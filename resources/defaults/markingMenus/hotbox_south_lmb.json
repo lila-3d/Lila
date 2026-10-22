@@ -1,0 +1,11 @@
+{
+  "N": {"label": "Select All", "action": "edit.selectAll"},
+  "E": {"label": "Grow", "action": "select.grow"},
+  "SE": {"label": "Ring", "action": "select.ring"},
+  "S": {"label": "Deselect", "action": "edit.deselect"},
+  "W": {"label": "Loop", "action": "select.loop"},
+  "overflow": [
+    {"label": "Pick Walk Up", "action": "select.pickWalkUp"},
+    {"label": "Pick Walk Down", "action": "select.pickWalkDown"}
+  ]
+}

@@ -1,0 +1,206 @@
+#include "ui/MeshCache.h"
+
+#include "core/Profile.h"
+#include "geo/Ops.h"
+#include "geo/RenderMesh.h"
+
+#include <tbb/parallel_for.h>
+#include <tbb/parallel_reduce.h>
+
+#include <unordered_map>
+
+namespace lila::ui
+{
+namespace
+{
+struct Entry
+{
+    std::weak_ptr<const geo::Mesh> source;
+    std::shared_ptr<const render::RenderMesh> built;
+    std::shared_ptr<const geo::RenderMesh> pick;
+    bool tangents = false;
+};
+
+std::unordered_map<const geo::Mesh*, Entry>& cache()
+{
+    static std::unordered_map<const geo::Mesh*, Entry> c;
+    return c;
+}
+
+Entry build(const scene::MeshPtr& source, bool tangents)
+{
+    LILA_ZONE();
+
+    geo::RenderMeshOptions opts;
+    opts.maxUvSets = 2;
+    opts.colors = true;
+    opts.sections = true;
+    opts.tangents = tangents;
+    auto pick = std::make_shared<geo::RenderMesh>(geo::buildRenderMesh(*source, opts));
+    const geo::RenderMesh& rm = *pick;
+
+    auto out = std::make_shared<render::RenderMesh>();
+    size_t n = rm.positions.size();
+    out->vertices.resize(n);
+    bool uvs = !rm.uvs.empty() && rm.uvs[0].size() == n;
+    bool uvs1 = rm.uvs.size() > 1 && rm.uvs[1].size() == n;
+    bool colors = rm.colors.size() == n;
+    tbb::parallel_for(size_t(0), n, [&](size_t i) {
+        render::MeshVertex& v = out->vertices[i];
+        v.pos = rm.positions[i];
+        v.normal = i < rm.normals.size() ? rm.normals[i] : glm::vec3(0, 1, 0);
+        v.tangent = i < rm.tangents.size() ? rm.tangents[i] : glm::vec4(1, 0, 0, 1);
+        v.uv = uvs ? rm.uvs[0][i] : glm::vec2(0.0f);
+        v.uv1 = uvs1 ? rm.uvs[1][i] : v.uv;
+        if (colors)
+            v.color = rm.colors[i];
+    });
+    out->indices.assign(rm.indices.begin(), rm.indices.end());
+    for (const geo::RenderSection& sec : rm.sections)
+        out->sections.push_back({uint32_t(std::max(0, sec.material)), sec.firstIndex, sec.indexCount});
+    out->edgePoints.resize(rm.lineIndices.size());
+    tbb::parallel_for(size_t(0), rm.lineIndices.size(), [&](size_t i) { out->edgePoints[i] = rm.positions[rm.lineIndices[i]]; });
+    if (n)
+    {
+        out->boundsMin = out->boundsMax = rm.positions[0];
+        for (const glm::vec3& p : rm.positions)
+        {
+            out->boundsMin = glm::min(out->boundsMin, p);
+            out->boundsMax = glm::max(out->boundsMax, p);
+        }
+    }
+    return {source, out, pick, tangents};
+}
+
+const Entry* entryFor(const scene::MeshPtr& mesh, bool tangents = false)
+{
+    if (!mesh)
+        return nullptr;
+    auto& c = cache();
+    auto it = c.find(mesh.get());
+    if (it != c.end() && it->second.source.lock() == mesh && (it->second.tangents || !tangents))
+        return &it->second;
+    // Snapshots die as the scene changes; drop their entries when the table gets busy.
+    if (c.size() > 64)
+        std::erase_if(c, [](const auto& kv) { return kv.second.source.expired(); });
+    return &(c[mesh.get()] = build(mesh, tangents));
+}
+} // namespace
+
+std::shared_ptr<const render::RenderMesh> renderMeshFor(const scene::MeshPtr& mesh, bool tangents)
+{
+    const Entry* e = entryFor(mesh, tangents);
+    return e ? e->built : nullptr;
+}
+
+bool reuseRenderMesh(const scene::MeshPtr& from, const scene::MeshPtr& to, const std::function<void(std::vector<render::MeshVertex>&)>& edit)
+{
+    LILA_ZONE();
+
+    auto& c = cache();
+    auto it = c.find(from.get());
+    if (!from || !to || it == c.end() || it->second.source.lock() != from)
+        return false;
+    Entry e = it->second;
+    auto copy = std::make_shared<render::RenderMesh>(*e.built);
+    copy->key = render::RenderMesh::nextKey();
+    edit(copy->vertices);
+    e.source = to;
+    e.built = std::move(copy);
+    c[to.get()] = std::move(e);
+    return true;
+}
+
+scene::MeshPtr smoothedFor(const scene::MeshPtr& mesh, int level)
+{
+    if (!mesh || level <= 0)
+        return mesh;
+    struct Smoothed
+    {
+        std::weak_ptr<const geo::Mesh> source;
+        int level = 0;
+        scene::MeshPtr result;
+    };
+    static std::unordered_map<const geo::Mesh*, Smoothed> cache;
+    auto it = cache.find(mesh.get());
+    if (it != cache.end() && it->second.level == level && it->second.source.lock() == mesh)
+        return it->second.result;
+    if (cache.size() > 64)
+        std::erase_if(cache, [](const auto& kv) { return kv.second.source.expired(); });
+    geo::SubdivideOptions o;
+    o.levels = level;
+    auto result = std::make_shared<const geo::Mesh>(geo::subdivide(*mesh, o));
+    cache[mesh.get()] = {mesh, level, result};
+    return result;
+}
+
+std::shared_ptr<const geo::RenderMesh> pickDataFor(const scene::MeshPtr& mesh)
+{
+    const Entry* e = entryFor(mesh);
+    return e ? e->pick : nullptr;
+}
+
+std::optional<RayHit> raycast(const render::RenderMesh& mesh, const glm::dmat4& world, const glm::dvec3& origin, const glm::dvec3& dir)
+{
+    LILA_ZONE();
+
+    glm::dmat4 inv = glm::inverse(world);
+    glm::dvec3 o = glm::dvec3(inv * glm::dvec4(origin, 1.0));
+    glm::dvec3 d = glm::dvec3(inv * glm::dvec4(dir, 0.0));
+
+    // Slab test against the bounds first; most meshes miss.
+    glm::dvec3 lo(mesh.boundsMin), hi(mesh.boundsMax);
+    double t0 = 0.0, t1 = 1e300;
+    for (int a = 0; a < 3; ++a)
+    {
+        if (std::abs(d[a]) < 1e-300)
+        {
+            if (o[a] < lo[a] || o[a] > hi[a])
+                return std::nullopt;
+            continue;
+        }
+        double ta = (lo[a] - o[a]) / d[a], tb = (hi[a] - o[a]) / d[a];
+        if (ta > tb)
+            std::swap(ta, tb);
+        t0 = std::max(t0, ta);
+        t1 = std::min(t1, tb);
+        if (t0 > t1)
+            return std::nullopt;
+    }
+
+    using Best = std::pair<double, size_t>; // distance along the local ray, triangle
+    size_t tris = mesh.indices.size() / 3;
+    Best best = tbb::parallel_reduce(
+        tbb::blocked_range<size_t>(0, tris, 4096), Best{1e300, 0},
+        [&](const tbb::blocked_range<size_t>& r, Best acc) {
+            for (size_t t = r.begin(); t != r.end(); ++t)
+            {
+                // Moller-Trumbore, both sides.
+                glm::dvec3 a(mesh.vertices[mesh.indices[t * 3]].pos), b(mesh.vertices[mesh.indices[t * 3 + 1]].pos),
+                    c(mesh.vertices[mesh.indices[t * 3 + 2]].pos);
+                glm::dvec3 e1 = b - a, e2 = c - a, p = glm::cross(d, e2);
+                double det = glm::dot(e1, p);
+                if (std::abs(det) < 1e-18)
+                    continue;
+                double invDet = 1.0 / det;
+                glm::dvec3 s = o - a;
+                double u = glm::dot(s, p) * invDet;
+                if (u < 0.0 || u > 1.0)
+                    continue;
+                glm::dvec3 q = glm::cross(s, e1);
+                double v = glm::dot(d, q) * invDet;
+                if (v < 0.0 || u + v > 1.0)
+                    continue;
+                double dist = glm::dot(e2, q) * invDet;
+                if (dist > 0.0 && dist < acc.first)
+                    acc = {dist, t};
+            }
+            return acc;
+        },
+        [](Best x, Best y) { return x.first <= y.first ? x : y; });
+    if (best.first >= 1e300)
+        return std::nullopt;
+    // Distance is in the local ray's units; convert to world.
+    return RayHit{glm::length(glm::dvec3(world * glm::dvec4(d * best.first, 0.0))), uint32_t(best.second)};
+}
+} // namespace lila::ui

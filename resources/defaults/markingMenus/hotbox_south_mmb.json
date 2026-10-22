@@ -1,0 +1,11 @@
+{
+  "N": {"label": "Undo", "action": "edit.undo"},
+  "NE": {"label": "Group", "action": "edit.group"},
+  "E": {"label": "Duplicate", "action": "edit.duplicate"},
+  "SE": {"label": "Unparent", "action": "edit.unparent"},
+  "S": {"label": "Redo", "action": "edit.redo"},
+  "SW": {"label": "Rename", "action": "edit.rename"},
+  "W": {"label": "Delete", "action": "edit.delete"},
+  "NW": {"label": "Parent", "action": "edit.parent"},
+  "overflow": []
+}

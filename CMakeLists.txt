@@ -1,0 +1,44 @@
+cmake_minimum_required(VERSION 3.28)
+project(Lila VERSION 0.1.0 LANGUAGES C CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
+option(LILA_BUILD_TESTS "Build unit tests" ON)
+
+if(MSVC)
+    add_compile_options(/W4 /permissive- /utf-8 /Zc:__cplusplus /MP)
+    add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+endif()
+
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
+
+find_package(Python 3.14 EXACT REQUIRED COMPONENTS Interpreter Development.Module Development.Embed)
+find_package(Qt6 6.11 REQUIRED COMPONENTS Core Gui Widgets Svg)
+find_package(TBB CONFIG REQUIRED)
+find_package(glm CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
+find_package(volk CONFIG REQUIRED)
+find_package(VulkanHeaders CONFIG REQUIRED)
+find_package(VulkanMemoryAllocator CONFIG REQUIRED)
+find_package(httplib CONFIG REQUIRED)
+# Off by default: the Tracy client listens on the network, which makes Windows Firewall prompt for every exe.
+option(LILA_TRACY "Build with the Tracy profiler" OFF)
+if(LILA_TRACY)
+    find_package(Tracy CONFIG REQUIRED)
+endif()
+find_package(doctest CONFIG REQUIRED)
+
+include(LilaDeps)
+include(LilaShaders)
+
+add_subdirectory(src)
+add_subdirectory(extensions/examples/hello)
+
+if(LILA_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

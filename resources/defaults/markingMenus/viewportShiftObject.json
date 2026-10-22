@@ -1,0 +1,30 @@
+{
+  "N": { "label": "Extrude", "action": "mesh.extrude" },
+  "NE": { "label": "Bevel", "action": "mesh.bevel" },
+  "E": { "label": "Insert Loop", "action": "mesh.insertLoop" },
+  "SE": { "label": "Bridge", "action": "mesh.bridge" },
+  "S": { "label": "Merge", "action": "mesh.merge" },
+  "SW": { "label": "Fill Hole", "action": "mesh.fillHole" },
+  "W": { "label": "Inset", "action": "mesh.inset" },
+  "NW": { "label": "Dissolve", "action": "mesh.dissolve" },
+  "overflow": [
+    { "label": "Merge to Center", "action": "mesh.mergeCenter" },
+    { "label": "Collapse", "action": "mesh.collapse" },
+    { "label": "Poke", "action": "mesh.poke" },
+    { "label": "Spin Edge", "action": "mesh.spin" },
+    { "separator": true },
+    { "label": "Flip Normals", "action": "mesh.flip" },
+    { "label": "Conform Normals", "action": "mesh.conform" },
+    { "separator": true },
+    { "label": "Triangulate", "action": "mesh.triangulate" },
+    { "label": "Quadrangulate", "action": "mesh.quadrangulate" },
+    { "label": "Subdivide", "action": "mesh.subdivide" },
+    { "separator": true },
+    { "label": "Mirror", "action": "mesh.mirror" },
+    { "label": "Separate", "action": "mesh.separate" },
+    { "label": "Combine", "action": "mesh.combine" },
+    { "separator": true },
+    { "label": "Symmetry X", "action": "mesh.symmetryX" },
+    { "label": "Symmetry Off", "action": "mesh.symmetryOff" }
+  ]
+}

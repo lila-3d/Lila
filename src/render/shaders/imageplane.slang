@@ -1,0 +1,56 @@
+// Reference images on world-space quads, shown in display space: no lighting, exposure, gamma or tonemapping.
+
+struct ImagePlanePush
+{
+    float4x4 viewProj;
+    float4 corners[4]; // xyz: top left, top right, bottom right, bottom left
+    float4 uv;         // u0, v0, u1, v1
+    float4 params;     // opacity, brightness, contrast, grayscale
+    float4 texel;      // xy: half a texel, to keep bilinear taps off the far edge of the repeating sampler
+};
+
+[[vk::push_constant]] ImagePlanePush pc;
+[[vk::binding(0, 0)]] Sampler2D image; // sRGB view, so samples arrive linear
+
+struct VSOut
+{
+    float4 pos : SV_Position;
+    float2 uv : TEXCOORD;
+};
+
+[shader("vertex")]
+VSOut imagePlaneVS(uint id : SV_VertexID)
+{
+    const uint order[6] = {0, 1, 2, 0, 2, 3};
+    uint c = order[id];
+    float2 t = float2(c == 1 || c == 2 ? 1.0 : 0.0, c >= 2 ? 1.0 : 0.0);
+    VSOut o;
+    o.pos = mul(pc.viewProj, float4(pc.corners[c].xyz, 1.0));
+    o.uv = lerp(pc.uv.xy, pc.uv.zw, t);
+    return o;
+}
+
+float3 toDisplay(float3 c)
+{
+    return select(c <= 0.0031308, c * 12.92, 1.055 * pow(max(c, 0.0), 1.0 / 2.4) - 0.055);
+}
+
+float3 toLinear(float3 c)
+{
+    return select(c <= 0.04045, c / 12.92, pow((c + 0.055) / 1.055, 2.4));
+}
+
+[shader("fragment")]
+float4 imagePlanePS(VSOut i) : SV_Target
+{
+    float4 c = image.Sample(clamp(i.uv, pc.texel.xy, 1.0 - pc.texel.xy));
+    float a = c.a * pc.params.x;
+    // Clear texels write no depth, so geometry behind a cut-out reference stays visible.
+    if (a < 0.002)
+        discard;
+    float3 d = toDisplay(c.rgb);
+    if (pc.params.w > 0.5)
+        d = dot(d, float3(0.2126, 0.7152, 0.0722));
+    d = saturate((d - 0.5) * pc.params.z + 0.5 + pc.params.y);
+    return float4(toLinear(d), a);
+}

@@ -1,0 +1,120 @@
+#pragma once
+
+#include "scene/Node.h"
+
+#include <array>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace lila::geo
+{
+class Mesh;
+}
+
+namespace lila::scene
+{
+class Graph;
+
+/**
+ * Surface materials, modeled on Unreal's default lit material.
+ *
+ * A `material` node (non-DAG) holds the inputs. Mesh faces pick one through their material slot: the face int
+ * "material" indexes geo::Mesh::materialNames(), and a slot binds to the material node whose name equals the slot
+ * name, exactly as FBX and Unreal match material slots by name. A slot with no node of that name renders with the
+ * neutral default (mid gray, roughness 0.55). Renaming a material through renameMaterial rewrites the slots too.
+ *
+ * Conventions, all Unreal's:
+ *   - baseColor and emissive are linear; color maps (base color, emissive) are sRGB, data maps are linear.
+ *   - A connected map replaces its constant (emissive maps are scaled by emissiveIntensity).
+ *   - Normal maps are tangent space, DirectX style by default (green points down the texture, Unreal's convention);
+ *     normalFormat "opengl" (Flip Green) is for maps baked green-up (Blender, Substance's OpenGL preset).
+ *   - Packed maps hold occlusion in R, roughness in G, metallic in B (ORM, Unreal's packing), or with packedLayout
+ *     "mro" metallic in R and occlusion in B. A packed map wins over separate ones.
+ *   - Lila UVs are V-up like Maya and FBX (v = 0 at the bottom of the image); the viewport samples at (u, 1 - v),
+ *     which is what Unreal's FBX import does when it flips V, so a texture lands the same way in both.
+ */
+namespace material
+{
+enum Attr
+{
+    kBaseColor,
+    kBaseColorMap,
+    kMetallic,
+    kMetallicMap,
+    kSpecular,
+    kRoughness,
+    kRoughnessMap,
+    kNormalMap,
+    kNormalFormat,
+    kAmbientOcclusionMap,
+    kOrmMap,
+    kPackedLayout,
+    kEmissiveColor,
+    kEmissiveMap,
+    kEmissiveIntensity,
+    kOpacity,
+    kOpacityMaskClip,
+    kBlendMode,
+    kTwoSided,
+    kUvSet,
+    kCount
+};
+
+enum class BlendMode
+{
+    Opaque,
+    Masked,
+    Translucent,
+};
+
+enum class NormalFormat
+{
+    DirectX,
+    OpenGL,
+};
+
+enum class PackedLayout
+{
+    ORM,
+    MRO,
+};
+} // namespace material
+
+namespace materials
+{
+/** Slot that faces fall back to when a mesh first gets a second material; the FBX exporter uses the same name. */
+inline constexpr const char* kDefaultSlot = "Default";
+
+/** The material node a slot binds to, or null. */
+Node* find(Graph& g, std::string_view slot);
+std::vector<Node*> all(Graph& g);
+
+/** Creates a material node named exactly `name` when it is free (else made unique). Undoable. */
+Node* create(Graph& g, std::string_view name);
+
+/** Source channel (0 R, 1 G, 2 B) of occlusion, roughness and metallic in a packed map of this layout. */
+std::array<int, 3> packedChannels(material::PackedLayout layout);
+
+/** Texture channel names for setMaterialTexture ("baseColor", "normal", "orm", ...) and their attrs. */
+const std::vector<std::pair<std::string, int>>& textureChannels();
+
+/** paths::resolvePath of a stored texture path, as UTF-8. */
+std::string resolvePath(const std::string& path);
+
+/** Slot index for name, added when missing. */
+int32_t slotIndex(geo::Mesh& mesh, const std::string& name);
+/** Points every face (faces empty) or the given faces at the named slot, then drops slots no face uses. */
+void assign(geo::Mesh& mesh, const std::string& slot, const std::vector<uint32_t>& faces);
+/** Drops slots no face uses and renumbers the rest, keeping their order. */
+void pruneSlots(geo::Mesh& mesh);
+/** Slot name per face id; ids outside the names get "Material<id>", like the FBX exporter. */
+std::string slotName(const geo::Mesh& mesh, int32_t id);
+/** Faces per slot name, in slot order. */
+std::vector<std::pair<std::string, uint32_t>> slotUsage(const geo::Mesh& mesh);
+
+void registerTypes();
+/** createMaterial, assignMaterial, listMaterials, materialInfo, setMaterialTexture, renameMaterial. */
+void registerCommands();
+} // namespace materials
+} // namespace lila::scene

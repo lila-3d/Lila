@@ -1,0 +1,170 @@
+#include <doctest/doctest.h>
+
+#include "cmds/Command.h"
+#include "cmds/Undo.h"
+#include "geo/Mesh.h"
+#include "geo/Ops.h"
+#include "geo/Primitives.h"
+#include "scene/Graph.h"
+#include "scene/LastOp.h"
+#include "scene/MeshNodes.h"
+
+#include <algorithm>
+#include <cmath>
+#include <set>
+
+using namespace lila;
+using json = nlohmann::json;
+using geo::Index;
+
+namespace
+{
+json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json ui(const char* name, json call = json::object()) { return cmds::execute(name, call, CallSource::UI); }
+
+/** Faces lying on top of another face: the same corner positions in any order. */
+int coincidentFaces(const geo::Mesh& m)
+{
+    std::set<std::vector<std::array<long long, 3>>> seen;
+    int dupes = 0;
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+    {
+        if (!m.faceValid(f))
+            continue;
+        std::vector<std::array<long long, 3>> key;
+        m.forEachFaceCorner(f, [&](Index c) {
+            glm::dvec3 p = m.position(m.cornerPoint(c));
+            key.push_back({std::llround(p.x * 1e4), std::llround(p.y * 1e4), std::llround(p.z * 1e4)});
+        });
+        std::sort(key.begin(), key.end());
+        if (!seen.insert(key).second)
+            ++dupes;
+    }
+    return dupes;
+}
+
+int zeroAreaFaces(const geo::Mesh& m)
+{
+    int n = 0;
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f) && m.faceArea(f) < 1e-9)
+            ++n;
+    return n;
+}
+
+Index faceFacing(const geo::Mesh& m, const glm::dvec3& dir)
+{
+    Index best = geo::kInvalid;
+    double bestDot = -2.0;
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f) && glm::dot(m.faceNormal(f), dir) > bestDot)
+        {
+            bestDot = glm::dot(m.faceNormal(f), dir);
+            best = f;
+        }
+    return best;
+}
+
+const geo::Mesh& meshOf(const std::string& name)
+{
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    scene::Node* n = g.find(name);
+    REQUIRE(n);
+    return *n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+}
+} // namespace
+
+TEST_CASE("extrude: thickness pushes the cap out, offset insets it")
+{
+    geo::Mesh cube = geo::makeCube();
+    const Index top = faceFacing(cube, {0, 1, 0});
+    geo::ExtrudeOptions o;
+    o.offset = 20.0;
+    o.inset = 10.0;
+    geo::ExtrudeResult r = geo::extrudeFaces(cube, std::vector<Index>{top}, o);
+    CHECK(r.sides.size() == 4);
+    CHECK(cube.numFaces() == 10);
+    CHECK(cube.numPoints() == 12);
+    CHECK(cube.faceArea(top) == doctest::Approx(80.0 * 80.0));
+    CHECK(cube.bounds().max.y == doctest::Approx(70.0));
+    CHECK(coincidentFaces(cube) == 0);
+    CHECK(zeroAreaFaces(cube) == 0);
+}
+
+TEST_CASE("inset leaves no coincident or zero-area faces")
+{
+    geo::Mesh cube = geo::makeCube();
+    geo::insetFaces(cube, std::vector<Index>{faceFacing(cube, {0, 1, 0})}, {.thickness = 10.0});
+    CHECK(cube.numFaces() == 10);
+    CHECK(coincidentFaces(cube) == 0);
+    CHECK(zeroAreaFaces(cube) == 0);
+
+    // A region of four faces: one inner region plus its rim.
+    geo::Mesh grid = geo::makeCube({100, 100, 100, 2, 1, 2});
+    std::vector<Index> tops;
+    for (Index f = 0; f < grid.faceCapacity(); ++f)
+        if (grid.faceValid(f) && grid.faceNormal(f).y > 0.9)
+            tops.push_back(f);
+    REQUIRE(tops.size() == 4);
+    const Index before = grid.numFaces();
+    geo::insetFaces(grid, tops, {.thickness = 5.0});
+    CHECK(grid.numFaces() == before + 8);
+    CHECK(coincidentFaces(grid) == 0);
+    CHECK(zeroAreaFaces(grid) == 0);
+}
+
+TEST_CASE("polyInset and polyExtrude through the command and adjust-last-op path")
+{
+    scene::lastOp::install();
+    run("newScene");
+    std::string cube = run("polyCube")[0];
+    run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
+    ui("polyInset", {{"thickness", 5}});
+    CHECK(meshOf(cube).numFaces() == 10);
+    CHECK(coincidentFaces(meshOf(cube)) == 0);
+    REQUIRE(scene::lastOp::live());
+    scene::lastOp::rerun({{"thickness", 10}});
+    scene::lastOp::rerun({{"thickness", 12}});
+    CHECK(meshOf(cube).numFaces() == 10);
+    CHECK(coincidentFaces(meshOf(cube)) == 0);
+
+    run("newScene");
+    cube = run("polyCube")[0];
+    run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
+    ui("polyExtrude", {{"thickness", 20}, {"offset", 10}});
+    const geo::Mesh& m = meshOf(cube);
+    CHECK(m.numFaces() == 10);
+    CHECK(coincidentFaces(m) == 0);
+    REQUIRE(scene::lastOp::live());
+    scene::lastOp::rerun({{"thickness", 30}});
+    CHECK(meshOf(cube).numFaces() == 10);
+    glm::dvec3 size = meshOf(cube).bounds().size();
+    CHECK(size.x + size.y + size.z == doctest::Approx(330.0));
+    run("undo");
+    CHECK(meshOf(cube).numFaces() == 6);
+}
+
+TEST_CASE("polyInset on every face of a symmetric cube adds rims without duplicates")
+{
+    for (bool symmetric : {false, true})
+        for (bool individual : {false, true})
+        {
+            run("newScene");
+            std::string cube = run("polyCube", {{"subdivisionsX", 2}, {"subdivisionsY", 2}, {"subdivisionsZ", 2}})[0];
+            if (symmetric)
+                run("setSymmetry", {{"args", {cube}}, {"axis", "x"}});
+            const int count = int(meshOf(cube).numFaces());
+            for (int f = 0; f < count; ++f)
+            {
+                CAPTURE(f);
+                CAPTURE(symmetric);
+                CAPTURE(individual);
+                run("selectComponents", {{"args", {cube}}, {"faces", json::array({f, (f + 1) % count})}});
+                run("polyInset", {{"thickness", 5}, {"individual", individual}});
+                CHECK(coincidentFaces(meshOf(cube)) == 0);
+                CHECK(zeroAreaFaces(meshOf(cube)) == 0);
+                run("undo");
+            }
+        }
+}

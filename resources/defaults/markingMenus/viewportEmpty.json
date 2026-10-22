@@ -1,0 +1,11 @@
+{
+  "N": { "label": "Select All", "action": "edit.selectAll" },
+  "S": { "label": "Deselect", "action": "edit.deselect" },
+  "E": { "label": "Frame All", "action": "viewport.frameAll" },
+  "W": { "label": "Undo", "action": "edit.undo" },
+  "NW": { "label": "Redo", "action": "edit.redo" },
+  "overflow": [
+    { "label": "New Scene", "action": "file.new" },
+    { "label": "Save Scene", "action": "file.save" }
+  ]
+}

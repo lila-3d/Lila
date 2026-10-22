@@ -1,0 +1,155 @@
+#include <doctest/doctest.h>
+
+#include "cmds/Command.h"
+#include "core/MainQueue.h"
+#include "core/Progress.h"
+#include "io/SceneFile.h"
+#include "maya/Maya.h"
+#include "scene/Node.h"
+#include "scene/SceneCommands.h"
+#include "ui/Outliner.h"
+#include "ui/ProgressOverlay.h"
+#include "ui/ReferenceEditor.h"
+
+#include <QApplication>
+#include <QCloseEvent>
+#include <QDockWidget>
+#include <QKeyEvent>
+#include <QMainWindow>
+#include <QMouseEvent>
+#include <QPushButton>
+#include <QTimer>
+
+#include <chrono>
+#include <cstdlib>
+#include <thread>
+
+using namespace lila;
+using json = nlohmann::json;
+
+namespace
+{
+json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+
+/** The overlay card: the visible top-level window other than the main one. */
+QWidget* card(QMainWindow& win)
+{
+    for (QWidget* w : QApplication::topLevelWidgets())
+        if (w != &win && w->isVisible() && w->parentWidget() == &win)
+            return w;
+    return nullptr;
+}
+
+void sleepMs(int ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); }
+
+void setup()
+{
+    static bool done = false;
+    if (done)
+        return;
+    done = true;
+    mainq::init();
+    cmds::registerBuiltins();
+    scene::types::registerBuiltins();
+    scene::registerCommands();
+    io::registerCommands();
+    maya::registerCommands();
+}
+} // namespace
+
+TEST_CASE("progress overlay: shown after 300 ms, pumps with input blocked, gone at the end")
+{
+    setup();
+    QMainWindow win;
+    auto* button = new QPushButton("work", &win);
+    win.setCentralWidget(button);
+    int clicks = 0;
+    QObject::connect(button, &QPushButton::clicked, [&] { ++clicks; });
+    win.resize(800, 600);
+    win.show();
+    ui::progressui::install(&win);
+    QApplication::processEvents();
+
+    int timers = 0;
+    QTimer::singleShot(0, [&] { ++timers; });
+    {
+        progress::Scope root("Unfurling...", 100.0, progress::Cancellable);
+        root.setStatus("scene.lila");
+        root.step();
+        CHECK_FALSE(card(win)); // quick operations never flash a card
+        CHECK(timers == 0);
+
+        sleepMs(350);
+        root.step();
+        REQUIRE(card(win));
+        CHECK(card(win)->geometry() == win.geometry());
+        CHECK(timers == 1); // the event loop ran inside the step
+
+        QPointF at(10, 10);
+        QMouseEvent press(QEvent::MouseButtonPress, at, button->mapToGlobal(at), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QMouseEvent release(QEvent::MouseButtonRelease, at, button->mapToGlobal(at), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(button, &press);
+        QApplication::sendEvent(button, &release);
+        CHECK(clicks == 0);
+
+        QCloseEvent close;
+        QApplication::sendEvent(&win, &close);
+        CHECK_FALSE(close.isAccepted());
+
+        QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QApplication::sendEvent(button, &escape);
+        CHECK(root.cancelled());
+    }
+    CHECK_FALSE(card(win));
+
+    // Input flows again once the operation is over.
+    QPointF at(10, 10);
+    QMouseEvent press(QEvent::MouseButtonPress, at, button->mapToGlobal(at), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QMouseEvent release(QEvent::MouseButtonRelease, at, button->mapToGlobal(at), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(button, &press);
+    QApplication::sendEvent(button, &release);
+    CHECK(clicks == 1);
+}
+
+TEST_CASE("progress overlay: a scene open with the editors up stays quick")
+{
+    // LILA_PROGRESS_SCENE names a big .lila or Maya file to time by hand; otherwise a small generated scene.
+    setup();
+    QMainWindow win;
+    auto* outliner = new QDockWidget("Outliner", &win);
+    auto* tree = new ui::Outliner(outliner);
+    outliner->setWidget(tree);
+    win.addDockWidget(Qt::LeftDockWidgetArea, outliner);
+    auto* refs = new QDockWidget("Reference Editor", &win);
+    refs->setWidget(new ui::ReferenceEditor(refs));
+    win.addDockWidget(Qt::LeftDockWidgetArea, refs);
+    win.resize(1200, 800);
+    win.show();
+    ui::progressui::install(&win);
+
+    std::string path;
+    if (const char* env = std::getenv("LILA_PROGRESS_SCENE"))
+        path = env;
+    else
+    {
+        run("newScene");
+        for (int i = 0; i < 60; ++i)
+            run("polySphere", {{"name", "Ball" + std::to_string(i)}, {"subdivisionsAxis", 48}, {"subdivisionsHeight", 48}, {"history", false}});
+        path = (std::filesystem::temp_directory_path() / "lila_dock_tests" / "progress_scene.lila").generic_string();
+        run("saveScene", {{"args", {path}}});
+        run("newScene");
+    }
+    QApplication::processEvents();
+
+    const bool maya = path.ends_with(".ma") || path.ends_with(".mb");
+    const auto start = std::chrono::steady_clock::now();
+    if (maya)
+        run("mayaImport", {{"args", {path}}});
+    else
+        run("openScene", {{"args", {path}}, {"force", true}});
+    QApplication::processEvents();
+    const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    MESSAGE("opened " << path << " with the outliner and reference editor up in " << seconds << " s");
+    CHECK(tree->topLevelItemCount() > 0);
+    CHECK_FALSE(card(win));
+}

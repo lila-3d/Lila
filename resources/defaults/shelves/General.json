@@ -1,0 +1,15 @@
+{
+  "items": [
+    { "label": "Locator", "icon": "crosshair", "tooltip": "Create a locator", "target": "create.locator" },
+    { "label": "Group", "icon": "box-multiple", "tooltip": "Group the selection", "target": "edit.group" },
+    { "label": "Parent", "icon": "link", "tooltip": "Parent the selection under the last selected", "target": "edit.parent" },
+    { "label": "Unparent", "icon": "unlink", "tooltip": "Unparent to the world", "target": "edit.unparent" },
+    { "label": "Chain", "icon": "hierarchy-2", "tooltip": "Parent in selection order", "target": "edit.parentChain" },
+    { "label": "Reset Piv", "icon": "focus-centered", "tooltip": "Reset pivots, keeping objects in place", "target": { "command": "resetPivot" } },
+    { "label": "Center Piv", "icon": "square-dot", "tooltip": "Center pivots on each object's bounds", "target": "modify.centerPivot" },
+    { "label": "Frame", "icon": "frame", "tooltip": "Frame the selection", "target": "viewport.frameSelected" },
+    { "label": "Toolkit", "icon": "tools", "tooltip": "Show or hide the Modeling Toolkit", "target": "window.modelingToolkit" },
+    { "label": "Measure", "icon": "ruler-measure", "tooltip": "Measure the selection and copy the result", "target": "measure.selection" },
+    { "label": "Distance", "icon": "ruler-2", "tooltip": "Distance tool: click two points to place a live distance measure", "target": "measure.distanceTool" }
+  ]
+}

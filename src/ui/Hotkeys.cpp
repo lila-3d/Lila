@@ -1,0 +1,453 @@
+#include "ui/Hotkeys.h"
+
+#include "core/Log.h"
+#include "core/PrefStore.h"
+#include "ui/Actions.h"
+#include "ui/Hotbox.h"
+#include "ui/MarkingMenu.h"
+
+#include <QAbstractItemView>
+#include <QAbstractSlider>
+#include <QAbstractSpinBox>
+#include <QComboBox>
+#include <QCursor>
+#include <QApplication>
+#include <QKeyEvent>
+#include <QKeySequence>
+#include <QMouseEvent>
+#include <QLineEdit>
+#include <QPlainTextEdit>
+#include <QTextEdit>
+
+#include <algorithm>
+
+namespace lila::ui
+{
+namespace
+{
+constexpr int kModMask = Qt::ControlModifier | Qt::ShiftModifier | Qt::AltModifier | Qt::MetaModifier;
+static_assert(hotkeys::kShiftModifier == int(Qt::ShiftModifier));
+
+/** Windows set-1 scancodes for the US positions of the keys whose labels move between layouts. */
+uint32_t usScancode(int qtKey)
+{
+#ifdef _WIN32
+    static const std::map<int, uint32_t> table = {
+        {Qt::Key_Q, 0x10}, {Qt::Key_W, 0x11}, {Qt::Key_E, 0x12}, {Qt::Key_R, 0x13}, {Qt::Key_T, 0x14},
+        {Qt::Key_Y, 0x15}, {Qt::Key_U, 0x16}, {Qt::Key_I, 0x17}, {Qt::Key_O, 0x18}, {Qt::Key_P, 0x19},
+        {Qt::Key_BracketLeft, 0x1A}, {Qt::Key_BracketRight, 0x1B}, {Qt::Key_A, 0x1E}, {Qt::Key_S, 0x1F},
+        {Qt::Key_D, 0x20}, {Qt::Key_F, 0x21}, {Qt::Key_G, 0x22}, {Qt::Key_H, 0x23}, {Qt::Key_J, 0x24},
+        {Qt::Key_K, 0x25}, {Qt::Key_L, 0x26}, {Qt::Key_Semicolon, 0x27}, {Qt::Key_Apostrophe, 0x28},
+        {Qt::Key_QuoteLeft, 0x29}, {Qt::Key_Backslash, 0x2B}, {Qt::Key_Z, 0x2C}, {Qt::Key_X, 0x2D},
+        {Qt::Key_C, 0x2E}, {Qt::Key_V, 0x2F}, {Qt::Key_B, 0x30}, {Qt::Key_N, 0x31}, {Qt::Key_M, 0x32},
+        {Qt::Key_Comma, 0x33}, {Qt::Key_Period, 0x34}, {Qt::Key_Slash, 0x35}, {Qt::Key_1, 0x02},
+        {Qt::Key_2, 0x03}, {Qt::Key_3, 0x04}, {Qt::Key_4, 0x05}, {Qt::Key_5, 0x06}, {Qt::Key_6, 0x07},
+        {Qt::Key_7, 0x08}, {Qt::Key_8, 0x09}, {Qt::Key_9, 0x0A}, {Qt::Key_0, 0x0B}, {Qt::Key_Minus, 0x0C},
+        {Qt::Key_Equal, 0x0D},
+    };
+    auto it = table.find(qtKey);
+    return it == table.end() ? 0 : it->second;
+#else
+    (void)qtKey;
+    return 0;
+#endif
+}
+
+uint32_t eventScancode(QKeyEvent* e)
+{
+#ifdef _WIN32
+    uint32_t s = e->nativeScanCode();
+    // Only the remappable block; anything else (arrows, F-keys) matches by Qt key.
+    return (s >= 0x02 && s <= 0x35) ? s : 0;
+#else
+    (void)e;
+    return 0;
+#endif
+}
+
+bool isStandardTextEdit(int mods, int key)
+{
+    if (mods == 0 || mods == Qt::ShiftModifier)
+        return true;
+    if (mods & Qt::ControlModifier)
+        switch (key)
+        {
+        case Qt::Key_Z: case Qt::Key_Y: case Qt::Key_X: case Qt::Key_C: case Qt::Key_V: case Qt::Key_A:
+        case Qt::Key_Backspace: case Qt::Key_Delete: case Qt::Key_Left: case Qt::Key_Right:
+        case Qt::Key_Home: case Qt::Key_End:
+            return true;
+        default: break;
+        }
+    return false;
+}
+/** The hotbox shows on key down rather than after the hold delay, as in Maya. */
+bool isHotbox(const json& target)
+{
+    return target.is_string() && target.get<std::string>() == "hotbox.show";
+}
+
+int buttonIndex(Qt::MouseButton b)
+{
+    switch (b)
+    {
+    case Qt::LeftButton: return 0;
+    case Qt::MiddleButton: return 1;
+    case Qt::RightButton: return 2;
+    default: return -1;
+    }
+}
+
+bool isModifierKey(int key)
+{
+    return key == Qt::Key_Control || key == Qt::Key_Shift || key == Qt::Key_Alt || key == Qt::Key_Meta;
+}
+
+bool isArrowKey(int key)
+{
+    return key == Qt::Key_Up || key == Qt::Key_Down || key == Qt::Key_Left || key == Qt::Key_Right;
+}
+
+/** Lists, trees, combo boxes and sliders keep their own arrow keys, unless they opt into pickwalking. */
+bool listNavigationFocused(QWidget* w)
+{
+    for (QWidget* p = w; p; p = p->parentWidget())
+        if (p->property("pickWalk").toBool())
+            return false;
+    return w && (qobject_cast<QAbstractItemView*>(w) || qobject_cast<QComboBox*>(w) || qobject_cast<QAbstractSlider*>(w));
+}
+} // namespace
+
+Hotkeys& Hotkeys::get()
+{
+    static Hotkeys h;
+    return h;
+}
+
+Hotkeys::Hotkeys()
+{
+    mHoldTimer.setSingleShot(true);
+    connect(&mHoldTimer, &QTimer::timeout, this, &Hotkeys::onHoldTimeout);
+    mRepeatTimer.setSingleShot(true);
+    connect(&mRepeatTimer, &QTimer::timeout, this, [this] {
+        if (!mRepeat)
+            return;
+        actions::run(mRepeat->target);
+        mRepeatTimer.start(std::max(10, PrefStore::get().value<int>("general", "/undo/repeatIntervalMs", 100)));
+    });
+}
+
+void Hotkeys::install()
+{
+    reload();
+    PrefStore::get().onChanged([this](const std::string& file) {
+        if (file == "hotkeys")
+            reload();
+    });
+    qApp->installEventFilter(this);
+}
+
+void Hotkeys::reload()
+{
+    json def = PrefStore::get().merged("hotkeys");
+    mHoldDelay = def.value("holdDelayMs", 180);
+    mContexts.clear();
+    if (!def.contains("contexts") || !def["contexts"].is_object())
+        return;
+    for (auto& [context, keys] : def["contexts"].items())
+    {
+        if (!keys.is_object())
+            continue;
+        auto& list = mContexts[context];
+        for (auto& [keyText, value] : keys.items())
+        {
+            QKeySequence seq = QKeySequence::fromString(QString::fromStdString(keyText), QKeySequence::PortableText);
+            if (seq.isEmpty())
+            {
+                log::warn("hotkeys: can't parse key '{}'", keyText);
+                continue;
+            }
+            QKeyCombination combo = seq[0];
+            auto [mods, key] = hotkeys::normalizeShifted(int(combo.keyboardModifiers()) & kModMask, int(combo.key()));
+            Chord chord{mods, key, usScancode(key)};
+            Binding b;
+            b.keyText = seq.toString(QKeySequence::NativeText);
+            b.targets = hotkeys::splitSlots(value);
+            if (b.targets.empty())
+                continue; // null unbinds a default
+            list.emplace_back(chord, std::move(b));
+        }
+    }
+}
+
+QString Hotkeys::keyFor(const std::string& actionId) const
+{
+    for (const char* ctx : {"global", "viewport"})
+    {
+        auto it = mContexts.find(ctx);
+        if (it == mContexts.end())
+            continue;
+        for (auto& [chord, b] : it->second)
+            if (b.targets.press.is_string() && b.targets.press.get<std::string>() == actionId)
+                return b.keyText;
+    }
+    return {};
+}
+
+bool Hotkeys::isKeyFor(QKeyEvent* e, const std::string& actionId) const
+{
+    auto [mods, key] = hotkeys::normalizeShifted(int(e->modifiers()) & kModMask, e->key());
+    uint32_t scan = eventScancode(e);
+    for (auto& [ctx, list] : mContexts)
+        for (auto& [chord, b] : list)
+        {
+            if (chord.mods != mods || !b.targets.press.is_string() || b.targets.press.get<std::string>() != actionId)
+                continue;
+            if (chord.scan && scan ? chord.scan == scan : chord.qtKey == key)
+                return true;
+        }
+    return false;
+}
+
+void Hotkeys::passThrough(QWidget* view, const char* context)
+{
+    view->setProperty("hotkeyPassThrough", context);
+}
+
+bool Hotkeys::textInputFocused(QWidget* w)
+{
+    return w && (qobject_cast<QLineEdit*>(w) || qobject_cast<QTextEdit*>(w) || qobject_cast<QPlainTextEdit*>(w) ||
+                 qobject_cast<QAbstractSpinBox*>(w) || w->property("hotkeysOff").toBool());
+}
+
+const Hotkeys::Binding* Hotkeys::lookup(QKeyEvent* e, QWidget* focus) const
+{
+    auto [mods, key] = hotkeys::normalizeShifted(int(e->modifiers()) & kModMask, e->key());
+    uint32_t scan = eventScancode(e);
+
+    std::vector<std::string> chain;
+    QWidget* hovered = QApplication::widgetAt(QCursor::pos());
+    for (QWidget* w = hovered; w; w = w->parentWidget())
+        if (w->property("hotkeyHover").toBool())
+            if (QString ctx = w->property("hotkeyContext").toString(); !ctx.isEmpty())
+                chain.push_back(ctx.toStdString());
+    for (QWidget* w = focus; w; w = w->parentWidget())
+    {
+        QString ctx = w->property("hotkeyContext").toString();
+        // Hover contexts (the outliner) only apply under the cursor, so F there doesn't steal the viewport's F.
+        if (!ctx.isEmpty() && !w->property("hotkeyHover").toBool())
+            chain.push_back(ctx.toStdString());
+    }
+    // Only the view itself, not an inline editor inside it, so typing a name never fires a tool.
+    if (focus)
+        if (QString ctx = focus->property("hotkeyPassThrough").toString(); !ctx.isEmpty())
+            chain.push_back(ctx.toStdString());
+    chain.push_back("global");
+
+    for (const std::string& ctx : chain)
+    {
+        auto it = mContexts.find(ctx);
+        if (it == mContexts.end())
+            continue;
+        for (auto& [chord, b] : it->second)
+        {
+            if (chord.mods != mods)
+                continue;
+            bool match = chord.scan && scan ? chord.scan == scan : chord.qtKey == key;
+            if (match)
+                return &b;
+        }
+    }
+    return nullptr;
+}
+
+bool Hotkeys::eventFilter(QObject* obj, QEvent* e)
+{
+    // Key-ups are lost when the app loses focus mid-hold, so release everything then.
+    if (e->type() == QEvent::ApplicationDeactivate)
+        releaseAll();
+    if (e->type() == QEvent::MouseButtonPress || e->type() == QEvent::MouseButtonDblClick)
+        return onMousePress(obj, static_cast<QMouseEvent*>(e));
+    if (e->type() == QEvent::MouseButtonRelease && obj->isWidgetType())
+        if (auto* m = static_cast<QMouseEvent*>(e); mSwallowRelease & int(m->button()))
+        {
+            mSwallowRelease &= ~int(m->button());
+            return true;
+        }
+    if (e->type() != QEvent::KeyPress && e->type() != QEvent::KeyRelease)
+        return false;
+    auto* k = static_cast<QKeyEvent*>(e);
+
+    // The held key's own events are handled wherever they land: an open hotbox menu would otherwise take the key's
+    // repeats as presses of its highlighted item.
+    if (mPending && (mPending->scan ? mPending->scan == eventScancode(k) : mPending->qtKey == k->key()))
+    {
+        if (e->type() == QEvent::KeyPress || k->isAutoRepeat())
+            return true;
+        Pending p = std::move(*mPending);
+        mPending.reset();
+        mHoldTimer.stop();
+        const hotkeys::Slots& t = p.binding.targets;
+        hotkeys::HeldKey::Up up = p.state.keyUp();
+        if (MarkingMenu* mm = MarkingMenu::active())
+        {
+            Qt::MouseButton button = mm->button();
+            // The menu's button may still be down; its release then belongs to nothing.
+            if (mm->keyReleased() && (QGuiApplication::mouseButtons() & button))
+                mSwallowRelease |= int(button);
+        }
+        if (isHotbox(t.hold))
+            if (Hotbox* hb = Hotbox::instance())
+            {
+                if (up == hotkeys::HeldKey::Up::Tap && hb->interacted())
+                    up = hotkeys::HeldKey::Up::AfterHold;
+                hb->keyReleased(up == hotkeys::HeldKey::Up::Tap);
+            }
+        if (up == hotkeys::HeldKey::Up::Tap)
+            actions::run(t.press);
+        if (up != hotkeys::HeldKey::Up::Used)
+            actions::run(t.release);
+        return true;
+    }
+
+    // The OS key repeat is eaten so the repeat cadence comes from the prefs alone.
+    if (mRepeat)
+    {
+        bool same = mRepeat->scan ? mRepeat->scan == eventScancode(k) : mRepeat->qtKey == k->key();
+        if (same)
+        {
+            if (e->type() == QEvent::KeyRelease && !k->isAutoRepeat())
+                stopRepeat();
+            return true;
+        }
+        if (e->type() == QEvent::KeyPress && !isModifierKey(k->key()))
+            stopRepeat();
+    }
+
+    // An unhandled key event propagates up the parent chain and passes through here again; only act on its first
+    // receiver.
+    QWidget* first = QWidget::keyboardGrabber() ? QWidget::keyboardGrabber() : QApplication::focusWidget();
+    if (!first)
+        first = QApplication::activeWindow();
+    if (obj != first)
+        return false;
+
+    if (e->type() == QEvent::KeyRelease)
+    {
+        if (k->isAutoRepeat())
+            return false;
+        for (auto it = mHeldKeys.begin(); it != mHeldKeys.end(); ++it)
+            if (it->scan ? it->scan == eventScancode(k) : it->qtKey == k->key())
+            {
+                json release = it->binding.targets.release;
+                mHeldKeys.erase(it);
+                actions::run(release);
+                return true;
+            }
+        return false;
+    }
+
+    QWidget* focus = QApplication::focusWidget();
+    if (MarkingMenu::active())
+        return false;
+    int mods = int(k->modifiers()) & kModMask;
+    if (textInputFocused(focus) && isStandardTextEdit(mods, k->key()))
+        return false;
+    if (listNavigationFocused(focus) && mods == 0 && isArrowKey(k->key()))
+        return false;
+
+    const Binding* b = lookup(k, focus);
+    if (!b)
+    {
+        // Eats unbound letters so the view doesn't jump to the first item starting with one.
+        bool typed = (mods & ~Qt::ShiftModifier) == 0 && !k->text().isEmpty() && k->text().front().isPrint() &&
+                     k->key() != Qt::Key_Space;
+        return typed && focus && focus->property("hotkeyPassThrough").isValid();
+    }
+    if (k->isAutoRepeat())
+        return true;
+
+    const hotkeys::Slots& t = b->targets;
+    if (t.hold.is_null() && t.release.is_null() && !t.hasButtons())
+    {
+        actions::run(t.press);
+        if (hotkeys::repeatsWhileHeld(t.press))
+            startRepeat(k, t.press);
+        return true;
+    }
+    if (t.hold.is_null() && !t.hasButtons())
+    {
+        // Press/release pairs (hold D for pivot mode) are tracked apart so other keys can come and go meanwhile.
+        mHeldKeys.push_back(Pending{*b, eventScancode(k), k->key(), hotkeys::HeldKey(t)});
+        if (!t.press.is_null())
+            actions::run(t.press);
+        return true;
+    }
+    mPending.emplace(Pending{*b, eventScancode(k), k->key(), hotkeys::HeldKey(t)});
+    if (!t.hold.is_null())
+        mHoldTimer.start(mHoldDelay);
+    if (isHotbox(t.hold))
+        if (Hotbox* hb = Hotbox::instance())
+            hb->showAt(QCursor::pos(), true);
+    return true;
+}
+
+bool Hotkeys::onMousePress(QObject* obj, QMouseEvent* e)
+{
+    if (!mPending || !obj->isWidgetType() || MarkingMenu::active() || QApplication::activePopupWidget())
+        return false;
+    int index = buttonIndex(e->button());
+    switch (mPending->state.mouseDown(index))
+    {
+    case hotkeys::HeldKey::Mouse::Pass: return false;
+    case hotkeys::HeldKey::Mouse::Swallow: mSwallowRelease |= int(e->button()); return true;
+    case hotkeys::HeldKey::Mouse::Fire: break;
+    }
+    mHoldTimer.stop();
+    const json& target = mPending->binding.targets.buttons[index];
+    if (target.is_object() && target.contains("markingMenu"))
+    {
+        std::string name = target["markingMenu"].get<std::string>();
+        if (!MarkingMenu::popup(name, MarkingMenu::Trigger::MouseButton, e->button(), e->globalPosition().toPoint()))
+            log::warn("no marking menu '{}'", name);
+        return true;
+    }
+    mSwallowRelease |= int(e->button());
+    actions::run(target);
+    return true;
+}
+
+void Hotkeys::startRepeat(QKeyEvent* e, const json& target)
+{
+    // An interval of 0 turns the repeat off.
+    if (PrefStore::get().value<int>("general", "/undo/repeatIntervalMs", 100) <= 0)
+        return;
+    mRepeat = Repeat{eventScancode(e), e->key(), target};
+    mRepeatTimer.start(std::max(0, PrefStore::get().value<int>("general", "/undo/repeatDelayMs", 180)));
+}
+
+void Hotkeys::stopRepeat()
+{
+    mRepeat.reset();
+    mRepeatTimer.stop();
+}
+
+void Hotkeys::releaseAll()
+{
+    stopRepeat();
+    mPending.reset();
+    mHoldTimer.stop();
+    mSwallowRelease = 0;
+    auto held = std::move(mHeldKeys);
+    mHeldKeys.clear();
+    for (const Pending& p : held)
+        actions::run(p.binding.targets.release);
+}
+
+void Hotkeys::onHoldTimeout()
+{
+    mHoldTimer.stop();
+    if (!mPending || !mPending->state.holdTimeout() || isHotbox(mPending->binding.targets.hold))
+        return;
+    actions::run(mPending->binding.targets.hold);
+}
+} // namespace lila::ui

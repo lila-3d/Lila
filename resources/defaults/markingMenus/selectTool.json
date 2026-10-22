@@ -1,0 +1,8 @@
+{
+  "N": {"label": "Object Mode", "action": "select.objectMode"},
+  "E": {"label": "Vertex", "action": "select.vertexMode"},
+  "SE": {"label": "Soft Select", "action": "softSelect.toggle"},
+  "S": {"label": "Face", "action": "select.faceMode"},
+  "W": {"label": "Edge", "action": "select.edgeMode"},
+  "overflow": []
+}

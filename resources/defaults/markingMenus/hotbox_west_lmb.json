@@ -1,0 +1,11 @@
+{
+  "N": {"label": "Shaded", "action": "viewport.shaded"},
+  "NE": {"label": "Textured", "action": "viewport.textured"},
+  "E": {"label": "Wireframe on Shaded", "action": "viewport.wireOnShaded"},
+  "SE": {"label": "Smooth On", "action": "display.smoothOn"},
+  "S": {"label": "Ambient Occlusion", "action": "viewport.toggleAO"},
+  "SW": {"label": "Smooth Off", "action": "display.smoothOff"},
+  "W": {"label": "Wireframe", "action": "viewport.wireframe"},
+  "NW": {"label": "Smooth Cage", "action": "display.smoothCage"},
+  "overflow": []
+}

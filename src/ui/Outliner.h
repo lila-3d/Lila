@@ -1,0 +1,87 @@
+#pragma once
+
+#include "scene/Plug.h"
+
+#include <QTreeWidget>
+#include <QWidget>
+
+#include <set>
+#include <unordered_map>
+#include <vector>
+
+namespace lila::ui
+{
+/** Mime format of an outliner MMB drag: the dragged nodes' names, one per line, so views can take the drop. */
+inline constexpr const char* kNodeNamesMime = "application/x-lila-node-names";
+
+/**
+ * Maya's outliner: the DAG hierarchy with a type icon per row, referenced rows badged and italic, hidden rows dimmed.
+ * LMB drag selects a range of rows; MMB drag moves rows onto another to parent them, or between rows to place them
+ * there; dropped on a viewport, a camera row makes that view look through it. Right-click for the common object actions, F with the cursor over it to reveal the selection. Collapsed rows
+ * stay collapsed across rebuilds; ancestors of the selection are shaded.
+ */
+class Outliner : public QTreeWidget
+{
+    Q_OBJECT
+
+public:
+    explicit Outliner(QWidget* parent = nullptr);
+    ~Outliner() override;
+
+    /** Expands the parents of the selected objects and scrolls the first one into view. */
+    void revealSelected();
+    /** Starts editing the name of the first selected object's row. */
+    void renameSelected();
+    void expandEverything();
+    void collapseEverything();
+
+protected:
+    void resizeEvent(QResizeEvent* e) override;
+    void dropEvent(QDropEvent* e) override;
+    void mousePressEvent(QMouseEvent* e) override;
+    void mouseMoveEvent(QMouseEvent* e) override;
+    void mouseReleaseEvent(QMouseEvent* e) override;
+    /** The rename key pressed again while a name is being edited cancels the edit. */
+    void keyPressEvent(QKeyEvent* e) override;
+
+private:
+    void scheduleRebuild();
+    void scheduleRestyle();
+    void rebuild();
+    /** Updates each row's icon, font and color from its node's type, reference and visibility. */
+    void restyle();
+    void syncSelectionFromScene();
+    void pushSelectionToScene();
+    void showContextMenu(const QPoint& pos);
+    void startMove();
+    /** Shades the rows of the selection's unselected ancestors. */
+    void shadeAncestors();
+
+    std::unordered_map<scene::NodeId, QTreeWidgetItem*> mItems;
+    std::set<scene::NodeId> mCollapsed;
+    int mListener = 0;
+    bool mQueued = false;
+    bool mRestyleQueued = false;
+    bool mSyncing = false;
+    /** Rows being moved by an MMB drag. */
+    std::vector<scene::NodeId> mMoving;
+    QPoint mMovePress;
+    /** Set while an LMB drag selects rows, so the scene hears one selection at the end instead of one per row. */
+    bool mDragSelecting = false;
+    bool mSelectionPending = false;
+    /** A rebuild was skipped while the pane was collapsed to nothing; it runs when the pane opens. */
+    bool mStale = false;
+};
+
+/**
+ * The outliner panel: Maya's hidden second outliner sits under the first, collapsed to a grab handle at the bottom.
+ * Drag the handle up to open it; each pane scrolls and expands on its own. The split is remembered.
+ */
+class OutlinerPanel : public QWidget
+{
+    Q_OBJECT
+
+public:
+    explicit OutlinerPanel(QWidget* parent = nullptr);
+};
+} // namespace lila::ui

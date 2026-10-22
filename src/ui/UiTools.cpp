@@ -1,0 +1,223 @@
+#include "ui/UiTools.h"
+
+#include "core/Paths.h"
+#include "mcp/McpServer.h"
+
+#include <QApplication>
+#include <QCursor>
+#include <QElapsedTimer>
+#include <QImage>
+#include <QKeyEvent>
+#include <QKeySequence>
+#include <QMainWindow>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QThread>
+#include <QTimer>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+namespace lila::ui
+{
+namespace
+{
+QWidget* mainWindow()
+{
+    for (QWidget* w : QApplication::topLevelWidgets())
+        if (qobject_cast<QMainWindow*>(w))
+            return w;
+    return nullptr;
+}
+
+/** Window contents including native Vulkan children, even when covered by other windows. */
+QImage captureWindow(QWidget* w)
+{
+#ifdef _WIN32
+    HWND hwnd = HWND(w->winId());
+    RECT r;
+    GetWindowRect(hwnd, &r);
+    int width = r.right - r.left, height = r.bottom - r.top;
+    HDC screen = GetDC(nullptr);
+    HDC dc = CreateCompatibleDC(screen);
+    HBITMAP bmp = CreateCompatibleBitmap(screen, width, height);
+    HGDIOBJ old = SelectObject(dc, bmp);
+    PrintWindow(hwnd, dc, 2 /* PW_RENDERFULLCONTENT */);
+    QImage img(width, height, QImage::Format_ARGB32);
+    BITMAPINFO bi{};
+    bi.bmiHeader = {sizeof(BITMAPINFOHEADER), width, -height, 1, 32, BI_RGB};
+    GetDIBits(dc, bmp, 0, height, img.bits(), &bi, DIB_RGB_COLORS);
+    SelectObject(dc, old);
+    DeleteObject(bmp);
+    DeleteDC(dc);
+    ReleaseDC(nullptr, screen);
+    return img.convertToFormat(QImage::Format_RGB32);
+#else
+    return w->grab().toImage();
+#endif
+}
+
+/** Main window plus any floating Lila windows (marking menus, popups) composited at their screen positions. */
+QImage captureAll()
+{
+    QWidget* main = mainWindow();
+    QImage img = captureWindow(main);
+    QPainter p(&img);
+    QPoint origin = main->frameGeometry().topLeft();
+    for (QWidget* w : QApplication::topLevelWidgets())
+    {
+        if (w == main || !w->isVisible())
+            continue;
+        QRect r = w->frameGeometry().translated(-origin);
+        if (!r.intersects(img.rect()))
+            continue;
+        // Translucent overlays render through Qt directly; native PrintWindow loses their alpha.
+        QImage layer = w->testAttribute(Qt::WA_TranslucentBackground) ? w->grab().toImage() : captureWindow(w);
+        p.drawImage(r.topLeft(), layer);
+    }
+    return img;
+}
+
+void pump(int ms)
+{
+    QElapsedTimer t;
+    t.start();
+    while (t.elapsed() < ms)
+        QApplication::processEvents(QEventLoop::AllEvents, 10);
+}
+QWidget* viewportWidget()
+{
+    // With four views up, the focused one wins, then any visible one.
+    QWidget* visible = nullptr;
+    if (QWidget* mw = mainWindow())
+        for (QWidget* c : mw->findChildren<QWidget*>())
+            if (c->property("hotkeyContext").toString() == "viewport" && c->isVisible())
+            {
+                if (c->hasFocus())
+                    return c;
+                if (!visible)
+                    visible = c;
+            }
+    return visible;
+}
+
+Qt::KeyboardModifiers parseMods(const mcp::json& e)
+{
+    Qt::KeyboardModifiers m;
+    for (const auto& x : e.value("mods", mcp::json::array()))
+    {
+        std::string s = x.get<std::string>();
+        if (s == "shift") m |= Qt::ShiftModifier;
+        if (s == "ctrl") m |= Qt::ControlModifier;
+        if (s == "alt") m |= Qt::AltModifier;
+    }
+    return m;
+}
+
+Qt::MouseButton parseButton(const std::string& b)
+{
+    return b == "right" ? Qt::RightButton : b == "middle" ? Qt::MiddleButton : Qt::LeftButton;
+}
+} // namespace
+
+void registerUiTools()
+{
+    mcp::Server& s = mcp::Server::get();
+
+    s.addTool({
+        .name = "send_mouse",
+        .description = "Mouse input to the viewport. `events`: [{\"type\": \"press\"|\"move\"|\"release\", \"x\": px, "
+                       "\"y\": px, \"button\": \"left\"|\"middle\"|\"right\", \"mods\": [\"shift\",\"ctrl\",\"alt\"]}] in "
+                       "viewport-local logical pixels. Returns the viewport size.",
+        .inputSchema = {{"type", "object"}, {"properties", {{"events", {{"type", "array"}}}}}, {"required", {"events"}}},
+        .run = [](const mcp::json& args) {
+            QWidget* vp = viewportWidget();
+            if (!vp)
+                throw std::runtime_error("no viewport");
+            Qt::MouseButtons held;
+            for (const auto& e : args["events"])
+            {
+                QPointF local(e.value("x", 0.0), e.value("y", 0.0));
+                QPointF global = vp->mapToGlobal(local);
+                std::string type = e.value("type", "move");
+                Qt::MouseButton b = parseButton(e.value("button", "left"));
+                QEvent::Type t = type == "press" ? QEvent::MouseButtonPress : type == "release" ? QEvent::MouseButtonRelease : QEvent::MouseMove;
+                if (t == QEvent::MouseButtonPress)
+                    held |= b;
+                if (t == QEvent::MouseButtonRelease)
+                    held &= ~b;
+                QMouseEvent ev(t, local, global, t == QEvent::MouseMove ? Qt::NoButton : b, held | (t == QEvent::MouseButtonRelease ? b : Qt::NoButton), parseMods(e));
+                QWidget* target = QWidget::mouseGrabber() ? QWidget::mouseGrabber() : vp;
+                if (target != vp)
+                {
+                    QPointF tl = target->mapFromGlobal(global);
+                    QMouseEvent ev2(t, tl, global, ev.button(), ev.buttons(), ev.modifiers());
+                    QApplication::sendEvent(target, &ev2);
+                }
+                else
+                    QApplication::sendEvent(vp, &ev);
+                pump(e.value("wait_ms", 16));
+            }
+            return std::to_string(vp->width()) + "x" + std::to_string(vp->height());
+        },
+    });
+
+    s.addTool({
+        .name = "capture_window",
+        .description = "Screenshot of Lila's main window (including the viewport) saved as PNG; returns the path.",
+        .inputSchema = {{"type", "object"}, {"properties", {{"path", {{"type", "string"}}}}}},
+        .run = [](const mcp::json& args) {
+            QWidget* w = mainWindow();
+            if (!w)
+                throw std::runtime_error("no main window");
+            pump(50);
+            std::string path = args.value("path", (paths::userConfigDir() / "capture.png").string());
+            if (!captureAll().save(QString::fromStdString(path)))
+                throw std::runtime_error("failed to save " + path);
+            return path;
+        },
+    });
+
+    s.addTool({
+        .name = "send_keys",
+        .description = "Press keys in Lila as if typed, through the real hotkey system. `keys` is a list like "
+                       "[\"W\", \"Ctrl+Z\"]. `hold_ms` keeps each key down that long (to trigger hold actions such as "
+                       "marking menus). `widget`: focus target, \"viewport\" (default) or \"focus\". `capture_path` saves a "
+                       "window capture while the last key is still held.",
+        .inputSchema = {{"type", "object"},
+                        {"properties", {{"keys", {{"type", "array"}, {"items", {{"type", "string"}}}}},
+                                        {"hold_ms", {{"type", "integer"}}},
+                                        {"widget", {{"type", "string"}}},
+                                        {"capture_path", {{"type", "string"}}}}},
+                        {"required", {"keys"}}},
+        .run = [](const mcp::json& args) {
+            QWidget* target = QApplication::focusWidget();
+            if (args.value("widget", "viewport") == "viewport")
+                if (QWidget* mw = mainWindow())
+                    for (QWidget* c : mw->findChildren<QWidget*>())
+                        if (c->property("hotkeyContext").toString() == "viewport" && c->isVisible())
+                        {
+                            c->setFocus();
+                            target = c;
+                        }
+            if (!target)
+                throw std::runtime_error("no focus widget");
+            int hold = args.value("hold_ms", 0);
+            for (const auto& k : args["keys"])
+            {
+                QKeyCombination combo = QKeySequence::fromString(QString::fromStdString(k.get<std::string>()))[0];
+                QKeyEvent press(QEvent::KeyPress, combo.key(), combo.keyboardModifiers());
+                QApplication::sendEvent(QWidget::keyboardGrabber() ? QWidget::keyboardGrabber() : target, &press);
+                pump(hold);
+                if (args.contains("capture_path"))
+                    captureAll().save(QString::fromStdString(args["capture_path"].get<std::string>()));
+                QKeyEvent release(QEvent::KeyRelease, combo.key(), combo.keyboardModifiers());
+                QApplication::sendEvent(QWidget::keyboardGrabber() ? QWidget::keyboardGrabber() : target, &release);
+                pump(30);
+            }
+            return std::string("ok");
+        },
+    });
+}
+} // namespace lila::ui

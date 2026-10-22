@@ -1,0 +1,7 @@
+{
+  "N": {"label": "Resolution Gate", "action": "viewport.toggleResolutionGate"},
+  "E": {"label": "Camera Settings", "action": "viewport.cameraSettings"},
+  "S": {"label": "Film Gate", "action": "viewport.toggleFilmGate"},
+  "W": {"label": "Render Settings", "action": "window.renderSettings"},
+  "overflow": []
+}

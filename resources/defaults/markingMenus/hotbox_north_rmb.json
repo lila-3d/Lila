@@ -1,0 +1,7 @@
+{
+  "N": {"label": "Preferences", "action": "window.preferences"},
+  "E": {"label": "Hotkey Cheat Sheet", "action": "help.hotkeyCheatSheet"},
+  "S": {"label": "Prefs Folder", "action": "help.prefsFolder"},
+  "W": {"label": "About Lila", "action": "help.about"},
+  "overflow": []
+}

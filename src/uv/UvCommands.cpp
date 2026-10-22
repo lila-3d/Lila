@@ -1,0 +1,809 @@
+#include "uv/UvCommands.h"
+
+#include "cmds/Command.h"
+#include "cmds/Undo.h"
+#include "core/Profile.h"
+#include "scene/Components.h"
+#include "scene/Graph.h"
+#include "scene/MeshNodes.h"
+#include "uv/Uv.h"
+#include "uv/UvEdit.h"
+
+#include <glm/gtc/constants.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <functional>
+#include <map>
+#include <optional>
+
+namespace lila::uv
+{
+namespace
+{
+using scene::ComponentMode;
+using scene::Graph;
+using scene::MeshNode;
+using scene::MeshPtr;
+using scene::Node;
+using scene::NodeId;
+using Ids = scene::components::Ids;
+
+Graph& graph() { return Graph::current(); }
+
+/** Direct edits work on the base mesh, so procedural history is baked first. */
+void bakeHistory(Node& n)
+{
+    Graph& g = graph();
+    scene::PlugRef in{n.id(), MeshNode::kInMesh, -1};
+    auto src = g.source(in);
+    if (!src)
+        return;
+    g.evaluate();
+    MeshPtr baked = n.as<MeshPtr>(MeshNode::kOutMesh);
+    g.disconnect(in);
+    g.setValue(in, baked);
+    if (g.destinations(*src).empty() && !g.node(src->node)->type().dag)
+        g.deleteNode(src->node);
+}
+
+std::string uvSetArg(const Args& a)
+{
+    return a.has("uvSet") ? a.get<std::string>("uvSet") : currentUvSet();
+}
+
+/** Meshes to work on: the component selection converted to kind, or whole selected meshes in object mode. */
+std::map<NodeId, Ids> targets(ComponentMode kind, bool allowWhole)
+{
+    Graph& g = graph();
+    g.evaluate();
+    std::map<NodeId, Ids> out;
+    ComponentMode from = scene::components::mode();
+    if (from != ComponentMode::Object)
+        for (auto& [node, ids] : scene::components::selected(from))
+            if (Node* n = g.node(node); n && n->type().isA("mesh") && n->as<MeshPtr>(MeshNode::kOutMesh))
+            {
+                Ids conv = scene::components::convert(*n->as<MeshPtr>(MeshNode::kOutMesh), from, ids, kind);
+                if (!conv.empty())
+                    out[node] = std::move(conv);
+            }
+    if (out.empty() && allowWhole)
+        for (NodeId id : g.selection())
+            if (Node* n = g.node(id); n && n->type().isA("mesh") && n->as<MeshPtr>(MeshNode::kOutMesh))
+                out[id] = {};
+    return out;
+}
+
+using UvEditFn = std::function<json(geo::Mesh&, const Ids& ids, Node&)>;
+
+/**
+ * Runs fn on a copy of every target mesh and writes it back to inMesh as one undo step. uv edits keep
+ * topology, so component ids and the selection stay valid. Returns fn's results keyed by mesh name.
+ */
+json editUv(const char* label, ComponentMode kind, const UvEditFn& fn, bool allowWhole = true)
+{
+    LILA_ZONE();
+
+    std::map<NodeId, Ids> work = targets(kind, allowWhole);
+    if (work.empty())
+        throw CommandError(std::string(label) + ": select a mesh or some components first");
+    Graph& g = graph();
+    UndoChunk chunk(label);
+    json out = json::object();
+    for (auto& [node, ids] : work)
+    {
+        Node& n = *g.node(node);
+        bakeHistory(n);
+        g.evaluate();
+        geo::Mesh mesh = *n.as<MeshPtr>(MeshNode::kInMesh);
+        out[n.name()] = fn(mesh, ids, n);
+        g.setValue({node, MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(std::move(mesh))));
+    }
+    return out.size() == 1 ? out.begin().value() : out;
+}
+
+/** Same targets, read only. */
+json queryUv(const std::function<json(const geo::Mesh&, const Ids&, Node&)>& fn)
+{
+    std::map<NodeId, Ids> work = targets(ComponentMode::Face, true);
+    if (work.empty())
+        throw CommandError("select a mesh or some components first");
+    json out = json::object();
+    for (auto& [node, ids] : work)
+    {
+        Node& n = *graph().node(node);
+        out[n.name()] = fn(*n.as<MeshPtr>(MeshNode::kOutMesh), ids, n);
+    }
+    return out.size() == 1 ? out.begin().value() : out;
+}
+
+glm::dmat3 worldLinear(Node& n)
+{
+    return glm::dmat3(n.as<glm::dmat4>(scene::Transform::kWorldMatrix));
+}
+
+std::vector<double> listArg(const Args& a, std::string_view name, size_t n, double fallback);
+
+PackOptions packArgs(const Args& a)
+{
+    PackOptions p;
+    p.resolution = std::max(4, a.get<int>("resolution", 1024));
+    p.padding = std::max(0.0, a.get<double>("padding", 4.0));
+    p.margin = a.get<double>("margin", -1.0);
+    p.paddingMips = std::clamp(a.get<int>("paddingMips", 0), 0, 12);
+    p.rotateStep = std::clamp(a.get<int>("rotateStep", 90), 0, 180);
+    if (a.has("angles"))
+        for (const json& v : a.flags[std::string("angles")])
+            p.angles.push_back(v.get<double>());
+    p.freeRotation = a.get<bool>("freeRotation", false);
+    p.flip = a.get<bool>("flip", false);
+    p.preOrient = a.get<bool>("orient", true);
+    std::string scale = a.get<std::string>("scaleMode", "normalize");
+    p.normalizeScale = scale == "normalize" && a.get<bool>("normalize", true);
+    p.lockScale = scale == "lock";
+    p.stack = a.get<bool>("stack", false);
+    p.stackMirrored = a.get<bool>("stackMirrored", true);
+    p.stackTolerance = std::max(0.0, a.get<double>("stackTolerance", 0.002));
+    p.tilesU = std::max(1, a.get<int>("tilesU", 1));
+    p.tilesV = std::max(1, a.get<int>("tilesV", 1));
+    p.texelsPerUnit = std::max(0.0, a.get<double>("texelsPerUnit", 0.0));
+    std::vector<double> region = listArg(a, "region", 4, 0.0);
+    if (a.has("region"))
+    {
+        p.regionMin = {region[0], region[1]};
+        p.regionMax = {region[2], region[3]};
+    }
+    p.effort = std::clamp(a.get<int>("effort", 1), 0, 3);
+    p.timeLimit = std::max(0.0, a.get<double>("timeLimit", 0.0));
+    p.workingResolution = std::max(0, a.get<int>("workingResolution", 0));
+    std::string layout = a.get<std::string>("layout", "fill");
+    p.layout = layout == "groupTiles" ? PackLayout::GroupTiles : layout == "groupRegions" ? PackLayout::GroupRegions
+             : layout == "keepTile"   ? PackLayout::KeepTile
+                                      : PackLayout::Fill;
+    std::string by = a.get<std::string>("groupBy", "none");
+    p.groupBy = by == "object" ? PackGroupBy::Object : by == "material" ? PackGroupBy::Material : by == "attribute" ? PackGroupBy::Attribute : PackGroupBy::None;
+    p.groupAttr = a.get<std::string>("groupAttr", "uvGroup");
+    p.fixPinned = a.get<bool>("fixPinned", false);
+    return p;
+}
+
+std::vector<FlagDef> packFlags()
+{
+    using T = ArgType;
+    return {{"resolution", "", T::Int, 1024, "Target texture size, px. Padding and margin are in its texels."},
+            {"padding", "", T::Float, 4.0, "Texels between islands, held exactly (the search never lets two islands closer)."},
+            {"margin", "", T::Float, -1.0, "Texels from the tile (or region) border; negative is half the padding."},
+            {"paddingMips", "", T::Int, 0, "Padding and margin survive this many mip levels: both are multiplied by 2^paddingMips."},
+            {"rotateStep", "", T::Int, 90, "Rotation step to try, degrees: 0 none, 90 quarter turns, smaller for more."},
+            {"angles", "", T::List, nullptr, "Exact angles to try, degrees (replaces rotateStep), e.g. [0, 90, 45]."},
+            {"freeRotation", "", T::Bool, false, "Any angle: each island also tries its three best-fitting angles (smallest bounding box) and their quarter turns."},
+            {"flip", "", T::Bool, false, "Also try islands mirrored (the texture then reads mirrored on them)."},
+            {"orient", "", T::Bool, true, "Turn islands to their smallest bounding rectangle first."},
+            {"scaleMode", "", T::String, "normalize",
+             "normalize: even texel density across islands and objects (world space). keep: islands keep their relative uv sizes. "
+             "lock: islands keep their exact uv size and are only moved and turned.",
+             {"normalize", "keep", "lock"}},
+            {"normalize", "", T::Bool, true, "Same as scaleMode=normalize when on, keep when off."},
+            {"stack", "", T::Bool, false, "Islands with the same shape (within stackTolerance) share one spot."},
+            {"stackMirrored", "", T::Bool, true, "Mirror-image islands stack too (the mirrored halves of a symmetric model)."},
+            {"stackTolerance", "", T::Float, 0.002, "Largest vertex mismatch for two islands to stack, as a fraction of the island's size."},
+            {"tilesU", "", T::Int, 1, "UDIM tiles across."},
+            {"tilesV", "", T::Int, 1, "UDIM tiles up."},
+            {"region", "", T::List, nullptr, "Pack into [uMin, vMin, uMax, vMax] of each tile instead of all of it."},
+            {"texelsPerUnit", "", T::Float, 0.0, "Pack at this density (px/cm) instead of filling the tiles; overflow spills into further tiles."},
+            {"effort", "", T::Int, 1, "Search effort 0-3: island orders tried per scale (1, 3, 6, 12). Higher packs denser, slower."},
+            {"timeLimit", "", T::Float, 0.0, "Stop refining after this many seconds (0 never); results can then vary between runs."},
+            {"workingResolution", "", T::Int, 0, "Search raster cells across a tile; 0 uses the resolution up to 4096."}};
+}
+
+/** Flags only uvPack has: where groups go and what stays fixed. */
+std::vector<FlagDef> packLayoutFlags()
+{
+    using T = ArgType;
+    return {{"layout", "", T::String, "fill",
+             "fill: fill the UDIM tiles in order. groupTiles: one tile per group. groupRegions: one part of tile 1001 per group, "
+             "sized by its area. keepTile: islands stay in the tile they are in.",
+             {"fill", "groupTiles", "groupRegions", "keepTile"}},
+            {"groupBy", "", T::String, "none", "What makes a group: object, material slot, or the face int attribute groupAttr.",
+             {"none", "object", "material", "attribute"}},
+            {"groupAttr", "", T::String, "uvGroup", "Face int attribute holding each face's group, for groupBy=attribute."},
+            {"keep", "", T::String, "none",
+             "selected: the selected islands stay where they are and the rest pack around them. unselected: only the selection packs, "
+             "around the rest.",
+             {"none", "selected", "unselected"}},
+            {"fixPinned", "", T::Bool, false, "Islands with pinned uvs stay where they are."}};
+}
+
+json packJson(const PackResult& r)
+{
+    return {{"ok", r.ok},       {"coverage", r.coverage}, {"density", std::round(r.coverage * 1000.0) / 10.0},
+            {"texelsPerUnit", r.texelsPerUnit}, {"tiles", r.tilesUsed}, {"stacked", r.stacked},
+            {"seconds", r.seconds}, {"layouts", r.attempts}};
+}
+
+AutoSeamOptions seamArgs(const Args& a)
+{
+    AutoSeamOptions o;
+    o.hardAngle = a.get<double>("hardAngle", 60.0);
+    o.maxDistortion = std::max(0.0, a.get<double>("maxDistortion", 0.08));
+    o.keepSeams = a.get<bool>("keepSeams", false);
+    o.visibility = a.get<bool>("visibility", true);
+    o.merge = a.get<bool>("merge", true);
+    o.useHardEdges = a.get<bool>("useHardEdges", true);
+    std::string method = a.get<std::string>("method", "split");
+    if (method != "split" && method != "optcuts")
+        throw CommandError("method must be split or optcuts");
+    o.method = method == "optcuts" ? SeamMethod::OptCuts : SeamMethod::Split;
+    o.distortionBound = std::max(0.0, a.get<double>("distortionBound", 0.05));
+    o.seamWeight = std::max(0.0, a.get<double>("seamWeight", 0.5));
+    return o;
+}
+
+std::vector<FlagDef> seamFlags()
+{
+    using T = ArgType;
+    return {{"hardAngle", "", T::Float, 60.0, "Edges sharper than this always get a seam, degrees."},
+            {"useHardEdges", "", T::Bool, true, "Edges marked hard always get a seam."},
+            {"keepSeams", "", T::Bool, false, "Keep the seams already there."},
+            {"maxDistortion", "", T::Float, 0.08, "Split islands that stretch more than this when flattened."},
+            {"visibility", "", T::Bool, true, "Hide cuts where they are least visible."},
+            {"merge", "", T::Bool, true, "Merge islands back while they still flatten well."},
+            {"method", "", T::String, "split",
+             "split (hard edges, open to disks, split where stretched) or optcuts (Auto Seams 2: seams and distortion optimised together).",
+             {"split", "optcuts"}},
+            {"distortionBound", "", T::Float, 0.05, "optcuts: stretch (symmetric Dirichlet excess, all islands) to get under."},
+            {"seamWeight", "", T::Float, 0.5, "optcuts: price of seam length against stretch; higher keeps seams shorter."}};
+}
+
+FlagDef uvSetFlag()
+{
+    return {"uvSet", "", ArgType::String, nullptr, "UV set; the current one (uvSetCurrent) when not given."};
+}
+
+template <class... L> std::vector<FlagDef> join(std::vector<FlagDef> a, L... rest)
+{
+    (a.insert(a.end(), rest.begin(), rest.end()), ...);
+    return a;
+}
+
+std::vector<double> listArg(const Args& a, std::string_view name, size_t n, double fallback)
+{
+    std::vector<double> out(n, fallback);
+    if (!a.has(name))
+        return out;
+    const json& j = a.flags[std::string(name)];
+    if (j.is_number())
+        std::fill(out.begin(), out.end(), j.get<double>());
+    else
+        for (size_t i = 0; i < n && i < j.size(); ++i)
+            out[i] = j[i].get<double>();
+    return out;
+}
+
+/** Corners moved by a component selection: faces' uv wedges, or every corner of the selected points. */
+std::vector<Index> cornersOf(const geo::Mesh& m, ComponentMode kind, const Ids& ids, std::string_view uvSet)
+{
+    if (kind == ComponentMode::Face || ids.empty())
+        return uvCornersOfFaces(m, uvSet, ids);
+    Ids pts = scene::components::convert(m, kind, ids, ComponentMode::Vertex);
+    return cornersOfPoints(m, pts);
+}
+
+/** Unmarks the seams and welds the uvs across them, first moving each smaller island onto its neighbour. */
+json sewEdges(geo::Mesh& m, std::span<const Index> edges, std::string_view uvSet, bool move = true)
+{
+    std::span<bool> seam = m.edgeAttrs().getOrAdd<bool>(geo::attr::kSeam);
+    std::span<glm::vec2> uv = m.cornerAttrs().get<glm::vec2>(uvSet);
+    size_t sewn = 0;
+    if (uv.empty())
+    {
+        for (Index e : edges)
+            if (m.edgeValid(e))
+                seam[e] = false;
+        return {{"sewn", 0}};
+    }
+    ChartOptions co;
+    co.source = IslandSource::Uvs;
+    co.uvSet = uvSet;
+    std::vector<std::vector<Index>> islands = islandFaces(m, {}, co);
+    std::vector<Index> islandOf(m.faceCapacity(), kInvalid);
+    for (size_t i = 0; i < islands.size(); ++i)
+        for (Index f : islands[i])
+            islandOf[f] = Index(i);
+    std::vector<uint8_t> moved(islands.size(), 0);
+
+    struct Pair
+    {
+        Index a, b; // corners on either side at the same point
+    };
+    std::vector<Pair> welds;
+    for (Index e : edges)
+    {
+        if (!m.edgeValid(e) || !m.isManifoldEdge(e) || m.isBoundaryEdge(e))
+            continue;
+        seam[e] = false;
+        Index c1 = m.edgeCorner(e), c2 = m.cornerRadial(c1);
+        bool opposite = m.cornerPoint(c1) != m.cornerPoint(c2);
+        Index a1 = c1, a2 = opposite ? m.cornerNext(c2) : c2;
+        Index b1 = m.cornerNext(c1), b2 = opposite ? c2 : m.cornerNext(c2);
+        Index i1 = islandOf[m.cornerFace(c1)], i2 = islandOf[m.cornerFace(c2)];
+        if (move && i1 != i2 && !moved[i1] && !moved[i2])
+        {
+            // The smaller island travels: rotate its edge onto the other side's, then translate.
+            bool firstSmaller = islands[i1].size() < islands[i2].size();
+            Index mover = firstSmaller ? i1 : i2;
+            glm::dvec2 fa = firstSmaller ? uv[a1] : uv[a2], fb = firstSmaller ? uv[b1] : uv[b2];
+            glm::dvec2 ta = firstSmaller ? uv[a2] : uv[a1], tb = firstSmaller ? uv[b2] : uv[b1];
+            double ang = std::atan2(tb.y - ta.y, tb.x - ta.x) - std::atan2(fb.y - fa.y, fb.x - fa.x);
+            double c = std::cos(ang), s = std::sin(ang);
+            for (Index f : islands[mover])
+                m.forEachFaceCorner(f, [&](Index k) {
+                    glm::dvec2 d = glm::dvec2(uv[k]) - fa;
+                    uv[k] = glm::vec2(ta + glm::dvec2(d.x * c - d.y * s, d.x * s + d.y * c));
+                });
+            moved[mover] = 1;
+        }
+        welds.push_back({a1, a2});
+        welds.push_back({b1, b2});
+        ++sewn;
+    }
+    for (const Pair& w : welds)
+    {
+        glm::vec2 oa = uv[w.a], ob = uv[w.b], mid = (oa + ob) * 0.5f;
+        Index p = m.cornerPoint(w.a);
+        auto same = [](glm::vec2 x, glm::vec2 y) { return glm::all(glm::lessThanEqual(glm::abs(x - y), glm::vec2(1e-6f))); };
+        m.forEachPointCorner(p, [&](Index k) {
+            if (same(uv[k], oa) || same(uv[k], ob))
+                uv[k] = mid;
+        });
+    }
+    return {{"sewn", sewn}};
+}
+} // namespace
+
+json editUvMeshes(const char* label, ComponentMode kind, const UvMeshEditFn& fn, bool allowWhole)
+{
+    return editUv(label, kind, fn, allowWhole);
+}
+
+void bakeUvHistory(Node& n)
+{
+    bakeHistory(n);
+}
+
+json sewUvEdges(geo::Mesh& m, std::span<const Index> edges, std::string_view uvSet, bool move)
+{
+    return sewEdges(m, edges, uvSet, move);
+}
+
+void registerCommands()
+{
+    registerLiveCommands();
+    registerOptimizeCommands();
+
+    using T = ArgType;
+    using K = ComponentMode;
+
+    cmds::registerCommand({
+        .name = "uvUnwrap",
+        .doc = "Unwrap the selected faces' islands along their seams (LSCM, refined with SLIM for low stretch). Closed or holed islands "
+               "are cut open first. Islands keep their place unless pack=True or they had no uvs.",
+        .flags = join({uvSetFlag(),
+                       {"method", "", T::String, "slim", "slim (low stretch), conformal (LSCM only) or bff (Boundary First Flattening: conformal, boundary lengths kept)."},
+                       {"iterations", "", T::Int, 12, "SLIM iterations."},
+                       {"pins", "", T::Bool, true, "Respect pinned uvs (corner attribute uvPin)."},
+                       {"pack", "", T::Bool, false, "Pack the unwrapped islands into 0-1."}},
+                      packFlags()),
+        .run = [](const Args& a) -> json {
+            UnwrapFacesOptions o;
+            std::string method = a.get<std::string>("method", "slim");
+            o.unwrap.method = method == "conformal" ? UnwrapMethod::Conformal : method == "bff" ? UnwrapMethod::Bff : UnwrapMethod::Slim;
+            o.unwrap.iterations = std::clamp(a.get<int>("iterations", 12), 0, 200);
+            o.unwrap.usePins = a.get<bool>("pins", true);
+            o.pack = a.get<bool>("pack", false);
+            o.packing = packArgs(a);
+            std::string set = uvSetArg(a);
+            return editUv("UV Unwrap", K::Face, [&](geo::Mesh& m, const Ids& f, Node&) -> json {
+                UnwrapFacesResult r = unwrapFaces(m, f, set, o);
+                return {{"islands", r.islands}, {"failed", r.failed}, {"seamsAdded", r.seamsAdded}};
+            });
+        },
+    });
+
+    cmds::registerCommand({
+        .name = "uvProject",
+        .doc = "Project uvs onto the selected faces: planar, box, cylindrical, spherical or camera (matrix=object to clip, 16 numbers).",
+        .flags = {uvSetFlag(),
+                  {"type", "", T::String, "planar", "planar, box, cylindrical, spherical or camera."},
+                  {"axis", "", T::String, "best", "x, y, z or best (fitted to the faces)."},
+                  {"normalize", "", T::Bool, true, "Fit into 0-1 keeping proportions."},
+                  {"matrix", "", T::List, nullptr, "Camera projection, column major, for type=camera."},
+                  {"pack", "", T::Bool, false, "Pack the resulting islands afterwards."}},
+        .run = [](const Args& a) -> json {
+            ProjectOptions o;
+            std::string type = a.get<std::string>("type", "planar");
+            if (type == "planar")
+                o.type = Projection::Planar;
+            else if (type == "box")
+                o.type = Projection::Box;
+            else if (type == "cylindrical")
+                o.type = Projection::Cylindrical;
+            else if (type == "spherical")
+                o.type = Projection::Spherical;
+            else if (type == "camera")
+                o.type = Projection::Camera;
+            else
+                throw CommandError("uvProject: type must be planar, box, cylindrical, spherical or camera");
+            std::string axis = a.get<std::string>("axis", "best");
+            o.axis = axis == "x" ? ProjectAxis::X : axis == "y" ? ProjectAxis::Y : axis == "z" ? ProjectAxis::Z : ProjectAxis::BestFit;
+            o.normalize = a.get<bool>("normalize", true);
+            if (o.type == Projection::Camera)
+            {
+                std::vector<double> mat = listArg(a, "matrix", 16, 0.0);
+                if (!a.has("matrix"))
+                    throw CommandError("uvProject: type=camera needs matrix=");
+                for (int c = 0; c < 4; ++c)
+                    for (int r = 0; r < 4; ++r)
+                        o.camera[c][r] = mat[size_t(c * 4 + r)];
+            }
+            bool pack = a.get<bool>("pack", false);
+            std::string set = uvSetArg(a);
+            return editUv("UV Project", K::Face, [&](geo::Mesh& m, const Ids& f, Node&) -> json {
+                if (!project(m, f, set, o))
+                    throw CommandError("uvProject: nothing to project");
+                if (pack)
+                    packIslands(m, f, set, {});
+                return nullptr;
+            });
+        },
+    });
+
+    cmds::registerCommand({
+        .name = "uvAutoSeams",
+        .doc = "Place seams for game assets on the selected faces: hard edges, then cuts that open each island along hidden, creased paths and "
+               "split it where it would stretch.",
+        .flags = seamFlags(),
+        .run = [](const Args& a) -> json {
+            AutoSeamOptions o = seamArgs(a);
+            return editUv("UV Auto Seams", K::Face, [&](geo::Mesh& m, const Ids& f, Node&) -> json {
+                AutoSeamResult r = autoSeams(m, f, o);
+                return {{"islands", r.charts.size()}, {"seams", r.seamEdges}};
+            });
+        },
+    });
+
+    cmds::registerCommand({
+        .name = "uvAuto",
+        .doc = "Automatic uvs: seams, low-stretch unwrap and pack, in one step.",
+        .flags = join({uvSetFlag(), {"iterations", "", T::Int, 12, "SLIM iterations."}}, seamFlags(), packFlags()),
+        .run = [](const Args& a) -> json {
+            AutoUvOptions o;
+            o.seams = seamArgs(a);
+            o.unwrap.iterations = std::clamp(a.get<int>("iterations", 12), 0, 200);
+            o.pack = packArgs(a);
+            std::string set = uvSetArg(a);
+            return editUv("Auto UV", K::Face, [&](geo::Mesh& m, const Ids& f, Node&) -> json {
+                AutoUvResult r = autoUv(m, f, set, o);
+                json j = packJson(r.pack);
+                j["islands"] = r.islands;
+                j["seams"] = r.seams;
+                return j;
+            });
+        },
+    });
+
+    cmds::registerCommand({
+        .name = "uvCutEdges",
+        .doc = "Mark the selected edges as uv seams.",
+        .run = [](const Args&) -> json {
+            return editUv("UV Cut", K::Edge, [](geo::Mesh& m, const Ids& e, Node&) -> json {
+                std::span<bool> seam = m.edgeAttrs().getOrAdd<bool>(geo::attr::kSeam);
+                size_t n = 0;
+                for (Index i : e)
+                    if (m.edgeValid(i))
+                    {
+                        seam[i] = true;
+                        ++n;
+                    }
+                return {{"cut", n}};
+            }, false);
+        },
+    });
+
+    cmds::registerCommand({
+        .name = "uvSewEdges",
+        .doc = "Unmark the selected seams and weld their uvs, moving the smaller island over to meet the other.",
+        .flags = {uvSetFlag()},
+        .run = [](const Args& a) -> json {
+            std::string set = uvSetArg(a);
+            return editUv("UV Sew", K::Edge, [&](geo::Mesh& m, const Ids& e, Node&) { return sewEdges(m, e, set); }, false);
+        },
+    });
+
+    cmds::registerCommand({
+        .name = "uvPack",
+        .doc = "Pack the uv islands of the selected faces (or whole meshes) into 0-1 with padding for a texture size. Every selected "
+               "mesh goes into one shared layout. Islands are packed by their real shapes, into the holes of other islands, with "
+               "rotations, optional mirroring and stacking of identical islands; the densest of several island orders wins. Returns "
+               "the density reached (percent of the used tiles covered) and the texel density. Runs on worker threads and can be "
+               "cancelled from the progress bar.",
+        .flags = join({uvSetFlag()}, packFlags(), packLayoutFlags()),
+        .run = [](const Args& a) -> json {
+            PackOptions o = packArgs(a);
+            std::string set = uvSetArg(a), keep = a.get<std::string>("keep", "none");
+            std::map<NodeId, Ids> work = targets(K::Face, true);
+            if (work.empty())
+                throw CommandError("uvPack: select a mesh or some components first");
+            Graph& g = graph();
+            UndoChunk chunk("UV Pack");
+            std::vector<NodeId> nodes;
+            std::vector<geo::Mesh> meshes;
+            meshes.reserve(work.size());
+            for (auto& [node, ids] : work)
+            {
+                Node& n = *g.node(node);
+                bakeHistory(n);
+                g.evaluate();
+                meshes.push_back(*n.as<MeshPtr>(MeshNode::kInMesh));
+                nodes.push_back(node);
+            }
+            std::vector<PackTarget> packTargets(nodes.size());
+            for (size_t i = 0; i < nodes.size(); ++i)
+            {
+                PackTarget& t = packTargets[i];
+                const Ids& ids = work[nodes[i]];
+                t.mesh = &meshes[i];
+                t.linear = worldLinear(*g.node(nodes[i]));
+                if (keep == "selected")
+                    t.fixedFaces.assign(ids.begin(), ids.end());
+                else
+                {
+                    t.faces.assign(ids.begin(), ids.end());
+                    t.othersFixed = keep == "unselected" && !ids.empty();
+                }
+            }
+            PackResult r = packMeshes(packTargets, set, o);
+            if (r.cancelled)
+                throw CommandError("uvPack: cancelled");
+            if (!r.ok)
+                throw CommandError("uvPack: the islands do not fit; lower the padding, add tiles or lower texelsPerUnit");
+            for (size_t i = 0; i < nodes.size(); ++i)
+                g.setValue({nodes[i], MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(std::move(meshes[i]))));
+            return packJson(r);
+        },
+    });
+
+    cmds::registerCommand({
+        .name = "uvStacks",
+        .doc = "Stacked islands of the selected meshes: islands lying on one another with the same shape, as uvPack stack=True "
+               "leaves them. Returns per mesh a list of stacks, each a list of islands as face ids. select=True selects their faces.",
+        .flags = {uvSetFlag(),
+                  {"tolerance", "", T::Float, 0.002, "Largest vertex mismatch, as a fraction of the island's size."},
+                  {"select", "", T::Bool, false, "Select the faces of every stacked island."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            std::string set = uvSetArg(a);
+            double tol = std::max(0.0, a.get<double>("tolerance", 0.002));
+            std::map<NodeId, Ids> picked;
+            json r = queryUv([&](const geo::Mesh& m, const Ids&, Node& n) -> json {
+                json stacks = json::array();
+                for (const auto& stack : stackedIslands(m, set, tol))
+                {
+                    json s = json::array();
+                    for (const auto& faces : stack)
+                    {
+                        s.push_back(faces);
+                        picked[n.id()].insert(picked[n.id()].end(), faces.begin(), faces.end());
+                    }
+                    stacks.push_back(std::move(s));
+                }
+                return stacks;
+            });
+            if (a.get<bool>("select", false))
+            {
+                for (auto& [node, ids] : picked)
+                    std::sort(ids.begin(), ids.end());
+                scene::components::setMode(ComponentMode::Face);
+                scene::components::setAll({}, {}, std::move(picked));
+            }
+            return r;
+        },
+    });
+
+    cmds::registerCommand({
+        .name = "uvStraighten",
+        .doc = "Rectify the selected islands: quad grids become straight rows and columns, other islands are fitted to a rectangle.",
+        .flags = {uvSetFlag()},
+        .run = [](const Args& a) -> json {
+            std::string set = uvSetArg(a);
+            return editUv("UV Straighten", K::Face, [&](geo::Mesh& m, const Ids& f, Node&) -> json {
+                ChartOptions co;
+                co.source = IslandSource::Uvs;
+                co.uvSet = set;
+                std::vector<Chart> charts = buildCharts(m, f, co);
+                size_t grid = 0, rect = 0, failed = 0;
+                for (Chart& ch : charts)
+                {
+                    StraightenResult r = straightenChart(ch);
+                    grid += r == StraightenResult::Grid;
+                    rect += r == StraightenResult::Rectangle;
+                    failed += r == StraightenResult::Failed;
+                }
+                writeCharts(m, charts, set);
+                return {{"grid", grid}, {"rectangle", rect}, {"failed", failed}};
+            });
+        },
+    });
+
+    cmds::registerCommand({
+        .name = "uvOrient",
+        .doc = "Rotate the selected islands upright: by bounding box, principal axis or longest edge.",
+        .flags = {uvSetFlag(), {"mode", "", T::String, "bbox", "bbox, principal or edge."}},
+        .run = [](const Args& a) -> json {
+            std::string mode = a.get<std::string>("mode", "bbox");
+            OrientMode om = mode == "principal" ? OrientMode::Principal : mode == "edge" ? OrientMode::LongestEdge : OrientMode::BoundingBox;
+            std::string set = uvSetArg(a);
+            return editUv("UV Orient", K::Face, [&](geo::Mesh& m, const Ids& f, Node&) -> json {
+                ChartOptions co;
+                co.source = IslandSource::Uvs;
+                co.uvSet = set;
+                std::vector<Chart> charts = buildCharts(m, f, co);
+                for (Chart& ch : charts)
+                    orientChart(ch, om);
+                writeCharts(m, charts, set);
+                return {{"islands", charts.size()}};
+            });
+        },
+    });
+
+    cmds::registerCommand({
+        .name = "uvTexelDensity",
+        .doc = "Texel density of the selection in px/cm for a texture size. With density=, scales each island to it (world space).",
+        .flags = {uvSetFlag(),
+                  {"resolution", "", T::Int, 1024, "Texture size, px."},
+                  {"density", "", T::Float, nullptr, "Set to this many px/cm."},
+                  {"worldSpace", "", T::Bool, true, "Measure world size, with the mesh's scale."}},
+        .run = [](const Args& a) -> json {
+            double res = double(std::max(1, a.get<int>("resolution", 1024)));
+            bool world = a.get<bool>("worldSpace", true);
+            std::string set = uvSetArg(a);
+            if (!a.has("density"))
+                return queryUv([&](const geo::Mesh& m, const Ids& f, Node& n) -> json {
+                    return texelDensity(m, set, f, res, world ? worldLinear(n) : glm::dmat3(1.0));
+                });
+            double density = a.get<double>("density");
+            return editUv("Set Texel Density", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
+                glm::dmat3 lin = world ? worldLinear(n) : glm::dmat3(1.0);
+                setTexelDensity(m, set, f, res, density, lin);
+                return texelDensity(m, set, f, res, lin);
+            });
+        },
+    });
+
+    cmds::registerCommand({
+        .name = "uvLightmap",
+        .doc = "Generate Unreal lightmap uvs: the source set's islands repacked without overlaps, padded for the lightmap resolution.",
+        .flags = {{"uvSet", "", T::String, "uv1", "Lightmap set to write."},
+                  {"source", "", T::String, "uv0", "Set whose islands to reuse (auto seams when missing)."},
+                  {"resolution", "", T::Int, 64, "Lightmap resolution in Unreal."},
+                  {"padding", "", T::Float, 2.0, "Texels between charts, held exactly at the lightmap resolution."},
+                  {"effort", "", T::Int, 2, "Packing search effort 0-3; higher packs denser, slower."},
+                  {"rotateStep", "", T::Int, 90, "Rotation step for the charts, degrees (0 keeps their orientation)."}},
+        .run = [](const Args& a) -> json {
+            std::string target = a.get<std::string>("uvSet", "uv1"), source = a.get<std::string>("source", "uv0");
+            LightmapOptions o;
+            o.resolution = std::max(4, a.get<int>("resolution", 64));
+            o.padding = std::max(0.0, a.get<double>("padding", 2.0));
+            o.effort = std::clamp(a.get<int>("effort", 2), 0, 3);
+            o.rotateStep = std::clamp(a.get<int>("rotateStep", 90), 0, 180);
+            o.source = source;
+            o.target = target;
+            return editUv("Lightmap UVs", K::Face, [&](geo::Mesh& m, const Ids&, Node&) -> json {
+                LightmapResult r = generateLightmapUvs(m, o);
+                if (!r.ok)
+                    throw CommandError("uvLightmap: the charts do not fit at this resolution; raise it or lower the padding");
+                json j = packJson(r.pack);
+                j["islands"] = r.islands;
+                j["rewrapped"] = r.rewrapped;
+                return j;
+            });
+        },
+    });
+
+    cmds::registerCommand({
+        .name = "uvLayout",
+        .doc = "UV report for the selection: islands, overlapping and folded faces, distortion and texel density.",
+        .flags = {uvSetFlag(), {"resolution", "", T::Int, 1024, "Texture size for the density, px."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            std::string set = uvSetArg(a);
+            double res = double(std::max(1, a.get<int>("resolution", 1024)));
+            return queryUv([&](const geo::Mesh& m, const Ids& f, Node& n) -> json {
+                if (m.cornerAttrs().get<glm::vec2>(set).empty())
+                    return {{"uvSet", set}, {"exists", false}};
+                ChartOptions co;
+                co.source = IslandSource::Uvs;
+                co.uvSet = set;
+                std::vector<uint8_t> flags;
+                size_t overlapping = overlappingFaces(m, set, flags, f);
+                std::vector<FaceDistortion> d = faceDistortion(m, set, f);
+                DistortionSummary s = summarize(m, d, f);
+                std::vector<std::string> sets;
+                for (const std::string& name : m.cornerAttrs().names())
+                    if (const geo::Attribute* at = m.cornerAttrs().find(name); at && at->type() == geo::AttrType::Float2)
+                        sets.push_back(name);
+                return {{"uvSet", set},
+                        {"uvSets", sets},
+                        {"islands", islandFaces(m, f, co).size()},
+                        {"overlappingFaces", overlapping},
+                        {"foldedFaces", s.folded},
+                        {"areaDistortion", {{"mean", s.meanArea}, {"max", s.maxArea}}},
+                        {"angleDistortion", {{"mean", s.meanAngle}, {"max", s.maxAngle}}},
+                        {"texelDensity", texelDensity(m, set, f, res, worldLinear(n))}};
+            });
+        },
+    });
+
+    cmds::registerCommand({
+        .name = "uvSetCurrent",
+        .doc = "The uv set the uv tools and editor work on. With no argument, returns it.",
+        .positionalDoc = "[uvSet]",
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            if (!a.positional.empty())
+                setCurrentUvSet(a.positional[0].get<std::string>());
+            return currentUvSet();
+        },
+    });
+
+    cmds::registerCommand({
+        .name = "uvTransform",
+        .doc = "Move, rotate (degrees) and scale the uvs of the selected components about a pivot (default: their centre).",
+        .flags = {uvSetFlag(),
+                  {"translate", "", T::List, nullptr, "[u, v] offset."},
+                  {"rotate", "", T::Float, 0.0, "Degrees, counter-clockwise."},
+                  {"scale", "", T::List, nullptr, "[su, sv], or one number."},
+                  {"pivot", "", T::List, nullptr, "[u, v]."}},
+        .run = [](const Args& a) -> json {
+            std::vector<double> t = listArg(a, "translate", 2, 0.0), sc = listArg(a, "scale", 2, 1.0);
+            double rot = glm::radians(a.get<double>("rotate", 0.0));
+            std::string set = uvSetArg(a);
+            K kind = scene::components::mode() == K::Object ? K::Face : scene::components::mode();
+            std::optional<glm::dvec2> pivot;
+            if (a.has("pivot"))
+            {
+                std::vector<double> p = listArg(a, "pivot", 2, 0.0);
+                pivot = glm::dvec2(p[0], p[1]);
+            }
+            return editUv("UV Transform", kind, [&](geo::Mesh& m, const Ids& ids, Node&) -> json {
+                std::span<glm::vec2> uv = m.cornerAttrs().get<glm::vec2>(set);
+                if (uv.empty())
+                    return nullptr;
+                std::vector<Index> corners = cornersOf(m, kind, ids, set);
+                if (corners.empty())
+                    return nullptr;
+                glm::dvec2 piv(0.0);
+                if (pivot)
+                    piv = *pivot;
+                else
+                {
+                    glm::dvec2 lo(1e30), hi(-1e30);
+                    for (Index c : corners)
+                    {
+                        lo = glm::min(lo, glm::dvec2(uv[c]));
+                        hi = glm::max(hi, glm::dvec2(uv[c]));
+                    }
+                    piv = (lo + hi) * 0.5;
+                }
+                double c = std::cos(rot), s = std::sin(rot);
+                for (Index k : corners)
+                {
+                    glm::dvec2 d = (glm::dvec2(uv[k]) - piv) * glm::dvec2(sc[0], sc[1]);
+                    uv[k] = glm::vec2(piv + glm::dvec2(d.x * c - d.y * s, d.x * s + d.y * c) + glm::dvec2(t[0], t[1]));
+                }
+                return {{"corners", corners.size()}};
+            });
+        },
+    });
+}
+} // namespace lila::uv

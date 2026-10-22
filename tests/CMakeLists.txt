@@ -1,0 +1,78 @@
+add_executable(lila_tests
+    main.cpp
+    test_graph.cpp
+    test_prefs.cpp
+    test_formats.cpp
+    test_references.cpp
+    test_meshes.cpp
+    test_modeling.cpp
+    test_modifiers.cpp
+    test_modstack.cpp
+    test_docs.cpp
+    test_transfer.cpp
+    test_gate.cpp
+    test_autobevel.cpp
+    test_measure.cpp
+    test_imageplane.cpp
+    test_hotkeys.cpp
+    test_display.cpp
+    test_preselect.cpp
+    test_layouts.cpp
+    test_toolkit.cpp
+    test_symmetry.cpp
+    test_softselect.cpp
+    test_gizmo.cpp
+    test_history.cpp
+    test_crash.cpp
+    test_component_query.cpp
+    test_outliner.cpp
+    test_value_reset.cpp
+    test_progress.cpp
+    test_scene_scripts.cpp
+    test_camera_history.cpp
+    test_options.cpp
+    test_extrude.cpp
+    test_hud.cpp
+    test_backdrop.cpp
+    test_tearoff.cpp
+    test_visibility.cpp
+    test_display_layers.cpp
+    test_create_select.cpp
+    test_camera.cpp
+    test_locks.cpp
+    test_paths.cpp)
+target_link_libraries(lila_tests PRIVATE lila_io lila_layouts lila_render doctest::doctest)
+add_test(NAME lila_tests COMMAND lila_tests)
+
+if(WIN32)
+    # Real crashes of a helper process, checked through the watchdog's report; kept out of lila_tests for speed.
+    add_executable(lila_crashtest crash_helper.cpp)
+    target_link_libraries(lila_crashtest PRIVATE lila_core)
+    add_executable(lila_crash_tests test_crash_watch.cpp)
+    target_link_libraries(lila_crash_tests PRIVATE lila_core doctest::doctest)
+    add_dependencies(lila_crash_tests lila_crashtest lilacrash lilawer)
+    add_test(NAME lila_crash_tests COMMAND lila_crash_tests)
+endif()
+
+add_subdirectory(math)
+add_subdirectory(geo)
+add_subdirectory(vcs)
+add_subdirectory(editor)
+add_subdirectory(docks)
+add_subdirectory(extensions)
+add_subdirectory(terminal)
+add_subdirectory(hk)
+add_subdirectory(link)
+add_subdirectory(fbx)
+add_subdirectory(anim)
+add_subdirectory(uv)
+add_subdirectory(rig)
+add_subdirectory(gn)
+add_subdirectory(retopo)
+add_subdirectory(sculpt)
+add_subdirectory(vcolor)
+add_subdirectory(deform)
+add_subdirectory(materials)
+add_subdirectory(fbxskin)
+add_subdirectory(maya)
+add_subdirectory(agentic)

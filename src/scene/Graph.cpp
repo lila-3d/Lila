@@ -1,0 +1,1046 @@
+#include "scene/Graph.h"
+
+#include "cmds/Undo.h"
+#include "core/Log.h"
+#include "core/Profile.h"
+#include "geo/Mesh.h"
+#include "scene/Transform.h"
+
+#include <tbb/parallel_for.h>
+
+#include <algorithm>
+#include <charconv>
+#include <stdexcept>
+#include <unordered_set>
+
+namespace lila::scene
+{
+namespace
+{
+const std::vector<NodeId> kNoChildren;
+
+bool scalarOf(const PlugValue& v, double& out)
+{
+    return std::visit(
+        [&](const auto& x) {
+            using T = std::decay_t<decltype(x)>;
+            if constexpr (std::is_arithmetic_v<T>)
+            {
+                out = double(x);
+                return true;
+            }
+            else
+                return false;
+        },
+        v);
+}
+
+void assignScalar(PlugValue& slot, double s)
+{
+    std::visit(
+        [&](auto& d) {
+            using D = std::decay_t<decltype(d)>;
+            if constexpr (std::is_same_v<D, bool>)
+                d = s != 0.0;
+            else if constexpr (std::is_arithmetic_v<D>)
+                d = D(s);
+        },
+        slot);
+}
+
+void measureValue(const PlugValue& v, UndoShared& shared, size_t& owned)
+{
+    if (const MeshPtr* m = std::get_if<MeshPtr>(&v); m && *m)
+        shared.add(m->get(), (*m)->memoryBytes());
+    else if (const DataPtr* d = std::get_if<DataPtr>(&v); d && *d)
+        shared.add(d->get(), (*d)->bytes());
+    else if (const std::string* s = std::get_if<std::string>(&v))
+        owned += s->capacity();
+}
+
+template <class Undo, class Redo> struct LambdaAction final : UndoAction
+{
+    Undo u;
+    Redo r;
+    bool selection;
+    /** Copies of the plug values the lambdas capture, so the undo budget can see them. */
+    std::vector<PlugValue> held;
+    LambdaAction(Undo u, Redo r, bool selection, std::vector<PlugValue> held)
+        : u(std::move(u)), r(std::move(r)), selection(selection), held(std::move(held)) {}
+    void undo() override { u(); }
+    void redo() override { r(); }
+    bool selectionOnly() const override { return selection; }
+    size_t bytes() const override
+    {
+        size_t n = sizeof(*this);
+        UndoShared ignored;
+        for (const PlugValue& v : held)
+            measureValue(v, ignored, n);
+        return n;
+    }
+    void sharedBytes(UndoShared& shared) const override
+    {
+        size_t ignored = 0;
+        for (const PlugValue& v : held)
+            measureValue(v, shared, ignored);
+    }
+};
+
+template <class Undo, class Redo> void recordUndo(Undo u, Redo r, bool selection = false, std::vector<PlugValue> held = {})
+{
+    UndoStack::get().record(
+        std::make_unique<LambdaAction<Undo, Redo>>(std::move(u), std::move(r), selection, std::move(held)));
+}
+
+/** Holds a deleted node so undo can put it back. */
+struct DeleteAction final : UndoAction
+{
+    Graph& g;
+    NodeId id;
+    NodeId parent;
+    size_t index;
+    std::unique_ptr<Node> held;
+    DeleteAction(Graph& g, NodeId id, NodeId parent, size_t index, std::unique_ptr<Node> held)
+        : g(g), id(id), parent(parent), index(index), held(std::move(held)) {}
+    void undo() override;
+    void redo() override;
+    size_t bytes() const override
+    {
+        size_t n = sizeof(*this);
+        if (held)
+        {
+            UndoShared ignored;
+            n += sizeof(Node) + held->name().capacity();
+            for (size_t i = 0; i < held->type().attrs.size(); ++i)
+                measureValue(held->value(int(i)), ignored, n);
+        }
+        return n;
+    }
+    void sharedBytes(UndoShared& shared) const override
+    {
+        if (!held)
+            return;
+        size_t ignored = 0;
+        for (size_t i = 0; i < held->type().attrs.size(); ++i)
+            measureValue(held->value(int(i)), shared, ignored);
+    }
+};
+} // namespace
+
+struct GraphAccess
+{
+    static void attach(Graph& g, std::unique_ptr<Node> n, NodeId parent, size_t index) { g.attach(std::move(n), parent, index); }
+    static std::unique_ptr<Node> detach(Graph& g, NodeId id) { return g.detach(id, nullptr); }
+};
+
+void DeleteAction::undo() { GraphAccess::attach(g, std::move(held), parent, index); }
+void DeleteAction::redo() { held = GraphAccess::detach(g, id); }
+
+Graph& Graph::current()
+{
+    static Graph g;
+    return g;
+}
+
+Graph::Graph() = default;
+Graph::~Graph() = default;
+
+void Graph::clear()
+{
+    mNodes.clear();
+    mNames.clear();
+    mRel.clear();
+    mRoots.clear();
+    mInputs.clear();
+    mOutgoingDst.clear();
+    mSelection.clear();
+    mHeld.clear();
+    mCtx = {};
+    UndoStack::get().clear();
+    changed(Change::Cleared, kNoNode);
+}
+
+bool Graph::validName(std::string_view name)
+{
+    if (name.empty())
+        return false;
+    bool start = true;
+    for (char c : name)
+    {
+        if (c == ':')
+        {
+            start = true;
+            continue;
+        }
+        bool alpha = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+        bool digit = c >= '0' && c <= '9';
+        if (!(alpha || (digit && !start)))
+            return false;
+        start = false;
+    }
+    return true;
+}
+
+std::string Graph::uniqueName(std::string_view wanted, NodeId self) const
+{
+    auto taken = [&](const std::string& n) {
+        auto it = mNames.find(n);
+        return it != mNames.end() && it->second != self;
+    };
+    std::string base(wanted);
+    if (!taken(base))
+        return base;
+
+    size_t digits = base.size();
+    while (digits > 0 && base[digits - 1] >= '0' && base[digits - 1] <= '9')
+        --digits;
+    std::string stem = base.substr(0, digits);
+    int n = 1;
+    if (digits < base.size())
+        std::from_chars(base.data() + digits, base.data() + base.size(), n);
+    for (;; ++n)
+    {
+        std::string candidate = stem + std::to_string(n);
+        if (!taken(candidate))
+            return candidate;
+    }
+}
+
+std::string Graph::conformName(const NodeType& type, std::string_view wanted, bool userGiven) const
+{
+    std::string fixed = mNaming.conform(type, wanted);
+    if (!userGiven || fixed == wanted)
+        return fixed;
+    switch (mNaming.mode)
+    {
+    case NamingPolicy::Mode::Fix: return fixed;
+    case NamingPolicy::Mode::Warn:
+        log::warn("'{}' breaks the naming convention (expected '{}')", wanted, fixed);
+        return std::string(wanted);
+    case NamingPolicy::Mode::Block:
+        throw std::invalid_argument("'" + std::string(wanted) + "' breaks the naming convention; use '" + fixed + "'");
+    }
+    return fixed;
+}
+
+std::vector<NodeId>& Graph::siblings(NodeId parent)
+{
+    return parent == kNoNode ? mRoots : mRel[parent].children;
+}
+
+void Graph::attach(std::unique_ptr<Node> n, NodeId parent, size_t index)
+{
+    NodeId id = n->id();
+    mNames[n->mName] = id;
+    if (n->type().dag)
+    {
+        mRel[id].parent = parent;
+        auto& sib = siblings(parent);
+        sib.insert(sib.begin() + std::min(index, sib.size()), id);
+    }
+    n->mDirty = true;
+    mAnyDirty = true;
+    mNodes.emplace(id, std::move(n));
+    changed(Change::Created, id);
+}
+
+std::unique_ptr<Node> Graph::detach(NodeId id, size_t* indexOut)
+{
+    auto it = mNodes.find(id);
+    if (it == mNodes.end())
+        return nullptr;
+    std::unique_ptr<Node> n = std::move(it->second);
+    mNodes.erase(it);
+    mNames.erase(n->mName);
+    std::erase(mSelection, id);
+    if (auto rel = mRel.find(id); rel != mRel.end())
+    {
+        auto& sib = siblings(rel->second.parent);
+        auto pos = std::find(sib.begin(), sib.end(), id);
+        if (indexOut)
+            *indexOut = size_t(pos - sib.begin());
+        if (pos != sib.end())
+            sib.erase(pos);
+        mRel.erase(rel);
+    }
+    changed(Change::Deleted, id);
+    return n;
+}
+
+Node* Graph::createNode(const NodeType& type, std::string_view name, NodeId parent, bool applyNaming)
+{
+    LILA_ZONE();
+
+    if (!type.create)
+        throw std::invalid_argument("node type '" + type.name + "' is abstract");
+    if (parent != kNoNode && (!node(parent) || !node(parent)->type().dag))
+        throw std::invalid_argument("parent must be a transform");
+    if (!name.empty() && !validName(name))
+        throw std::invalid_argument("invalid name '" + std::string(name) + "'");
+
+    std::unique_ptr<Node> n = type.create();
+    n->mId = mNextId++;
+    n->mType = &type;
+    // Default names follow the convention's style even when enforcement is off.
+    std::string fallback = applyCase(type.name, mNaming.styleFor(type));
+    n->mName = uniqueName(name.empty() ? fallback : applyNaming ? conformName(type, name, true) : std::string(name));
+    if (auto colon = n->mName.rfind(':'); colon != std::string::npos)
+        n->mNamespace = n->mName.substr(0, colon);
+    n->mValues.reserve(type.attrs.size());
+    for (const AttrDef& a : type.attrs)
+        n->mValues.push_back(a.defaultValue);
+
+    NodeId id = n->id();
+    NodeId p = type.dag ? parent : kNoNode;
+    attach(std::move(n), p, SIZE_MAX);
+
+    auto action = std::make_unique<DeleteAction>(*this, id, p, siblings(p).size() - 1, nullptr);
+    // Recorded as an inverted delete: undo removes, redo restores.
+    struct CreateAction final : UndoAction
+    {
+        std::unique_ptr<DeleteAction> del;
+        void undo() override { del->redo(); }
+        void redo() override { del->undo(); }
+    };
+    auto create = std::make_unique<CreateAction>();
+    create->del = std::move(action);
+    UndoStack::get().record(std::move(create));
+    return node(id);
+}
+
+void Graph::setReference(NodeId id, uint32_t reference)
+{
+    if (Node* n = node(id))
+        n->mReference = reference;
+}
+
+void Graph::deleteNode(NodeId id)
+{
+    LILA_ZONE();
+
+    if (!node(id))
+        return;
+    for (NodeId child : std::vector<NodeId>(children(id)))
+        deleteNode(child);
+
+    std::vector<PlugRef> inbound;
+    for (auto& [dst, src] : mInputs)
+        if (dst.node == id || src.node == id)
+            inbound.push_back(dst);
+    for (const PlugRef& dst : inbound)
+        disconnect(dst);
+
+    if (isSelected(id))
+    {
+        std::vector<NodeId> sel = mSelection;
+        std::erase(sel, id);
+        select(sel, SelectMode::Replace);
+    }
+
+    NodeId p = parent(id);
+    size_t index = 0;
+    std::unique_ptr<Node> held = detach(id, &index);
+    UndoStack::get().record(std::make_unique<DeleteAction>(*this, id, p, index, std::move(held)));
+}
+
+Node* Graph::node(NodeId id) const
+{
+    auto it = mNodes.find(id);
+    return it == mNodes.end() ? nullptr : it->second.get();
+}
+
+Node* Graph::find(std::string_view name) const
+{
+    auto it = mNames.find(std::string(name));
+    return it == mNames.end() ? nullptr : node(it->second);
+}
+
+std::vector<NodeId> Graph::nodes() const
+{
+    std::vector<NodeId> out;
+    out.reserve(mNodes.size());
+    for (auto& [id, n] : mNodes)
+        out.push_back(id);
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+void Graph::renameRaw(NodeId id, const std::string& name)
+{
+    Node* n = node(id);
+    mNames.erase(n->mName);
+    n->mName = name;
+    auto colon = name.rfind(':');
+    n->mNamespace = colon == std::string::npos ? std::string() : name.substr(0, colon);
+    mNames[name] = id;
+    changed(Change::Renamed, id);
+}
+
+std::string Graph::rename(NodeId id, std::string_view name)
+{
+    Node* n = node(id);
+    if (!n)
+        throw std::invalid_argument("no such node");
+    if (!validName(name))
+        throw std::invalid_argument("invalid name '" + std::string(name) + "'");
+    std::string oldName = n->mName;
+    std::string newName = uniqueName(conformName(n->type(), name, true), id);
+    if (newName == oldName)
+        return newName;
+    renameRaw(id, newName);
+    recordUndo([this, id, oldName] { renameRaw(id, oldName); }, [this, id, newName] { renameRaw(id, newName); });
+    return newName;
+}
+
+NodeId Graph::parent(NodeId id) const
+{
+    auto it = mRel.find(id);
+    return it == mRel.end() ? kNoNode : it->second.parent;
+}
+
+const std::vector<NodeId>& Graph::children(NodeId id) const
+{
+    auto it = mRel.find(id);
+    return it == mRel.end() ? kNoChildren : it->second.children;
+}
+
+std::vector<NodeId> Graph::descendants(NodeId id) const
+{
+    std::vector<NodeId> out;
+    std::vector<NodeId> stack(children(id).rbegin(), children(id).rend());
+    while (!stack.empty())
+    {
+        NodeId n = stack.back();
+        stack.pop_back();
+        out.push_back(n);
+        const auto& c = children(n);
+        stack.insert(stack.end(), c.rbegin(), c.rend());
+    }
+    return out;
+}
+
+void Graph::reparentRaw(NodeId child, NodeId newParent, size_t index)
+{
+    auto& rel = mRel[child];
+    auto& oldSib = siblings(rel.parent);
+    std::erase(oldSib, child);
+    rel.parent = newParent;
+    auto& sib = siblings(newParent);
+    sib.insert(sib.begin() + std::min(index, sib.size()), child);
+    markDirty(child);
+    changed(Change::Reparented, child);
+}
+
+void Graph::setParent(NodeId child, NodeId newParent, bool keepWorld, size_t index)
+{
+    LILA_ZONE();
+
+    Node* c = node(child);
+    if (!c || !c->type().dag)
+        throw std::invalid_argument("only transforms can be parented");
+    if (newParent != kNoNode)
+    {
+        Node* p = node(newParent);
+        if (!p || !p->type().dag)
+            throw std::invalid_argument("parent must be a transform");
+        for (NodeId a = newParent; a != kNoNode; a = parent(a))
+            if (a == child)
+                throw std::invalid_argument("cannot parent a node under itself");
+    }
+    NodeId oldParent = parent(child);
+    auto& oldSib = siblings(oldParent);
+    size_t oldIndex = size_t(std::find(oldSib.begin(), oldSib.end(), child) - oldSib.begin());
+    if (oldParent == newParent)
+    {
+        size_t newIndex = std::min(index, oldSib.size() - 1);
+        if (index == SIZE_MAX || newIndex == oldIndex)
+            return;
+        reparentRaw(child, newParent, newIndex);
+        recordUndo([this, child, oldParent, oldIndex] { reparentRaw(child, oldParent, oldIndex); },
+                   [this, child, newParent, newIndex] { reparentRaw(child, newParent, newIndex); });
+        return;
+    }
+
+    glm::dmat4 world(1.0);
+    if (keepWorld)
+    {
+        evaluate();
+        world = c->as<glm::dmat4>(Transform::kWorldMatrix);
+    }
+
+    reparentRaw(child, newParent, index);
+    const auto& newSib = siblings(newParent);
+    size_t newIndex = size_t(std::find(newSib.begin(), newSib.end(), child) - newSib.begin());
+    recordUndo([this, child, oldParent, oldIndex] { reparentRaw(child, oldParent, oldIndex); },
+               [this, child, newParent, newIndex] { reparentRaw(child, newParent, newIndex); });
+
+    if (keepWorld)
+    {
+        glm::dmat4 parentWorld(1.0);
+        if (newParent != kNoNode)
+            parentWorld = node(newParent)->as<glm::dmat4>(Transform::kWorldMatrix);
+        Transform::setLocalMatrix(*this, child, glm::inverse(parentWorld) * world);
+    }
+}
+
+PlugRef Graph::plug(std::string_view path) const
+{
+    auto dot = path.find('.');
+    if (dot == std::string_view::npos)
+        throw std::invalid_argument("expected node.attr, got '" + std::string(path) + "'");
+    Node* n = find(path.substr(0, dot));
+    if (!n)
+        throw std::invalid_argument("no node named '" + std::string(path.substr(0, dot)) + "'");
+    std::string_view attrName = path.substr(dot + 1);
+    const auto& attrs = n->type().attrs;
+    for (int i = 0; i < int(attrs.size()); ++i)
+    {
+        const AttrDef& a = attrs[i];
+        if (a.name == attrName || a.shortName == attrName)
+            return {n->id(), i, -1};
+        if (a.type == PlugType::Vec3)
+            for (int c = 0; c < 3; ++c)
+                if (a.childNames[c] == attrName || a.childShort[c] == attrName)
+                    return {n->id(), i, c};
+    }
+    throw std::invalid_argument("'" + n->name() + "' has no attribute '" + std::string(attrName) + "'");
+}
+
+std::string Graph::plugName(const PlugRef& p) const
+{
+    Node* n = node(p.node);
+    if (!n)
+        return "?";
+    const AttrDef& a = n->type().attrs[p.attr];
+    return n->name() + "." + (p.component >= 0 ? a.childNames[p.component] : a.name);
+}
+
+const AttrDef& Graph::attr(const PlugRef& p) const
+{
+    return node(p.node)->type().attrs[p.attr];
+}
+
+void Graph::setRaw(const PlugRef& p, const PlugValue& v)
+{
+    Node* n = node(p.node);
+    PlugValue& slot = n->mValues[p.attr];
+    if (p.component >= 0)
+        std::get<glm::dvec3>(slot)[p.component] = std::get<double>(v);
+    else
+        slot = v;
+    markDirty(p.node);
+    changed(Change::Value, p.node);
+}
+
+namespace
+{
+uint8_t lockBits(const AttrDef& a, int component)
+{
+    if (a.type != PlugType::Vec3)
+        return 1;
+    return component >= 0 ? uint8_t(1u << component) : uint8_t(7);
+}
+} // namespace
+
+bool Graph::isLocked(const PlugRef& p) const
+{
+    const Node* n = node(p.node);
+    if (!n || p.attr < 0)
+        return false;
+    uint8_t bits = lockBits(n->type().attrs[p.attr], p.component);
+    return (n->lockMask(p.attr) & bits) == bits;
+}
+
+bool Graph::anyLocked(const PlugRef& p) const
+{
+    const Node* n = node(p.node);
+    return n && p.attr >= 0 && (n->lockMask(p.attr) & lockBits(n->type().attrs[p.attr], p.component)) != 0;
+}
+
+void Graph::setLocked(const PlugRef& p, bool locked)
+{
+    Node* n = node(p.node);
+    if (!n || p.attr < 0)
+        throw std::invalid_argument("no such plug");
+    uint8_t old = n->lockMask(p.attr), bits = lockBits(n->type().attrs[p.attr], p.component);
+    uint8_t now = locked ? uint8_t(old | bits) : uint8_t(old & ~bits);
+    if (now == old)
+        return;
+    NodeId id = p.node;
+    int attr = p.attr;
+    setLockRaw(id, attr, now);
+    recordUndo([this, id, attr, old] { setLockRaw(id, attr, old); }, [this, id, attr, now] { setLockRaw(id, attr, now); });
+}
+
+void Graph::setLockRaw(NodeId id, int attr, uint8_t mask)
+{
+    Node* n = node(id);
+    if (!n)
+        return;
+    if (n->mLocks.size() <= size_t(attr))
+        n->mLocks.resize(n->type().attrs.size());
+    n->mLocks[size_t(attr)] = mask;
+    changed(Change::Value, id);
+}
+
+PlugValue Graph::keepLocked(const PlugRef& p, PlugValue v) const
+{
+    const Node* n = node(p.node);
+    if (!n || p.attr < 0)
+        return v;
+    uint8_t mask = n->lockMask(p.attr);
+    if (!mask)
+        return v;
+    if (isLocked(p))
+        return p.component >= 0 ? PlugValue(std::get<glm::dvec3>(n->value(p.attr))[p.component]) : n->value(p.attr);
+    if (glm::dvec3* x = std::get_if<glm::dvec3>(&v); x && p.component < 0)
+        for (int c = 0; c < 3; ++c)
+            if (mask & (1u << c))
+                (*x)[c] = std::get<glm::dvec3>(n->value(p.attr))[c];
+    return v;
+}
+
+void Graph::setValue(const PlugRef& p, PlugValue v)
+{
+    Node* n = node(p.node);
+    if (!n)
+        throw std::invalid_argument("no such node");
+    const AttrDef& a = n->type().attrs[p.attr];
+    if (!(a.flags & AttrInput))
+        throw std::invalid_argument(plugName(p) + " is an output and can't be set");
+    if (uint8_t mask = n->lockMask(p.attr))
+    {
+        const glm::dvec3* x = std::get_if<glm::dvec3>(&v);
+        if (p.component >= 0 || !x)
+        {
+            if (isLocked(p))
+                throw std::invalid_argument(plugName(p) + " is locked and can't be changed");
+        }
+        else
+            for (int c = 0; c < 3; ++c)
+                if ((mask & (1u << c)) && (*x)[c] != std::get<glm::dvec3>(n->mValues[p.attr])[c])
+                    throw std::invalid_argument(plugName({p.node, p.attr, c}) + " is locked and can't be changed");
+    }
+    if (auto src = source(p))
+    {
+        double d = 0.0;
+        if (!scalarOf(v, d) || !setDriven(p, *src, d))
+            throw std::invalid_argument(plugName(p) + " is driven by a connection");
+        return;
+    }
+    if (p.component >= 0 && source({p.node, p.attr, -1}))
+        throw std::invalid_argument(plugName(p) + " is driven by a connection");
+
+    PlugValue old = p.component >= 0 ? PlugValue(std::get<glm::dvec3>(n->mValues[p.attr])[p.component]) : n->mValues[p.attr];
+    if (old == v)
+        return;
+    setRaw(p, v);
+    std::vector<PlugValue> held;
+    if (std::holds_alternative<MeshPtr>(v) || std::holds_alternative<DataPtr>(v) || std::holds_alternative<std::string>(v))
+        held = {old, v};
+    recordUndo([this, p, old] { setRaw(p, old); }, [this, p, v] { setRaw(p, v); }, false, std::move(held));
+
+    if (p.component < 0 && a.type == PlugType::Vec3)
+        for (int c = 0; c < 3; ++c)
+        {
+            PlugRef comp{p.node, p.attr, c};
+            double now = std::get<glm::dvec3>(v)[c];
+            if (auto src = source(comp); src && now != std::get<glm::dvec3>(old)[c])
+                setDriven(comp, *src, now);
+        }
+}
+
+bool Graph::setDriven(const PlugRef& dst, const PlugRef& src, double v)
+{
+    DrivenEdit edit = mDrivenSet ? mDrivenSet(*this, dst, src, v) : DrivenEdit::Reject;
+    if (edit == DrivenEdit::Reject)
+        return false;
+    if (edit == DrivenEdit::Hold)
+    {
+        bool was = mHeld.contains(dst);
+        double old = 0.0;
+        const PlugValue& slot = node(dst.node)->mValues[dst.attr];
+        if (dst.component >= 0)
+            old = std::get<glm::dvec3>(slot)[dst.component];
+        else
+            scalarOf(slot, old);
+        holdRaw(dst, v);
+        recordUndo([this, dst, was, old] { was ? holdRaw(dst, old) : releaseRaw(dst); }, [this, dst, v] { holdRaw(dst, v); });
+    }
+    return true;
+}
+
+void Graph::holdRaw(const PlugRef& dst, double v)
+{
+    PlugValue& slot = node(dst.node)->mValues[dst.attr];
+    if (dst.component >= 0)
+        std::get<glm::dvec3>(slot)[dst.component] = v;
+    else
+        assignScalar(slot, v);
+    markDirty(dst.node);
+    mHeld.insert(dst);
+    changed(Change::Value, dst.node);
+}
+
+void Graph::releaseRaw(const PlugRef& dst)
+{
+    mHeld.erase(dst);
+    markDirty(dst.node);
+    changed(Change::Value, dst.node);
+}
+
+PlugValue Graph::value(const PlugRef& p)
+{
+    Node* n = node(p.node);
+    if (!n)
+        throw std::invalid_argument("no such node");
+    if (mAnyDirty)
+        evaluate();
+    const PlugValue& v = n->mValues[p.attr];
+    if (p.component >= 0)
+        return std::get<glm::dvec3>(v)[p.component];
+    return v;
+}
+
+bool Graph::dependsOn(NodeId n, NodeId upstream) const
+{
+    std::vector<NodeId> stack{n};
+    std::unordered_set<NodeId> seen;
+    while (!stack.empty())
+    {
+        NodeId cur = stack.back();
+        stack.pop_back();
+        if (cur == upstream)
+            return true;
+        if (!seen.insert(cur).second)
+            continue;
+        for (auto& [dst, src] : mInputs)
+            if (dst.node == cur)
+                stack.push_back(src.node);
+        if (NodeId p = parent(cur); p != kNoNode)
+            stack.push_back(p);
+    }
+    return false;
+}
+
+void Graph::connectRaw(const PlugRef& src, const PlugRef& dst)
+{
+    mHeld.erase(dst);
+    mInputs[dst] = src;
+    mOutgoingDst[src.node].push_back(dst);
+    markDirty(dst.node);
+    changed(Change::Connection, dst.node);
+}
+
+void Graph::disconnectRaw(const PlugRef& dst)
+{
+    auto it = mInputs.find(dst);
+    if (it == mInputs.end())
+        return;
+    std::erase(mOutgoingDst[it->second.node], dst);
+    mInputs.erase(it);
+    mHeld.erase(dst);
+    markDirty(dst.node);
+    changed(Change::Connection, dst.node);
+}
+
+void Graph::connect(const PlugRef& src, const PlugRef& dst, bool force)
+{
+    const AttrDef& sa = attr(src);
+    const AttrDef& da = attr(dst);
+    if (!(da.flags & AttrInput))
+        throw std::invalid_argument(plugName(dst) + " is not an input");
+    if ((src.component >= 0 && sa.type != PlugType::Vec3) || (dst.component >= 0 && da.type != PlugType::Vec3))
+        throw std::invalid_argument("only vec3 plugs have components");
+    PlugType st = src.component >= 0 ? PlugType::Float : sa.type;
+    PlugType dt = dst.component >= 0 ? PlugType::Float : da.type;
+    auto numeric = [](PlugType t) { return t == PlugType::Float || t == PlugType::Int || t == PlugType::Bool || t == PlugType::Enum; };
+    if (st != dt && !(numeric(st) && numeric(dt)))
+        throw std::invalid_argument(std::string("type mismatch: ") + typeName(st) + " -> " + typeName(dt));
+    if (src.node == dst.node || dependsOn(src.node, dst.node))
+        throw std::invalid_argument("connection would create a cycle");
+
+    std::vector<PlugRef> clashing;
+    if (dst.component >= 0)
+    {
+        if (source({dst.node, dst.attr, -1}))
+            clashing.push_back({dst.node, dst.attr, -1});
+    }
+    else if (da.type == PlugType::Vec3)
+        for (int c = 0; c < 3; ++c)
+            if (source({dst.node, dst.attr, c}))
+                clashing.push_back({dst.node, dst.attr, c});
+    if (!clashing.empty())
+    {
+        if (!force)
+            throw std::invalid_argument(plugName(dst) + " overlaps a driven plug; use force");
+        for (const PlugRef& c : clashing)
+            disconnect(c);
+    }
+
+    if (auto existing = source(dst))
+    {
+        if (*existing == src)
+            return;
+        if (!force)
+            throw std::invalid_argument(plugName(dst) + " is already connected; use force");
+        disconnect(dst);
+    }
+    connectRaw(src, dst);
+    recordUndo([this, dst] { disconnectRaw(dst); }, [this, src, dst] { connectRaw(src, dst); });
+}
+
+void Graph::disconnect(const PlugRef& dst)
+{
+    auto src = source(dst);
+    if (!src)
+        return;
+    PlugRef s = *src;
+    disconnectRaw(dst);
+    recordUndo([this, s, dst] { connectRaw(s, dst); }, [this, dst] { disconnectRaw(dst); });
+}
+
+std::optional<PlugRef> Graph::source(const PlugRef& dst) const
+{
+    auto it = mInputs.find(dst);
+    return it == mInputs.end() ? std::nullopt : std::optional(it->second);
+}
+
+std::vector<PlugRef> Graph::destinations(const PlugRef& src) const
+{
+    std::vector<PlugRef> out;
+    if (auto it = mOutgoingDst.find(src.node); it != mOutgoingDst.end())
+        for (const PlugRef& dst : it->second)
+            if (mInputs.at(dst) == src)
+                out.push_back(dst);
+    return out;
+}
+
+void Graph::markDirty(NodeId id)
+{
+    std::vector<NodeId> stack{id};
+    while (!stack.empty())
+    {
+        NodeId cur = stack.back();
+        stack.pop_back();
+        Node* n = node(cur);
+        if (!n)
+            continue;
+        // Already dirty means everything downstream already is.
+        if (n->mDirty && cur != id)
+            continue;
+        n->mDirty = true;
+        if (auto it = mOutgoingDst.find(cur); it != mOutgoingDst.end())
+            for (const PlugRef& dst : it->second)
+            {
+                // A held value lasts only until its source changes.
+                if (cur == id)
+                    mHeld.erase(dst);
+                stack.push_back(dst.node);
+            }
+        for (NodeId c : children(cur))
+            stack.push_back(c);
+    }
+    mAnyDirty = true;
+    mVersion.fetch_add(1, std::memory_order_relaxed);
+}
+
+void Graph::setTime(double seconds)
+{
+    if (mCtx.time == seconds)
+        return;
+    mCtx.time = seconds;
+    mHeld.clear();
+    for (auto& [id, n] : mNodes)
+        if (n->type().timeDependent)
+            markDirty(id);
+    mVersion.fetch_add(1, std::memory_order_relaxed);
+}
+
+void Graph::evaluate()
+{
+    LILA_ZONE();
+
+    if (!mAnyDirty)
+        return;
+    mAnyDirty = false;
+
+    // Kahn levels over the dirty subgraph; each level computes in parallel.
+    std::vector<Node*> dirty;
+    for (auto& [id, n] : mNodes)
+        if (n->mDirty)
+            dirty.push_back(n.get());
+
+    std::unordered_map<NodeId, int> pending;
+    std::unordered_map<NodeId, std::vector<NodeId>> downstream;
+    for (Node* n : dirty)
+        pending[n->id()] = 0;
+    auto addEdge = [&](NodeId up, NodeId down) {
+        if (up == down || !pending.contains(up))
+            return;
+        downstream[up].push_back(down);
+        ++pending[down];
+    };
+    for (Node* n : dirty)
+    {
+        if (NodeId p = parent(n->id()); p != kNoNode)
+            addEdge(p, n->id());
+    }
+    for (auto& [dst, src] : mInputs)
+        if (pending.contains(dst.node))
+            addEdge(src.node, dst.node);
+
+    std::vector<Node*> level;
+    for (Node* n : dirty)
+        if (pending[n->id()] == 0)
+            level.push_back(n);
+
+    while (!level.empty())
+    {
+        auto pull = [&](Node* n) {
+            if (n->type().dag)
+            {
+                glm::dmat4 pw(1.0);
+                if (NodeId p = parent(n->id()); p != kNoNode)
+                    pw = node(p)->as<glm::dmat4>(Transform::kWorldMatrix);
+                n->mValues[Transform::kParentMatrix] = pw;
+            }
+            for (auto it = mInputs.lower_bound({n->id(), 0, -1}); it != mInputs.end() && it->first.node == n->id(); ++it)
+            {
+                const PlugRef& sp = it->second;
+                const PlugRef& dp = it->first;
+                if (!mHeld.empty() && mHeld.contains(dp))
+                    continue;
+                const PlugValue& sv = node(sp.node)->mValues[sp.attr];
+                PlugValue& dv = n->mValues[dp.attr];
+                if (sp.component >= 0 || dp.component >= 0)
+                {
+                    double s = 0.0;
+                    if (sp.component >= 0)
+                        s = std::get<glm::dvec3>(sv)[sp.component];
+                    else
+                        scalarOf(sv, s);
+                    if (dp.component >= 0)
+                        std::get<glm::dvec3>(dv)[dp.component] = s;
+                    else
+                        assignScalar(dv, s);
+                    continue;
+                }
+                // Numeric types convert across connections.
+                std::visit(
+                    [&](auto& d) {
+                        using D = std::decay_t<decltype(d)>;
+                        std::visit(
+                            [&](const auto& s) {
+                                using S = std::decay_t<decltype(s)>;
+                                if constexpr (std::is_same_v<D, S>)
+                                    d = s;
+                                else if constexpr (std::is_arithmetic_v<D> && std::is_arithmetic_v<S>)
+                                    d = D(s);
+                            },
+                            sv);
+                    },
+                    dv);
+            }
+            n->compute(mCtx);
+            n->mDirty = false;
+        };
+
+        if (level.size() < 16)
+            for (Node* n : level)
+                pull(n);
+        else
+            tbb::parallel_for(size_t(0), level.size(), [&](size_t i) { pull(level[i]); });
+
+        std::vector<Node*> next;
+        for (Node* n : level)
+            for (NodeId d : downstream[n->id()])
+                if (--pending[d] == 0)
+                    next.push_back(node(d));
+        level.swap(next);
+    }
+}
+
+void Graph::selectRaw(std::vector<NodeId> ids)
+{
+    mSelection = std::move(ids);
+    mVersion.fetch_add(1, std::memory_order_relaxed);
+    changed(Change::Selection, kNoNode);
+}
+
+void Graph::select(const std::vector<NodeId>& ids, SelectMode mode)
+{
+    std::vector<NodeId> next = mode == SelectMode::Replace ? std::vector<NodeId>() : mSelection;
+    for (NodeId id : ids)
+    {
+        if (!node(id))
+            continue;
+        auto it = std::find(next.begin(), next.end(), id);
+        bool present = it != next.end();
+        switch (mode)
+        {
+        case SelectMode::Replace:
+        case SelectMode::Add:
+            if (!present)
+                next.push_back(id);
+            break;
+        case SelectMode::Remove:
+            if (present)
+                next.erase(it);
+            break;
+        case SelectMode::Toggle:
+            if (present)
+                next.erase(it);
+            else
+                next.push_back(id);
+            break;
+        }
+    }
+    if (next == mSelection)
+        return;
+    std::vector<NodeId> old = mSelection;
+    selectRaw(next);
+    recordUndo([this, old] { selectRaw(old); }, [this, next] { selectRaw(next); }, true);
+}
+
+bool Graph::isSelected(NodeId id) const
+{
+    return std::find(mSelection.begin(), mSelection.end(), id) != mSelection.end();
+}
+
+int Graph::addListener(Listener fn, bool immediate)
+{
+    mListeners.emplace(mNextListener, ListenerEntry{std::move(fn), immediate});
+    return mNextListener++;
+}
+
+void Graph::removeListener(int id)
+{
+    mListeners.erase(id);
+}
+
+void Graph::changed(Change c, NodeId id)
+{
+    mVersion.fetch_add(1, std::memory_order_relaxed);
+    for (auto& [lid, l] : mListeners)
+        if (mBatchDepth == 0 || l.immediate)
+            l.fn(c, id);
+        else
+            mBatchPending = true;
+}
+
+Graph::Batch::Batch(Graph& g) : mGraph(g)
+{
+    ++mGraph.mBatchDepth;
+}
+
+Graph::Batch::~Batch()
+{
+    if (--mGraph.mBatchDepth > 0 || !mGraph.mBatchPending)
+        return;
+    mGraph.mBatchPending = false;
+    for (auto& [lid, l] : mGraph.mListeners)
+        if (!l.immediate)
+            l.fn(Change::Reset, kNoNode);
+}
+} // namespace lila::scene

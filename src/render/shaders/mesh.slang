@@ -1,0 +1,364 @@
+// Shaded meshes and the environment background: Unreal's default lit model (metallic/specular/roughness, packed
+// ORM, DirectX or OpenGL normal maps, masked and translucent blending), split-sum image-based lighting with
+// energy-conserving GGX, a camera-relative studio rig while no environment is loaded, Khronos PBR Neutral tonemap.
+
+struct MeshPush
+{
+    float4x4 viewProj; // background: the inverse view-projection
+    float4x4 world;
+    float4 eye;     // xyz camera position, w: -1 when the world matrix mirrors (flips the bitangent)
+    float4 base;    // rgb base color (linear), a: roughness. Background: x blur lod, y saturation, z exposure
+    float4 params;  // x: exposure, y: 1 if Z-up, z: highlight amount, w: 0 studio rig, 1 environment, 2 flat (unlit)
+    float4 env;     // xy: cos/sin of the rotation, z: intensity, w: lod of the roughest mip
+    float4 surface; // x metallic, y specular, z opacity, w opacity mask clip
+    float3 emissive; // linear; scales the emissive map when there is one
+    uint flags;      // render::MaterialFlags
+    float4 display;  // x: display gamma
+};
+
+[[vk::push_constant]] MeshPush pc;
+
+struct EnvUniforms
+{
+    float4 sh[9]; // irradiance / pi, rgb
+};
+
+[[vk::binding(0, 0)]] SamplerCube envMap;
+[[vk::binding(1, 0)]] Sampler2D brdfLut;
+[[vk::binding(2, 0)]] ConstantBuffer<EnvUniforms> envU;
+
+// Per material. Missing maps are bound to 1x1 placeholders and ignored through the flags.
+[[vk::binding(0, 1)]] Sampler2D baseColorTex; // sRGB
+[[vk::binding(1, 1)]] Sampler2D normalTex;
+[[vk::binding(2, 1)]] Sampler2D ormTex;       // R occlusion, G roughness, B metallic
+[[vk::binding(3, 1)]] Sampler2D emissiveTex;  // sRGB
+
+// Screen-space ambient occlusion at the viewport's resolution; 1x1 white while it is off.
+[[vk::binding(0, 2)]] Sampler2D aoTex;
+
+static const uint kBaseColorMap = 1 << 0;
+static const uint kNormalMap = 1 << 1;
+static const uint kNormalGreenUp = 1 << 2;
+static const uint kMetallicMap = 1 << 3;
+static const uint kRoughnessMap = 1 << 4;
+static const uint kOcclusionMap = 1 << 5;
+static const uint kEmissiveMap = 1 << 6;
+static const uint kMasked = 1 << 7;
+static const uint kTranslucent = 1 << 8;
+static const uint kUv1 = 1 << 10;
+static const uint kVertexColorShaded = 1 << 11;
+static const uint kVertexColorUnlit = 1 << 12;
+static const uint kColorChannelShift = 13; // 3 bits: 0 rgb, 1 r, 2 g, 3 b, 4 a
+
+struct VSIn
+{
+    float3 pos : POSITION;
+    float3 normal : NORMAL;
+    float4 tangent : TANGENT;
+    float2 uv : TEXCOORD0;
+    float2 uv1 : TEXCOORD1;
+    float4 color : COLOR;
+};
+
+struct VSOut
+{
+    float4 pos : SV_Position;
+    float3 worldPos : POSITION;
+    float3 normal : NORMAL;
+    float4 tangent : TANGENT;
+    float2 uv : TEXCOORD;
+    float4 color : COLOR;
+};
+
+[shader("vertex")]
+VSOut meshVS(VSIn v)
+{
+    VSOut o;
+    float4 wp = mul(pc.world, float4(v.pos, 1.0));
+    o.worldPos = wp.xyz;
+    o.pos = mul(pc.viewProj, wp);
+    // Inverse transpose would be exact under non-uniform scale; cofactor matrix gives it without an inverse.
+    float3x3 m = (float3x3)pc.world;
+    float3x3 cof = float3x3(cross(m[1], m[2]), cross(m[2], m[0]), cross(m[0], m[1]));
+    o.normal = mul(cof, v.normal);
+    o.tangent = float4(mul(m, v.tangent.xyz), v.tangent.w * pc.eye.w);
+    // Lila UVs are V-up (Maya, FBX) and image rows run top down; Unreal's FBX import flips V the same way.
+    float2 uv = (pc.flags & kUv1) != 0 ? v.uv1 : v.uv;
+    o.uv = float2(uv.x, 1.0 - uv.y);
+    o.color = v.color;
+    return o;
+}
+
+static const float PI = 3.14159265;
+
+float D_GGX(float nh, float a)
+{
+    float a2 = a * a;
+    float d = nh * nh * (a2 - 1.0) + 1.0;
+    return a2 / (PI * d * d);
+}
+
+float V_SmithGGX(float nv, float nl, float a)
+{
+    float a2 = a * a;
+    float gv = nl * sqrt(nv * nv * (1.0 - a2) + a2);
+    float gl = nv * sqrt(nl * nl * (1.0 - a2) + a2);
+    return 0.5 / max(gv + gl, 1e-5);
+}
+
+float3 F_Schlick(float3 f0, float vh)
+{
+    return f0 + (1.0 - f0) * pow(1.0 - vh, 5.0);
+}
+
+struct Surface
+{
+    float3 diffuse; // base color * (1 - metallic)
+    float3 f0;      // 0.08 * specular for dielectrics, base color for metals
+    float rough;
+    float ao;   // material occlusion
+    float ssao; // screen-space occlusion
+};
+
+float3 light(float3 n, float3 v, float3 l, float3 radiance, Surface s)
+{
+    float3 h = normalize(v + l);
+    float nl = saturate(dot(n, l));
+    float nv = max(dot(n, v), 1e-4);
+    float a = s.rough * s.rough;
+    float3 F = F_Schlick(s.f0, saturate(dot(v, h)));
+    float3 spec = D_GGX(saturate(dot(n, h)), a) * V_SmithGGX(nv, nl, a) * F;
+    float3 diff = (1.0 - F) * s.diffuse / PI;
+    return (diff + spec) * radiance * nl;
+}
+
+// Khronos PBR Neutral: keeps hue and saturation of base colors intact up to the shoulder.
+float3 neutralTonemap(float3 c)
+{
+    const float startCompression = 0.8 - 0.04;
+    const float desaturation = 0.15;
+    float x = min(c.r, min(c.g, c.b));
+    float offset = x < 0.08 ? x - 6.25 * x * x : 0.04;
+    c -= offset;
+    float peak = max(c.r, max(c.g, c.b));
+    if (peak < startCompression)
+        return c;
+    const float d = 1.0 - startCompression;
+    float newPeak = 1.0 - d * d / (peak + d - startCompression);
+    c *= newPeak / peak;
+    float g = 1.0 - 1.0 / (desaturation * (peak - newPeak) + 1.0);
+    return lerp(c, newPeak.xxx, g);
+}
+
+// Maya-style viewport gamma on the tonemapped linear color; 1 leaves it alone.
+float3 displayGamma(float3 c)
+{
+    return pow(max(c, 0.0), 1.0 / max(pc.display.x, 0.01));
+}
+
+// Half an 8-bit step of noise, applied in sRGB space since that is where the swapchain quantizes.
+float3 dither(float3 linear, float2 pixel)
+{
+    float noise = frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715)))) - 0.5;
+    float3 srgb = select(linear <= 0.0031308, linear * 12.92, 1.055 * pow(max(linear, 0.0), 1.0 / 2.4) - 0.055);
+    srgb = saturate(srgb + noise / 255.0);
+    return select(srgb <= 0.04045, srgb / 12.92, pow((srgb + 0.055) / 1.055, 2.4));
+}
+
+/** World direction to environment space: the environment's own up is +Y, rotated around it by the pref. */
+float3 toEnv(float3 d)
+{
+    if (pc.params.y > 0.5)
+        d = float3(d.x, d.z, -d.y);
+    float c = pc.env.x, s = pc.env.y;
+    return float3(c * d.x + s * d.z, d.y, -s * d.x + c * d.z);
+}
+
+float3 irradiance(float3 n)
+{
+    float3 e = envU.sh[0].rgb * 0.282095;
+    e += envU.sh[1].rgb * (0.488603 * n.y) + envU.sh[2].rgb * (0.488603 * n.z) + envU.sh[3].rgb * (0.488603 * n.x);
+    e += envU.sh[4].rgb * (1.092548 * n.x * n.y) + envU.sh[5].rgb * (1.092548 * n.y * n.z);
+    e += envU.sh[6].rgb * (0.315392 * (3.0 * n.z * n.z - 1.0)) + envU.sh[7].rgb * (1.092548 * n.x * n.z);
+    e += envU.sh[8].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
+    return max(e, 0.0);
+}
+
+// Jimenez et al. 2016: bright surfaces bounce light back into their own creases, so occlusion darkens them less.
+float3 multiBounce(float visibility, float3 albedo)
+{
+    float3 a = 2.0404 * albedo - 0.3324;
+    float3 b = -4.7951 * albedo + 0.6417;
+    float3 c = 2.7552 * albedo + 0.6903;
+    return max(visibility, ((visibility * a + b) * visibility + c) * visibility);
+}
+
+// Lagarde and de Rousiers 2014.
+float specularOcclusion(float nv, float visibility, float rough)
+{
+    return saturate(pow(nv + visibility, exp2(-16.0 * rough - 1.0)) - 1.0 + visibility);
+}
+
+float3 imageBased(float3 n, float3 v, Surface s)
+{
+    float nv = max(dot(n, v), 1e-4);
+    float2 ab = brdfLut.SampleLevel(float2(nv, s.rough), 0).rg;
+    float3 specular = s.f0 * ab.x + ab.y;
+    // Multiple-scattering compensation (Fdez-Aguera): rough surfaces would otherwise lose energy.
+    float3 energy = 1.0 + s.f0 * (1.0 / max(ab.x + ab.y, 1e-4) - 1.0);
+    float3 prefiltered = envMap.SampleLevel(toEnv(reflect(-v, n)), s.rough * pc.env.w).rgb;
+    float3 diffuse = irradiance(toEnv(n)) * s.diffuse * (1.0 - specular * energy) * multiBounce(s.ssao, s.diffuse);
+    float3 reflected = prefiltered * specular * energy * specularOcclusion(nv, s.ssao, s.rough);
+    // Material AO darkens indirect light only, as in Unreal; image-based light is all indirect.
+    return (diffuse + reflected) * s.ao * pc.env.z;
+}
+
+float3 studioRig(float3 n, float3 v, Surface s)
+{
+    float3 up = pc.params.y > 0.5 ? float3(0, 0, 1) : float3(0, 1, 0);
+    // Camera-relative rig, so every side you look at is readable: key above-left, fill opposite, rim behind.
+    float3 fwd = -v;
+    float3 right = normalize(cross(fwd, up) + 1e-5);
+    float3 camUp = cross(right, fwd);
+    float3 key = normalize(-fwd * 0.6 + camUp * 0.7 - right * 0.5);
+    float3 fill = normalize(-fwd * 0.8 - camUp * 0.1 + right * 0.6);
+    float3 rim = normalize(fwd * 0.9 + camUp * 0.4);
+
+    float3 c = light(n, v, key, float3(2.6), s);
+    c += light(n, v, fill, float3(0.9), s);
+    c += light(n, v, rim, float3(1.2), s);
+    // Sky/ground hemisphere ambient, neutral gray; metals get theirs through f0.
+    float hemi = dot(n, up) * 0.5 + 0.5;
+    c += (s.diffuse * multiBounce(s.ssao, s.diffuse) + s.f0 * 0.5 * s.ssao) * lerp(0.10, 0.28, hemi) * s.ao;
+    return c;
+}
+
+/** The vertex color as shown: one channel isolates as grayscale, display-encoded so a 0.5 mask reads as mid gray. */
+float3 vertexColor(float4 c, uint flags)
+{
+    uint channel = (flags >> kColorChannelShift) & 7;
+    if (channel == 0)
+        return max(c.rgb, 0.0);
+    float v = saturate(channel == 1 ? c.r : channel == 2 ? c.g : channel == 3 ? c.b : c.a);
+    return (v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4)).xxx;
+}
+
+[shader("fragment")]
+float4 meshPS(VSOut i, bool front : SV_IsFrontFace) : SV_Target
+{
+    uint flags = pc.flags;
+    if ((flags & kVertexColorUnlit) != 0)
+        return float4(dither(vertexColor(i.color, flags), i.pos.xy), 1.0);
+    float3 baseColor = pc.base.rgb;
+    float opacity = pc.surface.z;
+    if ((flags & kBaseColorMap) != 0)
+    {
+        float4 t = baseColorTex.Sample(i.uv);
+        baseColor = t.rgb;
+        opacity *= t.a;
+    }
+    if ((flags & kMasked) != 0 && opacity < pc.surface.w)
+        discard;
+    if ((flags & kVertexColorShaded) != 0)
+        baseColor *= vertexColor(i.color, flags);
+
+    float3 ng = normalize(i.normal);
+    float3 n = ng;
+    if ((flags & kNormalMap) != 0)
+    {
+        float3 tn = normalTex.Sample(i.uv).xyz * 2.0 - 1.0;
+        // The bitangent points up the texture (V-up); DirectX maps store green pointing down it.
+        if ((flags & kNormalGreenUp) == 0)
+            tn.y = -tn.y;
+        float3 t = normalize(i.tangent.xyz - ng * dot(ng, i.tangent.xyz) + 1e-7);
+        float3 b = cross(ng, t) * (i.tangent.w < 0.0 ? -1.0 : 1.0);
+        n = normalize(t * tn.x + b * tn.y + ng * max(tn.z, 1e-3));
+    }
+    if (!front)
+        n = -n;
+
+    Surface s;
+    float metallic = pc.surface.x;
+    s.rough = pc.base.a;
+    s.ao = 1.0;
+    s.ssao = 1.0;
+    if ((flags & kTranslucent) == 0)
+    {
+        // Clamped so the 1x1 stand-in bound while AO is off reads as unoccluded everywhere.
+        uint aoW, aoH;
+        aoTex.GetDimensions(aoW, aoH);
+        s.ssao = aoTex.Load(int3(min(int2(i.pos.xy), int2(aoW, aoH) - 1), 0)).r;
+    }
+    if ((flags & (kMetallicMap | kRoughnessMap | kOcclusionMap)) != 0)
+    {
+        float3 orm = ormTex.Sample(i.uv).rgb;
+        if ((flags & kOcclusionMap) != 0)
+            s.ao = orm.r;
+        if ((flags & kRoughnessMap) != 0)
+            s.rough = orm.g;
+        if ((flags & kMetallicMap) != 0)
+            metallic = orm.b;
+    }
+    s.rough = clamp(s.rough, 0.04, 1.0);
+    metallic = saturate(metallic);
+    s.diffuse = baseColor * (1.0 - metallic);
+    s.f0 = lerp(float3(0.08 * pc.surface.y), baseColor, metallic);
+
+    float3 v = normalize(pc.eye.xyz - i.worldPos);
+    float3 c = pc.params.w > 1.5 ? baseColor : pc.params.w > 0.5 ? imageBased(n, v, s) : studioRig(n, v, s);
+    float3 emissive = pc.emissive;
+    if ((flags & kEmissiveMap) != 0)
+        emissive *= emissiveTex.Sample(i.uv).rgb;
+    c += emissive;
+    c *= pc.params.x;
+    c = displayGamma(neutralTonemap(c));
+    c = lerp(c, float3(1.0), pc.params.z);
+    float alpha = (flags & kTranslucent) != 0 ? saturate(opacity) : 1.0;
+    return float4(dither(c, i.pos.xy), alpha);
+}
+
+// Single-sample depth and world normal for the ambient occlusion pass. Masked materials cut out as in meshPS.
+[shader("fragment")]
+float4 prepassPS(VSOut i, bool front : SV_IsFrontFace) : SV_Target
+{
+    if ((pc.flags & kMasked) != 0)
+    {
+        float opacity = pc.surface.z;
+        if ((pc.flags & kBaseColorMap) != 0)
+            opacity *= baseColorTex.Sample(i.uv).a;
+        if (opacity < pc.surface.w)
+            discard;
+    }
+    float3 n = normalize(i.normal);
+    return float4(front ? n : -n, 1.0);
+}
+
+struct BgOut
+{
+    float4 pos : SV_Position;
+    float2 ndc;
+};
+
+[shader("vertex")]
+BgOut backgroundVS(uint vid: SV_VertexID)
+{
+    float2 uv = float2((vid << 1) & 2, vid & 2);
+    BgOut o;
+    o.ndc = uv * 2.0 - 1.0;
+    o.pos = float4(o.ndc, 0.0, 1.0);
+    return o;
+}
+
+[shader("fragment")]
+float4 backgroundPS(BgOut i) : SV_Target
+{
+    float4 nearH = mul(pc.viewProj, float4(i.ndc, 1.0, 1.0));
+    float4 farH = mul(pc.viewProj, float4(i.ndc, 0.001, 1.0));
+    float3 rd = normalize(farH.xyz / farH.w - nearH.xyz / nearH.w);
+
+    float3 c = envMap.SampleLevel(toEnv(rd), pc.base.x).rgb * pc.env.z * pc.base.z;
+    float luma = dot(c, float3(0.2126, 0.7152, 0.0722));
+    c = lerp(luma.xxx, c, pc.base.y);
+    c = displayGamma(neutralTonemap(c * pc.params.x));
+    return float4(dither(c, i.pos.xy), 1.0);
+}

@@ -1,0 +1,8 @@
+{
+  "N": {"label": "Show All", "action": "display.showAll"},
+  "E": {"label": "Show", "action": "display.show"},
+  "S": {"label": "Hide", "action": "display.hide"},
+  "W": {"label": "Isolate", "action": "viewport.isolate"},
+  "NW": {"label": "X-Ray Joints", "action": "rig.xrayJoints"},
+  "overflow": []
+}

@@ -1,0 +1,11 @@
+{
+  "N": {"label": "Set Key", "action": "anim.setKey"},
+  "E": {"label": "Key Translate", "action": "anim.setKeyTranslate"},
+  "SE": {"label": "Play", "action": "anim.play"},
+  "S": {"label": "Key Scale", "action": "anim.setKeyScale"},
+  "SW": {"label": "Stop", "action": "anim.stop"},
+  "W": {"label": "Key Rotate", "action": "anim.setKeyRotate"},
+  "overflow": [
+    {"label": "Auto Key", "action": "anim.autoKeyToggle"}
+  ]
+}

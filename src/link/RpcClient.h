@@ -1,0 +1,105 @@
+#pragma once
+
+#include "link/Socket.h"
+
+#include <nlohmann/json.hpp>
+
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <functional>
+#include <map>
+#include <mutex>
+#include <string>
+#include <thread>
+
+namespace lila::link
+{
+using json = nlohmann::json;
+
+struct RpcResult
+{
+    bool ok = false;
+    json result;
+    int code = 0; // JSON-RPC error code; kTimeout / kDisconnected for local failures
+    std::string error;
+
+    static constexpr int kTimeout = -1;
+    static constexpr int kDisconnected = -2;
+};
+
+struct CallOptions
+{
+    /** Fails the call this long after it was sent, however much progress came in. */
+    int timeoutMs = 10000;
+    /** Fails the call when neither its reply nor a progress notification arrived for this long. 0 is off. */
+    int idleTimeoutMs = 0;
+    /** Gets the params of each {"method":"progress","params":{"id":<this call>,...}} notification. */
+    std::function<void(const json& progress)> onProgress;
+};
+
+/**
+ * Newline-delimited JSON-RPC 2.0 client. A reader thread matches replies to requests by id, feeds progress notifications
+ * to their call, and fails requests whose timeout passes. Thread-safe.
+ */
+class RpcClient
+{
+public:
+    using Callback = std::function<void(RpcResult)>;
+
+    RpcClient() = default;
+    ~RpcClient();
+    RpcClient(const RpcClient&) = delete;
+    RpcClient& operator=(const RpcClient&) = delete;
+
+    bool connect(const std::string& host, uint16_t port, int timeoutMs, std::string* err = nullptr);
+    void disconnect();
+    bool connected() const { return mConnected; }
+    uint16_t port() const { return mPort; }
+
+    /** Blocks the calling thread until the reply or a timeout. onProgress runs on this thread. Don't call on the reader thread. */
+    RpcResult call(const std::string& method, const json& params, const CallOptions& opts);
+    RpcResult call(const std::string& method, const json& params = json::object(), int timeoutMs = 10000);
+
+    /** `done` and onProgress run on the reader thread (`done` on the calling thread for an immediate failure). */
+    void callAsync(const std::string& method, const json& params, CallOptions opts, Callback done);
+    void callAsync(const std::string& method, const json& params, int timeoutMs, Callback done);
+
+    /** Same, with `done` and onProgress posted to the main thread through mainq. */
+    void callOnMain(const std::string& method, const json& params, CallOptions opts, Callback done);
+    void callOnMain(const std::string& method, const json& params, int timeoutMs, Callback done);
+
+    /** Fires (on the reader thread) when the connection drops. */
+    void onDisconnected(std::function<void()> fn);
+
+private:
+    struct Pending
+    {
+        std::string method;
+        Callback done;
+        std::function<void(const json&)> onProgress;
+        std::chrono::steady_clock::time_point sent;
+        std::chrono::steady_clock::time_point deadline;
+        std::chrono::steady_clock::time_point lastHeard;
+        std::chrono::milliseconds idle{0};
+    };
+
+    void readLoop();
+    void handleLine(const std::string& line);
+    void handleProgress(const json& params);
+    void failAll(int code, const std::string& message);
+    void expire();
+
+    TcpSocket mSocket;
+    std::mutex mSendMutex;
+    std::thread mReader;
+    std::atomic<bool> mConnected{false};
+    std::atomic<bool> mStopping{false};
+    uint16_t mPort = 0;
+
+    std::mutex mPendingMutex;
+    std::map<int64_t, Pending> mPending;
+    int64_t mNextId = 1;
+    std::function<void()> mOnDisconnected;
+};
+} // namespace lila::link

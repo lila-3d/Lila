@@ -1,0 +1,7 @@
+{
+  "N": {"label": "Frame Selected", "action": "viewport.frameSelected"},
+  "E": {"label": "Isolate", "action": "viewport.isolate"},
+  "S": {"label": "Frame All", "action": "viewport.frameAll"},
+  "W": {"label": "Maximize Viewport", "action": "window.toggleMaximizePanel"},
+  "overflow": []
+}

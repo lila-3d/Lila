@@ -1,0 +1,22 @@
+{
+  "N": { "label": "Edge", "action": "select.edgeMode" },
+  "W": { "label": "Vertex", "action": "select.vertexMode" },
+  "S": { "label": "Face", "action": "select.faceMode" },
+  "NE": { "label": "Object Mode", "action": "select.objectMode" },
+  "E": { "label": "Frame Selected", "action": "viewport.frameSelected" },
+  "SE": { "label": "Delete", "action": "edit.delete" },
+  "SW": { "label": "Grow", "action": "select.grow" },
+  "overflow": [
+    { "label": "Group", "action": "edit.group" },
+    { "label": "Parent", "action": "edit.parent" },
+    { "label": "Unparent", "action": "edit.unparent" },
+    { "separator": true },
+    { "label": "Delete History", "action": "mesh.deleteHistory" },
+    { "separator": true },
+    { "label": "Select All", "action": "edit.selectAll" },
+    { "separator": true },
+    { "label": "Assign New Material", "action": "material.assignNew" },
+    { "label": "Assign Existing Material", "children": { "overflow": [ { "insert": "materials" } ] } },
+    { "label": "Assign Default Material", "action": "material.assignDefault" }
+  ]
+}

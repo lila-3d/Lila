@@ -1,0 +1,13 @@
+{
+  "N": { "label": "Vertex", "action": "select.vertexMode" },
+  "E": { "label": "Edge", "action": "select.edgeMode" },
+  "S": { "label": "Face", "action": "select.faceMode" },
+  "W": { "label": "Object", "action": "select.objectMode" },
+  "NE": { "label": "Select All", "action": "edit.selectAll" },
+  "SW": { "label": "Deselect", "action": "edit.deselect" },
+  "NW": { "label": "Select Hierarchy", "action": "select.hierarchy" },
+  "SE": { "label": "Grow", "action": "select.grow" },
+  "overflow": [
+    { "label": "Camera-Based Selection", "action": "select.toggleCameraBased" }
+  ]
+}

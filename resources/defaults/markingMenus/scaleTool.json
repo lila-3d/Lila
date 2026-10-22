@@ -1,0 +1,7 @@
+{
+  "N": {"label": "Edit Pivot", "action": "tool.pivotEditToggle"},
+  "E": {"label": "Reset Pivot", "action": "modify.resetPivot"},
+  "S": {"label": "Soft Select", "action": "softSelect.toggle"},
+  "W": {"label": "Center Pivot", "action": "modify.centerPivot"},
+  "overflow": []
+}

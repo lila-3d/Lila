@@ -1,0 +1,117 @@
+#pragma once
+
+#include "scene/Plug.h"
+#include "ui/ValueReset.h"
+
+#include <QElapsedTimer>
+#include <QWidget>
+
+#include <optional>
+
+class QLineEdit;
+class QTableWidget;
+class QTableWidgetItem;
+class QTimer;
+
+namespace lila::ui
+{
+/**
+ * Maya's virtual slider from outside the channel box: a middle drag in a viewport drives the channels highlighted in a
+ * visible channel box. begin() is false when none are highlighted, and the viewport then handles the drag itself.
+ */
+namespace channelSlider
+{
+bool begin(QPoint globalPos);
+void drag(QPoint globalPos, Qt::KeyboardModifiers mods);
+void end();
+bool active();
+} // namespace channelSlider
+
+/**
+ * Maya's channel box: the keyable channels of the lead selected node, edited for every selected node at once.
+ * Values accept expressions (`+=5`, `*=2`, `=10`). Left drag over channel names selects a range (Ctrl toggles, Shift
+ * extends); middle drag anywhere scrubs the highlighted channels (Ctrl slow, Shift fast); the whole drag is one undo step. A middle click on a channel name
+ * resets it (and every highlighted channel with it) to its default.
+ */
+class ChannelBox : public QWidget
+{
+    Q_OBJECT
+
+public:
+    explicit ChannelBox(QWidget* parent = nullptr);
+    ~ChannelBox() override;
+
+protected:
+    bool eventFilter(QObject* obj, QEvent* e) override;
+
+private:
+    struct Row
+    {
+        std::string attr;  // long name, or component long name ("translateX")
+        int attrIndex = -1;
+        int component = -1;
+        scene::PlugType type = scene::PlugType::Float;
+        /** An INPUTS row edits this node only; kNoNode rows edit every selected node. */
+        scene::NodeId node = scene::kNoNode;
+        bool header = false;
+    };
+
+    /** The rows the lead node needs: its channels, then INPUTS (modifiers top first, then the generator). */
+    std::vector<Row> buildRows(scene::NodeId lead) const;
+
+    void scheduleRefresh();
+    void refresh();
+    void commitCell(QTableWidgetItem* item);
+    /** Applies a value (or expression) to every selected node that has the channel. */
+    void apply(const Row& row, const QString& text);
+    std::vector<std::string> targets() const;
+    /** Flips a boolean channel on every selected node, and every other highlighted boolean channel to match. */
+    void toggleBool(int row);
+    void beginScrub(QPoint pos);
+    void scrub(QPoint pos, Qt::KeyboardModifiers mods);
+    /** Writes the scrub's current values live, at most once a frame. */
+    void applyScrub();
+    void endScrub(bool commit);
+
+    /** Restores the channels' defaults on every node they edit, as one undo step. */
+    void resetRows(const std::vector<int>& rows);
+    /** The middle-clicked row and every highlighted one with it, or just the clicked row when it isn't highlighted. */
+    std::vector<int> resetTargets(int clicked) const;
+
+    /** The highlighted channel rows, or none. */
+    std::vector<int> highlightedRows() const;
+    /** Copies the lead object's highlighted channel values, as "translateX 10" lines and as typed values. */
+    void copyValues();
+    /** Pastes copied values onto the same channels of every selected object, or one number into every highlighted channel. */
+    void pasteValues();
+
+    friend bool channelSlider::begin(QPoint);
+    friend void channelSlider::drag(QPoint, Qt::KeyboardModifiers);
+    friend void channelSlider::end();
+
+    QLineEdit* mName = nullptr;
+    QTableWidget* mTable = nullptr;
+    std::vector<Row> mRows;
+    scene::NodeId mNode = scene::kNoNode;
+    int mListener = 0;
+    bool mQueued = false;
+    bool mUpdating = false;
+
+    struct Scrub
+    {
+        QPoint start;
+        QPoint last;
+        double accum = 0.0;
+        std::vector<int> rows;
+        std::vector<std::pair<scene::PlugRef, scene::PlugValue>> saved;
+        bool moved = false;
+        bool chunk = false; // the drag's undo chunk is open
+    };
+    std::optional<Scrub> mScrub;
+    valueReset::ClickTracker mMidClick;
+    int mMidRow = -1; // the name cell a middle press landed on
+    QElapsedTimer mClock;
+    QTimer* mScrubTimer = nullptr;
+    QElapsedTimer mLastScrubApply;
+};
+} // namespace lila::ui

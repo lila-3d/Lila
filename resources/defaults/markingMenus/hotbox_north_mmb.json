@@ -1,0 +1,7 @@
+{
+  "N": {"label": "Maximize Viewport", "action": "window.toggleMaximizePanel"},
+  "E": {"label": "Expand Panels", "action": "window.expandPanels"},
+  "S": {"label": "Reset Layout", "action": "window.resetLayout"},
+  "W": {"label": "Four Views", "action": "viewport.toggleQuad"},
+  "overflow": []
+}

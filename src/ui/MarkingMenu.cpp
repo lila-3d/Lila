@@ -1,0 +1,422 @@
+#include "ui/MarkingMenu.h"
+
+#include "scene/Graph.h"
+#include "scene/Materials.h"
+
+#include "core/PrefStore.h"
+#include "ui/Actions.h"
+#include "ui/Icons.h"
+#include "ui/OptionBox.h"
+#include "ui/Theme.h"
+
+#include <QApplication>
+#include <QClipboard>
+#include <QCursor>
+#include <QKeyEvent>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QPainterPath>
+#include <QScreen>
+#include <QTimer>
+
+#include <cmath>
+
+namespace lila::ui
+{
+namespace
+{
+constexpr double kRadius = 95.0;
+constexpr double kDeadZone = 18.0;
+constexpr double kItemHeight = 24.0;
+constexpr double kSeparatorHeight = 9.0;
+constexpr double kBoxWidth = 18.0;
+const char* kSlotNames[8] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+const QPointF kDirs[8] = {{0, -1}, {0.71, -0.71}, {1, 0}, {0.71, 0.71}, {0, 1}, {-0.71, 0.71}, {-1, 0}, {-0.71, -0.71}};
+
+bool hasOptionBox(const json& action, const json& children, const json& boxAction)
+{
+    if (children.is_object())
+        return false;
+    return !boxAction.is_null() || (action.is_string() && optionBox::available(action.get<std::string>()));
+}
+
+MarkingMenu* gActive = nullptr;
+} // namespace
+
+MarkingMenu* MarkingMenu::active()
+{
+    return gActive;
+}
+
+MarkingMenu* MarkingMenu::popup(const std::string& name, Trigger trigger, Qt::MouseButton button, std::optional<QPoint> at)
+{
+    json def = PrefStore::get().merged("markingMenus/" + name);
+    if (!def.is_object() || def.empty())
+        return nullptr;
+    if (gActive)
+        gActive->close();
+    auto* mm = new MarkingMenu(def, trigger, button, at.value_or(QCursor::pos()));
+    mm->show();
+    mm->activateWindow();
+    mm->grabMouse();
+    mm->grabKeyboard();
+    return mm;
+}
+
+MarkingMenu::MarkingMenu(const json& def, Trigger trigger, Qt::MouseButton button, QPoint at)
+    : QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::NoDropShadowWindowHint),
+      mTrigger(trigger), mButton(button)
+{
+    setAttribute(Qt::WA_TranslucentBackground);
+    setAttribute(Qt::WA_DeleteOnClose);
+    setAttribute(Qt::WA_ShowWithoutActivating, false);
+    setMouseTracking(true);
+
+    QPoint cursor = at;
+    QScreen* screen = QGuiApplication::screenAt(cursor);
+    setGeometry(screen ? screen->geometry() : QRect(cursor - QPoint(600, 600), QSize(1200, 1200)));
+
+    mCursor = mapFromGlobal(cursor);
+    mLevels.push_back(buildLevel(def, mCursor));
+    gActive = this;
+}
+
+MarkingMenu::Level MarkingMenu::buildLevel(const json& def, QPointF center, std::optional<QPointF> cascade) const
+{
+    Level level;
+    level.center = center;
+    level.cascade = cascade;
+    auto toItem = [](const json& j) {
+        Item it;
+        it.label = QString::fromStdString(j.value("label", actions::labelFor(j.value("action", json()))));
+        it.action = j.value("action", json());
+        it.children = j.value("children", json());
+        it.boxAction = j.value("optionAction", json());
+        it.enabled = j.value("enabled", true) && actions::isEnabled(it.action);
+        return it;
+    };
+    for (int i = 0; i < 8; ++i)
+        if (def.contains(kSlotNames[i]) && def[kSlotNames[i]].is_object())
+            level.compass[i] = toItem(def[kSlotNames[i]]);
+    if (def.contains("overflow") && def["overflow"].is_array())
+        for (const json& j : def["overflow"])
+        {
+            if (!j.is_object())
+                continue;
+            if (j.value("separator", false))
+            {
+                // Never leading or doubled; a trailing one is dropped after the loop.
+                if (!level.overflow.empty() && !level.overflow.back().separator)
+                {
+                    Item sep;
+                    sep.separator = true;
+                    sep.enabled = false;
+                    level.overflow.push_back(std::move(sep));
+                }
+                continue;
+            }
+            // A placeholder for the scene's camera nodes, each looked through from the active view.
+            if (j.value("insert", std::string()) == "cameraNodes")
+            {
+                scene::Graph& g = scene::Graph::current();
+                for (scene::NodeId id : g.nodes())
+                    if (const scene::Node* n = g.node(id); n->type().isA("camera"))
+                        level.overflow.push_back(toItem({{"label", n->name()},
+                                                         {"action", {{"command", "lookThru"}, {"args", {{"args", {n->name()}}}}}}}));
+                continue;
+            }
+            // A placeholder for the scene's materials: each assigns, its option box opens it in the Material Editor.
+            if (j.value("insert", std::string()) == "materials")
+            {
+                std::vector<std::string> names;
+                for (const scene::Node* n : scene::materials::all(scene::Graph::current()))
+                    names.push_back(n->name());
+                std::ranges::sort(names);
+                for (const std::string& name : names)
+                    level.overflow.push_back(toItem({{"label", name},
+                                                     {"action", {{"command", "assignMaterial"}, {"args", {{"args", {name}}}}}},
+                                                     {"optionAction", {{"command", "editMaterial"}, {"args", {{"args", {name}}}}}}}));
+                if (names.empty())
+                    level.overflow.push_back(toItem({{"label", "No Materials"}, {"enabled", false}}));
+                continue;
+            }
+            level.overflow.push_back(toItem(j));
+        }
+    if (!level.overflow.empty() && level.overflow.back().separator)
+        level.overflow.pop_back();
+    layout(level);
+    return level;
+}
+
+void MarkingMenu::layout(Level& level) const
+{
+    QFontMetricsF fm(font());
+    for (int i = 0; i < 8; ++i)
+    {
+        if (!level.compass[i])
+            continue;
+        Item& it = *level.compass[i];
+        bool box = hasOptionBox(it.action, it.children, it.boxAction);
+        double w = fm.horizontalAdvance(it.label) + 22 + (it.children.is_object() ? 12 : 0) + (box ? kBoxWidth : 0);
+        QPointF p = level.center + kDirs[i] * kRadius;
+        double x = kDirs[i].x() > 0.1 ? p.x() - 12 : kDirs[i].x() < -0.1 ? p.x() - w + 12 : p.x() - w / 2;
+        it.rect = QRectF(x, p.y() - kItemHeight / 2, w, kItemHeight);
+        it.box = box ? QRectF(it.rect.right() - kBoxWidth, it.rect.top(), kBoxWidth, it.rect.height()) : QRectF();
+    }
+
+    double y = level.compass[4] ? level.compass[4]->rect.bottom() + 10 : level.center.y() + kRadius + 10;
+    double width = 0;
+    bool anyBox = false;
+    for (Item& it : level.overflow)
+    {
+        width = std::max(width, fm.horizontalAdvance(it.label) + 28 + (it.children.is_object() ? 12 : 0));
+        anyBox |= hasOptionBox(it.action, it.children, it.boxAction);
+    }
+    if (anyBox)
+        width += kBoxWidth;
+    double left = level.center.x() - width / 2;
+    if (level.cascade)
+    {
+        left = level.cascade->x();
+        // Kept on screen: a long list near the bottom moves up.
+        y = std::max(0.0, std::min(level.cascade->y(), height() - kItemHeight * double(level.overflow.size()) - 4));
+    }
+    for (Item& it : level.overflow)
+    {
+        if (it.separator)
+        {
+            it.rect = QRectF(left, y - 1, width, kSeparatorHeight);
+            y += kSeparatorHeight;
+            continue;
+        }
+        it.rect = QRectF(left, y, width, kItemHeight - 2);
+        it.box = hasOptionBox(it.action, it.children, it.boxAction) ? QRectF(it.rect.right() - kBoxWidth, y, kBoxWidth, it.rect.height())
+                                                                     : QRectF();
+        y += kItemHeight;
+    }
+}
+
+MarkingMenu::Item* MarkingMenu::highlighted()
+{
+    Level& l = mLevels.back();
+    if (mOverflow >= 0)
+        return &l.overflow[mOverflow];
+    if (mSlot >= 0 && l.compass[mSlot])
+        return &*l.compass[mSlot];
+    return nullptr;
+}
+
+void MarkingMenu::updateHighlight(QPointF pos)
+{
+    mCursor = pos;
+    mCopied = false;
+    Level& l = mLevels.back();
+    mOverflow = -1;
+    for (int i = 0; i < int(l.overflow.size()); ++i)
+        if (l.overflow[i].enabled && l.overflow[i].rect.adjusted(-4, -1, 4, 1).contains(pos))
+            mOverflow = i;
+
+    mSlot = -1;
+    mOnBox = false;
+    // An option box is picked by position, not direction, so a square in a neighbouring sector still wins.
+    for (int i = 0; i < 8 && mOverflow < 0; ++i)
+        if (l.compass[i] && l.compass[i]->enabled && l.compass[i]->box.adjusted(-2, -2, 2, 2).contains(pos))
+        {
+            mSlot = i;
+            mOnBox = true;
+        }
+    if (mOverflow >= 0)
+        mOnBox = l.overflow[mOverflow].box.adjusted(0, -1, 4, 1).contains(pos);
+    QPointF d = pos - l.center;
+    double dist = std::hypot(d.x(), d.y());
+    if (mOverflow < 0 && !mOnBox && dist > kDeadZone)
+    {
+        double angle = std::atan2(d.x(), -d.y()) * 180.0 / 3.14159265358979;
+        int sector = int(std::lround((angle < 0 ? angle + 360.0 : angle) / 45.0)) % 8;
+        if (l.compass[sector] && l.compass[sector]->enabled)
+            mSlot = sector;
+    }
+
+    // Moving past a submenu item opens it, centered on that item.
+    if (Item* it = highlighted(); it && mOverflow < 0 && it->children.is_object() && dist > kRadius + 35)
+    {
+        mLevels.push_back(buildLevel(it->children, it->rect.center()));
+        mSlot = -1;
+        mOverflow = -1;
+    }
+    // An overflow row with children cascades once the cursor reaches its arrow.
+    else if (it && mOverflow >= 0 && it->children.is_object() && pos.x() > it->rect.right() - 16)
+    {
+        QPointF origin(it->rect.right() + 2, it->rect.top());
+        mLevels.push_back(buildLevel(it->children, QPointF(it->rect.right(), it->rect.center().y()), origin));
+        mSlot = -1;
+        mOverflow = -1;
+    }
+    update();
+}
+
+bool MarkingMenu::release()
+{
+    json action, boxAction;
+    // A flick can release before any mouse move reaches the menu.
+    updateHighlight(mapFromGlobal(QCursor::pos()).toPointF());
+    bool options = false;
+    if (Item* it = highlighted())
+    {
+        action = it->action;
+        boxAction = it->boxAction;
+        options = mOnBox && !it->box.isEmpty();
+    }
+    gActive = nullptr;
+    releaseMouse();
+    releaseKeyboard();
+    close();
+    if (action.is_null() && !(options && !boxAction.is_null()))
+        return false;
+    // After closing, so the action sees the real focus widget.
+    if (options && !boxAction.is_null())
+        QTimer::singleShot(0, [boxAction] { actions::run(boxAction); });
+    else if (options)
+        QTimer::singleShot(0, [id = action.get<std::string>()] { optionBox::open(id); });
+    else
+        QTimer::singleShot(0, [action] { actions::run(action); });
+    return true;
+}
+
+bool MarkingMenu::keyReleased()
+{
+    updateHighlight(mapFromGlobal(QCursor::pos()).toPointF());
+    return highlighted() && release();
+}
+
+void MarkingMenu::mouseMoveEvent(QMouseEvent* e)
+{
+    updateHighlight(e->position());
+}
+
+void MarkingMenu::mouseReleaseEvent(QMouseEvent* e)
+{
+    if (mTrigger == Trigger::MouseButton && e->button() == mButton)
+        release();
+}
+
+void MarkingMenu::keyPressEvent(QKeyEvent* e)
+{
+    if (e->key() == Qt::Key_Control)
+    {
+        update();
+        return;
+    }
+    if (e->key() == Qt::Key_C && (e->modifiers() & Qt::ControlModifier))
+    {
+        if (Item* it = highlighted())
+        {
+            QGuiApplication::clipboard()->setText(QString::fromStdString(actions::pythonFor(it->action)));
+            mCopied = true;
+            update();
+        }
+        return;
+    }
+    if (e->key() == Qt::Key_Escape)
+    {
+        mSlot = mOverflow = -1;
+        mOnBox = false;
+        release();
+    }
+}
+
+void MarkingMenu::keyReleaseEvent(QKeyEvent* e)
+{
+    if (e->key() == Qt::Key_Control)
+        update();
+}
+
+void MarkingMenu::paintEvent(QPaintEvent*)
+{
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+
+    // Grayscale only.
+    const QColor itemBg(44, 44, 44, 235), itemBorder(95, 95, 95), text(220, 220, 220);
+    const QColor hiBg(150, 150, 150, 245), hiText(15, 15, 15), disabledText(110, 110, 110);
+
+    for (size_t li = 0; li < mLevels.size(); ++li)
+    {
+        const Level& l = mLevels[li];
+        bool top = li + 1 == mLevels.size();
+        p.setOpacity(top ? 1.0 : 0.35);
+
+        p.setPen(QPen(QColor(200, 200, 200), 1.5));
+        p.setBrush(QColor(30, 30, 30, 200));
+        p.drawEllipse(l.center, 5, 5);
+
+        auto drawItem = [&](const Item& it, bool hi, bool radial) {
+            if (it.separator)
+            {
+                p.setPen(QPen(itemBorder, 1));
+                double y = std::round(it.rect.center().y()) + 0.5;
+                p.drawLine(QPointF(it.rect.left() + 6, y), QPointF(it.rect.right() - 6, y));
+                return;
+            }
+            // On the option box the highlight moves to the square.
+            const bool boxHot = hi && top && mOnBox && !it.box.isEmpty();
+            hi = hi && !boxHot;
+            QPainterPath path;
+            path.addRoundedRect(it.rect, radial ? 4 : 2, radial ? 4 : 2);
+            p.setPen(QPen(itemBorder, 1));
+            p.setBrush(hi && top ? hiBg : itemBg);
+            p.drawPath(path);
+            p.setPen(!it.enabled ? disabledText : hi && top ? hiText : text);
+            QRectF tr = it.rect.adjusted(10, 0, -10 - (it.box.isEmpty() ? 0 : it.box.width() - 4), 0);
+            p.drawText(tr, Qt::AlignVCenter | Qt::AlignLeft, it.label);
+            if (it.children.is_object())
+                p.drawText(tr, Qt::AlignVCenter | Qt::AlignRight, QString::fromUtf8("▸"));
+            if (!it.box.isEmpty())
+            {
+                if (boxHot)
+                {
+                    p.setPen(Qt::NoPen);
+                    p.setBrush(hiBg);
+                    p.drawRoundedRect(it.box.adjusted(1, 2, -2, -2), 2, 2);
+                }
+                QRectF square = QRectF(0, 0, 12, 12);
+                square.moveCenter(it.box.center() - QPointF(1, 0));
+                icon("app-window").paint(&p, square.toRect(), Qt::AlignCenter,
+                                         !it.enabled ? QIcon::Disabled : boxHot ? QIcon::Active : QIcon::Normal);
+            }
+        };
+        for (int i = 0; i < 8; ++i)
+            if (l.compass[i])
+                drawItem(*l.compass[i], top && i == mSlot, true);
+        for (int i = 0; i < int(l.overflow.size()); ++i)
+            drawItem(l.overflow[i], top && i == mOverflow, false);
+    }
+
+    p.setOpacity(1.0);
+    p.setPen(QPen(QColor(230, 230, 230, 200), 1.5));
+    p.drawLine(mLevels.back().center, mCursor);
+
+    // Hold Ctrl over an item to see the code behind it; Ctrl+C copies it.
+    Item* hi = highlighted();
+    if (hi && (QGuiApplication::queryKeyboardModifiers() & Qt::ControlModifier))
+    {
+        QString code = QString::fromStdString(actions::pythonFor(hi->action));
+        if (code.isEmpty())
+            return;
+        code += mCopied ? "\n\n# copied" : "\n\n# Ctrl+C to copy";
+        p.setFont(monoFont());
+        QFontMetricsF fm(p.font());
+        QRectF codeRect = fm.boundingRect(QRectF(0, 0, 640, 2000), Qt::AlignLeft | Qt::TextWordWrap, code);
+        QRectF box(hi->rect.left(), hi->rect.bottom() + 8, codeRect.width() + 20, codeRect.height() + 14);
+        if (box.right() > width())
+            box.moveRight(width() - 8);
+        if (box.bottom() > height())
+            box.moveBottom(hi->rect.top() - 8);
+        p.setPen(QPen(QColor(110, 110, 110), 1));
+        p.setBrush(QColor(22, 22, 22, 245));
+        p.drawRoundedRect(box, 4, 4);
+        p.setPen(QColor(225, 225, 225));
+        p.drawText(box.adjusted(10, 7, -10, -7), Qt::AlignLeft | Qt::TextWordWrap, code);
+    }
+}
+} // namespace lila::ui

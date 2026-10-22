@@ -1,0 +1,7 @@
+{
+  "N": {"label": "Show All Rows", "action": "hotbox.showAllRows"},
+  "E": {"label": "Panel Menu Row", "action": "hotbox.togglePanelRow"},
+  "S": {"label": "Hide All Rows", "action": "hotbox.hideAllRows"},
+  "W": {"label": "Main Menu Row", "action": "hotbox.toggleMainRow"},
+  "overflow": []
+}

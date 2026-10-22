@@ -1,0 +1,14 @@
+{
+  "N": {"label": "Graph Editor", "action": "window.graphEditor"},
+  "NE": {"label": "UV Editor", "action": "window.uvEditor"},
+  "E": {"label": "Node Editor", "action": "window.nodeEditor"},
+  "SE": {"label": "Material Editor", "action": "window.materialEditor"},
+  "S": {"label": "Render Settings", "action": "window.renderSettings"},
+  "SW": {"label": "Hotkey Editor", "action": "window.hotkeyEditor"},
+  "W": {"label": "Marking Menu Editor", "action": "window.markingMenuEditor"},
+  "NW": {"label": "Terminal", "action": "window.terminal"},
+  "overflow": [
+    {"label": "API Reference", "action": "window.apiReference"},
+    {"label": "Time Slider", "action": "window.timeSlider"}
+  ]
+}

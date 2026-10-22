@@ -1,0 +1,24 @@
+# Build trees
+/build/
+/build-*/
+/out/
+/vcpkg_installed/
+/vcpkg_install.log
+*.pdb
+*.ilk
+
+# IDE and local state
+.vs/
+.idea/
+.vscode/
+*.user
+*.lnk
+.lila/
+
+# Python
+__pycache__/
+*.pyc
+
+# Unreal plugin build output
+/ue/*/Binaries/
+/ue/*/Intermediate/

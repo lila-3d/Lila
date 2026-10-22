@@ -1,0 +1,302 @@
+#include <doctest/doctest.h>
+
+#include "cmds/Command.h"
+#include "geo/Mesh.h"
+#include "geo/Ops.h"
+#include "geo/Primitives.h"
+#include "geo/Symmetry.h"
+#include "io/SceneFormats.h"
+#include "scene/Graph.h"
+#include "scene/MeshData.h"
+#include "scene/MeshNodes.h"
+
+#include <cstring>
+#include <filesystem>
+#include <random>
+
+using namespace lila;
+using geo::Index;
+using json = nlohmann::json;
+
+namespace
+{
+json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+
+geo::Mesh outMesh(const std::string& name)
+{
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    return *g.find(name)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+}
+
+bool sameBits(const geo::Mesh& a, const geo::Mesh& b)
+{
+    if (a.pointCapacity() != b.pointCapacity())
+        return false;
+    return std::memcmp(a.positions().data(), b.positions().data(), a.positions().size_bytes()) == 0;
+}
+
+/** Points scattered with full 53-bit mantissas, so any trip through float or short decimals shows. */
+void scramble(geo::Mesh& m, uint32_t seed)
+{
+    std::mt19937_64 rng(seed);
+    std::uniform_real_distribution<double> d(-1.0, 1.0);
+    for (glm::dvec3& p : m.positions())
+        p += glm::dvec3(d(rng), d(rng), d(rng)) * 3.14159265358979;
+}
+} // namespace
+
+TEST_CASE("persistent symmetry survives drift and compaction")
+{
+    geo::CubeOptions o;
+    o.subdivX = 4;
+    o.subdivY = 3;
+    geo::Mesh m = geo::makeCube(o);
+    const double tol = 1e-3;
+    geo::SymmetrySync sync;
+    geo::SymmetryMap first = geo::SymmetryMap::persistent(m, 0, tol, &sync);
+    CHECK(sync.unmatched == 0);
+    CHECK(sync.byPosition == m.numPoints());
+    CHECK(m.pointAttrs().has(geo::symmetryLayerName(0)));
+
+    // Drift the negative side a thousand times past the matching tolerance.
+    std::vector<std::pair<glm::dvec3, glm::dvec3>> pairs;
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        if (first.side(p) < 0)
+            m.setPosition(p, m.position(p) + glm::dvec3(0.7, -1.3, 2.1));
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        if (first.side(p) > 0)
+            pairs.push_back({m.position(p), m.position(first.mirrorPoint(p))});
+    CHECK(geo::SymmetryMap::build(m, geo::axisPlane(0), tol).unmatchedCount() > 0);
+
+    // Renumber the points: delete the first one and compact. Its partner is left without one.
+    geo::deletePoints(m, std::vector<Index>{0});
+    m.compact();
+    geo::SymmetryMap again = geo::SymmetryMap::persistent(m, 0, tol, &sync);
+    CHECK(sync.byPosition == 0);
+    CHECK(sync.topological == 0);
+    CHECK(sync.unmatched == 1);
+    size_t found = 0;
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        if (again.side(p) > 0)
+            for (auto& [a, b] : pairs)
+                if (a == m.position(p))
+                {
+                    CHECK(m.position(again.mirrorPoint(p)) == b);
+                    ++found;
+                }
+    CHECK(found > 0);
+
+    again.symmetrize(m, 1);
+    geo::SymmetryCheck c = again.check(m);
+    CHECK(c.maxAsymmetry == 0.0);
+    CHECK(c.unmatched == 1);
+}
+
+TEST_CASE("symmetric ops pair the points they create, however far the old ones drifted")
+{
+    geo::Mesh m = geo::makeCube({});
+    geo::SymmetryMap map = geo::SymmetryMap::persistent(m, 0, 1e-3);
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        if (map.side(p) < 0)
+            m.setPosition(p, m.position(p) + glm::dvec3(-0.5, 0.25, 0.0));
+    map = geo::SymmetryMap::persistent(m, 0, 1e-3);
+
+    std::vector<Index> side;
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f) && m.faceNormal(f).x > 0.5)
+            side.push_back(f);
+    REQUIRE(side.size() == 1);
+    const Index before = m.pointCapacity();
+    geo::ExtrudeOptions eo;
+    eo.offset = 10.0;
+    eo.symmetry = &map;
+    geo::extrudeFaces(m, side, eo);
+    CHECK(m.pointCapacity() == before + 8);
+    for (Index p = before; p < m.pointCapacity(); ++p)
+        m.pointAttrs().get<int32_t>(geo::symmetryLayerName(0))[p] = 0;
+    geo::SymmetrySync sync;
+    geo::SymmetryMap after = geo::SymmetryMap::persistent(m, 0, 1e-3, &sync);
+    CHECK(sync.topological == 8);
+    CHECK(sync.unmatched == 0);
+}
+
+TEST_CASE("mesh storage round-trips doubles bit-exactly")
+{
+    geo::Mesh m = geo::makeCube({.subdivX = 6, .subdivY = 6, .subdivZ = 6});
+    scramble(m, 7);
+    m.positions()[0] = glm::dvec3(1e-300, -1.7976931348623157e308, 4.9406564584124654e-324);
+    m.positions()[1] = glm::dvec3(0.1, 1.0 / 3.0, -2.0 / 7.0);
+    json doc = {{"lila", 2}, {"nodes", json::array({{{"name", "M"}, {"type", "mesh"}, {"attrs", {{"inMesh", scene::meshToJson(m)}}}}})}};
+
+    std::string bin = io::encodeBinary(doc);
+    geo::Mesh fromBin = *scene::meshFromJson(io::decodeBinary(bin, nullptr)["nodes"][0]["attrs"]["inMesh"]);
+    CHECK(sameBits(m, fromBin));
+
+    std::string text = io::encodeAscii(doc);
+    geo::Mesh fromText = *scene::meshFromJson(io::decodeAscii(text, nullptr)["nodes"][0]["attrs"]["inMesh"]);
+    CHECK(sameBits(m, fromText));
+
+    geo::Mesh fromJson = *scene::meshFromJson(json::parse(scene::meshToJson(m).dump()));
+    CHECK(sameBits(m, fromJson));
+}
+
+TEST_CASE("scene save, load and undo keep positions bit-exact")
+{
+    run("newScene");
+    std::string cube = run("polyCube", {{"subdivisionsX", 3}})[0];
+    std::mt19937_64 rng(11);
+    std::uniform_real_distribution<double> d(-1.0, 1.0);
+    for (int v = 0; v < 16; ++v)
+    {
+        run("selectComponents", {{"args", {cube}}, {"vertices", {v}}});
+        run("moveComponents", {{"by", {d(rng), d(rng), d(rng)}}});
+    }
+    geo::Mesh edited = outMesh(cube);
+    run("selectComponents", {{"args", {cube}}, {"vertices", {3}}});
+    run("moveComponents", {{"by", {1.0 / 3.0, 0, 0}}});
+    run("undo");
+    CHECK(sameBits(edited, outMesh(cube)));
+
+    auto dir = std::filesystem::temp_directory_path() / "lila_tests";
+    std::filesystem::create_directories(dir);
+    for (const char* ext : {".lila", ".lilaa"})
+    {
+        std::string path = (dir / (std::string("symmetry_bits") + ext)).string();
+        run("saveScene", {{"args", {path}}});
+        run("newScene");
+        run("openScene", {{"args", {path}}});
+        CHECK(sameBits(edited, outMesh(cube)));
+    }
+}
+
+TEST_CASE("1000 random symmetric edits stay exactly symmetric")
+{
+    run("newScene");
+    std::string cube = run("polyCube", {{"subdivisionsX", 4}, {"subdivisionsY", 2}})[0];
+    run("setSymmetry", {{"args", {cube}}, {"axis", "x"}});
+    std::mt19937 rng(1234);
+    auto pick = [&](int n) { return std::uniform_int_distribution<int>(0, n - 1)(rng); };
+    std::uniform_real_distribution<double> d(-1.0, 1.0);
+    for (int i = 0; i < 1000; ++i)
+    {
+        json info = run("meshInfo", {{"args", {cube}}});
+        const int points = info["points"].get<int>(), faceCount = info["faces"].get<int>();
+        const int op = pick(20);
+        if (op == 0 && faceCount < 400)
+        {
+            run("selectComponents", {{"args", {cube}}, {"faces", {pick(faceCount)}}});
+            run("polyExtrude", {{"thickness", 2.0 + d(rng)}});
+        }
+        else if (op == 1 && faceCount < 400)
+        {
+            run("selectComponents", {{"args", {cube}}, {"faces", {pick(faceCount)}}});
+            run("polyInset", {{"thickness", 1.0}});
+        }
+        else
+        {
+            json verts = json::array();
+            for (int k = 0, n = 1 + pick(4); k < n; ++k)
+                verts.push_back(pick(points));
+            run("selectComponents", {{"args", {cube}}, {"vertices", verts}});
+            if (op % 3 == 0)
+                run("moveComponents", {{"by", {d(rng) * 3.0, d(rng) * 3.0, d(rng) * 3.0}}});
+            else if (op % 3 == 1)
+                run("rotateComponents", {{"by", {d(rng) * 20.0, d(rng) * 20.0, d(rng) * 20.0}}});
+            else
+                run("scaleComponents", {{"by", {1.0 + d(rng) * 0.1, 1.0 + d(rng) * 0.1, 1.0 + d(rng) * 0.1}}});
+        }
+    }
+    json c = run("symmetryCheck", {{"args", {cube}}})[cube];
+    CHECK(c["maxAsymmetry"].get<double>() == 0.0);
+    CHECK(c["unmatched"].get<int>() == 0);
+    CHECK(c["withoutStoredPartner"].get<int>() == 0);
+}
+
+TEST_CASE("drift with symmetry off keeps the pairs; symmetrize repairs it")
+{
+    run("newScene");
+    std::string cube = run("polyCube", {{"subdivisionsX", 2}})[0];
+    run("setSymmetry", {{"args", {cube}}, {"axis", "x"}});
+    run("selectComponents", {{"args", {cube}}, {"vertices", {0}}});
+    run("moveComponents", {{"by", {0, 1, 0}}}); // stores the pairs
+    run("setSymmetry", {{"args", {cube}}, {"axis", "off"}});
+    for (int v = 0; v < 6; ++v)
+    {
+        run("selectComponents", {{"args", {cube}}, {"vertices", {v}}});
+        run("moveComponents", {{"by", {0.5 + v, -0.25, 0.75}}});
+    }
+    // A topology edit with symmetry off renumbers points; the pairs ride along.
+    run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
+    run("polyExtrude", {{"thickness", 3}});
+    run("setSymmetry", {{"args", {cube}}, {"axis", "x"}});
+
+    json c = run("symmetryCheck", {{"args", {cube}}})[cube];
+    CHECK(c["maxAsymmetry"].get<double>() > 0.1);
+    run("symmetrize", {{"args", {cube}}, {"side", "negative"}});
+    c = run("symmetryCheck", {{"args", {cube}}})[cube];
+    CHECK(c["maxAsymmetry"].get<double>() == 0.0);
+}
+
+TEST_CASE("polyBevel with symmetry on keeps the pairs at corners")
+{
+    for (int segments = 1; segments <= 3; ++segments)
+    {
+        CAPTURE(segments);
+        run("newScene");
+        std::string cube = run("polyCube", {{"subdivisionsX", 2}})[0];
+        run("setSymmetry", {{"args", {cube}}, {"axis", "x"}});
+        const int before = run("meshInfo", {{"args", {cube}}})["faces"].get<int>();
+        // Every face's border in turn: corners of three bevelled edges, terminal edges and edges across the plane.
+        for (int f : {0, 3})
+        {
+            run("selectComponents", {{"args", {cube}}, {"faces", {f}}});
+            run("polyBevel", {{"offset", 5.0}, {"segments", segments}});
+            json c = run("symmetryCheck", {{"args", {cube}}})[cube];
+            CHECK(c["maxAsymmetry"].get<double>() < 1e-9);
+            CHECK(c["unmatched"].get<int>() == 0);
+            run("undo");
+            CHECK(run("meshInfo", {{"args", {cube}}})["faces"].get<int>() == before);
+        }
+    }
+}
+
+TEST_CASE("toggleSymmetry turns a mixed selection on, then all off, undoably")
+{
+    run("newScene");
+    std::string a = run("polyCube")[0], b = run("polyCube")[0];
+    std::string group = run("createNode", {{"args", {"transform"}}});
+    scene::Graph& g = scene::Graph::current();
+    auto axisOf = [&](const std::string& n) { return g.find(n)->as<int64_t>(scene::MeshNode::kSymmetry); };
+
+    run("setSymmetry", {{"args", {a}}, {"axis", "y"}});
+    run("select", {{"args", {a, b, group}}});
+    scene::SymmetryState st = scene::symmetryState(g, g.selection());
+    CHECK(st.meshes == 2);
+    CHECK(st.on == 1);
+    CHECK(st.axis == 1);
+
+    // Partial: everything goes on, on the axis already in use.
+    CHECK(run("toggleSymmetry") == "y");
+    CHECK(axisOf(a) == 2);
+    CHECK(axisOf(b) == 2);
+    CHECK(run("toggleSymmetry") == "off");
+    CHECK(axisOf(a) == 0);
+    CHECK(axisOf(b) == 0);
+    run("undo");
+    CHECK(axisOf(b) == 2);
+
+    // An explicit axis different from the current one switches instead of turning off.
+    CHECK(run("toggleSymmetry", {{"axis", "z"}}) == "z");
+    CHECK(scene::symmetryState(g, g.selection()).axis == 2);
+    CHECK(run("toggleSymmetry", {{"axis", "z"}}) == "off");
+
+    run("setSymmetry", {{"args", {a}}, {"axis", "x"}});
+    run("setSymmetry", {{"args", {b}}, {"axis", "z"}});
+    st = scene::symmetryState(g, g.selection());
+    CHECK(st.on == 2);
+    CHECK(st.axis == -1);
+
+    run("select", {{"args", {group}}});
+    CHECK_THROWS(run("toggleSymmetry"));
+}

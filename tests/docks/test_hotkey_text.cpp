@@ -1,0 +1,186 @@
+#include <doctest/doctest.h>
+
+#include "ui/Actions.h"
+#include "ui/HotkeyBindings.h"
+#include "core/PrefStore.h"
+#include "ui/Hotkeys.h"
+
+#include <QApplication>
+#include <QElapsedTimer>
+#include <QKeyEvent>
+#include <QWidget>
+
+#include <string>
+#include <vector>
+
+using namespace lila::ui;
+
+TEST_CASE("hotkey text spelled with a shifted symbol parses to Shift plus the key under it")
+{
+    auto grow = hotkeys::parse("Shift+.");
+    REQUIRE(grow);
+    CHECK(grow->key() == Qt::Key_Period);
+    CHECK(grow->keyboardModifiers() == Qt::ShiftModifier);
+    CHECK(hotkeys::parse("Shift+>") == grow);
+    CHECK(hotkeys::parse(">") == grow);
+    CHECK(hotkeys::parse("Shift+<") == hotkeys::parse("Shift+,"));
+    auto open = hotkeys::parse("Ctrl+Shift+R");
+    REQUIRE(open);
+    CHECK(open->keyboardModifiers() == (Qt::ControlModifier | Qt::ShiftModifier));
+    CHECK(open->key() == Qt::Key_R);
+    auto undo = hotkeys::parse("[");
+    REQUIRE(undo);
+    CHECK(undo->key() == Qt::Key_BracketLeft);
+    CHECK(undo->keyboardModifiers() == Qt::NoModifier);
+    CHECK(hotkeys::parse("]")->key() == Qt::Key_BracketRight);
+}
+
+namespace
+{
+std::vector<std::string>& ranActions()
+{
+    static std::vector<std::string> ran;
+    return ran;
+}
+
+void pressAndRelease(QWidget* w, Qt::Key key, Qt::KeyboardModifiers mods, quint32 scan)
+{
+    QKeyEvent down(QEvent::KeyPress, key, mods, scan, 0, 0);
+    QApplication::sendEvent(w, &down);
+    QKeyEvent up(QEvent::KeyRelease, key, mods, scan, 0, 0);
+    QApplication::sendEvent(w, &up);
+}
+} // namespace
+
+TEST_CASE("Shift+backtick and Shift+1 pick selection modes without the floating shelf on backtick")
+{
+    for (const char* id : {"select.objectMode", "select.vertexMode", "shelf.floatingOpen", "shelf.floatingRelease"})
+        actions::add({.id = id, .label = id, .category = "Test", .run = [id] { ranActions().push_back(id); }, .doc = "Test stand-in."});
+    QWidget w;
+    w.show();
+    // The filter acts on an event's first receiver only; a grab makes that this widget without window activation.
+    w.grabKeyboard();
+    Hotkeys::get().install();
+
+    // Windows reports Shift+` as Key_AsciiTilde with the backtick's scancode; elsewhere only the Qt key is known.
+    for (quint32 scan : {0x29u, 0u})
+    {
+        ranActions().clear();
+        pressAndRelease(&w, Qt::Key_AsciiTilde, Qt::ShiftModifier, scan);
+        CHECK(ranActions() == std::vector<std::string>{"select.objectMode"});
+        ranActions().clear();
+        pressAndRelease(&w, Qt::Key_QuoteLeft, Qt::NoModifier, scan);
+        CHECK(ranActions() == std::vector<std::string>{"shelf.floatingOpen", "shelf.floatingRelease"});
+    }
+    ranActions().clear();
+    pressAndRelease(&w, Qt::Key_Exclam, Qt::ShiftModifier, 0x02);
+    CHECK(ranActions() == std::vector<std::string>{"select.vertexMode"});
+    w.releaseKeyboard();
+    qApp->removeEventFilter(&Hotkeys::get());
+}
+
+TEST_CASE("held undo repeats on the pref cadence, ignoring key autorepeat, and a tap undoes once")
+{
+    int undos = 0;
+    actions::add({.id = "edit.undo", .label = "Undo", .category = "Test", .run = [&undos] { ++undos; }, .doc = "Test stand-in."});
+    lila::PrefStore::get().set("general", "/undo/repeatDelayMs", 100);
+    lila::PrefStore::get().set("general", "/undo/repeatIntervalMs", 50);
+    QWidget w;
+    w.show();
+    w.grabKeyboard();
+    Hotkeys::get().install();
+    auto pump = [](int ms) {
+        QElapsedTimer t;
+        t.start();
+        while (t.elapsed() < ms)
+            QApplication::processEvents(QEventLoop::AllEvents, 5);
+    };
+
+    pressAndRelease(&w, Qt::Key_Z, Qt::ControlModifier, 0x2C);
+    pump(250);
+    CHECK(undos == 1);
+
+    undos = 0;
+    QKeyEvent down(QEvent::KeyPress, Qt::Key_Z, Qt::NoModifier, 0x2C, 0, 0);
+    QApplication::sendEvent(&w, &down);
+    QElapsedTimer held;
+    held.start();
+    while (held.elapsed() < 380)
+    {
+        QKeyEvent again(QEvent::KeyPress, Qt::Key_Z, Qt::NoModifier, 0x2C, 0, 0, QString(), true);
+        QApplication::sendEvent(&w, &again);
+        pump(10);
+    }
+    QKeyEvent up(QEvent::KeyRelease, Qt::Key_Z, Qt::NoModifier, 0x2C, 0, 0);
+    QApplication::sendEvent(&w, &up);
+    int atRelease = undos;
+    pump(200);
+    // One on press, then repeats from 100 ms every 50 ms until 380 ms: about 6, never the ~38 autorepeats.
+    CHECK(atRelease >= 4);
+    CHECK(atRelease <= 8);
+    CHECK(undos == atRelease);
+
+    w.releaseKeyboard();
+    qApp->removeEventFilter(&Hotkeys::get());
+}
+
+TEST_CASE("Shift+F1 to Shift+F5 switch to the built-in layouts in order")
+{
+    const char* ids[] = {"window.layout.modeling", "window.layout.uvEditing", "window.layout.rigging", "window.layout.animation",
+                         "window.layout.scripting"};
+    for (const char* id : ids)
+        actions::add({.id = id, .label = id, .category = "Test", .run = [id] { ranActions().push_back(id); }, .doc = "Test stand-in."});
+    QWidget w;
+    w.show();
+    w.grabKeyboard();
+    Hotkeys::get().install();
+    for (int i = 0; i < 5; ++i)
+    {
+        ranActions().clear();
+        pressAndRelease(&w, Qt::Key(Qt::Key_F1 + i), Qt::ShiftModifier, 0);
+        CHECK(ranActions() == std::vector<std::string>{ids[i]});
+    }
+    w.releaseKeyboard();
+    qApp->removeEventFilter(&Hotkeys::get());
+}
+
+TEST_CASE("F10 resets the layout and F1 opens the cheat sheet on press, closing it on release")
+{
+    for (const char* id : {"window.resetLayout", "select.edgeMode", "help.hotkeyCheatSheet", "help.hotkeyCheatSheetClose"})
+        actions::add({.id = id, .label = id, .category = "Test", .run = [id] { ranActions().push_back(id); }, .doc = "Test stand-in."});
+    QWidget w;
+    w.show();
+    w.grabKeyboard();
+    Hotkeys::get().install();
+    ranActions().clear();
+    pressAndRelease(&w, Qt::Key_F10, Qt::NoModifier, 0);
+    CHECK(ranActions() == std::vector<std::string>{"window.resetLayout"});
+
+    ranActions().clear();
+    QKeyEvent down(QEvent::KeyPress, Qt::Key_F1, Qt::NoModifier, 0, 0, 0);
+    QApplication::sendEvent(&w, &down);
+    CHECK(ranActions() == std::vector<std::string>{"help.hotkeyCheatSheet"});
+    QKeyEvent up(QEvent::KeyRelease, Qt::Key_F1, Qt::NoModifier, 0, 0, 0);
+    QApplication::sendEvent(&w, &up);
+    CHECK(ranActions() == std::vector<std::string>{"help.hotkeyCheatSheet", "help.hotkeyCheatSheetClose"});
+    w.releaseKeyboard();
+    qApp->removeEventFilter(&Hotkeys::get());
+}
+
+TEST_CASE("a disabled action is skipped by run and reported by isEnabled")
+{
+    bool on = false;
+    int runs = 0;
+    actions::add({.id = "test.gated", .label = "Gated", .category = "Test", .run = [&runs] { ++runs; }, .doc = "Test stand-in."});
+    CHECK(actions::isEnabled(nlohmann::json("test.gated")));
+    actions::setEnabledWhen("test.gated", [&on] { return on; });
+    CHECK_FALSE(actions::isEnabled(nlohmann::json("test.gated")));
+    CHECK_FALSE(actions::run(nlohmann::json("test.gated")));
+    CHECK(runs == 0);
+    on = true;
+    CHECK(actions::isEnabled(nlohmann::json("test.gated")));
+    CHECK(actions::run(nlohmann::json("test.gated")));
+    CHECK(runs == 1);
+    CHECK(actions::isEnabled(nlohmann::json{{"command", "anything"}}));
+    actions::setEnabledWhen("test.gated", nullptr);
+}

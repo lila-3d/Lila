@@ -1,0 +1,16 @@
+{
+  "N": {"label": "Perspective View", "action": "viewport.view.persp"},
+  "E": {"label": "Side View", "action": "viewport.view.right"},
+  "S": {"label": "Front View", "action": "viewport.view.front"},
+  "W": {"label": "Top View", "action": "viewport.view.top"},
+  "NW": {"label": "Left View", "action": "viewport.view.left"},
+  "SW": {"label": "Back View", "action": "viewport.view.back"},
+  "SE": {"label": "Bottom View", "action": "viewport.view.bottom"},
+  "overflow": [
+    {"label": "Scene Cameras", "insert": "cameraNodes"},
+    {"separator": true},
+    {"label": "Look Through Selected", "action": "viewport.lookThroughSelected"},
+    {"separator": true},
+    {"label": "Four Views", "action": "viewport.toggleQuad"}
+  ]
+}

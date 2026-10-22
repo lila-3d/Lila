@@ -1,0 +1,1762 @@
+#include "fbx/Fbx.h"
+
+#include "core/Profile.h"
+#include "fbx/FbxAxes.h"
+#include "fbx/FbxBinary.h"
+#include "geo/ColorSets.h"
+#include "geo/Mesh.h"
+#include "geo/Normals.h"
+#include "geo/Triangulate.h"
+#include "scene/Anim.h"
+#include "scene/Deformers.h"
+#include "scene/Graph.h"
+#include "scene/MeshNodes.h"
+#include "scene/Modifiers.h"
+#include "scene/Rig.h"
+#include "scene/Skin.h"
+
+#include <glm/gtx/matrix_decompose.hpp>
+
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstring>
+#include <format>
+#include <fstream>
+#include <map>
+#include <set>
+#include <unordered_map>
+
+namespace lila::fbx
+{
+namespace anim = scene::anim;
+
+namespace
+{
+using geo::Index;
+using geo::kInvalid;
+using bin::Record;
+
+/** GlobalSettings axis declaration: axis index 0/1/2 and sign for up, front and coord (right). */
+struct AxisDecl
+{
+    int up, upSign, front, frontSign, coord, coordSign;
+};
+
+constexpr AxisDecl kZUp{2, 1, 1, -1, 0, 1};
+constexpr AxisDecl kYUp{1, 1, 2, 1, 0, 1};
+
+bool fileIsZUp(AxisProfile p, math::UpAxis up)
+{
+    return p == AxisProfile::Ue5 || (p == AxisProfile::Generic && up == math::UpAxis::Z);
+}
+
+struct Trs
+{
+    glm::dvec3 t{0.0}, r{0.0}, s{1.0};
+};
+
+Trs decompose(const glm::dmat4& m)
+{
+    Trs out;
+    glm::dquat q;
+    glm::dvec3 skew;
+    glm::dvec4 persp;
+    if (!glm::decompose(m, out.s, q, out.t, skew, persp))
+        return out;
+    out.r = scene::matrixToEuler(glm::mat3_cast(q), scene::RotateOrder::XYZ);
+    return out;
+}
+
+/** TRS of a file-space local matrix with its pre-rotation taken out, Euler angles near ref. */
+Trs fileTrs(const glm::dmat4& local, const glm::dmat3& pre, scene::RotateOrder order, const glm::dvec3& ref)
+{
+    Trs out;
+    glm::dquat q;
+    glm::dvec3 skew;
+    glm::dvec4 persp;
+    if (!glm::decompose(local, out.s, q, out.t, skew, persp))
+        return out;
+    out.r = eulerNear(glm::transpose(pre) * glm::dmat3(glm::mat3_cast(q)), order, ref);
+    return out;
+}
+
+glm::dvec3 cleanVec(glm::dvec3 v)
+{
+    for (int i = 0; i < 3; ++i)
+        if (std::abs(v[i]) < 1e-9)
+            v[i] = 0.0;
+    return v;
+}
+
+bool nearMat(const glm::dmat4& a, const glm::dmat4& b, double eps = 1e-7)
+{
+    for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 4; ++r)
+            if (std::abs(a[c][r] - b[c][r]) > eps * std::max(1.0, std::abs(b[c][r])))
+                return false;
+    return true;
+}
+
+/** True when the node's local matrix is T * pre * R * S of its channels: no pivots, no segment scale compensation. */
+bool plainChannels(const scene::Node& n)
+{
+    using scene::Transform;
+    for (int a : {Transform::kRotatePivot, Transform::kScalePivot, Transform::kRotatePivotTranslate, Transform::kScalePivotTranslate})
+        if (glm::length(n.as<glm::dvec3>(a)) > 1e-9)
+            return false;
+    if (scene::rig::isJoint(n) && n.as<bool>(scene::Joint::kSegmentScaleCompensate))
+        return false;
+    return true;
+}
+
+std::vector<double> flat(const glm::dmat4& m)
+{
+    std::vector<double> out(16);
+    for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 4; ++r)
+            out[size_t(c * 4 + r)] = m[c][r];
+    return out;
+}
+
+constexpr int64_t kKTimeSecond = 46186158000;
+
+int64_t ktime(double seconds) { return int64_t(std::llround(seconds * double(kKTimeSecond))); }
+
+/** FBX TimeMode for a frame rate, or 14 (custom). */
+int timeMode(double fps)
+{
+    struct Mode
+    {
+        double fps;
+        int mode;
+    };
+    static constexpr Mode kModes[] = {{120, 1}, {100, 2},  {60, 3},    {50, 4},  {48, 5},     {30, 6},     {29.97, 9},
+                                      {25, 10}, {24, 11},  {1000, 12}, {23.976, 13}, {96, 15}, {72, 16}, {59.94, 17}, {119.88, 18}};
+    for (const Mode& m : kModes)
+        if (std::abs(fps - m.fps) < 1e-3)
+            return m.mode;
+    return 14;
+}
+
+void p3(Record& props, std::string_view name, std::string_view type, std::string_view label, std::string_view flags,
+        const glm::dvec3& v)
+{
+    props.addP(name, type, label, flags).f64(v.x).f64(v.y).f64(v.z);
+}
+
+void pInt(Record& props, std::string_view name, int32_t v) { props.addP(name, "int", "Integer", "").i32(v); }
+void pEnum(Record& props, std::string_view name, int32_t v) { props.addP(name, "enum", "", "").i32(v); }
+void pBool(Record& props, std::string_view name, bool v) { props.addP(name, "bool", "", "").i32(v ? 1 : 0); }
+void pDouble(Record& props, std::string_view name, double v) { props.addP(name, "double", "Number", "").f64(v); }
+void pString(Record& props, std::string_view name, std::string_view v) { props.addP(name, "KString", "", "").str(v); }
+
+/** Geometry arrays for one exported mesh, already in file space. */
+struct Geometry
+{
+    std::vector<double> vertices;
+    std::vector<int32_t> polygonVertexIndex;
+    std::vector<int32_t> edges;
+    std::vector<int32_t> smoothing;
+    std::vector<double> normals;
+    std::vector<double> tangents, binormals;
+    struct Uv
+    {
+        std::string name;
+        std::vector<double> values;
+        std::vector<int32_t> index;
+    };
+    std::vector<Uv> uvs;
+    /** Color sets in order; the first is layer 0, the vertex color Unreal reads. */
+    std::vector<Uv> colors;
+    std::vector<int32_t> materials;   // per polygon, index into slots
+    std::vector<std::string> slots;   // material names in connection order
+};
+
+/** Corners of a face edge between consecutive polygon corners a then b, or kInvalid for a triangulation diagonal. */
+Index polygonEdge(const geo::Mesh& m, Index a, Index b)
+{
+    if (m.cornerNext(a) == b)
+        return m.cornerEdge(a);
+    if (m.cornerNext(b) == a)
+        return m.cornerEdge(b);
+    return kInvalid;
+}
+
+/** Hard where the corner normals of the edge's two faces disagree; for meshes without a "hard" layer. */
+bool normalsSplit(const geo::Mesh& m, Index e, std::span<const glm::vec3> normals)
+{
+    Index c0 = m.edgeCorner(e);
+    if (c0 == kInvalid)
+        return false;
+    Index c1 = m.cornerRadial(c0);
+    if (c1 == c0)
+        return false;
+    if (m.cornerRadial(c1) != c0)
+        return true;
+    auto at = [&](Index c, Index p) { return m.cornerPoint(c) == p ? c : m.cornerNext(c); };
+    for (int i = 0; i < 2; ++i)
+    {
+        Index p = m.edgePoint(e, i);
+        if (glm::dot(normals[at(c0, p)], normals[at(c1, p)]) < 0.9999f)
+            return true;
+    }
+    return false;
+}
+
+template <class T> struct BitsHash
+{
+    size_t operator()(const T& v) const
+    {
+        uint64_t h = 1469598103934665603ull;
+        const auto* b = reinterpret_cast<const unsigned char*>(&v);
+        for (size_t i = 0; i < sizeof(T); ++i)
+            h = (h ^ b[i]) * 1099511628211ull;
+        return size_t(h);
+    }
+};
+
+template <class T> struct BitsEq
+{
+    bool operator()(const T& a, const T& b) const { return std::memcmp(&a, &b, sizeof(T)) == 0; }
+};
+
+std::string slotName(const std::vector<std::string>& names, int32_t id)
+{
+    if (id >= 0 && size_t(id) < names.size() && !names[size_t(id)].empty())
+        return names[size_t(id)];
+    return names.empty() && id == 0 ? std::string("Default") : "Material" + std::to_string(id);
+}
+
+Geometry buildGeometry(const geo::Mesh& m, const glm::dmat4& toFile, const ExportOptions& opts)
+{
+    LILA_ZONE();
+
+    Geometry g;
+    const glm::dmat3 lin(toFile);
+    const glm::dmat3 normalMat = glm::inverse(glm::transpose(lin));
+    const bool mirrored = glm::determinant(lin) < 0.0;
+
+    std::vector<int32_t> pointIndex(m.pointCapacity(), -1);
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+    {
+        if (!m.pointValid(p))
+            continue;
+        pointIndex[p] = int32_t(g.vertices.size() / 3);
+        glm::dvec3 v = glm::dvec3(toFile * glm::dvec4(m.position(p), 1.0));
+        g.vertices.insert(g.vertices.end(), {v.x, v.y, v.z});
+    }
+
+    std::vector<glm::vec3> computedNormals;
+    std::span<const glm::vec3> normals = m.cornerAttrs().get<glm::vec3>(geo::attr::kNormal);
+    if (normals.size() != m.cornerCapacity())
+    {
+        computedNormals = geo::cornerNormals(m);
+        normals = computedNormals;
+    }
+
+    geo::Triangulation tris;
+    const bool wantTangents = opts.tangents && m.cornerAttrs().get<glm::vec2>(geo::attr::uvName(0)).size() == m.cornerCapacity();
+    if (opts.triangulate || wantTangents)
+        tris = geo::triangulate(m);
+
+    // Polygons as runs of source corners.
+    std::vector<Index> corners;
+    std::vector<Index> polyFace;
+    std::vector<uint32_t> polyStart;
+    if (opts.triangulate)
+    {
+        corners = tris.corners;
+        polyFace = tris.faces;
+        for (Index t = 0; t < tris.triangleCount(); ++t)
+            polyStart.push_back(t * 3);
+    }
+    else
+    {
+        for (Index f = 0; f < m.faceCapacity(); ++f)
+        {
+            if (!m.faceValid(f))
+                continue;
+            polyStart.push_back(uint32_t(corners.size()));
+            polyFace.push_back(f);
+            m.forEachFaceCorner(f, [&](Index c) { corners.push_back(c); });
+        }
+    }
+    polyStart.push_back(uint32_t(corners.size()));
+    if (mirrored)
+        for (size_t i = 0; i + 1 < polyStart.size(); ++i)
+            std::reverse(corners.begin() + polyStart[i], corners.begin() + polyStart[i + 1]);
+
+    const size_t polyCount = polyStart.size() - 1;
+    g.polygonVertexIndex.resize(corners.size());
+    for (size_t i = 0; i < polyCount; ++i)
+        for (uint32_t k = polyStart[i]; k < polyStart[i + 1]; ++k)
+        {
+            int32_t idx = pointIndex[m.cornerPoint(corners[k])];
+            g.polygonVertexIndex[k] = k + 1 == polyStart[i + 1] ? ~idx : idx;
+        }
+
+    // One Edges entry per unique point pair, pointing at the polygon vertex that starts it.
+    std::span<const bool> hard = m.edgeAttrs().get<bool>(geo::attr::kHard);
+    std::unordered_map<uint64_t, int32_t> seen;
+    seen.reserve(corners.size());
+    for (size_t i = 0; i < polyCount; ++i)
+        for (uint32_t k = polyStart[i]; k < polyStart[i + 1]; ++k)
+        {
+            Index a = corners[k];
+            Index b = corners[k + 1 == polyStart[i + 1] ? polyStart[i] : k + 1];
+            uint32_t pa = uint32_t(pointIndex[m.cornerPoint(a)]), pb = uint32_t(pointIndex[m.cornerPoint(b)]);
+            uint64_t key = (uint64_t(std::min(pa, pb)) << 32) | std::max(pa, pb);
+            if (!seen.emplace(key, int32_t(g.edges.size())).second)
+                continue;
+            g.edges.push_back(int32_t(k));
+            Index e = polygonEdge(m, a, b);
+            bool isHard = e != kInvalid && (hard.empty() ? normalsSplit(m, e, normals) : hard[e]);
+            g.smoothing.push_back(isHard ? 0 : 1);
+        }
+
+    g.normals.reserve(corners.size() * 3);
+    for (Index c : corners)
+    {
+        glm::dvec3 n = glm::normalize(normalMat * glm::dvec3(normals[c]));
+        g.normals.insert(g.normals.end(), {n.x, n.y, n.z});
+    }
+
+    if (wantTangents)
+    {
+        std::vector<glm::vec4> tan = geo::cornerTangents(m, tris, normals);
+        if (tan.size() == m.cornerCapacity())
+        {
+            g.tangents.reserve(corners.size() * 3);
+            g.binormals.reserve(corners.size() * 3);
+            for (size_t k = 0; k < corners.size(); ++k)
+            {
+                const glm::vec4& t4 = tan[corners[k]];
+                glm::dvec3 n(g.normals[k * 3], g.normals[k * 3 + 1], g.normals[k * 3 + 2]);
+                glm::dvec3 t = lin * glm::dvec3(t4);
+                t = glm::length(t) > 0.0 ? glm::normalize(t) : t;
+                double w = (t4.w < 0.0f ? -1.0 : 1.0) * (mirrored ? -1.0 : 1.0);
+                glm::dvec3 b = w * glm::cross(n, t);
+                g.tangents.insert(g.tangents.end(), {t.x, t.y, t.z});
+                g.binormals.insert(g.binormals.end(), {b.x, b.y, b.z});
+            }
+        }
+    }
+
+    for (int set = 0; set < 8; ++set)
+    {
+        std::string name = geo::attr::uvName(set);
+        std::span<const glm::vec2> uv = m.cornerAttrs().get<glm::vec2>(name);
+        if (uv.size() != m.cornerCapacity())
+            continue;
+        Geometry::Uv layer;
+        layer.name = name;
+        std::unordered_map<glm::vec2, int32_t, BitsHash<glm::vec2>, BitsEq<glm::vec2>> ids;
+        layer.index.reserve(corners.size());
+        for (Index c : corners)
+        {
+            auto [it, added] = ids.emplace(uv[c], int32_t(ids.size()));
+            if (added)
+                layer.values.insert(layer.values.end(), {double(uv[c].x), double(uv[c].y)});
+            layer.index.push_back(it->second);
+        }
+        g.uvs.push_back(std::move(layer));
+    }
+
+    for (const std::string& set : geo::colors::sets(m))
+    {
+        std::span<const glm::vec4> col = geo::colors::values(m, set);
+        if (col.size() != m.cornerCapacity())
+            continue;
+        Geometry::Uv layer{set, {}, {}};
+        std::unordered_map<glm::vec4, int32_t, BitsHash<glm::vec4>, BitsEq<glm::vec4>> ids;
+        for (Index c : corners)
+        {
+            auto [it, added] = ids.emplace(col[c], int32_t(ids.size()));
+            if (added)
+                layer.values.insert(layer.values.end(), {double(col[c].r), double(col[c].g), double(col[c].b), double(col[c].a)});
+            layer.index.push_back(it->second);
+        }
+        g.colors.push_back(std::move(layer));
+    }
+
+    std::span<const int32_t> faceMat = m.faceAttrs().get<int32_t>(geo::attr::kMaterial);
+    std::vector<int32_t> ids(polyCount);
+    std::set<int32_t> used;
+    for (size_t i = 0; i < polyCount; ++i)
+    {
+        ids[i] = faceMat.size() == m.faceCapacity() ? faceMat[polyFace[i]] : 0;
+        used.insert(ids[i]);
+    }
+    if (used.empty())
+        used.insert(0);
+    std::map<int32_t, int32_t> slotOf;
+    for (int32_t id : used)
+    {
+        slotOf[id] = int32_t(g.slots.size());
+        g.slots.push_back(slotName(m.materialNames(), id));
+    }
+    g.materials.reserve(polyCount);
+    for (int32_t id : ids)
+        g.materials.push_back(slotOf[id]);
+    return g;
+}
+
+void layerElement(Record& layer, std::string_view type, int index)
+{
+    Record& e = layer.add("LayerElement");
+    e.add("Type").str(type);
+    e.add("TypedIndex").i32(index);
+}
+
+void writeGeometry(Record& objects, int64_t id, const std::string& name, const Geometry& g)
+{
+    Record& geom = objects.add("Geometry");
+    geom.i64(id).str(bin::objectName(name, "Geometry")).str("Mesh");
+    geom.add("Properties70");
+    geom.add("GeometryVersion").i32(124);
+    geom.add("Vertices").f64s(g.vertices);
+    geom.add("PolygonVertexIndex").i32s(g.polygonVertexIndex);
+    geom.add("Edges").i32s(g.edges);
+
+    auto header = [](Record& e, int version, std::string_view name, std::string_view mapping, std::string_view ref) {
+        e.add("Version").i32(version);
+        e.add("Name").str(name);
+        e.add("MappingInformationType").str(mapping);
+        e.add("ReferenceInformationType").str(ref);
+    };
+
+    {
+        Record& e = geom.add("LayerElementNormal");
+        e.i32(0);
+        header(e, 101, "", "ByPolygonVertex", "Direct");
+        e.add("Normals").f64s(g.normals);
+    }
+    if (!g.tangents.empty())
+    {
+        Record& b = geom.add("LayerElementBinormal");
+        b.i32(0);
+        header(b, 101, "uv0", "ByPolygonVertex", "Direct");
+        b.add("Binormals").f64s(g.binormals);
+        Record& t = geom.add("LayerElementTangent");
+        t.i32(0);
+        header(t, 101, "uv0", "ByPolygonVertex", "Direct");
+        t.add("Tangents").f64s(g.tangents);
+    }
+    {
+        Record& e = geom.add("LayerElementSmoothing");
+        e.i32(0);
+        header(e, 102, "", "ByEdge", "Direct");
+        e.add("Smoothing").i32s(g.smoothing);
+    }
+    for (size_t i = 0; i < g.colors.size(); ++i)
+    {
+        Record& e = geom.add("LayerElementColor");
+        e.i32(int32_t(i));
+        header(e, 101, g.colors[i].name, "ByPolygonVertex", "IndexToDirect");
+        e.add("Colors").f64s(g.colors[i].values);
+        e.add("ColorIndex").i32s(g.colors[i].index);
+    }
+    for (size_t i = 0; i < g.uvs.size(); ++i)
+    {
+        Record& e = geom.add("LayerElementUV");
+        e.i32(int32_t(i));
+        header(e, 101, g.uvs[i].name, "ByPolygonVertex", "IndexToDirect");
+        e.add("UV").f64s(g.uvs[i].values);
+        e.add("UVIndex").i32s(g.uvs[i].index);
+    }
+    {
+        Record& e = geom.add("LayerElementMaterial");
+        e.i32(0);
+        header(e, 101, "", "ByPolygon", "IndexToDirect");
+        e.add("Materials").i32s(g.materials);
+    }
+
+    Record& layer0 = geom.add("Layer");
+    layer0.i32(0);
+    layer0.add("Version").i32(100);
+    layerElement(layer0, "LayerElementNormal", 0);
+    if (!g.tangents.empty())
+    {
+        layerElement(layer0, "LayerElementBinormal", 0);
+        layerElement(layer0, "LayerElementTangent", 0);
+    }
+    layerElement(layer0, "LayerElementMaterial", 0);
+    layerElement(layer0, "LayerElementSmoothing", 0);
+    if (!g.colors.empty())
+        layerElement(layer0, "LayerElementColor", 0);
+    if (!g.uvs.empty())
+        layerElement(layer0, "LayerElementUV", 0);
+    for (size_t i = 1; i < std::max(g.uvs.size(), g.colors.size()); ++i)
+    {
+        Record& layer = geom.add("Layer");
+        layer.i32(int32_t(i));
+        layer.add("Version").i32(100);
+        if (i < g.colors.size())
+            layerElement(layer, "LayerElementColor", int32_t(i));
+        if (i < g.uvs.size())
+            layerElement(layer, "LayerElementUV", int32_t(i));
+    }
+}
+
+struct ModelInfo
+{
+    std::string_view type = "Null"; // Mesh, Null or LimbNode
+    Trs trs;
+    glm::dvec3 pre{0.0};
+    scene::RotateOrder order = scene::RotateOrder::XYZ;
+};
+
+void writeModel(Record& objects, int64_t id, const std::string& name, const ModelInfo& info)
+{
+    Record& model = objects.add("Model");
+    model.i64(id).str(bin::objectName(name, "Model")).str(info.type);
+    model.add("Version").i32(232);
+    Record& props = model.add("Properties70");
+    if (info.order != scene::RotateOrder::XYZ)
+        pEnum(props, "RotationOrder", fbxOrder(info.order));
+    if (info.pre != glm::dvec3(0.0))
+        p3(props, "PreRotation", "Vector3D", "Vector", "", info.pre);
+    pBool(props, "RotationActive", true);
+    pEnum(props, "InheritType", 1);
+    pInt(props, "DefaultAttributeIndex", 0);
+    p3(props, "Lcl Translation", "Lcl Translation", "", "A", info.trs.t);
+    p3(props, "Lcl Rotation", "Lcl Rotation", "", "A", info.trs.r);
+    p3(props, "Lcl Scaling", "Lcl Scaling", "", "A", info.trs.s);
+    model.add("Shading").boolean(true);
+    model.add("Culling").str("CullingOff");
+}
+
+void writeNullAttribute(Record& objects, int64_t id, const std::string& name)
+{
+    Record& attr = objects.add("NodeAttribute");
+    attr.i64(id).str(bin::objectName(name, "NodeAttribute")).str("Null");
+    attr.add("Properties70");
+    attr.add("TypeFlags").str("Null");
+}
+
+void writeLimbAttribute(Record& objects, int64_t id, const std::string& name)
+{
+    Record& attr = objects.add("NodeAttribute");
+    attr.i64(id).str(bin::objectName(name, "NodeAttribute")).str("LimbNode");
+    Record& props = attr.add("Properties70");
+    pDouble(props, "Size", 33.333333);
+    attr.add("TypeFlags").str("Skeleton");
+}
+
+void writeMaterial(Record& objects, int64_t id, const std::string& name)
+{
+    Record& mat = objects.add("Material");
+    mat.i64(id).str(bin::objectName(name, "Material")).str("");
+    mat.add("Version").i32(102);
+    mat.add("ShadingModel").str("lambert");
+    mat.add("MultiLayer").i32(0);
+    Record& props = mat.add("Properties70");
+    p3(props, "DiffuseColor", "Color", "", "A", glm::dvec3(0.8));
+    pDouble(props, "DiffuseFactor", 1.0);
+}
+
+void writeHeader(Record& root, const std::string& creator)
+{
+    Record& ext = root.add("FBXHeaderExtension");
+    ext.add("FBXHeaderVersion").i32(1003);
+    ext.add("FBXVersion").i32(7400);
+    ext.add("EncryptionType").i32(0);
+    // A fixed stamp keeps the output byte-identical for the same scene.
+    Record& stamp = ext.add("CreationTimeStamp");
+    stamp.add("Version").i32(1000);
+    stamp.add("Year").i32(1970);
+    stamp.add("Month").i32(1);
+    stamp.add("Day").i32(1);
+    stamp.add("Hour").i32(10);
+    stamp.add("Minute").i32(0);
+    stamp.add("Second").i32(0);
+    stamp.add("Millisecond").i32(0);
+    ext.add("Creator").str(creator);
+    Record& info = ext.add("SceneInfo");
+    info.str(bin::objectName("GlobalInfo", "SceneInfo")).str("UserData");
+    info.add("Type").str("UserData");
+    info.add("Version").i32(100);
+    Record& meta = info.add("MetaData");
+    meta.add("Version").i32(100);
+    for (const char* k : {"Title", "Subject", "Author", "Keywords", "Revision", "Comment"})
+        meta.add(k).str("");
+    Record& props = info.add("Properties70");
+    props.addP("Original", "Compound", "", "");
+    pString(props, "Original|ApplicationVendor", "Lila");
+    pString(props, "Original|ApplicationName", "Lila");
+    pString(props, "Original|ApplicationVersion", "0.1");
+    props.addP("LastSaved", "Compound", "", "");
+    pString(props, "LastSaved|ApplicationVendor", "Lila");
+    pString(props, "LastSaved|ApplicationName", "Lila");
+    pString(props, "LastSaved|ApplicationVersion", "0.1");
+
+    static constexpr uint8_t kFileId[16] = {0x28, 0xb3, 0x2a, 0xeb, 0xb6, 0x24, 0xcc, 0xc2,
+                                            0xbf, 0xc8, 0xb0, 0x2a, 0xa9, 0x2b, 0xfc, 0xf1};
+    root.add("FileId").raw(kFileId);
+    root.add("CreationTime").str("1970-01-01 10:00:00:000");
+    root.add("Creator").str(creator);
+}
+
+/** One AnimationCurve's arrays. Key attributes are run-length shared through refs, as FBX stores them. */
+struct CurveKeys
+{
+    std::vector<int64_t> times;
+    std::vector<float> values;
+    std::vector<int32_t> flags;
+    std::vector<float> data;
+    std::vector<int32_t> refs;
+};
+
+constexpr int32_t kKeyConstant = 0x2;
+constexpr int32_t kKeyLinear = 0x4;
+constexpr int32_t kKeyCubicUser = 0x8 | 0x400 | 0x800; // cubic, user slopes, broken (each side as given)
+constexpr int32_t kKeyWeightedRight = 0x1000000;
+constexpr int32_t kKeyWeightedNextLeft = 0x2000000;
+
+float packedWeights(double right, double nextLeft)
+{
+    auto fixed = [](double w) { return uint32_t(std::clamp(std::lround(w * 10000.0), 0L, 10000L)); };
+    uint32_t bits = fixed(right) | (fixed(nextLeft) << 16);
+    float f;
+    std::memcpy(&f, &bits, sizeof f);
+    return f;
+}
+
+/** Baked samples, linear between frames. */
+CurveKeys sampledKeys(const std::vector<double>& times, const std::vector<double>& values)
+{
+    CurveKeys k;
+    for (size_t i = 0; i < times.size(); ++i)
+    {
+        k.times.push_back(ktime(times[i]));
+        k.values.push_back(float(values[i]));
+    }
+    k.flags = {kKeyLinear};
+    k.data = {0.0f, 0.0f, packedWeights(1.0 / 3.0, 1.0 / 3.0), 0.0f};
+    k.refs = {int32_t(times.size())};
+    return k;
+}
+
+/** A Lila curve's own keys, scaled by factor (an axis flip). Slopes are value per second, as in FBX. */
+CurveKeys curveKeys(const anim::Curve& c, double factor)
+{
+    CurveKeys k;
+    for (size_t i = 0; i < c.keys.size(); ++i)
+    {
+        const anim::Key& key = c.keys[i];
+        k.times.push_back(ktime(key.time));
+        k.values.push_back(float(key.value * factor));
+        bool last = i + 1 == c.keys.size();
+        if (!last && key.out == anim::Tangent::Step)
+        {
+            k.flags.push_back(kKeyConstant);
+            k.data.insert(k.data.end(), {0.0f, 0.0f, packedWeights(1.0 / 3.0, 1.0 / 3.0), 0.0f});
+        }
+        else
+        {
+            int32_t flags = kKeyCubicUser;
+            double right = last ? 0.0 : c.outSlope(i) * factor;
+            double nextLeft = last ? 0.0 : c.inSlope(i + 1) * factor;
+            double wr = 1.0 / 3.0, wl = 1.0 / 3.0;
+            // Lila weights are relative to a third of the segment, FBX's to the whole segment.
+            if (c.weighted && !last)
+            {
+                wr = std::clamp(key.outWeight, 0.0, 3.0) / 3.0;
+                wl = std::clamp(c.keys[i + 1].inWeight, 0.0, 3.0) / 3.0;
+                flags |= kKeyWeightedRight | kKeyWeightedNextLeft;
+            }
+            k.flags.push_back(flags);
+            k.data.insert(k.data.end(), {float(right), float(nextLeft), packedWeights(wr, wl), 0.0f});
+        }
+        k.refs.push_back(1);
+    }
+    return k;
+}
+
+void writeCurve(Record& objects, int64_t id, const CurveKeys& k, double defaultValue)
+{
+    Record& c = objects.add("AnimationCurve");
+    c.i64(id).str(bin::objectName("", "AnimCurve")).str("");
+    c.add("Default").f64(defaultValue);
+    c.add("KeyVer").i32(4009);
+    c.add("KeyTime").i64s(k.times);
+    c.add("KeyValueFloat").f32s(k.values);
+    c.add("KeyAttrFlags").i32s(k.flags);
+    c.add("KeyAttrDataFloat").f32s(k.data);
+    c.add("KeyAttrRefCount").i32s(k.refs);
+}
+
+void writeCurveNode(Record& objects, int64_t id, std::string_view name, const glm::dvec3& defaults)
+{
+    Record& cn = objects.add("AnimationCurveNode");
+    cn.i64(id).str(bin::objectName(name, "AnimCurveNode")).str("");
+    Record& props = cn.add("Properties70");
+    props.addP("d|X", "Number", "", "A").f64(defaults.x);
+    props.addP("d|Y", "Number", "", "A").f64(defaults.y);
+    props.addP("d|Z", "Number", "", "A").f64(defaults.z);
+}
+
+/** A curve node animating one Number property (a blend channel's DeformPercent). */
+void writeCurveNode1(Record& objects, int64_t id, std::string_view name, std::string_view prop, double defaultValue)
+{
+    Record& cn = objects.add("AnimationCurveNode");
+    cn.i64(id).str(bin::objectName(name, "AnimCurveNode")).str("");
+    Record& props = cn.add("Properties70");
+    props.addP(std::string("d|") + std::string(prop), "Number", "", "A").f64(defaultValue);
+}
+
+void writeGlobalSettings(Record& root, const AxisDecl& a, double fps, int64_t spanStart, int64_t spanStop)
+{
+    Record& gs = root.add("GlobalSettings");
+    gs.add("Version").i32(1000);
+    Record& props = gs.add("Properties70");
+    pInt(props, "UpAxis", a.up);
+    pInt(props, "UpAxisSign", a.upSign);
+    pInt(props, "FrontAxis", a.front);
+    pInt(props, "FrontAxisSign", a.frontSign);
+    pInt(props, "CoordAxis", a.coord);
+    pInt(props, "CoordAxisSign", a.coordSign);
+    pInt(props, "OriginalUpAxis", a.up);
+    pInt(props, "OriginalUpAxisSign", a.upSign);
+    pDouble(props, "UnitScaleFactor", 1.0);
+    pDouble(props, "OriginalUnitScaleFactor", 1.0);
+    props.addP("AmbientColor", "ColorRGB", "Color", "").f64(0).f64(0).f64(0);
+    pString(props, "DefaultCamera", "Producer Perspective");
+    const int mode = timeMode(fps);
+    pEnum(props, "TimeMode", mode);
+    pEnum(props, "TimeProtocol", 2);
+    pEnum(props, "SnapOnFrameMode", 0);
+    props.addP("TimeSpanStart", "KTime", "Time", "").i64(spanStart);
+    props.addP("TimeSpanStop", "KTime", "Time", "").i64(spanStop);
+    pDouble(props, "CustomFrameRate", mode == 14 ? fps : -1.0);
+    props.addP("TimeMarker", "Compound", "", "");
+    pInt(props, "CurrentTimeMarker", -1);
+}
+
+struct ObjectCounts
+{
+    int models = 0, nulls = 0, limbs = 0, geometries = 0, materials = 0;
+    int deformers = 0, poses = 0, stacks = 0, layers = 0, curveNodes = 0, curves = 0;
+};
+
+void writeDefinitions(Record& root, const ObjectCounts& n)
+{
+    Record& defs = root.add("Definitions");
+    defs.add("Version").i32(100);
+    defs.add("Count").i32(1 + n.models + n.nulls + n.limbs + n.geometries + n.materials + n.deformers + n.poses + n.stacks + n.layers +
+                          n.curveNodes + n.curves);
+    auto type = [&](std::string_view name, int count, std::string_view tmpl) -> Record* {
+        Record& t = defs.add("ObjectType");
+        t.str(name);
+        t.add("Count").i32(count);
+        if (tmpl.empty())
+            return nullptr;
+        Record& pt = t.add("PropertyTemplate");
+        pt.str(tmpl);
+        return &pt.add("Properties70");
+    };
+    type("GlobalSettings", 1, "");
+    if (n.models)
+    {
+        Record* p = type("Model", n.models, "FbxNode");
+        p3(*p, "Lcl Translation", "Lcl Translation", "", "A", glm::dvec3(0.0));
+        p3(*p, "Lcl Rotation", "Lcl Rotation", "", "A", glm::dvec3(0.0));
+        p3(*p, "Lcl Scaling", "Lcl Scaling", "", "A", glm::dvec3(1.0));
+        pEnum(*p, "RotationOrder", 0);
+        p3(*p, "PreRotation", "Vector3D", "Vector", "", glm::dvec3(0.0));
+        pBool(*p, "Show", true);
+        p->addP("Visibility", "Visibility", "", "A").f64(1.0);
+    }
+    if (n.nulls || n.limbs)
+    {
+        Record* p = type("NodeAttribute", n.nulls + n.limbs, n.nulls ? "FbxNull" : "FbxSkeleton");
+        p3(*p, "Color", "ColorRGB", "Color", "", glm::dvec3(0.8));
+        pDouble(*p, "Size", 100.0);
+        if (n.nulls)
+            pEnum(*p, "Look", 1);
+    }
+    if (n.geometries)
+    {
+        Record* p = type("Geometry", n.geometries, "FbxMesh");
+        p3(*p, "Color", "ColorRGB", "Color", "", glm::dvec3(0.8));
+        pBool(*p, "Primary Visibility", true);
+        pBool(*p, "Casts Shadows", true);
+        pBool(*p, "Receive Shadows", true);
+    }
+    if (n.materials)
+    {
+        Record* p = type("Material", n.materials, "FbxSurfaceLambert");
+        p->addP("ShadingModel", "KString", "", "").str("Lambert");
+        p3(*p, "DiffuseColor", "Color", "", "A", glm::dvec3(0.8));
+        pDouble(*p, "DiffuseFactor", 1.0);
+    }
+    if (n.deformers)
+        type("Deformer", n.deformers, "");
+    if (n.poses)
+        type("Pose", n.poses, "");
+    if (n.stacks)
+    {
+        Record* p = type("AnimationStack", n.stacks, "FbxAnimStack");
+        p->addP("LocalStart", "KTime", "Time", "").i64(0);
+        p->addP("LocalStop", "KTime", "Time", "").i64(0);
+        p->addP("ReferenceStart", "KTime", "Time", "").i64(0);
+        p->addP("ReferenceStop", "KTime", "Time", "").i64(0);
+    }
+    if (n.layers)
+    {
+        Record* p = type("AnimationLayer", n.layers, "FbxAnimLayer");
+        pDouble(*p, "Weight", 100.0);
+    }
+    if (n.curveNodes)
+        type("AnimationCurveNode", n.curveNodes, "");
+    if (n.curves)
+        type("AnimationCurve", n.curves, "");
+}
+
+std::string toLower(std::string_view s)
+{
+    std::string out(s);
+    for (char& c : out)
+        c = char(std::tolower(static_cast<unsigned char>(c)));
+    return out;
+}
+} // namespace
+
+bool parseProfile(std::string_view name, AxisProfile* out)
+{
+    std::string n = toLower(name);
+    if (n == "ue5")
+        *out = AxisProfile::Ue5;
+    else if (n == "ue6")
+        *out = AxisProfile::Ue6;
+    else if (n == "generic")
+        *out = AxisProfile::Generic;
+    else
+        return false;
+    return true;
+}
+
+const char* profileName(AxisProfile p)
+{
+    switch (p)
+    {
+    case AxisProfile::Ue5: return "ue5";
+    case AxisProfile::Ue6: return "ue6";
+    case AxisProfile::Generic: return "generic";
+    }
+    return "ue5";
+}
+
+glm::dmat3 profileBasis(AxisProfile p, math::UpAxis up)
+{
+    const math::AxisBasis& b = math::axisBasis(up);
+    // Rows are the Lila directions that become file X, Y, Z.
+    glm::dmat3 rows = fileIsZUp(p, up) ? glm::dmat3(b.forward, -b.right, b.up) : glm::dmat3(-b.right, b.up, b.forward);
+    return glm::transpose(rows);
+}
+
+bool parseKind(std::string_view name, ExportKind* out)
+{
+    std::string n = toLower(name);
+    if (n == "static")
+        *out = ExportKind::Static;
+    else if (n == "skeletal")
+        *out = ExportKind::Skeletal;
+    else if (n == "animation")
+        *out = ExportKind::Animation;
+    else
+        return false;
+    return true;
+}
+
+const char* kindName(ExportKind k)
+{
+    switch (k)
+    {
+    case ExportKind::Static: return "static";
+    case ExportKind::Skeletal: return "skeletal";
+    case ExportKind::Animation: return "animation";
+    }
+    return "static";
+}
+
+namespace
+{
+using scene::Graph;
+using scene::Node;
+using scene::NodeId;
+
+/** The scene side of an export while it is being gathered. */
+struct Gather
+{
+    Graph& graph;
+    const ExportOptions& opts;
+    ExportScene& out;
+    std::unordered_map<NodeId, int> indexOf;
+    std::vector<glm::dmat4> rootInv; // per node: its export root's inverse placement
+    std::vector<NodeId> skinOf;      // per node: its skinCluster, or kNoNode
+
+    glm::dmat4 world(NodeId id) const { return graph.node(id)->as<glm::dmat4>(scene::Transform::kWorldMatrix); }
+
+    /** The node's local matrix relative to its exported parent, from the current evaluation. */
+    glm::dmat4 localOf(size_t i) const
+    {
+        const ExportNode& e = out.nodes[i];
+        const Node* n = graph.node(e.source);
+        if (e.parent < 0)
+            return rootInv[i] * world(e.source);
+        NodeId parentSource = out.nodes[size_t(e.parent)].source;
+        if (parentSource == graph.parent(e.source))
+            return n->as<glm::dmat4>(scene::Transform::kMatrix);
+        return glm::inverse(world(parentSource)) * world(e.source);
+    }
+
+    /** True when the exported local is the node's own local matrix, so its channels and curves apply directly. */
+    bool ownLocal(size_t i) const
+    {
+        const ExportNode& e = out.nodes[i];
+        if (e.parent >= 0)
+            return out.nodes[size_t(e.parent)].source == graph.parent(e.source);
+        return graph.parent(e.source) == scene::kNoNode && nearMat(rootInv[i], glm::dmat4(1.0), 1e-12);
+    }
+
+    void walk(NodeId id, int parent, const glm::dmat4& inv, bool isRoot, bool children)
+    {
+        using namespace scene;
+        Node* n = graph.node(id);
+        if (!n || !n->type().isA("transform") || indexOf.count(id))
+            return;
+        const bool flatten = opts.worldSpace && opts.kind == ExportKind::Static;
+        ExportNode e;
+        e.name = n->name();
+        e.source = id;
+        if (n->type().isA("mesh") && !n->type().isA("lattice"))
+            e.mesh = modifiers::exportMesh(graph, id);
+        const glm::dmat4 w = world(id);
+        if (flatten)
+        {
+            glm::dmat4 rel = inv * w;
+            if (e.mesh)
+                e.bake = rel;
+            else
+                e.local = rel;
+        }
+        else
+        {
+            e.parent = parent;
+            e.local = isRoot ? inv * w : n->as<glm::dmat4>(Transform::kMatrix);
+        }
+        e.joint = rig::isJoint(*n);
+        e.pre = static_cast<const Transform*>(n)->preRotation();
+        e.rotateOrder = RotateOrder(std::clamp<int64_t>(n->as<int64_t>(Transform::kRotateOrder), 0, 5));
+        e.translate = n->as<glm::dvec3>(Transform::kTranslate);
+        e.rotate = n->as<glm::dvec3>(Transform::kRotate);
+        e.scale = n->as<glm::dvec3>(Transform::kScale);
+        e.plainTrs = !flatten && plainChannels(*n) && nearMat(e.local, n->as<glm::dmat4>(Transform::kMatrix));
+        int index = int(out.nodes.size());
+        indexOf[id] = index;
+        out.nodes.push_back(std::move(e));
+        rootInv.push_back(inv);
+        skinOf.push_back(kNoNode);
+        if (!children)
+            return;
+        for (NodeId c : graph.children(id))
+            walk(c, flatten ? -1 : index, inv, false, true);
+    }
+
+    /** Exported node index and its blendShape, for the meshes that export morph targets. */
+    std::vector<std::pair<size_t, NodeId>> morphed;
+
+    void addSkeletons();
+    void buildMorphs();
+    void buildSkins();
+    void applyBindPose();
+    void keepSkeletonOnly();
+    void sampleTake();
+};
+
+/** Brings in the joints of every skin that the given roots did not cover, from their top joint down. */
+void Gather::addSkeletons()
+{
+    LILA_ZONE();
+
+    using namespace scene;
+    for (size_t i = 0; i < out.nodes.size(); ++i)
+    {
+        if (!out.nodes[i].mesh)
+            continue;
+        NodeId skin = skin::find(graph, out.nodes[i].source);
+        if (skin == kNoNode)
+            continue;
+        skinOf[i] = skin;
+        for (const skin::Influence& inf : skin::influences(graph, skin))
+        {
+            if (inf.joint == kNoNode || indexOf.count(inf.joint))
+                continue;
+            NodeId top = inf.joint;
+            while (graph.parent(top) != kNoNode && rig::isJoint(*graph.node(graph.parent(top))))
+                top = graph.parent(top);
+            walk(top, -1, rootInv[i], true, true);
+            if (!indexOf.count(inf.joint))
+                out.warnings.push_back(std::format("{}: influence {} could not be exported", out.nodes[i].name, inf.name));
+        }
+    }
+}
+
+/** Skin clusters per skinned mesh, weights pruned to the influence limit; the mesh goes out in its bind shape. */
+void Gather::buildSkins()
+{
+    LILA_ZONE();
+
+    using namespace scene;
+    for (size_t i = 0; i < out.nodes.size(); ++i)
+    {
+        NodeId skinId = skinOf[i];
+        if (skinId == kNoNode)
+            continue;
+        ExportNode& e = out.nodes[i];
+        MeshPtr bind = skin::inputMesh(graph, skinId);
+        if (!bind)
+            continue;
+        if (auto src = graph.source({e.source, MeshNode::kInMesh, -1}); !src || src->node != skinId)
+            out.warnings.push_back(std::format("{}: modifiers after the skinCluster are not exported", e.name));
+        e.mesh = bind;
+
+        auto skin = std::make_shared<ExportSkin>();
+        const Node* sc = graph.node(skinId);
+        skin->dualQuaternion = sc->as<int64_t>(SkinClusterNode::kSkinningMethod) == 1;
+        skin->meshBindWorld = rootInv[i] * sc->as<glm::dmat4>(SkinClusterNode::kGeomMatrix);
+
+        std::unordered_map<uint32_t, size_t> clusterOf;
+        for (const skin::Influence& inf : skin::influences(graph, skinId))
+        {
+            auto it = indexOf.find(inf.joint);
+            if (inf.joint == kNoNode || it == indexOf.end())
+                continue;
+            ExportSkin::Cluster c;
+            c.joint = it->second;
+            glm::dmat4 bindPre = graph.node(inf.link)->as<glm::dmat4>(SkinInfluenceNode::kBindPreMatrix);
+            c.bindWorld = rootInv[size_t(c.joint)] * glm::inverse(bindPre);
+            clusterOf[inf.index] = skin->clusters.size();
+            skin->clusters.push_back(std::move(c));
+        }
+
+        WeightTable t = skin::table(graph, skinId);
+        int pruned = 0;
+        int32_t vertex = 0;
+        for (geo::Index p = 0; p < bind->pointCapacity(); ++p)
+        {
+            if (!bind->pointValid(p))
+                continue;
+            if (p < t.points.size())
+            {
+                std::erase_if(t.points[p], [&](const WeightTable::Entry& en) { return !clusterOf.count(en.first); });
+                if (opts.maxInfluences > 0 && int(t.points[p].size()) > opts.maxInfluences)
+                    ++pruned;
+                t.prune(p, opts.maxInfluences, 1e-5f, {});
+                for (const WeightTable::Entry& en : t.points[p])
+                {
+                    ExportSkin::Cluster& c = skin->clusters[clusterOf[en.first]];
+                    c.vertices.push_back(vertex);
+                    c.weights.push_back(double(en.second));
+                }
+            }
+            ++vertex;
+        }
+        if (pruned)
+            out.warnings.push_back(std::format("{}: {} point(s) pruned to {} influences", e.name, pruned, opts.maxInfluences));
+        e.skin = std::move(skin);
+    }
+}
+
+/**
+ * Morph targets from each mesh's blendShape. The exported base is the neutral shape: the current morph weights are
+ * taken back out of the points the blendShape fed, so the targets add on top of it as they do in Unreal.
+ */
+void Gather::buildMorphs()
+{
+    LILA_ZONE();
+
+    using namespace scene;
+    for (size_t i = 0; i < out.nodes.size(); ++i)
+    {
+        ExportNode& e = out.nodes[i];
+        if (!e.mesh)
+            continue;
+        NodeId bs = deformers::blendShapeOf(graph, e.source);
+        if (bs == kNoNode || !modifiers::exportEnabled(*graph.node(bs)) || !graph.node(bs)->as<bool>(DeformerNode::kEnabled))
+            continue;
+        std::vector<deformers::MorphTarget> targets = deformers::morphTargets(graph, bs);
+        if (targets.empty())
+            continue;
+        MeshPtr input = std::get<MeshPtr>(graph.value({bs, DeformerNode::kInMesh, -1}));
+        if (!input || input->pointCapacity() != e.mesh->pointCapacity())
+        {
+            out.warnings.push_back(std::format("{}: the points change after the blendShape; morph targets not exported", e.name));
+            continue;
+        }
+        // Anything between the blendShape and what is exported moves points the deltas don't know about.
+        const std::vector<NodeId> stack = modifiers::stack(graph, e.source);
+        const NodeId stop = skinOf[i];
+        for (auto it = std::find(stack.begin(), stack.end(), bs) + 1; it < stack.end() && *it != stop; ++it)
+            if (const auto* m = static_cast<const ModifierNode*>(graph.node(*it)); m->as<bool>(m->enabledAttr) && modifiers::exportEnabled(*m))
+            {
+                out.warnings.push_back(std::format("{}: {} sits after the blendShape; its effect is baked into the base at the current pose",
+                                                   e.name, m->name()));
+                break;
+            }
+
+        const std::vector<float> map = deformers::pointWeights(graph, bs, input->pointCapacity());
+        std::vector<int32_t> vertexOf(input->pointCapacity(), -1);
+        int32_t next = 0;
+        for (geo::Index p = 0; p < input->pointCapacity(); ++p)
+            if (e.mesh->pointValid(p))
+                vertexOf[p] = next++;
+
+        auto base = std::make_shared<geo::Mesh>(*e.mesh);
+        auto morphs = std::make_shared<ExportMorphs>();
+        for (const deformers::MorphTarget& t : targets)
+        {
+            ExportMorphs::Target mt;
+            mt.name = t.name;
+            mt.weight = t.weight;
+            for (size_t k = 0; k < t.indices.size(); ++k)
+            {
+                uint32_t p = t.indices[k];
+                if (p >= vertexOf.size() || vertexOf[p] < 0)
+                    continue;
+                glm::dvec3 d = t.deltas[k] * double(map[p]);
+                base->setPosition(p, base->position(p) - d * t.weight);
+                mt.vertices.push_back(vertexOf[p]);
+                mt.deltas.push_back(d);
+            }
+            morphs->targets.push_back(std::move(mt));
+        }
+        if (base->cornerAttrs().has(geo::attr::kNormal))
+            geo::updateCornerNormals(*base);
+        e.mesh = std::move(base);
+        e.morphs = std::move(morphs);
+        morphed.push_back({i, bs});
+    }
+}
+
+/** Influence joints take their bind-time locals, the reference pose Unreal builds the skeleton from. */
+void Gather::applyBindPose()
+{
+    LILA_ZONE();
+
+    std::vector<std::optional<glm::dmat4>> bind(out.nodes.size());
+    for (const ExportNode& e : out.nodes)
+        if (e.skin)
+            for (const ExportSkin::Cluster& c : e.skin->clusters)
+            {
+                auto& slot = bind[size_t(c.joint)];
+                if (!slot)
+                    slot = c.bindWorld;
+                else if (!nearMat(*slot, c.bindWorld, 1e-5))
+                    out.warnings.push_back(std::format("{}: bound in different poses by different skins; using the first",
+                                                       out.nodes[size_t(c.joint)].name));
+            }
+    for (size_t i = 0; i < out.nodes.size(); ++i)
+    {
+        ExportNode& e = out.nodes[i];
+        glm::dmat4 parentBind = e.parent >= 0 ? out.nodes[size_t(e.parent)].bindWorld : glm::dmat4(1.0);
+        if (bind[i])
+        {
+            glm::dmat4 local = glm::inverse(parentBind) * *bind[i];
+            if (!nearMat(local, e.local, 1e-6))
+            {
+                e.local = local;
+                e.plainTrs = false;
+            }
+        }
+        e.bindWorld = parentBind * e.local;
+    }
+}
+
+/** Animation kind: joints and the nodes above them, without meshes; every transform when there are no joints. */
+void Gather::keepSkeletonOnly()
+{
+    std::vector<char> keep(out.nodes.size(), 0);
+    bool anyJoint = false;
+    for (size_t i = 0; i < out.nodes.size(); ++i)
+        if (out.nodes[i].joint)
+        {
+            anyJoint = true;
+            for (int k = int(i); k >= 0 && !keep[size_t(k)]; k = out.nodes[size_t(k)].parent)
+                keep[size_t(k)] = 1;
+        }
+    std::vector<int> remap(out.nodes.size(), -1);
+    std::vector<ExportNode> nodes;
+    std::vector<glm::dmat4> inv;
+    for (size_t i = 0; i < out.nodes.size(); ++i)
+    {
+        if (anyJoint && !keep[i])
+            continue;
+        ExportNode e = std::move(out.nodes[i]);
+        e.mesh.reset();
+        e.skin.reset();
+        e.parent = e.parent >= 0 ? remap[size_t(e.parent)] : -1;
+        remap[i] = int(nodes.size());
+        nodes.push_back(std::move(e));
+        inv.push_back(rootInv[i]);
+    }
+    out.nodes = std::move(nodes);
+    rootInv = std::move(inv);
+    indexOf.clear();
+    for (size_t i = 0; i < out.nodes.size(); ++i)
+        indexOf[out.nodes[i].source] = int(i);
+}
+
+/**
+ * The node's translate/rotate/scale curves, when nothing but curves drives its local matrix and they hold their end
+ * values outside their keys (or cover the range). Unanimated channels get one key at their value.
+ */
+std::optional<std::array<anim::Curve, 9>> directCurves(Graph& g, NodeId id, double start, double end)
+{
+    using namespace scene;
+    Node* n = g.node(id);
+    std::array<anim::Curve, 9> out;
+    bool any = false;
+    const int channels[3] = {Transform::kTranslate, Transform::kRotate, Transform::kScale};
+    for (int a = 0; a < int(n->type().attrs.size()); ++a)
+    {
+        const AttrDef& def = n->type().attrs[size_t(a)];
+        if (!(def.flags & AttrInput))
+            continue;
+        const int group = a == channels[0] ? 0 : a == channels[1] ? 1 : a == channels[2] ? 2 : -1;
+        if (group < 0)
+        {
+            if (a != Transform::kParentMatrix && a != Transform::kVisibility && g.source({id, a, -1}))
+                return std::nullopt;
+            continue;
+        }
+        if (g.source({id, a, -1}))
+            return std::nullopt;
+        glm::dvec3 rest = n->as<glm::dvec3>(a);
+        for (int c = 0; c < 3; ++c)
+        {
+            anim::Curve& curve = out[size_t(group * 3 + c)];
+            auto src = g.source({id, a, c});
+            if (!src)
+            {
+                curve.keys.push_back({.time = start, .value = rest[c]});
+                continue;
+            }
+            Node* cn = g.node(src->node);
+            if (!anim::isCurve(*cn))
+                return std::nullopt;
+            curve = anim::curveOf(*cn);
+            if (curve.keys.empty())
+                return std::nullopt;
+            bool covered = curve.keys.front().time <= start + 1e-9 && curve.keys.back().time >= end - 1e-9;
+            if (!covered && (curve.pre != anim::Infinity::Constant || curve.post != anim::Infinity::Constant))
+                return std::nullopt;
+            any = true;
+        }
+    }
+    if (!any)
+        return std::nullopt;
+    return out;
+}
+
+void Gather::sampleTake()
+{
+    LILA_ZONE();
+
+    anim::Playback& pb = anim::playback();
+    ExportTake take;
+    take.name = opts.takeName.empty() ? "Take 001" : opts.takeName;
+    take.fps = pb.fps > 0.0 ? pb.fps : 30.0;
+    take.start = std::isnan(opts.start) ? pb.minTime : opts.start;
+    take.end = std::isnan(opts.end) ? pb.maxTime : opts.end;
+    if (take.end < take.start)
+        std::swap(take.start, take.end);
+    const long long frames = std::llround((take.end - take.start) * take.fps);
+    for (long long f = 0; f <= frames; ++f)
+        take.times.push_back(take.start + double(f) / take.fps);
+    take.end = take.times.back();
+
+    const size_t count = out.nodes.size();
+    take.locals.assign(count, {});
+    take.curves.assign(count, std::nullopt);
+    std::vector<char> sampled(count, 1);
+    if (!opts.bakeAnimation)
+        for (size_t i = 0; i < count; ++i)
+            if (plainChannels(*graph.node(out.nodes[i].source)) && ownLocal(i))
+                if ((take.curves[i] = directCurves(graph, out.nodes[i].source, take.start, take.end)))
+                    sampled[i] = 0;
+
+    const double saved = graph.time();
+    for (size_t i = 0; i < count; ++i)
+        if (sampled[i])
+            take.locals[i].reserve(take.times.size());
+    take.morphWeights.assign(count, {});
+    for (const auto& [i, bs] : morphed)
+        take.morphWeights[i].assign(out.nodes[i].morphs->targets.size(), {});
+    for (double t : take.times)
+    {
+        graph.setTime(t);
+        graph.evaluate();
+        for (size_t i = 0; i < count; ++i)
+            if (sampled[i])
+                take.locals[i].push_back(localOf(i));
+        for (const auto& [i, bs] : morphed)
+        {
+            std::vector<double> weights = scene::deformers::morphWeights(graph, bs);
+            auto& perTarget = take.morphWeights[i];
+            for (size_t k = 0; k < perTarget.size(); ++k)
+                perTarget[k].push_back(k < weights.size() ? weights[k] : 0.0);
+        }
+    }
+    graph.setTime(saved);
+    graph.evaluate();
+    for (const auto& [i, bs] : morphed)
+    {
+        auto& perTarget = take.morphWeights[i];
+        const auto& targets = out.nodes[i].morphs->targets;
+        bool still = true;
+        for (size_t k = 0; k < perTarget.size() && still; ++k)
+            still = std::all_of(perTarget[k].begin(), perTarget[k].end(), [&](double w) { return std::abs(w - targets[k].weight) < 1e-9; });
+        if (still)
+            perTarget.clear();
+    }
+
+    bool animated = false;
+    for (size_t i = 0; i < count; ++i)
+    {
+        auto& samples = take.locals[i];
+        bool still = std::all_of(samples.begin(), samples.end(), [&](const glm::dmat4& m) { return nearMat(m, out.nodes[i].local, 1e-9); });
+        if (still)
+            samples.clear();
+        animated = animated || !samples.empty() || take.curves[i] || !take.morphWeights[i].empty();
+    }
+    if (animated || opts.kind == ExportKind::Animation)
+        out.take = std::move(take);
+}
+} // namespace
+
+ExportScene gatherExport(scene::Graph& graph, const std::vector<scene::NodeId>& roots, const ExportOptions& opts)
+{
+    LILA_ZONE();
+
+    using namespace scene;
+    graph.evaluate();
+    ExportScene out;
+    out.upAxis = math::upAxis();
+    out.fps = anim::playback().fps;
+    Gather g{graph, opts, out, {}, {}, {}};
+
+    std::set<NodeId> wanted;
+    for (NodeId id : roots)
+        if (Node* n = graph.node(id); n && n->type().isA("transform"))
+            wanted.insert(id);
+    auto coveredByAncestor = [&](NodeId id) {
+        for (NodeId p = graph.parent(id); p != kNoNode; p = graph.parent(p))
+            if (wanted.count(p))
+                return true;
+        return false;
+    };
+
+    std::set<NodeId> done;
+    for (NodeId id : roots)
+    {
+        if (!wanted.count(id) || (opts.children && coveredByAncestor(id)) || !done.insert(id).second)
+            continue;
+        glm::dmat4 rootInv(1.0);
+        if (opts.atOrigin)
+            rootInv = glm::inverse(g.world(id));
+        g.walk(id, -1, rootInv, true, opts.children);
+    }
+
+    if (opts.kind == ExportKind::Static)
+    {
+        for (ExportNode& e : out.nodes)
+            e.bindWorld = e.parent >= 0 ? out.nodes[size_t(e.parent)].bindWorld * e.local : e.local;
+        return out;
+    }
+    if (opts.worldSpace)
+        out.warnings.push_back("worldSpace is ignored for skeletal and animation exports");
+    g.addSkeletons();
+    g.buildSkins();
+    g.applyBindPose();
+    if (opts.kind == ExportKind::Skeletal)
+        g.buildMorphs();
+    if (opts.kind == ExportKind::Animation)
+        g.keepSkeletonOnly();
+    if (opts.animation)
+        g.sampleTake();
+    return out;
+}
+
+std::string encodeFbx(const ExportScene& scene, const ExportOptions& opts)
+{
+    LILA_ZONE();
+
+    const glm::dmat3 basis3 = profileBasis(opts.profile, scene.upAxis);
+    const glm::dmat4 basis(basis3);
+    const glm::dmat4 basisInv = glm::transpose(basis);
+    const AxisMap axes = axisMap(basis3);
+    const std::string creator = "Lila FBX exporter (" + std::string(profileName(opts.profile)) + ")";
+    const ExportTake* take = scene.take ? &*scene.take : nullptr;
+    auto toFile = [&](const glm::dmat4& m) { return basis * m * basisInv; };
+
+    Record root("");
+    writeHeader(root, creator);
+    const int64_t spanStart = take ? ktime(take->start) : 0;
+    const int64_t spanStop = take ? ktime(take->end) : 46186158000;
+    writeGlobalSettings(root, fileIsZUp(opts.profile, scene.upAxis) ? kZUp : kYUp, take ? take->fps : scene.fps, spanStart, spanStop);
+
+    Record& docs = root.add("Documents");
+    docs.add("Count").i32(1);
+    Record& doc = docs.add("Document");
+    int64_t nextId = 1000000000;
+    doc.i64(nextId++).str("Scene").str("Scene");
+    Record& docProps = doc.add("Properties70");
+    docProps.addP("SourceObject", "object", "", "");
+    pString(docProps, "ActiveAnimStackName", take ? take->name : "");
+    doc.add("RootNode").i64(0);
+    root.add("References");
+
+    Record objects("Objects");
+    Record connections("Connections");
+    auto connect = [&](int64_t child, int64_t parent) { connections.add("C").str("OO").i64(child).i64(parent); };
+    auto connectProp = [&](int64_t child, int64_t parent, std::string_view prop) {
+        connections.add("C").str("OP").i64(child).i64(parent).str(prop);
+    };
+
+    std::vector<int64_t> modelIds(scene.nodes.size()), geomIds(scene.nodes.size(), 0);
+    std::vector<ModelInfo> info(scene.nodes.size());
+    std::map<std::string, int64_t> materialIds;
+    ObjectCounts counts;
+    bool anySkin = false;
+    for (size_t i = 0; i < scene.nodes.size(); ++i)
+    {
+        const ExportNode& n = scene.nodes[i];
+        modelIds[i] = nextId++;
+        ++counts.models;
+        const bool isMesh = n.mesh && n.mesh->numFaces() > 0;
+        const bool keyed = take && take->curves[i];
+
+        // Joints and keyed nodes keep their rotate order through the axis swap, so channels map one to one.
+        ModelInfo& mi = info[i];
+        mi.type = isMesh ? "Mesh" : n.joint ? "LimbNode" : "Null";
+        mi.order = n.joint || keyed ? axes.order(n.rotateOrder) : scene::RotateOrder::XYZ;
+        const glm::dmat3 pre = basis3 * glm::dmat3(n.pre) * glm::transpose(basis3);
+        mi.pre = cleanVec(scene::matrixToEuler(pre, scene::RotateOrder::XYZ));
+        const glm::dmat3 preExact(scene::eulerToMatrix(mi.pre, scene::RotateOrder::XYZ));
+        if (n.plainTrs && mi.order == axes.order(n.rotateOrder))
+            mi.trs = {axes.translate(n.translate), axes.rotate(n.rotate), axes.scale(n.scale)};
+        else
+            mi.trs = fileTrs(toFile(n.local), preExact, mi.order, axes.rotate(n.rotate));
+        writeModel(objects, modelIds[i], n.name, mi);
+        connect(modelIds[i], n.parent >= 0 ? modelIds[size_t(n.parent)] : 0);
+        if (!isMesh)
+        {
+            int64_t attrId = nextId++;
+            if (n.joint)
+            {
+                writeLimbAttribute(objects, attrId, n.name);
+                ++counts.limbs;
+            }
+            else
+            {
+                writeNullAttribute(objects, attrId, n.name);
+                ++counts.nulls;
+            }
+            connect(attrId, modelIds[i]);
+            continue;
+        }
+        Geometry g = buildGeometry(*n.mesh, basis * n.bake, opts);
+        int64_t geomId = geomIds[i] = nextId++;
+        writeGeometry(objects, geomId, n.name, g);
+        connect(geomId, modelIds[i]);
+        ++counts.geometries;
+        // Material order on the model is what the polygons' slot indices refer to.
+        for (const std::string& slot : g.slots)
+        {
+            auto [it, added] = materialIds.emplace(slot, 0);
+            if (added)
+            {
+                it->second = nextId++;
+                writeMaterial(objects, it->second, slot);
+            }
+            connect(it->second, modelIds[i]);
+        }
+        anySkin = anySkin || n.skin;
+    }
+
+    // Skins: one Skin deformer per mesh, one Cluster per influence, matrices as Maya writes them.
+    for (size_t i = 0; i < scene.nodes.size(); ++i)
+    {
+        const ExportNode& n = scene.nodes[i];
+        if (!n.skin || !geomIds[i])
+            continue;
+        const int64_t geomId = geomIds[i];
+        int64_t skinId = nextId++;
+        Record& skin = objects.add("Deformer");
+        skin.i64(skinId).str(bin::objectName(n.name, "Deformer")).str("Skin");
+        skin.add("Version").i32(101);
+        skin.add("Link_DeformAcuracy").f64(50.0);
+        skin.add("SkinningType").str(n.skin->dualQuaternion ? "DualQuaternion" : "Linear");
+        connect(skinId, geomId);
+        ++counts.deformers;
+        const glm::dmat4 meshBind = toFile(n.skin->meshBindWorld);
+        for (const ExportSkin::Cluster& c : n.skin->clusters)
+        {
+            const ExportNode& joint = scene.nodes[size_t(c.joint)];
+            int64_t clusterId = nextId++;
+            Record& cl = objects.add("Deformer");
+            cl.i64(clusterId).str(bin::objectName(joint.name, "SubDeformer")).str("Cluster");
+            cl.add("Version").i32(100);
+            cl.add("UserData").str("").str("");
+            cl.add("Indexes").i32s(c.vertices);
+            cl.add("Weights").f64s(c.weights);
+            const glm::dmat4 link = toFile(c.bindWorld);
+            cl.add("Transform").f64s(flat(glm::inverse(link) * meshBind));
+            cl.add("TransformLink").f64s(flat(link));
+            connect(clusterId, skinId);
+            connect(modelIds[size_t(c.joint)], clusterId);
+            ++counts.deformers;
+        }
+    }
+    // Morph targets: a BlendShape per mesh, a BlendShapeChannel per target holding one Shape of point offsets.
+    std::vector<std::vector<int64_t>> channelIds(scene.nodes.size());
+    int64_t takeLayerId = 0;
+    for (size_t i = 0; i < scene.nodes.size(); ++i)
+    {
+        const ExportNode& n = scene.nodes[i];
+        if (!n.morphs || !geomIds[i])
+            continue;
+        const glm::dmat3 lin(basis * n.bake);
+        int64_t blendId = nextId++;
+        Record& blend = objects.add("Deformer");
+        blend.i64(blendId).str(bin::objectName(n.name, "Deformer")).str("BlendShape");
+        blend.add("Version").i32(100);
+        connect(blendId, geomIds[i]);
+        ++counts.deformers;
+        for (const ExportMorphs::Target& t : n.morphs->targets)
+        {
+            int64_t channelId = nextId++;
+            Record& ch = objects.add("Deformer");
+            ch.i64(channelId).str(bin::objectName(t.name, "SubDeformer")).str("BlendShapeChannel");
+            Record& props = ch.add("Properties70");
+            props.addP("DeformPercent", "Number", "", "A").f64(t.weight * 100.0);
+            ch.add("Version").i32(100);
+            ch.add("DeformPercent").f64(t.weight * 100.0);
+            ch.add("FullWeights").f64s(std::vector<double>{100.0});
+            connect(channelId, blendId);
+            channelIds[i].push_back(channelId);
+            ++counts.deformers;
+
+            std::vector<double> offsets;
+            offsets.reserve(t.deltas.size() * 3);
+            for (const glm::dvec3& d : t.deltas)
+            {
+                glm::dvec3 f = lin * d;
+                offsets.insert(offsets.end(), {f.x, f.y, f.z});
+            }
+            int64_t shapeId = nextId++;
+            Record& shape = objects.add("Geometry");
+            shape.i64(shapeId).str(bin::objectName(t.name, "Geometry")).str("Shape");
+            shape.add("Version").i32(100);
+            shape.add("Indexes").i32s(t.vertices);
+            shape.add("Vertices").f64s(offsets);
+            connect(shapeId, channelId);
+            ++counts.geometries;
+        }
+    }
+
+    if (anySkin)
+    {
+        Record& pose = objects.add("Pose");
+        pose.i64(nextId++).str(bin::objectName("BIND_POSES", "Pose")).str("BindPose");
+        pose.add("Type").str("BindPose");
+        pose.add("Version").i32(100);
+        pose.add("NbPoseNodes").i32(int32_t(scene.nodes.size()));
+        for (size_t i = 0; i < scene.nodes.size(); ++i)
+        {
+            const ExportNode& n = scene.nodes[i];
+            Record& pn = pose.add("PoseNode");
+            pn.add("Node").i64(modelIds[i]);
+            pn.add("Matrix").f64s(flat(toFile(n.skin ? n.skin->meshBindWorld : n.bindWorld)));
+        }
+        ++counts.poses;
+    }
+
+    if (take)
+    {
+        int64_t stackId = nextId++;
+        Record& stack = objects.add("AnimationStack");
+        stack.i64(stackId).str(bin::objectName(take->name, "AnimStack")).str("");
+        Record& sp = stack.add("Properties70");
+        sp.addP("LocalStart", "KTime", "Time", "").i64(spanStart);
+        sp.addP("LocalStop", "KTime", "Time", "").i64(spanStop);
+        sp.addP("ReferenceStart", "KTime", "Time", "").i64(spanStart);
+        sp.addP("ReferenceStop", "KTime", "Time", "").i64(spanStop);
+        int64_t layerId = takeLayerId = nextId++;
+        Record& layer = objects.add("AnimationLayer");
+        layer.i64(layerId).str(bin::objectName("BaseLayer", "AnimLayer")).str("");
+        layer.add("Properties70");
+        connect(layerId, stackId);
+        counts.stacks = counts.layers = 1;
+
+        static constexpr const char* kGroupProp[3] = {"Lcl Translation", "Lcl Rotation", "Lcl Scaling"};
+        static constexpr const char* kGroupName[3] = {"T", "R", "S"};
+        static constexpr const char* kAxisProp[3] = {"d|X", "d|Y", "d|Z"};
+        for (size_t i = 0; i < scene.nodes.size(); ++i)
+        {
+            const ModelInfo& mi = info[i];
+            const glm::dvec3 lcl[3] = {mi.trs.t, mi.trs.r, mi.trs.s};
+            // keys[group][file axis], or nothing to write for that channel.
+            std::array<std::array<std::optional<CurveKeys>, 3>, 3> keys;
+            if (take->curves[i])
+            {
+                const auto& lila = *take->curves[i];
+                for (int g = 0; g < 3; ++g)
+                    for (int a = 0; a < 3; ++a)
+                        keys[size_t(g)][size_t(axes.to[a])] = curveKeys(lila[size_t(g * 3 + a)], axes.factor(g, a));
+            }
+            else if (!take->locals[i].empty())
+            {
+                const glm::dmat3 preExact(scene::eulerToMatrix(mi.pre, scene::RotateOrder::XYZ));
+                std::vector<std::array<double, 9>> frames;
+                frames.reserve(take->times.size());
+                glm::dvec3 ref = mi.trs.r;
+                for (const glm::dmat4& local : take->locals[i])
+                {
+                    Trs trs = fileTrs(toFile(local), preExact, mi.order, ref);
+                    ref = trs.r;
+                    frames.push_back({trs.t.x, trs.t.y, trs.t.z, trs.r.x, trs.r.y, trs.r.z, trs.s.x, trs.s.y, trs.s.z});
+                }
+                for (int g = 0; g < 3; ++g)
+                    for (int a = 0; a < 3; ++a)
+                    {
+                        const int ch = g * 3 + a;
+                        const double tol = g == 2 ? 1e-7 : 1e-6;
+                        bool still = std::all_of(frames.begin(), frames.end(),
+                                                 [&](const std::array<double, 9>& f) { return std::abs(f[size_t(ch)] - lcl[g][a]) <= tol; });
+                        if (still)
+                            continue;
+                        std::vector<double> values;
+                        values.reserve(frames.size());
+                        for (const auto& f : frames)
+                            values.push_back(f[size_t(ch)]);
+                        keys[size_t(g)][size_t(a)] = sampledKeys(take->times, values);
+                    }
+            }
+            for (int g = 0; g < 3; ++g)
+            {
+                if (!keys[size_t(g)][0] && !keys[size_t(g)][1] && !keys[size_t(g)][2])
+                    continue;
+                int64_t nodeId = nextId++;
+                writeCurveNode(objects, nodeId, kGroupName[g], lcl[g]);
+                connect(nodeId, layerId);
+                connectProp(nodeId, modelIds[i], kGroupProp[g]);
+                ++counts.curveNodes;
+                for (int a = 0; a < 3; ++a)
+                {
+                    const auto& k = keys[size_t(g)][size_t(a)];
+                    if (!k)
+                        continue;
+                    int64_t curveId = nextId++;
+                    writeCurve(objects, curveId, *k, lcl[g][a]);
+                    connectProp(curveId, nodeId, kAxisProp[a]);
+                    ++counts.curves;
+                }
+            }
+        }
+    }
+
+    // Morph weight curves go on each channel's DeformPercent, in the same layer as the transform curves.
+    if (take && takeLayerId)
+    {
+        const int64_t layerId = takeLayerId;
+        for (size_t i = 0; i < scene.nodes.size(); ++i)
+        {
+            if (i >= take->morphWeights.size() || take->morphWeights[i].empty())
+                continue;
+            const auto& weights = take->morphWeights[i];
+            for (size_t k = 0; k < weights.size() && k < channelIds[i].size(); ++k)
+            {
+                std::vector<double> percent(weights[k].size());
+                for (size_t f = 0; f < percent.size(); ++f)
+                    percent[f] = weights[k][f] * 100.0;
+                const double rest = scene.nodes[i].morphs->targets[k].weight * 100.0;
+                int64_t nodeId = nextId++;
+                writeCurveNode1(objects, nodeId, "DeformPercent", "DeformPercent", rest);
+                connect(nodeId, layerId);
+                connectProp(nodeId, channelIds[i][k], "DeformPercent");
+                ++counts.curveNodes;
+                int64_t curveId = nextId++;
+                writeCurve(objects, curveId, sampledKeys(take->times, percent), rest);
+                connectProp(curveId, nodeId, "d|DeformPercent");
+                ++counts.curves;
+            }
+        }
+    }
+
+    counts.materials = int(materialIds.size());
+    writeDefinitions(root, counts);
+    root.add("Objects") = std::move(objects);
+    root.add("Connections") = std::move(connections);
+    Record& takes = root.add("Takes");
+    takes.add("Current").str(take ? take->name : "");
+    if (take)
+    {
+        Record& t = takes.add("Take");
+        t.str(take->name);
+        std::string file = take->name;
+        std::replace(file.begin(), file.end(), ' ', '_');
+        t.add("FileName").str(file + ".tak");
+        t.add("LocalTime").i64(spanStart).i64(spanStop);
+        t.add("ReferenceTime").i64(spanStart).i64(spanStop);
+    }
+    return bin::encodeFile(root);
+}
+
+bool writeFbx(const ExportScene& scene, const fs::path& path, const ExportOptions& opts, std::string* error)
+{
+    LILA_ZONE();
+
+    if (scene.nodes.empty())
+    {
+        if (error)
+            *error = "nothing to export";
+        return false;
+    }
+    std::string bytes = encodeFbx(scene, opts);
+    std::error_code ec;
+    if (path.has_parent_path())
+        fs::create_directories(path.parent_path(), ec);
+    // Write beside the target and rename, so a reader never sees half a file.
+    fs::path tmp = path;
+    tmp += ".tmp";
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (!f)
+        {
+            if (error)
+                *error = "can't write " + path.string();
+            return false;
+        }
+        f.write(bytes.data(), std::streamsize(bytes.size()));
+        if (!f)
+        {
+            if (error)
+                *error = "write failed: " + path.string();
+            return false;
+        }
+    }
+    fs::rename(tmp, path, ec);
+    if (ec)
+    {
+        fs::remove(tmp, ec);
+        if (error)
+            *error = "can't replace " + path.string();
+        return false;
+    }
+    return true;
+}
+} // namespace lila::fbx

@@ -1,0 +1,184 @@
+#pragma once
+
+#include "render/Renderer.h"
+#include "scene/ComponentPick.h"
+#include "scene/Plug.h"
+#include "ui/Camera.h"
+#include "ui/CameraHistory.h"
+#include "ui/Manipulator.h"
+
+#include <QWidget>
+
+class QMimeData;
+class QTimer;
+
+#include <deque>
+#include <map>
+#include <optional>
+#include <unordered_set>
+#include <string>
+#include <vector>
+
+namespace lila::ui
+{
+/** Native child window the render thread presents into. Owns the camera and Maya-style navigation. */
+class ViewportWidget : public QWidget
+{
+    Q_OBJECT
+
+public:
+    explicit ViewportWidget(QWidget* parent = nullptr);
+    ~ViewportWidget() override;
+
+    QPaintEngine* paintEngine() const override { return nullptr; }
+
+    Camera& camera() { return mCamera; }
+    const Camera& camera() const { return mCamera; }
+    void requestFrame();
+    void frameSelection(bool all);
+    /**
+     * "persp", "top", "bottom", "front", "back", "left" or "right", or a camera node's name to look through it. The
+     * perspective camera is kept while away. Unknown names are ignored.
+     */
+    void setView(const std::string& name);
+    /**
+     * Maya's Look Through: the view takes the camera node's pose and lens and its name, and navigating moves the node
+     * (on this view's camera undo, not the scene's) unless it is locked. The view goes back to where it was if the camera is deleted.
+     */
+    void lookThrough(scene::NodeId camera);
+    /** The camera node this view looks through, or kNoNode. */
+    scene::NodeId lookThroughCamera() const { return mLookThrough; }
+    /** Back to the view shown before looking through a camera node. */
+    void stopLookingThrough() { setView(mReturnView); }
+    /** Shows only the current selection (and its children) in this view; again to show everything. */
+    void toggleIsolate();
+    bool isolating() const { return !mIsolated.empty(); }
+    const Manipulator& manipulator() const { return mManip; }
+    /** Steps this view's camera back or forward through its own history ([ and ]); the scene's undo is untouched. */
+    void cameraUndo();
+    void cameraRedo();
+    const std::string& viewName() const { return mViewName; }
+    /** Which viewport panel this is, in creation order; keys its heads-up display prefs. */
+    int hudPanel() const { return mHudPanel; }
+
+signals:
+    /** The view (camera) or isolate state changed. */
+    void viewStateChanged();
+
+protected:
+    void showEvent(QShowEvent* e) override;
+    void resizeEvent(QResizeEvent* e) override;
+    void paintEvent(QPaintEvent* e) override;
+    void mousePressEvent(QMouseEvent* e) override;
+    void mouseMoveEvent(QMouseEvent* e) override;
+    void leaveEvent(QEvent* e) override;
+    void mouseReleaseEvent(QMouseEvent* e) override;
+    void wheelEvent(QWheelEvent* e) override;
+    void keyPressEvent(QKeyEvent* e) override;
+    bool event(QEvent* e) override;
+    void dragEnterEvent(QDragEnterEvent* e) override;
+    void dragMoveEvent(QDragMoveEvent* e) override;
+    void dropEvent(QDropEvent* e) override;
+
+private:
+    enum class Nav
+    {
+        None,
+        Tumble,
+        Track,
+        Dolly
+    };
+
+    void submit();
+    ViewInfo viewInfo() const;
+    /** Wraps the cursor to the opposite edge during manipulator drags, so a drag never runs out of screen. */
+    void wrapCursor(QMouseEvent* e);
+    void updateCursor();
+    /** Widget-space pixel of a world point; nullopt behind the camera. */
+    std::optional<QPointF> project(const glm::dvec3& world) const;
+    /** Names under a click point (nearest only) or inside a box. */
+    std::vector<std::string> hitTest(QPointF a, QPointF b);
+    void pick(QPointF a, QPointF b, Qt::KeyboardModifiers mods);
+    /** Component-mode picking on the hilited meshes. */
+    void pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers mods);
+    void drawComponents(render::FrameState& s);
+    /** What a click at the point would select in the current component mode: the nearest visible component. */
+    scene::componentPick::Hover componentAt(QPointF at);
+    /** Re-picks under the cursor for the preselection highlight; bursts of moves coalesce into one pick. */
+    void queuePreselect(QPointF at);
+    void updatePreselect();
+    void clearPreselect();
+    void drawPreselect(render::FrameState& s);
+    QSize pixelSize() const;
+    double aspect() const;
+    CameraView cameraView() const;
+    void applyCameraView(const CameraView& v);
+    void recordCamera(const CameraView& before, uint64_t gesture = 0);
+    /** Copies the look-through camera's pose and lens onto mCamera; drops back to the old view if it is gone. */
+    void syncLookThrough();
+    /**
+     * Navigation edits on the look-through camera, kept off the scene's undo stack like any camera move: begin saves
+     * the node, preview poses it, commit marks the scene changed and keys it when Auto Key is on. Begin returns false
+     * (with a message) when the camera is locked.
+     */
+    bool beginCameraEdit();
+    void previewCameraEdit();
+    void commitCameraEdit();
+    /** The first camera node named in a drag from the outliner, or kNoNode. */
+    scene::NodeId droppedCamera(const QMimeData* mime) const;
+
+    render::ViewportId mId = 0;
+    Camera mCamera;
+    Camera mPerspCamera;
+    std::string mViewName = "persp";
+    scene::NodeId mLookThrough = scene::kNoNode;
+    std::string mReturnView = "persp"; // the view to go back to when the look-through camera goes away
+    struct CameraEdit
+    {
+        scene::NodeId id = scene::kNoNode;
+        std::vector<std::pair<int, scene::PlugValue>> saved;
+    };
+    std::optional<CameraEdit> mCameraEdit;
+    QTimer* mWheelCommit = nullptr; // a run of wheel clicks on a camera node commits once it stops
+    double mLockedWarnMs = 0.0;
+    std::unordered_set<scene::NodeId> mIsolated; // empty = not isolating
+    void drawHud(OverlayPainter& p);
+    void drawViewIndicator(OverlayPainter& p);
+    /** Resolution and film gates with the mask outside them, Maya style. */
+    void drawGate(OverlayPainter& p);
+    /** Copies the scene's settings for this view's camera (film fit, overscan, gate) onto mCamera. */
+    void syncCameraSettings();
+    Nav mNav = Nav::None;
+    /** Camera undo per camera: built-in views by name, camera nodes by id, so [ steps through the shown camera's moves. */
+    std::map<std::string, CameraHistory> mCameraHistories;
+    std::string historyKey() const;
+    CameraView mNavStart;
+    bool mCameraRestoring = false;
+    QPointF mLastPos;
+    QPointF mPressPos;
+    bool mSelecting = false;
+    bool mMarquee = false;
+    bool mFrameQueued = false;
+    int mGraphListener = 0;
+    int mPrefListener = 0;
+    int mToolListener = 0;
+    int mComponentListener = 0;
+    int mPlaybackListener = 0;
+    int mViewportToolListener = 0;
+    int mRenderSettingsListener = 0;
+    Manipulator mManip;
+    bool mManipDrag = false;
+    bool mChannelDrag = false; // middle drag driving the channel box's highlighted channels
+    bool mToolDrag = false;
+    bool mSoftDrag = false;
+    double mSoftStartRadius = 0.0;
+    scene::componentPick::Hover mPreselect;
+    std::optional<QPointF> mPreselectAt; // cursor awaiting a pick
+    bool mPreselectQueued = false;
+    double mPreselectCostMs = 0.0;
+    int mHudPanel = 0;
+    std::vector<float> mBackdropBright; // OverlayPainter::classifyBackdrop state, so overlay colors switch with hysteresis
+    std::deque<std::pair<double, uint64_t>> mFrameSamples; // (ms, frames the renderer drew) over the last second, for the HUD
+    bool mHudRefreshQueued = false;
+};
+} // namespace lila::ui

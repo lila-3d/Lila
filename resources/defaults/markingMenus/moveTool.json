@@ -1,0 +1,8 @@
+{
+  "N": { "label": "World", "action": "manip.move.world" },
+  "W": { "label": "Object", "action": "manip.move.object" },
+  "E": { "label": "Parent", "action": "manip.move.parent" },
+  "S": { "label": "Edit Pivot", "action": "tool.pivotEditToggle" },
+  "SE": { "label": "Soft Select", "action": "softSelect.toggle" },
+  "overflow": []
+}

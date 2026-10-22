@@ -1,0 +1,252 @@
+#pragma once
+
+#include "geo/Bvh.h"
+#include "geo/Mesh.h"
+
+#include <glm/glm.hpp>
+
+#include <array>
+#include <string>
+#include <utility>
+#include <vector>
+
+/**
+ * Retopology: input repair, voxel remeshing, field-aligned auto quad remeshing, and relax/shrinkwrap onto a surface.
+ * Everything works in the mesh's own (object) space and is deterministic for a given input.
+ */
+namespace lila::retopo
+{
+using geo::Index;
+
+// Repair
+
+/** A problem findIssues looks for. Each lives on one kind of element (issueElement). */
+enum class MeshIssue : uint8_t
+{
+    Coincident,       // points: within the tolerance of another point
+    ZeroLengthEdge,   // edges: shorter than the tolerance
+    Lamina,           // faces: all their points shared with an earlier face (the extra copies)
+    ZeroAreaFace,     // faces: thinner than the tolerance
+    NonManifoldEdge,  // edges: three or more faces
+    NonManifoldPoint, // points: faces around them form more than one fan
+    Hole,             // edges: on an open border
+    Ngon,             // faces: more than four sides
+    Concave,          // faces: a corner bending inward
+    ZeroAreaUv,       // faces: no area in uv set 0
+    Flipped,          // faces: wound against their shell (conformNormals would turn them)
+    Count
+};
+inline constexpr size_t kIssueCount = size_t(MeshIssue::Count);
+
+enum class IssueElement : uint8_t
+{
+    Point,
+    Edge,
+    Face,
+};
+
+IssueElement issueElement(MeshIssue issue);
+/** Lower camel case name, as the meshRepair flag. */
+const char* issueName(MeshIssue issue);
+/** Plural words for reports, e.g. "lamina faces". */
+const char* issueLabel(MeshIssue issue);
+
+struct RepairOptions
+{
+    /** Which issues to look for and fix, by MeshIssue. */
+    std::array<bool, kIssueCount> checks = {true, true, true, true, true, true, false, false, false, false, true};
+    /** Distance under which points coincide and edges and faces are degenerate; negative scales with the mesh (1e-6 of the bounds diagonal). */
+    double tolerance = -1.0;
+    /** Repair also removes edges and points left without faces. */
+    bool removeLoose = true;
+
+    bool check(MeshIssue i) const { return checks[size_t(i)]; }
+    void set(MeshIssue i, bool on) { checks[size_t(i)] = on; }
+    /** The tolerance in use for this mesh. */
+    double toleranceFor(const geo::Mesh& mesh) const;
+};
+
+/** Offending element ids (sorted) per issue, of that issue's element kind. Unchecked issues stay empty. */
+struct MeshIssues
+{
+    std::array<std::vector<Index>, kIssueCount> ids;
+
+    const std::vector<Index>& of(MeshIssue i) const { return ids[size_t(i)]; }
+    Index count(MeshIssue i) const { return Index(ids[size_t(i)].size()); }
+    Index total() const;
+    /** Union of the ids of every issue on that element kind, sorted. */
+    std::vector<Index> elements(IssueElement kind) const;
+    /** "3 lamina faces, 2 n-gons", or "no issues". */
+    std::string summary() const;
+};
+
+/** Looks for the checked issues without changing the mesh. Ids are the mesh's own (not compacted). */
+MeshIssues findIssues(const geo::Mesh& mesh, const RepairOptions& opts = {});
+
+struct RepairReport
+{
+    /** How many of each issue were found when its fix ran. Zero-area uvs are only counted: they need a new unwrap. */
+    std::array<Index, kIssueCount> fixed{};
+    Index looseElements = 0;
+    std::string summary() const;
+};
+
+/**
+ * Fixes the checked issues in order: welds coincident points, collapses zero-length edges, drops lamina copies, merges
+ * zero-area slivers into a neighbour, splits non-manifold edges and points apart, fills holes, cuts n-gons and concave
+ * faces into quads and triangles, conforms winding. Compacts.
+ */
+RepairReport repairMesh(geo::Mesh& mesh, const RepairOptions& opts = {});
+
+struct VoxelOptions
+{
+    /** Voxels along the longest side of the bounds. */
+    int resolution = 128;
+    /** Pull the result onto the input surface where it lies close. */
+    bool project = true;
+};
+
+/**
+ * Rebuilds a dirty mesh (holes, self-intersections, inner shells) as one closed manifold quad surface: a narrow-band
+ * distance field signed by flooding the outside, contoured with surface nets.
+ */
+geo::Mesh voxelRemesh(const geo::Mesh& mesh, const VoxelOptions& opts = {});
+
+// Auto quad remesh
+
+struct QuadRemeshOptions
+{
+    int targetFaces = 5000;
+    /** Positive overrides targetFaces. */
+    double targetEdgeLength = 0.0;
+    /** 0 uniform, 1 strongly denser where curved. The point float "density" attribute multiplies on top. */
+    double adaptivity = 0.5;
+    /** Align to edges flagged "hard". */
+    bool useHardEdges = true;
+    /** Also align to edges whose faces meet sharper than this many degrees; negative disables. */
+    double sharpAngle = 40.0;
+    /** -1 off, 0/1/2 for a mirror plane through the origin across x/y/z: the result is exactly symmetric. */
+    int symmetryAxis = -1;
+    /** Polylines on (or near) the surface the edge flow should follow. */
+    std::vector<std::vector<glm::dvec3>> guides;
+    /** All quads (extract at half density and split each polygon); otherwise quad dominant. */
+    bool pureQuads = true;
+    int relaxIterations = 6;
+};
+
+struct QualityMetrics
+{
+    Index faces = 0;
+    Index quads = 0;
+    Index triangles = 0;
+    Index ngons = 0;
+    double quadPercent = 0.0;
+    /** Interior points by valence: valence[k] points have k edges. */
+    std::vector<Index> valence;
+    Index boundaryPoints = 0;
+    /** Interior points of valence other than 4. */
+    Index irregular = 0;
+    /** Largest and mean deviation of quad corner angles from 90, degrees. */
+    double maxAngleDeviation = 0.0;
+    double meanAngleDeviation = 0.0;
+    /** Distance from points and face centres to the source surface, when one is given. */
+    double maxDistance = 0.0;
+    double meanDistance = 0.0;
+    std::string summary() const;
+};
+
+/** Measures a mesh; distances need the source's Bvh. */
+QualityMetrics measureQuality(const geo::Mesh& mesh, const geo::MeshBvh* source = nullptr);
+
+struct QuadRemeshResult
+{
+    geo::Mesh mesh;
+    QualityMetrics metrics;
+    /** Wall time per stage, seconds. */
+    std::vector<std::pair<std::string, double>> timings;
+    std::string error;
+    bool ok() const { return error.empty(); }
+};
+
+/**
+ * Field-aligned quad remesh: a smooth 4-RoSy cross field aligned to curvature, features and guides; an Instant Meshes
+ * style position field solved on a multiresolution hierarchy; graph extraction into quads; cleanup; reprojection onto
+ * the source with feature-preserving tangential relaxation.
+ */
+QuadRemeshResult quadRemesh(const geo::Mesh& source, const QuadRemeshOptions& opts = {});
+
+// Relax and shrinkwrap
+
+struct RelaxOptions
+{
+    int iterations = 10;
+    /** Fraction of the way to the neighbour average per iteration. */
+    double strength = 0.5;
+    /** Border points stay put; otherwise they slide along the border, keeping its shape. */
+    bool pinBoundary = true;
+    /** Per point capacity; nonzero points stay put. Optional. */
+    std::vector<uint8_t> pinned;
+    /** Per point capacity; when given only these move. Optional. */
+    std::vector<uint8_t> active;
+    /** Move within the tangent plane only, so the shape stays when there is no target. */
+    bool tangential = true;
+    /** Keep points on the starting surface (or the target). Off is plain smoothing, which shrinks and rounds. */
+    bool project = true;
+    /** Edges whose faces meet sharper than this many degrees are creases: points slide along them, and their corners and ends stay. Negative turns it off. */
+    double sharpAngle = 12.0;
+    /** Edges flagged hard are creases too. */
+    bool hardEdgesAreCreases = true;
+    /** Points whose face angles fall short of (or exceed) a flat 360 by more than this many degrees, like a cone's tip, stay. Negative turns it off. */
+    double cornerAngle = 60.0;
+};
+
+struct FeatureOptions
+{
+    bool boundary = true;
+    /** Edges with a "crease" above zero. */
+    bool creases = false;
+    bool hardEdges = false;
+    /** Edges marked "seam", and edges where any uv set splits. */
+    bool uvSeams = false;
+};
+
+/** Points on the chosen kinds of feature edge, per point capacity: the points to pin when relaxing. */
+std::vector<uint8_t> featurePoints(const geo::Mesh& mesh, const FeatureOptions& opts);
+
+/**
+ * Laplacian relax keeping points on a surface: the target when given, otherwise the mesh's own starting shape.
+ * Parallel and deterministic.
+ */
+void relaxMesh(geo::Mesh& mesh, const geo::MeshBvh* target, const RelaxOptions& opts = {});
+
+/** Projects every point onto the target, then relaxes on it so the projection doesn't bunch up. */
+void shrinkwrap(geo::Mesh& mesh, const geo::MeshBvh& target, int relaxIterations = 3);
+
+enum class ProjectMethod : uint8_t
+{
+    Closest,
+    /** Along each point's normal, both ways. */
+    Normal,
+    /** Along one direction, both ways. */
+    Direction,
+};
+
+struct ProjectOptions
+{
+    ProjectMethod method = ProjectMethod::Closest;
+    /** For Direction, in the mesh's space. */
+    glm::dvec3 direction{0.0, 0.0, 1.0};
+    /** Distance to stay off the target, along its normal: positive outside. */
+    double offset = 0.0;
+    /** Points farther than this stay put; negative is unlimited. */
+    double maxDistance = -1.0;
+    /** Per point capacity; when given only these move. Optional. */
+    std::vector<uint8_t> active;
+};
+
+/**
+ * Moves points onto the target: to the closest point, or to the nearest hit along a ray (falling back to the closest
+ * point where the ray misses). The target mesh must be the one bvh was built from. Returns how many points moved.
+ */
+Index projectMesh(geo::Mesh& mesh, const geo::Mesh& target, const geo::MeshBvh& bvh, const ProjectOptions& opts = {});
+} // namespace lila::retopo

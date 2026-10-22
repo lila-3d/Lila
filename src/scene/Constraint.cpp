@@ -1,0 +1,483 @@
+#include "scene/Constraint.h"
+
+#include "core/Profile.h"
+#include "scene/Rig.h"
+#include "scene/RigUtil.h"
+#include "scene/TransformOps.h"
+
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
+#include <glm/gtx/quaternion.hpp>
+
+#include <optional>
+
+namespace lila::scene
+{
+using namespace rigutil;
+
+namespace
+{
+const char* kKindNames[] = {"parentConstraint", "pointConstraint", "orientConstraint", "aimConstraint"};
+
+AttrDef vec3Attr(std::string name, glm::dvec3 def, uint32_t flags, std::string doc)
+{
+    AttrDef a{.name = name, .type = PlugType::Vec3, .defaultValue = def, .flags = flags, .doc = std::move(doc)};
+    for (int i = 0; i < 3; ++i)
+        a.childNames[i] = name + char('X' + i);
+    return a;
+}
+
+AttrDef matrixAttr(std::string name, uint32_t flags, std::string doc)
+{
+    return {.name = std::move(name), .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = flags, .doc = std::move(doc)};
+}
+
+AttrDef boolAttr(std::string name, std::string doc)
+{
+    return {.name = std::move(name), .type = PlugType::Bool, .defaultValue = false, .flags = AttrInput | AttrStorable, .doc = std::move(doc)};
+}
+
+/** Weighted quaternion average in one hemisphere; fine for the small spreads constraint targets have. */
+struct QuatBlend
+{
+    glm::dquat sum{0, 0, 0, 0};
+    glm::dquat first{1, 0, 0, 0};
+    bool any = false;
+
+    void add(const glm::dquat& q, double w)
+    {
+        if (!any)
+            first = q;
+        any = true;
+        sum += (glm::dot(first, q) < 0.0 ? -q : q) * w;
+    }
+    glm::dmat3 result() const { return glm::length(sum) > 1e-12 ? glm::mat3_cast(glm::normalize(sum)) : glm::dmat3(1.0); }
+};
+} // namespace
+
+void ConstraintNode::compute(const EvalContext&)
+{
+    LILA_ZONE();
+
+    int count = int(std::clamp<int64_t>(as<int64_t>(kTargetCount), 0, kMaxTargets));
+    glm::dmat4 parent = as<glm::dmat4>(kParentMatrix);
+    glm::dmat4 parentInv = glm::inverse(parent);
+    glm::dmat3 parentRot = orthonormal(glm::dmat3(parent));
+    glm::dvec3 rp = as<glm::dvec3>(kRotatePivot), rpt = as<glm::dvec3>(kRotatePivotTranslate);
+    glm::dvec3 restT = as<glm::dvec3>(kRestTranslate), restR = as<glm::dvec3>(kRestRotate);
+    auto order = RotateOrder(as<int64_t>(kRotateOrder));
+    glm::dmat3 jo(eulerToMatrix(as<glm::dvec3>(kJointOrient), RotateOrder::XYZ));
+    glm::dvec3 offset = as<glm::dvec3>(kOffset);
+
+    glm::dvec3 outT = restT, outR = restR;
+    // World rotation to local rotate values, through the parent and jointOrient, staying near the rest pose.
+    auto toRotate = [&](const glm::dmat3& world) {
+        glm::dmat3 r = glm::transpose(jo) * glm::transpose(parentRot) * world;
+        return xformops::closestEuler(r, order, restR);
+    };
+
+    double wsum = 0.0;
+    glm::dvec3 pos(0.0);
+    QuatBlend rot;
+    for (int i = 0; i < count; ++i)
+    {
+        double w = as<double>(targetWeight(i));
+        if (w <= 0.0)
+            continue;
+        glm::dmat4 m = as<glm::dmat4>(targetMatrix(i));
+        if (kind == Kind::Parent)
+            m = m * as<glm::dmat4>(targetOffset(i));
+        pos += glm::dvec3(m[3]) * w;
+        rot.add(glm::quat_cast(orthonormal(glm::dmat3(m))), w);
+        wsum += w;
+    }
+
+    if (wsum > 0.0)
+    {
+        pos /= wsum;
+        switch (kind)
+        {
+        case Kind::Parent:
+        {
+            glm::dmat4 world(rot.result());
+            world[3] = glm::dvec4(pos, 1.0);
+            glm::dmat4 local = parentInv * world;
+            glm::dmat3 lr = orthonormal(glm::dmat3(local));
+            outR = xformops::closestEuler(glm::transpose(jo) * lr, order, restR);
+            // The local matrix places the origin at T + rpt + rp - (JO R) rp; solve that for T.
+            outT = glm::dvec3(local[3]) - rpt - rp + lr * rp;
+            break;
+        }
+        case Kind::Point:
+            outT = glm::dvec3(parentInv * glm::dvec4(pos, 1.0)) - rp - rpt + offset;
+            break;
+        case Kind::Orient:
+            outR = toRotate(rot.result() * glm::dmat3(eulerToMatrix(offset, RotateOrder::XYZ)));
+            break;
+        case Kind::Aim:
+        {
+            glm::dvec3 origin(parent * glm::dvec4(restT + rpt + rp, 1.0));
+            glm::dvec3 aim = pos - origin;
+            if (glm::length(aim) < 1e-9)
+                break;
+            glm::dvec3 aimVec = as<glm::dvec3>(kAimVector), upVec = as<glm::dvec3>(kUpVector);
+            glm::dvec3 worldUp = as<glm::dvec3>(kWorldUpVector);
+            glm::dmat4 upMatrix = as<glm::dmat4>(kWorldUpMatrix);
+            glm::dmat3 frame;
+            switch (as<int64_t>(kWorldUpType))
+            {
+            case kUpScene: frame = rig::aimFrame(aimVec, upVec, aim, {0, 1, 0}); break;
+            case kUpObject: frame = rig::aimFrame(aimVec, upVec, aim, glm::dvec3(upMatrix[3]) - origin); break;
+            case kUpObjectRotation: frame = rig::aimFrame(aimVec, upVec, aim, glm::dmat3(upMatrix) * worldUp); break;
+            case kUpVectorOnly: frame = rig::aimFrame(aimVec, upVec, aim, worldUp); break;
+            default: frame = glm::mat3_cast(glm::rotation(glm::normalize(aimVec), glm::normalize(aim))); break;
+            }
+            outR = toRotate(frame * glm::dmat3(eulerToMatrix(offset, RotateOrder::XYZ)));
+            break;
+        }
+        }
+    }
+
+    for (int k = 0; k < 3; ++k)
+    {
+        if (as<bool>(kSkipTranslateX + k))
+            outT[k] = restT[k];
+        if (as<bool>(kSkipRotateX + k))
+            outR[k] = restR[k];
+    }
+    setOutput(kConstraintTranslate, outT);
+    setOutput(kConstraintRotate, outR);
+}
+
+namespace
+{
+using Kind = ConstraintNode::Kind;
+
+bool drivesTranslate(Kind k) { return k == Kind::Parent || k == Kind::Point; }
+bool drivesRotate(Kind k) { return k != Kind::Point; }
+
+ConstraintNode* existingConstraint(Graph& g, NodeId obj, Kind kind)
+{
+    for (int attr : {int(Transform::kTranslate), int(Transform::kRotate)})
+        if (auto src = g.source({obj, attr, -1}))
+            if (auto* c = dynamic_cast<ConstraintNode*>(g.node(src->node)); c && c->kind == kind)
+                return c;
+    return nullptr;
+}
+
+void setSkips(Graph& g, NodeId c, const json& axes, int first, const char* cmd)
+{
+    if (axes.is_null())
+        return;
+    for (const json& ax : axes)
+    {
+        std::string s = ax.get<std::string>();
+        if (s.size() != 1 || s[0] < 'x' || s[0] > 'z')
+            throw CommandError(std::string(cmd) + ": skip axes are x, y or z");
+        g.setValue({c, first + (s[0] - 'x')}, true);
+    }
+}
+
+json makeConstraint(Kind kind, const Args& a)
+{
+    LILA_ZONE();
+
+    const char* cmd = kKindNames[int(kind)];
+    Graph& g = graph();
+    auto objs = a.objects();
+    if (objs.size() < 2)
+        throw CommandError(std::string(cmd) + ": give one or more targets, then the object to constrain");
+    Node& obj = nodeNamed(objs.back(), cmd);
+    if (!obj.type().isA("transform"))
+        throw CommandError(std::string(cmd) + ": " + obj.name() + " is not a transform");
+    std::vector<NodeId> targets;
+    for (size_t i = 0; i + 1 < objs.size(); ++i)
+    {
+        Node& t = nodeNamed(objs[i], cmd);
+        if (!t.type().isA("transform"))
+            throw CommandError(std::string(cmd) + ": " + t.name() + " is not a transform");
+        targets.push_back(t.id());
+    }
+
+    g.evaluate();
+    NodeId objId = obj.id();
+    glm::dvec3 curT = obj.as<glm::dvec3>(Transform::kTranslate), curR = obj.as<glm::dvec3>(Transform::kRotate);
+    glm::dmat4 objWorld = worldOf(obj);
+    bool joint = rig::isJoint(obj);
+
+    ConstraintNode* c = existingConstraint(g, objId, kind);
+    bool created = !c;
+    if (created)
+        for (int attr : {int(Transform::kTranslate), int(Transform::kRotate)})
+            if ((attr == Transform::kTranslate ? drivesTranslate(kind) : drivesRotate(kind)) && g.source({objId, attr, -1}))
+                throw CommandError(std::string(cmd) + ": " + g.plugName({objId, attr, -1}) + " is already driven");
+    if (!c)
+    {
+        std::string name = a.has("name") ? a.get<std::string>("name") : obj.name() + "_" + cmd;
+        c = static_cast<ConstraintNode*>(guarded([&] { return g.createNode(*types::find(cmd), name, kNoNode, true); }));
+        NodeId id = c->id();
+        g.setValue({id, ConstraintNode::kRotateOrder}, obj.value(Transform::kRotateOrder));
+        if (joint)
+            g.setValue({id, ConstraintNode::kJointOrient}, obj.value(Joint::kJointOrient));
+        g.setValue({id, ConstraintNode::kRotatePivot}, obj.value(Transform::kRotatePivot));
+        g.setValue({id, ConstraintNode::kRotatePivotTranslate}, obj.value(Transform::kRotatePivotTranslate));
+        g.setValue({id, ConstraintNode::kRestTranslate}, curT);
+        g.setValue({id, ConstraintNode::kRestRotate}, curR);
+        if (NodeId p = g.parent(objId); p != kNoNode)
+            guarded([&] { g.connect({p, Transform::kWorldMatrix, -1}, {id, ConstraintNode::kParentMatrix, -1}); return 0; });
+        if (kind == Kind::Parent)
+        {
+            setSkips(g, id, a.flags.value("skipTranslate", json()), ConstraintNode::kSkipTranslateX, cmd);
+            setSkips(g, id, a.flags.value("skipRotate", json()), ConstraintNode::kSkipRotateX, cmd);
+        }
+        else
+            setSkips(g, id, a.flags.value("skip", json()), kind == Kind::Point ? ConstraintNode::kSkipTranslateX : ConstraintNode::kSkipRotateX, cmd);
+        if (kind == Kind::Aim)
+        {
+            g.setValue({id, ConstraintNode::kAimVector}, vec3Of(a.flags["aimVector"]));
+            g.setValue({id, ConstraintNode::kUpVector}, vec3Of(a.flags["upVector"]));
+            g.setValue({id, ConstraintNode::kWorldUpVector}, vec3Of(a.flags["worldUpVector"]));
+            std::string upType = a.get<std::string>("worldUpType");
+            const char* upNames[] = {"scene", "object", "objectRotation", "vector", "none"};
+            int64_t type = -1;
+            for (int k = 0; k < 5; ++k)
+                if (upType == upNames[k])
+                    type = k;
+            if (type < 0)
+                throw CommandError("aimConstraint: worldUpType is scene, object, objectRotation, vector or none");
+            g.setValue({id, ConstraintNode::kWorldUpType}, type);
+            if (type == ConstraintNode::kUpObject || type == ConstraintNode::kUpObjectRotation)
+            {
+                if (!a.has("worldUpObject"))
+                    throw CommandError("aimConstraint: worldUpType " + upType + " needs worldUpObject");
+                NodeId up = nodeNamed(a.get<std::string>("worldUpObject"), cmd).id();
+                guarded([&] { g.connect({up, Transform::kWorldMatrix, -1}, {id, ConstraintNode::kWorldUpMatrix, -1}); return 0; });
+            }
+        }
+    }
+    NodeId id = c->id();
+
+    int count = int(c->as<int64_t>(ConstraintNode::kTargetCount));
+    double weight = a.get<double>("weight", 1.0);
+    std::vector<int> added;
+    for (NodeId t : targets)
+    {
+        bool already = false;
+        for (int s = 0; s < count; ++s)
+            if (auto src = g.source({id, ConstraintNode::targetMatrix(s), -1}); src && src->node == t)
+            {
+                g.setValue({id, ConstraintNode::targetWeight(s)}, weight);
+                already = true;
+            }
+        if (already)
+            continue;
+        if (count >= ConstraintNode::kMaxTargets)
+            throw CommandError(std::string(cmd) + ": at most " + std::to_string(ConstraintNode::kMaxTargets) + " targets");
+        guarded([&] { g.connect({t, Transform::kWorldMatrix, -1}, {id, ConstraintNode::targetMatrix(count), -1}); return 0; });
+        g.setValue({id, ConstraintNode::targetWeight(count)}, weight);
+        added.push_back(count++);
+    }
+    g.setValue({id, ConstraintNode::kTargetCount}, int64_t(count));
+
+    if (a.get<bool>("maintainOffset"))
+    {
+        g.evaluate();
+        if (kind == Kind::Parent)
+            for (int s : added)
+                g.setValue({id, ConstraintNode::targetOffset(s)},
+                           glm::inverse(c->as<glm::dmat4>(ConstraintNode::targetMatrix(s))) * objWorld);
+        else
+        {
+            g.setValue({id, ConstraintNode::kOffset}, glm::dvec3(0.0));
+            g.evaluate();
+            if (kind == Kind::Point)
+                g.setValue({id, ConstraintNode::kOffset}, clean(curT - c->as<glm::dvec3>(ConstraintNode::kConstraintTranslate)));
+            else
+            {
+                // offset = what turns the zero-offset result into the current orientation.
+                glm::dmat3 parentRot = orthonormal(glm::dmat3(c->as<glm::dmat4>(ConstraintNode::kParentMatrix)));
+                glm::dmat3 jo(eulerToMatrix(c->as<glm::dvec3>(ConstraintNode::kJointOrient), RotateOrder::XYZ));
+                auto order = RotateOrder(c->as<int64_t>(ConstraintNode::kRotateOrder));
+                glm::dmat3 zero = parentRot * jo * glm::dmat3(eulerToMatrix(c->as<glm::dvec3>(ConstraintNode::kConstraintRotate), order));
+                glm::dmat3 now = orthonormal(glm::dmat3(objWorld));
+                g.setValue({id, ConstraintNode::kOffset}, clean(matrixToEuler(glm::transpose(zero) * now, RotateOrder::XYZ)));
+            }
+        }
+    }
+    else if (a.has("offset") && kind != Kind::Parent)
+        g.setValue({id, ConstraintNode::kOffset}, vec3Of(a.flags["offset"]));
+
+    if (created)
+        guarded([&] {
+            if (drivesTranslate(kind))
+                g.connect({id, ConstraintNode::kConstraintTranslate, -1}, {objId, Transform::kTranslate, -1});
+            if (drivesRotate(kind))
+                g.connect({id, ConstraintNode::kConstraintRotate, -1}, {objId, Transform::kRotate, -1});
+            return 0;
+        });
+    return g.node(id)->name();
+}
+
+void registerConstraintCommandsImpl()
+{
+    using T = ArgType;
+    std::vector<FlagDef> common = {
+        {"maintainOffset", "mo", T::Bool, true, "Keep the object where it is now relative to the targets."},
+        {"weight", "w", T::Float, 1.0, "Weight of the given targets."},
+        {"name", "n", T::String, nullptr, "Name for a new constraint."},
+    };
+    auto with = [&](std::vector<FlagDef> extra) {
+        std::vector<FlagDef> f = common;
+        f.insert(f.end(), extra.begin(), extra.end());
+        return f;
+    };
+    const char* targetsDoc = "targets..., object";
+
+    cmds::registerCommand({
+        .name = "parentConstraint",
+        .doc = "Make the object follow the weighted blend of its targets' translation and rotation, as if parented. "
+               "Running it again on a constrained object adds targets (up to 8). Returns the constraint.",
+        .positionalDoc = targetsDoc,
+        .flags = with({{"skipTranslate", "st", T::List, nullptr, "Axes left alone, e.g. [\"y\"]."},
+                       {"skipRotate", "sr", T::List, nullptr, "Axes left alone."}}),
+        .run = [](const Args& a) -> json { return makeConstraint(Kind::Parent, a); },
+    });
+    cmds::registerCommand({
+        .name = "pointConstraint",
+        .doc = "Make the object's pivot follow the weighted average of its targets' positions. Returns the constraint.",
+        .positionalDoc = targetsDoc,
+        .flags = with({{"offset", "o", T::Vec3, nullptr, "Translate offset (when not maintaining the current one)."},
+                       {"skip", "sk", T::List, nullptr, "Axes left alone."}}),
+        .run = [](const Args& a) -> json { return makeConstraint(Kind::Point, a); },
+    });
+    cmds::registerCommand({
+        .name = "orientConstraint",
+        .doc = "Make the object's orientation follow the weighted blend of its targets'. Returns the constraint.",
+        .positionalDoc = targetsDoc,
+        .flags = with({{"offset", "o", T::Vec3, nullptr, "Rotation offset, degrees xyz."}, {"skip", "sk", T::List, nullptr, "Axes left alone."}}),
+        .run = [](const Args& a) -> json { return makeConstraint(Kind::Orient, a); },
+    });
+    cmds::registerCommand({
+        .name = "aimConstraint",
+        .doc = "Turn the object so aimVector points at its targets and upVector leans toward the world up. The aim "
+               "starts from the object's position when constrained (restTranslate). Returns the constraint.",
+        .positionalDoc = targetsDoc,
+        .flags = with({
+            {"aimVector", "aim", T::Vec3, json::array({1.0, 0.0, 0.0}), "Local axis that points at the target."},
+            {"upVector", "u", T::Vec3, json::array({0.0, 1.0, 0.0}), "Local axis that leans toward the world up."},
+            {"worldUpType", "wut", T::String, "vector", "scene | object | objectRotation | vector | none"},
+            {"worldUpVector", "wu", T::Vec3, json::array({0.0, 1.0, 0.0}), "World up (or up in worldUpObject's space)."},
+            {"worldUpObject", "wuo", T::String, nullptr, "Object for worldUpType object / objectRotation."},
+            {"offset", "o", T::Vec3, nullptr, "Rotation offset, degrees xyz."},
+            {"skip", "sk", T::List, nullptr, "Axes left alone."},
+        }),
+        .run = [](const Args& a) -> json { return makeConstraint(Kind::Aim, a); },
+    });
+
+    cmds::registerCommand({
+        .name = "removeConstraint",
+        .doc = "Delete constraints (give the constraints or the constrained objects). The objects keep their current pose.",
+        .positionalDoc = "constraints or objects",
+        .run = [](const Args& a) -> json {
+            Graph& g = graph();
+            std::vector<NodeId> list;
+            for (const std::string& name : a.objects())
+            {
+                Node& n = nodeNamed(name, "removeConstraint");
+                if (dynamic_cast<ConstraintNode*>(&n))
+                    list.push_back(n.id());
+                else
+                    for (int attr : {int(Transform::kTranslate), int(Transform::kRotate)})
+                        if (auto src = g.source({n.id(), attr, -1}); src && dynamic_cast<ConstraintNode*>(g.node(src->node)))
+                            list.push_back(src->node);
+            }
+            std::sort(list.begin(), list.end());
+            list.erase(std::unique(list.begin(), list.end()), list.end());
+            if (list.empty())
+                throw CommandError("removeConstraint: nothing constrained");
+            for (NodeId id : list)
+            {
+                g.evaluate();
+                for (int out : {int(ConstraintNode::kConstraintTranslate), int(ConstraintNode::kConstraintRotate)})
+                {
+                    PlugValue v = g.node(id)->value(out);
+                    for (const PlugRef& d : g.destinations({id, out, -1}))
+                    {
+                        g.disconnect(d);
+                        g.setValue(d, v);
+                    }
+                }
+                g.deleteNode(id);
+            }
+            return nullptr;
+        },
+    });
+}
+} // namespace
+
+void registerConstraintTypes()
+{
+    if (types::find("constraint"))
+        return;
+    const uint32_t stored = AttrInput | AttrStorable;
+    NodeType base;
+    base.name = "constraint";
+    base.icon = "link";
+    base.ownAttrs = {
+        {.name = "targetCount", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = stored | AttrHidden, .doc = "Target slots in use."},
+        matrixAttr("constraintParentMatrix", AttrInput | AttrHidden, "World matrix of the constrained object's parent."),
+        {.name = "constraintRotateOrder", .type = PlugType::Enum, .defaultValue = int64_t(0), .flags = stored,
+         .enumNames = {"xyz", "yzx", "zxy", "xzy", "yxz", "zyx"}, .doc = "The constrained object's rotate order."},
+        vec3Attr("constraintJointOrient", glm::dvec3(0.0), stored, "The constrained joint's jointOrient."),
+        vec3Attr("constraintRotatePivot", glm::dvec3(0.0), stored, "The constrained object's rotatePivot."),
+        vec3Attr("constraintRotateTranslate", glm::dvec3(0.0), stored, "The constrained object's rotatePivotTranslate."),
+        vec3Attr("restTranslate", glm::dvec3(0.0), stored, "Translate for skipped axes; the aim origin."),
+        vec3Attr("restRotate", glm::dvec3(0.0), stored, "Rotate for skipped axes."),
+        boolAttr("skipTranslateX", "Leave translateX alone."),
+        boolAttr("skipTranslateY", "Leave translateY alone."),
+        boolAttr("skipTranslateZ", "Leave translateZ alone."),
+        boolAttr("skipRotateX", "Leave rotateX alone."),
+        boolAttr("skipRotateY", "Leave rotateY alone."),
+        boolAttr("skipRotateZ", "Leave rotateZ alone."),
+        vec3Attr("offset", glm::dvec3(0.0), stored | AttrKeyable, "Translate (point) or rotation (orient, aim) offset."),
+    };
+    for (int i = 0; i < ConstraintNode::kMaxTargets; ++i)
+    {
+        std::string t = "target" + std::to_string(i);
+        base.ownAttrs.push_back(matrixAttr(t + "Matrix", AttrInput | AttrHidden, "Target world matrix."));
+        base.ownAttrs.push_back({.name = t + "Weight", .shortName = "w" + std::to_string(i), .type = PlugType::Float, .defaultValue = 1.0,
+                                 .flags = stored | AttrKeyable, .doc = "Target weight."});
+        base.ownAttrs.push_back(matrixAttr(t + "Offset", stored | AttrHidden, "Parent constraint: the object relative to the target."));
+    }
+    base.ownAttrs.push_back(vec3Attr("constraintTranslate", glm::dvec3(0.0), AttrOutput, "Drives the object's translate."));
+    base.ownAttrs.push_back(vec3Attr("constraintRotate", glm::dvec3(0.0), AttrOutput, "Drives the object's rotate."));
+    const NodeType& b = types::registerType(std::move(base));
+
+    for (int k = 0; k < 4; ++k)
+    {
+        NodeType t;
+        t.name = kKindNames[k];
+        t.base = &b;
+        if (Kind(k) == Kind::Aim)
+            t.ownAttrs = {
+                vec3Attr("aimVector", glm::dvec3(1, 0, 0), stored, "Local axis that points at the target."),
+                vec3Attr("upVector", glm::dvec3(0, 1, 0), stored, "Local axis that leans toward the world up."),
+                {.name = "worldUpType", .type = PlugType::Enum, .defaultValue = int64_t(ConstraintNode::kUpVectorOnly), .flags = stored,
+                 .enumNames = {"scene", "object", "objectRotation", "vector", "none"}, .doc = "Where the up direction comes from."},
+                vec3Attr("worldUpVector", glm::dvec3(0, 1, 0), stored, "World up, or up in the up object's space."),
+                matrixAttr("worldUpMatrix", AttrInput | AttrHidden, "World matrix of the up object."),
+            };
+        t.create = [k] {
+            auto n = std::make_unique<ConstraintNode>();
+            n->kind = Kind(k);
+            return n;
+        };
+        types::registerType(std::move(t));
+    }
+}
+
+void registerConstraintCommands()
+{
+    registerConstraintCommandsImpl();
+}
+} // namespace lila::scene

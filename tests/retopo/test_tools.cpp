@@ -1,0 +1,406 @@
+#include "cmds/Command.h"
+#include "cmds/Undo.h"
+#include "geo/Bvh.h"
+#include "geo/ObjIO.h"
+#include "geo/Ops.h"
+#include "geo/Primitives.h"
+#include "geo/Symmetry.h"
+#include "geo/TestUtil.h"
+#include "io/SceneFile.h"
+#include "retopo/Retopo.h"
+#include "retopo/RetopoCommands.h"
+#include "scene/Graph.h"
+#include "scene/MeshNodes.h"
+
+#include <doctest/doctest.h>
+
+#include <chrono>
+#include <cmath>
+#include <cstdlib>
+#include <filesystem>
+
+using namespace lila;
+using geo::Index;
+
+namespace
+{
+geo::Mesh sphere(int subdiv)
+{
+    geo::SphereOptions o;
+    o.radius = 50.0;
+    o.subdivAxis = subdiv;
+    o.subdivHeight = subdiv;
+    return geo::makeSphere(o);
+}
+
+void report(const std::string& what, const retopo::QuadRemeshResult& r)
+{
+    double total = 0.0;
+    std::string stages;
+    for (auto& [s, t] : r.timings)
+    {
+        total += t;
+        stages += " " + s + "=" + std::to_string(t);
+    }
+    MESSAGE(what << ": " << r.metrics.summary() << " in " << total << " s:" << stages);
+}
+
+scene::Node* makeMeshNode(const std::string& name, geo::Mesh mesh)
+{
+    scene::Graph& g = scene::Graph::current();
+    scene::Node* n = g.createNode(*scene::types::find("mesh"), name, scene::kNoNode, false);
+    g.setValue({n->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(std::move(mesh))));
+    return n;
+}
+
+const geo::Mesh& outMesh(const std::string& name)
+{
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    return *g.find(name)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+}
+} // namespace
+
+TEST_CASE("quad remesh: symmetry is exact")
+{
+    geo::Mesh src = sphere(96);
+    retopo::QuadRemeshOptions o;
+    o.targetFaces = 1500;
+    o.symmetryAxis = 0;
+    retopo::QuadRemeshResult r = retopo::quadRemesh(src, o);
+    REQUIRE(r.ok());
+    report("symmetric sphere", r);
+    if (std::getenv("LILA_RETOPO_DUMP"))
+        geo::writeObjFile((std::filesystem::temp_directory_path() / "retopo_symmetric.obj").string(), r.mesh);
+    CHECK(r.metrics.quadPercent > 95.0);
+    CHECK(geo::test::boundaryEdgeCount(r.mesh) == 0);
+    CHECK(r.mesh.validate().empty());
+
+    geo::SymmetryPlane plane;
+    geo::SymmetryMap map = geo::SymmetryMap::build(r.mesh, plane, 1e-12);
+    CHECK(map.unmatchedCount() == 0);
+    Index exact = 0;
+    for (Index p = 0; p < r.mesh.pointCapacity(); ++p)
+    {
+        Index q = map.mirrorPoint(p);
+        if (q != geo::kInvalid && r.mesh.position(q) == plane.reflect(r.mesh.position(p)))
+            ++exact;
+    }
+    CHECK(exact == r.mesh.numPoints());
+}
+
+TEST_CASE("relax keeps points on the surface and pins the boundary")
+{
+    geo::Mesh target = sphere(96);
+    geo::MeshBvh bvh(target);
+    geo::QuadSphereOptions qs;
+    qs.subdiv = 8;
+    geo::Mesh m = geo::makeQuadSphere(qs);
+    // Open it up so it has a border, then push the inner points off the surface.
+    std::vector<Index> top;
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f) && m.faceCentroid(f).y > 40.0)
+            top.push_back(f);
+    geo::deleteFaces(m, top);
+    m.compact();
+    std::vector<glm::dvec3> border;
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+    {
+        glm::dvec3 at = m.position(p);
+        if (m.isBoundaryPoint(p))
+            border.push_back(at);
+        else
+            m.setPosition(p, at + glm::dvec3(std::sin(p * 1.7), std::cos(p * 2.3), std::sin(p * 0.7)) * 2.0);
+    }
+    retopo::RelaxOptions ro;
+    ro.iterations = 20;
+    retopo::relaxMesh(m, &bvh, ro);
+    double worst = 0.0;
+    size_t b = 0;
+    bool pinned = true;
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+    {
+        geo::BvhClosest c;
+        REQUIRE(bvh.closestPoint(m.position(p), c));
+        if (m.isBoundaryPoint(p))
+            pinned &= m.position(p) == border[b++];
+        else
+            worst = std::max(worst, c.distance);
+    }
+    CHECK(worst < 1e-6);
+    CHECK(pinned);
+
+    geo::QuadSphereOptions big;
+    big.radius = 60.0;
+    big.subdiv = 6;
+    geo::Mesh wrap = geo::makeQuadSphere(big);
+    retopo::shrinkwrap(wrap, bvh, 3);
+    worst = 0.0;
+    for (Index p = 0; p < wrap.pointCapacity(); ++p)
+    {
+        geo::BvhClosest c;
+        bvh.closestPoint(wrap.position(p), c);
+        worst = std::max(worst, c.distance);
+    }
+    CHECK(worst < 1e-6);
+}
+
+TEST_CASE("repair fixes a broken mesh")
+{
+    // Unwelded neighbours, a duplicate face, a fin making an edge non-manifold, a flipped face and a sliver.
+    std::vector<glm::dvec3> pts = {{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0},
+                                   {1, 0, 0}, {2, 0, 0}, {2, 1, 0}, {1, 1, 0},
+                                   {1, 0, 0}, {1, 1, 0}, {1, 0.5, 1},
+                                   {2, 0, 0}, {3, 0, 0}, {3, 1, 0}, {2, 1, 0},
+                                   {0, 0, 0}, {0.5, 0, 0}, {1, 0, 0}};
+    std::vector<Index> sizes = {4, 4, 4, 3, 4, 3};
+    std::vector<Index> idx = {0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 8, 9, 10, 11, 14, 13, 12, 15, 16, 17};
+    geo::Mesh m = geo::Mesh::fromPolygons(pts, sizes, idx);
+    retopo::RepairReport r = retopo::repairMesh(m);
+    MESSAGE(r.summary());
+    using retopo::MeshIssue;
+    CHECK(r.fixed[size_t(MeshIssue::Coincident)] > 0);
+    CHECK(r.fixed[size_t(MeshIssue::Lamina)] == 1);
+    CHECK(r.fixed[size_t(MeshIssue::ZeroAreaFace)] >= 1);
+    CHECK(r.fixed[size_t(MeshIssue::NonManifoldEdge)] == 1);
+    CHECK(geo::test::isValid(m, geo::kValidateDefault | geo::kValidateDegenerate));
+    CHECK(m.numFaces() == 4);
+}
+
+TEST_CASE("voxel remesh closes holes")
+{
+    geo::CubeOptions co;
+    co.subdivX = co.subdivY = co.subdivZ = 10;
+    geo::Mesh m = geo::makeCube(co);
+    // A 10 cm hole, under the two voxels the remesher closes over at this resolution.
+    std::vector<Index> one = {0};
+    geo::deleteFaces(m, one);
+    m.compact();
+    REQUIRE(geo::test::boundaryEdgeCount(m) > 0);
+    retopo::VoxelOptions vo;
+    vo.resolution = 16;
+    geo::Mesh v = retopo::voxelRemesh(m, vo);
+    CHECK(v.numFaces() > 300);
+    CHECK(geo::test::boundaryEdgeCount(v) == 0);
+    CHECK(geo::test::isValid(v));
+    CHECK(geo::test::signedVolume(v) > 0.8e6);
+}
+
+TEST_CASE("commands: quadRemesh, relaxMesh, shrinkwrap, meshRepair undo cleanly")
+{
+    scene::Graph::current().clear();
+    UndoStack::get().clear();
+    makeMeshNode("src", sphere(64));
+    json r = cmds::execute("quadRemesh", {{"args", {"src"}}, {"targetFaces", 600}, {"symmetry", "x"}});
+    std::string name = r["name"].get<std::string>();
+    CHECK(r["metrics"]["quadPercent"].get<double>() > 95.0);
+    REQUIRE(scene::Graph::current().find(name));
+    CHECK(outMesh(name).cornerAttrs().has("uv0"));
+    cmds::execute("relaxMesh", {{"args", {name}}, {"target", "src"}, {"iterations", 3}});
+    cmds::execute("shrinkwrap", {{"args", {name}}, {"target", "src"}});
+    cmds::execute("meshRepair", {{"args", {name}}});
+    for (int i = 0; i < 4; ++i)
+        UndoStack::get().undo();
+    CHECK(scene::Graph::current().find(name) == nullptr);
+}
+
+TEST_CASE("commands: quad draw edits")
+{
+    scene::Graph::current().clear();
+    UndoStack::get().clear();
+    auto P = [](double x, double y) { return json::array({x, y, 0.0}); };
+    cmds::execute("quadDrawAddFace", {{"mesh", "retopo"}, {"create", true}, {"points", {P(0, 0), P(10, 0), P(10, 10), P(0, 10)}}});
+    // Shares the first quad's right edge in the same winding, so it gets flipped to match.
+    cmds::execute("quadDrawAddFace", {{"mesh", "retopo"}, {"points", {P(10, 10), P(20, 10), P(20, 0), P(10, 0)}}, {"weld", 0.5}});
+    {
+        const geo::Mesh& m = outMesh("retopo");
+        CHECK(m.numPoints() == 6);
+        CHECK(m.numFaces() == 2);
+        CHECK(geo::test::isValid(m));
+    }
+    cmds::execute("quadDrawInsertLoop", {{"mesh", "retopo"}, {"edge", int(outMesh("retopo").findEdge(0, 3))}});
+    CHECK(outMesh("retopo").numFaces() == 4);
+    cmds::execute("quadDrawMove", {{"mesh", "retopo"}, {"points", {0}}, {"positions", {P(-1, -1)}}});
+    CHECK(outMesh("retopo").position(0) == glm::dvec3(-1, -1, 0));
+    cmds::execute("quadDrawDelete", {{"mesh", "retopo"}, {"faces", {0}}});
+    CHECK(outMesh("retopo").numFaces() == 3);
+
+    // With x symmetry each new face gets a welded mirror image.
+    scene::Graph& g = scene::Graph::current();
+    cmds::execute("quadDrawAddFace", {{"mesh", "sym"}, {"create", true}, {"points", {P(0, 0), P(10, 0), P(10, 10), P(0, 10)}}});
+    g.setValue({g.find("sym")->id(), scene::MeshNode::kSymmetry, -1}, int64_t(1));
+    cmds::execute("quadDrawAddFace", {{"mesh", "sym"}, {"points", {P(10, 0), P(20, 0), P(20, 10), P(10, 10)}}});
+    {
+        const geo::Mesh& m = outMesh("sym");
+        CHECK(m.numFaces() == 3);
+        CHECK(geo::test::isValid(m));
+    }
+    scene::Graph::current().clear();
+    UndoStack::get().clear();
+}
+
+TEST_CASE("commands: quad draw dots undo, and fill consumes dots in one step")
+{
+    scene::Graph& g = scene::Graph::current();
+    g.clear();
+    UndoStack::get().clear();
+    makeMeshNode("ref", sphere(16));
+    g.setValue({g.find("ref")->id(), scene::MeshNode::kSymmetry, -1}, int64_t(1));
+    UndoStack::get().clear();
+    auto P = [](double x, double y) { return glm::dvec3(x, y, 0.0); };
+    auto J = [](const std::vector<glm::dvec3>& ps) {
+        json out = json::array();
+        for (const glm::dvec3& p : ps)
+            out.push_back({p.x, p.y, p.z});
+        return out;
+    };
+    auto dots = [&] { return retopo::quadDrawDots(*g.find("ref_retopo")); };
+    auto setDots = [&](const std::vector<glm::dvec3>& ps) {
+        cmds::execute("quadDrawSetDots", {{"mesh", "ref_retopo"}, {"reference", "ref"}, {"create", true}, {"dots", J(ps)}});
+    };
+
+    // The first dot creates the retopo mesh, connected to its reference and taking its symmetry.
+    setDots({P(10, 0)});
+    REQUIRE(g.find("ref_retopo"));
+    CHECK(retopo::quadDrawReference(g, g.find("ref_retopo")->id()) == g.find("ref")->id());
+    CHECK(g.find("ref_retopo")->as<int64_t>(scene::MeshNode::kSymmetry) == 1);
+    setDots({P(10, 0), P(20, 0)});
+    setDots({P(10, 0), P(20, 0), P(20, 10)});
+    setDots({P(10, 0), P(25, 0), P(20, 10)}); // a moved dot
+    setDots({P(10, 0), P(25, 0)}); // a deleted dot
+    CHECK(dots().size() == 2);
+    UndoStack::get().undo();
+    CHECK(dots() == std::vector<glm::dvec3>{P(10, 0), P(25, 0), P(20, 10)});
+    UndoStack::get().undo();
+    CHECK(dots() == std::vector<glm::dvec3>{P(10, 0), P(20, 0), P(20, 10)});
+    UndoStack::get().redo();
+    UndoStack::get().redo();
+    CHECK(dots().size() == 2);
+
+    // Dots are stored in object space, so they follow the mesh.
+    g.setValue({g.find("ref_retopo")->id(), scene::Transform::kTranslate, -1}, glm::dvec3(0, 0, 5));
+    g.evaluate();
+    CHECK(dots()[0] == glm::dvec3(10, 0, 5));
+    UndoStack::get().undo();
+    g.evaluate();
+
+    setDots({P(10, 0), P(20, 0), P(20, 10), P(10, 10), P(40, 40)});
+    {
+        UndoChunk chunk("Quad Draw Fill");
+        cmds::execute("quadDrawAddFace", {{"mesh", "ref_retopo"}, {"reference", "ref"}, {"create", true},
+                                          {"points", J({P(10, 0), P(20, 0), P(20, 10), P(10, 10)})}});
+        setDots({P(40, 40)});
+    }
+    CHECK(outMesh("ref_retopo").numFaces() == 2); // with its x mirror
+    CHECK(dots().size() == 1);
+    UndoStack::get().undo();
+    CHECK(outMesh("ref_retopo").numFaces() == 0);
+    CHECK(dots().size() == 5);
+
+    // Undoing back past the first dot removes the mesh again.
+    while (UndoStack::get().canUndo())
+        UndoStack::get().undo();
+    CHECK(g.find("ref_retopo") == nullptr);
+    g.clear();
+    UndoStack::get().clear();
+}
+
+TEST_CASE("quad draw resumes on its retopo mesh after save and load")
+{
+    scene::Graph& g = scene::Graph::current();
+    g.clear();
+    UndoStack::get().clear();
+    makeMeshNode("body", sphere(16));
+    makeMeshNode("other", sphere(8));
+    auto P = [](double x, double y) { return json::array({x, y, 0.0}); };
+    cmds::execute("quadDrawAddFace", {{"mesh", "body_retopo"}, {"reference", "body"}, {"create", true},
+                                      {"points", {P(0, 0), P(10, 0), P(10, 10), P(0, 10)}}});
+    cmds::execute("quadDrawSetDots", {{"mesh", "body_retopo"}, {"dots", {P(30, 0)}}});
+    g.rename(g.find("body_retopo")->id(), "topo");
+
+    for (const char* ext : {".lila", ".lilaa"})
+    {
+        auto path = std::filesystem::temp_directory_path() / (std::string("lila_quaddraw_resume") + ext);
+        io::save(path);
+        g.clear();
+        io::load(path);
+        std::filesystem::remove(path);
+        g.evaluate();
+
+        scene::NodeId body = g.find("body")->id(), topo = g.find("topo")->id(), other = g.find("other")->id();
+        CHECK(outMesh("topo").numFaces() == 1);
+        REQUIRE(retopo::quadDrawDots(*g.find("topo")).size() == 1);
+        CHECK(retopo::quadDrawDots(*g.find("topo"))[0] == glm::dvec3(30, 0, 0));
+
+        auto resolve = [&](std::vector<scene::NodeId> sel) {
+            auto t = retopo::resolveQuadDraw(g, sel);
+            REQUIRE(t);
+            return std::pair{t->reference, t->retopo};
+        };
+        CHECK(resolve({topo}) == std::pair{body, std::string("topo")});
+        CHECK(resolve({body}) == std::pair{body, std::string("topo")});
+        CHECK(resolve({body, topo}) == std::pair{body, std::string("topo")});
+        CHECK(resolve({topo, body}) == std::pair{body, std::string("topo")});
+        CHECK(resolve({other}) == std::pair{other, std::string("other_retopo")});
+        CHECK(resolve({other, topo}) == std::pair{body, std::string("topo")});
+        CHECK_FALSE(retopo::resolveQuadDraw(g, {}));
+    }
+
+    // A "<name>_retopo" drawn before the pair was connected resumes on its source mesh.
+    makeMeshNode("other_retopo", geo::Mesh());
+    CHECK(retopo::resolveQuadDraw(g, {g.find("other_retopo")->id()})->reference == g.find("other")->id());
+    g.clear();
+    UndoStack::get().clear();
+}
+
+TEST_CASE("quad remesh: 500k triangle timing" * doctest::skip())
+{
+    geo::Mesh src = sphere(500);
+    MESSAGE("input faces " << src.numFaces());
+    for (int target : {2000, 10000})
+    {
+        retopo::QuadRemeshOptions o;
+        o.targetFaces = target;
+        auto t0 = std::chrono::steady_clock::now();
+        retopo::QuadRemeshResult r = retopo::quadRemesh(src, o);
+        double sec = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        REQUIRE(r.ok());
+        report("500k sphere to " + std::to_string(target), r);
+        MESSAGE("wall " << sec << " s");
+    }
+}
+
+TEST_CASE("commands: polyReduce, relaxMesh flags, polyTriangulate quadSplit, decimate modifier")
+{
+    scene::Graph& g = scene::Graph::current();
+    g.clear();
+    UndoStack::get().clear();
+    makeMeshNode("ball", sphere(32));
+    const Index before = outMesh("ball").numFaces();
+    cmds::execute("setSymmetry", {{"args", {"ball"}}, {"axis", "x"}});
+    cmds::execute("polyReduce", {{"args", {"ball"}}, {"ratio", 0.3}});
+    const geo::Mesh reduced = outMesh("ball");
+    CHECK(reduced.numFaces() < before);
+    CHECK(reduced.numFaces() > before / 4);
+    CHECK(geo::test::boundaryEdgeCount(reduced) == 0);
+    // Symmetry on: every point has an exact mirror.
+    geo::SymmetryMap map = geo::SymmetryMap::build(reduced, geo::SymmetryPlane{}, 1e-9);
+    CHECK(map.unmatchedCount() == 0);
+
+    cmds::execute("relaxMesh", {{"args", {"ball"}}, {"iterations", 5}, {"sharpAngle", 20.0}, {"keepHardEdges", true}, {"project", true},
+                                {"pinBoundary", false}});
+    g.select({g.find("ball")->id()});
+    cmds::execute("polyTriangulate", {{"quadSplit", "first"}});
+    for (Index f = 0; f < outMesh("ball").faceCapacity(); ++f)
+        if (outMesh("ball").faceValid(f))
+            CHECK(outMesh("ball").faceSize(f) == 3);
+    // Triangulate, select, relax, reduce.
+    for (int i = 0; i < 4; ++i)
+        UndoStack::get().undo();
+    CHECK(outMesh("ball").numFaces() == before);
+
+    cmds::execute("addModifier", {{"args", {"ball"}}, {"kind", "decimate"}, {"params", {{"ratio", 0.2}, {"symmetry", 1}, {"keepHardEdges", true}}}});
+    const geo::Mesh modded = outMesh("ball");
+    CHECK(modded.numFaces() < before / 2);
+    CHECK(modded.cornerAttrs().has("uv0"));
+}

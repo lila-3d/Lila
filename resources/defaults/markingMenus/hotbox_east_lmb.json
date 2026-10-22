@@ -1,0 +1,12 @@
+{
+  "N": {"label": "Object Mode", "action": "select.objectMode"},
+  "NE": {"label": "Vertex", "action": "select.vertexMode"},
+  "E": {"label": "Edge", "action": "select.edgeMode"},
+  "SE": {"label": "Face", "action": "select.faceMode"},
+  "S": {"label": "All Components", "action": "select.allComponents"},
+  "overflow": [
+    {"label": "To Vertices", "action": "select.toVertices"},
+    {"label": "To Edges", "action": "select.toEdges"},
+    {"label": "To Faces", "action": "select.toFaces"}
+  ]
+}

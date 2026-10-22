@@ -1,0 +1,72 @@
+#pragma once
+
+#include "scene/Plug.h"
+
+#include <QWidget>
+
+#include <functional>
+#include <vector>
+
+class QListWidget;
+class QLabel;
+class QPushButton;
+class QVBoxLayout;
+
+namespace lila::scene
+{
+class Node;
+}
+
+namespace lila::ui
+{
+/** Dock object name of the material editor. */
+inline constexpr const char* kMaterialEditorDock = "materialEditor";
+
+/**
+ * Lists the scene's materials and edits the selected one: sliders, color swatches, texture slots with thumbnails, a
+ * fake-shaded preview ball and an assign-to-selection button. Every edit goes through commands, so it is undoable;
+ * a slider drag is one undo step.
+ */
+class MaterialEditor : public QWidget
+{
+    Q_OBJECT
+
+public:
+    explicit MaterialEditor(QWidget* parent = nullptr);
+    ~MaterialEditor() override;
+
+    void showMaterial(const std::string& name);
+    /** Side-panel width, like the channel box, rather than whatever the scroll area's contents ask for. */
+    QSize sizeHint() const override { return {340, 640}; }
+
+private:
+    /** Shows the first material of the last selected mesh. */
+    void followSelection();
+    void scheduleRefresh();
+    void refreshList();
+    void rebuild();
+    void updateValues();
+    void setAttr(int attr, const scene::json& value);
+    scene::Node* current() const;
+
+    QListWidget* mList = nullptr;
+    QLabel* mPreview = nullptr;
+    QWidget* mBody = nullptr;
+    QVBoxLayout* mBodyLayout = nullptr;
+    QPushButton* mAssign = nullptr;
+    scene::NodeId mNode = scene::kNoNode;
+    std::vector<std::function<void()>> mUpdaters;
+    int mListener = 0;
+    int mTextureListener = 0;
+    bool mQueued = false;
+    bool mDragging = false;
+};
+
+/**
+ * Registers "window.materialEditor" (shows the dock named kMaterialEditorDock, or a floating editor when the main
+ * window has none), "material.assignNew" (creates a material and assigns it to the selection) and
+ * "viewport.textured" (toggles materials in the viewport; hotkey 6). Also registers the material node type and
+ * commands when the scene has not yet.
+ */
+void registerMaterialUi();
+} // namespace lila::ui

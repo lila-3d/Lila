@@ -1,0 +1,862 @@
+#include "ui/Outliner.h"
+
+#include "cmds/Command.h"
+#include "core/Log.h"
+#include "core/PrefStore.h"
+#include "core/Profile.h"
+#include "io/References.h"
+#include "scene/Graph.h"
+#include "ui/Actions.h"
+#include "ui/Hotkeys.h"
+#include "ui/Icons.h"
+#include "ui/OutlinerLogic.h"
+
+#include <QApplication>
+#include <QClipboard>
+#include <QCursor>
+#include <QDrag>
+#include <QMimeData>
+#include <QDropEvent>
+#include <QHash>
+#include <QHeaderView>
+#include <QInputDialog>
+#include <QMenu>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QSplitter>
+#include <QTimer>
+#include <QVBoxLayout>
+
+#include <algorithm>
+#include <functional>
+
+namespace lila::ui
+{
+namespace
+{
+constexpr int kIdRole = Qt::UserRole + 1;
+constexpr int kStyleRole = Qt::UserRole + 2; // last applied style, so restyle only touches rows that changed
+constexpr int kUnloadedRefRole = Qt::UserRole + 3; // namespace of an unloaded reference's placeholder row
+
+std::vector<Outliner*> gOutliners;
+
+/** The outliner under the cursor, else the first visible one. */
+Outliner* activeOutliner()
+{
+    for (QWidget* w = QApplication::widgetAt(QCursor::pos()); w; w = w->parentWidget())
+        if (auto* o = qobject_cast<Outliner*>(w))
+            return o;
+    for (Outliner* o : gOutliners)
+        if (o->isVisible())
+            return o;
+    return nullptr;
+}
+
+/** A type icon, dimmed for hidden rows, with a chain-link badge in the corner for referenced ones. */
+QIcon rowIcon(const QString& name, bool referenced, bool dim)
+{
+    static QHash<QString, QIcon> cache;
+    QString key = name + (referenced ? "/r" : "") + (dim ? "/d" : "");
+    if (auto it = cache.find(key); it != cache.end())
+        return *it;
+    QIcon base = icon(name);
+    if (base.isNull())
+        base = icon("point");
+    QIcon::Mode mode = dim ? QIcon::Disabled : QIcon::Normal;
+    QIcon out;
+    for (int size : {16, 32})
+    {
+        QPixmap pm = base.pixmap(QSize(size, size), mode);
+        if (referenced)
+        {
+            QPainter p(&pm);
+            p.setRenderHint(QPainter::Antialiasing);
+            int b = size * 9 / 16;
+            QRect badge(size - b, size - b, b, b);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(40, 40, 40));
+            p.drawEllipse(badge);
+            p.drawPixmap(badge.adjusted(1, 1, -1, -1), icon("link").pixmap(QSize(b - 2, b - 2), QIcon::Active));
+        }
+        out.addPixmap(pm);
+    }
+    cache.insert(key, out);
+    return out;
+}
+
+/** "|group1|pCube1", Maya's full DAG path. */
+std::string dagPath(scene::Graph& g, scene::NodeId id)
+{
+    std::string out;
+    for (scene::NodeId p = id; p != scene::kNoNode; p = g.parent(p))
+        if (const scene::Node* n = g.node(p))
+            out = "|" + n->name() + out;
+    return out;
+}
+
+std::vector<scene::NodeId> selectedIds()
+{
+    return scene::Graph::current().selection();
+}
+
+json namesOf(const std::vector<scene::NodeId>& ids)
+{
+    json names = json::array();
+    for (scene::NodeId id : ids)
+        if (scene::Node* n = scene::Graph::current().node(id))
+            names.push_back(n->name());
+    return names;
+}
+
+void runCommand(const char* name, const json& call)
+{
+    try
+    {
+        cmds::execute(name, call, CallSource::UI);
+    }
+    catch (const CommandError& e)
+    {
+        log::error("{}", e.what());
+    }
+}
+
+void copyToClipboard(bool fullPath)
+{
+    scene::Graph& g = scene::Graph::current();
+    QStringList lines;
+    for (scene::NodeId id : g.selection())
+        if (scene::Node* n = g.node(id))
+            lines << QString::fromStdString(fullPath ? dagPath(g, id) : n->name());
+    if (!lines.isEmpty())
+        QApplication::clipboard()->setText(lines.join('\n'));
+}
+
+void registerOutlinerActions()
+{
+    if (actions::find("outliner.revealSelected"))
+        return;
+    auto onOutliner = [](void (Outliner::*fn)()) {
+        return [fn] {
+            if (Outliner* o = activeOutliner())
+                (o->*fn)();
+        };
+    };
+    actions::add({"outliner.revealSelected", "Reveal Selected", "Outliner", onOutliner(&Outliner::revealSelected), nullptr,
+                  "Expands the outliner down to the selected objects and scrolls to them (F over the outliner)."});
+    actions::add({"outliner.rename", "Rename", "Outliner", onOutliner(&Outliner::renameSelected), nullptr,
+                  "Edits the selected object's name in place in the outliner."});
+    actions::add({"outliner.expandAll", "Expand All", "Outliner", onOutliner(&Outliner::expandEverything), nullptr,
+                  "Opens every row of the outliner."});
+    actions::add({"outliner.collapseAll", "Collapse All", "Outliner", onOutliner(&Outliner::collapseEverything), nullptr,
+                  "Folds the outliner down to the top-level objects."});
+    actions::add({"outliner.copyName", "Copy Name", "Outliner", [] { copyToClipboard(false); }, nullptr,
+                  "Puts the selected objects' names on the clipboard, one per line."});
+    actions::add({"outliner.copyPath", "Copy Path", "Outliner", [] { copyToClipboard(true); }, nullptr,
+                  "Puts the selected objects' full DAG paths (|group|object) on the clipboard, one per line."});
+    actions::add({"select.children", "Select Children", "Select", [] {
+                      scene::Graph& g = scene::Graph::current();
+                      std::vector<scene::NodeId> kids;
+                      for (scene::NodeId id : g.selection())
+                          for (scene::NodeId c : g.children(id))
+                              if (std::find(kids.begin(), kids.end(), c) == kids.end())
+                                  kids.push_back(c);
+                      if (!kids.empty())
+                          runCommand("select", {{"args", namesOf(kids)}});
+                  }, nullptr, "Replaces the selection with the direct children of the selected objects.",
+                  "select(listRelatives(children=True))"});
+}
+
+/** Adds an action's menu item, labelled as the action (or label) with its hotkey, running it through run. */
+QAction* addItem(QMenu* menu, const std::string& id, const std::function<void(const json&)>& run, const QString& label = {})
+{
+    const Action* a = actions::find(id);
+    if (!a)
+        return nullptr;
+    QString text = label.isEmpty() ? QString::fromStdString(a->label) : label;
+    QString key = Hotkeys::get().keyFor(id);
+    QAction* item = menu->addAction(key.isEmpty() ? text : text + "\t" + key, [run, id] { run(json(id)); });
+    item->setToolTip(QString::fromStdString(a->doc));
+    return item;
+}
+
+/** The label that follows the cursor while rows are moved: the first name, and how many more. */
+QPixmap movePixmap(const QStringList& names, const QFont& font, const QPalette& pal, qreal dpr)
+{
+    QString text = names.size() == 1 ? names.front() : QString("%1 +%2").arg(names.front()).arg(names.size() - 1);
+    QFontMetrics fm(font);
+    QSize size(fm.horizontalAdvance(text) + 12, fm.height() + 6);
+    QPixmap pm(size * dpr);
+    pm.setDevicePixelRatio(dpr);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(Qt::NoPen);
+    p.setBrush(pal.color(QPalette::Highlight));
+    p.drawRoundedRect(QRectF(QPointF(0, 0), QSizeF(size)), 3, 3);
+    p.setFont(font);
+    p.setPen(pal.color(QPalette::HighlightedText));
+    p.drawText(QRect(QPoint(0, 0), size), Qt::AlignCenter, text);
+    return pm;
+}
+
+const io::Reference* referenceById(uint32_t id)
+{
+    for (const io::Reference& r : io::refs::all())
+        if (r.id == id)
+            return &r;
+    return nullptr;
+}
+
+void addReferenceItems(QMenu* menu, const std::string& ns, bool loaded)
+{
+    json args = {{"args", {ns}}};
+    auto add = [&](const char* label, const char* command) {
+        menu->addAction(label, [command, args] { actions::run(json{{"command", command}, {"args", args}}); });
+    };
+    if (loaded)
+    {
+        add("Reload Reference", "reloadReference");
+        add("Unload Reference", "unloadReference");
+        add("Import Objects from Reference", "importReference");
+    }
+    else
+        add("Load Reference", "loadReference");
+    menu->addSeparator();
+    if (const Action* a = actions::find("window.referenceEditor"))
+        menu->addAction(QString::fromStdString(a->label), [] { actions::run(json("window.referenceEditor")); });
+}
+} // namespace
+
+Outliner::Outliner(QWidget* parent) : QTreeWidget(parent)
+{
+    gOutliners.push_back(this);
+    registerOutlinerActions();
+
+    setHeaderHidden(true);
+    setSelectionMode(QAbstractItemView::ExtendedSelection);
+    setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
+    setUniformRowHeights(true);
+    setIconSize(QSize(16, 16));
+    setProperty("pickWalk", true);
+    setProperty("hotkeyContext", "outliner");
+    setProperty("hotkeyHover", true);
+    Hotkeys::passThrough(this);
+    // Drops land through dropEvent; drags start only from MMB (startMove), so an LMB drag selects instead.
+    setDragDropMode(QAbstractItemView::InternalMove);
+    setDragEnabled(false);
+    setDefaultDropAction(Qt::MoveAction);
+    setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(this, &QWidget::customContextMenuRequested, this, &Outliner::showContextMenu);
+
+    mListener = scene::Graph::current().addListener([this](scene::Change c, scene::NodeId) {
+        if (c == scene::Change::Value || c == scene::Change::Connection)
+            scheduleRestyle();
+        else if (c == scene::Change::Selection)
+            syncSelectionFromScene();
+        else
+            scheduleRebuild();
+    });
+
+    connect(this, &QTreeWidget::itemSelectionChanged, this, &Outliner::pushSelectionToScene);
+    connect(this, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem* item, int) {
+        if (mSyncing)
+            return;
+        auto id = item->data(0, kIdRole).toULongLong();
+        scene::Node* n = scene::Graph::current().node(id);
+        std::string to = item->text(0).trimmed().toStdString();
+        if (!n || to == n->name())
+            return;
+        if (to.empty())
+            return scheduleRebuild();
+        try
+        {
+            cmds::execute("rename", {{"args", {n->name(), to}}}, CallSource::UI);
+        }
+        catch (const CommandError& e)
+        {
+            log::error("{}", e.what());
+            scheduleRebuild();
+        }
+    });
+    connect(this, &QTreeWidget::itemCollapsed, this, [this](QTreeWidgetItem* item) {
+        if (!mSyncing)
+            mCollapsed.insert(item->data(0, kIdRole).toULongLong());
+    });
+    connect(this, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem* item) {
+        if (!mSyncing)
+            mCollapsed.erase(item->data(0, kIdRole).toULongLong());
+    });
+
+    rebuild();
+}
+
+Outliner::~Outliner()
+{
+    std::erase(gOutliners, this);
+    scene::Graph::current().removeListener(mListener);
+}
+
+void Outliner::dropEvent(QDropEvent* e)
+{
+    e->setDropAction(Qt::IgnoreAction);
+    e->accept();
+    scene::Graph& g = scene::Graph::current();
+    std::vector<scene::NodeId> moved = mMoving;
+    std::erase_if(moved, [&](scene::NodeId id) { return !g.node(id); });
+    if (moved.empty())
+        return;
+
+    QTreeWidgetItem* target = itemAt(e->position().toPoint());
+    scene::NodeId targetId = target ? scene::NodeId(target->data(0, kIdRole).toULongLong()) : scene::kNoNode;
+    DropIndicatorPosition where = targetId != scene::kNoNode ? dropIndicatorPosition() : OnViewport;
+    scene::NodeId parent = scene::kNoNode;
+    scene::NodeId anchor = scene::kNoNode; // the sibling the moved rows go in front of; none = the end
+    bool place = true;
+    if (where == OnItem)
+    {
+        if (std::find(moved.begin(), moved.end(), targetId) != moved.end())
+            return;
+        parent = targetId;
+        place = false;
+    }
+    else if (where == AboveItem)
+    {
+        parent = g.parent(targetId);
+        anchor = targetId;
+    }
+    else if (where == BelowItem && target->isExpanded() && !g.children(targetId).empty())
+    {
+        // The line sits between the row and its first child.
+        parent = targetId;
+        anchor = g.children(targetId).front();
+    }
+    else if (where == BelowItem)
+    {
+        parent = g.parent(targetId);
+        const auto& sib = parent == scene::kNoNode ? g.roots() : g.children(parent);
+        auto it = std::find(sib.begin(), sib.end(), targetId);
+        if (it != sib.end() && it + 1 != sib.end())
+            anchor = *(it + 1);
+    }
+
+    json call = {{"args", namesOf(moved)}};
+    if (parent != scene::kNoNode)
+        call["args"].push_back(g.node(parent)->name());
+    else
+        call["world"] = true;
+    if (place)
+        call["index"] = outliner::dropIndex(parent == scene::kNoNode ? g.roots() : g.children(parent), moved, anchor);
+    runCommand("parent", call);
+    scheduleRebuild();
+}
+
+void Outliner::keyPressEvent(QKeyEvent* e)
+{
+    QWidget* editor = QApplication::focusWidget();
+    bool renameKey = Hotkeys::get().isKeyFor(e, "outliner.rename") || Hotkeys::get().isKeyFor(e, "edit.rename");
+    if (state() == EditingState && renameKey && editor && viewport()->isAncestorOf(editor))
+    {
+        closeEditor(editor, QAbstractItemDelegate::RevertModelCache);
+        setFocus();
+        return;
+    }
+    QTreeWidget::keyPressEvent(e);
+}
+
+void Outliner::mousePressEvent(QMouseEvent* e)
+{
+    if (e->button() == Qt::MiddleButton)
+    {
+        mMoving.clear();
+        mMovePress = e->position().toPoint();
+        if (QTreeWidgetItem* item = itemAt(mMovePress))
+            if (scene::NodeId id = item->data(0, kIdRole).toULongLong())
+                mMoving = outliner::menuTargets(id, selectedIds());
+        e->accept();
+        return;
+    }
+    QTreeWidget::mousePressEvent(e);
+    mDragSelecting = e->button() == Qt::LeftButton;
+}
+
+void Outliner::mouseMoveEvent(QMouseEvent* e)
+{
+    if (!mMoving.empty() && (e->buttons() & Qt::MiddleButton))
+    {
+        if ((e->position().toPoint() - mMovePress).manhattanLength() >= QApplication::startDragDistance())
+            startMove();
+        e->accept();
+        return;
+    }
+    QTreeWidget::mouseMoveEvent(e);
+}
+
+void Outliner::mouseReleaseEvent(QMouseEvent* e)
+{
+    if (e->button() == Qt::MiddleButton)
+    {
+        mMoving.clear();
+        e->accept();
+        return;
+    }
+    QTreeWidget::mouseReleaseEvent(e);
+    if (e->button() == Qt::LeftButton)
+    {
+        mDragSelecting = false;
+        if (mSelectionPending)
+        {
+            mSelectionPending = false;
+            pushSelectionToScene();
+        }
+    }
+}
+
+void Outliner::startMove()
+{
+    // Top-to-bottom row order, so the rows land in the order they were shown.
+    std::vector<scene::NodeId> rows;
+    QModelIndexList indexes;
+    QStringList names;
+    for (QTreeWidgetItemIterator it(this); *it; ++it)
+        if (scene::NodeId id = (*it)->data(0, kIdRole).toULongLong();
+            id && std::find(mMoving.begin(), mMoving.end(), id) != mMoving.end())
+        {
+            rows.push_back(id);
+            indexes << indexFromItem(*it);
+            names << (*it)->text(0);
+        }
+    mMoving = rows;
+    if (rows.empty())
+        return;
+    auto* drag = new QDrag(this);
+    QMimeData* mime = model()->mimeData(indexes);
+    QStringList nodeNames;
+    for (scene::NodeId id : rows)
+        if (scene::Node* n = scene::Graph::current().node(id))
+            nodeNames << QString::fromStdString(n->name());
+    mime->setData(kNodeNamesMime, nodeNames.join(QChar('\n')).toUtf8());
+    drag->setMimeData(mime);
+    drag->setPixmap(movePixmap(names, font(), palette(), devicePixelRatioF()));
+    drag->setHotSpot(QPoint(-12, -4));
+    drag->exec(Qt::MoveAction | Qt::LinkAction, Qt::MoveAction);
+    mMoving.clear();
+}
+
+void Outliner::scheduleRebuild()
+{
+    if (mQueued)
+        return;
+    mQueued = true;
+    QTimer::singleShot(0, this, [this] {
+        mQueued = false;
+        if (height() <= 0)
+            mStale = true;
+        else
+            rebuild();
+    });
+}
+
+void Outliner::resizeEvent(QResizeEvent* e)
+{
+    QTreeWidget::resizeEvent(e);
+    if (mStale && height() > 0)
+    {
+        mStale = false;
+        rebuild();
+    }
+}
+
+void Outliner::scheduleRestyle()
+{
+    if (mRestyleQueued || mQueued)
+        return;
+    mRestyleQueued = true;
+    QTimer::singleShot(0, this, [this] {
+        mRestyleQueued = false;
+        restyle();
+    });
+}
+
+void Outliner::rebuild()
+{
+    LILA_ZONE();
+
+    mStale = false;
+    mSyncing = true;
+    scene::Graph& g = scene::Graph::current();
+    clear();
+    mItems.clear();
+    std::function<void(scene::NodeId, QTreeWidgetItem*)> add = [&](scene::NodeId id, QTreeWidgetItem* parent) {
+        scene::Node* n = g.node(id);
+        auto* item = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(this);
+        item->setText(0, QString::fromStdString(n->name()));
+        item->setData(0, kIdRole, QVariant::fromValue<qulonglong>(id));
+        item->setFlags(item->flags() | Qt::ItemIsEditable | Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled);
+        // Referenced names can't be edited.
+        if (n->referenceId())
+            item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+        const std::string& doc = n->type().doc;
+        item->setToolTip(0, QString::fromStdString(n->type().name + (doc.empty() ? "" : "\n" + doc)));
+        mItems[id] = item;
+        for (scene::NodeId c : g.children(id))
+            add(c, item);
+    };
+    for (scene::NodeId id : g.roots())
+        add(id, nullptr);
+    // An unloaded reference has no nodes, so it gets a placeholder row to load it back from.
+    for (const io::Reference& r : io::refs::all())
+        if (!r.loaded)
+        {
+            auto* item = new QTreeWidgetItem(this);
+            item->setText(0, QString::fromStdString(r.ns + " (unloaded)"));
+            item->setData(0, kUnloadedRefRole, QString::fromStdString(r.ns));
+            item->setFlags(Qt::ItemIsEnabled);
+            item->setIcon(0, rowIcon("link-off", false, true));
+            QFont f = item->font(0);
+            f.setItalic(true);
+            item->setFont(0, f);
+            item->setForeground(0, QColor(110, 110, 110));
+            item->setToolTip(0, QString::fromStdString("Unloaded reference\n" + r.path.generic_string()));
+        }
+    expandAll();
+    std::erase_if(mCollapsed, [&](scene::NodeId id) { return !mItems.contains(id); });
+    for (scene::NodeId id : mCollapsed)
+        mItems[id]->setExpanded(false);
+    mSyncing = false;
+    restyle();
+    syncSelectionFromScene();
+}
+
+void Outliner::restyle()
+{
+    LILA_ZONE();
+
+    scene::Graph& g = scene::Graph::current();
+    const QColor normal = palette().color(QPalette::Text);
+    for (auto& [id, item] : mItems)
+    {
+        scene::Node* n = g.node(id);
+        if (!n)
+            continue;
+        bool referenced = n->referenceId() != 0;
+        bool hidden = outliner::hiddenInHierarchy(g, id);
+        QString iconName = QString::fromStdString(outliner::iconName(*n));
+        QString style = iconName + (referenced ? "/r" : "") + (hidden ? "/h" : "");
+        if (item->data(0, kStyleRole).toString() == style)
+            continue;
+        item->setData(0, kStyleRole, style);
+        item->setIcon(0, rowIcon(iconName, referenced, hidden));
+        QFont f = item->font(0);
+        f.setItalic(referenced);
+        item->setFont(0, f);
+        QColor c = hidden ? QColor(100, 100, 100) : referenced ? QColor(150, 150, 150) : normal;
+        item->setForeground(0, c);
+    }
+}
+
+void Outliner::syncSelectionFromScene()
+{
+    mSyncing = true;
+    const auto& sel = scene::Graph::current().selection();
+    for (QTreeWidgetItemIterator it(this); *it; ++it)
+    {
+        auto id = (*it)->data(0, kIdRole).toULongLong();
+        (*it)->setSelected(id && std::find(sel.begin(), sel.end(), id) != sel.end());
+    }
+    shadeAncestors();
+    mSyncing = false;
+}
+
+void Outliner::shadeAncestors()
+{
+    scene::Graph& g = scene::Graph::current();
+    const std::set<scene::NodeId> chain = outliner::selectionAncestors(g, g.selection());
+    // A step above the background and well below the selection highlight.
+    const QBrush shade(QColor(56, 56, 56));
+    for (auto& [id, item] : mItems)
+    {
+        bool on = chain.contains(id);
+        if (item->data(0, Qt::BackgroundRole).isValid() != on)
+            item->setData(0, Qt::BackgroundRole, on ? QVariant(shade) : QVariant());
+    }
+}
+
+void Outliner::pushSelectionToScene()
+{
+    if (mSyncing)
+        return;
+    if (mDragSelecting)
+    {
+        mSelectionPending = true;
+        return;
+    }
+    // Selection order matters (parent, parent chain, constraints). Qt's selectedItems() isn't click order, so keep
+    // the scene's existing order and append whatever was newly selected.
+    scene::Graph& g = scene::Graph::current();
+    std::vector<scene::NodeId> picked;
+    for (QTreeWidgetItem* item : selectedItems())
+        if (scene::NodeId id = item->data(0, kIdRole).toULongLong())
+            picked.push_back(id);
+    std::vector<scene::NodeId> ordered;
+    for (scene::NodeId id : g.selection())
+        if (std::find(picked.begin(), picked.end(), id) != picked.end())
+            ordered.push_back(id);
+    for (scene::NodeId id : picked)
+        if (std::find(ordered.begin(), ordered.end(), id) == ordered.end())
+            ordered.push_back(id);
+    json names = namesOf(ordered);
+    try
+    {
+        if (names.empty())
+            cmds::execute("select", {{"clear", true}}, CallSource::UI);
+        else
+            cmds::execute("select", {{"args", names}}, CallSource::UI);
+    }
+    catch (const CommandError& e)
+    {
+        log::error("{}", e.what());
+    }
+}
+
+void Outliner::revealSelected()
+{
+    scene::Graph& g = scene::Graph::current();
+    QTreeWidgetItem* first = nullptr;
+    for (scene::NodeId id : g.selection())
+    {
+        auto it = mItems.find(id);
+        if (it == mItems.end())
+            continue;
+        for (scene::NodeId p : outliner::ancestors(g, id))
+            if (auto pit = mItems.find(p); pit != mItems.end())
+                pit->second->setExpanded(true);
+        if (!first)
+            first = it->second;
+    }
+    if (first)
+        scrollToItem(first, QAbstractItemView::PositionAtCenter);
+}
+
+void Outliner::renameSelected()
+{
+    scene::Graph& g = scene::Graph::current();
+    if (g.selection().empty())
+        return;
+    auto it = mItems.find(g.selection().front());
+    if (it == mItems.end() || !(it->second->flags() & Qt::ItemIsEditable))
+        return;
+    revealSelected();
+    setCurrentItem(it->second, 0, QItemSelectionModel::NoUpdate);
+    editItem(it->second, 0);
+}
+
+void Outliner::expandEverything()
+{
+    mCollapsed.clear();
+    expandAll();
+}
+
+void Outliner::collapseEverything()
+{
+    collapseAll();
+    for (auto& [id, item] : mItems)
+        if (item->childCount())
+            mCollapsed.insert(id);
+}
+
+void Outliner::showContextMenu(const QPoint& pos)
+{
+    scene::Graph& g = scene::Graph::current();
+    QTreeWidgetItem* clickedItem = itemAt(pos);
+    QMenu menu(this);
+    menu.setToolTipsVisible(true);
+
+    if (clickedItem && clickedItem->data(0, kUnloadedRefRole).isValid())
+    {
+        addReferenceItems(&menu, clickedItem->data(0, kUnloadedRefRole).toString().toStdString(), false);
+        menu.exec(viewport()->mapToGlobal(pos));
+        return;
+    }
+
+    scene::NodeId clicked = clickedItem ? scene::NodeId(clickedItem->data(0, kIdRole).toULongLong()) : scene::kNoNode;
+    const std::vector<scene::NodeId> targets = outliner::menuTargets(clicked, selectedIds());
+    // Actions work on the selection, so a click outside it selects the clicked row first, when the item runs.
+    auto run = [targets](const json& target) {
+        scene::Graph& g = scene::Graph::current();
+        std::vector<scene::NodeId> sel = g.selection();
+        std::vector<scene::NodeId> want = targets;
+        std::sort(sel.begin(), sel.end());
+        std::sort(want.begin(), want.end());
+        if (!want.empty() && sel != want)
+            runCommand("select", {{"args", namesOf(targets)}});
+        actions::run(target);
+    };
+
+    bool any = !targets.empty();
+    bool anyParented = false, anyGroup = false, anyTransform = false, anyMesh = false, anyChildren = false;
+    std::vector<uint32_t> refIds;
+    for (scene::NodeId id : targets)
+    {
+        scene::Node* n = g.node(id);
+        if (!n)
+            continue;
+        anyParented |= g.parent(id) != scene::kNoNode;
+        anyGroup |= n->type().name == "transform" && !g.children(id).empty();
+        anyTransform |= n->type().isA("transform");
+        anyMesh |= n->type().isA("mesh");
+        anyChildren |= !g.children(id).empty();
+        if (n->referenceId() && std::find(refIds.begin(), refIds.end(), n->referenceId()) == refIds.end())
+            refIds.push_back(n->referenceId());
+    }
+    auto item = [&](const std::string& id, bool enabled = true, const QString& label = {}) {
+        if (QAction* a = addItem(&menu, id, run, label))
+            a->setEnabled(enabled);
+    };
+
+    item("select.hierarchy", any && anyChildren);
+    item("select.children", any && anyChildren);
+    item("viewport.frameSelected", any, "Frame in Viewport");
+    item("outliner.revealSelected", any);
+    menu.addSeparator();
+    item("outliner.rename", targets.size() == 1 && clickedItem && (clickedItem->flags() & Qt::ItemIsEditable));
+    item("edit.duplicate", any);
+    if (QAction* del = menu.addAction("Delete", [run] { run(json{{"command", "delete"}}); }))
+        del->setEnabled(any);
+    menu.addSeparator();
+    item("edit.group", any);
+    item("edit.ungroup", anyGroup);
+    item("edit.unparent", anyParented);
+    QAction* parentTo = menu.addAction("Parent To...", [this, targets] {
+        scene::Graph& g = scene::Graph::current();
+        std::set<scene::NodeId> excluded(targets.begin(), targets.end());
+        for (scene::NodeId t : targets)
+            for (scene::NodeId d : g.descendants(t))
+                excluded.insert(d);
+        QStringList candidates;
+        for (QTreeWidgetItemIterator it(this); *it; ++it)
+            if (scene::NodeId id = (*it)->data(0, kIdRole).toULongLong(); id && !excluded.contains(id))
+                candidates << (*it)->text(0);
+        bool ok = false;
+        QString parentName = QInputDialog::getItem(this, "Parent To", "Parent", candidates, 0, true, &ok);
+        if (!ok || parentName.isEmpty())
+            return;
+        json args = namesOf(targets);
+        args.push_back(parentName.toStdString());
+        actions::run(json{{"command", "parent"}, {"args", {{"args", args}}}});
+    });
+    parentTo->setEnabled(any);
+    menu.addSeparator();
+    item("display.hide", any);
+    item("display.show", any);
+    item("display.toggleVisibility", any);
+    item("viewport.isolate", any);
+    menu.addSeparator();
+    if (anyTransform)
+    {
+        item("modify.freezeTransforms");
+        item("modify.centerPivot");
+    }
+    if (anyMesh)
+    {
+        item("mesh.deleteHistory");
+        QMenu* mats = nullptr;
+        for (scene::NodeId id : g.nodes())
+            if (scene::Node* m = g.node(id); m && m->type().name == "material")
+            {
+                if (!mats)
+                    mats = menu.addMenu("Assign Material");
+                std::string name = m->name();
+                mats->addAction(QString::fromStdString(name), [run, name, targets] {
+                    json args = namesOf(targets);
+                    args.insert(args.begin(), name);
+                    run(json{{"command", "assignMaterial"}, {"args", {{"args", args}}}});
+                });
+            }
+    }
+    if (anyTransform || anyMesh)
+        menu.addSeparator();
+    for (uint32_t refId : refIds)
+        if (const io::Reference* r = referenceById(refId))
+        {
+            QMenu* sub = menu.addMenu(icon("link"), QString::fromStdString(refIds.size() == 1 ? "Reference" : "Reference " + r->ns));
+            addReferenceItems(sub, r->ns, true);
+        }
+    if (!refIds.empty())
+        menu.addSeparator();
+    auto plain = [](const json& target) { actions::run(target); };
+    addItem(&menu, "outliner.expandAll", plain);
+    addItem(&menu, "outliner.collapseAll", plain);
+    menu.addSeparator();
+    item("outliner.copyName", any);
+    item("outliner.copyPath", any);
+    menu.exec(viewport()->mapToGlobal(pos));
+}
+
+namespace
+{
+constexpr const char* kSplitPref = "/outliner/split";
+
+/** A splitter handle with a short grip line, so the collapsed second pane can still be found. */
+class GripHandle : public QSplitterHandle
+{
+public:
+    using QSplitterHandle::QSplitterHandle;
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.fillRect(rect(), QColor(underMouse() ? 70 : 52, underMouse() ? 70 : 52, underMouse() ? 70 : 52));
+        p.setPen(QColor(120, 120, 120));
+        int y = height() / 2, half = std::min(14, width() / 4);
+        p.drawLine(width() / 2 - half, y, width() / 2 + half, y);
+    }
+    void enterEvent(QEnterEvent* e) override
+    {
+        QSplitterHandle::enterEvent(e);
+        update();
+    }
+    void leaveEvent(QEvent* e) override
+    {
+        QSplitterHandle::leaveEvent(e);
+        update();
+    }
+};
+
+class GripSplitter : public QSplitter
+{
+public:
+    using QSplitter::QSplitter;
+
+protected:
+    QSplitterHandle* createHandle() override { return new GripHandle(orientation(), this); }
+};
+} // namespace
+
+OutlinerPanel::OutlinerPanel(QWidget* parent) : QWidget(parent)
+{
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    auto* split = new GripSplitter(Qt::Vertical, this);
+    split->setHandleWidth(5);
+    split->addWidget(new Outliner(split));
+    split->addWidget(new Outliner(split));
+    split->setCollapsible(0, false);
+    split->setCollapsible(1, true);
+    split->setStretchFactor(0, 1);
+    split->setStretchFactor(1, 0);
+    split->handle(1)->setToolTip("Drag up for a second outliner");
+    layout->addWidget(split);
+
+    QList<int> sizes{1, 0};
+    json saved = PrefStore::get().value("general", kSplitPref, json());
+    if (saved.is_array() && saved.size() == 2 && saved[0].is_number_integer() && saved[1].is_number_integer())
+        sizes = {std::max(1, saved[0].get<int>()), std::max(0, saved[1].get<int>())};
+    split->setSizes(sizes);
+    connect(split, &QSplitter::splitterMoved, this, [split] {
+        QList<int> s = split->sizes();
+        if (s.size() == 2)
+            PrefStore::get().set("general", kSplitPref, json::array({s[0], s[1]}));
+    });
+}
+} // namespace lila::ui

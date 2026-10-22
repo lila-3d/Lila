@@ -1,0 +1,9 @@
+{
+  "N": {"label": "Select Tool", "action": "tool.select"},
+  "E": {"label": "Move Tool", "action": "tool.move"},
+  "SE": {"label": "Soft Select", "action": "softSelect.toggle"},
+  "S": {"label": "Rotate Tool", "action": "tool.rotate"},
+  "SW": {"label": "Edit Pivot", "action": "tool.pivotEditToggle"},
+  "W": {"label": "Scale Tool", "action": "tool.scale"},
+  "overflow": []
+}

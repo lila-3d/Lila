@@ -1,0 +1,253 @@
+#include "ui/ExtrudeHandles.h"
+
+#include "cmds/Command.h"
+#include "core/Log.h"
+#include "core/PrefStore.h"
+#include "core/Profile.h"
+#include "geo/Mesh.h"
+#include "scene/Components.h"
+#include "scene/Graph.h"
+#include "scene/LastOp.h"
+#include "scene/Modifiers.h"
+#include "scene/Transform.h"
+#include "ui/GizmoMath.h"
+#include "ui/Manipulator.h"
+#include "ui/Overlay.h"
+#include "ui/Tools.h"
+
+#include <cmath>
+
+namespace lila::ui
+{
+namespace
+{
+namespace lo = scene::lastOp;
+using H = ExtrudeHandles::Handle;
+
+constexpr const char* kCommand = "polyExtrude";
+const glm::vec4 kGray(0.70f, 0.70f, 0.70f, 1.0f);
+const glm::vec4 kHot(1.0f, 1.0f, 1.0f, 1.0f);
+
+double flag(const char* name)
+{
+    const lo::Op* op = lo::current();
+    const CommandDef* def = cmds::find(kCommand);
+    if (!op || !def)
+        return 0.0;
+    for (const FlagDef& f : def->flags)
+        if (f.name == name)
+        {
+            json v = lo::flagValue(*op, f);
+            return v.is_number() ? v.get<double>() : 0.0;
+        }
+    return 0.0;
+}
+
+double handlePixels() { return PrefStore::get().value<double>("general", "/manipulator/size", 100.0); }
+
+double segmentDistance(QPointF p, QPointF a, QPointF b)
+{
+    QPointF d = b - a;
+    double len2 = QPointF::dotProduct(d, d);
+    double t = len2 > 0 ? std::clamp(QPointF::dotProduct(p - a, d) / len2, 0.0, 1.0) : 0.0;
+    QPointF q = a + d * t;
+    return std::hypot(p.x() - q.x(), p.y() - q.y());
+}
+} // namespace
+
+bool ExtrudeHandles::active() const
+{
+    if (dragging())
+        return true;
+    const lo::Op* op = lo::current();
+    return op && op->command == kCommand && lo::live() && scene::components::mode() == scene::ComponentMode::Face &&
+           !scene::components::selected(scene::ComponentMode::Face).empty();
+}
+
+bool ExtrudeHandles::frame(Frame& f) const
+{
+    LILA_ZONE();
+
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    glm::dvec3 normalSum(0.0);
+    bool scaled = false;
+    for (auto& [node, ids] : scene::components::selected(scene::ComponentMode::Face))
+    {
+        scene::Node* n = g.node(node);
+        scene::MeshPtr cage = n && n->type().isA("mesh") ? scene::modifiers::cage(g, node) : nullptr;
+        if (!cage)
+            continue;
+        const geo::Mesh& m = *cage;
+        glm::dmat3 w(n->as<glm::dmat4>(scene::Transform::kWorldMatrix));
+        glm::dmat3 normalXform = glm::transpose(glm::inverse(w));
+        glm::dvec3 localSum(0.0);
+        for (geo::Index face : ids)
+            if (face < m.faceCapacity() && m.faceValid(face))
+            {
+                glm::dvec3 nl = m.faceNormal(face);
+                localSum += nl;
+                normalSum += normalXform * nl;
+            }
+        if (!scaled && glm::length(localSum) > 1e-12)
+        {
+            // Thickness is in the mesh's own units along its own normals.
+            glm::dvec3 worldStep = w * glm::normalize(localSum);
+            glm::dvec3 nw = normalXform * glm::normalize(localSum);
+            if (glm::length(nw) > 1e-12)
+                f.worldPerLocal = std::max(1e-9, std::abs(glm::dot(worldStep, glm::normalize(nw))));
+            scaled = true;
+        }
+    }
+    if (glm::length(normalSum) < 1e-12)
+        return false;
+    f.normal = glm::normalize(normalSum);
+    f.center = scene::selectionCenter();
+    // The offset handle sits on a diagonal of the cap's plane, clear of the move manipulator's axis arrows.
+    glm::dvec3 ref = std::abs(f.normal.y) < 0.9 ? glm::dvec3(0, 1, 0) : glm::dvec3(1, 0, 0);
+    glm::dvec3 t1 = glm::normalize(glm::cross(f.normal, ref));
+    glm::dvec3 t2 = glm::cross(f.normal, t1);
+    f.side = glm::normalize(t1 + t2);
+    return true;
+}
+
+bool ExtrudeHandles::layout(const Frame& f, const ViewInfo& view, QPointF& base, QPointF& tip, QPointF& offset) const
+{
+    double L = handlePixels() * view.unitsPerPixel(f.center);
+    auto b = view.project(f.center + f.normal * L * 1.05), t = view.project(f.center + f.normal * L * 1.45),
+         o = view.project(f.center + f.side * L * 0.75);
+    if (!b || !t || !o)
+        return false;
+    base = *b, tip = *t, offset = *o;
+    return true;
+}
+
+H ExtrudeHandles::pick(QPointF px, const ViewInfo& view) const
+{
+    if (!active())
+        return H::None;
+    Frame f;
+    QPointF base, tip, offset;
+    if (!frame(f) || !layout(f, view, base, tip, offset))
+        return H::None;
+    if (std::abs(px.x() - offset.x()) <= 8 && std::abs(px.y() - offset.y()) <= 8)
+        return H::Offset;
+    if (segmentDistance(px, base, tip) <= 8 || std::hypot(px.x() - tip.x(), px.y() - tip.y()) <= 11)
+        return H::Thickness;
+    return H::None;
+}
+
+void ExtrudeHandles::draw(OverlayPainter& p, const ViewInfo& view, Handle hover) const
+{
+    LILA_ZONE();
+
+    Frame f = mDrag.frame;
+    if (!dragging() && !frame(f))
+        return;
+    if (dragging())
+    {
+        // The live frame follows the cap while the start frame anchors the drag.
+        Frame now;
+        if (frame(now))
+            f = now;
+    }
+    QPointF base, tip, offset;
+    auto c = view.project(f.center);
+    if (!c || !layout(f, view, base, tip, offset))
+        return;
+    auto colorOf = [&](Handle h) { return (dragging() ? mDrag.handle == h : hover == h) ? kHot : kGray; };
+
+    glm::vec4 tc = colorOf(H::Thickness);
+    double len = std::hypot(tip.x() - c->x(), tip.y() - c->y());
+    if (len > 12)
+    {
+        QPointF dir = (tip - *c) / len;
+        QPointF n(-dir.y(), dir.x());
+        bool hot = tc == kHot;
+        p.dashedLine(*c + dir * 10.0, base, 1.0f, 4.0f, {tc.r, tc.g, tc.b, 0.5f});
+        p.line(base, tip - dir * 6.0, hot ? 3.5f : 2.0f, tc);
+        p.triangle(tip + dir * 9.0, tip - dir * 4.0 + n * 6.0, tip - dir * 4.0 - n * 6.0, tc);
+    }
+    glm::vec4 oc = colorOf(H::Offset);
+    p.dashedLine(*c, offset, 1.0f, 4.0f, {oc.r, oc.g, oc.b, 0.5f});
+    QRectF box(offset.x() - 5, offset.y() - 5, 10, 10);
+    p.fill({box.topLeft(), box.topRight(), box.bottomRight(), box.bottomLeft()}, {oc.r, oc.g, oc.b, oc == kHot ? 0.6f : 0.25f});
+    p.polyline({box.topLeft(), box.topRight(), box.bottomRight(), box.bottomLeft()}, oc == kHot ? 2.0f : 1.5f, oc, true);
+
+    if (dragging())
+    {
+        bool thickness = mDrag.handle == H::Thickness;
+        p.label(mDrag.lastPx + QPointF(18, -14), QString("%1 %2 cm").arg(thickness ? "Thickness" : "Offset").arg(mDrag.value, 0, 'f', 2));
+    }
+    else if (hover != H::None)
+        p.text((hover == H::Thickness ? tip : offset) + QPointF(14, 4), hover == H::Thickness ? "thickness" : "offset", kGray);
+}
+
+void ExtrudeHandles::begin(Handle h, QPointF px, const ViewInfo& view)
+{
+    Drag d;
+    if (h == H::None || !frame(d.frame))
+        return;
+    d.handle = h;
+    d.startThickness = flag("thickness");
+    d.startOffset = flag("offset");
+    d.value = h == H::Thickness ? d.startThickness : d.startOffset;
+    d.lastPx = px;
+    glm::dvec3 o, dir;
+    view.ray(px, o, dir);
+    d.startParam = gizmo::lineParam(d.frame.center, h == H::Thickness ? d.frame.normal : d.frame.side, o, dir);
+    mDrag = d;
+}
+
+void ExtrudeHandles::drag(QPointF px, const ViewInfo& view)
+{
+    if (!dragging())
+        return;
+    mDrag.lastPx = px;
+    glm::dvec3 o, dir;
+    view.ray(px, o, dir);
+    bool thickness = mDrag.handle == H::Thickness;
+    const Frame& f = mDrag.frame;
+    double moved = (gizmo::lineParam(f.center, thickness ? f.normal : f.side, o, dir) - mDrag.startParam) / f.worldPerLocal;
+    // Pulling the offset square toward the centre insets the cap further.
+    double value = thickness ? mDrag.startThickness + moved : mDrag.startOffset - moved;
+    if (IncrementSnap inc = tools::incrementSnap(Tool::Move); inc.enabled && !(tools::snaps() & (SnapGrid | SnapEdge | SnapVertex)))
+        value = gizmo::snapValue(value, inc.step);
+    if (std::abs(value - mDrag.value) < 1e-9)
+        return;
+    try
+    {
+        lo::rerun({{thickness ? "thickness" : "offset", value}});
+        mDrag.value = value;
+    }
+    catch (const CommandError& e)
+    {
+        log::warn("extrude: {}", e.what());
+    }
+}
+
+void ExtrudeHandles::end()
+{
+    if (!dragging())
+        return;
+    mDrag = {};
+    if (const lo::Op* op = lo::current())
+        log::write(LogLevel::Echo, cmds::toPython(op->command, op->call) + "\n");
+}
+
+void ExtrudeHandles::cancel()
+{
+    if (!dragging())
+        return;
+    Drag d = mDrag;
+    mDrag = {};
+    try
+    {
+        lo::rerun({{"thickness", d.startThickness}, {"offset", d.startOffset}});
+    }
+    catch (const CommandError& e)
+    {
+        log::warn("extrude: {}", e.what());
+    }
+}
+} // namespace lila::ui
