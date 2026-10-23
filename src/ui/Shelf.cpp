@@ -51,6 +51,9 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include <array>
+#include <initializer_list>
+
 namespace lila::ui
 {
 using json = nlohmann::json;
@@ -1209,8 +1212,57 @@ void FloatingShelf::keyPressEvent(QKeyEvent* e)
     QWidget::keyPressEvent(e);
 }
 
+namespace
+{
+nlohmann::json shelfItems(std::initializer_list<std::array<const char*, 4>> items)
+{
+    nlohmann::json out = nlohmann::json::array();
+    for (const auto& [label, iconName, tooltip, target] : items)
+        out.push_back({{"label", label}, {"icon", iconName}, {"tooltip", tooltip}, {"target", target}});
+    return out;
+}
+
+/** Modeling and Rigging: listed after the user's own shelves, editable like any other. */
+void registerBuiltInShelves()
+{
+    shelves::add({"Modeling", shelfItems({
+                                  {"Cube", "cube", "Create a cube", "create.cube"},
+                                  {"Sphere", "sphere", "Create a sphere", "create.sphere"},
+                                  {"Cylinder", "cylinder", "Create a cylinder", "create.cylinder"},
+                                  {"Plane", "plane", "Create a plane", "create.plane"},
+                                  {"Cone", "cone", "Create a cone", "create.cone"},
+                                  {"Combine", "arrows-join", "Combine the selected meshes into one", "mesh.combine"},
+                                  {"Separate", "arrows-split-2", "Separate a mesh into its loose parts", "mesh.separate"},
+                                  {"Mirror", "flip-horizontal", "Mirror the mesh across an axis", "mesh.mirror"},
+                                  {"Union", "layers-union", "Boolean union of the selected meshes", "mesh.booleanUnion"},
+                                  {"Difference", "layers-subtract", "Boolean difference: the first minus the rest", "mesh.booleanDifference"},
+                                  {"Symmetry", "columns-2", "Toggle modeling symmetry", "mesh.toggleSymmetry"},
+                                  {"Freeze", "snowflake", "Freeze transforms", "modify.freezeTransforms"},
+                                  {"Center Piv", "square-dot", "Center pivots on each object's bounds", "modify.centerPivot"},
+                                  {"Stack", "stack-2", "Show or hide the Modifier Stack", "window.modifierStack"},
+                                  {"Toolkit", "tools", "Show or hide the Modeling Toolkit", "window.modelingToolkit"},
+                              })});
+    shelves::add({"Rigging", shelfItems({
+                                 {"Joint", "bone", "Joint tool: click to place joints", "rig.jointTool"},
+                                 {"Orient", "compass", "Orient the selected joints", "rig.orientJoint"},
+                                 {"Mirror", "flip-horizontal", "Mirror the selected joint chains", "rig.mirrorJoints"},
+                                 {"Bind", "link-plus", "Bind the selected meshes to the selected joints", "rig.bindSkin"},
+                                 {"Unbind", "unlink", "Unbind the selected skinned meshes", "rig.unbindSkin"},
+                                 {"Paint", "brush", "Paint skin weights", "rig.paintWeights"},
+                                 {"Bind Pose", "user", "Go to the bind pose", "rig.goToBindPose"},
+                                 {"Parent", "link", "Parent constraint: the last selected follows the others", "rig.parentConstraint"},
+                                 {"Point", "point", "Point constraint", "rig.pointConstraint"},
+                                 {"Orient C", "rotate", "Orient constraint", "rig.orientConstraint"},
+                                 {"Aim", "target", "Aim constraint", "rig.aimConstraint"},
+                                 {"IK", "vector", "IK handle from the start joint to the end joint", "rig.ikHandle"},
+                                 {"X-Ray", "eye", "Show joints through meshes", "rig.xrayJoints"},
+                             })});
+}
+} // namespace
+
 void registerShelfActions()
 {
+    registerBuiltInShelves();
     actions::add({.id = "shelf.floatingToggle", .label = "Toggle Floating Shelf", .category = "Windows", .run = [] { FloatingShelf::toggle(); },
                   .doc = "Open the floating shelf, pinned until toggled again."});
     actions::add({.id = "shelf.floatingOpen", .label = "Floating Shelf", .category = "Windows", .run = [] { FloatingShelf::popup(); },

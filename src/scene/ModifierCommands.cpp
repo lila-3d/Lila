@@ -268,18 +268,20 @@ void registerStackCommands()
     });
 
     ops::registerCommand({
-        .name = "collapseStack",
-        .doc = "Bake a mesh's whole history (generator and modifiers) into the mesh itself and delete it, like Maya's Delete History.",
-        .positionalDoc = "meshes",
+        .name = "bakeModifierStack",
+        .doc = "Bake meshes to their current result, deleting the generator and modifiers feeding them. Objects that aren't meshes are skipped.",
+        .positionalDoc = "objects",
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             for (const std::string& name : a.objects())
             {
-                Node& mesh = meshNamed(name, "collapseStack");
+                if (Node* n = g.find(name); n && !n->type().isA("mesh"))
+                    continue;
+                Node& mesh = meshNamed(name, "bakeModifierStack");
                 std::vector<NodeId> mods = stack(g, mesh.id());
                 for (NodeId id : mods)
                     if (static_cast<ModifierNode*>(g.node(id))->editingInput())
-                        throw CommandError("collapseStack: " + g.node(id)->name() + " is editing its edges: apply or cancel that first");
+                        throw CommandError("bakeModifierStack: " + g.node(id)->name() + " is editing its edges: apply or cancel that first");
                 PlugRef in{mesh.id(), MeshNode::kInMesh, -1};
                 if (!g.source(in))
                     continue;

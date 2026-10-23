@@ -140,8 +140,8 @@ TEST_CASE("transfer attributes has a full option box")
 TEST_CASE("transfer attributes maps one uv set onto another")
 {
     ops::execute("newScene", json::object());
-    std::string src = ops::execute("polyPlane", {{"name", "MapSrc"}, {"history", false}})[0];
-    std::string dst = ops::execute("polyPlane", {{"name", "MapDst"}, {"history", false}})[0];
+    std::string src = ops::execute("polyPlane", {{"name", "MapSrc"}, {"generator", false}})[0];
+    std::string dst = ops::execute("polyPlane", {{"name", "MapDst"}, {"generator", false}})[0];
     ops::execute("transferAttributes", {{"args", {src, dst}}, {"sampleSpace", "component"}, {"sourceUvSet", 0}, {"targetUvSet", 1}});
     scene::Graph& g = scene::Graph::current();
     g.evaluate();

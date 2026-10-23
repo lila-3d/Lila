@@ -869,7 +869,7 @@ void Outliner::showContextMenu(const QPoint& pos)
     }
     if (anyMesh)
     {
-        item("mesh.deleteHistory");
+        item("mesh.bakeModifierStack");
         QMenu* mats = nullptr;
         for (scene::NodeId id : g.nodes())
             if (scene::Node* m = g.node(id); m && m->type().name == "material")

@@ -29,6 +29,7 @@
 #include "ui/Environments.h"
 #include "ui/MaterialDraw.h"
 #include "ui/MeshCache.h"
+#include "ui/PaintSelect.h"
 #include "ui/Outliner.h"
 #include "ui/Overlay.h"
 #include "ui/RenderPasses.h"
@@ -38,6 +39,7 @@
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportHud.h"
 #include "ui/ViewportTool.h"
+#include "uv/UvCommands.h"
 
 #include <QColor>
 #include <QCursor>
@@ -335,6 +337,22 @@ bool ViewportWidget::event(QEvent* e)
         requestFrame();
     if (e->type() == QEvent::Leave)
         clearPreselect();
+    if (e->type() == QEvent::FocusOut)
+        mTabHeld = false;
+    // Tab is a held modifier for drag selection here, not focus navigation. Viewport tools (Retopo Draw) keep their own Tab.
+    if (e->type() == QEvent::ShortcutOverride || e->type() == QEvent::KeyPress || e->type() == QEvent::KeyRelease)
+        if (auto* k = static_cast<QKeyEvent*>(e); k->key() == Qt::Key_Tab || k->key() == Qt::Key_Backtab)
+        {
+            if (e->type() == QEvent::KeyRelease && !k->isAutoRepeat())
+                mTabHeld = false;
+            if (!viewportTools::active())
+            {
+                if (e->type() == QEvent::KeyPress && !k->isAutoRepeat())
+                    mTabHeld = true;
+                e->accept();
+                return true;
+            }
+        }
     return QWidget::event(e);
 }
 
@@ -774,15 +792,16 @@ std::vector<std::string> ViewportWidget::hitTest(QPointF a, QPointF b)
 
 namespace
 {
-/** Meshes components can be picked on: the selected ones (Maya's hilite), or every visible mesh if none is selected. */
+/** Meshes components can be picked on: the selected ones (Maya's hilite) and those under selected groups, or every visible mesh if none. */
 std::vector<scene::NodeId> hilited()
 {
     scene::Graph& g = scene::Graph::current();
     std::vector<scene::NodeId> out;
-    for (scene::NodeId id : g.selection())
-        if (scene::Node* n = g.node(id); n && n->type().isA("mesh"))
-            out.push_back(id);
     const bool inherit = scene::inheritVisibility();
+    // Meshes under a selected group count too; hidden ones only when selected themselves.
+    for (scene::NodeId id : uv::meshesUnder(g, g.selection()))
+        if (std::ranges::find(g.selection(), id) != g.selection().end() || viewportPickable(g, id, inherit))
+            out.push_back(id);
     if (out.empty())
         for (scene::NodeId id : g.nodes())
             if (scene::Node* n = g.node(id); n->type().isA("mesh") && viewportPickable(g, id, inherit))
@@ -826,6 +845,7 @@ scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
     };
 
     cp::Screen screen{mCamera.proj(aspect()) * mCamera.view(), double(width()), double(height())};
+    const bool cull = paintSelect::backfaceCulling();
     double bestPx = cp::radius(mode);
     double bestRay = 1e300;
     for (scene::NodeId id : live)
@@ -841,7 +861,8 @@ scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
             auto pd = pickDataFor(mesh);
             if (!rm || !pd)
                 continue;
-            if (auto hit = raycast(*rm, world, rayO, rayD); hit && hit->distance < bestRay && hit->triangle < pd->triangleFaces.size())
+            if (auto hit = raycast(*rm, world, rayO, rayD); hit && hit->distance < bestRay && hit->triangle < pd->triangleFaces.size() &&
+                                                              (!cull || paintSelect::frontFacing(*mesh, world, mode, pd->triangleFaces[hit->triangle], view)))
             {
                 bestRay = hit->distance;
                 best.node = id;
@@ -850,7 +871,7 @@ scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
             continue;
         }
         for (const cp::Candidate& c : cp::nearby(*mesh, world, mode, screen, {a.x(), a.y()}, bestPx))
-            if (visible(cp::anchor(*mesh, world, mode, c.id)))
+            if ((!cull || paintSelect::frontFacing(*mesh, world, mode, c.id, view)) && visible(cp::anchor(*mesh, world, mode, c.id)))
             {
                 bestPx = c.px;
                 best.node = id;
@@ -876,7 +897,11 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
     if (click)
     {
         if (scene::componentPick::Hover h = componentAt(a); !h.empty())
+        {
             hits[h.node].push_back(h.id);
+            mClicked[1] = mClicked[0];
+            mClicked[0] = h;
+        }
     }
     else
     {
@@ -937,6 +962,18 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
                             hits[id].push_back(f);
                     }
             }
+        }
+    }
+
+    if (!click && paintSelect::backfaceCulling())
+    {
+        ViewInfo view = viewInfo();
+        for (auto it = hits.begin(); it != hits.end();)
+        {
+            scene::MeshPtr mesh = scene::modifiers::cage(g, it->first);
+            glm::dmat4 world = g.node(it->first)->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+            std::erase_if(it->second, [&](uint32_t id) { return !mesh || !paintSelect::frontFacing(*mesh, world, mode, id, view); });
+            it = it->second.empty() ? hits.erase(it) : std::next(it);
         }
     }
 
@@ -1408,6 +1445,46 @@ void ViewportWidget::setView(const std::string& name)
     emit viewStateChanged();
 }
 
+nlohmann::json ViewportWidget::cameraState() const
+{
+    const bool through = mLookThrough != scene::kNoNode;
+    const std::string& view = through ? mReturnView : mViewName;
+    const bool persp = view == "persp";
+    nlohmann::json j{{"view", view}, {"persp", (persp && !through ? mCamera : mPerspCamera).poseJson()}};
+    if (!persp && !through)
+        j["camera"] = mCamera.poseJson();
+    return j;
+}
+
+void ViewportWidget::restoreCameraState(const nlohmann::json& state)
+{
+    if (!state.is_object())
+        return;
+    std::string view = state.value("view", std::string("persp"));
+    if (!builtInView(view))
+        return;
+    if (mLookThrough != scene::kNoNode)
+        stopLookingThrough();
+    commitCameraEdit();
+    mPerspCamera.setPose(state.value("persp", nlohmann::json()));
+    if (view == "persp")
+    {
+        bool zUp = mCamera.zUp;
+        mCamera = mPerspCamera;
+        mCamera.zUp = zUp;
+        mCamera.ortho = false;
+    }
+    else
+    {
+        mCamera.setView(view);
+        mCamera.setPose(state.value("camera", nlohmann::json()));
+    }
+    mViewName = view;
+    syncCameraSettings();
+    requestFrame();
+    emit viewStateChanged();
+}
+
 void ViewportWidget::lookThrough(scene::NodeId camera)
 {
     scene::Node* n = scene::Graph::current().node(camera);
@@ -1828,7 +1905,17 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
     clearPreselect();
     mLastPos = e->position();
     setFocus();
-    if (tools::softSelectAdjusting() && (e->button() == Qt::LeftButton || e->button() == Qt::MiddleButton))
+    if (mTabHeld && !viewportTools::active() && e->button() == Qt::LeftButton && !(e->modifiers() & Qt::AltModifier) &&
+        scene::components::mode() != scene::ComponentMode::Object)
+    {
+        mTabStroke.begin(paintSelect::Stroke::opFor(e->modifiers(), paintSelect::Stroke::Op::Replace));
+        mTabStroke.paint(viewInfo(), e->position(), e->position(), paintSelect::tabRadius(scene::components::mode()));
+        submit();
+        return;
+    }
+    // The Paint Select tool takes B + drag for its own brush radius.
+    if (tools::softSelectAdjusting() && (e->button() == Qt::LeftButton || e->button() == Qt::MiddleButton) &&
+        viewportTools::activeId() != paintSelect::kToolId)
     {
         mSoftDrag = true;
         tools::markSoftSelectAdjusted();
@@ -1938,6 +2025,12 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
     // Badges follow the cursor, which otherwise only redraws the view when the hover changes.
     if (e->buttons() == Qt::NoButton && !cursorBadges::active(state(e->position())).empty())
         requestFrame();
+    if (mTabStroke.active())
+    {
+        mTabStroke.paint(viewInfo(), mLastPos - d, e->position(), paintSelect::tabRadius(scene::components::mode()));
+        submit();
+        return;
+    }
     if (mSoftDrag)
     {
         // Drag right to grow the falloff, left to shrink; scaled by how big a pixel is at the selection.
@@ -2017,6 +2110,19 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* e)
     // Runs after this release is handled, so it sees the new selection and hilite.
     if (e->buttons() == Qt::NoButton && !(e->modifiers() & Qt::AltModifier))
         queuePreselect(e->position());
+    if (mTabStroke.active())
+    {
+        if (e->button() == Qt::LeftButton)
+            mTabStroke.end();
+        submit();
+        return;
+    }
+    if (mSwallowRelease && e->button() == Qt::LeftButton)
+    {
+        mSwallowRelease = false;
+        mSelecting = false;
+        return;
+    }
     if (mSoftDrag)
     {
         mSoftDrag = false;
@@ -2057,6 +2163,93 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* e)
         pick(mPressPos, wasMarquee ? e->position() : mPressPos, e->modifiers());
         submit();
     }
+}
+
+void ViewportWidget::mouseDoubleClickEvent(QMouseEvent* e)
+{
+    Gizmo* gz = currentGizmo();
+    if (e->button() == Qt::LeftButton && !(e->modifiers() & (Qt::AltModifier | Qt::ControlModifier)) && !viewportTools::active() &&
+        !mTabHeld && !(gz && gz->hovering()) && scene::components::mode() != scene::ComponentMode::Object &&
+        selectLoopAt(e->position(), e->modifiers()))
+    {
+        mSwallowRelease = true;
+        mSelecting = false;
+        submit();
+        return;
+    }
+    mousePressEvent(e);
+}
+
+bool ViewportWidget::selectLoopAt(QPointF at, Qt::KeyboardModifiers mods)
+{
+    using scene::ComponentMode;
+    ComponentMode mode = scene::components::mode();
+    scene::componentPick::Hover h = componentAt(at);
+    scene::Graph& g = scene::Graph::current();
+    scene::Node* n = h.empty() ? nullptr : g.node(h.node);
+    scene::MeshPtr mesh = n ? scene::modifiers::cage(g, h.node) : nullptr;
+    if (!mesh)
+        return false;
+    try
+    {
+        if (mods & Qt::ShiftModifier)
+        {
+            // The double-click's own first click is mClicked[0]; the one before it anchors the path.
+            const scene::componentPick::Hover& prev = mClicked[0] == h ? mClicked[1] : mClicked[0];
+            std::optional<uint32_t> from;
+            if (prev.node == h.node && prev.mode == mode && prev.id != h.id)
+                from = prev.id;
+            else
+                for (uint32_t id : scene::components::selected(h.node, mode))
+                    if (id != h.id)
+                    {
+                        from = id;
+                        break;
+                    }
+            if (!from)
+                return false;
+            ops::execute("selectPathBetween",
+                         {{"args", {n->name()}}, {"kind", scene::components::modeName(mode)}, {"from", *from}, {"to", h.id}}, CallSource::UI);
+            return true;
+        }
+        if (mode == ComponentMode::Vertex)
+            return false;
+        json call = {{"args", {n->name()}}, {"edge", h.id}};
+        if (mode == ComponentMode::Face)
+        {
+            // The face loop crosses the face's edge nearest the cursor.
+            const geo::Mesh& m = *mesh;
+            glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+            double best = 1e300;
+            geo::Index nearest = geo::kInvalid;
+            m.forEachFaceCorner(h.id, [&](geo::Index c) {
+                geo::Index e = m.cornerEdge(c);
+                auto s0 = project(glm::dvec3(world * glm::dvec4(m.position(m.edgePoint(e, 0)), 1.0)));
+                auto s1 = project(glm::dvec3(world * glm::dvec4(m.position(m.edgePoint(e, 1)), 1.0)));
+                if (!s0 || !s1)
+                    return;
+                QPointF d = *s1 - *s0;
+                double len2 = QPointF::dotProduct(d, d);
+                double t = len2 > 0.0 ? std::clamp(QPointF::dotProduct(at - *s0, d) / len2, 0.0, 1.0) : 0.0;
+                QPointF q = *s0 + d * t - at;
+                if (double dist = std::hypot(q.x(), q.y()); dist < best)
+                {
+                    best = dist;
+                    nearest = e;
+                }
+            });
+            if (nearest == geo::kInvalid)
+                return false;
+            call["edge"] = nearest;
+            call["faces"] = true;
+        }
+        ops::execute("selectLoopThrough", call, CallSource::UI);
+    }
+    catch (const CommandError& e)
+    {
+        log::error("{}", e.what());
+    }
+    return true;
 }
 
 void ViewportWidget::wheelEvent(QWheelEvent* e)

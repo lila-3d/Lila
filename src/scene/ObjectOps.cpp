@@ -164,8 +164,8 @@ void registerObjectCommands()
 
     ops::registerCommand({
         .name = "freezeTransforms",
-        .doc = "Bake translate/rotate/scale into mesh points (and children's transforms), leaving identity values, as "
-               "Maya's Freeze Transformations. World positions don't change.",
+        .doc = "Bake translate/rotate/scale into mesh points (and children's transforms), leaving identity values. "
+               "World positions don't change.",
         .positionalDoc = "objects",
         .flags = {{"translate", "", T::Bool, true, "Freeze translation."},
                   {"rotate", "", T::Bool, true, "Freeze rotation."},
@@ -243,7 +243,7 @@ void registerObjectCommands()
 
     ops::registerCommand({
         .name = "toggleVisibility",
-        .doc = "Toggle visibility (Maya's H). Defaults to the selection. Every object ends up the same: hidden if most "
+        .doc = "Toggle visibility (the H key). Defaults to the selection. Every object ends up the same: hidden if most "
                "were visible (a tie hides), shown otherwise. Returns the new visibility.",
         .positionalDoc = "objects",
         .run = [](const Args& a) -> json {

@@ -10,6 +10,7 @@ class Node;
 }
 
 #include <glm/glm.hpp>
+#include <nlohmann/json_fwd.hpp>
 
 #include <optional>
 #include <string>
@@ -82,5 +83,10 @@ struct LILA_UI_API Camera
     void track(double dxFrac, double dyFrac, double aspect);
     void dolly(double factor);
     void frame(const glm::dvec3& center, double radius, double aspect);
+
+    /** The navigation pose (target, distance, yaw, pitch, ortho width, focal length) as scenes save it per view. */
+    nlohmann::json poseJson() const;
+    /** Takes what poseJson wrote; missing or malformed keys keep their current values. */
+    void setPose(const nlohmann::json& j);
 };
 } // namespace lila::ui

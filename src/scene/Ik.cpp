@@ -206,7 +206,7 @@ NodeType makeHandleType(const NodeType& base)
          .doc = "Solver id (ik2BoneSolver, ikFabrikSolver, or an extension's). Empty picks 2-bone for three joints, else FABRIK."},
         vec3Attr("poleVector", "pv", glm::dvec3(0.0), keyable, "Direction from the start joint the chain bends toward. Zero keeps the rest bend plane."),
         {.name = "poleAngle", .shortName = "pa", .type = PlugType::Float, .defaultValue = 0.0, .flags = keyable,
-         .doc = "Roll of the bend plane about the start-to-handle axis, degrees (Maya's twist)."},
+         .doc = "Roll of the bend plane about the start-to-handle axis, degrees."},
         {.name = "ikBlend", .shortName = "ikb", .type = PlugType::Float, .defaultValue = 1.0, .flags = keyable,
          .doc = "0 leaves the chain on its FK rotate, 1 is fully solved."},
         {.name = "jointCount", .shortName = "jc", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = hiddenStored,

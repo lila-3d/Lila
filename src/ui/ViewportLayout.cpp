@@ -37,20 +37,30 @@ ViewportLayout::ViewportLayout(QWidget* parent) : QWidget(parent)
         [self]() -> nlohmann::json {
             if (!self)
                 return nullptr;
-            nlohmann::json names = nlohmann::json::array();
+            nlohmann::json names = nlohmann::json::array(), cameras = nlohmann::json::array();
             bool any = false;
             for (ViewportWidget* v : self->mViews)
             {
                 const scene::Node* n = scene::Graph::current().node(v->lookThroughCamera());
                 names.push_back(n ? n->name() : std::string());
                 any |= n != nullptr;
+                cameras.push_back(v->cameraState());
             }
-            return any ? nlohmann::json{{"lookThrough", names}} : nlohmann::json();
+            nlohmann::json section{{"cameras", cameras}};
+            if (any)
+                section["lookThrough"] = names;
+            for (size_t i = 0; i < self->mViews.size(); ++i)
+                if (self->mViews[i] == self->mActive)
+                    section["active"] = i;
+            return section;
         },
         [self](const nlohmann::json& section) {
             if (!self)
                 return;
             nlohmann::json names = section.is_object() ? section.value("lookThrough", nlohmann::json::array()) : nlohmann::json::array();
+            nlohmann::json cameras = section.is_object() ? section.value("cameras", nlohmann::json::array()) : nlohmann::json::array();
+            for (size_t i = 0; i < self->mViews.size() && i < cameras.size(); ++i)
+                self->mViews[i]->restoreCameraState(cameras[i]);
             for (size_t i = 0; i < self->mViews.size(); ++i)
             {
                 ViewportWidget* v = self->mViews[i];
@@ -60,6 +70,11 @@ ViewportLayout::ViewportLayout(QWidget* parent) : QWidget(parent)
                     v->lookThrough(n->id());
                 else if (v->lookThroughCamera() != scene::kNoNode)
                     v->stopLookingThrough();
+            }
+            if (size_t active = section.is_object() ? section.value("active", self->mViews.size()) : self->mViews.size(); active < self->mViews.size())
+            {
+                self->mActive = self->mViews[active];
+                self->relayout();
             }
         });
 }

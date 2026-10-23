@@ -287,7 +287,7 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "polyColorSet",
-        .doc = "Maya's polyColorSet: create, delete, rename, copy, reorder or make current a mesh's vertex color sets, set their "
+        .doc = "Create, delete, rename, copy, reorder or make current a mesh's vertex color sets, set their "
                "precision, or query them. Returns {sets, current, half} for the last mesh.",
         .positionalDoc = "meshes",
         .flags = {{"create", "", T::Bool, false, "Add colorSet (a free name when empty), filled with fill."},

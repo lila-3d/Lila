@@ -11,7 +11,7 @@
       "Backspace": "edit.delete",
       "Ctrl+G": "edit.group",
       "Ctrl+D": "edit.duplicate",
-      "Alt+Shift+D": "mesh.deleteHistory",
+      "Alt+Shift+D": "mesh.bakeModifierStack",
       "H": "display.toggleVisibility",
       "T": "select.hierarchy",
       "Ctrl+H": "display.hide",
@@ -110,6 +110,12 @@
     "outliner": {
       "F": "outliner.revealSelected",
       "F2": "outliner.rename"
+    },
+    "uvEditor": {
+      "F9": "uv.vertexMode",
+      "F10": "uv.edgeMode",
+      "F11": "uv.faceMode",
+      "F12": "uv.islandMode"
     },
     "nodeEditor": {
       "Tab": "nodeEditor.addNode",

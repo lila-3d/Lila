@@ -610,7 +610,7 @@ void registerCommands()
     ops::registerCommand({
         .name = "setKeyframe",
         .doc = "Key channels at a time. With no objects, keys every keyable channel of the selection at the current "
-               "time (Maya's S). Objects may be nodes, plugs ('cube.ty') or curve nodes. Returns the number of keys set.",
+               "time (the S key). Objects may be nodes, plugs ('cube.ty') or curve nodes. Returns the number of keys set.",
         .positionalDoc = "objects",
         .flags = {
             attrFlag,

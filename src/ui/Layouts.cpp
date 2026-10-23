@@ -54,26 +54,29 @@ fs::path pathFor(const std::string& name, Origin origin)
     return dir.empty() ? fs::path() : dir / (file + u8".json");
 }
 
-json preset(std::vector<std::string> open, std::vector<std::string> raise, json size = json::object())
+json preset(std::vector<std::string> open, std::vector<std::string> raise, json size = json::object(), std::vector<std::string> bottom = {})
 {
-    return {{"version", 1},
-            {"preset", {{"open", open}, {"raise", raise}, {"size", std::move(size)}}},
-            {"viewport", {{"quad", false}, {"camera", "persp"}}}};
+    json p{{"open", open}, {"raise", raise}, {"size", std::move(size)}};
+    if (!bottom.empty())
+        p["bottom"] = bottom;
+    return {{"version", 1}, {"preset", std::move(p)}, {"viewport", {{"quad", false}, {"camera", "persp"}}}};
 }
 
 const std::vector<std::pair<std::string, json>>& presets()
 {
     static const std::vector<std::pair<std::string, json>> all = {
-        {"Modeling", preset({"shelf", "outliner", "undoHistory", "channelBox", "attributeEditor", "modelingToolkit", "displayLayers", "timeSlider"},
-                            {"modelingToolkit"})},
-        {"UV Editing", preset({"shelf", "outliner", "undoHistory", "uvEditor", "channelBox", "attributeEditor", "displayLayers"},
+        {"Modeling", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "channelBox", "attributeEditor", "modelingToolkit",
+                             "modifierStack", "displayLayers", "timeSlider"},
+                            {"modelingToolkit"}, {{"modelingToolkit", {{"width", 0.44}}}, {"modifierStack", {{"height", 0.35}}}},
+                            {"modifierStack"})},
+        {"UV Editing", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "uvEditor", "channelBox", "attributeEditor", "displayLayers"},
                               {"uvEditor", "channelBox"}, {{"uvEditor", {{"width", 0.42}}}})},
-        {"Rigging", preset({"shelf", "outliner", "undoHistory", "channelBox", "attributeEditor", "displayLayers", "nodeEditor", "scriptOutput",
+        {"Rigging", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "channelBox", "attributeEditor", "displayLayers", "nodeEditor", "scriptOutput",
                             "timeSlider"},
                            {"channelBox", "nodeEditor"}, {{"nodeEditor", {{"height", 0.3}}}})},
-        {"Animation", preset({"shelf", "outliner", "undoHistory", "channelBox", "displayLayers", "graphEditor", "scriptOutput", "timeSlider"},
+        {"Animation", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "channelBox", "displayLayers", "graphEditor", "scriptOutput", "timeSlider"},
                              {"graphEditor"}, {{"graphEditor", {{"height", 0.35}}}})},
-        {"Scripting", preset({"shelf", "outliner", "undoHistory", "channelBox", "displayLayers", "scriptEditor", "scriptOutput", "apiReference",
+        {"Scripting", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "channelBox", "displayLayers", "scriptEditor", "scriptOutput", "apiReference",
                               "timeSlider"},
                              {"scriptEditor"}, {{"scriptEditor", {{"height", 0.45}}}})},
     };
@@ -317,7 +320,7 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "listLayouts",
-        .doc = "UI layouts (Maya workspaces): [{name, origin, current, shadowsBuiltIn}]. origin is builtin | user | workspace.",
+        .doc = "UI layouts: [{name, origin, current, shadowsBuiltIn}]. origin is builtin | user | workspace.",
         .undoable = false,
         .run = [](const Args&) -> json {
             json out = json::array();

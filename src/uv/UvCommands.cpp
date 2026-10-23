@@ -16,6 +16,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <unordered_set>
 
 namespace lila::uv
 {
@@ -68,8 +69,8 @@ std::map<NodeId, Ids> targets(ComponentMode kind, bool allowWhole)
                     out[node] = std::move(conv);
             }
     if (out.empty() && allowWhole)
-        for (NodeId id : g.selection())
-            if (Node* n = g.node(id); n && n->type().isA("mesh") && n->as<MeshPtr>(MeshNode::kOutMesh))
+        for (NodeId id : meshesUnder(g, g.selection()))
+            if (g.node(id)->as<MeshPtr>(MeshNode::kOutMesh))
                 out[id] = {};
     return out;
 }
@@ -374,6 +375,36 @@ void bakeUvHistory(Node& n)
 json sewUvEdges(geo::Mesh& m, std::span<const Index> edges, std::string_view uvSet, bool move)
 {
     return sewEdges(m, edges, uvSet, move);
+}
+
+std::vector<NodeId> meshesUnder(const Graph& g, std::span<const NodeId> roots)
+{
+    std::vector<NodeId> out;
+    std::unordered_set<NodeId> seen;
+    auto add = [&](NodeId id) {
+        if (Node* n = g.node(id); n && n->type().isA("mesh") && seen.insert(id).second)
+            out.push_back(id);
+    };
+    for (NodeId root : roots)
+    {
+        add(root);
+        for (NodeId d : g.descendants(root))
+            add(d);
+    }
+    return out;
+}
+
+std::vector<NodeId> shownMeshes()
+{
+    Graph& g = graph();
+    std::vector<NodeId> out = meshesUnder(g, g.selection());
+    ComponentMode mode = scene::components::mode();
+    // Component selections outlive the object selection, so only the current kind counts, and only with no objects selected.
+    if (out.empty() && mode != ComponentMode::Object)
+        for (auto& [id, ids] : scene::components::selected(mode))
+            if (Node* n = g.node(id); n && n->type().isA("mesh") && !ids.empty())
+                out.push_back(id);
+    return out;
 }
 
 void registerCommands()

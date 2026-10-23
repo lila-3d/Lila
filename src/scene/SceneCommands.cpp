@@ -548,7 +548,7 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "pickWalk",
-        .doc = "Walk the selection through the hierarchy like Maya's arrow keys: up to the parent, down to the first child, "
+        .doc = "Walk the selection through the hierarchy like the arrow keys: up to the parent, down to the first child, "
                "left/right to the previous/next sibling (wrapping).",
         .flags = {{"direction", "", T::String, "down", "up, down, left or right."}},
         .run = [](const Args& a) -> json {
@@ -596,7 +596,7 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "selectHierarchy",
-        .doc = "Add every transform below each selected object to the selection, parents before children (Maya's select -hi).",
+        .doc = "Add every transform below each selected object to the selection, parents before children.",
         .run = [](const Args&) -> json {
             Graph& g = graph();
             std::vector<NodeId> out;

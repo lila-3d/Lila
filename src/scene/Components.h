@@ -58,6 +58,8 @@ LILA_SCENE_API int addListener(std::function<void()> fn);
 LILA_SCENE_API void removeListener(int id);
 
 LILA_SCENE_API void registerCommands();
+/** selectLoopThrough, selectPathBetween and selectContainedFaces (scene/SelectPaths.cpp); called by registerCommands. */
+LILA_SCENE_API void registerPathCommands();
 } // namespace components
 
 /**

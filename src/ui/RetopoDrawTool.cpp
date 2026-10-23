@@ -1,8 +1,9 @@
-#include "ui/QuadDrawTool.h"
+#include "ui/RetopoDrawTool.h"
 
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "core/Log.h"
+#include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "geo/Topology.h"
 #include "retopo/RetopoCommands.h"
@@ -10,8 +11,11 @@
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "ui/Actions.h"
+#include "ui/CursorBadges.h"
+#include "ui/OptionBox.h"
 
 #include <QApplication>
+#include <QInputDialog>
 #include <QPainter>
 #include <QPixmap>
 #include <QTimer>
@@ -30,6 +34,9 @@ using geo::kInvalid;
 
 constexpr double kPickRadius = 12.0; // px
 constexpr double kWeldRadius = 10.0; // px
+constexpr const char* kPrefs = "general";
+constexpr const char* kExtrudeAnglePref = "/retopoDraw/extrudeAngle";
+constexpr const char* kMergeBadge = "retopo.draw.merge";
 
 // Overlay colours are sRGB; the 3D streams take linear.
 const glm::vec4 kDotFill(0.95f, 0.95f, 0.95f, 1.0f);
@@ -94,7 +101,7 @@ json vecs(const std::vector<glm::dvec3>& ps)
     return out;
 }
 
-/** An X, Maya's Quad Draw delete cursor. */
+/** An X, the delete cursor. */
 QCursor makeDeleteCursor()
 {
     const int size = 24;
@@ -118,7 +125,7 @@ QCursor makeDeleteCursor()
 class KeyFilter : public QObject
 {
 public:
-    explicit KeyFilter(QuadDrawTool* tool) : mTool(tool) {}
+    explicit KeyFilter(RetopoDrawTool* tool) : mTool(tool) {}
 
     bool eventFilter(QObject* obj, QEvent* e) override
     {
@@ -131,7 +138,8 @@ public:
         QWidget* focus = QApplication::focusWidget();
         if (!focus || obj != focus || !focus->inherits("lila::ui::ViewportWidget"))
             return false;
-        if (k->key() == Qt::Key_Tab)
+        // Shift+Tab arrives as Backtab.
+        if (k->key() == Qt::Key_Tab || k->key() == Qt::Key_Backtab)
         {
             if (e->type() == QEvent::ShortcutOverride)
             {
@@ -152,32 +160,42 @@ public:
     }
 
 private:
-    QuadDrawTool* mTool;
+    RetopoDrawTool* mTool;
 };
 } // namespace
 
-QuadDrawTool::QuadDrawTool(scene::NodeId reference, std::string retopoName) : mReference(reference), mRetopoName(std::move(retopoName)) {}
+RetopoDrawTool::RetopoDrawTool(scene::NodeId reference, std::string retopoName) : mReference(reference), mRetopoName(std::move(retopoName)) {}
 
-QuadDrawTool::~QuadDrawTool() = default;
+RetopoDrawTool::~RetopoDrawTool() = default;
 
-void QuadDrawTool::activate()
+void RetopoDrawTool::activate()
 {
     mFilter = std::make_unique<KeyFilter>(this);
     qApp->installEventFilter(mFilter.get());
+    cursorBadges::add({kMergeBadge, "arrow-merge", [this](const ViewportState&) { return merging(); }, "Vertex merges on release"});
     refresh();
-    log::info("Quad Draw on {} into {}: click dots, Shift-click to fill, Ctrl-drag loops, Tab-drag extends, Shift-drag relaxes, "
-              "Ctrl+Shift-click deletes, Esc exits",
+    log::info("Retopo Draw on {} into {}: click dots, Shift-click to fill, Ctrl-drag loops, Tab-drag extends (Shift: whole loop, "
+              "Ctrl: up to the extrude angle), Shift-drag relaxes, Ctrl+Shift-click deletes, Esc exits",
               mRefMesh ? scene::Graph::current().node(mReference)->name() : std::string("(no reference)"), mRetopoName);
 }
 
-void QuadDrawTool::deactivate()
+void RetopoDrawTool::deactivate()
 {
+    cursorBadges::remove(kMergeBadge);
     if (mFilter)
         qApp->removeEventFilter(mFilter.get());
     mFilter.reset();
 }
 
-void QuadDrawTool::refresh()
+double RetopoDrawTool::extrudeAngle() { return std::clamp(PrefStore::get().value<double>(kPrefs, kExtrudeAnglePref, 30.0), 1.0, 179.0); }
+
+void RetopoDrawTool::setExtrudeAngle(double degrees)
+{
+    PrefStore::get().set(kPrefs, kExtrudeAnglePref, std::clamp(degrees, 1.0, 179.0));
+    viewportTools::requestRedraw();
+}
+
+void RetopoDrawTool::refresh()
 {
     LILA_ZONE();
 
@@ -219,12 +237,12 @@ void QuadDrawTool::refresh()
             glm::dvec3 nw = glm::normalize(glm::transpose(glm::inverse(glm::dmat3(mRetopoWorld))) * nl);
             mSymmetry = geo::SymmetryPlane{nw, glm::dot(nw, o)};
         }
-        const std::string& dots = n->as<std::string>(scene::MeshNode::kQuadDrawDots);
+        const std::string& dots = n->as<std::string>(scene::MeshNode::kRetopoDrawDots);
         if (dots != mDotsText || mRetopoWorld != mDotsWorld)
         {
             mDotsText = dots;
             mDotsWorld = mRetopoWorld;
-            mDots = retopo::quadDrawDots(*n);
+            mDots = retopo::retopoDrawDots(*n);
         }
     }
     else
@@ -236,7 +254,7 @@ void QuadDrawTool::refresh()
         mHover.dot = -1;
 }
 
-scene::Node* QuadDrawTool::retopoNode() const
+scene::Node* RetopoDrawTool::retopoNode() const
 {
     scene::Graph& g = scene::Graph::current();
     if (scene::Node* n = g.node(mRetopoId); n && n->type().isA("mesh"))
@@ -245,21 +263,21 @@ scene::Node* QuadDrawTool::retopoNode() const
     return n && n->type().isA("mesh") ? n : nullptr;
 }
 
-bool QuadDrawTool::deleting() const
+bool RetopoDrawTool::deleting() const
 {
     Qt::KeyboardModifiers m = QGuiApplication::queryKeyboardModifiers();
     return (m & Qt::ShiftModifier) && (m & Qt::ControlModifier) && (mDrag == Drag::None || mDrag == Drag::DeleteClick);
 }
 
-std::optional<QCursor> QuadDrawTool::cursor() const
+std::optional<QCursor> RetopoDrawTool::cursor() const
 {
     static const QCursor kDelete = makeDeleteCursor();
     return deleting() ? std::optional<QCursor>(kDelete) : std::nullopt;
 }
 
-glm::dvec3 QuadDrawTool::pointWorld(Index p) const { return glm::dvec3(mRetopoWorld * glm::dvec4(mRetopo->position(p), 1.0)); }
+glm::dvec3 RetopoDrawTool::pointWorld(Index p) const { return glm::dvec3(mRetopoWorld * glm::dvec4(mRetopo->position(p), 1.0)); }
 
-bool QuadDrawTool::surfaceHit(QPointF px, const ViewInfo& view, glm::dvec3& out) const
+bool RetopoDrawTool::surfaceHit(QPointF px, const ViewInfo& view, glm::dvec3& out) const
 {
     if (mRefBvh.empty())
         return false;
@@ -272,13 +290,13 @@ bool QuadDrawTool::surfaceHit(QPointF px, const ViewInfo& view, glm::dvec3& out)
     return true;
 }
 
-glm::dvec3 QuadDrawTool::onSurface(const glm::dvec3& p) const
+glm::dvec3 RetopoDrawTool::onSurface(const glm::dvec3& p) const
 {
     geo::BvhClosest c;
     return !mRefBvh.empty() && mRefBvh.closestPoint(p, c) ? c.point : p;
 }
 
-bool QuadDrawTool::visible(const glm::dvec3& p, const ViewInfo& view) const
+bool RetopoDrawTool::visible(const glm::dvec3& p, const ViewInfo& view) const
 {
     if (mRefBvh.empty())
         return true;
@@ -289,7 +307,7 @@ bool QuadDrawTool::visible(const glm::dvec3& p, const ViewInfo& view) const
     return len <= slack || !mRefBvh.occluded(view.eye, d / len, len - slack);
 }
 
-std::vector<std::optional<QPointF>> QuadDrawTool::projectPoints(const ViewInfo& view) const
+std::vector<std::optional<QPointF>> RetopoDrawTool::projectPoints(const ViewInfo& view) const
 {
     std::vector<std::optional<QPointF>> out;
     if (!mRetopo)
@@ -305,7 +323,7 @@ std::vector<std::optional<QPointF>> QuadDrawTool::projectPoints(const ViewInfo& 
     return out;
 }
 
-QuadDrawTool::Hover QuadDrawTool::pick(QPointF px, const ViewInfo& view) const
+RetopoDrawTool::Hover RetopoDrawTool::pick(QPointF px, const ViewInfo& view) const
 {
     Hover h;
     double best = kPickRadius;
@@ -381,7 +399,7 @@ QuadDrawTool::Hover QuadDrawTool::pick(QPointF px, const ViewInfo& view) const
     return h;
 }
 
-bool QuadDrawTool::run(const char* command, const json& call, json* result)
+bool RetopoDrawTool::run(const char* command, const json& call, json* result)
 {
     try
     {
@@ -397,7 +415,7 @@ bool QuadDrawTool::run(const char* command, const json& call, json* result)
     }
 }
 
-json QuadDrawTool::targetCall(json flags) const
+json RetopoDrawTool::targetCall(json flags) const
 {
     flags["mesh"] = mRetopoName;
     if (scene::Node* ref = scene::Graph::current().node(mReference))
@@ -406,10 +424,10 @@ json QuadDrawTool::targetCall(json flags) const
     return flags;
 }
 
-bool QuadDrawTool::setDots(const std::vector<glm::dvec3>& dots)
+bool RetopoDrawTool::setDots(const std::vector<glm::dvec3>& dots)
 {
     json name;
-    if (!run("quadDrawSetDots", targetCall({{"dots", vecs(dots)}}), &name))
+    if (!run("retopoDrawSetDots", targetCall({{"dots", vecs(dots)}}), &name))
         return false;
     if (name.is_string())
         mRetopoName = name.get<std::string>();
@@ -417,7 +435,7 @@ bool QuadDrawTool::setDots(const std::vector<glm::dvec3>& dots)
     return true;
 }
 
-void QuadDrawTool::placeDot(QPointF px, const ViewInfo& view)
+void RetopoDrawTool::placeDot(QPointF px, const ViewInfo& view)
 {
     glm::dvec3 hit;
     if (!surfaceHit(px, view, hit))
@@ -433,7 +451,7 @@ void QuadDrawTool::placeDot(QPointF px, const ViewInfo& view)
     setDots(dots);
 }
 
-std::optional<QuadDrawTool::Fill> QuadDrawTool::findFill(QPointF px, const ViewInfo& view) const
+std::optional<RetopoDrawTool::Fill> RetopoDrawTool::findFill(QPointF px, const ViewInfo& view) const
 {
     // Over an existing face there is nothing to fill.
     if (mRetopo && pick(px, view).face != kInvalid)
@@ -518,7 +536,7 @@ std::optional<QuadDrawTool::Fill> QuadDrawTool::findFill(QPointF px, const ViewI
     return fill;
 }
 
-void QuadDrawTool::fillAt(QPointF px, const ViewInfo& view)
+void RetopoDrawTool::fillAt(QPointF px, const ViewInfo& view)
 {
     std::optional<Fill> fill = findFill(px, view);
     if (!fill)
@@ -529,9 +547,9 @@ void QuadDrawTool::fillAt(QPointF px, const ViewInfo& view)
             remaining.push_back(mDots[i]);
     double weld = view.unitsPerPixel(fill->points[0]) * 0.5;
     // The face and the dots it used up are one undo step.
-    UndoChunk chunk("Quad Draw Fill");
+    UndoChunk chunk("Retopo Draw Fill");
     json name;
-    if (!run("quadDrawAddFace", targetCall({{"points", vecs(fill->points)}, {"weld", weld}}), &name))
+    if (!run("retopoDrawAddFace", targetCall({{"points", vecs(fill->points)}, {"weld", weld}}), &name))
         return;
     if (name.is_string())
         mRetopoName = name.get<std::string>();
@@ -540,7 +558,7 @@ void QuadDrawTool::fillAt(QPointF px, const ViewInfo& view)
     refresh();
 }
 
-void QuadDrawTool::deleteAt(QPointF px, const ViewInfo& view)
+void RetopoDrawTool::deleteAt(QPointF px, const ViewInfo& view)
 {
     Hover h = pick(px, view);
     if (h.dot >= 0)
@@ -551,13 +569,13 @@ void QuadDrawTool::deleteAt(QPointF px, const ViewInfo& view)
         return;
     }
     if (h.point != kInvalid)
-        run("quadDrawDelete", {{"mesh", mRetopoName}, {"points", {h.point}}});
+        run("retopoDrawDelete", {{"mesh", mRetopoName}, {"points", {h.point}}});
     else if (h.face != kInvalid)
-        run("quadDrawDelete", {{"mesh", mRetopoName}, {"faces", {h.face}}});
+        run("retopoDrawDelete", {{"mesh", mRetopoName}, {"faces", {h.face}}});
     refresh();
 }
 
-void QuadDrawTool::relaxStep(QPointF px, const ViewInfo& view)
+void RetopoDrawTool::relaxStep(QPointF px, const ViewInfo& view)
 {
     if (!mRetopo)
         return;
@@ -588,7 +606,7 @@ void QuadDrawTool::relaxStep(QPointF px, const ViewInfo& view)
         mMoved[p] = pos;
 }
 
-double QuadDrawTool::edgeFraction(Index edge, QPointF px, const ViewInfo& view) const
+double RetopoDrawTool::edgeFraction(Index edge, QPointF px, const ViewInfo& view) const
 {
     auto a = view.project(pointWorld(mRetopo->edgePoint(edge, 0))), b = view.project(pointWorld(mRetopo->edgePoint(edge, 1)));
     if (!a || !b)
@@ -598,7 +616,7 @@ double QuadDrawTool::edgeFraction(Index edge, QPointF px, const ViewInfo& view) 
     return std::clamp(t, 0.05, 0.95);
 }
 
-void QuadDrawTool::loopPreview(Index edge, double fraction, std::vector<std::pair<glm::dvec3, glm::dvec3>>& out) const
+void RetopoDrawTool::loopPreview(Index edge, double fraction, std::vector<std::pair<glm::dvec3, glm::dvec3>>& out) const
 {
     // Walk the ring both ways, carrying which end of each edge is the "start" side so the fraction lines up.
     const geo::Mesh& m = *mRetopo;
@@ -645,7 +663,88 @@ void QuadDrawTool::loopPreview(Index edge, double fraction, std::vector<std::pai
     }
 }
 
-bool QuadDrawTool::mousePress(QMouseEvent* e, const ViewInfo& view)
+retopo::BorderRun RetopoDrawTool::extrudeRun(Index edge, bool wholeLoop) const
+{
+    if (!mRetopo || edge == kInvalid || !mRetopo->edgeValid(edge) || !mRetopo->isBoundaryEdge(edge))
+        return {};
+    return retopo::walkBorder(*mRetopo, edge, wholeLoop ? 180.0 : extrudeAngle());
+}
+
+void RetopoDrawTool::beginRunExtrude(Index edge, bool wholeLoop)
+{
+    mDrag = Drag::ExtendRun;
+    mDragEdge = edge;
+    mRun = extrudeRun(edge, wholeLoop);
+    const geo::Mesh& m = *mRetopo;
+    const size_t n = mRun.points.size();
+    // Each edge's outward direction: in its face's plane, perpendicular to the edge, away from the face.
+    std::vector<glm::dvec3> edgeOut(mRun.edges.size(), glm::dvec3(0.0));
+    for (size_t i = 0; i < mRun.edges.size(); ++i)
+    {
+        glm::dvec3 a = pointWorld(mRun.points[i]), b = pointWorld(mRun.points[(i + 1) % n]);
+        Index face = kInvalid;
+        m.forEachEdgeCorner(mRun.edges[i], [&](Index c) { face = m.cornerFace(c); });
+        if (face == kInvalid)
+            continue;
+        std::vector<Index> pts = m.facePoints(face);
+        glm::dvec3 centre(0.0), normal(0.0);
+        for (size_t k = 0; k < pts.size(); ++k)
+        {
+            glm::dvec3 p = pointWorld(pts[k]), q = pointWorld(pts[(k + 1) % pts.size()]);
+            centre += p / double(pts.size());
+            normal += glm::cross(p, q);
+        }
+        glm::dvec3 out = glm::cross(b - a, normal);
+        if (glm::dot(out, centre - (a + b) * 0.5) > 0.0)
+            out = -out;
+        if (double len = glm::length(out); len > 0.0)
+            edgeOut[i] = out / len;
+        if (mRun.edges[i] == edge)
+            mRunPull = edgeOut[i];
+    }
+    mRunOut.assign(n, glm::dvec3(0.0));
+    for (size_t j = 0; j < n; ++j)
+    {
+        std::vector<size_t> adjacent;
+        if (j < mRun.edges.size())
+            adjacent.push_back(j);
+        if (j > 0 || mRun.closed)
+            adjacent.push_back((j + mRun.edges.size() - 1) % mRun.edges.size());
+        glm::dvec3 sum(0.0);
+        for (size_t i : adjacent)
+            sum += edgeOut[i];
+        double len = glm::length(sum);
+        if (len <= 0.0)
+            continue;
+        glm::dvec3 dir = sum / len;
+        // Longer at corners so the strip keeps its width there.
+        mRunOut[j] = dir / std::max(0.5, glm::dot(dir, edgeOut[adjacent[0]]));
+    }
+    mRunTo.clear();
+    for (Index p : mRun.points)
+        mRunTo.push_back(pointWorld(p));
+}
+
+void RetopoDrawTool::updateRunExtrude(QPointF px, const ViewInfo& view)
+{
+    glm::dvec3 hit;
+    if (!surfaceHit(px, view, hit))
+        return;
+    double dist = std::max(0.0, glm::dot(hit - mDragStartHit, mRunPull));
+    for (size_t j = 0; j < mRun.points.size(); ++j)
+        mRunTo[j] = onSurface(pointWorld(mRun.points[j]) + mRunOut[j] * dist);
+}
+
+void RetopoDrawTool::drawRun(render::FrameState& s, const retopo::BorderRun& run) const
+{
+    for (size_t i = 0; i < run.edges.size(); ++i)
+    {
+        s.linesOnTop.push_back({glm::vec3(pointWorld(run.points[i])), kHotLinear});
+        s.linesOnTop.push_back({glm::vec3(pointWorld(run.points[(i + 1) % run.points.size()])), kHotLinear});
+    }
+}
+
+bool RetopoDrawTool::mousePress(QMouseEvent* e, const ViewInfo& view)
 {
     refresh();
     mPressPx = e->position();
@@ -681,6 +780,12 @@ bool QuadDrawTool::mousePress(QMouseEvent* e, const ViewInfo& view)
     {
         if (h.edge == kInvalid || !mRetopo->isBoundaryEdge(h.edge))
             return true;
+        if (shift || ctrl)
+        {
+            beginRunExtrude(h.edge, shift);
+            surfaceHit(e->position(), view, mDragStartHit);
+            return true;
+        }
         mDrag = Drag::Extend;
         mDragEdge = h.edge;
         surfaceHit(e->position(), view, mDragStartHit);
@@ -711,7 +816,7 @@ bool QuadDrawTool::mousePress(QMouseEvent* e, const ViewInfo& view)
     return true;
 }
 
-bool QuadDrawTool::mouseMove(QMouseEvent* e, const ViewInfo& view)
+bool RetopoDrawTool::mouseMove(QMouseEvent* e, const ViewInfo& view)
 {
     mCursor = e->position();
     mCursorView = view.camera;
@@ -736,8 +841,19 @@ bool QuadDrawTool::mouseMove(QMouseEvent* e, const ViewInfo& view)
     case Drag::Tweak:
     {
         glm::dvec3 hit;
-        if (surfaceHit(e->position(), view, hit))
-            mMoved[mDragPoint] = hit;
+        if (!surfaceHit(e->position(), view, hit))
+            break;
+        mMoved.erase(mDragPoint);
+        mMergeTarget = kInvalid;
+        auto screen = projectPoints(view);
+        double best = kWeldRadius;
+        for (Index p = 0; p < screen.size(); ++p)
+            if (p != mDragPoint && screen[p] && distPx(*screen[p], e->position()) < best)
+            {
+                best = distPx(*screen[p], e->position());
+                mMergeTarget = p;
+            }
+        mMoved[mDragPoint] = mMergeTarget != kInvalid ? pointWorld(mMergeTarget) : hit;
         break;
     }
     case Drag::DotMove:
@@ -767,13 +883,14 @@ bool QuadDrawTool::mouseMove(QMouseEvent* e, const ViewInfo& view)
         }
         break;
     }
+    case Drag::ExtendRun: updateRunExtrude(e->position(), view); break;
     default: break;
     }
     viewportTools::requestRedraw();
     return true;
 }
 
-bool QuadDrawTool::mouseRelease(QMouseEvent* e, const ViewInfo& view)
+bool RetopoDrawTool::mouseRelease(QMouseEvent* e, const ViewInfo& view)
 {
     mCursor = e->position();
     commitDrag(view);
@@ -781,12 +898,13 @@ bool QuadDrawTool::mouseRelease(QMouseEvent* e, const ViewInfo& view)
     mMoved.clear();
     mDotTo.reset();
     mDragDot = -1;
+    mMergeTarget = kInvalid;
     refresh();
     mHover = pick(e->position(), view);
     return true;
 }
 
-void QuadDrawTool::commitDrag(const ViewInfo& view)
+void RetopoDrawTool::commitDrag(const ViewInfo& view)
 {
     switch (mDrag)
     {
@@ -806,15 +924,28 @@ void QuadDrawTool::commitDrag(const ViewInfo& view)
         break;
     case Drag::Loop:
         if (mRetopo && mRetopo->edgeValid(mDragEdge))
-            run("quadDrawInsertLoop", {{"mesh", mRetopoName}, {"edge", mDragEdge}, {"fraction", mLoopFraction}});
+            run("retopoDrawInsertLoop", {{"mesh", mRetopoName}, {"edge", mDragEdge}, {"fraction", mLoopFraction}});
         break;
     case Drag::Extend:
         if (distPx(mCursor, mPressPx) > 4.0 && mRetopo && mRetopo->edgeValid(mDragEdge))
         {
             Index a = mRetopo->edgePoint(mDragEdge, 0), b = mRetopo->edgePoint(mDragEdge, 1);
             double weld = view.unitsPerPixel(pointWorld(a)) * 0.5;
-            run("quadDrawAddFace", targetCall({{"points", {vec(pointWorld(a)), vec(pointWorld(b)), vec(mExtendTo[1]), vec(mExtendTo[0])}},
+            run("retopoDrawAddFace", targetCall({{"points", {vec(pointWorld(a)), vec(pointWorld(b)), vec(mExtendTo[1]), vec(mExtendTo[0])}},
                                                {"weld", weld}}));
+        }
+        break;
+    case Drag::ExtendRun:
+        if (distPx(mCursor, mPressPx) > 4.0 && mRetopo && mRunTo.size() == mRun.points.size())
+        {
+            json faces = json::array();
+            for (size_t i = 0; i < mRun.edges.size(); ++i)
+            {
+                size_t j = (i + 1) % mRun.points.size();
+                faces.push_back({vec(pointWorld(mRun.points[i])), vec(pointWorld(mRun.points[j])), vec(mRunTo[j]), vec(mRunTo[i])});
+            }
+            double weld = view.unitsPerPixel(pointWorld(mRun.points[0])) * 0.5;
+            run("retopoDrawAddFace", targetCall({{"faces", faces}, {"weld", weld}}));
         }
         break;
     case Drag::Tweak:
@@ -828,27 +959,29 @@ void QuadDrawTool::commitDrag(const ViewInfo& view)
                 positions.push_back(vec(pos));
             }
             double weld = 0.0;
-            if (mDrag == Drag::Tweak)
-            {
-                // Dropped onto another vertex: snap to it and let the command weld them.
-                auto screen = projectPoints(view);
-                for (Index p = 0; p < screen.size(); ++p)
-                    if (p != mDragPoint && screen[p] && distPx(*screen[p], mCursor) < kWeldRadius)
-                    {
-                        positions[0] = vec(pointWorld(p));
-                        weld = view.unitsPerPixel(pointWorld(p)) * 0.5;
-                        break;
-                    }
-            }
-            run("quadDrawMove", {{"mesh", mRetopoName}, {"points", points}, {"positions", positions}, {"weld", weld}});
+            // Dropped onto another vertex: mouseMove already snapped to it, and the command welds them.
+            if (mDrag == Drag::Tweak && mMergeTarget != kInvalid && mRetopo->pointValid(mMergeTarget))
+                weld = view.unitsPerPixel(pointWorld(mMergeTarget)) * 0.5;
+            run("retopoDrawMove", {{"mesh", mRetopoName}, {"points", points}, {"positions", positions}, {"weld", weld}});
         }
         break;
     default: break;
     }
 }
 
-bool QuadDrawTool::wheel(QWheelEvent* e, const ViewInfo&)
+bool RetopoDrawTool::wheel(QWheelEvent* e, const ViewInfo& view)
 {
+    if (mTabDown && (e->modifiers() & Qt::ControlModifier))
+    {
+        // 5 degrees a notch.
+        setExtrudeAngle(extrudeAngle() + 5.0 * e->angleDelta().y() / 120.0);
+        if (mDrag == Drag::ExtendRun && !(e->modifiers() & Qt::ShiftModifier) && mRetopo && mRetopo->edgeValid(mDragEdge))
+        {
+            beginRunExtrude(mDragEdge, false);
+            updateRunExtrude(mCursor, view);
+        }
+        return true;
+    }
     if (!(e->modifiers() & Qt::ShiftModifier))
         return false;
     // Shift turns the wheel's vertical delta horizontal on some platforms.
@@ -858,7 +991,7 @@ bool QuadDrawTool::wheel(QWheelEvent* e, const ViewInfo&)
     return true;
 }
 
-bool QuadDrawTool::keyPress(QKeyEvent* e, const ViewInfo&)
+bool RetopoDrawTool::keyPress(QKeyEvent* e, const ViewInfo&)
 {
     if (e->key() == Qt::Key_Escape)
     {
@@ -875,7 +1008,7 @@ bool QuadDrawTool::keyPress(QKeyEvent* e, const ViewInfo&)
     return false;
 }
 
-void QuadDrawTool::removeOwnDraw(render::FrameState& s) const
+void RetopoDrawTool::removeOwnDraw(render::FrameState& s) const
 {
     // The retopo mesh is drawn here, see-through; drop the viewport's opaque draw of it.
     if (!mRetopo)
@@ -897,7 +1030,7 @@ void QuadDrawTool::removeOwnDraw(render::FrameState& s) const
     });
 }
 
-void QuadDrawTool::draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& view)
+void RetopoDrawTool::draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& view)
 {
     LILA_ZONE();
 
@@ -938,7 +1071,7 @@ void QuadDrawTool::draw(render::FrameState& s, OverlayPainter& p, const ViewInfo
             }
 
         // Edge loop preview while Ctrl is held over an edge, or during the drag.
-        Index loopEdge = mDrag == Drag::Loop ? mDragEdge : (here && mDrag == Drag::None && ctrl && !shift) ? mHover.edge : kInvalid;
+        Index loopEdge = mDrag == Drag::Loop ? mDragEdge : (here && mDrag == Drag::None && ctrl && !shift && !mTabDown) ? mHover.edge : kInvalid;
         if (loopEdge != kInvalid && m.edgeValid(loopEdge))
         {
             std::vector<std::pair<glm::dvec3, glm::dvec3>> segs;
@@ -961,7 +1094,37 @@ void QuadDrawTool::draw(render::FrameState& s, OverlayPainter& p, const ViewInfo
             }
         }
 
+        // Tab Shift / Tab Ctrl: the edges that would extrude, then the strip while dragging.
+        if (here && mDrag == Drag::None && mTabDown && shift != ctrl)
+            drawRun(s, extrudeRun(mHover.edge, shift));
+        if (mDrag == Drag::ExtendRun && mRunTo.size() == mRun.points.size())
+        {
+            drawRun(s, mRun);
+            for (size_t i = 0; i < mRun.edges.size(); ++i)
+            {
+                size_t j = (i + 1) % mRun.points.size();
+                glm::dvec3 q[4] = {pointWorld(mRun.points[i]), pointWorld(mRun.points[j]), mRunTo[j], mRunTo[i]};
+                for (int k : {0, 1, 2, 0, 2, 3})
+                    s.tris3d.push_back({glm::vec3(q[k]), glm::vec4(0.6f, 0.6f, 0.6f, 0.5f)});
+                for (int k = 1; k < 4; ++k)
+                {
+                    s.linesOnTop.push_back({glm::vec3(q[k]), kHotLinear});
+                    s.linesOnTop.push_back({glm::vec3(q[(k + 1) % 4]), kHotLinear});
+                }
+            }
+        }
+
         auto screen = projectPoints(view);
+        if (mDrag == Drag::Tweak && mMergeTarget < screen.size() && screen[mMergeTarget])
+        {
+            std::vector<QPointF> ring;
+            for (int k = 0; k < 32; ++k)
+            {
+                double a = k / 32.0 * 6.283185307179586;
+                ring.push_back(*screen[mMergeTarget] + QPointF(std::cos(a), std::sin(a)) * 10.0);
+            }
+            p.polyline(ring, 2.0f, kHot, true);
+        }
         for (Index i = 0; i < screen.size(); ++i)
             if (screen[i])
             {
@@ -1017,10 +1180,14 @@ void QuadDrawTool::draw(render::FrameState& s, OverlayPainter& p, const ViewInfo
         p.polyline(circle, 1.5f, kBrush, true);
     }
     if (mRefBvh.empty())
-        drawToolMessage(p, view, "Quad Draw: select a reference mesh first");
+        drawToolMessage(p, view, "Retopo Draw: select a reference mesh first");
+    else if (here && mTabDown && ctrl && !shift)
+        drawToolMessage(p, view, QString("Extrude to angle: %1\u00b0   (wheel adjusts)").arg(int(std::lround(extrudeAngle()))));
+    else if (here && mTabDown && shift && !ctrl)
+        drawToolMessage(p, view, "Extrude edge loop");
 }
 
-void QuadDrawTool::drawDeleteTarget(render::FrameState& s, OverlayPainter& p, const ViewInfo& view) const
+void RetopoDrawTool::drawDeleteTarget(render::FrameState& s, OverlayPainter& p, const ViewInfo& view) const
 {
     if (mHover.dot >= 0 && mHover.dot < int(mDots.size()))
     {
@@ -1068,23 +1235,31 @@ void QuadDrawTool::drawDeleteTarget(render::FrameState& s, OverlayPainter& p, co
 void registerRetopoActions()
 {
     actions::add({
-        "retopo.quadDraw",
-        "Quad Draw",
+        "retopo.draw",
+        "Retopo Draw",
         "Mesh",
         [] {
             scene::Graph& g = scene::Graph::current();
-            std::optional<retopo::QuadDrawTargets> t = retopo::resolveQuadDraw(g, g.selection());
+            std::optional<retopo::RetopoDrawTargets> t = retopo::resolveRetopoDraw(g, g.selection());
             if (!t)
             {
-                log::warn("Quad Draw: select the reference mesh, or a retopo mesh to resume on");
+                log::warn("Retopo Draw: select the reference mesh, or a retopo mesh to resume on");
                 return;
             }
-            viewportTools::set(std::make_unique<QuadDrawTool>(t->reference, t->retopo));
+            viewportTools::set(std::make_unique<RetopoDrawTool>(t->reference, t->retopo));
         },
         nullptr,
         "Draw a new quad mesh over the selected reference, or resume on a selected retopo mesh: click dots, Shift-click to fill, "
-        "Ctrl-drag loops, Tab-drag extends, Shift-drag relaxes, MMB-drag tweaks, Ctrl+Shift-click deletes. Esc or Q/W/E/R exits.",
-        "lila.ui.run_action(\"retopo.quadDraw\")",
+        "Ctrl-drag loops, Tab-drag extends (Tab+Shift: whole loop, Tab+Ctrl: up to the extrude angle), Shift-drag relaxes, MMB-drag tweaks, Ctrl+Shift-click deletes. Esc or Q/W/E/R exits.",
+        "lila.ui.run_action(\"retopo.draw\")",
+    });
+    optionBox::addCustom("retopo.draw", [] {
+        bool ok = false;
+        double v = QInputDialog::getDouble(QApplication::activeWindow(), "Retopo Draw Options",
+                                           "Extrude angle: Tab+Ctrl drag stops where the border turns more than this",
+                                           RetopoDrawTool::extrudeAngle(), 1.0, 179.0, 0, &ok);
+        if (ok)
+            RetopoDrawTool::setExtrudeAngle(v);
     });
 }
 } // namespace lila::ui

@@ -409,14 +409,22 @@ Ids convert(const geo::Mesh& m, ComponentMode from, const Ids& ids, ComponentMod
 
 namespace
 {
-/** Every node in the hilite set (the object selection) that is a mesh. */
+/** Every mesh in the hilite set: the selected meshes and the meshes under selected groups. */
 std::vector<NodeId> hilitedMeshes()
 {
     std::vector<NodeId> out;
     Graph& g = Graph::current();
-    for (NodeId id : g.selection())
-        if (Node* n = g.node(id); n && n->type().isA("mesh"))
+    std::set<NodeId> seen;
+    auto add = [&](NodeId id) {
+        if (Node* n = g.node(id); n && n->type().isA("mesh") && seen.insert(id).second)
             out.push_back(id);
+    };
+    for (NodeId id : g.selection())
+    {
+        add(id);
+        for (NodeId d : g.descendants(id))
+            add(d);
+    }
     return out;
 }
 
@@ -435,6 +443,7 @@ void registerCommands()
 {
     using T = ArgType;
     watchCreations();
+    registerPathCommands();
 
     ops::registerCommand({
         .name = "selectMode",

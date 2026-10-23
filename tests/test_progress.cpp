@@ -258,7 +258,7 @@ TEST_CASE("scene load: reading on a worker builds the same scene")
 
     run("newScene");
     run("polySphere", {{"name", "Ball"}});
-    run("polyTorus", {{"name", "Ring"}, {"history", false}});
+    run("polyTorus", {{"name", "Ring"}, {"generator", false}});
     run("createReference", {{"args", {asset}}, {"namespace", "hero"}});
     run("setAttr", {{"args", {"hero:Box.tx", 4}}});
     run("parent", {{"args", {"Ring", "hero:Pin"}}});

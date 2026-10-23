@@ -4,6 +4,7 @@
 
 #include "geo/Bvh.h"
 #include "geo/Symmetry.h"
+#include "retopo/Retopo.h"
 #include "scene/Plug.h"
 #include "ui/ViewportTool.h"
 
@@ -21,27 +22,29 @@ class QObject;
 namespace lila::ui
 {
 /**
- * Maya-style Quad Draw: draws a new low-poly mesh on top of a live reference surface.
+ * Retopo Draw: draws a new low-poly mesh on top of a live reference surface.
  *
  *   click                place a dot on the surface
  *   Shift hover/click    preview, then fill, a quad from the four dots/vertices around the cursor
  *   Shift drag           relax brush (Shift wheel resizes), points slide on the surface
  *   Ctrl drag            insert an edge loop across the strip under the cursor
  *   Tab drag             extend a strip of quads from a border edge
+ *   Tab Shift drag       extrude the whole border loop the edge is on
+ *   Tab Ctrl drag        extrude along the border until it turns more than the extrude angle (Tab Ctrl wheel adjusts)
  *   Ctrl Shift click     delete the face, vertex or dot under the cursor (highlighted while hovering)
  *   MMB or LMB drag      tweak a vertex or dot along the surface; dropping a vertex on another welds them
  *   Esc, Q/W/E/R         leave the tool
  *
- * Targets come from retopo::resolveQuadDraw. The retopo mesh is created with the first dot, and keeps its reference
- * connected and its dots stored, so a later session resumes on it. Every edit, dots included, is a quadDraw* command,
+ * Targets come from retopo::resolveRetopoDraw. The retopo mesh is created with the first dot, and keeps its reference
+ * connected and its dots stored, so a later session resumes on it. Every edit, dots included, is a retopoDraw* command,
  * so it undoes and echoes like any other. Symmetry follows the retopo mesh's symmetry setting.
  */
-class LILA_UI_API QuadDrawTool : public ViewportTool
+class LILA_UI_API RetopoDrawTool : public ViewportTool
 {
 public:
-    QuadDrawTool(scene::NodeId reference, std::string retopoName);
-    ~QuadDrawTool() override;
-    const char* name() const override { return "Quad Draw"; }
+    RetopoDrawTool(scene::NodeId reference, std::string retopoName);
+    ~RetopoDrawTool() override;
+    const char* name() const override { return "Retopo Draw"; }
 
     void activate() override;
     void deactivate() override;
@@ -54,7 +57,17 @@ public:
     std::optional<QCursor> cursor() const override;
 
     /** Tab is held; fed by the tool's application event filter since Tab never reaches the viewport. */
-    void setTabDown(bool down) { mTabDown = down; }
+    void setTabDown(bool down)
+    {
+        mTabDown = down;
+        viewportTools::requestRedraw();
+    }
+    /** A vertex drag is over another vertex and welds to it on release. */
+    bool merging() const { return mMergeTarget != geo::kInvalid; }
+
+    /** Tab Ctrl drag's turn limit, degrees; kept in the general prefs. */
+    static double extrudeAngle();
+    static void setExtrudeAngle(double degrees);
 
 private:
     enum class Drag
@@ -65,6 +78,7 @@ private:
         Relax,
         Loop,
         Extend,
+        ExtendRun,
         DeleteClick,
         FillClick,
         DotClick,
@@ -107,6 +121,12 @@ private:
     bool run(const char* command, const nlohmann::json& call, nlohmann::json* result = nullptr);
     /** Adds the retopo mesh, the reference to connect, and create=True. */
     nlohmann::json targetCall(nlohmann::json flags) const;
+    /** The border run Tab Shift (whole loop) or Tab Ctrl (to the extrude angle) would extrude from edge. */
+    retopo::BorderRun extrudeRun(geo::Index edge, bool wholeLoop) const;
+    /** Starts a run extrude from the border edge: its run, and each run point's outward direction along the surface. */
+    void beginRunExtrude(geo::Index edge, bool wholeLoop);
+    void updateRunExtrude(QPointF px, const ViewInfo& view);
+    void drawRun(render::FrameState& s, const retopo::BorderRun& run) const;
     void removeOwnDraw(render::FrameState& s) const;
     void drawDeleteTarget(render::FrameState& s, OverlayPainter& p, const ViewInfo& view) const;
 
@@ -142,10 +162,15 @@ private:
     glm::dvec3 mDragStartHit{0.0};
     std::map<geo::Index, glm::dvec3> mMoved; // tweak and relax preview positions
     std::array<glm::dvec3, 2> mExtendTo{};
+    retopo::BorderRun mRun;
+    std::vector<glm::dvec3> mRunOut;    // per run point: outward along the surface, scaled for even strip width
+    std::vector<glm::dvec3> mRunTo;     // per run point: where its new point lands
+    glm::dvec3 mRunPull{0.0};           // the grabbed edge's outward direction; the drag's distance is measured along it
+    geo::Index mMergeTarget = geo::kInvalid;
 
     std::unique_ptr<QObject> mFilter;
 };
 
-/** Registers "retopo.quadDraw". */
+/** Registers "retopo.draw". */
 LILA_UI_API void registerRetopoActions();
 } // namespace lila::ui

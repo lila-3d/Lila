@@ -225,7 +225,7 @@ void registerTypes()
     NodeType t;
     t.name = kTypeName;
     t.icon = "stack-2";
-    t.doc = "A Maya display layer: shows, hides, templates or references its objects together. Edit it in Windows > Display Layers.";
+    t.doc = "A display layer: shows, hides, templates or references its objects together. Edit it in Windows > Display Layers.";
     t.ownAttrs = layerAttrs();
     t.create = [] { return std::make_unique<DisplayLayer>(); };
     types::registerType(std::move(t));

@@ -525,7 +525,7 @@ void registerTransferCommands()
     using T = ArgType;
     ops::registerCommand({
         .name = "transferAttributes",
-        .doc = "Maya's Transfer Attributes: copy UVs, normals, color sets, positions or named attributes from the first object to "
+        .doc = "Copy UVs, normals, color sets, positions or named attributes from the first object to "
                "the others, sampling in world, object, component (same topology) or uv space, by closest point or along normals. "
                "live=True adds a transferAttributes modifier to each target instead of baking, so the targets follow the source.",
         .positionalDoc = "source targets...",

@@ -17,7 +17,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 
 using namespace lila;
 using geo::Index;
@@ -204,32 +207,32 @@ TEST_CASE("commands: quadRemesh, relaxMesh, shrinkwrap, meshRepair undo cleanly"
     CHECK(scene::Graph::current().find(name) == nullptr);
 }
 
-TEST_CASE("commands: quad draw edits")
+TEST_CASE("commands: retopo draw edits")
 {
     scene::Graph::current().clear();
     UndoStack::get().clear();
     auto P = [](double x, double y) { return json::array({x, y, 0.0}); };
-    ops::execute("quadDrawAddFace", {{"mesh", "retopo"}, {"create", true}, {"points", {P(0, 0), P(10, 0), P(10, 10), P(0, 10)}}});
+    ops::execute("retopoDrawAddFace", {{"mesh", "retopo"}, {"create", true}, {"points", {P(0, 0), P(10, 0), P(10, 10), P(0, 10)}}});
     // Shares the first quad's right edge in the same winding, so it gets flipped to match.
-    ops::execute("quadDrawAddFace", {{"mesh", "retopo"}, {"points", {P(10, 10), P(20, 10), P(20, 0), P(10, 0)}}, {"weld", 0.5}});
+    ops::execute("retopoDrawAddFace", {{"mesh", "retopo"}, {"points", {P(10, 10), P(20, 10), P(20, 0), P(10, 0)}}, {"weld", 0.5}});
     {
         const geo::Mesh& m = outMesh("retopo");
         CHECK(m.numPoints() == 6);
         CHECK(m.numFaces() == 2);
         CHECK(geo::test::isValid(m));
     }
-    ops::execute("quadDrawInsertLoop", {{"mesh", "retopo"}, {"edge", int(outMesh("retopo").findEdge(0, 3))}});
+    ops::execute("retopoDrawInsertLoop", {{"mesh", "retopo"}, {"edge", int(outMesh("retopo").findEdge(0, 3))}});
     CHECK(outMesh("retopo").numFaces() == 4);
-    ops::execute("quadDrawMove", {{"mesh", "retopo"}, {"points", {0}}, {"positions", {P(-1, -1)}}});
+    ops::execute("retopoDrawMove", {{"mesh", "retopo"}, {"points", {0}}, {"positions", {P(-1, -1)}}});
     CHECK(outMesh("retopo").position(0) == glm::dvec3(-1, -1, 0));
-    ops::execute("quadDrawDelete", {{"mesh", "retopo"}, {"faces", {0}}});
+    ops::execute("retopoDrawDelete", {{"mesh", "retopo"}, {"faces", {0}}});
     CHECK(outMesh("retopo").numFaces() == 3);
 
     // With x symmetry each new face gets a welded mirror image.
     scene::Graph& g = scene::Graph::current();
-    ops::execute("quadDrawAddFace", {{"mesh", "sym"}, {"create", true}, {"points", {P(0, 0), P(10, 0), P(10, 10), P(0, 10)}}});
+    ops::execute("retopoDrawAddFace", {{"mesh", "sym"}, {"create", true}, {"points", {P(0, 0), P(10, 0), P(10, 10), P(0, 10)}}});
     g.setValue({g.find("sym")->id(), scene::MeshNode::kSymmetry, -1}, int64_t(1));
-    ops::execute("quadDrawAddFace", {{"mesh", "sym"}, {"points", {P(10, 0), P(20, 0), P(20, 10), P(10, 10)}}});
+    ops::execute("retopoDrawAddFace", {{"mesh", "sym"}, {"points", {P(10, 0), P(20, 0), P(20, 10), P(10, 10)}}});
     {
         const geo::Mesh& m = outMesh("sym");
         CHECK(m.numFaces() == 3);
@@ -239,7 +242,7 @@ TEST_CASE("commands: quad draw edits")
     UndoStack::get().clear();
 }
 
-TEST_CASE("commands: quad draw dots undo, and fill consumes dots in one step")
+TEST_CASE("commands: retopo draw dots undo, and fill consumes dots in one step")
 {
     scene::Graph& g = scene::Graph::current();
     g.clear();
@@ -254,15 +257,15 @@ TEST_CASE("commands: quad draw dots undo, and fill consumes dots in one step")
             out.push_back({p.x, p.y, p.z});
         return out;
     };
-    auto dots = [&] { return retopo::quadDrawDots(*g.find("ref_retopo")); };
+    auto dots = [&] { return retopo::retopoDrawDots(*g.find("ref_retopo")); };
     auto setDots = [&](const std::vector<glm::dvec3>& ps) {
-        ops::execute("quadDrawSetDots", {{"mesh", "ref_retopo"}, {"reference", "ref"}, {"create", true}, {"dots", J(ps)}});
+        ops::execute("retopoDrawSetDots", {{"mesh", "ref_retopo"}, {"reference", "ref"}, {"create", true}, {"dots", J(ps)}});
     };
 
     // The first dot creates the retopo mesh, connected to its reference and taking its symmetry.
     setDots({P(10, 0)});
     REQUIRE(g.find("ref_retopo"));
-    CHECK(retopo::quadDrawReference(g, g.find("ref_retopo")->id()) == g.find("ref")->id());
+    CHECK(retopo::retopoDrawReference(g, g.find("ref_retopo")->id()) == g.find("ref")->id());
     CHECK(g.find("ref_retopo")->as<int64_t>(scene::MeshNode::kSymmetry) == 1);
     setDots({P(10, 0), P(20, 0)});
     setDots({P(10, 0), P(20, 0), P(20, 10)});
@@ -286,8 +289,8 @@ TEST_CASE("commands: quad draw dots undo, and fill consumes dots in one step")
 
     setDots({P(10, 0), P(20, 0), P(20, 10), P(10, 10), P(40, 40)});
     {
-        UndoChunk chunk("Quad Draw Fill");
-        ops::execute("quadDrawAddFace", {{"mesh", "ref_retopo"}, {"reference", "ref"}, {"create", true},
+        UndoChunk chunk("Retopo Draw Fill");
+        ops::execute("retopoDrawAddFace", {{"mesh", "ref_retopo"}, {"reference", "ref"}, {"create", true},
                                           {"points", J({P(10, 0), P(20, 0), P(20, 10), P(10, 10)})}});
         setDots({P(40, 40)});
     }
@@ -305,7 +308,7 @@ TEST_CASE("commands: quad draw dots undo, and fill consumes dots in one step")
     UndoStack::get().clear();
 }
 
-TEST_CASE("quad draw resumes on its retopo mesh after save and load")
+TEST_CASE("retopo draw resumes on its retopo mesh after save and load")
 {
     scene::Graph& g = scene::Graph::current();
     g.clear();
@@ -313,14 +316,14 @@ TEST_CASE("quad draw resumes on its retopo mesh after save and load")
     makeMeshNode("body", sphere(16));
     makeMeshNode("other", sphere(8));
     auto P = [](double x, double y) { return json::array({x, y, 0.0}); };
-    ops::execute("quadDrawAddFace", {{"mesh", "body_retopo"}, {"reference", "body"}, {"create", true},
+    ops::execute("retopoDrawAddFace", {{"mesh", "body_retopo"}, {"reference", "body"}, {"create", true},
                                       {"points", {P(0, 0), P(10, 0), P(10, 10), P(0, 10)}}});
-    ops::execute("quadDrawSetDots", {{"mesh", "body_retopo"}, {"dots", {P(30, 0)}}});
+    ops::execute("retopoDrawSetDots", {{"mesh", "body_retopo"}, {"dots", {P(30, 0)}}});
     g.rename(g.find("body_retopo")->id(), "topo");
 
     for (const char* ext : {".lila", ".lilaa"})
     {
-        auto path = std::filesystem::temp_directory_path() / (std::string("lila_quaddraw_resume") + ext);
+        auto path = std::filesystem::temp_directory_path() / (std::string("lila_retopodraw_resume") + ext);
         io::save(path);
         g.clear();
         io::load(path);
@@ -329,11 +332,11 @@ TEST_CASE("quad draw resumes on its retopo mesh after save and load")
 
         scene::NodeId body = g.find("body")->id(), topo = g.find("topo")->id(), other = g.find("other")->id();
         CHECK(outMesh("topo").numFaces() == 1);
-        REQUIRE(retopo::quadDrawDots(*g.find("topo")).size() == 1);
-        CHECK(retopo::quadDrawDots(*g.find("topo"))[0] == glm::dvec3(30, 0, 0));
+        REQUIRE(retopo::retopoDrawDots(*g.find("topo")).size() == 1);
+        CHECK(retopo::retopoDrawDots(*g.find("topo"))[0] == glm::dvec3(30, 0, 0));
 
         auto resolve = [&](std::vector<scene::NodeId> sel) {
-            auto t = retopo::resolveQuadDraw(g, sel);
+            auto t = retopo::resolveRetopoDraw(g, sel);
             REQUIRE(t);
             return std::pair{t->reference, t->retopo};
         };
@@ -343,12 +346,33 @@ TEST_CASE("quad draw resumes on its retopo mesh after save and load")
         CHECK(resolve({topo, body}) == std::pair{body, std::string("topo")});
         CHECK(resolve({other}) == std::pair{other, std::string("other_retopo")});
         CHECK(resolve({other, topo}) == std::pair{body, std::string("topo")});
-        CHECK_FALSE(retopo::resolveQuadDraw(g, {}));
+        CHECK_FALSE(retopo::resolveRetopoDraw(g, {}));
+    }
+
+    SUBCASE("files with the quadDraw attr names still load")
+    {
+        auto path = std::filesystem::temp_directory_path() / "lila_retopodraw_oldnames.lilaa";
+        io::save(path);
+        std::string text;
+        {
+            std::ifstream in(path, std::ios::binary);
+            text.assign(std::istreambuf_iterator<char>(in), {});
+        }
+        for (auto [from, to] : {std::pair{"retopoDrawReference", "quadDrawReference"}, std::pair{"retopoDrawDots", "quadDrawDots"}})
+            for (size_t at = text.find(from); at != std::string::npos; at = text.find(from, at))
+                text.replace(at, std::strlen(from), to);
+        REQUIRE(text.find("quadDrawReference") != std::string::npos);
+        std::ofstream(path, std::ios::binary) << text;
+        g.clear();
+        io::load(path);
+        std::filesystem::remove(path);
+        REQUIRE(retopo::retopoDrawDots(*g.find("topo")).size() == 1);
+        CHECK(retopo::retopoDrawReference(g, g.find("topo")->id()) == g.find("body")->id());
     }
 
     // A "<name>_retopo" drawn before the pair was connected resumes on its source mesh.
     makeMeshNode("other_retopo", geo::Mesh());
-    CHECK(retopo::resolveQuadDraw(g, {g.find("other_retopo")->id()})->reference == g.find("other")->id());
+    CHECK(retopo::resolveRetopoDraw(g, {g.find("other_retopo")->id()})->reference == g.find("other")->id());
     g.clear();
     UndoStack::get().clear();
 }

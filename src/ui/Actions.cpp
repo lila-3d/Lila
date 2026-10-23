@@ -438,7 +438,7 @@ void registerBuiltins()
     cmd("mesh.mirror", "Mirror", "Mesh", "polyMirror", json::object(), "Adds a mirrored, welded copy of the mesh, once. The Mirror modifier stays live.");
     cmd("mesh.separate", "Separate", "Mesh", "polySeparate", json::object(), "Splits a mesh into one object per disconnected piece.");
     cmd("mesh.combine", "Combine", "Mesh", "polyCombine", json::object(), "Merges the selected meshes into one object.");
-    cmd("mesh.deleteHistory", "Delete History", "Mesh", "deleteHistory", json::object(),
+    cmd("mesh.bakeModifierStack", "Bake Modifier Stack", "Mesh", "bakeModifierStack", json::object(),
         "Bakes the generator and modifier stack into the selected meshes, leaving plain geometry.");
     cmd("mesh.transferAttributes", "Transfer Attributes", "Mesh", "transferAttributes", json::object(),
         "Copies UVs, normals or other attributes from the first selected mesh onto the others.");
@@ -487,6 +487,14 @@ void registerBuiltins()
                   },
                   .doc = "Marquee selection only picks components the camera can see.",
                   .python = "lila.prefs.set(\"general\", \"/select/cameraBased\", True)"});
+    actions::add({.id = "select.toggleBackfaceCulling", .label = "Backface Culling Selection", .category = "Select", .run = [] {
+                      bool on = PrefStore::get().value<bool>("general", "/select/backfaceCulling", false);
+                      PrefStore::get().set("general", "/select/backfaceCulling", !on);
+                  },
+                  .doc = "Clicks and marquees skip components on faces turned away from the camera.",
+                  .python = "lila.prefs.set(\"general\", \"/select/backfaceCulling\", True)"});
+    cmd("select.containedFaces", "To Contained Faces", "Select", "selectContainedFaces", json::object(),
+        "Selects the faces enclosed by the selected edges, flood filled up to them and the mesh borders.");
 
     for (auto [id, label, command, doc] : {
              std::tuple{"create.cube", "Cube", "polyCube", "Creates a box."},

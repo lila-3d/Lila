@@ -44,6 +44,8 @@ struct LILA_SCENE_API NodeType
     std::vector<AttrDef> attrs;
 
     int attrIndex(std::string_view name) const;
+    /** attrIndex, falling back to the attrs' fileAlias: for reading scene files. */
+    int fileAttrIndex(std::string_view name) const;
     bool isA(std::string_view typeName) const;
 };
 

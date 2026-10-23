@@ -91,7 +91,7 @@ LILA_SCENE_API MeshPtr exportMesh(Graph& g, NodeId mesh);
 
 LILA_SCENE_API void registerTypes();
 LILA_SCENE_API void registerCommands();
-/** duplicateModifier, applyAllModifiers, collapseStack, modifierStack (ModifierCommands.cpp). */
+/** duplicateModifier, applyAllModifiers, bakeModifierStack, modifierStack (ModifierCommands.cpp). */
 LILA_SCENE_API void registerStackCommands();
 } // namespace modifiers
 } // namespace lila::scene

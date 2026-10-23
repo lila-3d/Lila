@@ -5,6 +5,7 @@
 #include "io/SceneFile.h"
 #include "scene/Camera.h"
 #include "scene/Graph.h"
+#include "ui/Camera.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -239,6 +240,48 @@ TEST_CASE("camera nodes and the ui section survive both scene formats")
         CHECK(near(back->as<glm::dvec3>(Transform::kTranslate), {1, 2, 3}));
         CHECK(loaded == json{{"lookThrough", {"", name, "", ""}}});
     }
+}
+
+TEST_CASE("viewport camera poses survive both scene formats")
+{
+    static ui::Camera saved;
+    static ui::Camera loaded;
+    static bool provide = false;
+    io::registerUiSection(
+        "testViewCameras", [] { return provide ? saved.poseJson() : json(); }, [](const json& v) { loaded.setPose(v); });
+    saved.target = {10, -20, 30.5};
+    saved.distance = 1234.5;
+    saved.yaw = -135.0;
+    saved.pitch = 12.25;
+    saved.orthoWidth = 77.0;
+    saved.focalLength = 50.0;
+
+    auto dir = std::filesystem::temp_directory_path() / "lila_tests";
+    std::filesystem::create_directories(dir);
+    for (const char* ext : {".lila", ".lilaa"})
+    {
+        CAPTURE(ext);
+        run("newScene");
+        provide = true;
+        auto path = (dir / (std::string("viewCameras") + ext)).string();
+        run("saveScene", {{"args", {path}}});
+        provide = false;
+        loaded = ui::Camera{};
+        run("openScene", {{"args", {path}}});
+        CHECK(near(loaded.target, saved.target));
+        CHECK(loaded.distance == doctest::Approx(saved.distance));
+        CHECK(loaded.yaw == doctest::Approx(saved.yaw));
+        CHECK(loaded.pitch == doctest::Approx(saved.pitch));
+        CHECK(loaded.orthoWidth == doctest::Approx(saved.orthoWidth));
+        CHECK(loaded.focalLength == doctest::Approx(saved.focalLength));
+    }
+    io::unregisterUiSection("testViewCameras");
+
+    ui::Camera kept;
+    kept.setPose(json{{"distance", "far"}, {"target", {1, 2}}, {"pitch", 400.0}});
+    CHECK(kept.distance == doctest::Approx(ui::Camera{}.distance));
+    CHECK(near(kept.target, glm::dvec3(0.0)));
+    CHECK(kept.pitch == doctest::Approx(89.9));
 }
 
 TEST_CASE("ui sections nobody registered are written back")

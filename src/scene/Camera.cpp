@@ -222,7 +222,7 @@ void registerCameraCommands()
         return;
     ops::registerCommand({
         .name = "viewPlace",
-        .doc = "Place a camera node, as Maya's viewPlace: eye is its world position, lookAt the point it aims at, up the "
+        .doc = "Place a camera node: eye is its world position, lookAt the point it aims at, up the "
                "world direction its top leans to. Flags left out keep the camera's current value; with eye alone it moves "
                "without turning. Fails on a locked camera.",
         .positionalDoc = "camera",

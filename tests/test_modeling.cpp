@@ -123,7 +123,7 @@ TEST_CASE("bounding mesh: fitted collision named and parented for Unreal")
 
     CHECK(run("boundingMesh", {{"args", {cube}}, {"shape", "hull"}})[0] == "UCX_Crate");
     CHECK(run("boundingMesh", {{"args", {cube}}, {"shape", "sphere"}})[0] == "USP_Crate");
-    std::string capsule = run("boundingMesh", {{"args", {cube}}, {"shape", "capsule"}, {"history", true}})[0];
+    std::string capsule = run("boundingMesh", {{"args", {cube}}, {"shape", "capsule"}, {"generator", true}})[0];
     CHECK(capsule == "UCP_Crate");
     CHECK(run("ls", {{"type", "polyCapsule"}}).size() == 1);
     CHECK(size(capsule)[2] >= 200.0);

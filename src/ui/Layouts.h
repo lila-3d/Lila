@@ -26,7 +26,8 @@ namespace lila::ui::layouts
  *
  * A saved layout is {"version", "state" (base64 QMainWindow::saveState), "docks": {objectName: {title, open, floating,
  * collapsed, geometry?}}, "collapsed": [...], "viewport": {quad, camera}, "shelf": {visible, current}}. A built-in has
- * "preset": {open: [...], raise: [...], size: {dock: {width|height: fraction of window}}} in place of "state".
+ * "preset": {open: [...], raise: [...], size: {dock: {width|height: fraction of window}}, bottom: [...]} in place of
+ * "state"; each "bottom" dock leaves its tab group for a row of its own along the bottom of its dock area.
  */
 enum class Origin
 {

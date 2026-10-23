@@ -109,6 +109,6 @@ LILA_UI_API QString modifierIconName(const std::string& kindOrType);
 /** Shows and raises the Modifier Stack dock. */
 LILA_UI_API void showModifierStack();
 
-/** Registers "window.modifierStack", "modifier.applyAll" and "modifier.collapseStack". */
+/** Registers "window.modifierStack" and "modifier.applyAll". */
 LILA_UI_API void registerModifierStackActions();
 } // namespace lila::ui

@@ -36,6 +36,14 @@ LILA_UI_API double balance();
 LILA_UI_API void setBalance(double b);
 LILA_UI_API bool checker3d();
 LILA_UI_API void setChecker3d(bool on);
+/** Checks across one 0-1 tile, for the 3D checker and the editor's checker backdrop. */
+LILA_UI_API int checkerTiling();
+LILA_UI_API void setCheckerTiling(int checks);
+/** Island select: clicks and marquees in the UV editor select whole islands (as faces). */
+LILA_UI_API bool islandSelect();
+LILA_UI_API void setIslandSelect(bool on);
+/** The 3D checker only draws while a UV editor is on screen; each editor reports its visibility here. */
+LILA_UI_API void setEditorShown(const void* editor, bool shown);
 LILA_UI_API bool seams3d();
 LILA_UI_API void setSeams3d(bool on);
 /** Stretch heatmap in two colours instead of grayscale (still ordered light = stretched). */
@@ -46,7 +54,7 @@ LILA_UI_API void setTwoColourHeatmap(bool on);
 LILA_UI_API int addListener(std::function<void()> fn);
 LILA_UI_API void removeListener(int id);
 
-/** Meshes the uv tools show: the selected ones plus any with a component selection. */
+/** Meshes the uv tools show (see uv::shownMeshes). */
 LILA_UI_API std::vector<scene::NodeId> shownMeshes();
 /** Faces selected on the node (any component mode, converted), empty when none. */
 LILA_UI_API std::vector<geo::Index> selectedFaces(scene::NodeId node);

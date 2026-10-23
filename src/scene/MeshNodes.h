@@ -21,8 +21,8 @@ public:
         kOutMesh,
         kSymmetry,
         kSmoothPreview,
-        kQuadDrawReference,
-        kQuadDrawDots,
+        kRetopoDrawReference,
+        kRetopoDrawDots,
         kCount
     };
 

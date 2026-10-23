@@ -118,12 +118,12 @@ TEST_CASE("applyAllModifiers bakes the stack over an editable source")
     CHECK(run("modifierStack", {{"args", {cube}}})["source"]["type"] == "polyCube");
 }
 
-TEST_CASE("collapseStack removes all history")
+TEST_CASE("bakeModifierStack leaves plain geometry")
 {
     run("newScene");
     std::string cube = run("polyCube")[0];
     std::string sub = run("addModifier", {{"args", {cube}}, {"kind", "subdivision"}});
-    run("collapseStack", {{"args", {cube}}});
+    run("bakeModifierStack", {{"args", {cube}}});
     CHECK(faces(cube) == 24);
     json s = run("modifierStack", {{"args", {cube}}});
     CHECK(s["source"].is_null());
@@ -173,13 +173,14 @@ TEST_CASE("meshOf and stackSource walk the chain")
     CHECK(scene::modifiers::meshOf(g, src) == mesh);
 }
 
-TEST_CASE("deleteHistory bakes generator and every modifier")
+TEST_CASE("bakeModifierStack bakes generator and every modifier")
 {
     run("newScene");
     std::string cube = run("polyCube")[0];
     run("addModifier", {{"args", {cube}}, {"kind", "subdivision"}});
     run("addModifier", {{"args", {cube}}, {"kind", "array"}, {"params", {{"count", 2}}}});
-    run("deleteHistory", {{"args", {cube}}});
+    std::string locator = run("spaceLocator");
+    run("bakeModifierStack", {{"args", {cube, locator}}});
     CHECK(faces(cube) == 48);
     CHECK(run("modifiers", {{"args", {cube}}}).empty());
     CHECK(run("ls", {{"type", "polyCube"}}).empty());

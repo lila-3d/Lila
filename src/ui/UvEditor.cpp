@@ -15,6 +15,7 @@
 #include "ui/UvPackPanel.h"
 #include "uv/LiveSession.h"
 #include "uv/Uv.h"
+#include "uv/UvCommands.h"
 
 #include <QButtonGroup>
 #include <QCheckBox>
@@ -39,6 +40,7 @@
 #include <cmath>
 #include <map>
 #include <set>
+#include <tuple>
 #include <unordered_set>
 
 namespace lila::ui
@@ -60,22 +62,9 @@ std::function<void()>& opener()
     return fn;
 }
 
-/** Meshes the editor shows: the selected ones, plus any with a component selection. */
 std::vector<scene::NodeId> shownMeshes()
 {
-    scene::Graph& g = scene::Graph::current();
-    std::vector<scene::NodeId> out;
-    auto add = [&](scene::NodeId id) {
-        if (scene::Node* n = g.node(id); n && n->type().isA("mesh") && std::find(out.begin(), out.end(), id) == out.end())
-            out.push_back(id);
-    };
-    for (scene::NodeId id : g.selection())
-        add(id);
-    for (ComponentMode k : {ComponentMode::Vertex, ComponentMode::Edge, ComponentMode::Face})
-        for (auto& [id, ids] : scene::components::selected(k))
-            if (!ids.empty())
-                add(id);
-    return out;
+    return uv::shownMeshes();
 }
 
 json safeRun(const char* name, const json& call, CallSource src)
@@ -89,6 +78,17 @@ json safeRun(const char* name, const json& call, CallSource src)
         log::error("{}", e.what());
     }
     return nullptr;
+}
+
+/** "vertex", "edge" or "face" switch the component mode; "island" is face mode with island select. */
+void setPickMode(const std::string& m)
+{
+    const bool island = m == "island";
+    if (!island)
+        uvLive::setIslandSelect(false);
+    safeRun("selectMode", {{"args", {island ? std::string("face") : m}}}, CallSource::UI);
+    if (island)
+        uvLive::setIslandSelect(true);
 }
 } // namespace
 
@@ -119,6 +119,9 @@ public:
         setFocusPolicy(Qt::StrongFocus);
         setMinimumSize(240, 200);
         setAttribute(Qt::WA_OpaquePaintEvent);
+        // Under the cursor the view's keys (F9-F12 modes) win over the focused panel's and the global ones.
+        setProperty("hotkeyContext", "uvEditor");
+        setProperty("hotkeyHover", true);
     }
 
     void setTool(Tool t)
@@ -448,6 +451,7 @@ private:
         std::vector<int> island;       // per face, for the stretch and island displays (empty until needed)
         std::vector<double> area3;     // per face
         std::vector<double> islandRatio;
+        std::vector<int> pickIsland; // per face, its island as island select sees it (empty until needed)
         uint64_t liveGen = 0, liveEpoch = 0;
     };
 
@@ -685,7 +689,7 @@ private:
                 p.fillRect(tile, tu == 0 && tv == 0 ? gray(50) : gray(45));
                 if (mDisplay == Display::Checker)
                 {
-                    const int n = 8;
+                    const int n = uvLive::checkerTiling();
                     for (int y = 0; y < n; ++y)
                         for (int x = 0; x < n; ++x)
                             if ((x + y) % 2)
@@ -1089,7 +1093,7 @@ private:
     ComponentMode pickMode() const
     {
         ComponentMode m = scene::components::mode();
-        return m == ComponentMode::Object ? ComponentMode::Face : m;
+        return m == ComponentMode::Object || uvLive::islandSelect() ? ComponentMode::Face : m;
     }
 
     Hit faceAt(QPointF s) const
@@ -1193,20 +1197,51 @@ private:
                     p.drawLine(toScreen(drawnUv(mi, sg.a)), toScreen(drawnUv(mi, sg.b)));
         }
         else
+        {
+            auto hovered = std::find(mu.faces.begin(), mu.faces.end(), mPreselect.id);
+            if (hovered == mu.faces.end())
+                return;
+            const size_t hf = size_t(hovered - mu.faces.begin());
+            const bool island = uvLive::islandSelect();
+            const std::vector<int>* islands = island ? &pickIslands(mi) : nullptr;
+            p.setPen(QPen(hot, island ? 1.0 : 2.0));
+            p.setBrush(gray(255, 40));
             for (size_t fi = 0; fi < mu.faces.size(); ++fi)
-                if (mu.faces[fi] == mPreselect.id)
+                if (island ? (*islands)[fi] == (*islands)[hf] : fi == hf)
                 {
                     QPolygonF poly;
                     for (uint32_t k = mu.faceStart[fi]; k < mu.faceStart[fi + 1]; ++k)
                         poly << toScreen(drawnUv(mi, k));
-                    p.setPen(QPen(hot, 2.0));
-                    p.setBrush(gray(255, 40));
                     p.drawPolygon(poly);
                 }
+        }
+    }
+
+    /** Per shown face, the index of its island under islandOptions; built once per mesh. */
+    const std::vector<int>& pickIslands(size_t mi)
+    {
+        MeshUv& mu = mMeshes[mi];
+        if (mu.pickIsland.size() != mu.faces.size())
+        {
+            std::vector<int> faceIsland(mu.mesh->faceCapacity(), -1);
+            std::vector<std::vector<Index>> islands = uv::islandFaces(*mu.mesh, {}, islandOptions(mu));
+            for (size_t i = 0; i < islands.size(); ++i)
+                for (Index f : islands[i])
+                    faceIsland[f] = int(i);
+            mu.pickIsland.resize(mu.faces.size());
+            for (size_t fi = 0; fi < mu.faces.size(); ++fi)
+                mu.pickIsland[fi] = faceIsland[mu.faces[fi]];
+        }
+        return mu.pickIsland;
     }
 
     void pickAt(QPointF s, Qt::KeyboardModifiers mods)
     {
+        if (uvLive::islandSelect())
+        {
+            selectIslandAt(s, mods);
+            return;
+        }
         ComponentMode mode = pickMode();
         Hit hit = hitAt(s, mode);
         std::map<scene::NodeId, std::vector<Index>> hits;
@@ -1237,6 +1272,17 @@ private:
                     if (r.contains(toScreen(mu.uv[sg.a])) && r.contains(toScreen(mu.uv[sg.b])))
                         out.push_back(sg.edge);
             }
+            else if (uvLive::islandSelect())
+            {
+                for (size_t fi = 0; fi < mu.faces.size(); ++fi)
+                    for (uint32_t k = mu.faceStart[fi]; k < mu.faceStart[fi + 1]; ++k)
+                        if (r.contains(toScreen(mu.uv[k])))
+                        {
+                            out.push_back(mu.faces[fi]);
+                            break;
+                        }
+                out = uv::islandsOfFaces(m, out, islandOptions(mu));
+            }
             else
                 for (size_t fi = 0; fi < mu.faces.size(); ++fi)
                 {
@@ -1255,22 +1301,27 @@ private:
         apply(mode, hits, mods);
     }
 
-    void selectIslandAt(QPointF s, Qt::KeyboardModifiers mods)
+    static uv::ChartOptions islandOptions(const MeshUv& mu)
     {
-        Hit hit = faceAt(s);
-        if (hit.id == geo::kInvalid)
-            return;
-        const MeshUv& mu = mMeshes[hit.mesh];
         uv::ChartOptions co;
         co.source = uv::IslandSource::Uvs;
         co.uvSet = mu.set;
-        for (auto& island : uv::islandFaces(*mu.mesh, {}, co))
-            if (std::binary_search(island.begin(), island.end(), hit.id))
-            {
-                std::map<scene::NodeId, std::vector<Index>> hits{{mu.node, island}};
-                apply(ComponentMode::Face, hits, mods);
-                return;
-            }
+        return co;
+    }
+
+    void selectIslandAt(QPointF s, Qt::KeyboardModifiers mods)
+    {
+        Hit hit = faceAt(s);
+        std::map<scene::NodeId, std::vector<Index>> hits;
+        if (hit.id != geo::kInvalid)
+        {
+            const MeshUv& mu = mMeshes[hit.mesh];
+            const Index seed[] = {hit.id};
+            hits[mu.node] = uv::islandsOfFaces(*mu.mesh, seed, islandOptions(mu));
+        }
+        // A click on empty space in island mode clears, like the other modes; a double-click elsewhere does nothing.
+        if (!hits.empty() || uvLive::islandSelect())
+            apply(ComponentMode::Face, hits, mods);
     }
 
     /** Same modifiers as the viewport: shift toggles, ctrl removes, both add. */
@@ -1980,6 +2031,33 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     toolButtons.front()->setChecked(true);
     toolButtons.back()->setToolTip("Brush the uvs with the brush picked in the live row. B or F held + drag: size, M + drag: strength, "
                                    "Ctrl inverts, Shift relaxes. A click with the pin brushes toggles one pin");
+    auto* modes = new QButtonGroup(this);
+    modes->setExclusive(true);
+    const std::tuple<const char*, const char*, const char*> modeDefs[] = {{"Vertex", "vertex", "Select uv points (F9 in the view)"},
+                                                                          {"Edge", "edge", "Select uv edges (F10 in the view)"},
+                                                                          {"Face", "face", "Select uv faces (F11 in the view)"},
+                                                                          {"Island", "island", "Select whole uv islands (F12 in the view)"}};
+    std::vector<QToolButton*> modeButtons;
+    for (auto [label, mode, tip] : modeDefs)
+    {
+        QToolButton* b = button(label, tip, this);
+        b->setCheckable(true);
+        modes->addButton(b);
+        row1->addWidget(b);
+        modeButtons.push_back(b);
+        connect(b, &QToolButton::clicked, this, [m = std::string(mode)] { setPickMode(m); });
+    }
+    auto showMode = [modes, modeButtons] {
+        ComponentMode m = scene::components::mode();
+        if (uvLive::islandSelect() && m != ComponentMode::Face)
+            uvLive::setIslandSelect(false);
+        int i = uvLive::islandSelect() ? 3 : m == ComponentMode::Vertex ? 0 : m == ComponentMode::Edge ? 1 : m == ComponentMode::Face ? 2 : -1;
+        modes->setExclusive(false);
+        for (size_t k = 0; k < modeButtons.size(); ++k)
+            modeButtons[k]->setChecked(int(k) == i);
+        modes->setExclusive(true);
+    };
+    showMode();
     QToolButton* frameBtn = button("Frame", "Frame the selection (F), or everything (A)", this);
     row1->addWidget(frameBtn);
     row1->addWidget(new QLabel("Set", this));
@@ -2149,6 +2227,11 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     auto* checker = new QCheckBox("3D checker", this);
     checker->setChecked(uvLive::checker3d());
     checker->setToolTip("Checker texture on the meshes in the viewport");
+    auto* tiling = new QSpinBox(this);
+    tiling->setRange(1, 256);
+    tiling->setValue(uvLive::checkerTiling());
+    tiling->setKeyboardTracking(false);
+    tiling->setToolTip("Checks across one 0-1 tile, in the viewport and the editor's checker display");
     auto* seams = new QCheckBox("3D seams", this);
     seams->setChecked(uvLive::seams3d());
     seams->setToolTip("Draw the uv seams over the meshes in the viewport");
@@ -2156,6 +2239,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     twoColour->setChecked(uvLive::twoColourHeatmap());
     twoColour->setToolTip("Stretch display in two colours instead of grayscale");
     row5->addWidget(checker);
+    row5->addWidget(tiling);
     row5->addWidget(seams);
     row5->addWidget(twoColour);
     root->addLayout(row5);
@@ -2174,16 +2258,22 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     connect(pinBtn, &QToolButton::clicked, this, [this] { runCommand("uvPin"); });
     connect(unpinBtn, &QToolButton::clicked, this, [this] { runCommand("uvUnpin"); });
     connect(checker, &QCheckBox::toggled, this, [](bool on) { uvLive::setChecker3d(on); });
+    connect(tiling, &QSpinBox::valueChanged, this, [this](int v) {
+        uvLive::setCheckerTiling(v);
+        mView->update();
+    });
     connect(seams, &QCheckBox::toggled, this, [](bool on) { uvLive::setSeams3d(on); });
     connect(twoColour, &QCheckBox::toggled, this, [this](bool on) {
         uvLive::setTwoColourHeatmap(on);
         mView->update();
     });
-    mLiveListener = uvLive::addListener([this, live, brushCombo, checker, seams] {
-        QSignalBlocker b1(live), b2(brushCombo), b3(checker), b4(seams);
+    mLiveListener = uvLive::addListener([this, live, brushCombo, checker, tiling, seams, showMode] {
+        QSignalBlocker b1(live), b2(brushCombo), b3(checker), b4(seams), b5(tiling);
         live->setChecked(uvLive::liveMode());
         brushCombo->setCurrentIndex(int(uvLive::brush().brush));
         checker->setChecked(uvLive::checker3d());
+        tiling->setValue(uvLive::checkerTiling());
+        showMode();
         seams->setChecked(uvLive::seams3d());
         mView->update();
     });
@@ -2243,15 +2333,31 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
         mView->invalidate();
         refreshSets();
     });
-    mComponentListener = scene::components::addListener([this] { mView->update(); });
+    mComponentListener = scene::components::addListener([this, showMode] {
+        showMode();
+        mView->update();
+    });
     refreshSets();
 }
 
 UvEditor::~UvEditor()
 {
+    uvLive::setEditorShown(this, false);
     scene::Graph::current().removeListener(mGraphListener);
     scene::components::removeListener(mComponentListener);
     uvLive::removeListener(mLiveListener);
+}
+
+void UvEditor::showEvent(QShowEvent* e)
+{
+    QWidget::showEvent(e);
+    uvLive::setEditorShown(this, true);
+}
+
+void UvEditor::hideEvent(QHideEvent* e)
+{
+    QWidget::hideEvent(e);
+    uvLive::setEditorShown(this, false);
 }
 
 json UvEditor::runCommand(const char* command, const json& call)
@@ -2358,6 +2464,15 @@ void registerUvActions()
     cmd("uv.unwrap", "Unwrap", "uvUnwrap", json::object(), "Unwrap along the seams with low stretch.");
     // uv.cut, uv.sew and uv.weld come from uvLive::install, which re-solves the touched islands in live mode.
     uvLive::install();
+    for (auto [mode, label, doc] : {std::tuple{"vertex", "UV Vertex Select", "Select uv points in the UV editor (vertex mode)."},
+                                    {"edge", "UV Edge Select", "Select uv edges in the UV editor (edge mode)."},
+                                    {"face", "UV Face Select", "Select uv faces in the UV editor (face mode)."},
+                                    {"island", "UV Island Select", "Face mode where clicks and marquees in the UV editor select whole uv islands."}})
+    {
+        std::string id = std::string("uv.") + mode + "Mode";
+        actions::add({.id = id, .label = label, .category = "UV", .run = [m = std::string(mode)] { setPickMode(m); }, .doc = doc,
+                      .python = "lila.ui.run_action(\"" + id + "\")"});
+    }
     cmd("uv.straighten", "Straighten UVs", "uvStraighten", json::object(), "Rectify islands into grids.");
     cmd("uv.orient", "Orient UVs", "uvOrient", json::object(), "Turn islands upright.");
     cmd("uv.lightmap", "Lightmap UVs", "uvLightmap", json::object(), "Generate Unreal lightmap uvs in uv1.");

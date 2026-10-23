@@ -546,7 +546,7 @@ void registerTypes()
     NodeType t;
     t.name = kTypeName;
     t.icon = "list-details";
-    t.doc = "A Maya object set: a named list of objects and mesh components. Quick select sets select theirs from Edit > "
+    t.doc = "An object set: a named list of objects and mesh components. Quick select sets select theirs from Edit > "
             "Quick Select Sets; the game exporter and the Unreal link export a set as one unit.";
     t.ownAttrs = {
         {.name = "quickSelect", .shortName = "qs", .type = PlugType::Bool, .defaultValue = false,

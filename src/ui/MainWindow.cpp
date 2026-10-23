@@ -305,6 +305,10 @@ void MainWindow::registerPanels()
     panels::add({.id = kUndoHistoryDock, .title = "Undo History", .create = make([](QWidget* p) { return new UndoHistoryPanel(p); }),
                  .area = Qt::LeftDockWidgetArea, .icon = "history",
                  .place = [this, dock](QDockWidget* d) { splitDockWidget(dock("outliner"), d, Qt::Vertical); }});
+    // Split after the undo history, so the sets sit between it and the outliner.
+    panels::add({.id = kQuickSelectSetsDock, .title = "Quick Select Sets", .create = make([](QWidget* p) { return new QuickSelectSetsPanel(p); }),
+                 .area = Qt::LeftDockWidgetArea, .icon = "list-details",
+                 .place = [this, dock](QDockWidget* d) { splitDockWidget(dock("outliner"), d, Qt::Vertical); }});
     panels::add({.id = "scriptOutput", .title = "Script Output", .create = make([](QWidget* p) { return new ScriptPanel(p); }),
                  .area = Qt::BottomDockWidgetArea});
     panels::add({.id = kScriptEditorDock, .title = "Script Editor", .create = make([](QWidget* p) {
@@ -343,6 +347,8 @@ void MainWindow::registerPanels()
                  .area = Qt::RightDockWidgetArea});
     panels::add({.id = kChannelBoxDock, .title = "Channel Box", .create = make([](QWidget* p) { return new ChannelBox(p); }),
                  .area = Qt::RightDockWidgetArea, .place = [this, dock](QDockWidget* channels) {
+                     // Back to its own width when its tab is picked after a wider one, such as the modeling toolkit.
+                     channels->setProperty(kDefaultTabExtent, kDefaultSidePanelWidth);
                      splitDockWidget(dock(kUvEditorDock), channels, Qt::Horizontal);
                      // Split before the tabs join, so the layer editor sits under the whole channel box tab group as in Maya.
                      splitDockWidget(channels, dock(kDisplayLayersDock), Qt::Vertical);
@@ -351,7 +357,10 @@ void MainWindow::registerPanels()
                  .area = Qt::RightDockWidgetArea, .place = [this, dock](QDockWidget* d) { tabifyDockWidget(dock(kChannelBoxDock), d); }});
     auto tabWithAttributes = [this, dock](QDockWidget* d) { tabifyDockWidget(dock("attributeEditor"), d); };
     panels::add({.id = kModelingToolkitDock, .title = "Modeling Toolkit", .create = make([](QWidget* p) { return new ModelingToolkit(p); }),
-                 .area = Qt::RightDockWidgetArea, .open = false, .place = tabWithAttributes});
+                 .area = Qt::RightDockWidgetArea, .open = false, .place = [tabWithAttributes](QDockWidget* toolkit) {
+                     tabWithAttributes(toolkit);
+                     toolkit->setProperty(kDefaultTabExtent, kDefaultSidePanelWidth * 5 / 2);
+                 }});
     panels::add({.id = kModifierStackDock, .title = "Modifier Stack", .create = make([](QWidget* p) { return new ModifierStackWidget(p); }),
                  .area = Qt::RightDockWidgetArea, .place = tabWithAttributes});
     panels::add({.id = kMaterialEditorDock, .title = "Material Editor", .create = make([](QWidget* p) { return new MaterialEditor(p); }),
@@ -1078,16 +1087,28 @@ void MainWindow::buildMenus()
     addSubmenu("Create", "Sets");
     menus::addActions("Create/Sets", {"sets.create", "sets.createQuickSelect"});
 
-    menu("Select", "Select");
+    // Toggles show their state, read from the active view when they are per view.
+    auto syncChecks = [this](QMenu* m) {
+        connect(m, &QMenu::aboutToShow, m, [this, m] {
+            for (QAction* qa : m->actions())
+                if (std::optional<bool> on = viewportActionState(qa->data().toString().toStdString(), mViewports->active()))
+                {
+                    qa->setCheckable(true);
+                    qa->setChecked(*on);
+                }
+        });
+    };
+    menu("Select", "Select", Area::MenuBar, syncChecks);
     menus::addActions("Select", {"select.objectMode", "select.vertexMode", "select.edgeMode", "select.faceMode", "", "select.allComponents",
                           "select.grow", "select.loop", "select.ring", "", "select.hierarchy", "select.pickWalkUp", "select.pickWalkDown",
-                          "select.pickWalkLeft", "select.pickWalkRight", "", "select.toVertices", "select.toEdges", "select.toFaces"});
+                          "select.pickWalkLeft", "select.pickWalkRight", "", "select.toVertices", "select.toEdges", "select.toFaces",
+                          "select.containedFaces", "", "select.paintTool", "select.toggleCameraBased", "select.toggleBackfaceCulling"});
 
     menu("Mesh", "Mesh");
     menus::addActions("Mesh", {"mesh.extrude", "mesh.inset", "mesh.bevel", "mesh.insertLoop", "mesh.knife", "mesh.bridge", "mesh.fillHole", "",
                         "mesh.merge", "mesh.mergeCenter", "mesh.collapse", "mesh.dissolve", "mesh.poke", "mesh.spin", "", "mesh.flip",
                         "mesh.conform", "mesh.triangulate", "mesh.quadrangulate", "mesh.subdivide", "", "mesh.mirror", "mesh.symmetryX",
-                        "mesh.symmetryOff", "mesh.combine", "mesh.separate", "mesh.boundingMesh", "mesh.deleteHistory"});
+                        "mesh.symmetryOff", "mesh.combine", "mesh.separate", "mesh.boundingMesh", "mesh.bakeModifierStack"});
     addSubmenu("Mesh", "Symmetry");
     menus::addActions("Mesh/Symmetry", {"mesh.toggleSymmetry", "mesh.symmetryX", "mesh.symmetryY", "mesh.symmetryZ", "mesh.symmetryOff", "",
                                  "mesh.symmetryCheck", "mesh.symmetrizePositive", "mesh.symmetrizeNegative", "mesh.symmetryRebuild",
@@ -1097,7 +1118,7 @@ void MainWindow::buildMenus()
     menus::addActions("Mesh/Vertex Colors", {"vcolor.paint", "vcolor.createSet", "", "vcolor.fill", "vcolor.gradient", "vcolor.invert",
                                       "vcolor.levels", "vcolor.blur", "", "vcolor.bakeAO", "vcolor.bakeCavity", "vcolor.bakeCurvature",
                                       "vcolor.bakeHeight"});
-    menus::addActions("Mesh", {"", "retopo.quadDraw", "mesh.quadRemesh", "mesh.voxelRemesh", "mesh.repair", "mesh.selectIssues", "mesh.relax"});
+    menus::addActions("Mesh", {"", "retopo.draw", "mesh.quadRemesh", "mesh.voxelRemesh", "mesh.repair", "mesh.selectIssues", "mesh.relax"});
     addSubmenu("Mesh", "Sculpt");
     menus::addActions("Mesh/Sculpt", {"sculpt.tool", "sculpt.enter", "sculpt.exit", "sculpt.cancel", "window.sculpt", "mesh.relaxKeepForm",
                                "mesh.reproject", "mesh.transferShape"});
@@ -1137,17 +1158,6 @@ void MainWindow::buildMenus()
     menus::addActions("Deform/Nonlinear", {"deform.bend", "deform.twist", "deform.taper", "deform.squash", "deform.sine", "deform.wave"});
     menus::addActions("Deform", {"deform.softMod", "deform.deltaMush", "deform.wrap", "deform.cage", "", "deform.rebind"});
 
-    // Toggles show their state, read from the active view when they are per view.
-    auto syncChecks = [this](QMenu* m) {
-        connect(m, &QMenu::aboutToShow, m, [this, m] {
-            for (QAction* qa : m->actions())
-                if (std::optional<bool> on = viewportActionState(qa->data().toString().toStdString(), mViewports->active()))
-                {
-                    qa->setCheckable(true);
-                    qa->setChecked(*on);
-                }
-        });
-    };
     menu("Display", "Display", Area::MenuBar, syncChecks);
     menus::addActions("Display", {"viewport.wireframe", "viewport.shaded", "viewport.textured", "viewport.wireOnShaded", "viewport.defaultMaterial",
                            "viewport.toggleXray", "viewport.toggleBackfaceCulling", ""});
@@ -1403,7 +1413,10 @@ void MainWindow::applyDefaultDockSizes()
         resizeDocks({channels}, {kDefaultSidePanelWidth}, Qt::Horizontal);
     auto* outliner = findChild<QDockWidget*>("outliner");
     auto* undoHistory = findChild<QDockWidget*>(kUndoHistoryDock);
-    if (outliner && undoHistory && outliner->isVisible() && undoHistory->isVisible())
+    auto* quickSets = findChild<QDockWidget*>(kQuickSelectSetsDock);
+    if (outliner && undoHistory && quickSets && outliner->isVisible() && undoHistory->isVisible() && quickSets->isVisible())
+        resizeDocks({outliner, quickSets, undoHistory}, {height() / 2, height() / 5, height() * 3 / 10}, Qt::Vertical);
+    else if (outliner && undoHistory && outliner->isVisible() && undoHistory->isVisible())
         resizeDocks({outliner, undoHistory}, {height() * 2 / 3, height() / 3}, Qt::Vertical);
     auto* channels = findChild<QDockWidget*>("channelBox");
     auto* layers = findChild<QDockWidget*>(kDisplayLayersDock);

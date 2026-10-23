@@ -175,6 +175,7 @@ TEST_CASE("built-in layouts open the undo history with the outliner")
         CHECK(std::find(open.begin(), open.end(), json("outliner")) != open.end());
         CHECK(std::find(open.begin(), open.end(), json("undoHistory")) != open.end());
         CHECK(std::find(open.begin(), open.end(), json("displayLayers")) != open.end());
+        CHECK(std::find(open.begin(), open.end(), json("quickSelectSets")) != open.end());
     }
 }
 
@@ -187,4 +188,7 @@ TEST_CASE("the Modeling layout shows the modeling toolkit tab")
     json raise = l->value(json::json_pointer("/preset/raise"), json::array());
     REQUIRE_FALSE(raise.empty());
     CHECK(raise.back() == "modelingToolkit");
+    CHECK(std::find(open.begin(), open.end(), json("modifierStack")) != open.end());
+    json bottom = l->value(json::json_pointer("/preset/bottom"), json::array());
+    CHECK(std::find(bottom.begin(), bottom.end(), json("modifierStack")) != bottom.end());
 }

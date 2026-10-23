@@ -251,4 +251,22 @@ struct ProjectOptions
  * point where the ray misses). The target mesh must be the one bvh was built from. Returns how many points moved.
  */
 LILA_SCENE_API Index projectMesh(geo::Mesh& mesh, const geo::Mesh& target, const geo::MeshBvh& bvh, const ProjectOptions& opts = {});
+
+// Borders
+
+/** A stretch of open border, in order. Open runs have one more point than edges; closed loops the same count. */
+struct BorderRun
+{
+    std::vector<Index> edges;
+    /** edges[i] runs from points[i] to points[i + 1] (wrapping for a closed loop). */
+    std::vector<Index> points;
+    bool closed = false;
+};
+
+/**
+ * The border run through a border edge, grown both ways while the turn between successive edges stays at or under
+ * maxTurnDegrees (180 takes the whole loop). It stops where the border ends or branches. A loop cut by a single sharp
+ * corner comes back open, with that corner's point first and last.
+ */
+LILA_SCENE_API BorderRun walkBorder(const geo::Mesh& mesh, Index edge, double maxTurnDegrees = 180.0);
 } // namespace lila::retopo

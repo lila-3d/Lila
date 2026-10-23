@@ -150,3 +150,16 @@ TEST_CASE("rig elements: deform flags default on")
     CHECK_FALSE(rigel::isDeform(node("elbow")));
     CHECK(rigel::isDeform(node("wrist")));
 }
+
+TEST_CASE("rig elements: a looker's axes are choices that read old string values")
+{
+    arm();
+    const std::string looker = run("looker", {{"args", {"wrist"}}, {"aimAxis", "-z"}, {"upAxis", "+y"}}).get<std::string>();
+    const AttrDef& def = node(looker).type().attrs[size_t(node(looker).type().attrIndex("aimAxis"))];
+    CHECK(def.type == PlugType::Enum);
+    CHECK(def.enumNames.size() == 6);
+    CHECK(std::get<int64_t>(graph().value(graph().plug(looker + ".aimAxis"))) == 5);
+    CHECK(std::get<int64_t>(graph().value(graph().plug(looker + ".upAxis"))) == 2);
+    CHECK(std::get<int64_t>(fromJson(def, json("x"))) == 0);
+    CHECK_THROWS(run("looker", {{"args", {"elbow"}}, {"aimAxis", "w"}}));
+}

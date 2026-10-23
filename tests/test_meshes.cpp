@@ -28,11 +28,11 @@ TEST_CASE("primitives are procedural until history is deleted")
     CHECK(run("meshInfo", {{"args", {mesh}}})["faces"] == 22);
     run("undo");
     CHECK(run("meshInfo", {{"args", {mesh}}})["faces"] == 10);
-    run("deleteHistory", {{"args", {mesh}}});
+    run("bakeModifierStack", {{"args", {mesh}}});
     CHECK(!run("objExists", {{"args", {gen}}}).get<bool>());
     CHECK(run("meshInfo", {{"args", {mesh}}})["faces"] == 10);
-    json noHistory = run("polySphere", {{"history", false}});
-    CHECK(noHistory[1].is_null());
+    json baked = run("polySphere", {{"generator", false}});
+    CHECK(baked[1].is_null());
 }
 
 TEST_CASE("mesh json round trip keeps attributes")
@@ -49,7 +49,7 @@ TEST_CASE("meshes save and load in both formats")
 {
     run("newScene");
     run("polyTorus", {{"name", "Ring"}});
-    run("polyCube", {{"name", "Box"}, {"history", false}});
+    run("polyCube", {{"name", "Box"}, {"generator", false}});
     auto dir = std::filesystem::temp_directory_path() / "lila_tests";
     for (const char* ext : {".lila", ".lilaa"})
     {

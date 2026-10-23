@@ -3,6 +3,7 @@ find_package(meshoptimizer CONFIG REQUIRED)
 
 lila_module(lila_retopo Scene
     Extract.cpp
+    Border.cpp
     Field.cpp
     Internal.h
     Metrics.cpp

@@ -10,6 +10,7 @@
 class QButtonGroup;
 class QComboBox;
 class QDoubleSpinBox;
+class QSpinBox;
 class QListWidget;
 class QTimer;
 class QToolButton;
@@ -46,6 +47,8 @@ private:
     QDoubleSpinBox* mSoftRadius = nullptr;
     QComboBox* mSymmetry = nullptr;
     QToolButton* mCameraBased = nullptr;
+    QToolButton* mBackface = nullptr;
+    QSpinBox* mPaintRadius = nullptr;
     QTimer* mRefresh = nullptr;
     std::vector<QToolButton*> mButtons;
     int mGraphListener = 0;

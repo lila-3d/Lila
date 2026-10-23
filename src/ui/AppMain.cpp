@@ -33,7 +33,7 @@
 #include "ui/Panels.h"
 #include "ui/PoseLibrary.h"
 #include "ui/ControlPicker.h"
-#include "ui/QuadDrawTool.h"
+#include "ui/RetopoDrawTool.h"
 #include "ui/RigViewport.h"
 #include "ui/SculptPanel.h"
 #include "ui/Shelf.h"
@@ -42,6 +42,7 @@
 #include "ui/UiTools.h"
 #include "ui/UvEditor.h"
 #include "ui/VertexPaintTool.h"
+#include "ui/PaintSelect.h"
 #include "ui/ViewportTool.h"
 
 #include <QAbstractEventDispatcher>
@@ -93,6 +94,7 @@ void registerUi()
     registerKnifeActions();
     registerSculptUi();
     registerVertexPaintUi();
+    paintSelect::registerPaintSelectUi();
     registerAnimationUi();
     registerGhostingUi();
     registerPoseLibraryUi();
@@ -116,6 +118,7 @@ void registerBatchCommands()
         return;
     done = true;
     capture::registerCommands();
+    registerScreenshotCommand();
     modes::registerBuiltins();
     // captureView starts the renderer on demand in batch mode.
     events::subscribe(events::Event::Shutdown, [](const events::EventData&) { render::Renderer::get().stop(); });

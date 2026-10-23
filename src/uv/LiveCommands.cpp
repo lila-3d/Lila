@@ -317,7 +317,7 @@ void registerLiveCommands()
     ops::registerCommand({
         .name = "uvSew",
         .doc = "Sew the uvs along the selected edges (or edges= on the named mesh): unmarks the seams and welds the two sides. With move "
-               "(Maya's Move and Sew) the smaller island first travels to meet the other; then the joined island relaxes.",
+               "(move and sew) the smaller island first travels to meet the other; then the joined island relaxes.",
         .positionalDoc = "[mesh]",
         .flags = {setFlag(),
                   {"edges", "", T::List, nullptr, "Edge ids to sew instead of the selection (with the mesh named)."},

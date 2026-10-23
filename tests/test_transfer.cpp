@@ -23,8 +23,8 @@ const geo::Mesh& meshOf(const std::string& name)
 TEST_CASE("transfer attributes copies uvs and positions")
 {
     run("newScene");
-    std::string src = run("polySphere", {{"name", "Src"}, {"history", false}})[0];
-    std::string dst = run("polySphere", {{"name", "Dst"}, {"history", false}, {"subdivisionsAxis", 40}, {"subdivisionsHeight", 30}})[0];
+    std::string src = run("polySphere", {{"name", "Src"}, {"generator", false}})[0];
+    std::string dst = run("polySphere", {{"name", "Dst"}, {"generator", false}, {"subdivisionsAxis", 40}, {"subdivisionsHeight", 30}})[0];
     run("transferAttributes", {{"args", {src, dst}}, {"uvs", true}});
     const geo::Mesh& d = meshOf(dst);
     auto uv = d.cornerAttrs().get<glm::vec2>("uv0");
@@ -37,7 +37,7 @@ TEST_CASE("transfer attributes copies uvs and positions")
     CHECK(near > 0);
 
     // Shrink-wrap: a big cube pulled onto the sphere ends inside the sphere's bounds.
-    std::string box = run("polyCube", {{"name", "Box"}, {"history", false}, {"width", 300}, {"height", 300}, {"depth", 300},
+    std::string box = run("polyCube", {{"name", "Box"}, {"generator", false}, {"width", 300}, {"height", 300}, {"depth", 300},
                                        {"subdivisionsX", 4}, {"subdivisionsY", 4}, {"subdivisionsZ", 4}})[0];
     run("transferAttributes", {{"args", {src, box}}, {"uvs", false}, {"positions", true}});
     json info = run("meshInfo", {{"args", {box}}});
@@ -49,8 +49,8 @@ TEST_CASE("transfer attributes copies uvs and positions")
 TEST_CASE("boolean difference cuts a closed hole")
 {
     run("newScene");
-    std::string box = run("polyCube", {{"name", "Block"}, {"history", false}})[0];
-    std::string cutter = run("polyCylinder", {{"name", "Drill"}, {"history", false}, {"radius", 20}, {"height", 300}})[0];
+    std::string box = run("polyCube", {{"name", "Block"}, {"generator", false}})[0];
+    std::string cutter = run("polyCylinder", {{"name", "Drill"}, {"generator", false}, {"radius", 20}, {"height", 300}})[0];
     run("polyBoolean", {{"args", {box, cutter}}, {"operation", "difference"}});
     CHECK(!run("objExists", {{"args", {cutter}}}).get<bool>());
     const geo::Mesh& m = meshOf(box);

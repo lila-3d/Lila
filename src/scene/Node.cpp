@@ -34,6 +34,16 @@ int NodeType::attrIndex(std::string_view n) const
     return -1;
 }
 
+int NodeType::fileAttrIndex(std::string_view n) const
+{
+    if (int i = attrIndex(n); i >= 0)
+        return i;
+    for (int i = 0; i < int(attrs.size()); ++i)
+        if (!attrs[i].fileAlias.empty() && attrs[i].fileAlias == n)
+            return i;
+    return -1;
+}
+
 bool NodeType::isA(std::string_view typeName) const
 {
     for (const NodeType* t = this; t; t = t->base)

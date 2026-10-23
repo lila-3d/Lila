@@ -61,6 +61,9 @@ def autoKeyframe(state: bool | None = None) -> Any:
 def autoSelectAs(*objects: Any, overwrite: bool | None = None, tokens: Sequence[Any] | None = None, query: bool | None = None) -> Any:
     """Point helper joints (twist, corrective, muscle bones by name) at their nearest non-helper ancestor, preferring one weighted on the same skin. Works on the joints and everything under them, every joint with none given or selected. Returns {joint: target} for what was (or with query, would be) set."""
 
+def bakeModifierStack(*objects: Any) -> Any:
+    """Bake meshes to their current result, deleting the generator and modifiers feeding them. Objects that aren't meshes are skipped."""
+
 def bakeOffset(*objects: Any) -> Any:
     """Merge offsets down into the layer below (or the base animation), sampled every frame across the keys."""
 
@@ -91,7 +94,7 @@ def blendShape(*objects: Any, live: bool | None = None, name: str | None = None)
 def blendTargets(*objects: Any) -> Any:
     """A blendShape's targets in order: [{node, name, weight, live}]. Set a weight with setAttr(node + ".weight", w)."""
 
-def boundingMesh(*objects: Any, shape: str | None = None, offset: float | None = None, axisOffset: Sequence[float] | None = None, orient: str | None = None, axis: str | None = None, perObject: bool | None = None, nameFromSelection: bool | None = None, name: str | None = None, prefix: str | None = None, parent: bool | None = None, segments: int | None = None, maxHullPoints: int | None = None, history: bool | None = None) -> Any:
+def boundingMesh(*objects: Any, shape: str | None = None, offset: float | None = None, axisOffset: Sequence[float] | None = None, orient: str | None = None, axis: str | None = None, perObject: bool | None = None, nameFromSelection: bool | None = None, name: str | None = None, prefix: str | None = None, parent: bool | None = None, segments: int | None = None, maxHullPoints: int | None = None, generator: bool | None = None) -> Any:
     """Wrap the selection's points in a fitted shape, ready to go to Unreal as collision. Orientation is solved from the points alone (minimum-volume box), so frozen and unfrozen geometry behave the same, and every point is inside. Works on objects (every mesh at or under them) or on selected components. Returns the new meshes."""
 
 def cage(*objects: Any, name: str | None = None) -> Any:
@@ -120,9 +123,6 @@ def clearLoopKey(*objects: Any, attribute: Any | None = None) -> Any:
 
 def clearSimCache(*objects: Any) -> Any:
     """Throw away simulation caches, so the next simulate starts from the start frame."""
-
-def collapseStack(*objects: Any) -> Any:
-    """Bake a mesh's whole history (generator and modifiers) into the mesh itself and delete it, like Maya's Delete History."""
 
 def componentInfo(*objects: Any, kind: str | None = None, ids: Sequence[Any] | None = None, space: str | None = None, fields: Sequence[Any] | None = None) -> Any:
     """Positions, normals and adjacency of a mesh's components in bulk. Faces: center, normal, area, points, edges, neighbors (faces across each edge). Edges: points, center, length, faces, border. Vertices: position, normal, edges, neighbors (points), faces. World space unless space='object'. ids= picks some (default: the selected ones of that kind, or all)."""
@@ -201,9 +201,6 @@ def deleteComponents() -> Any:
 
 def deleteDisplayLayer(*objects: Any) -> Any:
     """Delete display layers; their objects stay, in no layer."""
-
-def deleteHistory(*objects: Any) -> Any:
-    """Bake meshes to their current result and delete the generators and modifiers feeding them."""
 
 def deleteLayout(*objects: Any, name: str | None = None) -> Any:
     """Delete a saved layout (the workspace copy first, when both exist). Built-ins can't be deleted; deleting a saved layout that shadows one brings the built-in back."""
@@ -314,10 +311,10 @@ def footPivot(*objects: Any, pivot: str | None = None, position: Sequence[float]
     """Move one of reverse feet's pivots (heel, ball, toe, inner or outer edge) to a world position on the sole."""
 
 def freezeTransforms(*objects: Any, translate: bool | None = None, rotate: bool | None = None, scale: bool | None = None) -> Any:
-    """Bake translate/rotate/scale into mesh points (and children's transforms), leaving identity values, as Maya's Freeze Transformations. World positions don't change."""
+    """Bake translate/rotate/scale into mesh points (and children's transforms), leaving identity values. World positions don't change."""
 
 def gameExport(path: str | None = None, filename: str | None = None, fileType: str | None = None, mode: str | None = None, sets: Sequence[Any] | None = None, separate: str | None = None, moveToOrigin: bool | None = None, profile: str | None = None, triangulate: bool | None = None, smoothingGroups: bool | None = None, tangents: bool | None = None, units: str | None = None, embedMedia: bool | None = None, preset: str | None = None, dryRun: bool | None = None) -> Any:
-    """Maya's Game Exporter (Model tab): export everything, the selection, or object sets to FBX or OBJ, as one file, a file per set or a file per object. Returns the paths written, or with dryRun=True [{file, nodes}] without writing."""
+    """Export everything, the selection, or object sets to FBX or OBJ, as one file, a file per set or a file per object. Returns the paths written, or with dryRun=True [{file, nodes}] without writing."""
 
 def gameExportDeletePreset(*objects: Any, scene: bool | None = None) -> Any:
     """Delete a game exporter preset from the prefs or (scene=True) the scene."""
@@ -479,7 +476,7 @@ def listExtensions(loaded: bool | None = None, searchPaths: bool | None = None) 
     """Extensions on the search paths: [{name, path, kind, loaded, autoload, version, vendor, sdk, error, ...}]."""
 
 def listLayouts() -> Any:
-    """UI layouts (Maya workspaces): [{name, origin, current, shadowsBuiltIn}]. origin is builtin | user | workspace."""
+    """UI layouts: [{name, origin, current, shadowsBuiltIn}]. origin is builtin | user | workspace."""
 
 def listMaterials(*objects: Any) -> Any:
     """Names of every material; with objects, their slots instead: [{object, slots: [{slot, material, faces}]}]."""
@@ -557,7 +554,7 @@ def meshRepair(*objects: Any, mode: str | None = None, coincident: bool | None =
     """Find or fix broken geometry. mode='select' selects what each enabled check finds and reports the counts; mode='repair' fixes it: welds coincident points, collapses zero-length edges, drops lamina copies, merges zero-area slivers into a neighbour, splits non-manifold edges and vertices apart, fills holes, cuts n-gons and concave faces into quads and triangles, conforms winding, removes loose points and edges."""
 
 def mirrorJoints(*objects: Any, axis: str | None = None, behavior: bool | None = None, searchReplace: Sequence[Any] | None = None) -> Any:
-    """Mirror a joint hierarchy across a plane through the world origin. behavior=True mirrors the axes so equal rotations make mirrored poses (Maya's Behavior); False keeps world orientation. Names swap searchReplace; side labels swap left/right. Returns the new joints."""
+    """Mirror a joint hierarchy across a plane through the world origin. behavior=True mirrors the axes so equal rotations make mirrored poses; False keeps world orientation. Names swap searchReplace; side labels swap left/right. Returns the new joints."""
 
 def mirrorPose(*objects: Any, newName: str | None = None, character: str | None = None, tier: str | None = None, nodes: Sequence[Any] | None = None, mirrorAxis: str | None = None) -> Any:
     """With a pose name, store its mirror image as a new pose (newName, default <name>_mirror). Without one, mirror the selected character's current pose onto itself: left and right swap, centre nodes reflect."""
@@ -629,7 +626,7 @@ def pasteKey(*objects: Any, attribute: Any | None = None, time: float | None = N
     """Paste copied keys starting at time (default the current time). One copied channel pastes onto every target; several match by channel name. option: merge (replace keys at the same times) or replace (clear the pasted span first). Returns the number pasted."""
 
 def pickWalk(direction: str | None = None) -> Any:
-    """Walk the selection through the hierarchy like Maya's arrow keys: up to the parent, down to the first child, left/right to the previous/next sibling (wrapping)."""
+    """Walk the selection through the hierarchy like the arrow keys: up to the parent, down to the first child, left/right to the previous/next sibling (wrapping)."""
 
 def pickerRun(*objects: Any, namespace: str | None = None) -> Any:
     """Run a picker item's action on its targets resolved in a namespace: select them, toggle an attr (every target follows the first), apply a pose to their character, or run a command (args default to the targets). Returns what the action returned."""
@@ -658,20 +655,20 @@ def polyBoolean(*objects: Any, operation: str | None = None, keepCutters: bool |
 def polyBridge(divisions: int | None = None) -> Any:
     """Join two selected boundary loops with faces."""
 
-def polyCapsule(name: str | None = None, position: Sequence[float] | None = None, history: bool | None = None, radius: float | None = None, height: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, subdivisionsCaps: int | None = None, baseAtOrigin: bool | None = None) -> Any:
-    """Create a Capsule mesh. Returns [mesh, generator] (generator is None without history)."""
+def polyCapsule(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, height: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, subdivisionsCaps: int | None = None, baseAtOrigin: bool | None = None) -> Any:
+    """Create a Capsule mesh. Returns [mesh, generator] (generator is None with generator=False)."""
 
 def polyCollapse() -> Any:
     """Collapse each connected group of selected edges to its centre."""
 
 def polyColorSet(*objects: Any, create: bool | None = None, delete: bool | None = None, rename: bool | None = None, copy: bool | None = None, current: bool | None = None, query: bool | None = None, colorSet: str | None = None, newColorSet: str | None = None, precision: str | None = None, moveTo: int | None = None, fill: Sequence[Any] | None = None) -> Any:
-    """Maya's polyColorSet: create, delete, rename, copy, reorder or make current a mesh's vertex color sets, set their precision, or query them. Returns {sets, current, half} for the last mesh."""
+    """Create, delete, rename, copy, reorder or make current a mesh's vertex color sets, set their precision, or query them. Returns {sets, current, half} for the last mesh."""
 
 def polyCombine(*objects: Any, name: str | None = None) -> Any:
     """Merge meshes into one object (world space kept). Returns its name."""
 
-def polyCone(name: str | None = None, position: Sequence[float] | None = None, history: bool | None = None, radius: float | None = None, height: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, subdivisionsCap: int | None = None, baseAtOrigin: bool | None = None) -> Any:
-    """Create a Cone mesh. Returns [mesh, generator] (generator is None without history)."""
+def polyCone(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, height: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, subdivisionsCap: int | None = None, baseAtOrigin: bool | None = None) -> Any:
+    """Create a Cone mesh. Returns [mesh, generator] (generator is None with generator=False)."""
 
 def polyConform() -> Any:
     """Make face winding consistent; closed parts face outward."""
@@ -679,14 +676,14 @@ def polyConform() -> Any:
 def polyConnect() -> Any:
     """Connect selected vertices that share a face with new edges, or the midpoints of selected edges across their faces."""
 
-def polyCube(name: str | None = None, position: Sequence[float] | None = None, history: bool | None = None, width: float | None = None, height: float | None = None, depth: float | None = None, subdivisionsX: int | None = None, subdivisionsY: int | None = None, subdivisionsZ: int | None = None, baseAtOrigin: bool | None = None) -> Any:
-    """Create a Cube mesh. Returns [mesh, generator] (generator is None without history)."""
+def polyCube(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, width: float | None = None, height: float | None = None, depth: float | None = None, subdivisionsX: int | None = None, subdivisionsY: int | None = None, subdivisionsZ: int | None = None, baseAtOrigin: bool | None = None) -> Any:
+    """Create a Cube mesh. Returns [mesh, generator] (generator is None with generator=False)."""
 
-def polyCylinder(name: str | None = None, position: Sequence[float] | None = None, history: bool | None = None, radius: float | None = None, height: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, subdivisionsCaps: int | None = None, caps: bool | None = None, baseAtOrigin: bool | None = None) -> Any:
-    """Create a Cylinder mesh. Returns [mesh, generator] (generator is None without history)."""
+def polyCylinder(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, height: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, subdivisionsCaps: int | None = None, caps: bool | None = None, baseAtOrigin: bool | None = None) -> Any:
+    """Create a Cylinder mesh. Returns [mesh, generator] (generator is None with generator=False)."""
 
-def polyDisc(name: str | None = None, position: Sequence[float] | None = None, history: bool | None = None, radius: float | None = None, subdivisionsAxis: int | None = None, subdivisionsRings: int | None = None) -> Any:
-    """Create a Disc mesh. Returns [mesh, generator] (generator is None without history)."""
+def polyDisc(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, subdivisionsAxis: int | None = None, subdivisionsRings: int | None = None) -> Any:
+    """Create a Disc mesh. Returns [mesh, generator] (generator is None with generator=False)."""
 
 def polyDissolve() -> Any:
     """Remove selected edges or vertices by merging the faces around them, cleanly."""
@@ -703,8 +700,8 @@ def polyFillHole() -> Any:
 def polyFlip() -> Any:
     """Reverse the winding of the selected faces (the whole mesh in object mode)."""
 
-def polyIcoSphere(name: str | None = None, position: Sequence[float] | None = None, history: bool | None = None, radius: float | None = None, subdivisions: int | None = None, baseAtOrigin: bool | None = None) -> Any:
-    """Create a IcoSphere mesh. Returns [mesh, generator] (generator is None without history)."""
+def polyIcoSphere(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, subdivisions: int | None = None, baseAtOrigin: bool | None = None) -> Any:
+    """Create a IcoSphere mesh. Returns [mesh, generator] (generator is None with generator=False)."""
 
 def polyInsertLoop(fraction: float | None = None, count: int | None = None) -> Any:
     """Insert edge loops across the ring of the first selected edge."""
@@ -724,17 +721,17 @@ def polyMergeCenter() -> Any:
 def polyMirror(*objects: Any, axis: str | None = None, direction: str | None = None, space: str | None = None, weld: bool | None = None, tolerance: float | None = None) -> Any:
     """Mirror whole meshes across the plane through the object's or the world's origin facing an axis, welding along the seam. direction positive keeps the + side and rebuilds the - side from it, cutting faces that cross the plane; negative does the reverse; both adds a mirrored copy of the whole mesh."""
 
-def polyPipe(name: str | None = None, position: Sequence[float] | None = None, history: bool | None = None, radius: float | None = None, thickness: float | None = None, height: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, baseAtOrigin: bool | None = None) -> Any:
-    """Create a Pipe mesh. Returns [mesh, generator] (generator is None without history)."""
+def polyPipe(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, thickness: float | None = None, height: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, baseAtOrigin: bool | None = None) -> Any:
+    """Create a Pipe mesh. Returns [mesh, generator] (generator is None with generator=False)."""
 
-def polyPlane(name: str | None = None, position: Sequence[float] | None = None, history: bool | None = None, width: float | None = None, depth: float | None = None, subdivisionsX: int | None = None, subdivisionsZ: int | None = None) -> Any:
-    """Create a Plane mesh. Returns [mesh, generator] (generator is None without history)."""
+def polyPlane(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, width: float | None = None, depth: float | None = None, subdivisionsX: int | None = None, subdivisionsZ: int | None = None) -> Any:
+    """Create a Plane mesh. Returns [mesh, generator] (generator is None with generator=False)."""
 
 def polyPoke() -> Any:
     """Fan each selected face into triangles around its centre."""
 
-def polyQuadSphere(name: str | None = None, position: Sequence[float] | None = None, history: bool | None = None, radius: float | None = None, subdivisions: int | None = None) -> Any:
-    """Create a QuadSphere mesh. Returns [mesh, generator] (generator is None without history)."""
+def polyQuadSphere(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, subdivisions: int | None = None) -> Any:
+    """Create a QuadSphere mesh. Returns [mesh, generator] (generator is None with generator=False)."""
 
 def polyQuadrangulate(maxAngle: float | None = None) -> Any:
     """Join neighbouring triangles into quads."""
@@ -745,8 +742,8 @@ def polyReduce(*objects: Any, ratio: float | None = None, targetTriangles: int |
 def polySeparate(*objects: Any) -> Any:
     """Split meshes into one object per connected part. Returns the new names."""
 
-def polySphere(name: str | None = None, position: Sequence[float] | None = None, history: bool | None = None, radius: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, baseAtOrigin: bool | None = None) -> Any:
-    """Create a Sphere mesh. Returns [mesh, generator] (generator is None without history)."""
+def polySphere(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, baseAtOrigin: bool | None = None) -> Any:
+    """Create a Sphere mesh. Returns [mesh, generator] (generator is None with generator=False)."""
 
 def polySpinEdge() -> Any:
     """Turn each selected edge one step within its two faces."""
@@ -754,29 +751,14 @@ def polySpinEdge() -> Any:
 def polySubdivide(*objects: Any, levels: int | None = None) -> Any:
     """Catmull-Clark subdivide whole meshes (crease-aware)."""
 
-def polyTorus(name: str | None = None, position: Sequence[float] | None = None, history: bool | None = None, radius: float | None = None, sectionRadius: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None) -> Any:
-    """Create a Torus mesh. Returns [mesh, generator] (generator is None without history)."""
+def polyTorus(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, sectionRadius: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None) -> Any:
+    """Create a Torus mesh. Returns [mesh, generator] (generator is None with generator=False)."""
 
 def polyTriangulate(beauty: bool | None = None, quadSplit: str | None = None) -> Any:
     """Triangulate the selected faces (the whole mesh in object mode), deterministically, as Unreal will. Concave and non-planar faces, collinear points and faces touching themselves split without overlaps or slivers, and no diagonal doubles an edge another face already has. With symmetry on, the mirrored faces split the mirrored way. A whole mesh with modifiers gets a triangulate modifier on top instead, so the result is triangulated rather than the cage."""
 
 def pruneWeights(*objects: Any, threshold: float | None = None, vertices: Sequence[Any] | None = None) -> Any:
     """Drop weights below a threshold and beyond the skin's maxInfluences, then renormalize."""
-
-def quadDrawAddFace(mesh: str | None = None, points: Sequence[Any] | None = None, weld: float | None = None, reference: str | None = None, create: bool | None = None) -> Any:
-    """Quad Draw: add a face through world points, reusing existing points within weld distance (and its mirror when the mesh has symmetry). Creates the mesh when create=True. Returns the mesh name."""
-
-def quadDrawDelete(mesh: str | None = None, faces: Sequence[Any] | None = None, points: Sequence[Any] | None = None) -> Any:
-    """Quad Draw: delete faces and points (base mesh ids) of the retopo mesh, mirrored with symmetry."""
-
-def quadDrawInsertLoop(mesh: str | None = None, edge: int | None = None, fraction: float | None = None) -> Any:
-    """Quad Draw: insert an edge loop across the ring through an edge (base mesh id), mirrored with symmetry."""
-
-def quadDrawMove(mesh: str | None = None, points: Sequence[Any] | None = None, positions: Sequence[Any] | None = None, weld: float | None = None) -> Any:
-    """Quad Draw: move points (base mesh ids) to world positions; mirror partners follow with symmetry."""
-
-def quadDrawSetDots(mesh: str | None = None, dots: Sequence[Any] | None = None, reference: str | None = None, create: bool | None = None) -> Any:
-    """Quad Draw: replace the retopo mesh's dots (the loose points a fill turns into a face) with world points. Creates the mesh when create=True. Returns the mesh name."""
 
 def quadRemesh(*objects: Any, targetFaces: int | None = None, targetEdgeLength: float | None = None, adaptivity: float | None = None, useHardEdges: bool | None = None, sharpAngle: float | None = None, symmetry: str | None = None, guides: Sequence[Any] | None = None, guidePoints: Sequence[Any] | None = None, pureQuads: bool | None = None, relaxIterations: int | None = None, transferUvs: bool | None = None, transferNormals: bool | None = None, keepSource: bool | None = None, name: str | None = None) -> Any:
     """Auto quad remesh: a new all-quad mesh whose edge flow follows curvature, hard edges and guide curves, at about the target face count, with UVs (and optionally normals) transferred from the source. Open borders, sharp creases, crease corners and cone tips are kept. Where the shape is too thin or tight for the requested size (a strip narrower than the edge length) it retries finer, so the face count can come out higher. Returns {name, metrics}."""
@@ -862,6 +844,21 @@ def resetPivot(*objects: Any) -> Any:
 def resetTransforms(*objects: Any) -> Any:
     """Put translate, rotate and scale back to their defaults (the object moves)."""
 
+def retopoDrawAddFace(mesh: str | None = None, points: Sequence[Any] | None = None, faces: Sequence[Any] | None = None, weld: float | None = None, reference: str | None = None, create: bool | None = None) -> Any:
+    """Retopo Draw: add a face through world points, reusing existing points within weld distance (and its mirror when the mesh has symmetry). faces= adds several in one step, skipping any that already exist or would make a non-manifold edge. Creates the mesh when create=True. Returns the mesh name."""
+
+def retopoDrawDelete(mesh: str | None = None, faces: Sequence[Any] | None = None, points: Sequence[Any] | None = None) -> Any:
+    """Retopo Draw: delete faces and points (base mesh ids) of the retopo mesh, mirrored with symmetry."""
+
+def retopoDrawInsertLoop(mesh: str | None = None, edge: int | None = None, fraction: float | None = None) -> Any:
+    """Retopo Draw: insert an edge loop across the ring through an edge (base mesh id), mirrored with symmetry."""
+
+def retopoDrawMove(mesh: str | None = None, points: Sequence[Any] | None = None, positions: Sequence[Any] | None = None, weld: float | None = None) -> Any:
+    """Retopo Draw: move points (base mesh ids) to world positions; mirror partners follow with symmetry."""
+
+def retopoDrawSetDots(mesh: str | None = None, dots: Sequence[Any] | None = None, reference: str | None = None, create: bool | None = None) -> Any:
+    """Retopo Draw: replace the retopo mesh's dots (the loose points a fill turns into a face) with world points. Creates the mesh when create=True. Returns the mesh name."""
+
 def reverseFoot(*objects: Any, ankle: str | None = None, ball: str | None = None, toe: str | None = None, name: str | None = None, pivots: Any | None = None, parent: str | None = None) -> Any:
     """Make a reverse foot on an IK chain's ankle: a control on the sole that poses the leg and rolls the foot over heel, ball and toe (roll), swivels on the ball (twist) and tips over its edges (bank). Pivots come from the skinned sole when the foot has a mesh, else from the joints, unless given. Returns it."""
 
@@ -928,6 +925,9 @@ def sceneScript(*objects: Any, text: str | None = None, runOnOpen: bool | None =
 def sceneVersions(*objects: Any) -> Any:
     """Backups, autosaves, emergency saves and incremental versions of a scene on disk, newest first."""
 
+def screenshot(path: str | None = None, target: str | None = None) -> Any:
+    """Save a PNG of Lila's UI as it is on screen: the whole window, the active viewport (HUD, gizmos and overlays included) or one panel. Needs the window; captureView renders the scene offscreen instead, in batch mode too. Returns the path."""
+
 def sculptCancel() -> Any:
     """Leave sculpt mode without changing the mesh, discarding the proxy (a kept proxy stays as it was)."""
 
@@ -967,6 +967,9 @@ def selectComponents(*objects: Any, vertices: Sequence[Any] | None = None, edges
 def selectComponentsWhere(*objects: Any, kind: str | None = None, normal: Sequence[float] | None = None, angle: float | None = None, side: str | None = None, box: Sequence[Any] | None = None, direction: Sequence[float] | None = None, near: Sequence[float] | None = None, radius: float | None = None, extreme: str | None = None, count: int | None = None, border: bool | None = None, shell: int | None = None, fromSelection: bool | None = None, tolerance: float | None = None, add: bool | None = None, deselect: bool | None = None) -> Any:
     """Select a mesh's components by predicates (the flags of findComponents) and switch to that component mode. With symmetry on, edits still mirror; select one side. Returns the selected ids."""
 
+def selectContainedFaces(larger: bool | None = None) -> Any:
+    """Select the faces enclosed by the selected edges: a flood fill that stops at selected edges and mesh borders. On each piece of a mesh the smaller regions are kept (every one but the largest by area), or with larger=True only the largest. Switches to face mode."""
+
 def selectDisplayLayerMembers(*objects: Any, add: bool | None = None) -> Any:
     """Select the objects in display layers."""
 
@@ -974,13 +977,19 @@ def selectFoldEdges(*objects: Any, add: bool | None = None, minAngle: float | No
     """Select fold edges of meshes by the autoBevel rule (on the editable cage). Returns the number selected."""
 
 def selectHierarchy() -> Any:
-    """Add every transform below each selected object to the selection, parents before children (Maya's select -hi)."""
+    """Add every transform below each selected object to the selection, parents before children."""
 
 def selectLoop(ring: bool | None = None) -> Any:
     """Extend the selected edges to full edge loops (or rings with ring=True)."""
 
+def selectLoopThrough(*objects: Any, edge: int | None = None, ring: bool | None = None, faces: bool | None = None, add: bool | None = None, deselect: bool | None = None, toggle: bool | None = None) -> Any:
+    """Select the edge loop (or ring) through one edge of a mesh, or with faces=True the face loop crossing it. Without add/deselect/toggle it replaces the selection of that kind. Returns the ids."""
+
 def selectMode(*objects: Any) -> Any:
     """Switch between object, vertex, edge and face selection. With no argument, returns the current mode."""
+
+def selectPathBetween(*objects: Any, kind: str | None = None, from: int | None = None, to: int | None = None, replace: bool | None = None, deselect: bool | None = None) -> Any:
+    """Select the components between two of a mesh's vertices, edges or faces: the shorter way along a loop or ring they share, else the shortest path across the surface. Adds to the selection unless replace or deselect. Returns the ids in order."""
 
 def selectSetMembers(*objects: Any, add: bool | None = None) -> Any:
     """Select what sets hold: their objects, and their components in component mode. Returns the members."""
@@ -1004,7 +1013,7 @@ def setInfinity(*objects: Any, attribute: Any | None = None, preInfinite: str | 
     """Curve behaviour outside its keys: constant, linear, cycle, cycleRelative (cycle with offset), oscillate. query=True returns [{curve, pre, post}]."""
 
 def setKeyframe(*objects: Any, attribute: Any | None = None, time: float | None = None, value: float | None = None, inTangentType: str | None = None, outTangentType: str | None = None) -> Any:
-    """Key channels at a time. With no objects, keys every keyable channel of the selection at the current time (Maya's S). Objects may be nodes, plugs ('cube.ty') or curve nodes. Returns the number of keys set."""
+    """Key channels at a time. With no objects, keys every keyable channel of the selection at the current time (the S key). Objects may be nodes, plugs ('cube.ty') or curve nodes. Returns the number of keys set."""
 
 def setLoopKey(*objects: Any, attribute: Any | None = None, time: float | None = None, snapRange: bool | None = None) -> Any:
     """Make the last key of each curve a loop key: it mirrors the first key's value and tangents (live, as the first key changes) and the curve cycles after it. time adds the loop key there first. Objects may be nodes, plugs or curves (default the selection). snapRange moves the playback end to the loop key. Returns the loop key time, or None."""
@@ -1052,7 +1061,7 @@ def skinPercent(*objects: Any, vertices: Sequence[Any] | None = None, transformV
     """Set exact weights: transformValue=[[joint, weight], ...] on the given (or selected) vertices; the other unlocked influences rescale to fill the rest. Without transformValue returns [{point, weights: {joint: w}}]."""
 
 def smoothPreview(*objects: Any, level: int | None = None) -> Any:
-    """Display meshes subdivided without changing them (Maya's 1/2/3 keys). level 0 is off."""
+    """Display meshes subdivided without changing them (the 1/2/3 keys). level 0 is off."""
 
 def snapReverseFoot(*objects: Any, align: bool | None = None, key: bool | None = None) -> Any:
     """Put reverse foot controls on the sole of the current pose with roll, twist and bank zeroed, or (align) level them with the pose moved into the channels. The pose is kept either way."""
@@ -1088,10 +1097,10 @@ def toggleSymmetry(*objects: Any, axis: str | None = None) -> Any:
     """Symmetry off on the meshes if every one already has it on (on axis=, when given), else on for all of them. Non-meshes are skipped. Returns the axis set, or 'off'."""
 
 def toggleVisibility(*objects: Any) -> Any:
-    """Toggle visibility (Maya's H). Defaults to the selection. Every object ends up the same: hidden if most were visible (a tie hides), shown otherwise. Returns the new visibility."""
+    """Toggle visibility (the H key). Defaults to the selection. Every object ends up the same: hidden if most were visible (a tie hides), shown otherwise. Returns the new visibility."""
 
 def transferAttributes(*objects: Any, uvs: bool | None = None, normals: bool | None = None, colors: bool | None = None, positions: bool | None = None, attributes: Sequence[Any] | None = None, skinWeights: bool | None = None, sampleSpace: str | None = None, searchMethod: str | None = None, maxDistance: float | None = None, flip: str | None = None, sourceUvSet: int | None = None, targetUvSet: int | None = None, sourceColorSet: str | None = None, targetColorSet: str | None = None, live: bool | None = None) -> Any:
-    """Maya's Transfer Attributes: copy UVs, normals, color sets, positions or named attributes from the first object to the others, sampling in world, object, component (same topology) or uv space, by closest point or along normals. live=True adds a transferAttributes modifier to each target instead of baking, so the targets follow the source."""
+    """Copy UVs, normals, color sets, positions or named attributes from the first object to the others, sampling in world, object, component (same topology) or uv space, by closest point or along normals. live=True adds a transferAttributes modifier to each target instead of baking, so the targets follow the source."""
 
 def transferShape(*objects: Any, method: str | None = None, levels: int | None = None, iterations: int | None = None, pinBoundary: bool | None = None) -> Any:
     """Move low-poly meshes onto a high-poly one (an imported sculpt): the same cage fit sculptExit uses. The first mesh is the high poly, the rest are the cages. Only positions change, so UVs and other attributes stay."""
@@ -1196,7 +1205,7 @@ def uvSetCurrent(*objects: Any) -> Any:
     """The uv set the uv tools and editor work on. With no argument, returns it."""
 
 def uvSew(*objects: Any, uvSet: str | None = None, edges: Sequence[Any] | None = None, move: bool | None = None, relax: bool | None = None, iterations: int | None = None, balance: float | None = None) -> Any:
-    """Sew the uvs along the selected edges (or edges= on the named mesh): unmarks the seams and welds the two sides. With move (Maya's Move and Sew) the smaller island first travels to meet the other; then the joined island relaxes."""
+    """Sew the uvs along the selected edges (or edges= on the named mesh): unmarks the seams and welds the two sides. With move (move and sew) the smaller island first travels to meet the other; then the joined island relaxes."""
 
 def uvSewEdges(uvSet: str | None = None) -> Any:
     """Unmark the selected seams and weld their uvs, moving the smaller island over to meet the other."""
@@ -1250,7 +1259,7 @@ def vertexColorStroke(*objects: Any, colorSet: str | None = None, blend: str | N
     """One vertex paint stroke: dabs is a list of {center, radius, opacity, view, eye} in world space (center and radius required). Mirrors through the mesh's symmetry and stays inside the component selection. One undo step that stores only the changed corners. Returns {corners} changed."""
 
 def viewPlace(*objects: Any, eye: Sequence[float] | None = None, lookAt: Sequence[float] | None = None, up: Sequence[float] | None = None, orthographicWidth: float | None = None) -> Any:
-    """Place a camera node, as Maya's viewPlace: eye is its world position, lookAt the point it aims at, up the world direction its top leans to. Flags left out keep the camera's current value; with eye alone it moves without turning. Fails on a locked camera."""
+    """Place a camera node: eye is its world position, lookAt the point it aims at, up the world direction its top leans to. Flags left out keep the camera's current value; with eye alone it moves without turning. Fails on a locked camera."""
 
 def voxelRemesh(*objects: Any, resolution: int | None = None, project: bool | None = None) -> Any:
     """Rebuild meshes as one closed, manifold quad surface from a voxel grid, whatever state they are in: closes holes, fuses intersecting and inner shells. For dirty scans and kitbashed blockouts; UVs are not kept."""

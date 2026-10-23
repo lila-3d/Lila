@@ -20,7 +20,7 @@
 #include "ui/ModifierStack.h"
 #include "ui/NodeEditor.h"
 #include "ui/Panels.h"
-#include "ui/QuadDrawTool.h"
+#include "ui/RetopoDrawTool.h"
 #include "ui/RigViewport.h"
 #include "ui/SculptPanel.h"
 #include "ui/Shelf.h"
@@ -71,6 +71,14 @@ TEST_CASE("every registered action has a doc")
         if (a->doc.empty())
             missing += a->id + "\n";
     CHECK_MESSAGE(missing.empty(), "actions without a doc:\n" << missing);
+
+    std::string unknown;
+    for (const std::string& shelf : ui::shelves::registry().idsInOrder())
+        for (const nlohmann::json& item : ui::shelves::registry().find(shelf)->items)
+            if (item["target"].is_string() && !ui::actions::find(item["target"].get<std::string>()))
+                unknown += shelf + ": " + item["target"].get<std::string>() + "\n";
+    CHECK(ui::shelves::registry().find("Rigging"));
+    CHECK_MESSAGE(unknown.empty(), "built-in shelf buttons without an action:\n" << unknown);
 
     // Every modifier kind gets an add action whose doc is the kind's own.
     for (const std::string& kind : scene::modifiers::kinds())

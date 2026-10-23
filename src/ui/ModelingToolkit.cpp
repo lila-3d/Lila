@@ -27,9 +27,12 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QScrollArea>
+#include <QSpinBox>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+
+#include <cmath>
 
 namespace lila::ui
 {
@@ -197,6 +200,19 @@ ModelingToolkit::ModelingToolkit(QWidget* parent) : QWidget(parent)
         mCameraBased->setCheckable(true);
         opts->addWidget(mCameraBased);
     }
+    mBackface = actionButton("select.toggleBackfaceCulling", "eye-off", "Backfaces", optsBox);
+    if (mBackface)
+    {
+        mBackface->setCheckable(true);
+        opts->addWidget(mBackface);
+    }
+    mPaintRadius = new QSpinBox(optsBox);
+    mPaintRadius->setRange(2, 1000);
+    mPaintRadius->setSuffix(" px");
+    mPaintRadius->setKeyboardTracking(false);
+    mPaintRadius->setToolTip("Paint Select brush radius on screen (B + drag or [ ] while painting)");
+    connect(mPaintRadius, &QSpinBox::valueChanged, this, [](int r) { PrefStore::get().set("general", "/paintSelect/radius", double(r)); });
+    opts->addWidget(mPaintRadius);
     row(optsBox, {{"select.byAngle", "angle", "By Angle"}}, opts);
     root->addWidget(optsBox);
     root->addWidget(section("Soft Selection", new SoftSelectPanel(body), body));
@@ -207,7 +223,8 @@ ModelingToolkit::ModelingToolkit(QWidget* parent) : QWidget(parent)
     row(selBox,
         {{"select.grow", "arrows-maximize", "Grow"}, {"select.shrink", "arrows-minimize", "Shrink"}, {"select.loop", "repeat", "Loop"},
          {"select.ring", "topology-ring", "Ring"}, {"select.border", "border-outer", "Border"}, {"select.allComponents", "border-all", "All"},
-         {"select.toVertices", "point", "To Vertices"}, {"select.toEdges", "line", "To Edges"}, {"select.toFaces", "square", "To Faces"}},
+         {"select.toVertices", "point", "To Vertices"}, {"select.toEdges", "line", "To Edges"}, {"select.toFaces", "square", "To Faces"},
+         {"select.containedFaces", "square-dot", "Contained"}, {"select.paintTool", "brush", "Paint"}},
         sel);
     root->addWidget(section("Selection", selBox, body));
 
@@ -221,7 +238,7 @@ ModelingToolkit::ModelingToolkit(QWidget* parent) : QWidget(parent)
          {"mesh.quadrangulate", "square-toggle", "Quadrangulate"}, {"mesh.fillHole", "square-plus", "Fill Hole"},
          {"mesh.repair", "wand", "Repair"}, {"modifier.decimate", "grain", "Decimate"}, {"mesh.relax", "wave-sine", "Relax"},
          {"mesh.quadRemesh", "grid-4x4", "Remesh"}, {"mesh.flip", "arrows-exchange-2", "Flip"}, {"mesh.conform", "refresh", "Conform"},
-         {"mesh.transferAttributes", "arrows-exchange", "Transfer"}, {"mesh.deleteHistory", "clear-all", "History"}},
+         {"mesh.transferAttributes", "arrows-exchange", "Transfer"}, {"mesh.bakeModifierStack", "stack-pop", "Bake Stack"}},
         mesh);
     root->addWidget(section("Mesh", meshBox, body));
 
@@ -238,7 +255,7 @@ ModelingToolkit::ModelingToolkit(QWidget* parent) : QWidget(parent)
 
     FlowLayout* tools = nullptr;
     QWidget* toolsBox = flowBox(body, &tools);
-    row(toolsBox, {{"mesh.insertLoop", "separator-vertical", "Insert Loop"}, {"mesh.knife", "slice", "Knife"}, {"retopo.quadDraw", "pencil", "Quad Draw"}}, tools);
+    row(toolsBox, {{"mesh.insertLoop", "separator-vertical", "Insert Loop"}, {"mesh.knife", "slice", "Knife"}, {"retopo.draw", "pencil", "Retopo Draw"}}, tools);
     root->addWidget(section("Tools", toolsBox, body));
 
     FlowLayout* bevel = nullptr;
@@ -343,6 +360,13 @@ void ModelingToolkit::refreshState()
     }
     if (mCameraBased)
         mCameraBased->setChecked(p.value<bool>("general", "/select/cameraBased", false));
+    if (mBackface)
+        mBackface->setChecked(p.value<bool>("general", "/select/backfaceCulling", false));
+    if (!mPaintRadius->hasFocus())
+    {
+        QSignalBlocker block(mPaintRadius);
+        mPaintRadius->setValue(int(std::lround(p.value<double>("general", "/paintSelect/radius", 30.0))));
+    }
     scene::Node* lead = leadMesh();
     mSymmetry->setEnabled(lead != nullptr);
     if (lead)

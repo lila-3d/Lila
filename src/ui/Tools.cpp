@@ -109,7 +109,7 @@ void registerActions()
         actions::add({.id = id, .label = label, .category = "Tools",
                       .run =
                           [t] {
-                              // Picking a transform tool leaves any viewport tool (quad draw, sculpt...), as in Maya.
+                              // Picking a transform tool leaves any viewport tool (retopo draw, sculpt...), as in Maya.
                               viewportTools::set(nullptr);
                               setCurrent(t);
                           },

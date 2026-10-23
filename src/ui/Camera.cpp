@@ -3,9 +3,11 @@
 #include "scene/Camera.h"
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace lila::ui
 {
@@ -160,5 +162,30 @@ void Camera::setView(const std::string& name)
         orthoUp = u;
     }
     distance = 10000.0;
+}
+nlohmann::json Camera::poseJson() const
+{
+    return {{"target", {target.x, target.y, target.z}}, {"distance", distance},       {"yaw", yaw},
+            {"pitch", pitch},                           {"orthoWidth", orthoWidth}, {"focalLength", focalLength}};
+}
+
+void Camera::setPose(const nlohmann::json& j)
+{
+    if (!j.is_object())
+        return;
+    auto num = [&](const char* key, double& out, double minValue) {
+        if (auto it = j.find(key); it != j.end() && it->is_number() && std::isfinite(it->get<double>()))
+            out = std::max(it->get<double>(), minValue);
+    };
+    if (auto it = j.find("target"); it != j.end() && it->is_array() && it->size() == 3 && (*it)[0].is_number() && (*it)[1].is_number() &&
+                                    (*it)[2].is_number())
+        target = {(*it)[0].get<double>(), (*it)[1].get<double>(), (*it)[2].get<double>()};
+    const double lowest = -std::numeric_limits<double>::max();
+    num("distance", distance, 1e-3);
+    num("yaw", yaw, lowest);
+    num("pitch", pitch, lowest);
+    pitch = std::clamp(pitch, -89.9, 89.9);
+    num("orthoWidth", orthoWidth, 1e-3);
+    num("focalLength", focalLength, 1e-3);
 }
 } // namespace lila::ui

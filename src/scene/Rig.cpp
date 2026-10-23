@@ -394,7 +394,7 @@ void registerJointCommands()
     ops::registerCommand({
         .name = "mirrorJoints",
         .doc = "Mirror a joint hierarchy across a plane through the world origin. behavior=True mirrors the axes so "
-               "equal rotations make mirrored poses (Maya's Behavior); False keeps world orientation. Names swap "
+               "equal rotations make mirrored poses; False keeps world orientation. Names swap "
                "searchReplace; side labels swap left/right. Returns the new joints.",
         .positionalDoc = "root",
         .flags = {

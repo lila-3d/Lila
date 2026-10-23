@@ -1,6 +1,6 @@
 """Every Lila command as a function: lila.ops.name(*objects, flag=value).
 
-Flags take long or short names, like Maya. Generated from the live command registry, so extension commands appear
+Flags take long or short names. Generated from the live command registry, so extension commands appear
 here too after refresh().
 """
 

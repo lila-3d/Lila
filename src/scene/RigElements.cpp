@@ -41,6 +41,26 @@ AttrDef whole(const char* name, int64_t def, const char* doc, uint32_t extra = 0
 {
     return {.name = name, .type = PlugType::Int, .defaultValue = def, .flags = AttrInput | AttrStorable | extra, .doc = doc};
 }
+/** Signed joint axes, as rig::axisVector reads them; stored as their index. */
+const std::vector<std::string> kAxisNames = {"x", "-x", "y", "-y", "z", "-z"};
+
+AttrDef axisChoice(const char* name, int64_t def, const char* doc)
+{
+    return {.name = name, .type = PlugType::Enum, .defaultValue = def, .flags = AttrInput | AttrStorable, .enumNames = kAxisNames, .doc = doc};
+}
+
+const std::string& axisName(int64_t index) { return kAxisNames[size_t(std::clamp<int64_t>(index, 0, int64_t(kAxisNames.size()) - 1))]; }
+
+/** The kAxisNames index of an axis like "x", "+y" or "-z"; throws std::invalid_argument for anything else. */
+int64_t axisIndex(std::string_view axis)
+{
+    const glm::dvec3 v = rig::axisVector(axis);
+    for (int i = 0; i < 3; ++i)
+        if (v[i] != 0.0)
+            return i * 2 + (v[i] < 0.0 ? 1 : 0);
+    return 0;
+}
+
 AttrDef text(const char* name, const char* doc, uint32_t extra = 0)
 {
     return {.name = name, .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | extra, .doc = doc};
@@ -232,7 +252,7 @@ public:
             const glm::dvec3 aim = target - from;
             if (glm::length(aim) > 1e-9)
             {
-                const glm::dmat3 world = rig::aimFrame(rig::axisVector(as<std::string>(at(kAimAxis))), rig::axisVector(as<std::string>(at(kUpAxis))),
+                const glm::dmat3 world = rig::aimFrame(rig::axisVector(axisName(as<int64_t>(at(kAimAxis)))), rig::axisVector(axisName(as<int64_t>(at(kUpAxis)))),
                                                        glm::normalize(aim), as<glm::dvec3>(at(kUpVector)));
                 rotate = solvedRotateFor(rotationOf(parent), as<glm::dvec3>(at(kJointOrient)), as<glm::dvec3>(at(kRotateAxis)),
                                          as<int64_t>(at(kRotateOrder)), world);
@@ -376,8 +396,8 @@ void registerTypesImpl()
                     .create = [] { return std::make_unique<LookerNode>(); }};
     looker.ownAttrs = {
         text("joint", "The joint that looks."),
-        text("aimAxis", "Joint axis aimed at the looker: x, -x, y ..."),
-        text("upAxis", "Joint axis leaned toward upVector."),
+        axisChoice("aimAxis", 0, "Joint axis aimed at the looker."),
+        axisChoice("upAxis", 2, "Joint axis leaned toward upVector."),
         vector3("upVector", glm::dvec3(0.0, 1.0, 0.0), "World up for the aim."),
         number("weight", 1.0, "Blend of the aim over the joint's own rotation.", key),
         matrix("jointParentMatrix", "The joint's parent world matrix.", hidden),
@@ -388,8 +408,6 @@ void registerTypesImpl()
         outVec("solvedRotate", "Rotate values for the joint."),
         outFloat("ikBlend", "The joint's ikBlend."),
     };
-    looker.ownAttrs[1].defaultValue = std::string("x");
-    looker.ownAttrs[2].defaultValue = std::string("y");
 
     NodeType twist{.name = kTwistType,
                    .doc = "Turns a twist joint about its bone by a share of another joint's twist: its parent's (countered, "
@@ -1223,7 +1241,7 @@ NodeId createLooker(Graph& g, NodeId j, const LookerOptions& opts)
     if (!parent)
         throw std::invalid_argument(g.node(j)->name() + " needs a parent to look from");
     const glm::dvec3 aimLocal = rig::axisVector(opts.aimAxis);
-    rig::axisVector(opts.upAxis);
+    const int64_t aimAxis = axisIndex(opts.aimAxis), upAxis = axisIndex(opts.upAxis);
     g.evaluate();
     const glm::dmat4 w = worldOf(g, j);
     const glm::dvec3 at = glm::dvec3(w[3]) + rotationOf(w) * aimLocal * opts.distance;
@@ -1234,8 +1252,8 @@ NodeId createLooker(Graph& g, NodeId j, const LookerOptions& opts)
     setWorldMatrix(g, id, glm::translate(glm::dmat4(1.0), at));
     auto set = [&](int own, PlugValue v) { g.setValue({id, LookerNode::at(own)}, std::move(v)); };
     set(LookerNode::kJoint, g.node(j)->name());
-    set(LookerNode::kAimAxis, opts.aimAxis);
-    set(LookerNode::kUpAxis, opts.upAxis);
+    set(LookerNode::kAimAxis, aimAxis);
+    set(LookerNode::kUpAxis, upAxis);
     set(LookerNode::kUpVector, opts.upVector);
     set(LookerNode::kWeight, opts.weight);
     set(LookerNode::kRestTranslate, vecOf(g, j, Transform::kTranslate));

@@ -246,7 +246,7 @@ std::vector<NodeId> instantiate(const json& doc, const std::string& ns, uint32_t
                     if (!n)
                         continue;
                     for (auto& [attr, value] : member(e, "attrs", kNoObject).items())
-                        if (int idx = n->type().attrIndex(attr); idx >= 0)
+                        if (int idx = n->type().fileAttrIndex(attr); idx >= 0)
                             g.setValue({n->id(), idx, -1}, scene::fromJson(n->type().attrs[idx], value));
                 }
             }
@@ -261,7 +261,7 @@ std::vector<NodeId> instantiate(const json& doc, const std::string& ns, uint32_t
     for (const json& jn : member(doc, "nodes", kNoArray))
         if (const scene::NodeType* t = scene::types::find(jn.value("type", "")))
             for (auto& [attr, value] : member(jn, "attrs", kNoObject).items())
-                if (int idx = t->attrIndex(attr); idx >= 0 && t->attrs[idx].type == scene::PlugType::Mesh)
+                if (int idx = t->fileAttrIndex(attr); idx >= 0 && t->attrs[idx].type == scene::PlugType::Mesh)
                     meshItems.push_back({&t->attrs[idx], &value});
     std::vector<scene::FromJsonResult> meshValues;
     progress::Scope scope("", 3.0 + double(member(doc, "nodes", kNoArray).size()));
@@ -305,7 +305,7 @@ std::vector<NodeId> instantiate(const json& doc, const std::string& ns, uint32_t
                 g.setValue({n->id(), int(i), -1}, *a.fileDefault);
         for (auto& [attr, value] : stored.items())
         {
-            int idx = t->attrIndex(attr);
+            int idx = t->fileAttrIndex(attr);
             if (idx < 0)
             {
                 warnings.push_back(name + "." + attr + ": no such attribute, ignored");
@@ -344,7 +344,16 @@ std::vector<NodeId> instantiate(const json& doc, const std::string& ns, uint32_t
         auto dot = plug.find('.');
         // Plugs on nodes from this document get the namespace; ones already namespaced (nested refs) are absolute
         // within it, so prefix those too.
-        return resolve(plug.substr(0, dot)) + plug.substr(dot);
+        std::string node = resolve(plug.substr(0, dot));
+        if (dot != std::string::npos)
+            if (const scene::Node* n = g.find(node))
+            {
+                size_t end = plug.find_first_of(".[", dot + 1);
+                std::string attr = plug.substr(dot + 1, end == std::string::npos ? std::string::npos : end - dot - 1);
+                if (int idx = n->type().fileAttrIndex(attr); idx >= 0 && n->type().attrIndex(attr) < 0)
+                    return node + "." + n->type().attrs[idx].name + (end == std::string::npos ? "" : plug.substr(end));
+            }
+        return node + plug.substr(dot);
     };
     for (const json& c : member(doc, "connections", kNoArray))
     {

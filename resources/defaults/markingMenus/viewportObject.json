@@ -11,7 +11,7 @@
     { "label": "Parent", "action": "edit.parent" },
     { "label": "Unparent", "action": "edit.unparent" },
     { "separator": true },
-    { "label": "Delete History", "action": "mesh.deleteHistory" },
+    { "label": "Bake Modifier Stack", "action": "mesh.bakeModifierStack" },
     { "separator": true },
     { "label": "Select All", "action": "edit.selectAll" },
     { "separator": true },

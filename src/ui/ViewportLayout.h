@@ -16,7 +16,7 @@ class ViewportWidget;
 /**
  * The central viewport area: one view, or Maya's four (top, persp, front, side). Tapping Space toggles between them
  * around the view under the cursor. Actions that target "the viewport" act on the active one: the last clicked.
- * Which camera nodes the panels look through saves with the scene ("ui"/"viewports").
+ * Each panel's view, its camera poses and the camera node it looks through save with the scene ("ui"/"viewports").
  */
 class LILA_UI_API ViewportLayout : public QWidget
 {

@@ -131,7 +131,7 @@ struct Placed
     geo::Mesh mesh;
     glm::dmat3 axes{1.0};
     glm::dvec3 center{0.0};
-    /** Generator node type and its settings, for history. Empty for the hull. */
+    /** Generator node type and its settings, kept with generator=True. Empty for the hull. */
     std::string generator;
     json settings;
 };
@@ -259,7 +259,7 @@ void registerBoundingMeshCommands()
             {"parent", "pa", T::Bool, true, "Parent under the mesh it wraps, keeping it in place."},
             {"segments", "sg", T::Int, 16, "Segments around a sphere, capsule or cylinder."},
             {"maxHullPoints", "mh", T::Int, 32, "Most points a hull keeps."},
-            {"history", "h", T::Bool, false, "Keep the primitive's generator so its size stays editable."},
+            {"generator", "g", T::Bool, false, "Keep the primitive's generator so its size stays editable."},
         },
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -294,7 +294,7 @@ void registerBoundingMeshCommands()
                 std::string base = a.get<bool>("nameFromSelection", true) ? g.node(job.owner)->name() : a.get<std::string>("name", "Collision");
                 if (auto colon = base.rfind(':'); colon != std::string::npos)
                     base = base.substr(colon + 1);
-                Node* mesh = build(g, placed, prefix + base, a.get<bool>("history", false));
+                Node* mesh = build(g, placed, prefix + base, a.get<bool>("generator", false));
                 if (a.get<bool>("parent", true))
                     g.setParent(mesh->id(), job.owner, true);
                 out.push_back(mesh->name());

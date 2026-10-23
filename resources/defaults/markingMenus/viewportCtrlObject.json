@@ -8,11 +8,13 @@
   "W": { "label": "Border", "action": "select.border" },
   "NW": { "label": "Grow", "action": "select.grow" },
   "overflow": [
+    { "label": "To Contained Faces", "action": "select.containedFaces" },
     { "label": "Select by Angle", "action": "select.byAngle" },
     { "label": "Select Fold Edges", "action": "select.foldEdges" },
     { "label": "Select All Components", "action": "select.allComponents" },
     { "label": "Select Hierarchy", "action": "select.hierarchy" },
     { "separator": true },
-    { "label": "Camera-Based Selection", "action": "select.toggleCameraBased" }
+    { "label": "Camera-Based Selection", "action": "select.toggleCameraBased" },
+    { "label": "Backface Culling Selection", "action": "select.toggleBackfaceCulling" }
   ]
 }

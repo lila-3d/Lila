@@ -739,10 +739,10 @@ ModifierStackWidget::ModifierStackWidget(QWidget* parent) : QWidget(parent)
         if (mMesh)
             run("applyAllModifiers", {{"args", {nameOf(mMesh)}}});
     })->setToolTip("Bake every modifier into the base mesh");
-    more->addAction(icon("stack-pop"), "Collapse Stack", this, [this] {
+    more->addAction(icon("stack-pop"), "Bake Modifier Stack", this, [this] {
         if (mMesh)
-            run("collapseStack", {{"args", {nameOf(mMesh)}}});
-    })->setToolTip("Bake the generator and every modifier into the mesh itself (Delete History)");
+            run("bakeModifierStack", {{"args", {nameOf(mMesh)}}});
+    })->setToolTip("Bake the generator and every modifier into the mesh itself");
     more->addSeparator();
     more->addAction(icon("chevron-down"), "Expand All", this, [this] { setCollapsed(scene::kNoNode, false, true); });
     more->addAction(icon("chevron-right"), "Collapse All", this, [this] { setCollapsed(scene::kNoNode, true, true); });
@@ -1462,7 +1462,5 @@ void registerModifierStackActions()
     };
     actions::add({.id = "modifier.applyAll", .label = "Apply All Modifiers", .category = "Modifiers", .run = onMeshes("applyAllModifiers"),
                   .doc = "Bake every modifier of the selected meshes into their base mesh.", .python = "applyAllModifiers()"});
-    actions::add({.id = "modifier.collapseStack", .label = "Collapse Stack", .category = "Modifiers", .run = onMeshes("collapseStack"),
-                  .doc = "Bake the generator and every modifier into the selected meshes (Delete History).", .python = "collapseStack()"});
 }
 } // namespace lila::ui

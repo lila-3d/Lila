@@ -192,6 +192,24 @@ std::vector<std::vector<Index>> islandFaces(const geo::Mesh& mesh, std::span<con
     return out;
 }
 
+std::vector<Index> islandsOfFaces(const geo::Mesh& mesh, std::span<const Index> seeds, const ChartOptions& opts)
+{
+    LILA_ZONE();
+
+    std::vector<Index> out;
+    if (seeds.empty())
+        return out;
+    std::vector<uint8_t> seed(mesh.faceCapacity(), 0);
+    for (Index f : seeds)
+        if (f < seed.size())
+            seed[f] = 1;
+    for (const std::vector<Index>& island : islandFaces(mesh, {}, opts))
+        if (std::any_of(island.begin(), island.end(), [&](Index f) { return seed[f] != 0; }))
+            out.insert(out.end(), island.begin(), island.end());
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
 std::vector<Chart> buildCharts(const geo::Mesh& mesh, std::span<const Index> faces, const ChartOptions& opts)
 {
     LILA_ZONE();

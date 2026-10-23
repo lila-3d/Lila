@@ -2,13 +2,18 @@
 
 #include "core/Paths.h"
 #include "core/PrefStore.h"
+#include "ui/ViewportDisplay.h"
 
 #include <QApplication>
 #include <QFontDatabase>
 #include <QIcon>
+#include <QImage>
 #include <QPalette>
+#include <QPixmap>
+#include <QPointer>
 #include <QProxyStyle>
 #include <QStyleFactory>
+#include <QTimer>
 #include <QWidget>
 
 #include <map>
@@ -37,14 +42,55 @@ public:
     }
 };
 
+bool monotone() { return PrefStore::get().value<bool>("general", ui::viewportDisplay::kMonotone, false); }
+
+/** The colour icon as luminance, alpha kept. */
+QIcon grayscaleIcon(const QString& path)
+{
+    QImage img = QImage(path).convertToFormat(QImage::Format_ARGB32);
+    for (int y = 0; y < img.height(); ++y)
+    {
+        auto* row = reinterpret_cast<QRgb*>(img.scanLine(y));
+        for (int x = 0; x < img.width(); ++x)
+        {
+            int g = qGray(row[x]);
+            row[x] = qRgba(g, g, g, qAlpha(row[x]));
+        }
+    }
+    return QIcon(QPixmap::fromImage(img));
+}
+
+QIcon appIcon(bool mono)
+{
+    const QString color = QString::fromStdWString((paths::resourcesDir() / "icons" / "lila_color.png").wstring());
+    return mono ? grayscaleIcon(color) : QIcon(color);
+}
+
 /**
  * Gives every top-level window (dialogs, floating docks, tool windows) the dark native title bar, and the grey icon in
- * it. The taskbar keeps the colour icon (the window's big icon).
+ * it. The taskbar keeps the colour icon (the window's big icon) unless the UI is monotone.
  */
 class DarkTitleBars : public QObject
 {
 public:
-    using QObject::QObject;
+    explicit DarkTitleBars(QObject* parent) : QObject(parent), mMono(monotone()) {}
+
+    /** Follows the monotone pref: the app icon and every window's big icon go grey or back to colour. */
+    void setMonotone(bool mono)
+    {
+        if (mono == mMono)
+            return;
+        mMono = mono;
+        qApp->setWindowIcon(appIcon(mono));
+#ifdef _WIN32
+        for (auto& [dpi, icon] : mBigIcons)
+            DestroyIcon(icon);
+        mBigIcons.clear();
+        for (QWidget* w : QApplication::topLevelWidgets())
+            if (w->testAttribute(Qt::WA_WState_Created))
+                applyIcons(HWND(w->winId()));
+#endif
+    }
 
 #ifdef _WIN32
     ~DarkTitleBars() override
@@ -60,16 +106,14 @@ protected:
     bool eventFilter(QObject* obj, QEvent* e) override
     {
 #ifdef _WIN32
-        if (e->type() == QEvent::Show || e->type() == QEvent::WinIdChange)
+        // Qt sends its own icons again when the window icon changes, so ours go back on after.
+        if (e->type() == QEvent::Show || e->type() == QEvent::WinIdChange || e->type() == QEvent::WindowIconChange)
             if (auto* w = qobject_cast<QWidget*>(obj); w && w->isWindow() && w->testAttribute(Qt::WA_WState_Created))
             {
                 BOOL dark = TRUE;
                 HWND hwnd = HWND(w->winId());
                 DwmSetWindowAttribute(hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
-                if (HICON icon = smallIcon())
-                    SendMessageW(hwnd, WM_SETICON, ICON_SMALL, LPARAM(icon));
-                if (HICON icon = bigIcon(GetDpiForWindow(hwnd)))
-                    SendMessageW(hwnd, WM_SETICON, ICON_BIG, LPARAM(icon));
+                applyIcons(hwnd);
             }
 #else
         (void)e;
@@ -79,7 +123,17 @@ protected:
     }
 
 private:
+    bool mMono = false;
+
 #ifdef _WIN32
+    void applyIcons(HWND hwnd)
+    {
+        if (HICON icon = smallIcon())
+            SendMessageW(hwnd, WM_SETICON, ICON_SMALL, LPARAM(icon));
+        if (HICON icon = bigIcon(GetDpiForWindow(hwnd)))
+            SendMessageW(hwnd, WM_SETICON, ICON_BIG, LPARAM(icon));
+    }
+
     HICON smallIcon()
     {
         if (!mSmallIcon)
@@ -97,7 +151,7 @@ private:
         HICON& icon = mBigIcons[dpi];
         if (!icon)
         {
-            auto path = paths::resourcesDir() / "icons" / "lila.ico";
+            auto path = paths::resourcesDir() / "icons" / (mMono ? "lila_grey.ico" : "lila.ico");
             int size = GetSystemMetricsForDpi(SM_CXICON, dpi);
             icon = HICON(LoadImageW(nullptr, path.wstring().c_str(), IMAGE_ICON, size, size, LR_LOADFROMFILE));
         }
@@ -133,7 +187,7 @@ void applyTheme(QApplication& app)
     app.setStyle(new NoAltMenuStyle(QStyleFactory::create("Fusion")));
 
     loadBundledFonts();
-    app.setWindowIcon(QIcon(QString::fromStdWString((paths::resourcesDir() / "icons" / "lila_color.png").wstring())));
+    app.setWindowIcon(appIcon(monotone()));
     PrefStore& prefs = PrefStore::get();
     QFont ui(QString::fromStdString(prefs.value<std::string>("general", "/ui/font", "Inter")));
     ui.setPointSizeF(prefs.value<double>("general", "/ui/fontSize", 9.0));
@@ -170,7 +224,17 @@ void applyTheme(QApplication& app)
     p.setColor(QPalette::Disabled, QPalette::Highlight, gray(70));
     app.setPalette(p);
 
-    app.installEventFilter(new DarkTitleBars(&app));
+    auto* titleBars = new DarkTitleBars(&app);
+    app.installEventFilter(titleBars);
+    QPointer<DarkTitleBars> bars(titleBars);
+    PrefStore::get().onChanged([bars](const std::string& file) {
+        if (file != "general")
+            return;
+        QTimer::singleShot(0, qApp, [bars] {
+            if (bars)
+                bars->setMonotone(monotone());
+        });
+    });
 
     app.setStyleSheet(R"(
         QToolTip { border: 1px solid #555; padding: 3px; }

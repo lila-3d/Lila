@@ -58,7 +58,7 @@ geo::Mesh paintedCube()
 std::string mesh(const char* kind, const char* name, json extra = json::object())
 {
     extra["name"] = name;
-    extra["history"] = false;
+    extra["generator"] = false;
     return run(kind, extra)[0].get<std::string>();
 }
 } // namespace

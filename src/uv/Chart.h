@@ -78,6 +78,9 @@ LILA_SCENE_API std::vector<Chart> buildCharts(const geo::Mesh& mesh, std::span<c
 /** Face id lists of the islands, without building chart geometry. */
 LILA_SCENE_API std::vector<std::vector<Index>> islandFaces(const geo::Mesh& mesh, std::span<const Index> faces = {}, const ChartOptions& opts = {});
 
+/** Every face of the islands (among all live faces) that hold at least one of the seed faces, ascending. */
+LILA_SCENE_API std::vector<Index> islandsOfFaces(const geo::Mesh& mesh, std::span<const Index> seeds, const ChartOptions& opts = {});
+
 /** Writes each chart's vertex uvs into its corners, adding the uv set if needed. */
 LILA_SCENE_API void writeCharts(geo::Mesh& mesh, std::span<const Chart> charts, std::string_view uvSet = "uv0");
 

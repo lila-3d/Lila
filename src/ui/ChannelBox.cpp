@@ -15,6 +15,9 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QComboBox>
+#include <QPainter>
+#include <QStyledItemDelegate>
 #include <QKeyEvent>
 #include <QHeaderView>
 #include <QLabel>
@@ -48,6 +51,78 @@ QString niceName(const std::string& name)
     }
     return out;
 }
+
+/** An enum channel's choices: the node's spaces for its space channel, else the attr's names. */
+std::vector<std::string> enumChoices(const Graph& g, scene::NodeId owner, int attrIndex)
+{
+    if (attrIndex == scene::Transform::kSpace && scene::spaces::hasSpaces(g, owner))
+        return scene::spaces::names(g, owner);
+    const scene::Node* n = g.node(owner);
+    return n && attrIndex >= 0 && attrIndex < int(n->type().attrs.size()) ? n->type().attrs[size_t(attrIndex)].enumNames
+                                                                           : std::vector<std::string>();
+}
+
+/**
+ * Enum values edit through a dropdown of their choices, which writes the chosen name back as the cell's text; the
+ * cell shows a chevron so it reads as one. Other cells keep the line edit.
+ */
+class EnumDelegate : public QStyledItemDelegate
+{
+public:
+    EnumDelegate(std::function<QStringList(int row)> choices, QObject* parent) : QStyledItemDelegate(parent), mChoices(std::move(choices)) {}
+
+    QWidget* createEditor(QWidget* parent, const QStyleOptionViewItem& option, const QModelIndex& index) const override
+    {
+        QStringList choices = mChoices(index.row());
+        if (choices.isEmpty())
+            return QStyledItemDelegate::createEditor(parent, option, index);
+        auto* combo = new QComboBox(parent);
+        combo->addItems(choices);
+        connect(combo, &QComboBox::activated, combo, [this, combo] {
+            auto* self = const_cast<EnumDelegate*>(this);
+            emit self->commitData(combo);
+            emit self->closeEditor(combo);
+        });
+        QTimer::singleShot(0, combo, [combo] { combo->showPopup(); });
+        return combo;
+    }
+
+    void setEditorData(QWidget* editor, const QModelIndex& index) const override
+    {
+        if (auto* combo = qobject_cast<QComboBox*>(editor))
+            combo->setCurrentIndex(std::max(0, combo->findText(index.data(Qt::DisplayRole).toString())));
+        else
+            QStyledItemDelegate::setEditorData(editor, index);
+    }
+
+    void setModelData(QWidget* editor, QAbstractItemModel* model, const QModelIndex& index) const override
+    {
+        if (auto* combo = qobject_cast<QComboBox*>(editor))
+            model->setData(index, combo->currentText());
+        else
+            QStyledItemDelegate::setModelData(editor, model, index);
+    }
+
+    void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override
+    {
+        QStyledItemDelegate::paint(painter, option, index);
+        if (mChoices(index.row()).isEmpty())
+            return;
+        const QRectF r = option.rect;
+        const double cx = r.right() - 7.0, cy = r.center().y() + 0.5;
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing);
+        QColor c = index.data(Qt::ForegroundRole).value<QBrush>().color();
+        if (!index.data(Qt::ForegroundRole).isValid())
+            c = option.palette.color(QPalette::Text);
+        painter->setPen(QPen(c, 1.2));
+        painter->drawPolyline(QPolygonF({QPointF(cx - 3.0, cy - 1.5), QPointF(cx, cy + 1.5), QPointF(cx + 3.0, cy - 1.5)}));
+        painter->restore();
+    }
+
+private:
+    std::function<QStringList(int row)> mChoices;
+};
 
 QString formatNumber(double v)
 {
@@ -222,6 +297,16 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
         if (!mUpdating)
             commitCell(item);
     });
+    mTable->setItemDelegateForColumn(1, new EnumDelegate(
+                                            [this](int r) {
+                                                QStringList out;
+                                                if (r < 0 || r >= int(mRows.size()) || mRows[r].header || mRows[r].type != scene::PlugType::Enum)
+                                                    return out;
+                                                for (const std::string& c : enumChoices(Graph::current(), mRows[r].node ? mRows[r].node : mNode, mRows[r].attrIndex))
+                                                    out << QString::fromStdString(c);
+                                                return out;
+                                            },
+                                            mTable));
 
     mListener = Graph::current().addListener([this](scene::Change, scene::NodeId) { scheduleRefresh(); });
     onTimeChanged(this, [this] { scheduleRefresh(); });
@@ -613,6 +698,19 @@ bool ChannelBox::eventFilter(QObject* obj, QEvent* e)
         }
         break;
     case QEvent::MouseButtonPress:
+        if (me->button() == Qt::LeftButton && me->modifiers() == Qt::NoModifier)
+        {
+            QModelIndex idx = mTable->indexAt(me->position().toPoint());
+            if (idx.isValid() && idx.column() == 1 && idx.row() < int(mRows.size()) && !mRows[idx.row()].header &&
+                mRows[idx.row()].type == scene::PlugType::Enum)
+            {
+                const int row = idx.row();
+                QTimer::singleShot(0, this, [this, row] {
+                    if (QTableWidgetItem* cell = mTable->item(row, 1); cell && (cell->flags() & Qt::ItemIsEditable))
+                        mTable->editItem(cell);
+                });
+            }
+        }
         // Left button is the view's own selection (drag a range, Ctrl toggle, Shift extend); middle drag is the virtual slider.
         if (me->button() == Qt::MiddleButton)
         {

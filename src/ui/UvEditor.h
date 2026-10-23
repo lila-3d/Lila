@@ -11,7 +11,9 @@
 
 class QComboBox;
 class QDoubleSpinBox;
+class QHideEvent;
 class QLabel;
+class QShowEvent;
 class QSpinBox;
 
 namespace lila::ui
@@ -35,6 +37,10 @@ public:
     ~UvEditor() override;
 
     UvView* view() const { return mView; }
+
+protected:
+    void showEvent(QShowEvent* e) override;
+    void hideEvent(QHideEvent* e) override;
 
 private:
     /** Runs a command from the UI (echoed), logging failures; returns its result or null. */

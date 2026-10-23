@@ -165,6 +165,8 @@ std::optional<bool> viewportActionState(const std::string& id, const ViewportWid
         {"viewport.monotone", vd::kMonotone, false},
         {"viewport.togglePreselectObjects", "/viewport/preselect/objects", false},
         {"measure.toggleShow", "/measure/show", true},
+        {"select.toggleCameraBased", "/select/cameraBased", false},
+        {"select.toggleBackfaceCulling", "/select/backfaceCulling", false},
     };
     for (const Toggle& t : toggles)
         if (id == t.id)

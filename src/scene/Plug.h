@@ -89,6 +89,8 @@ struct AttrDef
      * to the default, so a default that changes keeps its old value here and older files load unchanged.
      */
     std::optional<PlugValue> fileDefault;
+    /** An older name scene files may store this attr under. Only loading reads it. */
+    std::string fileAlias;
 
     /** The value scene files omit and assume when the attr is absent. */
     const PlugValue& storedDefault() const { return fileDefault ? *fileDefault : defaultValue; }

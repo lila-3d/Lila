@@ -13,6 +13,7 @@ lila_module(lila_scene Scene
     ComponentPick.cpp
     ComponentQuery.cpp
     Components.cpp
+    SelectPaths.cpp
     Constraint.cpp
     Deformers.cpp
     DisplayLayers.cpp

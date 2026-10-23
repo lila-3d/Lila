@@ -134,7 +134,7 @@ TEST_CASE("progress overlay: a scene open with the editors up stays quick")
     {
         run("newScene");
         for (int i = 0; i < 60; ++i)
-            run("polySphere", {{"name", "Ball" + std::to_string(i)}, {"subdivisionsAxis", 48}, {"subdivisionsHeight", 48}, {"history", false}});
+            run("polySphere", {{"name", "Ball" + std::to_string(i)}, {"subdivisionsAxis", 48}, {"subdivisionsHeight", 48}, {"generator", false}});
         path = (std::filesystem::temp_directory_path() / "lila_dock_tests" / "progress_scene.lila").generic_string();
         run("saveScene", {{"args", {path}}});
         run("newScene");

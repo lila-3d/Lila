@@ -24,7 +24,7 @@
 namespace lila::ui
 {
 /**
- * An interactive viewport tool (weight paint, quad draw, sculpt, knife...). While one is active the viewport offers it
+ * An interactive viewport tool (weight paint, retopo draw, sculpt, knife...). While one is active the viewport offers it
  * every mouse and key event first, except Alt navigation; returning true consumes the event. draw() adds to the
  * frame: 3D lines and meshes into `s`, 2D overlay into `p`.
  */

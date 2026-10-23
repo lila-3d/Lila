@@ -152,11 +152,12 @@ NodeType MeshNode::makeType(const NodeType& base)
         {.name = "symmetry", .type = PlugType::Enum, .defaultValue = int64_t(0), .flags = AttrInput | AttrStorable,
          .enumNames = {"off", "x", "y", "z"}, .doc = "Mirror plane (object space) every component edit is applied across."},
         {.name = "smoothPreview", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = AttrInput | AttrStorable,
-         .doc = "Display-only Catmull-Clark levels (Maya's 3 key); exports stay unsmoothed."},
-        {.name = "quadDrawReference", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden,
-         .doc = "Quad Draw's reference surface: connected from its outMesh when this mesh is being drawn over another."},
-        {.name = "quadDrawDots", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrHidden,
-         .doc = "Quad Draw's unconnected dots, a JSON list of object-space [x, y, z]."},
+         .doc = "Display-only Catmull-Clark levels (the 3 key); exports stay unsmoothed."},
+        {.name = "retopoDrawReference", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden,
+         .doc = "Retopo Draw's reference surface: connected from its outMesh when this mesh is being drawn over another.",
+         .fileAlias = "quadDrawReference"},
+        {.name = "retopoDrawDots", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrHidden,
+         .doc = "Retopo Draw's unconnected dots, a JSON list of object-space [x, y, z].", .fileAlias = "quadDrawDots"},
     };
     t.create = [] { return std::make_unique<MeshNode>(); };
     return t;
@@ -236,14 +237,14 @@ void registerMeshCommands()
         std::vector<FlagDef> flags = {
             {"name", "n", T::String, nullptr, "Name of the mesh; made unique."},
             {"position", "", T::Vec3, nullptr, "World position."},
-            {"history", "", T::Bool, true, "Keep the generator node so its parameters stay editable."},
+            {"generator", "", T::Bool, true, "Keep the generator node so its parameters stay editable."},
         };
         for (const AttrDef& a : p.attrs)
             flags.push_back({a.name, "", a.type == PlugType::Bool ? T::Bool : a.type == PlugType::Int ? T::Int : T::Float, nullptr, a.doc});
         std::string type = p.type, display = p.display;
         ops::registerCommand({
             .name = type,
-            .doc = std::string("Create a ") + p.display + " mesh. Returns [mesh, generator] (generator is None without history).",
+            .doc = std::string("Create a ") + p.display + " mesh. Returns [mesh, generator] (generator is None with generator=False).",
             .flags = flags,
             .run = [type, display](const Args& a) -> json {
                 Graph& g = graph();
@@ -261,7 +262,7 @@ void registerMeshCommands()
                     g.setValue({mesh->id(), Transform::kTranslate, -1},
                                glm::dvec3(a.flags["position"][0], a.flags["position"][1], a.flags["position"][2]));
                 json genName = gen->name();
-                if (!a.get<bool>("history", true))
+                if (!a.get<bool>("generator", true))
                 {
                     g.evaluate();
                     MeshPtr baked = mesh->as<MeshPtr>(MeshNode::kOutMesh);
@@ -277,23 +278,8 @@ void registerMeshCommands()
     }
 
     ops::registerCommand({
-        .name = "deleteHistory",
-        .doc = "Bake meshes to their current result and delete the generators and modifiers feeding them.",
-        .positionalDoc = "objects",
-        .run = [](const Args& a) -> json {
-            json meshes = json::array();
-            for (const std::string& name : a.objects())
-                if (nodeNamed(name).type().isA("mesh"))
-                    meshes.push_back(name);
-            if (!meshes.empty())
-                ops::execute("collapseStack", {{"args", meshes}});
-            return nullptr;
-        },
-    });
-
-    ops::registerCommand({
         .name = "smoothPreview",
-        .doc = "Display meshes subdivided without changing them (Maya's 1/2/3 keys). level 0 is off.",
+        .doc = "Display meshes subdivided without changing them (the 1/2/3 keys). level 0 is off.",
         .positionalDoc = "objects",
         .flags = {{"level", "", T::Int, 2, "Subdivision levels to display (0 to 3)."}},
         .run = [](const Args& a) -> json {

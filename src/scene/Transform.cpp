@@ -201,7 +201,7 @@ NodeType Transform::makeType()
         {.name = "displayLayer", .shortName = "dl", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = AttrInput | AttrHidden,
          .doc = "Display layer membership: connected from a displayLayer's drawInfo."},
         unkeyable(vec3("rotateAxis", "ra", glm::dvec3(0.0),
-                       "Rotation applied before rotate, Euler XYZ degrees: orients the rotation axes, as Maya's rotateAxis.")),
+                       "Rotation applied before rotate, Euler XYZ degrees: orients the rotation axes.")),
         rotationInterpolationAttr(0),
         {.name = "space", .shortName = "spc", .type = PlugType::Enum, .defaultValue = int64_t(0),
          .flags = AttrInput | AttrStorable | AttrKeyable | AttrHidden | AttrResetOnDisconnect,

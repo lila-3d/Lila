@@ -378,7 +378,7 @@ void registerCommands()
     exportFlags.push_back({"dryRun", "dr", T::Bool, false, "Only list the files and what goes in each, writing nothing."});
     ops::registerCommand({
         .name = "gameExport",
-        .doc = "Maya's Game Exporter (Model tab): export everything, the selection, or object sets to FBX or OBJ, as one "
+        .doc = "Export everything, the selection, or object sets to FBX or OBJ, as one "
                "file, a file per set or a file per object. Returns the paths written, or with dryRun=True "
                "[{file, nodes}] without writing.",
         .flags = exportFlags,

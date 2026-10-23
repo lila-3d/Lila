@@ -24,6 +24,7 @@ namespace
 {
 constexpr const char* kRigLayout = "Puppeteer Rig";
 constexpr const char* kAnimateLayout = "Puppeteer Animate";
+constexpr const char* kShelf = "Puppeteer";
 constexpr const char* kGraphDock = "graphEditor";
 constexpr const char* kTimeSliderDock = "timeSlider";
 constexpr const char* kBaseSelection = "lila.dominantInfluence";
@@ -219,6 +220,29 @@ void registerMenus(ext::Context& ctx)
         menus::addItem(ctx, {.menu = "Puppeteer", .action = a});
 }
 
+void registerShelf(ext::Context& ctx)
+{
+    json items = json::array();
+    for (auto [label, iconName, target] : {std::tuple{"Rig", "bone", "mode.puppeteerRig"},
+                                           {"Animate", "walk", "mode.puppeteerAnimate"},
+                                           {"Character", "user-plus", "puppeteer.rig.character"},
+                                           {"Joints", "hierarchy-2", "puppeteer.joint.create"},
+                                           {"Orient", "compass", "puppeteer.joint.orient"},
+                                           {"Mirror", "flip-horizontal", "puppeteer.joint.mirror"},
+                                           {"IK Chain", "vector", "puppeteer.rig.ikChain"},
+                                           {"Foot", "shoe", "puppeteer.rig.reverseFoot"},
+                                           {"Looker", "eye", "puppeteer.rig.looker"},
+                                           {"Spaces", "world", "puppeteer.rig.space"},
+                                           {"Lock", "lock", "puppeteer.anim.lock"},
+                                           {"Match", "target", "puppeteer.anim.matchControllers"},
+                                           {"Stacker", "list-numbers", "window.puppeteerStacker"},
+                                           {"Mixer", "stack-2", "window.puppeteerMixer"},
+                                           {"Bank", "movie", "window.puppeteerAnimBank"},
+                                           {"Cycles", "repeat", "window.puppeteerCycleMaker"}})
+        items.push_back({{"label", label}, {"icon", iconName}, {"target", target}});
+    shelves::add(ctx, {kShelf, std::move(items)});
+}
+
 void registerModeBundles(ext::Context& ctx)
 {
     layouts::add(ctx, kRigLayout,
@@ -252,6 +276,7 @@ void registerModeBundles(ext::Context& ctx)
                      .icon = "bone",
                      .layout = kRigLayout,
                      .hotkeys = rigKeys,
+                     .shelf = kShelf,
                      .gizmoProvider = kSpinnerGizmo,
                      .selectionHandler = kRigSelection});
     modes::add(ctx, {.id = kAnimateMode,
@@ -261,6 +286,7 @@ void registerModeBundles(ext::Context& ctx)
                      .icon = "walk",
                      .layout = kAnimateLayout,
                      .hotkeys = animKeys,
+                     .shelf = kShelf,
                      .gizmoProvider = kSpinnerGizmo,
                      .selectionHandler = kAnimateSelection,
                      // Animating starts in Rotate, whatever tool was on before.
@@ -278,6 +304,7 @@ void registerModes(ext::Context& ctx)
     registerActions(ctx);
     registerMenus(ctx);
     registerModeBundles(ctx);
+    registerShelf(ctx);
     // Unloading while swapped must give the window its viewports back.
     ctx.track("puppeteer:graphSwap", [] { setGraphFullScreen(false); });
 }

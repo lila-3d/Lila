@@ -327,6 +327,17 @@ void LayoutController::applyPreset(const json& preset)
     for (QDockWidget* d : mWindow->findChildren<QDockWidget*>())
         if (d->parentWidget() == mWindow && !d->objectName().isEmpty())
             d->setVisible(open.count(d->objectName().toStdString()) > 0);
+    // splitDockWidget can't take a dock out of a tab group (it tabs it again), so the dock is re-added to its area instead.
+    for (const json& n : preset.value("bottom", json::array()))
+    {
+        QDockWidget* d = n.is_string() ? dock(QString::fromStdString(n.get<std::string>())) : nullptr;
+        Qt::DockWidgetArea area = d ? mWindow->dockWidgetArea(d) : Qt::NoDockWidgetArea;
+        if (!d || d->isHidden() || d->isFloating() || area == Qt::NoDockWidgetArea)
+            continue;
+        mWindow->removeDockWidget(d);
+        mWindow->addDockWidget(area, d, Qt::Vertical);
+        d->show();
+    }
     // A dock just shown has no tab until the dock layout updates, so raising it now would be a no-op.
     json raise = preset.value("raise", json::array());
     QTimer::singleShot(0, mWindow, [this, raise] {

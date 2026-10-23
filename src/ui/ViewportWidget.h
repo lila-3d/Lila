@@ -9,6 +9,7 @@
 #include "ui/CameraHistory.h"
 #include "ui/Gizmo.h"
 #include "ui/Overlay.h"
+#include "ui/PaintSelect.h"
 #include "ui/SelectionHandlers.h"
 #include "ui/Tools.h"
 #include "ui/ViewportState.h"
@@ -57,6 +58,10 @@ public:
     scene::NodeId lookThroughCamera() const { return mLookThrough; }
     /** Back to the view shown before looking through a camera node. */
     void stopLookingThrough() { setView(mReturnView); }
+    /** The built-in view shown (the one to return to while looking through) and its cameras, as scenes save them. */
+    nlohmann::json cameraState() const;
+    /** Takes what cameraState wrote: shows that view with those poses. Leaves any look-through first. */
+    void restoreCameraState(const nlohmann::json& state);
     /** Shows only the current selection (and its children) in this view; again to show everything. */
     void toggleIsolate();
     bool isolating() const { return !mIsolated.empty(); }
@@ -81,6 +86,7 @@ protected:
     void mouseMoveEvent(QMouseEvent* e) override;
     void leaveEvent(QEvent* e) override;
     void mouseReleaseEvent(QMouseEvent* e) override;
+    void mouseDoubleClickEvent(QMouseEvent* e) override;
     void wheelEvent(QWheelEvent* e) override;
     void keyPressEvent(QKeyEvent* e) override;
     bool event(QEvent* e) override;
@@ -128,6 +134,8 @@ private:
     void pick(QPointF a, QPointF b, Qt::KeyboardModifiers mods);
     /** Component-mode picking on the hilited meshes. */
     void pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers mods);
+    /** Double-click in a component mode: the loop through what is under the cursor, or with Shift the path to the last click. */
+    bool selectLoopAt(QPointF at, Qt::KeyboardModifiers mods);
     void drawComponents(render::FrameState& s);
     /** What a click at the point would select in the current component mode: the nearest visible component. */
     scene::componentPick::Hover componentAt(QPointF at);
@@ -185,6 +193,12 @@ private:
     QPointF mPressPos;
     bool mSelecting = false;
     bool mMarquee = false;
+    /** Tab held over this view with a select or transform tool: LMB drags paint the selection (mTabStroke). */
+    bool mTabHeld = false;
+    paintSelect::Stroke mTabStroke;
+    bool mSwallowRelease = false; // the release ending a double-click that already selected
+    /** The last two components clicked, newest first: Shift+double-click selects the path between them. */
+    scene::componentPick::Hover mClicked[2];
     bool mFrameQueued = false;
     int mGraphListener = 0;
     int mPrefListener = 0;

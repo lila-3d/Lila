@@ -61,7 +61,7 @@ lila_module(lila_ui UI
     Overlay.cpp Overlay.h
     CursorBadges.cpp CursorBadges.h
     Panels.cpp Panels.h
-    QuadDrawTool.cpp QuadDrawTool.h
+    RetopoDrawTool.cpp RetopoDrawTool.h
     KnifeTool.cpp KnifeTool.h
     PythonBridge.cpp PythonBridge.h
     RigViewport.cpp RigViewport.h WeightPaintTool.cpp WeightPaintTool.h
@@ -100,6 +100,7 @@ lila_module(lila_ui UI
     ViewportLayout.cpp ViewportLayout.h
     ViewportToolbar.cpp ViewportToolbar.h
     VertexPaintTool.cpp VertexPaintTool.h
+    PaintSelect.cpp PaintSelect.h
     ViewportTool.cpp ViewportTool.h
     ViewportWidget.cpp ViewportWidget.h)
 

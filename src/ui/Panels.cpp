@@ -107,7 +107,7 @@ void registerPanelActions()
                   .doc = "Lists the scene's references: load, unload, reload, import or remove them. Again to tuck it away.",
                   .python = "lila.ui.run_action(\"window.referenceEditor\")"});
     actions::add({.id = "window.displayLayers", .label = "Display Layers", .category = "Windows", .run = [] { toggle(kDisplayLayersDock); },
-                  .doc = "Maya's display layer editor: show, hide, template or reference groups of objects together.",
+                  .doc = "Display layer editor: show, hide, template or reference groups of objects together.",
                   .python = "lila.ui.run_action(\"window.displayLayers\")"});
     registerDisplayLayerActions();
     actions::add({.id = "window.undoHistory", .label = "Undo History", .category = "Windows", .run = [] { toggle(kUndoHistoryDock); },

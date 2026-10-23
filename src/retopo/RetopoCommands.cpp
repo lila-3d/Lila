@@ -218,7 +218,7 @@ std::vector<uint8_t> selectedPointMask(scene::NodeId node, const geo::Mesh& base
     return geo::makeMask(base.pointCapacity(), pts);
 }
 
-// Quad Draw edits
+// Retopo Draw edits
 
 /** Existing point within tol of p (object space), or a new one. */
 Index pointAt(geo::Mesh& m, const glm::dvec3& p, double tol)
@@ -270,8 +270,8 @@ Index addOrientedFace(geo::Mesh& m, std::vector<Index> pts)
     return m.addFace(pts);
 }
 
-/** The retopo mesh, created on demand. With reference=, that mesh's outMesh is connected as its Quad Draw reference. */
-Node& quadDrawTarget(const Args& a, const char* cmd, bool create)
+/** The retopo mesh, created on demand. With reference=, that mesh's outMesh is connected as its Retopo Draw reference. */
+Node& retopoDrawTarget(const Args& a, const char* cmd, bool create)
 {
     std::string name = a.get<std::string>("mesh");
     if (name.empty())
@@ -292,7 +292,7 @@ Node& quadDrawTarget(const Args& a, const char* cmd, bool create)
     {
         if (ref->id() == n->id())
             throw CommandError(std::string(cmd) + ": the reference can't be the retopo mesh itself");
-        PlugRef dst{n->id(), MeshNode::kQuadDrawReference, -1};
+        PlugRef dst{n->id(), MeshNode::kRetopoDrawReference, -1};
         if (auto src = g.source(dst); !src || src->node != ref->id())
             g.connect({ref->id(), MeshNode::kOutMesh, -1}, dst, true);
         if (created)
@@ -604,49 +604,66 @@ void registerCommands()
     });
 
     ops::registerCommand({
-        .name = "quadDrawAddFace",
-        .doc = "Quad Draw: add a face through world points, reusing existing points within weld distance (and its mirror when "
-               "the mesh has symmetry). Creates the mesh when create=True. Returns the mesh name.",
+        .name = "retopoDrawAddFace",
+        .doc = "Retopo Draw: add a face through world points, reusing existing points within weld distance (and its mirror when "
+               "the mesh has symmetry). faces= adds several in one step, skipping any that already exist or would make a "
+               "non-manifold edge. Creates the mesh when create=True. Returns the mesh name.",
         .flags = {{"mesh", "", T::String, nullptr, "Retopo mesh."},
                   {"points", "", T::List, nullptr, "3 or 4 world [x, y, z], in order around the face."},
+                  {"faces", "", T::List, nullptr, "Several faces, each a list of 3 or 4 world [x, y, z]."},
                   {"weld", "", T::Float, 0.01, "Reuse points closer than this, cm."},
-                  {"reference", "", T::String, nullptr, "Reference mesh, connected so Quad Draw resumes on this pair later."},
+                  {"reference", "", T::String, nullptr, "Reference mesh, connected so Retopo Draw resumes on this pair later."},
                   {"create", "", T::Bool, false, "Create the mesh if it doesn't exist (taking the reference's symmetry)."}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
-            Node& n = quadDrawTarget(a, "quadDrawAddFace", a.get<bool>("create"));
-            std::vector<glm::dvec3> world = vecList(a.flags.value("points", json::array()), "quadDrawAddFace");
-            if (world.size() < 3 || world.size() > 4)
-                throw CommandError("quadDrawAddFace: give 3 or 4 points");
+            Node& n = retopoDrawTarget(a, "retopoDrawAddFace", a.get<bool>("create"));
+            const bool many = a.flags.contains("faces") && !a.flags["faces"].is_null();
+            std::vector<std::vector<glm::dvec3>> worldFaces;
+            if (many)
+                for (const json& face : a.flags["faces"])
+                    worldFaces.push_back(vecList(face, "retopoDrawAddFace"));
+            else
+                worldFaces.push_back(vecList(a.flags.value("points", json::array()), "retopoDrawAddFace"));
+            if (worldFaces.empty())
+                throw CommandError("retopoDrawAddFace: give points= or faces=");
+            for (const std::vector<glm::dvec3>& world : worldFaces)
+                if (world.size() < 3 || world.size() > 4)
+                    throw CommandError("retopoDrawAddFace: give 3 or 4 points per face");
             PlugRef base = scene::modifiers::editPlug(g, n.id());
             geo::Mesh m = baseMesh(base);
             glm::dmat4 toLocal = glm::inverse(worldOf(n));
             double weld = std::max(0.0, a.get<double>("weld"));
-            std::vector<glm::dvec3> local;
-            for (const glm::dvec3& p : world)
-                local.push_back(glm::dvec3(toLocal * glm::dvec4(p, 1.0)));
             auto sym = symmetryPlane(n);
             double planeTol = std::max(weld, symmetryTolerance(m));
-            if (sym)
-                for (glm::dvec3& p : local)
-                    if (std::abs(sym->distance(p)) < planeTol)
-                        p = sym->project(p);
             auto build = [&](const std::vector<glm::dvec3>& ps) {
                 std::vector<Index> ids;
                 for (const glm::dvec3& p : ps)
                     ids.push_back(pointAt(m, p, weld));
                 return addOrientedFace(m, ids);
             };
-            Index f = build(local);
-            if (sym)
+            int added = 0;
+            for (const std::vector<glm::dvec3>& world : worldFaces)
             {
-                std::vector<glm::dvec3> mirrored;
-                for (auto it = local.rbegin(); it != local.rend(); ++it)
-                    mirrored.push_back(sym->reflect(*it));
-                build(mirrored);
+                std::vector<glm::dvec3> local;
+                for (const glm::dvec3& p : world)
+                    local.push_back(glm::dvec3(toLocal * glm::dvec4(p, 1.0)));
+                if (sym)
+                    for (glm::dvec3& p : local)
+                        if (std::abs(sym->distance(p)) < planeTol)
+                            p = sym->project(p);
+                Index f = build(local);
+                if (sym)
+                {
+                    std::vector<glm::dvec3> mirrored;
+                    for (auto it = local.rbegin(); it != local.rend(); ++it)
+                        mirrored.push_back(sym->reflect(*it));
+                    build(mirrored);
+                }
+                added += f != geo::kInvalid;
             }
-            if (f == geo::kInvalid)
-                throw CommandError("quadDrawAddFace: that face already exists or would make a non-manifold edge");
+            if (added == 0)
+                throw CommandError(many ? "retopoDrawAddFace: those faces already exist or would make non-manifold edges"
+                                        : "retopoDrawAddFace: that face already exists or would make a non-manifold edge");
             m.removeAllLoose();
             m.compact();
             g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
@@ -655,17 +672,17 @@ void registerCommands()
     });
 
     ops::registerCommand({
-        .name = "quadDrawSetDots",
-        .doc = "Quad Draw: replace the retopo mesh's dots (the loose points a fill turns into a face) with world points. "
+        .name = "retopoDrawSetDots",
+        .doc = "Retopo Draw: replace the retopo mesh's dots (the loose points a fill turns into a face) with world points. "
                "Creates the mesh when create=True. Returns the mesh name.",
         .flags = {{"mesh", "", T::String, nullptr, "Retopo mesh."},
                   {"dots", "", T::List, json::array(), "World [x, y, z] per dot."},
-                  {"reference", "", T::String, nullptr, "Reference mesh, connected so Quad Draw resumes on this pair later."},
+                  {"reference", "", T::String, nullptr, "Reference mesh, connected so Retopo Draw resumes on this pair later."},
                   {"create", "", T::Bool, false, "Create the mesh if it doesn't exist (taking the reference's symmetry)."}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
-            Node& n = quadDrawTarget(a, "quadDrawSetDots", a.get<bool>("create"));
-            std::vector<glm::dvec3> world = vecList(a.flags["dots"], "quadDrawSetDots");
+            Node& n = retopoDrawTarget(a, "retopoDrawSetDots", a.get<bool>("create"));
+            std::vector<glm::dvec3> world = vecList(a.flags["dots"], "retopoDrawSetDots");
             g.evaluate();
             glm::dmat4 toLocal = glm::inverse(worldOf(n));
             json local = json::array();
@@ -675,21 +692,21 @@ void registerCommands()
                 local.push_back({l.x, l.y, l.z});
             }
             std::string text = local.empty() ? std::string() : local.dump();
-            if (n.as<std::string>(MeshNode::kQuadDrawDots) != text)
-                g.setValue({n.id(), MeshNode::kQuadDrawDots, -1}, text);
+            if (n.as<std::string>(MeshNode::kRetopoDrawDots) != text)
+                g.setValue({n.id(), MeshNode::kRetopoDrawDots, -1}, text);
             return n.name();
         },
     });
 
     ops::registerCommand({
-        .name = "quadDrawDelete",
-        .doc = "Quad Draw: delete faces and points (base mesh ids) of the retopo mesh, mirrored with symmetry.",
+        .name = "retopoDrawDelete",
+        .doc = "Retopo Draw: delete faces and points (base mesh ids) of the retopo mesh, mirrored with symmetry.",
         .flags = {{"mesh", "", T::String, nullptr, "Retopo mesh."},
                   {"faces", "", T::List, json::array(), "Face ids."},
                   {"points", "", T::List, json::array(), "Point ids."}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
-            Node& n = quadDrawTarget(a, "quadDrawDelete", false);
+            Node& n = retopoDrawTarget(a, "retopoDrawDelete", false);
             PlugRef base = scene::modifiers::editPlug(g, n.id());
             geo::Mesh m = baseMesh(base);
             std::optional<geo::SymmetryMap> map;
@@ -707,19 +724,19 @@ void registerCommands()
     });
 
     ops::registerCommand({
-        .name = "quadDrawMove",
-        .doc = "Quad Draw: move points (base mesh ids) to world positions; mirror partners follow with symmetry.",
+        .name = "retopoDrawMove",
+        .doc = "Retopo Draw: move points (base mesh ids) to world positions; mirror partners follow with symmetry.",
         .flags = {{"mesh", "", T::String, nullptr, "Retopo mesh."},
                   {"points", "", T::List, json::array(), "Point ids."},
                   {"positions", "", T::List, json::array(), "World [x, y, z] per point."},
                   {"weld", "", T::Float, 0.0, "Merge a moved point into another point closer than this, cm."}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
-            Node& n = quadDrawTarget(a, "quadDrawMove", false);
+            Node& n = retopoDrawTarget(a, "retopoDrawMove", false);
             std::vector<Index> points = a.flags["points"].get<std::vector<Index>>();
-            std::vector<glm::dvec3> world = vecList(a.flags["positions"], "quadDrawMove");
+            std::vector<glm::dvec3> world = vecList(a.flags["positions"], "retopoDrawMove");
             if (points.size() != world.size())
-                throw CommandError("quadDrawMove: points and positions differ in length");
+                throw CommandError("retopoDrawMove: points and positions differ in length");
             PlugRef base = scene::modifiers::editPlug(g, n.id());
             geo::Mesh m = baseMesh(base);
             std::optional<geo::SymmetryMap> map;
@@ -741,7 +758,7 @@ void registerCommands()
             }
             if (double weld = a.get<double>("weld"); weld > 0.0)
             {
-                // Dropping a point onto another merges them, like Quad Draw's auto-weld.
+                // Dropping a point onto another merges them, like Retopo Draw's auto-weld.
                 std::vector<Index> target(m.pointCapacity(), geo::kInvalid);
                 bool any = false;
                 for (Index p : points)
@@ -768,21 +785,21 @@ void registerCommands()
     });
 
     ops::registerCommand({
-        .name = "quadDrawInsertLoop",
-        .doc = "Quad Draw: insert an edge loop across the ring through an edge (base mesh id), mirrored with symmetry.",
+        .name = "retopoDrawInsertLoop",
+        .doc = "Retopo Draw: insert an edge loop across the ring through an edge (base mesh id), mirrored with symmetry.",
         .flags = {{"mesh", "", T::String, nullptr, "Retopo mesh."},
                   {"edge", "", T::Int, nullptr, "An edge the loop crosses."},
                   {"fraction", "", T::Float, 0.5, "Where along the ring edges, 0 to 1."}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
-            Node& n = quadDrawTarget(a, "quadDrawInsertLoop", false);
+            Node& n = retopoDrawTarget(a, "retopoDrawInsertLoop", false);
             if (!a.has("edge"))
-                throw CommandError("quadDrawInsertLoop: give edge=");
+                throw CommandError("retopoDrawInsertLoop: give edge=");
             PlugRef base = scene::modifiers::editPlug(g, n.id());
             geo::Mesh m = baseMesh(base);
             Index e = Index(a.get<int>("edge"));
             if (!m.edgeValid(e))
-                throw CommandError("quadDrawInsertLoop: no such edge");
+                throw CommandError("retopoDrawInsertLoop: no such edge");
             Index mirrorEdge = geo::kInvalid;
             std::vector<Index> ring = geo::edgeRing(m, e);
             if (auto plane = symmetryPlane(n))
@@ -813,20 +830,20 @@ void registerCommands()
     });
 }
 
-scene::NodeId quadDrawReference(const scene::Graph& g, scene::NodeId retopo)
+scene::NodeId retopoDrawReference(const scene::Graph& g, scene::NodeId retopo)
 {
     Node* n = g.node(retopo);
     if (!n || !n->type().isA("mesh"))
         return scene::kNoNode;
-    auto src = g.source({retopo, MeshNode::kQuadDrawReference, -1});
+    auto src = g.source({retopo, MeshNode::kRetopoDrawReference, -1});
     Node* ref = src ? g.node(src->node) : nullptr;
     return ref && ref->type().isA("mesh") ? ref->id() : scene::kNoNode;
 }
 
-std::vector<glm::dvec3> quadDrawDots(const scene::Node& retopo)
+std::vector<glm::dvec3> retopoDrawDots(const scene::Node& retopo)
 {
     std::vector<glm::dvec3> out;
-    const std::string& text = retopo.as<std::string>(MeshNode::kQuadDrawDots);
+    const std::string& text = retopo.as<std::string>(MeshNode::kRetopoDrawDots);
     if (text.empty())
         return out;
     json list = json::parse(text, nullptr, false);
@@ -839,7 +856,7 @@ std::vector<glm::dvec3> quadDrawDots(const scene::Node& retopo)
     return out;
 }
 
-std::optional<QuadDrawTargets> resolveQuadDraw(const scene::Graph& g, const std::vector<scene::NodeId>& selection)
+std::optional<RetopoDrawTargets> resolveRetopoDraw(const scene::Graph& g, const std::vector<scene::NodeId>& selection)
 {
     std::vector<Node*> meshes;
     for (scene::NodeId id : selection)
@@ -848,20 +865,20 @@ std::optional<QuadDrawTargets> resolveQuadDraw(const scene::Graph& g, const std:
     if (meshes.empty())
         return std::nullopt;
     for (Node* n : meshes)
-        if (scene::NodeId ref = quadDrawReference(g, n->id()); ref != scene::kNoNode)
-            return QuadDrawTargets{ref, n->name()};
+        if (scene::NodeId ref = retopoDrawReference(g, n->id()); ref != scene::kNoNode)
+            return RetopoDrawTargets{ref, n->name()};
     Node* ref = meshes[0];
     if (meshes.size() > 1)
-        return QuadDrawTargets{ref->id(), meshes[1]->name()};
+        return RetopoDrawTargets{ref->id(), meshes[1]->name()};
     for (scene::NodeId id : g.nodes())
-        if (quadDrawReference(g, id) == ref->id())
-            return QuadDrawTargets{ref->id(), g.node(id)->name()};
+        if (retopoDrawReference(g, id) == ref->id())
+            return RetopoDrawTargets{ref->id(), g.node(id)->name()};
     // A lone "<name>_retopo" whose source mesh exists was drawn before the pair was connected: resume on it.
     const std::string suffix = "_retopo";
     const std::string& name = ref->name();
     if (name.size() > suffix.size() && name.ends_with(suffix))
         if (Node* src = g.find(name.substr(0, name.size() - suffix.size())); src && src->type().isA("mesh"))
-            return QuadDrawTargets{src->id(), name};
-    return QuadDrawTargets{ref->id(), name + suffix};
+            return RetopoDrawTargets{src->id(), name};
+    return RetopoDrawTargets{ref->id(), name + suffix};
 }
 } // namespace lila::retopo

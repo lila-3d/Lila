@@ -16,6 +16,7 @@
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportTool.h"
 #include "uv/Uv.h"
+#include "uv/UvCommands.h"
 
 #include <QApplication>
 #include <QKeyEvent>
@@ -25,6 +26,7 @@
 
 #include <cmath>
 #include <map>
+#include <set>
 
 namespace lila::ui::uvLive
 {
@@ -42,6 +44,8 @@ struct Settings
     bool live = false;
     double balance = 0.0;
     bool checker = false;
+    int checkerTiling = 16;
+    bool islands = false;
     bool seams = true;
     bool twoColour = false;
 };
@@ -60,6 +64,7 @@ Settings& settings()
         s.live = p.value<bool>(kPrefs, "/uv/live/mode", s.live);
         s.balance = std::clamp(p.value<double>(kPrefs, "/uv/live/balance", s.balance), -1.0, 1.0);
         s.checker = p.value<bool>(kPrefs, "/uv/checker3d", s.checker);
+        s.checkerTiling = std::clamp(p.value<int>(kPrefs, "/uv/checkerTiling", s.checkerTiling), 1, 256);
         s.seams = p.value<bool>(kPrefs, "/uv/seams3d", s.seams);
         s.twoColour = p.value<bool>(kPrefs, "/uv/heatmapTwoColour", s.twoColour);
         uv::live::options().balance = s.balance;
@@ -90,6 +95,7 @@ void save()
     p.set(kPrefs, "/uv/live/mode", s.live);
     p.set(kPrefs, "/uv/live/balance", s.balance);
     p.set(kPrefs, "/uv/checker3d", s.checker);
+    p.set(kPrefs, "/uv/checkerTiling", s.checkerTiling);
     p.set(kPrefs, "/uv/seams3d", s.seams);
     p.set(kPrefs, "/uv/heatmapTwoColour", s.twoColour);
 }
@@ -113,11 +119,21 @@ void resetOptions(uv::LiveIsland& is)
 // ---------------------------------------------------------------------------------------------------------------------
 // 3D display: checker on the shown meshes, seams drawn over them.
 
-const render::Material& checkerMaterial()
+std::set<const void*>& shownEditors()
 {
-    static render::Material m = [] {
+    static std::set<const void*> s;
+    return s;
+}
+
+const render::Material& checkerMaterial(int checks)
+{
+    static int built = 0;
+    static render::Material m;
+    if (built != checks)
+    {
+        built = checks;
         auto img = std::make_shared<render::TextureImage>();
-        const int size = 512, checks = 8;
+        const int size = std::clamp(checks * 32, 256, 2048) / checks * checks;
         img->width = img->height = size;
         img->rgba.resize(size_t(size) * size * 4);
         for (int y = 0; y < size; ++y)
@@ -135,8 +151,8 @@ const render::Material& checkerMaterial()
         mat.roughness = 0.8f;
         mat.baseColorMap = std::move(img);
         mat.flags = render::MatBaseColorMap | render::MatTwoSided;
-        return mat;
-    }();
+        m = std::move(mat);
+    }
     return m;
 }
 
@@ -187,7 +203,8 @@ void draw3d(render::FrameState& s, OverlayPainter&, const ViewInfo&)
     LILA_ZONE();
 
     const Settings& st = settings();
-    if (!st.checker && !st.seams)
+    const bool checker = st.checker && !shownEditors().empty();
+    if (!checker && !st.seams)
         return;
     scene::Graph& g = scene::Graph::current();
     const std::string set = uv::currentUvSet();
@@ -197,7 +214,7 @@ void draw3d(render::FrameState& s, OverlayPainter&, const ViewInfo&)
         MeshPtr out = n ? n->as<MeshPtr>(scene::MeshNode::kOutMesh) : nullptr;
         if (!out || !scene::effectivelyVisible(g, id))
             continue;
-        if (st.checker)
+        if (checker)
         {
             int smooth = int(n->as<int64_t>(scene::MeshNode::kSmoothPreview));
             auto rm = renderMeshFor(smoothedFor(out, smooth), false);
@@ -207,7 +224,7 @@ void draw3d(render::FrameState& s, OverlayPainter&, const ViewInfo&)
                     uint32_t slotCount = 1;
                     for (const render::MeshSection& sec : rm->sections)
                         slotCount = std::max(slotCount, sec.material + 1);
-                    d.materials.assign(slotCount, checkerMaterial());
+                    d.materials.assign(slotCount, checkerMaterial(st.checkerTiling));
                 }
         }
         if (st.seams)
@@ -622,6 +639,41 @@ void setChecker3d(bool on)
     viewportTools::requestRedraw();
 }
 
+int checkerTiling()
+{
+    return settings().checkerTiling;
+}
+
+void setCheckerTiling(int checks)
+{
+    checks = std::clamp(checks, 1, 256);
+    if (settings().checkerTiling == checks)
+        return;
+    settings().checkerTiling = checks;
+    settingsChanged();
+    viewportTools::requestRedraw();
+}
+
+bool islandSelect()
+{
+    return settings().islands;
+}
+
+void setIslandSelect(bool on)
+{
+    if (settings().islands == on)
+        return;
+    settings().islands = on;
+    notify();
+}
+
+void setEditorShown(const void* editor, bool shown)
+{
+    bool changed = shown ? shownEditors().insert(editor).second : shownEditors().erase(editor) > 0;
+    if (changed && settings().checker)
+        viewportTools::requestRedraw();
+}
+
 bool seams3d()
 {
     return settings().seams;
@@ -659,19 +711,7 @@ void removeListener(int id)
 
 std::vector<NodeId> shownMeshes()
 {
-    scene::Graph& g = scene::Graph::current();
-    std::vector<NodeId> out;
-    auto add = [&](NodeId id) {
-        if (scene::Node* n = g.node(id); n && n->type().isA("mesh") && std::find(out.begin(), out.end(), id) == out.end())
-            out.push_back(id);
-    };
-    for (NodeId id : g.selection())
-        add(id);
-    for (ComponentMode k : {ComponentMode::Vertex, ComponentMode::Edge, ComponentMode::Face})
-        for (auto& [id, ids] : scene::components::selected(k))
-            if (!ids.empty())
-                add(id);
-    return out;
+    return uv::shownMeshes();
 }
 
 std::vector<geo::Index> selectedFaces(NodeId node)

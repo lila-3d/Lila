@@ -1,6 +1,12 @@
 #include "ops/Command.h"
+#include "scene/Graph.h"
+#include "scene/MeshNodes.h"
+#include "uv/Chart.h"
+#include "uv/UvCommands.h"
 
 #include <doctest/doctest.h>
+
+#include <algorithm>
 
 using namespace lila;
 
@@ -75,4 +81,75 @@ TEST_CASE("uvPack packs every selected mesh into one layout and stacks")
     CHECK(g["tiles"] == 2);
     run("undo");
     CHECK_THROWS(run("uvPack", {{"scaleMode", "lock"}, {"tilesU", 1}, {"padding", 600}}));
+}
+
+namespace
+{
+std::string made(const json& r) { return (r.is_array() ? r[0] : r).get<std::string>(); }
+scene::NodeId idOf(const std::string& name) { return scene::Graph::current().find(name)->id(); }
+std::vector<scene::NodeId> sorted(std::vector<scene::NodeId> v)
+{
+    std::sort(v.begin(), v.end());
+    return v;
+}
+} // namespace
+
+TEST_CASE("uv islands of seed faces")
+{
+    run("newScene");
+    std::string cube = made(run("polyCube"));
+    run("select", {{"args", {cube}}});
+    scene::Graph& g = scene::Graph::current();
+    auto mesh = [&] {
+        g.evaluate();
+        return g.find(cube)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+    };
+    uv::ChartOptions co;
+    co.source = uv::IslandSource::Uvs;
+
+    run("uvProject", {{"type", "box"}});
+    const geo::Index seed[] = {0};
+    CHECK(uv::islandsOfFaces(*mesh(), seed, co) == std::vector<geo::Index>{0});
+    const geo::Index two[] = {0, 3};
+    CHECK(uv::islandsOfFaces(*mesh(), two, co) == std::vector<geo::Index>{0, 3});
+    CHECK(uv::islandsOfFaces(*mesh(), {}, co).empty());
+
+    // One shared uv per point joins every face into a single island.
+    run("uvProject", {{"type", "planar"}});
+    CHECK(uv::islandsOfFaces(*mesh(), seed, co).size() == 6);
+}
+
+TEST_CASE("uv editor meshes follow the selection and its hierarchy")
+{
+    run("newScene");
+    std::string a = made(run("polyCube")), b = made(run("polyCube")), c = made(run("polyCube"));
+    std::string grp = made(run("group", {{"args", {a, b}}}));
+    scene::Graph& g = scene::Graph::current();
+
+    run("select", {{"args", {grp}}});
+    CHECK(sorted(uv::shownMeshes()) == sorted({idOf(a), idOf(b)}));
+    const scene::NodeId roots[] = {idOf(grp), idOf(a)};
+    CHECK(uv::meshesUnder(g, roots).size() == 2);
+
+    // Whole-mesh uv tools reach the meshes under a selected group.
+    json r = run("uvProject", {{"type", "box"}});
+    CHECK(r.contains(a));
+    CHECK(r.contains(b));
+
+    // A component selection left on a mesh does not keep it shown once something else is selected.
+    run("select", {{"args", {a}}});
+    run("selectMode", {{"args", {"face"}}});
+    run("selectComponents", {{"args", {a}}, {"faces", {0, 1}}});
+    run("selectMode", {{"args", {"object"}}});
+    run("select", {{"args", {c}}});
+    CHECK(uv::shownMeshes() == std::vector<scene::NodeId>{idOf(c)});
+    run("selectMode", {{"args", {"vertex"}}});
+    CHECK(uv::shownMeshes() == std::vector<scene::NodeId>{idOf(c)});
+
+    // With no objects selected, meshes with components of the current kind show.
+    run("select", {{"clear", true}});
+    run("selectComponents", {{"args", {b}}, {"vertices", {0}}});
+    CHECK(uv::shownMeshes() == std::vector<scene::NodeId>{idOf(b)});
+    run("selectMode", {{"args", {"object"}}});
+    CHECK(uv::shownMeshes().empty());
 }

@@ -5,6 +5,7 @@ lila_module(lila_geo Scene
     BoundingShapes.cpp
     Bvh.cpp
     ColorSets.cpp
+    ComponentPaths.cpp
     CrossSection.cpp
     FoldEdges.cpp
     Mesh.cpp

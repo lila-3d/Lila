@@ -45,7 +45,8 @@ add_executable(lila_tests
     test_paths.cpp
     test_text_match.cpp
     test_ui_registries.cpp
-    test_viewport_ext.cpp)
+    test_viewport_ext.cpp
+    test_select_paths.cpp)
 target_link_libraries(lila_tests PRIVATE LilaUI doctest::doctest)
 add_test(NAME lila_tests COMMAND lila_tests)
 
