@@ -1,4 +1,4 @@
-add_library(lila_cmds STATIC
+lila_module(lila_cmds Foundation
     Command.cpp
     CommandOptions.cpp
     Undo.cpp)

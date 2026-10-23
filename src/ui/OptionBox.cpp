@@ -1,6 +1,7 @@
 #include "ui/OptionBox.h"
 
 #include "cmds/CommandOptions.h"
+#include "core/ExtensionContext.h"
 #include "ui/Actions.h"
 #include "ui/FlagFields.h"
 #include "ui/Icons.h"
@@ -201,9 +202,9 @@ std::map<std::string, QPointer<OptionsDialog>>& dialogs()
     return d;
 }
 
-std::map<std::string, std::function<void()>>& customs()
+Registry<std::function<void()>>& customs()
 {
-    static std::map<std::string, std::function<void()>> c;
+    static Registry<std::function<void()>> c;
     return c;
 }
 
@@ -329,16 +330,41 @@ std::string optionsAt(const QMenu* menu, QAction* a, int globalX, bool shift)
     return a->data().toString().toStdString();
 }
 
-void addCustom(const std::string& actionId, std::function<void()> open)
+Registry<std::function<void()>>& customRegistry()
 {
-    customs()[actionId] = std::move(open);
+    return customs();
+}
+
+void addCustom(const std::string& actionId, std::function<void()> open, std::string owner)
+{
+    customs().put(actionId, std::move(open), std::move(owner));
+}
+
+uint64_t addCustom(ext::Context& ctx, const std::string& actionId, std::function<void()> open)
+{
+    if (const std::string* owner = customs().ownerOf(actionId); owner && *owner != ctx.owner())
+    {
+        ctx.log(LogLevel::Error, "the option box of '" + actionId + "' already belongs to " + *owner);
+        return 0;
+    }
+    addCustom(actionId, std::move(open), ctx.owner());
+    return ctx.track("optionBox:" + actionId, [actionId, own = ctx.owner()] {
+        if (const std::string* o = customs().ownerOf(actionId); o && *o == own)
+            customs().remove(actionId);
+    });
+}
+
+bool removeCustom(const std::string& actionId)
+{
+    return customs().remove(actionId);
 }
 
 void open(const std::string& actionId)
 {
-    if (auto custom = customs().find(actionId); custom != customs().end())
+    if (const std::function<void()>* custom = customs().find(actionId))
     {
-        custom->second();
+        std::function<void()> fn = *custom;
+        fn();
         return;
     }
     const Action* a = actions::find(actionId);

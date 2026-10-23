@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "render/FrameState.h"
 #include "scene/Graph.h"
 #include "ui/Manipulator.h"
@@ -42,32 +44,32 @@ struct Item
 };
 
 /** Every HUD element, in menu order. */
-const std::vector<Item>& items();
+LILA_UI_API const std::vector<Item>& items();
 
 /** The panel's own choice for an item, ignoring the show-all switch. */
-bool itemOn(int panel, std::string_view item);
+LILA_UI_API bool itemOn(int panel, std::string_view item);
 /** Turning an item on also turns the show-all switch on, so it never waits invisibly behind it. */
-void setItemOn(int panel, std::string_view item, bool on);
+LILA_UI_API void setItemOn(int panel, std::string_view item, bool on);
 /** The panel's Show/Hide all switch. */
-bool allShown(int panel);
-void setAllShown(int panel, bool on);
+LILA_UI_API bool allShown(int panel);
+LILA_UI_API void setAllShown(int panel, bool on);
 /** On and not hidden by the show-all switch: what actually draws. */
-bool shown(int panel, std::string_view item);
+LILA_UI_API bool shown(int panel, std::string_view item);
 /** Whether a part of an item draws while the item does; every part is on by default. */
-bool partOn(int panel, std::string_view item, std::string_view part);
-void setPartOn(int panel, std::string_view item, std::string_view part, bool on);
+LILA_UI_API bool partOn(int panel, std::string_view item, std::string_view part);
+LILA_UI_API void setPartOn(int panel, std::string_view item, std::string_view part, bool on);
 
 /** Check state of a "viewport.hud.*" action for a view, nullopt for any other id. */
-std::optional<bool> actionState(const std::string& id, const ViewportWidget* view);
+LILA_UI_API std::optional<bool> actionState(const std::string& id, const ViewportWidget* view);
 
 /** The HUD menu of a viewport: the show-all switch, then one checkable entry per item, then options. */
-void fillMenu(QMenu* menu, ViewportWidget* view);
+LILA_UI_API void fillMenu(QMenu* menu, ViewportWidget* view);
 
 /**
  * Registers "viewport.hud.toggleAll", one "viewport.hud.<id>" per item and one "viewport.hud.<id>.<part>" per part, all
  * acting on active(). Items with parts get an option box listing them.
  */
-void registerActions(std::function<ViewportWidget*()> active);
+LILA_UI_API void registerActions(std::function<ViewportWidget*()> active);
 
 struct Context
 {
@@ -88,8 +90,8 @@ struct Context
  * soft select top right; current frame and frame rate bottom right. Returns true while a count is provisional, so the
  * caller redraws shortly for the exact one.
  */
-bool draw(OverlayPainter& p, const Context& ctx);
+LILA_UI_API bool draw(OverlayPainter& p, const Context& ctx);
 
 /** World axes at the origin, a constant size on screen, letters at their tips. */
-void drawOriginAxis(render::FrameState& s, OverlayPainter& p, const ViewInfo& view);
+LILA_UI_API void drawOriginAxis(render::FrameState& s, OverlayPainter& p, const ViewInfo& view);
 } // namespace lila::ui::hud

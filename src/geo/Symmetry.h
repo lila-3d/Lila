@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "geo/Mesh.h"
 
 #include <glm/glm.hpp>
@@ -23,18 +25,18 @@ struct SymmetryPlane
 };
 
 /** Plane through the origin normal to axis 0, 1 or 2. Reflecting across it negates one coordinate, which is exact. */
-SymmetryPlane axisPlane(int axis);
+LILA_SCENE_API SymmetryPlane axisPlane(int axis);
 
 /**
  * Point int layer that keeps the symmetry pairs for an axis on the mesh, so they survive compaction, saving, undo and
  * any amount of position drift. Partners hold +k and -k (k > 0, the sign is the side), on-plane points hold
  * kSymmetryOnPlane, 0 is unpaired.
  */
-std::string symmetryLayerName(int axis);
+LILA_SCENE_API std::string symmetryLayerName(int axis);
 inline constexpr int32_t kSymmetryOnPlane = INT32_MIN;
 
 /** Zeroes every axis's stored pair key from firstPoint on: what an op copied onto the points it created means nothing. */
-void clearSymmetryKeys(Mesh& mesh, Index firstPoint);
+LILA_SCENE_API void clearSymmetryKeys(Mesh& mesh, Index firstPoint);
 
 /** How SymmetryMap::persistent resolved the points. */
 struct SymmetrySync
@@ -59,7 +61,7 @@ struct SymmetryCheck
  * Mirror partner of every point across a plane. Points on the plane map to themselves. Ids refer to
  * the mesh the map was built from; rebuild after topology changes.
  */
-class SymmetryMap
+class LILA_SCENE_API SymmetryMap
 {
 public:
     /** Matches each point to the nearest point at its reflection, within tolerance. */
@@ -136,5 +138,5 @@ private:
 };
 
 /** Runs after an op: snaps new points and the old on-plane points it moved back onto the plane. */
-void applySymmetrySnap(Mesh& mesh, const SymmetryMap* symmetry, Index firstNewPoint);
+LILA_SCENE_API void applySymmetrySnap(Mesh& mesh, const SymmetryMap* symmetry, Index firstNewPoint);
 } // namespace lila::geo

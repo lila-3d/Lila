@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/Components.h"
 
 #include <glm/glm.hpp>
@@ -16,7 +18,7 @@ class Mesh;
 namespace lila::scene::componentPick
 {
 /** World to widget pixels the way the viewport maps them: clip space scaled to the widget, no y flip. */
-struct Screen
+struct LILA_SCENE_API Screen
 {
     glm::dmat4 viewProj{1.0};
     double width = 1.0;
@@ -27,7 +29,7 @@ struct Screen
 };
 
 /** How close, in pixels, the cursor must be to a vertex or edge for a click to take it. */
-double radius(ComponentMode mode);
+LILA_SCENE_API double radius(ComponentMode mode);
 
 struct Candidate
 {
@@ -40,11 +42,11 @@ struct Candidate
  * Vertices (by their point) or edges (by the projected segment) of the mesh closer than maxPx to the cursor, nearest
  * first. Face mode has none: faces are picked by raycast.
  */
-std::vector<Candidate> nearby(const geo::Mesh& mesh, const glm::dmat4& world, ComponentMode mode, const Screen& screen,
+LILA_SCENE_API std::vector<Candidate> nearby(const geo::Mesh& mesh, const glm::dmat4& world, ComponentMode mode, const Screen& screen,
                               glm::dvec2 cursor, double maxPx);
 
 /** The world point that must be unoccluded for a candidate to count: the vertex, or the edge's midpoint. */
-glm::dvec3 anchor(const geo::Mesh& mesh, const glm::dmat4& world, ComponentMode mode, uint32_t id);
+LILA_SCENE_API glm::dvec3 anchor(const geo::Mesh& mesh, const glm::dmat4& world, ComponentMode mode, uint32_t id);
 
 /** What a click under the cursor would select, kept while hovering. Object mode leaves id unused. */
 struct Hover
@@ -61,7 +63,7 @@ struct Hover
  * Point ids of the triangles covering face f, 3 per triangle, split exactly as the shaded mesh splits it. Overlays
  * that fill a face use these so concave and non-planar n-gons cover the same area the surface does.
  */
-std::vector<uint32_t> fillTriangles(const geo::Mesh& mesh, uint32_t f);
+LILA_SCENE_API std::vector<uint32_t> fillTriangles(const geo::Mesh& mesh, uint32_t f);
 
 /** Topology that hover feedback calls out. */
 enum class Topology : uint8_t
@@ -72,13 +74,13 @@ enum class Topology : uint8_t
     Pole,     // a vertex with 5 or more edges
 };
 
-Topology faceTopology(const geo::Mesh& mesh, uint32_t f);
-Topology pointTopology(const geo::Mesh& mesh, uint32_t p);
+LILA_SCENE_API Topology faceTopology(const geo::Mesh& mesh, uint32_t f);
+LILA_SCENE_API Topology pointTopology(const geo::Mesh& mesh, uint32_t p);
 
 /** Pref keys ("general") for a kind's hover callout: whether it is on and its sRGB "#rrggbb" color. */
-std::string topologyEnabledKey(Topology t);
-std::string topologyColorKey(Topology t);
-const char* topologyDefaultColor(Topology t);
+LILA_SCENE_API std::string topologyEnabledKey(Topology t);
+LILA_SCENE_API std::string topologyColorKey(Topology t);
+LILA_SCENE_API const char* topologyDefaultColor(Topology t);
 } // namespace lila::scene::componentPick
 
 namespace lila::scene
@@ -100,13 +102,13 @@ enum class Kind : uint8_t
 inline constexpr Kind kAll[] = {Kind::Mesh, Kind::Joint, Kind::Locator, Kind::Other};
 
 /** "mesh", "joint", ...: the leaf of the pref key and of the "select.mask.<name>" action. */
-const char* name(Kind k);
-std::string prefKey(Kind k);
-bool enabled(Kind k);
-void setEnabled(Kind k, bool on);
+LILA_SCENE_API const char* name(Kind k);
+LILA_SCENE_API std::string prefKey(Kind k);
+LILA_SCENE_API bool enabled(Kind k);
+LILA_SCENE_API void setEnabled(Kind k, bool on);
 
 /** The mask an object falls under, by its node type. */
-Kind kindOf(const Node& node);
+LILA_SCENE_API Kind kindOf(const Node& node);
 
-bool pickable(const Node& node);
+LILA_SCENE_API bool pickable(const Node& node);
 } // namespace lila::scene::selectionMask

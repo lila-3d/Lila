@@ -85,3 +85,36 @@ TEST_CASE("every registered action has a doc")
     CHECK(tip.starts_with("Bevel"));
     CHECK(tip.ends_with("\n" + scene::modifiers::kindDoc("bevel")));
 }
+
+TEST_CASE("repeat last runs the last edit again, skipping selection, views, tools, windows and undo")
+{
+    ui::actions::registerBuiltins();
+    using json = nlohmann::json;
+    CHECK(ui::actions::repeatable(json("mesh.extrude")));
+    CHECK(ui::actions::repeatable(json{{"command", "polyExtrude"}}));
+    CHECK(ui::actions::repeatable(json{{"python", "print(1)"}}));
+    for (const char* id : {"select.grow", "edit.undo", "edit.redo", "edit.repeatLast", "edit.deselect", "viewport.frameAll", "tool.move",
+                           "window.graphEditor", "hotbox.show", "snap.gridOn", "softSelect.keyUp", "shelf.floatingRelease", "file.save"})
+    {
+        CAPTURE(id);
+        CHECK_FALSE(ui::actions::repeatable(json(id)));
+    }
+    CHECK_FALSE(ui::actions::repeatable(json{{"command", "select"}}));
+    CHECK_FALSE(ui::actions::repeatable(json{{"command", "undo"}}));
+
+    int edits = 0, selects = 0;
+    ui::actions::add({.id = "test.repeatEdit", .label = "Test Edit", .category = "Test", .run = [&] { ++edits; }, .doc = "test"});
+    ui::actions::add({.id = "select.testRepeat", .label = "Test Select", .category = "Test", .run = [&] { ++selects; }, .doc = "test"});
+    ui::actions::run(json("test.repeatEdit"));
+    ui::actions::run(json("select.testRepeat"));
+    REQUIRE(ui::actions::repeatTarget());
+    CHECK(*ui::actions::repeatTarget() == json("test.repeatEdit"));
+    CHECK(ui::actions::displayLabel("edit.repeatLast") == "Repeat Test Edit");
+    CHECK(ui::actions::run(json("edit.repeatLast")));
+    CHECK(edits == 2);
+    CHECK(selects == 1);
+    // Repeating doesn't make Repeat Last the thing to repeat, or a recent command.
+    CHECK(*ui::actions::repeatTarget() == json("test.repeatEdit"));
+    for (const json& r : ui::actions::recent())
+        CHECK(r != json("edit.repeatLast"));
+}

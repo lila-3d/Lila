@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QPointer>
 #include <QRegularExpression>
 #include <QTextCursor>
@@ -15,7 +17,7 @@ namespace lila::ui
 class CodeEditor;
 
 /** Find and replace over the current editor: case, whole word and regex toggles, all matches highlighted. */
-class FindBar : public QWidget
+class LILA_UI_API FindBar : public QWidget
 {
     Q_OBJECT
 

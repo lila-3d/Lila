@@ -107,6 +107,34 @@ inline nlohmann::json joinSlots(const Slots& s)
 }
 
 /**
+ * A mode layer's value over the binding beneath it, so a mode can rebind a key's tap and leave its hold alone (or the
+ * other way round). The slots the value names replace those below, a null one clearing it; the rest come through. A
+ * plain value names the press slot alone.
+ */
+inline Slots overlaySlots(Slots below, const nlohmann::json& over)
+{
+    bool multi = over.is_object() && (over.contains("press") || over.contains("hold") || over.contains("release") ||
+                                      over.contains("LMB") || over.contains("MMB") || over.contains("RMB"));
+    if (!multi)
+    {
+        below.press = over;
+        return below;
+    }
+    for (auto [key, slot] : {std::pair{"press", &below.press}, {"hold", &below.hold}, {"release", &below.release}})
+        if (over.contains(key))
+            *slot = over[key];
+    for (int i = 0; i < 3; ++i)
+        if (over.contains(kButtonKeys[i]))
+            below.buttons[i] = over[kButtonKeys[i]];
+    if (below.hold.is_object() && below.hold.contains("markingMenu") && below.buttons[0].is_null())
+    {
+        below.buttons[0] = below.hold;
+        below.hold = nullptr;
+    }
+    return below;
+}
+
+/**
  * State of a key that is down and has a hold or mouse-button targets, so its press target waits for key up. Using a
  * mouse button while it is down replaces the tap: the press, hold and release targets then never run.
  */

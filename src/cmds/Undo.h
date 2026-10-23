@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -37,10 +39,14 @@ struct UndoAction
 };
 
 /** Main thread only. */
-class UndoStack
+class LILA_FOUNDATION_API UndoStack
 {
 public:
     static UndoStack& get();
+
+    UndoStack() = default;
+    UndoStack(const UndoStack&) = delete;
+    UndoStack& operator=(const UndoStack&) = delete;
 
     /** Chunks nest; only the outermost one lands on the stack. */
     void openChunk(std::string label);

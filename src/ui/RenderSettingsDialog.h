@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QDialog>
 
 #include <string>
@@ -16,7 +18,7 @@ namespace lila::ui
  * Render resolution and per-camera gate settings. Every control runs setRenderResolution or cameraSettings as it
  * changes, so the script editor echoes it; there's no OK/Apply.
  */
-class RenderSettingsDialog : public QDialog
+class LILA_UI_API RenderSettingsDialog : public QDialog
 {
     Q_OBJECT
 

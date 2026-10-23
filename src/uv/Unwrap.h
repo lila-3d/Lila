@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "uv/Chart.h"
 
 #include <span>
@@ -35,32 +37,32 @@ struct UnwrapResult
  * Flattens one chart, which must be a disk (one boundary loop). Without pins the uvs come out at 3D
  * scale (uv area equals surface area) with the bounding box's lower corner at the origin.
  */
-UnwrapResult unwrapChart(Chart& chart, const UnwrapOptions& opts = {});
+LILA_SCENE_API UnwrapResult unwrapChart(Chart& chart, const UnwrapOptions& opts = {});
 
 /** All charts, in parallel. Returns how many succeeded. */
-size_t unwrapCharts(std::span<Chart> charts, const UnwrapOptions& opts = {});
+LILA_SCENE_API size_t unwrapCharts(std::span<Chart> charts, const UnwrapOptions& opts = {});
 
 /**
  * Least squares conformal map. Uses the chart's pinned vertices when there are two or more, else pins
  * the two vertices farthest apart. False when the system is singular.
  */
-bool lscm(Chart& chart, bool usePins = true);
+LILA_SCENE_API bool lscm(Chart& chart, bool usePins = true);
 
 /** Tutte embedding: the outer boundary on a circle, interior at neighbour averages. Never folds. */
-bool tutte(Chart& chart);
+LILA_SCENE_API bool tutte(Chart& chart);
 
 /**
  * Scalable Locally Injective Maps (Rabinovich et al. 2017) minimising symmetric Dirichlet energy from a
  * fold-free start. Returns the iterations run, or -1 when the start folds.
  */
-int slim(Chart& chart, int iterations, bool usePins = true);
+LILA_SCENE_API int slim(Chart& chart, int iterations, bool usePins = true);
 
 /** Symmetric Dirichlet distortion of the chart's current uvs after normalising scale (0 = isometric). */
-double chartDistortion(const Chart& chart);
+LILA_SCENE_API double chartDistortion(const Chart& chart);
 
 /** Triangles whose uv winding disagrees with the chart's overall orientation, or are degenerate. */
-size_t foldedTriangles(const Chart& chart);
+LILA_SCENE_API size_t foldedTriangles(const Chart& chart);
 
 /** Uniform scale about the origin so uv area equals 3D area. */
-void matchSurfaceArea(Chart& chart);
+LILA_SCENE_API void matchSurfaceArea(Chart& chart);
 } // namespace lila::uv

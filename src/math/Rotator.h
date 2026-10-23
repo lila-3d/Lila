@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "math/Vector.h"
 
 #include <glm/mat3x3.hpp>
@@ -15,7 +17,7 @@ struct Matrix;
  * right about forward. Applied roll, then pitch, then yaw. The numbers match an FRotator for the
  * same orientation once positions go through toUnreal.
  */
-struct Rotator
+struct LILA_FOUNDATION_API Rotator
 {
     double pitch = 0.0;
     double yaw = 0.0;
@@ -77,6 +79,6 @@ inline constexpr Rotator operator*(double s, const Rotator& r) { return r * s; }
  * Rotator to and from axes expressed in Unreal-frame components (x forward, y right, z up).
  * These are the core of the Rotator definition; everything else goes through them.
  */
-void rotatorToUnrealAxes(const Rotator& r, glm::dvec3& forward, glm::dvec3& right, glm::dvec3& up);
-Rotator rotatorFromUnrealAxes(const glm::dvec3& forward, const glm::dvec3& right, const glm::dvec3& up);
+LILA_FOUNDATION_API void rotatorToUnrealAxes(const Rotator& r, glm::dvec3& forward, glm::dvec3& right, glm::dvec3& up);
+LILA_FOUNDATION_API Rotator rotatorFromUnrealAxes(const glm::dvec3& forward, const glm::dvec3& right, const glm::dvec3& up);
 } // namespace lila::math

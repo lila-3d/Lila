@@ -1,0 +1,5 @@
+{
+    "id": "broken",
+    "sdk": "one",
+    "entry": "../outside.dll"
+}

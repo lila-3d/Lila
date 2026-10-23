@@ -1,4 +1,4 @@
-add_library(lila_maya STATIC
+lila_module(lila_maya Scene
     MayaAscii.cpp
     MayaBinary.cpp
     MayaCommands.cpp

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/Plug.h"
 
 #include <QWidget>
@@ -27,7 +29,7 @@ inline constexpr const char* kMaterialEditorDock = "materialEditor";
  * fake-shaded preview ball and an assign-to-selection button. Every edit goes through commands, so it is undoable;
  * a slider drag is one undo step.
  */
-class MaterialEditor : public QWidget
+class LILA_UI_API MaterialEditor : public QWidget
 {
     Q_OBJECT
 
@@ -68,5 +70,5 @@ private:
  * "viewport.textured" (toggles materials in the viewport; hotkey 6). Also registers the material node type and
  * commands when the scene has not yet.
  */
-void registerMaterialUi();
+LILA_UI_API void registerMaterialUi();
 } // namespace lila::ui

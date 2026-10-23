@@ -1,6 +1,7 @@
 #include "ui/AttributeEditor.h"
 
 #include "cmds/Command.h"
+#include "core/ExtensionContext.h"
 #include "core/Log.h"
 #include "core/Paths.h"
 #include "core/Profile.h"
@@ -94,23 +95,42 @@ QWidget* section(const QString& title, QWidget* content)
     return box;
 }
 
-struct ExtraSection
+std::vector<attributeEditor::Section*> extraSections()
 {
-    std::string typeName;
-    std::string title;
-    attributeEditor::SectionFactory make;
-};
-
-std::vector<ExtraSection>& extraSections()
-{
-    static std::vector<ExtraSection> v;
-    return v;
+    return attributeEditor::registry().allInOrder();
 }
 } // namespace
 
-void attributeEditor::addSection(std::string typeName, std::string title, SectionFactory fn)
+Registry<attributeEditor::Section>& attributeEditor::registry()
 {
-    extraSections().push_back({std::move(typeName), std::move(title), std::move(fn)});
+    static Registry<Section> r;
+    return r;
+}
+
+void attributeEditor::addSection(std::string typeName, std::string title, SectionFactory fn, std::string owner)
+{
+    std::string id = typeName + "/" + title;
+    registry().put(std::move(id), {std::move(typeName), std::move(title), std::move(fn)}, std::move(owner));
+}
+
+uint64_t attributeEditor::addSection(ext::Context& ctx, std::string typeName, std::string title, SectionFactory fn)
+{
+    std::string id = typeName + "/" + title;
+    if (const std::string* owner = registry().ownerOf(id); owner && *owner != ctx.owner())
+    {
+        ctx.log(LogLevel::Error, "Attribute Editor section '" + id + "' already belongs to " + *owner);
+        return 0;
+    }
+    addSection(std::move(typeName), std::move(title), std::move(fn), ctx.owner());
+    return ctx.track("attributeEditorSection:" + id, [id, own = ctx.owner()] {
+        if (const std::string* o = registry().ownerOf(id); o && *o == own)
+            registry().remove(id);
+    });
+}
+
+bool attributeEditor::removeSection(const std::string& typeName, const std::string& title)
+{
+    return registry().remove(typeName + "/" + title);
 }
 
 std::vector<std::pair<std::string, QWidget*>> attributeEditor::buildSections(scene::NodeId id)
@@ -119,10 +139,10 @@ std::vector<std::pair<std::string, QWidget*>> attributeEditor::buildSections(sce
     scene::Node* n = Graph::current().node(id);
     if (!n)
         return out;
-    for (const ExtraSection& extra : extraSections())
-        if (n->type().isA(extra.typeName))
-            if (QWidget* w = extra.make(id))
-                out.emplace_back(extra.title, w);
+    for (const attributeEditor::Section* extra : extraSections())
+        if (n->type().isA(extra->typeName))
+            if (QWidget* w = extra->make(id))
+                out.emplace_back(extra->title, w);
     return out;
 }
 
@@ -164,6 +184,10 @@ AttributeEditor::AttributeEditor(QWidget* parent) : QWidget(parent)
     scroll->setWidget(mBody);
     outer->addWidget(scroll, 1);
 
+    mSectionListener = attributeEditor::registry().addListener([this](RegistryChange, const std::string&, const std::string&) {
+        mRebuild = true;
+        scheduleRefresh();
+    });
     mListener = Graph::current().addListener([this](scene::Change c, scene::NodeId) {
         if (c != scene::Change::Value)
             mRebuild = true;
@@ -175,6 +199,7 @@ AttributeEditor::AttributeEditor(QWidget* parent) : QWidget(parent)
 AttributeEditor::~AttributeEditor()
 {
     Graph::current().removeListener(mListener);
+    attributeEditor::registry().removeListener(mSectionListener);
 }
 
 void AttributeEditor::scheduleRefresh()
@@ -430,10 +455,10 @@ void AttributeEditor::rebuild()
         else
             delete content;
     }
-    for (const ExtraSection& extra : extraSections())
-        if (n->type().isA(extra.typeName))
-            if (QWidget* w = extra.make(id))
-                mBodyLayout->addWidget(section(QString::fromStdString(extra.title), w));
+    for (const attributeEditor::Section* extra : extraSections())
+        if (n->type().isA(extra->typeName))
+            if (QWidget* w = extra->make(id))
+                mBodyLayout->addWidget(section(QString::fromStdString(extra->title), w));
     mBodyLayout->addStretch(1);
     updateValues();
 }

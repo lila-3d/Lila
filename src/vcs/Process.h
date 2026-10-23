@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -37,8 +39,8 @@ public:
 };
 
 /** Spawns real processes without a console window. */
-std::shared_ptr<ProcessRunner> systemRunner();
+LILA_SCENE_API std::shared_ptr<ProcessRunner> systemRunner();
 
 /** Full path of an executable found on PATH, or empty. */
-std::filesystem::path findExecutable(const std::string& name);
+LILA_SCENE_API std::filesystem::path findExecutable(const std::string& name);
 } // namespace lila::vcs

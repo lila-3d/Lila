@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <nlohmann/json.hpp>
 
 #include <QWidget>
@@ -21,7 +23,7 @@ class QTreeWidgetItem;
 namespace lila::ui
 {
 /** One level of a marking menu drawn the way it pops up, with empty slots outlined. */
-class RadialPreview : public QWidget
+class LILA_UI_API RadialPreview : public QWidget
 {
     Q_OBJECT
 
@@ -62,7 +64,7 @@ private:
  * and target (an action, Python, or a submenu). Saves the difference from the built-in menu, so untouched slots
  * keep tracking the defaults.
  */
-class MarkingMenuEditor : public QWidget
+class LILA_UI_API MarkingMenuEditor : public QWidget
 {
     Q_OBJECT
 

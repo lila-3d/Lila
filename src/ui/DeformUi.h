@@ -1,7 +1,9 @@
 #pragma once
 
+#include "core/Export.h"
+
 namespace lila::ui
 {
 /** Deform menu actions: blend shapes, lattice, nonlinear handles, delta mush, wrap, cage, softMod. */
-void registerDeformActions();
+LILA_UI_API void registerDeformActions();
 } // namespace lila::ui

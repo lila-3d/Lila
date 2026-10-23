@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/Plug.h"
 
 #include <QWidget>
@@ -32,7 +34,7 @@ class ModifierCardList;
  * Embeddable: a host can follow the selection (the default) or pin a mesh with setMesh, and hide the header row when
  * it has its own Add Modifier control.
  */
-class ModifierStackWidget : public QWidget
+class LILA_UI_API ModifierStackWidget : public QWidget
 {
     Q_OBJECT
 
@@ -98,15 +100,15 @@ private:
  * Fills menu with every registered modifier kind (from the type registry, so extension modifiers appear). Picking one adds
  * it to the selected meshes and shows the Modifier Stack panel. The menu refills itself each time it opens.
  */
-void fillAddModifierMenu(QMenu* menu);
+LILA_UI_API void fillAddModifierMenu(QMenu* menu);
 
 /** Tabler icon name for a modifier kind ("bevel") or node type; extensions may set their own. */
-void setModifierIcon(const std::string& kindOrType, const QString& tablerName);
-QString modifierIconName(const std::string& kindOrType);
+LILA_UI_API void setModifierIcon(const std::string& kindOrType, const QString& tablerName);
+LILA_UI_API QString modifierIconName(const std::string& kindOrType);
 
 /** Shows and raises the Modifier Stack dock. */
-void showModifierStack();
+LILA_UI_API void showModifierStack();
 
 /** Registers "window.modifierStack", "modifier.applyAll" and "modifier.collapseStack". */
-void registerModifierStackActions();
+LILA_UI_API void registerModifierStackActions();
 } // namespace lila::ui

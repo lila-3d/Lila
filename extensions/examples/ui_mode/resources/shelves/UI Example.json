@@ -1,0 +1,6 @@
+{
+    "items": [
+        { "label": "Hello", "icon": "message", "target": "uiMode.hello", "tooltip": "Say hello" },
+        { "label": "Lila", "icon": "arrow-back-up", "target": "mode.lila", "tooltip": "Back to the Lila mode" }
+    ]
+}

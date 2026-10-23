@@ -1,9 +1,11 @@
 #include "scene/Graph.h"
 
 #include "cmds/Undo.h"
+#include "core/Events.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "geo/Mesh.h"
+#include "scene/Spaces.h"
 #include "scene/Transform.h"
 
 #include <tbb/parallel_for.h>
@@ -624,12 +626,28 @@ void Graph::setValue(const PlugRef& p, PlugValue v)
     if (auto src = source(p))
     {
         double d = 0.0;
+        if (const glm::dvec3* vec = std::get_if<glm::dvec3>(&v); vec && p.component < 0)
+        {
+            if (!setDrivenVec(p, *src, *vec))
+                throw std::invalid_argument(plugName(p) + " is driven by a connection");
+            return;
+        }
         if (!scalarOf(v, d) || !setDriven(p, *src, d))
             throw std::invalid_argument(plugName(p) + " is driven by a connection");
         return;
     }
-    if (p.component >= 0 && source({p.node, p.attr, -1}))
-        throw std::invalid_argument(plugName(p) + " is driven by a connection");
+    if (p.component >= 0)
+        if (auto src = source({p.node, p.attr, -1}))
+        {
+            double d = 0.0;
+            glm::dvec3 whole = std::get<glm::dvec3>(value({p.node, p.attr, -1}));
+            if (!scalarOf(v, d))
+                throw std::invalid_argument(plugName(p) + " is driven by a connection");
+            whole[p.component] = d;
+            if (!setDrivenVec({p.node, p.attr, -1}, *src, whole))
+                throw std::invalid_argument(plugName(p) + " is driven by a connection");
+            return;
+        }
 
     PlugValue old = p.component >= 0 ? PlugValue(std::get<glm::dvec3>(n->mValues[p.attr])[p.component]) : n->mValues[p.attr];
     if (old == v)
@@ -670,13 +688,32 @@ bool Graph::setDriven(const PlugRef& dst, const PlugRef& src, double v)
     return true;
 }
 
-void Graph::holdRaw(const PlugRef& dst, double v)
+bool Graph::setDrivenVec(const PlugRef& dst, const PlugRef& src, const glm::dvec3& v)
+{
+    if (src.component >= 0 || attr(src).type != PlugType::Vec3)
+        return false;
+    DrivenEdit edit = mDrivenVecSet ? mDrivenVecSet(*this, dst, src, v) : DrivenEdit::Reject;
+    if (edit == DrivenEdit::Reject)
+        return false;
+    if (edit == DrivenEdit::Hold)
+    {
+        bool was = mHeld.contains(dst);
+        glm::dvec3 old = std::get<glm::dvec3>(node(dst.node)->mValues[dst.attr]);
+        holdRaw(dst, v);
+        recordUndo([this, dst, was, old] { was ? holdRaw(dst, old) : releaseRaw(dst); }, [this, dst, v] { holdRaw(dst, v); });
+    }
+    return true;
+}
+
+void Graph::holdRaw(const PlugRef& dst, const PlugValue& v)
 {
     PlugValue& slot = node(dst.node)->mValues[dst.attr];
-    if (dst.component >= 0)
-        std::get<glm::dvec3>(slot)[dst.component] = v;
+    if (const glm::dvec3* vec = std::get_if<glm::dvec3>(&v))
+        slot = *vec;
+    else if (dst.component >= 0)
+        std::get<glm::dvec3>(slot)[dst.component] = std::get<double>(v);
     else
-        assignScalar(slot, v);
+        assignScalar(slot, std::get<double>(v));
     markDirty(dst.node);
     mHeld.insert(dst);
     changed(Change::Value, dst.node);
@@ -740,6 +777,9 @@ void Graph::disconnectRaw(const PlugRef& dst)
     std::erase(mOutgoingDst[it->second.node], dst);
     mInputs.erase(it);
     mHeld.erase(dst);
+    if (Node* n = node(dst.node))
+        if (const AttrDef& a = n->type().attrs[size_t(dst.attr)]; a.flags & AttrResetOnDisconnect)
+            n->mValues[size_t(dst.attr)] = a.defaultValue;
     markDirty(dst.node);
     changed(Change::Connection, dst.node);
 }
@@ -786,8 +826,21 @@ void Graph::connect(const PlugRef& src, const PlugRef& dst, bool force)
             throw std::invalid_argument(plugName(dst) + " is already connected; use force");
         disconnect(dst);
     }
+    // Undo puts back the value the plug held before it was driven, not the last one pulled through the connection.
+    std::optional<PlugValue> before;
+    if (da.type != PlugType::Mesh && da.type != PlugType::Data)
+    {
+        const PlugValue& v = node(dst.node)->value(dst.attr);
+        before = dst.component >= 0 ? PlugValue(std::get<glm::dvec3>(v)[dst.component]) : v;
+    }
     connectRaw(src, dst);
-    recordUndo([this, dst] { disconnectRaw(dst); }, [this, src, dst] { connectRaw(src, dst); });
+    recordUndo(
+        [this, dst, before] {
+            disconnectRaw(dst);
+            if (before && node(dst.node))
+                setRaw(dst, *before);
+        },
+        [this, src, dst] { connectRaw(src, dst); });
 }
 
 void Graph::disconnect(const PlugRef& dst)
@@ -855,6 +908,8 @@ void Graph::setTime(double seconds)
         if (n->type().timeDependent)
             markDirty(id);
     mVersion.fetch_add(1, std::memory_order_relaxed);
+    if (this == &current())
+        events::send({.type = events::Event::TimeChanged, .time = seconds});
 }
 
 void Graph::evaluate()
@@ -942,6 +997,9 @@ void Graph::evaluate()
                     },
                     dv);
             }
+            if (n->type().dag)
+                if (const glm::dmat4* frame = spaces::activeFrame(*n))
+                    n->mValues[Transform::kParentMatrix] = *frame;
             n->compute(mCtx);
             n->mDirty = false;
         };
@@ -1027,6 +1085,25 @@ void Graph::changed(Change c, NodeId id)
             l.fn(c, id);
         else
             mBatchPending = true;
+    if (mBatchDepth == 0 && this == &current())
+        forwardEvent(c, id);
+}
+
+void Graph::forwardEvent(Change c, NodeId id)
+{
+    events::Event e;
+    switch (c)
+    {
+    case Change::Created: e = events::Event::NodeCreated; break;
+    case Change::Deleted: e = events::Event::NodeDeleted; break;
+    case Change::Renamed: e = events::Event::NodeRenamed; break;
+    case Change::Selection: e = events::Event::SelectionChanged; break;
+    default: return;
+    }
+    if (!events::hasSubscribers(e))
+        return;
+    const Node* n = c == Change::Renamed ? node(id) : nullptr;
+    events::send({.type = e, .name = n ? n->name() : std::string(), .node = id});
 }
 
 Graph::Batch::Batch(Graph& g) : mGraph(g)

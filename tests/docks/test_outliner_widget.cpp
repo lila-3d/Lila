@@ -73,3 +73,32 @@ TEST_CASE("outliner rows: icons, hidden dimming, reveal and kept collapse state"
     QApplication::processEvents();
     CHECK_FALSE(row(o, "grp")->data(0, Qt::BackgroundRole).isValid());
 }
+
+TEST_CASE("outliner lists object sets after the hierarchy, members under them, click selects the members")
+{
+    run("newScene");
+    run("spaceLocator", {{"name", "a"}});
+    run("spaceLocator", {{"name", "b"}});
+    run("createSet", {{"args", {"a"}}, {"name", "Props"}});
+
+    ui::Outliner o;
+    QApplication::processEvents();
+    REQUIRE(o.topLevelItemCount() == 3);
+    QTreeWidgetItem* set = o.topLevelItem(2);
+    CHECK(set->text(0) == "Props");
+    CHECK_FALSE(set->isExpanded());
+    REQUIRE(set->childCount() == 1);
+    CHECK(set->child(0)->text(0) == "a");
+
+    run("addToSet", {{"args", {"Props", "b"}}});
+    QApplication::processEvents();
+    set = row(o, "Props");
+    REQUIRE(set);
+    CHECK(set->childCount() == 2);
+
+    run("select", {{"clear", true}});
+    emit o.itemClicked(set, 0);
+    QApplication::processEvents();
+    CHECK(run("ls", {{"selection", true}}) == json({"a", "b"}));
+    CHECK_FALSE(set->isSelected());
+}

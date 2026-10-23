@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "geo/Bvh.h"
 #include "geo/Mesh.h"
 #include "geo/Symmetry.h"
@@ -49,12 +51,12 @@ enum class Falloff : uint8_t
     Count
 };
 
-std::string_view brushName(Brush b);
-std::optional<Brush> brushFromName(std::string_view name);
-std::string_view falloffName(Falloff f);
-std::optional<Falloff> falloffFromName(std::string_view name);
+LILA_SCENE_API std::string_view brushName(Brush b);
+LILA_SCENE_API std::optional<Brush> brushFromName(std::string_view name);
+LILA_SCENE_API std::string_view falloffName(Falloff f);
+LILA_SCENE_API std::optional<Falloff> falloffFromName(std::string_view name);
 /** Weight at t = distance / radius: 1 at the centre, 0 from the rim on. */
-double falloffWeight(Falloff f, double t);
+LILA_SCENE_API double falloffWeight(Falloff f, double t);
 
 struct BrushSettings
 {
@@ -113,7 +115,7 @@ enum class Layer : uint8_t
  * A mesh being sculpted. Topology never changes; positions, the soft mask (1 = fully masked) and the freeze flags
  * (frozen points never move) do. Strokes run in parallel and are deterministic for the same dabs.
  */
-class SculptMesh
+class LILA_SCENE_API SculptMesh
 {
 public:
     SculptMesh() = default;

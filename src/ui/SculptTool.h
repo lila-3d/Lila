@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "sculpt/Sculpt.h"
 
 #include <functional>
@@ -25,11 +27,11 @@ struct SculptSettings
     bool keepProxy = false;
 };
 
-SculptSettings& sculptSettings();
+LILA_UI_API SculptSettings& sculptSettings();
 /** Saves the settings and tells listeners (the panel, the viewports). */
-void sculptSettingsChanged();
-int addSculptSettingsListener(std::function<void()> fn);
-void removeSculptSettingsListener(int id);
+LILA_UI_API void sculptSettingsChanged();
+LILA_UI_API int addSculptSettingsListener(std::function<void()> fn);
+LILA_UI_API void removeSculptSettingsListener(int id);
 
 /**
  * The sculpt viewport tool, on the open sculpt session:
@@ -44,9 +46,9 @@ void removeSculptSettingsListener(int id);
  *
  * Each stroke runs one sculptStroke command, so it is one undo step.
  */
-void startSculptTool();
-bool sculptToolActive();
+LILA_UI_API void startSculptTool();
+LILA_UI_API bool sculptToolActive();
 
 /** Draws the open session's proxy in place of its mesh in every viewport, with the cage wire and the mask. */
-void installSculptDrawer();
+LILA_UI_API void installSculptDrawer();
 } // namespace lila::ui

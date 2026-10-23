@@ -58,11 +58,14 @@ inline KeyUp keyUpAction(bool tap, bool menuItemHovered, bool markingMenuOpen)
     return markingMenuOpen ? KeyUp::Keep : KeyUp::Dismiss;
 }
 
-/** While the key is held, hovering a menu name drops its menu down. The centre button opens on click only, since the
- * hotbox appears centred on it under the cursor. */
-inline bool hoverOpens(bool keyHeld, int hovered, bool hoveredIsCenter, int open)
+/**
+ * A press on a menu name while another hotbox menu is open: opens that one in its place, so switching menus takes one
+ * click rather than one to close and one to open. Menus never open on hover, as in Maya, so an open menu never springs
+ * up over what the cursor is travelling to.
+ */
+inline bool pressSwitchesMenu(int pressed, bool pressedIsCenter, int open)
 {
-    return keyHeld && hovered >= 0 && !hoveredIsCenter && hovered != open;
+    return pressed >= 0 && !pressedIsCenter && pressed != open;
 }
 
 /** Prefs name of the marking menu for a zone and mouse button ("lmb", "mmb", "rmb"): "hotbox_north_lmb". */

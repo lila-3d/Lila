@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <functional>
 #include <string>
 
@@ -35,31 +37,31 @@ struct IncrementSnap
 /** App-wide tool state. Every viewport reads it; hotkeys and menus change it. */
 namespace tools
 {
-Tool current();
-void setCurrent(Tool t);
-const char* name(Tool t);
+LILA_UI_API Tool current();
+LILA_UI_API void setCurrent(Tool t);
+LILA_UI_API const char* name(Tool t);
 
 /** Pivot editing: hold D, or toggle with Insert. */
-bool pivotEdit();
-void setPivotEdit(bool on);
+LILA_UI_API bool pivotEdit();
+LILA_UI_API void setPivotEdit(bool on);
 
-unsigned snaps();
-void setSnap(SnapFlags flag, bool on);
+LILA_UI_API unsigned snaps();
+LILA_UI_API void setSnap(SnapFlags flag, bool on);
 
 /** The increment snap in effect for t right now, with J's hold applied to rotate. */
-IncrementSnap incrementSnap(Tool t);
+LILA_UI_API IncrementSnap incrementSnap(Tool t);
 /** "move", "rotate" or "scale": the pref key segment for t's increment snap. */
-const char* snapKey(Tool t);
+LILA_UI_API const char* snapKey(Tool t);
 
 /** Called after any change; returns an id for removeListener. */
-int addListener(std::function<void()> fn);
-void removeListener(int id);
+LILA_UI_API int addListener(std::function<void()> fn);
+LILA_UI_API void removeListener(int id);
 
 /** True while B is held: LMB drag in the viewport sets the soft-selection radius. */
-bool softSelectAdjusting();
+LILA_UI_API bool softSelectAdjusting();
 /** A radius drag happened while the soft select key was down, so releasing it doesn't toggle. */
-void markSoftSelectAdjusted();
+LILA_UI_API void markSoftSelectAdjusted();
 
-void registerActions();
+LILA_UI_API void registerActions();
 } // namespace tools
 } // namespace lila::ui

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "cmds/CommandOptions.h"
 
 #include <functional>
@@ -22,5 +24,5 @@ struct FlagFieldWidgets
  * scrubbable label, combo box, text line or three spin boxes. `changed` gets each edit, already in the flag's type.
  * A middle click resets it to the field's default.
  */
-FlagFieldWidgets makeFlagField(const cmds::options::Field& f, const json& value, std::function<void(const json&)> changed, QWidget* parent);
+LILA_UI_API FlagFieldWidgets makeFlagField(const cmds::options::Field& f, const json& value, std::function<void(const json&)> changed, QWidget* parent);
 } // namespace lila::ui

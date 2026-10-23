@@ -6,6 +6,7 @@
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Workspace.h"
+#include "io/FileTranslators.h"
 #include "io/SceneFile.h"
 #include "io/SceneHistory.h"
 #include "mcp/McpServer.h"
@@ -14,6 +15,7 @@
 #include "scene/Graph.h"
 #include "scene/RenderSettings.h"
 #include "ui/Actions.h"
+#include "ui/GameExporter.h"
 #include "ui/Hotbox.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
@@ -22,17 +24,23 @@
 #include "ui/LayoutsUi.h"
 #include "ui/Animation.h"
 #include "ui/ApiReference.h"
+#include "ui/Ghosting.h"
 #include "ui/GraphEditor.h"
 #include "ui/SpinScrub.h"
 #include "ui/TimeSlider.h"
 #include "ui/AttributeEditor.h"
 #include "ui/DisplayLayersPanel.h"
+#include "ui/AnimLayersPanel.h"
+#include "ui/OffsetsPanel.h"
 #include "ui/DockSidebar.h"
 #include "ui/Environments.h"
+#include "ui/ExtensionManagerDialog.h"
 #include "ui/ChannelBox.h"
 #include "ui/CursorBadges.h"
 #include "ui/Outliner.h"
 #include "ui/MaterialEditor.h"
+#include "ui/Menus.h"
+#include "ui/Modes.h"
 #include "ui/ModelingToolkit.h"
 #include "ui/ModifierStack.h"
 #include "ui/OptionBox.h"
@@ -43,10 +51,12 @@
 #include "ui/ProgressOverlay.h"
 #include "ui/ReferenceEditor.h"
 #include "ui/RenderSettingsDialog.h"
+#include "ui/SetsUi.h"
 #include "ui/Shelf.h"
 #include "ui/StatusOutput.h"
 #include "ui/SceneDialogs.h"
 #include "ui/SourceControlPanel.h"
+#include "ui/SpacesUi.h"
 #include "ui/TearOff.h"
 #include "ui/TearOffLogic.h"
 #include "vcs/SourceControl.h"
@@ -86,8 +96,10 @@
 #include <optional>
 
 #ifdef _WIN32
+#include <windows.h>
 #include <dwmapi.h>
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "user32.lib")
 #endif
 
 namespace lila::ui
@@ -159,85 +171,26 @@ MainWindow::MainWindow()
     mViewports = new ViewportLayout(this);
     setCentralWidget(mViewports);
 
-    QDockWidget* shelf = addDock("Shelf", "shelf", new ShelfPanel(this), Qt::TopDockWidgetArea);
-    shelf->setFeatures(shelf->features() & ~QDockWidget::DockWidgetVerticalTitleBar);
-    QWidget* grip = ShelfPanel::dockTitleBar(shelf);
-    grip->setToolTip("Drag to move the shelf; right-click to collapse, float or close it");
-    grip->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(grip, &QWidget::customContextMenuRequested, this, [this, shelf, grip](const QPoint& at) {
-        QMenu menu;
-        menu.addAction("Collapse", this, [this, shelf] { mSidebars->collapse(shelf); });
-        menu.addAction(shelf->isFloating() ? "Dock" : "Float", shelf, [shelf] { shelf->setFloating(!shelf->isFloating()); });
-        menu.addAction("Close", shelf, &QDockWidget::close);
-        menu.exec(grip->mapToGlobal(at));
+    registerPanels();
+    for (panels::Panel* p : panels::registry().allInOrder())
+        createPanelDock(*p);
+    mPanelListener = panels::registry().addListener([this](RegistryChange change, const std::string& id, const std::string&) {
+        if (change == RegistryChange::Added)
+        {
+            if (const panels::Panel* p = panels::registry().find(id))
+                createPanelDock(*p);
+        }
+        else
+            removePanelDock(id);
     });
-    shelf->setTitleBarWidget(grip);
-    QDockWidget* outliner = addDock("Outliner", "outliner", new OutlinerPanel(this), Qt::LeftDockWidgetArea);
-    addDock("Source Control", "sourceControl", new SourceControlPanel(this), Qt::LeftDockWidgetArea);
-    addDock("Reference Editor", "referenceEditor", new ReferenceEditor(this), Qt::LeftDockWidgetArea);
-    QDockWidget* layers = addDock("Display Layers", kDisplayLayersDock, new DisplayLayersPanel(this), Qt::RightDockWidgetArea);
-    layers->setWindowIcon(icon("stack-2"));
-    QDockWidget* undoHistory = addDock("Undo History", kUndoHistoryDock, new UndoHistoryPanel(this), Qt::LeftDockWidgetArea);
-    undoHistory->setWindowIcon(icon("history"));
-    splitDockWidget(outliner, undoHistory, Qt::Vertical);
-    QDockWidget* output = addDock("Script Output", "scriptOutput", new ScriptPanel(this), Qt::BottomDockWidgetArea);
-    auto* scriptEditor = new ScriptEditor(this);
-    scriptEditor->setEditorFont(monoFont());
-    scriptEditor->setIconProvider([](const QString& name) { return icon(name); });
-    QDockWidget* editorDock = addDock("Script Editor", kScriptEditorDock, scriptEditor, Qt::BottomDockWidgetArea);
-
-    auto* apiRef = new ApiReference(this);
-    QDockWidget* apiDock = addDock("API Reference", kApiReferenceDock, apiRef, Qt::RightDockWidgetArea);
-    QDockWidget* termDock = addDock("Terminal", kTerminalDock, new TerminalPanel(this), Qt::BottomDockWidgetArea);
-    apiDock->hide();
     setShowDockHook([this](const char* name) { revealDock(findChild<QDockWidget*>(name)); });
     setToggleDockHook([this](const char* name) { toggleDock(findChild<QDockWidget*>(name)); });
     tearoff::setDockHook([this](const QString& title, const QString& name, QWidget* content) {
         return addDock(title, name, content, Qt::RightDockWidgetArea);
     });
-    connect(scriptEditor, &ScriptEditor::showDocs, this, [apiRef, apiDock](const QString& symbol) {
-        apiDock->show();
-        apiDock->raise();
-        apiRef->showSymbol(symbol);
-    });
-    connect(apiRef, &ApiReference::insertCode, this, [scriptEditor, editorDock](const QString& code) {
-        editorDock->show();
-        editorDock->raise();
-        CodeEditor* ed = scriptEditor->currentEditor();
-        if (!ed)
-            ed = scriptEditor->newTab();
-        ed->insertPlainText(code);
-        ed->setFocus();
-    });
-    // The UV editor opens as its own column left of the channel box.
-    QDockWidget* uvDock = addDock("UV Editor", kUvEditorDock, new UvEditor(this), Qt::RightDockWidgetArea);
-    QDockWidget* channels = addDock("Channel Box", kChannelBoxDock, new ChannelBox(this), Qt::RightDockWidgetArea);
-    splitDockWidget(uvDock, channels, Qt::Horizontal);
-    // Split before the tabs join, so the layer editor sits under the whole channel box tab group as in Maya.
-    splitDockWidget(channels, layers, Qt::Vertical);
-    QDockWidget* attrs = addDock("Attribute Editor", "attributeEditor", new AttributeEditor(this), Qt::RightDockWidgetArea);
-    tabifyDockWidget(channels, attrs);
-    QDockWidget* toolkit = addDock("Modeling Toolkit", kModelingToolkitDock, new ModelingToolkit(this), Qt::RightDockWidgetArea);
-    tabifyDockWidget(attrs, toolkit);
-    toolkit->hide();
-    QDockWidget* modStack = addDock("Modifier Stack", kModifierStackDock, new ModifierStackWidget(this), Qt::RightDockWidgetArea);
-    tabifyDockWidget(attrs, modStack);
-    QDockWidget* materials = addDock("Material Editor", kMaterialEditorDock, new MaterialEditor(this), Qt::RightDockWidgetArea);
-    tabifyDockWidget(attrs, materials);
-    channels->raise();
-
-    setUvEditorOpener([uvDock] { toggleDock(uvDock); });
-
-    QDockWidget* timeSlider = addDock("Time Slider", kTimeSliderDock, new TimeSlider(this), Qt::BottomDockWidgetArea);
-    timeSlider->setTitleBarWidget(new QWidget(timeSlider));
-    // Fixed height, so a bottom area left with only the slider shrinks to it instead of handing it the space.
-    timeSlider->widget()->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
-    QDockWidget* graphEditor = addDock("Graph Editor", kGraphEditorDock, new GraphEditor(this), Qt::BottomDockWidgetArea);
-    graphEditor->hide();
-    QDockWidget* nodeDock = addDock("Node Editor", kNodeEditorDock, new NodeEditor(this), Qt::BottomDockWidgetArea);
-    nodeDock->hide();
-    arrangeBottomDocks(this, {output, editorDock, termDock, graphEditor, nodeDock}, editorDock, timeSlider);
+    setUvEditorOpener([this] { toggleDock(findChild<QDockWidget*>(kUvEditorDock)); });
     setNodeEditorShowHook([this] { revealDock(findChild<QDockWidget*>(kNodeEditorDock)); });
+    QDockWidget* shelf = findChild<QDockWidget*>("shelf");
 
     mLayoutTimer = new QTimer(this);
     mLayoutTimer->setSingleShot(true);
@@ -251,6 +204,7 @@ MainWindow::MainWindow()
     buildStatusBar();
     restoreLayout();
     applyChromePrefs();
+    modes::restore();
     connect(shelf, &QDockWidget::visibilityChanged, this, [this, shelf](bool visible) {
         // Layouts and Reset Layout reopen the shelf; the pref keeps it closed.
         if (visible && !mShelfShown)
@@ -289,6 +243,11 @@ MainWindow::MainWindow()
     });
 }
 
+MainWindow::~MainWindow()
+{
+    panels::registry().removeListener(mPanelListener);
+}
+
 QDockWidget* MainWindow::addDock(const QString& title, const QString& objectName, QWidget* content, Qt::DockWidgetArea area)
 {
     auto* dock = new QDockWidget(title, this);
@@ -312,12 +271,158 @@ QDockWidget* MainWindow::addDock(const QString& title, const QString& objectName
     return dock;
 }
 
+void MainWindow::registerPanels()
+{
+    using panels::Panel;
+    auto dock = [this](const char* name) { return findChild<QDockWidget*>(name); };
+    auto make = [](auto factory) { return std::function<QWidget*(QWidget*)>(factory); };
+
+    panels::add({.id = "shelf", .title = "Shelf", .create = make([](QWidget* p) { return new ShelfPanel(p); }), .area = Qt::TopDockWidgetArea,
+                 .place = [this](QDockWidget* shelf) {
+                     shelf->setFeatures(shelf->features() & ~QDockWidget::DockWidgetVerticalTitleBar);
+                     QWidget* grip = ShelfPanel::dockTitleBar(shelf);
+                     grip->setToolTip("Drag to move the shelf; right-click to collapse, float or close it");
+                     grip->setContextMenuPolicy(Qt::CustomContextMenu);
+                     connect(grip, &QWidget::customContextMenuRequested, this, [this, shelf, grip](const QPoint& at) {
+                         QMenu menu;
+                         menu.addAction("Collapse", this, [this, shelf] { mSidebars->collapse(shelf); });
+                         menu.addAction(shelf->isFloating() ? "Dock" : "Float", shelf, [shelf] { shelf->setFloating(!shelf->isFloating()); });
+                         menu.addAction("Close", shelf, &QDockWidget::close);
+                         menu.exec(grip->mapToGlobal(at));
+                     });
+                     shelf->setTitleBarWidget(grip);
+                 }});
+    panels::add({.id = "outliner", .title = "Outliner", .create = make([](QWidget* p) { return new OutlinerPanel(p); }),
+                 .area = Qt::LeftDockWidgetArea});
+    panels::add({.id = "sourceControl", .title = "Source Control", .create = make([](QWidget* p) { return new SourceControlPanel(p); }),
+                 .area = Qt::LeftDockWidgetArea});
+    panels::add({.id = kReferenceEditorDock, .title = "Reference Editor", .create = make([](QWidget* p) { return new ReferenceEditor(p); }),
+                 .area = Qt::LeftDockWidgetArea});
+    panels::add({.id = kDisplayLayersDock, .title = "Display Layers", .create = make([](QWidget* p) { return new DisplayLayersPanel(p); }),
+                 .area = Qt::RightDockWidgetArea, .icon = "stack-2"});
+    registerAnimLayersPanel();
+    registerOffsetsPanel();
+    panels::add({.id = kUndoHistoryDock, .title = "Undo History", .create = make([](QWidget* p) { return new UndoHistoryPanel(p); }),
+                 .area = Qt::LeftDockWidgetArea, .icon = "history",
+                 .place = [this, dock](QDockWidget* d) { splitDockWidget(dock("outliner"), d, Qt::Vertical); }});
+    panels::add({.id = "scriptOutput", .title = "Script Output", .create = make([](QWidget* p) { return new ScriptPanel(p); }),
+                 .area = Qt::BottomDockWidgetArea});
+    panels::add({.id = kScriptEditorDock, .title = "Script Editor", .create = make([](QWidget* p) {
+                     auto* scriptEditor = new ScriptEditor(p);
+                     scriptEditor->setEditorFont(monoFont());
+                     scriptEditor->setIconProvider([](const QString& name) { return icon(name); });
+                     return scriptEditor;
+                 }),
+                 .area = Qt::BottomDockWidgetArea});
+    panels::add({.id = kApiReferenceDock, .title = "API Reference", .create = make([](QWidget* p) { return new ApiReference(p); }),
+                 .area = Qt::RightDockWidgetArea, .open = false, .place = [this, dock](QDockWidget* apiDock) {
+                     QDockWidget* editorDock = dock(kScriptEditorDock);
+                     auto* scriptEditor = editorDock ? qobject_cast<ScriptEditor*>(editorDock->widget()) : nullptr;
+                     auto* apiRef = qobject_cast<ApiReference*>(apiDock->widget());
+                     if (!scriptEditor || !apiRef)
+                         return;
+                     connect(scriptEditor, &ScriptEditor::showDocs, this, [apiRef, apiDock](const QString& symbol) {
+                         apiDock->show();
+                         apiDock->raise();
+                         apiRef->showSymbol(symbol);
+                     });
+                     connect(apiRef, &ApiReference::insertCode, this, [scriptEditor, editorDock](const QString& code) {
+                         editorDock->show();
+                         editorDock->raise();
+                         CodeEditor* ed = scriptEditor->currentEditor();
+                         if (!ed)
+                             ed = scriptEditor->newTab();
+                         ed->insertPlainText(code);
+                         ed->setFocus();
+                     });
+                 }});
+    panels::add({.id = kTerminalDock, .title = "Terminal", .create = make([](QWidget* p) { return new TerminalPanel(p); }),
+                 .area = Qt::BottomDockWidgetArea});
+    // The UV editor opens as its own column left of the channel box.
+    panels::add({.id = kUvEditorDock, .title = "UV Editor", .create = make([](QWidget* p) { return new UvEditor(p); }),
+                 .area = Qt::RightDockWidgetArea});
+    panels::add({.id = kChannelBoxDock, .title = "Channel Box", .create = make([](QWidget* p) { return new ChannelBox(p); }),
+                 .area = Qt::RightDockWidgetArea, .place = [this, dock](QDockWidget* channels) {
+                     splitDockWidget(dock(kUvEditorDock), channels, Qt::Horizontal);
+                     // Split before the tabs join, so the layer editor sits under the whole channel box tab group as in Maya.
+                     splitDockWidget(channels, dock(kDisplayLayersDock), Qt::Vertical);
+                 }});
+    panels::add({.id = "attributeEditor", .title = "Attribute Editor", .create = make([](QWidget* p) { return new AttributeEditor(p); }),
+                 .area = Qt::RightDockWidgetArea, .place = [this, dock](QDockWidget* d) { tabifyDockWidget(dock(kChannelBoxDock), d); }});
+    auto tabWithAttributes = [this, dock](QDockWidget* d) { tabifyDockWidget(dock("attributeEditor"), d); };
+    panels::add({.id = kModelingToolkitDock, .title = "Modeling Toolkit", .create = make([](QWidget* p) { return new ModelingToolkit(p); }),
+                 .area = Qt::RightDockWidgetArea, .open = false, .place = tabWithAttributes});
+    panels::add({.id = kModifierStackDock, .title = "Modifier Stack", .create = make([](QWidget* p) { return new ModifierStackWidget(p); }),
+                 .area = Qt::RightDockWidgetArea, .place = tabWithAttributes});
+    panels::add({.id = kMaterialEditorDock, .title = "Material Editor", .create = make([](QWidget* p) { return new MaterialEditor(p); }),
+                 .area = Qt::RightDockWidgetArea, .place = [tabWithAttributes, dock](QDockWidget* materials) {
+                     tabWithAttributes(materials);
+                     // Swatches and texture slots need more room than the channel box's width.
+                     materials->setProperty(kDefaultTabExtent, kDefaultSidePanelWidth * 5 / 4);
+                     dock(kChannelBoxDock)->raise();
+                 }});
+    panels::add({.id = kTimeSliderDock, .title = "Time Slider", .create = make([](QWidget* p) { return new TimeSlider(p); }),
+                 .area = Qt::BottomDockWidgetArea, .place = [](QDockWidget* timeSlider) {
+                     timeSlider->setTitleBarWidget(new QWidget(timeSlider));
+                     // Fixed height, so a bottom area left with only the slider shrinks to it instead of handing it the space.
+                     timeSlider->widget()->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+                 }});
+    panels::add({.id = kGraphEditorDock, .title = "Graph Editor", .create = make([](QWidget* p) { return new GraphEditor(p); }),
+                 .area = Qt::BottomDockWidgetArea, .open = false});
+    panels::add({.id = kNodeEditorDock, .title = "Node Editor", .create = make([](QWidget* p) { return new NodeEditor(p); }),
+                 .area = Qt::BottomDockWidgetArea, .open = false, .place = [this, dock](QDockWidget* nodeDock) {
+                     arrangeBottomDocks(this, {dock("scriptOutput"), dock(kScriptEditorDock), dock(kTerminalDock), dock(kGraphEditorDock), nodeDock},
+                                        dock(kScriptEditorDock), dock(kTimeSliderDock));
+                 }});
+}
+
+void MainWindow::createPanelDock(const panels::Panel& p)
+{
+    const QString name = QString::fromStdString(p.id);
+    if (!p.create || findChild<QDockWidget*>(name))
+        return;
+    QWidget* content = nullptr;
+    try
+    {
+        content = p.create(this);
+    }
+    catch (const std::exception& e)
+    {
+        log::error("panel {}: {}", p.id, e.what());
+    }
+    if (!content)
+        return;
+    QDockWidget* d = addDock(QString::fromStdString(p.title), name, content, p.area);
+    if (!p.icon.empty())
+        d->setWindowIcon(icon(QString::fromStdString(p.icon)));
+    if (p.place)
+        p.place(d);
+    if (!p.open)
+        d->hide();
+    if (mMenus)
+        mMenus->scheduleRebuild();
+}
+
+void MainWindow::removePanelDock(const std::string& id)
+{
+    QDockWidget* d = findChild<QDockWidget*>(QString::fromStdString(id));
+    if (!d)
+        return;
+    if (mSidebars->isCollapsed(d))
+        mSidebars->expand(d);
+    removeDockWidget(d);
+    // Now rather than later: an extension's panel code goes away with its library right after.
+    delete d;
+    if (mMenus)
+        mMenus->scheduleRebuild();
+}
+
 namespace
 {
 /** Shown on screen: for a tabbed dock, its tab is the current one. */
 bool showingTab(QDockWidget* d)
 {
-    return d && d->isVisible() && !d->visibleRegion().isEmpty();
+    return dockShowing(d);
 }
 
 /** Closes the widget it filters on Escape (which a popup QLineEdit otherwise ignores) or on the key bound to toggleAction. */
@@ -385,13 +490,45 @@ void MainWindow::run(const char* command, const json& call)
     }
 }
 
+namespace
+{
+/**
+ * Restores, raises and activates a window even while another app is in front, as when Lila is closed from the
+ * taskbar: Windows refuses SetForegroundWindow to a background process unless it shares the foreground thread's input.
+ */
+void bringToFront(QWidget* w)
+{
+    if (w->isMinimized())
+        w->showNormal();
+    w->raise();
+    w->activateWindow();
+#ifdef _WIN32
+    HWND hwnd = HWND(w->winId());
+    if (IsIconic(hwnd))
+        ShowWindow(hwnd, SW_RESTORE);
+    HWND front = GetForegroundWindow();
+    DWORD frontThread = front ? GetWindowThreadProcessId(front, nullptr) : 0, self = GetCurrentThreadId();
+    bool attached = frontThread && frontThread != self && AttachThreadInput(frontThread, self, TRUE);
+    BringWindowToTop(hwnd);
+    SetForegroundWindow(hwnd);
+    SetActiveWindow(hwnd);
+    if (attached)
+        AttachThreadInput(frontThread, self, FALSE);
+#endif
+}
+} // namespace
+
 bool MainWindow::confirmDiscard()
 {
     if (!io::modified())
         return true;
     QString name = io::displayName() == "untitled" ? QString("untitled scene") : QString::fromStdString(io::displayName());
-    auto choice = QMessageBox::question(this, "Unsaved changes", "Save changes to " + name + "?",
-                                        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+    bringToFront(this);
+    QMessageBox box(QMessageBox::Question, "Unsaved changes", "Save changes to " + name + "?",
+                    QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, this);
+    box.setDefaultButton(QMessageBox::Save);
+    QTimer::singleShot(0, &box, [&box] { bringToFront(&box); });
+    auto choice = QMessageBox::StandardButton(box.exec());
     if (choice == QMessageBox::Cancel)
         return false;
     if (choice == QMessageBox::Save)
@@ -456,20 +593,14 @@ void MainWindow::openScene(const std::filesystem::path& given)
     {
         QString start = Workspace::get().isOpen() ? QString::fromStdWString(Workspace::get().root().wstring()) : QString();
         QString chosen = QFileDialog::getOpenFileName(this, "Open Scene", start,
-                                                      "Scenes (*.lila *.lilaa *.ma *.mb);;Lila scenes (*.lila *.lilaa);;Maya scenes (*.ma *.mb)");
+                                                      QString::fromStdString(io::translators::dialogFilter(io::translators::Op::Open, "Scenes")));
         if (chosen.isEmpty())
             return;
         path = chosen.toStdWString();
     }
     try
     {
-        std::string ext = path.extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-        // A Maya file opens as a new untitled scene; saving it makes the .lila.
-        if (ext == ".ma" || ext == ".mb")
-            cmds::execute("mayaOpen", {{"args", {path.generic_string()}}, {"force", true}}, CallSource::UI);
-        else
-            cmds::execute("openScene", {{"args", {path.generic_string()}}}, CallSource::UI);
+        io::translators::run(io::translators::Op::Open, path, json::object(), CallSource::UI);
         addRecentFile(path);
         refreshSourceStatus();
         mViewports->active()->frameSelection(true);
@@ -565,15 +696,29 @@ void MainWindow::startup(const std::vector<io::recovery::Session>& stale, bool s
     dialog->present();
 }
 
+namespace
+{
+void runTranslator(io::translators::Op op, const QString& file, const std::string& translator)
+{
+    try
+    {
+        io::translators::run(op, std::filesystem::path(file.toStdWString()), json::object(), CallSource::UI, translator);
+    }
+    catch (const CommandError& e)
+    {
+        log::error("{}", e.what());
+    }
+}
+} // namespace
+
 void MainWindow::importFile()
 {
     QString start = Workspace::get().isOpen() ? QString::fromStdWString(Workspace::get().root().wstring()) : QString();
     QString file = QFileDialog::getOpenFileName(this, "Import", start,
-                                                "Scenes and meshes (*.fbx *.obj *.ma *.mb);;FBX (*.fbx);;OBJ (*.obj);;Maya (*.ma *.mb)");
+                                                QString::fromStdString(io::translators::dialogFilter(io::translators::Op::Import, "Scenes and meshes")));
     if (file.isEmpty())
         return;
-    const bool maya = file.endsWith(".ma", Qt::CaseInsensitive) || file.endsWith(".mb", Qt::CaseInsensitive);
-    run(maya ? "mayaImport" : file.endsWith(".obj", Qt::CaseInsensitive) ? "importObj" : "importFbx", {{"args", {file.toStdString()}}});
+    runTranslator(io::translators::Op::Import, file, {});
 }
 
 void MainWindow::convertMayaFolder()
@@ -602,13 +747,22 @@ void MainWindow::convertMayaFolder()
 void MainWindow::exportSelection()
 {
     QString start = Workspace::get().isOpen() ? QString::fromStdWString(Workspace::get().root().wstring()) : QString();
-    QString file = QFileDialog::getSaveFileName(this, "Export Selection", start, "FBX for Unreal (*.fbx);;OBJ (*.obj)");
+    QString selected;
+    QString file = QFileDialog::getSaveFileName(this, "Export Selection", start,
+                                                QString::fromStdString(io::translators::dialogFilter(io::translators::Op::Export, {})), &selected);
     if (file.isEmpty())
         return;
-    if (file.endsWith(".obj", Qt::CaseInsensitive))
-        run("exportObj", {{"args", {file.toStdString()}}});
-    else
-        run("exportFbx", {{"args", {file.toStdString()}}, {"profile", "ue5"}});
+    // The chosen filter entry names the format when the typed name has no extension a translator knows.
+    std::string translator;
+    if (!io::translators::forPath(io::translators::Op::Export, file.toStdWString()))
+        for (const io::translators::FileTranslator* t : io::translators::supporting(io::translators::Op::Export))
+            if (selected.startsWith(QString::fromStdString(t->label + " (")))
+            {
+                translator = t->id;
+                if (!t->extensions.empty())
+                    file += QString::fromStdString(t->extensions.front());
+            }
+    runTranslator(io::translators::Op::Export, file, translator);
 }
 
 void MainWindow::sendToUnreal()
@@ -761,21 +915,44 @@ void MainWindow::registerActions()
     actions::add({"edit.rename", "Rename...", "Edit", [this] { renameSelection(); }, actions::hasSelection,
                   "Renames the selected objects at the cursor; several get numbered names."});
     actions::add({"window.resetLayout", "Reset Layout", "Windows", [this] {
-                      resetLayout();
-                      layouts::setCurrent("");
-                  }, nullptr, "Puts every panel back in its default place and size."});
+                      std::string current = layouts::current();
+                      if (current.empty() || !layouts::find(current))
+                      {
+                          resetLayout();
+                          return;
+                      }
+                      try
+                      {
+                          cmds::execute("applyLayout", {{"name", current}}, CallSource::UI);
+                      }
+                      catch (const CommandError& e)
+                      {
+                          log::error("{}", e.what());
+                      }
+                  }, nullptr, "Puts every panel back where the current layout has it, keeping that layout picked. With none picked, "
+                              "back to the default arrangement."});
     actions::add({"window.toggleChannelBox", "Toggle Channel Box", "Windows", [this] { toggleChannelBox(); }, nullptr,
                   "Brings the channel box to the front of its tabs; again to go back to the tab shown before it."});
     actions::add({"window.toggleUvEditor", "Toggle UV Editor", "Windows", [this] { toggleUvEditor(); }, nullptr,
                   "Shows the UV editor, or tucks it back into its sidebar when it is showing."});
     actions::add({"window.expandPanels", "Expand Collapsed Panels", "Windows", [this] { mSidebars->expandAll(); }, nullptr,
                   "Opens every panel collapsed to a sidebar tab."});
-    actions::add({"window.preferences", "Preferences...", "Windows", [this] { PreferencesDialog::open(this); }, nullptr,
+    actions::add({"window.preferences", "Preferences...", "Windows", [this] {
+                      if (!closeShownWindow<PreferencesDialog>())
+                          PreferencesDialog::open(this);
+                  }, nullptr,
                   "Settings for the viewport, manipulators, files, Python and the rest of Lila."});
+    actions::add({"window.extensionManager", "Extension Manager...", "Windows", [this] {
+                      if (!closeShownWindow<ExtensionManagerDialog>())
+                          ExtensionManagerDialog::open(this);
+                  }, nullptr,
+                  "Load, unload and auto load extensions, and see their versions and load errors."});
     actions::add({"viewport.isolate", "Isolate Select", "View", [this] { mViewports->active()->toggleIsolate(); },
                   [this] { return mViewports->active()->isolating() || actions::hasSelection(); },
                   "Shows only the selected objects in the active view; again to show everything."});
     imagePlanes::install([this] { return mViewports->active(); });
+    sets::registerActions(this);
+    GameExporter::registerActions(this);
     hud::registerActions([this] { return mViewports->active(); });
     cursorBadges::registerDefaults();
     actions::add({"viewport.toggleQuad", "Toggle Four Views", "View", [this] { mViewports->toggleQuad(); }, nullptr,
@@ -800,7 +977,10 @@ void MainWindow::registerActions()
     actions::add({"viewport.cameraSettings", "Camera Settings...", "View",
                   [this] { RenderSettingsDialog::open(this, mViewports->active()->viewName()); }, nullptr,
                   "The active view's camera gates, film fit, overscan and gate mask."});
-    actions::add({"window.renderSettings", "Render Settings...", "Windows", [this] { RenderSettingsDialog::open(this); }, nullptr,
+    actions::add({"window.renderSettings", "Render Settings...", "Windows", [this] {
+                      if (!closeShownWindow<RenderSettingsDialog>())
+                          RenderSettingsDialog::open(this);
+                  }, nullptr,
                   "Render resolution and per-camera settings.", "lila.cmds.setRenderResolution(width=1920, height=1080)"});
     actions::add({"window.toggleMaximizePanel", "Maximize Viewport", "Windows", [this] {
                       bool hide = false;
@@ -828,23 +1008,6 @@ void MainWindow::registerActions()
                   }, nullptr, "Puts the newest crash report on the clipboard, ready to paste into a bug report."});
 }
 
-QAction* MainWindow::addActionItem(QMenu* menu, const std::string& id)
-{
-    const Action* a = actions::find(id);
-    QAction* qa = menu->addAction(QString::fromStdString(a ? a->label : id));
-    qa->setData(QString::fromStdString(id));
-    qa->setToolTip(QString::fromStdString(actions::tooltip(id)));
-    if (a)
-        qa->setStatusTip(QString::fromStdString(a->doc));
-    connect(qa, &QAction::triggered, this, [id] { actions::run(id); });
-    return qa;
-}
-
-QMenu* MainWindow::addMenu(const QString& title)
-{
-    return refreshKeysOnShow(tearoff::enable(menuBar()->addMenu(title)));
-}
-
 QMenu* MainWindow::refreshKeysOnShow(QMenu* menu)
 {
     menu->setToolTipsVisible(true);
@@ -855,9 +1018,8 @@ QMenu* MainWindow::refreshKeysOnShow(QMenu* menu)
             std::string id = qa->data().toString().toStdString();
             if (id.empty())
                 continue;
-            const Action* a = actions::find(id);
             QString key = Hotkeys::get().keyFor(id);
-            qa->setText(QString::fromStdString(a ? a->label : id) + (key.isEmpty() ? "" : "	" + key));
+            qa->setText(QString::fromStdString(actions::displayLabel(id)) + (key.isEmpty() ? "" : "	" + key));
             qa->setToolTip(QString::fromStdString(actions::tooltip(id)));
             qa->setEnabled(actions::isEnabled(json(id)));
         }
@@ -868,181 +1030,117 @@ QMenu* MainWindow::refreshKeysOnShow(QMenu* menu)
 
 void MainWindow::buildMenus()
 {
-    QMenu* file = addMenu("File");
-    for (const char* id : {"file.new", "file.open"})
-        addActionItem(file, id);
-    mRecentFilesMenu = file->addMenu("Recent Scenes");
-    connect(mRecentFilesMenu, &QMenu::aboutToShow, this, [this] {
-        mRecentFilesMenu->clear();
-        json recent = PrefStore::get().value("general", "/recentFiles", json::array());
-        for (const json& r : recent.is_array() ? recent : json::array())
-            if (r.is_string())
-            {
-                std::string p = r.get<std::string>();
-                mRecentFilesMenu->addAction(QString::fromStdString(p), [this, p] { openScene(std::filesystem::path(p)); });
-            }
-        if (mRecentFilesMenu->isEmpty())
-            mRecentFilesMenu->addAction("(none)")->setEnabled(false);
+    using namespace menus;
+    auto menu = [](const char* id, const char* title, Area area = Area::MenuBar, std::function<void(QMenu*)> setup = {}) {
+        addMenu({.id = id, .title = title, .area = area, .setup = std::move(setup)});
+    };
+
+    menu("File", "File");
+    menus::addActions("File", {"file.new", "file.open"});
+    addSubmenu("File", "Recent Scenes", [this](QMenu* recent) {
+        connect(recent, &QMenu::aboutToShow, this, [this, recent] {
+            recent->clear();
+            json files = PrefStore::get().value("general", "/recentFiles", json::array());
+            for (const json& r : files.is_array() ? files : json::array())
+                if (r.is_string())
+                {
+                    std::string p = r.get<std::string>();
+                    recent->addAction(QString::fromStdString(p), [this, p] { openScene(std::filesystem::path(p)); });
+                }
+            if (recent->isEmpty())
+                recent->addAction("(none)")->setEnabled(false);
+        });
     });
-    for (const char* id : {"file.save", "file.saveAs", "file.incrementAndSave", "file.versions"})
-        addActionItem(file, id);
-    file->addSeparator();
-    addActionItem(file, "file.import");
-    addActionItem(file, "file.convertMaya");
-    addActionItem(file, "file.exportSelection");
-    addActionItem(file, "file.createReference");
-    file->addSeparator();
-    for (const char* id : {"unreal.send", "unreal.sync", "unreal.connect"})
-        addActionItem(file, id);
-    file->addSeparator();
-    addActionItem(file, "file.openFolder");
-    mRecentMenu = file->addMenu("Recent Folders");
-    addActionItem(file, "file.closeFolder");
-    file->addSeparator();
-    addActionItem(file, "file.exit");
-    refreshRecentFolders();
+    menus::addActions("File", {"file.save", "file.saveAs", "file.incrementAndSave", "file.versions", "", "file.import", "file.convertMaya",
+                        "file.exportSelection", "file.gameExporter", "file.createReference", "", "unreal.send", "unreal.sync",
+                        "unreal.connect", "", "file.openFolder"});
+    addSubmenu("File", "Recent Folders", [this](QMenu* recent) {
+        mRecentMenu = recent;
+        refreshRecentFolders();
+    });
+    menus::addActions("File", {"file.closeFolder", "", "file.exit"});
 
-    QMenu* edit = addMenu("Edit");
-    for (const char* id : {"edit.undo", "edit.redo", "edit.flushUndo", "edit.flushRedo", "edit.flushAll"})
-        addActionItem(edit, id);
-    edit->addSeparator();
-    for (const char* id : {"edit.selectAll", "edit.deselect", "edit.delete"})
-        addActionItem(edit, id);
-    edit->addSeparator();
-    for (const char* id : {"edit.duplicate", "edit.group", "edit.parent", "edit.parentChain", "edit.unparent"})
-        addActionItem(edit, id);
-    edit->addSeparator();
-    addActionItem(edit, "edit.rename");
-    edit->addSeparator();
-    addActionItem(edit, "window.preferences");
+    menu("Edit", "Edit");
+    menus::addActions("Edit", {"edit.undo", "edit.redo", "edit.repeatLast", "edit.flushUndo", "edit.flushRedo", "edit.flushAll", "",
+                        "edit.selectAll", "edit.deselect", "edit.delete"});
+    addSubmenu("Edit", "Quick Select Sets", [](QMenu* m) { sets::attachQuickSelectMenu(m); });
+    menus::addActions("Edit", {"", "edit.duplicate", "edit.group", "edit.parent", "edit.parentChain", "edit.unparent", "", "edit.rename", "",
+                        "window.preferences", "window.extensionManager"});
 
-    QMenu* modify = addMenu("M&odify");
-    for (const char* id : {"modify.freezeTransforms", "modify.resetTransforms", "modify.centerPivot", "modify.resetPivot"})
-        addActionItem(modify, id);
+    menu("Modify", "M&odify");
+    menus::addActions("Modify", {"modify.freezeTransforms", "modify.resetTransforms", "modify.centerPivot", "modify.resetPivot"});
 
-    QMenu* create = addMenu("Create");
-    QMenu* polys = create->addMenu("Polygon Primitives");
-    for (const char* id : {"create.cube", "create.sphere", "create.cylinder", "create.cone", "create.plane", "create.torus", "create.disc",
-                           "create.pipe", "create.quadSphere", "create.icoSphere"})
-        addActionItem(polys, id);
-    addActionItem(create, "create.locator");
-    addActionItem(create, "create.camera");
-    addActionItem(create, "create.cameraFromView");
-    addActionItem(create, "create.emptyGroup");
-    addActionItem(create, "create.imagePlane");
+    menu("Create", "Create");
+    addSubmenu("Create", "Polygon Primitives");
+    menus::addActions("Create/Polygon Primitives", {"create.cube", "create.sphere", "create.cylinder", "create.cone", "create.plane", "create.torus",
+                                             "create.disc", "create.pipe", "create.quadSphere", "create.icoSphere"});
+    menus::addActions("Create", {"create.locator", "create.camera", "create.cameraFromView", "create.emptyGroup", "create.imagePlane"});
+    addSubmenu("Create", "Sets");
+    menus::addActions("Create/Sets", {"sets.create", "sets.createQuickSelect"});
 
-    QMenu* select = addMenu("Select");
-    for (const char* id : {"select.objectMode", "select.vertexMode", "select.edgeMode", "select.faceMode"})
-        addActionItem(select, id);
-    select->addSeparator();
-    for (const char* id : {"select.allComponents", "select.grow", "select.loop", "select.ring"})
-        addActionItem(select, id);
-    select->addSeparator();
-    for (const char* id : {"select.hierarchy", "select.pickWalkUp", "select.pickWalkDown", "select.pickWalkLeft", "select.pickWalkRight"})
-        addActionItem(select, id);
-    select->addSeparator();
-    for (const char* id : {"select.toVertices", "select.toEdges", "select.toFaces"})
-        addActionItem(select, id);
+    menu("Select", "Select");
+    menus::addActions("Select", {"select.objectMode", "select.vertexMode", "select.edgeMode", "select.faceMode", "", "select.allComponents",
+                          "select.grow", "select.loop", "select.ring", "", "select.hierarchy", "select.pickWalkUp", "select.pickWalkDown",
+                          "select.pickWalkLeft", "select.pickWalkRight", "", "select.toVertices", "select.toEdges", "select.toFaces"});
 
-    QMenu* mesh = addMenu("Mesh");
-    for (const char* id : {"mesh.extrude", "mesh.inset", "mesh.bevel", "mesh.insertLoop", "mesh.bridge", "mesh.fillHole"})
-        addActionItem(mesh, id);
-    mesh->addSeparator();
-    for (const char* id : {"mesh.merge", "mesh.mergeCenter", "mesh.collapse", "mesh.dissolve", "mesh.poke", "mesh.spin"})
-        addActionItem(mesh, id);
-    mesh->addSeparator();
-    for (const char* id : {"mesh.flip", "mesh.conform", "mesh.triangulate", "mesh.quadrangulate", "mesh.subdivide"})
-        addActionItem(mesh, id);
-    mesh->addSeparator();
-    for (const char* id : {"mesh.mirror", "mesh.symmetryX", "mesh.symmetryOff", "mesh.combine", "mesh.separate", "mesh.deleteHistory"})
-        addActionItem(mesh, id);
-    QMenu* symmetry = mesh->addMenu("Symmetry");
-    for (const char* id : {"mesh.toggleSymmetry", "mesh.symmetryX", "mesh.symmetryY", "mesh.symmetryZ", "mesh.symmetryOff"})
-        addActionItem(symmetry, id);
-    symmetry->addSeparator();
-    for (const char* id : {"mesh.symmetryCheck", "mesh.symmetrizePositive", "mesh.symmetrizeNegative", "mesh.symmetryRebuild",
-                           "mesh.symmetryRebuildTopological"})
-        addActionItem(symmetry, id);
-    mesh->addSeparator();
-    for (const char* id : {"mesh.booleanDifference", "mesh.booleanUnion", "mesh.booleanIntersection", "mesh.transferAttributes"})
-        addActionItem(mesh, id);
-    QMenu* vertexColorMenu = mesh->addMenu("Vertex Colors");
-    for (const char* id : {"vcolor.paint", "vcolor.createSet", "", "vcolor.fill", "vcolor.gradient", "vcolor.invert", "vcolor.levels", "vcolor.blur", "",
-                           "vcolor.bakeAO", "vcolor.bakeCavity", "vcolor.bakeCurvature", "vcolor.bakeHeight"})
-    {
-        if (*id)
-            addActionItem(vertexColorMenu, id);
-        else
-            vertexColorMenu->addSeparator();
-    }
-    mesh->addSeparator();
-    for (const char* id : {"retopo.quadDraw", "mesh.quadRemesh", "mesh.voxelRemesh", "mesh.repair", "mesh.selectIssues", "mesh.relax"})
-        addActionItem(mesh, id);
-    QMenu* sculptMenu = mesh->addMenu("Sculpt");
-    for (const char* id : {"sculpt.tool", "sculpt.enter", "sculpt.exit", "sculpt.cancel", "window.sculpt", "mesh.relaxKeepForm", "mesh.reproject",
-                           "mesh.transferShape"})
-        addActionItem(sculptMenu, id);
-    addActionItem(mesh, "window.nodeEditor");
-    fillAddModifierMenu(mesh->addMenu("Add Modifier"));
-    QMenu* autoBevel = mesh->addMenu("Auto Bevel");
-    for (const char* id : {"modifier.autoBevel", "select.foldEdges", "bevel.editEdges", "bevel.applyEdges", "bevel.cancelEdges",
-                           "bevel.measureThin", "bevel.clearOverrides", "bevel.showEdges"})
-        addActionItem(autoBevel, id);
+    menu("Mesh", "Mesh");
+    menus::addActions("Mesh", {"mesh.extrude", "mesh.inset", "mesh.bevel", "mesh.insertLoop", "mesh.knife", "mesh.bridge", "mesh.fillHole", "",
+                        "mesh.merge", "mesh.mergeCenter", "mesh.collapse", "mesh.dissolve", "mesh.poke", "mesh.spin", "", "mesh.flip",
+                        "mesh.conform", "mesh.triangulate", "mesh.quadrangulate", "mesh.subdivide", "", "mesh.mirror", "mesh.symmetryX",
+                        "mesh.symmetryOff", "mesh.combine", "mesh.separate", "mesh.deleteHistory"});
+    addSubmenu("Mesh", "Symmetry");
+    menus::addActions("Mesh/Symmetry", {"mesh.toggleSymmetry", "mesh.symmetryX", "mesh.symmetryY", "mesh.symmetryZ", "mesh.symmetryOff", "",
+                                 "mesh.symmetryCheck", "mesh.symmetrizePositive", "mesh.symmetrizeNegative", "mesh.symmetryRebuild",
+                                 "mesh.symmetryRebuildTopological"});
+    menus::addActions("Mesh", {"", "mesh.booleanDifference", "mesh.booleanUnion", "mesh.booleanIntersection", "mesh.transferAttributes"});
+    addSubmenu("Mesh", "Vertex Colors");
+    menus::addActions("Mesh/Vertex Colors", {"vcolor.paint", "vcolor.createSet", "", "vcolor.fill", "vcolor.gradient", "vcolor.invert",
+                                      "vcolor.levels", "vcolor.blur", "", "vcolor.bakeAO", "vcolor.bakeCavity", "vcolor.bakeCurvature",
+                                      "vcolor.bakeHeight"});
+    menus::addActions("Mesh", {"", "retopo.quadDraw", "mesh.quadRemesh", "mesh.voxelRemesh", "mesh.repair", "mesh.selectIssues", "mesh.relax"});
+    addSubmenu("Mesh", "Sculpt");
+    menus::addActions("Mesh/Sculpt", {"sculpt.tool", "sculpt.enter", "sculpt.exit", "sculpt.cancel", "window.sculpt", "mesh.relaxKeepForm",
+                               "mesh.reproject", "mesh.transferShape"});
+    menus::addActions("Mesh", {"window.nodeEditor"});
+    addSubmenu("Mesh", "Add Modifier", [](QMenu* m) { fillAddModifierMenu(m); });
+    addSubmenu("Mesh", "Auto Bevel");
+    menus::addActions("Mesh/Auto Bevel", {"modifier.autoBevel", "select.foldEdges", "bevel.editEdges", "bevel.applyEdges", "bevel.cancelEdges",
+                                   "bevel.measureThin", "bevel.clearOverrides", "bevel.showEdges"});
 
-    QMenu* uvMenu = addMenu("UV");
-    for (const char* id : {"window.uvEditor", "uv.auto", "uv.autoSeams", "uv.unwrap", "uv.projectPlanar", "uv.projectBox", "uv.projectCylindrical",
-                           "uv.projectSpherical", "uv.cut", "uv.sew", "uv.straighten", "uv.orient", "uv.pack", "uv.lightmap"})
-        addActionItem(uvMenu, id);
-    uvMenu->addSeparator();
-    for (const char* id : {"uv.autoSeams2", "uv.bff", "uv.bffDisk", "uv.bffRectangle", "uv.bffCones", "uv.unwrapSymmetric", "uv.unwrapSymmetricStack"})
-        addActionItem(uvMenu, id);
-    QMenu* packMenu = uvMenu->addMenu("Pack");
-    for (const char* id : {"uv.pack", "uv.packAroundSelected", "uv.packSelectionOnly", "uv.packStacked", "uv.packUdimByMaterial", "uv.selectStacks"})
-        addActionItem(packMenu, id);
-    QMenu* liveMenu = uvMenu->addMenu("Live");
-    for (const char* id : {"uv.liveMode", "uv.liveRelax", "uv.liveFlatten", "uv.liveSettle", "uv.pin", "uv.unpin", "uv.weld", "uv.brush3d",
-                           "uv.checker3d", "uv.seams3d", "uv.heatmapTwoColour"})
-        addActionItem(liveMenu, id);
-    QMenu* optimizeMenu = uvMenu->addMenu("Optimize");
-    for (const char* id : {"uv.optimizeConformal", "uv.optimizeAuthalic", "uv.optimizeBlend", "uv.optimizeIsometric", "uv.mosaic"})
-        addActionItem(optimizeMenu, id);
-    QMenu* alignMenu = uvMenu->addMenu("Align");
-    for (const char* id : {"uv.straightenEdges", "uv.alignU", "uv.alignV", "uv.orientByEdge"})
-        addActionItem(alignMenu, id);
+    menu("UV", "UV");
+    menus::addActions("UV", {"window.uvEditor", "uv.auto", "uv.autoSeams", "uv.unwrap", "uv.projectPlanar", "uv.projectBox", "uv.projectCylindrical",
+                      "uv.projectSpherical", "uv.cut", "uv.sew", "uv.straighten", "uv.orient", "uv.pack", "uv.lightmap", "", "uv.autoSeams2",
+                      "uv.bff", "uv.bffDisk", "uv.bffRectangle", "uv.bffCones", "uv.unwrapSymmetric", "uv.unwrapSymmetricStack"});
+    addSubmenu("UV", "Pack");
+    menus::addActions("UV/Pack", {"uv.pack", "uv.packAroundSelected", "uv.packSelectionOnly", "uv.packStacked", "uv.packUdimByMaterial", "uv.selectStacks"});
+    addSubmenu("UV", "Live");
+    menus::addActions("UV/Live", {"uv.liveMode", "uv.liveRelax", "uv.liveFlatten", "uv.liveSettle", "uv.pin", "uv.unpin", "uv.weld", "uv.brush3d",
+                           "uv.checker3d", "uv.seams3d", "uv.heatmapTwoColour"});
+    addSubmenu("UV", "Optimize");
+    menus::addActions("UV/Optimize", {"uv.optimizeConformal", "uv.optimizeAuthalic", "uv.optimizeBlend", "uv.optimizeIsometric", "uv.mosaic"});
+    addSubmenu("UV", "Align");
+    menus::addActions("UV/Align", {"uv.straightenEdges", "uv.alignU", "uv.alignV", "uv.orientByEdge"});
 
-    QMenu* rig = addMenu("Rig");
-    for (const char* id : {"rig.jointTool", "rig.orientJoint", "rig.mirrorJoints", "rig.insertJoint", "rig.rerootSkeleton"})
-        addActionItem(rig, id);
-    rig->addSeparator();
-    for (const char* id : {"rig.bindSkin", "rig.bindSkinHeatmap", "rig.unbindSkin", "rig.goToBindPose"})
-        addActionItem(rig, id);
-    rig->addSeparator();
-    for (const char* id : {"rig.paintWeights", "rig.mirrorSkinWeights", "rig.copySkinWeights", "rig.normalizeWeights", "rig.pruneWeights"})
-        addActionItem(rig, id);
-    rig->addSeparator();
-    for (const char* id : {"rig.parentConstraint", "rig.pointConstraint", "rig.orientConstraint", "rig.aimConstraint", "rig.removeConstraint"})
-        addActionItem(rig, id);
-    rig->addSeparator();
-    addActionItem(rig, "rig.xrayJoints");
+    menu("Rig", "Rig");
+    menus::addActions("Rig", {"rig.jointTool", "rig.orientJoint", "rig.mirrorJoints", "rig.insertJoint", "rig.rerootSkeleton", "rig.centerJoint",
+                       "rig.snapToComponentCenter", "", "rig.bindSkin",
+                       "rig.bindSkinHeatmap", "rig.unbindSkin", "rig.goToBindPose", "rig.editSkeleton", "", "rig.paintWeights", "rig.mirrorSkinWeights",
+                       "rig.copySkinWeights", "rig.normalizeWeights", "rig.pruneWeights", "", "rig.parentConstraint", "rig.pointConstraint",
+                       "rig.orientConstraint", "rig.aimConstraint", "rig.removeConstraint", "", "rig.ikHandle", "", "rig.xrayJoints",
+                       "rig.dominantInfluenceSelect"});
+    addSubmenu("Rig", "Spaces");
+    setupSpacesMenu();
 
-    QMenu* deform = addMenu("Deform");
-    for (const char* id : {"deform.blendShape", "deform.addBlendTarget", "deform.extractBlendTarget"})
-        addActionItem(deform, id);
-    deform->addSeparator();
-    addActionItem(deform, "deform.lattice");
-    QMenu* nonlinear = deform->addMenu("Nonlinear");
-    for (const char* id : {"deform.bend", "deform.twist", "deform.taper", "deform.squash", "deform.sine", "deform.wave"})
-        addActionItem(nonlinear, id);
-    for (const char* id : {"deform.softMod", "deform.deltaMush", "deform.wrap", "deform.cage"})
-        addActionItem(deform, id);
-    deform->addSeparator();
-    addActionItem(deform, "deform.rebind");
+    menu("Deform", "Deform");
+    menus::addActions("Deform", {"deform.blendShape", "deform.addBlendTarget", "deform.extractBlendTarget", "", "deform.lattice"});
+    addSubmenu("Deform", "Nonlinear");
+    menus::addActions("Deform/Nonlinear", {"deform.bend", "deform.twist", "deform.taper", "deform.squash", "deform.sine", "deform.wave"});
+    menus::addActions("Deform", {"deform.softMod", "deform.deltaMush", "deform.wrap", "deform.cage", "", "deform.rebind"});
 
-    QMenu* display = addMenu("Display");
     // Toggles show their state, read from the active view when they are per view.
-    auto syncChecks = [this](QMenu* menu) {
-        connect(menu, &QMenu::aboutToShow, menu, [this, menu] {
-            for (QAction* qa : menu->actions())
+    auto syncChecks = [this](QMenu* m) {
+        connect(m, &QMenu::aboutToShow, m, [this, m] {
+            for (QAction* qa : m->actions())
                 if (std::optional<bool> on = viewportActionState(qa->data().toString().toStdString(), mViewports->active()))
                 {
                     qa->setCheckable(true);
@@ -1050,145 +1148,106 @@ void MainWindow::buildMenus()
                 }
         });
     };
-    syncChecks(display);
-    for (const char* id : {"viewport.wireframe", "viewport.shaded", "viewport.textured", "viewport.wireOnShaded", "viewport.defaultMaterial",
-                           "viewport.toggleXray", "viewport.toggleBackfaceCulling"})
-        addActionItem(display, id);
-    display->addSeparator();
-    QMenu* lighting = display->addMenu("Lighting");
-    syncChecks(lighting);
-    for (const char* id : {"viewport.lighting.environment", "viewport.lighting.studio", "viewport.lighting.flat"})
-        addActionItem(lighting, id);
-    QMenu* vertexColors = display->addMenu("Vertex Colors");
-    syncChecks(vertexColors);
-    for (const char* id : {"viewport.vertexColors.off", "viewport.vertexColors.shaded", "viewport.vertexColors.unlit", "",
-                           "viewport.colorChannel.rgb", "viewport.colorChannel.r", "viewport.colorChannel.g", "viewport.colorChannel.b",
-                           "viewport.colorChannel.a", "", "viewport.grayscaleWeights"})
-    {
-        if (*id)
-            addActionItem(vertexColors, id);
-        else
-            vertexColors->addSeparator();
-    }
-    for (const char* id : {"viewport.toggleShadows", "viewport.toggleAO", "viewport.toggleAA"})
-        addActionItem(display, id);
-    QMenu* samples = display->addMenu("Antialiasing Samples");
-    syncChecks(samples);
-    for (const char* id : {"viewport.aaSamples2", "viewport.aaSamples4", "viewport.aaSamples8"})
-        addActionItem(samples, id);
-    QMenu* envMenu = display->addMenu("Environment");
-    connect(envMenu, &QMenu::aboutToShow, envMenu, [envMenu] { fillEnvironmentMenu(envMenu); });
-    addActionItem(display, "viewport.toggleEnvBackground");
-    display->addSeparator();
-    for (const char* id : {"display.toggleVisibility", "display.hide", "display.show", "display.showAll", "viewport.isolate"})
-        addActionItem(display, id);
-    QMenu* measure = display->addMenu("Measure");
-    syncChecks(measure);
-    for (const char* id : {"measure.selection", "measure.copyDistance", "measure.copyDiameter", "measure.copyLength", "", "measure.distanceTool",
-                           "measure.angleTool", "measure.radiusTool", "", "measure.distanceFromSelection", "measure.angleFromSelection",
-                           "measure.radiusFromSelection", "", "measure.toggleShow"})
-    {
-        if (*id)
-            addActionItem(measure, id);
-        else
-            measure->addSeparator();
-    }
-    display->addSeparator();
-    QMenu* layerMenu = display->addMenu("Display Layers");
-    for (const char* id : {"window.displayLayers", "layers.create", "layers.createFromSelected", "layers.addSelected", "layers.removeSelected"})
-        addActionItem(layerMenu, id);
-    display->addSeparator();
-    QMenu* views = display->addMenu("Views");
-    syncChecks(views);
-    for (const char* view : {"persp", "top", "front", "right", "left", "back", "bottom"})
-        addActionItem(views, (std::string("viewport.view.") + view).c_str());
-    addActionItem(display, "viewport.frameSelected");
-    addActionItem(display, "viewport.frameAll");
-    addActionItem(display, "viewport.cameraUndo");
-    addActionItem(display, "viewport.cameraRedo");
-    display->addSeparator();
-    for (const char* id : {"viewport.toggleGrid", "viewport.toggleResolutionGate", "viewport.toggleFilmGate"})
-        addActionItem(display, id);
-    addActionItem(display, "viewport.cameraSettings");
-    addActionItem(display, "window.renderSettings");
-    display->addSeparator();
-    addActionItem(display, "viewport.toggleToolbar");
-    addActionItem(display, "viewport.resetExposure");
+    menu("Display", "Display", Area::MenuBar, syncChecks);
+    menus::addActions("Display", {"viewport.wireframe", "viewport.shaded", "viewport.textured", "viewport.wireOnShaded", "viewport.defaultMaterial",
+                           "viewport.toggleXray", "viewport.toggleBackfaceCulling", ""});
+    addSubmenu("Display", "Lighting", syncChecks);
+    menus::addActions("Display/Lighting", {"viewport.lighting.environment", "viewport.lighting.studio", "viewport.lighting.flat"});
+    addSubmenu("Display", "Vertex Colors", syncChecks);
+    menus::addActions("Display/Vertex Colors", {"viewport.vertexColors.off", "viewport.vertexColors.shaded", "viewport.vertexColors.unlit", "",
+                                         "viewport.colorChannel.rgb", "viewport.colorChannel.r", "viewport.colorChannel.g",
+                                         "viewport.colorChannel.b", "viewport.colorChannel.a", "", "viewport.grayscaleWeights",
+                                         "viewport.monotone"});
+    menus::addActions("Display", {"viewport.toggleShadows", "viewport.toggleAO", "viewport.toggleAA"});
+    addSubmenu("Display", "Antialiasing Samples", syncChecks);
+    menus::addActions("Display/Antialiasing Samples", {"viewport.aaSamples2", "viewport.aaSamples4", "viewport.aaSamples8"});
+    addSubmenu("Display", "Environment", [](QMenu* env) { connect(env, &QMenu::aboutToShow, env, [env] { fillEnvironmentMenu(env); }); });
+    menus::addActions("Display", {"viewport.toggleEnvBackground", "", "display.toggleVisibility", "display.hide", "display.show", "display.showAll",
+                           "viewport.isolate"});
+    addSubmenu("Display", "Measure", syncChecks);
+    menus::addActions("Display/Measure", {"measure.selection", "measure.copyDistance", "measure.copyDiameter", "measure.copyLength", "",
+                                   "measure.distanceTool", "measure.angleTool", "measure.radiusTool", "", "measure.distanceFromSelection",
+                                   "measure.angleFromSelection", "measure.radiusFromSelection", "", "measure.toggleShow"});
+    menus::addActions("Display", {""});
+    addSubmenu("Display", "Display Layers");
+    menus::addActions("Display/Display Layers", {"window.displayLayers", "layers.create", "layers.createFromSelected", "layers.addSelected",
+                                          "layers.removeSelected"});
+    menus::addActions("Display", {""});
+    addSubmenu("Display", "Views", syncChecks);
+    menus::addActions("Display/Views", {"viewport.view.persp", "viewport.view.top", "viewport.view.front", "viewport.view.right", "viewport.view.left",
+                                 "viewport.view.back", "viewport.view.bottom"});
+    menus::addActions("Display", {"viewport.frameSelected", "viewport.frameAll", "viewport.cameraUndo", "viewport.cameraRedo", "",
+                           "viewport.toggleGrid", "viewport.toggleResolutionGate", "viewport.toggleFilmGate", "viewport.cameraSettings",
+                           "window.renderSettings", "", "viewport.toggleToolbar", "viewport.resetExposure"});
 
-    QMenu* animation = addMenu("Animation");
-    for (const char* id : {"anim.setKey", "anim.setKeyTranslate", "anim.setKeyRotate", "anim.setKeyScale", "anim.autoKeyToggle"})
-        addActionItem(animation, id);
-    animation->addSeparator();
-    for (const char* id : {"anim.play", "anim.playBackward", "anim.stop", "anim.firstFrame", "anim.lastFrame", "anim.nextFrame",
-                           "anim.prevFrame", "anim.nextKey", "anim.prevKey"})
-        addActionItem(animation, id);
-    animation->addSeparator();
-    addActionItem(animation, "window.graphEditor");
-    addActionItem(animation, "window.timeSlider");
+    menu("Animation", "Animation");
+    menus::addActions("Animation", {"anim.setKey", "anim.setKeyTranslate", "anim.setKeyRotate", "anim.setKeyScale", "anim.autoKeyToggle", "",
+                             "anim.play", "anim.playBackward", "anim.stop", "anim.firstFrame", "anim.lastFrame", "anim.nextFrame",
+                             "anim.prevFrame", "anim.nextKey", "anim.prevKey", "", "window.graphEditor", "window.timeSlider"});
+    menus::addActions("Animation", {""});
+    addGhostingMenu("Animation");
+    menus::addActions("Animation", {"window.poseLibrary", "pose.mirror", "window.controlPicker", "picker.editMode"});
+    menus::addActions("Animation", {"", "anim.createOffset", "anim.bakeOffset", "anim.deleteOffset", "window.offsets"});
 
-    QMenu* windows = addMenu("Windows");
-    for (QDockWidget* dock : findChildren<QDockWidget*>())
-        windows->addAction(dock->toggleViewAction());
-    windows->addSeparator();
-    addActionItem(windows, "window.toggleMaximizePanel");
-    addActionItem(windows, "window.toggleChannelBox");
-    addActionItem(windows, "window.toggleUvEditor");
-    addActionItem(windows, "viewport.frameAll");
-    addActionItem(windows, "window.resetLayout");
-    windows->addMenu(mLayouts->menu());
-    addActionItem(windows, "window.expandPanels");
-    windows->addSeparator();
-    addActionItem(windows, "window.materialEditor");
-    addActionItem(windows, "window.scriptEditor");
-    addActionItem(windows, "window.apiReference");
-    addActionItem(windows, "window.terminal");
-    addActionItem(windows, "window.displayLayers");
-    addActionItem(windows, "window.undoHistory");
-    addActionItem(windows, "window.hotkeyEditor");
-    addActionItem(windows, "window.markingMenuEditor");
+    menu("Windows", "Windows");
+    addItem({.id = "Windows/panels", .menu = "Windows", .kind = Kind::Custom, .setup = [this](QMenu* m) {
+                 for (QDockWidget* dock : findChildren<QDockWidget*>())
+                     m->addAction(dock->toggleViewAction());
+             }});
+    menus::addActions("Windows", {"", "window.toggleMaximizePanel", "window.toggleChannelBox", "window.toggleUvEditor", "viewport.frameAll",
+                           "window.resetLayout"});
+    addItem({.id = "Windows/layouts", .menu = "Windows", .kind = Kind::Custom, .setup = [this](QMenu* m) { m->addMenu(mLayouts->menu()); }});
+    menus::addActions("Windows", {"window.expandPanels", "", "window.materialEditor", "window.scriptEditor", "window.apiReference", "window.terminal",
+                           "window.displayLayers", "window.animLayers", "window.undoHistory", "window.hotkeyEditor", "window.markingMenuEditor",
+                           "window.extensionManager"});
 
-    QMenu* help = addMenu("Help");
-    addActionItem(help, "help.agentSetup");
-    addActionItem(help, "help.prefsFolder");
-    addActionItem(help, "help.crashReports");
-    addActionItem(help, "help.copyLastCrash");
-    addActionItem(help, "help.hotkeyCheatSheet");
-    addActionItem(help, "help.about");
+    menu("Help", "Help");
+    menus::addActions("Help", {"help.agentSetup", "help.prefsFolder", "help.crashReports", "help.copyLastCrash", "help.hotkeyCheatSheet", "help.about"});
 
     buildPanelMenus();
+
+    mMenus = new MenuBuilder(this, [this](QMenu* m, bool topLevel) {
+        if (topLevel)
+            tearoff::enable(m);
+        refreshKeysOnShow(m);
+    });
+    connect(mMenus, &MenuBuilder::rebuilt, this, [this] {
+        menuBar()->clear();
+        for (QMenu* m : mMenus->menus(Area::MenuBar))
+            menuBar()->addMenu(m);
+        // The layout switcher lives in the menu bar corner, so the hotbox carries it too for when the menu bar is hidden.
+        std::vector<QMenu*> panels = mMenus->menus(Area::Hotbox);
+        panels.push_back(mLayouts->menu());
+        if (Hotbox* hb = Hotbox::instance())
+            hb->setPanelMenus(std::move(panels));
+        else
+            Hotbox::install(this, std::move(panels));
+    });
+    mMenus->rebuild();
 }
 
 void MainWindow::buildPanelMenus()
 {
     // Maya's viewport panel menus. Lila's views have no menu bar of their own, so these live in the hotbox.
-    auto panelMenu = [this](const char* title, std::initializer_list<const char*> ids) {
-        QMenu* menu = refreshKeysOnShow(new QMenu(title, this));
-        for (const char* id : ids)
-        {
-            if (*id)
-                addActionItem(menu, id);
-            else
-                menu->addSeparator();
-        }
-        return menu;
-    };
-    QMenu* view = panelMenu("View", {"viewport.view.persp", "viewport.view.top", "viewport.view.front", "viewport.view.right",
-                                     "viewport.view.left", "viewport.view.back", "viewport.view.bottom", "", "viewport.frameSelected",
-                                     "viewport.frameAll", "viewport.cameraUndo", "viewport.cameraRedo", "", "viewport.toggleResolutionGate",
-                                     "viewport.toggleFilmGate", "viewport.cameraSettings", "", "viewport.imagePlaneImport"});
-    QMenu* shading = panelMenu("Shading", {"viewport.wireframe", "viewport.shaded", "viewport.textured", "viewport.wireOnShaded", "",
-                                           "viewport.toggleAO", "", "display.smoothOff", "display.smoothCage", "display.smoothOn"});
-    QMenu* showMenu = panelMenu("Show", {"display.hide", "display.show", "display.showAll", "", "viewport.isolate", "rig.xrayJoints",
-                                         "measure.toggleShow", "viewport.toggleImagePlanes"});
-    QMenu* renderer = panelMenu("Renderer", {"window.renderSettings"});
-    QMenu* panels = panelMenu("Panels", {"viewport.lookThroughSelected", "", "viewport.toggleQuad", "window.toggleMaximizePanel", "",
-                                         "window.uvEditor", "window.graphEditor", "window.nodeEditor", "window.materialEditor"});
+    using namespace menus;
+    for (const char* title : {"View", "Shading", "Show", "Renderer", "Panels"})
+        addMenu({.id = std::string("panel.") + title, .title = title, .area = Area::Hotbox});
+    menus::addActions("panel.View", {"viewport.view.persp", "viewport.view.top", "viewport.view.front", "viewport.view.right", "viewport.view.left",
+                              "viewport.view.back", "viewport.view.bottom", "", "viewport.frameSelected", "viewport.frameAll",
+                              "viewport.cameraUndo", "viewport.cameraRedo", "", "viewport.toggleResolutionGate", "viewport.toggleFilmGate",
+                              "viewport.cameraSettings", "", "viewport.imagePlaneImport"});
+    menus::addActions("panel.Shading", {"viewport.wireframe", "viewport.shaded", "viewport.textured", "viewport.wireOnShaded", "", "viewport.toggleAO",
+                                 "", "display.smoothOff", "display.smoothCage", "display.smoothOn"});
+    menus::addActions("panel.Show", {"display.hide", "display.show", "display.showAll", "", "viewport.isolate", "rig.xrayJoints", "measure.toggleShow",
+                              "viewport.toggleImagePlanes"});
+    menus::addActions("panel.Renderer", {"window.renderSettings"});
+    menus::addActions("panel.Panels", {"viewport.lookThroughSelected"});
     // Maya's Panels > Perspective / Orthographic: the views plus every camera node, rebuilt as the menu opens.
-    auto* cameras = new QMenu("Cameras", panels);
-    panels->insertMenu(panels->actions().value(1), cameras);
-    connect(cameras, &QMenu::aboutToShow, cameras, [this, cameras] { fillCameraMenu(cameras, mViewports->active()); });
-    // The layout switcher lives in the menu bar corner, so the hotbox carries it too for when the menu bar is hidden.
-    Hotbox::install(this, {view, shading, showMenu, renderer, panels, mLayouts->menu()});
+    addSubmenu("panel.Panels", "Cameras", [this](QMenu* cameras) {
+        connect(cameras, &QMenu::aboutToShow, cameras, [this, cameras] { fillCameraMenu(cameras, mViewports->active()); });
+    });
+    menus::addActions("panel.Panels", {"", "viewport.toggleQuad", "window.toggleMaximizePanel", "", "window.uvEditor", "window.graphEditor",
+                                "window.nodeEditor", "window.materialEditor"});
 }
 
 void MainWindow::buildStatusBar()
@@ -1212,7 +1271,7 @@ void MainWindow::buildStatusBar()
     if (QDockWidget* output = findChild<QDockWidget*>("scriptOutput"))
     {
         auto* line = new StatusOutput([output] { revealDock(output); },
-                                      [output] { return output->isVisible() && !output->visibleRegion().isEmpty(); }, this);
+                                      [output] { return dockShowing(output); }, this);
         statusBar()->addWidget(line, 1);
         connect(output, &QDockWidget::visibilityChanged, line, qOverload<>(&QWidget::update));
     }
@@ -1227,6 +1286,8 @@ void MainWindow::buildStatusBar()
     mSourceLabel->setStyleSheet("color: #9a9a9a;");
     statusBar()->addPermanentWidget(mSourceLabel);
     statusBar()->addPermanentWidget(new QLabel(QString::fromStdString(render::Renderer::get().deviceName()), this));
+
+    statusBar()->addPermanentWidget(modes::createSwitcher(this));
 
     mMcpButton = new QToolButton(this);
     mMcpButton->setText("MCP");
@@ -1263,6 +1324,8 @@ void MainWindow::refreshWorkspaceLabel()
 
 void MainWindow::refreshRecentFolders()
 {
+    if (!mRecentMenu)
+        return;
     mRecentMenu->clear();
     json recent = PrefStore::get().value("general", "/recentFolders", json::array());
     if (!recent.is_array() || recent.empty())

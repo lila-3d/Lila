@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 namespace lila::ui
 {
 /**
@@ -7,5 +9,5 @@ namespace lila::ui
  * bevel.measureThin, bevel.clearOverrides, bevel.showEdges), the attribute editor section with the Edit Edges buttons,
  * and the viewport overlay of a selected modifier's edges.
  */
-void registerAutoBevelUi();
+LILA_UI_API void registerAutoBevelUi();
 } // namespace lila::ui

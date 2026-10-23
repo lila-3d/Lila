@@ -1,0 +1,14 @@
+{
+    "id": "uiMode",
+    "name": "UI Mode Example",
+    "version": "1.0.0",
+    "vendor": "Lila",
+    "description": "Sample UI extension: an action, a menu, a panel, a preferences page and a mode with its own Space tap, marking menus and shelf.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "uiMode.dll",
+        "linux": "uiMode.so",
+        "macos": "uiMode.dylib"
+    },
+    "enabledByDefault": false
+}

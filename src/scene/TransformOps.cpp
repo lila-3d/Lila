@@ -97,7 +97,11 @@ glm::dvec3 rotatedEuler(Graph& g, NodeId id, const glm::dquat& rotation, Space s
     glm::dmat3 current = rotationOf(n);
     glm::dmat3 next;
     if (space == Space::Object)
-        next = current * r;
+    {
+        // The object's own axes include rotateAxis, which sits after R.
+        glm::dmat3 ra(static_cast<Transform*>(n)->rotateAxisMatrix());
+        next = current * ra * r * glm::transpose(ra);
+    }
     else
     {
         // Changing R alone turns the object about its rotate pivot, which is exactly what we want.
@@ -142,7 +146,8 @@ void setWorldPivot(Graph& g, NodeId id, const glm::dvec3& world)
     glm::dvec3 sp = v3(n, Transform::kScalePivot);
     glm::dvec3 spt = v3(n, Transform::kScalePivotTranslate);
     glm::dvec3 s = v3(n, Transform::kScale);
-    glm::dmat3 r = rotationOf(n);
+    const auto* xf = static_cast<const Transform*>(n);
+    glm::dmat3 r = glm::dmat3(xf->preRotation()) * rotationOf(n) * glm::dmat3(xf->rotateAxisMatrix());
 
     glm::dvec3 target = glm::dvec3(glm::inverse(n->as<glm::dmat4>(Transform::kParentMatrix)) * glm::dvec4(world, 1.0));
     // Pivot sits at T + Rpt + Rp in parent space; solve for Rp with Rpt compensating so the matrix is unchanged.

@@ -11,6 +11,8 @@
 #include <QStyleFactory>
 #include <QWidget>
 
+#include <map>
+
 #ifdef _WIN32
 #include <windows.h>
 #include <dwmapi.h>
@@ -49,6 +51,8 @@ public:
     {
         if (mSmallIcon)
             DestroyIcon(mSmallIcon);
+        for (auto& [dpi, icon] : mBigIcons)
+            DestroyIcon(icon);
     }
 #endif
 
@@ -64,6 +68,8 @@ protected:
                 DwmSetWindowAttribute(hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
                 if (HICON icon = smallIcon())
                     SendMessageW(hwnd, WM_SETICON, ICON_SMALL, LPARAM(icon));
+                if (HICON icon = bigIcon(GetDpiForWindow(hwnd)))
+                    SendMessageW(hwnd, WM_SETICON, ICON_BIG, LPARAM(icon));
             }
 #else
         (void)e;
@@ -85,7 +91,21 @@ private:
         return mSmallIcon;
     }
 
+    // Qt builds the big icon at the 96-dpi size, which the taskbar shows at half size on a scaled display.
+    HICON bigIcon(UINT dpi)
+    {
+        HICON& icon = mBigIcons[dpi];
+        if (!icon)
+        {
+            auto path = paths::resourcesDir() / "icons" / "lila.ico";
+            int size = GetSystemMetricsForDpi(SM_CXICON, dpi);
+            icon = HICON(LoadImageW(nullptr, path.wstring().c_str(), IMAGE_ICON, size, size, LR_LOADFROMFILE));
+        }
+        return icon;
+    }
+
     HICON mSmallIcon = nullptr;
+    std::map<UINT, HICON> mBigIcons;
 #endif
 };
 

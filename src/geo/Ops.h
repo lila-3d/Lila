@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "geo/Mesh.h"
 #include "geo/Symmetry.h"
 #include "geo/Triangulate.h"
@@ -18,11 +20,11 @@
 namespace lila::geo
 {
 // Delete. Leftover loose edges and points are removed too.
-void deleteFaces(Mesh& mesh, std::span<const Index> faces, const SymmetryMap* symmetry = nullptr);
+LILA_SCENE_API void deleteFaces(Mesh& mesh, std::span<const Index> faces, const SymmetryMap* symmetry = nullptr);
 /** Removes the edges and their faces. */
-void deleteEdges(Mesh& mesh, std::span<const Index> edges, const SymmetryMap* symmetry = nullptr);
+LILA_SCENE_API void deleteEdges(Mesh& mesh, std::span<const Index> edges, const SymmetryMap* symmetry = nullptr);
 /** Removes the points with their edges and faces. */
-void deletePoints(Mesh& mesh, std::span<const Index> points, const SymmetryMap* symmetry = nullptr);
+LILA_SCENE_API void deletePoints(Mesh& mesh, std::span<const Index> points, const SymmetryMap* symmetry = nullptr);
 
 struct ExtrudeOptions
 {
@@ -41,7 +43,7 @@ struct ExtrudeResult
     std::vector<Index> sides; // new side faces
 };
 
-ExtrudeResult extrudeFaces(Mesh& mesh, std::span<const Index> faces, const ExtrudeOptions& opts = {});
+LILA_SCENE_API ExtrudeResult extrudeFaces(Mesh& mesh, std::span<const Index> faces, const ExtrudeOptions& opts = {});
 
 struct InsetOptions
 {
@@ -54,7 +56,7 @@ struct InsetOptions
 };
 
 /** Returns the inner faces (same ids as the input) and the new rim faces as sides. */
-ExtrudeResult insetFaces(Mesh& mesh, std::span<const Index> faces, const InsetOptions& opts = {});
+LILA_SCENE_API ExtrudeResult insetFaces(Mesh& mesh, std::span<const Index> faces, const InsetOptions& opts = {});
 
 struct BevelOptions
 {
@@ -71,7 +73,7 @@ struct BevelOptions
 };
 
 /** Bevels manifold edges. Returns the new bevel and corner faces. */
-std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edges, const BevelOptions& opts = {});
+LILA_SCENE_API std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edges, const BevelOptions& opts = {});
 
 struct EdgeLoopOptions
 {
@@ -82,16 +84,16 @@ struct EdgeLoopOptions
 };
 
 /** Inserts loops across the edge ring through ringEdge. Returns the new loop edges. */
-std::vector<Index> insertEdgeLoop(Mesh& mesh, Index ringEdge, const EdgeLoopOptions& opts = {});
+LILA_SCENE_API std::vector<Index> insertEdgeLoop(Mesh& mesh, Index ringEdge, const EdgeLoopOptions& opts = {});
 
 /**
  * Splits faces between selected points that are consecutive (among the selected) around a face but not already
  * joined by an edge, Maya's Connect. Returns the new edges.
  */
-std::vector<Index> connectPoints(Mesh& mesh, std::span<const Index> points);
+LILA_SCENE_API std::vector<Index> connectPoints(Mesh& mesh, std::span<const Index> points);
 
 /** Splits each edge into count+1 pieces. Returns the new points. */
-std::vector<Index> subdivideEdges(Mesh& mesh, std::span<const Index> edges, int count = 1);
+LILA_SCENE_API std::vector<Index> subdivideEdges(Mesh& mesh, std::span<const Index> edges, int count = 1);
 
 struct MergeOptions
 {
@@ -102,23 +104,23 @@ struct MergeOptions
 };
 
 /** Welds points closer than the distance (all points when the selection is empty). Returns survivors. */
-std::vector<Index> mergeByDistance(Mesh& mesh, std::span<const Index> points, const MergeOptions& opts = {});
+LILA_SCENE_API std::vector<Index> mergeByDistance(Mesh& mesh, std::span<const Index> points, const MergeOptions& opts = {});
 /** Welds all given points into one at their centre. */
-Index mergeToCenter(Mesh& mesh, std::span<const Index> points);
+LILA_SCENE_API Index mergeToCenter(Mesh& mesh, std::span<const Index> points);
 /** Welds the given points into target, keeping its position. */
-Index mergeToTarget(Mesh& mesh, std::span<const Index> points, Index target);
+LILA_SCENE_API Index mergeToTarget(Mesh& mesh, std::span<const Index> points, Index target);
 /**
  * Welds points: target[p] is the point p merges into (or p / kInvalid to keep it). Survivors keep
  * their positions. Faces that collapse below three points are removed.
  */
-void weldPoints(Mesh& mesh, std::span<const Index> target);
+LILA_SCENE_API void weldPoints(Mesh& mesh, std::span<const Index> target);
 /** Collapses each connected group of edges to its centre. Returns the resulting points. */
-std::vector<Index> collapseEdges(Mesh& mesh, std::span<const Index> edges);
+LILA_SCENE_API std::vector<Index> collapseEdges(Mesh& mesh, std::span<const Index> edges);
 
 /** Removes edges by merging their faces; with clean, endpoints left with two edges on the same faces go too (Maya). */
-std::vector<Index> dissolveEdges(Mesh& mesh, std::span<const Index> edges, bool clean = true);
+LILA_SCENE_API std::vector<Index> dissolveEdges(Mesh& mesh, std::span<const Index> edges, bool clean = true);
 /** Removes points by merging the faces around them. Returns the merged faces. */
-std::vector<Index> dissolvePoints(Mesh& mesh, std::span<const Index> points);
+LILA_SCENE_API std::vector<Index> dissolvePoints(Mesh& mesh, std::span<const Index> points);
 
 struct BridgeOptions
 {
@@ -127,18 +129,18 @@ struct BridgeOptions
 };
 
 /** Joins two boundary loops (or open boundary chains) of equal length with quads. Returns the new faces. */
-std::vector<Index> bridgeEdgeLoops(Mesh& mesh, std::span<const Index> edges, const BridgeOptions& opts = {});
+LILA_SCENE_API std::vector<Index> bridgeEdgeLoops(Mesh& mesh, std::span<const Index> edges, const BridgeOptions& opts = {});
 
 /** Splits each face into a fan of triangles around a new centre point. Returns the new faces. */
-std::vector<Index> pokeFaces(Mesh& mesh, std::span<const Index> faces);
+LILA_SCENE_API std::vector<Index> pokeFaces(Mesh& mesh, std::span<const Index> faces);
 /** Turns each edge one step within its two faces. Returns the new edges. */
-std::vector<Index> spinEdges(Mesh& mesh, std::span<const Index> edges);
+LILA_SCENE_API std::vector<Index> spinEdges(Mesh& mesh, std::span<const Index> edges);
 /** Caps the boundary loops through the given edges (all holes when empty). Returns the new faces. */
-std::vector<Index> fillHoles(Mesh& mesh, std::span<const Index> edges);
-void flipNormals(Mesh& mesh, std::span<const Index> faces);
+LILA_SCENE_API std::vector<Index> fillHoles(Mesh& mesh, std::span<const Index> edges);
+LILA_SCENE_API void flipNormals(Mesh& mesh, std::span<const Index> faces);
 /** Makes winding consistent within each connected part; closed parts face outward. All faces when empty. */
-void conformNormals(Mesh& mesh, std::span<const Index> faces = {});
-std::vector<Index> triangulateFaces(Mesh& mesh, std::span<const Index> faces, const TriangulateOptions& opts = {});
+LILA_SCENE_API void conformNormals(Mesh& mesh, std::span<const Index> faces = {});
+LILA_SCENE_API std::vector<Index> triangulateFaces(Mesh& mesh, std::span<const Index> faces, const TriangulateOptions& opts = {});
 
 struct QuadrangulateOptions
 {
@@ -150,7 +152,7 @@ struct QuadrangulateOptions
 };
 
 /** Joins pairs of neighbouring triangles into quads, best shaped first. Returns the resulting faces. */
-std::vector<Index> quadrangulateFaces(Mesh& mesh, std::span<const Index> faces, const QuadrangulateOptions& opts = {});
+LILA_SCENE_API std::vector<Index> quadrangulateFaces(Mesh& mesh, std::span<const Index> faces, const QuadrangulateOptions& opts = {});
 
 struct SubdivideOptions
 {
@@ -163,10 +165,10 @@ struct SubdivideOptions
  * Catmull-Clark subdivision. Edge "crease" of 1 or more is sharp (and drops by one per level),
  * fractions blend between smooth and sharp. Corner uvs and colours are interpolated linearly per face.
  */
-Mesh subdivide(const Mesh& mesh, const SubdivideOptions& opts = {});
+LILA_SCENE_API Mesh subdivide(const Mesh& mesh, const SubdivideOptions& opts = {});
 
 /** Sparse linear map between point sets: out row i = sum of weights[k] * in point cols[k], k in [offsets[i], offsets[i+1]). */
-struct PointStencil
+struct LILA_SCENE_API PointStencil
 {
     std::vector<Index> offsets{0};
     std::vector<Index> cols;
@@ -182,7 +184,7 @@ struct PointStencil
  * One stencil per level of subdivide(mesh, opts): positions are linear in the cage, so subdivide's points equal the
  * stencils applied in order to the cage's positions. result, when given, receives the subdivided mesh.
  */
-std::vector<PointStencil> subdivideStencils(const Mesh& mesh, const SubdivideOptions& opts = {}, Mesh* result = nullptr);
+LILA_SCENE_API std::vector<PointStencil> subdivideStencils(const Mesh& mesh, const SubdivideOptions& opts = {}, Mesh* result = nullptr);
 
 /** Which side of the plane a mirror keeps: Positive keeps the side the normal points to and rebuilds the other from it. */
 enum class MirrorDirection
@@ -209,14 +211,14 @@ struct MirrorOptions
  * Cuts every face crossing the plane along it, then removes the faces on the side opposite keepSign (+1 or -1) and
  * faces lying in the plane. Points within tolerance of the plane snap onto it.
  */
-void cutAtPlane(Mesh& mesh, const SymmetryPlane& plane, int keepSign, double tolerance = 1e-3, const glm::dmat4& space = glm::dmat4(1.0));
+LILA_SCENE_API void cutAtPlane(Mesh& mesh, const SymmetryPlane& plane, int keepSign, double tolerance = 1e-3, const glm::dmat4& space = glm::dmat4(1.0));
 
 /** Adds a mirrored copy, after cutting away the discarded side unless the direction is Both. Returns the new faces. */
-std::vector<Index> mirrorMesh(Mesh& mesh, const MirrorOptions& opts = {});
+LILA_SCENE_API std::vector<Index> mirrorMesh(Mesh& mesh, const MirrorOptions& opts = {});
 
 /** A new mesh holding copies of the given faces with all attributes. */
-Mesh extractFaces(const Mesh& mesh, std::span<const Index> faces);
-Mesh combine(std::span<const Mesh* const> meshes);
+LILA_SCENE_API Mesh extractFaces(const Mesh& mesh, std::span<const Index> faces);
+LILA_SCENE_API Mesh combine(std::span<const Mesh* const> meshes);
 /** One mesh per connected part. */
-std::vector<Mesh> separate(const Mesh& mesh);
+LILA_SCENE_API std::vector<Mesh> separate(const Mesh& mesh);
 } // namespace lila::geo

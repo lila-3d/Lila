@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/Naming.h"
 #include "scene/Node.h"
 
@@ -38,7 +40,7 @@ enum class SelectMode : uint8_t
  * The scene's dependency graph plus its transform hierarchy. Main thread only, except evaluate() which fans
  * compute out over the TBB pool. Every mutation records undo.
  */
-class Graph
+class LILA_SCENE_API Graph
 {
 public:
     static Graph& current();
@@ -106,6 +108,12 @@ public:
     /** Decides what a set on a driven scalar plug does. src is the plug driving dst. */
     using DrivenSetHook = std::function<DrivenEdit(Graph& g, const PlugRef& dst, const PlugRef& src, double value)>;
     void setDrivenSetHook(DrivenSetHook fn) { mDrivenSet = std::move(fn); }
+    /**
+     * The same for a whole Vec3 driven by a Vec3 source (a rotation curve). Setting one component of such a plug
+     * offers the whole value with that component replaced.
+     */
+    using DrivenVecSetHook = std::function<DrivenEdit(Graph& g, const PlugRef& dst, const PlugRef& src, const glm::dvec3& value)>;
+    void setDrivenVecSetHook(DrivenVecSetHook fn) { mDrivenVecSet = std::move(fn); }
     /** True while a driven plug shows a held value instead of its source's. */
     bool isHeld(const PlugRef& dst) const { return mHeld.contains(dst); }
     /** Raw stored value, no evaluation. */
@@ -144,7 +152,7 @@ public:
     void removeListener(int id);
 
     /** Scene loads and imports: batched listeners hear nothing until the end, then one Reset. Nests. Main thread. */
-    class Batch
+    class LILA_SCENE_API Batch
     {
     public:
         explicit Batch(Graph& g = Graph::current());
@@ -183,13 +191,16 @@ private:
     void connectRaw(const PlugRef& src, const PlugRef& dst);
     void disconnectRaw(const PlugRef& dst);
     void selectRaw(std::vector<NodeId> ids);
-    void holdRaw(const PlugRef& dst, double v);
+    void holdRaw(const PlugRef& dst, const PlugValue& v);
+    bool setDrivenVec(const PlugRef& dst, const PlugRef& src, const glm::dvec3& v);
     void releaseRaw(const PlugRef& dst);
     /** Routes a set on a driven scalar through the hook. Returns false when it is rejected. */
     bool setDriven(const PlugRef& dst, const PlugRef& src, double v);
     void markDirty(NodeId id);
     bool dependsOn(NodeId node, NodeId upstream) const;
     void changed(Change c, NodeId id);
+    /** Node and selection changes of the current graph, to the event bus. */
+    void forwardEvent(Change c, NodeId id);
     std::vector<NodeId>& siblings(NodeId parent);
 
     std::unordered_map<NodeId, std::unique_ptr<Node>> mNodes;
@@ -201,6 +212,7 @@ private:
     std::vector<NodeId> mSelection;
     std::set<PlugRef> mHeld; // driven plugs keeping a user-set value
     DrivenSetHook mDrivenSet;
+    DrivenVecSetHook mDrivenVecSet;
     struct ListenerEntry
     {
         Listener fn;

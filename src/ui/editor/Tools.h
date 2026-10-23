@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QObject>
 #include <QString>
 
@@ -11,7 +13,7 @@ namespace lila::ui
  * basedpyright and ruff, pip-installed on demand into %LOCALAPPDATA%/Lila/tools (LILA_TOOLS_DIR overrides).
  * Installing runs pip in a child process, so the UI never blocks; without the tools the editor still edits and runs.
  */
-class Tools : public QObject
+class LILA_UI_API Tools : public QObject
 {
     Q_OBJECT
 

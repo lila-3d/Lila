@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "geo/Mesh.h"
 
 #include <glm/glm.hpp>
@@ -19,7 +21,7 @@ using geo::kInvalid;
  * seams (or boundaries) separate its corners, so a cylinder cut along one seam has two vertices per seam
  * point. Triangles come from the faces' deterministic triangulation.
  */
-struct Chart
+struct LILA_SCENE_API Chart
 {
     std::vector<Index> faces;              // mesh faces, ascending
     std::vector<Index> corners;            // mesh corners of those faces, face by face
@@ -71,26 +73,26 @@ struct ChartOptions
  * stable order, so the same mesh always gives the same charts. Current uvs are loaded when the set
  * exists.
  */
-std::vector<Chart> buildCharts(const geo::Mesh& mesh, std::span<const Index> faces = {}, const ChartOptions& opts = {});
+LILA_SCENE_API std::vector<Chart> buildCharts(const geo::Mesh& mesh, std::span<const Index> faces = {}, const ChartOptions& opts = {});
 
 /** Face id lists of the islands, without building chart geometry. */
-std::vector<std::vector<Index>> islandFaces(const geo::Mesh& mesh, std::span<const Index> faces = {}, const ChartOptions& opts = {});
+LILA_SCENE_API std::vector<std::vector<Index>> islandFaces(const geo::Mesh& mesh, std::span<const Index> faces = {}, const ChartOptions& opts = {});
 
 /** Writes each chart's vertex uvs into its corners, adding the uv set if needed. */
-void writeCharts(geo::Mesh& mesh, std::span<const Chart> charts, std::string_view uvSet = "uv0");
+LILA_SCENE_API void writeCharts(geo::Mesh& mesh, std::span<const Chart> charts, std::string_view uvSet = "uv0");
 
 /** Corner uvs of a set, added (zeroed) when missing. */
-std::span<glm::vec2> uvLayer(geo::Mesh& mesh, std::string_view uvSet);
+LILA_SCENE_API std::span<glm::vec2> uvLayer(geo::Mesh& mesh, std::string_view uvSet);
 
 /** Live faces as a list, or the given ones filtered to live faces. */
-std::vector<Index> liveFaces(const geo::Mesh& mesh, std::span<const Index> faces = {});
+LILA_SCENE_API std::vector<Index> liveFaces(const geo::Mesh& mesh, std::span<const Index> faces = {});
 
 /**
  * Sets "seam" on the edges of the faces wherever the uv set splits (or the face set ends) and clears it
  * where both sides agree. Edges away from the faces are left alone. Returns the seam count among them.
  */
-Index markSeamsFromUvs(geo::Mesh& mesh, std::span<const Index> faces, std::string_view uvSet = "uv0");
+LILA_SCENE_API Index markSeamsFromUvs(geo::Mesh& mesh, std::span<const Index> faces, std::string_view uvSet = "uv0");
 
 /** Unsigned angle between the two faces of a manifold edge, degrees; 0 when flat, 180 when folded. */
-double dihedralAngle(const geo::Mesh& mesh, Index e);
+LILA_SCENE_API double dihedralAngle(const geo::Mesh& mesh, Index e);
 } // namespace lila::uv

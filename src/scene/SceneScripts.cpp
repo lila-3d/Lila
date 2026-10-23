@@ -2,6 +2,7 @@
 
 #include "cmds/Command.h"
 #include "cmds/Undo.h"
+#include "core/ExtensionContext.h"
 #include "core/Log.h"
 
 #include <algorithm>
@@ -145,6 +146,13 @@ int addListener(std::function<void()> fn)
     State& s = state();
     s.listeners.emplace(s.nextListener, std::move(fn));
     return s.nextListener++;
+}
+
+int addListener(ext::Context& ctx, std::function<void()> fn)
+{
+    int id = addListener(std::move(fn));
+    ctx.track("sceneScriptListener:" + std::to_string(id), [id] { removeListener(id); });
+    return id;
 }
 
 void removeListener(int id)

@@ -1,0 +1,14 @@
+{
+    "id": "plainOwner",
+    "name": "Plain Owner Test",
+    "version": "1.0.0",
+    "vendor": "Lila",
+    "description": "Test extension that registers through the overloads that take no context.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "plainOwner.dll",
+        "linux": "plainOwner.so",
+        "macos": "plainOwner.dylib"
+    },
+    "enabledByDefault": false
+}

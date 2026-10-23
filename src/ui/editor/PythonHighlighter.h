@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QSyntaxHighlighter>
 #include <QTextBlockUserData>
 #include <QTextCharFormat>
@@ -38,10 +40,10 @@ struct Token
  * Tokenizes one line of Python. `state` carries an open triple-quoted string across lines: 0 is plain code, and the
  * return value is the state for the next line.
  */
-int tokenizePython(QStringView line, int state, std::vector<Token>& out);
+LILA_UI_API int tokenizePython(QStringView line, int state, std::vector<Token>& out);
 
 /** Per-block tokens, kept so bracket matching and completion can tell code from strings and comments. */
-class PythonBlockData : public QTextBlockUserData
+class LILA_UI_API PythonBlockData : public QTextBlockUserData
 {
 public:
     std::vector<Token> tokens;
@@ -50,7 +52,7 @@ public:
     bool inStringOrComment(int col) const;
 };
 
-class PythonHighlighter : public QSyntaxHighlighter
+class LILA_UI_API PythonHighlighter : public QSyntaxHighlighter
 {
 public:
     explicit PythonHighlighter(QTextDocument* doc);

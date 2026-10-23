@@ -16,7 +16,8 @@ import _lila
 
 from . import cmds
 
-__all__ = ["Node", "node", "nodes", "selected", "select", "locator", "group", "mesh", "exists", "display_layers", "display_layer"]
+__all__ = ["Node", "node", "nodes", "selected", "select", "locator", "group", "mesh", "exists", "display_layers", "display_layer", "object_sets",
+           "object_set"]
 
 _CAMEL = re.compile(r"_([a-z])")
 
@@ -285,6 +286,35 @@ class Node:
         else:
             cmds.editDisplayLayerMembers(Node(layer).name, self.name)
 
+    # object sets
+
+    @property
+    def sets(self):
+        """The object sets holding this node, whole or by its components (Nodes)."""
+        return [Node(s) for s in cmds.listSets(object=self.name)]
+
+    @property
+    def members(self):
+        """An object set's members: names and component strings like "pCube1.vtx[0:3]"."""
+        return cmds.setMembers(self.name)
+
+    @property
+    def member_nodes(self):
+        """The nodes an object set touches (component owners included), as Nodes."""
+        return [Node(n) for n in cmds.setMembers(self.name, nodes=True)]
+
+    def add_members(self, *items):
+        """Adds Nodes, names or component strings to this object set."""
+        cmds.addToSet(self.name, *[_member(i) for i in items])
+
+    def remove_members(self, *items):
+        """Takes Nodes, names or component strings out of this object set."""
+        cmds.removeFromSet(self.name, *[_member(i) for i in items])
+
+    def select_members(self, add=False):
+        """Selects what this object set holds: its objects, and its components in component mode."""
+        cmds.selectSetMembers(self.name, add=add)
+
     # lifetime / selection
 
     def delete(self):
@@ -357,6 +387,27 @@ def display_layer(*items, name=None):
     if not names:
         flags["empty"] = True
     return Node(cmds.createDisplayLayer(*names, **flags))
+
+
+def _member(item):
+    return item.name if isinstance(item, Node) else str(item)
+
+
+def object_sets(quick_select=None):
+    """Every object set in creation order; quick_select=True only quick select sets, False only plain ones."""
+    flags = {} if quick_select is None else {"quickSelect": quick_select}
+    return [Node(n) for n in cmds.listSets(**flags)]
+
+
+def object_set(*items, name=None, quick_select=False):
+    """A new object set holding the items (Nodes, names or component strings like "pCube1.f[0:3]"); none makes an empty one."""
+    flags = {"quickSelect": quick_select}
+    if name:
+        flags["name"] = name
+    members = [_member(i) for i in items]
+    if not members:
+        flags["empty"] = True
+    return Node(cmds.createSet(*members, **flags))
 
 
 def group(*items, name=None):

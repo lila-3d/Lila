@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/Transform.h"
 
 namespace lila::scene
@@ -13,7 +15,7 @@ class MeasureNode : public Transform
 {
 };
 
-class DistanceMeasure : public MeasureNode
+class LILA_SCENE_API DistanceMeasure : public MeasureNode
 {
 public:
     enum Attr
@@ -29,7 +31,7 @@ public:
     void compute(const EvalContext& ctx) override;
 };
 
-class AngleMeasure : public MeasureNode
+class LILA_SCENE_API AngleMeasure : public MeasureNode
 {
 public:
     enum Attr
@@ -47,7 +49,7 @@ public:
  * Best-fit circle through a mesh's vertices (inMesh + meshMatrix + vertices, live under mesh edits) or through fixed
  * world points (points, a JSON list of [x, y, z]) when no mesh is connected.
  */
-class RadiusMeasure : public MeasureNode
+class LILA_SCENE_API RadiusMeasure : public MeasureNode
 {
 public:
     enum Attr
@@ -78,15 +80,15 @@ public:
 
 namespace measure
 {
-bool isMeasure(const Node& n);
+LILA_SCENE_API bool isMeasure(const Node& n);
 /** Measurements are drawn unless the general pref /measure/show is off. */
-bool shown();
+LILA_SCENE_API bool shown();
 /** Value label for a measure node in display units, e.g. "12.50 cm" or "R 5.00 cm  Ø 10.00 cm". */
-std::string label(const Node& n);
+LILA_SCENE_API std::string label(const Node& n);
 } // namespace measure
 
 /** distanceMeasure, angleMeasure, radiusMeasure types. Idempotent; needs the transform type first. */
-void registerMeasureTypes();
+LILA_SCENE_API void registerMeasureTypes();
 /** distanceMeasure, angleMeasure, radiusMeasure and measureSelection commands. Idempotent. */
-void registerMeasureCommands();
+LILA_SCENE_API void registerMeasureCommands();
 } // namespace lila::scene

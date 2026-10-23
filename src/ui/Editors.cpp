@@ -1,6 +1,7 @@
 #include "ui/Editors.h"
 
 #include "ui/Actions.h"
+#include "ui/DockSidebar.h"
 #include "ui/HotkeyCheatSheet.h"
 #include "ui/HotkeyEditor.h"
 #include "ui/MarkingMenuEditor.h"
@@ -51,9 +52,15 @@ void openMarkingMenuEditor()
 
 void registerEditorActions()
 {
-    actions::add({"window.hotkeyEditor", "Hotkey Editor...", "Windows", [] { openHotkeyEditor(); }, nullptr,
+    actions::add({"window.hotkeyEditor", "Hotkey Editor...", "Windows", [] {
+                      if (!closeShownWindow<HotkeyEditor>())
+                          openHotkeyEditor();
+                  }, nullptr,
                   "Browse, search and rebind hotkeys"});
-    actions::add({"window.markingMenuEditor", "Marking Menu Editor...", "Windows", [] { openMarkingMenuEditor(); },
+    actions::add({"window.markingMenuEditor", "Marking Menu Editor...", "Windows", [] {
+                      if (!closeShownWindow<MarkingMenuEditor>())
+                          openMarkingMenuEditor();
+                  },
                   nullptr, "Edit marking menu slots, labels and targets"});
     actions::add({"help.hotkeyCheatSheet", "Hotkey Cheat Sheet", "Help", [] { HotkeyCheatSheet::open(); }, nullptr,
                   "Show the hotkeys live in the focused panel"});

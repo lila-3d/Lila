@@ -1,5 +1,8 @@
 #pragma once
 
+#include "core/Export.h"
+
+#include <QApplication>
 #include <QStringList>
 #include <QWidget>
 
@@ -16,19 +19,37 @@ namespace lila::ui
  * Lays the bottom dock area out Maya's way: `tabs` in one tab group in that order with `current` on top, and `row`
  * as its own full-width row under the group. Docks already in the window are moved; hidden ones stay hidden.
  */
-void arrangeBottomDocks(QMainWindow* window, const QList<QDockWidget*>& tabs, QDockWidget* current, QDockWidget* row);
+LILA_UI_API void arrangeBottomDocks(QMainWindow* window, const QList<QDockWidget*>& tabs, QDockWidget* current, QDockWidget* row);
 
 /**
  * Opens a panel the way a menu or hotkey should: expanded if it was collapsed, its tab raised, a usable size and
  * keyboard focus. Works for docks of any main window, managed by DockSidebars or not.
  */
-void revealDock(QDockWidget* dock);
+LILA_UI_API void revealDock(QDockWidget* dock);
+
+/** Dynamic property on a dock: its width (or height) as a tab when it has no size of its own remembered yet. */
+inline constexpr const char* kDefaultTabExtent = "lilaDefaultTabExtent";
+
+/** Shown, not collapsed and not behind another tab of its group. */
+LILA_UI_API bool dockShowing(const QDockWidget* dock);
+
+/** A window toggle for top-level windows: closes the shown window of type T, if there is one, and says whether it did. */
+template <class T> bool closeShownWindow()
+{
+    for (QWidget* w : QApplication::topLevelWidgets())
+        if (auto* t = qobject_cast<T*>(w); t && t->isVisible() && !t->isMinimized())
+        {
+            t->close();
+            return true;
+        }
+    return false;
+}
 
 /** A window toggle: tucks the panel into its sidebar (or hides it) when it is showing, otherwise reveals it. */
-void toggleDock(QDockWidget* dock);
+LILA_UI_API void toggleDock(QDockWidget* dock);
 
 /** Dock title bar: title, then collapse, float and close buttons. Double-click floats or re-docks. */
-class DockTitleBar : public QWidget
+class LILA_UI_API DockTitleBar : public QWidget
 {
     Q_OBJECT
 
@@ -52,7 +73,7 @@ private:
  * Collapsing a docked panel hides it and leaves a tab on a thin strip along its window edge; clicking the tab brings it
  * back where it was. Collapsed panels persist through the layout prefs.
  */
-class DockSidebars : public QObject
+class LILA_UI_API DockSidebars : public QObject
 {
     Q_OBJECT
 

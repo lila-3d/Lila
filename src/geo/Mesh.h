@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "geo/Attribute.h"
 
 #include <glm/glm.hpp>
@@ -69,7 +71,7 @@ enum ValidateFlags : uint32_t
  * Removing elements only marks them deleted, so ids of everything else stay stable until compact().
  * Iterate with `for (Index f = 0; f < faceCapacity(); ++f) if (faceValid(f))`.
  */
-class Mesh
+class LILA_SCENE_API Mesh
 {
 public:
     Index pointCapacity() const { return Index(mPointPos.size()); }

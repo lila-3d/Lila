@@ -1,4 +1,4 @@
-add_library(lila_gn STATIC
+lila_module(lila_gn Scene
     Clipboard.cpp
     Commands.cpp
     Exec.cpp

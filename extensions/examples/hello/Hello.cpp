@@ -1,4 +1,6 @@
-#include "extensions/LilaExtension.h"
+#include <lila/Command.h>
+#include <lila/Extension.h>
+#include <lila/Node.h>
 
 #include <cctype>
 #include <memory>
@@ -22,11 +24,8 @@ public:
 };
 } // namespace
 
-LILA_EXTENSION_EXPORT int lilaExtensionInit(LilaExtensionContext* ctx)
+LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
 {
-    if (!lilaExtensionCompatible(ctx))
-        return 1;
-
     CommandDef hello{
         .name = "helloExtension",
         .doc = "Say hello from a C++ extension.",
@@ -44,7 +43,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(LilaExtensionContext* ctx)
             return text;
         },
     };
-    if (!ctx->registerCommand(ctx, &hello))
+    if (!ctx.registerCommand(std::move(hello)))
         return 2;
 
     using namespace scene;
@@ -57,15 +56,15 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(LilaExtensionContext* ctx)
         {.name = "output", .shortName = "o", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrOutput, .doc = "input times factor."},
     };
     type.create = [] { return std::make_unique<HelloMultiply>(); };
-    if (!ctx->registerType(ctx, &type))
+    if (!types::registerType(ctx, std::move(type)))
         return 3;
 
-    ctx->log(ctx, int(LogLevel::Info), "hello extension loaded");
+    ctx.log(LogLevel::Info, "hello extension loaded");
     return 0;
 }
 
-LILA_EXTENSION_EXPORT void lilaExtensionUninit(LilaExtensionContext* ctx)
+LILA_EXTENSION_EXPORT void lilaExtensionUninit(ext::Context& ctx)
 {
     // Lila removes what the extension registered; this is where an extension frees its own state.
-    ctx->log(ctx, int(LogLevel::Info), "hello extension unloaded");
+    ctx.log(LogLevel::Info, "hello extension unloaded");
 }

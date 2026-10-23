@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "geo/Bvh.h"
 #include "geo/Mesh.h"
 #include "geo/Symmetry.h"
@@ -38,8 +40,8 @@ enum class Blend : uint8_t
     Count
 };
 
-std::string_view blendName(Blend b);
-std::optional<Blend> blendFromName(std::string_view name);
+LILA_SCENE_API std::string_view blendName(Blend b);
+LILA_SCENE_API std::optional<Blend> blendFromName(std::string_view name);
 /** Blur and Sharpen work from the neighbourhood instead of a brush color. */
 inline bool isFilter(Blend b) { return b == Blend::Blur || b == Blend::Sharpen; }
 
@@ -55,19 +57,19 @@ enum Channels : uint8_t
 };
 
 /** "rgba", "rgb", "r", "ga"... to bits; 0 when the string has no channel letter. */
-uint8_t channelsFromString(std::string_view s);
-std::string channelsToString(uint8_t channels);
+LILA_SCENE_API uint8_t channelsFromString(std::string_view s);
+LILA_SCENE_API std::string channelsToString(uint8_t channels);
 
 /**
  * base blended toward brush by weight w (0..1), only in the masked channels. For Blur and Sharpen, brush is the
  * neighbourhood average: Blur moves toward it, Sharpen away from it. Results are not clamped (linear colors may exceed
  * 1), except that Subtract and Sharpen stop at 0.
  */
-glm::vec4 blend(Blend mode, const glm::vec4& base, const glm::vec4& brush, float w, uint8_t channels);
+LILA_SCENE_API glm::vec4 blend(Blend mode, const glm::vec4& base, const glm::vec4& brush, float w, uint8_t channels);
 
 /** sRGB (what color pickers show) to linear and back, per channel; alpha passes through. */
-glm::vec4 srgbToLinear(const glm::vec4& c);
-glm::vec4 linearToSrgb(const glm::vec4& c);
+LILA_SCENE_API glm::vec4 srgbToLinear(const glm::vec4& c);
+LILA_SCENE_API glm::vec4 linearToSrgb(const glm::vec4& c);
 
 struct BrushSettings
 {
@@ -112,7 +114,7 @@ struct ColorDelta
  * A mesh being painted: a working copy of one color set plus what brush queries need (BVH, point corners, neighbours,
  * normals). Topology and positions never change while it lives.
  */
-class PaintMesh
+class LILA_SCENE_API PaintMesh
 {
 public:
     /** set must exist on mesh. */
@@ -183,19 +185,19 @@ private:
 // ------------------------------------------------------------------------------------------------ whole-set edits
 
 /** Points an edit applies to: all valid points when the selection is empty. */
-std::vector<Index> targetPoints(const geo::Mesh& mesh, std::span<const Index> selectedPoints);
+LILA_SCENE_API std::vector<Index> targetPoints(const geo::Mesh& mesh, std::span<const Index> selectedPoints);
 
 /** Points connected to the seeds (whole shells). */
-std::vector<Index> elementPoints(const geo::Mesh& mesh, std::span<const Index> seeds);
+LILA_SCENE_API std::vector<Index> elementPoints(const geo::Mesh& mesh, std::span<const Index> seeds);
 
 /** Replaces each corner color c of the points with fn(point, c), collecting the delta. Runs in parallel. */
-ColorDelta editPoints(geo::Mesh& mesh, std::string_view set, std::span<const Index> points,
+LILA_SCENE_API ColorDelta editPoints(geo::Mesh& mesh, std::string_view set, std::span<const Index> points,
                       const std::function<glm::vec4(Index point, const glm::vec4& color)>& fn);
 
 /** Replaces the set's values with one color per corner (by corner id), collecting the delta. */
-ColorDelta setCorners(geo::Mesh& mesh, std::string_view set, std::span<const glm::vec4> perCorner);
+LILA_SCENE_API ColorDelta setCorners(geo::Mesh& mesh, std::string_view set, std::span<const glm::vec4> perCorner);
 
-ColorDelta fill(geo::Mesh& mesh, std::string_view set, std::span<const Index> points, Blend mode, const glm::vec4& color, float opacity,
+LILA_SCENE_API ColorDelta fill(geo::Mesh& mesh, std::string_view set, std::span<const Index> points, Blend mode, const glm::vec4& color, float opacity,
                 uint8_t channels);
 
 enum class GradientType : uint8_t
@@ -205,10 +207,10 @@ enum class GradientType : uint8_t
 };
 
 /** from (weight 0, colorA) to to (weight 1, colorB) in object space; radial measures distance from `from` out to |to - from|. */
-ColorDelta gradient(geo::Mesh& mesh, std::string_view set, std::span<const Index> points, GradientType type, const glm::dvec3& from,
+LILA_SCENE_API ColorDelta gradient(geo::Mesh& mesh, std::string_view set, std::span<const Index> points, GradientType type, const glm::dvec3& from,
                     const glm::dvec3& to, const glm::vec4& colorA, const glm::vec4& colorB, uint8_t channels);
 
-ColorDelta invert(geo::Mesh& mesh, std::string_view set, std::span<const Index> points, uint8_t channels);
+LILA_SCENE_API ColorDelta invert(geo::Mesh& mesh, std::string_view set, std::span<const Index> points, uint8_t channels);
 
 struct Levels
 {
@@ -218,11 +220,11 @@ struct Levels
     float outBlack = 0.0f;
     float outWhite = 1.0f;
 };
-float applyLevels(float v, const Levels& l);
-ColorDelta levels(geo::Mesh& mesh, std::string_view set, std::span<const Index> points, const Levels& l, uint8_t channels);
+LILA_SCENE_API float applyLevels(float v, const Levels& l);
+LILA_SCENE_API ColorDelta levels(geo::Mesh& mesh, std::string_view set, std::span<const Index> points, const Levels& l, uint8_t channels);
 
 /** Laplacian smoothing of point colors over edges. */
-ColorDelta blur(geo::Mesh& mesh, std::string_view set, std::span<const Index> points, int iterations, float strength, uint8_t channels);
+LILA_SCENE_API ColorDelta blur(geo::Mesh& mesh, std::string_view set, std::span<const Index> points, int iterations, float strength, uint8_t channels);
 
 // ------------------------------------------------------------------------------------------------ bakes, per point 0..1
 
@@ -234,8 +236,8 @@ enum class BakeType : uint8_t
     Height,
     Count
 };
-std::string_view bakeName(BakeType t);
-std::optional<BakeType> bakeFromName(std::string_view name);
+LILA_SCENE_API std::string_view bakeName(BakeType t);
+LILA_SCENE_API std::optional<BakeType> bakeFromName(std::string_view name);
 
 struct BakeOptions
 {
@@ -253,8 +255,8 @@ struct BakeOptions
 };
 
 /** One value per point (white = open / convex / high; AO 1 = unoccluded). Points not on a face get 1. */
-std::vector<float> bake(const geo::Mesh& mesh, const BakeOptions& o);
+LILA_SCENE_API std::vector<float> bake(const geo::Mesh& mesh, const BakeOptions& o);
 
 /** Writes per-point values into the masked channels of the points' corners. */
-ColorDelta writeChannel(geo::Mesh& mesh, std::string_view set, std::span<const Index> points, std::span<const float> perPoint, uint8_t channels);
+LILA_SCENE_API ColorDelta writeChannel(geo::Mesh& mesh, std::string_view set, std::span<const Index> points, std::span<const float> perPoint, uint8_t channels);
 } // namespace lila::vcolor

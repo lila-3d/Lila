@@ -1,15 +1,24 @@
 #pragma once
 
+#include "core/Export.h"
+#include "core/ExtensionContext.h"
+
 #include "render/FrameState.h"
-#include "ui/Manipulator.h"
 #include "ui/Overlay.h"
+#include "ui/ViewInfo.h"
 
 #include <QRectF>
 
 #include <functional>
 #include <string>
+#include <string_view>
 #include <vector>
 
+/**
+ * Viewport drawers and pickers: content the viewport doesn't draw itself (joints, constraints, measurements, image
+ * planes...). Every viewport calls each drawer once a frame and each picker on every object-mode pick, in the order
+ * they were added. To draw and pick nodes of one type, a draw override (ui/DrawOverrides.h) is usually simpler.
+ */
 namespace lila::ui::viewportHooks
 {
 /** Adds scene content to every viewport frame (joints, constraints, curves...). Called on the main thread. */
@@ -26,9 +35,24 @@ struct PickHit
 };
 using Picker = std::function<std::vector<PickHit>(QPointF a, QPointF b, bool click, const ViewInfo& view)>;
 
-void addDrawer(Drawer fn);
-void addPicker(Picker fn);
+/** Lila's own, unnamed (ids "lila.drawer.<n>" / "lila.picker.<n>"). */
+LILA_UI_API void addDrawer(Drawer fn);
+LILA_UI_API void addPicker(Picker fn);
 
-const std::vector<Drawer>& drawers();
-const std::vector<Picker>& pickers();
+/** Named; adding an id again replaces it in place. owner is an extension id, empty for Lila. */
+LILA_UI_API void addDrawer(std::string id, Drawer fn, std::string owner = {});
+LILA_UI_API void addPicker(std::string id, Picker fn, std::string owner = {});
+/** For extensions: owned by ctx and removed when it unloads. 0, with a log message, when the id is taken. */
+LILA_UI_API ext::Context::Handle addDrawer(ext::Context& ctx, std::string id, Drawer fn);
+LILA_UI_API ext::Context::Handle addPicker(ext::Context& ctx, std::string id, Picker fn);
+LILA_UI_API bool removeDrawer(std::string_view id);
+LILA_UI_API bool removePicker(std::string_view id);
+/** Everything owner added. Returns the count. */
+LILA_UI_API size_t removeOwned(std::string_view owner);
+
+/** In the order added. Copies, so a callback may add or remove hooks while the caller iterates. */
+LILA_UI_API std::vector<Drawer> drawers();
+LILA_UI_API std::vector<Picker> pickers();
+LILA_UI_API std::vector<std::string> drawerIds();
+LILA_UI_API std::vector<std::string> pickerIds();
 } // namespace lila::ui::viewportHooks

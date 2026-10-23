@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "math/Transform.h"
 
 #include <array>
@@ -8,7 +10,7 @@
 namespace lila::math
 {
 /** Axis-aligned box. A default box is invalid (empty); adding a point makes it valid. */
-struct Box
+struct LILA_FOUNDATION_API Box
 {
     Vector min;
     Vector max;

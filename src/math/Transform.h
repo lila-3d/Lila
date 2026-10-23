@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "math/Matrix.h"
 
 namespace lila::math
@@ -9,7 +11,7 @@ namespace lila::math
  * A * B applies A first, then B, so child * parent gives the child in the parent's space. With
  * non-uniform scale under a rotation the result is an approximation, as in Unreal (shear drops).
  */
-struct Transform
+struct LILA_FOUNDATION_API Transform
 {
     Quat rotation;
     Vector translation;

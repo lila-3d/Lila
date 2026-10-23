@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "math/Vector.h"
 
 #include <optional>
@@ -11,7 +13,7 @@ namespace lila::math
 struct Color;
 
 /** Linear-space float RGBA. */
-struct LinearColor
+struct LILA_FOUNDATION_API LinearColor
 {
     float r = 0.0f;
     float g = 0.0f;
@@ -72,7 +74,7 @@ struct LinearColor
 inline constexpr LinearColor operator*(float s, const LinearColor& c) { return c * s; }
 
 /** 8-bit RGBA, sRGB-encoded rgb by convention. */
-struct Color
+struct LILA_FOUNDATION_API Color
 {
     uint8_t r = 0;
     uint8_t g = 0;
@@ -108,6 +110,6 @@ struct Color
     Color withAlpha(uint8_t alpha) const { return {r, g, b, alpha}; }
 };
 
-float srgbToLinear(float c);
-float linearToSRGB(float c);
+LILA_FOUNDATION_API float srgbToLinear(float c);
+LILA_FOUNDATION_API float linearToSRGB(float c);
 } // namespace lila::math

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -13,10 +15,14 @@
  */
 namespace lila::fbx::bin
 {
-class Record
+class LILA_SCENE_API Record
 {
 public:
     explicit Record(std::string name) : mName(std::move(name)) {}
+    Record(const Record&) = delete;
+    Record& operator=(const Record&) = delete;
+    Record(Record&&) = default;
+    Record& operator=(Record&&) = default;
 
     const std::string& name() const { return mName; }
 
@@ -54,8 +60,8 @@ private:
 };
 
 /** "Name\x00\x01Class", the binary form of an object name. */
-std::string objectName(std::string_view name, std::string_view cls);
+LILA_SCENE_API std::string objectName(std::string_view name, std::string_view cls);
 
 /** Header, root's children as the top-level records, the closing null record and the footer. */
-std::string encodeFile(const Record& root, uint32_t version = 7400);
+LILA_SCENE_API std::string encodeFile(const Record& root, uint32_t version = 7400);
 } // namespace lila::fbx::bin

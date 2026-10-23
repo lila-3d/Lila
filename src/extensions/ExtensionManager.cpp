@@ -2,13 +2,14 @@
 
 #include "cmds/Command.h"
 #include "cmds/Undo.h"
+#include "core/Events.h"
 #include "core/Log.h"
 #include "core/Paths.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "core/Workspace.h"
 #include "extensions/Library.h"
-#include "extensions/LilaExtension.h"
+#include "lila/Extension.h"
 #include "python/Python.h"
 #include "scene/Graph.h"
 
@@ -33,8 +34,17 @@ std::string pathKey(const fs::path& p)
     return s;
 }
 
-/** What kind of extension lives at path, if any. */
-std::optional<ExtensionInfo> probe(const fs::path& path)
+bool isPackageDir(const fs::path& path)
+{
+    std::error_code ec;
+    return fs::is_directory(path, ec) && fs::is_regular_file(path / ext::kManifestFile, ec);
+}
+
+/**
+ * What kind of extension lives at path, if any. A package with a broken manifest comes back with its error set. On the
+ * search paths packages are <Id>.lilaext folders; a path given explicitly may be any folder holding an extension.json.
+ */
+std::optional<ExtensionInfo> probe(const fs::path& path, bool explicitPath = false)
 {
     std::error_code ec;
     std::string stem = path.stem().string();
@@ -42,6 +52,21 @@ std::optional<ExtensionInfo> probe(const fs::path& path)
         return std::nullopt;
     ExtensionInfo info;
     info.path = path;
+    if (isPackageDir(path) && (explicitPath || path.extension() == ext::kPackageSuffix))
+    {
+        info.name = path.extension() == ext::kPackageSuffix ? stem : path.filename().string();
+        try
+        {
+            info.manifest = ext::Manifest::load(path);
+            info.name = info.manifest->id;
+            info.kind = info.manifest->library() ? ExtensionKind::Native : ExtensionKind::Python;
+        }
+        catch (const ext::ManifestError& e)
+        {
+            info.error = e.what();
+        }
+        return info;
+    }
     if (fs::is_directory(path, ec))
     {
         if (!fs::is_regular_file(path / "__init__.py", ec))
@@ -52,24 +77,15 @@ std::optional<ExtensionInfo> probe(const fs::path& path)
     }
     if (!fs::is_regular_file(path, ec))
         return std::nullopt;
-    std::string ext = path.extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    if (path.filename() == ext::kManifestFile)
+        return probe(path.parent_path(), true);
+    std::string extension = path.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    if (extension != ".py")
+        return std::nullopt;
     info.name = stem;
-    if (ext == ".py")
-    {
-        info.kind = ExtensionKind::Python;
-        return info;
-    }
-    if (ext == Library::extension())
-    {
-#ifndef _WIN32
-        if (info.name.starts_with("lib"))
-            info.name = info.name.substr(3);
-#endif
-        info.kind = ExtensionKind::Native;
-        return info;
-    }
-    return std::nullopt;
+    info.kind = ExtensionKind::Python;
+    return info;
 }
 
 void refreshPythonCommands()
@@ -83,86 +99,67 @@ std::string pyString(const std::string& s)
     return json(s).dump();
 }
 
-// Context callbacks: everything a native extension registers goes through here to get its owner tag.
-const char* ownerOf(LilaExtensionContext* ctx)
+std::vector<std::string> stringList(const char* key)
 {
-    return ctx && ctx->extensionName ? ctx->extensionName : "";
+    std::vector<std::string> out;
+    json list = PrefStore::get().value("general", key, json::array());
+    if (list.is_array())
+        for (const json& n : list)
+            if (n.is_string())
+                out.push_back(n.get<std::string>());
+    return out;
 }
 
-bool hostRegisterCommand(LilaExtensionContext* ctx, CommandDef* def)
+bool contains(const std::vector<std::string>& v, const std::string& s)
 {
-    if (!def)
-        return false;
-    if (const CommandDef* existing = cmds::find(def->name); existing && existing->owner != ownerOf(ctx))
-    {
-        log::error("extension {}: command '{}' already exists{}", ownerOf(ctx), def->name,
-                   existing->owner.empty() ? std::string() : " (from extension " + existing->owner + ")");
-        return false;
-    }
-    def->owner = ownerOf(ctx);
-    cmds::registerCommand(std::move(*def));
-    return true;
-}
-
-void hostUnregisterCommand(LilaExtensionContext* ctx, const char* name)
-{
-    if (const CommandDef* d = cmds::find(name ? name : ""); d && d->owner == ownerOf(ctx))
-        cmds::unregisterCommand(name);
-}
-
-const scene::NodeType* hostRegisterType(LilaExtensionContext* ctx, scene::NodeType* type)
-{
-    if (!type)
-        return nullptr;
-    type->owner = ownerOf(ctx);
-    if (type->doc.empty())
-        log::warn("extension {}: node type '{}' has no doc, so menus and tooltips can't say what it does", ownerOf(ctx), type->name);
-    try
-    {
-        return &scene::types::registerType(std::move(*type));
-    }
-    catch (const std::exception& e)
-    {
-        log::error("extension {}: {}", ownerOf(ctx), e.what());
-        return nullptr;
-    }
-}
-
-const scene::NodeType* hostFindType(LilaExtensionContext*, const char* name)
-{
-    return scene::types::find(name ? name : "");
-}
-
-bool hostRunPython(LilaExtensionContext* ctx, const char* code)
-{
-    if (!python::initialized())
-    {
-        log::warn("extension {}: Python is not running", ownerOf(ctx));
-        return false;
-    }
-    return python::run(code ? code : "", std::string("<extension ") + ownerOf(ctx) + ">").ok;
-}
-
-void hostLog(LilaExtensionContext* ctx, int level, const char* text)
-{
-    LogLevel l = level >= 0 && level <= int(LogLevel::Echo) ? LogLevel(level) : LogLevel::Info;
-    log::write(l, std::string("[") + ownerOf(ctx) + "] " + (text ? text : ""));
+    return std::find(v.begin(), v.end(), s) != v.end();
 }
 } // namespace
 
 json ExtensionInfo::toJson() const
 {
-    return {{"name", name}, {"path", path.string()}, {"kind", kindName(kind)}, {"loaded", loaded}, {"autoload", autoload}};
+    json j = {{"name", name}, {"path", path.string()}, {"kind", kindName(kind)}, {"loaded", loaded}, {"autoload", autoload}};
+    if (manifest)
+    {
+        j["displayName"] = manifest->name;
+        j["version"] = manifest->version;
+        j["vendor"] = manifest->vendor;
+        j["description"] = manifest->description;
+        j["sdk"] = manifest->sdk.str();
+        j["enabledByDefault"] = manifest->enabledByDefault;
+        json deps = json::array();
+        for (const ext::Dependency& d : manifest->dependencies)
+            deps.push_back(d.id);
+        j["dependencies"] = deps;
+    }
+    if (!error.empty())
+        j["error"] = error;
+    return j;
 }
 
 struct ExtensionManager::Loaded
 {
     ExtensionInfo info;
     std::unique_ptr<Library> lib;
-    std::unique_ptr<LilaExtensionContext> ctx;
-    std::string name;
-    std::string path;
+    std::unique_ptr<ext::Context> ctx;
+    bool python = false;
 };
+
+namespace
+{
+/** Loaded and loading extensions' contexts, for registrations made from their Python code. */
+std::map<std::string, ext::Context*, std::less<>>& liveContexts()
+{
+    static std::map<std::string, ext::Context*, std::less<>> m;
+    return m;
+}
+} // namespace
+
+ext::Context* contextOf(std::string_view name)
+{
+    auto it = liveContexts().find(name);
+    return it == liveContexts().end() ? nullptr : it->second;
+}
 
 ExtensionManager& ExtensionManager::get()
 {
@@ -204,11 +201,8 @@ std::vector<fs::path> ExtensionManager::searchPaths() const
             all = end == std::string_view::npos ? std::string_view() : all.substr(end + 1);
         }
     }
-    json prefPaths = PrefStore::get().value("general", "/extensions/paths", json::array());
-    if (prefPaths.is_array())
-        for (const json& p : prefPaths)
-            if (p.is_string())
-                out.emplace_back(p.get<std::string>());
+    for (const std::string& p : stringList("/extensions/paths"))
+        out.emplace_back(p);
     if (Workspace::get().isOpen())
         out.push_back(Workspace::get().root() / ".lila" / "extensions");
     out.push_back(paths::userConfigDir() / "extensions");
@@ -228,12 +222,13 @@ std::vector<ExtensionInfo> ExtensionManager::available() const
     LILA_ZONE();
 
     std::vector<ExtensionInfo> out;
-    std::vector<std::string> auto_ = autoloadList();
     auto add = [&](ExtensionInfo info) {
         if (std::any_of(out.begin(), out.end(), [&](const ExtensionInfo& o) { return o.name == info.name; }))
             return;
         info.loaded = isLoaded(info.name);
-        info.autoload = std::find(auto_.begin(), auto_.end(), info.name) != auto_.end();
+        info.autoload = autoloads(info);
+        if (info.error.empty())
+            info.error = lastError(info.name);
         out.push_back(std::move(info));
     };
 
@@ -263,7 +258,7 @@ std::optional<ExtensionInfo> ExtensionManager::find(const std::string& nameOrPat
     bool looksLikePath = p.has_parent_path() || p.has_extension();
     if (looksLikePath && fs::exists(p, ec))
     {
-        if (auto info = probe(fs::absolute(p, ec)))
+        if (auto info = probe(fs::absolute(p, ec), true))
             return info;
         throw ExtensionError("not an extension: " + nameOrPath);
     }
@@ -285,81 +280,153 @@ std::string ExtensionManager::load(const std::string& nameOrPath)
             dirs += "\n  " + d.string();
         throw ExtensionError("no extension named '" + nameOrPath + "' on the search paths:" + dirs);
     }
-    ExtensionInfo info = *found;
-    if (auto it = mLoaded.find(info.name); it != mLoaded.end())
+    std::set<std::string> visiting;
+    loadInfo(*found, visiting);
+    return found->name;
+}
+
+void ExtensionManager::loadInfo(const ExtensionInfo& found, std::set<std::string>& visiting)
+{
+    if (auto it = mLoaded.find(found.name); it != mLoaded.end())
     {
-        if (pathKey(it->second->info.path) != pathKey(info.path))
-            throw ExtensionError("a different extension named '" + info.name + "' is already loaded from " + it->second->info.path.string());
-        return info.name;
+        if (pathKey(it->second->info.path) != pathKey(found.path))
+            throw ExtensionError("a different extension named '" + found.name + "' is already loaded from " + it->second->info.path.string());
+        return;
+    }
+    // A broken manifest; not a failed load, so it is not recorded as one.
+    if (found.manifest == std::nullopt && !found.error.empty() && isPackageDir(found.path))
+        throw ExtensionError(found.error);
+    if (!visiting.insert(found.name).second)
+        throw ExtensionError("extension " + found.name + " depends on itself through its dependencies");
+
+    auto fail = [&](const std::string& why) {
+        mErrors[found.name] = why;
+        throw ExtensionError(why);
+    };
+
+    if (found.manifest)
+    {
+        const ext::Manifest& m = *found.manifest;
+        if (std::string why = ext::sdkMismatch(m.sdk); !why.empty())
+            fail("can't load " + m.id + " " + m.version + ": " + why);
+        for (const ext::Dependency& d : m.dependencies)
+        {
+            std::optional<ExtensionInfo> dep;
+            if (auto it = mLoaded.find(d.id); it != mLoaded.end())
+                dep = it->second->info;
+            else
+                dep = find(d.id);
+            if (!dep)
+                fail(m.id + " needs the extension " + d.id + ", which is not on the search paths");
+            const std::string depVersion = dep->manifest ? dep->manifest->version : std::string();
+            if (!d.minVersion.empty() && ext::compareVersions(depVersion, d.minVersion) < 0)
+                fail(m.id + " needs " + d.id + " " + d.minVersion + " or newer, found " + (depVersion.empty() ? "no version" : depVersion));
+            try
+            {
+                loadInfo(*dep, visiting);
+            }
+            catch (const ExtensionError& e)
+            {
+                fail(m.id + " needs " + d.id + ": " + e.what());
+            }
+        }
     }
 
     auto rec = std::make_unique<Loaded>();
-    rec->info = info;
+    rec->info = found;
     rec->info.loaded = true;
-    rec->name = info.name;
-    rec->path = info.path.string();
+    rec->info.error.clear();
+    const fs::path root = found.manifest ? found.manifest->root : found.path.parent_path();
+    rec->ctx = std::make_unique<ext::Context>(found.name, root);
+    liveContexts()[found.name] = rec->ctx.get();
 
-    if (info.kind == ExtensionKind::Native)
+    try
     {
-        std::string err;
-        rec->lib = Library::open(info.path, &err);
-        if (!rec->lib)
-            throw ExtensionError("could not load " + info.path.string() + ": " + err);
-        auto init = reinterpret_cast<LilaExtensionInitFn>(rec->lib->symbol("lilaExtensionInit"));
-        if (!init)
-            throw ExtensionError(info.path.string() + " does not export lilaExtensionInit");
-
-        rec->ctx = std::make_unique<LilaExtensionContext>();
-        LilaExtensionContext& c = *rec->ctx;
-        c.extensionName = rec->name.c_str();
-        c.extensionPath = rec->path.c_str();
-        c.registerCommand = hostRegisterCommand;
-        c.unregisterCommand = hostUnregisterCommand;
-        c.registerType = hostRegisterType;
-        c.findType = hostFindType;
-        c.runPython = hostRunPython;
-        c.log = hostLog;
-        c.host = this;
-
-        int rc = 0;
-        try
+        if (found.manifest)
         {
-            rc = init(&c);
+            if (found.manifest->library())
+                loadNative(*rec);
+            if (auto module = found.manifest->pythonModule())
+                loadPython(*rec, *module);
         }
-        catch (const std::exception& e)
-        {
-            removeOwned(info.name);
-            throw ExtensionError("extension " + info.name + " threw during init: " + e.what());
-        }
-        if (rc != 0)
-        {
-            removeOwned(info.name);
-            throw ExtensionError("extension " + info.name + " failed to initialize (code " + std::to_string(rc) + ")");
-        }
+        else
+            loadPython(*rec, found.path);
     }
-    else
+    catch (const ExtensionError& e)
     {
-        if (!python::initialized())
-            throw ExtensionError("can't load Python extension " + info.name + ": Python is not running");
-        python::Result r = python::run("__import__('lila.extension', fromlist=['_load'])._load(" + pyString(info.name) + ", " +
-                                           pyString(info.path.string()) + ")",
-                                       "<loadExtension>");
-        if (!r.ok)
-        {
-            removeOwned(info.name);
-            throw ExtensionError("Python extension " + info.name + " failed to load:\n" + r.value);
-        }
+        removeOwned(*rec);
+        fail(e.what());
     }
 
-    mLoaded[info.name] = std::move(rec);
-    if (info.kind == ExtensionKind::Native)
+    mErrors.erase(found.name);
+    const ExtensionKind kind = rec->info.kind;
+    mLoaded[found.name] = std::move(rec);
+    mOrder.push_back(found.name);
+    if (kind == ExtensionKind::Native)
         refreshPythonCommands();
-    log::info("loaded extension {} ({})", info.name, info.path.string());
-    return info.name;
+    log::info("loaded extension {} ({})", found.name, found.path.string());
+    events::send({.type = events::Event::ExtensionLoaded, .path = found.path, .name = found.name});
+}
+
+void ExtensionManager::loadNative(Loaded& rec)
+{
+    const ext::Manifest& m = *rec.info.manifest;
+    const fs::path path = *m.library();
+    std::error_code ec;
+    if (!fs::is_regular_file(path, ec))
+        throw ExtensionError(m.id + ": its library " + path.string() + " is missing (nothing built for " + ext::platformName() + "?)");
+    std::string err;
+    rec.lib = Library::open(path, &err);
+    if (!rec.lib)
+        throw ExtensionError("could not load " + path.string() + ": " + err);
+
+    auto sdk = reinterpret_cast<LilaExtensionSdkVersionFn>(rec.lib->symbol("lilaExtensionSdkVersion"));
+    if (!sdk)
+        throw ExtensionError(path.string() + " does not export lilaExtensionSdkVersion: build it with the Lila SDK's lila/Extension.h");
+    if (std::string why = ext::sdkMismatch(ext::SdkVersion::unpack(sdk())); !why.empty())
+        throw ExtensionError("can't load " + m.id + ": its library was " + why);
+    auto init = reinterpret_cast<LilaExtensionInitFn>(rec.lib->symbol("lilaExtensionInit"));
+    if (!init)
+        throw ExtensionError(path.string() + " does not export lilaExtensionInit");
+
+    int rc = 0;
+    try
+    {
+        owners::OwnerScope attribute(m.id);
+        rc = init(*rec.ctx);
+    }
+    catch (const std::exception& e)
+    {
+        throw ExtensionError("extension " + m.id + " threw during init: " + e.what());
+    }
+    if (rc != 0)
+        throw ExtensionError("extension " + m.id + " failed to initialize (code " + std::to_string(rc) + ")");
+}
+
+void ExtensionManager::loadPython(Loaded& rec, const fs::path& module)
+{
+    const std::string& name = rec.info.name;
+    if (!python::initialized())
+        throw ExtensionError("can't load the Python part of " + name + ": Python is not running");
+    owners::OwnerScope attribute(name);
+    python::Result r = python::run("__import__('lila.extension', fromlist=['_load'])._load(" + pyString(name) + ", " +
+                                       pyString(module.string()) + ")",
+                                   "<loadExtension>");
+    if (!r.ok)
+        throw ExtensionError("Python extension " + name + " failed to load:\n" + r.value);
+    rec.python = true;
 }
 
 void ExtensionManager::checkUnloadable(const std::string& name) const
 {
+    for (const std::string& other : mOrder)
+    {
+        const ExtensionInfo& info = mLoaded.at(other)->info;
+        if (info.manifest && std::any_of(info.manifest->dependencies.begin(), info.manifest->dependencies.end(),
+                                         [&](const ext::Dependency& d) { return d.id == name; }))
+            throw ExtensionError("can't unload " + name + ": " + other + " depends on it. Unload " + other + " first.");
+    }
+
     scene::Graph& g = scene::Graph::current();
     std::vector<std::string> users;
     for (scene::NodeId id : g.nodes())
@@ -373,26 +440,48 @@ void ExtensionManager::checkUnloadable(const std::string& name) const
     if (users.size() > 5)
         list += ", ...";
     throw ExtensionError("can't unload " + name + ": the scene has " + std::to_string(users.size()) + " node(s) of its types (" + list +
-                      "). Delete them first.");
+                         "). Delete them first.");
 }
 
-void ExtensionManager::removeOwned(const std::string& name)
+void ExtensionManager::removeOwned(Loaded& rec)
 {
     LILA_ZONE();
 
-    std::vector<std::string> commands;
-    for (const CommandDef* d : cmds::all())
-        if (d->owner == name)
-            commands.push_back(d->name);
-    for (const std::string& c : commands)
-        cmds::unregisterCommand(c);
+    const std::string& name = rec.info.name;
+    if (rec.python && python::initialized())
+    {
+        python::run("__import__('lila.extension', fromlist=['_unload'])._unload(" + pyString(name) + ")", "<unloadExtension>");
+        rec.python = false;
+    }
+    if (rec.lib)
+    {
+        if (auto uninit = reinterpret_cast<LilaExtensionUninitFn>(rec.lib->symbol("lilaExtensionUninit")))
+        {
+            try
+            {
+                uninit(*rec.ctx);
+            }
+            catch (const std::exception& e)
+            {
+                log::error("extension {} threw during uninit: {}", name, e.what());
+            }
+        }
+    }
+    if (rec.ctx)
+        rec.ctx->unloadAll();
+    liveContexts().erase(name);
 
-    std::vector<std::string> types;
-    for (const scene::NodeType* t : scene::types::all())
-        if (t->owner == name)
-            types.push_back(t->name);
-    for (const std::string& t : types)
+    // Anything tagged with the owner that did not go through the context (Python registrations, for instance).
+    cmds::registry().removeOwned(name);
+    for (const std::string& t : scene::types::registry().owned(name))
         scene::types::unregisterType(t);
+    events::unsubscribeOwned(name);
+    // Every other registry, before the library goes: entries made through calls that take no context still hold its code.
+    owners::removeOwned(name);
+
+    // Undo steps may hold actions whose code lives in the library.
+    if (rec.lib)
+        UndoStack::get().clear();
 }
 
 void ExtensionManager::unload(const std::string& name)
@@ -404,35 +493,16 @@ void ExtensionManager::unload(const std::string& name)
         throw ExtensionError("extension '" + name + "' is not loaded");
     checkUnloadable(name);
     Loaded& rec = *it->second;
+    removeOwned(rec);
 
-    if (rec.info.kind == ExtensionKind::Native)
-    {
-        if (auto uninit = reinterpret_cast<LilaExtensionUninitFn>(rec.lib->symbol("lilaExtensionUninit")))
-        {
-            try
-            {
-                uninit(rec.ctx.get());
-            }
-            catch (const std::exception& e)
-            {
-                log::error("extension {} threw during uninit: {}", name, e.what());
-            }
-        }
-        removeOwned(name);
-        // Undo steps may hold actions whose code lives in the library.
-        UndoStack::get().clear();
-    }
-    else if (python::initialized())
-    {
-        python::run("__import__('lila.extension', fromlist=['_unload'])._unload(" + pyString(name) + ")", "<unloadExtension>");
-        removeOwned(name);
-    }
-
-    ExtensionKind kind = rec.info.kind;
+    const ExtensionKind kind = rec.info.kind;
+    const fs::path path = rec.info.path;
     mLoaded.erase(it);
+    mOrder.erase(std::remove(mOrder.begin(), mOrder.end(), name), mOrder.end());
     if (kind == ExtensionKind::Native)
         refreshPythonCommands();
     log::info("unloaded extension {}", name);
+    events::send({.type = events::Event::ExtensionUnloaded, .path = path, .name = name});
 }
 
 std::string ExtensionManager::reload(const std::string& name)
@@ -447,7 +517,7 @@ std::string ExtensionManager::reload(const std::string& name)
 
 void ExtensionManager::unloadAll()
 {
-    std::vector<std::string> names = loaded();
+    std::vector<std::string> names = mOrder;
     for (auto n = names.rbegin(); n != names.rend(); ++n)
     {
         try
@@ -468,67 +538,99 @@ bool ExtensionManager::isLoaded(const std::string& name) const
 
 std::vector<std::string> ExtensionManager::loaded() const
 {
-    std::vector<std::string> out;
-    for (auto& [n, l] : mLoaded)
-        out.push_back(n);
-    return out;
+    return mOrder;
+}
+
+std::string ExtensionManager::lastError(const std::string& name) const
+{
+    auto it = mErrors.find(name);
+    return it == mErrors.end() ? std::string() : it->second;
 }
 
 json ExtensionManager::describe(const std::string& name) const
 {
     std::optional<ExtensionInfo> info;
+    const Loaded* rec = nullptr;
     if (auto it = mLoaded.find(name); it != mLoaded.end())
-        info = it->second->info;
+    {
+        rec = it->second.get();
+        info = rec->info;
+    }
     else
         info = find(name);
     if (!info)
         throw ExtensionError("no extension named '" + name + "'");
-    std::vector<std::string> auto_ = autoloadList();
-    info->autoload = std::find(auto_.begin(), auto_.end(), info->name) != auto_.end();
+    info->autoload = autoloads(*info);
+    if (info->error.empty())
+        info->error = lastError(name);
 
     json j = info->toJson();
     json commands = json::array();
-    for (const CommandDef* d : cmds::all())
-        if (d->owner == info->name)
-            commands.push_back(d->name);
+    for (const std::string& c : cmds::registry().owned(info->name))
+        commands.push_back(c);
+    std::sort(commands.begin(), commands.end());
     json types = json::array();
-    for (const scene::NodeType* t : scene::types::all())
-        if (t->owner == info->name)
-            types.push_back(t->name);
+    for (const std::string& t : scene::types::registry().owned(info->name))
+        types.push_back(t);
+    std::sort(types.begin(), types.end());
     j["commands"] = commands;
     j["types"] = types;
+    j["registrations"] = rec && rec->ctx ? json(rec->ctx->registrations()) : json::array();
     return j;
 }
 
 std::vector<std::string> ExtensionManager::autoloadList() const
 {
-    std::vector<std::string> out;
-    json list = PrefStore::get().value("general", "/extensions/autoload", json::array());
-    if (list.is_array())
-        for (const json& n : list)
-            if (n.is_string())
-                out.push_back(n.get<std::string>());
-    return out;
+    return stringList("/extensions/autoload");
+}
+
+std::vector<std::string> ExtensionManager::disabledList() const
+{
+    return stringList("/extensions/disabled");
+}
+
+bool ExtensionManager::autoloads(const ExtensionInfo& info) const
+{
+    if (contains(autoloadList(), info.name))
+        return true;
+    return info.manifest && info.manifest->enabledByDefault && !contains(disabledList(), info.name);
 }
 
 void ExtensionManager::setAutoload(const std::string& name, bool on)
 {
     std::vector<std::string> list = autoloadList();
-    auto it = std::find(list.begin(), list.end(), name);
-    if (on == (it != list.end()))
-        return;
-    if (on)
-        list.push_back(name);
-    else
-        list.erase(it);
+    std::vector<std::string> off = disabledList();
+    auto drop = [&](std::vector<std::string>& v) { v.erase(std::remove(v.begin(), v.end(), name), v.end()); };
+    drop(list);
+    drop(off);
+    (on ? list : off).push_back(name);
     PrefStore::get().set("general", "/extensions/autoload", list);
+    PrefStore::get().set("general", "/extensions/disabled", off);
 }
 
 void ExtensionManager::loadAutoload()
 {
     LILA_ZONE();
 
+    std::vector<ExtensionInfo> all = available();
+    std::vector<std::string> ids;
+    for (const ExtensionInfo& info : all)
+        if (info.autoload && !info.loaded)
+            ids.push_back(info.name);
+    // Turned on by name but not found: say so rather than dropping it silently.
     for (const std::string& name : autoloadList())
+        if (std::none_of(all.begin(), all.end(), [&](const ExtensionInfo& i) { return i.name == name; }))
+            ids.push_back(name);
+
+    auto depsOf = [&](const std::string& id) {
+        std::vector<std::string> out;
+        for (const ExtensionInfo& info : all)
+            if (info.name == id && info.manifest)
+                for (const ext::Dependency& d : info.manifest->dependencies)
+                    out.push_back(d.id);
+        return out;
+    };
+    for (const std::string& name : ext::dependencyOrder(ids, depsOf))
     {
         try
         {
@@ -571,8 +673,8 @@ void registerCommands()
 
     cmds::registerCommand({
         .name = "loadExtension",
-        .doc = "Load an extension by name (from the extension search paths) or by path. Returns its name.",
-        .positionalDoc = "name or path",
+        .doc = "Load an extension by id (from the extension search paths) or by the path of its package. Returns its id.",
+        .positionalDoc = "id or path",
         .flags = {{"autoload", "", T::Bool, nullptr, "Also load it at every startup (or stop doing so with False)."}},
         .undoable = false,
         .run = [&pm](const Args& a) -> json {
@@ -588,8 +690,9 @@ void registerCommands()
 
     cmds::registerCommand({
         .name = "unloadExtension",
-        .doc = "Unload an extension, removing its commands and node types. Fails while the scene uses its node types.",
-        .positionalDoc = "name",
+        .doc = "Unload an extension, removing everything it registered. Fails while the scene uses its node types or another "
+               "loaded extension depends on it.",
+        .positionalDoc = "id",
         .undoable = false,
         .run = [&pm](const Args& a) -> json {
             std::string name = nameArg(a, "unloadExtension");
@@ -602,8 +705,8 @@ void registerCommands()
 
     cmds::registerCommand({
         .name = "reloadExtension",
-        .doc = "Unload and load an extension again from the same file, picking up changes.",
-        .positionalDoc = "name",
+        .doc = "Unload and load an extension again from the same package, picking up changes.",
+        .positionalDoc = "id",
         .undoable = false,
         .run = [&pm](const Args& a) -> json {
             std::string name = nameArg(a, "reloadExtension");
@@ -613,7 +716,7 @@ void registerCommands()
 
     cmds::registerCommand({
         .name = "listExtensions",
-        .doc = "Extensions on the search paths: [{name, path, kind, loaded, autoload}].",
+        .doc = "Extensions on the search paths: [{name, path, kind, loaded, autoload, version, vendor, sdk, error, ...}].",
         .flags = {
             {"loaded", "", T::Bool, false, "Only loaded extensions."},
             {"searchPaths", "", T::Bool, false, "Return the search paths instead."},
@@ -637,8 +740,8 @@ void registerCommands()
 
     cmds::registerCommand({
         .name = "extensionInfo",
-        .doc = "One extension: {name, path, kind, loaded, autoload, commands, types}.",
-        .positionalDoc = "name",
+        .doc = "One extension: {name, path, kind, loaded, autoload, version, vendor, sdk, commands, types, registrations, error}.",
+        .positionalDoc = "id",
         .flags = {{"autoload", "", T::Bool, nullptr, "Set whether it loads at startup."}},
         .undoable = false,
         .run = [&pm](const Args& a) -> json {

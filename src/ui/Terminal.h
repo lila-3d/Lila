@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "ui/terminal/VtScreen.h"
 
 #include <QAbstractScrollArea>
@@ -18,7 +20,7 @@ namespace lila::ui
  * A child process on a pseudo terminal: ConPTY on Windows, forkpty elsewhere. Output is read on a background
  * thread and delivered on the owning thread through output().
  */
-class PtyProcess : public QObject
+class LILA_UI_API PtyProcess : public QObject
 {
     Q_OBJECT
 
@@ -43,7 +45,7 @@ private:
 };
 
 /** One terminal: a VtScreen painted in the mono font, fed by a PtyProcess running the user's shell. */
-class TerminalView : public QAbstractScrollArea
+class LILA_UI_API TerminalView : public QAbstractScrollArea
 {
     Q_OBJECT
 
@@ -146,7 +148,7 @@ private:
 };
 
 /** Dock contents: tabs of TerminalView with a "+" for another shell. The first one starts when first shown. */
-class TerminalPanel : public QWidget
+class LILA_UI_API TerminalPanel : public QWidget
 {
     Q_OBJECT
 

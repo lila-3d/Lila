@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "geo/Mesh.h"
 
 namespace lila::geo
@@ -96,21 +98,21 @@ struct IcoSphereOptions
     bool baseAtOrigin = false;
 };
 
-Mesh makeCube(const CubeOptions& o = {});
+LILA_SCENE_API Mesh makeCube(const CubeOptions& o = {});
 /** In XZ facing +Y. */
-Mesh makePlane(const PlaneOptions& o = {});
-Mesh makeSphere(const SphereOptions& o = {});
-Mesh makeCylinder(const CylinderOptions& o = {});
-Mesh makeCone(const ConeOptions& o = {});
-Mesh makeTorus(const TorusOptions& o = {});
+LILA_SCENE_API Mesh makePlane(const PlaneOptions& o = {});
+LILA_SCENE_API Mesh makeSphere(const SphereOptions& o = {});
+LILA_SCENE_API Mesh makeCylinder(const CylinderOptions& o = {});
+LILA_SCENE_API Mesh makeCone(const ConeOptions& o = {});
+LILA_SCENE_API Mesh makeTorus(const TorusOptions& o = {});
 /** In XZ facing +Y. */
-Mesh makeDisc(const DiscOptions& o = {});
-Mesh makePipe(const PipeOptions& o = {});
+LILA_SCENE_API Mesh makeDisc(const DiscOptions& o = {});
+LILA_SCENE_API Mesh makePipe(const PipeOptions& o = {});
 /** Subdivided cube projected onto a sphere: all quads, no poles. */
-Mesh makeQuadSphere(const QuadSphereOptions& o = {});
+LILA_SCENE_API Mesh makeQuadSphere(const QuadSphereOptions& o = {});
 /** Geodesic sphere of near-equal triangles: no poles, no pinching. */
-Mesh makeIcoSphere(const IcoSphereOptions& o = {});
+LILA_SCENE_API Mesh makeIcoSphere(const IcoSphereOptions& o = {});
 
 /** Sets edge "seam" where the corners on either side disagree on the UV set. Returns the count. */
-Index markUvSeams(Mesh& mesh, std::string_view uvSet = "uv0");
+LILA_SCENE_API Index markUvSeams(Mesh& mesh, std::string_view uvSet = "uv0");
 } // namespace lila::geo

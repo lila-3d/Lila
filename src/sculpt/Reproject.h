@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "geo/Bvh.h"
 #include "geo/Mesh.h"
 #include "geo/Ops.h"
@@ -46,7 +48,7 @@ struct FitOptions
  * Cage positions (per point capacity) whose subdivision through stencils best matches target, which holds one
  * position per subdivided point in subdivide()'s order. Solved as sparse normal equations with Eigen's LDLT.
  */
-std::vector<glm::dvec3> fitCage(const geo::Mesh& cage, std::span<const geo::PointStencil> stencils, std::span<const glm::dvec3> target,
+LILA_SCENE_API std::vector<glm::dvec3> fitCage(const geo::Mesh& cage, std::span<const geo::PointStencil> stencils, std::span<const glm::dvec3> target,
                                 const FitOptions& opts = {});
 
 /**
@@ -54,8 +56,8 @@ std::vector<glm::dvec3> fitCage(const geo::Mesh& cage, std::span<const geo::Poin
  * LeastSquares it subdivides, projects the subdivided points onto the surface, solves, and repeats; Closest and Normal
  * project the cage points directly. surface must be the mesh bvh was built from, in the cage's space.
  */
-geo::Mesh fitCageToSurface(const geo::Mesh& cage, const geo::Mesh& surface, const geo::MeshBvh& bvh, const FitOptions& opts = {});
+LILA_SCENE_API geo::Mesh fitCageToSurface(const geo::Mesh& cage, const geo::Mesh& surface, const geo::MeshBvh& bvh, const FitOptions& opts = {});
 
 /** Sets each pair to the average of itself and its partner's reflection, and on-plane points onto the plane. */
-void symmetrizePositions(std::span<glm::dvec3> positions, const geo::SymmetryMap& map);
+LILA_SCENE_API void symmetrizePositions(std::span<glm::dvec3> positions, const geo::SymmetryMap& map);
 } // namespace lila::sculpt

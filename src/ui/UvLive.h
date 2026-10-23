@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/Node.h"
 #include "uv/LiveSolver.h"
 
@@ -22,35 +24,35 @@ struct BrushSettings
     double strength = 0.5;
 };
 
-BrushSettings& brush();
+LILA_UI_API BrushSettings& brush();
 /** Saves the settings and tells listeners. */
-void settingsChanged();
+LILA_UI_API void settingsChanged();
 
 /** Live mode: dragging uvs steers the solver, and cuts, sews and pins re-solve their islands as they happen. */
-bool liveMode();
-void setLiveMode(bool on);
+LILA_UI_API bool liveMode();
+LILA_UI_API void setLiveMode(bool on);
 /** Stretch against compression, -1..1 (see uv::LiveOptions::balance). */
-double balance();
-void setBalance(double b);
-bool checker3d();
-void setChecker3d(bool on);
-bool seams3d();
-void setSeams3d(bool on);
+LILA_UI_API double balance();
+LILA_UI_API void setBalance(double b);
+LILA_UI_API bool checker3d();
+LILA_UI_API void setChecker3d(bool on);
+LILA_UI_API bool seams3d();
+LILA_UI_API void setSeams3d(bool on);
 /** Stretch heatmap in two colours instead of grayscale (still ordered light = stretched). */
-bool twoColourHeatmap();
-void setTwoColourHeatmap(bool on);
+LILA_UI_API bool twoColourHeatmap();
+LILA_UI_API void setTwoColourHeatmap(bool on);
 
 /** Called on settings changes and whenever a live session publishes a new frame. Main thread. */
-int addListener(std::function<void()> fn);
-void removeListener(int id);
+LILA_UI_API int addListener(std::function<void()> fn);
+LILA_UI_API void removeListener(int id);
 
 /** Meshes the uv tools show: the selected ones plus any with a component selection. */
-std::vector<scene::NodeId> shownMeshes();
+LILA_UI_API std::vector<scene::NodeId> shownMeshes();
 /** Faces selected on the node (any component mode, converted), empty when none. */
-std::vector<geo::Index> selectedFaces(scene::NodeId node);
+LILA_UI_API std::vector<geo::Index> selectedFaces(scene::NodeId node);
 
 /** Starts the driver that ticks live sessions (idempotent). */
-void ensureDriver();
+LILA_UI_API void ensureDriver();
 
 enum class Op
 {
@@ -59,17 +61,17 @@ enum class Op
     Settle,  // relax to convergence, then a SLIM pass for a fold-free finish
 };
 /** Runs op on the selected islands (or every island) of the shown meshes, without blocking; one undo step each. */
-void run(Op op);
+LILA_UI_API void run(Op op);
 
 /** After a structural edit (cut, sew, pin) in live mode, the islands holding the faces settle live. */
-void settleAfter(scene::NodeId node, const std::vector<geo::Index>& faces, const char* label);
+LILA_UI_API void settleAfter(scene::NodeId node, const std::vector<geo::Index>& faces, const char* label);
 
 /** Runs uvCut or uvSew on the selected edges from the UI; in live mode the touched islands then settle live. Returns the result. */
-nlohmann::json cutOrSew(const char* command, nlohmann::json call);
+LILA_UI_API nlohmann::json cutOrSew(const char* command, nlohmann::json call);
 
 /** The uv brush on the 3D mesh (action "uv.brush3d"). */
-void startBrushTool3d();
+LILA_UI_API void startBrushTool3d();
 
 /** Actions, prefs and the 3D drawer. Called from registerUvActions. */
-void install();
+LILA_UI_API void install();
 } // namespace lila::ui::uvLive

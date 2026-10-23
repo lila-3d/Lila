@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/RenderSettings.h"
 
 namespace lila::scene
@@ -15,7 +17,7 @@ class Node;
 namespace lila::ui
 {
 /** Maya-style tumble camera around a center of interest. */
-struct Camera
+struct LILA_UI_API Camera
 {
     glm::dvec3 target{0.0};
     double distance = 600.0; // cm; game assets are metres, not centimetres

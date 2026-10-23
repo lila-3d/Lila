@@ -1,6 +1,8 @@
 #include "ui/Layouts.h"
 
 #include "cmds/Command.h"
+#include "core/Events.h"
+#include "core/ExtensionContext.h"
 #include "core/PrefStore.h"
 #include "core/Workspace.h"
 
@@ -102,6 +104,7 @@ const char* originName(Origin o)
     case Origin::BuiltIn: return "builtin";
     case Origin::User: return "user";
     case Origin::Workspace: return "workspace";
+    case Origin::Extension: return "extension";
     }
     return "user";
 }
@@ -154,7 +157,41 @@ std::vector<std::string> namesIn(const fs::path& dir)
 
 std::vector<Entry> list()
 {
-    return merge(builtInNames(), namesIn(userLayoutsDir()), namesIn(workspaceLayoutsDir()));
+    std::vector<std::string> fixed = builtInNames();
+    for (const std::string& name : contributed().idsInOrder())
+        if (std::find(fixed.begin(), fixed.end(), name) == fixed.end())
+            fixed.push_back(name);
+    std::vector<Entry> out = merge(fixed, namesIn(userLayoutsDir()), namesIn(workspaceLayoutsDir()));
+    std::vector<std::string> builtIns = builtInNames();
+    for (Entry& e : out)
+        if (e.origin == Origin::BuiltIn && std::find(builtIns.begin(), builtIns.end(), e.name) == builtIns.end())
+            e.origin = Origin::Extension;
+    return out;
+}
+
+Registry<json>& contributed()
+{
+    static Registry<json> r;
+    return r;
+}
+
+void add(const std::string& name, json layout, std::string owner)
+{
+    contributed().put(name, std::move(layout), std::move(owner));
+}
+
+uint64_t add(ext::Context& ctx, const std::string& name, json layout)
+{
+    if (const std::string* owner = contributed().ownerOf(name); owner && *owner != ctx.owner())
+    {
+        ctx.log(LogLevel::Error, "layout '" + name + "' already belongs to " + *owner);
+        return 0;
+    }
+    add(name, std::move(layout), ctx.owner());
+    return ctx.track("layout:" + name, [name, own = ctx.owner()] {
+        if (const std::string* o = contributed().ownerOf(name); o && *o == own)
+            contributed().remove(name);
+    });
 }
 
 std::optional<Entry> find(const std::string& name)
@@ -192,6 +229,8 @@ std::optional<json> builtIn(const std::string& name)
     for (auto& [n, layout] : presets())
         if (n == name)
             return std::optional<json>(std::in_place, layout);
+    if (const json* layout = contributed().find(name))
+        return std::optional<json>(std::in_place, *layout);
     return std::nullopt;
 }
 
@@ -200,7 +239,7 @@ std::optional<json> read(const std::string& name)
     std::optional<Entry> e = find(name);
     if (!e)
         return std::nullopt;
-    if (e->origin == Origin::BuiltIn)
+    if (e->origin == Origin::BuiltIn || e->origin == Origin::Extension)
         return builtIn(name);
     json doc = PrefStore::get().merged(fileFor(name));
     if (!doc.is_object() || doc.empty())
@@ -222,7 +261,7 @@ void write(const std::string& name, const json& layout, Origin scope)
 bool remove(const std::string& name)
 {
     std::optional<Entry> e = find(name);
-    if (!e || e->origin == Origin::BuiltIn)
+    if (!e || e->origin == Origin::BuiltIn || e->origin == Origin::Extension)
         return false;
     PrefStore& p = PrefStore::get();
     // Emptied through the store first so its cached copy doesn't outlive the file.
@@ -242,11 +281,11 @@ void rename(const std::string& from, const std::string& to)
     std::optional<Entry> e = find(from);
     if (!e)
         throw CommandError("no layout named \"" + from + "\"");
-    if (e->origin == Origin::BuiltIn)
+    if (e->origin == Origin::BuiltIn || e->origin == Origin::Extension)
         throw CommandError("\"" + from + "\" is built in; save it under a new name instead");
     if (from == to)
         return;
-    if (std::optional<Entry> clash = find(to); clash && clash->origin != Origin::BuiltIn)
+    if (std::optional<Entry> clash = find(to); clash && clash->origin != Origin::BuiltIn && clash->origin != Origin::Extension)
         throw CommandError("a layout named \"" + to + "\" already exists");
     std::optional<json> doc = read(from);
     bool wasCurrent = current() == from;
@@ -303,6 +342,7 @@ void registerCommands()
                 throw CommandError("applyLayout: no layout named \"" + name + "\"");
             hooks().apply(name, *layout);
             setCurrent(name);
+            events::send({.type = events::Event::LayoutChanged, .name = name});
             return name;
         },
     });

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <volk.h>
 #include <vk_mem_alloc.h>
 
@@ -9,7 +11,7 @@
 namespace lila::render
 {
 /** Instance, device and allocator shared by every viewport. Created once, used from the render thread. */
-class VulkanContext
+class LILA_UI_API VulkanContext
 {
 public:
     bool init(bool validation);
@@ -31,5 +33,5 @@ private:
     VkDebugUtilsMessengerEXT mMessenger = VK_NULL_HANDLE;
 };
 
-const char* vkResultName(VkResult r);
+LILA_UI_API const char* vkResultName(VkResult r);
 } // namespace lila::render

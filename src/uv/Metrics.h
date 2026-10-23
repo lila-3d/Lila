@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "uv/Chart.h"
 
 #include <glm/glm.hpp>
@@ -33,8 +35,8 @@ struct DistortionSummary
 };
 
 /** Per face capacity; faces outside the set (or without uvs) stay zero. All live faces when empty. */
-std::vector<FaceDistortion> faceDistortion(const geo::Mesh& mesh, std::string_view uvSet, std::span<const Index> faces = {});
-DistortionSummary summarize(const geo::Mesh& mesh, std::span<const FaceDistortion> d, std::span<const Index> faces = {});
+LILA_SCENE_API std::vector<FaceDistortion> faceDistortion(const geo::Mesh& mesh, std::string_view uvSet, std::span<const Index> faces = {});
+LILA_SCENE_API DistortionSummary summarize(const geo::Mesh& mesh, std::span<const FaceDistortion> d, std::span<const Index> faces = {});
 
 /** One number per face for display: 0 perfect, towards 1 badly stretched. */
 inline float distortionValue(const FaceDistortion& d)
@@ -47,23 +49,23 @@ inline float distortionValue(const FaceDistortion& d)
  * Pairs of triangles whose interiors overlap in uv. Triangles in the same group are never compared with
  * each other when sameGroupOk is set. Parallel, grid accelerated. Flags are per triangle.
  */
-size_t triangleOverlaps(std::span<const std::array<glm::dvec2, 3>> tris, std::vector<uint8_t>& flags,
+LILA_SCENE_API size_t triangleOverlaps(std::span<const std::array<glm::dvec2, 3>> tris, std::vector<uint8_t>& flags,
                         std::span<const Index> group = {}, bool sameGroupOk = false);
 
 /** Faces (per face capacity) whose uvs overlap another face's or fold over. Returns how many. */
-size_t overlappingFaces(const geo::Mesh& mesh, std::string_view uvSet, std::vector<uint8_t>& flags, std::span<const Index> faces = {});
+LILA_SCENE_API size_t overlappingFaces(const geo::Mesh& mesh, std::string_view uvSet, std::vector<uint8_t>& flags, std::span<const Index> faces = {});
 
 /** True when the chart's uv triangles overlap one another anywhere. */
-bool chartOverlaps(const Chart& chart);
+LILA_SCENE_API bool chartOverlaps(const Chart& chart);
 
 /** px per 3D unit for a texture of the given resolution: sqrt(uv area / surface area) * resolution. */
-double texelDensity(const geo::Mesh& mesh, std::string_view uvSet, std::span<const Index> faces, double resolution,
+LILA_SCENE_API double texelDensity(const geo::Mesh& mesh, std::string_view uvSet, std::span<const Index> faces, double resolution,
                     const glm::dmat3& linear = glm::dmat3(1.0));
 
 /**
  * Scales each uv island (about its centre) so it has the given density, as Maya's Set Texel Density does.
  * linear maps object to world space so density counts world size.
  */
-void setTexelDensity(geo::Mesh& mesh, std::string_view uvSet, std::span<const Index> faces, double resolution, double density,
+LILA_SCENE_API void setTexelDensity(geo::Mesh& mesh, std::string_view uvSet, std::span<const Index> faces, double resolution, double density,
                      const glm::dmat3& linear = glm::dmat3(1.0));
 } // namespace lila::uv

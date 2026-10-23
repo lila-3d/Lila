@@ -1,5 +1,8 @@
 #pragma once
 
+#include "core/Export.h"
+#include "core/Registry.h"
+
 #include <glm/glm.hpp>
 #include <nlohmann/json.hpp>
 
@@ -15,6 +18,11 @@
 namespace lila::geo
 {
 class Mesh;
+}
+
+namespace lila::ext
+{
+class Context;
 }
 
 namespace lila::scene
@@ -62,6 +70,7 @@ enum AttrFlags : uint32_t
     AttrStorable = 1 << 3,
     AttrHidden = 1 << 4,
     AttrFile = 1 << 5, // String holding a file path: editors offer a file browser
+    AttrResetOnDisconnect = 1 << 6, // only meaningful while driven: losing the connection puts the default back
 };
 
 struct AttrDef
@@ -97,28 +106,36 @@ struct PlugRef
     auto operator<=>(const PlugRef&) const = default;
 };
 
-json toJson(const PlugValue& v);
+LILA_SCENE_API json toJson(const PlugValue& v);
 /** Converts j to the attr's type, or throws std::invalid_argument. */
-PlugValue fromJson(const AttrDef& def, const json& j);
-PlugValue defaultFor(PlugType type);
-const char* typeName(PlugType type);
+LILA_SCENE_API PlugValue fromJson(const AttrDef& def, const json& j);
+LILA_SCENE_API PlugValue defaultFor(PlugType type);
+LILA_SCENE_API const char* typeName(PlugType type);
 
 /**
  * toJson of each value, in order; meshes and data convert in parallel. packed writes meshes with meshToJsonPacked, for a
  * document headed straight into a binary scene file.
  */
-std::vector<json> toJsonAll(const std::vector<const PlugValue*>& values, bool packed = false);
+LILA_SCENE_API std::vector<json> toJsonAll(const std::vector<const PlugValue*>& values, bool packed = false);
 struct FromJsonResult
 {
     PlugValue value;
     std::string error; // fromJson's message when it threw; value is then unset
 };
 /** fromJson of each (attr, json), in order; meshes decode in parallel. */
-std::vector<FromJsonResult> fromJsonAll(const std::vector<std::pair<const AttrDef*, const json*>>& items);
+LILA_SCENE_API std::vector<FromJsonResult> fromJsonAll(const std::vector<std::pair<const AttrDef*, const json*>>& items);
 
 namespace data
 {
-/** Lets a Data kind load from scene files. */
-void registerKind(const std::string& kind, std::function<DataPtr(const json&)> fromJson);
+using FromJson = std::function<DataPtr(const json&)>;
+/** Every Data kind scene files can load, owner-tagged. */
+LILA_SCENE_API Registry<FromJson>& kinds();
+/** Lets a Data kind load from scene files. Registering a kind again replaces its loader. */
+LILA_SCENE_API void registerKind(const std::string& kind, FromJson fromJson);
+/**
+ * For extensions: owned by ctx and removed when it unloads. False, with a log message, if the kind is taken. Values
+ * already in the scene keep working while the extension is loaded; files holding the kind then fail to load it.
+ */
+LILA_SCENE_API bool registerKind(ext::Context& ctx, const std::string& kind, FromJson fromJson);
 } // namespace data
 } // namespace lila::scene

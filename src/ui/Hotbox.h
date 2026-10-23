@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "ui/HotboxZone.h"
 
 #include <QPointer>
@@ -21,13 +23,15 @@ namespace lila::ui
  * Shown by Hotkeys when a key's hold target is "hotbox.show"; it stays up while the key is held and while one of its
  * menus is open. Visible rows are in prefs general /hotbox/rows.
  */
-class Hotbox : public QWidget
+class LILA_UI_API Hotbox : public QWidget
 {
     Q_OBJECT
 
 public:
     /** Creates the hotbox for main and registers the hotbox.* actions. panelMenus form the second row. */
     static void install(QMainWindow* main, std::vector<QMenu*> panelMenus);
+    /** The panel row's menus, when the registered menus change. */
+    void setPanelMenus(std::vector<QMenu*> panelMenus) { mPanelMenus = std::move(panelMenus); }
     static Hotbox* instance();
 
     /** Shows centred on global. keyHeld: a hotkey is down, so the overlay hides when keyReleased() says so. */
@@ -66,6 +70,7 @@ private:
     bool rowVisible(const char* row) const;
     void setRowVisible(const char* row, bool on);
     QMenu* recentMenu();
+    QFont centerFont() const;
     /** The centre label opens the centre zone's camera marking menu (hotbox_center_lmb) on any button, as Maya's does. */
     void openCameraMenu(Qt::MouseButton button, QPoint global);
     void fillControls(QMenu* menu);

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "math/Box.h"
 
 namespace lila::math
@@ -13,18 +15,18 @@ namespace lila::math
  * per local axis and maps by permutation without sign. Matrices map as B^T M B and come out in
  * FMatrix row layout, ready to copy into an FMatrix element for element.
  */
-Vector toUnreal(const Vector& v);
-Vector fromUnreal(const Vector& v);
-Vector scaleToUnreal(const Vector& s);
-Vector scaleFromUnreal(const Vector& s);
-Quat toUnreal(const Quat& q);
-Quat fromUnreal(const Quat& q);
+LILA_FOUNDATION_API Vector toUnreal(const Vector& v);
+LILA_FOUNDATION_API Vector fromUnreal(const Vector& v);
+LILA_FOUNDATION_API Vector scaleToUnreal(const Vector& s);
+LILA_FOUNDATION_API Vector scaleFromUnreal(const Vector& s);
+LILA_FOUNDATION_API Quat toUnreal(const Quat& q);
+LILA_FOUNDATION_API Quat fromUnreal(const Quat& q);
 inline Rotator toUnreal(const Rotator& r) { return r; }
 inline Rotator fromUnreal(const Rotator& r) { return r; }
-Transform toUnreal(const Transform& t);
-Transform fromUnreal(const Transform& t);
-Matrix toUnreal(const Matrix& m);
-Matrix fromUnreal(const Matrix& m);
-Box toUnreal(const Box& b);
-Box fromUnreal(const Box& b);
+LILA_FOUNDATION_API Transform toUnreal(const Transform& t);
+LILA_FOUNDATION_API Transform fromUnreal(const Transform& t);
+LILA_FOUNDATION_API Matrix toUnreal(const Matrix& m);
+LILA_FOUNDATION_API Matrix fromUnreal(const Matrix& m);
+LILA_FOUNDATION_API Box toUnreal(const Box& b);
+LILA_FOUNDATION_API Box fromUnreal(const Box& b);
 } // namespace lila::math

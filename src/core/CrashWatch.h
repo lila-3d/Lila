@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "core/CrashCapture.h"
 
 #ifdef _WIN32
@@ -41,7 +43,7 @@ struct WerBlock
     wchar_t sessionsDir[1024] = {};
 };
 
-fs::path sessionFile(const fs::path& sessionsDir, DWORD pid, const wchar_t* suffix);
+LILA_CRASHKIT_API fs::path sessionFile(const fs::path& sessionsDir, DWORD pid, const wchar_t* suffix);
 
 struct Options
 {
@@ -65,13 +67,13 @@ struct Result
 };
 
 /** Waits for the process to exit; on a crash writes the report folder. */
-Result run(const Options& o);
+LILA_CRASHKIT_API Result run(const Options& o);
 
 /** The lilawer.dll side: writes <sessions>/<pid>.wer.txt and .wer.dmp for a crash WER reports. */
-void writeWerCapture(HANDLE process, DWORD pid, HANDLE thread, const EXCEPTION_RECORD& record, const CONTEXT& context,
+LILA_CRASHKIT_API void writeWerCapture(HANDLE process, DWORD pid, HANDLE thread, const EXCEPTION_RECORD& record, const CONTEXT& context,
                      const fs::path& sessionsDir, bool fullDump);
 
 /** The symbol search path for an exe: its own folder. */
-std::wstring symbolPathFor(const fs::path& exe);
+LILA_CRASHKIT_API std::wstring symbolPathFor(const fs::path& exe);
 } // namespace lila::crash::watch
 #endif

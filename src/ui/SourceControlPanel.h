@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <nlohmann/json.hpp>
 
 #include <QString>
@@ -17,7 +19,7 @@ namespace lila::ui
  * Pending changelists and their files for the workspace's provider (Perforce or git), with checkout, revert, submit
  * and sync. Every action runs a sc* command, so it echoes and can be scripted.
  */
-class SourceControlPanel : public QWidget
+class LILA_UI_API SourceControlPanel : public QWidget
 {
     Q_OBJECT
 
@@ -37,5 +39,5 @@ private:
 };
 
 /** Status-bar text for the open scene ("checked out", "read-only", ...), refreshed after open/save. */
-void sceneSourceStatus(const std::filesystem::path& scene, std::function<void(QString)> done);
+LILA_UI_API void sceneSourceStatus(const std::filesystem::path& scene, std::function<void(QString)> done);
 } // namespace lila::ui

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <glm/glm.hpp>
 #include <nlohmann/json.hpp>
 
@@ -22,15 +24,15 @@ enum class FilmFit
     Overscan,   // the film gate fits inside the gate
 };
 
-const char* filmFitName(FilmFit f);
+LILA_SCENE_API const char* filmFitName(FilmFit f);
 /** Accepts the names above in any case; nullopt when unknown. */
-std::optional<FilmFit> parseFilmFit(const std::string& s);
+LILA_SCENE_API std::optional<FilmFit> parseFilmFit(const std::string& s);
 
 /** True for the built-in views: persp, top, bottom, front, back, left, right. */
-bool isViewName(const std::string& name);
+LILA_SCENE_API bool isViewName(const std::string& name);
 
 /** Per-camera view settings. The built-in views keep theirs here by name; camera nodes as attributes. */
-struct CameraSettings
+struct LILA_SCENE_API CameraSettings
 {
     FilmFit filmFit = FilmFit::Fill;
     double overscan = 1.0; // > 1 shows more than the gate around it
@@ -44,7 +46,7 @@ struct CameraSettings
 };
 
 /** Scene render resolution plus the cameras' gate settings. Saved with the scene as "renderSettings". */
-struct RenderSettings
+struct LILA_SCENE_API RenderSettings
 {
     int width = 1920;
     int height = 1080;
@@ -66,32 +68,32 @@ struct RenderSettings
     void fromJson(const json& j);
 };
 
-RenderSettings& renderSettings();
+LILA_SCENE_API RenderSettings& renderSettings();
 /** Notifies listeners after render or camera settings change. */
-void renderSettingsChanged();
-int addRenderSettingsListener(std::function<void()> fn);
-void removeRenderSettingsListener(int id);
+LILA_SCENE_API void renderSettingsChanged();
+LILA_SCENE_API int addRenderSettingsListener(std::function<void()> fn);
+LILA_SCENE_API void removeRenderSettingsListener(int id);
 
 struct ResolutionPreset
 {
     const char* name;
     int width, height;
 };
-const std::vector<ResolutionPreset>& resolutionPresets();
+LILA_SCENE_API const std::vector<ResolutionPreset>& resolutionPresets();
 
 /**
  * Half extents of the resolution gate, in the film's units (tangents for a perspective camera, world units for an
  * orthographic one), given the film gate's half extents and the gate's width over height.
  */
-glm::dvec2 fitGate(glm::dvec2 film, double gateAspect, FilmFit fit);
+LILA_SCENE_API glm::dvec2 fitGate(glm::dvec2 film, double gateAspect, FilmFit fit);
 
 /**
  * Half extents of what a viewport of `viewAspect` shows. With a gate aspect the whole gate fits inside the viewport,
  * so the gate's contents never depend on the panel's shape. Without one the viewport itself is the gate, as in Maya
  * with gates hidden. Both scale by overscan.
  */
-glm::dvec2 fitView(glm::dvec2 film, double viewAspect, FilmFit fit, double overscan, std::optional<double> gateAspect);
+LILA_SCENE_API glm::dvec2 fitView(glm::dvec2 film, double viewAspect, FilmFit fit, double overscan, std::optional<double> gateAspect);
 
 /** Commands: setRenderResolution, cameraSettings. */
-void registerRenderSettingsCommands();
+LILA_SCENE_API void registerRenderSettingsCommands();
 } // namespace lila::scene

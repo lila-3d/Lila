@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <nlohmann/json.hpp>
 
 #include <string>
@@ -20,9 +22,9 @@ enum class CaseStyle
 };
 
 /** Splits any of myCube, MyCube, my_cube, my-cube, "my cube", HTTPServer2 into words. */
-std::vector<std::string> splitWords(std::string_view name);
-std::string applyCase(std::string_view name, CaseStyle style);
-CaseStyle parseCaseStyle(std::string_view s);
+LILA_SCENE_API std::vector<std::string> splitWords(std::string_view name);
+LILA_SCENE_API std::string applyCase(std::string_view name, CaseStyle style);
+LILA_SCENE_API CaseStyle parseCaseStyle(std::string_view s);
 
 /**
  * Per-workspace naming rules (prefs file "naming", usually in .lila/naming.json):
@@ -32,7 +34,7 @@ CaseStyle parseCaseStyle(std::string_view s);
  *   keepPrefixes: ["UCX_", "SOCKET_", ...]   kept verbatim in front of the converted name
  * Namespaces and trailing digits are left alone.
  */
-struct NamingPolicy
+struct LILA_SCENE_API NamingPolicy
 {
     bool enabled = false;
     enum class Mode

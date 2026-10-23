@@ -1,11 +1,17 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "render/Renderer.h"
 #include "scene/ComponentPick.h"
 #include "scene/Plug.h"
 #include "ui/Camera.h"
 #include "ui/CameraHistory.h"
-#include "ui/Manipulator.h"
+#include "ui/Gizmo.h"
+#include "ui/Overlay.h"
+#include "ui/SelectionHandlers.h"
+#include "ui/Tools.h"
+#include "ui/ViewportState.h"
 
 #include <QWidget>
 
@@ -14,6 +20,7 @@ class QTimer;
 
 #include <deque>
 #include <map>
+#include <memory>
 #include <optional>
 #include <unordered_set>
 #include <string>
@@ -22,7 +29,7 @@ class QTimer;
 namespace lila::ui
 {
 /** Native child window the render thread presents into. Owns the camera and Maya-style navigation. */
-class ViewportWidget : public QWidget
+class LILA_UI_API ViewportWidget : public QWidget
 {
     Q_OBJECT
 
@@ -53,7 +60,8 @@ public:
     /** Shows only the current selection (and its children) in this view; again to show everything. */
     void toggleIsolate();
     bool isolating() const { return !mIsolated.empty(); }
-    const Manipulator& manipulator() const { return mManip; }
+    /** The gizmo in use for the current tool, or null when none applies. */
+    const Gizmo* gizmo() const { return const_cast<ViewportWidget*>(this)->currentGizmo(); }
     /** Steps this view's camera back or forward through its own history ([ and ]); the scene's undo is untouched. */
     void cameraUndo();
     void cameraRedo();
@@ -91,6 +99,23 @@ private:
 
     void submit();
     ViewInfo viewInfo() const;
+    /**
+     * The gizmo that takes input for the current tool: the one dragging, else the active provider's, else the default
+     * provider's when the active one doesn't support the mode. A viewport tool's name is the mode when a gizmo
+     * supports it; otherwise the transform tool's is, so a press a tool declines still reaches the gizmo.
+     */
+    Gizmo* currentGizmo();
+    /** The gizmo to draw: as currentGizmo(), but none while a viewport tool no gizmo supports is active. */
+    Gizmo* drawnGizmo();
+    /** Makes the held instances match gizmos::activeId(); drops any whose provider is gone, cancelling its drag. */
+    void syncGizmos();
+    /** What a click at px hits for the selection handler: the object, plus the face and point on a mesh. */
+    selectionHandlers::Hit selectionHit(QPointF px);
+    /** The active selection handler's hover highlight under the cursor, recomputed on preselect. */
+    void updateHandlerHover(QPointF at);
+    void drawHandlerHover(render::FrameState& s);
+    /** This view for callbacks that shouldn't see the widget, with the cursor at cursor. */
+    ViewportState state(QPointF cursor);
     /** Wraps the cursor to the opposite edge during manipulator drags, so a drag never runs out of screen. */
     void wrapCursor(QMouseEvent* e);
     void updateCursor();
@@ -166,8 +191,17 @@ private:
     int mPlaybackListener = 0;
     int mViewportToolListener = 0;
     int mRenderSettingsListener = 0;
-    Manipulator mManip;
-    bool mManipDrag = false;
+    struct GizmoSlot
+    {
+        std::string id;
+        std::unique_ptr<Gizmo> gizmo;
+    };
+    GizmoSlot mGizmo;        // the active provider's
+    GizmoSlot mDefaultGizmo; // gizmos::kDefault's, when it isn't the active one
+    Gizmo* mGizmoDrag = nullptr; // took the press; null when no gizmo drag is under way
+    int mGizmoListener = 0;
+    int mHandlerListener = 0;
+    std::optional<selectionHandlers::Highlight> mHandlerHover;
     bool mChannelDrag = false; // middle drag driving the channel box's highlighted channels
     bool mToolDrag = false;
     bool mSoftDrag = false;

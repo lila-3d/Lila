@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "geo/Mesh.h"
 #include "geo/Normals.h"
 #include "geo/Triangulate.h"
@@ -57,5 +59,5 @@ struct RenderMesh
 };
 
 /** Parallel. */
-RenderMesh buildRenderMesh(const Mesh& mesh, const RenderMeshOptions& opts = {});
+LILA_SCENE_API RenderMesh buildRenderMesh(const Mesh& mesh, const RenderMeshOptions& opts = {});
 } // namespace lila::geo

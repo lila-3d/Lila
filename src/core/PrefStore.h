@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
@@ -7,6 +9,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace lila
 {
@@ -25,7 +28,7 @@ enum class PrefScope : uint8_t
  * Every set() is written to disk shortly after on the IO thread, and edits made to the files outside Lila are
  * picked up and reported through onChanged. Nothing waits for shutdown.
  */
-class PrefStore
+class LILA_FOUNDATION_API PrefStore
 {
 public:
     using ChangeFn = std::function<void(const std::string& file)>;
@@ -61,6 +64,21 @@ public:
 
     void set(std::string_view file, std::string_view key, json value, PrefScope scope = PrefScope::User);
     void remove(std::string_view file, std::string_view key, PrefScope scope = PrefScope::User);
+
+    /**
+     * Defaults contributed at runtime, by extensions and modes: they sit above the built-in defaults and below the
+     * user's, so a user edit still wins and removing them brings the built-ins back. Each is kept under a layer id
+     * ("<owner>:<what>") so it can be taken away again; later layers win over earlier ones. Never written to disk.
+     */
+    void setDefaults(std::string_view file, std::string layer, json data);
+    /** False when that layer contributed nothing to file. */
+    bool removeDefaults(std::string_view file, std::string_view layer);
+    /** Removes every contribution whose layer id starts with prefix. Returns the count. */
+    size_t removeDefaultsWithPrefix(std::string_view prefix);
+    /** Files with contributed defaults whose name starts with prefix ("markingMenus/"), sorted. */
+    std::vector<std::string> contributedFiles(std::string_view prefix = {}) const;
+    /** Whether any layer contributed to file. */
+    bool hasContributed(std::string_view file) const;
 
     /** Block until pending writes hit disk. */
     void flush();

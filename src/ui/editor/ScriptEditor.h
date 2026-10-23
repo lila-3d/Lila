@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/SceneScripts.h"
 #include "ui/editor/ScriptStorage.h"
 
@@ -30,7 +32,7 @@ class OutputView;
  * Each tab saves to a storage::Location: inside the scene (the sceneScript command), the workspace's .lila/scripts,
  * any file, or the user prefs' scripts folder. Vim keybindings come from the "scriptEditor" /vim pref.
  */
-class ScriptEditor : public QWidget
+class LILA_UI_API ScriptEditor : public QWidget
 {
     Q_OBJECT
 

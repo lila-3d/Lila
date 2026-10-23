@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "uv/Chart.h"
 
 #include <glm/glm.hpp>
@@ -119,7 +121,7 @@ struct PackResult
 };
 
 /** Packs the charts' uvs. Deterministic (without a time limit); parallel; cancellable through the current progress scope. */
-PackResult packCharts(std::span<Chart> charts, const PackOptions& opts = {}, std::span<const PackChartInfo> info = {});
+LILA_SCENE_API PackResult packCharts(std::span<Chart> charts, const PackOptions& opts = {}, std::span<const PackChartInfo> info = {});
 
 /** One mesh for packMeshes. */
 struct PackTarget
@@ -136,11 +138,11 @@ struct PackTarget
 };
 
 /** Packs the islands of several meshes into one layout and writes them back; nothing is written unless it succeeds. */
-PackResult packMeshes(std::span<PackTarget> targets, std::string_view uvSet, const PackOptions& opts = {});
+LILA_SCENE_API PackResult packMeshes(std::span<PackTarget> targets, std::string_view uvSet, const PackOptions& opts = {});
 
 /** Packs the uv islands of the faces (all when empty) and writes them back. */
-PackResult packIslands(geo::Mesh& mesh, std::span<const Index> faces, std::string_view uvSet, const PackOptions& opts = {});
+LILA_SCENE_API PackResult packIslands(geo::Mesh& mesh, std::span<const Index> faces, std::string_view uvSet, const PackOptions& opts = {});
 
 /** Islands lying on top of one another with the same shape, as face lists, one entry per stack of two or more. */
-std::vector<std::vector<std::vector<Index>>> stackedIslands(const geo::Mesh& mesh, std::string_view uvSet, double tolerance = 0.002);
+LILA_SCENE_API std::vector<std::vector<std::vector<Index>>> stackedIslands(const geo::Mesh& mesh, std::string_view uvSet, double tolerance = 0.002);
 } // namespace lila::uv

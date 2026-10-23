@@ -1,4 +1,4 @@
-add_library(lila_link STATIC
+lila_module(lila_link Scene
     Exporters.cpp
     LinkCommands.cpp
     RpcClient.cpp

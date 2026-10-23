@@ -1,6 +1,8 @@
 #pragma once
 
+#include "core/Export.h"
+
 namespace lila::scene
 {
-void registerCommands();
+LILA_SCENE_API void registerCommands();
 } // namespace lila::scene

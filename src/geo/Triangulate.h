@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "geo/Mesh.h"
 
 #include <glm/glm.hpp>
@@ -38,11 +40,11 @@ struct Triangulation
  * larger faces are ear-clipped (collinear corners are never ear tips) and then optionally flipped
  * toward Delaunay. Never adds points. Parallel.
  */
-Triangulation triangulate(const Mesh& mesh, const TriangulateOptions& opts = {});
+LILA_SCENE_API Triangulation triangulate(const Mesh& mesh, const TriangulateOptions& opts = {});
 
 /** Appends 3*(n-2) corner ids for face f. */
-void triangulateFace(const Mesh& mesh, Index f, std::vector<Index>& out, const TriangulateOptions& opts = {});
+LILA_SCENE_API void triangulateFace(const Mesh& mesh, Index f, std::vector<Index>& out, const TriangulateOptions& opts = {});
 
 /** Ear clipping of a simple polygon given in 2D, counter-clockwise. Appends 3*(n-2) local indices. */
-void earClip(std::span<const glm::dvec2> poly, std::vector<Index>& out);
+LILA_SCENE_API void earClip(std::span<const glm::dvec2> poly, std::vector<Index>& out);
 } // namespace lila::geo

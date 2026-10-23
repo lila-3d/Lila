@@ -25,6 +25,9 @@ namespace
 constexpr double kRowHeight = 22.0;
 constexpr double kRowGap = 6.0;
 constexpr double kButtonGap = 2.0;
+// The centre "Lila" button is a big target, as Maya's is, so a flick from the key press lands on it easily.
+constexpr double kCenterHeight = 42.0;
+constexpr double kCenterFontScale = 2.0;
 
 Hotbox* gHotbox = nullptr;
 
@@ -176,14 +179,13 @@ void Hotbox::hideEvent(QHideEvent* e)
 void Hotbox::layoutButtons()
 {
     mButtons.clear();
-    QFont bold = font();
-    bold.setBold(true);
+    const QFont big = centerFont();
     auto makeRow = [&](std::vector<Button> row, double y) {
         double total = 0;
         for (Button& b : row)
         {
-            QFontMetricsF fm(b.center ? bold : font());
-            b.rect.setSize({fm.horizontalAdvance(b.label) + (b.center ? 28 : 18), kRowHeight - 2});
+            QFontMetricsF fm(b.center ? big : font());
+            b.rect.setSize({fm.horizontalAdvance(b.label) + (b.center ? 48 : 18), b.center ? kCenterHeight : kRowHeight - 2});
             total += b.rect.width() + kButtonGap;
         }
         double x = mCenter.x() - (total - kButtonGap) / 2;
@@ -201,7 +203,7 @@ void Hotbox::layoutButtons()
         for (QAction* a : mMain->menuBar()->actions())
             if (QPointer<QMenu> m = a->menu(); m && a->isVisible())
                 row.push_back({a->text().remove('&'), {}, [m] { return m.data(); }});
-        makeRow(std::move(row), mCenter.y() - kRowHeight - kRowGap);
+        makeRow(std::move(row), mCenter.y() - kCenterHeight / 2 - kRowGap - kRowHeight / 2);
     }
     makeRow({{"Recent Commands", {}, [this] { return recentMenu(); }},
              {"Lila", {}, [] { return static_cast<QMenu*>(nullptr); }, true},
@@ -217,7 +219,7 @@ void Hotbox::layoutButtons()
         std::vector<Button> row;
         for (QMenu* m : mPanelMenus)
             row.push_back({m->title().remove('&'), {}, [m] { return m; }});
-        makeRow(std::move(row), mCenter.y() + kRowHeight + kRowGap);
+        makeRow(std::move(row), mCenter.y() + kCenterHeight / 2 + kRowGap + kRowHeight / 2);
     }
 
     // Kept inside the window, so a hotbox opened near an edge shifts rather than clipping.
@@ -235,6 +237,17 @@ void Hotbox::layoutButtons()
     double halfW = std::max({box.right() - mCenter.x(), mCenter.x() - box.left(), 50.0}) + 10;
     double halfH = std::max({box.bottom() - mCenter.y(), mCenter.y() - box.top(), 12.0}) + 10;
     mCenterZone = QRectF(mCenter.x() - halfW, mCenter.y() - halfH, 2 * halfW, 2 * halfH);
+}
+
+QFont Hotbox::centerFont() const
+{
+    QFont f = font();
+    f.setBold(true);
+    if (f.pointSizeF() > 0)
+        f.setPointSizeF(f.pointSizeF() * kCenterFontScale);
+    else
+        f.setPixelSize(int(f.pixelSize() * kCenterFontScale));
+    return f;
 }
 
 QMenu* Hotbox::recentMenu()
@@ -358,8 +371,6 @@ void Hotbox::hoverButton(int index)
         mHover = index;
         update();
     }
-    if (hotbox::hoverOpens(mKeyHeld, index, index >= 0 && mButtons[index].center, mOpen))
-        openMenu(index);
 }
 
 void Hotbox::mouseMoveEvent(QMouseEvent* e)
@@ -381,6 +392,24 @@ bool Hotbox::eventFilter(QObject* obj, QEvent* e)
         hide();
         break;
     case QEvent::MouseButtonPress:
+        // An open menu takes every press; one on another menu name swaps to that menu.
+        if (qobject_cast<QMenu*>(obj) && static_cast<QMouseEvent*>(e)->button() == Qt::LeftButton)
+        {
+            QPoint global = static_cast<QMouseEvent*>(e)->globalPosition().toPoint();
+            if (QApplication::topLevelAt(global) == this)
+                if (int index = buttonAt(mapFromGlobal(global).toPointF()); index >= 0 && !mButtons[index].center)
+                {
+                    // Deferred: the press is being delivered by the menu this closes. Its own name closes it.
+                    bool reopen = hotbox::pressSwitchesMenu(index, mButtons[index].center, mOpen);
+                    QTimer::singleShot(0, this, [this, index, reopen] {
+                        if (reopen && index < int(mButtons.size()))
+                            openMenu(index);
+                        else
+                            closePopups();
+                    });
+                    return true;
+                }
+        }
         if (auto* w = qobject_cast<QWidget*>(obj))
         {
             QWidget* win = w->window();
@@ -389,14 +418,13 @@ bool Hotbox::eventFilter(QObject* obj, QEvent* e)
         }
         break;
     case QEvent::MouseMove:
-        // An open menu takes every mouse move, so hovering another menu name is seen here.
-        if (mKeyHeld && qobject_cast<QMenu*>(obj))
+        // An open menu takes every mouse move, so hovering another menu name is seen here (it only highlights).
+        if (qobject_cast<QMenu*>(obj))
         {
             QPoint global = static_cast<QMouseEvent*>(e)->globalPosition().toPoint();
             if (QApplication::topLevelAt(global) == this)
             {
                 int index = buttonAt(mapFromGlobal(global).toPointF());
-                // Deferred: this may close the menu that is delivering the event.
                 QTimer::singleShot(0, this, [this, index] { hoverButton(index); });
             }
         }
@@ -430,8 +458,7 @@ void Hotbox::paintEvent(QPaintEvent*)
 
     const QColor bg(38, 38, 38, 225), border(92, 92, 92, 230), text(222, 222, 222);
     const QColor hiBg(150, 150, 150, 245), hiText(15, 15, 15);
-    QFont bold = font();
-    bold.setBold(true);
+    const QFont big = centerFont();
     for (int i = 0; i < int(mButtons.size()); ++i)
     {
         const Button& b = mButtons[i];
@@ -439,7 +466,7 @@ void Hotbox::paintEvent(QPaintEvent*)
         p.setPen(QPen(b.center ? QColor(150, 150, 150) : border, 1));
         p.setBrush(hi ? hiBg : bg);
         p.drawRoundedRect(b.rect, 3, 3);
-        p.setFont(b.center ? bold : font());
+        p.setFont(b.center ? big : font());
         p.setPen(hi ? hiText : text);
         p.drawText(b.rect, Qt::AlignCenter, b.label);
     }

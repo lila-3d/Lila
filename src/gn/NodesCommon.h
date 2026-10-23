@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "gn/NodeLib.h"
 
 #include <cmath>
@@ -194,11 +196,11 @@ inline GeometryPtr editComponents(const GeometryPtr& g, const ComponentEdits& e)
 inline FieldContext contextFor(const geo::Mesh& m, Domain d) { return FieldContext::forMesh(m, d > Domain::Corner ? Domain::Point : d); }
 
 /** Registration functions of the node files. */
-void registerInputNodes();
-void registerUtilityNodes();
-void registerGeometryNodes();
-void registerMeshNodes();
-void registerCurveNodes();
-void registerSampleNodes();
-void registerBooleanNode();
+LILA_SCENE_API void registerInputNodes();
+LILA_SCENE_API void registerUtilityNodes();
+LILA_SCENE_API void registerGeometryNodes();
+LILA_SCENE_API void registerMeshNodes();
+LILA_SCENE_API void registerCurveNodes();
+LILA_SCENE_API void registerSampleNodes();
+LILA_SCENE_API void registerBooleanNode();
 } // namespace lila::gn::nodes

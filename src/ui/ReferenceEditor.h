@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QWidget>
 
 class QFileSystemWatcher;
@@ -8,7 +10,7 @@ class QTreeWidget;
 namespace lila::ui
 {
 /** Maya's Reference Editor: every reference with its file, state and edit count; load, unload, reload, remove, import. */
-class ReferenceEditor : public QWidget
+class LILA_UI_API ReferenceEditor : public QWidget
 {
     Q_OBJECT
 

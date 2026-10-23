@@ -1,7 +1,12 @@
 #pragma once
 
+#include "core/Export.h"
+#include "core/Registry.h"
+#include "ui/Owner.h"
+
 #include <nlohmann/json.hpp>
 
+#include <QTimer>
 #include <QWidget>
 
 class QComboBox;
@@ -20,20 +25,39 @@ namespace lila::ui
  */
 namespace shelves
 {
-std::vector<std::string> names();
-nlohmann::json items(const std::string& shelf);
-void setItems(const std::string& shelf, const nlohmann::json& items);
-void addItem(const std::string& shelf, const nlohmann::json& item);
-void create(const std::string& shelf);
-void remove(const std::string& shelf);
-bool rename(const std::string& shelf, const std::string& to);
+LILA_UI_API std::vector<std::string> names();
+LILA_UI_API nlohmann::json items(const std::string& shelf);
+LILA_UI_API void setItems(const std::string& shelf, const nlohmann::json& items);
+LILA_UI_API void addItem(const std::string& shelf, const nlohmann::json& item);
+LILA_UI_API void create(const std::string& shelf);
+LILA_UI_API void remove(const std::string& shelf);
+LILA_UI_API bool rename(const std::string& shelf, const std::string& to);
+
+/**
+ * A shelf contributed in code or from an extension's resources/shelves: its items are defaults under the user's prefs,
+ * so the user can still edit it, and it is listed after the user's own order until they place it.
+ */
+struct Shelf
+{
+    std::string name;
+    nlohmann::json items = nlohmann::json::array();
+};
+LILA_UI_API Registry<Shelf>& registry();
+LILA_UI_API void add(Shelf s, std::string owner = kLilaOwner);
+/** Owned by the extension and removed when it unloads. */
+LILA_UI_API uint64_t add(ext::Context& ctx, Shelf s);
+
+/** The shelf the docked shelf shows; the first when there is no docked shelf. */
+LILA_UI_API std::string current();
+/** Shows that shelf in the docked shelf. False when there is no such shelf. */
+LILA_UI_API bool setCurrent(const std::string& shelf);
 } // namespace shelves
 
 /**
  * One shelf's buttons: a single row when docked, a wrapping grid of square icon buttons when floating. Buttons drag to
  * reorder (also onto another shelf) and right-click to edit.
  */
-class ShelfPage : public QWidget
+class LILA_UI_API ShelfPage : public QWidget
 {
     Q_OBJECT
 
@@ -71,7 +95,7 @@ private:
 };
 
 /** The docked shelf strip with a tab per shelf. */
-class ShelfPanel : public QWidget
+class LILA_UI_API ShelfPanel : public QWidget
 {
     Q_OBJECT
 
@@ -81,6 +105,9 @@ public:
 
     /** A thin grip in place of the dock's title bar, so the shelf keeps its vertical space but can still be dragged. */
     static QWidget* dockTitleBar(QDockWidget* dock);
+
+    std::string currentShelf() const;
+    bool showShelf(const std::string& name);
 
 private:
     void rebuild();
@@ -97,7 +124,7 @@ private:
  * hotkey is pressed again unless /floatingShelf/closeOnClickAway or /floatingShelf/closeAfterRun is set. Where it
  * opens is the general pref /floatingShelf/openAt (cursor, viewport or screen).
  */
-class FloatingShelf : public QWidget
+class LILA_UI_API FloatingShelf : public QWidget
 {
     Q_OBJECT
 
@@ -110,6 +137,7 @@ public:
 protected:
     void keyPressEvent(QKeyEvent* e) override;
     void closeEvent(QCloseEvent* e) override;
+    void moveEvent(QMoveEvent* e) override;
     bool eventFilter(QObject* obj, QEvent* e) override;
 
 private:
@@ -121,13 +149,16 @@ private:
     void showShelf(const std::string& name);
     void place();
     void settingsMenu(QMenu* menu);
+    /** With the remember-position pref on, stores where the shelf is so the next one opens there. */
+    void rememberPosition();
 
     QComboBox* mPicker = nullptr;
     ShelfPage* mPage = nullptr;
     bool mPinned = false;
     qint64 mOpenedAt = 0;
     int mPrefListener = 0;
+    QTimer mPositionTimer;
 };
 
-void registerShelfActions();
+LILA_UI_API void registerShelfActions();
 } // namespace lila::ui

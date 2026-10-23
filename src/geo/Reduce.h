@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "geo/Mesh.h"
 
 namespace lila::geo
@@ -40,5 +42,5 @@ struct ReduceResult
  * triangle over (in space or in UV) or leave a sliver. The result is triangles unless quads is set; a mesh that runs
  * out of legal collapses stops above the target.
  */
-ReduceResult reduceMesh(const Mesh& mesh, const ReduceOptions& opts = {});
+LILA_SCENE_API ReduceResult reduceMesh(const Mesh& mesh, const ReduceOptions& opts = {});
 } // namespace lila::geo

@@ -64,17 +64,64 @@ glm::dvec3 matrixToEuler(const glm::dmat3& rot, RotateOrder order)
     return glm::degrees(r);
 }
 
+glm::dvec3 eulerNear(const glm::dmat3& rot, RotateOrder order, const glm::dvec3& ref)
+{
+    auto unwrap = [&](glm::dvec3 e) {
+        for (int i = 0; i < 3; ++i)
+            e[i] += 360.0 * std::round((ref[i] - e[i]) / 360.0);
+        return e;
+    };
+    glm::dvec3 a = matrixToEuler(rot, order);
+    const int* s = kOrderAxes[int(order)];
+    // The other Euler solution for the same rotation.
+    glm::dvec3 b = a;
+    b[s[0]] += 180.0;
+    b[s[1]] = 180.0 - b[s[1]];
+    b[s[2]] += 180.0;
+    a = unwrap(a);
+    b = unwrap(b);
+    auto dist = [&](const glm::dvec3& e) { return glm::dot(e - ref, e - ref); };
+    if (dist(b) >= dist(a))
+        return a;
+    glm::dmat3 check(eulerToMatrix(b, order));
+    double err = 0.0;
+    for (int c = 0; c < 3; ++c)
+        err += glm::length(check[c] - rot[c]);
+    return err < 1e-6 ? b : a;
+}
+
+AttrDef rotationInterpolationAttr(int64_t def)
+{
+    return {.name = "rotationInterpolation", .shortName = "rin", .type = PlugType::Enum, .defaultValue = def,
+            .flags = AttrInput | AttrStorable, .enumNames = {"euler", "slerp", "smooth"},
+            .doc = "How new rotate keys are stored: euler (three curves), or one rotation curve interpolated by slerp or "
+                   "smooth (cubic in quaternion space). convertRotationCurves converts existing keys."};
+}
+
+glm::dmat4 Transform::rotation() const
+{
+    return eulerToMatrix(as<glm::dvec3>(kRotate), RotateOrder(as<int64_t>(kRotateOrder)));
+}
+
+glm::dmat4 Transform::rotateAxisMatrix() const { return eulerToMatrix(as<glm::dvec3>(kRotateAxis), RotateOrder::XYZ); }
+
 glm::dmat4 Transform::localMatrix(const Node& n)
+{
+    const auto* t = dynamic_cast<const Transform*>(&n);
+    return localMatrix(n, t ? t->rotation() : eulerToMatrix(n.as<glm::dvec3>(kRotate), RotateOrder(n.as<int64_t>(kRotateOrder))));
+}
+
+glm::dmat4 Transform::localMatrix(const Node& n, const glm::dmat4& rotation)
 {
     auto v3 = [&](int a) { return n.as<glm::dvec3>(a); };
     auto tr = [](const glm::dvec3& v) { return glm::translate(glm::dmat4(1.0), v); };
-    auto order = RotateOrder(n.as<int64_t>(kRotateOrder));
     glm::dvec3 rp = v3(kRotatePivot);
     glm::dvec3 sp = v3(kScalePivot);
     const auto* t = dynamic_cast<const Transform*>(&n);
     glm::dmat4 pre = t ? t->preRotation() : glm::dmat4(1.0);
+    glm::dmat4 rot = t ? rotation * t->rotateAxisMatrix() : rotation;
 
-    return tr(v3(kTranslate)) * tr(v3(kRotatePivotTranslate)) * tr(rp) * pre * eulerToMatrix(v3(kRotate), order) * tr(-rp) *
+    return tr(v3(kTranslate)) * tr(v3(kRotatePivotTranslate)) * tr(rp) * pre * rot * tr(-rp) *
            tr(v3(kScalePivotTranslate)) * tr(sp) * glm::scale(glm::dmat4(1.0), v3(kScale)) * tr(-sp);
 }
 
@@ -95,7 +142,8 @@ void Transform::setLocalMatrix(Graph& g, NodeId id, const glm::dmat4& m)
     auto order = RotateOrder(n->as<int64_t>(kRotateOrder));
     const auto* t = dynamic_cast<const Transform*>(n);
     glm::dmat3 pre = t ? glm::dmat3(t->preRotation()) : glm::dmat3(1.0);
-    glm::dvec3 euler = matrixToEuler(glm::transpose(pre) * glm::mat3_cast(orientation), order);
+    glm::dmat3 axis = t ? glm::dmat3(t->rotateAxisMatrix()) : glm::dmat3(1.0);
+    glm::dvec3 euler = matrixToEuler(glm::transpose(pre) * glm::mat3_cast(orientation) * glm::transpose(axis), order);
 
     g.setValue({id, kRotate}, euler);
     g.setValue({id, kScale}, scale);
@@ -142,7 +190,7 @@ NodeType Transform::makeType()
         {.name = "visibility", .shortName = "v", .type = PlugType::Bool, .defaultValue = true,
          .flags = AttrInput | AttrStorable | AttrKeyable},
         {.name = "parentMatrix", .shortName = "pm", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0),
-         .flags = AttrHidden, .doc = "World matrix of the parent."},
+         .flags = AttrHidden, .doc = "World matrix of the frame translate, rotate and scale live in: the parent's, or the active space's."},
         {.name = "matrix", .shortName = "m", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0),
          .flags = AttrOutput, .doc = "Local matrix."},
         {.name = "worldMatrix", .shortName = "wm", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0),
@@ -152,6 +200,15 @@ NodeType Transform::makeType()
                        "space. Leaves the object where it is.")),
         {.name = "displayLayer", .shortName = "dl", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = AttrInput | AttrHidden,
          .doc = "Display layer membership: connected from a displayLayer's drawInfo."},
+        unkeyable(vec3("rotateAxis", "ra", glm::dvec3(0.0),
+                       "Rotation applied before rotate, Euler XYZ degrees: orients the rotation axes, as Maya's rotateAxis.")),
+        rotationInterpolationAttr(0),
+        {.name = "space", .shortName = "spc", .type = PlugType::Enum, .defaultValue = int64_t(0),
+         .flags = AttrInput | AttrStorable | AttrKeyable | AttrHidden | AttrResetOnDisconnect,
+         .doc = "The active space (addSpace): translate, rotate and scale are read in its frame. 0 is the parent. Keyed "
+                "stepped; shown in the channel box only on nodes with spaces."},
+        {.name = "spaceFrames", .shortName = "spf", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrHidden,
+         .doc = "Every space's world frame, from the node's spaceSwitch."},
     };
     t.create = [] { return std::make_unique<Transform>(); };
     return t;

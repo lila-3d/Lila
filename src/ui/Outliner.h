@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/Plug.h"
 
 #include <QTreeWidget>
@@ -20,7 +22,7 @@ inline constexpr const char* kNodeNamesMime = "application/x-lila-node-names";
  * there; dropped on a viewport, a camera row makes that view look through it. Right-click for the common object actions, F with the cursor over it to reveal the selection. Collapsed rows
  * stay collapsed across rebuilds; ancestors of the selection are shaded.
  */
-class Outliner : public QTreeWidget
+class LILA_UI_API Outliner : public QTreeWidget
 {
     Q_OBJECT
 
@@ -53,12 +55,18 @@ private:
     void syncSelectionFromScene();
     void pushSelectionToScene();
     void showContextMenu(const QPoint& pos);
+    /** Object sets as rows after the hierarchy, each with its members as rows under it. */
+    void addSetRows();
+    /** The right-click menu of a set row or one of its member rows. */
+    void showSetMenu(QTreeWidgetItem* item, const QPoint& globalPos);
     void startMove();
     /** Shades the rows of the selection's unselected ancestors. */
     void shadeAncestors();
 
     std::unordered_map<scene::NodeId, QTreeWidgetItem*> mItems;
     std::set<scene::NodeId> mCollapsed;
+    /** Set rows start collapsed; these were opened. */
+    std::set<scene::NodeId> mOpenSets;
     int mListener = 0;
     bool mQueued = false;
     bool mRestyleQueued = false;
@@ -77,7 +85,7 @@ private:
  * The outliner panel: Maya's hidden second outliner sits under the first, collapsed to a grab handle at the bottom.
  * Drag the handle up to open it; each pane scrolls and expands on its own. The split is remembered.
  */
-class OutlinerPanel : public QWidget
+class LILA_UI_API OutlinerPanel : public QWidget
 {
     Q_OBJECT
 

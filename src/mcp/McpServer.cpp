@@ -1,5 +1,6 @@
 #include "mcp/McpServer.h"
 
+#include "core/ExtensionContext.h"
 #include "core/Log.h"
 #include "core/MainQueue.h"
 #include "core/Paths.h"
@@ -68,6 +69,7 @@ struct Server::Impl
 {
     std::mutex toolsMutex; // tools, resources, prompts, instructions
     std::map<std::string, Tool> tools;
+    std::map<std::string, std::string> toolOwners; // extension tools only
     std::map<std::string, Resource> resources;
     std::map<std::string, Prompt> prompts;
     std::string instructions = "Lila DCC. Use execute_python to drive the app with the lila package "
@@ -302,7 +304,47 @@ void Server::addTool(Tool tool)
 {
     std::scoped_lock lock(m->toolsMutex);
     std::string name = tool.name;
+    m->toolOwners.erase(name);
     m->tools[name] = std::move(tool);
+}
+
+bool Server::addTool(ext::Context& ctx, Tool tool)
+{
+    std::string name = tool.name;
+    {
+        std::scoped_lock lock(m->toolsMutex);
+        if (m->tools.contains(name))
+        {
+            log::error("extension {}: MCP tool '{}' is already registered", ctx.owner(), name);
+            return false;
+        }
+        m->tools[name] = std::move(tool);
+        m->toolOwners[name] = ctx.owner();
+    }
+    std::string owner = ctx.owner();
+    ctx.track("mcpTool:" + name, [this, name, owner] {
+        {
+            std::scoped_lock lock(m->toolsMutex);
+            auto it = m->toolOwners.find(name);
+            if (it == m->toolOwners.end() || it->second != owner)
+                return;
+        }
+        removeTool(name);
+    });
+    return true;
+}
+
+bool Server::removeTool(const std::string& name)
+{
+    std::scoped_lock lock(m->toolsMutex);
+    m->toolOwners.erase(name);
+    return m->tools.erase(name) > 0;
+}
+
+bool Server::hasTool(const std::string& name) const
+{
+    std::scoped_lock lock(m->toolsMutex);
+    return m->tools.contains(name);
 }
 
 void Server::addResource(Resource resource)

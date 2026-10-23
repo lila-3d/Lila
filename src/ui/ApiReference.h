@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QWidget>
 
 #include <vector>
@@ -17,7 +19,7 @@ namespace lila::ui
  * cmds::all(), Python by walking the modules in the embedded interpreter (lila._apidoc). Built on first show and on
  * Refresh, so extension commands appear once their extension has loaded.
  */
-class ApiReference : public QWidget
+class LILA_UI_API ApiReference : public QWidget
 {
     Q_OBJECT
 

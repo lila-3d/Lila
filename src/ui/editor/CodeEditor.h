@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "ui/editor/EditorTypes.h"
 
 #include <nlohmann/json.hpp>
@@ -29,7 +31,7 @@ class Checker;
  * Python source editor: gutter, highlighting, PyCharm-style editing keys, and language features from an optional
  * LspClient plus the live interpreter. Knows nothing about tabs or running code; it asks through signals.
  */
-class CodeEditor : public QPlainTextEdit
+class LILA_UI_API CodeEditor : public QPlainTextEdit
 {
     Q_OBJECT
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/Plug.h"
 
 #include <functional>
@@ -24,14 +26,14 @@ namespace components
 {
 using Ids = std::vector<uint32_t>;
 
-ComponentMode mode();
+LILA_SCENE_API ComponentMode mode();
 /** Not undoable, like Maya's selectMode. */
-void setMode(ComponentMode m);
-const char* modeName(ComponentMode m);
-ComponentMode modeFromName(const std::string& name); // throws std::invalid_argument
+LILA_SCENE_API void setMode(ComponentMode m);
+LILA_SCENE_API const char* modeName(ComponentMode m);
+LILA_SCENE_API ComponentMode modeFromName(const std::string& name); // throws std::invalid_argument
 
-const std::map<NodeId, Ids>& selected(ComponentMode kind);
-const Ids& selected(NodeId node, ComponentMode kind);
+LILA_SCENE_API const std::map<NodeId, Ids>& selected(ComponentMode kind);
+LILA_SCENE_API const Ids& selected(NodeId node, ComponentMode kind);
 
 enum class Op
 {
@@ -41,21 +43,21 @@ enum class Op
     Toggle,
 };
 /** Changes one node's selection of one kind. Replace clears that kind on every other node first. */
-void select(NodeId node, ComponentMode kind, const Ids& ids, Op op = Op::Replace);
-void clear();
+LILA_SCENE_API void select(NodeId node, ComponentMode kind, const Ids& ids, Op op = Op::Replace);
+LILA_SCENE_API void clear();
 /** Replaces everything at once, as one undo step. */
-void setAll(std::map<NodeId, Ids> points, std::map<NodeId, Ids> edges, std::map<NodeId, Ids> faces);
+LILA_SCENE_API void setAll(std::map<NodeId, Ids> points, std::map<NodeId, Ids> edges, std::map<NodeId, Ids> faces);
 
 /** Points touched by the node's selection of the current mode (verts as is, edge ends, face corners). */
-Ids pointsOf(NodeId node);
+LILA_SCENE_API Ids pointsOf(NodeId node);
 
 /** Maya's polyListComponentConversion: edges/faces to their points, points to edges/faces they fully cover. */
-Ids convert(const geo::Mesh& mesh, ComponentMode from, const Ids& ids, ComponentMode to);
+LILA_SCENE_API Ids convert(const geo::Mesh& mesh, ComponentMode from, const Ids& ids, ComponentMode to);
 
-int addListener(std::function<void()> fn);
-void removeListener(int id);
+LILA_SCENE_API int addListener(std::function<void()> fn);
+LILA_SCENE_API void removeListener(int id);
 
-void registerCommands();
+LILA_SCENE_API void registerCommands();
 } // namespace components
 
 /**
@@ -63,10 +65,10 @@ void registerCommands();
  * prefs /softSelect/enabled, /softSelect/radius (cm, world space), /softSelect/curve and /softSelect/falloffMode (see
  * scene/SoftSelect.h). All zero but the selection when it's off.
  */
-std::vector<float> softWeights(const geo::Mesh& mesh, const glm::dmat4& world, const components::Ids& selectedPoints);
+LILA_SCENE_API std::vector<float> softWeights(const geo::Mesh& mesh, const glm::dmat4& world, const components::Ids& selectedPoints);
 
 /** World-space centre of the selected components' points. */
-glm::dvec3 selectionCenter();
+LILA_SCENE_API glm::dvec3 selectionCenter();
 /** Applies a world-space transform to the selected components' points (with symmetry), as one undo step. */
-void transformSelectedComponents(const char* label, const glm::dmat4& worldXform);
+LILA_SCENE_API void transformSelectedComponents(const char* label, const glm::dmat4& worldXform);
 } // namespace lila::scene

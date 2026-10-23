@@ -119,7 +119,7 @@ TEST_CASE("a weight paint stroke paints the current influence as one undo step")
     lila::ui::OverlayPainter painter(s.overlayTris, 1.0);
     tool->draw(s, painter, view);
     CHECK(!s.tris3d.empty());
-    CHECK(grayscale(s.tris3d));
+    CHECK(!grayscale(s.tris3d));
 
     run("undo");
     CHECK(total(mesh, "bone_c") == doctest::Approx(before));

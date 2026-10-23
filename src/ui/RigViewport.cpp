@@ -4,8 +4,11 @@
 #include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "scene/Graph.h"
+#include "scene/Ik.h"
 #include "scene/Rig.h"
 #include "ui/Actions.h"
+#include "ui/DominantInfluenceUi.h"
+#include "ui/SpacesUi.h"
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportTool.h"
 #include "ui/WeightPaintTool.h"
@@ -142,6 +145,73 @@ void drawJoints(render::FrameState& s, OverlayPainter&, const ViewInfo&)
             for (NodeId c : childJoints(g, id))
                 addBone(out, p, glm::dvec3(g.node(c)->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]), r, color);
         }
+}
+
+bool isIkHandle(const scene::Node& n)
+{
+    return n.type().isA("ikHandle") && scene::effectivelyVisible(scene::Graph::current(), n.id());
+}
+
+/** IK handles: a cross at the target, a line from the chain's start to it, and the pole vector from the start. */
+void drawIkHandles(render::FrameState& s, OverlayPainter&, const ViewInfo&)
+{
+    LILA_ZONE();
+
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    auto& out = PrefStore::get().value<bool>("general", "/rig/xrayJoints", false) ? s.linesOnTop : s.lines;
+    double scale = displayScale();
+    for (NodeId id : g.nodes())
+    {
+        scene::Node* n = g.node(id);
+        if (!isIkHandle(*n))
+            continue;
+        const glm::vec4& color = g.isSelected(id) ? kSelectedColor : kChildOfSelectedColor;
+        glm::dvec3 p(n->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]);
+        std::vector<NodeId> chain = scene::ik::chainOf(g, id);
+        double r = 2.0 * scale;
+        if (!chain.empty())
+            r = g.node(chain.front())->as<double>(Joint::kRadius) * 1.5 * scale;
+        for (int a = 0; a < 3; ++a)
+        {
+            glm::dvec3 d(0.0);
+            d[a] = r;
+            addLine(out, p - d, p + d, color);
+        }
+        addCircle(out, p, {1, 0, 0}, {0, 0, 1}, r * 0.6, color, 12);
+        if (chain.empty())
+            continue;
+        glm::dvec3 start(g.node(chain.front())->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]);
+        addLine(out, start, p, color);
+        glm::dvec3 pole = n->as<glm::dvec3>(scene::IkHandle::kPoleVector);
+        if (glm::length(pole) > 1e-9)
+            addLine(out, start, start + glm::normalize(pole) * glm::length(p - start) * 0.5, kChildOfSelectedColor);
+    }
+}
+
+std::vector<viewportHooks::PickHit> pickIkHandles(QPointF a, QPointF b, bool click, const ViewInfo& view)
+{
+    scene::Graph& g = scene::Graph::current();
+    QRectF box = QRectF(a, b).normalized();
+    std::vector<viewportHooks::PickHit> hits;
+    for (NodeId id : g.nodes())
+    {
+        scene::Node* n = g.node(id);
+        if (!isIkHandle(*n))
+            continue;
+        auto c = view.project(glm::dvec3(n->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]));
+        if (!c)
+            continue;
+        if (!click)
+        {
+            if (box.contains(*c))
+                hits.push_back({n->name(), 0.0});
+            continue;
+        }
+        if (double d = std::hypot(c->x() - a.x(), c->y() - a.y()); d < 10.0)
+            hits.push_back({n->name(), d});
+    }
+    return hits;
 }
 
 double segDistance(QPointF p, QPointF a, QPointF b)
@@ -292,6 +362,11 @@ void registerRigActions()
         "The last selected object turns to point at the others.");
     add("rig.removeConstraint", "Remove Constraint", [] { command("removeConstraint"); }, "removeConstraint()",
         "Deletes the selected constraints, or those on the selected objects, keeping the current pose.");
+    add("rig.ikHandle", "IK Handle", [] { command("ikHandle"); }, "ikHandle()",
+        "Solves the chain from the first selected joint to the last with an IK handle at its end.");
+    add("rig.editSkeleton", "Edit Skeleton", [] { command("editSkeleton"); }, "editSkeleton()",
+        "Toggles skeleton editing: the skinned skeleton goes to bind pose so joints can be moved and reoriented "
+        "without deforming the mesh; turning it off rebinds and keeps the animation.");
     add("rig.xrayJoints", "X-Ray Joints", [] {
         bool on = PrefStore::get().value<bool>("general", "/rig/xrayJoints", false);
         PrefStore::get().set("general", "/rig/xrayJoints", !on);
@@ -308,6 +383,10 @@ void registerRigViewport()
     done = true;
     viewportHooks::addDrawer(drawJoints);
     viewportHooks::addPicker(pickJoints);
+    viewportHooks::addDrawer(drawIkHandles);
+    viewportHooks::addPicker(pickIkHandles);
     registerRigActions();
+    registerDominantInfluenceUi();
+    registerSpacesUi();
 }
 } // namespace lila::ui

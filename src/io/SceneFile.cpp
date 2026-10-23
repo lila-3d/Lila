@@ -2,6 +2,8 @@
 
 #include "cmds/Command.h"
 #include "cmds/Undo.h"
+#include "core/Events.h"
+#include "core/ExtensionContext.h"
 #include "core/Log.h"
 #include "core/PackedArray.h"
 #include "core/Paths.h"
@@ -10,11 +12,13 @@
 #include "core/Progress.h"
 #include "core/Workspace.h"
 #include "io/References.h"
-#include "io/SceneHistory.h"
 #include "io/SceneFormats.h"
+#include "io/SceneHistory.h"
 #include "scene/Anim.h"
 #include "scene/Camera.h"
 #include "scene/Graph.h"
+#include "scene/Picker.h"
+#include "scene/Poses.h"
 #include "scene/RenderSettings.h"
 #include "scene/SceneScripts.h"
 
@@ -80,6 +84,27 @@ void notify()
 {
     for (auto& fn : state().callbacks)
         fn();
+    events::send({.type = events::Event::SceneStateChanged});
+}
+
+/** The import and export commands, to the event bus with the file they read or wrote. */
+void forwardFileEvents(const ExecuteEvent& e)
+{
+    static const std::map<std::string_view, events::Event> kinds = {
+        {"importFbx", events::Event::SceneImported},  {"importObj", events::Event::SceneImported},
+        {"mayaImport", events::Event::SceneImported}, {"importReference", events::Event::SceneImported},
+        {"exportFbx", events::Event::SceneExported},  {"exportObj", events::Event::SceneExported},
+        {"gameExport", events::Event::SceneExported},
+    };
+    if (!e.done || !e.ok)
+        return;
+    auto it = kinds.find(e.name);
+    if (it == kinds.end() || !events::hasSubscribers(it->second))
+        return;
+    events::EventData d{.type = it->second};
+    if (const json& args = e.call.value("args", json::array()); args.is_array() && !args.empty() && args[0].is_string())
+        d.path = fs::path(std::u8string(reinterpret_cast<const char8_t*>(args[0].get_ref<const std::string&>().c_str())));
+    events::send(d);
 }
 
 void setModified(bool m)
@@ -109,6 +134,8 @@ void ensureListener()
             scene::renderSettings().fromJson({});
             scene::renderSettingsChanged();
             scene::scripts::clear();
+            scene::poses::clearScene();
+            scene::picker::clearScene();
         }
         if (c == scene::Change::Cleared)
             return setModified(false);
@@ -275,6 +302,10 @@ nlohmann::json serialize(const fs::path& sceneDir, bool packed)
     };
     if (!scene::scripts::all().empty())
         doc["scripts"] = scene::scripts::toJson();
+    if (json poses = scene::poses::sceneToJson(); !poses.empty())
+        doc["poses"] = std::move(poses);
+    if (json pickers = scene::picker::sceneToJson(); !pickers.empty())
+        doc["pickers"] = std::move(pickers);
     json ui = state().ui;
     for (auto& [key, section] : state().uiSections)
         if (json v = section.save(); v.is_null())
@@ -330,6 +361,8 @@ void deserialize(const nlohmann::json& doc, const fs::path& sceneDir, double own
         scene::camera::migrateNamedSettings(g, scene::renderSettings());
         scene::renderSettingsChanged();
         scene::scripts::fromJson(doc.value("scripts", json::array()));
+        scene::poses::sceneFromJson(doc.value("poses", json::array()));
+        scene::picker::sceneFromJson(doc.value("pickers", json::array()));
     }
     catch (...)
     {
@@ -355,10 +388,38 @@ void registerUiSection(const std::string& key, std::function<json()> save, std::
     state().uiSections[key] = {std::move(save), std::move(load)};
 }
 
+bool registerUiSection(ext::Context& ctx, const std::string& key, std::function<json()> save, std::function<void(const json&)> load)
+{
+    if (state().uiSections.contains(key))
+    {
+        log::error("extension {}: scene ui section '{}' is already registered", ctx.owner(), key);
+        return false;
+    }
+    registerUiSection(key, std::move(save), std::move(load));
+    ctx.track("sceneUiSection:" + key, [key] { unregisterUiSection(key); });
+    return true;
+}
+
+bool unregisterUiSection(const std::string& key)
+{
+    State& s = state();
+    auto it = s.uiSections.find(key);
+    if (it == s.uiSections.end())
+        return false;
+    // Kept as an unregistered section, so saving without its owner still writes what it last held.
+    if (json v = it->second.save(); v.is_null())
+        s.ui.erase(key);
+    else
+        s.ui[key] = std::move(v);
+    s.uiSections.erase(it);
+    return true;
+}
+
 void save(const fs::path& path)
 {
     LILA_ZONE();
 
+    events::send({.type = events::Event::SceneBeforeSave, .path = path});
     progress::Scope scope(std::format("Saving {}...", path.filename().string()), 3.0);
     // The backup copies the file as it is now, so it runs alongside gathering and encoding the new one.
     const int keep = PrefStore::get().value<int>("general", "/backups/keep", 10);
@@ -384,6 +445,7 @@ void save(const fs::path& path)
     log::info("saved {}", path.string());
     for (auto& fn : state().savedCallbacks)
         fn(path);
+    events::send({.type = events::Event::SceneSaved, .path = path});
 }
 
 void load(const fs::path& path)
@@ -416,6 +478,7 @@ void load(const fs::path& path)
             Workspace::get().open(*ws);
     log::info("opened {}", path.string());
     scene::scripts::sceneOpened();
+    events::send({.type = events::Event::SceneOpened, .path = path});
 }
 
 std::string loadingVerb()
@@ -591,6 +654,8 @@ void registerCommands()
     using T = ArgType;
     ensureListener();
     refs::registerCommands();
+    static int fileEvents = cmds::addExecuteListener(forwardFileEvents);
+    (void)fileEvents;
 
     cmds::registerCommand({
         .name = "saveScene",

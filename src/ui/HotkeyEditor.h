@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "ui/HotkeyBindings.h"
 
 #include <QDialog>
@@ -22,7 +24,7 @@ namespace lila::ui
  * Swallows the next key chord app-wide (ahead of Hotkeys, which would otherwise run it) and reports it.
  * Installed on qApp while armed; app event filters run newest first.
  */
-class ChordGrabber : public QObject
+class LILA_UI_API ChordGrabber : public QObject
 {
     Q_OBJECT
 
@@ -44,7 +46,7 @@ private:
 };
 
 /** Press a chord, pick a mode and context, and write it for one action. */
-class ChordCaptureDialog : public QDialog
+class LILA_UI_API ChordCaptureDialog : public QDialog
 {
     Q_OBJECT
 
@@ -69,7 +71,7 @@ private:
 };
 
 /** US keyboard drawn in grays, each key shaded by how many bindings use it. */
-class KeyboardHeatMap : public QWidget
+class LILA_UI_API KeyboardHeatMap : public QWidget
 {
     Q_OBJECT
 
@@ -107,7 +109,7 @@ private:
 };
 
 /** Lists every action and binding by context, with search, conflicts, assign / unbind / reset and a key map. */
-class HotkeyEditor : public QWidget
+class LILA_UI_API HotkeyEditor : public QWidget
 {
     Q_OBJECT
 
@@ -151,8 +153,8 @@ private:
 };
 
 /** Capture dialog that binds a chord to actionId; usable from menus, shelves and marking menus. */
-void assignHotkeyDialog(const std::string& actionId, QWidget* parent);
+LILA_UI_API void assignHotkeyDialog(const std::string& actionId, QWidget* parent);
 
 /** Adds "Assign Hotkey..." to the right-click of any QMenu entry whose QAction data or objectName is an action id. */
-void installMenuHotkeyHook();
+LILA_UI_API void installMenuHotkeyHook();
 } // namespace lila::ui

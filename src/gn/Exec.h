@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "gn/NodeLib.h"
 
 #include <memory>
@@ -33,7 +35,7 @@ struct Plan
 
 using PlanPtr = std::shared_ptr<const Plan>;
 
-PlanPtr compile(const Group& g);
+LILA_SCENE_API PlanPtr compile(const Group& g);
 /** Runs the plan on the worker thread. Throws ExecError naming the failing node. */
-GeometryPtr execute(const Plan& plan, const ExecEnv& env);
+LILA_SCENE_API GeometryPtr execute(const Plan& plan, const ExecEnv& env);
 } // namespace lila::gn

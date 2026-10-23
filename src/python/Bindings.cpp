@@ -19,6 +19,7 @@ namespace lila::python
 void bindMath(nb::module_& m);
 void bindScene(nb::module_& m);
 void bindExtensions(nb::module_& m);
+void bindRegistries(nb::module_& m);
 }
 
 namespace
@@ -107,6 +108,7 @@ NB_MODULE(_lila, m)
     lila::python::bindMath(math);
     lila::python::bindScene(m);
     lila::python::bindExtensions(m);
+    lila::python::bindRegistries(m);
 
     static nb::exception<lila::CommandError> commandError(m, "CommandError", PyExc_RuntimeError);
 

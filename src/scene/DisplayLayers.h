@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/Node.h"
 
 #include <optional>
@@ -50,16 +52,16 @@ enum class DisplayType : int64_t
     Reference,
 };
 
-bool isLayer(const Node& n);
+LILA_SCENE_API bool isLayer(const Node& n);
 /** Every layer in display order (then name). */
-std::vector<Node*> all(const Graph& g);
+LILA_SCENE_API std::vector<Node*> all(const Graph& g);
 /** The layer the node itself is in, or null. */
-Node* layerOf(const Graph& g, NodeId id);
+LILA_SCENE_API Node* layerOf(const Graph& g, NodeId id);
 /** Nodes whose own layer is this one, in node order. */
-std::vector<NodeId> members(const Graph& g, NodeId layer);
+LILA_SCENE_API std::vector<NodeId> members(const Graph& g, NodeId layer);
 
 /** True when the node's own layer hides it: visibility off, or hideOnPlayback while playing. */
-bool hiddenByOwnLayer(const Graph& g, NodeId id);
+LILA_SCENE_API bool hiddenByOwnLayer(const Graph& g, NodeId id);
 
 /** How the layer governing a node (its own, else the nearest ancestor's) draws it. */
 struct Display
@@ -67,27 +69,27 @@ struct Display
     DisplayType type = DisplayType::Normal;
     std::optional<glm::dvec3> color; // linear RGB wire tint
 };
-Display display(const Graph& g, NodeId id);
+LILA_SCENE_API Display display(const Graph& g, NodeId id);
 /** False for template and reference members: the viewport doesn't pick them, though lists and scripts still can. */
-bool pickable(const Graph& g, NodeId id);
+LILA_SCENE_API bool pickable(const Graph& g, NodeId id);
 
 /** All undoable. create takes the nodes out of any layer they were in. */
-Node* create(Graph& g, std::string_view name, const std::vector<NodeId>& nodes);
-void addMembers(Graph& g, NodeId layer, const std::vector<NodeId>& nodes);
-void removeMembers(Graph& g, const std::vector<NodeId>& nodes);
+LILA_SCENE_API Node* create(Graph& g, std::string_view name, const std::vector<NodeId>& nodes);
+LILA_SCENE_API void addMembers(Graph& g, NodeId layer, const std::vector<NodeId>& nodes);
+LILA_SCENE_API void removeMembers(Graph& g, const std::vector<NodeId>& nodes);
 /** Members go back to no layer; the node is deleted. */
-void remove(Graph& g, NodeId layer);
+LILA_SCENE_API void remove(Graph& g, NodeId layer);
 /** Moves the layer to index among all() and renumbers every layer's displayOrder 0, 1, 2, ... */
-void reorder(Graph& g, NodeId layer, size_t index);
+LILA_SCENE_API void reorder(Graph& g, NodeId layer, size_t index);
 
 /** { name, visibility, hideOnPlayback, displayType, color (null without one), order, members }. */
-json info(const Graph& g, NodeId layer);
+LILA_SCENE_API json info(const Graph& g, NodeId layer);
 
-void registerTypes();
+LILA_SCENE_API void registerTypes();
 /**
  * createDisplayLayer, editDisplayLayerMembers, removeFromDisplayLayer, deleteDisplayLayer, displayLayer,
  * listDisplayLayers, reorderDisplayLayer, selectDisplayLayerMembers.
  */
-void registerCommands();
+LILA_SCENE_API void registerCommands();
 } // namespace displayLayers
 } // namespace lila::scene

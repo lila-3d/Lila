@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <glm/glm.hpp>
 
 #include <filesystem>
@@ -19,5 +21,5 @@ struct HdrImage
 };
 
 /** Reads a Radiance .hdr (RGBE, flat or run-length encoded). Returns false and fills error on failure. */
-bool loadHdr(const std::filesystem::path& path, HdrImage& out, std::string& error);
+LILA_UI_API bool loadHdr(const std::filesystem::path& path, HdrImage& out, std::string& error);
 } // namespace lila::render

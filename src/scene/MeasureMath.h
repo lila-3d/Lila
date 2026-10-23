@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <glm/glm.hpp>
 
 #include <array>
@@ -19,7 +21,7 @@ struct Plane
 };
 
 /** Least-squares plane (smallest principal axis). Throws std::invalid_argument for fewer than 3 or collinear points. */
-Plane fitPlane(std::span<const glm::dvec3> pts);
+LILA_SCENE_API Plane fitPlane(std::span<const glm::dvec3> pts);
 
 struct Circle
 {
@@ -36,29 +38,29 @@ struct Circle
  * Gauss-Newton on the geometric distance, so partial arcs fit as well as full rings. Throws std::invalid_argument for
  * fewer than 3 or collinear points.
  */
-Circle fitCircle(std::span<const glm::dvec3> pts);
+LILA_SCENE_API Circle fitCircle(std::span<const glm::dvec3> pts);
 
 /** Angle at `vertex` between the arms to a and b, degrees. Throws std::invalid_argument for a zero-length arm. */
-double angleDegrees(const glm::dvec3& a, const glm::dvec3& vertex, const glm::dvec3& b);
+LILA_SCENE_API double angleDegrees(const glm::dvec3& a, const glm::dvec3& vertex, const glm::dvec3& b);
 
 /** Index of the corner opposite the longest side: the angle's vertex when three points come in no particular order. */
-int cornerOf(const std::array<glm::dvec3, 3>& pts);
+LILA_SCENE_API int cornerOf(const std::array<glm::dvec3, 3>& pts);
 
 /** Area of a planar or near-planar polygon (Newell). */
-double polygonArea(std::span<const glm::dvec3> pts);
-double polylineLength(std::span<const glm::dvec3> pts, bool closed);
+LILA_SCENE_API double polygonArea(std::span<const glm::dvec3> pts);
+LILA_SCENE_API double polylineLength(std::span<const glm::dvec3> pts, bool closed);
 
 /**
  * Display units for lengths. The general pref /units/linear picks one of mm, cm, m, km, in, ft, yd; scene units are
  * always cm.
  */
-std::string displayUnit();
+LILA_SCENE_API std::string displayUnit();
 /** Scene units (cm) to one unit of `unit`, e.g. 0.01 for m. Unknown units give 1. */
-double unitFactor(const std::string& unit);
+LILA_SCENE_API double unitFactor(const std::string& unit);
 /** Decimal places from the general pref /measure/precision. */
-int displayPrecision();
+LILA_SCENE_API int displayPrecision();
 /** "12.50 cm" in the display unit, or the bare number when withUnit is false. */
-std::string formatLength(double cm, bool withUnit = true);
-std::string formatArea(double cm2, bool withUnit = true);
-std::string formatAngle(double degrees, bool withUnit = true);
+LILA_SCENE_API std::string formatLength(double cm, bool withUnit = true);
+LILA_SCENE_API std::string formatArea(double cm2, bool withUnit = true);
+LILA_SCENE_API std::string formatAngle(double degrees, bool withUnit = true);
 } // namespace lila::scene::measure

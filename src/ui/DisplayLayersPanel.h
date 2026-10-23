@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QWidget>
 
 #include <string>
@@ -16,7 +18,7 @@ inline constexpr const char* kDisplayLayersDock = "displayLayers";
  * T template, R reference), a colour swatch and the name. Clicking the name selects the layer's objects; double-click
  * renames; the right-click menu and the toolbar add, remove, reorder and delete.
  */
-class DisplayLayersPanel : public QWidget
+class LILA_UI_API DisplayLayersPanel : public QWidget
 {
 public:
     explicit DisplayLayersPanel(QWidget* parent = nullptr);
@@ -43,5 +45,5 @@ private:
 };
 
 /** layers.create, layers.createFromSelected, layers.addSelected, layers.removeSelected. */
-void registerDisplayLayerActions();
+LILA_UI_API void registerDisplayLayerActions();
 } // namespace lila::ui

@@ -642,3 +642,63 @@ TEST_CASE("auto-sync against an editor that never answers fails with a clear err
     PrefStore::get().setWorkspaceDir({});
     fs::remove_all(ws);
 }
+
+TEST_CASE("an object set maps as one asset: its members export together through fbx:set")
+{
+    setup();
+    fs::path ws = tempDir("setmap");
+    PrefStore::get().setWorkspaceDir(ws / ".lila");
+    PrefStore::get().set("unreal", "/cacheDir", (ws / "cache").generic_string(), PrefScope::Workspace);
+
+    cmds::execute("newScene", json::object());
+    std::string a = cmds::execute("spaceLocator", {{"name", "rockA"}}).get<std::string>();
+    std::string b = cmds::execute("spaceLocator", {{"name", "rockB"}}).get<std::string>();
+    std::string set = cmds::execute("createSet", {{"args", {a, b}}, {"name", "Rocks"}}).get<std::string>();
+    cmds::execute("unrealMap", {{"args", {set}}, {"contentPath", "/Game/Props/SM_Rocks"}});
+
+    std::mutex mx;
+    std::vector<std::vector<scene::NodeId>> plain, together;
+    registerExporter("fbx", [&](const std::vector<scene::NodeId>& nodes, const fs::path& path, std::string*) {
+        std::ofstream(path) << "fbx";
+        std::scoped_lock lock(mx);
+        plain.push_back(nodes);
+        return true;
+    });
+    registerExporter("fbx:set:static", [&](const std::vector<scene::NodeId>& nodes, const fs::path& path, std::string*) {
+        std::ofstream(path) << "fbx";
+        std::scoped_lock lock(mx);
+        together.push_back(nodes);
+        return true;
+    });
+    FakeServer server(editor([](const json& req) -> std::optional<json> {
+        if (req["method"] == "importAsset")
+            return FakeServer::reply(req, {{"assets", {req["params"]["contentPath"]}}, {"warnings", json::array()}, {"errors", json::array()}});
+        return std::nullopt;
+    }));
+    Link::ConnectOptions o;
+    o.port = server.port();
+    Link::get().connect(o);
+
+    CHECK(syncMappings(true) == 1);
+    Link::get().waitIdle();
+    mainq::drain();
+    {
+        std::scoped_lock lock(mx);
+        CHECK(plain.empty());
+        REQUIRE(together.size() == 1);
+        scene::Graph& g = scene::Graph::current();
+        CHECK(together[0] == std::vector<scene::NodeId>{g.find(a)->id(), g.find(b)->id()});
+    }
+    CHECK(fs::exists(ws / "cache" / "Rocks.fbx"));
+
+    // An empty set has nothing to send.
+    cmds::execute("removeFromSet", {{"args", {set, a, b}}});
+    CHECK(syncMappings(true) == 0);
+
+    unregisterExporter("fbx");
+    unregisterExporter("fbx:set:static");
+    Link::get().disconnect();
+    cmds::execute("unrealUnmap", {{"args", {set}}});
+    PrefStore::get().setWorkspaceDir({});
+    fs::remove_all(ws);
+}

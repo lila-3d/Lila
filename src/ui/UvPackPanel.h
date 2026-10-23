@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <nlohmann/json.hpp>
 
 #include <QWidget>
@@ -16,11 +18,11 @@ class QSpinBox;
 namespace lila::ui
 {
 /** The last uvPack options used from the UV editor, as uvPack flags; the uv.pack actions reuse them. */
-nlohmann::json uvPackOptions();
-void setUvPackOptions(const nlohmann::json& options);
+LILA_UI_API nlohmann::json uvPackOptions();
+LILA_UI_API void setUvPackOptions(const nlohmann::json& options);
 
 /** The UV editor's Pack options: rotation, scale, stacking, tiles and groups, fixed islands and search effort. */
-class UvPackPanel : public QWidget
+class LILA_UI_API UvPackPanel : public QWidget
 {
     Q_OBJECT
 
@@ -64,5 +66,5 @@ private:
 };
 
 /** Registers the uv.pack* actions (pack with the last options, around the selection, stacked, select stacks). */
-void registerUvPackActions();
+LILA_UI_API void registerUvPackActions();
 } // namespace lila::ui

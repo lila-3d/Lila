@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <nlohmann/json.hpp>
 
 #include <QWidget>
@@ -16,7 +18,7 @@ namespace lila::ui
  * again with the new value, coalesced while dragging, as one undo step. Shown in the viewport's in-view popup and
  * in the Modeling Toolkit's Tool Options section.
  */
-class LastOpEditor : public QWidget
+class LILA_UI_API LastOpEditor : public QWidget
 {
     Q_OBJECT
 
@@ -56,6 +58,6 @@ namespace adjustLastOp
 inline constexpr const char* kEnabledPref = "/modeling/adjustLastOp";
 
 /** Tracks the last op and pops the in-view editor after adjustable UI commands. Registers "adjustLastOp.*" actions. */
-void install();
+LILA_UI_API void install();
 } // namespace adjustLastOp
 } // namespace lila::ui

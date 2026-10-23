@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "math/MathCore.h"
 #include "scene/AnimCurve.h"
 #include "scene/Plug.h"
@@ -54,11 +56,11 @@ enum class AxisProfile
 };
 
 /** "ue5", "ue6", "generic" (case-insensitive). False for anything else. */
-bool parseProfile(std::string_view name, AxisProfile* out);
-const char* profileName(AxisProfile p);
+LILA_SCENE_API bool parseProfile(std::string_view name, AxisProfile* out);
+LILA_SCENE_API const char* profileName(AxisProfile p);
 
 /** Lila space to file space for a profile and scene up axis: a rotation (signed axis permutation). */
-glm::dmat3 profileBasis(AxisProfile p, math::UpAxis up);
+LILA_SCENE_API glm::dmat3 profileBasis(AxisProfile p, math::UpAxis up);
 
 /**
  * What an export is for. Static writes meshes and transforms. Skeletal adds joints as LimbNodes, skins (Skin and
@@ -73,8 +75,8 @@ enum class ExportKind
 };
 
 /** "static", "skeletal", "animation" (case-insensitive). False for anything else. */
-bool parseKind(std::string_view name, ExportKind* out);
-const char* kindName(ExportKind k);
+LILA_SCENE_API bool parseKind(std::string_view name, ExportKind* out);
+LILA_SCENE_API const char* kindName(ExportKind k);
 
 struct ExportOptions
 {
@@ -92,8 +94,13 @@ struct ExportOptions
     /** Bake range in seconds; NaN means the playback range. */
     double start = std::numeric_limits<double>::quiet_NaN();
     double end = std::numeric_limits<double>::quiet_NaN();
-    /** AnimStack name; empty uses "Take 001". */
+    /** AnimStack name; empty uses the active take's name, else "Take 001". */
     std::string takeName;
+    /**
+     * Scene takes to write, one AnimStack each, sampled over each take's own range and fps: names, or just "all".
+     * Empty writes the animation connected now as one stack.
+     */
+    std::vector<std::string> takes;
     /** Triangles exactly as geo::triangulate makes them (the viewport's), so Unreal shades what Lila shows. */
     bool triangulate = true;
     /** MikkTSpace tangents and binormals from uv0. */
@@ -104,6 +111,15 @@ struct ExportOptions
     bool atOrigin = false;
     /** Export the descendants of the given nodes too. */
     bool children = true;
+    /** Write each edge's smoothing (hard or soft) as a smoothing layer. */
+    bool smoothingGroups = true;
+    /** Centimetres per file unit (100 writes metres): lengths are scaled and UnitScaleFactor declares it. */
+    double unitScale = 1.0;
+    /**
+     * Skeletal and animation kinds: write deform joints only (their deform flag), closing the hierarchy over the rest,
+     * so IK helpers and rig-only joints stay behind. A non-deform joint that carries skin weights still goes out.
+     */
+    bool deformOnly = true;
 };
 
 /** A skin on an exported mesh, already pruned to the influence limit. Matrices are export space, Lila axes. */
@@ -146,6 +162,8 @@ struct ExportNode
     bool joint = false;
     /** jointOrient as a rotation, Lila space. Written as PreRotation, the way Maya writes joints. */
     glm::dmat4 pre{1.0};
+    /** rotateAxis as a rotation, Lila space: applied before rotate, so it is written as the inverse PostRotation. */
+    glm::dmat4 post{1.0};
     scene::RotateOrder rotateOrder = scene::RotateOrder::XYZ;
     /**
      * local is exactly T * pre * R(rotateOrder) * S of these channel values (no pivots, no segment scale
@@ -181,24 +199,26 @@ struct ExportScene
     math::UpAxis upAxis = math::UpAxis::Y;
     double fps = 30.0;
     std::optional<ExportTake> take;
+    /** Further takes after take, each its own AnimStack. */
+    std::vector<ExportTake> extraTakes;
     std::vector<std::string> warnings;
 };
 
 /** Main thread: evaluates the graph and snapshots the nodes (and, with children, their descendants). */
-ExportScene gatherExport(scene::Graph& graph, const std::vector<scene::NodeId>& roots, const ExportOptions& opts);
+LILA_SCENE_API ExportScene gatherExport(scene::Graph& graph, const std::vector<scene::NodeId>& roots, const ExportOptions& opts);
 
 /** Any thread. The FBX bytes of a snapshot. */
-std::string encodeFbx(const ExportScene& scene, const ExportOptions& opts);
-bool writeFbx(const ExportScene& scene, const fs::path& path, const ExportOptions& opts, std::string* error);
+LILA_SCENE_API std::string encodeFbx(const ExportScene& scene, const ExportOptions& opts);
+LILA_SCENE_API bool writeFbx(const ExportScene& scene, const fs::path& path, const ExportOptions& opts, std::string* error);
 
 /**
  * For the Unreal link: the evaluated meshes of `nodes` and their children, triangulated with tangents, roots at the
- * origin, axes per `profile` ("ue5"/"ue6"). `kind` is the mapping's static, skeletal or animation. Safe from any
- * thread: the scene is read on the main thread (waiting for it when called elsewhere) and the file is written on the
- * caller's.
+ * origin unless atOrigin is false (an object set's members, exported as one asset), axes per `profile` ("ue5"/"ue6").
+ * `kind` is the mapping's static, skeletal or animation. Safe from any thread: the scene is read on the main thread (waiting for it when called elsewhere) and the file is written on the
+ * caller's. A take name writes only that scene take, over its own range.
  */
-bool exportForUnreal(const std::vector<scene::NodeId>& nodes, const fs::path& path, const std::string& profile, std::string* error,
-                     const std::string& kind = "static");
+LILA_SCENE_API bool exportForUnreal(const std::vector<scene::NodeId>& nodes, const fs::path& path, const std::string& profile, std::string* error,
+                     const std::string& kind = "static", bool atOrigin = true, const std::string& take = {});
 
 struct ImportOptions
 {
@@ -235,7 +255,7 @@ struct ImportResult
 };
 
 /** Main thread. Creates transforms and meshes for the file's node hierarchy, undoably. */
-ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOptions& opts = {});
+LILA_SCENE_API ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOptions& opts = {});
 
 struct ImportAxes
 {
@@ -247,8 +267,8 @@ struct ImportAxes
 };
 
 /** The file's axis conversions, read from its settings alone. Nullopt when the file can't be read. */
-std::optional<ImportAxes> importAxes(const fs::path& path);
+LILA_SCENE_API std::optional<ImportAxes> importAxes(const fs::path& path);
 
 /** importFbx and exportFbx. */
-void registerCommands();
+LILA_SCENE_API void registerCommands();
 } // namespace lila::fbx

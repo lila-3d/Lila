@@ -1,0 +1,14 @@
+{
+    "id": "viewportPoints",
+    "name": "Viewport Points Example",
+    "version": "1.0.0",
+    "vendor": "Lila",
+    "description": "Sample viewport extension: a node type with its own draw override, a gizmo provider, a cursor badge with its own icon, a selection handler, a render pass and a viewport tool.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "viewportPoints.dll",
+        "linux": "viewportPoints.so",
+        "macos": "viewportPoints.dylib"
+    },
+    "enabledByDefault": false
+}

@@ -1,8 +1,11 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/Plug.h"
 #include "scene/TransformOps.h"
 #include "ui/ExtrudeHandles.h"
+#include "ui/Gizmo.h"
 #include "ui/Overlay.h"
 #include "ui/Tools.h"
 
@@ -18,33 +21,14 @@ class QKeyEvent;
 
 namespace lila::ui
 {
-/** What a viewport hands the manipulator each frame. Pixels are logical (widget) pixels. */
-struct ViewInfo
-{
-    glm::dmat4 view{1.0};
-    glm::dmat4 proj{1.0};
-    glm::dvec3 eye{0.0};
-    double width = 1.0;
-    double height = 1.0;
-    std::string camera; // view name: persp, top, front, ...
-    bool ortho = false;
-    glm::dvec2 film{0.0}; // film back half extents: tangents for perspective, cm for orthographic
-
-    glm::dmat4 viewProj() const { return proj * view; }
-    std::optional<QPointF> project(const glm::dvec3& world) const;
-    /** World-space ray through a pixel. */
-    void ray(QPointF px, glm::dvec3& origin, glm::dvec3& dir) const;
-    /** World units per pixel at a point's depth. */
-    double unitsPerPixel(const glm::dvec3& at) const;
-    glm::dvec3 viewDir(const glm::dvec3& at) const { return glm::normalize(at - eye); }
-};
-
 /**
  * The move/rotate/scale manipulator. Owned per viewport, driven by the global tool state. While dragging it edits the
  * scene with undo off, re-applying the whole delta from the start state each step (no drift); on release it restores
  * the start state and runs the equivalent command once, so undo and the script echo see a single clean edit.
+ *
+ * The default gizmo provider, gizmos::kDefault.
  */
-class Manipulator
+class LILA_UI_API Manipulator : public Gizmo
 {
 public:
     enum class Handle
@@ -61,34 +45,37 @@ public:
         Free,     // trackball rotate
     };
 
-    void setView(const ViewInfo& v) { mView = v; }
+    void setView(const ViewInfo& v) override { mView = v; }
+    bool supports(std::string_view mode) const override;
 
     /** False when there is nothing to manipulate (select tool, empty selection). */
-    bool visible();
-    void draw(OverlayPainter& p);
+    bool visible() override;
+    void draw(OverlayPainter& p) override;
 
     /** Updates the hovered handle; true when it changed (redraw). */
-    bool hover(QPointF px);
+    bool hover(QPointF px) override;
     /**
      * True when the press grabbed a handle. Middle button drags the last used handle from anywhere; with Shift it waits
      * for the drag's direction and constrains to the axis that best matches it.
      */
-    bool press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifiers mods);
-    void drag(QPointF px, Qt::KeyboardModifiers mods);
-    void release();
-    void cancel();
-    bool dragging() const { return mDrag.has_value() || mExtrude.dragging(); }
-    bool hovering() const { return mHover != Handle::None || mExtrudeHover != ExtrudeHandles::Handle::None; }
+    bool press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifiers mods) override;
+    void drag(QPointF px, Qt::KeyboardModifiers mods) override;
+    void release() override;
+    void cancel() override;
+    bool dragging() const override { return mDrag.has_value() || mExtrude.dragging(); }
+    bool hovering() const override { return mHover != Handle::None || mExtrudeHover != ExtrudeHandles::Handle::None; }
     /** The hovered handle only drives locked channels, so pressing it does nothing. */
-    bool hoveringLocked() const { return mHover != Handle::None && handleLocked(mHover); }
+    bool hoveringLocked() const override { return mHover != Handle::None && handleLocked(mHover); }
     /** Shift is slowing the current drag down. */
-    bool precisionDrag() const { return mDrag && mDrag->precise; }
+    bool precisionDrag() const override { return mDrag && mDrag->precise; }
     /** The current drag is Ctrl's plane of the two axes other than the one pressed. */
     bool ctrlPlaneDrag() const { return mDrag && mDrag->ctrlPlane; }
     /** Numeric entry while dragging. True when consumed. */
-    bool keyPress(QKeyEvent* e);
+    bool keyPress(QKeyEvent* e) override;
+    QString typed() const override { return mDrag ? mDrag->typed : QString(); }
+    QString readout() const override;
     /** Mouse delta since the last drag() in pixels; the viewport uses it to wrap the cursor at edges. */
-    void warped(QPointF offset);
+    void warped(QPointF offset) override;
 
 private:
     struct Saved

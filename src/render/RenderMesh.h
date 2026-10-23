@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <glm/glm.hpp>
 
 #include <atomic>
@@ -28,11 +30,8 @@ struct MeshSection
     uint32_t indexCount = 0;
 };
 
-inline uint64_t nextResourceKey()
-{
-    static std::atomic<uint64_t> counter{1};
-    return counter++;
-}
+/** Unique across the process, whichever library asks. */
+LILA_FOUNDATION_API uint64_t nextResourceKey();
 
 /**
  * Vertices edited in place while the topology stays (sculpting a dense mesh): the editor writes vertices and marks

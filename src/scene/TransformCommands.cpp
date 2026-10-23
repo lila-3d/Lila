@@ -1,5 +1,6 @@
 #include "cmds/Command.h"
 #include "scene/Graph.h"
+#include "scene/RigElements.h"
 #include "scene/TransformOps.h"
 
 namespace lila::scene
@@ -62,16 +63,19 @@ void registerTransformCommands()
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             auto ids = transformsOf(a, "move");
-            if (a.has("to"))
-            {
-                glm::dvec3 to = vec3(a.flags["to"]);
-                for (NodeId id : xformops::topLevel(g, ids))
-                    xformops::moveBy(g, {id}, to - xformops::worldPivot(g, id));
-            }
-            else if (a.has("by"))
-                xformops::moveBy(g, ids, vec3(a.flags["by"]), spaceArg(a));
-            else
+            if (!a.has("to") && !a.has("by"))
                 throw CommandError("move: give by= or to=");
+            // An IK controller poses its chain's joints.
+            rigel::poseControllers(g, ids, [&] {
+                if (a.has("to"))
+                {
+                    glm::dvec3 to = vec3(a.flags["to"]);
+                    for (NodeId id : xformops::topLevel(g, ids))
+                        xformops::moveBy(g, {id}, to - xformops::worldPivot(g, id));
+                }
+                else
+                    xformops::moveBy(g, ids, vec3(a.flags["by"]), spaceArg(a));
+            });
             return nullptr;
         },
     });
@@ -89,15 +93,17 @@ void registerTransformCommands()
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             auto ids = transformsOf(a, "rotate");
-            if (a.has("to"))
-            {
-                for (NodeId id : ids)
-                    g.setValue({id, Transform::kRotate}, g.keepLocked({id, Transform::kRotate}, vec3(a.flags["to"])));
-            }
-            else if (a.has("by"))
-                xformops::rotateBy(g, ids, eulerQuat(vec3(a.flags["by"])), spaceArg(a));
-            else
+            if (!a.has("to") && !a.has("by"))
                 throw CommandError("rotate: give by= or to=");
+            rigel::poseControllers(g, ids, [&] {
+                if (a.has("to"))
+                {
+                    for (NodeId id : ids)
+                        g.setValue({id, Transform::kRotate}, g.keepLocked({id, Transform::kRotate}, vec3(a.flags["to"])));
+                }
+                else
+                    xformops::rotateBy(g, ids, eulerQuat(vec3(a.flags["by"])), spaceArg(a));
+            });
             return nullptr;
         },
     });

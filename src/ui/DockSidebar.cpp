@@ -196,12 +196,18 @@ void DockSidebars::restoreSize(QDockWidget* dock)
 {
     if (!dock || dock->isFloating() || !dock->isVisible())
         return;
-    auto it = mTabSizes.find(dock->objectName());
     Qt::DockWidgetArea area = mWindow->dockWidgetArea(dock);
-    if (it == mTabSizes.end() || area == Qt::NoDockWidgetArea)
+    if (area == Qt::NoDockWidgetArea)
+        return;
+    int want = 0;
+    if (auto it = mTabSizes.find(dock->objectName()); it != mTabSizes.end())
+        want = it->second;
+    else if (QVariant extent = dock->property(kDefaultTabExtent); extent.isValid())
+        want = extent.toInt();
+    if (want <= 0)
         return;
     bool sideways = area == Qt::LeftDockWidgetArea || area == Qt::RightDockWidgetArea;
-    mWindow->resizeDocks({dock}, {it->second}, sideways ? Qt::Horizontal : Qt::Vertical);
+    mWindow->resizeDocks({dock}, {want}, sideways ? Qt::Horizontal : Qt::Vertical);
     emit changed();
 }
 
@@ -300,6 +306,12 @@ void DockSidebars::manage(QDockWidget* dock)
 
 void DockSidebars::reveal(QDockWidget* dock)
 {
+    // As when its tab is clicked: the tab it covers keeps its size for later, and it gets back its own.
+    bool tabbed = !dock->isFloating() && !mWindow->tabifiedDockWidgets(dock).isEmpty();
+    if (tabbed && !dockShowing(dock))
+        for (QDockWidget* other : mWindow->tabifiedDockWidgets(dock))
+            if (dockShowing(other))
+                rememberSize(other);
     if (isCollapsed(dock))
         expand(dock);
     else
@@ -309,14 +321,18 @@ void DockSidebars::reveal(QDockWidget* dock)
     }
     // The dock layout settles after the show, so the tab, size and focus are fixed up once it has.
     QPointer<QDockWidget> d = dock;
-    QTimer::singleShot(0, this, [this, d] {
+    QTimer::singleShot(0, this, [this, d, tabbed] {
         if (!d || !d->isVisible())
             return;
         d->raise();
         if (d->isFloating())
             d->activateWindow();
         else
+        {
+            if (tabbed)
+                restoreSize(d);
             ensureUsableSize(d);
+        }
         if (QWidget* w = d->widget())
             w->setFocus(Qt::OtherFocusReason);
     });
@@ -360,12 +376,26 @@ void revealDock(QDockWidget* dock)
         w->setFocus(Qt::OtherFocusReason);
 }
 
+bool dockShowing(const QDockWidget* dock)
+{
+    if (!dock || !dock->isVisible())
+        return false;
+    auto* window = qobject_cast<QMainWindow*>(dock->parentWidget());
+    if (!window || dock->isFloating() || window->tabifiedDockWidgets(const_cast<QDockWidget*>(dock)).isEmpty())
+        return true;
+    // Asked of the tab bar rather than visibleRegion(), which comes back empty for a dock whose children are opaque.
+    for (QTabBar* bar : window->findChildren<QTabBar*>(Qt::FindDirectChildrenOnly))
+        for (int i = 0; i < bar->count(); ++i)
+            if (bar->tabData(i).value<quintptr>() == quintptr(dock) || (bar->tabText(i) == dock->windowTitle() && bar->tabData(i).isNull()))
+                return !bar->isVisible() || i == bar->currentIndex();
+    return true;
+}
+
 void toggleDock(QDockWidget* dock)
 {
     if (!dock)
         return;
-    // Shown and not buried under a tab.
-    if (!dock->isVisible() || dock->visibleRegion().isEmpty())
+    if (!dockShowing(dock))
     {
         revealDock(dock);
         return;

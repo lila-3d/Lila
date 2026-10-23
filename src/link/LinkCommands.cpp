@@ -189,7 +189,8 @@ void registerCommands()
     cmds::registerCommand({
         .name = "unrealMap",
         .doc = "Map a node to an Unreal asset so saving the scene re-exports and reimports it. Stored in the "
-               "workspace (.lila/unreal.json). Replaces any existing mapping for the node.",
+               "workspace (.lila/unreal.json). Replaces any existing mapping for the node. An object set maps its "
+               "members as one asset, exported together where they sit.",
         .positionalDoc = "node",
         .flags = importFlags(),
         .undoable = false,

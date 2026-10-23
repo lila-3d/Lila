@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "vcs/Process.h"
 #include "vcs/Provider.h"
 
@@ -38,7 +40,7 @@ enum class WriteAccess : uint8_t
  *    "autoAdd": true}
  * "auto" uses Perforce when `p4 where` maps the directory, else git when it is inside a work tree.
  */
-class SourceControl
+class LILA_SCENE_API SourceControl
 {
 public:
     using Group = std::pair<std::shared_ptr<Provider>, std::vector<fs::path>>;
@@ -102,8 +104,8 @@ private:
 };
 
 /** Save hook: true when file can be written now. With the "prompt" pref this fails with a question in error. */
-bool ensureWritable(const fs::path& file, std::string* error);
+LILA_SCENE_API bool ensureWritable(const fs::path& file, std::string* error);
 
 /** After saving a file, opens it for add when it is new and under source control (pref autoAdd). Runs async. */
-void markForAddIfNew(const fs::path& file);
+LILA_SCENE_API void markForAddIfNew(const fs::path& file);
 } // namespace lila::vcs

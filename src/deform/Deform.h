@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "geo/Mesh.h"
 
 #include <glm/glm.hpp>
@@ -24,15 +26,15 @@ struct Adjacency
     std::vector<char> boundary; // per point: on an open border
 };
 
-Adjacency pointAdjacency(const geo::Mesh& mesh);
+LILA_SCENE_API Adjacency pointAdjacency(const geo::Mesh& mesh);
 
 /** Uniform Laplacian smoothing, Jacobi style so the order of points never matters. Boundary points stay put when pinned. */
-void smooth(std::vector<glm::dvec3>& points, const Adjacency& adj, int iterations, double step, bool pinBoundary);
+LILA_SCENE_API void smooth(std::vector<glm::dvec3>& points, const Adjacency& adj, int iterations, double step, bool pinBoundary);
 
 // ------------------------------------------------------------------------------------------------ falloff
 
 /** 1 inside radius * (1 - softness), easing to 0 at radius. A radius of 0 or less means no falloff (always 1). */
-double sphericalFalloff(double distance, double radius, double softness);
+LILA_SCENE_API double sphericalFalloff(double distance, double radius, double softness);
 
 // ------------------------------------------------------------------------------------------------ nonlinear
 
@@ -71,12 +73,12 @@ struct WaveParams
     double minRadius = 0.0, maxRadius = 1.0;
 };
 
-glm::dvec3 bend(const glm::dvec3& p, const BendParams& o);
-glm::dvec3 twist(const glm::dvec3& p, const TwistParams& o);
-glm::dvec3 taper(const glm::dvec3& p, const TaperParams& o);
-glm::dvec3 squash(const glm::dvec3& p, const SquashParams& o);
-glm::dvec3 sine(const glm::dvec3& p, const SineParams& o);
-glm::dvec3 wave(const glm::dvec3& p, const WaveParams& o);
+LILA_SCENE_API glm::dvec3 bend(const glm::dvec3& p, const BendParams& o);
+LILA_SCENE_API glm::dvec3 twist(const glm::dvec3& p, const TwistParams& o);
+LILA_SCENE_API glm::dvec3 taper(const glm::dvec3& p, const TaperParams& o);
+LILA_SCENE_API glm::dvec3 squash(const glm::dvec3& p, const SquashParams& o);
+LILA_SCENE_API glm::dvec3 sine(const glm::dvec3& p, const SineParams& o);
+LILA_SCENE_API glm::dvec3 wave(const glm::dvec3& p, const WaveParams& o);
 
 // ------------------------------------------------------------------------------------------------ lattice
 
@@ -89,19 +91,19 @@ enum class FfdBasis : uint8_t
 
 /** Lattice point (i, j, k) is index i + n.x * (j + n.y * k); at rest it sits at -0.5 + i / (n.x - 1) and so on. */
 inline size_t latticeIndex(const glm::ivec3& n, int i, int j, int k) { return size_t(i) + size_t(n.x) * (size_t(j) + size_t(n.y) * size_t(k)); }
-glm::dvec3 latticeRest(const glm::ivec3& n, int i, int j, int k);
+LILA_SCENE_API glm::dvec3 latticeRest(const glm::ivec3& n, int i, int j, int k);
 
 /** The lattice as a mesh: points in latticeIndex order, a quad for every cell face. Divisions are points per axis, at least 2. */
-geo::Mesh latticeMesh(const glm::ivec3& divisions);
+LILA_SCENE_API geo::Mesh latticeMesh(const glm::ivec3& divisions);
 
 /**
  * Displacement at lattice coordinates stu (each 0..1) from per-point displacements (current - rest). Displacement form
  * keeps the rest lattice an exact identity for every basis.
  */
-glm::dvec3 ffdDisplacement(const glm::ivec3& n, std::span<const glm::dvec3> displacement, const glm::dvec3& stu, FfdBasis basis);
+LILA_SCENE_API glm::dvec3 ffdDisplacement(const glm::ivec3& n, std::span<const glm::dvec3> displacement, const glm::dvec3& stu, FfdBasis basis);
 
 /** Weights of one axis: (point index, weight) pairs summing to 1. */
-void ffdAxisWeights(int n, double s, FfdBasis basis, std::vector<std::pair<int, double>>& out);
+LILA_SCENE_API void ffdAxisWeights(int n, double s, FfdBasis basis, std::vector<std::pair<int, double>>& out);
 
 // ------------------------------------------------------------------------------------------------ delta mush
 
@@ -114,15 +116,15 @@ struct DeltaMushBind
     std::vector<glm::dvec3> local;
 };
 
-DeltaMushBind deltaMushBind(const geo::Mesh& topology, std::span<const glm::dvec3> rest, const Adjacency& adj, int iterations, double step,
+LILA_SCENE_API DeltaMushBind deltaMushBind(const geo::Mesh& topology, std::span<const glm::dvec3> rest, const Adjacency& adj, int iterations, double step,
                             bool pinBoundary);
 
 /** Smooths the deformed points and puts the rest detail back on in the smoothed frames, scaled by displacement. */
-std::vector<glm::dvec3> deltaMushApply(const geo::Mesh& topology, std::span<const glm::dvec3> deformed, const Adjacency& adj,
+LILA_SCENE_API std::vector<glm::dvec3> deltaMushApply(const geo::Mesh& topology, std::span<const glm::dvec3> deformed, const Adjacency& adj,
                                        const DeltaMushBind& bind, double displacement);
 
 /** Orthonormal frame per point from smoothed points: x toward the first neighbour, z along the area-weighted normal. */
-std::vector<glm::dmat3> pointFrames(const geo::Mesh& topology, std::span<const glm::dvec3> points, const Adjacency& adj);
+LILA_SCENE_API std::vector<glm::dmat3> pointFrames(const geo::Mesh& topology, std::span<const glm::dvec3> points, const Adjacency& adj);
 
 // ------------------------------------------------------------------------------------------------ wrap
 
@@ -145,18 +147,18 @@ struct WrapBinding
  * Binds targets to the driver's k nearest triangles. Triangles within falloff times the nearest distance count, weighted
  * by inverse squared distance. Both point sets in the same space.
  */
-WrapBinding wrapBind(const geo::Mesh& driver, std::span<const glm::dvec3> targets, int maxDrivers, double falloff);
+LILA_SCENE_API WrapBinding wrapBind(const geo::Mesh& driver, std::span<const glm::dvec3> targets, int maxDrivers, double falloff);
 /** Target points for the driver's current points (same topology as at bind). */
-std::vector<glm::dvec3> wrapApply(const WrapBinding& bind, std::span<const glm::dvec3> driverPoints, std::span<const glm::dvec3> targets);
+LILA_SCENE_API std::vector<glm::dvec3> wrapApply(const WrapBinding& bind, std::span<const glm::dvec3> driverPoints, std::span<const glm::dvec3> targets);
 
 // ------------------------------------------------------------------------------------------------ cage
 
 /** Mean value coordinates of x against a closed triangle cage (Ju, Schaefer and Warren 2005). Sums to 1. */
-void meanValueCoordinates(std::span<const glm::dvec3> cage, std::span<const uint32_t> triangles, const glm::dvec3& x, std::span<double> out);
+LILA_SCENE_API void meanValueCoordinates(std::span<const glm::dvec3> cage, std::span<const uint32_t> triangles, const glm::dvec3& x, std::span<double> out);
 
 /** Dense coordinates for many points, row per point. Parallel. */
-std::vector<float> meanValueCoordinates(std::span<const glm::dvec3> cage, std::span<const uint32_t> triangles, std::span<const glm::dvec3> points);
+LILA_SCENE_API std::vector<float> meanValueCoordinates(std::span<const glm::dvec3> cage, std::span<const uint32_t> triangles, std::span<const glm::dvec3> points);
 
 /** The triangles of a mesh as point ids, 3 per triangle, for the cage functions. */
-std::vector<uint32_t> trianglePoints(const geo::Mesh& mesh);
+LILA_SCENE_API std::vector<uint32_t> trianglePoints(const geo::Mesh& mesh);
 } // namespace lila::deform

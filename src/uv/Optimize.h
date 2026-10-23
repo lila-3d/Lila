@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "uv/Chart.h"
 
 #include <span>
@@ -19,7 +21,7 @@ struct ChartStats
     size_t folded = 0;
 };
 
-ChartStats chartStats(const Chart& chart);
+LILA_SCENE_API ChartStats chartStats(const Chart& chart);
 
 enum class OptimizeMode : uint8_t
 {
@@ -52,7 +54,7 @@ struct OptimizeResult
  * on a factorisation reused every iteration). Keeps the island's uv area and centroid. Steps never flip
  * a triangle when the start has none folded.
  */
-OptimizeResult optimizeChart(Chart& chart, const OptimizeOptions& opts = {});
+LILA_SCENE_API OptimizeResult optimizeChart(Chart& chart, const OptimizeOptions& opts = {});
 
 struct MosaicOptions
 {
@@ -76,5 +78,5 @@ struct MosaicResult
  * is re-solved with the optimise mode. Pieces of a split island keep its uv scale; the largest stays where
  * the island was and the rest are lined up beside it. Seams are written to match.
  */
-MosaicResult mosaicFaces(geo::Mesh& mesh, std::span<const Index> faces, std::string_view uvSet, const MosaicOptions& opts = {});
+LILA_SCENE_API MosaicResult mosaicFaces(geo::Mesh& mesh, std::span<const Index> faces, std::string_view uvSet, const MosaicOptions& opts = {});
 } // namespace lila::uv

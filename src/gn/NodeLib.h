@@ -1,5 +1,8 @@
 #pragma once
 
+#include "core/Export.h"
+#include "core/Registry.h"
+
 #include "gn/Field.h"
 #include "gn/Group.h"
 
@@ -7,6 +10,11 @@
 #include <map>
 #include <string>
 #include <vector>
+
+namespace lila::ext
+{
+class Context;
+}
 
 namespace lila::gn
 {
@@ -42,7 +50,7 @@ struct PropDecl
     std::string doc;
 };
 
-struct Sockets
+struct LILA_SCENE_API Sockets
 {
     std::vector<SocketDecl> inputs;
     std::vector<SocketDecl> outputs;
@@ -53,7 +61,7 @@ struct Sockets
 
 class ExecContext;
 
-struct NodeDecl
+struct LILA_SCENE_API NodeDecl
 {
     std::string type;
     std::string label;
@@ -71,20 +79,27 @@ struct NodeDecl
     std::string propValue(const GNode& n, std::string_view id) const;
 };
 
-void registerDecl(NodeDecl d);
-const NodeDecl* findDecl(std::string_view type);
-std::vector<const NodeDecl*> allDecls();
+/** Every geometry node type, owner-tagged. */
+LILA_SCENE_API Registry<NodeDecl>& declRegistry();
+/** Adds, or replaces the type's declaration. */
+LILA_SCENE_API void registerDecl(NodeDecl d);
+/** For extensions: owned by ctx and removed when it unloads. Null, with a log message, if the type is taken. */
+LILA_SCENE_API const NodeDecl* registerDecl(ext::Context& ctx, NodeDecl d);
+/** Groups using the type then fail to evaluate with "unknown node type". */
+LILA_SCENE_API void unregisterDecl(std::string_view type);
+LILA_SCENE_API const NodeDecl* findDecl(std::string_view type);
+LILA_SCENE_API std::vector<const NodeDecl*> allDecls();
 /** Fills the registry with the built-in node library. Safe to call twice. */
-void registerNodeLibrary();
+LILA_SCENE_API void registerNodeLibrary();
 
 /** Whether an output of one type may feed an input of another. */
-bool linkable(SocketType from, SocketType to);
+LILA_SCENE_API bool linkable(SocketType from, SocketType to);
 /**
  * The socket on a new node of this type that a dragged socket of `type` connects to: one of its inputs when
  * wantInput (the drag came from an output), else one of its outputs. Same type first, then the first linkable one.
  * Empty when nothing fits.
  */
-std::string compatibleSocket(const Group& g, const NodeDecl& d, SocketType type, bool wantInput);
+LILA_SCENE_API std::string compatibleSocket(const Group& g, const NodeDecl& d, SocketType type, bool wantInput);
 
 /** What a socket carries during evaluation. Which member is used follows the socket type. */
 struct Value
@@ -111,12 +126,12 @@ struct ExecEnv
 };
 
 /** Turns a JSON value (node value, exposed default) into a socket value. Rotations are given in degrees. */
-Value valueFromJson(SocketType t, const json& j);
+LILA_SCENE_API Value valueFromJson(SocketType t, const json& j);
 /** Converts a value along a link of another type; incompatible pairs give the default. */
-Value convertValue(const Value& v, SocketType from, SocketType to);
-Value defaultValue(SocketType t);
+LILA_SCENE_API Value convertValue(const Value& v, SocketType from, SocketType to);
+LILA_SCENE_API Value defaultValue(SocketType t);
 
-class ExecContext
+class LILA_SCENE_API ExecContext
 {
 public:
     ExecContext(const Group& g, const GNode& n, const NodeDecl& d, const Sockets& s, const ExecEnv& env)

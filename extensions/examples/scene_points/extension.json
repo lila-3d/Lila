@@ -1,0 +1,14 @@
+{
+    "id": "scenePoints",
+    "name": "Scene Points",
+    "version": "1.0.0",
+    "vendor": "Lila",
+    "description": "Sample C++ extension with one of each scene-side extension point: a .pts file translator, a curve interpolator, an IK solver, a geometry node, a data kind, an MCP tool, a link exporter, a scene ui section, a scene script listener and a deformer.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "scenePoints.dll",
+        "linux": "scenePoints.so",
+        "macos": "scenePoints.dylib"
+    },
+    "enabledByDefault": false
+}

@@ -1,0 +1,38 @@
+#pragma once
+
+#include "core/CrashHandler.h"
+#include "core/Export.h"
+
+#include <filesystem>
+#include <string>
+
+/** What lila.exe and lilabatch.exe share: startup and shutdown of everything below the UI. */
+namespace lila::host
+{
+struct Options
+{
+    std::string batchScript;
+    std::string command;
+    std::string path;
+    bool batch = false;
+};
+
+LILA_SCENE_API Options parse(int argc, char** argv);
+
+/** Prefs, the up axis, node types and every non-UI command. Call right after crash::install. */
+LILA_SCENE_API void startCore();
+
+/** Opens the workspace the command line names. A scene file it names is loaded here in batch mode; the GUI gets it back to open once its window is up, under the progress overlay. */
+LILA_SCENE_API std::filesystem::path openStartupWorkspace(const Options& o);
+
+/** Python, then the extensions that load at startup. False when Python did not start. */
+LILA_SCENE_API bool startPython(const Options& o);
+
+LILA_SCENE_API crash::WatchOptions crashOptions(bool gui);
+
+/** --batch: the watchdog, console progress, then the -c command and the script. The exit code. */
+LILA_SCENE_API int runBatch(const Options& o, bool pythonOk);
+
+/** Sends events::Event::Shutdown, unloads extensions and stops Lila's services. */
+LILA_SCENE_API void shutdown();
+} // namespace lila::host

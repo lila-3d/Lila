@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "math/Quat.h"
 
 #include <glm/mat4x4.hpp>
@@ -21,7 +23,7 @@ enum class Axis : uint8_t
  * That layout is exactly glm's column-major storage, so m holds the glm matrix as is:
  * m[i][j] here is glm's column i, row j.
  */
-struct Matrix
+struct LILA_FOUNDATION_API Matrix
 {
     glm::dmat4 m{1.0};
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "uv/Seams.h"
 
 #include <span>
@@ -30,8 +32,8 @@ struct OptCutsResult
  * most visible first, while the bound holds. Islands stay fold-free throughout. Writes "seam" like
  * autoSeams.
  */
-OptCutsResult optCuts(geo::Mesh& mesh, std::span<const Index> faces, const AutoSeamOptions& opts);
+LILA_SCENE_API OptCutsResult optCuts(geo::Mesh& mesh, std::span<const Index> faces, const AutoSeamOptions& opts);
 
 /** Seam length (3D) inside the faces: seam edges with both sides in the set. All live faces when empty. */
-double seamLength(const geo::Mesh& mesh, std::span<const Index> faces = {});
+LILA_SCENE_API double seamLength(const geo::Mesh& mesh, std::span<const Index> faces = {});
 } // namespace lila::uv

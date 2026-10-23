@@ -4,7 +4,7 @@ add_executable(lila_uv_tests
     test_uv_opt.cpp
     test_pack.cpp
     test_live.cpp)
-target_link_libraries(lila_uv_tests PRIVATE lila_uv doctest::doctest)
+target_link_libraries(lila_uv_tests PRIVATE LilaScene doctest::doctest)
 add_test(NAME lila_uv_tests COMMAND lila_uv_tests)
 
 add_executable(lila_uv_cmd_tests
@@ -12,9 +12,9 @@ add_executable(lila_uv_cmd_tests
     test_uv_commands.cpp
     test_uv_opt_commands.cpp
     test_live_commands.cpp)
-target_link_libraries(lila_uv_cmd_tests PRIVATE lila_uv_cmds doctest::doctest)
+target_link_libraries(lila_uv_cmd_tests PRIVATE LilaScene doctest::doctest)
 add_test(NAME lila_uv_cmd_tests COMMAND lila_uv_cmd_tests)
 
 # Visual check of the UV editor; not built by default.
 add_executable(lila_uv_editor_demo EXCLUDE_FROM_ALL uv_editor_demo.cpp)
-target_link_libraries(lila_uv_editor_demo PRIVATE lila_ui)
+target_link_libraries(lila_uv_editor_demo PRIVATE LilaUI)

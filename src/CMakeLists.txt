@@ -1,3 +1,18 @@
+# Lila is three shared libraries plus thin hosts. Each module below is an OBJECT library compiled into one of them:
+#   LilaFoundation  core, math, cmds (prefs, log, registries, events, the extension context)
+#   LilaScene       scene, geometry, deformers, io, fbx, uv, geometry nodes, link, python, mcp, extensions, ...
+#   LilaUI          render, ui, script editor, terminal
+# Only symbols marked LILA_<LIB>_API (src/core/Export.h) cross a library boundary.
+
+# lila_module(<name> <Foundation|Scene|UI> sources...): an OBJECT library compiled into Lila<lib>.
+function(lila_module name lib)
+    add_library(${name} OBJECT ${ARGN})
+    string(TOUPPER ${lib} upper)
+    target_compile_definitions(${name} PRIVATE LILA_${upper}_EXPORTS)
+    set_property(TARGET ${name} PROPERTY POSITION_INDEPENDENT_CODE ON)
+    set_property(GLOBAL APPEND PROPERTY LILA_${upper}_MODULES ${name})
+endfunction()
+
 add_subdirectory(core)
 add_subdirectory(math)
 add_subdirectory(cmds)
@@ -22,3 +37,23 @@ add_subdirectory(ui/terminal)
 add_subdirectory(ui/editor)
 add_subdirectory(ui)
 add_subdirectory(app)
+
+get_property(_foundation GLOBAL PROPERTY LILA_FOUNDATION_MODULES)
+get_property(_scene GLOBAL PROPERTY LILA_SCENE_MODULES)
+get_property(_ui GLOBAL PROPERTY LILA_UI_MODULES)
+
+add_library(LilaFoundation SHARED)
+target_link_libraries(LilaFoundation PRIVATE ${_foundation})
+target_include_directories(LilaFoundation PUBLIC ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/sdk/include)
+target_link_libraries(LilaFoundation PUBLIC nlohmann_json::nlohmann_json TBB::tbb glm::glm)
+target_compile_definitions(LilaFoundation PUBLIC GLM_FORCE_DEPTH_ZERO_TO_ONE GLM_ENABLE_EXPERIMENTAL LILA_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+if(LILA_TRACY)
+    target_link_libraries(LilaFoundation PUBLIC Tracy::TracyClient)
+    target_compile_definitions(LilaFoundation PUBLIC LILA_TRACY)
+endif()
+
+add_library(LilaScene SHARED)
+target_link_libraries(LilaScene PRIVATE ${_scene} PUBLIC LilaFoundation)
+
+add_library(LilaUI SHARED)
+target_link_libraries(LilaUI PRIVATE ${_ui} PUBLIC LilaScene Qt6::Widgets volk::volk Vulkan::Headers GPUOpen::VulkanMemoryAllocator)

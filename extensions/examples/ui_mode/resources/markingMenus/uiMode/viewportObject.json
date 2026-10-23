@@ -1,0 +1,4 @@
+{
+    "N": { "label": "Say Hello", "action": "uiMode.hello" },
+    "S": { "label": "Back to Lila", "action": "mode.lila" }
+}

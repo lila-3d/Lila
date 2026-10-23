@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "ui/terminal/VtScreen.h"
 
 #include <string>
@@ -16,10 +18,10 @@ enum class WheelAction : uint8_t
 };
 
 /** Shift always scrolls the local history, as in Windows Terminal; otherwise the program's modes decide. */
-WheelAction wheelAction(const VtScreen& screen, bool shift);
+LILA_UI_API WheelAction wheelAction(const VtScreen& screen, bool shift);
 
 /** Cursor up or down keys for one wheel notch, honouring application cursor keys. */
-std::string wheelKeys(const VtScreen& screen, bool up);
+LILA_UI_API std::string wheelKeys(const VtScreen& screen, bool up);
 
 enum class MouseButton : uint8_t
 {
@@ -49,5 +51,5 @@ struct MouseModifiers
  * The report for one mouse event at a 0-based cell under the screen's tracking mode and encoding. Empty when the mode
  * doesn't report this event (motion in 1000, releases in X10, a coordinate the legacy encoding can't carry).
  */
-std::string encodeMouse(const VtScreen& screen, MouseEventType type, MouseButton button, int col, int row, MouseModifiers mods = {});
+LILA_UI_API std::string encodeMouse(const VtScreen& screen, MouseEventType type, MouseButton button, int col, int row, MouseModifiers mods = {});
 } // namespace lila::term

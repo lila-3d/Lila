@@ -1,4 +1,4 @@
-add_library(lila_mcp STATIC
+lila_module(lila_mcp Scene
     AgentIntegration.cpp AgentIntegration.h
     AgentResources.cpp
     BuiltinTools.cpp

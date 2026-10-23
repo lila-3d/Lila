@@ -1,5 +1,8 @@
 #pragma once
 
+#include "core/Export.h"
+#include "core/Registry.h"
+
 #include <nlohmann/json.hpp>
 
 #include <functional>
@@ -41,7 +44,7 @@ struct FlagDef
 };
 
 /** Normalized call: positional args plus long-name flags, defaults filled in. */
-struct Args
+struct LILA_FOUNDATION_API Args
 {
     json positional = json::array();
     json flags = json::object();
@@ -91,27 +94,29 @@ struct ExecuteEvent
 
 namespace cmds
 {
-void registerCommand(CommandDef def);
-void unregisterCommand(std::string_view name);
-const CommandDef* find(std::string_view name);
-std::vector<const CommandDef*> all();
+/** Every command, owner-tagged; registerCommand and friends go through it. */
+LILA_FOUNDATION_API Registry<CommandDef>& registry();
+LILA_FOUNDATION_API void registerCommand(CommandDef def);
+LILA_FOUNDATION_API void unregisterCommand(std::string_view name);
+LILA_FOUNDATION_API const CommandDef* find(std::string_view name);
+LILA_FOUNDATION_API std::vector<const CommandDef*> all();
 
 /** `call` is {"args": [...], flag: value, ...}, flags by long or short name. Main thread only. Throws CommandError. */
-json execute(std::string_view name, const json& call, CallSource source = CallSource::Script);
+LILA_FOUNDATION_API json execute(std::string_view name, const json& call, CallSource source = CallSource::Script);
 
 /** Marks an already registered command adjustable (see CommandDef::adjustable). False if it isn't registered. */
-bool setAdjustable(std::string_view name, bool on = true);
+LILA_FOUNDATION_API bool setAdjustable(std::string_view name, bool on = true);
 
 /** Called around top-level executes only; commands run by other commands aren't reported. Returns an id. */
-int addExecuteListener(std::function<void(const ExecuteEvent&)> fn);
-void removeExecuteListener(int id);
+LILA_FOUNDATION_API int addExecuteListener(std::function<void(const ExecuteEvent&)> fn);
+LILA_FOUNDATION_API void removeExecuteListener(int id);
 
 /** Python source equivalent of a call, for echo. */
-std::string toPython(std::string_view name, const json& call);
+LILA_FOUNDATION_API std::string toPython(std::string_view name, const json& call);
 
 /** Selection provider for Args::objects(); installed by the scene module. */
-void setSelectionProvider(std::function<std::vector<std::string>()> fn);
+LILA_FOUNDATION_API void setSelectionProvider(std::function<std::vector<std::string>()> fn);
 
-void registerBuiltins();
+LILA_FOUNDATION_API void registerBuiltins();
 } // namespace cmds
 } // namespace lila

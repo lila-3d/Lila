@@ -1,5 +1,9 @@
 #pragma once
 
+#include "core/Export.h"
+#include "core/ExtensionContext.h"
+#include "core/Registry.h"
+
 #include "render/FrameState.h"
 #include "ui/Manipulator.h"
 #include "ui/Overlay.h"
@@ -13,6 +17,8 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace lila::ui
@@ -43,19 +49,45 @@ public:
 };
 
 /** A tool's status or hint line, centred along the top of the view. Queued and drawn by flushToolMessages once the HUD is placed. */
-void drawToolMessage(OverlayPainter& p, const ViewInfo& view, const QString& text, const glm::vec4& color = {0.95f, 0.95f, 0.95f, 1.0f});
+LILA_UI_API void drawToolMessage(OverlayPainter& p, const ViewInfo& view, const QString& text, const glm::vec4& color = {0.95f, 0.95f, 0.95f, 1.0f});
 /** Draws the queued tool messages, moved down past any of the occupied HUD rects they would cover. */
-void flushToolMessages(OverlayPainter& p, const ViewInfo& view, const std::vector<QRectF>& occupied);
+LILA_UI_API void flushToolMessages(OverlayPainter& p, const ViewInfo& view, const std::vector<QRectF>& occupied);
 
 namespace viewportTools
 {
-/** Replaces the active tool (deactivating the old one). nullptr goes back to select/move/rotate/scale. */
-void set(std::unique_ptr<ViewportTool> tool);
-ViewportTool* active();
-/** Asks every viewport to redraw, e.g. after a brush stroke. */
-void requestRedraw();
+/**
+ * A registered viewport tool: what activate(id) makes. Extensions register their tools this way rather than calling
+ * set() with their own instance, so unloading the extension can end its tool first.
+ */
+struct ToolDef
+{
+    std::string id;
+    QString label;
+    /** A Tabler icon name for toolbars and menus; may be empty. */
+    std::string icon;
+    std::function<std::unique_ptr<ViewportTool>()> create;
+};
 
-int addListener(std::function<void()> fn);
-void removeListener(int id);
+LILA_UI_API Registry<ToolDef>& registry();
+/** Throws std::invalid_argument when the id is taken. */
+LILA_UI_API const ToolDef& add(ToolDef def);
+/** For extensions: owned by ctx and removed when it unloads. Null, with a log message, if the id is taken. */
+LILA_UI_API const ToolDef* add(ext::Context& ctx, ToolDef def);
+/** Removing the definition of the active tool ends the tool first. */
+LILA_UI_API bool remove(std::string_view id);
+
+/** Makes the tool registered as id active. False when there is no such tool, or it made none. */
+LILA_UI_API bool activate(std::string_view id);
+/** The registered id of the active tool; empty when there is none, or it was set() directly. */
+LILA_UI_API const std::string& activeId();
+
+/** Replaces the active tool (deactivating the old one). nullptr goes back to select/move/rotate/scale. */
+LILA_UI_API void set(std::unique_ptr<ViewportTool> tool);
+LILA_UI_API ViewportTool* active();
+/** Asks every viewport to redraw, e.g. after a brush stroke. */
+LILA_UI_API void requestRedraw();
+
+LILA_UI_API int addListener(std::function<void()> fn);
+LILA_UI_API void removeListener(int id);
 } // namespace viewportTools
 } // namespace lila::ui

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "geo/Ops.h"
 #include "scene/Plug.h"
 #include "sculpt/Sculpt.h"
@@ -50,17 +52,17 @@ struct Session
 };
 
 /** The open session, or null. */
-std::shared_ptr<Session> active();
+LILA_SCENE_API std::shared_ptr<Session> active();
 
 /** Called on the main thread whenever the session opens, closes, or its proxy changes through a command or undo. */
-int addListener(std::function<void()> fn);
-void removeListener(int id);
-void notify();
+LILA_SCENE_API int addListener(std::function<void()> fn);
+LILA_SCENE_API void removeListener(int id);
+LILA_SCENE_API void notify();
 
 /** Follows the mesh's symmetry setting: call before each stroke. */
-void syncSymmetry(Session& s);
+LILA_SCENE_API void syncSymmetry(Session& s);
 
-uint64_t nextLiveToken();
+LILA_SCENE_API uint64_t nextLiveToken();
 
-void registerCommands();
+LILA_SCENE_API void registerCommands();
 } // namespace lila::sculpt

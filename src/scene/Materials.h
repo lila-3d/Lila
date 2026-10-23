@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/Node.h"
 
 #include <array>
@@ -87,34 +89,34 @@ namespace materials
 inline constexpr const char* kDefaultSlot = "Default";
 
 /** The material node a slot binds to, or null. */
-Node* find(Graph& g, std::string_view slot);
-std::vector<Node*> all(Graph& g);
+LILA_SCENE_API Node* find(Graph& g, std::string_view slot);
+LILA_SCENE_API std::vector<Node*> all(Graph& g);
 
 /** Creates a material node named exactly `name` when it is free (else made unique). Undoable. */
-Node* create(Graph& g, std::string_view name);
+LILA_SCENE_API Node* create(Graph& g, std::string_view name);
 
 /** Source channel (0 R, 1 G, 2 B) of occlusion, roughness and metallic in a packed map of this layout. */
-std::array<int, 3> packedChannels(material::PackedLayout layout);
+LILA_SCENE_API std::array<int, 3> packedChannels(material::PackedLayout layout);
 
 /** Texture channel names for setMaterialTexture ("baseColor", "normal", "orm", ...) and their attrs. */
-const std::vector<std::pair<std::string, int>>& textureChannels();
+LILA_SCENE_API const std::vector<std::pair<std::string, int>>& textureChannels();
 
 /** paths::resolvePath of a stored texture path, as UTF-8. */
-std::string resolvePath(const std::string& path);
+LILA_SCENE_API std::string resolvePath(const std::string& path);
 
 /** Slot index for name, added when missing. */
-int32_t slotIndex(geo::Mesh& mesh, const std::string& name);
+LILA_SCENE_API int32_t slotIndex(geo::Mesh& mesh, const std::string& name);
 /** Points every face (faces empty) or the given faces at the named slot, then drops slots no face uses. */
-void assign(geo::Mesh& mesh, const std::string& slot, const std::vector<uint32_t>& faces);
+LILA_SCENE_API void assign(geo::Mesh& mesh, const std::string& slot, const std::vector<uint32_t>& faces);
 /** Drops slots no face uses and renumbers the rest, keeping their order. */
-void pruneSlots(geo::Mesh& mesh);
+LILA_SCENE_API void pruneSlots(geo::Mesh& mesh);
 /** Slot name per face id; ids outside the names get "Material<id>", like the FBX exporter. */
-std::string slotName(const geo::Mesh& mesh, int32_t id);
+LILA_SCENE_API std::string slotName(const geo::Mesh& mesh, int32_t id);
 /** Faces per slot name, in slot order. */
-std::vector<std::pair<std::string, uint32_t>> slotUsage(const geo::Mesh& mesh);
+LILA_SCENE_API std::vector<std::pair<std::string, uint32_t>> slotUsage(const geo::Mesh& mesh);
 
-void registerTypes();
+LILA_SCENE_API void registerTypes();
 /** createMaterial, assignMaterial, listMaterials, materialInfo, setMaterialTexture, renameMaterial. */
-void registerCommands();
+LILA_SCENE_API void registerCommands();
 } // namespace materials
 } // namespace lila::scene

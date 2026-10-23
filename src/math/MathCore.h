@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <glm/glm.hpp>
 
 #include <algorithm>
@@ -54,27 +56,27 @@ inline constexpr double lerp(double a, double b, double alpha) { return a + alph
 inline constexpr double square(double a) { return a * a; }
 
 /** Wraps an angle in degrees into [0, 360). */
-double clampAxis(double degrees);
+LILA_FOUNDATION_API double clampAxis(double degrees);
 /** Wraps an angle in degrees into (-180, 180]. */
-double normalizeAxis(double degrees);
+LILA_FOUNDATION_API double normalizeAxis(double degrees);
 /** Clamps an angle to the arc [minDegrees, maxDegrees] taking the shorter way around; result in (-180, 180]. */
-double clampAngle(double degrees, double minDegrees, double maxDegrees);
+LILA_FOUNDATION_API double clampAngle(double degrees, double minDegrees, double maxDegrees);
 /** Wraps into [-180, 180]. */
-double unwindDegrees(double degrees);
+LILA_FOUNDATION_API double unwindDegrees(double degrees);
 /** Wraps into [-pi, pi]. */
-double unwindRadians(double radians);
+LILA_FOUNDATION_API double unwindRadians(double radians);
 
 /** Wraps value into [min, max], treating the range as cyclic. */
-double wrap(double value, double minValue, double maxValue);
-double gridSnap(double value, double grid);
-double getRangePct(double minValue, double maxValue, double value);
-double mapRangeUnclamped(double value, double inMin, double inMax, double outMin, double outMax);
-double mapRangeClamped(double value, double inMin, double inMax, double outMin, double outMax);
+LILA_FOUNDATION_API double wrap(double value, double minValue, double maxValue);
+LILA_FOUNDATION_API double gridSnap(double value, double grid);
+LILA_FOUNDATION_API double getRangePct(double minValue, double maxValue, double value);
+LILA_FOUNDATION_API double mapRangeUnclamped(double value, double inMin, double inMax, double outMin, double outMax);
+LILA_FOUNDATION_API double mapRangeClamped(double value, double inMin, double inMax, double outMin, double outMax);
 
 /** Eases toward target; speed <= 0 snaps. */
-double finterpTo(double current, double target, double deltaTime, double interpSpeed);
+LILA_FOUNDATION_API double finterpTo(double current, double target, double deltaTime, double interpSpeed);
 /** Moves toward target at a constant rate of interpSpeed units per second. */
-double finterpToConstant(double current, double target, double deltaTime, double interpSpeed);
+LILA_FOUNDATION_API double finterpToConstant(double current, double target, double deltaTime, double interpSpeed);
 
 enum class UpAxis : uint8_t
 {
@@ -83,8 +85,8 @@ enum class UpAxis : uint8_t
 };
 
 /** Process-wide up axis. The scene sets it when its up axis changes; reads are lock-free. */
-void setUpAxis(UpAxis axis);
-UpAxis upAxis();
+LILA_FOUNDATION_API void setUpAxis(UpAxis axis);
+LILA_FOUNDATION_API UpAxis upAxis();
 
 /** Semantic directions for the current up axis, in Lila space. See the table above. */
 struct AxisBasis
@@ -94,6 +96,6 @@ struct AxisBasis
     glm::dvec3 up;
 };
 
-const AxisBasis& axisBasis();
-const AxisBasis& axisBasis(UpAxis axis);
+LILA_FOUNDATION_API const AxisBasis& axisBasis();
+LILA_FOUNDATION_API const AxisBasis& axisBasis(UpAxis axis);
 } // namespace lila::math

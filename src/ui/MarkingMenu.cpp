@@ -3,6 +3,7 @@
 #include "scene/Graph.h"
 #include "scene/Materials.h"
 
+#include "core/ExtensionContext.h"
 #include "core/PrefStore.h"
 #include "ui/Actions.h"
 #include "ui/Icons.h"
@@ -25,9 +26,12 @@ namespace lila::ui
 {
 namespace
 {
-constexpr double kRadius = 95.0;
+// Far enough out that the taller items of neighbouring slots (N and NE) don't overlap.
+constexpr double kRadius = 110.0;
 constexpr double kDeadZone = 18.0;
-constexpr double kItemHeight = 24.0;
+constexpr double kItemHeight = 32.0;
+// Text inset from an item's left and right edges.
+constexpr double kPadX = 13.0;
 constexpr double kSeparatorHeight = 9.0;
 constexpr double kBoxWidth = 18.0;
 const char* kSlotNames[8] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
@@ -48,9 +52,168 @@ MarkingMenu* MarkingMenu::active()
     return gActive;
 }
 
+namespace markingMenus
+{
+namespace
+{
+constexpr const char* kLayer = "contributed";
+
+std::string& activeSetName()
+{
+    static std::string s;
+    return s;
+}
+} // namespace
+
+Registry<json>& registry()
+{
+    static Registry<json> r;
+    static int listener = r.addListener([](RegistryChange change, const std::string& name, const std::string&) {
+        if (change == RegistryChange::Removed)
+            PrefStore::get().removeDefaults("markingMenus/" + name, kLayer);
+        else if (const json* def = r.find(name))
+            PrefStore::get().setDefaults("markingMenus/" + name, kLayer, *def);
+    });
+    (void)listener;
+    return r;
+}
+
+void add(const std::string& name, json def, std::string owner)
+{
+    registry().put(name, def.is_object() ? std::move(def) : json::object(), std::move(owner));
+}
+
+uint64_t add(ext::Context& ctx, const std::string& name, json def)
+{
+    if (const std::string* owner = registry().ownerOf(name); owner && *owner != ctx.owner())
+    {
+        ctx.log(LogLevel::Error, "marking menu '" + name + "' already belongs to " + *owner);
+        return 0;
+    }
+    add(name, std::move(def), ctx.owner());
+    return ctx.track("markingMenu:" + name, [name, own = ctx.owner()] {
+        if (const std::string* o = registry().ownerOf(name); o && *o == own)
+            registry().remove(name);
+    });
+}
+
+bool remove(const std::string& name)
+{
+    return registry().remove(name);
+}
+
+void addSet(const std::string& set, const json& menus, std::string owner)
+{
+    if (!menus.is_object())
+        return;
+    for (auto& [name, def] : menus.items())
+        add(set + "/" + name, def, owner);
+}
+
+uint64_t addSet(ext::Context& ctx, const std::string& set, const json& menus)
+{
+    addSet(set, menus, ctx.owner());
+    return ctx.track("markingMenuSet:" + set, [set, own = ctx.owner()] {
+        for (const std::string& name : registry().owned(own))
+            if (name.starts_with(set + "/"))
+                registry().remove(name);
+    });
+}
+
+size_t removeSet(const std::string& set)
+{
+    size_t n = 0;
+    for (const std::string& name : registry().ids())
+        if (name.starts_with(set + "/"))
+            n += registry().remove(name) ? 1 : 0;
+    return n;
+}
+
+Registry<ItemAdd>& itemRegistry()
+{
+    static Registry<ItemAdd> r;
+    return r;
+}
+
+std::string addItem(ItemAdd add, std::string owner)
+{
+    std::string base = add.menu + "/" + add.slot + "/" + add.item.value("label", std::string());
+    std::string id = base;
+    for (int n = 2; itemRegistry().contains(id); ++n)
+        id = base + "#" + std::to_string(n);
+    itemRegistry().put(id, std::move(add), std::move(owner));
+    return id;
+}
+
+uint64_t addItem(ext::Context& ctx, ItemAdd add)
+{
+    std::string id = addItem(std::move(add), ctx.owner());
+    return ctx.track("markingMenuItem:" + id, [id, own = ctx.owner()] {
+        if (const std::string* o = itemRegistry().ownerOf(id); o && *o == own)
+            itemRegistry().remove(id);
+    });
+}
+
+bool removeItem(const std::string& id)
+{
+    return itemRegistry().remove(id);
+}
+
+void setActiveSet(std::string set)
+{
+    activeSetName() = std::move(set);
+}
+
+const std::string& activeSet()
+{
+    return activeSetName();
+}
+
+json resolve(const std::string& name)
+{
+    std::string used = name;
+    json def;
+    if (!activeSet().empty())
+    {
+        used = activeSet() + "/" + name;
+        def = PrefStore::get().merged("markingMenus/" + used);
+    }
+    if (!def.is_object() || def.empty())
+    {
+        used = name;
+        def = PrefStore::get().merged("markingMenus/" + name);
+    }
+    if (!def.is_object())
+        def = json::object();
+    for (ItemAdd* add : itemRegistry().allInOrder())
+    {
+        if (add->menu != used && add->menu != name)
+            continue;
+        if (add->slot == "overflow")
+        {
+            if (!def["overflow"].is_array())
+                def["overflow"] = json::array();
+            def["overflow"].push_back(add->item);
+        }
+        else if (std::find(std::begin(kSlotNames), std::end(kSlotNames), add->slot) != std::end(kSlotNames))
+            def[add->slot] = add->item;
+    }
+    return def;
+}
+
+std::vector<std::string> contributedNames()
+{
+    return registry().ids();
+}
+} // namespace markingMenus
+
 MarkingMenu* MarkingMenu::popup(const std::string& name, Trigger trigger, Qt::MouseButton button, std::optional<QPoint> at)
 {
-    json def = PrefStore::get().merged("markingMenus/" + name);
+    return popupDefinition(markingMenus::resolve(name), trigger, button, at);
+}
+
+MarkingMenu* MarkingMenu::popupDefinition(const json& def, Trigger trigger, Qt::MouseButton button, std::optional<QPoint> at)
+{
     if (!def.is_object() || def.empty())
         return nullptr;
     if (gActive)
@@ -157,7 +320,7 @@ void MarkingMenu::layout(Level& level) const
             continue;
         Item& it = *level.compass[i];
         bool box = hasOptionBox(it.action, it.children, it.boxAction);
-        double w = fm.horizontalAdvance(it.label) + 22 + (it.children.is_object() ? 12 : 0) + (box ? kBoxWidth : 0);
+        double w = fm.horizontalAdvance(it.label) + 2 * kPadX + 2 + (it.children.is_object() ? 12 : 0) + (box ? kBoxWidth : 0);
         QPointF p = level.center + kDirs[i] * kRadius;
         double x = kDirs[i].x() > 0.1 ? p.x() - 12 : kDirs[i].x() < -0.1 ? p.x() - w + 12 : p.x() - w / 2;
         it.rect = QRectF(x, p.y() - kItemHeight / 2, w, kItemHeight);
@@ -169,7 +332,7 @@ void MarkingMenu::layout(Level& level) const
     bool anyBox = false;
     for (Item& it : level.overflow)
     {
-        width = std::max(width, fm.horizontalAdvance(it.label) + 28 + (it.children.is_object() ? 12 : 0));
+        width = std::max(width, fm.horizontalAdvance(it.label) + 2 * kPadX + 9 + (it.children.is_object() ? 12 : 0));
         anyBox |= hasOptionBox(it.action, it.children, it.boxAction);
     }
     if (anyBox)
@@ -367,7 +530,7 @@ void MarkingMenu::paintEvent(QPaintEvent*)
             p.setBrush(hi && top ? hiBg : itemBg);
             p.drawPath(path);
             p.setPen(!it.enabled ? disabledText : hi && top ? hiText : text);
-            QRectF tr = it.rect.adjusted(10, 0, -10 - (it.box.isEmpty() ? 0 : it.box.width() - 4), 0);
+            QRectF tr = it.rect.adjusted(kPadX, 0, -kPadX - (it.box.isEmpty() ? 0 : it.box.width() - 4), 0);
             p.drawText(tr, Qt::AlignVCenter | Qt::AlignLeft, it.label);
             if (it.children.is_object())
                 p.drawText(tr, Qt::AlignVCenter | Qt::AlignRight, QString::fromUtf8("▸"));

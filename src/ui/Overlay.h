@@ -1,25 +1,38 @@
 #pragma once
 
+#include "core/Export.h"
+#include "core/ExtensionContext.h"
+
 #include "render/FrameState.h"
 
+#include <QImage>
 #include <QPointF>
 #include <QRectF>
 #include <QSizeF>
 #include <QString>
 
 #include <memory>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace lila::ui
 {
+struct OverlayAtlasData;
+
 /**
  * Builds a viewport's 2D overlay: thick anti-aliased lines, fills and text, in widget (logical) pixels. Converted to
  * physical pixels for the renderer, so callers never think about DPI.
  */
-class OverlayPainter
+class LILA_UI_API OverlayPainter
 {
 public:
-    OverlayPainter(std::vector<render::OverlayVertex>& out, double dpr) : mOut(out), mDpr(dpr) {}
+    /** Text and icons use the atlas current at the first that needs it; icons registered later show from the next painter on. */
+    OverlayPainter(std::vector<render::OverlayVertex>& out, double dpr);
+    ~OverlayPainter();
+
+    /** The atlas this painter's text and icons refer to: what the frame's FrameState::atlas must be. */
+    std::shared_ptr<const render::OverlayAtlas> atlas() const;
 
     void line(QPointF a, QPointF b, float width, const glm::vec4& color);
     void dashedLine(QPointF a, QPointF b, float width, float dash, const glm::vec4& color);
@@ -43,8 +56,8 @@ public:
     /** Text over a dark rounded plate, for readouts that must stay legible on any background. */
     void label(QPointF at, const QString& s, const glm::vec4& color = {0.95f, 0.95f, 0.95f, 1.0f});
     static float textWidth(const QString& s);
-    /** A Tabler icon from the atlas's set (kOverlayIcons in Overlay.cpp) filling r; false when it is not in the set. */
-    bool icon(QRectF r, const char* name, const glm::vec4& color);
+    /** An icon registered with overlayIcons, by id, filling r; false when there is none by that id. */
+    bool icon(QRectF r, std::string_view name, const glm::vec4& color);
 
     /** While on, lines, triangles and text get an under-stroke that contrasts with their own color. */
     void setShadow(bool on) { mShadow = on; }
@@ -76,6 +89,8 @@ private:
 
     std::vector<render::OverlayVertex>& mOut;
     double mDpr;
+    const OverlayAtlasData& atlasData() const;
+    mutable std::shared_ptr<const OverlayAtlasData> mAtlas;
     bool mShadow = false;
     std::vector<float> mBackdrop;
     int mBackdropCols = 0, mBackdropRows = 0;
@@ -83,6 +98,36 @@ private:
     float mBackdropMean = 0.0f;
 };
 
-/** The glyph atlas every viewport shares. Built on first use from the UI font. */
-std::shared_ptr<const render::OverlayAtlas> overlayAtlas();
+/** The glyph and icon atlas every viewport shares. Built on first use from the UI font, rebuilt when icons change. */
+LILA_UI_API std::shared_ptr<const render::OverlayAtlas> overlayAtlas();
+
+/**
+ * The icons OverlayPainter::icon() can draw, baked into the overlay atlas as coverage (alpha only: the painter tints
+ * them). Adding or removing one rebuilds the atlas before the next frame. Lila registers the Tabler icons its cursor
+ * badges use; anything else is registered by id from a Tabler name, an SVG/PNG file or an image.
+ */
+namespace overlayIcons
+{
+struct Source
+{
+    /** A Tabler icon name (resources/icons/tabler), or empty. */
+    QString tabler;
+    /** An SVG or PNG file, or empty. */
+    QString file;
+    /** Used when tabler and file are empty. */
+    QImage image;
+};
+
+/** Adds id, or replaces what it showed. owner is an extension id, empty for Lila. */
+LILA_UI_API void add(std::string id, Source source, std::string owner = {});
+/** For extensions: owned by ctx and removed when it unloads. 0, with a log message, when the id is taken. */
+LILA_UI_API ext::Context::Handle add(ext::Context& ctx, std::string id, Source source);
+LILA_UI_API bool remove(std::string_view id);
+/** Everything owner added. Returns the count. */
+LILA_UI_API size_t removeOwned(std::string_view owner);
+LILA_UI_API bool contains(std::string_view id);
+LILA_UI_API std::vector<std::string> ids();
+/** Counts changes to the set, so callers can tell when the atlas will be rebuilt. */
+LILA_UI_API uint64_t generation();
+} // namespace overlayIcons
 } // namespace lila::ui

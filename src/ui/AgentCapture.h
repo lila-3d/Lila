@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QImage>
 
 #include <optional>
@@ -42,18 +44,18 @@ struct Timing
  * Renders one view. Starts the renderer if it is not running (batch mode). Throws std::runtime_error. timing receives
  * the GPU time where the device has timestamps: the median of `repeat` draws of the same frame.
  */
-QImage render(const Options& o, Timing* timing = nullptr, int repeat = 1);
+LILA_UI_API QImage render(const Options& o, Timing* timing = nullptr, int repeat = 1);
 
 /** count views around the up axis (from the front, turning toward the right) tiled into one image, row by row. */
-QImage turntable(Options o, int count, double pitch, int columns, std::vector<std::string>* labels = nullptr);
+LILA_UI_API QImage turntable(Options o, int count, double pitch, int columns, std::vector<std::string>* labels = nullptr);
 
 /** Several named views tiled into one image, row by row (front, right, top, three-quarter by default). */
-QImage sheet(Options o, const std::vector<std::string>& views, int columns);
+LILA_UI_API QImage sheet(Options o, const std::vector<std::string>& views, int columns);
 
 /** PNG file contents. */
-std::string png(const QImage& image);
+LILA_UI_API std::string png(const QImage& image);
 
 /** captureView / captureTurntable commands (write PNG files) and the MCP image tools. */
-void registerCommands();
-void registerMcpTools();
+LILA_UI_API void registerCommands();
+LILA_UI_API void registerMcpTools();
 } // namespace lila::ui::capture

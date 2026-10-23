@@ -1,5 +1,6 @@
 #include "ui/Hotkeys.h"
 
+#include "core/ExtensionContext.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "ui/Actions.h"
@@ -146,41 +147,111 @@ void Hotkeys::install()
     qApp->installEventFilter(this);
 }
 
+Registry<hotkeyLayers::Layer>& hotkeyLayers::registry()
+{
+    static Registry<Layer> r;
+    static int listener = r.addListener([](RegistryChange change, const std::string& id, const std::string&) {
+        std::string layer = "layer:" + id;
+        if (change == RegistryChange::Removed)
+        {
+            PrefStore::get().removeDefaults("hotkeys", layer);
+            return;
+        }
+        const Layer* l = r.find(id);
+        if (!l)
+            return;
+        json contexts = l->contexts.is_object() ? l->contexts : json::object();
+        PrefStore::get().setDefaults("hotkeys", layer,
+                                     l->mode.empty() ? json{{"contexts", contexts}} : json{{"modes", {{l->mode, {{"contexts", contexts}}}}}});
+    });
+    (void)listener;
+    return r;
+}
+
+void hotkeyLayers::add(Layer layer, std::string owner)
+{
+    std::string id = layer.id;
+    registry().put(std::move(id), std::move(layer), std::move(owner));
+}
+
+uint64_t hotkeyLayers::add(ext::Context& ctx, Layer layer)
+{
+    if (const std::string* owner = registry().ownerOf(layer.id); owner && *owner != ctx.owner())
+    {
+        ctx.log(LogLevel::Error, "hotkey layer '" + layer.id + "' already belongs to " + *owner);
+        return 0;
+    }
+    std::string id = layer.id;
+    add(std::move(layer), ctx.owner());
+    return ctx.track("hotkeyLayer:" + id, [id, own = ctx.owner()] {
+        if (const std::string* o = registry().ownerOf(id); o && *o == own)
+            registry().remove(id);
+    });
+}
+
+bool hotkeyLayers::remove(const std::string& id)
+{
+    return registry().remove(id);
+}
+
 void Hotkeys::reload()
 {
     json def = PrefStore::get().merged("hotkeys");
     mHoldDelay = def.value("holdDelayMs", 180);
     mContexts.clear();
-    if (!def.contains("contexts") || !def["contexts"].is_object())
-        return;
-    for (auto& [context, keys] : def["contexts"].items())
-    {
-        if (!keys.is_object())
-            continue;
-        auto& list = mContexts[context];
-        for (auto& [keyText, value] : keys.items())
+    mModeContexts.clear();
+    // Calls fn(context, chord, key text, value) for each parseable key of a {"context": {"key": value}} object.
+    auto eachKey = [](const json& contexts, auto fn) {
+        if (!contexts.is_object())
+            return;
+        for (auto& [context, keys] : contexts.items())
         {
-            QKeySequence seq = QKeySequence::fromString(QString::fromStdString(keyText), QKeySequence::PortableText);
-            if (seq.isEmpty())
-            {
-                log::warn("hotkeys: can't parse key '{}'", keyText);
+            if (!keys.is_object())
                 continue;
+            for (auto& [keyText, value] : keys.items())
+            {
+                QKeySequence seq = QKeySequence::fromString(QString::fromStdString(keyText), QKeySequence::PortableText);
+                if (seq.isEmpty())
+                {
+                    log::warn("hotkeys: can't parse key '{}'", keyText);
+                    continue;
+                }
+                QKeyCombination combo = seq[0];
+                auto [mods, key] = hotkeys::normalizeShifted(int(combo.keyboardModifiers()) & kModMask, int(combo.key()));
+                fn(context, Chord{mods, key, usScancode(key)}, seq.toString(QKeySequence::NativeText), value);
             }
-            QKeyCombination combo = seq[0];
-            auto [mods, key] = hotkeys::normalizeShifted(int(combo.keyboardModifiers()) & kModMask, int(combo.key()));
-            Chord chord{mods, key, usScancode(key)};
-            Binding b;
-            b.keyText = seq.toString(QKeySequence::NativeText);
-            b.targets = hotkeys::splitSlots(value);
-            if (b.targets.empty())
-                continue; // null unbinds a default
-            list.emplace_back(chord, std::move(b));
         }
-    }
+    };
+    eachKey(def.value("contexts", json::object()), [this](const std::string& context, Chord chord, QString keyText, const json& value) {
+        Binding b;
+        b.keyText = std::move(keyText);
+        b.targets = hotkeys::splitSlots(value);
+        if (!b.targets.empty()) // null unbinds a default
+            mContexts[context].emplace_back(chord, std::move(b));
+    });
+    if (!mMode.empty())
+        eachKey(def.value(json::json_pointer("/modes/" + mMode + "/contexts"), json::object()),
+                [this](const std::string& context, Chord chord, QString keyText, const json& value) {
+                    mModeContexts[context].emplace_back(chord, Over{value, std::move(keyText)});
+                });
+}
+
+void Hotkeys::setMode(const std::string& mode)
+{
+    if (mode == mMode)
+        return;
+    mMode = mode;
+    releaseAll();
+    reload();
 }
 
 QString Hotkeys::keyFor(const std::string& actionId) const
 {
+    for (const char* ctx : {"global", "viewport"})
+        if (auto it = mModeContexts.find(ctx); it != mModeContexts.end())
+            for (auto& [chord, over] : it->second)
+                if (hotkeys::Slots s = hotkeys::overlaySlots({}, over.value); s.press.is_string() && s.press.get<std::string>() == actionId)
+                    return over.keyText;
     for (const char* ctx : {"global", "viewport"})
     {
         auto it = mContexts.find(ctx);
@@ -219,7 +290,7 @@ bool Hotkeys::textInputFocused(QWidget* w)
                  qobject_cast<QAbstractSpinBox*>(w) || w->property("hotkeysOff").toBool());
 }
 
-const Hotkeys::Binding* Hotkeys::lookup(QKeyEvent* e, QWidget* focus) const
+std::optional<Hotkeys::Binding> Hotkeys::lookup(QKeyEvent* e, QWidget* focus) const
 {
     auto [mods, key] = hotkeys::normalizeShifted(int(e->modifiers()) & kModMask, e->key());
     uint32_t scan = eventScancode(e);
@@ -243,21 +314,33 @@ const Hotkeys::Binding* Hotkeys::lookup(QKeyEvent* e, QWidget* focus) const
             chain.push_back(ctx.toStdString());
     chain.push_back("global");
 
+    auto matches = [&](const Chord& chord) { return chord.mods == mods && (chord.scan && scan ? chord.scan == scan : chord.qtKey == key); };
     for (const std::string& ctx : chain)
     {
-        auto it = mContexts.find(ctx);
-        if (it == mContexts.end())
-            continue;
-        for (auto& [chord, b] : it->second)
+        const Binding* own = nullptr;
+        if (auto it = mContexts.find(ctx); it != mContexts.end())
+            for (auto& [chord, b] : it->second)
+                if (!own && matches(chord))
+                    own = &b;
+        const Over* over = nullptr;
+        if (auto it = mModeContexts.find(ctx); it != mModeContexts.end())
+            for (auto& [chord, o] : it->second)
+                if (!over && matches(chord))
+                    over = &o;
+        if (!over)
         {
-            if (chord.mods != mods)
-                continue;
-            bool match = chord.scan && scan ? chord.scan == scan : chord.qtKey == key;
-            if (match)
-                return &b;
+            if (own)
+                return *own;
+            continue;
         }
+        Binding b = own ? *own : Binding{{}, over->keyText};
+        b.targets = hotkeys::overlaySlots(b.targets, over->value);
+        // A mode that nulls every slot of a key unbinds it while the mode is on.
+        if (b.targets.empty())
+            return std::nullopt;
+        return b;
     }
-    return nullptr;
+    return std::nullopt;
 }
 
 bool Hotkeys::eventFilter(QObject* obj, QEvent* e)
@@ -355,7 +438,8 @@ bool Hotkeys::eventFilter(QObject* obj, QEvent* e)
     if (listNavigationFocused(focus) && mods == 0 && isArrowKey(k->key()))
         return false;
 
-    const Binding* b = lookup(k, focus);
+    std::optional<Binding> found = lookup(k, focus);
+    const Binding* b = found ? &*found : nullptr;
     if (!b)
     {
         // Eats unbound letters so the view doesn't jump to the first item starting with one.

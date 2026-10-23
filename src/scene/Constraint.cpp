@@ -1,6 +1,7 @@
 #include "scene/Constraint.h"
 
 #include "core/Profile.h"
+#include "scene/AnimLayer.h"
 #include "scene/Rig.h"
 #include "scene/RigUtil.h"
 #include "scene/TransformOps.h"
@@ -156,12 +157,24 @@ using Kind = ConstraintNode::Kind;
 bool drivesTranslate(Kind k) { return k == Kind::Parent || k == Kind::Point; }
 bool drivesRotate(Kind k) { return k != Kind::Point; }
 
+/** The constraint driving obj.attr: through its blend, or connected straight to the plug (older scenes). */
+ConstraintNode* constraintOn(Graph& g, NodeId obj, int attr)
+{
+    if (auto src = g.source({obj, attr, -1}))
+        return dynamic_cast<ConstraintNode*>(g.node(src->node));
+    for (NodeId b : anim::blendChain(g, {obj, attr, -1}))
+        if (!anim::layerOf(g, b))
+            if (auto src = g.source({b, anim::BlendNode::kInputB, -1}))
+                if (auto* c = dynamic_cast<ConstraintNode*>(g.node(src->node)))
+                    return c;
+    return nullptr;
+}
+
 ConstraintNode* existingConstraint(Graph& g, NodeId obj, Kind kind)
 {
     for (int attr : {int(Transform::kTranslate), int(Transform::kRotate)})
-        if (auto src = g.source({obj, attr, -1}))
-            if (auto* c = dynamic_cast<ConstraintNode*>(g.node(src->node)); c && c->kind == kind)
-                return c;
+        if (auto* c = constraintOn(g, obj, attr); c && c->kind == kind)
+            return c;
     return nullptr;
 }
 
@@ -209,8 +222,8 @@ json makeConstraint(Kind kind, const Args& a)
     bool created = !c;
     if (created)
         for (int attr : {int(Transform::kTranslate), int(Transform::kRotate)})
-            if ((attr == Transform::kTranslate ? drivesTranslate(kind) : drivesRotate(kind)) && g.source({objId, attr, -1}))
-                throw CommandError(std::string(cmd) + ": " + g.plugName({objId, attr, -1}) + " is already driven");
+            if ((attr == Transform::kTranslate ? drivesTranslate(kind) : drivesRotate(kind)) && constraintOn(g, objId, attr))
+                throw CommandError(std::string(cmd) + ": " + g.plugName({objId, attr, -1}) + " is already constrained");
     if (!c)
     {
         std::string name = a.has("name") ? a.get<std::string>("name") : obj.name() + "_" + cmd;
@@ -307,12 +320,13 @@ json makeConstraint(Kind kind, const Args& a)
     else if (a.has("offset") && kind != Kind::Parent)
         g.setValue({id, ConstraintNode::kOffset}, vec3Of(a.flags["offset"]));
 
+    // Through a blend at the bottom of the channel's chain, so the channel stays keyable and layerable.
     if (created)
         guarded([&] {
             if (drivesTranslate(kind))
-                g.connect({id, ConstraintNode::kConstraintTranslate, -1}, {objId, Transform::kTranslate, -1});
+                anim::insertConstraintBlend(g, {objId, Transform::kTranslate, -1}, {id, ConstraintNode::kConstraintTranslate, -1});
             if (drivesRotate(kind))
-                g.connect({id, ConstraintNode::kConstraintRotate, -1}, {objId, Transform::kRotate, -1});
+                anim::insertConstraintBlend(g, {objId, Transform::kRotate, -1}, {id, ConstraintNode::kConstraintRotate, -1});
             return 0;
         });
     return g.node(id)->name();
@@ -388,8 +402,8 @@ void registerConstraintCommandsImpl()
                     list.push_back(n.id());
                 else
                     for (int attr : {int(Transform::kTranslate), int(Transform::kRotate)})
-                        if (auto src = g.source({n.id(), attr, -1}); src && dynamic_cast<ConstraintNode*>(g.node(src->node)))
-                            list.push_back(src->node);
+                        if (ConstraintNode* c = constraintOn(g, n.id(), attr))
+                            list.push_back(c->id());
             }
             std::sort(list.begin(), list.end());
             list.erase(std::unique(list.begin(), list.end()), list.end());
@@ -403,6 +417,18 @@ void registerConstraintCommandsImpl()
                     PlugValue v = g.node(id)->value(out);
                     for (const PlugRef& d : g.destinations({id, out, -1}))
                     {
+                        Node* dn = g.node(d.node);
+                        if (dn && anim::isBlend(*dn) && d.attr == anim::BlendNode::kInputB)
+                        {
+                            // Unanimated channels keep the constrained pose; animated ones go back to their keys.
+                            g.disconnect(d);
+                            PlugRef base{d.node, anim::BlendNode::kInputA, -1};
+                            for (int c = 0; c < 3; ++c)
+                                if (!g.source(base) && !g.source({d.node, base.attr, c}))
+                                    g.setValue({d.node, base.attr, c}, std::get<glm::dvec3>(v)[c]);
+                            anim::removeBlend(g, d.node, false);
+                            continue;
+                        }
                         g.disconnect(d);
                         g.setValue(d, v);
                     }

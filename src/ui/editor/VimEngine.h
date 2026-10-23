@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QHash>
 #include <QString>
 #include <QStringList>
@@ -52,7 +54,7 @@ public:
  * otherwise <Esc> <CR> <BS> <Del> <Tab> <Left> <Right> <Up> <Down> <Home> <End>, and <C-x> for Ctrl+letter.
  * In insert mode only <Esc> (and <C-[>) is consumed; the caller types everything else into the buffer itself.
  */
-class Engine
+class LILA_UI_API Engine
 {
 public:
     explicit Engine(Buffer& buffer);

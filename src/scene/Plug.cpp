@@ -2,6 +2,9 @@
 
 #include "scene/MeshData.h"
 
+#include "core/ExtensionContext.h"
+#include "core/Log.h"
+
 #include <tbb/parallel_for.h>
 
 #include <map>
@@ -11,16 +14,32 @@ namespace lila::scene
 {
 namespace
 {
-std::map<std::string, std::function<DataPtr(const json&)>>& dataKinds()
+Registry<data::FromJson>& dataKinds()
 {
-    static std::map<std::string, std::function<DataPtr(const json&)>> kinds;
-    return kinds;
+    return data::kinds();
 }
 } // namespace
 
-void data::registerKind(const std::string& kind, std::function<DataPtr(const json&)> fromJson)
+Registry<data::FromJson>& data::kinds()
 {
-    dataKinds()[kind] = std::move(fromJson);
+    static Registry<FromJson> r;
+    return r;
+}
+
+void data::registerKind(const std::string& kind, FromJson fromJson)
+{
+    kinds().put(kind, std::move(fromJson));
+}
+
+bool data::registerKind(ext::Context& ctx, const std::string& kind, FromJson fromJson)
+{
+    if (kinds().contains(kind))
+    {
+        log::error("extension {}: data kind '{}' is already registered", ctx.owner(), kind);
+        return false;
+    }
+    ctx.add(kinds(), "dataKind", kind, std::move(fromJson));
+    return true;
 }
 
 json toJson(const PlugValue& v)
@@ -107,11 +126,15 @@ PlugValue fromJson(const AttrDef& def, const json& j)
             return DataPtr();
         if (j.is_object() && j.contains("kind") && j["kind"].is_string())
         {
-            auto it = dataKinds().find(j["kind"].get<std::string>());
-            if (it == dataKinds().end())
+            const data::FromJson* fromJson = dataKinds().find(j["kind"].get<std::string>());
+            if (!fromJson)
                 throw std::invalid_argument("unknown data kind '" + j["kind"].get<std::string>() + "'");
-            return it->second(j);
+            return (*fromJson)(j);
         }
+        // A bare value for a Data attr whose default names its kind: that kind's loader gets it as {"kind", "value"}.
+        if (const DataPtr* d = std::get_if<DataPtr>(&def.defaultValue); d && *d)
+            if (const data::FromJson* fromJson = dataKinds().find((*d)->kind()))
+                return (*fromJson)(json{{"kind", (*d)->kind()}, {"value", j}});
         break;
     }
     throw std::invalid_argument(std::string("expected ") + typeName(def.type) + ", got " + j.dump());

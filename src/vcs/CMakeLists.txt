@@ -1,4 +1,4 @@
-add_library(lila_vcs STATIC
+lila_module(lila_vcs Scene
     GitProvider.cpp
     PerforceProvider.cpp
     Process.cpp

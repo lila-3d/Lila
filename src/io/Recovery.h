@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "io/SceneHistory.h"
 
 #include <cstdint>
@@ -32,23 +34,23 @@ struct Session
     std::vector<SessionScene> scenes;
 };
 
-fs::path sessionsDir();
-int64_t currentPid();
-int64_t nowMs();
+LILA_SCENE_API fs::path sessionsDir();
+LILA_SCENE_API int64_t currentPid();
+LILA_SCENE_API int64_t nowMs();
 
 /** True when pid is a live process that started no later than startedMs (so it is the one that wrote the file). */
-bool processAlive(int64_t pid, int64_t startedMs);
+LILA_SCENE_API bool processAlive(int64_t pid, int64_t startedMs);
 
 using AliveFn = std::function<bool(int64_t pid, int64_t startedMs)>;
 /** Session files in dir whose process is gone. A file carrying selfPid is always stale: it predates this process. */
-std::vector<Session> staleSessions(const fs::path& dir, int64_t selfPid, const AliveFn& alive = processAlive);
+LILA_SCENE_API std::vector<Session> staleSessions(const fs::path& dir, int64_t selfPid, const AliveFn& alive = processAlive);
 
 /** Writes this process's session file and keeps it up to date as the scene and workspace change. */
-void beginSession(const fs::path& dir = sessionsDir());
+LILA_SCENE_API void beginSession(const fs::path& dir = sessionsDir());
 /** Records that the session had scene open with autosaves going to folder. */
-void noteScene(const fs::path& scene, const fs::path& folder);
+LILA_SCENE_API void noteScene(const fs::path& scene, const fs::path& folder);
 /** Removes this process's session file; call on a clean exit. */
-void endSession();
+LILA_SCENE_API void endSession();
 
 /** An autosave or emergency save newer than the scene's saved file, written during a session that crashed. */
 struct Candidate
@@ -61,11 +63,11 @@ struct Candidate
 };
 
 /** Newest recoverable file per scene across sessions, newest first. */
-std::vector<Candidate> findRecoverable(const std::vector<Session>& sessions);
+LILA_SCENE_API std::vector<Candidate> findRecoverable(const std::vector<Session>& sessions);
 
 /** Deletes the session files, once their recovery has been offered. */
-void forget(const std::vector<Session>& sessions);
+LILA_SCENE_API void forget(const std::vector<Session>& sessions);
 
 /** Hooks io::emergencySave() into the crash handler. */
-void installCrashSave();
+LILA_SCENE_API void installCrashSave();
 } // namespace lila::io::recovery

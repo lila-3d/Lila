@@ -6,6 +6,7 @@ add_executable(lila_tests
     test_references.cpp
     test_meshes.cpp
     test_modeling.cpp
+    test_knife.cpp
     test_modifiers.cpp
     test_modstack.cpp
     test_docs.cpp
@@ -37,19 +38,23 @@ add_executable(lila_tests
     test_tearoff.cpp
     test_visibility.cpp
     test_display_layers.cpp
+    test_object_sets.cpp
     test_create_select.cpp
     test_camera.cpp
     test_locks.cpp
-    test_paths.cpp)
-target_link_libraries(lila_tests PRIVATE lila_io lila_layouts lila_render doctest::doctest)
+    test_paths.cpp
+    test_text_match.cpp
+    test_ui_registries.cpp
+    test_viewport_ext.cpp)
+target_link_libraries(lila_tests PRIVATE LilaUI doctest::doctest)
 add_test(NAME lila_tests COMMAND lila_tests)
 
 if(WIN32)
     # Real crashes of a helper process, checked through the watchdog's report; kept out of lila_tests for speed.
     add_executable(lila_crashtest crash_helper.cpp)
-    target_link_libraries(lila_crashtest PRIVATE lila_core)
+    target_link_libraries(lila_crashtest PRIVATE LilaFoundation)
     add_executable(lila_crash_tests test_crash_watch.cpp)
-    target_link_libraries(lila_crash_tests PRIVATE lila_core doctest::doctest)
+    target_link_libraries(lila_crash_tests PRIVATE LilaFoundation doctest::doctest)
     add_dependencies(lila_crash_tests lila_crashtest lilacrash lilawer)
     add_test(NAME lila_crash_tests COMMAND lila_crash_tests)
 endif()
@@ -65,8 +70,14 @@ add_subdirectory(hk)
 add_subdirectory(link)
 add_subdirectory(fbx)
 add_subdirectory(anim)
+add_subdirectory(sim)
+if(TARGET lila_puppeteer_extension)
+    add_subdirectory(puppeteer_anim)
+    add_subdirectory(puppeteer)
+endif()
 add_subdirectory(uv)
 add_subdirectory(rig)
+add_subdirectory(rigtemplates)
 add_subdirectory(gn)
 add_subdirectory(retopo)
 add_subdirectory(sculpt)

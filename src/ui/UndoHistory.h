@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QWidget>
 
 class QLabel;
@@ -11,7 +13,7 @@ namespace lila::ui
 inline constexpr const char* kUndoHistoryDock = "undoHistory";
 
 /** Compact list of undo steps: click a row to undo or redo to it. */
-class UndoHistoryPanel : public QWidget
+class LILA_UI_API UndoHistoryPanel : public QWidget
 {
 public:
     explicit UndoHistoryPanel(QWidget* parent = nullptr);

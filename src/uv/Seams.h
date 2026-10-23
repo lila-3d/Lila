@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "uv/Chart.h"
 
 #include <span>
@@ -48,17 +50,17 @@ struct AutoSeamResult
  * cheapest path (short, along creases, out of sight) and split where it cannot flatten without stretch.
  * Writes "seam" on the faces' edges (all live faces when empty).
  */
-AutoSeamResult autoSeams(geo::Mesh& mesh, std::span<const Index> faces = {}, const AutoSeamOptions& opts = {});
+LILA_SCENE_API AutoSeamResult autoSeams(geo::Mesh& mesh, std::span<const Index> faces = {}, const AutoSeamOptions& opts = {});
 
 /**
  * Adds the fewest seams that turn each island of the faces (from current seams) into a disk: closed parts
  * are split in two, tubes and holed islands are cut along the cheapest path. Returns the seams added.
  */
-Index cutToDisks(geo::Mesh& mesh, std::span<const Index> faces = {});
+LILA_SCENE_API Index cutToDisks(geo::Mesh& mesh, std::span<const Index> faces = {});
 
 /** Per edge capacity: the price of cutting each edge of the faces (its length, less where hidden, creased or concave). */
-std::vector<double> seamCosts(const geo::Mesh& mesh, std::span<const Index> faces, bool visibility = true);
+LILA_SCENE_API std::vector<double> seamCosts(const geo::Mesh& mesh, std::span<const Index> faces, bool visibility = true);
 
 /** Per point capacity: how open each point is to the sky, 0 (enclosed) to 1. Ray traced, parallel. */
-std::vector<float> pointVisibility(const geo::Mesh& mesh, int rays = 16);
+LILA_SCENE_API std::vector<float> pointVisibility(const geo::Mesh& mesh, int rays = 16);
 } // namespace lila::uv

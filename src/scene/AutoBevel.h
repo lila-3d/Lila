@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "geo/FoldEdges.h"
 #include "scene/Modifiers.h"
 
@@ -17,7 +19,7 @@ namespace lila::scene
  * Hand edits to an autoBevelModifier's edge set, stored as edge refs on the modifier's input mesh so they survive
  * upstream topology changes (see geo::EdgeMatcher). The capacities say which mesh the ids belong to.
  */
-struct BevelOverrides final : Data
+struct LILA_SCENE_API BevelOverrides final : Data
 {
     std::vector<geo::EdgeRef> add;
     std::vector<geo::EdgeRef> remove;
@@ -43,20 +45,20 @@ struct BevelEdgeSet final : Data
 
 namespace autoBevel
 {
-bool isAutoBevel(const Node& n);
+LILA_SCENE_API bool isAutoBevel(const Node& n);
 /** The modifier's last picked edges, null before it evaluated. Evaluates the graph. */
-std::shared_ptr<const BevelEdgeSet> chosen(Graph& g, NodeId modifier);
+LILA_SCENE_API std::shared_ptr<const BevelEdgeSet> chosen(Graph& g, NodeId modifier);
 /** The mesh node at the top of the modifier's chain, kNoNode if it feeds none. */
-NodeId meshOf(Graph& g, NodeId modifier);
-bool editing(const Node& modifier);
+LILA_SCENE_API NodeId meshOf(Graph& g, NodeId modifier);
+LILA_SCENE_API bool editing(const Node& modifier);
 
 /**
  * A direct edit compacted the base mesh: overrides of an autoBevelModifier sitting first in the stack follow
  * their edges to the new ids. Records undo with the edit.
  */
-void baseRemapped(Graph& g, NodeId mesh, const geo::MeshRemap& remap, const geo::Mesh& base);
+LILA_SCENE_API void baseRemapped(Graph& g, NodeId mesh, const geo::MeshRemap& remap, const geo::Mesh& base);
 
-void registerTypes();
-void registerCommands();
+LILA_SCENE_API void registerTypes();
+LILA_SCENE_API void registerCommands();
 } // namespace autoBevel
 } // namespace lila::scene

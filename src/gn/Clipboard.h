@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "gn/Group.h"
 
 #include <string>
@@ -20,12 +22,12 @@ inline constexpr const char* kClipboardFormat = "lila.geometryNodes";
 inline constexpr int kClipboardVersion = 1;
 
 /** The named nodes as text. Group Output is left out. Throws std::invalid_argument for a name not in the group. */
-std::string copyNodesText(const Group& g, const std::vector<std::string>& names);
+LILA_SCENE_API std::string copyNodesText(const Group& g, const std::vector<std::string>& names);
 
 /**
  * Adds the nodes in text to g, centred on `at` and renamed where taken; returns their new names in order. Also takes
  * a saved group definition, and text around the JSON (a forum post, a code fence). Validates everything first: on
  * any problem it throws std::invalid_argument naming each one and leaves g untouched.
  */
-std::vector<std::string> pasteNodesText(Group& g, std::string_view text, glm::dvec2 at);
+LILA_SCENE_API std::vector<std::string> pasteNodesText(Group& g, std::string_view text, glm::dvec2 at);
 } // namespace lila::gn

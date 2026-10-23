@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/Plug.h"
 
 #include <QWidget>
@@ -17,7 +19,7 @@ class CurveView;
  * box; Shift adds, Ctrl removes) and drags them, Shift constrains to one axis; MMB drags the selected keys too.
  * Selected keys show tangent handles. Every edit runs through commands, so it undoes.
  */
-class GraphEditor : public QWidget
+class LILA_UI_API GraphEditor : public QWidget
 {
 public:
     explicit GraphEditor(QWidget* parent = nullptr);

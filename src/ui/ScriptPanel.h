@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QWidget>
 
 class QPlainTextEdit;
@@ -8,7 +10,7 @@ class QLineEdit;
 namespace lila::ui
 {
 /** Log/output view plus a one-line Python prompt. The full editor (Monaco) replaces the prompt later. */
-class ScriptPanel : public QWidget
+class LILA_UI_API ScriptPanel : public QWidget
 {
     Q_OBJECT
 

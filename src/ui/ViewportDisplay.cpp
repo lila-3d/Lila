@@ -27,6 +27,18 @@ bool defaultMaterial()
     return PrefStore::get().value<bool>("general", kDefaultMaterial, false);
 }
 
+bool accentColors(const char* key)
+{
+    const PrefStore& p = PrefStore::get();
+    return accentColors(p.value<bool>("general", kMonotone, false), p.value<bool>("general", key, true));
+}
+
+glm::vec3 axisColor(int axis)
+{
+    static constexpr glm::vec3 kAxes[3] = {{0.85f, 0.40f, 0.40f}, {0.50f, 0.80f, 0.42f}, {0.42f, 0.56f, 0.90f}};
+    return kAxes[std::clamp(axis, 0, 2)];
+}
+
 render::VertexColorMode vertexColorMode()
 {
     std::string m = PrefStore::get().value<std::string>("general", kVertexColors, "off");

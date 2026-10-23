@@ -1,0 +1,14 @@
+{
+    "id": "Puppeteer",
+    "name": "Puppeteer",
+    "version": "1.0.0",
+    "vendor": "Lila",
+    "description": "Character animation on the joints themselves: Rig and Animate modes, IK chains, reverse feet, foot and hand locks and lookers posing the joints themselves, space switching, the Spinner gizmo and the breakdown slider.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "Puppeteer.dll",
+        "linux": "Puppeteer.so",
+        "macos": "Puppeteer.dylib"
+    },
+    "enabledByDefault": true
+}

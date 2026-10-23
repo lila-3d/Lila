@@ -1,0 +1,14 @@
+{
+    "id": "PhysicsAnimation",
+    "name": "Physics Animation",
+    "version": "1.0.0",
+    "vendor": "Lila",
+    "description": "Animate with rigid-body physics: physics markers on joints (shapes fitted to the skinned mesh, joint limits fitted to the animation), kinematic, pose-matched or simulated bodies, pins, colliders and fields, simulated deterministically with Jolt and recorded to an additive animation layer. The bodies double as selectable proxies for their joints.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "PhysicsAnimation.dll",
+        "linux": "PhysicsAnimation.so",
+        "macos": "PhysicsAnimation.dylib"
+    },
+    "enabledByDefault": true
+}

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QWidget>
 
 class QButtonGroup;
@@ -19,7 +21,7 @@ inline constexpr const char* kSculptDock = "sculptPanel";
  * Sculpt tool panel: Enter/Exit Sculpt with the proxy options, brush buttons, radius/strength/falloff/spacing,
  * symmetry, mask and freeze operations, and the standalone reprojection tools.
  */
-class SculptPanel : public QWidget
+class LILA_UI_API SculptPanel : public QWidget
 {
 public:
     explicit SculptPanel(QWidget* parent = nullptr);
@@ -56,5 +58,5 @@ private:
  * Registers the sculpt actions (window.sculpt, sculpt.tool, sculpt.enter, sculpt.exit, sculpt.cancel, sculpt.brush.*,
  * sculpt.mask*, sculpt.freezeClear, mesh.relaxKeepForm, mesh.reproject, mesh.transferShape) and the viewport drawer.
  */
-void registerSculptUi();
+LILA_UI_API void registerSculptUi();
 } // namespace lila::ui

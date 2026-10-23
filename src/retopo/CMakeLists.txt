@@ -1,7 +1,7 @@
 find_package(Eigen3 CONFIG REQUIRED)
 find_package(meshoptimizer CONFIG REQUIRED)
 
-add_library(lila_retopo STATIC
+lila_module(lila_retopo Scene
     Extract.cpp
     Field.cpp
     Internal.h
@@ -18,5 +18,5 @@ if(MSVC)
     target_compile_options(lila_retopo PRIVATE /wd4127 /wd4244)
 endif()
 
-add_library(lila_retopo_cmds STATIC RetopoCommands.cpp RetopoCommands.h)
+lila_module(lila_retopo_cmds Scene RetopoCommands.cpp RetopoCommands.h)
 target_link_libraries(lila_retopo_cmds PUBLIC lila_retopo lila_scene)

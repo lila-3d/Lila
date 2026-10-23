@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/Node.h"
 
 namespace lila::scene
@@ -14,7 +16,7 @@ namespace lila::scene
  * skipped axes) is copied onto it when it is made: reading those live would make the node depend on what it drives.
  * The constrained node's parent worldMatrix is connected, so constraints work under moving parents.
  */
-class ConstraintNode : public Node
+class LILA_SCENE_API ConstraintNode : public Node
 {
 public:
     static constexpr int kMaxTargets = 8;

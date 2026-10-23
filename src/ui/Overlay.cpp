@@ -1,5 +1,7 @@
 #include "ui/Overlay.h"
 
+#include "core/Log.h"
+#include "core/Registry.h"
 #include "ui/Icons.h"
 
 #include <QFont>
@@ -14,6 +16,7 @@
 #include <cmath>
 #include <numbers>
 #include <string>
+#include <map>
 #include <unordered_map>
 
 namespace lila::ui
@@ -27,18 +30,57 @@ struct Glyph
     float advance = 0.0f;
 };
 
-/** The Tabler icons the overlay can draw, baked into the glyph atlas when it is built. */
-constexpr const char* kOverlayIcons[] = {"grid-pattern", "line", "point", "angle", "target", "circle-dotted", "feather", "perspective"};
+/** The Tabler icons Lila's own cursor badges draw. */
+constexpr const char* kBuiltInIcons[] = {"grid-pattern", "line", "point", "angle", "target", "circle-dotted", "feather", "perspective"};
 constexpr double kIconPx = 16.0; // logical size they are baked for
+} // namespace
 
-struct Atlas
+struct OverlayAtlasData
 {
     std::shared_ptr<render::OverlayAtlas> pixels;
     std::unordered_map<char32_t, Glyph> glyphs;
-    std::unordered_map<std::string, QRectF> icons; // normalized atlas rects
+    std::map<std::string, QRectF, std::less<>> icons; // normalized atlas rects
     float ascent = 0.0f;
     float descent = 0.0f;
 };
+
+namespace
+{
+using Atlas = OverlayAtlasData;
+
+struct IconSet
+{
+    Registry<overlayIcons::Source> registry;
+    uint64_t generation = 1;
+    uint64_t built = 0; // generation the current atlas was built from
+};
+
+IconSet& iconSet()
+{
+    static IconSet* set = [] {
+        auto* s = new IconSet();
+        for (const char* name : kBuiltInIcons)
+            s->registry.add(name, {.tabler = QString::fromLatin1(name)});
+        s->registry.addListener([s](RegistryChange, const std::string&, const std::string&) { ++s->generation; });
+        return s;
+    }();
+    return *set;
+}
+
+/** An icon's pixels at side x side, or a null image when its source can't be read. */
+QImage renderIcon(const overlayIcons::Source& src, QSize size)
+{
+    if (!src.tabler.isEmpty())
+        return icon(src.tabler).pixmap(size, 1.0).toImage();
+    if (!src.file.isEmpty())
+    {
+        if (src.file.endsWith(".svg", Qt::CaseInsensitive))
+            return QIcon(src.file).pixmap(size, 1.0).toImage();
+        QImage img(src.file);
+        return img.isNull() ? img : img.scaled(size, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+    return src.image.isNull() ? QImage() : src.image.scaled(size, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+}
 
 Atlas buildAtlas()
 {
@@ -78,7 +120,7 @@ Atlas buildAtlas()
     std::vector<std::pair<std::string, QRect>> iconCells;
     x = pad;
     y += rowH;
-    for (const char* name : kOverlayIcons)
+    for (const std::string& name : iconSet().registry.ids())
     {
         if (x + iconSide > width)
         {
@@ -120,9 +162,13 @@ Atlas buildAtlas()
     // The atlas is coverage only, so an icon goes in as its alpha.
     for (const auto& [name, cell] : iconCells)
     {
-        QImage src = icon(QString::fromLatin1(name.c_str())).pixmap(cell.size(), 1.0).toImage().convertToFormat(QImage::Format_ARGB32);
+        QImage src = renderIcon(*iconSet().registry.find(name), cell.size());
         if (src.isNull())
+        {
+            log::warn("overlay icon {}: could not be read", name);
             continue;
+        }
+        src = src.convertToFormat(QImage::Format_ARGB32);
         QImage cover(src.size(), QImage::Format_Grayscale8);
         for (int row = 0; row < src.height(); ++row)
         {
@@ -156,9 +202,15 @@ Atlas buildAtlas()
     return atlas;
 }
 
-const Atlas& atlas()
+std::shared_ptr<const Atlas> currentAtlas()
 {
-    static Atlas a = buildAtlas();
+    static std::shared_ptr<const Atlas> a;
+    IconSet& set = iconSet();
+    if (!a || set.built != set.generation)
+    {
+        set.built = set.generation;
+        a = std::make_shared<const Atlas>(buildAtlas());
+    }
     return a;
 }
 
@@ -171,7 +223,23 @@ QPointF perp(QPointF d)
 
 std::shared_ptr<const render::OverlayAtlas> overlayAtlas()
 {
-    return atlas().pixels;
+    return currentAtlas()->pixels;
+}
+
+OverlayPainter::OverlayPainter(std::vector<render::OverlayVertex>& out, double dpr) : mOut(out), mDpr(dpr) {}
+
+OverlayPainter::~OverlayPainter() = default;
+
+const OverlayAtlasData& OverlayPainter::atlasData() const
+{
+    if (!mAtlas)
+        mAtlas = currentAtlas();
+    return *mAtlas;
+}
+
+std::shared_ptr<const render::OverlayAtlas> OverlayPainter::atlas() const
+{
+    return atlasData().pixels;
 }
 
 void OverlayPainter::vertex(QPointF p, glm::vec2 uv, const glm::vec4& color)
@@ -324,7 +392,8 @@ void OverlayPainter::disc(QPointF center, float radius, const glm::vec4& color, 
 
 float OverlayPainter::textWidth(const QString& s)
 {
-    const Atlas& a = atlas();
+    const std::shared_ptr<const Atlas> keep = currentAtlas();
+    const Atlas& a = *keep;
     float w = 0.0f;
     for (char32_t c : s.toUcs4())
         if (auto it = a.glyphs.find(c); it != a.glyphs.end())
@@ -340,7 +409,7 @@ float OverlayPainter::text(QPointF at, const QString& s, const glm::vec4& color,
         text(at + QPointF(1, 1), s, shadowFor(color, 0.7f * color.a), align);
         mShadow = true;
     }
-    const Atlas& a = atlas();
+    const Atlas& a = atlasData();
     float w = textWidth(s);
     double x = at.x() - (align == Center ? w * 0.5 : align == Right ? w : 0.0);
     // Snap to whole device pixels so glyphs don't smear.
@@ -365,9 +434,9 @@ float OverlayPainter::text(QPointF at, const QString& s, const glm::vec4& color,
     return w;
 }
 
-bool OverlayPainter::icon(QRectF r, const char* name, const glm::vec4& color)
+bool OverlayPainter::icon(QRectF r, std::string_view name, const glm::vec4& color)
 {
-    const Atlas& a = atlas();
+    const Atlas& a = atlasData();
     auto it = a.icons.find(name);
     if (it == a.icons.end())
         return false;
@@ -456,10 +525,37 @@ glm::vec4 OverlayPainter::ink(float shade, float alpha, QRectF r) const
 
 void OverlayPainter::label(QPointF at, const QString& s, const glm::vec4& color)
 {
-    const Atlas& a = atlas();
+    const Atlas& a = atlasData();
     float w = textWidth(s);
     QRectF plate(at.x() - 5, at.y() - a.ascent - 3, w + 10, a.ascent + a.descent + 6);
     rect(plate, {0.08f, 0.08f, 0.08f, 0.78f});
     text(at, s, color);
 }
+
+namespace overlayIcons
+{
+void add(std::string id, Source source, std::string owner)
+{
+    iconSet().registry.put(std::move(id), std::move(source), std::move(owner));
+}
+
+ext::Context::Handle add(ext::Context& ctx, std::string id, Source source)
+{
+    try
+    {
+        return ctx.add(iconSet().registry, "overlayIcon", std::move(id), std::move(source));
+    }
+    catch (const std::exception& e)
+    {
+        log::error("extension {}: overlay icon: {}", ctx.owner(), e.what());
+        return 0;
+    }
+}
+
+bool remove(std::string_view id) { return iconSet().registry.remove(id); }
+size_t removeOwned(std::string_view owner) { return iconSet().registry.removeOwned(owner); }
+bool contains(std::string_view id) { return iconSet().registry.contains(id); }
+std::vector<std::string> ids() { return iconSet().registry.ids(); }
+uint64_t generation() { return iconSet().generation; }
+} // namespace overlayIcons
 } // namespace lila::ui

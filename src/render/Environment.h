@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "render/HdrImage.h"
 
 #include <glm/glm.hpp>
@@ -24,11 +26,11 @@ struct EnvironmentData
 };
 
 /** A neutral gray photo studio: gradient dome, key, fill, rim and top softboxes, dim floor. */
-EnvironmentData buildStudioEnvironment();
+LILA_UI_API EnvironmentData buildStudioEnvironment();
 
 /** From a latitude-longitude panorama (top row looks up). */
-EnvironmentData buildEnvironment(const HdrImage& equirect);
+LILA_UI_API EnvironmentData buildEnvironment(const HdrImage& equirect);
 
 /** Split-sum GGX lookup: u = n.v, v = roughness, texels are (scale, bias) on F0, RG half floats. */
-std::vector<uint16_t> buildBrdfLut(int size);
+LILA_UI_API std::vector<uint16_t> buildBrdfLut(int size);
 } // namespace lila::render

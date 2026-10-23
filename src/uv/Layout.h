@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "uv/Chart.h"
 
 #include <glm/glm.hpp>
@@ -17,16 +19,16 @@ enum class OrientMode : uint8_t
 };
 
 /** Rotates the chart about its uv centroid. */
-void orientChart(Chart& chart, OrientMode mode = OrientMode::BoundingBox);
+LILA_SCENE_API void orientChart(Chart& chart, OrientMode mode = OrientMode::BoundingBox);
 
 /** Rotation (radians) that orients the points' minimum-area rectangle to the axes, long side along U. */
-double minAreaRectAngle(std::span<const glm::dvec2> points, glm::dvec2* size = nullptr);
+LILA_SCENE_API double minAreaRectAngle(std::span<const glm::dvec2> points, glm::dvec2* size = nullptr);
 
 /** Counter-clockwise convex hull (Andrew's monotone chain). */
-std::vector<glm::dvec2> convexHull(std::vector<glm::dvec2> points);
+LILA_SCENE_API std::vector<glm::dvec2> convexHull(std::vector<glm::dvec2> points);
 
 /** Rotates by angle (radians) and scales about a pivot. */
-void transformChart(Chart& chart, const glm::dvec2& pivot, double angle, const glm::dvec2& scale = glm::dvec2(1.0),
+LILA_SCENE_API void transformChart(Chart& chart, const glm::dvec2& pivot, double angle, const glm::dvec2& scale = glm::dvec2(1.0),
                     const glm::dvec2& offset = glm::dvec2(0.0));
 
 enum class StraightenResult : uint8_t
@@ -41,8 +43,8 @@ enum class StraightenResult : uint8_t
  * widths and row heights from their 3D edge lengths; other disk islands are fitted to a rectangle. The
  * result keeps the island's previous uv centroid and area when it had valid uvs.
  */
-StraightenResult straightenChart(Chart& chart);
+LILA_SCENE_API StraightenResult straightenChart(Chart& chart);
 
 /** Moves and scales the chart so its centroid and area match the reference ones (when positive). */
-void fitChart(Chart& chart, const glm::dvec2& centroid, double area);
+LILA_SCENE_API void fitChart(Chart& chart, const glm::dvec2& centroid, double area);
 } // namespace lila::uv

@@ -1,0 +1,8867 @@
+{
+	"aliases": {
+		"ball_l": [
+			"LeftToeBase",
+			"LeftToes",
+			"LeftToe",
+			"Bip01_L_Toe0",
+			"toe_L",
+			"L_toe"
+		],
+		"ball_r": [
+			"RightToeBase",
+			"RightToes",
+			"RightToe",
+			"Bip01_R_Toe0",
+			"toe_R",
+			"R_toe"
+		],
+		"calf_l": [
+			"LeftLeg",
+			"LeftLowerLeg",
+			"LeftShin",
+			"LeftCalf",
+			"Bip01_L_Calf",
+			"knee_L",
+			"L_knee"
+		],
+		"calf_r": [
+			"RightLeg",
+			"RightLowerLeg",
+			"RightShin",
+			"RightCalf",
+			"Bip01_R_Calf",
+			"knee_R",
+			"R_knee"
+		],
+		"clavicle_l": [
+			"LeftShoulder",
+			"LeftClavicle",
+			"Bip01_L_Clavicle",
+			"clavicle_L",
+			"L_clavicle"
+		],
+		"clavicle_r": [
+			"RightShoulder",
+			"RightClavicle",
+			"Bip01_R_Clavicle",
+			"clavicle_R",
+			"R_clavicle"
+		],
+		"foot_l": [
+			"LeftFoot",
+			"Bip01_L_Foot",
+			"ankle_L",
+			"L_ankle"
+		],
+		"foot_r": [
+			"RightFoot",
+			"Bip01_R_Foot",
+			"ankle_R",
+			"R_ankle"
+		],
+		"hand_l": [
+			"LeftHand",
+			"Bip01_L_Hand",
+			"wrist_L",
+			"L_wrist",
+			"hand_L"
+		],
+		"hand_r": [
+			"RightHand",
+			"Bip01_R_Hand",
+			"wrist_R",
+			"R_wrist",
+			"hand_R"
+		],
+		"head": [
+			"Head",
+			"Bip01_Head"
+		],
+		"index_01_l": [
+			"LeftHandIndex1",
+			"LeftIndex1",
+			"index1_L"
+		],
+		"index_01_r": [
+			"RightHandIndex1",
+			"RightIndex1",
+			"index1_R"
+		],
+		"index_02_l": [
+			"LeftHandIndex2",
+			"LeftIndex2",
+			"index2_L"
+		],
+		"index_02_r": [
+			"RightHandIndex2",
+			"RightIndex2",
+			"index2_R"
+		],
+		"index_03_l": [
+			"LeftHandIndex3",
+			"LeftIndex3",
+			"index3_L"
+		],
+		"index_03_r": [
+			"RightHandIndex3",
+			"RightIndex3",
+			"index3_R"
+		],
+		"index_metacarpal_l": [
+			"LeftHandIndex0",
+			"LeftInIndex"
+		],
+		"index_metacarpal_r": [
+			"RightHandIndex0",
+			"RightInIndex"
+		],
+		"lowerarm_l": [
+			"LeftForeArm",
+			"LeftLowerArm",
+			"Bip01_L_Forearm",
+			"elbow_L",
+			"L_elbow",
+			"forearm_L"
+		],
+		"lowerarm_r": [
+			"RightForeArm",
+			"RightLowerArm",
+			"Bip01_R_Forearm",
+			"elbow_R",
+			"R_elbow",
+			"forearm_R"
+		],
+		"middle_01_l": [
+			"LeftHandMiddle1",
+			"LeftMiddle1",
+			"middle1_L"
+		],
+		"middle_01_r": [
+			"RightHandMiddle1",
+			"RightMiddle1",
+			"middle1_R"
+		],
+		"middle_02_l": [
+			"LeftHandMiddle2",
+			"LeftMiddle2",
+			"middle2_L"
+		],
+		"middle_02_r": [
+			"RightHandMiddle2",
+			"RightMiddle2",
+			"middle2_R"
+		],
+		"middle_03_l": [
+			"LeftHandMiddle3",
+			"LeftMiddle3",
+			"middle3_L"
+		],
+		"middle_03_r": [
+			"RightHandMiddle3",
+			"RightMiddle3",
+			"middle3_R"
+		],
+		"middle_metacarpal_l": [
+			"LeftHandMiddle0",
+			"LeftInMiddle"
+		],
+		"middle_metacarpal_r": [
+			"RightHandMiddle0",
+			"RightInMiddle"
+		],
+		"neck_01": [
+			"Neck",
+			"Neck1",
+			"Bip01_Neck",
+			"neck"
+		],
+		"neck_02": [
+			"Neck2",
+			"Neck_02"
+		],
+		"pelvis": [
+			"Hips",
+			"Pelvis",
+			"Bip01_Pelvis",
+			"hip",
+			"COG"
+		],
+		"pinky_01_l": [
+			"LeftHandPinky1",
+			"LeftPinky1",
+			"pinky1_L"
+		],
+		"pinky_01_r": [
+			"RightHandPinky1",
+			"RightPinky1",
+			"pinky1_R"
+		],
+		"pinky_02_l": [
+			"LeftHandPinky2",
+			"LeftPinky2",
+			"pinky2_L"
+		],
+		"pinky_02_r": [
+			"RightHandPinky2",
+			"RightPinky2",
+			"pinky2_R"
+		],
+		"pinky_03_l": [
+			"LeftHandPinky3",
+			"LeftPinky3",
+			"pinky3_L"
+		],
+		"pinky_03_r": [
+			"RightHandPinky3",
+			"RightPinky3",
+			"pinky3_R"
+		],
+		"pinky_metacarpal_l": [
+			"LeftHandPinky0",
+			"LeftInPinky"
+		],
+		"pinky_metacarpal_r": [
+			"RightHandPinky0",
+			"RightInPinky"
+		],
+		"ring_01_l": [
+			"LeftHandRing1",
+			"LeftRing1",
+			"ring1_L"
+		],
+		"ring_01_r": [
+			"RightHandRing1",
+			"RightRing1",
+			"ring1_R"
+		],
+		"ring_02_l": [
+			"LeftHandRing2",
+			"LeftRing2",
+			"ring2_L"
+		],
+		"ring_02_r": [
+			"RightHandRing2",
+			"RightRing2",
+			"ring2_R"
+		],
+		"ring_03_l": [
+			"LeftHandRing3",
+			"LeftRing3",
+			"ring3_L"
+		],
+		"ring_03_r": [
+			"RightHandRing3",
+			"RightRing3",
+			"ring3_R"
+		],
+		"ring_metacarpal_l": [
+			"LeftHandRing0",
+			"LeftInRing"
+		],
+		"ring_metacarpal_r": [
+			"RightHandRing0",
+			"RightInRing"
+		],
+		"root": [
+			"Root",
+			"Reference",
+			"root_jnt"
+		],
+		"spine_01": [
+			"Spine",
+			"Spine01",
+			"Bip01_Spine",
+			"spine1",
+			"spine_1"
+		],
+		"spine_02": [
+			"Spine1",
+			"Spine02",
+			"Bip01_Spine1",
+			"spine2",
+			"spine_2"
+		],
+		"spine_03": [
+			"Spine2",
+			"Spine03",
+			"Bip01_Spine2",
+			"spine3",
+			"spine_3",
+			"Chest"
+		],
+		"spine_04": [
+			"Spine3",
+			"Spine04",
+			"spine4",
+			"spine_4",
+			"UpperChest"
+		],
+		"spine_05": [
+			"Spine4",
+			"Spine05",
+			"spine5",
+			"spine_5"
+		],
+		"thigh_l": [
+			"LeftUpLeg",
+			"LeftUpperLeg",
+			"LeftThigh",
+			"Bip01_L_Thigh",
+			"hip_L",
+			"L_hip"
+		],
+		"thigh_r": [
+			"RightUpLeg",
+			"RightUpperLeg",
+			"RightThigh",
+			"Bip01_R_Thigh",
+			"hip_R",
+			"R_hip"
+		],
+		"thumb_01_l": [
+			"LeftHandThumb1",
+			"LeftThumb1",
+			"thumb1_L"
+		],
+		"thumb_01_r": [
+			"RightHandThumb1",
+			"RightThumb1",
+			"thumb1_R"
+		],
+		"thumb_02_l": [
+			"LeftHandThumb2",
+			"LeftThumb2",
+			"thumb2_L"
+		],
+		"thumb_02_r": [
+			"RightHandThumb2",
+			"RightThumb2",
+			"thumb2_R"
+		],
+		"thumb_03_l": [
+			"LeftHandThumb3",
+			"LeftThumb3",
+			"thumb3_L"
+		],
+		"thumb_03_r": [
+			"RightHandThumb3",
+			"RightThumb3",
+			"thumb3_R"
+		],
+		"upperarm_l": [
+			"LeftArm",
+			"LeftUpperArm",
+			"Bip01_L_UpperArm",
+			"shoulder_L",
+			"L_shoulder",
+			"upperArm_L"
+		],
+		"upperarm_r": [
+			"RightArm",
+			"RightUpperArm",
+			"Bip01_R_UpperArm",
+			"shoulder_R",
+			"R_shoulder",
+			"upperArm_R"
+		]
+	},
+	"description": "Unreal Engine 5 mannequin (SKM_Manny, SK_Mannequin skeleton).",
+	"format": "lilarig",
+	"id": "UE5_Manny",
+	"lateral": [
+		0.0,
+		0.0,
+		1.0
+	],
+	"limbs": [
+		{
+			"markers": [
+				"pelvis",
+				"spine_01",
+				"spine_02",
+				"spine_03",
+				"spine_04",
+				"spine_05",
+				"neck_01",
+				"neck_02",
+				"head"
+			],
+			"name": "spine",
+			"rule": {
+				"upType": "world"
+			},
+			"side": "center"
+		},
+		{
+			"markers": [
+				"clavicle_l",
+				"upperarm_l",
+				"lowerarm_l",
+				"hand_l"
+			],
+			"name": "arm_l",
+			"rule": {
+				"upType": "plane"
+			},
+			"side": "left"
+		},
+		{
+			"markers": [
+				"index_metacarpal_l",
+				"index_01_l",
+				"index_02_l",
+				"index_03_l"
+			],
+			"name": "index_l",
+			"rule": {
+				"upType": "plane"
+			},
+			"side": "left"
+		},
+		{
+			"markers": [
+				"middle_metacarpal_l",
+				"middle_01_l",
+				"middle_02_l",
+				"middle_03_l"
+			],
+			"name": "middle_l",
+			"rule": {
+				"upType": "plane"
+			},
+			"side": "left"
+		},
+		{
+			"markers": [
+				"thumb_01_l",
+				"thumb_02_l",
+				"thumb_03_l"
+			],
+			"name": "thumb_l",
+			"rule": {
+				"upType": "plane"
+			},
+			"side": "left"
+		},
+		{
+			"markers": [
+				"pinky_metacarpal_l",
+				"pinky_01_l",
+				"pinky_02_l",
+				"pinky_03_l"
+			],
+			"name": "pinky_l",
+			"rule": {
+				"upType": "plane"
+			},
+			"side": "left"
+		},
+		{
+			"markers": [
+				"ring_metacarpal_l",
+				"ring_01_l",
+				"ring_02_l",
+				"ring_03_l"
+			],
+			"name": "ring_l",
+			"rule": {
+				"upType": "plane"
+			},
+			"side": "left"
+		},
+		{
+			"markers": [
+				"clavicle_r",
+				"upperarm_r",
+				"lowerarm_r",
+				"hand_r"
+			],
+			"name": "arm_r",
+			"rule": {
+				"upType": "plane"
+			},
+			"side": "right"
+		},
+		{
+			"markers": [
+				"pinky_metacarpal_r",
+				"pinky_01_r",
+				"pinky_02_r",
+				"pinky_03_r"
+			],
+			"name": "pinky_r",
+			"rule": {
+				"upType": "plane"
+			},
+			"side": "right"
+		},
+		{
+			"markers": [
+				"ring_metacarpal_r",
+				"ring_01_r",
+				"ring_02_r",
+				"ring_03_r"
+			],
+			"name": "ring_r",
+			"rule": {
+				"upType": "plane"
+			},
+			"side": "right"
+		},
+		{
+			"markers": [
+				"middle_metacarpal_r",
+				"middle_01_r",
+				"middle_02_r",
+				"middle_03_r"
+			],
+			"name": "middle_r",
+			"rule": {
+				"upType": "plane"
+			},
+			"side": "right"
+		},
+		{
+			"markers": [
+				"index_metacarpal_r",
+				"index_01_r",
+				"index_02_r",
+				"index_03_r"
+			],
+			"name": "index_r",
+			"rule": {
+				"upType": "plane"
+			},
+			"side": "right"
+		},
+		{
+			"markers": [
+				"thumb_01_r",
+				"thumb_02_r",
+				"thumb_03_r"
+			],
+			"name": "thumb_r",
+			"rule": {
+				"upType": "plane"
+			},
+			"side": "right"
+		},
+		{
+			"markers": [
+				"thigh_r",
+				"calf_r",
+				"foot_r",
+				"ball_r"
+			],
+			"name": "leg_r",
+			"rule": {
+				"upType": "plane"
+			},
+			"side": "right"
+		},
+		{
+			"markers": [
+				"thigh_l",
+				"calf_l",
+				"foot_l",
+				"ball_l"
+			],
+			"name": "leg_l",
+			"rule": {
+				"upType": "plane"
+			},
+			"side": "left"
+		}
+	],
+	"markers": [
+		{
+			"centerInMesh": false,
+			"flags": [
+				"root"
+			],
+			"joint": "root",
+			"label": "root",
+			"name": "root",
+			"offset": [
+				0.0,
+				0.0,
+				0.0,
+				1.0
+			],
+			"orient": "fixed",
+			"orientation": [
+				0.0,
+				0.0,
+				0.0,
+				1.0
+			],
+			"parent": "",
+			"placement": "free",
+			"position": [
+				0.0,
+				0.0,
+				0.0
+			],
+			"radius": 2.0,
+			"side": "center"
+		},
+		{
+			"aim": "z",
+			"aimAt": "spine_01",
+			"centerInMesh": true,
+			"joint": "pelvis",
+			"label": "pelvis",
+			"limb": "spine",
+			"name": "pelvis",
+			"offset": [
+				5.583641188300348e-17,
+				-9.43689570931383e-16,
+				-6.938893903907228e-18,
+				1.0
+			],
+			"orient": "aim",
+			"orientation": [
+				0.7067514202088702,
+				-0.022414951098437788,
+				0.022414951098437788,
+				-0.7067514202088697
+			],
+			"parent": "root",
+			"placement": "free",
+			"position": [
+				-2.2808661460876465,
+				95.89678192138672,
+				-3.4314998759166215e-17
+			],
+			"radius": 2.0,
+			"side": "center",
+			"up": "-y",
+			"upType": "world",
+			"upVector": [
+				0.0,
+				0.0,
+				1.0
+			]
+		},
+		{
+			"aim": "z",
+			"aimAt": "spine_02",
+			"centerInMesh": true,
+			"joint": "spine_01",
+			"label": "spine_01",
+			"limb": "spine",
+			"name": "spine_01",
+			"offset": [
+				-1.6219664500383144e-16,
+				-1.6167622796103838e-15,
+				6.245004513516504e-17,
+				1.0
+			],
+			"orient": "aim",
+			"orientation": [
+				0.7039545386885853,
+				0.06669338392780472,
+				-0.06669338392780474,
+				-0.7039545386885847
+			],
+			"parent": "pelvis",
+			"placement": "free",
+			"position": [
+				-2.04786158634129,
+				99.56644552458056,
+				-2.051373513483774e-15
+			],
+			"radius": 2.0,
+			"side": "center",
+			"up": "-y",
+			"upType": "world",
+			"upVector": [
+				0.0,
+				0.0,
+				1.0
+			]
+		},
+		{
+			"aim": "z",
+			"aimAt": "spine_03",
+			"centerInMesh": true,
+			"joint": "spine_02",
+			"label": "spine_02",
+			"limb": "spine",
+			"name": "spine_02",
+			"offset": [
+				3.469446951953615e-18,
+				1.4294121442048894e-15,
+				4.857225732735061e-17,
+				1.0
+			],
+			"orient": "aim",
+			"orientation": [
+				0.7056488868939306,
+				0.045383349648930815,
+				-0.04538334964893085,
+				-0.7056488868939301
+			],
+			"parent": "spine_01",
+			"placement": "free",
+			"position": [
+				-3.3239491648694495,
+				106.24060495915218,
+				-6.7172044932702784e-15
+			],
+			"radius": 2.0,
+			"side": "center",
+			"up": "-y",
+			"upType": "world",
+			"upVector": [
+				0.0,
+				0.0,
+				1.0
+			]
+		},
+		{
+			"aim": "z",
+			"aimAt": "spine_04",
+			"centerInMesh": true,
+			"joint": "spine_03",
+			"label": "spine_03",
+			"limb": "spine",
+			"name": "spine_03",
+			"offset": [
+				5.551115123125783e-17,
+				3.0184188481996443e-16,
+				3.469446951953614e-18,
+				1.0
+			],
+			"orient": "aim",
+			"orientation": [
+				0.706760510460845,
+				-0.022126474032845362,
+				0.022126474032845345,
+				-0.7067605104608445
+			],
+			"parent": "spine_02",
+			"placement": "free",
+			"position": [
+				-4.251157760099702,
+				113.41919998506341,
+				-1.1668521659683976e-14
+			],
+			"radius": 2.0,
+			"side": "center",
+			"up": "-y",
+			"upType": "world",
+			"upVector": [
+				0.0,
+				0.0,
+				1.0
+			]
+		},
+		{
+			"aim": "z",
+			"aimAt": "spine_05",
+			"centerInMesh": true,
+			"joint": "spine_04",
+			"label": "spine_04",
+			"limb": "spine",
+			"name": "spine_04",
+			"offset": [
+				-1.7789155565273163e-14,
+				4.582688471754803e-09,
+				3.922878128545526e-06,
+				0.9999999999923055
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.704701791345619,
+				0.058269934565748645,
+				-0.05826440564546398,
+				0.7047022484956038
+			],
+			"parent": "spine_03",
+			"placement": "free",
+			"position": [
+				-3.717967156796279,
+				121.92640080146127,
+				-1.7677001137394857e-14
+			],
+			"radius": 2.0,
+			"side": "center",
+			"up": "-y",
+			"upType": "world",
+			"upVector": [
+				0.0,
+				0.0,
+				1.0
+			]
+		},
+		{
+			"aim": "z",
+			"aimAt": "neck_01",
+			"centerInMesh": true,
+			"joint": "spine_05",
+			"label": "spine_05",
+			"limb": "spine",
+			"name": "spine_05",
+			"offset": [
+				1.8474805019152996e-16,
+				-3.677613769070831e-16,
+				-7.94878746157579e-12,
+				1.0
+			],
+			"orient": "aim",
+			"orientation": [
+				0.7043430928375602,
+				-0.06245644540087198,
+				0.06245644541205782,
+				-0.7043430928364376
+			],
+			"parent": "spine_04",
+			"placement": "free",
+			"position": [
+				-0.5250973638396585,
+				141.10220369806046,
+				5.559062876429255e-13
+			],
+			"radius": 2.0,
+			"side": "center",
+			"up": "-y",
+			"upType": "world",
+			"upVector": [
+				0.0,
+				0.0,
+				1.0
+			]
+		},
+		{
+			"aim": "z",
+			"aimAt": "neck_02",
+			"centerInMesh": true,
+			"joint": "neck_01",
+			"label": "neck_01",
+			"limb": "spine",
+			"name": "neck_01",
+			"offset": [
+				-4.063589742475671e-15,
+				4.926614671774132e-15,
+				-7.228287413063583e-12,
+				1.0
+			],
+			"orient": "aim",
+			"orientation": [
+				0.7019901202649975,
+				0.08491095956142873,
+				-0.08491095955071853,
+				-0.7019901202615803
+			],
+			"parent": "spine_05",
+			"placement": "free",
+			"position": [
+				1.5667103417368686,
+				152.80448203371722,
+				-1.6373167099616677e-12
+			],
+			"radius": 2.0,
+			"side": "center",
+			"up": "-y",
+			"upType": "world",
+			"upVector": [
+				0.0,
+				0.0,
+				1.0
+			]
+		},
+		{
+			"aim": "z",
+			"aimAt": "head",
+			"centerInMesh": true,
+			"joint": "neck_02",
+			"label": "neck_02",
+			"limb": "spine",
+			"name": "neck_02",
+			"offset": [
+				-2.1094237467877974e-15,
+				-5.578870698741412e-15,
+				8.549113651237783e-07,
+				-0.9999999999996346
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.7033100220383494,
+				-0.07317795367104452,
+				0.07317675113502688,
+				0.7033101471543386
+			],
+			"parent": "neck_01",
+			"placement": "free",
+			"position": [
+				0.3482884398968271,
+				157.767364317532,
+				-3.5408574695453865e-11
+			],
+			"radius": 2.0,
+			"side": "center",
+			"up": "-y",
+			"upType": "world",
+			"upVector": [
+				0.0,
+				0.0,
+				1.0
+			]
+		},
+		{
+			"centerInMesh": true,
+			"joint": "head",
+			"label": "head",
+			"limb": "spine",
+			"name": "head",
+			"offset": [
+				-8.847033889606016e-08,
+				0.10348841797417424,
+				8.50321632696327e-07,
+				0.9946306587595578
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.7071067811865404,
+				9.773433034091291e-09,
+				-9.77306013333389e-09,
+				0.7071067811865546
+			],
+			"parent": "neck_02",
+			"placement": "free",
+			"position": [
+				-0.6631226955237837,
+				162.57510097379765,
+				-6.554611231396554e-11
+			],
+			"radius": 2.0,
+			"side": "center"
+		},
+		{
+			"aim": "z",
+			"aimAt": "upperarm_l",
+			"centerInMesh": true,
+			"joint": "clavicle_l",
+			"label": "clavicle_l",
+			"limb": "arm_l",
+			"mirror": "clavicle_r",
+			"name": "clavicle_l",
+			"offset": [
+				1.4134337146878843e-15,
+				-6.408905388810214e-16,
+				-0.001724787657802756,
+				0.9999985125526617
+			],
+			"orient": "aim",
+			"orientation": [
+				0.07654065191231829,
+				0.02301960421005902,
+				3.909318049040545e-05,
+				0.9968006946719955
+			],
+			"parent": "spine_05",
+			"placement": "free",
+			"position": [
+				1.7398136340318353,
+				146.30105055478361,
+				1.4279042482580508
+			],
+			"radius": 2.0,
+			"side": "left",
+			"up": "x",
+			"upType": "world",
+			"upVector": [
+				1.0,
+				0.0,
+				0.0
+			]
+		},
+		{
+			"aim": "z",
+			"aimAt": "lowerarm_l",
+			"centerInMesh": true,
+			"joint": "upperarm_l",
+			"label": "upperarm_l",
+			"limb": "arm_l",
+			"mirror": "upperarm_r",
+			"name": "upperarm_l",
+			"offset": [
+				-9.994988777600746e-16,
+				-2.099015405931937e-16,
+				0.014903373862868299,
+				0.9998889385564298
+			],
+			"orient": "aim",
+			"orientation": [
+				0.46040908531936153,
+				0.002586368567977509,
+				-0.030410934661443664,
+				0.8871820331285102
+			],
+			"parent": "clavicle_l",
+			"placement": "free",
+			"position": [
+				2.5572333114819896,
+				143.58349994612846,
+				19.00987910961794
+			],
+			"radius": 2.0,
+			"side": "left",
+			"up": "x",
+			"upType": "plane",
+			"upVector": [
+				0.996014403310427,
+				-0.06866863546257666,
+				-0.05692035577789219
+			]
+		},
+		{
+			"aim": "z",
+			"aimAt": "hand_l",
+			"centerInMesh": true,
+			"joint": "lowerarm_l",
+			"label": "lowerarm_l",
+			"limb": "arm_l",
+			"mirror": "lowerarm_r",
+			"name": "lowerarm_l",
+			"offset": [
+				1.2698175844150226e-15,
+				6.245004513516505e-16,
+				3.1918911957973243e-15,
+				1.0
+			],
+			"orient": "aim",
+			"orientation": [
+				0.4238830223980029,
+				-0.2935547066904078,
+				-0.1822759833722696,
+				0.837212209292432
+			],
+			"parent": "upperarm_l",
+			"placement": "free",
+			"position": [
+				1.907005919948853,
+				120.89196196261413,
+				35.00698752605629
+			],
+			"radius": 2.0,
+			"side": "left",
+			"up": "-y",
+			"upType": "plane",
+			"upVector": [
+				-0.05634164485792485,
+				-0.5741972984168107,
+				-0.8167760289978763
+			]
+		},
+		{
+			"aim": "z",
+			"aimAt": "middle_metacarpal_l",
+			"centerInMesh": true,
+			"joint": "hand_l",
+			"label": "hand_l",
+			"limb": "arm_l",
+			"mirror": "hand_r",
+			"name": "hand_l",
+			"offset": [
+				0.016719480806875207,
+				-0.11140610078293584,
+				0.08841282344575585,
+				-0.9896930394421497
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.5205995176529524,
+				-0.009649321761475751,
+				0.6088745274213297,
+				-0.5984603935654467
+			],
+			"parent": "lowerarm_l",
+			"placement": "free",
+			"position": [
+				-15.698892566810558,
+				104.4665369623718,
+				47.768600955409106
+			],
+			"radius": 2.0,
+			"side": "left",
+			"up": "-y",
+			"upType": "plane",
+			"upVector": [
+				-0.6723450019394104,
+				0.15896026972763705,
+				-0.7229687621296035
+			]
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "lowerarm_twist_02_l",
+			"label": "",
+			"limb": "arm_l",
+			"localOffset": [
+				-6.875059346502043e-14,
+				4.4250767314407344e-14,
+				-1.2530607378555257e-14
+			],
+			"mirror": "lowerarm_twist_02_r",
+			"name": "lowerarm_twist_02_l",
+			"offset": [
+				-0.014877390877519242,
+				0.017494799369039075,
+				0.011477666775662329,
+				0.9996703748741891
+			],
+			"orient": "parent",
+			"orientation": [
+				0.4111073252734132,
+				-0.28096448108313293,
+				-0.16955823755211735,
+				0.8504703002189116
+			],
+			"parent": "lowerarm_l",
+			"placement": "segment",
+			"position": [
+				-3.9616271143487465,
+				115.41682010425954,
+				39.26085881804171
+			],
+			"radius": 2.0,
+			"side": "left",
+			"t": 0.3333333449986144,
+			"to": "hand_l"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "lowerarm_twist_01_l",
+			"label": "",
+			"limb": "arm_l",
+			"localOffset": [
+				-6.760833671847535e-15,
+				-5.004143309321151e-16,
+				5.738188222872399e-15
+			],
+			"mirror": "lowerarm_twist_01_r",
+			"name": "lowerarm_twist_01_l",
+			"offset": [
+				-0.014877324768411686,
+				0.01749479938643663,
+				0.011477665855753471,
+				0.9996703758682997
+			],
+			"orient": "parent",
+			"orientation": [
+				0.4111073813153665,
+				-0.2809644930205622,
+				-0.16955821908946456,
+				0.8504702728660947
+			],
+			"parent": "lowerarm_l",
+			"placement": "segment",
+			"position": [
+				-9.830260148646275,
+				109.94167824590485,
+				43.514730110027116
+			],
+			"radius": 2.0,
+			"side": "left",
+			"t": 0.666666689997229,
+			"to": "hand_l"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "lowerarm_correctiveRoot_l",
+			"label": "",
+			"limb": "arm_l",
+			"localOffset": [
+				9.607526257286694e-15,
+				-1.5423083238163807e-13,
+				8.001131041110956e-14
+			],
+			"mirror": "lowerarm_correctiveRoot_r",
+			"name": "lowerarm_correctiveRoot_l",
+			"offset": [
+				-0.015209695599849308,
+				0.00017877875103389232,
+				0.011752090629756285,
+				0.9998152437144315
+			],
+			"orient": "parent",
+			"orientation": [
+				0.4076536700442875,
+				-0.29555994433344185,
+				-0.1767924094320256,
+				0.8456992660350694
+			],
+			"parent": "lowerarm_l",
+			"placement": "parent",
+			"position": [
+				1.9070059199487999,
+				120.89196196261399,
+				35.00698752605621
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "lowerarm_in_l",
+			"label": "",
+			"limb": "arm_l",
+			"localOffset": [
+				0.7188079357147237,
+				-3.988929033279419,
+				0.717185974121096
+			],
+			"mirror": "lowerarm_in_r",
+			"name": "lowerarm_in_l",
+			"offset": [
+				8.326672684688674e-17,
+				5.551115123125783e-17,
+				1.0,
+				-2.7755575615628914e-17
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.2955599443334418,
+				-0.40765367004428743,
+				0.8456992660350694,
+				0.17679240943202554
+			],
+			"parent": "lowerarm_correctiveRoot_l",
+			"placement": "parent",
+			"position": [
+				1.7618187698582688,
+				117.67044926800969,
+				32.44898595208994
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "lowerarm_out_l",
+			"label": "",
+			"limb": "arm_l",
+			"localOffset": [
+				0.5751867294311565,
+				2.721245288848876,
+				0.5839591026306192
+			],
+			"mirror": "lowerarm_out_r",
+			"name": "lowerarm_out_l",
+			"offset": [
+				-4.85722573273506e-17,
+				6.938893903907228e-17,
+				2.7755575615628914e-17,
+				1.0
+			],
+			"orient": "parent",
+			"orientation": [
+				0.40765367004428743,
+				-0.2955599443334418,
+				-0.17679240943202554,
+				0.8456992660350694
+			],
+			"parent": "lowerarm_correctiveRoot_l",
+			"placement": "parent",
+			"position": [
+				2.127626483696866,
+				121.88644214576634,
+				37.66016668727202
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "lowerarm_fwd_l",
+			"label": "",
+			"limb": "arm_l",
+			"localOffset": [
+				-3.6590929031372044,
+				-0.4388961493968968,
+				1.693481326103214
+			],
+			"mirror": "lowerarm_fwd_r",
+			"name": "lowerarm_fwd_l",
+			"offset": [
+				-1.5265566588595902e-16,
+				1.3877787807814457e-16,
+				0.7071067811865476,
+				0.7071067811865475
+			],
+			"orient": "parent",
+			"orientation": [
+				0.0792622335786037,
+				-0.4972471153491941,
+				0.47298857428618984,
+				0.7230107974295775
+			],
+			"parent": "lowerarm_correctiveRoot_l",
+			"placement": "parent",
+			"position": [
+				-2.00023400995751,
+				121.61159424222689,
+				34.19146608679807
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "lowerarm_bck_l",
+			"label": "",
+			"limb": "arm_l",
+			"localOffset": [
+				4.918286323547369,
+				-1.1642642021179217,
+				0.662338972091679
+			],
+			"mirror": "lowerarm_bck_r",
+			"name": "lowerarm_bck_l",
+			"offset": [
+				5.204170427930421e-17,
+				1.1102230246251565e-16,
+				0.7071067811865476,
+				-0.7071067811865476
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.4972471153491942,
+				-0.07926223357860376,
+				0.7230107974295775,
+				-0.47298857428618984
+			],
+			"parent": "lowerarm_correctiveRoot_l",
+			"placement": "parent",
+			"position": [
+				5.16439444933265,
+				117.14409994905819,
+				36.158809865942786
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "wrist_inner_l",
+			"label": "",
+			"localOffset": [
+				1.6588308811187775,
+				0.03799104318022817,
+				-0.7035889029502864
+			],
+			"mirror": "wrist_inner_r",
+			"name": "wrist_inner_l",
+			"offset": [
+				0.080780246103254,
+				0.1161033521791047,
+				-0.7163195675625328,
+				0.6832867923348867
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.4678429280820746,
+				-0.3998070991413092,
+				0.785060938542533,
+				0.07040313128348345
+			],
+			"parent": "hand_l",
+			"placement": "parent",
+			"position": [
+				-14.804331897318033,
+				103.71020388003058,
+				46.398957924169466
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "wrist_outer_l",
+			"label": "",
+			"localOffset": [
+				-2.238496541976922,
+				-0.12413483113050594,
+				0.019651234149937746
+			],
+			"mirror": "wrist_outer_r",
+			"name": "wrist_outer_l",
+			"offset": [
+				-0.11610335217910464,
+				0.08078024610325397,
+				-0.6832867923348865,
+				-0.716319567562533
+			],
+			"orient": "parent",
+			"orientation": [
+				0.39980709914130924,
+				-0.46784292808207445,
+				-0.07040313128348369,
+				0.785060938542533
+			],
+			"parent": "hand_l",
+			"placement": "parent",
+			"position": [
+				-16.38116931693402,
+				106.09812328123937,
+				49.14667458046374
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"aim": "z",
+			"aimAt": "index_01_l",
+			"centerInMesh": true,
+			"joint": "index_metacarpal_l",
+			"label": "index_metacarpal_l",
+			"limb": "index_l",
+			"mirror": "index_metacarpal_r",
+			"name": "index_metacarpal_l",
+			"offset": [
+				-0.019422709318738338,
+				0.0074595067606113025,
+				0.18813592903502324,
+				-0.9819225969126778
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.5533856404510518,
+				0.048497159548216616,
+				0.5943472665933281,
+				-0.5815184306205379
+			],
+			"parent": "hand_l",
+			"placement": "free",
+			"position": [
+				-19.700069031658657,
+				103.23076320707469,
+				48.139056031148314
+			],
+			"radius": 2.0,
+			"side": "left",
+			"up": "-x",
+			"upType": "world",
+			"upVector": [
+				0.0,
+				1.0,
+				0.0
+			]
+		},
+		{
+			"aim": "z",
+			"aimAt": "index_02_l",
+			"centerInMesh": true,
+			"joint": "index_01_l",
+			"label": "index_01_l",
+			"limb": "index_l",
+			"mirror": "index_01_r",
+			"name": "index_01_l",
+			"offset": [
+				-1.1449174941446927e-14,
+				-2.0539125955565396e-15,
+				0.05233329175676931,
+				0.9986296743908128
+			],
+			"orient": "aim",
+			"orientation": [
+				0.6623032080315676,
+				0.07029853367682905,
+				-0.4699348901661542,
+				0.5792872998767592
+			],
+			"parent": "index_metacarpal_l",
+			"placement": "free",
+			"position": [
+				-23.73150746485479,
+				99.67802235266483,
+				50.5319004106922
+			],
+			"radius": 2.0,
+			"side": "left",
+			"up": "y",
+			"upType": "plane",
+			"upVector": [
+				0.6914047193364966,
+				-0.36439665526272913,
+				0.6238385942794467
+			]
+		},
+		{
+			"aim": "z",
+			"aimAt": "index_03_l",
+			"centerInMesh": true,
+			"joint": "index_02_l",
+			"label": "index_02_l",
+			"limb": "index_l",
+			"mirror": "index_02_r",
+			"name": "index_02_l",
+			"offset": [
+				-4.621303340002215e-15,
+				-1.1268763699945342e-14,
+				-2.7616797737550775e-14,
+				1.0
+			],
+			"orient": "aim",
+			"orientation": [
+				0.7176198520459267,
+				0.14477937842250896,
+				-0.3801395642576075,
+				0.5652915983978629
+			],
+			"parent": "index_01_l",
+			"placement": "free",
+			"position": [
+				-25.93892073810006,
+				96.27775391866227,
+				50.99222702872314
+			],
+			"radius": 2.0,
+			"side": "left",
+			"up": "y",
+			"upType": "plane",
+			"upVector": [
+				0.6375725160325836,
+				-0.3189686807287591,
+				0.7012562067561583
+			]
+		},
+		{
+			"centerInMesh": true,
+			"joint": "index_03_l",
+			"label": "index_03_l",
+			"limb": "index_l",
+			"mirror": "index_03_r",
+			"name": "index_03_l",
+			"offset": [
+				1.1102230246251568e-16,
+				0.1090091487495391,
+				-9.714451465470122e-17,
+				0.9940407463926724
+			],
+			"orient": "parent",
+			"orientation": [
+				0.7547820636596745,
+				0.2055385573259953,
+				-0.2996470869907207,
+				0.5461406056025931
+			],
+			"parent": "index_02_l",
+			"placement": "free",
+			"position": [
+				-26.92996750211266,
+				93.88671651696416,
+				50.805701953443794
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"aim": "z",
+			"aimAt": "middle_01_l",
+			"centerInMesh": true,
+			"joint": "middle_metacarpal_l",
+			"label": "middle_metacarpal_l",
+			"limb": "middle_l",
+			"mirror": "middle_metacarpal_r",
+			"name": "middle_metacarpal_l",
+			"offset": [
+				2.6957602816679594e-15,
+				-5.828670879282074e-15,
+				0.11490939319951679,
+				0.9933759768358197
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.5072045765534654,
+				-0.017165333526801156,
+				0.6411863598137114,
+				-0.5756117796197149
+			],
+			"parent": "hand_l",
+			"placement": "free",
+			"position": [
+				-18.129840122146426,
+				102.91678718852397,
+				49.688582660644755
+			],
+			"radius": 2.0,
+			"side": "left",
+			"up": "y",
+			"upType": "world",
+			"upVector": [
+				1.0,
+				0.0,
+				0.0
+			]
+		},
+		{
+			"aim": "z",
+			"aimAt": "middle_02_l",
+			"centerInMesh": true,
+			"joint": "middle_01_l",
+			"label": "middle_01_l",
+			"limb": "middle_l",
+			"mirror": "middle_01_r",
+			"name": "middle_01_l",
+			"offset": [
+				3.9968028886505635e-15,
+				-5.551115123125783e-17,
+				-3.094746681142624e-15,
+				1.0
+			],
+			"orient": "aim",
+			"orientation": [
+				0.6625095742280908,
+				0.17311358155770729,
+				-0.4790172173774677,
+				0.5492315152941653
+			],
+			"parent": "middle_metacarpal_l",
+			"placement": "free",
+			"position": [
+				-21.975762015124538,
+				99.22177134479577,
+				52.64559036232271
+			],
+			"radius": 2.0,
+			"side": "left",
+			"up": "y",
+			"upType": "plane",
+			"upVector": [
+				0.7555615147262358,
+				-0.3367528609758675,
+				0.5618935024443371
+			]
+		},
+		{
+			"aim": "z",
+			"aimAt": "middle_03_l",
+			"centerInMesh": true,
+			"joint": "middle_02_l",
+			"label": "middle_02_l",
+			"limb": "middle_l",
+			"mirror": "middle_02_r",
+			"name": "middle_02_l",
+			"offset": [
+				7.077671781985373e-16,
+				-8.93729534823251e-15,
+				9.742207041085749e-15,
+				1.0
+			],
+			"orient": "aim",
+			"orientation": [
+				0.7380028100989525,
+				0.2692796224035967,
+				-0.3517503131114282,
+				0.5090305044594461
+			],
+			"parent": "middle_01_l",
+			"placement": "free",
+			"position": [
+				-24.27363129302798,
+				94.60279909013566,
+				52.96723400109848
+			],
+			"radius": 2.0,
+			"side": "left",
+			"up": "y",
+			"upType": "plane",
+			"upVector": [
+				0.7555615147262472,
+				-0.33675286097587437,
+				0.5618935024443175
+			]
+		},
+		{
+			"centerInMesh": true,
+			"joint": "middle_03_l",
+			"label": "middle_03_l",
+			"limb": "middle_l",
+			"mirror": "middle_03_r",
+			"name": "middle_03_l",
+			"offset": [
+				4.163336342344337e-17,
+				0.08715574249514316,
+				8.326672684688674e-17,
+				0.9961946981138378
+			],
+			"orient": "parent",
+			"orientation": [
+				0.7658515463258155,
+				0.3126198637173994,
+				-0.28609061410381076,
+				0.48362422429131513
+			],
+			"parent": "middle_02_l",
+			"placement": "free",
+			"position": [
+				-24.87986607367289,
+				92.27533346758646,
+				52.38752799514602
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"aim": "z",
+			"aimAt": "thumb_02_l",
+			"centerInMesh": true,
+			"joint": "thumb_01_l",
+			"label": "thumb_01_l",
+			"limb": "thumb_l",
+			"mirror": "thumb_01_r",
+			"name": "thumb_01_l",
+			"offset": [
+				-8.743006318923106e-15,
+				-1.2767564783189297e-14,
+				0.1875925905097751,
+				0.9822469241417007
+			],
+			"orient": "aim",
+			"orientation": [
+				0.5895721887146441,
+				-0.5203780347303537,
+				-0.20933707549972436,
+				0.5811964591131141
+			],
+			"parent": "hand_l",
+			"placement": "free",
+			"position": [
+				-18.495816711152997,
+				102.95844529643912,
+				46.22671149637632
+			],
+			"radius": 2.0,
+			"side": "left",
+			"up": "y",
+			"upType": "world",
+			"upVector": [
+				0.0,
+				0.0,
+				1.0
+			]
+		},
+		{
+			"aim": "z",
+			"aimAt": "thumb_03_l",
+			"centerInMesh": true,
+			"joint": "thumb_02_l",
+			"label": "thumb_02_l",
+			"limb": "thumb_l",
+			"mirror": "thumb_02_r",
+			"name": "thumb_02_l",
+			"offset": [
+				1.350655698395542e-14,
+				-1.021405182655144e-14,
+				-0.008357484228953327,
+				0.9999650756188253
+			],
+			"orient": "aim",
+			"orientation": [
+				0.5958663867439404,
+				-0.4096531968032707,
+				-0.07174081561716868,
+				0.6870085609889917
+			],
+			"parent": "thumb_01_l",
+			"placement": "free",
+			"position": [
+				-22.22465709655154,
+				100.91196810134618,
+				45.19010039943567
+			],
+			"radius": 2.0,
+			"side": "left",
+			"up": "y",
+			"upType": "plane",
+			"upVector": [
+				-0.40050206445966274,
+				0.28936145495514054,
+				0.8694067199819614
+			]
+		},
+		{
+			"centerInMesh": true,
+			"joint": "thumb_03_l",
+			"label": "thumb_03_l",
+			"limb": "thumb_l",
+			"mirror": "thumb_03_r",
+			"name": "thumb_03_l",
+			"offset": [
+				1.4224732503009818e-16,
+				0.08715574249514306,
+				-5.551115123125783e-17,
+				0.9961946981138379
+			],
+			"orient": "parent",
+			"orientation": [
+				0.5998515593108846,
+				-0.3482176014872875,
+				-0.019534642791619646,
+				0.7200979145489486
+			],
+			"parent": "thumb_02_l",
+			"placement": "free",
+			"position": [
+				-24.22551574657473,
+				98.56675345063452,
+				45.04893137728138
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"aim": "z",
+			"aimAt": "pinky_01_l",
+			"centerInMesh": true,
+			"joint": "pinky_metacarpal_l",
+			"label": "pinky_metacarpal_l",
+			"limb": "pinky_l",
+			"mirror": "pinky_metacarpal_r",
+			"name": "pinky_metacarpal_l",
+			"offset": [
+				-0.019388277425900997,
+				0.015280910459316961,
+				-0.043572316963251055,
+				0.9987452336148819
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.4183669214916469,
+				-0.27228563876376033,
+				0.6804111194137448,
+				-0.5365355146705092
+			],
+			"parent": "hand_l",
+			"placement": "free",
+			"position": [
+				-16.074227195038077,
+				101.90432945001065,
+				50.94512706351747
+			],
+			"radius": 2.0,
+			"side": "left",
+			"up": "y",
+			"upType": "world",
+			"upVector": [
+				1.0,
+				0.0,
+				0.0
+			]
+		},
+		{
+			"aim": "z",
+			"aimAt": "pinky_02_l",
+			"centerInMesh": true,
+			"joint": "pinky_01_l",
+			"label": "pinky_01_l",
+			"limb": "pinky_l",
+			"mirror": "pinky_01_r",
+			"name": "pinky_01_l",
+			"offset": [
+				8.215650382226162e-15,
+				-2.2037927038809367e-14,
+				0.03895182758034389,
+				0.9992410895915718
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.533917747459613,
+				-0.2883775096500425,
+				0.5747003941024378,
+				-0.5490807844882166
+			],
+			"parent": "pinky_metacarpal_l",
+			"placement": "free",
+			"position": [
+				-17.6280352211447,
+				97.9685177828023,
+				53.53984582653269
+			],
+			"radius": 2.0,
+			"side": "left",
+			"up": "y",
+			"upType": "plane",
+			"upVector": [
+				0.9496801924363343,
+				-0.2551546996875978,
+				0.1816689608089912
+			]
+		},
+		{
+			"aim": "z",
+			"aimAt": "pinky_03_l",
+			"centerInMesh": true,
+			"joint": "pinky_02_l",
+			"label": "pinky_02_l",
+			"limb": "pinky_l",
+			"mirror": "pinky_02_r",
+			"name": "pinky_02_l",
+			"offset": [
+				5.273559366969493e-15,
+				-8.88178419700125e-16,
+				6.245004513516504e-15,
+				1.0
+			],
+			"orient": "aim",
+			"orientation": [
+				0.6308776663643806,
+				0.3848299689455024,
+				-0.4661996075893648,
+				0.48637145369312074
+			],
+			"parent": "pinky_01_l",
+			"placement": "free",
+			"position": [
+				-18.761388671698747,
+				94.4662338732379,
+				54.545516377194524
+			],
+			"radius": 2.0,
+			"side": "left",
+			"up": "y",
+			"upType": "plane",
+			"upVector": [
+				0.9390536272196401,
+				-0.23069740806767772,
+				0.2548666143622823
+			]
+		},
+		{
+			"centerInMesh": true,
+			"joint": "pinky_03_l",
+			"label": "pinky_03_l",
+			"limb": "pinky_l",
+			"mirror": "pinky_03_r",
+			"name": "pinky_03_l",
+			"offset": [
+				0.0,
+				0.0428957541412256,
+				5.551115123125784e-17,
+				0.9990795535274735
+			],
+			"orient": "parent",
+			"orientation": [
+				0.6502949609896689,
+				0.4053390238569945,
+				-0.4387085225355091,
+				0.46941620307016946
+			],
+			"parent": "pinky_02_l",
+			"placement": "free",
+			"position": [
+				-19.197722668566584,
+				92.4823401600667,
+				54.357425382254604
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"aim": "z",
+			"aimAt": "ring_01_l",
+			"centerInMesh": true,
+			"joint": "ring_metacarpal_l",
+			"label": "ring_metacarpal_l",
+			"limb": "ring_l",
+			"mirror": "ring_metacarpal_r",
+			"name": "ring_metacarpal_l",
+			"offset": [
+				-0.0019050581802636658,
+				0.003649354335090115,
+				0.01983231037097671,
+				0.9997948451715561
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.4372825395888942,
+				-0.11610971096381441,
+				0.6835780914739565,
+				-0.572733365928169
+			],
+			"parent": "hand_l",
+			"placement": "free",
+			"position": [
+				-17.132643411823302,
+				102.40470783030435,
+				50.33090507608863
+			],
+			"radius": 2.0,
+			"side": "left",
+			"up": "y",
+			"upType": "world",
+			"upVector": [
+				1.0,
+				0.0,
+				0.0
+			]
+		},
+		{
+			"aim": "z",
+			"aimAt": "ring_02_l",
+			"centerInMesh": true,
+			"joint": "ring_01_l",
+			"label": "ring_01_l",
+			"limb": "ring_l",
+			"mirror": "ring_01_r",
+			"name": "ring_01_l",
+			"offset": [
+				-1.0449974219284288e-14,
+				7.827072323607355e-15,
+				0.05033125037166038,
+				0.9987325794405756
+			],
+			"orient": "aim",
+			"orientation": [
+				0.6094464231050569,
+				0.22462404217348117,
+				-0.5197513726839553,
+				0.5549573025334854
+			],
+			"parent": "ring_metacarpal_l",
+			"placement": "free",
+			"position": [
+				-19.776772520660188,
+				98.71566438571196,
+				53.68851748972108
+			],
+			"radius": 2.0,
+			"side": "left",
+			"up": "y",
+			"upType": "plane",
+			"upVector": [
+				0.8824348141916767,
+				-0.31216920720381564,
+				0.35193633625450255
+			]
+		},
+		{
+			"aim": "z",
+			"aimAt": "ring_03_l",
+			"centerInMesh": true,
+			"joint": "ring_02_l",
+			"label": "ring_02_l",
+			"limb": "ring_l",
+			"mirror": "ring_02_r",
+			"name": "ring_02_l",
+			"offset": [
+				3.450018049022674e-14,
+				-7.66053886991358e-15,
+				-1.3158918399369668e-13,
+				1.0
+			],
+			"orient": "aim",
+			"orientation": [
+				0.6867424713713612,
+				0.3129775082947178,
+				-0.41225139181955334,
+				0.5103710877971304
+			],
+			"parent": "ring_01_l",
+			"placement": "free",
+			"position": [
+				-21.68897445843087,
+				94.18693860615176,
+				54.46611501863024
+			],
+			"radius": 2.0,
+			"side": "left",
+			"up": "y",
+			"upType": "plane",
+			"upVector": [
+				0.8506722776374782,
+				-0.28313286408474353,
+				0.44293617749539865
+			]
+		},
+		{
+			"centerInMesh": true,
+			"joint": "ring_03_l",
+			"label": "ring_03_l",
+			"limb": "ring_l",
+			"mirror": "ring_03_r",
+			"name": "ring_03_l",
+			"offset": [
+				-5.551115123125783e-17,
+				0.07992056584008067,
+				-5.551115123125783e-17,
+				0.9968012355308362
+			],
+			"orient": "parent",
+			"orientation": [
+				0.7174931084570522,
+				0.3527655130867014,
+				-0.356047849816623,
+				0.483725191337264
+			],
+			"parent": "ring_02_l",
+			"placement": "free",
+			"position": [
+				-22.247867167624555,
+				92.01471781808954,
+				54.15096225767711
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "weapon_l",
+			"label": "",
+			"localOffset": [
+				1.3170588016510036,
+				0.5195159912109406,
+				1.1633778810501119
+			],
+			"mirror": "weapon_r",
+			"name": "weapon_l",
+			"offset": [
+				-0.1438771653716117,
+				0.05929447413906197,
+				-0.08981169875222865,
+				0.9837262756419801
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.4612589125292872,
+				-0.1793367538107699,
+				0.6204576240764146,
+				-0.6083673898807902
+			],
+			"parent": "hand_l",
+			"placement": "parent",
+			"position": [
+				-15.698889263164299,
+				102.63405535367299,
+				47.768596880562384
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "upperarm_twist_01_l",
+			"label": "",
+			"limb": "arm_l",
+			"localOffset": [
+				4.955952699476063e-15,
+				-4.811405026670075e-14,
+				6.5981807020878e-16
+			],
+			"mirror": "upperarm_twist_01_r",
+			"name": "upperarm_twist_01_l",
+			"offset": [
+				-0.018790177785981202,
+				-0.0028496931446695324,
+				-5.3555911405416914e-05,
+				0.9998193864891383
+			],
+			"orient": "parent",
+			"orientation": [
+				0.44356882073966275,
+				0.0006537893740997686,
+				-0.031716382167098364,
+				0.8956787063056204
+			],
+			"parent": "upperarm_l",
+			"placement": "segment",
+			"position": [
+				2.3404908625236946,
+				136.0196544711159,
+				24.342248215531736
+			],
+			"radius": 2.0,
+			"side": "left",
+			"t": 0.3333333104396782,
+			"to": "lowerarm_l"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "upperarm_twistCor_01_l",
+			"label": "",
+			"limb": "arm_l",
+			"localOffset": [
+				3.7059082344636304e-15,
+				8.597560083310236e-14,
+				-4.216150024871723e-14
+			],
+			"mirror": "upperarm_twistCor_01_r",
+			"name": "upperarm_twistCor_01_l",
+			"offset": [
+				-0.018790177785981365,
+				-0.0028496931446695285,
+				-5.355591140540763e-05,
+				0.9998193864891383
+			],
+			"orient": "parent",
+			"orientation": [
+				0.4265683271159187,
+				-0.0012790259861664096,
+				-0.03301037285848299,
+				0.9038518361312308
+			],
+			"parent": "upperarm_twist_01_l",
+			"placement": "parent",
+			"position": [
+				2.3404908625237044,
+				136.01965447111598,
+				24.34224821553178
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "upperarm_twist_02_l",
+			"label": "",
+			"limb": "arm_l",
+			"localOffset": [
+				-2.196409546471227e-15,
+				-1.1757209782228056e-14,
+				-8.123542523088006e-15
+			],
+			"mirror": "upperarm_twist_02_r",
+			"name": "upperarm_twist_02_l",
+			"offset": [
+				-5.421010862427523e-20,
+				5.204170427930423e-18,
+				6.505213034913028e-18,
+				1.0
+			],
+			"orient": "parent",
+			"orientation": [
+				0.46040908531936153,
+				0.0025863685679775104,
+				-0.030410934661443657,
+				0.8871820331285102
+			],
+			"parent": "upperarm_l",
+			"placement": "segment",
+			"position": [
+				2.123748413565392,
+				128.45580899610337,
+				29.674617321445602
+			],
+			"radius": 2.0,
+			"side": "left",
+			"t": 0.666666620879357,
+			"to": "lowerarm_l"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "upperarm_tricep_l",
+			"label": "",
+			"limb": "arm_l",
+			"localOffset": [
+				4.880585670471191,
+				-0.20165041089058233,
+				0.6398169398307828
+			],
+			"mirror": "upperarm_tricep_r",
+			"name": "upperarm_tricep_l",
+			"offset": [
+				0.008088350373159579,
+				-0.0023913355772273164,
+				0.7369753192615555,
+				-0.6758670275296218
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.3021661137625928,
+				-0.3434256981343063,
+				0.6732630980410523,
+				-0.5809227404489693
+			],
+			"parent": "upperarm_twist_02_l",
+			"placement": "parent",
+			"position": [
+				6.968899563802253,
+				127.56550017797561,
+				29.71940159589394
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "upperarm_bicep_l",
+			"label": "",
+			"limb": "arm_l",
+			"localOffset": [
+				-4.439379215240478,
+				-1.7917963266372698,
+				0.6797468066215553
+			],
+			"mirror": "upperarm_bicep_r",
+			"name": "upperarm_bicep_l",
+			"offset": [
+				0.0023913355772272452,
+				0.008088350373159582,
+				0.6758670275296217,
+				0.7369753192615556
+			],
+			"orient": "parent",
+			"orientation": [
+				0.3434256981343063,
+				-0.3021661137625927,
+				0.5809227404489692,
+				0.6732630980410524
+			],
+			"parent": "upperarm_twist_02_l",
+			"placement": "parent",
+			"position": [
+				-2.4242283073649573,
+				127.10052612617505,
+				28.747366706818323
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "upperarm_twistCor_02_l",
+			"label": "",
+			"limb": "arm_l",
+			"localOffset": [
+				1.775132062131625e-14,
+				-1.4352984239097432e-14,
+				5.836119653543742e-14
+			],
+			"mirror": "upperarm_twistCor_02_r",
+			"name": "upperarm_twistCor_02_l",
+			"offset": [
+				-0.056343383556573735,
+				-0.008544961841413975,
+				-0.00016059035109488188,
+				0.9983748699598086
+			],
+			"orient": "parent",
+			"orientation": [
+				0.40941374748489123,
+				-0.0032113790241461715,
+				-0.03429243912141026,
+				0.9116984693604818
+			],
+			"parent": "upperarm_twist_02_l",
+			"placement": "parent",
+			"position": [
+				2.1237484135654077,
+				128.45580899610331,
+				29.674617321445623
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "upperarm_correctiveRoot_l",
+			"label": "",
+			"limb": "arm_l",
+			"localOffset": [
+				7.17634334011784e-15,
+				-1.1674066586093408e-13,
+				-1.2922557794604656e-14
+			],
+			"mirror": "upperarm_correctiveRoot_r",
+			"name": "upperarm_correctiveRoot_l",
+			"offset": [
+				-9.486769009248166e-20,
+				3.469446951953615e-18,
+				-1.3010426069826057e-18,
+				1.0
+			],
+			"orient": "parent",
+			"orientation": [
+				0.46040908531936153,
+				0.002586368567977512,
+				-0.030410934661443664,
+				0.8871820331285102
+			],
+			"parent": "upperarm_l",
+			"placement": "parent",
+			"position": [
+				2.5572333114819905,
+				143.5834999461284,
+				19.009879109617838
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "upperarm_bck_l",
+			"label": "",
+			"limb": "arm_l",
+			"localOffset": [
+				7.644437313079833,
+				0.3859378695487967,
+				1.4677364826202415
+			],
+			"mirror": "upperarm_bck_r",
+			"name": "upperarm_bck_l",
+			"offset": [
+				6.071532165918826e-17,
+				8.326672684688677e-17,
+				-0.5831060420507859,
+				0.8123960510267558
+			],
+			"orient": "parent",
+			"orientation": [
+				0.37252639563133205,
+				0.2705684750759202,
+				-0.5420269271431242,
+				0.7030103805099905
+			],
+			"parent": "upperarm_correctiveRoot_l",
+			"placement": "parent",
+			"position": [
+				10.174807932669633,
+				142.21154211158716,
+				19.92142112513461
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "upperarm_fwd_l",
+			"label": "",
+			"limb": "arm_l",
+			"localOffset": [
+				-8.509158134460447,
+				-1.0630378723144602,
+				3.255006074905405
+			],
+			"mirror": "upperarm_fwd_r",
+			"name": "upperarm_fwd_l",
+			"offset": [
+				0.0676232557586026,
+				0.08010129408062329,
+				0.7570512680523979,
+				0.6448908865129609
+			],
+			"orient": "parent",
+			"orientation": [
+				0.36130172954553197,
+				-0.2778774138190119,
+				0.6887350134371355,
+				0.5638167116913205
+			],
+			"parent": "upperarm_correctiveRoot_l",
+			"placement": "parent",
+			"position": [
+				-6.07217732305487,
+				140.75236102613775,
+				20.293939364884967
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "upperarm_in_l",
+			"label": "",
+			"limb": "arm_l",
+			"localOffset": [
+				-0.5444060564041133,
+				-4.761751651763918,
+				6.410148620605467
+			],
+			"mirror": "upperarm_in_r",
+			"name": "upperarm_in_l",
+			"offset": [
+				-3.8597597340483964e-17,
+				0.4082838069470946,
+				0.9128550448920068,
+				5.898059818321145e-17
+			],
+			"orient": "parent",
+			"orientation": [
+				0.014777271771621954,
+				-0.05806469830712198,
+				0.9978461687861265,
+				0.026704802720477944
+			],
+			"parent": "upperarm_correctiveRoot_l",
+			"placement": "parent",
+			"position": [
+				1.5954707576735914,
+				135.63972218873815,
+				18.83079863368613
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "upperarm_out_l",
+			"label": "",
+			"limb": "arm_l",
+			"localOffset": [
+				0.05173654109239628,
+				5.804066181182851,
+				0.22034949064256182
+			],
+			"mirror": "upperarm_out_r",
+			"name": "upperarm_out_l",
+			"offset": [
+				-1.0842021724855047e-19,
+				3.469446951953615e-18,
+				2.1684043449710093e-18,
+				1.0
+			],
+			"orient": "parent",
+			"orientation": [
+				0.46040908531936153,
+				0.002586368567977515,
+				-0.03041093466144366,
+				0.8871820331285102
+			],
+			"parent": "upperarm_correctiveRoot_l",
+			"placement": "parent",
+			"position": [
+				2.930724886548214,
+				146.73346506696203,
+				23.875743738247294
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "clavicle_out_l",
+			"label": "",
+			"limb": "arm_l",
+			"localOffset": [
+				-0.4438775479793551,
+				6.28183984756471,
+				11.813391685485838
+			],
+			"mirror": "clavicle_out_r",
+			"name": "clavicle_out_l",
+			"offset": [
+				-0.027061033634763445,
+				-0.03747115606995989,
+				-0.0025898813857585783,
+				0.9989278779951066
+			],
+			"orient": "parent",
+			"orientation": [
+				0.04942598069167604,
+				-0.0141591767070879,
+				-0.004787676726326464,
+				0.9986659442972949
+			],
+			"parent": "clavicle_l",
+			"placement": "parent",
+			"position": [
+				1.8602631841543118,
+				150.7050851776644,
+				14.069293934882722
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "clavicle_scap_l",
+			"label": "",
+			"limb": "arm_l",
+			"localOffset": [
+				7.578162193298337,
+				-1.9931055307388272,
+				9.985832214355467
+			],
+			"mirror": "clavicle_scap_r",
+			"name": "clavicle_scap_l",
+			"offset": [
+				0.002589881385758577,
+				0.9989278779951066,
+				-0.027061033634763452,
+				0.03747115606995978
+			],
+			"orient": "parent",
+			"orientation": [
+				0.004787676726326453,
+				0.9986659442972949,
+				0.04942598069167603,
+				0.014159176707087781
+			],
+			"parent": "clavicle_l",
+			"placement": "parent",
+			"position": [
+				9.761405045245656,
+				142.83485757023269,
+				10.634284336177947
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"aim": "-z",
+			"aimAt": "upperarm_r",
+			"centerInMesh": true,
+			"joint": "clavicle_r",
+			"label": "clavicle_r",
+			"limb": "arm_r",
+			"mirror": "clavicle_l",
+			"name": "clavicle_r",
+			"offset": [
+				-1.2299285104072633e-05,
+				1.0184048845202076e-07,
+				-0.001725352755686881,
+				0.9999985115021851
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.02301960422562619,
+				0.07654065191528821,
+				0.9968006946714081,
+				-3.9093179364668924e-05
+			],
+			"parent": "spine_05",
+			"placement": "free",
+			"position": [
+				1.7398495510540464,
+				146.3009947262177,
+				-1.4278726577554377
+			],
+			"radius": 2.0,
+			"side": "right",
+			"up": "-x",
+			"upType": "world",
+			"upVector": [
+				1.0,
+				0.0,
+				0.0
+			]
+		},
+		{
+			"aim": "-z",
+			"aimAt": "lowerarm_r",
+			"centerInMesh": true,
+			"joint": "upperarm_r",
+			"label": "upperarm_r",
+			"limb": "arm_r",
+			"mirror": "upperarm_l",
+			"name": "upperarm_r",
+			"offset": [
+				-1.0547118733938991e-15,
+				-6.539907504432566e-16,
+				0.014904508556339482,
+				0.9998889216431465
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.0025863685819238554,
+				0.4604090853215294,
+				0.8871820331270983,
+				0.030410934668625315
+			],
+			"parent": "clavicle_r",
+			"placement": "free",
+			"position": [
+				2.5572695781667267,
+				143.58299542707977,
+				-19.009882481023503
+			],
+			"radius": 2.0,
+			"side": "right",
+			"up": "x",
+			"upType": "plane",
+			"upVector": [
+				-0.9960142079706686,
+				0.0686699346148133,
+				-0.056922206567899876
+			]
+		},
+		{
+			"aim": "-z",
+			"aimAt": "hand_r",
+			"centerInMesh": true,
+			"joint": "lowerarm_r",
+			"label": "lowerarm_r",
+			"limb": "arm_r",
+			"mirror": "lowerarm_l",
+			"name": "lowerarm_r",
+			"offset": [
+				1.6653345369377348e-16,
+				-2.220446049250313e-16,
+				1.8596235662471372e-15,
+				1.0
+			],
+			"orient": "aim",
+			"orientation": [
+				0.2935547066767895,
+				0.42388302239765047,
+				0.837212209295754,
+				0.18227598337976306
+			],
+			"parent": "upperarm_r",
+			"placement": "free",
+			"position": [
+				1.9070525925043176,
+				120.89182056854676,
+				-35.00673490098288
+			],
+			"radius": 2.0,
+			"side": "right",
+			"up": "-y",
+			"upType": "plane",
+			"upVector": [
+				0.05634164488343167,
+				0.5741972984119447,
+				-0.8167760289995375
+			]
+		},
+		{
+			"aim": "-z",
+			"aimAt": "middle_metacarpal_r",
+			"centerInMesh": true,
+			"joint": "hand_r",
+			"label": "hand_r",
+			"limb": "arm_r",
+			"mirror": "hand_l",
+			"name": "hand_r",
+			"offset": [
+				-0.016716985997212438,
+				0.11146510822322968,
+				-0.08830753690750003,
+				0.9896958375952094
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.009649321772636235,
+				0.5205995176452262,
+				0.598460393563746,
+				0.6088745274294306
+			],
+			"parent": "lowerarm_r",
+			"placement": "free",
+			"position": [
+				-15.698805229060685,
+				104.46643350645414,
+				-47.76831885496153
+			],
+			"radius": 2.0,
+			"side": "right",
+			"up": "-y",
+			"upType": "plane",
+			"upVector": [
+				0.6724208679354807,
+				-0.15912447951850298,
+				-0.7228620728623546
+			]
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "lowerarm_twist_02_r",
+			"label": "",
+			"limb": "arm_r",
+			"localOffset": [
+				-8.197877940643475e-15,
+				-1.748569037413185e-14,
+				-9.121636248741448e-15
+			],
+			"mirror": "lowerarm_twist_02_l",
+			"name": "lowerarm_twist_02_r",
+			"offset": [
+				-0.014877390877519103,
+				0.017494799369039138,
+				0.011477666775662282,
+				0.999670374874189
+			],
+			"orient": "parent",
+			"orientation": [
+				0.28096448106934546,
+				0.411107325273299,
+				0.850470300222075,
+				0.16955823755937374
+			],
+			"parent": "lowerarm_r",
+			"placement": "segment",
+			"position": [
+				-3.9615613415290154,
+				115.41669652963647,
+				-39.26059234841275
+			],
+			"radius": 2.0,
+			"side": "right",
+			"t": 0.33333303003532194,
+			"to": "hand_r"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "lowerarm_twist_01_r",
+			"label": "",
+			"limb": "arm_r",
+			"localOffset": [
+				9.22601863524609e-15,
+				-8.059751519361928e-15,
+				7.417871726155563e-15
+			],
+			"mirror": "lowerarm_twist_01_l",
+			"name": "lowerarm_twist_01_r",
+			"offset": [
+				-0.014877324768411693,
+				0.017494799386436583,
+				0.01147766585575355,
+				0.9996703758682995
+			],
+			"orient": "parent",
+			"orientation": [
+				0.2809644930067748,
+				0.41110738131525215,
+				0.8504702728692581,
+				0.16955821909672092
+			],
+			"parent": "lowerarm_r",
+			"placement": "segment",
+			"position": [
+				-9.83016295289698,
+				109.94158398715821,
+				-43.51444086377404
+			],
+			"radius": 2.0,
+			"side": "right",
+			"t": 0.6666653601521566,
+			"to": "hand_r"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "lowerarm_correctiveRoot_r",
+			"label": "",
+			"limb": "arm_r",
+			"localOffset": [
+				2.3793934813476798e-05,
+				-0.00030234770383690647,
+				-1.925338983932914e-05
+			],
+			"mirror": "lowerarm_correctiveRoot_l",
+			"name": "lowerarm_correctiveRoot_r",
+			"offset": [
+				-0.015209695599849415,
+				0.00017877875103403107,
+				0.011752090629756393,
+				0.9998152437144316
+			],
+			"orient": "parent",
+			"orientation": [
+				0.2955599443197073,
+				0.40765367004404585,
+				0.8456992660384711,
+				0.17679240943927144
+			],
+			"parent": "lowerarm_r",
+			"placement": "parent",
+			"position": [
+				1.9070390763814482,
+				120.89199575449214,
+				-35.006982848915584
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "lowerarm_out_r",
+			"label": "",
+			"limb": "arm_r",
+			"localOffset": [
+				-0.6178444027900679,
+				-2.9244780540466313,
+				-0.7070856690406777
+			],
+			"mirror": "lowerarm_out_l",
+			"name": "lowerarm_out_r",
+			"offset": [
+				1.6653345369377348e-16,
+				0.0,
+				2.107342383927957e-08,
+				0.9999999999999998
+			],
+			"orient": "parent",
+			"orientation": [
+				0.2955599529103658,
+				0.4076536638155859,
+				0.8456992697640923,
+				0.1767923916174923
+			],
+			"parent": "lowerarm_correctiveRoot_r",
+			"placement": "parent",
+			"position": [
+				2.0926968353399737,
+				121.91439329830723,
+				-37.89739946195971
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "lowerarm_in_r",
+			"label": "",
+			"limb": "arm_r",
+			"localOffset": [
+				-0.8168740868568423,
+				3.825463771820071,
+				-0.8577861785888676
+			],
+			"mirror": "lowerarm_in_l",
+			"name": "lowerarm_in_r",
+			"offset": [
+				0.0,
+				9.71445146547012e-17,
+				-1.0,
+				-1.0533061672868271e-08
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.407653673157197,
+				0.29555994002586605,
+				-0.1767924183470739,
+				0.8456992641763057
+			],
+			"parent": "lowerarm_correctiveRoot_r",
+			"placement": "parent",
+			"position": [
+				1.7555908979884394,
+				117.63419350833983,
+				-32.6829687685601
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "lowerarm_fwd_r",
+			"label": "",
+			"limb": "arm_r",
+			"localOffset": [
+				3.587697505950924,
+				0.22602805495262546,
+				-1.812735080718996
+			],
+			"mirror": "lowerarm_fwd_l",
+			"name": "lowerarm_fwd_r",
+			"offset": [
+				4.163336342344336e-17,
+				2.7755575615628907e-17,
+				0.7071067811865476,
+				0.7071067811865475
+			],
+			"orient": "parent",
+			"orientation": [
+				0.4972471153393116,
+				0.07926223358814474,
+				0.7230107974371065,
+				-0.4729885742834717
+			],
+			"parent": "lowerarm_correctiveRoot_r",
+			"placement": "parent",
+			"position": [
+				-2.0101895132237626,
+				121.63212324286538,
+				-34.44466441027485
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "lowerarm_bck_r",
+			"label": "",
+			"limb": "arm_r",
+			"localOffset": [
+				-5.001581192016601,
+				0.9858056902885428,
+				-0.7723354101181027
+			],
+			"mirror": "lowerarm_bck_l",
+			"name": "lowerarm_bck_r",
+			"offset": [
+				1.1102230246251565e-16,
+				5.551115123125783e-17,
+				-0.7071067811865477,
+				0.7071067811865475
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.07926223358814483,
+				0.49724711533931176,
+				0.4729885742834715,
+				0.7230107974371065
+			],
+			"parent": "lowerarm_correctiveRoot_r",
+			"placement": "parent",
+			"position": [
+				5.167480146529722,
+				117.14279664727992,
+				-36.384356925784765
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "wrist_inner_r",
+			"label": "",
+			"localOffset": [
+				-1.6586792469024658,
+				-0.03817709535360447,
+				0.7033410668373108
+			],
+			"mirror": "wrist_inner_l",
+			"name": "wrist_inner_r",
+			"offset": [
+				0.08078024610325418,
+				0.11610335217910488,
+				-0.7163195675625329,
+				0.6832867923348865
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.3998070991425487,
+				0.46784292806960415,
+				-0.07040313129112018,
+				0.7850609385486484
+			],
+			"parent": "hand_r",
+			"placement": "parent",
+			"position": [
+				-14.80430053179677,
+				103.70999931835243,
+				-46.39900090187024
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "wrist_outer_r",
+			"label": "",
+			"localOffset": [
+				2.238711595535279,
+				0.12402799725532754,
+				-0.019879069179291387
+			],
+			"mirror": "wrist_outer_l",
+			"name": "wrist_outer_r",
+			"offset": [
+				0.11610335217910489,
+				-0.08078024610325406,
+				0.6832867923348863,
+				0.7163195675625331
+			],
+			"orient": "parent",
+			"orientation": [
+				0.467842928069604,
+				0.39980709914254886,
+				0.7850609385486484,
+				0.07040313129112037
+			],
+			"parent": "hand_r",
+			"placement": "parent",
+			"position": [
+				-16.381200415484322,
+				106.09799945752029,
+				-49.1467009088008
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"aim": "-z",
+			"aimAt": "pinky_01_r",
+			"centerInMesh": true,
+			"joint": "pinky_metacarpal_r",
+			"label": "pinky_metacarpal_r",
+			"limb": "pinky_r",
+			"mirror": "pinky_metacarpal_l",
+			"name": "pinky_metacarpal_r",
+			"offset": [
+				-0.019396653625530808,
+				0.01529636562144146,
+				-0.043577304086483276,
+				0.9987446168042462
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.2722856387741668,
+				0.4183669214826188,
+				0.5365355146650113,
+				0.6804111194194666
+			],
+			"parent": "hand_r",
+			"placement": "free",
+			"position": [
+				-16.07420047093896,
+				101.9039994533407,
+				-50.94510096428533
+			],
+			"radius": 2.0,
+			"side": "right",
+			"up": "-y",
+			"upType": "world",
+			"upVector": [
+				1.0,
+				0.0,
+				0.0
+			]
+		},
+		{
+			"aim": "-z",
+			"aimAt": "pinky_02_r",
+			"centerInMesh": true,
+			"joint": "pinky_01_r",
+			"label": "pinky_01_r",
+			"limb": "pinky_r",
+			"mirror": "pinky_01_l",
+			"name": "pinky_01_r",
+			"offset": [
+				-4.426966319970305e-06,
+				3.8092398779165926e-06,
+				0.038940540149280306,
+				0.9992415295106454
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.28837750966033,
+				0.533917747452273,
+				0.5490807844821232,
+				0.5747003941099165
+			],
+			"parent": "pinky_metacarpal_r",
+			"placement": "free",
+			"position": [
+				-17.628000637701895,
+				97.96849953849755,
+				-53.53980103131056
+			],
+			"radius": 2.0,
+			"side": "right",
+			"up": "y",
+			"upType": "plane",
+			"upVector": [
+				-0.9496752287359757,
+				0.25515621848620323,
+				0.18169277391545685
+			]
+		},
+		{
+			"aim": "-z",
+			"aimAt": "pinky_03_r",
+			"centerInMesh": true,
+			"joint": "pinky_02_r",
+			"label": "pinky_02_r",
+			"limb": "pinky_r",
+			"mirror": "pinky_02_l",
+			"name": "pinky_02_r",
+			"offset": [
+				7.598632502048286e-06,
+				-4.2953060281070155e-06,
+				-3.127780715650452e-05,
+				0.9999999994727551
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.3848299689544874,
+				0.6308776663585483,
+				0.48637145368523205,
+				0.46619960759807044
+			],
+			"parent": "pinky_01_r",
+			"placement": "free",
+			"position": [
+				-18.761400748818406,
+				94.46619970957619,
+				-54.545501068156966
+			],
+			"radius": 2.0,
+			"side": "right",
+			"up": "y",
+			"upType": "plane",
+			"upVector": [
+				-0.9390400402929411,
+				0.23068463465090655,
+				0.25492822923836717
+			]
+		},
+		{
+			"centerInMesh": true,
+			"joint": "pinky_03_r",
+			"label": "pinky_03_r",
+			"limb": "pinky_r",
+			"mirror": "pinky_03_l",
+			"name": "pinky_03_r",
+			"offset": [
+				6.391965845509162e-10,
+				0.042895754141225595,
+				1.4887445554112588e-08,
+				0.9990795535274732
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.40533901417548274,
+				0.6502949670242375,
+				0.469416209599169,
+				0.4387085155496105
+			],
+			"parent": "pinky_02_r",
+			"placement": "free",
+			"position": [
+				-19.19770086509111,
+				92.4822996379354,
+				-54.35740112885605
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"aim": "-z",
+			"aimAt": "ring_01_r",
+			"centerInMesh": true,
+			"joint": "ring_metacarpal_r",
+			"label": "ring_metacarpal_r",
+			"limb": "ring_r",
+			"mirror": "ring_metacarpal_l",
+			"name": "ring_metacarpal_r",
+			"offset": [
+				-0.0019034482704267386,
+				0.0036332077022813436,
+				0.019840816456733877,
+				0.9997947382782149
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.11610971097479558,
+				0.4372825395799246,
+				0.572733365925054,
+				0.6835780914804391
+			],
+			"parent": "hand_r",
+			"placement": "free",
+			"position": [
+				-17.13260061016501,
+				102.40499942786847,
+				-50.33090093933656
+			],
+			"radius": 2.0,
+			"side": "right",
+			"up": "-y",
+			"upType": "world",
+			"upVector": [
+				1.0,
+				0.0,
+				0.0
+			]
+		},
+		{
+			"aim": "-z",
+			"aimAt": "ring_02_r",
+			"centerInMesh": true,
+			"joint": "ring_01_r",
+			"label": "ring_01_r",
+			"limb": "ring_r",
+			"mirror": "ring_01_l",
+			"name": "ring_01_r",
+			"offset": [
+				2.4744791722874915e-06,
+				-1.9722500171626134e-06,
+				0.05032908443176298,
+				0.9987326885860138
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.22462404218369703,
+				0.6094464230985926,
+				0.5549573025281626,
+				0.5197513726928036
+			],
+			"parent": "ring_metacarpal_r",
+			"placement": "free",
+			"position": [
+				-19.776800845943985,
+				98.71569946140765,
+				-53.68850108416336
+			],
+			"radius": 2.0,
+			"side": "right",
+			"up": "y",
+			"upType": "plane",
+			"upVector": [
+				-0.8824356120268845,
+				0.3121633445716424,
+				0.3519395359043706
+			]
+		},
+		{
+			"aim": "-z",
+			"aimAt": "ring_03_r",
+			"centerInMesh": true,
+			"joint": "ring_02_r",
+			"label": "ring_02_r",
+			"limb": "ring_r",
+			"mirror": "ring_02_l",
+			"name": "ring_02_r",
+			"offset": [
+				2.477176549997574e-06,
+				1.1041530291272533e-05,
+				9.030882530680632e-08,
+				0.9999999999359701
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.3129775083039172,
+				0.6867424713664431,
+				0.5103710877901972,
+				0.41225139182934545
+			],
+			"parent": "ring_01_r",
+			"placement": "free",
+			"position": [
+				-21.689001049485334,
+				94.18689949977642,
+				-54.46610117193973
+			],
+			"radius": 2.0,
+			"side": "right",
+			"up": "y",
+			"upType": "plane",
+			"upVector": [
+				-0.850673584001595,
+				0.2831281110355778,
+				0.4429367067915086
+			]
+		},
+		{
+			"centerInMesh": true,
+			"joint": "ring_03_r",
+			"label": "ring_03_r",
+			"limb": "ring_r",
+			"mirror": "ring_03_l",
+			"name": "ring_03_r",
+			"offset": [
+				0.0,
+				0.07992056584008066,
+				0.0,
+				0.9968012355308362
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.3527655130953172,
+				0.7174931084529323,
+				0.48372519132961783,
+				0.35604784982677684
+			],
+			"parent": "ring_02_r",
+			"placement": "free",
+			"position": [
+				-22.247901135591448,
+				92.01469954681977,
+				-54.15100123105541
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"aim": "-z",
+			"aimAt": "middle_01_r",
+			"centerInMesh": true,
+			"joint": "middle_metacarpal_r",
+			"label": "middle_metacarpal_r",
+			"limb": "middle_r",
+			"mirror": "middle_metacarpal_l",
+			"name": "middle_metacarpal_r",
+			"offset": [
+				1.0504205169015182e-06,
+				-1.0100623688891199e-05,
+				0.11491739561717174,
+				0.9933750510665349
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.017165333537701048,
+				0.5072045765451666,
+				0.5756117796179366,
+				0.6411863598215808
+			],
+			"parent": "hand_r",
+			"placement": "free",
+			"position": [
+				-18.129800455563178,
+				102.9169995984117,
+				-49.68860089506043
+			],
+			"radius": 2.0,
+			"side": "right",
+			"up": "-y",
+			"upType": "world",
+			"upVector": [
+				1.0,
+				0.0,
+				0.0
+			]
+		},
+		{
+			"aim": "-z",
+			"aimAt": "middle_02_r",
+			"centerInMesh": true,
+			"joint": "middle_01_r",
+			"label": "middle_01_r",
+			"limb": "middle_r",
+			"mirror": "middle_01_l",
+			"name": "middle_01_r",
+			"offset": [
+				3.58340691664072e-06,
+				-7.490708294893846e-06,
+				-6.055133107626955e-06,
+				0.999999999947192
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.17311358156771223,
+				0.6625095742222458,
+				0.5492315152894887,
+				0.47901721738729797
+			],
+			"parent": "middle_metacarpal_r",
+			"placement": "free",
+			"position": [
+				-21.975800424690945,
+				99.22179991655294,
+				-52.64560086051516
+			],
+			"radius": 2.0,
+			"side": "right",
+			"up": "y",
+			"upType": "plane",
+			"upVector": [
+				-0.7555588737613567,
+				0.3367428624361636,
+				0.5619030457995129
+			]
+		},
+		{
+			"aim": "-z",
+			"aimAt": "middle_03_r",
+			"centerInMesh": true,
+			"joint": "middle_02_r",
+			"label": "middle_02_r",
+			"limb": "middle_r",
+			"mirror": "middle_02_l",
+			"name": "middle_02_r",
+			"offset": [
+				-6.9494066664566034e-06,
+				9.25130548132258e-06,
+				2.843157258650142e-05,
+				0.9999999995288824
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.26927962241259484,
+				0.7380028100949751,
+				0.5090305044530428,
+				0.35175031312215116
+			],
+			"parent": "middle_01_r",
+			"placement": "free",
+			"position": [
+				-24.273600637261914,
+				94.60279987233378,
+				-52.96720090452004
+			],
+			"radius": 2.0,
+			"side": "right",
+			"up": "y",
+			"upType": "plane",
+			"upVector": [
+				-0.7555926529652442,
+				0.3367636986459128,
+				0.5618451335192545
+			]
+		},
+		{
+			"centerInMesh": true,
+			"joint": "middle_03_r",
+			"label": "middle_03_r",
+			"limb": "middle_r",
+			"mirror": "middle_03_l",
+			"name": "middle_03_r",
+			"offset": [
+				0.0,
+				0.08715574249514316,
+				5.551115123125783e-17,
+				0.9961946981138378
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.3126198637258053,
+				0.7658515463227878,
+				0.48362422428415197,
+				0.2860906141148395
+			],
+			"parent": "middle_02_r",
+			"placement": "free",
+			"position": [
+				-24.879900717828495,
+				92.27529984094555,
+				-52.387500888680584
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"aim": "-z",
+			"aimAt": "index_01_r",
+			"centerInMesh": true,
+			"joint": "index_metacarpal_r",
+			"label": "index_metacarpal_r",
+			"limb": "index_r",
+			"mirror": "index_metacarpal_l",
+			"name": "index_metacarpal_r",
+			"offset": [
+				0.01942498946041754,
+				-0.007479854456124299,
+				-0.18813669444055015,
+				0.9819222503674927
+			],
+			"orient": "aim",
+			"orientation": [
+				0.04849715953736391,
+				0.5533856404435021,
+				0.5815184306196476,
+				0.5943472666021142
+			],
+			"parent": "hand_r",
+			"placement": "free",
+			"position": [
+				-19.70010053098666,
+				103.23099960839197,
+				-48.139100880562246
+			],
+			"radius": 2.0,
+			"side": "right",
+			"up": "x",
+			"upType": "world",
+			"upVector": [
+				0.0,
+				1.0,
+				0.0
+			]
+		},
+		{
+			"aim": "-z",
+			"aimAt": "index_02_r",
+			"centerInMesh": true,
+			"joint": "index_01_r",
+			"label": "index_01_r",
+			"limb": "index_r",
+			"mirror": "index_01_l",
+			"name": "index_01_r",
+			"offset": [
+				-3.961650521244754e-06,
+				4.10802862331472e-07,
+				0.05236281911162286,
+				0.9986281265610439
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.07029853368727634,
+				0.662303208025954,
+				0.579287299873689,
+				0.4699348901762876
+			],
+			"parent": "index_metacarpal_r",
+			"placement": "free",
+			"position": [
+				-23.731500561889227,
+				99.67799986318485,
+				-50.53190089549528
+			],
+			"radius": 2.0,
+			"side": "right",
+			"up": "y",
+			"upType": "plane",
+			"upVector": [
+				-0.6914287277935444,
+				0.36442785707895414,
+				0.6237937570757197
+			]
+		},
+		{
+			"aim": "-z",
+			"aimAt": "index_03_r",
+			"centerInMesh": true,
+			"joint": "index_02_r",
+			"label": "index_02_r",
+			"limb": "index_r",
+			"mirror": "index_02_l",
+			"name": "index_02_r",
+			"offset": [
+				6.86182223597065e-07,
+				7.630242306919112e-06,
+				-1.7890335701958863e-05,
+				0.9999999998106224
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.14477937843247018,
+				0.7176198520416738,
+				0.5652915983934647,
+				0.3801395642683826
+			],
+			"parent": "index_01_r",
+			"placement": "free",
+			"position": [
+				-25.938900693876693,
+				96.27779997781983,
+				-50.992200960814564
+			],
+			"radius": 2.0,
+			"side": "right",
+			"up": "y",
+			"upType": "plane",
+			"upVector": [
+				-0.6375491002521768,
+				0.3189594729617581,
+				0.7012816833310258
+			]
+		},
+		{
+			"centerInMesh": true,
+			"joint": "index_03_r",
+			"label": "index_03_r",
+			"limb": "index_r",
+			"mirror": "index_03_l",
+			"name": "index_03_r",
+			"offset": [
+				1.1102230246251565e-16,
+				0.10900914874953903,
+				-2.7755575615628914e-17,
+				0.9940407463926724
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.20553855733541765,
+				0.7547820636566215,
+				0.5461406055971353,
+				0.29964708700189524
+			],
+			"parent": "index_02_r",
+			"placement": "free",
+			"position": [
+				-26.930000821301494,
+				93.88669993414935,
+				-50.80570098749823
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"aim": "-z",
+			"aimAt": "thumb_02_r",
+			"centerInMesh": true,
+			"joint": "thumb_01_r",
+			"label": "thumb_01_r",
+			"limb": "thumb_r",
+			"mirror": "thumb_01_l",
+			"name": "thumb_01_r",
+			"offset": [
+				6.0777623912544615e-06,
+				5.08255696729243e-05,
+				0.1875803664490513,
+				0.9822492573184578
+			],
+			"orient": "aim",
+			"orientation": [
+				0.5203780347206528,
+				0.5895721887131067,
+				0.581196459119485,
+				0.2093370755104813
+			],
+			"parent": "hand_r",
+			"placement": "free",
+			"position": [
+				-18.4958005636089,
+				102.95799948474077,
+				-46.226701019175806
+			],
+			"radius": 2.0,
+			"side": "right",
+			"up": "y",
+			"upType": "world",
+			"upVector": [
+				0.0,
+				0.0,
+				1.0
+			]
+		},
+		{
+			"aim": "-z",
+			"aimAt": "thumb_03_r",
+			"centerInMesh": true,
+			"joint": "thumb_02_r",
+			"label": "thumb_02_r",
+			"limb": "thumb_r",
+			"mirror": "thumb_02_l",
+			"name": "thumb_02_r",
+			"offset": [
+				-7.444563099479051e-06,
+				-2.3446126288240166e-06,
+				-0.00829067531637312,
+				0.999965631730351
+			],
+			"orient": "aim",
+			"orientation": [
+				0.40965319679232715,
+				0.595866386744867,
+				0.6870085609936144,
+				0.07174081562769398
+			],
+			"parent": "thumb_01_r",
+			"placement": "free",
+			"position": [
+				-22.22470052715849,
+				100.91199959280996,
+				-45.19010102958398
+			],
+			"radius": 2.0,
+			"side": "right",
+			"up": "y",
+			"upType": "plane",
+			"upVector": [
+				0.4004252225661071,
+				-0.28927233784434,
+				0.8694717681966181
+			]
+		},
+		{
+			"centerInMesh": true,
+			"joint": "thumb_03_r",
+			"label": "thumb_03_r",
+			"limb": "thumb_r",
+			"mirror": "thumb_03_l",
+			"name": "thumb_03_r",
+			"offset": [
+				1.1102230246251568e-16,
+				0.08715574249514303,
+				5.551115123125784e-17,
+				0.9961946981138379
+			],
+			"orient": "parent",
+			"orientation": [
+				0.3482176014759827,
+				0.599851559312725,
+				0.7200979145526,
+				0.01953464280202407
+			],
+			"parent": "thumb_02_r",
+			"placement": "free",
+			"position": [
+				-24.22550069214619,
+				98.56679965274607,
+				-45.04890106600672
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "weapon_r",
+			"label": "",
+			"localOffset": [
+				-1.3170545101165738,
+				-0.5195173621177647,
+				-1.1633833646774236
+			],
+			"mirror": "weapon_l",
+			"name": "weapon_r",
+			"offset": [
+				-0.14387716521270716,
+				0.059294492700026055,
+				-0.08981169865303651,
+				0.9837262745555078
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.17933676477124544,
+				0.4612589233531457,
+				0.6083673890249748,
+				0.6204576137008997
+			],
+			"parent": "hand_r",
+			"placement": "parent",
+			"position": [
+				-15.69880543437375,
+				102.63395111216923,
+				-47.76832089867241
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "upperarm_twist_01_r",
+			"label": "",
+			"limb": "arm_r",
+			"localOffset": [
+				1.0202637908132155e-05,
+				-0.00010078256312368044,
+				5.441244785471533e-15
+			],
+			"mirror": "upperarm_twist_01_l",
+			"name": "upperarm_twist_01_r",
+			"offset": [
+				-0.018790177785981133,
+				-0.0028496931446695306,
+				-5.355591140541376e-05,
+				0.9998193864891383
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.0006537893881826791,
+				0.4435688207418356,
+				0.8956787063042889,
+				0.03171638217402276
+			],
+			"parent": "upperarm_r",
+			"placement": "segment",
+			"position": [
+				2.3405260850142438,
+				136.01932912929374,
+				-24.342249087200916
+			],
+			"radius": 2.0,
+			"side": "right",
+			"t": 0.33333332188632225,
+			"to": "lowerarm_r"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "upperarm_twistCor_01_r",
+			"label": "",
+			"limb": "arm_r",
+			"localOffset": [
+				-9.541932466448621e-15,
+				1.1665092486145229e-14,
+				-9.775244870457814e-14
+			],
+			"mirror": "upperarm_twistCor_01_l",
+			"name": "upperarm_twistCor_01_r",
+			"offset": [
+				-0.0187901777859813,
+				-0.0028496931446695337,
+				-5.355591140542308e-05,
+				0.9998193864891384
+			],
+			"orient": "parent",
+			"orientation": [
+				0.0012790259719520196,
+				0.4265683271180957,
+				0.9038518361299801,
+				0.03301037286514765
+			],
+			"parent": "upperarm_twist_01_r",
+			"placement": "parent",
+			"position": [
+				2.34052608501425,
+				136.01932912929365,
+				-24.342249087200965
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "upperarm_twist_02_r",
+			"label": "",
+			"limb": "arm_r",
+			"localOffset": [
+				2.040527581400773e-05,
+				-0.00020156512622236086,
+				-6.19079440489223e-15
+			],
+			"mirror": "upperarm_twist_02_l",
+			"name": "upperarm_twist_02_r",
+			"offset": [
+				0.0,
+				-1.691355389077387e-17,
+				8.456776945386935e-18,
+				1.0
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.0025863685819238367,
+				0.4604090853215294,
+				0.8871820331270983,
+				0.030410934668625315
+			],
+			"parent": "upperarm_r",
+			"placement": "segment",
+			"position": [
+				2.1237825918617608,
+				128.45566283150768,
+				-29.67461569337833
+			],
+			"radius": 2.0,
+			"side": "right",
+			"t": 0.6666666437726454,
+			"to": "lowerarm_r"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "upperarm_tricep_r",
+			"label": "",
+			"limb": "arm_r",
+			"localOffset": [
+				-4.871665477752683,
+				0.003514213720339887,
+				-0.7575201392173792
+			],
+			"mirror": "upperarm_tricep_l",
+			"name": "upperarm_tricep_r",
+			"offset": [
+				-0.008088350373159692,
+				0.002391335577227234,
+				-0.7369753192615556,
+				0.6758670275296218
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.34342569814538443,
+				0.30216611375380836,
+				0.5809227404427066,
+				0.6732630980447477
+			],
+			"parent": "upperarm_twist_02_r",
+			"placement": "parent",
+			"position": [
+				6.968437610191959,
+				127.58340918957198,
+				-29.949324585923176
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "upperarm_bicep_r",
+			"label": "",
+			"limb": "arm_r",
+			"localOffset": [
+				4.448310375213623,
+				1.5932773351669343,
+				-0.7984781861305297
+			],
+			"mirror": "upperarm_bicep_l",
+			"name": "upperarm_bicep_r",
+			"offset": [
+				0.002391335577227205,
+				0.008088350373159713,
+				0.6758670275296217,
+				0.7369753192615556
+			],
+			"orient": "parent",
+			"orientation": [
+				0.3021661137538083,
+				0.3434256981453845,
+				0.6732630980447478,
+				-0.5809227404427065
+			],
+			"parent": "upperarm_twist_02_r",
+			"placement": "parent",
+			"position": [
+				-2.424703714152412,
+				127.11781538654574,
+				-28.978194978058585
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "upperarm_twistCor_02_r",
+			"label": "",
+			"limb": "arm_r",
+			"localOffset": [
+				-4.3503746431160756e-08,
+				1.4233457202357202e-07,
+				7.689776790724579e-06
+			],
+			"mirror": "upperarm_twistCor_02_l",
+			"name": "upperarm_twistCor_02_r",
+			"offset": [
+				-0.05634338355657387,
+				-0.008544961841413982,
+				-0.00016059035109488532,
+				0.9983748699598086
+			],
+			"orient": "parent",
+			"orientation": [
+				0.003211379009805461,
+				0.40941374748707143,
+				0.9116984693593124,
+				0.03429243912781276
+			],
+			"parent": "upperarm_twist_02_r",
+			"placement": "parent",
+			"position": [
+				2.12378280731185,
+				128.45566903078037,
+				-29.67461114613541
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "upperarm_correctiveRoot_r",
+			"label": "",
+			"limb": "arm_r",
+			"localOffset": [
+				2.427043838164544e-15,
+				9.675373742009948e-15,
+				-6.292206257364866e-14
+			],
+			"mirror": "upperarm_correctiveRoot_l",
+			"name": "upperarm_correctiveRoot_r",
+			"offset": [
+				0.0,
+				-8.239936510889834e-18,
+				8.456776945386935e-18,
+				1.0
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.0025863685819238445,
+				0.4604090853215294,
+				0.8871820331270983,
+				0.03041093466862531
+			],
+			"parent": "upperarm_r",
+			"placement": "parent",
+			"position": [
+				2.5572695781667223,
+				143.5829954270797,
+				-19.00988248102353
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "upperarm_bck_r",
+			"label": "",
+			"limb": "arm_r",
+			"localOffset": [
+				-7.637698650360105,
+				-0.5763676762580909,
+				-1.5995808839797918
+			],
+			"mirror": "upperarm_bck_l",
+			"name": "upperarm_bck_r",
+			"offset": [
+				0.0,
+				6.7220534694101275e-18,
+				-0.583106042050786,
+				0.8123960510267558
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.2705684750885142,
+				0.37252639562496104,
+				0.7030103805046559,
+				0.5420269271481354
+			],
+			"parent": "upperarm_correctiveRoot_r",
+			"placement": "parent",
+			"position": [
+				10.17576024348956,
+				142.21300061627443,
+				-20.153129425955683
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "upperarm_in_r",
+			"label": "",
+			"limb": "arm_r",
+			"localOffset": [
+				0.5461316704750063,
+				4.5569877624511665,
+				-6.551142215728753
+			],
+			"mirror": "upperarm_in_l",
+			"name": "upperarm_in_r",
+			"offset": [
+				3.0427578373570796e-09,
+				-0.4082838069470947,
+				-0.9128550448920066,
+				-6.803103438229874e-09
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.058064698199548834,
+				-0.014777272220015635,
+				-0.0267048101578441,
+				0.9978461685867037
+			],
+			"parent": "upperarm_correctiveRoot_r",
+			"placement": "parent",
+			"position": [
+				1.6020201662215503,
+				135.64167699880633,
+				-19.079321526761447
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "upperarm_fwd_r",
+			"label": "",
+			"limb": "arm_r",
+			"localOffset": [
+				8.51672554016113,
+				0.8736957311630196,
+				-3.3879806995391775
+			],
+			"mirror": "upperarm_fwd_l",
+			"name": "upperarm_fwd_r",
+			"offset": [
+				-0.06762325575860262,
+				-0.08010129408062332,
+				-0.7570512680523979,
+				-0.644890886512961
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.27787741381225795,
+				-0.36130172955796785,
+				-0.5638167116945833,
+				0.6887350134306658
+			],
+			"parent": "upperarm_correctiveRoot_r",
+			"placement": "parent",
+			"position": [
+				-6.072139954900158,
+				140.75231424664955,
+				-20.525437344071488
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "upperarm_out_r",
+			"label": "",
+			"limb": "arm_r",
+			"localOffset": [
+				-0.04416717961430583,
+				-5.99351501464843,
+				-0.3533142209053137
+			],
+			"mirror": "upperarm_out_l",
+			"name": "upperarm_out_r",
+			"offset": [
+				0.0,
+				4.7704895589362195e-18,
+				1.0842021724855044e-17,
+				1.0
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.0025863685819238437,
+				0.4604090853215294,
+				0.8871820331270983,
+				0.030410934668625298
+			],
+			"parent": "upperarm_correctiveRoot_r",
+			"placement": "parent",
+			"position": [
+				2.930766545566168,
+				146.7334877353651,
+				-24.107323225165953
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "clavicle_out_r",
+			"label": "",
+			"limb": "arm_r",
+			"localOffset": [
+				0.44230145215988176,
+				-6.316575527191162,
+				-12.041718482971191
+			],
+			"mirror": "clavicle_out_l",
+			"name": "clavicle_out_r",
+			"offset": [
+				-0.027061033634763462,
+				-0.03747115606995988,
+				-0.002589881385758579,
+				0.9989278779951066
+			],
+			"orient": "parent",
+			"orientation": [
+				0.01415917669147724,
+				0.04942598069457616,
+				0.9986659442973689,
+				0.004787676727139495
+			],
+			"parent": "clavicle_r",
+			"placement": "parent",
+			"position": [
+				1.8724729443020156,
+				150.704523380378,
+				-14.299899981218351
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "clavicle_scap_r",
+			"label": "",
+			"limb": "arm_r",
+			"localOffset": [
+				-7.567725181579583,
+				1.9570828676223861,
+				-10.214470863342285
+			],
+			"mirror": "clavicle_scap_l",
+			"name": "clavicle_scap_r",
+			"offset": [
+				-0.0025898813857585766,
+				-0.9989278779951067,
+				0.027061033634763462,
+				-0.03747115606995976
+			],
+			"orient": "parent",
+			"orientation": [
+				0.9986659442973688,
+				-0.0047876767271394826,
+				-0.014159176691477121,
+				0.04942598069457615
+			],
+			"parent": "clavicle_r",
+			"placement": "parent",
+			"position": [
+				9.76163317751835,
+				142.83547682270043,
+				-10.865945867013448
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "clavicle_pec_r",
+			"label": "",
+			"limb": "arm_r",
+			"localOffset": [
+				-7.915499210357664,
+				9.635502815246582,
+				-9.23782157897949
+			],
+			"mirror": "clavicle_pec_l",
+			"name": "clavicle_pec_r",
+			"offset": [
+				0.10850443744621018,
+				0.6792961988630549,
+				-0.7254826462347891,
+				0.021410074190773613
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.05845967186299588,
+				0.037970709534349605,
+				0.9975602751112526,
+				-0.0037668956835817304
+			],
+			"parent": "spine_05",
+			"placement": "parent",
+			"position": [
+				-9.942604603955878,
+				133.40135746831413,
+				-9.635502815370161
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "spine_04_latissimus_l",
+			"label": "",
+			"limb": "spine",
+			"localOffset": [
+				4.626293182373047,
+				-15.443478584289556,
+				-9.961814880371103
+			],
+			"mirror": "spine_04_latissimus_r",
+			"name": "spine_04_latissimus_l",
+			"offset": [
+				-0.7577242306018015,
+				-0.019259585196769496,
+				-0.16731105857024647,
+				-0.6304681343391272
+			],
+			"orient": "parent",
+			"orientation": [
+				0.10128449164929133,
+				0.1234617808268995,
+				0.017577472000951878,
+				0.9870104725404139
+			],
+			"parent": "spine_05",
+			"placement": "parent",
+			"position": [
+				2.2760992340027277,
+				130.48176858748414,
+				15.443478584365494
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "spine_04_latissimus_r",
+			"label": "",
+			"limb": "spine",
+			"localOffset": [
+				4.627012252807617,
+				15.454672813415527,
+				-9.967103958129881
+			],
+			"mirror": "spine_04_latissimus_l",
+			"name": "spine_04_latissimus_r",
+			"offset": [
+				0.04704547299604006,
+				0.6750825045583374,
+				-0.7320416567639052,
+				0.07851973173781415
+			],
+			"orient": "parent",
+			"orientation": [
+				0.02572614291925924,
+				0.03815301510852055,
+				0.998940540145932,
+				-0.0005570112928772517
+			],
+			"parent": "spine_05",
+			"placement": "parent",
+			"position": [
+				2.275876402771665,
+				130.47643550649494,
+				-15.45467281333958
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "clavicle_pec_l",
+			"label": "",
+			"limb": "arm_l",
+			"localOffset": [
+				-7.684768199920649,
+				-9.310201644897464,
+				-9.242896080017099
+			],
+			"mirror": "clavicle_pec_r",
+			"name": "clavicle_pec_l",
+			"offset": [
+				-0.725465235368948,
+				0.021406229504991763,
+				-0.10850596387154658,
+				-0.6793146703949233
+			],
+			"orient": "parent",
+			"orientation": [
+				0.037945771472846605,
+				0.05846569603945867,
+				0.003765196587838376,
+				0.9975608773947618
+			],
+			"parent": "spine_05",
+			"placement": "parent",
+			"position": [
+				-9.716366667655251,
+				133.355762010454,
+				9.310201644777553
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"aim": "z",
+			"aimAt": "calf_r",
+			"centerInMesh": true,
+			"joint": "thigh_r",
+			"label": "thigh_r",
+			"limb": "leg_r",
+			"mirror": "thigh_l",
+			"name": "thigh_r",
+			"offset": [
+				1.1102230246251565e-16,
+				-6.754579534584693e-17,
+				0.07334713886799218,
+				0.9973064710608669
+			],
+			"orient": "aim",
+			"orientation": [
+				0.053695424937343764,
+				0.7241400117860611,
+				-0.6857412344122463,
+				0.049970031999690294
+			],
+			"parent": "pelvis",
+			"placement": "free",
+			"position": [
+				-2.5500232346622997,
+				93.54338174261515,
+				-9.969091415405273
+			],
+			"radius": 2.0,
+			"side": "right",
+			"up": "-x",
+			"upType": "world",
+			"upVector": [
+				1.0,
+				0.0,
+				0.0
+			]
+		},
+		{
+			"aim": "z",
+			"aimAt": "foot_r",
+			"centerInMesh": true,
+			"joint": "calf_r",
+			"label": "calf_r",
+			"limb": "leg_r",
+			"mirror": "calf_l",
+			"name": "calf_r",
+			"offset": [
+				1.1102230246251568e-16,
+				-1.0408340855860846e-17,
+				1.387778780781446e-17,
+				1.0
+			],
+			"orient": "aim",
+			"orientation": [
+				0.02370364391344632,
+				0.7212676821898496,
+				-0.687431724971766,
+				0.08153950819111529
+			],
+			"parent": "thigh_r",
+			"placement": "free",
+			"position": [
+				-2.605141828390345,
+				50.26662566214577,
+				-12.332226557040771
+			],
+			"radius": 2.0,
+			"side": "right",
+			"up": "-y",
+			"upType": "plane",
+			"upVector": [
+				-0.14629903414814555,
+				-0.05375152153513376,
+				0.9877790069342323
+			]
+		},
+		{
+			"aim": "x",
+			"aimAt": "ball_r",
+			"centerInMesh": true,
+			"joint": "foot_r",
+			"label": "foot_r",
+			"limb": "leg_r",
+			"mirror": "foot_l",
+			"name": "foot_r",
+			"offset": [
+				-0.031161722567233034,
+				-0.21318998059797467,
+				-0.023254024587933877,
+				-0.9762367692111078
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.041375531078212874,
+				-0.7042466206007838,
+				0.7058865246556337,
+				-0.06363157321615628
+			],
+			"parent": "calf_r",
+			"placement": "free",
+			"position": [
+				0.9848340374553968,
+				8.238229394805344,
+				-14.087558704303285
+			],
+			"radius": 2.0,
+			"side": "right",
+			"up": "y",
+			"upType": "plane",
+			"upVector": [
+				0.08805974334554564,
+				0.04907449105886485,
+				-0.9949056115678664
+			]
+		},
+		{
+			"centerInMesh": true,
+			"joint": "ball_r",
+			"label": "ball_r",
+			"limb": "leg_r",
+			"mirror": "ball_l",
+			"name": "ball_r",
+			"offset": [
+				5.551115123125784e-17,
+				0.7071067811865477,
+				-5.551115123125784e-17,
+				-0.7071067811865475
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.46988022973160465,
+				0.45298324413581154,
+				-0.5283940669328026,
+				0.5429718779732364
+			],
+			"parent": "foot_r",
+			"placement": "free",
+			"position": [
+				-13.938242194727588,
+				0.7514300524490469,
+				-15.777702081490702
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "ankle_fwd_r",
+			"label": "",
+			"localOffset": [
+				5.097367763519287,
+				-0.39477404952049167,
+				-2.1680757999420157
+			],
+			"mirror": "ankle_fwd_l",
+			"name": "ankle_fwd_r",
+			"offset": [
+				0.05004925753271239,
+				0.005506795940978262,
+				-0.7102624319750048,
+				-0.7021339079861051
+			],
+			"orient": "parent",
+			"orientation": [
+				0.5221791947451655,
+				0.5000666369528236,
+				-0.4154125743338938,
+				0.5519915219161167
+			],
+			"parent": "foot_r",
+			"placement": "parent",
+			"position": [
+				-4.179942442694337,
+				10.244362276209404,
+				-14.461820795993379
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "ankle_bck_r",
+			"label": "",
+			"localOffset": [
+				-4.041838169097902,
+				0.9291469454765329,
+				-0.5265811085700989
+			],
+			"mirror": "ankle_bck_l",
+			"name": "ankle_bck_r",
+			"offset": [
+				0.005506795940977971,
+				-0.05004925753271232,
+				-0.7021339079861049,
+				0.7102624319750053
+			],
+			"orient": "parent",
+			"orientation": [
+				0.5000666369528234,
+				-0.5221791947451659,
+				0.5519915219161168,
+				0.4154125743338936
+			],
+			"parent": "foot_r",
+			"placement": "parent",
+			"position": [
+				5.101283741774353,
+				8.89211606452819,
+				-14.410562652172523
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "calf_twist_02_r",
+			"label": "",
+			"limb": "leg_r",
+			"localOffset": [
+				5.977857098216077e-15,
+				0.03772895038127932,
+				-2.3037127760972e-15
+			],
+			"mirror": "calf_twist_02_l",
+			"name": "calf_twist_02_r",
+			"offset": [
+				0.002251339344082725,
+				0.023248640471834302,
+				-9.299604286483809e-05,
+				0.9997271745526903
+			],
+			"orient": "parent",
+			"orientation": [
+				0.039795528041592095,
+				0.7214211469782974,
+				-0.6883244997708179,
+				0.06463147573483198
+			],
+			"parent": "calf_r",
+			"placement": "segment",
+			"position": [
+				-1.4029634704098741,
+				36.25918791172373,
+				-12.95460515115248
+			],
+			"radius": 2.0,
+			"side": "right",
+			"t": 0.3333333408631032,
+			"to": "foot_r"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "calf_twistCor_02_r",
+			"label": "",
+			"limb": "leg_r",
+			"localOffset": [
+				-2.3103446446751683e-16,
+				9.637633273042694e-15,
+				-1.3752444342503504e-14
+			],
+			"mirror": "calf_twistCor_02_l",
+			"name": "calf_twistCor_02_r",
+			"offset": [
+				0.0,
+				-1.3877787807814457e-17,
+				-1.3877787807814457e-17,
+				1.0
+			],
+			"orient": "parent",
+			"orientation": [
+				0.039795528041592074,
+				0.7214211469782974,
+				-0.6883244997708179,
+				0.06463147573483198
+			],
+			"parent": "calf_twist_02_r",
+			"placement": "parent",
+			"position": [
+				-1.402963470409873,
+				36.25918791172374,
+				-12.954605151152489
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "calf_twist_01_r",
+			"label": "",
+			"limb": "leg_r",
+			"localOffset": [
+				8.083811398051921e-15,
+				0.07545790076255544,
+				-9.159339953157541e-16
+			],
+			"mirror": "calf_twist_01_l",
+			"name": "calf_twist_01_r",
+			"offset": [
+				0.002251339344082725,
+				0.023248640471834302,
+				-9.299604286483809e-05,
+				0.9997271745526903
+			],
+			"orient": "parent",
+			"orientation": [
+				0.039795528041592095,
+				0.7214211469782974,
+				-0.6883244997708179,
+				0.06463147573483198
+			],
+			"parent": "calf_r",
+			"placement": "segment",
+			"position": [
+				-0.20078511242939934,
+				22.251750161301686,
+				-13.576983745264187
+			],
+			"radius": 2.0,
+			"side": "right",
+			"t": 0.6666666817262064,
+			"to": "foot_r"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "calf_correctiveRoot_r",
+			"label": "",
+			"limb": "leg_r",
+			"localOffset": [
+				2.041865537429672e-15,
+				-5.0242522239276276e-14,
+				-1.001006970932793e-14
+			],
+			"mirror": "calf_correctiveRoot_l",
+			"name": "calf_correctiveRoot_r",
+			"offset": [
+				-0.0013405026340125301,
+				2.909794879352167e-08,
+				2.1706726228549324e-05,
+				0.9999991012903489
+			],
+			"orient": "parent",
+			"orientation": [
+				0.023609995048214424,
+				0.7221880258617744,
+				-0.6864624752969282,
+				0.0815861106127187
+			],
+			"parent": "calf_r",
+			"placement": "parent",
+			"position": [
+				-2.605141828390355,
+				50.26662566214578,
+				-12.332226557040721
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "calf_kneeBack_r",
+			"label": "",
+			"limb": "leg_r",
+			"localOffset": [
+				-5.763423442840576,
+				-0.4276191294193272,
+				0.15535767376422793
+			],
+			"mirror": "calf_kneeBack_l",
+			"name": "calf_kneeBack_r",
+			"offset": [
+				-0.012997676682032555,
+				0.021528979868792528,
+				0.6933397088617532,
+				-0.7201719319316588
+			],
+			"orient": "parent",
+			"orientation": [
+				0.49743678677153785,
+				-0.5257904098545298,
+				0.5608329627844446,
+				0.4019545694799789
+			],
+			"parent": "calf_correctiveRoot_r",
+			"placement": "parent",
+			"position": [
+				3.0259208843986123,
+				50.536888341127174,
+				-11.050768513593862
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "calf_knee_r",
+			"label": "",
+			"limb": "leg_r",
+			"localOffset": [
+				5.245784282684325,
+				-0.001620528521015796,
+				0.1899657100439095
+			],
+			"mirror": "calf_knee_l",
+			"name": "calf_knee_r",
+			"offset": [
+				-0.021528979868792597,
+				-0.012997676682032663,
+				0.7201719319316591,
+				0.693339708861753
+			],
+			"orient": "parent",
+			"orientation": [
+				0.5257904098545298,
+				0.49743678677153774,
+				-0.4019545694799787,
+				0.5608329627844447
+			],
+			"parent": "calf_correctiveRoot_r",
+			"placement": "parent",
+			"position": [
+				-7.759251535547381,
+				49.66875098540864,
+				-13.127236830602813
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "thigh_twist_01_r",
+			"label": "",
+			"limb": "leg_r",
+			"localOffset": [
+				5.064133628629117e-15,
+				-5.344696613290807e-15,
+				-1.4472923902010568e-14
+			],
+			"mirror": "thigh_twist_01_l",
+			"name": "thigh_twist_01_r",
+			"offset": [
+				0.0022531125680711472,
+				-0.011408073584860685,
+				2.5705410188078814e-05,
+				0.9999323870542799
+			],
+			"orient": "parent",
+			"orientation": [
+				0.04600001039230592,
+				0.721974556288038,
+				-0.6879377152476701,
+				0.05812434134176552
+			],
+			"parent": "thigh_r",
+			"placement": "segment",
+			"position": [
+				-2.568396098834047,
+				79.117796699877,
+				-10.756803111951083
+			],
+			"radius": 2.0,
+			"side": "right",
+			"t": 0.3333333259987192,
+			"to": "calf_r"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "thigh_twistCor_01_r",
+			"label": "",
+			"limb": "leg_r",
+			"localOffset": [
+				4.7963146786120765e-15,
+				1.6105192571852567e-14,
+				-1.3500267067819481e-14
+			],
+			"mirror": "thigh_twistCor_01_l",
+			"name": "thigh_twistCor_01_r",
+			"offset": [
+				0.0,
+				-1.3877787807814457e-17,
+				-2.0816681711721685e-17,
+				1.0
+			],
+			"orient": "parent",
+			"orientation": [
+				0.0460000103923059,
+				0.721974556288038,
+				-0.6879377152476701,
+				0.058124341341765515
+			],
+			"parent": "thigh_twist_01_r",
+			"placement": "parent",
+			"position": [
+				-2.5683960988340497,
+				79.11779669987702,
+				-10.756803111951099
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "thigh_twist_02_r",
+			"label": "",
+			"limb": "leg_r",
+			"localOffset": [
+				5.276602155698099e-15,
+				-4.022650144715637e-14,
+				-2.1166671824051346e-15
+			],
+			"mirror": "thigh_twist_02_l",
+			"name": "thigh_twist_02_r",
+			"offset": [
+				0.0022531125680711472,
+				-0.011408073584860685,
+				2.5705410188078814e-05,
+				0.9999323870542799
+			],
+			"orient": "parent",
+			"orientation": [
+				0.04600001039230592,
+				0.721974556288038,
+				-0.6879377152476701,
+				0.05812434134176552
+			],
+			"parent": "thigh_r",
+			"placement": "segment",
+			"position": [
+				-2.586768963005794,
+				64.69221165713884,
+				-11.544514808496864
+			],
+			"radius": 2.0,
+			"side": "right",
+			"t": 0.6666666519974385,
+			"to": "calf_r"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "thigh_twistCor_02_r",
+			"label": "",
+			"limb": "leg_r",
+			"localOffset": [
+				5.4429471842031546e-15,
+				1.6460423519352332e-14,
+				1.496734062836481e-14
+			],
+			"mirror": "thigh_twistCor_02_l",
+			"name": "thigh_twistCor_02_r",
+			"offset": [
+				0.0,
+				-2.0816681711721685e-17,
+				2.0816681711721685e-17,
+				1.0
+			],
+			"orient": "parent",
+			"orientation": [
+				0.046000010392305925,
+				0.721974556288038,
+				-0.6879377152476701,
+				0.05812434134176554
+			],
+			"parent": "thigh_twist_02_r",
+			"placement": "parent",
+			"position": [
+				-2.5867689630057966,
+				64.69221165713883,
+				-11.544514808496881
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "thigh_correctiveRoot_r",
+			"label": "",
+			"limb": "leg_r",
+			"localOffset": [
+				3.614507722090225e-15,
+				-2.1720343947836524e-14,
+				-7.22960037743516e-14
+			],
+			"mirror": "thigh_correctiveRoot_l",
+			"name": "thigh_correctiveRoot_r",
+			"offset": [
+				0.0,
+				0.0,
+				0.0,
+				1.0
+			],
+			"orient": "parent",
+			"orientation": [
+				0.053695424937343764,
+				0.7241400117860611,
+				-0.6857412344122463,
+				0.049970031999690294
+			],
+			"parent": "thigh_r",
+			"placement": "parent",
+			"position": [
+				-2.5500232346623064,
+				93.54338174261522,
+				-9.969091415405249
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "thigh_fwd_r",
+			"label": "",
+			"limb": "leg_r",
+			"localOffset": [
+				6.774739742279056,
+				-0.7550978064537048,
+				-4.2409243583679235
+			],
+			"mirror": "thigh_fwd_l",
+			"name": "thigh_fwd_r",
+			"offset": [
+				0.0,
+				-7.632783294297951e-17,
+				0.7071067811865477,
+				0.7071067811865475
+			],
+			"orient": "parent",
+			"orientation": [
+				0.5500127119543193,
+				0.47407591377054126,
+				-0.4495581285090434,
+				0.5202264254752231
+			],
+			"parent": "thigh_correctiveRoot_r",
+			"placement": "parent",
+			"position": [
+				-9.35694077859063,
+				97.79995758159478,
+				-9.9811894938118
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "thigh_bck_r",
+			"label": "",
+			"limb": "leg_r",
+			"localOffset": [
+				-10.062273979187015,
+				-1.5191730260849017,
+				-5.037499427795412
+			],
+			"mirror": "thigh_bck_l",
+			"name": "thigh_bck_r",
+			"offset": [
+				1.1102230246251563e-16,
+				-2.4286128663675293e-17,
+				-0.7071067811865476,
+				0.7071067811865476
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.4740759137705413,
+				0.5500127119543192,
+				-0.5202264254752231,
+				-0.4495581285090435
+			],
+			"parent": "thigh_correctiveRoot_r",
+			"placement": "parent",
+			"position": [
+				7.188129413195293,
+				98.39882091410084,
+				-6.724597886443567
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "thigh_out_r",
+			"label": "",
+			"limb": "leg_r",
+			"localOffset": [
+				-0.6006221175193789,
+				5.1101841926574725,
+				-5.816617012023934
+			],
+			"mirror": "thigh_out_l",
+			"name": "thigh_out_r",
+			"offset": [
+				1.3877787807814457e-17,
+				1.6306400674181987e-16,
+				0.9999999999999998,
+				1.971349444102044e-08
+			],
+			"orient": "parent",
+			"orientation": [
+				0.7241400128445855,
+				-0.05369541066201365,
+				0.04997001848133427,
+				0.68574123539733
+			],
+			"parent": "thigh_correctiveRoot_r",
+			"placement": "parent",
+			"position": [
+				-1.2008518485060826,
+				99.6204762624037,
+				-14.611980779135575
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "thigh_in_r",
+			"label": "",
+			"limb": "leg_r",
+			"localOffset": [
+				0.7658658623695387,
+				-8.577866554260254,
+				10.928328514099123
+			],
+			"mirror": "thigh_in_l",
+			"name": "thigh_in_r",
+			"offset": [
+				-1.1102230246251568e-16,
+				0.0,
+				1.9712382837155932e-08,
+				1.0
+			],
+			"orient": "parent",
+			"orientation": [
+				0.053695439211868895,
+				0.7241400107275963,
+				-0.6857412334272177,
+				0.049970045517284026
+			],
+			"parent": "thigh_correctiveRoot_r",
+			"placement": "parent",
+			"position": [
+				-4.576479597785286,
+				82.1773161996997,
+				-2.2037364372720196
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "thigh_bck_lwr_r",
+			"label": "",
+			"limb": "leg_r",
+			"localOffset": [
+				-10.648496627807623,
+				-1.4992258548736568,
+				5.276165008544917
+			],
+			"mirror": "thigh_bck_lwr_l",
+			"name": "thigh_bck_lwr_r",
+			"offset": [
+				1.1102230246251563e-16,
+				-2.4286128663675293e-17,
+				-0.7071067811865476,
+				0.7071067811865476
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.4740759137705413,
+				0.5500127119543192,
+				-0.5202264254752231,
+				-0.4495581285090435
+			],
+			"parent": "thigh_correctiveRoot_r",
+			"placement": "parent",
+			"position": [
+				7.757846073934505,
+				88.09616636897672,
+				-7.221046513328508
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "thigh_fwd_lwr_r",
+			"label": "",
+			"limb": "leg_r",
+			"localOffset": [
+				6.89965915679932,
+				-0.7243041992187493,
+				1.028026223182676
+			],
+			"mirror": "thigh_fwd_lwr_l",
+			"name": "thigh_fwd_lwr_r",
+			"offset": [
+				0.0,
+				-7.632783294297951e-17,
+				0.7071067811865477,
+				0.7071067811865475
+			],
+			"orient": "parent",
+			"orientation": [
+				0.5500127119543193,
+				0.47407591377054126,
+				-0.4495581285090434,
+				0.5202264254752231
+			],
+			"parent": "thigh_correctiveRoot_r",
+			"placement": "parent",
+			"position": [
+				-9.482711642557312,
+				92.54165759723938,
+				-10.317130413465932
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"aim": "-z",
+			"aimAt": "calf_l",
+			"centerInMesh": true,
+			"joint": "thigh_l",
+			"label": "thigh_l",
+			"limb": "leg_l",
+			"mirror": "thigh_r",
+			"name": "thigh_l",
+			"offset": [
+				-1.4830869280064995e-16,
+				2.7755575615628914e-17,
+				0.07334713886799214,
+				0.9973064710608668
+			],
+			"orient": "aim",
+			"orientation": [
+				0.7241400117860617,
+				-0.053695424937343826,
+				-0.04997003199969019,
+				-0.6857412344122458
+			],
+			"parent": "pelvis",
+			"placement": "free",
+			"position": [
+				-2.540597234577922,
+				93.54279829123482,
+				9.969202995300297
+			],
+			"radius": 2.0,
+			"side": "left",
+			"up": "x",
+			"upType": "world",
+			"upVector": [
+				1.0,
+				0.0,
+				0.0
+			]
+		},
+		{
+			"aim": "-z",
+			"aimAt": "foot_l",
+			"centerInMesh": true,
+			"joint": "calf_l",
+			"label": "calf_l",
+			"limb": "leg_l",
+			"mirror": "calf_r",
+			"name": "calf_l",
+			"offset": [
+				-1.929879867024198e-17,
+				-7.632783294297951e-17,
+				-3.157196726277789e-16,
+				1.0
+			],
+			"orient": "aim",
+			"orientation": [
+				0.72126768218985,
+				-0.02370364391344637,
+				-0.08153950819111518,
+				-0.6874317249717655
+			],
+			"parent": "thigh_l",
+			"placement": "free",
+			"position": [
+				-2.5957158865213668,
+				50.26599650252926,
+				12.332340632842394
+			],
+			"radius": 2.0,
+			"side": "left",
+			"up": "-y",
+			"upType": "plane",
+			"upVector": [
+				0.1462990341481461,
+				0.05375152153513479,
+				0.987779006934232
+			]
+		},
+		{
+			"aim": "-x",
+			"aimAt": "ball_l",
+			"centerInMesh": true,
+			"joint": "foot_l",
+			"label": "foot_l",
+			"limb": "leg_l",
+			"mirror": "foot_r",
+			"name": "foot_l",
+			"offset": [
+				-0.031161419676374563,
+				-0.21319013187453023,
+				-0.023252194203244633,
+				-0.9762367894418895
+			],
+			"orient": "aim",
+			"orientation": [
+				-0.7042466206007842,
+				0.041375531078212915,
+				0.06363157321615619,
+				0.7058865246556333
+			],
+			"parent": "calf_l",
+			"placement": "free",
+			"position": [
+				0.9942570599016247,
+				8.237634413317139,
+				14.087671352642268
+			],
+			"radius": 2.0,
+			"side": "left",
+			"up": "y",
+			"upType": "plane",
+			"upVector": [
+				-0.08806341844296768,
+				-0.04907479077444103,
+				-0.9949052714920068
+			]
+		},
+		{
+			"centerInMesh": true,
+			"joint": "ball_l",
+			"label": "ball_l",
+			"limb": "leg_l",
+			"mirror": "ball_r",
+			"name": "ball_l",
+			"offset": [
+				-9.71445146547012e-17,
+				-0.7071067811865476,
+				-1.0408340855860843e-17,
+				0.7071067811865476
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.45298324413581204,
+				-0.4698802297316043,
+				0.5429718779732366,
+				0.5283940669328024
+			],
+			"parent": "foot_l",
+			"placement": "free",
+			"position": [
+				-13.928804899964119,
+				0.750835252955504,
+				15.77787141527256
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "ankle_bck_l",
+			"label": "",
+			"localOffset": [
+				3.443733692169189,
+				-0.4924950897693636,
+				0.6127077341079717
+			],
+			"mirror": "ankle_bck_r",
+			"name": "ankle_bck_l",
+			"offset": [
+				-0.0019755591569058373,
+				0.05031159129964469,
+				0.7501633736987984,
+				-0.6593328095186467
+			],
+			"orient": "parent",
+			"orientation": [
+				0.4907753846440147,
+				0.5364083420700031,
+				0.45222580450096095,
+				-0.5166211708096067
+			],
+			"parent": "foot_l",
+			"placement": "parent",
+			"position": [
+				4.452132653103172,
+				8.958720196704475,
+				14.067781696998917
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "ankle_fwd_l",
+			"label": "",
+			"localOffset": [
+				-4.594758987426759,
+				-0.26459750533103943,
+				1.7797976732254028
+			],
+			"mirror": "ankle_fwd_r",
+			"name": "ankle_fwd_l",
+			"offset": [
+				0.05031159129964484,
+				0.0019755591569057818,
+				-0.6593328095186467,
+				-0.7501633736987984
+			],
+			"orient": "parent",
+			"orientation": [
+				0.5364083420700032,
+				-0.4907753846440147,
+				-0.5166211708096066,
+				-0.45222580450096095
+			],
+			"parent": "foot_l",
+			"placement": "parent",
+			"position": [
+				-3.563922913733332,
+				9.871559147524842,
+				15.037822414780521
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "calf_twist_02_l",
+			"label": "",
+			"limb": "leg_l",
+			"localOffset": [
+				3.3927708338955063e-15,
+				1.534493459894739e-14,
+				7.700476262852392e-15
+			],
+			"mirror": "calf_twist_02_r",
+			"name": "calf_twist_02_l",
+			"offset": [
+				0.002251339344082644,
+				0.023248640471834302,
+				-9.299604286481383e-05,
+				0.9997271745526903
+			],
+			"orient": "parent",
+			"orientation": [
+				0.7214211469782978,
+				-0.03979552804159214,
+				-0.06463147573483187,
+				-0.6883244997708173
+			],
+			"parent": "calf_l",
+			"placement": "segment",
+			"position": [
+				-1.3990582106820104,
+				36.25654215632774,
+				12.917450885992915
+			],
+			"radius": 2.0,
+			"side": "left",
+			"t": 0.3333333408631093,
+			"to": "foot_l"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "calf_twistCor_02_l",
+			"label": "",
+			"limb": "leg_l",
+			"localOffset": [
+				-3.693092191166727e-15,
+				-1.496543079386079e-14,
+				-1.4856821233195018e-14
+			],
+			"mirror": "calf_twistCor_02_r",
+			"name": "calf_twistCor_02_l",
+			"offset": [
+				-8.673617379884035e-19,
+				-6.938893903907228e-18,
+				-2.42861286636753e-17,
+				1.0
+			],
+			"orient": "parent",
+			"orientation": [
+				0.7214211469782978,
+				-0.03979552804159212,
+				-0.06463147573483186,
+				-0.6883244997708173
+			],
+			"parent": "calf_twist_02_l",
+			"placement": "parent",
+			"position": [
+				-1.3990582106820113,
+				36.256542156327725,
+				12.917450885992931
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "calf_twist_01_l",
+			"label": "",
+			"limb": "leg_l",
+			"localOffset": [
+				5.067010990424808e-06,
+				-0.07544811069965884,
+				3.913536161803677e-15
+			],
+			"mirror": "calf_twist_01_r",
+			"name": "calf_twist_01_l",
+			"offset": [
+				0.002251339344082644,
+				0.023248640471834302,
+				-9.299604286481383e-05,
+				0.9997271745526903
+			],
+			"orient": "parent",
+			"orientation": [
+				0.7214211469782978,
+				-0.03979552804159214,
+				-0.06463147573483187,
+				-0.6883244997708173
+			],
+			"parent": "calf_l",
+			"placement": "segment",
+			"position": [
+				-0.1913575551799167,
+				22.25114365565598,
+				13.577086437875039
+			],
+			"radius": 2.0,
+			"side": "left",
+			"t": 0.6666666817262186,
+			"to": "foot_l"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "calf_correctiveRoot_l",
+			"label": "",
+			"limb": "leg_l",
+			"localOffset": [
+				-3.390371148317007e-06,
+				-1.2112296645706302e-05,
+				2.9690784449073335e-07
+			],
+			"mirror": "calf_correctiveRoot_r",
+			"name": "calf_correctiveRoot_l",
+			"offset": [
+				-0.0013405026340123844,
+				2.909795057681741e-08,
+				2.1706726228566675e-05,
+				0.9999991012903489
+			],
+			"orient": "parent",
+			"orientation": [
+				0.7221880258617749,
+				-0.023609995048215718,
+				-0.08158611061271731,
+				-0.6864624752969277
+			],
+			"parent": "calf_l",
+			"placement": "parent",
+			"position": [
+				-2.595717481229671,
+				50.26599718500664,
+				12.332353094047427
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "calf_kneeBack_l",
+			"label": "",
+			"limb": "leg_l",
+			"localOffset": [
+				5.758532047271726,
+				0.40399324893951516,
+				-0.15856355428695879
+			],
+			"mirror": "calf_kneeBack_r",
+			"name": "calf_kneeBack_l",
+			"offset": [
+				-0.012985944023888345,
+				0.021529490471820786,
+				0.69333965692991,
+				-0.7201721783199814
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.5257985989385531,
+				-0.4974380511815187,
+				-0.4019538679694593,
+				0.5608246665539757
+			],
+			"parent": "calf_correctiveRoot_l",
+			"placement": "parent",
+			"position": [
+				3.034250328578276,
+				50.53402082179505,
+				11.07510607136599
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "calf_knee_l",
+			"label": "",
+			"limb": "leg_l",
+			"localOffset": [
+				-5.249245643615721,
+				-0.0011415837798268713,
+				-0.19280764460563915
+			],
+			"mirror": "calf_knee_r",
+			"name": "calf_knee_l",
+			"offset": [
+				0.02152949047182084,
+				0.012985944023888366,
+				-0.7201721783199815,
+				-0.69333965692991
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.4974380511815187,
+				0.5257985989385531,
+				0.5608246665539757,
+				0.40195386796945926
+			],
+			"parent": "calf_correctiveRoot_l",
+			"placement": "parent",
+			"position": [
+				-7.752592253432522,
+				49.66517992756908,
+				13.130737165177056
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "thigh_twist_01_l",
+			"label": "",
+			"limb": "leg_l",
+			"localOffset": [
+				-3.123905309316925e-15,
+				3.0382616378538813e-15,
+				-1.4097368253662318e-14
+			],
+			"mirror": "thigh_twist_01_r",
+			"name": "thigh_twist_01_l",
+			"offset": [
+				0.0022531125680712084,
+				-0.011408073584860706,
+				2.5705410188085753e-05,
+				0.9999323870542798
+			],
+			"orient": "parent",
+			"orientation": [
+				0.7219745562880385,
+				-0.04600001039230598,
+				-0.058124341341765445,
+				-0.6879377152476697
+			],
+			"parent": "thigh_l",
+			"placement": "segment",
+			"position": [
+				-2.5589701181548,
+				79.11719801241794,
+				10.756915523814977
+			],
+			"radius": 2.0,
+			"side": "left",
+			"t": 0.33333332599872684,
+			"to": "calf_l"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "thigh_twistCor_01_l",
+			"label": "",
+			"limb": "leg_l",
+			"localOffset": [
+				-8.094647026231006e-16,
+				2.5849679023840657e-15,
+				-1.4090968884414425e-14
+			],
+			"mirror": "thigh_twistCor_01_r",
+			"name": "thigh_twistCor_01_l",
+			"offset": [
+				0.0,
+				-6.938893903907228e-18,
+				4.85722573273506e-17,
+				1.0
+			],
+			"orient": "parent",
+			"orientation": [
+				0.7219745562880385,
+				-0.04600001039230601,
+				-0.05812434134176548,
+				-0.6879377152476697
+			],
+			"parent": "thigh_twist_01_l",
+			"placement": "parent",
+			"position": [
+				-2.558970118154801,
+				79.11719801241793,
+				10.756915523814975
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "thigh_twist_02_l",
+			"label": "",
+			"limb": "leg_l",
+			"localOffset": [
+				-2.2688980182134953e-06,
+				-8.07486412949203e-06,
+				-1.5671125963741261e-16
+			],
+			"mirror": "thigh_twist_02_r",
+			"name": "thigh_twist_02_l",
+			"offset": [
+				0.0022531125680712084,
+				-0.011408073584860706,
+				2.5705410188085753e-05,
+				0.9999323870542798
+			],
+			"orient": "parent",
+			"orientation": [
+				0.7219745562880385,
+				-0.04600001039230598,
+				-0.058124341341765445,
+				-0.6879377152476697
+			],
+			"parent": "thigh_l",
+			"placement": "segment",
+			"position": [
+				-2.5773440648706036,
+				64.691598188586,
+				11.544636359799386
+			],
+			"radius": 2.0,
+			"side": "left",
+			"t": 0.666666651997454,
+			"to": "calf_l"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper",
+				"twist"
+			],
+			"joint": "thigh_twistCor_02_l",
+			"label": "",
+			"limb": "leg_l",
+			"localOffset": [
+				-7.215103800941672e-15,
+				1.1830474935193737e-14,
+				6.813228480806242e-16
+			],
+			"mirror": "thigh_twistCor_02_r",
+			"name": "thigh_twistCor_02_l",
+			"offset": [
+				0.0,
+				-6.938893903907228e-18,
+				4.85722573273506e-17,
+				1.0
+			],
+			"orient": "parent",
+			"orientation": [
+				0.7219745562880385,
+				-0.04600001039230601,
+				-0.05812434134176548,
+				-0.6879377152476697
+			],
+			"parent": "thigh_twist_02_l",
+			"placement": "parent",
+			"position": [
+				-2.5773440648706125,
+				64.691598188586,
+				11.544636359799375
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "thigh_correctiveRoot_l",
+			"label": "",
+			"limb": "leg_l",
+			"localOffset": [
+				-1.6843888489184807e-15,
+				-1.1518680900228418e-14,
+				-1.4867681516774876e-14
+			],
+			"mirror": "thigh_correctiveRoot_r",
+			"name": "thigh_correctiveRoot_l",
+			"offset": [
+				0.0,
+				0.0,
+				1.3877787807814457e-17,
+				1.0
+			],
+			"orient": "parent",
+			"orientation": [
+				0.7241400117860617,
+				-0.05369542493734383,
+				-0.0499700319996902,
+				-0.6857412344122458
+			],
+			"parent": "thigh_l",
+			"placement": "parent",
+			"position": [
+				-2.540597234577922,
+				93.5427982912348,
+				9.969202995300309
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "thigh_bck_l",
+			"label": "",
+			"limb": "leg_l",
+			"localOffset": [
+				10.05575180053711,
+				1.4929672479629539,
+				5.035457134246823
+			],
+			"mirror": "thigh_bck_r",
+			"name": "thigh_bck_l",
+			"offset": [
+				6.591949208711867e-17,
+				5.551115123125783e-17,
+				-0.7071067811865476,
+				0.7071067811865475
+			],
+			"orient": "parent",
+			"orientation": [
+				0.5500127119543197,
+				0.4740759137705416,
+				0.4495581285090432,
+				-0.5202264254752226
+			],
+			"parent": "thigh_correctiveRoot_l",
+			"placement": "parent",
+			"position": [
+				7.1949346986893765,
+				98.39766702845566,
+				6.751658660093581
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "thigh_fwd_l",
+			"label": "",
+			"limb": "leg_l",
+			"localOffset": [
+				-6.773116111755371,
+				0.7473628520965572,
+				4.229551315307618
+			],
+			"mirror": "thigh_fwd_r",
+			"name": "thigh_fwd_l",
+			"offset": [
+				-4.857225732735061e-17,
+				0.0,
+				-0.7071067811865477,
+				-0.7071067811865475
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.4740759137705415,
+				0.5500127119543198,
+				0.5202264254752226,
+				0.4495581285090431
+			],
+			"parent": "thigh_correctiveRoot_l",
+			"placement": "parent",
+			"position": [
+				-9.344791466048813,
+				97.78841878876577,
+				9.989324530969162
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "thigh_out_l",
+			"label": "",
+			"limb": "leg_l",
+			"localOffset": [
+				0.5864350199699402,
+				-5.122735023498537,
+				5.814098358154299
+			],
+			"mirror": "thigh_out_r",
+			"name": "thigh_out_l",
+			"offset": [
+				-6.938893903907228e-18,
+				0.0,
+				-1.0,
+				-4.85722573273506e-17
+			],
+			"orient": "parent",
+			"orientation": [
+				0.0536954249373438,
+				0.7241400117860617,
+				0.6857412344122458,
+				-0.049970031999690155
+			],
+			"parent": "thigh_correctiveRoot_l",
+			"placement": "parent",
+			"position": [
+				-1.20362731567849,
+				99.61818352134058,
+				14.626698632838664
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "thigh_bck_lwr_l",
+			"label": "",
+			"limb": "leg_l",
+			"localOffset": [
+				10.491520881652832,
+				1.2301521301269531,
+				-5.298472881317133
+			],
+			"mirror": "thigh_bck_lwr_r",
+			"name": "thigh_bck_lwr_l",
+			"offset": [
+				6.591949208711867e-17,
+				5.551115123125783e-17,
+				-0.7071067811865476,
+				0.7071067811865475
+			],
+			"orient": "parent",
+			"orientation": [
+				0.5500127119543197,
+				0.4740759137705416,
+				0.4495581285090432,
+				-0.5202264254752226
+			],
+			"parent": "thigh_correctiveRoot_l",
+			"placement": "parent",
+			"position": [
+				7.651322306894851,
+				88.08922072398715,
+				7.511080271426452
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "thigh_in_l",
+			"label": "",
+			"limb": "leg_l",
+			"localOffset": [
+				-0.8266865015029916,
+				8.555188179016117,
+				-10.868840217590337
+			],
+			"mirror": "thigh_in_r",
+			"name": "thigh_in_l",
+			"offset": [
+				4.336808689942018e-19,
+				6.938893903907228e-18,
+				2.0816681711721685e-17,
+				1.0
+			],
+			"orient": "parent",
+			"orientation": [
+				0.7241400117860617,
+				-0.05369542493734385,
+				-0.049970031999690204,
+				-0.6857412344122458
+			],
+			"parent": "thigh_correctiveRoot_l",
+			"placement": "parent",
+			"position": [
+				-4.623826304360403,
+				82.23791305917317,
+				2.2318863054923046
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "thigh_fwd_lwr_l",
+			"label": "",
+			"limb": "leg_l",
+			"localOffset": [
+				-7.3878488540649405,
+				0.648395717144012,
+				-1.1209093332290616
+			],
+			"mirror": "thigh_fwd_lwr_r",
+			"name": "thigh_fwd_lwr_l",
+			"offset": [
+				-4.857225732735061e-17,
+				0.0,
+				-0.7071067811865477,
+				-0.7071067811865475
+			],
+			"orient": "parent",
+			"orientation": [
+				-0.4740759137705415,
+				0.5500127119543198,
+				0.5202264254752226,
+				0.4495581285090431
+			],
+			"parent": "thigh_correctiveRoot_l",
+			"placement": "parent",
+			"position": [
+				-9.945235005703433,
+				92.4569169241333,
+				10.468569158393636
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"ik"
+			],
+			"joint": "ik_foot_root",
+			"label": "",
+			"limb": "leg",
+			"localOffset": [
+				0.0,
+				0.0,
+				0.0
+			],
+			"name": "ik_foot_root",
+			"offset": [
+				0.0,
+				0.0,
+				0.0,
+				1.0
+			],
+			"orient": "parent",
+			"orientation": [
+				0.0,
+				0.0,
+				0.0,
+				1.0
+			],
+			"parent": "root",
+			"placement": "parent",
+			"position": [
+				0.0,
+				0.0,
+				0.0
+			],
+			"radius": 2.0,
+			"side": "center"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"ik"
+			],
+			"follow": "foot_l",
+			"joint": "ik_foot_l",
+			"label": "",
+			"limb": "leg_l",
+			"localOffset": [
+				5.534215943252775e-07,
+				5.235433391483027e-09,
+				3.090594722047327e-06
+			],
+			"mirror": "ik_foot_r",
+			"name": "ik_foot_l",
+			"offset": [
+				-1.1360846790230141e-09,
+				2.1389993942744215e-11,
+				-4.3932392203294154e-09,
+				1.0
+			],
+			"orient": "follow",
+			"orientation": [
+				-0.7042466215858647,
+				0.04137552792709709,
+				0.06363157014697009,
+				0.7058865241342132
+			],
+			"parent": "ik_foot_root",
+			"placement": "follow",
+			"position": [
+				0.9942575097084045,
+				8.237637519836426,
+				14.087671279907227
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"ik"
+			],
+			"follow": "foot_r",
+			"joint": "ik_foot_r",
+			"label": "",
+			"limb": "leg_r",
+			"localOffset": [
+				-5.736541165871644e-07,
+				1.1780809955636957e-07,
+				-2.247144098384611e-06
+			],
+			"mirror": "ik_foot_l",
+			"name": "ik_foot_r",
+			"offset": [
+				-1.136085281405741e-09,
+				2.1390122312281434e-11,
+				-4.3932322918438516e-09,
+				1.0
+			],
+			"orient": "follow",
+			"orientation": [
+				-0.04137552792710198,
+				-0.7042466215858645,
+				0.7058865241342127,
+				-0.06363157014697501
+			],
+			"parent": "ik_foot_root",
+			"placement": "follow",
+			"position": [
+				0.9848345518112183,
+				8.238231658935547,
+				-14.08755874633789
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"ik"
+			],
+			"joint": "ik_hand_root",
+			"label": "",
+			"limb": "arm",
+			"localOffset": [
+				0.0,
+				0.0,
+				0.0
+			],
+			"name": "ik_hand_root",
+			"offset": [
+				0.0,
+				0.0,
+				0.0,
+				1.0
+			],
+			"orient": "parent",
+			"orientation": [
+				0.0,
+				0.0,
+				0.0,
+				1.0
+			],
+			"parent": "root",
+			"placement": "parent",
+			"position": [
+				0.0,
+				0.0,
+				0.0
+			],
+			"radius": 2.0,
+			"side": "center"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"ik"
+			],
+			"follow": "hand_r",
+			"joint": "ik_hand_gun",
+			"label": "",
+			"limb": "arm",
+			"localOffset": [
+				-2.5775592457505105e-06,
+				-6.670084269979941e-07,
+				-1.2612546527224106e-06
+			],
+			"name": "ik_hand_gun",
+			"offset": [
+				1.7941237162588667e-08,
+				3.7115492099865095e-08,
+				6.136485737953669e-10,
+				0.9999999999999993
+			],
+			"orient": "follow",
+			"orientation": [
+				-0.009649332741360794,
+				0.5205995509869445,
+				0.5984603842390417,
+				0.6088745079129991
+			],
+			"parent": "ik_hand_root",
+			"placement": "follow",
+			"position": [
+				-15.69880485534668,
+				104.4664306640625,
+				-47.76831817626953
+			],
+			"radius": 2.0,
+			"side": "center"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"ik"
+			],
+			"follow": "hand_l",
+			"joint": "ik_hand_l",
+			"label": "",
+			"limb": "arm_l",
+			"localOffset": [
+				-4.847134469381886e-07,
+				2.987536125186037e-06,
+				-4.006555223362833e-06
+			],
+			"mirror": "ik_hand_r",
+			"name": "ik_hand_l",
+			"offset": [
+				-3.487283422448639e-08,
+				-7.940293533792442e-09,
+				-1.3687081477746499e-08,
+				0.9999999999999994
+			],
+			"orient": "follow",
+			"orientation": [
+				-0.5205994918162284,
+				-0.00964934536819304,
+				0.6088745394097193,
+				-0.5984604034631301
+			],
+			"parent": "ik_hand_gun",
+			"placement": "follow",
+			"position": [
+				-15.698887991063689,
+				104.4665390073991,
+				47.768601260708806
+			],
+			"radius": 2.0,
+			"side": "left"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"ik"
+			],
+			"follow": "hand_r",
+			"joint": "ik_hand_r",
+			"label": "",
+			"limb": "arm_r",
+			"localOffset": [
+				-2.577559243455836e-06,
+				-6.670084204359414e-07,
+				-1.2612546582505229e-06
+			],
+			"mirror": "ik_hand_l",
+			"name": "ik_hand_r",
+			"offset": [
+				1.7941236996055207e-08,
+				3.711549207037478e-08,
+				6.13648817524015e-10,
+				0.9999999999999991
+			],
+			"orient": "follow",
+			"orientation": [
+				-0.00964933274136075,
+				0.5205995509869444,
+				0.598460384239042,
+				0.608874507912999
+			],
+			"parent": "ik_hand_gun",
+			"placement": "follow",
+			"position": [
+				-15.698804855346689,
+				104.4664306640625,
+				-47.76831817626953
+			],
+			"radius": 2.0,
+			"side": "right"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "interaction",
+			"label": "",
+			"localOffset": [
+				0.0,
+				0.0,
+				0.0
+			],
+			"name": "interaction",
+			"offset": [
+				0.0,
+				0.0,
+				0.0,
+				1.0
+			],
+			"orient": "parent",
+			"orientation": [
+				0.0,
+				0.0,
+				0.0,
+				1.0
+			],
+			"parent": "root",
+			"placement": "parent",
+			"position": [
+				0.0,
+				0.0,
+				0.0
+			],
+			"radius": 2.0,
+			"side": "center"
+		},
+		{
+			"centerInMesh": false,
+			"flags": [
+				"helper"
+			],
+			"joint": "center_of_mass",
+			"label": "",
+			"localOffset": [
+				0.0,
+				0.0,
+				0.0
+			],
+			"name": "center_of_mass",
+			"offset": [
+				0.0,
+				0.0,
+				0.0,
+				1.0
+			],
+			"orient": "parent",
+			"orientation": [
+				0.0,
+				0.0,
+				0.0,
+				1.0
+			],
+			"parent": "root",
+			"placement": "parent",
+			"position": [
+				0.0,
+				0.0,
+				0.0
+			],
+			"radius": 2.0,
+			"side": "center"
+		}
+	],
+	"name": "UE5 Manny",
+	"picker": {
+		"character": "UE5_Manny",
+		"name": "UE5_Manny",
+		"pages": [
+			{
+				"height": 600.0,
+				"items": [
+					{
+						"label": "pelvis",
+						"shape": "rect",
+						"size": 14,
+						"target": "pelvis",
+						"x": 200.0,
+						"y": 237.8
+					},
+					{
+						"label": "spine_01",
+						"shape": "rect",
+						"size": 14,
+						"target": "spine_01",
+						"x": 200.0,
+						"y": 226.4
+					},
+					{
+						"label": "spine_02",
+						"shape": "rect",
+						"size": 14,
+						"target": "spine_02",
+						"x": 200.0,
+						"y": 205.6
+					},
+					{
+						"label": "spine_03",
+						"shape": "rect",
+						"size": 14,
+						"target": "spine_03",
+						"x": 200.0,
+						"y": 183.2
+					},
+					{
+						"label": "spine_04",
+						"shape": "rect",
+						"size": 14,
+						"target": "spine_04",
+						"x": 200.0,
+						"y": 156.7
+					},
+					{
+						"label": "spine_05",
+						"shape": "rect",
+						"size": 14,
+						"target": "spine_05",
+						"x": 200.0,
+						"y": 96.9
+					},
+					{
+						"label": "neck_01",
+						"shape": "rect",
+						"size": 14,
+						"target": "neck_01",
+						"x": 200.0,
+						"y": 60.5
+					},
+					{
+						"label": "neck_02",
+						"shape": "rect",
+						"size": 14,
+						"target": "neck_02",
+						"x": 200.0,
+						"y": 45.0
+					},
+					{
+						"label": "head",
+						"shape": "rect",
+						"size": 14,
+						"target": "head",
+						"x": 200.0,
+						"y": 30.0
+					},
+					{
+						"label": "clavicle_l",
+						"shape": "rect",
+						"size": 14,
+						"target": "clavicle_l",
+						"x": 204.5,
+						"y": 80.7
+					},
+					{
+						"label": "upperarm_l",
+						"shape": "rect",
+						"size": 14,
+						"target": "upperarm_l",
+						"x": 259.2,
+						"y": 89.2
+					},
+					{
+						"label": "lowerarm_l",
+						"shape": "rect",
+						"size": 14,
+						"target": "lowerarm_l",
+						"x": 309.1,
+						"y": 159.9
+					},
+					{
+						"label": "hand_l",
+						"shape": "rect",
+						"size": 14,
+						"target": "hand_l",
+						"x": 348.9,
+						"y": 211.1
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "index_metacarpal_l",
+						"x": 350.0,
+						"y": 215.0
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "index_01_l",
+						"x": 357.5,
+						"y": 226.0
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "index_02_l",
+						"x": 358.9,
+						"y": 236.6
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "index_03_l",
+						"x": 358.3,
+						"y": 244.1
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "middle_metacarpal_l",
+						"x": 354.9,
+						"y": 215.9
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "middle_01_l",
+						"x": 364.1,
+						"y": 227.5
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "middle_02_l",
+						"x": 365.1,
+						"y": 241.8
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "middle_03_l",
+						"x": 363.3,
+						"y": 249.1
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "thumb_01_l",
+						"x": 344.1,
+						"y": 215.8
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "thumb_02_l",
+						"x": 340.8,
+						"y": 222.2
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "thumb_03_l",
+						"x": 340.4,
+						"y": 229.5
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "pinky_metacarpal_l",
+						"x": 358.8,
+						"y": 219.1
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "pinky_01_l",
+						"x": 366.9,
+						"y": 231.4
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "pinky_02_l",
+						"x": 370.0,
+						"y": 242.3
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "pinky_03_l",
+						"x": 369.4,
+						"y": 248.5
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "ring_metacarpal_l",
+						"x": 356.9,
+						"y": 217.5
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "ring_01_l",
+						"x": 367.3,
+						"y": 229.0
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "ring_02_l",
+						"x": 369.8,
+						"y": 243.1
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "ring_03_l",
+						"x": 368.8,
+						"y": 249.9
+					},
+					{
+						"label": "clavicle_r",
+						"shape": "rect",
+						"size": 14,
+						"target": "clavicle_r",
+						"x": 195.5,
+						"y": 80.7
+					},
+					{
+						"label": "upperarm_r",
+						"shape": "rect",
+						"size": 14,
+						"target": "upperarm_r",
+						"x": 140.8,
+						"y": 89.2
+					},
+					{
+						"label": "lowerarm_r",
+						"shape": "rect",
+						"size": 14,
+						"target": "lowerarm_r",
+						"x": 90.9,
+						"y": 159.9
+					},
+					{
+						"label": "hand_r",
+						"shape": "rect",
+						"size": 14,
+						"target": "hand_r",
+						"x": 51.1,
+						"y": 211.1
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "pinky_metacarpal_r",
+						"x": 41.2,
+						"y": 219.1
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "pinky_01_r",
+						"x": 33.1,
+						"y": 231.4
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "pinky_02_r",
+						"x": 30.0,
+						"y": 242.3
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "pinky_03_r",
+						"x": 30.6,
+						"y": 248.5
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "ring_metacarpal_r",
+						"x": 43.1,
+						"y": 217.5
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "ring_01_r",
+						"x": 32.7,
+						"y": 229.0
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "ring_02_r",
+						"x": 30.2,
+						"y": 243.1
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "ring_03_r",
+						"x": 31.2,
+						"y": 249.9
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "middle_metacarpal_r",
+						"x": 45.1,
+						"y": 215.9
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "middle_01_r",
+						"x": 35.9,
+						"y": 227.5
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "middle_02_r",
+						"x": 34.9,
+						"y": 241.8
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "middle_03_r",
+						"x": 36.7,
+						"y": 249.1
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "index_metacarpal_r",
+						"x": 50.0,
+						"y": 215.0
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "index_01_r",
+						"x": 42.5,
+						"y": 226.0
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "index_02_r",
+						"x": 41.1,
+						"y": 236.6
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "index_03_r",
+						"x": 41.7,
+						"y": 244.1
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "thumb_01_r",
+						"x": 55.9,
+						"y": 215.8
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "thumb_02_r",
+						"x": 59.2,
+						"y": 222.2
+					},
+					{
+						"shape": "circle",
+						"size": 7,
+						"target": "thumb_03_r",
+						"x": 59.6,
+						"y": 229.5
+					},
+					{
+						"label": "thigh_r",
+						"shape": "rect",
+						"size": 14,
+						"target": "thigh_r",
+						"x": 168.9,
+						"y": 245.1
+					},
+					{
+						"label": "calf_r",
+						"shape": "rect",
+						"size": 14,
+						"target": "calf_r",
+						"x": 161.6,
+						"y": 380.0
+					},
+					{
+						"label": "foot_r",
+						"shape": "rect",
+						"size": 14,
+						"target": "foot_r",
+						"x": 156.1,
+						"y": 511.0
+					},
+					{
+						"label": "ball_r",
+						"shape": "rect",
+						"size": 14,
+						"target": "ball_r",
+						"x": 150.8,
+						"y": 534.3
+					},
+					{
+						"label": "thigh_l",
+						"shape": "rect",
+						"size": 14,
+						"target": "thigh_l",
+						"x": 231.1,
+						"y": 245.2
+					},
+					{
+						"label": "calf_l",
+						"shape": "rect",
+						"size": 14,
+						"target": "calf_l",
+						"x": 238.4,
+						"y": 380.0
+					},
+					{
+						"label": "foot_l",
+						"shape": "rect",
+						"size": 14,
+						"target": "foot_l",
+						"x": 243.9,
+						"y": 511.0
+					},
+					{
+						"label": "ball_l",
+						"shape": "rect",
+						"size": 14,
+						"target": "ball_l",
+						"x": 249.2,
+						"y": 534.4
+					}
+				],
+				"name": "Body",
+				"width": 400.0
+			}
+		],
+		"template": "UE5_Manny"
+	},
+	"poses": {
+		"A": {
+			"character": "UE5_Manny",
+			"name": "A",
+			"nodes": {
+				"lowerarm_l": {
+					"rotate": [
+						2.1371793224034267e-15,
+						0.33363264074075394,
+						-8.881784197001254e-16,
+						0.942703166979061
+					]
+				},
+				"lowerarm_r": {
+					"rotate": [
+						1.3322676295501882e-15,
+						0.3336326407407537,
+						-1.387778780781446e-16,
+						0.9427031669790611
+					]
+				},
+				"upperarm_l": {
+					"rotate": [
+						-0.08608607110389249,
+						0.006737870406761748,
+						5.464378949326945e-17,
+						0.9962649193182893
+					]
+				},
+				"upperarm_r": {
+					"rotate": [
+						-0.08608607110621981,
+						0.006737870395519693,
+						1.2988742026376346e-16,
+						0.9962649193181643
+					]
+				}
+			},
+			"tags": [
+				"template"
+			],
+			"template": "UE5_Manny"
+		},
+		"T": {
+			"character": "UE5_Manny",
+			"name": "T",
+			"nodes": {
+				"lowerarm_l": {
+					"rotate": [
+						2.138914045879403e-15,
+						0.33363264074075405,
+						-8.72565908416334e-16,
+						0.9427031669790609
+					]
+				},
+				"lowerarm_r": {
+					"rotate": [
+						1.3565537582138631e-15,
+						0.3336326407407538,
+						-1.5525775109992423e-16,
+						0.942703166979061
+					]
+				},
+				"upperarm_l": {
+					"rotate": [
+						-0.4600502316644586,
+						-0.01835754592693233,
+						1.4528309111305762e-16,
+						0.8877030949889827
+					]
+				},
+				"upperarm_r": {
+					"rotate": [
+						-0.46005023166599784,
+						-0.018357545944689798,
+						5.494736610156535e-16,
+						0.8877030949878175
+					]
+				}
+			},
+			"tags": [
+				"template"
+			],
+			"template": "UE5_Manny"
+		},
+		"bind": {
+			"character": "UE5_Manny",
+			"name": "bind",
+			"nodes": {
+				"ankle_bck_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"ankle_bck_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"ankle_fwd_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"ankle_fwd_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"ball_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"ball_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"calf_correctiveRoot_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"calf_correctiveRoot_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"calf_kneeBack_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"calf_kneeBack_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"calf_knee_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"calf_knee_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"calf_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"calf_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"calf_twistCor_02_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"calf_twistCor_02_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"calf_twist_01_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"calf_twist_01_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"calf_twist_02_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"calf_twist_02_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"center_of_mass": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"clavicle_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"clavicle_out_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"clavicle_out_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"clavicle_pec_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"clavicle_pec_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"clavicle_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"clavicle_scap_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"clavicle_scap_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"foot_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"foot_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"hand_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"hand_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"head": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"ik_foot_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"ik_foot_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"ik_foot_root": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"ik_hand_gun": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"ik_hand_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"ik_hand_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"ik_hand_root": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"index_01_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"index_01_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"index_02_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"index_02_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"index_03_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"index_03_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"index_metacarpal_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"index_metacarpal_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"interaction": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"lowerarm_bck_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"lowerarm_bck_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"lowerarm_correctiveRoot_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"lowerarm_correctiveRoot_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"lowerarm_fwd_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"lowerarm_fwd_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"lowerarm_in_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"lowerarm_in_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"lowerarm_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"lowerarm_out_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"lowerarm_out_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"lowerarm_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"lowerarm_twist_01_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"lowerarm_twist_01_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"lowerarm_twist_02_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"lowerarm_twist_02_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"middle_01_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"middle_01_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"middle_02_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"middle_02_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"middle_03_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"middle_03_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"middle_metacarpal_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"middle_metacarpal_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"neck_01": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"neck_02": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"pelvis": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"pinky_01_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"pinky_01_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"pinky_02_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"pinky_02_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"pinky_03_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"pinky_03_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"pinky_metacarpal_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"pinky_metacarpal_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"ring_01_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"ring_01_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"ring_02_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"ring_02_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"ring_03_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"ring_03_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"ring_metacarpal_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"ring_metacarpal_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"root": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"spine_01": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"spine_02": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"spine_03": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"spine_04": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"spine_04_latissimus_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"spine_04_latissimus_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"spine_05": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_bck_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_bck_lwr_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_bck_lwr_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_bck_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_correctiveRoot_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_correctiveRoot_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_fwd_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_fwd_lwr_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_fwd_lwr_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_fwd_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_in_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_in_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_out_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_out_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_twistCor_01_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_twistCor_01_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_twistCor_02_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_twistCor_02_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_twist_01_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_twist_01_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_twist_02_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thigh_twist_02_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thumb_01_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thumb_01_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thumb_02_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thumb_02_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thumb_03_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"thumb_03_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_bck_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_bck_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_bicep_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_bicep_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_correctiveRoot_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_correctiveRoot_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_fwd_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_fwd_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_in_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_in_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_out_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_out_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_tricep_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_tricep_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_twistCor_01_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_twistCor_01_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_twistCor_02_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_twistCor_02_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_twist_01_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_twist_01_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_twist_02_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"upperarm_twist_02_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"weapon_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"weapon_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"wrist_inner_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"wrist_inner_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"wrist_outer_l": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				},
+				"wrist_outer_r": {
+					"rotate": [
+						0.0,
+						0.0,
+						0.0,
+						1.0
+					]
+				}
+			},
+			"tags": [
+				"template"
+			],
+			"template": "UE5_Manny"
+		}
+	},
+	"rig": {
+		"ikChains": [
+			{
+				"end": "foot_l",
+				"name": "leg_l",
+				"pole": [
+					-1.0,
+					0.0,
+					0.0
+				],
+				"start": "thigh_l"
+			},
+			{
+				"end": "hand_l",
+				"name": "arm_l",
+				"pole": [
+					1.0,
+					0.0,
+					0.0
+				],
+				"start": "upperarm_l"
+			},
+			{
+				"end": "foot_r",
+				"name": "leg_r",
+				"pole": [
+					-1.0,
+					0.0,
+					0.0
+				],
+				"start": "thigh_r"
+			},
+			{
+				"end": "hand_r",
+				"name": "arm_r",
+				"pole": [
+					1.0,
+					0.0,
+					0.0
+				],
+				"start": "upperarm_r"
+			}
+		],
+		"lookers": [
+			{
+				"aimAxis": "-x",
+				"distance": 50.0,
+				"joint": "head",
+				"upAxis": "z",
+				"weight": 0.0
+			}
+		],
+		"nonDeform": [
+			"lowerarm_correctiveRoot_l",
+			"lowerarm_in_l",
+			"lowerarm_out_l",
+			"lowerarm_fwd_l",
+			"lowerarm_bck_l",
+			"wrist_inner_l",
+			"wrist_outer_l",
+			"weapon_l",
+			"upperarm_tricep_l",
+			"upperarm_bicep_l",
+			"upperarm_correctiveRoot_l",
+			"upperarm_bck_l",
+			"upperarm_fwd_l",
+			"upperarm_in_l",
+			"upperarm_out_l",
+			"clavicle_out_l",
+			"clavicle_scap_l",
+			"lowerarm_correctiveRoot_r",
+			"lowerarm_out_r",
+			"lowerarm_in_r",
+			"lowerarm_fwd_r",
+			"lowerarm_bck_r",
+			"wrist_inner_r",
+			"wrist_outer_r",
+			"weapon_r",
+			"upperarm_tricep_r",
+			"upperarm_bicep_r",
+			"upperarm_correctiveRoot_r",
+			"upperarm_bck_r",
+			"upperarm_in_r",
+			"upperarm_fwd_r",
+			"upperarm_out_r",
+			"clavicle_out_r",
+			"clavicle_scap_r",
+			"clavicle_pec_r",
+			"spine_04_latissimus_l",
+			"spine_04_latissimus_r",
+			"clavicle_pec_l",
+			"ankle_fwd_r",
+			"ankle_bck_r",
+			"calf_correctiveRoot_r",
+			"calf_kneeBack_r",
+			"calf_knee_r",
+			"thigh_correctiveRoot_r",
+			"thigh_fwd_r",
+			"thigh_bck_r",
+			"thigh_out_r",
+			"thigh_in_r",
+			"thigh_bck_lwr_r",
+			"thigh_fwd_lwr_r",
+			"ankle_bck_l",
+			"ankle_fwd_l",
+			"calf_correctiveRoot_l",
+			"calf_kneeBack_l",
+			"calf_knee_l",
+			"thigh_correctiveRoot_l",
+			"thigh_bck_l",
+			"thigh_fwd_l",
+			"thigh_out_l",
+			"thigh_bck_lwr_l",
+			"thigh_in_l",
+			"thigh_fwd_lwr_l",
+			"ik_foot_root",
+			"ik_foot_l",
+			"ik_foot_r",
+			"ik_hand_root",
+			"ik_hand_gun",
+			"ik_hand_l",
+			"ik_hand_r",
+			"interaction",
+			"center_of_mass"
+		],
+		"reverseFeet": [
+			{
+				"ball": "ball_l",
+				"chain": "leg_l",
+				"pivots": {
+					"ball": [
+						-15.2613,
+						0.5389,
+						-7.7599
+					],
+					"heel": [
+						4.2405,
+						-0.1614,
+						-8.3756
+					],
+					"inner": [
+						-14.5951,
+						4.9893,
+						-7.7808
+					],
+					"outer": [
+						-15.9275,
+						-3.9115,
+						-7.739
+					],
+					"toe": [
+						-22.0119,
+						0.7813,
+						-7.5468
+					]
+				}
+			},
+			{
+				"ball": "ball_r",
+				"chain": "leg_r",
+				"pivots": {
+					"ball": [
+						15.2613,
+						-0.539,
+						7.7605
+					],
+					"heel": [
+						-4.2404,
+						0.1614,
+						8.3762
+					],
+					"inner": [
+						14.5951,
+						-4.9893,
+						7.7814
+					],
+					"outer": [
+						15.9275,
+						3.9114,
+						7.7396
+					],
+					"toe": [
+						22.0119,
+						-0.7814,
+						7.5474
+					]
+				}
+			}
+		],
+		"twists": [
+			{
+				"joint": "upperarm_twist_01_l",
+				"source": "upperarm_l",
+				"weight": -0.6667
+			},
+			{
+				"joint": "upperarm_twist_02_l",
+				"source": "upperarm_l",
+				"weight": -0.3333
+			},
+			{
+				"joint": "lowerarm_twist_02_l",
+				"source": "hand_l",
+				"weight": 0.3333
+			},
+			{
+				"joint": "lowerarm_twist_01_l",
+				"source": "hand_l",
+				"weight": 0.6667
+			},
+			{
+				"joint": "thigh_twist_01_l",
+				"source": "thigh_l",
+				"weight": -0.6667
+			},
+			{
+				"joint": "thigh_twist_02_l",
+				"source": "thigh_l",
+				"weight": -0.3333
+			},
+			{
+				"joint": "calf_twist_02_l",
+				"source": "foot_l",
+				"weight": 0.3333
+			},
+			{
+				"joint": "calf_twist_01_l",
+				"source": "foot_l",
+				"weight": 0.6667
+			},
+			{
+				"joint": "upperarm_twist_01_r",
+				"source": "upperarm_r",
+				"weight": -0.6667
+			},
+			{
+				"joint": "upperarm_twist_02_r",
+				"source": "upperarm_r",
+				"weight": -0.3333
+			},
+			{
+				"joint": "lowerarm_twist_02_r",
+				"source": "hand_r",
+				"weight": 0.3333
+			},
+			{
+				"joint": "lowerarm_twist_01_r",
+				"source": "hand_r",
+				"weight": 0.6667
+			},
+			{
+				"joint": "thigh_twist_01_r",
+				"source": "thigh_r",
+				"weight": -0.6667
+			},
+			{
+				"joint": "thigh_twist_02_r",
+				"source": "thigh_r",
+				"weight": -0.3333
+			},
+			{
+				"joint": "calf_twist_02_r",
+				"source": "foot_r",
+				"weight": 0.3333
+			},
+			{
+				"joint": "calf_twist_01_r",
+				"source": "foot_r",
+				"weight": 0.6667
+			}
+		]
+	},
+	"source": {
+		"asset": "/Game/Characters/Mannequins/Meshes/SKM_Manny",
+		"axes": "Lila Y up, right handed, cm, as importFbx converts UE5 files: UE (x, y, z) is Lila (-y, z, x), and a UE bone's X (aim), Y and Z axes are its Lila local Z, -X and Y. Checked against UE's reference pose to 1e-13.",
+		"engine": "Unreal Engine 5.8",
+		"export": "UnrealEditor-Cmd -run=pythonscript, reference pose as FBX, imported with importFbx",
+		"joints": 161,
+		"skeleton": "root"
+	},
+	"spaces": {
+		"foot_l": [
+			"world",
+			"root"
+		],
+		"foot_r": [
+			"world",
+			"root"
+		],
+		"hand_l": [
+			"world",
+			"spine_05",
+			"head"
+		],
+		"hand_r": [
+			"world",
+			"spine_05",
+			"head"
+		],
+		"head": [
+			"neck_02",
+			"world"
+		],
+		"ik_foot_l": [
+			"world",
+			"root"
+		],
+		"ik_foot_r": [
+			"world",
+			"root"
+		],
+		"ik_hand_gun": [
+			"world",
+			"root"
+		],
+		"ik_hand_l": [
+			"world",
+			"root"
+		],
+		"ik_hand_r": [
+			"world",
+			"root"
+		],
+		"pelvis": [
+			"root",
+			"world"
+		]
+	},
+	"version": 1
+}

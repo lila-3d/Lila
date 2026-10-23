@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
@@ -32,10 +34,10 @@ enum class FileState : uint8_t
     Deleted,
 };
 
-const char* stateName(FileState s);
+LILA_SCENE_API const char* stateName(FileState s);
 
 /** state is the one most worth showing; the flags carry the rest (a file can be mine and out of date). */
-struct FileStatus
+struct LILA_SCENE_API FileStatus
 {
     std::string path;      // local path as given
     std::string depotPath; // p4 depot path, empty for git
@@ -55,7 +57,7 @@ struct FileStatus
     json toJson() const;
 };
 
-struct OpResult
+struct LILA_SCENE_API OpResult
 {
     std::vector<std::string> files;    // files the operation touched
     std::vector<std::string> warnings; // per-file problems that did not fail the whole call
@@ -64,7 +66,7 @@ struct OpResult
     json toJson() const;
 };
 
-struct Changelist
+struct LILA_SCENE_API Changelist
 {
     std::string id; // "default" or a number; git uses "default" for the index
     std::string description;
@@ -75,7 +77,7 @@ struct Changelist
     json toJson() const;
 };
 
-struct Revision
+struct LILA_SCENE_API Revision
 {
     std::string revision; // p4 rev, git commit hash
     std::string change;
@@ -91,7 +93,7 @@ struct Revision
  * One source control system bound to its settings. Every call blocks and throws VcsError; SourceControl adds the
  * async layer. Implementations are safe to call from any thread.
  */
-class Provider
+class LILA_SCENE_API Provider
 {
 public:
     virtual ~Provider() = default;

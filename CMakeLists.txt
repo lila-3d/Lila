@@ -12,6 +12,9 @@ option(LILA_BUILD_TESTS "Build unit tests" ON)
 if(MSVC)
     add_compile_options(/W4 /permissive- /utf-8 /Zc:__cplusplus /MP)
     add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+    # Lila's DLLs export classes holding STL members and deriving from Qt and std types. That is the SDK's ABI (same
+    # compiler and runtime on both sides), so the warnings about it say nothing.
+    add_compile_options(/wd4251 /wd4275)
 endif()
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
@@ -34,9 +37,18 @@ find_package(doctest CONFIG REQUIRED)
 
 include(LilaDeps)
 include(LilaShaders)
+include(LilaExtension)
 
 add_subdirectory(src)
 add_subdirectory(extensions/examples/hello)
+add_subdirectory(extensions/examples/scene_points)
+add_subdirectory(extensions/examples/ui_mode)
+add_subdirectory(extensions/examples/viewport_points)
+add_subdirectory(extensions/Overlap)
+add_subdirectory(extensions/RigTemplates)
+add_subdirectory(extensions/Puppeteer)
+add_subdirectory(extensions/PhysicsAnimation)
+include(LilaSdkInstall)
 
 if(LILA_BUILD_TESTS)
     enable_testing()

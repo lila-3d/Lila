@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/Plug.h"
 #include "ui/ValueReset.h"
 
@@ -21,10 +23,10 @@ namespace lila::ui
  */
 namespace channelSlider
 {
-bool begin(QPoint globalPos);
-void drag(QPoint globalPos, Qt::KeyboardModifiers mods);
-void end();
-bool active();
+LILA_UI_API bool begin(QPoint globalPos);
+LILA_UI_API void drag(QPoint globalPos, Qt::KeyboardModifiers mods);
+LILA_UI_API void end();
+LILA_UI_API bool active();
 } // namespace channelSlider
 
 /**
@@ -33,7 +35,7 @@ bool active();
  * extends); middle drag anywhere scrubs the highlighted channels (Ctrl slow, Shift fast); the whole drag is one undo step. A middle click on a channel name
  * resets it (and every highlighted channel with it) to its default.
  */
-class ChannelBox : public QWidget
+class LILA_UI_API ChannelBox : public QWidget
 {
     Q_OBJECT
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "geo/Bvh.h"
 #include "geo/Mesh.h"
 
@@ -45,13 +47,13 @@ enum class IssueElement : uint8_t
     Face,
 };
 
-IssueElement issueElement(MeshIssue issue);
+LILA_SCENE_API IssueElement issueElement(MeshIssue issue);
 /** Lower camel case name, as the meshRepair flag. */
-const char* issueName(MeshIssue issue);
+LILA_SCENE_API const char* issueName(MeshIssue issue);
 /** Plural words for reports, e.g. "lamina faces". */
-const char* issueLabel(MeshIssue issue);
+LILA_SCENE_API const char* issueLabel(MeshIssue issue);
 
-struct RepairOptions
+struct LILA_SCENE_API RepairOptions
 {
     /** Which issues to look for and fix, by MeshIssue. */
     std::array<bool, kIssueCount> checks = {true, true, true, true, true, true, false, false, false, false, true};
@@ -67,7 +69,7 @@ struct RepairOptions
 };
 
 /** Offending element ids (sorted) per issue, of that issue's element kind. Unchecked issues stay empty. */
-struct MeshIssues
+struct LILA_SCENE_API MeshIssues
 {
     std::array<std::vector<Index>, kIssueCount> ids;
 
@@ -81,9 +83,9 @@ struct MeshIssues
 };
 
 /** Looks for the checked issues without changing the mesh. Ids are the mesh's own (not compacted). */
-MeshIssues findIssues(const geo::Mesh& mesh, const RepairOptions& opts = {});
+LILA_SCENE_API MeshIssues findIssues(const geo::Mesh& mesh, const RepairOptions& opts = {});
 
-struct RepairReport
+struct LILA_SCENE_API RepairReport
 {
     /** How many of each issue were found when its fix ran. Zero-area uvs are only counted: they need a new unwrap. */
     std::array<Index, kIssueCount> fixed{};
@@ -96,7 +98,7 @@ struct RepairReport
  * zero-area slivers into a neighbour, splits non-manifold edges and points apart, fills holes, cuts n-gons and concave
  * faces into quads and triangles, conforms winding. Compacts.
  */
-RepairReport repairMesh(geo::Mesh& mesh, const RepairOptions& opts = {});
+LILA_SCENE_API RepairReport repairMesh(geo::Mesh& mesh, const RepairOptions& opts = {});
 
 struct VoxelOptions
 {
@@ -110,7 +112,7 @@ struct VoxelOptions
  * Rebuilds a dirty mesh (holes, self-intersections, inner shells) as one closed manifold quad surface: a narrow-band
  * distance field signed by flooding the outside, contoured with surface nets.
  */
-geo::Mesh voxelRemesh(const geo::Mesh& mesh, const VoxelOptions& opts = {});
+LILA_SCENE_API geo::Mesh voxelRemesh(const geo::Mesh& mesh, const VoxelOptions& opts = {});
 
 // Auto quad remesh
 
@@ -134,7 +136,7 @@ struct QuadRemeshOptions
     int relaxIterations = 6;
 };
 
-struct QualityMetrics
+struct LILA_SCENE_API QualityMetrics
 {
     Index faces = 0;
     Index quads = 0;
@@ -156,7 +158,7 @@ struct QualityMetrics
 };
 
 /** Measures a mesh; distances need the source's Bvh. */
-QualityMetrics measureQuality(const geo::Mesh& mesh, const geo::MeshBvh* source = nullptr);
+LILA_SCENE_API QualityMetrics measureQuality(const geo::Mesh& mesh, const geo::MeshBvh* source = nullptr);
 
 struct QuadRemeshResult
 {
@@ -173,7 +175,7 @@ struct QuadRemeshResult
  * style position field solved on a multiresolution hierarchy; graph extraction into quads; cleanup; reprojection onto
  * the source with feature-preserving tangential relaxation.
  */
-QuadRemeshResult quadRemesh(const geo::Mesh& source, const QuadRemeshOptions& opts = {});
+LILA_SCENE_API QuadRemeshResult quadRemesh(const geo::Mesh& source, const QuadRemeshOptions& opts = {});
 
 // Relax and shrinkwrap
 
@@ -211,16 +213,16 @@ struct FeatureOptions
 };
 
 /** Points on the chosen kinds of feature edge, per point capacity: the points to pin when relaxing. */
-std::vector<uint8_t> featurePoints(const geo::Mesh& mesh, const FeatureOptions& opts);
+LILA_SCENE_API std::vector<uint8_t> featurePoints(const geo::Mesh& mesh, const FeatureOptions& opts);
 
 /**
  * Laplacian relax keeping points on a surface: the target when given, otherwise the mesh's own starting shape.
  * Parallel and deterministic.
  */
-void relaxMesh(geo::Mesh& mesh, const geo::MeshBvh* target, const RelaxOptions& opts = {});
+LILA_SCENE_API void relaxMesh(geo::Mesh& mesh, const geo::MeshBvh* target, const RelaxOptions& opts = {});
 
 /** Projects every point onto the target, then relaxes on it so the projection doesn't bunch up. */
-void shrinkwrap(geo::Mesh& mesh, const geo::MeshBvh& target, int relaxIterations = 3);
+LILA_SCENE_API void shrinkwrap(geo::Mesh& mesh, const geo::MeshBvh& target, int relaxIterations = 3);
 
 enum class ProjectMethod : uint8_t
 {
@@ -248,5 +250,5 @@ struct ProjectOptions
  * Moves points onto the target: to the closest point, or to the nearest hit along a ray (falling back to the closest
  * point where the ray misses). The target mesh must be the one bvh was built from. Returns how many points moved.
  */
-Index projectMesh(geo::Mesh& mesh, const geo::Mesh& target, const geo::MeshBvh& bvh, const ProjectOptions& opts = {});
+LILA_SCENE_API Index projectMesh(geo::Mesh& mesh, const geo::Mesh& target, const geo::MeshBvh& bvh, const ProjectOptions& opts = {});
 } // namespace lila::retopo

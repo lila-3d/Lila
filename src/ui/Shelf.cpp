@@ -1,5 +1,6 @@
 #include "ui/Shelf.h"
 
+#include "core/ExtensionContext.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "ui/Actions.h"
@@ -63,7 +64,69 @@ std::vector<std::string> names()
     for (const json& n : order)
         if (n.is_string())
             out.push_back(n.get<std::string>());
+    json hidden = PrefStore::get().value("general", "/shelves/hidden", json::array());
+    for (const std::string& name : registry().idsInOrder())
+        if (std::find(out.begin(), out.end(), name) == out.end() && !(hidden.is_array() && std::find(hidden.begin(), hidden.end(), json(name)) != hidden.end()))
+            out.push_back(name);
     return out;
+}
+
+Registry<Shelf>& registry()
+{
+    static Registry<Shelf> r;
+    static int listener = r.addListener([](RegistryChange change, const std::string& name, const std::string&) {
+        std::string file = "shelves/" + name;
+        if (change == RegistryChange::Removed)
+            PrefStore::get().removeDefaults(file, "shelf");
+        else if (const Shelf* s = r.find(name))
+            PrefStore::get().setDefaults(file, "shelf", {{"items", s->items}});
+    });
+    (void)listener;
+    return r;
+}
+
+void add(Shelf s, std::string owner)
+{
+    std::string name = s.name;
+    if (!s.items.is_array())
+        s.items = json::array();
+    registry().put(std::move(name), std::move(s), std::move(owner));
+}
+
+uint64_t add(ext::Context& ctx, Shelf s)
+{
+    if (const std::string* owner = registry().ownerOf(s.name); owner && *owner != ctx.owner())
+    {
+        ctx.log(LogLevel::Error, "shelf '" + s.name + "' already belongs to " + *owner);
+        return 0;
+    }
+    std::string name = s.name;
+    add(std::move(s), ctx.owner());
+    return ctx.track("shelf:" + name, [name, own = ctx.owner()] {
+        if (const std::string* o = registry().ownerOf(name); o && *o == own)
+            registry().remove(name);
+    });
+}
+
+std::string current()
+{
+    for (QWidget* w : QApplication::allWidgets())
+        if (auto* panel = qobject_cast<ShelfPanel*>(w))
+            if (std::string s = panel->currentShelf(); !s.empty())
+                return s;
+    std::vector<std::string> all = names();
+    return all.empty() ? std::string() : all.front();
+}
+
+bool setCurrent(const std::string& shelf)
+{
+    std::vector<std::string> all = names();
+    if (std::find(all.begin(), all.end(), shelf) == all.end())
+        return false;
+    for (QWidget* w : QApplication::allWidgets())
+        if (auto* panel = qobject_cast<ShelfPanel*>(w))
+            panel->showShelf(shelf);
+    return true;
 }
 
 json items(const std::string& shelf)
@@ -89,6 +152,9 @@ void create(const std::string& shelf)
     auto all = names();
     if (std::find(all.begin(), all.end(), shelf) != all.end())
         return;
+    json hidden = PrefStore::get().value("general", "/shelves/hidden", json::array());
+    if (hidden.is_array() && std::erase(hidden.get_ref<json::array_t&>(), json(shelf)))
+        PrefStore::get().set("general", "/shelves/hidden", hidden);
     all.push_back(shelf);
     PrefStore::get().set("general", "/shelves/order", all);
     setItems(shelf, json::array());
@@ -99,6 +165,15 @@ void remove(const std::string& shelf)
     auto all = names();
     all.erase(std::remove(all.begin(), all.end(), shelf), all.end());
     PrefStore::get().set("general", "/shelves/order", all);
+    // A contributed shelf would come back on its own; remember the user deleted it.
+    if (registry().contains(shelf))
+    {
+        json hidden = PrefStore::get().value("general", "/shelves/hidden", json::array());
+        if (!hidden.is_array())
+            hidden = json::array();
+        hidden.push_back(shelf);
+        PrefStore::get().set("general", "/shelves/hidden", hidden);
+    }
 }
 
 bool rename(const std::string& shelf, const std::string& to)
@@ -763,7 +838,7 @@ ShelfPanel::ShelfPanel(QWidget* parent) : QWidget(parent)
         menu.exec(mTabs->mapToGlobal(p));
     });
     mPrefListener = PrefStore::get().onChanged([this](const std::string& file) {
-        if (file == "general" && shelves::names() != mNames)
+        if ((file == "general" || file.starts_with("shelves/")) && shelves::names() != mNames)
             rebuild();
     });
     rebuild();
@@ -772,6 +847,22 @@ ShelfPanel::ShelfPanel(QWidget* parent) : QWidget(parent)
 ShelfPanel::~ShelfPanel()
 {
     PrefStore::get().removeOnChanged(mPrefListener);
+}
+
+std::string ShelfPanel::currentShelf() const
+{
+    return mTabs->currentIndex() >= 0 ? mTabs->tabText(mTabs->currentIndex()).toStdString() : std::string();
+}
+
+bool ShelfPanel::showShelf(const std::string& name)
+{
+    for (int i = 0; i < mTabs->count(); ++i)
+        if (mTabs->tabText(i).toStdString() == name)
+        {
+            mTabs->setCurrentIndex(i);
+            return true;
+        }
+    return false;
 }
 
 QWidget* ShelfPanel::dockTitleBar(QDockWidget* dock)
@@ -825,6 +916,9 @@ FloatingShelf::FloatingShelf(QWidget* parent, bool pinned) : QWidget(parent, Qt:
         setAttribute(Qt::WA_ShowWithoutActivating);
     // Qt::Popup would close the moment another app has focus, so click-away is handled here instead.
     qApp->installEventFilter(this);
+    mPositionTimer.setSingleShot(true);
+    mPositionTimer.setInterval(300);
+    connect(&mPositionTimer, &QTimer::timeout, this, &FloatingShelf::rememberPosition);
     build();
     mPrefListener = PrefStore::get().onChanged([this](const std::string& file) {
         if (file == "general")
@@ -941,7 +1035,8 @@ void FloatingShelf::settingsMenu(QMenu* menu)
         connect(a, &QAction::triggered, this, [v] { PrefStore::get().set("general", "/floatingShelf/openAt", v); });
     }
     for (auto [label, key] : {std::pair{"Close When Clicking Elsewhere", "/floatingShelf/closeOnClickAway"},
-                              {"Close After Running a Button", "/floatingShelf/closeAfterRun"}})
+                              {"Close After Running a Button", "/floatingShelf/closeAfterRun"},
+                              {"Remember Last Position", "/floatingShelf/rememberPosition"}})
     {
         QAction* a = menu->addAction(label);
         a->setCheckable(true);
@@ -1008,7 +1103,16 @@ void FloatingShelf::place()
         if (view)
             topLeft = view->mapToGlobal(view->rect().center()) - QPoint(s.width() / 2, s.height() / 2);
     }
-    topLeft += QPoint(PrefStore::get().value<int>("general", "/floatingShelf/offsetX", 0), PrefStore::get().value<int>("general", "/floatingShelf/offsetY", 250));
+    topLeft += QPoint(PrefStore::get().value<int>("general", "/floatingShelf/offsetX", 250), PrefStore::get().value<int>("general", "/floatingShelf/offsetY", 0));
+    if (json last = PrefStore::get().value("general", "/floatingShelf/position", json());
+        PrefStore::get().value<bool>("general", "/floatingShelf/rememberPosition", false) && last.is_array() && last.size() == 2 &&
+        last[0].is_number_integer() && last[1].is_number_integer())
+    {
+        topLeft = QPoint(last[0].get<int>(), last[1].get<int>());
+        // A monitor unplugged since then: back onto the one under the cursor.
+        if (QScreen* there = QGuiApplication::screenAt(topLeft + QPoint(s.width() / 2, 16)))
+            avail = there->availableGeometry();
+    }
     // Room for the native title bar, which is not part of size() yet.
     topLeft.setX(std::clamp(topLeft.x(), avail.left(), std::max(avail.left(), avail.right() - s.width())));
     topLeft.setY(std::clamp(topLeft.y(), avail.top(), std::max(avail.top(), avail.bottom() - s.height() - 32)));
@@ -1074,9 +1178,24 @@ bool FloatingShelf::eventFilter(QObject* obj, QEvent* e)
     return QWidget::eventFilter(obj, e);
 }
 
+void FloatingShelf::rememberPosition()
+{
+    if (PrefStore::get().value<bool>("general", "/floatingShelf/rememberPosition", false))
+        PrefStore::get().set("general", "/floatingShelf/position", json::array({pos().x(), pos().y()}));
+}
+
+void FloatingShelf::moveEvent(QMoveEvent* e)
+{
+    QWidget::moveEvent(e);
+    if (isVisible())
+        mPositionTimer.start();
+}
+
 void FloatingShelf::closeEvent(QCloseEvent* e)
 {
     PrefStore::get().set("general", "/floatingShelf/size", json::array({width(), height()}));
+    mPositionTimer.stop();
+    rememberPosition();
     QWidget::closeEvent(e);
 }
 

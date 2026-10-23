@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/Graph.h"
 
 #include <cstdint>
@@ -40,18 +42,18 @@ struct PolyStats
  * Distinct uvs of a uv set, numbered the way Maya numbers map uvs: one per point per different uv among the point's
  * corners, so a seam point counts once for each side. 0 when the set is missing.
  */
-uint64_t countUvs(const geo::Mesh& mesh, std::string_view uvSet);
+LILA_SCENE_API uint64_t countUvs(const geo::Mesh& mesh, std::string_view uvSet);
 
 /** One mesh's counts, uncached. */
-PolyCount countMesh(const geo::Mesh& mesh, std::string_view uvSet);
+LILA_SCENE_API PolyCount countMesh(const geo::Mesh& mesh, std::string_view uvSet);
 
 /** effectivelyVisible(), for the HUD. */
-bool visibleInHierarchy(const Graph& g, NodeId id);
+LILA_SCENE_API bool visibleInHierarchy(const Graph& g, NodeId id);
 
 /**
  * Counts for the HUD. Meshes are immutable snapshots, so each mesh's counts are cached per snapshot; a new snapshot
  * with the same element counts (a deform or drag) carries its uv count over until it settles. shown narrows the scene
  * further, as a view's isolate does; null shows everything. Instances sharing one mesh count once each.
  */
-PolyStats polyStats(Graph& g, std::string_view uvSet = "uv0", const std::function<bool(NodeId)>& shown = {});
+LILA_SCENE_API PolyStats polyStats(Graph& g, std::string_view uvSet = "uv0", const std::function<bool(NodeId)>& shown = {});
 } // namespace lila::scene::hud

@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include "render/DisplayOptions.h"
+#include "ui/ViewportDisplay.h"
 
 using namespace lila::render;
 
@@ -58,4 +59,13 @@ TEST_CASE("environment intensity per HDRI")
         CHECK(environmentIntensity(withEnvironmentIntensity(byHdri, "a.hdr", -1.0f), "a.hdr", 1.0f) == doctest::Approx(0.0f));
         CHECK(environmentIntensity(withEnvironmentIntensity(nlohmann::json(3), "a.hdr", 2.0f), "a.hdr", 1.0f) == doctest::Approx(2.0f));
     }
+}
+
+TEST_CASE("monotone overrides the selective accent colours")
+{
+    using lila::ui::viewportDisplay::accentColors;
+    CHECK(accentColors(false, true));
+    CHECK_FALSE(accentColors(false, false));
+    CHECK_FALSE(accentColors(true, true));
+    CHECK_FALSE(accentColors(true, false));
 }

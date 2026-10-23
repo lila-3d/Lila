@@ -1,8 +1,14 @@
 #pragma once
 
+#include "core/Export.h"
+#include "core/Registry.h"
+#include "ui/Owner.h"
+
 #include <nlohmann/json.hpp>
 
+#include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -32,28 +38,40 @@ struct Action
 
 namespace actions
 {
-/** Every action needs a doc: tooltips and the help line show it, and the tests reject actions without one. */
-void add(Action a);
+/** Every registered action, by id, with its owner. */
+LILA_UI_API Registry<Action>& registry();
+
+/**
+ * Adds an action, or replaces the one with its id. Every action needs a doc: tooltips and the help line show it, and
+ * the tests reject actions without one.
+ */
+LILA_UI_API void add(Action a, std::string owner = kLilaOwner);
+
+/** Adds an action the extension owns, removed when it unloads. 0, with a log message, when another owner has the id. */
+LILA_UI_API uint64_t add(ext::Context& ctx, Action a);
+
+/** False when no action has that id. Menus, hotkeys and shelves that name it then do nothing. */
+LILA_UI_API bool remove(const std::string& id);
 
 /** Turns an existing action into a plain call of `command` (see Action::command), replacing its run. */
-void bindCommand(const std::string& id, std::string command, nlohmann::json call = nlohmann::json::object());
+LILA_UI_API void bindCommand(const std::string& id, std::string command, nlohmann::json call = nlohmann::json::object());
 
 /** Runs `command` with `call` plus its remembered option box values, from the UI; errors go to the log. */
-void runWithOptions(const std::string& command, const nlohmann::json& call);
-const Action* find(const std::string& id);
-std::vector<const Action*> all();
+LILA_UI_API void runWithOptions(const std::string& command, const nlohmann::json& call);
+LILA_UI_API const Action* find(const std::string& id);
+LILA_UI_API std::vector<const Action*> all();
 
 /** Gives an existing action an enabled predicate; menus grey it out and run() skips it while it returns false. */
-void setEnabledWhen(const std::string& id, std::function<bool()> enabled);
+LILA_UI_API void setEnabledWhen(const std::string& id, std::function<bool()> enabled);
 
 /** False only for a registered action whose predicate says so; any other target counts as enabled. */
-bool isEnabled(const nlohmann::json& target);
+LILA_UI_API bool isEnabled(const nlohmann::json& target);
 
 /** Predicate: anything is selected. */
-bool hasSelection();
+LILA_UI_API bool hasSelection();
 
 /** "Label  (Key)\ndoc", the tooltip of any button or menu item bound to an action. The id itself when unknown. */
-std::string tooltip(const std::string& id);
+LILA_UI_API std::string tooltip(const std::string& id);
 
 /**
  * Runs a binding target. Accepts:
@@ -63,17 +81,29 @@ std::string tooltip(const std::string& id);
  *   {"markingMenu": "name"}        (only meaningful from a key + mouse button binding)
  * Returns false when the target is unknown or failed.
  */
-bool run(const nlohmann::json& target);
+LILA_UI_API bool run(const nlohmann::json& target);
+
+/**
+ * Whether running `target` replaces what Repeat Last repeats. Selection, view and camera changes, tool switches, windows,
+ * file actions, undo/redo and held-key pairs are not, so Repeat Last skips past them to the last edit.
+ */
+LILA_UI_API bool repeatable(const nlohmann::json& target);
+
+/** What Repeat Last (edit.repeatLast) would run, if anything repeatable has run. */
+LILA_UI_API std::optional<nlohmann::json> repeatTarget();
+
+/** The label a menu shows for the action: its own, except Repeat Last names what it will repeat. */
+LILA_UI_API std::string displayLabel(const std::string& id);
 
 /** Targets run recently through run(), newest first and without repeats (the hotbox's Recent Commands). */
-std::vector<nlohmann::json> recent();
+LILA_UI_API std::vector<nlohmann::json> recent();
 
 /** Human-readable label for a target (menus, cheat sheet). */
-std::string labelFor(const nlohmann::json& target);
+LILA_UI_API std::string labelFor(const nlohmann::json& target);
 
 /** Python source that does what target does, for "show code" and copy-to-customize. */
-std::string pythonFor(const nlohmann::json& target);
+LILA_UI_API std::string pythonFor(const nlohmann::json& target);
 
-void registerBuiltins();
+LILA_UI_API void registerBuiltins();
 } // namespace actions
 } // namespace lila::ui

@@ -1,5 +1,10 @@
 #pragma once
 
+#include "core/Export.h"
+#include "core/Registry.h"
+#include "ui/Owner.h"
+
+#include <cstdint>
 #include <functional>
 #include <string>
 
@@ -17,27 +22,33 @@ class QWidget;
 namespace lila::ui::optionBox
 {
 /** The action has an option box. */
-bool available(const std::string& actionId);
+LILA_UI_API bool available(const std::string& actionId);
 
 /** Opens, or raises, the action's options dialog. */
-void open(const std::string& actionId);
+LILA_UI_API void open(const std::string& actionId);
+
+/** Custom option boxes, by action id. */
+LILA_UI_API Registry<std::function<void()>>& customRegistry();
 
 /** Gives an action whose settings are not command flags an option box that calls open instead of the generated dialog. */
-void addCustom(const std::string& actionId, std::function<void()> open);
+LILA_UI_API void addCustom(const std::string& actionId, std::function<void()> open, std::string owner = kLilaOwner);
+/** Owned by the extension and removed when it unloads. */
+LILA_UI_API uint64_t addCustom(ext::Context& ctx, const std::string& actionId, std::function<void()> open);
+LILA_UI_API bool removeCustom(const std::string& actionId);
 
 /**
  * The action id whose options a commit of row a in menu at global should open instead of running it: the cursor is
  * on the row's square, or Shift is held. Empty otherwise. For commits that are not a click on the menu, such as the
  * hotbox key coming up.
  */
-std::string optionsAt(const QMenu* menu, QAction* a, int globalX, bool shift);
+LILA_UI_API std::string optionsAt(const QMenu* menu, QAction* a, int globalX, bool shift);
 
 /** Adds the squares to the menu's rows and its submenus' rows, and the clicks that open them. Idempotent. */
-void decorateMenu(QMenu* menu);
+LILA_UI_API void decorateMenu(QMenu* menu);
 
 /** The button followed by its option box square, for panels; just the button when the action has no options. */
-QWidget* withOptionBox(QToolButton* button, const std::string& actionId, QWidget* parent);
+LILA_UI_API QWidget* withOptionBox(QToolButton* button, const std::string& actionId, QWidget* parent);
 
 /** Makes the rig menu's command actions plain command calls. Call once every action is registered. */
-void install();
+LILA_UI_API void install();
 } // namespace lila::ui::optionBox

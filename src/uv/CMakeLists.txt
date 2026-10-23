@@ -1,6 +1,6 @@
 find_package(Eigen3 CONFIG REQUIRED)
 
-add_library(lila_uv STATIC
+lila_module(lila_uv Scene
     Align.cpp
     Bff.cpp
     Chart.cpp
@@ -21,5 +21,5 @@ if(MSVC)
     target_compile_options(lila_uv PRIVATE /wd4127 /wd4244)
 endif()
 
-add_library(lila_uv_cmds STATIC UvCommands.cpp UvCommands.h LiveCommands.cpp LiveSession.cpp OptimizeCommands.cpp)
+lila_module(lila_uv_cmds Scene UvCommands.cpp UvCommands.h LiveCommands.cpp LiveSession.cpp OptimizeCommands.cpp)
 target_link_libraries(lila_uv_cmds PUBLIC lila_uv lila_scene)

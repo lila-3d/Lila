@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QWidget>
 
 class QComboBox;
@@ -16,7 +18,7 @@ class RangeBar;
  * frame and the playback buttons. Bottom row: the range slider between its start/end fields, fps, loop and auto
  * key. Drag the ruler to scrub; right-click it for key actions. Times are seconds underneath and shown as frames.
  */
-class TimeSlider : public QWidget
+class LILA_UI_API TimeSlider : public QWidget
 {
 public:
     explicit TimeSlider(QWidget* parent = nullptr);

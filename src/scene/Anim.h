@@ -1,7 +1,10 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/AnimCurve.h"
 #include "scene/PlaybackClock.h"
+#include "scene/Transform.h"
 
 #include <functional>
 #include <optional>
@@ -14,7 +17,7 @@ class Graph;
 namespace lila::scene::anim
 {
 /** Scene playback settings. Times are seconds; the UI shows frames at fps. */
-struct Playback
+struct LILA_SCENE_API Playback
 {
     double minTime = 0.0; // playback range
     double maxTime = 4.0;
@@ -31,16 +34,16 @@ struct Playback
     void fromJson(const json& j);
 };
 
-Playback& playback();
+LILA_SCENE_API Playback& playback();
 /** Notifies listeners after playback settings, the play state or auto key change. */
-void playbackChanged();
-int addPlaybackListener(std::function<void()> fn);
-void removePlaybackListener(int id);
+LILA_SCENE_API void playbackChanged();
+LILA_SCENE_API int addPlaybackListener(std::function<void()> fn);
+LILA_SCENE_API void removePlaybackListener(int id);
 
-double frameOf(double seconds);
-double secondsOf(double frame);
+LILA_SCENE_API double frameOf(double seconds);
+LILA_SCENE_API double secondsOf(double frame);
 /** Nearest whole frame, in seconds. */
-double snapToFrame(double seconds);
+LILA_SCENE_API double snapToFrame(double seconds);
 
 /** Runs playback; the UI installs a timer here. Without one, play only flips the state. */
 struct PlaybackDriver
@@ -48,20 +51,20 @@ struct PlaybackDriver
     std::function<void(int direction)> start;
     std::function<void()> stop;
 };
-void setPlaybackDriver(PlaybackDriver driver);
-void play(int direction);
-void stop();
+LILA_SCENE_API void setPlaybackDriver(PlaybackDriver driver);
+LILA_SCENE_API void play(int direction);
+LILA_SCENE_API void stop();
 /** 0 stopped, 1 forward, -1 backward. */
-int playDirection();
+LILA_SCENE_API int playDirection();
 
-bool autoKey();
-void setAutoKey(bool on);
+LILA_SCENE_API bool autoKey();
+LILA_SCENE_API void setAutoKey(bool on);
 
 /** Curve node driving plug, or kNoNode. */
-NodeId curveFor(Graph& g, const PlugRef& plug);
+LILA_SCENE_API NodeId curveFor(Graph& g, const PlugRef& plug);
 
 /** Keyable channels of a node as scalar plugs: Vec3 attrs become three component plugs. */
-std::vector<PlugRef> keyablePlugs(Graph& g, NodeId node);
+LILA_SCENE_API std::vector<PlugRef> keyablePlugs(Graph& g, NodeId node);
 
 struct AnimatedPlug
 {
@@ -69,23 +72,61 @@ struct AnimatedPlug
     NodeId curve = kNoNode;
 };
 /** Channels of a node driven by curves, in attribute order. */
-std::vector<AnimatedPlug> animatedPlugs(Graph& g, NodeId node);
+LILA_SCENE_API std::vector<AnimatedPlug> animatedPlugs(Graph& g, NodeId node);
 
 /** True when the curve node has a key at t. Never throws, even on malformed keys. */
-bool hasKeyAt(const Node& curve, double t);
+LILA_SCENE_API bool hasKeyAt(const Node& curve, double t);
 
 /** Sorted, unique key times of every curve on the nodes. */
-std::vector<double> keyTimes(Graph& g, const std::vector<NodeId>& nodes);
+LILA_SCENE_API std::vector<double> keyTimes(Graph& g, const std::vector<NodeId>& nodes);
 
 /**
  * Keys plug at time, creating and connecting a curve (animCurveTL/TA/TU by the attribute) when it has none.
  * Undoable through the graph. Returns the curve. Throws std::invalid_argument when something else drives the plug.
  */
-NodeId setKey(Graph& g, const PlugRef& plug, double time, double value, std::optional<Tangent> in = {},
+LILA_SCENE_API NodeId setKey(Graph& g, const PlugRef& plug, double time, double value, std::optional<Tangent> in = {},
               std::optional<Tangent> out = {});
 
 /** Removes keys in [t0, t1]; deletes the curve when none are left. Returns how many went. */
-int removeKeys(Graph& g, NodeId curve, double t0, double t1);
+LILA_SCENE_API int removeKeys(Graph& g, NodeId curve, double t0, double t1);
 
-void registerCommands();
+// Rotation curves (animCurveRQ). curveFor and animatedPlugs report one for each component of the rotate it drives.
+
+/**
+ * True when keys on plug (a transform's rotate or one of its components) go to a rotation curve: one already drives
+ * it, or nothing does, no anim layer is active and the node's rotationInterpolation is slerp or smooth.
+ */
+LILA_SCENE_API bool keysAsRotation(Graph& g, const PlugRef& plug);
+/**
+ * Keys the whole rotate plug at time with Euler degrees (in the node's rotateOrder), creating and connecting an
+ * animCurveRQ when it has none. Undoable. Returns the curve.
+ */
+LILA_SCENE_API NodeId setRotationKey(Graph& g, const PlugRef& rotate, double time, const glm::dvec3& euler,
+                                     std::optional<Tangent> in = {}, std::optional<Tangent> out = {});
+/** Key times of a scalar or rotation curve node. Never throws. */
+LILA_SCENE_API std::vector<double> curveKeyTimes(const Node& curve);
+/** A curve node's value at t: a rotation curve's Euler component (0..2), or a scalar curve's value. */
+LILA_SCENE_API double curveValueAt(const Node& curve, int component, double t);
+/**
+ * Converts the rotate curves of a node to `to`, keeping key times and the pose at every key: three Euler curves
+ * become one rotation curve or back, or a rotation curve changes interpolation. Also sets the node's
+ * rotationInterpolation. Undoable. Returns whether anything changed.
+ */
+LILA_SCENE_API bool convertRotationCurves(Graph& g, NodeId node, RotationInterpolation to);
+
+/**
+ * Loop key on curves (scalar or rotation; anything else is skipped): on, the last key mirrors the first and post
+ * infinity cycles; loopTime adds the loop key there first when it is past the last key. Off restores constant post
+ * infinity. Undoable. Returns the latest loop key time, NaN when no curve loops. Takes build on this.
+ */
+LILA_SCENE_API double setCurvesLoop(Graph& g, const std::vector<NodeId>& curves, bool on, std::optional<double> loopTime = {});
+/** Whether a curve node has its loop flag on. */
+LILA_SCENE_API bool curveLoops(const Node& curve);
+/** Times of the loop keys (the last key of each looping curve) on the nodes, sorted and unique. */
+LILA_SCENE_API std::vector<double> loopKeyTimes(Graph& g, const std::vector<NodeId>& nodes);
+
+/** convertRotationCurves, eulerFilter, setLoopKey, clearLoopKey; registered by registerCommands. */
+void registerRotationCommands();
+
+LILA_SCENE_API void registerCommands();
 } // namespace lila::scene::anim

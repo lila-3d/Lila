@@ -1,5 +1,7 @@
 #include "ui/Panels.h"
 
+#include "core/ExtensionContext.h"
+#include "core/Log.h"
 #include "ui/Actions.h"
 #include "ui/DisplayLayersPanel.h"
 #include "ui/UndoHistory.h"
@@ -26,6 +28,59 @@ void toggle(const char* dock)
         toggleDockHook()(dock);
 }
 } // namespace
+
+Registry<panels::Panel>& panels::registry()
+{
+    static Registry<Panel> r;
+    return r;
+}
+
+void panels::add(Panel p, std::string owner)
+{
+    std::string id = p.id;
+    if (!p.toggleAction.empty() && !actions::find(p.toggleAction))
+        actions::add({.id = p.toggleAction, .label = p.title, .category = "Windows", .run = [id] { panels::toggle(id); },
+                      .doc = "Shows the " + p.title + " panel, or tucks it away when it is showing.",
+                      .python = "lila.ui.show_panel(\"" + id + "\")"},
+                     owner);
+    registry().put(id, std::move(p), std::move(owner));
+}
+
+uint64_t panels::add(ext::Context& ctx, Panel p)
+{
+    if (const std::string* owner = registry().ownerOf(p.id); owner && *owner != ctx.owner())
+    {
+        ctx.log(LogLevel::Error, "panel '" + p.id + "' already belongs to " + *owner);
+        return 0;
+    }
+    if (p.toggleAction.empty())
+        p.toggleAction = "window." + p.id;
+    std::string id = p.id, action = p.toggleAction;
+    bool ownsAction = !actions::find(action);
+    add(std::move(p), ctx.owner());
+    return ctx.track("panel:" + id, [id, action, ownsAction, own = ctx.owner()] {
+        if (const std::string* o = registry().ownerOf(id); o && *o == own)
+            registry().remove(id);
+        if (const std::string* o = actions::registry().ownerOf(action); ownsAction && o && *o == own)
+            actions::remove(action);
+    });
+}
+
+bool panels::remove(const std::string& id)
+{
+    return registry().remove(id);
+}
+
+void panels::show(const std::string& id)
+{
+    if (showDockHook())
+        showDockHook()(id.c_str());
+}
+
+void panels::toggle(const std::string& id)
+{
+    lila::ui::toggle(id.c_str());
+}
 
 void setShowDockHook(std::function<void(const char* dockName)> showDock)
 {

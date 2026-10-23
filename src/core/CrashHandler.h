@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -14,7 +16,7 @@ namespace lila::crash
  * corruption, std::terminate, abort, pure virtual calls, invalid CRT parameters) and starts keeping the last log lines
  * and commands, flushed every second to <userConfigDir>/sessions/<pid>.crash.txt for the watchdog.
  */
-void install();
+LILA_FOUNDATION_API void install();
 
 struct WatchOptions
 {
@@ -31,20 +33,20 @@ struct WatchOptions
  * exits with Lila; on a crash it writes <userConfigDir>/crashes/<timestamp>_<pid>/ (report.txt + minidump.dmp).
  * False when the helper is missing; crashes are then reported in-process only.
  */
-bool startWatchdog(const WatchOptions& options);
+LILA_FOUNDATION_API bool startWatchdog(const WatchOptions& options);
 /** The watchdog's process id, 0 when none is running. */
-uint32_t watchdogPid();
+LILA_FOUNDATION_API uint32_t watchdogPid();
 
 /** Stops the flushing and removes this session's crash files; call on a clean exit. */
-void shutdown();
+LILA_FOUNDATION_API void shutdown();
 
 /** A value for the report, e.g. setContext("context", "scene", path). Cheap; unchanged values cost nothing. */
-void setContext(std::string_view section, std::string_view key, std::string_view value);
+LILA_FOUNDATION_API void setContext(std::string_view section, std::string_view key, std::string_view value);
 /** Where Python's faulthandler writes tracebacks for the report; empty before install(). */
-std::filesystem::path pythonTracebackFile();
+LILA_FOUNDATION_API std::filesystem::path pythonTracebackFile();
 
 /** A string never to appear in a report (the MCP token). */
-void addSecret(std::string secret);
+LILA_FOUNDATION_API void addSecret(std::string secret);
 
 /**
  * Called once from the crash handler to save the user's work; writes the saved file's path into path (empty when
@@ -52,19 +54,19 @@ void addSecret(std::string secret);
  * short wait, and a second fault inside it only ends that thread.
  */
 using EmergencySaveFn = void (*)(char* path, size_t size);
-void setEmergencySave(EmergencySaveFn fn);
+LILA_FOUNDATION_API void setEmergencySave(EmergencySaveFn fn);
 
 /** <userConfigDir>/crashes. */
-std::filesystem::path reportsDir();
+LILA_FOUNDATION_API std::filesystem::path reportsDir();
 /** Crash folders, newest first. */
-std::vector<std::filesystem::path> reports();
+LILA_FOUNDATION_API std::vector<std::filesystem::path> reports();
 /** The report's one-line summary. */
-std::string reportSummary(const std::filesystem::path& dir);
+LILA_FOUNDATION_API std::string reportSummary(const std::filesystem::path& dir);
 /** The pid of the process the report is about, 0 when unknown. */
-int64_t reportPid(const std::filesystem::path& dir);
+LILA_FOUNDATION_API int64_t reportPid(const std::filesystem::path& dir);
 /** One field of the report, e.g. reportField(dir, "app", "mode"); empty when absent. */
-std::string reportField(const std::filesystem::path& dir, std::string_view section, std::string_view key);
+LILA_FOUNDATION_API std::string reportField(const std::filesystem::path& dir, std::string_view section, std::string_view key);
 /** Whether the user has seen the report in Lila's startup dialog. */
-bool acknowledged(const std::filesystem::path& dir);
-void acknowledge(const std::filesystem::path& dir);
+LILA_FOUNDATION_API bool acknowledged(const std::filesystem::path& dir);
+LILA_FOUNDATION_API void acknowledge(const std::filesystem::path& dir);
 } // namespace lila::crash

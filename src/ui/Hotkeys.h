@@ -1,5 +1,9 @@
 #pragma once
 
+#include "core/Export.h"
+#include "core/Registry.h"
+#include "ui/Owner.h"
+
 #include "ui/HotkeyChord.h"
 
 #include <nlohmann/json.hpp>
@@ -19,6 +23,26 @@ class QWidget;
 namespace lila::ui
 {
 /**
+ * Binding layers contributed in code or from an extension's resources/hotkeys. A layer is defaults under the user's
+ * hotkeys, shaped like the prefs file's "contexts". A layer with a mode applies only while that mode is active, and
+ * sits over each context it names: its keys win over the same context's own, slot by slot (see
+ * hotkeys::overlaySlots), so a mode can take a key's tap and keep its hold.
+ */
+namespace hotkeyLayers
+{
+struct Layer
+{
+    std::string id;
+    nlohmann::json contexts = nlohmann::json::object(); // {"global": {"Ctrl+K": target, ...}, "viewport": {...}}
+    std::string mode;                                   // empty: always on
+};
+LILA_UI_API Registry<Layer>& registry();
+LILA_UI_API void add(Layer layer, std::string owner = kLilaOwner);
+LILA_UI_API uint64_t add(ext::Context& ctx, Layer layer);
+LILA_UI_API bool remove(const std::string& id);
+} // namespace hotkeyLayers
+
+/**
  * App-wide hotkeys from the "hotkeys" prefs file:
  *   { "holdDelayMs": 180,
  *     "contexts": { "global": { "Ctrl+Z": "edit.undo",
@@ -31,7 +55,7 @@ namespace lila::ui
  * when that button goes down while the key is held, and then the key's own targets don't run (see HeldKey).
  * Undo and redo repeat while held, on the /undo/repeatDelayMs and /undo/repeatIntervalMs "general" prefs.
  */
-class Hotkeys : public QObject
+class LILA_UI_API Hotkeys : public QObject
 {
     Q_OBJECT
 
@@ -45,6 +69,10 @@ public:
     bool isKeyFor(QKeyEvent* e, const std::string& actionId) const;
     /** Lets the viewport's hotkeys (Q/W/E/R, F, ...) through while view has focus, instead of keyboard search. */
     static void passThrough(QWidget* view, const char* context = "viewport");
+
+    /** The mode whose layer (the hotkeys prefs' /modes/<mode>/contexts) sits over the contexts; empty for none. */
+    void setMode(const std::string& mode);
+    const std::string& mode() const { return mMode; }
 
 protected:
     bool eventFilter(QObject* obj, QEvent* e) override;
@@ -72,7 +100,7 @@ private:
 
     Hotkeys();
     void reload();
-    const Binding* lookup(QKeyEvent* e, QWidget* focus) const;
+    std::optional<Binding> lookup(QKeyEvent* e, QWidget* focus) const;
     static bool textInputFocused(QWidget* w);
     void onHoldTimeout();
     bool onMousePress(QObject* obj, QMouseEvent* e);
@@ -88,7 +116,16 @@ private:
         nlohmann::json target;
     };
 
+    /** A mode layer's key: its raw value, overlaid on the context's own binding when looked up. */
+    struct Over
+    {
+        nlohmann::json value;
+        QString keyText;
+    };
+
     std::map<std::string, std::vector<std::pair<Chord, Binding>>> mContexts;
+    std::map<std::string, std::vector<std::pair<Chord, Over>>> mModeContexts;
+    std::string mMode;
     std::optional<Pending> mPending;
     std::vector<Pending> mHeldKeys;
     std::optional<Repeat> mRepeat;

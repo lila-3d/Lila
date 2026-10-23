@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <glm/glm.hpp>
 
 #include <array>
@@ -137,21 +139,21 @@ struct File
 };
 
 /** Frames per second of a Maya time unit ("film", "ntsc", "30fps", ...); 0 for an unknown one. */
-double fpsOf(std::string_view unit);
+LILA_SCENE_API double fpsOf(std::string_view unit);
 /** Centimetres per Maya linear unit ("mm", "cm", "m", "in", ...); 0 for an unknown one. */
-double cmPerUnit(std::string_view unit);
+LILA_SCENE_API double cmPerUnit(std::string_view unit);
 
 /** Never throws: anything it can't read becomes a warning. */
-File readAscii(std::string_view text);
-File readBinary(std::span<const uint8_t> bytes);
+LILA_SCENE_API File readAscii(std::string_view text);
+LILA_SCENE_API File readBinary(std::span<const uint8_t> bytes);
 /** Reads either kind by its content. Throws std::runtime_error when the file can't be opened or is neither. */
-File readFile(const std::filesystem::path& path);
+LILA_SCENE_API File readFile(const std::filesystem::path& path);
 
 /** True when the bytes start like a Maya binary (IFF) file. */
-bool looksBinary(std::span<const uint8_t> bytes);
+LILA_SCENE_API bool looksBinary(std::span<const uint8_t> bytes);
 
 /** Maya type name for a binary node form id, or empty. */
-std::string_view typeForCode(uint32_t code);
+LILA_SCENE_API std::string_view typeForCode(uint32_t code);
 
 /** One segment of an attribute path: name[lo:hi] (lo = hi = -1 without brackets, -2 for [*]). */
 struct AttrSeg
@@ -159,14 +161,14 @@ struct AttrSeg
     std::string name;
     int lo = -1, hi = -1;
 };
-std::vector<AttrSeg> splitAttr(std::string_view attr);
+LILA_SCENE_API std::vector<AttrSeg> splitAttr(std::string_view attr);
 
 /** Parses polyFaces tokens (f / h / mu / mc / fc ...). Unknown tags end the parse with a warning. */
-std::shared_ptr<MeshData> parsePolyFaces(std::span<const std::string> tokens, std::string* warning);
+LILA_SCENE_API std::shared_ptr<MeshData> parsePolyFaces(std::span<const std::string> tokens, std::string* warning);
 
 /** dataReferenceEdits tokens as an ASCII file writes them. Stops at an edit kind it doesn't know, with a warning. */
-std::vector<RefEdit> parseRefEdits(std::span<const std::string> tokens, std::string* warning);
+LILA_SCENE_API std::vector<RefEdit> parseRefEdits(std::span<const std::string> tokens, std::string* warning);
 
 /** "f[0:3]", "e[5]", "vtx[*]" to (kind, lo, hi); hi = -1 for [*]. False when it isn't a component. */
-bool parseComponent(std::string_view s, std::string* kind, int* lo, int* hi);
+LILA_SCENE_API bool parseComponent(std::string_view s, std::string* kind, int* lo, int* hi);
 } // namespace lila::maya

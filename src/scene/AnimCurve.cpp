@@ -1,7 +1,9 @@
 #include "scene/AnimCurve.h"
 
 #include "core/Profile.h"
+#include "scene/AnimInterpolator.h"
 #include "scene/Graph.h"
+#include "scene/RotationCurve.h"
 
 #include <algorithm>
 #include <cmath>
@@ -134,6 +136,8 @@ double Curve::evalSegment(size_t i, double t) const
 {
     const Key& a = keys[i];
     const Key& b = keys[i + 1];
+    if (const Interpolator* custom = findInterpolator(a.interpolator))
+        return custom->evaluate(*this, i, t);
     if (a.out == Tangent::Step)
         return a.value;
     double dt = b.time - a.time;
@@ -167,6 +171,8 @@ double Curve::evaluate(double t) const
         return 0.0;
     if (n == 1)
         return keys[0].value;
+    if (loop)
+        return looped().evaluate(t);
     const Key& first = keys.front();
     const Key& last = keys.back();
     double range = last.time - first.time;
@@ -229,6 +235,50 @@ void Curve::sort()
     std::stable_sort(keys.begin(), keys.end(), [](const Key& a, const Key& b) { return a.time < b.time; });
 }
 
+Curve Curve::looped() const
+{
+    Curve c = *this;
+    c.loop = false;
+    size_t n = keys.size();
+    if (!loop || n < 2)
+        return c;
+    Key& first = c.keys.front();
+    Key& last = c.keys.back();
+    double range = last.time - first.time;
+    last.value = first.value;
+    // The seam's neighbours across the loop: the key before the last one, a cycle early, and the second key.
+    Curve seam;
+    seam.weighted = weighted;
+    Key before = c.keys[n - 2];
+    before.time -= range;
+    if (n == 2)
+        before.value = first.value;
+    seam.keys = {before, first, c.keys[1]};
+    auto spans = [](Tangent t) { return t == Tangent::Auto || t == Tangent::Spline || t == Tangent::Clamped || t == Tangent::Linear; };
+    auto degrees = [](double slope) { return std::atan(slope) * 180.0 / 3.14159265358979323846; };
+    if (range > 0.0)
+    {
+        if (spans(first.in))
+        {
+            first.inAngle = degrees(seam.inSlope(1));
+            first.in = Tangent::Fixed;
+        }
+        if (spans(first.out))
+        {
+            first.outAngle = degrees(seam.outSlope(1));
+            first.out = Tangent::Fixed;
+        }
+    }
+    last.in = first.in;
+    last.out = first.out;
+    last.inAngle = first.inAngle;
+    last.outAngle = first.outAngle;
+    last.inWeight = first.inWeight;
+    last.outWeight = first.outWeight;
+    c.post = Infinity::Cycle;
+    return c;
+}
+
 json Curve::keysToJson() const
 {
     json out = json::array();
@@ -247,6 +297,8 @@ json Curve::keysToJson() const
             j["iw"] = k.inWeight;
         if (k.outWeight != 1.0)
             j["ow"] = k.outWeight;
+        if (!k.interpolator.empty())
+            j["interp"] = k.interpolator;
         out.push_back(std::move(j));
     }
     return out;
@@ -274,6 +326,7 @@ std::vector<Key> Curve::keysFromJson(const json& j)
         k.outAngle = e.value("oa", 0.0);
         k.inWeight = e.value("iw", 1.0);
         k.outWeight = e.value("ow", 1.0);
+        k.interpolator = e.value("interp", std::string());
         out.push_back(k);
     }
     std::stable_sort(out.begin(), out.end(), [](const Key& a, const Key& b) { return a.time < b.time; });
@@ -300,6 +353,7 @@ void CurveNode::compute(const EvalContext& ctx)
     mCached.pre = Infinity(std::clamp<int64_t>(as<int64_t>(kPreInfinity), 0, 4));
     mCached.post = Infinity(std::clamp<int64_t>(as<int64_t>(kPostInfinity), 0, 4));
     mCached.weighted = as<bool>(kWeighted);
+    mCached.loop = as<bool>(kLoop);
     setOutput(kOutput, mCached.evaluate(ctx.time));
 }
 
@@ -325,6 +379,7 @@ Curve curveOf(const Node& n)
     c.pre = Infinity(std::clamp<int64_t>(n.as<int64_t>(CurveNode::kPreInfinity), 0, 4));
     c.post = Infinity(std::clamp<int64_t>(n.as<int64_t>(CurveNode::kPostInfinity), 0, 4));
     c.weighted = n.as<bool>(CurveNode::kWeighted);
+    c.loop = n.as<bool>(CurveNode::kLoop);
     return c;
 }
 
@@ -335,7 +390,21 @@ void setCurve(Graph& g, NodeId id, const Curve& c)
     Node* n = g.node(id);
     if (!n)
         throw std::invalid_argument("no such curve");
-    std::string text = c.keysToJson().dump();
+    Curve stored = c;
+    // A loop key stores the first key's value and tangents too, so the keys read back as they evaluate.
+    if (stored.loop && stored.keys.size() > 1)
+    {
+        const Key& first = stored.keys.front();
+        Key& last = stored.keys.back();
+        last.value = first.value;
+        last.in = first.in;
+        last.out = first.out;
+        last.inAngle = first.inAngle;
+        last.outAngle = first.outAngle;
+        last.inWeight = first.inWeight;
+        last.outWeight = first.outWeight;
+    }
+    std::string text = stored.keysToJson().dump();
     if (text != n->as<std::string>(CurveNode::kKeys))
         g.setValue({id, CurveNode::kKeys}, text);
     if (int64_t(c.pre) != n->as<int64_t>(CurveNode::kPreInfinity))
@@ -344,6 +413,8 @@ void setCurve(Graph& g, NodeId id, const Curve& c)
         g.setValue({id, CurveNode::kPostInfinity}, int64_t(c.post));
     if (c.weighted != n->as<bool>(CurveNode::kWeighted))
         g.setValue({id, CurveNode::kWeighted}, c.weighted);
+    if (c.loop != n->as<bool>(CurveNode::kLoop))
+        g.setValue({id, CurveNode::kLoop}, c.loop);
 }
 
 void registerTypes()
@@ -365,6 +436,8 @@ void registerTypes()
          .doc = "Tangent handles have length as well as angle."},
         {.name = "output", .shortName = "o", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrOutput,
          .doc = "Value at the current time."},
+        {.name = "loop", .shortName = "lp", .type = PlugType::Bool, .defaultValue = false,
+         .doc = "The last key mirrors the first key's value and tangents, and the curve cycles after it."},
     };
     const NodeType& b = types::registerType(std::move(base));
     for (const char* name : {"animCurveTL", "animCurveTA", "animCurveTU"})
@@ -376,5 +449,6 @@ void registerTypes()
         t.create = [] { return std::make_unique<CurveNode>(); };
         types::registerType(std::move(t));
     }
+    registerRotationCurveType();
 }
 } // namespace lila::scene::anim

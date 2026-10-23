@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "ui/editor/EditorTypes.h"
 
 #include <nlohmann/json.hpp>
@@ -15,7 +17,7 @@
 namespace lila::ui
 {
 /** Splits a byte stream into JSON-RPC messages framed by `Content-Length` headers. */
-class LspFramer
+class LILA_UI_API LspFramer
 {
 public:
     void feed(const QByteArray& bytes);
@@ -29,13 +31,13 @@ private:
 };
 
 /** Converts an LSP `Diagnostic` object. */
-Diagnostic diagnosticFromLsp(const nlohmann::json& d);
+LILA_UI_API Diagnostic diagnosticFromLsp(const nlohmann::json& d);
 
 /**
  * A language server over stdio. Requests made before the server is initialized are dropped (the callback never
  * runs), so callers can ask freely and simply get nothing until it is ready.
  */
-class LspClient : public QObject
+class LILA_UI_API LspClient : public QObject
 {
     Q_OBJECT
 

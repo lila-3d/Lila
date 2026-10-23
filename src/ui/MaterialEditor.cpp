@@ -207,7 +207,7 @@ MaterialEditor* showEditor()
         e->setWindowFlag(Qt::Tool);
         e->setWindowTitle("Material Editor");
         e->setAttribute(Qt::WA_DeleteOnClose);
-        e->resize(380, 720);
+        e->resize(475, 720);
     }
     e->show();
     e->raise();

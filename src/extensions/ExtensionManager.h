@@ -1,14 +1,24 @@
 #pragma once
 
+#include "core/ExtensionManifest.h"
+#include "core/Export.h"
+
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
+
+namespace lila::ext
+{
+class Context;
+}
 
 namespace lila::extensions
 {
@@ -22,17 +32,21 @@ struct ExtensionError : std::runtime_error
 
 enum class ExtensionKind : uint8_t
 {
-    Native, // shared library exporting lilaExtensionInit
-    Python, // .py file or package defining initialize_extension()
+    Native, // a package with a library exporting lilaExtensionInit (and maybe a Python module too)
+    Python, // a package with only a Python module, or a bare .py file or package defining initialize_extension()
 };
 
-struct ExtensionInfo
+struct LILA_SCENE_API ExtensionInfo
 {
-    std::string name;
-    fs::path path;
+    std::string name; // the id
+    fs::path path;    // the package folder, or the bare Python file or folder
     ExtensionKind kind = ExtensionKind::Native;
     bool loaded = false;
     bool autoload = false;
+    /** From extension.json; empty for a bare Python extension. */
+    std::optional<ext::Manifest> manifest;
+    /** Why the manifest could not be read, or why the last load failed. */
+    std::string error;
 
     json toJson() const;
 };
@@ -40,16 +54,22 @@ struct ExtensionInfo
 /**
  * Finds, loads and unloads extensions. Main thread only.
  *
- * Search order, first match per name wins: addSearchPath() dirs, LILA_EXTENSION_PATH, general.json /extensions/paths,
- * <workspace>/.lila/extensions, <user config>/extensions, <exe dir>/extensions.
+ * An extension is a package folder <Id>.lilaext with an extension.json (see ext::Manifest), or a bare Python file or
+ * package. Search order, first match per id wins: addSearchPath() dirs, LILA_EXTENSION_PATH, general.json
+ * /extensions/paths, <workspace>/.lila/extensions, <user config>/extensions, <exe dir>/extensions.
+ *
+ * Lila checks a package's SDK version (its manifest, then what its library was built against) before running any of
+ * its code, and loads its dependencies first.
  */
-class ExtensionManager
+class LILA_SCENE_API ExtensionManager
 {
 public:
     static ExtensionManager& get();
 
     ExtensionManager();
     ~ExtensionManager();
+    ExtensionManager(const ExtensionManager&) = delete;
+    ExtensionManager& operator=(const ExtensionManager&) = delete;
 
     std::vector<fs::path> searchPaths() const;
     void addSearchPath(const fs::path& dir);
@@ -57,38 +77,52 @@ public:
     /** Everything on the search paths, plus loaded extensions that came from elsewhere. */
     std::vector<ExtensionInfo> available() const;
 
-    /** A name on the search paths or a path to an extension. Loading a loaded extension does nothing. Returns the name. */
+    /** An id on the search paths or a path to a package (or its extension.json). Loading a loaded extension does nothing. Returns the id. */
     std::string load(const std::string& nameOrPath);
-    /** Refuses while scene nodes use the extension's node types. */
+    /** Refuses while scene nodes use the extension's node types or a loaded extension depends on it. */
     void unload(const std::string& name);
     std::string reload(const std::string& name);
     void unloadAll();
 
     bool isLoaded(const std::string& name) const;
+    /** In load order. */
     std::vector<std::string> loaded() const;
-    /** Info plus the commands and node types the extension owns. Throws for unknown names. */
+    /** Info plus what the extension registered. Throws for unknown names. */
     json describe(const std::string& name) const;
+    /** The last load failure, empty when there was none. */
+    std::string lastError(const std::string& name) const;
 
-    /** general.json /extensions/autoload. */
+    /** general.json /extensions/autoload: extensions the user turned on. */
     std::vector<std::string> autoloadList() const;
+    /** Whether the extension loads at startup: turned on by the user, or enabledByDefault and not turned off. */
+    bool autoloads(const ExtensionInfo& info) const;
     void setAutoload(const std::string& name, bool on);
-    /** Loads the autoload list, logging failures. */
+    /** Loads every extension that autoloads, dependencies first, logging failures. */
     void loadAutoload();
 
 private:
     struct Loaded;
 
     std::optional<ExtensionInfo> find(const std::string& nameOrPath) const;
-    void removeOwned(const std::string& name);
+    std::vector<std::string> disabledList() const;
+    void loadInfo(const ExtensionInfo& info, std::set<std::string>& visiting);
+    void loadNative(Loaded& rec);
+    void loadPython(Loaded& rec, const fs::path& module);
+    void removeOwned(Loaded& rec);
     void checkUnloadable(const std::string& name) const;
 
     std::map<std::string, std::unique_ptr<Loaded>> mLoaded;
+    std::vector<std::string> mOrder; // load order
+    std::map<std::string, std::string> mErrors;
     std::vector<fs::path> mExtraPaths;
 };
 
-/** loadExtension, unloadExtension, reloadExtension, listExtensions, extensionInfo. */
-void registerCommands();
+/** The context of an extension that is loaded or loading, for registrations made on its behalf (from its Python code). */
+LILA_SCENE_API ext::Context* contextOf(std::string_view name);
 
-/** Startup: load the extensions in the autoload pref. After python::init so Python extensions can load. */
-void autoload();
+/** loadExtension, unloadExtension, reloadExtension, listExtensions, extensionInfo. */
+LILA_SCENE_API void registerCommands();
+
+/** Startup: load the extensions that autoload. After python::init so Python extensions can load. */
+LILA_SCENE_API void autoload();
 } // namespace lila::extensions

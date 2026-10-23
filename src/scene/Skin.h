@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/Modifiers.h"
 
 #include <string>
@@ -14,7 +16,7 @@ class Graph;
  * Sparse per-point skin weights, CSR: point p's entries are [offsets[p], offsets[p + 1]). Influence ids are the
  * skinInfluence nodes' index attrs, not chain positions, so rewiring the chain never scrambles weights.
  */
-struct SkinWeights final : Data
+struct LILA_SCENE_API SkinWeights final : Data
 {
     std::vector<uint32_t> offsets{0};
     std::vector<uint32_t> influences;
@@ -28,7 +30,7 @@ struct SkinWeights final : Data
 };
 
 /** Editable copy of SkinWeights: one small (influence, weight) list per point. */
-struct WeightTable
+struct LILA_SCENE_API WeightTable
 {
     using Entry = std::pair<uint32_t, float>;
     std::vector<std::vector<Entry>> points;
@@ -65,7 +67,7 @@ struct InfluenceLink final : Data
  * Moving any joint dirties exactly the links after it and the skin, undo and save/load are plain connections and
  * attrs, and the joint's name is always read from the connection, so renames are free.
  */
-class SkinInfluenceNode : public Node
+class LILA_SCENE_API SkinInfluenceNode : public Node
 {
 public:
     enum Attr
@@ -86,7 +88,7 @@ public:
  * Points are skinned in bind space: out = G^-1 * sum(w * jointWorld * bindPre) * G * p, with G the mesh's world
  * matrix at bind time (geomMatrix), so moving the mesh's own transform double-transforms it, as in Maya.
  */
-class SkinClusterNode : public ModifierNode
+class LILA_SCENE_API SkinClusterNode : public ModifierNode
 {
 public:
     enum Attr
@@ -117,26 +119,26 @@ struct Influence
 };
 
 /** The skinCluster in a mesh's stack, or kNoNode. */
-NodeId find(Graph& g, NodeId mesh);
+LILA_SCENE_API NodeId find(Graph& g, NodeId mesh);
 /** Mesh or skinCluster name to the skinCluster; throws CommandError. */
-NodeId resolve(Graph& g, const std::string& name, const char* cmd);
+LILA_SCENE_API NodeId resolve(Graph& g, const std::string& name, const char* cmd);
 /** The mesh node a skinCluster feeds, or kNoNode. */
-NodeId meshOf(Graph& g, NodeId skin);
+LILA_SCENE_API NodeId meshOf(Graph& g, NodeId skin);
 
-std::vector<Influence> influences(Graph& g, NodeId skin);
+LILA_SCENE_API std::vector<Influence> influences(Graph& g, NodeId skin);
 /** Influence id for a joint name, or -1. */
-int64_t indexOf(const std::vector<Influence>& infs, const std::string& joint);
+LILA_SCENE_API int64_t indexOf(const std::vector<Influence>& infs, const std::string& joint);
 /** Lock flags indexed by influence id. */
-std::vector<char> lockMask(const std::vector<Influence>& infs);
+LILA_SCENE_API std::vector<char> lockMask(const std::vector<Influence>& infs);
 
 /** The undeformed points the weights refer to. */
-MeshPtr inputMesh(Graph& g, NodeId skin);
-WeightTable table(Graph& g, NodeId skin);
+LILA_SCENE_API MeshPtr inputMesh(Graph& g, NodeId skin);
+LILA_SCENE_API WeightTable table(Graph& g, NodeId skin);
 /** Undoable. */
-void setWeights(Graph& g, NodeId skin, const WeightTable& t);
+LILA_SCENE_API void setWeights(Graph& g, NodeId skin, const WeightTable& t);
 
 /** Adds a joint as an influence with zero weights; returns its id (existing id if it already is one). Undoable. */
-uint32_t addInfluence(Graph& g, NodeId skin, NodeId joint);
+LILA_SCENE_API uint32_t addInfluence(Graph& g, NodeId skin, NodeId joint);
 
 enum class PaintMode
 {
@@ -151,11 +153,11 @@ enum class PaintMode
  * `value`; invert turns Add into subtract. The other unlocked influences rescale so the point still sums to 1, and
  * the point is pruned to maxInfluences. Smooth is a no-op here: use smoothPoints.
  */
-void paintPoint(WeightTable& t, size_t p, uint32_t influence, PaintMode mode, bool invert, float value, float amount,
+LILA_SCENE_API void paintPoint(WeightTable& t, size_t p, uint32_t influence, PaintMode mode, bool invert, float value, float amount,
                 const std::vector<char>& locked, int maxInfluences);
 
 /** Blends each (point, amount) toward its edge neighbours' average. Locked influences keep their values. */
-void smoothPoints(const geo::Mesh& m, WeightTable& t, const std::vector<std::pair<uint32_t, float>>& points,
+LILA_SCENE_API void smoothPoints(const geo::Mesh& m, WeightTable& t, const std::vector<std::pair<uint32_t, float>>& points,
                   const std::vector<char>& locked, int maxInfluences);
 } // namespace skin
 } // namespace lila::scene

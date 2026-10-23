@@ -19,7 +19,7 @@ Graph& graph() { return Graph::current(); }
 
 ModifierNode& modifierNamed(const std::string& name, const char* cmd)
 {
-    auto* n = dynamic_cast<ModifierNode*>(graph().find(name));
+    auto* n = asModifier(graph().find(name));
     if (!n)
         throw CommandError(std::string(cmd) + ": " + name + " is not a modifier");
     return *n;
@@ -35,7 +35,7 @@ Node& meshNamed(const std::string& name, const char* cmd)
 
 int outAttrOf(const Node& n)
 {
-    if (auto* m = dynamic_cast<const ModifierNode*>(&n))
+    if (auto* m = asModifier(&n))
         return m->outAttr;
     if (auto* gen = dynamic_cast<const GeneratorNode*>(&n))
         return gen->outAttr;
@@ -57,7 +57,7 @@ json describe(Graph& g, NodeId id)
 {
     Node* n = g.node(id);
     json j = {{"name", n->name()}, {"type", n->type().name}};
-    if (auto* m = dynamic_cast<ModifierNode*>(n))
+    if (auto* m = asModifier(n))
     {
         j["enabled"] = n->as<bool>(m->enabledAttr);
         j["exportEnabled"] = exportEnabled(*n);
@@ -78,7 +78,7 @@ std::vector<std::string> kinds()
         // Geometry-node modifiers need their group wired in, so they are added from the node editor instead.
         if (t->attrIndex("groupDefinition") >= 0)
             continue;
-        if (!dynamic_cast<ModifierNode*>(t->create().get()))
+        if (!asModifier(t->create().get()))
             continue;
         out.push_back(name.substr(0, name.size() - kSuffix.size()));
     }

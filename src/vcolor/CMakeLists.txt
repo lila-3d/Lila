@@ -1,4 +1,4 @@
-add_library(lila_vcolor STATIC
+lila_module(lila_vcolor Scene
     Paint.cpp
     Paint.h
     VertexColors.cpp

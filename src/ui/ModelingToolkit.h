@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QWidget>
 
 #include <string>
@@ -22,7 +24,7 @@ inline constexpr const char* kModelingToolkitDock = "modelingToolkit";
  * component and tool buttons (each runs a registered action), the last operation's live settings and the selected
  * mesh's modifier stack.
  */
-class ModelingToolkit : public QWidget
+class LILA_UI_API ModelingToolkit : public QWidget
 {
     Q_OBJECT
 
@@ -52,5 +54,5 @@ private:
 };
 
 /** Registers "window.modelingToolkit", which shows or hides the dock named kModelingToolkitDock. */
-void registerModelingToolkitActions();
+LILA_UI_API void registerModelingToolkitActions();
 } // namespace lila::ui

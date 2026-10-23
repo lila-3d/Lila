@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <glm/glm.hpp>
 
 #include <cstddef>
@@ -34,11 +36,11 @@ enum class AttrType : uint8_t
     Bool
 };
 
-size_t attrTypeSize(AttrType t);
-int attrTypeComponents(AttrType t);
-bool attrTypeIsFloat(AttrType t);
-const char* attrTypeName(AttrType t);
-const char* domainName(Domain d);
+LILA_SCENE_API size_t attrTypeSize(AttrType t);
+LILA_SCENE_API int attrTypeComponents(AttrType t);
+LILA_SCENE_API bool attrTypeIsFloat(AttrType t);
+LILA_SCENE_API const char* attrTypeName(AttrType t);
+LILA_SCENE_API const char* domainName(Domain d);
 
 template <class T> struct AttrTypeOf;
 template <> struct AttrTypeOf<float> { static constexpr AttrType value = AttrType::Float; };
@@ -62,11 +64,11 @@ inline constexpr std::string_view kMaterial = "material";   // face int, index i
 inline constexpr std::string_view kSmoothGroup = "smoothGroup"; // face int, 0 means faceted
 
 /** "uv0", "uv1", ... corner float2. */
-std::string uvName(int set);
+LILA_SCENE_API std::string uvName(int set);
 } // namespace attr
 
 /** One named, typed value per element of a domain. Data is type-erased; access it through values<T>(). */
-class Attribute
+class LILA_SCENE_API Attribute
 {
 public:
     Attribute(std::string name, AttrType type, size_t count);
@@ -125,7 +127,7 @@ private:
 };
 
 /** All attributes of one domain. Element count is kept in sync by the Mesh. */
-class AttributeSet
+class LILA_SCENE_API AttributeSet
 {
 public:
     Attribute* find(std::string_view name);

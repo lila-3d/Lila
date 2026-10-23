@@ -1,10 +1,17 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <nlohmann/json.hpp>
 
 #include <functional>
 #include <string>
 #include <vector>
+
+namespace lila::ext
+{
+class Context;
+}
 
 namespace lila::scene::scripts
 {
@@ -21,33 +28,35 @@ struct Script
 };
 
 /** In the order they were added. */
-const std::vector<Script>& all();
-const Script* find(const std::string& name);
+LILA_SCENE_API const std::vector<Script>& all();
+LILA_SCENE_API const Script* find(const std::string& name);
 
 /** Adds or replaces by name, undoably. */
-void set(const Script& script);
+LILA_SCENE_API void set(const Script& script);
 /** Undoable. False when there was no such script. */
-bool remove(const std::string& name);
+LILA_SCENE_API bool remove(const std::string& name);
 /** Drops every script without undo, as a new or opened scene does. */
-void clear();
+LILA_SCENE_API void clear();
 
 /** Saved with the scene as "scripts": [ { "name", "text", "runOnOpen" } ]. */
-json toJson();
+LILA_SCENE_API json toJson();
 /** Replaces every script without undo; malformed entries are skipped. */
-void fromJson(const json& j);
+LILA_SCENE_API void fromJson(const json& j);
 
 /** Notified after any change, undo and redo included. */
-int addListener(std::function<void()> fn);
-void removeListener(int id);
+LILA_SCENE_API int addListener(std::function<void()> fn);
+/** For extensions: removed when ctx unloads. */
+LILA_SCENE_API int addListener(ext::Context& ctx, std::function<void()> fn);
+LILA_SCENE_API void removeListener(int id);
 
 /**
  * Decides what happens to the run-on-open scripts of a scene just opened. The UI installs one that asks first;
  * without one nothing runs.
  */
-void setOpenHandler(std::function<void(const std::vector<Script>&)> fn);
+LILA_SCENE_API void setOpenHandler(std::function<void(const std::vector<Script>&)> fn);
 /** Called by the scene loader once a scene file has opened. */
-void sceneOpened();
+LILA_SCENE_API void sceneOpened();
 
 /** Commands: sceneScript. */
-void registerCommands();
+LILA_SCENE_API void registerCommands();
 } // namespace lila::scene::scripts

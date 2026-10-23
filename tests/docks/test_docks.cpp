@@ -548,6 +548,31 @@ TEST_CASE("toggling a panel reveals it, then tucks it into its sidebar")
     CHECK_FALSE(w.sidebars->isCollapsed(outliner));
 }
 
+TEST_CASE("toggling a tabbed panel with opaque contents reveals it, then tucks it away")
+{
+    Window w;
+    QDockWidget* graph = w.docks["graphEditor"];
+    graph->widget()->setAttribute(Qt::WA_OpaquePaintEvent);
+    graph->setTitleBarWidget(new QWidget(graph));
+    graph->titleBarWidget()->setAutoFillBackground(true);
+    toggleDock(graph);
+    settle();
+    REQUIRE(dockShowing(graph));
+    toggleDock(graph);
+    settle();
+    CHECK_FALSE(dockShowing(graph));
+    toggleDock(graph);
+    settle();
+    CHECK(dockShowing(graph));
+    // A tab behind another one is not showing, so toggling it brings it forward instead of hiding it.
+    revealDock(w.docks["terminal"]);
+    settle();
+    CHECK_FALSE(dockShowing(graph));
+    toggleDock(graph);
+    settle();
+    CHECK(dockShowing(graph));
+}
+
 TEST_CASE("a dock split under the channel box before its tabs join sits under the whole tab group")
 {
     QMainWindow win;

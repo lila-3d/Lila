@@ -5,9 +5,10 @@
   "SE": { "label": "Bridge", "action": "mesh.bridge" },
   "S": { "label": "Merge", "action": "mesh.merge" },
   "SW": { "label": "Fill Hole", "action": "mesh.fillHole" },
-  "W": { "label": "Inset", "action": "mesh.inset" },
+  "W": { "label": "Knife", "action": "mesh.knife" },
   "NW": { "label": "Dissolve", "action": "mesh.dissolve" },
   "overflow": [
+    { "label": "Inset", "action": "mesh.inset" },
     { "label": "Merge to Center", "action": "mesh.mergeCenter" },
     { "label": "Collapse", "action": "mesh.collapse" },
     { "label": "Poke", "action": "mesh.poke" },

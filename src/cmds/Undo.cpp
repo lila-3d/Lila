@@ -1,5 +1,6 @@
 #include "cmds/Undo.h"
 
+#include "core/Events.h"
 #include "core/Profile.h"
 
 #include <algorithm>
@@ -163,6 +164,7 @@ void UndoStack::notify()
         return;
     for (auto& fn : mListeners)
         fn();
+    events::send({.type = events::Event::UndoStackChanged});
 }
 
 void UndoStack::record(std::unique_ptr<UndoAction> action)
@@ -192,9 +194,11 @@ bool UndoStack::undo()
     for (auto& a : std::views::reverse(c.actions))
         a->undo();
     mReplaying = false;
+    std::string label = c.label;
     mUndone.push_back(std::move(c));
     ++mSerial;
     notify();
+    events::send({.type = events::Event::Undo, .name = std::move(label)});
     return true;
 }
 
@@ -210,9 +214,11 @@ bool UndoStack::redo()
     for (auto& a : c.actions)
         a->redo();
     mReplaying = false;
+    std::string label = c.label;
     mDone.push_back(std::move(c));
     ++mSerial;
     notify();
+    events::send({.type = events::Event::Redo, .name = std::move(label)});
     return true;
 }
 

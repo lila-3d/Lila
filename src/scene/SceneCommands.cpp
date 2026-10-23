@@ -1,22 +1,31 @@
 #include "scene/SceneCommands.h"
 
 #include "cmds/Command.h"
+#include "core/Events.h"
 #include "core/PrefStore.h"
 #include "core/Workspace.h"
-#include "scene/Graph.h"
 #include "scene/Anim.h"
+#include "scene/AnimLayer.h"
+#include "scene/Take.h"
 #include "scene/Camera.h"
 #include "scene/Components.h"
 #include "scene/Deformers.h"
 #include "scene/DisplayLayers.h"
+#include "scene/Ghosts.h"
+#include "scene/Graph.h"
 #include "scene/ImagePlane.h"
 #include "scene/Materials.h"
 #include "scene/Measure.h"
 #include "scene/MeshNodes.h"
-#include "scene/Rig.h"
 #include "scene/Modifiers.h"
+#include "scene/ObjectSets.h"
+#include "scene/Picker.h"
+#include "scene/Poses.h"
 #include "scene/RenderSettings.h"
+#include "scene/Rig.h"
 #include "scene/SceneScripts.h"
+#include "scene/Simulation.h"
+#include "scene/Spaces.h"
 #include "scene/Transform.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -129,10 +138,19 @@ void registerCommands()
     registerMeasureCommands();
     registerImagePlaneCommands();
     registerCameraCommands();
+    spaces::registerCommands();
     anim::registerCommands();
+    poses::registerCommands();
+    picker::registerCommands();
+    ghosts::registerCommands();
+    anim::registerLayerCommands();
+    anim::registerTakeCommands();
+    sim::registerCommands();
+    sim::registerCommands();
     registerRenderSettingsCommands();
     scripts::registerCommands();
     displayLayers::registerCommands();
+    objectSets::registerCommands();
 
     loadNamingPolicy();
     PrefStore::get().onChanged([](const std::string& file) {
@@ -717,6 +735,7 @@ void registerCommands()
         .undoable = false,
         .run = [](const Args&) -> json {
             graph().clear();
+            events::send({.type = events::Event::SceneNew});
             return nullptr;
         },
     });

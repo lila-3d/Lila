@@ -6,6 +6,7 @@
 #include "core/Profile.h"
 #include "io/References.h"
 #include "scene/Graph.h"
+#include "scene/ObjectSets.h"
 #include "ui/Actions.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
@@ -37,6 +38,9 @@ namespace
 constexpr int kIdRole = Qt::UserRole + 1;
 constexpr int kStyleRole = Qt::UserRole + 2; // last applied style, so restyle only touches rows that changed
 constexpr int kUnloadedRefRole = Qt::UserRole + 3; // namespace of an unloaded reference's placeholder row
+// Set rows carry the set's id here rather than in kIdRole, so clicking one selects its members, not the set node.
+constexpr int kSetRole = Qt::UserRole + 4;
+constexpr int kSetMemberRole = Qt::UserRole + 5; // a member row's member string, as setMembers lists it
 
 std::vector<Outliner*> gOutliners;
 
@@ -248,8 +252,11 @@ Outliner::Outliner(QWidget* parent) : QTreeWidget(parent)
     setContextMenuPolicy(Qt::CustomContextMenu);
     connect(this, &QWidget::customContextMenuRequested, this, &Outliner::showContextMenu);
 
-    mListener = scene::Graph::current().addListener([this](scene::Change c, scene::NodeId) {
-        if (c == scene::Change::Value || c == scene::Change::Connection)
+    mListener = scene::Graph::current().addListener([this](scene::Change c, scene::NodeId id) {
+        const scene::Node* n = scene::Graph::current().node(id);
+        if (c == scene::Change::Value && n && scene::objectSets::isSet(*n))
+            scheduleRebuild();
+        else if (c == scene::Change::Value || c == scene::Change::Connection)
             scheduleRestyle();
         else if (c == scene::Change::Selection)
             syncSelectionFromScene();
@@ -262,6 +269,8 @@ Outliner::Outliner(QWidget* parent) : QTreeWidget(parent)
         if (mSyncing)
             return;
         auto id = item->data(0, kIdRole).toULongLong();
+        if (!id)
+            id = item->data(0, kSetRole).toULongLong();
         scene::Node* n = scene::Graph::current().node(id);
         std::string to = item->text(0).trimmed().toStdString();
         if (!n || to == n->name())
@@ -279,12 +288,24 @@ Outliner::Outliner(QWidget* parent) : QTreeWidget(parent)
         }
     });
     connect(this, &QTreeWidget::itemCollapsed, this, [this](QTreeWidgetItem* item) {
-        if (!mSyncing)
+        if (mSyncing)
+            return;
+        if (scene::NodeId set = item->data(0, kSetRole).toULongLong())
+            mOpenSets.erase(set);
+        else
             mCollapsed.insert(item->data(0, kIdRole).toULongLong());
     });
     connect(this, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem* item) {
-        if (!mSyncing)
+        if (mSyncing)
+            return;
+        if (scene::NodeId set = item->data(0, kSetRole).toULongLong())
+            mOpenSets.insert(set);
+        else
             mCollapsed.erase(item->data(0, kIdRole).toULongLong());
+    });
+    connect(this, &QTreeWidget::itemClicked, this, [](QTreeWidgetItem* item, int) {
+        if (scene::Node* set = scene::Graph::current().node(item->data(0, kSetRole).toULongLong()))
+            runCommand("selectSetMembers", {{"args", {set->name()}}});
     });
 
     rebuild();
@@ -307,6 +328,16 @@ void Outliner::dropEvent(QDropEvent* e)
         return;
 
     QTreeWidgetItem* target = itemAt(e->position().toPoint());
+    if (target && target->data(0, kSetRole).isValid())
+    {
+        if (scene::Node* set = g.node(target->data(0, kSetRole).toULongLong()))
+        {
+            json args = namesOf(moved);
+            args.insert(args.begin(), set->name());
+            runCommand("addToSet", {{"args", args}});
+        }
+        return;
+    }
     scene::NodeId targetId = target ? scene::NodeId(target->data(0, kIdRole).toULongLong()) : scene::kNoNode;
     DropIndicatorPosition where = targetId != scene::kNoNode ? dropIndicatorPosition() : OnViewport;
     scene::NodeId parent = scene::kNoNode;
@@ -503,6 +534,7 @@ void Outliner::rebuild()
     };
     for (scene::NodeId id : g.roots())
         add(id, nullptr);
+    addSetRows();
     // An unloaded reference has no nodes, so it gets a placeholder row to load it back from.
     for (const io::Reference& r : io::refs::all())
         if (!r.loaded)
@@ -522,9 +554,75 @@ void Outliner::rebuild()
     std::erase_if(mCollapsed, [&](scene::NodeId id) { return !mItems.contains(id); });
     for (scene::NodeId id : mCollapsed)
         mItems[id]->setExpanded(false);
+    for (int i = 0; i < topLevelItemCount(); ++i)
+        if (QTreeWidgetItem* top = topLevelItem(i); top->data(0, kSetRole).isValid())
+            top->setExpanded(mOpenSets.contains(top->data(0, kSetRole).toULongLong()));
     mSyncing = false;
     restyle();
     syncSelectionFromScene();
+}
+
+void Outliner::addSetRows()
+{
+    scene::Graph& g = scene::Graph::current();
+    std::erase_if(mOpenSets, [&](scene::NodeId id) { return !g.node(id); });
+    for (const scene::Node* s : scene::objectSets::all(g))
+    {
+        const bool referenced = s->referenceId() != 0;
+        const bool quick = s->as<bool>(scene::ObjectSet::kQuickSelect);
+        auto* item = new QTreeWidgetItem(this);
+        item->setText(0, QString::fromStdString(s->name()));
+        item->setData(0, kSetRole, QVariant::fromValue<qulonglong>(s->id()));
+        item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsDropEnabled | (referenced ? Qt::ItemFlags() : Qt::ItemIsEditable));
+        item->setIcon(0, rowIcon(quick ? "pointer" : "list-details", referenced, false));
+        QFont f = item->font(0);
+        f.setItalic(referenced);
+        item->setFont(0, f);
+        item->setToolTip(0, QString::fromStdString(std::string(quick ? "Quick select set" : "Object set") +
+                                                   "\nClick to select its members; drop rows on it to add them."));
+        for (const std::string& m : scene::objectSets::format(g, scene::objectSets::members(g, s->id())))
+        {
+            auto* row = new QTreeWidgetItem(item);
+            row->setText(0, QString::fromStdString(m));
+            row->setData(0, kSetMemberRole, QString::fromStdString(m));
+            row->setFlags(Qt::ItemIsEnabled);
+            row->setForeground(0, QColor(150, 150, 150));
+        }
+    }
+}
+
+void Outliner::showSetMenu(QTreeWidgetItem* item, const QPoint& globalPos)
+{
+    scene::Graph& g = scene::Graph::current();
+    QTreeWidgetItem* setItem = item->data(0, kSetRole).isValid() ? item : item->parent();
+    scene::Node* set = setItem ? g.node(setItem->data(0, kSetRole).toULongLong()) : nullptr;
+    if (!set)
+        return;
+    const std::string name = set->name();
+    const bool editable = set->referenceId() == 0;
+    QMenu menu(this);
+    menu.setToolTipsVisible(true);
+    if (item->data(0, kSetMemberRole).isValid())
+    {
+        const std::string member = item->data(0, kSetMemberRole).toString().toStdString();
+        menu.addAction(icon("pointer"), "Select Member", [member] { runCommand("select", {{"args", {member.substr(0, member.find('.'))}}}); });
+        menu.addAction(icon("minus"), "Remove from Set", [name, member] { runCommand("removeFromSet", {{"args", {name, member}}}); });
+        menu.exec(globalPos);
+        return;
+    }
+    menu.addAction(icon("pointer"), "Select Set Members", [name] { runCommand("selectSetMembers", {{"args", {name}}}); });
+    menu.addAction("Add Selection to Set", [name] { runCommand("addToSet", {{"args", {name}}}); });
+    menu.addAction("Remove Selection from Set", [name] { runCommand("removeFromSet", {{"args", {name}}}); });
+    menu.addSeparator();
+    QAction* quick = menu.addAction("Quick Select Set", [name, on = !set->as<bool>(scene::ObjectSet::kQuickSelect)] {
+        runCommand("setAttr", {{"args", {name + ".quickSelect", on}}});
+    });
+    quick->setCheckable(true);
+    quick->setChecked(set->as<bool>(scene::ObjectSet::kQuickSelect));
+    quick->setToolTip("List it under Edit > Quick Select Sets.");
+    menu.addAction(icon("pencil"), "Rename", [this, setItem] { editItem(setItem, 0); })->setEnabled(editable);
+    menu.addAction(icon("trash"), "Delete Set", [name] { runCommand("deleteSet", {{"args", {name}}}); });
+    menu.exec(globalPos);
 }
 
 void Outliner::restyle()
@@ -671,6 +769,11 @@ void Outliner::showContextMenu(const QPoint& pos)
     QMenu menu(this);
     menu.setToolTipsVisible(true);
 
+    if (clickedItem && (clickedItem->data(0, kSetRole).isValid() || clickedItem->data(0, kSetMemberRole).isValid()))
+    {
+        showSetMenu(clickedItem, viewport()->mapToGlobal(pos));
+        return;
+    }
     if (clickedItem && clickedItem->data(0, kUnloadedRefRole).isValid())
     {
         addReferenceItems(&menu, clickedItem->data(0, kUnloadedRefRole).toString().toStdString(), false);

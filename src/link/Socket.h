@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -8,7 +10,7 @@
 namespace lila::link
 {
 /** Blocking TCP stream over WinSock or BSD sockets. Move-only; closes on destruction. */
-class TcpSocket
+class LILA_SCENE_API TcpSocket
 {
 public:
     TcpSocket() = default;
@@ -41,7 +43,7 @@ private:
 };
 
 /** Listening socket on 127.0.0.1, for tests and anything that wants to serve the same protocol. */
-class TcpListener
+class LILA_SCENE_API TcpListener
 {
 public:
     TcpListener() = default;

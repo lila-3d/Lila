@@ -2,9 +2,13 @@
 
 #include "cmds/Command.h"
 #include "cmds/Undo.h"
+#include "core/Events.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
+#include "scene/AnimLayer.h"
 #include "scene/Graph.h"
+#include "scene/RotationCurve.h"
+#include "scene/Spaces.h"
 
 #include <algorithm>
 #include <cmath>
@@ -42,6 +46,9 @@ struct ClipChannel
 {
     std::string attr;
     std::vector<Key> keys;
+    /** A rotation curve's keys instead (attr is then the whole rotate, e.g. "rotate"). */
+    std::vector<RotKey> rotKeys;
+    bool rotation = false;
 };
 std::vector<ClipChannel>& clipboard()
 {
@@ -155,7 +162,7 @@ std::vector<Target> targets(Graph& g, const Args& a, bool animatedOnly)
         Node* n = g.find(obj);
         if (!n)
             throw CommandError("no node named '" + obj + "'");
-        if (isCurve(*n))
+        if (isAnyCurve(*n))
         {
             out.push_back({{}, n->id()});
             continue;
@@ -210,8 +217,26 @@ int copyKeys(Graph& g, const Args& a)
     std::vector<ClipChannel> clip;
     double start = kInf;
     int count = 0;
+    std::vector<NodeId> rotationsDone;
     for (const Target& t : targets(g, a, true))
     {
+        if (isRotationCurve(*g.node(t.curve)))
+        {
+            if (std::find(rotationsDone.begin(), rotationsDone.end(), t.curve) != rotationsDone.end())
+                continue;
+            rotationsDone.push_back(t.curve);
+            ClipChannel ch{t.plug.valid() ? g.attr(t.plug).name : g.node(t.curve)->name(), {}, {}, true};
+            for (const RotKey& k : rotationCurveOf(*g.node(t.curve)).keys)
+                if (k.time >= t0 && k.time <= t1)
+                {
+                    ch.rotKeys.push_back(k);
+                    start = std::min(start, k.time);
+                }
+            count += int(ch.rotKeys.size());
+            if (!ch.rotKeys.empty())
+                clip.push_back(std::move(ch));
+            continue;
+        }
         ClipChannel ch{t.plug.valid() ? channelName(g, t.plug) : g.node(t.curve)->name(), {}};
         for (const Key& k : curveOf(*g.node(t.curve)).keys)
             if (k.time >= t0 && k.time <= t1)
@@ -226,8 +251,12 @@ int copyKeys(Graph& g, const Args& a)
     if (clip.empty())
         return 0;
     for (ClipChannel& ch : clip)
+    {
         for (Key& k : ch.keys)
             k.time -= start;
+        for (RotKey& k : ch.rotKeys)
+            k.time -= start;
+    }
     clipboard() = std::move(clip);
     return count;
 }
@@ -307,10 +336,13 @@ void setPlaybackDriver(PlaybackDriver driver)
 void play(int direction)
 {
     State& s = state();
+    const bool wasStopped = s.direction == 0;
     s.direction = direction >= 0 ? 1 : -1;
     if (s.driver.start)
         s.driver.start(s.direction);
     notify();
+    if (wasStopped)
+        events::send({.type = events::Event::PlaybackStarted});
 }
 
 void stop()
@@ -322,6 +354,7 @@ void stop()
     if (s.driver.stop)
         s.driver.stop();
     notify();
+    events::send({.type = events::Event::PlaybackStopped});
 }
 
 int playDirection()
@@ -346,11 +379,16 @@ void setAutoKey(bool on)
 
 NodeId curveFor(Graph& g, const PlugRef& plug)
 {
-    auto src = g.source(plug);
+    PlugRef in = keyInput(g, plug);
+    auto src = g.source(in);
+    // A rotation curve drives the whole rotate and stands for each of its components.
+    if (!src && in.component >= 0)
+        if (auto whole = g.source({in.node, in.attr, -1}); whole && g.node(whole->node) && isRotationCurve(*g.node(whole->node)))
+            src = whole;
     if (!src)
         return kNoNode;
     Node* n = g.node(src->node);
-    return n && isCurve(*n) ? n->id() : kNoNode;
+    return n && isAnyCurve(*n) ? n->id() : kNoNode;
 }
 
 std::vector<PlugRef> keyablePlugs(Graph& g, NodeId id)
@@ -363,7 +401,9 @@ std::vector<PlugRef> keyablePlugs(Graph& g, NodeId id)
     for (int i = 0; i < int(attrs.size()); ++i)
     {
         const AttrDef& a = attrs[i];
-        if (!(a.flags & AttrKeyable) || (a.flags & AttrHidden) || !(a.flags & AttrInput))
+        // The space channel shows (and keys) only on nodes that have spaces.
+        const bool space = i == Transform::kSpace && n->type().isA("transform") && spaces::hasSpaces(g, id);
+        if (!(a.flags & AttrKeyable) || ((a.flags & AttrHidden) && !space) || !(a.flags & AttrInput))
             continue;
         if (a.type == PlugType::Vec3)
             for (int c = 0; c < 3; ++c)
@@ -386,7 +426,9 @@ std::vector<AnimatedPlug> animatedPlugs(Graph& g, NodeId id)
             if (c >= 0 && n->type().attrs[i].type != PlugType::Vec3)
                 break;
             PlugRef p{id, i, c};
-            if (NodeId curve = curveFor(g, p))
+            NodeId curve = curveFor(g, p);
+            // A rotation curve is listed once per component, not for the whole plug.
+            if (curve && !(c < 0 && n->type().attrs[i].type == PlugType::Vec3 && isRotationCurve(*g.node(curve))))
                 out.push_back({p, curve});
         }
     return out;
@@ -394,14 +436,10 @@ std::vector<AnimatedPlug> animatedPlugs(Graph& g, NodeId id)
 
 bool hasKeyAt(const Node& curve, double t)
 {
-    try
-    {
-        return curveOf(curve).find(t) >= 0;
-    }
-    catch (const std::exception&)
-    {
-        return false;
-    }
+    for (double k : curveKeyTimes(curve))
+        if (std::abs(k - t) <= 1e-6)
+            return true;
+    return false;
 }
 
 std::vector<double> keyTimes(Graph& g, const std::vector<NodeId>& nodes)
@@ -415,13 +453,13 @@ std::vector<double> keyTimes(Graph& g, const std::vector<NodeId>& nodes)
         if (!n)
             continue;
         std::vector<NodeId> curves;
-        if (isCurve(*n))
+        if (isAnyCurve(*n))
             curves.push_back(id);
         for (const AnimatedPlug& ap : animatedPlugs(g, id))
             curves.push_back(ap.curve);
         for (NodeId c : curves)
-            for (const Key& k : curveOf(*g.node(c)).keys)
-                out.push_back(k.time);
+            for (double t : curveKeyTimes(*g.node(c)))
+                out.push_back(t);
     }
     std::sort(out.begin(), out.end());
     out.erase(std::unique(out.begin(), out.end(), [](double a, double b) { return std::abs(a - b) <= kTimeEps; }), out.end());
@@ -438,13 +476,49 @@ NodeId setKey(Graph& g, const PlugRef& plug, double time, double value, std::opt
     if (!(a.flags & AttrInput))
         throw std::invalid_argument(g.plugName(plug) + " is an output");
 
-    NodeId curve = curveFor(g, plug);
+    if (auto rq = setLayeredRotationKey(g, plug, time, value, in, out))
+        return *rq;
+    if (keysAsRotation(g, plug))
+    {
+        // One component of a rotation key: the rest of the key keeps what is already there.
+        PlugRef whole{plug.node, plug.attr, -1};
+        NodeId rq = curveFor(g, plug);
+        glm::dvec3 e = std::get<glm::dvec3>(g.value(whole));
+        if (rq)
+        {
+            RotationCurve rc = rotationCurveOf(*g.node(rq));
+            const bool now = std::abs(time - g.time()) <= kTimeEps;
+            if (int k = rc.find(time); k >= 0 && !(now && g.isHeld(whole)))
+                e = rc.keys[size_t(k)].euler;
+            else if (!now)
+                e = rc.evaluate(time);
+        }
+        e[plug.component] = value;
+        return setRotationKey(g, whole, time, e, in, out);
+    }
+
+    // On a layered channel the key lands on the active layer's input, converted so the plug reads value.
+    PlugRef keyed = plug;
+    std::string layeredName;
+    if (auto r = redirectKey(g, plug, value))
+    {
+        // An offset blend's inputB is its one control value: posing on its layer moves it at every frame together.
+        if (const auto* bn = dynamic_cast<const BlendNode*>(g.node(r->plug.node)); bn && bn->staticInputB() && r->plug.attr == BlendNode::kInputB)
+        {
+            g.setValue(r->plug, r->value);
+            return r->plug.node;
+        }
+        keyed = r->plug;
+        value = r->value;
+        layeredName = r->curveName;
+    }
+    NodeId curve = curveFor(g, keyed);
     Curve cv;
     if (!curve)
     {
-        if (g.source(plug) || (plug.component >= 0 && g.source({plug.node, plug.attr, -1})))
+        if (g.source(keyed) || (keyed.component >= 0 && g.source({keyed.node, keyed.attr, -1})))
             throw std::invalid_argument(g.plugName(plug) + " is driven by a connection");
-        std::string name = g.node(plug.node)->name() + "_" + channelName(g, plug);
+        std::string name = layeredName.empty() ? g.node(plug.node)->name() + "_" + channelName(g, plug) : layeredName;
         std::replace(name.begin(), name.end(), ':', '_');
         curve = g.createNode(*types::find(curveTypeFor(a)), name, kNoNode, false)->id();
     }
@@ -460,8 +534,8 @@ NodeId setKey(Graph& g, const PlugRef& plug, double time, double value, std::opt
     if (out)
         cv.keys[i].out = *out;
     setCurve(g, curve, cv);
-    if (!g.source(plug))
-        g.connect({curve, CurveNode::kOutput, -1}, plug);
+    if (!g.source(keyed))
+        g.connect({curve, CurveNode::kOutput, -1}, keyed);
     return curve;
 }
 
@@ -469,6 +543,22 @@ int removeKeys(Graph& g, NodeId curve, double t0, double t1)
 {
     LILA_ZONE();
 
+    if (!g.node(curve))
+        return 0;
+    if (isRotationCurve(*g.node(curve)))
+    {
+        RotationCurve rc = rotationCurveOf(*g.node(curve));
+        size_t before = rc.keys.size();
+        std::erase_if(rc.keys, [&](const RotKey& k) { return k.time >= t0 && k.time <= t1; });
+        int removed = int(before - rc.keys.size());
+        if (removed == 0)
+            return 0;
+        if (rc.keys.empty())
+            g.deleteNode(curve);
+        else
+            setRotationCurve(g, curve, rc);
+        return removed;
+    }
     Curve cv = curveOf(*g.node(curve));
     size_t before = cv.keys.size();
     std::erase_if(cv.keys, [&](const Key& k) { return k.time >= t0 && k.time <= t1; });
@@ -501,7 +591,7 @@ void registerCommands()
 
     graph().setDrivenSetHook([](Graph& g, const PlugRef& dst, const PlugRef& src, double v) {
         Node* s = g.node(src.node);
-        if (!s || !isCurve(*s))
+        if (!s || !(isCurve(*s) || isBlend(*s)))
             return Graph::DrivenEdit::Reject;
         // Interactive drags run with undo off; they hold, and the committing set keys.
         if (autoKey() && UndoStack::get().enabled())
@@ -511,6 +601,8 @@ void registerCommands()
         }
         return Graph::DrivenEdit::Hold;
     });
+
+    registerRotationCommands();
 
     const FlagDef attrFlag{"attribute", "at", T::Any, nullptr, "Attribute name or list of names (translate keys all three)."};
     const FlagDef timeFlag{"time", "t", T::Any, nullptr, "Seconds, or (start, end) with None for an open end. Default: all keys."};
@@ -536,8 +628,47 @@ void registerCommands()
             if (a.has("outTangentType"))
                 out = tangentArg(a, "outTangentType");
             int count = 0;
-            for (const Target& t : targets(g, a, false))
+            const std::vector<Target> ts = targets(g, a, false);
+            // Rotation channels key as one rotation per rotate, read before any key releases a held value.
+            std::vector<PlugRef> rotationsKeyed;
+            for (const Target& t : ts)
             {
+                if (!t.plug.valid() || !keysAsRotation(g, t.plug))
+                    continue;
+                PlugRef whole{t.plug.node, t.plug.attr, -1};
+                if (std::find(rotationsKeyed.begin(), rotationsKeyed.end(), whole) != rotationsKeyed.end())
+                    continue;
+                rotationsKeyed.push_back(whole);
+                g.evaluate();
+                glm::dvec3 e = std::get<glm::dvec3>(g.value(whole));
+                if (t.curve && std::abs(time - g.time()) > kTimeEps)
+                    e = rotationCurveOf(*g.node(t.curve)).evaluate(time);
+                for (const Target& o : ts)
+                    if (o.plug.node == whole.node && o.plug.attr == whole.attr && o.plug.component >= 0)
+                    {
+                        if (a.has("value"))
+                            e[o.plug.component] = a.get<double>("value");
+                        ++count;
+                    }
+                guarded([&] { return setRotationKey(g, whole, time, e, in, out); });
+            }
+            for (const Target& t : ts)
+            {
+                if (t.plug.valid() && std::find(rotationsKeyed.begin(), rotationsKeyed.end(), PlugRef{t.plug.node, t.plug.attr, -1}) !=
+                                          rotationsKeyed.end())
+                    continue;
+                if (!t.plug.valid() && isRotationCurve(*g.node(t.curve)))
+                {
+                    RotationCurve rc = rotationCurveOf(*g.node(t.curve));
+                    size_t i = rc.insert(rc.makeKey(time, rc.evaluate(time)));
+                    if (in)
+                        rc.keys[i].in = *in;
+                    if (out)
+                        rc.keys[i].out = *out;
+                    setRotationCurve(g, t.curve, rc);
+                    ++count;
+                    continue;
+                }
                 if (!t.plug.valid())
                 {
                     Curve cv = curveOf(*g.node(t.curve));
@@ -555,7 +686,7 @@ void registerCommands()
                 if (a.has("value"))
                     v = a.get<double>("value");
                 else if (t.curve && std::abs(time - g.time()) > kTimeEps)
-                    v = curveOf(*g.node(t.curve)).evaluate(time);
+                    v = curveValueAt(*g.node(t.curve), t.plug.component, time);
                 else
                     v = currentValue(g, t.plug);
                 guarded([&] { return setKey(g, t.plug, time, v, in, out); });
@@ -616,23 +747,89 @@ void registerCommands()
             if (option != "merge" && option != "replace")
                 throw CommandError("pasteKey: option is merge or replace");
             int count = 0;
+            std::vector<PlugRef> rotationsDone;
             for (const Target& t : targets(g, a, false))
             {
                 const ClipChannel* ch = nullptr;
                 std::string name = t.plug.valid() ? channelName(g, t.plug) : g.node(t.curve)->name();
                 for (const ClipChannel& c : clip)
-                    if (clip.size() == 1 || c.attr == name)
+                    if (clip.size() == 1 || c.attr == name || (c.rotation && t.plug.valid() && g.attr(t.plug).name == c.attr))
                         ch = &c;
                 if (!ch)
                     continue;
+                // Rotation keys onto a rotation channel, whole; onto Euler channels, as their Euler values.
+                bool toRotation = t.plug.valid() ? keysAsRotation(g, t.plug) : isRotationCurve(*g.node(t.curve));
+                if (toRotation)
+                {
+                    PlugRef whole{t.plug.node, t.plug.attr, -1};
+                    if (t.plug.valid() && std::find(rotationsDone.begin(), rotationsDone.end(), whole) != rotationsDone.end() && ch->rotation)
+                        continue;
+                    if (t.plug.valid())
+                        rotationsDone.push_back(whole);
+                    NodeId curve = t.curve;
+                    if (!curve && ch->rotation)
+                        curve = guarded([&] { return setRotationKey(g, whole, at + ch->rotKeys[0].time, ch->rotKeys[0].euler); });
+                    else if (!curve)
+                        curve = guarded([&] { return setKey(g, t.plug, at + ch->keys[0].time, ch->keys[0].value); });
+                    RotationCurve rc = rotationCurveOf(*g.node(curve));
+                    if (ch->rotation)
+                    {
+                        double span = ch->rotKeys.back().time;
+                        if (option == "replace")
+                            std::erase_if(rc.keys, [&](const RotKey& k) { return k.time >= at - kTimeEps && k.time <= at + span + kTimeEps; });
+                        for (RotKey k : ch->rotKeys)
+                        {
+                            k.time += at;
+                            if (int i = rc.find(k.time); i >= 0)
+                                rc.keys[size_t(i)] = k;
+                            else
+                                rc.insert(k);
+                            ++count;
+                        }
+                    }
+                    else
+                    {
+                        int axis = std::max(0, t.plug.component);
+                        for (const Key& k : ch->keys)
+                        {
+                            double time = at + k.time;
+                            int i = rc.find(time);
+                            glm::dvec3 e = i >= 0 ? rc.keys[size_t(i)].euler : rc.evaluate(time);
+                            e[axis] = k.value;
+                            if (i >= 0)
+                                rc.setEuler(size_t(i), e);
+                            else
+                            {
+                                RotKey rk = rc.makeKey(time, e);
+                                rk.in = k.in == Tangent::Fixed ? Tangent::Auto : k.in;
+                                rk.out = k.out == Tangent::Fixed ? Tangent::Auto : k.out;
+                                rc.insert(rk);
+                            }
+                            ++count;
+                        }
+                    }
+                    setRotationCurve(g, curve, rc);
+                    continue;
+                }
+                std::vector<Key> fromRotation;
+                if (ch->rotation)
+                {
+                    if (!t.plug.valid() || t.plug.component < 0)
+                        continue;
+                    for (const RotKey& rk : ch->rotKeys)
+                        fromRotation.push_back({.time = rk.time, .value = rk.euler[t.plug.component],
+                                                .in = rk.in == Tangent::Fixed ? Tangent::Auto : rk.in,
+                                                .out = rk.out == Tangent::Fixed ? Tangent::Auto : rk.out});
+                }
+                const std::vector<Key>& keys = ch->rotation ? fromRotation : ch->keys;
                 NodeId curve = t.curve;
                 if (!curve)
-                    curve = guarded([&] { return setKey(g, t.plug, at + ch->keys[0].time, ch->keys[0].value); });
+                    curve = guarded([&] { return setKey(g, t.plug, at + keys[0].time, keys[0].value); });
                 Curve cv = curveOf(*g.node(curve));
-                double span = ch->keys.back().time;
+                double span = keys.back().time;
                 if (option == "replace")
                     std::erase_if(cv.keys, [&](const Key& k) { return k.time >= at - kTimeEps && k.time <= at + span + kTimeEps; });
-                for (Key k : ch->keys)
+                for (Key k : keys)
                 {
                     k.time += at;
                     if (int i = cv.find(k.time); i >= 0)
@@ -672,12 +869,29 @@ void registerCommands()
                 json out = json::array();
                 int count = 0;
                 for (const Target& t : ts)
+                {
+                    if (isRotationCurve(*g.node(t.curve)))
+                    {
+                        for (const RotKey& k : rotationCurveOf(*g.node(t.curve)).keys)
+                            if (k.time >= t0 && k.time <= t1)
+                            {
+                                ++count;
+                                if (!values)
+                                    out.push_back(k.time);
+                                else if (t.plug.component >= 0)
+                                    out.push_back(k.euler[t.plug.component]);
+                                else
+                                    out.push_back({k.euler.x, k.euler.y, k.euler.z});
+                            }
+                        continue;
+                    }
                     for (const Key& k : curveOf(*g.node(t.curve)).keys)
                         if (k.time >= t0 && k.time <= t1)
                         {
                             ++count;
                             out.push_back(values ? k.value : k.time);
                         }
+                }
                 return a.get<bool>("keyCount") ? json(count) : out;
             }
             bool tc = a.has("timeChange"), vc = a.has("valueChange");
@@ -687,8 +901,66 @@ void registerCommands()
                 throw CommandError("keyframe: timeChange and valueChange take numbers");
             bool rel = a.get<bool>("relative");
             int count = 0;
+            // A rotation key moves in time as a whole, once per curve, after every axis has had its value change.
+            std::vector<NodeId> rotationsToMove;
             for (const Target& t : ts)
             {
+                if (!isRotationCurve(*g.node(t.curve)))
+                    continue;
+                RotationCurve rc = rotationCurveOf(*g.node(t.curve));
+                int changed = 0;
+                for (size_t i = 0; i < rc.keys.size(); ++i)
+                {
+                    if (rc.keys[i].time < t0 || rc.keys[i].time > t1)
+                        continue;
+                    ++changed;
+                    if (!vc)
+                        continue;
+                    glm::dvec3 e = rc.keys[i].euler;
+                    double v = a.get<double>("valueChange");
+                    for (int axis = 0; axis < 3; ++axis)
+                        if (t.plug.component == axis || t.plug.component < 0)
+                            e[axis] = rel ? e[axis] + v : v;
+                    rc.setEuler(i, e);
+                }
+                if (vc && changed)
+                    setRotationCurve(g, t.curve, rc);
+                if (tc && std::find(rotationsToMove.begin(), rotationsToMove.end(), t.curve) == rotationsToMove.end())
+                    rotationsToMove.push_back(t.curve);
+                count += vc ? changed : 0;
+            }
+            for (NodeId c : rotationsToMove)
+            {
+                RotationCurve rc = rotationCurveOf(*g.node(c));
+                std::vector<RotKey> moved, kept;
+                for (const RotKey& k : rc.keys)
+                {
+                    if (k.time < t0 || k.time > t1)
+                        kept.push_back(k);
+                    else
+                    {
+                        RotKey m = k;
+                        m.time = rel ? m.time + a.get<double>("timeChange") : a.get<double>("timeChange");
+                        moved.push_back(m);
+                    }
+                }
+                if (moved.empty())
+                    continue;
+                count += vc ? 0 : int(moved.size());
+                rc.keys = kept;
+                for (const RotKey& m : moved)
+                {
+                    if (int i = rc.find(m.time); i >= 0)
+                        rc.keys[size_t(i)] = m;
+                    else
+                        rc.insert(m);
+                }
+                setRotationCurve(g, c, rc);
+            }
+            for (const Target& t : ts)
+            {
+                if (isRotationCurve(*g.node(t.curve)))
+                    continue;
                 Curve cv = curveOf(*g.node(t.curve));
                 std::vector<Key> moved, kept;
                 for (const Key& k : cv.keys)
@@ -749,6 +1021,23 @@ void registerCommands()
                 json out = json::array();
                 for (const Target& t : ts)
                 {
+                    if (isRotationCurve(*g.node(t.curve)))
+                    {
+                        // Angles are those of the Euler channel the target names, as the graph editor draws it.
+                        RotationCurve rc = rotationCurveOf(*g.node(t.curve));
+                        int axis = std::max(0, t.plug.component);
+                        for (size_t i = 0; i < rc.keys.size(); ++i)
+                        {
+                            const RotKey& k = rc.keys[i];
+                            if (k.time < t0 || k.time > t1)
+                                continue;
+                            out.push_back({{"time", k.time}, {"in", tangentName(k.in)}, {"out", tangentName(k.out)},
+                                           {"inAngle", degreesOf(rc.eulerSlope(i, axis, false))},
+                                           {"outAngle", degreesOf(rc.eulerSlope(i, axis, true))}, {"inWeight", k.inWeight},
+                                           {"outWeight", k.outWeight}});
+                        }
+                        continue;
+                    }
                     Curve cv = curveOf(*g.node(t.curve));
                     for (size_t i = 0; i < cv.keys.size(); ++i)
                     {
@@ -770,6 +1059,63 @@ void registerCommands()
             int count = 0;
             for (const Target& t : ts)
             {
+                if (!isRotationCurve(*g.node(t.curve)))
+                    continue;
+                RotationCurve rc = rotationCurveOf(*g.node(t.curve));
+                const RotationCurve before = rc;
+                int axis = std::max(0, t.plug.component);
+                // The key-frame angular velocity giving these Euler rates (degrees per second) at the key.
+                auto velocityFor = [&](size_t i, bool outSide, double angle) {
+                    glm::dvec3 rates;
+                    for (int c = 0; c < 3; ++c)
+                        rates[c] = before.eulerSlope(i, c, outSide);
+                    rates[axis] = std::tan(glm::radians(std::clamp(angle, -89.999, 89.999)));
+                    constexpr double h = 1e-6;
+                    const glm::dvec3& e = before.keys[i].euler;
+                    glm::dquat q0 = eulerToQuat(e, rc.order), q1 = eulerToQuat(e + rates * h, rc.order);
+                    return glm::degrees(quatLog(glm::inverse(q0) * q1) / h);
+                };
+                if (a.has("weightedTangents"))
+                    rc.weighted = a.get<bool>("weightedTangents");
+                for (size_t i = 0; i < rc.keys.size(); ++i)
+                {
+                    RotKey& k = rc.keys[i];
+                    if (k.time < t0 || k.time > t1)
+                        continue;
+                    ++count;
+                    if (in)
+                    {
+                        if (*in == Tangent::Fixed && k.in != Tangent::Fixed)
+                            k.inVelocity = glm::degrees(before.inVelocity(i));
+                        k.in = *in;
+                    }
+                    if (out)
+                    {
+                        if (*out == Tangent::Fixed && k.out != Tangent::Fixed)
+                            k.outVelocity = glm::degrees(before.outVelocity(i));
+                        k.out = *out;
+                    }
+                    if (a.has("inAngle"))
+                    {
+                        k.inVelocity = velocityFor(i, false, a.get<double>("inAngle"));
+                        k.in = Tangent::Fixed;
+                    }
+                    if (a.has("outAngle"))
+                    {
+                        k.outVelocity = velocityFor(i, true, a.get<double>("outAngle"));
+                        k.out = Tangent::Fixed;
+                    }
+                    if (a.has("inWeight"))
+                        k.inWeight = std::clamp(a.get<double>("inWeight"), 0.0, 3.0);
+                    if (a.has("outWeight"))
+                        k.outWeight = std::clamp(a.get<double>("outWeight"), 0.0, 3.0);
+                }
+                setRotationCurve(g, t.curve, rc);
+            }
+            for (const Target& t : ts)
+            {
+                if (isRotationCurve(*g.node(t.curve)))
+                    continue;
                 Curve cv = curveOf(*g.node(t.curve));
                 Curve before = cv;
                 if (a.has("weightedTangents"))
@@ -828,8 +1174,27 @@ void registerCommands()
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             json out = json::array();
+            std::vector<NodeId> rotationsDone;
             for (const Target& t : targets(g, a, true))
             {
+                if (isRotationCurve(*g.node(t.curve)))
+                {
+                    if (std::find(rotationsDone.begin(), rotationsDone.end(), t.curve) != rotationsDone.end())
+                        continue;
+                    rotationsDone.push_back(t.curve);
+                    RotationCurve rc = rotationCurveOf(*g.node(t.curve));
+                    if (a.get<bool>("query"))
+                    {
+                        out.push_back({{"curve", g.node(t.curve)->name()}, {"pre", infinityName(rc.pre)}, {"post", infinityName(rc.post)}});
+                        continue;
+                    }
+                    if (a.has("preInfinite"))
+                        rc.pre = guarded([&] { return infinityFromName(a.get<std::string>("preInfinite")); });
+                    if (a.has("postInfinite"))
+                        rc.post = guarded([&] { return infinityFromName(a.get<std::string>("postInfinite")); });
+                    setRotationCurve(g, t.curve, rc);
+                    continue;
+                }
                 Curve cv = curveOf(*g.node(t.curve));
                 if (a.get<bool>("query"))
                 {
@@ -861,8 +1226,8 @@ void registerCommands()
             Graph& g = graph();
             std::vector<double> times;
             for (const Target& t : targets(g, a, true))
-                for (const Key& k : curveOf(*g.node(t.curve)).keys)
-                    times.push_back(k.time);
+                for (double k : curveKeyTimes(*g.node(t.curve)))
+                    times.push_back(k);
             if (times.empty())
                 return nullptr;
             std::sort(times.begin(), times.end());

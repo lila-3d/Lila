@@ -11,6 +11,7 @@
 #include "scene/Materials.h"
 #include "scene/MeshNodes.h"
 #include "scene/Rig.h"
+#include "scene/RotationCurve.h"
 #include "scene/Skin.h"
 
 #include <ufbx.h>
@@ -557,8 +558,34 @@ void importTake(scene::Graph& g, const ufbx_scene& fbx, const ImportOptions& opt
                     {.time = t, .value = groups[ch / 3][ch % 3], .in = anim::Tangent::Linear, .out = anim::Tangent::Linear});
         }
         const glm::dvec3 rest[3] = {nf.rest.t, nf.rest.r, nf.rest.s};
+        // Nodes keyed as rotation curves (joints by default) get one, posed exactly as the file at every frame.
+        bool rotationCurve = false;
+        const PlugRef rotate{nf.id, Transform::kRotate, -1};
+        if (anim::keysAsRotation(g, rotate) && !g.source(rotate))
+        {
+            bool moves = false;
+            for (int ch = 3; ch < 6; ++ch)
+                for (const anim::Key& k : curves[size_t(ch)].keys)
+                    moves = moves || std::abs(k.value - rest[1][ch % 3]) >= 1e-6;
+            if (moves)
+            {
+                Node* n = g.node(nf.id);
+                auto order = RotateOrder(n->as<int64_t>(Transform::kRotateOrder));
+                auto mode = RotationInterpolation(n->as<int64_t>(Transform::kRotationInterpolation));
+                anim::RotationCurve rc = anim::rotationFromEuler({&curves[3], &curves[4], &curves[5]}, rest[1], order,
+                                                                 mode == RotationInterpolation::Slerp ? anim::RotInterp::Slerp
+                                                                                                      : anim::RotInterp::Smooth);
+                NodeId curve = g.createNode(*types::find("animCurveRQ"), n->name() + "_rotate", kNoNode, false)->id();
+                anim::setRotationCurve(g, curve, rc);
+                g.connect({curve, anim::RotationCurveNode::kOutput, -1}, rotate);
+                ++r.curves;
+            }
+            rotationCurve = true;
+        }
         for (int ch = 0; ch < 9; ++ch)
         {
+            if (rotationCurve && ch / 3 == 1)
+                continue;
             anim::Curve& c = curves[size_t(ch)];
             const double v0 = rest[ch / 3][ch % 3];
             if (std::all_of(c.keys.begin(), c.keys.end(), [&](const anim::Key& k) { return std::abs(k.value - v0) < 1e-6; }))

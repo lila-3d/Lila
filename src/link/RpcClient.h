@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "link/Socket.h"
 
 #include <nlohmann/json.hpp>
@@ -42,7 +44,7 @@ struct CallOptions
  * Newline-delimited JSON-RPC 2.0 client. A reader thread matches replies to requests by id, feeds progress notifications
  * to their call, and fails requests whose timeout passes. Thread-safe.
  */
-class RpcClient
+class LILA_SCENE_API RpcClient
 {
 public:
     using Callback = std::function<void(RpcResult)>;

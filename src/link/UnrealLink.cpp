@@ -11,6 +11,8 @@
 #include "scene/Graph.h"
 #include "scene/Materials.h"
 #include "scene/MeshNodes.h"
+#include "scene/ObjectSets.h"
+#include "scene/Take.h"
 
 #include <algorithm>
 #include <cctype>
@@ -505,8 +507,40 @@ int syncMappings(bool force)
         if (!n || m.value("contentPath", std::string()).empty())
             continue;
         // "fbx:skeletal" / "fbx:animation" when registered, so the file matches the mapping's kind.
-        ExportFn exporter = findExporter("fbx:" + m.value("kind", std::string("static")));
-        jobs.push_back({m, materialParams(graph, {n->id()}), {n->id()}, dir / (fileSafe(node) + ".fbx"), exporter ? exporter : findExporter("fbx")});
+        const std::string kind = m.value("kind", std::string("static"));
+        ExportFn exporter = findExporter("fbx:" + kind);
+        std::vector<scene::NodeId> nodes{n->id()};
+        if (scene::objectSets::isSet(*n))
+        {
+            // A set is one asset: its members export together, keeping where they sit relative to each other.
+            nodes = scene::objectSets::nodesOf(graph, n->id());
+            if (nodes.empty())
+                continue;
+            if (ExportFn together = findExporter("fbx:set:" + kind))
+                exporter = together;
+        }
+        json materials = materialParams(graph, nodes);
+        // takes: all | [names] pushes each scene take as its own asset, <contentPath>_<take> (or <folder>/<take>).
+        if (m.contains("takes") && !m["takes"].is_null() && (kind == "animation" || kind == "skeletal"))
+        {
+            TakeExportFn takeExporter = findTakeExporter("fbx:" + kind);
+            std::vector<scene::NodeId> chosen = scene::anim::selectTakes(graph, m["takes"], n->id());
+            if (!takeExporter)
+                log::warn("Unreal sync: no take exporter for {}, {} skipped", kind, node);
+            for (scene::NodeId t : takeExporter ? chosen : std::vector<scene::NodeId>{})
+            {
+                std::string take = graph.node(t)->name();
+                json tm = m;
+                std::string path = m.value("contentPath", std::string());
+                tm["contentPath"] = path.ends_with('/') ? path + take : path + "_" + take;
+                ExportFn fn = [takeExporter, take](const std::vector<scene::NodeId>& ns, const fs::path& file, std::string* err) {
+                    return takeExporter(ns, file, take, err);
+                };
+                jobs.push_back({tm, materials, nodes, dir / (fileSafe(node) + "_" + fileSafe(take) + ".fbx"), fn});
+            }
+            continue;
+        }
+        jobs.push_back({m, materials, nodes, dir / (fileSafe(node) + ".fbx"), exporter ? exporter : findExporter("fbx")});
     }
     if (jobs.empty())
         return 0;

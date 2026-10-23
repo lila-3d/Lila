@@ -1,0 +1,14 @@
+{
+    "id": "Overlap",
+    "name": "Overlap",
+    "version": "1.0.0",
+    "vendor": "Lila",
+    "description": "Procedural secondary motion for joint chains: follow-through, lag and wobble, simulated deterministically (loops included) and recorded to an additive animation layer.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "Overlap.dll",
+        "linux": "Overlap.so",
+        "macos": "Overlap.dylib"
+    },
+    "enabledByDefault": true
+}

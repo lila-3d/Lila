@@ -1,5 +1,8 @@
 #include "ui/ViewportTool.h"
 
+#include "core/Events.h"
+#include "core/Log.h"
+
 #include <algorithm>
 #include <map>
 
@@ -50,19 +53,75 @@ namespace lila::ui::viewportTools
 namespace
 {
 std::unique_ptr<ViewportTool> gTool;
+std::string gToolId; // registered id gTool came from
 std::map<int, std::function<void()>> gListeners;
 int gNext = 1;
-} // namespace
 
-void set(std::unique_ptr<ViewportTool> tool)
+void install(std::unique_ptr<ViewportTool> tool, std::string id)
 {
     if (gTool)
         gTool->deactivate();
     gTool = std::move(tool);
+    gToolId = gTool ? std::move(id) : std::string();
     if (gTool)
         gTool->activate();
     requestRedraw();
+    events::send({.type = events::Event::ViewportToolChanged, .name = gTool ? gTool->name() : std::string()});
 }
+} // namespace
+
+Registry<ToolDef>& registry()
+{
+    static Registry<ToolDef>* r = [] {
+        auto* reg = new Registry<ToolDef>();
+        // The active tool's code may belong to whoever registered it, so it ends before its definition goes.
+        reg->addListener([](RegistryChange change, const std::string& id, const std::string&) {
+            if (change == RegistryChange::Removed && gTool && gToolId == id)
+                install(nullptr, {});
+        });
+        return reg;
+    }();
+    return *r;
+}
+
+const ToolDef& add(ToolDef def)
+{
+    std::string id = def.id;
+    return registry().add(std::move(id), std::move(def));
+}
+
+const ToolDef* add(ext::Context& ctx, ToolDef def)
+{
+    std::string id = def.id;
+    try
+    {
+        ctx.add(registry(), "viewportTool", id, std::move(def));
+        return registry().find(id);
+    }
+    catch (const std::exception& e)
+    {
+        log::error("extension {}: viewport tool: {}", ctx.owner(), e.what());
+        return nullptr;
+    }
+}
+
+bool remove(std::string_view id) { return registry().remove(id); }
+
+bool activate(std::string_view id)
+{
+    const ToolDef* def = registry().find(id);
+    if (!def || !def->create)
+        return false;
+    std::unique_ptr<ViewportTool> tool = def->create();
+    if (!tool)
+        return false;
+    install(std::move(tool), std::string(id));
+    return true;
+}
+
+const std::string& activeId() { return gToolId; }
+
+void set(std::unique_ptr<ViewportTool> tool) { install(std::move(tool), {}); }
 
 ViewportTool* active() { return gTool.get(); }
 

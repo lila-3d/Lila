@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "uv/Chart.h"
 
 #include <glm/glm.hpp>
@@ -49,7 +51,7 @@ struct BffResult
 };
 
 /** The cached operators of one disk chart, which must outlive it. */
-class BffSolver
+class LILA_SCENE_API BffSolver
 {
 public:
     explicit BffSolver(const Chart& chart);
@@ -81,11 +83,11 @@ private:
  * origin. Cones cut the chart open along shortest paths to the boundary, which changes its vertices
  * (cornerVertex follows).
  */
-BffResult bff(Chart& chart, const BffOptions& opts = {});
+LILA_SCENE_API BffResult bff(Chart& chart, const BffOptions& opts = {});
 
 /** Greedy cone placement: repeatedly the interior vertex with the largest |log scale| given the cones so far. */
-std::vector<Index> placeCones(const Chart& chart, int count, std::span<const Index> fixedCones = {});
+LILA_SCENE_API std::vector<Index> placeCones(const Chart& chart, int count, std::span<const Index> fixedCones = {});
 
 /** Cuts the chart open along the given chart edges (pairs of vertices). Returns the source vertex per vertex. */
-std::vector<Index> cutChart(Chart& chart, std::span<const std::pair<Index, Index>> edges);
+LILA_SCENE_API std::vector<Index> cutChart(Chart& chart, std::span<const std::pair<Index, Index>> edges);
 } // namespace lila::uv

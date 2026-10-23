@@ -1,0 +1,52 @@
+# Lila extension SDK @LILA_SDK_VERSION@.
+#
+#   find_package(LilaSDK @LILA_SDK_VERSION@ REQUIRED)
+#   lila_add_extension(my_ext ID MyExt MANIFEST extension.json SOURCES MyExt.cpp)
+#
+# Builds against Lila's import libraries and <lila/...> headers only. Use the compiler Lila was built with
+# (@LILA_SDK_COMPILER@): C++ types cross the boundary, so the ABI must match. UI extensions also need
+# Qt @LILA_QT_VERSION@ exactly, found through CMAKE_PREFIX_PATH.
+
+cmake_minimum_required(VERSION 3.28)
+include_guard(GLOBAL)
+
+get_filename_component(LILA_SDK_PREFIX "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+set(LILA_SDK_VERSION @LILA_SDK_VERSION@)
+set(LILA_QT_VERSION @LILA_QT_VERSION@)
+set(LILA_SDK_COMPILER "@LILA_SDK_COMPILER@")
+
+if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "@CMAKE_CXX_COMPILER_ID@")
+    message(WARNING "Lila SDK: Lila was built with ${LILA_SDK_COMPILER}; ${CMAKE_CXX_COMPILER_ID} extensions will not load")
+elseif(MSVC AND NOT MSVC_TOOLSET_VERSION STREQUAL "@MSVC_TOOLSET_VERSION@")
+    message(WARNING "Lila SDK: Lila was built with MSVC toolset @MSVC_TOOLSET_VERSION@, this is ${MSVC_TOOLSET_VERSION}")
+endif()
+
+add_library(LilaSdkCommon INTERFACE IMPORTED)
+target_include_directories(LilaSdkCommon INTERFACE "${LILA_SDK_PREFIX}/include" "${LILA_SDK_PREFIX}/include/lila/internal")
+target_compile_features(LilaSdkCommon INTERFACE cxx_std_20)
+target_compile_definitions(LilaSdkCommon INTERFACE GLM_FORCE_DEPTH_ZERO_TO_ONE GLM_ENABLE_EXPERIMENTAL)
+if(WIN32)
+    target_compile_definitions(LilaSdkCommon INTERFACE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
+if(MSVC)
+    target_compile_options(LilaSdkCommon INTERFACE /permissive- /utf-8 /Zc:__cplusplus /wd4251 /wd4275)
+endif()
+target_link_directories(LilaSdkCommon INTERFACE "${LILA_SDK_PREFIX}/lib")
+
+# Same names as inside Lila's own build, so extension CMake code works in both.
+foreach(_lib Foundation Scene UI)
+    add_library(Lila${_lib} UNKNOWN IMPORTED)
+    set_target_properties(Lila${_lib} PROPERTIES IMPORTED_LOCATION "${LILA_SDK_PREFIX}/lib/${CMAKE_IMPORT_LIBRARY_PREFIX}Lila${_lib}${CMAKE_IMPORT_LIBRARY_SUFFIX}")
+endforeach()
+set_target_properties(LilaFoundation PROPERTIES INTERFACE_LINK_LIBRARIES "LilaSdkCommon;${LILA_SDK_PREFIX}/lib/@LILA_SDK_TBB_LIB@")
+set_target_properties(LilaScene PROPERTIES INTERFACE_LINK_LIBRARIES LilaFoundation)
+
+find_package(Qt6 ${LILA_QT_VERSION} EXACT QUIET COMPONENTS Core Gui Widgets)
+if(Qt6_FOUND)
+    set_target_properties(LilaUI PROPERTIES INTERFACE_LINK_LIBRARIES "LilaScene;Qt6::Widgets")
+else()
+    set_target_properties(LilaUI PROPERTIES INTERFACE_LINK_LIBRARIES LilaScene)
+    set(LILA_SDK_NO_QT TRUE)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/LilaExtension.cmake")

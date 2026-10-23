@@ -344,3 +344,209 @@ def show_panel(name):
     mw.addDockWidget(where, dock)
     dock.show()
     return dock
+
+
+# ------------------------------------------------------------------ registries
+#
+# Actions, menus, panels, modes, layouts, marking menus, hotkey layers, shelves and preferences pages, owned by the
+# extension that registers them (or "python" outside one) and removed when it unloads.
+
+try:
+    import _lila_sdk
+except ImportError:  # batch mode without the UI library, or an older lila binary
+    _lila_sdk = None
+
+
+def _owner(owner=None):
+    """The extension a registration belongs to: the one loading, else the one whose code is calling."""
+    if owner:
+        return owner
+    import sys
+
+    from . import extension
+
+    if extension._loading:
+        return extension._loading
+    frame = sys._getframe(2)
+    while frame is not None:
+        module = frame.f_globals.get("__name__", "")
+        for name in extension._modules:
+            if module == name or module.startswith(name + "."):
+                return name
+        frame = frame.f_back
+    return "python"
+
+
+def _wrap(fn):
+    if fn is None:
+        return None
+    import json
+
+    def call(text):
+        return json.dumps(fn(*json.loads(text)), default=str)
+
+    return call
+
+
+def _call(op, fns=(), **args):
+    if _lila_sdk is None:
+        raise RuntimeError("this needs Lila's UI library (_lila_sdk), which this session does not have")
+    import json
+
+    return json.loads(_lila_sdk.call(op, json.dumps(args), tuple(_wrap(f) for f in fns)))
+
+
+def add_action(id, fn, label=None, category="Python", doc="", owner=None):
+    """Register fn as the UI action `id`, so menus, hotkeys, marking menus and shelves can run it."""
+    return _call("action.add", [lambda: fn()], id=id, label=label or id, category=category, doc=doc or (fn.__doc__ or "").strip(),
+                 owner=_owner(owner))
+
+
+def remove_action(id):
+    return _call("action.remove", id=id)
+
+
+def add_menu(id, title=None, area="menuBar", before="", owner=None):
+    """A menu bar menu (area "menuBar") or a hotbox panel menu ("hotbox"). Items go in with add_menu_item."""
+    return _call("menu.add", id=id, title=title or id, area=area, before=before, owner=_owner(owner))
+
+
+def add_menu_item(menu, action=None, label=None, kind=None, id="", after="", before="", owner=None):
+    """Add a row to a menu path ("Mesh", "Mesh/Symmetry"). kind: "action" (default with an action), "separator" or
+    "submenu" (label names it; its rows use the path "<menu>/<label>"). Returns the item's id."""
+    kind = kind or ("action" if action else "submenu" if label else "separator")
+    return _call("menu.addItem", menu=menu, action=action or "", label=label or "", kind=kind, id=id, after=after, before=before,
+                 owner=_owner(owner))
+
+
+def remove_menu(id):
+    return _call("menu.remove", id=id)
+
+
+def remove_menu_item(id):
+    return _call("menu.removeItem", id=id)
+
+
+def add_panel(id, build, title=None, area="right", icon="", open=True, owner=None):
+    """A dockable panel. build() returns a QWidget or a Column/Row; it is called when the dock is made. A
+    window.<id> action toggles it."""
+    QtCore, QtWidgets = _qt()
+    from shiboken6 import wrapInstance
+
+    def fill(pointer):
+        holder = wrapInstance(int(pointer), QtWidgets.QWidget)
+        content = build()
+        holder.layout().addWidget(content.build() if isinstance(content, _Node) else content)
+
+    return _call("panel.add", [fill], id=id, title=title or id, area=area, icon=icon, open=open, owner=_owner(owner))
+
+
+def remove_panel(id, owner=None):
+    return _call("panel.remove", id=id, owner=_owner(owner))
+
+
+def add_mode(id, label=None, doc="", layout="", hotkeys=None, marking_menu_set="", shelf="", gizmo_provider="",
+             selection_handler="", on_enter=None, on_exit=None, icon="", owner=None):
+    """A mode: entering it applies its layout, hotkey layer, marking-menu set and shelf, then calls on_enter().
+    hotkeys is shaped like the hotkeys prefs' "contexts"; naming only "press" or only "hold" for a key keeps its
+    other slots, so {"viewport": {"Space": {"press": "my.action"}}} rebinds Space's tap and keeps the hotbox."""
+    return _call("mode.add", [on_enter, on_exit], id=id, label=label or id, doc=doc, layout=layout, hotkeys=hotkeys or {},
+                 markingMenuSet=marking_menu_set, shelf=shelf, gizmoProvider=gizmo_provider, selectionHandler=selection_handler,
+                 icon=icon, owner=_owner(owner))
+
+
+def remove_mode(id):
+    return _call("mode.remove", id=id)
+
+
+def set_mode(id):
+    """Switch modes. Returns False for an unknown id."""
+    return _call("mode.activate", id=id)
+
+
+def mode():
+    """The current mode's id."""
+    return _call("mode.current")
+
+
+def modes():
+    """Every mode as a dict."""
+    return _call("mode.list")
+
+
+def add_layout(name, layout, owner=None):
+    """A read-only layout (shaped like a saved one, or {"preset": {...}}), with a layout.apply.<name> action."""
+    return _call("layout.add", name=name, layout=layout, owner=_owner(owner))
+
+
+def remove_layout(name):
+    return _call("layout.remove", name=name)
+
+
+def add_marking_menu(name, definition, owner=None):
+    """A marking menu ("set/name" puts it in a set), as defaults the Marking Menu Editor can still change."""
+    return _call("markingMenu.add", name=name, definition=definition, owner=_owner(owner))
+
+
+def remove_marking_menu(name):
+    return _call("markingMenu.remove", name=name)
+
+
+def add_marking_menu_set(set, menus, owner=None):
+    """Every menu of a set: {name: definition}. A mode whose marking_menu_set is `set` shows these instead."""
+    return _call("markingMenu.addSet", set=set, menus=menus, owner=_owner(owner))
+
+
+def remove_marking_menu_set(set):
+    return _call("markingMenu.removeSet", set=set)
+
+
+def add_marking_menu_item(menu, item, slot="overflow", owner=None):
+    """Add {"label", "action"} to an existing marking menu, in a compass slot ("N" ... "NW") or the overflow list."""
+    return _call("markingMenu.addItem", menu=menu, item=item, slot=slot, owner=_owner(owner))
+
+
+def remove_marking_menu_item(id):
+    return _call("markingMenu.removeItem", id=id)
+
+
+def add_hotkey_layer(id, contexts, mode="", owner=None):
+    """Default key bindings, {"global": {"Ctrl+K": "my.action"}}; with a mode, only while it is on."""
+    return _call("hotkeyLayer.add", id=id, contexts=contexts, mode=mode, owner=_owner(owner))
+
+
+def remove_hotkey_layer(id):
+    return _call("hotkeyLayer.remove", id=id)
+
+
+def add_shelf(name, items, owner=None):
+    """A shelf of buttons [{"label", "icon", "target", "tooltip"}], as defaults the user can still edit."""
+    return _call("shelf.add", name=name, items=items, owner=_owner(owner))
+
+
+def remove_shelf(name):
+    return _call("shelf.remove", name=name)
+
+
+def add_preferences_page(id, title, rows, file="general", build=None, owner=None):
+    """A Preferences tab whose rows the search finds. rows: {"section": "Title"} or {"type": "toggle" | "number" |
+    "choice" | "text" | "color", "label", "key", "default", ...} ("number" takes min, max, step, decimals; "choice"
+    takes options [[text, value]]). build() may return one more QWidget for anything the rows can't express."""
+    fill = None
+    if build is not None:
+        QtCore, QtWidgets = _qt()
+        from shiboken6 import wrapInstance
+
+        def fill(pointer):
+            wrapInstance(int(pointer), QtWidgets.QWidget).layout().addWidget(build())
+
+    return _call("prefPage.add", [fill], id=id, title=title, file=file, rows=rows, owner=_owner(owner))
+
+
+def remove_preferences_page(id):
+    return _call("prefPage.remove", id=id)
+
+
+def remove_owned(owner):
+    """Remove everything owner registered in the UI and on the event bus."""
+    return _call("owner.removeAll", owner=owner)

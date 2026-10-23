@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "vcs/Process.h"
 #include "vcs/Provider.h"
 
@@ -9,7 +11,7 @@
 
 namespace lila::vcs
 {
-struct GitSettings
+struct LILA_SCENE_API GitSettings
 {
     std::string exe; // empty = git on PATH
 
@@ -23,7 +25,7 @@ struct GitSettings
  * One work tree. Submit is a local commit and never pushes. Checkout takes a `git lfs lock` on LFS-tracked or
  * lockable files and is a no-op otherwise, since git files are always writable.
  */
-class GitProvider final : public Provider
+class LILA_SCENE_API GitProvider final : public Provider
 {
 public:
     GitProvider(fs::path root, GitSettings settings, std::shared_ptr<ProcessRunner> runner);

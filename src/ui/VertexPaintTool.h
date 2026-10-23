@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 namespace lila::ui
 {
 /**
@@ -18,8 +20,8 @@ namespace lila::ui
  *   X                    swap primary and secondary colors
  *   Esc                  leave the tool
  */
-void startVertexPaint();
+LILA_UI_API void startVertexPaint();
 
 /** Actions (vcolor.*) and the Mesh > Vertex Colors items. */
-void registerVertexPaintUi();
+LILA_UI_API void registerVertexPaintUi();
 } // namespace lila::ui

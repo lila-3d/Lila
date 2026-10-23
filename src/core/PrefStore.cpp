@@ -5,6 +5,7 @@
 #include "core/Paths.h"
 #include "core/Profile.h"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <condition_variable>
@@ -90,6 +91,8 @@ struct PrefStore::Impl
     std::condition_variable cv;
     mutable std::array<Layer, LayerCount> layers;
     std::map<int, ChangeFn> listeners;
+    /** setDefaults, per file, oldest first. */
+    std::map<std::string, std::vector<std::pair<std::string, json>>, std::less<>> contributed;
     int nextListener = 1;
     std::jthread io;
     bool flushRequested = false;
@@ -300,6 +303,11 @@ json PrefStore::value(std::string_view file, std::string_view key, const json& f
     auto ptr = pointer(key);
     for (int li = LayerCount - 1; li >= 0; --li)
     {
+        if (li == Defaults)
+            if (auto c = m->contributed.find(file); c != m->contributed.end())
+                for (auto it = c->second.rbegin(); it != c->second.rend(); ++it)
+                    if (it->second.contains(ptr))
+                        return it->second[ptr];
         if (m->layers[li].dir.empty())
             continue;
         const Doc& d = m->doc(li, file);
@@ -314,9 +322,82 @@ json PrefStore::merged(std::string_view file) const
     std::scoped_lock lock(m->mutex);
     json out = json::object();
     for (int li = 0; li < LayerCount; ++li)
+    {
         if (!m->layers[li].dir.empty())
             out.merge_patch(m->doc(li, file).data);
+        if (li == Defaults)
+            if (auto c = m->contributed.find(file); c != m->contributed.end())
+                for (auto& [layer, data] : c->second)
+                    out.merge_patch(data);
+    }
     return out;
+}
+
+void PrefStore::setDefaults(std::string_view file, std::string layer, json data)
+{
+    {
+        std::scoped_lock lock(m->mutex);
+        auto& list = m->contributed[std::string(file)];
+        auto it = std::find_if(list.begin(), list.end(), [&](auto& e) { return e.first == layer; });
+        if (it != list.end())
+            it->second = std::move(data);
+        else
+            list.emplace_back(std::move(layer), std::move(data));
+    }
+    m->notify(std::string(file));
+}
+
+bool PrefStore::removeDefaults(std::string_view file, std::string_view layer)
+{
+    {
+        std::scoped_lock lock(m->mutex);
+        auto c = m->contributed.find(file);
+        if (c == m->contributed.end())
+            return false;
+        size_t n = std::erase_if(c->second, [&](auto& e) { return e.first == layer; });
+        if (c->second.empty())
+            m->contributed.erase(c);
+        if (!n)
+            return false;
+    }
+    m->notify(std::string(file));
+    return true;
+}
+
+size_t PrefStore::removeDefaultsWithPrefix(std::string_view prefix)
+{
+    std::vector<std::string> files;
+    size_t count = 0;
+    {
+        std::scoped_lock lock(m->mutex);
+        for (auto c = m->contributed.begin(); c != m->contributed.end();)
+        {
+            size_t n = std::erase_if(c->second, [&](auto& e) { return e.first.starts_with(prefix); });
+            if (n)
+                files.push_back(c->first);
+            count += n;
+            c = c->second.empty() ? m->contributed.erase(c) : std::next(c);
+        }
+    }
+    for (const std::string& f : files)
+        m->notify(f);
+    return count;
+}
+
+std::vector<std::string> PrefStore::contributedFiles(std::string_view prefix) const
+{
+    std::scoped_lock lock(m->mutex);
+    std::vector<std::string> out;
+    for (auto& [file, list] : m->contributed)
+        if (file.starts_with(prefix))
+            out.push_back(file);
+    return out;
+}
+
+bool PrefStore::hasContributed(std::string_view file) const
+{
+    std::scoped_lock lock(m->mutex);
+    return m->contributed.find(file) != m->contributed.end();
 }
 
 void PrefStore::set(std::string_view file, std::string_view key, json value, PrefScope scope)

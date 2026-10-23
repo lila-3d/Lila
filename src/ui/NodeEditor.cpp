@@ -1502,7 +1502,7 @@ void registerNodeEditorActions()
     actions::add({.id = "window.nodeEditor", .label = "Node Editor", .category = "Windows",
                   .run = [] {
                       for (NodeEditor* e : editors())
-                          if (auto* d = qobject_cast<QDockWidget*>(e->parentWidget()); d && d->isVisible() && !d->visibleRegion().isEmpty())
+                          if (auto* d = qobject_cast<QDockWidget*>(e->parentWidget()); dockShowing(d))
                           {
                               toggleDock(d);
                               return;

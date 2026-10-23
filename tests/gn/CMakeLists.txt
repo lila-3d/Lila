@@ -3,9 +3,9 @@ add_executable(lila_gn_tests
     test_clipboard.cpp
     test_gn.cpp
     test_nodes.cpp)
-target_link_libraries(lila_gn_tests PRIVATE lila_gn lila_io doctest::doctest)
+target_link_libraries(lila_gn_tests PRIVATE LilaScene doctest::doctest)
 add_test(NAME lila_gn_tests COMMAND lila_gn_tests)
 
 # Throwaway visual check of the node editor: builds a group, opens the editor offscreen and grabs it to a PNG.
 add_executable(lila_gn_demo EXCLUDE_FROM_ALL demo.cpp)
-target_link_libraries(lila_gn_demo PRIVATE lila_ui lila_gn)
+target_link_libraries(lila_gn_demo PRIVATE LilaUI)

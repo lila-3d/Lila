@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <nlohmann/json.hpp>
 
 #include <QKeyCombination>
@@ -61,39 +63,39 @@ enum class Slot
     Rmb
 };
 
-Snapshot snapshot();
+LILA_UI_API Snapshot snapshot();
 
 /** Fills b's targets from a hotkeys.json value. */
-void split(const nlohmann::json& value, Binding& b);
-const nlohmann::json& slotTarget(const Binding& b, Slot slot);
+LILA_UI_API void split(const nlohmann::json& value, Binding& b);
+LILA_UI_API const nlohmann::json& slotTarget(const Binding& b, Slot slot);
 
-std::optional<QKeyCombination> parse(const std::string& keyText);
-std::string toText(QKeyCombination chord);
-QString displayText(QKeyCombination chord);
-QString keyName(int qtKey);
+LILA_UI_API std::optional<QKeyCombination> parse(const std::string& keyText);
+LILA_UI_API std::string toText(QKeyCombination chord);
+LILA_UI_API QString displayText(QKeyCombination chord);
+LILA_UI_API QString keyName(int qtKey);
 
 /** Chord for a key event, named by US physical position the way Hotkeys matches. Empty for a lone modifier. */
-std::optional<QKeyCombination> chordFromEvent(QKeyEvent* e);
+LILA_UI_API std::optional<QKeyCombination> chordFromEvent(QKeyEvent* e);
 
 /** Focus widget's hotkeyContext chain, innermost first, ending in "global". */
-std::vector<std::string> contextChain(QWidget* focus);
+LILA_UI_API std::vector<std::string> contextChain(QWidget* focus);
 
 /** Bindings reachable from focus, with inner contexts shadowing outer ones. */
-std::vector<const Binding*> active(const Snapshot& s, QWidget* focus);
+LILA_UI_API std::vector<const Binding*> active(const Snapshot& s, QWidget* focus);
 
-const Binding* find(const Snapshot& s, const std::string& context, QKeyCombination chord);
+LILA_UI_API const Binding* find(const Snapshot& s, const std::string& context, QKeyCombination chord);
 
 /** "Undo", or "Pivot On / release: Pivot Off" for multi-slot bindings. */
-std::string describe(const Binding& b);
-std::string modeText(const Binding& b);
+LILA_UI_API std::string describe(const Binding& b);
+LILA_UI_API std::string modeText(const Binding& b);
 /** Action ids among the binding's targets. */
-std::vector<std::string> actionIds(const Binding& b);
-bool targets(const Binding& b, const std::string& actionId);
+LILA_UI_API std::vector<std::string> actionIds(const Binding& b);
+LILA_UI_API bool targets(const Binding& b, const std::string& actionId);
 
 /** Puts target into one slot of the binding at chord, keeping the binding's other slots. */
-void assign(const std::string& context, QKeyCombination chord, Slot slot, const nlohmann::json& target);
+LILA_UI_API void assign(const std::string& context, QKeyCombination chord, Slot slot, const nlohmann::json& target);
 /** Removes the binding; a default gets a null override. */
-void unbind(const std::string& context, const std::string& keyText);
+LILA_UI_API void unbind(const std::string& context, const std::string& keyText);
 /** Drops the user override so the default (or nothing) applies again. */
-void resetToDefault(const std::string& context, const std::string& keyText);
+LILA_UI_API void resetToDefault(const std::string& context, const std::string& keyText);
 } // namespace lila::ui::hotkeys

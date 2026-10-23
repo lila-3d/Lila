@@ -8,6 +8,7 @@
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
+#include "scene/Spaces.h"
 #include "ui/Animation.h"
 #include "ui/NumberExpr.h"
 #include "ui/SpinScrub.h"
@@ -97,7 +98,9 @@ std::optional<json> parseValue(Graph& g, const std::string& plug, scene::PlugTyp
     }
     if (type == scene::PlugType::Enum)
     {
-        const auto& names = g.attr(g.plug(plug)).enumNames;
+        const scene::PlugRef ref = g.plug(plug);
+        const auto& names = ref.attr == scene::Transform::kSpace && scene::spaces::hasSpaces(g, ref.node) ? scene::spaces::names(g, ref.node)
+                                                                                                     : g.attr(ref).enumNames;
         auto it = std::find(names.begin(), names.end(), text.trimmed().toStdString());
         if (it != names.end())
             return json(int64_t(it - names.begin()));
@@ -284,6 +287,29 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
                     cmds::execute("setAttr", {{"args", {p}}, {"lock", lock}}, CallSource::UI);
                 });
             });
+        if (Graph& sg = Graph::current(); sg.node(mNode) && scene::spaces::hasSpaces(sg, mNode))
+        {
+            menu.addSeparator();
+            QMenu* spaces = menu.addMenu("Switch Space");
+            const std::string node = sg.node(mNode)->name();
+            const std::vector<std::string> names = scene::spaces::names(sg, mNode);
+            const int now = scene::spaces::active(sg, mNode);
+            for (int i = 0; i < int(names.size()); ++i)
+            {
+                QAction* act = spaces->addAction(QString::fromStdString(names[size_t(i)]), [node, i] {
+                    try
+                    {
+                        cmds::execute("switchSpace", {{"args", {node}}, {"space", i}}, CallSource::UI);
+                    }
+                    catch (const std::exception& e)
+                    {
+                        log::error("{}", e.what());
+                    }
+                });
+                act->setCheckable(true);
+                act->setChecked(i == now);
+            }
+        }
         menu.exec(mTable->viewport()->mapToGlobal(pos));
     });
     refresh();
@@ -329,7 +355,8 @@ std::vector<ChannelBox::Row> ChannelBox::buildRows(scene::NodeId lead) const
         for (int i = 0; i < int(attrs.size()); ++i)
         {
             const scene::AttrDef& a = attrs[i];
-            if (!(a.flags & scene::AttrKeyable) || (a.flags & scene::AttrHidden))
+            const bool space = i == scene::Transform::kSpace && scene::spaces::hasSpaces(g, n->id());
+            if (!(a.flags & scene::AttrKeyable) || ((a.flags & scene::AttrHidden) && !space))
                 continue;
             if (a.type == scene::PlugType::Vec3)
                 for (int c = 0; c < 3; ++c)
@@ -447,7 +474,9 @@ void ChannelBox::refresh()
         else if (row.type == scene::PlugType::Enum)
         {
             int64_t idx = std::get<int64_t>(v);
-            text = idx >= 0 && idx < int64_t(def.enumNames.size()) ? QString::fromStdString(def.enumNames[idx]) : QString::number(idx);
+            const auto& names = row.attrIndex == scene::Transform::kSpace && scene::spaces::hasSpaces(g, owner) ? scene::spaces::names(g, owner)
+                                                                                                           : def.enumNames;
+            text = idx >= 0 && idx < int64_t(names.size()) ? QString::fromStdString(names[size_t(idx)]) : QString::number(idx);
         }
         else
             text = formatNumber(numericOf(v, row.component));
@@ -541,7 +570,11 @@ void ChannelBox::apply(const Row& row, const QString& text)
                 log::warn("channel box: can't read '{}'", text.toStdString());
                 return;
             }
-            cmds::execute("setAttr", {{"args", {plug, *value}}}, CallSource::UI);
+            // Changing space keeps the pose: the node is re-keyed in the new frame.
+            if (row.attrIndex == scene::Transform::kSpace && scene::spaces::hasSpaces(g, n->id()))
+                cmds::execute("switchSpace", {{"args", {name}}, {"space", *value}}, CallSource::UI);
+            else
+                cmds::execute("setAttr", {{"args", {plug, *value}}}, CallSource::UI);
         }
         catch (const std::exception& e)
         {

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QWidget>
 
 #include <functional>
@@ -25,7 +27,7 @@ inline constexpr const char* kNodeEditorDock = "nodeEditor";
  * node's values. Every edit goes through the gn commands, so it all undoes. Follows the selection: picking a mesh
  * with a geometry-nodes modifier opens its group.
  */
-class NodeEditor : public QWidget
+class LILA_UI_API NodeEditor : public QWidget
 {
 public:
     explicit NodeEditor(QWidget* parent = nullptr);
@@ -72,8 +74,8 @@ private:
 };
 
 /** Registers "window.nodeEditor", "gn.newGroup" and the nodeEditor.* editing actions. The first two need the show hook to bring the dock up. */
-void registerNodeEditorActions();
+LILA_UI_API void registerNodeEditorActions();
 
 /** How the actions show the editor: the main window raises its dock. */
-void setNodeEditorShowHook(std::function<void()> show);
+LILA_UI_API void setNodeEditorShowHook(std::function<void()> show);
 } // namespace lila::ui

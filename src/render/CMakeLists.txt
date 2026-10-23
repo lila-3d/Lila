@@ -1,4 +1,4 @@
-add_library(lila_render STATIC
+lila_module(lila_render UI
     Backdrop.cpp
     Environment.cpp
     HdrImage.cpp

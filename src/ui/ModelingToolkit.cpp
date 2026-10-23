@@ -237,7 +237,7 @@ ModelingToolkit::ModelingToolkit(QWidget* parent) : QWidget(parent)
 
     FlowLayout* tools = nullptr;
     QWidget* toolsBox = flowBox(body, &tools);
-    row(toolsBox, {{"mesh.insertLoop", "separator-vertical", "Insert Loop"}, {"retopo.quadDraw", "pencil", "Quad Draw"}}, tools);
+    row(toolsBox, {{"mesh.insertLoop", "separator-vertical", "Insert Loop"}, {"mesh.knife", "slice", "Knife"}, {"retopo.quadDraw", "pencil", "Quad Draw"}}, tools);
     root->addWidget(section("Tools", toolsBox, body));
 
     FlowLayout* bevel = nullptr;

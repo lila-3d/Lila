@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 namespace lila::ui
 {
 /**
@@ -8,5 +10,5 @@ namespace lila::ui
  * the weight colour ramp (black 0 through blue, green, yellow, red to white 1; gray by display pref). LMB paints;
  * Ctrl inverts add, Shift smooths; B + drag or [ ] resize; Esc exits. Each stroke is one undo step.
  */
-void startWeightPaint();
+LILA_UI_API void startWeightPaint();
 } // namespace lila::ui

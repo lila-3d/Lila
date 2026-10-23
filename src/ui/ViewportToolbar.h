@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QWidget>
 
 #include <functional>
@@ -21,24 +23,24 @@ enum class Tool;
  * Checked state of a stateful display action ("viewport.toggleGrid", "viewport.view.top", ...) as seen from view, so
  * menus and toolbars agree; nullopt for actions that are not toggles. view may be null for the global ones.
  */
-std::optional<bool> viewportActionState(const std::string& id, const ViewportWidget* view);
+LILA_UI_API std::optional<bool> viewportActionState(const std::string& id, const ViewportWidget* view);
 
 /**
  * Maya's camera menu for a view: the built-in views, every camera node in the scene (checked when the view looks
  * through it), Look Through Selected and Create Camera from View. `activate` runs first on each pick, so actions that
  * target the active view act on this one.
  */
-void fillCameraMenu(QMenu* menu, ViewportWidget* view, std::function<void()> activate = {});
+LILA_UI_API void fillCameraMenu(QMenu* menu, ViewportWidget* view, std::function<void()> activate = {});
 
 /** Fills menu with the built-in HDRIs, the procedural studio and Browse..., checking the current environment. */
-void fillEnvironmentMenu(QMenu* menu);
+LILA_UI_API void fillEnvironmentMenu(QMenu* menu);
 
 /**
  * Maya's panel icon row: camera, gates, shading, lighting, AO, AA, environment, isolate, x-ray, framing, exposure and
  * gamma for one viewport. Buttons run registered actions on that viewport and track their state from prefs, render
  * settings and the view itself. Whatever does not fit the width goes into a chevron menu at the end.
  */
-class ViewportToolbar : public QWidget
+class LILA_UI_API ViewportToolbar : public QWidget
 {
     Q_OBJECT
 
@@ -109,7 +111,7 @@ private:
 };
 
 /** One viewport with its toolbar above it, as a cell of the viewport layout. */
-class ViewportPanel : public QWidget
+class LILA_UI_API ViewportPanel : public QWidget
 {
     Q_OBJECT
 

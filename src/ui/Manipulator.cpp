@@ -5,12 +5,14 @@
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
+#include "scene/CenterInMesh.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "geo/Mesh.h"
 #include "ui/GizmoMath.h"
+#include "ui/ViewportDisplay.h"
 
 #include <QKeyEvent>
 
@@ -166,38 +168,12 @@ std::string nameOf(NodeId id)
 }
 } // namespace
 
-// ------------------------------------------------------------------- ViewInfo
-
-std::optional<QPointF> ViewInfo::project(const glm::dvec3& world) const
-{
-    glm::dvec4 clip = viewProj() * glm::dvec4(world, 1.0);
-    if (clip.w <= 1e-9)
-        return std::nullopt;
-    return QPointF((clip.x / clip.w * 0.5 + 0.5) * width, (clip.y / clip.w * 0.5 + 0.5) * height);
-}
-
-void ViewInfo::ray(QPointF px, glm::dvec3& origin, glm::dvec3& dir) const
-{
-    // Two depths along the pixel; works for perspective and orthographic alike. Reversed-Z: 1 is the near plane.
-    glm::dmat4 inv = glm::inverse(viewProj());
-    double x = px.x() / width * 2.0 - 1.0, y = px.y() / height * 2.0 - 1.0;
-    glm::dvec4 a = inv * glm::dvec4(x, y, 1.0, 1.0), b = inv * glm::dvec4(x, y, 0.5, 1.0);
-    glm::dvec3 nearPoint = glm::dvec3(a) / a.w, midPoint = glm::dvec3(b) / b.w;
-    origin = nearPoint;
-    dir = glm::normalize(midPoint - nearPoint);
-}
-
-double ViewInfo::unitsPerPixel(const glm::dvec3& at) const
-{
-    glm::dvec3 right(view[0][0], view[1][0], view[2][0]);
-    auto a = project(at), b = project(at + right);
-    if (!a || !b)
-        return 1.0;
-    double d = dist(*a, *b);
-    return d > 1e-9 ? 1.0 / d : 1.0;
-}
-
 // ------------------------------------------------------------------- state
+
+bool Manipulator::supports(std::string_view mode) const
+{
+    return mode == "select" || mode == "move" || mode == "rotate" || mode == "scale";
+}
 
 Tool Manipulator::effectiveTool() const
 {
@@ -922,7 +898,12 @@ void Manipulator::apply()
                 scene::xformops::setWorldPivot(g, ids[i], d.startPivots[i] + d.moveDelta);
         }
         else if (t == Tool::Move)
+        {
             scene::xformops::moveBy(g, ids, d.moveDelta);
+            for (NodeId id : ids)
+                if (scene::rig::centerEnabled(*g.node(id)))
+                    scene::rig::centerNode(g, id);
+        }
         else if (t == Tool::Rotate)
             scene::xformops::rotateBy(g, ids, d.rotation);
         else
@@ -1012,7 +993,16 @@ void Manipulator::commit()
         {
             if (glm::length(d.moveDelta) < 1e-9)
                 return;
+            json centred = json::array();
+            for (const Saved& s : d.saved)
+                if (scene::Node* n = Graph::current().node(s.id); n && scene::rig::centerEnabled(*n))
+                    centred.push_back(n->name());
+            std::optional<UndoChunk> chunk;
+            if (!centred.empty())
+                chunk.emplace("Move");
             cmds::execute("move", {{"args", names}, {"by", vecJson(d.moveDelta)}}, CallSource::UI);
+            if (!centred.empty())
+                cmds::execute("centerJoint", {{"args", centred}}, CallSource::UI);
         }
         else if (t == Tool::Rotate)
         {
@@ -1121,11 +1111,9 @@ glm::vec4 Manipulator::handleColor(H h, int axisIndex) const
     if (handleLocked(h))
         return kLocked;
     bool hot = (mDrag && mDrag->handle == h) || (!mDrag && mHover == h);
-    if (PrefStore::get().value<bool>("general", "/manipulator/axisColors", false) && axisIndex >= 0)
+    if (axisIndex >= 0 && viewportDisplay::accentColors(viewportDisplay::kManipulatorAxisColors))
     {
-        // Muted tints, off by default to keep everything near the work neutral.
-        static const glm::vec4 tints[3] = {{0.85f, 0.40f, 0.40f, 1}, {0.50f, 0.80f, 0.42f, 1}, {0.42f, 0.56f, 0.90f, 1}};
-        glm::vec4 c = tints[axisIndex];
+        glm::vec4 c(viewportDisplay::axisColor(axisIndex), 1.0f);
         return hot ? glm::mix(c, kHot, 0.55f) : c;
     }
     return hot ? kHot : kGray;
@@ -1302,25 +1290,15 @@ void Manipulator::drawScale(OverlayPainter& p)
     p.rect(QRectF(c->x() - 6, c->y() - 6, 12, 12), {centerCol.r, centerCol.g, centerCol.b, 0.9f});
 }
 
-void Manipulator::drawReadout(OverlayPainter& p)
+QString Manipulator::readout() const
 {
     if (!mDrag)
-        return;
+        return {};
     const Drag& d = *mDrag;
-    auto start = mView.project(d.startPivot);
-    if (!start)
-        return;
     Tool t = pivotTool(d.pivotEdit, d.tool);
     QString text;
-    QPointF at = d.lastPx + QPointF(18, -14);
-
     if (t == Tool::Move)
     {
-        auto now = mView.project(mPivot);
-        if (now)
-            p.dashedLine(*start, *now, 1.5f, 4.0f, kTrail);
-        p.disc(*start, 3.0f, kTrail, 10);
-        double len = glm::length(d.moveDelta);
         int ai = axisOf(d.handle);
         if (d.handle >= H::X && d.handle <= H::Z)
         {
@@ -1330,8 +1308,41 @@ void Manipulator::drawReadout(OverlayPainter& p)
         else
         {
             glm::dvec3 local = glm::transpose(d.frame) * d.moveDelta;
-            text = QString("%1 cm  (%2, %3, %4)").arg(len, 0, 'f', 2).arg(local.x, 0, 'f', 2).arg(local.y, 0, 'f', 2).arg(local.z, 0, 'f', 2);
+            text = QString("%1 cm  (%2, %3, %4)").arg(glm::length(d.moveDelta), 0, 'f', 2).arg(local.x, 0, 'f', 2).arg(local.y, 0, 'f', 2).arg(local.z, 0, 'f', 2);
         }
+    }
+    else if (t == Tool::Rotate)
+        text = QString::fromUtf8("%1°").arg(d.angle, 0, 'f', 1);
+    else
+    {
+        glm::dvec3 s = d.scale;
+        if (s.x == s.y && s.y == s.z)
+            text = QString::fromUtf8("×%1").arg(s.x, 0, 'f', 3);
+        else
+            text = QString::fromUtf8("× %1, %2, %3").arg(s.x, 0, 'f', 3).arg(s.y, 0, 'f', 3).arg(s.z, 0, 'f', 3);
+    }
+    if (heldSnap() || tools::incrementSnap(t).enabled)
+        text += "  snap";
+    return text;
+}
+
+void Manipulator::drawReadout(OverlayPainter& p)
+{
+    if (!mDrag)
+        return;
+    const Drag& d = *mDrag;
+    auto start = mView.project(d.startPivot);
+    if (!start)
+        return;
+    Tool t = pivotTool(d.pivotEdit, d.tool);
+    QPointF at = d.lastPx + QPointF(18, -14);
+
+    if (t == Tool::Move)
+    {
+        auto now = mView.project(mPivot);
+        if (now)
+            p.dashedLine(*start, *now, 1.5f, 4.0f, kTrail);
+        p.disc(*start, 3.0f, kTrail, 10);
     }
     else if (t == Tool::Rotate)
     {
@@ -1369,19 +1380,8 @@ void Manipulator::drawReadout(OverlayPainter& p)
                 p.line(fan[0], fan.back(), 1.0f, kTrail);
             }
         }
-        text = QString::fromUtf8("%1°").arg(d.angle, 0, 'f', 1);
     }
-    else
-    {
-        glm::dvec3 s = d.scale;
-        if (s.x == s.y && s.y == s.z)
-            text = QString::fromUtf8("×%1").arg(s.x, 0, 'f', 3);
-        else
-            text = QString::fromUtf8("× %1, %2, %3").arg(s.x, 0, 'f', 3).arg(s.y, 0, 'f', 3).arg(s.z, 0, 'f', 3);
-    }
-    if (heldSnap() || tools::incrementSnap(t).enabled)
-        text += "  snap";
-    p.label(at, text);
+    p.label(at, readout());
     if (!d.typed.isEmpty())
         p.label(at + QPointF(0, 22), QString::fromUtf8("= %1…").arg(d.typed));
 }

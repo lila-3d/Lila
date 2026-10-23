@@ -68,6 +68,23 @@ TEST_CASE("connections drive values and refuse cycles")
     CHECK_THROWS_AS(run("connectAttr", {{"args", {"dst.rotate", "src.scale"}}}), CommandError);
 }
 
+TEST_CASE("undoing a connection puts back the value the plug had before it")
+{
+    run("newScene");
+    run("spaceLocator", {{"name", "src"}});
+    run("spaceLocator", {{"name", "dst"}});
+    run("setAttr", {{"args", {"dst.translate", json::array({4, 5, 6})}}});
+    run("setAttr", {{"args", {"src.translate", json::array({1, 2, 3})}}});
+    run("connectAttr", {{"args", {"src.translate", "dst.translate"}}});
+    CHECK(vec(run("getAttr", {{"args", {"dst.translate"}}})) == glm::dvec3(1, 2, 3));
+    run("undo");
+    CHECK(vec(run("getAttr", {{"args", {"dst.translate"}}})) == glm::dvec3(4, 5, 6));
+    run("connectAttr", {{"args", {"src.ty", "dst.tx"}}});
+    CHECK(vec(run("getAttr", {{"args", {"dst.translate"}}})) == glm::dvec3(2, 5, 6));
+    run("undo");
+    CHECK(vec(run("getAttr", {{"args", {"dst.translate"}}})) == glm::dvec3(4, 5, 6));
+}
+
 TEST_CASE("pivots don't move the object")
 {
     run("newScene");

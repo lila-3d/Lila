@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QWidget>
 
 #include <array>
@@ -16,7 +18,7 @@ class ViewportWidget;
  * around the view under the cursor. Actions that target "the viewport" act on the active one: the last clicked.
  * Which camera nodes the panels look through saves with the scene ("ui"/"viewports").
  */
-class ViewportLayout : public QWidget
+class LILA_UI_API ViewportLayout : public QWidget
 {
     Q_OBJECT
 

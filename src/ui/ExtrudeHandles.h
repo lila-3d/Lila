@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <glm/glm.hpp>
 
 #include <QPointF>
@@ -15,7 +17,7 @@ struct ViewInfo;
  * the result stays one undo step and the adjust-last-op popup follows. The cap's move/rotate/scale is the regular
  * manipulator's.
  */
-class ExtrudeHandles
+class LILA_UI_API ExtrudeHandles
 {
 public:
     enum class Handle

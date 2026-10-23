@@ -223,7 +223,7 @@ Node& meshNamed(const std::string& name, const char* cmd)
 
 int outAttrOf(const Node& n)
 {
-    if (auto* m = dynamic_cast<const ModifierNode*>(&n))
+    if (auto* m = modifiers::asModifier(&n))
         return m->outAttr;
     if (auto* g = dynamic_cast<const GeneratorNode*>(&n))
         return g->outAttr;
@@ -263,7 +263,7 @@ namespace modifiers
 {
 bool bypassed(const MeshPtr& mesh) { return mesh && mesh->pointAttrs().has(kBypassLayer); }
 
-bool isModifier(const Node& n) { return dynamic_cast<const ModifierNode*>(&n) != nullptr; }
+bool isModifier(const Node& n) { return (n.traits() & Node::kModifier) != 0; }
 
 std::vector<NodeId> stack(Graph& g, NodeId mesh)
 {
@@ -272,7 +272,7 @@ std::vector<NodeId> stack(Graph& g, NodeId mesh)
     while (auto src = g.source(plug))
     {
         Node* up = g.node(src->node);
-        auto* mod = dynamic_cast<ModifierNode*>(up);
+        auto* mod = asModifier(up);
         if (!mod)
             break;
         out.insert(out.begin(), up->id());
@@ -289,7 +289,7 @@ std::pair<PlugRef, std::optional<PlugRef>> chainBase(Graph& g, NodeId mesh)
     PlugRef plug{mesh, MeshNode::kInMesh, -1};
     while (auto src = g.source(plug))
     {
-        auto* mod = dynamic_cast<ModifierNode*>(g.node(src->node));
+        auto* mod = asModifier(g.node(src->node));
         if (!mod)
             return {plug, src};
         plug = {mod->id(), mod->inAttr, -1};
@@ -517,7 +517,7 @@ void registerCommands()
                 std::optional<PlugRef> src;
                 while ((src = g.source(plug)))
                 {
-                    auto* down = dynamic_cast<ModifierNode*>(g.node(src->node));
+                    auto* down = asModifier(g.node(src->node));
                     if (!down)
                         break;
                     below.push_back(down->id());

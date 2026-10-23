@@ -162,7 +162,8 @@ std::optional<bool> viewportActionState(const std::string& id, const ViewportWid
         {"viewport.toggleEnvBackground", "/viewport/env/background", true},
         {"viewport.toggleToolbar", vd::kToolbar, true},
         {"viewport.grayscaleWeights", vd::kGrayscaleWeights, false},
-        {"viewport.togglePreselectObjects", "/viewport/preselect/objects", true},
+        {"viewport.monotone", vd::kMonotone, false},
+        {"viewport.togglePreselectObjects", "/viewport/preselect/objects", false},
         {"measure.toggleShow", "/measure/show", true},
     };
     for (const Toggle& t : toggles)
@@ -412,6 +413,7 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
         gray->setChecked(viewportActionState("viewport.grayscaleWeights", mView).value_or(false));
         connect(gray, &QAction::triggered, this, [] { actions::run("viewport.grayscaleWeights"); });
     });
+    actionButton("viewport.monotone", "palette");
     separator();
     menuButton("bulb", "Lighting", [this](QMenu* m) {
         auto* group = new QActionGroup(m);
@@ -819,6 +821,8 @@ void ViewportToolbar::refresh()
         {
             QSignalBlocker block(b->defaultAction());
             b->defaultAction()->setChecked(*on);
+            if (id == "viewport.monotone")
+                b->defaultAction()->setIcon(icon(*on ? "palette-off" : "palette"));
         }
     for (auto& [s, kf] : mFields)
     {

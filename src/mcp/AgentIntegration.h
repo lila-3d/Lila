@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <filesystem>
 #include <string>
 #include <utility>
@@ -16,10 +18,10 @@ inline constexpr const char* kBlockEnd = "<!-- lila:end -->";
  * The "lila" server entry merged into a workspace's .mcp.json. The URL and token come from the environment Lila's terminal
  * sets (LILA_MCP_URL, LILA_MCP_TOKEN), so the file holds no secret and is safe under source control.
  */
-std::string mergeMcpJson(const std::string& existing, int port);
+LILA_SCENE_API std::string mergeMcpJson(const std::string& existing, int port);
 
 /** existing with the delimited Lila block replaced by block, or appended when it has none. User text is never touched. */
-std::string upsertBlock(const std::string& existing, const std::string& block);
+LILA_SCENE_API std::string upsertBlock(const std::string& existing, const std::string& block);
 
 struct SetupOptions
 {
@@ -36,12 +38,12 @@ struct SetupResult
 };
 
 /** Writes what the options ask for into the workspace root. Reads templates from resources/agents. */
-SetupResult setUp(const fs::path& root, const SetupOptions& options);
+LILA_SCENE_API SetupResult setUp(const fs::path& root, const SetupOptions& options);
 
 /** Variables for shells started from Lila: LILA, LILA_MCP_URL, LILA_MCP_TOKEN, LILA_WORKSPACE, LILA_BIN. */
-std::vector<std::pair<std::string, std::string>> shellVariables();
+LILA_SCENE_API std::vector<std::pair<std::string, std::string>> shellVariables();
 
 /** Per workspace answer to the setup prompt, in prefs: "" (never asked), "done" or "declined". */
-std::string workspaceState(const fs::path& root);
-void setWorkspaceState(const fs::path& root, const std::string& state);
+LILA_SCENE_API std::string workspaceState(const fs::path& root);
+LILA_SCENE_API void setWorkspaceState(const fs::path& root, const std::string& state);
 } // namespace lila::mcp::agents

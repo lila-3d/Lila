@@ -1,6 +1,7 @@
 #include "scene/Deformers.h"
 
 #include "cmds/Command.h"
+#include "core/ExtensionContext.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "deform/Deform.h"
@@ -516,17 +517,10 @@ public:
 
 // ------------------------------------------------------------------------------------------------ registration
 
-struct Spec
+NodeType deformerType(deformers::DeformerSpec s)
 {
-    std::string name;
-    std::string icon;
-    std::string doc;
-    std::vector<AttrDef> params;
-    std::function<std::unique_ptr<DeformerNode>()> make;
-};
-
-void registerDeformer(Spec s)
-{
+    if (!s.make)
+        throw std::invalid_argument("deformer '" + s.name + "' has no make");
     NodeType t;
     t.name = s.name;
     t.icon = s.icon;
@@ -556,7 +550,7 @@ void registerDeformer(Spec s)
         n->apply = [](const geo::Mesh& m, const Node& self) { return static_cast<const DeformerNode&>(self).run(m); };
         return n;
     };
-    types::registerType(std::move(t));
+    return t;
 }
 
 std::vector<AttrDef> nonlinearCommon(std::vector<AttrDef> own)
@@ -596,7 +590,8 @@ std::vector<NodeId> meshesOf(const std::vector<std::string>& names, const char* 
 
 DeformerNode& deformerNamed(const std::string& name, const char* cmd)
 {
-    auto* d = dynamic_cast<DeformerNode*>(&nodeNamed(name, cmd));
+    Node& n = nodeNamed(name, cmd);
+    auto* d = deformers::isDeformer(n) ? static_cast<DeformerNode*>(&n) : nullptr;
     if (!d)
         throw CommandError(std::string(cmd) + ": " + name + " is not a deformer");
     return *d;
@@ -1006,7 +1001,36 @@ void DeformerNode::compute(const EvalContext&)
 
 namespace deformers
 {
-bool isDeformer(const Node& n) { return dynamic_cast<const DeformerNode*>(&n) != nullptr; }
+bool isDeformer(const Node& n) { return (n.traits() & Node::kDeformer) != 0; }
+
+const NodeType& registerDeformer(DeformerSpec spec)
+{
+    return types::registerType(deformerType(std::move(spec)));
+}
+
+const NodeType* registerDeformer(ext::Context& ctx, DeformerSpec spec)
+{
+    try
+    {
+        return types::registerType(ctx, deformerType(std::move(spec)));
+    }
+    catch (const std::exception& e)
+    {
+        log::error("extension {}: {}", ctx.owner(), e.what());
+        return nullptr;
+    }
+}
+
+std::vector<NodeId> addDeformer(Graph& graph, const std::string& type, const std::vector<NodeId>& meshes, const std::string& name)
+{
+    const NodeType* t = types::find(type);
+    if (!t || !t->create || !(t->create()->traits() & Node::kDeformer))
+        throw CommandError("'" + type + "' is not a deformer type");
+    std::vector<NodeId> out;
+    for (NodeId mesh : meshes)
+        out.push_back(createDeformer(graph, type, mesh, name.empty() ? type : name, false).id());
+    return out;
+}
 
 std::vector<NodeId> list(Graph& graph, NodeId mesh)
 {
@@ -1252,6 +1276,31 @@ void registerCommands()
             for (NodeId mesh : meshesOf(a.objects(), "deformers"))
                 for (NodeId id : deformers::list(g(), mesh))
                     out.push_back(g().node(id)->name());
+            return out;
+        },
+    });
+
+    cmds::registerCommand({
+        .name = "deformer",
+        .doc = "Add a deformer of any registered type, an extension's included, to the top of each mesh's stack. Returns the "
+               "new deformers.",
+        .positionalDoc = "meshes",
+        .flags = {{"type", "", T::String, nullptr, "The deformer node type, e.g. deltaMush."},
+                  {"params", "", T::Any, nullptr, "{param: value} to set on each deformer."},
+                  {"name", "", T::String, nullptr, "Name for the deformer."}},
+        .run = [](const Args& a) -> json {
+            if (!a.has("type"))
+                throw CommandError("deformer: give a type");
+            Graph& graph = g();
+            std::vector<NodeId> made =
+                deformers::addDeformer(graph, a.get<std::string>("type"), meshesOf(a.objects(), "deformer"), a.get<std::string>("name"));
+            json out = json::array();
+            for (NodeId id : made)
+            {
+                if (a.has("params"))
+                    applyParams(graph, *graph.node(id), a.flags["params"]);
+                out.push_back(graph.node(id)->name());
+            }
             return out;
         },
     });

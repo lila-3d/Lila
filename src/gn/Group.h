@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "gn/Geometry.h"
 
 #include <glm/glm.hpp>
@@ -45,7 +47,7 @@ struct GInput
  *   { "name", "typeVersion", "inputs": [{name, type, default}], "nodes": [{name, type, position, values}],
  *     "links": [[fromNode, fromSocket, toNode, toSocket]] }
  */
-struct Group
+struct LILA_SCENE_API Group
 {
     std::string name;
     int typeVersion = 1;
@@ -71,7 +73,7 @@ struct Group
 };
 
 /** Identifier rules for group names, node names and exposed inputs: letters, digits and underscores, not a digit first. */
-bool validIdentifier(std::string_view s);
+LILA_SCENE_API bool validIdentifier(std::string_view s);
 /** An identifier that doesn't clash with the modifier's own attrs, so it can be an exposed input. */
-bool validInputName(std::string_view s);
+LILA_SCENE_API bool validInputName(std::string_view s);
 } // namespace lila::gn

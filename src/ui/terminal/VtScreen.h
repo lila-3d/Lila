@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <cstdint>
 #include <deque>
 #include <optional>
@@ -54,11 +56,11 @@ struct Cell
 using Line = std::vector<Cell>;
 
 /** Perceived lightness (0..255) of an sRGB color; how every SGR color is shown in a grayscale UI. */
-int grayFromRgb(int r, int g, int b);
+LILA_UI_API int grayFromRgb(int r, int g, int b);
 /** Gray level for an xterm 256-color index. */
-int grayFromIndex(int index);
+LILA_UI_API int grayFromIndex(int index);
 /** Display width of a code point: 0, 1 or 2. */
-int charWidth(char32_t c);
+LILA_UI_API int charWidth(char32_t c);
 
 /**
  * VT100/xterm screen model: feed it the bytes a program writes and it keeps the grid, cursor and scrollback.
@@ -68,7 +70,7 @@ int charWidth(char32_t c);
  * contents into the scrollback, as Windows Terminal does, so full redraws keep their history; ED 3 clears it.
  * OSC strings are swallowed. Replies to queries (DSR, DA) are queued for takeResponses().
  */
-class VtScreen
+class LILA_UI_API VtScreen
 {
 public:
     VtScreen(int cols = 80, int rows = 24, int scrollback = 5000);

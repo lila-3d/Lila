@@ -1,4 +1,5 @@
 #include "fbx/Fbx.h"
+#include "fbx/GameExport.h"
 
 #include "cmds/Command.h"
 #include "core/Log.h"
@@ -63,7 +64,7 @@ ExportKind autoKind(Graph& g, const std::vector<NodeId>& ids, bool children)
 } // namespace
 
 bool exportForUnreal(const std::vector<scene::NodeId>& nodes, const fs::path& path, const std::string& profile, std::string* error,
-                     const std::string& kind)
+                     const std::string& kind, bool atOrigin, const std::string& take)
 {
     LILA_ZONE();
 
@@ -80,7 +81,9 @@ bool exportForUnreal(const std::vector<scene::NodeId>& nodes, const fs::path& pa
             *error = "unknown kind '" + kind + "' (static, skeletal or animation)";
         return false;
     }
-    opts.atOrigin = true;
+    opts.atOrigin = atOrigin;
+    if (!take.empty())
+        opts.takes = {take};
 
     progress::Scope scope("Exporting " + path.filename().string(), 3.0);
     ExportScene snapshot;
@@ -191,14 +194,18 @@ void registerCommands()
                   {"maxInfluences", "mi", T::Int, 8, "Skin influences per vertex, heaviest kept and renormalised (4 for mobile)."},
                   {"animation", "anim", T::Bool, true, "Write the take for skeletal exports (always for kind=animation)."},
                   {"bakeAnimation", "bake", T::Bool, true, "Sample every frame; False writes plain translate/rotate/scale curves as keys."},
+                  {"deformOnly", "do", T::Bool, true, "Skeletal and animation kinds: deform joints only (IK helpers and rig-only joints stay behind)."},
                   {"start", "st", T::Float, nullptr, "First frame; the playback start by default."},
                   {"end", "et", T::Float, nullptr, "Last frame; the playback end by default."},
-                  {"take", "", T::String, "", "Take (AnimStack) name; Take 001 by default."},
+                  {"take", "", T::String, "", "Take (AnimStack) name; the active take's, else Take 001."},
+                  {"takes", "", T::Any, nullptr, "Scene takes to write, one AnimStack each: 'all' or a list of names."},
                   {"triangulate", "", T::Bool, true, "Write triangles exactly as the viewport splits faces."},
                   {"tangents", "", T::Bool, true, "Write MikkTSpace tangents and binormals from uv0."},
                   {"worldSpace", "ws", T::Bool, false, "Bake world transforms into the meshes and flatten the hierarchy."},
                   {"atOrigin", "", T::Bool, false, "Drop the exported roots' own transforms, keeping their children relative."},
                   {"children", "", T::Bool, true, "Include the descendants of the given objects."},
+                  {"smoothingGroups", "sg", T::Bool, true, "Write edge smoothing (hard and soft edges)."},
+                  {"units", "u", T::String, "cm", "File units: cm, m, mm, in or ft. Lengths are scaled to them.", {"cm", "m", "mm", "in", "ft"}},
                   {"selectionOnly", "sl", T::Bool, true, "Without objects: the selection, or every root when False."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
@@ -216,10 +223,25 @@ void registerCommands()
             opts.worldSpace = a.get<bool>("worldSpace", false);
             opts.atOrigin = a.get<bool>("atOrigin", false);
             opts.children = a.get<bool>("children", true);
+            opts.smoothingGroups = a.get<bool>("smoothingGroups", true);
+            opts.unitScale = game::cmPerUnit(a.get<std::string>("units", "cm"));
+            if (opts.unitScale <= 0.0)
+                throw CommandError("exportFbx: units must be cm, m, mm, in or ft");
             opts.maxInfluences = a.get<int>("maxInfluences", 8);
             opts.animation = a.get<bool>("animation", true);
             opts.bakeAnimation = a.get<bool>("bakeAnimation", true);
+            opts.deformOnly = a.get<bool>("deformOnly", true);
             opts.takeName = a.get<std::string>("take", "");
+            if (a.has("takes"))
+            {
+                const json& t = a.flags["takes"];
+                if (t.is_string())
+                    opts.takes.push_back(t.get<std::string>());
+                else if (t.is_array())
+                    for (const json& n : t)
+                        if (n.is_string())
+                            opts.takes.push_back(n.get<std::string>());
+            }
             if (a.has("start"))
                 opts.start = scene::anim::secondsOf(a.get<double>("start"));
             if (a.has("end"))
@@ -263,5 +285,7 @@ void registerCommands()
             return path;
         },
     });
+
+    game::registerCommands();
 }
 } // namespace lila::fbx

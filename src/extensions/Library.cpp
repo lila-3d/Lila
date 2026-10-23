@@ -34,6 +34,13 @@ std::unique_ptr<Library> Library::open(const std::filesystem::path& path, std::s
         }
         return nullptr;
     }
+    // Lila's own libraries stay once an extension brings one in (LilaUI into lilabatch, say): their statics hook into
+    // the other libraries for the life of the process, so unloading the extension must not unmap them.
+    for (const wchar_t* own : {L"LilaUI.dll", L"LilaScene.dll", L"LilaFoundation.dll"})
+    {
+        HMODULE pinned = nullptr;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, own, &pinned);
+    }
 #else
     lib->mHandle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!lib->mHandle)

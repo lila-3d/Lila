@@ -1,11 +1,13 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QPlainTextEdit>
 
 namespace lila::ui
 {
 /** The script editor's history: the log as the script panel shows it, with traceback frames clickable. */
-class OutputView : public QPlainTextEdit
+class LILA_UI_API OutputView : public QPlainTextEdit
 {
     Q_OBJECT
 

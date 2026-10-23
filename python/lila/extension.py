@@ -1,7 +1,8 @@
 """Python extensions and the commands they register.
 
 An extension is a .py file or a package on the extension search paths that defines initialize_extension() and, optionally,
-uninitialize_extension(). Load it with lila.cmds.loadExtension("name").
+uninitialize_extension(). Load it with lila.cmds.loadExtension("name"). To ship it with a version, vendor and dependencies,
+put it in an <Id>.lilaext folder whose extension.json names it under "python".
 
     from lila import extension
 
@@ -19,13 +20,27 @@ defaults apply. Raise lila.CommandError to fail with a message.
 """
 
 import importlib.util
+import json
 import os
 import sys
 import traceback
 
 import _lila
 
-__all__ = ["register_command", "unregister_command", "loaded"]
+__all__ = [
+    "register_command",
+    "unregister_command",
+    "loaded",
+    "register_file_translator",
+    "unregister_file_translator",
+    "file_translators",
+    "register_mcp_tool",
+    "unregister_mcp_tool",
+    "register_link_exporter",
+    "unregister_link_exporter",
+    "register_scene_ui_section",
+    "unregister_scene_ui_section",
+]
 
 _TYPES = {bool: "bool", int: "int", float: "float", str: "str", list: "list", tuple: "vec3", None: "any"}
 
@@ -102,6 +117,105 @@ def loaded():
     return sorted(_modules)
 
 
+def _registries():
+    native = getattr(_lila, "registries", None)
+    if native is None:
+        raise RuntimeError("this Lila build has no registry bindings (_lila.registries)")
+    return native
+
+
+def _owner(owner):
+    return (_loading or "") if owner is None else owner
+
+
+def _operation(op):
+    """A translator operation as (command, flags json): from None, a command name or a (command, {flag: value}) pair."""
+    if op is None:
+        return "", ""
+    if isinstance(op, str):
+        return op, ""
+    command, flags = op
+    return command, json.dumps(flags or {})
+
+
+def register_file_translator(id, extensions, label="", doc="", open=None, import_=None, export=None, priority=0, owner=None):
+    """Make File > Open, Import or Export handle files with these extensions (".pts").
+
+    open, import_ and export name the command each runs with the path as its first argument, or are
+    (command, {flag: value}) pairs adding fixed flags. Leave one None when the format does not support it.
+    """
+    args = [_operation(op) for op in (open, import_, export)]
+    _registries().register_file_translator(
+        _owner(owner), id, label, doc, [e if e.startswith(".") else "." + e for e in extensions],
+        args[0][0], args[0][1], args[1][0], args[1][1], args[2][0], args[2][1], priority)
+
+
+def unregister_file_translator(id):
+    """Returns whether it existed."""
+    return _registries().unregister_file_translator(id)
+
+
+def file_translators():
+    """Every file translator as a dict: id, label, extensions, the open/import/export commands, owner."""
+    return json.loads(_registries().file_translators())
+
+
+def register_mcp_tool(name, fn, description="", schema=None, owner=None):
+    """Offer fn to MCP clients (agents) as a tool. fn gets the call's arguments as keywords and returns text.
+
+    schema: the JSON schema of the arguments; defaults to an object with no properties.
+    """
+
+    def run(args):
+        result = fn(**json.loads(args))
+        return result if isinstance(result, str) else json.dumps(result)
+
+    _registries().register_mcp_tool(_owner(owner), name, description or (fn.__doc__ or "").strip(), json.dumps(schema or {}), run)
+
+
+def unregister_mcp_tool(name):
+    return _registries().unregister_mcp_tool(name)
+
+
+def register_link_exporter(format, fn, owner=None):
+    """Write nodes for the Unreal link in a format of your own. fn(node_ids, path) runs on the link's worker thread and
+    returns True on success; it must not touch the scene."""
+    _registries().register_link_exporter(_owner(owner), format, fn)
+
+
+def unregister_link_exporter(format):
+    _registries().unregister_link_exporter(format)
+
+
+def register_scene_ui_section(key, save, load, owner=None):
+    """Keep your own data in the scene file under "ui"/key. save() returns a JSON-able value (None leaves it out);
+    load(value) gets it back after a scene opens, None when the file has none."""
+    _registries().register_scene_ui_section(
+        _owner(owner), key, lambda: None if (v := save()) is None else json.dumps(v), lambda text: load(json.loads(text)))
+
+
+def unregister_scene_ui_section(key):
+    return _registries().unregister_scene_ui_section(key)
+
+
+def _remove_ui(name):
+    """Actions, menus, panels, modes and event subscriptions the extension registered."""
+    from . import ui
+
+    if ui._lila_sdk is not None:
+        try:
+            ui.remove_owned(name)
+        except Exception:
+            traceback.print_exc()
+    from . import viewport
+
+    if viewport.available():
+        try:
+            viewport.remove_owned(name)
+        except Exception:
+            traceback.print_exc()
+
+
 def _drop_modules(name):
     for mod in [m for m in sys.modules if m == name or m.startswith(name + ".")]:
         del sys.modules[mod]
@@ -135,6 +249,7 @@ def _load(name, path):
     except BaseException:
         if hasattr(_lila, "extension"):
             _lila.extension.unregister_owner(name)
+        _remove_ui(name)
         _drop_modules(name)
         raise
     _modules[name] = module
@@ -158,5 +273,6 @@ def _unload(name):
             _loading = None
     if hasattr(_lila, "extension"):
         _lila.extension.unregister_owner(name)
+    _remove_ui(name)
     _drop_modules(name)
     _refresh()

@@ -1,4 +1,4 @@
-add_library(lila_editor STATIC
+lila_module(lila_editor UI
     CodeEditor.cpp CodeEditor.h
     CompletionPopup.cpp CompletionPopup.h
     EditorPalette.h

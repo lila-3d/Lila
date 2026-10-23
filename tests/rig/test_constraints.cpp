@@ -33,9 +33,9 @@ TEST_CASE("parentConstraint follows its target with the offset kept")
 
     run("removeConstraint", {{"args", {"Follower"}}});
     checkNear(pos("Follower"), {5, 12.5, 0});
-    CHECK_FALSE(graph().source({node("Follower").id(), Transform::kTranslate, -1}));
+    CHECK_FALSE(graph().source({node("Follower").id(), Transform::kTranslate, 0}));
     run("undo");
-    CHECK(graph().source({node("Follower").id(), Transform::kTranslate, -1}));
+    CHECK(graph().source({node("Follower").id(), Transform::kTranslate, 0}));
 }
 
 TEST_CASE("point, orient and aim constraints")

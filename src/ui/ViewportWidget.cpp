@@ -22,12 +22,15 @@
 #include "ui/Animation.h"
 #include "ui/ChannelBox.h"
 #include "ui/CursorBadges.h"
+#include "ui/DrawOverrides.h"
 #include "ui/MarkingMenu.h"
 #include "ui/Environments.h"
 #include "ui/MaterialDraw.h"
 #include "ui/MeshCache.h"
 #include "ui/Outliner.h"
 #include "ui/Overlay.h"
+#include "ui/RenderPasses.h"
+#include "ui/SelectionHandlers.h"
 #include "ui/Tools.h"
 #include "ui/ViewportDisplay.h"
 #include "ui/ViewportHooks.h"
@@ -90,15 +93,20 @@ double nowMs()
 constexpr int kEditedAttrs[] = {scene::Transform::kTranslate, scene::Transform::kRotate, scene::Transform::kScale,
                                 scene::Camera::kOrthographicWidth};
 
-void addLocator(std::vector<render::LineVertex>& out, const glm::dmat4& world, const glm::dvec3& size, const glm::vec4& color)
+/** Drawn and picked by a draw override rather than as the viewport's own mesh. */
+bool overridden(const scene::Node& n) { return drawOverrides::forType(n.type()) != nullptr; }
+
+glm::vec4 srgbToLinear(const glm::vec4& c)
 {
-    for (int axis = 0; axis < 3; ++axis)
-    {
-        glm::dvec4 d(0.0);
-        d[axis] = size[axis];
-        out.push_back({glm::vec3(world * (glm::dvec4(0, 0, 0, 1) + d)), color});
-        out.push_back({glm::vec3(world * (glm::dvec4(0, 0, 0, 1) - d)), color});
-    }
+    auto lin = [](float v) { return v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f); };
+    return {lin(c.r), lin(c.g), lin(c.b), c.a};
+}
+
+bool sameHighlight(const std::optional<selectionHandlers::Highlight>& a, const std::optional<selectionHandlers::Highlight>& b)
+{
+    if (!a || !b)
+        return !a && !b;
+    return a->mesh == b->mesh && a->domain == b->domain && a->color == b->color && a->weights == b->weights;
 }
 } // namespace
 
@@ -137,6 +145,15 @@ ViewportWidget::ViewportWidget(QWidget* parent) : QWidget(parent)
     // Display layers hide on playback: starting or stopping changes what is drawn without changing the time.
     mPlaybackListener = scene::anim::addPlaybackListener([this] { requestFrame(); });
     mViewportToolListener = viewportTools::addListener([this] { requestFrame(); });
+    mGizmoListener = gizmos::addListener([this] {
+        syncGizmos();
+        updateCursor();
+        requestFrame();
+    });
+    mHandlerListener = selectionHandlers::addListener([this] {
+        mHandlerHover.reset();
+        requestFrame();
+    });
     // Changing the time only dirties the graph; nothing else asks for a frame.
     onTimeChanged(this, [this] { requestFrame(); });
     mRenderSettingsListener = scene::addRenderSettingsListener([this] {
@@ -162,6 +179,8 @@ ViewportWidget::~ViewportWidget()
     scene::components::removeListener(mComponentListener);
     scene::anim::removePlaybackListener(mPlaybackListener);
     viewportTools::removeListener(mViewportToolListener);
+    gizmos::removeListener(mGizmoListener);
+    selectionHandlers::removeListener(mHandlerListener);
     scene::removeRenderSettingsListener(mRenderSettingsListener);
     if (mId)
         render::Renderer::get().removeViewport(mId);
@@ -320,10 +339,12 @@ void ViewportWidget::updateCursor()
         return;
     }
     // Set explicitly: the native viewport window otherwise keeps whatever cursor it was entered with, like a text caret.
-    Qt::CursorShape shape = mManip.dragging()       ? Qt::ClosedHandCursor
-                            : mManip.hoveringLocked() ? Qt::ForbiddenCursor
-                            : mManip.hovering()       ? Qt::OpenHandCursor
-                                                      : Qt::ArrowCursor;
+    Gizmo* gz = currentGizmo();
+    Qt::CursorShape shape = !gz                    ? Qt::ArrowCursor
+                            : gz->dragging()       ? Qt::ClosedHandCursor
+                            : gz->hoveringLocked() ? Qt::ForbiddenCursor
+                            : gz->hovering()       ? Qt::OpenHandCursor
+                                                   : Qt::ArrowCursor;
     if (cursor().shape() != shape)
         setCursor(shape);
 }
@@ -381,7 +402,7 @@ void ViewportWidget::submit()
     for (scene::NodeId id : g.nodes())
     {
         scene::Node* n = g.node(id);
-        if (!n->type().isA("mesh") || !scene::effectivelyVisible(g, id, inherit) || (!mIsolated.empty() && !mIsolated.contains(id)))
+        if (!n->type().isA("mesh") || overridden(*n) || !scene::effectivelyVisible(g, id, inherit) || (!mIsolated.empty() && !mIsolated.contains(id)))
             continue;
         int smooth = int(n->as<int64_t>(scene::MeshNode::kSmoothPreview));
         scene::MeshPtr shown = smoothedFor(n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh), smooth);
@@ -425,24 +446,9 @@ void ViewportWidget::submit()
         s.meshes.push_back(std::move(d));
     }
 
-    // Highlighted draws last: with an equal-depth test the later line wins, so a selected locator sitting exactly on
-    // an unselected one stays visible.
-    for (int pass = 0; pass < 3; ++pass)
-        for (scene::NodeId id : g.nodes())
-        {
-            scene::Node* n = g.node(id);
-            if (!n->type().isA("locator") || id == mLookThrough || !scene::effectivelyVisible(g, id, inherit))
-                continue;
-            bool hot = mPreselect.mode == scene::ComponentMode::Object && mPreselect.node == id;
-            int rank = g.isSelected(id) ? 2 : hot || underSelection.contains(id) ? 1 : 0;
-            if (rank != pass)
-                continue;
-            const glm::vec4 color = rank == 2 ? kSelectedColor : hot ? kPreselectColor : rank == 1 ? kChildOfSelectedColor : layerLineColor(g, id, kLocatorColor);
-            addLocator(s.lines, n->as<glm::dmat4>(scene::Transform::kWorldMatrix), n->as<glm::dvec3>(scene::Locator::kLocalScale), color);
-        }
     drawComponents(s);
     drawPreselect(s);
-    mManip.setView(viewInfo());
+    drawHandlerHover(s);
     OverlayPainter painter(s.overlayTris, devicePixelRatioF());
     {
         constexpr int kCols = 8, kRows = 6;
@@ -451,24 +457,52 @@ void ViewportWidget::submit()
         painter.setBackdrop(mBackdropBright, kCols, kRows, QSizeF(width(), height()));
     }
     drawGate(painter);
+    const ViewInfo view = viewInfo();
+    // Locators and extension node types. Highlighted draws last: with an equal-depth test the later line wins, so a
+    // selected locator sitting exactly on an unselected one stays visible.
+    for (int pass = 0; pass < 3; ++pass)
+        for (scene::NodeId id : g.nodes())
+        {
+            scene::Node* n = g.node(id);
+            const drawOverrides::DrawOverride* o = drawOverrides::forType(n->type());
+            if (!o || !o->draw || id == mLookThrough || !scene::effectivelyVisible(g, id, inherit))
+                continue;
+            bool hot = mPreselect.mode == scene::ComponentMode::Object && mPreselect.node == id;
+            int rank = g.isSelected(id) ? 2 : hot || underSelection.contains(id) ? 1 : 0;
+            if (rank != pass)
+                continue;
+            using HL = drawOverrides::Highlight;
+            drawOverrides::DrawContext dc{.frame = s, .painter = painter, .view = view, .node = *n};
+            dc.world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+            dc.highlight = rank == 2 ? HL::Selected : hot ? HL::Preselected : rank == 1 ? HL::UnderSelected : HL::None;
+            dc.color = rank == 2 ? kSelectedColor : hot ? kPreselectColor : rank == 1 ? kChildOfSelectedColor : layerLineColor(g, id, kLocatorColor);
+            o->draw(dc);
+        }
+    renderPasses::Context passes{.frame = s, .painter = painter, .view = view, .panel = mHudPanel};
+    renderPasses::run(renderPasses::Stage::Scene, passes);
     for (const auto& drawer : viewportHooks::drawers())
-        drawer(s, painter, viewInfo());
+        drawer(s, painter, view);
     if (ViewportTool* tool = viewportTools::active())
-        tool->draw(s, painter, viewInfo());
-    else
-        mManip.draw(painter);
+        tool->draw(s, painter, view);
+    if (Gizmo* gz = drawnGizmo())
+    {
+        gz->setView(view);
+        gz->draw(painter);
+    }
+    renderPasses::run(renderPasses::Stage::Overlay, passes);
     if (hud::shown(mHudPanel, "originAxis"))
-        hud::drawOriginAxis(s, painter, viewInfo());
+        hud::drawOriginAxis(s, painter, view);
     drawViewIndicator(painter);
     drawHud(painter);
     if (QPointF cursor = mapFromGlobal(QCursor::pos().toPointF()); rect().contains(cursor.toPoint()))
     {
-        std::vector<const cursorBadges::Badge*> badges = cursorBadges::active(*this);
+        std::vector<const cursorBadges::Badge*> badges = cursorBadges::active(state(cursor));
         cursorBadges::draw(painter, cursor, badges);
         cursorBadges::publish(this, badges);
     }
     else
         cursorBadges::publish(this, {});
+    renderPasses::run(renderPasses::Stage::Final, passes);
     // The ground grid is edge-on in side views, so they get a grid in the view plane through the origin instead.
     if (mCamera.ortho && std::abs(glm::dot(mCamera.forward(), mCamera.up())) < 0.5)
     {
@@ -498,7 +532,7 @@ void ViewportWidget::submit()
         }
     }
     if (!s.overlayTris.empty())
-        s.atlas = overlayAtlas();
+        s.atlas = painter.atlas();
 
     if (mMarquee)
     {
@@ -547,7 +581,65 @@ void ViewportWidget::wrapCursor(QMouseEvent* e)
     if (to == p)
         return;
     QCursor::setPos(mapToGlobal(to.toPoint()));
-    mManip.warped(QPointF(to.toPoint()) - p);
+    if (mGizmoDrag)
+        mGizmoDrag->warped(QPointF(to.toPoint()) - p);
+}
+
+void ViewportWidget::syncGizmos()
+{
+    auto fit = [this](GizmoSlot& slot, const std::string& id) {
+        if (slot.gizmo && slot.id == id && gizmos::find(id))
+            return;
+        if (slot.gizmo && mGizmoDrag == slot.gizmo.get())
+        {
+            mGizmoDrag->cancel();
+            mGizmoDrag = nullptr;
+        }
+        slot.gizmo = id.empty() ? nullptr : gizmos::create(id);
+        slot.id = slot.gizmo ? id : std::string();
+    };
+    const std::string active = gizmos::activeId();
+    fit(mGizmo, active);
+    fit(mDefaultGizmo, active == gizmos::kDefault ? std::string() : std::string(gizmos::kDefault));
+}
+
+Gizmo* ViewportWidget::currentGizmo()
+{
+    syncGizmos();
+    if (mGizmoDrag)
+        return mGizmoDrag;
+    auto pick = [this](std::string_view mode) -> Gizmo* {
+        for (GizmoSlot* slot : {&mGizmo, &mDefaultGizmo})
+            if (slot->gizmo && slot->gizmo->supports(mode))
+                return slot->gizmo.get();
+        return nullptr;
+    };
+    if (ViewportTool* tool = viewportTools::active())
+        if (Gizmo* gz = pick(tool->name()))
+            return gz;
+    return pick(tools::name(tools::current()));
+}
+
+Gizmo* ViewportWidget::drawnGizmo()
+{
+    Gizmo* gz = currentGizmo();
+    if (!gz)
+        return nullptr;
+    ViewportTool* tool = viewportTools::active();
+    return !tool || gz->supports(tool->name()) ? gz : nullptr;
+}
+
+ViewportState ViewportWidget::state(QPointF cursor)
+{
+    ViewportState st;
+    st.view = viewInfo();
+    st.panel = mHudPanel;
+    st.cursor = cursor;
+    st.gizmo = currentGizmo();
+    if (ViewportTool* tool = viewportTools::active())
+        st.tool = tool->name();
+    st.navigating = mNav != Nav::None;
+    return st;
 }
 
 std::optional<QPointF> ViewportWidget::project(const glm::dvec3& world) const
@@ -571,42 +663,26 @@ std::vector<std::string> ViewportWidget::hitTest(QPointF a, QPointF b)
     json hits = json::array();
     double best = 6.0; // px
     std::string bestName;
+    ViewInfo view = viewInfo();
     for (scene::NodeId id : g.nodes())
     {
         scene::Node* n = g.node(id);
-        if (!n->type().isA("locator") || id == mLookThrough || !viewportPickable(g, id, inherit) || !scene::selectionMask::pickable(*n))
+        const drawOverrides::DrawOverride* o = drawOverrides::forType(n->type());
+        if (!o || !o->pick || id == mLookThrough || !viewportPickable(g, id, inherit) || !scene::selectionMask::pickable(*n))
             continue;
-        std::vector<render::LineVertex> segs;
-        addLocator(segs, n->as<glm::dmat4>(scene::Transform::kWorldMatrix), n->as<glm::dvec3>(scene::Locator::kLocalScale), {});
-        for (size_t i = 0; i + 1 < segs.size(); i += 2)
+        std::optional<double> px = o->pick({.view = view, .node = *n, .world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix), .a = a, .b = b, .click = click});
+        if (!px)
+            continue;
+        if (!click)
+            hits.push_back(n->name());
+        else if (*px < best)
         {
-            auto p0 = project(glm::dvec3(segs[i].pos)), p1 = project(glm::dvec3(segs[i + 1].pos));
-            if (!p0 || !p1)
-                continue;
-            if (!click)
-            {
-                if (box.contains(*p0) || box.contains(*p1))
-                {
-                    hits.push_back(n->name());
-                    break;
-                }
-                continue;
-            }
-            QPointF d = *p1 - *p0;
-            double len2 = QPointF::dotProduct(d, d);
-            double t = len2 > 0 ? std::clamp(QPointF::dotProduct(a - *p0, d) / len2, 0.0, 1.0) : 0.0;
-            QPointF q = *p0 + d * t - a;
-            double dist = std::hypot(q.x(), q.y());
-            if (dist < best)
-            {
-                best = dist;
-                bestName = n->name();
-            }
+            best = *px;
+            bestName = n->name();
         }
     }
     // Meshes: a click takes the nearest surface under the cursor unless a locator line is right there; a box takes
     // any mesh with a vertex inside it.
-    ViewInfo view = viewInfo();
     glm::dvec3 rayO, rayD;
     view.ray(a, rayO, rayD);
     double nearest = 1e300;
@@ -614,7 +690,7 @@ std::vector<std::string> ViewportWidget::hitTest(QPointF a, QPointF b)
     for (scene::NodeId id : g.nodes())
     {
         scene::Node* n = g.node(id);
-        if (!n->type().isA("mesh") || !viewportPickable(g, id, inherit) || !scene::selectionMask::pickable(*n))
+        if (!n->type().isA("mesh") || overridden(*n) || !viewportPickable(g, id, inherit) || !scene::selectionMask::pickable(*n))
             continue;
         auto rm = renderMeshFor(n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh));
         if (!rm || rm->vertices.empty())
@@ -990,8 +1066,25 @@ void ViewportWidget::updatePreselect()
     scene::componentPick::Hover next{mode};
     QElapsedTimer timer;
     timer.start();
-    bool busy = mManip.hovering() || mManip.dragging() || viewportTools::active() || mNav != Nav::None || mSelecting;
-    if (!busy && PrefStore::get().value<bool>("general", pref, true))
+    Gizmo* gz = currentGizmo();
+    bool busy = (gz && (gz->hovering() || gz->dragging())) || viewportTools::active() || mNav != Nav::None || mSelecting;
+    const selectionHandlers::Handler* handler = mode == ComponentMode::Object && !busy ? selectionHandlers::active() : nullptr;
+    std::optional<selectionHandlers::Highlight> highlight;
+    if (handler && handler->hover)
+    {
+        selectionHandlers::Hit hit = selectionHit(at);
+        try
+        {
+            highlight = handler->hover(hit);
+        }
+        catch (const std::exception& e)
+        {
+            log::error("selection handler {}: {}", handler->id, e.what());
+        }
+        if (PrefStore::get().value<bool>("general", pref, false))
+            next.node = hit.node;
+    }
+    else if (!busy && PrefStore::get().value<bool>("general", pref, mode != ComponentMode::Object))
     {
         if (mode != ComponentMode::Object)
             next = componentAt(at);
@@ -1000,7 +1093,9 @@ void ViewportWidget::updatePreselect()
                 next.node = n->id();
     }
     mPreselectCostMs = double(timer.nsecsElapsed()) / 1e6;
-    if (next == mPreselect)
+    const bool highlightChanged = !sameHighlight(highlight, mHandlerHover);
+    mHandlerHover = std::move(highlight);
+    if (next == mPreselect && !highlightChanged)
         return;
     mPreselect = next;
     requestFrame();
@@ -1009,10 +1104,90 @@ void ViewportWidget::updatePreselect()
 void ViewportWidget::clearPreselect()
 {
     mPreselectAt.reset();
-    if (mPreselect.empty())
+    if (mPreselect.empty() && !mHandlerHover)
         return;
     mPreselect = {};
+    mHandlerHover.reset();
     requestFrame();
+}
+
+selectionHandlers::Hit ViewportWidget::selectionHit(QPointF px)
+{
+    selectionHandlers::Hit hit;
+    hit.px = px;
+    std::vector<std::string> names = hitTest(px, px);
+    if (names.empty())
+        return hit;
+    scene::Graph& g = scene::Graph::current();
+    hit.name = names.front();
+    scene::Node* n = g.find(hit.name);
+    if (!n)
+        return hit;
+    hit.node = n->id();
+    if (!n->type().isA("mesh") || overridden(*n))
+        return hit;
+    scene::MeshPtr mesh = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+    auto rm = renderMeshFor(mesh);
+    auto pd = pickDataFor(mesh);
+    if (!rm || !pd)
+        return hit;
+    const glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+    glm::dvec3 o, d;
+    viewInfo().ray(px, o, d);
+    std::optional<RayHit> ray = raycast(*rm, world, o, d);
+    if (!ray || ray->triangle >= pd->triangleFaces.size() || 3 * size_t(ray->triangle) + 2 >= pd->indices.size())
+        return hit;
+    hit.face = pd->triangleFaces[ray->triangle];
+    hit.position = o + d * ray->distance;
+    double nearest = 1e300;
+    for (int k = 0; k < 3; ++k)
+    {
+        uint32_t v = pd->indices[3 * size_t(ray->triangle) + k];
+        if (v >= pd->positions.size() || v >= pd->vertexPoint.size())
+            continue;
+        double dist = glm::length(glm::dvec3(world * glm::dvec4(glm::dvec3(pd->positions[v]), 1.0)) - hit.position);
+        if (dist < nearest)
+        {
+            nearest = dist;
+            hit.point = pd->vertexPoint[v];
+        }
+    }
+    return hit;
+}
+
+void ViewportWidget::drawHandlerHover(render::FrameState& s)
+{
+    if (!mHandlerHover || scene::components::mode() != scene::ComponentMode::Object)
+        return;
+    using Domain = selectionHandlers::Highlight::Domain;
+    const selectionHandlers::Highlight& h = *mHandlerHover;
+    scene::Graph& g = scene::Graph::current();
+    scene::Node* n = g.node(h.mesh);
+    if (!n || !n->type().isA("mesh"))
+        return;
+    scene::MeshPtr mesh = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+    if (!mesh)
+        return;
+    const geo::Mesh& m = *mesh;
+    const glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+    const glm::vec4 color = srgbToLinear(h.color);
+    auto weight = [&](uint32_t i) { return i < h.weights.size() ? std::clamp(h.weights[i], 0.0f, 1.0f) : 0.0f; };
+    for (uint32_t f = 0; f < m.faceCapacity(); ++f)
+    {
+        if (!m.faceValid(f) || (h.domain == Domain::Face && weight(f) <= 0.0f))
+            continue;
+        std::vector<uint32_t> tris = scene::componentPick::fillTriangles(m, f);
+        for (size_t t = 0; t + 2 < tris.size(); t += 3)
+        {
+            float w[3];
+            for (int k = 0; k < 3; ++k)
+                w[k] = h.domain == Domain::Face ? weight(f) : weight(tris[t + k]);
+            if (w[0] <= 0.0f && w[1] <= 0.0f && w[2] <= 0.0f)
+                continue;
+            for (int k = 0; k < 3; ++k)
+                s.tris3d.push_back({glm::vec3(world * glm::dvec4(m.position(tris[t + k]), 1.0)), glm::vec4(glm::vec3(color), color.a * w[k])});
+        }
+    }
 }
 
 namespace
@@ -1109,6 +1284,28 @@ void ViewportWidget::pick(QPointF a, QPointF b, Qt::KeyboardModifiers mods)
         return;
     }
     json hits = hitTest(a, b);
+    if (selectionHandlers::anyRedirect())
+    {
+        QRectF box = QRectF(a, b).normalized();
+        std::vector<selectionHandlers::Hit> asked;
+        if (box.width() < 4 && box.height() < 4)
+        {
+            if (!hits.empty())
+                asked.push_back(selectionHit(a));
+        }
+        else
+            for (const std::string& name : hits.get<std::vector<std::string>>())
+            {
+                selectionHandlers::Hit h;
+                h.name = name;
+                if (scene::Node* n = scene::Graph::current().find(name))
+                    h.node = n->id();
+                h.px = (a + b) * 0.5;
+                h.click = false;
+                asked.push_back(std::move(h));
+            }
+        hits = selectionHandlers::redirect(asked);
+    }
 
     // Maya: Shift toggles, Ctrl removes, Ctrl+Shift adds.
     bool shift = mods & Qt::ShiftModifier, ctrl = mods & Qt::ControlModifier;
@@ -1448,17 +1645,20 @@ void ViewportWidget::drawHud(OverlayPainter& p)
 
 void ViewportWidget::drawViewIndicator(OverlayPainter& p)
 {
-    // Axis triad in the bottom-left corner plus the view's name, Maya style. Grayscale: letters tell the axes apart.
+    // Axis triad in the bottom-left corner plus the view's name, Maya style. Letters tell the axes apart in monotone.
     glm::dmat3 v(mCamera.view());
     QPointF origin(36, height() - 36);
     const QRectF corner(0, height() - 72, 72, 72);
     bool axes = hud::shown(mHudPanel, "viewAxis");
+    bool colored = viewportDisplay::accentColors(viewportDisplay::kViewAxisColors);
     p.setShadow(true);
     for (int axis = 0; axes && axis < 3; ++axis)
     {
         glm::dvec3 d = v * glm::dvec3(axis == 0, axis == 1, axis == 2);
         QPointF tip = origin + QPointF(d.x, -d.y) * 22.0;
-        glm::vec4 c = p.ink(d.z < 0.0 ? 0.45f : 0.9f, 1.0f, corner); // pointing away from the viewer (view -Z) reads dimmer
+        // Pointing away from the viewer (view -Z) reads dimmer.
+        glm::vec4 c = colored ? glm::vec4(viewportDisplay::axisColor(axis) * (d.z < 0.0 ? 0.6f : 1.0f), 1.0f)
+                              : p.ink(d.z < 0.0 ? 0.45f : 0.9f, 1.0f, corner);
         p.line(origin, tip, 1.5f, c);
         p.text(tip + QPointF(d.x, -d.y) * 8.0 + QPointF(0, 4), QString(QChar('X' + axis)), c, OverlayPainter::Center);
     }
@@ -1577,11 +1777,34 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
         return;
     }
     if (e->button() == Qt::RightButton && !(e->modifiers() & Qt::AltModifier))
+        if (Gizmo* gz = currentGizmo())
+        {
+            gz->setView(viewInfo());
+            if (gz->wantsRightButton(e->position()) && gz->press(e->position(), e->button(), e->modifiers()))
+            {
+                mGizmoDrag = gz;
+                submit();
+                return;
+            }
+        }
+    if (e->button() == Qt::RightButton && !(e->modifiers() & Qt::AltModifier))
     {
         // Maya-style: the menu depends on the modifier and on whether the cursor is over an object.
         bool overObject = !hitTest(e->position(), e->position()).empty();
         std::string base = (e->modifiers() & Qt::ShiftModifier) ? "viewportShift" : (e->modifiers() & Qt::ControlModifier) ? "viewportCtrl" : "viewport";
         QPoint at = e->globalPosition().toPoint();
+        // Over a skinned mesh, a joint-picking selection handler offers the joints under the cursor instead.
+        if (overObject && base == "viewport" && scene::components::mode() == scene::ComponentMode::Object)
+            if (selectionHandlers::Hit hit = selectionHit(e->position()); hit.face != selectionHandlers::kNone)
+                if (auto cands = selectionHandlers::candidates(hit); !cands.empty())
+                {
+                    json fallback = markingMenus::resolve(base + "Object");
+                    if (!fallback.is_object() || fallback.empty())
+                        fallback = markingMenus::resolve(base);
+                    if (MarkingMenu::popupDefinition(selectionHandlers::candidateMenu(cands, fallback), MarkingMenu::Trigger::MouseButton,
+                                                     Qt::RightButton, at))
+                        return;
+                }
         if (!MarkingMenu::popup(base + (overObject ? "Object" : "Empty"), MarkingMenu::Trigger::MouseButton, Qt::RightButton, at))
             MarkingMenu::popup(base, MarkingMenu::Trigger::MouseButton, Qt::RightButton, at);
         return;
@@ -1593,15 +1816,16 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
         return;
     }
     if ((e->button() == Qt::LeftButton || e->button() == Qt::MiddleButton) && !(e->modifiers() & Qt::AltModifier))
-    {
-        mManip.setView(viewInfo());
-        if (mManip.press(e->position(), e->button(), e->modifiers()))
+        if (Gizmo* gz = currentGizmo())
         {
-            mManipDrag = true;
-            submit();
-            return;
+            gz->setView(viewInfo());
+            if (gz->press(e->position(), e->button(), e->modifiers()))
+            {
+                mGizmoDrag = gz;
+                submit();
+                return;
+            }
         }
-    }
     if (e->button() == Qt::LeftButton && !(e->modifiers() & Qt::AltModifier))
     {
         mSelecting = true;
@@ -1633,7 +1857,7 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
     QPointF d = e->position() - mLastPos;
     mLastPos = e->position();
     // Badges follow the cursor, which otherwise only redraws the view when the hover changes.
-    if (e->buttons() == Qt::NoButton && !cursorBadges::active(*this).empty())
+    if (e->buttons() == Qt::NoButton && !cursorBadges::active(state(e->position())).empty())
         requestFrame();
     if (mSoftDrag)
     {
@@ -1654,25 +1878,30 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
         channelSlider::drag(e->globalPosition().toPoint(), e->modifiers());
         return;
     }
-    if (mManipDrag)
+    if (Gizmo* gz = mGizmoDrag)
     {
-        mManip.setView(viewInfo());
-        mManip.drag(e->position(), e->modifiers());
-        if (!mManip.dragging())
-            mManipDrag = false;
-        wrapCursor(e);
+        gz->setView(viewInfo());
+        gz->drag(e->position(), e->modifiers());
+        if (!gz->dragging())
+            mGizmoDrag = nullptr;
+        if (gz->wrapsCursor())
+            wrapCursor(e);
         submit();
         return;
     }
     if (e->buttons() == Qt::NoButton)
     {
-        mManip.setView(viewInfo());
-        if (mManip.hover(e->position()))
+        Gizmo* gz = currentGizmo();
+        if (gz)
         {
-            updateCursor();
-            requestFrame();
+            gz->setView(viewInfo());
+            if (gz->hover(e->position()))
+            {
+                updateCursor();
+                requestFrame();
+            }
         }
-        if (mManip.hovering() || (e->modifiers() & Qt::AltModifier) || viewportTools::active())
+        if ((gz && gz->hovering()) || (e->modifiers() & Qt::AltModifier) || viewportTools::active())
             clearPreselect();
         else
             queuePreselect(e->position());
@@ -1733,10 +1962,11 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* e)
         channelSlider::end();
         return;
     }
-    if (mManipDrag && (e->button() == Qt::LeftButton || e->button() == Qt::MiddleButton))
+    if (mGizmoDrag && (e->button() == Qt::LeftButton || e->button() == Qt::MiddleButton || e->button() == Qt::RightButton))
     {
-        mManipDrag = false;
-        mManip.release();
+        Gizmo* gz = mGizmoDrag;
+        mGizmoDrag = nullptr;
+        gz->release();
         submit();
         return;
     }
@@ -1782,9 +2012,9 @@ void ViewportWidget::keyPressEvent(QKeyEvent* e)
         submit();
         return;
     }
-    if (mManip.keyPress(e))
+    if (Gizmo* gz = currentGizmo(); gz && gz->keyPress(e))
     {
-        mManipDrag = mManip.dragging();
+        mGizmoDrag = gz->dragging() ? gz : nullptr;
         submit();
         return;
     }

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "geo/Bvh.h"
 #include "geo/Symmetry.h"
 #include "scene/Plug.h"
@@ -34,7 +36,7 @@ namespace lila::ui
  * connected and its dots stored, so a later session resumes on it. Every edit, dots included, is a quadDraw* command,
  * so it undoes and echoes like any other. Symmetry follows the retopo mesh's symmetry setting.
  */
-class QuadDrawTool : public ViewportTool
+class LILA_UI_API QuadDrawTool : public ViewportTool
 {
 public:
     QuadDrawTool(scene::NodeId reference, std::string retopoName);
@@ -145,5 +147,5 @@ private:
 };
 
 /** Registers "retopo.quadDraw". */
-void registerRetopoActions();
+LILA_UI_API void registerRetopoActions();
 } // namespace lila::ui

@@ -1,9 +1,10 @@
 find_package(meshoptimizer CONFIG REQUIRED)
 
-add_library(lila_geo STATIC
+lila_module(lila_geo Scene
     Attribute.cpp
     Bvh.cpp
     ColorSets.cpp
+    CrossSection.cpp
     FoldEdges.cpp
     Mesh.cpp
     Normals.cpp
@@ -11,6 +12,7 @@ add_library(lila_geo STATIC
     OpsBasic.cpp
     OpsBevel.cpp
     OpsExtrude.cpp
+    OpsKnife.cpp
     OpsLoop.cpp
     Primitives.cpp
     Reduce.cpp

@@ -22,3 +22,4 @@ __pycache__/
 # Unreal plugin build output
 /ue/*/Binaries/
 /ue/*/Intermediate/
+tests/data/rig/*_skeleton.fbx

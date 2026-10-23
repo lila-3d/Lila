@@ -109,13 +109,11 @@ TEST_CASE("hotbox key release picks the hovered menu item")
     CHECK(hotbox::keyUpAction(false, false, false) == KeyUp::Dismiss);
     CHECK(hotbox::keyUpAction(false, false, true) == KeyUp::Keep);
 
-    // Hovering a menu name opens it only while the key is held, and not the centre button or the menu already open.
-    CHECK(hotbox::hoverOpens(true, 3, false, -1));
-    CHECK(hotbox::hoverOpens(true, 3, false, 2));
-    CHECK_FALSE(hotbox::hoverOpens(true, 3, false, 3));
-    CHECK_FALSE(hotbox::hoverOpens(false, 3, false, -1));
-    CHECK_FALSE(hotbox::hoverOpens(true, -1, false, 2));
-    CHECK_FALSE(hotbox::hoverOpens(true, 5, true, -1));
+    // With a menu open, pressing another menu name switches to it; not the centre button or the menu already open.
+    CHECK(hotbox::pressSwitchesMenu(3, false, 2));
+    CHECK_FALSE(hotbox::pressSwitchesMenu(3, false, 3));
+    CHECK_FALSE(hotbox::pressSwitchesMenu(-1, false, 2));
+    CHECK_FALSE(hotbox::pressSwitchesMenu(5, true, 2));
 }
 
 TEST_CASE("shifted symbols in hotkey text mean Shift plus the key they sit on")

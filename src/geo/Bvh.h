@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "geo/Mesh.h"
 #include "geo/Triangulate.h"
 
@@ -34,7 +36,7 @@ struct BvhClosest
  * Bounding volume hierarchy over a mesh's triangles: binned SAH, built in parallel. Holds a copy of
  * the positions, so rebuild (or refit) after the mesh changes.
  */
-class MeshBvh
+class LILA_SCENE_API MeshBvh
 {
 public:
     MeshBvh() = default;

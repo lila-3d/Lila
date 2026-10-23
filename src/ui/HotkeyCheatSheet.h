@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QWidget>
 
 #include <vector>
@@ -10,7 +12,7 @@ namespace lila::ui
  * Translucent overlay over the main window listing the hotkeys live for the focus widget's context chain, grouped
  * by category. Bound to holding F1; closes on release, a click or another key.
  */
-class HotkeyCheatSheet : public QWidget
+class LILA_UI_API HotkeyCheatSheet : public QWidget
 {
     Q_OBJECT
 

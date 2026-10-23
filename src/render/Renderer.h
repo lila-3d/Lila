@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "render/FrameState.h"
 
 #include <memory>
@@ -15,7 +17,7 @@ struct EnvProbe;
  * Owns the GPU and a render thread. The main thread hands each viewport a FrameState and the render thread draws
  * it when it gets to it; nothing on the main thread ever waits for the GPU. Frames are only drawn on demand.
  */
-class Renderer
+class LILA_UI_API Renderer
 {
 public:
     static Renderer& get();

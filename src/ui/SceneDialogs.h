@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "io/Recovery.h"
 
 #include <QDialog>
@@ -16,16 +18,16 @@ class QTreeWidget;
 
 namespace lila::ui
 {
-void openCrashReport(const std::filesystem::path& dir);
-void openCrashFolder(const std::filesystem::path& dir);
+LILA_UI_API void openCrashReport(const std::filesystem::path& dir);
+LILA_UI_API void openCrashFolder(const std::filesystem::path& dir);
 /** Puts report.txt on the clipboard. */
-void copyCrashReport(const std::filesystem::path& dir);
+LILA_UI_API void copyCrashReport(const std::filesystem::path& dir);
 
 /**
  * After a crash: what crashed (with the report a click away) when crashReport is set, and the scenes with newer
  * autosaves or emergency saves, with what to do with the selected one.
  */
-class RecoveryDialog : public QDialog
+class LILA_UI_API RecoveryDialog : public QDialog
 {
     Q_OBJECT
 
@@ -56,7 +58,7 @@ private:
  * The frameless recent-scenes picker shown when Lila starts without a scene. Enter or double-click opens, Esc or a
  * click outside dismisses.
  */
-class StartupDialog : public QDialog
+class LILA_UI_API StartupDialog : public QDialog
 {
     Q_OBJECT
 
@@ -82,7 +84,7 @@ private:
 };
 
 /** File > Versions: everything Lila and source control kept of the current scene. */
-class VersionsDialog : public QDialog
+class LILA_UI_API VersionsDialog : public QDialog
 {
     Q_OBJECT
 

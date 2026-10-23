@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "uv/Chart.h"
 
 #include <glm/glm.hpp>
@@ -39,8 +41,8 @@ struct ProjectOptions
 };
 
 /** Projects the faces (all when empty) into the uv set. Returns false on unknown input. */
-bool project(geo::Mesh& mesh, std::span<const Index> faces, std::string_view uvSet, const ProjectOptions& opts = {});
+LILA_SCENE_API bool project(geo::Mesh& mesh, std::span<const Index> faces, std::string_view uvSet, const ProjectOptions& opts = {});
 
 /** u, v with u x v = n, Y-up friendly: +Z gives X/Y, +Y gives X/-Z. */
-void planeFrame(const glm::dvec3& n, glm::dvec3& u, glm::dvec3& v);
+LILA_SCENE_API void planeFrame(const glm::dvec3& n, glm::dvec3& u, glm::dvec3& v);
 } // namespace lila::uv

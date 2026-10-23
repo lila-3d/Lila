@@ -1,10 +1,14 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <nlohmann/json.hpp>
 
 #include <QObject>
 
 #include <functional>
+#include <set>
+#include <string>
 
 class QComboBox;
 class QDockWidget;
@@ -21,7 +25,7 @@ class ViewportLayout;
  * Named layouts in the main window: the Windows > Layouts menu, the switcher in the menu bar's corner, the manager
  * dialog and the window.layout.* actions. Installs the hooks behind the applyLayout and saveLayout commands.
  */
-class LayoutController : public QObject
+class LILA_UI_API LayoutController : public QObject
 {
     Q_OBJECT
 
@@ -43,6 +47,8 @@ public:
 private:
     void fillMenu();
     void refreshSwitcher();
+    /** A layout.apply.<name> action per layout, so every layout is keybindable. */
+    void refreshLayoutActions();
     void run(const char* command, const nlohmann::json& call);
     QDockWidget* dock(const QString& name) const;
     void ensureDocks(const nlohmann::json& docks);
@@ -56,5 +62,7 @@ private:
     QMenu* mMenu = nullptr;
     QComboBox* mSwitcher = nullptr;
     int mPrefListener = 0;
+    int mContributedListener = 0;
+    std::set<std::string> mLayoutActions;
 };
 } // namespace lila::ui

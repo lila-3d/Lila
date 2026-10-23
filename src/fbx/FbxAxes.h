@@ -44,25 +44,7 @@ inline glm::dvec3 unwrapNear(glm::dvec3 e, const glm::dvec3& ref)
 }
 
 /** Euler angles of r in `order` closest to ref, so baked frames neither flip nor wrap. */
-inline glm::dvec3 eulerNear(const glm::dmat3& r, scene::RotateOrder order, const glm::dvec3& ref)
-{
-    glm::dvec3 a = scene::matrixToEuler(r, order);
-    const int* s = kOrderSeq[int(order)];
-    glm::dvec3 b = a;
-    b[s[0]] += 180.0;
-    b[s[1]] = 180.0 - b[s[1]];
-    b[s[2]] += 180.0;
-    a = unwrapNear(a, ref);
-    b = unwrapNear(b, ref);
-    auto dist = [&](const glm::dvec3& e) { return glm::dot(e - ref, e - ref); };
-    if (dist(b) >= dist(a))
-        return a;
-    glm::dmat3 check(scene::eulerToMatrix(b, order));
-    double err = 0.0;
-    for (int c = 0; c < 3; ++c)
-        err += glm::length(check[c] - r[c]);
-    return err < 1e-6 ? b : a;
-}
+using scene::eulerNear;
 
 /** Where a signed axis permutation sends each Lila axis: file axis to[i], with sign[i]. */
 struct AxisMap

@@ -3,6 +3,7 @@
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
+#include "geo/Knife.h"
 #include "geo/Mesh.h"
 #include "geo/Ops.h"
 #include "geo/Reduce.h"
@@ -13,6 +14,7 @@
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
+#include "scene/ObjectSets.h"
 #include "scene/SoftSelect.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
@@ -187,6 +189,7 @@ json editSelected(const char* label, ComponentMode kind, const EditFn& fn, bool 
         auto edited = std::make_shared<geo::Mesh>(std::move(mesh));
         g.setValue(base, MeshPtr(edited));
         autoBevel::baseRemapped(g, node, remap, *edited);
+        objectSets::meshRemapped(g, node, remap);
     }
     components::setAll(newSel[0], newSel[1], newSel[2]);
     if (resultKind != ComponentMode::Object)
@@ -1142,6 +1145,120 @@ void registerMeshEditCommands()
                 g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
             }
             return out;
+        },
+    });
+
+    cmds::registerCommand({
+        .name = "polyKnife",
+        .doc = "Knife / multi-cut: cut a mesh along a path of points, splitting the faces between them and the edges the path "
+               "crosses. Between two points the cut follows the surface under the straight screen line joining them (seen from "
+               "eye= or along direction=; without either, along the points' average normal). With loopEdge= it inserts an edge "
+               "loop across that edge's quad ring instead. Follows the mesh's symmetry. Returns the new edges.",
+        .flags = {{"mesh", "", T::String, nullptr, "Mesh to cut; default: the selected or hilited mesh."},
+                  {"points", "", T::List, nullptr,
+                   "Path points: {\"vertex\": id}, {\"edge\": id, \"t\": 0..1 from its first point}, or {\"face\": id, \"position\": "
+                   "[x, y, z] world}."},
+                  {"closed", "", T::Bool, false, "Also cut from the last point back to the first."},
+                  {"through", "", T::Bool, false, "Cut every face under the line, hidden faces too."},
+                  {"eye", "", T::Vec3, nullptr, "World eye of a perspective view."},
+                  {"direction", "", T::Vec3, nullptr, "World view direction of an orthographic view."},
+                  {"loopEdge", "", T::Int, -1, "Insert an edge loop across this edge's ring instead of cutting a path."},
+                  {"fraction", "", T::Float, 0.5, "Where along loopEdge the loop crosses it, from its first point."},
+                  {"select", "", T::Bool, true, "Select the new edges."}},
+        .run = [vec](const Args& a) -> json {
+            Graph& g = graph();
+            g.evaluate();
+            std::string name = a.get<std::string>("mesh", "");
+            if (name.empty())
+            {
+                std::vector<NodeId> candidates = g.selection();
+                for (auto& [node, ids] : components::selected(components::mode()))
+                    candidates.push_back(node);
+                for (NodeId id : candidates)
+                    if (Node* n = g.node(id); n && n->type().isA("mesh"))
+                    {
+                        name = n->name();
+                        break;
+                    }
+                if (name.empty())
+                    throw CommandError("polyKnife: give mesh= or select a mesh");
+            }
+            Node& n = meshArg(name, "polyKnife");
+            PlugRef base = basePlug(n);
+            geo::Mesh mesh = baseMesh(base);
+            const glm::dmat4 world = n.as<glm::dmat4>(Transform::kWorldMatrix);
+            const glm::dmat4 toLocal = glm::inverse(world);
+            auto sym = symmetryFor(n, mesh);
+
+            geo::KnifePlan plan;
+            const int loopEdge = a.get<int>("loopEdge");
+            std::vector<geo::KnifePoint> pts;
+            if (loopEdge >= 0)
+            {
+                if (!mesh.edgeValid(Index(loopEdge)))
+                    throw CommandError("polyKnife: " + name + " has no edge " + std::to_string(loopEdge));
+                plan = geo::knifeLoopPlan(mesh, Index(loopEdge), a.get<double>("fraction"), sym ? &*sym : nullptr);
+            }
+            else
+            {
+                for (const json& p : a.flags.value("points", json::array()))
+                {
+                    if (!p.is_object())
+                        throw CommandError("polyKnife: each point is {vertex:}, {edge:, t:} or {face:, position:}");
+                    if (p.contains("vertex"))
+                        pts.push_back(geo::KnifePoint::point(p["vertex"].get<Index>()));
+                    else if (p.contains("edge"))
+                        pts.push_back(geo::KnifePoint::edge(p["edge"].get<Index>(), std::clamp(p.value("t", 0.5), 0.0, 1.0)));
+                    else if (p.contains("face") && p.contains("position"))
+                        pts.push_back(geo::KnifePoint::face(p["face"].get<Index>(), glm::dvec3(toLocal * glm::dvec4(vec(p["position"]), 1.0))));
+                    else
+                        throw CommandError("polyKnife: each point is {vertex:}, {edge:, t:} or {face:, position:}");
+                }
+                if (pts.size() < 2)
+                    throw CommandError("polyKnife: give at least two points");
+                geo::KnifeOptions o;
+                o.closed = a.get<bool>("closed");
+                o.through = a.get<bool>("through");
+                if (a.has("eye"))
+                    o.eye = glm::dvec3(toLocal * glm::dvec4(vec(a.flags["eye"]), 1.0));
+                else if (a.has("direction"))
+                    o.viewDir = glm::inverse(glm::dmat3(world)) * vec(a.flags["direction"]);
+                o.symmetry = sym ? &*sym : nullptr;
+                plan = geo::knifePlan(mesh, pts, o);
+            }
+
+            UndoChunk chunk("Knife");
+            std::vector<glm::dvec3> before;
+            int drive = 1;
+            if (sym)
+            {
+                before.assign(mesh.positions().begin(), mesh.positions().end());
+                Ids touched;
+                for (const geo::KnifeSegment& s : plan.segments)
+                    if (!s.mirrored)
+                        for (Index p : mesh.facePoints(s.face))
+                            touched.push_back(p);
+                drive = sym->majoritySide(touched);
+            }
+            const Index firstNew = mesh.pointCapacity();
+            Ids cut = geo::knifeApply(mesh, plan);
+            if (cut.empty())
+                throw CommandError("polyKnife: the path crosses no faces it can cut");
+            geo::clearSymmetryKeys(mesh, firstNew);
+            if (sym)
+                maintainSymmetry(n, mesh, before, drive);
+            geo::MeshRemap remap;
+            mesh.compact(&remap);
+            Ids mapped = remapIds(cut, remap.edges);
+            auto edited = std::make_shared<geo::Mesh>(std::move(mesh));
+            g.setValue(base, MeshPtr(edited));
+            autoBevel::baseRemapped(g, n.id(), remap, *edited);
+            if (a.get<bool>("select"))
+            {
+                components::setAll({}, {{n.id(), mapped}}, {});
+                components::setMode(ComponentMode::Edge);
+            }
+            return mapped;
         },
     });
 

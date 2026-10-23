@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "vcs/Process.h"
 #include "vcs/Provider.h"
 
@@ -9,7 +11,7 @@
 namespace lila::vcs
 {
 /** Empty fields fall through to p4's own lookup: P4CONFIG files, P4PORT/P4USER/P4CLIENT, then `p4 set`. */
-struct PerforceSettings
+struct LILA_SCENE_API PerforceSettings
 {
     std::string exe; // empty = p4 on PATH, then the default install location
     std::string port;
@@ -24,7 +26,7 @@ struct PerforceSettings
     bool operator==(const PerforceSettings&) const = default;
 };
 
-class PerforceProvider final : public Provider
+class LILA_SCENE_API PerforceProvider final : public Provider
 {
 public:
     struct Message

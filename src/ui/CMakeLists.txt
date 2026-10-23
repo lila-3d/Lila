@@ -1,10 +1,11 @@
 # Layout files and commands, without Qt, so the tests and batch mode can use them.
-add_library(lila_layouts STATIC Layouts.cpp Layouts.h)
+lila_module(lila_layouts Scene Layouts.cpp Layouts.h)
 target_link_libraries(lila_layouts PUBLIC lila_cmds)
 
-add_library(lila_ui STATIC
+lila_module(lila_ui UI
     Actions.cpp
     AdjustLastOp.cpp AdjustLastOp.h
+    AppMain.cpp AppMain.h
     FlagFields.cpp FlagFields.h
     OptionBox.cpp OptionBox.h
     AgentCapture.cpp AgentCapture.h
@@ -16,9 +17,16 @@ add_library(lila_ui STATIC
     Camera.cpp
     ChannelBox.cpp ChannelBox.h
     DisplayLayersPanel.cpp DisplayLayersPanel.h
+    AnimLayersPanel.cpp AnimLayersPanel.h
+    OffsetsPanel.cpp OffsetsPanel.h
     Editors.cpp Editors.h
     Environments.cpp Environments.h
+    ExtensionManagerDialog.cpp ExtensionManagerDialog.h
+    GameExporter.cpp GameExporter.h
+    Ghosting.cpp Ghosting.h
     GraphEditor.cpp GraphEditor.h
+    PoseLibrary.cpp PoseLibrary.h
+    ControlPicker.cpp ControlPicker.h
     HotkeyBindings.cpp HotkeyBindings.h
     HotkeyCheatSheet.cpp HotkeyCheatSheet.h
     HotkeyEditor.cpp HotkeyEditor.h
@@ -30,9 +38,17 @@ add_library(lila_ui STATIC
     MarkingMenu.cpp MarkingMenu.h
     MarkingMenuEditor.cpp MarkingMenuEditor.h
     MainWindow.cpp MainWindow.h
+    Menus.cpp Menus.h
+    Modes.cpp Modes.h
+    ExtensionUi.cpp ExtensionUi.h
+    PythonSdk.cpp
+    PythonViewport.cpp
+    Owner.h
     SpinScrub.cpp SpinScrub.h
     ValueReset.h
     Manipulator.cpp Manipulator.h
+    Gizmo.cpp Gizmo.h ViewInfo.cpp ViewInfo.h ViewportState.h
+    DrawOverrides.cpp DrawOverrides.h RenderPasses.cpp RenderPasses.h SelectionHandlers.cpp SelectionHandlers.h
     ExtrudeHandles.cpp ExtrudeHandles.h
     MaterialDraw.cpp MaterialDraw.h
     MaterialEditor.cpp MaterialEditor.h
@@ -46,13 +62,16 @@ add_library(lila_ui STATIC
     CursorBadges.cpp CursorBadges.h
     Panels.cpp Panels.h
     QuadDrawTool.cpp QuadDrawTool.h
+    KnifeTool.cpp KnifeTool.h
     PythonBridge.cpp PythonBridge.h
     RigViewport.cpp RigViewport.h WeightPaintTool.cpp WeightPaintTool.h
+    SpacesUi.cpp SpacesUi.h
     DeformUi.cpp DeformUi.h
     SculptPanel.cpp SculptPanel.h
     SculptTool.cpp SculptTool.h
     Tools.cpp Tools.h
     Outliner.cpp Outliner.h
+    SetsUi.cpp SetsUi.h
     PreferencesDialog.cpp PreferencesDialog.h
     ProgressOverlay.cpp ProgressOverlay.h
     ReferenceEditor.cpp ReferenceEditor.h
@@ -74,6 +93,7 @@ add_library(lila_ui STATIC
     UvPackPanel.cpp UvPackPanel.h
     FlowLayout.cpp FlowLayout.h
     DockSidebar.cpp DockSidebar.h
+    DominantInfluenceUi.cpp DominantInfluenceUi.h
     ViewportHooks.cpp ViewportHooks.h
     ViewportDisplay.cpp ViewportDisplay.h
     ViewportHud.cpp ViewportHud.h

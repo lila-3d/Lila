@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "gn/Group.h"
 #include "scene/Graph.h"
 
@@ -21,28 +23,28 @@ namespace lila::gn
 inline constexpr const char* kGroupNodeType = "gnGroup";
 
 /** Node types (gnGroup) and the scene listener that registers modifier types as groups appear. Call after the scene's builtins. */
-void registerTypes();
+LILA_SCENE_API void registerTypes();
 /** gnCreateGroup, gnAddNode, gnConnect, ... and exportMeshSequence. */
-void registerCommands();
+LILA_SCENE_API void registerCommands();
 
-scene::Node* findGroupNode(scene::Graph& g, std::string_view group);
-std::vector<std::string> groupNames(scene::Graph& g);
+LILA_SCENE_API scene::Node* findGroupNode(scene::Graph& g, std::string_view group);
+LILA_SCENE_API std::vector<std::string> groupNames(scene::Graph& g);
 /** Throws std::invalid_argument when the definition is unreadable. */
-Group readGroup(const scene::Node& groupNode);
+LILA_SCENE_API Group readGroup(const scene::Node& groupNode);
 /** Modifier node type name for the group's current interface version. */
-std::string typeNameFor(const Group& g);
+LILA_SCENE_API std::string typeNameFor(const Group& g);
 /** Modifiers using a group. */
-std::vector<scene::NodeId> instancesOf(scene::Graph& g, scene::NodeId groupNode);
-bool isGnModifier(const scene::Node& n);
+LILA_SCENE_API std::vector<scene::NodeId> instancesOf(scene::Graph& g, scene::NodeId groupNode);
+LILA_SCENE_API bool isGnModifier(const scene::Node& n);
 /** The group node feeding a gn modifier, or null. */
-scene::Node* groupOfModifier(scene::Graph& g, const scene::Node& modifier);
+LILA_SCENE_API scene::Node* groupOfModifier(scene::Graph& g, const scene::Node& modifier);
 
 /**
  * Writes a changed definition back undoably: bumps the type version when the interface changed, drops links to
  * sockets that no longer exist, then migrates and reconnects the group's modifiers.
  */
-void commitGroup(scene::Graph& g, scene::Node& groupNode, Group next);
+LILA_SCENE_API void commitGroup(scene::Graph& g, scene::Node& groupNode, Group next);
 
 /** User library (prefs) and workspace library folders, user first. Missing folders are skipped. */
-std::vector<std::filesystem::path> libraryDirs();
+LILA_SCENE_API std::vector<std::filesystem::path> libraryDirs();
 } // namespace lila::gn

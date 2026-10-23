@@ -1,4 +1,5 @@
 #include "ui/MarkingMenuEditor.h"
+#include "ui/MarkingMenu.h"
 
 #include "core/Paths.h"
 #include "core/PrefStore.h"
@@ -548,6 +549,8 @@ void MarkingMenuEditor::refreshMenuList()
             if (e.is_regular_file() && e.path().extension() == ".json")
                 names.insert(fs::relative(e.path(), dir, ec).replace_extension().generic_string());
     }
+    for (const std::string& n : markingMenus::contributedNames())
+        names.insert(n);
     if (!mName.empty())
         names.insert(mName);
 

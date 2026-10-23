@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -10,7 +12,7 @@ namespace lila
  * The folder you're working in. Any folder works; Lila only keeps its own state under <root>/.lila/, created the
  * first time something needs to be saved there. Having no workspace is a normal state.
  */
-class Workspace
+class LILA_FOUNDATION_API Workspace
 {
 public:
     static Workspace& get();

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <glm/vec2.hpp>
 #include <nlohmann/json.hpp>
 
@@ -27,8 +29,8 @@ enum class Interp : uint8_t
     Flat,   // hold this key's value up to the next key
 };
 
-const char* interpName(Interp i);
-Interp interpFromName(std::string_view name, Interp fallback = Interp::Spline);
+LILA_SCENE_API const char* interpName(Interp i);
+LILA_SCENE_API Interp interpFromName(std::string_view name, Interp fallback = Interp::Spline);
 
 struct Key
 {
@@ -44,7 +46,7 @@ struct Key
  * Spline segments use Fritsch-Carlson tangents so they never overshoot their keys; the curve's ends have flat tangents.
  * Results are clamped to 0..1. With no keys it is the default smooth falloff.
  */
-class Curve
+class LILA_SCENE_API Curve
 {
 public:
     Curve();
@@ -76,13 +78,13 @@ private:
 };
 
 /** Ramer-Douglas-Peucker: keeps the endpoints and every point further than epsilon from the simplified polyline. */
-std::vector<glm::dvec2> simplify(const std::vector<glm::dvec2>& points, double epsilon);
+LILA_SCENE_API std::vector<glm::dvec2> simplify(const std::vector<glm::dvec2>& points, double epsilon);
 
 /**
  * A freehand stroke (x = distance, y = weight, both 0..1) as spline keys: points that run backwards in x are dropped,
  * the stroke is extended to x = 0 and 1, then simplified.
  */
-Curve curveFromStroke(const std::vector<glm::dvec2>& stroke, double epsilon = 0.02);
+LILA_SCENE_API Curve curveFromStroke(const std::vector<glm::dvec2>& stroke, double epsilon = 0.02);
 
 struct Preset
 {
@@ -91,22 +93,22 @@ struct Preset
 };
 
 /** Built-in presets; the first is the default curve. */
-const std::vector<Preset>& builtinPresets();
-const Preset* findBuiltin(std::string_view name);
+LILA_SCENE_API const std::vector<Preset>& builtinPresets();
+LILA_SCENE_API const Preset* findBuiltin(std::string_view name);
 
 /** The curve in prefs. */
-Curve currentCurve();
-void setCurrentCurve(const Curve& c);
+LILA_SCENE_API Curve currentCurve();
+LILA_SCENE_API void setCurrentCurve(const Curve& c);
 
 /** Saved user presets, in order. */
-std::vector<Preset> userPresets();
+LILA_SCENE_API std::vector<Preset> userPresets();
 /** Adds or replaces the named preset. */
-void saveUserPreset(const std::string& name, const Curve& c);
-bool deleteUserPreset(const std::string& name);
-bool renameUserPreset(const std::string& from, const std::string& to);
+LILA_SCENE_API void saveUserPreset(const std::string& name, const Curve& c);
+LILA_SCENE_API bool deleteUserPreset(const std::string& name);
+LILA_SCENE_API bool renameUserPreset(const std::string& from, const std::string& to);
 
 /** True when falloff distances are measured along the surface rather than straight through space. */
-bool surfaceFalloff();
+LILA_SCENE_API bool surfaceFalloff();
 
-void registerCommands();
+LILA_SCENE_API void registerCommands();
 } // namespace lila::scene::softSelect

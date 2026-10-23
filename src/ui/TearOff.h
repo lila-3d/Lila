@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QPoint>
 #include <QMenu>
 #include <QPointer>
@@ -23,25 +25,25 @@ class QVBoxLayout;
 namespace lila::ui::tearoff
 {
 /** Adds the tear-off row to the menu, and to its submenus as they appear. Returns the menu. */
-QMenu* enable(QMenu* menu);
+LILA_UI_API QMenu* enable(QMenu* menu);
 
 /** How a torn-off menu becomes a dock: the main window installs its addDock. */
-void setDockHook(std::function<QDockWidget*(const QString& title, const QString& objectName, QWidget* content)> addDock);
+LILA_UI_API void setDockHook(std::function<QDockWidget*(const QString& title, const QString& objectName, QWidget* content)> addDock);
 
 /** The menu's path from the menu bar, or nullopt when it is not reachable from one. */
-std::optional<std::vector<std::string>> pathOf(QMenu* menu);
+LILA_UI_API std::optional<std::vector<std::string>> pathOf(QMenu* menu);
 
 /** The menu at that path in the window's menu bar. */
-QMenu* findMenu(QMainWindow* window, const std::vector<std::string>& path);
+LILA_UI_API QMenu* findMenu(QMainWindow* window, const std::vector<std::string>& path);
 
 /** Shows the menu's torn-off dock, creating it floating at `at` (the cursor when unset) if it has none yet. */
-QDockWidget* tearOff(QMenu* menu, std::optional<QPoint> at = std::nullopt);
+LILA_UI_API QDockWidget* tearOff(QMenu* menu, std::optional<QPoint> at = std::nullopt);
 
 /** Creates the docks for these dock names that do not exist yet, so a restored window state can place them. */
-void recreate(QMainWindow* window, const std::vector<std::string>& dockNames);
+LILA_UI_API void recreate(QMainWindow* window, const std::vector<std::string>& dockNames);
 
 /** The torn-off panel inside a dock: a button per row of the menu, rebuilt when the menu's rows change. */
-class TearOffPanel : public QWidget
+class LILA_UI_API TearOffPanel : public QWidget
 {
     Q_OBJECT
 

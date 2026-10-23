@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/SoftSelect.h"
 
 #include <QWidget>
@@ -17,7 +19,7 @@ class FlowLayout;
  * Compact editor for a soft select falloff curve. Drag keys, click empty space to add one, right-click a key to delete
  * it or set its interpolation, double-click to reset. In draw mode a freehand stroke replaces the curve.
  */
-class FalloffCurveEditor : public QWidget
+class LILA_UI_API FalloffCurveEditor : public QWidget
 {
 public:
     explicit FalloffCurveEditor(QWidget* parent = nullptr);
@@ -62,7 +64,7 @@ private:
  * Soft select falloff: preset thumbnails (built-in and saved), the curve editor and the falloff mode, all bound live
  * to the general prefs under /softSelect.
  */
-class SoftSelectPanel : public QWidget
+class LILA_UI_API SoftSelectPanel : public QWidget
 {
 public:
     explicit SoftSelectPanel(QWidget* parent = nullptr);

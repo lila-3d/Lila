@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "math/MathCore.h"
 
 #include <cstdint>
@@ -10,7 +12,7 @@ struct Rotator;
 struct Quat;
 struct Plane;
 
-struct Vector2
+struct LILA_FOUNDATION_API Vector2
 {
     double x = 0.0;
     double y = 0.0;
@@ -72,7 +74,7 @@ struct Vector2
 
 inline constexpr Vector2 operator*(double s, const Vector2& v) { return v * s; }
 
-struct Vector
+struct LILA_FOUNDATION_API Vector
 {
     double x = 0.0;
     double y = 0.0;
@@ -198,7 +200,7 @@ struct Vector
 
 inline constexpr Vector operator*(double s, const Vector& v) { return v * s; }
 
-struct Vector4
+struct LILA_FOUNDATION_API Vector4
 {
     double x = 0.0;
     double y = 0.0;

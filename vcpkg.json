@@ -15,6 +15,7 @@
     "zstd",
     "manifold",
     "meshoptimizer",
+    "joltphysics",
     {
       "name": "tracy",
       "features": [
@@ -22,5 +23,10 @@
       ]
     }
   ],
-  "builtin-baseline": "6f6324d69cc4d5229804bee9f72737fe2ef08087"
+  "builtin-baseline": "6f6324d69cc4d5229804bee9f72737fe2ef08087",
+  "vcpkg-configuration": {
+    "overlay-ports": [
+      "./vcpkg-ports"
+    ]
+  }
 }

@@ -13,8 +13,13 @@
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "scene/Rig.h"
+#include "scene/RigElements.h"
+#include "scene/RotationCurve.h"
 #include "scene/Skin.h"
+#include "scene/Spaces.h"
+#include "scene/Take.h"
 
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 
 #include <algorithm>
@@ -24,6 +29,7 @@
 #include <format>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <set>
 #include <unordered_map>
 
@@ -69,7 +75,8 @@ Trs decompose(const glm::dmat4& m)
 }
 
 /** TRS of a file-space local matrix with its pre-rotation taken out, Euler angles near ref. */
-Trs fileTrs(const glm::dmat4& local, const glm::dmat3& pre, scene::RotateOrder order, const glm::dvec3& ref)
+Trs fileTrs(const glm::dmat4& local, const glm::dmat3& pre, scene::RotateOrder order, const glm::dvec3& ref,
+            const glm::dmat3& post = glm::dmat3(1.0))
 {
     Trs out;
     glm::dquat q;
@@ -77,7 +84,8 @@ Trs fileTrs(const glm::dmat4& local, const glm::dmat3& pre, scene::RotateOrder o
     glm::dvec4 persp;
     if (!glm::decompose(local, out.s, q, out.t, skew, persp))
         return out;
-    out.r = eulerNear(glm::transpose(pre) * glm::dmat3(glm::mat3_cast(q)), order, ref);
+    // FBX composes Pre * R * Post^-1, so R = Pre^-1 * rotation * Post.
+    out.r = eulerNear(glm::transpose(pre) * glm::dmat3(glm::mat3_cast(q)) * post, order, ref);
     return out;
 }
 
@@ -105,7 +113,7 @@ bool plainChannels(const scene::Node& n)
     for (int a : {Transform::kRotatePivot, Transform::kScalePivot, Transform::kRotatePivotTranslate, Transform::kScalePivotTranslate})
         if (glm::length(n.as<glm::dvec3>(a)) > 1e-9)
             return false;
-    if (scene::rig::isJoint(n) && n.as<bool>(scene::Joint::kSegmentScaleCompensate))
+    if (scene::rig::isJoint(n) && (n.as<bool>(scene::Joint::kSegmentScaleCompensate) || n.as<double>(scene::Joint::kIkBlend) != 0.0))
         return false;
     return true;
 }
@@ -314,6 +322,8 @@ Geometry buildGeometry(const geo::Mesh& m, const glm::dmat4& toFile, const Expor
             bool isHard = e != kInvalid && (hard.empty() ? normalsSplit(m, e, normals) : hard[e]);
             g.smoothing.push_back(isHard ? 0 : 1);
         }
+    if (!opts.smoothingGroups)
+        g.smoothing.clear();
 
     g.normals.reserve(corners.size() * 3);
     for (Index c : corners)
@@ -443,6 +453,7 @@ void writeGeometry(Record& objects, int64_t id, const std::string& name, const G
         header(t, 101, "uv0", "ByPolygonVertex", "Direct");
         t.add("Tangents").f64s(g.tangents);
     }
+    if (!g.smoothing.empty())
     {
         Record& e = geom.add("LayerElementSmoothing");
         e.i32(0);
@@ -482,7 +493,8 @@ void writeGeometry(Record& objects, int64_t id, const std::string& name, const G
         layerElement(layer0, "LayerElementTangent", 0);
     }
     layerElement(layer0, "LayerElementMaterial", 0);
-    layerElement(layer0, "LayerElementSmoothing", 0);
+    if (!g.smoothing.empty())
+        layerElement(layer0, "LayerElementSmoothing", 0);
     if (!g.colors.empty())
         layerElement(layer0, "LayerElementColor", 0);
     if (!g.uvs.empty())
@@ -504,6 +516,7 @@ struct ModelInfo
     std::string_view type = "Null"; // Mesh, Null or LimbNode
     Trs trs;
     glm::dvec3 pre{0.0};
+    glm::dvec3 post{0.0};
     scene::RotateOrder order = scene::RotateOrder::XYZ;
 };
 
@@ -517,6 +530,8 @@ void writeModel(Record& objects, int64_t id, const std::string& name, const Mode
         pEnum(props, "RotationOrder", fbxOrder(info.order));
     if (info.pre != glm::dvec3(0.0))
         p3(props, "PreRotation", "Vector3D", "Vector", "", info.pre);
+    if (info.post != glm::dvec3(0.0))
+        p3(props, "PostRotation", "Vector3D", "Vector", "", info.post);
     pBool(props, "RotationActive", true);
     pEnum(props, "InheritType", 1);
     pInt(props, "DefaultAttributeIndex", 0);
@@ -706,7 +721,7 @@ void writeCurveNode1(Record& objects, int64_t id, std::string_view name, std::st
     props.addP(std::string("d|") + std::string(prop), "Number", "", "A").f64(defaultValue);
 }
 
-void writeGlobalSettings(Record& root, const AxisDecl& a, double fps, int64_t spanStart, int64_t spanStop)
+void writeGlobalSettings(Record& root, const AxisDecl& a, double fps, int64_t spanStart, int64_t spanStop, double unitScale)
 {
     Record& gs = root.add("GlobalSettings");
     gs.add("Version").i32(1000);
@@ -719,8 +734,8 @@ void writeGlobalSettings(Record& root, const AxisDecl& a, double fps, int64_t sp
     pInt(props, "CoordAxisSign", a.coordSign);
     pInt(props, "OriginalUpAxis", a.up);
     pInt(props, "OriginalUpAxisSign", a.upSign);
-    pDouble(props, "UnitScaleFactor", 1.0);
-    pDouble(props, "OriginalUnitScaleFactor", 1.0);
+    pDouble(props, "UnitScaleFactor", unitScale);
+    pDouble(props, "OriginalUnitScaleFactor", unitScale);
     props.addP("AmbientColor", "ColorRGB", "Color", "").f64(0).f64(0).f64(0);
     pString(props, "DefaultCamera", "Producer Perspective");
     const int mode = timeMode(fps);
@@ -765,6 +780,7 @@ void writeDefinitions(Record& root, const ObjectCounts& n)
         p3(*p, "Lcl Scaling", "Lcl Scaling", "", "A", glm::dvec3(1.0));
         pEnum(*p, "RotationOrder", 0);
         p3(*p, "PreRotation", "Vector3D", "Vector", "", glm::dvec3(0.0));
+        p3(*p, "PostRotation", "Vector3D", "Vector", "", glm::dvec3(0.0));
         pBool(*p, "Show", true);
         p->addP("Visibility", "Visibility", "", "A").f64(1.0);
     }
@@ -896,6 +912,9 @@ struct Gather
     std::unordered_map<NodeId, int> indexOf;
     std::vector<glm::dmat4> rootInv; // per node: its export root's inverse placement
     std::vector<NodeId> skinOf;      // per node: its skinCluster, or kNoNode
+    /** Joints some skinCluster takes as an influence; they go out whatever their deform flag says. */
+    std::set<NodeId> weighted;
+    std::vector<std::string> weightedNonDeform;
 
     glm::dmat4 world(NodeId id) const { return graph.node(id)->as<glm::dmat4>(scene::Transform::kWorldMatrix); }
 
@@ -907,7 +926,8 @@ struct Gather
         if (e.parent < 0)
             return rootInv[i] * world(e.source);
         NodeId parentSource = out.nodes[size_t(e.parent)].source;
-        if (parentSource == graph.parent(e.source))
+        // A node in another space has its local matrix in that space's frame, not its parent's.
+        if (parentSource == graph.parent(e.source) && !scene::spaces::hasSpaces(graph, e.source))
             return n->as<glm::dmat4>(scene::Transform::kMatrix);
         return glm::inverse(world(parentSource)) * world(e.source);
     }
@@ -927,6 +947,18 @@ struct Gather
         Node* n = graph.node(id);
         if (!n || !n->type().isA("transform") || indexOf.count(id))
             return;
+        if (opts.deformOnly && opts.kind != ExportKind::Static && !rigel::isDeform(*n))
+        {
+            if (!weighted.count(id))
+            {
+                // Its children hang off the nearest exported ancestor instead.
+                if (children)
+                    for (NodeId c : graph.children(id))
+                        walk(c, parent, inv, isRoot, true);
+                return;
+            }
+            weightedNonDeform.push_back(n->name());
+        }
         const bool flatten = opts.worldSpace && opts.kind == ExportKind::Static;
         ExportNode e;
         e.name = n->name();
@@ -945,10 +977,18 @@ struct Gather
         else
         {
             e.parent = parent;
-            e.local = isRoot ? inv * w : n->as<glm::dmat4>(Transform::kMatrix);
+            if (isRoot)
+                e.local = inv * w;
+            else if (const NodeId above = out.nodes[size_t(parent)].source; above != graph.parent(id))
+                e.local = glm::inverse(world(above)) * w;
+            else if (spaces::hasSpaces(graph, id) && graph.parent(id) != kNoNode)
+                e.local = glm::inverse(world(graph.parent(id))) * w;
+            else
+                e.local = n->as<glm::dmat4>(Transform::kMatrix);
         }
         e.joint = rig::isJoint(*n);
         e.pre = static_cast<const Transform*>(n)->preRotation();
+        e.post = static_cast<const Transform*>(n)->rotateAxisMatrix();
         e.rotateOrder = RotateOrder(std::clamp<int64_t>(n->as<int64_t>(Transform::kRotateOrder), 0, 5));
         e.translate = n->as<glm::dvec3>(Transform::kTranslate);
         e.rotate = n->as<glm::dvec3>(Transform::kRotate);
@@ -974,6 +1014,7 @@ struct Gather
     void applyBindPose();
     void keepSkeletonOnly();
     void sampleTake();
+    std::optional<ExportTake> sampleRange(const std::string& name, double start, double end, double fps, bool keep);
 };
 
 /** Brings in the joints of every skin that the given roots did not cover, from their top joint down. */
@@ -1232,8 +1273,32 @@ std::optional<std::array<anim::Curve, 9>> directCurves(Graph& g, NodeId id, doub
                 return std::nullopt;
             continue;
         }
-        if (g.source({id, a, -1}))
-            return std::nullopt;
+        if (auto whole = g.source({id, a, -1}))
+        {
+            Node* cn = g.node(whole->node);
+            if (group != 1 || !cn || !anim::isRotationCurve(*cn))
+                return std::nullopt;
+            // FBX has only Euler curves: the rotation curve's own keys, plus frames only where those miss it.
+            anim::RotationCurve rc = anim::rotationCurveOf(*cn).looped();
+            if (rc.keys.empty())
+                return std::nullopt;
+            bool covered = rc.keys.front().time <= start + 1e-9 && rc.keys.back().time >= end - 1e-9;
+            if (!covered && (rc.pre != anim::Infinity::Constant || rc.post != anim::Infinity::Constant))
+                return std::nullopt;
+            std::vector<double> times;
+            const double fps = anim::playback().fps > 0.0 ? anim::playback().fps : 30.0;
+            for (long long f = 0, count = std::llround((end - start) * fps); f <= count; ++f)
+                times.push_back(start + double(f) / fps);
+            std::array<anim::Curve, 3> euler = anim::eulerKeysFor(rc, times);
+            for (int c = 0; c < 3; ++c)
+            {
+                euler[size_t(c)].pre = euler[size_t(c)].post = anim::Infinity::Constant;
+                euler[size_t(c)].loop = false;
+                out[size_t(3 + c)] = std::move(euler[size_t(c)]);
+            }
+            any = true;
+            continue;
+        }
         glm::dvec3 rest = n->as<glm::dvec3>(a);
         for (int c = 0; c < 3; ++c)
         {
@@ -1247,7 +1312,7 @@ std::optional<std::array<anim::Curve, 9>> directCurves(Graph& g, NodeId id, doub
             Node* cn = g.node(src->node);
             if (!anim::isCurve(*cn))
                 return std::nullopt;
-            curve = anim::curveOf(*cn);
+            curve = anim::curveOf(*cn).looped();
             if (curve.keys.empty())
                 return std::nullopt;
             bool covered = curve.keys.front().time <= start + 1e-9 && curve.keys.back().time >= end - 1e-9;
@@ -1266,11 +1331,46 @@ void Gather::sampleTake()
     LILA_ZONE();
 
     anim::Playback& pb = anim::playback();
+    std::vector<NodeId> chosen;
+    if (!opts.takes.empty())
+        chosen = anim::selectTakes(graph, opts.takes.size() == 1 ? nlohmann::json(opts.takes[0]) : nlohmann::json(opts.takes));
+    if (chosen.empty())
+    {
+        std::string name = opts.takeName;
+        if (name.empty())
+            for (NodeId t : anim::activeTakes(graph))
+            {
+                name = graph.node(t)->name();
+                break;
+            }
+        out.take = sampleRange(name.empty() ? "Take 001" : name, std::isnan(opts.start) ? pb.minTime : opts.start,
+                               std::isnan(opts.end) ? pb.maxTime : opts.end, pb.fps, false);
+        return;
+    }
+    for (NodeId t : chosen)
+    {
+        std::optional<ExportTake> sampled;
+        anim::withTake(graph, t, [&] {
+            const scene::Node& n = *graph.node(t);
+            sampled = sampleRange(n.name(), n.as<double>(anim::TakeNode::kStart), n.as<double>(anim::TakeNode::kEnd),
+                                  n.as<double>(anim::TakeNode::kFps), true);
+        });
+        if (!out.take)
+            out.take = std::move(sampled);
+        else
+            out.extraTakes.push_back(std::move(*sampled));
+    }
+}
+
+std::optional<ExportTake> Gather::sampleRange(const std::string& name, double start, double end, double fps, bool keep)
+{
+    LILA_ZONE();
+
     ExportTake take;
-    take.name = opts.takeName.empty() ? "Take 001" : opts.takeName;
-    take.fps = pb.fps > 0.0 ? pb.fps : 30.0;
-    take.start = std::isnan(opts.start) ? pb.minTime : opts.start;
-    take.end = std::isnan(opts.end) ? pb.maxTime : opts.end;
+    take.name = name;
+    take.fps = fps > 0.0 ? fps : 30.0;
+    take.start = start;
+    take.end = end;
     if (take.end < take.start)
         std::swap(take.start, take.end);
     const long long frames = std::llround((take.end - take.start) * take.fps);
@@ -1284,7 +1384,8 @@ void Gather::sampleTake()
     std::vector<char> sampled(count, 1);
     if (!opts.bakeAnimation)
         for (size_t i = 0; i < count; ++i)
-            if (plainChannels(*graph.node(out.nodes[i].source)) && ownLocal(i))
+            if (plainChannels(*graph.node(out.nodes[i].source)) && ownLocal(i) &&
+                !graph.source({out.nodes[i].source, scene::Joint::kIkBlend, -1}))
                 if ((take.curves[i] = directCurves(graph, out.nodes[i].source, take.start, take.end)))
                     sampled[i] = 0;
 
@@ -1332,8 +1433,9 @@ void Gather::sampleTake()
             samples.clear();
         animated = animated || !samples.empty() || take.curves[i] || !take.morphWeights[i].empty();
     }
-    if (animated || opts.kind == ExportKind::Animation)
-        out.take = std::move(take);
+    if (animated || keep || opts.kind == ExportKind::Animation)
+        return take;
+    return std::nullopt;
 }
 } // namespace
 
@@ -1359,6 +1461,13 @@ ExportScene gatherExport(scene::Graph& graph, const std::vector<scene::NodeId>& 
         return false;
     };
 
+    if (opts.kind != ExportKind::Static && opts.deformOnly)
+        for (NodeId id : graph.nodes())
+            if (Node* n = graph.node(id); n && n->type().isA("skinCluster"))
+                for (const skin::Influence& inf : skin::influences(graph, id))
+                    if (inf.joint != kNoNode)
+                        g.weighted.insert(inf.joint);
+
     std::set<NodeId> done;
     for (NodeId id : roots)
     {
@@ -1379,6 +1488,13 @@ ExportScene gatherExport(scene::Graph& graph, const std::vector<scene::NodeId>& 
     if (opts.worldSpace)
         out.warnings.push_back("worldSpace is ignored for skeletal and animation exports");
     g.addSkeletons();
+    if (!g.weightedNonDeform.empty())
+    {
+        std::string list;
+        for (const std::string& n : g.weightedNonDeform)
+            list += (list.empty() ? "" : ", ") + n;
+        out.warnings.push_back(std::format("{} non-deform joint(s) carry skin weights and were exported: {}", g.weightedNonDeform.size(), list));
+    }
     g.buildSkins();
     g.applyBindPose();
     if (opts.kind == ExportKind::Skeletal)
@@ -1390,9 +1506,66 @@ ExportScene gatherExport(scene::Graph& graph, const std::vector<scene::NodeId>& 
     return out;
 }
 
-std::string encodeFbx(const ExportScene& scene, const ExportOptions& opts)
+namespace
+{
+/** The snapshot in file units: every length divided by cmPerUnit, rotations and scales unchanged. */
+ExportScene inUnits(const ExportScene& in, double cmPerUnit)
 {
     LILA_ZONE();
+
+    ExportScene out = in;
+    const double k = 1.0 / cmPerUnit;
+    const glm::dmat4 s = glm::scale(glm::dmat4(1.0), glm::dvec3(k));
+    const glm::dmat4 sInv = glm::scale(glm::dmat4(1.0), glm::dvec3(cmPerUnit));
+    auto conj = [&](const glm::dmat4& m) { return s * m * sInv; };
+    for (ExportNode& n : out.nodes)
+    {
+        n.local = conj(n.local);
+        n.translate *= k;
+        n.bake = s * n.bake;
+        n.bindWorld = conj(n.bindWorld);
+        if (n.skin)
+        {
+            auto skin = std::make_shared<ExportSkin>(*n.skin);
+            skin->meshBindWorld = conj(skin->meshBindWorld);
+            for (ExportSkin::Cluster& c : skin->clusters)
+                c.bindWorld = conj(c.bindWorld);
+            n.skin = std::move(skin);
+        }
+    }
+    std::vector<ExportTake*> all;
+    if (out.take)
+        all.push_back(&*out.take);
+    for (ExportTake& t : out.extraTakes)
+        all.push_back(&t);
+    for (ExportTake* tk : all)
+    {
+        for (std::vector<glm::dmat4>& frames : tk->locals)
+            for (glm::dmat4& m : frames)
+                m = conj(m);
+        for (auto& curves : tk->curves)
+            if (curves)
+                for (int c = 0; c < 3; ++c)
+                    for (scene::anim::Key& key : (*curves)[size_t(c)].keys)
+                    {
+                        key.value *= k;
+                        // Fixed tangent angles live in (seconds, value) space, so the slope scales with the value.
+                        key.inAngle = glm::degrees(std::atan(std::tan(glm::radians(key.inAngle)) * k));
+                        key.outAngle = glm::degrees(std::atan(std::tan(glm::radians(key.outAngle)) * k));
+                    }
+    }
+    return out;
+}
+} // namespace
+
+std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
+{
+    LILA_ZONE();
+
+    std::optional<ExportScene> scaled;
+    if (opts.unitScale > 0.0 && opts.unitScale != 1.0)
+        scaled = inUnits(sceneIn, opts.unitScale);
+    const ExportScene& scene = scaled ? *scaled : sceneIn;
 
     const glm::dmat3 basis3 = profileBasis(opts.profile, scene.upAxis);
     const glm::dmat4 basis(basis3);
@@ -1406,7 +1579,8 @@ std::string encodeFbx(const ExportScene& scene, const ExportOptions& opts)
     writeHeader(root, creator);
     const int64_t spanStart = take ? ktime(take->start) : 0;
     const int64_t spanStop = take ? ktime(take->end) : 46186158000;
-    writeGlobalSettings(root, fileIsZUp(opts.profile, scene.upAxis) ? kZUp : kYUp, take ? take->fps : scene.fps, spanStart, spanStop);
+    writeGlobalSettings(root, fileIsZUp(opts.profile, scene.upAxis) ? kZUp : kYUp, take ? take->fps : scene.fps, spanStart, spanStop,
+                        opts.unitScale);
 
     Record& docs = root.add("Documents");
     docs.add("Count").i32(1);
@@ -1446,10 +1620,13 @@ std::string encodeFbx(const ExportScene& scene, const ExportOptions& opts)
         const glm::dmat3 pre = basis3 * glm::dmat3(n.pre) * glm::transpose(basis3);
         mi.pre = cleanVec(scene::matrixToEuler(pre, scene::RotateOrder::XYZ));
         const glm::dmat3 preExact(scene::eulerToMatrix(mi.pre, scene::RotateOrder::XYZ));
+        const glm::dmat3 post = basis3 * glm::transpose(glm::dmat3(n.post)) * glm::transpose(basis3);
+        mi.post = cleanVec(scene::matrixToEuler(post, scene::RotateOrder::XYZ));
+        const glm::dmat3 postExact(scene::eulerToMatrix(mi.post, scene::RotateOrder::XYZ));
         if (n.plainTrs && mi.order == axes.order(n.rotateOrder))
             mi.trs = {axes.translate(n.translate), axes.rotate(n.rotate), axes.scale(n.scale)};
         else
-            mi.trs = fileTrs(toFile(n.local), preExact, mi.order, axes.rotate(n.rotate));
+            mi.trs = fileTrs(toFile(n.local), preExact, mi.order, axes.rotate(n.rotate), postExact);
         writeModel(objects, modelIds[i], n.name, mi);
         connect(modelIds[i], n.parent >= 0 ? modelIds[size_t(n.parent)] : 0);
         if (!isMesh)
@@ -1523,7 +1700,6 @@ std::string encodeFbx(const ExportScene& scene, const ExportOptions& opts)
     }
     // Morph targets: a BlendShape per mesh, a BlendShapeChannel per target holding one Shape of point offsets.
     std::vector<std::vector<int64_t>> channelIds(scene.nodes.size());
-    int64_t takeLayerId = 0;
     for (size_t i = 0; i < scene.nodes.size(); ++i)
     {
         const ExportNode& n = scene.nodes[i];
@@ -1585,22 +1761,28 @@ std::string encodeFbx(const ExportScene& scene, const ExportOptions& opts)
         ++counts.poses;
     }
 
+    std::vector<const ExportTake*> allTakes;
     if (take)
+        allTakes.push_back(take);
+    for (const ExportTake& extra : scene.extraTakes)
+        allTakes.push_back(&extra);
+    counts.stacks = counts.layers = int(allTakes.size());
+    // One AnimStack per take, each with a single layer holding its transform and morph weight curves.
+    for (const ExportTake* tk : allTakes)
     {
         int64_t stackId = nextId++;
         Record& stack = objects.add("AnimationStack");
-        stack.i64(stackId).str(bin::objectName(take->name, "AnimStack")).str("");
+        stack.i64(stackId).str(bin::objectName(tk->name, "AnimStack")).str("");
         Record& sp = stack.add("Properties70");
-        sp.addP("LocalStart", "KTime", "Time", "").i64(spanStart);
-        sp.addP("LocalStop", "KTime", "Time", "").i64(spanStop);
-        sp.addP("ReferenceStart", "KTime", "Time", "").i64(spanStart);
-        sp.addP("ReferenceStop", "KTime", "Time", "").i64(spanStop);
-        int64_t layerId = takeLayerId = nextId++;
+        sp.addP("LocalStart", "KTime", "Time", "").i64(ktime(tk->start));
+        sp.addP("LocalStop", "KTime", "Time", "").i64(ktime(tk->end));
+        sp.addP("ReferenceStart", "KTime", "Time", "").i64(ktime(tk->start));
+        sp.addP("ReferenceStop", "KTime", "Time", "").i64(ktime(tk->end));
+        int64_t layerId = nextId++;
         Record& layer = objects.add("AnimationLayer");
         layer.i64(layerId).str(bin::objectName("BaseLayer", "AnimLayer")).str("");
         layer.add("Properties70");
         connect(layerId, stackId);
-        counts.stacks = counts.layers = 1;
 
         static constexpr const char* kGroupProp[3] = {"Lcl Translation", "Lcl Rotation", "Lcl Scaling"};
         static constexpr const char* kGroupName[3] = {"T", "R", "S"};
@@ -1611,22 +1793,23 @@ std::string encodeFbx(const ExportScene& scene, const ExportOptions& opts)
             const glm::dvec3 lcl[3] = {mi.trs.t, mi.trs.r, mi.trs.s};
             // keys[group][file axis], or nothing to write for that channel.
             std::array<std::array<std::optional<CurveKeys>, 3>, 3> keys;
-            if (take->curves[i])
+            if (tk->curves[i])
             {
-                const auto& lila = *take->curves[i];
+                const auto& lila = *tk->curves[i];
                 for (int g = 0; g < 3; ++g)
                     for (int a = 0; a < 3; ++a)
                         keys[size_t(g)][size_t(axes.to[a])] = curveKeys(lila[size_t(g * 3 + a)], axes.factor(g, a));
             }
-            else if (!take->locals[i].empty())
+            else if (!tk->locals[i].empty())
             {
                 const glm::dmat3 preExact(scene::eulerToMatrix(mi.pre, scene::RotateOrder::XYZ));
+                const glm::dmat3 postExact(scene::eulerToMatrix(mi.post, scene::RotateOrder::XYZ));
                 std::vector<std::array<double, 9>> frames;
-                frames.reserve(take->times.size());
+                frames.reserve(tk->times.size());
                 glm::dvec3 ref = mi.trs.r;
-                for (const glm::dmat4& local : take->locals[i])
+                for (const glm::dmat4& local : tk->locals[i])
                 {
-                    Trs trs = fileTrs(toFile(local), preExact, mi.order, ref);
+                    Trs trs = fileTrs(toFile(local), preExact, mi.order, ref, postExact);
                     ref = trs.r;
                     frames.push_back({trs.t.x, trs.t.y, trs.t.z, trs.r.x, trs.r.y, trs.r.z, trs.s.x, trs.s.y, trs.s.z});
                 }
@@ -1643,7 +1826,7 @@ std::string encodeFbx(const ExportScene& scene, const ExportOptions& opts)
                         values.reserve(frames.size());
                         for (const auto& f : frames)
                             values.push_back(f[size_t(ch)]);
-                        keys[size_t(g)][size_t(a)] = sampledKeys(take->times, values);
+                        keys[size_t(g)][size_t(a)] = sampledKeys(tk->times, values);
                     }
             }
             for (int g = 0; g < 3; ++g)
@@ -1667,17 +1850,12 @@ std::string encodeFbx(const ExportScene& scene, const ExportOptions& opts)
                 }
             }
         }
-    }
 
-    // Morph weight curves go on each channel's DeformPercent, in the same layer as the transform curves.
-    if (take && takeLayerId)
-    {
-        const int64_t layerId = takeLayerId;
         for (size_t i = 0; i < scene.nodes.size(); ++i)
         {
-            if (i >= take->morphWeights.size() || take->morphWeights[i].empty())
+            if (i >= tk->morphWeights.size() || tk->morphWeights[i].empty())
                 continue;
-            const auto& weights = take->morphWeights[i];
+            const auto& weights = tk->morphWeights[i];
             for (size_t k = 0; k < weights.size() && k < channelIds[i].size(); ++k)
             {
                 std::vector<double> percent(weights[k].size());
@@ -1690,7 +1868,7 @@ std::string encodeFbx(const ExportScene& scene, const ExportOptions& opts)
                 connectProp(nodeId, channelIds[i][k], "DeformPercent");
                 ++counts.curveNodes;
                 int64_t curveId = nextId++;
-                writeCurve(objects, curveId, sampledKeys(take->times, percent), rest);
+                writeCurve(objects, curveId, sampledKeys(tk->times, percent), rest);
                 connectProp(curveId, nodeId, "d|DeformPercent");
                 ++counts.curves;
             }
@@ -1703,15 +1881,15 @@ std::string encodeFbx(const ExportScene& scene, const ExportOptions& opts)
     root.add("Connections") = std::move(connections);
     Record& takes = root.add("Takes");
     takes.add("Current").str(take ? take->name : "");
-    if (take)
+    for (const ExportTake* tk : allTakes)
     {
         Record& t = takes.add("Take");
-        t.str(take->name);
-        std::string file = take->name;
+        t.str(tk->name);
+        std::string file = tk->name;
         std::replace(file.begin(), file.end(), ' ', '_');
         t.add("FileName").str(file + ".tak");
-        t.add("LocalTime").i64(spanStart).i64(spanStop);
-        t.add("ReferenceTime").i64(spanStart).i64(spanStop);
+        t.add("LocalTime").i64(ktime(tk->start)).i64(ktime(tk->end));
+        t.add("ReferenceTime").i64(ktime(tk->start)).i64(ktime(tk->end));
     }
     return bin::encodeFile(root);
 }

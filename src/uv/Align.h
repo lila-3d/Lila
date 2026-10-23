@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "uv/Chart.h"
 
 #include <span>
@@ -13,7 +15,7 @@ namespace lila::uv
  * re-solved around it (LSCM held by the chains and pins, refined by SLIM when it stays fold-free).
  * edgeSelected is per mesh edge. Returns how many chains were straightened.
  */
-size_t straightenEdges(Chart& chart, const geo::Mesh& mesh, std::span<const uint8_t> edgeSelected, int iterations = 12);
+LILA_SCENE_API size_t straightenEdges(Chart& chart, const geo::Mesh& mesh, std::span<const uint8_t> edgeSelected, int iterations = 12);
 
 enum class AlignAxis : uint8_t
 {
@@ -26,5 +28,5 @@ enum class AlignAxis : uint8_t
  * Rotates the chart about its uv centroid so the overall direction of its selected edges lies along an
  * axis. False (chart untouched) when none of its edges are selected.
  */
-bool alignToEdges(Chart& chart, const geo::Mesh& mesh, std::span<const uint8_t> edgeSelected, AlignAxis axis = AlignAxis::Nearest);
+LILA_SCENE_API bool alignToEdges(Chart& chart, const geo::Mesh& mesh, std::span<const uint8_t> edgeSelected, AlignAxis axis = AlignAxis::Nearest);
 } // namespace lila::uv

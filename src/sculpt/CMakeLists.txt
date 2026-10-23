@@ -1,6 +1,6 @@
 find_package(Eigen3 CONFIG REQUIRED)
 
-add_library(lila_sculpt STATIC
+lila_module(lila_sculpt Scene
     Reproject.cpp
     Reproject.h
     Sculpt.cpp
@@ -11,5 +11,5 @@ if(MSVC)
     target_compile_options(lila_sculpt PRIVATE /wd4127 /wd4244)
 endif()
 
-add_library(lila_sculpt_cmds STATIC SculptCommands.cpp SculptSession.h)
+lila_module(lila_sculpt_cmds Scene SculptCommands.cpp SculptSession.h)
 target_link_libraries(lila_sculpt_cmds PUBLIC lila_sculpt lila_scene PRIVATE lila_retopo)

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "ui/editor/EditorTypes.h"
 
 #include <QFrame>
@@ -13,7 +15,7 @@ namespace lila::ui
  * The completion list with a documentation pane beside it. It never takes focus: the editor keeps typing and
  * forwards navigation keys here.
  */
-class CompletionPopup : public QFrame
+class LILA_UI_API CompletionPopup : public QFrame
 {
     Q_OBJECT
 

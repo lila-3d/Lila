@@ -13,12 +13,6 @@ namespace lila
 {
 namespace
 {
-std::map<std::string, CommandDef, std::less<>>& registry()
-{
-    static std::map<std::string, CommandDef, std::less<>> r;
-    return r;
-}
-
 std::function<std::vector<std::string>()>& selectionProvider()
 {
     static std::function<std::vector<std::string>()> fn;
@@ -142,30 +136,35 @@ std::vector<std::string> Args::objects() const
 
 namespace cmds
 {
+Registry<CommandDef>& registry()
+{
+    static Registry<CommandDef> r;
+    return r;
+}
+
 void registerCommand(CommandDef def)
 {
+    if (const std::string* attributed = owners::attributedOwner())
+        def.owner = *attributed;
     std::string name = def.name;
-    registry()[name] = std::move(def);
+    std::string owner = def.owner;
+    registry().put(std::move(name), std::move(def), std::move(owner));
 }
 
 void unregisterCommand(std::string_view name)
 {
-    if (auto it = registry().find(name); it != registry().end())
-        registry().erase(it);
+    registry().remove(name);
 }
 
 const CommandDef* find(std::string_view name)
 {
-    auto it = registry().find(name);
-    return it == registry().end() ? nullptr : &it->second;
+    return registry().find(name);
 }
 
 std::vector<const CommandDef*> all()
 {
-    std::vector<const CommandDef*> out;
-    for (auto& [n, d] : registry())
-        out.push_back(&d);
-    return out;
+    std::vector<CommandDef*> defs = registry().all();
+    return {defs.begin(), defs.end()};
 }
 
 json execute(std::string_view name, const json& call, CallSource source)
@@ -215,10 +214,10 @@ json execute(std::string_view name, const json& call, CallSource source)
 
 bool setAdjustable(std::string_view name, bool on)
 {
-    auto it = registry().find(name);
-    if (it == registry().end())
+    CommandDef* def = registry().find(name);
+    if (!def)
         return false;
-    it->second.adjustable = on;
+    def->adjustable = on;
     return true;
 }
 

@@ -1,12 +1,14 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QLayout>
 #include <QList>
 
 namespace lila::ui
 {
 /** Lays items left to right and wraps onto new lines, so a row of tool buttons never forces its panel wider. */
-class FlowLayout : public QLayout
+class LILA_UI_API FlowLayout : public QLayout
 {
 public:
     explicit FlowLayout(int spacing = 4);

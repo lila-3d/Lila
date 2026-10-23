@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/Node.h"
 #include "scene/Plug.h"
 #include "uv/LiveSolver.h"
@@ -17,11 +19,11 @@
 namespace lila::uv::live
 {
 /** Solver settings the UI shares across sessions (balance slider, boundary smoothing...). */
-LiveOptions& options();
+LILA_SCENE_API LiveOptions& options();
 /** Pushes options() to every session's islands. */
-void optionsChanged();
+LILA_SCENE_API void optionsChanged();
 
-class Session
+class LILA_SCENE_API Session
 {
 public:
     Session(scene::NodeId node, std::string uvSet);
@@ -94,21 +96,21 @@ private:
 };
 
 /** The session of a mesh node for the current uv set, made on demand (nullptr when create is false and none exists). */
-Session* get(scene::NodeId node, bool create = true);
+LILA_SCENE_API Session* get(scene::NodeId node, bool create = true);
 /** The session if it exists and still matches the scene. */
-Session* find(scene::NodeId node);
+LILA_SCENE_API Session* find(scene::NodeId node);
 /** Ticks every session; true when any of them got a new frame. */
-bool tickAll();
-bool anyOpen();
-void commitAll();
+LILA_SCENE_API bool tickAll();
+LILA_SCENE_API bool anyOpen();
+LILA_SCENE_API void commitAll();
 /** Drops every session (new scene). */
-void clear();
+LILA_SCENE_API void clear();
 
 /** Hands a finished mesh to uvLiveCommit, which sets it as the node's inMesh. Returns the token to pass. */
-uint64_t stage(scene::NodeId node, scene::MeshPtr mesh);
+LILA_SCENE_API uint64_t stage(scene::NodeId node, scene::MeshPtr mesh);
 /** For uvLiveCommit: the staged mesh and its node, removed from the stage; null when the token is unknown. */
-scene::MeshPtr takeStaged(uint64_t token, scene::NodeId& node);
+LILA_SCENE_API scene::MeshPtr takeStaged(uint64_t token, scene::NodeId& node);
 
 /** Commits open transactions before any other command that edits the scene (or undo/redo) runs. Installed once. */
-void installAutoCommit();
+LILA_SCENE_API void installAutoCommit();
 } // namespace lila::uv::live

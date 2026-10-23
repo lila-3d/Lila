@@ -2,6 +2,7 @@
 
 #include "cmds/Command.h"
 #include "cmds/CommandOptions.h"
+#include "core/ExtensionContext.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "python/Python.h"
@@ -11,28 +12,32 @@
 #include "ui/Hotkeys.h"
 #include "ui/ViewportDisplay.h"
 
+#include <algorithm>
 #include <map>
+#include <string_view>
 
 namespace lila::ui::actions
 {
 namespace
 {
-std::map<std::string, Action>& registry()
-{
-    static std::map<std::string, Action> r;
-    return r;
-}
-
 std::vector<json>& recentList()
 {
     static std::vector<json> r;
     return r;
 }
 
+json& lastRepeatable()
+{
+    static json r;
+    return r;
+}
+
 void remember(const json& target)
 {
+    if (repeatable(target))
+        lastRepeatable() = target;
     // Opening the hotbox is how Recent Commands is reached, so it isn't one of them.
-    if (target.is_string() && target.get<std::string>().rfind("hotbox.", 0) == 0)
+    if (target.is_string() && (target.get<std::string>().rfind("hotbox.", 0) == 0 || target.get<std::string>() == "edit.repeatLast"))
         return;
     std::vector<json>& r = recentList();
     std::erase(r, target);
@@ -86,24 +91,50 @@ json runCommandResult(const char* name, const json& call)
 }
 } // namespace
 
-void add(Action a)
+Registry<Action>& registry()
+{
+    static Registry<Action> r;
+    return r;
+}
+
+void add(Action a, std::string owner)
 {
     std::string id = a.id;
     if (a.doc.empty())
         log::warn("action {} has no doc", id);
     if (!a.command.empty() && !a.run)
         a.run = [command = a.command, call = a.call.is_object() ? a.call : json::object()] { runWithOptions(command, call); };
-    registry()[id] = std::move(a);
+    registry().put(std::move(id), std::move(a), std::move(owner));
+}
+
+uint64_t add(ext::Context& ctx, Action a)
+{
+    if (const std::string* owner = registry().ownerOf(a.id); owner && *owner != ctx.owner())
+    {
+        ctx.log(LogLevel::Error, "action '" + a.id + "' already belongs to " + *owner);
+        return 0;
+    }
+    std::string id = a.id;
+    add(std::move(a), ctx.owner());
+    return ctx.track("action:" + id, [id, own = ctx.owner()] {
+        if (const std::string* o = registry().ownerOf(id); o && *o == own)
+            registry().remove(id);
+    });
+}
+
+bool remove(const std::string& id)
+{
+    return registry().remove(id);
 }
 
 void bindCommand(const std::string& id, std::string command, json call)
 {
-    auto it = registry().find(id);
-    if (it == registry().end())
+    Action* a = registry().find(id);
+    if (!a)
         return;
-    it->second.command = std::move(command);
-    it->second.call = call.is_object() ? std::move(call) : json::object();
-    it->second.run = [command = it->second.command, c = it->second.call] { runWithOptions(command, c); };
+    a->command = std::move(command);
+    a->call = call.is_object() ? std::move(call) : json::object();
+    a->run = [command = a->command, c = a->call] { runWithOptions(command, c); };
 }
 
 void runWithOptions(const std::string& command, const json& call)
@@ -130,14 +161,13 @@ std::string tooltip(const std::string& id)
 
 const Action* find(const std::string& id)
 {
-    auto it = registry().find(id);
-    return it == registry().end() ? nullptr : &it->second;
+    return registry().find(id);
 }
 
 void setEnabledWhen(const std::string& id, std::function<bool()> enabled)
 {
-    if (auto it = registry().find(id); it != registry().end())
-        it->second.enabled = std::move(enabled);
+    if (Action* a = registry().find(id))
+        a->enabled = std::move(enabled);
 }
 
 bool isEnabled(const json& target)
@@ -156,8 +186,8 @@ bool hasSelection()
 std::vector<const Action*> all()
 {
     std::vector<const Action*> out;
-    for (auto& [id, a] : registry())
-        out.push_back(&a);
+    for (Action* a : registry().all())
+        out.push_back(a);
     return out;
 }
 
@@ -173,7 +203,10 @@ bool run(const json& target)
         }
         if (a->enabled && !a->enabled())
             return false;
-        a->run();
+        // A copy, since running it may remove the action (an extension unloading itself).
+        std::function<void()> fn = a->run;
+        if (fn)
+            fn();
         remember(target);
         return true;
     }
@@ -194,8 +227,54 @@ bool run(const json& target)
         }
     }
     if (target.contains("python"))
-        return python::run(target["python"].get<std::string>(), "<hotkey>").ok;
+    {
+        bool ok = python::run(target["python"].get<std::string>(), "<hotkey>").ok;
+        if (ok)
+            remember(target);
+        return ok;
+    }
     return false;
+}
+
+bool repeatable(const json& target)
+{
+    auto startsWith = [](const std::string& s, std::string_view prefix) { return s.rfind(prefix, 0) == 0; };
+    if (target.is_string())
+    {
+        const std::string& id = target.get_ref<const std::string&>();
+        static const std::vector<std::string_view> prefixes = {
+            "select.", "viewport.", "hotbox.", "window.", "tool.", "snap.", "softSelect.", "shelf.", "help.", "file.", "edit.flush",
+            "anim.nextFrame", "anim.prevFrame", "anim.nextKey", "anim.prevKey", "anim.play", "anim.stop", "adjustLastOp.",
+            "outliner.revealSelected", "graphEditor.frame", "nodeEditor.frame"};
+        static const std::vector<std::string_view> ids = {"edit.undo", "edit.redo", "edit.repeatLast", "edit.selectAll", "edit.deselect"};
+        return std::ranges::none_of(prefixes, [&](std::string_view p) { return startsWith(id, p); }) &&
+               std::ranges::find(ids, id) == ids.end();
+    }
+    if (!target.is_object())
+        return false;
+    if (target.contains("command") && target["command"].is_string())
+    {
+        const std::string& name = target["command"].get_ref<const std::string&>();
+        return !startsWith(name, "select") && !startsWith(name, "pickWalk") && name != "undo" && name != "redo" && name != "lookThru" &&
+               !startsWith(name, "flushUndo");
+    }
+    return target.contains("python");
+}
+
+std::optional<json> repeatTarget()
+{
+    if (lastRepeatable().is_null())
+        return std::nullopt;
+    return lastRepeatable();
+}
+
+std::string displayLabel(const std::string& id)
+{
+    if (id == "edit.repeatLast")
+        if (auto t = repeatTarget())
+            return "Repeat " + labelFor(*t);
+    const Action* a = find(id);
+    return a ? a->label : id;
 }
 
 std::vector<json> recent()
@@ -254,6 +333,14 @@ void registerBuiltins()
     };
     cmd("edit.undo", "Undo", "Edit", "undo", json::object(), "Steps back through the undo history.");
     cmd("edit.redo", "Redo", "Edit", "redo", json::object(), "Reapplies the last change you undid.");
+    add({.id = "edit.repeatLast", .label = "Repeat Last", .category = "Edit",
+         .run = [] {
+             if (auto t = repeatTarget())
+                 run(*t);
+         },
+         .enabled = [] { return repeatTarget().has_value(); },
+         .doc = "Runs the last command, menu item or shelf button again. Selection, views, tools, windows and undo are not repeated.",
+         .python = "lila.ui.run_action(\"edit.repeatLast\")"});
     cmd("edit.flushUndo", "Flush Undo", "Edit", "flushUndo", json::object(), "Clears the undo history so undo cannot go back past this point.");
     cmd("edit.flushRedo", "Flush Redo", "Edit", "flushUndo", {{"which", "future"}}, "Clears the redo steps, keeping the undo history.");
     cmd("edit.flushAll", "Flush All Undo", "Edit", "flushUndo", {{"which", "all"}}, "Clears both the undo and the redo history.");
@@ -447,7 +534,7 @@ void registerBuiltins()
     togglePref("viewport.defaultMaterial", "Use Default Material", vd::kDefaultMaterial, false, "Shades every mesh with the plain default material.");
     togglePref("viewport.toggleEnvBackground", "Environment Background", "/viewport/env/background", true, "Shows the HDRI behind the scene.");
     togglePref("viewport.toggleToolbar", "Show Toolbar", vd::kToolbar, true, "The icon row at the top of each viewport panel.");
-    togglePref("viewport.togglePreselectObjects", "Highlight Objects Under Cursor", "/viewport/preselect/objects", true,
+    togglePref("viewport.togglePreselectObjects", "Highlight Objects Under Cursor", "/viewport/preselect/objects", false,
                "In object mode, the object under the cursor highlights before it is clicked.");
     for (int n : {2, 4, 8})
     {
@@ -502,6 +589,9 @@ void registerBuiltins()
     }
     togglePref("viewport.grayscaleWeights", "Grayscale Weight Display", vd::kGrayscaleWeights, false,
                "Skin weights and the soft select falloff draw as a gray ramp instead of colours.");
+    togglePref("viewport.monotone", "Monotone", vd::kMonotone, false,
+               "No colour anywhere: the view axes, manipulator axes, time slider keys and graph editor curves all draw in grays. "
+               "Off, each follows its own colour preference.");
     {
         namespace sm = scene::selectionMask;
         for (auto [kind, label, doc] : {std::tuple{sm::Kind::Mesh, "Select Polygon Objects", "Meshes can be picked in object mode."},

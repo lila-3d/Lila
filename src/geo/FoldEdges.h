@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "geo/Mesh.h"
 
 #include <vector>
@@ -34,18 +36,18 @@ struct FoldEdgeOptions
 };
 
 /** Angle between the normals of the edge's two faces, degrees; negative unless the edge has exactly two faces. */
-double edgeFoldAngle(const Mesh& mesh, Index e);
+LILA_SCENE_API double edgeFoldAngle(const Mesh& mesh, Index e);
 /** True for a convex edge (the faces fold away from their normals). */
-bool edgeIsConvex(const Mesh& mesh, Index e);
+LILA_SCENE_API bool edgeIsConvex(const Mesh& mesh, Index e);
 /** The face's width across from edge e, as the thin test measures it. */
-double faceWidthAt(const Mesh& mesh, Index f, Index e);
+LILA_SCENE_API double faceWidthAt(const Mesh& mesh, Index f, Index e);
 
 /** Fold edges by the rule. Sorted. */
-std::vector<Index> foldEdges(const Mesh& mesh, const FoldEdgeOptions& opts = {});
+LILA_SCENE_API std::vector<Index> foldEdges(const Mesh& mesh, const FoldEdgeOptions& opts = {});
 /** Blender's bevel limit "Angle": two-face edges whose normals differ by more than the angle. Sorted. */
-std::vector<Index> angleEdges(const Mesh& mesh, double degrees);
+LILA_SCENE_API std::vector<Index> angleEdges(const Mesh& mesh, double degrees);
 /** Edges whose float "bevelWeight" is above the threshold. Sorted. */
-std::vector<Index> weightedEdges(const Mesh& mesh, double threshold = 0.0);
+LILA_SCENE_API std::vector<Index> weightedEdges(const Mesh& mesh, double threshold = 0.0);
 
 /** Remembers one edge well enough to find it again in a changed mesh. */
 struct EdgeRef
@@ -57,7 +59,7 @@ struct EdgeRef
     glm::dvec3 b{0.0};
 };
 
-EdgeRef edgeRef(const Mesh& mesh, Index e);
+LILA_SCENE_API EdgeRef edgeRef(const Mesh& mesh, Index e);
 
 enum class EdgeMatch : uint8_t
 {
@@ -72,7 +74,7 @@ enum class EdgeMatch : uint8_t
  * collinear overlapping edge nearest the old midpoint. Spatial grids are built on first use, so lookups stay
  * near constant time on big meshes.
  */
-class EdgeMatcher
+class LILA_SCENE_API EdgeMatcher
 {
 public:
     explicit EdgeMatcher(const Mesh& mesh);

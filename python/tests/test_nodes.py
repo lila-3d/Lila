@@ -44,3 +44,15 @@ assert cmds.displayLayer("Props")["visibility"] is False
 tri.display_layer = None
 assert tri.display_layer is None
 print("test_nodes display layers: ok")
+
+quick = lila.nodes.object_set(tri, "Quad.vtx[0:1]", name="Pick", quick_select=True)
+assert [s.name for s in lila.nodes.object_sets(quick_select=True)] == ["Pick"]
+assert quick.members == ["Quad", "Quad.vtx[0:1]"] and quick.member_nodes == [tri]
+assert tri.sets == [quick]
+quick.remove_members("Quad.vtx[1]")
+assert quick.members == ["Quad", "Quad.vtx[0]"]
+cmds.select(clear=True)
+quick.select_members()
+assert lila.selected() == [tri]
+cmds.selectMode("object")
+print("test_nodes object sets: ok")

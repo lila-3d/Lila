@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "ui/editor/VimEngine.h"
 
 #include <QObject>
@@ -15,7 +17,7 @@ class CodeEditor;
  * Vim keybindings on a CodeEditor: feeds its keys to a vim::Engine, draws a block cursor outside insert mode and
  * keeps each vim change, insert-mode typing included, as one undo step. Deleting it restores the plain editor.
  */
-class VimBinding : public QObject, private vim::Buffer
+class LILA_UI_API VimBinding : public QObject, private vim::Buffer
 {
     Q_OBJECT
 

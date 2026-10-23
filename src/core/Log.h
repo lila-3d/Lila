@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <cstdint>
 #include <format>
 #include <functional>
@@ -31,16 +33,16 @@ namespace log
 {
 using Sink = std::function<void(const LogEntry&)>;
 
-void write(LogLevel level, std::string_view text);
+LILA_FOUNDATION_API void write(LogLevel level, std::string_view text);
 
 /** Sinks are called on the writing thread. Returns an id for removeSink. */
-int addSink(Sink sink);
-void removeSink(int id);
+LILA_FOUNDATION_API int addSink(Sink sink);
+LILA_FOUNDATION_API void removeSink(int id);
 
 /** Entries with seq > since, oldest first. */
-std::vector<LogEntry> since(uint64_t since, size_t maxCount = 1000);
+LILA_FOUNDATION_API std::vector<LogEntry> since(uint64_t since, size_t maxCount = 1000);
 
-const char* levelName(LogLevel level);
+LILA_FOUNDATION_API const char* levelName(LogLevel level);
 
 template <class... Args> void debug(std::format_string<Args...> f, Args&&... a) { write(LogLevel::Debug, std::format(f, std::forward<Args>(a)...)); }
 template <class... Args> void info(std::format_string<Args...> f, Args&&... a) { write(LogLevel::Info, std::format(f, std::forward<Args>(a)...)); }

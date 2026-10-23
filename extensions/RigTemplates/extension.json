@@ -1,0 +1,14 @@
+{
+    "id": "RigTemplates",
+    "name": "Rig Templates",
+    "version": "1.0.0",
+    "vendor": "Lila",
+    "description": "Skeleton templates as markers: place them on a mesh, build joints with the template's names and orientations, orient existing skeletons to a template, plus each template's poses, picker and naming aliases. Ships UE5 Manny.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "RigTemplates.dll",
+        "linux": "RigTemplates.so",
+        "macos": "RigTemplates.dylib"
+    },
+    "enabledByDefault": true
+}

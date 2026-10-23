@@ -1,11 +1,13 @@
 #pragma once
 
+#include "core/Export.h"
+
 class QApplication;
 class QFont;
 
 namespace lila::ui
 {
-void applyTheme(QApplication& app);
+LILA_UI_API void applyTheme(QApplication& app);
 /** Code/output font from prefs (default JetBrains Mono). */
-QFont monoFont();
+LILA_UI_API QFont monoFont();
 } // namespace lila::ui

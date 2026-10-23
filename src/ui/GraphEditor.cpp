@@ -3,10 +3,13 @@
 #include "cmds/Command.h"
 #include "cmds/Undo.h"
 #include "core/Log.h"
+#include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "scene/Anim.h"
 #include "scene/Graph.h"
+#include "scene/RotationCurve.h"
 #include "ui/Animation.h"
+#include "ui/ViewportDisplay.h"
 
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -24,7 +27,9 @@
 #include <QWheelEvent>
 
 #include <cmath>
+#include <functional>
 #include <map>
+#include <set>
 
 namespace lila::ui
 {
@@ -109,8 +114,31 @@ struct Channel
     QString label;
     int level = 180; // gray
     Qt::PenStyle dash = Qt::SolidLine;
+    int axis = -1; // 0..2 for an X, Y or Z component, which can draw in its axis colour
     bool shown = true;
 };
+
+bool axisColors() { return viewportDisplay::accentColors(viewportDisplay::kGraphAxisColors); }
+
+/** The channel's gray at this level, or its axis colour brightened or dimmed to match. */
+QColor channelColor(const Channel& ch, int level)
+{
+    if (ch.axis < 0 || !axisColors())
+        return gray(level);
+    glm::vec3 c = viewportDisplay::axisColor(ch.axis);
+    float k = float(level) / 210.0f;
+    c = k <= 1.0f ? c * k : glm::mix(c, glm::vec3(1.0f), std::min(1.0f, (k - 1.0f) * 1.5f));
+    return QColor::fromRgbF(c.r, c.g, c.b);
+}
+
+/** 0..2 when the plug is the X, Y or Z child of a three-component attribute, else -1. */
+int axisOf(const scene::AttrDef& a, int component)
+{
+    if (component < 0 || a.childNames.size() != 3 || a.childNames[size_t(component)].empty())
+        return -1;
+    char last = char(std::toupper(static_cast<unsigned char>(a.childNames[size_t(component)].back())));
+    return last == 'X' + component ? component : -1;
+}
 
 struct KeySel
 {
@@ -118,12 +146,58 @@ struct KeySel
     double time = 0.0;
 };
 
-QIcon swatch(int level, Qt::PenStyle dash)
+/**
+ * A rotation curve shows as several channels, each with an id of its own: the curve's id with the channel's slot in
+ * the top byte. Slots 0..2 are the Euler X, Y, Z it outputs, 3..6 the quaternion W, X, Y, Z.
+ */
+constexpr int kSlotShift = 56;
+NodeId slotId(NodeId curve, int slot) { return curve | (NodeId(slot + 1) << kSlotShift); }
+NodeId realCurve(NodeId id) { return id & ((NodeId(1) << kSlotShift) - 1); }
+/** -1 for a scalar curve's channel. */
+int slotOf(NodeId id) { return int(id >> kSlotShift) - 1; }
+
+double quatComponent(const glm::dquat& q, int c) { return c == 0 ? q.w : c == 1 ? q.x : c == 2 ? q.y : q.z; }
+
+/** A rotation channel as a scalar curve: its keys' values, with fixed tangents matching the slopes it really has. */
+anim::Curve derivedChannel(const anim::RotationCurve& rc, int slot)
+{
+    anim::Curve out;
+    glm::dquat ref = rc.keys.empty() ? glm::dquat(1.0, 0.0, 0.0, 0.0) : rc.keys.front().q;
+    auto quatAt = [&](double t) {
+        glm::dquat q = rc.evaluateQuat(t);
+        return quatComponent(glm::dot(q, ref) < 0.0 ? -q : q, slot - 3);
+    };
+    for (size_t i = 0; i < rc.keys.size(); ++i)
+    {
+        const anim::RotKey& k = rc.keys[i];
+        anim::Key d{.time = k.time, .in = anim::Tangent::Fixed, .out = anim::Tangent::Fixed};
+        double inSlope, outSlope;
+        if (slot < 3)
+        {
+            d.value = k.euler[slot];
+            inSlope = rc.eulerSlope(i, slot, false);
+            outSlope = rc.eulerSlope(i, slot, true);
+        }
+        else
+        {
+            constexpr double h = 1e-4;
+            d.value = quatAt(k.time);
+            inSlope = (d.value - quatAt(k.time - h)) / h;
+            outSlope = (quatAt(k.time + h) - d.value) / h;
+        }
+        d.inAngle = std::atan(inSlope) * 180.0 / 3.14159265358979323846;
+        d.outAngle = std::atan(outSlope) * 180.0 / 3.14159265358979323846;
+        out.keys.push_back(d);
+    }
+    return out;
+}
+
+QIcon swatch(const Channel& ch)
 {
     QPixmap pm(28, 12);
     pm.fill(Qt::transparent);
     QPainter p(&pm);
-    p.setPen(QPen(gray(level), 2, dash, Qt::FlatCap));
+    p.setPen(QPen(channelColor(ch, ch.level), 2, ch.dash, Qt::FlatCap));
     p.drawLine(2, 6, 26, 6);
     return QIcon(pm);
 }
@@ -138,10 +212,58 @@ public:
         setMinimumSize(200, 120);
         setFocusPolicy(Qt::ClickFocus);
         setContextMenuPolicy(Qt::PreventContextMenu);
+        mAxisColors = axisColors();
+        mPrefListener = PrefStore::get().onChanged([this](const std::string& file) {
+            if (file != "general" || axisColors() == mAxisColors)
+                return;
+            mAxisColors = !mAxisColors;
+            mEditor->scheduleRebuild();
+        });
     }
+    ~CurveView() override { PrefStore::get().removeOnChanged(mPrefListener); }
 
     std::vector<Channel> channels;
+    /** Keyed by channel id; a rotation channel's holds its derived keys. */
     std::map<NodeId, anim::Curve> curves;
+    /** Rotation curves by their own node id, loop applied. */
+    std::map<NodeId, anim::RotationCurve> rotations;
+    /** Channels whose curve has a loop key. */
+    std::set<NodeId> loopCurves;
+    /** Rotation curves show as W, X, Y, Z (read only) instead of Euler X, Y, Z. */
+    bool quatView = false;
+
+    /** What commands call a channel: its curve node, or for a rotation channel its plug. Empty when read only. */
+    std::string commandTarget(NodeId id) const
+    {
+        Graph& g = Graph::current();
+        int slot = slotOf(id);
+        if (slot < 0)
+        {
+            scene::Node* n = g.node(id);
+            return n ? n->name() : std::string();
+        }
+        if (slot > 2 || !g.node(realCurve(id)))
+            return {};
+        const Channel* ch = channelOf(id);
+        return ch ? g.plugName(ch->plug) : std::string();
+    }
+
+    /** The channel's value over time as drawn: rotation channels evaluate their rotation curve, with any drag applied. */
+    std::function<double(double)> sampler(NodeId id, const anim::Curve& c) const
+    {
+        int slot = slotOf(id);
+        auto it = rotations.find(realCurve(id));
+        if (slot < 0 || it == rotations.end())
+            return [&c](double t) { return c.evaluate(t); };
+        anim::RotationCurve rc = previewRotation(id, it->second);
+        if (slot < 3)
+            return [rc, slot](double t) { return rc.evaluate(t)[slot]; };
+        glm::dquat ref = rc.keys.empty() ? glm::dquat(1.0, 0.0, 0.0, 0.0) : rc.keys.front().q;
+        return [rc, slot, ref](double t) {
+            glm::dquat q = rc.evaluateQuat(t);
+            return quatComponent(glm::dot(q, ref) < 0.0 ? -q : q, slot - 3);
+        };
+    }
     std::vector<KeySel> sel;
     NodeId activeCurve = scene::kNoNode;
 
@@ -210,11 +332,12 @@ public:
                 if (!ch.shown || it == curves.end() || it->second.keys.empty())
                     continue;
                 const anim::Curve& c = it->second;
+                auto eval = sampler(ch.curve, c);
                 double a = c.keys.front().time, b = c.keys.back().time;
                 for (int s = 0; s <= 64; ++s)
                 {
                     double t = a + (b - a) * s / 64.0;
-                    grow(t, c.evaluate(t));
+                    grow(t, eval(t));
                 }
                 for (const anim::Key& k : c.keys)
                     grow(k.time, k.value);
@@ -309,7 +432,7 @@ protected:
             {
                 if (!ch.shown || !shownCurves.contains(ch.curve) || isActive(ch.curve) != (pass == 1))
                     continue;
-                drawCurve(p, shownCurves[ch.curve], ch, pass == 1);
+                drawCurve(p, shownCurves[ch.curve], ch, pass == 1, sampler(ch.curve, shownCurves[ch.curve]));
             }
 
         // Keys, then the tangent handles of selected ones.
@@ -333,9 +456,15 @@ protected:
                     p.drawEllipse(in, 3, 3);
                     p.drawEllipse(out, 3, 3);
                 }
-                p.setPen(QPen(selected ? gray(255) : gray(isActive(ch.curve) ? 230 : ch.level), 1));
+                p.setPen(QPen(selected ? gray(255) : channelColor(ch, isActive(ch.curve) ? 230 : ch.level), 1));
                 p.setBrush(selected ? gray(255) : gray(22));
                 p.drawRect(QRectF(pt.x() - 3, pt.y() - 3, 6, 6));
+                // A loop key is ringed: it mirrors the first key.
+                if (i + 1 == c.keys.size() && i > 0 && loopCurves.contains(ch.curve))
+                {
+                    p.setBrush(Qt::NoBrush);
+                    p.drawEllipse(pt, 6.5, 6.5);
+                }
             }
         }
 
@@ -558,6 +687,24 @@ private:
         return isSelected(curve, back) ? back : t + 1e9;
     }
 
+    /** A rotation channel's curve with the key drag in progress applied to its axis. */
+    anim::RotationCurve previewRotation(NodeId id, anim::RotationCurve rc) const
+    {
+        int slot = slotOf(id);
+        if (mDrag != Drag::Move || !mMoved || slot < 0 || slot > 2 || (mMoveDt == 0.0 && mMoveDv == 0.0))
+            return rc;
+        for (size_t i = 0; i < rc.keys.size(); ++i)
+            if (isSelected(id, rc.keys[i].time))
+            {
+                glm::dvec3 e = rc.keys[i].euler;
+                e[slot] += mMoveDv;
+                rc.setEuler(i, e);
+                rc.keys[i].time += mMoveDt;
+            }
+        rc.sort();
+        return rc;
+    }
+
     /** The curve as it would be with the drag in progress applied. */
     anim::Curve preview(NodeId id) const
     {
@@ -596,7 +743,7 @@ private:
         return c;
     }
 
-    void drawCurve(QPainter& p, const anim::Curve& c, const Channel& ch, bool active)
+    void drawCurve(QPainter& p, const anim::Curve& c, const Channel& ch, bool active, const std::function<double(double)>& eval)
     {
         if (c.keys.empty())
             return;
@@ -622,7 +769,7 @@ private:
             QPainterPath out;
             for (double x : xs)
             {
-                QPointF pt(x, yOf(c.evaluate(timeAt(x))));
+                QPointF pt(x, yOf(eval(timeAt(x))));
                 if (out.elementCount() == 0)
                     out.moveTo(pt);
                 else
@@ -631,14 +778,14 @@ private:
             return out;
         };
         p.setBrush(Qt::NoBrush);
-        p.setPen(QPen(gray(int(level * 0.5)), 1, Qt::DotLine));
+        p.setPen(QPen(channelColor(ch, int(level * 0.5)), 1, Qt::DotLine));
         if (xFirst > 0.0)
             p.drawPath(path(-2.0, std::min(xFirst, w + 2.0)));
         if (xLast < w)
             p.drawPath(path(std::max(xLast, -2.0), w + 2.0));
         if (xLast >= -2.0 && xFirst <= w + 2.0)
         {
-            p.setPen(QPen(gray(level), active ? 2.0 : 1.4, ch.dash));
+            p.setPen(QPen(channelColor(ch, level), active ? 2.0 : 1.4, ch.dash));
             p.drawPath(path(std::max(xFirst, -2.0), std::min(xLast, w + 2.0)));
         }
     }
@@ -693,7 +840,7 @@ private:
     {
         double t = timeAt(pos.x());
         for (const Channel& ch : channels)
-            if (ch.shown && curves.contains(ch.curve) && std::abs(yOf(curves.at(ch.curve).evaluate(t)) - pos.y()) < 5.0)
+            if (ch.shown && curves.contains(ch.curve) && std::abs(yOf(sampler(ch.curve, curves.at(ch.curve))(t)) - pos.y()) < 5.0)
                 return ch.curve;
         return scene::kNoNode;
     }
@@ -774,17 +921,41 @@ private:
             byCurve[k.curve].push_back(k.time);
         {
             UndoChunk chunk("Move Keys");
+            // Rotation keys move in time whole: each axis takes its value change, then each curve moves once.
+            std::map<NodeId, std::set<double>> rotationTimes;
             for (auto& [curve, times] : byCurve)
             {
                 // Move the leading keys first so none lands on a selected key that hasn't moved yet.
                 std::sort(times.begin(), times.end());
                 if (dt > 0.0)
                     std::reverse(times.begin(), times.end());
-                std::string name = Graph::current().node(curve)->name();
+                std::string name = commandTarget(curve);
+                if (name.empty())
+                    continue;
+                bool rotation = slotOf(curve) >= 0;
                 for (double t : times)
+                {
+                    if (rotation)
+                    {
+                        rotationTimes[realCurve(curve)].insert(t);
+                        if (dv != 0.0)
+                            runQuiet("keyframe", {{"args", {name}}, {"time", t}, {"valueChange", dv}, {"relative", true}});
+                        continue;
+                    }
                     runQuiet("keyframe",
                              {{"args", {name}}, {"time", t}, {"timeChange", dt}, {"valueChange", dv}, {"relative", true}});
+                }
             }
+            if (dt != 0.0)
+                for (auto& [curve, set] : rotationTimes)
+                {
+                    std::vector<double> times(set.begin(), set.end());
+                    if (dt > 0.0)
+                        std::reverse(times.begin(), times.end());
+                    if (scene::Node* n = Graph::current().node(curve))
+                        for (double t : times)
+                            runQuiet("keyframe", {{"args", {n->name()}}, {"time", t}, {"timeChange", dt}, {"relative", true}});
+                }
         }
         log::write(LogLevel::Echo, "# moved " + std::to_string(sel.size()) + " keys\n");
         for (KeySel& k : sel)
@@ -796,13 +967,12 @@ private:
     {
         if (std::isnan(mTangentAngle) || !mMoved)
             return;
-        Graph& g = Graph::current();
-        if (!g.node(mTangent.curve))
+        std::string name = commandTarget(mTangent.curve);
+        if (name.empty())
             return;
         try
         {
-            cmds::execute("keyTangent",
-                          {{"args", {g.node(mTangent.curve)->name()}}, {"time", mTangent.time}, {"inAngle", mTangentAngle}, {"outAngle", mTangentAngle}},
+            cmds::execute("keyTangent", {{"args", {name}}, {"time", mTangent.time}, {"inAngle", mTangentAngle}, {"outAngle", mTangentAngle}},
                           CallSource::UI);
         }
         catch (const CommandError& e)
@@ -831,6 +1001,8 @@ private:
                 inf->addAction(QString(m) == "cycleRelative" ? QString("Cycle with Offset") : niceName(m),
                                [this, pre, m] { mEditor->applyInfinity(pre, m); });
         }
+        menu.addAction("Loop Key", [this] { loopKeys(true); });
+        menu.addAction("Clear Loop Key", [this] { loopKeys(false); });
         menu.addSeparator();
         menu.addAction("Delete Keys", [this] { mEditor->deleteSelectedKeys(); })->setEnabled(!sel.empty());
         menu.addAction("Frame Selection", [this] { frame(true); });
@@ -838,12 +1010,37 @@ private:
         menu.exec(at);
     }
 
+public:
+    /** setLoopKey or clearLoopKey on the curves edits apply to. */
+    void loopKeys(bool on)
+    {
+        Graph& g = Graph::current();
+        json names = json::array();
+        std::set<NodeId> done;
+        for (NodeId c : targetCurves())
+            if (scene::Node* n = g.node(realCurve(c)); n && done.insert(n->id()).second)
+                names.push_back(n->name());
+        if (names.empty())
+            return;
+        try
+        {
+            cmds::execute(on ? "setLoopKey" : "clearLoopKey", {{"args", names}}, CallSource::UI);
+        }
+        catch (const CommandError& e)
+        {
+            log::error("{}", e.what());
+        }
+    }
+
+private:
     GraphEditor* mEditor;
     double mT0 = -0.2; // time at the left edge
     double mV0 = -5.0; // value at the bottom edge
     double mSx = 200.0; // pixels per second
     double mSy = 10.0; // pixels per unit
     bool mFramed = false;
+    bool mAxisColors = true;
+    int mPrefListener = 0;
 
     Drag mDrag = Drag::None;
     QPointF mPress;
@@ -894,6 +1091,25 @@ GraphEditor::GraphEditor(QWidget* parent) : QWidget(parent)
     }
     infinity->setMenu(infMenu);
     bar->addWidget(infinity);
+    auto* loop = new QToolButton(this);
+    loop->setText("Loop");
+    loop->setToolTip("Make the last key a loop key: it mirrors the first key and the curve cycles after it");
+    loop->setAutoRaise(true);
+    loop->setFocusPolicy(Qt::NoFocus);
+    connect(loop, &QToolButton::clicked, this, [this] { mView->loopKeys(true); });
+    bar->addWidget(loop);
+    auto* quat = new QToolButton(this);
+    quat->setText("Quaternion");
+    quat->setToolTip("Show rotation curves as quaternion W, X, Y, Z (read only) instead of Euler X, Y, Z");
+    quat->setCheckable(true);
+    quat->setAutoRaise(true);
+    quat->setFocusPolicy(Qt::NoFocus);
+    connect(quat, &QToolButton::toggled, this, [this](bool on) {
+        mView->quatView = on;
+        mView->sel.clear();
+        rebuild();
+    });
+    bar->addWidget(quat);
     bar->addStretch(1);
     bar->addWidget(new QLabel("Frame", this));
     mKeyTime = new QLineEdit(this);
@@ -930,7 +1146,7 @@ GraphEditor::GraphEditor(QWidget* parent) : QWidget(parent)
     mListener = Graph::current().addListener([this](scene::Change c, NodeId id) {
         if (c == scene::Change::Value)
         {
-            if (mView->curves.contains(id) && !mCurvesQueued)
+            if ((mView->curves.contains(id) || mView->rotations.contains(id)) && !mCurvesQueued)
             {
                 mCurvesQueued = true;
                 QTimer::singleShot(0, this, [this] {
@@ -1005,25 +1221,37 @@ void GraphEditor::rebuild()
         QFont f = top->font(0);
         f.setWeight(QFont::DemiBold);
         top->setFont(0, f);
-        for (const anim::AnimatedPlug& ap : plugs)
-        {
+        auto addChannel = [&](const anim::AnimatedPlug& ap, NodeId id, const QString& label, int axis) {
             Channel ch;
             ch.plug = ap.plug;
-            ch.curve = ap.curve;
+            ch.curve = id;
             ch.curveName = g.node(ap.curve)->name();
-            const scene::AttrDef& a = g.attr(ap.plug);
-            std::string attr = ap.plug.component >= 0 ? a.childNames[ap.plug.component] : a.name;
-            ch.label = niceName(attr);
+            ch.label = label;
+            ch.axis = axis;
             // Neighbouring channels never share a look: gray level and dash both cycle, at different periods.
             static constexpr int kLevels[] = {210, 150, 180, 120};
             static constexpr Qt::PenStyle kDashes[] = {Qt::SolidLine, Qt::DashLine, Qt::DotLine};
             ch.level = kLevels[channels.size() % 4];
             ch.dash = kDashes[channels.size() % 3];
             auto* item = new QTreeWidgetItem(top, {ch.label});
-            item->setIcon(0, swatch(ch.level, ch.dash));
+            item->setIcon(0, swatch(ch));
             item->setData(0, Qt::UserRole, int(channels.size()));
-            item->setData(0, Qt::UserRole + 1, QString::fromStdString(g.plugName(ap.plug)));
+            item->setData(0, Qt::UserRole + 1, QString::fromStdString(g.plugName(ap.plug)) + ch.label);
             channels.push_back(std::move(ch));
+        };
+        for (const anim::AnimatedPlug& ap : plugs)
+        {
+            const scene::AttrDef& a = g.attr(ap.plug);
+            bool rotation = anim::isRotationCurve(*g.node(ap.curve));
+            if (rotation && mView->quatView)
+            {
+                if (ap.plug.component == 0)
+                    for (int s = 3; s < 7; ++s)
+                        addChannel(ap, slotId(ap.curve, s), niceName(a.name) + " " + QChar("WXYZ"[s - 3]), -1);
+                continue;
+            }
+            std::string attr = ap.plug.component >= 0 ? a.childNames[ap.plug.component] : a.name;
+            addChannel(ap, rotation ? slotId(ap.curve, ap.plug.component) : ap.curve, niceName(attr), axisOf(a, ap.plug.component));
         }
         top->setExpanded(true);
     }
@@ -1046,14 +1274,27 @@ void GraphEditor::reloadCurves()
 {
     Graph& g = Graph::current();
     mView->curves.clear();
+    mView->rotations.clear();
+    mView->loopCurves.clear();
     for (const Channel& ch : mView->channels)
     {
-        scene::Node* n = g.node(ch.curve);
+        scene::Node* n = g.node(realCurve(ch.curve));
         if (!n)
             continue;
+        if (anim::curveLoops(*n))
+            mView->loopCurves.insert(ch.curve);
         try
         {
-            mView->curves[ch.curve] = anim::curveOf(*n);
+            int slot = slotOf(ch.curve);
+            if (slot < 0)
+            {
+                mView->curves[ch.curve] = anim::curveOf(*n);
+                continue;
+            }
+            auto it = mView->rotations.find(n->id());
+            if (it == mView->rotations.end())
+                it = mView->rotations.emplace(n->id(), anim::rotationCurveOf(*n).looped()).first;
+            mView->curves[ch.curve] = derivedChannel(it->second, slot);
         }
         catch (const std::exception& e)
         {
@@ -1084,15 +1325,14 @@ void GraphEditor::applyVisibility()
 
 void GraphEditor::applyTangent(const char* type)
 {
-    Graph& g = Graph::current();
     bool step = std::string_view(type) == "step";
     UndoChunk chunk("Key Tangents");
     if (!mView->sel.empty())
     {
         for (const KeySel& k : mView->sel)
-            if (scene::Node* n = g.node(k.curve))
+            if (std::string name = mView->commandTarget(k.curve); !name.empty())
             {
-                json call = {{"args", {n->name()}}, {"time", k.time}, {"outTangentType", type}};
+                json call = {{"args", {name}}, {"time", k.time}, {"outTangentType", type}};
                 if (!step)
                     call["inTangentType"] = type;
                 runQuiet("keyTangent", call);
@@ -1100,9 +1340,9 @@ void GraphEditor::applyTangent(const char* type)
     }
     else
         for (NodeId c : mView->targetCurves())
-            if (scene::Node* n = g.node(c))
+            if (std::string name = mView->commandTarget(c); !name.empty())
             {
-                json call = {{"args", {n->name()}}, {"outTangentType", type}};
+                json call = {{"args", {name}}, {"outTangentType", type}};
                 if (!step)
                     call["inTangentType"] = type;
                 runQuiet("keyTangent", call);
@@ -1115,8 +1355,9 @@ void GraphEditor::applyInfinity(bool pre, const char* mode)
     Graph& g = Graph::current();
     json names = json::array();
     for (NodeId c : mView->targetCurves())
-        if (scene::Node* n = g.node(c))
-            names.push_back(n->name());
+        if (scene::Node* n = g.node(realCurve(c)))
+            if (std::find(names.begin(), names.end(), n->name()) == names.end())
+                names.push_back(n->name());
     if (names.empty())
         return;
     try
@@ -1133,14 +1374,13 @@ void GraphEditor::deleteSelectedKeys()
 {
     if (mView->sel.empty())
         return;
-    Graph& g = Graph::current();
     std::vector<KeySel> doomed = mView->sel;
     mView->sel.clear();
     {
         UndoChunk chunk("Delete Keys");
         for (const KeySel& k : doomed)
-            if (scene::Node* n = g.node(k.curve))
-                runQuiet("cutKey", {{"args", {n->name()}}, {"time", k.time}, {"clear", true}});
+            if (std::string name = mView->commandTarget(k.curve); !name.empty())
+                runQuiet("cutKey", {{"args", {name}}, {"time", k.time}, {"clear", true}});
     }
     log::write(LogLevel::Echo, "# deleted " + std::to_string(doomed.size()) + " keys\n");
     refreshKeyFields();
@@ -1180,7 +1420,6 @@ void GraphEditor::editKeyField(bool time)
     double x = field->text().toDouble(&ok);
     if (!ok || mView->sel.empty())
         return;
-    Graph& g = Graph::current();
     if (time)
     {
         if (mView->sel.size() != 1)
@@ -1189,14 +1428,14 @@ void GraphEditor::editKeyField(bool time)
         double to = anim::secondsOf(x);
         if (std::abs(to - k.time) < kEps)
             return;
-        if (scene::Node* n = g.node(k.curve))
-            if (runQuiet("keyframe", {{"args", {n->name()}}, {"time", k.time}, {"timeChange", to}}))
+        if (std::string name = mView->commandTarget(k.curve); !name.empty())
+            if (runQuiet("keyframe", {{"args", {name}}, {"time", k.time}, {"timeChange", to}}))
                 k.time = to;
         return;
     }
     UndoChunk chunk("Key Values");
     for (const KeySel& k : mView->sel)
-        if (scene::Node* n = g.node(k.curve))
-            runQuiet("keyframe", {{"args", {n->name()}}, {"time", k.time}, {"valueChange", x}});
+        if (std::string name = mView->commandTarget(k.curve); !name.empty())
+            runQuiet("keyframe", {{"args", {name}}, {"time", k.time}, {"valueChange", x}});
 }
 } // namespace lila::ui

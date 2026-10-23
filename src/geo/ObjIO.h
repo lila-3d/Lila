@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "geo/Mesh.h"
 
 #include <string>
@@ -35,8 +37,8 @@ struct ObjReadResult
 };
 
 /** Parses in parallel chunks. Faces referencing missing data are skipped. */
-ObjReadResult readObj(std::string_view text, const ObjReadOptions& opts = {});
-ObjReadResult readObjFile(const std::string& path, const ObjReadOptions& opts = {});
+LILA_SCENE_API ObjReadResult readObj(std::string_view text, const ObjReadOptions& opts = {});
+LILA_SCENE_API ObjReadResult readObjFile(const std::string& path, const ObjReadOptions& opts = {});
 
 struct ObjWriteOptions
 {
@@ -49,16 +51,16 @@ struct ObjWriteOptions
 };
 
 /** Writes one or more meshes, each as an "o" object, sharing one vertex pool. */
-std::string writeObj(std::span<const ObjObject> objects, const ObjWriteOptions& opts = {});
-std::string writeObj(const Mesh& mesh, const ObjWriteOptions& opts = {});
-bool writeObjFile(const std::string& path, const Mesh& mesh, const ObjWriteOptions& opts = {});
+LILA_SCENE_API std::string writeObj(std::span<const ObjObject> objects, const ObjWriteOptions& opts = {});
+LILA_SCENE_API std::string writeObj(const Mesh& mesh, const ObjWriteOptions& opts = {});
+LILA_SCENE_API bool writeObjFile(const std::string& path, const Mesh& mesh, const ObjWriteOptions& opts = {});
 
 /**
  * Smoothing group per face from hard edges: faces joined by soft edges share a group, faces with
  * only hard edges get 0. Groups are numbered from 1.
  */
-std::vector<int32_t> smoothingGroupsFromHardEdges(const Mesh& mesh);
+LILA_SCENE_API std::vector<int32_t> smoothingGroupsFromHardEdges(const Mesh& mesh);
 
 /** Sets "hard" on edges whose faces have different smoothing groups, or group 0. */
-void hardEdgesFromSmoothingGroups(Mesh& mesh, std::span<const int32_t> groups);
+LILA_SCENE_API void hardEdgesFromSmoothingGroups(Mesh& mesh, std::span<const int32_t> groups);
 } // namespace lila::geo

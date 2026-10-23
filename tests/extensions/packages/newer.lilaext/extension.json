@@ -1,0 +1,6 @@
+{
+    "id": "newer",
+    "version": "1.0.0",
+    "sdk": "1.99",
+    "python": "newer.py"
+}

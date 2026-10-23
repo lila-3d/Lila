@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "uv/Chart.h"
 #include "uv/Layout.h"
 #include "uv/Metrics.h"
@@ -32,7 +34,7 @@ struct UnwrapFacesResult
 };
 
 /** Unwraps the islands of the faces (all when empty) along their seams, opening any that are not disks. */
-UnwrapFacesResult unwrapFaces(geo::Mesh& mesh, std::span<const Index> faces, std::string_view uvSet, const UnwrapFacesOptions& opts = {});
+LILA_SCENE_API UnwrapFacesResult unwrapFaces(geo::Mesh& mesh, std::span<const Index> faces, std::string_view uvSet, const UnwrapFacesOptions& opts = {});
 
 struct AutoUvOptions
 {
@@ -49,7 +51,7 @@ struct AutoUvResult
 };
 
 /** One call for game assets: auto seams, SLIM unwrap of every island, then pack into 0-1. */
-AutoUvResult autoUv(geo::Mesh& mesh, std::span<const Index> faces = {}, std::string_view uvSet = "uv0", const AutoUvOptions& opts = {});
+LILA_SCENE_API AutoUvResult autoUv(geo::Mesh& mesh, std::span<const Index> faces = {}, std::string_view uvSet = "uv0", const AutoUvOptions& opts = {});
 
 struct LightmapOptions
 {
@@ -77,15 +79,15 @@ struct LightmapResult
  * Unreal lightmap channel: the source set's islands (or auto seams when it is missing), each made
  * non-overlapping, packed with no overlaps and padding for the lightmap resolution.
  */
-LightmapResult generateLightmapUvs(geo::Mesh& mesh, const LightmapOptions& opts = {});
+LILA_SCENE_API LightmapResult generateLightmapUvs(geo::Mesh& mesh, const LightmapOptions& opts = {});
 
 /** Corners of the faces plus every corner that shares their uv at the same point, so moving them keeps islands whole. */
-std::vector<Index> uvCornersOfFaces(const geo::Mesh& mesh, std::string_view uvSet, std::span<const Index> faces);
+LILA_SCENE_API std::vector<Index> uvCornersOfFaces(const geo::Mesh& mesh, std::string_view uvSet, std::span<const Index> faces);
 
 /** Every corner of the points, each once. */
-std::vector<Index> cornersOfPoints(const geo::Mesh& mesh, std::span<const Index> points);
+LILA_SCENE_API std::vector<Index> cornersOfPoints(const geo::Mesh& mesh, std::span<const Index> points);
 
 /** UV set the tools use when a command does not name one ("uv0" by default). */
-const std::string& currentUvSet();
-void setCurrentUvSet(std::string name);
+LILA_SCENE_API const std::string& currentUvSet();
+LILA_SCENE_API void setCurrentUvSet(std::string name);
 } // namespace lila::uv

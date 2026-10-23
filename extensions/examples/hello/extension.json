@@ -1,0 +1,14 @@
+{
+    "id": "hello",
+    "name": "Hello",
+    "version": "1.0.0",
+    "vendor": "Lila",
+    "description": "Sample C++ extension: a helloExtension command and a helloMultiply node type.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "hello.dll",
+        "linux": "hello.so",
+        "macos": "hello.dylib"
+    },
+    "enabledByDefault": false
+}

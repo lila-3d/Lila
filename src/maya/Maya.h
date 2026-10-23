@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/Plug.h"
 
 #include <filesystem>
@@ -88,19 +90,19 @@ struct ImportResult
 };
 
 /** Main thread. Undoable as one step when run inside a command. */
-ImportResult importMaya(scene::Graph& graph, const fs::path& path, const ImportOptions& opts = {});
+LILA_SCENE_API ImportResult importMaya(scene::Graph& graph, const fs::path& path, const ImportOptions& opts = {});
 /** The same from a file already read with readFile (MayaFile.h), the slow part that touches nothing and can run first, off the main thread. */
-ImportResult importMaya(scene::Graph& graph, const fs::path& path, const File& file, const ImportOptions& opts = {});
+LILA_SCENE_API ImportResult importMaya(scene::Graph& graph, const fs::path& path, const File& file, const ImportOptions& opts = {});
 
 /**
  * The .lila a reference to this Maya file loads: <stem>.lila beside it, converted now unless a current conversion is
  * already there. Leaves the scene alone. Empty with report.error set on failure.
  */
-fs::path lilaForReference(const fs::path& path, const ImportOptions& opts, ImportResult& report);
+LILA_SCENE_API fs::path lilaForReference(const fs::path& path, const ImportOptions& opts, ImportResult& report);
 
 /** mayaImport, mayaOpen, mayaConvert, mayaInfo, mayaReference. Needs the scene and io commands. */
-void registerCommands();
+LILA_SCENE_API void registerCommands();
 
 /** True for .ma / .mb (case-insensitive). */
-bool isMayaFile(const fs::path& path);
+LILA_SCENE_API bool isMayaFile(const fs::path& path);
 } // namespace lila::maya

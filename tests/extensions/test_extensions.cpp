@@ -1,57 +1,20 @@
+#include "Isolate.h"
+
 #include "cmds/Command.h"
-#include "core/MainQueue.h"
+#include "core/Events.h"
 #include "extensions/ExtensionManager.h"
 #include "python/Python.h"
 #include "scene/Graph.h"
 
 #include <doctest/doctest.h>
-#include <nanobind/nanobind.h>
 
-#include <cstdlib>
-#include <random>
+#include <algorithm>
 
-namespace nb = nanobind;
 using namespace lila;
 using lila::extensions::ExtensionManager;
 
-namespace lila::python
-{
-void bindExtensions(nb::module_& m);
-}
-
-// Stands in for _lila.extension until Bindings.cpp calls bindExtensions itself.
-NB_MODULE(_lila_extension_test, m)
-{
-    lila::python::bindExtensions(m);
-}
-
 namespace
 {
-/** Keeps the tests off the user's real config: no userSetup.py, no prefs. */
-void isolate()
-{
-    static bool done = false;
-    if (done)
-        return;
-    done = true;
-    std::random_device rd;
-    std::filesystem::path dir = std::filesystem::temp_directory_path() / ("lila_extensions_test_" + std::to_string(rd()));
-    std::filesystem::create_directories(dir);
-    static std::filesystem::path cleanup = dir;
-    std::atexit([] {
-        std::error_code ec;
-        std::filesystem::remove_all(cleanup, ec);
-    });
-#ifdef _WIN32
-    _putenv_s("LILA_CONFIG_DIR", dir.string().c_str());
-#else
-    setenv("LILA_CONFIG_DIR", dir.c_str(), 1);
-#endif
-    mainq::init();
-    cmds::registerBuiltins();
-    scene::types::registerBuiltins();
-}
-
 json run(const char* cmd, json call = json::object())
 {
     return cmds::execute(cmd, call);
@@ -64,8 +27,13 @@ TEST_CASE("native extension: load, use, unload, reload")
     extensions::registerCommands();
     ExtensionManager& pm = ExtensionManager::get();
 
-    CHECK(run("loadExtension", {{"args", {LILA_TEST_HELLO_EXTENSION}}}) == "hello");
+    std::vector<std::string> heard;
+    events::SubscriptionId sub = events::subscribe(events::Event::ExtensionLoaded, [&](const events::EventData& e) { heard.push_back(e.name); });
+
+    CHECK(run("loadExtension", {{"args", {LILA_TEST_HELLO_PACKAGE}}}) == "hello");
     CHECK(pm.isLoaded("hello"));
+    CHECK(heard == std::vector<std::string>{"hello"});
+    events::unsubscribe(sub);
     const CommandDef* cmd = cmds::find("helloExtension");
     REQUIRE(cmd);
     CHECK(cmd->owner == "hello");
@@ -77,8 +45,12 @@ TEST_CASE("native extension: load, use, unload, reload")
 
     json info = run("extensionInfo", {{"args", {"hello"}}});
     CHECK(info["kind"] == "native");
+    CHECK(info["version"] == "1.0.0");
+    CHECK(info["vendor"] == "Lila");
+    CHECK(info["sdk"] == "1.0");
     CHECK(info["commands"] == json::array({"helloExtension"}));
     CHECK(info["types"] == json::array({"helloMultiply"}));
+    CHECK(info["registrations"] == json::array({"command:helloExtension", "nodeType:helloMultiply"}));
 
     // compute() runs code from the library.
     scene::Graph& g = scene::Graph::current();
@@ -96,12 +68,12 @@ TEST_CASE("native extension: load, use, unload, reload")
     CHECK_FALSE(cmds::find("helloExtension"));
     CHECK_FALSE(scene::types::find("helloMultiply"));
 
-    // Loading by name through a search path, then reload.
-    pm.addSearchPath(std::filesystem::path(LILA_TEST_HELLO_EXTENSION).parent_path());
+    // Loading by id through a search path, then reload.
+    pm.addSearchPath(std::filesystem::path(LILA_TEST_HELLO_PACKAGE).parent_path());
     json listed = run("listExtensions");
     bool found = false;
     for (const json& p : listed)
-        found |= p["name"] == "hello" && p["kind"] == "native" && !p["loaded"].get<bool>();
+        found |= p["name"] == "hello" && p["kind"] == "native" && !p["loaded"].get<bool>() && p["version"] == "1.0.0";
     CHECK(found);
     CHECK(run("loadExtension", {{"args", {"hello"}}}) == "hello");
     CHECK(run("loadExtension", {{"args", {"hello"}}}) == "hello");
@@ -115,15 +87,48 @@ TEST_CASE("native extension: load, use, unload, reload")
     CHECK_THROWS_AS(run("unloadExtension", {{"args", {"hello"}}}), CommandError);
 }
 
+TEST_CASE("packages: SDK version checks and broken manifests")
+{
+    isolate();
+    ExtensionManager& pm = ExtensionManager::get();
+    pm.addSearchPath(LILA_TEST_PACKAGES_DIR);
+    const size_t commands = cmds::all().size();
+
+    // Rejected by Lila before any of the extension's code runs (future's library does not even exist).
+    CHECK_THROWS_WITH_AS(pm.load("future"), doctest::Contains("the major version must match"), extensions::ExtensionError);
+    CHECK_FALSE(pm.isLoaded("future"));
+    CHECK(pm.lastError("future").find("SDK 2.0") != std::string::npos);
+    CHECK_THROWS_WITH_AS(pm.load("newer"), doctest::Contains("newer than this Lila's SDK"), extensions::ExtensionError);
+    CHECK(cmds::all().size() == commands);
+
+    bool brokenListed = false;
+    for (const extensions::ExtensionInfo& info : pm.available())
+        if (info.name == "broken")
+        {
+            brokenListed = true;
+            CHECK(info.error.find("'version' is missing") != std::string::npos);
+            CHECK(info.error.find("'sdk' must be") != std::string::npos);
+            CHECK(info.error.find("inside the package") != std::string::npos);
+        }
+    CHECK(brokenListed);
+    CHECK_THROWS_WITH_AS(pm.load("broken"), doctest::Contains("'version' is missing"), extensions::ExtensionError);
+
+    // Autoload skips what it can't load and says so instead of failing startup.
+    const std::vector<std::string> loadedBefore = pm.loaded();
+    pm.setAutoload("future", true);
+    pm.loadAutoload();
+    CHECK_FALSE(pm.isLoaded("future"));
+    pm.setAutoload("future", false);
+    // Extensions shipped next to the test (enabled by default) loaded too; later tests expect only their own.
+    for (const std::string& name : pm.loaded())
+        if (std::find(loadedBefore.begin(), loadedBefore.end(), name) == loadedBefore.end())
+            pm.unload(name);
+}
+
 TEST_CASE("python extension: load, call, errors, unload")
 {
     isolate();
-    PyImport_AppendInittab("_lila_extension_test", PyInit__lila_extension_test);
     REQUIRE(python::init({"lila_extensions_tests"}));
-    REQUIRE(python::run("import _lila, _lila_extension_test\n"
-                        "if not hasattr(_lila, 'extension'):\n"
-                        "    _lila.extension = _lila_extension_test.extension\n")
-                .ok);
 
     ExtensionManager& pm = ExtensionManager::get();
     pm.addSearchPath(LILA_TEST_EXAMPLES_DIR);
@@ -170,6 +175,22 @@ TEST_CASE("python extension: load, call, errors, unload")
     CHECK_FALSE(python::run("extension.register_command('undo', _add)").ok);
     CHECK(cmds::find("undo")->owner.empty());
 
+    // Python packages: dependencies load first, and can't unload from under a dependent.
+    pm.addSearchPath(LILA_TEST_PACKAGES_DIR);
+    CHECK(pm.load("pyuser") == "pyuser");
+    CHECK(pm.isLoaded("pybase"));
+    CHECK(pm.loaded() == std::vector<std::string>{"pybase", "pyuser"});
+    CHECK(run("pyUserHello") == "user+base");
+    CHECK(cmds::find("pyBaseHello")->owner == "pybase");
+    CHECK_THROWS_WITH_AS(pm.unload("pybase"), doctest::Contains("pyuser depends on it"), extensions::ExtensionError);
+    json info = pm.describe("pybase");
+    CHECK(info["displayName"] == "Python Base");
+    CHECK(info["vendor"] == "Lila Tests");
+    CHECK(info["kind"] == "python");
+
     pm.unloadAll();
+    CHECK_FALSE(cmds::find("pyUserHello"));
+    CHECK_FALSE(cmds::find("pyBaseHello"));
+    CHECK(pm.loaded().empty());
     python::shutdown();
 }

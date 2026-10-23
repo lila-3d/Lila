@@ -1,4 +1,4 @@
-add_library(lila_math STATIC
+lila_module(lila_math Foundation
     Color.cpp
     Math.cpp
     Matrix.cpp

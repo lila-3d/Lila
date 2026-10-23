@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "math/Rotator.h"
 
 #include <glm/gtc/quaternion.hpp>
@@ -10,7 +12,7 @@ namespace lila::math
  * Unit quaternion, (x, y, z, w) order. Right-handed in Lila space: Quat(axis, angle) turns by the
  * right-hand rule. A * B applies B first, then A.
  */
-struct Quat
+struct LILA_FOUNDATION_API Quat
 {
     double x = 0.0;
     double y = 0.0;

@@ -1,11 +1,13 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "math/Matrix.h"
 
 namespace lila::math
 {
 /** Plane of points p with dot(normal, p) == w. The point-normal and three-point constructors normalize. */
-struct Plane
+struct LILA_FOUNDATION_API Plane
 {
     double x = 0.0;
     double y = 0.0;
@@ -33,5 +35,5 @@ struct Plane
 };
 
 /** Where the segment's infinite line crosses the plane; start when parallel. */
-Vector linePlaneIntersection(const Vector& lineStart, const Vector& lineEnd, const Plane& plane);
+LILA_FOUNDATION_API Vector linePlaneIntersection(const Vector& lineStart, const Vector& lineEnd, const Plane& plane);
 } // namespace lila::math

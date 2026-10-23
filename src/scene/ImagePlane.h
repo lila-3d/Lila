@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/Transform.h"
 
 #include <array>
@@ -88,7 +90,7 @@ struct FitResult
 };
 
 /** Places an image of aspect (width / height) into a frame of size box. */
-FitResult fit(Fit mode, glm::dvec2 box, double imageAspect);
+LILA_SCENE_API FitResult fit(Fit mode, glm::dvec2 box, double imageAspect);
 
 /** A camera's frame and film half extents: tangents for perspective, cm for orthographic. */
 struct CameraFrame
@@ -102,7 +104,7 @@ struct CameraFrame
 };
 
 /** World-space quad: centre and half-extent axes along the image's right and up; uv as in FitResult. */
-struct Quad
+struct LILA_SCENE_API Quad
 {
     glm::dvec3 center{0.0};
     glm::dvec3 halfU{0.0};
@@ -114,24 +116,24 @@ struct Quad
     glm::dvec3 normal() const;
 };
 
-Settings settings(const Node& n);
-Quad layoutFree(const Settings& s, const glm::dmat4& world, double imageAspect);
-Quad layoutAttached(const Settings& s, const CameraFrame& cam, double imageAspect);
+LILA_SCENE_API Settings settings(const Node& n);
+LILA_SCENE_API Quad layoutFree(const Settings& s, const glm::dmat4& world, double imageAspect);
+LILA_SCENE_API Quad layoutAttached(const Settings& s, const CameraFrame& cam, double imageAspect);
 
 /**
  * The file for one frame of an image sequence: a run of '#' in the file name becomes the frame padded to its length,
  * otherwise the last run of digits in the name is replaced, keeping its padding. Names without either are returned as is.
  */
-std::string frameFile(const std::string& path, int64_t frame);
+LILA_SCENE_API std::string frameFile(const std::string& path, int64_t frame);
 
 /** A camera attr value as a view name ("side" is "right") or a camera node's name as is; empty for a free plane. */
-std::string cameraName(const std::string& value);
+LILA_SCENE_API std::string cameraName(const std::string& value);
 /** A view name, a camera node in the current scene, or empty. */
-bool validCamera(const std::string& value);
+LILA_SCENE_API bool validCamera(const std::string& value);
 } // namespace imagePlane
 
 /** The imagePlane type. Idempotent; needs the transform type first. */
-void registerImagePlaneTypes();
+LILA_SCENE_API void registerImagePlaneTypes();
 /** The imagePlane command. Idempotent. */
-void registerImagePlaneCommands();
+LILA_SCENE_API void registerImagePlaneCommands();
 } // namespace lila::scene

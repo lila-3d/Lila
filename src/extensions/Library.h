@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -7,7 +9,7 @@
 namespace lila::extensions
 {
 /** A loaded shared library: LoadLibrary / dlopen. */
-class Library
+class LILA_SCENE_API Library
 {
 public:
     static std::unique_ptr<Library> open(const std::filesystem::path& path, std::string* error);

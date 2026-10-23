@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "uv/Chart.h"
 
 #include <condition_variable>
@@ -50,9 +52,9 @@ enum class LiveBrush : uint8_t
     Soften,
 };
 
-std::string_view liveBrushName(LiveBrush b);
+LILA_SCENE_API std::string_view liveBrushName(LiveBrush b);
 /** False when the name is not a brush. */
-bool liveBrushFromName(std::string_view name, LiveBrush& out);
+LILA_SCENE_API bool liveBrushFromName(std::string_view name, LiveBrush& out);
 
 /** One brush dab, in uv space or on the surface (object space). */
 struct LiveDab
@@ -74,7 +76,7 @@ struct LiveDab
 };
 
 /** Smooth falloff weight for a normalised distance (0 at the centre, 1 at the rim). */
-double liveFalloff(double t);
+LILA_SCENE_API double liveFalloff(double t);
 
 /**
  * One uv island solved by local/global ARAP (Liu et al. 2008) with an asymmetric stretch/compress weighting, per-vertex
@@ -83,7 +85,7 @@ double liveFalloff(double t);
  * reused until one of those changes; each iteration is a local step and two back-substitutions. Warm-started from the
  * chart's current uvs, it never folds a triangle that is not already folded.
  */
-class LiveIsland
+class LILA_SCENE_API LiveIsland
 {
 public:
     LiveIsland() = default;
@@ -195,20 +197,20 @@ private:
 };
 
 /** Live islands of the faces (all when empty): the uv set's islands, also split along "seam" edges, with pins ("uvPin") and stiffness ("uvStiffness"). */
-std::vector<LiveIsland> liveIslands(const geo::Mesh& mesh, std::span<const Index> faces, std::string_view uvSet, const LiveOptions& opts = {});
+LILA_SCENE_API std::vector<LiveIsland> liveIslands(const geo::Mesh& mesh, std::span<const Index> faces, std::string_view uvSet, const LiveOptions& opts = {});
 
 /** Writes uvs, and with pinsAndStiffness the "uvPin" and "uvStiffness" corner attributes, of the islands back to the mesh. */
-void writeLiveIslands(geo::Mesh& mesh, std::span<const LiveIsland> islands, std::string_view uvSet, bool pinsAndStiffness = true);
+LILA_SCENE_API void writeLiveIslands(geo::Mesh& mesh, std::span<const LiveIsland> islands, std::string_view uvSet, bool pinsAndStiffness = true);
 
 /** Edge flags (per edge capacity) of the mesh's "seam" attribute, for ChartOptions::extraSeams. */
-std::vector<uint8_t> seamFlags(const geo::Mesh& mesh);
+LILA_SCENE_API std::vector<uint8_t> seamFlags(const geo::Mesh& mesh);
 
 /**
  * Runs live islands on a worker thread, steered from the UI thread through queued edits. It iterates while any island
  * is awake, publishes uvs at most ~60 times a second through double-buffered frames, and sleeps (no CPU) once every
  * island has settled. The UI thread never waits on it except in sync() and waitIdle().
  */
-class LiveSolver
+class LILA_SCENE_API LiveSolver
 {
 public:
     using Edit = std::function<void(std::vector<LiveIsland>&)>;

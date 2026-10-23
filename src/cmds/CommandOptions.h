@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "cmds/Command.h"
 
 #include <limits>
@@ -60,37 +62,37 @@ struct Override
     std::map<std::string, Range> ranges;
 };
 
-void setOverride(const std::string& command, Override o);
-const Override* findOverride(std::string_view command);
+LILA_FOUNDATION_API void setOverride(const std::string& command, Override o);
+LILA_FOUNDATION_API const Override* findOverride(std::string_view command);
 
 /** "maxDistance" reads "Max Distance", "uvSet" reads "UV Set". */
-std::string prettyLabel(std::string_view camel);
+LILA_FOUNDATION_API std::string prettyLabel(std::string_view camel);
 
 /**
  * Allowed values spelled out in a flag doc: "closestPoint | pointIndex", "world, object, component or uv.".
  * Empty unless every listed value is a single word and the default (when given) is one of them.
  */
-std::vector<std::string> choicesFromDoc(std::string_view doc, const json& defaultValue = nullptr);
+LILA_FOUNDATION_API std::vector<std::string> choicesFromDoc(std::string_view doc, const json& defaultValue = nullptr);
 
 /** The field a flag generates, before overrides. */
-Field fieldFor(const FlagDef& flag);
+LILA_FOUNDATION_API Field fieldFor(const FlagDef& flag);
 
 /** The editable fields of a command's option box, minus the flags `fixed` already sets (an action's own call). */
-std::vector<Field> fields(std::string_view command, const json& fixed = json::object());
-bool hasOptions(std::string_view command, const json& fixed = json::object());
+LILA_FOUNDATION_API std::vector<Field> fields(std::string_view command, const json& fixed = json::object());
+LILA_FOUNDATION_API bool hasOptions(std::string_view command, const json& fixed = json::object());
 
 /** The stored changes, {flag: value}. */
-json saved(std::string_view command);
+LILA_FOUNDATION_API json saved(std::string_view command);
 /** Every field's current value: the stored one, else its default. */
-json values(std::string_view command, const json& fixed = json::object());
+LILA_FOUNDATION_API json values(std::string_view command, const json& fixed = json::object());
 
 /** Stores one value; setting it back to the default forgets it. */
-void setValue(std::string_view command, const std::string& flag, const json& value);
+LILA_FOUNDATION_API void setValue(std::string_view command, const std::string& flag, const json& value);
 /** Edit > Reset Settings. */
-void reset(std::string_view command);
+LILA_FOUNDATION_API void reset(std::string_view command);
 
 /** `call` with the remembered values filled in under it; flags the call sets itself win. */
-json callWith(std::string_view command, const json& call = json::object());
+LILA_FOUNDATION_API json callWith(std::string_view command, const json& call = json::object());
 
 inline constexpr const char* kPrefFile = "optionBoxes";
 } // namespace lila::cmds::options

@@ -61,6 +61,9 @@ void buildScene()
     run("joint", {{"position", v3(3, 0, 0)}, {"name", "bone_b"}, {"orientation", v3(10, 0, -20)}});
     run("joint", {{"position", v3(3, 50, 0)}, {"name", "bone_c"}, {"orientation", v3(0, 15, 0)}});
     run("setAttr", {{"args", {"bone_b.rotateOrder", 1}}});
+    // Euler curves, so the written keys are the scene's own; rotation curves are covered in the fbx tests.
+    for (const std::string& j : kJoints)
+        run("setAttr", {{"args", {j + ".rotationInterpolation", 0}}});
     run("skinCluster", {{"args", {"bone_a", "Tube"}}});
 
     Graph& g = graph();

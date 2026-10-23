@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "gn/Geometry.h"
 
 #include <tbb/parallel_for.h>
@@ -16,7 +18,7 @@ namespace lila::gn
 using ColumnData = std::variant<std::vector<double>, std::vector<int64_t>, std::vector<uint8_t>, std::vector<glm::dvec3>>;
 
 /** One value per element, or one value for all of them when single. */
-struct Column
+struct LILA_SCENE_API Column
 {
     ColumnData data = std::vector<double>{0.0};
     bool single = true;
@@ -47,7 +49,7 @@ template <class T> constexpr SocketType socketOf()
 }
 
 /** Converts storage: Blender's implicit conversions (vector to float is the average, float to vector splats). */
-Column convert(const Column& c, SocketType to);
+LILA_SCENE_API Column convert(const Column& c, SocketType to);
 /** Every element, broadcasting a single value. */
 template <class T> std::vector<T> expand(const Column& c, size_t n)
 {
@@ -67,7 +69,7 @@ enum class Component : uint8_t
 };
 
 /** Where a field is evaluated: one component of a geometry, on one of its domains. */
-struct FieldContext
+struct LILA_SCENE_API FieldContext
 {
     Component component = Component::None;
     Domain domain = Domain::Point;
@@ -82,7 +84,7 @@ struct FieldContext
     static FieldContext forInstances(const Instances& i);
 };
 
-size_t domainSize(const FieldContext& ctx, Domain d);
+LILA_SCENE_API size_t domainSize(const FieldContext& ctx, Domain d);
 
 class Field
 {
@@ -101,16 +103,16 @@ private:
 
 using FieldPtr = std::shared_ptr<const Field>;
 
-FieldPtr constantField(SocketType type, Column value);
-FieldPtr constantFloat(double v);
-FieldPtr constantInt(int64_t v);
-FieldPtr constantBool(bool v);
-FieldPtr constantVector(const glm::dvec3& v, SocketType type = SocketType::Vector);
+LILA_SCENE_API FieldPtr constantField(SocketType type, Column value);
+LILA_SCENE_API FieldPtr constantFloat(double v);
+LILA_SCENE_API FieldPtr constantInt(int64_t v);
+LILA_SCENE_API FieldPtr constantBool(bool v);
+LILA_SCENE_API FieldPtr constantVector(const glm::dvec3& v, SocketType type = SocketType::Vector);
 /** Wraps a field so it evaluates to another socket type. */
-FieldPtr convertField(const FieldPtr& f, SocketType to);
+LILA_SCENE_API FieldPtr convertField(const FieldPtr& f, SocketType to);
 
 /** Evaluates and converts to `as`, sized to the context unless single. */
-Column evaluate(const FieldPtr& f, const FieldContext& ctx, SocketType as);
+LILA_SCENE_API Column evaluate(const FieldPtr& f, const FieldContext& ctx, SocketType as);
 template <class T> std::vector<T> evaluateAll(const FieldPtr& f, const FieldContext& ctx)
 {
     return expand<T>(evaluate(f, ctx, socketOf<T>()), ctx.size);
@@ -122,22 +124,22 @@ template <class T> T evaluateSingle(const FieldPtr& f)
     return evaluate(f, none, socketOf<T>()).template at<T>(0);
 }
 /** Indices of elements where the bool field is true. */
-std::vector<geo::Index> selected(const FieldPtr& selection, const FieldContext& ctx);
+LILA_SCENE_API std::vector<geo::Index> selected(const FieldPtr& selection, const FieldContext& ctx);
 
 // Built-in inputs.
-FieldPtr positionField();
-FieldPtr normalField();
-FieldPtr indexField();
+LILA_SCENE_API FieldPtr positionField();
+LILA_SCENE_API FieldPtr normalField();
+LILA_SCENE_API FieldPtr indexField();
 /** The "id" attribute when present, otherwise the index. */
-FieldPtr idField();
-FieldPtr radiusField();
+LILA_SCENE_API FieldPtr idField();
+LILA_SCENE_API FieldPtr radiusField();
 /** Reads an attribute by name on whatever domain it lives, adapted to the context's domain. */
-FieldPtr attributeField(std::string name, SocketType type);
+LILA_SCENE_API FieldPtr attributeField(std::string name, SocketType type);
 /** True where the attribute exists (single per context). */
-FieldPtr attributeExistsField(std::string name);
+LILA_SCENE_API FieldPtr attributeExistsField(std::string name);
 
 /** Per-element function of input fields, run in parallel. */
-class FunctionField : public Field
+class LILA_SCENE_API FunctionField : public Field
 {
 public:
     using Fn = std::function<Column(const std::vector<Column>& inputs, size_t n)>;
@@ -181,24 +183,24 @@ template <class R, class... A, class F> FieldPtr map(SocketType outType, F fn, s
 }
 
 /** Moves a value column between mesh domains: averages where several elements meet. */
-Column adaptDomain(const geo::Mesh& m, const Column& c, Domain from, Domain to);
-Column adaptCurveDomain(const CurveSet& cs, const Column& c, Domain from, Domain to);
+LILA_SCENE_API Column adaptDomain(const geo::Mesh& m, const Column& c, Domain from, Domain to);
+LILA_SCENE_API Column adaptCurveDomain(const CurveSet& cs, const Column& c, Domain from, Domain to);
 
 /** Raw attribute lookup: values on the domain the attribute lives on. */
-std::optional<Column> readAttribute(const FieldContext& ctx, std::string_view name, Domain* domainOut);
+LILA_SCENE_API std::optional<Column> readAttribute(const FieldContext& ctx, std::string_view name, Domain* domainOut);
 
 /** Writes a column as an attribute on a mesh domain (replacing any same-named layer on other domains). */
-void writeAttribute(geo::Mesh& m, std::string_view name, Domain d, const Column& values, SocketType type);
-void writeAttribute(CurveSet& c, std::string_view name, Domain d, const Column& values, SocketType type);
-void writeAttribute(Instances& inst, std::string_view name, const Column& values, SocketType type);
+LILA_SCENE_API void writeAttribute(geo::Mesh& m, std::string_view name, Domain d, const Column& values, SocketType type);
+LILA_SCENE_API void writeAttribute(CurveSet& c, std::string_view name, Domain d, const Column& values, SocketType type);
+LILA_SCENE_API void writeAttribute(Instances& inst, std::string_view name, const Column& values, SocketType type);
 
 /** Domains each component offers, first is its natural one. */
-std::vector<Domain> componentDomains(Component c);
+LILA_SCENE_API std::vector<Domain> componentDomains(Component c);
 
 /** Tangents and rotation-minimizing normals along a poly curve. */
-void curveFrames(std::span<const glm::dvec3> pts, bool cyclic, std::vector<glm::dvec3>& tangents, std::vector<glm::dvec3>& normals);
+LILA_SCENE_API void curveFrames(std::span<const glm::dvec3> pts, bool cyclic, std::vector<glm::dvec3>& tangents, std::vector<glm::dvec3>& normals);
 
 /** Integer hash for seeded random values: stable per (id, seed). */
-uint32_t hash32(uint32_t a, uint32_t b = 0, uint32_t c = 0);
-double hashToUnit(uint32_t h);
+LILA_SCENE_API uint32_t hash32(uint32_t a, uint32_t b = 0, uint32_t c = 0);
+LILA_SCENE_API double hashToUnit(uint32_t h);
 } // namespace lila::gn

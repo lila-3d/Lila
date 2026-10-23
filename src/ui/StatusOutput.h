@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "ui/OutputTail.h"
 
 #include <QWidget>
@@ -12,7 +14,7 @@ namespace lila::ui
  * Maya's command line result: the script output's last line in the status bar while the Script Output panel is out of
  * sight. Warnings and errors carry an icon and errors are bold. Hover for the last few lines; click to open the panel.
  */
-class StatusOutput : public QWidget
+class LILA_UI_API StatusOutput : public QWidget
 {
     Q_OBJECT
 

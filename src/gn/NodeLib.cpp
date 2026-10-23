@@ -1,5 +1,8 @@
 #include "gn/NodeLib.h"
 
+#include "core/ExtensionContext.h"
+#include "core/Log.h"
+
 #include <map>
 #include <memory>
 
@@ -7,10 +10,22 @@ namespace lila::gn
 {
 namespace
 {
-std::map<std::string, std::unique_ptr<NodeDecl>, std::less<>>& registry()
+/** Removed decls stay allocated: evaluation plans hold pointers to them. */
+std::vector<std::unique_ptr<NodeDecl>>& retired()
 {
-    static std::map<std::string, std::unique_ptr<NodeDecl>, std::less<>> r;
+    static std::vector<std::unique_ptr<NodeDecl>> r;
     return r;
+}
+
+void retire(std::unique_ptr<NodeDecl> d)
+{
+    if (!d)
+        return;
+    // Its functions may live in an extension library that is about to be unloaded.
+    std::string type = d->type;
+    d->dynamicSockets = nullptr;
+    d->exec = [type](ExecContext&) { throw std::runtime_error("node type " + type + " was unloaded"); };
+    retired().push_back(std::move(d));
 }
 
 const Value& emptyValue()
@@ -67,16 +82,44 @@ std::string NodeDecl::propValue(const GNode& n, std::string_view id) const
     return p ? p->defaultValue : std::string();
 }
 
+Registry<NodeDecl>& declRegistry()
+{
+    static Registry<NodeDecl> r;
+    return r;
+}
+
 void registerDecl(NodeDecl d)
 {
     std::string type = d.type;
-    registry()[type] = std::make_unique<NodeDecl>(std::move(d));
+    retire(declRegistry().take(type));
+    declRegistry().add(std::move(type), std::move(d));
+}
+
+const NodeDecl* registerDecl(ext::Context& ctx, NodeDecl d)
+{
+    std::string type = d.type;
+    if (declRegistry().contains(type))
+    {
+        log::error("extension {}: geometry node type '{}' is already registered", ctx.owner(), type);
+        return nullptr;
+    }
+    declRegistry().add(type, std::move(d), ctx.owner());
+    std::string owner = ctx.owner();
+    ctx.track("gnNode:" + type, [type, owner] {
+        if (const std::string* o = declRegistry().ownerOf(type); o && *o == owner)
+            unregisterDecl(type);
+    });
+    return declRegistry().find(type);
+}
+
+void unregisterDecl(std::string_view type)
+{
+    retire(declRegistry().take(type));
 }
 
 const NodeDecl* findDecl(std::string_view type)
 {
-    auto it = registry().find(type);
-    return it == registry().end() ? nullptr : it->second.get();
+    return declRegistry().find(type);
 }
 
 bool linkable(SocketType from, SocketType to)
@@ -107,8 +150,8 @@ std::string compatibleSocket(const Group& g, const NodeDecl& d, SocketType type,
 std::vector<const NodeDecl*> allDecls()
 {
     std::vector<const NodeDecl*> out;
-    for (auto& [k, d] : registry())
-        out.push_back(d.get());
+    for (NodeDecl* d : declRegistry().all())
+        out.push_back(d);
     return out;
 }
 

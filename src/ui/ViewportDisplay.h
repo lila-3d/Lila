@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "render/FrameState.h"
 
 namespace lila::ui::viewportDisplay
@@ -25,21 +27,38 @@ inline constexpr const char* kColorChannel = "/viewport/colorChannel"; // "rgb",
 inline constexpr const char* kGrayscaleWeights = "/viewport/grayscaleWeights";
 inline constexpr int kDefaultSamples = 8;
 
+/** Full monotone: no hue anywhere, overriding every accent toggle below. Off by default. */
+inline constexpr const char* kMonotone = "/ui/monotone";
+/** Selective colour: the few displays that read better with hue, each on by default. */
+inline constexpr const char* kViewAxisColors = "/viewport/viewAxisColors";
+inline constexpr const char* kManipulatorAxisColors = "/manipulator/axisColors";
+inline constexpr const char* kTimeKeyColors = "/timeline/keyColors";
+inline constexpr const char* kGraphAxisColors = "/graphEditor/axisColors";
+inline constexpr const char* kGhostColors = "/anim/ghost/colors";
+
+inline bool accentColors(bool monotone, bool selective) { return selective && !monotone; }
+/** Whether the display behind one of the accent toggles above draws in colour right now. */
+LILA_UI_API bool accentColors(const char* key);
+/** Muted red, green and blue for X, Y and Z that read on the dark UI greys. sRGB 0..1. */
+LILA_UI_API glm::vec3 axisColor(int axis);
+/** Key ticks on the time slider, Maya's red. sRGB 0..1. */
+inline constexpr glm::vec3 kKeyTickColor{0.86f, 0.36f, 0.36f};
+
 /** Copies the prefs above onto a frame. */
-void apply(render::FrameState& s);
+LILA_UI_API void apply(render::FrameState& s);
 
 /** Shaded meshes ignore their materials and draw the plain default one. */
-bool defaultMaterial();
+LILA_UI_API bool defaultMaterial();
 
-render::VertexColorMode vertexColorMode();
-render::ColorChannel colorChannel();
+LILA_UI_API render::VertexColorMode vertexColorMode();
+LILA_UI_API render::ColorChannel colorChannel();
 
-bool grayscaleWeights();
+LILA_UI_API bool grayscaleWeights();
 /**
  * Linear colour for a weight of 0..1: black through blue, cyan, green, yellow and red to white (Maya's paint ramp), or a
  * display-encoded gray ramp (0.5 reads mid gray) when grayscale.
  */
-glm::vec4 weightColor(float w, bool grayscale);
+LILA_UI_API glm::vec4 weightColor(float w, bool grayscale);
 /** Soft select falloff: dark red at the rim through orange to yellow at full weight (Maya's), or gray. Linear. */
-glm::vec4 falloffColor(float w, bool grayscale);
+LILA_UI_API glm::vec4 falloffColor(float w, bool grayscale);
 } // namespace lila::ui::viewportDisplay

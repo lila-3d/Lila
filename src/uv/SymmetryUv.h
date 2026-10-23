@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "uv/Chart.h"
 #include "uv/Unwrap.h"
 
@@ -40,12 +42,12 @@ struct SymmetryUvResult
  * copied to their mirror partners (flipped or stacked), and islands that straddle the plane are solved
  * and made exactly mirror symmetric about a vertical line in uv.
  */
-SymmetryUvResult unwrapSymmetric(geo::Mesh& mesh, std::span<const Index> faces, std::string_view uvSet, const SymmetryUvOptions& opts = {});
+LILA_SCENE_API SymmetryUvResult unwrapSymmetric(geo::Mesh& mesh, std::span<const Index> faces, std::string_view uvSet, const SymmetryUvOptions& opts = {});
 
 /**
  * Makes a chart's uvs mirror symmetric: partner[v] is the vertex mirroring v (itself on the plane). Fits
  * the best mirror line, averages each pair across it, and turns the chart so the line is vertical.
  * Returns the largest correction applied, in uv units.
  */
-double symmetrizeChart(Chart& chart, std::span<const Index> partner);
+LILA_SCENE_API double symmetrizeChart(Chart& chart, std::span<const Index> partner);
 } // namespace lila::uv

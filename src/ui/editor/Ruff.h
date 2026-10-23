@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "ui/editor/EditorTypes.h"
 
 #include <QByteArray>
@@ -18,13 +20,13 @@ struct FormatResult
 };
 
 /** `ruff format -`. Blocks for at most a few seconds; ruff is fast enough that this is the simpler choice. */
-FormatResult format(const QString& ruffExe, const QString& source, const QString& filename);
+LILA_UI_API FormatResult format(const QString& ruffExe, const QString& source, const QString& filename);
 
 /** Parses `ruff check --output-format=json` against the checked text (for code point to UTF-16 columns). */
-QList<Diagnostic> parseCheck(const QByteArray& output, const QStringList& lines);
+LILA_UI_API QList<Diagnostic> parseCheck(const QByteArray& output, const QStringList& lines);
 
 /** Runs `ruff check` in the background; a new check supersedes one still running. */
-class Checker : public QObject
+class LILA_UI_API Checker : public QObject
 {
     Q_OBJECT
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include "scene/Transform.h"
 
 #include <functional>
@@ -10,7 +12,7 @@ namespace lila::scene
  * A polygon mesh in the hierarchy. `inMesh` holds the base mesh (or is fed by a generator such as polyCube);
  * `outMesh` is what gets drawn and exported once modifiers run.
  */
-class MeshNode : public Transform
+class LILA_SCENE_API MeshNode : public Transform
 {
 public:
     enum Attr
@@ -29,7 +31,7 @@ public:
 };
 
 /** Procedural source: keyable parameters in, a mesh out. One class serves every primitive type. */
-class GeneratorNode : public Node
+class LILA_SCENE_API GeneratorNode : public Node
 {
 public:
     using Build = std::function<geo::Mesh(const Node&)>;
@@ -47,8 +49,8 @@ struct SymmetryState
     int on = 0;
     int axis = -1; // 0-2 when every mesh that has it on agrees, else -1
 };
-SymmetryState symmetryState(const Graph& g, const std::vector<NodeId>& nodes);
+LILA_SCENE_API SymmetryState symmetryState(const Graph& g, const std::vector<NodeId>& nodes);
 
-void registerMeshTypes();
-void registerMeshCommands();
+LILA_SCENE_API void registerMeshTypes();
+LILA_SCENE_API void registerMeshCommands();
 } // namespace lila::scene

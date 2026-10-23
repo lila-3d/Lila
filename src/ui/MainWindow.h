@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QMainWindow>
 #include <QPointer>
 
@@ -17,16 +19,25 @@ class QToolButton;
 
 namespace lila::ui
 {
+namespace menus
+{
+class MenuBuilder;
+}
+namespace panels
+{
+struct Panel;
+}
 class DockSidebars;
 class LayoutController;
 class ViewportLayout;
 
-class MainWindow : public QMainWindow
+class LILA_UI_API MainWindow : public QMainWindow
 {
     Q_OBJECT
 
 public:
     MainWindow();
+    ~MainWindow() override;
 
     /**
      * Run once the window is up: offers crash recovery for stale (crashed) sessions, then the startup dialog when
@@ -43,9 +54,11 @@ protected:
 
 private:
     void registerActions();
-    QAction* addActionItem(QMenu* menu, const std::string& id);
-    QMenu* addMenu(const QString& title);
     QMenu* refreshKeysOnShow(QMenu* menu);
+    /** Lila's own panels, in the order their docks are made (a panel's place() may refer to earlier ones). */
+    void registerPanels();
+    void createPanelDock(const panels::Panel& p);
+    void removePanelDock(const std::string& id);
     void buildMenus();
     void buildPanelMenus();
     void buildStatusBar();
@@ -83,8 +96,9 @@ private:
     void sendToUnreal();
 
     ViewportLayout* mViewports = nullptr;
-    QMenu* mRecentMenu = nullptr;
-    QMenu* mRecentFilesMenu = nullptr;
+    QPointer<QMenu> mRecentMenu;
+    menus::MenuBuilder* mMenus = nullptr;
+    int mPanelListener = 0;
     QTimer* mAutosaveTimer = nullptr;
     QLabel* mWorkspaceLabel = nullptr;
     QLabel* mSourceLabel = nullptr;

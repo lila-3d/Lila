@@ -72,27 +72,11 @@ QString originLabel(const layouts::Entry& e)
     switch (e.origin)
     {
     case layouts::Origin::BuiltIn: return "Built in";
+    case layouts::Origin::Extension: return "Extension";
     case layouts::Origin::User: return e.shadowsBuiltIn ? "User (replaces built in)" : "User";
     case layouts::Origin::Workspace: return e.shadowsBuiltIn ? "Folder (replaces built in)" : "Folder";
     }
     return {};
-}
-
-std::string actionSlug(const std::string& name)
-{
-    std::string out;
-    bool upper = false;
-    for (char c : name)
-    {
-        if (!std::isalnum((unsigned char)c))
-        {
-            upper = !out.empty();
-            continue;
-        }
-        out += upper ? char(std::toupper((unsigned char)c)) : char(std::tolower((unsigned char)c));
-        upper = false;
-    }
-    return out;
 }
 } // namespace
 
@@ -113,11 +97,11 @@ LayoutController::LayoutController(QMainWindow* window, DockSidebars* sidebars, 
                       if (!cur.empty())
                           addToShelf(cur);
                   }, [] { return !layouts::current().empty(); }, "Adds a shelf button that switches to the current layout."});
-    for (const std::string& name : layouts::builtInNames())
-        actions::add({"window.layout." + actionSlug(name), name + " Layout", "Windows",
-                      [this, name] { run("applyLayout", {{"name", name}}); }, nullptr,
-                      "Arranges the panels, viewports and shelf as the built-in " + name + " layout.",
-                      "lila.cmds.applyLayout(\"" + name + "\")"});
+    QPointer<LayoutController> self(this);
+    mContributedListener = layouts::contributed().addListener([self](RegistryChange, const std::string&, const std::string&) {
+        if (self)
+            self->refreshSwitcher();
+    });
 
     mMenu = new QMenu("Layouts", window);
     mMenu->setIcon(icon("layout"));
@@ -149,7 +133,6 @@ LayoutController::LayoutController(QMainWindow* window, DockSidebars* sidebars, 
     window->menuBar()->setCornerWidget(corner, Qt::TopRightCorner);
     refreshSwitcher();
 
-    QPointer<LayoutController> self(this);
     mPrefListener = PrefStore::get().onChanged([self](const std::string& file) {
         if (self && (file == "general" || file.starts_with("layouts/")) && file != "layouts/main")
             self->refreshSwitcher();
@@ -163,6 +146,7 @@ LayoutController::LayoutController(QMainWindow* window, DockSidebars* sidebars, 
 LayoutController::~LayoutController()
 {
     PrefStore::get().removeOnChanged(mPrefListener);
+    layouts::contributed().removeListener(mContributedListener);
     layouts::setGuiHooks({});
 }
 
@@ -216,6 +200,7 @@ void LayoutController::fillMenu()
 
 void LayoutController::refreshSwitcher()
 {
+    refreshLayoutActions();
     if (!mSwitcher)
         return;
     std::vector<layouts::Entry> all = layouts::list();
@@ -239,6 +224,33 @@ void LayoutController::refreshSwitcher()
     QSignalBlocker block(mSwitcher);
     int index = mSwitcher->findData(QString::fromStdString(cur));
     mSwitcher->setCurrentIndex(index >= 0 ? index : 0);
+}
+
+void LayoutController::refreshLayoutActions()
+{
+    std::set<std::string> live;
+    for (const layouts::Entry& e : layouts::list())
+    {
+        std::string id = "layout.apply." + e.name;
+        live.insert(id);
+        if (mLayoutActions.contains(id) && actions::find(id))
+            continue;
+        std::string name = e.name;
+        actions::add({id, name + " Layout", "Layouts", [this, name] { run("applyLayout", {{"name", name}}); }, nullptr,
+                      "Arranges the panels, viewports and shelf as the " + name + " layout.",
+                      "lila.cmds.applyLayout(\"" + name + "\")"});
+        mLayoutActions.insert(id);
+    }
+    for (auto it = mLayoutActions.begin(); it != mLayoutActions.end();)
+    {
+        if (live.contains(*it))
+        {
+            ++it;
+            continue;
+        }
+        actions::remove(*it);
+        it = mLayoutActions.erase(it);
+    }
 }
 
 std::string LayoutController::currentShelf() const
@@ -490,7 +502,7 @@ void LayoutController::manage()
     };
     auto updateButtons = [&] {
         const layouts::Entry* e = selected();
-        bool saved = e && e->origin != layouts::Origin::BuiltIn;
+        bool saved = e && e->origin != layouts::Origin::BuiltIn && e->origin != layouts::Origin::Extension;
         applyButton->setEnabled(e);
         shelfButton->setEnabled(e);
         renameButton->setEnabled(saved);

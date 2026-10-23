@@ -1,9 +1,14 @@
 #include "scene/Rig.h"
 
 #include "core/Profile.h"
+#include "scene/CenterInMesh.h"
+#include "scene/DominantInfluence.h"
+#include "scene/RigElements.h"
+#include "scene/SelectAs.h"
 #include "scene/RigUtil.h"
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
 #include <stdexcept>
@@ -100,6 +105,19 @@ glm::dmat4 Joint::preRotation() const
     return eulerToMatrix(as<glm::dvec3>(kJointOrient), RotateOrder::XYZ);
 }
 
+glm::dmat4 Joint::rotation() const
+{
+    auto order = RotateOrder(as<int64_t>(kRotateOrder));
+    glm::dmat4 fk = eulerToMatrix(as<glm::dvec3>(kRotate), order);
+    double w = std::clamp(as<double>(kIkBlend), 0.0, 1.0);
+    if (w <= 0.0)
+        return fk;
+    glm::dmat4 solved = eulerToMatrix(as<glm::dvec3>(kSolvedRotate), order);
+    if (w >= 1.0)
+        return solved;
+    return glm::dmat4(glm::mat3_cast(glm::slerp(glm::quat_cast(glm::dmat3(fk)), glm::quat_cast(glm::dmat3(solved)), w)));
+}
+
 void Joint::compute(const EvalContext&)
 {
     glm::dmat4 local = localMatrix(*this);
@@ -140,6 +158,20 @@ NodeType Joint::makeType(const NodeType& base)
          .doc = "Label used when type is 'other'."},
         {.name = "drawStyle", .shortName = "ds", .type = PlugType::Enum, .defaultValue = int64_t(kBone), .flags = stored,
          .enumNames = {kDrawStyleNames, kDrawStyleNames + 3}, .doc = "bone, box or none."},
+        {.name = "centerInMesh", .shortName = "cim", .type = PlugType::Bool, .defaultValue = false, .flags = stored,
+         .doc = "Keep the joint centred in the mesh cross-section across its bone while it is dragged."},
+        {.name = "centerMeshes", .shortName = "cms", .type = PlugType::Data, .defaultValue = rig::makeCenterMeshList(Graph::current(), {}),
+         .flags = stored, .doc = "Meshes to centre in (set with the centerMeshes command). Empty: the meshes its skinClusters deform."},
+        vec3Attr("solvedRotate", "sr", glm::dvec3(0.0), AttrInput | AttrHidden | AttrResetOnDisconnect,
+                 "IK solution in rotate's units and order, connected from an ikHandle."),
+        {.name = "ikBlend", .shortName = "ikb", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrInput | AttrHidden | AttrResetOnDisconnect,
+         .doc = "0 uses rotate (FK), 1 uses solvedRotate (IK); connected from an ikHandle's ikBlend."},
+        {.name = "selectAs", .shortName = "sla", .type = PlugType::Data, .defaultValue = rig::makeNodeRef(Graph::current(), kNoNode),
+         .flags = stored, .doc = "Joint a viewport mesh click selects instead of this one (set with the selectAs command)."},
+        {.name = "deform", .shortName = "dfm", .type = PlugType::Bool, .defaultValue = true, .flags = stored,
+         .doc = "Exported to game engines. Off for IK helpers and rig-only joints: exporters skip them and close the hierarchy over them."},
+        // Replaces the transform's attr in place (registerType matches by name), so joints default to smooth.
+        rotationInterpolationAttr(int64_t(RotationInterpolation::Smooth)),
     };
     t.create = [] { return std::make_unique<Joint>(); };
     return t;
@@ -538,9 +570,14 @@ void registerRigTypes()
     const NodeType* transform = types::find("transform");
     if (!transform)
         throw std::logic_error("registerRigTypes needs the built-in types first");
+    rig::registerCenterMeshListKind();
+    rig::registerNodeRefKind();
     types::registerType(Joint::makeType(*transform));
     registerSkinTypes();
     registerConstraintTypes();
+    registerIkTypes();
+    rigel::registerTypes();
+    registerEditSkeletonTypes();
 }
 
 void registerRigCommands()
@@ -550,5 +587,11 @@ void registerRigCommands()
     registerJointCommands();
     registerSkinCommands();
     registerConstraintCommands();
+    registerIkCommands();
+    rigel::registerCommands();
+    registerEditSkeletonCommands();
+    registerCenterCommands();
+    registerDominantInfluenceCommands();
+    registerSelectAsCommands();
 }
 } // namespace lila::scene

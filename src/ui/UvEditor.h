@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QWidget>
 
 #include <nlohmann/json.hpp>
@@ -24,7 +26,7 @@ class UvPackPanel;
  * UV editor: a 2D view of the hilited meshes' uvs with selection synced to the 3D component selection,
  * a move/rotate/scale manipulator, numeric transforms and buttons for the uv commands.
  */
-class UvEditor : public QWidget
+class LILA_UI_API UvEditor : public QWidget
 {
     Q_OBJECT
 
@@ -61,8 +63,8 @@ private:
 };
 
 /** Registers "window.uvEditor" and the uv.* actions (unwrap, auto, pack...) for menus, hotkeys and shelves. */
-void registerUvActions();
+LILA_UI_API void registerUvActions();
 
 /** How "window.uvEditor" toggles the panel: the main window raises its dock, or tucks it away when showing. */
-void setUvEditorOpener(std::function<void()> open);
+LILA_UI_API void setUvEditorOpener(std::function<void()> open);
 } // namespace lila::ui

@@ -1,0 +1,6 @@
+{
+    "id": "future",
+    "version": "1.0.0",
+    "sdk": "2.0",
+    "entry": {"windows": "future.dll", "linux": "future.so", "macos": "future.dylib"}
+}

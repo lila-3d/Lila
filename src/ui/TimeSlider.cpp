@@ -2,12 +2,15 @@
 
 #include "cmds/Command.h"
 #include "core/Log.h"
+#include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "scene/Anim.h"
 #include "scene/Graph.h"
 #include "ui/Actions.h"
 #include "ui/Animation.h"
+#include "ui/Ghosting.h"
 #include "ui/Icons.h"
+#include "ui/ViewportDisplay.h"
 
 #include <QComboBox>
 #include <QHBoxLayout>
@@ -57,10 +60,12 @@ enum class Glyph
 {
     ToStart,
     StepBack,
+    PrevKey,
     PlayBack,
     Play,
     Pause,
     StepForward,
+    NextKey,
     ToEnd,
 };
 
@@ -81,6 +86,7 @@ QIcon glyphIcon(Glyph g)
         p.drawPath(path);
     };
     auto bar = [&](double x) { p.drawRect(QRectF(x, 8, 3, 16)); };
+    auto key = [&](double cx) { p.drawPolygon(QPolygonF({{cx, 10}, {cx + 6, 16}, {cx, 22}, {cx - 6, 16}})); };
     switch (g)
     {
     case Glyph::ToStart: bar(7); tri(24, 11); break;
@@ -89,6 +95,8 @@ QIcon glyphIcon(Glyph g)
     case Glyph::Play: tri(9, 23); break;
     case Glyph::Pause: bar(10); bar(19); break;
     case Glyph::StepForward: bar(7); tri(12, 25); break;
+    case Glyph::PrevKey: key(10); tri(27, 17); break;
+    case Glyph::NextKey: tri(5, 15); key(22); break;
     case Glyph::ToEnd: tri(8, 21); bar(22); break;
     }
     return QIcon(pm);
@@ -127,7 +135,12 @@ public:
         setMinimumHeight(28);
         setMouseTracking(false);
         setFocusPolicy(Qt::ClickFocus);
+        mPrefListener = PrefStore::get().onChanged([this](const std::string& file) {
+            if (file == "general")
+                update();
+        });
     }
+    ~TimeRuler() override { PrefStore::get().removeOnChanged(mPrefListener); }
 
     void invalidateKeys()
     {
@@ -172,15 +185,29 @@ protected:
         {
             Graph& g = Graph::current();
             mKeys = anim::keyTimes(g, g.selection());
+            mLoopKeys = anim::loopKeyTimes(g, g.selection());
             mKeysValid = true;
         }
         double tickW = std::max(2.0, ppf * 0.35);
+        QColor tick = gray(175);
+        if (viewportDisplay::accentColors(viewportDisplay::kTimeKeyColors))
+            tick = QColor::fromRgbF(viewportDisplay::kKeyTickColor.r, viewportDisplay::kKeyTickColor.g, viewportDisplay::kKeyTickColor.b);
         for (double t : mKeys)
         {
             double fr = anim::frameOf(t);
             if (fr < first - 0.5 || fr > last + 0.5)
                 continue;
-            p.fillRect(QRectF(xOf(fr) - tickW / 2, 2, tickW, h - 4), gray(175));
+            p.fillRect(QRectF(xOf(fr) - tickW / 2, 2, tickW, h - 4), tick);
+        }
+        // Loop keys: the tick with caps top and bottom, bracketing the cycle.
+        for (double t : mLoopKeys)
+        {
+            double fr = anim::frameOf(t);
+            if (fr < first - 0.5 || fr > last + 0.5)
+                continue;
+            double capW = tickW * 3.0;
+            p.fillRect(QRectF(xOf(fr) - capW, 1, capW, 2), tick);
+            p.fillRect(QRectF(xOf(fr) - capW, h - 3, capW, 2), tick);
         }
 
         int cur = frameOf(Graph::current().time());
@@ -263,8 +290,10 @@ private:
 
     static constexpr double kMargin = 10.0;
     std::vector<double> mKeys;
+    std::vector<double> mLoopKeys;
     bool mKeysValid = false;
     bool mScrubbing = false;
+    int mPrefListener = 0;
 };
 
 /** Outer animation range with the playback range as a draggable bar inside it. */
@@ -395,6 +424,7 @@ TimeSlider::TimeSlider(QWidget* parent) : QWidget(parent)
         return b;
     };
     addButton(Glyph::ToStart, "Go to start", "anim.firstFrame");
+    addButton(Glyph::PrevKey, "Previous key (,)", "anim.prevKey");
     addButton(Glyph::StepBack, "Step back one frame (Alt+,)", "anim.prevFrame");
     mPlayBack = toolButton(this, "Play backwards");
     top->addWidget(mPlayBack);
@@ -413,6 +443,7 @@ TimeSlider::TimeSlider(QWidget* parent) : QWidget(parent)
             runUi("play");
     });
     addButton(Glyph::StepForward, "Step forward one frame (Alt+.)", "anim.nextFrame");
+    addButton(Glyph::NextKey, "Next key (.)", "anim.nextKey");
     addButton(Glyph::ToEnd, "Go to end", "anim.lastFrame");
     outer->addLayout(top);
 
@@ -443,6 +474,43 @@ TimeSlider::TimeSlider(QWidget* parent) : QWidget(parent)
     mAutoKey->setIcon(icon("key"));
     mAutoKey->setCheckable(true);
     bottom->addWidget(mAutoKey);
+    {
+        QToolButton* ghost = toolButton(this, QString::fromStdString(actions::tooltip("anim.toggleGhosts")) + "\nRight-click for ghost options");
+        ghost->setIcon(icon("ghost"));
+        ghost->setCheckable(true);
+        ghost->setChecked(ghostActionState("anim.toggleGhosts").value_or(false));
+        ghost->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(ghost, &QToolButton::clicked, this, [] { actions::run(json("anim.toggleGhosts")); });
+        connect(ghost, &QToolButton::customContextMenuRequested, this, [ghost](const QPoint& at) {
+            QMenu menu;
+            for (const char* id : {"anim.ghostMode.keys", "anim.ghostMode.frames", "", "anim.ghostShow.mesh", "anim.ghostShow.skeleton",
+                                   "anim.ghostShow.both", "", "anim.refreshGhosts"})
+            {
+                if (!*id)
+                {
+                    menu.addSeparator();
+                    continue;
+                }
+                QAction* qa = menu.addAction(QString::fromStdString(actions::displayLabel(id)), [id] { actions::run(json(id)); });
+                if (std::optional<bool> on = ghostActionState(id))
+                {
+                    qa->setCheckable(true);
+                    qa->setChecked(*on);
+                }
+            }
+            menu.exec(ghost->mapToGlobal(at));
+        });
+        int listener = PrefStore::get().onChanged([ghost](const std::string& file) {
+            if (file != "general")
+                return;
+            QMetaObject::invokeMethod(ghost, [ghost] {
+                QSignalBlocker block(ghost);
+                ghost->setChecked(ghostActionState("anim.toggleGhosts").value_or(false));
+            });
+        });
+        connect(ghost, &QObject::destroyed, [listener] { PrefStore::get().removeOnChanged(listener); });
+        bottom->addWidget(ghost);
+    }
     outer->addLayout(bottom);
 
     // Checked toggles read as lit, which grayscale needs to be unmistakable.
