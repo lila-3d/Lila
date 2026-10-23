@@ -414,7 +414,7 @@ void install(std::function<ViewportWidget*()> active)
                   .category = "Create",
                   .run = [] { importImage(QApplication::activeWindow(), {}); },
                   .doc = "Creates a free image plane from an image file, placed by its transform like any object.",
-                  .python = "lila.cmds.imagePlane(fileName=\"refs/side.png\")"});
+                  .python = "lila.ops.imagePlane(fileName=\"refs/side.png\")"});
     actions::add({.id = "viewport.imagePlaneImport",
                   .label = "Import Image...",
                   .category = "View",
@@ -424,7 +424,7 @@ void install(std::function<ViewportWidget*()> active)
                           importImage(v ? v->window() : QApplication::activeWindow(), v ? v->viewName() : "persp");
                       },
                   .doc = "Attaches a new image plane to the active view's camera.",
-                  .python = "lila.cmds.imagePlane(fileName=\"refs/front.png\", camera=\"front\")"});
+                  .python = "lila.ops.imagePlane(fileName=\"refs/front.png\", camera=\"front\")"});
     actions::add({.id = "viewport.toggleImagePlanes",
                   .label = "Image Planes",
                   .category = "View",

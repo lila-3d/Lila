@@ -54,7 +54,7 @@ int main(int argc, char** argv)
     crash::addSecret("crashtestSecretToken0123456789");
     log::info("crashtest: marker line for mode {}", mode);
     log::info("crashtest: the secret is crashtestSecretToken0123456789");
-    log::write(LogLevel::Echo, "lila.cmds.polyCube(name='crashtestCube')\n");
+    log::write(LogLevel::Echo, "lila.ops.polyCube(name='crashtestCube')\n");
 
     crash::WatchOptions opts;
     opts.ui = false;

@@ -51,7 +51,7 @@ LILA_UI_API bool isIdentChar(QChar c);
 /** Start column of the identifier that ends at `col`. */
 LILA_UI_API int wordStart(QStringView line, int col);
 
-/** For "x = lila.cmds.po" at the end returns {"lila.cmds", "po"}; base is empty for a bare name. */
+/** For "x = lila.ops.po" at the end returns {"lila.ops", "po"}; base is empty for a bare name. */
 struct DottedPrefix
 {
     QString base;
@@ -59,7 +59,7 @@ struct DottedPrefix
 };
 LILA_UI_API DottedPrefix dottedPrefixAt(QStringView line, int col);
 
-/** Full dotted symbol under the cursor, extended right to the end of the identifier: "lila.cmds.polyCube". */
+/** Full dotted symbol under the cursor, extended right to the end of the identifier: "lila.ops.polyCube". */
 LILA_UI_API QString dottedSymbolAt(QStringView line, int col);
 
 /** True if `s` is identifier(.identifier)*, which is all the interpreter is ever asked to evaluate. */

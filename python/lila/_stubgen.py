@@ -1,4 +1,4 @@
-"""Writes cmds.pyi from the live command registry so editors and basedpyright see typed commands."""
+"""Writes ops.pyi from the live command registry so editors and basedpyright see typed commands."""
 
 import os
 
@@ -29,7 +29,7 @@ def _render():
 
 def write(force=False):
     """Rewrites the stub only when the registry changed. Silently skips read-only installs."""
-    path = os.path.join(os.path.dirname(__file__), "cmds.pyi")
+    path = os.path.join(os.path.dirname(__file__), "ops.pyi")
     text = _render()
     try:
         if not force and os.path.isfile(path):

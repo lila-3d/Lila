@@ -10,7 +10,7 @@ attributes, and decorate a function with @panel to get a dockable window.
         return Column(
             Label("Wheel"),
             Slider("Wheel.rotateX", minimum=-360, maximum=360),
-            Row(Button("Key", lambda: lila.cmds.setKeyframe("Wheel")), Button("Reset", reset)),
+            Row(Button("Key", lambda: lila.ops.setKeyframe("Wheel")), Button("Reset", reset)),
         )
 
     show_panel("Wheel Rig")
@@ -78,10 +78,10 @@ _bindings = []
 _timer = None
 
 
-def _cmds():
-    from . import cmds
+def _ops():
+    from . import ops
 
-    return cmds
+    return ops
 
 
 def _refresh_bindings():
@@ -176,11 +176,11 @@ class _Bound(_Node):
         self.plug, self.on_change, self.label = plug, on_change, label
 
     def _get(self):
-        return _cmds().getAttr(self.plug) if self.plug else None
+        return _ops().getAttr(self.plug) if self.plug else None
 
     def _set(self, value):
         if self.plug:
-            _cmds().setAttr(self.plug, value)
+            _ops().setAttr(self.plug, value)
         if self.on_change:
             self.on_change(value)
 

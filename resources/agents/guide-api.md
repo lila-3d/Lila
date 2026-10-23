@@ -2,18 +2,18 @@
 
 ## Ways in
 
-- MCP `execute_python`: Python in Lila's interpreter, state kept between calls. `lila` and `cmds` are pre-imported; printed output and a trailing expression's value come back.
+- MCP `execute_python`: Python in Lila's interpreter, state kept between calls. `lila` and `ops` are pre-imported; printed output and a trailing expression's value come back.
 - MCP `run_command`: one command by name with JSON args, for clients without Python.
 - Headless: `lilabatch --batch script.py` or `lilabatch --batch -c "code"` (on PATH in Lila's terminal). No window, same commands; `captureView` / `captureTurntable` still render.
 - Lila's terminal sets `LILA=1`, `LILA_MCP_URL`, `LILA_MCP_TOKEN`, `LILA_WORKSPACE` and `LILA_BIN`.
 
 ## Where things live
 
-- `lila.cmds.<name>(*objects, flag=value)`: every registered command (Maya style). Positional args are object names; with none, most commands use the selection. Flags take long or short names. `help(cmds.polyExtrude)` prints the flags; the MCP `list_commands` tool with `filter` does the same.
+- `lila.ops.<name>(*objects, flag=value)`: every registered command (Maya style). Positional args are object names; with none, most commands use the selection. Flags take long or short names. `help(ops.polyExtrude)` prints the flags; the MCP `list_commands` tool with `filter` does the same.
 - `lila.nodes`: an object API over the scene (`lila.node("Dog").translate_y = 10`, `lila.selected()`).
 - `lila.math`: Vector, Rotator, Transform (Unreal-flavoured, cm, Y-up by default).
 - `lila.ui`: declarative panels; not needed for modeling.
-- Every mutation is a command, so it is undoable (`cmds.undo()`, `cmds.redo()`) and echoes in Lila's script editor.
+- Every mutation is a command, so it is undoable (`ops.undo()`, `ops.redo()`) and echoes in Lila's script editor.
 
 ## Command families
 

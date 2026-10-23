@@ -89,7 +89,7 @@ LayoutController::LayoutController(QMainWindow* window, DockSidebars* sidebars, 
     });
 
     actions::add({"window.layout.saveAs", "Save Current Layout As...", "Windows", [this] { saveAs(); }, nullptr,
-                  "Saves the panel arrangement, viewports and shelf under a name.", "lila.cmds.saveLayout(\"My Layout\")"});
+                  "Saves the panel arrangement, viewports and shelf under a name.", "lila.ops.saveLayout(\"My Layout\")"});
     actions::add({"window.layout.manage", "Manage Layouts...", "Windows", [this] { manage(); }, nullptr,
                   "Apply, rename, delete or revert saved layouts, or add them to the shelf."});
     actions::add({"window.layout.addToShelf", "Add Current Layout to Shelf", "Windows", [this] {
@@ -238,7 +238,7 @@ void LayoutController::refreshLayoutActions()
         std::string name = e.name;
         actions::add({id, name + " Layout", "Layouts", [this, name] { run("applyLayout", {{"name", name}}); }, nullptr,
                       "Arranges the panels, viewports and shelf as the " + name + " layout.",
-                      "lila.cmds.applyLayout(\"" + name + "\")"});
+                      "lila.ops.applyLayout(\"" + name + "\")"});
         mLayoutActions.insert(id);
     }
     for (auto it = mLayoutActions.begin(); it != mLayoutActions.end();)

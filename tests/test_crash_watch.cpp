@@ -127,7 +127,7 @@ void checkCommon(const HelperRun& run, const char* code)
     CHECK(r.find("crash")->get("exception.code") == code);
     CHECK(contains(r.summary, code));
     CHECK(contains(run.text, "crashtest: marker line"));
-    CHECK(contains(run.text, "lila.cmds.polyCube(name='crashtestCube')"));
+    CHECK(contains(run.text, "lila.ops.polyCube(name='crashtestCube')"));
     CHECK(contains(run.text, "scene: X:/crashtest/scene.lila"));
     CHECK_FALSE(contains(run.text, "crashtestSecretToken0123456789"));
     REQUIRE(r.find("system"));

@@ -1527,7 +1527,7 @@ void registerNodeEditorActions()
                               e->setGroup(qs(r.get<std::string>()));
                       },
                   .doc = "Make a geometry-nodes group and open it in the node editor.",
-                  .python = "lila.cmds.gnCreateGroup(\"GeometryNodes\")"});
+                  .python = "lila.ops.gnCreateGroup(\"GeometryNodes\")"});
 }
 
 void setNodeEditorShowHook(std::function<void()> show) { showHook() = std::move(show); }

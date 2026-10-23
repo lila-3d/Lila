@@ -146,14 +146,14 @@ TEST_CASE("python extension: load, call, errors, unload")
     CHECK(run("helloPy", {{"args", {"a", "b"}}}) == "Hello, a, b");
     CHECK_THROWS_WITH_AS(run("helloPy"), doctest::Contains("give someone to greet"), CommandError);
 
-    // Visible to scripts, as lila.cmds is refreshed on load.
-    python::Result r = python::run("lila.cmds.helloPy('x')");
+    // Visible to scripts, as lila.ops is refreshed on load.
+    python::Result r = python::run("lila.ops.helloPy('x')");
     CHECK(r.ok);
     CHECK(r.value == "'Hello, x'");
 
     pm.unload("hello_py");
     CHECK_FALSE(cmds::find("helloPy"));
-    CHECK(python::run("assert not hasattr(lila.cmds, 'helloPy')").ok);
+    CHECK(python::run("assert not hasattr(lila.ops, 'helloPy')").ok);
 
     // Direct registration, a dict flag with a short name, and a non-CommandError exception.
     REQUIRE(python::run("from lila import extension\n"

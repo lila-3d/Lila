@@ -91,7 +91,7 @@ std::optional<ExtensionInfo> probe(const fs::path& path, bool explicitPath = fal
 void refreshPythonCommands()
 {
     if (python::initialized())
-        python::run("__import__('lila.cmds', fromlist=['refresh']).refresh()", "<extensions>");
+        python::run("__import__('lila.ops', fromlist=['refresh']).refresh()", "<extensions>");
 }
 
 std::string pyString(const std::string& s)

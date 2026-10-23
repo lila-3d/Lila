@@ -1,4 +1,4 @@
-"""Every Lila command as a function: lila.cmds.name(*objects, flag=value).
+"""Every Lila command as a function: lila.ops.name(*objects, flag=value).
 
 Flags take long or short names, like Maya. Generated from the live command registry, so extension commands appear
 here too after refresh().

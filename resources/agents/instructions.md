@@ -1,7 +1,7 @@
 You are connected to Lila, a Maya-style 3D DCC for game assets (Unreal Engine). Do the 3D work here, through these tools: do not look for or launch Blender, Maya or other 3D apps, and do not write OBJ files by hand.
 
 - A model is ONE connected mesh grown out of one primitive: legs, head, ears, snout and tail are faces extruded out of the body, eyes and nose are faces inset and bulged. Never build parts as separate primitives pushed together. Read lila://guide/modeling (or read_guide topic "modeling") before you start; it has the workflow and command recipes.
-- Drive Lila with execute_python (`cmds` is lila.cmds) and put a whole stage, many commands, in one call. Every call is undoable (`cmds.undo()`); list_commands shows flags.
+- Drive Lila with execute_python (`ops` is lila.ops) and put a whole stage, many commands, in one call. Every call is undoable (`ops.undo()`); list_commands shows flags.
 - Select components by where they are with selectComponentsWhere / findComponents (normal, side of the symmetry plane, box, extreme along an axis), never by guessed ids.
 - Check with mesh_check (a few lines: shells, holes, non-manifold, counts) after each stage and before finishing: it must say OK with 1 shell. Look with capture_turntable views ["front", "right", "top", "persp"], display "shaded"; three or four captures per model is enough.
 - Units are centimetres, Y is up, the front of an asset faces +Z (Lila's front view). Leave the user's existing objects alone unless asked.

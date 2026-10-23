@@ -14,7 +14,7 @@ import re
 
 import _lila
 
-from . import cmds
+from . import ops
 
 __all__ = ["Node", "node", "nodes", "selected", "select", "locator", "group", "mesh", "exists", "display_layers", "display_layer", "object_sets",
            "object_set"]
@@ -74,7 +74,7 @@ class Node:
 
     @name.setter
     def name(self, value):
-        cmds.rename(self.name, value)
+        ops.rename(self.name, value)
 
     @property
     def type(self):
@@ -105,9 +105,9 @@ class Node:
     @parent.setter
     def parent(self, value):
         if value is None:
-            cmds.parent(self.name, world=True)
+            ops.parent(self.name, world=True)
         else:
-            cmds.parent(self.name, Node(value).name)
+            ops.parent(self.name, Node(value).name)
 
     @property
     def children(self):
@@ -129,7 +129,7 @@ class Node:
         return [a["name"] for a in _lila.node_attrs(self._id) if keyable is None or a["keyable"] == keyable]
 
     def get(self, attr):
-        value = cmds.getAttr(f"{self.name}.{_camel(attr)}")
+        value = ops.getAttr(f"{self.name}.{_camel(attr)}")
         return _vector(value) if isinstance(value, list) and len(value) == 3 else value
 
     def set(self, attr, value):
@@ -137,22 +137,22 @@ class Node:
             value = [value.x, value.y, value.z]
         elif isinstance(value, tuple):
             value = list(value)
-        cmds.setAttr(f"{self.name}.{_camel(attr)}", value)
+        ops.setAttr(f"{self.name}.{_camel(attr)}", value)
 
     def lock(self, *attrs, locked=True):
         """Lock attributes (translate locks all three of tx/ty/tz) so nothing can change them; locked=False unlocks."""
         for attr in attrs:
-            cmds.setAttr(f"{self.name}.{_camel(attr)}", lock=locked)
+            ops.setAttr(f"{self.name}.{_camel(attr)}", lock=locked)
 
     def unlock(self, *attrs):
         self.lock(*attrs, locked=False)
 
     def is_locked(self, attr):
-        return cmds.getAttr(f"{self.name}.{_camel(attr)}", lock=True)
+        return ops.getAttr(f"{self.name}.{_camel(attr)}", lock=True)
 
     def has_attr(self, attr):
         try:
-            cmds.getAttr(f"{self.name}.{_camel(attr)}")
+            ops.getAttr(f"{self.name}.{_camel(attr)}")
             return True
         except Exception:
             return False
@@ -185,68 +185,68 @@ class Node:
     @property
     def world_position(self):
         """World position of the rotate pivot."""
-        return _vector(cmds.pivot(self.name))
+        return _vector(ops.pivot(self.name))
 
     @world_position.setter
     def world_position(self, value):
-        cmds.move(self.name, to=list(value))
+        ops.move(self.name, to=list(value))
 
     @property
     def world_matrix(self):
         return self.get("worldMatrix")
 
     def move(self, x=0.0, y=0.0, z=0.0, space="world"):
-        cmds.move(self.name, by=[x, y, z], space=space)
+        ops.move(self.name, by=[x, y, z], space=space)
 
     def rotate_by(self, x=0.0, y=0.0, z=0.0, space="world"):
-        cmds.rotate(self.name, by=[x, y, z], space=space)
+        ops.rotate(self.name, by=[x, y, z], space=space)
 
     def scale_by(self, x=1.0, y=None, z=None):
         y = x if y is None else y
         z = x if z is None else z
-        cmds.scale(self.name, by=[x, y, z])
+        ops.scale(self.name, by=[x, y, z])
 
     def set_pivot(self, position):
-        cmds.setPivot(self.name, position=list(position))
+        ops.setPivot(self.name, position=list(position))
 
     def reset_pivot(self):
-        cmds.resetPivot(self.name)
+        ops.resetPivot(self.name)
 
     # meshes
 
     @property
     def points(self):
         """Final (modified) mesh points in object space, as lila.math.Vector."""
-        return [_vector(p) for p in cmds.meshData(self.name)["points"]]
+        return [_vector(p) for p in ops.meshData(self.name)["points"]]
 
     @property
     def faces(self):
         """Faces as lists of point indices."""
-        return cmds.meshData(self.name)["faces"]
+        return ops.meshData(self.name)["faces"]
 
     def mesh_info(self):
-        return cmds.meshInfo(self.name)
+        return ops.meshInfo(self.name)
 
     # vertex colors
 
     @property
     def color_sets(self):
         """Color set names in order; the first is the vertex color exporters write first (Unreal's)."""
-        return cmds.polyColorSet(self.name, query=True)["sets"]
+        return ops.polyColorSet(self.name, query=True)["sets"]
 
     @property
     def current_color_set(self):
         """The set the viewport shows and paint tools edit, or "" without any."""
-        return cmds.polyColorSet(self.name, query=True)["current"]
+        return ops.polyColorSet(self.name, query=True)["current"]
 
     @current_color_set.setter
     def current_color_set(self, name):
-        cmds.polyColorSet(self.name, colorSet=name, current=True)
+        ops.polyColorSet(self.name, colorSet=name, current=True)
 
     def add_color_set(self, name="", fill=(1.0, 1.0, 1.0, 1.0)):
         """Adds a color set filled with a linear RGBA color; returns its name."""
         before = set(self.color_sets)
-        sets = cmds.polyColorSet(self.name, create=True, colorSet=name, fill=list(fill))["sets"]
+        sets = ops.polyColorSet(self.name, create=True, colorSet=name, fill=list(fill))["sets"]
         return next((s for s in sets if s not in before), name)
 
     def get_colors(self, color_set="", base=True):
@@ -254,7 +254,7 @@ class Node:
         fn = getattr(_lila, "color_set_array", None)
         if fn is None:
             import numpy as np
-            flat = cmds.getVertexColorData(self.name, colorSet=color_set, base=base)
+            flat = ops.getVertexColorData(self.name, colorSet=color_set, base=base)
             return np.asarray(flat, dtype=np.float32).reshape(-1, 4)
         return fn(self.name, color_set, base)
 
@@ -264,7 +264,7 @@ class Node:
         arr = np.ascontiguousarray(values, dtype=np.float32).reshape(-1, 4)
         fn = getattr(_lila, "set_color_set_array", None)
         if fn is None:
-            cmds.setVertexColorData(self.name, colorSet=color_set, values=arr.ravel().tolist())
+            ops.setVertexColorData(self.name, colorSet=color_set, values=arr.ravel().tolist())
         else:
             fn(self.name, arr, color_set)
 
@@ -273,7 +273,7 @@ class Node:
     @property
     def display_layer(self):
         """The display layer this node is in (a Node), or None."""
-        for info in cmds.listDisplayLayers():
+        for info in ops.listDisplayLayers():
             if self.name in info["members"]:
                 return Node(info["name"])
         return None
@@ -282,49 +282,49 @@ class Node:
     def display_layer(self, layer):
         """Moves the node into a layer (Node or name); None takes it out of its layer."""
         if layer is None:
-            cmds.removeFromDisplayLayer(self.name)
+            ops.removeFromDisplayLayer(self.name)
         else:
-            cmds.editDisplayLayerMembers(Node(layer).name, self.name)
+            ops.editDisplayLayerMembers(Node(layer).name, self.name)
 
     # object sets
 
     @property
     def sets(self):
         """The object sets holding this node, whole or by its components (Nodes)."""
-        return [Node(s) for s in cmds.listSets(object=self.name)]
+        return [Node(s) for s in ops.listSets(object=self.name)]
 
     @property
     def members(self):
         """An object set's members: names and component strings like "pCube1.vtx[0:3]"."""
-        return cmds.setMembers(self.name)
+        return ops.setMembers(self.name)
 
     @property
     def member_nodes(self):
         """The nodes an object set touches (component owners included), as Nodes."""
-        return [Node(n) for n in cmds.setMembers(self.name, nodes=True)]
+        return [Node(n) for n in ops.setMembers(self.name, nodes=True)]
 
     def add_members(self, *items):
         """Adds Nodes, names or component strings to this object set."""
-        cmds.addToSet(self.name, *[_member(i) for i in items])
+        ops.addToSet(self.name, *[_member(i) for i in items])
 
     def remove_members(self, *items):
         """Takes Nodes, names or component strings out of this object set."""
-        cmds.removeFromSet(self.name, *[_member(i) for i in items])
+        ops.removeFromSet(self.name, *[_member(i) for i in items])
 
     def select_members(self, add=False):
         """Selects what this object set holds: its objects, and its components in component mode."""
-        cmds.selectSetMembers(self.name, add=add)
+        ops.selectSetMembers(self.name, add=add)
 
     # lifetime / selection
 
     def delete(self):
-        cmds.delete(self.name)
+        ops.delete(self.name)
 
     def select(self, add=False):
         if add:
-            cmds.select(self.name, add=True)
+            ops.select(self.name, add=True)
         else:
-            cmds.select(self.name)
+            ops.select(self.name)
 
 
 def node(name):
@@ -352,11 +352,11 @@ def select(*items, add=False):
     """Select nodes (Node handles or names). No arguments clears the selection."""
     names = [Node(i).name for i in items]
     if not names:
-        cmds.select(clear=True)
+        ops.select(clear=True)
     elif add:
-        cmds.select(*names, add=True)
+        ops.select(*names, add=True)
     else:
-        cmds.select(*names)
+        ops.select(*names)
 
 
 def locator(name=None, position=None):
@@ -365,19 +365,19 @@ def locator(name=None, position=None):
         flags["name"] = name
     if position is not None:
         flags["position"] = list(position)
-    return Node(cmds.spaceLocator(**flags))
+    return Node(ops.spaceLocator(**flags))
 
 
 def mesh(points, faces, name=None):
     """A new mesh from points ([x, y, z] or Vector) and faces (lists of point indices)."""
     pts = [[p[0], p[1], p[2]] for p in points]
     flags = {"name": name} if name else {}
-    return Node(cmds.createMesh(points=pts, faces=[list(f) for f in faces], **flags))
+    return Node(ops.createMesh(points=pts, faces=[list(f) for f in faces], **flags))
 
 
 def display_layers():
     """Every display layer, in Display Layers panel order."""
-    return [Node(info["name"]) for info in cmds.listDisplayLayers()]
+    return [Node(info["name"]) for info in ops.listDisplayLayers()]
 
 
 def display_layer(*items, name=None):
@@ -386,7 +386,7 @@ def display_layer(*items, name=None):
     names = [Node(i).name for i in items]
     if not names:
         flags["empty"] = True
-    return Node(cmds.createDisplayLayer(*names, **flags))
+    return Node(ops.createDisplayLayer(*names, **flags))
 
 
 def _member(item):
@@ -396,7 +396,7 @@ def _member(item):
 def object_sets(quick_select=None):
     """Every object set in creation order; quick_select=True only quick select sets, False only plain ones."""
     flags = {} if quick_select is None else {"quickSelect": quick_select}
-    return [Node(n) for n in cmds.listSets(**flags)]
+    return [Node(n) for n in ops.listSets(**flags)]
 
 
 def object_set(*items, name=None, quick_select=False):
@@ -407,10 +407,10 @@ def object_set(*items, name=None, quick_select=False):
     members = [_member(i) for i in items]
     if not members:
         flags["empty"] = True
-    return Node(cmds.createSet(*members, **flags))
+    return Node(ops.createSet(*members, **flags))
 
 
 def group(*items, name=None):
     flags = {"name": name} if name else {}
     names = [Node(i).name for i in items]
-    return Node(cmds.group(*names, **flags))
+    return Node(ops.group(*names, **flags))

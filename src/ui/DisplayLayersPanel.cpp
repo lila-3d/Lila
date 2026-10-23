@@ -402,18 +402,18 @@ void DisplayLayersPanel::contextMenu(const QPoint& at)
 void registerDisplayLayerActions()
 {
     actions::add({.id = "layers.create", .label = "Create Empty Display Layer", .category = "Display",
-                  .doc = "A new display layer with no objects in it.", .python = "lila.cmds.createDisplayLayer(empty=True)",
+                  .doc = "A new display layer with no objects in it.", .python = "lila.ops.createDisplayLayer(empty=True)",
                   .command = "createDisplayLayer", .call = {{"empty", true}}});
     actions::add({.id = "layers.createFromSelected", .label = "Create Display Layer from Selected", .category = "Display",
                   .run = [] { createFromSelected(); },
                   .doc = "A new display layer holding the selected objects, taken out of the layers they were in.",
-                  .python = "lila.cmds.createDisplayLayer()"});
+                  .python = "lila.ops.createDisplayLayer()"});
     actions::add({.id = "layers.addSelected", .label = "Add Selected to Display Layer", .category = "Display",
                   .run = [] { addSelected(validActive()); },
                   .doc = "Moves the selected objects into the display layer last clicked in the Display Layers panel.",
-                  .python = "lila.cmds.editDisplayLayerMembers(\"layer1\")"});
+                  .python = "lila.ops.editDisplayLayerMembers(\"layer1\")"});
     actions::add({.id = "layers.removeSelected", .label = "Remove Selected from Display Layers", .category = "Display",
                   .run = [] { removeSelected(); }, .doc = "Takes the selected objects out of their display layers.",
-                  .python = "lila.cmds.removeFromDisplayLayer()"});
+                  .python = "lila.ops.removeFromDisplayLayer()"});
 }
 } // namespace lila::ui

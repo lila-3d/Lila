@@ -71,8 +71,8 @@ TEST_CASE("traceback references")
 
 TEST_CASE("dotted prefixes and symbols")
 {
-    auto p = text::dottedPrefixAt(u"x = lila.cmds.po", 16);
-    CHECK(p.base == "lila.cmds");
+    auto p = text::dottedPrefixAt(u"x = lila.ops.po", 16);
+    CHECK(p.base == "lila.ops");
     CHECK(p.prefix == "po");
     p = text::dottedPrefixAt(u"lila.", 5);
     CHECK(p.base == "lila");
@@ -80,7 +80,7 @@ TEST_CASE("dotted prefixes and symbols")
     p = text::dottedPrefixAt(u"pri", 3);
     CHECK(p.base.isEmpty());
     CHECK(p.prefix == "pri");
-    CHECK(text::dottedSymbolAt(u"cmds.polyCube(w=1)", 7) == "cmds.polyCube");
+    CHECK(text::dottedSymbolAt(u"ops.polyCube(w=1)", 7) == "ops.polyCube");
     CHECK(text::isDottedName(u"a.b_c.d1"));
     CHECK(!text::isDottedName(u"a().b"));
     CHECK(!text::isDottedName(u"1a"));

@@ -73,7 +73,7 @@ struct Server::Impl
     std::map<std::string, Resource> resources;
     std::map<std::string, Prompt> prompts;
     std::string instructions = "Lila DCC. Use execute_python to drive the app with the lila package "
-                               "(lila.cmds.* mirrors every command). list_commands shows what exists.";
+                               "(lila.ops.* mirrors every command). list_commands shows what exists.";
     std::unique_ptr<httplib::Server> http;
     std::thread thread;
     std::string token;

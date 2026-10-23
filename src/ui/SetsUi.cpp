@@ -44,13 +44,13 @@ void registerActions(QWidget* dialogParent)
         return;
     actions::add({.id = "sets.create", .label = "Set", .category = "Create",
                   .doc = "A new object set holding the selected objects, or the selected components in component mode.",
-                  .python = "lila.cmds.createSet(name=\"set1\")", .command = "createSet", .call = json::object()});
+                  .python = "lila.ops.createSet(name=\"set1\")", .command = "createSet", .call = json::object()});
     QPointer<QWidget> parent(dialogParent);
     actions::add({.id = "sets.createQuickSelect", .label = "Quick Select Set...", .category = "Create",
                   .run = [parent] { createQuickSelect(parent); },
                   .doc = "Names a quick select set holding the selection (objects or components); Edit > Quick Select Sets "
                          "selects it again in one click.",
-                  .python = "lila.cmds.createSet(name=\"pickMe\", quickSelect=True)"});
+                  .python = "lila.ops.createSet(name=\"pickMe\", quickSelect=True)"});
 }
 
 void attachQuickSelectMenu(QMenu* menu)

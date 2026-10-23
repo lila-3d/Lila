@@ -37,7 +37,7 @@ namespace
 const char* kSample = R"(# %% Setup
 import os
 import lila
-from lila import cmds
+from lila import ops
 
 GRID = 0x10  # spacing
 
@@ -47,7 +47,7 @@ def build(count: int, name: str = "cube") -> list[str]:
     """Make `count` cubes in a row."""
     made = []
     for i in range(count):
-        node = cmds.polyCube(name=f"{name}_{i:02d}")
+        node = ops.polyCube(name=f"{name}_{i:02d}")
         made.append(node)
     return made
 
@@ -62,7 +62,7 @@ class Rig(object):
 
 
 cubes = build(3)
-lila.cmds.
+lila.ops.
 )";
 
 void typeText(QWidget* w, const QString& text)
@@ -227,7 +227,7 @@ int main(int argc, char** argv)
                          ui::CodeEditor* t = editor->newTab();
                          t->setPlainText("x = 21 * 2\nprint('x is', x)\n\ndef boom():\n    return 1 / 0\n\nboom()\n");
                          editor->runCurrent(false);
-                         t->setPlainText("import lila\nlila.cmds.ls()\n");
+                         t->setPlainText("import lila\nlila.ops.ls()\n");
                          editor->runCurrent(false);
                      }});
     steps.push_back({800, [&] { save(editor, out + "/4_run.png"); }});

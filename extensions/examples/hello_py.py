@@ -2,8 +2,8 @@
 
 Copy it into an extension folder (e.g. <workspace>/.lila/extensions/) or add this folder to general.json /extensions/paths, then:
 
-    lila.cmds.loadExtension("hello_py")
-    lila.cmds.helloPy("world", loud=True)
+    lila.ops.loadExtension("hello_py")
+    lila.ops.helloPy("world", loud=True)
 """
 
 import lila

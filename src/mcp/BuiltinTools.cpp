@@ -89,7 +89,7 @@ void registerBuiltinTools()
 
     s.addTool({
         .name = "execute_python",
-        .description = "Run Python in Lila's interpreter (__main__, persistent between calls). `lila` and `cmds` are "
+        .description = "Run Python in Lila's interpreter (__main__, persistent between calls). `lila` and `ops` are "
                        "pre-imported. Returns printed output, warnings, errors and the value of a trailing expression. Put a whole "
                        "modeling stage (many commands) in one call and print only what you need.",
         .inputSchema = {{"type", "object"},

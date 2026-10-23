@@ -888,7 +888,7 @@ void MainWindow::registerActions()
                           run("lookThru", {{"args", {n->name()}}});
                   },
                   [selectedCamera] { return selectedCamera() != nullptr; }, "The active view looks through the selected camera; navigating it then moves the camera.",
-                  "lila.cmds.lookThru(\"camera1\")"});
+                  "lila.ops.lookThru(\"camera1\")"});
     actions::add({"create.cameraFromView", "Camera from View", "Create", [this] { createCameraFromView(); }, nullptr,
                   "Creates a camera where the active view's camera is, with its lens, and selects it."});
     cmds::registerCommand({
@@ -971,9 +971,9 @@ void MainWindow::registerActions()
     };
     actions::add({"viewport.toggleResolutionGate", "Resolution Gate", "View", [toggleGate] { toggleGate("gate", "resolutionGate"); },
                   nullptr, "Shows the render resolution's frame in the active view, darkening outside it.",
-                  "lila.cmds.cameraSettings(\"persp\", gate=True)"});
+                  "lila.ops.cameraSettings(\"persp\", gate=True)"});
     actions::add({"viewport.toggleFilmGate", "Film Gate", "View", [toggleGate] { toggleGate("filmGate", "filmGate"); }, nullptr,
-                  "Shows the camera's film back in the active view.", "lila.cmds.cameraSettings(\"persp\", filmGate=True)"});
+                  "Shows the camera's film back in the active view.", "lila.ops.cameraSettings(\"persp\", filmGate=True)"});
     actions::add({"viewport.cameraSettings", "Camera Settings...", "View",
                   [this] { RenderSettingsDialog::open(this, mViewports->active()->viewName()); }, nullptr,
                   "The active view's camera gates, film fit, overscan and gate mask."});
@@ -981,7 +981,7 @@ void MainWindow::registerActions()
                       if (!closeShownWindow<RenderSettingsDialog>())
                           RenderSettingsDialog::open(this);
                   }, nullptr,
-                  "Render resolution and per-camera settings.", "lila.cmds.setRenderResolution(width=1920, height=1080)"});
+                  "Render resolution and per-camera settings.", "lila.ops.setRenderResolution(width=1920, height=1080)"});
     actions::add({"window.toggleMaximizePanel", "Maximize Viewport", "Windows", [this] {
                       bool hide = false;
                       for (QDockWidget* d : findChildren<QDockWidget*>())

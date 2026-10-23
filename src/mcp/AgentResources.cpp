@@ -39,7 +39,7 @@ std::string fill(std::string text, const json& args, const std::map<std::string,
 /** Every command name grouped by its first word, appended to the API guide so it never goes stale. */
 std::string commandIndex()
 {
-    std::string out = "\n\n## Every registered command\n\nCall any of these as `lila.cmds.<name>(...)` (run `help(lila.cmds.<name>)` or the `list_commands` tool with `filter` for flags).\n\n";
+    std::string out = "\n\n## Every registered command\n\nCall any of these as `lila.ops.<name>(...)` (run `help(lila.ops.<name>)` or the `list_commands` tool with `filter` for flags).\n\n";
     std::string line;
     for (const CommandDef* d : cmds::all())
     {

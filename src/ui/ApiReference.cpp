@@ -272,8 +272,8 @@ void ApiReference::addCommands()
     std::vector<const CommandDef*> defs = cmds::all();
     std::sort(defs.begin(), defs.end(), [](const CommandDef* a, const CommandDef* b) { return a->name < b->name; });
 
-    int root = add({.key = "lila.cmds", .name = "Commands", .kind = "folder",
-                    .doc = QString("%1 commands, each callable as lila.cmds.name(*objects, flag=value) or by its bare name in the "
+    int root = add({.key = "lila.ops", .name = "Commands", .kind = "folder",
+                    .doc = QString("%1 commands, each callable as lila.ops.name(*objects, flag=value) or by its bare name in the "
                                    "script editor. Flags take long or short names.")
                                .arg(defs.size())});
     std::map<std::string, int> extensionFolders;
@@ -284,13 +284,13 @@ void ApiReference::addCommands()
         {
             auto [it, isNew] = extensionFolders.try_emplace(def->owner, -1);
             if (isNew)
-                it->second = add({.key = "lila.cmds.extension:" + qs(def->owner), .name = qs(def->owner), .kind = "folder",
+                it->second = add({.key = "lila.ops.extension:" + qs(def->owner), .name = qs(def->owner), .kind = "folder",
                                   .doc = "Commands registered by the " + qs(def->owner) + " extension.", .parent = root});
             parent = it->second;
         }
 
         Entry e;
-        e.key = "lila.cmds." + qs(def->name);
+        e.key = "lila.ops." + qs(def->name);
         e.name = qs(def->name);
         e.kind = "command";
         e.doc = qs(def->doc);
@@ -327,7 +327,7 @@ void ApiReference::addCommands()
                 QString word = qs(def->positionalDoc).remove(QRegularExpression("[\\[\\]\\.]")).section(' ', 0, 0);
                 arg = "\"" + word + "\"";
             }
-            e.example = "cmds." + e.name + "(" + arg + ")";
+            e.example = "ops." + e.name + "(" + arg + ")";
         }
         e.footer = (def->owner.empty() ? QString("Built-in command.") : "From the <b>" + esc(qs(def->owner)) + "</b> extension.") +
                    (def->undoable ? " Undoable." : " Not undoable.");
@@ -389,7 +389,7 @@ QString ApiReference::membersHtml(const Entry& e) const
 {
     if (e.children.empty())
         return {};
-    QString html = "<h3>" + QString(e.kind == "folder" && e.key == "lila.cmds" ? "Commands" : "Members") +
+    QString html = "<h3>" + QString(e.kind == "folder" && e.key == "lila.ops" ? "Commands" : "Members") +
                    "</h3><table cellspacing=\"0\" cellpadding=\"2\">";
     for (int c : e.children)
     {
@@ -599,11 +599,11 @@ int ApiReference::find(const QString& symbol) const
     };
     if (int i = byKey(s); i >= 0)
         return i;
-    for (const char* prefix : {"lila.cmds.", "cmds."})
+    for (const char* prefix : {"lila.ops.", "ops."})
         if (s.startsWith(prefix))
-            if (int i = byKey("lila.cmds." + s.mid(int(strlen(prefix)))); i >= 0)
+            if (int i = byKey("lila.ops." + s.mid(int(strlen(prefix)))); i >= 0)
                 return i;
-    if (int i = byKey("lila.cmds." + s); i >= 0)
+    if (int i = byKey("lila.ops." + s); i >= 0)
         return i;
 
     // "Node.translate" -> lila.nodes.Node.translate; "lila.Node" -> lila.nodes.Node.

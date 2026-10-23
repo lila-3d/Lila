@@ -742,14 +742,14 @@ void registerActions()
     auto add = [](const char* id, const char* label, std::function<void()> fn, const char* python = "", const char* doc = "") {
         actions::add({.id = id, .label = label, .category = "Measure", .run = std::move(fn), .doc = doc, .python = python});
     };
-    add("measure.selection", "Measure Selection", measureSelectionUi, "lila.cmds.measureSelection()",
+    add("measure.selection", "Measure Selection", measureSelectionUi, "lila.ops.measureSelection()",
         "Distance, length, angle, circle, area or size of the selection, shown in the viewport and copied to the clipboard.");
-    add("measure.copyDistance", "Copy Distance", [] { copyField("distance", {"distance", "length"}); }, "lila.cmds.measureSelection()[\"distance\"]",
+    add("measure.copyDistance", "Copy Distance", [] { copyField("distance", {"distance", "length"}); }, "lila.ops.measureSelection()[\"distance\"]",
         "Copies the distance across the selection to the clipboard, in the clipboard units.");
-    add("measure.copyDiameter", "Copy Diameter", [] { copyField("diameter", {"diameter"}); }, "lila.cmds.measureSelection()[\"diameter\"]",
+    add("measure.copyDiameter", "Copy Diameter", [] { copyField("diameter", {"diameter"}); }, "lila.ops.measureSelection()[\"diameter\"]",
         "Copies the diameter of the circle through the selection to the clipboard.");
     add("measure.copyLength", "Copy Length", [] { copyField("length", {"length", "distance", "circumference"}); },
-        "lila.cmds.measureSelection()[\"length\"]", "Copies the total length of the selected edges to the clipboard.");
+        "lila.ops.measureSelection()[\"length\"]", "Copies the total length of the selected edges to the clipboard.");
     add("measure.distanceTool", "Distance Tool", [] { viewportTools::set(std::make_unique<MeasureTool>(MeasureTool::Kind::Distance)); }, "",
         "Click two points in the viewport to place a live distance measurement.");
     add("measure.angleTool", "Angle Tool", [] { viewportTools::set(std::make_unique<MeasureTool>(MeasureTool::Kind::Angle)); }, "",
@@ -757,11 +757,11 @@ void registerActions()
     add("measure.radiusTool", "Radius Tool", [] { viewportTools::set(std::make_unique<MeasureTool>(MeasureTool::Kind::Radius)); }, "",
         "Click three or more points on a round shape, then Enter, to place a best-fit radius and diameter.");
     add("measure.distanceFromSelection", "Distance Measure from Selection", [] { runCommand("distanceMeasure", json::object()); },
-        "lila.cmds.distanceMeasure()", "Places a distance measurement between the two selected points or objects; it updates as they move.");
-    add("measure.angleFromSelection", "Angle Measure from Selection", [] { runCommand("angleMeasure", json::object()); }, "lila.cmds.angleMeasure()",
+        "lila.ops.distanceMeasure()", "Places a distance measurement between the two selected points or objects; it updates as they move.");
+    add("measure.angleFromSelection", "Angle Measure from Selection", [] { runCommand("angleMeasure", json::object()); }, "lila.ops.angleMeasure()",
         "Places an angle measurement on the three selected points; it updates as they move.");
     add("measure.radiusFromSelection", "Radius Measure from Selection", [] { runCommand("radiusMeasure", json::object()); },
-        "lila.cmds.radiusMeasure()", "Places a best-fit circle through the selected vertices; it updates under edits.");
+        "lila.ops.radiusMeasure()", "Places a best-fit circle through the selected vertices; it updates under edits.");
     add("measure.toggleShow", "Show Measurements", [] {
             prefs().set("general", "/measure/show", !scene::measure::shown());
             viewportTools::requestRedraw();

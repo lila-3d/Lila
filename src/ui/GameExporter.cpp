@@ -253,7 +253,7 @@ void GameExporter::registerActions(QWidget* parent)
                   },
                   .doc = "Exports everything, the selection or object sets to FBX or OBJ for a game engine: one file, a file "
                          "per set or a file per object, with presets.",
-                  .python = "lila.cmds.gameExport(mode=\"sets\", sets=[\"Props\"], separate=\"perSet\", path=\"Export\")"});
+                  .python = "lila.ops.gameExport(mode=\"sets\", sets=[\"Props\"], separate=\"perSet\", path=\"Export\")"});
 }
 
 json GameExporter::settings() const

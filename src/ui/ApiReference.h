@@ -30,7 +30,7 @@ public:
     void rebuild();
 
 public slots:
-    /** Finds and shows a symbol: "parent", "lila.cmds.parent", "lila.math.Vector.get_safe_normal", "Node.translate". */
+    /** Finds and shows a symbol: "parent", "lila.ops.parent", "lila.math.Vector.get_safe_normal", "Node.translate". */
     bool showSymbol(const QString& symbol);
 
 signals:
@@ -43,7 +43,7 @@ protected:
 private:
     struct Entry
     {
-        QString key;  // fully qualified: lila.cmds.parent, lila.nodes.Node.translate
+        QString key;  // fully qualified: lila.ops.parent, lila.nodes.Node.translate
         QString name; // short name shown in the tree
         QString kind; // command, module, class, function, method, staticmethod, classmethod, property, attribute
         QStringList signatures;

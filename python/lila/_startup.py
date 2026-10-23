@@ -40,7 +40,7 @@ def boot():
     import __main__
 
     __main__.lila = lila
-    __main__.cmds = lila.cmds
+    __main__.ops = lila.ops
     expose_commands()
     # Object API names that don't collide with commands.
     for name in ("Node", "node", "selected", "exists"):
@@ -80,14 +80,14 @@ def _config_dir():
 def expose_commands():
     """Every command as a bare name in the interactive namespace: parent(), ls(sl=True).
 
-    Python builtins always win, so a command that shares a builtin's name stays reachable only as cmds.<name>.
+    Python builtins always win, so a command that shares a builtin's name stays reachable only as ops.<name>.
     Called again after extensions add commands.
     """
     import builtins
 
     import __main__
-    from . import cmds
+    from . import ops
 
-    for name in cmds.__all__:
+    for name in ops.__all__:
         if not hasattr(builtins, name):
-            setattr(__main__, name, getattr(cmds, name))
+            setattr(__main__, name, getattr(ops, name))

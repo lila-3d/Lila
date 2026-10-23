@@ -1,7 +1,7 @@
 """Python extensions and the commands they register.
 
 An extension is a .py file or a package on the extension search paths that defines initialize_extension() and, optionally,
-uninitialize_extension(). Load it with lila.cmds.loadExtension("name"). To ship it with a version, vendor and dependencies,
+uninitialize_extension(). Load it with lila.ops.loadExtension("name"). To ship it with a version, vendor and dependencies,
 put it in an <Id>.lilaext folder whose extension.json names it under "python".
 
     from lila import extension
@@ -82,9 +82,9 @@ def _owner_of(fn):
 
 
 def _refresh():
-    from . import cmds
+    from . import ops
 
-    cmds.refresh()
+    ops.refresh()
 
 
 def register_command(name, fn, doc="", flags=(), positional="", undoable=True, owner=None):
