@@ -264,9 +264,11 @@ protected:
             mNav = Nav::Zoom;
             return;
         }
-        if (e->button() == Qt::RightButton && (e->modifiers() & Qt::ShiftModifier))
+        if (e->button() == Qt::RightButton)
         {
-            MarkingMenu::popup("uvEditorShift", MarkingMenu::Trigger::MouseButton, Qt::RightButton, e->globalPosition().toPoint());
+            // Ctrl converts the component selection exactly as in the viewport.
+            const char* menu = (e->modifiers() & Qt::ShiftModifier) ? "uvEditorShift" : (e->modifiers() & Qt::ControlModifier) ? "viewportCtrlObject" : "uvEditor";
+            MarkingMenu::popup(menu, MarkingMenu::Trigger::MouseButton, Qt::RightButton, e->globalPosition().toPoint());
             return;
         }
         if (e->button() != Qt::LeftButton)

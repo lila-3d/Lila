@@ -39,25 +39,25 @@ inline constexpr const char* kGraphAxisColors = "/graphEditor/axisColors";
 inline constexpr const char* kGhostColors = "/anim/ghost/colors";
 inline constexpr const char* kComponentColors = "/viewport/componentColors";
 
-/** Component sizes in logical pixels: edge widths and vertex square sizes, unselected, hovered and selected. */
-inline constexpr const char* kEdgeWidth = "/viewport/components/edgeWidth";
-inline constexpr const char* kEdgeWidthHover = "/viewport/components/edgeWidthHover";
-inline constexpr const char* kEdgeWidthSelected = "/viewport/components/edgeWidthSelected";
-inline constexpr const char* kVertexSize = "/viewport/components/vertexSize";
-inline constexpr const char* kVertexSizeHover = "/viewport/components/vertexSizeHover";
-inline constexpr const char* kVertexSizeSelected = "/viewport/components/vertexSizeSelected";
+/** Component thickness in logical pixels: edge line widths and vertex square sizes, unselected, hovered and selected. */
+inline constexpr const char* kEdgeThickness = "/viewport/components/edgeThickness";
+inline constexpr const char* kEdgeThicknessHover = "/viewport/components/edgeThicknessHover";
+inline constexpr const char* kEdgeThicknessSelected = "/viewport/components/edgeThicknessSelected";
+inline constexpr const char* kVertexThickness = "/viewport/components/vertexThickness";
+inline constexpr const char* kVertexThicknessHover = "/viewport/components/vertexThicknessHover";
+inline constexpr const char* kVertexThicknessSelected = "/viewport/components/vertexThicknessSelected";
 
-struct ComponentSizes
+struct ComponentThickness
 {
-    double edge = 1.0;
+    double edge = 2.0;
     double edgeHover = 3.5;
-    double edgeSelected = 1.0;
-    double vertex = 3.2;
+    double edgeSelected = 3.0;
+    double vertex = 4.0;
     double vertexHover = 8.0;
-    double vertexSelected = 5.0;
+    double vertexSelected = 6.0;
 };
 
-LILA_UI_API ComponentSizes componentSizes();
+LILA_UI_API ComponentThickness componentThickness();
 
 /**
  * Device-pixel width of a hardware line for a logical width. 1 stays a one-pixel hairline at any display scale; the

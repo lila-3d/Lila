@@ -93,6 +93,8 @@ public:
 
     /** Fires the highlighted item (if any) and closes. False when nothing was highlighted. */
     bool release();
+    /** Closes without running anything. */
+    void dismiss();
     /** The key holding the menu came up: commits the item under the cursor, or its options on its option box, as a
      * mouse release does. Keeps the menu open and returns false when the cursor is on no item. */
     bool keyReleased();

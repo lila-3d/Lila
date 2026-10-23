@@ -27,13 +27,13 @@ bool defaultMaterial()
     return PrefStore::get().value<bool>("general", kDefaultMaterial, false);
 }
 
-ComponentSizes componentSizes()
+ComponentThickness componentThickness()
 {
     const PrefStore& p = PrefStore::get();
-    const ComponentSizes d;
+    const ComponentThickness d;
     auto get = [&](const char* key, double fallback) { return std::max(0.0, p.value<double>("general", key, fallback)); };
-    return {get(kEdgeWidth, d.edge),     get(kEdgeWidthHover, d.edgeHover),   get(kEdgeWidthSelected, d.edgeSelected),
-            get(kVertexSize, d.vertex), get(kVertexSizeHover, d.vertexHover), get(kVertexSizeSelected, d.vertexSelected)};
+    return {get(kEdgeThickness, d.edge),     get(kEdgeThicknessHover, d.edgeHover),   get(kEdgeThicknessSelected, d.edgeSelected),
+            get(kVertexThickness, d.vertex), get(kVertexThicknessHover, d.vertexHover), get(kVertexThicknessSelected, d.vertexSelected)};
 }
 
 bool accentColors(const char* key)

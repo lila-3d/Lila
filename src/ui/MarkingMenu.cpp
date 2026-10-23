@@ -242,6 +242,20 @@ MarkingMenu::MarkingMenu(const json& def, Trigger trigger, Qt::MouseButton butto
     mCursor = mapFromGlobal(cursor);
     mLevels.push_back(buildLevel(def, mCursor));
     gActive = this;
+    // Losing focus to another app means the button release never arrives (alt-tab sends a key the menu sees instead).
+    connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
+        if (state != Qt::ApplicationActive)
+            dismiss();
+    });
+}
+
+void MarkingMenu::dismiss()
+{
+    if (gActive == this)
+        gActive = nullptr;
+    releaseMouse();
+    releaseKeyboard();
+    close();
 }
 
 MarkingMenu::Level MarkingMenu::buildLevel(const json& def, QPointF center, std::optional<QPointF> cascade) const
@@ -481,11 +495,7 @@ void MarkingMenu::keyPressEvent(QKeyEvent* e)
         return;
     }
     if (e->key() == Qt::Key_Escape)
-    {
-        mSlot = mOverflow = -1;
-        mOnBox = false;
-        release();
-    }
+        dismiss();
 }
 
 void MarkingMenu::keyReleaseEvent(QKeyEvent* e)

@@ -8,6 +8,7 @@
 #include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "geo/Bvh.h"
+#include "io/SceneFile.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
@@ -636,6 +637,7 @@ void setChecker3d(bool on)
 {
     settings().checker = on;
     settingsChanged();
+    io::uiChanged("uvChecker");
     viewportTools::requestRedraw();
 }
 
@@ -651,6 +653,7 @@ void setCheckerTiling(int checks)
         return;
     settings().checkerTiling = checks;
     settingsChanged();
+    io::uiChanged("uvChecker");
     viewportTools::requestRedraw();
 }
 
@@ -824,6 +827,17 @@ void install()
     done = true;
     settings();
     viewportHooks::addDrawer(draw3d);
+    // Per scene; the prefs keep the last values for scenes saved without them.
+    io::registerUiSection(
+        "uvChecker", [] { return nlohmann::json{{"on", settings().checker}, {"tiling", settings().checkerTiling}}; },
+        [](const nlohmann::json& section) {
+            if (!section.is_object())
+                return;
+            settings().checker = section.value("on", settings().checker);
+            settings().checkerTiling = std::clamp(section.value("tiling", settings().checkerTiling), 1, 256);
+            settingsChanged();
+            viewportTools::requestRedraw();
+        });
 
     auto add = [](std::string id, std::string label, std::function<void()> fn, std::string doc, std::string python = {}) {
         actions::add({.id = std::move(id), .label = std::move(label), .category = "UV", .run = std::move(fn), .doc = std::move(doc),

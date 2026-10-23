@@ -453,7 +453,7 @@ void ViewportWidget::submit()
     const render::VertexColorMode vertexColors = viewportDisplay::vertexColorMode();
     const render::ColorChannel colorChannel = viewportDisplay::colorChannel();
     const glm::vec4 componentWire = componentPalette().wire;
-    const float componentWireWidth = viewportDisplay::hairlineWidth(viewportDisplay::componentSizes().edge, devicePixelRatioF());
+    const float componentWireWidth = viewportDisplay::hairlineWidth(viewportDisplay::componentThickness().edge, devicePixelRatioF());
     std::unordered_set<scene::NodeId> hilite;
     if (scene::components::mode() != scene::ComponentMode::Object)
         for (scene::NodeId id : hilited())
@@ -1034,9 +1034,9 @@ void ViewportWidget::drawComponents(render::FrameState& s)
     std::vector<scene::NodeId> live = hilited();
     const ComponentPalette palette = componentPalette();
     const glm::vec4 dotLinear = palette.point, hotLinear = palette.selected, faceFillLinear = palette.selectedFill;
-    const viewportDisplay::ComponentSizes sizes = viewportDisplay::componentSizes();
-    const float wireWidth = viewportDisplay::hairlineWidth(sizes.edge, devicePixelRatioF());
-    s.selectedEdgeWidth = viewportDisplay::hairlineWidth(sizes.edgeSelected, devicePixelRatioF());
+    const viewportDisplay::ComponentThickness thickness = viewportDisplay::componentThickness();
+    const float wireWidth = viewportDisplay::hairlineWidth(thickness.edge, devicePixelRatioF());
+    s.selectedEdgeWidth = viewportDisplay::hairlineWidth(thickness.edgeSelected, devicePixelRatioF());
     for (scene::NodeId id : live)
     {
         scene::Node* n = g.node(id);
@@ -1119,7 +1119,7 @@ void ViewportWidget::drawComponents(render::FrameState& s)
                 // Outside vertex mode only the falloff shows, as dots shaded by weight.
                 if (mode != ComponentMode::Vertex && wgt <= 0.0f)
                     continue;
-                double half = 0.5 * (on[p] || wgt >= 1.0f ? sizes.vertexSelected : sizes.vertex) * perUnitDepth * depth;
+                double half = 0.5 * (on[p] || wgt >= 1.0f ? thickness.vertexSelected : thickness.vertex) * perUnitDepth * depth;
                 glm::dvec3 r = right * half, u = up * half;
                 glm::vec4 col = on[p] ? hotLinear : wgt > 0.0f ? viewportDisplay::falloffColor(wgt, grayWeights) : dotLinear;
                 glm::vec3 a(c - r - u), b(c + r - u), cc(c + r + u), d(c - r + u);
@@ -1321,7 +1321,7 @@ void ViewportWidget::drawPreselect(render::FrameState& s)
     // Thicker than the selection, so hovered and selected read apart.
     const ComponentPalette palette = componentPalette();
     glm::vec4 hot = palette.hover, faceFill = palette.hoverFill;
-    const viewportDisplay::ComponentSizes sizes = viewportDisplay::componentSizes();
+    const viewportDisplay::ComponentThickness thickness = viewportDisplay::componentThickness();
     namespace cp = scene::componentPick;
     cp::Topology topo = mode == ComponentMode::Face ? cp::faceTopology(m, id) : mode == ComponentMode::Vertex ? cp::pointTopology(m, id) : cp::Topology::Plain;
     if (std::optional<glm::vec4> tint = topologyTint(topo))
@@ -1348,10 +1348,10 @@ void ViewportWidget::drawPreselect(render::FrameState& s)
         quad(c - r - u, c + r - u, c + r + u, c - r + u, col);
     };
     if (mode == ComponentMode::Vertex)
-        square(wp(id), 0.5 * sizes.vertexHover, hot);
+        square(wp(id), 0.5 * thickness.vertexHover, hot);
     else if (mode == ComponentMode::Edge)
     {
-        ribbon(wp(m.edgePoint(id, 0)), wp(m.edgePoint(id, 1)), 0.5 * sizes.edgeHover);
+        ribbon(wp(m.edgePoint(id, 0)), wp(m.edgePoint(id, 1)), 0.5 * thickness.edgeHover);
         // Edge hover calls out the poles at its ends.
         if (std::optional<glm::vec4> pole = topologyTint(cp::Topology::Pole))
             for (int k = 0; k < 2; ++k)

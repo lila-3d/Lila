@@ -1,0 +1,10 @@
+{
+  "N": { "label": "Edge", "action": "uv.edgeMode" },
+  "W": { "label": "Vertex", "action": "uv.vertexMode" },
+  "S": { "label": "Face", "action": "uv.faceMode" },
+  "NE": { "label": "Island", "action": "uv.islandMode" },
+  "SW": { "label": "Grow", "action": "select.grow" },
+  "overflow": [
+    { "label": "Select All", "action": "edit.selectAll" }
+  ]
+}
