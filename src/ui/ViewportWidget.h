@@ -123,6 +123,8 @@ private:
     std::optional<QPointF> project(const glm::dvec3& world) const;
     /** Names under a click point (nearest only) or inside a box. */
     std::vector<std::string> hitTest(QPointF a, QPointF b);
+    /** The skinned mesh under the cursor, or empty. */
+    std::string skinnedMeshAt(QPointF at);
     void pick(QPointF a, QPointF b, Qt::KeyboardModifiers mods);
     /** Component-mode picking on the hilited meshes. */
     void pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers mods);

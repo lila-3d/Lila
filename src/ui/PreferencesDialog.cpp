@@ -392,6 +392,7 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         toggle(ui, "Time slider keys in red", vd::kTimeKeyColors, true);
         toggle(ui, "Graph editor X/Y/Z curves in axis colors", vd::kGraphAxisColors, true);
         toggle(ui, "Animation ghosts tinted before and after", vd::kGhostColors, true);
+        toggle(ui, "Components in Maya's colors (blue wire, pink vertices, red hover, yellow selection)", vd::kComponentColors, true);
         section(ui, "Floating Shelf");
         choice(ui, "Opens at", "/floatingShelf/openAt",
                {{"Cursor", "cursor"}, {"Center of viewport", "viewport"}, {"Center of screen", "screen"}}, "viewport");

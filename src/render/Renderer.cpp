@@ -1330,10 +1330,12 @@ struct Renderer::Impl
     {
         LILA_ZONE();
 
-        VkDescriptorSetLayoutBinding sb{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
+        VkDescriptorSetLayoutBinding sb[3];
+        for (uint32_t i = 0; i < 3; ++i)
+            sb[i] = {i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
         VkDescriptorSetLayoutCreateInfo lci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        lci.bindingCount = 1;
-        lci.pBindings = &sb;
+        lci.bindingCount = 3;
+        lci.pBindings = sb;
         vkCreateDescriptorSetLayout(vk.device, &lci, nullptr, &aoSampleLayout);
 
         VkDescriptorSetLayoutBinding cb[4];
@@ -1343,7 +1345,7 @@ struct Renderer::Impl
         lci.pBindings = cb;
         vkCreateDescriptorSetLayout(vk.device, &lci, nullptr, &aoComputeLayout);
 
-        VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxAoSets * 3}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, kMaxAoSets}};
+        VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxAoSets * 4}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, kMaxAoSets}};
         VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         pci.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
         pci.maxSets = kMaxAoSets;
@@ -1361,7 +1363,8 @@ struct Renderer::Impl
         whiteAo = createTexture(kAoFormat, {1, 1}, 1, false);
         uploadImage(whiteAo.image, {1, 1}, 1, 1, sizeof(float), {&one});
         whiteAoSet = allocateSet(aoPool, aoSampleLayout);
-        writeImage(whiteAoSet, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, whiteAo.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        for (uint32_t b = 0; b < 3; ++b)
+            writeImage(whiteAoSet, b, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, whiteAo.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
 
     void destroyAo()
@@ -1409,6 +1412,8 @@ struct Renderer::Impl
         writeImage(v.denoiseSet, 2, sampler, v.aoRaw.view, general);
         writeImage(v.denoiseSet, 3, storage, v.aoFinal.view, general);
         writeImage(v.aoSampleSet, 0, sampler, v.aoFinal.view, general);
+        writeImage(v.aoSampleSet, 1, sampler, v.aoDepth.view, depthRead);
+        writeImage(v.aoSampleSet, 2, sampler, v.aoNormal.view, shaderRead);
     }
 
     static bool anyShaded(const FrameState& s)
@@ -1904,11 +1909,12 @@ struct Renderer::Impl
         if (s.atlas && s.atlas.get() != uploadedAtlas)
             uploadAtlas(s.atlas);
 
-        // One buffer per frame: lines, linesOnTop, tris3d and overlay share the LineVertex stride, overlayTris follow.
-        const std::vector<LineVertex>* lineSets[] = {&s.lines, &s.linesOnTop, &s.tris3d, &s.overlay};
-        uint32_t lineFirst[4];
+        // One buffer per frame: lines, linesOnTop, tris3d, overlay and linesXray share the LineVertex stride, overlayTris follow.
+        const std::vector<LineVertex>* lineSets[] = {&s.lines, &s.linesOnTop, &s.tris3d, &s.overlay, &s.linesXray};
+        constexpr int kLineSets = int(std::size(lineSets));
+        uint32_t lineFirst[kLineSets];
         size_t lineBytes = 0;
-        for (int i = 0; i < 4; ++i)
+        for (int i = 0; i < kLineSets; ++i)
         {
             lineFirst[i] = uint32_t(lineBytes / sizeof(LineVertex));
             lineBytes += lineSets[i]->size() * sizeof(LineVertex);
@@ -1917,7 +1923,7 @@ struct Renderer::Impl
         if (lineBytes + trisBytes)
         {
             ensureLines(f, lineBytes + trisBytes);
-            for (int i = 0; i < 4; ++i)
+            for (int i = 0; i < kLineSets; ++i)
                 std::memcpy(static_cast<char*>(f.linesMapped) + size_t(lineFirst[i]) * sizeof(LineVertex), lineSets[i]->data(),
                             lineSets[i]->size() * sizeof(LineVertex));
             std::memcpy(static_cast<char*>(f.linesMapped) + lineBytes, s.overlayTris.data(), trisBytes);
@@ -2056,6 +2062,15 @@ struct Renderer::Impl
             VkDeviceSize offset = 0;
             vkCmdBindVertexBuffers(cmd, 0, 1, &f.lines, &offset);
             vkCmdDraw(cmd, uint32_t(verts.size()), 1, lineFirst[i + 1], 0);
+        }
+
+        if (overlayPipeline && !s.linesXray.empty())
+        {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, overlayPipeline);
+            vkCmdPushConstants(cmd, linesLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &vpF);
+            VkDeviceSize offset = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &f.lines, &offset);
+            vkCmdDraw(cmd, uint32_t(s.linesXray.size()), 1, lineFirst[4], 0);
         }
 
         if (overlayPipeline && !s.overlay.empty())

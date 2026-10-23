@@ -607,6 +607,20 @@ void registerBuiltins()
                           .python = "lila.prefs.set(\"general\", \"" + key + "\", not lila.prefs.get(\"general\", \"" + key + "\", True))"});
         }
     }
+    {
+        namespace sm = scene::selectionMask;
+        for (auto [kind, label, doc] : {std::tuple{sm::Kind::Mesh, "Show Geometry", "Meshes draw in the viewport."},
+                                        {sm::Kind::Joint, "Show Joints", "Joints draw in the viewport."},
+                                        {sm::Kind::Locator, "Show Locators", "Locators draw in the viewport."}})
+        {
+            sm::Kind k = kind;
+            std::string key = sm::showKey(k);
+            actions::add({.id = std::string("viewport.show.") + sm::name(k), .label = label, .category = "Display",
+                          .run = [k] { sm::setShown(k, !sm::shown(k)); },
+                          .doc = std::string(doc) + " Off hides them and leaves them unpickable, without changing their visibility.",
+                          .python = "lila.prefs.set(\"general\", \"" + key + "\", not lila.prefs.get(\"general\", \"" + key + "\", True))"});
+        }
+    }
     actions::add({.id = "viewport.resetExposure", .label = "Reset Exposure and Gamma", .category = "Display", .run = [] {
                       PrefStore::get().set("general", vd::kExposure, 0.0);
                       PrefStore::get().set("general", vd::kGamma, 1.0);

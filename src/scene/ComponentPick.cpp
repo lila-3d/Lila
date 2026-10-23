@@ -171,6 +171,26 @@ void setEnabled(Kind k, bool on)
     PrefStore::get().set("general", prefKey(k), on);
 }
 
+std::string showKey(Kind k)
+{
+    return std::string("/viewport/show/") + name(k);
+}
+
+bool shown(Kind k)
+{
+    return PrefStore::get().value<bool>("general", showKey(k), true);
+}
+
+void setShown(Kind k, bool on)
+{
+    PrefStore::get().set("general", showKey(k), on);
+}
+
+bool shown(const Node& node)
+{
+    return shown(kindOf(node));
+}
+
 Kind kindOf(const Node& node)
 {
     const NodeType& t = node.type();
@@ -180,6 +200,6 @@ Kind kindOf(const Node& node)
 
 bool pickable(const Node& node)
 {
-    return enabled(kindOf(node));
+    return enabled(kindOf(node)) && shown(kindOf(node));
 }
 } // namespace lila::scene::selectionMask

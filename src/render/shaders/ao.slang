@@ -140,19 +140,23 @@ void denoiseCS(uint3 id: SV_DispatchThreadID)
         aoOut[px] = 1.0;
         return;
     }
-    float zc = viewPos(px, depth).z;
-    float tolerance = 0.1 * ap.params.x + 0.01 * abs(zc);
+    float3 pc = viewPos(px, depth);
+    float3 ncv = normalize(mul((float3x3)ap.view, nc));
+    // Distance from this pixel's tangent plane rather than depth difference, so a face seen at a grazing angle still
+    // averages its whole neighbourhood and the 4x4 noise pattern cancels out.
+    float tolerance = 0.05 * ap.params.x + 0.002 * abs(pc.z);
 
     float sum = 0.0, weights = 0.0;
-    for (int y = -2; y <= 2; ++y)
-        for (int x = -2; x <= 2; ++x)
+    // Exactly one 4x4 cell, so every value of the noise pattern is averaged once and it cancels.
+    for (int y = -2; y <= 1; ++y)
+        for (int x = -2; x <= 1; ++x)
         {
             int2 q = clamp(px + int2(x, y), int2(0), int2(ap.size.xy) - 1);
             float dq = depthTex.Load(int3(q, 0)).r;
             if (dq <= 0.0)
                 continue;
             float3 nq = normalTex.Load(int3(q, 0)).xyz;
-            float w = saturate(1.0 - abs(viewPos(q, dq).z - zc) / tolerance);
+            float w = saturate(1.0 - abs(dot(viewPos(q, dq) - pc, ncv)) / tolerance);
             float nd = saturate(dot(nq, nc));
             w *= nd * nd * nd * nd;
             sum += aoIn.Load(int3(q, 0)).r * w;

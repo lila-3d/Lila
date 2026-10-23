@@ -12,12 +12,14 @@
 #include "render/Backdrop.h"
 #include "scene/Anim.h"
 #include "scene/Camera.h"
+#include "scene/ComponentPick.h"
 #include "scene/Components.h"
 #include "scene/DisplayLayers.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "scene/RenderSettings.h"
+#include "scene/Skin.h"
 #include "scene/Transform.h"
 #include "ui/Animation.h"
 #include "ui/ChannelBox.h"
@@ -70,6 +72,32 @@ glm::vec4 layerLineColor(const scene::Graph& g, scene::NodeId id, const glm::vec
         return glm::vec4(glm::vec3(*layer.color), 1.0f);
     return layer.type == scene::displayLayers::DisplayType::Template ? kTemplateWireColor : fallback;
 }
+
+/** Linear colors for component display: Maya's hues, or greys when monotone. */
+struct ComponentPalette
+{
+    glm::vec4 wire;     // the hilited meshes' wire; alpha 0 keeps the renderer's default
+    glm::vec4 point;    // unselected vertices
+    glm::vec4 selected; // selected vertices, edges and face outlines
+    glm::vec4 selectedFill;
+    glm::vec4 hover;
+    glm::vec4 hoverFill;
+};
+
+ComponentPalette componentPalette()
+{
+    if (!viewportDisplay::accentColors(viewportDisplay::kComponentColors))
+        return {glm::vec4(0.0f), glm::vec4(0.007f, 0.007f, 0.007f, 1.0f), glm::vec4(1.0f), glm::vec4(0.0f, 0.0f, 0.0f, 0.4f),
+                glm::vec4(0.5f, 0.5f, 0.5f, 1.0f), glm::vec4(1.0f, 1.0f, 1.0f, 0.12f)};
+    auto lin = [](float r, float g, float b, float a) {
+        auto c = [](float v) { return v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f); };
+        return glm::vec4(c(r), c(g), c(b), a);
+    };
+    return {lin(0.45f, 0.78f, 1.0f, 1.0f),  lin(0.95f, 0.42f, 0.78f, 1.0f), lin(1.0f, 0.95f, 0.15f, 1.0f),
+            lin(1.0f, 0.95f, 0.15f, 0.25f), lin(1.0f, 0.18f, 0.18f, 1.0f),  lin(1.0f, 0.18f, 0.18f, 0.25f)};
+}
+
+std::vector<scene::NodeId> hilited();
 
 /** In the viewport's pick: shown, and not templated or referenced by a display layer. */
 bool viewportPickable(const scene::Graph& g, scene::NodeId id, bool inherit)
@@ -399,10 +427,16 @@ void ViewportWidget::submit()
     bool showMaterials = materialsShown() && !viewportDisplay::defaultMaterial();
     const render::VertexColorMode vertexColors = viewportDisplay::vertexColorMode();
     const render::ColorChannel colorChannel = viewportDisplay::colorChannel();
+    const glm::vec4 componentWire = componentPalette().wire;
+    std::unordered_set<scene::NodeId> hilite;
+    if (scene::components::mode() != scene::ComponentMode::Object)
+        for (scene::NodeId id : hilited())
+            hilite.insert(id);
     for (scene::NodeId id : g.nodes())
     {
         scene::Node* n = g.node(id);
-        if (!n->type().isA("mesh") || overridden(*n) || !scene::effectivelyVisible(g, id, inherit) || (!mIsolated.empty() && !mIsolated.contains(id)))
+        if (!n->type().isA("mesh") || overridden(*n) || !scene::effectivelyVisible(g, id, inherit) || (!mIsolated.empty() && !mIsolated.contains(id)) ||
+            !scene::selectionMask::shown(*n))
             continue;
         int smooth = int(n->as<int64_t>(scene::MeshNode::kSmoothPreview));
         scene::MeshPtr shown = smoothedFor(n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh), smooth);
@@ -435,6 +469,8 @@ void ViewportWidget::submit()
             d.wireColor = glm::vec4(glm::vec3(*layer.color), 1.0f);
         else if (templated)
             d.wireColor = kTemplateWireColor;
+        if (hilite.contains(id) && componentWire.a > 0.0f)
+            d.wireColor = componentWire;
         // In component mode the hilited mesh shows a plain wire so the selected components stand out.
         bool componentMode = scene::components::mode() != scene::ComponentMode::Object;
         if (g.isSelected(id) && !componentMode)
@@ -465,7 +501,7 @@ void ViewportWidget::submit()
         {
             scene::Node* n = g.node(id);
             const drawOverrides::DrawOverride* o = drawOverrides::forType(n->type());
-            if (!o || !o->draw || id == mLookThrough || !scene::effectivelyVisible(g, id, inherit))
+            if (!o || !o->draw || id == mLookThrough || !scene::effectivelyVisible(g, id, inherit) || !scene::selectionMask::shown(*n))
                 continue;
             bool hot = mPreselect.mode == scene::ComponentMode::Object && mPreselect.node == id;
             int rank = g.isSelected(id) ? 2 : hot || underSelection.contains(id) ? 1 : 0;
@@ -947,7 +983,8 @@ void ViewportWidget::drawComponents(render::FrameState& s)
         return;
     scene::Graph& g = scene::Graph::current();
     std::vector<scene::NodeId> live = hilited();
-    const glm::vec4 dotLinear(0.007f, 0.007f, 0.007f, 1.0f), hotLinear(1.0f, 1.0f, 1.0f, 1.0f), faceFillLinear(0.0f, 0.0f, 0.0f, 0.4f);
+    const ComponentPalette palette = componentPalette();
+    const glm::vec4 dotLinear = palette.point, hotLinear = palette.selected, faceFillLinear = palette.selectedFill;
     for (scene::NodeId id : live)
     {
         scene::Node* n = g.node(id);
@@ -964,6 +1001,7 @@ void ViewportWidget::drawComponents(render::FrameState& s)
                 cageDraw.mesh = rm;
                 cageDraw.world = glm::mat4(world);
                 cageDraw.flags = render::DrawWire;
+                cageDraw.wireColor = palette.wire;
                 s.meshes.push_back(std::move(cageDraw));
             }
         auto wp = [&](uint32_t p) { return glm::vec3(world * glm::dvec4(m.position(p), 1.0)); };
@@ -1227,8 +1265,9 @@ void ViewportWidget::drawPreselect(render::FrameState& s)
     ViewInfo view = viewInfo();
     glm::dvec3 right(view.view[0][0], view.view[1][0], view.view[2][0]), up(view.view[0][1], view.view[1][1], view.view[2][1]);
     glm::dvec3 fwd = -glm::dvec3(view.view[0][2], view.view[1][2], view.view[2][2]);
-    // Light gray and thicker than the selection's white, so hovered and selected read apart. Linear colors.
-    glm::vec4 hot(0.5f, 0.5f, 0.5f, 1.0f), faceFill(1.0f, 1.0f, 1.0f, 0.12f);
+    // Thicker than the selection, so hovered and selected read apart.
+    const ComponentPalette palette = componentPalette();
+    glm::vec4 hot = palette.hover, faceFill = palette.hoverFill;
     namespace cp = scene::componentPick;
     cp::Topology topo = mode == ComponentMode::Face ? cp::faceTopology(m, id) : mode == ComponentMode::Vertex ? cp::pointTopology(m, id) : cp::Topology::Plain;
     if (std::optional<glm::vec4> tint = topologyTint(topo))
@@ -1672,6 +1711,15 @@ void ViewportWidget::drawViewIndicator(OverlayPainter& p)
     p.setShadow(false);
 }
 
+std::string ViewportWidget::skinnedMeshAt(QPointF at)
+{
+    scene::Graph& g = scene::Graph::current();
+    for (const std::string& name : hitTest(at, at))
+        if (scene::Node* n = g.find(name); n && n->type().isA("mesh") && scene::skin::find(g, n->id()) != scene::kNoNode)
+            return name;
+    return {};
+}
+
 void ViewportWidget::frameSelection(bool all)
 {
     scene::Graph& g = scene::Graph::current();
@@ -1720,25 +1768,44 @@ void ViewportWidget::frameSelection(bool all)
             return;
         }
     }
+    auto addGeometry = [&](scene::Node* n) {
+        if (!n->type().isA("mesh"))
+            return false;
+        auto rm = renderMeshFor(n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh));
+        if (!rm || rm->vertices.empty())
+            return false;
+        glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+        for (int c = 0; c < 8; ++c)
+        {
+            glm::dvec3 corner((c & 1) ? rm->boundsMax.x : rm->boundsMin.x, (c & 2) ? rm->boundsMax.y : rm->boundsMin.y,
+                              (c & 4) ? rm->boundsMax.z : rm->boundsMin.z);
+            glm::dvec3 w(world * glm::dvec4(corner, 1.0));
+            lo = glm::min(lo, w);
+            hi = glm::max(hi, w);
+        }
+        return true;
+    };
+    bool group = false;
     for (scene::NodeId id : ids)
     {
         scene::Node* n = g.node(id);
         if (!n || !n->type().dag || id == mLookThrough || (all && !scene::effectivelyVisible(g, id, inherit)))
             continue;
-        glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
-        glm::dvec3 p(world[3]);
-        lo = glm::min(lo, p - 1.0);
-        hi = glm::max(hi, p + 1.0);
-        if (n->type().isA("mesh"))
-            if (auto rm = renderMeshFor(n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh)); rm && !rm->vertices.empty())
-                for (int c = 0; c < 8; ++c)
+        bool geometry = addGeometry(n);
+        if (!all)
+            for (scene::NodeId d : g.descendants(id))
+                if (scene::Node* dn = g.node(d); dn && dn->type().dag && scene::effectivelyVisible(g, d, inherit) && addGeometry(dn))
                 {
-                    glm::dvec3 corner((c & 1) ? rm->boundsMax.x : rm->boundsMin.x, (c & 2) ? rm->boundsMax.y : rm->boundsMin.y,
-                                      (c & 4) ? rm->boundsMax.z : rm->boundsMin.z);
-                    glm::dvec3 w(world * glm::dvec4(corner, 1.0));
-                    lo = glm::min(lo, w);
-                    hi = glm::max(hi, w);
+                    group = group || !n->type().isA("mesh");
+                    geometry = true;
                 }
+        // Only geometry decides the framing; a bare pivot counts when nothing under it has any.
+        if (!geometry)
+        {
+            glm::dvec3 p(n->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]);
+            lo = glm::min(lo, p - 1.0);
+            hi = glm::max(hi, p + 1.0);
+        }
         ++count;
     }
     if (count == 0)
@@ -1746,7 +1813,9 @@ void ViewportWidget::frameSelection(bool all)
         lo = glm::dvec3(-50.0);
         hi = glm::dvec3(50.0);
     }
-    mCamera.frame((lo + hi) * 0.5, glm::length(hi - lo) * 0.5, aspect());
+    // Maya frames a group from further out than a single mesh.
+    double radius = glm::length(hi - lo) * 0.5 * (group ? 2.0 : 1.0);
+    mCamera.frame((lo + hi) * 0.5, radius, aspect());
     if (mLookThrough != scene::kNoNode)
         previewCameraEdit();
     recordCamera(before);
@@ -1803,6 +1872,16 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
                         fallback = markingMenus::resolve(base);
                     if (MarkingMenu::popupDefinition(selectionHandlers::candidateMenu(cands, fallback), MarkingMenu::Trigger::MouseButton,
                                                      Qt::RightButton, at))
+                        return;
+                }
+        // Over a bound mesh, Maya offers Paint Skin Weights in the top left slot.
+        if (overObject && base == "viewport")
+            if (std::string mesh = skinnedMeshAt(e->position()); !mesh.empty())
+                if (json def = markingMenus::resolve(base + "Object"); def.is_object() && !def.contains("NW"))
+                {
+                    def["NW"] = {{"label", "Paint Skin Weights"},
+                                 {"action", {{"python", "lila.nodes.select(" + json(mesh).dump() + ")\nlila.ui.run_action(\"rig.paintWeights\")"}}}};
+                    if (MarkingMenu::popupDefinition(def, MarkingMenu::Trigger::MouseButton, Qt::RightButton, at))
                         return;
                 }
         if (!MarkingMenu::popup(base + (overObject ? "Object" : "Empty"), MarkingMenu::Trigger::MouseButton, Qt::RightButton, at))

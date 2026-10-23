@@ -35,6 +35,7 @@ inline constexpr const char* kManipulatorAxisColors = "/manipulator/axisColors";
 inline constexpr const char* kTimeKeyColors = "/timeline/keyColors";
 inline constexpr const char* kGraphAxisColors = "/graphEditor/axisColors";
 inline constexpr const char* kGhostColors = "/anim/ghost/colors";
+inline constexpr const char* kComponentColors = "/viewport/componentColors";
 
 inline bool accentColors(bool monotone, bool selective) { return selective && !monotone; }
 /** Whether the display behind one of the accent toggles above draws in colour right now. */

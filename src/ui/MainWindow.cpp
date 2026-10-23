@@ -1238,7 +1238,8 @@ void MainWindow::buildPanelMenus()
                               "viewport.cameraSettings", "", "viewport.imagePlaneImport"});
     menus::addActions("panel.Shading", {"viewport.wireframe", "viewport.shaded", "viewport.textured", "viewport.wireOnShaded", "", "viewport.toggleAO",
                                  "", "display.smoothOff", "display.smoothCage", "display.smoothOn"});
-    menus::addActions("panel.Show", {"display.hide", "display.show", "display.showAll", "", "viewport.isolate", "rig.xrayJoints", "measure.toggleShow",
+    menus::addActions("panel.Show", {"display.hide", "display.show", "display.showAll", "", "viewport.isolate", "viewport.show.mesh", "viewport.show.joint",
+                              "viewport.show.locator", "rig.xrayJoints", "measure.toggleShow",
                               "viewport.toggleImagePlanes"});
     menus::addActions("panel.Renderer", {"window.renderSettings"});
     menus::addActions("panel.Panels", {"viewport.lookThroughSelected"});

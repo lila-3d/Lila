@@ -35,6 +35,58 @@ struct EnvUniforms
 
 // Screen-space ambient occlusion at the viewport's resolution; 1x1 white while it is off.
 [[vk::binding(0, 2)]] Sampler2D aoTex;
+[[vk::binding(1, 2)]] Sampler2D aoDepthTex;  // the single-sample prepass the AO was computed from: depth
+[[vk::binding(2, 2)]] Sampler2D aoNormalTex; // and world normal
+
+/** How far a prepass texel is from being this fragment's surface: relative depth error, plus a penalty for a normal that turns away. */
+float aoMismatch(int2 q, float depth, float3 n)
+{
+    float err = abs(aoDepthTex.Load(int3(q, 0)).r - depth) / max(depth, 1e-9);
+    float3 nq = aoNormalTex.Load(int3(q, 0)).xyz;
+    return err + (dot(nq, n) < 0.9 ? 1.0 : 0.0);
+}
+
+/**
+ * The AO texel for a fragment. The AO is one sample per pixel but this pass is multisampled, so where two surfaces meet
+ * a pixel's AO can belong to the other surface; take the neighbour that matches this fragment's depth and normal.
+ */
+float sampleAo(int2 px, float depth, float3 n)
+{
+    uint w, h;
+    aoTex.GetDimensions(w, h);
+    // The 1x1 stand-in while AO is off.
+    if (w == 1 && h == 1)
+        return aoTex.Load(int3(0, 0, 0)).r;
+    int2 hi = int2(w, h) - 1;
+    int2 best = min(px, hi);
+    float bestErr = aoMismatch(best, depth, n);
+    if (bestErr > 1e-3)
+        for (int y = -1; y <= 1; ++y)
+            for (int x = -1; x <= 1; ++x)
+            {
+                int2 q = clamp(px + int2(x, y), int2(0), hi);
+                float err = aoMismatch(q, depth, n);
+                if (err < bestErr)
+                {
+                    bestErr = err;
+                    best = q;
+                }
+            }
+    return aoTex.Load(int3(best, 0)).r;
+}
+
+/**
+ * Widens roughness by how fast the normal turns across the pixel (Tokuyoshi and Kaplanyan 2019), so highlights on
+ * curved or bevelled edges thinner than a pixel stop crawling as the camera moves.
+ */
+float specularAntialias(float3 n, float rough)
+{
+    float3 du = ddx(n), dv = ddy(n);
+    float variance = 0.25 * (dot(du, du) + dot(dv, dv));
+    float alpha = rough * rough;
+    float alpha2 = saturate(alpha * alpha + min(2.0 * variance, 0.18));
+    return sqrt(sqrt(alpha2));
+}
 
 static const uint kBaseColorMap = 1 << 0;
 static const uint kNormalMap = 1 << 1;
@@ -63,11 +115,12 @@ struct VSIn
 struct VSOut
 {
     float4 pos : SV_Position;
-    float3 worldPos : POSITION;
-    float3 normal : NORMAL;
-    float4 tangent : TANGENT;
-    float2 uv : TEXCOORD;
-    float4 color : COLOR;
+    // Centroid: with MSAA a pixel the triangle only partly covers would otherwise extrapolate past its edge.
+    centroid float3 worldPos : POSITION;
+    centroid float3 normal : NORMAL;
+    centroid float4 tangent : TANGENT;
+    centroid float2 uv : TEXCOORD;
+    centroid float4 color : COLOR;
 };
 
 [shader("vertex")]
@@ -284,10 +337,7 @@ float4 meshPS(VSOut i, bool front : SV_IsFrontFace) : SV_Target
     s.ssao = 1.0;
     if ((flags & kTranslucent) == 0)
     {
-        // Clamped so the 1x1 stand-in bound while AO is off reads as unoccluded everywhere.
-        uint aoW, aoH;
-        aoTex.GetDimensions(aoW, aoH);
-        s.ssao = aoTex.Load(int3(min(int2(i.pos.xy), int2(aoW, aoH) - 1), 0)).r;
+        s.ssao = sampleAo(int2(i.pos.xy), i.pos.z, front ? ng : -ng);
     }
     if ((flags & (kMetallicMap | kRoughnessMap | kOcclusionMap)) != 0)
     {
@@ -299,7 +349,7 @@ float4 meshPS(VSOut i, bool front : SV_IsFrontFace) : SV_Target
         if ((flags & kMetallicMap) != 0)
             metallic = orm.b;
     }
-    s.rough = clamp(s.rough, 0.04, 1.0);
+    s.rough = specularAntialias(n, clamp(s.rough, 0.04, 1.0));
     metallic = saturate(metallic);
     s.diffuse = baseColor * (1.0 - metallic);
     s.f0 = lerp(float3(0.08 * pc.surface.y), baseColor, metallic);

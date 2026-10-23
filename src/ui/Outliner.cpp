@@ -1,6 +1,7 @@
 #include "ui/Outliner.h"
 
 #include "cmds/Command.h"
+#include "core/Events.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
@@ -235,6 +236,8 @@ Outliner::Outliner(QWidget* parent) : QTreeWidget(parent)
 {
     gOutliners.push_back(this);
     registerOutlinerActions();
+    for (events::Event e : {events::Event::SceneNew, events::Event::SceneOpened})
+        mEventSubs.push_back(events::subscribe(e, [this](const events::EventData&) { mExpanded.clear(); }));
 
     setHeaderHidden(true);
     setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -293,7 +296,7 @@ Outliner::Outliner(QWidget* parent) : QTreeWidget(parent)
         if (scene::NodeId set = item->data(0, kSetRole).toULongLong())
             mOpenSets.erase(set);
         else
-            mCollapsed.insert(item->data(0, kIdRole).toULongLong());
+            mExpanded.erase(item->data(0, kIdRole).toULongLong());
     });
     connect(this, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem* item) {
         if (mSyncing)
@@ -301,7 +304,7 @@ Outliner::Outliner(QWidget* parent) : QTreeWidget(parent)
         if (scene::NodeId set = item->data(0, kSetRole).toULongLong())
             mOpenSets.insert(set);
         else
-            mCollapsed.erase(item->data(0, kIdRole).toULongLong());
+            mExpanded.insert(item->data(0, kIdRole).toULongLong());
     });
     connect(this, &QTreeWidget::itemClicked, this, [](QTreeWidgetItem* item, int) {
         if (scene::Node* set = scene::Graph::current().node(item->data(0, kSetRole).toULongLong()))
@@ -314,6 +317,8 @@ Outliner::Outliner(QWidget* parent) : QTreeWidget(parent)
 Outliner::~Outliner()
 {
     std::erase(gOutliners, this);
+    for (events::SubscriptionId id : mEventSubs)
+        events::unsubscribe(id);
     scene::Graph::current().removeListener(mListener);
 }
 
@@ -550,10 +555,10 @@ void Outliner::rebuild()
             item->setForeground(0, QColor(110, 110, 110));
             item->setToolTip(0, QString::fromStdString("Unloaded reference\n" + r.path.generic_string()));
         }
-    expandAll();
-    std::erase_if(mCollapsed, [&](scene::NodeId id) { return !mItems.contains(id); });
-    for (scene::NodeId id : mCollapsed)
-        mItems[id]->setExpanded(false);
+    collapseAll();
+    std::erase_if(mExpanded, [&](scene::NodeId id) { return !mItems.contains(id); });
+    for (scene::NodeId id : mExpanded)
+        mItems[id]->setExpanded(true);
     for (int i = 0; i < topLevelItemCount(); ++i)
         if (QTreeWidgetItem* top = topLevelItem(i); top->data(0, kSetRole).isValid())
             top->setExpanded(mOpenSets.contains(top->data(0, kSetRole).toULongLong()));
@@ -727,7 +732,10 @@ void Outliner::revealSelected()
             continue;
         for (scene::NodeId p : outliner::ancestors(g, id))
             if (auto pit = mItems.find(p); pit != mItems.end())
+            {
                 pit->second->setExpanded(true);
+                mExpanded.insert(p);
+            }
         if (!first)
             first = it->second;
     }
@@ -750,16 +758,16 @@ void Outliner::renameSelected()
 
 void Outliner::expandEverything()
 {
-    mCollapsed.clear();
+    for (auto& [id, item] : mItems)
+        if (item->childCount())
+            mExpanded.insert(id);
     expandAll();
 }
 
 void Outliner::collapseEverything()
 {
     collapseAll();
-    for (auto& [id, item] : mItems)
-        if (item->childCount())
-            mCollapsed.insert(id);
+    mExpanded.clear();
 }
 
 void Outliner::showContextMenu(const QPoint& pos)

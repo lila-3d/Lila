@@ -3,6 +3,7 @@
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
+#include "scene/ComponentPick.h"
 #include "scene/Graph.h"
 #include "scene/Ik.h"
 #include "scene/Rig.h"
@@ -36,7 +37,8 @@ double displayScale() { return PrefStore::get().value<double>("general", "/rig/j
 
 bool drawn(const scene::Node& n)
 {
-    return scene::rig::isJoint(n) && scene::effectivelyVisible(scene::Graph::current(), n.id()) && n.as<int64_t>(Joint::kDrawStyle) != Joint::kHidden;
+    return scene::rig::isJoint(n) && scene::selectionMask::shown(n) && scene::effectivelyVisible(scene::Graph::current(), n.id()) &&
+           n.as<int64_t>(Joint::kDrawStyle) != Joint::kHidden;
 }
 
 glm::dmat3 axesOf(const glm::dmat4& world)
@@ -116,7 +118,7 @@ void drawJoints(render::FrameState& s, OverlayPainter&, const ViewInfo&)
         for (NodeId d : g.descendants(id))
             under.insert(d);
     bool xray = PrefStore::get().value<bool>("general", "/rig/xrayJoints", false);
-    auto& out = xray ? s.linesOnTop : s.lines;
+    auto& out = xray ? s.linesXray : s.lines;
     double scale = displayScale();
 
     // Highlighted ranks last, so a selected bone wins over an unselected one at equal depth.
@@ -159,7 +161,7 @@ void drawIkHandles(render::FrameState& s, OverlayPainter&, const ViewInfo&)
 
     scene::Graph& g = scene::Graph::current();
     g.evaluate();
-    auto& out = PrefStore::get().value<bool>("general", "/rig/xrayJoints", false) ? s.linesOnTop : s.lines;
+    auto& out = PrefStore::get().value<bool>("general", "/rig/xrayJoints", false) ? s.linesXray : s.lines;
     double scale = displayScale();
     for (NodeId id : g.nodes())
     {

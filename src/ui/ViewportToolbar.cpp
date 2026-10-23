@@ -173,6 +173,10 @@ std::optional<bool> viewportActionState(const std::string& id, const ViewportWid
         for (scene::selectionMask::Kind k : scene::selectionMask::kAll)
             if (id.substr(12) == scene::selectionMask::name(k))
                 return scene::selectionMask::enabled(k);
+    if (id.starts_with("viewport.show."))
+        for (scene::selectionMask::Kind k : scene::selectionMask::kAll)
+            if (id.substr(14) == scene::selectionMask::name(k))
+                return scene::selectionMask::shown(k);
     if (id.starts_with("viewport.aaSamples"))
         return pref(vd::kAaEnabled, true) && PrefStore::get().value<int>("general", vd::kAaSamples, vd::kDefaultSamples) == std::stoi(id.substr(18));
     if (id == "viewport.toggleVertexColors")
@@ -448,8 +452,11 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
     menuButton("world", "Environment", [](QMenu* m) { fillEnvironmentMenu(m); });
     separator();
     actionButton("viewport.isolate", "focus-2");
+    actionButton("viewport.show.mesh", "box");
+    actionButton("viewport.show.joint", "bone");
+    actionButton("viewport.hud.originAxis", "axis-y");
     actionButton("viewport.toggleXray", "ghost");
-    actionButton("rig.xrayJoints", "bone");
+    actionButton("rig.xrayJoints", "skull");
     actionButton("viewport.toggleBackfaceCulling", "square-toggle");
     separator();
     actionButton("viewport.frameSelected", "focus-centered");

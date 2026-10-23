@@ -19,8 +19,8 @@ inline constexpr const char* kNodeNamesMime = "application/x-lila-node-names";
 /**
  * Maya's outliner: the DAG hierarchy with a type icon per row, referenced rows badged and italic, hidden rows dimmed.
  * LMB drag selects a range of rows; MMB drag moves rows onto another to parent them, or between rows to place them
- * there; dropped on a viewport, a camera row makes that view look through it. Right-click for the common object actions, F with the cursor over it to reveal the selection. Collapsed rows
- * stay collapsed across rebuilds; ancestors of the selection are shaded.
+ * there; dropped on a viewport, a camera row makes that view look through it. Right-click for the common object actions, F with the cursor over it to reveal the selection. Rows start
+ * collapsed and keep their open state across rebuilds; ancestors of the selection are shaded.
  */
 class LILA_UI_API Outliner : public QTreeWidget
 {
@@ -64,7 +64,9 @@ private:
     void shadeAncestors();
 
     std::unordered_map<scene::NodeId, QTreeWidgetItem*> mItems;
-    std::set<scene::NodeId> mCollapsed;
+    /** Rows start collapsed, as in Maya; these were opened. */
+    std::set<scene::NodeId> mExpanded;
+    std::vector<uint64_t> mEventSubs;
     /** Set rows start collapsed; these were opened. */
     std::set<scene::NodeId> mOpenSets;
     int mListener = 0;

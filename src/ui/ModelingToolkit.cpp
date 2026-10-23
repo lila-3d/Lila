@@ -61,7 +61,8 @@ QWidget* section(const QString& title, QWidget* content, QWidget* parent)
         PrefStore::get().set("general", key, !on);
     });
     v->addWidget(header);
-    v->addWidget(content);
+    v->addWidget(content, 1);
+    v->addStretch(0);
     return box;
 }
 
@@ -260,9 +261,10 @@ ModelingToolkit::ModelingToolkit(QWidget* parent) : QWidget(parent)
     auto* modsBox = new QWidget(body);
     auto* modsLayout = new QVBoxLayout(modsBox);
     modsLayout->setContentsMargins(2, 0, 2, 2);
-    modsLayout->addWidget(new ModifierStackWidget(modsBox));
-    root->addWidget(section("Modifiers", modsBox, body));
-    root->addStretch(1);
+    auto* stack = new ModifierStackWidget(modsBox);
+    stack->setMinimumHeight(420);
+    modsLayout->addWidget(stack);
+    root->addWidget(section("Modifiers", modsBox, body), 1);
 
     mRefresh = new QTimer(this);
     mRefresh->setSingleShot(true);

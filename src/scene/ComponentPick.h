@@ -107,6 +107,13 @@ LILA_SCENE_API std::string prefKey(Kind k);
 LILA_SCENE_API bool enabled(Kind k);
 LILA_SCENE_API void setEnabled(Kind k, bool on);
 
+/** Maya's Show menu filters: whether a kind draws in the viewport at all. Hidden kinds can't be picked either. */
+LILA_SCENE_API std::string showKey(Kind k);
+LILA_SCENE_API bool shown(Kind k);
+LILA_SCENE_API void setShown(Kind k, bool on);
+/** Whether the kind node falls under is shown. */
+LILA_SCENE_API bool shown(const Node& node);
+
 /** The mask an object falls under, by its node type. */
 LILA_SCENE_API Kind kindOf(const Node& node);
 
