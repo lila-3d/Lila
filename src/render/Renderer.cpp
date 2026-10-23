@@ -1528,9 +1528,17 @@ struct Renderer::Impl
         return mod;
     }
 
+    /** A requested line width within what the device rasterizes. */
+    float lineWidth(float w) const
+    {
+        const float* range = vk.properties.limits.lineWidthRange;
+        return std::clamp(w, std::max(1.0f, range[0]), std::max(1.0f, range[1]));
+    }
+
     VkPipeline buildPipeline(VkPipelineLayout layout, VkShaderModule mod, const char* vs, const char* ps, VkFormat format,
                              VkPrimitiveTopology topology, const VkPipelineVertexInputStateCreateInfo& vertexInput, bool depthWrite,
-                             bool blend, bool depthTest = true, float depthBias = 0.0f, bool dynamicCull = false, bool singleSample = false)
+                             bool blend, bool depthTest = true, float depthBias = 0.0f, bool dynamicCull = false, bool singleSample = false,
+                             bool dynamicLineWidth = false)
     {
         VkPipelineShaderStageCreateInfo stages[2]{};
         stages[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, mod, vs};
@@ -1570,9 +1578,14 @@ struct Renderer::Impl
         VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
         cb.attachmentCount = 1;
         cb.pAttachments = &att;
-        VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE};
+        VkDynamicState dyn[4] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        uint32_t dynCount = 2;
+        if (dynamicCull)
+            dyn[dynCount++] = VK_DYNAMIC_STATE_CULL_MODE;
+        if (dynamicLineWidth)
+            dyn[dynCount++] = VK_DYNAMIC_STATE_LINE_WIDTH;
         VkPipelineDynamicStateCreateInfo dy{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
-        dy.dynamicStateCount = dynamicCull ? 3 : 2;
+        dy.dynamicStateCount = dynCount;
         dy.pDynamicStates = dyn;
         VkPipelineRenderingCreateInfo ri{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
         ri.colorAttachmentCount = 1;
@@ -1653,8 +1666,8 @@ struct Renderer::Impl
             linesPipeline = buildPipeline(linesLayout, lines, "linesVS", "linesPS", format, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, vin, true, false);
             overlayPipeline =
                 buildPipeline(linesLayout, lines, "linesVS", "linesPS", format, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, vin, false, true, false);
-            linesOnTopPipeline =
-                buildPipeline(linesLayout, lines, "linesVS", "linesPS", format, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, vin, false, true, true, 2.0f);
+            linesOnTopPipeline = buildPipeline(linesLayout, lines, "linesVS", "linesPS", format, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, vin, false,
+                                               true, true, 2.0f, false, false, true);
             tris3dPipeline =
                 buildPipeline(linesLayout, lines, "linesVS", "linesPS", format, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, vin, false, true, true, 2.0f);
         }
@@ -1719,8 +1732,10 @@ struct Renderer::Impl
             wvin.pVertexBindingDescriptions = &wb;
             wvin.vertexAttributeDescriptionCount = 1;
             wvin.pVertexAttributeDescriptions = &wa;
-            wirePipeline = buildPipeline(wireLayout, wire, "wireVS", "wirePS", format, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, wvin, false, true, true, 2.0f);
-            wireXrayPipeline = buildPipeline(wireLayout, wire, "wireVS", "wirePS", format, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, wvin, false, true, false);
+            wirePipeline = buildPipeline(wireLayout, wire, "wireVS", "wirePS", format, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, wvin, false, true, true, 2.0f,
+                                         false, false, true);
+            wireXrayPipeline = buildPipeline(wireLayout, wire, "wireVS", "wirePS", format, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, wvin, false, true, false,
+                                             0.0f, false, false, true);
             vkDestroyShaderModule(vk.device, wire, nullptr);
         }
 
@@ -1910,7 +1925,7 @@ struct Renderer::Impl
             uploadAtlas(s.atlas);
 
         // One buffer per frame: lines, linesOnTop, tris3d, overlay and linesXray share the LineVertex stride, overlayTris follow.
-        const std::vector<LineVertex>* lineSets[] = {&s.lines, &s.linesOnTop, &s.tris3d, &s.overlay, &s.linesXray};
+        const std::vector<LineVertex>* lineSets[] = {&s.lines, &s.linesOnTop, &s.tris3d, &s.overlay, &s.linesXray, &s.selectedEdges};
         constexpr int kLineSets = int(std::size(lineSets));
         uint32_t lineFirst[kLineSets];
         size_t lineBytes = 0;
@@ -2051,17 +2066,26 @@ struct Renderer::Impl
             vkCmdDraw(cmd, uint32_t(s.lines.size()), 1, 0, 0);
         }
 
-        VkPipeline biased[2] = {linesOnTopPipeline, tris3dPipeline};
-        for (int i = 0; i < 2; ++i)
+        // Selected edges draw between the other on-top lines and tris3d, so hover ribbons stay over them.
+        struct Biased
         {
-            const std::vector<LineVertex>& verts = *lineSets[i + 1];
-            if (!biased[i] || verts.empty())
+            VkPipeline pipeline;
+            int set;
+            float width;
+        };
+        const Biased biased[] = {{linesOnTopPipeline, 1, 1.0f}, {linesOnTopPipeline, 5, s.selectedEdgeWidth}, {tris3dPipeline, 2, 0.0f}};
+        for (const Biased& b : biased)
+        {
+            const std::vector<LineVertex>& verts = *lineSets[b.set];
+            if (!b.pipeline || verts.empty())
                 continue;
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, biased[i]);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, b.pipeline);
+            if (b.width > 0.0f)
+                vkCmdSetLineWidth(cmd, lineWidth(b.width));
             vkCmdPushConstants(cmd, linesLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &vpF);
             VkDeviceSize offset = 0;
             vkCmdBindVertexBuffers(cmd, 0, 1, &f.lines, &offset);
-            vkCmdDraw(cmd, uint32_t(verts.size()), 1, lineFirst[i + 1], 0);
+            vkCmdDraw(cmd, uint32_t(verts.size()), 1, lineFirst[b.set], 0);
         }
 
         if (overlayPipeline && !s.linesXray.empty())
@@ -2430,6 +2454,7 @@ struct Renderer::Impl
                                                       : glm::vec4(0.02f, 0.02f, 0.02f, 1.0f);
             bool shaded = d.flags & (DrawShaded | DrawWireDepth);
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shaded ? wirePipeline : wireXrayPipeline);
+            vkCmdSetLineWidth(cmd, lineWidth(d.wireWidth));
             vkCmdPushConstants(cmd, wireLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
             VkDeviceSize offset = 0;
             vkCmdBindVertexBuffers(cmd, 0, 1, &g->edges.buffer, &offset);

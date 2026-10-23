@@ -89,6 +89,9 @@ LILA_UI_API bool run(const nlohmann::json& target);
  */
 LILA_UI_API bool repeatable(const nlohmann::json& target);
 
+/** Records a target that ran without run(), such as a panel button's command, for Repeat Last and Recent Commands. */
+LILA_UI_API void remember(const nlohmann::json& target);
+
 /** What Repeat Last (edit.repeatLast) would run, if anything repeatable has run. */
 LILA_UI_API std::optional<nlohmann::json> repeatTarget();
 

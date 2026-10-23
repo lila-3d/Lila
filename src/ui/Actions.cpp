@@ -32,20 +32,6 @@ json& lastRepeatable()
     return r;
 }
 
-void remember(const json& target)
-{
-    if (repeatable(target))
-        lastRepeatable() = target;
-    // Opening the hotbox is how Recent Commands is reached, so it isn't one of them.
-    if (target.is_string() && (target.get<std::string>().rfind("hotbox.", 0) == 0 || target.get<std::string>() == "edit.repeatLast"))
-        return;
-    std::vector<json>& r = recentList();
-    std::erase(r, target);
-    r.insert(r.begin(), target);
-    if (r.size() > 20)
-        r.resize(20);
-}
-
 void runCommand(const char* name, const json& call = json::object())
 {
     try
@@ -256,9 +242,23 @@ bool repeatable(const json& target)
     {
         const std::string& name = target["command"].get_ref<const std::string&>();
         return !startsWith(name, "select") && !startsWith(name, "pickWalk") && name != "undo" && name != "redo" && name != "lookThru" &&
-               !startsWith(name, "flushUndo");
+               !startsWith(name, "flushUndo") && (!ops::find(name) || ops::find(name)->undoable);
     }
     return target.contains("python");
+}
+
+void remember(const json& target)
+{
+    if (repeatable(target))
+        lastRepeatable() = target;
+    // Opening the hotbox is how Recent Commands is reached, so it isn't one of them.
+    if (target.is_string() && (target.get<std::string>().rfind("hotbox.", 0) == 0 || target.get<std::string>() == "edit.repeatLast"))
+        return;
+    std::vector<json>& r = recentList();
+    std::erase(r, target);
+    r.insert(r.begin(), target);
+    if (r.size() > 20)
+        r.resize(20);
 }
 
 std::optional<json> repeatTarget()

@@ -44,7 +44,7 @@ struct Settings
     bool live = false;
     double balance = 0.0;
     bool checker = false;
-    int checkerTiling = 16;
+    int checkerTiling = 32;
     bool islands = false;
     bool seams = true;
     bool twoColour = false;

@@ -4,6 +4,8 @@
 
 #include "render/FrameState.h"
 
+#include <algorithm>
+
 namespace lila::ui::viewportDisplay
 {
 /**
@@ -36,6 +38,32 @@ inline constexpr const char* kTimeKeyColors = "/timeline/keyColors";
 inline constexpr const char* kGraphAxisColors = "/graphEditor/axisColors";
 inline constexpr const char* kGhostColors = "/anim/ghost/colors";
 inline constexpr const char* kComponentColors = "/viewport/componentColors";
+
+/** Component sizes in logical pixels: edge widths and vertex square sizes, unselected, hovered and selected. */
+inline constexpr const char* kEdgeWidth = "/viewport/components/edgeWidth";
+inline constexpr const char* kEdgeWidthHover = "/viewport/components/edgeWidthHover";
+inline constexpr const char* kEdgeWidthSelected = "/viewport/components/edgeWidthSelected";
+inline constexpr const char* kVertexSize = "/viewport/components/vertexSize";
+inline constexpr const char* kVertexSizeHover = "/viewport/components/vertexSizeHover";
+inline constexpr const char* kVertexSizeSelected = "/viewport/components/vertexSizeSelected";
+
+struct ComponentSizes
+{
+    double edge = 1.0;
+    double edgeHover = 3.5;
+    double edgeSelected = 1.0;
+    double vertex = 3.2;
+    double vertexHover = 8.0;
+    double vertexSelected = 5.0;
+};
+
+LILA_UI_API ComponentSizes componentSizes();
+
+/**
+ * Device-pixel width of a hardware line for a logical width. 1 stays a one-pixel hairline at any display scale; the
+ * width beyond it scales with the display like the drawn components do.
+ */
+inline float hairlineWidth(double logical, double dpr) { return float(std::max(1.0, 1.0 + (logical - 1.0) * dpr)); }
 
 inline bool accentColors(bool monotone, bool selective) { return selective && !monotone; }
 /** Whether the display behind one of the accent toggles above draws in colour right now. */

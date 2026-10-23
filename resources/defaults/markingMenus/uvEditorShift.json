@@ -1,0 +1,14 @@
+{
+  "N": { "label": "Straighten", "action": "uv.straighten" },
+  "NE": { "label": "Flatten", "action": "uv.liveFlatten" },
+  "E": { "label": "Relax", "action": "uv.liveRelax" },
+  "SE": { "label": "Settle", "action": "uv.liveSettle" },
+  "SW": { "label": "Pack", "action": "uv.pack" },
+  "W": { "label": "Unwrap", "action": "uv.unwrap" },
+  "overflow": [
+    { "label": "Auto Seams", "action": "uv.autoSeams" },
+    { "label": "Cut", "action": "uv.cut" },
+    { "label": "Sew", "action": "uv.sew" },
+    { "label": "Orient", "action": "uv.orient" }
+  ]
+}

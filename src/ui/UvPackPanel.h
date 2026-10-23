@@ -58,6 +58,7 @@ private:
     QSpinBox* mMips = nullptr;
     QComboBox* mKeep = nullptr;
     QCheckBox* mFixPinned = nullptr;
+    QCheckBox* mPerObject = nullptr;
     QComboBox* mEffort = nullptr;
     QDoubleSpinBox* mTimeLimit = nullptr;
     QCheckBox* mShowStacks = nullptr;

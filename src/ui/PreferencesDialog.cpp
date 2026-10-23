@@ -393,6 +393,14 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         toggle(ui, "Graph editor X/Y/Z curves in axis colors", vd::kGraphAxisColors, true);
         toggle(ui, "Animation ghosts tinted before and after", vd::kGhostColors, true);
         toggle(ui, "Classic component colors (blue wire, pink vertices, red hover, yellow selection)", vd::kComponentColors, true);
+        section(ui, "Component Size (px)");
+        const vd::ComponentSizes sizes;
+        number(ui, "Edge width", vd::kEdgeWidth, sizes.edge, 1.0, 16.0, 0.5, 1);
+        number(ui, "Hovered edge width", vd::kEdgeWidthHover, sizes.edgeHover, 0.5, 16.0, 0.5, 1);
+        number(ui, "Selected edge width", vd::kEdgeWidthSelected, sizes.edgeSelected, 1.0, 16.0, 0.5, 1);
+        number(ui, "Vertex size", vd::kVertexSize, sizes.vertex, 0.5, 32.0, 0.5, 1);
+        number(ui, "Hovered vertex size", vd::kVertexSizeHover, sizes.vertexHover, 0.5, 32.0, 0.5, 1);
+        number(ui, "Selected vertex size", vd::kVertexSizeSelected, sizes.vertexSelected, 0.5, 32.0, 0.5, 1);
         section(ui, "Floating Shelf");
         choice(ui, "Opens at", "/floatingShelf/openAt",
                {{"Cursor", "cursor"}, {"Center of viewport", "viewport"}, {"Center of screen", "screen"}}, "viewport");

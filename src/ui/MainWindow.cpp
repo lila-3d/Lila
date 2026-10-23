@@ -1133,7 +1133,7 @@ void MainWindow::buildMenus()
                       "uv.projectSpherical", "uv.cut", "uv.sew", "uv.straighten", "uv.orient", "uv.pack", "uv.lightmap", "", "uv.autoSeams2",
                       "uv.bff", "uv.bffDisk", "uv.bffRectangle", "uv.bffCones", "uv.unwrapSymmetric", "uv.unwrapSymmetricStack"});
     addSubmenu("UV", "Pack");
-    menus::addActions("UV/Pack", {"uv.pack", "uv.packAroundSelected", "uv.packSelectionOnly", "uv.packStacked", "uv.packUdimByMaterial", "uv.selectStacks"});
+    menus::addActions("UV/Pack", {"uv.pack", "uv.packAroundSelected", "uv.packSelectionOnly", "uv.packStacked", "uv.packPerObject", "uv.packUdimByMaterial", "uv.selectStacks"});
     addSubmenu("UV", "Live");
     menus::addActions("UV/Live", {"uv.liveMode", "uv.liveRelax", "uv.liveFlatten", "uv.liveSettle", "uv.pin", "uv.unpin", "uv.weld", "uv.brush3d",
                            "uv.checker3d", "uv.seams3d", "uv.heatmapTwoColour"});

@@ -83,6 +83,21 @@ TEST_CASE("uvPack packs every selected mesh into one layout and stacks")
     CHECK_THROWS(run("uvPack", {{"scaleMode", "lock"}, {"tilesU", 1}, {"padding", 600}}));
 }
 
+TEST_CASE("uvPack perObject gives each mesh a layout of its own")
+{
+    run("newScene");
+    std::string a = run("polyCube")[0], b = run("polyCube")[0];
+    run("select", {{"args", {a, b}}});
+    run("uvProject", {{"type", "box"}});
+    double shared = run("uvPack", {{"resolution", 512}, {"padding", 4}})["texelsPerUnit"].get<double>();
+    json r = run("uvPack", {{"resolution", 512}, {"padding", 4}, {"perObject", true}});
+    REQUIRE(r["meshes"].size() == 2);
+    CHECK(r["meshes"][0]["mesh"] == a);
+    for (const json& m : r["meshes"])
+        CHECK(m["texelsPerUnit"].get<double>() > shared * 1.2);
+    run("undo");
+}
+
 namespace
 {
 std::string made(const json& r) { return (r.is_array() ? r[0] : r).get<std::string>(); }

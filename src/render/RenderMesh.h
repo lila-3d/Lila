@@ -160,5 +160,6 @@ struct MeshDraw
     ColorChannel colorChannel = ColorChannel::Rgb;
     /** Linear wire color when not selected or preselected; alpha 0 keeps the default near black. */
     glm::vec4 wireColor{0.0f};
+    float wireWidth = 1.0f; // device pixels
 };
 } // namespace lila::render

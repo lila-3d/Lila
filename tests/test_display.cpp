@@ -61,6 +61,16 @@ TEST_CASE("environment intensity per HDRI")
     }
 }
 
+TEST_CASE("component hairline width under display scaling")
+{
+    using lila::ui::viewportDisplay::hairlineWidth;
+    CHECK(hairlineWidth(1.0, 1.0) == doctest::Approx(1.0f));
+    CHECK(hairlineWidth(1.0, 2.0) == doctest::Approx(1.0f));
+    CHECK(hairlineWidth(3.0, 1.0) == doctest::Approx(3.0f));
+    CHECK(hairlineWidth(3.0, 1.5) == doctest::Approx(4.0f));
+    CHECK(hairlineWidth(0.5, 2.0) == doctest::Approx(1.0f));
+}
+
 TEST_CASE("monotone overrides the selective accent colours")
 {
     using lila::ui::viewportDisplay::accentColors;

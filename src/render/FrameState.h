@@ -100,6 +100,9 @@ struct FrameState
     std::vector<ImagePlaneDraw> imagePlanes;
     std::vector<LineVertex> lines;
     std::vector<LineVertex> linesOnTop; // like lines, biased toward the camera and writing no depth (edges over faces)
+    /** Selected component edges: drawn like linesOnTop, at their own width in device pixels. */
+    std::vector<LineVertex> selectedEdges;
+    float selectedEdgeWidth = 1.0f;
     std::vector<LineVertex> tris3d;     // world-space triangle list, blended and biased toward the camera, no depth write
     std::vector<LineVertex> linesXray;  // world-space lines with no depth test, over every surface (x-ray joints)
     std::vector<LineVertex> overlay; // NDC positions, drawn last with no depth test (marquee, HUD)

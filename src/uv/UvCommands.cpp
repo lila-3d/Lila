@@ -212,7 +212,8 @@ std::vector<FlagDef> packLayoutFlags()
              "selected: the selected islands stay where they are and the rest pack around them. unselected: only the selection packs, "
              "around the rest.",
              {"none", "selected", "unselected"}},
-            {"fixPinned", "", T::Bool, false, "Islands with pinned uvs stay where they are."}};
+            {"fixPinned", "", T::Bool, false, "Islands with pinned uvs stay where they are."},
+            {"perObject", "", T::Bool, false, "Pack each selected mesh into a layout of its own instead of one shared layout."}};
 }
 
 json packJson(const PackResult& r)
@@ -554,7 +555,7 @@ void registerCommands()
     ops::registerCommand({
         .name = "uvPack",
         .doc = "Pack the uv islands of the selected faces (or whole meshes) into 0-1 with padding for a texture size. Every selected "
-               "mesh goes into one shared layout. Islands are packed by their real shapes, into the holes of other islands, with "
+               "mesh goes into one shared layout, or each into its own with perObject. Islands are packed by their real shapes, into the holes of other islands, with "
                "rotations, optional mirroring and stacking of identical islands; the densest of several island orders wins. Returns "
                "the density reached (percent of the used tiles covered) and the texel density. Runs on worker threads and can be "
                "cancelled from the progress bar.",
@@ -593,14 +594,41 @@ void registerCommands()
                     t.othersFixed = keep == "unselected" && !ids.empty();
                 }
             }
-            PackResult r = packMeshes(packTargets, set, o);
-            if (r.cancelled)
-                throw CommandError("uvPack: cancelled");
-            if (!r.ok)
-                throw CommandError("uvPack: the islands do not fit; lower the padding, add tiles or lower texelsPerUnit");
+            auto pack = [&](std::span<PackTarget> t) {
+                PackResult r = packMeshes(t, set, o);
+                if (r.cancelled)
+                    throw CommandError("uvPack: cancelled");
+                if (!r.ok)
+                    throw CommandError("uvPack: the islands do not fit; lower the padding, add tiles or lower texelsPerUnit");
+                return r;
+            };
+            json result;
+            if (a.get<bool>("perObject", false))
+            {
+                // The least dense layout stands for the batch; each mesh's own result is under "meshes".
+                json each = json::array();
+                PackResult worst;
+                worst.coverage = 1.0;
+                worst.ok = true;
+                double seconds = 0.0;
+                for (size_t i = 0; i < packTargets.size(); ++i)
+                {
+                    PackResult r = pack({&packTargets[i], 1});
+                    each.push_back(packJson(r));
+                    each.back()["mesh"] = g.node(nodes[i])->name();
+                    seconds += r.seconds;
+                    if (r.coverage <= worst.coverage)
+                        worst = r;
+                }
+                worst.seconds = seconds;
+                result = packJson(worst);
+                result["meshes"] = std::move(each);
+            }
+            else
+                result = packJson(pack(packTargets));
             for (size_t i = 0; i < nodes.size(); ++i)
                 g.setValue({nodes[i], MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(std::move(meshes[i]))));
-            return packJson(r);
+            return result;
         },
     });
 

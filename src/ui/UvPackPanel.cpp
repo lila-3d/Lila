@@ -4,6 +4,7 @@
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "ui/Actions.h"
+#include "ui/Icons.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -147,7 +148,9 @@ UvPackPanel::UvPackPanel(QWidget* parent) : QWidget(parent)
     mGroupAttr = new QLineEdit("uvGroup", this);
     mGroupAttr->setToolTip("Face int attribute holding each face's group");
     mGroupAttr->setMaximumWidth(90);
-    form->addRow("Layout", row({mLayout, mGroupBy, mGroupAttr}));
+    mPerObject = new QCheckBox("Each object", this);
+    mPerObject->setToolTip("Pack each selected object into a layout of its own instead of one shared layout");
+    form->addRow("Layout", row({mLayout, mGroupBy, mGroupAttr, mPerObject}));
 
     mTilesU = integer(this, 1, 10, 1, "UDIM tiles across");
     mTilesV = integer(this, 1, 100, 1, "UDIM tiles up");
@@ -178,7 +181,7 @@ UvPackPanel::UvPackPanel(QWidget* parent) : QWidget(parent)
     root->addLayout(form);
 
     auto* buttons = new QHBoxLayout();
-    auto* pack = new QPushButton("Pack", this);
+    auto* pack = new QPushButton(icon("packages"), "Pack", this);
     pack->setToolTip("Pack the selected islands (or whole meshes) with these options (uvPack)");
     mResult = new QLabel(this);
     mResult->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -199,7 +202,7 @@ UvPackPanel::UvPackPanel(QWidget* parent) : QWidget(parent)
     auto changed = [this] { save(); };
     for (QComboBox* c : {mRotation, mScale, mLayout, mGroupBy, mKeep, mEffort})
         connect(c, &QComboBox::currentIndexChanged, this, changed);
-    for (QCheckBox* c : {mFlip, mOrient, mStack, mStackMirrored, mFixPinned})
+    for (QCheckBox* c : {mFlip, mOrient, mStack, mStackMirrored, mFixPinned, mPerObject})
         connect(c, &QCheckBox::toggled, this, changed);
     for (QDoubleSpinBox* s : {mDensity, mMargin, mTimeLimit, mRegion[0], mRegion[1], mRegion[2], mRegion[3]})
         connect(s, &QDoubleSpinBox::valueChanged, this, changed);
@@ -230,6 +233,7 @@ json UvPackPanel::options() const
     o["paddingMips"] = mMips->value();
     o["keep"] = valueOf(mKeep);
     o["fixPinned"] = mFixPinned->isChecked();
+    o["perObject"] = mPerObject->isChecked();
     o["effort"] = std::stoi(valueOf(mEffort));
     o["timeLimit"] = mTimeLimit->value();
     return o;
@@ -258,6 +262,7 @@ void UvPackPanel::load(const json& o)
     mMips->setValue(o.value("paddingMips", 0));
     selectValue(mKeep, o.value("keep", std::string("none")));
     mFixPinned->setChecked(o.value("fixPinned", false));
+    mPerObject->setChecked(o.value("perObject", false));
     selectValue(mEffort, std::to_string(o.value("effort", 1)));
     mTimeLimit->setValue(o.value("timeLimit", 0.0));
     mLoading = false;
@@ -314,6 +319,8 @@ void registerUvPackActions()
         "Pack with identical and mirrored islands stacked on one spot.");
     add("uv.packUdimByMaterial", "Pack UDIM Tile per Material", json{{"layout", "groupTiles"}, {"groupBy", "material"}},
         "Each material slot gets its own UDIM tile, all at one texel density.");
+    add("uv.packPerObject", "Pack Each Object Separately", json{{"perObject", true}},
+        "Each selected object packs into a layout of its own.");
     actions::add({.id = "uv.selectStacks",
                   .label = "Select Stacked Islands",
                   .category = "UV",

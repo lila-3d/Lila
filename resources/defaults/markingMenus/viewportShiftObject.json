@@ -1,12 +1,12 @@
 {
-  "N": { "label": "Extrude", "action": "mesh.extrude" },
-  "NE": { "label": "Bevel", "action": "mesh.bevel" },
-  "E": { "label": "Insert Loop", "action": "mesh.insertLoop" },
+  "S": { "label": "Extrude", "action": "mesh.extrude" },
+  "E": { "label": "Bevel", "action": "mesh.bevel" },
+  "NE": { "label": "Insert Loop", "action": "mesh.insertLoop" },
   "SE": { "label": "Bridge", "action": "mesh.bridge" },
-  "S": { "label": "Merge", "action": "mesh.merge" },
-  "SW": { "label": "Fill Hole", "action": "mesh.fillHole" },
+  "N": { "label": "Merge", "action": "mesh.merge" },
+  "NW": { "label": "Fill Hole", "action": "mesh.fillHole" },
   "W": { "label": "Knife", "action": "mesh.knife" },
-  "NW": { "label": "Dissolve", "action": "mesh.dissolve" },
+  "SW": { "label": "Dissolve", "action": "mesh.dissolve" },
   "overflow": [
     { "label": "Inset", "action": "mesh.inset" },
     { "label": "Merge to Center", "action": "mesh.mergeCenter" },
