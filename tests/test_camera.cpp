@@ -339,3 +339,22 @@ TEST_CASE("camera node gate settings live on the node")
         CHECK(renderSettings().cameras.count("shotCam") == 0);
     }
 }
+
+TEST_CASE("moving a saved view marks the scene modified until it moves back")
+{
+    run("newScene");
+    double pose = 0.0;
+    io::registerUiSection("testView", [&] { return json(pose); }, [&](const json& j) { pose = j.is_number() ? j.get<double>() : 0.0; });
+    io::markClean();
+    pose = 5.0;
+    io::uiChanged("testView");
+    CHECK(io::modified());
+    pose = 0.0;
+    io::uiChanged("testView");
+    CHECK_FALSE(io::modified());
+
+    pose = 7.0;
+    io::acceptUi("testView");
+    CHECK_FALSE(io::modified());
+    io::unregisterUiSection("testView");
+}

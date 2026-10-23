@@ -80,6 +80,14 @@ LILA_SCENE_API void autosave();
 LILA_SCENE_API void markModified();
 
 /**
+ * A UI section saved with the scene (cameras) changed. The scene counts as modified while the section differs from
+ * what was last saved or opened, so moving a camera back clears it again.
+ */
+LILA_SCENE_API void uiChanged(const std::string& key);
+/** Takes the section's current state as the saved one, for automatic changes such as framing a scene just opened. */
+LILA_SCENE_API void acceptUi(const std::string& key);
+
+/**
  * Replaces the scene with a history file (autosave, backup, revision copy) whose references resolve against scene's
  * folder. keepPath: it becomes scene, modified, so Save writes the real file. Otherwise it opens untitled and
  * modified, shown as title.

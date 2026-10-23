@@ -273,20 +273,27 @@ void ViewportWidget::recordCamera(const CameraView& before, uint64_t gesture)
     if (mCameraRestoring || before.view != historyKey())
         return;
     mCameraHistories[before.view].record(before, cameraView(), gesture, nowMs());
+    io::uiChanged("viewports");
 }
 
 void ViewportWidget::cameraUndo()
 {
     commitCameraEdit();
     if (auto v = mCameraHistories[historyKey()].undo(cameraView()))
+    {
         applyCameraView(*v);
+        io::uiChanged("viewports");
+    }
 }
 
 void ViewportWidget::cameraRedo()
 {
     commitCameraEdit();
     if (auto v = mCameraHistories[historyKey()].redo(cameraView()))
+    {
         applyCameraView(*v);
+        io::uiChanged("viewports");
+    }
 }
 
 QSize ViewportWidget::pixelSize() const

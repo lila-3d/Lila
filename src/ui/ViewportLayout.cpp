@@ -83,7 +83,10 @@ ViewportLayout::ViewportLayout(QWidget* parent) : QWidget(parent)
 void ViewportLayout::frameUnlessRestored()
 {
     if (!mCamerasRestored && mActive)
+    {
         mActive->frameSelection(true);
+        io::acceptUi("viewports");
+    }
     mCamerasRestored = false;
 }
 

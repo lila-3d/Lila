@@ -59,6 +59,8 @@ struct State
     uint64_t cleanStateId = 0;
     bool untracked = false; // changed outside the undo stack, so no undo can return to the saved state
     std::optional<uint64_t> autosavedStateId; // undo state the last autosave wrote, while no untracked edit followed
+    json cleanUi;         // UI sections as of the last save/open/new, so moving a camera back undoes the change
+    bool uiDirty = false;
 
     int listener = 0;
     std::string title;
@@ -107,6 +109,21 @@ void forwardFileEvents(const ExecuteEvent& e)
     events::send(d);
 }
 
+json currentUiSection(const std::string& key)
+{
+    auto it = state().uiSections.find(key);
+    return it == state().uiSections.end() ? json() : it->second.save();
+}
+
+void snapshotUi()
+{
+    State& s = state();
+    s.cleanUi = json::object();
+    for (auto& [key, section] : s.uiSections)
+        s.cleanUi[key] = section.save();
+    s.uiDirty = false;
+}
+
 void setModified(bool m)
 {
     State& s = state();
@@ -138,7 +155,10 @@ void ensureListener()
             scene::picker::clearScene();
         }
         if (c == scene::Change::Cleared)
+        {
+            snapshotUi();
             return setModified(false);
+        }
         UndoStack& u = UndoStack::get();
         if (u.replaying())
         {
@@ -158,7 +178,7 @@ void ensureListener()
     UndoStack::get().addListener([] {
         State& s = state();
         if (!s.loading)
-            setModified(s.untracked || UndoStack::get().stateId() != s.cleanStateId);
+            setModified(s.untracked || s.uiDirty || UndoStack::get().stateId() != s.cleanStateId);
     });
 }
 
@@ -523,6 +543,7 @@ void markClean()
     s.autosavedStateId.reset();
     s.cleanStateId = UndoStack::get().stateId();
     s.untracked = false;
+    snapshotUi();
     setModified(false);
 }
 
@@ -574,6 +595,25 @@ void autosave()
             log::warn("autosave failed: {}", e.what());
         }
     }).detach();
+}
+
+void uiChanged(const std::string& key)
+{
+    ensureListener();
+    State& s = state();
+    if (s.loading)
+        return;
+    s.uiDirty = currentUiSection(key) != s.cleanUi.value(key, json());
+    if (s.uiDirty)
+        s.autosaveDirty = true;
+    setModified(s.untracked || s.uiDirty || UndoStack::get().stateId() != s.cleanStateId);
+}
+
+void acceptUi(const std::string& key)
+{
+    State& s = state();
+    s.cleanUi[key] = currentUiSection(key);
+    uiChanged(key);
 }
 
 void markModified()
