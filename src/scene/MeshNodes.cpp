@@ -70,6 +70,14 @@ std::vector<Primitive> primitives()
              return geo::makeCylinder({f(n, "radius"), f(n, "height"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsHeight"),
                                        i(n, "subdivisionsCaps", 0), b(n, "caps"), b(n, "baseAtOrigin")});
          }},
+        {"polyCapsule", "Capsule",
+         {floatAttr("radius", 50, "cm."), floatAttr("height", 200, "End to end, caps included, cm."),
+          intAttr("subdivisionsAxis", 20, "Segments around."), intAttr("subdivisionsHeight", 1, "Segments along the straight part."),
+          intAttr("subdivisionsCaps", 6, "Rings on each rounded end."), boolAttr("baseAtOrigin", false, "Sit on the ground.")},
+         [](const Node& n) {
+             return geo::makeCapsule({f(n, "radius"), f(n, "height"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsHeight"),
+                                      i(n, "subdivisionsCaps"), b(n, "baseAtOrigin")});
+         }},
         {"polyCone", "Cone",
          {floatAttr("radius", 50, "cm."), floatAttr("height", 100, "cm."), intAttr("subdivisionsAxis", 20, "Segments around."),
           intAttr("subdivisionsHeight", 1, "Segments up."), intAttr("subdivisionsCap", 0, "Rings on the base; 0 is one n-gon."),

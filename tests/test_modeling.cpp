@@ -92,3 +92,42 @@ TEST_CASE("duplicate, freeze, center pivot")
     run("centerPivot", {{"args", {copy}}});
     run("undo");
 }
+
+TEST_CASE("bounding mesh: fitted collision named and parented for Unreal")
+{
+    run("newScene");
+    std::string cube = run("polyCube", {{"name", "Crate"}, {"width", 200}, {"height", 40}, {"depth", 60}, {"position", {10, 20, 30}}})[0];
+    run("rotate", {{"args", {cube}}, {"by", {0, 30, 10}}});
+    auto size = [](const std::string& m) {
+        json info = run("meshInfo", {{"args", {m}}});
+        std::vector<double> s;
+        for (int i = 0; i < 3; ++i)
+            s.push_back(info["boundsMax"][i].get<double>() - info["boundsMin"][i].get<double>());
+        std::sort(s.begin(), s.end());
+        return s;
+    };
+
+    json made = run("boundingMesh", {{"args", {cube}}, {"offset", 5}});
+    REQUIRE(made.size() == 1);
+    std::string box = made[0];
+    CHECK(box == "UBX_Crate");
+    CHECK(run("listRelatives", {{"args", {box}}, {"parent", true}}) == json::array({cube}));
+    std::vector<double> s = size(box);
+    CHECK(s[0] == doctest::Approx(50.0));
+    CHECK(s[1] == doctest::Approx(70.0));
+    CHECK(s[2] == doctest::Approx(210.0));
+
+    // The existing collision child is not wrapped again.
+    CHECK(run("boundingMesh", {{"args", {cube}}}) == json::array({"UBX_Crate_01"}));
+    CHECK(size("UBX_Crate_01")[2] == doctest::Approx(200.0));
+
+    CHECK(run("boundingMesh", {{"args", {cube}}, {"shape", "hull"}})[0] == "UCX_Crate");
+    CHECK(run("boundingMesh", {{"args", {cube}}, {"shape", "sphere"}})[0] == "USP_Crate");
+    std::string capsule = run("boundingMesh", {{"args", {cube}}, {"shape", "capsule"}, {"history", true}})[0];
+    CHECK(capsule == "UCP_Crate");
+    CHECK(run("ls", {{"type", "polyCapsule"}}).size() == 1);
+    CHECK(size(capsule)[2] >= 200.0);
+
+    run("undo");
+    CHECK(run("ls", {{"type", "polyCapsule"}}).empty());
+}

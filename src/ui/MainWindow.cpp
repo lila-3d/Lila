@@ -1053,7 +1053,7 @@ void MainWindow::buildMenus()
     });
     menus::addActions("File", {"file.save", "file.saveAs", "file.incrementAndSave", "file.versions", "", "file.import", "file.convertMaya",
                         "file.exportSelection", "file.gameExporter", "file.createReference", "", "unreal.send", "unreal.sync",
-                        "unreal.connect", "", "file.openFolder"});
+                        "unreal.connect", "unreal.collision", "", "file.openFolder"});
     addSubmenu("File", "Recent Folders", [this](QMenu* recent) {
         mRecentMenu = recent;
         refreshRecentFolders();
@@ -1072,7 +1072,7 @@ void MainWindow::buildMenus()
 
     menu("Create", "Create");
     addSubmenu("Create", "Polygon Primitives");
-    menus::addActions("Create/Polygon Primitives", {"create.cube", "create.sphere", "create.cylinder", "create.cone", "create.plane", "create.torus",
+    menus::addActions("Create/Polygon Primitives", {"create.cube", "create.sphere", "create.cylinder", "create.capsule", "create.cone", "create.plane", "create.torus",
                                              "create.disc", "create.pipe", "create.quadSphere", "create.icoSphere"});
     menus::addActions("Create", {"create.locator", "create.camera", "create.cameraFromView", "create.emptyGroup", "create.imagePlane"});
     addSubmenu("Create", "Sets");
@@ -1087,7 +1087,7 @@ void MainWindow::buildMenus()
     menus::addActions("Mesh", {"mesh.extrude", "mesh.inset", "mesh.bevel", "mesh.insertLoop", "mesh.knife", "mesh.bridge", "mesh.fillHole", "",
                         "mesh.merge", "mesh.mergeCenter", "mesh.collapse", "mesh.dissolve", "mesh.poke", "mesh.spin", "", "mesh.flip",
                         "mesh.conform", "mesh.triangulate", "mesh.quadrangulate", "mesh.subdivide", "", "mesh.mirror", "mesh.symmetryX",
-                        "mesh.symmetryOff", "mesh.combine", "mesh.separate", "mesh.deleteHistory"});
+                        "mesh.symmetryOff", "mesh.combine", "mesh.separate", "mesh.boundingMesh", "mesh.deleteHistory"});
     addSubmenu("Mesh", "Symmetry");
     menus::addActions("Mesh/Symmetry", {"mesh.toggleSymmetry", "mesh.symmetryX", "mesh.symmetryY", "mesh.symmetryZ", "mesh.symmetryOff", "",
                                  "mesh.symmetryCheck", "mesh.symmetrizePositive", "mesh.symmetrizeNegative", "mesh.symmetryRebuild",

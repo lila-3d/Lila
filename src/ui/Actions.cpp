@@ -472,6 +472,10 @@ void registerBuiltins()
     cmd("mesh.symmetryRebuild", "Rebuild Symmetry", "Mesh", "symmetryRebuild", json::object(), "Pairs mirror vertices again from their positions.");
     cmd("mesh.symmetryRebuildTopological", "Rebuild Symmetry from Edge", "Mesh", "symmetryRebuild", {{"topological", true}},
         "Pairs mirror vertices by topology, outward from the selected center edge. Works on posed or uneven meshes.");
+    cmd("mesh.boundingMesh", "Bounding Mesh", "Mesh", "boundingMesh", json::object(),
+        "Wraps the selection in a fitted box, sphere, capsule, cylinder or hull, named and parented as its Unreal collision.");
+    cmd("unreal.collision", "Add Collision", "Unreal", "boundingMesh", json::object(),
+        "Wraps the selection in a fitted collision shape named for Unreal (UBX_, USP_, UCP_, UCX_) and parents it under the mesh.");
     cmd("mesh.extract", "Extract", "Mesh", "polyExtract", json::object(), "Moves the selected faces into a new object.");
     cmd("mesh.connect", "Connect", "Mesh", "polyConnect", json::object(), "Splits faces with new edges between the selected vertices or edges.");
     cmd("select.shrink", "Shrink Selection", "Select", "shrinkSelection", json::object(), "Drops the components on the selection's border.");
@@ -488,6 +492,7 @@ void registerBuiltins()
              std::tuple{"create.cube", "Cube", "polyCube", "Creates a box."},
              {"create.sphere", "Sphere", "polySphere", "Creates a UV sphere, quads with triangles at the poles."},
              {"create.cylinder", "Cylinder", "polyCylinder", "Creates a capped cylinder."},
+             {"create.capsule", "Capsule", "polyCapsule", "Creates a cylinder with rounded ends."},
              {"create.cone", "Cone", "polyCone", "Creates a cone with a capped base."},
              {"create.plane", "Plane", "polyPlane", "Creates a flat grid of quads."},
              {"create.torus", "Torus", "polyTorus", "Creates a ring-shaped tube."},

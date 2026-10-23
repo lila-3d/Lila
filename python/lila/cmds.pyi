@@ -91,6 +91,9 @@ def blendShape(*objects: Any, live: bool | None = None, name: str | None = None)
 def blendTargets(*objects: Any) -> Any:
     """A blendShape's targets in order: [{node, name, weight, live}]. Set a weight with setAttr(node + ".weight", w)."""
 
+def boundingMesh(*objects: Any, shape: str | None = None, offset: float | None = None, axisOffset: Sequence[float] | None = None, orient: str | None = None, axis: str | None = None, perObject: bool | None = None, nameFromSelection: bool | None = None, name: str | None = None, prefix: str | None = None, parent: bool | None = None, segments: int | None = None, maxHullPoints: int | None = None, history: bool | None = None) -> Any:
+    """Wrap the selection's points in a fitted shape, ready to go to Unreal as collision. Orientation is solved from the points alone (minimum-volume box), so frozen and unfrozen geometry behave the same, and every point is inside. Works on objects (every mesh at or under them) or on selected components. Returns the new meshes."""
+
 def cage(*objects: Any, name: str | None = None) -> Any:
     """Deform meshes by a closed cage mesh around them (mean value coordinates). Give the meshes first and the cage last; then edit the cage's points. Returns the deformers."""
 
@@ -654,6 +657,9 @@ def polyBoolean(*objects: Any, operation: str | None = None, keepCutters: bool |
 
 def polyBridge(divisions: int | None = None) -> Any:
     """Join two selected boundary loops with faces."""
+
+def polyCapsule(name: str | None = None, position: Sequence[float] | None = None, history: bool | None = None, radius: float | None = None, height: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, subdivisionsCaps: int | None = None, baseAtOrigin: bool | None = None) -> Any:
+    """Create a Capsule mesh. Returns [mesh, generator] (generator is None without history)."""
 
 def polyCollapse() -> Any:
     """Collapse each connected group of selected edges to its centre."""

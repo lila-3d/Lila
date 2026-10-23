@@ -7,6 +7,7 @@ lila_module(lila_scene Scene
     RotationCommands.cpp
     AutoBevel.cpp
     Booleans.cpp
+    BoundingMesh.cpp
     Camera.cpp
     CenterInMesh.cpp
     ComponentPick.cpp

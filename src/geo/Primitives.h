@@ -48,6 +48,18 @@ struct CylinderOptions
     bool baseAtOrigin = false;
 };
 
+struct CapsuleOptions
+{
+    double radius = 50.0;
+    /** End to end, caps included; never less than the diameter. */
+    double height = 200.0;
+    int subdivAxis = 20;
+    int subdivHeight = 1;
+    /** Rings on each hemispherical cap. */
+    int subdivCaps = 6;
+    bool baseAtOrigin = false;
+};
+
 struct ConeOptions
 {
     double radius = 50.0;
@@ -103,6 +115,7 @@ LILA_SCENE_API Mesh makeCube(const CubeOptions& o = {});
 LILA_SCENE_API Mesh makePlane(const PlaneOptions& o = {});
 LILA_SCENE_API Mesh makeSphere(const SphereOptions& o = {});
 LILA_SCENE_API Mesh makeCylinder(const CylinderOptions& o = {});
+LILA_SCENE_API Mesh makeCapsule(const CapsuleOptions& o = {});
 LILA_SCENE_API Mesh makeCone(const ConeOptions& o = {});
 LILA_SCENE_API Mesh makeTorus(const TorusOptions& o = {});
 /** In XZ facing +Y. */

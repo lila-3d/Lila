@@ -474,6 +474,32 @@ Mesh makeCylinder(const CylinderOptions& o)
     return lathe(profile, bands, std::max(3, o.subdivAxis), false);
 }
 
+Mesh makeCapsule(const CapsuleOptions& o)
+{
+    LILA_ZONE();
+
+    const int caps = std::max(1, o.subdivCaps);
+    const int hs = std::max(1, o.subdivHeight);
+    const double half = std::max(0.0, 0.5 * o.height - o.radius);
+    std::vector<ProfilePoint> profile;
+    for (int j = 0; j <= caps; ++j)
+    {
+        const double phi = 0.5 * glm::pi<double>() * j / caps;
+        profile.push_back({j == 0 ? 0.0 : o.radius * std::sin(phi), -half - o.radius * std::cos(phi)});
+    }
+    for (int j = 1; j <= hs && half > 0.0; ++j)
+        profile.push_back({o.radius, -half + 2.0 * half * j / hs});
+    for (int j = 1; j <= caps; ++j)
+    {
+        const double phi = 0.5 * glm::pi<double>() * j / caps;
+        profile.push_back({j == caps ? 0.0 : o.radius * std::cos(phi), half + o.radius * std::sin(phi)});
+    }
+    Mesh m = lathe(profile, {{0, int(profile.size()) - 1, Band::Cylindrical}}, std::max(3, o.subdivAxis), false);
+    if (o.baseAtOrigin)
+        shiftY(m, half + o.radius);
+    return m;
+}
+
 Mesh makeCone(const ConeOptions& o)
 {
     LILA_ZONE();

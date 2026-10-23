@@ -2,6 +2,7 @@ find_package(meshoptimizer CONFIG REQUIRED)
 
 lila_module(lila_geo Scene
     Attribute.cpp
+    BoundingShapes.cpp
     Bvh.cpp
     ColorSets.cpp
     CrossSection.cpp

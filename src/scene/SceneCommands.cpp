@@ -117,6 +117,7 @@ void registerMeshEditCommands();
 void registerTransferCommands();
 void registerBooleanCommands();
 void registerObjectCommands();
+void registerBoundingMeshCommands();
 void registerComponentQueryCommands();
 
 void registerCommands()
@@ -130,6 +131,7 @@ void registerCommands()
     registerTransferCommands();
     registerBooleanCommands();
     registerObjectCommands();
+    registerBoundingMeshCommands();
     modifiers::registerCommands();
     components::registerCommands();
     materials::registerCommands();
