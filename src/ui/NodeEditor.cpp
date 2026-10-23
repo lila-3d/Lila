@@ -60,7 +60,9 @@
 #include <QWheelEvent>
 
 #include <array>
+#include <cctype>
 #include <cmath>
+#include <utility>
 #include <map>
 #include <memory>
 #include <optional>
@@ -119,6 +121,28 @@ QString pretty(const std::string& id)
     return out;
 }
 
+/** "Spike Length" -> "spikeLength": the parameter name for a typed display name, empty when nothing usable is left. */
+std::string identifierFrom(const QString& text)
+{
+    std::string out;
+    bool up = false;
+    for (QChar ch : text)
+    {
+        char c = ch.toLatin1();
+        bool alnum = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+        if (!alnum)
+        {
+            up = !out.empty();
+            continue;
+        }
+        if (out.empty() && c >= '0' && c <= '9')
+            out += '_';
+        out += out.empty() ? char(std::tolower(c)) : up ? char(std::toupper(c)) : c;
+        up = false;
+    }
+    return out;
+}
+
 /** Runs a gn command from the UI; failures go to the log rather than a dialog. */
 json runCmd(const char* name, json call)
 {
@@ -136,6 +160,28 @@ json runCmd(const char* name, json call)
 }
 
 json args(std::initializer_list<json> a) { return {{"args", json(a)}}; }
+
+bool hasPlug(const std::string& path)
+{
+    try
+    {
+        return scene::Graph::current().plug(path).attr >= 0;
+    }
+    catch (const std::invalid_argument&)
+    {
+        return false;
+    }
+}
+
+/** Nonzero while a side-panel field sets a value, which then doesn't rebuild the panel under the field. */
+int gFieldEdits = 0;
+
+void setFromField(json call)
+{
+    ++gFieldEdits;
+    runCmd("gnSetValue", std::move(call));
+    --gFieldEdits;
+}
 
 /** The theme's colour per socket type: lightness only in Monotone, where the shape tells the rest. */
 QColor socketColor(const std::string& type)
@@ -1205,7 +1251,33 @@ QWidget* valueEditor(QWidget* parent, const std::string& type, const json& value
     return s;
 }
 
-/** Bounds every spin box under w by an exposed input's min, max and step. */
+/** The soft range, or the hard one, of an exposed input; 0 when it has neither end. */
+double rangeSpan(const json& in)
+{
+    auto end = [&](const char* soft, const char* hard) -> std::optional<double> {
+        if (in.contains(soft) && in[soft].is_number())
+            return in[soft].get<double>();
+        if (in.contains(hard) && in[hard].is_number())
+            return in[hard].get<double>();
+        return std::nullopt;
+    };
+    std::optional<double> lo = end("softMin", "min"), hi = end("softMax", "max");
+    if (!hi)
+        return 0.0;
+    return *hi - lo.value_or(0.0);
+}
+
+/** Rounds up to 1, 2 or 5 times a power of ten. */
+double niceStep(double raw)
+{
+    double p = std::pow(10.0, std::floor(std::log10(raw)));
+    for (double m : {1.0, 2.0, 5.0})
+        if (raw <= m * p)
+            return m * p;
+    return 10.0 * p;
+}
+
+/** Bounds every spin box under w by an exposed input's min, max and step; with no step, a scrub across ~1200 px covers the range. */
 void applyLimits(QWidget* w, const json& in)
 {
     QList<QDoubleSpinBox*> boxes = w->findChildren<QDoubleSpinBox*>();
@@ -1218,6 +1290,8 @@ void applyLimits(QWidget* w, const json& in)
         b->setRange(in.contains("min") ? in["min"].get<double>() : -1e9, in.contains("max") ? in["max"].get<double>() : 1e9);
         if (in.contains("step"))
             b->setSingleStep(in["step"].get<double>());
+        else if (double span = rangeSpan(in); span > 0.0 && b->decimals() > 0)
+            b->setSingleStep(niceStep(span / 200.0));
         b->setValue(v);
     }
 }
@@ -1285,7 +1359,7 @@ NodeEditor::NodeEditor(QWidget* parent) : QWidget(parent)
     mRefresh = new QTimer(this);
     mRefresh->setSingleShot(true);
     mRefresh->setInterval(0);
-    connect(mRefresh, &QTimer::timeout, this, [this] { refresh(); });
+    connect(mRefresh, &QTimer::timeout, this, [this] { refresh(std::exchange(mPanelDirty, false)); });
 
     setProperty("hotkeyContext", "nodeEditor");
     mCanvas->onAddMenu = [this](QPointF scenePos) { openAddMenu(scenePos, nullptr); };
@@ -1341,17 +1415,37 @@ NodeEditor::NodeEditor(QWidget* parent) : QWidget(parent)
             QTimer::singleShot(0, this, [this] { followSelection(); });
             return;
         }
-        if (c == scene::Change::Cleared || c == scene::Change::Created || c == scene::Change::Deleted || c == scene::Change::Renamed ||
-            c == scene::Change::Reset)
+        if (c == scene::Change::Reset)
+        {
+            // A command's batched changes arrive as one Reset, a selection among them.
+            QTimer::singleShot(0, this, [this] { followSelection(); });
+            scheduleRefresh(gFieldEdits == 0);
+            return;
+        }
+        if (c == scene::Change::Cleared || c == scene::Change::Created || c == scene::Change::Deleted || c == scene::Change::Renamed)
         {
             scheduleRefresh();
             return;
         }
         if (c == scene::Change::Value)
-            if (scene::Node* n = g.node(id); n && n->type().name == gn::kGroupNodeType)
-                scheduleRefresh();
+            if (scene::Node* n = g.node(id))
+            {
+                if (n->type().name == gn::kGroupNodeType)
+                    scheduleRefresh(gFieldEdits == 0);
+                // Evaluation writes the modifier's outputs too; only a change to a shown value rebuilds the panel.
+                else if (gFieldEdits == 0 && qs(n->path()) == mModifier && !mValueCheck)
+                {
+                    mValueCheck = true;
+                    QTimer::singleShot(0, this, [this] {
+                        mValueCheck = false;
+                        if (shownValues() != mShownValues)
+                            scheduleRefresh();
+                    });
+                }
+            }
     });
     editors().push_back(this);
+    followSelection();
     refresh();
 }
 
@@ -1675,8 +1769,9 @@ void NodeEditor::showError(const QString& message)
     QToolTip::showText(QCursor::pos(), message, mCanvas, QRect(), 8000);
 }
 
-void NodeEditor::scheduleRefresh()
+void NodeEditor::scheduleRefresh(bool panel)
 {
+    mPanelDirty |= panel;
     if (!mRefresh->isActive())
         mRefresh->start();
 }
@@ -1692,7 +1787,7 @@ void NodeEditor::followSelection()
         if (gn::isGnModifier(*n))
         {
             if (scene::Node* grp = gn::groupOfModifier(g, *n))
-                setGroup(qs(grp->name()));
+                followModifier(*n, qs(grp->name()));
             return;
         }
         if (!n->type().isA("mesh"))
@@ -1702,11 +1797,47 @@ void NodeEditor::followSelection()
             if (scene::Node* m = g.node(*it); m && gn::isGnModifier(*m))
                 if (scene::Node* grp = gn::groupOfModifier(g, *m))
                 {
-                    if (qs(grp->name()) != mGroup)
-                        setGroup(qs(grp->name()));
+                    followModifier(*m, qs(grp->name()));
                     return;
                 }
     }
+}
+
+void NodeEditor::followModifier(const scene::Node& modifier, const QString& group)
+{
+    QString path = qs(modifier.path());
+    bool changed = path != mModifier;
+    mModifier = path;
+    if (group != mGroup)
+        setGroup(group);
+    else if (changed)
+        scheduleRefresh();
+}
+
+nlohmann::json NodeEditor::shownValues() const
+{
+    json out = json::object();
+    scene::Node* m = modifierInView();
+    if (!m || mGroup.isEmpty())
+        return out;
+    json info = runCmd("gnGroupInfo", args({mGroup.toStdString()}));
+    if (!info.is_object() || !info.contains("definition"))
+        return out;
+    scene::Graph& g = scene::Graph::current();
+    for (const json& in : info["definition"].value("inputs", json::array()))
+        if (std::string plug = m->path() + "." + in.value("name", ""); hasPlug(plug))
+            out[plug] = scene::toJson(g.value(g.plug(plug)));
+    return out;
+}
+
+scene::Node* NodeEditor::modifierInView() const
+{
+    scene::Graph& g = scene::Graph::current();
+    scene::Node* m = mModifier.isEmpty() ? nullptr : g.find(mModifier.toStdString());
+    if (!m || !gn::isGnModifier(*m))
+        return nullptr;
+    scene::Node* grp = gn::groupOfModifier(g, *m);
+    return grp && qs(grp->name()) == mGroup ? m : nullptr;
 }
 
 void NodeEditor::refreshGroups()
@@ -1724,7 +1855,7 @@ void NodeEditor::refreshGroups()
     mRefreshing = false;
 }
 
-void NodeEditor::refresh()
+void NodeEditor::refresh(bool panel)
 {
     LILA_ZONE();
 
@@ -1735,7 +1866,8 @@ void NodeEditor::refresh()
         selected.insert(mSelectedNode.toStdString());
     json info = mGroup.isEmpty() ? json() : runCmd("gnGroupInfo", args({mGroup.toStdString()}));
     mCanvas->build(mGroup.toStdString(), info, selected);
-    rebuildSidePanel();
+    if (panel)
+        rebuildSidePanel();
 }
 
 QWidget* NodeEditor::buildInterface(QWidget* panel, const json& info)
@@ -1747,7 +1879,13 @@ QWidget* NodeEditor::buildInterface(QWidget* panel, const json& info)
     auto* v = new QVBoxLayout(box);
     v->setContentsMargins(0, 0, 0, 0);
     v->setSpacing(3);
-    v->addWidget(heading(box, "Parameters"));
+    scene::Node* modifier = modifierInView();
+    std::string modPath = modifier ? modifier->path() : std::string();
+    mShownValues = shownValues();
+    QLabel* title = heading(box, modifier ? "Parameters: " + qs(modPath) : "Parameter Defaults");
+    title->setToolTip(modifier ? "The values this modifier uses. Middle click a field to restore the group's default."
+                               : "Defaults for new modifiers using this group. Select a mesh with this group applied to edit its values.");
+    v->addWidget(title);
 
     // Panels in first-use order, the unpanelled inputs first.
     std::vector<std::string> panels{""};
@@ -1782,9 +1920,21 @@ QWidget* NodeEditor::buildInterface(QWidget* panel, const json& info)
             auto* row = new QWidget(box);
             auto* h = new QHBoxLayout(row);
             h->setContentsMargins(0, 0, 0, 0);
-            QWidget* ed = valueEditor(row, type, in.value("default", json()), [group, name](json val) {
-                runCmd("gnSetValue", args({group, "GroupInput." + name, val}));
-            });
+            QWidget* ed = nullptr;
+            if (modifier && hasPlug(modPath + "." + name))
+            {
+                std::string plug = modPath + "." + name;
+                scene::Graph& g = scene::Graph::current();
+                ed = valueEditor(row, type, scene::toJson(g.value(g.plug(plug))), [plug](json val) {
+                    ++gFieldEdits;
+                    runCmd("setAttr", args({plug, val}));
+                    --gFieldEdits;
+                }, in.value("default", json()));
+            }
+            else
+                ed = valueEditor(row, type, in.value("default", json()), [group, name](json val) {
+                    setFromField(args({group, "GroupInput." + name, val}));
+                });
             applyLimits(ed, in);
             ed->setToolTip(tip);
             h->addWidget(ed, 1);
@@ -1796,11 +1946,17 @@ QWidget* NodeEditor::buildInterface(QWidget* panel, const json& info)
             int index = int(i);
             int count = int(inputs.size());
             json current = in;
-            menu->addAction("Rename...", this, [this, group, name] {
+            bool labelled = in.contains("label");
+            menu->addAction("Rename...", this, [this, group, name, shown, labelled] {
                 bool ok = false;
-                QString to = QInputDialog::getText(this, "Rename Input", "Name", QLineEdit::Normal, qs(name), &ok);
-                if (ok && !to.trimmed().isEmpty() && to.trimmed().toStdString() != name)
-                    runCmd("gnRenameInput", args({group, name, to.trimmed().toStdString()}));
+                QString to = QInputDialog::getText(this, "Rename Input", "Name", QLineEdit::Normal, shown, &ok).trimmed();
+                if (!ok || to.isEmpty() || to == shown)
+                    return;
+                std::string id = identifierFrom(to);
+                if (labelled || to != pretty(id))
+                    runCmd("gnSetInputInfo", {{"args", {group, name}}, {"label", to.toStdString()}});
+                if (!id.empty() && id != name)
+                    runCmd("gnRenameInput", args({group, name, id}));
             });
             menu->addAction("Edit Info...", this, [this, name, current] { editInputInfo(name, current); });
             QAction* up = menu->addAction("Move Up", this, [group, name, index] { runCmd("gnMoveInput", args({group, name, index - 1})); });
@@ -2033,7 +2189,7 @@ void NodeEditor::rebuildSidePanel()
                 h->addWidget(l, 1);
             }
             else
-                h->addWidget(valueEditor(row, type, value, [group, nodeName, id](json v) { runCmd("gnSetValue", args({group, nodeName + "." + id, v})); },
+                h->addWidget(valueEditor(row, type, value, [group, nodeName, id](json v) { setFromField(args({group, nodeName + "." + id, v})); },
                                          s.value("default", json())),
                              1);
             auto* expose = new QToolButton(row);

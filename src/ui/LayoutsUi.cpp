@@ -130,6 +130,9 @@ LayoutController::LayoutController(QMainWindow* window, DockSidebars* sidebars, 
     more->setToolTip("Layouts: save, manage, add to shelf");
     row->addWidget(more);
     row->addWidget(mSwitcher);
+    // Keeps whatever already sits in the corner, the workspace name.
+    if (QWidget* existing = window->menuBar()->cornerWidget(Qt::TopRightCorner))
+        row->insertWidget(0, existing);
     window->menuBar()->setCornerWidget(corner, Qt::TopRightCorner);
     refreshSwitcher();
 

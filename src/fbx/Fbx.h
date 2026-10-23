@@ -66,15 +66,18 @@ LILA_SCENE_API glm::dmat3 profileBasis(AxisProfile p, math::UpAxis up);
  * What an export is for. Static writes meshes and transforms. Skeletal adds joints as LimbNodes, skins (Skin and
  * Cluster deformers, BindPose) with skinned meshes in their bind pose, and the animation over the bake range.
  * Animation writes only the skeleton and its curves, no meshes, as Unreal wants for an anim sequence.
+ * Sequence writes cameras and transforms with their animation and no meshes, for Unreal Sequencer's FBX import:
+ * cameras arrive as CineCameras with their focal length keyed.
  */
 enum class ExportKind
 {
     Static,
     Skeletal,
     Animation,
+    Sequence,
 };
 
-/** "static", "skeletal", "animation" (case-insensitive). False for anything else. */
+/** "static", "skeletal", "animation", "sequence" (case-insensitive). False for anything else. */
 LILA_SCENE_API bool parseKind(std::string_view name, ExportKind* out);
 LILA_SCENE_API const char* kindName(ExportKind k);
 
@@ -152,6 +155,19 @@ struct ExportMorphs
     std::vector<Target> targets;
 };
 
+/** A camera's lens, film back and clipping. Lengths in cm, film back in inches, focal length in mm. */
+struct ExportCamera
+{
+    double focalLength = 35.0;
+    double filmWidth = 1.41732, filmHeight = 0.94488;
+    double nearClip = 0.1, farClip = 10000.0;
+    bool ortho = false;
+    double orthoWidth = 30.0;
+    int filmFit = 1; // scene::FilmFit
+
+    bool operator==(const ExportCamera&) const = default;
+};
+
 struct ExportNode
 {
     std::string name;
@@ -177,6 +193,8 @@ struct ExportNode
     glm::dmat4 bindWorld{1.0};
     std::shared_ptr<const ExportSkin> skin;
     std::shared_ptr<const ExportMorphs> morphs;
+    /** Written as an FBX camera, which looks down its local +X with +Y up where a Lila camera looks down -Z. */
+    std::optional<ExportCamera> camera;
 };
 
 /** Sampled (or keyed) animation of the exported nodes over one range. */
@@ -190,6 +208,8 @@ struct ExportTake
     std::vector<std::vector<glm::dmat4>> locals;
     /** [node] translate xyz, rotate xyz, scale xyz curves in Lila channel space, for nodes written from their keys. */
     std::vector<std::optional<std::array<scene::anim::Curve, 9>>> curves;
+    /** [node][frame] camera settings; empty for a node that is not a camera or whose settings don't change. */
+    std::vector<std::vector<ExportCamera>> cameras;
     /** [node][morph target][frame] weight 0 to 1; empty for a node whose morph weights don't change. */
     std::vector<std::vector<std::vector<double>>> morphWeights;
     /** [curve][frame] values of ExportScene::curveNames. */
@@ -250,7 +270,7 @@ struct ImportResult
     std::string error;
     std::vector<scene::NodeId> roots;
     std::vector<scene::NodeId> nodes; // every node created, parents first
-    /** Things in the file that were not imported, one line each (cameras, lights). */
+    /** Things in the file that were not imported, one line each (lights, curves). */
     std::vector<std::string> skipped;
     std::vector<std::string> warnings;
     /** What the file declared, for the report. */
@@ -258,6 +278,7 @@ struct ImportResult
     double sourceUnitMeters = 0.01;
     std::vector<scene::NodeId> joints;
     std::vector<scene::NodeId> skins; // skinCluster nodes
+    std::vector<scene::NodeId> cameras;
     std::string take; // imported AnimStack, empty for none
     double fps = 0.0;
     double start = 0.0, end = 0.0; // seconds

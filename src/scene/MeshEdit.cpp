@@ -1210,27 +1210,62 @@ void registerMeshEditCommands()
         },
     });
 
+    // +1 or -1 for the side most of the selected components of n lie on, 0 with nothing selected.
+    auto selectionSide = [](const Node& n, const geo::Mesh& m, int axis) {
+        const ComponentMode from = components::mode();
+        if (from == ComponentMode::Object)
+            return 0;
+        double sum = 0.0;
+        for (Index p : components::convert(m, from, components::selected(n.id(), from), ComponentMode::Vertex))
+            if (m.pointValid(p))
+                sum += m.position(p)[axis];
+        return sum > 0.0 ? 1 : sum < 0.0 ? -1 : 0;
+    };
+
     ops::registerCommand({
         .name = "symmetryRebuild",
-        .doc = "Throw away the stored symmetry pairs and match them again, by position or, for meshes that are no longer symmetric, by "
-               "topology outward from the selected edge (which must lie on the plane). Returns the points left unmatched per mesh.",
+        .doc = "Rebuild meshes symmetric: the kept side is mirrored across the object-space plane, replacing the other side, "
+               "welded on the plane, and the symmetry pairs are stored again. With pairsOnly, the geometry is left alone and only "
+               "the stored pairs are matched again, by position or, for meshes that are no longer symmetric, by topology outward "
+               "from the selected edge (which must lie on the plane). Returns the points left unmatched per mesh.",
         .positionalDoc = "objects",
-        .flags = {{"topological", "", T::Bool, false, "Match by topology from the selected edge."},
-                  {"tolerance", "", T::Float, 0.0, "Position match distance, cm (0: scaled to the mesh)."}},
-        .run = [symmetricMesh, symmetryTargets](const Args& a) -> json {
+        .flags = {{"axis", "", T::String, nullptr, "x, y or z; default: the mesh's symmetry axis, else x."},
+                  {"side", "", T::String, "auto", "The side that is kept; auto: the side of the selected components, else positive.",
+                   {"auto", "positive", "negative"}},
+                  {"pairsOnly", "", T::Bool, false, "Only match the stored pairs again, leaving the geometry as it is."},
+                  {"topological", "", T::Bool, false, "With pairsOnly: match by topology from the selected edge."},
+                  {"tolerance", "", T::Float, 0.0, "Weld or match distance, cm (0: scaled to the mesh)."}},
+        .run = [symmetricMesh, symmetryTargets, selectionSide](const Args& a) -> json {
             Graph& g = graph();
             g.evaluate();
+            const std::string side = a.get<std::string>("side", "auto");
+            if (side != "auto" && side != "positive" && side != "negative")
+                throw CommandError("symmetryRebuild: side must be auto, positive or negative");
+            const std::string axisFlag = a.get<std::string>("axis", "");
+            if (!axisFlag.empty() && (axisFlag.size() != 1 || axisFlag[0] < 'x' || axisFlag[0] > 'z'))
+                throw CommandError("symmetryRebuild: axis must be x, y or z");
+            const bool pairsOnly = a.get<bool>("pairsOnly") || a.get<bool>("topological");
             json out = json::object();
             UndoChunk chunk("Rebuild Symmetry");
+            bool rebuilt = false;
             for (const std::string& name : symmetryTargets(a))
             {
-                Node& n = symmetricMesh(name, "symmetryRebuild");
-                const int axis = symmetryAxis(n);
+                Node& n = pairsOnly && axisFlag.empty() ? symmetricMesh(name, "symmetryRebuild") : meshArg(name, "symmetryRebuild");
+                const int axis = !axisFlag.empty() ? axisFlag[0] - 'x' : std::max(0, symmetryAxis(n));
                 PlugRef base = basePlug(n);
                 geo::Mesh m = baseMesh(base);
                 const double tol = a.get<double>("tolerance") > 0.0 ? a.get<double>("tolerance") : symmetryTolerance(m);
                 geo::SymmetryMap map;
-                if (a.get<bool>("topological"))
+                if (!pairsOnly)
+                {
+                    const int keep = side == "positive" ? 1 : side == "negative" ? -1 : selectionSide(n, m, axis) < 0 ? -1 : 1;
+                    map = geo::symmetrizeTopology(m, axis, keep, tol);
+                    if (m.numFaces() == 0)
+                        throw CommandError(std::format("symmetryRebuild: {} has nothing on the {} side of the {} plane", n.path(),
+                                                       keep > 0 ? "+" : "-", char('X' + axis)));
+                    rebuilt = true;
+                }
+                else if (a.get<bool>("topological"))
                 {
                     ComponentMode from = components::mode();
                     Ids sel = from == ComponentMode::Object ? Ids{} : components::convert(m, from, components::selected(n.id(), from), ComponentMode::Edge);
@@ -1239,13 +1274,18 @@ void registerMeshEditCommands()
                     map = geo::SymmetryMap::buildTopological(m, sel.front(), geo::axisPlane(axis));
                     if (map.empty())
                         throw CommandError("symmetryRebuild: the topology of " + n.path() + " is not symmetric about that edge");
+                    map.store(m, axis);
                 }
                 else
+                {
                     map = geo::SymmetryMap::build(m, geo::axisPlane(axis), tol);
-                map.store(m, axis);
+                    map.store(m, axis);
+                }
                 out[n.path()] = map.unmatchedCount();
                 g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
             }
+            if (rebuilt)
+                components::clear();
             return out;
         },
     });

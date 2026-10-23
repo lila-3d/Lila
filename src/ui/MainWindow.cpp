@@ -41,6 +41,7 @@
 #include "ui/CursorBadges.h"
 #include "ui/Outliner.h"
 #include "ui/MaterialEditor.h"
+#include "ui/MenuSearch.h"
 #include "ui/Menus.h"
 #include "ui/Modes.h"
 #include "ui/ModelingToolkit.h"
@@ -82,6 +83,8 @@
 #include <QFileDialog>
 #include <QInputDialog>
 #include <QKeyEvent>
+#include <QBoxLayout>
+#include <QDir>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -838,7 +841,13 @@ void MainWindow::refreshTitle()
     QString scene = QString::fromStdString(io::displayName());
     QString title = scene + (io::modified() ? "*" : "");
     if (ws.isOpen())
-        title += " - " + QString::fromStdWString(ws.root().filename().wstring());
+    {
+        std::filesystem::path root = ws.root();
+        if (root.has_parent_path() && root.parent_path() != root.root_path())
+            title += " - " + QString::fromStdWString(root.parent_path().filename().wstring()) + "\\" + QString::fromStdWString(root.filename().wstring());
+        else
+            title += " - " + QString::fromStdWString(root.filename().wstring());
+    }
     setWindowTitle(title + " - Lila");
 }
 
@@ -955,6 +964,8 @@ void MainWindow::registerActions()
                   "Shows the UV editor, or tucks it back into its sidebar when it is showing."});
     actions::add({"window.expandPanels", "Expand Collapsed Panels", "Windows", [this] { mSidebars->expandAll(); }, nullptr,
                   "Opens every panel collapsed to a sidebar tab."});
+    actions::add({"window.searchMenus", "Search Menus...", "Windows", [this] { menuSearch::openBox(menuBar(), this); }, nullptr,
+                  "Finds any item in the main menus by typing part of its name or menu, and runs it."});
     actions::add({"window.preferences", "Preferences...", "Windows", [this] {
                       if (!closeShownWindow<PreferencesDialog>())
                           PreferencesDialog::open(this);
@@ -1128,7 +1139,7 @@ void MainWindow::buildMenus()
     addSubmenu("Mesh", "Symmetry");
     menus::addActions("Mesh/Symmetry", {"mesh.toggleSymmetry", "mesh.symmetryX", "mesh.symmetryY", "mesh.symmetryZ", "mesh.symmetryOff", "",
                                  "mesh.symmetryCheck", "mesh.symmetrizePositive", "mesh.symmetrizeNegative", "mesh.symmetryRebuild",
-                                 "mesh.symmetryRebuildTopological"});
+                                 "mesh.symmetryRepair", "mesh.symmetryRebuildTopological"});
     menus::addActions("Mesh", {"", "mesh.booleanDifference", "mesh.booleanUnion", "mesh.booleanIntersection", "mesh.transferAttributes"});
     addSubmenu("Mesh", "Vertex Colors");
     menus::addActions("Mesh/Vertex Colors", {"vcolor.paint", "vcolor.createSet", "", "vcolor.fill", "vcolor.gradient", "vcolor.invert",
@@ -1234,7 +1245,7 @@ void MainWindow::buildMenus()
                            "window.extensionManager"});
 
     menu("Help", "Help");
-    menus::addActions("Help", {"help.agentSetup", "help.prefsFolder", "help.crashReports", "help.copyLastCrash", "help.hotkeyCheatSheet", "help.about"});
+    menus::addActions("Help", {"window.searchMenus", "", "help.agentSetup", "help.prefsFolder", "help.crashReports", "help.copyLastCrash", "help.hotkeyCheatSheet", "help.about"});
 
     buildPanelMenus();
 
@@ -1290,6 +1301,7 @@ void MainWindow::buildStatusBar()
     help->setMinimumWidth(1);
     statusBar()->addWidget(help, 1);
     qApp->installEventFilter(new HelpLine(help, this));
+    menuSearch::install();
     // Held-key states take the help line while they last, then hand back whatever it said before.
     cursorBadges::setStatusSink([help, saved = std::make_shared<std::optional<QString>>()](const QString& text) {
         if (!text.isEmpty() && !*saved)
@@ -1312,8 +1324,10 @@ void MainWindow::buildStatusBar()
     installSpinScrub(this);
 
     mWorkspaceLabel = new QLabel(this);
-    mWorkspaceLabel->setStyleSheet("color: #9a9a9a;");
-    statusBar()->addPermanentWidget(mWorkspaceLabel);
+    mWorkspaceLabel->setTextFormat(Qt::RichText);
+    mWorkspaceLabel->setContentsMargins(0, 0, 10, 0);
+    // The layouts corner is installed later, so the label joins it once the window is built.
+    QTimer::singleShot(0, this, [this] { placeWorkspaceLabel(); });
     refreshWorkspaceLabel();
 
     mSourceLabel = new QLabel(this);
@@ -1349,10 +1363,40 @@ void MainWindow::buildStatusBar()
     progressui::install(this);
 }
 
+void MainWindow::placeWorkspaceLabel()
+{
+    QWidget* corner = menuBar()->cornerWidget(Qt::TopRightCorner);
+    if (corner == mWorkspaceLabel || mWorkspaceLabel->parentWidget() == corner)
+        return;
+    if (auto* row = corner ? qobject_cast<QBoxLayout*>(corner->layout()) : nullptr)
+        row->insertWidget(0, mWorkspaceLabel);
+    else
+        menuBar()->setCornerWidget(mWorkspaceLabel, Qt::TopRightCorner);
+    mWorkspaceLabel->show();
+}
+
 void MainWindow::refreshWorkspaceLabel()
 {
     auto& ws = Workspace::get();
-    mWorkspaceLabel->setText(ws.isOpen() ? QString::fromStdWString(ws.root().wstring()) : QString("No folder open"));
+    if (ws.isOpen())
+    {
+        std::filesystem::path root = ws.root();
+        QString name = QString::fromStdWString(root.filename().wstring());
+        QString parent = root.has_parent_path() && root.parent_path() != root.root_path()
+                             ? QString::fromStdWString(root.parent_path().filename().wstring()) + "\\"
+                             : QString();
+        QString dim = palette().color(QPalette::Disabled, QPalette::WindowText).name();
+        mWorkspaceLabel->setText(QString("<span style=\"color:%1\">%2</span>%3").arg(dim, parent.toHtmlEscaped(), name.toHtmlEscaped()));
+        QString full = QDir::toNativeSeparators(QString::fromStdWString(root.wstring()));
+        mWorkspaceLabel->setToolTip("Workspace: " + full);
+        mWorkspaceLabel->setStatusTip(full);
+    }
+    else
+    {
+        mWorkspaceLabel->setText("No folder open");
+        mWorkspaceLabel->setToolTip("No workspace folder open. File > Open Folder sets one.");
+        mWorkspaceLabel->setStatusTip(QString());
+    }
     refreshTitle();
 }
 

@@ -2141,7 +2141,9 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
                     if (MarkingMenu::popupDefinition(def, MarkingMenu::Trigger::MouseButton, Qt::RightButton, at))
                         return;
                 }
-        if (!MarkingMenu::popup(base + (overObject ? "Object" : "Empty"), MarkingMenu::Trigger::MouseButton, Qt::RightButton, at))
+        bool componentMode = scene::components::mode() != scene::ComponentMode::Object;
+        if (!MarkingMenu::popup(markingMenus::viewportMenuName(base, overObject, componentMode), MarkingMenu::Trigger::MouseButton,
+                                Qt::RightButton, at))
             MarkingMenu::popup(base, MarkingMenu::Trigger::MouseButton, Qt::RightButton, at);
         return;
     }

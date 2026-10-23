@@ -8,6 +8,7 @@ lila_module(lila_ui UI
     AppMain.cpp AppMain.h
     FlagFields.cpp FlagFields.h
     OptionBox.cpp OptionBox.h
+    MenuSearch.cpp MenuSearch.h
     AgentCapture.cpp AgentCapture.h
     AgentSetup.cpp AgentSetup.h
     Animation.cpp Animation.h

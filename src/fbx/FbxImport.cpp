@@ -6,6 +6,7 @@
 #include "geo/ColorSets.h"
 #include "geo/Mesh.h"
 #include "scene/Anim.h"
+#include "scene/Camera.h"
 #include "scene/Deformers.h"
 #include "scene/Graph.h"
 #include "scene/Materials.h"
@@ -324,7 +325,61 @@ struct NodeFrame
     glm::dmat3 pre{1.0};
     scene::RotateOrder order = scene::RotateOrder::XYZ;
     Trs rest;
+    /** Lila local = before * (file local in Lila axes) * after: a camera's turn from FBX's +X view, undone on its children. */
+    glm::dmat4 before{1.0}, after{1.0};
 };
+
+/**
+ * Post-multiplied onto a camera's local matrix in Lila axes: FBX cameras look down their local +X with +Y up, Lila
+ * cameras down -Z. `fileToLila` is the file to Lila axis rotation.
+ */
+glm::dmat4 cameraFrame(const glm::dmat3& fileToLila)
+{
+    const glm::dmat3 lilaFromFbx(glm::dvec3(0, 0, -1), glm::dvec3(0, 1, 0), glm::dvec3(1, 0, 0));
+    return glm::dmat4(fileToLila * glm::transpose(lilaFromFbx));
+}
+
+/** Animatable FBX camera properties and the camera attributes they land on; lengths scale with the file's units. */
+struct CameraProp
+{
+    const char* prop;
+    int attr;
+    bool length;
+};
+constexpr CameraProp kCameraProps[] = {
+    {"FocalLength", scene::Camera::kFocalLength, false},         {"FilmWidth", scene::Camera::kHorizontalFilmAperture, false},
+    {"FilmHeight", scene::Camera::kVerticalFilmAperture, false}, {"NearPlane", scene::Camera::kNearClipPlane, true},
+    {"FarPlane", scene::Camera::kFarClipPlane, true},            {"OrthoZoom", scene::Camera::kOrthographicWidth, true},
+};
+
+/** Lens, film back, clipping and projection of a file camera onto a camera node. */
+void applyCamera(scene::Graph& g, scene::NodeId id, const ufbx_camera& cam, double unitScale)
+{
+    using scene::Camera;
+    auto set = [&](int attr, scene::PlugValue v) { g.setValue({id, attr, -1}, std::move(v)); };
+    set(Camera::kFocalLength, double(cam.focal_length_mm));
+    if (cam.film_size_inch.x > 0.0 && cam.film_size_inch.y > 0.0)
+    {
+        set(Camera::kHorizontalFilmAperture, double(cam.film_size_inch.x));
+        set(Camera::kVerticalFilmAperture, double(cam.film_size_inch.y));
+    }
+    set(Camera::kNearClipPlane, double(cam.near_plane) * unitScale);
+    set(Camera::kFarClipPlane, double(cam.far_plane) * unitScale);
+    const bool ortho = cam.projection_mode == UFBX_PROJECTION_MODE_ORTHOGRAPHIC;
+    set(Camera::kOrthographic, ortho);
+    if (ortho)
+        set(Camera::kOrthographicWidth, double(ufbx_find_real(&cam.props, "OrthoZoom", 30.0)) * unitScale);
+    // Lila's film fits are fill, horizontal, vertical, overscan.
+    int64_t fit = 1;
+    switch (cam.gate_fit)
+    {
+    case UFBX_GATE_FIT_FILL: fit = 0; break;
+    case UFBX_GATE_FIT_VERTICAL: fit = 2; break;
+    case UFBX_GATE_FIT_OVERSCAN: fit = 3; break;
+    default: break;
+    }
+    set(Camera::kFilmFit, fit);
+}
 
 std::string attribName(ufbx_element_type t)
 {
@@ -515,9 +570,46 @@ std::set<const ufbx_node*> animatedNodes(const ufbx_anim_stack& stack)
     return out;
 }
 
+using CameraList = std::vector<std::pair<const ufbx_camera*, scene::NodeId>>;
+
+/** Bakes the stack's camera property curves onto the camera nodes, one linear key per frame. */
+void importCameraCurves(scene::Graph& g, const ufbx_anim_stack& stack, const CameraList& cameras, const std::vector<double>& times,
+                        double unitScale, ImportResult& r)
+{
+    using namespace scene;
+    for (const auto& [cam, id] : cameras)
+        for (const CameraProp& cp : kCameraProps)
+        {
+            bool animated = false;
+            for (size_t l = 0; l < stack.layers.count && !animated; ++l)
+            {
+                const ufbx_anim_layer* layer = stack.layers.data[l];
+                for (size_t p = 0; p < layer->anim_props.count && !animated; ++p)
+                {
+                    const ufbx_anim_prop& ap = layer->anim_props.data[p];
+                    animated = ap.element == &cam->element && toString(ap.prop_name) == cp.prop;
+                }
+            }
+            const PlugRef plug{id, cp.attr, -1};
+            if (!animated || g.source(plug))
+                continue;
+            anim::Curve c;
+            for (double t : times)
+            {
+                ufbx_prop v = ufbx_evaluate_prop(stack.anim, &cam->element, cp.prop, t);
+                c.keys.push_back({.time = t, .value = double(v.value_real) * (cp.length ? unitScale : 1.0), .in = anim::Tangent::Linear,
+                                  .out = anim::Tangent::Linear});
+            }
+            NodeId curve = g.createNode(*types::find("animCurveTU"), g.node(id)->name() + "_" + g.attr(plug).name, kNoNode, false)->id();
+            anim::setCurve(g, curve, c);
+            g.connect({curve, anim::CurveNode::kOutput, -1}, plug);
+            ++r.curves;
+        }
+}
+
 /** Bakes the chosen take onto each animated node's translate/rotate/scale: one linear key per frame per moving channel. */
 void importTake(scene::Graph& g, const ufbx_scene& fbx, const ImportOptions& opts, const glm::dmat4& C, const glm::dmat4& Cinv,
-                const std::unordered_map<uint32_t, NodeFrame>& frames, ImportResult& r)
+                const std::unordered_map<uint32_t, NodeFrame>& frames, const CameraList& cameras, double unitScale, ImportResult& r)
 {
     LILA_ZONE();
 
@@ -550,7 +642,7 @@ void importTake(scene::Graph& g, const ufbx_scene& fbx, const ImportOptions& opt
         for (double t : times)
         {
             ufbx_transform xf = ufbx_evaluate_transform(stack->anim, fn, t);
-            glm::dmat4 local = C * toGlm(ufbx_transform_to_matrix(&xf)) * Cinv;
+            glm::dmat4 local = nf.before * C * toGlm(ufbx_transform_to_matrix(&xf)) * Cinv * nf.after;
             Trs trs = decomposeWith(local, nf.pre, nf.order, ref);
             ref = trs.r;
             const glm::dvec3 groups[3] = {trs.t, trs.r, trs.s};
@@ -601,6 +693,8 @@ void importTake(scene::Graph& g, const ufbx_scene& fbx, const ImportOptions& opt
             ++r.curves;
         }
     }
+
+    importCameraCurves(g, *stack, cameras, times, unitScale, r);
 
     if (opts.setPlayback)
     {
@@ -677,6 +771,8 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
     const SlotNames slotNames = importMaterials(graph, *fbx);
     const NodeType* xformType = types::find("transform");
     const NodeType* jointType = types::find("joint");
+    const NodeType* cameraType = types::find("camera");
+    CameraList cameras;
     std::map<uint32_t, MeshPtr> meshCache;
     std::map<uint32_t, std::vector<Index>> pointCache;
     std::unordered_map<uint32_t, NodeFrame> frames; // by ufbx node element id
@@ -697,8 +793,10 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
         const std::string fbxName = toString(fn->name);
         const bool isMesh = fn->mesh && fn->mesh->num_faces > 0;
         const bool isJoint = jointType && !isMesh && (fn->bone || bones.count(fn));
-        const NodeType& type = isMesh ? *meshType : isJoint ? *jointType : *xformType;
-        Node* n = graph.createNode(type, safeName(fbxName, isMesh ? "Mesh" : isJoint ? "joint" : "Transform"), parent, false);
+        const bool isCamera = cameraType && !isMesh && !isJoint && fn->camera;
+        const NodeType& type = isMesh ? *meshType : isJoint ? *jointType : isCamera ? *cameraType : *xformType;
+        Node* n = graph.createNode(type, safeName(fbxName, isMesh ? "Mesh" : isJoint ? "joint" : isCamera ? "camera" : "Transform"), parent,
+                                   false);
         r.nodes.push_back(n->id());
         if (parent == opts.parent)
             r.roots.push_back(n->id());
@@ -706,7 +804,16 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
         NodeFrame& nf = frames[fn->element_id];
         nf.id = n->id();
         nf.joint = isJoint;
-        const glm::dmat4 local = C * toGlm(fn->node_to_parent) * Cinv;
+        if (isCamera)
+        {
+            nf.after = cameraFrame(C3);
+            applyCamera(graph, n->id(), *fn->camera, unitScale);
+            cameras.push_back({fn->camera, n->id()});
+            r.cameras.push_back(n->id());
+        }
+        if (auto above = fn->parent ? frames.find(fn->parent->element_id) : frames.end(); above != frames.end())
+            nf.before = glm::transpose(above->second.after);
+        const glm::dmat4 local = nf.before * C * toGlm(fn->node_to_parent) * Cinv * nf.after;
         if (isJoint)
         {
             // PreRotation is jointOrient, as Maya writes it; the rotate order is carried through the axis swap.
@@ -766,7 +873,7 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
             if (mesh.blend_deformers.count)
                 blended.push_back({fn, n->id()});
         }
-        else if (fn->attrib && fn->attrib_type != UFBX_ELEMENT_EMPTY && !fn->mesh && !isJoint)
+        else if (fn->attrib && fn->attrib_type != UFBX_ELEMENT_EMPTY && !fn->mesh && !isJoint && !isCamera)
         {
             r.skipped.push_back(std::format("{} '{}' (imported as a transform)", attribName(fn->attrib_type), fbxName));
         }
@@ -832,7 +939,7 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
     }
 
     if (opts.animation && fbx->anim_stacks.count)
-        importTake(graph, *fbx, opts, C, Cinv, frames, r);
+        importTake(graph, *fbx, opts, C, Cinv, frames, cameras, unitScale, r);
     else if (fbx->anim_curves.count)
         r.skipped.push_back(std::format("animation ({} curve(s))", fbx->anim_curves.count));
     for (size_t i = 0; i < fbx->metadata.warnings.count; ++i)

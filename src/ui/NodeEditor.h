@@ -16,6 +16,11 @@ class QScrollArea;
 class QSplitter;
 class QTimer;
 
+namespace lila::scene
+{
+class Node;
+}
+
 namespace lila::ui
 {
 class NodeCanvas;
@@ -70,16 +75,26 @@ private:
     void openAddMenu(QPointF scenePos, const WireDrag* wire);
     void selectAfterRefresh(const std::vector<std::string>& names);
     void showError(const QString& message);
-    void scheduleRefresh();
-    void refresh();
+    /** panel false: only the canvas needs it, so a field being scrubbed in the side panel survives. */
+    void scheduleRefresh(bool panel = true);
+    void refresh(bool panel = true);
     void refreshGroups();
     void rebuildSidePanel();
     void followSelection();
+    void followModifier(const scene::Node& modifier, const QString& group);
+    /** The followed modifier when it uses the group on show, else null. */
+    scene::Node* modifierInView() const;
+    /** The followed modifier's input values by plug, to tell real edits from evaluation writes. */
+    nlohmann::json shownValues() const;
     QWidget* buildInterface(QWidget* panel, const nlohmann::json& info);
     void editInputInfo(const std::string& input, const nlohmann::json& current);
 
     QString mGroup;
     QString mSelectedNode;
+    /** The gn modifier the selection led to; Parameters edit its values, which are what the mesh uses, not the group's defaults. */
+    QString mModifier;
+    nlohmann::json mShownValues;
+    bool mValueCheck = false;
     std::set<std::string> mSelectNext; // selected by the next refresh, after a paste or duplicate
     QComboBox* mGroups = nullptr;
     NodeCanvas* mCanvas = nullptr;
@@ -87,6 +102,7 @@ private:
     QTimer* mRefresh = nullptr;
     int mListener = 0;
     bool mRefreshing = false;
+    bool mPanelDirty = false;
 };
 
 /** Registers "window.nodeEditor", "gn.newGroup" and the nodeEditor.* editing actions. The first two need the show hook to bring the dock up. */

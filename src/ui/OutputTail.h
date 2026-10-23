@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <deque>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -60,6 +61,27 @@ public:
 
     const std::deque<OutputLine>& lines() const { return mLines; }
 
+    /**
+     * Ends a burst: the lines added since the last commit, which is one command's worth when called once the UI thread
+     * is idle again. The burst's last info, warning or error becomes display(), else its last stdout line (a return
+     * value), else its last echo. Echoes come before or after a command's report depending on where it ran, so the
+     * report wins either way. True when display() changed.
+     */
+    bool commit()
+    {
+        std::optional<OutputLine>& pick = mBurstReport ? mBurstReport : mBurstOutput ? mBurstOutput : mBurstEcho;
+        bool changed = pick.has_value();
+        if (changed)
+            mDisplay = std::move(*pick);
+        mBurstReport.reset();
+        mBurstOutput.reset();
+        mBurstEcho.reset();
+        return changed;
+    }
+
+    /** The line the status bar shows, or null before anything was committed. */
+    const OutputLine* display() const { return mDisplay ? &*mDisplay : nullptr; }
+
 private:
     void flushPartial()
     {
@@ -75,12 +97,14 @@ private:
         if (line.find_first_not_of(" \t") == std::string_view::npos)
             return;
         mLines.push_back({level, std::string(line)});
+        (level == LogLevel::Echo ? mBurstEcho : level == LogLevel::Output ? mBurstOutput : mBurstReport) = mLines.back();
         if (mLines.size() > mKeep)
             mLines.pop_front();
         ++mAdded;
     }
 
     std::deque<OutputLine> mLines;
+    std::optional<OutputLine> mBurstReport, mBurstOutput, mBurstEcho, mDisplay;
     std::string mPartial;
     LogLevel mPartialLevel = LogLevel::Output;
     size_t mKeep;

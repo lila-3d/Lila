@@ -13,6 +13,7 @@
 #include <QComboBox>
 #include <QCursor>
 #include <QApplication>
+#include <QMenu>
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QMouseEvent>
@@ -430,7 +431,8 @@ bool Hotkeys::eventFilter(QObject* obj, QEvent* e)
     }
 
     QWidget* focus = QApplication::focusWidget();
-    if (MarkingMenu::active())
+    // An open menu takes typing as a search (MenuSearch).
+    if (MarkingMenu::active() || qobject_cast<QMenu*>(QApplication::activePopupWidget()))
         return false;
     int mods = int(k->modifiers()) & kModMask;
     if (textInputFocused(focus) && isStandardTextEdit(mods, k->key()))

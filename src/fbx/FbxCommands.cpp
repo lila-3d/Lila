@@ -49,9 +49,17 @@ std::vector<std::string> names(const Graph& g, const std::vector<NodeId>& ids)
     return out;
 }
 
-/** Skeletal when any of the nodes (or, with children, their descendants) is a skinned mesh, else static. */
+/**
+ * Skeletal when any of the nodes (or, with children, their descendants) is a skinned mesh, sequence when every node is
+ * a camera, else static.
+ */
 ExportKind autoKind(Graph& g, const std::vector<NodeId>& ids, bool children)
 {
+    bool cameras = !ids.empty();
+    for (NodeId id : ids)
+        cameras = cameras && g.node(id) && g.node(id)->type().isA("camera");
+    if (cameras)
+        return ExportKind::Sequence;
     for (NodeId id : ids)
     {
         std::vector<NodeId> all{id};
@@ -81,7 +89,7 @@ bool exportForUnreal(const std::vector<scene::NodeId>& nodes, const fs::path& pa
     if (!parseKind(kind.empty() ? "static" : kind, &opts.kind))
     {
         if (error)
-            *error = "unknown kind '" + kind + "' (static, skeletal or animation)";
+            *error = "unknown kind '" + kind + "' (static, skeletal, animation or sequence)";
         return false;
     }
     opts.atOrigin = atOrigin;
@@ -139,7 +147,8 @@ void registerCommands()
         .doc = "Import an FBX file: its node hierarchy as transforms, joints and meshes, converted to the scene's axes and "
                "cm. LimbNodes become joints (PreRotation into jointOrient), skins become skinClusters with the file's "
                "weights and bind matrices, morph channels become a morph with a target per channel (in-betweens kept), and one take is "
-               "baked onto the channels. Cameras and lights are reported, not imported. Returns the new node names, or with report=True a dict of nodes, roots, "
+               "baked onto the channels. Cameras become camera nodes with their lens, film back and clipping (focal length, film back and "
+               "clipping curves keyed per frame); lights are reported, not imported. Returns the new node names, or with report=True a dict of nodes, roots, "
                "joints, skinClusters, take, fps, skipped and warnings.",
         .positionalDoc = "path",
         .flags = {{"parent", "p", T::String, nullptr, "Parent the imported roots under this node."},
@@ -178,7 +187,7 @@ void registerCommands()
             if (!a.get<bool>("report", false))
                 return names(g, r.nodes);
             return {{"nodes", names(g, r.nodes)}, {"roots", names(g, r.roots)}, {"joints", names(g, r.joints)},
-                    {"skinClusters", names(g, r.skins)}, {"take", r.take}, {"fps", r.fps}, {"start", r.start}, {"end", r.end},
+                    {"skinClusters", names(g, r.skins)}, {"cameras", names(g, r.cameras)}, {"take", r.take}, {"fps", r.fps}, {"start", r.start}, {"end", r.end},
                     {"curves", r.curves}, {"skipped", r.skipped}, {"warnings", r.warnings}, {"sourceAxes", r.sourceAxes},
                     {"sourceUnitMeters", r.sourceUnitMeters}};
         },
@@ -190,12 +199,15 @@ void registerCommands()
                "(or the whole scene with selectionOnly=False). Names go out intact, so UCX_/UBX_/USP_/UCP_ collision and "
                "SOCKET_ empties work in Unreal. kind=skeletal writes joints, skins (bind pose mesh, clusters, BindPose), "
                "morph targets (in-betweens as their own targets) with their weight curves, driven channel curveNames as named curves on the root joint, and the animation baked over the range; kind=animation writes only the skeleton and its curves. "
+               "kind=sequence writes cameras and transforms with their animation and no meshes, for Unreal Sequencer's Import FBX: "
+               "cameras go out as FBX cameras (focal length aperture mode, film back, clipping, focal length and clipping curves) "
+               "and arrive as CineCameras. Cameras are written as FBX cameras in every kind. "
                "start/end are frames. Returns the path.",
         .positionalDoc = "path objects...",
         .flags = {{"profile", "", T::String, "ue5", "Axis profile: ue5 (Z up), ue6 (Y up) or generic (the scene's own axes)."},
-                  {"kind", "k", T::String, "auto", "auto | static | skeletal | animation. auto is skeletal when a skinned mesh is exported."},
+                  {"kind", "k", T::String, "auto", "auto | static | skeletal | animation | sequence. auto is skeletal when a skinned mesh is exported, sequence when only cameras are."},
                   {"maxInfluences", "mi", T::Int, 8, "Skin influences per vertex, heaviest kept and renormalised (4 for mobile)."},
-                  {"animation", "anim", T::Bool, true, "Write the take for skeletal exports (always for kind=animation)."},
+                  {"animation", "anim", T::Bool, true, "Write the take for skeletal and sequence exports (always for kind=animation)."},
                   {"bakeAnimation", "bake", T::Bool, true, "Sample every frame; False writes plain translate/rotate/scale curves as keys."},
                   {"deformOnly", "do", T::Bool, true, "Skeletal and animation kinds: deform joints only (IK helpers and rig-only joints stay behind)."},
                   {"start", "st", T::Float, nullptr, "First frame; the playback start by default."},
@@ -265,7 +277,7 @@ void registerCommands()
             if (kind == "auto")
                 opts.kind = autoKind(g, ids, opts.children);
             else if (!parseKind(kind, &opts.kind))
-                throw CommandError("exportFbx: unknown kind '" + kind + "' (auto, static, skeletal or animation)");
+                throw CommandError("exportFbx: unknown kind '" + kind + "' (auto, static, skeletal, animation or sequence)");
 
             progress::Scope scope("Exporting " + utf8Path(path).filename().string() + "...", 3.0);
             ExportScene snapshot;

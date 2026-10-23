@@ -57,6 +57,12 @@ LILA_UI_API const std::string& activeSet();
 LILA_UI_API nlohmann::json resolve(const std::string& name);
 /** Names of the contributed menus, sets included ("set/name"). */
 LILA_UI_API std::vector<std::string> contributedNames();
+
+/**
+ * Which viewport menu a press opens: base + "Object" over an object, base + "Empty" over nothing. In a component mode
+ * it is always the "Object" menu, since that is the component menu and the empty one is for object mode.
+ */
+LILA_UI_API std::string viewportMenuName(const std::string& base, bool overObject, bool componentMode);
 } // namespace markingMenus
 
 /**

@@ -496,13 +496,17 @@ void registerBuiltins()
     cmd("mesh.symmetryZ", "Symmetry Z", "Mesh", "setSymmetry", {{"axis", "z"}}, "Mirrors selections and edits across the object's Z plane.");
     cmd("mesh.toggleSymmetry", "Toggle Symmetry", "Mesh", "toggleSymmetry", json::object(),
         "Turns symmetry on for the selected meshes (on the axis last used), or off when they all have it on.");
-    cmd("mesh.symmetryCheck", "Symmetry Check", "Mesh", "symmetryCheck", json::object(), "Selects the vertices that have no mirror partner.");
+    cmd("mesh.symmetryCheck", "Symmetry Check", "Mesh", "symmetryCheck", json::object(),
+        "Reports how far the mesh is from symmetric and how many vertices have no mirror partner.");
     cmd("mesh.symmetrizePositive", "Symmetrize (Keep + Side)", "Mesh", "symmetrize", {{"side", "positive"}},
         "Copies the + side of the mesh onto the - side.");
     cmd("mesh.symmetrizeNegative", "Symmetrize (Keep - Side)", "Mesh", "symmetrize", {{"side", "negative"}},
         "Copies the - side of the mesh onto the + side.");
-    cmd("mesh.symmetryRebuild", "Rebuild Symmetry", "Mesh", "symmetryRebuild", json::object(), "Pairs mirror vertices again from their positions.");
-    cmd("mesh.symmetryRebuildTopological", "Rebuild Symmetry from Edge", "Mesh", "symmetryRebuild", {{"topological", true}},
+    cmd("mesh.symmetryRebuild", "Rebuild Symmetry", "Mesh", "symmetryRebuild", json::object(),
+        "Replaces the other side with a mirror of the kept one (the side of the selection, else +), welded on the plane.");
+    cmd("mesh.symmetryRepair", "Re-pair Symmetry", "Mesh", "symmetryRebuild", {{"pairsOnly", true}},
+        "Pairs mirror vertices again from their positions, leaving the geometry as it is.");
+    cmd("mesh.symmetryRebuildTopological", "Re-pair Symmetry from Edge", "Mesh", "symmetryRebuild", {{"topological", true}},
         "Pairs mirror vertices by topology, outward from the selected center edge. Works on posed or uneven meshes.");
     cmd("mesh.boundingMesh", "Bounding Mesh", "Mesh", "boundingMesh", json::object(),
         "Wraps the selection in a fitted box, sphere, capsule, cylinder or hull, named and parented as its Unreal collision.");

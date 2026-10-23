@@ -66,6 +66,7 @@
       "]": "viewport.cameraRedo",
       "Alt+V": "anim.play",
       "Ctrl+Shift+T": "window.modelingToolkit",
+      "Ctrl+T": "window.searchMenus",
       "Shift+G": "adjustLastOp.show",
       "G": "edit.repeatLast",
       "M": "window.materialEditor"
@@ -86,6 +87,8 @@
       "1": "display.smoothOff",
       "2": "display.smoothCage",
       "3": "display.smoothOn",
+      "Alt+2": "viewport.show.mesh",
+      "Alt+3": "viewport.show.joint",
       "4": "viewport.wireframe",
       "5": "viewport.shaded",
       "6": "viewport.textured",

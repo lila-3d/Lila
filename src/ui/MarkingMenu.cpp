@@ -208,6 +208,11 @@ std::vector<std::string> contributedNames()
 {
     return registry().ids();
 }
+
+std::string viewportMenuName(const std::string& base, bool overObject, bool componentMode)
+{
+    return base + (overObject || componentMode ? "Object" : "Empty");
+}
 } // namespace markingMenus
 
 MarkingMenu* MarkingMenu::popup(const std::string& name, Trigger trigger, Qt::MouseButton button, std::optional<QPoint> at)

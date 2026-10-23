@@ -50,7 +50,9 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 
+#include <algorithm>
 #include <array>
 #include <initializer_list>
 
@@ -197,6 +199,41 @@ bool rename(const std::string& shelf, const std::string& to)
 namespace
 {
 constexpr const char* kItemMime = "application/x-lila-shelf-item";
+
+/** The item's label; an action's label cut to 8 characters when it was added gets its full name back. */
+QString displayLabel(const json& item)
+{
+    std::string label = item.value("label", "?");
+    if (json target = item.value("target", json()); label.size() == 8 && target.is_string())
+        if (std::string full = actions::labelFor(target); full.size() > 8 && full.starts_with(label))
+            label = full;
+    return QString::fromStdString(label).trimmed();
+}
+
+/** Word-wraps a label into at most maxLines lines of width, eliding the last line when the rest doesn't fit. */
+QString wrapLabel(const QFontMetrics& fm, const QString& label, int width, int maxLines)
+{
+    QStringList words = label.split(' ', Qt::SkipEmptyParts);
+    QStringList lines;
+    QString line;
+    int i = 0;
+    for (; i < words.size() && int(lines.size()) < maxLines - 1; ++i)
+    {
+        QString next = line.isEmpty() ? words[i] : line + ' ' + words[i];
+        if (fm.horizontalAdvance(next) <= width || line.isEmpty())
+        {
+            line = next;
+            continue;
+        }
+        lines << fm.elidedText(line, Qt::ElideRight, width);
+        line = words[i];
+    }
+    QStringList rest = words.mid(i);
+    if (!rest.isEmpty())
+        line = line.isEmpty() ? rest.join(' ') : line + ' ' + rest.join(' ');
+    lines << fm.elidedText(line, Qt::ElideRight, width);
+    return lines.join('\n');
+}
 
 QString tooltipFor(const json& item)
 {
@@ -575,11 +612,17 @@ void ShelfPage::rebuild()
         delete item;
     }
     json all = shelves::items(mShelf);
-    const int cell = 48;
+    const int iconSize = mFloating ? shelves::floatingIconSize() : 16;
+    QFont small = font();
+    small.setPointSizeF(small.pointSizeF() - 1.0);
+    QFontMetrics fm(small);
+    // Labels get two lines and a width that grows with the icons, so bigger icons show more of each name.
+    const int cell = std::max(iconSize + 24, iconSize * 3 / 2 + 16);
+    const int cellHeight = iconSize + 10 + 2 * fm.lineSpacing();
     for (int i = 0; i < int(all.size()); ++i)
     {
         const json& item = all[i];
-        QString label = QString::fromStdString(item.value("label", "?"));
+        QString label = displayLabel(item);
         auto* b = new QToolButton(this);
         b->setIcon(itemIcon(item));
         b->setToolTip(tooltipFor(item));
@@ -588,17 +631,15 @@ void ShelfPage::rebuild()
         b->setProperty("shelfIndex", i);
         if (mFloating)
         {
-            QFont small = b->font();
-            small.setPointSizeF(small.pointSizeF() - 1.0);
             b->setFont(small);
-            b->setText(QFontMetrics(small).elidedText(label, Qt::ElideRight, cell - 6));
+            b->setText(wrapLabel(fm, label, cell - 6, 2));
             b->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
-            b->setIconSize({24, 24});
-            b->setFixedSize(cell, cell);
+            b->setIconSize({iconSize, iconSize});
+            b->setFixedSize(cell, cellHeight);
         }
         else
         {
-            b->setText(label);
+            b->setText(QFontMetrics(b->font()).elidedText(label, Qt::ElideRight, 120));
             b->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
             b->setIconSize({16, 16});
             b->setMinimumHeight(24);
@@ -617,9 +658,9 @@ void ShelfPage::rebuild()
     {
         auto* plus = new QToolButton(this);
         plus->setIcon(icon("plus"));
-        plus->setIconSize({18, 18});
+        plus->setIconSize({iconSize * 3 / 4, iconSize * 3 / 4});
         plus->setAutoRaise(true);
-        plus->setFixedSize(cell, cell);
+        plus->setFixedSize(cell, cellHeight);
         plus->setToolTip("Add a button");
         connect(plus, &QToolButton::clicked, this, &ShelfPage::addButton);
         mLayout->addWidget(plus);
@@ -667,22 +708,33 @@ void ShelfPage::fillAddMenu(QMenu* menu)
             sub = add->addMenu(QString::fromStdString(a->category));
         std::string id = a->id, label = a->label;
         sub->addAction(QString::fromStdString(label), this, [this, id, label] {
-            shelves::addItem(mShelf, {{"label", label.size() <= 8 ? label : label.substr(0, 8)}, {"tooltip", label}, {"target", id}});
+            shelves::addItem(mShelf, {{"label", label}, {"tooltip", label}, {"target", id}});
         });
     }
 }
 
 void shelves::addToCurrent(const json& target)
 {
-    std::string shelf = current();
+    FloatingShelf* floating = FloatingShelf::active();
+    std::string shelf = floating && !floating->shelf().empty() ? floating->shelf() : current();
     if (shelf.empty())
     {
         log::warn("no shelf to add to");
         return;
     }
     std::string label = actions::labelFor(target);
-    addItem(shelf, {{"label", label.size() <= 8 ? label : label.substr(0, 8)}, {"tooltip", label}, {"target", target}});
+    addItem(shelf, {{"label", label}, {"tooltip", label}, {"target", target}});
     log::info("Added {} to the {} shelf", label, shelf);
+}
+
+int shelves::floatingIconSize()
+{
+    return stepFloatingIconSize(PrefStore::get().value<int>("general", "/floatingShelf/iconSize", kFloatingIconDefault), 0);
+}
+
+int shelves::stepFloatingIconSize(int size, int notches)
+{
+    return std::clamp(size + notches * 4, 16, 96);
 }
 
 bool shelves::addModifierHeld()
@@ -929,6 +981,20 @@ QPointer<FloatingShelf> gFloating;
 
 FloatingShelf* FloatingShelf::active() { return gFloating; }
 
+std::string FloatingShelf::shelf() const
+{
+    return mPage ? mPage->shelf() : std::string();
+}
+
+void FloatingShelf::setIconSize(int size)
+{
+    size = shelves::stepFloatingIconSize(size, 0);
+    if (size == shelves::floatingIconSize())
+        return;
+    PrefStore::get().set("general", "/floatingShelf/iconSize", size);
+    mPage->rebuild();
+}
+
 FloatingShelf::FloatingShelf(QWidget* parent, bool pinned) : QWidget(parent, Qt::Tool), mPinned(pinned)
 {
     setWindowTitle("Floating Shelf");
@@ -1037,7 +1103,9 @@ void FloatingShelf::build()
                                  "Hold F1 for the hotkey cheat sheet.\n\n"
                                  "Click a button to run it. Drag a button to reorder it, or onto another shelf.\n"
                                  "Right-click a button to edit it, change its icon or delete it.\n"
-                                 "+ adds a button. Where the shelf opens is under Settings.");
+                                 "+ adds a button. Ctrl+Shift+click a menu item to add it to this shelf.\n"
+                                 "Ctrl+wheel scales the icons, Ctrl+middle-click resets their size.\n"
+                                 "Where the shelf opens is under Settings.");
     });
 }
 
@@ -1188,9 +1256,32 @@ void FloatingShelf::releaseKey()
 
 bool FloatingShelf::eventFilter(QObject* obj, QEvent* e)
 {
+    auto* inside = qobject_cast<QWidget*>(obj);
+    if (inside && inside->window() == this)
+    {
+        if (e->type() == QEvent::Wheel)
+            if (auto* we = static_cast<QWheelEvent*>(e); we->modifiers() & Qt::ControlModifier)
+            {
+                // Touchpads send fractions of a notch; they add up over the gesture.
+                mWheelAccum += we->angleDelta().y();
+                if (int notches = mWheelAccum / 120; notches != 0)
+                {
+                    mWheelAccum -= notches * 120;
+                    setIconSize(shelves::stepFloatingIconSize(shelves::floatingIconSize(), notches));
+                }
+                return true;
+            }
+        if (e->type() == QEvent::MouseButtonPress)
+            if (auto* me = static_cast<QMouseEvent*>(e); me->button() == Qt::MiddleButton && (me->modifiers() & Qt::ControlModifier))
+            {
+                setIconSize(shelves::kFloatingIconDefault);
+                return true;
+            }
+    }
     // Menus and dialogs opened from the shelf are other windows; clicks in them are not click-away.
+    // Ctrl+Shift clicks add menu items to this shelf, so they keep it open.
     if (!mPinned && e->type() == QEvent::MouseButtonPress && !QApplication::activePopupWidget() && !QApplication::activeModalWidget() &&
-        PrefStore::get().value<bool>("general", "/floatingShelf/closeOnClickAway", false))
+        !shelves::addModifierHeld() && PrefStore::get().value<bool>("general", "/floatingShelf/closeOnClickAway", false))
     {
         auto* w = qobject_cast<QWidget*>(obj);
         if (w && w->window() != this)

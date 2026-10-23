@@ -122,6 +122,44 @@ TEST_CASE("output tail keeps the last lines, joining stdout pieces and dropping 
     CHECK(t.lines().back().level == LogLevel::Error);
 }
 
+TEST_CASE("output tail displays a command's report over its echo, whichever came first")
+{
+    OutputTail t;
+    CHECK(t.display() == nullptr);
+    CHECK_FALSE(t.commit());
+
+    // A UI command echoes after it ran.
+    t.add(LogLevel::Info, "MySpecialCube: symmetry X max asymmetry 0 cm\n");
+    t.add(LogLevel::Echo, "symmetryCheck()\n");
+    CHECK(t.commit());
+    REQUIRE(t.display());
+    CHECK(t.display()->text == "MySpecialCube: symmetry X max asymmetry 0 cm");
+    CHECK(t.lines().back().text == "symmetryCheck()");
+
+    // The prompt echoes before; the report outranks the printed return value.
+    t.add(LogLevel::Echo, "symmetryCheck()\n");
+    t.add(LogLevel::Warning, "no mesh selected\n");
+    t.add(LogLevel::Output, "{'pairs': 4}\n");
+    CHECK(t.commit());
+    CHECK(t.display()->text == "no mesh selected");
+    CHECK(t.display()->level == LogLevel::Warning);
+
+    t.add(LogLevel::Echo, "len([1, 2])\n");
+    t.add(LogLevel::Output, "2\n");
+    t.commit();
+    CHECK(t.display()->text == "2");
+
+    t.add(LogLevel::Echo, "move(1, 0, 0)\n");
+    t.commit();
+    CHECK(t.display()->text == "move(1, 0, 0)");
+    CHECK(t.display()->level == LogLevel::Echo);
+
+    // An empty burst keeps what is shown.
+    CHECK_FALSE(t.add(LogLevel::Debug, "noise\n"));
+    CHECK_FALSE(t.commit());
+    CHECK(t.display()->text == "move(1, 0, 0)");
+}
+
 TEST_CASE("camera history of a camera node restores its transform")
 {
     auto node = [](double tx) {

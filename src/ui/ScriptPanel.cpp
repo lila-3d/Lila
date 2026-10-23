@@ -7,6 +7,7 @@
 #include <QFontDatabase>
 #include <QKeyEvent>
 #include <QLineEdit>
+#include <QMenu>
 #include <QPlainTextEdit>
 #include <QScrollBar>
 #include <QVBoxLayout>
@@ -25,6 +26,14 @@ ScriptPanel::ScriptPanel(QWidget* parent) : QWidget(parent)
     mOutput->setFont(mono);
     mOutput->setMaximumBlockCount(20000);
     mOutput->setLineWrapMode(QPlainTextEdit::NoWrap);
+    mOutput->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(mOutput, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+        QMenu* menu = mOutput->createStandardContextMenu(pos);
+        menu->addSeparator();
+        menu->addAction("Clear", mOutput, &QPlainTextEdit::clear);
+        menu->exec(mOutput->viewport()->mapToGlobal(pos));
+        delete menu;
+    });
     layout->addWidget(mOutput, 1);
 
     mInput = new QLineEdit(this);

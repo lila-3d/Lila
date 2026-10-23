@@ -1,5 +1,6 @@
 #include "geo/Symmetry.h"
 
+#include "geo/Bvh.h"
 #include "geo/Topology.h"
 
 #include "core/Profile.h"
@@ -664,7 +665,10 @@ void SymmetryMap::symmetrize(Mesh& mesh, int drive) const
 
 SymmetryCheck SymmetryMap::check(const Mesh& mesh) const
 {
+    LILA_ZONE();
+
     SymmetryCheck out;
+    std::vector<Index> unmatched;
     for (Index p = 0; p < mesh.pointCapacity(); ++p)
     {
         if (!mesh.pointValid(p))
@@ -673,6 +677,7 @@ SymmetryCheck SymmetryMap::check(const Mesh& mesh) const
         if (q == kInvalid || !mesh.pointValid(q))
         {
             ++out.unmatched;
+            unmatched.push_back(p);
             continue;
         }
         double err = 0.0;
@@ -690,6 +695,20 @@ SymmetryCheck SymmetryMap::check(const Mesh& mesh) const
         {
             out.maxAsymmetry = err;
             out.worstPoint = p;
+        }
+    }
+    // A point without a partner is off by how far its reflection lies from the surface.
+    if (!unmatched.empty() && mesh.numFaces() > 0)
+    {
+        const MeshBvh bvh(mesh);
+        for (Index p : unmatched)
+        {
+            BvhClosest hit;
+            if (bvh.closestPoint(reflected(mesh.position(p)), hit) && hit.distance > out.maxAsymmetry)
+            {
+                out.maxAsymmetry = hit.distance;
+                out.worstPoint = p;
+            }
         }
     }
     return out;

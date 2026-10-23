@@ -8,6 +8,7 @@
 #include "geo/Normals.h"
 #include "geo/Triangulate.h"
 #include "scene/Anim.h"
+#include "scene/Camera.h"
 #include "scene/Deformers.h"
 #include "scene/Drivers.h"
 #include "scene/Graph.h"
@@ -568,6 +569,44 @@ void writeLimbAttribute(Record& objects, int64_t id, const std::string& name)
     attr.add("TypeFlags").str("Skeleton");
 }
 
+/** FBX GateFit for scene::FilmFit fill, horizontal, vertical, overscan. */
+constexpr int32_t kGateFit[4] = {3, 2, 1, 4};
+
+/** Camera settings as animatable FBX properties, in the order ExportCamera holds them. */
+struct CameraChannel
+{
+    const char* prop;
+    double ExportCamera::*value;
+};
+constexpr CameraChannel kCameraChannels[] = {
+    {"FocalLength", &ExportCamera::focalLength}, {"FilmWidth", &ExportCamera::filmWidth}, {"FilmHeight", &ExportCamera::filmHeight},
+    {"NearPlane", &ExportCamera::nearClip},      {"FarPlane", &ExportCamera::farClip},    {"OrthoZoom", &ExportCamera::orthoWidth},
+};
+
+/**
+ * A Camera attribute with its lens in focal length mode, the way Unreal's own exporter writes one, so Sequencer's
+ * FBX import makes a CineCamera and keys its CurrentFocalLength from the FocalLength curve.
+ */
+void writeCameraAttribute(Record& objects, int64_t id, const std::string& name, const ExportCamera& c)
+{
+    Record& attr = objects.add("NodeAttribute");
+    attr.i64(id).str(bin::objectName(name, "NodeAttribute")).str("Camera");
+    Record& props = attr.add("Properties70");
+    const double aspect = c.filmWidth / std::max(c.filmHeight, 1e-9);
+    for (const CameraChannel& ch : kCameraChannels)
+        props.addP(ch.prop, "Number", "", "A").f64(c.*ch.value);
+    pDouble(props, "FilmAspectRatio", aspect);
+    pEnum(props, "ApertureMode", 3);
+    pEnum(props, "GateFit", kGateFit[std::clamp(c.filmFit, 0, 3)]);
+    const double fov = glm::degrees(2.0 * std::atan(c.filmWidth * 25.4 * 0.5 / std::max(c.focalLength, 1e-6)));
+    props.addP("FieldOfView", "FieldOfView", "", "A").f64(fov);
+    pDouble(props, "AspectWidth", aspect);
+    pDouble(props, "AspectHeight", 1.0);
+    pEnum(props, "CameraProjectionType", c.ortho ? 1 : 0);
+    attr.add("TypeFlags").str("Camera");
+    attr.add("GeometryVersion").i32(124);
+}
+
 void writeMaterial(Record& objects, int64_t id, const std::string& name)
 {
     Record& mat = objects.add("Material");
@@ -760,7 +799,7 @@ void writeGlobalSettings(Record& root, const AxisDecl& a, double fps, int64_t sp
 
 struct ObjectCounts
 {
-    int models = 0, nulls = 0, limbs = 0, geometries = 0, materials = 0;
+    int models = 0, nulls = 0, limbs = 0, cameras = 0, geometries = 0, materials = 0;
     int deformers = 0, poses = 0, stacks = 0, layers = 0, curveNodes = 0, curves = 0;
 };
 
@@ -768,7 +807,7 @@ void writeDefinitions(Record& root, const ObjectCounts& n)
 {
     Record& defs = root.add("Definitions");
     defs.add("Version").i32(100);
-    defs.add("Count").i32(1 + n.models + n.nulls + n.limbs + n.geometries + n.materials + n.deformers + n.poses + n.stacks + n.layers +
+    defs.add("Count").i32(1 + n.models + n.nulls + n.limbs + n.cameras + n.geometries + n.materials + n.deformers + n.poses + n.stacks + n.layers +
                           n.curveNodes + n.curves);
     auto type = [&](std::string_view name, int count, std::string_view tmpl) -> Record* {
         Record& t = defs.add("ObjectType");
@@ -793,11 +832,14 @@ void writeDefinitions(Record& root, const ObjectCounts& n)
         pBool(*p, "Show", true);
         p->addP("Visibility", "Visibility", "", "A").f64(1.0);
     }
-    if (n.nulls || n.limbs)
+    if (n.nulls || n.limbs || n.cameras)
     {
-        Record* p = type("NodeAttribute", n.nulls + n.limbs, n.nulls ? "FbxNull" : "FbxSkeleton");
-        p3(*p, "Color", "ColorRGB", "Color", "", glm::dvec3(0.8));
-        pDouble(*p, "Size", 100.0);
+        Record* p = type("NodeAttribute", n.nulls + n.limbs + n.cameras, n.nulls ? "FbxNull" : n.limbs ? "FbxSkeleton" : "FbxCamera");
+        if (n.nulls || n.limbs)
+        {
+            p3(*p, "Color", "ColorRGB", "Color", "", glm::dvec3(0.8));
+            pDouble(*p, "Size", 100.0);
+        }
         if (n.nulls)
             pEnum(*p, "Look", 1);
     }
@@ -890,6 +932,8 @@ bool parseKind(std::string_view name, ExportKind* out)
         *out = ExportKind::Skeletal;
     else if (n == "animation")
         *out = ExportKind::Animation;
+    else if (n == "sequence")
+        *out = ExportKind::Sequence;
     else
         return false;
     return true;
@@ -902,6 +946,7 @@ const char* kindName(ExportKind k)
     case ExportKind::Static: return "static";
     case ExportKind::Skeletal: return "skeletal";
     case ExportKind::Animation: return "animation";
+    case ExportKind::Sequence: return "sequence";
     }
     return "static";
 }
@@ -911,6 +956,23 @@ namespace
 using scene::Graph;
 using scene::Node;
 using scene::NodeId;
+
+std::optional<ExportCamera> cameraOf(const Node& n)
+{
+    using scene::Camera;
+    if (!n.type().isA("camera"))
+        return std::nullopt;
+    ExportCamera c;
+    c.focalLength = n.as<double>(Camera::kFocalLength);
+    c.filmWidth = n.as<double>(Camera::kHorizontalFilmAperture);
+    c.filmHeight = n.as<double>(Camera::kVerticalFilmAperture);
+    c.nearClip = n.as<double>(Camera::kNearClipPlane);
+    c.farClip = n.as<double>(Camera::kFarClipPlane);
+    c.ortho = n.as<bool>(Camera::kOrthographic);
+    c.orthoWidth = n.as<double>(Camera::kOrthographicWidth);
+    c.filmFit = int(scene::camera::filmFit(n));
+    return c;
+}
 
 /** The scene side of an export while it is being gathered. */
 struct Gather
@@ -956,7 +1018,7 @@ struct Gather
         Node* n = graph.node(id);
         if (!n || !n->type().isA("transform") || indexOf.count(id))
             return;
-        if (opts.deformOnly && opts.kind != ExportKind::Static && !rigel::isDeform(*n))
+        if (opts.deformOnly && (opts.kind == ExportKind::Skeletal || opts.kind == ExportKind::Animation) && !rigel::isDeform(*n))
         {
             if (!weighted.count(id))
             {
@@ -972,8 +1034,9 @@ struct Gather
         ExportNode e;
         e.name = n->name();
         e.source = id;
-        if (n->type().isA("mesh") && !n->type().isA("lattice"))
+        if (n->type().isA("mesh") && !n->type().isA("lattice") && opts.kind != ExportKind::Sequence)
             e.mesh = modifiers::exportMesh(graph, id);
+        e.camera = cameraOf(*n);
         const glm::dmat4 w = world(id);
         if (flatten)
         {
@@ -1452,9 +1515,11 @@ std::optional<ExportTake> Gather::sampleRange(const std::string& name, double st
     take.locals.assign(count, {});
     take.curves.assign(count, std::nullopt);
     std::vector<char> sampled(count, 1);
+    // A camera's file frame is turned from its channels, and so is its children's parent frame.
+    auto reframed = [&](size_t i) { return out.nodes[i].camera || (out.nodes[i].parent >= 0 && out.nodes[size_t(out.nodes[i].parent)].camera); };
     if (!opts.bakeAnimation)
         for (size_t i = 0; i < count; ++i)
-            if (plainChannels(*graph.node(out.nodes[i].source)) && ownLocal(i) &&
+            if (!reframed(i) && plainChannels(*graph.node(out.nodes[i].source)) && ownLocal(i) &&
                 !graph.source({out.nodes[i].source, scene::Joint::kIkBlend, -1}))
                 if ((take.curves[i] = directCurves(graph, out.nodes[i].source, take.start, take.end)))
                     sampled[i] = 0;
@@ -1463,6 +1528,7 @@ std::optional<ExportTake> Gather::sampleRange(const std::string& name, double st
     for (size_t i = 0; i < count; ++i)
         if (sampled[i])
             take.locals[i].reserve(take.times.size());
+    take.cameras.assign(count, {});
     take.morphWeights.assign(count, {});
     for (const auto& [i, bs] : morphed)
         take.morphWeights[i].assign(out.nodes[i].morphs->targets.size(), {});
@@ -1472,8 +1538,12 @@ std::optional<ExportTake> Gather::sampleRange(const std::string& name, double st
         graph.setTime(t);
         graph.evaluate();
         for (size_t i = 0; i < count; ++i)
+        {
             if (sampled[i])
                 take.locals[i].push_back(localOf(i));
+            if (out.nodes[i].camera)
+                take.cameras[i].push_back(*cameraOf(*graph.node(out.nodes[i].source)));
+        }
         std::map<NodeId, std::vector<double>> morphNow;
         for (size_t c = 0; c < curveSources.size(); ++c)
         {
@@ -1518,7 +1588,10 @@ std::optional<ExportTake> Gather::sampleRange(const std::string& name, double st
         bool still = std::all_of(samples.begin(), samples.end(), [&](const glm::dmat4& m) { return nearMat(m, out.nodes[i].local, 1e-9); });
         if (still)
             samples.clear();
-        animated = animated || !samples.empty() || take.curves[i] || !take.morphWeights[i].empty();
+        auto& cams = take.cameras[i];
+        if (std::all_of(cams.begin(), cams.end(), [&](const ExportCamera& c) { return c == *out.nodes[i].camera; }))
+            cams.clear();
+        animated = animated || !samples.empty() || take.curves[i] || !take.morphWeights[i].empty() || !cams.empty();
     }
     animated = animated || !curveSources.empty();
     if (animated || keep || opts.kind == ExportKind::Animation)
@@ -1598,10 +1671,12 @@ ExportScene gatherExport(scene::Graph& graph, const std::vector<scene::NodeId>& 
     }
     warnDuplicateNames(graph, out);
 
-    if (opts.kind == ExportKind::Static)
+    if (opts.kind == ExportKind::Static || opts.kind == ExportKind::Sequence)
     {
         for (ExportNode& e : out.nodes)
             e.bindWorld = e.parent >= 0 ? out.nodes[size_t(e.parent)].bindWorld * e.local : e.local;
+        if (opts.kind == ExportKind::Sequence && opts.animation)
+            g.sampleTake();
         return out;
     }
     if (opts.worldSpace)
@@ -1628,6 +1703,24 @@ ExportScene gatherExport(scene::Graph& graph, const std::vector<scene::NodeId>& 
 
 namespace
 {
+/**
+ * Post-multiplied onto a camera's file-space local matrix: an FBX camera looks down its local +X with +Y up, a Lila
+ * camera down -Z, so the file frame is the Lila one turned 90 degrees about its local Y (then into file axes).
+ */
+glm::dmat4 cameraFrame(const glm::dmat3& basis)
+{
+    const glm::dmat3 lilaFromFbx(glm::dvec3(0, 0, -1), glm::dvec3(0, 1, 0), glm::dvec3(1, 0, 0));
+    return glm::dmat4(basis * lilaFromFbx);
+}
+
+ExportCamera inUnits(ExportCamera c, double k)
+{
+    c.nearClip *= k;
+    c.farClip *= k;
+    c.orthoWidth *= k;
+    return c;
+}
+
 /** The snapshot in file units: every length divided by cmPerUnit, rotations and scales unchanged. */
 ExportScene inUnits(const ExportScene& in, double cmPerUnit)
 {
@@ -1644,6 +1737,8 @@ ExportScene inUnits(const ExportScene& in, double cmPerUnit)
         n.translate *= k;
         n.bake = s * n.bake;
         n.bindWorld = conj(n.bindWorld);
+        if (n.camera)
+            n.camera = inUnits(*n.camera, k);
         if (n.skin)
         {
             auto skin = std::make_shared<ExportSkin>(*n.skin);
@@ -1663,6 +1758,9 @@ ExportScene inUnits(const ExportScene& in, double cmPerUnit)
         for (std::vector<glm::dmat4>& frames : tk->locals)
             for (glm::dmat4& m : frames)
                 m = conj(m);
+        for (std::vector<ExportCamera>& frames : tk->cameras)
+            for (ExportCamera& c : frames)
+                c = inUnits(c, k);
         for (auto& curves : tk->curves)
             if (curves)
                 for (int c = 0; c < 3; ++c)
@@ -1694,6 +1792,16 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
     const std::string creator = "Lila FBX exporter (" + std::string(profileName(opts.profile)) + ")";
     const ExportTake* take = scene.take ? &*scene.take : nullptr;
     auto toFile = [&](const glm::dmat4& m) { return basis * m * basisInv; };
+    const glm::dmat4 camFrame = cameraFrame(basis3);
+    const glm::dmat4 camFrameInv = glm::transpose(camFrame);
+    /** A node's local matrix in the file, with cameras turned to look down +X and their children turned back. */
+    auto fileLocal = [&](size_t i, const glm::dmat4& local) {
+        const ExportNode& n = scene.nodes[i];
+        glm::dmat4 m = toFile(local);
+        if (n.parent >= 0 && scene.nodes[size_t(n.parent)].camera)
+            m = camFrameInv * m;
+        return n.camera ? m * camFrame : m;
+    };
 
     Record root("");
     writeHeader(root, creator);
@@ -1720,7 +1828,7 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
         connections.add("C").str("OP").i64(child).i64(parent).str(prop);
     };
 
-    std::vector<int64_t> modelIds(scene.nodes.size()), geomIds(scene.nodes.size(), 0);
+    std::vector<int64_t> modelIds(scene.nodes.size()), geomIds(scene.nodes.size(), 0), attrIds(scene.nodes.size(), 0);
     std::vector<ModelInfo> info(scene.nodes.size());
     std::map<std::string, int64_t> materialIds;
     ObjectCounts counts;
@@ -1743,10 +1851,11 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
         const glm::dmat3 post = basis3 * glm::transpose(glm::dmat3(n.post)) * glm::transpose(basis3);
         mi.post = cleanVec(scene::matrixToEuler(post, scene::RotateOrder::XYZ));
         const glm::dmat3 postExact(scene::eulerToMatrix(mi.post, scene::RotateOrder::XYZ));
-        if (n.plainTrs && mi.order == axes.order(n.rotateOrder))
+        const bool reframed = n.camera || (n.parent >= 0 && scene.nodes[size_t(n.parent)].camera);
+        if (n.plainTrs && !reframed && mi.order == axes.order(n.rotateOrder))
             mi.trs = {axes.translate(n.translate), axes.rotate(n.rotate), axes.scale(n.scale)};
         else
-            mi.trs = fileTrs(toFile(n.local), preExact, mi.order, axes.rotate(n.rotate), postExact);
+            mi.trs = fileTrs(fileLocal(i, n.local), preExact, mi.order, axes.rotate(n.rotate), postExact);
         std::vector<std::pair<std::string, double>> userProps;
         if (int(i) == scene.curveHolder)
             for (size_t c = 0; c < scene.curveNames.size(); ++c)
@@ -1757,8 +1866,13 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
         connect(modelIds[i], n.parent >= 0 ? modelIds[size_t(n.parent)] : 0);
         if (!isMesh)
         {
-            int64_t attrId = nextId++;
-            if (n.joint)
+            int64_t attrId = attrIds[i] = nextId++;
+            if (n.camera && !n.joint)
+            {
+                writeCameraAttribute(objects, attrId, n.name, *n.camera);
+                ++counts.cameras;
+            }
+            else if (n.joint)
             {
                 writeLimbAttribute(objects, attrId, n.name);
                 ++counts.limbs;
@@ -1882,7 +1996,7 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
             const ExportNode& n = scene.nodes[i];
             Record& pn = pose.add("PoseNode");
             pn.add("Node").i64(modelIds[i]);
-            pn.add("Matrix").f64s(flat(toFile(n.skin ? n.skin->meshBindWorld : n.bindWorld)));
+            pn.add("Matrix").f64s(flat(toFile(n.skin ? n.skin->meshBindWorld : n.bindWorld) * (n.camera ? camFrame : glm::dmat4(1.0))));
         }
         ++counts.poses;
     }
@@ -1935,7 +2049,7 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
                 glm::dvec3 ref = mi.trs.r;
                 for (const glm::dmat4& local : tk->locals[i])
                 {
-                    Trs trs = fileTrs(toFile(local), preExact, mi.order, ref, postExact);
+                    Trs trs = fileTrs(fileLocal(i, local), preExact, mi.order, ref, postExact);
                     ref = trs.r;
                     frames.push_back({trs.t.x, trs.t.y, trs.t.z, trs.r.x, trs.r.y, trs.r.z, trs.s.x, trs.s.y, trs.s.z});
                 }
@@ -1974,6 +2088,31 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
                     connectProp(curveId, nodeId, kAxisProp[a]);
                     ++counts.curves;
                 }
+            }
+        }
+
+        for (size_t i = 0; i < scene.nodes.size(); ++i)
+        {
+            if (i >= tk->cameras.size() || tk->cameras[i].empty() || !attrIds[i] || !scene.nodes[i].camera)
+                continue;
+            const auto& frames = tk->cameras[i];
+            for (const CameraChannel& ch : kCameraChannels)
+            {
+                const double rest = (*scene.nodes[i].camera).*ch.value;
+                std::vector<double> values(frames.size());
+                for (size_t f = 0; f < frames.size(); ++f)
+                    values[f] = frames[f].*ch.value;
+                if (std::all_of(values.begin(), values.end(), [&](double v) { return std::abs(v - rest) <= 1e-9 * std::max(1.0, std::abs(rest)); }))
+                    continue;
+                int64_t nodeId = nextId++;
+                writeCurveNode1(objects, nodeId, ch.prop, ch.prop, rest);
+                connect(nodeId, layerId);
+                connectProp(nodeId, attrIds[i], ch.prop);
+                ++counts.curveNodes;
+                int64_t curveId = nextId++;
+                writeCurve(objects, curveId, sampledKeys(tk->times, values), rest);
+                connectProp(curveId, nodeId, std::string("d|") + ch.prop);
+                ++counts.curves;
             }
         }
 

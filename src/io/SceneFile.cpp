@@ -60,7 +60,7 @@ struct State
     uint64_t cleanStateId = 0;
     bool untracked = false; // changed outside the undo stack, so no undo can return to the saved state
     std::optional<uint64_t> autosavedStateId; // undo state the last autosave wrote, while no untracked edit followed
-    json cleanUi;         // UI sections as of the last save/open/new, so moving a camera back undoes the change
+    json cleanUi = json::object(); // UI sections as of the last save/open/new, so moving a camera back undoes the change
     bool uiDirty = false;
 
     int listener = 0;
@@ -615,7 +615,7 @@ void uiChanged(const std::string& key)
     State& s = state();
     if (s.loading)
         return;
-    s.uiDirty = currentUiSection(key) != s.cleanUi.value(key, json());
+    s.uiDirty = currentUiSection(key) != (s.cleanUi.is_object() ? s.cleanUi.value(key, json()) : json());
     if (s.uiDirty)
         s.autosaveDirty = true;
     setModified(s.untracked || s.uiDirty || UndoStack::get().stateId() != s.cleanStateId);

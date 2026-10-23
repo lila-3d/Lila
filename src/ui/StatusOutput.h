@@ -11,8 +11,8 @@
 namespace lila::ui
 {
 /**
- * Maya's command line result: the script output's last line in the status bar while the Script Output panel is out of
- * sight. Warnings and errors carry an icon and errors are bold. Hover for the last few lines; click to open the panel.
+ * Maya's command line result: the last command's report in the status bar while the Script Output panel is out of
+ * sight (see OutputTail::commit). Warnings and errors carry an icon and errors are bold. Hover for the last few lines; click to open the panel.
  */
 class LILA_UI_API StatusOutput : public QWidget
 {
@@ -43,5 +43,6 @@ private:
     std::function<void()> mOpen;
     std::function<bool()> mOutputShowing;
     int mSink = 0;
+    bool mCommitPending = false;
 };
 } // namespace lila::ui

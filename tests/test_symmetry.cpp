@@ -5,6 +5,7 @@
 #include "geo/Ops.h"
 #include "geo/Primitives.h"
 #include "geo/Symmetry.h"
+#include "geo/Topology.h"
 #include "io/SceneFormats.h"
 #include "scene/Graph.h"
 #include "scene/MeshData.h"
@@ -89,7 +90,9 @@ TEST_CASE("persistent symmetry survives drift and compaction")
 
     again.symmetrize(m, 1);
     geo::SymmetryCheck c = again.check(m);
-    CHECK(c.maxAsymmetry == 0.0);
+    // Only the deleted point's partner is off: its reflection falls in the hole.
+    CHECK(c.maxAsymmetry > 0.0);
+    CHECK(again.mirrorPoint(c.worstPoint) == geo::kInvalid);
     CHECK(c.unmatched == 1);
 }
 
@@ -235,7 +238,13 @@ TEST_CASE("drift with symmetry off keeps the pairs; symmetrize repairs it")
     CHECK(c["maxAsymmetry"].get<double>() > 0.1);
     run("symmetrize", {{"args", {cube}}, {"side", "negative"}});
     c = run("symmetryCheck", {{"args", {cube}}})[cube];
+    // The extrusion made with symmetry off has no mirror; symmetryRebuild makes one.
+    CHECK(c["maxAsymmetry"].get<double>() == doctest::Approx(3.0));
+    CHECK(c["unmatched"].get<int>() == 4);
+    run("symmetryRebuild", {{"args", {cube}}});
+    c = run("symmetryCheck", {{"args", {cube}}})[cube];
     CHECK(c["maxAsymmetry"].get<double>() == 0.0);
+    CHECK(c["unmatched"].get<int>() == 0);
 }
 
 TEST_CASE("polyBevel with symmetry on keeps the pairs at corners")
@@ -299,4 +308,95 @@ TEST_CASE("toggleSymmetry turns a mixed selection on, then all off, undoably")
 
     run("select", {{"args", {group}}});
     CHECK_THROWS(run("toggleSymmetry"));
+}
+
+namespace
+{
+/** The first face whose centre satisfies pred. */
+template <class Pred> int findFace(const geo::Mesh& m, Pred pred)
+{
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+    {
+        if (!m.faceValid(f))
+            continue;
+        glm::dvec3 c(0.0);
+        m.forEachFaceCorner(f, [&](Index k) { c += m.position(m.cornerPoint(k)) / double(m.faceSize(f)); });
+        if (pred(c))
+            return int(f);
+    }
+    return -1;
+}
+
+/** Every point has a point at its exact reflection across x = 0. */
+bool exactlyMirrored(const geo::Mesh& m)
+{
+    geo::SymmetryMap map = geo::SymmetryMap::build(m, geo::axisPlane(0), 1e-12);
+    if (map.unmatchedCount() != 0)
+        return false;
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p) && (map.onPlane(p) ? m.position(p).x != 0.0 : m.position(map.mirrorPoint(p)) != m.position(p) * glm::dvec3(-1, 1, 1)))
+            return false;
+    return true;
+}
+} // namespace
+
+TEST_CASE("symmetryCheck counts unmatched points as asymmetry")
+{
+    run("newScene");
+    std::string cube = run("polyCube")[0];
+    run("setSymmetry", {{"args", {cube}}, {"axis", "x"}});
+    run("symmetryCheck", {{"args", {cube}}}); // stores the cube's pairs
+    run("setSymmetry", {{"args", {cube}}, {"axis", "off"}});
+    run("selectComponents", {{"args", {cube}}, {"faces", {findFace(outMesh(cube), [](glm::dvec3 c) { return c.x > 40.0; })}}});
+    run("polyExtrude", {{"thickness", 30}});
+    run("setSymmetry", {{"args", {cube}}, {"axis", "x"}});
+    json c = run("symmetryCheck", {{"args", {cube}}})[cube];
+    CHECK(c["unmatched"].get<int>() == 4);
+    CHECK(c["maxAsymmetry"].get<double>() == doctest::Approx(30.0));
+}
+
+TEST_CASE("symmetryRebuild mirrors the kept side of an asymmetric mesh")
+{
+    struct Case
+    {
+        int subdivisionsX;
+        const char* side;
+        int faces, points;
+    };
+    // An extruded +X side face: cut at the plane, 9 faces kept, mirrored to 18. Keeping -X leaves a split cube.
+    // With a centre loop the extruded face is a top quad on +X whose inner wall lies in the plane and goes, so 8 faces are
+    // kept and the block is mirrored into one twice as wide.
+    for (const Case& k : {Case{1, "auto", 18, 20}, Case{1, "negative", 10, 12}, Case{2, "auto", 16, 18}, Case{2, "positive", 16, 18},
+                          Case{2, "negative", 10, 12}})
+    {
+        CAPTURE(k.subdivisionsX);
+        CAPTURE(k.side);
+        run("newScene");
+        std::string cube = run("polyCube", {{"subdivisionsX", k.subdivisionsX}})[0];
+        const geo::Mesh before = outMesh(cube);
+        const int face = k.subdivisionsX == 1 ? findFace(before, [](glm::dvec3 c) { return c.x > 40.0; })
+                                               : findFace(before, [](glm::dvec3 c) { return c.x > 0.0 && c.y > 40.0; });
+        REQUIRE(face >= 0);
+        run("selectComponents", {{"args", {cube}}, {"faces", {face}}});
+        run("polyExtrude", {{"thickness", 30}});
+        const int extruded = run("meshInfo", {{"args", {cube}}})["faces"].get<int>();
+
+        json out = run("symmetryRebuild", {{"args", {cube}}, {"side", k.side}});
+        CHECK(out[cube].get<int>() == 0);
+        geo::Mesh m = outMesh(cube);
+        CHECK(m.numFaces() == Index(k.faces));
+        CHECK(m.numPoints() == Index(k.points));
+        CHECK(geo::boundaryLoops(m).empty());
+        CHECK(exactlyMirrored(m));
+
+        run("setSymmetry", {{"args", {cube}}, {"axis", "x"}});
+        json c = run("symmetryCheck", {{"args", {cube}}})[cube];
+        CHECK(c["maxAsymmetry"].get<double>() == 0.0);
+        CHECK(c["unmatched"].get<int>() == 0);
+        CHECK(c["withoutStoredPartner"].get<int>() == 0);
+
+        run("undo");
+        run("undo");
+        CHECK(run("meshInfo", {{"args", {cube}}})["faces"].get<int>() == extruded);
+    }
 }

@@ -1,5 +1,6 @@
 #include "ui/SpinScrub.h"
 
+#include "ops/Undo.h"
 #include "ui/Theme.h"
 #include "ui/ValueReset.h"
 
@@ -82,6 +83,7 @@ protected:
             mCarry = 0.0;
             mClick.press(int(m->globalPosition().x()), int(m->globalPosition().y()), nowMs());
             QApplication::setOverrideCursor(Qt::SizeHorCursor);
+            UndoStack::get().openChunk("Drag Value");
             return true;
         }
         case QEvent::MouseMove:
@@ -91,6 +93,12 @@ protected:
             if (!mBox)
                 return false;
             auto* m = static_cast<QMouseEvent*>(e);
+            // The release can go missing when focus moves mid-drag.
+            if (!(m->buttons() & Qt::MiddleButton))
+            {
+                endDrag();
+                return false;
+            }
             double x = m->globalPosition().x();
             mClick.move(int(x), int(m->globalPosition().y()));
             mCarry += (x - mLastX) / kPixelsPerStep;
@@ -117,8 +125,7 @@ protected:
             if (!mBox || m->button() != Qt::MiddleButton)
                 return false;
             QPointer<QAbstractSpinBox> box = mBox;
-            mBox = nullptr;
-            QApplication::restoreOverrideCursor();
+            endDrag();
             if (mClick.release(int(m->globalPosition().x()), int(m->globalPosition().y()), nowMs()))
                 resetToDefault(box);
             return true;
@@ -206,6 +213,13 @@ private:
         else
             return;
         flashReset(box);
+    }
+
+    void endDrag()
+    {
+        mBox = nullptr;
+        QApplication::restoreOverrideCursor();
+        UndoStack::get().closeChunk();
     }
 
     void step(double steps, Qt::KeyboardModifiers mods)

@@ -49,7 +49,10 @@ struct SymmetrySync
 
 struct SymmetryCheck
 {
-    /** Largest distance between a point and the reflection of its partner, or of an on-plane point from the plane. */
+    /**
+     * Largest distance between a point and the reflection of its partner, of an on-plane point from the plane, or of an
+     * unmatched point's reflection from the surface.
+     */
     double maxAsymmetry = 0.0;
     Index worstPoint = kInvalid;
     Index pairs = 0;

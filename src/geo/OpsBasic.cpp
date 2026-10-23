@@ -1101,4 +1101,23 @@ std::vector<Index> mirrorMesh(Mesh& mesh, const MirrorOptions& opts)
     }
     return out;
 }
+
+SymmetryMap symmetrizeTopology(Mesh& mesh, int axis, int keepSign, double tolerance)
+{
+    LILA_ZONE();
+
+    axis = std::clamp(axis, 0, 2);
+    MirrorOptions o;
+    o.plane = axisPlane(axis);
+    o.direction = keepSign < 0 ? MirrorDirection::Negative : MirrorDirection::Positive;
+    o.tolerance = tolerance;
+    mirrorMesh(mesh, o);
+    // The mirrored half carries copies of the kept half's keys, which pair nothing.
+    for (int k = 0; k < 3; ++k)
+        mesh.pointAttrs().remove(symmetryLayerName(k));
+    mesh.compact();
+    SymmetryMap map = SymmetryMap::build(mesh, o.plane, tolerance);
+    map.store(mesh, axis);
+    return map;
+}
 } // namespace lila::geo

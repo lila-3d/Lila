@@ -79,6 +79,8 @@ private:
     void saveLayout();
     void refreshRecentFolders();
     void refreshWorkspaceLabel();
+    /** Puts the workspace name at the right of the menu bar, beside the layout switcher. */
+    void placeWorkspaceLabel();
     void openFolder();
     void showAbout();
     bool confirmDiscard();

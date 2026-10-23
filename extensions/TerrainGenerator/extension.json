@@ -1,0 +1,14 @@
+{
+    "id": "TerrainGenerator",
+    "name": "Terrain Generator",
+    "version": "1.0.0",
+    "vendor": "Lila",
+    "description": "Scatters source meshes into a seamlessly tiling high poly patch, with a bake plane, Object ID map and an FBX pair ready to bake down to tiling textures.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "TerrainGenerator.dll",
+        "linux": "TerrainGenerator.so",
+        "macos": "TerrainGenerator.dylib"
+    },
+    "enabledByDefault": true
+}

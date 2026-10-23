@@ -41,6 +41,9 @@ const std::vector<TokenInfo> kTokens = {
     {"highlightText", "Selected text", "Interface"},
     {"accent", "Accent (links, active)", "Interface"},
     {"tooltipText", "Tooltip text", "Interface"},
+    {"statusInfo", "Status message", "Interface"},
+    {"statusWarning", "Status warning", "Interface"},
+    {"statusError", "Status error", "Interface"},
     {"iconNormal", "Icon", "Icons"},
     {"iconActive", "Icon active", "Icons"},
     {"iconDisabled", "Icon disabled", "Icons"},
@@ -96,6 +99,7 @@ const Pairs kMonotone = {
     {"panel", "#3a3a3a"},         {"input", "#242424"},         {"menu", "#242424"},           {"scrollbar", "#3a3a3a"},
     {"separator", "#2a2a2a"},     {"hover", "#6a6a6a"},         {"statusBar", "#2c2c2c"},      {"checked", "#5a5a5a"},
     {"highlight", "#696969"},     {"highlightText", "#ffffff"}, {"accent", "#ebebeb"},         {"tooltipText", "#dcdcdc"},
+    {"statusInfo", "#a0a0a0"},    {"statusWarning", "#f2f2f2"}, {"statusError", "#f2f2f2"},
     {"iconNormal", "#c8c8c8"},    {"iconActive", "#f2f2f2"},    {"iconDisabled", "#6e6e6e"},   {"viewportBackground", "#4d4d4d"},
     {"grid", "#adadad"},          {"gridAxisX", "#000000"},     {"gridAxisZ", "#000000"},      {"wireframe", "#272727"},
     {"wireSelected", "#f6f6f6"},  {"wirePreselect", "#e1e1e1"}, {"wireUnderSelected", "#c4c4c4"},
@@ -121,7 +125,7 @@ const Pairs kColour = {
     {"nodeInput", "#7a2f45"},     {"nodeOutput", "#5a2a3a"},      {"nodeUtilities", "#2a5873"},    {"nodeColor", "#6a6420"},
     {"nodeTexture", "#7a4a20"},   {"socketGeometry", "#00d6a3"},  {"socketFloat", "#a1a1a1"},      {"socketInt", "#598c5c"},
     {"socketBool", "#cca6d6"},    {"socketString", "#70b2ff"},    {"socketVector", "#6363c7"},     {"socketRotation", "#a663c7"},
-    {"socketColor", "#c7c729"},
+    {"socketColor", "#c7c729"},   {"statusInfo", "#7fb0f5"},      {"statusWarning", "#f2d16b"},    {"statusError", "#f2655c"},
 };
 
 // Sampled from the Lila icon: navy ink, its sky and pale blues, and the icon's blue for selection.
@@ -143,7 +147,7 @@ const Pairs kLight = {
     {"nodeInput", "#ecb8c6"},      {"nodeOutput", "#e0b0c0"},     {"nodeUtilities", "#b0d4ec"},    {"nodeColor", "#e6e0a0"},
     {"nodeTexture", "#ecc8a0"},    {"socketGeometry", "#00a37c"}, {"socketFloat", "#6b6b6b"},      {"socketInt", "#3f7a43"},
     {"socketBool", "#9a6aa8"},     {"socketString", "#2f7fd6"},   {"socketVector", "#4a4ab0"},     {"socketRotation", "#8a4ab0"},
-    {"socketColor", "#a39a1f"},
+    {"socketColor", "#a39a1f"},    {"statusInfo", "#1767d0"},     {"statusWarning", "#a36b00"},    {"statusError", "#c8261c"},
 };
 
 const Pairs kHighContrast = {
@@ -156,7 +160,7 @@ const Pairs kHighContrast = {
     {"iconNormal", "#ffffff"},   {"iconActive", "#ffd400"},    {"iconDisabled", "#808080"},  {"wireSelected", "#ffd400"},
     {"wirePreselect", "#00e5ff"}, {"axisX", "#ff5c5c"},        {"axisY", "#5cff5c"},         {"axisZ", "#5c9dff"},
     {"manipActive", "#ffd400"},  {"keyTick", "#ff5c5c"},       {"nodeSelected", "#ffd400"},  {"nodeBody", "#1a1a1a"},
-    {"nodeHeader", "#333333"},
+    {"nodeHeader", "#333333"},    {"statusInfo", "#5cb8ff"},    {"statusWarning", "#ffd400"}, {"statusError", "#ff5c5c"},
 };
 
 Theme make(const char* name, const char* base, const char* description, Pairs colors)

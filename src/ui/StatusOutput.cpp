@@ -2,6 +2,7 @@
 
 #include "ui/Icons.h"
 #include "ui/Theme.h"
+#include "ui/ThemeModel.h"
 
 #include <QMouseEvent>
 #include <QPainter>
@@ -25,6 +26,15 @@ const char* prefix(LogLevel level)
     default: return "";
     }
 }
+
+/** The theme's colour for the message's severity, kept on the grey ramp while the theme leaves the token at Monotone's. */
+QColor severityColor(LogLevel level)
+{
+    const char* token = level == LogLevel::Error ? "statusError" : level == LogLevel::Warning ? "statusWarning" : "statusInfo";
+    if (themes::isDefault(*themes::current(), token))
+        return themeShade(level == LogLevel::Error || level == LogLevel::Warning ? 242 : 160);
+    return themeColor(token);
+}
 } // namespace
 
 StatusOutput::StatusOutput(std::function<void()> openOutput, std::function<bool()> outputShowing, QWidget* parent)
@@ -34,6 +44,7 @@ StatusOutput::StatusOutput(std::function<void()> openOutput, std::function<bool(
     connect(this, &StatusOutput::appendRequested, this, &StatusOutput::append, Qt::QueuedConnection);
     for (const LogEntry& e : log::since(0))
         mTail.add(e.level, e.text);
+    mTail.commit();
     mSink = log::addSink([this](const LogEntry& e) { emit appendRequested(int(e.level), QString::fromStdString(e.text)); });
     refresh();
 }
@@ -55,13 +66,20 @@ QSize StatusOutput::minimumSizeHint() const
 
 bool StatusOutput::shown() const
 {
-    return !mTail.lines().empty() && !(mOutputShowing && mOutputShowing());
+    return mTail.display() && !(mOutputShowing && mOutputShowing());
 }
 
 void StatusOutput::append(int level, const QString& text)
 {
-    if (mTail.add(LogLevel(level), text.toStdString()))
+    if (!mTail.add(LogLevel(level), text.toStdString()) || mCommitPending)
+        return;
+    // Lines one command logs are all queued before this runs, so the commit sees the whole command.
+    mCommitPending = true;
+    QMetaObject::invokeMethod(this, [this] {
+        mCommitPending = false;
+        mTail.commit();
         refresh();
+    }, Qt::QueuedConnection);
 }
 
 void StatusOutput::refresh()
@@ -82,7 +100,7 @@ void StatusOutput::paintEvent(QPaintEvent*)
     setCursor(visible ? Qt::PointingHandCursor : Qt::ArrowCursor);
     if (!visible)
         return;
-    const OutputLine& last = mTail.lines().back();
+    const OutputLine& last = *mTail.display();
     bool error = last.level == LogLevel::Error;
     bool warning = last.level == LogLevel::Warning;
 
@@ -97,12 +115,12 @@ void StatusOutput::paintEvent(QPaintEvent*)
     int x = std::max(4, (width() - total) / 2);
     if (iconW)
     {
-        // Grayscale UI: severity reads by the icon and weight, not hue.
+        // Severity reads by the icon and weight as well, so grey themes need no hue.
         QIcon ic = icon(error ? "alert-octagon" : "alert-triangle");
         ic.paint(&p, QRect(x, (height() - kIconSize) / 2, kIconSize, kIconSize), Qt::AlignCenter, QIcon::Normal, QIcon::On);
         x += iconW;
     }
-    p.setPen(error || warning ? themeShade(242) : themeShade(160));
+    p.setPen(severityColor(last.level));
     p.drawText(QRect(x, 0, width() - x, height()), Qt::AlignVCenter | Qt::AlignLeft, text);
 }
 

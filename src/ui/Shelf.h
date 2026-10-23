@@ -47,7 +47,10 @@ LILA_UI_API void add(Shelf s, std::string owner = kLilaOwner);
 /** Owned by the extension and removed when it unloads. */
 LILA_UI_API uint64_t add(ext::Context& ctx, Shelf s);
 
-/** Adds a button for target (anything actions::run accepts) to the current shelf, labelled like the action. */
+/**
+ * Adds a button for target (anything actions::run accepts), labelled like the action, to the shelf the floating shelf
+ * shows while it is open, else to the current shelf.
+ */
 LILA_UI_API void addToCurrent(const nlohmann::json& target);
 /** Ctrl+Shift is held: clicking a menu item or releasing on a marking menu item adds it to the shelf instead of running it. */
 LILA_UI_API bool addModifierHeld();
@@ -56,6 +59,12 @@ LILA_UI_API bool addModifierHeld();
 LILA_UI_API std::string current();
 /** Shows that shelf in the docked shelf. False when there is no such shelf. */
 LILA_UI_API bool setCurrent(const std::string& shelf);
+
+/** Icon size of the floating shelf's buttons, the general pref /floatingShelf/iconSize. Ctrl+wheel over it scales it. */
+constexpr int kFloatingIconDefault = 24;
+LILA_UI_API int floatingIconSize();
+/** size moved by notches wheel steps, clamped to the sizes the floating shelf allows. */
+LILA_UI_API int stepFloatingIconSize(int size, int notches);
 } // namespace shelves
 
 /**
@@ -138,6 +147,8 @@ public:
     static void popup();
     static void releaseKey();
     static FloatingShelf* active();
+    /** The shelf it shows. */
+    std::string shelf() const;
 
 protected:
     void keyPressEvent(QKeyEvent* e) override;
@@ -156,12 +167,14 @@ private:
     void settingsMenu(QMenu* menu);
     /** With the remember-position pref on, stores where the shelf is so the next one opens there. */
     void rememberPosition();
+    void setIconSize(int size);
 
     QComboBox* mPicker = nullptr;
     ShelfPage* mPage = nullptr;
     bool mPinned = false;
     qint64 mOpenedAt = 0;
     int mPrefListener = 0;
+    int mWheelAccum = 0;
     QTimer mPositionTimer;
 };
 

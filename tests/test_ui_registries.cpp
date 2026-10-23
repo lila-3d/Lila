@@ -151,6 +151,26 @@ TEST_CASE("marking menus resolve through the active set and take added items")
     CHECK(markingMenus::resolve("testMenu").empty());
 }
 
+TEST_CASE("a component mode opens the component viewport menu wherever it is pressed")
+{
+    for (const char* base : {"viewport", "viewportShift", "viewportCtrl"})
+    {
+        CHECK(markingMenus::viewportMenuName(base, false, false) == std::string(base) + "Empty");
+        CHECK(markingMenus::viewportMenuName(base, true, false) == std::string(base) + "Object");
+        CHECK(markingMenus::viewportMenuName(base, false, true) == std::string(base) + "Object");
+        CHECK(markingMenus::viewportMenuName(base, true, true) == std::string(base) + "Object");
+    }
+}
+
+TEST_CASE("floating shelf icon size steps by wheel notches within its limits")
+{
+    CHECK(shelves::stepFloatingIconSize(shelves::kFloatingIconDefault, 0) == shelves::kFloatingIconDefault);
+    CHECK(shelves::stepFloatingIconSize(24, 2) == 32);
+    CHECK(shelves::stepFloatingIconSize(24, -1) == 20);
+    CHECK(shelves::stepFloatingIconSize(24, -50) == 16);
+    CHECK(shelves::stepFloatingIconSize(24, 50) == 96);
+}
+
 TEST_CASE("contributed layouts list as extension layouts and can't be deleted")
 {
     layouts::add("Test Contributed", {{"preset", {{"open", {"outliner"}}}}}, "someExtension");

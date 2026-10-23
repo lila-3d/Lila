@@ -216,6 +216,13 @@ LILA_SCENE_API void cutAtPlane(Mesh& mesh, const SymmetryPlane& plane, int keepS
 /** Adds a mirrored copy, after cutting away the discarded side unless the direction is Both. Returns the new faces. */
 LILA_SCENE_API std::vector<Index> mirrorMesh(Mesh& mesh, const MirrorOptions& opts = {});
 
+/**
+ * Rebuilds the mesh symmetric about an axis plane through the origin: the side opposite keepSign (+1 or -1) is cut
+ * away and replaced by the mirror of the kept side, welded on the plane. Compacts the mesh and stores the exact pairs
+ * in the axis's symmetry layer (other axes' layers are dropped). Returns the map.
+ */
+LILA_SCENE_API SymmetryMap symmetrizeTopology(Mesh& mesh, int axis, int keepSign, double tolerance = 1e-3);
+
 /** A new mesh holding copies of the given faces with all attributes. */
 LILA_SCENE_API Mesh extractFaces(const Mesh& mesh, std::span<const Index> faces);
 LILA_SCENE_API Mesh combine(std::span<const Mesh* const> meshes);
