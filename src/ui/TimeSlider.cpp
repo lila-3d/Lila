@@ -1,3 +1,4 @@
+#include "ui/Theme.h"
 #include "ui/TimeSlider.h"
 
 #include "ops/Command.h"
@@ -31,7 +32,7 @@ namespace
 namespace anim = scene::anim;
 using scene::Graph;
 
-QColor gray(int v, int a = 255) { return QColor(v, v, v, a); }
+QColor gray(int v, int a = 255) { return themeShade(v, a); }
 
 void runUi(const char* command, const json& call = json::object())
 {
@@ -191,7 +192,10 @@ protected:
         double tickW = std::max(2.0, ppf * 0.35);
         QColor tick = gray(175);
         if (viewportDisplay::accentColors(viewportDisplay::kTimeKeyColors))
-            tick = QColor::fromRgbF(viewportDisplay::kKeyTickColor.r, viewportDisplay::kKeyTickColor.g, viewportDisplay::kKeyTickColor.b);
+        {
+            glm::vec3 k = viewportDisplay::keyTickColor();
+            tick = QColor::fromRgbF(k.r, k.g, k.b);
+        }
         for (double t : mKeys)
         {
             double fr = anim::frameOf(t);

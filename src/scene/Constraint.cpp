@@ -202,13 +202,13 @@ json makeConstraint(Kind kind, const Args& a)
         throw CommandError(std::string(cmd) + ": give one or more targets, then the object to constrain");
     Node& obj = nodeNamed(objs.back(), cmd);
     if (!obj.type().isA("transform"))
-        throw CommandError(std::string(cmd) + ": " + obj.name() + " is not a transform");
+        throw CommandError(std::string(cmd) + ": " + obj.path() + " is not a transform");
     std::vector<NodeId> targets;
     for (size_t i = 0; i + 1 < objs.size(); ++i)
     {
         Node& t = nodeNamed(objs[i], cmd);
         if (!t.type().isA("transform"))
-            throw CommandError(std::string(cmd) + ": " + t.name() + " is not a transform");
+            throw CommandError(std::string(cmd) + ": " + t.path() + " is not a transform");
         targets.push_back(t.id());
     }
 
@@ -329,7 +329,7 @@ json makeConstraint(Kind kind, const Args& a)
                 anim::insertConstraintBlend(g, {objId, Transform::kRotate, -1}, {id, ConstraintNode::kConstraintRotate, -1});
             return 0;
         });
-    return g.node(id)->name();
+    return g.node(id)->path();
 }
 
 void registerConstraintCommandsImpl()

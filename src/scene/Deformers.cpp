@@ -9,6 +9,7 @@
 #include "geo/Normals.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
+#include "scene/Morphs.h"
 #include "scene/RigUtil.h"
 #include "scene/Skin.h"
 #include "scene/SoftSelect.h"
@@ -138,17 +139,6 @@ struct CageData final : Data
             d->points = d->rest.empty() ? 0 : uint32_t(d->weights.size() / d->rest.size());
         return d;
     }
-};
-
-/** What one blendTarget passes down its chain. */
-struct BlendTargetLink final : Data
-{
-    DataPtr prev;
-    double weight = 0.0;
-    DataPtr deltas;
-    MeshPtr live;
-    const char* kind() const override { return "blendTargetLink"; }
-    json toJson() const override { return {{"kind", kind()}}; }
 };
 
 // ------------------------------------------------------------------------------------------------ attr helpers
@@ -457,64 +447,6 @@ public:
     }
 };
 
-class BlendShapeNode : public DeformerNode
-{
-public:
-    void deform(const geo::Mesh& in, std::vector<glm::dvec3>& points) const override
-    {
-        LILA_ZONE();
-
-        for (DataPtr d = as<DataPtr>(attr("targets")); d;)
-        {
-            const auto* link = dynamic_cast<const BlendTargetLink*>(d.get());
-            if (!link)
-                break;
-            d = link->prev;
-            const double w = link->weight;
-            if (w == 0.0)
-                continue;
-            if (link->live)
-            {
-                if (link->live->pointCapacity() != in.pointCapacity())
-                    throw std::runtime_error("a live target's point count differs from the mesh");
-                parallelPoints(points.size(), [&](size_t p) { points[p] += (link->live->position(geo::Index(p)) - in.position(geo::Index(p))) * w; });
-            }
-            else if (const auto* deltas = dynamic_cast<const BlendDeltas*>(link->deltas.get()))
-            {
-                const size_t n = std::min(deltas->indices.size(), deltas->deltas.size());
-                parallelPoints(n, [&](size_t k) {
-                    uint32_t p = deltas->indices[k];
-                    if (p < points.size())
-                        points[p] += deltas->deltas[k] * w;
-                });
-            }
-        }
-    }
-};
-
-class BlendTargetNode : public Node
-{
-public:
-    enum Attr
-    {
-        kWeight,
-        kMorphName,
-        kDeltas,
-        kTargetMesh,
-        kPrevious,
-        kLink,
-    };
-    void compute(const EvalContext&) override
-    {
-        auto link = std::make_shared<BlendTargetLink>();
-        link->prev = as<DataPtr>(kPrevious);
-        link->weight = as<double>(kWeight);
-        link->deltas = as<DataPtr>(kDeltas);
-        link->live = as<MeshPtr>(kTargetMesh);
-        setOutput(kLink, DataPtr(std::move(link)));
-    }
-};
-
 // ------------------------------------------------------------------------------------------------ registration
 
 NodeType deformerType(deformers::DeformerSpec s)
@@ -791,107 +723,6 @@ int axisIndex(const std::string& a, const char* cmd)
     throw CommandError(std::string(cmd) + ": axis must be x, y or z");
 }
 
-// ------------------------------------------------------------------------------------------------ blend shape helpers
-
-const NodeType& blendTargetType() { return *types::find("blendTarget"); }
-
-NodeId resolveBlendShape(Graph& graph, const std::string& name, const char* cmd)
-{
-    Node& n = nodeNamed(name, cmd);
-    if (n.type().isA("blendShape"))
-        return n.id();
-    if (n.type().isA("mesh"))
-        if (NodeId b = deformers::blendShapeOf(graph, n.id()); b != kNoNode)
-            return b;
-    throw CommandError(std::string(cmd) + ": " + name + " has no blendShape");
-}
-
-/** Target nodes of a blendShape, first added first. */
-std::vector<NodeId> targetNodes(Graph& graph, NodeId bs)
-{
-    std::vector<NodeId> out;
-    PlugRef plug{bs, graph.node(bs)->type().attrIndex("targets"), -1};
-    while (auto src = graph.source(plug))
-    {
-        Node* t = graph.node(src->node);
-        if (!dynamic_cast<BlendTargetNode*>(t) || out.size() > 100000)
-            break;
-        out.push_back(t->id());
-        plug = {t->id(), BlendTargetNode::kPrevious, -1};
-    }
-    std::reverse(out.begin(), out.end());
-    return out;
-}
-
-std::shared_ptr<BlendDeltas> deltasBetween(const geo::Mesh& base, const geo::Mesh& target)
-{
-    auto d = std::make_shared<BlendDeltas>();
-    for (geo::Index p = 0; p < base.pointCapacity(); ++p)
-    {
-        if (!base.pointValid(p))
-            continue;
-        glm::dvec3 delta = target.position(p) - base.position(p);
-        if (glm::length(delta) > 1e-7)
-        {
-            d->indices.push_back(uint32_t(p));
-            d->deltas.push_back(delta);
-        }
-    }
-    return d;
-}
-
-/** Hooks a target node onto the end of the blendShape's chain. */
-void appendTarget(Graph& graph, NodeId bs, NodeId t)
-{
-    PlugRef targets{bs, graph.node(bs)->type().attrIndex("targets"), -1};
-    if (auto last = graph.source(targets))
-    {
-        graph.disconnect(targets);
-        graph.connect(*last, {t, BlendTargetNode::kPrevious, -1});
-    }
-    graph.connect({t, BlendTargetNode::kLink, -1}, targets);
-}
-
-NodeId addTarget(Graph& graph, NodeId bs, NodeId targetMesh, const std::string& morphName, bool live)
-{
-    graph.evaluate();
-    MeshPtr base = std::get<MeshPtr>(graph.value({bs, DeformerNode::kInMesh, -1}));
-    MeshPtr target = graph.node(targetMesh)->as<MeshPtr>(MeshNode::kOutMesh);
-    if (!base || !target)
-        throw CommandError("blendShape: " + graph.node(targetMesh)->name() + " or the base has no geometry");
-    if (base->pointCapacity() != target->pointCapacity())
-        throw CommandError(std::format("blendShape: {} has {} points, the base {}", graph.node(targetMesh)->name(), target->pointCapacity(),
-                                       base->pointCapacity()));
-    Node* t = guarded([&] { return graph.createNode(blendTargetType(), morphName + "Target", kNoNode, true); });
-    graph.setValue({t->id(), BlendTargetNode::kMorphName, -1}, morphName);
-    if (live)
-        graph.connect({targetMesh, MeshNode::kOutMesh, -1}, {t->id(), BlendTargetNode::kTargetMesh, -1});
-    else
-        graph.setValue({t->id(), BlendTargetNode::kDeltas, -1}, DataPtr(deltasBetween(*base, *target)));
-    appendTarget(graph, bs, t->id());
-    return t->id();
-}
-
-void removeTarget(Graph& graph, NodeId t)
-{
-    auto prev = graph.source({t, BlendTargetNode::kPrevious, -1});
-    std::vector<PlugRef> dsts = graph.destinations({t, BlendTargetNode::kLink, -1});
-    for (const PlugRef& d : dsts)
-        graph.disconnect(d);
-    if (prev)
-        for (const PlugRef& d : dsts)
-            graph.connect(*prev, d);
-    graph.deleteNode(t);
-}
-
-json targetInfo(Graph& graph, NodeId t)
-{
-    Node* n = graph.node(t);
-    return {{"node", n->name()},
-            {"name", n->as<std::string>(BlendTargetNode::kMorphName)},
-            {"weight", n->as<double>(BlendTargetNode::kWeight)},
-            {"live", graph.source({t, BlendTargetNode::kTargetMesh, -1}).has_value()}};
-}
 } // namespace
 
 // ------------------------------------------------------------------------------------------------ data kinds
@@ -903,20 +734,6 @@ DataPtr PointWeights::fromJson(const json& j)
     auto w = std::make_shared<PointWeights>();
     readArray(j, "values", w->values);
     return w;
-}
-
-json BlendDeltas::toJson() const { return {{"kind", kind()}, {"indices", indices}, {"deltas", flatten(deltas)}}; }
-
-DataPtr BlendDeltas::fromJson(const json& j)
-{
-    auto d = std::make_shared<BlendDeltas>();
-    readArray(j, "indices", d->indices);
-    std::vector<double> f;
-    readArray(j, "deltas", f);
-    d->deltas = unflatten(f);
-    d->indices.resize(std::min(d->indices.size(), d->deltas.size()));
-    d->deltas.resize(d->indices.size());
-    return d;
 }
 
 // ------------------------------------------------------------------------------------------------ DeformerNode
@@ -1021,14 +838,14 @@ const NodeType* registerDeformer(ext::Context& ctx, DeformerSpec spec)
     }
 }
 
-std::vector<NodeId> addDeformer(Graph& graph, const std::string& type, const std::vector<NodeId>& meshes, const std::string& name)
+std::vector<NodeId> addDeformer(Graph& graph, const std::string& type, const std::vector<NodeId>& meshes, const std::string& name, bool belowSkin)
 {
     const NodeType* t = types::find(type);
     if (!t || !t->create || !(t->create()->traits() & Node::kDeformer))
         throw CommandError("'" + type + "' is not a deformer type");
     std::vector<NodeId> out;
     for (NodeId mesh : meshes)
-        out.push_back(createDeformer(graph, type, mesh, name.empty() ? type : name, false).id());
+        out.push_back(createDeformer(graph, type, mesh, name.empty() ? type : name, belowSkin).id());
     return out;
 }
 
@@ -1038,76 +855,6 @@ std::vector<NodeId> list(Graph& graph, NodeId mesh)
     for (NodeId id : modifiers::stack(graph, mesh))
         if (isDeformer(*graph.node(id)))
             out.push_back(id);
-    return out;
-}
-
-NodeId blendShapeOf(Graph& graph, NodeId mesh)
-{
-    for (NodeId id : modifiers::stack(graph, mesh))
-        if (graph.node(id)->type().isA("blendShape"))
-            return id;
-    return kNoNode;
-}
-
-std::vector<MorphTarget> morphTargets(Graph& graph, NodeId bs)
-{
-    graph.evaluate();
-    std::vector<MorphTarget> out;
-    Node* b = graph.node(bs);
-    if (!b)
-        return out;
-    MeshPtr base = std::get<MeshPtr>(graph.value({bs, DeformerNode::kInMesh, -1}));
-    double envelope = b->as<double>(DeformerNode::kEnvelope);
-    for (NodeId t : targetNodes(graph, bs))
-    {
-        Node* n = graph.node(t);
-        MorphTarget m;
-        m.node = t;
-        m.name = n->as<std::string>(BlendTargetNode::kMorphName);
-        if (m.name.empty())
-            m.name = n->name();
-        m.weight = n->as<double>(BlendTargetNode::kWeight) * envelope;
-        MeshPtr live = n->as<MeshPtr>(BlendTargetNode::kTargetMesh);
-        std::shared_ptr<const BlendDeltas> deltas;
-        if (live && base && live->pointCapacity() == base->pointCapacity())
-            deltas = deltasBetween(*base, *live);
-        else
-            deltas = std::dynamic_pointer_cast<const BlendDeltas>(n->as<DataPtr>(BlendTargetNode::kDeltas));
-        if (deltas)
-        {
-            m.indices = deltas->indices;
-            m.deltas = deltas->deltas;
-        }
-        out.push_back(std::move(m));
-    }
-    return out;
-}
-
-NodeId addBlendShape(Graph& graph, NodeId mesh, const std::string& name)
-{
-    return createDeformer(graph, "blendShape", mesh, name, true).id();
-}
-
-NodeId addBlendTarget(Graph& graph, NodeId bs, const std::string& morphName, std::shared_ptr<const BlendDeltas> deltas, double weight)
-{
-    Node* t = guarded([&] { return graph.createNode(blendTargetType(), morphName + "Target", kNoNode, true); });
-    graph.setValue({t->id(), BlendTargetNode::kMorphName, -1}, morphName);
-    graph.setValue({t->id(), BlendTargetNode::kDeltas, -1}, DataPtr(std::move(deltas)));
-    graph.setValue({t->id(), BlendTargetNode::kWeight, -1}, weight);
-    appendTarget(graph, bs, t->id());
-    return t->id();
-}
-
-std::vector<double> morphWeights(Graph& graph, NodeId bs)
-{
-    graph.evaluate();
-    std::vector<double> out;
-    Node* b = graph.node(bs);
-    if (!b)
-        return out;
-    double envelope = b->as<double>(DeformerNode::kEnvelope);
-    for (NodeId t : targetNodes(graph, bs))
-        out.push_back(graph.node(t)->as<double>(BlendTargetNode::kWeight) * envelope);
     return out;
 }
 
@@ -1123,10 +870,9 @@ std::vector<float> pointWeights(Graph& graph, NodeId deformer, size_t n)
 
 void registerTypes()
 {
-    if (types::find("blendShape"))
+    if (types::find("lattice"))
         return;
     data::registerKind("pointWeights", &PointWeights::fromJson);
-    data::registerKind("blendDeltas", &BlendDeltas::fromJson);
     data::registerKind("restPoints", &RestPoints::fromJson);
     data::registerKind("wrapBinding", &WrapData::fromJson);
     data::registerKind("cageBinding", &CageData::fromJson);
@@ -1230,27 +976,6 @@ void registerTypes()
                               "Falloff shape as soft select curve JSON ([[pos, value, interp], ...]); empty for the default smooth curve.")},
                       [] { return std::make_unique<SoftModNode>(); }});
 
-    registerDeformer({"blendShape", "mood-smile",
-                      "Morph targets: blends the mesh toward target shapes by their weights. Exported to Unreal as morph targets.",
-                      {connected("targets", PlugType::Data, DataPtr(), "The last blendTarget in the chain.")},
-                      [] { return std::make_unique<BlendShapeNode>(); }});
-
-    NodeType target;
-    target.name = "blendTarget";
-    target.icon = "mood-smile";
-    target.doc = "One morph target of a blendShape: its weight, and the shape as offsets or a live target mesh.";
-    target.ownAttrs = {
-        keyable("weight", PlugType::Float, 0.0, "How much of the target applies, usually 0 to 1."),
-        stored("morphName", PlugType::String, std::string(), "The morph target's name in exports."),
-        hiddenStored("deltas", PlugType::Data, DataPtr(), "Offsets from the base, object space."),
-        connected("targetMesh", PlugType::Mesh, MeshPtr(), "A live target's outMesh; overrides the stored offsets."),
-        connected("previous", PlugType::Data, DataPtr(), "The target before this one."),
-        {.name = "link", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrOutput | AttrHidden,
-         .doc = "This target plus everything before it."},
-    };
-    target.create = [] { return std::make_unique<BlendTargetNode>(); };
-    types::registerType(std::move(target));
-
     // The lattice is a mesh, so its points are edited with every component tool; the viewport draws it as wire.
     NodeType lattice;
     lattice.name = "lattice";
@@ -1260,6 +985,8 @@ void registerTypes()
     lattice.doc = "The control lattice of an ffd deformer. Move its points (vertex mode) to reshape the meshes it deforms.";
     lattice.create = [] { return std::make_unique<MeshNode>(); };
     types::registerType(std::move(lattice));
+
+    morphs::registerTypes();
 }
 
 void registerCommands()
@@ -1268,7 +995,7 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "deformers",
-        .doc = "A mesh's deformers (blendShape, ffd, deltaMush, ...), applied first first.",
+        .doc = "A mesh's deformers (morph, ffd, deltaMush, ...), applied first first.",
         .positionalDoc = "mesh",
         .undoable = false,
         .run = [](const Args& a) -> json {
@@ -1584,137 +1311,7 @@ void registerCommands()
         },
     });
 
-    ops::registerCommand({
-        .name = "blendShape",
-        .doc = "Add a blendShape (morph targets) to the base mesh, the last argument, with a target per other mesh. Targets need "
-               "the base's point count. It sits under any skinCluster, so morphs apply before skinning, as in Unreal. Returns "
-               "the blendShape.",
-        .positionalDoc = "targets..., base",
-        .flags = {{"live", "", T::Bool, false, "Keep targets connected so editing a target mesh updates the morph."},
-                  {"name", "", T::String, nullptr, "Name for the blendShape."}},
-        .run = [](const Args& a) -> json {
-            Graph& graph = g();
-            std::vector<std::string> objs = a.objects();
-            if (objs.empty())
-                throw CommandError("blendShape: give targets and the base mesh last");
-            NodeId base = meshNamed(objs.back(), "blendShape").id();
-            objs.pop_back();
-            if (deformers::blendShapeOf(graph, base) != kNoNode)
-                throw CommandError("blendShape: " + graph.node(base)->name() + " already has a blendShape; use addBlendTarget");
-            DeformerNode& bs = createDeformer(graph, "blendShape", base, a.has("name") ? a.get<std::string>("name") : "BlendShape", true);
-            for (const std::string& name : objs)
-            {
-                NodeId t = meshNamed(name, "blendShape").id();
-                addTarget(graph, bs.id(), t, name, a.get<bool>("live"));
-            }
-            return bs.name();
-        },
-    });
-
-    ops::registerCommand({
-        .name = "addBlendTarget",
-        .doc = "Add target meshes to a blendShape (or the blendShape on a mesh): the first argument, then the targets. Returns the "
-               "new target nodes, whose weight attrs drive the morphs.",
-        .positionalDoc = "blendShape, targets...",
-        .flags = {{"live", "", T::Bool, false, "Keep the targets connected so editing them updates the morphs."},
-                  {"morphName", "", T::String, nullptr, "Export name when adding one target. Default: the target mesh's name."}},
-        .run = [](const Args& a) -> json {
-            Graph& graph = g();
-            std::vector<std::string> objs = a.objects();
-            if (objs.size() < 2)
-                throw CommandError("addBlendTarget: give the blendShape (or its mesh), then the targets");
-            NodeId bs = resolveBlendShape(graph, objs.front(), "addBlendTarget");
-            json out = json::array();
-            for (size_t i = 1; i < objs.size(); ++i)
-            {
-                NodeId t = meshNamed(objs[i], "addBlendTarget").id();
-                std::string morph = a.has("morphName") && objs.size() == 2 ? a.get<std::string>("morphName") : objs[i];
-                out.push_back(graph.node(addTarget(graph, bs, t, morph, a.get<bool>("live")))->name());
-            }
-            return out;
-        },
-    });
-
-    ops::registerCommand({
-        .name = "removeBlendTarget",
-        .doc = "Remove morph targets (blendTarget nodes) from their blendShape.",
-        .positionalDoc = "targets",
-        .run = [](const Args& a) -> json {
-            Graph& graph = g();
-            for (const std::string& name : a.objects())
-            {
-                Node& n = nodeNamed(name, "removeBlendTarget");
-                if (!dynamic_cast<BlendTargetNode*>(&n))
-                    throw CommandError("removeBlendTarget: " + name + " is not a blendTarget");
-                removeTarget(graph, n.id());
-            }
-            return nullptr;
-        },
-    });
-
-    ops::registerCommand({
-        .name = "blendTargets",
-        .doc = "A blendShape's targets in order: [{node, name, weight, live}]. Set a weight with setAttr(node + \".weight\", w).",
-        .positionalDoc = "blendShape or mesh",
-        .undoable = false,
-        .run = [](const Args& a) -> json {
-            Graph& graph = g();
-            auto objs = a.objects();
-            if (objs.empty())
-                throw CommandError("blendTargets: no blendShape");
-            json out = json::array();
-            for (NodeId t : targetNodes(graph, resolveBlendShape(graph, objs.back(), "blendTargets")))
-                out.push_back(targetInfo(graph, t));
-            return out;
-        },
-    });
-
-    ops::registerCommand({
-        .name = "extractBlendTarget",
-        .doc = "Build a new mesh in a morph target's full shape (base plus offsets), to sculpt it and add it back with addBlendTarget "
-               "or keep it live. Returns the new mesh.",
-        .positionalDoc = "target",
-        .run = [](const Args& a) -> json {
-            Graph& graph = g();
-            auto objs = a.objects();
-            if (objs.empty())
-                throw CommandError("extractBlendTarget: no target");
-            Node& n = nodeNamed(objs.back(), "extractBlendTarget");
-            if (!dynamic_cast<BlendTargetNode*>(&n))
-                throw CommandError("extractBlendTarget: " + n.name() + " is not a blendTarget");
-            auto dsts = graph.destinations({n.id(), BlendTargetNode::kLink, -1});
-            NodeId bs = kNoNode;
-            for (NodeId cur = n.id(); !dsts.empty();)
-            {
-                cur = dsts[0].node;
-                if (graph.node(cur)->type().isA("blendShape"))
-                {
-                    bs = cur;
-                    break;
-                }
-                dsts = graph.destinations({cur, BlendTargetNode::kLink, -1});
-            }
-            if (bs == kNoNode)
-                throw CommandError("extractBlendTarget: " + n.name() + " is not connected to a blendShape");
-            graph.evaluate();
-            MeshPtr base = std::get<MeshPtr>(graph.value({bs, DeformerNode::kInMesh, -1}));
-            if (!base)
-                throw CommandError("extractBlendTarget: the base has no geometry");
-            auto shape = std::make_shared<geo::Mesh>(*base);
-            for (const deformers::MorphTarget& m : deformers::morphTargets(graph, bs))
-                if (m.node == n.id())
-                    for (size_t k = 0; k < m.indices.size(); ++k)
-                        if (m.indices[k] < shape->pointCapacity())
-                            shape->setPosition(m.indices[k], shape->position(m.indices[k]) + m.deltas[k]);
-            std::string morph = n.as<std::string>(BlendTargetNode::kMorphName);
-            Node* mesh = guarded([&] { return graph.createNode(*types::find("mesh"), morph.empty() ? n.name() : morph, kNoNode, true); });
-            graph.setValue({mesh->id(), MeshNode::kInMesh, -1}, MeshPtr(std::move(shape)));
-            NodeId baseMesh = modifiers::meshOf(graph, bs);
-            if (baseMesh != kNoNode)
-                Transform::setLocalMatrix(graph, mesh->id(), worldOf(*graph.node(baseMesh)));
-            return mesh->name();
-        },
-    });
+    morphs::registerCommands();
 }
 } // namespace deformers
 } // namespace lila::scene

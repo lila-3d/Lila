@@ -73,4 +73,14 @@ LILA_SCENE_API std::vector<float> softWeights(const geo::Mesh& mesh, const glm::
 LILA_SCENE_API glm::dvec3 selectionCenter();
 /** Applies a world-space transform to the selected components' points (with symmetry), as one undo step. */
 LILA_SCENE_API void transformSelectedComponents(const char* label, const glm::dmat4& worldXform);
+
+/**
+ * Object-space unit normal per point (zero where it has no faces): the area-weighted sum of its faces' normals. With a face
+ * selection, points on the selected faces sum only those, so the region moves as one surface.
+ */
+LILA_SCENE_API std::vector<glm::dvec3> componentNormals(const geo::Mesh& mesh, ComponentMode kind, const components::Ids& ids);
+/** World-space average normal of the selected components, for orienting the manipulator; +Y when there is none. */
+LILA_SCENE_API glm::dvec3 selectionNormal();
+/** Moves each selected point (with soft selection and symmetry) by a world distance along its own normal, as one undo step. */
+LILA_SCENE_API void offsetSelectedComponents(const char* label, double distance);
 } // namespace lila::scene

@@ -4,6 +4,7 @@
 
 #include "render/Renderer.h"
 #include "scene/ComponentPick.h"
+#include "scene/Isolation.h"
 #include "scene/Plug.h"
 #include "ui/Camera.h"
 #include "ui/CameraHistory.h"
@@ -62,9 +63,17 @@ public:
     nlohmann::json cameraState() const;
     /** Takes what cameraState wrote: shows that view with those poses. Leaves any look-through first. */
     void restoreCameraState(const nlohmann::json& state);
-    /** Shows only the current selection (and its children) in this view; again to show everything. */
+    /**
+     * Shows only the current selection in this view; again to show everything. Selected components of a mesh show only
+     * the faces they touch. Hidden things can't be picked, hovered or snapped to here.
+     */
     void toggleIsolate();
-    bool isolating() const { return !mIsolated.empty(); }
+    /** Adds the selection (objects or components) to this view's isolation, starting one if none is on. */
+    void addToIsolation();
+    void removeFromIsolation();
+    bool isolating() const { return mIsolation.active(); }
+    const scene::isolation::Set& isolation() const { return mIsolation; }
+    void setIsolation(scene::isolation::Set set);
     /** The gizmo in use for the current tool, or null when none applies. */
     const Gizmo* gizmo() const { return const_cast<ViewportWidget*>(this)->currentGizmo(); }
     /** Steps this view's camera back or forward through its own history ([ and ]); the scene's undo is untouched. */
@@ -127,8 +136,16 @@ private:
     void updateCursor();
     /** Widget-space pixel of a world point; nullopt behind the camera. */
     std::optional<QPointF> project(const glm::dvec3& world) const;
-    /** Names under a click point (nearest only) or inside a box. */
+    /** Names under a click point (nearest only) or inside a box (the lasso instead while mLassoPick is set). */
     std::vector<std::string> hitTest(QPointF a, QPointF b);
+    /** A drag selection's test for a projected point: inside the lasso being picked, else inside box. */
+    bool inSelectRegion(const QRectF& box, QPointF p) const;
+    /** Selects with the lasso drawn in mLasso, or clicks at the press when it is too small to enclose anything. */
+    void pickLasso(Qt::KeyboardModifiers mods);
+    /** Whether what a Tab press at the point would land on is selected; nullopt over nothing. */
+    std::optional<bool> selectedUnder(QPointF at);
+    /** Refreshes mTabUnder for the cursor badge while Tab is held. */
+    void updateTabHover(QPointF at);
     /** The skinned mesh under the cursor, or empty. */
     std::string skinnedMeshAt(QPointF at);
     void pick(QPointF a, QPointF b, Qt::KeyboardModifiers mods);
@@ -176,7 +193,7 @@ private:
     std::optional<CameraEdit> mCameraEdit;
     QTimer* mWheelCommit = nullptr; // a run of wheel clicks on a camera node commits once it stops
     double mLockedWarnMs = 0.0;
-    std::unordered_set<scene::NodeId> mIsolated; // empty = not isolating
+    scene::isolation::Set mIsolation;
     void drawHud(OverlayPainter& p);
     void drawViewIndicator(OverlayPainter& p);
     /** Resolution and film gates with the mask outside them, Maya style. */
@@ -196,6 +213,11 @@ private:
     /** Tab held over this view with a select or transform tool: LMB drags paint the selection (mTabStroke). */
     bool mTabHeld = false;
     paintSelect::Stroke mTabStroke;
+    std::optional<bool> mTabUnder; // selectedUnder at the cursor while Tab is held
+    /** The drag under way draws a lasso (mLasso, widget pixels) rather than a marquee. */
+    bool mLassoDrag = false;
+    std::vector<glm::dvec2> mLasso;
+    bool mLassoPick = false; // hitTest and pickComponents test against mLasso
     bool mSwallowRelease = false; // the release ending a double-click that already selected
     /** The last two components clicked, newest first: Shift+double-click selects the path between them. */
     scene::componentPick::Hover mClicked[2];

@@ -317,9 +317,9 @@ void GameExporter::refreshSets()
     scene::Graph& g = scene::Graph::current();
     for (const scene::Node* s : scene::objectSets::all(g))
     {
-        auto* item = new QListWidgetItem(icon("list-details"), QString::fromStdString(s->name()), mSetList);
+        auto* item = new QListWidgetItem(icon("list-details"), QString::fromStdString(s->path()), mSetList);
         item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable);
-        item->setCheckState(ticked.contains(s->name()) ? Qt::Checked : Qt::Unchecked);
+        item->setCheckState(ticked.contains(s->path()) ? Qt::Checked : Qt::Unchecked);
         item->setToolTip(QString::number(scene::objectSets::nodesOf(g, s->id()).size()) + " object(s)");
     }
     mApplying = wasApplying;

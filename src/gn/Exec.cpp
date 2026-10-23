@@ -4,6 +4,7 @@
 
 #include <functional>
 #include <map>
+#include <mutex>
 
 namespace lila::gn
 {
@@ -74,21 +75,59 @@ PlanPtr compile(const Group& g)
                 if (!step.sockets.inputs[k].multi)
                     break;
             }
-        if (grp.nodes[n].type == "SceneTime")
-            plan->usesTime = true;
         stepOf[n] = int(plan->steps.size());
         plan->steps.push_back(std::move(step));
         state[n] = 2;
         return true;
     };
-    if (!visit(size_t(outNode - grp.nodes.data())))
+    plan->usesTime = usesSceneTime(grp);
+    size_t outIndex = size_t(outNode - grp.nodes.data());
+    if (!visit(outIndex))
+    {
         plan->steps.clear();
-    else
-        plan->outputStep = int(plan->steps.size()) - 1;
+        return plan;
+    }
+    plan->outputStep = stepOf[outIndex];
+    if (const GNode* viewer = activeViewer(grp))
+    {
+        std::string error = plan->error;
+        size_t vi = size_t(viewer - grp.nodes.data());
+        // A broken viewer branch only loses the preview, never the result.
+        if (visit(vi))
+            plan->viewerStep = stepOf[vi];
+        plan->error = error;
+    }
     return plan;
 }
 
-GeometryPtr execute(const Plan& plan, const ExecEnv& env)
+const GNode* activeViewer(const Group& g)
+{
+    for (const GNode& n : g.nodes)
+        if (n.type == "Viewer")
+            if (auto it = n.values.find("active"); it != n.values.end() && it->is_boolean() && it->get<bool>())
+                return &n;
+    return nullptr;
+}
+
+PlanPtr cachedPlan(const json& definition)
+{
+    static std::mutex mutex;
+    static std::map<std::string, PlanPtr> cache;
+    std::string key = definition.dump();
+    {
+        std::lock_guard lock(mutex);
+        if (auto it = cache.find(key); it != cache.end())
+            return it->second;
+    }
+    PlanPtr plan = compile(Group::fromJson(definition));
+    std::lock_guard lock(mutex);
+    if (cache.size() > 128)
+        cache.clear();
+    cache[key] = plan;
+    return plan;
+}
+
+std::vector<Value> executeOutputs(const Plan& plan, const ExecEnv& env)
 {
     LILA_ZONE();
 
@@ -96,6 +135,7 @@ GeometryPtr execute(const Plan& plan, const ExecEnv& env)
         throw ExecError(plan.error.empty() ? "nothing to evaluate" : plan.error);
 
     std::vector<std::vector<Value>> results(plan.steps.size());
+    std::vector<Value> outputs;
     for (size_t s = 0; s < plan.steps.size(); ++s)
     {
         const Plan::Step& step = plan.steps[s];
@@ -129,29 +169,33 @@ GeometryPtr execute(const Plan& plan, const ExecEnv& env)
         }
         for (size_t k = 0; k < step.sockets.outputs.size(); ++k)
             ctx.outputs[k] = defaultValue(step.sockets.outputs[k].type);
+        bool isViewer = int(s) == plan.viewerStep;
         try
         {
             if (step.decl->exec)
                 step.decl->exec(ctx);
         }
-        catch (const ExecError&)
-        {
-            throw;
-        }
         catch (const std::exception& e)
         {
+            if (isViewer)
+                continue;
+            if (dynamic_cast<const ExecError*>(&e))
+                throw;
             throw ExecError(node.name + ": " + e.what());
         }
+        if (int(s) == plan.outputStep)
+            for (size_t k = 0; k < ctx.inputs.size(); ++k)
+                outputs.push_back(ctx.inputs[k].empty() ? defaultValue(step.sockets.inputs[k].type) : ctx.inputs[k][0]);
         results[s] = std::move(ctx.outputs);
     }
+    return outputs;
+}
 
-    const Plan::Step& out = plan.steps[plan.outputStep];
-    if (!out.inputs.empty() && !out.inputs[0].empty())
-    {
-        const Plan::Source& src = out.inputs[0][0];
-        const Value& v = results[src.step][src.output];
-        return v.geometry ? v.geometry : makeGeometry({});
-    }
+GeometryPtr execute(const Plan& plan, const ExecEnv& env)
+{
+    std::vector<Value> out = executeOutputs(plan, env);
+    if (!out.empty() && out[0].geometry)
+        return out[0].geometry;
     return makeGeometry({});
 }
 } // namespace lila::gn

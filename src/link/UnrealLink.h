@@ -4,6 +4,7 @@
 
 #include "link/RpcClient.h"
 #include "scene/Node.h"
+#include "seq/MeshSequence.h"
 
 #include <condition_variable>
 #include <deque>
@@ -71,6 +72,26 @@ LILA_SCENE_API json materialParams(scene::Graph& g, const std::vector<scene::Nod
  */
 LILA_SCENE_API CallOptions importCallOptions();
 
+/** Asset names of a meshSequence mapping's frames: contentPath /Game/FX/SM_Spike gives /Game/FX/SM_Spike_000, ... */
+struct SequenceAssets
+{
+    std::string folder; // /Game/FX
+    std::string base;   // SM_Spike
+    std::vector<std::string> contentPaths;
+    std::vector<std::string> objectPaths;
+};
+LILA_SCENE_API SequenceAssets sequenceAssets(const json& mapping, int count);
+
+/** From a listAssets reply, the frames <base>_<n> with n >= count: what is left over when a sequence gets shorter. */
+LILA_SCENE_API std::vector<std::string> surplusFrames(const json& listed, const std::string& base, int count);
+
+/**
+ * Sampling for a meshSequence (fbx per frame) or geometryCache (one abc) mapping: its "sequence" object (the
+ * exportMeshSequence flags: start, end, step, fps, scale, padding, worldSpace, recenter, ...; the playback range without
+ * start and end), written to `folder` with the ue5 axes.
+ */
+LILA_SCENE_API seq::SequenceOptions sequenceOptions(const json& mapping, const fs::path& folder);
+
 /** Where auto-sync writes exports: the "/cacheDir" pref, else <workspace>/.lila/cache/unreal, else the user dir. */
 LILA_SCENE_API fs::path cacheDir();
 
@@ -130,6 +151,11 @@ private:
  * Auto-sync: for each mapping whose node exists, export it with the "fbx" exporter to cacheDir()/<node>.fbx on the
  * worker and send importAsset. A mapped object set exports its member objects together into one file, through the
  * "fbx:set:<kind>" exporter when one is registered. Results are logged. Main thread. Off when the "unreal" pref "/autoSync" is false.
+ *
+ * Animated kinds are sampled here on the main thread first. meshSequence writes an FBX per frame and imports each as
+ * the static mesh <contentPath>_<index> (reimported in place, so references stay), then sets the Niagara system's mesh
+ * renderer to them when the mapping names niagaraSystem, then deletes frames past the end. geometryCache writes one
+ * .abc and imports it as a Geometry Cache.
  */
 LILA_SCENE_API void onSceneSaved();
 

@@ -145,7 +145,7 @@ void registerOptimizeCommands()
             bo.exactLengths = a.get<bool>("exactLengths", false);
             const bool pack = a.get<bool>("pack", false), rectangle = boundary == "rectangle";
             std::string set = uvSetOf(a);
-            return editUvMeshes("UV BFF", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
+            return editUvMeshes("UV BFF", K::Face, symmetricUvEdit(set, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
                 LILA_ZONE_N("uvBff");
                 std::vector<Index> faces = liveFaces(m, f);
                 Index opened = cutToDisks(m, faces);
@@ -193,7 +193,7 @@ void registerOptimizeCommands()
                 if (cones > 0)
                     markSeamsFromUvs(m, faces, set);
                 return {{"islands", charts.size()}, {"failed", failed.load()}, {"cones", cones.load()}, {"seamsAdded", opened}};
-            });
+            }));
         },
     });
 
@@ -211,7 +211,7 @@ void registerOptimizeCommands()
         .run = [](const Args& a) -> json {
             OptimizeOptions o = optimizeArgs(a);
             std::string set = uvSetOf(a);
-            return editUvMeshes("UV Optimize", K::Face, [&](geo::Mesh& m, const Ids& f, Node&) -> json {
+            return editUvMeshes("UV Optimize", K::Face, symmetricUvEdit(set, [&](geo::Mesh& m, const Ids& f, Node&) -> json {
                 if (m.cornerAttrs().get<glm::vec2>(set).empty())
                     throw CommandError("uvOptimize: no " + set + " uvs; unwrap first");
                 std::vector<Chart> charts = uvIslands(m, f, set);
@@ -239,7 +239,7 @@ void registerOptimizeCommands()
                         {"failed", failed},
                         {"areaDistortion", {area[0] / w, area[1] / w}},
                         {"angleDistortion", {angle[0] / w, angle[1] / w}}};
-            });
+            }));
         },
     });
 
@@ -319,7 +319,7 @@ void registerOptimizeCommands()
         .run = [](const Args& a) -> json {
             std::string set = uvSetOf(a);
             int iterations = std::clamp(a.get<int>("iterations", 12), 0, 200);
-            return editUvMeshes("UV Straighten Edges", K::Edge, [&](geo::Mesh& m, const Ids& e, Node&) -> json {
+            return editUvMeshes("UV Straighten Edges", K::Edge, symmetricUvEdit(set, [&](geo::Mesh& m, const Ids& e, Node&) -> json {
                 if (m.cornerAttrs().get<glm::vec2>(set).empty())
                     throw CommandError("uvStraightenEdges: no " + set + " uvs; unwrap first");
                 std::vector<uint8_t> sel = edgeMask(m, e);
@@ -328,7 +328,7 @@ void registerOptimizeCommands()
                 tbb::parallel_for(size_t(0), charts.size(), size_t(1), [&](size_t i) { chains += straightenEdges(charts[i], m, sel, iterations); });
                 writeCharts(m, charts, set);
                 return {{"chains", chains.load()}};
-            }, false);
+            }), false);
         },
     });
 
@@ -341,7 +341,7 @@ void registerOptimizeCommands()
             std::string set = uvSetOf(a);
             std::string axis = a.get<std::string>("axis", "nearest");
             AlignAxis ax = axis == "u" ? AlignAxis::U : axis == "v" ? AlignAxis::V : AlignAxis::Nearest;
-            return editUvMeshes("UV Align To Edge", K::Edge, [&](geo::Mesh& m, const Ids& e, Node&) -> json {
+            return editUvMeshes("UV Align To Edge", K::Edge, symmetricUvEdit(set, [&](geo::Mesh& m, const Ids& e, Node&) -> json {
                 if (m.cornerAttrs().get<glm::vec2>(set).empty())
                     throw CommandError("uvAlignToEdge: no " + set + " uvs; unwrap first");
                 std::vector<uint8_t> sel = edgeMask(m, e);
@@ -351,7 +351,7 @@ void registerOptimizeCommands()
                     turned += alignToEdges(ch, m, sel, ax) ? 1 : 0;
                 writeCharts(m, charts, set);
                 return {{"islands", turned}};
-            }, false);
+            }), false);
         },
     });
 }

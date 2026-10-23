@@ -40,6 +40,9 @@ struct GridPush
     glm::mat4 viewProj;
     glm::vec4 eye;
     glm::vec4 params;
+    glm::vec4 color;
+    glm::vec4 axisX;
+    glm::vec4 axisZ;
 };
 
 struct MeshPush
@@ -116,6 +119,7 @@ struct GpuMesh
     Buffer vertices, indices, edges;
     uint32_t indexCount = 0;
     uint32_t edgePointCount = 0;
+    bool sharedVertices = false; // the vertex buffer belongs to the shareVertices mesh's entry
     std::shared_ptr<const RenderMesh> keep;
     uint64_t lastUsed = 0;
 };
@@ -905,11 +909,20 @@ struct Renderer::Impl
     {
         LILA_ZONE();
 
+        // Looked up first: inserting this entry may rehash the cache under the base's.
+        Buffer shared;
+        if (mesh->shareVertices)
+            shared = gpuMesh(mesh->shareVertices)->vertices;
         auto it = meshCache.find(mesh->key);
         if (it == meshCache.end())
         {
             GpuMesh g;
-            if (mesh->dynamic)
+            if (mesh->shareVertices)
+            {
+                g.vertices = shared;
+                g.sharedVertices = true;
+            }
+            else if (mesh->dynamic)
             {
                 DynamicVertices& dv = *mesh->dynamic;
                 std::scoped_lock lock(dv.mutex);
@@ -927,6 +940,8 @@ struct Renderer::Impl
             g.keep = mesh;
             it = meshCache.emplace(mesh->key, std::move(g)).first;
         }
+        else if (mesh->shareVertices)
+            it->second.vertices = shared;
         it->second.lastUsed = frameCounter;
         return &it->second;
     }
@@ -946,7 +961,8 @@ struct Renderer::Impl
         for (uint64_t key : stale)
         {
             GpuMesh& g = meshCache[key];
-            destroyBuffer(g.vertices);
+            if (!g.sharedVertices)
+                destroyBuffer(g.vertices);
             destroyBuffer(g.indices);
             destroyBuffer(g.edges);
             meshCache.erase(key);
@@ -957,7 +973,8 @@ struct Renderer::Impl
     {
         for (auto& [key, g] : meshCache)
         {
-            destroyBuffer(g.vertices);
+            if (!g.sharedVertices)
+                destroyBuffer(g.vertices);
             destroyBuffer(g.indices);
             destroyBuffer(g.edges);
         }
@@ -1925,7 +1942,7 @@ struct Renderer::Impl
             uploadAtlas(s.atlas);
 
         // One buffer per frame: lines, linesOnTop, tris3d, overlay and linesXray share the LineVertex stride, overlayTris follow.
-        const std::vector<LineVertex>* lineSets[] = {&s.lines, &s.linesOnTop, &s.tris3d, &s.overlay, &s.linesXray, &s.selectedEdges};
+        const std::vector<LineVertex>* lineSets[] = {&s.lines, &s.linesOnTop, &s.tris3d, &s.overlay, &s.linesXray, &s.selectedEdges, &s.seamLines};
         constexpr int kLineSets = int(std::size(lineSets));
         uint32_t lineFirst[kLineSets];
         size_t lineBytes = 0;
@@ -2044,6 +2061,9 @@ struct Renderer::Impl
             gp.invViewProj = glm::mat4(glm::inverse(viewProj));
             gp.eye = glm::vec4(glm::vec3(s.eye), 1.0f);
             gp.params = glm::vec4(s.gridSpacing, float(s.gridMajorEvery), s.zUp ? 1.0f : 0.0f, 0.0f);
+            gp.color = glm::vec4(s.gridColor, 1.0f);
+            gp.axisX = glm::vec4(s.gridAxisX, 1.0f);
+            gp.axisZ = glm::vec4(s.gridAxisZ, 1.0f);
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gridPipeline);
             vkCmdPushConstants(cmd, gridLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(GridPush), &gp);
             vkCmdDraw(cmd, 3, 1, 0, 0);
@@ -2073,7 +2093,7 @@ struct Renderer::Impl
             int set;
             float width;
         };
-        const Biased biased[] = {{linesOnTopPipeline, 1, 1.0f}, {linesOnTopPipeline, 5, s.selectedEdgeWidth}, {tris3dPipeline, 2, 0.0f}};
+        const Biased biased[] = {{linesOnTopPipeline, 1, 1.0f}, {linesOnTopPipeline, 6, s.seamLineWidth}, {linesOnTopPipeline, 5, s.selectedEdgeWidth}, {tris3dPipeline, 2, 0.0f}};
         for (const Biased& b : biased)
         {
             const std::vector<LineVertex>& verts = *lineSets[b.set];
@@ -2446,12 +2466,11 @@ struct Renderer::Impl
             WirePush p;
             p.viewProj = viewProj;
             p.world = d.world;
-            // Grayscale only: white for the selection, mid gray under it, near black otherwise.
-            p.color = (d.flags & DrawSelected) ? glm::vec4(0.92f, 0.92f, 0.92f, 1.0f)
-                      : (d.flags & DrawPreselect)     ? glm::vec4(0.75f, 0.75f, 0.75f, 1.0f)
-                      : (d.flags & DrawUnderSelected) ? glm::vec4(0.55f, 0.55f, 0.55f, 1.0f)
+            p.color = (d.flags & DrawSelected)        ? s.wireSelected
+                      : (d.flags & DrawPreselect)     ? s.wirePreselect
+                      : (d.flags & DrawUnderSelected) ? s.wireUnderSelected
                       : d.wireColor.a > 0.0f          ? d.wireColor
-                                                      : glm::vec4(0.02f, 0.02f, 0.02f, 1.0f);
+                                                      : s.wireDefault;
             bool shaded = d.flags & (DrawShaded | DrawWireDepth);
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shaded ? wirePipeline : wireXrayPipeline);
             vkCmdSetLineWidth(cmd, lineWidth(d.wireWidth));

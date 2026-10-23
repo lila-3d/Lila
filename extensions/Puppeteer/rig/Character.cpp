@@ -58,7 +58,7 @@ std::vector<std::string> skinnedMeshes(Graph& g, NodeId root)
         try
         {
             Args a;
-            a.positional = json::array({n->name()});
+            a.positional = json::array({n->path()});
             r = info->run(a);
         }
         catch (const std::exception&)
@@ -66,9 +66,9 @@ std::vector<std::string> skinnedMeshes(Graph& g, NodeId root)
             continue;
         }
         for (const json& inf : r.value("influences", json::array()))
-            if (Node* j = inf.is_string() ? g.find(inf.get<std::string>()) : nullptr; j && isUnder(g, j->id(), root))
+            if (Node* j = inf.is_string() ? named(g, inf.get<std::string>()) : nullptr; j && isUnder(g, j->id(), root))
             {
-                out.push_back(n->name());
+                out.push_back(n->path());
                 break;
             }
     }
@@ -91,7 +91,7 @@ void adoptElements(Graph& g, NodeId character, NodeId root)
     auto joint = [&](const Node& n) -> Node* {
         for (const char* attr : {"startJoint", "ankle", "joint"})
             if (const int a = attrOf(n, attr); a >= 0)
-                return g.find(n.as<std::string>(a));
+                return named(g, n.as<std::string>(a));
         return nullptr;
     };
     std::vector<NodeId> moving;
@@ -127,12 +127,13 @@ json characterJson(Graph& g, NodeId c)
     json elements = json::array();
     for (NodeId e : g.descendants(c))
         if (Node* en = g.node(e); en && (lila::scene::rigel::isElement(*en) || en->type().name.rfind("puppeteer", 0) == 0))
-            elements.push_back({{"name", en->name()}, {"type", en->type().name}});
+            elements.push_back({{"name", en->path()}, {"type", en->type().name}});
     json takes = json::array();
-    const std::string root = textOf(n, "root");
+    const Node* rootNode = named(g, textOf(n, "root"));
+    const std::string root = rootNode ? rootNode->path() : textOf(n, "root");
     if (ops::find("listTakes"))
         for (const json& t : ops::execute("listTakes", json::object()))
-            if (t.value("root", std::string()) == root || t.value("root", std::string()).empty())
+            if (const std::string tr = t.value("root", std::string()); tr.empty() || tr == root || (rootNode && named(g, tr) == rootNode))
                 takes.push_back(t.value("name", std::string()));
     json poses = json::array();
     if (ops::find("listPoses"))
@@ -157,7 +158,10 @@ json characterJson(Graph& g, NodeId c)
         }
     else if (!id.empty())
         templ = {{"id", id}, {"loaded", false}};
-    return {{"name", n.name()},         {"root", root},           {"meshes", splitNames(textOf(n, "meshes"))},
+    json meshes = json::array();
+    for (const std::string& m : splitNames(textOf(n, "meshes")))
+        meshes.push_back(named(g, m) ? named(g, m)->path() : m);
+    return {{"name", n.path()},         {"root", root},           {"meshes", meshes},
             {"template", templ},        {"poseLibrary", poseLibraryOf(g, c)}, {"elements", elements},
             {"takes", takes},           {"poses", poses}};
 }
@@ -204,13 +208,13 @@ void registerCommands(ext::Context& ctx)
                 throw CommandError("puppeteerCharacter: give the skeleton's root joint");
             const NodeId root = topJoint(g, jointNamed(g, objs.front(), "puppeteerCharacter").id());
             for (NodeId c : characters(g))
-                if (textOf(*g.node(c), "root") == g.node(root)->name())
-                    throw CommandError("puppeteerCharacter: " + g.node(root)->name() + " already has " + g.node(c)->name());
+                if (named(g, textOf(*g.node(c), "root")) == g.node(root))
+                    throw CommandError("puppeteerCharacter: " + g.path(root) + " already has " + g.path(c));
             const std::string rootName = g.node(root)->name();
             std::vector<std::string> meshes;
             if (a.has("meshes"))
                 for (const json& m : a.flags["meshes"])
-                    meshes.push_back(nodeNamed(g, m.get<std::string>(), "puppeteerCharacter").name());
+                    meshes.push_back(nodeNamed(g, m.get<std::string>(), "puppeteerCharacter").path());
             else
                 meshes = skinnedMeshes(g, root);
             std::string templ = a.get<std::string>("template", "");
@@ -218,13 +222,13 @@ void registerCommands(ext::Context& ctx)
                 templ = poses::characterOf(g, root).templateId;
             Node* c = g.createNode(*types::find(kCharacterType), a.get<std::string>("name", rootName + "_character"));
             const NodeId id = c->id();
-            g.setValue(plugOf(*c, "root"), rootName);
+            g.setValue(plugOf(*c, "root"), g.path(root));
             g.setValue(plugOf(*c, "meshes"), joinNames(meshes));
             g.setValue(plugOf(*c, "templateId"), templ);
             g.setValue(plugOf(*c, "poseLibrary"), a.get<std::string>("poseLibrary", ""));
             adoptElements(g, id, root);
             g.select({id});
-            return g.node(id)->name();
+            return g.node(id)->path();
         },
     });
 
@@ -248,7 +252,10 @@ void registerCommands(ext::Context& ctx)
             Graph& g = Graph::current();
             json out = json::array();
             for (NodeId c : characters(g))
-                out.push_back({{"name", g.node(c)->name()}, {"root", textOf(*g.node(c), "root")}, {"poseLibrary", poseLibraryOf(g, c)}});
+            {
+                const Node* root = named(g, textOf(*g.node(c), "root"));
+                out.push_back({{"name", g.node(c)->path()}, {"root", root ? root->path() : textOf(*g.node(c), "root")}, {"poseLibrary", poseLibraryOf(g, c)}});
+            }
             return out;
         },
     });
@@ -273,7 +280,7 @@ NodeId characterFor(Graph& g, NodeId node)
         if (Node* n = g.node(cur); n && n->type().isA(kCharacterType))
             return cur;
     for (NodeId c : characters(g))
-        if (Node* root = g.find(textOf(*g.node(c), "root")); root && isUnder(g, node, root->id()))
+        if (Node* root = named(g, textOf(*g.node(c), "root")); root && isUnder(g, node, root->id()))
             return c;
     return kNoNode;
 }
@@ -285,7 +292,10 @@ std::string poseLibraryOf(Graph& g, NodeId character)
         return lib;
     if (const std::string& t = textOf(n, "templateId"); !t.empty())
         return t;
-    return poses::stripNamespace(textOf(n, "root"));
+    if (const Node* root = named(g, textOf(n, "root")))
+        return poses::stripNamespace(root->name());
+    const std::string& root = textOf(n, "root");
+    return poses::stripNamespace(root.substr(root.rfind('|') + 1));
 }
 
 NodeId elementParentFor(Graph& g, NodeId joint) { return characterFor(g, joint); }

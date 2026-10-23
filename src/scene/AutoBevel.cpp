@@ -260,7 +260,7 @@ json selectionSnapshot(Graph& g, NodeId mesh)
     json names = json::array();
     for (NodeId id : g.selection())
         if (Node* n = g.node(id))
-            names.push_back(n->name());
+            names.push_back(n->path());
     j["selection"] = names;
     return j;
 }
@@ -539,10 +539,10 @@ void registerCommands()
             Node& mod = modifierArg(a, "bevelEditEdges");
             NodeId mesh = meshOf(g, mod.id());
             if (mesh == kNoNode)
-                throw CommandError("bevelEditEdges: " + mod.name() + " feeds no mesh");
+                throw CommandError("bevelEditEdges: " + mod.path() + " feeds no mesh");
             for (NodeId id : modifiers::stack(g, mesh))
                 if (id != mod.id() && static_cast<ModifierNode*>(g.node(id))->editingInput())
-                    throw CommandError("bevelEditEdges: " + g.node(id)->name() + " is already editing its edges");
+                    throw CommandError("bevelEditEdges: " + g.node(id)->path() + " is already editing its edges");
             if (!editing(mod))
             {
                 g.evaluate();
@@ -552,7 +552,7 @@ void registerCommands()
                 g.setValue({mod.id(), kEditing, -1}, true);
             }
             selectChosen(g, mod, mesh);
-            return mod.name();
+            return mod.path();
         },
     });
 
@@ -565,11 +565,11 @@ void registerCommands()
             Graph& g = graph();
             Node& mod = modifierArg(a, "bevelApplyEdges");
             if (!editing(mod))
-                throw CommandError("bevelApplyEdges: " + mod.name() + " is not editing its edges");
+                throw CommandError("bevelApplyEdges: " + mod.path() + " is not editing its edges");
             NodeId mesh = meshOf(g, mod.id());
             MeshPtr in = inputOf(g, mod);
             if (!in || mesh == kNoNode)
-                throw CommandError("bevelApplyEdges: " + mod.name() + " has no input mesh");
+                throw CommandError("bevelApplyEdges: " + mod.path() + " has no input mesh");
             const geo::Mesh& m = *in;
             std::vector<uint8_t> want(m.edgeCapacity(), 0), rule(m.edgeCapacity(), 0);
             for (uint32_t e : components::selected(mesh, ComponentMode::Edge))
@@ -603,7 +603,7 @@ void registerCommands()
             Graph& g = graph();
             Node& mod = modifierArg(a, "bevelCancelEdges");
             if (!editing(mod))
-                throw CommandError("bevelCancelEdges: " + mod.name() + " is not editing its edges");
+                throw CommandError("bevelCancelEdges: " + mod.path() + " is not editing its edges");
             endEdit(g, mod);
             return nullptr;
         },
@@ -635,7 +635,7 @@ void registerCommands()
                     if (cage->edgeValid(e))
                         longest = std::max(longest, cage->edgeLength(e));
             if (longest <= 0.0)
-                throw CommandError("bevelMeasureThin: select a thickness edge on " + (mesh ? g.node(mesh)->name() : mod.name()));
+                throw CommandError("bevelMeasureThin: select a thickness edge on " + (mesh ? g.node(mesh)->path() : mod.path()));
             g.setValue({mod.id(), kThin, -1}, longest * 1.5);
             return longest * 1.5;
         },

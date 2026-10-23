@@ -148,8 +148,8 @@ void HotkeyCheatSheet::paintEvent(QPaintEvent*)
     p.setRenderHint(QPainter::Antialiasing);
 
     QRectF panel = QRectF(rect()).adjusted(28, 28, -28, -28);
-    p.setPen(QPen(QColor(90, 90, 90, 220), 1));
-    p.setBrush(QColor(14, 14, 14, 222));
+    p.setPen(QPen(themeShade(90, 220), 1));
+    p.setBrush(themeShade(14, 222));
     p.drawRoundedRect(panel, 8, 8);
 
     QRectF content = panel.adjusted(28, 22, -28, -22);
@@ -157,12 +157,12 @@ void HotkeyCheatSheet::paintEvent(QPaintEvent*)
     titleFont.setPixelSize(17);
     titleFont.setBold(true);
     p.setFont(titleFont);
-    p.setPen(QColor(235, 235, 235));
+    p.setPen(themeShade(235));
     p.drawText(content, Qt::AlignLeft | Qt::AlignTop, mTitle);
     QFont hintFont = font();
     hintFont.setPixelSize(12);
     p.setFont(hintFont);
-    p.setPen(QColor(130, 130, 130));
+    p.setPen(themeShade(130));
     p.drawText(content, Qt::AlignRight | Qt::AlignTop, "release F1 to close");
     content.setTop(content.top() + 38);
 
@@ -221,24 +221,24 @@ void HotkeyCheatSheet::paintEvent(QPaintEvent*)
         for (const Group* g : cols[c])
         {
             p.setFont(header);
-            p.setPen(QColor(150, 150, 150));
+            p.setPen(themeShade(150));
             p.drawText(QRectF(x, y, colWidth, line), Qt::AlignLeft | Qt::AlignVCenter, g->title);
-            p.setPen(QPen(QColor(70, 70, 70), 1));
+            p.setPen(QPen(themeShade(70), 1));
             p.drawLine(QPointF(x, y + line - 2), QPointF(x + colWidth, y + line - 2));
             y += line + 2;
             for (const Row& r : g->rows)
             {
                 QRectF keyRect(x + keyWidth - monoFm.horizontalAdvance(r.key) - 12, y + 2, monoFm.horizontalAdvance(r.key) + 10, line - 4);
-                p.setPen(QPen(QColor(105, 105, 105), 1));
-                p.setBrush(QColor(44, 44, 44, 235));
+                p.setPen(QPen(themeShade(105), 1));
+                p.setBrush(themeShade(44, 235));
                 p.drawRoundedRect(keyRect, 3, 3);
                 p.setFont(mono);
-                p.setPen(QColor(230, 230, 230));
+                p.setPen(themeShade(230));
                 p.drawText(keyRect, Qt::AlignCenter, r.key);
 
                 QRectF textRect(x + keyWidth + 6, y, colWidth - keyWidth - 6, line);
                 p.setFont(label);
-                p.setPen(QColor(205, 205, 205));
+                p.setPen(themeShade(205));
                 QFontMetricsF fm(label);
                 QString suffix = r.context.isEmpty() ? QString() : "  " + r.context;
                 double suffixW = fm.horizontalAdvance(suffix);
@@ -246,7 +246,7 @@ void HotkeyCheatSheet::paintEvent(QPaintEvent*)
                 p.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, text);
                 if (!suffix.isEmpty())
                 {
-                    p.setPen(QColor(120, 120, 120));
+                    p.setPen(themeShade(120));
                     p.drawText(textRect.adjusted(fm.horizontalAdvance(text), 0, 0, 0), Qt::AlignLeft | Qt::AlignVCenter, suffix);
                 }
                 y += line;

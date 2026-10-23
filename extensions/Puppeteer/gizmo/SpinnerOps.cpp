@@ -211,7 +211,7 @@ json moveNodes(const Args& a)
         {
             json names = json::array();
             for (NodeId n : nodes)
-                names.push_back(g.node(n)->name());
+                names.push_back(g.node(n)->path());
             ops::execute("move", {{"args", names}, {"by", vecJson(by)}, {"space", "world"}});
         }
         if (sticky)
@@ -349,7 +349,7 @@ std::vector<NodeId> breakdownNodes(Graph& g, const std::vector<std::string>& nam
     for (const std::string& s : names)
         if (Node* n = g.find(s))
             if (NodeId c = characterFor(g, n->id()))
-                if (Node* r = g.find(textOf(*g.node(c), "root")))
+                if (Node* r = named(g, textOf(*g.node(c), "root")))
                     roots.push_back(r->id());
     for (NodeId id : g.nodes())
     {
@@ -371,7 +371,7 @@ std::vector<BreakdownSample> sampleBreakdown(Graph& g, const std::vector<NodeId>
     std::vector<BreakdownSample> out;
     for (NodeId id : nodes)
     {
-        BreakdownSample s{.id = id, .name = g.node(id)->name(), .channels = animatedChannels(g.node(id)->name())};
+        BreakdownSample s{.id = id, .name = g.node(id)->path(), .channels = animatedChannels(g.node(id)->path())};
         if (s.channels.empty())
             continue;
         const json prevT = ops::execute("findKeyframe", {{"args", {s.name}}, {"which", "previous"}, {"time", now}});

@@ -1185,7 +1185,7 @@ void registerCommands()
                     RotationCurve rc = rotationCurveOf(*g.node(t.curve));
                     if (a.get<bool>("query"))
                     {
-                        out.push_back({{"curve", g.node(t.curve)->name()}, {"pre", infinityName(rc.pre)}, {"post", infinityName(rc.post)}});
+                        out.push_back({{"curve", g.node(t.curve)->path()}, {"pre", infinityName(rc.pre)}, {"post", infinityName(rc.post)}});
                         continue;
                     }
                     if (a.has("preInfinite"))
@@ -1198,7 +1198,7 @@ void registerCommands()
                 Curve cv = curveOf(*g.node(t.curve));
                 if (a.get<bool>("query"))
                 {
-                    out.push_back({{"curve", g.node(t.curve)->name()}, {"pre", infinityName(cv.pre)}, {"post", infinityName(cv.post)}});
+                    out.push_back({{"curve", g.node(t.curve)->path()}, {"pre", infinityName(cv.pre)}, {"post", infinityName(cv.post)}});
                     continue;
                 }
                 if (a.has("preInfinite"))

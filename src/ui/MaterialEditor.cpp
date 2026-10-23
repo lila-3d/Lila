@@ -230,7 +230,9 @@ MaterialEditor::MaterialEditor(QWidget* parent) : QWidget(parent)
     auto* del = new QPushButton("Delete", this);
     mAssign = new QPushButton("Assign", this);
     mAssign->setToolTip("Assign to the selected objects, or the selected faces in face mode.");
-    for (QPushButton* b : {add, del, mAssign})
+    auto* selectUsers = new QPushButton("Select", this);
+    selectUsers->setToolTip("Select the objects this material is assigned to. Shift+click selects the assigned faces.");
+    for (QPushButton* b : {add, del, mAssign, selectUsers})
         buttons->addWidget(b);
     buttons->addStretch();
     top->addLayout(buttons);
@@ -256,11 +258,15 @@ MaterialEditor::MaterialEditor(QWidget* parent) : QWidget(parent)
     });
     connect(del, &QPushButton::clicked, this, [this] {
         if (scene::Node* n = current())
-            run("delete", {{"args", json::array({n->name()})}});
+            run("delete", {{"args", json::array({n->path()})}});
     });
     connect(mAssign, &QPushButton::clicked, this, [this] {
         if (scene::Node* n = current())
-            run("assignMaterial", {{"args", json::array({n->name()})}});
+            run("assignMaterial", {{"args", json::array({n->path()})}});
+    });
+    connect(selectUsers, &QPushButton::clicked, this, [this] {
+        if (scene::Node* n = current())
+            run("selectByMaterial", {{"args", json::array({n->path()})}, {"faces", bool(QGuiApplication::keyboardModifiers() & Qt::ShiftModifier)}});
     });
     connect(mList, &QListWidget::currentTextChanged, this, [this](const QString& name) {
         scene::Node* n = scene::materials::find(scene::Graph::current(), name.toStdString());
@@ -275,7 +281,7 @@ MaterialEditor::MaterialEditor(QWidget* parent) : QWidget(parent)
         scene::Node* n = current();
         std::string wanted = item->text().toStdString();
         if (n && wanted != n->name())
-            run("renameMaterial", {{"args", json::array({n->name(), wanted})}});
+            run("renameMaterial", {{"args", json::array({n->path(), wanted})}});
         scheduleRefresh();
     });
 
@@ -380,7 +386,7 @@ void MaterialEditor::setAttr(int attr, const json& value)
     scene::Node* n = current();
     if (!n)
         return;
-    run("setAttr", {{"args", json::array({n->name() + "." + n->type().attrs[size_t(attr)].name, value})}});
+    run("setAttr", {{"args", json::array({n->path() + "." + n->type().attrs[size_t(attr)].name, value})}});
 }
 
 void MaterialEditor::rebuild()
@@ -580,7 +586,7 @@ void MaterialEditor::rebuild()
         grid->addWidget(box, row++, 1, 1, 2);
         auto apply = [this, channel](const std::string& p) {
             if (scene::Node* m = current())
-                run("setMaterialTexture", {{"args", json::array({m->name()})}, {"channel", channel}, {"path", p}});
+                run("setMaterialTexture", {{"args", json::array({m->path()})}, {"channel", channel}, {"path", p}});
         };
         connect(path, &QLineEdit::editingFinished, this, [path, apply, this, attr] {
             scene::Node* m = current();

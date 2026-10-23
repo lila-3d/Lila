@@ -311,6 +311,179 @@ TEST_CASE("projections")
     CHECK(uv::summarize(s, uv::faceDistortion(s, "uv0")).folded == 0);
 }
 
+namespace
+{
+void transformPoints(geo::Mesh& m, const glm::dmat3& r, const glm::dvec3& t)
+{
+    for (glm::dvec3& p : m.positions())
+        p = r * p + t;
+}
+
+/** Faces whose uv winding is against their 3D winding. */
+size_t flippedFaces(const geo::Mesh& m, std::string_view set = "uv0")
+{
+    std::span<const glm::vec2> uv = m.cornerAttrs().get<glm::vec2>(set);
+    size_t n = 0;
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f))
+        {
+            double a = 0.0;
+            m.forEachFaceCorner(f, [&](Index c) {
+                glm::dvec2 p = uv[c], q = uv[m.cornerNext(c)];
+                a += p.x * q.y - p.y * q.x;
+            });
+            n += a <= 0.0;
+        }
+    return n;
+}
+} // namespace
+
+TEST_CASE("cylinder fit finds a tilted axis and seams along an edge column")
+{
+    const glm::dmat3 rot = uv::eulerFrame({31.0, -17.0, 52.0});
+    const glm::dvec3 move(120.0, -40.0, 15.0);
+    for (bool caps : {true, false})
+    {
+        CAPTURE(caps);
+        geo::CylinderOptions co;
+        co.caps = caps;
+        co.subdivAxis = 24;
+        co.subdivHeight = 3;
+        geo::Mesh m = geo::makeCylinder(co);
+        transformPoints(m, rot, move);
+        uv::ProjectOptions o;
+        o.type = uv::Projection::Cylindrical;
+        uv::ProjectFrame fr = uv::fitProjection(m, {}, o);
+        double angle = glm::degrees(std::acos(std::min(1.0, std::abs(glm::dot(fr.axes[2], rot * glm::dvec3(0, 1, 0))))));
+        CHECK(angle < 1.0);
+        CHECK(fr.radius == doctest::Approx(50.0).epsilon(0.02));
+        CHECK(fr.height == doctest::Approx(100.0).epsilon(1e-6));
+        CHECK(glm::length(fr.center - move) < 1e-6);
+
+        if (caps)
+            continue;
+        clearSeams(m);
+        REQUIRE(uv::project(m, {}, "uv0", o));
+        CHECK(flippedFaces(m) == 0);
+        CHECK(overlaps(m) == 0);
+        // The seam runs along one column of edges: no face is cut across the wrap.
+        std::span<const bool> seam = m.edgeAttrs().get<bool>(geo::attr::kSeam);
+        CHECK(std::count(seam.begin(), seam.end(), true) == co.subdivHeight);
+        CHECK(uv::summarize(m, uv::faceDistortion(m, "uv0")).meanAngle < 0.05);
+    }
+}
+
+TEST_CASE("cylinder seam goes to the side facing away from the view")
+{
+    geo::CylinderOptions co;
+    co.caps = false;
+    co.subdivAxis = 16;
+    geo::Mesh m = geo::makeCylinder(co);
+    // The primitive's own seam would win over the view.
+    clearSeams(m);
+    uv::ProjectOptions o;
+    o.type = uv::Projection::Cylindrical;
+    for (glm::dvec3 view : {glm::dvec3(0, 0, -1), glm::dvec3(1, 0, 0), glm::dvec3(-0.7, -0.3, 0.7)})
+    {
+        o.viewDir = view;
+        uv::ProjectFrame fr = uv::fitProjection(m, {}, o);
+        glm::dvec3 seamDir = std::cos(fr.seamAngle) * fr.axes[0] + std::sin(fr.seamAngle) * fr.axes[1];
+        glm::dvec3 away = glm::normalize(view - glm::dot(view, fr.axes[2]) * fr.axes[2]);
+        // Within half a segment of straight behind, on a vertex column.
+        CHECK(glm::dot(seamDir, away) > std::cos(glm::pi<double>() / 16.0) - 1e-9);
+    }
+
+    // An existing seam column is preferred over the far side.
+    o.viewDir = glm::dvec3(0, 0, -1);
+    uv::ProjectFrame fr = uv::fitProjection(m, {}, o);
+    glm::dvec3 behind = std::cos(fr.seamAngle) * fr.axes[0] + std::sin(fr.seamAngle) * fr.axes[1];
+    std::span<bool> seam = m.edgeAttrs().getOrAdd<bool>(geo::attr::kSeam);
+    for (Index e = 0; e < m.edgeCapacity(); ++e)
+        if (m.edgeValid(e))
+        {
+            glm::dvec3 a = m.position(m.edgePoint(e, 0)), b = m.position(m.edgePoint(e, 1));
+            seam[e] = std::abs(a.y - b.y) > 1.0 && glm::dot(glm::normalize(glm::dvec3(a.x, 0, a.z)), behind) < -0.99;
+        }
+    REQUIRE(std::count(seam.begin(), seam.end(), true) == 1);
+    fr = uv::fitProjection(m, {}, o);
+    CHECK(glm::dot(std::cos(fr.seamAngle) * fr.axes[0] + std::sin(fr.seamAngle) * fr.axes[1], behind) < -0.99);
+}
+
+TEST_CASE("plane fit on a rotated plane gives undistorted uvs along its sides")
+{
+    geo::PlaneOptions po;
+    po.width = 200.0;
+    po.depth = 100.0;
+    po.subdivX = 4;
+    po.subdivZ = 2;
+    geo::Mesh m = geo::makePlane(po);
+    transformPoints(m, uv::eulerFrame({20.0, 35.0, -50.0}) * uv::eulerFrame({0.0, 27.0, 0.0}), {5.0, 6.0, 7.0});
+    uv::ProjectOptions o;
+    REQUIRE(uv::project(m, {}, "uv0", o));
+    auto d = uv::summarize(m, uv::faceDistortion(m, "uv0"));
+    CHECK(d.meanAngle < 1e-4);
+    CHECK(d.meanArea < 1e-4);
+    CHECK(flippedFaces(m) == 0);
+    // Aligned to the minimum-area rectangle, so the 2:1 plane fills 1 x 0.5 exactly.
+    glm::vec2 lo(1e9f), hi(-1e9f);
+    for (const glm::vec2& p : m.cornerAttrs().get<glm::vec2>("uv0"))
+        lo = glm::min(lo, p), hi = glm::max(hi, p);
+    glm::vec2 ext = hi - lo;
+    CHECK(std::max(ext.x, ext.y) == doctest::Approx(1.0).epsilon(1e-5));
+    CHECK(std::min(ext.x, ext.y) == doctest::Approx(0.5).epsilon(1e-5));
+    CHECK(lo.x == doctest::Approx(0.0).epsilon(1e-5));
+    CHECK(lo.y == doctest::Approx(0.0).epsilon(1e-5));
+}
+
+TEST_CASE("projecting through a fitted frame's explicit values reproduces the fit")
+{
+    geo::Mesh m = geo::makeCylinder({});
+    transformPoints(m, uv::eulerFrame({10.0, 20.0, 30.0}), {1.0, 2.0, 3.0});
+    for (uv::Projection type : {uv::Projection::Planar, uv::Projection::Box, uv::Projection::Cylindrical, uv::Projection::Spherical})
+    {
+        CAPTURE(int(type));
+        uv::ProjectOptions o;
+        o.type = type;
+        uv::ProjectFrame fr;
+        geo::Mesh a = m;
+        REQUIRE(uv::project(a, {}, "uv0", o, &fr));
+        uv::ProjectOptions e = o;
+        e.center = fr.center;
+        e.rotation = uv::frameEuler(fr.axes);
+        e.width = fr.width, e.height = fr.height, e.depth = fr.depth, e.radius = fr.radius;
+        e.seamAngle = glm::degrees(fr.seamAngle);
+        geo::Mesh b = m;
+        REQUIRE(uv::project(b, {}, "uv0", e));
+        std::span<const glm::vec2> ua = a.cornerAttrs().get<glm::vec2>("uv0"), ub = b.cornerAttrs().get<glm::vec2>("uv0");
+        float worst = 0.0f;
+        for (size_t i = 0; i < ua.size(); ++i)
+            worst = std::max(worst, glm::length(ua[i] - ub[i]));
+        CHECK(worst < 1e-4f);
+    }
+}
+
+TEST_CASE("box fit follows the object's principal axes")
+{
+    geo::CubeOptions c;
+    c.width = 200.0;
+    c.height = 50.0;
+    c.depth = 100.0;
+    geo::Mesh m = geo::makeCube(c);
+    const glm::dmat3 rot = uv::eulerFrame({0.0, 0.0, 25.0});
+    transformPoints(m, rot, {});
+    uv::ProjectOptions o;
+    o.type = uv::Projection::Box;
+    uv::ProjectFrame fr = uv::fitProjection(m, {}, o);
+    for (int i = 0; i < 3; ++i)
+        CHECK(std::abs(glm::dot(fr.axes[i], rot[i])) > 0.9999);
+    CHECK(fr.width == doctest::Approx(200.0));
+    CHECK(fr.height == doctest::Approx(50.0));
+    CHECK(fr.depth == doctest::Approx(100.0));
+    REQUIRE(uv::project(m, {}, "uv0", o));
+    CHECK(flippedFaces(m) == 0);
+    CHECK(uv::summarize(m, uv::faceDistortion(m, "uv0")).meanAngle < 1e-4);
+}
+
 TEST_CASE("straighten turns a bent quad strip into a straight grid")
 {
     geo::CylinderOptions co;

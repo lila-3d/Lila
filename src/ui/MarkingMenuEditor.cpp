@@ -199,10 +199,10 @@ void RadialPreview::paintEvent(QPaintEvent*)
     auto boxes = layoutBoxes();
     QPointF center = (boxes[0].rect.center() + boxes[4].rect.center()) / 2;
     center.setX(width() / 2.0);
-    p.setPen(QPen(QColor(200, 200, 200), 1.5));
-    p.setBrush(QColor(30, 30, 30));
+    p.setPen(QPen(themeShade(200), 1.5));
+    p.setBrush(themeShade(30));
     p.drawEllipse(center, 5, 5);
-    p.setPen(QPen(QColor(70, 70, 70), 1, Qt::DotLine));
+    p.setPen(QPen(themeShade(70), 1, Qt::DotLine));
     for (int i = 0; i < 8; ++i)
         p.drawLine(center + kDirs[i] * 14, boxes[i].rect.center());
 
@@ -213,17 +213,17 @@ void RadialPreview::paintEvent(QPaintEvent*)
         path.addRoundedRect(b.rect, b.slot < kOverflow ? 4 : 2, b.slot < kOverflow ? 4 : 2);
         if (b.empty)
         {
-            p.setPen(QPen(sel ? QColor(200, 200, 200) : QColor(85, 85, 85), 1, Qt::DashLine));
-            p.setBrush(sel ? QBrush(QColor(70, 70, 70)) : QBrush(Qt::NoBrush));
+            p.setPen(QPen(sel ? themeShade(200) : themeShade(85), 1, Qt::DashLine));
+            p.setBrush(sel ? QBrush(themeShade(70)) : QBrush(Qt::NoBrush));
             p.drawPath(path);
-            p.setPen(QColor(110, 110, 110));
+            p.setPen(themeShade(110));
             p.drawText(b.rect, Qt::AlignCenter, b.label);
             continue;
         }
-        p.setPen(QPen(sel ? QColor(230, 230, 230) : QColor(95, 95, 95), sel ? 1.5 : 1));
-        p.setBrush(sel ? QColor(150, 150, 150) : QColor(44, 44, 44));
+        p.setPen(QPen(sel ? themeShade(230) : themeShade(95), sel ? 1.5 : 1));
+        p.setBrush(sel ? themeShade(150) : themeShade(44));
         p.drawPath(path);
-        p.setPen(sel ? QColor(15, 15, 15) : QColor(220, 220, 220));
+        p.setPen(sel ? themeShade(15) : themeShade(220));
         QRectF tr = b.rect.adjusted(10, 0, -10, 0);
         p.drawText(tr, Qt::AlignVCenter | Qt::AlignLeft, b.label);
         if (b.submenu)

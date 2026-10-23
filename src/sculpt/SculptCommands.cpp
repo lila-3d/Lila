@@ -274,7 +274,7 @@ void buildProxy(Session& s, const Args& a, Node& n)
             geo::clearSymmetryKeys(proxy, 0);
     }
     if (proxy.numFaces() == 0)
-        throw CommandError("sculptEnter: " + n.name() + " has no faces");
+        throw CommandError("sculptEnter: " + n.path() + " has no faces");
 
     std::vector<float> mask, freeze;
     if (auto m = std::as_const(proxy).pointAttrs().get<float>(kMaskLayer); !m.empty())
@@ -393,14 +393,14 @@ void registerCommands()
             UndoChunk chunk("Enter Sculpt");
             std::shared_ptr<Session> prev = activeRef();
             if (prev && prev->node == n.id())
-                return {{"mesh", n.name()}, {"points", prev->sculpt.mesh().numPoints()}};
+                return {{"mesh", n.path()}, {"points", prev->sculpt.mesh().numPoints()}};
             if (prev)
                 ops::execute("sculptExit", json::object());
 
             g.evaluate();
             MeshPtr cage = scene::modifiers::cage(g, n.id());
             if (!cage || cage->numFaces() == 0)
-                throw CommandError("sculptEnter: " + n.name() + " has no faces");
+                throw CommandError("sculptEnter: " + n.path() + " has no faces");
             auto s = std::make_shared<Session>();
             s->node = n.id();
             s->cage = *cage;
@@ -409,9 +409,9 @@ void registerCommands()
             UndoStack::get().record(std::make_unique<SwitchAction>(activeRef(), s));
             setActive(s);
             const char* modes[] = {"subdivide", "remesh", "direct"};
-            log::info("sculptEnter {}: {} proxy, {} points, {} faces", n.name(), modes[int(s->mode)], s->sculpt.mesh().numPoints(),
+            log::info("sculptEnter {}: {} proxy, {} points, {} faces", n.path(), modes[int(s->mode)], s->sculpt.mesh().numPoints(),
                       s->sculpt.mesh().numFaces());
-            return {{"mesh", n.name()},
+            return {{"mesh", n.path()},
                     {"mode", modes[int(s->mode)]},
                     {"levels", s->mode == ProxyMode::Subdivide ? s->subdivide.levels : 0},
                     {"points", s->sculpt.mesh().numPoints()},
@@ -439,7 +439,7 @@ void registerCommands()
             PlugRef base = scene::modifiers::editPlug(g, n.id());
             geo::Mesh mesh = storedMesh(base);
             if (mesh.pointCapacity() != s->cage.pointCapacity() || mesh.numFaces() != s->cage.numFaces())
-                throw CommandError("sculptExit: " + n.name() + "'s topology changed since sculptEnter; undo that edit or run sculptCancel");
+                throw CommandError("sculptExit: " + n.path() + "'s topology changed since sculptEnter; undo that edit or run sculptCancel");
 
             std::optional<geo::SymmetryMap> map;
             geo::Mesh cageCopy = s->cage;
@@ -470,7 +470,7 @@ void registerCommands()
 
             UndoStack::get().record(std::make_unique<SwitchAction>(s, nullptr));
             setActive(nullptr);
-            return {{"mesh", n.name()}, {"maxMove", maxMove}};
+            return {{"mesh", n.path()}, {"maxMove", maxMove}};
         },
     });
 
@@ -572,7 +572,7 @@ void registerCommands()
             for (uint8_t f : s->sculpt.frozen())
                 frozen += f != 0;
             return {{"active", true},
-                    {"mesh", n->name()},
+                    {"mesh", n->path()},
                     {"mode", modes[int(s->mode)]},
                     {"levels", s->mode == ProxyMode::Subdivide ? s->subdivide.levels : 0},
                     {"points", s->sculpt.mesh().numPoints()},
@@ -610,7 +610,7 @@ void registerCommands()
                     continue;
                 geo::Mesh surface = meshInSpaceOf(src, n);
                 if (surface.numFaces() == 0)
-                    throw CommandError("transferShape: " + src.name() + " has no faces");
+                    throw CommandError("transferShape: " + src.path() + " has no faces");
                 geo::MeshBvh bvh(surface);
                 PlugRef base = scene::modifiers::editPlug(g, n.id());
                 geo::Mesh cage = storedMesh(base);
@@ -632,7 +632,7 @@ void registerCommands()
                     if (cage.pointValid(p))
                         maxMove = std::max(maxMove, glm::length(fitted.position(p) - cage.position(p)));
                 g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(fitted))));
-                out[n.name()] = maxMove;
+                out[n.path()] = maxMove;
             }
             return out;
         },

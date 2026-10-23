@@ -234,6 +234,7 @@ public:
     {
         mColor = linear;
         QColor c = swatchColor(linear);
+        setProperty("lilaRawColors", true);
         setStyleSheet(QString("QToolButton { background: %1; border: 1px solid #1c1c1c; border-radius: 2px; }"
                               "QToolButton:hover { border: 1px solid #d0d0d0; }")
                           .arg(c.name()));
@@ -626,6 +627,7 @@ public:
             return;
         }
         mTarget->setText(QString::fromStdString(n->name()));
+        mTarget->setToolTip(QString::fromStdString(n->fullPath()));
         MeshPtr m = scene::modifiers::cage(g, id);
         if (!m)
             return;
@@ -670,7 +672,7 @@ private:
     std::string meshName() const
     {
         scene::Node* n = scene::Graph::current().node(target ? target() : kNoNode);
-        return n ? n->name() : std::string();
+        return n ? n->path() : std::string();
     }
 
     json targetCall(const char*) const
@@ -1039,7 +1041,7 @@ public:
             mGradientDrag = false;
             scene::Node* n = scene::Graph::current().node(mMesh);
             if (n && glm::length(mGradientTo - mGradientFrom) > 1e-9)
-                runCommand("vertexColorGradient", {{"args", {n->name()}},
+                runCommand("vertexColorGradient", {{"args", {n->path()}},
                                                    {"type", (e->modifiers() & Qt::ShiftModifier) ? "radial" : "linear"},
                                                    {"start", vecJson(mGradientFrom)},
                                                    {"end", vecJson(mGradientTo)},
@@ -1087,7 +1089,7 @@ public:
         substituteLiveMesh(s, *n);
         const Settings& st = settings();
         drawToolMessage(p, view, QString("Vertex paint %1: %2   %3 %4   radius %5 px   strength %6%7")
-                                     .arg(QString::fromStdString(n->name()), QString::fromStdString(mSet.empty() ? "(new set)" : mSet),
+                                     .arg(QString::fromStdString(n->path()), QString::fromStdString(mSet.empty() ? "(new set)" : mSet),
                                           QString::fromStdString(st.blend), QString::fromStdString(st.channels).toUpper())
                                      .arg(int(std::lround(st.radius)))
                                      .arg(st.strength, 0, 'f', 2)
@@ -1255,7 +1257,7 @@ private:
             return false;
         MeshPtr cage = cageOf(mMesh);
         if (cage && geo::colors::current(*cage).empty())
-            runCommand("polyColorSet", {{"args", {n->name()}}, {"create", true}, {"colorSet", "colorSet"}});
+            runCommand("polyColorSet", {{"args", {n->path()}}, {"create", true}, {"colorSet", "colorSet"}});
         retarget();
         return mPaint != nullptr;
     }
@@ -1445,7 +1447,7 @@ private:
         try
         {
             // Not echoed: a stroke is hundreds of dabs, and repeating it from the script editor is rarely wanted.
-            ops::execute("vertexColorStroke", {{"args", {n->name()}}, {"live", int64_t(token)}}, CallSource::Script);
+            ops::execute("vertexColorStroke", {{"args", {n->path()}}, {"live", int64_t(token)}}, CallSource::Script);
         }
         catch (const CommandError& e)
         {

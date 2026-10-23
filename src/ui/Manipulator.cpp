@@ -12,6 +12,8 @@
 #include "scene/Modifiers.h"
 #include "geo/Mesh.h"
 #include "ui/GizmoMath.h"
+#include "ui/Isolate.h"
+#include "ui/Theme.h"
 #include "ui/ViewportDisplay.h"
 
 #include <QKeyEvent>
@@ -48,7 +50,17 @@ scene::Space spaceFor(Tool t)
 {
     std::string key = t == Tool::Rotate ? "/manipulator/rotateSpace" : "/manipulator/moveSpace";
     std::string s = PrefStore::get().value<std::string>("general", key, "world");
-    return s == "object" ? scene::Space::Object : s == "parent" ? scene::Space::Parent : scene::Space::World;
+    // Normal has no meaning for whole objects, so they move on their own axes.
+    return s == "object" || s == "normal" ? scene::Space::Object : s == "parent" ? scene::Space::Parent : scene::Space::World;
+}
+
+bool normalSpace() { return PrefStore::get().value<std::string>("general", "/manipulator/moveSpace", "world") == "normal"; }
+
+/** A frame whose Z is the normal; X and Y are any perpendicular pair. */
+glm::dmat3 normalFrame(const glm::dvec3& n)
+{
+    glm::dvec3 x = glm::normalize(glm::cross(std::abs(n.y) < 0.9 ? glm::dvec3(0, 1, 0) : glm::dvec3(1, 0, 0), n));
+    return glm::dmat3(x, glm::cross(n, x), n);
 }
 
 int axisOf(H h)
@@ -164,7 +176,7 @@ json vecJson(const glm::dvec3& v) { return json::array({tidy(v.x), tidy(v.y), ti
 std::string nameOf(NodeId id)
 {
     scene::Node* n = Graph::current().node(id);
-    return n ? n->name() : std::string();
+    return n ? n->path() : std::string();
 }
 } // namespace
 
@@ -190,6 +202,7 @@ void Manipulator::refresh()
     mTargets.clear();
     mLead = scene::kNoNode;
     mComponents = false;
+    mNormal = false;
     if (tools::current() == Tool::Select && !tools::pivotEdit())
         return;
 
@@ -207,6 +220,11 @@ void Manipulator::refresh()
         mPivot = scene::selectionCenter();
         scene::Space space = spaceFor(tools::current() == Tool::Rotate ? Tool::Rotate : Tool::Move);
         mFrame = scene::xformops::frame(g, mLead, tools::current() == Tool::Scale ? scene::Space::World : space);
+        if (tools::current() == Tool::Move && normalSpace())
+        {
+            mNormal = true;
+            mFrame = normalFrame(scene::selectionNormal());
+        }
         return;
     }
     mTargets = scene::xformops::topLevel(g, g.selection());
@@ -322,6 +340,13 @@ H Manipulator::pick(QPointF px) const
     Tool t = effectiveTool();
     glm::dvec3 viewDir = mView.viewDir(mPivot);
 
+    if (t == Tool::Move && mNormal)
+    {
+        auto tip = mView.project(mPivot + axis(2) * L);
+        if (std::abs(px.x() - c->x()) <= 8 && std::abs(px.y() - c->y()) <= 8)
+            return H::Z;
+        return tip && segmentDistance(px, *c, *tip) < grab ? H::Z : H::None;
+    }
     if (t == Tool::Move || t == Tool::Scale)
     {
         if (std::abs(px.x() - c->x()) <= 8 && std::abs(px.y() - c->y()) <= 8)
@@ -432,6 +457,9 @@ bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifier
     }
     else if (button != Qt::LeftButton || h == H::None)
         return false;
+    const bool alongNormal = mNormal && effectiveTool() == Tool::Move;
+    if (alongNormal)
+        h = H::Z, axisFromDrag = false;
     // Taken so it neither drags nor falls through to a selection click.
     if (handleLocked(h))
     {
@@ -449,7 +477,8 @@ bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifier
     d.pivotEdit = tools::pivotEdit() && !mComponents;
     d.tool = tools::current();
     d.axisFromDrag = d.axisPending = axisFromDrag;
-    d.ctrlPlane = ctrlPlane && !axisFromDrag && button == Qt::LeftButton;
+    d.ctrlPlane = ctrlPlane && !axisFromDrag && !alongNormal && button == Qt::LeftButton;
+    d.alongNormal = alongNormal;
     if (d.components)
     {
         // Live edits write the base mesh directly; resolving it freezes a procedural source first (its own undo step).
@@ -777,11 +806,12 @@ std::optional<glm::dvec3> Manipulator::snapTarget(QPointF px, unsigned snaps) co
     for (NodeId id : g.nodes())
     {
         scene::Node* n = g.node(id);
-        if (!n->type().isA("mesh") || moving.contains(id) || !scene::effectivelyVisible(g, id))
+        if (!n->type().isA("mesh") || moving.contains(id) || !scene::effectivelyVisible(g, id) || !isolate::shows(scene::isolation::active(), id))
             continue;
         scene::MeshPtr mesh = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
         if (!mesh)
             continue;
+        const auto vis = isolate::visibility(scene::isolation::active(), id, mesh);
         const geo::Mesh& m = *mesh;
         glm::dmat4 world = n->as<glm::dmat4>(Transform::kWorldMatrix);
         // Components being dragged can't be their own snap targets.
@@ -797,7 +827,7 @@ std::optional<glm::dvec3> Manipulator::snapTarget(QPointF px, unsigned snaps) co
         if (snaps & SnapVertex)
             for (geo::Index p = 0; p < m.pointCapacity(); ++p)
             {
-                if (!m.pointValid(p) || (!skip.empty() && skip[p]))
+                if (!m.pointValid(p) || !vis->point(p) || (!skip.empty() && skip[p]))
                     continue;
                 glm::dvec3 w = worldOf(p);
                 if (auto s = mView.project(w))
@@ -810,7 +840,7 @@ std::optional<glm::dvec3> Manipulator::snapTarget(QPointF px, unsigned snaps) co
         if (snaps & SnapEdge)
             for (geo::Index e = 0; e < m.edgeCapacity(); ++e)
             {
-                if (!m.edgeValid(e))
+                if (!m.edgeValid(e) || !vis->edge(e))
                     continue;
                 geo::Index p0 = m.edgePoint(e, 0), p1 = m.edgePoint(e, 1);
                 if (!skip.empty() && (skip[p0] || skip[p1]))
@@ -884,7 +914,9 @@ void Manipulator::apply()
     Tool t = pivotTool(d.pivotEdit, d.tool);
     try
     {
-        if (d.components)
+        if (d.alongNormal)
+            scene::offsetSelectedComponents("Drag Components", glm::dot(d.moveDelta, d.frame[2]));
+        else if (d.components)
             scene::transformSelectedComponents("Drag Components", componentXform());
         else if (d.pivotEdit && t == Tool::Rotate)
         {
@@ -951,7 +983,12 @@ void Manipulator::commit()
         if (d.components)
         {
             json pivot = vecJson(d.startPivot);
-            if (t == Tool::Move && glm::length(d.moveDelta) > 1e-9)
+            if (d.alongNormal)
+            {
+                if (double offset = glm::dot(d.moveDelta, d.frame[2]); std::abs(offset) > 1e-9)
+                    ops::execute("moveComponents", {{"normal", tidy(offset)}}, CallSource::UI);
+            }
+            else if (t == Tool::Move && glm::length(d.moveDelta) > 1e-9)
                 ops::execute("moveComponents", {{"by", vecJson(d.moveDelta)}}, CallSource::UI);
             else if (t == Tool::Rotate && std::abs(d.angle) > 1e-9)
             {
@@ -996,7 +1033,7 @@ void Manipulator::commit()
             json centred = json::array();
             for (const Saved& s : d.saved)
                 if (scene::Node* n = Graph::current().node(s.id); n && scene::rig::centerEnabled(*n))
-                    centred.push_back(n->name());
+                    centred.push_back(n->path());
             std::optional<UndoChunk> chunk;
             if (!centred.empty())
                 chunk.emplace("Move");
@@ -1114,9 +1151,9 @@ glm::vec4 Manipulator::handleColor(H h, int axisIndex) const
     if (axisIndex >= 0 && viewportDisplay::accentColors(viewportDisplay::kManipulatorAxisColors))
     {
         glm::vec4 c(viewportDisplay::axisColor(axisIndex), 1.0f);
-        return hot ? glm::mix(c, kHot, 0.55f) : c;
+        return hot ? glm::mix(c, themeSrgb("manipActive", kHot), 0.55f) : c;
     }
-    return hot ? kHot : kGray;
+    return hot ? themeSrgb("manipActive", kHot) : themeSrgb("manipNeutral", kGray);
 }
 
 void Manipulator::draw(OverlayPainter& p)
@@ -1154,7 +1191,7 @@ void Manipulator::drawMove(OverlayPainter& p)
     for (int i = 0; i < 3; ++i)
     {
         H h = H(int(H::PlaneYZ) + i);
-        if (std::abs(glm::dot(axis(i), viewDir)) < 0.12 || (active != H::None && active != h) || pivotMode)
+        if (std::abs(glm::dot(axis(i), viewDir)) < 0.12 || (active != H::None && active != h) || pivotMode || mNormal)
             continue;
         glm::dvec3 a = axis((i + 1) % 3), b = axis((i + 2) % 3);
         std::vector<QPointF> quad;
@@ -1173,7 +1210,7 @@ void Manipulator::drawMove(OverlayPainter& p)
         H h = H(int(H::X) + i);
         if (active != H::None && active != h && active != H::Center && !isPlane(active))
             continue;
-        if (isPlane(active) && axisOf(active) == i)
+        if ((isPlane(active) && axisOf(active) == i) || (mNormal && i != 2))
             continue;
         auto tip = mView.project(mPivot + axis(i) * L);
         if (!tip || dist(*tip, *c) < 12)
@@ -1189,10 +1226,10 @@ void Manipulator::drawMove(OverlayPainter& p)
         QPointF n(-dirPx.y(), dirPx.x());
         QPointF arrowTip = *tip + dirPx * 10.0;
         p.triangle(arrowTip, *tip - dirPx * 4.0 + n * 5.0, *tip - dirPx * 4.0 - n * 5.0, col);
-        p.text(arrowTip + dirPx * 12.0 + QPointF(0, 4), QString(QChar('X' + i)), col, OverlayPainter::Center);
+        p.text(arrowTip + dirPx * 12.0 + QPointF(0, 4), QString(mNormal ? QChar('N') : QChar('X' + i)), col, OverlayPainter::Center);
     }
 
-    glm::vec4 centerCol = handleColor(H::Center, -1);
+    glm::vec4 centerCol = handleColor(mNormal ? H::Z : H::Center, -1);
     if (pivotMode)
     {
         p.polyline({*c + QPointF(-7, 0), *c + QPointF(7, 0)}, 1.5f, centerCol);
@@ -1303,7 +1340,7 @@ QString Manipulator::readout() const
         if (d.handle >= H::X && d.handle <= H::Z)
         {
             double signedLen = glm::dot(d.moveDelta, d.frame[ai]);
-            text = QString("%1 %2 cm").arg(QChar('X' + ai)).arg(signedLen, 0, 'f', 2);
+            text = QString("%1 %2 cm").arg(d.alongNormal ? QChar('N') : QChar('X' + ai)).arg(signedLen, 0, 'f', 2);
         }
         else
         {

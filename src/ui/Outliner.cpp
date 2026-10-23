@@ -12,6 +12,7 @@
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
 #include "ui/OutlinerLogic.h"
+#include "ui/Theme.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -79,7 +80,7 @@ QIcon rowIcon(const QString& name, bool referenced, bool dim)
             int b = size * 9 / 16;
             QRect badge(size - b, size - b, b, b);
             p.setPen(Qt::NoPen);
-            p.setBrush(QColor(40, 40, 40));
+            p.setBrush(themeShade(40));
             p.drawEllipse(badge);
             p.drawPixmap(badge.adjusted(1, 1, -1, -1), icon("link").pixmap(QSize(b - 2, b - 2), QIcon::Active));
         }
@@ -109,7 +110,7 @@ json namesOf(const std::vector<scene::NodeId>& ids)
     json names = json::array();
     for (scene::NodeId id : ids)
         if (scene::Node* n = scene::Graph::current().node(id))
-            names.push_back(n->name());
+            names.push_back(n->path());
     return names;
 }
 
@@ -282,7 +283,7 @@ Outliner::Outliner(QWidget* parent) : QTreeWidget(parent)
             return scheduleRebuild();
         try
         {
-            ops::execute("rename", {{"args", {n->name(), to}}}, CallSource::UI);
+            ops::execute("rename", {{"args", {n->path(), to}}}, CallSource::UI);
         }
         catch (const CommandError& e)
         {
@@ -308,7 +309,7 @@ Outliner::Outliner(QWidget* parent) : QTreeWidget(parent)
     });
     connect(this, &QTreeWidget::itemClicked, this, [](QTreeWidgetItem* item, int) {
         if (scene::Node* set = scene::Graph::current().node(item->data(0, kSetRole).toULongLong()))
-            runCommand("selectSetMembers", {{"args", {set->name()}}});
+            runCommand("selectSetMembers", {{"args", {set->path()}}});
     });
 
     rebuild();
@@ -338,7 +339,7 @@ void Outliner::dropEvent(QDropEvent* e)
         if (scene::Node* set = g.node(target->data(0, kSetRole).toULongLong()))
         {
             json args = namesOf(moved);
-            args.insert(args.begin(), set->name());
+            args.insert(args.begin(), set->path());
             runCommand("addToSet", {{"args", args}});
         }
         return;
@@ -377,7 +378,7 @@ void Outliner::dropEvent(QDropEvent* e)
 
     json call = {{"args", namesOf(moved)}};
     if (parent != scene::kNoNode)
-        call["args"].push_back(g.node(parent)->name());
+        call["args"].push_back(g.node(parent)->path());
     else
         call["world"] = true;
     if (place)
@@ -469,7 +470,7 @@ void Outliner::startMove()
     QStringList nodeNames;
     for (scene::NodeId id : rows)
         if (scene::Node* n = scene::Graph::current().node(id))
-            nodeNames << QString::fromStdString(n->name());
+            nodeNames << QString::fromStdString(n->path());
     mime->setData(kNodeNamesMime, nodeNames.join(QChar('\n')).toUtf8());
     drag->setMimeData(mime);
     drag->setPixmap(movePixmap(names, font(), palette(), devicePixelRatioF()));
@@ -532,7 +533,7 @@ void Outliner::rebuild()
         if (n->referenceId())
             item->setFlags(item->flags() & ~Qt::ItemIsEditable);
         const std::string& doc = n->type().doc;
-        item->setToolTip(0, QString::fromStdString(n->type().name + (doc.empty() ? "" : "\n" + doc)));
+        item->setToolTip(0, QString::fromStdString(g.fullPath(id) + "\n" + n->type().name + (doc.empty() ? "" : "\n" + doc)));
         mItems[id] = item;
         for (scene::NodeId c : g.children(id))
             add(c, item);
@@ -552,7 +553,7 @@ void Outliner::rebuild()
             QFont f = item->font(0);
             f.setItalic(true);
             item->setFont(0, f);
-            item->setForeground(0, QColor(110, 110, 110));
+            item->setForeground(0, themeShade(110));
             item->setToolTip(0, QString::fromStdString("Unloaded reference\n" + r.path.generic_string()));
         }
     collapseAll();
@@ -591,7 +592,7 @@ void Outliner::addSetRows()
             row->setText(0, QString::fromStdString(m));
             row->setData(0, kSetMemberRole, QString::fromStdString(m));
             row->setFlags(Qt::ItemIsEnabled);
-            row->setForeground(0, QColor(150, 150, 150));
+            row->setForeground(0, themeShade(150));
         }
     }
 }
@@ -603,7 +604,7 @@ void Outliner::showSetMenu(QTreeWidgetItem* item, const QPoint& globalPos)
     scene::Node* set = setItem ? g.node(setItem->data(0, kSetRole).toULongLong()) : nullptr;
     if (!set)
         return;
-    const std::string name = set->name();
+    const std::string name = set->path();
     const bool editable = set->referenceId() == 0;
     QMenu menu(this);
     menu.setToolTipsVisible(true);
@@ -652,7 +653,7 @@ void Outliner::restyle()
         QFont f = item->font(0);
         f.setItalic(referenced);
         item->setFont(0, f);
-        QColor c = hidden ? QColor(100, 100, 100) : referenced ? QColor(150, 150, 150) : normal;
+        QColor c = hidden ? themeShade(100) : referenced ? themeShade(150) : normal;
         item->setForeground(0, c);
     }
 }
@@ -675,7 +676,7 @@ void Outliner::shadeAncestors()
     scene::Graph& g = scene::Graph::current();
     const std::set<scene::NodeId> chain = outliner::selectionAncestors(g, g.selection());
     // A step above the background and well below the selection highlight.
-    const QBrush shade(QColor(56, 56, 56));
+    const QBrush shade(themeShade(56));
     for (auto& [id, item] : mItems)
     {
         bool on = chain.contains(id);
@@ -876,8 +877,8 @@ void Outliner::showContextMenu(const QPoint& pos)
             {
                 if (!mats)
                     mats = menu.addMenu("Assign Material");
-                std::string name = m->name();
-                mats->addAction(QString::fromStdString(name), [run, name, targets] {
+                std::string name = m->path();
+                mats->addAction(QString::fromStdString(m->name()), [run, name, targets] {
                     json args = namesOf(targets);
                     args.insert(args.begin(), name);
                     run(json{{"command", "assignMaterial"}, {"args", {{"args", args}}}});
@@ -917,8 +918,8 @@ protected:
     void paintEvent(QPaintEvent*) override
     {
         QPainter p(this);
-        p.fillRect(rect(), QColor(underMouse() ? 70 : 52, underMouse() ? 70 : 52, underMouse() ? 70 : 52));
-        p.setPen(QColor(120, 120, 120));
+        p.fillRect(rect(), themeShade(underMouse() ? 70 : 52));
+        p.setPen(themeShade(120));
         int y = height() / 2, half = std::min(14, width() / 4);
         p.drawLine(width() / 2 - half, y, width() / 2 + half, y);
     }

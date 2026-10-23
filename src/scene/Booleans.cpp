@@ -171,7 +171,7 @@ void registerBooleanCommands()
                 manifold::Manifold solid(toManifold(*n->as<MeshPtr>(MeshNode::kOutMesh), n->as<glm::dmat4>(Transform::kWorldMatrix),
                                                     uint32_t(faceOf.size()), faceOf, colorSets));
                 if (solid.Status() != manifold::Manifold::Error::NoError)
-                    throw CommandError("polyBoolean: " + n->name() + " isn't a closed solid (" + std::to_string(int(solid.Status())) + ")");
+                    throw CommandError("polyBoolean: " + n->path() + " isn't a closed solid (" + std::to_string(int(solid.Status())) + ")");
                 return solid;
             };
             manifold::Manifold result = toSolid(nodes[0]);
@@ -194,7 +194,7 @@ void registerBooleanCommands()
                     g.deleteNode(nodes[i]->id());
             }
             g.select({nodes[0]->id()});
-            return nodes[0]->name();
+            return nodes[0]->path();
         },
     });
     ops::setAdjustable("polyBoolean");

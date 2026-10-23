@@ -1,0 +1,291 @@
+{
+  "dependencies": [],
+  "format": "lila.nodes",
+  "group": {
+    "description": "True for points inside an axis-aligned box.",
+    "inputs": [
+      {
+        "default": [
+          0,
+          0,
+          0
+        ],
+        "description": "Middle of the box, cm.",
+        "label": "Center",
+        "name": "center",
+        "subtype": "distance",
+        "type": "vector"
+      },
+      {
+        "default": [
+          100,
+          100,
+          100
+        ],
+        "description": "Full extent along each axis, cm.",
+        "label": "Size",
+        "name": "size",
+        "subtype": "distance",
+        "type": "vector"
+      }
+    ],
+    "links": [
+      [
+        "Position",
+        "value",
+        "Offset",
+        "a"
+      ],
+      [
+        "GroupInput",
+        "center",
+        "Offset",
+        "b"
+      ],
+      [
+        "Offset",
+        "vector",
+        "Abs",
+        "a"
+      ],
+      [
+        "GroupInput",
+        "size",
+        "Half",
+        "a"
+      ],
+      [
+        "Half",
+        "vector",
+        "Inside",
+        "a"
+      ],
+      [
+        "Abs",
+        "vector",
+        "Inside",
+        "b"
+      ],
+      [
+        "Inside",
+        "vector",
+        "Split",
+        "vector"
+      ],
+      [
+        "Split",
+        "x",
+        "X",
+        "a"
+      ],
+      [
+        "Split",
+        "y",
+        "Y",
+        "a"
+      ],
+      [
+        "Split",
+        "z",
+        "Z",
+        "a"
+      ],
+      [
+        "X",
+        "result",
+        "XY",
+        "a"
+      ],
+      [
+        "Y",
+        "result",
+        "XY",
+        "b"
+      ],
+      [
+        "XY",
+        "result",
+        "XYZ",
+        "a"
+      ],
+      [
+        "Z",
+        "result",
+        "XYZ",
+        "b"
+      ],
+      [
+        "XYZ",
+        "result",
+        "GroupOutput",
+        "selection"
+      ],
+      [
+        "XYZ",
+        "result",
+        "Not",
+        "a"
+      ],
+      [
+        "Not",
+        "result",
+        "GroupOutput",
+        "inverted"
+      ]
+    ],
+    "name": "BoxSelection",
+    "nodes": [
+      {
+        "name": "Position",
+        "position": [
+          -700.0,
+          0.0
+        ],
+        "type": "Position"
+      },
+      {
+        "name": "Offset",
+        "position": [
+          -500.0,
+          0.0
+        ],
+        "type": "VectorMath",
+        "values": {
+          "operation": "subtract"
+        }
+      },
+      {
+        "name": "Abs",
+        "position": [
+          -300.0,
+          0.0
+        ],
+        "type": "VectorMath",
+        "values": {
+          "operation": "absolute"
+        }
+      },
+      {
+        "name": "Half",
+        "position": [
+          -300.0,
+          -160.0
+        ],
+        "type": "VectorMath",
+        "values": {
+          "operation": "scale",
+          "scale": 0.5
+        }
+      },
+      {
+        "name": "Inside",
+        "position": [
+          -100.0,
+          -80.0
+        ],
+        "type": "VectorMath",
+        "values": {
+          "operation": "subtract"
+        }
+      },
+      {
+        "name": "Split",
+        "position": [
+          100.0,
+          -80.0
+        ],
+        "type": "SeparateXYZ"
+      },
+      {
+        "name": "X",
+        "position": [
+          300.0,
+          -240.0
+        ],
+        "type": "Compare",
+        "values": {
+          "operation": "greaterEqual"
+        }
+      },
+      {
+        "name": "Y",
+        "position": [
+          300.0,
+          -80.0
+        ],
+        "type": "Compare",
+        "values": {
+          "operation": "greaterEqual"
+        }
+      },
+      {
+        "name": "Z",
+        "position": [
+          300.0,
+          80.0
+        ],
+        "type": "Compare",
+        "values": {
+          "operation": "greaterEqual"
+        }
+      },
+      {
+        "name": "XY",
+        "position": [
+          500.0,
+          -160.0
+        ],
+        "type": "BooleanMath"
+      },
+      {
+        "name": "XYZ",
+        "position": [
+          700.0,
+          -80.0
+        ],
+        "type": "BooleanMath"
+      },
+      {
+        "name": "Not",
+        "position": [
+          900.0,
+          40.0
+        ],
+        "type": "BooleanMath",
+        "values": {
+          "operation": "not"
+        }
+      },
+      {
+        "name": "GroupInput",
+        "position": [
+          -900.0,
+          -120.0
+        ],
+        "type": "GroupInput"
+      },
+      {
+        "name": "GroupOutput",
+        "position": [
+          1100.0,
+          -80.0
+        ],
+        "type": "GroupOutput"
+      }
+    ],
+    "outputs": [
+      {
+        "description": "Inside the box.",
+        "name": "selection",
+        "type": "bool"
+      },
+      {
+        "description": "Outside the box.",
+        "name": "inverted",
+        "type": "bool"
+      }
+    ],
+    "typeVersion": 1
+  },
+  "version": 1
+}

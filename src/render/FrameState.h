@@ -68,6 +68,15 @@ struct FrameState
     float gridSpacing = 10.0f; // cm between minor lines
     int gridMajorEvery = 10;
     glm::vec3 background{0.24f, 0.25f, 0.27f};
+    /** Grid line colour and the two ground axes (X, then Z or Y when Z-up), in the grid shader's linear values. */
+    glm::vec3 gridColor{0.42f};
+    glm::vec3 gridAxisX{0.0f};
+    glm::vec3 gridAxisZ{0.0f};
+    /** Linear object wire colours: selected, preselected, under a selected parent, and the default. */
+    glm::vec4 wireSelected{0.92f, 0.92f, 0.92f, 1.0f};
+    glm::vec4 wirePreselect{0.75f, 0.75f, 0.75f, 1.0f};
+    glm::vec4 wireUnderSelected{0.55f, 0.55f, 0.55f, 1.0f};
+    glm::vec4 wireDefault{0.02f, 0.02f, 0.02f, 1.0f};
     std::vector<MeshDraw> meshes;
     float exposure = 1.0f; // linear multiplier
     float gamma = 1.0f;    // display gamma on top of the tonemap, like Maya's viewport gamma
@@ -103,6 +112,9 @@ struct FrameState
     /** Selected component edges: drawn like linesOnTop, at their own width in device pixels. */
     std::vector<LineVertex> selectedEdges;
     float selectedEdgeWidth = 1.0f;
+    /** UV seams over meshes: drawn like linesOnTop, at their own width in device pixels. */
+    std::vector<LineVertex> seamLines;
+    float seamLineWidth = 1.0f;
     std::vector<LineVertex> tris3d;     // world-space triangle list, blended and biased toward the camera, no depth write
     std::vector<LineVertex> linesXray;  // world-space lines with no depth test, over every surface (x-ray joints)
     std::vector<LineVertex> overlay; // NDC positions, drawn last with no depth test (marquee, HUD)

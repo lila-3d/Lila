@@ -4,6 +4,8 @@
 
 #include <QWidget>
 
+#include <nlohmann/json.hpp>
+
 #include <functional>
 #include <set>
 #include <string>
@@ -51,6 +53,18 @@ public:
     void paste();
     void duplicateSelected();
     void selectAll();
+    /** Collapses the selected nodes into a new group run by a Group node in their place (gnGroupNodes). */
+    void groupSelected();
+    /** Inlines the selected Group node's nodes (gnUngroup). */
+    void ungroupSelected();
+    /** Opens the group the selected Group node runs. */
+    void openSelectedGroup();
+    /** Writes the group to a .lilanodes file picked in a dialog. */
+    void exportGroup();
+    /** Reads .lilanodes or .json files into the scene and shows the last file's main group. */
+    void importGroups(const QStringList& files);
+    /** Shows a node in a Viewer: reuses the group's first Viewer or adds one, links the node's outputs and activates it. */
+    void viewNode(const std::string& node);
 
 private:
     void openAddMenu(QPointF scenePos, const WireDrag* wire);
@@ -61,6 +75,8 @@ private:
     void refreshGroups();
     void rebuildSidePanel();
     void followSelection();
+    QWidget* buildInterface(QWidget* panel, const nlohmann::json& info);
+    void editInputInfo(const std::string& input, const nlohmann::json& current);
 
     QString mGroup;
     QString mSelectedNode;

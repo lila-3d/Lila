@@ -53,6 +53,78 @@ std::string commandIndex()
     return out + line + "\n";
 }
 
+std::string socketLine(const json& s)
+{
+    std::string out = s.value("id", "") + " " + s.value("type", "");
+    if (s.value("field", false))
+        out += " field";
+    if (s.contains("implicit"))
+        out += " (implicit " + s["implicit"].get<std::string>() + ")";
+    else if (s.contains("default") && !s["default"].is_null())
+        out += " = " + s["default"].dump();
+    return out;
+}
+
+/** The geometry-node catalogue from the live node registry, appended to the geometry-nodes guide. */
+std::string nodeCatalogue()
+{
+    const CommandDef* d = ops::find("gnNodeTypes");
+    if (!d)
+        return {};
+    Args a;
+    a.flags = {{"detail", true}};
+    json types;
+    try
+    {
+        types = d->run(a);
+    }
+    catch (const std::exception&)
+    {
+        return {};
+    }
+    std::map<std::string, std::vector<const json*>> byCategory;
+    for (const json& t : types)
+        byCategory[t.value("category", "Other")].push_back(&t);
+    std::string out = "\n\n## Node catalogue\n\nSockets are listed as they are with default properties; nodes marked \"sockets follow props\" change "
+                      "their sockets with their properties (gnGroupInfo shows the resolved ones).\n";
+    for (auto& [cat, list] : byCategory)
+    {
+        out += "\n### " + cat + "\n\n";
+        for (const json* t : list)
+        {
+            out += "- `" + t->value("type", "") + "`: " + t->value("doc", "");
+            if (t->value("dynamicSockets", false))
+                out += " (sockets follow props)";
+            out += "\n";
+            std::string props;
+            for (const json& p : t->value("props", json::array()))
+            {
+                props += (props.empty() ? "" : "; ") + p.value("id", "");
+                if (!p["options"].empty())
+                {
+                    std::string opts;
+                    for (const json& o : p["options"])
+                        opts += (opts.empty() ? "" : "|") + o.get<std::string>();
+                    props += " " + opts;
+                }
+                props += " (default " + p["default"].dump() + ")";
+            }
+            if (!props.empty())
+                out += "  - props: " + props + "\n";
+            std::string ins, outs;
+            for (const json& s : t->value("inputs", json::array()))
+                ins += (ins.empty() ? "" : ", ") + socketLine(s);
+            for (const json& s : t->value("outputs", json::array()))
+                outs += (outs.empty() ? "" : ", ") + s.value("id", "") + " " + s.value("type", "");
+            if (!ins.empty())
+                out += "  - in: " + ins + "\n";
+            if (!outs.empty())
+                out += "  - out: " + outs + "\n";
+        }
+    }
+    return out;
+}
+
 struct Doc
 {
     const char* uri;
@@ -67,6 +139,9 @@ constexpr Doc kDocs[] = {
      "limbs, head, snout, eyes, ears and tail, selecting components by position and normal, checking with mesh_check and "
      "captures, cheap token use. Read before modeling anything."},
     {"lila://guide/api", "guide-api.md", "API guide", "Where Lila's commands and Python modules live and how to call them, plus an index of every command."},
+    {"lila://guide/geometry-nodes", "guide-geometry-nodes.md", "Geometry nodes guide",
+     "Authoring geometry-node groups from code: the one-call gnBuildGroup spec, group interfaces, nested groups, colours and "
+     "normals for export, sharing as .lilanodes, and the full node catalogue with sockets and options."},
     {"lila://examples/low-poly-dog", "examples/low_poly_dog.py", "Example: low-poly dog",
      "A complete script: a very low-poly dog as one closed symmetric mesh (legs, head, snout, nose, eyes, floppy ears, tail "
      "all extruded), checked with meshCheck and captures."},
@@ -95,26 +170,30 @@ void registerAgentResources()
     {
         std::string uri = d.uri, file = d.file;
         bool api = uri == "lila://guide/api";
+        bool nodes = uri == "lila://guide/geometry-nodes";
         s.addResource({
             .uri = uri,
             .name = d.name,
             .description = d.description,
             .mimeType = file.ends_with(".py") ? "text/x-python" : "text/markdown",
-            .read = [file, api] { return readFile(agentsDir() / file) + (api ? commandIndex() : std::string()); },
+            .read = [file, api, nodes] { return readFile(agentsDir() / file) + (api ? commandIndex() : nodes ? nodeCatalogue() : std::string()); },
         });
     }
 
     s.addTool({
         .name = "read_guide",
         .description = "Lila's agent guides, for clients that cannot read MCP resources. topic: modeling (read before modeling), api, "
-                       "or example (a complete low-poly dog script).",
+                       "geometryNodes (read before building node groups: spec format and node catalogue), or example (a complete "
+                       "low-poly dog script).",
         .inputSchema = {{"type", "object"},
-                        {"properties", {{"topic", {{"type", "string"}, {"enum", {"modeling", "api", "example"}}}}}},
+                        {"properties", {{"topic", {{"type", "string"}, {"enum", {"modeling", "api", "geometryNodes", "example"}}}}}},
                         {"required", {"topic"}}},
         .run = [](const json& args) {
             std::string topic = args.value("topic", "modeling");
             if (topic == "api")
                 return readFile(agentsDir() / "guide-api.md") + commandIndex();
+            if (topic == "geometryNodes")
+                return readFile(agentsDir() / "guide-geometry-nodes.md") + nodeCatalogue();
             if (topic == "example")
                 return readFile(agentsDir() / "examples" / "low_poly_dog.py");
             return readFile(agentsDir() / "guide-modeling.md");

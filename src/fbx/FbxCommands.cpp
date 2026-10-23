@@ -8,10 +8,13 @@
 #include "core/Progress.h"
 #include "scene/Anim.h"
 #include "scene/Graph.h"
+#include "scene/Rig.h"
 #include "scene/Skin.h"
 
 #include <chrono>
+#include <charconv>
 #include <future>
+#include <set>
 
 namespace lila::fbx
 {
@@ -42,7 +45,7 @@ std::vector<std::string> names(const Graph& g, const std::vector<NodeId>& ids)
 {
     std::vector<std::string> out;
     for (NodeId id : ids)
-        out.push_back(g.node(id)->name());
+        out.push_back(g.node(id)->path());
     return out;
 }
 
@@ -135,7 +138,7 @@ void registerCommands()
         .name = "importFbx",
         .doc = "Import an FBX file: its node hierarchy as transforms, joints and meshes, converted to the scene's axes and "
                "cm. LimbNodes become joints (PreRotation into jointOrient), skins become skinClusters with the file's "
-               "weights and bind matrices, blend shapes become a blendShape with a target per channel, and one take is "
+               "weights and bind matrices, morph channels become a morph with a target per channel (in-betweens kept), and one take is "
                "baked onto the channels. Cameras and lights are reported, not imported. Returns the new node names, or with report=True a dict of nodes, roots, "
                "joints, skinClusters, take, fps, skipped and warnings.",
         .positionalDoc = "path",
@@ -186,7 +189,7 @@ void registerCommands()
         .doc = "Export the evaluated meshes and transforms to a binary FBX 7.4 file. Objects default to the selection "
                "(or the whole scene with selectionOnly=False). Names go out intact, so UCX_/UBX_/USP_/UCP_ collision and "
                "SOCKET_ empties work in Unreal. kind=skeletal writes joints, skins (bind pose mesh, clusters, BindPose), "
-               "blendShape morph targets with their weight curves, and the animation baked over the range; kind=animation writes only the skeleton and its curves. "
+               "morph targets (in-betweens as their own targets) with their weight curves, driven channel curveNames as named curves on the root joint, and the animation baked over the range; kind=animation writes only the skeleton and its curves. "
                "start/end are frames. Returns the path.",
         .positionalDoc = "path objects...",
         .flags = {{"profile", "", T::String, "ue5", "Axis profile: ue5 (Z up), ue6 (Y up) or generic (the scene's own axes)."},
@@ -283,6 +286,59 @@ void registerCommands()
             if (!ok)
                 throw CommandError("exportFbx: " + err);
             return path;
+        },
+    });
+
+    ops::registerCommand({
+        .name = "fixDuplicateJointNames",
+        .doc = "Rename joints that share a name with another joint in the same skeleton (the given roots and their "
+               "descendants, or the selection), so the skeleton exports with unique bone names. Returns [[old, new], ...].",
+        .positionalDoc = "roots",
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            std::vector<NodeId> joints;
+            std::set<NodeId> seen;
+            for (const std::string& name : a.objects())
+            {
+                scene::Node* root = g.find(name);
+                if (!root)
+                    throw CommandError("fixDuplicateJointNames: no node named '" + name + "'");
+                std::vector<NodeId> all{root->id()};
+                for (NodeId d : g.descendants(root->id()))
+                    all.push_back(d);
+                for (NodeId id : all)
+                    if (scene::rig::isJoint(*g.node(id)) && seen.insert(id).second)
+                        joints.push_back(id);
+            }
+            std::set<std::string> used;
+            for (NodeId id : joints)
+                used.insert(g.node(id)->name());
+            json out = json::array();
+            std::set<std::string> kept;
+            for (NodeId id : joints)
+            {
+                scene::Node* n = g.node(id);
+                if (kept.insert(n->name()).second)
+                    continue;
+                std::string base = n->name();
+                size_t digits = base.size();
+                while (digits > 0 && base[digits - 1] >= '0' && base[digits - 1] <= '9')
+                    --digits;
+                std::string stem = base.substr(0, digits);
+                int k = 1;
+                if (digits < base.size())
+                    std::from_chars(base.data() + digits, base.data() + base.size(), k);
+                std::string candidate;
+                do
+                    candidate = stem + std::to_string(++k);
+                while (used.contains(candidate) || g.availableName(candidate, g.parent(id)) != candidate);
+                std::string was = n->path();
+                std::string now = g.rename(id, candidate);
+                used.insert(now);
+                kept.insert(now);
+                out.push_back({was, n->path()});
+            }
+            return out;
         },
     });
 

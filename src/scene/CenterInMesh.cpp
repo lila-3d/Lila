@@ -55,7 +55,7 @@ struct CenterMeshList final : Data
         {
             const Node* n = e.id != kNoNode ? g.node(e.id) : nullptr;
             if (n)
-                names.push_back(n->name());
+                names.push_back(n->path());
             else if (e.id == kNoNode)
                 names.push_back(e.name);
         }
@@ -87,16 +87,21 @@ struct CenterMeshList final : Data
             if (e.id != kNoNode)
                 n = g.node(e.id); // a deleted mesh stays unbound
             else
-            {
-                if (!ownerNamespace.empty())
-                    n = g.find(ownerNamespace + ":" + e.name);
-                if (!n)
-                    n = g.find(e.name);
-            }
+                try
+                {
+                    if (!ownerNamespace.empty())
+                        n = g.find(ownerNamespace + ":" + e.name);
+                    if (!n)
+                        n = g.find(e.name);
+                }
+                catch (const std::exception&)
+                {
+                    continue; // ambiguous: stays unbound until the name is made unique
+                }
             if (!isMesh(n))
                 continue;
             e.id = n->id();
-            e.name = n->name();
+            e.name = n->path();
             out.push_back(n->id());
         }
         return out;
@@ -156,7 +161,7 @@ DataPtr makeCenterMeshList(const Graph& g, const std::vector<NodeId>& meshes)
     auto out = std::make_shared<CenterMeshList>();
     for (NodeId id : meshes)
         if (const Node* n = g.node(id))
-            out->entries.push_back({id, n->name()});
+            out->entries.push_back({id, n->path()});
     return out;
 }
 
@@ -298,7 +303,7 @@ void registerCenterCommands()
                 {
                     Node& n = nodeNamed(m.get<std::string>(), "centerJoint");
                     if (!isMesh(&n))
-                        throw CommandError("centerJoint: " + n.name() + " is not a mesh");
+                        throw CommandError("centerJoint: " + n.path() + " is not a mesh");
                     override.push_back(n.id());
                 }
             std::vector<NodeId> list = targets(g, a, "centerJoint");
@@ -321,11 +326,11 @@ void registerCenterCommands()
                 }
                 if (!p)
                 {
-                    log::warn("centerJoint: nothing to centre {} in (no bone direction or no meshes under it)", g.node(id)->name());
+                    log::warn("centerJoint: nothing to centre {} in (no bone direction or no meshes under it)", g.node(id)->path());
                     continue;
                 }
                 rig::moveNodeTo(g, id, *p, a.get<bool>("keepChildren"));
-                moved.push_back(g.node(id)->name());
+                moved.push_back(g.node(id)->path());
             }
             return moved;
         },
@@ -351,7 +356,7 @@ void registerCenterCommands()
                 {
                     Node& n = nodeNamed(m.get<std::string>(), "centerMeshes");
                     if (!isMesh(&n))
-                        throw CommandError("centerMeshes: " + n.name() + " is not a mesh");
+                        throw CommandError("centerMeshes: " + n.path() + " is not a mesh");
                     meshes.push_back(n.id());
                 }
             json out = json::object();
@@ -361,15 +366,15 @@ void registerCenterCommands()
                 int attr = n->type().attrIndex("centerMeshes");
                 int on = n->type().attrIndex("centerInMesh");
                 if (attr < 0 || on < 0)
-                    throw CommandError("centerMeshes: " + n->name() + " has no centerMeshes attr");
+                    throw CommandError("centerMeshes: " + n->path() + " has no centerMeshes attr");
                 if (a.has("meshes"))
                     g.setValue({id, attr, -1}, rig::makeCenterMeshList(g, meshes));
                 if (a.has("centerInMesh"))
                     g.setValue({id, on, -1}, a.get<bool>("centerInMesh"));
                 json names = json::array();
                 for (NodeId m : rig::centerMeshes(g, id))
-                    names.push_back(g.node(m)->name());
-                out[n->name()] = names;
+                    names.push_back(g.node(m)->path());
+                out[n->path()] = names;
             }
             return out;
         },
@@ -430,7 +435,7 @@ void registerCenterCommands()
                 bool keep = a.has("keepChildren") ? a.get<bool>("keepChildren") : rig::isJoint(*g.node(id));
                 g.evaluate();
                 rig::moveNodeTo(g, id, target, keep);
-                moved.push_back(g.node(id)->name());
+                moved.push_back(g.node(id)->path());
             }
             return moved;
         },

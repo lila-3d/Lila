@@ -8,6 +8,7 @@
 #include "ui/CursorBadges.h"
 #include "ui/DrawOverrides.h"
 #include "ui/Gizmo.h"
+#include "ui/NodeLookup.h"
 #include "ui/Overlay.h"
 #include "ui/RenderPasses.h"
 #include "ui/SelectionHandlers.h"
@@ -325,7 +326,7 @@ json dispatch(const std::string& op, const json& a, const std::vector<PyCall>& f
     {
         PyCall draw = fn(0), pick = fn(1);
         drawOverrides::DrawOverride o{.id = id, .nodeType = str(a, "nodeType")};
-        auto nodeJson = [](const scene::Node& n, const glm::dmat4& world) { return json{{"node", n.name()}, {"world", mat(world)}}; };
+        auto nodeJson = [](const scene::Node& n, const glm::dmat4& world) { return json{{"node", n.path()}, {"world", mat(world)}}; };
         if (draw)
             o.draw = [draw, id, nodeJson](drawOverrides::DrawContext& c) {
                 json args = nodeJson(c.node, c.world);
@@ -376,7 +377,7 @@ json dispatch(const std::string& op, const json& a, const std::vector<PyCall>& f
                     return std::nullopt;
                 selectionHandlers::Highlight hl;
                 std::string mesh = str(r, "mesh");
-                if (scene::Node* n = scene::Graph::current().find(mesh))
+                if (scene::Node* n = findNode(mesh))
                     hl.mesh = n->id();
                 hl.domain = str(r, "domain", "face") == "point" ? selectionHandlers::Highlight::Domain::Point : selectionHandlers::Highlight::Domain::Face;
                 hl.weights = r.value("weights", std::vector<float>());

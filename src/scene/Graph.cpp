@@ -1,5 +1,6 @@
 #include "scene/Graph.h"
 
+#include "ops/Command.h"
 #include "ops/Undo.h"
 #include "core/Events.h"
 #include "core/Log.h"
@@ -183,11 +184,14 @@ bool Graph::validName(std::string_view name)
     return true;
 }
 
-std::string Graph::uniqueName(std::string_view wanted, NodeId self) const
+std::string Graph::uniqueName(std::string_view wanted, NodeId parent, NodeId self, bool global) const
 {
     auto taken = [&](const std::string& n) {
-        auto it = mNames.find(n);
-        return it != mNames.end() && it->second != self;
+        auto [b, e] = mNames.equal_range(n);
+        for (auto it = b; it != e; ++it)
+            if (it->second != self && (global || this->parent(it->second) == parent))
+                return true;
+        return false;
     };
     std::string base(wanted);
     if (!taken(base))
@@ -225,6 +229,37 @@ std::string Graph::conformName(const NodeType& type, std::string_view wanted, bo
     return fixed;
 }
 
+namespace
+{
+/**
+ * A name nobody chose (empty, or a command's own default like "Cube" when its call has no name flag) is made unique
+ * across the scene, so new nodes don't make existing names ambiguous.
+ */
+bool defaultName(std::string_view name, bool applyNaming)
+{
+    if (name.empty())
+        return true;
+    const Args* running = ops::currentArgs();
+    return applyNaming && running && !running->has("name");
+}
+} // namespace
+
+std::string Graph::availableName(std::string_view wanted, NodeId parent) const
+{
+    return uniqueName(wanted, parent, kNoNode, mNaming.uniqueNames);
+}
+
+void Graph::eraseName(const std::string& name, NodeId id)
+{
+    auto [b, e] = mNames.equal_range(name);
+    for (auto it = b; it != e; ++it)
+        if (it->second == id)
+        {
+            mNames.erase(it);
+            return;
+        }
+}
+
 std::vector<NodeId>& Graph::siblings(NodeId parent)
 {
     return parent == kNoNode ? mRoots : mRel[parent].children;
@@ -233,7 +268,8 @@ std::vector<NodeId>& Graph::siblings(NodeId parent)
 void Graph::attach(std::unique_ptr<Node> n, NodeId parent, size_t index)
 {
     NodeId id = n->id();
-    mNames[n->mName] = id;
+    mNames.emplace(n->mName, id);
+    n->mGraph = this;
     if (n->type().dag)
     {
         mRel[id].parent = parent;
@@ -253,7 +289,7 @@ std::unique_ptr<Node> Graph::detach(NodeId id, size_t* indexOut)
         return nullptr;
     std::unique_ptr<Node> n = std::move(it->second);
     mNodes.erase(it);
-    mNames.erase(n->mName);
+    eraseName(n->mName, id);
     std::erase(mSelection, id);
     if (auto rel = mRel.find(id); rel != mRel.end())
     {
@@ -285,7 +321,9 @@ Node* Graph::createNode(const NodeType& type, std::string_view name, NodeId pare
     n->mType = &type;
     // Default names follow the convention's style even when enforcement is off.
     std::string fallback = applyCase(type.name, mNaming.styleFor(type));
-    n->mName = uniqueName(name.empty() ? fallback : applyNaming ? conformName(type, name, true) : std::string(name));
+    NodeId p = type.dag ? parent : kNoNode;
+    n->mName = uniqueName(name.empty() ? fallback : applyNaming ? conformName(type, name, true) : std::string(name), p,
+                          kNoNode, mNaming.uniqueNames || defaultName(name, applyNaming));
     if (auto colon = n->mName.rfind(':'); colon != std::string::npos)
         n->mNamespace = n->mName.substr(0, colon);
     n->mValues.reserve(type.attrs.size());
@@ -293,7 +331,6 @@ Node* Graph::createNode(const NodeType& type, std::string_view name, NodeId pare
         n->mValues.push_back(a.defaultValue);
 
     NodeId id = n->id();
-    NodeId p = type.dag ? parent : kNoNode;
     attach(std::move(n), p, SIZE_MAX);
 
     auto action = std::make_unique<DeleteAction>(*this, id, p, siblings(p).size() - 1, nullptr);
@@ -351,10 +388,106 @@ Node* Graph::node(NodeId id) const
     return it == mNodes.end() ? nullptr : it->second.get();
 }
 
-Node* Graph::find(std::string_view name) const
+bool Graph::matchesPath(NodeId id, const std::vector<std::string_view>& segs, bool absolute) const
 {
-    auto it = mNames.find(std::string(name));
-    return it == mNames.end() ? nullptr : node(it->second);
+    NodeId cur = id;
+    for (size_t i = segs.size() - 1; i-- > 0;)
+    {
+        cur = parent(cur);
+        if (cur == kNoNode || node(cur)->mName != segs[i])
+            return false;
+    }
+    return !absolute || parent(cur) == kNoNode;
+}
+
+std::vector<NodeId> Graph::findAll(std::string_view path) const
+{
+    bool absolute = !path.empty() && path[0] == '|';
+    if (absolute)
+        path.remove_prefix(1);
+    std::vector<std::string_view> segs;
+    for (size_t start = 0;;)
+    {
+        size_t bar = path.find('|', start);
+        segs.push_back(path.substr(start, bar == std::string_view::npos ? std::string_view::npos : bar - start));
+        if (segs.back().empty())
+            return {};
+        if (bar == std::string_view::npos)
+            break;
+        start = bar + 1;
+    }
+    std::vector<NodeId> out;
+    auto [b, e] = mNames.equal_range(std::string(segs.back()));
+    for (auto it = b; it != e; ++it)
+        if ((segs.size() == 1 && !absolute) || matchesPath(it->second, segs, absolute))
+            out.push_back(it->second);
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+Node* Graph::find(std::string_view path) const
+{
+    if (path.find('|') == std::string_view::npos)
+    {
+        auto [b, e] = mNames.equal_range(std::string(path));
+        if (b == e)
+            return nullptr;
+        if (std::next(b) == e)
+            return node(b->second);
+    }
+    std::vector<NodeId> all = findAll(path);
+    if (all.empty())
+        return nullptr;
+    if (all.size() == 1)
+        return node(all[0]);
+    std::string list;
+    for (NodeId id : all)
+        list += (list.empty() ? "" : ", ") + fullPath(id);
+    throw CommandError("'" + std::string(path) + "' is ambiguous: it matches " + list + "; use a path");
+}
+
+std::string Graph::fullPath(NodeId id) const
+{
+    std::vector<const std::string*> chain;
+    for (NodeId cur = id; cur != kNoNode; cur = parent(cur))
+        if (const Node* n = node(cur))
+            chain.push_back(&n->mName);
+        else
+            break;
+    std::string out;
+    for (auto it = chain.rbegin(); it != chain.rend(); ++it)
+        out += "|" + **it;
+    return out;
+}
+
+std::string Graph::path(NodeId id) const
+{
+    const Node* n = node(id);
+    if (!n)
+        return {};
+    auto [b, e] = mNames.equal_range(n->mName);
+    if (b == e || std::next(b) == e)
+        return n->mName;
+    std::vector<std::string_view> chain; // leaf first
+    for (NodeId cur = id; cur != kNoNode; cur = parent(cur))
+        chain.push_back(node(cur)->mName);
+    std::vector<std::string_view> segs;
+    for (size_t k = 1; k <= chain.size(); ++k)
+    {
+        segs.assign(chain.begin(), chain.begin() + std::ptrdiff_t(k));
+        std::reverse(segs.begin(), segs.end());
+        int matches = 0;
+        for (auto it = b; it != e && matches < 2; ++it)
+            matches += matchesPath(it->second, segs, false) ? 1 : 0;
+        if (matches == 1)
+        {
+            std::string out;
+            for (std::string_view seg : segs)
+                out += (out.empty() ? "" : "|") + std::string(seg);
+            return out;
+        }
+    }
+    return fullPath(id);
 }
 
 std::vector<NodeId> Graph::nodes() const
@@ -370,11 +503,11 @@ std::vector<NodeId> Graph::nodes() const
 void Graph::renameRaw(NodeId id, const std::string& name)
 {
     Node* n = node(id);
-    mNames.erase(n->mName);
+    eraseName(n->mName, id);
     n->mName = name;
     auto colon = name.rfind(':');
     n->mNamespace = colon == std::string::npos ? std::string() : name.substr(0, colon);
-    mNames[name] = id;
+    mNames.emplace(name, id);
     changed(Change::Renamed, id);
 }
 
@@ -386,7 +519,7 @@ std::string Graph::rename(NodeId id, std::string_view name)
     if (!validName(name))
         throw std::invalid_argument("invalid name '" + std::string(name) + "'");
     std::string oldName = n->mName;
-    std::string newName = uniqueName(conformName(n->type(), name, true), id);
+    std::string newName = uniqueName(conformName(n->type(), name, true), parent(id), id, mNaming.uniqueNames);
     if (newName == oldName)
         return newName;
     renameRaw(id, newName);
@@ -475,6 +608,12 @@ void Graph::setParent(NodeId child, NodeId newParent, bool keepWorld, size_t ind
     size_t newIndex = size_t(std::find(newSib.begin(), newSib.end(), child) - newSib.begin());
     recordUndo([this, child, oldParent, oldIndex] { reparentRaw(child, oldParent, oldIndex); },
                [this, child, newParent, newIndex] { reparentRaw(child, newParent, newIndex); });
+    // Sibling names stay unique, so only a clash under the new parent renames.
+    if (std::string oldName = c->mName, fixed = uniqueName(oldName, newParent, child, mNaming.uniqueNames); fixed != oldName)
+    {
+        renameRaw(child, fixed);
+        recordUndo([this, child, oldName] { renameRaw(child, oldName); }, [this, child, fixed] { renameRaw(child, fixed); });
+    }
 
     if (keepWorld)
     {
@@ -514,7 +653,16 @@ std::string Graph::plugName(const PlugRef& p) const
     if (!n)
         return "?";
     const AttrDef& a = n->type().attrs[p.attr];
-    return n->name() + "." + (p.component >= 0 ? a.childNames[p.component] : a.name);
+    return path(p.node) + "." + (p.component >= 0 ? a.childNames[p.component] : a.name);
+}
+
+std::string Graph::fullPlugName(const PlugRef& p) const
+{
+    Node* n = node(p.node);
+    if (!n)
+        return "?";
+    const AttrDef& a = n->type().attrs[p.attr];
+    return fullPath(p.node) + "." + (p.component >= 0 ? a.childNames[p.component] : a.name);
 }
 
 const AttrDef& Graph::attr(const PlugRef& p) const

@@ -2,10 +2,13 @@
 
 #include "ops/Command.h"
 #include "ops/Undo.h"
+#include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
+#include "geo/Symmetry.h"
+#include "uv/SymmetryUv.h"
 #include "uv/Uv.h"
 #include "uv/UvEdit.h"
 
@@ -54,6 +57,17 @@ std::string uvSetArg(const Args& a)
 }
 
 /** Meshes to work on: the component selection converted to kind, or whole selected meshes in object mode. */
+std::vector<NodeId> selectedMeshes(const Graph& g)
+{
+    if (includeChildren())
+        return meshesUnder(g, g.selection());
+    std::vector<NodeId> out;
+    for (NodeId id : g.selection())
+        if (Node* n = g.node(id); n && n->type().isA("mesh"))
+            out.push_back(id);
+    return out;
+}
+
 std::map<NodeId, Ids> targets(ComponentMode kind, bool allowWhole)
 {
     Graph& g = graph();
@@ -69,7 +83,7 @@ std::map<NodeId, Ids> targets(ComponentMode kind, bool allowWhole)
                     out[node] = std::move(conv);
             }
     if (out.empty() && allowWhole)
-        for (NodeId id : meshesUnder(g, g.selection()))
+        for (NodeId id : selectedMeshes(g))
             if (g.node(id)->as<MeshPtr>(MeshNode::kOutMesh))
                 out[id] = {};
     return out;
@@ -97,7 +111,7 @@ json editUv(const char* label, ComponentMode kind, const UvEditFn& fn, bool allo
         bakeHistory(n);
         g.evaluate();
         geo::Mesh mesh = *n.as<MeshPtr>(MeshNode::kInMesh);
-        out[n.name()] = fn(mesh, ids, n);
+        out[n.path()] = fn(mesh, ids, n);
         g.setValue({node, MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(std::move(mesh))));
     }
     return out.size() == 1 ? out.begin().value() : out;
@@ -113,9 +127,15 @@ json queryUv(const std::function<json(const geo::Mesh&, const Ids&, Node&)>& fn)
     for (auto& [node, ids] : work)
     {
         Node& n = *graph().node(node);
-        out[n.name()] = fn(*n.as<MeshPtr>(MeshNode::kOutMesh), ids, n);
+        out[n.path()] = fn(*n.as<MeshPtr>(MeshNode::kOutMesh), ids, n);
     }
     return out.size() == 1 ? out.begin().value() : out;
+}
+
+std::vector<ProjectionRecord>& lastProjectionsMutable()
+{
+    static std::vector<ProjectionRecord> records;
+    return records;
 }
 
 glm::dmat3 worldLinear(Node& n)
@@ -378,6 +398,124 @@ json sewUvEdges(geo::Mesh& m, std::span<const Index> edges, std::string_view uvS
     return sewEdges(m, edges, uvSet, move);
 }
 
+int uvSymmetryAxis(const Node& n)
+{
+    if (!n.type().isA("mesh"))
+        return -1;
+    int64_t axis = n.as<int64_t>(MeshNode::kSymmetry);
+    return axis >= 1 && axis <= 3 ? int(axis - 1) : -1;
+}
+
+namespace
+{
+double symmetryTolerance(const geo::Mesh& mesh)
+{
+    return std::max(1e-4, glm::length(mesh.bounds().size()) * 1e-5);
+}
+} // namespace
+
+std::optional<geo::SymmetryMap> uvSymmetryMap(const Node& n, const geo::Mesh& mesh)
+{
+    const int axis = uvSymmetryAxis(n);
+    if (axis < 0)
+        return std::nullopt;
+    geo::Mesh copy = mesh;
+    return geo::SymmetryMap::persistent(copy, axis, symmetryTolerance(copy));
+}
+
+json withUvSymmetry(geo::Mesh& m, const Node& n, std::string_view uvSet, UvSymmetry mode, std::span<const Index> moved, const std::function<json()>& edit)
+{
+    const int axis = uvSymmetryAxis(n);
+    if (axis < 0)
+        return edit();
+    geo::SymmetryMap map = geo::SymmetryMap::persistent(m, axis, symmetryTolerance(m));
+    std::optional<UvMirror> mirror;
+    if (mode == UvSymmetry::Delta)
+        mirror = buildUvMirror(m, map, uvSet);
+    std::span<const glm::vec2> was = m.cornerAttrs().get<glm::vec2>(uvSet);
+    std::vector<glm::vec2> before(was.begin(), was.end());
+    before.resize(m.cornerCapacity(), glm::vec2(0.0f));
+    json r = edit();
+    std::span<glm::vec2> uv = m.cornerAttrs().get<glm::vec2>(uvSet);
+    if (uv.size() != before.size())
+        return r;
+    std::vector<Index> changed;
+    for (Index c = 0; c < uv.size(); ++c)
+        if (uv[c] != before[c])
+            changed.push_back(c);
+    if (mode == UvSymmetry::Absolute)
+    {
+        // Islands as the edit left them, placed through the pairing the uvs had before.
+        UvMirror after = buildUvMirror(m, map, uvSet);
+        fitUvMirror(after, before);
+        symmetrizeUvIslands(after, changed, uvMirrorDrive(after, changed), uv);
+        return r;
+    }
+    std::vector<Index> all(moved.begin(), moved.end());
+    all.insert(all.end(), changed.begin(), changed.end());
+    std::sort(all.begin(), all.end());
+    all.erase(std::unique(all.begin(), all.end()), all.end());
+    applyUvFollow(uvFollowRules(*mirror, all, uvMirrorDrive(*mirror, all)), before, uv);
+    return r;
+}
+
+std::vector<Index> mirrorComponents(const geo::SymmetryMap& map, const geo::Mesh& m, ComponentMode mode, std::span<const Index> ids)
+{
+    switch (mode)
+    {
+    case ComponentMode::Vertex: return map.expandPoints(ids);
+    case ComponentMode::Edge: return map.expandEdges(m, ids);
+    case ComponentMode::Face: return map.expandFaces(m, ids);
+    default: return {ids.begin(), ids.end()};
+    }
+}
+
+UvMeshEditFn symmetricUvEdit(std::string uvSet, UvMeshEditFn fn)
+{
+    return [uvSet = std::move(uvSet), fn = std::move(fn)](geo::Mesh& m, const Ids& ids, Node& n) -> json {
+        return withUvSymmetry(m, n, uvSet, UvSymmetry::Absolute, {}, [&] { return fn(m, ids, n); });
+    };
+}
+
+std::vector<Index> withMirrorCorners(const Node& n, const geo::Mesh& m, std::span<const Index> corners)
+{
+    std::vector<Index> out(corners.begin(), corners.end());
+    if (std::optional<geo::SymmetryMap> map = uvSymmetryMap(n, m))
+        for (Index c : corners)
+        {
+            if (!m.cornerValid(c))
+                continue;
+            Index f = map->mirrorFace(m, m.cornerFace(c)), p = map->mirrorPoint(m.cornerPoint(c));
+            if (f != kInvalid && p != kInvalid)
+                if (Index mc = m.findCorner(f, p); mc != kInvalid)
+                    out.push_back(mc);
+        }
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+std::vector<Index> withMirrorEdges(const Node& n, const geo::Mesh& m, std::span<const Index> edges)
+{
+    if (std::optional<geo::SymmetryMap> map = uvSymmetryMap(n, m))
+        return map->expandEdges(m, edges);
+    std::vector<Index> out(edges.begin(), edges.end());
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+std::function<std::optional<glm::dvec3>()>& projectionViewProvider()
+{
+    static std::function<std::optional<glm::dvec3>()> fn;
+    return fn;
+}
+
+const std::vector<ProjectionRecord>& lastProjections()
+{
+    return lastProjectionsMutable();
+}
+
 std::vector<NodeId> meshesUnder(const Graph& g, std::span<const NodeId> roots)
 {
     std::vector<NodeId> out;
@@ -395,10 +533,20 @@ std::vector<NodeId> meshesUnder(const Graph& g, std::span<const NodeId> roots)
     return out;
 }
 
+bool includeChildren()
+{
+    return PrefStore::get().value<bool>("general", "/uv/includeChildren", true);
+}
+
+void setIncludeChildren(bool on)
+{
+    PrefStore::get().set("general", "/uv/includeChildren", on);
+}
+
 std::vector<NodeId> shownMeshes()
 {
     Graph& g = graph();
-    std::vector<NodeId> out = meshesUnder(g, g.selection());
+    std::vector<NodeId> out = selectedMeshes(g);
     ComponentMode mode = scene::components::mode();
     // Component selections outlive the object selection, so only the current kind counts, and only with no objects selected.
     if (out.empty() && mode != ComponentMode::Object)
@@ -435,19 +583,42 @@ void registerCommands()
             o.pack = a.get<bool>("pack", false);
             o.packing = packArgs(a);
             std::string set = uvSetArg(a);
-            return editUv("UV Unwrap", K::Face, [&](geo::Mesh& m, const Ids& f, Node&) -> json {
-                UnwrapFacesResult r = unwrapFaces(m, f, set, o);
-                return {{"islands", r.islands}, {"failed", r.failed}, {"seamsAdded", r.seamsAdded}};
+            return editUv("UV Unwrap", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
+                Index mirrored = 0;
+                if (std::optional<geo::SymmetryMap> map = uvSymmetryMap(n, m))
+                    mirrored = symmetricSeams(m, *map, f);
+                UnwrapFacesResult r;
+                withUvSymmetry(m, n, set, UvSymmetry::Absolute, {}, [&]() -> json {
+                    r = unwrapFaces(m, f, set, o);
+                    return nullptr;
+                });
+                return {{"islands", r.islands}, {"failed", r.failed}, {"seamsAdded", r.seamsAdded + mirrored}};
             });
         },
     });
 
     ops::registerCommand({
         .name = "uvProject",
-        .doc = "Project uvs onto the selected faces: planar, box, cylindrical, spherical or camera (matrix=object to clip, 16 numbers).",
+        .doc = "Project uvs onto the selected faces: planar, box, cylindrical, spherical or camera (matrix=object to clip, 16 numbers). "
+               "The frame is fitted to the faces unless given; returns the frame used.",
         .flags = {uvSetFlag(),
-                  {"type", "", T::String, "planar", "planar, box, cylindrical, spherical or camera."},
-                  {"axis", "", T::String, "best", "x, y, z or best (fitted to the faces)."},
+                  {"type", "", T::String, "planar", "planar, box, cylindrical, spherical or camera.", {"planar", "box", "cylindrical", "spherical", "camera"}},
+                  {"axis", "", T::String, "best", "x, y, z or best (fitted to the faces).", {"best", "x", "y", "z"}},
+                  {"fit", "", T::String, "auto", "Frame orientation when not given: auto (principal axes and normals), world or object axes.",
+                   {"auto", "world", "object"}},
+                  {"center", "", T::Vec3, nullptr, "Frame centre, object space."},
+                  {"rotation", "", T::Vec3, nullptr, "Frame orientation, XYZ euler degrees in object space; Z is the projection axis."},
+                  {"width", "", T::Float, 0.0, "Planar and box size along the frame's X; 0 fits the faces."},
+                  {"height", "", T::Float, 0.0, "Planar and box size along Y, cylinder length along its axis; 0 fits the faces."},
+                  {"depth", "", T::Float, 0.0, "Box size along Z; 0 fits the faces."},
+                  {"radius", "", T::Float, 0.0, "Cylinder and sphere radius; 0 fits the faces."},
+                  {"seamAngle", "", T::Float, nullptr,
+                   "Degrees about the axis where U wraps; unset places it where it cuts fewest faces, away from the camera."},
+                  {"scaleU", "", T::Float, 1.0, "U scale, applied after the projection."},
+                  {"scaleV", "", T::Float, 1.0, "V scale, applied after the projection."},
+                  {"offsetU", "", T::Float, 0.0, "U offset, applied after the scale."},
+                  {"offsetV", "", T::Float, 0.0, "V offset, applied after the scale."},
+                  {"viewDir", "", T::Vec3, nullptr, "World direction the camera looks along, for the seam; the UI passes the active view's."},
                   {"normalize", "", T::Bool, true, "Fit into 0-1 keeping proportions."},
                   {"matrix", "", T::List, nullptr, "Camera projection, column major, for type=camera."},
                   {"pack", "", T::Bool, false, "Pack the resulting islands afterwards."}},
@@ -468,7 +639,29 @@ void registerCommands()
                 throw CommandError("uvProject: type must be planar, box, cylindrical, spherical or camera");
             std::string axis = a.get<std::string>("axis", "best");
             o.axis = axis == "x" ? ProjectAxis::X : axis == "y" ? ProjectAxis::Y : axis == "z" ? ProjectAxis::Z : ProjectAxis::BestFit;
+            std::string fit = a.get<std::string>("fit", "auto");
+            if (fit != "auto" && fit != "world" && fit != "object")
+                throw CommandError("uvProject: fit must be auto, world or object");
+            o.fit = fit == "world" ? ProjectFit::World : fit == "object" ? ProjectFit::Object : ProjectFit::Auto;
             o.normalize = a.get<bool>("normalize", true);
+            auto vec3 = [&](const char* name) -> std::optional<glm::dvec3> {
+                if (!a.has(name))
+                    return std::nullopt;
+                std::vector<double> v = listArg(a, name, 3, 0.0);
+                return glm::dvec3(v[0], v[1], v[2]);
+            };
+            auto number = [&](const char* name) -> std::optional<double> {
+                return a.has(name) ? std::optional<double>(a.get<double>(name)) : std::nullopt;
+            };
+            o.center = vec3("center");
+            o.rotation = vec3("rotation");
+            o.width = number("width"), o.height = number("height"), o.depth = number("depth"), o.radius = number("radius");
+            o.seamAngle = number("seamAngle");
+            o.scale = {a.get<double>("scaleU", 1.0), a.get<double>("scaleV", 1.0)};
+            o.offset = {a.get<double>("offsetU", 0.0), a.get<double>("offsetV", 0.0)};
+            std::optional<glm::dvec3> view = vec3("viewDir");
+            if (!view && projectionViewProvider())
+                view = projectionViewProvider()();
             if (o.type == Projection::Camera)
             {
                 std::vector<double> mat = listArg(a, "matrix", 16, 0.0);
@@ -480,14 +673,37 @@ void registerCommands()
             }
             bool pack = a.get<bool>("pack", false);
             std::string set = uvSetArg(a);
-            return editUv("UV Project", K::Face, [&](geo::Mesh& m, const Ids& f, Node&) -> json {
-                if (!project(m, f, set, o))
+            std::vector<ProjectionRecord> records;
+            json out = editUv("UV Project", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
+                ProjectOptions mo = o;
+                glm::dmat4 world = n.as<glm::dmat4>(scene::Transform::kWorldMatrix);
+                mo.worldLinear = glm::dmat3(world);
+                if (view)
+                    mo.viewDir = glm::inverse(mo.worldLinear) * *view;
+                ProjectFrame fr;
+                if (!project(m, f, set, mo, &fr))
                     throw CommandError("uvProject: nothing to project");
                 if (pack)
                     packIslands(m, f, set, {});
-                return nullptr;
+                records.push_back({n.id(), o.type, fr, world, o.scale, o.offset});
+                if (o.type == Projection::Camera)
+                    return nullptr;
+                glm::dvec3 rot = frameEuler(fr.axes);
+                json r = {{"type", type}, {"center", {fr.center.x, fr.center.y, fr.center.z}}, {"rotation", {rot.x, rot.y, rot.z}}};
+                if (o.type == Projection::Planar || o.type == Projection::Box)
+                    r["width"] = fr.width, r["height"] = fr.height;
+                if (o.type == Projection::Box)
+                    r["depth"] = fr.depth;
+                if (o.type == Projection::Cylindrical)
+                    r["height"] = fr.height;
+                if (o.type == Projection::Cylindrical || o.type == Projection::Spherical)
+                    r["radius"] = fr.radius, r["seamAngle"] = glm::degrees(fr.seamAngle);
+                return r;
             });
+            lastProjectionsMutable() = std::move(records);
+            return out;
         },
+        .adjustable = true,
     });
 
     ops::registerCommand({
@@ -528,8 +744,9 @@ void registerCommands()
         .name = "uvCutEdges",
         .doc = "Mark the selected edges as uv seams.",
         .run = [](const Args&) -> json {
-            return editUv("UV Cut", K::Edge, [](geo::Mesh& m, const Ids& e, Node&) -> json {
+            return editUv("UV Cut", K::Edge, [](geo::Mesh& m, const Ids& sel, Node& node) -> json {
                 std::span<bool> seam = m.edgeAttrs().getOrAdd<bool>(geo::attr::kSeam);
+                const std::vector<Index> e = withMirrorEdges(node, m, sel);
                 size_t n = 0;
                 for (Index i : e)
                     if (m.edgeValid(i))
@@ -548,7 +765,7 @@ void registerCommands()
         .flags = {uvSetFlag()},
         .run = [](const Args& a) -> json {
             std::string set = uvSetArg(a);
-            return editUv("UV Sew", K::Edge, [&](geo::Mesh& m, const Ids& e, Node&) { return sewEdges(m, e, set); }, false);
+            return editUv("UV Sew", K::Edge, [&](geo::Mesh& m, const Ids& e, Node& n) { return sewEdges(m, withMirrorEdges(n, m, e), set); }, false);
         },
     });
 
@@ -615,7 +832,7 @@ void registerCommands()
                 {
                     PackResult r = pack({&packTargets[i], 1});
                     each.push_back(packJson(r));
-                    each.back()["mesh"] = g.node(nodes[i])->name();
+                    each.back()["mesh"] = g.node(nodes[i])->path();
                     seconds += r.seconds;
                     if (r.coverage <= worst.coverage)
                         worst = r;
@@ -675,21 +892,23 @@ void registerCommands()
         .flags = {uvSetFlag()},
         .run = [](const Args& a) -> json {
             std::string set = uvSetArg(a);
-            return editUv("UV Straighten", K::Face, [&](geo::Mesh& m, const Ids& f, Node&) -> json {
-                ChartOptions co;
-                co.source = IslandSource::Uvs;
-                co.uvSet = set;
-                std::vector<Chart> charts = buildCharts(m, f, co);
-                size_t grid = 0, rect = 0, failed = 0;
-                for (Chart& ch : charts)
-                {
-                    StraightenResult r = straightenChart(ch);
-                    grid += r == StraightenResult::Grid;
-                    rect += r == StraightenResult::Rectangle;
-                    failed += r == StraightenResult::Failed;
-                }
-                writeCharts(m, charts, set);
-                return {{"grid", grid}, {"rectangle", rect}, {"failed", failed}};
+            return editUv("UV Straighten", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
+                return withUvSymmetry(m, n, set, UvSymmetry::Absolute, {}, [&]() -> json {
+                    ChartOptions co;
+                    co.source = IslandSource::Uvs;
+                    co.uvSet = set;
+                    std::vector<Chart> charts = buildCharts(m, f, co);
+                    size_t grid = 0, rect = 0, failed = 0;
+                    for (Chart& ch : charts)
+                    {
+                        StraightenResult r = straightenChart(ch);
+                        grid += r == StraightenResult::Grid;
+                        rect += r == StraightenResult::Rectangle;
+                        failed += r == StraightenResult::Failed;
+                    }
+                    writeCharts(m, charts, set);
+                    return {{"grid", grid}, {"rectangle", rect}, {"failed", failed}};
+                });
             });
         },
     });
@@ -702,15 +921,17 @@ void registerCommands()
             std::string mode = a.get<std::string>("mode", "bbox");
             OrientMode om = mode == "principal" ? OrientMode::Principal : mode == "edge" ? OrientMode::LongestEdge : OrientMode::BoundingBox;
             std::string set = uvSetArg(a);
-            return editUv("UV Orient", K::Face, [&](geo::Mesh& m, const Ids& f, Node&) -> json {
-                ChartOptions co;
-                co.source = IslandSource::Uvs;
-                co.uvSet = set;
-                std::vector<Chart> charts = buildCharts(m, f, co);
-                for (Chart& ch : charts)
-                    orientChart(ch, om);
-                writeCharts(m, charts, set);
-                return {{"islands", charts.size()}};
+            return editUv("UV Orient", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
+                return withUvSymmetry(m, n, set, UvSymmetry::Absolute, {}, [&]() -> json {
+                    ChartOptions co;
+                    co.source = IslandSource::Uvs;
+                    co.uvSet = set;
+                    std::vector<Chart> charts = buildCharts(m, f, co);
+                    for (Chart& ch : charts)
+                        orientChart(ch, om);
+                    writeCharts(m, charts, set);
+                    return {{"islands", charts.size()}};
+                });
             });
         },
     });
@@ -733,7 +954,10 @@ void registerCommands()
             double density = a.get<double>("density");
             return editUv("Set Texel Density", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
                 glm::dmat3 lin = world ? worldLinear(n) : glm::dmat3(1.0);
-                setTexelDensity(m, set, f, res, density, lin);
+                withUvSymmetry(m, n, set, UvSymmetry::Absolute, {}, [&]() -> json {
+                    setTexelDensity(m, set, f, res, density, lin);
+                    return nullptr;
+                });
                 return texelDensity(m, set, f, res, lin);
             });
         },
@@ -822,9 +1046,11 @@ void registerCommands()
                   {"translate", "", T::List, nullptr, "[u, v] offset."},
                   {"rotate", "", T::Float, 0.0, "Degrees, counter-clockwise."},
                   {"scale", "", T::List, nullptr, "[su, sv], or one number."},
-                  {"pivot", "", T::List, nullptr, "[u, v]."}},
+                  {"pivot", "", T::List, nullptr, "[u, v]."},
+                  {"perIsland", "", T::Bool, false, "Transform each island touched by the selection, whole, about its own centre."}},
         .run = [](const Args& a) -> json {
             std::vector<double> t = listArg(a, "translate", 2, 0.0), sc = listArg(a, "scale", 2, 1.0);
+            const bool perIsland = a.get<bool>("perIsland") && !a.has("pivot");
             double rot = glm::radians(a.get<double>("rotate", 0.0));
             std::string set = uvSetArg(a);
             K kind = scene::components::mode() == K::Object ? K::Face : scene::components::mode();
@@ -834,33 +1060,65 @@ void registerCommands()
                 std::vector<double> p = listArg(a, "pivot", 2, 0.0);
                 pivot = glm::dvec2(p[0], p[1]);
             }
-            return editUv("UV Transform", kind, [&](geo::Mesh& m, const Ids& ids, Node&) -> json {
-                std::span<glm::vec2> uv = m.cornerAttrs().get<glm::vec2>(set);
-                if (uv.empty())
+            return editUv("UV Transform", kind, [&](geo::Mesh& m, const Ids& ids, Node& n) -> json {
+                if (m.cornerAttrs().get<glm::vec2>(set).empty())
                     return nullptr;
-                std::vector<Index> corners = cornersOf(m, kind, ids, set);
-                if (corners.empty())
-                    return nullptr;
-                glm::dvec2 piv(0.0);
-                if (pivot)
-                    piv = *pivot;
+                std::optional<UvMirror> mirror;
+                if (std::optional<geo::SymmetryMap> map = uvSymmetryMap(n, m))
+                    mirror = buildUvMirror(m, *map, set);
+                std::vector<std::vector<Index>> groups;
+                if (perIsland)
+                {
+                    ChartOptions co;
+                    co.source = IslandSource::Uvs;
+                    co.uvSet = set;
+                    Ids faces = ids.empty() || kind == K::Face ? ids : scene::components::convert(m, kind, ids, K::Face);
+                    std::vector<Index> whole = faces.empty() ? std::vector<Index>{} : islandsOfFaces(m, faces, co);
+                    for (const std::vector<Index>& island : islandFaces(m, whole, co))
+                        groups.push_back(uvCornersOfFaces(m, set, island));
+                }
                 else
-                {
-                    glm::dvec2 lo(1e30), hi(-1e30);
-                    for (Index c : corners)
+                    groups.push_back(cornersOf(m, kind, ids, set));
+                std::vector<Index> all;
+                for (const std::vector<Index>& corners : groups)
+                    all.insert(all.end(), corners.begin(), corners.end());
+                // With symmetry the partner side follows mirrored, so the pivot is the driving side's.
+                const int drive = mirror ? uvMirrorDrive(*mirror, all) : 0;
+                const double c = std::cos(rot), s = std::sin(rot);
+                size_t moved = 0;
+                withUvSymmetry(m, n, set, UvSymmetry::Delta, all, [&]() -> json {
+                    std::span<glm::vec2> uv = m.cornerAttrs().get<glm::vec2>(set);
+                    for (const std::vector<Index>& corners : groups)
                     {
-                        lo = glm::min(lo, glm::dvec2(uv[c]));
-                        hi = glm::max(hi, glm::dvec2(uv[c]));
+                        if (corners.empty())
+                            continue;
+                        glm::dvec2 piv(0.0);
+                        if (pivot)
+                            piv = *pivot;
+                        else
+                        {
+                            glm::dvec2 lo(1e30), hi(-1e30);
+                            for (int pass = 0; pass < 2 && lo.x > hi.x; ++pass)
+                                for (Index k : corners)
+                                    if (pass == 1 || !mirror || mirror->side[k] != -drive)
+                                    {
+                                        lo = glm::min(lo, glm::dvec2(uv[k]));
+                                        hi = glm::max(hi, glm::dvec2(uv[k]));
+                                    }
+                            piv = (lo + hi) * 0.5;
+                        }
+                        for (Index k : corners)
+                        {
+                            glm::dvec2 d = (glm::dvec2(uv[k]) - piv) * glm::dvec2(sc[0], sc[1]);
+                            uv[k] = glm::vec2(piv + glm::dvec2(d.x * c - d.y * s, d.x * s + d.y * c) + glm::dvec2(t[0], t[1]));
+                        }
+                        moved += corners.size();
                     }
-                    piv = (lo + hi) * 0.5;
-                }
-                double c = std::cos(rot), s = std::sin(rot);
-                for (Index k : corners)
-                {
-                    glm::dvec2 d = (glm::dvec2(uv[k]) - piv) * glm::dvec2(sc[0], sc[1]);
-                    uv[k] = glm::vec2(piv + glm::dvec2(d.x * c - d.y * s, d.x * s + d.y * c) + glm::dvec2(t[0], t[1]));
-                }
-                return {{"corners", corners.size()}};
+                    return nullptr;
+                });
+                if (moved == 0)
+                    return nullptr;
+                return {{"corners", moved}};
             });
         },
     });

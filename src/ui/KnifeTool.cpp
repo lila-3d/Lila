@@ -372,7 +372,7 @@ void KnifeTool::finish(bool closed)
     json points = json::array();
     for (const Spot& s : mPoints)
         points.push_back(pointJson(s.point, s.world));
-    json call = {{"mesh", n->name()}, {"points", points}, {"closed", closed}, {"through", mThrough}};
+    json call = {{"mesh", n->path()}, {"points", points}, {"closed", closed}, {"through", mThrough}};
     if (mView.ortho)
     {
         const glm::dvec3 f = viewForward(mView);
@@ -401,7 +401,7 @@ void KnifeTool::insertLoop(const Spot& spot)
         return;
     try
     {
-        ops::execute("polyKnife", {{"mesh", n->name()}, {"loopEdge", spot.point.id}, {"fraction", spot.point.t}}, CallSource::UI);
+        ops::execute("polyKnife", {{"mesh", n->path()}, {"loopEdge", spot.point.id}, {"fraction", spot.point.t}}, CallSource::UI);
     }
     catch (const CommandError& e)
     {

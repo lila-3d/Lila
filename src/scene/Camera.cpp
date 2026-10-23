@@ -188,7 +188,14 @@ void migrateNamedSettings(Graph& g, RenderSettings& r)
 {
     for (auto it = r.cameras.begin(); it != r.cameras.end();)
     {
-        const Node* n = isViewName(it->first) ? nullptr : g.find(it->first);
+        const Node* n = nullptr;
+        try
+        {
+            n = isViewName(it->first) ? nullptr : g.find(it->first);
+        }
+        catch (const std::exception&)
+        {
+        }
         if (n && n->type().isA("camera"))
         {
             setSettings(g, n->id(), it->second);

@@ -1,6 +1,7 @@
 #include "ui/Icons.h"
 
 #include "core/Paths.h"
+#include "ui/Theme.h"
 
 #include <QDir>
 #include <QFile>
@@ -19,7 +20,7 @@ QString iconDir()
     return QString::fromStdWString((paths::resourcesDir() / "icons" / "tabler").wstring());
 }
 
-/** Renders the SVG at whatever size is asked for, with currentColor swapped for the grey of the mode. */
+/** Renders the SVG at whatever size is asked for, with currentColor swapped for the theme's icon colour of the mode. */
 class TablerEngine : public QIconEngine
 {
 public:
@@ -36,7 +37,7 @@ public:
     QPixmap scaledPixmap(const QSize& size, QIcon::Mode mode, QIcon::State state, qreal scale) override
     {
         QSize px = (QSizeF(size) * scale).toSize();
-        QString key = QString("%1x%2/%3/%4").arg(px.width()).arg(px.height()).arg(int(mode)).arg(int(state));
+        QString key = QString("%1x%2/%3/%4/%5").arg(px.width()).arg(px.height()).arg(int(mode)).arg(int(state)).arg(themeColor(tintToken(mode, state)).name());
         if (auto it = mCache.find(key); it != mCache.end())
             return *it;
         QPixmap pm(px);
@@ -56,15 +57,19 @@ public:
     QString key() const override { return "lila.tabler"; }
 
 private:
+    static const char* tintToken(QIcon::Mode mode, QIcon::State state)
+    {
+        if (mode == QIcon::Disabled)
+            return "iconDisabled";
+        if (mode == QIcon::Active || mode == QIcon::Selected || state == QIcon::On)
+            return "iconActive";
+        return "iconNormal";
+    }
+
     QByteArray tinted(QIcon::Mode mode, QIcon::State state) const
     {
-        const char* grey = "#c8c8c8";
-        if (mode == QIcon::Disabled)
-            grey = "#6e6e6e";
-        else if (mode == QIcon::Active || mode == QIcon::Selected || state == QIcon::On)
-            grey = "#f2f2f2";
         QByteArray out = mSvg;
-        out.replace("currentColor", grey);
+        out.replace("currentColor", themeColor(tintToken(mode, state)).name().toLatin1());
         return out;
     }
 

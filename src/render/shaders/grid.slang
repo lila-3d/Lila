@@ -6,6 +6,9 @@ struct GridPush
     float4x4 viewProj;
     float4 eye;
     float4 params; // x: minor spacing, y: major every N, z: 1 if Z-up
+    float4 color;  // grid lines
+    float4 axisX;
+    float4 axisZ;  // the other ground axis: Z, or Y when Z-up
 };
 
 [[vk::push_constant]] GridPush pc;
@@ -81,11 +84,12 @@ PSOut gridPS(VSOut i)
     float alongX = 1.0 - saturate(abs(coord.y) / (px.y * 2.0));
     float alongOther = 1.0 - saturate(abs(coord.x) / (px.x * 2.0));
 
-    // Grayscale only: axes read by brightness, not hue. Grid lines fade out under the axes so no light fringe shows.
+    // Grid lines fade out under the axes so no light fringe shows.
     float axis = max(alongX, alongOther);
     float nearAxis = max(1.0 - saturate(abs(coord.y) / (px.y * 3.0)), 1.0 - saturate(abs(coord.x) / (px.x * 3.0)));
     float lines = max(minorA * 0.4, majorA * 0.75) * (1.0 - nearAxis);
-    float3 color = lerp(float3(0.42, 0.42, 0.42), float3(0.0, 0.0, 0.0), axis);
+    float3 axisColor = alongX >= alongOther ? pc.axisX.rgb : pc.axisZ.rgb;
+    float3 color = lerp(pc.color.rgb, axisColor, axis);
     float alpha = max(lines, axis);
 
     float height = abs(zUp ? pc.eye.z : pc.eye.y);

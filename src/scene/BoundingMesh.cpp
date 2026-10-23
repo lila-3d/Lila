@@ -105,13 +105,13 @@ std::string autoPrefix(const std::string& shape)
 /** UE pairs UCX_Name, UCX_Name_01, UCX_Name_02... with the mesh Name, so extra shapes get a two-digit suffix. */
 std::string freeName(const Graph& g, const std::string& base)
 {
-    if (!g.find(base))
+    if (g.findAll(base).empty())
         return base;
     for (int i = 1;; ++i)
     {
         char suffix[8];
         std::snprintf(suffix, sizeof suffix, "_%02d", i);
-        if (!g.find(base + suffix))
+        if (g.findAll(base + suffix).empty())
             return base + suffix;
     }
 }
@@ -297,7 +297,7 @@ void registerBoundingMeshCommands()
                 Node* mesh = build(g, placed, prefix + base, a.get<bool>("generator", false));
                 if (a.get<bool>("parent", true))
                     g.setParent(mesh->id(), job.owner, true);
-                out.push_back(mesh->name());
+                out.push_back(mesh->path());
                 made.push_back(mesh->id());
             }
             if (components::mode() != ComponentMode::Object)

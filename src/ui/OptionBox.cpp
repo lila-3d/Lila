@@ -5,6 +5,7 @@
 #include "ui/Actions.h"
 #include "ui/FlagFields.h"
 #include "ui/Icons.h"
+#include "ui/Shelf.h"
 
 #include <QAction>
 #include <QApplication>
@@ -270,7 +271,10 @@ protected:
             if (e->type() == QEvent::MouseButtonRelease)
             {
                 closeMenus();
-                QTimer::singleShot(0, [id] { open(id); });
+                if (shelves::addModifierHeld())
+                    shelves::addToCurrent(json{{"optionBox", id}});
+                else
+                    QTimer::singleShot(0, [id] { open(id); });
             }
             return true;
         }
@@ -325,7 +329,8 @@ std::string optionsAt(const QMenu* menu, QAction* a, int globalX, bool shift)
     if (!menu || !a || !a->property(kBoxProperty).toBool())
         return {};
     bool onBox = menu->mapFromGlobal(QPoint(globalX, 0)).x() >= boxRect(menu, a).left() - 6;
-    if (!onBox && !shift)
+    // Ctrl+Shift on the item itself adds it to the shelf rather than opening its options.
+    if (!onBox && (!shift || shelves::addModifierHeld()))
         return {};
     return a->data().toString().toStdString();
 }

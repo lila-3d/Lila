@@ -170,12 +170,12 @@ Picked picked()
         if (NodeId root = instanceOf(g, id); root != kNoNode)
         {
             if (p.instance.empty())
-                p.instance = g.node(root)->name();
+                p.instance = g.node(root)->path();
         }
         else if (rig::isJoint(*n))
         {
             if (p.joint.empty())
-                p.joint = n->name();
+                p.joint = n->path();
         }
         else
         {
@@ -183,7 +183,7 @@ Picked picked()
             for (NodeId c : g.children(id))
                 mesh |= g.node(c)->type().isA("mesh");
             if (mesh)
-                p.meshes.push_back(n->name());
+                p.meshes.push_back(n->path());
         }
     }
     return p;

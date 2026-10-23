@@ -8,6 +8,7 @@
 #include "ui/Actions.h"
 #include "ui/AttributeEditor.h"
 #include "ui/Icons.h"
+#include "ui/NodeLookup.h"
 #include "ui/Menus.h"
 
 #include <QHBoxLayout>
@@ -43,7 +44,7 @@ std::vector<std::string> selectedWithSpaces()
     std::vector<std::string> out;
     for (NodeId id : g.selection())
         if (scene::spaces::hasSpaces(g, id))
-            out.push_back(g.node(id)->name());
+            out.push_back(g.node(id)->path());
     return out;
 }
 
@@ -89,7 +90,7 @@ QWidget* spacesPanel(NodeId id)
     Graph& g = Graph::current();
     if (!g.node(id))
         return nullptr;
-    const std::string node = g.node(id)->name();
+    const std::string node = g.node(id)->path();
     auto* w = new QWidget;
     auto* v = new QVBoxLayout(w);
     v->setContentsMargins(8, 2, 4, 4);
@@ -144,7 +145,7 @@ void registerActions()
     add("rig.removeSpace", "Remove Active Space", [] {
         Graph& g = Graph::current();
         for (const std::string& n : selectedWithSpaces())
-            if (int i = scene::spaces::active(g, g.find(n)->id()); i > 0)
+            if (int i = findNode(n) ? scene::spaces::active(g, findNode(n)->id()) : 0; i > 0)
                 run("removeSpace", {{"args", {n}}, {"space", i}});
     }, "", "Remove the selected nodes' active space, switching them back to their parent with the pose kept.");
     add("rig.switchSpaceParent", "Switch to Parent Space", [] { switchSelected("parent", false); }, "switchSpace(space=\"parent\")",

@@ -76,6 +76,19 @@ inline PlugRef plugOf(const Node& n, const char* name) { return {n.id(), attrOf(
 
 inline const std::string& textOf(const Node& n, const char* name) { return n.as<std::string>(attrOf(n, name)); }
 
+/** The node a text attr names (a full path, or a name in older scenes); null when it is gone or ambiguous. */
+inline Node* named(const Graph& g, const std::string& path)
+{
+    try
+    {
+        return path.empty() ? nullptr : g.find(path);
+    }
+    catch (const std::exception&)
+    {
+        return nullptr;
+    }
+}
+
 /** The node named, or a CommandError naming the command. */
 inline Node& nodeNamed(Graph& g, const std::string& name, const char* command)
 {

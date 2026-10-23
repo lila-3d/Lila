@@ -7,6 +7,7 @@
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "uv/Uv.h"
+#include "uv/UvEdit.h"
 
 #include <algorithm>
 #include <map>
@@ -237,7 +238,48 @@ geo::Mesh Session::meshFromFrame(const LiveSolver::Frame& f) const
             for (size_t j = 0; j < mTopology[i].corners.size(); ++j)
                 st[mTopology[i].corners[j]] = f.islands[i]->stiffness[mTopology[i].cornerVertex[j]];
     }
+    mirrorFrame(m);
     return m;
+}
+
+bool Session::mirrorFrame(geo::Mesh& m) const
+{
+    LILA_ZONE();
+
+    scene::Node* n = Graph::current().node(mNode);
+    const int axis = n && mBase ? uvSymmetryAxis(*n) : -1;
+    if (axis < 0)
+        return false;
+    if (!mMirror || mMirrorBase != mBase || mMirrorAxis != axis)
+    {
+        std::optional<geo::SymmetryMap> map = uvSymmetryMap(*n, *mBase);
+        mMirror = map ? buildUvMirror(*mBase, *map, mSet) : UvMirror{};
+        mMirrorBase = mBase;
+        mMirrorAxis = axis;
+    }
+    std::span<const glm::vec2> before = mBase->cornerAttrs().get<glm::vec2>(mSet);
+    std::span<glm::vec2> uv = m.cornerAttrs().get<glm::vec2>(mSet);
+    if (mMirror->empty() || before.size() != uv.size() || uv.size() != mMirror->partner.size())
+        return false;
+    std::vector<Index> changed;
+    for (Index c = 0; c < uv.size(); ++c)
+        if (uv[c] != before[c])
+            changed.push_back(c);
+    bool any = applyUvFollow(uvFollowRules(*mMirror, changed, uvMirrorDrive(*mMirror, changed)), before, uv) > 0;
+    std::span<bool> pin = m.cornerAttrs().get<bool>("uvPin");
+    std::span<const bool> pinWas = mBase->cornerAttrs().get<bool>("uvPin");
+    if (pin.size() == uv.size())
+        for (Index c = 0; c < pin.size(); ++c)
+        {
+            const bool was = c < pinWas.size() && pinWas[c];
+            const Index pc = mMirror->partner[c];
+            if (pin[c] != was && pc != kInvalid && pc != c && pin[pc] != pin[c])
+            {
+                pin[pc] = pin[c];
+                any = true;
+            }
+        }
+    return any;
 }
 
 void Session::writePreview(const LiveSolver::Frame& f)
@@ -327,6 +369,9 @@ void Session::commit()
     }
     mBase = outMesh(mNode);
     mStamp = mBase;
+    // The solver still holds the unmirrored side; reload so it matches what was committed.
+    if (scene::Node* n = g.node(mNode); n && uvSymmetryAxis(*n) >= 0)
+        reload();
 }
 
 void Session::finish(int ms)

@@ -334,7 +334,7 @@ NodeId duplicateTake(Graph& g, NodeId take, const std::string& name)
 
     Node& src = *g.node(take);
     NodeId root = rootOf(g, take);
-    TakeSettings s{root ? g.node(root)->name() : std::string(), src.as<double>(TakeNode::kStart), src.as<double>(TakeNode::kEnd), src.as<double>(TakeNode::kFps),
+    TakeSettings s{root ? g.node(root)->path() : std::string(), src.as<double>(TakeNode::kStart), src.as<double>(TakeNode::kEnd), src.as<double>(TakeNode::kFps),
                    src.as<bool>(TakeNode::kLoop)};
     std::string base = src.name();
     auto conns = takeConnections(g, take);
@@ -450,7 +450,8 @@ std::vector<NodeId> selectTakes(Graph& g, const json& selector, NodeId root)
             continue;
         if (selector.is_string() && selector.get<std::string>() == "all")
             out.push_back(t);
-        else if (std::find(names.begin(), names.end(), g.node(t)->name()) != names.end())
+        else if (std::find(names.begin(), names.end(), g.node(t)->name()) != names.end() ||
+                 std::find(names.begin(), names.end(), g.node(t)->path()) != names.end())
             out.push_back(t);
     }
     return out;
@@ -507,8 +508,8 @@ std::string onlyArg(const Args& a, const char* cmd)
 json takeJson(Graph& g, NodeId t)
 {
     Node& n = *g.node(t);
-    return {{"name", n.name()},
-            {"root", rootOf(g, t) ? g.node(rootOf(g, t))->name() : std::string()},
+    return {{"name", n.path()},
+            {"root", rootOf(g, t) ? g.node(rootOf(g, t))->path() : std::string()},
             {"start", n.as<double>(TakeNode::kStart)},
             {"end", n.as<double>(TakeNode::kEnd)},
             {"fps", n.as<double>(TakeNode::kFps)},
@@ -566,7 +567,7 @@ void registerTakeCommands()
                 g.setValue({t, TakeNode::kFolder}, a.get<std::string>("folder"));
             if (a.get<bool>("activate"))
                 setActiveTake(g, t);
-            return g.node(t)->name();
+            return g.node(t)->path();
         },
     });
 
@@ -602,7 +603,7 @@ void registerTakeCommands()
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             NodeId t = takeNamed(g, onlyArg(a, "duplicateTake"), "duplicateTake");
-            return g.node(guarded([&] { return duplicateTake(g, t, a.get<std::string>("name")); }))->name();
+            return g.node(guarded([&] { return duplicateTake(g, t, a.get<std::string>("name")); }))->path();
         },
     });
 
@@ -615,7 +616,7 @@ void registerTakeCommands()
             Graph& g = graph();
             NodeId t = takeNamed(g, onlyArg(a, "setActiveTake"), "setActiveTake");
             setActiveTake(g, t);
-            return g.node(t)->name();
+            return g.node(t)->path();
         },
     });
 

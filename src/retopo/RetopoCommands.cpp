@@ -337,7 +337,7 @@ void registerCommands()
             g.evaluate();
             MeshPtr srcMesh = src.as<MeshPtr>(MeshNode::kOutMesh);
             if (!srcMesh || srcMesh->numFaces() == 0)
-                throw CommandError("quadRemesh: " + src.name() + " has no faces");
+                throw CommandError("quadRemesh: " + src.path() + " has no faces");
 
             QuadRemeshOptions o;
             o.targetFaces = std::max(8, a.get<int>("targetFaces"));
@@ -359,7 +359,7 @@ void registerCommands()
             double total = 0.0;
             for (auto& [stage, sec] : r.timings)
                 total += sec;
-            log::info("quadRemesh {}: {} ({:.2f} s)", src.name(), r.metrics.summary(), total);
+            log::info("quadRemesh {}: {} ({:.2f} s)", src.path(), r.metrics.summary(), total);
 
             std::string name = a.get<std::string>("name", src.name() + "_remesh");
             Node* out = g.createNode(*scene::types::find("mesh"), name, g.parent(src.id()), true);
@@ -372,8 +372,8 @@ void registerCommands()
             bool normals = a.get<bool>("transferNormals");
             if (uvs || normals)
                 ops::execute("transferAttributes",
-                              {{"args", json::array({src.name(), out->name()})}, {"uvs", uvs}, {"normals", normals}, {"sampleSpace", "object"}});
-            std::string outName = out->name();
+                              {{"args", json::array({src.path(), out->path()})}, {"uvs", uvs}, {"normals", normals}, {"sampleSpace", "object"}});
+            std::string outName = out->path();
             if (!a.get<bool>("keepSource"))
                 g.deleteNode(src.id());
             g.select({out->id()});
@@ -667,7 +667,7 @@ void registerCommands()
             m.removeAllLoose();
             m.compact();
             g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
-            return n.name();
+            return n.path();
         },
     });
 
@@ -694,7 +694,7 @@ void registerCommands()
             std::string text = local.empty() ? std::string() : local.dump();
             if (n.as<std::string>(MeshNode::kRetopoDrawDots) != text)
                 g.setValue({n.id(), MeshNode::kRetopoDrawDots, -1}, text);
-            return n.name();
+            return n.path();
         },
     });
 
@@ -866,19 +866,22 @@ std::optional<RetopoDrawTargets> resolveRetopoDraw(const scene::Graph& g, const 
         return std::nullopt;
     for (Node* n : meshes)
         if (scene::NodeId ref = retopoDrawReference(g, n->id()); ref != scene::kNoNode)
-            return RetopoDrawTargets{ref, n->name()};
+            return RetopoDrawTargets{ref, n->path()};
     Node* ref = meshes[0];
     if (meshes.size() > 1)
-        return RetopoDrawTargets{ref->id(), meshes[1]->name()};
+        return RetopoDrawTargets{ref->id(), meshes[1]->path()};
     for (scene::NodeId id : g.nodes())
         if (retopoDrawReference(g, id) == ref->id())
-            return RetopoDrawTargets{ref->id(), g.node(id)->name()};
+            return RetopoDrawTargets{ref->id(), g.node(id)->path()};
     // A lone "<name>_retopo" whose source mesh exists was drawn before the pair was connected: resume on it.
     const std::string suffix = "_retopo";
     const std::string& name = ref->name();
     if (name.size() > suffix.size() && name.ends_with(suffix))
-        if (Node* src = g.find(name.substr(0, name.size() - suffix.size())); src && src->type().isA("mesh"))
-            return RetopoDrawTargets{src->id(), name};
+    {
+        std::vector<scene::NodeId> found = g.findAll(name.substr(0, name.size() - suffix.size()));
+        if (found.size() == 1 && g.node(found[0])->type().isA("mesh"))
+            return RetopoDrawTargets{found[0], ref->path()};
+    }
     return RetopoDrawTargets{ref->id(), name + suffix};
 }
 } // namespace lila::retopo

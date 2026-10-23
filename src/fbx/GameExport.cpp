@@ -278,7 +278,7 @@ std::vector<Job> plan(Graph& g, const json& settingsIn)
     {
         for (const auto& [name, nodes] : groups)
             for (NodeId id : nodes)
-                job(g.node(id)->name(), {id});
+                job(g.node(id)->path(), {id}); // members sharing a name get their own files
     }
     else if (separate == "perSet" && mode == "sets")
     {
@@ -335,7 +335,7 @@ std::vector<fs::path> run(Graph& g, const json& settingsIn)
                     all.push_back(d);
                 for (NodeId n : all)
                     if (g.node(n)->type().isA("mesh"))
-                        names.push_back(g.node(n)->name());
+                        names.push_back(g.node(n)->path());
             }
             if (names.empty())
             {
@@ -409,7 +409,7 @@ void registerCommands()
                     {
                         json nodes = json::array();
                         for (NodeId id : j.nodes)
-                            nodes.push_back(g.node(id)->name());
+                            nodes.push_back(g.node(id)->path());
                         out.push_back({{"file", paths::toUtf8(j.file)}, {"nodes", nodes}});
                     }
                     return out;

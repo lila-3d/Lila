@@ -102,7 +102,8 @@ TEST_CASE("repeat last runs the last edit again, skipping selection, views, tool
     CHECK(ui::actions::repeatable(json{{"command", "polyExtrude"}}));
     CHECK(ui::actions::repeatable(json{{"python", "print(1)"}}));
     for (const char* id : {"select.grow", "edit.undo", "edit.redo", "edit.repeatLast", "edit.deselect", "viewport.frameAll", "tool.move",
-                           "window.graphEditor", "hotbox.show", "snap.gridOn", "softSelect.keyUp", "shelf.floatingRelease", "file.save"})
+                           "window.graphEditor", "hotbox.show", "snap.gridOn", "softSelect.keyUp", "shelf.floatingRelease", "file.save",
+                           "uv.vertexMode", "uv.islandMode", "uv.selectStacks", "rig.dominantInfluenceSelect", "mode.next"})
     {
         CAPTURE(id);
         CHECK_FALSE(ui::actions::repeatable(json(id)));

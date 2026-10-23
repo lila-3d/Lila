@@ -702,3 +702,121 @@ TEST_CASE("an object set maps as one asset: its members export together through 
     PrefStore::get().setWorkspaceDir({});
     fs::remove_all(ws);
 }
+
+TEST_CASE("meshSequence frame names and the frames left over when the range shrinks")
+{
+    SequenceAssets a = sequenceAssets({{"node", "spike"}, {"contentPath", "/Game/FX/Spike/SM_Spike"}}, 3);
+    CHECK(a.folder == "/Game/FX/Spike");
+    CHECK(a.base == "SM_Spike");
+    CHECK(a.contentPaths == std::vector<std::string>{"/Game/FX/Spike/SM_Spike_000", "/Game/FX/Spike/SM_Spike_001", "/Game/FX/Spike/SM_Spike_002"});
+    CHECK(a.objectPaths[1] == "/Game/FX/Spike/SM_Spike_001.SM_Spike_001");
+    SequenceAssets b = sequenceAssets({{"node", "spike"}, {"contentPath", "/Game/FX/"}, {"sequence", {{"padding", 2}}}}, 1);
+    CHECK(b.contentPaths == std::vector<std::string>{"/Game/FX/spike_00"});
+
+    json listed = json::array();
+    for (const char* n : {"SM_Spike_000", "SM_Spike_002", "SM_Spike_003", "SM_Spike_0010", "SM_Spike_Old", "SM_Spikey_009", "SM_Spike_004_LOD"})
+        listed.push_back({{"path", std::string("/Game/FX/Spike/") + n + "." + n}, {"class", "StaticMesh"}});
+    CHECK(surplusFrames(listed, "SM_Spike", 3) ==
+          std::vector<std::string>{"/Game/FX/Spike/SM_Spike_003.SM_Spike_003", "/Game/FX/Spike/SM_Spike_0010.SM_Spike_0010"});
+    CHECK(surplusFrames(listed, "SM_Spike", 11).empty());
+}
+
+TEST_CASE("a meshSequence mapping imports every frame, feeds the Niagara renderer and drops surplus frames")
+{
+    setup();
+    fs::path ws = tempDir("meshseq");
+    PrefStore::get().setWorkspaceDir(ws / ".lila");
+    PrefStore::get().set("unreal", "/cacheDir", (ws / "cache").generic_string(), PrefScope::Workspace);
+
+    ops::execute("newScene", json::object());
+    scene::Graph& g = scene::Graph::current();
+    scene::Node* n = g.createNode(*scene::types::find("mesh"), "spike");
+    g.setValue({n->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(geo::makeCube())));
+    const std::string spike = n->name();
+
+    CHECK_THROWS_AS(ops::execute("unrealMap", {{"args", {spike}}, {"contentPath", "/Game/FX/SM_Spike"}, {"kind", "meshSequence"}, {"sequence", 3}}),
+                    CommandError);
+    CHECK_THROWS_AS(ops::execute("unrealMap", {{"args", {spike}}, {"contentPath", "/Game/FX/SM_Spike"}, {"kind", "flipbook"}}), CommandError);
+    json m = ops::execute("unrealMap", {{"args", {spike}},
+                                        {"contentPath", "/Game/FX/SM_Spike"},
+                                        {"kind", "meshSequence"},
+                                        {"sequence", {{"start", 32}, {"end", 34}, {"scale", 0.1}}},
+                                        {"niagaraSystem", "/Game/FX/NS_Spike"}});
+    CHECK(m["sequence"]["end"] == 34);
+    CHECK(m["niagaraSystem"] == "/Game/FX/NS_Spike");
+
+    FakeServer server(editor([](const json& req) -> std::optional<json> {
+        const std::string method = req["method"];
+        if (method == "importAsset")
+            return FakeServer::reply(req, {{"assets", {req["params"]["contentPath"]}}, {"warnings", json::array()}, {"errors", json::array()}});
+        if (method == "setNiagaraMeshes")
+            return FakeServer::reply(req, {{"renderers", 1}, {"updated", {"Emitter/MeshRenderer"}}, {"errors", json::array()}});
+        if (method == "listAssets")
+        {
+            json out = json::array();
+            for (const char* a : {"SM_Spike_000", "SM_Spike_001", "SM_Spike_002", "SM_Spike_003", "SM_Spike_004"})
+                out.push_back({{"path", std::string("/Game/FX/") + a + "." + a}, {"class", "StaticMesh"}});
+            return FakeServer::reply(req, out);
+        }
+        if (method == "deleteAssets")
+            return FakeServer::reply(req, {{"deleted", req["params"]["paths"].size()}, {"missing", json::array()}});
+        return std::nullopt;
+    }));
+    Link::ConnectOptions o;
+    o.port = server.port();
+    Link::get().connect(o);
+
+    // No FBX exporter is needed: the sequence writes its own frames.
+    unregisterExporter("fbx");
+    CHECK(syncMappings(true) == 1);
+    Link::get().waitIdle();
+    mainq::drain();
+
+    std::vector<json> imports, niagara, deletes;
+    for (const json& r : server.requests())
+    {
+        if (r["method"] == "importAsset")
+            imports.push_back(r["params"]);
+        else if (r["method"] == "setNiagaraMeshes")
+            niagara.push_back(r["params"]);
+        else if (r["method"] == "deleteAssets")
+            deletes.push_back(r["params"]);
+    }
+    REQUIRE(imports.size() == 3);
+    for (size_t i = 0; i < 3; ++i)
+    {
+        CHECK(imports[i]["kind"] == "static");
+        CHECK(imports[i]["contentPath"] == "/Game/FX/SM_Spike_00" + std::to_string(i));
+        CHECK(fs::exists(imports[i]["file"].get<std::string>()));
+        CHECK(imports[i]["file"].get<std::string>().ends_with(".fbx"));
+    }
+    REQUIRE(niagara.size() == 1);
+    CHECK(niagara[0]["system"] == "/Game/FX/NS_Spike");
+    CHECK(niagara[0]["meshes"] == json{"/Game/FX/SM_Spike_000.SM_Spike_000", "/Game/FX/SM_Spike_001.SM_Spike_001", "/Game/FX/SM_Spike_002.SM_Spike_002"});
+    REQUIRE(deletes.size() == 1);
+    CHECK(deletes[0]["paths"] == json{"/Game/FX/SM_Spike_003.SM_Spike_003", "/Game/FX/SM_Spike_004.SM_Spike_004"});
+
+    // geometryCache sends one .abc of the same range.
+    ops::execute("unrealMap", {{"args", {spike}}, {"contentPath", "/Game/FX/GC_Spike"}, {"kind", "geometryCache"}, {"sequence", {{"start", 1}, {"end", 4}}}});
+    size_t before = server.requests().size();
+    CHECK(syncMappings(true) == 1);
+    Link::get().waitIdle();
+    mainq::drain();
+    std::vector<json> after = server.requests();
+    REQUIRE(after.size() > before);
+    json cacheReq;
+    for (size_t i = before; i < after.size(); ++i)
+        if (after[i]["method"] == "importAsset")
+            cacheReq = after[i]["params"];
+    REQUIRE(cacheReq.is_object());
+    CHECK(cacheReq["kind"] == "geometryCache");
+    CHECK(cacheReq["contentPath"] == "/Game/FX/GC_Spike");
+    CHECK_FALSE(cacheReq.contains("materials"));
+    CHECK(cacheReq["file"].get<std::string>().ends_with(".abc"));
+    CHECK(fs::exists(cacheReq["file"].get<std::string>()));
+
+    Link::get().disconnect();
+    ops::execute("unrealUnmap", {{"args", {spike}}});
+    PrefStore::get().setWorkspaceDir({});
+    fs::remove_all(ws);
+}

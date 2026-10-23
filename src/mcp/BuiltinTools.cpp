@@ -39,6 +39,8 @@ void describe(scene::Graph& g, scene::NodeId id, int depth, std::string& out)
     glm::dvec3 r = n->as<glm::dvec3>(scene::Transform::kRotate);
     glm::dvec3 sc = n->as<glm::dvec3>(scene::Transform::kScale);
     out += std::string(depth * 2, ' ') + n->name() + " (" + n->type().name + ")";
+    if (std::string path = n->path(); path != n->name())
+        out += " path=" + path;
     if (t != glm::dvec3(0.0))
         out += std::format(" t=[{:.4g}, {:.4g}, {:.4g}]", t.x, t.y, t.z);
     if (r != glm::dvec3(0.0))
@@ -51,7 +53,7 @@ void describe(scene::Graph& g, scene::NodeId id, int depth, std::string& out)
         out += " *selected*";
     if (n->type().isA("mesh"))
     {
-        json s = ops::execute("meshInfo", {{"args", {n->name()}}});
+        json s = ops::execute("meshInfo", {{"args", {n->path()}}});
         out += std::format("\n{}  mesh: {} faces ({} quads, {} tris, {} ngons), {} triangles, {} points", std::string(depth * 2, ' '),
                            s["faces"].get<int>(), s.value("quads", 0), s.value("triFaces", 0), s.value("ngons", 0), s["triangles"].get<int>(),
                            s["points"].get<int>());

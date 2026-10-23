@@ -104,6 +104,9 @@ LILA_FOUNDATION_API std::vector<const CommandDef*> all();
 /** `call` is {"args": [...], flag: value, ...}, flags by long or short name. Main thread only. Throws CommandError. */
 LILA_FOUNDATION_API json execute(std::string_view name, const json& call, CallSource source = CallSource::Script);
 
+/** The arguments of the innermost command running now, or null outside any. */
+LILA_FOUNDATION_API const Args* currentArgs();
+
 /** Marks an already registered command adjustable (see CommandDef::adjustable). False if it isn't registered. */
 LILA_FOUNDATION_API bool setAdjustable(std::string_view name, bool on = true);
 

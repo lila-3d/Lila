@@ -4,5 +4,6 @@
   "SE": {"label": "Soft Select", "action": "softSelect.toggle"},
   "S": {"label": "Face", "action": "select.faceMode"},
   "W": {"label": "Edge", "action": "select.edgeMode"},
+  "SW": {"label": "Lasso", "action": "select.toggleLasso"},
   "overflow": []
 }

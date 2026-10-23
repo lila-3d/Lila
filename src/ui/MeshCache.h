@@ -33,12 +33,28 @@ LILA_UI_API std::shared_ptr<const geo::RenderMesh> pickDataFor(const scene::Mesh
  */
 LILA_UI_API bool reuseRenderMesh(const scene::MeshPtr& from, const scene::MeshPtr& to, const std::function<void(std::vector<render::MeshVertex>&)>& edit);
 
+/** A render copy drawing only some faces of its mesh, sharing the full copy's vertices on the GPU. */
+struct MaskedMesh
+{
+    std::shared_ptr<const render::RenderMesh> mesh;
+    /** 1 per triangle of the full copy that is hidden, for raycast. */
+    std::vector<uint8_t> hiddenTriangles;
+};
+
+/**
+ * The faces shownFaces() marks (1 per face of mesh; called only on a cache miss) as a triangle and wire subset of
+ * renderMeshFor(mesh), cached per mesh snapshot and maskKey so the mask is only applied once per change.
+ */
+LILA_UI_API std::shared_ptr<const MaskedMesh> maskedRenderMeshFor(const scene::MeshPtr& mesh, uint64_t maskKey, const std::function<std::vector<uint8_t>()>& shownFaces,
+                                                                  bool tangents = false);
+
 struct RayHit
 {
     double distance = 0.0; // world units
     uint32_t triangle = 0;
 };
 
-/** Nearest hit along a world-space ray, or nullopt. Triangles come from the render copy. */
-LILA_UI_API std::optional<RayHit> raycast(const render::RenderMesh& mesh, const glm::dmat4& world, const glm::dvec3& origin, const glm::dvec3& dir);
+/** Nearest hit along a world-space ray, or nullopt. Triangles come from the render copy; hidden (1 per triangle) ones are skipped. */
+LILA_UI_API std::optional<RayHit> raycast(const render::RenderMesh& mesh, const glm::dmat4& world, const glm::dvec3& origin, const glm::dvec3& dir,
+                                          const std::vector<uint8_t>* hidden = nullptr);
 } // namespace lila::ui

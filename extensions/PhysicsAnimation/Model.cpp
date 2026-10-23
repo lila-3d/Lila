@@ -305,6 +305,18 @@ bool flag(const Node& n, const char* name)
     return a >= 0 && n.as<bool>(a);
 }
 
+Node* named(Graph& g, const std::string& path)
+{
+    try
+    {
+        return path.empty() ? nullptr : g.find(path);
+    }
+    catch (const std::exception&)
+    {
+        return nullptr;
+    }
+}
+
 std::string text(const Node& n, const char* name)
 {
     const int a = attr(n, name);
@@ -405,8 +417,7 @@ bool isMarker(const Node& n) { return n.type().isA(kMarkerType); }
 
 NodeId jointOf(Graph& g, const Node& marker)
 {
-    const std::string name = text(marker, "joint");
-    Node* j = name.empty() ? nullptr : g.find(name);
+    Node* j = named(g, text(marker, "joint"));
     return j && transformOf(j) ? j->id() : kNoNode;
 }
 
@@ -416,7 +427,7 @@ NodeId markerFor(Graph& g, NodeId joint)
     if (!j)
         return kNoNode;
     for (NodeId id : g.nodes())
-        if (Node* n = g.node(id); n && isMarker(*n) && text(*n, "joint") == j->name())
+        if (Node* n = g.node(id); n && isMarker(*n) && named(g, text(*n, "joint")) == j)
             return id;
     return kNoNode;
 }
@@ -586,7 +597,7 @@ RigDef buildRig(Graph& g, NodeId solver)
             continue;
         PinDef pin;
         pin.node = pid;
-        if (Node* target = g.find(text(p, "marker")))
+        if (Node* target = named(g, text(p, "marker")))
         {
             const NodeId joint = isMarker(*target) ? jointOf(g, *target) : target->id();
             if (auto it = bodyOf.find(joint); it != bodyOf.end())
@@ -603,7 +614,7 @@ RigDef buildRig(Graph& g, NodeId solver)
     {
         const Node& c = *g.node(cid);
         h = hashOwn(g, c, h);
-        Node* mesh = g.find(text(c, "mesh"));
+        Node* mesh = named(g, text(c, "mesh"));
         if (!flag(c, "enabled") || !mesh || !mesh->type().isA("mesh"))
             continue;
         const int out = attr(*mesh, "outMesh");

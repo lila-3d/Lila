@@ -194,12 +194,12 @@ const Template& instanceTemplate(Graph& g, NodeId root, Template& storage)
         }
         catch (const std::exception& e)
         {
-            log::warn("rig template {}: stored template unreadable ({}); using the library's", n->name(), e.what());
+            log::warn("rig template {}: stored template unreadable ({}); using the library's", n->path(), e.what());
         }
     }
     const Entry* e = findTemplate(str(*n, "templateId"));
     if (!e)
-        throw CommandError("rig template " + n->name() + ": template '" + str(*n, "templateId") + "' is not loaded");
+        throw CommandError("rig template " + n->path() + ": template '" + str(*n, "templateId") + "' is not loaded");
     storage = e->tmpl;
     return storage;
 }
@@ -288,7 +288,7 @@ std::string placeInstance(Graph& g, const Template& t, const std::string& name, 
     }
     if (!meshes.empty())
         setMeshes(g, rootId, meshes);
-    return g.node(rootId)->name();
+    return g.node(rootId)->path();
 }
 
 /** Template, marker positions and bound meshes from an instance root or a template id. */
@@ -338,7 +338,7 @@ void addTemplateSpaces(Graph& g, const Template& t, const std::map<std::string, 
                     log::warn("buildRigSkeleton: {} has no joint for space '{}'", m.name, s);
                     continue;
                 }
-                space = g.node(built->second)->name();
+                space = g.node(built->second)->path();
             }
             try
             {
@@ -374,7 +374,7 @@ json buildTemplateRig(Graph& g, const Template& t, const Solved& solved, const s
                 return marker;
         return std::string();
     };
-    auto record = [&](NodeId id) { out.push_back(g.node(id)->name()); };
+    auto record = [&](NodeId id) { out.push_back(g.node(id)->path()); };
     const json& rig = t.rig;
     if (rig.contains("nonDeform"))
         for (const json& n : rig["nonDeform"])
@@ -382,7 +382,7 @@ json buildTemplateRig(Graph& g, const Template& t, const Solved& solved, const s
                 g.setValue({it->second, Joint::kDeform, -1}, false);
     if (!rig.contains("ikChains") && !rig.contains("lookers") && !rig.contains("twists"))
         return out;
-    const NodeId group = g.createNode(*types::find("transform"), top + "_rig")->id();
+    const NodeId group = g.createNode(*types::find("transform"), top.substr(top.rfind('|') + 1) + "_rig")->id();
     std::map<std::string, NodeId> chains;
     for (const json& c : rig.value("ikChains", json::array()))
     {
@@ -450,7 +450,7 @@ json buildTemplateRig(Graph& g, const Template& t, const Solved& solved, const s
         }
         catch (const std::invalid_argument& err)
         {
-            log::warn("buildRigSkeleton: looker on {}: {}", g.node(j)->name(), err.what());
+            log::warn("buildRigSkeleton: looker on {}: {}", g.node(j)->path(), err.what());
         }
     }
     for (const json& tw : rig.value("twists", json::array()))
@@ -467,7 +467,7 @@ json buildTemplateRig(Graph& g, const Template& t, const Solved& solved, const s
         }
         catch (const std::invalid_argument& err)
         {
-            log::warn("buildRigSkeleton: twist driver on {}: {}", g.node(j)->name(), err.what());
+            log::warn("buildRigSkeleton: twist driver on {}: {}", g.node(j)->path(), err.what());
         }
     }
     return out;
@@ -506,9 +506,9 @@ json buildSkeleton(Graph& g, const Source& src, const std::string& prefix, bool 
         g.setValue({id, Joint::kSide, -1}, int64_t(m.side == "left" ? Joint::kLeft : m.side == "right" ? Joint::kRight : Joint::kCenter));
         g.setValue({id, Joint::kCenterInMesh, -1}, m.centerInMesh && !meshes.empty());
         made[m.name] = id;
-        names.push_back(g.node(id)->name());
+        names.push_back(g.node(id)->path());
         if (up.empty() && top.empty())
-            top = g.node(id)->name();
+            top = g.node(id)->path();
     }
     if (withSpaces)
         addTemplateSpaces(g, t, made);
@@ -518,7 +518,7 @@ json buildSkeleton(Graph& g, const Source& src, const std::string& prefix, bool 
         if (meshes.empty())
             throw CommandError("buildRigSkeleton: bindSkin needs meshes (give meshes or bind the instance first)");
         for (NodeId mesh : meshes)
-            skins.push_back(ops::execute("skinCluster", {{"args", {top, g.node(mesh)->name()}}, {"bindTo", "hierarchy"}}));
+            skins.push_back(ops::execute("skinCluster", {{"args", {top, g.node(mesh)->path()}}, {"bindTo", "hierarchy"}}));
     }
     // After the bind, so the auto rule can prefer bones the skin weights. Redirects set before it are kept.
     if (Node* root = g.find(top))
@@ -574,7 +574,7 @@ json orientSkeleton(Graph& g, const Template& t, NodeId anyJoint, const std::vec
         throw CommandError("orientRigSkeleton: preserve=rest is for skeletons with no skin or animation; use worldPose or channels");
     std::map<std::string, NodeId> mapped = mapJoints(g, t, joints);
     if (mapped.empty())
-        throw CommandError("orientRigSkeleton: no joint of " + g.node(top)->name() + " matches template " + t.id);
+        throw CommandError("orientRigSkeleton: no joint of " + g.node(top)->path() + " matches template " + t.id);
 
     std::set<std::string> wanted;
     for (const std::string& l : limbs)
@@ -622,7 +622,7 @@ json orientSkeleton(Graph& g, const Template& t, NodeId anyJoint, const std::vec
             const glm::dmat4 inv = glm::inverse(worldOf(g, id));
             for (auto& [c, w] : kids)
                 Transform::setLocalMatrix(g, c, inv * w);
-            changed.push_back(g.node(id)->name());
+            changed.push_back(g.node(id)->path());
         }
         return changed;
     }
@@ -634,15 +634,15 @@ json orientSkeleton(Graph& g, const Template& t, NodeId anyJoint, const std::vec
         return false;
     }();
     if (!wasEditing)
-        ops::execute("editSkeleton", {{"args", {g.node(top)->name()}}, {"on", true}});
+        ops::execute("editSkeleton", {{"args", {g.node(top)->path()}}, {"on", true}});
     for (auto& [id, name] : order)
     {
         const Node& j = *g.node(id);
         const glm::dquat jo = orientFor(g, id, solved.rotation[name], false);
         if (std::abs(glm::dot(eulerQuat(j.as<glm::dvec3>(Joint::kJointOrient), RotateOrder::XYZ), jo)) > 1.0 - 1e-14)
             continue;
-        ops::execute("moveSkinnedJoints", {{"args", {j.name()}}, {"jointOrient", vecJson(degrees(jo))}, {"preserve", preserve}});
-        changed.push_back(j.name());
+        ops::execute("moveSkinnedJoints", {{"args", {j.path()}}, {"jointOrient", vecJson(degrees(jo))}, {"preserve", preserve}});
+        changed.push_back(j.path());
     }
     if (!wasEditing)
         ops::execute("editSkeleton", {{"on", false}, {"preserve", preserve}});
@@ -1011,7 +1011,7 @@ bool registerCommands(ext::Context& ctx)
                         setMeshes(g, root, {});
                         for (auto& [name, id] : markersOf(g, root))
                             setMeshes(g, id, {});
-                        return g.node(root)->name();
+                        return g.node(root)->path();
                     }});
 
     defs.push_back({.name = "centerRigMarkers",
@@ -1034,10 +1034,10 @@ bool registerCommands(ext::Context& ctx)
                                 std::map<std::string, NodeId> mk = markersOf(g, n.id());
                                 for (const Marker& m : t.markers)
                                     if (auto it = mk.find(m.name); it != mk.end() && rig::centerEnabled(*g.node(it->second)))
-                                        names.push_back(g.node(it->second)->name());
+                                        names.push_back(g.node(it->second)->path());
                             }
                             else if (n.type().isA(kMarkerType))
-                                names.push_back(n.name());
+                                names.push_back(n.path());
                             else
                                 throw CommandError("centerRigMarkers: " + o + " is not a marker or instance");
                         }
@@ -1085,7 +1085,7 @@ bool registerCommands(ext::Context& ctx)
                             g.setValue({other, Transform::kTranslate, -1}, glm::dvec3(parentInv * glm::dvec4(w, 1.0)));
                             for (auto& [c, cw] : kids)
                                 g.setValue({c, Transform::kTranslate, -1}, glm::dvec3(glm::inverse(worldOf(g, other)) * glm::dvec4(cw, 1.0)));
-                            moved.push_back(g.node(other)->name());
+                            moved.push_back(g.node(other)->path());
                         }
                         return moved;
                     }});
@@ -1135,7 +1135,7 @@ bool registerCommands(ext::Context& ctx)
                             throw CommandError("orientRigSkeleton: give a joint of the skeleton");
                         Node& j = need(g, objs[0], "orientRigSkeleton");
                         if (!rig::isJoint(j))
-                            throw CommandError("orientRigSkeleton: " + j.name() + " is not a joint");
+                            throw CommandError("orientRigSkeleton: " + j.path() + " is not a joint");
                         const Entry* e = nullptr;
                         if (a.has("template"))
                         {
@@ -1147,7 +1147,7 @@ bool registerCommands(ext::Context& ctx)
                         {
                             e = bestTemplate(g, skeletonOf(g, topJoint(g, j.id()))).first;
                             if (!e)
-                                throw CommandError("orientRigSkeleton: no loaded template matches " + j.name() + "'s joint names; give template");
+                                throw CommandError("orientRigSkeleton: no loaded template matches " + j.path() + "'s joint names; give template");
                         }
                         std::vector<std::string> limbs = a.has("limbs") ? stringList(a.flags["limbs"]) : std::vector<std::string>{};
                         return orientSkeleton(g, e->tmpl, j.id(), limbs, a.get<std::string>("preserve", ""));
@@ -1175,7 +1175,7 @@ bool registerCommands(ext::Context& ctx)
                             throw CommandError("templateFromSkeleton: give a joint of the skeleton");
                         Node& j = need(g, objs[0], "templateFromSkeleton");
                         if (!rig::isJoint(j))
-                            throw CommandError("templateFromSkeleton: " + j.name() + " is not a joint");
+                            throw CommandError("templateFromSkeleton: " + j.path() + " is not a joint");
                         const NodeId top = topJoint(g, j.id());
                         FromSkeletonOptions o;
                         o.id = a.has("id") ? a.get<std::string>("id") : bare(g.node(top)->name());

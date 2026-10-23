@@ -4,6 +4,7 @@
 #include "geo/Mesh.h"
 #include "io/SceneFile.h"
 #include "scene/Graph.h"
+#include "scene/Components.h"
 #include "scene/Materials.h"
 #include "scene/MeshNodes.h"
 
@@ -258,4 +259,21 @@ TEST_CASE("assigning the default slot clears a material")
     run("assignMaterial", {{"args", {scene::materials::kDefaultSlot}}});
     CHECK(slots(cube) == std::map<std::string, int>{{"Default", 6}});
     CHECK(run("materialInfo", {{"args", {"M_A"}}})["usedBy"].empty());
+}
+
+TEST_CASE("selectByMaterial selects the objects or faces a material is assigned to")
+{
+    run("newScene");
+    std::string a = run("polyCube")[0], b = run("polyCube")[0], c = run("polyCube")[0];
+    run("createMaterial", {{"args", {"M_Blue"}}});
+    run("assignMaterial", {{"args", {"M_Blue", a}}});
+    run("assignMaterial", {{"args", {"M_Blue", b}}, {"faces", {1, 3}}});
+    CHECK(run("selectByMaterial", {{"args", {"M_Blue"}}}) == json::array({a, b}));
+    CHECK(run("ls", {{"selection", true}}) == json::array({a, b}));
+    run("selectByMaterial", {{"args", {"M_Blue"}}, {"faces", true}});
+    namespace comps = scene::components;
+    scene::Graph& g = scene::Graph::current();
+    CHECK(comps::selected(scene::ComponentMode::Face).size() == 2);
+    CHECK(comps::selected(g.find(b)->id(), scene::ComponentMode::Face) == comps::Ids{1, 3});
+    CHECK(comps::selected(g.find(c)->id(), scene::ComponentMode::Face).empty());
 }

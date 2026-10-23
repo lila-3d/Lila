@@ -4,6 +4,6 @@
 
 namespace lila::ui
 {
-/** Deform menu actions: blend shapes, lattice, nonlinear handles, delta mush, wrap, cage, softMod. */
+/** Deform menu actions: morph targets, correctives, driven channels, lattice, nonlinear handles, delta mush, wrap, cage, softMod. */
 LILA_UI_API void registerDeformActions();
 } // namespace lila::ui

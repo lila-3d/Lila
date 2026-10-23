@@ -5,9 +5,11 @@
 #include "scene/Node.h"
 #include "scene/Plug.h"
 #include "uv/LiveSolver.h"
+#include "uv/SymmetryUv.h"
 
 #include <chrono>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -72,6 +74,8 @@ public:
 
 private:
     geo::Mesh meshFromFrame(const LiveSolver::Frame& f) const;
+    /** With the node's symmetry on, the uvs and pins the frame changed on one side follow on the other, mirrored. True if any did. */
+    bool mirrorFrame(geo::Mesh& m) const;
     void writePreview(const LiveSolver::Frame& f);
 
     scene::NodeId mNode;
@@ -82,6 +86,9 @@ private:
     std::vector<Chart> mTopology;
     std::vector<std::pair<int, Index>> mCornerWedge;
     std::vector<int> mFaceIsland;
+    mutable std::optional<UvMirror> mMirror; // of mBase, for mMirrorAxis
+    mutable scene::MeshPtr mMirrorBase;
+    mutable int mMirrorAxis = -1;
     uint64_t mEpoch = 0;
     uint64_t mSeen = 0;
 

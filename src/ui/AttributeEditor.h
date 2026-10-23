@@ -57,6 +57,7 @@ private:
     void rebuild();
     void updateValues();
     void set(const std::string& attr, const scene::json& value);
+    QWidget* colorSwatch(const scene::AttrDef& def, scene::NodeId id, int index, bool readOnly);
 
     QLineEdit* mName = nullptr;
     QLabel* mType = nullptr;

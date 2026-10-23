@@ -72,7 +72,7 @@ json names(Graph& g, const std::vector<NodeId>& ids)
 {
     json out = json::array();
     for (NodeId id : ids)
-        out.push_back(g.node(id)->name());
+        out.push_back(g.node(id)->path());
     return out;
 }
 
@@ -102,7 +102,7 @@ json createChainCmd(const Args& a)
     const NodeId s = jointNamed(start, "ikChain").id(), e = jointNamed(end, "ikChain").id();
     const NodeId c = elementGuard("ikChain", [&] { return createIkChain(g, s, e, o); });
     g.select({controllerOf(g, c)});
-    return g.node(c)->name();
+    return g.node(c)->path();
 }
 
 json createFootCmd(const Args& a)
@@ -135,7 +135,7 @@ json createFootCmd(const Args& a)
     }
     const NodeId f = elementGuard("reverseFoot", [&] { return createReverseFoot(g, chain, o); });
     g.select({f});
-    return g.node(f)->name();
+    return g.node(f)->path();
 }
 
 json lockCmd(const Args& a)
@@ -147,7 +147,7 @@ json lockCmd(const Args& a)
     {
         const bool on = a.has("state") ? a.get<bool>("state") : !locked(g, c, t);
         setLock(g, c, t, on);
-        out.push_back({{"chain", g.node(c)->name()}, {"locked", on}});
+        out.push_back({{"chain", g.node(c)->path()}, {"locked", on}});
     }
     return out;
 }
@@ -170,7 +170,7 @@ json footPivotCmd(const Args& a)
         glm::dvec3 local(glm::inverse(w) * glm::dvec4(vec3Of(a.flags["position"]), 1.0));
         local.y = 0.0;
         g.setValue({f, g.node(f)->type().attrIndex((which + "Pivot").c_str()), -1}, local);
-        out.push_back(g.node(f)->name());
+        out.push_back(g.node(f)->path());
     }
     return out;
 }
@@ -288,7 +288,7 @@ void registerCommands()
                     snapReverseFoot(g, f, a.get<bool>("align"));
                     return 0;
                 });
-                const std::string n = g.node(f)->name();
+                const std::string n = g.node(f)->path();
                 if (a.get<bool>("key", true))
                     ops::execute("setKeyframe", {{"args", {n + ".translate", n + ".rotate", n + ".roll", n + ".twist", n + ".bank"}}});
                 out.push_back(n);
@@ -422,7 +422,7 @@ void registerCommands()
             const NodeId j = jointNamed(objs.front(), "looker").id();
             const NodeId l = elementGuard("looker", [&] { return createLooker(g, j, o); });
             g.select({l});
-            return g.node(l)->name();
+            return g.node(l)->path();
         },
     });
 
@@ -450,7 +450,7 @@ void registerCommands()
                 if (a.has("weight"))
                     o.weight = a.get<double>("weight");
                 const NodeId j = jointNamed(s, "twistDriver").id();
-                out.push_back(g.node(elementGuard("twistDriver", [&] { return createTwistDriver(g, j, o); }))->name());
+                out.push_back(g.node(elementGuard("twistDriver", [&] { return createTwistDriver(g, j, o); }))->path());
             }
             return out;
         },

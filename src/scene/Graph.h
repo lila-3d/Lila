@@ -52,13 +52,31 @@ public:
     void clear();
 
     // Nodes
-    /** applyNaming=false keeps the name as given (file loads); it is still made unique. */
+    /**
+     * applyNaming=false keeps the name as given (file loads); it is still made unique among its siblings, or across
+     * the scene with NamingPolicy::uniqueNames. Default names (empty) are always made unique across the scene.
+     */
     Node* createNode(const NodeType& type, std::string_view name = {}, NodeId parent = kNoNode, bool applyNaming = true);
     void deleteNode(NodeId id);
     Node* node(NodeId id) const;
-    Node* find(std::string_view name) const;
-    /** Returns the name actually given, which is made unique. */
+    /**
+     * Resolves a short name ("Arm"), a partial path ("L|Arm", any unique run of parents ending at the node) or a full
+     * path ("|Body|L|Arm"). Null when nothing matches; throws CommandError listing the full paths when it is ambiguous.
+     * Nodes outside the hierarchy count as roots.
+     */
+    Node* find(std::string_view path) const;
+    /** Every node `path` matches, by id. */
+    std::vector<NodeId> findAll(std::string_view path) const;
+    /** The shortest path that resolves back to this node alone: its name when that is unique. "" for no node. */
+    std::string path(NodeId id) const;
+    /** "|Body|L|Arm". */
+    std::string fullPath(NodeId id) const;
+    /** Returns the name actually given, which is made unique (see createNode). */
     std::string rename(NodeId id, std::string_view name);
+    /** What `wanted` would become for a node under `parent` (kNoNode for a root or a non-DAG node). */
+    std::string availableName(std::string_view wanted, NodeId parent = kNoNode) const;
+    /** NamingPolicy::uniqueNames: names unique across the scene rather than among siblings. */
+    bool uniqueNames() const { return mNaming.uniqueNames; }
     std::vector<NodeId> nodes() const;
     /** Marks a node as loaded from a file reference (0 = owned by the scene). Not undoable; references manage it. */
     void setReference(NodeId id, uint32_t reference);
@@ -75,9 +93,12 @@ public:
     std::vector<NodeId> descendants(NodeId id) const;
 
     // Plugs
-    /** "node.attr" or "node.tx". Throws std::invalid_argument. */
+    /** "node.attr" or "node.tx", the node part resolved as find() does. Throws std::invalid_argument. */
     PlugRef plug(std::string_view path) const;
+    /** The node's shortest unique path, a dot and the attr. */
     std::string plugName(const PlugRef& p) const;
+    /** plugName with the node's full path: stable while other nodes come and go, for files and baselines. */
+    std::string fullPlugName(const PlugRef& p) const;
     const AttrDef& attr(const PlugRef& p) const;
 
     /**
@@ -179,7 +200,11 @@ private:
         std::vector<NodeId> children;
     };
 
-    std::string uniqueName(std::string_view wanted, NodeId self = kNoNode) const;
+    /** global: unique across the scene; otherwise among the children of parent. */
+    std::string uniqueName(std::string_view wanted, NodeId parent, NodeId self, bool global) const;
+    /** id's ancestors' names match segs (leaf last, already known to match); absolute also requires a root. */
+    bool matchesPath(NodeId id, const std::vector<std::string_view>& segs, bool absolute) const;
+    void eraseName(const std::string& name, NodeId id);
     /** Applies the naming policy; throws in block mode when a user-given name doesn't conform. */
     std::string conformName(const NodeType& type, std::string_view wanted, bool userGiven) const;
     void attach(std::unique_ptr<Node> node, NodeId parent, size_t index);
@@ -204,7 +229,7 @@ private:
     std::vector<NodeId>& siblings(NodeId parent);
 
     std::unordered_map<NodeId, std::unique_ptr<Node>> mNodes;
-    std::unordered_map<std::string, NodeId> mNames;
+    std::unordered_multimap<std::string, NodeId> mNames; // short name -> nodes
     std::unordered_map<NodeId, Relations> mRel;
     std::vector<NodeId> mRoots;
     std::map<PlugRef, PlugRef> mInputs; // dst -> src

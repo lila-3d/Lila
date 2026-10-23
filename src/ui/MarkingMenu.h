@@ -6,6 +6,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <QElapsedTimer>
 #include <QWidget>
 
 #include <array>
@@ -138,6 +139,7 @@ private:
     int mSlot = -1;     // highlighted compass slot on the top level
     int mOverflow = -1; // highlighted overflow row
     bool mOnBox = false; // the cursor is on the highlighted item's option box
+    QElapsedTimer mOnBoxSince; // a compass box only counts once the cursor has rested on it, so a flick never opens it
     bool mCopied = false;
     Trigger mTrigger;
     Qt::MouseButton mButton;

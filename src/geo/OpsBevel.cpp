@@ -58,10 +58,43 @@ struct Mix
     }
     void apply(Mesh& mesh, Index c) const
     {
-        if (!src.empty())
-            mesh.cornerAttrs().mix(c, src, w);
+        if (src.empty())
+            return;
+        // Merged per source, so non-float layers take the corner with the most weight overall.
+        std::vector<Index> s;
+        std::vector<float> ws;
+        for (size_t i = 0; i < src.size(); ++i)
+        {
+            const size_t at = size_t(std::find(s.begin(), s.end(), src[i]) - s.begin());
+            if (at == s.size())
+            {
+                s.push_back(src[i]);
+                ws.push_back(w[i]);
+            }
+            else
+                ws[at] += w[i];
+        }
+        mesh.cornerAttrs().mix(c, s, ws);
     }
 };
+
+/** d turned by the rotation taking unit normal from onto to, about the hinge when they are opposite. */
+glm::dvec3 unfold(const glm::dvec3& d, const glm::dvec3& from, const glm::dvec3& to, const glm::dvec3& hinge)
+{
+    glm::dvec3 k = glm::cross(from, to);
+    double s = glm::length(k), c = glm::dot(from, to);
+    if (s < 1e-9)
+    {
+        if (c > 0.0 || glm::length(hinge) <= 0.0)
+            return d;
+        k = glm::normalize(hinge);
+        s = 0.0;
+        c = -1.0;
+    }
+    else
+        k /= s;
+    return d * c + glm::cross(k, d) * s + k * glm::dot(k, d) * (1.0 - c);
+}
 
 enum class Kind : uint8_t
 {
@@ -315,6 +348,35 @@ struct VertMesh
     Fill fill = Fill::None;
     std::vector<std::vector<Index>> sideIds; // Grid: the n + 1 points of each side, node to node
 };
+/** Sets "seam" on the edges of the faces where the corners on the two sides carry different wedge labels. */
+void markWedgeSeams(Mesh& mesh, std::span<const Index> faces, const std::unordered_map<Index, int>& label)
+{
+    auto of = [&](Index c) {
+        auto it = label.find(c);
+        return it == label.end() ? -1 : it->second;
+    };
+    auto differ = [&](Index c, Index r) {
+        const int a = of(c), b = of(r);
+        return a >= 0 && b >= 0 && a != b;
+    };
+    std::vector<std::pair<Index, bool>> set;
+    bool any = false;
+    for (Index f : faces)
+        mesh.forEachFaceCorner(f, [&](Index c) {
+            const Index r = mesh.cornerRadial(c);
+            if (r == c || r == kInvalid || mesh.cornerRadial(r) != c)
+                return;
+            const bool same = mesh.cornerPoint(r) == mesh.cornerPoint(c);
+            const bool seam = differ(c, same ? r : mesh.cornerNext(r)) || differ(mesh.cornerNext(c), same ? mesh.cornerNext(r) : r);
+            set.push_back({mesh.cornerEdge(c), seam});
+            any |= seam;
+        });
+    if (!any && !mesh.edgeAttrs().has(attr::kSeam))
+        return;
+    std::span<bool> seam = mesh.edgeAttrs().getOrAdd<bool>(attr::kSeam);
+    for (const auto& [e, on] : set)
+        seam[e] = on;
+}
 } // namespace
 
 std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const BevelOptions& opts)
@@ -370,6 +432,69 @@ std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const 
         vertOf[p] = verts.size();
         verts.push_back(std::move(v));
     }
+
+    /*
+     * UV wedges: the fan faces of each point grouped by the uv seams between them (edge "seam" or a uv split). New
+     * corners take a wedge label and their uvs from that wedge, and new edges are seams exactly where labels differ.
+     * A strip over a seam belongs to the side whose face has the lower id, so its one seam runs along the other side;
+     * a vertex mesh belongs to the wedge of the fan's lowest face.
+     */
+    struct FanFrame
+    {
+        CornerTri tri;
+        glm::dvec3 n{0.0};
+        Index face = kInvalid;
+    };
+    std::vector<std::vector<FanFrame>> fans(verts.size());
+    std::vector<std::vector<int>> wedge(verts.size());
+    std::vector<uint8_t> stripSeam(mesh.edgeCapacity(), 0);
+    {
+        std::vector<std::span<const glm::vec2>> uvs;
+        const AttributeSet& ca = std::as_const(mesh).cornerAttrs();
+        for (size_t l = 0; l < ca.layerCount(); ++l)
+            if (ca.layer(l).type() == AttrType::Float2)
+                uvs.push_back(ca.layer(l).values<glm::vec2>());
+        auto uvDiffer = [&](Index c1, Index c2) {
+            for (std::span<const glm::vec2> uv : uvs)
+                if (glm::any(glm::greaterThan(glm::abs(uv[c1] - uv[c2]), glm::vec2(1e-6f))))
+                    return true;
+            return false;
+        };
+        const std::span<const bool> seam = std::as_const(mesh).edgeAttrs().get<bool>(attr::kSeam);
+        auto seamAttr = [&](Index e) { return e < seam.size() && seam[e]; };
+        for (Index e : sel)
+        {
+            const Index c = mesh.edgeCorner(e), rc = mesh.cornerRadial(c);
+            const bool same = mesh.cornerPoint(rc) == mesh.cornerPoint(c);
+            stripSeam[e] = seamAttr(e) || uvDiffer(c, same ? rc : mesh.cornerNext(rc))
+                || uvDiffer(mesh.cornerNext(c), same ? mesh.cornerNext(rc) : rc);
+        }
+        int wedges = 0;
+        for (size_t vi = 0; vi < verts.size(); ++vi)
+        {
+            const Vert& v = verts[vi];
+            const size_t n = v.size();
+            for (Index c : v.corners)
+                fans[vi].push_back({CornerTri::of(mesh, c), mesh.faceNormal(mesh.cornerFace(c)), mesh.cornerFace(c)});
+            auto cut = [&](size_t i) {
+                return (i > 0 || v.closed) && (seamAttr(v.inEdge(i)) || uvDiffer(v.corners[i], v.corners[(i + n - 1) % n]));
+            };
+            std::vector<int>& w = wedge[vi];
+            const int first = wedges++;
+            w.assign(n, first);
+            for (size_t i = 1; i < n; ++i)
+                w[i] = cut(i) ? wedges++ : w[i - 1];
+            if (const int last = w.back(); v.closed && !cut(0))
+                std::replace(w.begin(), w.end(), last, first);
+        }
+    }
+    auto lowestFace = [&](size_t vi) {
+        size_t best = 0;
+        for (size_t i = 1; i < fans[vi].size(); ++i)
+            if (fans[vi][i].face < fans[vi][best].face)
+                best = i;
+        return best;
+    };
 
     // Boundary point directions per unit offset. Slides on an edge are shared by the faces on both sides.
     struct SlideAcc
@@ -678,6 +803,53 @@ std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const 
         return profiles[prof].at(from == profiles[prof].lo ? s : 1.0 - s, r);
     };
 
+    // Corner recipes of each strip end, across from a (the face where the edge goes out) to b.
+    struct StripEnd
+    {
+        Index a = kInvalid, b = kInvalid;
+        Mix ma, mb;
+        int label = -1;
+
+        const Mix& at(Index p) const { return p == a ? ma : mb; }
+    };
+    std::vector<std::vector<StripEnd>> ends(verts.size());
+    std::vector<const StripEnd*> endOfProfile(profiles.size(), nullptr);
+    for (size_t vi = 0; vi < verts.size(); ++vi)
+    {
+        const Vert& v = verts[vi];
+        ends[vi].resize(v.size());
+        for (size_t i = 0; i < v.size(); ++i)
+        {
+            const Index e = v.inEdge(i);
+            if (!bev[e])
+                continue;
+            const size_t j = (i + v.size() - 1) % v.size();
+            const ChainPoint& a = v.chain[j].back();
+            const ChainPoint& b = v.chain[i].front();
+            StripEnd& se = ends[vi][i];
+            se = {a.point, b.point, a.mix, b.mix, wedge[vi][i]};
+            if (stripSeam[e])
+            {
+                // The far side continues the owner's uvs, its face unfolded about the edge into the owner's plane.
+                const bool ownA = fans[vi][j].face < fans[vi][i].face;
+                const FanFrame& own = fans[vi][ownA ? j : i];
+                const FanFrame& opp = fans[vi][ownA ? i : j];
+                const Index p = ownA ? b.point : a.point;
+                const glm::dvec3 q = own.tri.o + unfold(mesh.position(p) - own.tri.o, opp.n, own.n, profiles[v.profileAt[i]].axis);
+                (ownA ? se.mb : se.ma) = own.tri.mix(q);
+                se.label = wedge[vi][ownA ? j : i];
+            }
+            if (!endOfProfile[v.profileAt[i]])
+                endOfProfile[v.profileAt[i]] = &se;
+        }
+    }
+    // Recipes of every chain point in each fan face it belongs to, for the vertex meshes.
+    std::vector<std::unordered_map<Index, std::vector<std::pair<size_t, Mix>>>> chainMix(verts.size());
+    for (size_t vi = 0; vi < verts.size(); ++vi)
+        for (size_t i = 0; i < verts[vi].size(); ++i)
+            for (const ChainPoint& cp : verts[vi].chain[i])
+                chainMix[vi][cp.point].push_back({i, cp.mix});
+
     // Vertex meshes: walk the hole around each point against the fan so the fill winds like its neighbours.
     std::vector<VertMesh> vmesh(verts.size());
     struct Insert
@@ -863,10 +1035,12 @@ std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const 
                 const Side& arc = h.sides[1 - s];
                 const Index from = h.nodes[(1 - s)];
                 Insert ins{vi, st.face, st.at, {}};
-                const Index c = v.corners[st.face];
-                const Index src = v.chain[st.face][st.at].srcEdge;
+                const ChainPoint& lo = v.chain[st.face][st.at];
+                const ChainPoint& hi = v.chain[st.face][st.at + 1];
+                // Spaced like the strip's end, so the two agree wherever the face shares the strip's uvs.
+                int k = 0;
                 for (Index p : arcIds(arc.profile, from))
-                    ins.pts.push_back({Kind::Extra, kInvalid, glm::dvec3(0.0), p, CornerTri::of(mesh, c).mix(mesh.position(p)), src});
+                    ins.pts.push_back({Kind::Extra, kInvalid, glm::dvec3(0.0), p, Mix::lerp(lo.mix, hi.mix, double(++k) / segments), lo.srcEdge});
                 inserts.push_back(std::move(ins));
                 vm.fill = Fill::Merge;
             }
@@ -927,20 +1101,20 @@ std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const 
         ch.insert(ch.begin() + ptrdiff_t(ins.at) + 1, ins.pts.begin(), ins.pts.end());
     }
 
-    // Rebuild every face around a bevelled point. Vertex meshes take their uvs from the first fan face.
-    std::vector<CornerTri> repCorner;
-    for (const Vert& v : verts)
-        repCorner.push_back(CornerTri::of(mesh, v.corners[0]));
+    // Rebuild every face around a bevelled point.
+    std::unordered_map<Index, int> cornerLabel;
     const std::vector<Index> oldEdges = edgesOfFaces(mesh, touchedFaces);
     {
         std::vector<Index> pts, edgeSrc;
         std::vector<const Mix*> mixes;
         std::vector<Mix> own;
+        std::vector<int> labels;
         for (Index f : touchedFaces)
         {
             pts.clear();
             edgeSrc.clear();
             mixes.clear();
+            labels.clear();
             own.clear();
             own.reserve(mesh.faceSize(f));
             mesh.forEachFaceCorner(f, [&](Index c) {
@@ -951,6 +1125,7 @@ std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const 
                     own.push_back(Mix::one(c));
                     mixes.push_back(&own.back());
                     edgeSrc.push_back(mesh.cornerEdge(c));
+                    labels.push_back(-1);
                     return;
                 }
                 for (const ChainPoint& cp : verts[it->second.first].chain[it->second.second])
@@ -958,6 +1133,7 @@ std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const 
                     pts.push_back(cp.point);
                     mixes.push_back(&cp.mix);
                     edgeSrc.push_back(cp.srcEdge);
+                    labels.push_back(wedge[it->second.first][it->second.second]);
                 }
             });
             mesh.removeFace(f);
@@ -966,19 +1142,26 @@ std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const 
                 continue;
             Index c = mesh.faceCorner(nf);
             for (size_t k = 0; k < pts.size(); ++k, c = mesh.cornerNext(c))
+            {
                 mixes[k]->apply(mesh, c);
+                if (labels[k] >= 0)
+                    cornerLabel[c] = labels[k];
+            }
         }
     }
 
     std::vector<Index> out;
-    auto emit = [&](std::span<const Index> pts, Index srcFace, std::span<const Mix> mix) {
+    auto emit = [&](std::span<const Index> pts, Index srcFace, std::span<const Mix> mix, std::span<const int> labels) {
         const Index f = mesh.addFace(pts, srcFace, {});
         if (f == kInvalid)
             return;
         out.push_back(f);
         Index c = mesh.faceCorner(f);
         for (size_t k = 0; k < pts.size(); ++k, c = mesh.cornerNext(c))
+        {
             mix[k].apply(mesh, c);
+            cornerLabel[c] = labels[k];
+        }
     };
 
     // Strips.
@@ -993,6 +1176,7 @@ std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const 
             Mix mix;
         } through[2];
         Index srcFace = kInvalid;
+        int label[2] = {-1, -1};
         for (int s = 0; s < 2; ++s)
         {
             const size_t vi = vertOf.at(mesh.edgePoint(e, s));
@@ -1008,13 +1192,15 @@ std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const 
             const std::vector<Index> mid = arcIds(v.profileAt[i], a.point);
             side[s].insert(side[s].end(), mid.begin(), mid.end());
             side[s].push_back(b.point);
+            const StripEnd& se = ends[vi][i];
+            label[s] = se.label;
             for (int k = 0; k <= segments; ++k)
-                sideMix[s].push_back(Mix::lerp(a.mix, b.mix, double(k) / segments));
+                sideMix[s].push_back(Mix::lerp(se.ma, se.mb, double(k) / segments));
             const Profile& pr = profiles[v.profileAt[i]];
             if (pr.through != kInvalid)
             {
                 const size_t seg = a.point == pr.lo ? pr.throughSeg : size_t(segments) - 1 - pr.throughSeg;
-                through[s] = {seg, pr.through, Mix::lerp(a.mix, b.mix, (seg + 0.5) / segments)};
+                through[s] = {seg, pr.through, Mix::lerp(se.ma, se.mb, (seg + 0.5) / segments)};
             }
             if (s == 0)
                 srcFace = mesh.cornerFace(v.corners[j]);
@@ -1026,19 +1212,23 @@ std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const 
         {
             std::vector<Index> pts{pb[k - j], pa[j]};
             std::vector<Mix> mix{sideMix[1][k - j], sideMix[0][j]};
+            std::vector<int> labels{label[1], label[0]};
             if (through[0].seg == j)
             {
                 pts.push_back(through[0].point);
                 mix.push_back(through[0].mix);
+                labels.push_back(label[0]);
             }
             pts.insert(pts.end(), {pa[j + 1], pb[k - j - 1]});
             mix.insert(mix.end(), {sideMix[0][j + 1], sideMix[1][k - j - 1]});
+            labels.insert(labels.end(), {label[0], label[1]});
             if (through[1].seg == k - j - 1)
             {
                 pts.push_back(through[1].point);
                 mix.push_back(through[1].mix);
+                labels.push_back(label[1]);
             }
-            emit(pts, srcFace, mix);
+            emit(pts, srcFace, mix, labels);
         }
     }
 
@@ -1055,13 +1245,70 @@ std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const 
         const Hole& h = vm.hole;
         const size_t K = h.nodes.size();
         const Index srcFace = mesh.cornerFace(v.corners[0]);
-        auto patchMix = [&](std::span<const Index> pts) {
+        if (vm.fill == Fill::None || vm.fill == Fill::Merge || K == 0)
+            continue;
+
+        // The patch takes the uvs of its wedge: from strips and fan faces in it, unfolded from the rest.
+        const FanFrame& rf = fans[vi][lowestFace(vi)];
+        const int W = wedge[vi][lowestFace(vi)];
+        auto stripOf = [&](const Side& sd, Index a, Index b) -> const StripEnd* {
+            if (sd.type != Side::Arc)
+                return nullptr;
+            const StripEnd* se = endOfProfile[sd.profile];
+            auto has = [&](Index p) { return se && (se->a == p || se->b == p); };
+            return se && se->label == W && has(a) && has(b) ? se : nullptr;
+        };
+        std::vector<Mix> nodeVal(K);
+        for (size_t k = 0; k < K; ++k)
+        {
+            const Index p = h.nodes[k];
+            const StripEnd* se = stripOf(h.sides[(k + K - 1) % K], h.nodes[(k + K - 1) % K], p);
+            se = se ? se : stripOf(h.sides[k], p, h.nodes[(k + 1) % K]);
+            if (se)
+            {
+                nodeVal[k] = se->at(p);
+                continue;
+            }
+            auto it = chainMix[vi].find(p);
+            const bool chained = it != chainMix[vi].end() && !it->second.empty();
+            if (chained)
+            {
+                auto in = std::find_if(it->second.begin(), it->second.end(), [&](const auto& im) { return wedge[vi][im.first] == W; });
+                if (in != it->second.end())
+                {
+                    nodeVal[k] = in->second;
+                    continue;
+                }
+            }
+            const glm::dvec3 n = chained ? fans[vi][it->second.front().first].n : rf.n;
+            nodeVal[k] = rf.tri.mix(rf.tri.o + unfold(mesh.position(p) - rf.tri.o, n, rf.n, glm::dvec3(0.0)));
+        }
+        auto sideMixAt = [&](size_t k, double t) {
+            const Index a = h.nodes[k], b = h.nodes[(k + 1) % K];
+            if (const StripEnd* se = stripOf(h.sides[k], a, b))
+                return Mix::lerp(se->at(a), se->at(b), t);
+            return Mix::lerp(nodeVal[k], nodeVal[(k + 1) % K], t);
+        };
+        std::unordered_map<Index, Mix> pm;
+        for (size_t k = 0; k < K; ++k)
+            pm.emplace(h.nodes[k], nodeVal[k]);
+        for (size_t k = 0; k < K; ++k)
+            if (h.sides[k].type == Side::Arc)
+            {
+                const std::vector<Index> mid = arcIds(h.sides[k].profile, h.nodes[k]);
+                for (size_t j = 0; j < mid.size(); ++j)
+                    pm.emplace(mid[j], sideMixAt(k, double(j + 1) / segments));
+            }
+        auto face = [&](std::span<const Index> pts) {
             std::vector<Mix> m;
             for (Index p : pts)
-                m.push_back(repCorner[vi].mix(mesh.position(p)));
-            return m;
+            {
+                auto it = pm.find(p);
+                m.push_back(it != pm.end() ? it->second : rf.tri.mix(mesh.position(p)));
+            }
+            std::vector<int> lab(pts.size(), W);
+            emit(pts, srcFace, m, lab);
         };
-        auto face = [&](std::span<const Index> pts) { emit(pts, srcFace, patchMix(pts)); };
         // The whole boundary, profile points included.
         auto ring = [&]() {
             std::vector<Index> all;
@@ -1166,6 +1413,28 @@ std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const 
                     - ((1 - s) * (1 - t) * S[0] + s * (1 - t) * S[size_t(n)] + (1 - s) * t * P[size_t(n)] + s * t * Z);
             };
             const glm::dvec3 Z = centre(half);
+            // The same patch over the sides' recipes; they vary linearly, so the centre is the corners' average.
+            std::vector<std::vector<Mix>> halfMix(K);
+            Mix zMix;
+            for (size_t k = 0; k < K; ++k)
+            {
+                for (int j = 0; j <= n2; ++j)
+                    halfMix[k].push_back(sideMixAt(k, double(j) / n2));
+                zMix.add(halfMix[k][0], 1.0 / double(K));
+                for (int j = 1; j < n; ++j)
+                    pm.emplace(vm.sideIds[k][size_t(j)], halfMix[k][size_t(2 * j)]);
+            }
+            auto coonsMix = [&](size_t i, int a, int b) {
+                const std::vector<Mix>& S = halfMix[i];
+                const std::vector<Mix>& P = halfMix[(i + K - 1) % K];
+                const double s = double(a) / n, t = double(b) / n;
+                Mix m;
+                m.add(P[size_t(n2 - b)], 1 - s);
+                m.add(S[size_t(a)], 1 - t);
+                m.add(S[0], -(1 - s) * (1 - t));
+                m.add(zMix, s * t);
+                return m;
+            };
 
             // A corner of three profiles sharing one centre is the affine image of a superellipsoid octant: snap to it.
             bool ideal = false;
@@ -1302,6 +1571,7 @@ std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const 
                 const Index p = mesh.addPoint(position(i, a, b));
                 mesh.pointAttrs().copy(p, v.point);
                 made.emplace(key, p);
+                pm.emplace(p, coonsMix(i, a, b));
                 return p;
             };
             // Point (a, b) in half steps of sector i: a runs along side i from its node, b back along side i - 1.
@@ -1358,6 +1628,7 @@ std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const 
     for (Index p : welded)
         mesh.removePoint(p);
     mesh.removeLoose(oldEdges, oldPoints);
+    markWedgeSeams(mesh, out, cornerLabel);
 
     if (opts.smoothingAngle >= 0.0)
     {

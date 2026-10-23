@@ -1,4 +1,5 @@
 #include "gn/NodesCommon.h"
+#include "gn/Texture.h"
 
 #include <map>
 
@@ -415,11 +416,11 @@ void mix()
         .label = "Mix",
         .category = "Utilities",
         .doc = "Blends a and b by factor.",
-        .props = {prop("dataType", {"float", "vector", "rotation"}, "float"), prop("clampFactor", {"true", "false"}, "true")},
+        .props = {prop("dataType", {"float", "vector", "rotation", "color"}, "float"), prop("clampFactor", {"true", "false"}, "true")},
         .dynamicSockets =
             [](const Group&, const GNode& n) {
                 SocketType t = dataTypeOf(findDecl("Mix")->propValue(n, "dataType"));
-                json def = t == T::Float ? json(0.0) : vec(0, 0, 0);
+                json def = t == T::Float ? json(0.0) : zeroJson(t);
                 return Sockets{{fin("factor", T::Float, 0.5), fin("a", t, def), fin("b", t, def)}, {fout("result", t)}};
             },
         .exec =
@@ -429,6 +430,10 @@ void mix()
                 if (t == T::Float)
                     c.out("result", map<double, double, double, double>(
                                         T::Float, [clamp](double f, double a, double b) { f = clamp ? std::clamp(f, 0.0, 1.0) : f; return a + (b - a) * f; },
+                                        {c.field("factor"), c.field("a"), c.field("b")}));
+                else if (t == T::Color)
+                    c.out("result", map<glm::dvec4, double, glm::dvec4, glm::dvec4>(
+                                        t, [clamp](double f, glm::dvec4 a, glm::dvec4 b) { f = clamp ? std::clamp(f, 0.0, 1.0) : f; return a + (b - a) * f; },
                                         {c.field("factor"), c.field("a"), c.field("b")}));
                 else
                     c.out("result", map<D3, double, D3, D3>(
@@ -445,7 +450,7 @@ void switchNode()
         .label = "Switch",
         .category = "Utilities",
         .doc = "Picks false or true by the switch. For data types the switch can be a field.",
-        .props = {prop("type", {"geometry", "float", "int", "bool", "vector", "rotation", "string"}, "geometry")},
+        .props = {prop("type", {"geometry", "float", "int", "bool", "vector", "rotation", "string", "color"}, "geometry")},
         .dynamicSockets =
             [](const Group&, const GNode& n) {
                 SocketType t = dataTypeOf(findDecl("Switch")->propValue(n, "type"));
@@ -461,7 +466,7 @@ void switchNode()
                 }
                 else
                 {
-                    json def = t == T::Vector || t == T::Rotation ? vec(0, 0, 0) : t == T::String ? json("") : json(0);
+                    json def = t == T::String ? json("") : zeroJson(t);
                     s.inputs.push_back(data ? fin("false", t, def) : in("false", t, def));
                     s.inputs.push_back(data ? fin("true", t, def) : in("true", t, def));
                     s.outputs = {data ? fout("output", t) : out("output", t)};
@@ -641,15 +646,15 @@ double gradientNoise(D3 p)
     return lerp(lerp(x00, x10, u.y), lerp(x01, x11, u.y), u.z);
 }
 
-/** fBm over gradient noise, 0..1. Fractional detail blends in the last octave. */
-double fbm(D3 p, double detail, double roughness, double lacunarity)
+/** fBm over a gradient noise, 0..1. Fractional detail blends in the last octave. */
+template <class P, class Noise> double fbm(P p, double detail, double roughness, double lacunarity, Noise noiseAt)
 {
     detail = std::clamp(detail, 0.0, 15.0);
     double amp = 1.0, sum = 0.0, norm = 0.0, freq = 1.0;
     int octaves = int(detail);
     for (int o = 0; o <= octaves; ++o)
     {
-        sum += gradientNoise(p * freq) * amp;
+        sum += noiseAt(p * freq) * amp;
         norm += amp;
         amp *= roughness;
         freq *= lacunarity;
@@ -657,12 +662,27 @@ double fbm(D3 p, double detail, double roughness, double lacunarity)
     double rest = detail - double(octaves);
     if (rest > 0.0)
     {
-        double extra = gradientNoise(p * freq) * amp;
+        double extra = noiseAt(p * freq) * amp;
         double withExtra = (sum + extra) / (norm + amp);
         double without = sum / norm;
         return 0.5 + 0.5 * (without + (withExtra - without) * rest);
     }
     return 0.5 + 0.5 * sum / norm;
+}
+
+Sockets noiseSockets(const Group&, const GNode& n)
+{
+    std::string dims = findDecl("NoiseTexture")->propValue(n, "dimensions");
+    Sockets s;
+    if (dims != "1D")
+        s.inputs.push_back(fin("vector", T::Vector, nullptr, Implicit::Position));
+    if (dims == "1D" || dims == "4D")
+        s.inputs.push_back(fin("w", T::Float, 0.0, Implicit::None, "The fourth coordinate (the only one in 1D). Animate it to evolve the noise."));
+    for (SocketDecl d : {fin("scale", T::Float, 0.05), fin("detail", T::Float, 2.0), fin("roughness", T::Float, 0.5), fin("lacunarity", T::Float, 2.0),
+                         fin("distortion", T::Float, 0.0)})
+        s.inputs.push_back(std::move(d));
+    s.outputs = {fout("fac", T::Float), fout("color", T::Color)};
+    return s;
 }
 
 void noise()
@@ -671,32 +691,58 @@ void noise()
         .type = "NoiseTexture",
         .label = "Noise Texture",
         .category = "Texture",
-        .doc = "3D gradient noise with fBm octaves. Positions are in cm, so the default scale of 0.05 gives about five bumps a metre.",
-        .sockets = {.inputs = {fin("vector", T::Vector, nullptr, Implicit::Position), fin("scale", T::Float, 0.05), fin("detail", T::Float, 2.0),
-                               fin("roughness", T::Float, 0.5), fin("lacunarity", T::Float, 2.0), fin("distortion", T::Float, 0.0)},
-                    .outputs = {fout("fac", T::Float), fout("color", T::Vector)}},
+        .doc = "Gradient noise with fBm octaves in 1D to 4D (W is the extra coordinate). Positions are in cm, so the default scale of 0.05 "
+               "gives about five bumps a metre.",
+        .props = {prop("dimensions", {"1D", "2D", "3D", "4D"}, "3D")},
+        .dynamicSockets = noiseSockets,
         .exec =
             [](ExecContext& c) {
-                std::vector<FieldPtr> ins{c.field("vector"), c.field("scale"), c.field("detail"), c.field("roughness"), c.field("lacunarity"),
-                                          c.field("distortion")};
-                std::vector<SocketType> types{T::Vector, T::Float, T::Float, T::Float, T::Float, T::Float};
+                std::string dimsName = c.prop("dimensions");
+                int dims = dimsName == "1D" ? 1 : dimsName == "2D" ? 2 : dimsName == "4D" ? 4 : 3;
+                FieldPtr vector = c.sockets.inputIndex("vector") >= 0 ? c.field("vector") : constantVector(D3(0.0));
+                FieldPtr w = c.sockets.inputIndex("w") >= 0 ? c.field("w") : constantFloat(0.0);
+                std::vector<FieldPtr> ins{vector, c.field("scale"), c.field("detail"), c.field("roughness"), c.field("lacunarity"), c.field("distortion"), w};
+                std::vector<SocketType> types{T::Vector, T::Float, T::Float, T::Float, T::Float, T::Float, T::Float};
                 auto make = [&](bool color) {
-                    return std::make_shared<FunctionField>(color ? T::Vector : T::Float, ins, types, [color](const std::vector<Column>& in, size_t n) {
+                    return std::make_shared<FunctionField>(color ? T::Color : T::Float, ins, types, [color, dims](const std::vector<Column>& in, size_t n) {
                         bool single = true;
                         for (const Column& x : in)
                             single = single && x.single;
                         size_t cnt = single ? 1 : n;
                         std::vector<double> fac(color ? 0 : cnt);
-                        std::vector<D3> col(color ? cnt : 0);
+                        std::vector<glm::dvec4> col(color ? cnt : 0);
                         tbb::parallel_for(size_t(0), cnt, [&](size_t k) {
-                            D3 p = in[0].at<D3>(k) * in[1].at<double>(k);
+                            double scale = in[1].at<double>(k);
                             double det = in[2].at<double>(k), rough = in[3].at<double>(k), lac = in[4].at<double>(k), dist = in[5].at<double>(k);
+                            if (dims == 4)
+                            {
+                                glm::dvec4 p(in[0].at<D3>(k) * scale, in[6].at<double>(k) * scale);
+                                if (dist != 0.0)
+                                    p += glm::dvec4(tex::gradientNoise4(p + glm::dvec4(13.5, 0, 0, 0)), tex::gradientNoise4(p + glm::dvec4(0, 47.2, 0, 0)),
+                                                    tex::gradientNoise4(p + glm::dvec4(0, 0, 91.7, 0)), tex::gradientNoise4(p + glm::dvec4(0, 0, 0, 33.1))) *
+                                         dist;
+                                auto nz = [](const glm::dvec4& q) { return tex::gradientNoise4(q); };
+                                if (color)
+                                    col[k] = glm::dvec4(fbm(p, det, rough, lac, nz), fbm(p + glm::dvec4(31.4, 17.3, 5.9, 2.2), det, rough, lac, nz),
+                                                        fbm(p + glm::dvec4(7.7, 53.1, 29.3, 11.5), det, rough, lac, nz), 1.0);
+                                else
+                                    fac[k] = fbm(p, det, rough, lac, nz);
+                                return;
+                            }
+                            D3 p = dims == 1 ? D3(in[6].at<double>(k) * scale, 0.0, 0.0) : in[0].at<D3>(k) * scale;
+                            if (dims == 2)
+                                p.z = 0.0;
                             if (dist != 0.0)
                                 p += D3(gradientNoise(p + D3(13.5, 0, 0)), gradientNoise(p + D3(0, 47.2, 0)), gradientNoise(p + D3(0, 0, 91.7))) * dist;
+                            if (dims == 1)
+                                p.y = p.z = 0.0;
+                            else if (dims == 2)
+                                p.z = 0.0;
                             if (color)
-                                col[k] = D3(fbm(p, det, rough, lac), fbm(p + D3(31.4, 17.3, 5.9), det, rough, lac), fbm(p + D3(7.7, 53.1, 29.3), det, rough, lac));
+                                col[k] = glm::dvec4(fbm(p, det, rough, lac, gradientNoise), fbm(p + D3(31.4, 17.3, 5.9), det, rough, lac, gradientNoise),
+                                                    fbm(p + D3(7.7, 53.1, 29.3), det, rough, lac, gradientNoise), 1.0);
                             else
-                                fac[k] = fbm(p, det, rough, lac);
+                                fac[k] = fbm(p, det, rough, lac, gradientNoise);
                         });
                         return color ? Column{std::move(col), single} : Column{std::move(fac), single};
                     });

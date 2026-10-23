@@ -10,7 +10,7 @@ namespace lila::gn
 {
 namespace
 {
-constexpr std::array<const char*, 7> kSocketNames = {"geometry", "float", "int", "bool", "vector", "rotation", "string"};
+constexpr std::array<const char*, 8> kSocketNames = {"geometry", "float", "int", "bool", "vector", "rotation", "string", "color"};
 constexpr std::array<const char*, 6> kDomainNames = {"point", "edge", "face", "corner", "curve", "instance"};
 } // namespace
 

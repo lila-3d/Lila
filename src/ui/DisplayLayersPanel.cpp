@@ -7,6 +7,7 @@
 #include "ui/Actions.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
+#include "ui/NodeLookup.h"
 
 #include <QColorDialog>
 #include <QHBoxLayout>
@@ -95,7 +96,7 @@ json selectionNames()
     scene::Graph& g = scene::Graph::current();
     json out = json::array();
     for (scene::NodeId id : g.selection())
-        out.push_back(g.node(id)->name());
+        out.push_back(g.node(id)->path());
     return out;
 }
 
@@ -128,11 +129,11 @@ void removeSelected()
 
 const std::string& validActive()
 {
-    scene::Node* n = scene::Graph::current().find(activeLayer());
+    scene::Node* n = findNode(activeLayer());
     if (!n || !dl::isLayer(*n))
     {
         std::vector<scene::Node*> layers = dl::all(scene::Graph::current());
-        activeLayer() = layers.empty() ? std::string() : layers.front()->name();
+        activeLayer() = layers.empty() ? std::string() : layers.front()->path();
     }
     return activeLayer();
 }
@@ -272,7 +273,7 @@ void DisplayLayersPanel::refresh()
         const QString name = QString::fromStdString(layer->name());
         auto* item = new QTreeWidgetItem(mTree);
         item->setFlags(item->flags() | Qt::ItemIsEditable);
-        item->setData(kName, kLayerRole, name);
+        item->setData(kName, kLayerRole, QString::fromStdString(layer->path()));
         item->setText(kName, name);
         item->setToolTip(kName, QString("%1 object(s). Click to select them, double-click to rename.").arg(info["members"].size()));
 
@@ -295,7 +296,7 @@ void DisplayLayersPanel::refresh()
 
         if (!visible)
             item->setForeground(kName, dim);
-        if (layer->name() == active)
+        if (layer->path() == active)
             mTree->setCurrentItem(item);
     }
     mTree->setUpdatesEnabled(true);
@@ -319,7 +320,7 @@ void DisplayLayersPanel::clicked(QTreeWidgetItem* item, int column)
 {
     const std::string layer = item->data(kName, kLayerRole).toString().toStdString();
     activeLayer() = layer;
-    scene::Node* n = scene::Graph::current().find(layer);
+    scene::Node* n = findNode(layer);
     if (!n || !dl::isLayer(*n))
         return;
     const json info = dl::info(scene::Graph::current(), n->id());
@@ -340,7 +341,7 @@ void DisplayLayersPanel::clicked(QTreeWidgetItem* item, int column)
 
 void DisplayLayersPanel::pickColor(const std::string& layer)
 {
-    scene::Node* n = scene::Graph::current().find(layer);
+    scene::Node* n = findNode(layer);
     if (!n)
         return;
     const glm::dvec3 start = n->as<glm::dvec3>(scene::DisplayLayer::kColor);
@@ -366,7 +367,7 @@ void DisplayLayersPanel::contextMenu(const QPoint& at)
     }
     const std::string layer = item->data(kName, kLayerRole).toString().toStdString();
     activeLayer() = layer;
-    scene::Node* n = scene::Graph::current().find(layer);
+    scene::Node* n = findNode(layer);
     if (!n)
         return;
     const json info = dl::info(scene::Graph::current(), n->id());

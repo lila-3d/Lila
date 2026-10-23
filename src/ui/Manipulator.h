@@ -100,6 +100,7 @@ private:
         bool linearRotate = false; // a ring turned by straight-line motion along linearDir
         bool precise = false;      // Shift held at the last update
         bool ctrlPlane = false;
+        bool alongNormal = false; // each component point moves along its own normal by the N axis distance
         QPointF linearDir;
         double linearSign = 1.0;
         Tool tool = Tool::Move;
@@ -151,6 +152,7 @@ private:
     std::vector<scene::NodeId> mTargets;
     scene::NodeId mLead = scene::kNoNode;
     bool mComponents = false;
+    bool mNormal = false; // the move tool's Normal orientation on components: a single N handle, frame[2]
     glm::dvec3 mPivot{0.0};
     glm::dmat3 mFrame{1.0};
     glm::bvec3 mLockedAxes{false};

@@ -11,10 +11,12 @@
 #include "scene/Modifiers.h"
 #include "ui/Actions.h"
 #include "ui/AttributeEditor.h"
+#include "ui/NodeLookup.h"
 #include "ui/DockSidebar.h"
 #include "ui/Icons.h"
 #include "ui/NumberExpr.h"
 #include "ui/SpinScrub.h"
+#include "ui/Theme.h"
 #include "ui/ValueReset.h"
 
 #include <QApplication>
@@ -40,6 +42,8 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include <algorithm>
+#include <cmath>
 #include <optional>
 
 namespace lila::ui
@@ -54,7 +58,7 @@ using scene::PlugType;
 constexpr const char* kMime = "application/x-lila-modifier";
 constexpr std::string_view kSuffix = "Modifier";
 
-QColor gray(int v) { return QColor(v, v, v); }
+QColor gray(int v) { return themeShade(v); }
 
 std::map<std::string, QString>& iconTable()
 {
@@ -62,7 +66,7 @@ std::map<std::string, QString>& iconTable()
         {"mirror", "flip-vertical"},   {"subdivision", "cube-3d-sphere"}, {"bevel", "border-corners"},
         {"array", "box-multiple"},     {"triangulate", "triangles"},      {"weightedNormals", "arrows-diagonal"},
         {"solidify", "stack-2"},       {"decimate", "chart-dots-3"},      {"autoBevel", "sparkles"},
-        {"skinCluster", "bone"},       {"meshSource", "box"},             {"blendShape", "mood-smile"},
+        {"skinCluster", "bone"},       {"meshSource", "box"},             {"morph", "mood-smile"},
         {"ffd", "grid-dots"},          {"deltaMush", "droplet"},          {"wrap", "layers-intersect"},
         {"cage", "box"},               {"softMod", "focus-2"},            {"bendDeformer", "rainbow"},
         {"twistDeformer", "rotate-clockwise"}, {"taperDeformer", "triangle-inverted"}, {"squashDeformer", "arrows-vertical"},
@@ -135,14 +139,25 @@ json run(const char* name, const json& call)
 void setAttr(const PlugRef& p, const json& value)
 {
     Graph& g = Graph::current();
-    if (g.node(p.node))
-        run("setAttr", {{"args", {g.plugName(p), value}}});
+    if (!g.node(p.node))
+        return;
+    json v = value;
+    if (v.is_number() && p.attr >= 0)
+    {
+        // Typed and dragged values stay inside the attr's hard limits.
+        const scene::AttrDef& def = g.attr(p);
+        double d = v.get<double>();
+        double c = std::clamp(d, def.minValue.value_or(-HUGE_VAL), def.maxValue.value_or(HUGE_VAL));
+        if (c != d)
+            v = v.is_number_integer() ? json(int64_t(std::llround(c))) : json(c);
+    }
+    run("setAttr", {{"args", {g.plugName(p), v}}});
 }
 
 std::string nameOf(NodeId id)
 {
     scene::Node* n = Graph::current().node(id);
-    return n ? n->name() : std::string();
+    return n ? n->path() : std::string();
 }
 
 struct Counts
@@ -985,7 +1000,7 @@ QWidget* ModifierStackWidget::buildHeaderFor(QWidget* card, QWidget* body, NodeI
         grip->setPixmap(icon("grip-vertical").pixmap(14, 14));
         grip->setCursor(Qt::OpenHandCursor);
         grip->setToolTip("Drag to reorder");
-        grip->installEventFilter(new GripFilter(card, n->name(), grip));
+        grip->installEventFilter(new GripFilter(card, n->path(), grip));
         h->addWidget(grip);
     }
 
@@ -1119,7 +1134,7 @@ QWidget* ModifierStackWidget::buildMeshInputRow(const PlugRef& ref, QWidget* par
         for (auto it = g.selection().rbegin(); it != g.selection().rend(); ++it)
             if (scene::Node* n = g.node(*it); n && n->type().isA("mesh") && n->id() != target)
             {
-                run("transferSource", {{"args", {nameOf(mod), n->name()}}});
+                run("transferSource", {{"args", {nameOf(mod), n->path()}}});
                 return;
             }
         log::error("Transfer source: select the source mesh (not the one being modified), then click again");
@@ -1129,6 +1144,7 @@ QWidget* ModifierStackWidget::buildMeshInputRow(const PlugRef& ref, QWidget* par
         auto src = g.source(ref);
         scene::Node* n = src ? g.node(src->node) : nullptr;
         name->setText(n ? QString::fromStdString(n->name()) : QString("(none)"));
+        name->setToolTip(n ? QString::fromStdString(n->fullPath()) : QString());
     });
     return row;
 }
@@ -1146,11 +1162,29 @@ QWidget* ModifierStackWidget::buildParams(NodeId id, bool isModifier)
     auto* guard = new WheelGuard(box);
     int rows = 0;
     const auto& attrs = n->type().attrs;
+    // Attrs keep their order; a category gets its heading the first time one of its attrs shows.
+    std::vector<int> order;
+    std::vector<std::string> categories{""};
     for (int i = 0; i < int(attrs.size()); ++i)
+        if (std::find(categories.begin(), categories.end(), attrs[i].category) == categories.end())
+            categories.push_back(attrs[i].category);
+    for (const std::string& c : categories)
+        for (int i = 0; i < int(attrs.size()); ++i)
+            if (attrs[i].category == c)
+                order.push_back(i);
+    std::string heading;
+    for (int i : order)
     {
         const scene::AttrDef& def = attrs[i];
         if ((def.flags & scene::AttrHidden) || !(def.flags & scene::AttrInput))
             continue;
+        if (def.category != heading)
+        {
+            heading = def.category;
+            auto* h = new QLabel(QString::fromStdString(heading), box);
+            h->setStyleSheet("color: #c8c8c8; font-weight: 600; padding-top: 4px; border-bottom: 1px solid #474747;");
+            form->addRow(h);
+        }
         if (def.type == PlugType::Mesh)
         {
             if (QWidget* row = buildMeshInputRow({id, i, -1}, box))
@@ -1167,7 +1201,7 @@ QWidget* ModifierStackWidget::buildParams(NodeId id, bool isModifier)
         if (isModifier && (def.name == "enabled" || def.name == "exportEnabled"))
             continue;
         QString doc = QString::fromStdString(def.doc);
-        auto* label = new QLabel(niceName(def.name));
+        auto* label = new QLabel(def.niceName.empty() ? niceName(def.name) : QString::fromStdString(def.niceName));
         label->setToolTip(QString::fromStdString(def.name + (def.doc.empty() ? "" : "\n" + def.doc)));
         QWidget* field = nullptr;
         PlugRef ref{id, i, -1};
@@ -1370,7 +1404,7 @@ QWidget* ModifierStackWidget::buildModifierCard(NodeId mod, int index, int count
 void ModifierStackWidget::dropModifier(const std::string& name, int to)
 {
     Graph& g = Graph::current();
-    scene::Node* n = g.find(name);
+    scene::Node* n = findNode(name);
     if (!n || !mMesh)
         return;
     std::vector<NodeId> mods = scene::modifiers::stack(g, mMesh);
@@ -1405,7 +1439,7 @@ void fillAddModifierMenu(QMenu* menu)
                 json meshes = json::array();
                 for (NodeId id : g.selection())
                     if (scene::Node* n = g.node(id); n && n->type().isA("mesh"))
-                        meshes.push_back(n->name());
+                        meshes.push_back(n->path());
                 if (meshes.empty())
                 {
                     log::error("Add Modifier: select a mesh");
@@ -1453,7 +1487,7 @@ void registerModifierStackActions()
             Graph& g = Graph::current();
             for (NodeId id : g.selection())
                 if (scene::Node* n = g.node(id); n && n->type().isA("mesh"))
-                    meshes.push_back(n->name());
+                    meshes.push_back(n->path());
             if (meshes.empty())
                 log::error("select a mesh");
             else

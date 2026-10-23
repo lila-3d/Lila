@@ -67,6 +67,8 @@ double num(const Node& n, const char* name);
 int64_t integer(const Node& n, const char* name);
 bool flag(const Node& n, const char* name);
 std::string text(const Node& n, const char* name);
+/** The node a text attr names (a full path, or a name in older scenes); null when it is gone or ambiguous. */
+Node* named(Graph& g, const std::string& path);
 glm::dvec3 vec(const Node& n, const char* name);
 
 /** A marker's collision shape in its joint's space, cm. A capsule's axis is the shape frame's X. */

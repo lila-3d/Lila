@@ -87,6 +87,7 @@ nlohmann::json NamingPolicy::defaults()
     return {
         {"enabled", false},
         {"mode", "fix"},
+        {"uniqueNames", false},
         {"rules", {{"joint", "snake_case"}, {"*", "PascalCase"}}},
         {"keepPrefixes", {"UCX_", "UBX_", "USP_", "UCP_", "SOCKET_", "SM_", "SK_", "MI_", "M_", "T_"}},
     };
@@ -100,6 +101,7 @@ NamingPolicy NamingPolicy::fromJson(const nlohmann::json& in)
 
     NamingPolicy p;
     p.enabled = j.value("enabled", false);
+    p.uniqueNames = j.value("uniqueNames", false);
     std::string mode = j.value("mode", "fix");
     p.mode = mode == "warn" ? Mode::Warn : mode == "block" ? Mode::Block : Mode::Fix;
     std::pair<std::string, CaseStyle> fallback{"*", CaseStyle::Any};

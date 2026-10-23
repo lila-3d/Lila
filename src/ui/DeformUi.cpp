@@ -1,6 +1,7 @@
 #include "ui/DeformUi.h"
 
 #include "ui/Actions.h"
+#include "ui/MorphPanel.h"
 
 namespace lila::ui
 {
@@ -18,12 +19,7 @@ void registerDeformActions()
     if (done)
         return;
     done = true;
-    add("deform.blendShape", "Blend Shape", "blendShape", nlohmann::json::object(), "blendShape()",
-        "Select the target meshes, then the base last: the base gets a morph target per target, exported to Unreal as morph targets.");
-    add("deform.addBlendTarget", "Add Blend Target", "addBlendTarget", nlohmann::json::object(), "addBlendTarget()",
-        "Select the base mesh (or its blendShape) first, then the new targets.");
-    add("deform.extractBlendTarget", "Extract Blend Target", "extractBlendTarget", nlohmann::json::object(), "extractBlendTarget()",
-        "Builds a mesh in the selected blendTarget's full shape, to sculpt and add back.");
+    registerMorphUi();
     add("deform.lattice", "Lattice", "lattice", nlohmann::json::object(), "lattice()",
         "Wraps the selected meshes in a lattice; edit its points in vertex mode to reshape them.");
     for (const char* kind : {"bend", "twist", "taper", "squash", "sine", "wave"})

@@ -46,6 +46,8 @@ inline constexpr const char* kEdgeThicknessSelected = "/viewport/components/edge
 inline constexpr const char* kVertexThickness = "/viewport/components/vertexThickness";
 inline constexpr const char* kVertexThicknessHover = "/viewport/components/vertexThicknessHover";
 inline constexpr const char* kVertexThicknessSelected = "/viewport/components/vertexThicknessSelected";
+/** UV seams drawn over meshes while the UV editor shows them. */
+inline constexpr const char* kUvSeamThickness = "/viewport/components/uvSeamThickness";
 
 struct ComponentThickness
 {
@@ -55,6 +57,7 @@ struct ComponentThickness
     double vertex = 4.0;
     double vertexHover = 8.0;
     double vertexSelected = 6.0;
+    double uvSeam = 3.0;
 };
 
 LILA_UI_API ComponentThickness componentThickness();
@@ -68,10 +71,10 @@ inline float hairlineWidth(double logical, double dpr) { return float(std::max(1
 inline bool accentColors(bool monotone, bool selective) { return selective && !monotone; }
 /** Whether the display behind one of the accent toggles above draws in colour right now. */
 LILA_UI_API bool accentColors(const char* key);
-/** Muted red, green and blue for X, Y and Z that read on the dark UI greys. sRGB 0..1. */
+/** The theme's X, Y and Z colours (Monotone: muted red, green and blue that read on the dark UI greys). sRGB 0..1. */
 LILA_UI_API glm::vec3 axisColor(int axis);
-/** Key ticks on the time slider, Maya's red. sRGB 0..1. */
-inline constexpr glm::vec3 kKeyTickColor{0.86f, 0.36f, 0.36f};
+/** Key ticks on the time slider, the theme's keyTick (Monotone: Maya's red). sRGB 0..1. */
+LILA_UI_API glm::vec3 keyTickColor();
 
 /** Copies the prefs above onto a frame. */
 LILA_UI_API void apply(render::FrameState& s);

@@ -6,6 +6,7 @@
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
+#include "scene/Morphs.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <ufbx.h>
@@ -67,7 +68,7 @@ fs::path tempFile(const std::string& name)
 }
 } // namespace
 
-TEST_CASE("blendShape: weights, envelope, weight map, live targets and undo")
+TEST_CASE("morph: weights, envelope, weight map, live targets and undo")
 {
     run("newScene");
     std::string base = run("polyCube", {{"name", "Base"}})[0];
@@ -76,9 +77,9 @@ TEST_CASE("blendShape: weights, envelope, weight map, live targets and undo")
     editPoints(smile, [](geo::Index p, const glm::dvec3&) { return p == 0 ? glm::dvec3(0, 10, 0) : glm::dvec3(0.0); });
     std::vector<glm::dvec3> rest = points(base);
 
-    std::string bs = run("blendShape", {{"args", {smile, base}}});
+    std::string bs = run("morph", {{"args", {smile, base}}});
     CHECK(run("deformers", {{"args", {base}}}) == json::array({bs}));
-    json targets = run("blendTargets", {{"args", {bs}}});
+    json targets = run("morphTargets", {{"args", {bs}}});
     REQUIRE(targets.size() == 1);
     CHECK(targets[0]["name"] == "Smile");
     std::string smileTarget = targets[0]["node"];
@@ -99,7 +100,7 @@ TEST_CASE("blendShape: weights, envelope, weight map, live targets and undo")
     CHECK(near(points(base)[0], rest[0] + glm::dvec3(0, 5, 0)));
 
     // A live target follows edits to its mesh.
-    json added = run("addBlendTarget", {{"args", {base, frown}}, {"live", true}});
+    json added = run("addMorphTarget", {{"args", {base, frown}}, {"live", true}});
     REQUIRE(added.size() == 1);
     std::string frownTarget = added[0];
     run("setAttr", {{"args", {frownTarget + ".weight", 1.0}}});
@@ -108,17 +109,17 @@ TEST_CASE("blendShape: weights, envelope, weight map, live targets and undo")
     CHECK(near(points(base)[3], rest[3] + glm::dvec3(-4, 0, 0)));
 
     // Extracting rebuilds the full target shape.
-    std::string extracted = run("extractBlendTarget", {{"args", {smileTarget}}});
+    std::string extracted = run("extractMorphTarget", {{"args", {smileTarget}}});
     CHECK(near(points(extracted)[0], rest[0] + glm::dvec3(0, 10, 0)));
 
-    run("removeBlendTarget", {{"args", {frownTarget}}});
-    CHECK(run("blendTargets", {{"args", {base}}}).size() == 1);
+    run("removeMorphTarget", {{"args", {frownTarget}}});
+    CHECK(run("morphTargets", {{"args", {base}}}).size() == 1);
     CHECK(near(points(base)[3], rest[3]));
     run("undo");
-    CHECK(run("blendTargets", {{"args", {base}}}).size() == 2);
+    CHECK(run("morphTargets", {{"args", {base}}}).size() == 2);
 }
 
-TEST_CASE("blendShape sits under the skinCluster, and deformers save and load")
+TEST_CASE("morph sits under the skinCluster, and deformers save and load")
 {
     run("newScene");
     std::string mesh = run("polyCylinder", {{"name", "Tube"}, {"radius", 10}, {"height", 100}, {"subdivisionsHeight", 4}})[0];
@@ -128,12 +129,12 @@ TEST_CASE("blendShape sits under the skinCluster, and deformers save and load")
     run("joint", {{"position", v3(0, -50, 0)}, {"name", "bone_a"}});
     run("joint", {{"position", v3(0, 50, 0)}, {"name", "bone_b"}});
     std::string skin = run("skinCluster", {{"args", {"bone_a", mesh}}});
-    std::string bs = run("blendShape", {{"args", {target, mesh}}});
+    std::string bs = run("morph", {{"args", {target, mesh}}});
     json stack = run("modifiers", {{"args", {mesh}}});
     REQUIRE(stack.size() == 2);
     CHECK(stack[0] == bs);
     CHECK(stack[1] == skin);
-    std::string t = run("blendTargets", {{"args", {bs}}})[0]["node"];
+    std::string t = run("morphTargets", {{"args", {bs}}})[0]["node"];
     run("setAttr", {{"args", {t + ".weight", 0.75}}});
     std::vector<glm::dvec3> before = points(mesh);
 
@@ -148,7 +149,7 @@ TEST_CASE("blendShape sits under the skinCluster, and deformers save and load")
         run("newScene");
         run("openScene", {{"args", {path}}});
         CHECK(samePoints(points(mesh), twisted, 1e-4));
-        CHECK(run("blendTargets", {{"args", {bs}}})[0]["weight"].get<double>() == doctest::Approx(0.75));
+        CHECK(run("morphTargets", {{"args", {bs}}})[0]["weight"].get<double>() == doctest::Approx(0.75));
         CHECK(run("deformers", {{"args", {mesh}}}).size() == 2);
     }
     (void)handle;
@@ -346,8 +347,8 @@ TEST_CASE("morph targets export to FBX with weight curves and import back")
     run("joint", {{"position", v3(0, -50, 0)}, {"name", "bone_a"}});
     run("joint", {{"position", v3(0, 50, 0)}, {"name", "bone_b"}});
     run("skinCluster", {{"args", {"bone_a", mesh}}});
-    std::string bs = run("blendShape", {{"args", {target, mesh}}});
-    std::string t = run("blendTargets", {{"args", {bs}}})[0]["node"];
+    std::string bs = run("morph", {{"args", {target, mesh}}});
+    std::string t = run("morphTargets", {{"args", {bs}}})[0]["node"];
     run("setKeyframe", {{"args", {t + ".weight"}}, {"time", 0.0}, {"value", 0.0}});
     run("setKeyframe", {{"args", {t + ".weight"}}, {"time", 1.0}, {"value", 1.0}});
     run("currentTime", {{"args", {0.5}}});
@@ -387,20 +388,20 @@ TEST_CASE("morph targets export to FBX with weight curves and import back")
     CHECK(ufbx_find_anim_prop(fbx->anim_layers.data[0], &ch->element, "DeformPercent") != nullptr);
     ufbx_free_scene(fbx);
 
-    // Importing brings the morph back as a blendShape target.
+    // Importing brings the morph back as a morph target.
     run("newScene");
     run("importFbx", {{"args", {path}}});
-    json imported = run("blendTargets", {{"args", {"Tube"}}});
+    json imported = run("morphTargets", {{"args", {"Tube"}}});
     REQUIRE(imported.size() == 1);
     CHECK(imported[0]["name"] == "Bulge");
     std::string node = imported[0]["node"];
     run("setAttr", {{"args", {node + ".weight", 1.0}}});
     std::string ibs = run("deformers", {{"args", {"Tube"}}})[0];
     graph().evaluate();
-    std::vector<deformers::MorphTarget> morphs = deformers::morphTargets(graph(), graph().find(ibs)->id());
-    REQUIRE(morphs.size() == 1);
+    std::vector<morphs::Target> got = morphs::targets(graph(), graph().find(ibs)->id());
+    REQUIRE(got.size() == 1);
     double maxDelta = 0.0;
-    for (const glm::dvec3& d : morphs[0].deltas)
+    for (const glm::dvec3& d : got[0].deltas)
         maxDelta = std::max(maxDelta, glm::length(d));
     CHECK(maxDelta == doctest::Approx(5.0).epsilon(1e-3));
     (void)rest;

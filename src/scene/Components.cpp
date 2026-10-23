@@ -5,6 +5,7 @@
 #include "geo/Mesh.h"
 #include "geo/Topology.h"
 #include "scene/Graph.h"
+#include "scene/Isolation.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 
@@ -463,7 +464,7 @@ void registerCommands()
                         std::map<NodeId, Ids> conv;
                         for (auto& [node, ids] : selected(prev))
                             if (MeshPtr m = meshOf(node))
-                                if (Ids c = convert(*m, prev, ids, next); !c.empty())
+                                if (Ids c = isolation::visibleOnly(isolation::activeVisibility(node, *m), next, convert(*m, prev, ids, next)); !c.empty())
                                     conv[node] = std::move(c);
                         std::map<NodeId, Ids> sets[3] = {selected(ComponentMode::Vertex), selected(ComponentMode::Edge),
                                                          selected(ComponentMode::Face)};
@@ -530,7 +531,7 @@ void registerCommands()
             for (auto [key, kind] : {std::pair{"vertices", ComponentMode::Vertex}, {"edges", ComponentMode::Edge}, {"faces", ComponentMode::Face}})
                 for (auto& [node, ids] : selected(kind))
                     if (Node* n = g.node(node))
-                        out[n->name()][key] = ids;
+                        out[n->path()][key] = ids;
             return out;
         },
     });
@@ -553,14 +554,14 @@ void registerCommands()
                 // A whole object stands for all of its components.
                 for (NodeId node : hilitedMeshes())
                     if (MeshPtr m = meshOf(node))
-                        sets[slot(to)][node] = allIds(*m, to);
+                        sets[slot(to)][node] = isolation::visibleOnly(isolation::activeVisibility(node, *m), to, allIds(*m, to));
                 if (sets[slot(to)].empty())
                     throw CommandError("convertSelection: select a mesh or some components");
             }
             else
                 for (auto& [node, ids] : selected(from))
                     if (MeshPtr m = meshOf(node))
-                        sets[slot(to)][node] = convert(*m, from, ids, to);
+                        sets[slot(to)][node] = isolation::visibleOnly(isolation::activeVisibility(node, *m), to, convert(*m, from, ids, to));
             setAll(sets[0], sets[1], sets[2]);
             if (from != to)
                 UndoStack::get().record(std::make_unique<ModeAction>(from, to));
@@ -600,7 +601,7 @@ void registerCommands()
                                 m->forEachFaceCorner(f, [&](geo::Index c) { grown.push_back(m->cornerPoint(c)); });
                         }
                 }
-                select(node, k, grown, Op::Add);
+                select(node, k, isolation::visibleOnly(isolation::activeVisibility(node, *m), k, std::move(grown)), Op::Add);
             }
             return nullptr;
         },
@@ -619,8 +620,9 @@ void registerCommands()
                 if (!m)
                     continue;
                 Ids out;
+                const isolation::Visibility vis = isolation::activeVisibility(node, *m);
                 for (uint32_t e : ids)
-                    for (geo::Index x : ring ? geo::edgeRing(*m, e) : geo::edgeLoop(*m, e))
+                    for (geo::Index x : isolation::clipLoop(*m, vis, ring ? geo::edgeRing(*m, e) : geo::edgeLoop(*m, e), e, ComponentMode::Edge, ring))
                         out.push_back(x);
                 select(node, ComponentMode::Edge, out, Op::Add);
             }
@@ -747,6 +749,7 @@ void registerCommands()
                 if (!m)
                     continue;
                 std::vector<uint8_t> in = geo::makeMask(m->faceCapacity(), ids);
+                const isolation::Visibility vis = isolation::activeVisibility(node, *m);
                 std::vector<geo::Index> work(ids.begin(), ids.end());
                 Ids grown;
                 while (!work.empty())
@@ -762,7 +765,7 @@ void registerCommands()
                         if (!m->isManifoldEdge(e))
                             continue;
                         geo::Index g = m->oppositeFace(e, f);
-                        if (g == geo::kInvalid || in[g] || glm::dot(nf, m->faceNormal(g)) < cosLimit)
+                        if (g == geo::kInvalid || in[g] || !vis.face(g) || glm::dot(nf, m->faceNormal(g)) < cosLimit)
                             continue;
                         in[g] = 1;
                         grown.push_back(g);
@@ -791,7 +794,7 @@ void registerCommands()
                 MeshPtr m = meshOf(node);
                 if (!m)
                     continue;
-                select(node, k, allIds(*m, k), first ? Op::Replace : Op::Add);
+                select(node, k, isolation::visibleOnly(isolation::activeVisibility(node, *m), k, allIds(*m, k)), first ? Op::Replace : Op::Add);
                 first = false;
             }
             return nullptr;

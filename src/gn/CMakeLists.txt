@@ -10,11 +10,16 @@ lila_module(lila_gn Scene
     NodeLibrary.cpp
     NodesBoolean.cpp
     NodesCurve.cpp
+    NodesGroup.cpp
     NodesGeometry.cpp
     NodesInput.cpp
     NodesMesh.cpp
     NodesSample.cpp
-    NodesUtility.cpp)
+    NodesShading.cpp
+    NodesTexture.cpp
+    NodesUtility.cpp
+    GroupCommands.cpp
+    Viewer.cpp)
 
 find_package(manifold CONFIG REQUIRED)
 target_link_libraries(lila_gn PUBLIC lila_scene PRIVATE lila_fbx manifold::manifold)

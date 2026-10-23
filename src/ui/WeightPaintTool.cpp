@@ -178,7 +178,7 @@ public:
             item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
             item->setCheckState(i.locked ? Qt::Checked : Qt::Unchecked);
             item->setData(Qt::UserRole, qlonglong(i.index));
-            item->setData(Qt::UserRole + 1, QString::fromStdString(scene::Graph::current().node(i.link)->name()));
+            item->setData(Qt::UserRole + 1, QString::fromStdString(scene::Graph::current().node(i.link)->path()));
             if (int64_t(i.index) == settings().influence)
                 mList->setCurrentItem(item);
         }
@@ -393,7 +393,7 @@ public:
     }
 
 private:
-    static std::string nodeName(NodeId id) { return scene::Graph::current().node(id)->name(); }
+    static std::string nodeName(NodeId id) { return scene::Graph::current().node(id)->path(); }
 
     glm::dmat4 meshWorld() const { return scene::Graph::current().node(mMesh)->as<glm::dmat4>(scene::Transform::kWorldMatrix); }
 

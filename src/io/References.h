@@ -34,10 +34,12 @@ struct Reference
         /** Nonzero lock masks by attribute index (see Node::lockMask). */
         std::map<int, uint8_t> locks;
     };
-    /** Each node (relative to ns) right after loading. */
+    /** Each node right after loading, by its path through the reference's nodes with ns stripped ("Body|Arm"). */
     std::map<std::string, Baseline> baseline;
+    /** The baseline key each loaded node had, so edits keep their key when the node is reparented. */
+    std::map<scene::NodeId, std::string> baselineKeys;
     std::set<std::pair<std::string, std::string>> baselineConnections;
-    /** Edits held while unloaded, and scene nodes parented under referenced ones as [child, parent]. */
+    /** Edits held while unloaded, and scene nodes parented under referenced ones as [child, parent] paths. */
     nlohmann::json edits = nlohmann::json::array();
     nlohmann::json children = nlohmann::json::array();
 };

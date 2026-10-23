@@ -64,13 +64,13 @@ std::string currentCharacter()
         try
         {
             const Character ch = resolveCharacter(g, id);
-            state().node = g.node(ch.root)->name();
+            state().node = g.node(ch.root)->path();
             return state().node;
         }
         catch (const std::exception&)
         {
         }
-    if (!state().node.empty() && !g.find(state().node))
+    if (!state().node.empty() && !named(g, state().node))
         state().node.clear();
     return state().node;
 }

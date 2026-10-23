@@ -289,7 +289,7 @@ NodeId endpoint(const json& spec, const json& parent, const std::string& locName
     {
         Node& n = nodeNamed(spec.get<std::string>(), cmd);
         if (!n.type().isA("transform"))
-            throw CommandError(std::string(cmd) + ": " + n.name() + " has no position");
+            throw CommandError(std::string(cmd) + ": " + n.path() + " has no position");
         return n.id();
     }
     if (!spec.is_array() || spec.size() != 3)
@@ -341,7 +341,7 @@ json finish(Node& n, const Args& a)
 {
     if (!a.get<bool>("skipSelect", false))
         graph().select({n.id()});
-    return n.name();
+    return n.path();
 }
 
 std::vector<glm::dvec3> pointsArg(const json& j, const char* cmd)
@@ -500,7 +500,7 @@ void registerCreateCommands()
             if (mesh != kNoNode)
             {
                 if (!g.node(mesh)->type().isA("mesh"))
-                    throw CommandError(std::string("radiusMeasure: ") + g.node(mesh)->name() + " is not a mesh");
+                    throw CommandError(std::string("radiusMeasure: ") + g.node(mesh)->path() + " is not a mesh");
                 if (verts.size() < 3)
                     throw CommandError("radiusMeasure: needs at least 3 vertices");
             }
@@ -522,7 +522,7 @@ void registerCreateCommands()
                 g.setValue({n.id(), RadiusMeasure::kPoints}, pts.dump());
             g.evaluate();
             if (!n.as<bool>(RadiusMeasure::kValid))
-                log::warn("radiusMeasure: {} points don't define a circle (collinear?)", n.name());
+                log::warn("radiusMeasure: {} points don't define a circle (collinear?)", n.path());
             return finish(n, a);
         },
     });

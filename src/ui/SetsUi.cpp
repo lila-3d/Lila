@@ -203,14 +203,14 @@ void QuickSelectSetsPanel::refresh()
         const size_t count = scene::objectSets::members(g, set->id()).size();
         auto* item = new QTreeWidgetItem(mTree);
         item->setFlags(item->flags() | Qt::ItemIsEditable);
-        item->setData(0, kSetRole, name);
+        item->setData(0, kSetRole, QString::fromStdString(set->path()));
         item->setText(0, name);
         item->setIcon(0, icon("list-details"));
         item->setText(1, QString::number(count));
         item->setTextAlignment(1, Qt::AlignRight | Qt::AlignVCenter);
         item->setToolTip(0, "Click to select the members (Ctrl or Shift adds them), double-click to rename.");
         item->setToolTip(1, QString("%1 member(s)").arg(count));
-        if (set->name() == current)
+        if (set->path() == current)
             mTree->setCurrentItem(item);
     }
     if (mTree->topLevelItemCount() == 0)
@@ -291,8 +291,8 @@ void attachQuickSelectMenu(QMenu* menu)
         scene::Graph& g = scene::Graph::current();
         for (const scene::Node* s : scene::objectSets::all(g, true))
         {
-            const std::string name = s->name();
-            QAction* a = menu->addAction(icon("list-details"), QString::fromStdString(name),
+            const std::string name = s->path();
+            QAction* a = menu->addAction(icon("list-details"), QString::fromStdString(s->name()),
                                          [name] { run("selectSetMembers", {{"args", {name}}}); });
             a->setToolTip(QString::fromStdString("Select the members of " + name));
         }

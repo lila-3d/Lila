@@ -40,7 +40,7 @@ std::optional<std::vector<std::string>> redirect(const selectionHandlers::Hit& h
     scene::NodeId j = clickJoint(h);
     if (j == scene::kNoNode)
         return std::nullopt;
-    return std::vector<std::string>{scene::Graph::current().node(j)->name()};
+    return std::vector<std::string>{scene::Graph::current().node(j)->path()};
 }
 
 /** Shades everything a click there selects: the joint's own weights plus those of the helpers redirecting to it. */
@@ -106,7 +106,7 @@ std::vector<selectionHandlers::Candidate> candidates(const selectionHandlers::Hi
          scene::rig::selectionCandidates(g, h.node, h.face, h.position, !selectionHandlers::selectAsBypassed()))
     {
         selectionHandlers::Candidate e;
-        e.name = g.node(c.joint)->name();
+        e.name = g.node(c.joint)->path();
         e.role = roleId(c.role);
         e.weight = c.weight;
         QString note = roleLabel(c.role);

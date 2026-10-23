@@ -243,7 +243,7 @@ json measureEdges(const std::map<NodeId, components::Ids>& sel)
             double len = glm::distance(a, b);
             total += len;
             ++count;
-            perEdge.push_back({{"node", m->node->name()}, {"edge", e}, {"length", len}});
+            perEdge.push_back({{"node", m->node->path()}, {"edge", e}, {"length", len}});
             r.segments.push_back({a, b});
             std::pair<NodeId, uint32_t> k0{id, p0}, k1{id, p1};
             ++degree[k0];
@@ -433,7 +433,7 @@ std::optional<Cylinder> cylinderOf(const std::vector<glm::dvec3>& pts, const glm
 json measureMeasureNode(const Node& n)
 {
     Result r;
-    r.fields["node"] = n.name();
+    r.fields["node"] = n.path();
     if (n.type().isA("distanceMeasure"))
         addDistance(r, n.as<glm::dvec3>(DistanceMeasure::kStartPoint), n.as<glm::dvec3>(DistanceMeasure::kEndPoint));
     else if (n.type().isA("angleMeasure"))
@@ -444,7 +444,7 @@ json measureMeasureNode(const Node& n)
     else if (n.type().isA("radiusMeasure"))
     {
         if (!n.as<bool>(RadiusMeasure::kValid))
-            throw CommandError("measureSelection: " + n.name() + " has no valid circle");
+            throw CommandError("measureSelection: " + n.path() + " has no valid circle");
         measure::Circle c;
         c.center = n.as<glm::dvec3>(RadiusMeasure::kCenter);
         c.normal = n.as<glm::dvec3>(RadiusMeasure::kNormal);

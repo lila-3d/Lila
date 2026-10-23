@@ -679,7 +679,7 @@ void TerminalView::paintEvent(QPaintEvent*)
     LILA_ZONE();
 
     QPainter p(viewport());
-    p.fillRect(viewport()->rect(), QColor(kDefaultBg, kDefaultBg, kDefaultBg));
+    p.fillRect(viewport()->rect(), themeShade(kDefaultBg));
 
     // Explicit colors are compressed into the readable range and kept clear of their background.
     auto foreground = [](int fg, int bg) {
@@ -761,16 +761,16 @@ void TerminalView::paintEvent(QPaintEvent*)
 
             QRectF rect(mPad + x * mCellW, y, span * mCellW, mCellH);
             if (st.bg != kDefaultBg)
-                p.fillRect(rect, QColor(st.bg, st.bg, st.bg));
+                p.fillRect(rect, themeShade(st.bg));
             if (!text.trimmed().isEmpty())
             {
                 p.setFont(st.bold ? (st.italic ? mBoldItalic : mBold) : (st.italic ? mItalic : mFont));
-                p.setPen(QColor(st.fg, st.fg, st.fg));
+                p.setPen(themeShade(st.fg));
                 p.drawText(QPointF(rect.left(), y + mAscent), text);
             }
             if (st.underline || st.strike)
             {
-                p.setPen(QColor(st.fg, st.fg, st.fg));
+                p.setPen(themeShade(st.fg));
                 qreal ly = st.underline ? y + mAscent + 1.5 : y + mCellH * 0.55;
                 p.drawLine(QPointF(rect.left(), ly), QPointF(rect.right(), ly));
             }
@@ -783,12 +783,12 @@ void TerminalView::paintEvent(QPaintEvent*)
             QRectF cell(mPad + mScreen.cursorX() * mCellW, y, mCellW, mCellH);
             if (!mFocused)
             {
-                p.setPen(QColor(kDefaultFg, kDefaultFg, kDefaultFg));
+                p.setPen(themeShade(kDefaultFg));
                 p.setBrush(Qt::NoBrush);
                 p.drawRect(cell.adjusted(0.5, 0.5, -0.5, -0.5));
             }
             else if (mScreen.cursorX() >= cols)
-                p.fillRect(cell, QColor(kDefaultFg, kDefaultFg, kDefaultFg));
+                p.fillRect(cell, themeShade(kDefaultFg));
         }
     }
 }

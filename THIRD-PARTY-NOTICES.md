@@ -19,6 +19,8 @@ Qt and PySide6 are dynamically linked and unmodified. You may replace the Qt and
 | Python | PSF-2.0 | Python Software Foundation | https://www.python.org |
 | oneTBB | Apache-2.0 | Intel Corporation | https://github.com/uxlfoundation/oneTBB |
 | hwloc | BSD-3-Clause | The hwloc contributors (Indiana University, University of Tennessee, HLRS Stuttgart, Inria and others) | https://github.com/open-mpi/hwloc |
+| Alembic | BSD-3-Clause | Lucasfilm Entertainment Company Ltd. and Sony Pictures Imageworks Inc. | https://github.com/alembic/alembic |
+| Imath | BSD-3-Clause | Contributors to the OpenEXR Project | https://github.com/AcademySoftwareFoundation/Imath |
 | Manifold | Apache-2.0 | The Manifold Authors | https://github.com/elalish/manifold |
 | Clipper2 | BSL-1.0 | Angus Johnson | https://github.com/AngusJohnson/Clipper2 |
 | Slang | Apache-2.0 WITH LLVM-exception | Slang contributors | https://github.com/shader-slang/slang |

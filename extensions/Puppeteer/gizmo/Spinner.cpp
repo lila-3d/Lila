@@ -252,7 +252,7 @@ std::vector<std::string> selectedTransforms()
     std::vector<std::string> out;
     for (NodeId id : g.selection())
         if (Node* n = g.node(id); n && n->type().isA("transform"))
-            out.push_back(n->name());
+            out.push_back(n->path());
     return out;
 }
 
@@ -523,7 +523,7 @@ public:
             if (button == Qt::RightButton)
                 if (NodeId c = controllerAt(graph(), mView, px))
                 {
-                    runCommand("puppeteerFootLock", {{"args", {graph().node(c)->name()}}});
+                    runCommand("puppeteerFootLock", {{"args", {graph().node(c)->path()}}});
                     viewportTools::requestRedraw();
                     return true;
                 }
@@ -568,7 +568,7 @@ public:
                     changed();
                 }
                 else
-                    runCommand("puppeteerSnapReverseFoot", {{"args", {graph().node(t.foot)->name()}}, {"align", s.footAlign}});
+                    runCommand("puppeteerSnapReverseFoot", {{"args", {graph().node(t.foot)->path()}}, {"align", s.footAlign}});
             }
             else
             {
@@ -1129,7 +1129,7 @@ private:
         case Kind::PoleTurn:
         {
             const double by = step(amount * s.poleSpeed, s.rotateStep);
-            call["args"] = {graph().node(t.chain)->name()};
+            call["args"] = {graph().node(t.chain)->path()};
             call["by"] = by;
             call["turn"] = d.kind == Kind::PoleTurn;
             d.readout = QString("Pole %1°%2").arg(by, 0, 'f', 1).arg(d.kind == Kind::PoleTurn ? "  with the controller" : "");
@@ -1139,7 +1139,7 @@ private:
         {
             static const char* names[] = {"roll", "twist", "bank"};
             const double by = step(amount * s.controllerSpeed, s.rotateStep);
-            call["args"] = {graph().node(t.foot)->name()};
+            call["args"] = {graph().node(t.foot)->path()};
             call[names[axis]] = by;
             d.readout = QString("%1 %2°").arg(names[axis]).arg(by, 0, 'f', 1);
             return {"puppeteerFootChannels", call};

@@ -278,8 +278,8 @@ bool validCamera(const std::string& value)
     std::string v = cameraName(value);
     if (v.empty() || std::ranges::any_of(kViews, [&](const char* view) { return v == view; }))
         return true;
-    const Node* n = Graph::current().find(v);
-    return n && n->type().isA("camera");
+    const std::vector<NodeId> found = Graph::current().findAll(v);
+    return found.size() == 1 && Graph::current().node(found[0])->type().isA("camera");
 }
 } // namespace imagePlane
 
@@ -366,7 +366,7 @@ void registerImagePlaneCommands()
             }
             if (a.positional.empty() && !a.get<bool>("skipSelect", false))
                 g.select({n->id()});
-            return n->name();
+            return n->path();
         },
     });
 }

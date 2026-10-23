@@ -9,9 +9,11 @@
 #include "geo/Triangulate.h"
 #include "scene/Anim.h"
 #include "scene/Deformers.h"
+#include "scene/Drivers.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
+#include "scene/Morphs.h"
 #include "scene/Rig.h"
 #include "scene/RigElements.h"
 #include "scene/RotationCurve.h"
@@ -352,6 +354,8 @@ Geometry buildGeometry(const geo::Mesh& m, const glm::dmat4& toFile, const Expor
             }
         }
     }
+    if (!opts.normals)
+        g.normals.clear();
 
     for (int set = 0; set < 8; ++set)
     {
@@ -436,6 +440,7 @@ void writeGeometry(Record& objects, int64_t id, const std::string& name, const G
         e.add("ReferenceInformationType").str(ref);
     };
 
+    if (!g.normals.empty())
     {
         Record& e = geom.add("LayerElementNormal");
         e.i32(0);
@@ -486,7 +491,8 @@ void writeGeometry(Record& objects, int64_t id, const std::string& name, const G
     Record& layer0 = geom.add("Layer");
     layer0.i32(0);
     layer0.add("Version").i32(100);
-    layerElement(layer0, "LayerElementNormal", 0);
+    if (!g.normals.empty())
+        layerElement(layer0, "LayerElementNormal", 0);
     if (!g.tangents.empty())
     {
         layerElement(layer0, "LayerElementBinormal", 0);
@@ -520,7 +526,8 @@ struct ModelInfo
     scene::RotateOrder order = scene::RotateOrder::XYZ;
 };
 
-void writeModel(Record& objects, int64_t id, const std::string& name, const ModelInfo& info)
+void writeModel(Record& objects, int64_t id, const std::string& name, const ModelInfo& info,
+                const std::vector<std::pair<std::string, double>>& userProps = {})
 {
     Record& model = objects.add("Model");
     model.i64(id).str(bin::objectName(name, "Model")).str(info.type);
@@ -538,6 +545,8 @@ void writeModel(Record& objects, int64_t id, const std::string& name, const Mode
     p3(props, "Lcl Translation", "Lcl Translation", "", "A", info.trs.t);
     p3(props, "Lcl Rotation", "Lcl Rotation", "", "A", info.trs.r);
     p3(props, "Lcl Scaling", "Lcl Scaling", "", "A", info.trs.s);
+    for (const auto& [prop, value] : userProps)
+        props.addP(prop, "double", "Number", "A+U").f64(value);
     model.add("Shading").boolean(true);
     model.add("Culling").str("CullingOff");
 }
@@ -712,7 +721,7 @@ void writeCurveNode(Record& objects, int64_t id, std::string_view name, const gl
     props.addP("d|Z", "Number", "", "A").f64(defaults.z);
 }
 
-/** A curve node animating one Number property (a blend channel's DeformPercent). */
+/** A curve node animating one Number property (a morph channel's DeformPercent, a named curve). */
 void writeCurveNode1(Record& objects, int64_t id, std::string_view name, std::string_view prop, double defaultValue)
 {
     Record& cn = objects.add("AnimationCurveNode");
@@ -1005,11 +1014,21 @@ struct Gather
             walk(c, flatten ? -1 : index, inv, false, true);
     }
 
-    /** Exported node index and its blendShape, for the meshes that export morph targets. */
+    /** Exported node index and its morph, for the meshes that export morph targets. */
     std::vector<std::pair<size_t, NodeId>> morphed;
+
+    /** Where each of out.curveNames is sampled from: a drivenChannel's output, or one weight of a morph. */
+    struct CurveSource
+    {
+        NodeId channel = scene::kNoNode;
+        NodeId morph = scene::kNoNode;
+        size_t index = 0;
+    };
+    std::vector<CurveSource> curveSources;
 
     void addSkeletons();
     void buildMorphs();
+    void buildCurves();
     void buildSkins();
     void applyBindPose();
     void keepSkeletonOnly();
@@ -1112,8 +1131,8 @@ void Gather::buildSkins()
 }
 
 /**
- * Morph targets from each mesh's blendShape. The exported base is the neutral shape: the current morph weights are
- * taken back out of the points the blendShape fed, so the targets add on top of it as they do in Unreal.
+ * Morph targets from each mesh's morph deformer. The exported base is the neutral shape: the current morph weights are
+ * taken back out of the points the morph fed, so the targets add on top of it as they do in Unreal.
  */
 void Gather::buildMorphs()
 {
@@ -1125,25 +1144,25 @@ void Gather::buildMorphs()
         ExportNode& e = out.nodes[i];
         if (!e.mesh)
             continue;
-        NodeId bs = deformers::blendShapeOf(graph, e.source);
+        NodeId bs = morphs::find(graph, e.source);
         if (bs == kNoNode || !modifiers::exportEnabled(*graph.node(bs)) || !graph.node(bs)->as<bool>(DeformerNode::kEnabled))
             continue;
-        std::vector<deformers::MorphTarget> targets = deformers::morphTargets(graph, bs);
+        std::vector<morphs::Target> targets = morphs::targets(graph, bs);
         if (targets.empty())
             continue;
         MeshPtr input = std::get<MeshPtr>(graph.value({bs, DeformerNode::kInMesh, -1}));
         if (!input || input->pointCapacity() != e.mesh->pointCapacity())
         {
-            out.warnings.push_back(std::format("{}: the points change after the blendShape; morph targets not exported", e.name));
+            out.warnings.push_back(std::format("{}: the points change after the morph; morph targets not exported", e.name));
             continue;
         }
-        // Anything between the blendShape and what is exported moves points the deltas don't know about.
+        // Anything between the morph and what is exported moves points the deltas don't know about.
         const std::vector<NodeId> stack = modifiers::stack(graph, e.source);
         const NodeId stop = skinOf[i];
         for (auto it = std::find(stack.begin(), stack.end(), bs) + 1; it < stack.end() && *it != stop; ++it)
             if (const auto* m = static_cast<const ModifierNode*>(graph.node(*it)); m->as<bool>(m->enabledAttr) && modifiers::exportEnabled(*m))
             {
-                out.warnings.push_back(std::format("{}: {} sits after the blendShape; its effect is baked into the base at the current pose",
+                out.warnings.push_back(std::format("{}: {} sits after the morph; its effect is baked into the base at the current pose",
                                                    e.name, m->name()));
                 break;
             }
@@ -1157,7 +1176,7 @@ void Gather::buildMorphs()
 
         auto base = std::make_shared<geo::Mesh>(*e.mesh);
         auto morphs = std::make_shared<ExportMorphs>();
-        for (const deformers::MorphTarget& t : targets)
+        for (const morphs::Target& t : targets)
         {
             ExportMorphs::Target mt;
             mt.name = t.name;
@@ -1179,6 +1198,57 @@ void Gather::buildMorphs()
         e.mesh = std::move(base);
         e.morphs = std::move(morphs);
         morphed.push_back({i, bs});
+    }
+}
+
+/**
+ * Named curves for Unreal: every driven channel with a curveName, and in animation exports the morph weights of meshes
+ * skinned to the exported joints, which have no mesh to carry them. They hang off the first root joint.
+ */
+void Gather::buildCurves()
+{
+    LILA_ZONE();
+
+    using namespace scene;
+    for (size_t i = 0; i < out.nodes.size() && out.curveHolder < 0; ++i)
+        if (out.nodes[i].joint && out.nodes[i].parent < 0)
+            out.curveHolder = int(i);
+    if (out.curveHolder < 0 && !out.nodes.empty())
+        out.curveHolder = 0;
+    if (out.curveHolder < 0)
+        return;
+    std::set<std::string> names;
+    for (NodeId c : drivers::channels(graph))
+    {
+        const std::string& name = graph.node(c)->as<std::string>(drivers::kCurveName);
+        if (!name.empty() && names.insert(name).second)
+        {
+            out.curveNames.push_back(name);
+            curveSources.push_back({c, kNoNode, 0});
+        }
+    }
+    if (opts.kind != ExportKind::Animation)
+        return;
+    for (NodeId id : graph.nodes())
+    {
+        if (!graph.node(id)->type().isA("morph") || !modifiers::exportEnabled(*graph.node(id)))
+            continue;
+        const NodeId mesh = modifiers::meshOf(graph, id);
+        const NodeId s = mesh != kNoNode ? skin::find(graph, mesh) : kNoNode;
+        if (s == kNoNode)
+            continue;
+        bool onSkeleton = false;
+        for (const skin::Influence& inf : skin::influences(graph, s))
+            onSkeleton = onSkeleton || indexOf.count(inf.joint);
+        if (!onSkeleton)
+            continue;
+        std::vector<morphs::Target> targets = morphs::targets(graph, id);
+        for (size_t k = 0; k < targets.size(); ++k)
+            if (names.insert(targets[k].name).second)
+            {
+                out.curveNames.push_back(targets[k].name);
+                curveSources.push_back({kNoNode, id, k});
+            }
     }
 }
 
@@ -1396,6 +1466,7 @@ std::optional<ExportTake> Gather::sampleRange(const std::string& name, double st
     take.morphWeights.assign(count, {});
     for (const auto& [i, bs] : morphed)
         take.morphWeights[i].assign(out.nodes[i].morphs->targets.size(), {});
+    take.namedCurves.assign(curveSources.size(), {});
     for (double t : take.times)
     {
         graph.setTime(t);
@@ -1403,9 +1474,25 @@ std::optional<ExportTake> Gather::sampleRange(const std::string& name, double st
         for (size_t i = 0; i < count; ++i)
             if (sampled[i])
                 take.locals[i].push_back(localOf(i));
+        std::map<NodeId, std::vector<double>> morphNow;
+        for (size_t c = 0; c < curveSources.size(); ++c)
+        {
+            const CurveSource& src = curveSources[c];
+            double v = 0.0;
+            if (src.channel != scene::kNoNode)
+                v = std::get<double>(graph.value({src.channel, scene::drivers::kChannelOutput, -1}));
+            else
+            {
+                auto it = morphNow.find(src.morph);
+                if (it == morphNow.end())
+                    it = morphNow.emplace(src.morph, scene::morphs::weights(graph, src.morph)).first;
+                v = src.index < it->second.size() ? it->second[src.index] : 0.0;
+            }
+            take.namedCurves[c].push_back(v);
+        }
         for (const auto& [i, bs] : morphed)
         {
-            std::vector<double> weights = scene::deformers::morphWeights(graph, bs);
+            std::vector<double> weights = scene::morphs::weights(graph, bs);
             auto& perTarget = take.morphWeights[i];
             for (size_t k = 0; k < perTarget.size(); ++k)
                 perTarget[k].push_back(k < weights.size() ? weights[k] : 0.0);
@@ -1433,9 +1520,40 @@ std::optional<ExportTake> Gather::sampleRange(const std::string& name, double st
             samples.clear();
         animated = animated || !samples.empty() || take.curves[i] || !take.morphWeights[i].empty();
     }
+    animated = animated || !curveSources.empty();
     if (animated || keep || opts.kind == ExportKind::Animation)
         return take;
     return std::nullopt;
+}
+} // namespace
+
+namespace
+{
+/**
+ * FBX and engines address bones and meshes by name, so names that are only unique among siblings in the scene can
+ * collide in one file. Warns once per clashing name; fixDuplicateJointNames renames clashing joints.
+ */
+void warnDuplicateNames(scene::Graph& graph, ExportScene& out)
+{
+    std::map<std::pair<bool, std::string>, std::vector<scene::NodeId>> byName; // (joint, name)
+    for (const ExportNode& e : out.nodes)
+        if (e.joint || e.mesh)
+            byName[{e.joint, e.name}].push_back(e.source);
+    for (auto& [key, ids] : byName)
+    {
+        if (ids.size() < 2)
+            continue;
+        std::string list;
+        for (scene::NodeId id : ids)
+            list += (list.empty() ? "" : ", ") + graph.fullPath(id);
+        if (key.first)
+            out.warnings.push_back(std::format("joint name '{}' is used {} times in one skeleton ({}); bone names must be unique, "
+                                               "run fixDuplicateJointNames to rename them",
+                                               key.second, ids.size(), list));
+        else
+            out.warnings.push_back(std::format("{} exported meshes are named '{}' ({}); importers may merge or rename them",
+                                               ids.size(), key.second, list));
+    }
 }
 } // namespace
 
@@ -1478,6 +1596,7 @@ ExportScene gatherExport(scene::Graph& graph, const std::vector<scene::NodeId>& 
             rootInv = glm::inverse(g.world(id));
         g.walk(id, -1, rootInv, true, opts.children);
     }
+    warnDuplicateNames(graph, out);
 
     if (opts.kind == ExportKind::Static)
     {
@@ -1501,6 +1620,7 @@ ExportScene gatherExport(scene::Graph& graph, const std::vector<scene::NodeId>& 
         g.buildMorphs();
     if (opts.kind == ExportKind::Animation)
         g.keepSkeletonOnly();
+    g.buildCurves();
     if (opts.animation)
         g.sampleTake();
     return out;
@@ -1627,7 +1747,13 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
             mi.trs = {axes.translate(n.translate), axes.rotate(n.rotate), axes.scale(n.scale)};
         else
             mi.trs = fileTrs(toFile(n.local), preExact, mi.order, axes.rotate(n.rotate), postExact);
-        writeModel(objects, modelIds[i], n.name, mi);
+        std::vector<std::pair<std::string, double>> userProps;
+        if (int(i) == scene.curveHolder)
+            for (size_t c = 0; c < scene.curveNames.size(); ++c)
+                userProps.push_back({scene.curveNames[c], take && c < take->namedCurves.size() && !take->namedCurves[c].empty()
+                                                              ? take->namedCurves[c].front()
+                                                              : 0.0});
+        writeModel(objects, modelIds[i], n.name, mi, userProps);
         connect(modelIds[i], n.parent >= 0 ? modelIds[size_t(n.parent)] : 0);
         if (!isMesh)
         {
@@ -1872,6 +1998,23 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
                 connectProp(curveId, nodeId, "d|DeformPercent");
                 ++counts.curves;
             }
+        }
+
+        for (size_t c = 0; c < scene.curveNames.size() && scene.curveHolder >= 0; ++c)
+        {
+            if (c >= tk->namedCurves.size() || tk->namedCurves[c].empty())
+                continue;
+            const std::string& name = scene.curveNames[c];
+            const double first = tk->namedCurves[c].front();
+            int64_t nodeId = nextId++;
+            writeCurveNode1(objects, nodeId, name, name, first);
+            connect(nodeId, layerId);
+            connectProp(nodeId, modelIds[size_t(scene.curveHolder)], name);
+            ++counts.curveNodes;
+            int64_t curveId = nextId++;
+            writeCurve(objects, curveId, sampledKeys(tk->times, tk->namedCurves[c]), first);
+            connectProp(curveId, nodeId, "d|" + name);
+            ++counts.curves;
         }
     }
 

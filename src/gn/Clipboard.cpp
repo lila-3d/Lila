@@ -25,6 +25,10 @@ std::string valueProblem(const SocketDecl& s, const json& v)
     case SocketType::String: ok = v.is_string(); break;
     case SocketType::Vector:
     case SocketType::Rotation: ok = (v.is_array() && v.size() == 3 && v[0].is_number() && v[1].is_number() && v[2].is_number()) || v.is_number(); break;
+    case SocketType::Color:
+        ok = (v.is_array() && (v.size() == 3 || v.size() == 4) && std::all_of(v.begin(), v.end(), [](const json& x) { return x.is_number(); })) ||
+             v.is_number() || (v.is_string() && v.get<std::string>().starts_with("#"));
+        break;
     default: ok = v.is_number() || v.is_boolean(); break;
     }
     return ok ? std::string() : std::format("{} takes a {}, got {}", s.id, socketTypeName(s.type), v.dump());

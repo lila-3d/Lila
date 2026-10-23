@@ -12,6 +12,8 @@
 #include "ui/Icons.h"
 #include "ui/SoftSelectPanel.h"
 #include "ui/SpinScrub.h"
+#include "ui/ThemeEditor.h"
+#include "ui/ThemeModel.h"
 #include "ui/ViewportDisplay.h"
 
 #include <QCheckBox>
@@ -293,6 +295,7 @@ void color(Page& p, const char* label, const std::string& key, const std::string
 {
     auto* b = new QToolButton;
     b->setFixedSize(40, 18);
+    b->setProperty("lilaRawColors", true);
     auto show = [b](const QString& hex) { b->setStyleSheet(QString("QToolButton { background: %1; border: 1px solid #262626; }").arg(hex)); };
     std::string file = p.file;
     auto current = [file, key, fallback] {
@@ -381,6 +384,8 @@ void addBuiltIns(Registry<prefPages::Page>& r)
     });
 
     builtIn(r, "interface", "Interface", "general", [](Page& ui) {
+        section(ui, "Theme");
+        addRow(ui, "Theme", makeThemeEditor(), themes::kThemePref);
         section(ui, "Chrome");
         toggle(ui, "Show menu bar (the hotbox still has the menus)", "/ui/showMenuBar", true);
         toggle(ui, "Show shelf (` still opens the floating shelf)", "/ui/showShelf", true);
@@ -401,6 +406,7 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         number(ui, "Vertex thickness", vd::kVertexThickness, thickness.vertex, 0.5, 32.0, 0.5, 1);
         number(ui, "Hovered vertex thickness", vd::kVertexThicknessHover, thickness.vertexHover, 0.5, 32.0, 0.5, 1);
         number(ui, "Selected vertex thickness", vd::kVertexThicknessSelected, thickness.vertexSelected, 0.5, 32.0, 0.5, 1);
+        number(ui, "UV seam thickness", vd::kUvSeamThickness, thickness.uvSeam, 1.0, 16.0, 0.5, 1);
         section(ui, "Floating Shelf");
         choice(ui, "Opens at", "/floatingShelf/openAt",
                {{"Cursor", "cursor"}, {"Center of viewport", "viewport"}, {"Center of screen", "screen"}}, "viewport");
@@ -483,7 +489,7 @@ void addBuiltIns(Registry<prefPages::Page>& r)
     builtIn(r, "manipulators", "Manipulators", "general", [](Page& manip) {
         section(manip, "Manipulators");
         number(manip, "Size (pixels)", "/manipulator/size", 100.0, 30.0, 400.0, 5.0, 0);
-        choice(manip, "Move space", "/manipulator/moveSpace", {{"World", "world"}, {"Object", "object"}, {"Parent", "parent"}}, "world");
+        choice(manip, "Move space", "/manipulator/moveSpace", {{"World", "world"}, {"Object", "object"}, {"Parent", "parent"}, {"Normal", "normal"}}, "world");
         choice(manip, "Rotate space", "/manipulator/rotateSpace", {{"World", "world"}, {"Object", "object"}, {"Parent", "parent"}}, "world");
         number(manip, "Rotate snap (degrees)", "/manipulator/rotateStep", 15.0, 0.1, 180.0, 1.0, 1);
         section(manip, "Soft Select");
@@ -574,6 +580,9 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         section(naming, "Conventions");
         toggle(naming, "Enforce conventions", "/enabled", false);
         choice(naming, "When a name breaks them", "/mode", {{"Fix it", "fix"}, {"Warn", "warn"}, {"Refuse", "block"}}, "fix");
+        section(naming, "Uniqueness");
+        // Off, names only need to be unique among siblings and paths (Parent|Child) tell the rest apart.
+        toggle(naming, "Unique node names", "/uniqueNames", false);
         section(naming, "Case");
         choice(naming, "Joints", "/rules/joint", {{"snake_case", "snake_case"}, {"PascalCase", "PascalCase"}, {"camelCase", "camelCase"}}, "snake_case");
         choice(naming, "Everything else", "/rules/*", {{"PascalCase", "PascalCase"}, {"snake_case", "snake_case"}, {"camelCase", "camelCase"}}, "PascalCase");

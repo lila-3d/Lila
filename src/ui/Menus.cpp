@@ -3,6 +3,7 @@
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
 #include "ui/Actions.h"
+#include "ui/Shelf.h"
 
 #include <QAction>
 #include <QMenu>
@@ -202,7 +203,12 @@ QAction* addActionRow(QMenu* menu, const std::string& id)
     qa->setToolTip(QString::fromStdString(actions::tooltip(id)));
     if (a)
         qa->setStatusTip(QString::fromStdString(a->doc));
-    QObject::connect(qa, &QAction::triggered, menu, [id] { actions::run(id); });
+    QObject::connect(qa, &QAction::triggered, menu, [id] {
+        if (shelves::addModifierHeld())
+            shelves::addToCurrent(id);
+        else
+            actions::run(id);
+    });
     return qa;
 }
 

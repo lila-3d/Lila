@@ -6,6 +6,7 @@
 #include "ui/Hotkeys.h"
 #include "ui/Manipulator.h"
 #include "ui/Overlay.h"
+#include "ui/PaintSelect.h"
 #include "ui/Tools.h"
 
 #include <QStringList>
@@ -182,6 +183,10 @@ void registerDefaults()
          {"tool.pivotEditOn", "tool.pivotEditToggle"}});
     add({"softSelect.adjust", "circle-dotted", [](const ViewportState&) { return tools::softSelectAdjusting(); },
          "Drag to set the soft select radius", {"softSelect.keyDown", "softSelect.adjustOn"}});
+    add({"tabSelect.add", "circle-plus", [](const ViewportState& v) { return v.tabSelects == true; }, "Drag to select", {}, "Tab"});
+    add({"tabSelect.remove", "circle-minus", [](const ViewportState& v) { return v.tabSelects == false; }, "Drag to deselect", {}, "Tab"});
+    add({"select.lassoHold", "lasso", [](const ViewportState&) { return paintSelect::lassoHeld(); }, "Drag to lasso select",
+         {"select.lassoHoldOn"}});
     add({"manipulator.precision", "feather", [](const ViewportState& v) { return v.gizmo && v.gizmo->precisionDrag(); },
          "Precision drag", {}, "Shift"});
     add({"manipulator.ctrlPlane", "perspective",

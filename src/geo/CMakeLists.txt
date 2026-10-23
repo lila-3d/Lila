@@ -18,6 +18,7 @@ lila_module(lila_geo Scene
     OpsLoop.cpp
     Primitives.cpp
     Reduce.cpp
+    SmartJoin.cpp
     RenderMesh.cpp
     Subdivide.cpp
     Symmetry.cpp

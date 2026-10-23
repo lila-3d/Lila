@@ -9,6 +9,8 @@
 #include "scene/Graph.h"
 #include "scene/RotationCurve.h"
 #include "ui/Animation.h"
+#include "ui/Icons.h"
+#include "ui/Theme.h"
 #include "ui/ViewportDisplay.h"
 
 #include <QHBoxLayout>
@@ -44,7 +46,7 @@ constexpr double kEps = 1e-6;
 constexpr int kRulerHeight = 18;
 constexpr double kHandleLength = 36.0;
 
-QColor gray(int v, int a = 255) { return QColor(v, v, v, a); }
+QColor gray(int v, int a = 255) { return themeShade(v, a); }
 
 GraphEditor*& current()
 {
@@ -240,7 +242,7 @@ public:
         if (slot < 0)
         {
             scene::Node* n = g.node(id);
-            return n ? n->name() : std::string();
+            return n ? n->path() : std::string();
         }
         if (slot > 2 || !g.node(realCurve(id)))
             return {};
@@ -954,7 +956,7 @@ private:
                         std::reverse(times.begin(), times.end());
                     if (scene::Node* n = Graph::current().node(curve))
                         for (double t : times)
-                            runQuiet("keyframe", {{"args", {n->name()}}, {"time", t}, {"timeChange", dt}, {"relative", true}});
+                            runQuiet("keyframe", {{"args", {n->path()}}, {"time", t}, {"timeChange", dt}, {"relative", true}});
                 }
         }
         log::write(LogLevel::Echo, "# moved " + std::to_string(sel.size()) + " keys\n");
@@ -1019,7 +1021,7 @@ public:
         std::set<NodeId> done;
         for (NodeId c : targetCurves())
             if (scene::Node* n = g.node(realCurve(c)); n && done.insert(n->id()).second)
-                names.push_back(n->name());
+                names.push_back(n->path());
         if (names.empty())
             return;
         try
@@ -1069,15 +1071,16 @@ GraphEditor::GraphEditor(QWidget* parent) : QWidget(parent)
     for (const char* t : {"auto", "spline", "linear", "flat", "step", "clamped"})
     {
         auto* b = new QToolButton(this);
-        b->setText(niceName(t));
-        b->setToolTip(QString("Set the selected keys' tangents to %1").arg(t));
+        b->setIcon(icon(QString("curve-tangent-%1").arg(t)));
+        b->setToolTip(QString("%1: set the selected keys' tangents to %2").arg(niceName(t), t));
         b->setAutoRaise(true);
         b->setFocusPolicy(Qt::NoFocus);
         connect(b, &QToolButton::clicked, this, [this, t] { applyTangent(t); });
         bar->addWidget(b);
     }
     auto* infinity = new QToolButton(this);
-    infinity->setText("Infinity");
+    infinity->setIcon(icon("infinity"));
+    infinity->setToolTip("Pre and post infinity: how the curve continues before its first key and after its last");
     infinity->setAutoRaise(true);
     infinity->setPopupMode(QToolButton::InstantPopup);
     infinity->setFocusPolicy(Qt::NoFocus);
@@ -1092,14 +1095,14 @@ GraphEditor::GraphEditor(QWidget* parent) : QWidget(parent)
     infinity->setMenu(infMenu);
     bar->addWidget(infinity);
     auto* loop = new QToolButton(this);
-    loop->setText("Loop");
+    loop->setIcon(icon("repeat"));
     loop->setToolTip("Make the last key a loop key: it mirrors the first key and the curve cycles after it");
     loop->setAutoRaise(true);
     loop->setFocusPolicy(Qt::NoFocus);
     connect(loop, &QToolButton::clicked, this, [this] { mView->loopKeys(true); });
     bar->addWidget(loop);
     auto* quat = new QToolButton(this);
-    quat->setText("Quaternion");
+    quat->setIcon(icon("rotate-3d"));
     quat->setToolTip("Show rotation curves as quaternion W, X, Y, Z (read only) instead of Euler X, Y, Z");
     quat->setCheckable(true);
     quat->setAutoRaise(true);
@@ -1120,7 +1123,8 @@ GraphEditor::GraphEditor(QWidget* parent) : QWidget(parent)
     mKeyValue->setFixedWidth(70);
     bar->addWidget(mKeyValue);
     auto* frameAll = new QToolButton(this);
-    frameAll->setText("Frame All");
+    frameAll->setIcon(icon("zoom-scan"));
+    frameAll->setToolTip("Frame All");
     frameAll->setAutoRaise(true);
     frameAll->setFocusPolicy(Qt::NoFocus);
     connect(frameAll, &QToolButton::clicked, this, [this] { frame(false); });
@@ -1217,7 +1221,8 @@ void GraphEditor::rebuild()
         if (plugs.empty())
             continue;
         auto* top = new QTreeWidgetItem(mChannels, {QString::fromStdString(n->name())});
-        top->setData(0, Qt::UserRole + 1, QString::fromStdString(n->name()));
+        top->setData(0, Qt::UserRole + 1, QString::fromStdString(n->fullPath()));
+        top->setToolTip(0, QString::fromStdString(n->fullPath()));
         QFont f = top->font(0);
         f.setWeight(QFont::DemiBold);
         top->setFont(0, f);
@@ -1225,7 +1230,7 @@ void GraphEditor::rebuild()
             Channel ch;
             ch.plug = ap.plug;
             ch.curve = id;
-            ch.curveName = g.node(ap.curve)->name();
+            ch.curveName = g.node(ap.curve)->path();
             ch.label = label;
             ch.axis = axis;
             // Neighbouring channels never share a look: gray level and dash both cycle, at different periods.
@@ -1298,7 +1303,7 @@ void GraphEditor::reloadCurves()
         }
         catch (const std::exception& e)
         {
-            log::warn("{}: {}", n->name(), e.what());
+            log::warn("{}: {}", n->path(), e.what());
         }
     }
     mView->dropMissing();
@@ -1356,8 +1361,8 @@ void GraphEditor::applyInfinity(bool pre, const char* mode)
     json names = json::array();
     for (NodeId c : mView->targetCurves())
         if (scene::Node* n = g.node(realCurve(c)))
-            if (std::find(names.begin(), names.end(), n->name()) == names.end())
-                names.push_back(n->name());
+            if (std::find(names.begin(), names.end(), n->path()) == names.end())
+                names.push_back(n->path());
     if (names.empty())
         return;
     try

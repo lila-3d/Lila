@@ -34,7 +34,7 @@ std::vector<std::string> names(const Graph& g, const std::vector<NodeId>& ids)
     std::vector<std::string> out;
     for (NodeId id : ids)
         if (const scene::Node* n = g.node(id))
-            out.push_back(n->name());
+            out.push_back(n->path());
     return out;
 }
 

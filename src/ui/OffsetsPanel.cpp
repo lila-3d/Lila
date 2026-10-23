@@ -6,6 +6,7 @@
 #include "scene/Graph.h"
 #include "scene/Offsets.h"
 #include "ui/Actions.h"
+#include "ui/NodeLookup.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
 #include "ui/Panels.h"
@@ -61,7 +62,7 @@ std::string activeOffset()
 {
     scene::Graph& g = scene::Graph::current();
     scene::NodeId l = scene::anim::activeLayer(g);
-    return l && scene::offsets::isOffsetLayer(g, l) ? g.node(l)->name() : std::string();
+    return l && scene::offsets::isOffsetLayer(g, l) ? g.node(l)->path() : std::string();
 }
 
 QString infoText(const json& o)
@@ -130,7 +131,7 @@ OffsetsPanel::OffsetsPanel(QWidget* parent) : QWidget(parent)
 
     connect(mTree, &QTreeWidget::itemClicked, this, [](QTreeWidgetItem* item, int column) {
         const std::string o = item->data(kName, kOffsetRole).toString().toStdString();
-        scene::Node* n = scene::Graph::current().find(o);
+        scene::Node* n = findNode(o);
         if (!n)
             return;
         if (column == kMute)

@@ -6,6 +6,7 @@
 #include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "geo/ColorSets.h"
+#include "geo/Lasso.h"
 #include "geo/Mesh.h"
 #include "geo/RenderMesh.h"
 #include "io/SceneFile.h"
@@ -24,16 +25,20 @@
 #include "ui/Animation.h"
 #include "ui/ChannelBox.h"
 #include "ui/CursorBadges.h"
+#include "ui/NodeLookup.h"
 #include "ui/DrawOverrides.h"
 #include "ui/MarkingMenu.h"
 #include "ui/Environments.h"
 #include "ui/MaterialDraw.h"
+#include "ui/Isolate.h"
 #include "ui/MeshCache.h"
 #include "ui/PaintSelect.h"
 #include "ui/Outliner.h"
 #include "ui/Overlay.h"
 #include "ui/RenderPasses.h"
 #include "ui/SelectionHandlers.h"
+#include "ui/TabSelectLogic.h"
+#include "ui/Theme.h"
 #include "ui/Tools.h"
 #include "ui/ViewportDisplay.h"
 #include "ui/ViewportHooks.h"
@@ -45,6 +50,7 @@
 #include <QCursor>
 #include <QDragEnterEvent>
 #include <QElapsedTimer>
+#include <QGuiApplication>
 #include <QKeyEvent>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -95,11 +101,16 @@ ComponentPalette componentPalette()
         auto c = [](float v) { return v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f); };
         return glm::vec4(c(r), c(g), c(b), a);
     };
-    return {lin(0.45f, 0.78f, 1.0f, 1.0f),  lin(0.95f, 0.42f, 0.78f, 1.0f), lin(1.0f, 0.95f, 0.15f, 1.0f),
-            lin(1.0f, 0.95f, 0.15f, 0.25f), lin(1.0f, 0.18f, 0.18f, 1.0f),  lin(1.0f, 0.18f, 0.18f, 0.25f)};
+    auto tok = [&](const char* token, float r, float g, float b, float a) {
+        glm::vec4 c = themeSrgb(token, glm::vec4(r, g, b, a));
+        return lin(c.r, c.g, c.b, a);
+    };
+    return {tok("componentWire", 0.45f, 0.78f, 1.0f, 1.0f),      tok("componentPoint", 0.95f, 0.42f, 0.78f, 1.0f),
+            tok("componentSelected", 1.0f, 0.95f, 0.15f, 1.0f),  tok("componentSelected", 1.0f, 0.95f, 0.15f, 0.25f),
+            tok("componentHover", 1.0f, 0.18f, 0.18f, 1.0f),     tok("componentHover", 1.0f, 0.18f, 0.18f, 0.25f)};
 }
 
-std::vector<scene::NodeId> hilited();
+std::vector<scene::NodeId> hilited(const scene::isolation::Set& iso);
 
 /** In the viewport's pick: shown, and not templated or referenced by a display layer. */
 bool viewportPickable(const scene::Graph& g, scene::NodeId id, bool inherit)
@@ -164,6 +175,8 @@ ViewportWidget::ViewportWidget(QWidget* parent) : QWidget(parent)
             mCameraEdit.reset();
             setView(mReturnView);
         }
+        if (c == scene::Change::Cleared && mIsolation.active())
+            mIsolation.clear();
         requestFrame();
     });
     mWheelCommit = new QTimer(this);
@@ -345,17 +358,27 @@ bool ViewportWidget::event(QEvent* e)
     if (e->type() == QEvent::Leave)
         clearPreselect();
     if (e->type() == QEvent::FocusOut)
+    {
         mTabHeld = false;
+        mTabUnder.reset();
+    }
     // Tab is a held modifier for drag selection here, not focus navigation. Viewport tools (Retopo Draw) keep their own Tab.
     if (e->type() == QEvent::ShortcutOverride || e->type() == QEvent::KeyPress || e->type() == QEvent::KeyRelease)
         if (auto* k = static_cast<QKeyEvent*>(e); k->key() == Qt::Key_Tab || k->key() == Qt::Key_Backtab)
         {
             if (e->type() == QEvent::KeyRelease && !k->isAutoRepeat())
+            {
                 mTabHeld = false;
+                mTabUnder.reset();
+                requestFrame();
+            }
             if (!viewportTools::active())
             {
                 if (e->type() == QEvent::KeyPress && !k->isAutoRepeat())
+                {
                     mTabHeld = true;
+                    updateTabHover(mapFromGlobal(QCursor::pos().toPointF()));
+                }
                 e->accept();
                 return true;
             }
@@ -419,7 +442,8 @@ void ViewportWidget::submit()
     s.proj = mCamera.proj(aspect());
     s.eye = mCamera.eye();
     s.zUp = mCamera.zUp;
-    auto bg = PrefStore::get().value("general", "/viewport/background", json::array({0.30, 0.30, 0.30}));
+    const glm::vec4 themeBg = themeSrgb("viewportBackground", glm::vec4(0.30f, 0.30f, 0.30f, 1.0f));
+    auto bg = PrefStore::get().value("general", "/viewport/background", json::array({themeBg.r, themeBg.g, themeBg.b}));
     if (bg.is_array() && bg.size() == 3)
         s.background = {bg[0].get<float>(), bg[1].get<float>(), bg[2].get<float>()};
     {
@@ -456,12 +480,12 @@ void ViewportWidget::submit()
     const float componentWireWidth = viewportDisplay::hairlineWidth(viewportDisplay::componentThickness().edge, devicePixelRatioF());
     std::unordered_set<scene::NodeId> hilite;
     if (scene::components::mode() != scene::ComponentMode::Object)
-        for (scene::NodeId id : hilited())
+        for (scene::NodeId id : hilited(mIsolation))
             hilite.insert(id);
     for (scene::NodeId id : g.nodes())
     {
         scene::Node* n = g.node(id);
-        if (!n->type().isA("mesh") || overridden(*n) || !scene::effectivelyVisible(g, id, inherit) || (!mIsolated.empty() && !mIsolated.contains(id)) ||
+        if (!n->type().isA("mesh") || overridden(*n) || !scene::effectivelyVisible(g, id, inherit) || !mIsolation.shows(id) ||
             !scene::selectionMask::shown(*n))
             continue;
         int smooth = int(n->as<int64_t>(scene::MeshNode::kSmoothPreview));
@@ -472,6 +496,8 @@ void ViewportWidget::submit()
             continue;
         render::MeshDraw d;
         d.mesh = std::move(rm);
+        if (auto part = isolate::masked(&mIsolation, id, shown, smooth, textured && needsTangents(*shown)))
+            d.mesh = part->mesh;
         if (textured)
             d.materials = drawMaterials(*shown);
         d.world = glm::mat4(n->as<glm::dmat4>(scene::Transform::kWorldMatrix));
@@ -531,7 +557,8 @@ void ViewportWidget::submit()
         {
             scene::Node* n = g.node(id);
             const drawOverrides::DrawOverride* o = drawOverrides::forType(n->type());
-            if (!o || !o->draw || id == mLookThrough || !scene::effectivelyVisible(g, id, inherit) || !scene::selectionMask::shown(*n))
+            if (!o || !o->draw || id == mLookThrough || !scene::effectivelyVisible(g, id, inherit) || !scene::selectionMask::shown(*n) ||
+                !mIsolation.shows(id))
                 continue;
             bool hot = mPreselect.mode == scene::ComponentMode::Object && mPreselect.node == id;
             int rank = g.isSelected(id) ? 2 : hot || underSelection.contains(id) ? 1 : 0;
@@ -541,7 +568,10 @@ void ViewportWidget::submit()
             drawOverrides::DrawContext dc{.frame = s, .painter = painter, .view = view, .node = *n};
             dc.world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
             dc.highlight = rank == 2 ? HL::Selected : hot ? HL::Preselected : rank == 1 ? HL::UnderSelected : HL::None;
-            dc.color = rank == 2 ? kSelectedColor : hot ? kPreselectColor : rank == 1 ? kChildOfSelectedColor : layerLineColor(g, id, kLocatorColor);
+            dc.color = rank == 2 ? themeLinear("wireSelected", kSelectedColor)
+                       : hot ? themeLinear("wirePreselect", kPreselectColor)
+                       : rank == 1 ? themeLinear("wireUnderSelected", kChildOfSelectedColor)
+                                   : layerLineColor(g, id, themeLinear("wireframe", kLocatorColor));
             o->draw(dc);
         }
     renderPasses::Context passes{.frame = s, .painter = painter, .view = view, .panel = mHudPanel};
@@ -600,7 +630,29 @@ void ViewportWidget::submit()
     if (!s.overlayTris.empty())
         s.atlas = painter.atlas();
 
-    if (mMarquee)
+    if (mMarquee && mLassoDrag && mLasso.size() > 1)
+    {
+        auto ndc = [&](glm::dvec2 p) { return glm::vec3(float(p.x / width() * 2.0 - 1.0), float(p.y / height() * 2.0 - 1.0), 0.5f); };
+        // Dashes alternate light and dark so the outline reads on any background.
+        constexpr double kDash = 6.0;
+        const glm::vec4 shades[2] = {{0.9f, 0.9f, 0.9f, 0.95f}, {0.12f, 0.12f, 0.12f, 0.95f}};
+        double run = 0.0;
+        for (size_t i = 0; i < mLasso.size(); ++i)
+        {
+            glm::dvec2 a = mLasso[i], b = mLasso[(i + 1) % mLasso.size()];
+            double len = glm::distance(a, b);
+            for (double t = 0.0; t < len;)
+            {
+                double step = std::min(len - t, kDash - std::fmod(run, kDash));
+                const glm::vec4& color = shades[int(run / kDash) % 2];
+                s.overlay.push_back({ndc(a + (b - a) * (t / len)), color});
+                s.overlay.push_back({ndc(a + (b - a) * ((t + step) / len)), color});
+                t += step;
+                run += step;
+            }
+        }
+    }
+    else if (mMarquee)
     {
         auto ndc = [&](QPointF p) {
             return glm::vec3(float(p.x() / width() * 2.0 - 1.0), float(p.y() / height() * 2.0 - 1.0), 0.5f);
@@ -705,6 +757,13 @@ ViewportState ViewportWidget::state(QPointF cursor)
     if (ViewportTool* tool = viewportTools::active())
         st.tool = tool->name();
     st.navigating = mNav != Nav::None;
+    if (mTabStroke.active())
+        st.tabSelects = mTabStroke.op() != paintSelect::Stroke::Op::Remove;
+    else if (mTabHeld && !viewportTools::active())
+    {
+        Qt::KeyboardModifiers mods = QGuiApplication::queryKeyboardModifiers();
+        st.tabSelects = tabSelect::modeAtPress(mTabUnder, mods & Qt::ShiftModifier, mods & Qt::ControlModifier) == tabSelect::Mode::Select;
+    }
     return st;
 }
 
@@ -734,17 +793,22 @@ std::vector<std::string> ViewportWidget::hitTest(QPointF a, QPointF b)
     {
         scene::Node* n = g.node(id);
         const drawOverrides::DrawOverride* o = drawOverrides::forType(n->type());
-        if (!o || !o->pick || id == mLookThrough || !viewportPickable(g, id, inherit) || !scene::selectionMask::pickable(*n))
+        if (!o || !o->pick || id == mLookThrough || !viewportPickable(g, id, inherit) || !scene::selectionMask::pickable(*n) ||
+            !mIsolation.shows(id))
             continue;
         std::optional<double> px = o->pick({.view = view, .node = *n, .world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix), .a = a, .b = b, .click = click});
         if (!px)
             continue;
+        // The override only knows the lasso's bounds, so its pivot has to fall inside the lasso itself.
+        if (!click && mLassoPick)
+            if (auto s = project(glm::dvec3(n->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3])); !s || !inSelectRegion(box, *s))
+                continue;
         if (!click)
-            hits.push_back(n->name());
+            hits.push_back(n->path());
         else if (*px < best)
         {
             best = *px;
-            bestName = n->name();
+            bestName = n->path();
         }
     }
     // Meshes: a click takes the nearest surface under the cursor unless a locator line is right there; a box takes
@@ -756,36 +820,52 @@ std::vector<std::string> ViewportWidget::hitTest(QPointF a, QPointF b)
     for (scene::NodeId id : g.nodes())
     {
         scene::Node* n = g.node(id);
-        if (!n->type().isA("mesh") || overridden(*n) || !viewportPickable(g, id, inherit) || !scene::selectionMask::pickable(*n))
+        if (!n->type().isA("mesh") || overridden(*n) || !viewportPickable(g, id, inherit) || !scene::selectionMask::pickable(*n) ||
+            !mIsolation.shows(id))
             continue;
-        auto rm = renderMeshFor(n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh));
+        scene::MeshPtr outMesh = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+        auto rm = renderMeshFor(outMesh);
         if (!rm || rm->vertices.empty())
             continue;
         glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
         if (click)
         {
-            if (auto t = raycast(*rm, world, rayO, rayD); t && t->distance < nearest)
+            if (auto t = isolate::raycast(&mIsolation, id, outMesh, world, rayO, rayD); t && t->distance < nearest)
             {
                 nearest = t->distance;
-                nearestMesh = n->name();
+                nearestMesh = n->path();
             }
+            continue;
+        }
+        if (mIsolation.isPartial(id))
+        {
+            // Only the isolated faces' points count toward a marquee.
+            const geo::Mesh& m = *outMesh;
+            auto vis = isolate::visibility(&mIsolation, id, outMesh);
+            for (geo::Index p = 0; p < m.pointCapacity(); ++p)
+                if (m.pointValid(p) && vis->point(p))
+                    if (auto s = project(glm::dvec3(world * glm::dvec4(m.position(p), 1.0))); s && inSelectRegion(box, *s))
+                    {
+                        hits.push_back(n->path());
+                        break;
+                    }
             continue;
         }
         size_t step = std::max<size_t>(1, rm->vertices.size() / 20000);
         for (size_t k = 0; k < rm->vertices.size(); k += step)
-            if (auto p = project(glm::dvec3(world * glm::dvec4(glm::dvec3(rm->vertices[k].pos), 1.0))); p && box.contains(*p))
+            if (auto p = project(glm::dvec3(world * glm::dvec4(glm::dvec3(rm->vertices[k].pos), 1.0))); p && inSelectRegion(box, *p))
             {
-                hits.push_back(n->name());
+                hits.push_back(n->path());
                 break;
             }
     }
     for (const auto& picker : viewportHooks::pickers())
         for (const viewportHooks::PickHit& h : picker(a, b, click, view))
         {
-            const scene::Node* hn = g.find(h.name);
+            const scene::Node* hn = findNode(h.name);
             if (hn ? !scene::selectionMask::pickable(*hn) : !scene::selectionMask::enabled(scene::selectionMask::Kind::Other))
                 continue;
-            if (hn && !scene::displayLayers::pickable(g, hn->id()))
+            if (hn && (!scene::displayLayers::pickable(g, hn->id()) || !mIsolation.shows(hn->id())))
                 continue;
             if (!click)
                 hits.push_back(h.name);
@@ -805,18 +885,18 @@ std::vector<std::string> ViewportWidget::hitTest(QPointF a, QPointF b)
 namespace
 {
 /** Meshes components can be picked on: the selected ones (Maya's hilite) and those under selected groups, or every visible mesh if none. */
-std::vector<scene::NodeId> hilited()
+std::vector<scene::NodeId> hilited(const scene::isolation::Set& iso)
 {
     scene::Graph& g = scene::Graph::current();
     std::vector<scene::NodeId> out;
     const bool inherit = scene::inheritVisibility();
     // Meshes under a selected group count too; hidden ones only when selected themselves.
     for (scene::NodeId id : uv::meshesUnder(g, g.selection()))
-        if (std::ranges::find(g.selection(), id) != g.selection().end() || viewportPickable(g, id, inherit))
+        if ((std::ranges::find(g.selection(), id) != g.selection().end() || viewportPickable(g, id, inherit)) && iso.shows(id))
             out.push_back(id);
     if (out.empty())
         for (scene::NodeId id : g.nodes())
-            if (scene::Node* n = g.node(id); n->type().isA("mesh") && viewportPickable(g, id, inherit))
+            if (scene::Node* n = g.node(id); n->type().isA("mesh") && viewportPickable(g, id, inherit) && iso.shows(id))
                 out.push_back(id);
     return out;
 }
@@ -837,7 +917,7 @@ scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
     ViewInfo view = viewInfo();
     glm::dvec3 rayO, rayD;
     view.ray(a, rayO, rayD);
-    std::vector<scene::NodeId> live = hilited();
+    std::vector<scene::NodeId> live = hilited(mIsolation);
 
     // Visible means nothing on any hilited mesh is closer along the view ray.
     auto visible = [&](const glm::dvec3& world) {
@@ -847,10 +927,9 @@ scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
         for (scene::NodeId id : live)
         {
             scene::Node* n = g.node(id);
-            auto rm = renderMeshFor(n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh));
-            if (!rm)
-                continue;
-            if (auto hit = raycast(*rm, n->as<glm::dmat4>(scene::Transform::kWorldMatrix), view.eye, dir); hit && hit->distance < dist * (1.0 - 1e-4) - 1e-3)
+            if (auto hit = isolate::raycast(&mIsolation, id, n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh), n->as<glm::dmat4>(scene::Transform::kWorldMatrix),
+                                            view.eye, dir);
+                hit && hit->distance < dist * (1.0 - 1e-4) - 1e-3)
                 return false;
         }
         return true;
@@ -869,11 +948,10 @@ scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
         glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
         if (mode == ComponentMode::Face)
         {
-            auto rm = renderMeshFor(mesh);
             auto pd = pickDataFor(mesh);
-            if (!rm || !pd)
+            if (!pd)
                 continue;
-            if (auto hit = raycast(*rm, world, rayO, rayD); hit && hit->distance < bestRay && hit->triangle < pd->triangleFaces.size() &&
+            if (auto hit = isolate::raycast(&mIsolation, id, mesh, world, rayO, rayD); hit && hit->distance < bestRay && hit->triangle < pd->triangleFaces.size() &&
                                                               (!cull || paintSelect::frontFacing(*mesh, world, mode, pd->triangleFaces[hit->triangle], view)))
             {
                 bestRay = hit->distance;
@@ -882,8 +960,9 @@ scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
             }
             continue;
         }
+        auto vis = isolate::visibility(&mIsolation, id, mesh);
         for (const cp::Candidate& c : cp::nearby(*mesh, world, mode, screen, {a.x(), a.y()}, bestPx))
-            if ((!cull || paintSelect::frontFacing(*mesh, world, mode, c.id, view)) && visible(cp::anchor(*mesh, world, mode, c.id)))
+            if (vis->shows(mode, c.id) && (!cull || paintSelect::frontFacing(*mesh, world, mode, c.id, view)) && visible(cp::anchor(*mesh, world, mode, c.id)))
             {
                 bestPx = c.px;
                 best.node = id;
@@ -926,18 +1005,17 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
             glm::dvec3 dir = world - eye;
             double dist = glm::length(dir);
             dir /= dist;
-            for (scene::NodeId id : hilited())
+            for (scene::NodeId id : hilited(mIsolation))
             {
                 scene::Node* n = g.node(id);
-                auto rm = renderMeshFor(n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh));
-                if (!rm)
-                    continue;
-                if (auto hit = raycast(*rm, n->as<glm::dmat4>(scene::Transform::kWorldMatrix), eye, dir); hit && hit->distance < dist * (1.0 - 1e-4) - 1e-3)
+                if (auto hit = isolate::raycast(&mIsolation, id, n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh), n->as<glm::dmat4>(scene::Transform::kWorldMatrix),
+                                                eye, dir);
+                    hit && hit->distance < dist * (1.0 - 1e-4) - 1e-3)
                     return false;
             }
             return true;
         };
-        for (scene::NodeId id : hilited())
+        for (scene::NodeId id : hilited(mIsolation))
         {
             scene::Node* n = g.node(id);
             scene::MeshPtr mesh = scene::modifiers::cage(g, id);
@@ -950,7 +1028,7 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
             {
                 for (uint32_t p = 0; p < m.pointCapacity(); ++p)
                     if (m.pointValid(p))
-                        if (auto s = project(worldOf(p)); s && box.contains(*s) && visible(worldOf(p)))
+                        if (auto s = project(worldOf(p)); s && inSelectRegion(box, *s) && visible(worldOf(p)))
                             hits[id].push_back(p);
             }
             else if (mode == ComponentMode::Edge)
@@ -960,7 +1038,7 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
                     if (!m.edgeValid(e))
                         continue;
                     auto s0 = project(worldOf(m.edgePoint(e, 0))), s1 = project(worldOf(m.edgePoint(e, 1)));
-                    if (s0 && s1 && box.contains((*s0 + *s1) * 0.5) && visible((worldOf(m.edgePoint(e, 0)) + worldOf(m.edgePoint(e, 1))) * 0.5))
+                    if (s0 && s1 && inSelectRegion(box, (*s0 + *s1) * 0.5) && visible((worldOf(m.edgePoint(e, 0)) + worldOf(m.edgePoint(e, 1))) * 0.5))
                         hits[id].push_back(e);
                 }
             }
@@ -970,11 +1048,18 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
                     if (m.faceValid(f))
                     {
                         glm::dvec3 c = glm::dvec3(world * glm::dvec4(m.faceCentroid(f), 1.0));
-                        if (auto s = project(c); s && box.contains(*s) && visible(c))
+                        if (auto s = project(c); s && inSelectRegion(box, *s) && visible(c))
                             hits[id].push_back(f);
                     }
             }
         }
+    }
+
+    for (auto it = hits.begin(); it != hits.end();)
+    {
+        auto vis = isolate::visibility(&mIsolation, it->first, scene::modifiers::cage(g, it->first));
+        std::erase_if(it->second, [&](uint32_t id) { return !vis->shows(mode, id); });
+        it = it->second.empty() ? hits.erase(it) : std::next(it);
     }
 
     if (!click && paintSelect::backfaceCulling())
@@ -996,14 +1081,14 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
         UndoChunk chunk("Select Components");
         bool first = true;
         if (hits.empty() && !shift && !ctrl)
-            for (scene::NodeId id : hilited())
+            for (scene::NodeId id : hilited(mIsolation))
             {
-                ops::execute("selectComponents", {{"args", {g.node(id)->name()}}, {flag, json::array()}}, CallSource::UI);
+                ops::execute("selectComponents", {{"args", {g.node(id)->path()}}, {flag, json::array()}}, CallSource::UI);
                 break;
             }
         for (auto& [id, ids] : hits)
         {
-            json call = {{"args", {g.node(id)->name()}}, {flag, ids}};
+            json call = {{"args", {g.node(id)->path()}}, {flag, ids}};
             if (shift && ctrl)
                 call["add"] = true;
             else if (ctrl)
@@ -1031,7 +1116,7 @@ void ViewportWidget::drawComponents(render::FrameState& s)
     if (mode == ComponentMode::Object)
         return;
     scene::Graph& g = scene::Graph::current();
-    std::vector<scene::NodeId> live = hilited();
+    std::vector<scene::NodeId> live = hilited(mIsolation);
     const ComponentPalette palette = componentPalette();
     const glm::vec4 dotLinear = palette.point, hotLinear = palette.selected, faceFillLinear = palette.selectedFill;
     const viewportDisplay::ComponentThickness thickness = viewportDisplay::componentThickness();
@@ -1051,6 +1136,8 @@ void ViewportWidget::drawComponents(render::FrameState& s)
             {
                 render::MeshDraw cageDraw;
                 cageDraw.mesh = rm;
+                if (auto part = isolate::masked(&mIsolation, id, mesh))
+                    cageDraw.mesh = part->mesh;
                 cageDraw.world = glm::mat4(world);
                 cageDraw.flags = render::DrawWire;
                 cageDraw.wireColor = palette.wire;
@@ -1058,6 +1145,7 @@ void ViewportWidget::drawComponents(render::FrameState& s)
                 s.meshes.push_back(std::move(cageDraw));
             }
         auto wp = [&](uint32_t p) { return glm::vec3(world * glm::dvec4(m.position(p), 1.0)); };
+        const auto vis = isolate::visibility(&mIsolation, id, mesh);
         const auto& selFaces = scene::components::selected(id, ComponentMode::Face);
         const auto& selEdges = scene::components::selected(id, ComponentMode::Edge);
         const auto& selPoints = scene::components::selected(id, ComponentMode::Vertex);
@@ -1066,7 +1154,7 @@ void ViewportWidget::drawComponents(render::FrameState& s)
         if (mode == ComponentMode::Face)
             for (uint32_t f : selFaces)
             {
-                if (!m.faceValid(f))
+                if (!m.faceValid(f) || !vis->face(f))
                     continue;
                 std::vector<glm::vec3> poly;
                 m.forEachFaceCorner(f, [&](geo::Index c) { poly.push_back(wp(m.cornerPoint(c))); });
@@ -1080,7 +1168,7 @@ void ViewportWidget::drawComponents(render::FrameState& s)
             }
         if (mode == ComponentMode::Edge)
             for (uint32_t e : selEdges)
-                if (m.edgeValid(e))
+                if (m.edgeValid(e) && vis->edge(e))
                 {
                     s.selectedEdges.push_back({wp(m.edgePoint(e, 0)), hotLinear});
                     s.selectedEdges.push_back({wp(m.edgePoint(e, 1)), hotLinear});
@@ -1109,7 +1197,7 @@ void ViewportWidget::drawComponents(render::FrameState& s)
             const bool grayWeights = viewportDisplay::grayscaleWeights();
             for (uint32_t p = 0; p < m.pointCapacity(); ++p)
             {
-                if (!m.pointValid(p))
+                if (!m.pointValid(p) || !vis->point(p))
                     continue;
                 glm::dvec3 c(wp(p));
                 double depth = glm::dot(c - view.eye, fwd);
@@ -1180,7 +1268,7 @@ void ViewportWidget::updatePreselect()
         if (mode != ComponentMode::Object)
             next = componentAt(at);
         else if (std::vector<std::string> names = hitTest(at, at); !names.empty())
-            if (scene::Node* n = scene::Graph::current().find(names.front()))
+            if (scene::Node* n = findNode(names.front()))
                 next.node = n->id();
     }
     mPreselectCostMs = double(timer.nsecsElapsed()) / 1e6;
@@ -1209,9 +1297,8 @@ selectionHandlers::Hit ViewportWidget::selectionHit(QPointF px)
     std::vector<std::string> names = hitTest(px, px);
     if (names.empty())
         return hit;
-    scene::Graph& g = scene::Graph::current();
     hit.name = names.front();
-    scene::Node* n = g.find(hit.name);
+    scene::Node* n = findNode(hit.name);
     if (!n)
         return hit;
     hit.node = n->id();
@@ -1225,7 +1312,7 @@ selectionHandlers::Hit ViewportWidget::selectionHit(QPointF px)
     const glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
     glm::dvec3 o, d;
     viewInfo().ray(px, o, d);
-    std::optional<RayHit> ray = raycast(*rm, world, o, d);
+    std::optional<RayHit> ray = isolate::raycast(&mIsolation, hit.node, mesh, world, o, d);
     if (!ray || ray->triangle >= pd->triangleFaces.size() || 3 * size_t(ray->triangle) + 2 >= pd->indices.size())
         return hit;
     hit.face = pd->triangleFaces[ray->triangle];
@@ -1263,9 +1350,12 @@ void ViewportWidget::drawHandlerHover(render::FrameState& s)
     const glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
     const glm::vec4 color = srgbToLinear(h.color);
     auto weight = [&](uint32_t i) { return i < h.weights.size() ? std::clamp(h.weights[i], 0.0f, 1.0f) : 0.0f; };
+    if (!mIsolation.shows(h.mesh))
+        return;
+    const auto vis = isolate::visibility(&mIsolation, h.mesh, mesh);
     for (uint32_t f = 0; f < m.faceCapacity(); ++f)
     {
-        if (!m.faceValid(f) || (h.domain == Domain::Face && weight(f) <= 0.0f))
+        if (!m.faceValid(f) || !vis->face(f) || (h.domain == Domain::Face && weight(f) <= 0.0f))
             continue;
         std::vector<uint32_t> tris = scene::componentPick::fillTriangles(m, f);
         for (size_t t = 0; t + 2 < tris.size(); t += 3)
@@ -1369,6 +1459,51 @@ void ViewportWidget::drawPreselect(render::FrameState& s)
     }
 }
 
+bool ViewportWidget::inSelectRegion(const QRectF& box, QPointF p) const
+{
+    return mLassoPick ? geo::lasso::contains(mLasso, {p.x(), p.y()}) : box.contains(p);
+}
+
+void ViewportWidget::pickLasso(Qt::KeyboardModifiers mods)
+{
+    auto [lo, hi] = geo::lasso::bounds(mLasso);
+    if (mLasso.size() < 3 || (hi.x - lo.x < 4 && hi.y - lo.y < 4))
+    {
+        pick(mPressPos, mPressPos, mods);
+        return;
+    }
+    mLassoPick = true;
+    pick(QPointF(lo.x, lo.y), QPointF(hi.x, hi.y), mods);
+    mLassoPick = false;
+}
+
+std::optional<bool> ViewportWidget::selectedUnder(QPointF at)
+{
+    scene::Graph& g = scene::Graph::current();
+    scene::ComponentMode mode = scene::components::mode();
+    if (mode != scene::ComponentMode::Object)
+    {
+        scene::componentPick::Hover h = componentAt(at);
+        if (h.empty())
+            return std::nullopt;
+        const scene::components::Ids& sel = scene::components::selected(h.node, mode);
+        return std::ranges::find(sel, h.id) != sel.end();
+    }
+    std::vector<std::string> hits = hitTest(at, at);
+    const scene::Node* n = hits.empty() ? nullptr : findNode(hits.front());
+    if (!n)
+        return std::nullopt;
+    return std::ranges::find(g.selection(), n->id()) != g.selection().end();
+}
+
+void ViewportWidget::updateTabHover(QPointF at)
+{
+    std::optional<bool> under = rect().contains(at.toPoint()) ? selectedUnder(at) : std::nullopt;
+    if (under != mTabUnder)
+        requestFrame();
+    mTabUnder = under;
+}
+
 void ViewportWidget::pick(QPointF a, QPointF b, Qt::KeyboardModifiers mods)
 {
     if (scene::components::mode() != scene::ComponentMode::Object)
@@ -1391,7 +1526,7 @@ void ViewportWidget::pick(QPointF a, QPointF b, Qt::KeyboardModifiers mods)
             {
                 selectionHandlers::Hit h;
                 h.name = name;
-                if (scene::Node* n = scene::Graph::current().find(name))
+                if (scene::Node* n = findNode(name))
                     h.node = n->id();
                 h.px = (a + b) * 0.5;
                 h.click = false;
@@ -1429,7 +1564,7 @@ void ViewportWidget::setView(const std::string& name)
         return;
     if (!builtInView(name))
     {
-        if (scene::Node* n = scene::Graph::current().find(name); n && n->type().isA("camera"))
+        if (scene::Node* n = findNode(name); n && n->type().isA("camera"))
             lookThrough(n->id());
         return;
     }
@@ -1515,7 +1650,7 @@ void ViewportWidget::lookThrough(scene::NodeId camera)
             mPerspCamera = mCamera;
     }
     mLookThrough = camera;
-    mViewName = n->name();
+    mViewName = n->path();
     syncLookThrough();
     syncCameraSettings();
     requestFrame();
@@ -1536,8 +1671,8 @@ void ViewportWidget::syncLookThrough()
     }
     g.evaluate();
     mCamera.lookThrough(*n, n->as<glm::dmat4>(scene::Transform::kWorldMatrix));
-    bool renamed = n->name() != mViewName;
-    mViewName = n->name();
+    bool renamed = n->path() != mViewName;
+    mViewName = n->path();
     // The gate settings are the node's attributes, which can change under any edit.
     syncCameraSettings();
     if (renamed)
@@ -1555,7 +1690,7 @@ bool ViewportWidget::beginCameraEdit()
         if (double now = nowMs(); now - mLockedWarnMs > 1500.0)
         {
             mLockedWarnMs = now;
-            log::warn("Camera '{}' is locked; unlock it (locked attribute) to move it through the view.", n->name());
+            log::warn("Camera '{}' is locked; unlock it (locked attribute) to move it through the view.", n->path());
         }
         return false;
     }
@@ -1639,9 +1774,8 @@ scene::NodeId ViewportWidget::droppedCamera(const QMimeData* mime) const
 {
     if (!mime || !mime->hasFormat(kNodeNamesMime))
         return scene::kNoNode;
-    scene::Graph& g = scene::Graph::current();
     for (const QString& name : QString::fromUtf8(mime->data(kNodeNamesMime)).split(QChar('\n'), Qt::SkipEmptyParts))
-        if (scene::Node* n = g.find(name.toStdString()); n && n->type().isA("camera"))
+        if (scene::Node* n = findNode(name.toStdString()); n && n->type().isA("camera"))
             return n->id();
     return scene::kNoNode;
 }
@@ -1726,21 +1860,39 @@ void ViewportWidget::drawGate(OverlayPainter& p)
 
 void ViewportWidget::toggleIsolate()
 {
-    if (!mIsolated.empty())
-        mIsolated.clear();
+    if (mIsolation.active())
+        mIsolation.clear();
     else
     {
         scene::Graph& g = scene::Graph::current();
-        for (scene::NodeId id : g.selection())
-        {
-            mIsolated.insert(id);
-            for (scene::NodeId d : g.descendants(id))
-                mIsolated.insert(d);
-            // Parents stay so the isolated objects keep their transforms visible in context.
-            for (scene::NodeId p = g.parent(id); p != scene::kNoNode; p = g.parent(p))
-                mIsolated.insert(p);
-        }
+        g.evaluate();
+        mIsolation = scene::isolation::fromSelection(g);
     }
+    setIsolation(std::move(mIsolation));
+}
+
+void ViewportWidget::addToIsolation()
+{
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    scene::isolation::addSelection(mIsolation, g);
+    setIsolation(std::move(mIsolation));
+}
+
+void ViewportWidget::removeFromIsolation()
+{
+    if (!mIsolation.active())
+        return;
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    scene::isolation::removeSelection(mIsolation, g);
+    setIsolation(std::move(mIsolation));
+}
+
+void ViewportWidget::setIsolation(scene::isolation::Set set)
+{
+    mIsolation = std::move(set);
+    clearPreselect();
     requestFrame();
     emit viewStateChanged();
 }
@@ -1755,8 +1907,8 @@ void ViewportWidget::drawHud(OverlayPainter& p)
     hud::Context ctx;
     ctx.panel = mHudPanel;
     ctx.view = viewInfo();
-    if (!mIsolated.empty())
-        ctx.shownNode = [this](scene::NodeId id) { return mIsolated.contains(id); };
+    if (mIsolation.active())
+        ctx.shownNode = [this](scene::NodeId id) { return mIsolation.shows(id); };
     // Frames the renderer drew, not states submitted: mouse moves submit far more often than the display can show.
     double span = mFrameSamples.back().first - mFrameSamples.front().first;
     ctx.framesPerSecond = span > 100.0 ? double(mFrameSamples.back().second - mFrameSamples.front().second) * 1000.0 / span : 0.0;
@@ -1809,7 +1961,7 @@ std::string ViewportWidget::skinnedMeshAt(QPointF at)
 {
     scene::Graph& g = scene::Graph::current();
     for (const std::string& name : hitTest(at, at))
-        if (scene::Node* n = g.find(name); n && n->type().isA("mesh") && scene::skin::find(g, n->id()) != scene::kNoNode)
+        if (scene::Node* n = findNode(name); n && n->type().isA("mesh") && scene::skin::find(g, n->id()) != scene::kNoNode)
             return name;
     return {};
 }
@@ -1922,10 +2074,11 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
     clearPreselect();
     mLastPos = e->position();
     setFocus();
-    if (mTabHeld && !viewportTools::active() && e->button() == Qt::LeftButton && !(e->modifiers() & Qt::AltModifier) &&
-        scene::components::mode() != scene::ComponentMode::Object)
+    if (mTabHeld && !viewportTools::active() && e->button() == Qt::LeftButton && !(e->modifiers() & Qt::AltModifier))
     {
-        mTabStroke.begin(paintSelect::Stroke::opFor(e->modifiers(), paintSelect::Stroke::Op::Replace));
+        tabSelect::Mode m = tabSelect::modeAtPress(selectedUnder(e->position()), e->modifiers() & Qt::ShiftModifier,
+                                                   e->modifiers() & Qt::ControlModifier);
+        mTabStroke.begin(m == tabSelect::Mode::Select ? paintSelect::Stroke::Op::Add : paintSelect::Stroke::Op::Remove);
         mTabStroke.paint(viewInfo(), e->position(), e->position(), paintSelect::tabRadius(scene::components::mode()));
         submit();
         return;
@@ -2014,6 +2167,10 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
         mSelecting = true;
         mMarquee = false;
         mPressPos = e->position();
+        mLassoDrag = paintSelect::lassoActive();
+        mLasso.clear();
+        if (mLassoDrag)
+            mLasso.push_back({mPressPos.x(), mPressPos.y()});
         return;
     }
     if (e->modifiers() & Qt::AltModifier)
@@ -2078,6 +2235,8 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
         submit();
         return;
     }
+    if (e->buttons() == Qt::NoButton && mTabHeld && !viewportTools::active())
+        updateTabHover(e->position());
     if (e->buttons() == Qt::NoButton)
     {
         Gizmo* gz = currentGizmo();
@@ -2100,6 +2259,8 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
     {
         QPointF drag = e->position() - mPressPos;
         mMarquee = mMarquee || std::abs(drag.x()) + std::abs(drag.y()) > 4;
+        if (mLassoDrag)
+            geo::lasso::extend(mLasso, {e->position().x(), e->position().y()});
         if (mMarquee)
             submit();
         return;
@@ -2130,7 +2291,10 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* e)
     if (mTabStroke.active())
     {
         if (e->button() == Qt::LeftButton)
+        {
             mTabStroke.end();
+            updateTabHover(e->position());
+        }
         submit();
         return;
     }
@@ -2177,7 +2341,12 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* e)
         mSelecting = false;
         bool wasMarquee = mMarquee;
         mMarquee = false;
-        pick(mPressPos, wasMarquee ? e->position() : mPressPos, e->modifiers());
+        if (wasMarquee && mLassoDrag)
+            pickLasso(e->modifiers());
+        else
+            pick(mPressPos, wasMarquee ? e->position() : mPressPos, e->modifiers());
+        mLassoDrag = false;
+        mLasso.clear();
         submit();
     }
 }
@@ -2226,12 +2395,12 @@ bool ViewportWidget::selectLoopAt(QPointF at, Qt::KeyboardModifiers mods)
             if (!from)
                 return false;
             ops::execute("selectPathBetween",
-                         {{"args", {n->name()}}, {"kind", scene::components::modeName(mode)}, {"from", *from}, {"to", h.id}}, CallSource::UI);
+                         {{"args", {n->path()}}, {"kind", scene::components::modeName(mode)}, {"from", *from}, {"to", h.id}}, CallSource::UI);
             return true;
         }
         if (mode == ComponentMode::Vertex)
             return false;
-        json call = {{"args", {n->name()}}, {"edge", h.id}};
+        json call = {{"args", {n->path()}}, {"edge", h.id}};
         if (mode == ComponentMode::Face)
         {
             // The face loop crosses the face's edge nearest the cursor.

@@ -71,10 +71,17 @@ const char* kindSuffix(ComponentMode k)
 /** Looks the entry's node up by name: relative to the set's namespace first, as files from a reference store them. */
 const Node* findByName(const Graph& g, const std::string& setNamespace, const std::string& name)
 {
-    if (!setNamespace.empty())
-        if (const Node* n = g.find(setNamespace + ":" + name))
-            return n;
-    return g.find(name);
+    try
+    {
+        if (!setNamespace.empty())
+            if (const Node* n = g.find(setNamespace + ":" + name))
+                return n;
+        return g.find(name);
+    }
+    catch (const std::exception&)
+    {
+        return nullptr; // ambiguous: unbound until it is made unique
+    }
 }
 
 /** The live node an entry means, or null. Read only, so it is safe from the parallel scene serializer. */
@@ -99,7 +106,7 @@ const Node* bind(const Graph& g, const std::string& setNamespace, const SetMembe
     if (n)
     {
         e.id = n->id();
-        e.name = n->name();
+        e.name = n->path();
         e.referenced = n->referenceId() != 0;
     }
     return n;
@@ -114,7 +121,7 @@ json SetMembers::toJson() const
         const Node* n = e.id != kNoNode ? g.node(e.id) : nullptr;
         std::string name;
         if (n)
-            name = n->name();
+            name = n->path();
         else if (e.id == kNoNode || e.referenced)
             name = e.name; // unbound or its reference is unloaded: keep it for when it comes back
         else
@@ -194,7 +201,7 @@ void store(Graph& g, NodeId set, const std::vector<Member>& list)
             continue;
         SetMembers::Entry e;
         e.id = n->id();
-        e.name = n->name();
+        e.name = n->path();
         e.referenced = n->referenceId() != 0;
         e.kind = m.kind;
         e.ids = m.ids;
@@ -266,7 +273,7 @@ json namesOf(const Graph& g, const std::vector<NodeId>& ids)
 {
     json out = json::array();
     for (NodeId id : ids)
-        out.push_back(g.node(id)->name());
+        out.push_back(g.node(id)->path());
     return out;
 }
 
@@ -399,10 +406,10 @@ std::vector<std::string> format(const Graph& g, const std::vector<Member>& list)
             continue;
         if (m.kind == ComponentMode::Object)
         {
-            out.push_back(n->name());
+            out.push_back(n->path());
             continue;
         }
-        const std::string prefix = n->name() + "." + kindSuffix(m.kind) + "[";
+        const std::string prefix = n->path() + "." + kindSuffix(m.kind) + "[";
         for (size_t i = 0; i < m.ids.size();)
         {
             size_t j = i;
@@ -532,7 +539,7 @@ json info(const Graph& g, NodeId set)
 {
     const Node* n = g.node(set);
     return {
-        {"name", n->name()},
+        {"name", n->path()},
         {"quickSelect", n->as<bool>(ObjectSet::kQuickSelect)},
         {"members", format(g, resolve(g, set))},
     };
@@ -585,7 +592,7 @@ void registerCommands()
             }
             try
             {
-                return create(g, a.get<std::string>("name", ""), list, a.get<bool>("quickSelect", false))->name();
+                return create(g, a.get<std::string>("name", ""), list, a.get<bool>("quickSelect", false))->path();
             }
             catch (const std::invalid_argument& e)
             {
@@ -674,7 +681,7 @@ void registerCommands()
             {
                 if (a.has("object") && std::ranges::find(holding, s->id()) == holding.end())
                     continue;
-                out.push_back(a.get<bool>("info", false) ? info(g, s->id()) : json(s->name()));
+                out.push_back(a.get<bool>("info", false) ? info(g, s->id()) : json(s->path()));
             }
             return out;
         },

@@ -20,6 +20,7 @@
 #include "scene/Picker.h"
 #include "scene/Poses.h"
 #include "scene/RenderSettings.h"
+#include "scene/SceneData.h"
 #include "scene/SceneScripts.h"
 
 #include <format>
@@ -151,6 +152,7 @@ void ensureListener()
             scene::renderSettings().fromJson({});
             scene::renderSettingsChanged();
             scene::scripts::clear();
+            scene::data::clear();
             scene::poses::clearScene();
             scene::picker::clearScene();
         }
@@ -279,7 +281,7 @@ nlohmann::json serialize(const fs::path& sceneDir, bool packed)
         }
         json node = {{"name", n->name()}, {"type", n->type().name}};
         if (NodeId p = g.parent(id); p != scene::kNoNode)
-            node["parent"] = g.node(p)->name();
+            node["parent"] = g.fullPath(p);
         if (!attrs.empty())
             node["attrs"] = std::move(attrs);
         json locked = json::array();
@@ -301,12 +303,12 @@ nlohmann::json serialize(const fs::path& sceneDir, bool packed)
 
     json connections = json::array();
     for (auto& [dst, src] : g.connections())
-        if (!refs::isBaselineConnection(g.plugName(src), g.plugName(dst)))
-            connections.push_back({g.plugName(src), g.plugName(dst)});
+        if (std::string from = g.fullPlugName(src), to = g.fullPlugName(dst); !refs::isBaselineConnection(from, to))
+            connections.push_back({from, to});
 
     json selection = json::array();
     for (NodeId id : g.selection())
-        selection.push_back(g.node(id)->name());
+        selection.push_back(g.fullPath(id));
 
     json doc = {
         {"lila", kVersion},
@@ -322,6 +324,8 @@ nlohmann::json serialize(const fs::path& sceneDir, bool packed)
     };
     if (!scene::scripts::all().empty())
         doc["scripts"] = scene::scripts::toJson();
+    if (!scene::data::all().empty())
+        doc["data"] = scene::data::toJson();
     if (json poses = scene::poses::sceneToJson(); !poses.empty())
         doc["poses"] = std::move(poses);
     if (json pickers = scene::picker::sceneToJson(); !pickers.empty())
@@ -368,8 +372,15 @@ void deserialize(const nlohmann::json& doc, const fs::path& sceneDir, double own
 
         std::vector<NodeId> sel;
         for (const json& n : doc.value("selection", json::array()))
-            if (scene::Node* node = g.find(n.get<std::string>()))
-                sel.push_back(node->id());
+            try
+            {
+                if (scene::Node* node = g.find(n.get<std::string>()))
+                    sel.push_back(node->id());
+            }
+            catch (const std::exception& e)
+            {
+                warnings.push_back(std::string("selection: ") + e.what());
+            }
         g.select(sel);
         g.setTime(doc.value("time", 0.0));
         if (doc.contains("playback"))
@@ -381,6 +392,7 @@ void deserialize(const nlohmann::json& doc, const fs::path& sceneDir, double own
         scene::camera::migrateNamedSettings(g, scene::renderSettings());
         scene::renderSettingsChanged();
         scene::scripts::fromJson(doc.value("scripts", json::array()));
+        scene::data::fromJson(doc.value("data", json::object()));
         scene::poses::sceneFromJson(doc.value("poses", json::array()));
         scene::picker::sceneFromJson(doc.value("pickers", json::array()));
     }

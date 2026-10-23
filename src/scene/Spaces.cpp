@@ -364,9 +364,9 @@ int find(const Graph& g, NodeId node, const std::string& space)
     for (const Space& s : all)
         if (!s.name.empty() && s.name == space)
             return s.index;
-    const Node* want = g.find(space);
+    const std::vector<NodeId> want = g.findAll(space);
     for (const Space& s : all)
-        if (want && s.target == want->id() && s.kind == Kind::Node)
+        if (want.size() == 1 && s.target == want[0] && s.kind == Kind::Node)
             return s.index;
     if (space == "local")
         return 0;
@@ -397,7 +397,7 @@ int addSpace(Graph& g, NodeId id, const std::string& space, bool maintainOffset)
         if (target == g.parent(id))
             return 0;
         if (target == id || dependsOn(g, target, id))
-            throw std::invalid_argument(t->name() + " depends on " + n->name() + ", so it can't be its space");
+            throw std::invalid_argument(t->path() + " depends on " + n->path() + ", so it can't be its space");
     }
     if (int existing = find(g, id, space); existing >= 0 && (target || list(g, id)[size_t(existing)].kind == Kind::World))
         return existing;
@@ -408,7 +408,7 @@ int addSpace(Graph& g, NodeId id, const std::string& space, bool maintainOffset)
     std::vector<std::string> kinds = kindsOf(g, sw);
     const int slot = int(kinds.size());
     if (slot >= kMaxSpaces)
-        throw std::invalid_argument(n->name() + " already has " + std::to_string(kMaxSpaces) + " spaces");
+        throw std::invalid_argument(n->path() + " already has " + std::to_string(kMaxSpaces) + " spaces");
 
     const glm::dmat4 parentWorld = parentWorldOf(g, id);
     glm::dmat4 offset(1.0);
@@ -643,7 +643,7 @@ int spaceArg(Graph& g, NodeId id, const json& j, const char* cmd)
         std::string all;
         for (const std::string& s : names(g, id))
             all += (all.empty() ? "" : ", ") + s;
-        throw CommandError(std::string(cmd) + ": " + g.node(id)->name() + " has no space '" + spaceText(j) + "' (it has " + all + ")");
+        throw CommandError(std::string(cmd) + ": " + g.node(id)->path() + " has no space '" + spaceText(j) + "' (it has " + all + ")");
     }
     return i;
 }
@@ -655,7 +655,7 @@ json listJson(Graph& g, NodeId id)
         spaces.push_back({{"index", s.index},
                           {"name", s.name},
                           {"kind", s.kind == Kind::Parent ? "parent" : s.kind == Kind::World ? "world" : "node"}});
-    return {{"node", g.node(id)->name()}, {"active", active(g, id)}, {"spaces", spaces}};
+    return {{"node", g.node(id)->path()}, {"active", active(g, id)}, {"spaces", spaces}};
 }
 } // namespace
 

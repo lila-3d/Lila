@@ -16,7 +16,7 @@ void groupNodes()
                 Sockets s;
                 s.outputs.push_back(geoOut("geometry", "The mesh coming up the modifier stack."));
                 for (const GInput& in : g.inputs)
-                    s.outputs.push_back(out(in.name, in.type, "Exposed parameter."));
+                    s.outputs.push_back(out(in.name, in.type, in.description.empty() ? "Exposed parameter." : in.description));
                 return s;
             },
         .exec =
@@ -28,7 +28,7 @@ void groupNodes()
                     if (k < 0)
                         continue;
                     auto it = c.env.params.find(in.name);
-                    c.outputs[k] = it != c.env.params.end() ? it->second : valueFromJson(in.type, in.defaultValue);
+                    c.outputs[k] = it != c.env.params.end() ? it->second : paramValue(in, in.defaultValue);
                 }
             },
     });
@@ -36,8 +36,16 @@ void groupNodes()
         .type = "GroupOutput",
         .label = "Group Output",
         .category = "Group",
-        .doc = "What the modifier passes up the stack. Instances are realized and only the mesh is kept.",
-        .sockets = {.inputs = {geoIn("geometry")}},
+        .doc = "What the modifier passes up the stack. Instances are realized and only the mesh is kept. The group's outputs are what "
+               "a Group node using it gives back.",
+        .dynamicSockets =
+            [](const Group& g, const GNode&) {
+                Sockets s;
+                s.inputs.push_back(geoIn("geometry"));
+                for (const GOutput& o : g.outputs)
+                    s.inputs.push_back(fin(o.name, o.type, zeroJson(o.type), Implicit::None, o.description));
+                return s;
+            },
     });
 }
 

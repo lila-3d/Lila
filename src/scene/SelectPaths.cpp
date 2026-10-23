@@ -6,6 +6,7 @@
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "scene/Graph.h"
+#include "scene/Isolation.h"
 #include "scene/Modifiers.h"
 
 #include <string>
@@ -85,7 +86,9 @@ void registerPathCommands()
             if (!t.mesh->edgeValid(e))
                 throw CommandError("selectLoopThrough: no edge " + std::to_string(e));
             bool faces = a.get<bool>("faces");
-            Ids ids = faces ? geo::faceLoop(*t.mesh, e) : a.get<bool>("ring") ? geo::edgeRing(*t.mesh, e) : geo::edgeLoop(*t.mesh, e);
+            const bool ring = !faces && a.get<bool>("ring");
+            Ids ids = faces ? geo::faceLoop(*t.mesh, e) : ring ? geo::edgeRing(*t.mesh, e) : geo::edgeLoop(*t.mesh, e);
+            ids = isolation::clipLoop(*t.mesh, isolation::activeVisibility(t.node, *t.mesh), ids, e, faces ? ComponentMode::Face : ComponentMode::Edge, ring);
             UndoChunk chunk("Select Loop");
             selectAndShow(t.node, faces ? ComponentMode::Face : ComponentMode::Edge, ids, opArg(a, Op::Replace));
             return ids;
@@ -151,7 +154,7 @@ void registerPathCommands()
                     continue;
                 if (Ids ids = geo::containedFaces(*m, edges, !larger); !ids.empty())
                 {
-                    out[n->name()] = ids;
+                    out[n->path()] = ids;
                     faces[node] = std::move(ids);
                 }
             }

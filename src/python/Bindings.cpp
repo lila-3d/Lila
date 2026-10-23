@@ -3,6 +3,7 @@
 #include "core/PrefStore.h"
 #include "core/Progress.h"
 #include "core/Workspace.h"
+#include "scene/SceneData.h"
 #include "python/Python.h"
 
 #include <nanobind/nanobind.h>
@@ -182,6 +183,12 @@ NB_MODULE(_lila, m)
     m.def("set_pref", [](const std::string& file, const std::string& key, nb::handle value, bool workspace) {
         lila::PrefStore::get().set(file, key, toJson(value), workspace ? lila::PrefScope::Workspace : lila::PrefScope::User);
     }, nb::arg("file"), nb::arg("key"), nb::arg("value"), nb::arg("workspace") = false);
+
+    m.def("scene_data", [](const std::string& key, nb::handle fallback) { return toPy(lila::scene::data::get(key, toJson(fallback))); },
+          nb::arg("key"), nb::arg("default") = nb::none(), "A value saved in the scene file by set_scene_data.");
+
+    m.def("set_scene_data", [](const std::string& key, nb::handle value) { lila::scene::data::set(key, toJson(value)); },
+          nb::arg("key"), nb::arg("value").none(), "Saves any JSON-compatible value in the scene file, undoably. None removes the key.");
 
     m.def("workspace", []() -> nb::object {
         auto& ws = lila::Workspace::get();

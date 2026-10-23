@@ -8,11 +8,14 @@
 #include "python/Python.h"
 #include "scene/ComponentPick.h"
 #include "scene/Graph.h"
+#include "scene/Isolation.h"
 #include "scene/Modifiers.h"
 #include "ui/Hotkeys.h"
+#include "ui/OptionBox.h"
 #include "ui/ViewportDisplay.h"
 
 #include <algorithm>
+#include <cctype>
 #include <map>
 #include <string_view>
 
@@ -212,6 +215,11 @@ bool run(const json& target)
             return false;
         }
     }
+    if (target.contains("optionBox") && target["optionBox"].is_string())
+    {
+        optionBox::open(target["optionBox"].get<std::string>());
+        return true;
+    }
     if (target.contains("python"))
     {
         bool ok = python::run(target["python"].get<std::string>(), "<hotkey>").ok;
@@ -225,25 +233,33 @@ bool run(const json& target)
 bool repeatable(const json& target)
 {
     auto startsWith = [](const std::string& s, std::string_view prefix) { return s.rfind(prefix, 0) == 0; };
+    auto commandRepeatable = [&](const std::string& name) {
+        return !startsWith(name, "select") && !startsWith(name, "pickWalk") && name != "undo" && name != "redo" && name != "lookThru" &&
+               !startsWith(name, "flushUndo") && (!ops::find(name) || ops::find(name)->undoable);
+    };
     if (target.is_string())
     {
         const std::string& id = target.get_ref<const std::string&>();
         static const std::vector<std::string_view> prefixes = {
             "select.", "viewport.", "hotbox.", "window.", "tool.", "snap.", "softSelect.", "shelf.", "help.", "file.", "edit.flush",
-            "anim.nextFrame", "anim.prevFrame", "anim.nextKey", "anim.prevKey", "anim.play", "anim.stop", "adjustLastOp.",
-            "outliner.revealSelected", "graphEditor.frame", "nodeEditor.frame"};
+            "anim.nextFrame", "anim.prevFrame", "anim.nextKey", "anim.prevKey", "anim.play", "anim.stop", "anim.firstFrame",
+            "anim.lastFrame", "anim.ghost", "anim.toggleGhosts", "anim.autoKeyToggle", "adjustLastOp.", "outliner.revealSelected",
+            "graphEditor.", "nodeEditor.frame", "nodeEditor.selectAll", "mode.", "picker.frame", "measure.toggleShow"};
         static const std::vector<std::string_view> ids = {"edit.undo", "edit.redo", "edit.repeatLast", "edit.selectAll", "edit.deselect"};
-        return std::ranges::none_of(prefixes, [&](std::string_view p) { return startsWith(id, p); }) &&
-               std::ranges::find(ids, id) == ids.end();
+        if (std::ranges::any_of(prefixes, [&](std::string_view p) { return startsWith(id, p); }) || std::ranges::find(ids, id) != ids.end())
+            return false;
+        // Selection and mode switches under any category: uv.vertexMode, uv.selectStacks, rig.dominantInfluenceSelect.
+        std::string last = id.substr(id.rfind('.') + 1);
+        std::ranges::transform(last, last.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        if (last.find("select") != std::string::npos || last.ends_with("mode"))
+            return false;
+        const Action* a = find(id);
+        return !a || a->command.empty() || commandRepeatable(a->command);
     }
     if (!target.is_object())
         return false;
     if (target.contains("command") && target["command"].is_string())
-    {
-        const std::string& name = target["command"].get_ref<const std::string&>();
-        return !startsWith(name, "select") && !startsWith(name, "pickWalk") && name != "undo" && name != "redo" && name != "lookThru" &&
-               !startsWith(name, "flushUndo") && (!ops::find(name) || ops::find(name)->undoable);
-    }
+        return commandRepeatable(target["command"].get_ref<const std::string&>());
     return target.contains("python");
 }
 
@@ -297,6 +313,8 @@ std::string labelFor(const json& target)
             return target["command"].get<std::string>();
         if (target.contains("markingMenu"))
             return target["markingMenu"].get<std::string>() + " menu";
+        if (target.contains("optionBox") && target["optionBox"].is_string())
+            return labelFor(target["optionBox"]) + " Options";
         if (target.contains("python"))
             return "Python";
     }
@@ -320,6 +338,8 @@ std::string pythonFor(const json& target)
             return ops::toPython(target["command"].get<std::string>(), target.value("args", json::object()));
         if (target.contains("markingMenu"))
             return "# opens the '" + target["markingMenu"].get<std::string>() + "' marking menu";
+        if (target.contains("optionBox") && target["optionBox"].is_string())
+            return "# opens the option box of " + target["optionBox"].get<std::string>();
     }
     return "";
 }
@@ -387,6 +407,16 @@ void registerBuiltins()
               try
               {
                   json all = ops::execute("ls", {{"dag", true}});
+                  // An isolated view selects only what it shows.
+                  if (const scene::isolation::Set* iso = scene::isolation::active())
+                  {
+                      const scene::Graph& g = scene::Graph::current();
+                      json shown = json::array();
+                      for (const json& name : all)
+                          if (const scene::Node* n = name.is_string() ? g.find(name.get<std::string>()) : nullptr; !n || iso->shows(n->id()))
+                              shown.push_back(name);
+                      all = std::move(shown);
+                  }
                   ops::execute("select", {{"args", all}}, CallSource::UI);
               }
               catch (const CommandError& e)
@@ -438,6 +468,8 @@ void registerBuiltins()
     cmd("mesh.mirror", "Mirror", "Mesh", "polyMirror", json::object(), "Adds a mirrored, welded copy of the mesh, once. The Mirror modifier stays live.");
     cmd("mesh.separate", "Separate", "Mesh", "polySeparate", json::object(), "Splits a mesh into one object per disconnected piece.");
     cmd("mesh.combine", "Combine", "Mesh", "polyCombine", json::object(), "Merges the selected meshes into one object.");
+    cmd("mesh.smartJoin", "Smart Join", "Mesh", "smartJoin", json::object(),
+        "Joins the two selected meshes (a limb into a body) with a quad bridge, carving a matching hole; the option box previews live and rates the result.");
     cmd("mesh.bakeModifierStack", "Bake Modifier Stack", "Mesh", "bakeModifierStack", json::object(),
         "Bakes the generator and modifier stack into the selected meshes, leaving plain geometry.");
     cmd("mesh.transferAttributes", "Transfer Attributes", "Mesh", "transferAttributes", json::object(),

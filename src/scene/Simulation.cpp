@@ -99,7 +99,7 @@ Sim& simFor(Graph& g, NodeId node)
         throw std::invalid_argument("no such node");
     const SolverType* type = solverTypeFor(n->type());
     if (!type)
-        throw std::invalid_argument(n->name() + " is not a simulation");
+        throw std::invalid_argument(n->path() + " is not a simulation");
     Sim& s = sims()[node];
     if (!s.solver || s.nodeType != type->nodeType)
     {
@@ -107,7 +107,7 @@ Sim& simFor(Graph& g, NodeId node)
         s.nodeType = type->nodeType;
         s.solver = type->create(g, node);
         if (!s.solver)
-            throw std::invalid_argument(n->name() + ": its solver could not be made");
+            throw std::invalid_argument(n->path() + ": its solver could not be made");
     }
     return s;
 }
@@ -407,7 +407,7 @@ void simulateLoop(Graph& g, NodeId node, Sim& s)
     last->hash = h;
     s.frames.back() = std::move(last);
     if (!s.info.converged)
-        log::write(LogLevel::Warning, g.node(node)->name() + ": the loop did not settle in " + std::to_string(s.info.passes) +
+        log::write(LogLevel::Warning, g.node(node)->path() + ": the loop did not settle in " + std::to_string(s.info.passes) +
                                           " passes; the seam's residual was cross-faded over " + std::to_string(fade) + " frames");
 }
 
@@ -646,17 +646,15 @@ Info info(Graph& g, NodeId node)
 
 std::optional<std::pair<int64_t, int64_t>> loopRange(Graph& g, const std::vector<NodeId>& nodes)
 {
-    std::set<std::string> names;
-    for (NodeId n : nodes)
-        if (Node* node = g.node(n))
-            names.insert(node->name());
+    const std::set<NodeId> ids(nodes.begin(), nodes.end());
     for (NodeId t : anim::activeTakes(g))
     {
         Node& take = *g.node(t);
         if (!take.as<bool>(anim::TakeNode::kLoop))
             continue;
         const std::string& root = take.as<std::string>(anim::TakeNode::kRoot);
-        if (root.empty() || names.contains(root))
+        const std::vector<NodeId> rootIds = root.empty() ? std::vector<NodeId>{} : g.findAll(root);
+        if (root.empty() || (rootIds.size() == 1 && ids.contains(rootIds[0])))
             return std::pair{frameAt(take.as<double>(anim::TakeNode::kStart)), frameAt(take.as<double>(anim::TakeNode::kEnd))};
     }
     std::vector<double> loops = anim::loopKeyTimes(g, nodes);
@@ -803,7 +801,8 @@ NodeId record(Graph& g, NodeId node, const RecordOptions& o)
         Node* n = g.node(outputs[i]);
         if (!n || !n->type().isA("transform"))
             continue;
-        if (o.nodes.empty() || std::find(o.nodes.begin(), o.nodes.end(), n->name()) != o.nodes.end())
+        if (o.nodes.empty() || std::find(o.nodes.begin(), o.nodes.end(), n->name()) != o.nodes.end() ||
+            std::find(o.nodes.begin(), o.nodes.end(), n->path()) != o.nodes.end())
             chosen.push_back(i);
     }
     if (chosen.empty())
@@ -852,7 +851,7 @@ NodeId record(Graph& g, NodeId node, const RecordOptions& o)
 
     std::string layerName = o.layer.empty() ? g.node(node)->name() + "_sim" : o.layer;
     const NodeId layer = anim::createLayer(g, layerName, anim::LayerMode::Additive);
-    layerName = g.node(layer)->name();
+    layerName = g.node(layer)->path();
     if (int a = g.node(node)->type().attrIndex(kRecordingsAttr); a >= 0)
     {
         std::vector<std::string> list = recordings(g, node);
@@ -861,7 +860,7 @@ NodeId record(Graph& g, NodeId node, const RecordOptions& o)
     }
 
     const NodeId previous = anim::activeLayer(g);
-    const std::string previousName = previous ? g.node(previous)->name() : std::string(anim::kBaseLayerName);
+    const std::string previousName = previous ? g.node(previous)->path() : std::string(anim::kBaseLayerName);
     ops::execute("setActiveAnimLayer", {{"args", {layerName}}});
     struct Restore
     {
@@ -972,7 +971,7 @@ std::vector<NodeId> simArgs(Graph& g, const Args& a, const char* cmd, bool allWh
 
 json infoJson(Graph& g, NodeId id, const Info& i)
 {
-    return {{"node", g.node(id)->name()}, {"loop", i.loop}, {"loopStart", i.loopStart}, {"loopEnd", i.loopEnd},
+    return {{"node", g.node(id)->path()}, {"loop", i.loop}, {"loopStart", i.loopStart}, {"loopEnd", i.loopEnd},
             {"converged", i.converged}, {"passes", i.passes}, {"residual", i.residual}, {"startFrame", i.startFrame},
             {"substeps", i.substeps}, {"steps", i.steps}, {"cachedFrom", i.cachedFrom}, {"cachedTo", i.cachedTo},
             {"lastInvalidated", i.lastInvalidated}, {"cacheHash", hex(i.cacheHash)}, {"error", i.error}};
@@ -1028,7 +1027,7 @@ void registerCommands()
                     const Setup& su = sims()[id].setup;
                     for (size_t i = 0; i < su.outputs.size() && i < f->world.size(); ++i)
                         if (Node* n = g.node(su.outputs[i]))
-                            pos[n->name()] = {f->world[i][3].x, f->world[i][3].y, f->world[i][3].z};
+                            pos[n->path()] = {f->world[i][3].x, f->world[i][3].y, f->world[i][3].z};
                     j["frame"] = frame;
                     j["positions"] = pos;
                 }
@@ -1080,7 +1079,7 @@ void registerCommands()
             o.rotate = a.get<bool>("rotate", true);
             o.loop = loopArg(a, "recordSimulation");
             NodeId layer = guarded("recordSimulation", [&] { return record(g, ids[0], o); });
-            return g.node(layer)->name();
+            return g.node(layer)->path();
         },
     });
 

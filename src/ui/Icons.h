@@ -8,8 +8,8 @@
 namespace lila::ui
 {
 /**
- * A Tabler outline icon from resources/icons/tabler, rendered in the UI greys: light grey normally, brighter on hover
- * (QIcon::Active) and when checked, dim when disabled. Cached by name; a null icon when the name is unknown.
+ * A Tabler outline icon from resources/icons/tabler, in the theme's icon colours: iconNormal, iconActive on hover
+ * (QIcon::Active) and when checked, iconDisabled when disabled. Cached by name; a null icon when the name is unknown.
  */
 LILA_UI_API QIcon icon(const QString& name);
 

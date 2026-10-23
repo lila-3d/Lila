@@ -4,6 +4,8 @@
 #include "ui/Actions.h"
 #include "ui/MarkingMenu.h"
 #include "ui/OptionBox.h"
+#include "ui/Shelf.h"
+#include "ui/Theme.h"
 #include "ui/ViewportWidget.h"
 
 #include <QApplication>
@@ -146,7 +148,9 @@ void Hotbox::keyReleased(bool tap)
         QPointer<QAction> action = hovered;
         closePopups();
         hide();
-        if (!options.empty())
+        if (!options.empty() && shelves::addModifierHeld())
+            shelves::addToCurrent(json{{"optionBox", options}});
+        else if (!options.empty())
             QTimer::singleShot(0, [options] { optionBox::open(options); });
         else if (action)
             action->trigger();
@@ -446,9 +450,9 @@ void Hotbox::paintEvent(QPaintEvent*)
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
     // Never fully transparent: zero-alpha pixels of a layered window let clicks through to the window below.
-    p.fillRect(rect(), QColor(0, 0, 0, 40));
+    p.fillRect(rect(), themeShade(0, 40));
 
-    p.setPen(QPen(QColor(210, 210, 210, 80), 1));
+    p.setPen(QPen(themeShade(210, 80), 1));
     double reach = width() + height();
     for (QPointF corner : {mCenterZone.topLeft(), mCenterZone.topRight(), mCenterZone.bottomLeft(), mCenterZone.bottomRight()})
     {
@@ -463,7 +467,7 @@ void Hotbox::paintEvent(QPaintEvent*)
     {
         const Button& b = mButtons[i];
         bool hi = i == mHover || i == mOpen;
-        p.setPen(QPen(b.center ? QColor(150, 150, 150) : border, 1));
+        p.setPen(QPen(b.center ? themeShade(150) : border, 1));
         p.setBrush(hi ? hiBg : bg);
         p.drawRoundedRect(b.rect, 3, 3);
         p.setFont(b.center ? big : font());

@@ -132,7 +132,7 @@ void registerObjectCommands()
             {
                 NodeId c = copyTree(r, g.parent(r), true);
                 made.push_back(c);
-                out.push_back(g.node(c)->name());
+                out.push_back(g.node(c)->path());
             }
             g.select(made);
             return out;
@@ -309,7 +309,7 @@ void registerObjectCommands()
                 for (NodeId c : std::vector<NodeId>(g.children(grp.id())))
                 {
                     g.setParent(c, up, true);
-                    out.push_back(g.node(c)->name());
+                    out.push_back(g.node(c)->path());
                 }
                 g.deleteNode(grp.id());
             }

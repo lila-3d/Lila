@@ -32,6 +32,7 @@ LILA_SCENE_API CaseStyle parseCaseStyle(std::string_view s);
  *   mode: "fix" (rewrite to match) | "warn" | "block"
  *   rules: { "<nodeType>": "snake_case" | "PascalCase" | ..., "*": default }
  *   keepPrefixes: ["UCX_", "SOCKET_", ...]   kept verbatim in front of the converted name
+ *   uniqueNames: bool   names unique across the whole scene; off, only among siblings (paths tell them apart)
  * Namespaces and trailing digits are left alone.
  */
 struct LILA_SCENE_API NamingPolicy
@@ -45,6 +46,7 @@ struct LILA_SCENE_API NamingPolicy
     } mode = Mode::Fix;
     std::vector<std::pair<std::string, CaseStyle>> rules = {{"joint", CaseStyle::Snake}, {"*", CaseStyle::Pascal}}; // "*" last
     std::vector<std::string> keepPrefixes;
+    bool uniqueNames = false;
 
     static NamingPolicy fromJson(const nlohmann::json& j);
     static nlohmann::json defaults();

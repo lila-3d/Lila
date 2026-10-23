@@ -1,0 +1,160 @@
+{
+  "dependencies": [],
+  "format": "lila.nodes",
+  "group": {
+    "description": "True for points within a radius of a centre; also gives the distance.",
+    "inputs": [
+      {
+        "default": [
+          0,
+          0,
+          0
+        ],
+        "description": "Middle of the sphere, cm.",
+        "label": "Center",
+        "name": "center",
+        "subtype": "distance",
+        "type": "vector"
+      },
+      {
+        "default": 50,
+        "description": "cm.",
+        "label": "Radius",
+        "min": 0.0,
+        "name": "radius",
+        "softMax": 500.0,
+        "subtype": "distance",
+        "type": "float"
+      }
+    ],
+    "links": [
+      [
+        "Position",
+        "value",
+        "Distance",
+        "a"
+      ],
+      [
+        "GroupInput",
+        "center",
+        "Distance",
+        "b"
+      ],
+      [
+        "Distance",
+        "value",
+        "Inside",
+        "a"
+      ],
+      [
+        "GroupInput",
+        "radius",
+        "Inside",
+        "b"
+      ],
+      [
+        "Inside",
+        "result",
+        "GroupOutput",
+        "selection"
+      ],
+      [
+        "Inside",
+        "result",
+        "Not",
+        "a"
+      ],
+      [
+        "Not",
+        "result",
+        "GroupOutput",
+        "inverted"
+      ],
+      [
+        "Distance",
+        "value",
+        "GroupOutput",
+        "distance"
+      ]
+    ],
+    "name": "SphereSelection",
+    "nodes": [
+      {
+        "name": "GroupInput",
+        "position": [
+          -600.0,
+          -80.0
+        ],
+        "type": "GroupInput"
+      },
+      {
+        "name": "Position",
+        "position": [
+          -600.0,
+          80.0
+        ],
+        "type": "Position"
+      },
+      {
+        "name": "Distance",
+        "position": [
+          -350.0,
+          0.0
+        ],
+        "type": "VectorMath",
+        "values": {
+          "operation": "distance"
+        }
+      },
+      {
+        "name": "Inside",
+        "position": [
+          -100.0,
+          0.0
+        ],
+        "type": "Compare",
+        "values": {
+          "operation": "lessEqual"
+        }
+      },
+      {
+        "name": "Not",
+        "position": [
+          150.0,
+          80.0
+        ],
+        "type": "BooleanMath",
+        "values": {
+          "operation": "not"
+        }
+      },
+      {
+        "name": "GroupOutput",
+        "position": [
+          400.0,
+          0.0
+        ],
+        "type": "GroupOutput"
+      }
+    ],
+    "outputs": [
+      {
+        "description": "Inside the sphere.",
+        "name": "selection",
+        "type": "bool"
+      },
+      {
+        "description": "Outside the sphere.",
+        "name": "inverted",
+        "type": "bool"
+      },
+      {
+        "description": "Distance from the centre, cm.",
+        "name": "distance",
+        "type": "float"
+      }
+    ],
+    "typeVersion": 1
+  },
+  "version": 1
+}

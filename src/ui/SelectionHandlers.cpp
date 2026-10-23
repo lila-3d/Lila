@@ -5,6 +5,7 @@
 #include "scene/Graph.h"
 #include "scene/Rig.h"
 #include "scene/SelectAs.h"
+#include "ui/NodeLookup.h"
 
 #include <algorithm>
 #include <map>
@@ -194,11 +195,11 @@ std::string applySelectAs(const std::string& name)
     if (selectAsBypassed())
         return name;
     const scene::Graph& g = scene::Graph::current();
-    const scene::Node* n = g.find(name);
+    const scene::Node* n = findNode(name);
     if (!n || !scene::rig::isJoint(*n))
         return name;
     scene::NodeId t = scene::rig::selectAsTarget(g, n->id());
-    return t != n->id() && g.node(t) ? g.node(t)->name() : name;
+    return t != n->id() && g.node(t) ? g.node(t)->path() : name;
 }
 
 int addListener(std::function<void()> fn)

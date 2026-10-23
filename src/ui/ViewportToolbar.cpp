@@ -167,6 +167,7 @@ std::optional<bool> viewportActionState(const std::string& id, const ViewportWid
         {"measure.toggleShow", "/measure/show", true},
         {"select.toggleCameraBased", "/select/cameraBased", false},
         {"select.toggleBackfaceCulling", "/select/backfaceCulling", false},
+        {"select.toggleLasso", "/select/lasso", false},
     };
     for (const Toggle& t : toggles)
         if (id == t.id)
@@ -294,6 +295,7 @@ void fillCameraMenu(QMenu* menu, ViewportWidget* view, std::function<void()> act
         if (std::exchange(first, false))
             menu->addSeparator();
         QAction* a = menu->addAction(icon("camera"), QString::fromStdString(n->name()));
+        a->setToolTip(QString::fromStdString(n->fullPath()));
         a->setCheckable(true);
         a->setChecked(view->lookThroughCamera() == id);
         pick(a, [target, id] {
@@ -367,7 +369,7 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
         {
             UndoChunk chunk("Select Camera");
             ops::execute("selectMode", {{"args", {"object"}}}, CallSource::UI);
-            ops::execute("select", {{"args", {n->name()}}}, CallSource::UI);
+            ops::execute("select", {{"args", {n->path()}}}, CallSource::UI);
         }
         catch (const CommandError& e)
         {

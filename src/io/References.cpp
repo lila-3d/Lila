@@ -27,7 +27,7 @@ constexpr int kMaxDepth = 16; // guards against files that reference each other
 
 std::vector<Reference> gRefs;
 uint32_t gNextId = 1;
-std::vector<std::pair<std::string, std::string>> gPendingParents; // referenced node, scene parent
+std::vector<std::pair<NodeId, std::string>> gPendingParents; // referenced node, scene parent
 
 const json kNoArray = json::array();
 const json kNoObject = json::object();
@@ -47,6 +47,36 @@ std::string prefixed(const std::string& ns, const std::string& name)
 std::string stripNs(const std::string& ns, const std::string& name)
 {
     return name.rfind(ns + ":", 0) == 0 ? name.substr(ns.size() + 1) : name;
+}
+
+/** prefixed() on every name in a path, keeping a leading '|'. */
+std::string prefixedPath(const std::string& ns, const std::string& path)
+{
+    if (ns.empty())
+        return path;
+    std::string out;
+    size_t start = path.starts_with('|') ? 1 : 0;
+    if (start)
+        out = "|";
+    for (;;)
+    {
+        size_t bar = path.find('|', start);
+        out += prefixed(ns, path.substr(start, bar == std::string::npos ? std::string::npos : bar - start));
+        if (bar == std::string::npos)
+            return out;
+        out += '|';
+        start = bar + 1;
+    }
+}
+
+/** The node's path through its reference's own nodes, namespace stripped: "Body|Arm". Edits and baselines use it. */
+std::string refKey(const Reference& r, NodeId id)
+{
+    Graph& g = Graph::current();
+    std::string key;
+    for (NodeId cur = id; cur != scene::kNoNode && g.node(cur)->referenceId() == r.id; cur = g.parent(cur))
+        key = stripNs(r.ns, g.node(cur)->name()) + (key.empty() ? "" : "|" + key);
+    return key;
 }
 
 std::vector<NodeId> nodesOf(uint32_t refId)
@@ -83,12 +113,15 @@ void captureBaseline(Reference& r)
 {
     Graph& g = Graph::current();
     r.baseline.clear();
+    r.baselineKeys.clear();
     r.baselineConnections.clear();
     for (NodeId id : nodesOf(r.id))
     {
         scene::Node* n = g.node(id);
         NodeId p = g.parent(id);
-        Reference::Baseline& b = r.baseline[stripNs(r.ns, n->name())];
+        std::string key = refKey(r, id);
+        r.baselineKeys[id] = key;
+        Reference::Baseline& b = r.baseline[key];
         for (int i = 0; i < int(n->type().attrs.size()); ++i)
         {
             if (isStoredInput(g, n, i))
@@ -97,11 +130,11 @@ void captureBaseline(Reference& r)
                 b.locks.emplace(i, mask);
         }
         if (p)
-            b.parent = g.node(p)->name();
+            b.parent = g.fullPath(p);
     }
     for (auto& [dst, src] : g.connections())
         if (g.node(src.node)->referenceId() == r.id && g.node(dst.node)->referenceId() == r.id)
-            r.baselineConnections.insert({g.plugName(src), g.plugName(dst)});
+            r.baselineConnections.insert({g.fullPlugName(src), g.fullPlugName(dst)});
 }
 
 std::string uniqueNamespace(std::string wanted)
@@ -117,24 +150,25 @@ std::string uniqueNamespace(std::string wanted)
     return ns;
 }
 
-/** Scene-owned nodes parented under this reference's nodes, as [child, parent]. */
-json sceneChildren(const Reference& r)
+/**
+ * Moves the scene-owned nodes parented under this reference's nodes to the root. Returns them as [child, parent]
+ * paths, the child's taken after the move so it still resolves.
+ */
+json detachChildren(const Reference& r)
 {
     Graph& g = Graph::current();
-    json out = json::array();
+    std::vector<std::pair<NodeId, std::string>> found;
     for (NodeId id : nodesOf(r.id))
         for (NodeId c : g.children(id))
             if (g.node(c)->referenceId() != r.id)
-                out.push_back({g.node(c)->name(), g.node(id)->name()});
+                found.push_back({c, g.fullPath(id)});
+    json out = json::array();
+    for (auto& [c, parent] : found)
+    {
+        g.setParent(c, scene::kNoNode, true);
+        out.push_back({g.fullPath(c), parent});
+    }
     return out;
-}
-
-void detachChildren(const json& children)
-{
-    Graph& g = Graph::current();
-    for (const json& pair : children)
-        if (scene::Node* c = g.find(pair[0].get<std::string>()))
-            g.setParent(c->id(), scene::kNoNode, true);
 }
 
 void attachChildren(const json& children, std::vector<std::string>& warnings)
@@ -221,10 +255,18 @@ std::vector<NodeId> instantiate(const json& doc, const std::string& ns, uint32_t
     }
     Graph& g = Graph::current();
     std::vector<NodeId> created;
-    std::map<std::string, std::string> renamed; // name in file -> scene name, should uniquing kick in
-    auto resolve = [&](const std::string& n) {
-        auto it = renamed.find(n);
-        return it == renamed.end() ? prefixed(ns, n) : it->second;
+    // Documents name parents and plug nodes by full path ("|Body|Arm"); older ones by name, unique back then.
+    std::unordered_map<std::string, NodeId> byPath;
+    std::unordered_map<NodeId, std::string> pathOf;
+    std::unordered_multimap<std::string, NodeId> byName;
+    auto lookup = [&](const std::string& ref) -> scene::Node* {
+        if (ref.empty())
+            return nullptr;
+        if (auto it = byPath.find(ref.starts_with('|') ? ref : "|" + ref); it != byPath.end())
+            return g.node(it->second);
+        if (ref.find('|') == std::string::npos && byName.count(ref) == 1)
+            return g.node(byName.find(ref)->second);
+        return g.find(prefixedPath(ns, ref));
     };
 
     // A referenced file's own references come in as part of it, under a nested namespace.
@@ -242,7 +284,15 @@ std::vector<NodeId> instantiate(const json& doc, const std::string& ns, uint32_t
                 created.insert(created.end(), ids.begin(), ids.end());
                 for (const json& e : member(rec, "edits", kNoArray))
                 {
-                    scene::Node* n = g.find(prefixed(nested, e.value("node", "")));
+                    scene::Node* n = nullptr;
+                    try
+                    {
+                        n = g.find(prefixedPath(nested, e.value("node", "")));
+                    }
+                    catch (const std::exception& ex)
+                    {
+                        warnings.push_back(std::string("nested reference edit skipped: ") + ex.what());
+                    }
                     if (!n)
                         continue;
                     for (auto& [attr, value] : member(e, "attrs", kNoObject).items())
@@ -285,16 +335,32 @@ std::vector<NodeId> instantiate(const json& doc, const std::string& ns, uint32_t
             continue;
         }
         NodeId parent = scene::kNoNode;
+        std::string key = "|" + name;
         if (jn.contains("parent"))
         {
-            if (scene::Node* p = g.find(resolve(jn["parent"].get<std::string>())))
+            const std::string ref = jn["parent"].get<std::string>();
+            scene::Node* p = nullptr;
+            try
+            {
+                p = lookup(ref);
+            }
+            catch (const std::exception& e)
+            {
+                warnings.push_back(name + ": " + e.what());
+            }
+            if (p)
+            {
                 parent = p->id();
+                auto known = pathOf.find(parent);
+                key = (known != pathOf.end() ? known->second : ref.starts_with('|') ? ref : "|" + ref) + key;
+            }
             else
-                warnings.push_back(name + ": parent " + jn["parent"].get<std::string>() + " not found");
+                warnings.push_back(name + ": parent " + ref + " not found");
         }
         scene::Node* n = g.createNode(*t, prefixed(ns, name), parent, false);
-        if (n->name() != prefixed(ns, name))
-            renamed[name] = n->name();
+        byPath.emplace(key, n->id());
+        pathOf.emplace(n->id(), key);
+        byName.emplace(name, n->id());
         if (refId)
             g.setReference(n->id(), refId);
         created.push_back(n->id());
@@ -332,7 +398,7 @@ std::vector<NodeId> instantiate(const json& doc, const std::string& ns, uint32_t
         for (const json& plug : member(jn, "locked", kNoArray))
             try
             {
-                g.setLocked(g.plug(n->name() + "." + plug.get<std::string>()), true);
+                g.setLocked(g.plug(n->path() + "." + plug.get<std::string>()), true);
             }
             catch (const std::exception& e)
             {
@@ -342,17 +408,18 @@ std::vector<NodeId> instantiate(const json& doc, const std::string& ns, uint32_t
 
     auto mapPlug = [&](const std::string& plug) {
         auto dot = plug.find('.');
+        if (dot == std::string::npos)
+            throw std::invalid_argument("expected node.attr, got '" + plug + "'");
         // Plugs on nodes from this document get the namespace; ones already namespaced (nested refs) are absolute
         // within it, so prefix those too.
-        std::string node = resolve(plug.substr(0, dot));
-        if (dot != std::string::npos)
-            if (const scene::Node* n = g.find(node))
-            {
-                size_t end = plug.find_first_of(".[", dot + 1);
-                std::string attr = plug.substr(dot + 1, end == std::string::npos ? std::string::npos : end - dot - 1);
-                if (int idx = n->type().fileAttrIndex(attr); idx >= 0 && n->type().attrIndex(attr) < 0)
-                    return node + "." + n->type().attrs[idx].name + (end == std::string::npos ? "" : plug.substr(end));
-            }
+        const scene::Node* n = lookup(plug.substr(0, dot));
+        if (!n)
+            throw std::invalid_argument("no node named '" + plug.substr(0, dot) + "'");
+        std::string node = n->path();
+        size_t end = plug.find_first_of(".[", dot + 1);
+        std::string attr = plug.substr(dot + 1, end == std::string::npos ? std::string::npos : end - dot - 1);
+        if (int idx = n->type().fileAttrIndex(attr); idx >= 0 && n->type().attrIndex(attr) < 0)
+            return node + "." + n->type().attrs[idx].name + (end == std::string::npos ? "" : plug.substr(end));
         return node + plug.substr(dot);
     };
     for (const json& c : member(doc, "connections", kNoArray))
@@ -455,7 +522,10 @@ json currentEdits(const Reference& r, const fs::path& sceneDir)
     for (NodeId id : nodesOf(r.id))
     {
         scene::Node* n = g.node(id);
-        std::string rel = stripNs(r.ns, n->name());
+        auto keyIt = r.baselineKeys.find(id);
+        if (keyIt == r.baselineKeys.end())
+            continue;
+        const std::string& rel = keyIt->second;
         auto bit = r.baseline.find(rel);
         if (bit == r.baseline.end())
             continue;
@@ -503,7 +573,7 @@ json currentEdits(const Reference& r, const fs::path& sceneDir)
         if (!unlock.empty())
             edit["unlock"] = std::move(unlock);
         NodeId p = g.parent(id);
-        std::optional<std::string> parent = p ? std::optional<std::string>(g.node(p)->name()) : std::nullopt;
+        std::optional<std::string> parent = p ? std::optional<std::string>(g.fullPath(p)) : std::nullopt;
         if (parent != base.parent)
             edit["parent"] = parent ? json(*parent) : json(nullptr);
         if (edit.size() > 1)
@@ -513,18 +583,43 @@ json currentEdits(const Reference& r, const fs::path& sceneDir)
     return edits;
 }
 
+namespace
+{
+/** The reference's node with this refKey; a bare name also matches by name alone when only one node has it. */
+NodeId refNode(const Reference& r, const std::string& key)
+{
+    Graph& g = Graph::current();
+    NodeId byName = scene::kNoNode;
+    int named = 0;
+    for (NodeId id : nodesOf(r.id))
+    {
+        if (refKey(r, id) == key)
+            return id;
+        if (stripNs(r.ns, g.node(id)->name()) == key)
+            byName = id, ++named;
+    }
+    return named == 1 && key.find('|') == std::string::npos ? byName : scene::kNoNode;
+}
+} // namespace
+
 void applyEdits(const Reference& r, const json& edits, std::vector<std::string>& warnings)
 {
     Graph& g = Graph::current();
+    // Every target first: reparenting edits change the keys of the nodes after them.
+    std::vector<NodeId> targets;
     for (const json& e : edits)
+        targets.push_back(refNode(r, e.value("node", "")));
+    for (size_t k = 0; k < edits.size(); ++k)
     {
-        std::string name = prefixed(r.ns, e.value("node", ""));
-        scene::Node* n = g.find(name);
+        const json& e = edits[k];
+        scene::Node* n = g.node(targets[k]);
         if (!n)
         {
-            warnings.push_back("reference edit for " + name + " skipped: the node is no longer in " + r.path.filename().string());
+            warnings.push_back("reference edit for " + prefixed(r.ns, e.value("node", "")) + " skipped: the node is no longer in " +
+                               r.path.filename().string());
             continue;
         }
+        const std::string name = n->path();
         auto setLocks = [&](const char* key, bool locked) {
             for (const json& plug : member(e, key, kNoArray))
                 try
@@ -560,12 +655,20 @@ void applyEdits(const Reference& r, const json& edits, std::vector<std::string>&
             NodeId p = scene::kNoNode;
             if (!e["parent"].is_null())
             {
-                if (scene::Node* pn = g.find(e["parent"].get<std::string>()))
+                scene::Node* pn = nullptr;
+                try
+                {
+                    pn = g.find(e["parent"].get<std::string>());
+                }
+                catch (const std::exception&)
+                {
+                }
+                if (pn)
                     p = pn->id();
                 else
                 {
                     // A scene node not created yet while the scene loads; resolvePendingParents finishes it.
-                    gPendingParents.push_back({name, e["parent"].get<std::string>()});
+                    gPendingParents.push_back({n->id(), e["parent"].get<std::string>()});
                     continue;
                 }
             }
@@ -586,8 +689,7 @@ void unload(Reference& r)
     if (!r.loaded)
         return;
     r.edits = currentEdits(r);
-    r.children = sceneChildren(r);
-    detachChildren(r.children);
+    r.children = detachChildren(r);
     Graph& g = Graph::current();
     for (NodeId id : nodesOf(r.id))
         if (g.node(id) && g.parent(id) == scene::kNoNode)
@@ -608,8 +710,7 @@ void remove(const std::string& ns)
     Reference* r = find(ns);
     if (!r)
         return;
-    json children = sceneChildren(*r);
-    detachChildren(children);
+    detachChildren(*r);
     Graph& g = Graph::current();
     for (NodeId id : nodesOf(r->id))
         if (g.node(id) && g.parent(id) == scene::kNoNode)
@@ -695,20 +796,22 @@ void resolvePendingParents(std::vector<std::string>& warnings)
     Graph& g = Graph::current();
     for (const auto& [child, parent] : gPendingParents)
     {
-        scene::Node* c = g.find(child);
-        scene::Node* p = g.find(parent);
-        if (!c || !p)
-        {
-            warnings.push_back("reference edit for " + child + " skipped: its parent " + parent + " is gone");
+        scene::Node* c = g.node(child);
+        if (!c)
             continue;
-        }
         try
         {
+            scene::Node* p = g.find(parent);
+            if (!p)
+            {
+                warnings.push_back("reference edit for " + c->path() + " skipped: its parent " + parent + " is gone");
+                continue;
+            }
             g.setParent(c->id(), p->id(), false);
         }
         catch (const std::exception& ex)
         {
-            warnings.push_back(child + ": " + ex.what());
+            warnings.push_back(c->path() + ": " + ex.what());
         }
     }
     gPendingParents.clear();

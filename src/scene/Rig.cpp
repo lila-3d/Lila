@@ -318,7 +318,7 @@ void registerJointCommands()
                 placeAt(g, id, vec3Of(a.flags["position"]));
             if (!a.get<bool>("skipSelect"))
                 g.select({id});
-            return g.node(id)->name();
+            return g.node(id)->path();
         },
     });
 
@@ -385,7 +385,7 @@ void registerJointCommands()
                     else
                         Transform::setLocalMatrix(g, c, inv * world);
                 }
-                out.push_back(j->name());
+                out.push_back(j->path());
             }
             return out;
         },
@@ -459,7 +459,7 @@ void registerJointCommands()
                 g.setValue({dst, Transform::kRotate}, rot);
                 g.setValue({dst, Joint::kJointOrient}, clean(matrixToEuler(jo, RotateOrder::XYZ)));
                 g.setValue({dst, Transform::kTranslate}, clean(glm::dvec3(glm::inverse(parentWorld) * glm::dvec4(pos, 1.0))));
-                out.push_back(d->name());
+                out.push_back(d->path());
             }
             return out;
         },
@@ -527,7 +527,7 @@ void registerJointCommands()
                 g.setValue({j->id(), Joint::kRadius}, g.node(id)->value(Joint::kRadius));
                 placeAt(g, j->id(), glm::mix(from, to, double(k) / double(count + 1)));
                 parent = j->id();
-                out.push_back(j->name());
+                out.push_back(j->path());
             }
             guarded([&] { g.setParent(child, parent, true); return 0; });
             return out;
@@ -549,7 +549,7 @@ void registerJointCommands()
             for (NodeId p = g.parent(id); p != kNoNode && rig::isJoint(*g.node(p)); p = g.parent(p))
                 path.push_back(p);
             if (path.size() == 1)
-                return g.node(id)->name();
+                return g.node(id)->path();
             NodeId top = g.parent(path.back());
             guarded([&] {
                 g.setParent(id, top, true);
@@ -557,7 +557,7 @@ void registerJointCommands()
                     g.setParent(path[k], path[k - 1], true);
                 return 0;
             });
-            return g.node(id)->name();
+            return g.node(id)->path();
         },
     });
 }

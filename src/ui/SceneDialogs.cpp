@@ -8,6 +8,7 @@
 #include "core/Workspace.h"
 #include "io/SceneFile.h"
 #include "io/SceneHistory.h"
+#include "ui/Theme.h"
 #include "vcs/SourceControl.h"
 
 #include <QApplication>
@@ -228,6 +229,12 @@ StartupDialog::StartupDialog(Hooks hooks, QWidget* parent) : QDialog(parent), mH
     layout->setContentsMargins(16, 14, 16, 12);
     auto* title = new QLabel("Recent Scenes", this);
     title->setObjectName("startupTitle");
+    if (themeChooserPending())
+    {
+        layout->addWidget(makeThemeChooser(this));
+        layout->addSpacing(10);
+        connect(this, &QDialog::finished, this, [] { setThemeChooserDone(); });
+    }
     layout->addWidget(title);
 
     mList = makeList(this, {"Name", "Folder", "Modified"});
@@ -280,7 +287,7 @@ StartupDialog::StartupDialog(Hooks hooks, QWidget* parent) : QDialog(parent), mH
         if (open)
             open({});
     });
-    resize(680, 380);
+    resize(680, themeChooserPending() ? 640 : 380);
     qApp->installEventFilter(this);
 }
 

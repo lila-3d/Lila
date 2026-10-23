@@ -110,7 +110,7 @@ public:
         int world = n ? n->type().attrIndex("worldMatrix") : -1;
         if (world < 0)
             return false;
-        mTarget = n->name();
+        mTarget = n->path();
         mPivot = glm::dvec3(n->as<glm::dmat4>(world)[3]);
         return true;
     }

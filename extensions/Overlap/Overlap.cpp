@@ -42,6 +42,19 @@ double num(const Node& n, const char* name) { return n.as<double>(attr(n, name))
 int64_t integer(const Node& n, const char* name) { return n.as<int64_t>(attr(n, name)); }
 bool flag(const Node& n, const char* name) { return n.as<bool>(attr(n, name)); }
 const std::string& text(const Node& n, const char* name) { return n.as<std::string>(attr(n, name)); }
+
+/** The node a text attr names (a full path, or a name in older scenes); null when it is gone or ambiguous. */
+Node* named(Graph& g, const std::string& path)
+{
+    try
+    {
+        return path.empty() ? nullptr : g.find(path);
+    }
+    catch (const std::exception&)
+    {
+        return nullptr;
+    }
+}
 glm::dvec3 vec(const Node& n, const char* name) { return n.as<glm::dvec3>(attr(n, name)); }
 
 AttrDef number(const char* name, double def, const char* doc, uint32_t extra = 0)
@@ -260,11 +273,12 @@ public:
 
         uint64_t h = hashOwn(g, *o, 0x9ae16a3b2f90404full);
 
-        // Per-joint overrides, by joint name.
-        std::map<std::string, NodeId> overrides;
+        // Per-joint overrides, by the joint they name.
+        std::map<NodeId, NodeId> overrides;
         for (NodeId j : descendantsOfType(g, mNode, kJointType))
         {
-            overrides[text(*g.node(j), "joint")] = j;
+            if (Node* joint = named(g, text(*g.node(j), "joint")))
+                overrides[joint->id()] = j;
             h = hashOwn(g, *g.node(j), h);
         }
 
@@ -276,8 +290,8 @@ public:
             h = hashOwn(g, chain, h);
             if (!flag(chain, "enabled"))
                 continue;
-            Node* root = g.find(text(chain, "root"));
-            Node* end = text(chain, "end").empty() ? nullptr : g.find(text(chain, "end"));
+            Node* root = named(g, text(chain, "root"));
+            Node* end = named(g, text(chain, "end"));
             if (!root || (!text(chain, "end").empty() && !end))
                 continue;
             std::vector<NodeId> joints = chainJoints(g, root->id(), end ? end->id() : kNoNode);
@@ -296,7 +310,7 @@ public:
                 double delay = num(chain, "delay");
                 e.collide = flag(chain, "collide");
                 e.radius = num(chain, "radius");
-                if (auto ov = overrides.find(jn.name()); ov != overrides.end())
+                if (auto ov = overrides.find(jn.id()); ov != overrides.end())
                 {
                     const Node& j = *g.node(ov->second);
                     if (!flag(j, "enabled"))
@@ -361,7 +375,7 @@ public:
 
         if (mSpace == Space::CharacterRoot)
         {
-            Node* root = g.find(text(*o, "root"));
+            Node* root = named(g, text(*o, "root"));
             mRoot = root ? root->id() : kNoNode;
             if (!mRoot && !mEntries.empty())
                 for (NodeId cur = mEntries.front().joint; cur; cur = g.parent(cur))
@@ -766,10 +780,10 @@ std::string setString(Graph& g, NodeId id, const char* name, const std::string& 
     return v;
 }
 
-NodeId overlapFor(Graph& g, const std::string& rootName)
+NodeId overlapFor(Graph& g, NodeId root)
 {
     for (NodeId id : g.nodes())
-        if (Node* n = g.node(id); n && n->type().name == kOverlapType && text(*n, "root") == rootName)
+        if (Node* n = g.node(id); n && n->type().name == kOverlapType && named(g, text(*n, "root")) == g.node(root))
             return id;
     return kNoNode;
 }
@@ -810,12 +824,13 @@ void registerCommands(ext::Context& ctx)
             std::vector<NodeId> joints = jointArgs(g, a, "createOverlap");
             if (a.has("end") && joints.size() != 1)
                 throw CommandError("createOverlap: end needs exactly one root joint");
-            const std::string rootName = g.node(topJoint(g, joints.front()))->name();
-            NodeId o = overlapFor(g, rootName);
+            const NodeId top = topJoint(g, joints.front());
+            const std::string rootName = g.node(top)->name();
+            NodeId o = overlapFor(g, top);
             if (!o)
             {
                 o = g.createNode(*types::find(kOverlapType), a.get<std::string>("name", rootName + "_overlap"))->id();
-                setString(g, o, "root", rootName);
+                setString(g, o, "root", g.path(top));
                 if (a.has("space"))
                 {
                     const std::string s = a.get<std::string>("space");
@@ -826,17 +841,17 @@ void registerCommands(ext::Context& ctx)
             {
                 const std::string name = g.node(j)->name();
                 NodeId c = g.createNode(*types::find(kChainType), name + "_chain", o)->id();
-                setString(g, c, "root", name);
+                setString(g, c, "root", g.path(j));
                 if (a.has("end"))
                 {
                     Node* end = g.find(a.get<std::string>("end"));
                     if (!end || chainJoints(g, j, end->id()).empty())
-                        throw CommandError("createOverlap: " + a.get<std::string>("end") + " is not below " + name);
-                    setString(g, c, "end", end->name());
+                        throw CommandError("createOverlap: " + a.get<std::string>("end") + " is not below " + g.path(j));
+                    setString(g, c, "end", end->path());
                 }
             }
             g.select({o});
-            return g.node(o)->name();
+            return g.node(o)->path();
         },
     });
 
@@ -867,7 +882,7 @@ void registerCommands(ext::Context& ctx)
             g.setValue({id, attr(*n, "radius"), -1}, a.get<double>("radius", 5.0));
             g.setValue({id, attr(*n, "length"), -1}, a.get<double>("length", 20.0));
             g.select({id});
-            return g.node(id)->name();
+            return g.node(id)->path();
         },
     });
 
@@ -886,23 +901,23 @@ void registerCommands(ext::Context& ctx)
             for (NodeId j : jointArgs(g, a, "addOverlapJoint"))
             {
                 const std::string name = g.node(j)->name();
-                NodeId o = overlapFor(g, g.node(topJoint(g, j))->name());
+                NodeId o = overlapFor(g, topJoint(g, j));
                 if (!o)
-                    throw CommandError("addOverlapJoint: " + name + " has no Overlap; run createOverlap first");
+                    throw CommandError("addOverlapJoint: " + g.path(j) + " has no Overlap; run createOverlap first");
                 NodeId settings = kNoNode;
                 for (NodeId s : descendantsOfType(g, o, kJointType))
-                    if (text(*g.node(s), "joint") == name)
+                    if (named(g, text(*g.node(s), "joint")) == g.node(j))
                         settings = s;
                 if (!settings)
                 {
                     settings = g.createNode(*types::find(kJointType), name + "_overlapJoint", o)->id();
-                    setString(g, settings, "joint", name);
+                    setString(g, settings, "joint", g.path(j));
                 }
                 if (a.has("pin"))
                     g.setValue({settings, attr(*g.node(settings), "pin"), -1}, a.get<double>("pin"));
                 if (a.has("delay"))
                     g.setValue({settings, attr(*g.node(settings), "delay"), -1}, a.get<double>("delay"));
-                out.push_back(g.node(settings)->name());
+                out.push_back(g.node(settings)->path());
             }
             return out;
         },

@@ -195,7 +195,7 @@ QWidget* controls(NodeId id, QWidget* parent = nullptr)
     status->setWordWrap(true);
     auto name = [id] {
         Node* n = Graph::current().node(id);
-        return n ? n->name() : std::string();
+        return n ? n->path() : std::string();
     };
     auto refresh = [status, id] { status->setText(QString::fromStdString(infoText(id))); };
     auto button = [&](const char* label, const char* tip, std::function<void()> fn) {
@@ -245,7 +245,7 @@ QWidget* makePanel(QWidget* parent)
         list->clear();
         for (NodeId id : sim::simulations(g))
             if (Node* n = g.node(id); n && n->type().isA(kOverlapType))
-                list->addItem(QString::fromStdString(n->name()));
+                list->addItem(QString::fromStdString(n->path()));
         for (int i = 0; i < list->count(); ++i)
             if (list->item(i)->text() == current)
                 list->setCurrentRow(i);
@@ -257,7 +257,8 @@ QWidget* makePanel(QWidget* parent)
             delete item;
         }
         Graph& g = Graph::current();
-        if (Node* n = g.find(name.toStdString()))
+        std::vector<NodeId> found = g.findAll(name.toStdString());
+        if (Node* n = found.size() == 1 ? g.node(found[0]) : nullptr)
         {
             g.select({n->id()});
             holder->addWidget(controls(n->id(), w));

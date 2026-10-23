@@ -3,6 +3,7 @@
 #include "core/Log.h"
 #include "core/Registry.h"
 #include "ui/Icons.h"
+#include "ui/Theme.h"
 
 #include <QFont>
 #include <QFontMetricsF>
@@ -519,8 +520,13 @@ bool OverlayPainter::brightBackdrop(QRectF r) const
 glm::vec4 OverlayPainter::ink(float shade, float alpha, QRectF r) const
 {
     // Dark ink stays well below a mid-gray backdrop even for dim shades, so they never vanish into it.
-    float g = brightBackdrop(r) ? 0.35f * (1.0f - shade) : shade;
-    return {g, g, g, alpha};
+    if (brightBackdrop(r))
+    {
+        float g = 0.35f * (1.0f - shade);
+        return {g, g, g, alpha};
+    }
+    glm::vec4 tint = themeSrgb("hudText", glm::vec4(1.0f));
+    return {shade * tint.r, shade * tint.g, shade * tint.b, alpha};
 }
 
 void OverlayPainter::label(QPointF at, const QString& s, const glm::vec4& color)

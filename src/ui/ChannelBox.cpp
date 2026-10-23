@@ -8,10 +8,13 @@
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
+#include "scene/Morphs.h"
 #include "scene/Spaces.h"
 #include "ui/Animation.h"
+#include "ui/NodeLookup.h"
 #include "ui/NumberExpr.h"
 #include "ui/SpinScrub.h"
+#include "ui/Theme.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -34,6 +37,21 @@ namespace lila::ui
 namespace
 {
 using scene::Graph;
+
+/** The plug "Set as Driver" picked, for Drive From. */
+std::string gDriverPlug;
+
+double currentNumber(Graph& g, const scene::PlugRef& p)
+{
+    scene::PlugValue v = g.value(p);
+    if (auto* d = std::get_if<double>(&v))
+        return *d;
+    if (auto* i = std::get_if<int64_t>(&v))
+        return double(*i);
+    if (auto* b = std::get_if<bool>(&v))
+        return *b ? 1.0 : 0.0;
+    return 0.0;
+}
 
 /** "translateX" -> "Translate X". */
 QString niceName(const std::string& name)
@@ -160,6 +178,16 @@ struct CopiedValue
 std::vector<CopiedValue> gCopied;
 QString gCopiedText; // what the copy put on the clipboard; a different clipboard means someone else copied since
 
+/** A value held inside the attr's hard limits. */
+double clampToLimits(const scene::AttrDef& def, double v)
+{
+    if (def.minValue)
+        v = std::max(v, *def.minValue);
+    if (def.maxValue)
+        v = std::min(v, *def.maxValue);
+    return v;
+}
+
 /**
  * The setAttr value for text typed into a channel: on/off for bools, an enum's name or index, otherwise a number or
  * an expression on the channel's current value. nullopt when the text doesn't fit the channel.
@@ -187,6 +215,7 @@ std::optional<json> parseValue(Graph& g, const std::string& plug, scene::PlugTyp
     auto v = evalExpression(text, current);
     if (!v)
         return std::nullopt;
+    *v = clampToLimits(g.attr(g.plug(plug)), *v);
     if (type == scene::PlugType::Int)
         return json(int64_t(std::llround(*v)));
     return json(*v);
@@ -271,7 +300,7 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
             return;
         try
         {
-            ops::execute("rename", {{"args", {n->name(), mName->text().toStdString()}}}, CallSource::UI);
+            ops::execute("rename", {{"args", {n->path(), mName->text().toStdString()}}}, CallSource::UI);
         }
         catch (const CommandError& e)
         {
@@ -325,7 +354,7 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
             if (item->column() != 0 || item->row() >= int(mRows.size()) || mRows[item->row()].header)
                 continue;
             const Row& row = mRows[item->row()];
-            for (const std::string& name : row.node ? std::vector<std::string>{g.node(row.node)->name()} : targets())
+            for (const std::string& name : row.node ? std::vector<std::string>{g.node(row.node)->path()} : targets())
                 plugs.push_back(name + "." + row.attr);
         }
         auto runEach = [plugs](const char* label, auto fn) {
@@ -366,6 +395,23 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
             runEach("Delete Keys", [](const std::string& p) { ops::execute("cutKey", {{"args", {p}}, {"clear", true}}, CallSource::UI); });
         });
         menu.addSeparator();
+        if (plugs.size() == 1)
+            menu.addAction("Set as Driver", [p = plugs[0].get<std::string>()] {
+                gDriverPlug = p;
+                log::info("driver: {}; right-click a channel and choose Drive From to drive it", p);
+            });
+        if (!gDriverPlug.empty())
+            menu.addAction(QString::fromStdString("Drive From " + gDriverPlug), [runEach] {
+                runEach("Drive From", [](const std::string& p) {
+                    Graph& g = Graph::current();
+                    const double d = currentNumber(g, g.plug(gDriverPlug)), v = currentNumber(g, g.plug(p));
+                    ops::execute("driveChannel",
+                                 {{"args", {p}}, {"driver", gDriverPlug}, {"keys", json::array({json::array({d, v}), json::array({d + 1.0, v + 1.0})})},
+                                  {"force", true}},
+                                 CallSource::UI);
+                });
+            });
+        menu.addSeparator();
         for (bool lock : {true, false})
             menu.addAction(lock ? "Lock Selected" : "Unlock Selected", [runEach, lock] {
                 runEach(lock ? "Lock Selected" : "Unlock Selected", [lock](const std::string& p) {
@@ -376,7 +422,7 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
         {
             menu.addSeparator();
             QMenu* spaces = menu.addMenu("Switch Space");
-            const std::string node = sg.node(mNode)->name();
+            const std::string node = sg.node(mNode)->path();
             const std::vector<std::string> names = scene::spaces::names(sg, mNode);
             const int now = scene::spaces::active(sg, mNode);
             for (int i = 0; i < int(names.size()); ++i)
@@ -427,7 +473,7 @@ std::vector<std::string> ChannelBox::targets() const
     Graph& g = Graph::current();
     for (scene::NodeId id : g.selection())
         if (scene::Node* n = g.node(id))
-            out.push_back(n->name());
+            out.push_back(n->path());
     return out;
 }
 
@@ -471,6 +517,10 @@ std::vector<ChannelBox::Row> ChannelBox::buildRows(scene::NodeId lead) const
             continue;
         rows.push_back({in->name(), -1, -1, scene::PlugType::Float, id, true});
         addChannels(in, id);
+        if (in->type().isA("morph"))
+            for (scene::NodeId t : scene::morphs::targetNodes(g, id))
+                rows.push_back({"weight", scene::morphs::kWeight, -1, scene::PlugType::Float, t, false,
+                                g.node(t)->as<std::string>(scene::morphs::kMorphName)});
     }
     return rows;
 }
@@ -491,12 +541,13 @@ void ChannelBox::refresh()
     mUpdating = true;
     mNode = lead;
     mName->setText(n ? QString::fromStdString(n->name()) : QString());
+    mName->setToolTip(n ? QString::fromStdString(n->fullPath()) : QString());
     mName->setEnabled(n != nullptr);
 
     std::vector<Row> rows = buildRows(lead);
     bool sameLayout = rows.size() == mRows.size() &&
                       std::equal(rows.begin(), rows.end(), mRows.begin(), [](const Row& a, const Row& b) {
-                          return a.attr == b.attr && a.node == b.node && a.header == b.header && a.component == b.component;
+                          return a.attr == b.attr && a.node == b.node && a.header == b.header && a.component == b.component && a.label == b.label;
                       });
     // A scrub holds row indices, so it only ever sees values change.
     if (!sameLayout && mScrub)
@@ -529,10 +580,16 @@ void ChannelBox::refresh()
                 continue;
             }
             scene::Node* owner = g.node(row.node ? row.node : lead);
-            auto* name = new QTableWidgetItem(niceName(row.attr));
+            const scene::AttrDef& def = owner->type().attrs[row.attrIndex];
+            QString shown = row.label.empty() ? niceName(row.attr) : QString::fromStdString(row.label);
+            if (row.label.empty() && !def.niceName.empty())
+            {
+                const char* axes = (def.flags & scene::AttrColor) ? "RGB" : "XYZ";
+                shown = QString::fromStdString(def.niceName) + (row.component >= 0 && row.component < 3 ? QString(" ") + axes[row.component] : QString());
+            }
+            auto* name = new QTableWidgetItem(shown);
             name->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
             name->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-            const scene::AttrDef& def = owner->type().attrs[row.attrIndex];
             QString tip = QString::fromStdString(row.attr + (def.doc.empty() ? "" : "\n" + def.doc));
             if (QString text = defaultText(def, row.component); !text.isEmpty())
                 tip += "\n" + resetHint(text);
@@ -572,12 +629,12 @@ void ChannelBox::refresh()
         bool driven = !curve && (g.source(ref).has_value() || g.source(scene::PlugRef{owner, row.attrIndex}).has_value());
         QBrush tint;
         if (curve)
-            tint = scene::anim::hasKeyAt(*g.node(curve), g.time()) ? QColor(84, 84, 84) : QColor(60, 60, 60);
+            tint = scene::anim::hasKeyAt(*g.node(curve), g.time()) ? themeShade(84) : themeShade(60);
         // Locked fields read as a flat light grey, Maya's blue-grey in grayscale.
         const bool locked = g.isLocked(ref);
-        item->setBackground(locked ? QBrush(QColor(112, 112, 112)) : tint);
+        item->setBackground(locked ? QBrush(themeShade(112)) : tint);
         mTable->item(r, 0)->setBackground(tint);
-        item->setForeground(locked ? QColor(28, 28, 28) : driven ? QColor(130, 130, 130) : palette().color(QPalette::Text));
+        item->setForeground(locked ? themeShade(28) : driven ? themeShade(130) : palette().color(QPalette::Text));
         QFont f = item->font();
         f.setItalic(driven);
         item->setFont(f);
@@ -629,10 +686,10 @@ void ChannelBox::toggleBool(int row)
 void ChannelBox::apply(const Row& row, const QString& text)
 {
     Graph& g = Graph::current();
-    std::vector<std::string> names = row.node ? std::vector<std::string>{g.node(row.node)->name()} : targets();
+    std::vector<std::string> names = row.node ? std::vector<std::string>{g.node(row.node)->path()} : targets();
     for (const std::string& name : names)
     {
-        scene::Node* n = g.find(name);
+        scene::Node* n = findNode(name);
         std::string plug = name + "." + row.attr;
         // Skip selected nodes that don't have this channel.
         try
@@ -778,7 +835,7 @@ void ChannelBox::beginScrub(QPoint pos)
         return;
     Graph& g = Graph::current();
     for (int r : s.rows)
-        for (const std::string& name : mRows[r].node ? std::vector<std::string>{g.node(mRows[r].node)->name()} : targets())
+        for (const std::string& name : mRows[r].node ? std::vector<std::string>{g.node(mRows[r].node)->path()} : targets())
         {
             try
             {
@@ -836,11 +893,11 @@ void ChannelBox::applyScrub()
     {
         try
         {
-            double base = numericOf(value, -1);
+            double v = clampToLimits(g.attr(plug), numericOf(value, -1) + s.accum);
             if (std::holds_alternative<int64_t>(value))
-                g.setValue(plug, int64_t(std::llround(base + s.accum)));
+                g.setValue(plug, int64_t(std::llround(v)));
             else
-                g.setValue(plug, base + s.accum);
+                g.setValue(plug, v);
         }
         catch (const std::exception&)
         {
@@ -870,7 +927,7 @@ void ChannelBox::endScrub(bool commit)
         UndoChunk chunk("Drag Channels");
         for (auto& [plug, value] : s.saved)
         {
-            double v = numericOf(value, -1) + s.accum;
+            double v = clampToLimits(g.attr(plug), numericOf(value, -1) + s.accum);
             json jv = std::holds_alternative<int64_t>(value) ? json(int64_t(std::llround(v))) : json(std::round(v * 1e4) / 1e4);
             try
             {
@@ -907,7 +964,7 @@ void ChannelBox::resetRows(const std::vector<int>& rows)
                 continue;
             const Row& row = mRows[r];
             bool any = false;
-            for (const std::string& name : row.node ? std::vector<std::string>{g.node(row.node)->name()} : targets())
+            for (const std::string& name : row.node ? std::vector<std::string>{g.node(row.node)->path()} : targets())
             {
                 try
                 {
@@ -1057,7 +1114,7 @@ void ChannelBox::pasteValues()
             // Input nodes are per object: paste onto the matching input shown here.
             for (const Row& row : mRows)
                 if (row.node && !row.header && row.attr == c.attr && g.node(row.node) && g.node(row.node)->type().name == c.inputType)
-                    set(g.node(row.node)->name() + "." + c.attr, c.value);
+                    set(g.node(row.node)->path() + "." + c.attr, c.value);
         }
     else
         for (auto& [attr, value] : lines)
@@ -1075,7 +1132,7 @@ void ChannelBox::pasteValues()
             for (const Row& row : mRows)
                 if (row.node && !row.header && row.attr == attr && g.node(row.node))
                 {
-                    std::string plug = g.node(row.node)->name() + "." + attr;
+                    std::string plug = g.node(row.node)->path() + "." + attr;
                     if (auto v = parsed(plug, value))
                         set(plug, *v);
                 }

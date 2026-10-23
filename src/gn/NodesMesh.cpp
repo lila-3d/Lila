@@ -326,6 +326,7 @@ void meshOps()
                 for (Index e = 0; e < m.edgeCapacity(); ++e)
                     if (sel[e])
                         hard[e] = !smooth[e];
+                m.cornerAttrs().remove(geo::attr::kNormal);
                 return;
             }
             // A flat face hardens its edges; a smooth one softens them unless a flat neighbour keeps them hard.

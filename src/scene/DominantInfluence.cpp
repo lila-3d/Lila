@@ -165,7 +165,7 @@ void registerDominantInfluenceCommands()
             if (a.has("face"))
             {
                 NodeId j = rig::dominantJoint(g, mesh, uint32_t(a.get<int64_t>("face")));
-                return j == kNoNode ? json(nullptr) : json(g.node(j)->name());
+                return j == kNoNode ? json(nullptr) : json(g.node(j)->path());
             }
             if (a.has("joint"))
                 return rig::dominatedFaces(g, mesh, nodeNamed(a.get<std::string>("joint"), "dominantInfluence").id());

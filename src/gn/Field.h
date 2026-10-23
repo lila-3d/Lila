@@ -14,8 +14,8 @@
 
 namespace lila::gn
 {
-/** Storage per socket type: Float double, Int int64_t, Bool uint8_t, Vector and Rotation dvec3. */
-using ColumnData = std::variant<std::vector<double>, std::vector<int64_t>, std::vector<uint8_t>, std::vector<glm::dvec3>>;
+/** Storage per socket type: Float double, Int int64_t, Bool uint8_t, Vector and Rotation dvec3, Color dvec4 (linear RGBA). */
+using ColumnData = std::variant<std::vector<double>, std::vector<int64_t>, std::vector<uint8_t>, std::vector<glm::dvec3>, std::vector<glm::dvec4>>;
 
 /** One value per element, or one value for all of them when single. */
 struct LILA_SCENE_API Column
@@ -44,6 +44,8 @@ template <class T> constexpr SocketType socketOf()
         return SocketType::Int;
     else if constexpr (std::is_same_v<T, uint8_t>)
         return SocketType::Bool;
+    else if constexpr (std::is_same_v<T, glm::dvec4>)
+        return SocketType::Color;
     else
         return SocketType::Vector;
 }
@@ -108,6 +110,7 @@ LILA_SCENE_API FieldPtr constantFloat(double v);
 LILA_SCENE_API FieldPtr constantInt(int64_t v);
 LILA_SCENE_API FieldPtr constantBool(bool v);
 LILA_SCENE_API FieldPtr constantVector(const glm::dvec3& v, SocketType type = SocketType::Vector);
+LILA_SCENE_API FieldPtr constantColor(const glm::dvec4& v);
 /** Wraps a field so it evaluates to another socket type. */
 LILA_SCENE_API FieldPtr convertField(const FieldPtr& f, SocketType to);
 
@@ -189,7 +192,11 @@ LILA_SCENE_API Column adaptCurveDomain(const CurveSet& cs, const Column& c, Doma
 /** Raw attribute lookup: values on the domain the attribute lives on. */
 LILA_SCENE_API std::optional<Column> readAttribute(const FieldContext& ctx, std::string_view name, Domain* domainOut);
 
-/** Writes a column as an attribute on a mesh domain (replacing any same-named layer on other domains). */
+/**
+ * Writes a column as an attribute on a mesh domain (replacing any same-named layer on other domains). Color values,
+ * and vectors written to a name that already is a colour set, become the corner colour set "color:<name>" that
+ * exporters write as vertex colour; other domains are spread onto the corners.
+ */
 LILA_SCENE_API void writeAttribute(geo::Mesh& m, std::string_view name, Domain d, const Column& values, SocketType type);
 LILA_SCENE_API void writeAttribute(CurveSet& c, std::string_view name, Domain d, const Column& values, SocketType type);
 LILA_SCENE_API void writeAttribute(Instances& inst, std::string_view name, const Column& values, SocketType type);

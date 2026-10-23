@@ -10,6 +10,7 @@
 #include "scene/Camera.h"
 #include "scene/Components.h"
 #include "scene/Deformers.h"
+#include "scene/Drivers.h"
 #include "scene/DisplayLayers.h"
 #include "scene/Ghosts.h"
 #include "scene/Graph.h"
@@ -23,6 +24,7 @@
 #include "scene/Poses.h"
 #include "scene/RenderSettings.h"
 #include "scene/Rig.h"
+#include "scene/SceneData.h"
 #include "scene/SceneScripts.h"
 #include "scene/Simulation.h"
 #include "scene/Spaces.h"
@@ -59,7 +61,7 @@ json namesOf(const std::vector<NodeId>& ids)
     json out = json::array();
     for (NodeId id : ids)
         if (Node* n = graph().node(id))
-            out.push_back(n->name());
+            out.push_back(n->path());
     return out;
 }
 
@@ -103,7 +105,7 @@ json create(const std::string& type, const Args& a)
     Node* n = guarded([&] { return graph().createNode(*t, a.get<std::string>("name", ""), parentArg(a)); });
     if (!a.get<bool>("skipSelect", false) && t->dag)
         graph().select({n->id()});
-    return n->name();
+    return n->path();
 }
 } // namespace
 
@@ -116,6 +118,7 @@ void registerTransformCommands();
 void registerMeshEditCommands();
 void registerTransferCommands();
 void registerBooleanCommands();
+void registerSmartJoinCommands();
 void registerObjectCommands();
 void registerBoundingMeshCommands();
 void registerComponentQueryCommands();
@@ -130,6 +133,7 @@ void registerCommands()
     registerComponentQueryCommands();
     registerTransferCommands();
     registerBooleanCommands();
+    registerSmartJoinCommands();
     registerObjectCommands();
     registerBoundingMeshCommands();
     modifiers::registerCommands();
@@ -142,6 +146,7 @@ void registerCommands()
     registerCameraCommands();
     spaces::registerCommands();
     anim::registerCommands();
+    drivers::registerCommands();
     poses::registerCommands();
     picker::registerCommands();
     ghosts::registerCommands();
@@ -151,6 +156,7 @@ void registerCommands()
     sim::registerCommands();
     registerRenderSettingsCommands();
     scripts::registerCommands();
+    data::registerCommands();
     displayLayers::registerCommands();
     objectSets::registerCommands();
 
@@ -167,6 +173,8 @@ void registerCommands()
         .flags = {
             {"enable", "e", T::Bool, nullptr, "Turn enforcement on or off for the workspace (user prefs if none open)."},
             {"mode", "m", T::String, nullptr, "fix | warn | block"},
+            {"uniqueNames", "un", T::Bool, nullptr,
+             "Make names unique across the whole scene, not just among siblings (workspace, else user prefs)."},
             {"check", "c", T::Bool, false, "Return [[node, expectedName], ...] for names that break the rules."},
             {"fix", "f", T::Bool, false, "Rename every node that breaks the rules."},
         },
@@ -176,7 +184,9 @@ void registerCommands()
                 PrefStore::get().set("naming", "/enabled", a.get<bool>("enable"), scope);
             if (a.has("mode"))
                 PrefStore::get().set("naming", "/mode", a.get<std::string>("mode"), scope);
-            if (a.has("enable") || a.has("mode"))
+            if (a.has("uniqueNames"))
+                PrefStore::get().set("naming", "/uniqueNames", a.get<bool>("uniqueNames"), scope);
+            if (a.has("enable") || a.has("mode") || a.has("uniqueNames"))
                 loadNamingPolicy();
 
             if (a.get<bool>("check") || a.get<bool>("fix"))
@@ -191,9 +201,10 @@ void registerCommands()
                     std::string want = policy.conform(n->type(), was);
                     if (want == was)
                         continue;
+                    std::string at = graph().path(id);
                     if (a.get<bool>("fix"))
                         want = guarded([&] { return graph().rename(id, want); });
-                    out.push_back({was, want});
+                    out.push_back({at, want});
                 }
                 return out;
             }
@@ -206,16 +217,16 @@ void registerCommands()
     ops::setSelectionProvider([] {
         std::vector<std::string> out;
         for (NodeId id : graph().selection())
-            out.push_back(graph().node(id)->name());
+            out.push_back(graph().path(id));
         return out;
     });
 
     ops::registerCommand({
         .name = "createNode",
-        .doc = "Create a node of the given type. Returns its name.",
+        .doc = "Create a node of the given type. Returns its path (the name, unless another node shares it).",
         .positionalDoc = "type",
         .flags = {
-            {"name", "n", T::String, nullptr, "Name; made unique."},
+            {"name", "n", T::String, nullptr, "Name; made unique among its siblings."},
             {"parent", "p", T::String, nullptr, "Parent transform."},
             {"skipSelect", "ss", T::Bool, false, "Don't select the new node."},
         },
@@ -228,9 +239,9 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "spaceLocator",
-        .doc = "Create a locator. Returns its name.",
+        .doc = "Create a locator. Returns its path.",
         .flags = {
-            {"name", "n", T::String, nullptr, "Name; made unique."},
+            {"name", "n", T::String, nullptr, "Name; made unique among its siblings."},
             {"position", "p", T::Vec3, nullptr, "World position."},
             {"skipSelect", "ss", T::Bool, false, "Don't select the new locator."},
         },
@@ -265,7 +276,7 @@ void registerCommands()
             for (NodeId m : members)
                 guarded([&] { graph().setParent(m, g); return 0; });
             graph().select({g});
-            return name;
+            return graph().path(g);
         },
     });
 
@@ -281,7 +292,7 @@ void registerCommands()
                 doomed.push_back(id);
                 for (NodeId d : doomed)
                     if (graph().node(d)->referenceId())
-                        throw CommandError("delete: '" + graph().node(d)->name() +
+                        throw CommandError("delete: '" + graph().path(d) +
                                            "' comes from a reference; remove or unload the reference instead");
             }
             for (NodeId id : ids)
@@ -292,7 +303,7 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "rename",
-        .doc = "rename(old, new) or rename(new) for the single selected object. Returns the name given.",
+        .doc = "rename(old, new) or rename(new) for the single selected object. Returns the renamed node's path.",
         .positionalDoc = "[object] newName",
         .run = [](const Args& a) -> json {
             std::string target, newName;
@@ -303,14 +314,16 @@ void registerCommands()
             }
             else if (a.positional.size() == 1 && graph().selection().size() == 1)
             {
-                target = graph().node(graph().selection()[0])->name();
+                target = graph().path(graph().selection()[0]);
                 newName = a.positional[0].get<std::string>();
             }
             else
                 throw CommandError("rename: expected (object, newName)");
             if (nodeNamed(target).referenceId())
                 throw CommandError("rename: '" + target + "' comes from a reference and keeps its name");
-            return guarded([&] { return graph().rename(nodeNamed(target).id(), newName); });
+            NodeId id = nodeNamed(target).id();
+            guarded([&] { return graph().rename(id, newName); });
+            return graph().path(id);
         },
     });
 
@@ -494,10 +507,16 @@ void registerCommands()
         .undoable = false,
         .run = [](const Args& a) -> json {
             std::vector<NodeId> ids = a.get<bool>("selection") ? graph().selection() : graph().nodes();
-            std::vector<std::string> wanted;
+            // A short name matching several nodes lists them all, like a pattern would.
+            std::vector<NodeId> wanted;
+            bool filtered = false;
             for (const json& v : a.positional)
                 if (v.is_string())
-                    wanted.push_back(v.get<std::string>());
+                {
+                    filtered = true;
+                    for (NodeId id : graph().findAll(v.get<std::string>()))
+                        wanted.push_back(id);
+                }
             json out = json::array();
             for (NodeId id : ids)
             {
@@ -506,9 +525,9 @@ void registerCommands()
                     continue;
                 if (a.get<bool>("dag") && !n->type().dag)
                     continue;
-                if (!wanted.empty() && std::find(wanted.begin(), wanted.end(), n->name()) == wanted.end())
+                if (filtered && std::find(wanted.begin(), wanted.end(), id) == wanted.end())
                     continue;
-                out.push_back(n->name());
+                out.push_back(graph().path(id));
             }
             return out;
         },
@@ -617,10 +636,10 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "objExists",
-        .doc = "True if a node with this name exists.",
+        .doc = "True if a node with this name or path exists.",
         .positionalDoc = "name",
         .undoable = false,
-        .run = [](const Args& a) -> json { return !a.positional.empty() && graph().find(a.positional[0].get<std::string>()) != nullptr; },
+        .run = [](const Args& a) -> json { return !a.positional.empty() && !graph().findAll(a.positional[0].get<std::string>()).empty(); },
     });
 
     ops::registerCommand({

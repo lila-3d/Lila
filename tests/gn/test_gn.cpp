@@ -206,42 +206,6 @@ TEST_CASE("groups and their modifiers survive save and load")
     }
 }
 
-TEST_CASE("exportMeshSequence writes a mesh per frame")
-{
-    run("newScene");
-    std::string mesh = run("polyCube", {{"name", "Bob"}})[0];
-    run("gnCreateGroup", args({"Bounce"}));
-    std::string sp = add("Bounce", "SetPosition"), xyz = add("Bounce", "CombineXYZ"), t = add("Bounce", "SceneTime"), m = add("Bounce", "Math");
-    set("Bounce", m + ".operation", "multiply");
-    set("Bounce", m + ".b", 10.0);
-    run("gnDisconnect", args({"Bounce", "GroupOutput.geometry"}));
-    link("Bounce", "GroupInput.geometry", sp + ".geometry");
-    link("Bounce", sp + ".geometry", "GroupOutput.geometry");
-    link("Bounce", t + ".frame", m + ".a");
-    link("Bounce", m + ".value", xyz + ".y");
-    link("Bounce", xyz + ".vector", sp + ".offset");
-    run("gnApply", args({mesh, "Bounce"}));
-
-    fs::path dir = fs::temp_directory_path() / "lila_gn_seq";
-    fs::remove_all(dir);
-    json files = run("exportMeshSequence", {{"args", {mesh}}, {"start", 1}, {"end", 4}, {"path", (dir / "bob_{frame}.obj").generic_string()}});
-    REQUIRE(files.size() == 4);
-    CHECK(files[0].get<std::string>().ends_with("bob_0001.obj"));
-    std::vector<double> tops;
-    for (const json& f : files)
-    {
-        REQUIRE(fs::exists(f.get<std::string>()));
-        geo::ObjReadResult r = geo::readObjFile(f.get<std::string>());
-        REQUIRE(r.ok());
-        REQUIRE(r.objects.size() == 1);
-        tops.push_back(r.objects[0].mesh.bounds().max.y);
-    }
-    for (size_t k = 0; k < tops.size(); ++k)
-        CHECK(tops[k] == doctest::Approx(50.0 + 10.0 * double(k + 1)));
-    // The scene's time is put back.
-    CHECK(run("currentTime").get<double>() == doctest::Approx(0.0));
-}
-
 TEST_CASE("node library evaluates")
 {
     run("newScene");

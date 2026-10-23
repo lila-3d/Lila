@@ -13,10 +13,13 @@
 #include "scene/MeshNodes.h"
 #include "scene/ObjectSets.h"
 #include "scene/Take.h"
+#include "seq/MeshSequence.h"
 
 #include <algorithm>
 #include <cctype>
+#include <format>
 #include <fstream>
+#include <regex>
 #include <stdexcept>
 
 namespace lila::link
@@ -77,6 +80,33 @@ std::string fileSafe(const std::string& name)
     return out.empty() ? "unnamed" : out;
 }
 
+/** A mapping's node (a full path, or a name in older mappings) made file safe, without the leading '|'. */
+std::string nodeFileStem(const std::string& node)
+{
+    return fileSafe(node.starts_with('|') ? node.substr(1) : node);
+}
+
+/** The node a mapping names; null when it is gone or the name has become ambiguous. */
+scene::Node* mappedNode(const std::string& node)
+{
+    try
+    {
+        return node.empty() ? nullptr : scene::Graph::current().find(node);
+    }
+    catch (const std::exception&)
+    {
+        return nullptr;
+    }
+}
+
+bool sameMappedNode(const std::string& a, const std::string& b)
+{
+    if (a == b)
+        return true;
+    scene::Node* n = mappedNode(a);
+    return n && n == mappedNode(b);
+}
+
 void writeMappings(const json& list)
 {
     PrefStore::get().set(kPrefFile, "/mappings", list, PrefScope::Workspace);
@@ -98,7 +128,144 @@ void reportImport(const std::string& what, const RpcResult& r)
     if (errors.empty())
         log::info("Unreal: {} -> {}", what, res.value("assets", json::array()).dump());
 }
+
+/** One frame of a meshSequence mapping: a static mesh import at <folder>/<base>_<index>. */
+json frameMapping(const json& m, const std::string& contentPath)
+{
+    json fm = m;
+    fm["kind"] = "static";
+    fm["contentPath"] = contentPath;
+    return fm;
+}
+
+/** Imports the frames in order, points the Niagara renderer at them, then drops frames past the end. Worker thread. */
+void syncSequence(RpcClient& client, const json& m, const std::vector<fs::path>& files, const json& materials, progress::Scope& scope)
+{
+    LILA_ZONE();
+
+    const std::string node = m.value("node", std::string());
+    const SequenceAssets names = sequenceAssets(m, int(files.size()));
+    json meshes = json::array();
+    for (size_t i = 0; i < files.size(); ++i)
+    {
+        scope.setStatus(std::format("Unreal: sending {} frame {} of {}", node, i + 1, files.size()));
+        RpcResult r = client.call("importAsset", importParams(files[i], frameMapping(m, names.contentPaths[i]), materials), importCallOptions());
+        if (!r.ok || !r.result.value("errors", json::array()).empty())
+        {
+            mainq::post([what = names.contentPaths[i], r] { reportImport(what, r); });
+            return;
+        }
+        meshes.push_back(names.objectPaths[i]);
+    }
+    mainq::post([node, n = files.size(), folder = names.folder] { log::info("Unreal: {} -> {} frame(s) in {}", node, n, folder); });
+
+    std::string system = m.value("niagaraSystem", std::string());
+    if (!system.empty())
+    {
+        scope.setStatus("Unreal: updating " + system);
+        json params = {{"system", system}, {"meshes", meshes}};
+        if (m.contains("niagaraEmitter") && m["niagaraEmitter"].is_string())
+            params["emitter"] = m["niagaraEmitter"];
+        if (m.contains("niagaraRenderer") && m["niagaraRenderer"].is_number_integer())
+            params["renderer"] = m["niagaraRenderer"];
+        if (m.value("save", false))
+            params["save"] = true;
+        RpcResult r = client.call("setNiagaraMeshes", params, importCallOptions());
+        mainq::post([system, r] {
+            if (!r.ok)
+                log::error("Unreal: setting the meshes of {} failed: {}", system, r.error);
+            else
+                log::info("Unreal: {} renderer(s) of {} now use the frames", r.result.value("renderers", 0), system);
+        });
+    }
+
+    RpcResult listed = client.call("listAssets", {{"path", names.folder}, {"recursive", false}, {"class", "StaticMesh"}}, kHelloTimeoutMs);
+    if (!listed.ok)
+        return;
+    json surplus = json::array();
+    for (const std::string& p : surplusFrames(listed.result, names.base, int(files.size())))
+        surplus.push_back(p);
+    if (surplus.empty())
+        return;
+    RpcResult r = client.call("deleteAssets", {{"paths", surplus}}, importCallOptions());
+    mainq::post([node, surplus, r] {
+        if (!r.ok)
+            log::error("Unreal: removing surplus frames of {} failed: {}", node, r.error);
+        else
+            log::info("Unreal: removed {} frame(s) of {} past the end of the range: {}", surplus.size(), node, surplus.dump());
+    });
+}
 } // namespace
+
+SequenceAssets sequenceAssets(const json& mapping, int count)
+{
+    SequenceAssets out;
+    std::string path = mapping.value("contentPath", std::string());
+    const size_t dot = path.find('.', path.rfind('/') == std::string::npos ? 0 : path.rfind('/'));
+    if (dot != std::string::npos)
+        path.resize(dot);
+    if (path.ends_with('/'))
+    {
+        out.folder = path.substr(0, path.size() - 1);
+        std::string node = mapping.value("node", std::string("Mesh"));
+        out.base = fileSafe(node.substr(node.rfind('|') == std::string::npos ? 0 : node.rfind('|') + 1));
+    }
+    else
+    {
+        const size_t slash = path.rfind('/');
+        out.folder = slash == std::string::npos ? std::string() : path.substr(0, slash);
+        out.base = slash == std::string::npos ? path : path.substr(slash + 1);
+    }
+    json seqOpts = mapping.value("sequence", json::object());
+    const int padding = seqOpts.is_object() ? seqOpts.value("padding", 3) : 3;
+    for (int i = 0; i < count; ++i)
+    {
+        std::string name = seq::frameName("{name}_{index}", out.base, i, double(i), padding);
+        out.contentPaths.push_back(out.folder + "/" + name);
+        out.objectPaths.push_back(out.folder + "/" + name + "." + name);
+    }
+    return out;
+}
+
+std::vector<std::string> surplusFrames(const json& listed, const std::string& base, int count)
+{
+    std::vector<std::string> out;
+    if (!listed.is_array())
+        return out;
+    std::string escaped;
+    for (char c : base)
+    {
+        if (std::string_view("\\^$.|?*+()[]{}").find(c) != std::string_view::npos)
+            escaped += '\\';
+        escaped += c;
+    }
+    const std::regex frame("^" + escaped + "_([0-9]+)$");
+    for (const json& a : listed)
+    {
+        std::string path = a.is_object() ? a.value("path", std::string()) : a.is_string() ? a.get<std::string>() : std::string();
+        std::string name = path.substr(path.rfind('/') + 1);
+        if (size_t dot = name.find('.'); dot != std::string::npos)
+            name.resize(dot);
+        std::smatch match;
+        if (std::regex_match(name, match, frame) && std::stoll(match[1].str()) >= count)
+            out.push_back(path);
+    }
+    return out;
+}
+
+seq::SequenceOptions sequenceOptions(const json& mapping, const fs::path& folder)
+{
+    json s = mapping.value("sequence", json::object());
+    if (!s.is_object())
+        s = json::object();
+    seq::SequenceOptions o = seq::fromJson(s);
+    o.playbackRange = s.value("playbackRange", !s.contains("start") && !s.contains("end"));
+    o.format = mapping.value("kind", std::string()) == "geometryCache" ? "abc" : "fbx";
+    o.folder = folder.generic_string();
+    o.pattern = "{name}_{index}";
+    o.profile = "ue5";
+    return o;
+}
 
 json toJson(const Instance& i)
 {
@@ -181,7 +348,7 @@ void setMapping(const json& m)
 
     json list = mappings();
     std::string node = m.value("node", std::string());
-    auto it = std::ranges::find_if(list, [&](const json& x) { return x.is_object() && x.value("node", std::string()) == node; });
+    auto it = std::ranges::find_if(list, [&](const json& x) { return x.is_object() && sameMappedNode(x.value("node", std::string()), node); });
     if (it != list.end())
         *it = m;
     else
@@ -195,7 +362,7 @@ bool removeMapping(const std::string& node)
     size_t before = list.size();
     json kept = json::array();
     for (const json& x : list)
-        if (!x.is_object() || x.value("node", std::string()) != node)
+        if (!x.is_object() || !sameMappedNode(x.value("node", std::string()), node))
             kept.push_back(x);
     if (kept.size() == before)
         return false;
@@ -481,11 +648,8 @@ int syncMappings(bool force)
     if (list.empty())
         return 0;
 
-    if (!findExporter("fbx"))
-    {
-        log::warn("Unreal sync: no FBX exporter registered, {} mapping(s) skipped", list.size());
-        return 0;
-    }
+    const bool haveFbx = static_cast<bool>(findExporter("fbx"));
+    int skipped = 0;
 
     struct Job
     {
@@ -494,6 +658,8 @@ int syncMappings(bool force)
         std::vector<scene::NodeId> nodes;
         fs::path file;
         ExportFn exporter;
+        /** meshSequence: the frame files, already written; the file above is then the first. */
+        std::vector<fs::path> frames;
     };
     std::vector<Job> jobs;
     scene::Graph& graph = scene::Graph::current();
@@ -503,11 +669,17 @@ int syncMappings(bool force)
         if (!m.is_object())
             continue;
         std::string node = m.value("node", std::string());
-        scene::Node* n = graph.find(node);
+        scene::Node* n = mappedNode(node);
         if (!n || m.value("contentPath", std::string()).empty())
             continue;
         // "fbx:skeletal" / "fbx:animation" when registered, so the file matches the mapping's kind.
         const std::string kind = m.value("kind", std::string("static"));
+        const bool animated = kind == "meshSequence" || kind == "geometryCache";
+        if (!haveFbx && !animated)
+        {
+            ++skipped;
+            continue;
+        }
         ExportFn exporter = findExporter("fbx:" + kind);
         std::vector<scene::NodeId> nodes{n->id()};
         if (scene::objectSets::isSet(*n))
@@ -520,6 +692,34 @@ int syncMappings(bool force)
                 exporter = together;
         }
         json materials = materialParams(graph, nodes);
+        if (animated)
+        {
+            const bool cache = kind == "geometryCache";
+            const fs::path folder = cache ? dir : dir / (nodeFileStem(node) + "_frames");
+            std::vector<fs::path> files;
+            try
+            {
+                std::error_code ec;
+                if (!cache)
+                    fs::remove_all(folder, ec);
+                seq::SequenceOptions so = sequenceOptions(m, folder);
+                so.pattern = cache ? nodeFileStem(node) : "{name}_{index}";
+                files = seq::exportSequence(graph, seq::meshNodes(graph, nodes), so);
+            }
+            catch (const std::exception& e)
+            {
+                log::error("Unreal sync: export of {} failed: {}", node, e.what());
+                continue;
+            }
+            if (files.empty())
+                continue;
+            // Geometry caches have no material slots Lila manages; Unreal's Alembic importer makes them.
+            Job job{m, cache ? json() : materials, nodes, files.front(), nullptr, {}};
+            if (!cache)
+                job.frames = files;
+            jobs.push_back(std::move(job));
+            continue;
+        }
         // takes: all | [names] pushes each scene take as its own asset, <contentPath>_<take> (or <folder>/<take>).
         if (m.contains("takes") && !m["takes"].is_null() && (kind == "animation" || kind == "skeletal"))
         {
@@ -536,12 +736,14 @@ int syncMappings(bool force)
                 ExportFn fn = [takeExporter, take](const std::vector<scene::NodeId>& ns, const fs::path& file, std::string* err) {
                     return takeExporter(ns, file, take, err);
                 };
-                jobs.push_back({tm, materials, nodes, dir / (fileSafe(node) + "_" + fileSafe(take) + ".fbx"), fn});
+                jobs.push_back({tm, materials, nodes, dir / (nodeFileStem(node) + "_" + fileSafe(take) + ".fbx"), fn});
             }
             continue;
         }
-        jobs.push_back({m, materials, nodes, dir / (fileSafe(node) + ".fbx"), exporter ? exporter : findExporter("fbx")});
+        jobs.push_back({m, materials, nodes, dir / (nodeFileStem(node) + ".fbx"), exporter ? exporter : findExporter("fbx")});
     }
+    if (skipped > 0)
+        log::warn("Unreal sync: no FBX exporter registered, {} mapping(s) skipped", skipped);
     if (jobs.empty())
         return 0;
 
@@ -560,9 +762,15 @@ int syncMappings(bool force)
         for (const Job& job : jobs)
         {
             std::string node = job.mapping.value("node", std::string());
+            if (!job.frames.empty())
+            {
+                syncSequence(*client, job.mapping, job.frames, job.materials, scope);
+                scope.step();
+                continue;
+            }
             std::string err;
             scope.setStatus("Exporting " + node);
-            if (!job.exporter(job.nodes, job.file, &err))
+            if (job.exporter && !job.exporter(job.nodes, job.file, &err))
             {
                 mainq::post([node, err] { log::error("Unreal sync: export of {} failed: {}", node, err); });
                 scope.step();

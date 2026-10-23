@@ -443,6 +443,13 @@ const std::string& textAt(const Node& n, const char* attr)
     return a < 0 ? none : n.as<std::string>(a);
 }
 
+/** The node a string attr names, or null when it names none or several. Never throws, as drawing resolves these too. */
+Node* nodeAt(Graph& g, const Node& n, const char* attr)
+{
+    const std::vector<NodeId> found = g.findAll(textAt(n, attr));
+    return found.size() == 1 ? g.node(found[0]) : nullptr;
+}
+
 PlugRef plugAt(const Node& n, const char* attr) { return {n.id(), n.type().attrIndex(attr), -1}; }
 
 glm::dmat4 worldOf(Graph& g, NodeId id) { return std::get<glm::dmat4>(g.value({id, Transform::kWorldMatrix, -1})); }
@@ -546,7 +553,7 @@ std::vector<std::string> controllerPlugs(Graph& g, NodeId chain)
     const NodeId c = controllerOf(g, chain);
     if (!c)
         return out;
-    const std::string n = g.node(c)->name();
+    const std::string n = g.node(c)->path();
     out = {n + ".translate", n + ".rotate"};
     if (footForChain(g, chain))
         for (const char* ch : {".roll", ".twist", ".bank", ".poleAngle"})
@@ -602,11 +609,16 @@ bool isElement(const Node& n)
 
 std::vector<NodeId> elementsNaming(Graph& g, const char* type, const char* attr, const std::string& name)
 {
+    // Compared by the node each names, as the same node can be written by name or by path.
+    const std::vector<NodeId> target = g.findAll(name);
     std::vector<NodeId> out;
     for (NodeId id : g.nodes())
-        if (Node* n = g.node(id); n && n->type().isA(type))
-            if (const int a = n->type().attrIndex(attr); a >= 0 && n->as<std::string>(a) == name)
+        if (Node* n = g.node(id); n && n->type().isA(type) && n->type().attrIndex(attr) >= 0)
+        {
+            const Node* named = nodeAt(g, *n, attr);
+            if (target.size() == 1 ? named && named->id() == target[0] : textAt(*n, attr) == name)
                 out.push_back(id);
+        }
     std::sort(out.begin(), out.end());
     return out;
 }
@@ -626,8 +638,8 @@ std::vector<NodeId> chainJoints(Graph& g, NodeId chain)
     const Node* c = g.node(chain);
     if (!c)
         return {};
-    Node* s = g.find(textAt(*c, "startJoint"));
-    Node* e = g.find(textAt(*c, "endJoint"));
+    Node* s = nodeAt(g, *c, "startJoint");
+    Node* e = nodeAt(g, *c, "endJoint");
     return s && e ? jointsBetween(g, s->id(), e->id()) : std::vector<NodeId>{};
 }
 
@@ -635,7 +647,7 @@ std::vector<NodeId> posedJoints(Graph& g, NodeId chain)
 {
     std::vector<NodeId> out = chainJoints(g, chain);
     if (NodeId f = footForChain(g, chain))
-        if (Node* ball = g.find(textAt(*g.node(f), "ball")))
+        if (Node* ball = nodeAt(g, *g.node(f), "ball"))
             out.push_back(ball->id());
     return out;
 }
@@ -643,13 +655,13 @@ std::vector<NodeId> posedJoints(Graph& g, NodeId chain)
 NodeId handleOf(Graph& g, NodeId chain)
 {
     const Node* c = g.node(chain);
-    Node* h = c ? g.find(textAt(*c, "handle")) : nullptr;
+    Node* h = c ? nodeAt(g, *c, "handle") : nullptr;
     return h ? h->id() : kNoNode;
 }
 
 NodeId chainForEffector(Graph& g, NodeId joint)
 {
-    const std::vector<NodeId> c = elementsNaming(g, kIkChainType, "endJoint", g.node(joint)->name());
+    const std::vector<NodeId> c = elementsNaming(g, kIkChainType, "endJoint", g.node(joint)->path());
     return c.empty() ? kNoNode : c.front();
 }
 
@@ -666,7 +678,7 @@ NodeId chainContaining(Graph& g, NodeId joint)
 
 NodeId footForChain(Graph& g, NodeId chain)
 {
-    const std::vector<NodeId> f = elementsNaming(g, kReverseFootType, "chain", g.node(chain)->name());
+    const std::vector<NodeId> f = elementsNaming(g, kReverseFootType, "chain", g.node(chain)->path());
     return f.empty() ? kNoNode : f.front();
 }
 
@@ -679,12 +691,12 @@ NodeId chainFrom(Graph& g, NodeId node)
         return node;
     if (n->type().isA(kReverseFootType))
     {
-        Node* c = g.find(textAt(*n, "chain"));
+        Node* c = nodeAt(g, *n, "chain");
         return c ? c->id() : kNoNode;
     }
     if (n->type().isA("ikHandle"))
     {
-        const std::vector<NodeId> c = elementsNaming(g, kIkChainType, "handle", n->name());
+        const std::vector<NodeId> c = elementsNaming(g, kIkChainType, "handle", n->path());
         return c.empty() ? kNoNode : c.front();
     }
     if (rig::isJoint(*n))
@@ -750,7 +762,7 @@ glm::dmat4 controllerWorld(Graph& g, NodeId chain)
         return m;
     }
     glm::dmat3 offset(1.0);
-    if (Node* al = g.find(textAt(*g.node(chain), "align")))
+    if (Node* al = nodeAt(g, *g.node(chain), "align"))
         offset = rotationOf(al->as<glm::dmat4>(AlignNode::kOffset));
     const glm::dmat4 now = worldOf(g, c);
     glm::dmat3 r = rotationOf(effector) * glm::transpose(offset);
@@ -826,15 +838,15 @@ void solveToFk(Graph& g, NodeId chain, bool key)
         return;
     std::vector<std::string> plugs;
     for (NodeId j : joints)
-        plugs.push_back(g.node(j)->name() + ".rotate");
+        plugs.push_back(g.node(j)->path() + ".rotate");
     for (const std::string& p : controllerPlugs(g, chain))
         plugs.push_back(p);
     ops::execute("setKeyframe", {{"args", plugs}});
-    ops::execute("setKeyframe", {{"args", {g.node(chain)->name() + ".lock"}}, {"inTangentType", "step"}, {"outTangentType", "step"}});
+    ops::execute("setKeyframe", {{"args", {g.node(chain)->path() + ".lock"}}, {"inTangentType", "step"}, {"outTangentType", "step"}});
     if (locked(g, chain, g.time()))
         if (NodeId c = controllerOf(g, chain))
         {
-            const std::string n = g.node(c)->name();
+            const std::string n = g.node(c)->path();
             const double t = g.time();
             ops::execute("keyTangent", {{"args", {n + ".translate", n + ".rotate"}}, {"time", json::array({t, t})}, {"outTangentType", "step"}});
         }
@@ -879,13 +891,13 @@ void setLock(Graph& g, NodeId chain, double time, bool on)
 {
     atTime(g, time, [&] {
         matchController(g, chain);
-        const std::string name = g.node(chain)->name();
+        const std::string name = g.node(chain)->path();
         ops::execute("setKeyframe", {{"args", {name + ".lock"}}, {"time", time}, {"value", on ? 1.0 : 0.0}, {"inTangentType", "step"},
                                       {"outTangentType", "step"}});
         const NodeId c = controllerOf(g, chain);
         if (!c)
             return;
-        const std::string n = g.node(c)->name();
+        const std::string n = g.node(c)->path();
         const json plugs = controllerPlugs(g, chain);
         ops::execute("setKeyframe", {{"args", plugs}, {"time", time}});
         // The controller's key holds until its next key while locked.
@@ -899,7 +911,7 @@ void swingPole(Graph& g, NodeId chain, double by, bool turn)
     const std::vector<NodeId> joints = chainJoints(g, chain);
     const std::optional<PlugRef> pole = polePlug(g, chain);
     if (joints.size() < 3 || !pole)
-        throw std::invalid_argument(g.node(chain)->name() + " has no pole to swing");
+        throw std::invalid_argument(g.node(chain)->path() + " has no pole to swing");
     g.evaluate();
     const glm::dvec3 s(worldOf(g, joints.front())[3]);
     glm::dvec3 target(worldOf(g, controllerOf(g, chain))[3]);
@@ -927,9 +939,9 @@ void snapReverseFoot(Graph& g, NodeId foot, bool align)
     g.evaluate();
     Node& fn = *g.node(foot);
     const auto& rf = static_cast<const ReverseFootNode&>(fn);
-    Node* ankle = g.find(textAt(fn, "ankle"));
+    Node* ankle = nodeAt(g, fn, "ankle");
     if (!ankle)
-        throw std::invalid_argument(fn.name() + " has lost its ankle");
+        throw std::invalid_argument(fn.path() + " has lost its ankle");
     const glm::dmat4 ankleW = worldOf(g, ankle->id());
     const glm::dmat4 rest = rf.restAnkle();
     FootChannels ch;
@@ -1043,11 +1055,11 @@ std::vector<glm::dvec3> solePoints(Graph& g, const std::vector<NodeId>& joints)
         {
             std::vector<int64_t> faces;
             for (NodeId j : joints)
-                for (const json& f : ops::execute("dominantInfluence", {{"args", {m->name()}}, {"joint", g.node(j)->name()}}))
+                for (const json& f : ops::execute("dominantInfluence", {{"args", {m->path()}}, {"joint", g.node(j)->path()}}))
                     faces.push_back(f.get<int64_t>());
             if (faces.empty())
                 continue;
-            const json data = ops::execute("meshData", {{"args", {m->name()}}, {"worldSpace", true}});
+            const json data = ops::execute("meshData", {{"args", {m->path()}}, {"worldSpace", true}});
             const json& points = data.at("points");
             const json& polys = data.at("faces");
             for (int64_t f : faces)
@@ -1120,11 +1132,11 @@ NodeId createIkChain(Graph& g, NodeId start, NodeId end, const ChainOptions& opt
     if (!rig::isJoint(*g.node(start)) || !rig::isJoint(*g.node(end)))
         throw std::invalid_argument("an IK chain runs between joints");
     if (jointsBetween(g, start, end).size() < 2)
-        throw std::invalid_argument(g.node(end)->name() + " is not below " + g.node(start)->name());
+        throw std::invalid_argument(g.node(end)->path() + " is not below " + g.node(start)->path());
     if (chainForEffector(g, end))
-        throw std::invalid_argument(g.node(end)->name() + " already ends an IK chain");
+        throw std::invalid_argument(g.node(end)->path() + " already ends an IK chain");
     const std::string base = opts.name.empty() ? g.node(end)->name() + "_ik" : opts.name;
-    json hcall = {{"startJoint", g.node(start)->name()}, {"endEffector", g.node(end)->name()}, {"name", base + "Handle"}};
+    json hcall = {{"startJoint", g.node(start)->path()}, {"endEffector", g.node(end)->path()}, {"name", base + "Handle"}};
     if (!opts.solver.empty())
         hcall["solver"] = opts.solver;
     if (opts.poleVector)
@@ -1133,8 +1145,8 @@ NodeId createIkChain(Graph& g, NodeId start, NodeId end, const ChainOptions& opt
     Node* c = g.createNode(typeNamed(kIkChainType), base);
     const NodeId id = c->id();
     parentUnder(g, id, opts.parent);
-    g.setValue({id, IkChainNode::at(IkChainNode::kStartJoint)}, g.node(start)->name());
-    g.setValue({id, IkChainNode::at(IkChainNode::kEndJoint)}, g.node(end)->name());
+    g.setValue({id, IkChainNode::at(IkChainNode::kStartJoint)}, g.node(start)->path());
+    g.setValue({id, IkChainNode::at(IkChainNode::kEndJoint)}, g.node(end)->path());
     g.setValue({id, IkChainNode::at(IkChainNode::kHandle)}, handle);
     // The handle stays at the top: a reverse foot drives its translate with a world position.
     const NodeId hid = g.find(handle)->id();
@@ -1142,7 +1154,7 @@ NodeId createIkChain(Graph& g, NodeId start, NodeId end, const ChainOptions& opt
     // The end effector turns with the handle, so posing the handle sets the hand's orientation.
     g.evaluate();
     const NodeId al = makeAlign(g, end, g.node(end)->name() + "_ikAlign");
-    g.setValue({id, IkChainNode::at(IkChainNode::kAlign)}, g.node(al)->name());
+    g.setValue({id, IkChainNode::at(IkChainNode::kAlign)}, g.node(al)->path());
     g.setValue({al, AlignNode::kOffset}, glm::dmat4(glm::transpose(rotationOf(worldOf(g, hid))) * rotationOf(worldOf(g, end))));
     connect(g, {hid, Transform::kWorldMatrix, -1}, {al, AlignNode::kTarget, -1});
     connect(g, {id, IkChainNode::at(IkChainNode::kIkBlend), -1}, {al, AlignNode::kWeight, -1});
@@ -1156,18 +1168,18 @@ NodeId createReverseFoot(Graph& g, NodeId chain, const FootOptions& opts)
     if (!g.node(chain) || !g.node(chain)->type().isA(kIkChainType))
         throw std::invalid_argument("a reverse foot goes on an IK chain");
     if (footForChain(g, chain))
-        throw std::invalid_argument(g.node(chain)->name() + " already has a reverse foot");
+        throw std::invalid_argument(g.node(chain)->path() + " already has a reverse foot");
     const std::vector<NodeId> joints = chainJoints(g, chain);
     if (joints.size() < 2)
-        throw std::invalid_argument(g.node(chain)->name() + " has lost its joints");
+        throw std::invalid_argument(g.node(chain)->path() + " has lost its joints");
     const NodeId ankleId = joints.back();
     const NodeId ballId = opts.ball ? opts.ball : firstChildJoint(g, ankleId);
     if (!ballId)
-        throw std::invalid_argument(g.node(ankleId)->name() + " has no ball joint below it");
+        throw std::invalid_argument(g.node(ankleId)->path() + " has no ball joint below it");
     const NodeId toeId = opts.toe ? opts.toe : firstChildJoint(g, ballId);
     const NodeId handleId = handleOf(g, chain);
     if (!handleId)
-        throw std::invalid_argument(g.node(chain)->name() + " has no ikHandle");
+        throw std::invalid_argument(g.node(chain)->path() + " has no ikHandle");
     const std::string ankleName = g.node(ankleId)->name();
 
     g.evaluate();
@@ -1199,10 +1211,10 @@ NodeId createReverseFoot(Graph& g, NodeId chain, const FootOptions& opts)
     parentUnder(g, foot, opts.parent);
     setWorldMatrix(g, foot, setup.control);
     auto set = [&](int own, PlugValue v) { g.setValue({foot, ReverseFootNode::at(own)}, std::move(v)); };
-    set(ReverseFootNode::kAnkle, ankleName);
-    set(ReverseFootNode::kBall, g.node(ballId)->name());
-    set(ReverseFootNode::kToe, toeId ? g.node(toeId)->name() : std::string());
-    set(ReverseFootNode::kChain, g.node(chain)->name());
+    set(ReverseFootNode::kAnkle, g.node(ankleId)->path());
+    set(ReverseFootNode::kBall, g.node(ballId)->path());
+    set(ReverseFootNode::kToe, toeId ? g.node(toeId)->path() : std::string());
+    set(ReverseFootNode::kChain, g.node(chain)->path());
     set(ReverseFootNode::kHeelPivot, setup.pivots.heel);
     set(ReverseFootNode::kBallPivot, setup.pivots.ball);
     set(ReverseFootNode::kToePivot, setup.pivots.toe);
@@ -1218,11 +1230,11 @@ NodeId createReverseFoot(Graph& g, NodeId chain, const FootOptions& opts)
     set(ReverseFootNode::kPoleAngle, numOf(g, plugAt(*g.node(handleId), "poleAngle")));
 
     // The foot's align turns the ankle in place of the chain's own.
-    if (Node* old = g.find(textAt(*g.node(chain), "align")))
+    if (Node* old = nodeAt(g, *g.node(chain), "align"))
         g.deleteNode(old->id());
     const NodeId al = makeAlign(g, ankleId, ankleName + "_footAlign");
-    set(ReverseFootNode::kAlign, g.node(al)->name());
-    g.setValue({chain, IkChainNode::at(IkChainNode::kAlign)}, g.node(al)->name());
+    set(ReverseFootNode::kAlign, g.node(al)->path());
+    g.setValue({chain, IkChainNode::at(IkChainNode::kAlign)}, g.node(al)->path());
 
     const PlugRef ikBlend{chain, IkChainNode::at(IkChainNode::kIkBlend), -1};
     connect(g, ikBlend, {foot, ReverseFootNode::at(ReverseFootNode::kIkWeight), -1});
@@ -1239,7 +1251,7 @@ NodeId createLooker(Graph& g, NodeId j, const LookerOptions& opts)
 {
     const NodeId parent = g.parent(j);
     if (!parent)
-        throw std::invalid_argument(g.node(j)->name() + " needs a parent to look from");
+        throw std::invalid_argument(g.node(j)->path() + " needs a parent to look from");
     const glm::dvec3 aimLocal = rig::axisVector(opts.aimAxis);
     const int64_t aimAxis = axisIndex(opts.aimAxis), upAxis = axisIndex(opts.upAxis);
     g.evaluate();
@@ -1251,7 +1263,7 @@ NodeId createLooker(Graph& g, NodeId j, const LookerOptions& opts)
     parentUnder(g, id, opts.parent);
     setWorldMatrix(g, id, glm::translate(glm::dmat4(1.0), at));
     auto set = [&](int own, PlugValue v) { g.setValue({id, LookerNode::at(own)}, std::move(v)); };
-    set(LookerNode::kJoint, g.node(j)->name());
+    set(LookerNode::kJoint, g.node(j)->path());
     set(LookerNode::kAimAxis, aimAxis);
     set(LookerNode::kUpAxis, upAxis);
     set(LookerNode::kUpVector, opts.upVector);
@@ -1269,24 +1281,24 @@ NodeId createLooker(Graph& g, NodeId j, const LookerOptions& opts)
 NodeId createTwistDriver(Graph& g, NodeId t, const TwistOptions& opts)
 {
     if (!rig::isJoint(*g.node(t)))
-        throw std::invalid_argument(g.node(t)->name() + " is not a joint");
+        throw std::invalid_argument(g.node(t)->path() + " is not a joint");
     const NodeId bone = g.parent(t);
     if (!bone || !rig::isJoint(*g.node(bone)))
-        throw std::invalid_argument(g.node(t)->name() + " needs a parent joint to twist along");
+        throw std::invalid_argument(g.node(t)->path() + " needs a parent joint to twist along");
     if (g.source({t, Joint::kSolvedRotate, -1}))
-        throw std::invalid_argument(g.node(t)->name() + " is already driven");
+        throw std::invalid_argument(g.node(t)->path() + " is already driven");
     const NodeId source = opts.source ? opts.source : bone;
     const bool counter = source == bone;
     if (!counter && g.parent(source) != bone)
-        throw std::invalid_argument(g.node(source)->name() + " is neither " + g.node(t)->name() + "'s parent nor a child of it");
+        throw std::invalid_argument(g.node(source)->path() + " is neither " + g.node(t)->path() + "'s parent nor a child of it");
     // The bone's axis in its own frame: toward the next joint along the limb.
     const NodeId along = counter ? mainChildJoint(g, bone, t) : source;
     if (!along)
-        throw std::invalid_argument(g.node(bone)->name() + " has no joint to twist toward");
+        throw std::invalid_argument(g.node(bone)->path() + " has no joint to twist toward");
     g.evaluate();
     const glm::dvec3 reach = vecOf(g, along, Transform::kTranslate);
     if (glm::length(reach) < 1e-9)
-        throw std::invalid_argument(g.node(along)->name() + " sits on " + g.node(bone)->name());
+        throw std::invalid_argument(g.node(along)->path() + " sits on " + g.node(bone)->path());
     const glm::dvec3 boneAxis = glm::normalize(reach);
     const glm::dmat3 restSource = localRotationOf(g, source);
     const glm::dmat3 restLocal = localRotationOf(g, t);
@@ -1298,8 +1310,8 @@ NodeId createTwistDriver(Graph& g, NodeId t, const TwistOptions& opts)
 
     Node* n = g.createNode(typeNamed(kTwistType), opts.name.empty() ? g.node(t)->name() + "_twist" : opts.name);
     const NodeId id = n->id();
-    g.setValue({id, TwistNode::kJoint}, g.node(t)->name());
-    g.setValue({id, TwistNode::kSource}, g.node(source)->name());
+    g.setValue({id, TwistNode::kJoint}, g.node(t)->path());
+    g.setValue({id, TwistNode::kSource}, g.node(source)->path());
     g.setValue({id, TwistNode::kRestSource}, glm::dmat4(restSource));
     g.setValue({id, TwistNode::kSourceAxis}, sourceAxis);
     g.setValue({id, TwistNode::kRestLocal}, glm::dmat4(restLocal));

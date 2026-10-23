@@ -11,6 +11,7 @@
 #include "ui/Actions.h"
 #include "ui/Icons.h"
 #include "ui/Panels.h"
+#include "ui/Theme.h"
 
 #include <QActionGroup>
 #include <QApplication>
@@ -47,7 +48,7 @@ namespace pk = scene::picker;
 using scene::NodeId;
 
 QString qs(const std::string& s) { return QString::fromStdString(s); }
-QColor gray(int v, int a = 255) { return QColor(v, v, v, a); }
+QColor gray(int v, int a = 255) { return themeShade(v, a); }
 
 bool runUi(const char* command, const json& call, json* result = nullptr)
 {
@@ -65,7 +66,7 @@ bool runUi(const char* command, const json& call, json* result = nullptr)
     }
 }
 
-QColor itemColor(const std::string& c, const QColor& fallback = gray(128))
+QColor itemColor(const std::string& c, const QColor& fallback = QColor(128, 128, 128))
 {
     QColor q(qs(c));
     return q.isValid() ? q : fallback;
@@ -74,7 +75,7 @@ QColor itemColor(const std::string& c, const QColor& fallback = gray(128))
 /** Black or white, whichever reads on the fill. */
 QColor contrast(const QColor& fill)
 {
-    return fill.lightnessF() > 0.6 ? gray(20) : gray(240);
+    return fill.lightnessF() > 0.6 ? QColor(20, 20, 20) : QColor(240, 240, 240);
 }
 
 /** A path, workspace-relative path, scene-relative path or data: URI. */

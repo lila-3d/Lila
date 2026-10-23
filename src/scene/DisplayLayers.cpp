@@ -45,7 +45,7 @@ json namesOf(const Graph& g, const std::vector<NodeId>& ids)
 {
     json out = json::array();
     for (NodeId id : ids)
-        out.push_back(g.node(id)->name());
+        out.push_back(g.node(id)->path());
     return out;
 }
 
@@ -208,7 +208,7 @@ json info(const Graph& g, NodeId layer)
         color = {c.x, c.y, c.z};
     }
     return {
-        {"name", n->name()},
+        {"name", n->path()},
         {"visibility", n->as<bool>(DisplayLayer::kVisibility)},
         {"hideOnPlayback", n->as<bool>(DisplayLayer::kHideOnPlayback)},
         {"displayType", kDisplayTypeNames[size_t(std::clamp<int64_t>(n->as<int64_t>(DisplayLayer::kDisplayType), 0, 2))]},
@@ -250,7 +250,7 @@ void registerCommands()
                 ids = objectIds(g, a.objects(), "createDisplayLayer");
             try
             {
-                return create(g, a.get<std::string>("name", ""), ids)->name();
+                return create(g, a.get<std::string>("name", ""), ids)->path();
             }
             catch (const std::invalid_argument& e)
             {
@@ -390,7 +390,7 @@ void registerCommands()
             reorder(g, layer->id(), size_t(std::max<int64_t>(0, a.get<int64_t>("index", 0))));
             json out = json::array();
             for (const Node* n : all(g))
-                out.push_back(n->name());
+                out.push_back(n->path());
             return out;
         },
     });

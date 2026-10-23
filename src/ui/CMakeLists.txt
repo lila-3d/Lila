@@ -1,5 +1,5 @@
-# Layout files and commands, without Qt, so the tests and batch mode can use them.
-lila_module(lila_layouts Scene Layouts.cpp Layouts.h)
+# Layout and theme files and commands, without Qt, so the tests and batch mode can use them.
+lila_module(lila_layouts Scene Layouts.cpp Layouts.h ThemeModel.cpp ThemeModel.h)
 target_link_libraries(lila_layouts PUBLIC lila_ops)
 
 lila_module(lila_ui UI
@@ -14,16 +14,20 @@ lila_module(lila_ui UI
     ApiReference.cpp ApiReference.h
     AttributeEditor.cpp AttributeEditor.h
     AutoBevelUi.cpp AutoBevelUi.h
+    SmartJoinUi.cpp SmartJoinUi.h
     Camera.cpp
     ChannelBox.cpp ChannelBox.h
     DisplayLayersPanel.cpp DisplayLayersPanel.h
     AnimLayersPanel.cpp AnimLayersPanel.h
     OffsetsPanel.cpp OffsetsPanel.h
+    BatchRunPanel.cpp BatchRunPanel.h
     Editors.cpp Editors.h
     Environments.cpp Environments.h
     ExtensionManagerDialog.cpp ExtensionManagerDialog.h
     GameExporter.cpp GameExporter.h
+    MeshSequenceExporter.cpp MeshSequenceExporter.h
     Ghosting.cpp Ghosting.h
+    GnViewerDraw.cpp GnViewerDraw.h
     GraphEditor.cpp GraphEditor.h
     PoseLibrary.cpp PoseLibrary.h
     ControlPicker.cpp ControlPicker.h
@@ -46,6 +50,7 @@ lila_module(lila_ui UI
     Owner.h
     SpinScrub.cpp SpinScrub.h
     ValueReset.h
+    NodeLookup.h
     Manipulator.cpp Manipulator.h
     Gizmo.cpp Gizmo.h ViewInfo.cpp ViewInfo.h ViewportState.h
     DrawOverrides.cpp DrawOverrides.h RenderPasses.cpp RenderPasses.h SelectionHandlers.cpp SelectionHandlers.h
@@ -54,6 +59,7 @@ lila_module(lila_ui UI
     MaterialEditor.cpp MaterialEditor.h
     MeasureTool.cpp MeasureTool.h
     MeshCache.cpp MeshCache.h
+    Isolate.cpp Isolate.h
     ModelingToolkit.cpp ModelingToolkit.h
     SoftSelectPanel.cpp SoftSelectPanel.h
     ModifierStack.cpp ModifierStack.h
@@ -67,6 +73,7 @@ lila_module(lila_ui UI
     RigViewport.cpp RigViewport.h WeightPaintTool.cpp WeightPaintTool.h
     SpacesUi.cpp SpacesUi.h
     DeformUi.cpp DeformUi.h
+    MorphPanel.cpp MorphPanel.h
     SculptPanel.cpp SculptPanel.h
     SculptTool.cpp SculptTool.h
     Tools.cpp Tools.h
@@ -84,13 +91,14 @@ lila_module(lila_ui UI
     TearOff.cpp TearOff.h TearOffLogic.h
     Terminal.cpp Terminal.h
     TextureCache.cpp TextureCache.h
-    Theme.cpp
+    Theme.cpp Theme.h ThemeEditor.cpp ThemeEditor.h
     TimeSlider.cpp TimeSlider.h
     UiTools.cpp
     UndoHistory.cpp UndoHistory.h
     UvEditor.cpp UvEditor.h
     UvLive.cpp UvLive.h
     UvPackPanel.cpp UvPackPanel.h
+    UvProjectTool.cpp UvProjectTool.h
     FlowLayout.cpp FlowLayout.h
     DockSidebar.cpp DockSidebar.h
     DominantInfluenceUi.cpp DominantInfluenceUi.h

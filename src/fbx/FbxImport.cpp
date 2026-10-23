@@ -10,6 +10,7 @@
 #include "scene/Graph.h"
 #include "scene/Materials.h"
 #include "scene/MeshNodes.h"
+#include "scene/Morphs.h"
 #include "scene/Rig.h"
 #include "scene/RotationCurve.h"
 #include "scene/Skin.h"
@@ -430,7 +431,7 @@ scene::NodeId buildSkin(scene::Graph& g, const ufbx_skin_deformer& skin, scene::
     LILA_ZONE();
 
     using namespace scene;
-    const std::string meshName = g.node(mesh)->name();
+    const std::string meshName = g.node(mesh)->path();
     std::vector<std::pair<const ufbx_skin_cluster*, NodeId>> clusters;
     for (size_t i = 0; i < skin.clusters.count; ++i)
     {
@@ -722,7 +723,7 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
             graph.setValue({n->id(), Joint::kJointOrient, -1}, jo);
             graph.setValue({n->id(), Transform::kRotateOrder, -1}, int64_t(nf.order));
             if (fn->inherit_mode == UFBX_INHERIT_MODE_IGNORE_PARENT_SCALE)
-                r.warnings.push_back(std::format("{}: segment scale compensation in the file is not kept", n->name()));
+                r.warnings.push_back(std::format("{}: segment scale compensation in the file is not kept", n->path()));
         }
         else
         {
@@ -730,7 +731,7 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
         }
         const Trs& trs = nf.rest;
         if (trs.sheared)
-            r.warnings.push_back(std::format("{}: shear dropped from its transform", n->name()));
+            r.warnings.push_back(std::format("{}: shear dropped from its transform", n->path()));
         graph.setValue({n->id(), Transform::kTranslate, -1}, trs.t);
         graph.setValue({n->id(), Transform::kRotate, -1}, trs.r);
         graph.setValue({n->id(), Transform::kScale, -1}, trs.s);
@@ -748,7 +749,7 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
             {
                 MeshBuild built = convertMesh(mesh, *fn, C * toGlm(fn->geometry_to_node), slotNames);
                 if (built.badFaces)
-                    r.warnings.push_back(std::format("{}: {} degenerate face(s) skipped", n->name(), built.badFaces));
+                    r.warnings.push_back(std::format("{}: {} degenerate face(s) skipped", n->path(), built.badFaces));
                 ptr = std::make_shared<geo::Mesh>(std::move(built.mesh));
                 pointCache[mesh.element_id] = std::move(built.pointOf);
                 if (!fn->has_geometry_transform)
@@ -789,12 +790,26 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
             r.skins.push_back(sc);
     }
 
-    // Morph targets become a blendShape with one target per channel, taken from the channel's full-weight shape.
+    // Morph targets become a morph with one target per channel: the full-weight shape, the channel's other keyframes as in-betweens.
     for (const auto& [fn, meshId] : blended)
     {
         const std::vector<Index>& pointOf = pointCache[fn->mesh->element_id];
         const glm::dmat3 lin(C * toGlm(fn->geometry_to_node));
-        NodeId bs = scene::deformers::addBlendShape(graph, meshId, "BlendShape");
+        auto deltasOf = [&](const ufbx_blend_shape& shape) {
+            auto deltas = std::make_shared<scene::MorphDeltas>();
+            for (size_t k = 0; k < shape.num_offsets; ++k)
+            {
+                uint32_t v = shape.offset_vertices.data[k];
+                Index p = v < pointOf.size() ? pointOf[v] : kInvalid;
+                if (p == kInvalid)
+                    continue;
+                const ufbx_vec3& o = shape.position_offsets.data[k];
+                deltas->indices.push_back(uint32_t(p));
+                deltas->deltas.push_back(lin * glm::dvec3(o.x, o.y, o.z));
+            }
+            return deltas;
+        };
+        NodeId morph = scene::morphs::create(graph, meshId, "Morph");
         for (size_t d = 0; d < fn->mesh->blend_deformers.count; ++d)
         {
             const ufbx_blend_deformer& def = *fn->mesh->blend_deformers.data[d];
@@ -804,20 +819,14 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
                 const ufbx_blend_shape* shape = ch.target_shape;
                 if (!shape)
                     continue;
-                auto deltas = std::make_shared<scene::BlendDeltas>();
-                for (size_t k = 0; k < shape->num_offsets; ++k)
+                NodeId t = scene::morphs::addTarget(graph, morph, toString(ch.name), deltasOf(*shape), double(ch.weight));
+                for (size_t k = 0; k < ch.keyframes.count; ++k)
                 {
-                    uint32_t v = shape->offset_vertices.data[k];
-                    Index p = v < pointOf.size() ? pointOf[v] : kInvalid;
-                    if (p == kInvalid)
-                        continue;
-                    const ufbx_vec3& o = shape->position_offsets.data[k];
-                    deltas->indices.push_back(uint32_t(p));
-                    deltas->deltas.push_back(lin * glm::dvec3(o.x, o.y, o.z));
+                    const ufbx_blend_keyframe& kf = ch.keyframes.data[k];
+                    const double w = double(kf.target_weight);
+                    if (kf.shape && kf.shape != shape && std::abs(w) > 1e-6 && std::abs(w - 1.0) > 1e-6)
+                        scene::morphs::setInBetween(graph, t, w, deltasOf(*kf.shape));
                 }
-                if (shape->num_offsets && ch.keyframes.count > 1)
-                    r.warnings.push_back(std::format("{}: in-between shapes of '{}' were not imported", graph.node(meshId)->name(), toString(ch.name)));
-                scene::deformers::addBlendTarget(graph, bs, toString(ch.name), std::move(deltas), double(ch.weight));
             }
         }
     }

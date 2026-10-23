@@ -30,7 +30,7 @@ struct NodeRef final : Data
     json toJson() const override
     {
         const Node* n = id != kNoNode ? Graph::current().node(id) : nullptr;
-        return {{"kind", kind()}, {"node", n ? n->name() : id == kNoNode ? name : std::string()}};
+        return {{"kind", kind()}, {"node", n ? n->path() : id == kNoNode ? name : std::string()}};
     }
 
     static DataPtr fromJson(const json& j)
@@ -143,7 +143,7 @@ DataPtr makeNodeRef(const Graph& g, NodeId node)
     if (const Node* n = g.node(node))
     {
         out->id = node;
-        out->name = n->name();
+        out->name = n->path();
     }
     return out;
 }
@@ -158,14 +158,21 @@ NodeId resolveNodeRef(const Graph& g, const DataPtr& ref, const std::string& own
     if (r->name.empty())
         return kNoNode;
     const Node* n = nullptr;
-    if (!ownerNamespace.empty())
-        n = g.find(ownerNamespace + ":" + r->name);
-    if (!n)
-        n = g.find(r->name);
+    try
+    {
+        if (!ownerNamespace.empty())
+            n = g.find(ownerNamespace + ":" + r->name);
+        if (!n)
+            n = g.find(r->name);
+    }
+    catch (const std::exception&)
+    {
+        return kNoNode; // ambiguous: unbound until the name is made unique
+    }
     if (!n)
         return kNoNode;
     r->id = n->id();
-    r->name = n->name();
+    r->name = n->path();
     return r->id;
 }
 
@@ -185,7 +192,7 @@ void setSelectAs(Graph& g, NodeId joint, NodeId target)
     if (!n)
         throw std::invalid_argument("selectAs: not a joint");
     if (target == joint)
-        throw std::invalid_argument("selectAs: " + n->name() + " can't select as itself");
+        throw std::invalid_argument("selectAs: " + n->path() + " can't select as itself");
     if (target != kNoNode && !g.node(target))
         throw std::invalid_argument("selectAs: no such target");
     if (selectAsOf(g, joint) == target)
@@ -397,7 +404,7 @@ void registerSelectAsCommands()
             for (NodeId j : joints)
             {
                 NodeId t = rig::selectAsOf(g, j);
-                out[g.node(j)->name()] = t != kNoNode ? json(g.node(t)->name()) : json(nullptr);
+                out[g.node(j)->path()] = t != kNoNode ? json(g.node(t)->path()) : json(nullptr);
             }
             return out;
         },
@@ -451,7 +458,7 @@ void registerSelectAsCommands()
                     continue;
                 if (!a.get<bool>("query"))
                     rig::setSelectAs(g, j, t);
-                out[g.node(j)->name()] = g.node(t)->name();
+                out[g.node(j)->path()] = g.node(t)->path();
             }
             return out;
         },
@@ -481,7 +488,7 @@ void registerSelectAsCommands()
             json out = json::array();
             for (const rig::SelectCandidate& c :
                  rig::selectionCandidates(g, mesh, uint32_t(a.get<int64_t>("face")), hit, a.get<bool>("redirect", true)))
-                out.push_back({{"joint", g.node(c.joint)->name()}, {"role", roleName(c.role)}, {"weight", c.weight}});
+                out.push_back({{"joint", g.node(c.joint)->path()}, {"role", roleName(c.role)}, {"weight", c.weight}});
             return out;
         },
     });

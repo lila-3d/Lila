@@ -157,7 +157,7 @@ void drawSolver(drawOverrides::DrawContext& c)
     for (NodeId p : membersOf(g, c.node.id(), kPinType))
     {
         Node* pin = g.node(p);
-        Node* target = g.find(text(*pin, "marker"));
+        Node* target = named(g, text(*pin, "marker"));
         if (!target || !flag(*pin, "enabled"))
             continue;
         const NodeId joint = isMarker(*target) ? jointOf(g, *target) : target->id();
@@ -220,7 +220,7 @@ std::optional<std::vector<std::string>> redirectProxy(const selectionHandlers::H
     const NodeId joint = jointOf(g, *n);
     if (!joint)
         return std::nullopt;
-    return std::vector<std::string>{g.node(joint)->name()};
+    return std::vector<std::string>{g.node(joint)->path()};
 }
 
 /** The solver of the selection, else the scene's only one. */
@@ -425,7 +425,7 @@ private:
             json values = json::array();
             for (int k = 0; k < 16; ++k)
                 values.push_back(m[k / 4][k % 4]);
-            pose[g.node(mRig.bodies[i].joint)->name()] = values;
+            pose[g.node(mRig.bodies[i].joint)->path()] = values;
         }
         runCommand("physicsApplyPose", {{"pose", pose}});
     }
@@ -475,7 +475,7 @@ QWidget* solverControls(NodeId id, QWidget* parent = nullptr)
     status->setWordWrap(true);
     auto name = [id] {
         Node* n = Graph::current().node(id);
-        return n ? n->name() : std::string();
+        return n ? n->path() : std::string();
     };
     auto refresh = [status, id] { status->setText(QString::fromStdString(infoText(id))); };
     auto button = [&](QHBoxLayout* row, const char* label, const char* tip, std::function<void()> fn) {
@@ -514,7 +514,7 @@ QWidget* markerControls(NodeId id, QWidget* parent = nullptr)
     row->setContentsMargins(0, 0, 0, 0);
     auto name = [id] {
         Node* n = Graph::current().node(id);
-        return n ? n->name() : std::string();
+        return n ? n->path() : std::string();
     };
     auto button = [&](const char* label, const char* tip, std::function<void()> fn) {
         auto* b = new QPushButton(label, w);
@@ -532,7 +532,7 @@ QWidget* markerControls(NodeId id, QWidget* parent = nullptr)
         Graph& g = Graph::current();
         if (Node* m = g.node(id))
             if (NodeId j = jointOf(g, *m))
-                runCommand("select", {{"args", {g.node(j)->name()}}});
+                runCommand("select", {{"args", {g.node(j)->path()}}});
     });
     return w;
 }
@@ -568,7 +568,7 @@ QWidget* makePanel(QWidget* parent)
         list->clear();
         for (NodeId id : sim::simulations(g))
             if (Node* n = g.node(id); n && n->type().isA(kSolverType))
-                list->addItem(QString::fromStdString(n->name()));
+                list->addItem(QString::fromStdString(n->path()));
         for (int i = 0; i < list->count(); ++i)
             if (list->item(i)->text() == current)
                 list->setCurrentRow(i);
@@ -580,7 +580,7 @@ QWidget* makePanel(QWidget* parent)
             delete item;
         }
         Graph& g = Graph::current();
-        if (Node* n = g.find(name.toStdString()))
+        if (Node* n = named(g, name.toStdString()))
         {
             g.select({n->id()});
             holder->addWidget(solverControls(n->id(), w));

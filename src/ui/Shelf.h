@@ -47,6 +47,11 @@ LILA_UI_API void add(Shelf s, std::string owner = kLilaOwner);
 /** Owned by the extension and removed when it unloads. */
 LILA_UI_API uint64_t add(ext::Context& ctx, Shelf s);
 
+/** Adds a button for target (anything actions::run accepts) to the current shelf, labelled like the action. */
+LILA_UI_API void addToCurrent(const nlohmann::json& target);
+/** Ctrl+Shift is held: clicking a menu item or releasing on a marking menu item adds it to the shelf instead of running it. */
+LILA_UI_API bool addModifierHeld();
+
 /** The shelf the docked shelf shows; the first when there is no docked shelf. */
 LILA_UI_API std::string current();
 /** Shows that shelf in the docked shelf. False when there is no such shelf. */

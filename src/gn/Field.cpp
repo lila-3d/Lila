@@ -1,6 +1,7 @@
 #include "gn/Field.h"
 
 #include "core/Profile.h"
+#include "geo/ColorSets.h"
 #include "geo/Normals.h"
 
 #include <cmath>
@@ -19,6 +20,8 @@ template <class T> T fromDouble(double d)
         return int64_t(std::llround(d));
     else if constexpr (std::is_same_v<T, uint8_t>)
         return d != 0.0 ? 1 : 0;
+    else if constexpr (std::is_same_v<T, glm::dvec4>)
+        return glm::dvec4(d, d, d, 1.0);
     else
         return glm::dvec3(d);
 }
@@ -27,6 +30,8 @@ template <class S> double toDouble(const S& s)
 {
     if constexpr (std::is_same_v<S, glm::dvec3>)
         return (s.x + s.y + s.z) / 3.0;
+    else if constexpr (std::is_same_v<S, glm::dvec4>)
+        return 0.2126 * s.x + 0.7152 * s.y + 0.0722 * s.z; // Blender's colour to float: luminance
     else
         return double(s);
 }
@@ -35,9 +40,15 @@ template <class T, class S> T convertOne(const S& s)
 {
     if constexpr (std::is_same_v<T, S>)
         return s;
+    else if constexpr (std::is_same_v<T, glm::dvec3> && std::is_same_v<S, glm::dvec4>)
+        return glm::dvec3(s);
+    else if constexpr (std::is_same_v<T, glm::dvec4> && std::is_same_v<S, glm::dvec3>)
+        return glm::dvec4(s, 1.0);
     else if constexpr (std::is_same_v<T, glm::dvec3>)
         return glm::dvec3(toDouble(s));
-    else if constexpr (std::is_same_v<T, int64_t> && !std::is_same_v<S, glm::dvec3>)
+    else if constexpr (std::is_same_v<T, glm::dvec4>)
+        return fromDouble<T>(toDouble(s));
+    else if constexpr (std::is_same_v<T, int64_t> && !std::is_same_v<S, glm::dvec3> && !std::is_same_v<S, glm::dvec4>)
         return int64_t(std::llround(double(s)));
     else
         return fromDouble<T>(toDouble(s));
@@ -106,6 +117,10 @@ Column meshNormals(const geo::Mesh& m, Domain d)
     }
     case Domain::Corner:
     {
+        // Custom normals (Set Mesh Normal, imported split normals) win over computed ones.
+        std::span<const glm::vec3> stored = m.cornerAttrs().get<glm::vec3>(geo::attr::kNormal);
+        if (stored.size() == m.cornerCapacity() && !stored.empty())
+            return Column::of(std::vector<glm::dvec3>(stored.begin(), stored.end()));
         std::vector<glm::vec3> cn = geo::cornerNormals(m);
         std::vector<glm::dvec3> out(cn.begin(), cn.end());
         return Column::of(std::move(out));
@@ -256,10 +271,7 @@ Column fromLayer(const geo::Attribute& a)
     case geo::AttrType::Float4:
     {
         auto v = a.values<glm::vec4>();
-        std::vector<glm::dvec3> out(n);
-        for (size_t k = 0; k < n; ++k)
-            out[k] = glm::dvec3(v[k]);
-        return Column::of(std::move(out));
+        return Column::of(std::vector<glm::dvec4>(v.begin(), v.end()));
     }
     case geo::AttrType::Int:
     {
@@ -286,6 +298,7 @@ geo::AttrType layerTypeFor(SocketType t)
     case SocketType::Bool: return geo::AttrType::Bool;
     case SocketType::Vector:
     case SocketType::Rotation: return geo::AttrType::Float3;
+    case SocketType::Color: return geo::AttrType::Float4;
     default: return geo::AttrType::Float;
     }
 }
@@ -296,7 +309,7 @@ void fillLayer(geo::AttributeSet& set, std::string_view name, const Column& valu
     geo::Attribute* existing = set.find(name);
     geo::AttrType want = layerTypeFor(type);
     if (existing && (existing->type() == geo::AttrType::Float2 || existing->type() == geo::AttrType::Float4) &&
-        (type == SocketType::Vector || type == SocketType::Rotation))
+        (type == SocketType::Vector || type == SocketType::Rotation || type == SocketType::Color))
         want = existing->type();
     geo::Attribute& a = set.add(name, want);
     switch (want)
@@ -325,6 +338,16 @@ void fillLayer(geo::AttributeSet& set, std::string_view name, const Column& valu
             dst[k] = v[k] != 0;
         break;
     }
+    case geo::AttrType::Float4:
+        if (type == SocketType::Color)
+        {
+            auto v = expand<glm::dvec4>(convert(values, SocketType::Color), n);
+            auto dst = a.values<glm::vec4>();
+            for (size_t k = 0; k < n && k < dst.size(); ++k)
+                dst[k] = glm::vec4(v[k]);
+            break;
+        }
+        [[fallthrough]];
     default:
     {
         auto v = expand<glm::dvec3>(convert(values, SocketType::Vector), n);
@@ -351,10 +374,24 @@ void fillLayer(geo::AttributeSet& set, std::string_view name, const Column& valu
     }
 }
 
+/** Colours always land in a colour set; so do vectors aimed at an existing set or at a name every DCC uses for colour. */
+bool writesColorSet(const geo::Mesh& m, std::string_view name, SocketType type)
+{
+    if (type == SocketType::Color)
+        return true;
+    if (type != SocketType::Vector)
+        return false;
+    if (name.starts_with(geo::colors::kLayerPrefix))
+        return true;
+    return geo::colors::has(m, name) || name == "Col" || name == "Cd";
+}
+
 template <class T> T zero()
 {
     if constexpr (std::is_same_v<T, glm::dvec3>)
         return glm::dvec3(0.0);
+    else if constexpr (std::is_same_v<T, glm::dvec4>)
+        return glm::dvec4(0.0);
     else
         return T(0);
 }
@@ -416,6 +453,7 @@ Column convert(const Column& c, SocketType to)
     case SocketType::Bool: return convertTo<uint8_t>(c);
     case SocketType::Vector:
     case SocketType::Rotation: return convertTo<glm::dvec3>(c);
+    case SocketType::Color: return convertTo<glm::dvec4>(c);
     default: return c;
     }
 }
@@ -485,6 +523,7 @@ FieldPtr constantFloat(double v) { return constantField(SocketType::Float, Colum
 FieldPtr constantInt(int64_t v) { return constantField(SocketType::Int, Column::of(v)); }
 FieldPtr constantBool(bool v) { return constantField(SocketType::Bool, Column::of(uint8_t(v ? 1 : 0))); }
 FieldPtr constantVector(const glm::dvec3& v, SocketType type) { return constantField(type, Column::of(v)); }
+FieldPtr constantColor(const glm::dvec4& v) { return constantField(SocketType::Color, Column::of(v)); }
 
 FieldPtr convertField(const FieldPtr& f, SocketType to)
 {
@@ -699,6 +738,12 @@ std::optional<Column> readAttribute(const FieldContext& ctx, std::string_view na
                 *domainOut = d;
                 return fromLayer(*a);
             }
+        if (!name.starts_with(geo::colors::kLayerPrefix))
+            if (const geo::Attribute* a = ctx.mesh->cornerAttrs().find(geo::colors::layerName(name)))
+            {
+                *domainOut = Domain::Corner;
+                return fromLayer(*a);
+            }
         return std::nullopt;
     }
     case Component::Curve:
@@ -739,6 +784,24 @@ void writeAttribute(geo::Mesh& m, std::string_view name, Domain d, const Column&
         auto v = expand<glm::dvec3>(convert(values, SocketType::Vector), ctx.size);
         for (Index p = 0; p < m.pointCapacity(); ++p)
             m.setPosition(p, v[p]);
+        return;
+    }
+    if (writesColorSet(m, name, type))
+    {
+        std::string set(name.starts_with(geo::colors::kLayerPrefix) ? geo::colors::setOf(name) : name);
+        std::string layer = geo::colors::layerName(set);
+        Column c = convert(values, SocketType::Color);
+        if (d != Domain::Corner)
+            c = adaptDomain(m, c, d, Domain::Corner);
+        for (int k = 0; k < 4; ++k)
+        {
+            if (Domain(k) != Domain::Corner)
+                m.attributes(geo::Domain(k)).remove(layer);
+            m.attributes(geo::Domain(k)).remove(set);
+        }
+        geo::colors::add(m, set);
+        fillLayer(m.cornerAttrs(), layer, c, SocketType::Color, m.cornerCapacity());
+        geo::colors::settle(m, set);
         return;
     }
     for (int k = 0; k < 4; ++k)

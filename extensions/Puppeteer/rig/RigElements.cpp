@@ -319,7 +319,7 @@ json withCharacter(Graph& g, json call, const std::string& node)
         return call;
     if (Node* n = g.find(node))
         if (NodeId c = elementParentFor(g, n->id()))
-            call["parent"] = g.node(c)->name();
+            call["parent"] = g.node(c)->path();
     return call;
 }
 
@@ -369,9 +369,9 @@ json createSpace(const Args& a)
     const json list = a.flags.value("spaces", json::array());
     if (!list.is_array() || list.empty())
         throw CommandError("puppeteerSpace: give the spaces ('world' or other nodes)");
-    ops::execute("addSpace", {{"args", {g.node(j)->name()}}, {"space", list}});
+    ops::execute("addSpace", {{"args", {g.node(j)->path()}}, {"space", list}});
     g.select({j});
-    return g.node(lila::scene::spaces::switchOf(g, j))->name();
+    return g.node(lila::scene::spaces::switchOf(g, j))->path();
 }
 
 json switchSpace(const Args& a)
@@ -382,8 +382,8 @@ json switchSpace(const Args& a)
         throw CommandError("puppeteerSwitchSpace: give the joint");
     const NodeId j = jointNamed(g, objs.front(), "puppeteerSwitchSpace").id();
     if (!lila::scene::spaces::hasSpaces(g, j))
-        throw CommandError("puppeteerSwitchSpace: " + g.node(j)->name() + " has no spaces (puppeteerSpace)");
-    json call = {{"args", {g.node(j)->name()}}, {"space", a.flags.value("space", json())}};
+        throw CommandError("puppeteerSwitchSpace: " + g.node(j)->path() + " has no spaces (puppeteerSpace)");
+    json call = {{"args", {g.node(j)->path()}}, {"space", a.flags.value("space", json())}};
     if (a.has("time"))
         call["time"] = a.get<double>("time");
     return ops::execute("switchSpace", call);
@@ -470,8 +470,8 @@ ChainSamples sampleLegacyChain(Graph& g, NodeId chain)
     ChainSamples s;
     const Node& c = *g.node(chain);
     s.chain = c.name();
-    Node* start = g.find(textOf(c, "startJoint"));
-    Node* end = g.find(textOf(c, "endJoint"));
+    Node* start = named(g, textOf(c, "startJoint"));
+    Node* end = named(g, textOf(c, "endJoint"));
     if (!start || !end)
         return s;
     std::vector<NodeId> joints;
@@ -483,17 +483,17 @@ ChainSamples sampleLegacyChain(Graph& g, NodeId chain)
     }
     std::reverse(joints.begin(), joints.end());
     std::vector<NodeId> elements{chain};
-    if (Node* h = g.find(textOf(c, "handle")))
+    if (Node* h = named(g, textOf(c, "handle")))
         elements.push_back(h->id());
     for (NodeId id : g.nodes())
         if (Node* n = g.node(id); n && n->type().isA(kLegacyReverseFootType) && textOf(*n, "chain") == c.name())
         {
             elements.push_back(id);
-            if (Node* ball = g.find(textOf(*n, "ball")))
+            if (Node* ball = named(g, textOf(*n, "ball")))
                 joints.push_back(ball->id());
         }
     for (NodeId j : joints)
-        s.joints.push_back(g.node(j)->name());
+        s.joints.push_back(g.node(j)->path());
     std::vector<NodeId> all = elements;
     all.insert(all.end(), joints.begin(), joints.end());
     std::vector<double> times = keyTimesOf(g, all);
@@ -534,7 +534,7 @@ void bakeSamples(Graph& g, const ChainSamples& s)
             if (Node* j = g.find(s.joints[i]))
             {
                 setWorldRotation(g, j->id(), worlds[i]);
-                plugs.push_back(j->name() + ".rotate");
+                plugs.push_back(j->path() + ".rotate");
             }
         if (s.keyed && !plugs.empty())
             ops::execute("setKeyframe", {{"args", plugs}, {"time", t}});
@@ -557,15 +557,15 @@ int migrateSpaces(Graph& g)
     for (NodeId sp : legacy)
     {
         const Node& s = *g.node(sp);
-        Node* j = g.find(s.as<std::string>(LegacySpaceNode::kJoint));
+        Node* j = named(g, s.as<std::string>(LegacySpaceNode::kJoint));
         const std::vector<std::string> names = words(s.as<std::string>(LegacySpaceNode::kSpaces));
         const std::optional<PlugRef> curve = g.source({sp, LegacySpaceNode::kSpace, -1});
         const double value = s.as<double>(LegacySpaceNode::kSpace);
         std::vector<std::string> constraints;
         for (int i = 0; i < kMaxSpaces; ++i)
             for (const PlugRef& d : g.destinations({sp, LegacySpaceNode::kWeights + i, -1}))
-                if (std::find(constraints.begin(), constraints.end(), g.node(d.node)->name()) == constraints.end())
-                    constraints.push_back(g.node(d.node)->name());
+                if (std::find(constraints.begin(), constraints.end(), g.node(d.node)->path()) == constraints.end())
+                    constraints.push_back(g.node(d.node)->path());
         // The constraint held the joint in its space; the joint's keys go back to driving it directly.
         for (const std::string& c : constraints)
             ops::execute("removeConstraint", {{"args", {c}}});
@@ -574,7 +574,7 @@ int migrateSpaces(Graph& g)
             // Old space keys were read in the space's own frame, which is a base space without an offset.
             std::vector<int> index{0};
             for (const std::string& n : names)
-                index.push_back(g.find(n) ? lila::scene::spaces::addSpace(g, j->id(), n, false) : 0);
+                index.push_back(named(g, n) ? lila::scene::spaces::addSpace(g, j->id(), n, false) : 0);
             auto mapped = [&](double v) { return index[size_t(std::clamp(int(std::lround(v)), 0, int(index.size()) - 1))]; };
             if (curve)
             {

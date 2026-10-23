@@ -71,6 +71,7 @@ enum AttrFlags : uint32_t
     AttrHidden = 1 << 4,
     AttrFile = 1 << 5, // String holding a file path: editors offer a file browser
     AttrResetOnDisconnect = 1 << 6, // only meaningful while driven: losing the connection puts the default back
+    AttrColor = 1 << 7,             // Vec3 holding a linear RGB colour: editors show a swatch
 };
 
 struct AttrDef
@@ -91,6 +92,15 @@ struct AttrDef
     std::optional<PlugValue> fileDefault;
     /** An older name scene files may store this attr under. Only loading reads it. */
     std::string fileAlias;
+    /** Editor hints. niceName replaces the label made from the name; the limits bound sliders and typed values. */
+    std::string niceName;
+    std::optional<double> minValue;
+    std::optional<double> maxValue;
+    std::optional<double> softMin;
+    std::optional<double> softMax;
+    std::optional<double> step;
+    /** Groups attrs under a heading in editors; empty is the type's own section. */
+    std::string category;
 
     /** The value scene files omit and assume when the attr is absent. */
     const PlugValue& storedDefault() const { return fileDefault ? *fileDefault : defaultValue; }

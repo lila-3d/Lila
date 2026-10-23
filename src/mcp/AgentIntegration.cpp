@@ -124,21 +124,24 @@ SetupResult setUp(const fs::path& root, const SetupOptions& o)
     }
     if (o.skill)
     {
-        fs::path src = agents / "skills" / "lila-modeling";
-        fs::path dst = root / ".claude" / "skills" / "lila-modeling";
-        std::error_code ec;
-        for (const auto& entry : fs::recursive_directory_iterator(src, ec))
+        for (const char* skill : {"lila-modeling", "lila-geometry-nodes"})
         {
-            if (!entry.is_regular_file())
-                continue;
-            fs::path to = dst / fs::relative(entry.path(), src);
-            if (writeAll(to, readAll(entry.path()), &err))
-                r.written.push_back(utf8(to));
-            else
-                r.errors.push_back(err);
+            fs::path src = agents / "skills" / skill;
+            fs::path dst = root / ".claude" / "skills" / skill;
+            std::error_code ec;
+            for (const auto& entry : fs::recursive_directory_iterator(src, ec))
+            {
+                if (!entry.is_regular_file())
+                    continue;
+                fs::path to = dst / fs::relative(entry.path(), src);
+                if (writeAll(to, readAll(entry.path()), &err))
+                    r.written.push_back(utf8(to));
+                else
+                    r.errors.push_back(err);
+            }
+            if (ec)
+                r.errors.push_back("missing " + utf8(src));
         }
-        if (ec)
-            r.errors.push_back("missing " + utf8(src));
     }
     return r;
 }

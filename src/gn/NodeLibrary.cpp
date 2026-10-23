@@ -15,5 +15,8 @@ void registerNodeLibrary()
     nodes::registerCurveNodes();
     nodes::registerSampleNodes();
     nodes::registerBooleanNode();
+    nodes::registerTextureNodes();
+    nodes::registerShadingNodes();
+    nodes::registerGroupNodes();
 }
 } // namespace lila::gn

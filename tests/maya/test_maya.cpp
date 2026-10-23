@@ -421,11 +421,11 @@ TEST_CASE("maya import: units, DAG paths, namespaces and custom attributes")
     maya::ImportResult r = load("units_paths.ma");
     checkVec(vec(g, "a", Transform::kTranslate), {100, 0, 0});
     checkVec(vec(g, "b", Transform::kRotate), {0, 90, 0}, 1e-9);
-    // |a|leaf keeps its name; |b|leaf is made unique.
-    CHECK(g.parent(node(g, "leaf")->id()) == node(g, "a")->id());
-    CHECK(g.parent(node(g, "leaf1")->id()) == node(g, "b")->id());
-    checkVec(vec(g, "leaf1", Transform::kTranslate), {0, 0, 300});
-    CHECK(g.parent(node(g, "kid")->id()) == node(g, "leaf1")->id());
+    // Both leafs keep their name; paths tell them apart.
+    CHECK(g.parent(node(g, "a|leaf")->id()) == node(g, "a")->id());
+    CHECK(g.parent(node(g, "b|leaf")->id()) == node(g, "b")->id());
+    checkVec(vec(g, "b|leaf", Transform::kTranslate), {0, 0, 300});
+    CHECK(g.parent(node(g, "kid")->id()) == node(g, "b|leaf")->id());
     CHECK(node(g, "props:barrel")->nameSpace() == "props");
     CHECK(contains(r.skipped, "barrel.health"));
     // Not centimetres, so the cube is baked at its size rather than kept as a live generator.

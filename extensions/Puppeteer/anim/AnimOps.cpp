@@ -91,7 +91,7 @@ Character resolveCharacter(Graph& g, NodeId node)
     if (!g.node(node))
         throw std::invalid_argument("no such node");
     if (const NodeId c = puppeteer::characterFor(g, node))
-        if (Node* root = g.find(g.node(c)->as<std::string>(g.node(c)->type().attrIndex("root"))))
+        if (Node* root = named(g, g.node(c)->as<std::string>(g.node(c)->type().attrIndex("root"))))
         {
             Character ch = poses::characterOf(g, root->id());
             ch.id = poseLibraryOf(g, c);
@@ -101,7 +101,7 @@ Character resolveCharacter(Graph& g, NodeId node)
         }
     Character ch = poses::characterOf(g, node);
     if (!ch.root)
-        throw std::invalid_argument(g.node(node)->name() + " is not part of a character");
+        throw std::invalid_argument(g.node(node)->path() + " is not part of a character");
     return ch;
 }
 
@@ -384,7 +384,7 @@ void adoptIntoTake(Graph& g, const Character& ch)
     if (keyTimesOf(g, characterCurves(g, ch)).empty())
         return;
     const sa::Playback& pb = sa::playback();
-    sa::createTake(g, "Take1", {.root = g.node(ch.root)->name(), .start = pb.minTime, .end = pb.maxTime, .fps = pb.fps});
+    sa::createTake(g, "Take1", {.root = g.node(ch.root)->path(), .start = pb.minTime, .end = pb.maxTime, .fps = pb.fps});
 }
 
 poses::Pose libraryPose(const Character& ch, const std::string& name)
@@ -406,9 +406,8 @@ namespace
 {
 NodeId marksNode(Graph& g, const Character& ch)
 {
-    const std::string root = g.node(ch.root)->name();
     for (NodeId id : g.nodes())
-        if (Node* n = g.node(id); n && n->type().name == kMarksType && n->as<std::string>(n->type().attrIndex("character")) == root)
+        if (Node* n = g.node(id); n && n->type().name == kMarksType && named(g, n->as<std::string>(n->type().attrIndex("character"))) == g.node(ch.root))
             return id;
     return kNoNode;
 }
@@ -450,7 +449,7 @@ void setMarks(Graph& g, const Character& ch, const Marks& marks)
             throw std::invalid_argument("key marks are unavailable");
         Node* n = g.createNode(*t, g.node(ch.root)->name() + "_keyMarks");
         id = n->id();
-        g.setValue({id, n->type().attrIndex("character"), -1}, g.node(ch.root)->name());
+        g.setValue({id, n->type().attrIndex("character"), -1}, g.path(ch.root));
     }
     json j = json::array();
     for (const auto& [t, m] : marks.at)
@@ -553,7 +552,7 @@ bool walkKeyed(const std::string& label)
 WalkResult generateWalk(Graph& g, const Character& ch, const WalkParams& params, const std::string& takeName, const std::string& restPose)
 {
     const std::map<NodeId, std::string> labels = jointLabels(g, ch);
-    const std::string rootName = g.node(ch.root)->name();
+    const std::string rootName = g.node(ch.root)->path();
     const double frames = params.frames();
     const double fps = params.fps;
 
@@ -630,10 +629,10 @@ WalkResult generateWalk(Graph& g, const Character& ch, const WalkParams& params,
     }
 
     WalkResult res;
-    res.take = g.node(take)->name();
+    res.take = g.node(take)->path();
     res.frames = int(frames);
     for (const Keyed& k : keyed)
-        res.joints.push_back(g.node(k.node)->name());
+        res.joints.push_back(g.node(k.node)->path());
     const int translate = Transform::kTranslate;
     for (int f : walkKeyFrames(params))
     {

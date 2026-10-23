@@ -19,6 +19,10 @@ from . import ops
 __all__ = ["Node", "node", "nodes", "selected", "select", "locator", "group", "mesh", "exists", "display_layers", "display_layer", "object_sets",
            "object_set"]
 
+# A _lila without path lookups only has scene-unique names, so there the name is the path.
+_node_path = getattr(_lila, "node_path", _lila.node_name)
+_node_full_path = getattr(_lila, "node_full_path", lambda i: None if _lila.node_name(i) is None else "|" + _lila.node_name(i))
+
 _CAMEL = re.compile(r"_([a-z])")
 
 
@@ -74,7 +78,23 @@ class Node:
 
     @name.setter
     def name(self, value):
-        ops.rename(self.name, value)
+        ops.rename(self.path, value)
+
+    @property
+    def path(self):
+        """The shortest path that names this node alone ("Arm", or "L|Arm" when another Arm exists). Commands take it."""
+        path = _node_path(self._id)
+        if path is None:
+            raise LookupError(f"node {self._id} was deleted")
+        return path
+
+    @property
+    def full_path(self):
+        """The path from the root, "|Body|L|Arm"."""
+        path = _node_full_path(self._id)
+        if path is None:
+            raise LookupError(f"node {self._id} was deleted")
+        return path
 
     @property
     def type(self):
@@ -90,10 +110,10 @@ class Node:
         return hash(self._id)
 
     def __repr__(self):
-        return f"Node('{_lila.node_name(self._id) or '<deleted>'}')"
+        return f"Node('{_node_path(self._id) or '<deleted>'}')"
 
     def __str__(self):
-        return self.name
+        return self.path
 
     # hierarchy
 
@@ -105,9 +125,9 @@ class Node:
     @parent.setter
     def parent(self, value):
         if value is None:
-            ops.parent(self.name, world=True)
+            ops.parent(self.path, world=True)
         else:
-            ops.parent(self.name, Node(value).name)
+            ops.parent(self.path, Node(value).path)
 
     @property
     def children(self):
@@ -129,7 +149,7 @@ class Node:
         return [a["name"] for a in _lila.node_attrs(self._id) if keyable is None or a["keyable"] == keyable]
 
     def get(self, attr):
-        value = ops.getAttr(f"{self.name}.{_camel(attr)}")
+        value = ops.getAttr(f"{self.path}.{_camel(attr)}")
         return _vector(value) if isinstance(value, list) and len(value) == 3 else value
 
     def set(self, attr, value):
@@ -137,22 +157,22 @@ class Node:
             value = [value.x, value.y, value.z]
         elif isinstance(value, tuple):
             value = list(value)
-        ops.setAttr(f"{self.name}.{_camel(attr)}", value)
+        ops.setAttr(f"{self.path}.{_camel(attr)}", value)
 
     def lock(self, *attrs, locked=True):
         """Lock attributes (translate locks all three of tx/ty/tz) so nothing can change them; locked=False unlocks."""
         for attr in attrs:
-            ops.setAttr(f"{self.name}.{_camel(attr)}", lock=locked)
+            ops.setAttr(f"{self.path}.{_camel(attr)}", lock=locked)
 
     def unlock(self, *attrs):
         self.lock(*attrs, locked=False)
 
     def is_locked(self, attr):
-        return ops.getAttr(f"{self.name}.{_camel(attr)}", lock=True)
+        return ops.getAttr(f"{self.path}.{_camel(attr)}", lock=True)
 
     def has_attr(self, attr):
         try:
-            ops.getAttr(f"{self.name}.{_camel(attr)}")
+            ops.getAttr(f"{self.path}.{_camel(attr)}")
             return True
         except Exception:
             return False
@@ -185,68 +205,68 @@ class Node:
     @property
     def world_position(self):
         """World position of the rotate pivot."""
-        return _vector(ops.pivot(self.name))
+        return _vector(ops.pivot(self.path))
 
     @world_position.setter
     def world_position(self, value):
-        ops.move(self.name, to=list(value))
+        ops.move(self.path, to=list(value))
 
     @property
     def world_matrix(self):
         return self.get("worldMatrix")
 
     def move(self, x=0.0, y=0.0, z=0.0, space="world"):
-        ops.move(self.name, by=[x, y, z], space=space)
+        ops.move(self.path, by=[x, y, z], space=space)
 
     def rotate_by(self, x=0.0, y=0.0, z=0.0, space="world"):
-        ops.rotate(self.name, by=[x, y, z], space=space)
+        ops.rotate(self.path, by=[x, y, z], space=space)
 
     def scale_by(self, x=1.0, y=None, z=None):
         y = x if y is None else y
         z = x if z is None else z
-        ops.scale(self.name, by=[x, y, z])
+        ops.scale(self.path, by=[x, y, z])
 
     def set_pivot(self, position):
-        ops.setPivot(self.name, position=list(position))
+        ops.setPivot(self.path, position=list(position))
 
     def reset_pivot(self):
-        ops.resetPivot(self.name)
+        ops.resetPivot(self.path)
 
     # meshes
 
     @property
     def points(self):
         """Final (modified) mesh points in object space, as lila.math.Vector."""
-        return [_vector(p) for p in ops.meshData(self.name)["points"]]
+        return [_vector(p) for p in ops.meshData(self.path)["points"]]
 
     @property
     def faces(self):
         """Faces as lists of point indices."""
-        return ops.meshData(self.name)["faces"]
+        return ops.meshData(self.path)["faces"]
 
     def mesh_info(self):
-        return ops.meshInfo(self.name)
+        return ops.meshInfo(self.path)
 
     # vertex colors
 
     @property
     def color_sets(self):
         """Color set names in order; the first is the vertex color exporters write first (Unreal's)."""
-        return ops.polyColorSet(self.name, query=True)["sets"]
+        return ops.polyColorSet(self.path, query=True)["sets"]
 
     @property
     def current_color_set(self):
         """The set the viewport shows and paint tools edit, or "" without any."""
-        return ops.polyColorSet(self.name, query=True)["current"]
+        return ops.polyColorSet(self.path, query=True)["current"]
 
     @current_color_set.setter
     def current_color_set(self, name):
-        ops.polyColorSet(self.name, colorSet=name, current=True)
+        ops.polyColorSet(self.path, colorSet=name, current=True)
 
     def add_color_set(self, name="", fill=(1.0, 1.0, 1.0, 1.0)):
         """Adds a color set filled with a linear RGBA color; returns its name."""
         before = set(self.color_sets)
-        sets = ops.polyColorSet(self.name, create=True, colorSet=name, fill=list(fill))["sets"]
+        sets = ops.polyColorSet(self.path, create=True, colorSet=name, fill=list(fill))["sets"]
         return next((s for s in sets if s not in before), name)
 
     def get_colors(self, color_set="", base=True):
@@ -254,9 +274,9 @@ class Node:
         fn = getattr(_lila, "color_set_array", None)
         if fn is None:
             import numpy as np
-            flat = ops.getVertexColorData(self.name, colorSet=color_set, base=base)
+            flat = ops.getVertexColorData(self.path, colorSet=color_set, base=base)
             return np.asarray(flat, dtype=np.float32).reshape(-1, 4)
-        return fn(self.name, color_set, base)
+        return fn(self.path, color_set, base)
 
     def set_colors(self, values, color_set=""):
         """Sets a color set from an (N, 4) array-like in get_colors' order; one undo step. Creates the set when missing."""
@@ -264,9 +284,9 @@ class Node:
         arr = np.ascontiguousarray(values, dtype=np.float32).reshape(-1, 4)
         fn = getattr(_lila, "set_color_set_array", None)
         if fn is None:
-            ops.setVertexColorData(self.name, colorSet=color_set, values=arr.ravel().tolist())
+            ops.setVertexColorData(self.path, colorSet=color_set, values=arr.ravel().tolist())
         else:
-            fn(self.name, arr, color_set)
+            fn(self.path, arr, color_set)
 
     # display layers
 
@@ -274,7 +294,7 @@ class Node:
     def display_layer(self):
         """The display layer this node is in (a Node), or None."""
         for info in ops.listDisplayLayers():
-            if self.name in info["members"]:
+            if self.path in info["members"]:
                 return Node(info["name"])
         return None
 
@@ -282,49 +302,49 @@ class Node:
     def display_layer(self, layer):
         """Moves the node into a layer (Node or name); None takes it out of its layer."""
         if layer is None:
-            ops.removeFromDisplayLayer(self.name)
+            ops.removeFromDisplayLayer(self.path)
         else:
-            ops.editDisplayLayerMembers(Node(layer).name, self.name)
+            ops.editDisplayLayerMembers(Node(layer).path, self.path)
 
     # object sets
 
     @property
     def sets(self):
         """The object sets holding this node, whole or by its components (Nodes)."""
-        return [Node(s) for s in ops.listSets(object=self.name)]
+        return [Node(s) for s in ops.listSets(object=self.path)]
 
     @property
     def members(self):
         """An object set's members: names and component strings like "pCube1.vtx[0:3]"."""
-        return ops.setMembers(self.name)
+        return ops.setMembers(self.path)
 
     @property
     def member_nodes(self):
         """The nodes an object set touches (component owners included), as Nodes."""
-        return [Node(n) for n in ops.setMembers(self.name, nodes=True)]
+        return [Node(n) for n in ops.setMembers(self.path, nodes=True)]
 
     def add_members(self, *items):
         """Adds Nodes, names or component strings to this object set."""
-        ops.addToSet(self.name, *[_member(i) for i in items])
+        ops.addToSet(self.path, *[_member(i) for i in items])
 
     def remove_members(self, *items):
         """Takes Nodes, names or component strings out of this object set."""
-        ops.removeFromSet(self.name, *[_member(i) for i in items])
+        ops.removeFromSet(self.path, *[_member(i) for i in items])
 
     def select_members(self, add=False):
         """Selects what this object set holds: its objects, and its components in component mode."""
-        ops.selectSetMembers(self.name, add=add)
+        ops.selectSetMembers(self.path, add=add)
 
     # lifetime / selection
 
     def delete(self):
-        ops.delete(self.name)
+        ops.delete(self.path)
 
     def select(self, add=False):
         if add:
-            ops.select(self.name, add=True)
+            ops.select(self.path, add=True)
         else:
-            ops.select(self.name)
+            ops.select(self.path)
 
 
 def node(name):
@@ -350,7 +370,7 @@ def selected(type=None):
 
 def select(*items, add=False):
     """Select nodes (Node handles or names). No arguments clears the selection."""
-    names = [Node(i).name for i in items]
+    names = [Node(i).path for i in items]
     if not names:
         ops.select(clear=True)
     elif add:
@@ -383,14 +403,14 @@ def display_layers():
 def display_layer(*items, name=None):
     """A new display layer holding the items (Node handles or names); none makes an empty one."""
     flags = {"name": name} if name else {}
-    names = [Node(i).name for i in items]
+    names = [Node(i).path for i in items]
     if not names:
         flags["empty"] = True
     return Node(ops.createDisplayLayer(*names, **flags))
 
 
 def _member(item):
-    return item.name if isinstance(item, Node) else str(item)
+    return item.path if isinstance(item, Node) else str(item)
 
 
 def object_sets(quick_select=None):
@@ -412,5 +432,5 @@ def object_set(*items, name=None, quick_select=False):
 
 def group(*items, name=None):
     flags = {"name": name} if name else {}
-    names = [Node(i).name for i in items]
+    names = [Node(i).path for i in items]
     return Node(ops.group(*names, **flags))

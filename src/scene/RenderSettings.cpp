@@ -89,8 +89,9 @@ bool isViewName(const std::string& name)
 CameraSettings RenderSettings::camera(const std::string& name) const
 {
     if (!isViewName(name))
-        if (const Node* n = Graph::current().find(name); n && n->type().isA("camera"))
-            return camera::settings(*n);
+        if (std::vector<NodeId> found = Graph::current().findAll(name); found.size() == 1)
+            if (const Node* n = Graph::current().node(found[0]); n->type().isA("camera"))
+                return camera::settings(*n);
     auto it = cameras.find(name);
     return it == cameras.end() ? CameraSettings{} : it->second;
 }

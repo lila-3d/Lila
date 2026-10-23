@@ -223,7 +223,7 @@ public:
         }
         QString brush = QString::fromUtf8(sculpt::brushName(st.brush).data(), qsizetype(sculpt::brushName(st.brush).size()));
         drawToolMessage(p, view, QString("Sculpt %1: %2   radius %3 px   strength %4%5")
-                              .arg(QString::fromStdString(n->name()), brush)
+                              .arg(QString::fromStdString(n->path()), brush)
                               .arg(int(std::lround(st.radius)))
                               .arg(st.strength, 0, 'f', 2)
                               .arg(s->sculpt.symmetric() ? "   symmetry" : ""));

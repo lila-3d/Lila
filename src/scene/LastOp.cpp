@@ -63,7 +63,7 @@ std::vector<std::string> meshesOf(const Op& op)
     std::vector<std::string> out;
     auto addNode = [&](NodeId id) {
         if (Node* n = g.node(id); n && n->type().isA("mesh"))
-            out.push_back(n->name());
+            out.push_back(n->path());
     };
     if (op.call.contains("args"))
     {

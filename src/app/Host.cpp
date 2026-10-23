@@ -1,6 +1,8 @@
 #include "app/Host.h"
 
 #include "ops/Command.h"
+#include "batch/BatchCommands.h"
+#include "batch/BatchRunner.h"
 #include "core/Events.h"
 #include "core/Log.h"
 #include "core/MainQueue.h"
@@ -21,7 +23,9 @@
 #include "scene/Node.h"
 #include "scene/SceneCommands.h"
 #include "sculpt/SculptSession.h"
+#include "seq/MeshSequence.h"
 #include "ui/Layouts.h"
+#include "ui/ThemeModel.h"
 #include "uv/UvCommands.h"
 #include "vcolor/VertexColors.h"
 #include "vcs/SourceControl.h"
@@ -29,6 +33,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #ifdef _WIN32
 #include <io.h>
 #endif
@@ -72,6 +77,20 @@ Options parse(int argc, char** argv)
     for (int i = 1; i < argc; ++i)
     {
         std::string a = argv[i];
+        if (a == "--batch-run")
+        {
+            o.batch = true;
+            o.batchRunCli = true;
+            o.batchRun.assign(argv + i + 1, argv + argc);
+            break;
+        }
+        if (a == "--batch-run-worker" && i + 2 < argc)
+        {
+            o.batch = true;
+            o.workerJob = argv[i + 1];
+            o.workerIndex = size_t(std::strtoull(argv[i + 2], nullptr, 10));
+            break;
+        }
         if (a == "--batch" || a == "-b")
         {
             o.batch = true;
@@ -105,6 +124,7 @@ void startCore()
     scene::registerCommands();
     io::registerCommands();
     gn::registerCommands();
+    seq::registerCommands();
     uv::registerCommands();
     retopo::registerCommands();
     sculpt::registerCommands();
@@ -114,9 +134,11 @@ void startCore()
     link::registerCommands();
     fbx::registerCommands();
     maya::registerCommands();
+    batch::registerCommands();
     io::translators::registerBuiltins();
     io::translators::registerCommands();
     ui::layouts::registerCommands();
+    ui::themes::registerCommands();
     link::registerExporter("fbx", [](const std::vector<scene::NodeId>& nodes, const fs::path& path, std::string* err) {
         return fbx::exportForUnreal(nodes, path, "ue5", err);
     });
@@ -195,6 +217,13 @@ crash::WatchOptions crashOptions(bool gui)
 
 int runBatch(const Options& o, bool pythonOk)
 {
+    // A worker's crash is its run's to report, and its output is already captured to a log.
+    if (!o.workerJob.empty())
+    {
+        int rc = batch::runWorker(o.workerJob, o.workerIndex, pythonOk);
+        mainq::drain();
+        return rc;
+    }
     crash::startWatchdog(crashOptions(false));
     installConsoleProgress();
     if (!pythonOk)
@@ -204,6 +233,8 @@ int runBatch(const Options& o, bool pythonOk)
         rc = 1;
     if (!o.batchScript.empty() && !python::runFile(o.batchScript).ok)
         rc = 1;
+    if (o.batchRunCli)
+        rc = std::max(rc, batch::runCli(o.batchRun));
     mainq::drain();
     return rc;
 }
@@ -211,6 +242,7 @@ int runBatch(const Options& o, bool pythonOk)
 void shutdown()
 {
     events::send({.type = events::Event::Shutdown});
+    batch::shutdown();
     extensions::ExtensionManager::get().unloadAll();
     vcs::SourceControl::get().shutdown();
     link::Link::get().shutdown();

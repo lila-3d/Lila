@@ -523,7 +523,7 @@ NodeId pickSolver(Graph& g, const Args& a, const std::vector<NodeId>& nodes, con
     {
         Node& s = need(g, a.get<std::string>("solver"), cmd);
         if (!s.type().isA(kSolverType))
-            throw CommandError(std::string(cmd) + ": " + s.name() + " is not a physics solver");
+            throw CommandError(std::string(cmd) + ": " + s.path() + " is not a physics solver");
         return s.id();
     }
     for (NodeId n : nodes)
@@ -622,7 +622,7 @@ NodeId makeMarker(Graph& g, NodeId solver, NodeId joint, Behaviour behaviour, Sh
 {
     const std::string jointName = g.node(joint)->name();
     const NodeId m = g.createNode(*types::find(kMarkerType), jointName + "_marker", solver)->id();
-    setAttr(g, m, "joint", jointName);
+    setAttr(g, m, "joint", g.path(joint));
     // No marker above it in the skeleton: it carries the character, so it matches the world pose too.
     bool root = true;
     for (NodeId a = g.parent(joint); a && root; a = g.parent(a))
@@ -687,7 +687,7 @@ void keyPose(Graph& g, const std::vector<std::pair<NodeId, glm::dmat4>>& pose, d
     {
         const auto& [id, world] = pose[i];
         poseJoint(g, id, world);
-        const std::string n = g.node(id)->name();
+        const std::string n = g.node(id)->path();
         json plugs = json::array();
         for (const char* c : {"translateX", "translateY", "translateZ", "rotateX", "rotateY", "rotateZ"})
             plugs.push_back(n + "." + c);
@@ -699,7 +699,7 @@ std::vector<std::string> names(Graph& g, const std::vector<NodeId>& ids)
 {
     std::vector<std::string> out;
     for (NodeId id : ids)
-        out.push_back(g.node(id)->name());
+        out.push_back(g.node(id)->path());
     return out;
 }
 
@@ -735,7 +735,7 @@ void registerCommands(ext::Context& ctx)
             Graph& g = graph();
             Node* s = g.createNode(*types::find(kSolverType), a.get<std::string>("name", "physics1"));
             g.select({s->id()});
-            return s->name();
+            return s->path();
         },
     });
 
@@ -761,7 +761,7 @@ void registerCommands(ext::Context& ctx)
                 throw CommandError("assignPhysicsMarker: select or name joints");
             for (NodeId j : joints)
                 if (!g.node(j)->type().isA("transform"))
-                    throw CommandError("assignPhysicsMarker: " + g.node(j)->name() + " is not a joint or transform");
+                    throw CommandError("assignPhysicsMarker: " + g.node(j)->path() + " is not a joint or transform");
             // Parents first, so each marker sees whether one sits above it.
             std::stable_sort(joints.begin(), joints.end(), [&](NodeId x, NodeId y) {
                 int dx = 0, dy = 0;
@@ -811,7 +811,7 @@ void registerCommands(ext::Context& ctx)
                     if (!markerFor(g, j))
                         labelled.push_back({j, *d});
             if (labelled.empty())
-                throw CommandError("physicsMarkersFromTemplate: no joint below " + g.node(top)->name() + " has a semantic label");
+                throw CommandError("physicsMarkersFromTemplate: no joint below " + g.node(top)->path() + " has a semantic label");
             std::stable_sort(labelled.begin(), labelled.end(), [&](const auto& x, const auto& y) {
                 int dx = 0, dy = 0;
                 for (NodeId c = g.parent(x.first); c; c = g.parent(c))
@@ -858,7 +858,7 @@ void registerCommands(ext::Context& ctx)
             {
                 const NodeId joint = jointOf(g, *g.node(m));
                 if (!joint)
-                    throw CommandError("fitPhysicsMarker: " + g.node(m)->name() + " has no joint");
+                    throw CommandError("fitPhysicsMarker: " + g.node(m)->path() + " has no joint");
                 if (a.get<bool>("fitShape", true))
                 {
                     const ShapeKind kind = a.has("shape") ? shapeArg(a.get<std::string>("shape")) : shapeOf(*g.node(m)).kind;
@@ -887,13 +887,13 @@ void registerCommands(ext::Context& ctx)
                 throw CommandError("retargetPhysicsMarker: give the marker and the new joint");
             NodeId m = isMarker(*g.node(ids[0])) ? ids[0] : markerFor(g, ids[0]);
             if (!m)
-                throw CommandError("retargetPhysicsMarker: " + g.node(ids[0])->name() + " has no physics marker");
+                throw CommandError("retargetPhysicsMarker: " + g.node(ids[0])->path() + " has no physics marker");
             if (!g.node(ids[1])->type().isA("transform"))
-                throw CommandError("retargetPhysicsMarker: " + g.node(ids[1])->name() + " is not a joint or transform");
-            setAttr(g, m, "joint", g.node(ids[1])->name());
+                throw CommandError("retargetPhysicsMarker: " + g.node(ids[1])->path() + " is not a joint or transform");
+            setAttr(g, m, "joint", g.path(ids[1]));
             if (a.get<bool>("fit", false))
                 writeShape(g, m, fitShape(g, ids[1], shapeOf(*g.node(m)).kind));
-            return g.node(m)->name();
+            return g.node(m)->path();
         },
     });
 
@@ -910,12 +910,12 @@ void registerCommands(ext::Context& ctx)
                 throw CommandError("createPhysicsPin: give one marker or joint");
             NodeId m = isMarker(*g.node(ids[0])) ? ids[0] : markerFor(g, ids[0]);
             if (!m)
-                throw CommandError("createPhysicsPin: " + g.node(ids[0])->name() + " has no physics marker");
+                throw CommandError("createPhysicsPin: " + g.node(ids[0])->path() + " has no physics marker");
             const NodeId solver = solverOf(g, m);
             const NodeId joint = jointOf(g, *g.node(m));
             Node* p = g.createNode(*types::find(kPinType), g.node(m)->name() + "_pin", solver);
             const NodeId pid = p->id();
-            setAttr(g, pid, "marker", g.node(m)->name());
+            setAttr(g, pid, "marker", g.path(m));
             setAttr(g, pid, "stiffness", a.get<double>("stiffness", 4.0));
             setAttr(g, pid, "orient", a.get<bool>("orient", false));
             g.evaluate();
@@ -926,7 +926,7 @@ void registerCommands(ext::Context& ctx)
                 g.setValue({pid, Transform::kTranslate, -1}, glm::dvec3(glm::inverse(parent) * world[3]));
             }
             g.select({pid});
-            return g.node(pid)->name();
+            return g.node(pid)->path();
         },
     });
 
@@ -945,9 +945,9 @@ void registerCommands(ext::Context& ctx)
             for (NodeId mesh : meshes)
             {
                 if (!g.node(mesh)->type().isA("mesh"))
-                    throw CommandError("createPhysicsCollider: " + g.node(mesh)->name() + " is not a mesh");
+                    throw CommandError("createPhysicsCollider: " + g.node(mesh)->path() + " is not a mesh");
                 Node* c = g.createNode(*types::find(kColliderType), g.node(mesh)->name() + "_collider", solver);
-                setAttr(g, c->id(), "mesh", g.node(mesh)->name());
+                setAttr(g, c->id(), "mesh", g.path(mesh));
                 made.push_back(c->id());
             }
             return names(g, made);
@@ -979,7 +979,7 @@ void registerCommands(ext::Context& ctx)
             if (a.has("seed"))
                 setAttr(g, id, "seed", a.get<int64_t>("seed"));
             g.select({id});
-            return g.node(id)->name();
+            return g.node(id)->path();
         },
     });
 
@@ -1005,7 +1005,7 @@ void registerCommands(ext::Context& ctx)
                 o.tolerance = a.get<double>("tolerance", 0.0);
                 try
                 {
-                    return g.node(sim::record(g, solver, o))->name();
+                    return g.node(sim::record(g, solver, o))->path();
                 }
                 catch (const std::invalid_argument& e)
                 {
@@ -1038,7 +1038,7 @@ void registerCommands(ext::Context& ctx)
             json out = json::array();
             if (!frames.empty())
                 for (const auto& [id, m] : frames.front())
-                    out.push_back(g.node(id)->name());
+                    out.push_back(g.node(id)->path());
             return out;
         },
     });
@@ -1070,7 +1070,7 @@ void registerCommands(ext::Context& ctx)
             g.evaluate();
             json out = json::array();
             for (const auto& [id, m] : pose)
-                out.push_back(g.node(id)->name());
+                out.push_back(g.node(id)->path());
             return out;
         },
     });
@@ -1161,8 +1161,8 @@ void registerCommands(ext::Context& ctx)
                     continue;
                 const Node& mn = *g.node(m);
                 const NodeId joint = jointOf(g, mn);
-                json j = {{"marker", mn.name()},
-                          {"joint", joint ? g.node(joint)->name() : std::string()},
+                json j = {{"marker", mn.path()},
+                          {"joint", joint ? g.node(joint)->path() : std::string()},
                           {"label", joint ? semanticLabel(g, joint) : std::string()},
                           {"behaviour", integer(mn, "behaviour")},
                           {"shape", integer(mn, "shape")},
@@ -1172,7 +1172,7 @@ void registerCommands(ext::Context& ctx)
                     const RigDef rig = buildRig(g, s);
                     for (const BodyDef& b : rig.bodies)
                         if (b.marker == m && b.parent >= 0)
-                            j["parent"] = g.node(rig.bodies[size_t(b.parent)].marker)->name();
+                            j["parent"] = g.node(rig.bodies[size_t(b.parent)].marker)->path();
                 }
                 out.push_back(j);
             }

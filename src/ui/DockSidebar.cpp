@@ -1,6 +1,7 @@
 #include "ui/DockSidebar.h"
 
 #include "ui/Icons.h"
+#include "ui/Theme.h"
 
 #include <QAction>
 #include <QDockWidget>
@@ -136,7 +137,7 @@ QSize DockTitleBar::minimumSizeHint() const
 void DockTitleBar::paintEvent(QPaintEvent*)
 {
     QPainter p(this);
-    p.fillRect(rect(), QColor(58, 58, 58));
+    p.fillRect(rect(), themeShade(58));
     p.setPen(palette().color(QPalette::WindowText));
     p.drawText(rect().adjusted(6, 0, -60, 0), Qt::AlignVCenter | Qt::AlignLeft,
                fontMetrics().elidedText(mDock->windowTitle(), Qt::ElideRight, width() - 66));

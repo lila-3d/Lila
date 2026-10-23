@@ -7,6 +7,7 @@
 #include <tbb/parallel_for.h>
 #include <tbb/parallel_reduce.h>
 
+#include <map>
 #include <unordered_map>
 
 namespace lila::ui
@@ -111,6 +112,73 @@ bool reuseRenderMesh(const scene::MeshPtr& from, const scene::MeshPtr& to, const
     return true;
 }
 
+std::shared_ptr<const MaskedMesh> maskedRenderMeshFor(const scene::MeshPtr& mesh, uint64_t maskKey, const std::function<std::vector<uint8_t>()>& shownFaces,
+                                                      bool tangents)
+{
+    LILA_ZONE();
+
+    const Entry* full = entryFor(mesh, tangents);
+    if (!full || !full->pick)
+        return nullptr;
+    struct Masked
+    {
+        std::weak_ptr<const geo::Mesh> source;
+        std::shared_ptr<const render::RenderMesh> base;
+        std::shared_ptr<const MaskedMesh> result;
+    };
+    static std::map<std::pair<const geo::Mesh*, uint64_t>, Masked> cache;
+    auto key = std::make_pair(mesh.get(), maskKey);
+    if (auto it = cache.find(key); it != cache.end() && it->second.source.lock() == mesh && it->second.base == full->built)
+        return it->second.result;
+    if (cache.size() > 64)
+        std::erase_if(cache, [](const auto& kv) { return kv.second.source.expired(); });
+
+    const geo::RenderMesh& pd = *full->pick;
+    const render::RenderMesh& rm = *full->built;
+    const std::vector<uint8_t> faces = shownFaces();
+    auto shown = [&](geo::Index f) { return f < faces.size() && faces[f]; };
+    auto out = std::make_shared<MaskedMesh>();
+    auto sub = std::make_shared<render::RenderMesh>();
+    sub->shareVertices = full->built;
+    sub->boundsMin = rm.boundsMin;
+    sub->boundsMax = rm.boundsMax;
+    const size_t tris = rm.indices.size() / 3;
+    out->hiddenTriangles.assign(tris, 0);
+    for (size_t t = 0; t < tris; ++t)
+        out->hiddenTriangles[t] = t < pd.triangleFaces.size() && !shown(pd.triangleFaces[t]);
+    std::vector<render::MeshSection> sections = rm.sections;
+    if (sections.empty())
+        sections.push_back({0, 0, uint32_t(rm.indices.size())});
+    for (const render::MeshSection& sec : sections)
+    {
+        render::MeshSection kept{sec.material, uint32_t(sub->indices.size()), 0};
+        for (uint32_t i = sec.firstIndex; i + 2 < sec.firstIndex + sec.indexCount && i + 2 < rm.indices.size(); i += 3)
+            if (!out->hiddenTriangles[i / 3])
+                sub->indices.insert(sub->indices.end(), rm.indices.begin() + i, rm.indices.begin() + i + 3);
+        kept.indexCount = uint32_t(sub->indices.size()) - kept.firstIndex;
+        if (kept.indexCount)
+            sub->sections.push_back(kept);
+    }
+    // A wire edge shows while any face on it does.
+    std::vector<uint8_t> edgeShown;
+    if (!pd.lineEdges.empty())
+    {
+        edgeShown.assign(mesh->edgeCapacity(), 0);
+        for (geo::Index f = 0; f < mesh->faceCapacity(); ++f)
+            if (shown(f) && mesh->faceValid(f))
+                mesh->forEachFaceCorner(f, [&](geo::Index c) { edgeShown[mesh->cornerEdge(c)] = 1; });
+    }
+    for (size_t l = 0; l < pd.lineEdges.size() && 2 * l + 1 < rm.edgePoints.size(); ++l)
+        if (pd.lineEdges[l] < edgeShown.size() && edgeShown[pd.lineEdges[l]])
+        {
+            sub->edgePoints.push_back(rm.edgePoints[2 * l]);
+            sub->edgePoints.push_back(rm.edgePoints[2 * l + 1]);
+        }
+    out->mesh = std::move(sub);
+    cache[key] = {mesh, full->built, out};
+    return out;
+}
+
 scene::MeshPtr smoothedFor(const scene::MeshPtr& mesh, int level)
 {
     if (!mesh || level <= 0)
@@ -140,7 +208,8 @@ std::shared_ptr<const geo::RenderMesh> pickDataFor(const scene::MeshPtr& mesh)
     return e ? e->pick : nullptr;
 }
 
-std::optional<RayHit> raycast(const render::RenderMesh& mesh, const glm::dmat4& world, const glm::dvec3& origin, const glm::dvec3& dir)
+std::optional<RayHit> raycast(const render::RenderMesh& mesh, const glm::dmat4& world, const glm::dvec3& origin, const glm::dvec3& dir,
+                              const std::vector<uint8_t>* hidden)
 {
     LILA_ZONE();
 
@@ -175,6 +244,8 @@ std::optional<RayHit> raycast(const render::RenderMesh& mesh, const glm::dmat4& 
         [&](const tbb::blocked_range<size_t>& r, Best acc) {
             for (size_t t = r.begin(); t != r.end(); ++t)
             {
+                if (hidden && t < hidden->size() && (*hidden)[t])
+                    continue;
                 // Moller-Trumbore, both sides.
                 glm::dvec3 a(mesh.vertices[mesh.indices[t * 3]].pos), b(mesh.vertices[mesh.indices[t * 3 + 1]].pos),
                     c(mesh.vertices[mesh.indices[t * 3 + 2]].pos);

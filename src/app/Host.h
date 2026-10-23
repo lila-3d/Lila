@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
 
 /** What lila.exe and lilabatch.exe share: startup and shutdown of everything below the UI. */
 namespace lila::host
@@ -15,6 +16,12 @@ struct Options
     std::string command;
     std::string path;
     bool batch = false;
+    /** --batch-run: everything after it, for batch::runCli. */
+    std::vector<std::string> batchRun;
+    bool batchRunCli = false;
+    /** --batch-run-worker <job> <index>: one file of a batch run. */
+    std::string workerJob;
+    size_t workerIndex = 0;
 };
 
 LILA_SCENE_API Options parse(int argc, char** argv);
@@ -30,7 +37,7 @@ LILA_SCENE_API bool startPython(const Options& o);
 
 LILA_SCENE_API crash::WatchOptions crashOptions(bool gui);
 
-/** --batch: the watchdog, console progress, then the -c command and the script. The exit code. */
+/** --batch: the watchdog, console progress, then the -c command, the script and a --batch-run. The exit code. */
 LILA_SCENE_API int runBatch(const Options& o, bool pythonOk);
 
 /** Sends events::Event::Shutdown, unloads extensions and stops Lila's services. */

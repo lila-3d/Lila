@@ -45,8 +45,8 @@ void registerCommands(ext::Context& ctx)
                 const Node& j = jointNamed(g, s, "puppeteerMirrorJoints");
                 const auto pair = sidePair(j.name());
                 if (!pair)
-                    throw CommandError("puppeteerMirrorJoints: " + j.name() + " has no side in its name");
-                json r = ops::execute("mirrorJoints", {{"args", {j.name()}},
+                    throw CommandError("puppeteerMirrorJoints: " + j.path() + " has no side in its name");
+                json r = ops::execute("mirrorJoints", {{"args", {j.path()}},
                                                         {"axis", a.get<std::string>("axis", "x")},
                                                         {"behavior", a.get<bool>("behavior", true)},
                                                         {"searchReplace", {pair->first, pair->second}}});

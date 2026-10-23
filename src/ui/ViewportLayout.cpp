@@ -3,6 +3,8 @@
 #include "core/PrefStore.h"
 #include "io/SceneFile.h"
 #include "scene/Graph.h"
+#include "scene/Isolation.h"
+#include "ui/NodeLookup.h"
 #include "ui/ViewportToolbar.h"
 #include "ui/ViewportWidget.h"
 
@@ -32,23 +34,30 @@ ViewportLayout::ViewportLayout(QWidget* parent) : QWidget(parent)
     relayout();
 
     QPointer<ViewportLayout> self(this);
+    scene::isolation::setActiveProvider([self]() -> const scene::isolation::Set* {
+        return self && self->mActive ? &self->mActive->isolation() : nullptr;
+    });
     io::registerUiSection(
         "viewports",
         [self]() -> nlohmann::json {
             if (!self)
                 return nullptr;
-            nlohmann::json names = nlohmann::json::array(), cameras = nlohmann::json::array();
-            bool any = false;
+            nlohmann::json names = nlohmann::json::array(), cameras = nlohmann::json::array(), isolation = nlohmann::json::array();
+            bool any = false, anyIsolated = false;
             for (ViewportWidget* v : self->mViews)
             {
                 const scene::Node* n = scene::Graph::current().node(v->lookThroughCamera());
-                names.push_back(n ? n->name() : std::string());
+                names.push_back(n ? n->fullPath() : std::string());
                 any |= n != nullptr;
                 cameras.push_back(v->cameraState());
+                isolation.push_back(scene::isolation::toJson(v->isolation(), scene::Graph::current()));
+                anyIsolated |= v->isolating();
             }
             nlohmann::json section{{"cameras", cameras}};
             if (any)
                 section["lookThrough"] = names;
+            if (anyIsolated)
+                section["isolation"] = isolation;
             for (size_t i = 0; i < self->mViews.size(); ++i)
                 if (self->mViews[i] == self->mActive)
                     section["active"] = i;
@@ -62,11 +71,14 @@ ViewportLayout::ViewportLayout(QWidget* parent) : QWidget(parent)
             for (size_t i = 0; i < self->mViews.size() && i < cameras.size(); ++i)
                 self->mViews[i]->restoreCameraState(cameras[i]);
             self->mCamerasRestored = !cameras.empty();
+            nlohmann::json isolation = section.is_object() ? section.value("isolation", nlohmann::json::array()) : nlohmann::json::array();
+            for (size_t i = 0; i < self->mViews.size(); ++i)
+                self->mViews[i]->setIsolation(scene::isolation::fromJson(i < isolation.size() ? isolation[i] : nlohmann::json(), scene::Graph::current()));
             for (size_t i = 0; i < self->mViews.size(); ++i)
             {
                 ViewportWidget* v = self->mViews[i];
                 std::string name = i < names.size() && names[i].is_string() ? names[i].get<std::string>() : std::string();
-                const scene::Node* n = name.empty() ? nullptr : scene::Graph::current().find(name);
+                const scene::Node* n = name.empty() ? nullptr : findNode(name);
                 if (n && n->type().isA("camera"))
                     v->lookThrough(n->id());
                 else if (v->lookThroughCamera() != scene::kNoNode)

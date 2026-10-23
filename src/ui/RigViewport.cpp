@@ -207,11 +207,11 @@ std::vector<viewportHooks::PickHit> pickIkHandles(QPointF a, QPointF b, bool cli
         if (!click)
         {
             if (box.contains(*c))
-                hits.push_back({n->name(), 0.0});
+                hits.push_back({n->path(), 0.0});
             continue;
         }
         if (double d = std::hypot(c->x() - a.x(), c->y() - a.y()); d < 10.0)
-            hits.push_back({n->name(), d});
+            hits.push_back({n->path(), d});
     }
     return hits;
 }
@@ -246,7 +246,7 @@ std::vector<viewportHooks::PickHit> pickJoints(QPointF a, QPointF b, bool click,
         if (!click)
         {
             if (box.contains(*c))
-                hits.push_back({n->name(), 0.0});
+                hits.push_back({n->path(), 0.0});
             continue;
         }
         double rpx = n->as<double>(Joint::kRadius) * scale / view.unitsPerPixel(p);
@@ -256,7 +256,7 @@ std::vector<viewportHooks::PickHit> pickJoints(QPointF a, QPointF b, bool click,
             if (auto cc = view.project(glm::dvec3(g.node(ch)->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3])))
                 best = std::min(best, segDistance(a, *c, *cc));
         if (best < 8.0)
-            hits.push_back({n->name(), best});
+            hits.push_back({n->path(), best});
     }
     return hits;
 }

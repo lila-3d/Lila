@@ -11,6 +11,7 @@
 #include "scene/Camera.h"
 #include "scene/ImagePlane.h"
 #include "ui/Actions.h"
+#include "ui/NodeLookup.h"
 #include "ui/Animation.h"
 #include "ui/Camera.h"
 #include "ui/TextureCache.h"
@@ -97,7 +98,7 @@ render::TexturePtr imageFor(const scene::Node& n, double time)
     }
     static std::set<std::string> warned;
     if (std::string e = textures::error(file); !e.empty() && warned.insert(file).second)
-        log::warn("imagePlane {}: {}: {}", n.name(), file, e);
+        log::warn("imagePlane {}: {}: {}", n.path(), file, e);
     // A sequence holds its last frame on screen while the next one loads.
     return sequence ? s.image : nullptr;
 }
@@ -120,8 +121,7 @@ std::optional<ip::CameraFrame> cameraFor(const std::string& camera, const ViewIn
 {
     if (camera == view.camera)
         return frameOf(view);
-    scene::Graph& g = scene::Graph::current();
-    if (const scene::Node* cam = g.find(camera); cam && cam->type().isA("camera"))
+    if (const scene::Node* cam = findNode(camera); cam && cam->type().isA("camera"))
         return scene::camera::frame(*cam, cam->as<glm::dmat4>(scene::Transform::kWorldMatrix));
     if (camera != "persp")
     {
@@ -253,16 +253,16 @@ std::vector<viewportHooks::PickHit> pick(QPointF a, QPointF b, bool click, const
         if (!click)
         {
             if (std::ranges::any_of(poly, [&](const QPointF& c) { return box.contains(c); }))
-                hits.push_back({p.node->name(), 0.0});
+                hits.push_back({p.node->path(), 0.0});
             continue;
         }
         double best = 1e300;
         for (int i = 0; i < 4; ++i)
             best = std::min(best, segDistance(a, poly[i], poly[(i + 1) % 4]));
         if (best < 6.0)
-            hits.push_back({p.node->name(), best});
+            hits.push_back({p.node->path(), best});
         else if (depthOf(*p.node) == render::ImagePlaneDraw::Depth::Front && poly.containsPoint(a, Qt::OddEvenFill))
-            hits.push_back({p.node->name(), 5.0});
+            hits.push_back({p.node->path(), 5.0});
     }
     return hits;
 }
@@ -374,7 +374,7 @@ void fillCameraMenu(QMenu* menu, const std::string& camera)
             continue;
         if (std::exchange(first, false))
             menu->addSeparator();
-        std::string name = n->name();
+        std::string name = n->path();
         QObject::connect(menu->addAction(QString::fromStdString("Select " + name)), &QAction::triggered, menu, [name] {
             try
             {

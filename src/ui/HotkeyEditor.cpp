@@ -410,13 +410,13 @@ void KeyboardHeatMap::paintEvent(QPaintEvent*)
                         c.key == Qt::Key_Meta || c.key == Qt::Key_CapsLock;
         int level = modifier ? 30 : n == 0 ? 44 : 70 + int(130.0 * n / maxCount);
         QColor fill(level, level, level);
-        QColor text = level > 135 ? QColor(18, 18, 18) : modifier ? QColor(110, 110, 110) : QColor(205, 205, 205);
+        QColor text = level > 135 ? themeShade(18) : modifier ? themeShade(110) : themeShade(205);
 
-        QPen pen(QColor(26, 26, 26), 1);
+        QPen pen(themeShade(26), 1);
         if (c.key == mSelected && !modifier)
-            pen = QPen(QColor(245, 245, 245), 2);
+            pen = QPen(themeShade(245), 2);
         else if (c.key == mHover && !modifier)
-            pen = QPen(QColor(160, 160, 160), 1.5);
+            pen = QPen(themeShade(160), 1.5);
         p.setPen(pen);
         p.setBrush(fill);
         p.drawRoundedRect(r, 3, 3);

@@ -22,6 +22,7 @@ namespace lila::io
  *     "connections": [ ["src.attr", "dst.attr"] ],
  *     "selection": [ names ],
  *     "references": [ { "namespace", "path", "loaded", "edits": [ { "node", "attrs", "parent" } ] } ],
+ *     "data": { key: value },   scene::data, values tools and scripts keep with the scene
  *     "ui": { section: value } }
  * Only storable attrs that differ from their defaults are written.
  */

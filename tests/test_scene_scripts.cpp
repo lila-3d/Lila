@@ -2,7 +2,9 @@
 
 #include "ops/Command.h"
 #include "ops/Undo.h"
+#include "io/SceneFile.h"
 #include "io/SceneFormats.h"
+#include "scene/SceneData.h"
 #include "scene/SceneScripts.h"
 
 #include <filesystem>
@@ -84,4 +86,31 @@ TEST_CASE("sceneScript command is undoable and saves with the scene")
     UndoStack::get().undo();
     CHECK(scripts::find("tool2"));
     ops::execute("newScene", json::object());
+}
+
+TEST_CASE("sceneData values are undoable and survive both file formats")
+{
+    namespace data = lila::scene::data;
+    ops::execute("newScene", json::object());
+    CHECK(data::all().empty());
+    json value = {{"radius", 4.5}, {"names", {"a", "b"}}, {"nested", {{"on", true}}}};
+    ops::execute("sceneData", {{"args", {"myTool.settings"}}, {"value", value}});
+    CHECK(data::get("myTool.settings") == value);
+    UndoStack::get().undo();
+    CHECK(data::get("myTool.settings").is_null());
+    UndoStack::get().redo();
+    CHECK(data::get("myTool.settings") == value);
+
+    json doc = io::serialize();
+    CHECK(doc["data"]["myTool.settings"] == value);
+    std::vector<std::string> warnings;
+    CHECK(io::decodeAscii(io::encodeAscii(doc), &warnings)["data"] == doc["data"]);
+    CHECK(io::decodeBinary(io::encodeBinary(doc), &warnings)["data"] == doc["data"]);
+
+    ops::execute("newScene", json::object());
+    CHECK(data::all().empty());
+    io::deserialize(doc);
+    CHECK(data::get("myTool.settings") == value);
+    ops::execute("sceneData", {{"args", {"myTool.settings"}}, {"remove", true}});
+    CHECK(data::all().empty());
 }

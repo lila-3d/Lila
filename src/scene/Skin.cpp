@@ -375,7 +375,7 @@ std::vector<Influence> influences(Graph& g, NodeId skin)
 int64_t indexOf(const std::vector<Influence>& infs, const std::string& joint)
 {
     for (const Influence& i : infs)
-        if (i.name == joint)
+        if (i.name == joint || (i.joint != kNoNode && Graph::current().path(i.joint) == joint))
             return i.index;
     return -1;
 }
@@ -768,7 +768,7 @@ void registerSkinCommandsImpl()
             if (mesh == kNoNode || joints.empty())
                 throw CommandError("skinCluster: give at least one joint and a mesh");
             if (skin::find(g, mesh) != kNoNode)
-                throw CommandError("skinCluster: " + g.node(mesh)->name() + " is already skinned");
+                throw CommandError("skinCluster: " + g.node(mesh)->path() + " is already skinned");
             if (a.get<std::string>("bindTo") == "hierarchy")
             {
                 size_t given = joints.size();
@@ -822,7 +822,7 @@ void registerSkinCommandsImpl()
             if (method == "heatmap")
                 smoothWeights(world, t, 6, maxInf, {});
             skin::setWeights(g, skin, t);
-            return g.node(skin)->name();
+            return g.node(skin)->path();
         },
     });
 
@@ -853,7 +853,7 @@ void registerSkinCommandsImpl()
             {
                 std::unordered_map<uint32_t, std::string> names;
                 for (const auto& i : infs)
-                    names[i.index] = i.name;
+                    names[i.index] = i.joint != kNoNode ? g.path(i.joint) : i.name;
                 json out = json::array();
                 for (uint32_t p : pts)
                 {
@@ -1123,8 +1123,8 @@ void registerSkinCommandsImpl()
             }
             NodeId mesh = skin::meshOf(g, skin);
             return {
-                {"skinCluster", g.node(skin)->name()},
-                {"mesh", mesh != kNoNode ? json(g.node(mesh)->name()) : json(nullptr)},
+                {"skinCluster", g.node(skin)->path()},
+                {"mesh", mesh != kNoNode ? json(g.node(mesh)->path()) : json(nullptr)},
                 {"influences", names},
                 {"locked", locked},
                 {"maxInfluences", maxInfOf(g, skin)},

@@ -1,5 +1,7 @@
 #include "gn/Exec.h"
 #include "gn/Gn.h"
+#include "gn/NodesCommon.h"
+#include "gn/Viewer.h"
 
 #include "core/Log.h"
 #include "core/Profile.h"
@@ -8,6 +10,7 @@
 #include "scene/Modifiers.h"
 #include "scene/Transform.h"
 
+#include <atomic>
 #include <map>
 #include <mutex>
 #include <set>
@@ -30,8 +33,7 @@ struct TypeLayout
 {
     struct Param
     {
-        std::string name;
-        SocketType type;
+        GInput input;
         int attr;
     };
     struct Object
@@ -103,21 +105,87 @@ public:
             {
                 const scene::PlugValue& v = value(p.attr);
                 json j = scene::toJson(v);
-                env.params[p.name] = valueFromJson(p.type, j);
+                env.params[p.input.name] = paramValue(p.input, j);
             }
             for (const TypeLayout::Object& o : mLayout->objects)
                 env.objects[o.node] = {as<scene::MeshPtr>(o.meshAttr), as<glm::dmat4>(o.matrixAttr)};
+            ViewerSink sink;
+            if (mPlan->viewerStep >= 0)
+                env.viewer = &sink;
             GeometryPtr result = execute(*mPlan, env);
             setOutput(outAttr, scene::MeshPtr(std::make_shared<geo::Mesh>(toOutputMesh(*result))));
+            if (sink.captured)
+                publishViewer(sink);
+            else
+                clearViewerData(id());
         }
         catch (const std::exception& e)
         {
             log::warn("{}: {}", name(), e.what());
             setOutput(outAttr, in);
+            clearViewerData(id());
         }
     }
 
+    ~GnModifierNode() override { clearViewerData(id()); }
+
 private:
+    void publishViewer(const ViewerSink& sink)
+    {
+        LILA_ZONE();
+
+        auto d = std::make_shared<ViewerData>();
+        d->group = mPlan->group.name;
+        d->node = sink.node;
+        d->type = sink.type;
+        d->domain = sink.domain;
+        Geometry r = realize(sink.geometry ? *sink.geometry : Geometry{});
+        geo::Mesh m = r.mesh ? *r.mesh : geo::Mesh();
+        if (r.points)
+            m.append(*r.points);
+        if (r.curves)
+            for (const glm::dvec3& p : r.curves->positions)
+                m.addPoint(p);
+        stripAnonymous(m);
+        m.compact();
+        if (sink.field)
+        {
+            FieldContext ctx = nodes::contextFor(m, sink.domain);
+            d->domain = ctx.domain;
+            bool vector = sink.type == SocketType::Vector || sink.type == SocketType::Rotation;
+            std::vector<glm::dvec4> v(ctx.size);
+            if (sink.type == SocketType::Color)
+                v = expand<glm::dvec4>(evaluate(sink.field, ctx, SocketType::Color), ctx.size);
+            else if (vector)
+            {
+                std::vector<glm::dvec3> raw = expand<glm::dvec3>(evaluate(sink.field, ctx, SocketType::Vector), ctx.size);
+                for (size_t k = 0; k < ctx.size; ++k)
+                    v[k] = glm::dvec4(raw[k], 0.0);
+            }
+            else
+            {
+                std::vector<double> raw = expand<double>(evaluate(sink.field, ctx, SocketType::Float), ctx.size);
+                for (size_t k = 0; k < ctx.size; ++k)
+                    v[k] = glm::dvec4(raw[k], 0.0, 0.0, 0.0);
+            }
+            d->values = std::move(v);
+            d->hasValues = true;
+            if (!d->values.empty())
+            {
+                d->minValue = d->maxValue = d->values[0].x;
+                for (const glm::dvec4& x : d->values)
+                {
+                    d->minValue = std::min(d->minValue, x.x);
+                    d->maxValue = std::max(d->maxValue, x.x);
+                }
+            }
+        }
+        d->mesh = std::make_shared<const geo::Mesh>(std::move(m));
+        static std::atomic<uint64_t> serial{0};
+        d->serial = ++serial;
+        setViewerData(id(), std::move(d));
+    }
+
     std::shared_ptr<const TypeLayout> mLayout;
     std::string mCachedDef;
     PlanPtr mPlan;
@@ -138,7 +206,7 @@ struct Interface
     {
         json j = json::array();
         for (const GInput& in : inputs)
-            j.push_back(std::string(socketTypeName(in.type)) + ":" + in.name);
+            j.push_back(std::string(socketTypeName(in.type)) + ":" + in.name + (in.subtype == "angle" ? ":angle" : ""));
         json o = objects;
         return json{{"in", j}, {"obj", o}, {"time", usesTime}}.dump();
     }
@@ -149,12 +217,9 @@ Interface interfaceOf(const Group& g)
     Interface i;
     i.inputs = g.inputs;
     for (const GNode& n : g.nodes)
-    {
         if (n.type == "ObjectInfo")
             i.objects.push_back(n.name);
-        if (n.type == "SceneTime")
-            i.usesTime = true;
-    }
+    i.usesTime = usesSceneTime(g);
     return i;
 }
 
@@ -171,12 +236,40 @@ Registry& registry()
     return r;
 }
 
+/** Label, tooltip, limits and panel: what editors show, none of which changes the attr's layout. */
+void presentParam(AttrDef& a, const GInput& in)
+{
+    a.niceName = in.displayName();
+    a.doc = !in.description.empty() ? in.description
+            : in.type == SocketType::Rotation ? "Exposed geometry-nodes rotation, degrees."
+                                               : "Group input of the geometry-nodes group, fed to its Group Input node.";
+    a.minValue = in.min;
+    a.maxValue = in.max;
+    a.softMin = in.softMin;
+    a.softMax = in.softMax;
+    a.step = in.step;
+    if (in.subtype == "factor" && !a.softMin && !a.softMax)
+    {
+        a.softMin = 0.0;
+        a.softMax = 1.0;
+    }
+    else if (in.subtype == "percentage" && !a.softMin && !a.softMax)
+    {
+        a.softMin = 0.0;
+        a.softMax = 100.0;
+    }
+    a.category = in.panel;
+    if (in.type == SocketType::Color || (in.type == SocketType::Vector && in.subtype == "color"))
+        a.flags |= scene::AttrColor;
+    else
+        a.flags &= ~scene::AttrColor;
+}
+
 AttrDef paramAttr(const GInput& in)
 {
     AttrDef a;
     a.name = in.name;
     a.flags = scene::AttrInput | scene::AttrStorable | scene::AttrKeyable;
-    a.doc = "Group input of the geometry-nodes group, fed to its Group Input node.";
     const json& d = in.defaultValue;
     auto num = [&](double fallback) { return d.is_number() ? d.get<double>() : d.is_boolean() ? double(d.get<bool>()) : fallback; };
     switch (in.type)
@@ -199,8 +292,19 @@ AttrDef paramAttr(const GInput& in)
         a.defaultValue = v;
         for (int k = 0; k < 3; ++k)
             a.childNames[k] = in.name + char('X' + k);
-        if (in.type == SocketType::Rotation)
-            a.doc = "Exposed geometry-nodes rotation, degrees.";
+        break;
+    }
+    case SocketType::Color:
+    {
+        a.type = PlugType::Vec3;
+        glm::dvec3 v(0.0);
+        if (d.is_array() && d.size() >= 3)
+            v = {d[0].get<double>(), d[1].get<double>(), d[2].get<double>()};
+        else if (d.is_number())
+            v = glm::dvec3(d.get<double>());
+        a.defaultValue = v;
+        for (int k = 0; k < 3; ++k)
+            a.childNames[k] = in.name + "RGB"[k];
         break;
     }
     case SocketType::String:
@@ -213,7 +317,19 @@ AttrDef paramAttr(const GInput& in)
         a.defaultValue = num(0.0);
         break;
     }
+    presentParam(a, in);
     return a;
+}
+
+/** Refreshes the presentation of an already registered type's params in place, so a tooltip edit needs no new type. */
+void representParams(const scene::NodeType& t, const Group& g)
+{
+    auto& type = const_cast<scene::NodeType&>(t);
+    for (const GInput& in : g.inputs)
+        for (std::vector<AttrDef>* list : {&type.ownAttrs, &type.attrs})
+            for (AttrDef& a : *list)
+                if (a.name == in.name)
+                    presentParam(a, in);
 }
 
 const scene::NodeType& ensureType(const Group& g)
@@ -229,7 +345,10 @@ const scene::NodeType& ensureType(const Group& g)
     {
         auto it = r.signatures.find(name);
         if (it != r.signatures.end() && it->second == sig)
+        {
+            representParams(*t, g);
             return *t;
+        }
         // Same name, other interface (another scene loaded): nodes still holding the old type keep it alive.
         scene::types::unregisterType(name);
     }
@@ -249,7 +368,7 @@ const scene::NodeType& ensureType(const Group& g)
     layout->defAttr = 2;
     for (const GInput& in : iface.inputs)
     {
-        layout->params.push_back({in.name, in.type, int(t.ownAttrs.size())});
+        layout->params.push_back({in, int(t.ownAttrs.size())});
         t.ownAttrs.push_back(paramAttr(in));
     }
     for (const std::string& obj : iface.objects)
@@ -285,7 +404,7 @@ void syncTypeFor(const Node& n)
     }
     catch (const std::exception& e)
     {
-        log::warn("{}: {}", n.name(), e.what());
+        log::warn("{}: {}", n.path(), e.what());
     }
 }
 
@@ -343,13 +462,18 @@ void connectObjects(Graph& g, Node& mod, const Group& grp)
         }
         catch (const std::exception&)
         {
-            throw std::invalid_argument("Object Info " + n.name + ": " + object + " depends on " + mod.name() + " (that would be a cycle)");
+            throw std::invalid_argument("Object Info " + n.name + ": " + object + " depends on " + mod.path() + " (that would be a cycle)");
         }
     }
 }
 
-/** Replaces a modifier with one of the group's current type, keeping its name, connections and parameter values. */
-Node* migrate(Graph& g, Node& old, const scene::NodeType& type)
+using Renames = std::map<std::string, std::string>;
+
+/**
+ * Replaces a modifier with one of the group's current type, keeping its name, connections and parameter values.
+ * renames maps old parameter names to new ones, so a renamed input keeps its value and animation.
+ */
+Node* migrate(Graph& g, Node& old, const scene::NodeType& type, const Renames& renames)
 {
     LILA_ZONE();
 
@@ -363,6 +487,10 @@ Node* migrate(Graph& g, Node& old, const scene::NodeType& type)
         else if (src.node == oldId)
             out.push_back({src, dst});
     }
+    auto newName = [&](const std::string& n) {
+        auto it = renames.find(n);
+        return it == renames.end() ? n : it->second;
+    };
     std::vector<std::pair<std::string, scene::PlugValue>> values;
     const auto& defs = old.type().attrs;
     for (int i = 0; i < int(defs.size()); ++i)
@@ -372,7 +500,7 @@ Node* migrate(Graph& g, Node& old, const scene::NodeType& type)
     Node* fresh = g.createNode(type, {}, scene::kNoNode, false);
     for (auto& [attr, v] : values)
     {
-        int idx = type.attrIndex(attr);
+        int idx = type.attrIndex(newName(attr));
         if (idx >= 0 && type.attrs[idx].type == defs[old.type().attrIndex(attr)].type)
             g.setValue({fresh->id(), idx, -1}, v);
     }
@@ -380,7 +508,7 @@ Node* migrate(Graph& g, Node& old, const scene::NodeType& type)
     g.rename(fresh->id(), name);
     for (auto& [src, dst] : in)
     {
-        int idx = type.attrIndex(defs[dst.attr].name);
+        int idx = type.attrIndex(newName(defs[dst.attr].name));
         if (idx < 0)
             continue;
         try
@@ -401,7 +529,7 @@ Node* migrate(Graph& g, Node& old, const scene::NodeType& type)
     return fresh;
 }
 
-void syncInstances(Graph& g, Node& groupNode, const Group& grp)
+void syncInstances(Graph& g, Node& groupNode, const Group& grp, const Renames& renames)
 {
     const scene::NodeType& type = ensureType(grp);
     for (NodeId id : instancesOf(g, groupNode.id()))
@@ -410,9 +538,69 @@ void syncInstances(Graph& g, Node& groupNode, const Group& grp)
         if (!mod)
             continue;
         if (&mod->type() != &type)
-            mod = migrate(g, *mod, type);
+            mod = migrate(g, *mod, type, renames);
         connectObjects(g, *mod, grp);
     }
+}
+
+/**
+ * Copies the current definition of every group its Group nodes use into grp.subgroups, dropping unused ones. Groups
+ * missing from the scene keep the copy they had. Throws when a group would end up containing itself.
+ */
+void embedSubgroups(Graph& g, Group& grp)
+{
+    std::map<std::string, json> next;
+    for (const std::string& name : referencedGroups(grp))
+    {
+        if (name == grp.name)
+            throw std::invalid_argument("group " + grp.name + " can't contain itself");
+        json def;
+        if (Node* n = findGroupNode(g, name))
+            def = readGroup(*n).toJson();
+        else if (auto it = grp.subgroups.find(name); it != grp.subgroups.end())
+            def = it->second;
+        else
+            continue;
+        if (dependsOn(Group::fromJson(def), grp.name))
+            throw std::invalid_argument("group " + name + " uses " + grp.name + ", so it can't go inside it (that would be a cycle)");
+        next[name] = std::move(def);
+    }
+    grp.subgroups = std::move(next);
+}
+
+/** Re-embeds a changed group into every group that uses it, which updates their modifiers in turn. */
+void propagateToUsers(Graph& g, const std::string& changed)
+{
+    thread_local std::set<std::string> active;
+    if (!active.insert(changed).second)
+        return;
+    for (const std::string& name : groupNames(g))
+    {
+        if (name == changed || active.contains(name))
+            continue;
+        Node* n = findGroupNode(g, name);
+        Group user;
+        try
+        {
+            user = readGroup(*n);
+        }
+        catch (const std::exception&)
+        {
+            continue;
+        }
+        std::vector<std::string> refs = referencedGroups(user);
+        if (std::find(refs.begin(), refs.end(), changed) == refs.end())
+            continue;
+        try
+        {
+            commitGroup(g, *n, std::move(user));
+        }
+        catch (const std::exception& e)
+        {
+            log::warn("{}: couldn't update its use of {}: {}", name, changed, e.what());
+        }
+    }
+    active.erase(changed);
 }
 } // namespace
 
@@ -423,8 +611,11 @@ std::string typeNameFor(const Group& g)
 
 scene::Node* findGroupNode(Graph& g, std::string_view group)
 {
-    Node* n = g.find(group);
-    return n && n->type().name == kGroupNodeType ? n : nullptr;
+    // A hierarchy node elsewhere may share the group's name, so look for the group node among every match.
+    for (NodeId id : g.findAll(group))
+        if (Node* n = g.node(id); n->type().name == kGroupNodeType)
+            return n;
+    return nullptr;
 }
 
 std::vector<std::string> groupNames(Graph& g)
@@ -440,14 +631,14 @@ Group readGroup(const Node& groupNode)
 {
     const std::string& def = groupNode.as<std::string>(kDefinitionAttr);
     if (def.empty())
-        throw std::invalid_argument(groupNode.name() + " has no definition");
+        throw std::invalid_argument(groupNode.path() + " has no definition");
     try
     {
         return Group::fromJson(json::parse(def));
     }
     catch (const json::exception& e)
     {
-        throw std::invalid_argument(groupNode.name() + ": " + e.what());
+        throw std::invalid_argument(groupNode.path() + ": " + e.what());
     }
 }
 
@@ -473,19 +664,25 @@ Node* groupOfModifier(Graph& g, const Node& modifier)
     return src ? g.node(src->node) : nullptr;
 }
 
-void commitGroup(Graph& g, Node& groupNode, Group next)
+void commitGroup(Graph& g, Node& groupNode, Group next) { commitGroup(g, groupNode, std::move(next), {}); }
+
+void commitGroup(Graph& g, Node& groupNode, Group next, const std::map<std::string, std::string>& renames)
 {
     LILA_ZONE();
 
     Group prev = readGroup(groupNode);
     next.name = prev.name;
+    embedSubgroups(g, next);
     pruneLinks(next);
     if (interfaceOf(next).signature() != interfaceOf(prev).signature())
         next.typeVersion = std::max(registry().maxVersion[prev.name], prev.typeVersion) + 1;
     else
         next.typeVersion = prev.typeVersion;
+    bool changed = next.toJson() != prev.toJson();
     setGroupDefinition(g, groupNode, next);
-    syncInstances(g, groupNode, next);
+    syncInstances(g, groupNode, next, renames);
+    if (changed)
+        propagateToUsers(g, next.name);
 }
 
 namespace detail
@@ -517,8 +714,10 @@ Node* applyGroup(Graph& g, Node& groupNode, Node& mesh)
     return mod;
 }
 
-void createGroupNode(Graph& g, const Group& grp)
+void createGroupNode(Graph& g, const Group& given)
 {
+    Group grp = given;
+    embedSubgroups(g, grp);
     Node* n = g.createNode(*scene::types::find(kGroupNodeType), grp.name, scene::kNoNode, false);
     if (n->name() != grp.name)
     {
@@ -527,6 +726,7 @@ void createGroupNode(Graph& g, const Group& grp)
     }
     ensureType(grp);
     setGroupDefinition(g, *n, grp);
+    propagateToUsers(g, grp.name);
 }
 } // namespace detail
 

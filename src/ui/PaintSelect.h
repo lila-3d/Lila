@@ -19,8 +19,8 @@
  *
  *   Paint Select tool: LMB drag paints into the selection, Ctrl removes, Shift toggles once per stroke; B + drag or
  *   [ ] sets the radius (general pref /paintSelect/radius, px). Works on objects in object mode. Esc leaves it.
- *   Tab drag: replaces the selection of the current component kind with what the path crosses; Shift toggles,
- *   Ctrl removes, Ctrl+Shift adds, as clicks do.
+ *   Tab drag: a stroke starting on something selected deselects what the path crosses, any other stroke selects it
+ *   (ui/TabSelectLogic.h); Ctrl always removes, Ctrl+Shift always adds. Works on objects in object mode.
  */
 namespace lila::geo
 {
@@ -65,6 +65,7 @@ public:
     /** Puts the starting selection back without recording anything. */
     void cancel();
     bool active() const { return mActive; }
+    Op op() const { return mOp; }
 
 private:
     void preview();
@@ -82,6 +83,12 @@ private:
 /** Brush radius for Tab drag, px, by component mode. */
 LILA_UI_API double tabRadius(scene::ComponentMode mode);
 
-/** The Paint Select tool and its action, select.paintTool. */
+/** The general pref /select/lasso: viewport drag selection draws a freehand lasso instead of a marquee. */
+inline constexpr const char* kLassoPref = "/select/lasso";
+/** Drags select with a lasso: the pref is on, or the lasso hold key (select.lassoHoldOn) is down. */
+LILA_UI_API bool lassoActive();
+LILA_UI_API bool lassoHeld();
+
+/** The Paint Select tool and its action, select.paintTool, and the lasso actions (select.toggleLasso, select.lassoHoldOn/Off). */
 LILA_UI_API void registerPaintSelectUi();
 } // namespace lila::ui::paintSelect

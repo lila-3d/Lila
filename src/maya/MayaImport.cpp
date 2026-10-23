@@ -668,7 +668,71 @@ struct Nested
 };
 
 /** Bumped when a conversion would come out differently, so cached .lila files of referenced Maya files are redone. */
-constexpr int kConverterVersion = 3;
+constexpr int kConverterVersion = 4;
+
+/**
+ * How a referenced file's node is named relative to its namespace: the bare name when no other node has it, else its
+ * path from the file's top ("Body|L|Arm"), the form reference edits resolve.
+ */
+std::string relName(const Graph& g, NodeId id, const std::string& ns)
+{
+    auto strip = [&](const std::string& name) { return !ns.empty() && name.rfind(ns + ":", 0) == 0 ? name.substr(ns.size() + 1) : name; };
+    const scene::Node* n = g.node(id);
+    if (g.findAll(n->name()).size() == 1)
+        return strip(n->name());
+    std::string out;
+    for (NodeId cur = id; cur != scene::kNoNode; cur = g.parent(cur))
+    {
+        const std::string& name = g.node(cur)->name();
+        if (!ns.empty() && name.rfind(ns + ":", 0) != 0)
+            break;
+        out = strip(name) + (out.empty() ? "" : "|" + out);
+    }
+    return out;
+}
+
+/** A relName under ns as a scene path: the namespace on every name. */
+std::string nsPath(const std::string& ns, const std::string& rel)
+{
+    std::string out;
+    for (size_t start = 0;;)
+    {
+        size_t bar = rel.find('|', start);
+        out += ns + ":" + rel.substr(start, bar == std::string::npos ? std::string::npos : bar - start);
+        if (bar == std::string::npos)
+            return out;
+        out += '|';
+        start = bar + 1;
+    }
+}
+
+/** A scene path with ns: taken off every name. */
+std::string stripNsPath(const std::string& ns, const std::string& path)
+{
+    std::string out;
+    for (size_t start = 0;;)
+    {
+        size_t bar = path.find('|', start);
+        std::string seg = path.substr(start, bar == std::string::npos ? std::string::npos : bar - start);
+        out += seg.rfind(ns + ":", 0) == 0 ? seg.substr(ns.size() + 1) : seg;
+        if (bar == std::string::npos)
+            return out;
+        out += '|';
+        start = bar + 1;
+    }
+}
+
+/** Whether a node record of a scene document is the one a relName names. */
+bool docNodeIs(const json& n, const std::string& rel)
+{
+    const std::string name = n.value("name", "");
+    if (rel.find('|') == std::string::npos)
+        return name == rel;
+    std::string parent = n.value("parent", "");
+    if (parent.starts_with('|'))
+        parent.erase(0, 1);
+    return (parent.empty() ? name : parent + "|" + name) == rel;
+}
 
 class Converter
 {
@@ -741,15 +805,15 @@ public:
                     mR.skipped.push_back(std::format("instance of '{}' under '{}' (instances are not converted)", p.child, p.parent));
         report();
         for (const auto& [i, id] : mLila)
-            mR.mayaNames[mIx.fullPath(i)] = mG.node(id)->name();
+            mR.mayaNames[mIx.fullPath(i)] = relName(mG, id, "");
         for (const auto& [i, id] : mShapeNode)
-            mR.mayaNames[mIx.fullPath(i)] = mG.node(id)->name();
+            mR.mayaNames[mIx.fullPath(i)] = relName(mG, id, "");
         for (const auto& [i, id] : mLocatorShape)
-            mR.mayaNames[mIx.fullPath(i)] = mG.node(id)->name();
+            mR.mayaNames[mIx.fullPath(i)] = relName(mG, id, "");
         for (const auto& [i, id] : mCameraNode)
-            mR.mayaNames[mIx.fullPath(i)] = mG.node(id)->name();
+            mR.mayaNames[mIx.fullPath(i)] = relName(mG, id, "");
         for (const auto& [i, id] : mPlaneNode)
-            mR.mayaNames[mIx.fullPath(i)] = mG.node(id)->name();
+            mR.mayaNames[mIx.fullPath(i)] = relName(mG, id, "");
     }
 
 private:
@@ -878,7 +942,7 @@ private:
         setTransform(i, id);
         bool visible = num(mn, {"v", "visibility"}, 1.0) != 0.0;
         if (num(mn, {"it", "inheritsTransform"}, 1.0) == 0.0)
-            mR.warnings.push_back(std::format("{}: inheritsTransform off is not supported; it inherits", n->name()));
+            mR.warnings.push_back(std::format("{}: inheritsTransform off is not supported; it inherits", n->path()));
 
         if (!meshes.empty())
         {
@@ -903,7 +967,7 @@ private:
                 mG.setValue({id, scene::Locator::kLocalScale, -1}, mAxes.scale(ls));
                 glm::dvec3 lp = vec3(mIx.node(l), {"lp", "localPosition"}, {Names{"lpx"}, Names{"lpy"}, Names{"lpz"}}, glm::dvec3(0.0));
                 if (glm::dot(lp, lp) > 0.0)
-                    mR.warnings.push_back(std::format("{}: locator localPosition dropped", n->name()));
+                    mR.warnings.push_back(std::format("{}: locator localPosition dropped", n->path()));
             }
         }
         for (size_t k = 0; k < cameras.size(); ++k)
@@ -1008,7 +1072,7 @@ private:
         if (num(n, {"v", "visibility"}, 1.0) == 0.0)
             set(scene::Transform::kVisibility, false);
 
-        const std::string name = mG.node(camId)->name();
+        const std::string name = mG.node(camId)->path();
         std::vector<std::string> dropped;
         if (std::abs(num(n, {"lsr", "lensSqueezeRatio"}, 1.0) - 1.0) > 1e-9)
             dropped.push_back("lens squeeze");
@@ -1057,7 +1121,7 @@ private:
         namespace ip = scene::imagePlane;
         const MNode& n = mIx.node(shape);
         auto set = [&](int attr, scene::PlugValue v) { mG.setValue({pid, attr, -1}, std::move(v)); };
-        const std::string name = mG.node(pid)->name();
+        const std::string name = mG.node(pid)->path();
 
         std::string file = text(n, {"imn", "imageName"});
         const int kind = int(num(n, {"t", "type"}, 0.0));
@@ -1116,7 +1180,7 @@ private:
         mG.setValue({pid, ImagePlane::kOffsetX, -1}, c.x);
         mG.setValue({pid, ImagePlane::kOffsetY, -1}, c.y);
         if (std::abs(c.z) > 1e-9)
-            mR.warnings.push_back(std::format("{}: image center depth dropped", mG.node(pid)->name()));
+            mR.warnings.push_back(std::format("{}: image center depth dropped", mG.node(pid)->path()));
     }
 
     /** The camera an image plane belongs to: the shape it sits under, or the one its message feeds (older files). */
@@ -1225,11 +1289,11 @@ private:
                 set(ImagePlane::kHeight, box.y);
                 set(ImagePlane::kMaintainRatio, keepRatio);
                 if (offset != glm::dvec2(0.0))
-                    mR.warnings.push_back(std::format("{}: offset on an orthographic camera dropped", pn->name()));
+                    mR.warnings.push_back(std::format("{}: offset on an orthographic camera dropped", pn->path()));
                 continue;
             }
 
-            const std::string camName = mG.node(mCameraNode[cam])->name();
+            const std::string camName = mG.node(mCameraNode[cam])->path();
             if (perspChild)
             {
                 // The camera node's frame is Maya's camera space, so this is Maya's placement as it stands.
@@ -1241,9 +1305,9 @@ private:
                 set(ImagePlane::kMaintainRatio, false);
                 mR.warnings.push_back(std::format("{}: placed under camera '{}' at its depth (Lila attaches image planes only to its views); "
                                                   "it follows the camera, sized for the lens at import",
-                                                  pn->name(), camName));
+                                                  pn->path(), camName));
                 if (mIx.input(cam, {"fl", "focalLength"}))
-                    mR.warnings.push_back(std::format("{}: camera '{}' has a driven focal length; the plane keeps its import-time size", pn->name(), camName));
+                    mR.warnings.push_back(std::format("{}: camera '{}' has a driven focal length; the plane keeps its import-time size", pn->path(), camName));
                 continue;
             }
             const glm::dmat4 camWorld = std::get<glm::dmat4>(mG.value({mCameraNode[cam], scene::Transform::kWorldMatrix, -1}));
@@ -1259,7 +1323,7 @@ private:
             set(ImagePlane::kMaintainRatio, keepRatio);
             mR.warnings.push_back(std::format("{}: placed in the world facing along orthographic camera '{}' as at import "
                                               "(Lila attaches image planes only to its views)",
-                                              pn->name(), camName));
+                                              pn->path(), camName));
         }
     }
 
@@ -1280,7 +1344,7 @@ private:
         auto order = scene::RotateOrder(std::clamp(int64_t(num(n, {"ro", "rotateOrder"}, 0.0)), int64_t(0), int64_t(5)));
         r *= mU.ang;
         ra *= mU.ang;
-        const std::string name = mG.node(id)->name();
+        const std::string name = mG.node(id)->path();
 
         if (glm::dot(ra, ra) > 1e-18)
         {
@@ -1878,7 +1942,7 @@ private:
     void buildMesh(int shape, NodeId meshId)
     {
         mShapeNode[shape] = meshId;
-        const std::string name = mG.node(meshId)->name();
+        const std::string name = mG.node(meshId)->path();
         auto sgs = mOpts.materials ? assignments(shape) : std::vector<std::pair<int, std::vector<int>>>{};
         const bool plainMaterial = sgs.empty() || (sgs.size() == 1 && sgs[0].second.empty() &&
                                                    shortName(mIx.node(sgs[0].first).name) == "initialShadingGroup");
@@ -2298,7 +2362,7 @@ private:
                 const PlugRef plug{cam->second, attr, -1};
                 if (attr < 0 || mG.source(plug))
                 {
-                    ++skippedTargets[std::format("{}.{}", mG.node(cam->second)->name(), c.dst.attr)];
+                    ++skippedTargets[std::format("{}.{}", mG.node(cam->second)->path(), c.dst.attr)];
                     continue;
                 }
                 // Clipping distances and the orthographic width are lengths; the lens and film back are not.
@@ -2326,13 +2390,13 @@ private:
                         group = gi, axis = ai;
             if (!target || group < 0)
             {
-                ++skippedTargets[target ? std::format("{}.{}", mG.node(target->first)->name(), target->second)
+                ++skippedTargets[target ? std::format("{}.{}", mG.node(target->first)->path(), target->second)
                                         : std::format("{}.{}", shortName(mIx.node(c.dst.node).name), c.dst.attr)];
                 continue;
             }
             if (group == 1 && mRotateAxisFolded.contains(c.dst.node))
                 mR.warnings.push_back(std::format("{}: rotate is animated and rotateAxis was folded in; the curve keeps Maya's values",
-                                                  mG.node(target->first)->name()));
+                                                  mG.node(target->first)->path()));
 
             // Maya channel `axis` lands on Lila channel to[axis], negated where the swap mirrors it.
             const int lilaAxis = mAxes.to[axis];
@@ -2517,7 +2581,7 @@ private:
                 return false;
             }
             for (const auto& [path, name] : sub.mayaNames)
-                info.names[path] = name.rfind(ns + ":", 0) == 0 ? name.substr(ns.size() + 1) : name;
+                info.names[path] = stripNsPath(ns, name);
             merge(sub, info.ref->path);
             return true;
         }
@@ -2730,7 +2794,7 @@ private:
         else
         {
             for (NodeId id : importForeign(tmp, src, mR.warnings))
-                names["|" + tmp.node(id)->name()] = tmp.node(id)->name();
+                names["|" + tmp.node(id)->name()] = relName(tmp, id, "");
         }
         json doc = documentOf(tmp, nested.refs, nested.outDir);
         doc["mayaSource"] = {{"path", sourcePath(src, target.parent_path(), srcKey)}, {"size", size}, {"mtime", mtime}, {"converter", kConverterVersion}};
@@ -2812,14 +2876,14 @@ private:
             }
             json node = {{"name", n->name()}, {"type", n->type().name}};
             if (NodeId p = g.parent(id); p != scene::kNoNode)
-                node["parent"] = g.node(p)->name();
+                node["parent"] = g.fullPath(p);
             if (!attrs.empty())
                 node["attrs"] = std::move(attrs);
             nodes.push_back(std::move(node));
         }
         json connections = json::array();
         for (auto& [dst, src] : g.connections())
-            connections.push_back({g.plugName(src), g.plugName(dst)});
+            connections.push_back({g.fullPlugName(src), g.fullPlugName(dst)});
         return {{"lila", 1},
                 {"upAxis", math::upAxis() == math::UpAxis::Z ? "z" : "y"},
                 {"units", "cm"},
@@ -2964,25 +3028,38 @@ private:
         for (const RefInfo& other : mRefs)
             if (other.live && mayaPath.find(other.mayaNs + ":") != std::string_view::npos)
                 if (auto rel = refNodeName(other, mayaPath))
-                    return other.lilaNs + ":" + *rel;
+                    return nsPath(other.lilaNs, *rel);
         int i = mIx.resolve(mayaPath);
         if (auto it = mLila.find(i); it != mLila.end())
-            return mG.node(it->second)->name();
+            return mG.node(it->second)->path();
         return std::nullopt;
+    }
+
+    /** A live reference's node by relName; null when it is gone or ambiguous. */
+    scene::Node* refFind(const RefInfo& info, const std::string& rel) const
+    {
+        try
+        {
+            return mG.find(nsPath(info.lilaNs, rel));
+        }
+        catch (const std::exception&)
+        {
+            return nullptr;
+        }
     }
 
     json currentValue(RefInfo& info, const std::string& rel, const std::string& attr)
     {
         if (info.live)
         {
-            scene::Node* n = mG.find(info.lilaNs + ":" + rel);
+            scene::Node* n = refFind(info, rel);
             int idx = n ? n->type().attrIndex(attr) : -1;
             return idx >= 0 ? scene::toJson(n->value(idx)) : json();
         }
         if (info.nestedEdits.contains(rel) && info.nestedEdits[rel].contains(attr))
             return info.nestedEdits[rel][attr];
         for (const json& n : info.nestedDoc.value("nodes", json::array()))
-            if (n.value("name", "") == rel)
+            if (docNodeIs(n, rel))
             {
                 if (n.contains("attrs") && n["attrs"].contains(attr))
                     return n["attrs"][attr];
@@ -3000,7 +3077,7 @@ private:
             info.nestedEdits[rel][attr] = value;
             return true;
         }
-        scene::Node* n = mG.find(info.lilaNs + ":" + rel);
+        scene::Node* n = refFind(info, rel);
         int idx = n ? n->type().attrIndex(attr) : -1;
         if (idx < 0)
             return false;
@@ -3128,12 +3205,12 @@ private:
     {
         if (info.live)
         {
-            const scene::Node* n = mG.find(info.lilaNs + ":" + rel);
+            const scene::Node* n = refFind(info, rel);
             const NodeId p = n ? mG.parent(n->id()) : scene::kNoNode;
             return p == scene::kNoNode || !mG.node(p)->name().starts_with(info.lilaNs + ":");
         }
         for (const json& n : info.nestedDoc.value("nodes", json::array()))
-            if (n.value("name", "") == rel)
+            if (docNodeIs(n, rel))
                 return !n.contains("parent");
         return true;
     }
@@ -3193,12 +3270,20 @@ private:
             const std::string prefix = info.lilaNs + ":";
             for (NodeId id : mG.nodes())
                 if (const scene::Node* n = mG.node(id); n->name().starts_with(prefix))
-                    out.emplace_back(n->name().substr(prefix.size()), &n->type());
+                    out.emplace_back(relName(mG, id, info.lilaNs), &n->type());
             return out;
         }
+        std::map<std::string, int> uses;
+        for (const json& n : info.nestedDoc.value("nodes", json::array()))
+            ++uses[n.value("name", "")];
         for (const json& n : info.nestedDoc.value("nodes", json::array()))
             if (const scene::NodeType* t = scene::types::find(n.value("type", "")))
-                out.emplace_back(n.value("name", ""), t);
+            {
+                std::string name = n.value("name", ""), parent = n.value("parent", "");
+                if (parent.starts_with('|'))
+                    parent.erase(0, 1);
+                out.emplace_back(uses[name] == 1 || parent.empty() ? name : parent + "|" + name, t);
+            }
         return out;
     }
 
@@ -3281,7 +3366,7 @@ private:
                 auto rel = refNodeName(info, a[0]);
                 const bool toWorld = a[1].empty() || a[1] == "|";
                 std::optional<std::string> parent = toWorld ? std::optional<std::string>("") : sceneNodeName(a[1]);
-                scene::Node* child = rel && info.live ? mG.find(info.lilaNs + ":" + *rel) : nullptr;
+                scene::Node* child = rel && info.live ? refFind(info, *rel) : nullptr;
                 scene::Node* p = parent && !parent->empty() ? mG.find(*parent) : nullptr;
                 if (!child || !parent || (!toWorld && !p))
                 {
@@ -3296,7 +3381,7 @@ private:
                 }
                 catch (const std::exception& ex)
                 {
-                    mR.warnings.push_back(std::format("{}: {}", child->name(), ex.what()));
+                    mR.warnings.push_back(std::format("{}: {}", child->path(), ex.what()));
                 }
             }
             else if (e.kind == 5 && a.size() >= 4)
@@ -3306,7 +3391,7 @@ private:
                 const size_t dot = plug.find('.');
                 auto rel = dot == std::string::npos ? std::nullopt : refNodeName(info, std::string_view(plug).substr(0, dot));
                 const size_t lb = a[3].rfind('[');
-                scene::Node* n = rel && info.live ? mG.find(info.lilaNs + ":" + *rel) : nullptr;
+                scene::Node* n = rel && info.live ? refFind(info, *rel) : nullptr;
                 if (!n || lb == std::string::npos)
                 {
                     ++unsupported["connection to a referenced node"];

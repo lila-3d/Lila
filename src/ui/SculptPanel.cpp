@@ -109,7 +109,7 @@ std::vector<std::string> selectedMeshes()
     std::vector<std::string> out;
     for (scene::NodeId id : g.selection())
         if (scene::Node* n = g.node(id); n && n->type().isA("mesh"))
-            out.push_back(n->name());
+            out.push_back(n->path());
     return out;
 }
 
@@ -324,7 +324,7 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     connect(mSymmetry, &QComboBox::activated, this, [this](int) {
         std::vector<std::string> targets;
         if (auto s = sculpt::active(); s && scene::Graph::current().node(s->node))
-            targets.push_back(scene::Graph::current().node(s->node)->name());
+            targets.push_back(scene::Graph::current().node(s->node)->path());
         else
             targets = selectedMeshes();
         if (!targets.empty())
@@ -387,7 +387,7 @@ void SculptPanel::refreshSession()
     if (n)
     {
         const char* modes[] = {"subdivided", "voxel remeshed", "direct"};
-        mStatus->setText(QString("Sculpting %1: %2, %L3 faces").arg(QString::fromStdString(n->name()), modes[int(s->mode)]).arg(s->sculpt.mesh().numFaces()));
+        mStatus->setText(QString("Sculpting %1: %2, %L3 faces").arg(QString::fromStdString(n->path()), modes[int(s->mode)]).arg(s->sculpt.mesh().numFaces()));
     }
     else
     {

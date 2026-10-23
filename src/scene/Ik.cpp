@@ -327,8 +327,12 @@ std::vector<NodeId> chainOf(Graph& g, NodeId handle)
     }
     if (chain.empty())
         return {};
-    Node* end = g.find(h->as<std::string>(IkHandle::kEndEffector));
-    if (!end || g.parent(end->id()) != chain.back())
+    // The effector is stored by name and told apart from same-named nodes by being the chain's last child.
+    Node* end = nullptr;
+    for (NodeId id : g.findAll(h->as<std::string>(IkHandle::kEndEffector)))
+        if (g.parent(id) == chain.back())
+            end = g.node(id);
+    if (!end)
     {
         // Renamed: the child whose offset matches the stored rest offset.
         glm::dvec3 want = positionOf(h->as<glm::dmat4>(IkHandle::slotLocal(count - 1)));
@@ -402,7 +406,7 @@ json createHandle(const Args& a)
         std::vector<std::string> joints;
         for (NodeId id : g.selection())
             if (rig::isJoint(*g.node(id)))
-                joints.push_back(g.node(id)->name());
+                joints.push_back(g.node(id)->path());
         if (joints.size() < 2)
             throw CommandError("ikHandle: give startJoint and endEffector, or select the start and end joints");
         startName = startName.empty() ? joints.front() : startName;
@@ -416,7 +420,7 @@ json createHandle(const Args& a)
         throw CommandError("ikHandle: chains are limited to " + std::to_string(IkHandle::kMaxJoints) + " joints");
     for (size_t i = 0; i + 1 < chain.size(); ++i)
         if (g.source({chain[i], Joint::kSolvedRotate, -1}))
-            throw CommandError("ikHandle: " + g.node(chain[i])->name() + " is already solved by another handle");
+            throw CommandError("ikHandle: " + g.node(chain[i])->path() + " is already solved by another handle");
 
     std::string solver = a.get<std::string>("solver");
     if (!solver.empty())
@@ -448,7 +452,7 @@ json createHandle(const Args& a)
     }
     ik::refresh(g, id);
     g.select({id});
-    return g.node(id)->name();
+    return g.node(id)->path();
 }
 
 void registerIkCommandsImpl()

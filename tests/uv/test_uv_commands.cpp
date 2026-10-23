@@ -2,6 +2,7 @@
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "uv/Chart.h"
+#include "uv/Uv.h"
 #include "uv/UvCommands.h"
 
 #include <doctest/doctest.h>
@@ -167,4 +168,57 @@ TEST_CASE("uv editor meshes follow the selection and its hierarchy")
     CHECK(uv::shownMeshes() == std::vector<scene::NodeId>{idOf(b)});
     run("selectMode", {{"args", {"object"}}});
     CHECK(uv::shownMeshes().empty());
+}
+
+TEST_CASE("uv editor meshes leave out children when includeChildren is off")
+{
+    run("newScene");
+    std::string a = made(run("polyCube")), b = made(run("polyCube"));
+    run("parent", {{"args", {b, a}}});
+    run("select", {{"args", {a}}});
+    CHECK(uv::shownMeshes().size() == 2);
+    uv::setIncludeChildren(false);
+    CHECK(uv::shownMeshes() == std::vector<scene::NodeId>{idOf(a)});
+    // One mesh projected: the result is its frame rather than results keyed by mesh.
+    json r = run("uvProject", {{"type", "box"}});
+    CHECK(r.contains("type"));
+    CHECK(!r.contains(b));
+    uv::setIncludeChildren(true);
+}
+
+TEST_CASE("uvTransform perIsland turns each island about its own centre")
+{
+    run("newScene");
+    std::string cube = made(run("polyCube"));
+    run("select", {{"args", {cube}}});
+    run("uvProject", {{"type", "box"}});
+    run("uvPack", {{"resolution", 512}, {"padding", 4}});
+    auto centres = [&] {
+        scene::Graph& g = scene::Graph::current();
+        g.evaluate();
+        const geo::Mesh& m = *g.find(cube)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+        uv::ChartOptions co;
+        co.source = uv::IslandSource::Uvs;
+        std::span<const glm::vec2> uvs = m.cornerAttrs().get<glm::vec2>("uv0");
+        std::vector<glm::dvec2> out;
+        for (const auto& island : uv::islandFaces(m, {}, co))
+        {
+            glm::dvec2 lo(1e30), hi(-1e30);
+            for (geo::Index c : uv::uvCornersOfFaces(m, "uv0", island))
+            {
+                lo = glm::min(lo, glm::dvec2(uvs[c]));
+                hi = glm::max(hi, glm::dvec2(uvs[c]));
+            }
+            out.push_back((lo + hi) * 0.5);
+        }
+        return out;
+    };
+    std::vector<glm::dvec2> before = centres();
+    REQUIRE(before.size() == 6);
+    CHECK(run("uvTransform", {{"rotate", 90.0}, {"perIsland", true}})["corners"].get<int>() > 0);
+    run("uvTransform", {{"scale", {-1.0, 1.0}}, {"perIsland", true}});
+    std::vector<glm::dvec2> after = centres();
+    REQUIRE(after.size() == 6);
+    for (size_t i = 0; i < 6; ++i)
+        CHECK(glm::distance(before[i], after[i]) < 1e-4);
 }

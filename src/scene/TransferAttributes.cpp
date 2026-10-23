@@ -453,7 +453,7 @@ int attrOf(const Node& n, const char* name)
 {
     int a = n.type().attrIndex(name);
     if (a < 0)
-        throw CommandError(n.name() + " has no attribute " + name);
+        throw CommandError(n.path() + " has no attribute " + name);
     return a;
 }
 

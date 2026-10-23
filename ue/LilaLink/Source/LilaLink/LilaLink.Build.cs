@@ -26,6 +26,10 @@ public class LilaLink : ModuleRules
 			"InterchangeNodes",
 			"InterchangePipelines",
 			"MaterialEditor",
+			"Niagara",
+			"NiagaraCore",
+			"AlembicLibrary",
+			"GeometryCache",
 		});
 
 		// Header-only use: the module is looked up at runtime, so a project without Python still loads.

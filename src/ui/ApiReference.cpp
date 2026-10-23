@@ -190,7 +190,7 @@ ApiReference::ApiReference(QWidget* parent) : QWidget(parent)
     split->setSizes({260, 560});
 
     QString mono = monoFont().family();
-    mView->document()->setDefaultStyleSheet(QString(R"(
+    mView->document()->setDefaultStyleSheet(themedStyleSheet(R"(
         body { color: #d4d4d4; }
         h2 { color: #f2f2f2; font-size: 15px; margin-bottom: 2px; }
         h3 { color: #bdbdbd; font-size: 12px; margin-top: 14px; margin-bottom: 4px; }
@@ -204,7 +204,7 @@ ApiReference::ApiReference(QWidget* parent) : QWidget(parent)
         td.f { font-family: '%1'; color: #ececec; }
         th { color: #9a9a9a; font-weight: normal; text-align: left; }
     )")
-                                                     .arg(mono));
+                                                .arg(mono));
 
     connect(mSearch, &QLineEdit::textChanged, this, &ApiReference::runSearch);
     connect(mSearch, &QLineEdit::returnPressed, this, [this] {
@@ -484,7 +484,7 @@ void ApiReference::populateTree()
             item->setFont(0, f);
         }
         else if (e.kind == "property" || e.kind == "attribute")
-            item->setForeground(0, QColor(170, 170, 170));
+            item->setForeground(0, themeShade(170));
         items[i] = item;
     }
     for (int i = 0; i < mTree->topLevelItemCount(); ++i)
@@ -577,7 +577,7 @@ void ApiReference::runSearch(const QString& text)
         item->setText(0, e.name);
         QString where = e.key.left(std::max<qsizetype>(0, e.key.size() - e.name.size() - 1));
         item->setText(1, e.kind == "command" ? QString("command") : where);
-        item->setForeground(1, QColor(130, 130, 130));
+        item->setForeground(1, themeShade(130));
         item->setToolTip(0, e.key);
         item->setData(0, kEntryRole, h.index);
     }

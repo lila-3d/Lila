@@ -61,8 +61,18 @@ inline json vec(double x, double y, double z) { return json::array({x, y, z}); }
 
 inline const std::vector<std::string>& dataTypes()
 {
-    static const std::vector<std::string> v = {"float", "int", "vector", "bool", "rotation"};
+    static const std::vector<std::string> v = {"float", "int", "vector", "bool", "rotation", "color"};
     return v;
+}
+
+/** A socket default of the type's zero: [0, 0, 0] for vectors, opaque black for colours. */
+inline json zeroJson(SocketType t)
+{
+    if (t == SocketType::Vector || t == SocketType::Rotation)
+        return json::array({0, 0, 0});
+    if (t == SocketType::Color)
+        return json::array({0, 0, 0, 1});
+    return json(0);
 }
 
 inline SocketType dataTypeOf(const std::string& s)
@@ -203,4 +213,7 @@ LILA_SCENE_API void registerMeshNodes();
 LILA_SCENE_API void registerCurveNodes();
 LILA_SCENE_API void registerSampleNodes();
 LILA_SCENE_API void registerBooleanNode();
+LILA_SCENE_API void registerTextureNodes();
+LILA_SCENE_API void registerShadingNodes();
+LILA_SCENE_API void registerGroupNodes();
 } // namespace lila::gn::nodes

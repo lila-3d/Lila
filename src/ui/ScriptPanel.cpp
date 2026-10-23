@@ -63,9 +63,9 @@ void ScriptPanel::append(int level, const QString& text)
     QTextCursor c(mOutput->document());
     c.movePosition(QTextCursor::End);
     QTextCharFormat fmt;
-    fmt.setForeground(lvl == LogLevel::Error || lvl == LogLevel::Warning ? QColor(250, 250, 250)
-                      : lvl == LogLevel::Info                             ? QColor(140, 140, 140)
-                                                                          : QColor(205, 205, 205));
+    fmt.setForeground(lvl == LogLevel::Error || lvl == LogLevel::Warning ? themeShade(250)
+                      : lvl == LogLevel::Info                             ? themeShade(140)
+                                                                          : themeShade(205));
     if (lvl == LogLevel::Error)
         fmt.setFontWeight(QFont::Bold);
     if (lvl == LogLevel::Output || lvl == LogLevel::Echo)

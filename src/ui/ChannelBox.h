@@ -56,6 +56,8 @@ private:
         /** An INPUTS row edits this node only; kNoNode rows edit every selected node. */
         scene::NodeId node = scene::kNoNode;
         bool header = false;
+        /** Shown instead of the attr's nice name (a morph target's name for its weight). */
+        std::string label;
     };
 
     /** The rows the lead node needs: its channels, then INPUTS (modifiers top first, then the generator). */

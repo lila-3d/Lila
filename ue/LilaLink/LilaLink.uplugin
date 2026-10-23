@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
-	"Version": 3,
-	"VersionName": "0.3.0",
+	"Version": 4,
+	"VersionName": "0.4.0",
 	"FriendlyName": "Lila Link",
 	"Description": "Lets the Lila DCC import and reimport assets into this project over a localhost JSON-RPC socket.",
 	"Category": "Editor",
@@ -19,6 +19,18 @@
 	"Plugins": [
 		{
 			"Name": "Interchange",
+			"Enabled": true
+		},
+		{
+			"Name": "Niagara",
+			"Enabled": true
+		},
+		{
+			"Name": "AlembicImporter",
+			"Enabled": true
+		},
+		{
+			"Name": "GeometryCache",
 			"Enabled": true
 		},
 		{

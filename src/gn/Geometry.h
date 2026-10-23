@@ -23,6 +23,7 @@ enum class SocketType : uint8_t
     Vector,
     Rotation, // Euler XYZ, radians
     String,
+    Color, // linear RGBA
 };
 
 LILA_SCENE_API const char* socketTypeName(SocketType t);

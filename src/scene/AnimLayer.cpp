@@ -710,7 +710,7 @@ std::optional<KeyRedirect> redirectKey(Graph& g, const PlugRef& plug, double val
     {
         Node& l = *g.node(layer);
         if (l.as<bool>(LayerNode::kLock))
-            throw std::invalid_argument("animation layer " + l.name() + " is locked");
+            throw std::invalid_argument("animation layer " + l.path() + " is locked");
         target = blendFor(g, member, layer);
         if (!target)
         {
@@ -846,7 +846,7 @@ json layerJson(Graph& g, NodeId l)
     json members = json::array();
     for (const PlugRef& m : layerMembers(g, l))
         members.push_back(g.plugName(m));
-    return {{"name", n.name()},
+    return {{"name", n.path()},
             {"weight", n.as<double>(LayerNode::kWeight)},
             {"mute", n.as<bool>(LayerNode::kMute)},
             {"solo", n.as<bool>(LayerNode::kSolo)},
@@ -1094,7 +1094,7 @@ json mergeLayers(Graph& g, const std::vector<NodeId>& named)
     if (activeMerged)
         setActive(g, target);
     g.evaluate();
-    return targetIsLayer ? json(g.node(target)->name()) : json(kBaseLayerName);
+    return targetIsLayer ? json(g.node(target)->path()) : json(kBaseLayerName);
 }
 
 NodeId duplicateLayer(Graph& g, NodeId src, const std::string& name)
@@ -1174,7 +1174,7 @@ json extractLayer(Graph& g, NodeId src, const std::vector<PlugRef>& members, con
         deleteLayer(g, l);
         throw CommandError("extractAnimLayer: none of those channels are animated on that layer");
     }
-    return g.node(l)->name();
+    return g.node(l)->path();
 }
 } // namespace
 
@@ -1284,7 +1284,7 @@ void registerLayerCommands()
                 for (const PlugRef& m : memberArgs(g, a.objects(), "createAnimLayer"))
                     guarded([&] { return addMember(g, l, m); });
             setActive(g, l);
-            return g.node(l)->name();
+            return g.node(l)->path();
         },
     });
 
@@ -1313,7 +1313,7 @@ void registerLayerCommands()
             if (!l)
                 throw CommandError("addAnimLayerMembers: the base animation has no members; name a layer");
             if (g.node(l)->as<bool>(LayerNode::kLock))
-                throw CommandError("addAnimLayerMembers: " + g.node(l)->name() + " is locked");
+                throw CommandError("addAnimLayerMembers: " + g.node(l)->path() + " is locked");
             int added = 0;
             for (const PlugRef& m : memberArgs(g, a.objects(), "addAnimLayerMembers"))
                 if (!blendFor(g, m, l))
@@ -1336,7 +1336,7 @@ void registerLayerCommands()
             if (!l)
                 throw CommandError("removeAnimLayerMembers: name a layer");
             if (g.node(l)->as<bool>(LayerNode::kLock))
-                throw CommandError("removeAnimLayerMembers: " + g.node(l)->name() + " is locked");
+                throw CommandError("removeAnimLayerMembers: " + g.node(l)->path() + " is locked");
             int removed = 0;
             for (const PlugRef& m : memberArgs(g, a.objects(), "removeAnimLayerMembers"))
                 if (blendFor(g, m, l))
@@ -1374,7 +1374,7 @@ void registerLayerCommands()
             Graph& g = graph();
             NodeId src = layerArg(g, a, "extractAnimLayer");
             if (src && g.node(src)->as<bool>(LayerNode::kLock))
-                throw CommandError("extractAnimLayer: " + g.node(src)->name() + " is locked");
+                throw CommandError("extractAnimLayer: " + g.node(src)->path() + " is locked");
             return guarded([&] { return extractLayer(g, src, memberArgs(g, a.objects(), "extractAnimLayer"), a.get<std::string>("name")); });
         },
     });
@@ -1389,7 +1389,7 @@ void registerLayerCommands()
             if (a.positional.size() != 1)
                 throw CommandError("duplicateAnimLayer: name one layer");
             NodeId src = layerNamed(g, a.positional[0].get<std::string>(), "duplicateAnimLayer");
-            return g.node(guarded([&] { return duplicateLayer(g, src, a.get<std::string>("name")); }))->name();
+            return g.node(guarded([&] { return duplicateLayer(g, src, a.get<std::string>("name")); }))->path();
         },
     });
 

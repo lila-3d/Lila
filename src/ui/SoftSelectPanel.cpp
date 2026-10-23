@@ -4,6 +4,7 @@
 #include "ui/FlowLayout.h"
 #include "ui/Icons.h"
 #include "ui/SpinScrub.h"
+#include "ui/Theme.h"
 
 #include <QActionGroup>
 #include <QComboBox>
@@ -54,15 +55,15 @@ QIcon curveIcon(const ss::Curve& c)
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing);
     QRectF r(3, 3, size.width() - 6, size.height() - 6);
-    p.setPen(QPen(QColor(90, 90, 90), 1.0));
+    p.setPen(QPen(themeShade(90), 1.0));
     p.drawLine(r.bottomLeft(), r.bottomRight());
     QPainterPath line = curvePath(c, r, 48);
     QPainterPath fill = line;
     fill.lineTo(r.bottomRight());
     fill.lineTo(r.bottomLeft());
     fill.closeSubpath();
-    p.fillPath(fill, QColor(255, 255, 255, 36));
-    p.setPen(QPen(QColor(215, 215, 215), 1.4));
+    p.fillPath(fill, themeShade(255, 36));
+    p.setPen(QPen(themeShade(215), 1.4));
     p.drawPath(line);
     return QIcon(pm);
 }
@@ -156,9 +157,9 @@ void FalloffCurveEditor::paintEvent(QPaintEvent*)
 {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
-    p.fillRect(rect(), QColor(34, 34, 34));
+    p.fillRect(rect(), themeShade(34));
     QRectF r = plotRect();
-    p.setPen(QPen(QColor(56, 56, 56), 1.0));
+    p.setPen(QPen(themeShade(56), 1.0));
     for (int i = 0; i <= 4; ++i)
     {
         double x = r.left() + r.width() * i / 4.0, y = r.top() + r.height() * i / 4.0;
@@ -170,8 +171,8 @@ void FalloffCurveEditor::paintEvent(QPaintEvent*)
     fill.lineTo(r.bottomRight());
     fill.lineTo(r.bottomLeft());
     fill.closeSubpath();
-    p.fillPath(fill, QColor(255, 255, 255, 28));
-    p.setPen(QPen(QColor(205, 205, 205), 1.5));
+    p.fillPath(fill, themeShade(255, 28));
+    p.setPen(QPen(themeShade(205), 1.5));
     p.drawPath(line);
 
     if (!mStroke.empty())
@@ -182,7 +183,7 @@ void FalloffCurveEditor::paintEvent(QPaintEvent*)
             QPointF q = toScreen(mStroke[i].x, mStroke[i].y);
             i == 0 ? s.moveTo(q) : s.lineTo(q);
         }
-        p.setPen(QPen(QColor(255, 255, 255, 170), 1.5, Qt::DashLine));
+        p.setPen(QPen(themeShade(255, 170), 1.5, Qt::DashLine));
         p.drawPath(s);
     }
 
@@ -192,8 +193,8 @@ void FalloffCurveEditor::paintEvent(QPaintEvent*)
             const ss::Key& k = mCurve.keys()[i];
             QPointF c = toScreen(k.pos, k.value);
             bool hot = i == mDrag || i == mHover;
-            p.setPen(QPen(QColor(20, 20, 20), 1.0));
-            p.setBrush(hot ? QColor(255, 255, 255) : QColor(170, 170, 170));
+            p.setPen(QPen(themeShade(20), 1.0));
+            p.setBrush(hot ? themeShade(255) : themeShade(170));
             double h = hot ? 4.0 : 3.0;
             // Shape tells the interpolation apart without colour: square linear/flat, round smooth/spline.
             if (k.interp == ss::Interp::Linear || k.interp == ss::Interp::Flat)
@@ -203,7 +204,7 @@ void FalloffCurveEditor::paintEvent(QPaintEvent*)
         }
     if (mDrawMode)
     {
-        p.setPen(QColor(140, 140, 140));
+        p.setPen(themeShade(140));
         p.drawText(r.adjusted(4, 2, -4, -2), Qt::AlignTop | Qt::AlignRight, "Draw");
     }
 }

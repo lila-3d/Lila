@@ -4,6 +4,7 @@
 #include "ui/DockSidebar.h"
 #include "ui/Icons.h"
 #include "ui/OptionBox.h"
+#include "ui/Shelf.h"
 #include "ui/TearOffLogic.h"
 
 #include <QAction>
@@ -400,7 +401,12 @@ void TearOffPanel::rebuild()
             box->setFixedWidth(18);
             box->setFocusPolicy(Qt::NoFocus);
             box->setToolTip("Options (or Shift+click the item)");
-            connect(box, &QToolButton::clicked, box, [id] { optionBox::open(id); });
+            connect(box, &QToolButton::clicked, box, [id] {
+                if (shelves::addModifierHeld())
+                    shelves::addToCurrent(nlohmann::json{{"optionBox", id}});
+                else
+                    optionBox::open(id);
+            });
             h->addWidget(box);
         }
         auto sync = [button, row, a] {
@@ -424,6 +430,11 @@ void TearOffPanel::rebuild()
             }
             if (!action)
                 return;
+            if (shelves::addModifierHeld() && !id.empty())
+            {
+                shelves::addToCurrent(id);
+                return;
+            }
             if ((QApplication::keyboardModifiers() & Qt::ShiftModifier) && !id.empty() && optionBox::available(id))
             {
                 optionBox::open(id);

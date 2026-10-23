@@ -67,9 +67,9 @@ void reportSync(const Node& n, int axis, const geo::SymmetrySync& s, bool hadLay
     const char axisName = char('X' + axis);
     if (hadLayer)
         log::write(LogLevel::Warning, std::format("{}: symmetry {} re-matched {} points without a stored partner ({} by position), {} unmatched",
-                                                  n.name(), axisName, rematched, s.byPosition, s.unmatched));
+                                                  n.path(), axisName, rematched, s.byPosition, s.unmatched));
     else
-        log::write(LogLevel::Info, std::format("{}: symmetry {} paired {} points, {} unmatched", n.name(), axisName, rematched, s.unmatched));
+        log::write(LogLevel::Info, std::format("{}: symmetry {} paired {} points, {} unmatched", n.path(), axisName, rematched, s.unmatched));
 }
 
 /** The mesh's persistent symmetry pairs, stored onto it if it has none yet. */
@@ -327,10 +327,80 @@ std::vector<float> softWeights(const geo::Mesh& m, const glm::dmat4& world, cons
     return w;
 }
 
-void transformSelectedComponents(const char* label, const glm::dmat4& worldXform)
+std::vector<glm::dvec3> componentNormals(const geo::Mesh& m, ComponentMode kind, const Ids& ids)
 {
     LILA_ZONE();
 
+    std::vector<glm::dvec3> n(m.pointCapacity(), glm::dvec3(0.0));
+    // A face selection's points take only the selected faces, so a region offsets as a whole.
+    std::vector<char> fromSelection(m.pointCapacity(), 0);
+    if (kind == ComponentMode::Face)
+        for (Index f : ids)
+            if (m.faceValid(f))
+            {
+                glm::dvec3 a = m.faceAreaVector(f);
+                m.forEachFaceCorner(f, [&](Index c) {
+                    n[m.cornerPoint(c)] += a;
+                    fromSelection[m.cornerPoint(c)] = 1;
+                });
+            }
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f))
+        {
+            glm::dvec3 a = m.faceAreaVector(f);
+            m.forEachFaceCorner(f, [&](Index c) {
+                if (!fromSelection[m.cornerPoint(c)])
+                    n[m.cornerPoint(c)] += a;
+            });
+        }
+    for (glm::dvec3& v : n)
+        if (double len = glm::length(v); len > 1e-12)
+            v /= len;
+        else
+            v = glm::dvec3(0.0);
+    return n;
+}
+
+glm::dvec3 selectionNormal()
+{
+    Graph& g = graph();
+    g.evaluate();
+    ComponentMode kind = components::mode();
+    glm::dvec3 sum(0.0);
+    if (kind == ComponentMode::Object)
+        return glm::dvec3(0, 1, 0);
+    for (auto& [node, ids] : components::selected(kind))
+    {
+        Node* n = g.node(node);
+        MeshPtr cage = n && n->type().isA("mesh") ? modifiers::cage(g, node) : nullptr;
+        if (!cage)
+            continue;
+        const geo::Mesh& m = *cage;
+        glm::dmat3 toWorld = glm::inverseTranspose(glm::dmat3(n->as<glm::dmat4>(Transform::kWorldMatrix)));
+        // Runs on every manipulator refresh, so only the selection's own faces are visited.
+        glm::dvec3 local(0.0);
+        if (kind == ComponentMode::Face)
+            for (Index f : ids)
+                local += m.faceValid(f) ? m.faceAreaVector(f) : glm::dvec3(0.0);
+        else
+            for (Index p : components::convert(m, kind, ids, ComponentMode::Vertex))
+                if (m.pointValid(p))
+                    for (Index f : m.pointFaces(p))
+                        local += m.faceAreaVector(f);
+        sum += toWorld * local;
+    }
+    double len = glm::length(sum);
+    return len > 1e-12 ? sum / len : glm::dvec3(0, 1, 0);
+}
+
+namespace
+{
+/** Where each point would go at full weight, given its rest position; set up once per mesh. */
+using PointTarget = std::function<glm::dvec3(Index, const glm::dvec3&)>;
+using TargetSetup = std::function<PointTarget(const geo::Mesh&, const glm::dmat4& world, ComponentMode kind, const Ids& ids)>;
+
+void deformSelectedComponents(const char* label, const TargetSetup& setup)
+{
     ComponentMode kind = components::mode();
     if (kind == ComponentMode::Object)
         throw CommandError(std::string(label) + ": select some components first");
@@ -346,7 +416,7 @@ void transformSelectedComponents(const char* label, const glm::dmat4& worldXform
         geo::Mesh m = baseMesh(base);
         Ids pts = components::convert(m, kind, ids, ComponentMode::Vertex);
         glm::dmat4 world = n->as<glm::dmat4>(Transform::kWorldMatrix);
-        glm::dmat4 local = glm::inverse(world) * worldXform * world;
+        PointTarget targetOf = setup(m, world, kind, ids);
         auto sym = symmetryFor(*n, m);
 
         // With symmetry, the side the selection is on drives and the other side follows as its exact reflection.
@@ -366,13 +436,39 @@ void transformSelectedComponents(const char* label, const glm::dmat4& worldXform
             moved.push_back(p);
             if (sym && sym->side(p) == -drive)
                 continue;
-            glm::dvec3 target = glm::dvec3(local * glm::dvec4(before[p], 1.0));
-            m.setPosition(p, glm::mix(before[p], target, double(weight[p])));
+            m.setPosition(p, glm::mix(before[p], targetOf(p, before[p]), double(weight[p])));
         }
         if (sym)
             sym->enforce(m, moved, drive);
         g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
     }
+}
+} // namespace
+
+void transformSelectedComponents(const char* label, const glm::dmat4& worldXform)
+{
+    LILA_ZONE();
+
+    deformSelectedComponents(label, [&](const geo::Mesh&, const glm::dmat4& world, ComponentMode, const Ids&) -> PointTarget {
+        glm::dmat4 local = glm::inverse(world) * worldXform * world;
+        return [local](Index, const glm::dvec3& p) { return glm::dvec3(local * glm::dvec4(p, 1.0)); };
+    });
+}
+
+void offsetSelectedComponents(const char* label, double distance)
+{
+    LILA_ZONE();
+
+    deformSelectedComponents(label, [&](const geo::Mesh& m, const glm::dmat4& world, ComponentMode kind, const Ids& ids) -> PointTarget {
+        auto normals = std::make_shared<std::vector<glm::dvec3>>(componentNormals(m, kind, ids));
+        glm::dmat3 toWorld = glm::inverseTranspose(glm::dmat3(world)), toLocal = glm::inverse(glm::dmat3(world));
+        // The distance is world space, so a scaled object still moves by it.
+        return [normals, toWorld, toLocal, distance](Index p, const glm::dvec3& at) {
+            glm::dvec3 nw = toWorld * (*normals)[p];
+            double len = glm::length(nw);
+            return len > 1e-12 ? at + toLocal * (nw / len * distance) : at;
+        };
+    });
 }
 
 void registerMeshEditCommands()
@@ -602,7 +698,7 @@ void registerMeshEditCommands()
                 if (stack.empty())
                     return false;
                 if (g.node(stack.back())->type().name != "triangulateModifier")
-                    ops::execute("addModifier", {{"args", {mesh.name()}}, {"kind", "triangulate"}});
+                    ops::execute("addModifier", {{"args", {mesh.path()}}, {"kind", "triangulate"}});
                 return true;
             };
             return editSelected("Triangulate", K::Face, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
@@ -663,7 +759,7 @@ void registerMeshEditCommands()
                 {
                     json params = {{"ratio", o.ratio}, {"targetTriangles", int64_t(o.targetTriangles)}, {"keepBorders", o.keepBorders},
                                    {"keepHardEdges", o.keepHardEdges}, {"symmetry", axis + 1}, {"quads", o.quads}};
-                    out[n.name()] = ops::execute("addModifier", {{"args", {n.name()}}, {"kind", "decimate"}, {"params", params}});
+                    out[n.path()] = ops::execute("addModifier", {{"args", {n.path()}}, {"kind", "decimate"}, {"params", params}});
                     continue;
                 }
                 PlugRef base = basePlug(n);
@@ -672,13 +768,13 @@ void registerMeshEditCommands()
                 o.symmetryTolerance = symmetryTolerance(mesh);
                 geo::ReduceResult r = geo::reduceMesh(mesh, o);
                 if (r.symmetryIgnored)
-                    log::warn("polyReduce {}: faces straddle the symmetry plane, so it was reduced without symmetry", n.name());
+                    log::warn("polyReduce {}: faces straddle the symmetry plane, so it was reduced without symmetry", n.path());
                 if (axis >= 0 && axis == symmetryAxis(n))
                 {
                     r.mesh.pointAttrs().remove(geo::symmetryLayerName(axis));
                     geo::SymmetryMap::persistent(r.mesh, axis, symmetryTolerance(r.mesh));
                 }
-                out[n.name()] = r.mesh.numFaces();
+                out[n.path()] = r.mesh.numFaces();
                 g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(r.mesh))));
             }
             components::clear();
@@ -794,7 +890,7 @@ void registerMeshEditCommands()
                                      Transform::kRotatePivotTranslate, Transform::kScalePivotTranslate, Transform::kRotateOrder})
                         g.setValue({part->id(), attr, -1}, g.storedValue({n.id(), attr, -1}));
                     g.setValue({part->id(), MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(std::move(parts[i]))));
-                    out.push_back(part->name());
+                    out.push_back(part->path());
                     made.push_back(part->id());
                 }
                 g.deleteNode(n.id());
@@ -845,7 +941,7 @@ void registerMeshEditCommands()
                 if (Node* n = g.find(name))
                     g.deleteNode(n->id());
             g.select({out->id()});
-            return out->name();
+            return out->path();
         },
     });
 
@@ -884,7 +980,7 @@ void registerMeshEditCommands()
                                  Transform::kRotatePivotTranslate, Transform::kScalePivotTranslate, Transform::kRotateOrder})
                     g.setValue({piece->id(), attr, -1}, g.storedValue({n.id(), attr, -1}));
                 g.setValue({piece->id(), MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(std::move(part))));
-                out.push_back(piece->name());
+                out.push_back(piece->path());
                 made.push_back(piece->id());
             }
             components::setMode(K::Object);
@@ -950,11 +1046,17 @@ void registerMeshEditCommands()
 
     ops::registerCommand({
         .name = "moveComponents",
-        .doc = "Move the selected components by an offset in world space.",
-        .flags = {{"by", "", T::Vec3, nullptr, "Offset, cm."}},
+        .doc = "Move the selected components by an offset in world space, or with normal= push each point along its own vertex normal "
+               "(a face selection uses only the selected faces' normals, so the region inflates as a whole).",
+        .flags = {{"by", "", T::Vec3, nullptr, "Offset, cm."}, {"normal", "", T::Float, nullptr, "Distance along the vertex normals, cm."}},
         .run = [vec](const Args& a) -> json {
-            if (!a.has("by"))
-                throw CommandError("moveComponents: give by=");
+            if (a.has("by") == a.has("normal"))
+                throw CommandError("moveComponents: give by= or normal=");
+            if (a.has("normal"))
+            {
+                offsetSelectedComponents("Move Components", a.get<double>("normal"));
+                return nullptr;
+            }
             transformSelectedComponents("Move Components", glm::translate(glm::dmat4(1.0), vec(a.flags["by"])));
             return nullptr;
         },
@@ -1045,7 +1147,7 @@ void registerMeshEditCommands()
         if (names.empty() && components::mode() != ComponentMode::Object)
             for (auto& [node, ids] : components::selected(components::mode()))
                 if (Node* n = graph().node(node))
-                    names.push_back(n->name());
+                    names.push_back(n->path());
         return names;
     };
 
@@ -1070,7 +1172,7 @@ void registerMeshEditCommands()
                 geo::SymmetrySync sync;
                 geo::SymmetryMap map = geo::SymmetryMap::persistent(m, axis, symmetryTolerance(m), &sync);
                 geo::SymmetryCheck c = map.check(m);
-                out[n.name()] = {{"axis", std::string(1, char('x' + axis))},
+                out[n.path()] = {{"axis", std::string(1, char('x' + axis))},
                                  {"maxAsymmetry", c.maxAsymmetry},
                                  {"worstPoint", c.worstPoint == geo::kInvalid ? json(nullptr) : json(c.worstPoint)},
                                  {"pairs", c.pairs},
@@ -1078,7 +1180,7 @@ void registerMeshEditCommands()
                                  {"unmatched", c.unmatched},
                                  {"stored", stored},
                                  {"withoutStoredPartner", sync.topological + sync.byPosition + sync.unmatched}};
-                log::write(LogLevel::Info, std::format("{}: symmetry {} max asymmetry {:g} cm, {} pairs, {} on the plane, {} unmatched", n.name(),
+                log::write(LogLevel::Info, std::format("{}: symmetry {} max asymmetry {:g} cm, {} pairs, {} on the plane, {} unmatched", n.path(),
                                                        char('X' + axis), c.maxAsymmetry, c.pairs, c.onPlane, c.unmatched));
             }
             return out;
@@ -1133,15 +1235,15 @@ void registerMeshEditCommands()
                     ComponentMode from = components::mode();
                     Ids sel = from == ComponentMode::Object ? Ids{} : components::convert(m, from, components::selected(n.id(), from), ComponentMode::Edge);
                     if (sel.empty())
-                        throw CommandError("symmetryRebuild: select an edge on the symmetry plane of " + n.name());
+                        throw CommandError("symmetryRebuild: select an edge on the symmetry plane of " + n.path());
                     map = geo::SymmetryMap::buildTopological(m, sel.front(), geo::axisPlane(axis));
                     if (map.empty())
-                        throw CommandError("symmetryRebuild: the topology of " + n.name() + " is not symmetric about that edge");
+                        throw CommandError("symmetryRebuild: the topology of " + n.path() + " is not symmetric about that edge");
                 }
                 else
                     map = geo::SymmetryMap::build(m, geo::axisPlane(axis), tol);
                 map.store(m, axis);
-                out[n.name()] = map.unmatchedCount();
+                out[n.path()] = map.unmatchedCount();
                 g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
             }
             return out;
@@ -1177,7 +1279,7 @@ void registerMeshEditCommands()
                 for (NodeId id : candidates)
                     if (Node* n = g.node(id); n && n->type().isA("mesh"))
                     {
-                        name = n->name();
+                        name = n->path();
                         break;
                     }
                 if (name.empty())

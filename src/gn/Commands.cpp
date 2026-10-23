@@ -5,16 +5,13 @@
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "core/Log.h"
+#include "core/Paths.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "core/Workspace.h"
-#include "fbx/Fbx.h"
 #include "geo/Mesh.h"
-#include "geo/ObjIO.h"
-#include "math/MathCore.h"
-#include "scene/MeshNodes.h"
-#include "scene/Transform.h"
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <functional>
@@ -27,6 +24,7 @@ namespace detail
 {
 scene::Node* applyGroup(scene::Graph& g, scene::Node& groupNode, scene::Node& mesh);
 void createGroupNode(scene::Graph& g, const Group& grp);
+void registerGroupCommands();
 } // namespace detail
 
 namespace
@@ -175,6 +173,10 @@ void checkValue(const SocketDecl& s, const json& v, const char* cmd)
     case SocketType::String: ok = v.is_string(); break;
     case SocketType::Vector:
     case SocketType::Rotation: ok = (v.is_array() && v.size() == 3 && v[0].is_number() && v[1].is_number() && v[2].is_number()) || v.is_number(); break;
+    case SocketType::Color:
+        ok = (v.is_array() && (v.size() == 3 || v.size() == 4) && std::all_of(v.begin(), v.end(), [](const json& x) { return x.is_number(); })) ||
+             v.is_number() || (v.is_string() && v.get<std::string>().starts_with("#"));
+        break;
     default: ok = v.is_number() || v.is_boolean(); break;
     }
     if (!ok)
@@ -190,31 +192,6 @@ fs::path workspaceLibrary(bool create)
     return Workspace::get().stateDir(create) / "geometryNodes";
 }
 
-/** {frame} in the pattern becomes the zero-padded frame number. */
-std::string framePath(const std::string& pattern, double frame)
-{
-    std::string num;
-    if (std::abs(frame - std::round(frame)) < 1e-6)
-    {
-        num = std::to_string(int64_t(std::llround(frame)));
-        if (num.size() < 4 && frame >= 0)
-            num = std::string(4 - num.size(), '0') + num;
-    }
-    else
-    {
-        num = std::to_string(frame);
-        std::replace(num.begin(), num.end(), '.', '_');
-    }
-    std::string out = pattern;
-    auto pos = out.find("{frame}");
-    if (pos == std::string::npos)
-    {
-        fs::path p(pattern);
-        return (p.parent_path() / (p.stem().string() + "." + num + p.extension().string())).string();
-    }
-    out.replace(pos, 7, num);
-    return out;
-}
 } // namespace
 
 std::vector<fs::path> libraryDirs()
@@ -226,6 +203,10 @@ std::vector<fs::path> libraryDirs()
     fs::path ws = workspaceLibrary(false);
     if (!ws.empty() && fs::is_directory(ws, ec))
         out.push_back(ws);
+    // Groups shipped with Lila come last, so a user or workspace copy of the same name wins.
+    fs::path shipped = paths::resourcesDir() / "geometryNodes";
+    if (fs::is_directory(shipped, ec))
+        out.push_back(shipped);
     return out;
 }
 
@@ -233,6 +214,7 @@ void registerCommands()
 {
     using T = ArgType;
     registerNodeLibrary();
+    detail::registerGroupCommands();
 
     ops::registerCommand({
         .name = "gnCreateGroup",
@@ -599,7 +581,7 @@ void registerCommands()
                 nodes.push_back(nodeJson(gn, grp));
             json inst = json::array();
             for (scene::NodeId id : instancesOf(graph(), n.id()))
-                inst.push_back(graph().node(id)->name());
+                inst.push_back(graph().node(id)->path());
             PlanPtr plan = compile(grp);
             json out = {{"name", grp.name}, {"definition", grp.toJson()}, {"nodes", nodes}, {"modifiers", inst}, {"typeName", typeNameFor(grp)}};
             if (!plan->error.empty())
@@ -614,7 +596,9 @@ void registerCommands()
                "link from (or, with linkInput, give one to) a socket of that type, each with the socket it would use.",
         .flags = {{"linkType", "", T::String, nullptr, "Socket type of a dragged link's loose end."},
                   {"linkInput", "", T::Bool, false, "The drag started at an input, so the node needs a matching output."},
-                  {"group", "", T::String, nullptr, "Group the node would go in; its interface sets Group Input's sockets."}},
+                  {"group", "", T::String, nullptr, "Group the node would go in; its interface sets Group Input's sockets."},
+                  {"detail", "", T::Bool, false, "Also list each node's properties (with options and defaults) and its sockets (id, type, field, "
+                                                 "default, implicit input, doc) as they are with default properties."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             std::optional<SocketType> link;
@@ -634,6 +618,34 @@ void registerCommands()
             for (const NodeDecl* d : allDecls())
             {
                 json e = {{"type", d->type}, {"label", d->label}, {"category", d->category}, {"doc", d->doc}};
+                if (a.get<bool>("detail", false))
+                {
+                    GNode probe{d->type, d->type, {0.0, 0.0}, json::object()};
+                    json props = json::array();
+                    for (const PropDecl& p : d->props)
+                    {
+                        json pj = {{"id", p.id}, {"default", p.defaultValue}, {"options", p.options}};
+                        if (!p.doc.empty())
+                            pj["doc"] = p.doc;
+                        props.push_back(std::move(pj));
+                    }
+                    Sockets s = d->socketsFor(grp, probe);
+                    json ins = json::array(), outs = json::array();
+                    for (const SocketDecl& sd : s.inputs)
+                    {
+                        json sj = socketJson(sd, probe, grp, true);
+                        sj.erase("linked");
+                        sj.erase("value");
+                        ins.push_back(std::move(sj));
+                    }
+                    for (const SocketDecl& sd : s.outputs)
+                        outs.push_back(socketJson(sd, probe, grp, false));
+                    e["props"] = std::move(props);
+                    e["inputs"] = std::move(ins);
+                    e["outputs"] = std::move(outs);
+                    // Sockets of these follow their properties (or the group interface); the list shows the defaults' sockets.
+                    e["dynamicSockets"] = bool(d->dynamicSockets);
+                }
                 if (link)
                 {
                     if (d->type == "GroupOutput" || (d->type == "GroupInput" && !fromInput))
@@ -661,7 +673,7 @@ void registerCommands()
                 throw CommandError("gnApply: " + meshName + " is not a mesh");
             try
             {
-                return detail::applyGroup(graph(), gn, *mesh)->name();
+                return detail::applyGroup(graph(), gn, *mesh)->path();
             }
             catch (const std::exception& e)
             {
@@ -702,7 +714,7 @@ void registerCommands()
             fs::path user = userLibrary();
             for (const fs::path& dir : libraryDirs())
                 for (const auto& e : fs::directory_iterator(dir))
-                    if (e.path().extension() == ".json")
+                    if (e.path().extension() == ".json" || e.path().extension() == ".lilanodes")
                         out.push_back({{"name", e.path().stem().string()}, {"scope", dir == user ? "user" : "workspace"}, {"path", e.path().generic_string()}});
             return out;
         },
@@ -716,15 +728,28 @@ void registerCommands()
         .run = [](const Args& a) -> json {
             std::string what = positionalString(a, 0, "gnLoadGroup", "name or path");
             fs::path path(what);
-            if (path.extension() != ".json")
+            if (path.extension() != ".json" && path.extension() != ".lilanodes")
             {
                 path.clear();
                 std::vector<fs::path> dirs = libraryDirs();
-                for (auto it = dirs.rbegin(); it != dirs.rend() && path.empty(); ++it)
-                    if (fs::exists(*it / (what + ".json")))
-                        path = *it / (what + ".json");
+                // Workspace before user before shipped.
+                std::vector<fs::path> order;
+                if (dirs.size() >= 2 && dirs[1] == workspaceLibrary(false))
+                    order.push_back(dirs[1]);
+                for (const fs::path& d : dirs)
+                    if (std::find(order.begin(), order.end(), d) == order.end())
+                        order.push_back(d);
+                for (auto it = order.begin(); it != order.end() && path.empty(); ++it)
+                    for (const char* ext : {".json", ".lilanodes"})
+                        if (path.empty() && fs::exists(*it / (what + ext)))
+                            path = *it / (what + ext);
                 if (path.empty())
                     throw CommandError("gnLoadGroup: no library group named " + what);
+            }
+            if (path.extension() == ".lilanodes")
+            {
+                json names = ops::execute("gnImportGroup", {{"args", json::array({paths::toUtf8(path)})}});
+                return names.empty() ? json() : names.back();
             }
             std::ifstream in(path, std::ios::binary);
             if (!in)
@@ -748,89 +773,6 @@ void registerCommands()
             grp.typeVersion = 1;
             detail::createGroupNode(graph(), grp);
             return grp.name;
-        },
-    });
-
-    ops::registerCommand({
-        .name = "exportMeshSequence",
-        .doc = "Write one mesh file per frame: sets the time, evaluates, writes. The path's {frame} becomes the frame number "
-               "(e.g. out/rock_{frame}.obj). Format obj or fbx. Frames are at fps. Returns the written paths.",
-        .positionalDoc = "mesh",
-        .flags = {{"start", "", T::Float, 1.0, "First frame."},
-                  {"end", "", T::Float, 24.0, "Last frame, inclusive."},
-                  {"step", "", T::Float, 1.0, "Frame step."},
-                  {"path", "", T::String, nullptr, "Output path pattern with {frame}."},
-                  {"format", "", T::String, "obj", "obj or fbx."},
-                  {"fps", "", T::Float, 30.0, "Frames per second."},
-                  {"worldSpace", "", T::Bool, true, "Bake the object's world matrix into the mesh."}},
-        .undoable = false,
-        .run = [](const Args& a) -> json {
-            LILA_ZONE();
-
-            std::string meshName = positionalString(a, 0, "exportMeshSequence", "mesh");
-            Graph& g = graph();
-            Node* mesh = g.find(meshName);
-            if (!mesh || !mesh->type().isA("mesh"))
-                throw CommandError("exportMeshSequence: " + meshName + " is not a mesh");
-            if (!a.has("path"))
-                throw CommandError("exportMeshSequence: path= required");
-            std::string pattern = a.get<std::string>("path"), format = a.get<std::string>("format", "obj");
-            if (format != "obj" && format != "fbx")
-                throw CommandError("exportMeshSequence: format must be obj or fbx");
-            double start = a.get<double>("start", 1.0), end = a.get<double>("end", 24.0), step = a.get<double>("step", 1.0);
-            double fps = a.get<double>("fps", 30.0);
-            bool world = a.get<bool>("worldSpace", true);
-            if (step <= 0.0 || fps <= 0.0)
-                throw CommandError("exportMeshSequence: step and fps must be positive");
-            double restore = g.time();
-            json written = json::array();
-            scene::NodeId id = mesh->id();
-            try
-            {
-                for (double f = start; f <= end + 1e-9; f += step)
-                {
-                    g.setTime(f / fps);
-                    g.evaluate();
-                    Node* n = g.node(id);
-                    scene::MeshPtr m = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-                    if (!m)
-                        continue;
-                    glm::dmat4 xf = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
-                    std::string path = framePath(pattern, f);
-                    std::error_code ec;
-                    fs::create_directories(fs::path(path).parent_path(), ec);
-                    if (format == "obj")
-                    {
-                        geo::Mesh copy = *m;
-                        if (world)
-                            transformMesh(copy, xf);
-                        if (!geo::writeObjFile(path, copy))
-                            throw CommandError("exportMeshSequence: can't write " + path);
-                    }
-                    else
-                    {
-                        fbx::ExportScene es;
-                        es.upAxis = math::upAxis();
-                        fbx::ExportNode node;
-                        node.name = n->name();
-                        node.mesh = m;
-                        node.local = world ? xf : glm::dmat4(1.0);
-                        es.nodes.push_back(std::move(node));
-                        fbx::ExportOptions o;
-                        std::string err;
-                        if (!fbx::writeFbx(es, path, o, &err))
-                            throw CommandError("exportMeshSequence: " + err);
-                    }
-                    written.push_back(fs::path(path).generic_string());
-                }
-            }
-            catch (...)
-            {
-                g.setTime(restore);
-                throw;
-            }
-            g.setTime(restore);
-            return written;
         },
     });
 }

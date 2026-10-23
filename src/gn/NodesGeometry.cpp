@@ -554,12 +554,14 @@ void attributes()
         .type = "StoreNamedAttribute",
         .label = "Store Named Attribute",
         .category = "Attribute",
-        .doc = "Writes a field into a named attribute on a domain. Vector values written to an existing uv or colour layer keep its layout.",
+        .doc = "Writes a field into a named attribute on a domain. Vector values written to an existing uv or colour layer keep its layout. "
+               "Colors (and vectors named Col, Cd or color:<set>) become a vertex colour set on the corners, which FBX exports; "
+               "point and face values spread to the corners.",
         .props = {prop("dataType", dataTypes(), "float"), prop("domain", meshDomains(), "point")},
         .dynamicSockets =
             [](const Group&, const GNode& n) {
                 SocketType t = dataTypeOf(findDecl("StoreNamedAttribute")->propValue(n, "dataType"));
-                json def = t == T::Vector || t == T::Rotation ? vec(0, 0, 0) : json(0);
+                json def = zeroJson(t);
                 return Sockets{{geoIn(), selectionIn(), in("name", T::String, ""), fin("value", t, def)}, {geoOut()}};
             },
         .exec =
@@ -584,7 +586,7 @@ void attributes()
         .dynamicSockets =
             [](const Group&, const GNode& n) {
                 SocketType t = dataTypeOf(findDecl("CaptureAttribute")->propValue(n, "dataType"));
-                json def = t == T::Vector || t == T::Rotation ? vec(0, 0, 0) : json(0);
+                json def = zeroJson(t);
                 return Sockets{{geoIn(), fin("value", t, def)}, {geoOut(), fout("attribute", t)}};
             },
         .exec =

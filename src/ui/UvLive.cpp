@@ -14,6 +14,7 @@
 #include "scene/MeshNodes.h"
 #include "ui/Actions.h"
 #include "ui/MeshCache.h"
+#include "ui/ViewportDisplay.h"
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportTool.h"
 #include "uv/Uv.h"
@@ -232,8 +233,9 @@ void draw3d(render::FrameState& s, OverlayPainter&, const ViewInfo&)
         {
             glm::mat4 w = glm::mat4(n->as<glm::dmat4>(scene::Transform::kWorldMatrix));
             const glm::vec4 color(1.0f, 1.0f, 1.0f, 1.0f);
+            s.seamLineWidth = viewportDisplay::hairlineWidth(viewportDisplay::componentThickness().uvSeam, qApp->devicePixelRatio());
             for (const glm::vec3& p : seamLines(out, set))
-                s.linesOnTop.push_back({glm::vec3(w * glm::vec4(p, 1.0f)), color});
+                s.seamLines.push_back({glm::vec3(w * glm::vec4(p, 1.0f)), color});
         }
     }
 }
@@ -884,6 +886,11 @@ void install()
         "Paint the UV editor's brush (relax, flatten, pin, stiffen...) on the mesh in the viewport; B drag sizes it, M drag sets strength.");
     add("uv.checker3d", "UV Checker in 3D", [] { setChecker3d(!checker3d()); }, "Show a checker texture on the meshes in the UV editor.");
     add("uv.seams3d", "UV Seams in 3D", [] { setSeams3d(!seams3d()); }, "Draw uv seams over the meshes in the UV editor.");
+    add("uv.includeChildren", "UVs of Child Meshes", [] {
+        uv::setIncludeChildren(!uv::includeChildren());
+        settingsChanged();
+        viewportTools::requestRedraw();
+    }, "Toggle whether the uv editor and uv tools include meshes under the selected objects, or only the selected meshes.");
     add("uv.heatmapTwoColour", "Two-Colour Stretch Map", [] { setTwoColourHeatmap(!twoColourHeatmap()); },
         "Show the UV editor's stretch map in two colours instead of grayscale.");
 }

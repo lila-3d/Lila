@@ -437,13 +437,14 @@ std::string namespaceOf(std::string_view name)
 NodeId resolve(Graph& g, const std::string& target, const std::string& nameSpace)
 {
     const std::string bare = poses::stripNamespace(target);
+    // Drawing resolves targets too, so an ambiguous one resolves to nothing rather than throwing.
     if (!nameSpace.empty())
     {
-        Node* n = g.find(nameSpace + ":" + bare);
-        return n ? n->id() : kNoNode;
+        std::vector<NodeId> found = g.findAll(nameSpace + ":" + bare);
+        return found.size() == 1 ? found[0] : kNoNode;
     }
-    if (Node* n = g.find(target))
-        return n->id();
+    if (std::vector<NodeId> found = g.findAll(target); !found.empty())
+        return found.size() == 1 ? found[0] : kNoNode;
     NodeId only = kNoNode;
     for (NodeId id : g.nodes())
         if (Node* n = g.node(id); n && poses::stripNamespace(n->name()) == bare)
@@ -912,7 +913,7 @@ json runAction(const Item& item, const std::vector<NodeId>& ids)
 {
     std::vector<std::string> names;
     for (NodeId id : ids)
-        names.push_back(graph().node(id)->name());
+        names.push_back(graph().node(id)->path());
     const Action& act = item.action;
     switch (act.kind)
     {
@@ -1305,7 +1306,7 @@ void registerCommands()
             json out = json::array();
             for (NodeId id : graph().selection())
                 if (Node* n = graph().node(id))
-                    out.push_back(n->name());
+                    out.push_back(n->path());
             return out;
         },
     });

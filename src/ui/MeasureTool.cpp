@@ -346,10 +346,10 @@ std::vector<viewportHooks::PickHit> pickMeasures(QPointF a, QPointF b, bool clic
         if (click)
         {
             if (double d = s.distance(a); d < 6.0)
-                hits.push_back({n->name(), d});
+                hits.push_back({n->path(), d});
         }
         else if (box.contains(s.labelAt))
-            hits.push_back({n->name(), 0.0});
+            hits.push_back({n->path(), 0.0});
     }
     return hits;
 }
@@ -466,7 +466,7 @@ json parentFor(const Snap& s)
     if (s.mesh == scene::kNoNode || !attachToMeshes())
         return nullptr;
     scene::Node* n = scene::Graph::current().node(s.mesh);
-    return n ? json(n->name()) : json(nullptr);
+    return n ? json(n->path()) : json(nullptr);
 }
 
 json point(const glm::dvec3& p) { return json::array({p.x, p.y, p.z}); }
@@ -633,7 +633,7 @@ private:
                 json verts = json::array();
                 for (const Snap& s : picked)
                     verts.push_back(s.vertex);
-                runCommand("radiusMeasure", {{"mesh", scene::Graph::current().node(picked[0].mesh)->name()}, {"vertices", verts}});
+                runCommand("radiusMeasure", {{"mesh", scene::Graph::current().node(picked[0].mesh)->path()}, {"vertices", verts}});
             }
             else
             {

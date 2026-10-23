@@ -147,7 +147,7 @@ json stackJson(Graph& g, const Stack& s)
         rowsJson.push_back({{"index", r.index}, {"time", r.time}, {"frame", r.time * f}, {"gap", r.gap * f}, {"loop", r.loop},
                             {"mark", markName(r.mark)}});
     return {{"character", s.ch.id},
-            {"root", g.node(s.ch.root)->name()},
+            {"root", g.node(s.ch.root)->path()},
             {"fps", f},
             {"total", totalTime(s.keys) * f},
             {"loop", s.looping()},
@@ -607,7 +607,7 @@ void registerCycleCommands(ext::Context& ctx)
             Stack s = stackArg(a, "characterLabels");
             json out = json::object();
             for (const auto& [id, label] : jointLabels(g, s.ch))
-                out[g.node(id)->name()] = label;
+                out[g.node(id)->path()] = label;
             return out;
         },
     });
@@ -646,7 +646,7 @@ void registerBankCommands(ext::Context& ctx)
             for (NodeId id : g.nodes())
                 names.push_back(g.node(id)->name());
             const std::string name = numberedName(g.node(t)->name(), names);
-            return g.node(sa::duplicateTake(g, t, name))->name();
+            return g.node(sa::duplicateTake(g, t, name))->path();
         },
     });
 
@@ -750,7 +750,7 @@ void registerBankCommands(ext::Context& ctx)
             for (NodeId t : sa::activeTakes(g))
                 if (auto src = g.source({t, sa::TakeNode::kRoot, -1}); (src ? src->node : kNoNode) == (root ? root->id() : kNoNode))
                     before = t;
-            sa::TakeSettings s{root ? root->name() : std::string(), file.value("start", 0.0), file.value("end", 4.0),
+            sa::TakeSettings s{root ? root->path() : std::string(), file.value("start", 0.0), file.value("end", 4.0),
                                file.value("fps", sa::playback().fps), file.value("loop", false)};
             const NodeId t = guarded("importTake", [&] { return sa::createTake(g, a.get<std::string>("name", file.value("name", std::string("Take1"))), s); });
             g.setValue({t, sa::TakeNode::kFolder}, normalFolder(file.value("folder", std::string())));
@@ -772,7 +772,7 @@ void registerBankCommands(ext::Context& ctx)
                 Node* curve = nullptr;
                 try
                 {
-                    dst = g.plug(nodeName + "." + c.value("plug", std::string()));
+                    dst = g.plug(g.path(node->second) + "." + c.value("plug", std::string()));
                     curve = g.createNode(*type, nodeName + "_" + c.value("plug", std::string()), kNoNode, false);
                     // Keys last: they are read in the curve's rotate order, which has to be set first.
                     const json attrs = c.value("attrs", json::object());
@@ -781,7 +781,7 @@ void registerBankCommands(ext::Context& ctx)
                             g.setValue({curve->id(), i, -1}, fromJson(curve->type().attrs[size_t(i)], v));
                     if (const int i = curve->type().attrIndex("keys"); i >= 0 && attrs.contains("keys"))
                         g.setValue({curve->id(), i, -1}, fromJson(curve->type().attrs[size_t(i)], attrs["keys"]));
-                    out = g.plug(curve->name() + "." + c.value("output", std::string("output")));
+                    out = g.plug(curve->path() + "." + c.value("output", std::string("output")));
                     g.connect(out, dst, true);
                 }
                 catch (const std::exception& e)
@@ -797,7 +797,7 @@ void registerBankCommands(ext::Context& ctx)
             if (missing > 0)
                 lila::log::write(LogLevel::Warning, "importTake: " + std::to_string(missing) + " channels had no match in the scene" +
                                                         (firstError.empty() ? std::string() : " (" + firstError + ")"));
-            return g.node(t)->name();
+            return g.node(t)->path();
         },
     });
 }

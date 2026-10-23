@@ -261,7 +261,7 @@ void registerMeshCommands()
                 if (a.has("position"))
                     g.setValue({mesh->id(), Transform::kTranslate, -1},
                                glm::dvec3(a.flags["position"][0], a.flags["position"][1], a.flags["position"][2]));
-                json genName = gen->name();
+                json genName = gen->path();
                 if (!a.get<bool>("generator", true))
                 {
                     g.evaluate();
@@ -272,7 +272,7 @@ void registerMeshCommands()
                     genName = nullptr;
                 }
                 g.select({mesh->id()});
-                return json::array({mesh->name(), genName});
+                return json::array({mesh->path(), genName});
             },
         });
     }
@@ -376,7 +376,7 @@ void registerMeshCommands()
             Node* n = graph().createNode(*types::find("mesh"), a.get<std::string>("name", "Mesh"), kNoNode, true);
             graph().setValue({n->id(), MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(geo::Mesh::fromPolygons(pts, sizes, idx))));
             graph().select({n->id()});
-            return n->name();
+            return n->path();
         },
     });
 
@@ -405,7 +405,7 @@ void registerMeshCommands()
                 std::string wanted = Graph::validName(o.name) ? o.name : "Mesh";
                 Node* n = g.createNode(*types::find("mesh"), wanted, kNoNode, true);
                 g.setValue({n->id(), MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(std::move(o.mesh))));
-                names.push_back(n->name());
+                names.push_back(n->path());
                 ids.push_back(n->id());
             }
             g.select(ids);
@@ -427,7 +427,7 @@ void registerMeshCommands()
                 names.push_back(a.positional[k].get<std::string>());
             if (names.empty())
                 for (NodeId id : graph().selection())
-                    names.push_back(graph().node(id)->name());
+                    names.push_back(graph().node(id)->path());
             Graph& g = graph();
             g.evaluate();
             std::vector<geo::ObjObject> objects;

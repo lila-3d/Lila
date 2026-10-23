@@ -12,6 +12,7 @@
 #include "scene/Modifiers.h"
 #include "ui/Actions.h"
 #include "ui/CursorBadges.h"
+#include "ui/NodeLookup.h"
 #include "ui/OptionBox.h"
 
 #include <QApplication>
@@ -176,7 +177,7 @@ void RetopoDrawTool::activate()
     refresh();
     log::info("Retopo Draw on {} into {}: click dots, Shift-click to fill, Ctrl-drag loops, Tab-drag extends (Shift: whole loop, "
               "Ctrl: up to the extrude angle), Shift-drag relaxes, Ctrl+Shift-click deletes, Esc exits",
-              mRefMesh ? scene::Graph::current().node(mReference)->name() : std::string("(no reference)"), mRetopoName);
+              mRefMesh ? scene::Graph::current().node(mReference)->path() : std::string("(no reference)"), mRetopoName);
 }
 
 void RetopoDrawTool::deactivate()
@@ -224,7 +225,7 @@ void RetopoDrawTool::refresh()
     if (scene::Node* n = retopoNode())
     {
         mRetopoId = n->id();
-        mRetopoName = n->name();
+        mRetopoName = n->path();
         mRetopo = scene::modifiers::cage(g, n->id());
         mRetopoWorld = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
         int64_t axis = n->as<int64_t>(scene::MeshNode::kSymmetry);
@@ -259,7 +260,7 @@ scene::Node* RetopoDrawTool::retopoNode() const
     scene::Graph& g = scene::Graph::current();
     if (scene::Node* n = g.node(mRetopoId); n && n->type().isA("mesh"))
         return n;
-    scene::Node* n = g.find(mRetopoName);
+    scene::Node* n = findNode(mRetopoName);
     return n && n->type().isA("mesh") ? n : nullptr;
 }
 
@@ -419,7 +420,7 @@ json RetopoDrawTool::targetCall(json flags) const
 {
     flags["mesh"] = mRetopoName;
     if (scene::Node* ref = scene::Graph::current().node(mReference))
-        flags["reference"] = ref->name();
+        flags["reference"] = ref->path();
     flags["create"] = true;
     return flags;
 }
@@ -1013,8 +1014,7 @@ void RetopoDrawTool::removeOwnDraw(render::FrameState& s) const
     // The retopo mesh is drawn here, see-through; drop the viewport's opaque draw of it.
     if (!mRetopo)
         return;
-    scene::Graph& g = scene::Graph::current();
-    scene::Node* n = g.find(mRetopoName);
+    scene::Node* n = findNode(mRetopoName);
     if (!n)
         return;
     scene::MeshPtr out = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);

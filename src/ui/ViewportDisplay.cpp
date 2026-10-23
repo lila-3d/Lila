@@ -2,6 +2,7 @@
 
 #include "core/PrefStore.h"
 #include "render/DisplayOptions.h"
+#include "ui/Theme.h"
 
 #include <algorithm>
 #include <cmath>
@@ -20,6 +21,13 @@ void apply(render::FrameState& s)
         s.groundShadow = 0.0f;
     s.exposure = render::exposureScale(p.value<double>("general", kExposure, 0.0));
     s.gamma = p.value<float>("general", kGamma, 1.0f);
+    s.gridColor = glm::vec3(themeLinear("grid", glm::vec4(s.gridColor, 1.0f)));
+    s.gridAxisX = glm::vec3(themeLinear("gridAxisX", glm::vec4(s.gridAxisX, 1.0f)));
+    s.gridAxisZ = glm::vec3(themeLinear("gridAxisZ", glm::vec4(s.gridAxisZ, 1.0f)));
+    s.wireSelected = themeLinear("wireSelected", s.wireSelected);
+    s.wirePreselect = themeLinear("wirePreselect", s.wirePreselect);
+    s.wireUnderSelected = themeLinear("wireUnderSelected", s.wireUnderSelected);
+    s.wireDefault = themeLinear("wireframe", s.wireDefault);
 }
 
 bool defaultMaterial()
@@ -33,7 +41,8 @@ ComponentThickness componentThickness()
     const ComponentThickness d;
     auto get = [&](const char* key, double fallback) { return std::max(0.0, p.value<double>("general", key, fallback)); };
     return {get(kEdgeThickness, d.edge),     get(kEdgeThicknessHover, d.edgeHover),   get(kEdgeThicknessSelected, d.edgeSelected),
-            get(kVertexThickness, d.vertex), get(kVertexThicknessHover, d.vertexHover), get(kVertexThicknessSelected, d.vertexSelected)};
+            get(kVertexThickness, d.vertex), get(kVertexThicknessHover, d.vertexHover), get(kVertexThicknessSelected, d.vertexSelected),
+            get(kUvSeamThickness, d.uvSeam)};
 }
 
 bool accentColors(const char* key)
@@ -45,7 +54,14 @@ bool accentColors(const char* key)
 glm::vec3 axisColor(int axis)
 {
     static constexpr glm::vec3 kAxes[3] = {{0.85f, 0.40f, 0.40f}, {0.50f, 0.80f, 0.42f}, {0.42f, 0.56f, 0.90f}};
-    return kAxes[std::clamp(axis, 0, 2)];
+    static constexpr const char* kTokens[3] = {"axisX", "axisY", "axisZ"};
+    int i = std::clamp(axis, 0, 2);
+    return glm::vec3(themeSrgb(kTokens[i], glm::vec4(kAxes[i], 1.0f)));
+}
+
+glm::vec3 keyTickColor()
+{
+    return glm::vec3(themeSrgb("keyTick", glm::vec4(0.86f, 0.36f, 0.36f, 1.0f)));
 }
 
 render::VertexColorMode vertexColorMode()

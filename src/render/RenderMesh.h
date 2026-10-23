@@ -62,6 +62,8 @@ struct RenderMesh
 {
     /** When set, the vertices live (and change) here and `vertices` stays empty; indices and sections stay fixed. */
     std::shared_ptr<DynamicVertices> dynamic;
+    /** When set, draws with this mesh's vertex buffer and `vertices` stays empty: a subset of its triangles (isolated faces). */
+    std::shared_ptr<const RenderMesh> shareVertices;
     std::vector<MeshVertex> vertices;
     std::vector<uint32_t> indices;     // triangle list, grouped by section
     std::vector<MeshSection> sections; // empty means one section of slot 0

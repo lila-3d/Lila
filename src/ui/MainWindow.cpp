@@ -16,6 +16,7 @@
 #include "scene/RenderSettings.h"
 #include "ui/Actions.h"
 #include "ui/GameExporter.h"
+#include "ui/MeshSequenceExporter.h"
 #include "ui/Hotbox.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
@@ -27,6 +28,7 @@
 #include "ui/Ghosting.h"
 #include "ui/GraphEditor.h"
 #include "ui/SpinScrub.h"
+#include "ui/Theme.h"
 #include "ui/TimeSlider.h"
 #include "ui/AttributeEditor.h"
 #include "ui/DisplayLayersPanel.h"
@@ -56,6 +58,7 @@
 #include "ui/StatusOutput.h"
 #include "ui/SceneDialogs.h"
 #include "ui/SourceControlPanel.h"
+#include "ui/BatchRunPanel.h"
 #include "ui/SpacesUi.h"
 #include "ui/TearOff.h"
 #include "ui/TearOffLogic.h"
@@ -302,6 +305,7 @@ void MainWindow::registerPanels()
                  .area = Qt::RightDockWidgetArea, .icon = "stack-2"});
     registerAnimLayersPanel();
     registerOffsetsPanel();
+    registerBatchRunPanel();
     panels::add({.id = kUndoHistoryDock, .title = "Undo History", .create = make([](QWidget* p) { return new UndoHistoryPanel(p); }),
                  .area = Qt::LeftDockWidgetArea, .icon = "history",
                  .place = [this, dock](QDockWidget* d) { splitDockWidget(dock("outliner"), d, Qt::Vertical); }});
@@ -700,7 +704,11 @@ void MainWindow::startup(const std::vector<io::recovery::Session>& stale, bool s
         }
     }
     if (!showStartup || !PrefStore::get().value<bool>("general", "/startup/showDialog", true))
+    {
+        if (themeChooserPending())
+            showThemeChooser(this);
         return;
+    }
     auto* dialog = new StartupDialog({[this](const std::filesystem::path& p) { openScene(p); }}, this);
     dialog->present();
 }
@@ -784,6 +792,7 @@ void MainWindow::sendToUnreal()
         return;
     }
     json existing = ops::execute("unrealMappings", json::object());
+    auto leafName = [](const std::string& path) { return path.substr(path.rfind('|') + 1); };
     for (const json& name : selection)
     {
         bool mapped = false;
@@ -793,7 +802,7 @@ void MainWindow::sendToUnreal()
             continue;
         bool ok = false;
         QString path = QInputDialog::getText(this, "Send to Unreal", QString::fromStdString("Content path for " + name.get<std::string>()),
-                                             QLineEdit::Normal, QString::fromStdString("/Game/Meshes/SM_" + name.get<std::string>()), &ok);
+                                             QLineEdit::Normal, QString::fromStdString("/Game/Meshes/SM_" + leafName(name.get<std::string>())), &ok);
         if (!ok || path.isEmpty())
             return;
         run("unrealMap", {{"args", {name}}, {"contentPath", path.toStdString()}, {"kind", "static"}});
@@ -894,7 +903,7 @@ void MainWindow::registerActions()
     actions::add({"viewport.lookThroughSelected", "Look Through Selected", "View",
                   [this, selectedCamera] {
                       if (scene::Node* n = selectedCamera())
-                          run("lookThru", {{"args", {n->name()}}});
+                          run("lookThru", {{"args", {n->path()}}});
                   },
                   [selectedCamera] { return selectedCamera() != nullptr; }, "The active view looks through the selected camera; navigating it then moves the camera.",
                   "lila.ops.lookThru(\"camera1\")"});
@@ -958,10 +967,17 @@ void MainWindow::registerActions()
                   "Load, unload and auto load extensions, and see their versions and load errors."});
     actions::add({"viewport.isolate", "Isolate Select", "View", [this] { mViewports->active()->toggleIsolate(); },
                   [this] { return mViewports->active()->isolating() || actions::hasSelection(); },
-                  "Shows only the selected objects in the active view; again to show everything."});
+                  "Shows only the selection in the active view: whole objects, or just the faces of selected components. Again to show everything."});
+    actions::add({"viewport.isolateAdd", "Add Selected to Isolation", "View", [this] { mViewports->active()->addToIsolation(); },
+                  [] { return actions::hasSelection(); },
+                  "Adds the selected objects or components to what the active view isolates, starting isolation if it is off."});
+    actions::add({"viewport.isolateRemove", "Remove Selected from Isolation", "View", [this] { mViewports->active()->removeFromIsolation(); },
+                  [this] { return mViewports->active()->isolating() && actions::hasSelection(); },
+                  "Hides the selected objects or components in the active view's isolation."});
     imagePlanes::install([this] { return mViewports->active(); });
     sets::registerActions(this);
     GameExporter::registerActions(this);
+    MeshSequenceExporter::registerActions(this);
     hud::registerActions([this] { return mViewports->active(); });
     cursorBadges::registerDefaults();
     actions::add({"viewport.toggleQuad", "Toggle Four Views", "View", [this] { mViewports->toggleQuad(); }, nullptr,
@@ -1061,7 +1077,7 @@ void MainWindow::buildMenus()
         });
     });
     menus::addActions("File", {"file.save", "file.saveAs", "file.incrementAndSave", "file.versions", "", "file.import", "file.convertMaya",
-                        "file.exportSelection", "file.gameExporter", "file.createReference", "", "unreal.send", "unreal.sync",
+                        "file.exportSelection", "file.gameExporter", "file.exportMeshSequence", "window.batchRun", "file.createReference", "", "unreal.send", "unreal.sync",
                         "unreal.connect", "unreal.collision", "", "file.openFolder"});
     addSubmenu("File", "Recent Folders", [this](QMenu* recent) {
         mRecentMenu = recent;
@@ -1102,13 +1118,13 @@ void MainWindow::buildMenus()
     menus::addActions("Select", {"select.objectMode", "select.vertexMode", "select.edgeMode", "select.faceMode", "", "select.allComponents",
                           "select.grow", "select.loop", "select.ring", "", "select.hierarchy", "select.pickWalkUp", "select.pickWalkDown",
                           "select.pickWalkLeft", "select.pickWalkRight", "", "select.toVertices", "select.toEdges", "select.toFaces",
-                          "select.containedFaces", "", "select.paintTool", "select.toggleCameraBased", "select.toggleBackfaceCulling"});
+                          "select.containedFaces", "", "select.paintTool", "select.toggleLasso", "select.toggleCameraBased", "select.toggleBackfaceCulling"});
 
     menu("Mesh", "Mesh");
     menus::addActions("Mesh", {"mesh.extrude", "mesh.inset", "mesh.bevel", "mesh.insertLoop", "mesh.knife", "mesh.bridge", "mesh.fillHole", "",
                         "mesh.merge", "mesh.mergeCenter", "mesh.collapse", "mesh.dissolve", "mesh.poke", "mesh.spin", "", "mesh.flip",
                         "mesh.conform", "mesh.triangulate", "mesh.quadrangulate", "mesh.subdivide", "", "mesh.mirror", "mesh.symmetryX",
-                        "mesh.symmetryOff", "mesh.combine", "mesh.separate", "mesh.boundingMesh", "mesh.bakeModifierStack"});
+                        "mesh.symmetryOff", "mesh.combine", "mesh.smartJoin", "mesh.separate", "mesh.boundingMesh", "mesh.bakeModifierStack"});
     addSubmenu("Mesh", "Symmetry");
     menus::addActions("Mesh/Symmetry", {"mesh.toggleSymmetry", "mesh.symmetryX", "mesh.symmetryY", "mesh.symmetryZ", "mesh.symmetryOff", "",
                                  "mesh.symmetryCheck", "mesh.symmetrizePositive", "mesh.symmetrizeNegative", "mesh.symmetryRebuild",
@@ -1130,13 +1146,13 @@ void MainWindow::buildMenus()
 
     menu("UV", "UV");
     menus::addActions("UV", {"window.uvEditor", "uv.auto", "uv.autoSeams", "uv.unwrap", "uv.projectPlanar", "uv.projectBox", "uv.projectCylindrical",
-                      "uv.projectSpherical", "uv.cut", "uv.sew", "uv.straighten", "uv.orient", "uv.pack", "uv.lightmap", "", "uv.autoSeams2",
+                      "uv.projectSpherical", "uv.cut", "uv.sew", "uv.straighten", "uv.orient", "uv.rotateLeft", "uv.rotateRight", "uv.flipX", "uv.flipY", "uv.pack", "uv.lightmap", "", "uv.autoSeams2",
                       "uv.bff", "uv.bffDisk", "uv.bffRectangle", "uv.bffCones", "uv.unwrapSymmetric", "uv.unwrapSymmetricStack"});
     addSubmenu("UV", "Pack");
     menus::addActions("UV/Pack", {"uv.pack", "uv.packAroundSelected", "uv.packSelectionOnly", "uv.packStacked", "uv.packPerObject", "uv.packUdimByMaterial", "uv.selectStacks"});
     addSubmenu("UV", "Live");
     menus::addActions("UV/Live", {"uv.liveMode", "uv.liveRelax", "uv.liveFlatten", "uv.liveSettle", "uv.pin", "uv.unpin", "uv.weld", "uv.brush3d",
-                           "uv.checker3d", "uv.seams3d", "uv.heatmapTwoColour"});
+                           "uv.checker3d", "uv.seams3d", "uv.includeChildren", "uv.heatmapTwoColour"});
     addSubmenu("UV", "Optimize");
     menus::addActions("UV/Optimize", {"uv.optimizeConformal", "uv.optimizeAuthalic", "uv.optimizeBlend", "uv.optimizeIsometric", "uv.mosaic"});
     addSubmenu("UV", "Align");
@@ -1153,7 +1169,13 @@ void MainWindow::buildMenus()
     setupSpacesMenu();
 
     menu("Deform", "Deform");
-    menus::addActions("Deform", {"deform.blendShape", "deform.addBlendTarget", "deform.extractBlendTarget", "", "deform.lattice"});
+    menus::addActions("Deform", {"deform.morph", "deform.addMorphTarget", "window.morphTargets"});
+    addSubmenu("Deform", "Morph Tools");
+    menus::addActions("Deform/Morph Tools", {"deform.editMorphTarget", "deform.extractMorphTarget", "deform.setMorphTarget", "deform.addInBetween",
+                                             "", "deform.flipMorphTarget", "deform.symmetrizeMorphTarget", "", "deform.removeMorphTarget"});
+    addSubmenu("Deform", "Correctives");
+    menus::addActions("Deform/Correctives", {"deform.sculptCorrective", "deform.addCorrective", "", "deform.poseDriver", "deform.setPoseDriverTarget"});
+    menus::addActions("Deform", {"deform.driveChannel", "window.drivenChannels", "", "deform.lattice"});
     addSubmenu("Deform", "Nonlinear");
     menus::addActions("Deform/Nonlinear", {"deform.bend", "deform.twist", "deform.taper", "deform.squash", "deform.sine", "deform.wave"});
     menus::addActions("Deform", {"deform.softMod", "deform.deltaMush", "deform.wrap", "deform.cage", "", "deform.rebind"});
@@ -1173,7 +1195,7 @@ void MainWindow::buildMenus()
     menus::addActions("Display/Antialiasing Samples", {"viewport.aaSamples2", "viewport.aaSamples4", "viewport.aaSamples8"});
     addSubmenu("Display", "Environment", [](QMenu* env) { connect(env, &QMenu::aboutToShow, env, [env] { fillEnvironmentMenu(env); }); });
     menus::addActions("Display", {"viewport.toggleEnvBackground", "", "display.toggleVisibility", "display.hide", "display.show", "display.showAll",
-                           "viewport.isolate"});
+                           "viewport.isolate", "viewport.isolateAdd", "viewport.isolateRemove"});
     addSubmenu("Display", "Measure", syncChecks);
     menus::addActions("Display/Measure", {"measure.selection", "measure.copyDistance", "measure.copyDiameter", "measure.copyLength", "",
                                    "measure.distanceTool", "measure.angleTool", "measure.radiusTool", "", "measure.distanceFromSelection",
@@ -1248,7 +1270,8 @@ void MainWindow::buildPanelMenus()
                               "viewport.cameraSettings", "", "viewport.imagePlaneImport"});
     menus::addActions("panel.Shading", {"viewport.wireframe", "viewport.shaded", "viewport.textured", "viewport.wireOnShaded", "", "viewport.toggleAO",
                                  "", "display.smoothOff", "display.smoothCage", "display.smoothOn"});
-    menus::addActions("panel.Show", {"display.hide", "display.show", "display.showAll", "", "viewport.isolate", "viewport.show.mesh", "viewport.show.joint",
+    menus::addActions("panel.Show", {"display.hide", "display.show", "display.showAll", "", "viewport.isolate", "viewport.isolateAdd",
+                              "viewport.isolateRemove", "viewport.show.mesh", "viewport.show.joint",
                               "viewport.show.locator", "rig.xrayJoints", "measure.toggleShow",
                               "viewport.toggleImagePlanes"});
     menus::addActions("panel.Renderer", {"window.renderSettings"});

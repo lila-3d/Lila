@@ -1,6 +1,7 @@
 #include "ui/StatusOutput.h"
 
 #include "ui/Icons.h"
+#include "ui/Theme.h"
 
 #include <QMouseEvent>
 #include <QPainter>
@@ -101,7 +102,7 @@ void StatusOutput::paintEvent(QPaintEvent*)
         ic.paint(&p, QRect(x, (height() - kIconSize) / 2, kIconSize, kIconSize), Qt::AlignCenter, QIcon::Normal, QIcon::On);
         x += iconW;
     }
-    p.setPen(error || warning ? QColor(242, 242, 242) : QColor(160, 160, 160));
+    p.setPen(error || warning ? themeShade(242) : themeShade(160));
     p.drawText(QRect(x, 0, width() - x, height()), Qt::AlignVCenter | Qt::AlignLeft, text);
 }
 

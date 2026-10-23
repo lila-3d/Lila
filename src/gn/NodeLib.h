@@ -116,6 +116,17 @@ struct ObjectInput
     glm::dmat4 matrix{1.0};
 };
 
+/** What the active Viewer node saw: its geometry and the field to colour it by (null when unlinked). */
+struct ViewerSink
+{
+    std::string node;
+    GeometryPtr geometry;
+    FieldPtr field;
+    SocketType type = SocketType::Float;
+    Domain domain = Domain::Point;
+    bool captured = false;
+};
+
 /** Everything an evaluation can read from outside the group. */
 struct ExecEnv
 {
@@ -123,10 +134,14 @@ struct ExecEnv
     GeometryPtr input;
     std::map<std::string, Value> params;        // group inputs by name
     std::map<std::string, ObjectInput> objects; // by Object Info node name
+    /** Set by the modifier while a Viewer is active; nested groups run without one. */
+    ViewerSink* viewer = nullptr;
 };
 
 /** Turns a JSON value (node value, exposed default) into a socket value. Rotations are given in degrees. */
 LILA_SCENE_API Value valueFromJson(SocketType t, const json& j);
+/** An exposed input's value from JSON as the graph sees it: angle-subtype floats are given in degrees and read as radians. */
+LILA_SCENE_API Value paramValue(const GInput& in, const json& j);
 /** Converts a value along a link of another type; incompatible pairs give the default. */
 LILA_SCENE_API Value convertValue(const Value& v, SocketType from, SocketType to);
 LILA_SCENE_API Value defaultValue(SocketType t);

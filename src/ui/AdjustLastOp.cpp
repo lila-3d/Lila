@@ -11,6 +11,7 @@
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
 #include "ui/SpinScrub.h"
+#include "ui/Theme.h"
 #include "ui/ValueReset.h"
 #include "ui/ViewportLayout.h"
 #include "ui/ViewportWidget.h"
@@ -281,11 +282,11 @@ protected:
     {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing);
-        p.setPen(QColor(255, 255, 255, 36));
-        p.setBrush(QColor(34, 34, 34, 215));
+        p.setPen(themeShade(255, 36));
+        p.setBrush(themeShade(34, 215));
         p.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 6, 6);
         p.setPen(Qt::NoPen);
-        p.setBrush(QColor(255, 255, 255, 60));
+        p.setBrush(themeShade(255, 60));
         p.drawRoundedRect(QRectF(width() / 2.0 - 16, 6, 32, 3), 1.5, 1.5);
     }
 

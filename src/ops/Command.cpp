@@ -26,6 +26,7 @@ std::map<int, std::function<void(const ExecuteEvent&)>>& executeListeners()
 }
 
 int gExecuteDepth = 0;
+std::vector<const Args*> gRunning;
 
 void notifyExecute(const ExecuteEvent& e)
 {
@@ -184,6 +185,7 @@ json execute(std::string_view name, const json& call, CallSource source)
         notifyExecute({name, call, source});
     json result;
     ++gExecuteDepth;
+    gRunning.push_back(&args);
     try
     {
         if (def->undoable)
@@ -198,11 +200,13 @@ json execute(std::string_view name, const json& call, CallSource source)
     }
     catch (...)
     {
+        gRunning.pop_back();
         --gExecuteDepth;
         if (top && !executeListeners().empty())
             notifyExecute({name, call, source, true, false});
         throw;
     }
+    gRunning.pop_back();
     --gExecuteDepth;
     if (top && !executeListeners().empty())
         notifyExecute({name, call, source, true, true});
@@ -211,6 +215,8 @@ json execute(std::string_view name, const json& call, CallSource source)
         log::write(LogLevel::Echo, toPython(name, call) + "\n");
     return result;
 }
+
+const Args* currentArgs() { return gRunning.empty() ? nullptr : gRunning.back(); }
 
 bool setAdjustable(std::string_view name, bool on)
 {

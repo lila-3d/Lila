@@ -20,6 +20,53 @@ struct RegionMove
     double thickness = 0.0; // inward, boundary points only
 };
 
+/** A cap corner on the region border, with its face's corner triangle before the thickness moved it. */
+struct CapCorner
+{
+    Index c, prev, next;
+    glm::dvec3 o, a, b;
+};
+
+/**
+ * Uvs of the moved border corners extrapolated from their corner triangles, so the cap shrinks in uv space as it
+ * does in the face and the sides between get the uv band it gave up. The sides' top corners follow the cap.
+ */
+void insetCapUvs(Mesh& mesh, std::span<const CapCorner> caps, std::span<const Index> sides, Index firstDup)
+{
+    AttributeSet& ca = mesh.cornerAttrs();
+    for (size_t l = 0; l < ca.layerCount(); ++l)
+    {
+        if (ca.layer(l).type() != AttrType::Float2)
+            continue;
+        std::span<glm::vec2> uv = ca.layer(l).values<glm::vec2>();
+        std::vector<glm::vec2> moved;
+        for (const CapCorner& cc : caps)
+        {
+            const glm::dvec3 d = mesh.position(mesh.cornerPoint(cc.c)) - cc.o;
+            const double aa = glm::dot(cc.a, cc.a), ab = glm::dot(cc.a, cc.b), bb = glm::dot(cc.b, cc.b);
+            const double det = aa * bb - ab * ab;
+            if (std::abs(det) <= 1e-12 * aa * bb)
+            {
+                moved.push_back(uv[cc.c]);
+                continue;
+            }
+            const double al = (bb * glm::dot(cc.a, d) - ab * glm::dot(cc.b, d)) / det;
+            const double be = (aa * glm::dot(cc.b, d) - ab * glm::dot(cc.a, d)) / det;
+            moved.push_back(uv[cc.c] + float(al) * (uv[cc.prev] - uv[cc.c]) + float(be) * (uv[cc.next] - uv[cc.c]));
+        }
+        for (size_t i = 0; i < caps.size(); ++i)
+            uv[caps[i].c] = moved[i];
+        for (Index sf : sides)
+            mesh.forEachFaceCorner(sf, [&](Index sc) {
+                const Index r = mesh.cornerRadial(sc);
+                if (r == sc || mesh.cornerPoint(sc) < firstDup || mesh.cornerNextPoint(sc) < firstDup)
+                    return;
+                uv[sc] = uv[mesh.cornerNext(r)];
+                uv[mesh.cornerNext(sc)] = uv[r];
+            });
+    }
+}
+
 ExtrudeResult extrudeRegion(Mesh& mesh, const std::vector<Index>& faces, const RegionMove& move)
 {
     LILA_ZONE();
@@ -52,6 +99,7 @@ ExtrudeResult extrudeRegion(Mesh& mesh, const std::vector<Index>& faces, const R
         });
 
     std::unordered_map<Index, Index> dup;
+    const Index firstDup = mesh.pointCapacity();
     for (const BoundaryCorner& bc : boundary)
         for (Index p : {bc.a, bc.b})
             if (!dup.count(p))
@@ -98,6 +146,11 @@ ExtrudeResult extrudeRegion(Mesh& mesh, const std::vector<Index>& faces, const R
         if (sf != kInvalid)
             result.sides.push_back(sf);
     }
+    // The sides share the cap's uvs, so a seam on the region border stays on the base edge only.
+    if (std::span<bool> seam = mesh.edgeAttrs().get<bool>(attr::kSeam); !seam.empty())
+        for (const BoundaryCorner& bc : boundary)
+            if (const Index e = mesh.findEdge(dup[bc.a], dup[bc.b]); e != kInvalid && e >= edgeCap)
+                seam[e] = false;
     if (!footHard.empty())
     {
         std::span<bool> hard = mesh.edgeAttrs().get<bool>(attr::kHard);
@@ -113,6 +166,17 @@ ExtrudeResult extrudeRegion(Mesh& mesh, const std::vector<Index>& faces, const R
     std::unordered_map<Index, glm::dvec3> normalSum;
     for (Index f : faces)
         mesh.forEachFaceCorner(f, [&](Index c) { normalSum[mesh.cornerPoint(c)] += faceN[f]; });
+
+    std::vector<CapCorner> capCorners;
+    if (move.thickness != 0.0)
+        for (Index f : faces)
+            mesh.forEachFaceCorner(f, [&](Index c) {
+                if (mesh.cornerPoint(c) < firstDup)
+                    return;
+                const Index pc = mesh.cornerPrev(c), nc = mesh.cornerNext(c);
+                const glm::dvec3 o = mesh.position(mesh.cornerPoint(c));
+                capCorners.push_back({c, pc, nc, o, mesh.position(mesh.cornerPoint(pc)) - o, mesh.position(mesh.cornerPoint(nc)) - o});
+            });
 
     if (move.thickness != 0.0)
     {
@@ -140,6 +204,8 @@ ExtrudeResult extrudeRegion(Mesh& mesh, const std::vector<Index>& faces, const R
             mesh.setPosition(p, mesh.position(p) + m * (move.thickness / cosHalf));
         }
     }
+    if (!capCorners.empty())
+        insetCapUvs(mesh, capCorners, result.sides, firstDup);
     if (move.offset != 0.0)
         for (const auto& [p, sum] : normalSum)
         {

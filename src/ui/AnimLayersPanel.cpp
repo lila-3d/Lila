@@ -6,6 +6,7 @@
 #include "scene/Graph.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
+#include "ui/NodeLookup.h"
 #include "ui/Panels.h"
 
 #include <QDoubleSpinBox>
@@ -63,7 +64,7 @@ json selectionNames()
     scene::Graph& g = scene::Graph::current();
     json out = json::array();
     for (scene::NodeId id : g.selection())
-        out.push_back(g.node(id)->name());
+        out.push_back(g.node(id)->path());
     return out;
 }
 } // namespace
@@ -256,8 +257,7 @@ void AnimLayersPanel::clicked(QTreeWidgetItem* item, int column)
         run("setActiveAnimLayer", {{"args", {al::kBaseLayerName}}});
         return;
     }
-    scene::Graph& g = scene::Graph::current();
-    scene::Node* n = g.find(layer);
+    scene::Node* n = findNode(layer);
     if (!n || !al::isLayer(*n))
         return;
     switch (column)

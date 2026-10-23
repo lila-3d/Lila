@@ -7,8 +7,10 @@
 #include "scene/Take.h"
 #include "scene/Camera.h"
 #include "scene/Deformers.h"
+#include "scene/Drivers.h"
 #include "scene/DisplayLayers.h"
 #include "scene/ObjectSets.h"
+#include "scene/Graph.h"
 #include "scene/ImagePlane.h"
 #include "scene/Materials.h"
 #include "scene/Measure.h"
@@ -26,6 +28,10 @@
 
 namespace lila::scene
 {
+std::string Node::path() const { return mGraph ? mGraph->path(mId) : mName; }
+
+std::string Node::fullPath() const { return mGraph ? mGraph->fullPath(mId) : "|" + mName; }
+
 int NodeType::attrIndex(std::string_view n) const
 {
     for (int i = 0; i < int(attrs.size()); ++i)
@@ -122,9 +128,27 @@ void unregisterType(std::string_view name)
     retired().push_back(std::move(type));
 }
 
+namespace
+{
+std::map<std::string, std::string, std::less<>>& fileAliases()
+{
+    static std::map<std::string, std::string, std::less<>> m;
+    return m;
+}
+} // namespace
+
 const NodeType* find(std::string_view name)
 {
-    return registry().find(name);
+    if (const NodeType* t = registry().find(name))
+        return t;
+    auto& aliases = fileAliases();
+    auto it = aliases.find(name);
+    return it == aliases.end() ? nullptr : registry().find(it->second);
+}
+
+void addFileAlias(std::string_view oldName, std::string_view type)
+{
+    fileAliases()[std::string(oldName)] = std::string(type);
 }
 
 const std::string& iconFor(const NodeType& type, const std::string& fallback)
@@ -156,6 +180,7 @@ void registerBuiltins()
     registerImagePlaneTypes();
     registerCameraTypes();
     anim::registerTypes();
+    drivers::registerTypes();
     anim::registerLayerTypes();
     anim::registerTakeTypes();
     spaces::registerTypes();

@@ -117,8 +117,7 @@ TEST_CASE("parallel evaluation of a wide graph")
     run("spaceLocator", {{"name", "root"}});
     for (int i = 0; i < 200; ++i)
     {
-        std::string n = run("spaceLocator", {{"name", "c"}, {"skipSelect", true}}).get<std::string>();
-        run("parent", {{"args", {n, "root"}}, {"relative", true}});
+        std::string n = run("createNode", {{"args", {"locator"}}, {"name", "c"}, {"parent", "root"}, {"skipSelect", true}}).get<std::string>();
         run("setAttr", {{"args", {n + ".tx", i}}});
     }
     run("setAttr", {{"args", {"root.ty", 3}}});

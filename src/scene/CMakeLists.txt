@@ -16,6 +16,7 @@ lila_module(lila_scene Scene
     SelectPaths.cpp
     Constraint.cpp
     Deformers.cpp
+    Drivers.cpp
     DisplayLayers.cpp
     EditSkeleton.cpp
     DominantInfluence.cpp
@@ -25,6 +26,7 @@ lila_module(lila_scene Scene
     Ik.cpp
     IkSolverRegistry.cpp
     ImagePlane.cpp
+    Isolation.cpp
     LastOp.cpp
     Materials.cpp
     Measure.cpp
@@ -34,6 +36,7 @@ lila_module(lila_scene Scene
     MeshEdit.cpp
     MeshNodes.cpp
     ModifierCommands.cpp
+    Morphs.cpp
     Modifiers.cpp
     Naming.cpp
     ObjectOps.cpp
@@ -48,10 +51,12 @@ lila_module(lila_scene Scene
     RigElements.cpp
     RigElementCommands.cpp
     SceneCommands.cpp
+    SceneData.cpp
     SceneScripts.cpp
     SelectAs.cpp
     Simulation.cpp
     Skin.cpp
+    SmartJoin.cpp
     SoftSelect.cpp
     Spaces.cpp
     Take.cpp

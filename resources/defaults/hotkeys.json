@@ -101,6 +101,7 @@
       "C": { "press": "snap.edgeOn", "release": "snap.edgeOff" },
       "V": { "press": "snap.vertexOn", "release": "snap.vertexOff" },
       "J": { "press": "snap.rotateHoldOn", "release": "snap.rotateHoldOff" },
+      "L": { "press": "select.lassoHoldOn", "release": "select.lassoHoldOff" },
       "Space": { "press": "viewport.toggleQuad", "hold": "hotbox.show" },
       "Esc": "anim.stop"
     },
@@ -115,7 +116,9 @@
       "F9": "uv.vertexMode",
       "F10": "uv.edgeMode",
       "F11": "uv.faceMode",
-      "F12": "uv.islandMode"
+      "F12": "uv.islandMode",
+      "Ctrl+U": "uv.unwrap",
+      "Ctrl+P": "uv.pack"
     },
     "nodeEditor": {
       "Tab": "nodeEditor.addNode",
@@ -128,6 +131,8 @@
       "Ctrl+V": "nodeEditor.paste",
       "Ctrl+D": "nodeEditor.duplicate",
       "Shift+D": "nodeEditor.duplicate",
+      "Ctrl+G": "nodeEditor.groupNodes",
+      "Ctrl+Alt+G": "nodeEditor.ungroup",
       "A": "nodeEditor.selectAll",
       "F": "nodeEditor.frameSelected",
       "Home": "nodeEditor.frameAll"

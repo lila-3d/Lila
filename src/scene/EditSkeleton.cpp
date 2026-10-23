@@ -196,7 +196,7 @@ void enter(Graph& g, const std::vector<std::string>& targets)
     for (NodeId id : joints)
     {
         auto v = [&](int a) { return vec(std::get<glm::dvec3>(g.value({id, a, -1}))); };
-        js.push_back({{"name", g.node(id)->name()}, {"layout", toJson(layoutOf(g, id))},
+        js.push_back({{"name", g.node(id)->path()}, {"layout", toJson(layoutOf(g, id))},
                       {"pose", {{"t", v(Transform::kTranslate)}, {"r", v(Transform::kRotate)}, {"s", v(Transform::kScale)}}}});
     }
 
@@ -218,7 +218,7 @@ void enter(Graph& g, const std::vector<std::string>& targets)
     for (NodeId s : skins)
     {
         bool enabled = g.node(s)->as<bool>(SkinClusterNode::kEnabled);
-        sk.push_back({{"name", g.node(s)->name()}, {"enabled", enabled}});
+        sk.push_back({{"name", g.node(s)->path()}, {"enabled", enabled}});
         if (enabled && !g.source({s, SkinClusterNode::kEnabled, -1}))
             g.setValue({s, SkinClusterNode::kEnabled}, false);
     }
@@ -635,7 +635,7 @@ void registerCommandsImpl()
                     targets.push_back(p.get<std::string>());
                 if (targets.empty())
                     for (NodeId id : g.selection())
-                        targets.push_back(g.node(id)->name());
+                        targets.push_back(g.node(id)->path());
                 enter(g, targets);
             }
             else if (!on && active)
@@ -678,7 +678,7 @@ void registerCommandsImpl()
             {
                 std::vector<std::string> names;
                 for (NodeId j : joints)
-                    names.push_back(g.node(j)->name());
+                    names.push_back(g.node(j)->path());
                 enter(g, names);
             }
             for (NodeId j : joints)

@@ -8,6 +8,7 @@
 #include "ui/Actions.h"
 #include "ui/Icons.h"
 #include "ui/OptionBox.h"
+#include "ui/Shelf.h"
 #include "ui/Theme.h"
 
 #include <QApplication>
@@ -29,6 +30,8 @@ namespace
 // Far enough out that the taller items of neighbouring slots (N and NE) don't overlap.
 constexpr double kRadius = 110.0;
 constexpr double kDeadZone = 18.0;
+// How long the cursor must rest on a compass item's option box before releasing there opens it rather than the item.
+constexpr qint64 kBoxDwellMs = 250;
 constexpr double kItemHeight = 32.0;
 // Text inset from an item's left and right edges.
 constexpr double kPadX = 13.0;
@@ -299,7 +302,7 @@ MarkingMenu::Level MarkingMenu::buildLevel(const json& def, QPointF center, std:
                 for (scene::NodeId id : g.nodes())
                     if (const scene::Node* n = g.node(id); n->type().isA("camera"))
                         level.overflow.push_back(toItem({{"label", n->name()},
-                                                         {"action", {{"command", "lookThru"}, {"args", {{"args", {n->name()}}}}}}}));
+                                                         {"action", {{"command", "lookThru"}, {"args", {{"args", {n->path()}}}}}}}));
                 continue;
             }
             // A placeholder for the scene's materials: each assigns, its option box opens it in the Material Editor.
@@ -307,7 +310,7 @@ MarkingMenu::Level MarkingMenu::buildLevel(const json& def, QPointF center, std:
             {
                 std::vector<std::string> names;
                 for (const scene::Node* n : scene::materials::all(scene::Graph::current()))
-                    names.push_back(n->name());
+                    names.push_back(n->path());
                 std::ranges::sort(names);
                 for (const std::string& name : names)
                     level.overflow.push_back(toItem({{"label", name},
@@ -393,6 +396,8 @@ void MarkingMenu::updateHighlight(QPointF pos)
         if (l.overflow[i].enabled && l.overflow[i].rect.adjusted(-4, -1, 4, 1).contains(pos))
             mOverflow = i;
 
+    const bool wasOnBox = mOnBox;
+    const int wasSlot = mSlot;
     mSlot = -1;
     mOnBox = false;
     // An option box is picked by position, not direction, so a square in a neighbouring sector still wins.
@@ -402,6 +407,11 @@ void MarkingMenu::updateHighlight(QPointF pos)
             mSlot = i;
             mOnBox = true;
         }
+    if (mOnBox && (!wasOnBox || wasSlot != mSlot))
+    {
+        mOnBoxSince.start();
+        QTimer::singleShot(kBoxDwellMs, this, qOverload<>(&QWidget::update));
+    }
     if (mOverflow >= 0)
         mOnBox = l.overflow[mOverflow].box.adjusted(0, -1, 4, 1).contains(pos);
     QPointF d = pos - l.center;
@@ -442,7 +452,7 @@ bool MarkingMenu::release()
     {
         action = it->action;
         boxAction = it->boxAction;
-        options = mOnBox && !it->box.isEmpty();
+        options = mOnBox && !it->box.isEmpty() && (mOverflow >= 0 || (mOnBoxSince.isValid() && mOnBoxSince.elapsed() >= kBoxDwellMs));
     }
     gActive = nullptr;
     releaseMouse();
@@ -451,10 +461,14 @@ bool MarkingMenu::release()
     if (action.is_null() && !(options && !boxAction.is_null()))
         return false;
     // After closing, so the action sees the real focus widget.
-    if (options && !boxAction.is_null())
+    if (options && shelves::addModifierHeld())
+        shelves::addToCurrent(boxAction.is_null() ? json{{"optionBox", action.get<std::string>()}} : boxAction);
+    else if (options && !boxAction.is_null())
         QTimer::singleShot(0, [boxAction] { actions::run(boxAction); });
     else if (options)
         QTimer::singleShot(0, [id = action.get<std::string>()] { optionBox::open(id); });
+    else if (shelves::addModifierHeld())
+        shelves::addToCurrent(action);
     else
         QTimer::singleShot(0, [action] { actions::run(action); });
     return true;
@@ -519,8 +533,8 @@ void MarkingMenu::paintEvent(QPaintEvent*)
         bool top = li + 1 == mLevels.size();
         p.setOpacity(top ? 1.0 : 0.35);
 
-        p.setPen(QPen(QColor(200, 200, 200), 1.5));
-        p.setBrush(QColor(30, 30, 30, 200));
+        p.setPen(QPen(themeShade(200), 1.5));
+        p.setBrush(themeShade(30, 200));
         p.drawEllipse(l.center, 5, 5);
 
         auto drawItem = [&](const Item& it, bool hi, bool radial) {
@@ -532,7 +546,7 @@ void MarkingMenu::paintEvent(QPaintEvent*)
                 return;
             }
             // On the option box the highlight moves to the square.
-            const bool boxHot = hi && top && mOnBox && !it.box.isEmpty();
+            const bool boxHot = hi && top && mOnBox && !it.box.isEmpty() && (mOverflow >= 0 || (mOnBoxSince.isValid() && mOnBoxSince.elapsed() >= kBoxDwellMs));
             hi = hi && !boxHot;
             QPainterPath path;
             path.addRoundedRect(it.rect, radial ? 4 : 2, radial ? 4 : 2);
@@ -566,7 +580,7 @@ void MarkingMenu::paintEvent(QPaintEvent*)
     }
 
     p.setOpacity(1.0);
-    p.setPen(QPen(QColor(230, 230, 230, 200), 1.5));
+    p.setPen(QPen(themeShade(230, 200), 1.5));
     p.drawLine(mLevels.back().center, mCursor);
 
     // Hold Ctrl over an item to see the code behind it; Ctrl+C copies it.
@@ -585,10 +599,10 @@ void MarkingMenu::paintEvent(QPaintEvent*)
             box.moveRight(width() - 8);
         if (box.bottom() > height())
             box.moveBottom(hi->rect.top() - 8);
-        p.setPen(QPen(QColor(110, 110, 110), 1));
-        p.setBrush(QColor(22, 22, 22, 245));
+        p.setPen(QPen(themeShade(110), 1));
+        p.setBrush(themeShade(22, 245));
         p.drawRoundedRect(box, 4, 4);
-        p.setPen(QColor(225, 225, 225));
+        p.setPen(themeShade(225));
         p.drawText(box.adjusted(10, 7, -10, -7), Qt::AlignLeft | Qt::TextWordWrap, code);
     }
 }

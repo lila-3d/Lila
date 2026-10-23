@@ -120,6 +120,8 @@ struct ExportOptions
      * so IK helpers and rig-only joints stay behind. A non-deform joint that carries skin weights still goes out.
      */
     bool deformOnly = true;
+    /** Write the split normals; off leaves them for the importer to compute. */
+    bool normals = true;
 };
 
 /** A skin on an exported mesh, already pruned to the influence limit. Matrices are export space, Lila axes. */
@@ -190,6 +192,8 @@ struct ExportTake
     std::vector<std::optional<std::array<scene::anim::Curve, 9>>> curves;
     /** [node][morph target][frame] weight 0 to 1; empty for a node whose morph weights don't change. */
     std::vector<std::vector<std::vector<double>>> morphWeights;
+    /** [curve][frame] values of ExportScene::curveNames. */
+    std::vector<std::vector<double>> namedCurves;
 };
 
 /** What an export needs from the scene, taken on the main thread so the file can be written anywhere. */
@@ -201,6 +205,12 @@ struct ExportScene
     std::optional<ExportTake> take;
     /** Further takes after take, each its own AnimStack. */
     std::vector<ExportTake> extraTakes;
+    /**
+     * Curves Unreal imports by name onto the animation: driven channels' curveNames, and in animation exports the morph
+     * weights of meshes skinned to the skeleton. Written as animated user properties on node curveHolder (the root joint).
+     */
+    std::vector<std::string> curveNames;
+    int curveHolder = -1;
     std::vector<std::string> warnings;
 };
 

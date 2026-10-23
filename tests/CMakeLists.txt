@@ -19,6 +19,7 @@ add_executable(lila_tests
     test_display.cpp
     test_preselect.cpp
     test_layouts.cpp
+    test_themes.cpp
     test_toolkit.cpp
     test_symmetry.cpp
     test_softselect.cpp
@@ -46,8 +47,15 @@ add_executable(lila_tests
     test_text_match.cpp
     test_ui_registries.cpp
     test_viewport_ext.cpp
-    test_select_paths.cpp)
+    test_select_paths.cpp
+    test_isolation.cpp
+    test_smart_join.cpp
+    test_batch_run.cpp
+    test_node_paths.cpp
+    test_select_strokes.cpp)
 target_link_libraries(lila_tests PRIVATE LilaUI doctest::doctest)
+# The batch run tests start real lilabatch workers.
+add_dependencies(lila_tests lilabatch)
 add_test(NAME lila_tests COMMAND lila_tests)
 
 if(WIN32)
@@ -70,6 +78,7 @@ add_subdirectory(terminal)
 add_subdirectory(hk)
 add_subdirectory(link)
 add_subdirectory(fbx)
+add_subdirectory(seq)
 add_subdirectory(anim)
 add_subdirectory(sim)
 if(TARGET lila_puppeteer_extension)

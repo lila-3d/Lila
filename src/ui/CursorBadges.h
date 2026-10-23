@@ -72,6 +72,9 @@ LILA_UI_API void publish(const void* view, const std::vector<const Badge*>& badg
  */
 LILA_UI_API void setStatusSink(std::function<void(const QString&)> shown);
 
-/** The built-in badges: X/C/V snaps, J rotate snap, D pivot edit, B soft select radius, Shift precision, Ctrl plane. */
+/**
+ * The built-in badges: X/C/V snaps, J rotate snap, D pivot edit, B soft select radius, Tab select or deselect, L lasso,
+ * Shift precision, Ctrl plane.
+ */
 LILA_UI_API void registerDefaults();
 } // namespace lila::ui::cursorBadges

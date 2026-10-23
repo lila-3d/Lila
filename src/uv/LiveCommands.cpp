@@ -172,7 +172,7 @@ json editEdges(const char* label, const Args& a, const std::function<json(geo::M
     bakeUvHistory(*n);
     g.evaluate();
     geo::Mesh mesh = *n->as<MeshPtr>(MeshNode::kInMesh);
-    json r = fn(mesh, edges);
+    json r = fn(mesh, withMirrorEdges(*n, mesh, edges));
     g.setValue({n->id(), MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(std::move(mesh))));
     return r;
 }
@@ -196,7 +196,7 @@ void registerLiveCommands()
                 throw CommandError("uvLiveCommit: nothing staged under that token (it is only for the live uv tools)");
             bakeUvHistory(*n);
             g.setValue({node, MeshNode::kInMesh, -1}, mesh);
-            return n->name();
+            return n->path();
         },
     });
 
@@ -216,9 +216,9 @@ void registerLiveCommands()
             int iterations = std::clamp(a.get<int>("iterations", 200), 1, 100000);
             bool flatten = a.get<bool>("flatten", false), pins = a.get<bool>("pins", true);
             std::string set = setArg(a);
-            return editUvMeshes("UV Live Relax", ComponentMode::Face, [&](geo::Mesh& m, const Ids& f, Node&) -> json {
+            return editUvMeshes("UV Live Relax", ComponentMode::Face, symmetricUvEdit(set, [&](geo::Mesh& m, const Ids& f, Node&) -> json {
                 return relaxIslands(m, f, set, o, iterations, flatten, pins).toJson();
-            });
+            }));
         },
     });
 
@@ -235,7 +235,7 @@ void registerLiveCommands()
                 std::string set = setArg(a);
                 bool all = !on && a.get<bool>("all", false);
                 ComponentMode kind = editKind();
-                return editUvMeshes(label, kind, [&](geo::Mesh& m, const Ids& ids, Node&) -> json {
+                return editUvMeshes(label, kind, [&](geo::Mesh& m, const Ids& ids, Node& n) -> json {
                     std::span<bool> pin = m.cornerAttrs().getOrAdd<bool>("uvPin");
                     if (all || (!on && ids.empty() && scene::components::mode() == ComponentMode::Object))
                     {
@@ -244,7 +244,7 @@ void registerLiveCommands()
                     }
                     if (ids.empty())
                         throw CommandError(std::string(on ? "uvPin" : "uvUnpin") + ": select uv components");
-                    std::vector<Index> corners = selectionCorners(m, kind, ids, set);
+                    std::vector<Index> corners = withMirrorCorners(n, m, selectionCorners(m, kind, ids, set));
                     for (Index c : corners)
                         pin[c] = on;
                     return {{"corners", corners.size()}};
@@ -263,9 +263,9 @@ void registerLiveCommands()
             std::string set = setArg(a);
             float k = float(std::clamp(a.get<double>("value", 1.0), 0.05, 20.0));
             ComponentMode kind = editKind();
-            return editUvMeshes("UV Stiffness", kind, [&](geo::Mesh& m, const Ids& ids, Node&) -> json {
+            return editUvMeshes("UV Stiffness", kind, [&](geo::Mesh& m, const Ids& ids, Node& n) -> json {
                 std::span<float> st = m.cornerAttrs().getOrAdd<float>("uvStiffness");
-                std::vector<Index> corners = selectionCorners(m, kind, ids, set);
+                std::vector<Index> corners = withMirrorCorners(n, m, selectionCorners(m, kind, ids, set));
                 for (Index c : corners)
                     st[c] = k;
                 return {{"corners", corners.size()}};
@@ -308,8 +308,8 @@ void registerLiveCommands()
             };
             if (a.has("edges"))
                 return editEdges("UV Cut", a, cut);
-            return editUvMeshes("UV Cut", ComponentMode::Edge, [&](geo::Mesh& m, const Ids& e, Node&) -> json {
-                return cut(m, std::vector<Index>(e.begin(), e.end()));
+            return editUvMeshes("UV Cut", ComponentMode::Edge, [&](geo::Mesh& m, const Ids& e, Node& n) -> json {
+                return cut(m, withMirrorEdges(n, m, e));
             }, false);
         },
     });
@@ -343,8 +343,8 @@ void registerLiveCommands()
             };
             if (a.has("edges"))
                 return editEdges("UV Sew", a, sew);
-            return editUvMeshes("UV Sew", ComponentMode::Edge, [&](geo::Mesh& m, const Ids& e, Node&) -> json {
-                return sew(m, std::vector<Index>(e.begin(), e.end()));
+            return editUvMeshes("UV Sew", ComponentMode::Edge, [&](geo::Mesh& m, const Ids& e, Node& n) -> json {
+                return sew(m, withMirrorEdges(n, m, e));
             }, false);
         },
     });

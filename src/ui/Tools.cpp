@@ -138,6 +138,11 @@ void registerActions()
                           .doc = std::string("Aligns the ") + tool + " manipulator to " + what + ".",
                           .python = "lila.prefs.set(\"general\", \"" + key + "\", \"" + space + "\")"});
         }
+    actions::add({.id = "manip.move.normal", .label = "Normal", .category = "Tools",
+                  .run = [] { PrefStore::get().set("general", "/manipulator/moveSpace", "normal"); },
+                  .doc = "Moves components along their own vertex normals with a single N handle, so a face selection inflates. "
+                         "Objects move on their own axes.",
+                  .python = "lila.prefs.set(\"general\", \"/manipulator/moveSpace\", \"normal\")"});
 
     auto snap = [](const char* key, const char* label, SnapFlags f, const char* doc) {
         actions::add({.id = std::string("snap.") + key + "On", .label = label, .category = "Snapping", .run = [f] { setSnap(f, true); },

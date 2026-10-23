@@ -1,0 +1,744 @@
+#include "ui/MorphPanel.h"
+
+#include "ops/Command.h"
+#include "ops/Undo.h"
+#include "core/Log.h"
+#include "scene/Drivers.h"
+#include "scene/Graph.h"
+#include "scene/Modifiers.h"
+#include "scene/Morphs.h"
+#include "ui/Actions.h"
+#include "ui/Hotkeys.h"
+#include "ui/NodeLookup.h"
+#include "ui/Icons.h"
+#include "ui/Panels.h"
+
+#include <QApplication>
+#include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QHBoxLayout>
+#include <QHeaderView>
+#include <QInputDialog>
+#include <QLabel>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPointer>
+#include <QSlider>
+#include <QSplitter>
+#include <QTableWidget>
+#include <QTimer>
+#include <QToolButton>
+#include <QTreeWidget>
+#include <QVBoxLayout>
+
+#include <cmath>
+
+namespace lila::ui
+{
+namespace
+{
+using scene::Graph;
+
+enum Column
+{
+    kName,
+    kSlider,
+    kValue,
+    kEdit,
+    kInfo,
+};
+
+constexpr int kTargetRole = Qt::UserRole;
+constexpr int kSliderSteps = 1000;
+
+std::string gCurrentTarget;
+
+json run(const char* command, const json& call)
+{
+    try
+    {
+        return ops::execute(command, call, CallSource::UI);
+    }
+    catch (const CommandError& e)
+    {
+        log::warn("{}", e.what());
+        return nullptr;
+    }
+}
+
+QToolButton* toolButton(QWidget* parent, const char* iconName, const QString& tip)
+{
+    auto* b = new QToolButton(parent);
+    b->setIcon(icon(iconName));
+    b->setToolTip(tip);
+    b->setAutoRaise(true);
+    b->setIconSize(QSize(16, 16));
+    return b;
+}
+
+json selectionNames()
+{
+    Graph& g = Graph::current();
+    json out = json::array();
+    for (scene::NodeId id : g.selection())
+        out.push_back(g.node(id)->path());
+    return out;
+}
+
+/** The morph of the lead selection: a mesh's, a target's, or the morph itself. */
+std::string selectedMorph()
+{
+    Graph& g = Graph::current();
+    for (auto it = g.selection().rbegin(); it != g.selection().rend(); ++it)
+    {
+        scene::Node* n = g.node(*it);
+        scene::NodeId m = scene::kNoNode;
+        if (n->type().isA("morph"))
+            m = n->id();
+        else if (scene::morphs::isTarget(*n))
+            m = scene::morphs::morphOf(g, n->id());
+        else if (n->type().isA("mesh"))
+            m = scene::morphs::find(g, n->id());
+        if (m != scene::kNoNode)
+            return g.node(m)->path();
+    }
+    return {};
+}
+
+/** Runs a target command on the current target, with its option box values. */
+void onTarget(const char* command, json call = json::object())
+{
+    std::string t = currentMorphTarget();
+    if (t.empty())
+    {
+        log::warn("{}: pick a morph target in the Morph Targets panel first", command);
+        return;
+    }
+    json args = json::array({t});
+    if (call.contains("args"))
+        for (const json& a : call["args"])
+            args.push_back(a);
+    call["args"] = args;
+    actions::runWithOptions(command, call);
+}
+
+/** Live preview while a slider drags, kept out of undo; the release commits one setAttr. */
+void previewWeight(const std::string& target, double w)
+{
+    Graph& g = Graph::current();
+    scene::Node* n = findNode(target);
+    if (!n)
+        return;
+    UndoStack& u = UndoStack::get();
+    const bool was = u.enabled();
+    u.setEnabled(false);
+    try
+    {
+        g.setValue({n->id(), scene::morphs::kWeight, -1}, w);
+    }
+    catch (const std::exception&)
+    {
+    }
+    u.setEnabled(was);
+}
+
+/** A small read-only plot of a driven channel's curve over its keys' range. */
+class CurvePlot : public QWidget
+{
+public:
+    explicit CurvePlot(QWidget* parent) : QWidget(parent) { setMinimumHeight(90); }
+    void setCurve(scene::anim::Curve c, double input)
+    {
+        mCurve = std::move(c);
+        mInput = input;
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const QPalette pal = palette();
+        p.fillRect(rect(), pal.color(QPalette::Base));
+        if (mCurve.keys.empty())
+            return;
+        double x0 = mCurve.keys.front().time, x1 = mCurve.keys.back().time;
+        if (x1 - x0 < 1e-9)
+        {
+            x0 -= 1.0;
+            x1 += 1.0;
+        }
+        const double pad = (x1 - x0) * 0.1;
+        x0 -= pad;
+        x1 += pad;
+        double y0 = 1e300, y1 = -1e300;
+        const int samples = std::max(2, width());
+        std::vector<QPointF> pts;
+        for (int i = 0; i < samples; ++i)
+        {
+            double x = x0 + (x1 - x0) * double(i) / double(samples - 1);
+            double y = mCurve.evaluate(x);
+            y0 = std::min(y0, y);
+            y1 = std::max(y1, y);
+            pts.push_back({x, y});
+        }
+        if (y1 - y0 < 1e-9)
+        {
+            y0 -= 1.0;
+            y1 += 1.0;
+        }
+        const QRectF r = QRectF(rect()).adjusted(6, 6, -6, -6);
+        auto map = [&](double x, double y) { return QPointF(r.left() + (x - x0) / (x1 - x0) * r.width(), r.bottom() - (y - y0) / (y1 - y0) * r.height()); };
+        p.setPen(QPen(pal.color(QPalette::Mid), 1.0));
+        p.drawRect(r);
+        QPainterPath path;
+        for (size_t i = 0; i < pts.size(); ++i)
+            i == 0 ? path.moveTo(map(pts[i].x(), pts[i].y())) : path.lineTo(map(pts[i].x(), pts[i].y()));
+        p.setPen(QPen(pal.color(QPalette::Text), 1.5));
+        p.drawPath(path);
+        p.setBrush(pal.color(QPalette::Text));
+        for (const scene::anim::Key& k : mCurve.keys)
+            p.drawEllipse(map(k.time, k.value), 3.0, 3.0);
+        if (mInput >= x0 && mInput <= x1)
+        {
+            p.setPen(QPen(pal.color(QPalette::BrightText), 1.0, Qt::DashLine));
+            QPointF top = map(mInput, y1), bottom = map(mInput, y0);
+            p.drawLine(top, bottom);
+        }
+    }
+
+private:
+    scene::anim::Curve mCurve;
+    double mInput = 0.0;
+};
+
+const QStringList kTangents = {"linear", "spline", "flat", "step", "auto", "clamped"};
+} // namespace
+
+std::string currentMorphTarget()
+{
+    Graph& g = Graph::current();
+    if (scene::Node* n = findNode(gCurrentTarget); n && scene::morphs::isTarget(*n))
+        return gCurrentTarget;
+    for (auto it = g.selection().rbegin(); it != g.selection().rend(); ++it)
+        if (scene::morphs::isTarget(*g.node(*it)))
+            return g.node(*it)->path();
+    return {};
+}
+
+// ------------------------------------------------------------------------------------------------ morph targets
+
+MorphTargetsPanel::MorphTargetsPanel(QWidget* parent) : QWidget(parent)
+{
+    auto* v = new QVBoxLayout(this);
+    v->setContentsMargins(2, 2, 2, 2);
+    v->setSpacing(2);
+
+    auto* bar = new QHBoxLayout;
+    bar->setContentsMargins(0, 0, 0, 0);
+    bar->setSpacing(1);
+    auto add = [&](const char* iconName, const QString& tip, auto fn) {
+        QToolButton* b = toolButton(this, iconName, tip);
+        connect(b, &QToolButton::clicked, this, fn);
+        bar->addWidget(b);
+    };
+    add("plus", "Add the selected meshes as targets of the last selected mesh (a morph is made if needed)", [] {
+        json sel = selectionNames();
+        if (sel.size() < 2)
+        {
+            log::warn("Add Morph Target: select the target meshes, then the base mesh last");
+            return;
+        }
+        json args = json::array({sel.back()});
+        for (size_t i = 0; i + 1 < sel.size(); ++i)
+            args.push_back(sel[i]);
+        run("addMorphTarget", {{"args", args}});
+    });
+    add("square-plus", "Add an empty target to sculpt with Edit", [this] {
+        if (mMorph.empty())
+            return;
+        bool ok = false;
+        QString name = QInputDialog::getText(this, "New Morph Target", "Name", QLineEdit::Normal, "Target", &ok);
+        if (ok && !name.isEmpty())
+            run("addMorphTarget", {{"args", {mMorph}}, {"name", name.toStdString()}});
+    });
+    add("pencil", "Edit the current target: sculpt its shape on an edit mesh, click again to bake it back", [] { onTarget("editMorphTarget"); });
+    add("timeline", "Add an in-between to the current target (weight in the option box)", [] { onTarget("addInBetween"); });
+    add("flip-vertical", "Flip the current target to the other side as a new target", [] { onTarget("mirrorMorphTarget", {{"mode", "flip"}}); });
+    add("arrows-left-right", "Symmetrize the current target", [] { onTarget("mirrorMorphTarget", {{"mode", "symmetrize"}}); });
+    add("copy", "Extract the current target's shape as a mesh", [] { onTarget("extractMorphTarget"); });
+    add("brush", "Sculpt a corrective: copies the posed mesh to sculpt on", [] { actions::run(json("deform.sculptCorrective")); });
+    add("target-arrow", "Add the selected corrective sculpt, driven by the posed joint", [] { actions::run(json("deform.addCorrective")); });
+    bar->addStretch(1);
+    add("trash", "Remove the current target", [] {
+        if (std::string t = currentMorphTarget(); !t.empty())
+            run("removeMorphTarget", {{"args", {t}}});
+    });
+    v->addLayout(bar);
+
+    mHeader = new QLabel(this);
+    mHeader->setContentsMargins(4, 2, 4, 2);
+    v->addWidget(mHeader);
+
+    mTree = new QTreeWidget(this);
+    mTree->setColumnCount(5);
+    mTree->setHeaderLabels({"Target", "Weight", "", "", ""});
+    mTree->setRootIsDecorated(false);
+    mTree->setIndentation(0);
+    mTree->setUniformRowHeights(true);
+    mTree->setSelectionMode(QAbstractItemView::SingleSelection);
+    mTree->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    Hotkeys::passThrough(mTree);
+    QHeaderView* header = mTree->header();
+    header->setStretchLastSection(true);
+    header->setSectionResizeMode(kName, QHeaderView::Interactive);
+    header->resizeSection(kName, 120);
+    header->setSectionResizeMode(kSlider, QHeaderView::Interactive);
+    header->resizeSection(kSlider, 110);
+    header->setSectionResizeMode(kValue, QHeaderView::Fixed);
+    header->resizeSection(kValue, 52);
+    header->setSectionResizeMode(kEdit, QHeaderView::Fixed);
+    header->resizeSection(kEdit, 26);
+    v->addWidget(mTree, 1);
+
+    connect(mTree, &QTreeWidget::currentItemChanged, this, [](QTreeWidgetItem* item, QTreeWidgetItem*) {
+        gCurrentTarget = item ? item->data(kName, kTargetRole).toString().toStdString() : std::string();
+    });
+    connect(mTree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* item, int column) {
+        if (column != kName)
+            return;
+        const std::string t = item->data(kName, kTargetRole).toString().toStdString();
+        bool ok = false;
+        QString name = QInputDialog::getText(this, "Rename Morph Target", "Name", QLineEdit::Normal, item->text(kName), &ok);
+        if (ok && !name.isEmpty() && name != item->text(kName))
+            if (json r = run("renameMorphTarget", {{"args", {t, name.toStdString()}}}); r.is_string())
+                gCurrentTarget = r.get<std::string>();
+    });
+
+    QPointer<MorphTargetsPanel> self(this);
+    mGraphListener = Graph::current().addListener([self](scene::Change, scene::NodeId) {
+        if (self)
+            self->scheduleRefresh();
+    });
+    refresh();
+}
+
+MorphTargetsPanel::~MorphTargetsPanel() { Graph::current().removeListener(mGraphListener); }
+
+void MorphTargetsPanel::showEvent(QShowEvent* e)
+{
+    QWidget::showEvent(e);
+    refresh();
+}
+
+void MorphTargetsPanel::scheduleRefresh()
+{
+    if (mPending || !isVisible())
+        return;
+    mPending = true;
+    QTimer::singleShot(30, this, [this] {
+        mPending = false;
+        refresh();
+    });
+}
+
+void MorphTargetsPanel::refresh()
+{
+    // A slider being dragged keeps its row; the release refreshes.
+    for (QSlider* s : mTree->findChildren<QSlider*>())
+        if (s->isSliderDown())
+            return;
+    if (std::string m = selectedMorph(); !m.empty())
+        mMorph = m;
+    Graph& g = Graph::current();
+    if (!mMorph.empty() && !findNode(mMorph))
+        mMorph.clear();
+    json list = mMorph.empty() ? json::array() : run("morphTargets", {{"args", {mMorph}}});
+    if (!list.is_array())
+        list = json::array();
+    std::string meshName;
+    if (scene::Node* m = findNode(mMorph))
+        if (scene::NodeId mesh = scene::modifiers::meshOf(g, m->id()); mesh != scene::kNoNode)
+            meshName = g.node(mesh)->path();
+    mHeader->setText(mMorph.empty() ? QString("Select a mesh with morph targets") : QString::fromStdString(meshName + "  /  " + mMorph));
+
+    const std::string keep = gCurrentTarget;
+    mTree->setUpdatesEnabled(false);
+    mTree->clear();
+    const QColor dim = palette().color(QPalette::Disabled, QPalette::Text);
+    for (const json& t : list)
+    {
+        const std::string node = t["node"].get<std::string>();
+        auto* item = new QTreeWidgetItem(mTree);
+        item->setData(kName, kTargetRole, QString::fromStdString(node));
+        item->setText(kName, QString::fromStdString(t["name"].get<std::string>()));
+        item->setToolTip(kName, QString::fromStdString(node + "\nDouble-click to rename."));
+        const bool driven = t["driver"].is_string();
+        QStringList info;
+        if (driven)
+            info << QString::fromStdString("driven by " + t["driver"].get<std::string>());
+        if (!t["inBetweens"].empty())
+        {
+            QStringList ws;
+            for (const json& w : t["inBetweens"])
+                ws << QString::number(w.get<double>());
+            info << "in-betweens " + ws.join(", ");
+        }
+        if (t["live"].get<bool>())
+            info << "live";
+        item->setText(kInfo, info.join(" | "));
+        item->setToolTip(kInfo, item->text(kInfo));
+
+        const double weight = t["weight"].get<double>();
+        auto* slider = new QSlider(Qt::Horizontal, mTree);
+        slider->setRange(0, kSliderSteps);
+        slider->setValue(int(std::lround(std::clamp(weight, 0.0, 1.0) * kSliderSteps)));
+        slider->setEnabled(!driven);
+        auto* value = new QDoubleSpinBox(mTree);
+        value->setRange(-10.0, 10.0);
+        value->setDecimals(3);
+        value->setSingleStep(0.05);
+        value->setFrame(false);
+        value->setButtonSymbols(QAbstractSpinBox::NoButtons);
+        value->setValue(weight);
+        value->setEnabled(!driven);
+        if (driven)
+            item->setForeground(kName, dim);
+        auto start = std::make_shared<double>(weight);
+        connect(slider, &QSlider::sliderPressed, this, [start, value] { *start = value->value(); });
+        connect(slider, &QSlider::valueChanged, this, [slider, value, node](int v) {
+            const double w = double(v) / kSliderSteps;
+            value->blockSignals(true);
+            value->setValue(w);
+            value->blockSignals(false);
+            if (slider->isSliderDown())
+                previewWeight(node, w);
+        });
+        connect(slider, &QSlider::sliderReleased, this, [slider, start, node] {
+            const double w = double(slider->value()) / kSliderSteps;
+            previewWeight(node, *start);
+            run("setAttr", {{"args", {node + ".weight", w}}});
+        });
+        connect(value, &QDoubleSpinBox::editingFinished, this, [value, node] { run("setAttr", {{"args", {node + ".weight", value->value()}}}); });
+        mTree->setItemWidget(item, kSlider, slider);
+        mTree->setItemWidget(item, kValue, value);
+
+        auto* edit = toolButton(mTree, "pencil", "Edit mode: sculpt this target on an edit mesh; click again to bake it back");
+        edit->setCheckable(true);
+        edit->setChecked(t["editing"].is_string());
+        connect(edit, &QToolButton::clicked, this, [node](bool on) { run("editMorphTarget", {{"args", {node}}, {"on", on}}); });
+        mTree->setItemWidget(item, kEdit, edit);
+        if (node == keep)
+            mTree->setCurrentItem(item);
+    }
+    mTree->setUpdatesEnabled(true);
+}
+
+// ------------------------------------------------------------------------------------------------ driven channels
+
+DrivenChannelsPanel::DrivenChannelsPanel(QWidget* parent) : QWidget(parent)
+{
+    auto* v = new QVBoxLayout(this);
+    v->setContentsMargins(2, 2, 2, 2);
+    v->setSpacing(2);
+
+    auto* bar = new QHBoxLayout;
+    bar->setContentsMargins(0, 0, 0, 0);
+    bar->setSpacing(1);
+    auto add = [&](const char* iconName, const QString& tip, auto fn) {
+        QToolButton* b = toolButton(this, iconName, tip);
+        connect(b, &QToolButton::clicked, this, fn);
+        bar->addWidget(b);
+    };
+    add("key", "Key the current channel at the driver's value now (asks for the driven value)", [this] {
+        std::string c = current();
+        if (c.empty())
+            return;
+        bool ok = false;
+        double v = QInputDialog::getDouble(this, "Set Driven Key", "Driven value at the driver's current value", 0.0, -1e9, 1e9, 4, &ok);
+        if (ok)
+            run("setDrivenKey", {{"args", {c}}, {"value", v}});
+    });
+    add("cursor-text", "Set the curve name the channel bakes into on export (Unreal curve)", [this] {
+        std::string c = current();
+        if (c.empty())
+            return;
+        bool ok = false;
+        QString name = QInputDialog::getText(this, "Curve Name", "Unreal curve (empty for none)", QLineEdit::Normal, "", &ok);
+        if (ok)
+            run("editDrivenChannel", {{"args", {c}}, {"curveName", name.toStdString()}});
+    });
+    bar->addStretch(1);
+    add("trash", "Delete the current channel; the driven plug keeps its value", [this] {
+        if (std::string c = current(); !c.empty())
+            run("removeDrivenChannel", {{"args", {c}}});
+    });
+    v->addLayout(bar);
+
+    auto* split = new QSplitter(Qt::Vertical, this);
+    mTree = new QTreeWidget(split);
+    mTree->setColumnCount(3);
+    mTree->setHeaderLabels({"Driver", "Driven", "Curve"});
+    mTree->setRootIsDecorated(false);
+    mTree->setIndentation(0);
+    mTree->setUniformRowHeights(true);
+    mTree->setSelectionMode(QAbstractItemView::SingleSelection);
+    mTree->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    Hotkeys::passThrough(mTree);
+
+    auto* lower = new QWidget(split);
+    auto* lv = new QVBoxLayout(lower);
+    lv->setContentsMargins(0, 0, 0, 0);
+    lv->setSpacing(2);
+    mPlot = new CurvePlot(lower);
+    lv->addWidget(mPlot);
+    mKeys = new QTableWidget(lower);
+    mKeys->setColumnCount(3);
+    mKeys->setHorizontalHeaderLabels({"Driver", "Driven", "Interpolation"});
+    mKeys->verticalHeader()->setVisible(false);
+    mKeys->horizontalHeader()->setStretchLastSection(true);
+    lv->addWidget(mKeys, 1);
+    auto* keyBar = new QHBoxLayout;
+    auto* addKey = toolButton(lower, "plus", "Add a key after the last one");
+    auto* removeKey = toolButton(lower, "minus", "Remove the selected key");
+    keyBar->addWidget(addKey);
+    keyBar->addWidget(removeKey);
+    keyBar->addStretch(1);
+    lv->addLayout(keyBar);
+    split->addWidget(mTree);
+    split->addWidget(lower);
+    v->addWidget(split, 1);
+
+    connect(mTree, &QTreeWidget::currentItemChanged, this, [this] { refreshKeys(); });
+    connect(mKeys, &QTableWidget::itemChanged, this, [this] {
+        if (!mFilling)
+            commitKeys();
+    });
+    connect(addKey, &QToolButton::clicked, this, [this] {
+        std::string c = current();
+        if (c.empty())
+            return;
+        json info = run("drivenChannels", {{"args", {c}}});
+        if (!info.is_array() || info.empty())
+            return;
+        json keys = info[0]["keys"];
+        double in = keys.empty() ? 0.0 : keys.back()[0].get<double>() + 1.0;
+        double out = keys.empty() ? 0.0 : keys.back()[1].get<double>();
+        run("setDrivenKey", {{"args", {c}}, {"input", in}, {"value", out}});
+    });
+    connect(removeKey, &QToolButton::clicked, this, [this] {
+        std::string c = current();
+        if (!c.empty() && mKeys->currentRow() >= 0)
+            run("removeDrivenKey", {{"args", {c}}, {"index", mKeys->currentRow()}});
+    });
+
+    QPointer<DrivenChannelsPanel> self(this);
+    mGraphListener = Graph::current().addListener([self](scene::Change c, scene::NodeId) {
+        if (self && c != scene::Change::Selection)
+            self->scheduleRefresh();
+    });
+    refresh();
+}
+
+DrivenChannelsPanel::~DrivenChannelsPanel() { Graph::current().removeListener(mGraphListener); }
+
+void DrivenChannelsPanel::showEvent(QShowEvent* e)
+{
+    QWidget::showEvent(e);
+    refresh();
+}
+
+void DrivenChannelsPanel::scheduleRefresh()
+{
+    if (mPending || !isVisible())
+        return;
+    mPending = true;
+    QTimer::singleShot(30, this, [this] {
+        mPending = false;
+        refresh();
+    });
+}
+
+std::string DrivenChannelsPanel::current() const
+{
+    if (QTreeWidgetItem* it = mTree->currentItem())
+        return it->data(0, kTargetRole).toString().toStdString();
+    return {};
+}
+
+void DrivenChannelsPanel::refresh()
+{
+    if (QWidget* f = QApplication::focusWidget(); f && mKeys->isAncestorOf(f))
+        return;
+    const std::string keep = current();
+    json list = run("drivenChannels", json::object());
+    mTree->blockSignals(true);
+    mTree->clear();
+    for (const json& c : list.is_array() ? list : json::array())
+    {
+        auto* item = new QTreeWidgetItem(mTree);
+        const std::string node = c["node"].get<std::string>();
+        item->setData(0, kTargetRole, QString::fromStdString(node));
+        item->setText(0, c["driver"].is_string() ? QString::fromStdString(c["driver"].get<std::string>()) : QString("(input)"));
+        QStringList driven;
+        for (const json& d : c["driven"])
+            driven << QString::fromStdString(d.get<std::string>());
+        item->setText(1, driven.isEmpty() ? QString("(curve only)") : driven.join(", "));
+        item->setText(2, QString::fromStdString(c["curveName"].get<std::string>()));
+        item->setToolTip(0, QString::fromStdString(node));
+        if (node == keep)
+            mTree->setCurrentItem(item);
+    }
+    mTree->blockSignals(false);
+    refreshKeys();
+}
+
+void DrivenChannelsPanel::refreshKeys()
+{
+    mFilling = true;
+    mKeys->setRowCount(0);
+    std::string c = current();
+    Graph& g = Graph::current();
+    scene::Node* n = c.empty() ? nullptr : findNode(c);
+    if (!n || !scene::drivers::isChannel(*n))
+    {
+        static_cast<CurvePlot*>(mPlot)->setCurve({}, 0.0);
+        mFilling = false;
+        return;
+    }
+    scene::anim::Curve curve = scene::drivers::channelCurve(*n);
+    mKeys->setRowCount(int(curve.keys.size()));
+    for (int r = 0; r < int(curve.keys.size()); ++r)
+    {
+        const scene::anim::Key& k = curve.keys[size_t(r)];
+        mKeys->setItem(r, 0, new QTableWidgetItem(QString::number(k.time, 'g', 6)));
+        mKeys->setItem(r, 1, new QTableWidgetItem(QString::number(k.value, 'g', 6)));
+        auto* combo = new QComboBox(mKeys);
+        combo->addItems(kTangents);
+        combo->setCurrentText(QString::fromUtf8(scene::anim::tangentName(k.out)));
+        connect(combo, &QComboBox::currentTextChanged, this, [this] {
+            if (!mFilling)
+                commitKeys();
+        });
+        mKeys->setCellWidget(r, 2, combo);
+    }
+    g.evaluate();
+    static_cast<CurvePlot*>(mPlot)->setCurve(curve, std::get<double>(g.value({n->id(), scene::drivers::kInput, -1})));
+    mFilling = false;
+}
+
+void DrivenChannelsPanel::commitKeys()
+{
+    std::string c = current();
+    if (c.empty())
+        return;
+    json keys = json::array();
+    for (int r = 0; r < mKeys->rowCount(); ++r)
+    {
+        bool okIn = false, okOut = false;
+        double in = mKeys->item(r, 0) ? mKeys->item(r, 0)->text().toDouble(&okIn) : 0.0;
+        double out = mKeys->item(r, 1) ? mKeys->item(r, 1)->text().toDouble(&okOut) : 0.0;
+        if (!okIn || !okOut)
+            return;
+        auto* combo = qobject_cast<QComboBox*>(mKeys->cellWidget(r, 2));
+        keys.push_back({in, out, combo ? combo->currentText().toStdString() : std::string("linear")});
+    }
+    run("editDrivenChannel", {{"args", {c}}, {"keys", keys}});
+}
+
+// ------------------------------------------------------------------------------------------------ actions
+
+void registerMorphUi()
+{
+    static bool done = false;
+    if (std::exchange(done, true))
+        return;
+    auto cmd = [](const char* id, const char* label, const char* command, json call, const char* python, const char* doc) {
+        actions::add({.id = id, .label = label, .category = "Deform", .doc = doc, .python = python, .command = command, .call = std::move(call)});
+    };
+    auto onCurrent = [](const char* id, const char* label, const char* command, json call, const char* doc) {
+        actions::add({.id = id,
+                      .label = label,
+                      .category = "Deform",
+                      .run = [command, call] { onTarget(command, call); },
+                      .enabled = [] { return !currentMorphTarget().empty(); },
+                      .doc = doc});
+    };
+    cmd("deform.morph", "Morph", "morph", json::object(), "morph()",
+        "Select the target meshes, then the base last: the base gets a morph target per target, exported to Unreal as morph targets.");
+    cmd("deform.addMorphTarget", "Add Morph Target", "addMorphTarget", json::object(), "addMorphTarget()",
+        "Select the base mesh (or its morph) first, then the new targets; with just the base, adds an empty target to sculpt.");
+    onCurrent("deform.editMorphTarget", "Edit Morph Target", "editMorphTarget", json::object(),
+              "Toggle edit mode on the current morph target: sculpt its shape on an edit mesh, run again to bake it back.");
+    onCurrent("deform.extractMorphTarget", "Extract Morph Target", "extractMorphTarget", json::object(),
+              "Builds a mesh in the current morph target's shape.");
+    actions::add({.id = "deform.setMorphTarget",
+                  .label = "Set Morph Target From Selected",
+                  .category = "Deform",
+                  .run =
+                      [] {
+                          json sel = selectionNames();
+                          if (sel.empty())
+                              return;
+                          onTarget("setMorphTarget", {{"args", {sel.back()}}});
+                      },
+                  .enabled = [] { return !currentMorphTarget().empty(); },
+                  .doc = "Replaces the current morph target's shape with the selected mesh's."});
+    onCurrent("deform.addInBetween", "Add In-Between", "addInBetween", json::object(),
+              "Adds an in-between shape to the current morph target at a weight (option box), ready to edit.");
+    onCurrent("deform.flipMorphTarget", "Flip Morph Target", "mirrorMorphTarget", {{"mode", "flip"}},
+              "Mirrors the current morph target to the other side as a new target, left and right swapped in its name.");
+    onCurrent("deform.symmetrizeMorphTarget", "Symmetrize Morph Target", "mirrorMorphTarget", {{"mode", "symmetrize"}},
+              "Copies one side of the current morph target onto the other.");
+    actions::add({.id = "deform.removeMorphTarget",
+                  .label = "Remove Morph Target",
+                  .category = "Deform",
+                  .run =
+                      [] {
+                          if (std::string t = currentMorphTarget(); !t.empty())
+                              run("removeMorphTarget", {{"args", {t}}});
+                      },
+                  .enabled = [] { return !currentMorphTarget().empty(); },
+                  .doc = "Removes the current morph target from its morph."});
+    cmd("deform.sculptCorrective", "Sculpt Corrective", "sculptCorrective", json::object(), "sculptCorrective()",
+        "Pose the rig and select the skinned mesh: makes a copy of the posed mesh to sculpt the fix on.");
+    cmd("deform.addCorrective", "Add Corrective", "addCorrective", json::object(), "addCorrective()",
+        "Select the corrective sculpt: it becomes a morph target applied before skinning, driven by the posed joint so it shows at this pose.");
+    cmd("deform.poseDriver", "Pose Driver", "poseDriver", json::object(), "poseDriver()",
+        "Makes a pose driver for the selected joint: 1 at its pose now, 0 at rest. Connect its output to drive anything.");
+    cmd("deform.setPoseDriverTarget", "Set Pose Driver Target", "setPoseDriverTarget", json::object(), "setPoseDriverTarget()",
+        "Makes the selected pose driver's joint pose now its target.");
+    actions::add({.id = "deform.driveChannel",
+                  .label = "Drive Channel...",
+                  .category = "Deform",
+                  .run =
+                      [] {
+                          bool ok = false;
+                          QString driver = QInputDialog::getText(nullptr, "Drive Channel", "Driver plug (node.attr)", QLineEdit::Normal, "", &ok);
+                          if (!ok || driver.isEmpty())
+                              return;
+                          QString driven = QInputDialog::getText(nullptr, "Drive Channel", "Driven plug (node.attr)", QLineEdit::Normal, "", &ok);
+                          if (!ok || driven.isEmpty())
+                              return;
+                          actions::runWithOptions("driveChannel", {{"args", {driven.toStdString()}}, {"driver", driver.toStdString()}});
+                      },
+                  .doc = "Drives one plug from another through a curve of driver and driven key pairs. In the channel box: Set as Driver, "
+                         "then Drive From on the driven channel."});
+
+    panels::add({.id = kMorphTargetsDock,
+                 .title = "Morph Targets",
+                 .create = [](QWidget* p) -> QWidget* { return new MorphTargetsPanel(p); },
+                 .area = Qt::RightDockWidgetArea,
+                 .icon = "mood-smile",
+                 .open = false,
+                 .toggleAction = "window.morphTargets"});
+    panels::add({.id = kDrivenChannelsDock,
+                 .title = "Driven Channels",
+                 .create = [](QWidget* p) -> QWidget* { return new DrivenChannelsPanel(p); },
+                 .area = Qt::RightDockWidgetArea,
+                 .icon = "link",
+                 .open = false,
+                 .toggleAction = "window.drivenChannels"});
+}
+} // namespace lila::ui

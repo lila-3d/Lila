@@ -127,9 +127,9 @@ std::vector<glm::dvec3> controllerOutline(Graph& g, NodeId chain)
         }
         return out;
     }
-    Node* h = g.find(textOf(*cn, "handle"));
-    Node* s = g.find(textOf(*cn, "startJoint"));
-    Node* e = g.find(textOf(*cn, "endJoint"));
+    Node* h = named(g, textOf(*cn, "handle"));
+    Node* s = named(g, textOf(*cn, "startJoint"));
+    Node* e = named(g, textOf(*cn, "endJoint"));
     if (!h || !s || !e)
         return out;
     const glm::dvec3 at(lila::scene::rigel::controllerWorld(g, chain)[3]);

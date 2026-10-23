@@ -3,12 +3,27 @@
   "NE": { "label": "Flatten", "action": "uv.liveFlatten" },
   "E": { "label": "Relax", "action": "uv.liveRelax" },
   "SE": { "label": "Settle", "action": "uv.liveSettle" },
+  "S": {
+    "label": "Project",
+    "children": {
+      "W": { "label": "Planar", "action": "uv.projectPlanar" },
+      "SW": { "label": "Box", "action": "uv.projectBox" },
+      "S": { "label": "Cylindrical", "action": "uv.projectCylindrical" },
+      "SE": { "label": "Spherical", "action": "uv.projectSpherical" }
+    }
+  },
   "SW": { "label": "Pack", "action": "uv.pack" },
   "W": { "label": "Unwrap", "action": "uv.unwrap" },
   "overflow": [
     { "label": "Auto Seams", "action": "uv.autoSeams" },
     { "label": "Cut", "action": "uv.cut" },
     { "label": "Sew", "action": "uv.sew" },
-    { "label": "Orient", "action": "uv.orient" }
+    { "label": "Orient", "action": "uv.orient" },
+    { "label": "Orient to Edge", "action": "uv.orientByEdge" },
+    { "separator": true },
+    { "label": "Rotate Left 90", "action": "uv.rotateLeft" },
+    { "label": "Rotate Right 90", "action": "uv.rotateRight" },
+    { "label": "Flip X", "action": "uv.flipX" },
+    { "label": "Flip Y", "action": "uv.flipY" }
   ]
 }

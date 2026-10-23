@@ -10,6 +10,7 @@
 #include "scene/Transform.h"
 #include "ui/Actions.h"
 #include "ui/AttributeEditor.h"
+#include "ui/NodeLookup.h"
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportTool.h"
 
@@ -108,7 +109,7 @@ QWidget* modifierPanel(NodeId mod, bool withSelect)
 
     auto name = [mod] {
         scene::Node* n = Graph::current().node(mod);
-        return n ? n->name() : std::string();
+        return n ? n->path() : std::string();
     };
     auto call = [name](const char* cmd) { return [name, cmd] { run(cmd, {{"args", {name()}}}); }; };
 
@@ -182,6 +183,7 @@ QWidget* meshPanel(NodeId mesh)
     for (NodeId id : mods)
     {
         auto* title = new QLabel(QString::fromStdString(g.node(id)->name()));
+        title->setToolTip(QString::fromStdString(g.node(id)->fullPath()));
         title->setContentsMargins(8, 2, 4, 0);
         v->addWidget(title);
         v->addWidget(modifierPanel(id, true));
@@ -211,12 +213,11 @@ void registerActions()
                   .category = "Modifiers",
                   .run =
                       [] {
-                          Graph& g = Graph::current();
                           json names = json::array();
                           bool on = true;
                           for (const std::string& name : Args{}.objects())
                           {
-                              scene::Node* n = g.find(name);
+                              scene::Node* n = findNode(name);
                               if (n && scene::autoBevel::isAutoBevel(*n))
                               {
                                   names.push_back(name);

@@ -56,3 +56,21 @@ quick.select_members()
 assert lila.selected() == [tri]
 ops.selectMode("object")
 print("test_nodes object sets: ok")
+
+ops.newScene()
+left, right = lila.locator("L"), lila.locator("R")
+arm_l, arm_r = lila.locator("Arm"), lila.locator("Arm2")
+arm_l.parent = left
+arm_r.parent = right
+arm_r.name = "Arm"
+assert arm_l.name == arm_r.name == "Arm"
+assert (arm_l.path, arm_r.path) == ("L|Arm", "R|Arm") and arm_r.full_path == "|R|Arm"
+assert repr(arm_l) == "Node('L|Arm')" and lila.node("R|Arm") == arm_r
+arm_r.translate_x = 4
+assert arm_r.translate_x == 4 and arm_l.translate_x == 0
+try:
+    lila.node("Arm")
+    raise AssertionError("an ambiguous name resolved")
+except lila.CommandError as e:
+    assert "|L|Arm" in str(e) and "|R|Arm" in str(e)
+print("test_nodes paths: ok")

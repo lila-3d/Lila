@@ -4,6 +4,7 @@
 
 #include <QPointF>
 
+#include <optional>
 #include <string>
 
 namespace lila::ui
@@ -24,5 +25,10 @@ struct ViewportState
     std::string tool;
     /** Alt navigation is under way. */
     bool navigating = false;
+    /**
+     * Tab is held for drag selection: true when the next (or current) stroke selects, false when it deselects. Unset
+     * while Tab is up.
+     */
+    std::optional<bool> tabSelects;
 };
 } // namespace lila::ui

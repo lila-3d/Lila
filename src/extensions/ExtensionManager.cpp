@@ -431,7 +431,7 @@ void ExtensionManager::checkUnloadable(const std::string& name) const
     std::vector<std::string> users;
     for (scene::NodeId id : g.nodes())
         if (scene::Node* n = g.node(id); n && n->type().owner == name)
-            users.push_back(n->name());
+            users.push_back(n->path());
     if (users.empty())
         return;
     std::string list;

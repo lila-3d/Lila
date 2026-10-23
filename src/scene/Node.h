@@ -59,6 +59,8 @@ LILA_SCENE_API const NodeType* registerType(ext::Context& ctx, NodeType type);
 /** Drops a type from lookup. It stays allocated for anything still pointing at it, but can no longer create nodes. */
 LILA_SCENE_API void unregisterType(std::string_view name);
 LILA_SCENE_API const NodeType* find(std::string_view name);
+/** Makes find(oldName) return the type named `type`, for scene files that store a type under an older name. */
+LILA_SCENE_API void addFileAlias(std::string_view oldName, std::string_view type);
 LILA_SCENE_API std::vector<const NodeType*> all();
 /** The first icon set on the type or one of its bases, else fallback. */
 LILA_SCENE_API const std::string& iconFor(const NodeType& type, const std::string& fallback);
@@ -76,7 +78,12 @@ public:
 
     NodeId id() const { return mId; }
     const NodeType& type() const { return *mType; }
+    /** The short name, unique among siblings. Use path() to address the node. */
     const std::string& name() const { return mName; }
+    /** Graph::path: the shortest path that resolves back to this node. */
+    LILA_SCENE_API std::string path() const;
+    /** Graph::fullPath. */
+    LILA_SCENE_API std::string fullPath() const;
 
     /** "" for the root namespace. */
     const std::string& nameSpace() const { return mNamespace; }
@@ -106,6 +113,7 @@ private:
     friend class Graph;
 
     NodeId mId = kNoNode;
+    const Graph* mGraph = nullptr;
     const NodeType* mType = nullptr;
     std::string mName;
     std::string mNamespace;

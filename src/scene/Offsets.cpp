@@ -303,13 +303,13 @@ json infoJson(Graph& g, const Info& i)
     auto names = [&](const std::vector<NodeId>& ids) {
         json out = json::array();
         for (NodeId id : ids)
-            out.push_back(g.node(id)->name());
+            out.push_back(g.node(id)->path());
         return out;
     };
-    json j = {{"name", g.node(i.layer)->name()},
+    json j = {{"name", g.node(i.layer)->path()},
               {"joints", names(i.joints)},
               {"compensated", names(i.compensated)},
-              {"space", i.space == Space::Node && i.spaceNode ? g.node(i.spaceNode)->name() : spaceName(i.space)},
+              {"space", i.space == Space::Node && i.spaceNode ? g.node(i.spaceNode)->path() : spaceName(i.space)},
               {"weight", i.weight},
               {"mute", i.mute},
               {"range", nullptr},
@@ -372,7 +372,7 @@ NodeId create(Graph& g, const std::vector<NodeId>& jointsIn, const Options& opts
     for (NodeId j : jointsIn)
     {
         if (!isTransformNode(g.node(j)))
-            throw std::invalid_argument("createOffset: " + (g.node(j) ? g.node(j)->name() : std::string("?")) + " is not a transform");
+            throw std::invalid_argument("createOffset: " + (g.node(j) ? g.node(j)->path() : std::string("?")) + " is not a transform");
         if (std::find(joints.begin(), joints.end(), j) == joints.end())
             joints.push_back(j);
     }
@@ -443,7 +443,7 @@ NodeId create(Graph& g, const std::vector<NodeId>& jointsIn, const Options& opts
             }
             catch (const std::invalid_argument&)
             {
-                throw std::invalid_argument("createOffset: " + g.node(opts.spaceNode)->name() + " moves with " + g.node(n)->name() +
+                throw std::invalid_argument("createOffset: " + g.node(opts.spaceNode)->path() + " moves with " + g.node(n)->path() +
                                             "; pick a space above it");
             }
         }
@@ -458,7 +458,7 @@ NodeId create(Graph& g, const std::vector<NodeId>& jointsIn, const Options& opts
         if (opts.translate && !compensate)
             setup(anim::addMember(g, layer, {n, Transform::kTranslate, -1}, kVectorBlendType), n, false);
     }
-    ops::execute("setActiveAnimLayer", {{"args", {g.node(layer)->name()}}});
+    ops::execute("setActiveAnimLayer", {{"args", {g.node(layer)->path()}}});
     g.evaluate();
     return layer;
 }
@@ -495,7 +495,7 @@ Info info(Graph& g, NodeId layer)
 
 void setControl(Graph& g, NodeId layer, NodeId joint, std::optional<glm::dvec3> rotate, std::optional<glm::dvec3> translate)
 {
-    const std::string name = g.node(joint) ? g.node(joint)->name() : std::string("?");
+    const std::string name = g.node(joint) ? g.node(joint)->path() : std::string("?");
     if (rotate)
     {
         NodeId b = blendOf(g, layer, joint);
@@ -543,13 +543,13 @@ void remove(Graph& g, NodeId layer)
 {
     if (NodeId curve = envelopeCurve(g, layer))
         g.deleteNode(curve);
-    ops::execute("deleteAnimLayer", {{"args", {g.node(layer)->name()}}});
+    ops::execute("deleteAnimLayer", {{"args", {g.node(layer)->path()}}});
 }
 
 void bake(Graph& g, NodeId layer)
 {
     NodeId curve = envelopeCurve(g, layer);
-    ops::execute("mergeAnimLayers", {{"args", {g.node(layer)->name()}}});
+    ops::execute("mergeAnimLayers", {{"args", {g.node(layer)->path()}}});
     if (curve && g.node(curve))
         g.deleteNode(curve);
 }
@@ -642,7 +642,7 @@ void registerCommands()
             opts.translate = ch != "rotate";
             opts.keepChildren = a.get<bool>("keepChildren");
             opts.name = a.get<std::string>("name", "");
-            return g.node(guarded([&] { return create(g, joints, opts); }))->name();
+            return g.node(guarded([&] { return create(g, joints, opts); }))->path();
         },
     });
 

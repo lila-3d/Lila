@@ -56,7 +56,7 @@ void dropIfOrphan(Graph& g, NodeId id)
 json describe(Graph& g, NodeId id)
 {
     Node* n = g.node(id);
-    json j = {{"name", n->name()}, {"type", n->type().name}};
+    json j = {{"name", n->path()}, {"type", n->type().name}};
     if (auto* m = asModifier(n))
     {
         j["enabled"] = n->as<bool>(m->enabledAttr);
@@ -158,7 +158,7 @@ MeshPtr exportMesh(Graph& g, NodeId mesh)
             continue;
         if (!mod->apply)
         {
-            log::warn("{}: can't re-run for export after an earlier modifier changed; exported without it", mod->name());
+            log::warn("{}: can't re-run for export after an earlier modifier changed; exported without it", mod->path());
             continue;
         }
         try
@@ -167,7 +167,7 @@ MeshPtr exportMesh(Graph& g, NodeId mesh)
         }
         catch (const std::exception& e)
         {
-            log::warn("{}: {}", mod->name(), e.what());
+            log::warn("{}: {}", mod->path(), e.what());
         }
     }
     return cur;
@@ -192,7 +192,7 @@ void registerStackCommands()
             for (NodeId id : stack(g, mesh))
                 mods.push_back(describe(g, id));
             NodeId src = stackSource(g, mesh);
-            return {{"mesh", g.node(mesh)->name()}, {"source", src ? describe(g, src) : json(nullptr)}, {"modifiers", mods}};
+            return {{"mesh", g.node(mesh)->path()}, {"source", src ? describe(g, src) : json(nullptr)}, {"modifiers", mods}};
         },
     });
 
@@ -242,7 +242,7 @@ void registerStackCommands()
             g.connect(out, {copy->id(), copy->inAttr, -1});
             for (const PlugRef& d : dsts)
                 g.connect({copy->id(), copy->outAttr, -1}, d);
-            return copy->name();
+            return copy->path();
         },
     });
 
@@ -259,7 +259,7 @@ void registerStackCommands()
                 if (mods.empty())
                     continue;
                 NodeId src = stackSource(g, mesh);
-                ops::execute("applyModifier", {{"args", {g.node(mods.back())->name()}}});
+                ops::execute("applyModifier", {{"args", {g.node(mods.back())->path()}}});
                 if (src && !dynamic_cast<MeshSourceNode*>(g.node(src)))
                     dropIfOrphan(g, src);
             }
@@ -281,7 +281,7 @@ void registerStackCommands()
                 std::vector<NodeId> mods = stack(g, mesh.id());
                 for (NodeId id : mods)
                     if (static_cast<ModifierNode*>(g.node(id))->editingInput())
-                        throw CommandError("bakeModifierStack: " + g.node(id)->name() + " is editing its edges: apply or cancel that first");
+                        throw CommandError("bakeModifierStack: " + g.node(id)->path() + " is editing its edges: apply or cancel that first");
                 PlugRef in{mesh.id(), MeshNode::kInMesh, -1};
                 if (!g.source(in))
                     continue;

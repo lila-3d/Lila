@@ -397,7 +397,7 @@ void registerCommands()
             g.evaluate();
             MeshPtr cur = std::get<MeshPtr>(g.storedValue(base));
             if (!cur)
-                throw CommandError("vertexColorStroke: " + n.name() + " has no mesh");
+                throw CommandError("vertexColorStroke: " + n.path() + " has no mesh");
             auto m = std::make_shared<geo::Mesh>(*cur);
             bool created = false;
             std::string set;
@@ -663,7 +663,7 @@ void registerCommands()
             if (m && set.empty())
                 set = geo::colors::current(*m);
             if (!m || !geo::colors::has(*m, set))
-                throw CommandError("getVertexColorData: " + n.name() + " has no color set " + (set.empty() ? "(none)" : set));
+                throw CommandError("getVertexColorData: " + n.path() + " has no color set " + (set.empty() ? "(none)" : set));
             std::span<const glm::vec4> v = geo::colors::values(*m, set);
             json out = json::array();
             for (geo::Index c : cornerOrder(*m))

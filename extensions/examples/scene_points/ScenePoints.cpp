@@ -46,8 +46,8 @@ json importPoints(const Args& a)
         if (!(row >> name >> p.x >> p.y >> p.z))
             continue;
         scene::Node* n = g.createNode(*scene::types::find("locator"), name);
-        g.setValue(g.plug(n->name() + ".translate"), p);
-        made.push_back(n->name());
+        g.setValue(g.plug(n->path() + ".translate"), p);
+        made.push_back(n->path());
     }
     return made;
 }

@@ -4,6 +4,7 @@
 #include "LilaLinkMaterials.h"
 #include "LilaLinkSettings.h"
 
+#include "AbcImportSettings.h"
 #include "AssetImportTask.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "AssetToolsModule.h"
@@ -42,6 +43,7 @@ enum class EKind : uint8
 	Static,
 	Skeletal,
 	Animation,
+	GeometryCache,
 };
 
 struct FImportRequest
@@ -122,9 +124,13 @@ bool ParseRequest(const TSharedPtr<FJsonObject>& Params, FImportRequest& Out, FS
 	{
 		Out.Kind = EKind::Animation;
 	}
+	else if (Kind == TEXT("geometryCache"))
+	{
+		Out.Kind = EKind::GeometryCache;
+	}
 	else
 	{
-		OutError = FString::Printf(TEXT("importAsset: kind must be static, skeletal or animation, not '%s'"), *Kind);
+		OutError = FString::Printf(TEXT("importAsset: kind must be static, skeletal, animation or geometryCache, not '%s'"), *Kind);
 		return false;
 	}
 
@@ -468,6 +474,63 @@ void ImportWithFbxFactory(const FImportRequest& R, FImportOutcome& Out)
 	}
 }
 
+/**
+ * An .abc as a Geometry Cache through the Alembic importer, every frame of the file. Over an existing cache the factory
+ * reimports in place, so actors and sequencer tracks using it keep working.
+ */
+void ImportGeometryCache(const FImportRequest& R, FImportOutcome& Out)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImport::ImportGeometryCache);
+
+	Out.Method = TEXT("alembic");
+	// Found by name so the module does not link the importer; it is a plugin a project can turn off.
+	UClass* FactoryClass = FindObject<UClass>(nullptr, TEXT("/Script/AlembicImporter.AlembicImportFactory"));
+	if (!FactoryClass)
+	{
+		Out.Errors.Add(TEXT("Geometry caches need the Alembic Importer plugin; enable it in this project"));
+		return;
+	}
+	UAbcImportSettings* Settings = NewObject<UAbcImportSettings>(GetTransientPackage());
+	Settings->ImportType = EAlembicImportType::GeometryCache;
+	Settings->SamplingSettings.SamplingType = EAlembicSamplingType::PerFrame;
+	// Lila writes real times, so a range from frame 32 starts 32 frames in; skipping the empty start keeps frame 0 the first sample.
+	Settings->SamplingSettings.bSkipEmpty = true;
+	Settings->SamplingSettings.FrameStart = 0;
+	Settings->SamplingSettings.FrameEnd = 0;
+	Settings->NormalGenerationSettings.bRecomputeNormals = R.bComputeNormals;
+	Settings->MaterialSettings.bFindMaterials = true;
+	Settings->MaterialSettings.bCreateMaterials = false;
+	Settings->GeometryCacheSettings.bFlattenTracks = true;
+
+	TStrongObjectPtr<UAssetImportTask> Task(NewObject<UAssetImportTask>(GetTransientPackage()));
+	Task->Filename = R.File;
+	Task->DestinationPath = R.PackagePath;
+	Task->DestinationName = R.AssetName;
+	Task->bReplaceExisting = true;
+	Task->bReplaceExistingSettings = true;
+	Task->bAutomated = true;
+	Task->bSave = false;
+	Task->Factory = NewObject<UFactory>(GetTransientPackage(), FactoryClass);
+	Task->Options = Settings;
+
+	FAssetToolsModule::GetModule().Get().ImportAssetTasks({Task.Get()});
+	for (const FString& Path : Task->ImportedObjectPaths)
+	{
+		Out.Assets.AddUnique(Path);
+	}
+	if (Out.Assets.IsEmpty())
+	{
+		if (UObject* Existing = FindExisting(R))
+		{
+			Out.Assets.Add(Existing->GetPathName());
+		}
+		else
+		{
+			Out.Errors.Add(TEXT("Alembic import produced no Geometry Cache; see the AlembicImporter messages in the editor log"));
+		}
+	}
+}
+
 void ReimportWithManager(const FImportRequest& R, UObject* Existing, FImportOutcome& Out)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImport::ReimportWithManager);
@@ -563,6 +626,15 @@ void LilaLink::ImportAsset(const TSharedPtr<FJsonObject>& Params, const FLilaLin
 	if (!ParseRequest(Params, Request, Error))
 	{
 		Call->Reply(nullptr, Error);
+		return;
+	}
+
+	if (Request.Kind == EKind::GeometryCache)
+	{
+		Call->Progress(TEXT("importing"));
+		FImportOutcome Outcome;
+		ImportGeometryCache(Request, Outcome);
+		FinishImport(Request, Outcome, Call);
 		return;
 	}
 

@@ -20,10 +20,12 @@ fs::path resolve(const std::string& s)
     return p.lexically_normal();
 }
 
-void checkKind(const std::string& kind)
+void checkKind(const std::string& kind, bool sequences)
 {
-    if (kind != "static" && kind != "skeletal" && kind != "animation")
-        throw CommandError("kind must be static, skeletal or animation, not '" + kind + "'");
+    if (kind == "static" || kind == "skeletal" || kind == "animation" || kind == "geometryCache" || (sequences && kind == "meshSequence"))
+        return;
+    throw CommandError("kind must be static, skeletal, animation, " + std::string(sequences ? "meshSequence " : "") + "or geometryCache, not '" +
+                       kind + "'");
 }
 
 /** Flags shared by unrealImport and unrealMap; they become importAsset options. */
@@ -32,7 +34,9 @@ std::vector<FlagDef> importFlags()
     using T = ArgType;
     return {
         {"contentPath", "cp", T::String, nullptr, "Destination asset, like /Game/Props/SM_Crate."},
-        {"kind", "k", T::String, "static", "static | skeletal | animation"},
+        {"kind", "k", T::String, "static",
+         "static | skeletal | animation | meshSequence (a static mesh per frame, <contentPath>_000...) | geometryCache (one Alembic "
+         "Geometry Cache)"},
         {"skeleton", "sk", T::String, nullptr, "Skeleton asset to reuse, like /Game/Chars/SK_Hero_Skeleton."},
         {"importMaterials", "im", T::Bool, nullptr, "Create the materials Unreal does not have yet (default on)."},
         {"materialFolder", "mf", T::String, nullptr,
@@ -48,6 +52,20 @@ std::vector<FlagDef> importFlags()
         {"existing", "ex", T::String, nullptr, "reimport (default: keep the asset and its references) | replace"},
         {"reapplyOptions", "ro", T::Bool, nullptr, "On reimport, apply these options instead of the asset's stored ones."},
         {"save", "sv", T::Bool, nullptr, "Save the imported packages in Unreal afterwards."},
+    };
+}
+
+/** unrealMap only: how meshSequence and geometryCache mappings sample the animation. */
+std::vector<FlagDef> sequenceFlags()
+{
+    using T = ArgType;
+    return {
+        {"sequence", "sq", T::Any, nullptr,
+         "meshSequence / geometryCache sampling, the exportMeshSequence flags as a dict: start, end, step, fps, scale, padding, "
+         "worldSpace, recenter, applyModifiers, normals, uvs, colors (the playback range without start and end)."},
+        {"niagaraSystem", "ns", T::String, nullptr, "meshSequence: Niagara system whose mesh renderer gets the frames, in order, as its meshes."},
+        {"niagaraEmitter", "ne", T::String, nullptr, "meshSequence: only this emitter of the system (default every emitter)."},
+        {"niagaraRenderer", "nr", T::Int, nullptr, "meshSequence: only the n-th mesh renderer of each emitter (default all)."},
     };
 }
 
@@ -159,7 +177,7 @@ void registerCommands()
                 throw CommandError("unrealImport: give a file");
             if (!a.has("contentPath"))
                 throw CommandError("unrealImport: give contentPath, like /Game/Props/SM_Crate");
-            checkKind(a.get<std::string>("kind", "static"));
+            checkKind(a.get<std::string>("kind", "static"), false);
 
             json params = importParams(resolve(file), optionFlags(a));
             std::shared_ptr<RpcClient> client = requireClient();
@@ -190,24 +208,50 @@ void registerCommands()
         .name = "unrealMap",
         .doc = "Map a node to an Unreal asset so saving the scene re-exports and reimports it. Stored in the "
                "workspace (.lila/unreal.json). Replaces any existing mapping for the node. An object set maps its "
-               "members as one asset, exported together where they sit.",
+               "members as one asset, exported together where they sit. kind meshSequence sends an animated mesh "
+               "as a static mesh per frame (<contentPath>_000, ...; reimported in place, frames past the end deleted) and "
+               "can point a Niagara mesh renderer at them; geometryCache sends it as one Alembic Geometry Cache.",
         .positionalDoc = "node",
-        .flags = importFlags(),
+        .flags = [] {
+            std::vector<FlagDef> f = importFlags();
+            for (FlagDef& d : sequenceFlags())
+                f.push_back(std::move(d));
+            return f;
+        }(),
         .undoable = false,
         .run = [](const Args& a) -> json {
             std::vector<std::string> nodes = a.objects();
             if (nodes.size() != 1)
                 throw CommandError("unrealMap: give exactly one node");
-            if (!scene::Graph::current().find(nodes[0]))
+            scene::Node* target = scene::Graph::current().find(nodes[0]);
+            if (!target)
                 throw CommandError("no node named '" + nodes[0] + "'");
             if (!a.has("contentPath"))
                 throw CommandError("unrealMap: give contentPath, like /Game/Props/SM_Crate");
-            checkKind(a.get<std::string>("kind", "static"));
+            const std::string kind = a.get<std::string>("kind", "static");
+            checkKind(kind, true);
+            if (a.has("sequence") && !a.flags["sequence"].is_object())
+                throw CommandError("unrealMap: sequence must be a dict, like {\"start\": 32, \"end\": 58, \"scale\": 0.1}");
 
             json m = optionFlags(a);
-            m["node"] = nodes[0];
+            for (const FlagDef& f : sequenceFlags())
+                if (a.has(f.name))
+                    m[f.name] = a.flags[f.name];
+            if (m.contains("sequence"))
+            {
+                try
+                {
+                    sequenceOptions(m, {});
+                }
+                catch (const std::invalid_argument& e)
+                {
+                    throw CommandError(std::string("unrealMap: sequence: ") + e.what());
+                }
+            }
+            m["node"] = target->fullPath();
             m["kind"] = a.get<std::string>("kind", "static");
             setMapping(m);
+            m["node"] = target->path();
             return m;
         },
     });
@@ -229,7 +273,21 @@ void registerCommands()
         .name = "unrealMappings",
         .doc = "Every node -> Unreal asset mapping in this workspace.",
         .undoable = false,
-        .run = [](const Args&) -> json { return mappings(); },
+        .run = [](const Args&) -> json {
+            // Stored by full path; returned as each node's current shortest path, like every other node name.
+            json list = mappings();
+            for (json& m : list)
+                if (m.is_object())
+                    try
+                    {
+                        if (scene::Node* n = scene::Graph::current().find(m.value("node", std::string())))
+                            m["node"] = n->path();
+                    }
+                    catch (const std::exception&)
+                    {
+                    }
+            return list;
+        },
     });
 
     ops::registerCommand({

@@ -143,7 +143,7 @@ json describe(Graph& g, const Node& n)
             continue;
         for (const auto& [slot, count] : materials::slotUsage(*mesh))
             if (slot == n.name())
-                used.push_back({{"object", m->name()}, {"faces", count}});
+                used.push_back({{"object", m->path()}, {"faces", count}});
     }
     out["usedBy"] = std::move(used);
     return out;
@@ -212,7 +212,7 @@ std::map<NodeId, std::vector<uint32_t>> assignTargets(Graph& g, const Args& a)
         return out;
     if (named.empty())
         for (NodeId id : g.selection())
-            named.push_back(g.node(id)->name());
+            named.push_back(g.node(id)->path());
     for (const std::string& name : named)
     {
         Node* n = g.find(name);
@@ -256,8 +256,11 @@ namespace materials
 {
 Node* find(Graph& g, std::string_view slot)
 {
-    Node* n = g.find(slot);
-    return n && n->type().isA("material") ? n : nullptr;
+    // Slots hold the material's name, which a DAG node elsewhere may share.
+    for (NodeId id : g.findAll(slot))
+        if (Node* n = g.node(id); n->type().isA("material"))
+            return n;
+    return nullptr;
 }
 
 std::vector<Node*> all(Graph& g)
@@ -439,7 +442,7 @@ void registerCommands()
                 throw CommandError("createMaterial: invalid name '" + name + "'");
             Node* n = materials::create(g, name);
             applyFlags(g, *n, a);
-            return n->name();
+            return n->path();
         },
     });
 
@@ -468,7 +471,7 @@ void registerCommands()
                 geo::Mesh m = baseMesh(g, base);
                 materials::assign(m, mat, faces);
                 g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
-                out.push_back(g.node(id)->name());
+                out.push_back(g.node(id)->path());
             }
             return out;
         },
@@ -485,7 +488,7 @@ void registerCommands()
             if (a.positional.empty())
             {
                 for (Node* n : materials::all(g))
-                    out.push_back(n->name());
+                    out.push_back(n->path());
                 return out;
             }
             g.evaluate();
@@ -498,7 +501,7 @@ void registerCommands()
                 if (const MeshPtr& m = n->as<MeshPtr>(MeshNode::kOutMesh))
                     for (const auto& [slot, count] : materials::slotUsage(*m))
                         slots.push_back({{"slot", slot}, {"material", materials::find(g, slot) != nullptr}, {"faces", count}});
-                out.push_back({{"object", n->name()}, {"slots", std::move(slots)}});
+                out.push_back({{"object", n->path()}, {"slots", std::move(slots)}});
             }
             return out;
         },
@@ -514,6 +517,50 @@ void registerCommands()
             if (a.positional.empty() || !a.positional[0].is_string())
                 throw CommandError("materialInfo: give a material name");
             return describe(g, materialArg(g, a.positional[0].get<std::string>(), "materialInfo"));
+        },
+    });
+
+    ops::registerCommand({
+        .name = "selectByMaterial",
+        .doc = "Select the objects a material is assigned to, or with faces=true the faces it is assigned to. Returns the "
+               "objects.",
+        .positionalDoc = "material",
+        .flags = {{"faces", "f", T::Bool, false, "Select the assigned faces instead of whole objects."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = graph();
+            if (a.positional.empty() || !a.positional[0].is_string())
+                throw CommandError("selectByMaterial: give a material name");
+            const std::string mat = materialArg(g, a.positional[0].get<std::string>(), "selectByMaterial").name();
+            g.evaluate();
+            json objects = json::array();
+            std::vector<std::pair<std::string, json>> faces;
+            for (NodeId id : g.nodes())
+            {
+                Node* n = g.node(id);
+                const MeshPtr mesh = n->type().isA("mesh") ? n->as<MeshPtr>(MeshNode::kOutMesh) : nullptr;
+                if (!mesh)
+                    continue;
+                std::span<const int32_t> ids = mesh->faceAttrs().get<int32_t>(geo::attr::kMaterial);
+                json hit = json::array();
+                for (size_t f = 0; f < ids.size(); ++f)
+                    if (mesh->faceValid(geo::Index(f)) && materials::slotName(*mesh, ids[f]) == mat)
+                        hit.push_back(f);
+                if (hit.empty())
+                    continue;
+                objects.push_back(n->path());
+                faces.emplace_back(n->path(), std::move(hit));
+            }
+            ops::execute("select", objects.empty() ? json{{"clear", true}} : json{{"args", objects}});
+            if (!a.get<bool>("faces"))
+                return objects;
+            ops::execute("selectMode", {{"args", {"face"}}});
+            bool first = true;
+            for (auto& [name, ids] : faces)
+            {
+                ops::execute("selectComponents", {{"args", {name}}, {"faces", ids}, {"add", !first}});
+                first = false;
+            }
+            return objects;
         },
     });
 

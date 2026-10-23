@@ -17,6 +17,7 @@
 #include "ui/AgentSetup.h"
 #include "ui/Animation.h"
 #include "ui/AutoBevelUi.h"
+#include "ui/SmartJoinUi.h"
 #include "ui/DeformUi.h"
 #include "ui/Editors.h"
 #include "ui/ExtensionUi.h"
@@ -144,6 +145,7 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
     registerRigViewport();
     registerDeformActions();
     registerAutoBevelUi();
+    registerSmartJoinUi();
     registerMeasureUi();
     mcp::startFromPrefs();
     crash::addSecret(mcp::Server::get().token());

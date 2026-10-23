@@ -232,22 +232,39 @@ bool shapeType(const NodeType& t) { return t.isA("mesh") || t.isA("camera") || t
 
 bool poseable(const Node& n) { return n.type().isA("transform") && !shapeType(n.type()); }
 
-/** Pose node names to scene nodes: by name without namespace, preferring nameSpace among equals. */
+/** The full path with every name's namespace stripped: "|Body|L|Arm". */
+std::string barePath(const Graph& g, NodeId id)
+{
+    std::string out;
+    for (NodeId cur = id; cur != kNoNode; cur = g.parent(cur))
+        out = "|" + stripNamespace(g.node(cur)->name()) + out;
+    return out;
+}
+
+/**
+ * Pose node names to scene nodes: by name without namespace, preferring nameSpace among equals. A name with a '|' is
+ * a barePath, which poses use for nodes whose name alone is shared.
+ */
 struct NameIndex
 {
     std::unordered_map<std::string, std::vector<NodeId>> byName;
+    std::unordered_map<std::string, std::vector<NodeId>> byPath;
 
     NameIndex(Graph& g, const std::vector<NodeId>& scope)
     {
         for (NodeId id : scope.empty() ? g.nodes() : scope)
             if (Node* n = g.node(id); n && poseable(*n))
+            {
                 byName[stripNamespace(n->name())].push_back(id);
+                byPath[barePath(g, id)].push_back(id);
+            }
     }
 
     NodeId find(Graph& g, const std::string& name, const std::string& nameSpace) const
     {
-        auto it = byName.find(name);
-        if (it == byName.end() || it->second.empty())
+        const auto& map = name.find('|') == std::string::npos ? byName : byPath;
+        auto it = map.find(name);
+        if (it == map.end() || it->second.empty())
             return kNoNode;
         for (NodeId id : it->second)
             if (g.node(id)->nameSpace() == nameSpace)
@@ -521,6 +538,10 @@ Pose capture(Graph& g, const std::vector<NodeId>& nodes, const std::vector<std::
     LILA_ZONE();
 
     Pose p;
+    std::unordered_map<std::string, int> named;
+    for (NodeId id : nodes)
+        if (Node* n = g.node(id); n && poseable(*n))
+            ++named[stripNamespace(n->name())];
     for (NodeId id : nodes)
     {
         Node* n = g.node(id);
@@ -549,7 +570,7 @@ Pose capture(Graph& g, const std::vector<NodeId>& nodes, const std::vector<std::
                 vals[def.name] = std::get<bool>(v);
         }
         if (!vals.empty())
-            p.nodes[stripNamespace(n->name())] = std::move(vals);
+            p.nodes[named[stripNamespace(n->name())] > 1 ? barePath(g, id) : stripNamespace(n->name())] = std::move(vals);
     }
     return p;
 }

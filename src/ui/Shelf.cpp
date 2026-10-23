@@ -672,6 +672,24 @@ void ShelfPage::fillAddMenu(QMenu* menu)
     }
 }
 
+void shelves::addToCurrent(const json& target)
+{
+    std::string shelf = current();
+    if (shelf.empty())
+    {
+        log::warn("no shelf to add to");
+        return;
+    }
+    std::string label = actions::labelFor(target);
+    addItem(shelf, {{"label", label.size() <= 8 ? label : label.substr(0, 8)}, {"tooltip", label}, {"target", target}});
+    log::info("Added {} to the {} shelf", label, shelf);
+}
+
+bool shelves::addModifierHeld()
+{
+    return (QGuiApplication::keyboardModifiers() & (Qt::ControlModifier | Qt::ShiftModifier)) == (Qt::ControlModifier | Qt::ShiftModifier);
+}
+
 void ShelfPage::itemMenu(int index, QPoint global)
 {
     // Changes wait until the menu is gone, so the rebuild they cause never deletes a widget mid-signal.

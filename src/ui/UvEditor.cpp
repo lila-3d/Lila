@@ -1,3 +1,4 @@
+#include "ui/Theme.h"
 #include "ui/UvEditor.h"
 
 #include "ops/Command.h"
@@ -5,9 +6,11 @@
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
+#include "geo/Topology.h"
 #include "scene/ComponentPick.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
+#include "scene/Isolation.h"
 #include "scene/MeshNodes.h"
 #include "ui/Actions.h"
 #include "ui/FlowLayout.h"
@@ -15,9 +18,13 @@
 #include "ui/MarkingMenu.h"
 #include "ui/UvLive.h"
 #include "ui/UvPackPanel.h"
+#include "ui/UvProjectTool.h"
+#include "ui/ViewportTool.h"
 #include "uv/LiveSession.h"
+#include "uv/SymmetryUv.h"
 #include "uv/Uv.h"
 #include "uv/UvCommands.h"
+#include "uv/UvEdit.h"
 
 #include <QButtonGroup>
 #include <QCheckBox>
@@ -56,7 +63,7 @@ namespace
 {
 QColor gray(int v, int a = 255)
 {
-    return QColor(v, v, v, a);
+    return themeShade(v, a);
 }
 
 std::function<void()>& opener()
@@ -406,7 +413,11 @@ protected:
 
     void mouseDoubleClickEvent(QMouseEvent* e) override
     {
-        if (e->button() == Qt::LeftButton && !(e->modifiers() & Qt::AltModifier))
+        if (e->button() != Qt::LeftButton || (e->modifiers() & Qt::AltModifier))
+            return;
+        if (pickMode() == ComponentMode::Edge)
+            selectLoopAt(e->position(), e->modifiers());
+        else
             selectIslandAt(e->position(), e->modifiers());
     }
 
@@ -480,6 +491,10 @@ private:
         std::vector<double> islandRatio;
         std::vector<int> pickIsland; // per face, its island as island select sees it (empty until needed)
         uint64_t liveGen = 0, liveEpoch = 0;
+        // Symmetry caches, built on demand for the axis they were made for (-2: not yet).
+        mutable int symAxis = -2;
+        mutable std::shared_ptr<const geo::SymmetryMap> sym;
+        mutable std::shared_ptr<const uv::UvMirror> mirror;
     };
 
     enum class Nav
@@ -544,11 +559,11 @@ private:
             // Meshes are immutable once published, so the same pointer means the same uvs.
             if (old != mMeshes.end() && old->mesh == mesh && old->set == set)
             {
-                old->name = n->name();
+                old->name = n->path();
                 next.push_back(std::move(*old));
                 continue;
             }
-            next.push_back(build(id, n->name(), mesh, set));
+            next.push_back(build(id, n->path(), mesh, set));
         }
         mMeshes = std::move(next);
         applyLive();
@@ -662,6 +677,42 @@ private:
         return mask;
     }
 
+    /** The mesh's mirror pairs while its modeling symmetry is on, else null. */
+    const geo::SymmetryMap* symmetryOf(const MeshUv& mu) const
+    {
+        scene::Node* n = scene::Graph::current().node(mu.node);
+        const int axis = n && mu.mesh ? uv::uvSymmetryAxis(*n) : -1;
+        if (axis != mu.symAxis)
+        {
+            mu.symAxis = axis;
+            mu.sym.reset();
+            mu.mirror.reset();
+            if (axis >= 0)
+                if (std::optional<geo::SymmetryMap> map = uv::uvSymmetryMap(*n, *mu.mesh))
+                    mu.sym = std::make_shared<const geo::SymmetryMap>(std::move(*map));
+        }
+        return mu.sym.get();
+    }
+
+    /** Its uv corner pairs while symmetry is on, else null. */
+    const uv::UvMirror* mirrorOf(const MeshUv& mu) const
+    {
+        const geo::SymmetryMap* s = symmetryOf(mu);
+        if (!s || mu.corner.empty())
+            return nullptr;
+        if (!mu.mirror)
+            mu.mirror = std::make_shared<const uv::UvMirror>(uv::buildUvMirror(*mu.mesh, *s, mu.set));
+        return mu.mirror.get();
+    }
+
+    /** ids plus their mirror images while the mesh's symmetry is on. */
+    std::vector<Index> withMirror(scene::NodeId node, ComponentMode mode, const std::vector<Index>& ids) const
+    {
+        auto it = std::find_if(mMeshes.begin(), mMeshes.end(), [&](const MeshUv& m) { return m.node == node; });
+        const geo::SymmetryMap* s = it != mMeshes.end() ? symmetryOf(*it) : nullptr;
+        return s ? uv::mirrorComponents(*s, *it->mesh, mode, ids) : ids;
+    }
+
     bool hasSelection() const
     {
         for (const MeshUv& mu : mMeshes)
@@ -673,12 +724,27 @@ private:
         return false;
     }
 
-    bool selectionBounds(glm::dvec2& lo, glm::dvec2& hi) const
+    /** With drivingSide, a symmetric mesh counts only the side its selection mostly is on (the side edits follow). */
+    bool selectionBounds(glm::dvec2& lo, glm::dvec2& hi, bool drivingSide = false) const
     {
         bool any = false;
         for (const MeshUv& mu : mMeshes)
         {
             auto mask = selectedEntries(mu);
+            if (const uv::UvMirror* mirror = drivingSide ? mirrorOf(mu) : nullptr)
+            {
+                std::vector<Index> corners;
+                for (size_t i = 0; i < mask.size(); ++i)
+                    if (mask[i])
+                        corners.push_back(mu.corner[i]);
+                const int drive = uv::uvMirrorDrive(*mirror, corners);
+                bool kept = false;
+                for (size_t i = 0; i < mask.size(); ++i)
+                    kept |= mask[i] && mirror->side[mu.corner[i]] != -drive;
+                for (size_t i = 0; i < mask.size() && kept; ++i)
+                    if (mirror->side[mu.corner[i]] == -drive)
+                        mask[i] = 0;
+            }
             for (size_t i = 0; i < mask.size(); ++i)
                 if (mask[i])
                 {
@@ -690,11 +756,19 @@ private:
         return any;
     }
 
-    /** Where an entry is drawn, with the live drag applied. */
+    /** Where an entry is drawn, with the live drag applied (and mirrored onto its partner with symmetry on). */
     glm::dvec2 drawnUv(size_t mesh, size_t entry) const
     {
         const glm::dvec2& p = mMeshes[mesh].uv[entry];
-        if (mDrag == Handle::None || mesh >= mDragMask.size() || !mDragMask[mesh][entry])
+        if (mDrag == Handle::None || mesh >= mDragMask.size())
+            return p;
+        if (mesh < mDragFollow.size() && !mDragFollow[mesh].empty() && mDragFollow[mesh][entry].first != ~0u)
+        {
+            auto& [src, linear] = mDragFollow[mesh][entry];
+            const glm::dvec2& ps = mMeshes[mesh].uv[src];
+            return p + linear * ((mDragMask[mesh][src] ? dragTransform(ps) : ps) - ps);
+        }
+        if (!mDragMask[mesh][entry])
             return p;
         return dragTransform(p);
     }
@@ -793,7 +867,7 @@ private:
                 {
                     // Lightness only: even faces stay dark, stretched ones turn bright.
                     int v = 58 + int(mu.distortion[fi] * 170.0f);
-                    p.setBrush(gray(v, 220));
+                    p.setBrush(QColor(v, v, v, 220));
                     p.drawPolygon(poly);
                 }
                 if (sel)
@@ -865,7 +939,7 @@ private:
     glm::dvec2 currentPivot() const
     {
         glm::dvec2 lo, hi;
-        return selectionBounds(lo, hi) ? (lo + hi) * 0.5 : glm::dvec2(0.5);
+        return selectionBounds(lo, hi, true) ? (lo + hi) * 0.5 : glm::dvec2(0.5);
     }
 
     void drawManipulator(QPainter& p)
@@ -985,6 +1059,12 @@ private:
         if (meshes.isEmpty())
             meshes = "select a mesh";
         QString text = QString::fromStdString(uv::currentUvSet()) + "   " + meshes + "   " + tool;
+        for (const MeshUv& mu : mMeshes)
+            if (scene::Node* n = scene::Graph::current().node(mu.node); n && uv::uvSymmetryAxis(*n) >= 0)
+            {
+                text += QString("   Symmetry %1").arg(QChar('X' + uv::uvSymmetryAxis(*n)));
+                break;
+            }
         if (missing)
             text += "   (no uvs in this set)";
         p.drawText(QRectF(8, 4, width() - 16, 20), Qt::AlignLeft | Qt::AlignVCenter, text);
@@ -1018,14 +1098,37 @@ private:
     void beginDrag(Handle h)
     {
         mDrag = h;
+        mAxisLock = 0;
         mPivot = currentPivot();
         mDragMove = glm::dvec2(0.0);
         mDragScale = glm::dvec2(1.0);
         mDragAngle = 0.0;
         mDragMask.clear();
+        mDragFollow.clear();
         for (const MeshUv& mu : mMeshes)
+        {
             mDragMask.push_back(selectedEntries(mu));
+            mDragFollow.push_back(dragFollow(mu, mDragMask.back()));
+        }
         mPressUv = toUv(mPressPos);
+    }
+
+    /** Per entry, the entry whose drag it follows and through what map, as uvTransform will mirror it; empty without symmetry. */
+    std::vector<std::pair<uint32_t, glm::dmat2>> dragFollow(const MeshUv& mu, const std::vector<uint8_t>& mask) const
+    {
+        std::vector<std::pair<uint32_t, glm::dmat2>> out;
+        const uv::UvMirror* mirror = mirrorOf(mu);
+        if (!mirror)
+            return out;
+        std::vector<Index> moved;
+        for (size_t k = 0; k < mask.size(); ++k)
+            if (mask[k])
+                moved.push_back(mu.corner[k]);
+        out.assign(mu.corner.size(), {~0u, glm::dmat2(1.0)});
+        for (const uv::UvFollow& r : uv::uvFollowRules(*mirror, moved, uv::uvMirrorDrive(*mirror, moved)))
+            if (r.corner < mu.entryOf.size() && r.source < mu.entryOf.size() && mu.entryOf[r.corner] != ~0u && mu.entryOf[r.source] != ~0u)
+                out[mu.entryOf[r.corner]] = {mu.entryOf[r.source], r.linear};
+        return out;
     }
 
     void updateDrag(Qt::KeyboardModifiers mods)
@@ -1034,7 +1137,14 @@ private:
         Tool t = mTool == Tool::Select ? Tool::Move : mTool;
         if (t == Tool::Move)
         {
-            mDragMove = mDrag == Handle::U ? glm::dvec2(d.x, 0.0) : mDrag == Handle::V ? glm::dvec2(0.0, d.y) : d;
+            // Shift on a free move locks to whichever axis the drag first heads along, until release.
+            QPointF px = mMousePos - mPressPos;
+            if (mDrag != Handle::U && mDrag != Handle::V && (mods & Qt::ShiftModifier) && !mAxisLock && std::hypot(px.x(), px.y()) > 4.0)
+                mAxisLock = std::abs(px.x()) >= std::abs(px.y()) ? 1 : 2;
+            if (!(mods & Qt::ShiftModifier))
+                mAxisLock = 0;
+            const bool lockU = mDrag == Handle::U || mAxisLock == 1, lockV = mDrag == Handle::V || mAxisLock == 2;
+            mDragMove = lockU ? glm::dvec2(d.x, 0.0) : lockV ? glm::dvec2(0.0, d.y) : d;
             if (mods & Qt::ControlModifier)
             {
                 // Snap to sixty-fourths of the tile.
@@ -1069,6 +1179,7 @@ private:
         Handle h = mDrag;
         mDrag = Handle::None;
         mDragMask.clear();
+        mDragFollow.clear();
         (void)h;
         json call = {{"pivot", {mPivot.x, mPivot.y}}};
         bool any = false;
@@ -1208,19 +1319,26 @@ private:
         const MeshUv& mu = *it;
         const geo::Mesh& m = *mu.mesh;
         const QColor hot = gray(200);
+        // With symmetry the mirror image lights up too, since a click selects both.
+        Index mirrorId = geo::kInvalid;
+        if (const geo::SymmetryMap* sym = symmetryOf(mu))
+            mirrorId = mPreselect.mode == ComponentMode::Vertex ? sym->mirrorPoint(mPreselect.id)
+                       : mPreselect.mode == ComponentMode::Edge ? sym->mirrorEdge(m, mPreselect.id)
+                                                                 : sym->mirrorFace(m, mPreselect.id);
+        auto lit = [&](Index id) { return id == mPreselect.id || (mirrorId != geo::kInvalid && id == mirrorId); };
         if (mPreselect.mode == ComponentMode::Vertex)
         {
             p.setPen(QPen(gray(20), 1.0));
             p.setBrush(hot);
             for (size_t k = 0; k < mu.uv.size(); ++k)
-                if (m.cornerPoint(mu.corner[k]) == mPreselect.id)
+                if (lit(m.cornerPoint(mu.corner[k])))
                     p.drawRect(QRectF(toScreen(drawnUv(mi, k)) - QPointF(4.0, 4.0), QSizeF(8.0, 8.0)));
         }
         else if (mPreselect.mode == ComponentMode::Edge)
         {
             p.setPen(QPen(hot, 3.5, Qt::SolidLine, Qt::RoundCap));
             for (const Segment& sg : mu.segments)
-                if (sg.edge == mPreselect.id)
+                if (lit(sg.edge))
                     p.drawLine(toScreen(drawnUv(mi, sg.a)), toScreen(drawnUv(mi, sg.b)));
         }
         else
@@ -1229,12 +1347,14 @@ private:
             if (hovered == mu.faces.end())
                 return;
             const size_t hf = size_t(hovered - mu.faces.begin());
+            auto mirrored = mirrorId == geo::kInvalid ? mu.faces.end() : std::find(mu.faces.begin(), mu.faces.end(), mirrorId);
+            const size_t hm = mirrored == mu.faces.end() ? hf : size_t(mirrored - mu.faces.begin());
             const bool island = uvLive::islandSelect();
             const std::vector<int>* islands = island ? &pickIslands(mi) : nullptr;
             p.setPen(QPen(hot, island ? 1.0 : 2.0));
             p.setBrush(gray(255, 40));
             for (size_t fi = 0; fi < mu.faces.size(); ++fi)
-                if (island ? (*islands)[fi] == (*islands)[hf] : fi == hf)
+                if (island ? (*islands)[fi] == (*islands)[hf] || (*islands)[fi] == (*islands)[hm] : fi == hf || fi == hm)
                 {
                     QPolygonF poly;
                     for (uint32_t k = mu.faceStart[fi]; k < mu.faceStart[fi + 1]; ++k)
@@ -1351,6 +1471,17 @@ private:
             apply(ComponentMode::Face, hits, mods);
     }
 
+    void selectLoopAt(QPointF s, Qt::KeyboardModifiers mods)
+    {
+        Hit hit = hitAt(s, ComponentMode::Edge);
+        if (hit.id == geo::kInvalid)
+            return;
+        const MeshUv& mu = mMeshes[hit.mesh];
+        const scene::isolation::Visibility vis = scene::isolation::activeVisibility(mu.node, *mu.mesh);
+        apply(ComponentMode::Edge, {{mu.node, scene::isolation::clipLoop(*mu.mesh, vis, geo::edgeLoop(*mu.mesh, hit.id), hit.id, ComponentMode::Edge, false)}},
+              mods);
+    }
+
     /** Same modifiers as the viewport: shift toggles, ctrl removes, both add. */
     void apply(ComponentMode mode, const std::map<scene::NodeId, std::vector<Index>>& hits, Qt::KeyboardModifiers mods)
     {
@@ -1369,12 +1500,13 @@ private:
             return;
         }
         bool first = true;
-        for (auto& [id, ids] : hits)
+        for (auto& [id, picked] : hits)
         {
             scene::Node* n = g.node(id);
             if (!n)
                 continue;
-            json call = {{"args", {n->name()}}, {flag, ids}};
+            const std::vector<Index> ids = withMirror(id, mode, picked);
+            json call = {{"args", {n->path()}}, {flag, ids}};
             if (shift && ctrl)
                 call["add"] = true;
             else if (ctrl)
@@ -1415,12 +1547,15 @@ private:
     {
         v = std::clamp(v, -1.0, 1.0);
         if (!twoColour)
-            return gray(int(std::lround(128.0 + 105.0 * v)), 225);
+        {
+            int g = int(std::lround(128.0 + 105.0 * v));
+            return QColor(g, g, g, 225);
+        }
         auto mix = [](QColor a, QColor b, double t) {
             return QColor(int(a.red() + (b.red() - a.red()) * t), int(a.green() + (b.green() - a.green()) * t),
                           int(a.blue() + (b.blue() - a.blue()) * t), 225);
         };
-        return v < 0.0 ? mix(gray(128), QColor(45, 70, 150), -v) : mix(gray(128), QColor(240, 165, 95), v);
+        return v < 0.0 ? mix(QColor(128, 128, 128), QColor(45, 70, 150), -v) : mix(QColor(128, 128, 128), QColor(240, 165, 95), v);
     }
 
     /** Per face: log2 of its uv-to-surface area ratio over its island's, clamped to -1..1; folded faces read -1. */
@@ -1699,6 +1834,17 @@ private:
                 if (mu.faces[fi] == d.id)
                     for (uint32_t k = mu.faceStart[fi]; k < mu.faceStart[fi + 1]; ++k)
                         use[k] = 1;
+        // With symmetry the grabbed side drives and its partners follow it mirrored, so only that side is held.
+        const uv::UvMirror* mirror = mirrorOf(mu);
+        int grabSide = 0;
+        if (mirror)
+        {
+            std::vector<Index> grabbed;
+            for (size_t k = 0; k < use.size(); ++k)
+                if (use[k])
+                    grabbed.push_back(mu.corner[k]);
+            grabSide = uv::uvMirrorDrive(*mirror, grabbed);
+        }
         // Grabbing part of the selection drags the whole selection.
         std::vector<uint8_t> sel = selectedEntries(mu);
         bool inSelection = false;
@@ -1707,6 +1853,10 @@ private:
         if (inSelection)
             for (size_t k = 0; k < use.size(); ++k)
                 use[k] |= sel[k];
+        if (mirror)
+            for (size_t k = 0; k < use.size(); ++k)
+                if (mirror->side[mu.corner[k]] == -grabSide)
+                    use[k] = 0;
         std::set<int> islandSet;
         for (size_t k = 0; k < use.size(); ++k)
             if (use[k])
@@ -2005,9 +2155,11 @@ private:
     Handle mHover = Handle::None;
     scene::componentPick::Hover mPreselect;
     Handle mDrag = Handle::None;
+    int mAxisLock = 0; // a Shift free move: 1 along U, 2 along V
     glm::dvec2 mPivot{0.5}, mPressUv{0.0}, mDragMove{0.0}, mDragScale{1.0};
     double mDragAngle = 0.0;
     std::vector<std::vector<uint8_t>> mDragMask;
+    std::vector<std::vector<std::pair<uint32_t, glm::dmat2>>> mDragFollow;
 };
 
 namespace
@@ -2275,6 +2427,10 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     seams->setChecked(uvLive::seams3d());
     seams->setIcon(icon("line-dashed"));
     seams->setToolTip("Draw the uv seams over the meshes in the viewport");
+    auto* children = new QCheckBox("Children", this);
+    children->setChecked(uv::includeChildren());
+    children->setIcon(icon("hierarchy"));
+    children->setToolTip("Show and edit the uvs of meshes under the selected objects too, not only the selected meshes");
     auto* twoColour = new QCheckBox("2-colour", this);
     twoColour->setChecked(uvLive::twoColourHeatmap());
     twoColour->setIcon(icon("palette"));
@@ -2282,6 +2438,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     row5->addWidget(checker);
     row5->addWidget(tiling);
     row5->addWidget(seams);
+    row5->addWidget(children);
     row5->addWidget(twoColour);
     root->addLayout(row5);
     connect(live, &QToolButton::toggled, this, [](bool on) { uvLive::setLiveMode(on); });
@@ -2304,12 +2461,18 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
         mView->update();
     });
     connect(seams, &QCheckBox::toggled, this, [](bool on) { uvLive::setSeams3d(on); });
+    connect(children, &QCheckBox::toggled, this, [](bool on) {
+        uv::setIncludeChildren(on);
+        uvLive::settingsChanged();
+        viewportTools::requestRedraw();
+    });
     connect(twoColour, &QCheckBox::toggled, this, [this](bool on) {
         uvLive::setTwoColourHeatmap(on);
         mView->update();
     });
-    mLiveListener = uvLive::addListener([this, live, brushCombo, checker, tiling, seams, showMode] {
-        QSignalBlocker b1(live), b2(brushCombo), b3(checker), b4(seams), b5(tiling);
+    mLiveListener = uvLive::addListener([this, live, brushCombo, checker, tiling, seams, children, showMode] {
+        QSignalBlocker b1(live), b2(brushCombo), b3(checker), b4(seams), b5(tiling), b6(children);
+        children->setChecked(uv::includeChildren());
         live->setChecked(uvLive::liveMode());
         brushCombo->setCurrentIndex(int(uvLive::brush().brush));
         checker->setChecked(uvLive::checker3d());
@@ -2498,6 +2661,7 @@ void setUvEditorOpener(std::function<void()> open)
 void registerUvActions()
 {
     registerUvPackActions();
+    installUvProjectTool();
     actions::add({.id = "window.uvEditor", .label = "UV Editor", .category = "Windows", .run = [] {
                       if (opener())
                           opener()();
@@ -2525,6 +2689,14 @@ void registerUvActions()
     }
     cmd("uv.straighten", "Straighten UVs", "uvStraighten", json::object(), "Rectify islands into grids.");
     cmd("uv.orient", "Orient UVs", "uvOrient", json::object(), "Turn islands upright.");
+    cmd("uv.rotateLeft", "Rotate Islands Left", "uvTransform", json{{"rotate", 90.0}, {"perIsland", true}},
+        "Rotate each selected island 90 degrees counter-clockwise about its centre.");
+    cmd("uv.rotateRight", "Rotate Islands Right", "uvTransform", json{{"rotate", -90.0}, {"perIsland", true}},
+        "Rotate each selected island 90 degrees clockwise about its centre.");
+    cmd("uv.flipX", "Flip Islands X", "uvTransform", json{{"scale", {-1.0, 1.0}}, {"perIsland", true}},
+        "Mirror each selected island left to right about its centre.");
+    cmd("uv.flipY", "Flip Islands Y", "uvTransform", json{{"scale", {1.0, -1.0}}, {"perIsland", true}},
+        "Mirror each selected island top to bottom about its centre.");
     cmd("uv.lightmap", "Lightmap UVs", "uvLightmap", json::object(), "Generate Unreal lightmap uvs in uv1.");
     cmd("uv.bff", "BFF Unwrap", "uvBff", json::object(), "Boundary First Flattening: conformal, boundary lengths kept, least area stretch.");
     cmd("uv.bffDisk", "BFF Unwrap to Disk", "uvBff", json{{"boundary", "disk"}}, "Flatten islands conformally onto circles.");

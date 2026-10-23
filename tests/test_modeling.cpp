@@ -1,6 +1,11 @@
 #include <doctest/doctest.h>
 
 #include "ops/Command.h"
+#include "geo/Mesh.h"
+#include "geo/Primitives.h"
+#include "scene/Components.h"
+#include "scene/Graph.h"
+#include "scene/MeshNodes.h"
 
 using namespace lila;
 using json = nlohmann::json;
@@ -130,4 +135,95 @@ TEST_CASE("bounding mesh: fitted collision named and parented for Unreal")
 
     run("undo");
     CHECK(run("ls", {{"type", "polyCapsule"}}).empty());
+}
+
+namespace
+{
+geo::Mesh meshOf(const std::string& name)
+{
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    return *g.find(name)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+}
+
+} // namespace
+
+TEST_CASE("component normals are area weighted and selection aware")
+{
+    geo::Mesh cube = geo::makeCube({});
+    scene::components::Ids all;
+    for (geo::Index f = 0; f < cube.faceCapacity(); ++f)
+        all.push_back(f);
+    auto n = scene::componentNormals(cube, scene::ComponentMode::Face, all);
+    for (geo::Index p = 0; p < cube.pointCapacity(); ++p)
+    {
+        glm::dvec3 corner = glm::sign(cube.position(p)) / std::sqrt(3.0);
+        CHECK(glm::length(n[p] - corner) < 1e-9);
+    }
+    // One selected face: its corners take only that face's normal.
+    auto one = scene::componentNormals(cube, scene::ComponentMode::Face, {0});
+    glm::dvec3 face = cube.faceNormal(0);
+    for (geo::Index p : cube.facePoints(0))
+        CHECK(glm::length(one[p] - face) < 1e-9);
+}
+
+TEST_CASE("moveComponents normal= offsets each point along its own normal")
+{
+    run("newScene");
+    std::string cube = run("polyCube")[0];
+    run("selectComponents", {{"args", {cube}}, {"faces", {0, 1, 2, 3, 4, 5}}});
+    run("moveComponents", {{"normal", 10}});
+    json info = run("meshInfo", {{"args", {cube}}});
+    // Every corner leaves along its diagonal, so all six faces move out by the same amount.
+    const double out = 50.0 + 10.0 / std::sqrt(3.0);
+    for (int i = 0; i < 3; ++i)
+    {
+        CHECK(info["boundsMax"][i].get<double>() == doctest::Approx(out));
+        CHECK(info["boundsMin"][i].get<double>() == doctest::Approx(-out));
+    }
+    run("undo");
+    CHECK(run("meshInfo", {{"args", {cube}}})["boundsMax"][0].get<double>() == doctest::Approx(50.0));
+
+    // A single face moves out by the full distance and leaves the rest alone.
+    run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
+    geo::Mesh before = meshOf(cube);
+    glm::dvec3 normal = before.faceNormal(0);
+    run("moveComponents", {{"normal", 7}});
+    geo::Mesh after = meshOf(cube);
+    auto facePts = before.facePoints(0);
+    for (geo::Index p = 0; p < before.pointCapacity(); ++p)
+    {
+        bool onFace = std::find(facePts.begin(), facePts.end(), p) != facePts.end();
+        glm::dvec3 expect = before.position(p) + (onFace ? normal * 7.0 : glm::dvec3(0.0));
+        CHECK(glm::length(after.position(p) - expect) < 1e-9);
+    }
+    CHECK_THROWS(run("moveComponents"));
+    CHECK_THROWS(run("moveComponents", {{"by", {1, 0, 0}}, {"normal", 1}}));
+}
+
+TEST_CASE("moveComponents normal= keeps symmetry")
+{
+    run("newScene");
+    std::string cube = run("polyCube", {{"subdivisionsX", 4}, {"subdivisionsY", 2}})[0];
+    run("setSymmetry", {{"args", {cube}}, {"axis", "x"}});
+    geo::Mesh m = meshOf(cube);
+    // The +X half of the top, so the mirror side follows from symmetry alone.
+    scene::components::Ids pts;
+    for (geo::Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.position(p).y > 49.0 && m.position(p).x > 1.0)
+            pts.push_back(p);
+    run("selectComponents", {{"args", {cube}}, {"vertices", pts}});
+    run("moveComponents", {{"normal", 6}});
+    geo::Mesh after = meshOf(cube);
+    int moved = 0;
+    for (geo::Index p = 0; p < after.pointCapacity(); ++p)
+    {
+        glm::dvec3 at = after.position(p);
+        moved += glm::length(at - m.position(p)) > 1e-6;
+        double best = 1e30;
+        for (geo::Index q = 0; q < after.pointCapacity(); ++q)
+            best = std::min(best, glm::length(after.position(q) - glm::dvec3(-at.x, at.y, at.z)));
+        CHECK(best < 1e-9);
+    }
+    CHECK(moved == 2 * int(pts.size()));
 }

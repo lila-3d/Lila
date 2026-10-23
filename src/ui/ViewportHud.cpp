@@ -309,7 +309,7 @@ Block objectBlock(scene::Graph& g, const Context& ctx, const PartOn& on)
     if (scene::Node* n = sel.empty() ? nullptr : g.node(sel.back()))
     {
         if (on("name"))
-            b.push_back({"Object:", {QString::fromStdString(n->name())}});
+            b.push_back({"Object:", {QString::fromStdString(n->path())}});
         if (on("type"))
             b.push_back({"Type:", {QString::fromStdString(n->type().name)}});
         if (n->type().dag)

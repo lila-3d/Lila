@@ -64,6 +64,14 @@ void bindScene(nb::module_& m)
         scene::Node* n = nodeOf(id);
         return n ? nb::object(nb::str(n->name().c_str())) : nb::none();
     });
+    m.def("node_path", [](uint64_t id) -> nb::object {
+        scene::Node* n = nodeOf(id);
+        return n ? nb::object(nb::str(n->path().c_str())) : nb::none();
+    });
+    m.def("node_full_path", [](uint64_t id) -> nb::object {
+        scene::Node* n = nodeOf(id);
+        return n ? nb::object(nb::str(n->fullPath().c_str())) : nb::none();
+    });
     m.def("node_type", [](uint64_t id) -> nb::object {
         scene::Node* n = nodeOf(id);
         return n ? nb::object(nb::str(n->type().name.c_str())) : nb::none();

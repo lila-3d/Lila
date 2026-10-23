@@ -10,15 +10,24 @@
 #include "scene/Modifiers.h"
 #include "ui/Actions.h"
 #include "ui/DockSidebar.h"
+#include "ui/GnViewerDraw.h"
+#include "ui/Icons.h"
 #include "ui/SpinScrub.h"
+#include "ui/Theme.h"
 #include "ui/ValueReset.h"
 
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
+#include <QColorDialog>
 #include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QFrame>
 #include <QGraphicsItem>
@@ -26,10 +35,14 @@
 #include <QGraphicsScene>
 #include <QGraphicsView>
 #include <QHBoxLayout>
+#include <QHelpEvent>
+#include <QInputDialog>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -46,8 +59,10 @@
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
+#include <array>
 #include <cmath>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 
@@ -57,7 +72,7 @@ using json = nlohmann::json;
 
 namespace
 {
-QColor gray(int v, int alpha = 255) { return QColor(v, v, v, alpha); }
+QColor gray(int v, int alpha = 255) { return themeShade(v, alpha); }
 
 constexpr double kNodeWidth = 170.0;
 constexpr double kHeader = 24.0;
@@ -122,18 +137,39 @@ json runCmd(const char* name, json call)
 
 json args(std::initializer_list<json> a) { return {{"args", json(a)}}; }
 
-/** Lightness per socket type; the shape tells the rest. Grayscale only. */
-int socketLightness(const std::string& type)
+/** The theme's colour per socket type: lightness only in Monotone, where the shape tells the rest. */
+QColor socketColor(const std::string& type)
 {
     if (type == "geometry")
-        return 235;
-    if (type == "float" || type == "int")
-        return 185;
+        return themeColor("socketGeometry");
+    if (type == "float")
+        return themeColor("socketFloat");
+    if (type == "int")
+        return themeColor("socketInt");
     if (type == "bool")
-        return 105;
+        return themeColor("socketBool");
     if (type == "string")
-        return 125;
-    return 150; // vector, rotation
+        return themeColor("socketString");
+    if (type == "color")
+        return themeColor("socketColor");
+    return themeColor(type == "rotation" ? "socketRotation" : "socketVector");
+}
+
+/** The header colour for a node type's category. */
+QColor headerColor(const std::string& type, std::string_view c)
+{
+    if (type == "GroupInput" || type == "GroupOutput")
+        return themeColor("nodeGroupIo");
+    static const std::pair<std::string_view, const char*> kTokens[] = {
+        {"Geometry", "nodeGeometry"}, {"Mesh", "nodeMesh"},           {"Mesh Primitives", "nodeMesh"}, {"Curve", "nodeCurve"},
+        {"Curve Primitives", "nodeCurve"}, {"Point", "nodePoint"},    {"Instances", "nodeInstances"}, {"Attribute", "nodeAttribute"},
+        {"Input", "nodeInput"},       {"Output", "nodeOutput"},       {"Utilities", "nodeUtilities"}, {"Color", "nodeColor"},
+        {"Texture", "nodeTexture"},   {"Group", "nodeGroupIo"},
+    };
+    for (auto& [name, token] : kTokens)
+        if (c == name)
+            return themeColor(token);
+    return themeColor("nodeHeader");
 }
 
 /**
@@ -144,7 +180,7 @@ void drawSocket(QPainter& p, QPointF c, const std::string& type, bool field)
 {
     double r = type == "geometry" ? kSocketR + 1.0 : kSocketR;
     p.setPen(QPen(gray(18), 1.2));
-    p.setBrush(gray(socketLightness(type)));
+    p.setBrush(socketColor(type));
     if (field)
     {
         QPolygonF d;
@@ -169,6 +205,12 @@ void drawSocket(QPainter& p, QPointF c, const std::string& type, bool field)
         p.setBrush(gray(45));
         p.drawEllipse(c, r * 0.5, r * 0.5);
     }
+    else if (type == "color")
+    {
+        p.setPen(QPen(gray(45), 1.0));
+        p.setBrush(Qt::NoBrush);
+        p.drawEllipse(c, r * 0.55, r * 0.55);
+    }
 }
 
 QString valueText(const json& v, const std::string& type)
@@ -183,8 +225,11 @@ QString valueText(const json& v, const std::string& type)
         return {};
     if (type == "bool")
         return v.is_boolean() ? (v.get<bool>() ? "on" : "off") : (v.is_number() && v.get<double>() != 0.0 ? "on" : "off");
-    if (v.is_array() && v.size() == 3)
-        return num(v[0].get<double>()) + ", " + num(v[1].get<double>()) + ", " + num(v[2].get<double>());
+    if (v.is_array() && (v.size() == 3 || v.size() == 4) && v[0].is_number())
+    {
+        QString t = num(v[0].get<double>()) + ", " + num(v[1].get<double>()) + ", " + num(v[2].get<double>());
+        return v.size() == 4 ? t + ", " + num(v[3].get<double>()) : t;
+    }
     if (v.is_number())
         return num(v.get<double>());
     if (v.is_string())
@@ -201,6 +246,7 @@ struct SocketInfo
     bool linked = false;
     json value;
     std::string implicit;
+    std::string doc;
 };
 
 class NodeItem final : public QGraphicsItem
@@ -210,9 +256,31 @@ public:
 
     std::string name;
     std::string type;
+    std::string category;
     QString label;
     std::vector<SocketInfo> inputs, outputs;
     std::vector<std::pair<std::string, std::string>> props;
+    bool viewerActive = false;
+    std::string groupRef; // the group a Group node runs
+
+    bool isViewer() const { return type == "Viewer"; }
+    /** The Viewer's eye toggle, in item coordinates. */
+    QRectF eyeRect() const { return QRectF(kNodeWidth - kHeader, 2, kHeader - 4, kHeader - 4); }
+    /** Socket under a scene point as a tooltip: id, type, field, doc. Empty when none. */
+    QString socketTip(QPointF scenePos) const
+    {
+        bool input = false;
+        int i = socketAt(scenePos, input);
+        if (i < 0)
+            return {};
+        const SocketInfo& s = input ? inputs[i] : outputs[i];
+        QString t = qs(s.id) + ": " + qs(s.type) + (s.field ? " (field)" : "") + (s.multi ? ", takes several links" : "");
+        if (!s.implicit.empty())
+            t += "\nUnlinked, it reads the " + qs(s.implicit) + ".";
+        if (!s.doc.empty())
+            t += "\n" + qs(s.doc);
+        return t;
+    }
 
     QRectF boundingRect() const override { return QRectF(-2, -2, kNodeWidth + 4, height() + 4); }
     void paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*) override;
@@ -305,6 +373,7 @@ public:
         setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         setFocusPolicy(Qt::StrongFocus);
         setBackgroundBrush(gray(34));
+        setAcceptDrops(true);
         connect(&mScene, &QGraphicsScene::selectionChanged, this, [this] {
             if (mBuilding || !onSelect)
                 return;
@@ -318,8 +387,36 @@ public:
     /** A fresh wire let go over empty canvas: offer the nodes it can connect to. */
     std::function<void(QPointF, const WireDrag&)> onWireDropped;
     std::function<void()> onFocused;
+    /** Double-click on a Group node: the group it runs. */
+    std::function<void(const std::string&)> onOpenGroup;
+    /** Ctrl+Shift+click on a node: preview it in a Viewer. */
+    std::function<void(const std::string&)> onViewNode;
+    /** .lilanodes or .json files dropped on the canvas. */
+    std::function<void(const QStringList&)> onFilesDropped;
 
     const std::string& group() const { return mGroup; }
+
+    /** Output sockets of a node as (id, type), for wiring helpers. */
+    std::vector<std::pair<std::string, std::string>> outputsOf(const std::string& node) const
+    {
+        std::vector<std::pair<std::string, std::string>> out;
+        if (auto it = mNodes.find(node); it != mNodes.end())
+            for (const SocketInfo& si : it->second->outputs)
+                out.push_back({si.id, si.type});
+        return out;
+    }
+
+    std::string typeOf(const std::string& node) const
+    {
+        auto it = mNodes.find(node);
+        return it == mNodes.end() ? std::string() : it->second->type;
+    }
+
+    QPointF positionOf(const std::string& node) const
+    {
+        auto it = mNodes.find(node);
+        return it == mNodes.end() ? QPointF() : it->second->pos();
+    }
 
     void build(const std::string& group, const json& info, const std::set<std::string>& selected)
     {
@@ -332,9 +429,14 @@ public:
         mTemp = nullptr;
         if (info.is_object())
         {
+            std::map<std::string, bool> active;
+            for (const json& d : info["definition"].value("nodes", json::array()))
+                if (d.value("type", "") == "Viewer")
+                    active[d.value("name", "")] = d.contains("values") && d["values"].value("active", false);
             for (const json& n : info.value("nodes", json::array()))
             {
                 auto* item = new NodeItem(this, n);
+                item->viewerActive = active[item->name];
                 mScene.addItem(item);
                 mNodes[item->name] = item;
                 item->setSelected(selected.contains(item->name));
@@ -460,6 +562,21 @@ protected:
             setCursor(Qt::ClosedHandCursor);
             return;
         }
+        if (e->button() == Qt::LeftButton && (e->modifiers() & Qt::ControlModifier) && (e->modifiers() & Qt::ShiftModifier))
+            if (NodeItem* n = nodeAt(sp); n && onViewNode)
+            {
+                onViewNode(n->name);
+                return;
+            }
+        if (e->button() == Qt::LeftButton && !(e->modifiers() & Qt::ControlModifier))
+            if (NodeItem* n = nodeAt(sp); n && n->isViewer() && n->eyeRect().contains(n->mapFromScene(sp)))
+            {
+                if (n->viewerActive)
+                    runCmd("gnSetActiveViewer", args({mGroup}));
+                else
+                    runCmd("gnSetActiveViewer", args({mGroup, n->name}));
+                return;
+            }
         if (e->button() == Qt::LeftButton && (e->modifiers() & Qt::ControlModifier))
         {
             mCutting = true;
@@ -543,10 +660,67 @@ protected:
 
     void mouseDoubleClickEvent(QMouseEvent* e) override
     {
-        if (!nodeAt(mapToScene(e->pos())) && onAddMenu)
+        NodeItem* n = nodeAt(mapToScene(e->pos()));
+        if (!n && onAddMenu)
             onAddMenu(mapToScene(e->pos()));
+        else if (n && !n->groupRef.empty() && onOpenGroup)
+            onOpenGroup(n->groupRef);
         else
             QGraphicsView::mouseDoubleClickEvent(e);
+    }
+
+    bool viewportEvent(QEvent* e) override
+    {
+        if (e->type() == QEvent::ToolTip)
+        {
+            auto* he = static_cast<QHelpEvent*>(e);
+            QPointF sp = mapToScene(he->pos());
+            if (NodeItem* n = nodeAt(sp))
+                if (QString tip = n->socketTip(sp); !tip.isEmpty())
+                {
+                    QToolTip::showText(he->globalPos(), tip, viewport());
+                    return true;
+                }
+        }
+        return QGraphicsView::viewportEvent(e);
+    }
+
+    static QStringList nodeFiles(const QMimeData* m)
+    {
+        QStringList out;
+        if (m)
+            for (const QUrl& u : m->urls())
+                if (u.isLocalFile() && (u.toLocalFile().endsWith(".lilanodes", Qt::CaseInsensitive) || u.toLocalFile().endsWith(".json", Qt::CaseInsensitive)))
+                    out << u.toLocalFile();
+        return out;
+    }
+
+    void dragEnterEvent(QDragEnterEvent* e) override
+    {
+        if (!nodeFiles(e->mimeData()).isEmpty())
+            e->acceptProposedAction();
+        else
+            QGraphicsView::dragEnterEvent(e);
+    }
+
+    void dragMoveEvent(QDragMoveEvent* e) override
+    {
+        if (!nodeFiles(e->mimeData()).isEmpty())
+            e->acceptProposedAction();
+        else
+            QGraphicsView::dragMoveEvent(e);
+    }
+
+    void dropEvent(QDropEvent* e) override
+    {
+        QStringList files = nodeFiles(e->mimeData());
+        if (files.isEmpty() || !onFilesDropped)
+        {
+            QGraphicsView::dropEvent(e);
+            return;
+        }
+        e->acceptProposedAction();
+        onFilesDropped(files);
     }
 
 private:
@@ -712,22 +886,29 @@ NodeItem::NodeItem(NodeCanvas* canvas, const json& info) : mCanvas(canvas)
 {
     name = info.value("name", "");
     type = info.value("type", "");
+    category = info.value("category", "");
     label = qs(info.value("label", type));
     for (const json& s : info.value("inputs", json::array()))
         inputs.push_back({s.value("id", ""), s.value("type", ""), s.value("field", false), s.value("multi", false), s.value("linked", false),
-                          s.value("value", json()), s.value("implicit", "")});
+                          s.value("value", json()), s.value("implicit", ""), s.value("doc", "")});
     for (const json& s : info.value("outputs", json::array()))
-        outputs.push_back({s.value("id", ""), s.value("type", ""), s.value("field", false)});
+        outputs.push_back({s.value("id", ""), s.value("type", ""), s.value("field", false), false, false, json(), "", s.value("doc", "")});
     for (const json& p : info.value("props", json::array()))
         props.push_back({p.value("id", ""), p.value("value", "")});
+    if (type == gn::kGroupNodeDeclType)
+        for (auto& [id, v] : props)
+            if (id == "group")
+                groupRef = v;
+    if (!groupRef.empty())
+        label = qs(groupRef);
     setFlags(ItemIsMovable | ItemIsSelectable | ItemSendsGeometryChanges);
     const json& pos = info["position"];
     setPos(pos[0].get<double>(), pos[1].get<double>());
     QString tip = label;
-    for (const SocketInfo& s : inputs)
-        tip += "\n  in  " + qs(s.id) + ": " + qs(s.type) + (s.field ? " (field)" : "");
-    for (const SocketInfo& s : outputs)
-        tip += "\n  out " + qs(s.id) + ": " + qs(s.type) + (s.field ? " (field)" : "");
+    if (!groupRef.empty())
+        tip += "\nGroup node: double-click to open " + qs(groupRef) + ".";
+    if (isViewer())
+        tip += "\nClick the eye to preview in the viewport.";
     setToolTip(tip);
 }
 
@@ -741,23 +922,34 @@ QVariant NodeItem::itemChange(GraphicsItemChange change, const QVariant& value)
 void NodeItem::paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*)
 {
     QRectF body(0, 0, kNodeWidth, height());
-    p->setPen(isSelected() ? QPen(gray(235), 1.6) : QPen(gray(20), 1.0));
-    p->setBrush(gray(58));
+    p->setPen(isSelected() ? QPen(themeColor("nodeSelected"), 1.6) : QPen(gray(20), 1.0));
+    p->setBrush(themeColor("nodeBody"));
     p->drawRoundedRect(body, 6, 6);
     QPainterPath head;
     head.addRoundedRect(QRectF(0, 0, kNodeWidth, kHeader), 6, 6);
     head.addRect(QRectF(0, kHeader - 6, kNodeWidth, 6));
     p->setPen(Qt::NoPen);
-    bool groupIo = type == "GroupInput" || type == "GroupOutput";
-    p->setBrush(gray(groupIo ? 92 : 76));
+    p->setBrush(headerColor(type, category));
     p->drawPath(head.simplified());
     p->setPen(gray(232));
     QFont f = p->font();
     f.setBold(true);
     p->setFont(f);
-    p->drawText(QRectF(8, 0, kNodeWidth - 16, kHeader), Qt::AlignVCenter | Qt::AlignLeft, label);
+    p->drawText(QRectF(8, 0, kNodeWidth - 16 - (isViewer() ? kHeader : 0.0), kHeader), Qt::AlignVCenter | Qt::AlignLeft, label);
     f.setBold(false);
     p->setFont(f);
+    if (isViewer())
+    {
+        QRectF eye = eyeRect();
+        if (viewerActive)
+        {
+            p->setPen(Qt::NoPen);
+            p->setBrush(gray(150));
+            p->drawRoundedRect(eye, 3, 3);
+        }
+        QIcon ic = icon(viewerActive ? "eye" : "eye-off");
+        p->drawPixmap(eye.adjusted(2, 2, -2, -2).toRect(), ic.pixmap(QSize(32, 32), viewerActive ? QIcon::Active : QIcon::Normal));
+    }
 
     double y = kHeader;
     for (size_t i = 0; i < outputs.size(); ++i, y += kRow)
@@ -925,9 +1117,48 @@ QDoubleSpinBox* numberBox(QWidget* parent, double v, bool integer)
     return s;
 }
 
+double toSrgb(double c)
+{
+    c = std::clamp(c, 0.0, 1.0);
+    return c <= 0.0031308 ? c * 12.92 : 1.055 * std::pow(c, 1.0 / 2.4) - 0.055;
+}
+
+double toLinear(double c) { return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4); }
+
+/** A swatch button for a linear RGBA value; the swatch shows the colour itself, so it is data, not chrome. */
+QWidget* colorEditor(QWidget* parent, const json& value, std::function<void(json)> set)
+{
+    auto* b = new QToolButton(parent);
+    b->setMinimumWidth(60);
+    auto rgba = std::make_shared<std::array<double, 4>>(std::array<double, 4>{0.0, 0.0, 0.0, 1.0});
+    if (value.is_array() && value.size() >= 3)
+        for (size_t k = 0; k < std::min<size_t>(4, value.size()); ++k)
+            (*rgba)[k] = value[k].is_number() ? value[k].get<double>() : 0.0;
+    else if (value.is_number())
+        (*rgba)[0] = (*rgba)[1] = (*rgba)[2] = value.get<double>();
+    auto paint = [b, rgba] {
+        QColor c = QColor::fromRgbF(float(toSrgb((*rgba)[0])), float(toSrgb((*rgba)[1])), float(toSrgb((*rgba)[2])));
+        b->setStyleSheet(QString("QToolButton { background: %1; border: 1px solid rgb(20,20,20); min-height: 16px; }").arg(c.name()));
+        b->setToolTip(QString("Linear %1, %2, %3, alpha %4").arg((*rgba)[0], 0, 'f', 3).arg((*rgba)[1], 0, 'f', 3).arg((*rgba)[2], 0, 'f', 3).arg((*rgba)[3], 0, 'f', 3));
+    };
+    paint();
+    QObject::connect(b, &QToolButton::clicked, b, [b, rgba, paint, set] {
+        QColor init = QColor::fromRgbF(float(toSrgb((*rgba)[0])), float(toSrgb((*rgba)[1])), float(toSrgb((*rgba)[2])), float((*rgba)[3]));
+        QColor c = QColorDialog::getColor(init, b, "Color", QColorDialog::ShowAlphaChannel);
+        if (!c.isValid())
+            return;
+        *rgba = {toLinear(c.redF()), toLinear(c.greenF()), toLinear(c.blueF()), c.alphaF()};
+        paint();
+        set(json::array({(*rgba)[0], (*rgba)[1], (*rgba)[2], (*rgba)[3]}));
+    });
+    return b;
+}
+
 /** Editor for one socket value; calls set with the new JSON value. A non-null def is restored by a middle click. */
 QWidget* valueEditor(QWidget* parent, const std::string& type, const json& value, std::function<void(json)> set, const json& def = json())
 {
+    if (type == "color")
+        return colorEditor(parent, value, std::move(set));
     if (type == "bool")
     {
         auto* c = new QCheckBox(parent);
@@ -974,6 +1205,23 @@ QWidget* valueEditor(QWidget* parent, const std::string& type, const json& value
     return s;
 }
 
+/** Bounds every spin box under w by an exposed input's min, max and step. */
+void applyLimits(QWidget* w, const json& in)
+{
+    QList<QDoubleSpinBox*> boxes = w->findChildren<QDoubleSpinBox*>();
+    if (auto* self = qobject_cast<QDoubleSpinBox*>(w))
+        boxes.push_back(self);
+    for (QDoubleSpinBox* b : boxes)
+    {
+        QSignalBlocker block(b);
+        double v = b->value();
+        b->setRange(in.contains("min") ? in["min"].get<double>() : -1e9, in.contains("max") ? in["max"].get<double>() : 1e9);
+        if (in.contains("step"))
+            b->setSingleStep(in["step"].get<double>());
+        b->setValue(v);
+    }
+}
+
 QLabel* heading(QWidget* parent, const QString& text)
 {
     auto* l = new QLabel(text, parent);
@@ -1006,12 +1254,20 @@ NodeEditor::NodeEditor(QWidget* parent) : QWidget(parent)
     addBtn->setToolTip("Add a node (Tab or Shift+A over the canvas)");
     auto* saveBtn = new QToolButton(this);
     saveBtn->setText("Save to Library");
+    auto* exportBtn = new QToolButton(this);
+    exportBtn->setIcon(icon("file-export"));
+    exportBtn->setToolTip("Export this group (and the groups nested in it) to a .lilanodes file to share");
+    auto* importBtn = new QToolButton(this);
+    importBtn->setIcon(icon("file-import"));
+    importBtn->setToolTip("Import node groups from a .lilanodes or .json file; you can also drop the file on the canvas");
     bar->addWidget(new QLabel("Group", this));
     bar->addWidget(mGroups);
     bar->addWidget(newBtn);
     bar->addWidget(addBtn);
     bar->addWidget(applyBtn);
     bar->addWidget(saveBtn);
+    bar->addWidget(exportBtn);
+    bar->addWidget(importBtn);
     bar->addStretch(1);
     lay->addLayout(bar);
 
@@ -1035,6 +1291,20 @@ NodeEditor::NodeEditor(QWidget* parent) : QWidget(parent)
     mCanvas->onAddMenu = [this](QPointF scenePos) { openAddMenu(scenePos, nullptr); };
     mCanvas->onWireDropped = [this](QPointF scenePos, const WireDrag& w) { openAddMenu(scenePos, &w); };
     mCanvas->onFocused = [this] { lastFocused() = this; };
+    mCanvas->onOpenGroup = [this](const std::string& g) {
+        if (gn::findGroupNode(scene::Graph::current(), g))
+            setGroup(qs(g));
+        else
+            showError("The group " + qs(g) + " isn't in this scene (only its embedded copy is).");
+    };
+    mCanvas->onViewNode = [this](const std::string& n) { viewNode(n); };
+    mCanvas->onFilesDropped = [this](const QStringList& files) { importGroups(files); };
+    connect(exportBtn, &QToolButton::clicked, this, [this] { exportGroup(); });
+    connect(importBtn, &QToolButton::clicked, this, [this] {
+        QStringList files = QFileDialog::getOpenFileNames(this, "Import Node Groups", QString(), "Node groups (*.lilanodes *.json);;All files (*)");
+        if (!files.isEmpty())
+            importGroups(files);
+    });
     mCanvas->onSelect = [this](const std::string& n) {
         mSelectedNode = qs(n);
         rebuildSidePanel();
@@ -1053,7 +1323,7 @@ NodeEditor::NodeEditor(QWidget* parent) : QWidget(parent)
         UndoChunk chunk("Apply Geometry Nodes");
         for (scene::NodeId id : std::vector<scene::NodeId>(g.selection()))
             if (scene::Node* n = g.node(id); n && n->type().isA("mesh"))
-                runCmd("gnApply", args({n->name(), mGroup.toStdString()}));
+                runCmd("gnApply", args({n->path(), mGroup.toStdString()}));
     });
     connect(saveBtn, &QToolButton::clicked, this, [this] {
         if (!mGroup.isEmpty())
@@ -1250,6 +1520,148 @@ void NodeEditor::duplicateSelected()
 
 void NodeEditor::selectAll() { mCanvas->selectAll(); }
 
+void NodeEditor::groupSelected()
+{
+    json call = selectionCall(mGroup, mCanvas->selectedNames());
+    if (call.is_null())
+        return;
+    call["name"] = "NodeGroup";
+    try
+    {
+        json r = ops::execute("gnGroupNodes", call, CallSource::UI);
+        if (r.is_object())
+            selectAfterRefresh({r.value("node", "")});
+    }
+    catch (const std::exception& e)
+    {
+        showError(qs(e.what()));
+    }
+}
+
+void NodeEditor::ungroupSelected()
+{
+    std::vector<std::string> names = mCanvas->selectedNames();
+    UndoChunk chunk("Ungroup");
+    std::vector<std::string> added;
+    for (const std::string& n : names)
+        if (mCanvas->typeOf(n) == gn::kGroupNodeDeclType)
+        {
+            try
+            {
+                json r = ops::execute("gnUngroup", args({mGroup.toStdString(), n}), CallSource::UI);
+                if (r.is_array())
+                    for (const json& x : r)
+                        added.push_back(x.get<std::string>());
+            }
+            catch (const std::exception& e)
+            {
+                showError(qs(e.what()));
+            }
+        }
+    if (!added.empty())
+        selectAfterRefresh(added);
+}
+
+void NodeEditor::openSelectedGroup()
+{
+    for (const std::string& n : mCanvas->selectedNames())
+        if (mCanvas->typeOf(n) == gn::kGroupNodeDeclType)
+        {
+            json info = runCmd("gnGroupInfo", args({mGroup.toStdString()}));
+            for (const json& d : info.is_object() ? info["definition"].value("nodes", json::array()) : json::array())
+                if (d.value("name", "") == n && d.contains("values"))
+                {
+                    std::string g = d["values"].value("group", "");
+                    if (gn::findGroupNode(scene::Graph::current(), g))
+                        setGroup(qs(g));
+                    return;
+                }
+        }
+}
+
+void NodeEditor::exportGroup()
+{
+    if (mGroup.isEmpty())
+        return;
+    QString path = QFileDialog::getSaveFileName(this, "Export Node Group", mGroup + ".lilanodes", "Node groups (*.lilanodes)");
+    if (path.isEmpty())
+        return;
+    json r = runCmd("gnExportGroup", args({mGroup.toStdString(), path.toStdString()}));
+    if (r.is_string())
+        log::info("exported {}", r.get<std::string>());
+}
+
+void NodeEditor::importGroups(const QStringList& files)
+{
+    UndoChunk chunk("Import Node Groups");
+    QString last;
+    for (const QString& f : files)
+    {
+        try
+        {
+            json names = ops::execute("gnImportGroup", args({f.toStdString()}), CallSource::UI);
+            if (names.is_array() && !names.empty())
+                last = qs(names.back().get<std::string>());
+        }
+        catch (const std::exception& e)
+        {
+            showError(qs(e.what()));
+        }
+    }
+    if (!last.isEmpty())
+        setGroup(last);
+}
+
+void NodeEditor::viewNode(const std::string& node)
+{
+    if (mGroup.isEmpty() || node.empty())
+        return;
+    std::string group = mGroup.toStdString();
+    std::string type = mCanvas->typeOf(node);
+    if (type == "Viewer" || type == "GroupOutput")
+        return;
+    std::string geometry, field, fieldType;
+    for (auto& [id, t] : mCanvas->outputsOf(node))
+    {
+        if (t == "geometry" && geometry.empty())
+            geometry = id;
+        else if (t != "geometry" && t != "string" && field.empty())
+        {
+            field = id;
+            fieldType = t;
+        }
+    }
+    if (geometry.empty() && field.empty())
+        return;
+    UndoChunk chunk("View Node");
+    std::string viewer;
+    json info = runCmd("gnGroupInfo", args({group}));
+    if (info.is_object())
+        for (const json& n : info["definition"].value("nodes", json::array()))
+            if (n.value("type", "") == "Viewer")
+            {
+                viewer = n.value("name", "");
+                break;
+            }
+    if (viewer.empty())
+    {
+        QPointF at = mCanvas->positionOf(node) + QPointF(kNodeWidth + 60.0, 0.0);
+        json r = runCmd("gnAddNode", {{"args", {group, "Viewer"}}, {"position", {at.x(), at.y()}}});
+        if (!r.is_string())
+            return;
+        viewer = r.get<std::string>();
+    }
+    if (!field.empty())
+    {
+        std::string dt = fieldType == "rotation" ? "vector" : fieldType;
+        runCmd("gnSetValue", args({group, viewer + ".dataType", dt}));
+        runCmd("gnConnect", args({group, node + "." + field, viewer + ".value"}));
+    }
+    if (!geometry.empty())
+        runCmd("gnConnect", args({group, node + "." + geometry, viewer + ".geometry"}));
+    runCmd("gnSetActiveViewer", args({group, viewer}));
+}
+
 void NodeEditor::selectAfterRefresh(const std::vector<std::string>& names)
 {
     mSelectNext = std::set<std::string>(names.begin(), names.end());
@@ -1326,6 +1738,194 @@ void NodeEditor::refresh()
     rebuildSidePanel();
 }
 
+QWidget* NodeEditor::buildInterface(QWidget* panel, const json& info)
+{
+    std::string group = mGroup.toStdString();
+    const json& def = info["definition"];
+    json inputs = def.value("inputs", json::array());
+    auto* box = new QWidget(panel);
+    auto* v = new QVBoxLayout(box);
+    v->setContentsMargins(0, 0, 0, 0);
+    v->setSpacing(3);
+    v->addWidget(heading(box, "Parameters"));
+
+    // Panels in first-use order, the unpanelled inputs first.
+    std::vector<std::string> panels{""};
+    for (const json& in : inputs)
+        if (std::string pn = in.value("panel", ""); std::find(panels.begin(), panels.end(), pn) == panels.end())
+            panels.push_back(pn);
+    for (const std::string& pn : panels)
+    {
+        QFormLayout* form = nullptr;
+        for (size_t i = 0; i < inputs.size(); ++i)
+        {
+            const json& in = inputs[i];
+            if (in.value("panel", "") != pn)
+                continue;
+            if (!form)
+            {
+                if (!pn.empty())
+                {
+                    auto* sub = new QLabel(qs(pn), box);
+                    sub->setStyleSheet("color: rgb(190,190,190); padding-top: 4px; border-bottom: 1px solid rgb(70,70,70);");
+                    v->addWidget(sub);
+                }
+                form = new QFormLayout();
+                form->setContentsMargins(pn.empty() ? 0 : 8, 0, 0, 0);
+                v->addLayout(form);
+            }
+            std::string name = in.value("name", ""), type = in.value("type", "float");
+            QString shown = in.contains("label") ? qs(in["label"].get<std::string>()) : pretty(name);
+            QString tip = qs(name) + ": " + qs(type) + (in.contains("subtype") ? " (" + qs(in["subtype"].get<std::string>()) + ")" : "");
+            if (in.contains("description"))
+                tip += "\n" + qs(in["description"].get<std::string>());
+            auto* row = new QWidget(box);
+            auto* h = new QHBoxLayout(row);
+            h->setContentsMargins(0, 0, 0, 0);
+            QWidget* ed = valueEditor(row, type, in.value("default", json()), [group, name](json val) {
+                runCmd("gnSetValue", args({group, "GroupInput." + name, val}));
+            });
+            applyLimits(ed, in);
+            ed->setToolTip(tip);
+            h->addWidget(ed, 1);
+            auto* more = new QToolButton(row);
+            more->setIcon(icon("dots"));
+            more->setToolTip("Rename, edit, move or remove this input");
+            more->setPopupMode(QToolButton::InstantPopup);
+            auto* menu = new QMenu(more);
+            int index = int(i);
+            int count = int(inputs.size());
+            json current = in;
+            menu->addAction("Rename...", this, [this, group, name] {
+                bool ok = false;
+                QString to = QInputDialog::getText(this, "Rename Input", "Name", QLineEdit::Normal, qs(name), &ok);
+                if (ok && !to.trimmed().isEmpty() && to.trimmed().toStdString() != name)
+                    runCmd("gnRenameInput", args({group, name, to.trimmed().toStdString()}));
+            });
+            menu->addAction("Edit Info...", this, [this, name, current] { editInputInfo(name, current); });
+            QAction* up = menu->addAction("Move Up", this, [group, name, index] { runCmd("gnMoveInput", args({group, name, index - 1})); });
+            up->setEnabled(index > 0);
+            QAction* down = menu->addAction("Move Down", this, [group, name, index] { runCmd("gnMoveInput", args({group, name, index + 1})); });
+            down->setEnabled(index + 1 < count);
+            menu->addSeparator();
+            menu->addAction("Remove", this, [group, name] { runCmd("gnRemoveInput", args({group, name})); });
+            more->setMenu(menu);
+            h->addWidget(more);
+            auto* label = new QLabel(shown, box);
+            label->setToolTip(tip);
+            form->addRow(label, row);
+        }
+    }
+    if (inputs.empty())
+    {
+        auto* none = new QLabel("Nothing exposed yet. Expose a node's input, or add one below.", box);
+        none->setWordWrap(true);
+        none->setStyleSheet("color: rgb(150,150,150);");
+        v->addWidget(none);
+    }
+
+    auto* addRow = new QWidget(box);
+    auto* ah = new QHBoxLayout(addRow);
+    ah->setContentsMargins(0, 4, 0, 0);
+    auto* addName = new QLineEdit(addRow);
+    addName->setPlaceholderText("new input name");
+    auto* addType = new QComboBox(addRow);
+    for (const char* t : {"float", "int", "bool", "vector", "rotation", "color", "string"})
+        addType->addItem(qs(t));
+    auto* addBtn = new QToolButton(addRow);
+    addBtn->setIcon(icon("plus"));
+    addBtn->setToolTip("Add an exposed input; link it from the Group Input node");
+    auto add = [group, addName, addType] {
+        std::string n = addName->text().trimmed().toStdString();
+        if (!n.empty())
+            runCmd("gnAddInput", args({group, n, addType->currentText().toStdString()}));
+    };
+    QObject::connect(addBtn, &QToolButton::clicked, addBtn, add);
+    QObject::connect(addName, &QLineEdit::returnPressed, addName, add);
+    ah->addWidget(addName, 1);
+    ah->addWidget(addType);
+    ah->addWidget(addBtn);
+    v->addWidget(addRow);
+
+    json outputs = def.value("outputs", json::array());
+    if (!outputs.empty())
+    {
+        v->addWidget(heading(box, "Outputs"));
+        for (const json& o : outputs)
+        {
+            std::string name = o.value("name", "");
+            auto* row = new QWidget(box);
+            auto* h = new QHBoxLayout(row);
+            h->setContentsMargins(0, 0, 0, 0);
+            auto* l = new QLabel(pretty(name) + "  (" + qs(o.value("type", "")) + ")", row);
+            if (o.contains("description"))
+                l->setToolTip(qs(o["description"].get<std::string>()));
+            h->addWidget(l, 1);
+            auto* rm = new QToolButton(row);
+            rm->setIcon(icon("x"));
+            rm->setToolTip("Remove this output");
+            QObject::connect(rm, &QToolButton::clicked, rm, [group, name] { runCmd("gnRemoveOutput", args({group, name})); });
+            h->addWidget(rm);
+            v->addWidget(row);
+        }
+    }
+    return box;
+}
+
+void NodeEditor::editInputInfo(const std::string& input, const json& current)
+{
+    QDialog dlg(this);
+    dlg.setWindowTitle("Input " + qs(input));
+    auto* form = new QFormLayout(&dlg);
+    auto text = [&](const char* key) { return current.contains(key) ? qs(current[key].get<std::string>()) : QString(); };
+    auto number = [&](const char* key) { return current.contains(key) ? QString::number(current[key].get<double>()) : QString(); };
+    auto* label = new QLineEdit(text("label"), &dlg);
+    label->setPlaceholderText(pretty(input));
+    auto* desc = new QLineEdit(text("description"), &dlg);
+    desc->setPlaceholderText("Tooltip shown on the modifier");
+    auto* subtype = new QComboBox(&dlg);
+    for (const char* st : {"", "factor", "percentage", "angle", "distance", "color"})
+        subtype->addItem(*st ? pretty(st) : QString("None"), qs(st));
+    subtype->setCurrentIndex(std::max(0, subtype->findData(text("subtype"))));
+    std::array<std::pair<const char*, QLineEdit*>, 5> nums{};
+    const char* numKeys[5] = {"min", "max", "softMin", "softMax", "step"};
+    for (int k = 0; k < 5; ++k)
+    {
+        auto* e = new QLineEdit(number(numKeys[k]), &dlg);
+        e->setPlaceholderText("none");
+        nums[k] = {numKeys[k], e};
+    }
+    auto* panelEdit = new QLineEdit(text("panel"), &dlg);
+    panelEdit->setPlaceholderText("none");
+    form->addRow("Label", label);
+    form->addRow("Description", desc);
+    form->addRow("Subtype", subtype);
+    form->addRow("Min", nums[0].second);
+    form->addRow("Max", nums[1].second);
+    form->addRow("Soft Min", nums[2].second);
+    form->addRow("Soft Max", nums[3].second);
+    form->addRow("Step", nums[4].second);
+    form->addRow("Panel", panelEdit);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    form->addRow(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+    json call = {{"args", {mGroup.toStdString(), input}},
+                 {"label", label->text().trimmed().toStdString()},
+                 {"description", desc->text().trimmed().toStdString()},
+                 {"subtype", subtype->currentData().toString().toStdString()},
+                 {"panel", panelEdit->text().trimmed().toStdString()}};
+    for (auto& [key, e] : nums)
+    {
+        bool ok = false;
+        double d = e->text().trimmed().toDouble(&ok);
+        call[key] = ok ? json(d) : json("");
+    }
+    runCmd("gnSetInputInfo", call);
+}
+
 void NodeEditor::rebuildSidePanel()
 {
     auto* panel = new QWidget();
@@ -1347,29 +1947,7 @@ void NodeEditor::rebuildSidePanel()
         return;
     }
 
-    lay->addWidget(heading(panel, "Interface"));
-    auto* iface = new QFormLayout();
-    iface->setContentsMargins(0, 0, 0, 0);
-    for (const json& in : info["definition"].value("inputs", json::array()))
-    {
-        std::string name = in.value("name", ""), type = in.value("type", "float");
-        auto* row = new QWidget(panel);
-        auto* h = new QHBoxLayout(row);
-        h->setContentsMargins(0, 0, 0, 0);
-        h->addWidget(valueEditor(row, type, in.value("default", json()), [group, name](json v) {
-                         runCmd("gnSetValue", args({group, "GroupInput." + name, v}));
-                     }),
-                     1);
-        auto* rm = new QToolButton(row);
-        rm->setText("x");
-        rm->setToolTip("Remove this input");
-        QObject::connect(rm, &QToolButton::clicked, rm, [group, name] { runCmd("gnRemoveInput", args({group, name})); });
-        h->addWidget(rm);
-        iface->addRow(qs(name) + " (" + qs(type) + ")", row);
-    }
-    if (info["definition"].value("inputs", json::array()).empty())
-        iface->addRow(new QLabel("Nothing exposed yet.", panel));
-    lay->addLayout(iface);
+    lay->addWidget(buildInterface(panel, info));
     json mods = info.value("modifiers", json::array());
     QString used = mods.empty() ? "Not used by any mesh." : "Used by " + QString::number(mods.size()) + " modifier(s).";
     auto* usedLabel = new QLabel(used, panel);
@@ -1398,6 +1976,22 @@ void NodeEditor::rebuildSidePanel()
             std::string id = p.value("id", "");
             std::string cur = p.value("value", "");
             json opts = p.value("options", json::array());
+            if (node->value("type", "") == gn::kGroupNodeDeclType && id == "group")
+            {
+                auto* combo = new QComboBox(panel);
+                for (const std::string& g : gn::groupNames(scene::Graph::current()))
+                    if (g != group)
+                        combo->addItem(qs(g));
+                if (combo->findText(qs(cur)) < 0 && !cur.empty())
+                    combo->addItem(qs(cur));
+                combo->setCurrentIndex(cur.empty() ? -1 : combo->findText(qs(cur)));
+                combo->setToolTip("The node group this node runs. Double-click the node to open it.");
+                QObject::connect(combo, &QComboBox::activated, combo, [combo, group, nodeName](int) {
+                    runCmd("gnSetValue", args({group, nodeName + ".group", combo->currentText().toStdString()}));
+                });
+                form->addRow("Group", combo);
+                continue;
+            }
             if (opts.empty())
             {
                 auto* e = new QLineEdit(qs(cur), panel);
@@ -1460,7 +2054,8 @@ void NodeEditor::rebuildSidePanel()
         auto* hint = new QLabel("Select a node to edit its values.\n\nTab / Shift+A add a node under the cursor; while dragging a wire, or "
                                 "letting one go on empty canvas, it lists only nodes that connect. Ctrl+drag cuts links, Delete / X "
                                 "deletes, Ctrl+C / Ctrl+V copy and paste as text, Ctrl+D duplicates, F frames the selection, Home "
-                                "frames all.",
+                                "frames all. Ctrl+G groups the selection, Ctrl+Alt+G ungroups, double-click a Group node to open its "
+                                "group, Ctrl+Shift+click a node to preview it in a Viewer. Drop a .lilanodes file here to import it.",
                                 panel);
         hint->setWordWrap(true);
         hint->setStyleSheet("color: rgb(150,150,150);");
@@ -1493,12 +2088,19 @@ void registerEditActions()
     add("nodeEditor.selectAll", "Select All Nodes", &NodeEditor::selectAll, "Select every node in the group.");
     add("nodeEditor.frameSelected", "Frame Selected Nodes", &NodeEditor::frameSelected, "Fit the view to the selected nodes.");
     add("nodeEditor.frameAll", "Frame All Nodes", &NodeEditor::frameAll, "Fit the view to the whole group.");
+    add("nodeEditor.groupNodes", "Group Selected Nodes", &NodeEditor::groupSelected,
+        "Collapse the selected nodes into a new node group, run by a Group node in their place.");
+    add("nodeEditor.ungroup", "Ungroup", &NodeEditor::ungroupSelected, "Replace the selected Group nodes with the nodes of their groups.");
+    add("nodeEditor.openGroup", "Open Group", &NodeEditor::openSelectedGroup, "Open the group the selected Group node runs.");
+    add("nodeEditor.exportGroup", "Export Node Group...", &NodeEditor::exportGroup,
+        "Write the group and the groups nested in it to a .lilanodes file to share.");
 }
 } // namespace
 
 void registerNodeEditorActions()
 {
     registerEditActions();
+    registerGnViewerDrawer();
     actions::add({.id = "window.nodeEditor", .label = "Node Editor", .category = "Windows",
                   .run = [] {
                       for (NodeEditor* e : editors())
@@ -1516,7 +2118,7 @@ void registerNodeEditorActions()
                       [] {
                           std::vector<std::string> names = gn::groupNames(scene::Graph::current());
                           std::string name = "GeometryNodes";
-                          for (int i = 1; std::find(names.begin(), names.end(), name) != names.end() || scene::Graph::current().find(name); ++i)
+                          for (int i = 1; std::find(names.begin(), names.end(), name) != names.end() || !scene::Graph::current().findAll(name).empty(); ++i)
                               name = "GeometryNodes" + std::to_string(i);
                           json r = runCmd("gnCreateGroup", args({name}));
                           if (!r.is_string())

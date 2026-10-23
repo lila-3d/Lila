@@ -1,11 +1,11 @@
 {
-  "N": { "label": "To Vertices", "action": "select.toVertices" },
+  "N": { "label": "Border", "action": "select.border" },
   "SE": { "label": "Edge Loop", "action": "select.loop" },
   "E": { "label": "To Edges", "action": "select.toEdges" },
   "SW": { "label": "Edge Ring", "action": "select.ring" },
   "S": { "label": "To Faces", "action": "select.toFaces" },
   "NE": { "label": "Shrink", "action": "select.shrink" },
-  "W": { "label": "Border", "action": "select.border" },
+  "W": { "label": "To Vertices", "action": "select.toVertices" },
   "NW": { "label": "Grow", "action": "select.grow" },
   "overflow": [
     { "label": "To Contained Faces", "action": "select.containedFaces" },

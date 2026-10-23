@@ -15,6 +15,7 @@
 #include "scene/Transform.h"
 #include "ui/Actions.h"
 #include "ui/DrawOverrides.h"
+#include "ui/Isolate.h"
 #include "ui/MeshCache.h"
 #include "ui/Tools.h"
 #include "ui/ViewportTool.h"
@@ -37,11 +38,12 @@ namespace
 constexpr double kPi = 3.14159265358979323846;
 constexpr const char* kRadiusKey = "/paintSelect/radius";
 
+/** Brushes paint in the active view, so its isolation decides what they can reach. */
 bool pickableMesh(const scene::Graph& g, NodeId id, bool inherit)
 {
     const scene::Node* n = g.node(id);
     return n && n->type().isA("mesh") && !drawOverrides::forType(n->type()) && scene::effectivelyVisible(g, id, inherit) &&
-           scene::displayLayers::pickable(g, id) && scene::selectionMask::pickable(*n);
+           scene::displayLayers::pickable(g, id) && scene::selectionMask::pickable(*n) && isolate::shows(scene::isolation::active(), id);
 }
 
 /** The meshes components are picked on, as the viewport has them: the selected ones, or every pickable mesh. */
@@ -52,7 +54,8 @@ std::vector<NodeId> hilited()
     const bool inherit = scene::inheritVisibility();
     // Meshes under a selected group count too; hidden ones only when selected themselves.
     for (NodeId id : uv::meshesUnder(g, g.selection()))
-        if (std::ranges::find(g.selection(), id) != g.selection().end() || pickableMesh(g, id, inherit))
+        if ((std::ranges::find(g.selection(), id) != g.selection().end() || pickableMesh(g, id, inherit)) &&
+            isolate::shows(scene::isolation::active(), id))
             out.push_back(id);
     if (out.empty())
     {
@@ -89,10 +92,9 @@ bool unoccluded(const scene::Graph& g, const std::vector<NodeId>& meshes, const 
     for (NodeId id : meshes)
     {
         const scene::Node* n = g.node(id);
-        auto rm = renderMeshFor(n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh));
-        if (!rm)
-            continue;
-        if (auto hit = raycast(*rm, n->as<glm::dmat4>(scene::Transform::kWorldMatrix), eye, dir); hit && hit->distance < dist * (1.0 - 1e-4) - 1e-3)
+        if (auto hit = isolate::raycast(scene::isolation::active(), id, n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh),
+                                        n->as<glm::dmat4>(scene::Transform::kWorldMatrix), eye, dir);
+            hit && hit->distance < dist * (1.0 - 1e-4) - 1e-3)
             return false;
     }
     return true;
@@ -167,13 +169,13 @@ std::map<NodeId, scene::components::Ids> componentsUnder(const ViewInfo& view, Q
             continue;
         const geo::Mesh& m = *mesh;
         glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+        const auto vis = isolate::visibility(scene::isolation::active(), id, mesh);
         auto& ids = out[id];
         if (mode == ComponentMode::Face)
         {
             // The face under the brush centre, then every face whose centre falls inside it.
-            if (auto rm = renderMeshFor(mesh); rm)
-                if (auto pd = pickDataFor(mesh); pd)
-                    if (auto hit = raycast(*rm, world, rayO, rayD); hit && hit->triangle < pd->triangleFaces.size())
+            if (auto pd = pickDataFor(mesh); pd)
+                if (auto hit = isolate::raycast(scene::isolation::active(), id, mesh, world, rayO, rayD); hit && hit->triangle < pd->triangleFaces.size())
                     {
                         uint32_t f = pd->triangleFaces[hit->triangle];
                         if (frontFacing(m, world, mode, f, view) && unoccluded(g, live, view, rayO + rayD * hit->distance))
@@ -181,7 +183,7 @@ std::map<NodeId, scene::components::Ids> componentsUnder(const ViewInfo& view, Q
                     }
             for (uint32_t f = 0; f < m.faceCapacity(); ++f)
             {
-                if (!m.faceValid(f))
+                if (!m.faceValid(f) || !vis->face(f))
                     continue;
                 glm::dvec3 c(world * glm::dvec4(m.faceCentroid(f), 1.0));
                 auto s = screen.project(c);
@@ -191,7 +193,7 @@ std::map<NodeId, scene::components::Ids> componentsUnder(const ViewInfo& view, Q
         }
         else
             for (const cp::Candidate& c : cp::nearby(m, world, mode, screen, cursor, radiusPx))
-                if (frontFacing(m, world, mode, c.id, view) && unoccluded(g, live, view, cp::anchor(m, world, mode, c.id)))
+                if (vis->shows(mode, c.id) && frontFacing(m, world, mode, c.id, view) && unoccluded(g, live, view, cp::anchor(m, world, mode, c.id)))
                     ids.push_back(c.id);
         if (ids.empty())
             out.erase(id);
@@ -231,12 +233,11 @@ std::vector<NodeId> objectsUnder(const ViewInfo& view, QPointF at, double radius
         {
             const scene::Node* n = g.node(id);
             scene::MeshPtr mesh = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-            auto rm = renderMeshFor(mesh);
             auto pd = pickDataFor(mesh);
-            if (!rm || !pd || !mesh)
+            if (!pd || !mesh)
                 continue;
             glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
-            if (auto hit = raycast(*rm, world, o, d); hit && hit->distance < best)
+            if (auto hit = isolate::raycast(scene::isolation::active(), id, mesh, world, o, d); hit && hit->distance < best)
             {
                 best = hit->distance;
                 bestId = id;
@@ -367,7 +368,7 @@ void Stroke::end()
             json names = json::array();
             for (NodeId id : mTouchedObjects)
                 if (const scene::Node* n = g.node(id))
-                    names.push_back(n->name());
+                    names.push_back(n->path());
             if (names.empty())
             {
                 if (mOp == Op::Replace && !mStartObjects.empty())
@@ -384,7 +385,7 @@ void Stroke::end()
         {
             if (mOp == Op::Replace && !mStart[slot(mMode)].empty())
                 if (const scene::Node* n = g.node(mStart[slot(mMode)].begin()->first))
-                    ops::execute("selectComponents", {{"args", {n->name()}}, {flag, json::array()}}, CallSource::UI);
+                    ops::execute("selectComponents", {{"args", {n->path()}}, {flag, json::array()}}, CallSource::UI);
             return;
         }
         UndoChunk chunk("Paint Select");
@@ -394,7 +395,7 @@ void Stroke::end()
             const scene::Node* n = g.node(node);
             if (!n)
                 continue;
-            json call = {{"args", {n->name()}}, {flag, scene::components::Ids(ids.begin(), ids.end())}};
+            json call = {{"args", {n->path()}}, {flag, scene::components::Ids(ids.begin(), ids.end())}};
             flags(call);
             if (mOp == Op::Replace && !first)
                 call["add"] = true;
@@ -409,6 +410,15 @@ void Stroke::end()
 }
 
 double tabRadius(ComponentMode mode) { return mode == ComponentMode::Vertex ? 10.0 : mode == ComponentMode::Edge ? 6.0 : 4.0; }
+
+namespace
+{
+bool gLassoHeld = false;
+} // namespace
+
+bool lassoHeld() { return gLassoHeld; }
+
+bool lassoActive() { return gLassoHeld || PrefStore::get().value<bool>("general", kLassoPref, false); }
 
 namespace
 {
@@ -539,5 +549,18 @@ void registerPaintSelectUi()
                   .run = [] { setBrushRadius(brushRadius() * 1.25); },
                   .doc = "Grows the Paint Select brush.",
                   .python = "lila.prefs.set(\"general\", \"/paintSelect/radius\", 40)"});
+    actions::add({.id = "select.toggleLasso", .label = "Lasso Select", .category = "Select",
+                  .run = [] { PrefStore::get().set("general", kLassoPref, !PrefStore::get().value<bool>("general", kLassoPref, false)); },
+                  .doc = "Drag selection draws a freehand lasso instead of a marquee and picks what falls inside it. Shift "
+                         "toggles, Ctrl removes, Ctrl+Shift adds, as with the marquee.",
+                  .python = "lila.prefs.set(\"general\", \"/select/lasso\", True)"});
+    actions::add({.id = "select.lassoHoldOn", .label = "Lasso Select (hold)", .category = "Select",
+                  .run = [] { gLassoHeld = true; },
+                  .doc = "While held, drag selection draws a lasso instead of a marquee.",
+                  .python = "lila.ui.run_action(\"select.lassoHoldOn\")"});
+    actions::add({.id = "select.lassoHoldOff", .label = "End Lasso Select Hold", .category = "Select",
+                  .run = [] { gLassoHeld = false; },
+                  .doc = "Releases the lasso hold.",
+                  .python = "lila.ui.run_action(\"select.lassoHoldOff\")"});
 }
 } // namespace lila::ui::paintSelect

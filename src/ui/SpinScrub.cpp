@@ -1,5 +1,6 @@
 #include "ui/SpinScrub.h"
 
+#include "ui/Theme.h"
 #include "ui/ValueReset.h"
 
 #include <QAbstractScrollArea>
@@ -260,7 +261,7 @@ protected:
     void paintEvent(QPaintEvent*) override
     {
         QPainter p(this);
-        p.fillRect(rect(), QColor(255, 255, 255, int(120 * mAlpha)));
+        p.fillRect(rect(), themeShade(255, int(120 * mAlpha)));
     }
 
 private:

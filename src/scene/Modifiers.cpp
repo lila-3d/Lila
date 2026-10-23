@@ -302,7 +302,7 @@ PlugRef editPlug(Graph& g, NodeId mesh)
 {
     for (NodeId id : stack(g, mesh))
         if (static_cast<ModifierNode*>(g.node(id))->editingInput())
-            throw CommandError(g.node(id)->name() + " is editing its edges: apply or cancel that first");
+            throw CommandError(g.node(id)->path() + " is editing its edges: apply or cancel that first");
     auto [base, src] = chainBase(g, mesh);
     if (!src)
         return base;
@@ -442,13 +442,13 @@ void registerCommands()
             if (a.has("params"))
                 for (auto& [k, val] : a.flags["params"].items())
                 {
-                    PlugRef p = g.plug(mod->name() + "." + k);
+                    PlugRef p = g.plug(mod->path() + "." + k);
                     AttrDef def = g.attr(p);
                     if (p.component >= 0)
                         def.type = PlugType::Float;
                     g.setValue(p, fromJson(def, val));
                 }
-            return mod->name();
+            return mod->path();
         },
     });
 
@@ -463,7 +463,7 @@ void registerCommands()
                 throw CommandError("modifiers: no mesh");
             json out = json::array();
             for (NodeId id : stack(graph(), meshNamed(objs.back(), "modifiers").id()))
-                out.push_back(graph().node(id)->name());
+                out.push_back(graph().node(id)->path());
             return out;
         },
     });

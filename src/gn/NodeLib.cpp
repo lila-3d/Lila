@@ -3,6 +3,7 @@
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
 
+#include <cmath>
 #include <map>
 #include <memory>
 
@@ -41,6 +42,29 @@ glm::dvec3 vec3(const json& j, glm::dvec3 fallback)
     if (j.is_number())
         return glm::dvec3(j.get<double>());
     return fallback;
+}
+
+double srgbToLinear(double c) { return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4); }
+
+/** [r, g, b], [r, g, b, a], a grey number, or "#rrggbb[aa]" (sRGB, made linear). */
+glm::dvec4 vec4(const json& j)
+{
+    if (j.is_array() && (j.size() == 3 || j.size() == 4))
+        return {j[0].get<double>(), j[1].get<double>(), j[2].get<double>(), j.size() == 4 ? j[3].get<double>() : 1.0};
+    if (j.is_number())
+        return {j.get<double>(), j.get<double>(), j.get<double>(), 1.0};
+    if (j.is_string())
+    {
+        std::string h = j.get<std::string>();
+        if (!h.empty() && h[0] == '#')
+            h.erase(0, 1);
+        if (h.size() == 6 || h.size() == 8)
+        {
+            auto byte = [&](size_t i) { return double(std::stoi(h.substr(i, 2), nullptr, 16)) / 255.0; };
+            return {srgbToLinear(byte(0)), srgbToLinear(byte(2)), srgbToLinear(byte(4)), h.size() == 8 ? byte(6) : 1.0};
+        }
+    }
+    return {0.0, 0.0, 0.0, 1.0};
 }
 } // namespace
 
@@ -165,6 +189,7 @@ Value defaultValue(SocketType t)
     case SocketType::Float: v.field = constantFloat(0.0); break;
     case SocketType::Int: v.field = constantInt(0); break;
     case SocketType::Bool: v.field = constantBool(false); break;
+    case SocketType::Color: v.field = constantColor(glm::dvec4(0.0, 0.0, 0.0, 1.0)); break;
     default: v.field = constantVector(glm::dvec3(0.0), t); break;
     }
     return v;
@@ -186,13 +211,21 @@ Value valueFromJson(SocketType t, const json& j)
         case SocketType::Bool: v.field = constantBool(j.is_boolean() ? j.get<bool>() : j.get<double>() != 0.0); break;
         case SocketType::Vector: v.field = constantVector(vec3(j, glm::dvec3(0.0))); break;
         case SocketType::Rotation: v.field = constantVector(glm::radians(vec3(j, glm::dvec3(0.0))), SocketType::Rotation); break;
+        case SocketType::Color: v.field = constantColor(vec4(j)); break;
         }
     }
-    catch (const json::exception&)
+    catch (const std::exception&)
     {
         return defaultValue(t);
     }
     return v;
+}
+
+Value paramValue(const GInput& in, const json& j)
+{
+    if (in.type == SocketType::Float && in.subtype == "angle" && j.is_number())
+        return valueFromJson(in.type, glm::radians(j.get<double>()));
+    return valueFromJson(in.type, j);
 }
 
 Value convertValue(const Value& v, SocketType from, SocketType to)

@@ -542,7 +542,7 @@ json meshCheck(Node& n, const Args& a)
     g.evaluate();
     MeshPtr mesh = n.as<MeshPtr>(MeshNode::kOutMesh);
     if (!mesh)
-        throw CommandError("meshCheck: " + n.name() + " has no mesh");
+        throw CommandError("meshCheck: " + n.path() + " has no mesh");
     const geo::Mesh& m = *mesh;
     glm::dmat4 w = n.as<glm::dmat4>(Transform::kWorldMatrix);
 
@@ -596,7 +596,7 @@ json meshCheck(Node& n, const Args& a)
     if (ngons)
         notes.push_back(std::format("{} ngons (fine flat-shaded; triangulate or split them before subdividing).", ngons));
 
-    json out = {{"mesh", n.name()},
+    json out = {{"mesh", n.path()},
                 {"ok", issues.empty()},
                 {"faces", m.numFaces()},
                 {"triangles", tris},
@@ -613,7 +613,7 @@ json meshCheck(Node& n, const Args& a)
     {
         try
         {
-            json s = ops::execute("symmetryCheck", {{"args", {n.name()}}})[n.name()];
+            json s = ops::execute("symmetryCheck", {{"args", {n.path()}}})[n.path()];
             out["symmetry"] = {{"axis", s["axis"]}, {"maxAsymmetry", s["maxAsymmetry"]}, {"unmatched", s["unmatched"]}};
             if (s["unmatched"].get<int64_t>() > 0 || s["maxAsymmetry"].get<double>() > 1e-3 * std::max(1.0, scale))
                 notes.push_back("halves differ: symmetrize(mesh) if that is not intended.");
@@ -673,7 +673,7 @@ void registerComponentQueryCommands()
             Graph& g = Graph::current();
             // Picking components hilites their mesh, as clicking it would.
             if (!g.isSelected(n.id()))
-                ops::execute("select", {{"args", {n.name()}}});
+                ops::execute("select", {{"args", {n.path()}}});
             components::select(n.id(), kind, ids, op);
             components::setMode(kind);
             return components::selected(n.id(), kind);

@@ -112,11 +112,11 @@ std::vector<selectionHandlers::Candidate> baseCandidates(const selectionHandlers
 /** An IK chain stands for its controller (its reverse foot or handle); a joint is always itself, posed FK. */
 std::string animateTarget(Graph& g, const std::string& name)
 {
-    Node* n = g.find(name);
+    Node* n = named(g, name);
     if (n && n->type().isA(kIkChainType))
     {
         const NodeId goal = ikGoalOf(g, n->id());
-        return goal ? g.node(goal)->name() : name;
+        return goal ? g.node(goal)->path() : name;
     }
     return name;
 }
@@ -137,7 +137,7 @@ std::optional<std::vector<std::string>> animateRedirect(const selectionHandlers:
     if (auto base = baseRedirect(hit))
         names = *base;
     else if (hit.node != kNoNode && g.node(hit.node) && (rig::isJoint(*g.node(hit.node)) || g.node(hit.node)->type().isA(kIkChainType)))
-        names = {g.node(hit.node)->name()};
+        names = {g.node(hit.node)->path()};
     else
         return std::nullopt;
     for (std::string& n : names)
@@ -175,7 +175,7 @@ void registerActions(ext::Context& ctx)
                                Graph& g = Graph::current();
                                std::vector<std::string> sel;
                                for (NodeId id : g.selection())
-                                   sel.push_back(g.node(id)->name());
+                                   sel.push_back(g.node(id)->path());
                                if (sel.size() < 2)
                                {
                                    log::write(LogLevel::Warning, "Create Spaces: select the spaces, then the joint last");

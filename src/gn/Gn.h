@@ -6,6 +6,7 @@
 #include "scene/Graph.h"
 
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -24,7 +25,7 @@ inline constexpr const char* kGroupNodeType = "gnGroup";
 
 /** Node types (gnGroup) and the scene listener that registers modifier types as groups appear. Call after the scene's builtins. */
 LILA_SCENE_API void registerTypes();
-/** gnCreateGroup, gnAddNode, gnConnect, ... and exportMeshSequence. */
+/** gnCreateGroup, gnAddNode, gnConnect, ... */
 LILA_SCENE_API void registerCommands();
 
 LILA_SCENE_API scene::Node* findGroupNode(scene::Graph& g, std::string_view group);
@@ -44,6 +45,8 @@ LILA_SCENE_API scene::Node* groupOfModifier(scene::Graph& g, const scene::Node& 
  * sockets that no longer exist, then migrates and reconnects the group's modifiers.
  */
 LILA_SCENE_API void commitGroup(scene::Graph& g, scene::Node& groupNode, Group next);
+/** commitGroup where renames maps old exposed-input names to new ones, so modifiers keep those values and animation. */
+LILA_SCENE_API void commitGroup(scene::Graph& g, scene::Node& groupNode, Group next, const std::map<std::string, std::string>& renames);
 
 /** User library (prefs) and workspace library folders, user first. Missing folders are skipped. */
 LILA_SCENE_API std::vector<std::filesystem::path> libraryDirs();
