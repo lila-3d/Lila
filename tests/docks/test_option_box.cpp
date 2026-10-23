@@ -1,7 +1,7 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
-#include "cmds/CommandOptions.h"
+#include "ops/Command.h"
+#include "ops/CommandOptions.h"
 #include "ui/Actions.h"
 #include "ui/OptionBox.h"
 
@@ -39,8 +39,8 @@ void click(QMenu& menu, QPoint at, Qt::KeyboardModifiers mods)
 TEST_CASE("menu rows of commands with flags get an option box that opens the generated dialog")
 {
     QApplication::setStyle(QStyleFactory::create("Fusion"));
-    if (!cmds::find("boxProbe"))
-        cmds::registerCommand({.name = "boxProbe",
+    if (!ops::find("boxProbe"))
+        ops::registerCommand({.name = "boxProbe",
                                .doc = "Probe.",
                                .flags = {{"segments", "", ArgType::Int, 2, "How many."}, {"mode", "", ArgType::String, "a", "a | b"}},
                                .undoable = false,
@@ -66,7 +66,7 @@ TEST_CASE("menu rows of commands with flags get an option box that opens the gen
     if (const char* shot = std::getenv("LILA_OPTIONBOX_SHOT"))
         menu.grab().save(QString::fromLocal8Bit(shot));
 
-    cmds::options::reset("boxProbe");
+    ops::options::reset("boxProbe");
     probeRuns = 0;
     CHECK(ui::actions::run(json("test.boxProbe")));
     CHECK(probeRuns == 1);

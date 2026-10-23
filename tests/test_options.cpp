@@ -1,7 +1,7 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
-#include "cmds/CommandOptions.h"
+#include "ops/Command.h"
+#include "ops/CommandOptions.h"
 #include "core/PrefStore.h"
 #include "geo/Mesh.h"
 #include "scene/Graph.h"
@@ -10,7 +10,7 @@
 #include <algorithm>
 
 using namespace lila;
-namespace opt = lila::cmds::options;
+namespace opt = lila::ops::options;
 
 namespace
 {
@@ -25,7 +25,7 @@ json lastCall;
 void registerProbe()
 {
     using T = ArgType;
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "optionsProbe",
         .doc = "Records its flags.",
         .positionalDoc = "objects...",
@@ -52,7 +52,7 @@ void registerProbe()
 
 TEST_CASE("option box fields come from the command's typed flags and docs")
 {
-    if (!cmds::find("optionsProbe"))
+    if (!ops::find("optionsProbe"))
         registerProbe();
     std::vector<opt::Field> fs = opt::fields("optionsProbe");
 
@@ -90,7 +90,7 @@ TEST_CASE("option box fields come from the command's typed flags and docs")
 
 TEST_CASE("option box values round-trip through prefs and fill in menu calls")
 {
-    if (!cmds::find("optionsProbe"))
+    if (!ops::find("optionsProbe"))
         registerProbe();
     opt::reset("optionsProbe");
     CHECK(opt::saved("optionsProbe").empty());
@@ -117,7 +117,7 @@ TEST_CASE("option box values round-trip through prefs and fill in menu calls")
     json call = opt::callWith("optionsProbe", {{"mode", "closestPoint"}});
     CHECK(call["segments"] == 5);
     CHECK(call["mode"] == "closestPoint");
-    cmds::execute("optionsProbe", opt::callWith("optionsProbe"));
+    ops::execute("optionsProbe", opt::callWith("optionsProbe"));
     CHECK(lastCall["segments"] == 5);
     CHECK(lastCall["mode"] == "pointIndex");
 
@@ -139,10 +139,10 @@ TEST_CASE("transfer attributes has a full option box")
 
 TEST_CASE("transfer attributes maps one uv set onto another")
 {
-    cmds::execute("newScene", json::object());
-    std::string src = cmds::execute("polyPlane", {{"name", "MapSrc"}, {"history", false}})[0];
-    std::string dst = cmds::execute("polyPlane", {{"name", "MapDst"}, {"history", false}})[0];
-    cmds::execute("transferAttributes", {{"args", {src, dst}}, {"sampleSpace", "component"}, {"sourceUvSet", 0}, {"targetUvSet", 1}});
+    ops::execute("newScene", json::object());
+    std::string src = ops::execute("polyPlane", {{"name", "MapSrc"}, {"history", false}})[0];
+    std::string dst = ops::execute("polyPlane", {{"name", "MapDst"}, {"history", false}})[0];
+    ops::execute("transferAttributes", {{"args", {src, dst}}, {"sampleSpace", "component"}, {"sourceUvSet", 0}, {"targetUvSet", 1}});
     scene::Graph& g = scene::Graph::current();
     g.evaluate();
     const geo::Mesh& m = *g.find(dst)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);

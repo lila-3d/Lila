@@ -1,6 +1,6 @@
 #pragma once
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "scene/Plug.h"
 
 #include <algorithm>

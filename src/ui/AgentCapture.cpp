@@ -1,6 +1,6 @@
 #include "ui/AgentCapture.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "geo/Mesh.h"
@@ -526,7 +526,7 @@ void registerCommands()
 {
     std::vector<FlagDef> flags = optionFlags();
     flags.push_back({"path", "p", T::String, nullptr, "PNG file to write."});
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "captureView",
         .doc = "Render the scene offscreen from a named view or angle and save a PNG. Never moves a viewport's camera, works with Lila in "
                "the background and in batch mode. Returns the path.",
@@ -552,7 +552,7 @@ void registerCommands()
     std::vector<FlagDef> mflags = optionFlags();
     mflags.push_back({"frames", "", T::Int, 20, "Frames to draw; the result is their median."});
     mflags.push_back({"ambientOcclusion", "ao", T::Bool, nullptr, "Force ambient occlusion on or off instead of the viewport pref."});
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "measureView",
         .doc = "Draw the scene offscreen several times like captureView and return the median GPU time per frame in ms, with the "
                "ambient occlusion share, and the render thread's time recording it: {gpuMs, aoMs, cpuMs, aoCpuMs, frames}. 0 where the GPU has no timestamps.",
@@ -582,7 +582,7 @@ void registerCommands()
     tflags.push_back({"count", "c", T::Int, 4, "Views around the up axis, starting at the front."});
     tflags.push_back({"columns", "", T::Int, 0, "Tiles per row; 0 picks."});
     tflags.push_back({"views", "", T::List, nullptr, "Named views to tile instead of a turn, e.g. ['front', 'right', 'top', 'persp']."});
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "captureTurntable",
         .doc = "Render several views offscreen and tile them into one PNG contact sheet (row by row): count angles around the subject, "
                "or the named views. Returns the path.",

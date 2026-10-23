@@ -1,6 +1,6 @@
 #pragma once
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Export.h"
 #include "core/Registry.h"
 
@@ -44,7 +44,7 @@ struct Operation
     json flags = json::object();
     /** Instead of command: does the work itself and returns what the call returns. */
     std::function<json(const fs::path& path, const json& options)> run;
-    /** Opens this operation's options UI. Unset, a UI shows the command's generated option box (cmds/CommandOptions.h). */
+    /** Opens this operation's options UI. Unset, a UI shows the command's generated option box (ops/CommandOptions.h). */
     std::function<void()> optionBox;
 
     bool supported() const { return !command.empty() || static_cast<bool>(run); }

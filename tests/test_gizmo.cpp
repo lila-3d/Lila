@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "scene/Graph.h"
 #include "scene/TransformOps.h"
 #include "ui/GizmoMath.h"
@@ -159,9 +159,9 @@ TEST_CASE("closest point parameter along a line")
 TEST_CASE("orienting the pivot turns the manipulator's axes, not the object")
 {
     using namespace lila;
-    cmds::execute("newScene", nlohmann::json::object());
-    std::string cube = cmds::execute("polyCube", nlohmann::json::object())[0];
-    cmds::execute("rotate", {{"args", {cube}}, {"by", {0, 90, 0}}});
+    ops::execute("newScene", nlohmann::json::object());
+    std::string cube = ops::execute("polyCube", nlohmann::json::object())[0];
+    ops::execute("rotate", {{"args", {cube}}, {"by", {0, 90, 0}}});
     scene::Graph& g = scene::Graph::current();
     scene::NodeId id = g.find(cube)->id();
     g.evaluate();
@@ -178,11 +178,11 @@ TEST_CASE("orienting the pivot turns the manipulator's axes, not the object")
     CHECK(g.node(id)->as<glm::dmat4>(scene::Transform::kWorldMatrix) == before);
 
     // The same through the command, then reset.
-    cmds::execute("setPivot", {{"args", {cube}}, {"orient", {0, 0, 45}}});
+    ops::execute("setPivot", {{"args", {cube}}, {"orient", {0, 0, 45}}});
     CHECK(g.node(id)->as<glm::dvec3>(scene::Transform::kPivotOrient).z == Approx(45.0));
-    cmds::execute("undo", nlohmann::json::object());
+    ops::execute("undo", nlohmann::json::object());
     CHECK(g.node(id)->as<glm::dvec3>(scene::Transform::kPivotOrient).y == Approx(30.0));
-    cmds::execute("resetPivot", {{"args", {cube}}});
+    ops::execute("resetPivot", {{"args", {cube}}});
     CHECK(near(g.node(id)->as<glm::dvec3>(scene::Transform::kPivotOrient), glm::dvec3(0.0)));
     CHECK(g.node(id)->as<glm::dmat4>(scene::Transform::kWorldMatrix) == before);
 }

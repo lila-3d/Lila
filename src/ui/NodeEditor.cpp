@@ -1,7 +1,7 @@
 #include "ui/NodeEditor.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "gn/Gn.h"
@@ -111,7 +111,7 @@ json runCmd(const char* name, json call)
     {
         // Queries run quietly; edits echo to the script editor like any UI action.
         bool query = std::string_view(name) == "gnGroupInfo" || std::string_view(name) == "gnNodeTypes";
-        return cmds::execute(name, call, query ? CallSource::Script : CallSource::UI);
+        return ops::execute(name, call, query ? CallSource::Script : CallSource::UI);
     }
     catch (const std::exception& e)
     {
@@ -1226,7 +1226,7 @@ void NodeEditor::paste()
     QPointF at = mCanvas->cursorScenePos();
     try
     {
-        json r = cmds::execute("gnPasteNodes", {{"args", {mGroup.toStdString(), text.toStdString()}}, {"position", {at.x(), at.y()}}},
+        json r = ops::execute("gnPasteNodes", {{"args", {mGroup.toStdString(), text.toStdString()}}, {"position", {at.x(), at.y()}}},
                                CallSource::UI);
         if (r.is_array())
             selectAfterRefresh(r.get<std::vector<std::string>>());

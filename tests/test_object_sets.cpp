@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
 #include "scene/ObjectSets.h"
@@ -12,7 +12,7 @@ using namespace lila::scene;
 
 namespace
 {
-json run(const std::string& name, const json& call = json::object()) { return cmds::execute(name, call); }
+json run(const std::string& name, const json& call = json::object()) { return ops::execute(name, call); }
 std::string made(const json& r) { return (r.is_array() ? r[0] : r).get<std::string>(); }
 json members(const std::string& set) { return run("setMembers", {{"args", {set}}}); }
 

@@ -1,4 +1,4 @@
 #pragma once
 
-/** Commands: CommandDef, cmds::execute, cmds::registry. */
-#include "cmds/Command.h"
+/** Commands: CommandDef, ops::execute, ops::registry. */
+#include "ops/Command.h"

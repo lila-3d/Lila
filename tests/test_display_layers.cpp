@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "scene/Anim.h"
 #include "scene/DisplayLayers.h"
 #include "scene/Graph.h"
@@ -14,7 +14,7 @@ namespace dl = lila::scene::displayLayers;
 
 namespace
 {
-json run(const std::string& name, const json& call = json::object()) { return cmds::execute(name, call); }
+json run(const std::string& name, const json& call = json::object()) { return ops::execute(name, call); }
 std::string made(const json& r) { return (r.is_array() ? r[0] : r).get<std::string>(); }
 NodeId idOf(const std::string& name) { return Graph::current().find(name)->id(); }
 std::string layerName(const std::string& node)

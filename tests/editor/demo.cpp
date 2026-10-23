@@ -1,7 +1,7 @@
 // Throwaway harness: the ScriptEditor with Python up, driven by a few scripted steps that save screenshots and
 // print what the language features returned. Usage: lila_editor_demo <outdir>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/MainQueue.h"
 #include "core/PrefStore.h"
@@ -92,7 +92,7 @@ int main(int argc, char** argv)
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     mainq::init();
     PrefStore::get().start();
-    cmds::registerBuiltins();
+    ops::registerBuiltins();
     scene::types::registerBuiltins();
     scene::registerCommands();
     io::registerCommands();

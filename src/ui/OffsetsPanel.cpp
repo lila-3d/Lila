@@ -1,6 +1,6 @@
 #include "ui/OffsetsPanel.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "scene/AnimLayer.h"
 #include "scene/Graph.h"
@@ -37,7 +37,7 @@ json run(const char* command, const json& call)
 {
     try
     {
-        return cmds::execute(command, call, CallSource::UI);
+        return ops::execute(command, call, CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -172,7 +172,7 @@ void OffsetsPanel::scheduleRefresh()
 
 void OffsetsPanel::refresh()
 {
-    json list = cmds::execute("listOffsets", json::object(), CallSource::Script);
+    json list = ops::execute("listOffsets", json::object(), CallSource::Script);
     if (!list.is_array())
         return;
     const QColor dim = palette().color(QPalette::Disabled, QPalette::Text);

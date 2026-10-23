@@ -27,7 +27,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context&)
     markingMenus::add("plainOwnerMenu", {{"N", {{"label", "Go"}, {"action", "plainOwner.go"}}}});
     modes::add({.id = "plainOwnerMode", .label = "Plain", .onEnter = [alive] {}, .onExit = [alive] {}});
     optionBox::addCustom("plainOwner.go", [alive] {});
-    cmds::registerCommand({.name = "plainOwnerCommand",
+    ops::registerCommand({.name = "plainOwnerCommand",
                            .doc = "Test command registered without a context.",
                            .undoable = false,
                            .run = [alive](const Args&) -> json { return *alive; }});

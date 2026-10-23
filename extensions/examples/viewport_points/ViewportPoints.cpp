@@ -75,8 +75,8 @@ public:
         if (std::optional<glm::dvec3> p = ground(view, e->position()))
         {
             UndoChunk chunk("Place Marker");
-            json made = cmds::execute("createNode", {{"args", {kMarker}}}, CallSource::UI);
-            cmds::execute("move", {{"args", {made}}, {"to", {p->x, p->y, p->z}}}, CallSource::UI);
+            json made = ops::execute("createNode", {{"args", {kMarker}}}, CallSource::UI);
+            ops::execute("move", {{"args", {made}}, {"to", {p->x, p->y, p->z}}}, CallSource::UI);
         }
         return true;
     }
@@ -158,7 +158,7 @@ public:
             return;
         mDrag = false;
         if (glm::length(mDelta) > 1e-9)
-            cmds::execute("move", {{"args", {mTarget}}, {"by", {mDelta.x, mDelta.y, mDelta.z}}}, CallSource::UI);
+            ops::execute("move", {{"args", {mTarget}}, {"by", {mDelta.x, mDelta.y, mDelta.z}}}, CallSource::UI);
         mDelta = glm::dvec3(0.0);
     }
 

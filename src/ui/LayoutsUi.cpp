@@ -1,6 +1,6 @@
 #include "ui/LayoutsUi.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Workspace.h"
@@ -154,7 +154,7 @@ void LayoutController::run(const char* command, const json& call)
 {
     try
     {
-        cmds::execute(command, call, CallSource::UI);
+        ops::execute(command, call, CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -461,7 +461,7 @@ void LayoutController::saveAs()
         return;
     try
     {
-        cmds::execute("saveLayout", {{"name", name->text().trimmed().toStdString()}, {"workspace", inFolder->isChecked()}}, CallSource::UI);
+        ops::execute("saveLayout", {{"name", name->text().trimmed().toStdString()}, {"workspace", inFolder->isChecked()}}, CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -553,7 +553,7 @@ void LayoutController::manage()
             return;
         try
         {
-            cmds::execute("renameLayout", {{"name", from}, {"to", to.toStdString()}}, CallSource::UI);
+            ops::execute("renameLayout", {{"name", from}, {"to", to.toStdString()}}, CallSource::UI);
             reload(to.toStdString());
         }
         catch (const CommandError& err)

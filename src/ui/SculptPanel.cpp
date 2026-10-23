@@ -1,6 +1,6 @@
 #include "ui/SculptPanel.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
@@ -446,14 +446,14 @@ void registerSculptUi()
                   .category = "Sculpt",
                   .run = enterSculpt,
                   .doc = "Build a high-resolution sculpt proxy of the selected mesh's cage (settings in the Sculpt panel).",
-                  .python = cmds::toPython("sculptEnter", {{"mode", "subdivide"}, {"levels", 2}})});
+                  .python = ops::toPython("sculptEnter", {{"mode", "subdivide"}, {"levels", 2}})});
     actions::add({.id = "sculpt.exit",
                   .label = "Exit Sculpt",
                   .category = "Sculpt",
                   .run = exitSculpt,
                   .enabled = [] { return sculpt::active() != nullptr; },
                   .doc = "Move the low-poly cage onto the sculpt and leave sculpt mode.",
-                  .python = cmds::toPython("sculptExit", {{"method", "fit"}})});
+                  .python = ops::toPython("sculptExit", {{"method", "fit"}})});
     actions::add({.id = "sculpt.cancel",
                   .label = "Cancel Sculpt",
                   .category = "Sculpt",
@@ -463,7 +463,7 @@ void registerSculptUi()
                   },
                   .enabled = [] { return sculpt::active() != nullptr; },
                   .doc = "Leave sculpt mode without changing the mesh.",
-                  .python = cmds::toPython("sculptCancel", json::object())});
+                  .python = ops::toPython("sculptCancel", json::object())});
     for (const BrushInfo& b : kBrushes)
     {
         std::string name(sculpt::brushName(b.brush));
@@ -488,7 +488,7 @@ void registerSculptUi()
                       .run = [call] { runCommand("sculptMask", call); },
                       .enabled = [] { return sculpt::active() != nullptr; },
                       .doc = doc,
-                      .python = cmds::toPython("sculptMask", call)});
+                      .python = ops::toPython("sculptMask", call)});
     };
     maskAction("sculpt.maskInvert", "Invert Mask", "invert", "mask", "Masked points become free and free ones masked.");
     maskAction("sculpt.maskClear", "Clear Mask", "clear", "mask", "Unmask everything.");
@@ -502,7 +502,7 @@ void registerSculptUi()
                   .run = [] { runCommand("relaxMesh", {{"iterations", 10}, {"strength", 0.5}, {"pinCreases", true}, {"pinSeams", true}}); },
                   .doc = "Even out the point spacing of the selected components (or whole meshes), sliding points along the "
                          "surface so the shape stays. Borders, creases and UV seams stay put.",
-                  .python = cmds::toPython("relaxMesh", {{"iterations", 10}, {"pinCreases", true}, {"pinSeams", true}})});
+                  .python = ops::toPython("relaxMesh", {{"iterations", 10}, {"pinCreases", true}, {"pinSeams", true}})});
     actions::add({.id = "mesh.reproject",
                   .label = "Reproject onto Target",
                   .category = "Mesh",
@@ -517,7 +517,7 @@ void registerSculptUi()
                   },
                   .doc = "Shrinkwrap meshes onto a surface: select the target first, then the meshes to move. The shrinkwrap "
                          "command also projects along normals or a direction, with an offset.",
-                  .python = cmds::toPython("shrinkwrap", {{"args", {"low"}}, {"target", "high"}, {"method", "closest"}, {"offset", 0.0}})});
+                  .python = ops::toPython("shrinkwrap", {{"args", {"low"}}, {"target", "high"}, {"method", "closest"}, {"offset", 0.0}})});
     actions::add({.id = "mesh.transferShape",
                   .label = "Transfer Shape (High to Low)",
                   .category = "Mesh",
@@ -532,6 +532,6 @@ void registerSculptUi()
                   },
                   .doc = "Fit low-poly cages to a high poly (an imported sculpt) so their subdivision matches it, keeping UVs. "
                          "Select the high poly first.",
-                  .python = cmds::toPython("transferShape", {{"args", {"high", "low"}}, {"method", "fit"}, {"levels", 2}})});
+                  .python = ops::toPython("transferShape", {{"args", {"high", "low"}}, {"method", "fit"}, {"levels", 2}})});
 }
 } // namespace lila::ui

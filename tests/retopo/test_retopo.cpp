@@ -1,5 +1,5 @@
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "geo/Bvh.h"
 #include "geo/TestUtil.h"
 #include "geo/ObjIO.h"

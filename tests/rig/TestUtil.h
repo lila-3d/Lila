@@ -2,7 +2,7 @@
 
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "geo/Mesh.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
@@ -13,7 +13,7 @@ namespace rigtest
 using namespace lila;
 using json = nlohmann::json;
 
-inline json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+inline json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 
 inline scene::Graph& graph() { return scene::Graph::current(); }
 

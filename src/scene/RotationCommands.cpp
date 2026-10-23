@@ -1,7 +1,7 @@
 #include "scene/Anim.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Profile.h"
 #include "scene/AnimLayer.h"
 #include "scene/Graph.h"
@@ -433,7 +433,7 @@ void registerRotationCommands()
 
     const FlagDef attrFlag{"attribute", "at", T::Any, nullptr, "Attribute name or list of names."};
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "convertRotationCurves",
         .doc = "Convert the rotate animation of transforms (default the selection) to `to`, keeping the key times and the "
                "pose at every key: euler (three curves) or one rotation curve interpolated by slerp or smooth. Also sets "
@@ -459,7 +459,7 @@ void registerRotationCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "eulerFilter",
         .doc = "Euler filter the rotate curves of transforms (default the selection): each key keeps its rotation but "
                "takes the angles closest to the previous key's, removing flips and 360-degree jumps. Rotation curves "
@@ -496,7 +496,7 @@ void registerRotationCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "setLoopKey",
         .doc = "Make the last key of each curve a loop key: it mirrors the first key's value and tangents (live, as the "
                "first key changes) and the curve cycles after it. time adds the loop key there first. Objects may be "
@@ -527,7 +527,7 @@ void registerRotationCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "clearLoopKey",
         .doc = "Turn the loop key off on curves (nodes, plugs or curves, default the selection): the last key is an "
                "ordinary key again and cycling post infinity goes back to constant. Returns the number of curves changed.",

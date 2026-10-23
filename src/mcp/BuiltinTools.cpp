@@ -1,6 +1,6 @@
 #include "mcp/McpServer.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "python/Python.h"
 #include "scene/Graph.h"
@@ -51,7 +51,7 @@ void describe(scene::Graph& g, scene::NodeId id, int depth, std::string& out)
         out += " *selected*";
     if (n->type().isA("mesh"))
     {
-        json s = cmds::execute("meshInfo", {{"args", {n->name()}}});
+        json s = ops::execute("meshInfo", {{"args", {n->name()}}});
         out += std::format("\n{}  mesh: {} faces ({} quads, {} tris, {} ngons), {} triangles, {} points", std::string(depth * 2, ' '),
                            s["faces"].get<int>(), s.value("quads", 0), s.value("triFaces", 0), s.value("ngons", 0), s["triangles"].get<int>(),
                            s["points"].get<int>());
@@ -112,7 +112,7 @@ void registerBuiltinTools()
                         {"properties", {{"name", {{"type", "string"}}}, {"args", {{"type", "object"}}}}},
                         {"required", {"name"}}},
         .run = [](const json& args) {
-            return cmds::execute(args.value("name", ""), args.value("args", json::object()), CallSource::UI).dump(2);
+            return ops::execute(args.value("name", ""), args.value("args", json::object()), CallSource::UI).dump(2);
         },
     });
 
@@ -123,7 +123,7 @@ void registerBuiltinTools()
         .run = [](const json& args) {
             std::string filter = args.value("filter", "");
             std::string out;
-            for (const CommandDef* d : cmds::all())
+            for (const CommandDef* d : ops::all())
             {
                 if (!filter.empty() && d->name.find(filter) == std::string::npos)
                     continue;
@@ -168,8 +168,8 @@ void registerBuiltinTools()
                 describe(g, id, 0, out);
             if (out.empty())
                 out = "(empty scene)\n";
-            out += "component mode: " + cmds::execute("selectMode", json::object()).get<std::string>();
-            json sel = cmds::execute("componentSelection", json::object());
+            out += "component mode: " + ops::execute("selectMode", json::object()).get<std::string>();
+            json sel = ops::execute("componentSelection", json::object());
             for (auto& [mesh, kinds] : sel.items())
                 for (auto& [kind, ids] : kinds.items())
                     out += std::format("\n  {} selected {}: {}", mesh, kind, ids.size() > 40 ? std::to_string(ids.size()) + " ids" : ids.dump());
@@ -188,7 +188,7 @@ void registerBuiltinTools()
             json call = json::object();
             if (args.contains("mesh") && args["mesh"].is_string())
                 call["args"] = {args["mesh"]};
-            return cmds::execute("meshInfo", call).dump();
+            return ops::execute("meshInfo", call).dump();
         },
     });
 
@@ -210,7 +210,7 @@ void registerBuiltinTools()
                 call["expectShells"] = args["expect_shells"];
             if (args.contains("max_triangles"))
                 call["maxTriangles"] = args["max_triangles"];
-            json r = cmds::execute("meshCheck", call);
+            json r = ops::execute("meshCheck", call);
             std::string out = std::format("{}: {} | {} faces ({} quads, {} tris, {} ngons), {} triangles | {} shell{} | box {}\n",
                                           r["mesh"].get<std::string>(), r["ok"].get<bool>() ? "OK" : "PROBLEMS", r["faces"].get<int64_t>(),
                                           r["quads"].get<int64_t>(), r["tris"].get<int64_t>(), r["ngons"].get<int64_t>(),

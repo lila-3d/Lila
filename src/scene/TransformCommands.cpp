@@ -1,4 +1,4 @@
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "scene/Graph.h"
 #include "scene/RigElements.h"
 #include "scene/TransformOps.h"
@@ -50,7 +50,7 @@ void registerTransformCommands()
 {
     using T = ArgType;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "move",
         .doc = "Move objects. move(by=(x, y, z)) moves relative in `space`; move(to=(x, y, z)) puts each pivot at a world "
                "position. A selected parent and child move once.",
@@ -80,7 +80,7 @@ void registerTransformCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "rotate",
         .doc = "Rotate objects about their pivots. rotate(by=(x, y, z)) adds a rotation (degrees, XYZ order) in `space`; "
                "rotate(to=(x, y, z)) sets the local Euler angles.",
@@ -108,7 +108,7 @@ void registerTransformCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "scale",
         .doc = "Scale objects along their own axes. scale(by=(x, y, z)) multiplies; scale(to=(x, y, z)) sets.",
         .positionalDoc = "objects",
@@ -132,7 +132,7 @@ void registerTransformCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "setPivot",
         .doc = "Move the rotate and scale pivots to a world position, or orient the pivot, without moving the objects.",
         .positionalDoc = "objects",
@@ -155,7 +155,7 @@ void registerTransformCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "resetPivot",
         .doc = "Put the pivots back at the object's origin, keeping the object where it is.",
         .positionalDoc = "objects",
@@ -167,7 +167,7 @@ void registerTransformCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "pivot",
         .doc = "World position of an object's rotate pivot.",
         .positionalDoc = "object",

@@ -1,7 +1,7 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "scene/Graph.h"
 #include "scene/ImagePlane.h"
 
@@ -13,7 +13,7 @@ namespace ip = lila::scene::imagePlane;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 
 bool near(const glm::dvec3& a, const glm::dvec3& b) { return glm::distance(a, b) < 1e-9; }
 bool near(const glm::dvec4& a, const glm::dvec4& b) { return glm::length(a - b) < 1e-9; }

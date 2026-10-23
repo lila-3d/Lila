@@ -1,7 +1,7 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "gn/Clipboard.h"
 #include "gn/Gn.h"
 #include "gn/NodeLib.h"
@@ -14,7 +14,7 @@ using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 json args(std::initializer_list<json> a) { return {{"args", json(a)}}; }
 
 gn::Group group(const char* name) { return gn::readGroup(*gn::findGroupNode(scene::Graph::current(), name)); }

@@ -3,7 +3,7 @@
 // Before Qt: Qt's emit macro breaks TBB's headers.
 #include <tbb/parallel_for.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
@@ -421,7 +421,7 @@ private:
         try
         {
             // Not echoed: a stroke is hundreds of dabs, and repeating it from the script editor is rarely wanted.
-            cmds::execute("sculptStroke", call, CallSource::Script);
+            ops::execute("sculptStroke", call, CallSource::Script);
         }
         catch (const CommandError& e)
         {

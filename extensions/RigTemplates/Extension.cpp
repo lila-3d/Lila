@@ -518,7 +518,7 @@ json buildSkeleton(Graph& g, const Source& src, const std::string& prefix, bool 
         if (meshes.empty())
             throw CommandError("buildRigSkeleton: bindSkin needs meshes (give meshes or bind the instance first)");
         for (NodeId mesh : meshes)
-            skins.push_back(cmds::execute("skinCluster", {{"args", {top, g.node(mesh)->name()}}, {"bindTo", "hierarchy"}}));
+            skins.push_back(ops::execute("skinCluster", {{"args", {top, g.node(mesh)->name()}}, {"bindTo", "hierarchy"}}));
     }
     // After the bind, so the auto rule can prefer bones the skin weights. Redirects set before it are kept.
     if (Node* root = g.find(top))
@@ -634,18 +634,18 @@ json orientSkeleton(Graph& g, const Template& t, NodeId anyJoint, const std::vec
         return false;
     }();
     if (!wasEditing)
-        cmds::execute("editSkeleton", {{"args", {g.node(top)->name()}}, {"on", true}});
+        ops::execute("editSkeleton", {{"args", {g.node(top)->name()}}, {"on", true}});
     for (auto& [id, name] : order)
     {
         const Node& j = *g.node(id);
         const glm::dquat jo = orientFor(g, id, solved.rotation[name], false);
         if (std::abs(glm::dot(eulerQuat(j.as<glm::dvec3>(Joint::kJointOrient), RotateOrder::XYZ), jo)) > 1.0 - 1e-14)
             continue;
-        cmds::execute("moveSkinnedJoints", {{"args", {j.name()}}, {"jointOrient", vecJson(degrees(jo))}, {"preserve", preserve}});
+        ops::execute("moveSkinnedJoints", {{"args", {j.name()}}, {"jointOrient", vecJson(degrees(jo))}, {"preserve", preserve}});
         changed.push_back(j.name());
     }
     if (!wasEditing)
-        cmds::execute("editSkeleton", {{"on", false}, {"preserve", preserve}});
+        ops::execute("editSkeleton", {{"on", false}, {"preserve", preserve}});
     return changed;
 }
 
@@ -1044,7 +1044,7 @@ bool registerCommands(ext::Context& ctx)
                         UndoChunk chunk("Centre Markers");
                         json moved = json::array();
                         for (const std::string& n : names)
-                            for (const json& m : cmds::execute("centerJoint", {{"args", {n}}, {"keepChildren", true}}))
+                            for (const json& m : ops::execute("centerJoint", {{"args", {n}}, {"keepChildren", true}}))
                                 moved.push_back(m);
                         return moved;
                     }});

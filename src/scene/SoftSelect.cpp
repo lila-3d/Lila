@@ -1,6 +1,6 @@
 #include "scene/SoftSelect.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/PrefStore.h"
 
 #include <algorithm>
@@ -365,7 +365,7 @@ bool surfaceFalloff()
 void registerCommands()
 {
     using T = ArgType;
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "softSelectCurve",
         .doc = "Set or query the soft select falloff curve (weight against distance from the selection, 0 at the selection, "
                "1 at the radius). With no flags it returns the current curve.",

@@ -1,6 +1,6 @@
 #include "ui/AdjustLastOp.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "scene/Components.h"
@@ -94,7 +94,7 @@ LastOpEditor::LastOpEditor(QWidget* parent) : QWidget(parent)
     mEcho->setInterval(700);
     connect(mEcho, &QTimer::timeout, this, [] {
         if (const lo::Op* op = lo::current())
-            log::write(LogLevel::Echo, cmds::toPython(op->command, op->call) + "\n");
+            log::write(LogLevel::Echo, ops::toPython(op->command, op->call) + "\n");
     });
     mLiveCheck = new QTimer(this);
     mLiveCheck->setSingleShot(true);
@@ -176,7 +176,7 @@ void LastOpEditor::rebuild()
     for (const FlagDef* f : flags)
     {
         std::string name = f->name;
-        FlagFieldWidgets w = makeFlagField(cmds::options::fieldFor(*f), lo::flagValue(*op, *f), [this, name](const json& v) { setFlag(name, v); },
+        FlagFieldWidgets w = makeFlagField(ops::options::fieldFor(*f), lo::flagValue(*op, *f), [this, name](const json& v) { setFlag(name, v); },
                                            mFields);
         if (w.label)
         {

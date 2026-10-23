@@ -1,7 +1,7 @@
 #include "scene/Picker.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/ExtensionContext.h"
 #include "core/Paths.h"
 #include "core/Profile.h"
@@ -924,16 +924,16 @@ json runAction(const Item& item, const std::vector<NodeId>& ids)
         if (act.attr.empty())
             throw CommandError("pickerRun: item '" + item.id + "' toggles no attr");
         // Every target follows the first, so a mixed set lines up instead of each flipping its own way.
-        json now = cmds::execute("getAttr", {{"args", {names.front() + "." + act.attr}}});
+        json now = ops::execute("getAttr", {{"args", {names.front() + "." + act.attr}}});
         json next = sameValue(now, act.values[1]) ? act.values[0] : act.values[1];
         for (const std::string& n : names)
-            cmds::execute("setAttr", {{"args", {n + "." + act.attr, next}}});
+            ops::execute("setAttr", {{"args", {n + "." + act.attr, next}}});
         return next;
     }
     case ActionKind::ApplyPose:
         if (act.pose.empty())
             throw CommandError("pickerRun: item '" + item.id + "' names no pose");
-        return cmds::execute("applyPose", {{"args", {act.pose}}, {"nodes", names}, {"weight", act.weight}, {"mirror", act.mirror}});
+        return ops::execute("applyPose", {{"args", {act.pose}}, {"nodes", names}, {"weight", act.weight}, {"mirror", act.mirror}});
     case ActionKind::RunCommand:
     {
         if (act.command.empty())
@@ -941,7 +941,7 @@ json runAction(const Item& item, const std::vector<NodeId>& ids)
         json call = act.call.is_object() ? act.call : json::object();
         if (!call.contains("args"))
             call["args"] = names;
-        return cmds::execute(act.command, call);
+        return ops::execute(act.command, call);
     }
     }
     return nullptr;
@@ -952,7 +952,7 @@ void registerCommands()
 {
     using T = ArgType;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "createPicker",
         .doc = "Make a control picker in the scene: empty, from a layout ({pages: [{items: [{target, x, y, size, mirror}]}]}), "
                "a copy of a template picker, or a .lilapicker file. Returns the picker's summary.",
@@ -1008,7 +1008,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "deletePicker",
         .doc = "Delete a scene picker. Template pickers belong to their extension and can't be deleted.",
         .positionalDoc = "name",
@@ -1020,7 +1020,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "listPickers",
         .doc = "Scene and template pickers: [{name, source, character, template, namespace, pages, items}]. full=True "
                "returns whole documents; namespaces=True adds the scene namespaces each one's targets resolve in.",
@@ -1051,7 +1051,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "editPicker",
         .doc = "Edit a scene picker. Operations run in this order: rename/character/namespace, page add/remove/rename, "
                "setPage, addItem, addFromSelection, removeItems, setItems (patches by id), moveItems by offset, mirrorItems, "
@@ -1270,7 +1270,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "pickerSelect",
         .doc = "Select the nodes a picker's items target, resolved in a namespace (the picker's own by default). mode "
                "replace, add, remove or toggle; no items with replace clears the selection. Returns the selected names.",
@@ -1310,7 +1310,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "pickerRun",
         .doc = "Run a picker item's action on its targets resolved in a namespace: select them, toggle an attr (every "
                "target follows the first), apply a pose to their character, or run a command (args default to the "
@@ -1332,7 +1332,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "exportPicker",
         .doc = "Write a picker (scene or template) to a .lilapicker file. Returns the path.",
         .positionalDoc = "name",
@@ -1357,7 +1357,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "importPicker",
         .doc = "Read a .lilapicker file into the scene, renamed with name= or replacing one of the same name with "
                "replace=True. Returns the picker's summary.",

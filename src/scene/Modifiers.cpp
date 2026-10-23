@@ -1,7 +1,7 @@
 #include "scene/Modifiers.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "geo/Mesh.h"
@@ -404,7 +404,7 @@ void registerCommands()
     for (const std::string& kind : kinds())
         kindList += "\n- " + kind + ": " + kindDoc(kind);
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "addModifier",
         .doc = "Add a modifier to the top of a mesh's stack. params sets its parameters. Returns its name. modifierKinds(docs=True) "
                "also lists kinds extensions add later.\n\nKinds:" + kindList,
@@ -452,7 +452,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "modifiers",
         .doc = "A mesh's modifier stack, bottom (applied first) to top.",
         .positionalDoc = "mesh",
@@ -480,7 +480,7 @@ void registerCommands()
         g.deleteNode(mod.id());
     };
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "removeModifier",
         .doc = "Remove modifiers, reconnecting the stack around them.",
         .positionalDoc = "modifiers",
@@ -497,7 +497,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "applyModifier",
         .doc = "Bake a modifier (and everything below it in the stack) into the base mesh.",
         .positionalDoc = "modifier",
@@ -544,7 +544,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "moveModifier",
         .doc = "Move a modifier up or down its stack by a number of steps (positive is up, applied later).",
         .positionalDoc = "modifier",

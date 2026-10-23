@@ -16,7 +16,7 @@ namespace lila::ui
 {
 /**
  * Searchable reference for every command in the registry and the lila Python package, built live: commands from
- * cmds::all(), Python by walking the modules in the embedded interpreter (lila._apidoc). Built on first show and on
+ * ops::all(), Python by walking the modules in the embedded interpreter (lila._apidoc). Built on first show and on
  * Refresh, so extension commands appear once their extension has loaded.
  */
 class LILA_UI_API ApiReference : public QWidget

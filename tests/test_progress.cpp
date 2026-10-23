@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "core/Progress.h"
 #include "io/SceneFile.h"
@@ -16,7 +16,7 @@ using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 
 std::string tempPath(const char* name)
 {

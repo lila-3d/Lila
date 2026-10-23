@@ -1,6 +1,6 @@
 #include "ui/PoseLibrary.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/Workspace.h"
 #include "scene/Graph.h"
@@ -43,7 +43,7 @@ bool runUi(const char* command, const json& call, json* result = nullptr)
 {
     try
     {
-        json r = cmds::execute(command, call, CallSource::UI);
+        json r = ops::execute(command, call, CallSource::UI);
         if (result)
             *result = std::move(r);
         return true;

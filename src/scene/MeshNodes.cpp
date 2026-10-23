@@ -1,6 +1,6 @@
 #include "scene/MeshNodes.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "core/Progress.h"
@@ -241,7 +241,7 @@ void registerMeshCommands()
         for (const AttrDef& a : p.attrs)
             flags.push_back({a.name, "", a.type == PlugType::Bool ? T::Bool : a.type == PlugType::Int ? T::Int : T::Float, nullptr, a.doc});
         std::string type = p.type, display = p.display;
-        cmds::registerCommand({
+        ops::registerCommand({
             .name = type,
             .doc = std::string("Create a ") + p.display + " mesh. Returns [mesh, generator] (generator is None without history).",
             .flags = flags,
@@ -276,7 +276,7 @@ void registerMeshCommands()
         });
     }
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "deleteHistory",
         .doc = "Bake meshes to their current result and delete the generators and modifiers feeding them.",
         .positionalDoc = "objects",
@@ -286,12 +286,12 @@ void registerMeshCommands()
                 if (nodeNamed(name).type().isA("mesh"))
                     meshes.push_back(name);
             if (!meshes.empty())
-                cmds::execute("collapseStack", {{"args", meshes}});
+                ops::execute("collapseStack", {{"args", meshes}});
             return nullptr;
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "smoothPreview",
         .doc = "Display meshes subdivided without changing them (Maya's 1/2/3 keys). level 0 is off.",
         .positionalDoc = "objects",
@@ -305,7 +305,7 @@ void registerMeshCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "meshInfo",
         .doc = "Counts and health of a mesh: points, edges, faces, triangles, tri/quad/ngon faces, open border edges and loops, "
                "non-manifold edges, shells, closed, object and world bounds, symmetry, smooth preview, modifiers, material slots "
@@ -323,7 +323,7 @@ void registerMeshCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "meshData",
         .doc = "A mesh's points and faces as plain lists: {points: [[x,y,z]...], faces: [[i,j,k,...]...]}. "
                "base=True reads the editable base mesh (under modifiers) instead of the final result.",
@@ -363,7 +363,7 @@ void registerMeshCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "createMesh",
         .doc = "Make a mesh from points and faces (lists of point indices, any size). Returns its name.",
         .flags = {{"points", "", T::List, nullptr, "[[x, y, z], ...] in cm."},
@@ -394,7 +394,7 @@ void registerMeshCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "importObj",
         .doc = "Import an OBJ file; one mesh per object. Returns the new mesh names.",
         .positionalDoc = "path",
@@ -427,7 +427,7 @@ void registerMeshCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "exportObj",
         .doc = "Export meshes to an OBJ file in world space. Defaults to the selection.",
         .positionalDoc = "path objects...",

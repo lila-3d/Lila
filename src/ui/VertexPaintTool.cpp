@@ -3,7 +3,7 @@
 // Before Qt: Qt's emit macro breaks TBB's headers.
 #include <tbb/parallel_for.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
@@ -183,7 +183,7 @@ json runCommand(const char* name, const json& call)
 {
     try
     {
-        return cmds::execute(name, call, CallSource::UI);
+        return ops::execute(name, call, CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -1445,7 +1445,7 @@ private:
         try
         {
             // Not echoed: a stroke is hundreds of dabs, and repeating it from the script editor is rarely wanted.
-            cmds::execute("vertexColorStroke", {{"args", {n->name()}}, {"live", int64_t(token)}}, CallSource::Script);
+            ops::execute("vertexColorStroke", {{"args", {n->name()}}, {"live", int64_t(token)}}, CallSource::Script);
         }
         catch (const CommandError& e)
         {

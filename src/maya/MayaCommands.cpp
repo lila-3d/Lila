@@ -1,7 +1,7 @@
 #include "maya/Maya.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "core/Progress.h"
@@ -198,7 +198,7 @@ void registerCommands()
         flags.insert(flags.end(), importFlags().begin(), importFlags().end());
         flags.push_back({"report", "", T::Bool, false, "Return the import report instead of just the names."});
         flags.push_back({"select", "", T::Bool, true, "Select the imported roots."});
-        cmds::registerCommand({
+        ops::registerCommand({
             .name = "mayaImport",
             .doc = "Import a Maya .ma or .mb file into the scene, without Maya: transforms, groups, meshes (uvs, colors, "
                    "normals, hard edges, creases), primitive history, joints, skinClusters, locators, materials with "
@@ -231,7 +231,7 @@ void registerCommands()
         std::vector<FlagDef> flags = {{"path", "", T::String, nullptr, "The .ma or .mb file (or pass it first)."},
                                       {"force", "f", T::Bool, false, "Discard unsaved changes."}};
         flags.insert(flags.end(), importFlags().begin(), importFlags().end());
-        cmds::registerCommand({
+        ops::registerCommand({
             .name = "mayaOpen",
             .doc = "Open a Maya .ma or .mb file as a new, untitled scene (save it to keep it as .lila). Not undoable. "
                    "Returns the import report.",
@@ -265,7 +265,7 @@ void registerCommands()
             {"force", "f", T::Bool, false, "Discard unsaved changes in the current scene."},
         };
         flags.insert(flags.end(), importFlags().begin(), importFlags().end());
-        cmds::registerCommand({
+        ops::registerCommand({
             .name = "mayaConvert",
             .doc = "Convert Maya files to Lila scenes: a file to a .lila / .lilaa, or every .ma / .mb in a folder. Each "
                    "file is opened as its own scene and saved; the scene is left empty afterwards. Returns one entry per "
@@ -379,7 +379,7 @@ void registerCommands()
         });
     }
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "mayaInfo",
         .doc = "Read a Maya file without importing it: format, version, units, fileInfo, references, node counts by "
                "type and read warnings.",
@@ -419,7 +419,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "mayaReference",
         .doc = "Reference a Maya .ma or .mb file: it is converted to a .lila beside it (reused while the Maya file is unchanged) "
                "and that is referenced under a namespace, as createReference. Returns the namespace. Clears undo.",
@@ -448,7 +448,7 @@ void registerCommands()
                 log::warn("mayaReference: {}", w);
             json call = {{"args", {utf8(lila)}}};
             call["namespace"] = a.has("namespace") ? a.get<std::string>("namespace") : path.stem().string();
-            return cmds::execute("createReference", call);
+            return ops::execute("createReference", call);
         },
     });
 }

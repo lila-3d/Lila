@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "scene/Graph.h"
 #include "ui/OutlinerLogic.h"
 
@@ -10,7 +10,7 @@ namespace outliner = lila::ui::outliner;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 
 scene::NodeId idOf(const std::string& name) { return scene::Graph::current().find(name)->id(); }
 } // namespace
@@ -161,7 +161,7 @@ TEST_CASE("parent index reorders and inserts among siblings")
     CHECK(namesUnder("grp") == Names{"y", "b", "x"});
     CHECK_THROWS(run("parent", {{"args", {"x", "grp"}}, {"index", -1}}));
 
-    CHECK(cmds::toPython("parent", {{"args", {"b"}}, {"world", true}, {"index", 0}}).find("index=0") != std::string::npos);
+    CHECK(ops::toPython("parent", {{"args", {"b"}}, {"world", true}, {"index", 0}}).find("index=0") != std::string::npos);
 }
 
 TEST_CASE("outliner drop index and selection ancestors")

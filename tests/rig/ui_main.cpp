@@ -1,7 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "io/SceneFile.h"
 #include "scene/Node.h"
@@ -27,7 +27,7 @@ int main(int argc, char** argv)
 #endif
     QApplication app(argc, argv);
     lila::mainq::init();
-    lila::cmds::registerBuiltins();
+    lila::ops::registerBuiltins();
     lila::scene::types::registerBuiltins();
     lila::scene::registerRigTypes();
     lila::scene::registerCommands();

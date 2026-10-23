@@ -1,5 +1,5 @@
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "geo/Bvh.h"
 #include "geo/ObjIO.h"
 #include "geo/Ops.h"
@@ -191,14 +191,14 @@ TEST_CASE("commands: quadRemesh, relaxMesh, shrinkwrap, meshRepair undo cleanly"
     scene::Graph::current().clear();
     UndoStack::get().clear();
     makeMeshNode("src", sphere(64));
-    json r = cmds::execute("quadRemesh", {{"args", {"src"}}, {"targetFaces", 600}, {"symmetry", "x"}});
+    json r = ops::execute("quadRemesh", {{"args", {"src"}}, {"targetFaces", 600}, {"symmetry", "x"}});
     std::string name = r["name"].get<std::string>();
     CHECK(r["metrics"]["quadPercent"].get<double>() > 95.0);
     REQUIRE(scene::Graph::current().find(name));
     CHECK(outMesh(name).cornerAttrs().has("uv0"));
-    cmds::execute("relaxMesh", {{"args", {name}}, {"target", "src"}, {"iterations", 3}});
-    cmds::execute("shrinkwrap", {{"args", {name}}, {"target", "src"}});
-    cmds::execute("meshRepair", {{"args", {name}}});
+    ops::execute("relaxMesh", {{"args", {name}}, {"target", "src"}, {"iterations", 3}});
+    ops::execute("shrinkwrap", {{"args", {name}}, {"target", "src"}});
+    ops::execute("meshRepair", {{"args", {name}}});
     for (int i = 0; i < 4; ++i)
         UndoStack::get().undo();
     CHECK(scene::Graph::current().find(name) == nullptr);
@@ -209,27 +209,27 @@ TEST_CASE("commands: quad draw edits")
     scene::Graph::current().clear();
     UndoStack::get().clear();
     auto P = [](double x, double y) { return json::array({x, y, 0.0}); };
-    cmds::execute("quadDrawAddFace", {{"mesh", "retopo"}, {"create", true}, {"points", {P(0, 0), P(10, 0), P(10, 10), P(0, 10)}}});
+    ops::execute("quadDrawAddFace", {{"mesh", "retopo"}, {"create", true}, {"points", {P(0, 0), P(10, 0), P(10, 10), P(0, 10)}}});
     // Shares the first quad's right edge in the same winding, so it gets flipped to match.
-    cmds::execute("quadDrawAddFace", {{"mesh", "retopo"}, {"points", {P(10, 10), P(20, 10), P(20, 0), P(10, 0)}}, {"weld", 0.5}});
+    ops::execute("quadDrawAddFace", {{"mesh", "retopo"}, {"points", {P(10, 10), P(20, 10), P(20, 0), P(10, 0)}}, {"weld", 0.5}});
     {
         const geo::Mesh& m = outMesh("retopo");
         CHECK(m.numPoints() == 6);
         CHECK(m.numFaces() == 2);
         CHECK(geo::test::isValid(m));
     }
-    cmds::execute("quadDrawInsertLoop", {{"mesh", "retopo"}, {"edge", int(outMesh("retopo").findEdge(0, 3))}});
+    ops::execute("quadDrawInsertLoop", {{"mesh", "retopo"}, {"edge", int(outMesh("retopo").findEdge(0, 3))}});
     CHECK(outMesh("retopo").numFaces() == 4);
-    cmds::execute("quadDrawMove", {{"mesh", "retopo"}, {"points", {0}}, {"positions", {P(-1, -1)}}});
+    ops::execute("quadDrawMove", {{"mesh", "retopo"}, {"points", {0}}, {"positions", {P(-1, -1)}}});
     CHECK(outMesh("retopo").position(0) == glm::dvec3(-1, -1, 0));
-    cmds::execute("quadDrawDelete", {{"mesh", "retopo"}, {"faces", {0}}});
+    ops::execute("quadDrawDelete", {{"mesh", "retopo"}, {"faces", {0}}});
     CHECK(outMesh("retopo").numFaces() == 3);
 
     // With x symmetry each new face gets a welded mirror image.
     scene::Graph& g = scene::Graph::current();
-    cmds::execute("quadDrawAddFace", {{"mesh", "sym"}, {"create", true}, {"points", {P(0, 0), P(10, 0), P(10, 10), P(0, 10)}}});
+    ops::execute("quadDrawAddFace", {{"mesh", "sym"}, {"create", true}, {"points", {P(0, 0), P(10, 0), P(10, 10), P(0, 10)}}});
     g.setValue({g.find("sym")->id(), scene::MeshNode::kSymmetry, -1}, int64_t(1));
-    cmds::execute("quadDrawAddFace", {{"mesh", "sym"}, {"points", {P(10, 0), P(20, 0), P(20, 10), P(10, 10)}}});
+    ops::execute("quadDrawAddFace", {{"mesh", "sym"}, {"points", {P(10, 0), P(20, 0), P(20, 10), P(10, 10)}}});
     {
         const geo::Mesh& m = outMesh("sym");
         CHECK(m.numFaces() == 3);
@@ -256,7 +256,7 @@ TEST_CASE("commands: quad draw dots undo, and fill consumes dots in one step")
     };
     auto dots = [&] { return retopo::quadDrawDots(*g.find("ref_retopo")); };
     auto setDots = [&](const std::vector<glm::dvec3>& ps) {
-        cmds::execute("quadDrawSetDots", {{"mesh", "ref_retopo"}, {"reference", "ref"}, {"create", true}, {"dots", J(ps)}});
+        ops::execute("quadDrawSetDots", {{"mesh", "ref_retopo"}, {"reference", "ref"}, {"create", true}, {"dots", J(ps)}});
     };
 
     // The first dot creates the retopo mesh, connected to its reference and taking its symmetry.
@@ -287,7 +287,7 @@ TEST_CASE("commands: quad draw dots undo, and fill consumes dots in one step")
     setDots({P(10, 0), P(20, 0), P(20, 10), P(10, 10), P(40, 40)});
     {
         UndoChunk chunk("Quad Draw Fill");
-        cmds::execute("quadDrawAddFace", {{"mesh", "ref_retopo"}, {"reference", "ref"}, {"create", true},
+        ops::execute("quadDrawAddFace", {{"mesh", "ref_retopo"}, {"reference", "ref"}, {"create", true},
                                           {"points", J({P(10, 0), P(20, 0), P(20, 10), P(10, 10)})}});
         setDots({P(40, 40)});
     }
@@ -313,9 +313,9 @@ TEST_CASE("quad draw resumes on its retopo mesh after save and load")
     makeMeshNode("body", sphere(16));
     makeMeshNode("other", sphere(8));
     auto P = [](double x, double y) { return json::array({x, y, 0.0}); };
-    cmds::execute("quadDrawAddFace", {{"mesh", "body_retopo"}, {"reference", "body"}, {"create", true},
+    ops::execute("quadDrawAddFace", {{"mesh", "body_retopo"}, {"reference", "body"}, {"create", true},
                                       {"points", {P(0, 0), P(10, 0), P(10, 10), P(0, 10)}}});
-    cmds::execute("quadDrawSetDots", {{"mesh", "body_retopo"}, {"dots", {P(30, 0)}}});
+    ops::execute("quadDrawSetDots", {{"mesh", "body_retopo"}, {"dots", {P(30, 0)}}});
     g.rename(g.find("body_retopo")->id(), "topo");
 
     for (const char* ext : {".lila", ".lilaa"})
@@ -377,8 +377,8 @@ TEST_CASE("commands: polyReduce, relaxMesh flags, polyTriangulate quadSplit, dec
     UndoStack::get().clear();
     makeMeshNode("ball", sphere(32));
     const Index before = outMesh("ball").numFaces();
-    cmds::execute("setSymmetry", {{"args", {"ball"}}, {"axis", "x"}});
-    cmds::execute("polyReduce", {{"args", {"ball"}}, {"ratio", 0.3}});
+    ops::execute("setSymmetry", {{"args", {"ball"}}, {"axis", "x"}});
+    ops::execute("polyReduce", {{"args", {"ball"}}, {"ratio", 0.3}});
     const geo::Mesh reduced = outMesh("ball");
     CHECK(reduced.numFaces() < before);
     CHECK(reduced.numFaces() > before / 4);
@@ -387,10 +387,10 @@ TEST_CASE("commands: polyReduce, relaxMesh flags, polyTriangulate quadSplit, dec
     geo::SymmetryMap map = geo::SymmetryMap::build(reduced, geo::SymmetryPlane{}, 1e-9);
     CHECK(map.unmatchedCount() == 0);
 
-    cmds::execute("relaxMesh", {{"args", {"ball"}}, {"iterations", 5}, {"sharpAngle", 20.0}, {"keepHardEdges", true}, {"project", true},
+    ops::execute("relaxMesh", {{"args", {"ball"}}, {"iterations", 5}, {"sharpAngle", 20.0}, {"keepHardEdges", true}, {"project", true},
                                 {"pinBoundary", false}});
     g.select({g.find("ball")->id()});
-    cmds::execute("polyTriangulate", {{"quadSplit", "first"}});
+    ops::execute("polyTriangulate", {{"quadSplit", "first"}});
     for (Index f = 0; f < outMesh("ball").faceCapacity(); ++f)
         if (outMesh("ball").faceValid(f))
             CHECK(outMesh("ball").faceSize(f) == 3);
@@ -399,7 +399,7 @@ TEST_CASE("commands: polyReduce, relaxMesh flags, polyTriangulate quadSplit, dec
         UndoStack::get().undo();
     CHECK(outMesh("ball").numFaces() == before);
 
-    cmds::execute("addModifier", {{"args", {"ball"}}, {"kind", "decimate"}, {"params", {{"ratio", 0.2}, {"symmetry", 1}, {"keepHardEdges", true}}}});
+    ops::execute("addModifier", {{"args", {"ball"}}, {"kind", "decimate"}, {"params", {{"ratio", 0.2}, {"symmetry", 1}, {"keepHardEdges", true}}}});
     const geo::Mesh modded = outMesh("ball");
     CHECK(modded.numFaces() < before / 2);
     CHECK(modded.cornerAttrs().has("uv0"));

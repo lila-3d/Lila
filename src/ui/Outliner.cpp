@@ -1,6 +1,6 @@
 #include "ui/Outliner.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Events.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
@@ -117,7 +117,7 @@ void runCommand(const char* name, const json& call)
 {
     try
     {
-        cmds::execute(name, call, CallSource::UI);
+        ops::execute(name, call, CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -282,7 +282,7 @@ Outliner::Outliner(QWidget* parent) : QTreeWidget(parent)
             return scheduleRebuild();
         try
         {
-            cmds::execute("rename", {{"args", {n->name(), to}}}, CallSource::UI);
+            ops::execute("rename", {{"args", {n->name(), to}}}, CallSource::UI);
         }
         catch (const CommandError& e)
         {
@@ -711,9 +711,9 @@ void Outliner::pushSelectionToScene()
     try
     {
         if (names.empty())
-            cmds::execute("select", {{"clear", true}}, CallSource::UI);
+            ops::execute("select", {{"clear", true}}, CallSource::UI);
         else
-            cmds::execute("select", {{"args", names}}, CallSource::UI);
+            ops::execute("select", {{"args", names}}, CallSource::UI);
     }
     catch (const CommandError& e)
     {

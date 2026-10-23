@@ -1,5 +1,5 @@
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Profile.h"
 #include "geo/Mesh.h"
 #include "scene/DisplayLayers.h"
@@ -99,7 +99,7 @@ void registerObjectCommands()
 {
     using T = ArgType;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "duplicate",
         .doc = "Duplicate objects with their children, keeping each mesh's generator and modifier stack live. Returns the "
                "new top-level names.",
@@ -139,7 +139,7 @@ void registerObjectCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "centerPivot",
         .doc = "Move pivots to the centre of each object's bounding box (meshes) without moving the object.",
         .positionalDoc = "objects",
@@ -162,7 +162,7 @@ void registerObjectCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "freezeTransforms",
         .doc = "Bake translate/rotate/scale into mesh points (and children's transforms), leaving identity values, as "
                "Maya's Freeze Transformations. World positions don't change.",
@@ -227,7 +227,7 @@ void registerObjectCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "hide",
         .doc = "Hide objects (visibility off). Defaults to the selection.",
         .positionalDoc = "objects",
@@ -241,7 +241,7 @@ void registerObjectCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "toggleVisibility",
         .doc = "Toggle visibility (Maya's H). Defaults to the selection. Every object ends up the same: hidden if most "
                "were visible (a tie hides), shown otherwise. Returns the new visibility.",
@@ -267,7 +267,7 @@ void registerObjectCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "show",
         .doc = "Show objects. all=True shows every hidden object.",
         .positionalDoc = "objects",
@@ -289,7 +289,7 @@ void registerObjectCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "ungroup",
         .doc = "Move each group's children up to the group's parent, keeping where they are, then delete the group. "
                "Defaults to the selection; returns the children.",
@@ -317,7 +317,7 @@ void registerObjectCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "resetTransforms",
         .doc = "Put translate, rotate and scale back to their defaults (the object moves).",
         .positionalDoc = "objects",

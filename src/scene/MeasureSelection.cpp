@@ -558,7 +558,7 @@ json measureObjects(const std::vector<NodeId>& ids)
 
 void registerMeasureSelectionCommand()
 {
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "measureSelection",
         .doc = "Measure the selection without making nodes: 2 vertices or objects give distance and dx/dy/dz, 3 an angle, "
                "edges total and per-edge length, a closed edge loop or 4+ vertices a best-fit circle, faces area and "

@@ -212,7 +212,7 @@ json moveNodes(const Args& a)
             json names = json::array();
             for (NodeId n : nodes)
                 names.push_back(g.node(n)->name());
-            cmds::execute("move", {{"args", names}, {"by", vecJson(by)}, {"space", "world"}});
+            ops::execute("move", {{"args", names}, {"by", vecJson(by)}, {"space", "world"}});
         }
         if (sticky)
             for (NodeId n : nodes)
@@ -250,7 +250,7 @@ std::vector<std::pair<int, std::string>> animatedChannels(const std::string& nod
     std::vector<std::pair<int, std::string>> out;
     for (auto [attr, name] : {std::pair{int(Transform::kTranslate), "translate"}, {int(Transform::kRotate), "rotate"}, {int(Transform::kScale), "scale"}})
     {
-        const json n = cmds::execute("keyframe", {{"args", {node + "." + name}}, {"query", true}, {"keyCount", true}});
+        const json n = ops::execute("keyframe", {{"args", {node + "." + name}}, {"query", true}, {"keyCount", true}});
         if (n.is_number() && n.get<int>() > 0)
             out.push_back({attr, name});
     }
@@ -374,8 +374,8 @@ std::vector<BreakdownSample> sampleBreakdown(Graph& g, const std::vector<NodeId>
         BreakdownSample s{.id = id, .name = g.node(id)->name(), .channels = animatedChannels(g.node(id)->name())};
         if (s.channels.empty())
             continue;
-        const json prevT = cmds::execute("findKeyframe", {{"args", {s.name}}, {"which", "previous"}, {"time", now}});
-        const json nextT = cmds::execute("findKeyframe", {{"args", {s.name}}, {"which", "next"}, {"time", now}});
+        const json prevT = ops::execute("findKeyframe", {{"args", {s.name}}, {"which", "previous"}, {"time", now}});
+        const json nextT = ops::execute("findKeyframe", {{"args", {s.name}}, {"which", "next"}, {"time", now}});
         // findKeyframe wraps around; a key on the wrong side means there is none that way.
         const double tp = prevT.is_number() && prevT.get<double>() < now - kTimeEps ? prevT.get<double>() : now;
         const double tn = nextT.is_number() && nextT.get<double>() > now + kTimeEps ? nextT.get<double>() : now;

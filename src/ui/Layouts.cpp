@@ -1,6 +1,6 @@
 #include "ui/Layouts.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Events.h"
 #include "core/ExtensionContext.h"
 #include "core/PrefStore.h"
@@ -315,7 +315,7 @@ void registerCommands()
     using T = ArgType;
     FlagDef nameFlag{"name", "n", T::String, nullptr, "Layout name"};
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "listLayouts",
         .doc = "UI layouts (Maya workspaces): [{name, origin, current, shadowsBuiltIn}]. origin is builtin | user | workspace.",
         .undoable = false,
@@ -328,7 +328,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "applyLayout",
         .doc = "Arrange the window's panels, viewports and shelf as the named layout. UI only.",
         .positionalDoc = "name",
@@ -347,7 +347,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "saveLayout",
         .doc = "Save the current panel arrangement as a named layout. workspace=True saves it in the open folder's .lila/layouts.",
         .positionalDoc = "name",
@@ -362,7 +362,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "deleteLayout",
         .doc = "Delete a saved layout (the workspace copy first, when both exist). Built-ins can't be deleted; deleting a "
                "saved layout that shadows one brings the built-in back.",
@@ -377,7 +377,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "renameLayout",
         .doc = "Rename a saved layout, keeping where it is saved.",
         .positionalDoc = "name",

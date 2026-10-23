@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "geo/Mesh.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
@@ -14,7 +14,7 @@ using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 int faces(const std::string& m) { return run("meshInfo", {{"args", {m}}})["faces"].get<int>(); }
 
 int validFaces(const scene::MeshPtr& m)

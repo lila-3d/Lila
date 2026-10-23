@@ -1,5 +1,5 @@
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Profile.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
@@ -183,7 +183,7 @@ void registerLiveCommands()
     using T = ArgType;
     live::installAutoCommit();
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvLiveCommit",
         .doc = "Applies the result of a live uv drag, brush stroke or relax from the UV editor as one undo step. Only the live tools call it.",
         .flags = {{"live", "", T::Int, nullptr, "Token of the staged result."}},
@@ -206,7 +206,7 @@ void registerLiveCommands()
                                        {"pins", "", T::Bool, true, "Respect pinned uvs (uvPin)."}};
     for (const FlagDef& f : optionFlags())
         relaxFlags.push_back(f);
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvLiveRelax",
         .doc = "Relax the selected faces' uv islands with the live solver (ARAP with a stretch/compress balance, stiffness and pins), as "
                "the UV editor's Relax does, but synchronously. Never folds a triangle that was not folded.",
@@ -226,7 +226,7 @@ void registerLiveCommands()
         std::vector<FlagDef> flags = {setFlag()};
         if (!on)
             flags.push_back({"all", "", T::Bool, false, "Unpin every uv of the meshes."});
-        cmds::registerCommand({
+        ops::registerCommand({
             .name = name,
             .doc = on ? "Pin the uvs of the selected components so the live solver, unwrap and relax keep them in place."
                       : "Unpin the uvs of the selected components (all=True: of the whole meshes).",
@@ -255,7 +255,7 @@ void registerLiveCommands()
     pinCommand("uvPin", "UV Pin", true);
     pinCommand("uvUnpin", "UV Unpin", false);
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvStiffness",
         .doc = "Set how stiff the selected components' uvs are for the live solver: 1 normal, up to 20 rigid, down to 0.05 floppy.",
         .flags = {setFlag(), {"value", "", T::Float, 1.0, "Stiffness, 0.05..20."}},
@@ -273,7 +273,7 @@ void registerLiveCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvCut",
         .doc = "Cut the uvs along the selected edges (or edges= on the named mesh): marks them as seams, splits the uvs there and relaxes "
                "the affected islands so the cut opens.",
@@ -314,7 +314,7 @@ void registerLiveCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvSew",
         .doc = "Sew the uvs along the selected edges (or edges= on the named mesh): unmarks the seams and welds the two sides. With move "
                "(Maya's Move and Sew) the smaller island first travels to meet the other; then the joined island relaxes.",

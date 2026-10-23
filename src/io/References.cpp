@@ -1,7 +1,7 @@
 #include "io/References.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "core/Progress.h"
@@ -729,7 +729,7 @@ void registerCommands()
         return *r;
     };
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "createReference",
         .doc = "Reference a scene file (.lila, .lilaa) into this one under a namespace. Returns the namespace. Clears undo.",
         .positionalDoc = "path",
@@ -757,7 +757,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "removeReference",
         .doc = "Remove a reference and its nodes. Clears undo.",
         .positionalDoc = "namespace",
@@ -770,7 +770,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "reloadReference",
         .doc = "Re-read a reference's file, keeping local edits. Clears undo.",
         .positionalDoc = "namespace",
@@ -785,7 +785,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "unloadReference",
         .doc = "Take a reference's nodes out of the scene but remember it and its edits. Clears undo.",
         .positionalDoc = "namespace",
@@ -798,7 +798,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "loadReference",
         .doc = "Bring an unloaded reference back. Clears undo.",
         .positionalDoc = "namespace",
@@ -815,7 +815,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "importReference",
         .doc = "Turn a reference's nodes into ordinary scene nodes and drop the link to the file.",
         .positionalDoc = "namespace",
@@ -828,7 +828,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "references",
         .doc = "Every reference: namespace, path, loaded, and its local edits.",
         .undoable = false,

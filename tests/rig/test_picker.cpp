@@ -1,6 +1,6 @@
 #include "TestUtil.h"
 
-#include "cmds/Undo.h"
+#include "ops/Undo.h"
 #include "io/SceneFile.h"
 #include "scene/Picker.h"
 #include "scene/Poses.h"

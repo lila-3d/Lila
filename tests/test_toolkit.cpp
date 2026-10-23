@@ -1,7 +1,7 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "geo/Mesh.h"
 #include "geo/Ops.h"
 #include "scene/LastOp.h"
@@ -11,8 +11,8 @@ using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
-json ui(const char* name, json call = json::object()) { return cmds::execute(name, call, CallSource::UI); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
+json ui(const char* name, json call = json::object()) { return ops::execute(name, call, CallSource::UI); }
 int faces(const std::string& m) { return run("meshInfo", {{"args", {m}}})["faces"].get<int>(); }
 size_t selectedCount(const std::string& m, const char* kind)
 {
@@ -121,13 +121,13 @@ TEST_CASE("execute listeners see top-level commands only")
 {
     run("newScene");
     int before = 0, after = 0;
-    int id = cmds::addExecuteListener([&](const ExecuteEvent& e) { (e.done ? after : before)++; });
+    int id = ops::addExecuteListener([&](const ExecuteEvent& e) { (e.done ? after : before)++; });
     run("polyCube");
     CHECK(before == 1);
     CHECK(after == 1);
     CHECK_THROWS_AS(run("polyExtrude"), CommandError);
     CHECK(after == 2);
-    cmds::removeExecuteListener(id);
+    ops::removeExecuteListener(id);
     uint64_t serial = UndoStack::get().serial();
     run("polyCube");
     CHECK(UndoStack::get().serial() != serial);

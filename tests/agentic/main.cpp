@@ -1,7 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "core/PrefStore.h"
 #include "io/SceneFile.h"
@@ -26,7 +26,7 @@ int main(int argc, char** argv)
 #endif
     lila::mainq::init();
     lila::PrefStore::get().start();
-    lila::cmds::registerBuiltins();
+    lila::ops::registerBuiltins();
     lila::scene::types::registerBuiltins();
     lila::scene::registerCommands();
     lila::io::registerCommands();

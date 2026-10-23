@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "scene/Modifiers.h"
 #include "scene/Node.h"
 
@@ -33,14 +33,14 @@ TEST_CASE("every modifier parameter has a doc")
 
 TEST_CASE("addModifier and modifierKinds document the kinds")
 {
-    const std::string& doc = cmds::find("addModifier")->doc;
+    const std::string& doc = ops::find("addModifier")->doc;
     for (const std::string& kind : {"bevel", "mirror", "autoBevel", "decimate"})
     {
         CAPTURE(kind);
         CHECK(doc.find("- " + std::string(kind) + ": " + scene::modifiers::kindDoc(kind)) != std::string::npos);
     }
-    json docs = cmds::execute("modifierKinds", {{"docs", true}});
+    json docs = ops::execute("modifierKinds", {{"docs", true}});
     REQUIRE(docs.is_object());
     CHECK(docs["solidify"].get<std::string>() == scene::modifiers::kindDoc("solidify"));
-    CHECK(cmds::execute("modifierKinds", json::object()).is_array());
+    CHECK(ops::execute("modifierKinds", json::object()).is_array());
 }

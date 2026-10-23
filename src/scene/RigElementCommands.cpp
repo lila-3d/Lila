@@ -3,7 +3,7 @@
 
 #include "scene/RigElements.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Profile.h"
 #include "scene/Anim.h"
 #include "scene/Graph.h"
@@ -231,12 +231,12 @@ json bakeCmd(const Args& a)
 
 void registerCommands()
 {
-    if (cmds::find("ikChain"))
+    if (ops::find("ikChain"))
         return;
     using T = ArgType;
     const FlagDef parentFlag{"parent", "p", T::String, nullptr, "Node to put the element under, such as a character."};
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "ikChain",
         .doc = "Make an IK chain from a start joint to an end effector, solved by a base ikHandle. The joints keep their keyed "
                "rotate: grabbing the controller solves the chain and writes (keys) the rotations, and a locked key holds the "
@@ -253,7 +253,7 @@ void registerCommands()
         .run = createChainCmd,
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "reverseFoot",
         .doc = "Make a reverse foot on an IK chain's ankle: a control on the sole that poses the leg and rolls the foot over "
                "heel, ball and toe (roll), swivels on the ball (twist) and tips over its edges (bank). Pivots come from the "
@@ -270,7 +270,7 @@ void registerCommands()
         .run = createFootCmd,
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "snapReverseFoot",
         .doc = "Put reverse foot controls on the sole of the current pose with roll, twist and bank zeroed, or (align) level "
                "them with the pose moved into the channels. The pose is kept either way.",
@@ -290,14 +290,14 @@ void registerCommands()
                 });
                 const std::string n = g.node(f)->name();
                 if (a.get<bool>("key", true))
-                    cmds::execute("setKeyframe", {{"args", {n + ".translate", n + ".rotate", n + ".roll", n + ".twist", n + ".bank"}}});
+                    ops::execute("setKeyframe", {{"args", {n + ".translate", n + ".rotate", n + ".roll", n + ".twist", n + ".bank"}}});
                 out.push_back(n);
             }
             return out;
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "footChannels",
         .doc = "Roll, twist and bank reverse feet by degrees (or to them, with absolute) within each foot's limits, posing "
                "the leg's joints (keyed when the leg is animated).",
@@ -320,7 +320,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "footPivot",
         .doc = "Move one of reverse feet's pivots (heel, ball, toe, inner or outer edge) to a world position on the sole.",
         .positionalDoc = "reverse feet, their chains or ankles",
@@ -331,7 +331,7 @@ void registerCommands()
         .run = footPivotCmd,
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "ikPole",
         .doc = "Swing IK chains' pole by degrees (the knee or elbow turns around the line from hip to foot), posing the "
                "joints. turn also turns the controller with it, so the foot or hand follows the knee or elbow.",
@@ -354,7 +354,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "ikPose",
         .doc = "Put IK controllers at a world position and rotation (or move and turn them by an amount) and pose their "
                "chains' joints there, keyed when the chain is animated. Returns the chains.",
@@ -368,7 +368,7 @@ void registerCommands()
         .run = poseCmd,
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "ikMatch",
         .doc = "Put IK controllers (and their poles) onto the joints' current pose, which grabbing one also does. Returns the "
                "chains.",
@@ -382,7 +382,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "ikLock",
         .doc = "Lock (plant) or unlock the key at a time on IK and reverse foot controllers: a locked key holds the "
                "controller where it is, and the solver holds the hand or foot there, until the chain's next key. Toggles "
@@ -395,7 +395,7 @@ void registerCommands()
         .run = lockCmd,
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "looker",
         .doc = "Make a looker: the joint aims at it (aimAxis at the looker, upAxis toward upVector), blended by its keyable "
                "weight. Returns it.",
@@ -426,7 +426,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "twistDriver",
         .doc = "Drive twist joints from another joint's twist about the bone: a twist joint under the upper arm or thigh "
                "counters its parent's twist (source = the parent), one under the forearm or calf takes the hand's or foot's "
@@ -456,7 +456,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "bakeToDeformSkeleton",
         .doc = "Make a clean copy of the deform joints (names plus suffix, hierarchy closed over non-deform joints) keyed every "
                "frame with the evaluated world transform of each original, so IK, spaces, layers, constraints and physics end "

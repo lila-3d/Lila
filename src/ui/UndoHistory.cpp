@@ -1,7 +1,7 @@
 #include "ui/UndoHistory.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/PrefStore.h"
 #include "ui/Actions.h"
 #include "ui/Hotkeys.h"
@@ -60,7 +60,7 @@ UndoHistoryPanel::UndoHistoryPanel(QWidget* parent) : QWidget(parent)
             return;
         try
         {
-            cmds::execute("undoJump", {{"position", position}}, CallSource::UI);
+            ops::execute("undoJump", {{"position", position}}, CallSource::UI);
         }
         catch (const CommandError&)
         {

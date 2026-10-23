@@ -5,4 +5,4 @@ lila_module(lila_vcs Scene
     Provider.cpp
     SourceControl.cpp
     VcsCommands.cpp)
-target_link_libraries(lila_vcs PUBLIC lila_cmds)
+target_link_libraries(lila_vcs PUBLIC lila_ops)

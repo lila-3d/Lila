@@ -1,5 +1,5 @@
 // Throwaway visual check: builds a scatter group, opens the node editor offscreen and grabs it to a PNG.
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "gn/Gn.h"
 #include "io/SceneFile.h"
@@ -23,7 +23,7 @@ int main(int argc, char** argv)
     std::filesystem::create_directories(dir);
     _putenv_s("LILA_CONFIG_DIR", dir.string().c_str());
     mainq::init();
-    cmds::registerBuiltins();
+    ops::registerBuiltins();
     scene::types::registerBuiltins();
     gn::registerTypes();
     scene::registerCommands();
@@ -33,7 +33,7 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     ui::applyTheme(app);
 
-    auto run = [](const char* n, json c) { return cmds::execute(n, c); };
+    auto run = [](const char* n, json c) { return ops::execute(n, c); };
     auto a = [](std::initializer_list<json> l) { return json{{"args", json(l)}}; };
     std::string mesh = run("polyPlane", {{"name", "Ground"}})[0];
     run("gnCreateGroup", a({"Scatter"}));

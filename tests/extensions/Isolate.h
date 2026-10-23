@@ -1,6 +1,6 @@
 #pragma once
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "scene/Node.h"
 
@@ -30,6 +30,6 @@ inline void isolate()
     setenv("LILA_CONFIG_DIR", dir.c_str(), 1);
 #endif
     lila::mainq::init();
-    lila::cmds::registerBuiltins();
+    lila::ops::registerBuiltins();
     lila::scene::types::registerBuiltins();
 }

@@ -4,7 +4,7 @@
 #include "core/Paths.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "python/Python.h"
 #include "ui/editor/CodeEditor.h"
 #include "ui/editor/FindBar.h"
@@ -571,7 +571,7 @@ bool ScriptEditor::saveToScene(CodeEditor* editor, const QString& name, bool run
         editor->formatDocument();
     try
     {
-        cmds::execute("sceneScript", {{"args", {name.toStdString()}}, {"text", editor->toPlainText().toStdString()}, {"runOnOpen", runOnOpen}});
+        ops::execute("sceneScript", {{"args", {name.toStdString()}}, {"text", editor->toPlainText().toStdString()}, {"runOnOpen", runOnOpen}});
     }
     catch (const std::exception& e)
     {
@@ -647,7 +647,7 @@ void ScriptEditor::setRunOnOpen(CodeEditor* editor, bool on)
         return;
     try
     {
-        cmds::execute("sceneScript", {{"args", {name.toStdString()}}, {"runOnOpen", on}});
+        ops::execute("sceneScript", {{"args", {name.toStdString()}}, {"runOnOpen", on}});
     }
     catch (const std::exception& e)
     {
@@ -666,7 +666,7 @@ void ScriptEditor::removeFromScene(CodeEditor* editor)
     editor->document()->setModified(true);
     try
     {
-        cmds::execute("sceneScript", {{"args", {name.toStdString()}}, {"remove", true}});
+        ops::execute("sceneScript", {{"args", {name.toStdString()}}, {"remove", true}});
     }
     catch (const std::exception& e)
     {

@@ -1,7 +1,7 @@
 #include "sculpt/SculptSession.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "geo/Symmetry.h"
@@ -374,7 +374,7 @@ void registerCommands()
             setActive(nullptr);
     }, true);
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "sculptEnter",
         .doc = "Enter sculpt mode on a mesh: builds a temporary high-resolution proxy of its cage to sculpt on. mode='subdivide' "
                "(Catmull-Clark, levels deep) reprojects exactly on exit; 'remesh' sculpts a uniform voxel remesh; 'direct' "
@@ -395,7 +395,7 @@ void registerCommands()
             if (prev && prev->node == n.id())
                 return {{"mesh", n.name()}, {"points", prev->sculpt.mesh().numPoints()}};
             if (prev)
-                cmds::execute("sculptExit", json::object());
+                ops::execute("sculptExit", json::object());
 
             g.evaluate();
             MeshPtr cage = scene::modifiers::cage(g, n.id());
@@ -419,7 +419,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "sculptExit",
         .doc = "Leave sculpt mode, moving the low-poly cage onto the sculpt. method='fit' solves for the cage whose "
                "subdivision best matches the sculpt (least squares through the subdivision stencils); 'closest' and 'normal' "
@@ -474,7 +474,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "sculptCancel",
         .doc = "Leave sculpt mode without changing the mesh, discarding the proxy (a kept proxy stays as it was).",
         .run = [](const Args&) -> json {
@@ -488,7 +488,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "sculptStroke",
         .doc = "One brush stroke on the sculpt proxy: dabs is a list of {center, normal, radius, pressure, view, delta, direction} "
                "in world space (only center is required). Honours the mask, frozen points and the mesh's symmetry, mirrored "
@@ -530,7 +530,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "sculptMask",
         .doc = "Change the sculpt mask (masked points resist every brush) or the freeze layer (frozen points never move): "
                "clear, fill, invert, or blur (mask only).",
@@ -556,7 +556,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "sculptState",
         .doc = "The open sculpt session: {active, mesh, mode, levels, points, faces, symmetry, masked, frozen}.",
         .undoable = false,
@@ -583,7 +583,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "transferShape",
         .doc = "Move low-poly meshes onto a high-poly one (an imported sculpt): the same cage fit sculptExit uses. The first "
                "mesh is the high poly, the rest are the cages. Only positions change, so UVs and other attributes stay.",

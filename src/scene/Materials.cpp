@@ -1,7 +1,7 @@
 #include "scene/Materials.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Profile.h"
 #include "core/Paths.h"
 #include "geo/Mesh.h"
@@ -407,7 +407,7 @@ void registerCommands()
 {
     using T = ArgType;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "createMaterial",
         .doc = "Create a material (Unreal default lit inputs). Faces use it through a slot of the same name. Returns its name.",
         .positionalDoc = "name",
@@ -443,7 +443,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "assignMaterial",
         .doc = "Assign a material to whole objects, to faces= of one object, or (with no objects) to the face selection in "
                "face mode, else the selected objects. Unused slots are dropped.",
@@ -474,7 +474,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "listMaterials",
         .doc = "Names of every material; with objects, their slots instead: [{object, slots: [{slot, material, faces}]}].",
         .positionalDoc = "[objects...]",
@@ -504,7 +504,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "materialInfo",
         .doc = "Every input of a material plus the meshes using it: {name, baseColor, ..., flipGreen, usedBy: [{object, faces}]}.",
         .positionalDoc = "material",
@@ -517,7 +517,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "setMaterialTexture",
         .doc = "Set or clear (path='') a texture: channel baseColor, metallic, roughness, normal, ambientOcclusion, orm or "
                "emissive. Stored relative to the workspace root (or the scene folder without one).",
@@ -539,7 +539,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "renameMaterial",
         .doc = "Rename a material and every slot bound to it. Returns the new name.",
         .positionalDoc = "material newName",

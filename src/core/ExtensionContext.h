@@ -1,6 +1,6 @@
 #pragma once
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Events.h"
 #include "core/Export.h"
 #include "core/Log.h"

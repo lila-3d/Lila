@@ -1,6 +1,6 @@
 #include "ui/AutoBevelUi.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "geo/Mesh.h"
@@ -36,7 +36,7 @@ void run(const char* name, json call = json::object())
 {
     try
     {
-        cmds::execute(name, call, CallSource::UI);
+        ops::execute(name, call, CallSource::UI);
     }
     catch (const CommandError& e)
     {

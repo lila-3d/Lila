@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "scene/Node.h"
 #include "scene/SceneCommands.h"
@@ -14,7 +14,7 @@ using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 
 QTreeWidgetItem* row(ui::Outliner& o, const char* name)
 {
@@ -28,7 +28,7 @@ QString style(QTreeWidgetItem* item) { return item->data(0, Qt::UserRole + 2).to
 TEST_CASE("outliner rows: icons, hidden dimming, reveal and kept collapse state")
 {
     mainq::init();
-    cmds::registerBuiltins();
+    ops::registerBuiltins();
     scene::types::registerBuiltins();
     scene::registerCommands();
 

@@ -46,7 +46,7 @@ bool isUnder(Graph& g, NodeId node, NodeId ancestor)
 std::vector<std::string> skinnedMeshes(Graph& g, NodeId root)
 {
     std::vector<std::string> out;
-    const CommandDef* info = cmds::find("skinInfo");
+    const CommandDef* info = ops::find("skinInfo");
     if (!info)
         return out;
     for (NodeId id : g.nodes())
@@ -130,25 +130,25 @@ json characterJson(Graph& g, NodeId c)
             elements.push_back({{"name", en->name()}, {"type", en->type().name}});
     json takes = json::array();
     const std::string root = textOf(n, "root");
-    if (cmds::find("listTakes"))
-        for (const json& t : cmds::execute("listTakes", json::object()))
+    if (ops::find("listTakes"))
+        for (const json& t : ops::execute("listTakes", json::object()))
             if (t.value("root", std::string()) == root || t.value("root", std::string()).empty())
                 takes.push_back(t.value("name", std::string()));
     json poses = json::array();
-    if (cmds::find("listPoses"))
+    if (ops::find("listPoses"))
         try
         {
-            poses = cmds::execute("listPoses", {{"character", poseLibraryOf(g, c)}});
+            poses = ops::execute("listPoses", {{"character", poseLibraryOf(g, c)}});
         }
         catch (const std::exception&)
         {
         }
     json templ = nullptr;
     // Rig Templates is optional: its command is there only while it is loaded.
-    if (const std::string id = textOf(n, "templateId"); !id.empty() && cmds::find("rigTemplateInfo"))
+    if (const std::string id = textOf(n, "templateId"); !id.empty() && ops::find("rigTemplateInfo"))
         try
         {
-            json t = cmds::execute("rigTemplateInfo", {{"args", {id}}});
+            json t = ops::execute("rigTemplateInfo", {{"args", {id}}});
             templ = {{"id", id}, {"name", t.value("name", id)}};
         }
         catch (const std::exception&)

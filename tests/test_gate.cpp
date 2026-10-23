@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "io/SceneFormats.h"
 #include "scene/RenderSettings.h"
 
@@ -95,19 +95,19 @@ TEST_CASE("render settings commands and scene round trip")
 {
     renderSettings().fromJson({});
 
-    json r = cmds::execute("setRenderResolution", {{"preset", "Portrait 1080x1920"}});
+    json r = ops::execute("setRenderResolution", {{"preset", "Portrait 1080x1920"}});
     CHECK(r["width"] == 1080);
     CHECK(r["height"] == 1920);
     CHECK(renderSettings().deviceAspect() == doctest::Approx(1080.0 / 1920.0));
-    r = cmds::execute("setRenderResolution", {{"width", 2000}, {"height", 1000}, {"deviceAspect", 2.4}});
+    r = ops::execute("setRenderResolution", {{"width", 2000}, {"height", 1000}, {"deviceAspect", 2.4}});
     CHECK(r["pixelAspect"].get<double>() == doctest::Approx(1.2));
-    CHECK_THROWS_AS(cmds::execute("setRenderResolution", {{"preset", "nope"}}), CommandError);
+    CHECK_THROWS_AS(ops::execute("setRenderResolution", {{"preset", "nope"}}), CommandError);
 
-    json c = cmds::execute("cameraSettings", {{"args", {"persp"}}, {"filmFit", "Horizontal"}, {"overscan", 1.3}, {"gate", true}});
+    json c = ops::execute("cameraSettings", {{"args", {"persp"}}, {"filmFit", "Horizontal"}, {"overscan", 1.3}, {"gate", true}});
     CHECK(c["filmFit"] == "horizontal");
     CHECK(renderSettings().camera("persp").resolutionGate);
     CHECK_FALSE(renderSettings().camera("top").resolutionGate);
-    CHECK_THROWS_AS(cmds::execute("cameraSettings", {{"filmFit", "stretch"}}), CommandError);
+    CHECK_THROWS_AS(ops::execute("cameraSettings", {{"filmFit", "stretch"}}), CommandError);
 
     json saved = renderSettings().toJson();
     json doc = {{"lila", 2}, {"renderSettings", saved}, {"nodes", json::array()}};

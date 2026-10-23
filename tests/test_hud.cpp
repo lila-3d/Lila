@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "geo/Mesh.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
@@ -17,7 +17,7 @@ using hud::PolyCount;
 
 namespace
 {
-json run(const std::string& name, const json& call = json::object()) { return cmds::execute(name, call); }
+json run(const std::string& name, const json& call = json::object()) { return ops::execute(name, call); }
 
 NodeId idOf(const std::string& name) { return Graph::current().find(name)->id(); }
 

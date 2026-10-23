@@ -1,7 +1,7 @@
 #include "scene/AutoBevel.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "geo/Mesh.h"
@@ -491,7 +491,7 @@ void registerCommands()
          })
         createFlags.push_back(f);
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "autoBevel",
         .doc = "Add an autoBevel modifier to the top of each mesh's stack: bevels fold edges found live on its input mesh. Returns the "
                "modifier names.",
@@ -509,14 +509,14 @@ void registerCommands()
             json out = json::array();
             for (const std::string& name : a.objects())
                 if (Node* n = g.find(name); n && n->type().isA("mesh"))
-                    out.push_back(cmds::execute("addModifier", {{"args", {name}}, {"kind", "autoBevel"}, {"params", params}}));
+                    out.push_back(ops::execute("addModifier", {{"args", {name}}, {"kind", "autoBevel"}, {"params", params}}));
             if (out.empty())
                 throw CommandError("autoBevel: select or name a mesh");
             return out;
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "bevelEdgeInfo",
         .doc = "The edges an autoBevel modifier picks on its input mesh: {edges, count, lost, editing}.",
         .positionalDoc = "modifier or mesh",
@@ -529,7 +529,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "bevelEditEdges",
         .doc = "Show an autoBevel modifier's input mesh (it and later modifiers pass through) with its edges selected, so they can "
                "be changed with the normal selection tools. Finish with bevelApplyEdges or bevelCancelEdges.",
@@ -556,7 +556,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "bevelApplyEdges",
         .doc = "Store the selected edges as an autoBevel modifier's edge set (as overrides of its rule) and end Edit Edges. Returns "
                "{added, removed}.",
@@ -595,7 +595,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "bevelCancelEdges",
         .doc = "End an autoBevel modifier's Edit Edges without changing its edge set.",
         .positionalDoc = "modifier or mesh",
@@ -609,7 +609,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "bevelClearOverrides",
         .doc = "Drop an autoBevel modifier's hand-picked edges, going back to its rule.",
         .positionalDoc = "modifier or mesh",
@@ -620,7 +620,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "bevelMeasureThin",
         .doc = "Set an autoBevel modifier's thin to 1.5 times the longest selected edge (pick a thickness edge). Returns it.",
         .positionalDoc = "modifier or mesh",
@@ -650,7 +650,7 @@ void registerCommands()
         {"minLength", "", T::Float, 0.0, "Skip edges shorter than this, cm."},
         {"completeCorners", "", T::Bool, true, "Add the quad loops joining folds that meet at an angle."},
     };
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "selectFoldEdges",
         .doc = "Select fold edges of meshes by the autoBevel rule (on the editable cage). Returns the number selected.",
         .positionalDoc = "meshes",

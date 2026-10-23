@@ -1,6 +1,6 @@
 #include "ui/MeasureTool.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
@@ -677,7 +677,7 @@ std::optional<json> measure()
 {
     try
     {
-        return cmds::execute("measureSelection", json::object(), CallSource::UI);
+        return ops::execute("measureSelection", json::object(), CallSource::UI);
     }
     catch (const CommandError& e)
     {

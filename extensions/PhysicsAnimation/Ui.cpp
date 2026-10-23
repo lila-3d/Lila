@@ -50,7 +50,7 @@ json runCommand(const char* name, const json& call = json::object())
 {
     try
     {
-        return cmds::execute(name, call, CallSource::UI);
+        return ops::execute(name, call, CallSource::UI);
     }
     catch (const std::exception& e)
     {

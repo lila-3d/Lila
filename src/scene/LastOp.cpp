@@ -1,6 +1,6 @@
 #include "scene/LastOp.h"
 
-#include "cmds/Undo.h"
+#include "ops/Undo.h"
 #include "scene/Graph.h"
 
 #include <algorithm>
@@ -45,7 +45,7 @@ void onExecute(const ExecuteEvent& e)
         return;
     }
     UndoStack& undo = UndoStack::get();
-    const CommandDef* def = cmds::find(e.name);
+    const CommandDef* def = ops::find(e.name);
     bool recorded = e.ok && e.source == CallSource::UI && def && def->adjustable && def->undoable && undo.undoLabel() == def->name &&
                     (!s.op || undo.serial() != s.op->serial);
     if (recorded)
@@ -87,7 +87,7 @@ void install()
     if (st().installed)
         return;
     st().installed = true;
-    cmds::addExecuteListener(onExecute);
+    ops::addExecuteListener(onExecute);
 }
 
 const Op* current()
@@ -135,7 +135,7 @@ void rerun(const json& flags, CallSource source)
     };
     try
     {
-        cmds::execute(op.command, call, source);
+        ops::execute(op.command, call, source);
     }
     catch (...)
     {
@@ -154,7 +154,7 @@ void rerun(const json& flags, CallSource source)
 std::vector<const FlagDef*> editableFlags(const std::string& command)
 {
     std::vector<const FlagDef*> out;
-    if (const CommandDef* def = cmds::find(command))
+    if (const CommandDef* def = ops::find(command))
         for (const FlagDef& f : def->flags)
             if (f.type == ArgType::Bool || f.type == ArgType::Int || f.type == ArgType::Float ||
                 (f.type == ArgType::String && !f.choices.empty()))
@@ -187,7 +187,7 @@ void makeNonDestructive()
     std::string kind = modifierEquivalent(op.command);
     if (kind.empty())
         throw CommandError("makeNonDestructive: " + op.command + " has no modifier equivalent");
-    const CommandDef* def = cmds::find(op.command);
+    const CommandDef* def = ops::find(op.command);
     auto value = [&](const char* flag) {
         for (const FlagDef& f : def->flags)
             if (f.name == flag)
@@ -220,7 +220,7 @@ void makeNonDestructive()
         json call = {{"args", {mesh}}, {"kind", kind}};
         if (!params.empty())
             call["params"] = params;
-        cmds::execute("addModifier", call, CallSource::UI);
+        ops::execute("addModifier", call, CallSource::UI);
     }
 }
 

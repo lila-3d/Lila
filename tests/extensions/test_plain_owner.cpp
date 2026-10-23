@@ -1,6 +1,6 @@
 #include "Isolate.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Registry.h"
 #include "extensions/ExtensionManager.h"
 #include "ui/Actions.h"
@@ -20,7 +20,7 @@ namespace
 std::vector<size_t> sizes()
 {
     return {actions::registry().size(), menus::itemRegistry().size(), panels::registry().size(), markingMenus::registry().size(),
-            modes::registry().size(), optionBox::customRegistry().size(), cmds::registry().size()};
+            modes::registry().size(), optionBox::customRegistry().size(), ops::registry().size()};
 }
 
 const std::string* ownerOf(const Registry<Action>& r, const char* id)
@@ -45,9 +45,9 @@ TEST_CASE("registrations made during an extension's init belong to it, whatever 
     CHECK(*actions::registry().ownerOf("mode.plainOwnerMode") == "plainOwner");
     CHECK(*panels::registry().ownerOf("plainOwnerPanel") == "plainOwner");
     CHECK(*modes::registry().ownerOf("plainOwnerMode") == "plainOwner");
-    REQUIRE(cmds::find("plainOwnerCommand"));
-    CHECK(cmds::find("plainOwnerCommand")->owner == "plainOwner");
-    CHECK(cmds::execute("plainOwnerCommand", json::object()) == 42);
+    REQUIRE(ops::find("plainOwnerCommand"));
+    CHECK(ops::find("plainOwnerCommand")->owner == "plainOwner");
+    CHECK(ops::execute("plainOwnerCommand", json::object()) == 42);
     CHECK(actions::run(json("plainOwner.go")));
     CHECK(modes::activate("plainOwnerMode"));
 
@@ -55,7 +55,7 @@ TEST_CASE("registrations made during an extension's init belong to it, whatever 
     CHECK(modes::current() == modes::kDefaultMode);
     CHECK(sizes() == before);
     CHECK_FALSE(actions::find("plainOwner.go"));
-    CHECK_FALSE(cmds::find("plainOwnerCommand"));
+    CHECK_FALSE(ops::find("plainOwnerCommand"));
 
     // Loads again cleanly: nothing of the first load was left behind to clash with.
     REQUIRE(mgr.load(LILA_TEST_PLAIN_OWNER_PACKAGE) == "plainOwner");

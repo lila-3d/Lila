@@ -61,4 +61,4 @@ lila_module(lila_scene Scene
 
 find_package(meshoptimizer CONFIG REQUIRED)
 find_package(manifold CONFIG REQUIRED)
-target_link_libraries(lila_scene PUBLIC lila_cmds lila_geo PRIVATE lila_deform meshoptimizer::meshoptimizer manifold::manifold)
+target_link_libraries(lila_scene PUBLIC lila_ops lila_geo PRIVATE lila_deform meshoptimizer::meshoptimizer manifold::manifold)

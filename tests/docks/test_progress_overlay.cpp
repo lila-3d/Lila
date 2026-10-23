@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "core/Progress.h"
 #include "io/SceneFile.h"
@@ -29,7 +29,7 @@ using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 
 /** The overlay card: the visible top-level window other than the main one. */
 QWidget* card(QMainWindow& win)
@@ -49,7 +49,7 @@ void setup()
         return;
     done = true;
     mainq::init();
-    cmds::registerBuiltins();
+    ops::registerBuiltins();
     scene::types::registerBuiltins();
     scene::registerCommands();
     io::registerCommands();

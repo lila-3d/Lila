@@ -1,6 +1,6 @@
 #include "scene/AnimLayer.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Profile.h"
 #include "scene/Anim.h"
 #include "scene/AnimCurve.h"
@@ -1265,7 +1265,7 @@ void registerLayerCommands()
     using T = ArgType;
     const FlagDef layerFlag{"layer", "l", T::String, nullptr, "Animation layer. Default: the active one."};
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "createAnimLayer",
         .doc = "Make an animation layer at the top of the stack, with the given objects or plugs (default the selection) "
                "as members, and make it active. Returns its name.",
@@ -1288,7 +1288,7 @@ void registerLayerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "deleteAnimLayer",
         .doc = "Delete animation layers with their curves; their members lose what the layers added.",
         .positionalDoc = "layers",
@@ -1302,7 +1302,7 @@ void registerLayerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "addAnimLayerMembers",
         .doc = "Add objects (every keyable attribute) or plugs to a layer. Returns how many attributes were added.",
         .positionalDoc = "objects or plugs",
@@ -1325,7 +1325,7 @@ void registerLayerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "removeAnimLayerMembers",
         .doc = "Take objects or plugs off a layer, deleting what the layer keyed on them. Returns how many went.",
         .positionalDoc = "objects or plugs",
@@ -1348,7 +1348,7 @@ void registerLayerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "mergeAnimLayers",
         .doc = "Bake layers (and any between them) down into the layer under the lowest, or the base animation: the "
                "result is sampled every frame across their keys, so it evaluates the same. Returns the layer merged into.",
@@ -1364,7 +1364,7 @@ void registerLayerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "extractAnimLayer",
         .doc = "Move the animation of objects or plugs from a layer (or the base animation) to a new layer just above "
                "it, leaving the result unchanged. Returns the new layer.",
@@ -1379,7 +1379,7 @@ void registerLayerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "duplicateAnimLayer",
         .doc = "Copy a layer, its settings and its curves, just above it. Returns the copy.",
         .positionalDoc = "layer",
@@ -1393,7 +1393,7 @@ void registerLayerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "reorderAnimLayer",
         .doc = "Move a layer in the stack: index (0 is just above the base animation) or by (+1 up, -1 down). Returns its new index.",
         .positionalDoc = "layer",
@@ -1412,7 +1412,7 @@ void registerLayerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "setActiveAnimLayer",
         .doc = "Choose the layer keys go to; BaseAnimation (or no argument) for the base animation.",
         .positionalDoc = "layer",
@@ -1424,7 +1424,7 @@ void registerLayerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "editAnimLayer",
         .doc = "Set a layer's weight, mute, solo, lock, mode or rotation accumulation. Returns its settings.",
         .positionalDoc = "layer",
@@ -1459,7 +1459,7 @@ void registerLayerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "listAnimLayers",
         .doc = "The layer stack from the bottom: BaseAnimation first, then each layer's settings and members.",
         .undoable = false,

@@ -2,7 +2,7 @@
 
 #include "core/Export.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "geo/Mesh.h"
 #include "scene/Components.h"
 #include "scene/Node.h"

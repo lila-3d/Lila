@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "fbx/Fbx.h"
 #include "fbx/FbxBinary.h"
 #include "geo/ColorSets.h"
@@ -426,12 +426,12 @@ TEST_CASE("exportFbx and importFbx commands")
     g.clear();
     buildScene(g);
     fs::path path = tempFile("command.fbx");
-    json res = cmds::execute("exportFbx", {{"args", {path.string(), "Body"}}, {"profile", "ue5"}, {"atOrigin", true}});
+    json res = ops::execute("exportFbx", {{"args", {path.string(), "Body"}}, {"profile", "ue5"}, {"atOrigin", true}});
     CHECK(res.get<std::string>() == path.string());
-    CHECK_THROWS_AS(cmds::execute("exportFbx", {{"args", {path.string(), "Body"}}, {"profile", "ue7"}}), CommandError);
+    CHECK_THROWS_AS(ops::execute("exportFbx", {{"args", {path.string(), "Body"}}, {"profile", "ue7"}}), CommandError);
 
     g.clear();
-    json report = cmds::execute("importFbx", {{"args", {path.string()}}, {"report", true}});
+    json report = ops::execute("importFbx", {{"args", {path.string()}}, {"report", true}});
     REQUIRE(report["nodes"].size() == 3);
     CHECK(report["roots"] == json::array({"Body"}));
     CHECK(report["skipped"].empty());
@@ -440,7 +440,7 @@ TEST_CASE("exportFbx and importFbx commands")
     CHECK(near(body->as<glm::dvec3>(Transform::kTranslate), glm::dvec3(0.0)));
     CHECK(g.selection() == std::vector<NodeId>{body->id()});
 
-    json names = cmds::execute("importFbx", {{"args", {path.string()}}});
+    json names = ops::execute("importFbx", {{"args", {path.string()}}});
     CHECK(names.size() == 3);
     CHECK(names[0].get<std::string>() != "Body"); // made unique
 }

@@ -1,7 +1,7 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/PrefStore.h"
 #include "scene/Anim.h"
 #include "scene/AnimLayer.h"
@@ -22,7 +22,7 @@ using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 json v3(double x, double y, double z) { return json::array({x, y, z}); }
 
 /** A point on a damped spring chasing a locator, plus seeded noise: small enough to reason about, real enough to test. */

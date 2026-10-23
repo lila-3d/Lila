@@ -609,7 +609,7 @@ void registerCommandsImpl()
 {
     using T = ArgType;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "editSkeleton",
         .doc = "Edit a bound skeleton without deforming its mesh. on=True puts the skeleton (of the given meshes or "
                "joints, else every skinned one) in bind pose and holds its animation; move, orient and re-pivot joints "
@@ -644,7 +644,7 @@ void registerCommandsImpl()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "moveSkinnedJoints",
         .doc = "Change bound joints' layout without deforming the mesh or losing animation, in one step: the same as "
                "editSkeleton on, setting the values in bind pose, then editSkeleton off. Moving a joint leaves its "
@@ -730,7 +730,7 @@ void registerEditSkeletonTypes()
 
 void registerEditSkeletonCommands()
 {
-    if (cmds::find("editSkeleton"))
+    if (ops::find("editSkeleton"))
         return;
     registerCommandsImpl();
 }

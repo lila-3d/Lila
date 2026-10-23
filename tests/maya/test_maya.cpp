@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "geo/ColorSets.h"
 #include "geo/Mesh.h"
 #include "io/References.h"
@@ -669,12 +669,12 @@ TEST_CASE("maya convert: a file and a folder to .lila")
     fresh();
     io::markClean();
 
-    json one = cmds::execute("mayaConvert", {{"source", fixture("skin.ma").generic_string()}, {"destination", (out / "skin.lila").generic_string()}});
+    json one = ops::execute("mayaConvert", {{"source", fixture("skin.ma").generic_string()}, {"destination", (out / "skin.lila").generic_string()}});
     REQUIRE(one.size() == 1);
     CHECK_FALSE(one[0].contains("error"));
     CHECK(fs::exists(out / "skin.lila"));
 
-    json many = cmds::execute("mayaConvert", {{"source", fixture("generated").generic_string()},
+    json many = ops::execute("mayaConvert", {{"source", fixture("generated").generic_string()},
                                               {"destination", (out / "all").generic_string()},
                                               {"format", "ascii"}});
     CHECK(many.size() == 24);
@@ -696,7 +696,7 @@ TEST_CASE("maya import: unknown files fail cleanly, mayaInfo reads without impor
     fresh();
     maya::ImportResult r = maya::importMaya(Graph::current(), fixture("does_not_exist.ma"));
     CHECK_FALSE(r.ok);
-    json info = cmds::execute("mayaInfo", {{"args", {fixture("generated/skin.mb").generic_string()}}});
+    json info = ops::execute("mayaInfo", {{"args", {fixture("generated/skin.mb").generic_string()}}});
     CHECK(info["format"] == "binary");
     CHECK(info["nodeTypes"]["skinCluster"] == 1);
     CHECK(info["nodeTypes"]["joint"] == 3);
@@ -876,7 +876,7 @@ TEST_CASE("maya convert: a scene with references converts to a .lila that refere
     fs::path dir = refsCopy("ref_convert");
     fresh();
     io::markClean();
-    json res = cmds::execute("mayaConvert", {{"source", (dir / "refscene.mb").generic_string()},
+    json res = ops::execute("mayaConvert", {{"source", (dir / "refscene.mb").generic_string()},
                                              {"destination", (dir / "out" / "scene.lila").generic_string()}});
     REQUIRE(res.size() == 1);
     CHECK_FALSE(res[0].contains("error"));
@@ -1040,7 +1040,7 @@ TEST_CASE("maya convert: file paths are stored relative to the converted scene")
     fresh();
     io::markClean();
 
-    json res = cmds::execute("mayaConvert", {{"source", (proj / "scenes").generic_string()}, {"destination", (proj / "out").generic_string()},
+    json res = ops::execute("mayaConvert", {{"source", (proj / "scenes").generic_string()}, {"destination", (proj / "out").generic_string()},
                                              {"format", "ascii"}});
     REQUIRE(res.size() == 4);
     for (const json& e : res)

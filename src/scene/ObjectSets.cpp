@@ -1,7 +1,7 @@
 #include "scene/ObjectSets.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Profile.h"
 #include "geo/Mesh.h"
 #include "scene/Graph.h"
@@ -560,10 +560,10 @@ void registerTypes()
 
 void registerCommands()
 {
-    if (cmds::find("createSet"))
+    if (ops::find("createSet"))
         return;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "createSet",
         .doc = "Create an object set holding the members (the selected components in component mode, else the selected "
                "objects). Members are object names or components like pCube1.vtx[0:3], pCube1.e[5], pCube1.f[2]. Returns "
@@ -594,7 +594,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "addToSet",
         .doc = "Add members (the selection by default) to a set. Returns the set's members.",
         .positionalDoc = "set, members",
@@ -606,7 +606,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "removeFromSet",
         .doc = "Take members (the selection by default) out of a set. An object takes its components with it. Returns "
                "the set's members.",
@@ -619,7 +619,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "selectSetMembers",
         .doc = "Select what sets hold: their objects, and their components in component mode. Returns the members.",
         .positionalDoc = "sets",
@@ -636,7 +636,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "deleteSet",
         .doc = "Delete sets; their members stay.",
         .positionalDoc = "sets",
@@ -648,7 +648,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "listSets",
         .doc = "Every object set's name in creation order. quickSelect=True lists only quick select sets, False only plain "
                "ones; object= lists the sets that hold that object. info=True returns {name, quickSelect, members} each.",
@@ -680,7 +680,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "setMembers",
         .doc = "A set's members as names and components (pCube1, pCube1.vtx[0:3]). nodes=True gives the distinct objects "
                "instead, component owners included.",

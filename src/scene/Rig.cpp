@@ -269,7 +269,7 @@ void registerJointCommands()
 {
     using T = ArgType;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "joint",
         .doc = "Create a joint. With no parent given it goes under the selected joint, so repeated calls build a chain "
                "(the new joint is selected). Returns its name.",
@@ -322,7 +322,7 @@ void registerJointCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "orientJoint",
         .doc = "Aim each joint's primary axis at its child with the secondary axis toward a world axis, putting the "
                "rotation in jointOrient and zeroing rotate. Children keep their world placement. Leaf joints take "
@@ -391,7 +391,7 @@ void registerJointCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "mirrorJoints",
         .doc = "Mirror a joint hierarchy across a plane through the world origin. behavior=True mirrors the axes so "
                "equal rotations make mirrored poses (Maya's Behavior); False keeps world orientation. Names swap "
@@ -465,7 +465,7 @@ void registerJointCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "jointLength",
         .doc = "Length of a joint's bone (distance to its first child joint). With length= the child slides along the "
                "bone to that length. Returns the length.",
@@ -495,7 +495,7 @@ void registerJointCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "insertJoint",
         .doc = "Split a bone: insert count joints evenly between a joint and its child. Returns the new joints.",
         .positionalDoc = "joint",
@@ -534,7 +534,7 @@ void registerJointCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "rerootSkeleton",
         .doc = "Make a joint the root of its skeleton by reversing the parent chain above it. Joints keep their world "
                "placement.",
@@ -582,7 +582,7 @@ void registerRigTypes()
 
 void registerRigCommands()
 {
-    if (cmds::find("joint"))
+    if (ops::find("joint"))
         return;
     registerJointCommands();
     registerSkinCommands();

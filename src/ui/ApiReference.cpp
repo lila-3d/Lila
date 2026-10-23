@@ -1,6 +1,6 @@
 #include "ui/ApiReference.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Profile.h"
 #include "python/Python.h"
 #include "ui/PythonBridge.h"
@@ -269,7 +269,7 @@ void ApiReference::addCommands()
 {
     LILA_ZONE();
 
-    std::vector<const CommandDef*> defs = cmds::all();
+    std::vector<const CommandDef*> defs = ops::all();
     std::sort(defs.begin(), defs.end(), [](const CommandDef* a, const CommandDef* b) { return a->name < b->name; });
 
     int root = add({.key = "lila.ops", .name = "Commands", .kind = "folder",

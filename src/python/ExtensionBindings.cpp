@@ -1,4 +1,4 @@
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "python/Python.h"
@@ -155,7 +155,7 @@ void bindExtensions(nb::module_& m)
                 throw nb::value_error("command name is empty");
             // Re-registering a Python command (a reloaded script) is fine; replacing anything else is not.
             static std::set<std::string> fromPython;
-            if (const CommandDef* existing = cmds::find(name); existing && (!fromPython.contains(name) || existing->owner != owner))
+            if (const CommandDef* existing = ops::find(name); existing && (!fromPython.contains(name) || existing->owner != owner))
                 throw nb::value_error(("command '" + name + "' already exists" +
                                        (existing->owner.empty() ? std::string() : " (from extension " + existing->owner + ")"))
                                           .c_str());
@@ -182,25 +182,25 @@ void bindExtensions(nb::module_& m)
                 def.flags.push_back(std::move(fd));
             }
             def.run = [fn = hold(fn), name](const Args& a) { return callPython(fn, name, a); };
-            cmds::registerCommand(std::move(def));
+            ops::registerCommand(std::move(def));
             fromPython.insert(name);
         },
         nb::arg("name"), nb::arg("fn"), nb::arg("doc") = "", nb::arg("positional") = "", nb::arg("flags") = nb::list(),
         nb::arg("undoable") = true, nb::arg("owner") = "");
 
     p.def("unregister_command", [](const std::string& name) {
-        bool had = cmds::find(name) != nullptr;
-        cmds::unregisterCommand(name);
+        bool had = ops::find(name) != nullptr;
+        ops::unregisterCommand(name);
         return had;
     });
 
     p.def("unregister_owner", [](const std::string& owner) {
         std::vector<std::string> names;
-        for (const CommandDef* d : cmds::all())
+        for (const CommandDef* d : ops::all())
             if (!owner.empty() && d->owner == owner)
                 names.push_back(d->name);
         for (const std::string& n : names)
-            cmds::unregisterCommand(n);
+            ops::unregisterCommand(n);
         return int(names.size());
     });
 }

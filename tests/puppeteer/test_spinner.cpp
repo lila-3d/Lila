@@ -2,8 +2,8 @@
 
 #include "rig/RigMath.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "extensions/ExtensionManager.h"
 #include "scene/Graph.h"
 #include "scene/Transform.h"
@@ -24,12 +24,12 @@ using Approx = doctest::Approx;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 json v3(double x, double y, double z) { return json::array({x, y, z}); }
 
 void load()
 {
-    if (!cmds::find("puppeteerIkChain"))
+    if (!ops::find("puppeteerIkChain"))
         REQUIRE(extensions::ExtensionManager::get().load(LILA_TEST_PUPPETEER_PACKAGE) == "Puppeteer");
 }
 

@@ -1,4 +1,4 @@
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "core/Workspace.h"
@@ -81,7 +81,7 @@ void registerCommands()
 {
     using T = ArgType;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "unrealConnect",
         .doc = "Connect to an Unreal editor running LilaLink. Without flags, uses the first one found through the "
                "projects in the unreal prefs or on the default ports. Returns what the editor reported.",
@@ -116,7 +116,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "unrealStatus",
         .doc = "Connection state, the connected editor's hello reply, and with scan=True every editor that can be found.",
         .flags = {
@@ -144,7 +144,7 @@ void registerCommands()
     std::vector<FlagDef> importCmdFlags = importFlags();
     importCmdFlags.push_back({"file", "f", T::String, nullptr, "File to import; or pass it positionally."});
     importCmdFlags.push_back({"wait", "w", T::Bool, false, "Block until Unreal finishes and return its reply."});
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "unrealImport",
         .doc = "Import (or reimport) a file into the connected Unreal project. Connects first if needed. Returns "
                "{assets, warnings, errors} with wait=True; otherwise queues it and logs the result.",
@@ -186,7 +186,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "unrealMap",
         .doc = "Map a node to an Unreal asset so saving the scene re-exports and reimports it. Stored in the "
                "workspace (.lila/unreal.json). Replaces any existing mapping for the node. An object set maps its "
@@ -212,7 +212,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "unrealUnmap",
         .doc = "Remove the Unreal mapping of the given nodes (or the selection). Returns how many were removed.",
         .positionalDoc = "nodes",
@@ -225,14 +225,14 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "unrealMappings",
         .doc = "Every node -> Unreal asset mapping in this workspace.",
         .undoable = false,
         .run = [](const Args&) -> json { return mappings(); },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "unrealSync",
         .doc = "Export and reimport every mapped node now, as saving does. Returns how many were queued.",
         .undoable = false,

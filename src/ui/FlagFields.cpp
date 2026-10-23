@@ -19,7 +19,7 @@
 
 namespace lila::ui
 {
-namespace opt = cmds::options;
+namespace opt = ops::options;
 
 namespace
 {

@@ -1,6 +1,6 @@
 #include "scene/DisplayLayers.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Profile.h"
 #include "scene/Anim.h"
 #include "scene/Graph.h"
@@ -233,10 +233,10 @@ void registerTypes()
 
 void registerCommands()
 {
-    if (cmds::find("createDisplayLayer"))
+    if (ops::find("createDisplayLayer"))
         return;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "createDisplayLayer",
         .doc = "Create a display layer holding the objects (the selection by default), taking them out of any layer they "
                "were in. Returns its name.",
@@ -259,7 +259,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "editDisplayLayerMembers",
         .doc = "Put objects (the selection by default) in a display layer, moving them out of their old one. Naming "
                "defaultLayer takes them out of any layer. Returns the layer's members.",
@@ -283,7 +283,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "removeFromDisplayLayer",
         .doc = "Take objects (the selection by default) out of their display layers.",
         .positionalDoc = "objects",
@@ -294,7 +294,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "deleteDisplayLayer",
         .doc = "Delete display layers; their objects stay, in no layer.",
         .positionalDoc = "layers",
@@ -312,7 +312,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "displayLayer",
         .doc = "Edit a display layer's switches (V, P, display type, colour, name); with no flags, query it. Returns its "
                "info: name, visibility, hideOnPlayback, displayType, color (null for none), order and members.",
@@ -364,7 +364,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "listDisplayLayers",
         .doc = "Every display layer in panel order, each as displayLayer returns it.",
         .undoable = false,
@@ -377,7 +377,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "reorderDisplayLayer",
         .doc = "Move a display layer to a row of the Display Layers panel (0 is the top).",
         .positionalDoc = "layer",
@@ -395,7 +395,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "selectDisplayLayerMembers",
         .doc = "Select the objects in display layers.",
         .positionalDoc = "layers",

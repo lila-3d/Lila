@@ -1,7 +1,7 @@
 #include "ui/ViewportToolbar.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "scene/ComponentPick.h"
@@ -364,8 +364,8 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
         try
         {
             UndoChunk chunk("Select Camera");
-            cmds::execute("selectMode", {{"args", {"object"}}}, CallSource::UI);
-            cmds::execute("select", {{"args", {n->name()}}}, CallSource::UI);
+            ops::execute("selectMode", {{"args", {"object"}}}, CallSource::UI);
+            ops::execute("select", {{"args", {n->name()}}}, CallSource::UI);
         }
         catch (const CommandError& e)
         {

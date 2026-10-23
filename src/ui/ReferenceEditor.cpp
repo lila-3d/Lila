@@ -1,6 +1,6 @@
 #include "ui/ReferenceEditor.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Workspace.h"
@@ -51,7 +51,7 @@ ReferenceEditor::ReferenceEditor(QWidget* parent) : QWidget(parent)
     mWatcher = new QFileSystemWatcher(this);
     connect(mWatcher, &QFileSystemWatcher::fileChanged, this, [this](const QString& path) {
         QTimer::singleShot(300, this, [this, path] {
-            json refs = cmds::execute("references", json::object());
+            json refs = ops::execute("references", json::object());
             for (const json& r : refs)
                 if (QString::fromStdString(r.value("path", "")) == path)
                 {
@@ -59,7 +59,7 @@ ReferenceEditor::ReferenceEditor(QWidget* parent) : QWidget(parent)
                     if (PrefStore::get().value<bool>("general", "/references/autoReload", true))
                     {
                         log::info("reference {} changed on disk; reloading", ns);
-                        cmds::execute("reloadReference", {{"args", {ns}}}, CallSource::UI);
+                        ops::execute("reloadReference", {{"args", {ns}}}, CallSource::UI);
                     }
                     else if (!mChanged.contains(path))
                         mChanged.push_back(path);
@@ -109,7 +109,7 @@ void ReferenceEditor::refresh()
 {
     mStale = false;
     mTree->clear();
-    json refs = cmds::execute("references", json::object());
+    json refs = ops::execute("references", json::object());
     for (const json& r : refs)
     {
         auto* item = new QTreeWidgetItem(mTree);
@@ -144,7 +144,7 @@ void ReferenceEditor::runOnSelected(const char* command)
     {
         try
         {
-            cmds::execute(command, {{"args", {item->text(0).toStdString()}}}, CallSource::UI);
+            ops::execute(command, {{"args", {item->text(0).toStdString()}}}, CallSource::UI);
             mChanged.removeAll(item->text(3));
         }
         catch (const CommandError& e)
@@ -165,7 +165,7 @@ void ReferenceEditor::createReferenceDialog(QWidget* parent)
     bool maya = file.endsWith(".ma", Qt::CaseInsensitive) || file.endsWith(".mb", Qt::CaseInsensitive);
     try
     {
-        cmds::execute(maya ? "mayaReference" : "createReference", {{"args", {file.toStdString()}}}, CallSource::UI);
+        ops::execute(maya ? "mayaReference" : "createReference", {{"args", {file.toStdString()}}}, CallSource::UI);
     }
     catch (const CommandError& e)
     {

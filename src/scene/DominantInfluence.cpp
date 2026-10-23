@@ -143,7 +143,7 @@ void registerDominantInfluenceCommands()
 {
     using T = ArgType;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "dominantInfluence",
         .doc = "Query a skinned mesh's dominant influences: with face, the joint owning that face (null when "
                "unweighted); with joint, the faces it owns.",

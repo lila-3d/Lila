@@ -1,6 +1,6 @@
 #include "ui/TimeSlider.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
@@ -37,7 +37,7 @@ void runUi(const char* command, const json& call = json::object())
 {
     try
     {
-        cmds::execute(command, call, CallSource::UI);
+        ops::execute(command, call, CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -260,7 +260,7 @@ private:
         double t = anim::secondsOf(fr);
         if (std::abs(t - Graph::current().time()) < 1e-9)
             return;
-        cmds::execute("currentTime", {{"args", {t}}});
+        ops::execute("currentTime", {{"args", {t}}});
         notifyTimeChanged();
     }
 
@@ -364,7 +364,7 @@ protected:
         else
             mx = std::clamp(mStartMax + d, mStartMin, hi);
         if (mn != frameOf(pb.minTime) || mx != frameOf(pb.maxTime))
-            cmds::execute("playbackOptions", {{"minTime", anim::secondsOf(mn)}, {"maxTime", anim::secondsOf(mx)}});
+            ops::execute("playbackOptions", {{"minTime", anim::secondsOf(mn)}, {"maxTime", anim::secondsOf(mx)}});
     }
 
     void mouseReleaseEvent(QMouseEvent*) override
@@ -517,7 +517,7 @@ TimeSlider::TimeSlider(QWidget* parent) : QWidget(parent)
     setStyleSheet("QToolButton:checked { background: #686868; border: 1px solid #b4b4b4; border-radius: 2px; }");
 
     connect(mFrame, &QSpinBox::valueChanged, this, [](int f) {
-        cmds::execute("currentTime", {{"args", {anim::secondsOf(f)}}});
+        ops::execute("currentTime", {{"args", {anim::secondsOf(f)}}});
         notifyTimeChanged();
     });
     auto rangeField = [this](QSpinBox* s, const char* flag) {

@@ -1,6 +1,6 @@
 #include "ui/AnimLayersPanel.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "scene/AnimLayer.h"
 #include "scene/Graph.h"
@@ -39,7 +39,7 @@ json run(const char* command, const json& call)
 {
     try
     {
-        return cmds::execute(command, call, CallSource::UI);
+        return ops::execute(command, call, CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -179,7 +179,7 @@ void AnimLayersPanel::scheduleRefresh()
 void AnimLayersPanel::refresh()
 {
     const QColor dim = palette().color(QPalette::Disabled, QPalette::Text);
-    json stack = cmds::execute("listAnimLayers", json::object(), CallSource::Script);
+    json stack = ops::execute("listAnimLayers", json::object(), CallSource::Script);
     if (!stack.is_array())
         return;
 

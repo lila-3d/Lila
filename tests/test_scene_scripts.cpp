@@ -1,7 +1,7 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "io/SceneFormats.h"
 #include "scene/SceneScripts.h"
 
@@ -41,24 +41,24 @@ TEST_CASE("scene scripts survive both file formats")
 
 TEST_CASE("sceneScript command is undoable and saves with the scene")
 {
-    cmds::execute("newScene", json::object());
+    ops::execute("newScene", json::object());
     CHECK(scripts::all().empty());
-    cmds::execute("sceneScript", {{"args", {"tool"}}, {"text", kAwkward}});
+    ops::execute("sceneScript", {{"args", {"tool"}}, {"text", kAwkward}});
     REQUIRE(scripts::find("tool"));
     CHECK(scripts::find("tool")->text == kAwkward);
     CHECK(!scripts::find("tool")->runOnOpen);
 
-    cmds::execute("sceneScript", {{"args", {"tool"}}, {"runOnOpen", true}});
+    ops::execute("sceneScript", {{"args", {"tool"}}, {"runOnOpen", true}});
     CHECK(scripts::find("tool")->runOnOpen);
     UndoStack::get().undo();
     CHECK(!scripts::find("tool")->runOnOpen);
     UndoStack::get().redo();
     CHECK(scripts::find("tool")->runOnOpen);
 
-    cmds::execute("sceneScript", {{"args", {"tool"}}, {"rename", "tool2"}});
+    ops::execute("sceneScript", {{"args", {"tool"}}, {"rename", "tool2"}});
     CHECK(!scripts::find("tool"));
     CHECK(scripts::find("tool2"));
-    CHECK_THROWS(cmds::execute("sceneScript", {{"args", {"missing"}}, {"query", true}}));
+    CHECK_THROWS(ops::execute("sceneScript", {{"args", {"missing"}}, {"query", true}}));
 
     std::vector<scripts::Script> offered;
     scripts::setOpenHandler([&](const std::vector<scripts::Script>& s) { offered = s; });
@@ -66,11 +66,11 @@ TEST_CASE("sceneScript command is undoable and saves with the scene")
     for (const char* ext : {".lila", ".lilaa"})
     {
         auto path = (dir / (std::string("scripts") + ext)).string();
-        cmds::execute("saveScene", {{"args", {path}}});
-        cmds::execute("newScene", json::object());
+        ops::execute("saveScene", {{"args", {path}}});
+        ops::execute("newScene", json::object());
         CHECK(scripts::all().empty());
         offered.clear();
-        cmds::execute("openScene", {{"args", {path}}});
+        ops::execute("openScene", {{"args", {path}}});
         REQUIRE(scripts::find("tool2"));
         CHECK(scripts::find("tool2")->text == kAwkward);
         CHECK(scripts::find("tool2")->runOnOpen);
@@ -79,9 +79,9 @@ TEST_CASE("sceneScript command is undoable and saves with the scene")
     }
     scripts::setOpenHandler(nullptr);
 
-    cmds::execute("sceneScript", {{"args", {"tool2"}}, {"remove", true}});
+    ops::execute("sceneScript", {{"args", {"tool2"}}, {"remove", true}});
     CHECK(scripts::all().empty());
     UndoStack::get().undo();
     CHECK(scripts::find("tool2"));
-    cmds::execute("newScene", json::object());
+    ops::execute("newScene", json::object());
 }

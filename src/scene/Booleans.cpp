@@ -1,5 +1,5 @@
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Profile.h"
 #include "geo/ColorSets.h"
 #include "geo/Mesh.h"
@@ -137,7 +137,7 @@ geo::Mesh fromManifold(const manifold::MeshGL& gl, const glm::dmat4& toLocal, co
 void registerBooleanCommands()
 {
     using T = ArgType;
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polyBoolean",
         .doc = "Union, difference or intersection of meshes (Manifold: robust, watertight output). The first object keeps the "
                "result; the others are deleted unless keepCutters=True.",
@@ -197,6 +197,6 @@ void registerBooleanCommands()
             return nodes[0]->name();
         },
     });
-    cmds::setAdjustable("polyBoolean");
+    ops::setAdjustable("polyBoolean");
 }
 } // namespace lila::scene

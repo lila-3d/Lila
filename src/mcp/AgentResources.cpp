@@ -1,6 +1,6 @@
 #include "mcp/McpServer.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Paths.h"
 
 #include <fstream>
@@ -41,7 +41,7 @@ std::string commandIndex()
 {
     std::string out = "\n\n## Every registered command\n\nCall any of these as `lila.ops.<name>(...)` (run `help(lila.ops.<name>)` or the `list_commands` tool with `filter` for flags).\n\n";
     std::string line;
-    for (const CommandDef* d : cmds::all())
+    for (const CommandDef* d : ops::all())
     {
         if (line.size() + d->name.size() > 110)
         {

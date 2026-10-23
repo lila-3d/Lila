@@ -1,7 +1,7 @@
 #include "uv/UvCommands.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Profile.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
@@ -384,7 +384,7 @@ void registerCommands()
     using T = ArgType;
     using K = ComponentMode;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvUnwrap",
         .doc = "Unwrap the selected faces' islands along their seams (LSCM, refined with SLIM for low stretch). Closed or holed islands "
                "are cut open first. Islands keep their place unless pack=True or they had no uvs.",
@@ -410,7 +410,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvProject",
         .doc = "Project uvs onto the selected faces: planar, box, cylindrical, spherical or camera (matrix=object to clip, 16 numbers).",
         .flags = {uvSetFlag(),
@@ -458,7 +458,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvAutoSeams",
         .doc = "Place seams for game assets on the selected faces: hard edges, then cuts that open each island along hidden, creased paths and "
                "split it where it would stretch.",
@@ -472,7 +472,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvAuto",
         .doc = "Automatic uvs: seams, low-stretch unwrap and pack, in one step.",
         .flags = join({uvSetFlag(), {"iterations", "", T::Int, 12, "SLIM iterations."}}, seamFlags(), packFlags()),
@@ -492,7 +492,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvCutEdges",
         .doc = "Mark the selected edges as uv seams.",
         .run = [](const Args&) -> json {
@@ -510,7 +510,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvSewEdges",
         .doc = "Unmark the selected seams and weld their uvs, moving the smaller island over to meet the other.",
         .flags = {uvSetFlag()},
@@ -520,7 +520,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvPack",
         .doc = "Pack the uv islands of the selected faces (or whole meshes) into 0-1 with padding for a texture size. Every selected "
                "mesh goes into one shared layout. Islands are packed by their real shapes, into the holes of other islands, with "
@@ -573,7 +573,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvStacks",
         .doc = "Stacked islands of the selected meshes: islands lying on one another with the same shape, as uvPack stack=True "
                "leaves them. Returns per mesh a list of stacks, each a list of islands as face ids. select=True selects their faces.",
@@ -610,7 +610,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvStraighten",
         .doc = "Rectify the selected islands: quad grids become straight rows and columns, other islands are fitted to a rectangle.",
         .flags = {uvSetFlag()},
@@ -635,7 +635,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvOrient",
         .doc = "Rotate the selected islands upright: by bounding box, principal axis or longest edge.",
         .flags = {uvSetFlag(), {"mode", "", T::String, "bbox", "bbox, principal or edge."}},
@@ -656,7 +656,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvTexelDensity",
         .doc = "Texel density of the selection in px/cm for a texture size. With density=, scales each island to it (world space).",
         .flags = {uvSetFlag(),
@@ -680,7 +680,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvLightmap",
         .doc = "Generate Unreal lightmap uvs: the source set's islands repacked without overlaps, padded for the lightmap resolution.",
         .flags = {{"uvSet", "", T::String, "uv1", "Lightmap set to write."},
@@ -710,7 +710,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvLayout",
         .doc = "UV report for the selection: islands, overlapping and folded faces, distortion and texel density.",
         .flags = {uvSetFlag(), {"resolution", "", T::Int, 1024, "Texture size for the density, px."}},
@@ -744,7 +744,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvSetCurrent",
         .doc = "The uv set the uv tools and editor work on. With no argument, returns it.",
         .positionalDoc = "[uvSet]",
@@ -756,7 +756,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvTransform",
         .doc = "Move, rotate (degrees) and scale the uvs of the selected components about a pivot (default: their centre).",
         .flags = {uvSetFlag(),

@@ -39,7 +39,7 @@ json viewportRegistries()
             {"types", scene::types::registry().ids()}};
 }
 
-json run(const char* cmd, json call = json::object()) { return cmds::execute(cmd, call); }
+json run(const char* cmd, json call = json::object()) { return ops::execute(cmd, call); }
 } // namespace
 
 TEST_CASE("viewport extension points: an extension registers one of each, and unloading restores every registry")

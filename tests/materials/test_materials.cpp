@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "geo/Mesh.h"
 #include "io/SceneFile.h"
 #include "scene/Graph.h"
@@ -15,7 +15,7 @@ using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 
 /** Face count per slot name of an object's evaluated mesh, checking every face id points at a named slot. */
 std::map<std::string, int> slots(const std::string& object)

@@ -1,7 +1,7 @@
 #include "fbx/Fbx.h"
 #include "fbx/GameExport.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/MainQueue.h"
 #include "core/Profile.h"
@@ -131,7 +131,7 @@ void registerCommands()
 {
     using T = ArgType;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "importFbx",
         .doc = "Import an FBX file: its node hierarchy as transforms, joints and meshes, converted to the scene's axes and "
                "cm. LimbNodes become joints (PreRotation into jointOrient), skins become skinClusters with the file's "
@@ -181,7 +181,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "exportFbx",
         .doc = "Export the evaluated meshes and transforms to a binary FBX 7.4 file. Objects default to the selection "
                "(or the whole scene with selectionOnly=False). Names go out intact, so UCX_/UBX_/USP_/UCP_ collision and "

@@ -1,7 +1,7 @@
 #include "scene/Components.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "geo/Mesh.h"
 #include "geo/Topology.h"
 #include "scene/Graph.h"
@@ -135,7 +135,7 @@ void ensureGraphListener()
 /** Whatever command creates something and selects it, the result lands in object mode so the new node shows as selected. */
 void watchCreations()
 {
-    cmds::addExecuteListener([](const ExecuteEvent& e) {
+    ops::addExecuteListener([](const ExecuteEvent& e) {
         State& s = st();
         if (!e.done)
         {
@@ -436,7 +436,7 @@ void registerCommands()
     using T = ArgType;
     watchCreations();
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "selectMode",
         .doc = "Switch between object, vertex, edge and face selection. With no argument, returns the current mode.",
         .positionalDoc = "[mode]",
@@ -476,7 +476,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "selectComponents",
         .doc = "Select vertices, edges or faces of a mesh by id. Ids may be [first, last] ranges. Without add/deselect/toggle "
                "it replaces the selection of that kind.",
@@ -511,7 +511,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "componentSelection",
         .doc = "Selected components: {mesh: {\"vertices\": [...], \"edges\": [...], \"faces\": [...]}}.",
         .undoable = false,
@@ -526,7 +526,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "convertSelection",
         .doc = "Convert the component selection to another kind and switch to that mode. In object mode the selected meshes "
                "convert as a whole: every component of that kind.",
@@ -560,7 +560,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "growSelection",
         .doc = "Grow the component selection by one ring of neighbours: points to the points of their faces, edges and "
                "faces to those sharing a point with the selection.",
@@ -597,7 +597,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "selectLoop",
         .doc = "Extend the selected edges to full edge loops (or rings with ring=True).",
         .flags = {{"ring", "", T::Bool, false, "Select edge rings instead of loops."}},
@@ -619,7 +619,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "shrinkSelection",
         .doc = "Shrink the component selection by dropping what lies on its border.",
         .run = [](const Args&) -> json {
@@ -683,7 +683,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "selectBorder",
         .doc = "Select border edges: the perimeter of selected faces, or the whole open boundary through selected edges or vertices.",
         .run = [](const Args&) -> json {
@@ -723,7 +723,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "selectByAngle",
         .doc = "Grow the face selection across edges where neighbouring faces bend less than an angle.",
         .flags = {{"angle", "", T::Float, 30.0, "Largest bend between neighbouring faces, degrees."}},
@@ -766,9 +766,9 @@ void registerCommands()
             return nullptr;
         },
     });
-    cmds::setAdjustable("selectByAngle");
+    ops::setAdjustable("selectByAngle");
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "selectAllComponents",
         .doc = "Select every component of the current kind on the hilited meshes.",
         .run = [](const Args&) -> json {

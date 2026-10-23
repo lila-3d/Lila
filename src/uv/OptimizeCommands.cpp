@@ -1,6 +1,6 @@
 #include "uv/UvCommands.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Profile.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
@@ -119,7 +119,7 @@ void registerOptimizeCommands()
     using T = ArgType;
     using K = ComponentMode;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvBff",
         .doc = "Boundary First Flattening of the selected faces' islands: conformal, with the boundary chosen first. free keeps the boundary "
                "lengths (least area distortion), disk makes a circle, rectangle straight sides between four corners (the selected vertices, "
@@ -197,7 +197,7 @@ void registerOptimizeCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvOptimize",
         .doc = "Optimise the selected uv islands from where they are: conformal (keep angles), authalic (keep areas), blend (both, weighted by "
                "mix) or isometric (SLIM). Islands keep their place, size and pins, and never fold.",
@@ -243,7 +243,7 @@ void registerOptimizeCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvMosaic",
         .doc = "Split the selected uv islands that cannot flatten below threshold along short, hidden, creased cuts, then re-solve every piece with "
                "the optimise mode. Pieces keep the island's scale; the largest stays in place, the rest line up beside it.",
@@ -270,7 +270,7 @@ void registerOptimizeCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvUnwrapSymmetric",
         .doc = "Symmetry-aware unwrap of the selected faces using the mesh's symmetry pairs: islands on one side are solved and mirrored onto "
                "their partners (flip lays the mirror image beside, stack shares the same uvs), islands across the plane come out exactly "
@@ -311,7 +311,7 @@ void registerOptimizeCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvStraightenEdges",
         .doc = "Straighten the selected edge chains in uv (edge loops, borders, seam sides): each goes onto its best-fit line with its uv length "
                "kept, and the rest of its island is re-solved around it.",
@@ -332,7 +332,7 @@ void registerOptimizeCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "uvAlignToEdge",
         .doc = "Rotate each island with selected edges so their direction lies along U or V: axis=u or v aligns an island side, nearest "
                "orients the island by the edge.",

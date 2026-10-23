@@ -1,6 +1,6 @@
 #include "ui/UvPackPanel.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "ui/Actions.h"
@@ -30,7 +30,7 @@ json runPack(const json& call)
 {
     try
     {
-        return cmds::execute("uvPack", call, CallSource::UI);
+        return ops::execute("uvPack", call, CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -302,7 +302,7 @@ void registerUvPackActions()
                           runPack(call);
                       },
                       .doc = std::move(doc),
-                      .python = cmds::toPython("uvPack", example)});
+                      .python = ops::toPython("uvPack", example)});
     };
     add("uv.pack", "Pack UVs", json::object(),
         "Pack islands with the UV editor's Pack options (resolution, padding, rotation, stacking, tiles, effort).");
@@ -321,7 +321,7 @@ void registerUvPackActions()
                       [] {
                           try
                           {
-                              cmds::execute("uvStacks", {{"select", true}}, CallSource::UI);
+                              ops::execute("uvStacks", {{"select", true}}, CallSource::UI);
                           }
                           catch (const CommandError& e)
                           {
@@ -329,6 +329,6 @@ void registerUvPackActions()
                           }
                       },
                   .doc = "Select the faces of every island stacked on another one with the same shape.",
-                  .python = cmds::toPython("uvStacks", json{{"select", true}})});
+                  .python = ops::toPython("uvStacks", json{{"select", true}})});
 }
 } // namespace lila::ui

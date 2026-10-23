@@ -1,6 +1,6 @@
-#include "cmds/Command.h"
+#include "ops/Command.h"
 
-#include "cmds/Undo.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/MainQueue.h"
 #include "core/Profile.h"
@@ -134,7 +134,7 @@ std::vector<std::string> Args::objects() const
     return out;
 }
 
-namespace cmds
+namespace ops
 {
 Registry<CommandDef>& registry()
 {
@@ -363,5 +363,5 @@ void registerBuiltins()
         },
     });
 }
-} // namespace cmds
+} // namespace ops
 } // namespace lila

@@ -1,4 +1,4 @@
-#include "cmds/Command.h"
+#include "ops/Command.h"
 
 #include <doctest/doctest.h>
 
@@ -8,7 +8,7 @@ namespace
 {
 json run(const char* name, json call = json::object())
 {
-    return cmds::execute(name, call);
+    return ops::execute(name, call);
 }
 } // namespace
 

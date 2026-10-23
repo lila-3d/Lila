@@ -1,7 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "gn/Gn.h"
 #include "io/SceneFile.h"
@@ -22,7 +22,7 @@ int main(int argc, char** argv)
     setenv("LILA_CONFIG_DIR", dir.string().c_str(), 1);
 #endif
     lila::mainq::init();
-    lila::cmds::registerBuiltins();
+    lila::ops::registerBuiltins();
     lila::scene::types::registerBuiltins();
     lila::gn::registerTypes();
     lila::scene::registerCommands();

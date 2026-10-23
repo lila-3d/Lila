@@ -127,7 +127,7 @@ size_t Context::registrationCount() const
 
 Context::Handle Context::registerCommand(CommandDef def)
 {
-    if (const CommandDef* existing = cmds::find(def.name); existing && existing->owner != owner())
+    if (const CommandDef* existing = ops::find(def.name); existing && existing->owner != owner())
     {
         log::error("extension {}: command '{}' already exists{}", owner(), def.name,
                    existing->owner.empty() ? std::string() : " (from extension " + existing->owner + ")");
@@ -135,11 +135,11 @@ Context::Handle Context::registerCommand(CommandDef def)
     }
     def.owner = owner();
     std::string name = def.name;
-    cmds::registerCommand(std::move(def));
+    ops::registerCommand(std::move(def));
     std::string own = owner();
     return track("command:" + name, [name, own] {
-        if (const CommandDef* d = cmds::find(name); d && d->owner == own)
-            cmds::unregisterCommand(name);
+        if (const CommandDef* d = ops::find(name); d && d->owner == own)
+            ops::unregisterCommand(name);
     });
 }
 

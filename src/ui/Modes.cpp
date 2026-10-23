@@ -1,6 +1,6 @@
 #include "ui/Modes.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Events.h"
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
@@ -37,7 +37,7 @@ void applyLayout(const std::string& mode, const std::string& name)
 {
     try
     {
-        cmds::execute("applyLayout", {{"name", name}}, CallSource::UI);
+        ops::execute("applyLayout", {{"name", name}}, CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -221,7 +221,7 @@ void registerBuiltins()
                   .doc = "Switches to the next mode in the mode list.", .python = "lila.ui.run_action(\"mode.next\")"});
     actions::add({.id = "mode.previous", .label = "Previous Mode", .category = "Modes", .run = [] { step(-1); },
                   .doc = "Switches to the previous mode in the mode list.", .python = "lila.ui.run_action(\"mode.previous\")"});
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "mode",
         .doc = "Switch to a mode (a bundle of layout, hotkeys, marking menus, shelf and gizmos), or with no argument return the "
                "current one. list returns every mode as {id, label, doc}.",

@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/PrefStore.h"
 #include "scene/Graph.h"
 #include "scene/HudStats.h"
@@ -11,7 +11,7 @@ using namespace lila::scene;
 
 namespace
 {
-json run(const std::string& name, const json& call = json::object()) { return cmds::execute(name, call); }
+json run(const std::string& name, const json& call = json::object()) { return ops::execute(name, call); }
 std::string made(const json& r) { return (r.is_array() ? r[0] : r).get<std::string>(); }
 NodeId idOf(const std::string& name) { return Graph::current().find(name)->id(); }
 bool own(const std::string& name) { return Graph::current().find(name)->as<bool>(Transform::kVisibility); }

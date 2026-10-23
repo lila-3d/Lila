@@ -1,6 +1,6 @@
 #include "Isolate.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Events.h"
 #include "extensions/ExtensionManager.h"
 #include "python/Python.h"
@@ -17,7 +17,7 @@ namespace
 {
 json run(const char* cmd, json call = json::object())
 {
-    return cmds::execute(cmd, call);
+    return ops::execute(cmd, call);
 }
 } // namespace
 
@@ -34,7 +34,7 @@ TEST_CASE("native extension: load, use, unload, reload")
     CHECK(pm.isLoaded("hello"));
     CHECK(heard == std::vector<std::string>{"hello"});
     events::unsubscribe(sub);
-    const CommandDef* cmd = cmds::find("helloExtension");
+    const CommandDef* cmd = ops::find("helloExtension");
     REQUIRE(cmd);
     CHECK(cmd->owner == "hello");
     CHECK(run("helloExtension", {{"args", {"Bob"}}, {"loud", true}}) == "HELLO, BOB");
@@ -65,7 +65,7 @@ TEST_CASE("native extension: load, use, unload, reload")
 
     run("unloadExtension", {{"args", {"hello"}}});
     CHECK_FALSE(pm.isLoaded("hello"));
-    CHECK_FALSE(cmds::find("helloExtension"));
+    CHECK_FALSE(ops::find("helloExtension"));
     CHECK_FALSE(scene::types::find("helloMultiply"));
 
     // Loading by id through a search path, then reload.
@@ -78,10 +78,10 @@ TEST_CASE("native extension: load, use, unload, reload")
     CHECK(run("loadExtension", {{"args", {"hello"}}}) == "hello");
     CHECK(run("loadExtension", {{"args", {"hello"}}}) == "hello");
     CHECK(run("reloadExtension", {{"args", {"hello"}}}) == "hello");
-    CHECK(cmds::find("helloExtension"));
+    CHECK(ops::find("helloExtension"));
     CHECK(run("listExtensions", {{"loaded", true}}).size() == 1);
     pm.unload("hello");
-    CHECK_FALSE(cmds::find("helloExtension"));
+    CHECK_FALSE(ops::find("helloExtension"));
 
     CHECK_THROWS_WITH_AS(run("loadExtension", {{"args", {"noSuchExtension"}}}), doctest::Contains("no extension named"), CommandError);
     CHECK_THROWS_AS(run("unloadExtension", {{"args", {"hello"}}}), CommandError);
@@ -92,14 +92,14 @@ TEST_CASE("packages: SDK version checks and broken manifests")
     isolate();
     ExtensionManager& pm = ExtensionManager::get();
     pm.addSearchPath(LILA_TEST_PACKAGES_DIR);
-    const size_t commands = cmds::all().size();
+    const size_t commands = ops::all().size();
 
     // Rejected by Lila before any of the extension's code runs (future's library does not even exist).
     CHECK_THROWS_WITH_AS(pm.load("future"), doctest::Contains("the major version must match"), extensions::ExtensionError);
     CHECK_FALSE(pm.isLoaded("future"));
     CHECK(pm.lastError("future").find("SDK 2.0") != std::string::npos);
     CHECK_THROWS_WITH_AS(pm.load("newer"), doctest::Contains("newer than this Lila's SDK"), extensions::ExtensionError);
-    CHECK(cmds::all().size() == commands);
+    CHECK(ops::all().size() == commands);
 
     bool brokenListed = false;
     for (const extensions::ExtensionInfo& info : pm.available())
@@ -139,7 +139,7 @@ TEST_CASE("python extension: load, call, errors, unload")
     CHECK(listed);
 
     CHECK(pm.load("hello_py") == "hello_py");
-    const CommandDef* cmd = cmds::find("helloPy");
+    const CommandDef* cmd = ops::find("helloPy");
     REQUIRE(cmd);
     CHECK(cmd->owner == "hello_py");
     CHECK(run("helloPy", {{"args", {"world"}}, {"loud", true}}) == "HELLO, WORLD");
@@ -152,7 +152,7 @@ TEST_CASE("python extension: load, call, errors, unload")
     CHECK(r.value == "'Hello, x'");
 
     pm.unload("hello_py");
-    CHECK_FALSE(cmds::find("helloPy"));
+    CHECK_FALSE(ops::find("helloPy"));
     CHECK(python::run("assert not hasattr(lila.ops, 'helloPy')").ok);
 
     // Direct registration, a dict flag with a short name, and a non-CommandError exception.
@@ -166,14 +166,14 @@ TEST_CASE("python extension: load, call, errors, unload")
                         "extension.register_command('pyBoom', _boom)\n")
                 .ok);
     CHECK(run("pyAdd", {{"x", 5}}) == 15);
-    CHECK(cmds::find("pyAdd")->owner == "tests");
+    CHECK(ops::find("pyAdd")->owner == "tests");
     CHECK_THROWS_WITH_AS(run("pyBoom"), doctest::Contains("kaput"), CommandError);
     CHECK(python::run("assert extension.unregister_command('pyAdd')").ok);
-    CHECK_FALSE(cmds::find("pyAdd"));
+    CHECK_FALSE(ops::find("pyAdd"));
 
     // An extension can't take over a built-in.
     CHECK_FALSE(python::run("extension.register_command('undo', _add)").ok);
-    CHECK(cmds::find("undo")->owner.empty());
+    CHECK(ops::find("undo")->owner.empty());
 
     // Python packages: dependencies load first, and can't unload from under a dependent.
     pm.addSearchPath(LILA_TEST_PACKAGES_DIR);
@@ -181,7 +181,7 @@ TEST_CASE("python extension: load, call, errors, unload")
     CHECK(pm.isLoaded("pybase"));
     CHECK(pm.loaded() == std::vector<std::string>{"pybase", "pyuser"});
     CHECK(run("pyUserHello") == "user+base");
-    CHECK(cmds::find("pyBaseHello")->owner == "pybase");
+    CHECK(ops::find("pyBaseHello")->owner == "pybase");
     CHECK_THROWS_WITH_AS(pm.unload("pybase"), doctest::Contains("pyuser depends on it"), extensions::ExtensionError);
     json info = pm.describe("pybase");
     CHECK(info["displayName"] == "Python Base");
@@ -189,8 +189,8 @@ TEST_CASE("python extension: load, call, errors, unload")
     CHECK(info["kind"] == "python");
 
     pm.unloadAll();
-    CHECK_FALSE(cmds::find("pyUserHello"));
-    CHECK_FALSE(cmds::find("pyBaseHello"));
+    CHECK_FALSE(ops::find("pyUserHello"));
+    CHECK_FALSE(ops::find("pyBaseHello"));
     CHECK(pm.loaded().empty());
     python::shutdown();
 }

@@ -1,7 +1,7 @@
 #include "uv/LiveSession.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "scene/Graph.h"
@@ -319,7 +319,7 @@ void Session::commit()
     try
     {
         UndoChunk chunk(mLabel.empty() ? "UV Live" : mLabel);
-        cmds::execute("uvLiveCommit", {{"live", int64_t(token)}}, CallSource::Script);
+        ops::execute("uvLiveCommit", {{"live", int64_t(token)}}, CallSource::Script);
     }
     catch (const CommandError& e)
     {
@@ -436,11 +436,11 @@ void installAutoCommit()
     if (installed)
         return;
     installed = true;
-    cmds::addExecuteListener([](const ExecuteEvent& e) {
+    ops::addExecuteListener([](const ExecuteEvent& e) {
         static bool busy = false;
         if (e.done || busy || e.name == "uvLiveCommit")
             return;
-        const CommandDef* def = cmds::find(e.name);
+        const CommandDef* def = ops::find(e.name);
         if (!def || (!def->undoable && e.name != "undo" && e.name != "redo"))
             return;
         if (!anyOpen())

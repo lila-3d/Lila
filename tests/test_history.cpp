@@ -1,7 +1,7 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Paths.h"
 #include "io/Recovery.h"
 #include "io/SceneFile.h"
@@ -21,7 +21,7 @@ namespace recovery = io::recovery;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 
 fs::path freshDir(const char* name)
 {

@@ -1,7 +1,7 @@
 #include "retopo/RetopoCommands.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "geo/Ops.h"
@@ -306,7 +306,7 @@ void registerCommands()
 {
     using T = ArgType;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "quadRemesh",
         .doc = "Auto quad remesh: a new all-quad mesh whose edge flow follows curvature, hard edges and guide curves, at about "
                "the target face count, with UVs (and optionally normals) transferred from the source. Open borders, sharp "
@@ -371,7 +371,7 @@ void registerCommands()
             bool uvs = a.get<bool>("transferUvs") && srcMesh->cornerAttrs().has(geo::attr::uvName(0));
             bool normals = a.get<bool>("transferNormals");
             if (uvs || normals)
-                cmds::execute("transferAttributes",
+                ops::execute("transferAttributes",
                               {{"args", json::array({src.name(), out->name()})}, {"uvs", uvs}, {"normals", normals}, {"sampleSpace", "object"}});
             std::string outName = out->name();
             if (!a.get<bool>("keepSource"))
@@ -381,7 +381,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "meshRepair",
         .doc = "Find or fix broken geometry. mode='select' selects what each enabled check finds and reports the counts; "
                "mode='repair' fixes it: welds coincident points, collapses zero-length edges, drops lamina copies, merges "
@@ -443,9 +443,9 @@ void registerCommands()
             return out;
         },
     });
-    cmds::setAdjustable("meshRepair");
+    ops::setAdjustable("meshRepair");
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "voxelRemesh",
         .doc = "Rebuild meshes as one closed, manifold quad surface from a voxel grid, whatever state they are in: closes holes, "
                "fuses intersecting and inner shells. For dirty scans and kitbashed blockouts; UVs are not kept.",
@@ -472,9 +472,9 @@ void registerCommands()
             return out;
         },
     });
-    cmds::setAdjustable("voxelRemesh");
+    ops::setAdjustable("voxelRemesh");
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "relaxMesh",
         .doc = "Even out point spacing while keeping the form: points slide over the mesh's own starting surface (or a target "
                "mesh), points on sharp creases and hard edges slide only along them, and crease corners and cone tips stay. "
@@ -538,9 +538,9 @@ void registerCommands()
             return nullptr;
         },
     });
-    cmds::setAdjustable("relaxMesh");
+    ops::setAdjustable("relaxMesh");
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "shrinkwrap",
         .doc = "Reproject meshes onto a target surface: to the closest point, along each point's normal, or along a fixed "
                "direction, optionally held off the surface by an offset; then relax them on it. Moves only the selected "
@@ -603,7 +603,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "quadDrawAddFace",
         .doc = "Quad Draw: add a face through world points, reusing existing points within weld distance (and its mirror when "
                "the mesh has symmetry). Creates the mesh when create=True. Returns the mesh name.",
@@ -654,7 +654,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "quadDrawSetDots",
         .doc = "Quad Draw: replace the retopo mesh's dots (the loose points a fill turns into a face) with world points. "
                "Creates the mesh when create=True. Returns the mesh name.",
@@ -681,7 +681,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "quadDrawDelete",
         .doc = "Quad Draw: delete faces and points (base mesh ids) of the retopo mesh, mirrored with symmetry.",
         .flags = {{"mesh", "", T::String, nullptr, "Retopo mesh."},
@@ -706,7 +706,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "quadDrawMove",
         .doc = "Quad Draw: move points (base mesh ids) to world positions; mirror partners follow with symmetry.",
         .flags = {{"mesh", "", T::String, nullptr, "Retopo mesh."},
@@ -767,7 +767,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "quadDrawInsertLoop",
         .doc = "Quad Draw: insert an edge loop across the ring through an edge (base mesh id), mirrored with symmetry.",
         .flags = {{"mesh", "", T::String, nullptr, "Retopo mesh."},

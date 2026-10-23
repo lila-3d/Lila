@@ -1,5 +1,5 @@
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "geo/Bvh.h"
 #include "geo/Ops.h"
 #include "geo/Primitives.h"
@@ -134,10 +134,10 @@ TEST_CASE("reprojection round trip leaves an untouched cage unchanged")
     scene::Node* n = makeMeshNode("rtCube", geo::makeCube({}));
     scene::Graph::current().setValue({n->id(), scene::MeshNode::kSymmetry, -1}, int64_t(1));
     geo::Mesh before = inMesh("rtCube");
-    cmds::execute("sculptEnter", {{"args", {"rtCube"}}, {"levels", 2}});
+    ops::execute("sculptEnter", {{"args", {"rtCube"}}, {"levels", 2}});
     REQUIRE(sculpt::active());
     CHECK(sculpt::active()->sculpt.mesh().numFaces() == 6 * 16);
-    cmds::execute("sculptExit", json::object());
+    ops::execute("sculptExit", json::object());
     CHECK_FALSE(sculpt::active());
     CHECK(maxDiff(before, inMesh("rtCube")) < 1e-9);
 }
@@ -197,7 +197,7 @@ TEST_CASE("relax brush keeps points on the original surface")
 
     // The standalone command: relaxMesh keeps the form too.
     makeMeshNode("relaxed", proxy);
-    cmds::execute("relaxMesh", {{"args", {"relaxed"}}, {"iterations", 10}, {"pinSeams", true}});
+    ops::execute("relaxMesh", {{"args", {"relaxed"}}, {"iterations", 10}, {"pinSeams", true}});
     const geo::Mesh& out = inMesh("relaxed");
     double cmdOff = 0.0, cmdMoved = 0.0;
     for (Index p = 0; p < out.pointCapacity(); ++p)
@@ -302,16 +302,16 @@ TEST_CASE("sculpt commands undo as single steps")
     (void)n;
     geo::Mesh before = inMesh("undoCube");
     UndoStack& u = UndoStack::get();
-    cmds::execute("sculptEnter", {{"args", {"undoCube"}}, {"levels", 2}});
+    ops::execute("sculptEnter", {{"args", {"undoCube"}}, {"levels", 2}});
     auto s = sculpt::active();
     REQUIRE(s);
     std::vector<glm::dvec3> start(s->sculpt.mesh().positions().begin(), s->sculpt.mesh().positions().end());
     json dab = {{"center", {0.0, 0.0, 50.0}}, {"normal", {0.0, 0.0, 1.0}}, {"radius", 40.0}};
-    json r = cmds::execute("sculptStroke", {{"brush", "draw"}, {"strength", 1.0}, {"dabs", json::array({dab, dab, dab})}});
+    json r = ops::execute("sculptStroke", {{"brush", "draw"}, {"strength", 1.0}, {"dabs", json::array({dab, dab, dab})}});
     CHECK(r["points"].get<int>() > 0);
     std::vector<glm::dvec3> sculpted(s->sculpt.mesh().positions().begin(), s->sculpt.mesh().positions().end());
     CHECK(sculpted != start);
-    cmds::execute("sculptExit", {{"keepProxy", true}});
+    ops::execute("sculptExit", {{"keepProxy", true}});
     CHECK_FALSE(sculpt::active());
     CHECK(maxDiff(before, inMesh("undoCube")) > 0.1);
     CHECK(scene::Graph::current().find("undoCube_sculptProxy"));
@@ -337,11 +337,11 @@ TEST_CASE("sculpt commands undo as single steps")
     CHECK(maxDiff(before, inMesh("undoCube")) > 0.1);
 
     // Re-entering resumes from the kept proxy.
-    cmds::execute("sculptEnter", {{"args", {"undoCube"}}});
+    ops::execute("sculptEnter", {{"args", {"undoCube"}}});
     REQUIRE(sculpt::active());
     CHECK(sculpt::active()->mode == sculpt::ProxyMode::Subdivide);
     CHECK(sculpt::active()->proxyNode != scene::kNoNode);
-    cmds::execute("sculptCancel", json::object());
+    ops::execute("sculptCancel", json::object());
     CHECK_FALSE(sculpt::active());
 }
 
@@ -351,7 +351,7 @@ TEST_CASE("transferShape and shrinkwrap move a cage onto a high poly")
     makeMeshNode("high", high);
     makeMeshNode("low", geo::makeCube({}));
     geo::MeshBvh highBvh(high);
-    cmds::execute("transferShape", {{"args", {"high", "low"}}, {"levels", 2}});
+    ops::execute("transferShape", {{"args", {"high", "low"}}, {"levels", 2}});
     // The fitted cage's subdivision lies near the sphere.
     geo::SubdivideOptions o;
     o.levels = 2;
@@ -362,7 +362,7 @@ TEST_CASE("transferShape and shrinkwrap move a cage onto a high poly")
     CHECK(worst < 6.0);
 
     makeMeshNode("wrapped", geo::makeCube({}));
-    cmds::execute("shrinkwrap", {{"args", {"wrapped"}}, {"target", "high"}, {"method", "normal"}, {"offset", 2.0}, {"iterations", 0}});
+    ops::execute("shrinkwrap", {{"args", {"wrapped"}}, {"target", "high"}, {"method", "normal"}, {"offset", 2.0}, {"iterations", 0}});
     const geo::Mesh& w = inMesh("wrapped");
     for (Index p = 0; p < w.pointCapacity(); ++p)
         CHECK(std::abs(glm::length(w.position(p)) - 62.0) < 0.5);

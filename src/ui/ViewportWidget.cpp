@@ -1,7 +1,7 @@
 #include "ui/ViewportWidget.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
@@ -949,7 +949,7 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
         if (hits.empty() && !shift && !ctrl)
             for (scene::NodeId id : hilited())
             {
-                cmds::execute("selectComponents", {{"args", {g.node(id)->name()}}, {flag, json::array()}}, CallSource::UI);
+                ops::execute("selectComponents", {{"args", {g.node(id)->name()}}, {flag, json::array()}}, CallSource::UI);
                 break;
             }
         for (auto& [id, ids] : hits)
@@ -964,7 +964,7 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
             else if (!first)
                 call["add"] = true;
             first = false;
-            cmds::execute("selectComponents", call, CallSource::UI);
+            ops::execute("selectComponents", call, CallSource::UI);
         }
     }
     catch (const CommandError& e)
@@ -1361,7 +1361,7 @@ void ViewportWidget::pick(QPointF a, QPointF b, Qt::KeyboardModifiers mods)
         return;
     try
     {
-        cmds::execute("select", call, CallSource::UI);
+        ops::execute("select", call, CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -1532,7 +1532,7 @@ void ViewportWidget::commitCameraEdit()
             double value = a.plug.component >= 0 && std::holds_alternative<glm::dvec3>(v) ? std::get<glm::dvec3>(v)[a.plug.component]
                            : std::holds_alternative<double>(v)                         ? std::get<double>(v)
                                                                                         : 0.0;
-            cmds::execute("setKeyframe", {{"args", {g.plugName(a.plug)}}, {"value", value}}, CallSource::UI);
+            ops::execute("setKeyframe", {{"args", {g.plugName(a.plug)}}, {"value", value}}, CallSource::UI);
         }
     }
     catch (const CommandError& e)

@@ -1,7 +1,7 @@
 #include "scene/SceneScripts.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
 
@@ -183,7 +183,7 @@ void registerCommands()
 {
     using T = ArgType;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "sceneScript",
         .doc = "Create, edit, query or remove a Python script stored in the scene file. With no name, lists the scene's "
                "scripts. runOnOpen scripts are offered to run when the scene opens, after a confirmation. Returns the "

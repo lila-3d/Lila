@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "gn/Exec.h"
 #include "gn/Gn.h"
 #include "geo/Mesh.h"
@@ -10,7 +10,7 @@ using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 json args(std::initializer_list<json> a) { return {{"args", json(a)}}; }
 int faces(const std::string& m) { return run("meshInfo", args({m}))["faces"].get<int>(); }
 json bounds(const std::string& m) { return run("meshInfo", args({m})); }

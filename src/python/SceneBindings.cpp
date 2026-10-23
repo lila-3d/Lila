@@ -1,4 +1,4 @@
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "geo/ColorSets.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
@@ -52,7 +52,7 @@ void bindScene(nb::module_& m)
             std::vector<glm::vec4> flat(values.shape(0));
             std::memcpy(flat.data(), values.data(), flat.size() * sizeof(glm::vec4));
             uint64_t token = vcolor::stashValues(std::move(flat));
-            cmds::execute("setVertexColorData", {{"args", {mesh}}, {"colorSet", set}, {"buffer", int64_t(token)}});
+            ops::execute("setVertexColorData", {{"args", {mesh}}, {"colorSet", set}, {"buffer", int64_t(token)}});
         },
         nb::arg("mesh"), nb::arg("values"), nb::arg("color_set") = "");
 

@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/PrefStore.h"
 #include "core/Workspace.h"
 #include "ui/Layouts.h"
@@ -25,7 +25,7 @@ const layouts::Entry* entry(const std::vector<layouts::Entry>& all, const std::s
 
 void ensureCommands()
 {
-    if (!cmds::find("applyLayout"))
+    if (!ops::find("applyLayout"))
         layouts::registerCommands();
 }
 } // namespace
@@ -134,9 +134,9 @@ TEST_CASE("layout commands need the UI for apply and save")
 {
     ensureCommands();
     layouts::setGuiHooks({});
-    CHECK_THROWS_AS(cmds::execute("applyLayout", {{"name", "Modeling"}}), CommandError);
-    CHECK_THROWS_AS(cmds::execute("saveLayout", {{"args", {"X"}}}), CommandError);
-    json listed = cmds::execute("listLayouts", json::object());
+    CHECK_THROWS_AS(ops::execute("applyLayout", {{"name", "Modeling"}}), CommandError);
+    CHECK_THROWS_AS(ops::execute("saveLayout", {{"args", {"X"}}}), CommandError);
+    json listed = ops::execute("listLayouts", json::object());
     REQUIRE(listed.is_array());
     CHECK(listed.size() >= layouts::builtInNames().size());
     CHECK(listed[0]["origin"] == "builtin");
@@ -147,18 +147,18 @@ TEST_CASE("layout commands need the UI for apply and save")
         .apply = [&](const std::string& name, const json& l) { applied = name; appliedLayout = l; },
         .capture = [] { return json{{"version", 1}, {"state", "FFFF"}}; },
     });
-    cmds::execute("saveLayout", {{"args", {"Captured"}}});
+    ops::execute("saveLayout", {{"args", {"Captured"}}});
     CHECK(layouts::read("Captured")->value("state", "") == "FFFF");
     CHECK(layouts::current() == "Captured");
-    cmds::execute("applyLayout", {{"args", {"UV Editing"}}});
+    ops::execute("applyLayout", {{"args", {"UV Editing"}}});
     CHECK(applied == "UV Editing");
     CHECK(appliedLayout.contains("preset"));
     CHECK(layouts::current() == "UV Editing");
-    CHECK_THROWS_AS(cmds::execute("applyLayout", {{"name", "Missing"}}), CommandError);
-    cmds::execute("renameLayout", {{"name", "Captured"}, {"to", "Kept"}});
-    cmds::execute("deleteLayout", {{"name", "Kept"}});
+    CHECK_THROWS_AS(ops::execute("applyLayout", {{"name", "Missing"}}), CommandError);
+    ops::execute("renameLayout", {{"name", "Captured"}, {"to", "Kept"}});
+    ops::execute("deleteLayout", {{"name", "Kept"}});
     CHECK_FALSE(layouts::find("Kept"));
-    CHECK_THROWS_AS(cmds::execute("deleteLayout", {{"name", "Modeling"}}), CommandError);
+    CHECK_THROWS_AS(ops::execute("deleteLayout", {{"name", "Modeling"}}), CommandError);
 
     layouts::setGuiHooks({});
     layouts::setCurrent("");

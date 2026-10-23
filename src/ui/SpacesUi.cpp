@@ -1,6 +1,6 @@
 #include "ui/SpacesUi.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "scene/Anim.h"
 #include "scene/Graph.h"
@@ -29,7 +29,7 @@ void run(const char* name, json call = json::object())
 {
     try
     {
-        cmds::execute(name, call, CallSource::UI);
+        ops::execute(name, call, CallSource::UI);
     }
     catch (const std::exception& e)
     {

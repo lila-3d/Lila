@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/PackedArray.h"
 #include "geo/Mesh.h"
 #include "geo/Primitives.h"
@@ -119,17 +119,17 @@ TEST_CASE("binary loses only a damaged blob")
 
 TEST_CASE("save and open both formats")
 {
-    cmds::execute("newScene", json::object());
-    cmds::execute("spaceLocator", {{"name", "Saved"}, {"position", {1, 2, 3}}});
+    ops::execute("newScene", json::object());
+    ops::execute("spaceLocator", {{"name", "Saved"}, {"position", {1, 2, 3}}});
     auto dir = std::filesystem::temp_directory_path() / "lila_tests";
     for (const char* ext : {".lila", ".lilaa"})
     {
         auto path = (dir / (std::string("formats") + ext)).string();
-        cmds::execute("saveScene", {{"args", {path}}});
-        cmds::execute("newScene", json::object());
-        CHECK(!cmds::execute("objExists", {{"args", {"Saved"}}}).get<bool>());
-        cmds::execute("openScene", {{"args", {path}}});
-        CHECK(cmds::execute("getAttr", {{"args", {"Saved.ty"}}}).get<double>() == doctest::Approx(2));
+        ops::execute("saveScene", {{"args", {path}}});
+        ops::execute("newScene", json::object());
+        CHECK(!ops::execute("objExists", {{"args", {"Saved"}}}).get<bool>());
+        ops::execute("openScene", {{"args", {path}}});
+        CHECK(ops::execute("getAttr", {{"args", {"Saved.ty"}}}).get<double>() == doctest::Approx(2));
     }
 }
 

@@ -12,7 +12,7 @@
 #include "geo/ObjIO.h"
 #include "geo/Ops.h"
 #include "geo/Primitives.h"
-#include "cmds/Undo.h"
+#include "ops/Undo.h"
 #include "io/References.h"
 #include "io/SceneFormats.h"
 #include "maya/MayaFile.h"

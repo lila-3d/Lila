@@ -1,6 +1,6 @@
 #include "scene/Offsets.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Profile.h"
 #include "scene/Anim.h"
 #include "scene/AnimCurve.h"
@@ -458,7 +458,7 @@ NodeId create(Graph& g, const std::vector<NodeId>& jointsIn, const Options& opts
         if (opts.translate && !compensate)
             setup(anim::addMember(g, layer, {n, Transform::kTranslate, -1}, kVectorBlendType), n, false);
     }
-    cmds::execute("setActiveAnimLayer", {{"args", {g.node(layer)->name()}}});
+    ops::execute("setActiveAnimLayer", {{"args", {g.node(layer)->name()}}});
     g.evaluate();
     return layer;
 }
@@ -543,13 +543,13 @@ void remove(Graph& g, NodeId layer)
 {
     if (NodeId curve = envelopeCurve(g, layer))
         g.deleteNode(curve);
-    cmds::execute("deleteAnimLayer", {{"args", {g.node(layer)->name()}}});
+    ops::execute("deleteAnimLayer", {{"args", {g.node(layer)->name()}}});
 }
 
 void bake(Graph& g, NodeId layer)
 {
     NodeId curve = envelopeCurve(g, layer);
-    cmds::execute("mergeAnimLayers", {{"args", {g.node(layer)->name()}}});
+    ops::execute("mergeAnimLayers", {{"args", {g.node(layer)->name()}}});
     if (curve && g.node(curve))
         g.deleteNode(curve);
 }
@@ -596,13 +596,13 @@ void registerTypes()
 
 void registerCommands()
 {
-    if (cmds::find("createOffset"))
+    if (ops::find("createOffset"))
         return;
     using T = ArgType;
     const FlagDef rangeFlag{"range", "r", T::Any, nullptr, "'whole' (constant over the take) or [start, end] in frames, eased in and out."};
     const FlagDef easeFlag{"ease", "e", T::Float, nullptr, "Frames of ease at each end of the range."};
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "createOffset",
         .doc = "Offset body parts non-destructively for polish: a new additive layer (made active) holding one adjustable "
                "offset per joint, constant over the take or eased over a range. Pose on it at any frame and the whole "
@@ -646,7 +646,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "listOffsets",
         .doc = "Offset layers bottom first: [{name, joints, compensated, space, range (frames or None), ease, weight, mute}].",
         .undoable = false,
@@ -659,7 +659,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "editOffset",
         .doc = "Change an offset: weight, mute, range and ease, or a joint's control values directly. Returns its info.",
         .positionalDoc = "offset",
@@ -706,7 +706,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "deleteOffset",
         .doc = "Delete offsets: their layers, blends and envelopes. The animation underneath is untouched.",
         .positionalDoc = "offsets",
@@ -722,7 +722,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "bakeOffset",
         .doc = "Merge offsets down into the layer below (or the base animation), sampled every frame across the keys.",
         .positionalDoc = "offsets",

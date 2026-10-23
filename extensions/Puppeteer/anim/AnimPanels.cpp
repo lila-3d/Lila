@@ -274,7 +274,7 @@ QWidget* makeStacker(QWidget* parent)
         if (!ch.empty())
             try
             {
-                keys = cmds::execute("stackerKeys", {{"args", {ch}}});
+                keys = ops::execute("stackerKeys", {{"args", {ch}}});
             }
             catch (const std::exception&)
             {
@@ -354,7 +354,7 @@ QWidget* makeStacker(QWidget* parent)
             return;
         try
         {
-            const json keys = cmds::execute("stackerKeys", {{"args", {ch}}});
+            const json keys = ops::execute("stackerKeys", {{"args", {ch}}});
             if (row < int(keys["rows"].size()))
                 runCommand("currentTime", {{"args", {keys["rows"][size_t(row)]["time"]}}});
         }
@@ -451,7 +451,7 @@ QWidget* makeMixer(QWidget* parent)
         json layers;
         try
         {
-            layers = cmds::execute("listAnimLayers", json::object());
+            layers = ops::execute("listAnimLayers", json::object());
         }
         catch (const std::exception&)
         {
@@ -616,7 +616,7 @@ QWidget* makeBank(QWidget* parent)
         json takes;
         try
         {
-            takes = cmds::execute("listTakes", json::object());
+            takes = ops::execute("listTakes", json::object());
         }
         catch (const std::exception&)
         {

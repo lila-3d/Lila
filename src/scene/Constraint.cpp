@@ -347,7 +347,7 @@ void registerConstraintCommandsImpl()
     };
     const char* targetsDoc = "targets..., object";
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "parentConstraint",
         .doc = "Make the object follow the weighted blend of its targets' translation and rotation, as if parented. "
                "Running it again on a constrained object adds targets (up to 8). Returns the constraint.",
@@ -356,7 +356,7 @@ void registerConstraintCommandsImpl()
                        {"skipRotate", "sr", T::List, nullptr, "Axes left alone."}}),
         .run = [](const Args& a) -> json { return makeConstraint(Kind::Parent, a); },
     });
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "pointConstraint",
         .doc = "Make the object's pivot follow the weighted average of its targets' positions. Returns the constraint.",
         .positionalDoc = targetsDoc,
@@ -364,14 +364,14 @@ void registerConstraintCommandsImpl()
                        {"skip", "sk", T::List, nullptr, "Axes left alone."}}),
         .run = [](const Args& a) -> json { return makeConstraint(Kind::Point, a); },
     });
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "orientConstraint",
         .doc = "Make the object's orientation follow the weighted blend of its targets'. Returns the constraint.",
         .positionalDoc = targetsDoc,
         .flags = with({{"offset", "o", T::Vec3, nullptr, "Rotation offset, degrees xyz."}, {"skip", "sk", T::List, nullptr, "Axes left alone."}}),
         .run = [](const Args& a) -> json { return makeConstraint(Kind::Orient, a); },
     });
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "aimConstraint",
         .doc = "Turn the object so aimVector points at its targets and upVector leans toward the world up. The aim "
                "starts from the object's position when constrained (restTranslate). Returns the constraint.",
@@ -388,7 +388,7 @@ void registerConstraintCommandsImpl()
         .run = [](const Args& a) -> json { return makeConstraint(Kind::Aim, a); },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "removeConstraint",
         .doc = "Delete constraints (give the constraints or the constrained objects). The objects keep their current pose.",
         .positionalDoc = "constraints or objects",

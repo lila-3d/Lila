@@ -92,7 +92,7 @@ struct ExecuteEvent
     bool ok = false;   // with done: it returned without throwing
 };
 
-namespace cmds
+namespace ops
 {
 /** Every command, owner-tagged; registerCommand and friends go through it. */
 LILA_FOUNDATION_API Registry<CommandDef>& registry();
@@ -118,5 +118,5 @@ LILA_FOUNDATION_API std::string toPython(std::string_view name, const json& call
 LILA_FOUNDATION_API void setSelectionProvider(std::function<std::vector<std::string>()> fn);
 
 LILA_FOUNDATION_API void registerBuiltins();
-} // namespace cmds
+} // namespace ops
 } // namespace lila

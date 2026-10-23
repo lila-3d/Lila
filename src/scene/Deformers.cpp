@@ -1,6 +1,6 @@
 #include "scene/Deformers.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
 #include "core/Profile.h"
@@ -1266,7 +1266,7 @@ void registerCommands()
 {
     using T = ArgType;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "deformers",
         .doc = "A mesh's deformers (blendShape, ffd, deltaMush, ...), applied first first.",
         .positionalDoc = "mesh",
@@ -1280,7 +1280,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "deformer",
         .doc = "Add a deformer of any registered type, an extension's included, to the top of each mesh's stack. Returns the "
                "new deformers.",
@@ -1305,7 +1305,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "nonlinear",
         .doc = "Add a nonlinear deformer (bend, twist, taper, squash, sine or wave) to the meshes, driven by a new handle sized to "
                "them. Move, rotate and scale the handle to place the effect. Returns [handle, deformers...].",
@@ -1337,7 +1337,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "lattice",
         .doc = "Add an ffd deformer to the meshes with a new lattice around them. Edit the lattice's points in vertex mode (soft select "
                "and symmetry work) or transform the whole lattice. Returns [lattice, deformers...].",
@@ -1381,7 +1381,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "deltaMush",
         .doc = "Add a delta mush to the meshes: smooths out deformation artefacts (from skinning or other deformers) while keeping "
                "the rest shape's detail. Above a skinCluster the rest shape is the bind shape. Returns the deformers.",
@@ -1437,7 +1437,7 @@ void registerCommands()
         };
     };
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "wrap",
         .doc = "Make meshes follow a driver mesh (proximity wrap): each point binds to its nearest driver triangles. Give the "
                "meshes to deform first and the driver last. Returns the deformers.",
@@ -1448,7 +1448,7 @@ void registerCommands()
         .run = driverCommand("wrap", "wrap", "Wrap", true),
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "cage",
         .doc = "Deform meshes by a closed cage mesh around them (mean value coordinates). Give the meshes first and the cage last; "
                "then edit the cage's points. Returns the deformers.",
@@ -1457,7 +1457,7 @@ void registerCommands()
         .run = driverCommand("cage", "cage", "Cage", false),
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "softMod",
         .doc = "Add a soft modification handle: moving, rotating or scaling the handle moves nearby points, fading out over the "
                "radius with the soft select curve. Returns [handle, deformers...].",
@@ -1489,7 +1489,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "rebindDeformer",
         .doc = "Re-capture a deformer's bind-time state from the scene as it is now: the mesh's placement, the delta mush rest "
                "shape, wrap and cage bindings, the softMod handle's rest, or the lattice's rest box.",
@@ -1529,7 +1529,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "setDeformerWeights",
         .doc = "Set a deformer's per-point weight map: weights= the whole map (one value per point), or points= ids with value=. "
                "Weights scale the envelope per point; 1 is full effect.",
@@ -1567,7 +1567,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "deformerWeights",
         .doc = "A deformer's per-point weight map, one value per point of its input (1 where unpainted).",
         .positionalDoc = "deformer",
@@ -1584,7 +1584,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "blendShape",
         .doc = "Add a blendShape (morph targets) to the base mesh, the last argument, with a target per other mesh. Targets need "
                "the base's point count. It sits under any skinCluster, so morphs apply before skinning, as in Unreal. Returns "
@@ -1611,7 +1611,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "addBlendTarget",
         .doc = "Add target meshes to a blendShape (or the blendShape on a mesh): the first argument, then the targets. Returns the "
                "new target nodes, whose weight attrs drive the morphs.",
@@ -1635,7 +1635,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "removeBlendTarget",
         .doc = "Remove morph targets (blendTarget nodes) from their blendShape.",
         .positionalDoc = "targets",
@@ -1652,7 +1652,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "blendTargets",
         .doc = "A blendShape's targets in order: [{node, name, weight, live}]. Set a weight with setAttr(node + \".weight\", w).",
         .positionalDoc = "blendShape or mesh",
@@ -1669,7 +1669,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "extractBlendTarget",
         .doc = "Build a new mesh in a morph target's full shape (base plus offsets), to sculpt it and add it back with addBlendTarget "
                "or keep it live. Returns the new mesh.",

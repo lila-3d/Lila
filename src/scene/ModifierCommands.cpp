@@ -1,6 +1,6 @@
 #include "scene/Modifiers.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "geo/Mesh.h"
@@ -175,7 +175,7 @@ MeshPtr exportMesh(Graph& g, NodeId mesh)
 
 void registerStackCommands()
 {
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "modifierStack",
         .doc = "A mesh's stack as data: its source (generator, meshSource or null) and each modifier, applied first first, with "
                "name, type, enabled, exportEnabled and its last evaluation error.",
@@ -196,7 +196,7 @@ void registerStackCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "modifierKinds",
         .doc = "Every modifier kind addModifier accepts, including ones extensions registered. docs=True returns {kind: description} "
                "instead.",
@@ -212,7 +212,7 @@ void registerStackCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "duplicateModifier",
         .doc = "Copy a modifier with its settings and insert the copy right after it in the stack. Returns the copy's name.",
         .positionalDoc = "modifier",
@@ -246,7 +246,7 @@ void registerStackCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "applyAllModifiers",
         .doc = "Bake every modifier of a mesh into its base mesh, leaving an empty stack over an editable source.",
         .positionalDoc = "meshes",
@@ -259,7 +259,7 @@ void registerStackCommands()
                 if (mods.empty())
                     continue;
                 NodeId src = stackSource(g, mesh);
-                cmds::execute("applyModifier", {{"args", {g.node(mods.back())->name()}}});
+                ops::execute("applyModifier", {{"args", {g.node(mods.back())->name()}}});
                 if (src && !dynamic_cast<MeshSourceNode*>(g.node(src)))
                     dropIfOrphan(g, src);
             }
@@ -267,7 +267,7 @@ void registerStackCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "collapseStack",
         .doc = "Bake a mesh's whole history (generator and modifiers) into the mesh itself and delete it, like Maya's Delete History.",
         .positionalDoc = "meshes",

@@ -1,6 +1,6 @@
 #include "ui/RenderSettingsDialog.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "scene/RenderSettings.h"
 #include "ui/SpinScrub.h"
@@ -26,7 +26,7 @@ void runUi(const char* command, const json& call)
 {
     try
     {
-        cmds::execute(command, call, CallSource::UI);
+        ops::execute(command, call, CallSource::UI);
     }
     catch (const CommandError& e)
     {

@@ -2,7 +2,7 @@
 
 #include "core/Export.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 
 #include <limits>
 #include <map>
@@ -15,7 +15,7 @@
  * generated from the command's typed flags and docs. Values live in the "optionBoxes" pref file, one object per
  * command holding only the flags that differ from their defaults, so a changed registry default still applies.
  */
-namespace lila::cmds::options
+namespace lila::ops::options
 {
 enum class FieldKind : uint8_t
 {
@@ -95,4 +95,4 @@ LILA_FOUNDATION_API void reset(std::string_view command);
 LILA_FOUNDATION_API json callWith(std::string_view command, const json& call = json::object());
 
 inline constexpr const char* kPrefFile = "optionBoxes";
-} // namespace lila::cmds::options
+} // namespace lila::ops::options

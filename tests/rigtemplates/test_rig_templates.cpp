@@ -1,4 +1,4 @@
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "extensions/ExtensionManager.h"
 #include "scene/CenterInMesh.h"
 #include "scene/Graph.h"
@@ -26,7 +26,7 @@ using namespace lila::scene;
 
 namespace
 {
-json run(const char* cmd, json call = json::object()) { return cmds::execute(cmd, call); }
+json run(const char* cmd, json call = json::object()) { return ops::execute(cmd, call); }
 
 Graph& graph() { return Graph::current(); }
 
@@ -85,7 +85,7 @@ json registries()
     std::vector<std::string> pickers;
     for (const picker::Document& d : picker::templatePickers())
         pickers.push_back(d.name);
-    return {{"commands", cmds::registry().ids()},       {"types", types::registry().ids()},
+    return {{"commands", ops::registry().ids()},       {"types", types::registry().ids()},
             {"drawOverrides", ui::drawOverrides::registry().ids()}, {"actions", ui::actions::registry().ids()},
             {"menuItems", ui::menus::itemRegistry().ids()}, {"panels", ui::panels::registry().ids()},
             {"poses", poseNames},                       {"pickers", pickers}};
@@ -110,7 +110,7 @@ TEST_CASE("rig templates: loading registers everything, unloading restores every
     const json loaded = registries();
     for (auto& [key, ids] : loaded.items())
         CHECK_MESSAGE(ids != before[key], key);
-    CHECK(*cmds::registry().ownerOf("buildRigSkeleton") == "RigTemplates");
+    CHECK(*ops::registry().ownerOf("buildRigSkeleton") == "RigTemplates");
     CHECK(*types::registry().ownerOf("rigMarker") == "RigTemplates");
     CHECK(*ui::drawOverrides::registry().ownerOf("rigTemplates.marker") == "RigTemplates");
     CHECK(ui::actions::find("rigTemplates.place"));

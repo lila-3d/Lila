@@ -1,5 +1,5 @@
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "geo/ColorSets.h"
 #include "geo/Mesh.h"
 #include "geo/ObjIO.h"
@@ -22,7 +22,7 @@ using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 
 scene::MeshPtr outMesh(const std::string& name)
 {

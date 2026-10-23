@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/PrefStore.h"
 #include "scene/MeasureMath.h"
 
@@ -15,7 +15,7 @@ namespace measure = lila::scene::measure;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 
 /** Points on a tilted circle from a0 to a1 degrees. */
 std::vector<glm::dvec3> arc(glm::dvec3 c, double r, double a0, double a1, int n)

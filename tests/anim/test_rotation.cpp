@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "scene/Anim.h"
 #include "scene/Graph.h"
 #include "scene/Rig.h"
@@ -14,7 +14,7 @@ using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 json v3(double x, double y, double z) { return json::array({x, y, z}); }
 
 /** Angle in degrees between two rotations. */

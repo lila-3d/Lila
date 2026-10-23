@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "scene/Graph.h"
 #include "ui/ValueReset.h"
 
@@ -9,7 +9,7 @@ namespace vr = lila::ui::valueReset;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 
 /** What the editors do on a middle click: setAttr the plug's AttrDef default. */
 void resetPlug(const std::string& plug)
@@ -18,7 +18,7 @@ void resetPlug(const std::string& plug)
     scene::PlugRef ref = g.plug(plug);
     std::optional<json> def = vr::plugDefault(g.attr(ref), ref.component);
     REQUIRE(def);
-    cmds::execute("setAttr", {{"args", {plug, *def}}}, CallSource::UI);
+    ops::execute("setAttr", {{"args", {plug, *def}}}, CallSource::UI);
 }
 
 double number(const std::string& plug) { return run("getAttr", {{"args", {plug}}}).get<double>(); }

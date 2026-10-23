@@ -1,6 +1,6 @@
 #include "ui/ExtrudeHandles.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
@@ -31,7 +31,7 @@ const glm::vec4 kHot(1.0f, 1.0f, 1.0f, 1.0f);
 double flag(const char* name)
 {
     const lo::Op* op = lo::current();
-    const CommandDef* def = cmds::find(kCommand);
+    const CommandDef* def = ops::find(kCommand);
     if (!op || !def)
         return 0.0;
     for (const FlagDef& f : def->flags)
@@ -232,7 +232,7 @@ void ExtrudeHandles::end()
         return;
     mDrag = {};
     if (const lo::Op* op = lo::current())
-        log::write(LogLevel::Echo, cmds::toPython(op->command, op->call) + "\n");
+        log::write(LogLevel::Echo, ops::toPython(op->command, op->call) + "\n");
 }
 
 void ExtrudeHandles::cancel()

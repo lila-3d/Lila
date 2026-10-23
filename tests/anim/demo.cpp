@@ -1,7 +1,7 @@
 // Throwaway harness: builds the time slider, graph editor and channel box over a keyed scene and grabs PNGs.
 // Usage (with LILA_CONFIG_DIR pointing at a temp dir): lila_anim_demo <outdir>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "core/PrefStore.h"
 #include "scene/Anim.h"
@@ -44,7 +44,7 @@ void save(QWidget* w, const char* name)
     std::printf("saved %s\n", name);
 }
 
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 
 void mouse(QWidget* w, QEvent::Type type, QPointF at, Qt::MouseButton button, Qt::MouseButtons buttons, Qt::KeyboardModifiers mods = {})
 {
@@ -58,7 +58,7 @@ int main(int argc, char** argv)
     gOut = argc > 1 ? argv[1] : ".";
     mainq::init();
     PrefStore::get().start();
-    cmds::registerBuiltins();
+    ops::registerBuiltins();
     scene::types::registerBuiltins();
     scene::registerCommands();
     scene::anim::registerCommands();

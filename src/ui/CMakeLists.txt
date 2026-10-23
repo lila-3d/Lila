@@ -1,6 +1,6 @@
 # Layout files and commands, without Qt, so the tests and batch mode can use them.
 lila_module(lila_layouts Scene Layouts.cpp Layouts.h)
-target_link_libraries(lila_layouts PUBLIC lila_cmds)
+target_link_libraries(lila_layouts PUBLIC lila_ops)
 
 lila_module(lila_ui UI
     Actions.cpp

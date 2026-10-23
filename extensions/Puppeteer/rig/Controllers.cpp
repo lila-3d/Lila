@@ -32,7 +32,7 @@ void registerControllers(ext::Context& ctx)
             {"by", "by", T::Float, 0.0, "Degrees added to the pole angle."},
             {"turn", "tu", T::Bool, false, "Turn the controller with the pole."},
         },
-        .run = [](const Args& a) -> json { return cmds::execute("ikPole", forwarded(a)); },
+        .run = [](const Args& a) -> json { return ops::execute("ikPole", forwarded(a)); },
     });
     ctx.registerCommand({
         .name = "puppeteerFootChannels",
@@ -45,7 +45,7 @@ void registerControllers(ext::Context& ctx)
             {"bank", "b", T::Float, nullptr, "Bank: positive onto the outer edge."},
             {"absolute", "abs", T::Bool, false, "Set the values instead of adding to them."},
         },
-        .run = [](const Args& a) -> json { return cmds::execute("footChannels", forwarded(a)); },
+        .run = [](const Args& a) -> json { return ops::execute("footChannels", forwarded(a)); },
     });
     ctx.registerCommand({
         .name = "puppeteerFootPivot",
@@ -56,7 +56,7 @@ void registerControllers(ext::Context& ctx)
             {"pivot", "pv", T::String, nullptr, "Which pivot.", {"heel", "ball", "toe", "inner", "outer"}},
             {"position", "p", T::Vec3, nullptr, "World position; its height is dropped onto the sole."},
         },
-        .run = [](const Args& a) -> json { return cmds::execute("footPivot", forwarded(a)); },
+        .run = [](const Args& a) -> json { return ops::execute("footPivot", forwarded(a)); },
     });
     ctx.registerCommand({
         .name = "puppeteerFootLock",
@@ -68,7 +68,7 @@ void registerControllers(ext::Context& ctx)
             {"time", "t", T::Float, nullptr, "Seconds; default the current time."},
             {"state", "s", T::Bool, nullptr, "Locked or not; default the opposite of now."},
         },
-        .run = [](const Args& a) -> json { return cmds::execute("ikLock", forwarded(a)); },
+        .run = [](const Args& a) -> json { return ops::execute("ikLock", forwarded(a)); },
     });
 }
 } // namespace puppeteer

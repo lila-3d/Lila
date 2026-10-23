@@ -1,6 +1,6 @@
 #include "ui/ImagePlaneUi.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/Paths.h"
 #include "core/PrefStore.h"
@@ -274,7 +274,7 @@ void create(const std::string& file, const std::string& camera)
         call["camera"] = camera;
     try
     {
-        cmds::execute("imagePlane", call, CallSource::UI);
+        ops::execute("imagePlane", call, CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -378,7 +378,7 @@ void fillCameraMenu(QMenu* menu, const std::string& camera)
         QObject::connect(menu->addAction(QString::fromStdString("Select " + name)), &QAction::triggered, menu, [name] {
             try
             {
-                cmds::execute("select", {{"args", {name}}}, CallSource::UI);
+                ops::execute("select", {{"args", {name}}}, CallSource::UI);
             }
             catch (const CommandError& e)
             {

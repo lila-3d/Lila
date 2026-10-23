@@ -1,7 +1,7 @@
 #include "ui/GraphEditor.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
@@ -96,7 +96,7 @@ bool runQuiet(const char* command, const json& call)
 {
     try
     {
-        cmds::execute(command, call);
+        ops::execute(command, call);
         return true;
     }
     catch (const CommandError& e)
@@ -867,7 +867,7 @@ private:
         double t = anim::snapToFrame(timeAt(x));
         if (std::abs(t - Graph::current().time()) < kEps)
             return;
-        cmds::execute("currentTime", {{"args", {t}}});
+        ops::execute("currentTime", {{"args", {t}}});
         notifyTimeChanged();
     }
 
@@ -972,7 +972,7 @@ private:
             return;
         try
         {
-            cmds::execute("keyTangent", {{"args", {name}}, {"time", mTangent.time}, {"inAngle", mTangentAngle}, {"outAngle", mTangentAngle}},
+            ops::execute("keyTangent", {{"args", {name}}, {"time", mTangent.time}, {"inAngle", mTangentAngle}, {"outAngle", mTangentAngle}},
                           CallSource::UI);
         }
         catch (const CommandError& e)
@@ -1024,7 +1024,7 @@ public:
             return;
         try
         {
-            cmds::execute(on ? "setLoopKey" : "clearLoopKey", {{"args", names}}, CallSource::UI);
+            ops::execute(on ? "setLoopKey" : "clearLoopKey", {{"args", names}}, CallSource::UI);
         }
         catch (const CommandError& e)
         {
@@ -1362,7 +1362,7 @@ void GraphEditor::applyInfinity(bool pre, const char* mode)
         return;
     try
     {
-        cmds::execute("setInfinity", {{"args", names}, {pre ? "preInfinite" : "postInfinite", mode}}, CallSource::UI);
+        ops::execute("setInfinity", {{"args", names}, {pre ? "preInfinite" : "postInfinite", mode}}, CallSource::UI);
     }
     catch (const CommandError& e)
     {

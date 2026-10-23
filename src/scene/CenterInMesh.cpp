@@ -275,7 +275,7 @@ void registerCenterCommands()
 {
     using T = ArgType;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "centerJoint",
         .doc = "Move each joint (or any node with centerInMesh/centerMeshes attrs) to the centre of the mesh cross-section "
                "across its bone: the meshes are cut by the plane through the joint perpendicular to parent->joint (or "
@@ -331,7 +331,7 @@ void registerCenterCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "centerMeshes",
         .doc = "Bind nodes to the meshes they centre in (their centerMeshes attr), overriding the skinCluster lookup. "
                "With no meshes flag, returns the meshes each node centres in now.",
@@ -375,7 +375,7 @@ void registerCenterCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "snapToComponentCenter",
         .doc = "Move transforms, joints or markers to the centre of the current component selection. Targets are the "
                "given nodes, else the selected transforms that aren't meshes holding the components.",

@@ -1,13 +1,13 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "scene/Graph.h"
 
 using namespace lila;
 
 namespace
 {
-json run(const std::string& name, const json& call = json::object()) { return cmds::execute(name, call); }
+json run(const std::string& name, const json& call = json::object()) { return ops::execute(name, call); }
 
 std::string cube()
 {

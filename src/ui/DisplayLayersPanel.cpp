@@ -1,6 +1,6 @@
 #include "ui/DisplayLayersPanel.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "scene/DisplayLayers.h"
 #include "scene/Graph.h"
@@ -50,7 +50,7 @@ json run(const char* command, const json& call)
 {
     try
     {
-        return cmds::execute(command, call, CallSource::UI);
+        return ops::execute(command, call, CallSource::UI);
     }
     catch (const CommandError& e)
     {

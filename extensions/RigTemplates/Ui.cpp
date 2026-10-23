@@ -193,7 +193,7 @@ void run(const char* cmd, const json& call)
 {
     try
     {
-        cmds::execute(cmd, call, CallSource::UI);
+        ops::execute(cmd, call, CallSource::UI);
     }
     catch (const std::exception& e)
     {

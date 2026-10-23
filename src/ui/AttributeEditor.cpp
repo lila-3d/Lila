@@ -1,6 +1,6 @@
 #include "ui/AttributeEditor.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
 #include "core/Paths.h"
@@ -166,7 +166,7 @@ AttributeEditor::AttributeEditor(QWidget* parent) : QWidget(parent)
             return;
         try
         {
-            cmds::execute("rename", {{"args", {n->name(), mName->text().toStdString()}}}, CallSource::UI);
+            ops::execute("rename", {{"args", {n->name(), mName->text().toStdString()}}}, CallSource::UI);
         }
         catch (const CommandError& e)
         {
@@ -226,7 +226,7 @@ void AttributeEditor::set(const std::string& attr, const json& value)
         return;
     try
     {
-        cmds::execute("setAttr", {{"args", {n->name() + "." + attr, value}}}, CallSource::UI);
+        ops::execute("setAttr", {{"args", {n->name() + "." + attr, value}}}, CallSource::UI);
     }
     catch (const CommandError& e)
     {

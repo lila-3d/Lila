@@ -1,6 +1,6 @@
 #include "fbx/GameExport.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/Paths.h"
 #include "core/PrefStore.h"
@@ -343,7 +343,7 @@ std::vector<fs::path> run(Graph& g, const json& settingsIn)
                 continue;
             }
             names.insert(names.begin(), paths::toUtf8(j.file));
-            cmds::execute("exportObj", {{"args", names}});
+            ops::execute("exportObj", {{"args", names}});
         }
         else
         {
@@ -370,13 +370,13 @@ std::vector<fs::path> run(Graph& g, const json& settingsIn)
 void registerCommands()
 {
     registerPresetType();
-    if (cmds::find("gameExport"))
+    if (ops::find("gameExport"))
         return;
 
     std::vector<FlagDef> exportFlags = settingFlags();
     exportFlags.push_back({"preset", "pr", T::String, nullptr, "Start from a preset (the scene's first, then the prefs'); flags override it."});
     exportFlags.push_back({"dryRun", "dr", T::Bool, false, "Only list the files and what goes in each, writing nothing."});
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gameExport",
         .doc = "Maya's Game Exporter (Model tab): export everything, the selection, or object sets to FBX or OBJ, as one "
                "file, a file per set or a file per object. Returns the paths written, or with dryRun=True "
@@ -426,7 +426,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gameExportPresets",
         .doc = "Game exporter presets: {\"scene\": {name: settings}, \"prefs\": {name: settings}, \"defaults\": settings}.",
         .undoable = false,
@@ -438,7 +438,7 @@ void registerCommands()
     std::vector<FlagDef> saveFlags = settingFlags();
     saveFlags.push_back({"settings", "", T::Any, nullptr, "The whole settings object; the other flags are laid over it."});
     saveFlags.push_back({"scene", "", T::Bool, false, "Keep it in the scene (a gameExportPreset node) instead of the prefs."});
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gameExportSavePreset",
         .doc = "Save game exporter settings under a name, in the prefs or (scene=True) in the scene. Replaces a preset of "
                "that name. Returns the settings saved.",
@@ -469,7 +469,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gameExportDeletePreset",
         .doc = "Delete a game exporter preset from the prefs or (scene=True) the scene.",
         .positionalDoc = "name",

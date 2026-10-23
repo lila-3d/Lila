@@ -1,6 +1,6 @@
 #include "io/FileTranslators.h"
 
-#include "cmds/CommandOptions.h"
+#include "ops/CommandOptions.h"
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
 
@@ -186,11 +186,11 @@ json run(Op op, const fs::path& path, const json& options, CallSource source, st
 
     json call = options.is_object() ? options : json::object();
     if (source == CallSource::UI)
-        call = cmds::options::callWith(o.command, call);
+        call = ops::options::callWith(o.command, call);
     for (auto& [k, v] : o.flags.items())
         call[k] = v;
     call["args"] = json::array({pathArg(path)});
-    return cmds::execute(o.command, call, source);
+    return ops::execute(o.command, call, source);
 }
 
 json describe(const FileTranslator& t)
@@ -240,7 +240,7 @@ void registerBuiltins()
 void registerCommands()
 {
     using T = ArgType;
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "fileTranslators",
         .doc = "List the file translators: which extensions File > Open, Import and Export handle, and the command each runs.",
         .flags = {{"operation", "", T::String, nullptr, "Only translators that support this: open | import | export", {"open", "import", "export"}}},
@@ -258,7 +258,7 @@ void registerCommands()
         },
     });
     auto fileCommand = [](const char* name, Op op, const char* doc) {
-        cmds::registerCommand({
+        ops::registerCommand({
             .name = name,
             .doc = doc,
             .positionalDoc = "path",

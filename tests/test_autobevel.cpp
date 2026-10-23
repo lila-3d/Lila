@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "geo/FoldEdges.h"
 #include "geo/Ops.h"
 #include "scene/AutoBevel.h"
@@ -16,7 +16,7 @@ using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 int faces(const std::string& m) { return run("meshInfo", {{"args", {m}}})["faces"].get<int>(); }
 
 /** An L-shaped profile 1 cm thick with 10 cm legs, extruded 10 cm along z: a bent sheet with thickness. */

@@ -29,7 +29,7 @@ struct Action
     std::string python; // equivalent source, shown to users who want to copy and adapt it
     /**
      * Set when the action is one plain command call: `command` with the flags in `call`. Such an action gets an option
-     * box for the command's other flags (see cmds/CommandOptions.h) and runs with the remembered values. Left without
+     * box for the command's other flags (see ops/CommandOptions.h) and runs with the remembered values. Left without
      * a `run`, add() supplies one that does exactly that.
      */
     std::string command;

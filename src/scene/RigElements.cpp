@@ -1,7 +1,7 @@
 #include "scene/RigElements.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Profile.h"
 #include "scene/Anim.h"
 #include "scene/AnimLayer.h"
@@ -811,14 +811,14 @@ void solveToFk(Graph& g, NodeId chain, bool key)
         plugs.push_back(g.node(j)->name() + ".rotate");
     for (const std::string& p : controllerPlugs(g, chain))
         plugs.push_back(p);
-    cmds::execute("setKeyframe", {{"args", plugs}});
-    cmds::execute("setKeyframe", {{"args", {g.node(chain)->name() + ".lock"}}, {"inTangentType", "step"}, {"outTangentType", "step"}});
+    ops::execute("setKeyframe", {{"args", plugs}});
+    ops::execute("setKeyframe", {{"args", {g.node(chain)->name() + ".lock"}}, {"inTangentType", "step"}, {"outTangentType", "step"}});
     if (locked(g, chain, g.time()))
         if (NodeId c = controllerOf(g, chain))
         {
             const std::string n = g.node(c)->name();
             const double t = g.time();
-            cmds::execute("keyTangent", {{"args", {n + ".translate", n + ".rotate"}}, {"time", json::array({t, t})}, {"outTangentType", "step"}});
+            ops::execute("keyTangent", {{"args", {n + ".translate", n + ".rotate"}}, {"time", json::array({t, t})}, {"outTangentType", "step"}});
         }
 }
 
@@ -862,16 +862,16 @@ void setLock(Graph& g, NodeId chain, double time, bool on)
     atTime(g, time, [&] {
         matchController(g, chain);
         const std::string name = g.node(chain)->name();
-        cmds::execute("setKeyframe", {{"args", {name + ".lock"}}, {"time", time}, {"value", on ? 1.0 : 0.0}, {"inTangentType", "step"},
+        ops::execute("setKeyframe", {{"args", {name + ".lock"}}, {"time", time}, {"value", on ? 1.0 : 0.0}, {"inTangentType", "step"},
                                       {"outTangentType", "step"}});
         const NodeId c = controllerOf(g, chain);
         if (!c)
             return;
         const std::string n = g.node(c)->name();
         const json plugs = controllerPlugs(g, chain);
-        cmds::execute("setKeyframe", {{"args", plugs}, {"time", time}});
+        ops::execute("setKeyframe", {{"args", plugs}, {"time", time}});
         // The controller's key holds until its next key while locked.
-        cmds::execute("keyTangent", {{"args", {n + ".translate", n + ".rotate"}}, {"time", json::array({time, time})},
+        ops::execute("keyTangent", {{"args", {n + ".translate", n + ".rotate"}}, {"time", json::array({time, time})},
                                      {"outTangentType", on ? "step" : "auto"}});
     });
 }
@@ -1014,7 +1014,7 @@ FootSetup footSetup(const glm::dvec3& ankle, const glm::dvec3& ball, const glm::
 std::vector<glm::dvec3> solePoints(Graph& g, const std::vector<NodeId>& joints)
 {
     std::vector<glm::dvec3> out;
-    if (!cmds::find("dominantInfluence") || !cmds::find("meshData"))
+    if (!ops::find("dominantInfluence") || !ops::find("meshData"))
         return out;
     for (NodeId id : g.nodes())
     {
@@ -1025,11 +1025,11 @@ std::vector<glm::dvec3> solePoints(Graph& g, const std::vector<NodeId>& joints)
         {
             std::vector<int64_t> faces;
             for (NodeId j : joints)
-                for (const json& f : cmds::execute("dominantInfluence", {{"args", {m->name()}}, {"joint", g.node(j)->name()}}))
+                for (const json& f : ops::execute("dominantInfluence", {{"args", {m->name()}}, {"joint", g.node(j)->name()}}))
                     faces.push_back(f.get<int64_t>());
             if (faces.empty())
                 continue;
-            const json data = cmds::execute("meshData", {{"args", {m->name()}}, {"worldSpace", true}});
+            const json data = ops::execute("meshData", {{"args", {m->name()}}, {"worldSpace", true}});
             const json& points = data.at("points");
             const json& polys = data.at("faces");
             for (int64_t f : faces)
@@ -1111,7 +1111,7 @@ NodeId createIkChain(Graph& g, NodeId start, NodeId end, const ChainOptions& opt
         hcall["solver"] = opts.solver;
     if (opts.poleVector)
         hcall["poleVector"] = json::array({opts.poleVector->x, opts.poleVector->y, opts.poleVector->z});
-    const std::string handle = cmds::execute("ikHandle", hcall).get<std::string>();
+    const std::string handle = ops::execute("ikHandle", hcall).get<std::string>();
     Node* c = g.createNode(typeNamed(kIkChainType), base);
     const NodeId id = c->id();
     parentUnder(g, id, opts.parent);

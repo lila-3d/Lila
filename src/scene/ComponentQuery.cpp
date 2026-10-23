@@ -1,5 +1,5 @@
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Profile.h"
 #include "geo/Mesh.h"
 #include "geo/Topology.h"
@@ -613,7 +613,7 @@ json meshCheck(Node& n, const Args& a)
     {
         try
         {
-            json s = cmds::execute("symmetryCheck", {{"args", {n.name()}}})[n.name()];
+            json s = ops::execute("symmetryCheck", {{"args", {n.name()}}})[n.name()];
             out["symmetry"] = {{"axis", s["axis"]}, {"maxAsymmetry", s["maxAsymmetry"]}, {"unmatched", s["unmatched"]}};
             if (s["unmatched"].get<int64_t>() > 0 || s["maxAsymmetry"].get<double>() > 1e-3 * std::max(1.0, scale))
                 notes.push_back("halves differ: symmetrize(mesh) if that is not intended.");
@@ -633,7 +633,7 @@ void registerComponentQueryCommands()
 {
     using T = ArgType;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "meshCheck",
         .doc = "Validate a model in one compact report: ok (no issues), shells with their world boxes (largest first), open border "
                "edges, non-manifold edges and vertices, zero-area faces, face/triangle counts, symmetry drift. issues says what is "
@@ -645,7 +645,7 @@ void registerComponentQueryCommands()
         .run = [](const Args& a) -> json { return meshCheck(targetMesh(a, "meshCheck"), a); },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "findComponents",
         .doc = "Ids of a mesh's vertices, edges or faces matching every predicate given (normal direction, side of the symmetry "
                "plane, box, distance, extreme along an axis, open border). Ids index the editable cage, like selectComponents. "
@@ -659,7 +659,7 @@ void registerComponentQueryCommands()
     std::vector<FlagDef> selFlags = queryFlags();
     selFlags.push_back({"add", "", T::Bool, false, "Add to the selection of that kind instead of replacing it."});
     selFlags.push_back({"deselect", "", T::Bool, false, "Remove the matches from the selection."});
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "selectComponentsWhere",
         .doc = "Select a mesh's components by predicates (the flags of findComponents) and switch to that component mode. "
                "With symmetry on, edits still mirror; select one side. Returns the selected ids.",
@@ -673,14 +673,14 @@ void registerComponentQueryCommands()
             Graph& g = Graph::current();
             // Picking components hilites their mesh, as clicking it would.
             if (!g.isSelected(n.id()))
-                cmds::execute("select", {{"args", {n.name()}}});
+                ops::execute("select", {{"args", {n.name()}}});
             components::select(n.id(), kind, ids, op);
             components::setMode(kind);
             return components::selected(n.id(), kind);
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "componentInfo",
         .doc = "Positions, normals and adjacency of a mesh's components in bulk. Faces: center, normal, area, points, edges, "
                "neighbors (faces across each edge). Edges: points, center, length, faces, border. Vertices: position, normal, "

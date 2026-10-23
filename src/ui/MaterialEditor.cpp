@@ -1,7 +1,7 @@
 #include "ui/MaterialEditor.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/Paths.h"
 #include "core/Profile.h"
@@ -72,7 +72,7 @@ json run(const char* command, const json& call)
 {
     try
     {
-        return cmds::execute(command, call, CallSource::UI);
+        return ops::execute(command, call, CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -696,7 +696,7 @@ void MaterialEditor::updateValues()
 void registerMaterialUi()
 {
     scene::materials::registerTypes();
-    if (!cmds::find("createMaterial"))
+    if (!ops::find("createMaterial"))
         scene::materials::registerCommands();
 
     actions::add({.id = "window.materialEditor", .label = "Material Editor", .category = "Windows", .run = [] {
@@ -723,8 +723,8 @@ void registerMaterialUi()
                   .enabled = actions::hasSelection,
                   .doc = "Put the selected objects or faces back on the neutral default material.",
                   .python = "assignMaterial('Default')"});
-    if (!cmds::find("editMaterial"))
-        cmds::registerCommand({
+    if (!ops::find("editMaterial"))
+        ops::registerCommand({
             .name = "editMaterial",
             .doc = "Show a material in the Material Editor, without assigning it.",
             .positionalDoc = "material",

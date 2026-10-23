@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "gn/Gn.h"
 #include "retopo/RetopoCommands.h"
@@ -36,7 +36,7 @@ using namespace lila;
 TEST_CASE("every registered action has a doc")
 {
     mainq::init();
-    cmds::registerBuiltins();
+    ops::registerBuiltins();
     scene::types::registerBuiltins();
     gn::registerTypes();
     scene::registerCommands();

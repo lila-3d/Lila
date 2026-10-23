@@ -620,7 +620,7 @@ QList<Diagnostic> CodeEditor::diagnostics() const
 
 QList<Diagnostic> CodeEditor::filterInterpreterKnown(QList<Diagnostic> list) const
 {
-    // Script tabs run in __main__, where Lila injects names (cmds, lila, every command) the analyzer cannot see.
+    // Script tabs run in __main__, where Lila injects names (ops, lila, every command) the analyzer cannot see.
     static const QRegularExpression undefinedRe(R"re("(\w+)" is not defined)re");
     list.removeIf([this](const Diagnostic& d) {
         if (d.code == "reportUndefinedVariable")

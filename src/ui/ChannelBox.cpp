@@ -1,7 +1,7 @@
 #include "ui/ChannelBox.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "scene/Anim.h"
@@ -196,7 +196,7 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
             return;
         try
         {
-            cmds::execute("rename", {{"args", {n->name(), mName->text().toStdString()}}}, CallSource::UI);
+            ops::execute("rename", {{"args", {n->name(), mName->text().toStdString()}}}, CallSource::UI);
         }
         catch (const CommandError& e)
         {
@@ -264,7 +264,7 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
         menu.addSeparator();
         menu.addAction("Reset to Default", [this] { resetRows(highlightedRows()); });
         menu.addAction("Key Selected", [runEach] {
-            runEach("Key Selected", [](const std::string& p) { cmds::execute("setKeyframe", {{"args", {p}}}, CallSource::UI); });
+            runEach("Key Selected", [](const std::string& p) { ops::execute("setKeyframe", {{"args", {p}}}, CallSource::UI); });
         });
         menu.addAction("Break Connections", [runEach] {
             runEach("Break Connections", [](const std::string& p) {
@@ -272,19 +272,19 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
                 scene::PlugRef ref = g.plug(p);
                 // An anim curve goes with its connection, as in Maya.
                 if (scene::anim::curveFor(g, ref))
-                    cmds::execute("cutKey", {{"args", {p}}, {"clear", true}}, CallSource::UI);
+                    ops::execute("cutKey", {{"args", {p}}, {"clear", true}}, CallSource::UI);
                 else if (g.source(ref))
-                    cmds::execute("disconnectAttr", {{"args", {p}}}, CallSource::UI);
+                    ops::execute("disconnectAttr", {{"args", {p}}}, CallSource::UI);
             });
         });
         menu.addAction("Delete Keys", [runEach] {
-            runEach("Delete Keys", [](const std::string& p) { cmds::execute("cutKey", {{"args", {p}}, {"clear", true}}, CallSource::UI); });
+            runEach("Delete Keys", [](const std::string& p) { ops::execute("cutKey", {{"args", {p}}, {"clear", true}}, CallSource::UI); });
         });
         menu.addSeparator();
         for (bool lock : {true, false})
             menu.addAction(lock ? "Lock Selected" : "Unlock Selected", [runEach, lock] {
                 runEach(lock ? "Lock Selected" : "Unlock Selected", [lock](const std::string& p) {
-                    cmds::execute("setAttr", {{"args", {p}}, {"lock", lock}}, CallSource::UI);
+                    ops::execute("setAttr", {{"args", {p}}, {"lock", lock}}, CallSource::UI);
                 });
             });
         if (Graph& sg = Graph::current(); sg.node(mNode) && scene::spaces::hasSpaces(sg, mNode))
@@ -299,7 +299,7 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
                 QAction* act = spaces->addAction(QString::fromStdString(names[size_t(i)]), [node, i] {
                     try
                     {
-                        cmds::execute("switchSpace", {{"args", {node}}, {"space", i}}, CallSource::UI);
+                        ops::execute("switchSpace", {{"args", {node}}, {"space", i}}, CallSource::UI);
                     }
                     catch (const std::exception& e)
                     {
@@ -572,9 +572,9 @@ void ChannelBox::apply(const Row& row, const QString& text)
             }
             // Changing space keeps the pose: the node is re-keyed in the new frame.
             if (row.attrIndex == scene::Transform::kSpace && scene::spaces::hasSpaces(g, n->id()))
-                cmds::execute("switchSpace", {{"args", {name}}, {"space", *value}}, CallSource::UI);
+                ops::execute("switchSpace", {{"args", {name}}, {"space", *value}}, CallSource::UI);
             else
-                cmds::execute("setAttr", {{"args", {plug, *value}}}, CallSource::UI);
+                ops::execute("setAttr", {{"args", {plug, *value}}}, CallSource::UI);
         }
         catch (const std::exception& e)
         {
@@ -776,7 +776,7 @@ void ChannelBox::endScrub(bool commit)
             json jv = std::holds_alternative<int64_t>(value) ? json(int64_t(std::llround(v))) : json(std::round(v * 1e4) / 1e4);
             try
             {
-                cmds::execute("setAttr", {{"args", {g.plugName(plug), jv}}}, CallSource::UI);
+                ops::execute("setAttr", {{"args", {g.plugName(plug), jv}}}, CallSource::UI);
             }
             catch (const std::exception& e)
             {
@@ -820,7 +820,7 @@ void ChannelBox::resetRows(const std::vector<int>& rows)
                     std::optional<json> def = valueReset::plugDefault(g.attr(ref), ref.component);
                     if (!def)
                         continue;
-                    cmds::execute("setAttr", {{"args", {plug, *def}}}, CallSource::UI);
+                    ops::execute("setAttr", {{"args", {plug, *def}}}, CallSource::UI);
                     any = true;
                 }
                 catch (const std::exception& e)
@@ -924,7 +924,7 @@ void ChannelBox::pasteValues()
     auto set = [&](const std::string& plug, const json& value) {
         try
         {
-            cmds::execute("setAttr", {{"args", {plug, value}}}, CallSource::UI);
+            ops::execute("setAttr", {{"args", {plug, value}}}, CallSource::UI);
         }
         catch (const std::exception& e)
         {

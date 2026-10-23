@@ -1,7 +1,7 @@
 #include "ui/UvEditor.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
@@ -82,7 +82,7 @@ json safeRun(const char* name, const json& call, CallSource src)
 {
     try
     {
-        return cmds::execute(name, call, src);
+        return ops::execute(name, call, src);
     }
     catch (const CommandError& e)
     {
@@ -2349,7 +2349,7 @@ void registerUvActions()
                   .doc = "2D uv view with selection, manipulators and the uv tools.",
                   .python = "lila.ui.run_action(\"window.uvEditor\")"});
     auto cmd = [](std::string id, std::string label, const char* command, json call, std::string doc) {
-        std::string py = cmds::toPython(command, call);
+        std::string py = ops::toPython(command, call);
         actions::add({.id = std::move(id), .label = std::move(label), .category = "UV", .doc = std::move(doc), .python = py, .command = command,
                       .call = call});
     };

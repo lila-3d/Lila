@@ -1,7 +1,7 @@
 #include "ui/Actions.h"
 
-#include "cmds/Command.h"
-#include "cmds/CommandOptions.h"
+#include "ops/Command.h"
+#include "ops/CommandOptions.h"
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
@@ -50,7 +50,7 @@ void runCommand(const char* name, const json& call = json::object())
 {
     try
     {
-        cmds::execute(name, call, CallSource::UI);
+        ops::execute(name, call, CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -82,7 +82,7 @@ json runCommandResult(const char* name, const json& call)
 {
     try
     {
-        return cmds::execute(name, call, CallSource::Script);
+        return ops::execute(name, call, CallSource::Script);
     }
     catch (const CommandError&)
     {
@@ -141,7 +141,7 @@ void runWithOptions(const std::string& command, const json& call)
 {
     try
     {
-        cmds::execute(command, cmds::options::callWith(command, call), CallSource::UI);
+        ops::execute(command, ops::options::callWith(command, call), CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -216,7 +216,7 @@ bool run(const json& target)
     {
         try
         {
-            cmds::execute(target["command"].get<std::string>(), target.value("args", json::object()), CallSource::UI);
+            ops::execute(target["command"].get<std::string>(), target.value("args", json::object()), CallSource::UI);
             remember(target);
             return true;
         }
@@ -317,7 +317,7 @@ std::string pythonFor(const json& target)
         if (target.contains("python"))
             return target["python"].get<std::string>();
         if (target.contains("command"))
-            return cmds::toPython(target["command"].get<std::string>(), target.value("args", json::object()));
+            return ops::toPython(target["command"].get<std::string>(), target.value("args", json::object()));
         if (target.contains("markingMenu"))
             return "# opens the '" + target["markingMenu"].get<std::string>() + "' marking menu";
     }
@@ -327,7 +327,7 @@ std::string pythonFor(const json& target)
 void registerBuiltins()
 {
     auto cmd = [](std::string id, std::string label, std::string category, const char* command, json call, std::string doc) {
-        std::string py = cmds::toPython(command, call);
+        std::string py = ops::toPython(command, call);
         add({.id = std::move(id), .label = std::move(label), .category = std::move(category), .doc = std::move(doc), .python = py,
              .command = command, .call = call});
     };
@@ -386,8 +386,8 @@ void registerBuiltins()
     add({"edit.selectAll", "Select All", "Edit", [] {
               try
               {
-                  json all = cmds::execute("ls", {{"dag", true}});
-                  cmds::execute("select", {{"args", all}}, CallSource::UI);
+                  json all = ops::execute("ls", {{"dag", true}});
+                  ops::execute("select", {{"args", all}}, CallSource::UI);
               }
               catch (const CommandError& e)
               {

@@ -1,6 +1,6 @@
 #include "ui/OptionBox.h"
 
-#include "cmds/CommandOptions.h"
+#include "ops/CommandOptions.h"
 #include "core/ExtensionContext.h"
 #include "ui/Actions.h"
 #include "ui/FlagFields.h"
@@ -31,7 +31,7 @@
 
 namespace lila::ui::optionBox
 {
-namespace opt = cmds::options;
+namespace opt = ops::options;
 
 namespace
 {
@@ -76,7 +76,7 @@ public:
         edit->addAction("Reset Settings", this, [this] { resetSettings(); });
         QMenu* help = bar->addMenu("Help");
         help->addAction("Copy Python", this, [this] {
-            QGuiApplication::clipboard()->setText(QString::fromStdString(cmds::toPython(mCommand, opt::callWith(mCommand, mCall))));
+            QGuiApplication::clipboard()->setText(QString::fromStdString(ops::toPython(mCommand, opt::callWith(mCommand, mCall))));
         });
         root->setMenuBar(bar);
 

@@ -1,6 +1,6 @@
 #include "ui/ModelingToolkit.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "scene/Components.h"
@@ -112,7 +112,7 @@ void runCommand(const char* name, const json& call)
 {
     try
     {
-        cmds::execute(name, call, CallSource::UI);
+        ops::execute(name, call, CallSource::UI);
     }
     catch (const CommandError& e)
     {

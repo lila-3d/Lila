@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "gn/Clipboard.h"
 #include "gn/Gn.h"
@@ -25,7 +25,7 @@ using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 
 void pump()
 {
@@ -64,7 +64,7 @@ void selectNode(QGraphicsView* view, const std::string& name)
 TEST_CASE("node editor keys act on the graph, not the scene selection")
 {
     mainq::init();
-    cmds::registerBuiltins();
+    ops::registerBuiltins();
     scene::types::registerBuiltins();
     scene::registerCommands();
     gn::registerTypes();

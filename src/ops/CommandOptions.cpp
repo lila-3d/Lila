@@ -1,4 +1,4 @@
-#include "cmds/CommandOptions.h"
+#include "ops/CommandOptions.h"
 
 #include "core/PrefStore.h"
 
@@ -6,7 +6,7 @@
 #include <cctype>
 #include <cmath>
 
-namespace lila::cmds::options
+namespace lila::ops::options
 {
 namespace
 {
@@ -406,4 +406,4 @@ json callWith(std::string_view command, const json& call)
                 out[f.flag] = v;
     return out;
 }
-} // namespace lila::cmds::options
+} // namespace lila::ops::options

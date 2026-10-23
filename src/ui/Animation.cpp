@@ -1,6 +1,6 @@
 #include "ui/Animation.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "scene/Anim.h"
@@ -60,7 +60,7 @@ TimeHub& hub()
 
 void setTime(double seconds)
 {
-    cmds::execute("currentTime", {{"args", {seconds}}});
+    ops::execute("currentTime", {{"args", {seconds}}});
     notifyTimeChanged();
 }
 
@@ -68,7 +68,7 @@ void runUi(const char* command, const json& call = json::object())
 {
     try
     {
-        cmds::execute(command, call, CallSource::UI);
+        ops::execute(command, call, CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -189,7 +189,7 @@ void stepKey(const char* which)
 {
     try
     {
-        json t = cmds::execute("findKeyframe", {{"which", which}});
+        json t = ops::execute("findKeyframe", {{"which", which}});
         if (t.is_number())
             setTime(t.get<double>());
     }

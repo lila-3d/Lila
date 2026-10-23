@@ -1,6 +1,6 @@
 #include "scene/Camera.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "scene/Graph.h"
 
 #include <algorithm>
@@ -218,9 +218,9 @@ void registerCameraTypes()
 void registerCameraCommands()
 {
     using T = ArgType;
-    if (cmds::find("viewPlace"))
+    if (ops::find("viewPlace"))
         return;
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "viewPlace",
         .doc = "Place a camera node, as Maya's viewPlace: eye is its world position, lookAt the point it aims at, up the "
                "world direction its top leans to. Flags left out keep the camera's current value; with eye alone it moves "

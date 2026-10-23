@@ -1,7 +1,7 @@
 #include "extensions/ExtensionManager.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Events.h"
 #include "core/Log.h"
 #include "core/Paths.h"
@@ -472,7 +472,7 @@ void ExtensionManager::removeOwned(Loaded& rec)
     liveContexts().erase(name);
 
     // Anything tagged with the owner that did not go through the context (Python registrations, for instance).
-    cmds::registry().removeOwned(name);
+    ops::registry().removeOwned(name);
     for (const std::string& t : scene::types::registry().owned(name))
         scene::types::unregisterType(t);
     events::unsubscribeOwned(name);
@@ -566,7 +566,7 @@ json ExtensionManager::describe(const std::string& name) const
 
     json j = info->toJson();
     json commands = json::array();
-    for (const std::string& c : cmds::registry().owned(info->name))
+    for (const std::string& c : ops::registry().owned(info->name))
         commands.push_back(c);
     std::sort(commands.begin(), commands.end());
     json types = json::array();
@@ -671,7 +671,7 @@ void registerCommands()
     using T = ArgType;
     ExtensionManager& pm = ExtensionManager::get();
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "loadExtension",
         .doc = "Load an extension by id (from the extension search paths) or by the path of its package. Returns its id.",
         .positionalDoc = "id or path",
@@ -688,7 +688,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "unloadExtension",
         .doc = "Unload an extension, removing everything it registered. Fails while the scene uses its node types or another "
                "loaded extension depends on it.",
@@ -703,7 +703,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "reloadExtension",
         .doc = "Unload and load an extension again from the same package, picking up changes.",
         .positionalDoc = "id",
@@ -714,7 +714,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "listExtensions",
         .doc = "Extensions on the search paths: [{name, path, kind, loaded, autoload, version, vendor, sdk, error, ...}].",
         .flags = {
@@ -738,7 +738,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "extensionInfo",
         .doc = "One extension: {name, path, kind, loaded, autoload, version, vendor, sdk, commands, types, registrations, error}.",
         .positionalDoc = "id",

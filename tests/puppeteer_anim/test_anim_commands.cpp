@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "extensions/ExtensionManager.h"
 #include "scene/Anim.h"
 #include "scene/AnimCurve.h"
@@ -18,13 +18,13 @@ using Approx = doctest::Approx;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 json v3(double x, double y, double z) { return json::array({x, y, z}); }
 double sec(double frame) { return frame / 30.0; }
 
 void loadPuppeteer()
 {
-    if (!cmds::find("stackerKeys"))
+    if (!ops::find("stackerKeys"))
         REQUIRE(extensions::ExtensionManager::get().load(LILA_TEST_PUPPETEER_PACKAGE) == "Puppeteer");
 }
 

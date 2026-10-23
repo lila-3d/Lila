@@ -1,5 +1,5 @@
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
@@ -382,7 +382,7 @@ void registerMeshEditCommands()
 
     softSelect::registerCommands();
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polyExtrude",
         .doc = "Extrude the selected faces along their normals. Connected faces extrude as regions unless individual=True.",
         .flags = {{"thickness", "", T::Float, 0.0, "Distance along the normals, cm."},
@@ -396,7 +396,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polyInset",
         .doc = "Inset the selected faces.",
         .flags = {{"thickness", "", T::Float, 5.0, "Inward distance, cm."},
@@ -410,7 +410,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polyBevel",
         .doc = "Bevel the selected edges (vertex or face selections convert to their edges).",
         .flags = {{"offset", "", T::Float, 2.0, "Width, cm."},
@@ -432,7 +432,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "deleteComponents",
         .doc = "Delete the selected vertices, edges or faces (with whatever depends on them).",
         .run = [](const Args&) -> json {
@@ -449,7 +449,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polyInsertLoop",
         .doc = "Insert edge loops across the ring of the first selected edge.",
         .flags = {{"fraction", "", T::Float, 0.5, "Where along the ring, 0 to 1."}, {"count", "", T::Int, 1, "Evenly spaced loops."}},
@@ -466,7 +466,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polyMerge",
         .doc = "Weld selected vertices closer than a distance (all of a mesh's points if it has no component selection).",
         .flags = {{"distance", "", T::Float, 0.01, "Weld distance, cm."}, {"average", "", T::Bool, false, "Move merged points to their average."}},
@@ -478,7 +478,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polyMergeCenter",
         .doc = "Weld the selected vertices into one at their centre.",
         .run = [](const Args&) -> json {
@@ -489,7 +489,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polyCollapse",
         .doc = "Collapse each connected group of selected edges to its centre.",
         .run = [](const Args&) -> json {
@@ -499,7 +499,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polyDissolve",
         .doc = "Remove selected edges or vertices by merging the faces around them, cleanly.",
         .run = [](const Args&) -> json {
@@ -511,7 +511,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polyBridge",
         .doc = "Join two selected boundary loops with faces.",
         .flags = {{"divisions", "", T::Int, 0, "Extra rows between the loops."}},
@@ -522,7 +522,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polyPoke",
         .doc = "Fan each selected face into triangles around its centre.",
         .run = [](const Args&) -> json {
@@ -532,7 +532,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polySpinEdge",
         .doc = "Turn each selected edge one step within its two faces.",
         .run = [](const Args&) -> json {
@@ -542,7 +542,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polyFillHole",
         .doc = "Cap the holes bordered by the selected edges (every hole when nothing is selected).",
         .run = [](const Args&) -> json {
@@ -552,7 +552,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polyFlip",
         .doc = "Reverse the winding of the selected faces (the whole mesh in object mode).",
         .run = [](const Args&) -> json {
@@ -568,7 +568,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polyConform",
         .doc = "Make face winding consistent; closed parts face outward.",
         .run = [](const Args&) -> json {
@@ -579,7 +579,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polyTriangulate",
         .doc = "Triangulate the selected faces (the whole mesh in object mode), deterministically, as Unreal will. Concave and "
                "non-planar faces, collinear points and faces touching themselves split without overlaps or slivers, and no "
@@ -602,7 +602,7 @@ void registerMeshEditCommands()
                 if (stack.empty())
                     return false;
                 if (g.node(stack.back())->type().name != "triangulateModifier")
-                    cmds::execute("addModifier", {{"args", {mesh.name()}}, {"kind", "triangulate"}});
+                    ops::execute("addModifier", {{"args", {mesh.name()}}, {"kind", "triangulate"}});
                 return true;
             };
             return editSelected("Triangulate", K::Face, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
@@ -616,7 +616,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polyReduce",
         .doc = "Reduce the polygon count of whole meshes while keeping their shape, silhouette, UVs and normals. The result is "
                "triangles (or quads with quads=True). A mesh with modifiers gets a decimate modifier on top instead. Honours "
@@ -663,7 +663,7 @@ void registerMeshEditCommands()
                 {
                     json params = {{"ratio", o.ratio}, {"targetTriangles", int64_t(o.targetTriangles)}, {"keepBorders", o.keepBorders},
                                    {"keepHardEdges", o.keepHardEdges}, {"symmetry", axis + 1}, {"quads", o.quads}};
-                    out[n.name()] = cmds::execute("addModifier", {{"args", {n.name()}}, {"kind", "decimate"}, {"params", params}});
+                    out[n.name()] = ops::execute("addModifier", {{"args", {n.name()}}, {"kind", "decimate"}, {"params", params}});
                     continue;
                 }
                 PlugRef base = basePlug(n);
@@ -686,7 +686,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polyQuadrangulate",
         .doc = "Join neighbouring triangles into quads.",
         .flags = {{"maxAngle", "", T::Float, 40.0, "Largest angle between the two triangles, degrees."}},
@@ -699,7 +699,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polySubdivide",
         .doc = "Catmull-Clark subdivide whole meshes (crease-aware).",
         .positionalDoc = "objects",
@@ -720,7 +720,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polyMirror",
         .doc = "Mirror whole meshes across the plane through the object's or the world's origin facing an axis, welding along "
                "the seam. direction positive keeps the + side and rebuilds the - side from it, cutting faces that cross the "
@@ -771,7 +771,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polySeparate",
         .doc = "Split meshes into one object per connected part. Returns the new names.",
         .positionalDoc = "objects",
@@ -804,7 +804,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polyCombine",
         .doc = "Merge meshes into one object (world space kept). Returns its name.",
         .positionalDoc = "objects",
@@ -849,7 +849,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polyExtract",
         .doc = "Move the selected faces out into new mesh objects (one per source mesh). Returns their names.",
         .run = [](const Args&) -> json {
@@ -893,7 +893,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polyConnect",
         .doc = "Connect selected vertices that share a face with new edges, or the midpoints of selected edges across their faces.",
         .run = [](const Args&) -> json {
@@ -948,7 +948,7 @@ void registerMeshEditCommands()
         return count ? sum / double(count) : selectionCenter();
     };
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "moveComponents",
         .doc = "Move the selected components by an offset in world space.",
         .flags = {{"by", "", T::Vec3, nullptr, "Offset, cm."}},
@@ -960,7 +960,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "rotateComponents",
         .doc = "Rotate the selected components about a world pivot (default: their centre; with symmetry, a pair clear of the mirror plane turns about each side's own centre). Degrees, XYZ order.",
         .flags = {{"by", "", T::Vec3, nullptr, "Rotation, degrees."}, {"pivot", "", T::Vec3, nullptr, "World pivot."}},
@@ -975,7 +975,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "scaleComponents",
         .doc = "Scale the selected components about a world pivot (default: their centre; with symmetry, a pair clear of the mirror plane scales about each side's own centre).",
         .flags = {{"by", "", T::Vec3, nullptr, "Factor per world axis."}, {"pivot", "", T::Vec3, nullptr, "World pivot."}},
@@ -989,7 +989,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "setSymmetry",
         .doc = "Object-space mirror plane for component edits on meshes: 'off', 'x', 'y' or 'z'.",
         .positionalDoc = "objects",
@@ -1005,7 +1005,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "toggleSymmetry",
         .doc = "Symmetry off on the meshes if every one already has it on (on axis=, when given), else on for all of them. Non-meshes are skipped. Returns the axis set, or 'off'.",
         .positionalDoc = "objects",
@@ -1049,7 +1049,7 @@ void registerMeshEditCommands()
         return names;
     };
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "symmetryCheck",
         .doc = "Report how symmetric meshes are across their symmetry plane: the largest distance between a point and its partner's "
                "reflection, and the points without a partner. Changes nothing.",
@@ -1085,7 +1085,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "symmetrize",
         .doc = "Make meshes exactly symmetric: every point on one side of the symmetry plane is copied, reflected, onto its partner, and "
                "on-plane points are put on the plane.",
@@ -1108,7 +1108,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "symmetryRebuild",
         .doc = "Throw away the stored symmetry pairs and match them again, by position or, for meshes that are no longer symmetric, by "
                "topology outward from the selected edge (which must lie on the plane). Returns the points left unmatched per mesh.",
@@ -1148,7 +1148,7 @@ void registerMeshEditCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polyKnife",
         .doc = "Knife / multi-cut: cut a mesh along a path of points, splitting the faces between them and the edges the path "
                "crosses. Between two points the cut follows the surface under the straight screen line joining them (seen from "
@@ -1264,6 +1264,6 @@ void registerMeshEditCommands()
 
     for (const char* name : {"polyExtrude", "polyInset", "polyBevel", "polyInsertLoop", "polyMerge", "polyBridge", "polyQuadrangulate",
                              "polySubdivide", "polyMirror", "polyTriangulate", "polyReduce"})
-        cmds::setAdjustable(name);
+        ops::setAdjustable(name);
 }
 } // namespace lila::scene

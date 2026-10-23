@@ -1,6 +1,6 @@
 #include "scene/SceneCommands.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Events.h"
 #include "core/PrefStore.h"
 #include "core/Workspace.h"
@@ -160,7 +160,7 @@ void registerCommands()
             loadNamingPolicy();
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "namingConvention",
         .doc = "Naming rules for this workspace (.lila/naming.json). Query with no flags; check lists violations; fix "
                "renames them.",
@@ -203,14 +203,14 @@ void registerCommands()
         },
     });
 
-    cmds::setSelectionProvider([] {
+    ops::setSelectionProvider([] {
         std::vector<std::string> out;
         for (NodeId id : graph().selection())
             out.push_back(graph().node(id)->name());
         return out;
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "createNode",
         .doc = "Create a node of the given type. Returns its name.",
         .positionalDoc = "type",
@@ -226,7 +226,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "spaceLocator",
         .doc = "Create a locator. Returns its name.",
         .flags = {
@@ -245,7 +245,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "group",
         .doc = "Group objects under a new transform, or create an empty group with empty=True.",
         .positionalDoc = "objects",
@@ -269,7 +269,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "delete",
         .doc = "Delete objects (and their children). Defaults to the selection.",
         .positionalDoc = "objects",
@@ -290,7 +290,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "rename",
         .doc = "rename(old, new) or rename(new) for the single selected object. Returns the name given.",
         .positionalDoc = "[object] newName",
@@ -314,7 +314,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "parent",
         .doc = "parent(child..., parent), or parent(child..., world=True). Keeps world transforms unless relative=True. "
                "chain=True parents each object under the next one, in order: (a, b, c) puts a under b and b under c. "
@@ -379,7 +379,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "setAttr",
         .doc = "setAttr('node.attr', value). Vec3 takes a list or three numbers. lock=True/False locks or unlocks the "
                "plug, with or without a value: a locked plug can't be changed until it is unlocked.",
@@ -407,7 +407,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "getAttr",
         .doc = "Value of 'node.attr'. lock=True returns whether it is locked instead.",
         .positionalDoc = "plug",
@@ -422,7 +422,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "connectAttr",
         .doc = "connectAttr('src.attr', 'dst.attr').",
         .positionalDoc = "src dst",
@@ -436,7 +436,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "disconnectAttr",
         .doc = "disconnectAttr('dst.attr'), or (src, dst).",
         .positionalDoc = "[src] dst",
@@ -448,7 +448,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "listAttr",
         .doc = "Attribute names of a node.",
         .positionalDoc = "object",
@@ -482,7 +482,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "ls",
         .doc = "List nodes, optionally filtered by type or the selection.",
         .positionalDoc = "names",
@@ -514,7 +514,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "select",
         .doc = "Select objects. Replaces the selection unless add/deselect/toggle.",
         .positionalDoc = "objects",
@@ -546,7 +546,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "pickWalk",
         .doc = "Walk the selection through the hierarchy like Maya's arrow keys: up to the parent, down to the first child, "
                "left/right to the previous/next sibling (wrapping).",
@@ -594,7 +594,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "selectHierarchy",
         .doc = "Add every transform below each selected object to the selection, parents before children (Maya's select -hi).",
         .run = [](const Args&) -> json {
@@ -615,7 +615,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "objExists",
         .doc = "True if a node with this name exists.",
         .positionalDoc = "name",
@@ -623,7 +623,7 @@ void registerCommands()
         .run = [](const Args& a) -> json { return !a.positional.empty() && graph().find(a.positional[0].get<std::string>()) != nullptr; },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "nodeType",
         .doc = "Type name of a node.",
         .positionalDoc = "object",
@@ -636,7 +636,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "listRelatives",
         .doc = "Children (default), parent or all descendants.",
         .positionalDoc = "object",
@@ -658,7 +658,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "xform",
         .doc = "Query or set translation/rotation/scale, local or world space.",
         .positionalDoc = "objects",
@@ -731,7 +731,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "newScene",
         .doc = "Clear the scene. Not undoable.",
         .undoable = false,
@@ -742,7 +742,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "currentTime",
         .doc = "Query or set the current time in seconds.",
         .positionalDoc = "seconds",

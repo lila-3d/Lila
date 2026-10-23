@@ -2,7 +2,7 @@
 
 #include "FakeServer.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/MainQueue.h"
 #include "core/PrefStore.h"
@@ -35,7 +35,7 @@ struct Setup
     Setup()
     {
         mainq::init();
-        cmds::registerBuiltins();
+        ops::registerBuiltins();
         scene::types::registerBuiltins();
         scene::registerCommands();
         link::registerCommands();
@@ -276,7 +276,7 @@ TEST_CASE("unrealImport sends importAsset with the mapped options")
     fs::path file = tempDir("import") / "crate.fbx";
     std::ofstream(file) << "fbx";
 
-    json out = cmds::execute("unrealImport", {{"args", {file.string()}},
+    json out = ops::execute("unrealImport", {{"args", {file.string()}},
                                               {"contentPath", "/Game/Props/SM_Crate"},
                                               {"lodGroup", "LargeProp"},
                                               {"autoCollision", false},
@@ -297,7 +297,7 @@ TEST_CASE("unrealImport sends importAsset with the mapped options")
     CHECK_FALSE(p["options"].contains("skeleton"));
 
     // Queued form: returns at once, the reply lands through mainq.
-    json queued = cmds::execute("unrealImport", {{"args", {file.string()}}, {"contentPath", "/Game/Props/SM_Crate2"}});
+    json queued = ops::execute("unrealImport", {{"args", {file.string()}}, {"contentPath", "/Game/Props/SM_Crate2"}});
     CHECK(queued["queued"] == true);
     CHECK(waitUntil([&] {
         int n = 0;
@@ -306,8 +306,8 @@ TEST_CASE("unrealImport sends importAsset with the mapped options")
         return n == 2;
     }));
 
-    CHECK_THROWS_AS(cmds::execute("unrealImport", {{"args", {file.string()}}}), CommandError);
-    CHECK_THROWS_AS(cmds::execute("unrealImport", {{"args", {file.string()}}, {"contentPath", "/Game/X"}, {"kind", "mesh"}}), CommandError);
+    CHECK_THROWS_AS(ops::execute("unrealImport", {{"args", {file.string()}}}), CommandError);
+    CHECK_THROWS_AS(ops::execute("unrealImport", {{"args", {file.string()}}, {"contentPath", "/Game/X"}, {"kind", "mesh"}}), CommandError);
 
     Link::get().disconnect();
     fs::remove_all(file.parent_path());
@@ -325,14 +325,14 @@ TEST_CASE("mappings live in workspace prefs and drive auto-sync on save")
     REQUIRE(crate);
     std::string crateName = crate->name();
 
-    json m = cmds::execute("unrealMap", {{"args", {crateName}}, {"contentPath", "/Game/Props/SM_Crate"}, {"lodGroup", "SmallProp"}});
+    json m = ops::execute("unrealMap", {{"args", {crateName}}, {"contentPath", "/Game/Props/SM_Crate"}, {"lodGroup", "SmallProp"}});
     CHECK(m["node"] == crateName);
-    CHECK(cmds::execute("unrealMappings", json::object()).size() == 1);
+    CHECK(ops::execute("unrealMappings", json::object()).size() == 1);
     // Re-mapping replaces rather than duplicates.
-    cmds::execute("unrealMap", {{"args", {crateName}}, {"contentPath", "/Game/Props/SM_Crate"}, {"kind", "static"}});
+    ops::execute("unrealMap", {{"args", {crateName}}, {"contentPath", "/Game/Props/SM_Crate"}, {"kind", "static"}});
     REQUIRE(mappings().size() == 1);
     CHECK_FALSE(mappings()[0].contains("lodGroup"));
-    CHECK_THROWS_AS(cmds::execute("unrealMap", {{"args", {"nobody"}}, {"contentPath", "/Game/X"}}), CommandError);
+    CHECK_THROWS_AS(ops::execute("unrealMap", {{"args", {"nobody"}}, {"contentPath", "/Game/X"}}), CommandError);
 
     // No exporter yet: nothing is queued.
     unregisterExporter("fbx");
@@ -380,11 +380,11 @@ TEST_CASE("mappings live in workspace prefs and drive auto-sync on save")
     onSceneSaved();
     Link::get().waitIdle();
     CHECK(exported.size() == 1);
-    CHECK(cmds::execute("unrealSync", json::object()) == 1);
+    CHECK(ops::execute("unrealSync", json::object()) == 1);
     Link::get().waitIdle();
     CHECK(exported.size() == 2);
 
-    CHECK(cmds::execute("unrealUnmap", {{"args", {crateName}}}) == 1);
+    CHECK(ops::execute("unrealUnmap", {{"args", {crateName}}}) == 1);
     CHECK(mappings().empty());
 
     unregisterExporter("fbx");
@@ -438,7 +438,7 @@ TEST_CASE("auto-sync sends the mapping's material options and the materials its 
     CHECK_FALSE(mats[1].contains("baseColorMap"));
     CHECK(materialParams(g, {plain->id()}).empty());
 
-    cmds::execute("unrealMap", {{"args", {shipName}},
+    ops::execute("unrealMap", {{"args", {shipName}},
                                 {"contentPath", "/Game/Ships/SM_Ship"},
                                 {"materialFolder", "/Game/Ships/Mats"},
                                 {"keepMaterials", false},
@@ -475,7 +475,7 @@ TEST_CASE("auto-sync sends the mapping's material options and the materials its 
 
     // A mapping without the options leaves them to the plugin's defaults; a mesh with no assignments still sends an
     // empty list so the plugin manages its slots, while a plain file import leaves materials to Interchange.
-    cmds::execute("unrealMap", {{"args", {shipName}}, {"contentPath", "/Game/Ships/SM_Ship"}});
+    ops::execute("unrealMap", {{"args", {shipName}}, {"contentPath", "/Game/Ships/SM_Ship"}});
     json params = importParams(ws / "x.fbx", mappings()[0], materialParams(g, {plain->id()}));
     CHECK_FALSE(params["options"].contains("materialFolder"));
     CHECK_FALSE(params["options"].contains("keepMaterials"));
@@ -484,7 +484,7 @@ TEST_CASE("auto-sync sends the mapping's material options and the materials its 
 
     unregisterExporter("fbx");
     Link::get().disconnect();
-    cmds::execute("unrealUnmap", {{"args", {shipName}}});
+    ops::execute("unrealUnmap", {{"args", {shipName}}});
     for (scene::Node* n : {other, plain, ship, glass, hull})
         g.deleteNode(n->id());
     PrefStore::get().setWorkspaceDir({});
@@ -609,7 +609,7 @@ TEST_CASE("auto-sync against an editor that never answers fails with a clear err
     scene::Node* cube = g.createNode(*scene::types::find("transform"), "cube");
     REQUIRE(cube);
     std::string name = cube->name();
-    cmds::execute("unrealMap", {{"args", {name}}, {"contentPath", "/Game/Meshes/SM_Cube"}});
+    ops::execute("unrealMap", {{"args", {name}}, {"contentPath", "/Game/Meshes/SM_Cube"}});
     registerExporter("fbx", [](const std::vector<scene::NodeId>&, const fs::path& path, std::string*) {
         std::ofstream(path) << "fbx";
         return true;
@@ -623,7 +623,7 @@ TEST_CASE("auto-sync against an editor that never answers fails with a clear err
 
     uint64_t before = log::since(0, 100000).empty() ? 0 : log::since(0, 100000).back().seq;
     auto t0 = std::chrono::steady_clock::now();
-    CHECK(cmds::execute("unrealSync", json::object()) == 1);
+    CHECK(ops::execute("unrealSync", json::object()) == 1);
     Link::get().waitIdle();
     mainq::drain();
     CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::seconds(5));
@@ -637,7 +637,7 @@ TEST_CASE("auto-sync against an editor that never answers fails with a clear err
 
     unregisterExporter("fbx");
     Link::get().disconnect();
-    cmds::execute("unrealUnmap", {{"args", {name}}});
+    ops::execute("unrealUnmap", {{"args", {name}}});
     g.deleteNode(cube->id());
     PrefStore::get().setWorkspaceDir({});
     fs::remove_all(ws);
@@ -650,11 +650,11 @@ TEST_CASE("an object set maps as one asset: its members export together through 
     PrefStore::get().setWorkspaceDir(ws / ".lila");
     PrefStore::get().set("unreal", "/cacheDir", (ws / "cache").generic_string(), PrefScope::Workspace);
 
-    cmds::execute("newScene", json::object());
-    std::string a = cmds::execute("spaceLocator", {{"name", "rockA"}}).get<std::string>();
-    std::string b = cmds::execute("spaceLocator", {{"name", "rockB"}}).get<std::string>();
-    std::string set = cmds::execute("createSet", {{"args", {a, b}}, {"name", "Rocks"}}).get<std::string>();
-    cmds::execute("unrealMap", {{"args", {set}}, {"contentPath", "/Game/Props/SM_Rocks"}});
+    ops::execute("newScene", json::object());
+    std::string a = ops::execute("spaceLocator", {{"name", "rockA"}}).get<std::string>();
+    std::string b = ops::execute("spaceLocator", {{"name", "rockB"}}).get<std::string>();
+    std::string set = ops::execute("createSet", {{"args", {a, b}}, {"name", "Rocks"}}).get<std::string>();
+    ops::execute("unrealMap", {{"args", {set}}, {"contentPath", "/Game/Props/SM_Rocks"}});
 
     std::mutex mx;
     std::vector<std::vector<scene::NodeId>> plain, together;
@@ -692,13 +692,13 @@ TEST_CASE("an object set maps as one asset: its members export together through 
     CHECK(fs::exists(ws / "cache" / "Rocks.fbx"));
 
     // An empty set has nothing to send.
-    cmds::execute("removeFromSet", {{"args", {set, a, b}}});
+    ops::execute("removeFromSet", {{"args", {set, a, b}}});
     CHECK(syncMappings(true) == 0);
 
     unregisterExporter("fbx");
     unregisterExporter("fbx:set:static");
     Link::get().disconnect();
-    cmds::execute("unrealUnmap", {{"args", {set}}});
+    ops::execute("unrealUnmap", {{"args", {set}}});
     PrefStore::get().setWorkspaceDir({});
     fs::remove_all(ws);
 }

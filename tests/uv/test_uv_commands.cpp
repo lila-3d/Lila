@@ -1,4 +1,4 @@
-#include "cmds/Command.h"
+#include "ops/Command.h"
 
 #include <doctest/doctest.h>
 
@@ -6,7 +6,7 @@ using namespace lila;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 } // namespace
 
 TEST_CASE("uv commands on a cube")

@@ -454,7 +454,7 @@ json createHandle(const Args& a)
 void registerIkCommandsImpl()
 {
     using T = ArgType;
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "ikHandle",
         .doc = "Create an IK handle that solves the chain from startJoint down to endEffector (or the first and last "
                "selected joints); the handle starts on the end joint, so nothing moves. The joints keep their keyable "
@@ -494,7 +494,7 @@ void registerIkCommandsImpl()
 
 void registerIkCommands()
 {
-    if (cmds::find("ikHandle"))
+    if (ops::find("ikHandle"))
         return;
     registerIkCommandsImpl();
 }

@@ -1,4 +1,4 @@
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Progress.h"
@@ -114,13 +114,13 @@ NB_MODULE(_lila, m)
 
     m.def("execute", [](const std::string& name, nb::dict call, bool echo) {
         json c = toJson(call);
-        json result = lila::cmds::execute(name, c, echo ? lila::CallSource::UI : lila::CallSource::Script);
+        json result = lila::ops::execute(name, c, echo ? lila::CallSource::UI : lila::CallSource::Script);
         return toPy(result);
     }, nb::arg("name"), nb::arg("call"), nb::arg("echo") = false);
 
     m.def("commands", [] {
         nb::list out;
-        for (const lila::CommandDef* d : lila::cmds::all())
+        for (const lila::CommandDef* d : lila::ops::all())
         {
             nb::list flags;
             for (const lila::FlagDef& f : d->flags)

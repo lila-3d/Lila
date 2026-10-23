@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/PrefStore.h"
 #include "geo/Mesh.h"
 #include "scene/Components.h"
@@ -204,28 +204,28 @@ TEST_CASE("softWeights follows the curve and falloff mode")
 TEST_CASE("softSelectCurve command and user presets")
 {
     resetPrefs();
-    json r = cmds::execute("softSelectCurve", {{"preset", "Linear"}});
+    json r = ops::execute("softSelectCurve", {{"preset", "Linear"}});
     CHECK(Curve::fromJson(r["keys"]) == findBuiltin("Linear")->curve);
     CHECK(r["falloffMode"] == "volume");
 
-    cmds::execute("softSelectCurve", {{"keys", {{0, 1, "flat"}, {0.5, 0.25, "linear"}, {1, 0, "linear"}}}, {"save", "Mine"}});
+    ops::execute("softSelectCurve", {{"keys", {{0, 1, "flat"}, {0.5, 0.25, "linear"}, {1, 0, "linear"}}}, {"save", "Mine"}});
     CHECK(currentCurve().evaluate(0.25) == doctest::Approx(1.0));
     REQUIRE(userPresets().size() == 1);
     CHECK(userPresets()[0].name == "Mine");
 
-    cmds::execute("softSelectCurve", {{"preset", "Smooth"}});
+    ops::execute("softSelectCurve", {{"preset", "Smooth"}});
     CHECK(currentCurve() == Curve());
-    cmds::execute("softSelectCurve", {{"preset", "Mine"}});
+    ops::execute("softSelectCurve", {{"preset", "Mine"}});
     CHECK(currentCurve().evaluate(0.75) == doctest::Approx(0.125));
 
-    r = cmds::execute("softSelectCurve", {{"rename", "Mine"}, {"to", "Ours"}});
+    r = ops::execute("softSelectCurve", {{"rename", "Mine"}, {"to", "Ours"}});
     CHECK(r["userPresets"] == json::array({"Ours"}));
-    CHECK_THROWS_AS(cmds::execute("softSelectCurve", {{"preset", "Mine"}}), CommandError);
-    CHECK_THROWS_AS(cmds::execute("softSelectCurve", {{"save", "Smooth"}}), CommandError);
-    cmds::execute("softSelectCurve", {{"remove", "Ours"}});
+    CHECK_THROWS_AS(ops::execute("softSelectCurve", {{"preset", "Mine"}}), CommandError);
+    CHECK_THROWS_AS(ops::execute("softSelectCurve", {{"save", "Smooth"}}), CommandError);
+    ops::execute("softSelectCurve", {{"remove", "Ours"}});
     CHECK(userPresets().empty());
-    CHECK_THROWS_AS(cmds::execute("softSelectCurve", {{"falloffMode", "sideways"}}), CommandError);
-    cmds::execute("softSelectCurve", {{"falloffMode", "surface"}});
+    CHECK_THROWS_AS(ops::execute("softSelectCurve", {{"falloffMode", "sideways"}}), CommandError);
+    ops::execute("softSelectCurve", {{"falloffMode", "surface"}});
     CHECK(surfaceFalloff());
     resetPrefs();
     PrefStore::get().set("general", kEnabled, false);

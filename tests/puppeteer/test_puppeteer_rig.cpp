@@ -2,7 +2,7 @@
 
 #include "rig/RigMath.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "extensions/ExtensionManager.h"
 #include "scene/Graph.h"
 #include "scene/Rig.h"
@@ -22,14 +22,14 @@ using Approx = doctest::Approx;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 json v3(double x, double y, double z) { return json::array({x, y, z}); }
 
 std::string package() { return LILA_TEST_PUPPETEER_PACKAGE; }
 
 void loadPuppeteer()
 {
-    if (!cmds::find("puppeteerIkChain"))
+    if (!ops::find("puppeteerIkChain"))
         REQUIRE(extensions::ExtensionManager::get().load(package()) == "Puppeteer");
 }
 
@@ -81,7 +81,7 @@ json registries()
             {"actions", ui::actions::registry().ids()},
             {"items", ui::menus::itemRegistry().ids()},
             {"types", types::registry().ids()},
-            {"commands", cmds::registry().ids()}};
+            {"commands", ops::registry().ids()}};
 }
 } // namespace
 
@@ -89,7 +89,7 @@ TEST_CASE("puppeteer: modes, gizmo and selection handlers come and go with the e
 {
     extensions::ExtensionManager& em = extensions::ExtensionManager::get();
     run("newScene");
-    if (cmds::find("puppeteerIkChain"))
+    if (ops::find("puppeteerIkChain"))
         em.unload("Puppeteer");
     const json before = registries();
     REQUIRE(em.load(package()) == "Puppeteer");
@@ -122,7 +122,7 @@ TEST_CASE("puppeteer: modes, gizmo and selection handlers come and go with the e
     em.unload("Puppeteer");
     CHECK(ui::modes::current() == ui::modes::kDefaultMode);
     CHECK(registries() == before);
-    CHECK_FALSE(cmds::find("puppeteerIkChain"));
+    CHECK_FALSE(ops::find("puppeteerIkChain"));
 }
 
 TEST_CASE("puppeteer: the character finds its skeleton and groups its rig elements")

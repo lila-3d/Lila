@@ -1,7 +1,7 @@
 #include "scene/RenderSettings.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "scene/Camera.h"
 #include "scene/Graph.h"
 
@@ -173,7 +173,7 @@ void registerRenderSettingsCommands()
 {
     using T = ArgType;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "setRenderResolution",
         .doc = "Query or set the scene's render resolution. preset is one of 'HD 1080', 'QHD 1440', 'UHD 4K', "
                "'Square 1080', 'Portrait 1080x1920'. deviceAspect sets the pixel aspect so the image displays at that "
@@ -219,7 +219,7 @@ void registerRenderSettingsCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "cameraSettings",
         .doc = "Query or set a camera's gate display and film fit. The camera is a view name ('persp', 'top', 'front', "
                "...; default 'persp') or a camera node, which keeps them as its own attributes. filmFit is 'fill', 'horizontal', 'vertical' or 'overscan'. Returns the settings.",

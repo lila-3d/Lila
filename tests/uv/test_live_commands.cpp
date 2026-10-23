@@ -1,5 +1,5 @@
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "uv/LiveSession.h"
@@ -14,7 +14,7 @@ using geo::Index;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 
 scene::MeshPtr meshOf(const std::string& name)
 {

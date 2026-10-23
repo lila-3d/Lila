@@ -1,7 +1,7 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "scene/Graph.h"
 #include "scene/Naming.h"
 #include "scene/Transform.h"
@@ -14,7 +14,7 @@ namespace
 {
 json run(const char* name, json call = json::object())
 {
-    return cmds::execute(name, call);
+    return ops::execute(name, call);
 }
 
 glm::dvec3 vec(const json& j) { return {j[0].get<double>(), j[1].get<double>(), j[2].get<double>()}; }
@@ -174,7 +174,7 @@ TEST_CASE("scene save/load round trip")
     CHECK(run("listRelatives", {{"args", {"A"}}}) == json::array({"B"}));
     CHECK(vec(run("getAttr", {{"args", {"B.scale"}}})) == glm::dvec3(1, 2, 3));
     CHECK(run("getAttr", {{"args", {"B.rotateOrder"}}}) == 2);
-    CHECK(cmds::execute("undoInfo", json::object())["undo"].get<std::string>().empty());
+    CHECK(ops::execute("undoInfo", json::object())["undo"].get<std::string>().empty());
     CHECK(io::serialize() == doc);
 }
 

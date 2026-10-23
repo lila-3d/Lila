@@ -1,7 +1,7 @@
 #include "vcolor/VertexColors.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Profile.h"
 #include "geo/ColorSets.h"
 #include "scene/Components.h"
@@ -285,7 +285,7 @@ void registerCommands()
 {
     using T = ArgType;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "polyColorSet",
         .doc = "Maya's polyColorSet: create, delete, rename, copy, reorder or make current a mesh's vertex color sets, set their "
                "precision, or query them. Returns {sets, current, half} for the last mesh.",
@@ -368,7 +368,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "vertexColorStroke",
         .doc = "One vertex paint stroke: dabs is a list of {center, radius, opacity, view, eye} in world space (center and radius "
                "required). Mirrors through the mesh's symmetry and stays inside the component selection. One undo step that stores "
@@ -471,7 +471,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "vertexColorFill",
         .doc = "Flood vertex colors: blend a color over the whole mesh, the selected components, or whole shells of them. Returns the "
                "sets changed.",
@@ -495,7 +495,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "vertexColorGradient",
         .doc = "Gradient fill: colorA at start to colorB at end (linear), or from start out to the distance of end (radial), world "
                "space. Without start and end it spans the target points along axis.",
@@ -544,7 +544,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "vertexColorAdjust",
         .doc = "Adjust vertex colors: invert, or levels (input black and white points, gamma, output range), per channel.",
         .positionalDoc = "meshes",
@@ -569,7 +569,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "vertexColorBlur",
         .doc = "Smooth vertex colors across edges; a negative strength sharpens instead.",
         .positionalDoc = "meshes",
@@ -584,7 +584,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "vertexColorBake",
         .doc = "Bake a grayscale map into vertex color channels: ambient occlusion from the mesh itself, cavity (creases dark), "
                "curvature (0.5 flat, convex brighter) or a height gradient along an axis. The classic masks for game materials.",
@@ -618,7 +618,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "vertexColorSample",
         .doc = "The vertex color on the mesh surface closest to a world-space point (the eyedropper). Returns linear [r, g, b, a].",
         .positionalDoc = "mesh",
@@ -644,7 +644,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "getVertexColorData",
         .doc = "A color set's values per face-vertex (faces in order, each face's corners around it) as a flat [r, g, b, a, ...] list. "
                "Python's Node.get_colors returns the same as a numpy array, faster.",
@@ -673,7 +673,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "setVertexColorData",
         .doc = "Set a color set from a flat [r, g, b, a, ...] list per face-vertex, in getVertexColorData's order. Creates the set when "
                "missing. One undo step.",

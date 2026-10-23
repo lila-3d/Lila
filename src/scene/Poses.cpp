@@ -1,7 +1,7 @@
 #include "scene/Poses.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/Paths.h"
 #include "core/Profile.h"
@@ -948,7 +948,7 @@ void registerCommands()
     using T = ArgType;
     const std::vector<std::string> tierChoices = {"scene", "workspace", "user", "template"};
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "savePose",
         .doc = "Store the current pose of the selected nodes (and everything under them) in the pose library, keyed by "
                "node name without namespace, rotations as quaternions. The character is the selection's root joint (or "
@@ -1002,7 +1002,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "applyPose",
         .doc = "Apply a library pose to the selected character by node name: namespaces are ignored, aliases tried, "
                "weight blends from the current pose (rotations slerp), mirror applies it to the other side. Names the "
@@ -1039,7 +1039,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "mirrorPose",
         .doc = "With a pose name, store its mirror image as a new pose (newName, default <name>_mirror). Without one, "
                "mirror the selected character's current pose onto itself: left and right swap, centre nodes reflect.",
@@ -1090,7 +1090,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "listPoses",
         .doc = "List library poses for the selected character (or the given one, or every character with neither): "
                "[{name, character, template, tier, tags, reserved, thumbnail, nodes}], one per name with the first tier "
@@ -1119,7 +1119,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "deletePose",
         .doc = "Delete a library pose from its tier (the first tier holding it unless tier is given). Reserved poses "
                "(bind, ref, test) need force. Scene poses come back with undo; file poses don't.",
@@ -1143,7 +1143,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "renamePose",
         .doc = "Rename a library pose within its tier. Reserved names (bind, ref, test) can't be renamed to or from.",
         .positionalDoc = "name newName",

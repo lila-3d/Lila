@@ -1,6 +1,6 @@
 #include "ui/PreferencesDialog.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
@@ -516,7 +516,7 @@ void addBuiltIns(Registry<prefPages::Page>& r)
             QObject::connect(box, &QComboBox::currentIndexChanged, box, [box](int) {
                 try
                 {
-                    cmds::execute("playbackOptions", {{"playbackSpeed", box->currentData().toString().toStdString()}}, CallSource::UI);
+                    ops::execute("playbackOptions", {{"playbackSpeed", box->currentData().toString().toStdString()}}, CallSource::UI);
                 }
                 catch (const CommandError& e)
                 {
@@ -544,7 +544,7 @@ void addBuiltIns(Registry<prefPages::Page>& r)
             QObject::connect(spin, &QDoubleSpinBox::valueChanged, spin, [](double v) {
                 try
                 {
-                    cmds::execute("playbackOptions", {{"playbackSpeed", "custom"}, {"speedMultiplier", v}}, CallSource::UI);
+                    ops::execute("playbackOptions", {{"playbackSpeed", "custom"}, {"speedMultiplier", v}}, CallSource::UI);
                 }
                 catch (const CommandError& e)
                 {

@@ -1,5 +1,5 @@
 // Renders the UV editor offscreen to PNGs for a visual check: uv_editor_demo <out-dir>
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "scene/Components.h"
 #include "scene/Node.h"
@@ -27,7 +27,7 @@ int main(int argc, char** argv)
     QString out = argc > 1 ? QString(argv[1]) : QDir::currentPath();
 
     mainq::init();
-    cmds::registerBuiltins();
+    ops::registerBuiltins();
     scene::types::registerBuiltins();
     scene::registerCommands();
     uv::registerCommands();
@@ -35,11 +35,11 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     ui::applyTheme(app);
 
-    cmds::execute("newScene", json::object());
-    std::string sphere = cmds::execute("polySphere", json::object())[0];
-    std::string cube = cmds::execute("polyCube", {{"position", {150, 0, 0}}})[0];
-    cmds::execute("select", {{"args", {sphere, cube}}});
-    cmds::execute("uvAuto", {{"resolution", 1024}, {"padding", 8}});
+    ops::execute("newScene", json::object());
+    std::string sphere = ops::execute("polySphere", json::object())[0];
+    std::string cube = ops::execute("polyCube", {{"position", {150, 0, 0}}})[0];
+    ops::execute("select", {{"args", {sphere, cube}}});
+    ops::execute("uvAuto", {{"resolution", 1024}, {"padding", 8}});
 
     ui::UvEditor editor;
     editor.resize(900, 760);
@@ -48,7 +48,7 @@ int main(int argc, char** argv)
     editor.grab().save(out + "/uv_editor_checker.png");
 
     // Face selection on one island plus the move manipulator.
-    cmds::execute("selectComponents", {{"args", {sphere}}, {"faces", {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}}});
+    ops::execute("selectComponents", {{"args", {sphere}}, {"faces", {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}}});
     for (QComboBox* c : editor.findChildren<QComboBox*>())
         if (c->count() == 3)
             c->setCurrentIndex(2);

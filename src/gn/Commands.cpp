@@ -2,8 +2,8 @@
 #include "gn/Exec.h"
 #include "gn/Gn.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
@@ -234,7 +234,7 @@ void registerCommands()
     using T = ArgType;
     registerNodeLibrary();
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gnCreateGroup",
         .doc = "Create a geometry-nodes group (Group Input wired to Group Output). Returns its name.",
         .positionalDoc = "name",
@@ -254,7 +254,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gnAddNode",
         .doc = "Add a node to a group. Returns its name. gnNodeTypes lists the types.",
         .positionalDoc = "group type",
@@ -277,7 +277,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gnDeleteNode",
         .doc = "Delete nodes from a group, with their links.",
         .positionalDoc = "group nodes...",
@@ -295,7 +295,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gnConnect",
         .doc = "Link an output socket to an input socket: gnConnect(group, 'Grid.mesh', 'SetPosition.geometry'). Replaces the input's "
                "link unless it takes several.",
@@ -328,7 +328,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gnDisconnect",
         .doc = "Remove the links into an input socket, or only the one from `source` when given.",
         .positionalDoc = "group to",
@@ -346,7 +346,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gnSetValue",
         .doc = "Set an unlinked input's value or a property: gnSetValue(group, 'Grid.sizeX', 200), gnSetValue(group, 'Math.operation', "
                "'multiply'). GroupInput.<input> sets an exposed input's default. Rotations are in degrees.",
@@ -394,7 +394,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gnExposeInput",
         .doc = "Expose an input socket as a group parameter: it becomes a Group Input output wired to the socket and a keyable attr "
                "on every modifier using the group. Returns the parameter name.",
@@ -437,7 +437,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gnRemoveInput",
         .doc = "Remove an exposed group parameter and its links.",
         .positionalDoc = "group name",
@@ -452,7 +452,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gnMoveNodes",
         .doc = "Move nodes on the canvas: gnMoveNodes(group, positions={'Grid': [0, 100]}).",
         .positionalDoc = "group",
@@ -468,7 +468,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gnDuplicateNodes",
         .doc = "Copy nodes with the links between them. Returns the new names in order.",
         .positionalDoc = "group nodes...",
@@ -502,7 +502,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gnCopyNodes",
         .doc = "Nodes as shareable text (JSON with a format header): their values and the links between them. Paste it with "
                "gnPasteNodes, here or in another scene.",
@@ -525,7 +525,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gnPasteNodes",
         .doc = "Add nodes from text made by gnCopyNodes (or a saved group's JSON), centred at position; names are made unique. "
                "Returns the new names. Bad text fails with every problem listed and changes nothing.",
@@ -554,7 +554,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gnSetDefinition",
         .doc = "Replace a group's whole definition (JSON as gnGroupInfo returns under 'definition'). The name is kept.",
         .positionalDoc = "group definition",
@@ -579,14 +579,14 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gnGroups",
         .doc = "Names of the geometry-nodes groups in the scene.",
         .undoable = false,
         .run = [](const Args&) -> json { return groupNames(graph()); },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gnGroupInfo",
         .doc = "A group's definition, its nodes with resolved sockets and values, its modifiers, and any compile error.",
         .positionalDoc = "group",
@@ -608,7 +608,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gnNodeTypes",
         .doc = "The node library: type, label, category and description of each node. With linkType, only nodes that can take a "
                "link from (or, with linkInput, give one to) a socket of that type, each with the socket it would use.",
@@ -649,7 +649,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gnApply",
         .doc = "Add a group's modifier to the top of a mesh's stack. Its exposed inputs are keyable attrs. Returns the modifier name.",
         .positionalDoc = "mesh group",
@@ -670,7 +670,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gnSaveGroup",
         .doc = "Save a group to the user library (prefs folder) or the workspace's .lila/geometryNodes. Returns the file path.",
         .positionalDoc = "group",
@@ -693,7 +693,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gnLibrary",
         .doc = "Groups saved in the user and workspace libraries.",
         .undoable = false,
@@ -708,7 +708,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "gnLoadGroup",
         .doc = "Bring a library group (by name, workspace first, or a .json path) into the scene. If the scene already has it, its "
                "definition is replaced and its modifiers update. Returns the group name.",
@@ -751,7 +751,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "exportMeshSequence",
         .doc = "Write one mesh file per frame: sets the time, evaluates, writes. The path's {frame} becomes the frame number "
                "(e.g. out/rock_{frame}.obj). Format obj or fbx. Frames are at fps. Returns the written paths.",

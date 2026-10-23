@@ -1,6 +1,6 @@
 #include "ui/KnifeTool.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
@@ -382,7 +382,7 @@ void KnifeTool::finish(bool closed)
         call["eye"] = {mView.eye.x, mView.eye.y, mView.eye.z};
     try
     {
-        cmds::execute("polyKnife", call, CallSource::UI);
+        ops::execute("polyKnife", call, CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -401,7 +401,7 @@ void KnifeTool::insertLoop(const Spot& spot)
         return;
     try
     {
-        cmds::execute("polyKnife", {{"mesh", n->name()}, {"loopEdge", spot.point.id}, {"fraction", spot.point.t}}, CallSource::UI);
+        ops::execute("polyKnife", {{"mesh", n->name()}, {"loopEdge", spot.point.id}, {"fraction", spot.point.t}}, CallSource::UI);
     }
     catch (const CommandError& e)
     {

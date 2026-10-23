@@ -487,11 +487,11 @@ std::string labelFromName(const std::string& rawName)
 std::map<NodeId, std::string> jointLabels(Graph& g, const Character& ch)
 {
     std::map<std::string, std::string> fromTemplate;
-    if (!ch.templateId.empty() && cmds::find("rigTemplateInfo"))
+    if (!ch.templateId.empty() && ops::find("rigTemplateInfo"))
     {
         try
         {
-            const json t = cmds::execute("rigTemplateInfo", {{"args", {ch.templateId}}});
+            const json t = ops::execute("rigTemplateInfo", {{"args", {ch.templateId}}});
             for (const json& m : t.value("markers", json::array()))
                 if (!m.value("label", std::string()).empty())
                     fromTemplate[m.value("joint", m.value("name", std::string()))] = m["label"].get<std::string>();
@@ -662,7 +662,7 @@ WalkResult generateWalk(Graph& g, const Character& ch, const WalkParams& params,
             }
         }
     }
-    cmds::execute("editTake", {{"args", {res.take}}, {"loop", true}});
+    ops::execute("editTake", {{"args", {res.take}}, {"loop", true}});
     return res;
 }
 } // namespace puppeteer::anim

@@ -374,7 +374,7 @@ void registerSelectAsCommands()
 {
     using T = ArgType;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "selectAs",
         .doc = "Set or clear where a mesh click on joints lands instead of them (a twist bone selecting its limb). "
                "With neither target nor clear, returns {joint: target or None} for the joints.",
@@ -403,7 +403,7 @@ void registerSelectAsCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "autoSelectAs",
         .doc = "Point helper joints (twist, corrective, muscle bones by name) at their nearest non-helper ancestor, "
                "preferring one weighted on the same skin. Works on the joints and everything under them, every joint "
@@ -457,7 +457,7 @@ void registerSelectAsCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "selectionCandidates",
         .doc = "The joints a click on a skinned mesh's face could mean: [{joint, role, weight}] with role redirect, "
                "weighted, parent, child or influence, in that order.",

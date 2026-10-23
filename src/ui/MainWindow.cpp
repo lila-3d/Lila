@@ -1,7 +1,7 @@
 #include "ui/MainWindow.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/CrashHandler.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
@@ -482,7 +482,7 @@ void MainWindow::run(const char* command, const json& call)
 {
     try
     {
-        cmds::execute(command, call, CallSource::UI);
+        ops::execute(command, call, CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -571,7 +571,7 @@ bool MainWindow::saveScene(bool saveAs, const std::filesystem::path& target)
     }
     try
     {
-        cmds::execute("saveScene", {{"args", {path.generic_string()}}}, CallSource::UI);
+        ops::execute("saveScene", {{"args", {path.generic_string()}}}, CallSource::UI);
         addRecentFile(path);
         vcs::markForAddIfNew(path);
         refreshSourceStatus();
@@ -729,7 +729,7 @@ void MainWindow::convertMayaFolder()
         return;
     try
     {
-        json results = cmds::execute("mayaConvert", {{"source", dir.toStdString()}, {"force", true}}, CallSource::UI);
+        json results = ops::execute("mayaConvert", {{"source", dir.toStdString()}, {"force", true}}, CallSource::UI);
         int failed = 0;
         for (const json& r : results)
             failed += r.contains("error") ? 1 : 0;
@@ -768,13 +768,13 @@ void MainWindow::exportSelection()
 void MainWindow::sendToUnreal()
 {
     // First send asks where each object goes; after that, saving the scene re-exports and reimports it.
-    json selection = cmds::execute("ls", {{"selection", true}});
+    json selection = ops::execute("ls", {{"selection", true}});
     if (selection.empty())
     {
         QMessageBox::information(this, "Send to Unreal", "Select the objects to send first.");
         return;
     }
-    json existing = cmds::execute("unrealMappings", json::object());
+    json existing = ops::execute("unrealMappings", json::object());
     for (const json& name : selection)
     {
         bool mapped = false;
@@ -891,7 +891,7 @@ void MainWindow::registerActions()
                   "lila.ops.lookThru(\"camera1\")"});
     actions::add({"create.cameraFromView", "Camera from View", "Create", [this] { createCameraFromView(); }, nullptr,
                   "Creates a camera where the active view's camera is, with its lens, and selects it."});
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "lookThru",
         .doc = "Make the active view look through a camera node, or switch it to a view (persp, top, front, side, ...). "
                "Returns the name of what the active view looks through; with no argument it only returns it.",
@@ -923,7 +923,7 @@ void MainWindow::registerActions()
                       }
                       try
                       {
-                          cmds::execute("applyLayout", {{"name", current}}, CallSource::UI);
+                          ops::execute("applyLayout", {{"name", current}}, CallSource::UI);
                       }
                       catch (const CommandError& e)
                       {
@@ -962,7 +962,7 @@ void MainWindow::registerActions()
         bool on = scene::renderSettings().camera(cam).toJson()[key].get<bool>();
         try
         {
-            cmds::execute("cameraSettings", {{"args", json::array({cam})}, {flag, !on}}, CallSource::UI);
+            ops::execute("cameraSettings", {{"args", json::array({cam})}, {flag, !on}}, CallSource::UI);
         }
         catch (const CommandError& e)
         {
@@ -1439,8 +1439,8 @@ void MainWindow::createCameraFromView()
     try
     {
         UndoChunk chunk("Create Camera from View");
-        std::string name = cmds::execute("createNode", {{"args", {"camera"}}}, CallSource::UI).get<std::string>();
-        auto set = [&](const char* attr, json value) { cmds::execute("setAttr", {{"args", {name + "." + attr, std::move(value)}}}, CallSource::UI); };
+        std::string name = ops::execute("createNode", {{"args", {"camera"}}}, CallSource::UI).get<std::string>();
+        auto set = [&](const char* attr, json value) { ops::execute("setAttr", {{"args", {name + "." + attr, std::move(value)}}}, CallSource::UI); };
         if (through)
         {
             for (int attr = scene::Camera::kFocalLength; attr < scene::Camera::kCount; ++attr)
@@ -1462,10 +1462,10 @@ void MainWindow::createCameraFromView()
         }
         // Orthographic views sit far out along their axis; the camera only needs to be clear of the scene.
         glm::dvec3 eye = c.ortho && !through ? c.target - c.forward() * 1000.0 : c.eye();
-        cmds::execute("viewPlace", {{"args", {name}}, {"eye", vec(eye)}, {"lookAt", vec(c.target)}, {"up", vec(c.viewUp())}},
+        ops::execute("viewPlace", {{"args", {name}}, {"eye", vec(eye)}, {"lookAt", vec(c.target)}, {"up", vec(c.viewUp())}},
                       CallSource::UI);
-        cmds::execute("selectMode", {{"args", {"object"}}}, CallSource::UI);
-        cmds::execute("select", {{"args", {name}}}, CallSource::UI);
+        ops::execute("selectMode", {{"args", {"object"}}}, CallSource::UI);
+        ops::execute("select", {{"args", {name}}}, CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -1475,7 +1475,7 @@ void MainWindow::createCameraFromView()
 
 void MainWindow::renameSelection()
 {
-    json selection = cmds::execute("ls", {{"selection", true}});
+    json selection = ops::execute("ls", {{"selection", true}});
     if (!selection.is_array() || selection.empty())
         return;
     std::vector<std::string> names;

@@ -1,13 +1,13 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 
 using namespace lila;
 using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 
 void faceMode(const std::string& mesh)
 {
@@ -70,7 +70,7 @@ TEST_CASE("creating a node lands in object mode with the new node selected")
     CHECK(run("selectMode") == "object");
     CHECK(run("ls", {{"selection", true}}) == json::array({node}));
 
-    if (cmds::find("joint"))
+    if (ops::find("joint"))
     {
         faceMode(cube);
         std::string joint = run("joint");

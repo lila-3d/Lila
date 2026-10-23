@@ -1,6 +1,6 @@
 #include "scene/ImagePlane.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Profile.h"
 #include "core/Paths.h"
 #include "scene/Graph.h"
@@ -299,7 +299,7 @@ void registerImagePlaneTypes()
 
 void registerImagePlaneCommands()
 {
-    if (cmds::find("imagePlane"))
+    if (ops::find("imagePlane"))
         return;
     std::vector<FlagDef> flags = {
         {"fileName", "f", T::String, nullptr, "Image file; stored relative to the workspace root (or the scene folder without one)."},
@@ -325,7 +325,7 @@ void registerImagePlaneCommands()
         {"placement", "pl", T::String, nullptr, "behind, inScene or inFront of the geometry.", kPlacementNames},
         {"locked", "lk", T::Bool, nullptr, "Not pickable in the viewport (reference mode)."},
     };
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "imagePlane",
         .doc = "Create an image plane for modelling from reference images, or edit the image plane named. Returns its name.",
         .positionalDoc = "imagePlane to edit (omit to create one)",

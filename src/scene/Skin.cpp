@@ -1,6 +1,6 @@
 #include "scene/Skin.h"
 
-#include "cmds/Undo.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
@@ -734,7 +734,7 @@ void registerSkinCommandsImpl()
 {
     using T = ArgType;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "skinCluster",
         .doc = "Bind a mesh to joints. Give the joints and the mesh in any order (or select them). With "
                "bindTo=\"hierarchy\" every joint below the given ones is an influence too. Weights start from "
@@ -826,7 +826,7 @@ void registerSkinCommandsImpl()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "skinPercent",
         .doc = "Set exact weights: transformValue=[[joint, weight], ...] on the given (or selected) vertices; the "
                "other unlocked influences rescale to fill the rest. Without transformValue returns "
@@ -901,7 +901,7 @@ void registerSkinCommandsImpl()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "copySkinWeights",
         .doc = "Copy weights from one skinned mesh to another by closest surface point (or point id). Influences match "
                "by joint name; missing ones are added to the destination.",
@@ -968,7 +968,7 @@ void registerSkinCommandsImpl()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "mirrorSkinWeights",
         .doc = "Mirror weights across a world plane through the origin: points on the source side copy to their mirror "
                "partners, with influences swapped by searchReplace (an influence with no partner maps to itself).",
@@ -1035,7 +1035,7 @@ void registerSkinCommandsImpl()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "normalizeWeights",
         .doc = "Make each point's weights sum to 1 (locked influences keep their values). Defaults to every point.",
         .positionalDoc = "mesh",
@@ -1058,7 +1058,7 @@ void registerSkinCommandsImpl()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "pruneWeights",
         .doc = "Drop weights below a threshold and beyond the skin's maxInfluences, then renormalize.",
         .positionalDoc = "mesh",
@@ -1086,7 +1086,7 @@ void registerSkinCommandsImpl()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "skinInfo",
         .doc = "A skinned mesh's skinCluster, influences, influence limit and weight health.",
         .positionalDoc = "mesh",
@@ -1136,7 +1136,7 @@ void registerSkinCommandsImpl()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "unbindSkin",
         .doc = "Remove a mesh's skinCluster and its influence links; the mesh returns to its bind shape.",
         .positionalDoc = "mesh",
@@ -1157,7 +1157,7 @@ void registerSkinCommandsImpl()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "addInfluence",
         .doc = "Add joints to a skinCluster with zero weight; their current pose becomes their bind pose.",
         .positionalDoc = "mesh, joints...",
@@ -1182,7 +1182,7 @@ void registerSkinCommandsImpl()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "removeInfluence",
         .doc = "Remove joints from a skinCluster; their weight goes to the remaining influences.",
         .positionalDoc = "mesh, joints...",
@@ -1228,7 +1228,7 @@ void registerSkinCommandsImpl()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "goToBindPose",
         .doc = "Put a skinned mesh's joints back where they were bound.",
         .positionalDoc = "mesh",

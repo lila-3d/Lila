@@ -26,7 +26,7 @@ namespace
 {
 json run(const char* cmd, json call = json::object())
 {
-    return cmds::execute(cmd, call);
+    return ops::execute(cmd, call);
 }
 
 /** The installed-SDK build of the sample when LILA_TEST_SCENE_POINTS_PACKAGE names one, else the in-tree build. */
@@ -49,7 +49,7 @@ json registries()
             {"dataKinds", scene::data::kinds().ids()},
             {"linkExporters", link::exporterFormats()},
             {"types", scene::types::registry().ids()},
-            {"commands", cmds::registry().ids()},
+            {"commands", ops::registry().ids()},
             {"mcpTool", mcp::Server::get().hasTool("scene_points_count")}};
 }
 

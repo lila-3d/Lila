@@ -1,6 +1,6 @@
 #include "app/Host.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Events.h"
 #include "core/Log.h"
 #include "core/MainQueue.h"
@@ -99,7 +99,7 @@ void startCore()
         if (file == "general")
             syncUpAxis();
     });
-    cmds::registerBuiltins();
+    ops::registerBuiltins();
     scene::types::registerBuiltins();
     gn::registerTypes();
     scene::registerCommands();

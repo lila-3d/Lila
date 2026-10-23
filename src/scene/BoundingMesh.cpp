@@ -1,4 +1,4 @@
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Profile.h"
 #include "geo/BoundingShapes.h"
 #include "geo/Primitives.h"
@@ -238,7 +238,7 @@ Node* build(Graph& g, Placed& p, const std::string& name, bool history)
 
 void registerBoundingMeshCommands()
 {
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "boundingMesh",
         .doc = "Wrap the selection's points in a fitted shape, ready to go to Unreal as collision. Orientation is solved from the "
                "points alone (minimum-volume box), so frozen and unfrozen geometry behave the same, and every point is inside. "
@@ -306,6 +306,6 @@ void registerBoundingMeshCommands()
             return out;
         },
     });
-    cmds::setAdjustable("boundingMesh");
+    ops::setAdjustable("boundingMesh");
 }
 } // namespace lila::scene

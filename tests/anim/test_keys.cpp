@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "scene/Anim.h"
 #include "scene/Graph.h"
 
@@ -12,7 +12,7 @@ using scene::Graph;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 double get(const std::string& plug) { return run("getAttr", {{"args", {plug}}}).get<double>(); }
 void at(double seconds) { run("currentTime", {{"args", {seconds}}}); }
 bool exists(const std::string& name) { return run("objExists", {{"args", {name}}}).get<bool>(); }

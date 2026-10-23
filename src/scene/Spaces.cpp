@@ -1,6 +1,6 @@
 #include "scene/Spaces.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Profile.h"
 #include "scene/Anim.h"
 #include "scene/AnimLayer.h"
@@ -663,7 +663,7 @@ void registerCommands()
 {
     using T = ArgType;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "addSpace",
         .doc = "Give a transform or joint spaces to animate in: 'world' or other nodes (its parent is always space 0). Its "
                "space channel (keyable, in the channel box) then picks the frame translate, rotate and scale are read in, "
@@ -706,7 +706,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "removeSpace",
         .doc = "Remove one of a node's spaces. Frames spent in it switch to the parent keeping the world pose; the last "
                "space removed takes the spaceSwitch and the space channel with it. Returns the node's spaces.",
@@ -729,7 +729,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "listSpaces",
         .doc = "A node's spaces: {node, active, spaces: [{index, name, kind}]}, kind parent, world or node.",
         .positionalDoc = "node",
@@ -743,7 +743,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "switchSpace",
         .doc = "Switch nodes to another space keeping their world pose: keys the space channel (stepped) and re-keys "
                "translate, rotate and scale in the new frame at the time, on the active layer. With range, every key in "

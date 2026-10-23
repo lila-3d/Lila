@@ -577,7 +577,7 @@ ShapeKind shapeArg(const std::string& s)
 
 std::pair<int64_t, int64_t> rangeArgs(const Args& a)
 {
-    const json r = cmds::execute("playbackOptions", json::object());
+    const json r = ops::execute("playbackOptions", json::object());
     int64_t start = sim::frameOf(r.value("minTime", 0.0)), end = sim::frameOf(r.value("maxTime", 1.0));
     if (a.has("start"))
         start = a.get<int64_t>("start");
@@ -691,7 +691,7 @@ void keyPose(Graph& g, const std::vector<std::pair<NodeId, glm::dmat4>>& pose, d
         json plugs = json::array();
         for (const char* c : {"translateX", "translateY", "translateZ", "rotateX", "rotateY", "rotateZ"})
             plugs.push_back(n + "." + c);
-        cmds::execute("setKeyframe", {{"args", plugs}, {"time", time}});
+        ops::execute("setKeyframe", {{"args", plugs}, {"time", time}});
     }
 }
 

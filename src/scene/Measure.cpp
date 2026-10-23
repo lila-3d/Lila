@@ -356,7 +356,7 @@ std::vector<glm::dvec3> pointsArg(const json& j, const char* cmd)
 
 void registerCreateCommands()
 {
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "distanceMeasure",
         .doc = "Live distance between two points. Each point is an object name or [x, y, z] (a locator is made there); with "
                "neither given, measures between two selected objects or vertices (vertex locators are parented to their "
@@ -390,7 +390,7 @@ void registerCreateCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "angleMeasure",
         .doc = "Live angle at a vertex. points is [arm1, vertex, arm2], each an object name or [x, y, z]; with none given, "
                "uses three selected objects (the second is the vertex) or vertices (the one joined to both others by edges, "
@@ -447,7 +447,7 @@ void registerCreateCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "radiusMeasure",
         .doc = "Best-fit circle (radius and diameter). Either fixed world points, a mesh plus vertex ids (live under edits), "
                "or with neither, the selected components of one mesh (an edge loop or ring of vertices). Returns the node.",
@@ -533,7 +533,7 @@ void registerMeasureSelectionCommand();
 
 void registerMeasureCommands()
 {
-    if (cmds::find("distanceMeasure"))
+    if (ops::find("distanceMeasure"))
         return;
     registerCreateCommands();
     registerMeasureSelectionCommand();

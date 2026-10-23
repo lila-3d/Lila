@@ -1,7 +1,7 @@
 // Throwaway harness: the API reference and terminal panels with Python up, grabbed to PNGs.
 // Usage: lila_panels_demo <outdir>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "core/PrefStore.h"
 #include "io/SceneFile.h"
@@ -56,7 +56,7 @@ int main(int argc, char** argv)
 
     mainq::init();
     PrefStore::get().start();
-    cmds::registerBuiltins();
+    ops::registerBuiltins();
     scene::types::registerBuiltins();
     scene::registerCommands();
     io::registerCommands();

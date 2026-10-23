@@ -1,6 +1,6 @@
 #include "ui/Ghosting.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
@@ -27,7 +27,7 @@ void runUi(const json& call)
 {
     try
     {
-        cmds::execute("ghosting", call, CallSource::UI);
+        ops::execute("ghosting", call, CallSource::UI);
     }
     catch (const CommandError& e)
     {

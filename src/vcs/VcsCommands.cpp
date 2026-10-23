@@ -1,6 +1,6 @@
 #include "vcs/VcsCommands.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Workspace.h"
 #include "vcs/SourceControl.h"
 
@@ -79,7 +79,7 @@ void registerCommands()
 {
     using T = ArgType;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "scStatus",
         .doc = "Source control state of files: [{path, state, checkedOutByMe, outOfDate, lockedByOther, otherUsers, ...}]. "
                "state is notTracked | synced | checkedOut | checkedOutOther | outOfDate | locked | added | deleted.",
@@ -102,7 +102,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "scCheckout",
         .doc = "Check files out for edit. Perforce: p4 edit. Git: git lfs lock for LFS files, otherwise nothing to do. "
                "Returns {files, warnings}.",
@@ -116,7 +116,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "scAdd",
         .doc = "Mark new files for add. Returns {files, warnings}.",
         .positionalDoc = "files",
@@ -129,7 +129,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "scRevert",
         .doc = "Discard local changes and release checkouts. Git: restores from HEAD, unstages new files.",
         .positionalDoc = "files",
@@ -140,7 +140,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "scDelete",
         .doc = "Mark files for delete (removes the local copies).",
         .positionalDoc = "files",
@@ -153,7 +153,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "scSubmit",
         .doc = "Submit a changelist (git: commit; never pushes). Files limit it to those files. Returns {change, files, warnings}.",
         .positionalDoc = "files (optional)",
@@ -173,7 +173,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "scSync",
         .doc = "Get latest. No files = the whole workspace (git: pull --ff-only).",
         .positionalDoc = "files (optional)",
@@ -189,7 +189,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "scChangelists",
         .doc = "List pending changelists with their files, or create one, move files into one, shelve or unshelve.",
         .positionalDoc = "files (for move or shelve)",
@@ -225,7 +225,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "scHistory",
         .doc = "Revisions of a file, newest first: [{revision, change, action, user, time, description}].",
         .positionalDoc = "file",
@@ -242,7 +242,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "scLock",
         .doc = "Lock files so nobody else can submit them (git: git lfs lock). unlock releases.",
         .positionalDoc = "files",
@@ -257,7 +257,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "scProvider",
         .doc = "Which provider manages a path (default: the workspace root) and its settings: {provider, settings, info}.",
         .positionalDoc = "path (optional)",

@@ -1,7 +1,7 @@
 // Throwaway harness: builds the hotkey editor, cheat sheet, capture dialog and marking menu editor, drives them a
 // little and grabs PNGs. Usage (with LILA_CONFIG_DIR pointing at a temp dir): lila_hk_demo <outdir>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "core/PrefStore.h"
 #include "scene/Node.h"
@@ -68,7 +68,7 @@ int main(int argc, char** argv)
     gOut = argc > 1 ? argv[1] : ".";
     mainq::init();
     PrefStore::get().start();
-    cmds::registerBuiltins();
+    ops::registerBuiltins();
     scene::types::registerBuiltins();
     scene::registerCommands();
 

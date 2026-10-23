@@ -1,7 +1,7 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "io/SceneFile.h"
 #include "scene/Camera.h"
 #include "scene/Graph.h"
@@ -16,7 +16,7 @@ using namespace lila::scene;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 
 Node& newCamera()
 {

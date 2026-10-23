@@ -46,7 +46,7 @@ endfunction()
 
 # An extension's sources may include <lila/...>, the standard library, third-party headers and their own files only.
 function(lila_check_extension_sources target)
-    set(internal core cmds math scene geo deform io fbx uv gn link maya retopo sculpt vcolor vcs mcp python extensions render ui app)
+    set(internal core ops math scene geo deform io fbx uv gn link maya retopo sculpt vcolor vcs mcp python extensions render ui app)
     list(JOIN internal "|" internal_re)
     foreach(src ${ARGN})
         cmake_path(ABSOLUTE_PATH src BASE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} OUTPUT_VARIABLE file)

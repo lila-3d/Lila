@@ -1,7 +1,7 @@
 #include "scene/Anim.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Events.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
@@ -607,7 +607,7 @@ void registerCommands()
     const FlagDef attrFlag{"attribute", "at", T::Any, nullptr, "Attribute name or list of names (translate keys all three)."};
     const FlagDef timeFlag{"time", "t", T::Any, nullptr, "Seconds, or (start, end) with None for an open end. Default: all keys."};
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "setKeyframe",
         .doc = "Key channels at a time. With no objects, keys every keyable channel of the selection at the current "
                "time (Maya's S). Objects may be nodes, plugs ('cube.ty') or curve nodes. Returns the number of keys set.",
@@ -696,7 +696,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "cutKey",
         .doc = "Remove keys (all, or those in time) and copy them for pasteKey. A curve left with no keys is deleted "
                "and the channel keeps its value. Returns the number removed.",
@@ -715,7 +715,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "copyKey",
         .doc = "Copy keys (all, or those in time) to the key clipboard. Returns the number copied.",
         .positionalDoc = "objects",
@@ -726,7 +726,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "pasteKey",
         .doc = "Paste copied keys starting at time (default the current time). One copied channel pastes onto every "
                "target; several match by channel name. option: merge (replace keys at the same times) or replace "
@@ -844,7 +844,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "keyframe",
         .doc = "Query or edit keys. query=True returns key times (valueChange=True: values; keyCount=True: the "
                "count). Without query, moves the keys in time by timeChange and/or sets valueChange; relative=True "
@@ -995,7 +995,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "keyTangent",
         .doc = "Query or set tangents of keys (all, or those in time). Setting an angle makes that side fixed. "
                "query=True returns [{time, in, out, inAngle, outAngle, inWeight, outWeight}].",
@@ -1160,7 +1160,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "setInfinity",
         .doc = "Curve behaviour outside its keys: constant, linear, cycle, cycleRelative (cycle with offset), "
                "oscillate. query=True returns [{curve, pre, post}].",
@@ -1211,7 +1211,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "findKeyframe",
         .doc = "Time of the next, previous, first or last key on the objects (default the selection), or None. "
                "next and previous wrap around.",
@@ -1255,7 +1255,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "playbackOptions",
         .doc = "Query or set playback: ranges in seconds, fps (default 30), loop, playbackSpeed (realTime, half, twice, "
                "everyFrame, everyFrameMaxRealTime, custom), speedMultiplier for custom; speed is a user pref, not saved in "
@@ -1336,7 +1336,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "play",
         .doc = "Start playback (forward=False plays backwards), or stop it with state=False. query=True returns "
                "whether it is playing.",
@@ -1357,7 +1357,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "stop",
         .doc = "Stop playback.",
         .undoable = false,
@@ -1367,7 +1367,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "autoKeyframe",
         .doc = "Auto key: when on, changing an animated channel keys it at the current time. With no flags, queries.",
         .flags = {{"state", "st", T::Bool, nullptr, "On or off."}},

@@ -1,7 +1,7 @@
 #include "io/SceneFile.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Events.h"
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
@@ -654,10 +654,10 @@ void registerCommands()
     using T = ArgType;
     ensureListener();
     refs::registerCommands();
-    static int fileEvents = cmds::addExecuteListener(forwardFileEvents);
+    static int fileEvents = ops::addExecuteListener(forwardFileEvents);
     (void)fileEvents;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "saveScene",
         .doc = "Save the scene. With no path, saves to the current file. .lila is binary, .lilaa is text (diffable and "
                "repairable by hand).",
@@ -688,7 +688,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "openScene",
         .doc = "Open a .lila or .lilaa scene, replacing the current one. Not undoable.",
         .positionalDoc = "path",
@@ -709,7 +709,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "sceneInfo",
         .doc = "Current scene file and whether it has unsaved changes.",
         .undoable = false,
@@ -718,7 +718,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "incrementAndSave",
         .doc = "Save to the next free incremental name (scene.lila -> scene_v002.lila -> scene_v003.lila) and make it "
                "the current file. Returns the new path.",
@@ -739,7 +739,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "sceneVersions",
         .doc = "Backups, autosaves, emergency saves and incremental versions of a scene on disk, newest first.",
         .positionalDoc = "[path]",

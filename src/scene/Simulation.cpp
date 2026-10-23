@@ -1,7 +1,7 @@
 #include "scene/Simulation.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
@@ -862,7 +862,7 @@ NodeId record(Graph& g, NodeId node, const RecordOptions& o)
 
     const NodeId previous = anim::activeLayer(g);
     const std::string previousName = previous ? g.node(previous)->name() : std::string(anim::kBaseLayerName);
-    cmds::execute("setActiveAnimLayer", {{"args", {layerName}}});
+    ops::execute("setActiveAnimLayer", {{"args", {layerName}}});
     struct Restore
     {
         Graph& g;
@@ -872,7 +872,7 @@ NodeId record(Graph& g, NodeId node, const RecordOptions& o)
         {
             try
             {
-                cmds::execute("setActiveAnimLayer", {{"args", {active}}});
+                ops::execute("setActiveAnimLayer", {{"args", {active}}});
             }
             catch (const std::exception&)
             {
@@ -1002,7 +1002,7 @@ void registerCommands()
     using T = ArgType;
     const FlagDef loopFlag{"loop", "lp", T::String, "auto", "auto (the active take's loop flag, else loop keys) | on | off", {"auto", "on", "off"}};
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "simulate",
         .doc = "Simulate up to a frame (default the current one) from the start frame or the cache, the same answer however "
                "the frame is reached. Looping animation is simulated as a periodic loop. Returns each simulation's info.",
@@ -1038,7 +1038,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "recordSimulation",
         .doc = "Bake a simulation onto a new additive animation layer (one per recording): mute it to compare, delete it to "
                "revert, lower its weight to tone it down. Returns the layer.",
@@ -1084,7 +1084,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "clearSimCache",
         .doc = "Throw away simulation caches, so the next simulate starts from the start frame.",
         .positionalDoc = "simulation nodes (default all)",
@@ -1102,7 +1102,7 @@ void registerCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "simulationInfo",
         .doc = "A simulation's state: loop range and convergence (passes, residual), step count, cached frames and the "
                "cache's input hash.",

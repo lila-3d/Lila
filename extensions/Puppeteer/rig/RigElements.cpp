@@ -337,7 +337,7 @@ json createIkChain(const Args& a)
     json call = forwarded(a);
     const std::vector<std::string> objs = objectArgs(a);
     const std::string start = a.get<std::string>("startJoint", objs.empty() ? "" : objs[0]);
-    return cmds::execute("ikChain", withCharacter(g, call, start));
+    return ops::execute("ikChain", withCharacter(g, call, start));
 }
 
 json createReverseFoot(const Args& a)
@@ -345,7 +345,7 @@ json createReverseFoot(const Args& a)
     Graph& g = graph();
     const std::vector<std::string> objs = objectArgs(a);
     const std::string ankle = a.get<std::string>("ankle", objs.empty() ? "" : objs[0]);
-    const json r = cmds::execute("reverseFoot", withCharacter(g, forwarded(a), ankle));
+    const json r = ops::execute("reverseFoot", withCharacter(g, forwarded(a), ankle));
     // The foot's limits come from Puppeteer's preferences.
     const std::string foot = r.get<std::string>();
     const std::pair<const char*, double> limits[] = {{"ballLimit", 30.0},    {"toeLimit", 60.0}, {"rollBackMax", 60.0}, {"rollForwardMax", 90.0},
@@ -369,7 +369,7 @@ json createSpace(const Args& a)
     const json list = a.flags.value("spaces", json::array());
     if (!list.is_array() || list.empty())
         throw CommandError("puppeteerSpace: give the spaces ('world' or other nodes)");
-    cmds::execute("addSpace", {{"args", {g.node(j)->name()}}, {"space", list}});
+    ops::execute("addSpace", {{"args", {g.node(j)->name()}}, {"space", list}});
     g.select({j});
     return g.node(lila::scene::spaces::switchOf(g, j))->name();
 }
@@ -386,7 +386,7 @@ json switchSpace(const Args& a)
     json call = {{"args", {g.node(j)->name()}}, {"space", a.flags.value("space", json())}};
     if (a.has("time"))
         call["time"] = a.get<double>("time");
-    return cmds::execute("switchSpace", call);
+    return ops::execute("switchSpace", call);
 }
 
 // Migration -------------------------------------------------------------------------------------------------------
@@ -537,7 +537,7 @@ void bakeSamples(Graph& g, const ChainSamples& s)
                 plugs.push_back(j->name() + ".rotate");
             }
         if (s.keyed && !plugs.empty())
-            cmds::execute("setKeyframe", {{"args", plugs}, {"time", t}});
+            ops::execute("setKeyframe", {{"args", plugs}, {"time", t}});
     }
     if (std::abs(g.time() - was) > 1e-9)
         g.setTime(was);
@@ -568,7 +568,7 @@ int migrateSpaces(Graph& g)
                     constraints.push_back(g.node(d.node)->name());
         // The constraint held the joint in its space; the joint's keys go back to driving it directly.
         for (const std::string& c : constraints)
-            cmds::execute("removeConstraint", {{"args", {c}}});
+            ops::execute("removeConstraint", {{"args", {c}}});
         if (j)
         {
             // Old space keys were read in the space's own frame, which is a base space without an offset.
@@ -678,7 +678,7 @@ bool registerRigElements(ext::Context& ctx)
             {"align", "al", T::Bool, false, "Level the control instead."},
             {"key", "k", T::Bool, true, "Key the control's channels at the current time."},
         },
-        .run = [](const Args& a) -> json { return cmds::execute("snapReverseFoot", forwarded(a)); },
+        .run = [](const Args& a) -> json { return ops::execute("snapReverseFoot", forwarded(a)); },
     });
 
     ctx.registerCommand({
@@ -695,7 +695,7 @@ bool registerRigElements(ext::Context& ctx)
         },
         .run = [](const Args& a) -> json {
             const std::vector<std::string> objs = objectArgs(a);
-            return cmds::execute("looker", withCharacter(graph(), forwarded(a), objs.empty() ? "" : objs[0]));
+            return ops::execute("looker", withCharacter(graph(), forwarded(a), objs.empty() ? "" : objs[0]));
         },
     });
 

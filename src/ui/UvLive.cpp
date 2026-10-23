@@ -3,7 +3,7 @@
 // Before Qt: Qt's emit macro breaks TBB's headers.
 #include "uv/LiveSession.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
@@ -759,7 +759,7 @@ nlohmann::json cutOrSew(const char* command, nlohmann::json call)
     json r;
     try
     {
-        r = cmds::execute(command, call, CallSource::UI);
+        r = ops::execute(command, call, CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -792,40 +792,40 @@ void install()
     add("uv.liveMode", "Live UV Mode", [] { setLiveMode(!liveMode()); },
         "Toggle live mode: dragging uvs steers the solver and the island relaxes around them; cuts, sews and pins re-solve as they happen.");
     add("uv.liveRelax", "Relax UVs (Live)", [] { run(Op::Relax); }, "Relax the selected islands live until they settle (one undo step).",
-        cmds::toPython("uvLiveRelax", json::object()));
+        ops::toPython("uvLiveRelax", json::object()));
     add("uv.liveFlatten", "Flatten UVs (Live)", [] { run(Op::Flatten); },
         "Flatten the selected islands from scratch, keeping pins, size and placement, then relax them live.",
-        cmds::toPython("uvLiveRelax", {{"flatten", true}}));
+        ops::toPython("uvLiveRelax", {{"flatten", true}}));
     add("uv.liveSettle", "Settle UVs", [] { run(Op::Settle); }, "Relax the selected islands to convergence and finish with a fold-free SLIM pass.",
-        cmds::toPython("uvLiveRelax", {{"slim", 10}}));
+        ops::toPython("uvLiveRelax", {{"slim", 10}}));
     add("uv.pin", "Pin UVs", [] {
             try
             {
-                cmds::execute("uvPin", json::object(), CallSource::UI);
+                ops::execute("uvPin", json::object(), CallSource::UI);
             }
             catch (const CommandError& e)
             {
                 log::error("{}", e.what());
             }
         },
-        "Pin the selected uvs so the solver keeps them in place.", cmds::toPython("uvPin", json::object()));
+        "Pin the selected uvs so the solver keeps them in place.", ops::toPython("uvPin", json::object()));
     add("uv.unpin", "Unpin UVs", [] {
             try
             {
-                cmds::execute("uvUnpin", json::object(), CallSource::UI);
+                ops::execute("uvUnpin", json::object(), CallSource::UI);
             }
             catch (const CommandError& e)
             {
                 log::error("{}", e.what());
             }
         },
-        "Unpin the selected uvs.", cmds::toPython("uvUnpin", json::object()));
+        "Unpin the selected uvs.", ops::toPython("uvUnpin", json::object()));
     add("uv.cut", "Cut UV Edges", [] { cutOrSew("uvCut", json::object()); }, "Cut the uvs along the selected edges and let the cut open.",
-        cmds::toPython("uvCut", json::object()));
+        ops::toPython("uvCut", json::object()));
     add("uv.sew", "Sew UV Edges", [] { cutOrSew("uvSew", json{{"move", true}}); },
-        "Move and Sew: weld the selected seams, the smaller island moving to meet the other.", cmds::toPython("uvSew", json::object()));
+        "Move and Sew: weld the selected seams, the smaller island moving to meet the other.", ops::toPython("uvSew", json::object()));
     add("uv.weld", "Weld UV Edges", [] { cutOrSew("uvSew", json{{"move", false}}); },
-        "Weld the selected seams where they are, both sides meeting halfway.", cmds::toPython("uvSew", {{"move", false}}));
+        "Weld the selected seams where they are, both sides meeting halfway.", ops::toPython("uvSew", {{"move", false}}));
     add("uv.brush3d", "UV Brush (3D)", [] { startBrushTool3d(); },
         "Paint the UV editor's brush (relax, flatten, pin, stiffen...) on the mesh in the viewport; B drag sizes it, M drag sets strength.");
     add("uv.checker3d", "UV Checker in 3D", [] { setChecker3d(!checker3d()); }, "Show a checker texture on the meshes in the UV editor.");

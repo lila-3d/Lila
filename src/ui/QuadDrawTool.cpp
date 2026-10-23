@@ -1,7 +1,7 @@
 #include "ui/QuadDrawTool.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "geo/Topology.h"
@@ -385,7 +385,7 @@ bool QuadDrawTool::run(const char* command, const json& call, json* result)
 {
     try
     {
-        json r = cmds::execute(command, call, CallSource::UI);
+        json r = ops::execute(command, call, CallSource::UI);
         if (result)
             *result = std::move(r);
         return true;

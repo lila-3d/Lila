@@ -1,6 +1,6 @@
 #include "ui/SourceControlPanel.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "vcs/SourceControl.h"
 
@@ -61,7 +61,7 @@ void SourceControlPanel::run(const char* command, const json& call)
 {
     try
     {
-        cmds::execute(command, call, CallSource::UI);
+        ops::execute(command, call, CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -75,9 +75,9 @@ void SourceControlPanel::refresh()
     mTree->clear();
     try
     {
-        json info = cmds::execute("scProvider", json::object());
+        json info = ops::execute("scProvider", json::object());
         mProvider->setText(QString::fromStdString("Provider: " + info.value("provider", std::string("none"))));
-        json lists = cmds::execute("scChangelists", json::object());
+        json lists = ops::execute("scChangelists", json::object());
         for (const json& cl : lists.is_array() ? lists : json::array())
         {
             auto* top = new QTreeWidgetItem(mTree);

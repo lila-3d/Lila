@@ -1,7 +1,7 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "geo/Mesh.h"
 #include "geo/Ops.h"
 #include "geo/Primitives.h"
@@ -19,8 +19,8 @@ using geo::Index;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
-json ui(const char* name, json call = json::object()) { return cmds::execute(name, call, CallSource::UI); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
+json ui(const char* name, json call = json::object()) { return ops::execute(name, call, CallSource::UI); }
 
 /** Faces lying on top of another face: the same corner positions in any order. */
 int coincidentFaces(const geo::Mesh& m)

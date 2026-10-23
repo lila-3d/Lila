@@ -1,7 +1,7 @@
 #include "ui/ModifierStack.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "geo/Mesh.h"
@@ -123,7 +123,7 @@ json run(const char* name, const json& call)
 {
     try
     {
-        return cmds::execute(name, call, CallSource::UI);
+        return ops::execute(name, call, CallSource::UI);
     }
     catch (const CommandError& e)
     {

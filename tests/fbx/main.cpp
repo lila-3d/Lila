@@ -1,7 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "fbx/Fbx.h"
 #include "scene/Node.h"
@@ -26,7 +26,7 @@ struct Init
         setenv("LILA_CONFIG_DIR", dir.string().c_str(), 1);
 #endif
         lila::mainq::init();
-        lila::cmds::registerBuiltins();
+        lila::ops::registerBuiltins();
         lila::scene::types::registerBuiltins();
         lila::scene::registerCommands();
         lila::fbx::registerCommands();

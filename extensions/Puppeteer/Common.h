@@ -146,7 +146,7 @@ inline json runCommand(const char* name, const json& call = json::object())
 {
     try
     {
-        return lila::cmds::execute(name, call, lila::CallSource::UI);
+        return lila::ops::execute(name, call, lila::CallSource::UI);
     }
     catch (const std::exception& e)
     {
@@ -173,10 +173,10 @@ inline json vecJson(const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); 
  */
 inline void keyVec(const std::string& node, const std::string& attr, const glm::dvec3& v, double time)
 {
-    lila::cmds::execute("setKeyframe", {{"args", {node + "." + attr}}, {"time", time}});
+    lila::ops::execute("setKeyframe", {{"args", {node + "." + attr}}, {"time", time}});
     const char axes[3] = {'x', 'y', 'z'};
     for (int k = 0; k < 3; ++k)
-        lila::cmds::execute("keyframe", {{"args", {node + "." + attr.substr(0, 1) + axes[k]}}, {"time", json::array({time, time})},
+        lila::ops::execute("keyframe", {{"args", {node + "." + attr.substr(0, 1) + axes[k]}}, {"time", json::array({time, time})},
                                          {"valueChange", v[k]}});
 }
 inline glm::dvec3 jsonVec(const json& j) { return {j.at(0).get<double>(), j.at(1).get<double>(), j.at(2).get<double>()}; }

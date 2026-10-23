@@ -1,6 +1,6 @@
 #include "ui/GameExporter.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "scene/Graph.h"
@@ -42,7 +42,7 @@ json runUi(const char* command, const json& call)
 {
     try
     {
-        return cmds::execute(command, call, CallSource::UI);
+        return ops::execute(command, call, CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -171,7 +171,7 @@ GameExporter::GameExporter(QWidget* parent) : QDialog(parent)
     v->addLayout(bottom);
 
     json last = PrefStore::get().value(kPrefFile, kLastPref, json::object());
-    json defaults = cmds::execute("gameExportPresets", json::object())["defaults"];
+    json defaults = ops::execute("gameExportPresets", json::object())["defaults"];
     if (last.is_object())
         for (auto& [k, val] : last.items())
             defaults[k] = val;
@@ -207,7 +207,7 @@ GameExporter::GameExporter(QWidget* parent) : QDialog(parent)
         json p = json::parse(mPreset->itemData(i).toString().toStdString(), nullptr, false);
         if (p.is_object() && p.contains("settings"))
         {
-            json s = cmds::execute("gameExportPresets", json::object())["defaults"];
+            json s = ops::execute("gameExportPresets", json::object())["defaults"];
             for (auto& [k, val] : p["settings"].items())
                 s[k] = val;
             apply(s);
@@ -329,7 +329,7 @@ void GameExporter::refreshPresets()
 {
     mPreset->clear();
     mPreset->addItem("(choose a preset)", QString());
-    json all = cmds::execute("gameExportPresets", json::object());
+    json all = ops::execute("gameExportPresets", json::object());
     for (const char* where : {"scene", "prefs"})
         for (auto& [name, s] : all[where].items())
         {
@@ -358,7 +358,7 @@ void GameExporter::updatePreview()
     call["dryRun"] = true;
     try
     {
-        json jobs = cmds::execute("gameExport", call);
+        json jobs = ops::execute("gameExport", call);
         if (jobs.empty())
         {
             mPreview->setText("Nothing to export.");

@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 
 #include <filesystem>
 
@@ -9,7 +9,7 @@ using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 double get(const std::string& plug) { return run("getAttr", {{"args", {plug}}}).get<double>(); }
 
 std::string tempPath(const char* name)

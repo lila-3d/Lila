@@ -1,7 +1,7 @@
 #include "ui/Manipulator.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
@@ -952,16 +952,16 @@ void Manipulator::commit()
         {
             json pivot = vecJson(d.startPivot);
             if (t == Tool::Move && glm::length(d.moveDelta) > 1e-9)
-                cmds::execute("moveComponents", {{"by", vecJson(d.moveDelta)}}, CallSource::UI);
+                ops::execute("moveComponents", {{"by", vecJson(d.moveDelta)}}, CallSource::UI);
             else if (t == Tool::Rotate && std::abs(d.angle) > 1e-9)
             {
                 glm::dvec3 euler = scene::matrixToEuler(glm::mat3_cast(d.rotation), scene::RotateOrder::XYZ);
-                cmds::execute("rotateComponents", {{"by", vecJson(euler)}, {"pivot", pivot}}, CallSource::UI);
+                ops::execute("rotateComponents", {{"by", vecJson(euler)}, {"pivot", pivot}}, CallSource::UI);
             }
             else if (t == Tool::Scale && glm::length(d.scale - glm::dvec3(1.0)) > 1e-9)
             {
                 // Scaling along a rotated frame isn't expressible per world axis; the command takes the world axes.
-                cmds::execute("scaleComponents", {{"by", vecJson(d.scale)}, {"pivot", pivot}}, CallSource::UI);
+                ops::execute("scaleComponents", {{"by", vecJson(d.scale)}, {"pivot", pivot}}, CallSource::UI);
             }
             return;
         }
@@ -978,7 +978,7 @@ void Manipulator::commit()
                 glm::dmat3 local = glm::transpose(scene::xformops::frame(g, id, scene::Space::Object)) * r * d.startPivotFrames[i];
                 glm::dvec3 hint = g.node(id)->as<glm::dvec3>(Transform::kPivotOrient);
                 glm::dvec3 euler = scene::xformops::closestEuler(local, scene::RotateOrder::XYZ, hint);
-                cmds::execute("setPivot", {{"args", {names[i]}}, {"orient", vecJson(euler)}}, CallSource::UI);
+                ops::execute("setPivot", {{"args", {names[i]}}, {"orient", vecJson(euler)}}, CallSource::UI);
             }
         }
         else if (d.pivotEdit)
@@ -987,7 +987,7 @@ void Manipulator::commit()
                 return;
             UndoChunk chunk("Move Pivot");
             for (size_t i = 0; i < d.saved.size(); ++i)
-                cmds::execute("setPivot", {{"args", {names[i]}}, {"position", vecJson(d.startPivots[i] + d.moveDelta)}}, CallSource::UI);
+                ops::execute("setPivot", {{"args", {names[i]}}, {"position", vecJson(d.startPivots[i] + d.moveDelta)}}, CallSource::UI);
         }
         else if (t == Tool::Move)
         {
@@ -1000,22 +1000,22 @@ void Manipulator::commit()
             std::optional<UndoChunk> chunk;
             if (!centred.empty())
                 chunk.emplace("Move");
-            cmds::execute("move", {{"args", names}, {"by", vecJson(d.moveDelta)}}, CallSource::UI);
+            ops::execute("move", {{"args", names}, {"by", vecJson(d.moveDelta)}}, CallSource::UI);
             if (!centred.empty())
-                cmds::execute("centerJoint", {{"args", centred}}, CallSource::UI);
+                ops::execute("centerJoint", {{"args", centred}}, CallSource::UI);
         }
         else if (t == Tool::Rotate)
         {
             if (std::abs(d.angle) < 1e-9)
                 return;
             glm::dvec3 euler = scene::matrixToEuler(glm::mat3_cast(d.rotation), scene::RotateOrder::XYZ);
-            cmds::execute("rotate", {{"args", names}, {"by", vecJson(euler)}}, CallSource::UI);
+            ops::execute("rotate", {{"args", names}, {"by", vecJson(euler)}}, CallSource::UI);
         }
         else
         {
             if (glm::length(d.scale - glm::dvec3(1.0)) < 1e-9)
                 return;
-            cmds::execute("scale", {{"args", names}, {"by", vecJson(d.scale)}}, CallSource::UI);
+            ops::execute("scale", {{"args", names}, {"by", vecJson(d.scale)}}, CallSource::UI);
         }
     }
     catch (const CommandError& e)

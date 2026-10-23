@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "scene/Anim.h"
 #include "scene/PlaybackClock.h"
 
@@ -99,17 +99,17 @@ TEST_CASE("playback speed names round-trip")
 TEST_CASE("playbackOptions sets the playback speed")
 {
     PlaybackSpeed before = playback().speed;
-    json r = cmds::execute("playbackOptions", {{"playbackSpeed", "everyFrame"}});
+    json r = ops::execute("playbackOptions", {{"playbackSpeed", "everyFrame"}});
     CHECK(r["playbackSpeed"] == "everyFrame");
     CHECK(r["everyFrame"] == true);
     CHECK(playback().speed == PlaybackSpeed::EveryFrame);
-    cmds::execute("playbackOptions", {{"everyFrame", false}});
+    ops::execute("playbackOptions", {{"everyFrame", false}});
     CHECK(playback().speed == PlaybackSpeed::RealTime);
-    CHECK_THROWS_AS(cmds::execute("playbackOptions", {{"playbackSpeed", "warp"}}), CommandError);
+    CHECK_THROWS_AS(ops::execute("playbackOptions", {{"playbackSpeed", "warp"}}), CommandError);
     // Scene data does not carry the speed.
     playback().fromJson({{"playbackSpeed", "twice"}});
     CHECK(playback().speed == PlaybackSpeed::RealTime);
-    cmds::execute("playbackOptions", {{"playbackSpeed", std::string(speedName(before))}});
+    ops::execute("playbackOptions", {{"playbackSpeed", std::string(speedName(before))}});
 }
 
 TEST_CASE("playback clock: custom speed scales real time by the multiplier")
@@ -134,21 +134,21 @@ TEST_CASE("playback clock: custom speed scales real time by the multiplier")
 TEST_CASE("playbackOptions sets a custom speed multiplier")
 {
     Playback before = playback();
-    json r = cmds::execute("playbackOptions", {{"speedMultiplier", 0.25}});
+    json r = ops::execute("playbackOptions", {{"speedMultiplier", 0.25}});
     CHECK(r["playbackSpeed"] == "custom");
     CHECK(r["speedMultiplier"] == doctest::Approx(0.25));
     CHECK(playback().speed == PlaybackSpeed::Custom);
     CHECK(playback().customSpeed == doctest::Approx(0.25));
     // An explicit speed wins; the multiplier is kept for later.
-    cmds::execute("playbackOptions", {{"playbackSpeed", "realTime"}, {"speedMultiplier", 1.5}});
+    ops::execute("playbackOptions", {{"playbackSpeed", "realTime"}, {"speedMultiplier", 1.5}});
     CHECK(playback().speed == PlaybackSpeed::RealTime);
     CHECK(playback().customSpeed == doctest::Approx(1.5));
-    cmds::execute("playbackOptions", {{"playbackSpeed", "custom"}});
+    ops::execute("playbackOptions", {{"playbackSpeed", "custom"}});
     CHECK(playback().customSpeed == doctest::Approx(1.5));
-    CHECK_THROWS_AS(cmds::execute("playbackOptions", {{"speedMultiplier", 0.0}}), CommandError);
-    CHECK_THROWS_AS(cmds::execute("playbackOptions", {{"speedMultiplier", -2.0}}), CommandError);
+    CHECK_THROWS_AS(ops::execute("playbackOptions", {{"speedMultiplier", 0.0}}), CommandError);
+    CHECK_THROWS_AS(ops::execute("playbackOptions", {{"speedMultiplier", -2.0}}), CommandError);
     CHECK(playback().customSpeed == doctest::Approx(1.5));
     playback().fromJson({{"speedMultiplier", 4.0}});
     CHECK(playback().customSpeed == doctest::Approx(1.5));
-    cmds::execute("playbackOptions", {{"playbackSpeed", std::string(speedName(before.speed))}, {"speedMultiplier", before.customSpeed}});
+    ops::execute("playbackOptions", {{"playbackSpeed", std::string(speedName(before.speed))}, {"speedMultiplier", before.customSpeed}});
 }

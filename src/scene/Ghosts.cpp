@@ -1,6 +1,6 @@
 #include "scene/Ghosts.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "scene/Anim.h"
@@ -265,7 +265,7 @@ void registerCommands()
 {
     using T = ArgType;
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "ghosting",
         .doc = "Animation ghosting of the selected characters: their meshes or skeletons at the previous and next keys, "
                "or every step frames. Sets the given options (user prefs) and returns them all.",

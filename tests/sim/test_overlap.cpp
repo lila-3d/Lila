@@ -2,7 +2,7 @@
 
 #include "../../extensions/Overlap/OverlapSolver.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "extensions/ExtensionManager.h"
 #include "scene/Anim.h"
 #include "scene/AnimLayer.h"
@@ -26,7 +26,7 @@ using Approx = doctest::Approx;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 json v3(double x, double y, double z) { return json::array({x, y, z}); }
 
 /** A root, hips keyed side to side over frames 0..30, and a four-joint tail behind the hips. */
@@ -76,7 +76,7 @@ json uiRegistries()
 {
     return {{"actions", ui::actions::registry().ids()}, {"drawOverrides", ui::drawOverrides::registry().ids()},
             {"items", ui::menus::itemRegistry().ids()}, {"panels", ui::panels::registry().ids()},
-            {"types", types::registry().ids()}, {"commands", cmds::registry().ids()}, {"solvers", sim::solverTypes().ids()}};
+            {"types", types::registry().ids()}, {"commands", ops::registry().ids()}, {"solvers", sim::solverTypes().ids()}};
 }
 
 void loadOverlap()
@@ -360,5 +360,5 @@ TEST_CASE("overlap extension: unloading takes everything it registered")
     CHECK(sim::solverTypes().find("overlap"));
     em.unload("Overlap");
     CHECK(uiRegistries() == before);
-    CHECK_FALSE(cmds::find("createOverlap"));
+    CHECK_FALSE(ops::find("createOverlap"));
 }

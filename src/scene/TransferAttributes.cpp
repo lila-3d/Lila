@@ -1,5 +1,5 @@
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Profile.h"
 #include "geo/Bvh.h"
 #include "geo/ColorSets.h"
@@ -523,7 +523,7 @@ void registerTransferModifier()
 void registerTransferCommands()
 {
     using T = ArgType;
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "transferAttributes",
         .doc = "Maya's Transfer Attributes: copy UVs, normals, color sets, positions or named attributes from the first object to "
                "the others, sampling in world, object, component (same topology) or uv space, by closest point or along normals. "
@@ -595,7 +595,7 @@ void registerTransferCommands()
                 for (size_t i = 1; i < objs.size(); ++i)
                 {
                     meshNode(g, objs[i], "transferAttributes");
-                    std::string mod = cmds::execute("addModifier", {{"args", {objs[i]}}, {"kind", "transferAttributes"}, {"params", params}}).get<std::string>();
+                    std::string mod = ops::execute("addModifier", {{"args", {objs[i]}}, {"kind", "transferAttributes"}, {"params", params}}).get<std::string>();
                     connectSource(g, *g.find(mod), src);
                     out.push_back(mod);
                 }
@@ -622,14 +622,14 @@ void registerTransferCommands()
                 transfer(source, srcWorld, target, dstNode.as<glm::dmat4>(Transform::kWorldMatrix), o);
                 g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(target))));
                 if (skinWeights)
-                    cmds::execute("copySkinWeights", {{"args", {objs.front(), objs[i]}},
+                    ops::execute("copySkinWeights", {{"args", {objs.front(), objs[i]}},
                                                       {"surfaceAssociation", o.space == Space::Component ? "pointIndex" : "closestPoint"}});
             }
             return nullptr;
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "transferSource",
         .doc = "Set the source mesh of transferAttributes modifiers: connects its mesh and world matrix, and refreshes the target's "
                "stored world matrix (run it again after moving the target).",

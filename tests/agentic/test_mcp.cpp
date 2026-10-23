@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "mcp/McpServer.h"
 #include "render/Renderer.h"
@@ -136,9 +136,9 @@ TEST_CASE("mcp: guides as resources, model_asset as a prompt")
 
 TEST_CASE("mcp: scene_summary and mesh_info describe meshes")
 {
-    cmds::execute("newScene", json::object());
-    cmds::execute("polyCube", {{"name", "Box"}, {"subdivisionsX", 2}});
-    cmds::execute("setSymmetry", {{"args", {"Box"}}, {"axis", "x"}});
+    ops::execute("newScene", json::object());
+    ops::execute("polyCube", {{"name", "Box"}, {"subdivisionsX", 2}});
+    ops::execute("setSymmetry", {{"args", {"Box"}}, {"axis", "x"}});
     json summary = call("tools/call", {{"name", "scene_summary"}, {"arguments", json::object()}});
     CHECK(summary["result"]["isError"] == false);
     std::string text = summary["result"]["content"][0]["text"];
@@ -155,8 +155,8 @@ TEST_CASE("mcp: scene_summary and mesh_info describe meshes")
     std::string report = check["result"]["content"][0]["text"];
     CHECK(report.starts_with("Box: OK | 10 faces"));
     CHECK(report.find("1 shell |") != std::string::npos);
-    cmds::execute("polyCube", {{"name", "Bit"}, {"position", {0, 5, 0}}});
-    cmds::execute("polyCombine", {{"args", {"Box", "Bit"}}, {"name", "Two"}});
+    ops::execute("polyCube", {{"name", "Bit"}, {"position", {0, 5, 0}}});
+    ops::execute("polyCombine", {{"args", {"Box", "Bit"}}, {"name", "Two"}});
     report = call("tools/call", {{"name", "mesh_check"}, {"arguments", {{"mesh", "Two"}}}})["result"]["content"][0]["text"];
     CHECK(report.find("PROBLEMS") != std::string::npos);
     CHECK(report.find("shell 1: 6 faces") != std::string::npos);
@@ -173,8 +173,8 @@ TEST_CASE("mcp: viewport_capture returns a PNG image block from the offscreen re
         MESSAGE("no Vulkan device: offscreen capture not exercised");
         return;
     }
-    cmds::execute("newScene", json::object());
-    cmds::execute("polyCube", {{"name", "Box"}});
+    ops::execute("newScene", json::object());
+    ops::execute("polyCube", {{"name", "Box"}});
     json r = call("tools/call", {{"name", "viewport_capture"}, {"arguments", {{"view", "front"}, {"width", 64}, {"height", 48}}}});
     REQUIRE(r["result"]["isError"] == false);
     json img = r["result"]["content"][0];

@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Paths.h"
 #include "core/Workspace.h"
 #include "io/SceneFile.h"
@@ -135,9 +135,9 @@ TEST_CASE("paths: stored and resolved")
 TEST_CASE("paths: saving makes absolute file attrs relative")
 {
     Tree t;
-    cmds::execute("newScene", json::object());
+    ops::execute("newScene", json::object());
     Workspace::get().open(t.ws);
-    std::string name = cmds::execute("imagePlane", {{"fileName", "x.png"}}).get<std::string>();
+    std::string name = ops::execute("imagePlane", {{"fileName", "x.png"}}).get<std::string>();
     scene::Graph& g = scene::Graph::current();
     scene::Node* n = g.find(name);
     REQUIRE(n);
@@ -149,5 +149,5 @@ TEST_CASE("paths: saving makes absolute file attrs relative")
         if (node["name"] == name)
             stored = node["attrs"]["imageName"].get<std::string>();
     CHECK(stored == "../Ref/fighter.png");
-    cmds::execute("newScene", json::object());
+    ops::execute("newScene", json::object());
 }

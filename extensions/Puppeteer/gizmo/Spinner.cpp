@@ -332,7 +332,7 @@ bool offKey(const std::vector<std::string>& names)
     cached = false;
     try
     {
-        const json times = cmds::execute("keyframe", {{"args", namesJson(names)}, {"query", true}});
+        const json times = ops::execute("keyframe", {{"args", namesJson(names)}, {"query", true}});
         bool any = false, here = false;
         auto visit = [&](const json& j, auto& self) -> void {
             if (j.is_number())
@@ -1293,7 +1293,7 @@ private:
             return;
         }
         // A failing preview says why once per drag rather than doing nothing silently.
-        if (std::string error = quietly([&] { cmds::execute(name, call, CallSource::Script); }); !error.empty() && !d.warned)
+        if (std::string error = quietly([&] { ops::execute(name, call, CallSource::Script); }); !error.empty() && !d.warned)
         {
             d.warned = true;
             log::write(LogLevel::Warning, "Spinner: " + error);

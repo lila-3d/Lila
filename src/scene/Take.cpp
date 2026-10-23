@@ -1,7 +1,7 @@
 #include "scene/Take.h"
 
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Profile.h"
 #include "scene/Anim.h"
 #include "scene/AnimLayer.h"
@@ -546,7 +546,7 @@ void registerTakeCommands()
                                         {"root", "r", T::String, nullptr, "Character root; default the whole scene."},
                                         {"activate", "a", T::Bool, false, "Switch to the new take."}};
     createFlags.insert(createFlags.end(), settings.begin(), settings.end());
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "createTake",
         .doc = "Make a take for a character root or the whole scene. The first one adopts the animation already there "
                "and is active; later ones start empty. Returns its name.",
@@ -570,7 +570,7 @@ void registerTakeCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "deleteTake",
         .doc = "Delete a take and its animation.",
         .positionalDoc = "take",
@@ -581,7 +581,7 @@ void registerTakeCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "renameTake",
         .doc = "Rename a take. Returns the name it got.",
         .positionalDoc = "take, newName",
@@ -594,7 +594,7 @@ void registerTakeCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "duplicateTake",
         .doc = "Copy a take and its animation as a new, inactive take. Returns its name.",
         .positionalDoc = "take",
@@ -606,7 +606,7 @@ void registerTakeCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "setActiveTake",
         .doc = "Switch to a take: its animation is connected (the take it replaces is set aside) and its range and fps "
                "become the playback settings.",
@@ -619,7 +619,7 @@ void registerTakeCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "editTake",
         .doc = "Change a take's range, fps, loop or folder. Returns its settings.",
         .positionalDoc = "take",
@@ -651,7 +651,7 @@ void registerTakeCommands()
         },
     });
 
-    cmds::registerCommand({
+    ops::registerCommand({
         .name = "listTakes",
         .doc = "Every take: name, root, start, end, fps, loop, active and how many channels it animates.",
         .undoable = false,

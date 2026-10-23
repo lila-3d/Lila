@@ -1,6 +1,6 @@
 #include "Isolate.h"
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/Events.h"
 #include "core/ExtensionContext.h"
 #include "core/ExtensionManifest.h"
@@ -141,7 +141,7 @@ TEST_CASE("registry: owner-tagged add, replace, removal and change signal")
 TEST_CASE("context: unloading removes everything the owner registered, newest first")
 {
     isolate();
-    const size_t commandsBefore = cmds::all().size();
+    const size_t commandsBefore = ops::all().size();
     const size_t typesBefore = scene::types::all().size();
     Registry<std::string> panels;
     panels.add("outliner", "built in");
@@ -151,10 +151,10 @@ TEST_CASE("context: unloading removes everything the owner registered, newest fi
         ext::Context ctx("sample", "C:/exts/sample.lilaext");
         CHECK(ctx.resources() == std::filesystem::path("C:/exts/sample.lilaext") / "resources");
         CHECK(ctx.registerCommand({.name = "sampleCmd", .doc = "Sample.", .undoable = false, .run = [](const Args&) { return json(1); }}));
-        CHECK(cmds::find("sampleCmd")->owner == "sample");
+        CHECK(ops::find("sampleCmd")->owner == "sample");
         // Lila's own command can't be taken over.
         CHECK_FALSE(ctx.registerCommand({.name = "undo", .run = [](const Args&) { return json(); }}));
-        CHECK(cmds::find("undo")->owner.empty());
+        CHECK(ops::find("undo")->owner.empty());
 
         scene::NodeType t;
         t.name = "sampleNode";
@@ -187,11 +187,11 @@ TEST_CASE("context: unloading removes everything the owner registered, newest fi
         events::send({.type = events::Event::SceneSaved});
         CHECK(heard == 1);
     }
-    CHECK_FALSE(cmds::find("sampleCmd"));
+    CHECK_FALSE(ops::find("sampleCmd"));
     CHECK_FALSE(scene::types::find("sampleNode"));
     CHECK_FALSE(panels.contains("samplePanel"));
     CHECK(panels.contains("outliner"));
-    CHECK(cmds::all().size() == commandsBefore);
+    CHECK(ops::all().size() == commandsBefore);
     CHECK(scene::types::all().size() == typesBefore);
     CHECK(events::subscriptionCount("sample") == 0);
 }
@@ -202,11 +202,11 @@ TEST_CASE("context: removal leaves a name someone else took over alone")
     ext::Context ctx("first");
     REQUIRE(ctx.registerCommand({.name = "sharedName", .undoable = false, .run = [](const Args&) { return json(1); }}));
     // Replaced from outside the context (Python reloading a script, say): unloading first must not remove it.
-    cmds::registerCommand({.name = "sharedName", .undoable = false, .run = [](const Args&) { return json(2); }, .owner = "second"});
+    ops::registerCommand({.name = "sharedName", .undoable = false, .run = [](const Args&) { return json(2); }, .owner = "second"});
     ctx.unloadAll();
-    REQUIRE(cmds::find("sharedName"));
-    CHECK(cmds::find("sharedName")->owner == "second");
-    cmds::unregisterCommand("sharedName");
+    REQUIRE(ops::find("sharedName"));
+    CHECK(ops::find("sharedName")->owner == "second");
+    ops::unregisterCommand("sharedName");
 }
 
 TEST_CASE("events: subscribe, emit, unsubscribe and owner removal")

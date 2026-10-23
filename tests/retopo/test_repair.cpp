@@ -1,5 +1,5 @@
-#include "cmds/Command.h"
-#include "cmds/Undo.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
 #include "geo/Attribute.h"
 #include "geo/Ops.h"
 #include "geo/Primitives.h"
@@ -248,7 +248,7 @@ TEST_CASE("commands: meshRepair select mode selects issues in their component mo
     scene::components::setMode(scene::ComponentMode::Object);
 
     scene::NodeId finId = makeMeshNode("fin", fin())->id();
-    json r = cmds::execute("meshRepair", {{"args", {"fin"}}, {"mode", "select"}, {"flippedNormals", false}});
+    json r = ops::execute("meshRepair", {{"args", {"fin"}}, {"mode", "select"}, {"flippedNormals", false}});
     CHECK(r["fin"]["nonManifoldEdges"] == 1);
     CHECK(r["fin"]["lamina"] == 0);
     CHECK(scene::components::mode() == scene::ComponentMode::Edge);
@@ -256,20 +256,20 @@ TEST_CASE("commands: meshRepair select mode selects issues in their component mo
     CHECK(outMesh("fin").numFaces() == 3);
 
     scene::NodeId bowId = makeMeshNode("bow", bowtie())->id();
-    cmds::execute("meshRepair", {{"args", {"bow"}}, {"mode", "select"}});
+    ops::execute("meshRepair", {{"args", {"bow"}}, {"mode", "select"}});
     CHECK(scene::components::mode() == scene::ComponentMode::Vertex);
     CHECK(scene::components::selected(bowId, scene::ComponentMode::Vertex) == scene::components::Ids{0});
 
     // Faces for face issues: n-gons when the check is on.
     geo::Mesh pent = soup({{0, 0, 0}, {1, 0, 0}, {1.5, 1, 0}, {0.5, 2, 0}, {-0.5, 1, 0}}, {5}, {0, 1, 2, 3, 4});
     scene::NodeId pentId = makeMeshNode("pent", std::move(pent))->id();
-    cmds::execute("meshRepair", {{"args", {"pent"}}, {"mode", "select"}, {"ngons", true}});
+    ops::execute("meshRepair", {{"args", {"pent"}}, {"mode", "select"}, {"ngons", true}});
     CHECK(scene::components::mode() == scene::ComponentMode::Face);
     CHECK(scene::components::selected(pentId, scene::ComponentMode::Face).size() == 1);
 
-    CHECK_THROWS_AS(cmds::execute("meshRepair", {{"args", {"pent"}}, {"mode", "bogus"}}), CommandError);
+    CHECK_THROWS_AS(ops::execute("meshRepair", {{"args", {"pent"}}, {"mode", "bogus"}}), CommandError);
 
-    cmds::execute("meshRepair", {{"args", {"fin"}}});
+    ops::execute("meshRepair", {{"args", {"fin"}}});
     CHECK(outMesh("fin").numPoints() == 10);
     UndoStack::get().undo();
     CHECK(outMesh("fin").numPoints() == 8);
@@ -284,7 +284,7 @@ TEST_CASE("commands: voxelRemesh rebuilds and undoes")
     geo::deleteFaces(cube, one);
     cube.compact();
     makeMeshNode("box", std::move(cube));
-    json r = cmds::execute("voxelRemesh", {{"args", {"box"}}, {"resolution", 16}});
+    json r = ops::execute("voxelRemesh", {{"args", {"box"}}, {"resolution", 16}});
     CHECK(r["box"].get<int>() > 100);
     CHECK(geo::test::boundaryEdgeCount(outMesh("box")) == 0);
     UndoStack::get().undo();

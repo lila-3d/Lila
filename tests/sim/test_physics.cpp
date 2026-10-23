@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "cmds/Command.h"
+#include "ops/Command.h"
 #include "core/PrefStore.h"
 #include "extensions/ExtensionManager.h"
 #include "scene/Anim.h"
@@ -28,7 +28,7 @@ using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return cmds::execute(name, call); }
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 json v3(double x, double y, double z) { return json::array({x, y, z}); }
 
 void loadPhysics()
@@ -306,7 +306,7 @@ TEST_CASE("physics: unloading takes everything it registered")
     auto registries = [] {
         return json{{"actions", ui::actions::registry().ids()},         {"drawOverrides", ui::drawOverrides::registry().ids()},
                     {"items", ui::menus::itemRegistry().ids()},         {"panels", ui::panels::registry().ids()},
-                    {"types", types::registry().ids()},                 {"commands", cmds::registry().ids()},
+                    {"types", types::registry().ids()},                 {"commands", ops::registry().ids()},
                     {"solvers", sim::solverTypes().ids()},              {"handlers", ui::selectionHandlers::registry().ids()},
                     {"tools", ui::viewportTools::registry().ids()}};
     };
@@ -317,6 +317,6 @@ TEST_CASE("physics: unloading takes everything it registered")
         CHECK_MESSAGE(loaded[k] != before[k], k);
     em.unload("PhysicsAnimation");
     CHECK(registries() == before);
-    CHECK_FALSE(cmds::find("assignPhysicsMarker"));
+    CHECK_FALSE(ops::find("assignPhysicsMarker"));
     CHECK_FALSE(ui::selectionHandlers::anyRedirect());
 }
