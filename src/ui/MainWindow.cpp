@@ -612,7 +612,7 @@ void MainWindow::openScene(const std::filesystem::path& given)
         io::translators::run(io::translators::Op::Open, path, json::object(), CallSource::UI);
         addRecentFile(path);
         refreshSourceStatus();
-        mViewports->active()->frameSelection(true);
+        mViewports->frameUnlessRestored();
     }
     catch (const CommandError& e)
     {
@@ -636,7 +636,7 @@ void MainWindow::showVersions()
                                       {[this] { return confirmDiscard(); },
                                        [this] {
                                            refreshSourceStatus();
-                                           mViewports->active()->frameSelection(true);
+                                           mViewports->frameUnlessRestored();
                                        }},
                                       this);
     dialog->show();
@@ -685,7 +685,7 @@ void MainWindow::startup(const std::vector<io::recovery::Session>& stale, bool s
                 io::loadVersion(c.file, c.scene, !c.scene.empty(), "untitled (recovered)");
                 if (!c.scene.empty())
                     addRecentFile(c.scene);
-                mViewports->active()->frameSelection(true);
+                mViewports->frameUnlessRestored();
                 return;
             }
             if (dialog.choice() == RecoveryDialog::Choice::OpenSaved)

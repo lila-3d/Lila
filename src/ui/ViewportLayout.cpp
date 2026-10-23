@@ -61,6 +61,7 @@ ViewportLayout::ViewportLayout(QWidget* parent) : QWidget(parent)
             nlohmann::json cameras = section.is_object() ? section.value("cameras", nlohmann::json::array()) : nlohmann::json::array();
             for (size_t i = 0; i < self->mViews.size() && i < cameras.size(); ++i)
                 self->mViews[i]->restoreCameraState(cameras[i]);
+            self->mCamerasRestored = !cameras.empty();
             for (size_t i = 0; i < self->mViews.size(); ++i)
             {
                 ViewportWidget* v = self->mViews[i];
@@ -77,6 +78,13 @@ ViewportLayout::ViewportLayout(QWidget* parent) : QWidget(parent)
                 self->relayout();
             }
         });
+}
+
+void ViewportLayout::frameUnlessRestored()
+{
+    if (!mCamerasRestored && mActive)
+        mActive->frameSelection(true);
+    mCamerasRestored = false;
 }
 
 void ViewportLayout::relayout()

@@ -31,6 +31,8 @@ public:
     bool quad() const { return mQuad; }
     void setQuad(bool on);
     void toggleQuad();
+    /** Frames everything in the active view unless the scene just loaded brought its own cameras. */
+    void frameUnlessRestored();
 
 protected:
     bool eventFilter(QObject* obj, QEvent* e) override;
@@ -43,5 +45,6 @@ private:
     ViewportWidget* mActive = nullptr;
     QGridLayout* mGrid = nullptr;
     bool mQuad = false;
+    bool mCamerasRestored = false;
 };
 } // namespace lila::ui
