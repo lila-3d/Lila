@@ -1,0 +1,63 @@
+Lila Software License
+
+Copyright (c) 2026 Jared Taylor. All rights reserved.
+
+This license covers Lila, including its source code, binaries, resources and documentation (the "Software"), except the components listed under "MIT-licensed components" below, which are licensed under the MIT License instead.
+
+1. Grant
+
+Subject to the terms of this license, you are granted a free, non-exclusive, non-transferable, worldwide license to install and use the Software for any purpose, personal or commercial, with no revenue limit, and to create content, assets and extensions with it. Content and assets you create with the Software belong to you.
+
+2. Restrictions
+
+You may not, except as expressly permitted in writing by the copyright holder:
+
+a. Redistribute, sell, rent, lease, sublicense or host the Software, in whole or in part, other than by pointing others to an official distribution.
+b. Distribute modified versions, derivative works or forks of the Software. You may modify the Software for your own use or for internal use within your organisation, including its employees and contractors working on its behalf. Extensions built against the Extension SDK are not derivative works for the purpose of this clause.
+c. Remove or alter any copyright, license or attribution notice in the Software.
+d. Use the name "Lila" or its logos to endorse or promote a product other than the Software.
+
+Access to the source code, where provided, is for reference and for building and modifying the Software for the uses permitted above.
+
+3. Contributions
+
+The copyright holder does not accept outside contributions of code or other copyrightable material unless a separate contributor agreement has been signed. Bug reports and feedback may be used freely without obligation.
+
+If you submit a contribution in any form, including a pull request, patch, issue attachment or code snippet, with or without a contributor agreement, you grant the copyright holder and its successors and assigns a perpetual, irrevocable, worldwide, royalty-free, non-exclusive, transferable and sublicensable license to use, reproduce, modify, distribute, sublicense and relicense the contribution under any terms, including proprietary terms, and you represent that you have the right to grant this license. You waive, to the extent permitted by law, any moral rights in the contribution against the copyright holder and its licensees.
+
+4. Future versions
+
+The copyright holder may release future versions of the Software under different terms. A version you have already received remains available to you under the terms it was released with.
+
+5. No support
+
+The copyright holder has no obligation to provide support, maintenance, updates or fixes, or to respond to requests for features.
+
+6. Termination
+
+This license terminates automatically if you breach it. On termination you must stop using the Software and delete all copies. Content you created before termination remains yours.
+
+7. No warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. YOU USE THE SOFTWARE AT YOUR OWN RISK, INCLUDING ANY LOSS OF DATA OR WORK.
+
+8. Limitation of liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OF OR OTHER DEALINGS IN THE SOFTWARE.
+
+9. Third-party components
+
+The Software includes third-party components distributed under their own licenses, which govern those components. Their notices are included with the Software.
+
+10. Governing law
+
+This license is governed by the laws of New Zealand.
+
+MIT-licensed components
+
+The following are licensed under the MIT License (see the LICENSE file in each directory), so extensions and integrations built on them can be distributed under any terms, including closed source:
+
+- sdk/ (the Extension SDK headers)
+- python/lila/ (the Python API)
+- ue/LilaLink/ (the Unreal Engine plugin)
+- extensions/examples/ (example extensions)
