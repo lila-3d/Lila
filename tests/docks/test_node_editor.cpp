@@ -128,6 +128,49 @@ TEST_CASE("node editor keys act on the graph, not the scene selection")
     pump();
 }
 
+namespace
+{
+/** Geometry nodes under another id, as an extension's backend would sit beside it. */
+class AliasBackend final : public ui::GraphBackend
+{
+public:
+    std::string id() const override { return "tstAlias"; }
+    QString title() const override { return "Alias"; }
+    std::string commandPrefix() const override { return "gn"; }
+    std::vector<std::string> groupNames(scene::Graph& g) const override { return gn::groupNames(g); }
+    bool isGroupNode(const scene::Node& n) const override { return n.type().name == gn::kGroupNodeType; }
+};
+} // namespace
+
+TEST_CASE("a node editor opens on a registered backend and falls back when it goes")
+{
+    run("newScene");
+    run("gnCreateGroup", {{"args", {"G"}}});
+    run("gnAddNode", {{"args", {"G", "Value"}}, {"position", {0, 300}}});
+    ui::graphBackends::add(std::make_shared<AliasBackend>(), "tstOwner");
+
+    QMainWindow win;
+    auto* editor = new ui::NodeEditor(&win, "tstAlias");
+    win.setCentralWidget(editor);
+    win.resize(900, 600);
+    win.show();
+    editor->setGroup("G");
+    pump();
+    CHECK(editor->backend().id() == "tstAlias");
+    auto* view = editor->findChild<QGraphicsView*>();
+    REQUIRE(view);
+    view->setFocus();
+    pump();
+    selectNode(view, "Value");
+    press(view, Qt::Key_Delete);
+    CHECK(nodeCount("G") == 2);
+
+    ui::graphBackends::remove("tstAlias");
+    pump();
+    CHECK(editor->backend().id() == ui::kGeometryNodesBackend);
+    CHECK_FALSE(editor->setBackend("tstAlias"));
+}
+
 TEST_CASE("graph editor Delete stays in the graph editor")
 {
     ui::registerAnimationUi();
