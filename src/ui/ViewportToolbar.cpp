@@ -6,6 +6,7 @@
 #include "core/PrefStore.h"
 #include "scene/ComponentPick.h"
 #include "scene/Graph.h"
+#include "scene/Components.h"
 #include "scene/MeshNodes.h"
 #include "scene/RenderSettings.h"
 #include "ui/Actions.h"
@@ -138,10 +139,14 @@ QWidgetAction* rotateStepColumns(QMenu* menu, double current, const std::string&
 
 std::optional<bool> viewportActionState(const std::string& id, const ViewportWidget* view)
 {
-    if (id == "viewport.wireframe" || id == "viewport.shaded")
-        return PrefStore::get().value<std::string>("general", "/viewport/displayMode", "shaded") == id.substr(9);
+    // Wireframe, Shaded and Textured are one choice, as in Maya.
+    const bool wire = PrefStore::get().value<std::string>("general", "/viewport/displayMode", "shaded") == "wireframe";
+    if (id == "viewport.wireframe")
+        return wire;
+    if (id == "viewport.shaded")
+        return !wire && !materialsShown();
     if (id == "viewport.textured")
-        return materialsShown();
+        return !wire && materialsShown();
     if (id == "rig.xrayJoints")
         return pref("/rig/xrayJoints", false);
     struct Toggle
@@ -157,6 +162,8 @@ std::optional<bool> viewportActionState(const std::string& id, const ViewportWid
         {"viewport.toggleGrid", vd::kGrid, true},
         {"viewport.toggleXray", vd::kXray, false},
         {"viewport.toggleBackfaceCulling", vd::kBackfaceCulling, false},
+        {"viewport.toggleKuwahara", vd::kKuwahara, false},
+        {"viewport.toggleOutline", vd::kOutline, false},
         {"viewport.toggleShadows", vd::kShadows, true},
         {"viewport.defaultMaterial", vd::kDefaultMaterial, false},
         {"viewport.toggleEnvBackground", "/viewport/env/background", true},
@@ -462,6 +469,8 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
     actionButton("viewport.toggleXray", "ghost");
     actionButton("rig.xrayJoints", "skull");
     actionButton("viewport.toggleBackfaceCulling", "square-toggle");
+    actionButton("viewport.toggleKuwahara", "brush");
+    actionButton("viewport.toggleOutline", "border-outer");
     separator();
     actionButton("viewport.frameSelected", "focus-centered");
     actionButton("viewport.frameAll", "arrows-maximize");
@@ -715,6 +724,27 @@ void ViewportToolbar::buildSymmetryRow()
                 refreshSymmetry();
             });
         }
+        menu->addSeparator();
+        bool custom = false;
+        for (scene::NodeId id : g.selection())
+            if (const scene::Node* n = g.node(id); n && n->type().isA("mesh") && n->as<int64_t>(scene::MeshNode::kSymmetryPlane) == 1)
+                custom = true;
+        QAction* fromSel = menu->addAction(labelOf("mesh.symmetryPlaneFromSelection"));
+        fromSel->setEnabled(scene::components::mode() == scene::ComponentMode::Vertex || scene::components::mode() == scene::ComponentMode::Edge);
+        connect(fromSel, &QAction::triggered, this, [this] {
+            activateView();
+            actions::run("mesh.symmetryPlaneFromSelection");
+            refreshSymmetry();
+        });
+        QAction* atPivot = menu->addAction(labelOf("mesh.symmetryPlaneFromPivot"));
+        atPivot->setCheckable(true);
+        atPivot->setChecked(!custom);
+        atPivot->setEnabled(custom);
+        connect(atPivot, &QAction::triggered, this, [this] {
+            activateView();
+            actions::run("mesh.symmetryPlaneFromPivot");
+            refreshSymmetry();
+        });
         menu->addSeparator();
         QAction* off = menu->addAction(labelOf("mesh.symmetryOff"));
         off->setEnabled(st.on > 0);

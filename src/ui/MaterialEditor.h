@@ -62,12 +62,13 @@ private:
     int mTextureListener = 0;
     bool mQueued = false;
     bool mDragging = false;
+    int mShownModel = -1; // shading model whose inputs the panel shows
 };
 
 /**
  * Registers "window.materialEditor" (shows the dock named kMaterialEditorDock, or a floating editor when the main
  * window has none), "material.assignNew" (creates a material and assigns it to the selection) and
- * "viewport.textured" (toggles materials in the viewport; hotkey 6). Also registers the material node type and
+ * "viewport.textured" (shaded with materials in the viewport; hotkey 6). Also registers the material node type and
  * commands when the scene has not yet.
  */
 LILA_UI_API void registerMaterialUi();

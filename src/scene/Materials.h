@@ -60,7 +60,60 @@ enum Attr
     kBlendMode,
     kTwoSided,
     kUvSet,
+    kShadingModel,
+    // Painterly
+    kPainterlyStrength,
+    kStrokeNormal,
+    kStrokeScale,
+    kStrokeLayerRatio,
+    kStrokeMapping,
+    kStrokeMap,
+    kPaletteCount,
+    kPaletteShadow,
+    kPaletteLight,
+    kPaletteAccent,
+    kPaletteContrast,
+    kPaletteSpread,
+    kSpecularTint,
+    kBoil,
+    kBoilFps,
+    // Toon
+    kToonShadowColor,
+    kToonLightTint,
+    kToonThreshold,
+    kToonSoftness,
+    kToonOuterOffset,
+    kToonOuterColor,
+    kRimColor,
+    kRimWidth,
+    kRimStrength,
+    // Foliage
+    kFoliageBottomColor,
+    kFoliageTopColor,
+    kFoliageGradient,
+    kFoliageBottomShadow,
+    kFoliageTopHighlight,
+    kFoliageTranslucency,
+    kFoliageWrap,
     kCount
+};
+
+/** The viewport (and Unreal master material) lighting model; DefaultLit is Unreal's default lit. */
+enum class ShadingModel
+{
+    DefaultLit,
+    Painterly,
+    Toon,
+    Foliage,
+};
+
+/** Where Painterly stroke sheets are projected. */
+enum class StrokeMapping
+{
+    Object, // triplanar in object space: strokes ride along with the object
+    World,  // triplanar in world space
+    Screen, // triplanar, rescaled by camera distance in octaves so strokes keep their size on screen
+    Uv,     // the mesh's UVs, for output that bakes to textures
 };
 
 enum class BlendMode
@@ -100,6 +153,11 @@ LILA_SCENE_API std::array<int, 3> packedChannels(material::PackedLayout layout);
 
 /** Texture channel names for setMaterialTexture ("baseColor", "normal", "orm", ...) and their attrs. */
 LILA_SCENE_API const std::vector<std::pair<std::string, int>>& textureChannels();
+
+/** The stroke sheets shipped in resources/strokes, by file stem; a material's strokeMap may name one instead of a path. */
+LILA_SCENE_API std::vector<std::string> builtinStrokeSheets();
+/** The stroke sheet file a strokeMap value means: the default sheet when empty, a built-in by stem, else resolvePath. */
+LILA_SCENE_API std::string strokeSheetPath(const std::string& strokeMap);
 
 /** paths::resolvePath of a stored texture path, as UTF-8. */
 LILA_SCENE_API std::string resolvePath(const std::string& path);

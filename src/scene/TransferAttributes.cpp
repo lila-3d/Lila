@@ -5,6 +5,7 @@
 #include "geo/ColorSets.h"
 #include "geo/Mesh.h"
 #include "geo/Normals.h"
+#include "geo/Primitives.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
@@ -457,6 +458,62 @@ int attrOf(const Node& n, const char* name)
     return a;
 }
 
+/**
+ * The soft-normal proxy around points lo..hi (object space): an ellipsoid filling the box, or for a dome one centred
+ * on the bottom of the box reaching its top, so every point's closest surface faces up and out.
+ */
+geo::Mesh foliageProxy(const glm::dvec3& lo, const glm::dvec3& hi, bool dome, int up)
+{
+    geo::Mesh m = geo::makeIcoSphere({.radius = 1.0, .subdivisions = 4});
+    glm::dvec3 centre = (lo + hi) * 0.5, radii = glm::max((hi - lo) * 0.5, glm::dvec3(1e-3));
+    if (dome)
+    {
+        centre[up] = lo[up];
+        radii[up] = std::max(hi[up] - lo[up], 1e-3);
+    }
+    // A little larger than the mesh, so closest points sit outside every leaf.
+    radii *= 1.05;
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p))
+            m.setPosition(p, centre + m.position(p) * radii);
+    return m;
+}
+
+/** Corner normals blended toward the proxy's by mix (0 keeps the mesh's own, 1 takes the proxy's). */
+void softFoliageNormals(geo::Mesh& mesh, double mix, bool dome, int up)
+{
+    LILA_ZONE();
+
+    glm::dvec3 lo(std::numeric_limits<double>::max()), hi(std::numeric_limits<double>::lowest());
+    for (Index p = 0; p < mesh.pointCapacity(); ++p)
+        if (mesh.pointValid(p))
+        {
+            lo = glm::min(lo, mesh.position(p));
+            hi = glm::max(hi, mesh.position(p));
+        }
+    if (lo.x > hi.x)
+        return;
+    std::vector<glm::vec3> own;
+    if (auto stored = std::as_const(mesh).cornerAttrs().get<glm::vec3>(geo::attr::kNormal); !stored.empty())
+        own.assign(stored.begin(), stored.end());
+    else
+        own = geo::cornerNormals(mesh);
+
+    Options o;
+    o.uvs = false;
+    o.normals = true;
+    o.space = Space::Object;
+    geo::Mesh proxy = foliageProxy(lo, hi, dome, up);
+    transfer(proxy, glm::dmat4(1.0), mesh, glm::dmat4(1.0), o);
+    auto normals = mesh.cornerAttrs().get<glm::vec3>(geo::attr::kNormal);
+    const float t = float(std::clamp(mix, 0.0, 1.0));
+    for (Index c = 0; c < Index(std::min(normals.size(), own.size())); ++c)
+    {
+        glm::vec3 n = glm::mix(own[c], normals[c], t);
+        normals[c] = glm::length(n) > 1e-6f ? glm::normalize(n) : normals[c];
+    }
+}
+
 /** Connects source's outMesh and worldMatrix into the modifier and stores the target's current world matrix. */
 void connectSource(Graph& g, Node& mod, Node& source)
 {
@@ -626,6 +683,54 @@ void registerTransferCommands()
                                                       {"surfaceAssociation", o.space == Space::Component ? "pointIndex" : "closestPoint"}});
             }
             return nullptr;
+        },
+    });
+
+    ops::registerCommand({
+        .name = "softFoliageNormals",
+        .doc = "Soft Foliage Normals: transfer normals from a generated dome or sphere around each mesh onto it, mixed with the "
+               "mesh's own, so leaf clumps shade as one soft volume instead of many cards.",
+        .positionalDoc = "meshes...",
+        .flags = {
+            {"mix", "", T::Float, 0.8, "0 keeps the mesh's own normals, 1 takes the proxy's."},
+            {"proxy", "", T::String, "dome", "dome (centred on the bottom, normals face up and out) or sphere.", {"dome", "sphere"}},
+            {"up", "", T::String, "y", "The meshes' up axis, for the dome.", {"y", "z"}},
+        },
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            g.evaluate();
+            std::vector<NodeId> meshes;
+            for (const std::string& name : a.objects())
+            {
+                Node* n = g.find(name);
+                if (!n)
+                    throw CommandError("softFoliageNormals: no object " + name);
+                if (n->type().isA("mesh"))
+                    meshes.push_back(n->id());
+                for (NodeId d : g.descendants(n->id()))
+                    if (g.node(d)->type().isA("mesh"))
+                        meshes.push_back(d);
+            }
+            if (meshes.empty())
+                throw CommandError("softFoliageNormals: select meshes");
+            const double mix = a.get<double>("mix", 0.8);
+            const bool dome = a.get<std::string>("proxy", "dome") != "sphere";
+            const int up = a.get<std::string>("up", "y") == "z" ? 2 : 1;
+            UndoChunk chunk("Soft Foliage Normals");
+            json out = json::array();
+            for (NodeId id : meshes)
+            {
+                PlugRef base = modifiers::editPlug(g, id);
+                g.evaluate();
+                MeshPtr current = std::get<MeshPtr>(g.storedValue(base));
+                if (!current)
+                    continue;
+                geo::Mesh mesh = *current;
+                softFoliageNormals(mesh, mix, dome, up);
+                g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(mesh))));
+                out.push_back(g.node(id)->path());
+            }
+            return out;
         },
     });
 

@@ -2,6 +2,7 @@
 
 #include "ops/Command.h"
 #include "geo/Mesh.h"
+#include "geo/Normals.h"
 #include "io/SceneFile.h"
 #include "scene/Graph.h"
 #include "scene/Components.h"
@@ -276,4 +277,85 @@ TEST_CASE("selectByMaterial selects the objects or faces a material is assigned 
     CHECK(comps::selected(scene::ComponentMode::Face).size() == 2);
     CHECK(comps::selected(g.find(b)->id(), scene::ComponentMode::Face) == comps::Ids{1, 3});
     CHECK(comps::selected(g.find(c)->id(), scene::ComponentMode::Face).empty());
+}
+
+TEST_CASE("shading models and their inputs round trip, undo and key")
+{
+    run("newScene");
+    run("createMaterial", {{"args", {"M_Paint"}}, {"shadingModel", "painterly"}, {"strokeScale", 35.0}, {"strokeMapping", "screen"},
+                           {"paletteCount", 4}, {"paletteShadow", {0.1, 0.2, 0.6}}, {"boil", true}, {"boilFps", 8.0}, {"strokeMap", "strokes_dabs"}});
+    run("createMaterial", {{"args", {"M_Toon"}}, {"shadingModel", "toon"}, {"toonSoftness", 0.02}, {"rimColor", {1.0, 0.5, 0.0}}});
+    run("createMaterial", {{"args", {"M_Leaf"}}, {"shadingModel", "foliage"}, {"foliageWrap", 0.9}});
+    run("createMaterial", {{"args", {"M_Plain"}}});
+    CHECK(run("materialInfo", {{"args", {"M_Plain"}}})["shadingModel"] == "defaultLit");
+
+    run("setAttr", {{"args", {"M_Toon.toonThreshold", 0.3}}});
+    CHECK(run("materialInfo", {{"args", {"M_Toon"}}})["toonThreshold"].get<double>() == doctest::Approx(0.3));
+    run("undo");
+    CHECK(run("materialInfo", {{"args", {"M_Toon"}}})["toonThreshold"].get<double>() == doctest::Approx(0.0));
+    run("setKeyframe", {{"args", {"M_Paint.painterlyStrength"}}});
+
+    for (const char* name : {"styles.lila", "styles.lilaa"})
+    {
+        auto path = tempFile(name);
+        io::save(path);
+        run("newScene");
+        io::load(path);
+        json paint = run("materialInfo", {{"args", {"M_Paint"}}});
+        CHECK(paint["shadingModel"] == "painterly");
+        CHECK(paint["strokeScale"].get<double>() == doctest::Approx(35.0));
+        CHECK(paint["strokeMapping"] == "screen");
+        CHECK(paint["paletteCount"] == 4);
+        CHECK(paint["paletteShadow"][2].get<double>() == doctest::Approx(0.6));
+        CHECK(paint["boil"] == true);
+        CHECK(paint["boilFps"].get<double>() == doctest::Approx(8.0));
+        CHECK(paint["strokeMap"] == "strokes_dabs");
+        json toon = run("materialInfo", {{"args", {"M_Toon"}}});
+        CHECK(toon["shadingModel"] == "toon");
+        CHECK(toon["toonSoftness"].get<double>() == doctest::Approx(0.02));
+        CHECK(toon["rimColor"][1].get<double>() == doctest::Approx(0.5));
+        CHECK(run("materialInfo", {{"args", {"M_Leaf"}}})["foliageWrap"].get<double>() == doctest::Approx(0.9));
+        CHECK(run("materialInfo", {{"args", {"M_Plain"}}})["shadingModel"] == "defaultLit");
+    }
+
+    // Built-in sheets resolve by name, an empty strokeMap is the default sheet.
+    CHECK(std::filesystem::exists(scene::materials::strokeSheetPath("")));
+    CHECK(std::filesystem::exists(scene::materials::strokeSheetPath("strokes_dabs")));
+    CHECK(scene::materials::builtinStrokeSheets().size() >= 3);
+}
+
+TEST_CASE("soft foliage normals point a mesh's normals out of a dome, mixed with its own")
+{
+    run("newScene");
+    std::string cube = run("polyCube")[0];
+    // The lowest normal Y: -1 while the cube's bottom face points straight down.
+    auto lowestY = [&] {
+        scene::Graph& g = scene::Graph::current();
+        g.evaluate();
+        const scene::MeshPtr& m = g.find(cube)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+        REQUIRE(m);
+        auto stored = m->cornerAttrs().get<glm::vec3>(geo::attr::kNormal);
+        std::vector<glm::vec3> n = stored.empty() ? geo::cornerNormals(*m) : std::vector<glm::vec3>(stored.begin(), stored.end());
+        float lo = 1.0f;
+        for (geo::Index c = 0; c < m->cornerCapacity(); ++c)
+            if (m->cornerValid(c))
+            {
+                CHECK(glm::length(n[c]) == doctest::Approx(1.0).epsilon(1e-3));
+                lo = std::min(lo, n[c].y);
+            }
+        return lo;
+    };
+    CHECK(lowestY() < -0.99f);
+    run("softFoliageNormals", {{"args", {cube}}, {"mix", 1.0}});
+    const float full = lowestY();
+    CHECK(full > -0.3f);
+    run("undo");
+    CHECK(lowestY() < -0.99f);
+    run("softFoliageNormals", {{"args", {cube}}, {"mix", 0.0}});
+    CHECK(lowestY() < -0.99f);
+    run("undo");
+    run("softFoliageNormals", {{"args", {cube}}});
+    const float mixed = lowestY();
+    CHECK(mixed < full);
+    CHECK(mixed > -0.99f);
 }

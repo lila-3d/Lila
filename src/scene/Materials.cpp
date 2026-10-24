@@ -46,6 +46,56 @@ AttrDef enumAttr(std::string name, std::vector<std::string> names, std::string d
             .enumNames = std::move(names), .doc = std::move(doc)};
 }
 
+AttrDef boolAttr(std::string name, bool def, std::string doc)
+{
+    return {.name = std::move(name), .type = PlugType::Bool, .defaultValue = def, .flags = AttrInput | AttrStorable, .doc = std::move(doc)};
+}
+
+/** Painterly, Toon and Foliage inputs; each model reads only its own and DefaultLit none of them. */
+void stylisedAttrs(std::vector<AttrDef>& a)
+{
+    a[kShadingModel] = enumAttr("shadingModel", {"defaultLit", "painterly", "toon", "foliage"},
+                                "Lighting model: defaultLit (Unreal's default lit), painterly (brush strokes and a colour palette), toon "
+                                "(stepped ramp with tinted light and shadow) or foliage (soft gradient shading, lit through).");
+
+    a[kPainterlyStrength] = floatAttr("painterlyStrength", 1.0, "Painterly: scales the whole effect; 0 shades exactly like defaultLit.");
+    a[kStrokeNormal] = floatAttr("strokeNormal", 0.6, "Painterly: how far the stroke sheet bends the shading normal; 0 is the plain surface.");
+    a[kStrokeScale] = floatAttr("strokeScale", 20.0, "Painterly: size of one stroke sheet tile, cm (UV mode: tiles per UV unit is 100 / this).");
+    a[kStrokeLayerRatio] = floatAttr("strokeLayerRatio", 2.7, "Painterly: the second, finer stroke layer is this many times smaller.");
+    a[kStrokeMapping] = enumAttr("strokeMapping", {"object", "world", "screen", "uv"},
+                                 "Painterly: project strokes triplanar in object or world space, at a constant size on screen, or along the UVs.");
+    a[kStrokeMap] = pathAttr("strokeMap", "Painterly: tileable stroke sheet (RG normal tilt, B stroke shade, A per-stroke random). Empty uses the "
+                                          "built-in sheet; a built-in's name (strokes_soft, strokes_bristle, strokes_dabs) picks another.");
+    a[kPaletteCount] = {.name = "paletteCount", .type = PlugType::Int, .defaultValue = int64_t(3), .flags = AttrInput | AttrStorable,
+                        .doc = "Painterly: colours in the palette, 2 to 4: base and shadow, then light, then accent."};
+    a[kPaletteShadow] = colorAttr("paletteShadow", glm::dvec3(0.10, 0.12, 0.25), "Painterly: linear colour strokes take on in shadow.");
+    a[kPaletteLight] = colorAttr("paletteLight", glm::dvec3(0.95, 0.80, 0.55), "Painterly: linear colour strokes take on in light; tints the specular.");
+    a[kPaletteAccent] = colorAttr("paletteAccent", glm::dvec3(0.60, 0.30, 0.35), "Painterly: linear colour a few scattered strokes pick up.");
+    a[kPaletteContrast] = floatAttr("paletteContrast", 0.5, "Painterly: 0 blends the palette smoothly across the light, 1 steps it.");
+    a[kPaletteSpread] = floatAttr("paletteSpread", 0.35, "Painterly: how far individual strokes push the palette boundary around.");
+    a[kSpecularTint] = floatAttr("specularTint", 0.5, "Painterly: tints the specular toward paletteLight.");
+    a[kBoil] = boolAttr("boil", false, "Painterly: shift the strokes a few times a second, like hand-drawn frames. Follows the time slider.");
+    a[kBoilFps] = floatAttr("boilFps", 10.0, "Painterly: stroke changes per second while boiling.");
+
+    a[kToonShadowColor] = colorAttr("toonShadowColor", glm::dvec3(0.35, 0.38, 0.55), "Toon: multiplies the base colour in shadow.");
+    a[kToonLightTint] = colorAttr("toonLightTint", glm::dvec3(1.0, 0.97, 0.92), "Toon: multiplies the base colour in light.");
+    a[kToonThreshold] = floatAttr("toonThreshold", 0.0, "Toon: where light turns to shadow, as N.L from -1 to 1.");
+    a[kToonSoftness] = floatAttr("toonSoftness", 0.08, "Toon: width of the light to shadow ramp; 0 is a hard line.");
+    a[kToonOuterOffset] = floatAttr("toonOuterOffset", 0.45, "Toon: how much deeper into the shadow the second, harder band starts; 0 hides it.");
+    a[kToonOuterColor] = colorAttr("toonOuterColor", glm::dvec3(0.20, 0.20, 0.35), "Toon: multiplies the base colour in the outer shadow band.");
+    a[kRimColor] = colorAttr("rimColor", glm::dvec3(1.0), "Toon: linear rim light colour.");
+    a[kRimWidth] = floatAttr("rimWidth", 0.3, "Toon: how far the rim reaches in from the silhouette, 0 to 1.");
+    a[kRimStrength] = floatAttr("rimStrength", 0.4, "Toon: rim light brightness; 0 is off.");
+
+    a[kFoliageBottomColor] = colorAttr("foliageBottomColor", glm::dvec3(0.05, 0.12, 0.06), "Foliage: linear colour at the bottom of the object.");
+    a[kFoliageTopColor] = colorAttr("foliageTopColor", glm::dvec3(0.35, 0.50, 0.15), "Foliage: linear colour at the top of the object.");
+    a[kFoliageGradient] = floatAttr("foliageGradient", 0.6, "Foliage: how much the bottom to top gradient replaces the base colour.");
+    a[kFoliageBottomShadow] = floatAttr("foliageBottomShadow", 0.5, "Foliage: darkens surfaces facing down.");
+    a[kFoliageTopHighlight] = floatAttr("foliageTopHighlight", 0.3, "Foliage: brightens surfaces facing up.");
+    a[kFoliageTranslucency] = floatAttr("foliageTranslucency", 0.4, "Foliage: light passing through toward the camera from behind.");
+    a[kFoliageWrap] = floatAttr("foliageWrap", 0.5, "Foliage: wraps the light around the form, 0 to 1, for soft clumps.");
+}
+
 std::vector<AttrDef> materialAttrs()
 {
     std::vector<AttrDef> a(kCount);
@@ -75,6 +125,7 @@ std::vector<AttrDef> materialAttrs()
                     .doc = "Draw back faces too (with flipped normals). One-sided materials cull them, as in Unreal."};
     a[kUvSet] = {.name = "uvSet", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = AttrInput | AttrStorable,
                  .doc = "UV set the textures use (0 or 1)."};
+    stylisedAttrs(a);
     return a;
 }
 
@@ -293,7 +344,7 @@ const std::vector<std::pair<std::string, int>>& textureChannels()
     static const std::vector<std::pair<std::string, int>> c = {
         {"baseColor", kBaseColorMap}, {"metallic", kMetallicMap},  {"roughness", kRoughnessMap},
         {"normal", kNormalMap},       {"ambientOcclusion", kAmbientOcclusionMap}, {"orm", kOrmMap},
-        {"emissive", kEmissiveMap},
+        {"emissive", kEmissiveMap},   {"stroke", kStrokeMap},
     };
     return c;
 }
@@ -301,6 +352,27 @@ const std::vector<std::pair<std::string, int>>& textureChannels()
 std::string resolvePath(const std::string& path)
 {
     return paths::toUtf8(paths::resolvePath(path));
+}
+
+std::vector<std::string> builtinStrokeSheets()
+{
+    std::vector<std::string> out;
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator(paths::resourcesDir() / "strokes", ec))
+        if (e.path().extension() == ".png")
+            out.push_back(paths::toUtf8(e.path().stem()));
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+std::string strokeSheetPath(const std::string& strokeMap)
+{
+    const std::filesystem::path dir = paths::resourcesDir() / "strokes";
+    if (strokeMap.empty())
+        return paths::toUtf8(dir / "strokes_soft.png");
+    if (strokeMap.find_first_of("/\\.") == std::string::npos)
+        return paths::toUtf8(dir / (strokeMap + ".png"));
+    return resolvePath(strokeMap);
 }
 
 int32_t slotIndex(geo::Mesh& mesh, const std::string& name)
@@ -410,7 +482,7 @@ void registerCommands()
 {
     using T = ArgType;
 
-    ops::registerCommand({
+    CommandDef create{
         .name = "createMaterial",
         .doc = "Create a material (Unreal default lit inputs). Faces use it through a slot of the same name. Returns its name.",
         .positionalDoc = "name",
@@ -444,7 +516,17 @@ void registerCommands()
             applyFlags(g, *n, a);
             return n->path();
         },
-    });
+    };
+    // The stylised shading models' inputs, as flags named like their attributes.
+    const std::vector<AttrDef> attrs = materialAttrs();
+    for (size_t i = kShadingModel; i < attrs.size(); ++i)
+    {
+        const AttrDef& d = attrs[i];
+        const T type = d.type == PlugType::Float ? T::Float : d.type == PlugType::Vec3 ? T::Vec3 : d.type == PlugType::Bool ? T::Bool
+                       : d.type == PlugType::Int ? T::Int : d.type == PlugType::String ? T::String : T::Any;
+        create.flags.push_back({d.name, "", type, nullptr, d.doc});
+    }
+    ops::registerCommand(std::move(create));
 
     ops::registerCommand({
         .name = "assignMaterial",

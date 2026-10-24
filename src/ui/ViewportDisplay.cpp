@@ -21,6 +21,10 @@ void apply(render::FrameState& s)
         s.groundShadow = 0.0f;
     s.exposure = render::exposureScale(p.value<double>("general", kExposure, 0.0));
     s.gamma = p.value<float>("general", kGamma, 1.0f);
+    s.kuwahara = p.value<bool>("general", kKuwahara, false);
+    s.kuwaharaRadius = p.value<float>("general", kKuwaharaRadius, 4.0f);
+    s.outline = p.value<bool>("general", kOutline, false);
+    s.outlineWidth = p.value<float>("general", kOutlineWidth, 1.0f);
     s.gridColor = glm::vec3(themeLinear("grid", glm::vec4(s.gridColor, 1.0f)));
     s.gridAxisX = glm::vec3(themeLinear("gridAxisX", glm::vec4(s.gridAxisX, 1.0f)));
     s.gridAxisZ = glm::vec3(themeLinear("gridAxisZ", glm::vec4(s.gridAxisZ, 1.0f)));
@@ -42,7 +46,7 @@ ComponentThickness componentThickness()
     auto get = [&](const char* key, double fallback) { return std::max(0.0, p.value<double>("general", key, fallback)); };
     return {get(kEdgeThickness, d.edge),     get(kEdgeThicknessHover, d.edgeHover),   get(kEdgeThicknessSelected, d.edgeSelected),
             get(kVertexThickness, d.vertex), get(kVertexThicknessHover, d.vertexHover), get(kVertexThicknessSelected, d.vertexSelected),
-            get(kUvSeamThickness, d.uvSeam)};
+            get(kUvSeamThickness, d.uvSeam), get(kSymmetryEdgeThickness, d.symmetryEdge)};
 }
 
 bool accentColors(const char* key)

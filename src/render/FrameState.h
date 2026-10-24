@@ -106,6 +106,12 @@ struct FrameState
     bool ambientOcclusion = true;       // screen-space, on indirect light only
     float aoRadius = 30.0f;             // world units (cm)
     float aoIntensity = 1.0f;
+    // Preview-only post over the shaded scene (not lines or overlays): a painterly anisotropic Kuwahara filter and outlines.
+    bool kuwahara = false;
+    float kuwaharaRadius = 4.0f; // device pixels
+    bool outline = false;
+    float outlineWidth = 1.0f;  // device pixels
+    glm::vec3 outlineColor{0.01f}; // linear
     std::vector<ImagePlaneDraw> imagePlanes;
     std::vector<LineVertex> lines;
     std::vector<LineVertex> linesOnTop; // like lines, biased toward the camera and writing no depth (edges over faces)
@@ -115,6 +121,9 @@ struct FrameState
     /** UV seams over meshes: drawn like linesOnTop, at their own width in device pixels. */
     std::vector<LineVertex> seamLines;
     float seamLineWidth = 1.0f;
+    /** Mesh edges on the symmetry plane: drawn like linesOnTop, under the selected edges and hover, at their own width in device pixels. */
+    std::vector<LineVertex> symmetryLines;
+    float symmetryLineWidth = 1.0f;
     std::vector<LineVertex> tris3d;     // world-space triangle list, blended and biased toward the camera, no depth write
     std::vector<LineVertex> linesXray;  // world-space lines with no depth test, over every surface (x-ray joints)
     std::vector<LineVertex> overlay; // NDC positions, drawn last with no depth test (marquee, HUD)

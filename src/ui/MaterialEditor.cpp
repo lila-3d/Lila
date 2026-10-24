@@ -4,6 +4,7 @@
 #include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/Paths.h"
+#include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
@@ -627,6 +628,79 @@ void MaterialEditor::rebuild()
         });
     };
 
+    auto intSpin = [&](const char* text, int attr, int lo, int hi) {
+        QLabel* l = label(text);
+        auto* spin = new QSpinBox(mBody);
+        spin->setRange(lo, hi);
+        resettable(l, attr, spin);
+        if (std::optional<json> d = valueReset::plugDefault(n->type().attrs[size_t(attr)]))
+            setSpinDefault(spin, d->get<double>());
+        grid->addWidget(spin, row++, 1, 1, 2, Qt::AlignLeft);
+        connect(spin, &QSpinBox::valueChanged, this, [this, attr](int v) { setAttr(attr, v); });
+        mUpdaters.push_back([this, spin, attr] {
+            if (scene::Node* m = current())
+            {
+                QSignalBlocker block(spin);
+                spin->setValue(int(m->as<int64_t>(attr)));
+            }
+        });
+    };
+
+    section("Shading");
+    combo("Shading Model", kShadingModel, {"Default Lit", "Painterly", "Toon", "Foliage"},
+          "Default Lit: Unreal's default lit.\nPainterly: brush strokes bend the normal and a palette recolours light and shadow.\n"
+          "Toon: stepped light and shadow with a rim.\nFoliage: soft gradient shading lit through from behind.");
+    mShownModel = int(n->as<int64_t>(kShadingModel));
+    // Each model shows only its own inputs, so switching the model rebuilds the panel.
+    mUpdaters.push_back([this] {
+        scene::Node* m = current();
+        if (m && int(m->as<int64_t>(kShadingModel)) != mShownModel)
+            QTimer::singleShot(0, this, [this] { rebuild(); });
+    });
+    switch (ShadingModel(mShownModel))
+    {
+    case ShadingModel::Painterly:
+        slider("Strength", kPainterlyStrength, 0.0, 1.0);
+        texture("Stroke Sheet", "stroke", kStrokeMap);
+        combo("Mapping", kStrokeMapping, {"Object", "World", "Screen", "UV"},
+              "Object: triplanar in object space, strokes move with the object.\nWorld: triplanar in world space.\n"
+              "Screen: strokes keep their size on screen at any distance.\nUV: along the UVs, for baking.");
+        slider("Stroke Normal", kStrokeNormal, 0.0, 1.0);
+        slider("Stroke Scale", kStrokeScale, 1.0, 200.0);
+        slider("Layer Ratio", kStrokeLayerRatio, 1.0, 8.0);
+        intSpin("Palette Colors", kPaletteCount, 2, 4);
+        color("Shadow Color", kPaletteShadow);
+        color("Light Color", kPaletteLight);
+        color("Accent Color", kPaletteAccent);
+        slider("Contrast", kPaletteContrast, 0.0, 1.0);
+        slider("Stroke Spread", kPaletteSpread, 0.0, 1.0);
+        slider("Specular Tint", kSpecularTint, 0.0, 1.0);
+        check("Boil", kBoil);
+        slider("Boil FPS", kBoilFps, 1.0, 24.0);
+        break;
+    case ShadingModel::Toon:
+        color("Light Tint", kToonLightTint);
+        color("Shadow Color", kToonShadowColor);
+        slider("Threshold", kToonThreshold, -1.0, 1.0);
+        slider("Softness", kToonSoftness, 0.0, 0.5);
+        slider("Outer Band", kToonOuterOffset, 0.0, 1.0);
+        color("Outer Color", kToonOuterColor);
+        color("Rim Color", kRimColor);
+        slider("Rim Width", kRimWidth, 0.0, 1.0);
+        slider("Rim Strength", kRimStrength, 0.0, 2.0);
+        break;
+    case ShadingModel::Foliage:
+        color("Bottom Color", kFoliageBottomColor);
+        color("Top Color", kFoliageTopColor);
+        slider("Gradient", kFoliageGradient, 0.0, 1.0);
+        slider("Bottom Shadow", kFoliageBottomShadow, 0.0, 1.0);
+        slider("Top Highlight", kFoliageTopHighlight, 0.0, 1.0);
+        slider("Translucency", kFoliageTranslucency, 0.0, 1.0);
+        slider("Wrap", kFoliageWrap, 0.0, 1.0);
+        break;
+    default: break;
+    }
+
     section("Surface");
     color("Base Color", kBaseColor);
     texture("Base Color Map", "baseColor", kBaseColorMap);
@@ -748,8 +822,14 @@ void registerMaterialUi()
                   .run = [] { texturePicker::showFoldersDialog(QApplication::activeWindow()); },
                   .doc = "Choose which folders of the project the texture lists show, for the workspace and this scene.",
                   .python = "textureFolders(include=['Textures/**'], exclude=['**/*_old.*'])"});
-    actions::add({.id = "viewport.textured", .label = "Textured", .category = "Display", .run = [] { setMaterialsShown(!materialsShown()); },
-                  .doc = "Toggle materials and textures in the viewport; off draws flat gray for form checks.",
-                  .python = "lila.prefs.set(\"general\", \"/viewport/materials\", not lila.prefs.get(\"general\", \"/viewport/materials\", True))"});
+    actions::add({.id = "viewport.textured", .label = "Textured", .category = "Display",
+                  .run =
+                      [] {
+                          PrefStore::get().set("general", "/viewport/displayMode", "shaded");
+                          setMaterialsShown(true);
+                      },
+                  .doc = "Draws meshes shaded with their materials and textures.",
+                  .python = "lila.prefs.set(\"general\", \"/viewport/displayMode\", \"shaded\")\n"
+                            "lila.prefs.set(\"general\", \"/viewport/materials\", True)"});
 }
 } // namespace lila::ui

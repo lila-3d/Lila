@@ -28,6 +28,11 @@ inline constexpr const char* kColorChannel = "/viewport/colorChannel"; // "rgb",
 /** Weight displays (skin weights, soft select falloff) as a grayscale ramp instead of the colour ramp. */
 inline constexpr const char* kGrayscaleWeights = "/viewport/grayscaleWeights";
 inline constexpr int kDefaultSamples = 8;
+/** Preview-only post over the shaded scene: an anisotropic Kuwahara (painted look) and depth/normal outlines. */
+inline constexpr const char* kKuwahara = "/viewport/post/kuwahara";
+inline constexpr const char* kKuwaharaRadius = "/viewport/post/kuwaharaRadius"; // device pixels
+inline constexpr const char* kOutline = "/viewport/post/outline";
+inline constexpr const char* kOutlineWidth = "/viewport/post/outlineWidth"; // device pixels
 
 /** Full monotone: no hue anywhere, overriding every accent toggle below. Off by default. */
 inline constexpr const char* kMonotone = "/ui/monotone";
@@ -48,6 +53,10 @@ inline constexpr const char* kVertexThicknessHover = "/viewport/components/verte
 inline constexpr const char* kVertexThicknessSelected = "/viewport/components/vertexThicknessSelected";
 /** UV seams drawn over meshes while the UV editor shows them. */
 inline constexpr const char* kUvSeamThickness = "/viewport/components/uvSeamThickness";
+/** The edges on a mesh's symmetry plane, drawn in red in component modes. */
+inline constexpr const char* kSymmetryEdges = "/viewport/components/symmetryEdges";
+inline constexpr const char* kSymmetryEdgesObjectMode = "/viewport/components/symmetryEdgesObjectMode";
+inline constexpr const char* kSymmetryEdgeThickness = "/viewport/components/symmetryEdgeThickness";
 
 struct ComponentThickness
 {
@@ -58,6 +67,7 @@ struct ComponentThickness
     double vertexHover = 8.0;
     double vertexSelected = 6.0;
     double uvSeam = 3.0;
+    double symmetryEdge = 4.0;
 };
 
 LILA_UI_API ComponentThickness componentThickness();
