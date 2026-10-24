@@ -59,6 +59,14 @@ struct BakeHandoff
 /** The handoff for a generated group (a name or path). Throws lila::CommandError when it is not one. */
 BakeHandoff bakeHandoff(const std::string& group);
 
+/**
+ * A native texture set for a generated group (terrainTextureSet): a bake project from the exported tile when there is one
+ * (ID map from the palette, terrainMasks vertex colours, AO, height over the measured range), and a layer stack of a ground
+ * fill, the baked height, and per Object ID a folder masked by ID Select holding the colour recipe (base, root, per instance,
+ * tip, occlusion) masked by the terrainMasks channels and AO.
+ */
+json createTextureSet(lila::scene::Graph& g, lila::scene::Node& grp, const lila::Args& a);
+
 bool registerScene(lila::ext::Context& ctx);
 void registerUi(lila::ext::Context& ctx);
 } // namespace terrain

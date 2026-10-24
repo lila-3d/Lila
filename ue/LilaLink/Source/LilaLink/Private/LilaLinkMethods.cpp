@@ -99,7 +99,8 @@ TSharedPtr<FJsonValue> Hello(const TSharedPtr<FJsonObject>&, FString&)
 	Out->SetNumberField(TEXT("pid"), FPlatformProcess::GetCurrentProcessId());
 	// "progress": long methods send progress notifications, so Lila can tell a slow call from a hung editor.
 	Out->SetArrayField(TEXT("features"), {Str(TEXT("progress")), Str(TEXT("materials")), Str(TEXT("meshSequence")), Str(TEXT("geometryCache")),
-		Str(TEXT("vertexAnimation")), Str(TEXT("textures")), Str(TEXT("materialInstances"))});
+		Str(TEXT("vertexAnimation")), Str(TEXT("textures")), Str(TEXT("materialInstances")),
+		Str(TEXT("stylisedInstances"))});
 	Out->SetBoolField(TEXT("python"), IPythonScriptPlugin::Get() != nullptr && IPythonScriptPlugin::Get()->IsPythonAvailable());
 	return Obj(Out);
 }

@@ -67,6 +67,9 @@ LILA_SCENE_API json importParams(const fs::path& file, const json& mapping, cons
  */
 LILA_SCENE_API json materialParams(scene::Graph& g, const std::vector<scene::NodeId>& roots);
 
+/** One slot's entry of materialParams: {name} plus the material node's values when there is one. */
+LILA_SCENE_API json materialInputs(scene::Graph& g, const std::string& slot);
+
 /**
  * Timeouts for importAsset: the "unreal" prefs "/importTimeoutMs" (overall, default 10 min) and "/importIdleTimeoutMs"
  * (without any reply or progress from the editor, default 60 s).
@@ -173,7 +176,7 @@ private:
  */
 LILA_SCENE_API void onSceneSaved();
 
-/** What onSceneSaved does, minus the pref check when `force`. Returns how many mappings were queued. */
+/** What onSceneSaved does, minus the pref check when `force`, then syncTextureSets. Returns how many mappings and sets were queued. */
 LILA_SCENE_API int syncMappings(bool force);
 
 /** Registers unrealConnect, unrealStatus, unrealImport, unrealMap, unrealUnmap, unrealMappings, unrealSync. */

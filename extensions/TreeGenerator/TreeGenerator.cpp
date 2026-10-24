@@ -16,6 +16,7 @@
 #include <lila/Node.h>
 #include <lila/Prefs.h>
 #include <lila/Transform.h>
+#include <lila/Undo.h>
 
 #include <QImage>
 
@@ -1112,6 +1113,95 @@ NodeId treeArg(Graph& g, const Args& a, const char* cmd)
     return treeInSelection(g);
 }
 
+// ------------------------------------------------------------------------------------------------ native texture sets
+
+/** The tree's bake project from its export, the leaves' colour set baked as vertex colours; empty with a warning before an export. */
+std::string treeBakeProject(Graph& g, NodeId tree, const json& values, const std::string& target, json& warnings)
+{
+    const json h = bakeHandoff(g, tree, values);
+    if (h.value("high", std::string()).empty() || !fs::exists(utf8(h["high"].get<std::string>())) || h.value("low", std::string()).empty() ||
+        !fs::exists(utf8(h["low"].get<std::string>())))
+    {
+        warnings.push_back("no bake project: export the tree first, then texSetSettings(set, {\"bakeProject\": ...}); until then the mesh maps "
+                           "read as defaults");
+        return {};
+    }
+    const json made = ops::execute("createBakeFromGenerator", {{"args", {g.node(tree)->path()}}, {"kind", "tree"}, {"target", target}});
+    const std::string project = made.at("project").get<std::string>();
+    for (const char* map : {"ao", "curvature", "cavity"})
+        ops::execute("setBakeMap", {{"args", {map}}, {"project", project}, {"enabled", true}});
+    if (const std::string set = h.value("colourSet", std::string()); !set.empty())
+        ops::execute("setBakeMap", {{"args", {"vertexColor"}}, {"project", project}, {"enabled", true}, {"options", {{"set", set}}}});
+    return project;
+}
+
+json createTreeTextureSets(Graph& g, NodeId tree, const Args& a)
+{
+    const json stored = storedSettings(g, tree);
+    const json values = stored.is_object() ? stored["values"] : callOf(a).values;
+    const std::string preset = stored.is_object() ? stored.value("preset", std::string()) : a.get<std::string>("preset", "");
+    const json palette = paletteFor(speciesOf(preset));
+    const std::string season = a.get<std::string>("season", "summer");
+    if (!palette["leaves"].contains(season))
+        throw CommandError("treeTextureSet: season is spring, summer, autumn or lateAutumn");
+    const json e = exportSettings(values);
+    const std::string base = a.get<std::string>("name", g.node(tree)->name());
+    const std::string target = a.get<std::string>("target", "unreal");
+    json warnings = json::array();
+
+    UndoChunk chunk("Tree Texture Sets");
+    const std::string project = a.get<bool>("bake", true) ? treeBakeProject(g, tree, values, target, warnings) : std::string();
+    auto makeSet = [&](const std::string& name, const std::string& material) {
+        if (a.get<bool>("replace", false))
+        {
+            Node* old = nullptr;
+            try
+            {
+                old = g.find(name);
+            }
+            catch (const std::exception&)
+            {
+            }
+            if (old && old->type().name == "textureSet")
+                g.deleteNode(old->id());
+        }
+        return ops::execute("texCreateSet", {{"args", {name}}, {"settings", {{"material", material}, {"bakeProject", project}, {"exportPreset", target}}}})
+            .get<std::string>();
+    };
+    auto fill = [](const std::string& set, const std::string& name, const json& material, const json& extra) {
+        json call = {{"args", {set, "fill"}}, {"name", name}, {"material", material}};
+        call.update(extra);
+        return ops::execute("texAddLayer", call).at("id").get<std::string>();
+    };
+    auto mask = [](const std::string& set, const std::string& layer, const std::string& type, const json& values, const json& bindings, bool invert) {
+        ops::execute("texAddGenerator", {{"args", {set, layer, type}}, {"values", values}, {"bindings", bindings}, {"invert", invert}});
+    };
+    const json none = json::object();
+    auto opacity = [](double v) { return json{{"channels", {{"baseColor", {{"opacity", v}}}}}}; };
+
+    // Bark: the species' tones over curvature and occlusion.
+    const json& bark = palette["bark"];
+    const std::string barkSet = makeSet(base + "_Bark", e.value("trunk_material", std::string("Trunk")));
+    fill(barkSet, "Bark", {{"baseColor", bark["base"]}, {"roughness", bark["roughness"]}}, none);
+    mask(barkSet, fill(barkSet, "Crevices", {{"baseColor", bark["dark"]}}, none), "genCavityGrime", none, none, false);
+    mask(barkSet, fill(barkSet, "Ridges", {{"baseColor", bark["light"]}}, opacity(0.6)), "genEdgeWear", none, none, false);
+    mask(barkSet, fill(barkSet, "Deep Occlusion", {{"baseColor", bark["deep"]}}, none), "genAoDarken", none, {{"ao", "ao"}}, false);
+
+    // Leaves: the season's tones over the leaf colour set (R exposure, G per leaf, B per bunch).
+    const json& leaf = palette["leaves"][season];
+    const std::string leafSet = makeSet(base + "_Leaves", e.value("leaf_material", std::string("Leaves")));
+    const json vc = {{"position", "vertexColor"}};
+    fill(leafSet, "Leaf", {{"baseColor", leaf["base"]}, {"roughness", leaf["roughness"]}}, none);
+    mask(leafSet, fill(leafSet, "Per Bunch", {{"baseColor", leaf["bunch"]}}, opacity(0.5)), "maskAxis", {{"axis", "z"}, {"start", 0.0}, {"end", 1.0}}, vc, false);
+    mask(leafSet, fill(leafSet, "Per Leaf", {{"baseColor", leaf["light"]}}, opacity(0.35)), "maskAxis", {{"axis", "y"}, {"start", 0.0}, {"end", 1.0}}, vc, false);
+    mask(leafSet, fill(leafSet, "Shade", {{"baseColor", leaf["dark"]}}, none), "maskAxis", {{"axis", "x"}, {"start", 0.0}, {"end", 0.6}}, vc, true);
+    mask(leafSet, fill(leafSet, "Deep Shade", {{"baseColor", leaf["deep"]}}, none), "maskAxis", {{"axis", "x"}, {"start", 0.0}, {"end", 0.25}}, vc, true);
+    mask(leafSet, fill(leafSet, "Sunlit", {{"baseColor", leaf["fresh"]}}, none), "maskAxis", {{"axis", "x"}, {"start", 0.7}, {"end", 1.0}}, vc, false);
+
+    return {{"sets", {barkSet, leafSet}}, {"bakeProject", project.empty() ? json() : json(project)}, {"season", season}, {"species", speciesOf(preset)},
+            {"warnings", warnings}};
+}
+
 // ------------------------------------------------------------------------------------------------ registration
 
 bool registerTypes(ext::Context& ctx)
@@ -1527,6 +1617,31 @@ void registerCommands(ext::Context& ctx)
             return bakeHandoff(g, tree, callOf(a).values);
         },
     });
+
+    {
+        std::vector<FlagDef> flags = settingsFlags();
+        flags.push_back({"name", "", T::String, nullptr, "Base name of the sets (<name>_Bark, <name>_Leaves); the tree's by default."});
+        flags.push_back({"season", "", T::String, "summer", "Leaf palette: spring, summer, autumn or lateAutumn."});
+        flags.push_back({"target", "", T::String, "unreal", "Bake target and export preset."});
+        flags.push_back({"bake", "", T::Bool, true, "Make the bake project when the tree is exported."});
+        flags.push_back({"replace", "", T::Bool, false, "Replace texture sets of those names."});
+        ctx.registerCommand({
+            .name = "treeTextureSet",
+            .doc = "Make native texture sets for a tree instead of handing the palette to Painter: <name>_Bark (the species' bark tones over "
+                   "cavity, edges and AO) and <name>_Leaves (the season's leaf tones over the leaf colour set: R exposure, G per leaf, B per "
+                   "bunch), on the trunk and leaf materials, with a bake project from the export when there is one. Returns {sets, "
+                   "bakeProject, season, species, warnings}.",
+            .positionalDoc = "tree (default the selection)",
+            .flags = flags,
+            .run = [](const Args& a) -> json {
+                Graph& g = graph();
+                const NodeId tree = treeArg(g, a, "treeTextureSet");
+                if (!tree)
+                    throw CommandError("Select a tree built by this tool.");
+                return createTreeTextureSets(g, tree, a);
+            },
+        });
+    }
 }
 } // namespace
 

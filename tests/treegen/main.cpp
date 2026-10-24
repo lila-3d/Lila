@@ -9,6 +9,8 @@
 #include "scene/Node.h"
 #include "scene/Rig.h"
 #include "scene/SceneCommands.h"
+#include "bake/Bake.h"
+#include "tex/TextureSet.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -28,10 +30,13 @@ int main(int argc, char** argv)
     lila::ops::registerBuiltins();
     lila::scene::types::registerBuiltins();
     lila::scene::registerRigTypes();
+    lila::tex::registerTypes();
     lila::scene::registerCommands();
     lila::io::registerCommands();
     lila::fbx::registerCommands();
     lila::extensions::registerCommands();
+    lila::bake::registerCommands();
+    lila::tex::registerCommands();
 
     doctest::Context ctx(argc, argv);
     return ctx.run();

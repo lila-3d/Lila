@@ -1,6 +1,7 @@
 #include "LilaLinkTextures.h"
 
 #include "LilaLinkLog.h"
+#include "LilaLinkMaterials.h"
 #include "LilaLinkMethods.h"
 #include "LilaLinkSettings.h"
 
@@ -49,6 +50,9 @@ struct FInstanceRequest
 	FString Name;
 	FName Slot;
 	TMap<FName, FString> Parameters;
+	TMap<FName, float> Scalars;
+	/** Lila's material values for a Painterly or Toon parent's parameters. */
+	TSharedPtr<FJsonObject> Stylised;
 	TArray<FString> Meshes;
 };
 
@@ -185,6 +189,23 @@ void ParseInstances(const TSharedPtr<FJsonObject>& Params, TArray<FInstanceReque
 					R.Parameters.Add(FName(*Key), Texture);
 				}
 			}
+		}
+		const TSharedPtr<FJsonObject>* Scalars = nullptr;
+		if ((*M)->TryGetObjectField(TEXT("scalars"), Scalars))
+		{
+			for (const auto& [Key, Value] : (*Scalars)->Values)
+			{
+				double Number = 0.0;
+				if (Value.IsValid() && Value->TryGetNumber(Number))
+				{
+					R.Scalars.Add(FName(*Key), float(Number));
+				}
+			}
+		}
+		const TSharedPtr<FJsonObject>* Stylised = nullptr;
+		if ((*M)->TryGetObjectField(TEXT("stylised"), Stylised))
+		{
+			R.Stylised = *Stylised;
 		}
 		const TArray<TSharedPtr<FJsonValue>>* Meshes = nullptr;
 		if ((*M)->TryGetArrayField(TEXT("meshes"), Meshes))
@@ -408,7 +429,9 @@ void ImportTextures(const TSharedPtr<FJsonObject>& Params, const FLilaLinkCallRe
 	{
 		FString ParentPath;
 		Params->TryGetStringField(TEXT("materialParent"), ParentPath);
+		// "lila:painterly" and "lila:toon" are LilaLink's own stylised masters, built on first use.
 		UMaterialInterface* Parent = ParentPath.IsEmpty() ? nullptr
+			: ParentPath.StartsWith(TEXT("lila:")) ? LilaLink::StylisedParent(ParentPath.RightChop(5), Assets, Warnings)
 			: Cast<UMaterialInterface>(FSoftObjectPath(ParentPath.Contains(TEXT(".")) ? ParentPath : ParentPath + TEXT(".") + FPackageName::GetShortName(ParentPath)).TryLoad());
 		TArray<FInstanceRequest> Instances;
 		ParseInstances(Params, Instances);
@@ -427,6 +450,14 @@ void ImportTextures(const TSharedPtr<FJsonObject>& Params, const FLilaLinkCallRe
 			if (!Instance)
 			{
 				continue;
+			}
+			if (R.Stylised.IsValid())
+			{
+				LilaLink::ApplyStylised(Instance, R.Stylised, Assets, Warnings);
+			}
+			for (const auto& [Param, Value] : R.Scalars)
+			{
+				UMaterialEditingLibrary::SetMaterialInstanceScalarParameterValue(Instance, Param, Value);
 			}
 			TArray<FMaterialParameterInfo> Infos;
 			TArray<FGuid> Ids;

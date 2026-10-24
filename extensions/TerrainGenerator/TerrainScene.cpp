@@ -12,6 +12,7 @@
 #include <lila/Node.h>
 #include <lila/Prefs.h>
 #include <lila/Transform.h>
+#include <lila/Undo.h>
 
 // TBB before Qt: Qt's emit macro breaks TBB's headers.
 #include <tbb/parallel_for.h>
@@ -1238,6 +1239,24 @@ void registerCommands(ext::Context& ctx)
     });
 
     ctx.registerCommand({
+        .name = "terrainTextureSet",
+        .doc = "Make a texture set for a generated group, painted natively instead of through Painter's stack script: a bake project from "
+               "the exported tile (its ID palette, terrainMasks colour set, AO and the measured height range), then layers bound to them: "
+               "a ground fill, the baked height, and per Object ID a folder masked by ID Select with the ID's colour recipe (base, root, "
+               "per instance, tip, occlusion; the colours sidecar when exported). Export FBX Pair first for the mesh maps. Returns {set, "
+               "bakeProject, ids, layers, warnings}.",
+        .positionalDoc = "group (default the selection)",
+        .flags = {{"name", "", T::String, nullptr, "Set name; <Preset>_Tex by default."},
+                  {"target", "", T::String, "unreal", "Bake target and export preset."},
+                  {"bake", "", T::Bool, true, "Make the bake project when the tile is exported."},
+                  {"replace", "", T::Bool, false, "Replace a texture set of that name."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = graph();
+            return createTextureSet(g, *groupArg(g, a, "terrainTextureSet"), a);
+        },
+    });
+
+    ctx.registerCommand({
         .name = "terrainSourceInfo",
         .doc = "What the generator reads off a source mesh: its length, width and thickness axes, which end is the base, and how far "
                "it reaches from its pivot. {valid: False} when it is not a mesh.",
@@ -1485,6 +1504,124 @@ BakeHandoff bakeHandoff(const std::string& groupName)
         h.idMapPath = existing(name + kIdMapSuffix + ".png");
     }
     return h;
+}
+
+namespace
+{
+/** A per-ID colour recipe from the colours sidecar when the export wrote one (hand edits win), else the defaults. */
+json colourRecipes(const BakeHandoff& h)
+{
+    if (!h.coloursPath.empty())
+        if (std::ifstream f{utf8(h.coloursPath)}; f)
+            if (json j = json::parse(f, nullptr, false); j.is_object() && !j.empty())
+                return j;
+    return json::parse(defaultColourRecipes(h.legend).dump());
+}
+
+json layerId(const json& r) { return r.at("id"); }
+
+/** Makes the bake project the set reads its mesh maps from, when the tile is exported; else says why not. */
+std::string bakeProjectFor(const BakeHandoff& h, const std::string& target, json& warnings)
+{
+    if (h.highPath.empty() || h.bakePlane.empty())
+    {
+        warnings.push_back("no bake project: create a bake plane and Export FBX Pair, then texSetSettings(set, {\"bakeProject\": ...}); "
+                           "until then the mesh maps read as defaults");
+        return {};
+    }
+    const json made = ops::execute("createBakeFromGenerator", {{"args", {h.group}}, {"kind", "terrain"}, {"target", target}});
+    const std::string project = made.at("project").get<std::string>();
+    const double range = h.measured && h.heightP99 > 0.0 ? h.heightP99 : h.heightAbovePlane;
+    ops::execute("setBakeMap", {{"args", {"vertexColor"}}, {"project", project}, {"enabled", true}, {"options", {{"set", kColourSet}}}});
+    ops::execute("setBakeMap", {{"args", {"ao"}}, {"project", project}, {"enabled", true}});
+    json height = {{"args", {"height"}}, {"project", project}, {"enabled", true}};
+    if (range > 0.0)
+        height["options"] = {{"range", range}};
+    ops::execute("setBakeMap", height);
+    return project;
+}
+} // namespace
+
+json createTextureSet(Graph& g, Node& grp, const Args& a)
+{
+    const BakeHandoff h = bakeHandoff(grp.path());
+    const json stored = readStored(grp);
+    const std::string preset = stored.value("preset", std::string());
+    const std::string name = a.get<std::string>("name", nodeStem(preset.empty() ? grp.name() : preset) + "_Tex");
+    const std::string target = a.get<std::string>("target", "unreal");
+    json warnings = json::array();
+
+    UndoChunk chunk("Terrain Texture Set");
+    if (a.get<bool>("replace", false))
+        if (Node* old = findNode(g, name); old && old->type().name == "textureSet")
+            g.deleteNode(old->id());
+    const std::string project = a.get<bool>("bake", true) ? bakeProjectFor(h, target, warnings) : std::string();
+    const int res = int(num(stored["values"], "bakeResolution"));
+    json settings = {{"material", h.bakeMaterial.empty() ? nodeStem(preset) + kBakeMaterialSuffix + "1" : h.bakeMaterial},
+                     {"bakeProject", project},
+                     {"exportPreset", target}};
+    if (res > 0)
+        settings["width"] = settings["height"] = res;
+    const std::string set = ops::execute("texCreateSet", {{"args", {name}}, {"settings", settings}}).get<std::string>();
+
+    const json recipes = colourRecipes(h);
+    std::vector<int64_t> ids;
+    for (auto it = h.legend.begin(); it != h.legend.end(); ++it)
+        ids.push_back(std::stoll(it.key()));
+    std::sort(ids.begin(), ids.end());
+
+    auto fill = [&](const std::string& layerName, const json& material, const json& extra) {
+        json call = {{"args", {set, "fill"}}, {"name", layerName}, {"material", material}};
+        call.update(extra);
+        return layerId(ops::execute("texAddLayer", call)).get<std::string>();
+    };
+    auto mask = [&](const std::string& layer, const std::string& type, const json& values, const json& bindings, bool invert) {
+        ops::execute("texAddGenerator", {{"args", {set, layer, type}}, {"values", values}, {"bindings", bindings}, {"invert", invert}});
+    };
+
+    const json ground = recipes.contains("-1") ? recipes["-1"] : json{{"base", "#30211A"}, {"roughness", 0.8}};
+    fill("Ground", {{"baseColor", ground.value("base", std::string("#30211A"))}, {"roughness", ground.value("roughness", 0.8)}}, json::object());
+    // The baked height drives the height channel (and through it the normals); its range is the tile's measured one.
+    const json heightGraph = {{"name", "BakedHeight"},
+                              {"inputs", json::array()},
+                              {"outputs", {{{"name", "height"}, {"type", "gray"}}}},
+                              {"nodes", {{{"name", "GroupInput"}, {"type", "GroupInput"}, {"position", {-400, 0}}},
+                                         {{"name", "GroupOutput"}, {"type", "GroupOutput"}, {"position", {0, 0}}},
+                                         {{"name", "Height"}, {"type", "meshHeight"}, {"position", {-200, 0}}}}},
+                              {"links", {{"Height", "out", "GroupOutput", "height"}}}};
+    ops::execute("texAddLayer", {{"args", {set, "procedural"}}, {"name", "Baked Height"}, {"graph", heightGraph}, {"channels", {{"height", {{"mode", "normal"}}}}}});
+
+    int layers = 2;
+    for (int64_t id : ids)
+    {
+        const std::string key = std::to_string(id);
+        const json& entry = h.legend[key];
+        const json r = recipes.contains(key) ? recipes[key] : json::object();
+        std::string label = "ID " + key;
+        if (entry.contains("sources") && !entry["sources"].empty())
+            label += " " + entry["sources"][0].get<std::string>();
+        const std::string folder = layerId(ops::execute("texAddLayer", {{"args", {set, "folder"}}, {"name", label}})).get<std::string>();
+        json colour = entry.value("colour", json::array({0, 0, 0}));
+        if (colour.is_array() && colour.size() == 3)
+            colour.push_back(1.0);
+        mask(folder, "genIdSelect", {{"color", colour}, {"tolerance", 0.02}}, {{"id", "id"}}, false);
+        const json in = {{"parent", folder}};
+        fill("Base", {{"baseColor", r.value("base", std::string("#708A3D"))}, {"roughness", r.value("roughness", 0.5)}}, in);
+        if (id >= 0)
+        {
+            // terrainMasks: R root (0) to tip (1), G a random value per instance.
+            mask(fill("Root", {{"baseColor", r.value("root", std::string("#516A30"))}}, in), "maskAxis", {{"axis", "x"}, {"start", 0.0}, {"end", 0.6}},
+                 {{"position", "vertexColor"}}, true);
+            mask(fill("Per Instance", {{"baseColor", r.value("perInstance", std::string("#516A30"))}}, json{{"parent", folder}, {"channels", {{"baseColor", {{"opacity", 0.5}}}}}}),
+                 "maskAxis", {{"axis", "y"}, {"start", 0.0}, {"end", 1.0}}, {{"position", "vertexColor"}}, false);
+            mask(fill("Tip", {{"baseColor", r.value("tip", std::string("#91A84C"))}}, in), "maskAxis", {{"axis", "x"}, {"start", 0.5}, {"end", 1.0}},
+                 {{"position", "vertexColor"}}, false);
+            layers += 3;
+        }
+        mask(fill("Occlusion", {{"baseColor", r.value("occlusion", std::string("#516A30"))}}, in), "genAoDarken", json::object(), {{"ao", "ao"}}, false);
+        layers += 3;
+    }
+    return {{"set", set}, {"bakeProject", project.empty() ? json() : json(project)}, {"ids", ids.size()}, {"layers", layers}, {"warnings", warnings}};
 }
 
 bool registerScene(ext::Context& ctx)

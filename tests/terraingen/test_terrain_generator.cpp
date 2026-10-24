@@ -14,6 +14,7 @@
 #include <QImage>
 
 #include <cmath>
+#include <functional>
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -928,4 +929,50 @@ TEST_CASE("terrain: regenerate, delete and undo")
     // Selecting anything inside the group finds it.
     graph().select({meshChildren(again["group"])[0]});
     CHECK(run("terrainSettings")["group"] == again["group"]);
+}
+
+TEST_CASE("terrain: texture set built natively from the palette and masks")
+{
+    fresh();
+    const std::string a = blade("Z", "bladeA"), b = blade("Z", "bladeB");
+    json v = preset("Dry Grass");
+    v.update({{"tileSize", 20.0}, {"count", 40}});
+    const json r = generateTile(v, {source(a, 1.0, 0), source(b, 1.0, 3)}, "Dry Grass");
+    REQUIRE(r["group"].is_string());
+    const json t = run("terrainTextureSet", {{"args", {r["group"]}}, {"bake", false}, {"name", "GrassTex"}});
+    CHECK(t["set"] == "GrassTex");
+    CHECK(t["ids"] == 2);
+    CHECK(t["bakeProject"].is_null());
+
+    const json stack = run("texLayerStack", {{"args", {"GrassTex"}}});
+    int folders = 0, idSelects = 0, vertexMasks = 0;
+    std::function<void(const json&)> walk = [&](const json& layers) {
+        for (const json& l : layers)
+        {
+            if (l.value("kind", std::string()) == "folder")
+                ++folders;
+            for (const json& m : l.value("masks", nlohmann::json::array()))
+            {
+                if (m.value("type", std::string()) == "genIdSelect")
+                    ++idSelects;
+                if (m.value("bindings", nlohmann::json::object()).value("position", std::string()) == "vertexColor")
+                    ++vertexMasks;
+            }
+            walk(l.value("children", nlohmann::json::array()));
+        }
+    };
+    walk(stack["layers"]);
+    CHECK(folders == 2);
+    CHECK(idSelects == 2);
+    CHECK(vertexMasks == 6);
+
+    const fs::path out = fs::temp_directory_path() / "lila_terraingen_tests" / "tex";
+    fs::remove_all(out);
+    const json e = run("texEvaluate", {{"args", {"GrassTex"}}, {"resolution", 32}, {"backend", "cpu"}, {"folder", out.string()},
+                                       {"channels", {"baseColor", "roughness", "height"}}});
+    CHECK(e["backend"] == "cpu");
+    REQUIRE(e["files"].size() == 3);
+    for (const json& f : e["files"])
+        CHECK(fs::exists(fs::path(f.get<std::string>())));
+    CHECK(QImage(QString::fromStdString(e["files"][0].get<std::string>())).width() == 32);
 }

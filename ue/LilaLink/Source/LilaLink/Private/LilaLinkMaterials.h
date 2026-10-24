@@ -4,6 +4,9 @@
 #include "Dom/JsonObject.h"
 #include "UObject/SoftObjectPath.h"
 
+class UMaterialInstanceConstant;
+class UMaterialInterface;
+
 namespace LilaLink
 {
 /** Slot name Lila gives faces with no material; it stays on the engine default material. */
@@ -48,4 +51,14 @@ void SnapshotMaterials(UObject* Asset, FMaterialRequest& Request);
 /** Assigns a material to every slot of the imported meshes. Created materials and textures are added to OutCreated. */
 void ApplyMaterials(const FMaterialRequest& Request, const TArray<FString>& ImportedAssets, TArray<FString>& OutCreated,
 	TArray<FString>& OutWarnings, TArray<FSlotResult>& OutSlots);
+
+/** The Painterly ("painterly") or Toon ("toon") master material, built on first use; null with a warning for anything else. */
+UMaterialInterface* StylisedParent(const FString& Model, TArray<FString>& OutCreated, TArray<FString>& OutWarnings);
+
+/**
+ * Sets a stylised master's parameters on an instance from Lila's material values (In: shadingModel, baseColor, palette...,
+ * strokeMap). Leaves the base colour map to the caller.
+ */
+void ApplyStylised(UMaterialInstanceConstant* Instance, const TSharedPtr<FJsonObject>& In, TArray<FString>& OutCreated,
+	TArray<FString>& OutWarnings);
 } // namespace LilaLink

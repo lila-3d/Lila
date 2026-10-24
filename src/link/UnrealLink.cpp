@@ -8,6 +8,7 @@
 #include "core/Progress.h"
 #include "core/Workspace.h"
 #include "link/Exporters.h"
+#include "link/TextureSetSend.h"
 #include "scene/Graph.h"
 #include "scene/Materials.h"
 #include "scene/MeshNodes.h"
@@ -464,32 +465,37 @@ json materialParams(scene::Graph& g, const std::vector<scene::NodeId>& roots)
 
     json out = json::array();
     for (const std::string& slot : slots)
-    {
-        json m = {{"name", slot}};
-        if (scene::Node* mat = scene::materials::find(g, slot))
-        {
-            const auto& defs = mat->type().attrs;
-            for (int i = 0; i < scene::material::kCount; ++i)
-            {
-                const scene::AttrDef& d = defs[size_t(i)];
-                if (d.type == scene::PlugType::Enum)
-                {
-                    int64_t v = mat->as<int64_t>(i);
-                    m[d.name] = v >= 0 && size_t(v) < d.enumNames.size() ? json(d.enumNames[size_t(v)]) : json(v);
-                }
-                else if (d.flags & scene::AttrFile)
-                {
-                    std::string path = mat->as<std::string>(i);
-                    if (!path.empty())
-                        m[d.name] = fs::path(scene::materials::resolvePath(path)).generic_string();
-                }
-                else
-                    m[d.name] = scene::toJson(mat->value(i));
-            }
-        }
-        out.push_back(std::move(m));
-    }
+        out.push_back(materialInputs(g, slot));
     return out;
+}
+
+json materialInputs(scene::Graph& g, const std::string& slot)
+{
+    json m = {{"name", slot}};
+    if (scene::Node* mat = scene::materials::find(g, slot))
+    {
+        const auto& defs = mat->type().attrs;
+        for (int i = 0; i < scene::material::kCount; ++i)
+        {
+            const scene::AttrDef& d = defs[size_t(i)];
+            if (d.type == scene::PlugType::Enum)
+            {
+                int64_t v = mat->as<int64_t>(i);
+                m[d.name] = v >= 0 && size_t(v) < d.enumNames.size() ? json(d.enumNames[size_t(v)]) : json(v);
+            }
+            else if (i == scene::material::kStrokeMap)
+                m[d.name] = fs::path(scene::materials::strokeSheetPath(mat->as<std::string>(i))).generic_string();
+            else if (d.flags & scene::AttrFile)
+            {
+                std::string path = mat->as<std::string>(i);
+                if (!path.empty())
+                    m[d.name] = fs::path(scene::materials::resolvePath(path)).generic_string();
+            }
+            else
+                m[d.name] = scene::toJson(mat->value(i));
+        }
+    }
+    return m;
 }
 
 CallOptions importCallOptions()
@@ -699,7 +705,7 @@ int syncMappings(bool force)
         return 0;
     json list = mappings();
     if (list.empty())
-        return 0;
+        return syncTextureSets();
 
     const bool haveFbx = static_cast<bool>(findExporter("fbx"));
     int skipped = 0;
@@ -817,7 +823,7 @@ int syncMappings(bool force)
     if (skipped > 0)
         log::warn("Unreal sync: no FBX exporter registered, {} mapping(s) skipped", skipped);
     if (jobs.empty())
-        return 0;
+        return syncTextureSets();
 
     int count = static_cast<int>(jobs.size());
     Link::get().post([jobs = std::move(jobs), dir] {
@@ -867,6 +873,7 @@ int syncMappings(bool force)
             scope.step();
         }
     });
-    return count;
+    // After the meshes, so their slots exist when the instances are set on them.
+    return count + syncTextureSets();
 }
 } // namespace lila::link

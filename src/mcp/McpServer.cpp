@@ -422,6 +422,7 @@ std::string Server::token() const { return m->token; }
 
 void registerBuiltinTools();
 void registerAgentResources();
+void registerTextureTools();
 
 void registerBuiltins()
 {
@@ -431,6 +432,7 @@ void registerBuiltins()
     done = true;
     registerBuiltinTools();
     registerAgentResources();
+    registerTextureTools();
 }
 
 std::string tokenFromPrefs()

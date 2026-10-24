@@ -398,3 +398,20 @@ TEST_CASE("tree generator: presets save to the preferences")
     CHECK(run("treeDeletePreset", {{"args", {"Bonsai"}}}) == true);
     CHECK(run("treePresets").size() == 10);
 }
+
+TEST_CASE("tree generator: native texture sets from the species palette")
+{
+    fresh();
+    const std::string leaf = run("treeLeafPlane").get<std::string>();
+    const std::string tree = run("treeBuild", {{"preset", "Kaede Young"}, {"settings", quick(5)}, {"leaf", leaf}, {"name", "maple"}}).get<std::string>();
+    const json r = run("treeTextureSet", {{"args", {tree}}, {"bake", false}, {"season", "autumn"}});
+    REQUIRE(r["sets"].size() == 2);
+    CHECK(r["species"] == "kaede");
+    const std::string leaves = r["sets"][1].get<std::string>();
+    const json stack = run("texLayerStack", {{"args", {leaves}}});
+    CHECK(stack["layers"].size() == 6);
+    CHECK(stack["layers"][0]["material"]["baseColor"] == "#C86A22");
+    const json e = run("texEvaluate", {{"args", {leaves}}, {"resolution", 16}, {"backend", "cpu"}, {"channels", {"baseColor"}},
+                                       {"folder", (std::filesystem::temp_directory_path() / "lila_treegen_tests" / "tex").string()}});
+    CHECK(e["files"].size() == 1);
+}

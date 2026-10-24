@@ -4,6 +4,7 @@
 #include "core/Workspace.h"
 #include "link/Exporters.h"
 #include "link/TextureSend.h"
+#include "link/TextureSetSend.h"
 #include "link/UnrealLink.h"
 #include "scene/Graph.h"
 
@@ -105,6 +106,7 @@ void registerCommands()
 {
     using T = ArgType;
     registerTextureCommands();
+    registerTextureSetCommands();
 
     ops::registerCommand({
         .name = "unrealConnect",
