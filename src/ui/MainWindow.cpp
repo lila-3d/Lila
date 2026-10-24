@@ -1436,7 +1436,7 @@ void MainWindow::showAbout()
 {
     QMessageBox::about(this, "About Lila",
                        "<h2>Lila</h2>"
-                       "<p><i>Lila (&#2354;&#2368;&#2354;&#2366;): Sanskrit for divine play, or creation.</i></p>"
+                       "<p><i>Lila (&#2354;&#2368;&#2354;&#2366;, LEE-laah): Sanskrit for divine play, or creation.</i></p>"
                        "<p>Version 0.1.0</p>"
                        "<p>Copyright &copy; 2026 Jared Taylor. All rights reserved.</p>");
 }
