@@ -23,6 +23,8 @@ public:
         kSmoothPreview,
         kRetopoDrawReference,
         kRetopoDrawDots,
+        kSymmetryPlane,
+        kSymmetryOffset,
         kCount
     };
 
@@ -50,6 +52,12 @@ struct SymmetryState
     int axis = -1; // 0-2 when every mesh that has it on agrees, else -1
 };
 LILA_SCENE_API SymmetryState symmetryState(const Graph& g, const std::vector<NodeId>& nodes);
+
+/**
+ * Where a mesh's symmetry plane for axis (0-2) lies along that axis, in object space: through the object's pivot, or
+ * at symmetryOffset when symmetryPlane is custom (set from an edge selection).
+ */
+LILA_SCENE_API double symmetryOffset(const Node& mesh, int axis);
 
 LILA_SCENE_API void registerMeshTypes();
 LILA_SCENE_API void registerMeshCommands();

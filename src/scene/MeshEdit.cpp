@@ -5,6 +5,7 @@
 #include "core/Profile.h"
 #include "geo/Knife.h"
 #include "geo/Mesh.h"
+#include "geo/Normals.h"
 #include "geo/Ops.h"
 #include "geo/Reduce.h"
 #include "geo/Symmetry.h"
@@ -12,6 +13,8 @@
 #include "scene/AutoBevel.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
+#include "scene/Isolation.h"
+#include "scene/LastOp.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "scene/ObjectSets.h"
@@ -20,6 +23,7 @@
 #include <glm/gtc/matrix_inverse.hpp>
 #include <cstring>
 #include <format>
+#include <optional>
 #include <limits>
 #include <queue>
 #include <tbb/parallel_for.h>
@@ -80,7 +84,7 @@ std::optional<geo::SymmetryMap> symmetryFor(const Node& n, geo::Mesh& mesh)
         return std::nullopt;
     const bool hadLayer = mesh.pointAttrs().has(geo::symmetryLayerName(axis));
     geo::SymmetrySync sync;
-    geo::SymmetryMap map = geo::SymmetryMap::persistent(mesh, axis, symmetryTolerance(mesh), &sync);
+    geo::SymmetryMap map = geo::SymmetryMap::persistent(mesh, axis, symmetryTolerance(mesh), &sync, symmetryOffset(n, axis));
     reportSync(n, axis, sync, hadLayer);
     return map;
 }
@@ -95,7 +99,7 @@ void maintainSymmetry(const Node& n, geo::Mesh& mesh, const std::vector<glm::dve
 
     const int axis = symmetryAxis(n);
     const Index firstNew = Index(before.size());
-    geo::SymmetryMap map = geo::SymmetryMap::persistent(mesh, axis, symmetryTolerance(mesh));
+    geo::SymmetryMap map = geo::SymmetryMap::persistent(mesh, axis, symmetryTolerance(mesh), nullptr, symmetryOffset(n, axis));
     Ids touched;
     for (Index p = 0; p < mesh.pointCapacity(); ++p)
         if (mesh.pointValid(p) && (p >= firstNew || std::memcmp(&before[p], &mesh.position(p), sizeof(glm::dvec3)) != 0))
@@ -116,6 +120,8 @@ struct EditResult
 {
     ComponentMode kind = ComponentMode::Object;
     Ids ids;
+    /** Selects the result without leaving the mode the edit started in. */
+    bool stayInMode = false;
 };
 
 using EditFn = std::function<EditResult(geo::Mesh&, const Ids& selection, const geo::SymmetryMap* symmetry)>;
@@ -154,8 +160,11 @@ json editSelected(const char* label, ComponentMode kind, const EditFn& fn, bool 
         throw CommandError(std::string(label) + ": select some components first");
 
     UndoChunk chunk(label);
-    std::map<NodeId, Ids> newSel[3];
-    ComponentMode resultKind = kind;
+    std::map<NodeId, Ids> newSel[3] = {components::selected(ComponentMode::Vertex), components::selected(ComponentMode::Edge),
+                                       components::selected(ComponentMode::Face)};
+    // An op that selects nothing leaves the mode alone.
+    ComponentMode resultKind = ComponentMode::Object;
+    bool stayInMode = false;
     for (auto& [node, sel] : targets)
     {
         Node& n = *g.node(node);
@@ -176,14 +185,22 @@ json editSelected(const char* label, ComponentMode kind, const EditFn& fn, bool 
             maintainSymmetry(n, mesh, before, drive);
         geo::MeshRemap remap;
         mesh.compact(&remap);
-        const std::vector<Index>& map = r.kind == ComponentMode::Vertex ? remap.points
-                                        : r.kind == ComponentMode::Edge ? remap.edges
-                                                                                     : remap.faces;
+        const std::vector<Index>* maps[3] = {&remap.points, &remap.edges, &remap.faces};
+        // The other kinds' selections follow the new ids, so they come back when their mode does.
+        for (int k = 0; k < 3; ++k)
+            if (auto it = newSel[k].find(node); it != newSel[k].end())
+                if (Ids kept = remapIds(it->second, *maps[k]); kept.empty())
+                    newSel[k].erase(it);
+                else
+                    it->second = std::move(kept);
         if (r.kind != ComponentMode::Object)
         {
             resultKind = r.kind;
-            Ids mapped = remapIds(r.ids, map);
-            if (!mapped.empty())
+            stayInMode = stayInMode || r.stayInMode;
+            Ids mapped = remapIds(r.ids, *maps[int(r.kind) - 1]);
+            if (mapped.empty())
+                newSel[int(r.kind) - 1].erase(node);
+            else
                 newSel[int(r.kind) - 1][node] = std::move(mapped);
         }
         auto edited = std::make_shared<geo::Mesh>(std::move(mesh));
@@ -192,9 +209,40 @@ json editSelected(const char* label, ComponentMode kind, const EditFn& fn, bool 
         objectSets::meshRemapped(g, node, remap);
     }
     components::setAll(newSel[0], newSel[1], newSel[2]);
-    if (resultKind != ComponentMode::Object)
-        components::setMode(resultKind);
+    if (resultKind != ComponentMode::Object && !(stayInMode && from != ComponentMode::Object))
+        components::setModeUndoable(resultKind);
     return nullptr;
+}
+
+/**
+ * Maya's default for a component edit run in object mode: every component of kind on the selected meshes gets selected
+ * and kind becomes the mode, so Extrude on an object extrudes all its faces.
+ */
+void selectWholeInObjectMode(ComponentMode kind)
+{
+    if (components::mode() != ComponentMode::Object)
+        return;
+    Graph& g = graph();
+    g.evaluate();
+    std::map<NodeId, Ids> all;
+    for (NodeId id : g.selection())
+        if (Node* n = g.node(id); n && n->type().isA("mesh"))
+            if (MeshPtr cage = modifiers::cage(g, id))
+            {
+                const geo::Mesh& m = *cage;
+                Ids ids;
+                const Index count = kind == ComponentMode::Vertex ? m.pointCapacity() : kind == ComponentMode::Edge ? m.edgeCapacity() : m.faceCapacity();
+                for (Index i = 0; i < count; ++i)
+                    if (kind == ComponentMode::Vertex ? m.pointValid(i) : kind == ComponentMode::Edge ? m.edgeValid(i) : m.faceValid(i))
+                        ids.push_back(i);
+                if (!ids.empty())
+                    all[id] = std::move(ids);
+            }
+    if (all.empty())
+        return;
+    components::setAll(kind == ComponentMode::Vertex ? all : std::map<NodeId, Ids>{}, kind == ComponentMode::Edge ? all : std::map<NodeId, Ids>{},
+                       kind == ComponentMode::Face ? all : std::map<NodeId, Ids>{});
+    components::setModeUndoable(kind);
 }
 
 EditResult faces(Ids ids) { return {ComponentMode::Face, std::move(ids)}; }
@@ -480,11 +528,19 @@ void registerMeshEditCommands()
 
     ops::registerCommand({
         .name = "polyExtrude",
-        .doc = "Extrude the selected faces along their normals. Connected faces extrude as regions unless individual=True.",
+        .doc = "Extrude the selected faces along their normals, or in edge mode grow a strip of faces off the selected edges. "
+               "Connected faces extrude as regions unless individual=True.",
         .flags = {{"thickness", "", T::Float, 0.0, "Distance along the normals, cm."},
-                  {"offset", "", T::Float, 0.0, "Inward distance of the extruded faces' border, cm; negative grows them."},
+                  {"offset", "", T::Float, 0.0,
+                   "Faces: inward distance of the extruded border, cm; negative grows them. Edges: outward distance from their faces, cm."},
                   {"individual", "", T::Bool, false, "Each face separately."}},
         .run = [](const Args& a) -> json {
+            selectWholeInObjectMode(K::Face);
+            if (components::mode() == K::Edge)
+                return editSelected("Extrude", K::Edge, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
+                    geo::EdgeExtrudeOptions o{a.get<double>("thickness"), a.get<double>("offset"), s};
+                    return edges(geo::extrudeEdges(m, sel, o).edges);
+                });
             return editSelected("Extrude", K::Face, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
                 geo::ExtrudeOptions o{a.get<double>("thickness"), a.get<bool>("individual"), s, a.get<double>("offset")};
                 return faces(geo::extrudeFaces(m, sel, o).faces);
@@ -499,6 +555,7 @@ void registerMeshEditCommands()
                   {"depth", "", T::Float, 0.0, "Push along the normals afterwards, cm."},
                   {"individual", "", T::Bool, false, "Each face separately."}},
         .run = [](const Args& a) -> json {
+            selectWholeInObjectMode(K::Face);
             return editSelected("Inset", K::Face, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
                 geo::InsetOptions o{a.get<double>("thickness"), a.get<double>("depth"), a.get<bool>("individual"), s};
                 return faces(geo::insetFaces(m, sel, o).faces);
@@ -515,7 +572,9 @@ void registerMeshEditCommands()
                   {"clamp", "", T::Bool, true, "Keep widths from overlapping."},
                   {"smoothingAngle", "", T::Float, 30.0, "New edges sharper than this are hard."}},
         .run = [](const Args& a) -> json {
-            return editSelected("Bevel", K::Edge, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
+            selectWholeInObjectMode(K::Edge);
+            double used = a.get<double>("offset");
+            json out = editSelected("Bevel", K::Edge, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
                 geo::BevelOptions o;
                 o.offset = a.get<double>("offset");
                 o.segments = std::max(1, a.get<int>("segments"));
@@ -523,8 +582,16 @@ void registerMeshEditCommands()
                 o.clamp = a.get<bool>("clamp");
                 o.smoothingAngle = a.get<double>("smoothingAngle");
                 o.symmetry = s;
-                return faces(geo::bevelEdges(m, sel, o));
+                double applied = o.offset;
+                o.appliedOffset = &applied;
+                EditResult r = faces(geo::bevelEdges(m, sel, o));
+                used = std::min(used, applied);
+                r.stayInMode = true;
+                return r;
             });
+            if (a.get<bool>("clamp") && used < a.get<double>("offset") - 1e-9)
+                lastOp::limitFlag("offset", std::floor(used * 1000.0) / 1000.0);
+            return out;
         },
     });
 
@@ -550,13 +617,20 @@ void registerMeshEditCommands()
         .doc = "Insert edge loops across the ring of the first selected edge.",
         .flags = {{"fraction", "", T::Float, 0.5, "Where along the ring, 0 to 1."}, {"count", "", T::Int, 1, "Evenly spaced loops."}},
         .run = [](const Args& a) -> json {
-            return editSelected("Insert Edge Loop", K::Edge, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap*) {
+            return editSelected("Insert Edge Loop", K::Edge, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
                 Ids out;
-                if (!sel.empty())
-                {
-                    geo::EdgeLoopOptions o{a.get<double>("fraction"), std::max(1, a.get<int>("count"))};
-                    out = geo::insertEdgeLoop(m, sel.front(), o);
-                }
+                if (sel.empty())
+                    return edges(out);
+                geo::EdgeLoopOptions o{a.get<double>("fraction"), std::max(1, a.get<int>("count"))};
+                if (s && o.count == 1)
+                    return edges(geo::knifeApply(m, geo::knifeLoopPlan(m, sel.front(), o.fraction, s)));
+                // Evenly spaced loops on a ring that crosses the plane are symmetric already; any other ring gets its mirror's loops too.
+                Index mirror = s ? s->mirrorEdge(m, sel.front()) : geo::kInvalid;
+                if (mirror != geo::kInvalid && std::ranges::count(geo::edgeRing(m, sel.front()), mirror))
+                    mirror = geo::kInvalid;
+                out = geo::insertEdgeLoop(m, sel.front(), o);
+                if (mirror != geo::kInvalid && m.edgeValid(mirror))
+                    std::ranges::copy(geo::insertEdgeLoop(m, mirror, o), std::back_inserter(out));
                 return edges(out);
             });
         },
@@ -564,11 +638,16 @@ void registerMeshEditCommands()
 
     ops::registerCommand({
         .name = "polyMerge",
-        .doc = "Weld selected vertices closer than a distance (all of a mesh's points if it has no component selection).",
+        .doc = "Weld selected vertices closer than a distance (all of a mesh's points if it has no component selection). "
+               "Exactly two selected vertices weld whatever the distance.",
         .flags = {{"distance", "", T::Float, 0.01, "Weld distance, cm."}, {"average", "", T::Bool, false, "Move merged points to their average."}},
         .run = [](const Args& a) -> json {
+            const bool pair = components::mode() == K::Vertex;
             return editSelected("Merge", K::Vertex, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
                 geo::MergeOptions o{a.get<double>("distance"), a.get<bool>("average"), s};
+                // Just past the pair's own gap, so a mirrored pair welds too without reaching further.
+                if (pair && sel.size() == 2 && m.pointValid(sel[0]) && m.pointValid(sel[1]))
+                    o.distance = std::max(o.distance, glm::distance(m.position(sel[0]), m.position(sel[1])) * 1.001 + 1e-6);
                 return points(geo::mergeByDistance(m, sel, o));
             }, true);
         },
@@ -765,6 +844,7 @@ void registerMeshEditCommands()
                 PlugRef base = basePlug(n);
                 geo::Mesh mesh = baseMesh(base);
                 o.symmetryAxis = axis;
+                o.symmetryOffset = symmetryOffset(n, axis);
                 o.symmetryTolerance = symmetryTolerance(mesh);
                 geo::ReduceResult r = geo::reduceMesh(mesh, o);
                 if (r.symmetryIgnored)
@@ -772,7 +852,7 @@ void registerMeshEditCommands()
                 if (axis >= 0 && axis == symmetryAxis(n))
                 {
                     r.mesh.pointAttrs().remove(geo::symmetryLayerName(axis));
-                    geo::SymmetryMap::persistent(r.mesh, axis, symmetryTolerance(r.mesh));
+                    geo::SymmetryMap::persistent(r.mesh, axis, symmetryTolerance(r.mesh), nullptr, symmetryOffset(n, axis));
                 }
                 out[n.path()] = r.mesh.numFaces();
                 g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(r.mesh))));
@@ -820,13 +900,15 @@ void registerMeshEditCommands()
         .name = "polyMirror",
         .doc = "Mirror whole meshes across the plane through the object's or the world's origin facing an axis, welding along "
                "the seam. direction positive keeps the + side and rebuilds the - side from it, cutting faces that cross the "
-               "plane; negative does the reverse; both adds a mirrored copy of the whole mesh.",
+               "plane; negative does the reverse; both adds a mirrored copy of the whole mesh. flip=True reflects the mesh "
+               "across the plane instead, keeping nothing of the original.",
         .positionalDoc = "objects",
         .flags = {{"axis", "", T::String, "x", "x, y or z.", {"x", "y", "z"}},
                   {"direction", "", T::String, "positive", "positive (+ to -), negative (- to +) or both.", {"positive", "negative", "both"}},
                   {"space", "", T::String, "object", "object or world: whose origin and axes the plane uses.", {"object", "world"}},
                   {"weld", "", T::Bool, true, "Weld points on the plane."},
-                  {"tolerance", "", T::Float, 0.001, "Points this close to the plane are cut onto it and welded, cm."}},
+                  {"tolerance", "", T::Float, 0.001, "Points this close to the plane are cut onto it and welded, cm."},
+                  {"flip", "", T::Bool, false, "Reflect the mesh across the plane rather than adding a mirrored copy: the original is not kept."}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             std::string axis = a.get<std::string>("axis", "x");
@@ -846,6 +928,24 @@ void registerMeshEditCommands()
                 Node& n = meshArg(name, "polyMirror");
                 PlugRef base = basePlug(n);
                 geo::Mesh m = baseMesh(base);
+                if (a.get<bool>("flip"))
+                {
+                    glm::dmat4 reflect(1.0);
+                    reflect[axis[0] - 'x'][axis[0] - 'x'] = -1.0;
+                    if (space == "world")
+                    {
+                        const glm::dmat4 w = n.as<glm::dmat4>(Transform::kWorldMatrix);
+                        reflect = glm::inverse(w) * reflect * w;
+                    }
+                    for (geo::Index p = 0; p < m.pointCapacity(); ++p)
+                        if (m.pointValid(p))
+                            m.setPosition(p, glm::dvec3(reflect * glm::dvec4(m.position(p), 1.0)));
+                    for (geo::Index f = 0; f < m.faceCapacity(); ++f)
+                        if (m.faceValid(f))
+                            m.flipFace(f);
+                    g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
+                    continue;
+                }
                 geo::MirrorOptions o;
                 o.plane.normal = glm::dvec3(0.0);
                 o.plane.normal[axis[0] - 'x'] = 1.0;
@@ -893,6 +993,7 @@ void registerMeshEditCommands()
                     out.push_back(part->path());
                     made.push_back(part->id());
                 }
+                isolation::inherit(std::vector<NodeId>(made.end() - std::ptrdiff_t(parts.size()), made.end()), {n.id()});
                 g.deleteNode(n.id());
             }
             g.select(made);
@@ -937,9 +1038,14 @@ void registerMeshEditCommands()
             geo::Mesh combined = geo::combine(ptrs);
             Node* out = g.createNode(*types::find("mesh"), a.get<std::string>("name", names.back()), kNoNode, true);
             g.setValue({out->id(), MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(std::move(combined))));
+            std::vector<NodeId> sources;
             for (const std::string& name : names)
                 if (Node* n = g.find(name))
+                {
+                    sources.push_back(n->id());
                     g.deleteNode(n->id());
+                }
+            isolation::inherit({out->id()}, sources);
             g.select({out->id()});
             return out->path();
         },
@@ -963,7 +1069,7 @@ void registerMeshEditCommands()
             if (targets.empty())
                 throw CommandError("polyExtract: select some faces first");
             json out = json::array();
-            std::vector<NodeId> made;
+            std::vector<NodeId> made, sources;
             components::clear();
             for (auto& [node, sel] : targets)
             {
@@ -982,10 +1088,64 @@ void registerMeshEditCommands()
                 g.setValue({piece->id(), MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(std::move(part))));
                 out.push_back(piece->path());
                 made.push_back(piece->id());
+                sources.push_back(node);
             }
+            isolation::inherit(made, sources);
             components::setMode(K::Object);
             g.select(made);
             return out;
+        },
+    });
+
+    ops::registerCommand({
+        .name = "polySoftEdge",
+        .doc = "Make the selected edges soft or hard by the angle their faces meet at: sharper than angle turns hard, the "
+               "rest soft. 180 softens every edge, 0 hardens every edge. In object mode, whole selected meshes.",
+        .flags = {{"angle", "", T::Float, 180.0, "Edges whose faces meet sharper than this turn hard, degrees."}},
+        .run = [](const Args& a) -> json {
+            const double angle = a.get<double>("angle");
+            return editSelected("Soften/Harden Edges", K::Edge, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
+                const Ids edges = withMirror(m, s, sel, K::Edge);
+                if (angle >= 180.0)
+                    geo::setSoftEdges(m, edges);
+                else if (angle <= 0.0)
+                {
+                    std::span<bool> hard = m.edgeAttrs().getOrAdd<bool>(geo::attr::kHard);
+                    auto harden = [&](Index e) {
+                        if (m.edgeValid(e))
+                            hard[e] = true;
+                    };
+                    if (edges.empty())
+                        for (Index e = 0; e < m.edgeCapacity(); ++e)
+                            harden(e);
+                    for (Index e : edges)
+                        harden(e);
+                }
+                else
+                    geo::setHardEdgesByAngle(m, angle, edges);
+                // Stored split normals would hide the change.
+                if (m.cornerAttrs().has(geo::attr::kNormal))
+                    geo::updateCornerNormals(m);
+                return EditResult{};
+            }, true);
+        },
+    });
+
+    ops::registerCommand({
+        .name = "polyDuplicateFaces",
+        .doc = "Copy the selected faces into a separate shell of the same mesh and select the copies.",
+        .run = [](const Args&) -> json {
+            return editSelected("Duplicate Faces", K::Face, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
+                geo::Mesh part = geo::extractFaces(m, withMirror(m, s, sel, K::Face));
+                part.compact();
+                const Index first = m.faceCapacity();
+                m.append(part);
+                Ids made;
+                for (Index f = first; f < m.faceCapacity(); ++f)
+                    if (m.faceValid(f))
+                        made.push_back(f);
+                return faces(std::move(made));
+            });
         },
     });
 
@@ -1080,30 +1240,137 @@ void registerMeshEditCommands()
     ops::registerCommand({
         .name = "scaleComponents",
         .doc = "Scale the selected components about a world pivot (default: their centre; with symmetry, a pair clear of the mirror plane scales about each side's own centre).",
-        .flags = {{"by", "", T::Vec3, nullptr, "Factor per world axis."}, {"pivot", "", T::Vec3, nullptr, "World pivot."}},
+        .flags = {{"by", "", T::Vec3, nullptr, "Factor per axis: the world axes, or the axes orient= turns them to."},
+                  {"pivot", "", T::Vec3, nullptr, "World pivot."},
+                  {"orient", "", T::Vec3, nullptr, "Rotation of the scale axes from the world axes, degrees, XYZ order."}},
         .run = [vec, symmetricPivot](const Args& a) -> json {
             if (!a.has("by"))
                 throw CommandError("scaleComponents: give by=");
             glm::dvec3 pivot = a.has("pivot") ? vec(a.flags["pivot"]) : symmetricPivot();
-            transformSelectedComponents("Scale Components", glm::translate(glm::dmat4(1.0), pivot) * glm::scale(glm::dmat4(1.0), vec(a.flags["by"])) *
-                                                                glm::translate(glm::dmat4(1.0), -pivot));
+            const glm::dmat4 r = a.has("orient") ? eulerToMatrix(vec(a.flags["orient"]), RotateOrder::XYZ) : glm::dmat4(1.0);
+            transformSelectedComponents("Scale Components", glm::translate(glm::dmat4(1.0), pivot) * r * glm::scale(glm::dmat4(1.0), vec(a.flags["by"])) *
+                                                                glm::transpose(r) * glm::translate(glm::dmat4(1.0), -pivot));
             return nullptr;
         },
     });
+
+    // Warns when a mesh just given symmetry is not symmetric about its plane, so edits will not mirror cleanly.
+    auto warnIfAsymmetric = [](NodeId id) {
+        Graph& g = graph();
+        g.evaluate();
+        Node* n = g.node(id);
+        MeshPtr cage = n ? modifiers::cage(g, id) : nullptr;
+        const int axis = n ? symmetryAxis(*n) : -1;
+        if (!cage || axis < 0)
+            return;
+        geo::Mesh m = *cage;
+        const double tolerance = symmetryTolerance(m);
+        geo::SymmetryMap map = geo::SymmetryMap::persistent(m, axis, tolerance, nullptr, symmetryOffset(*n, axis));
+        geo::SymmetryCheck c = map.check(m);
+        if (c.unmatched > 0 || c.maxAsymmetry > tolerance)
+            log::warn("{} is not symmetric in {}: {} points without a partner, max asymmetry {:g} cm", n->path(), char('X' + axis), c.unmatched,
+                         c.maxAsymmetry);
+    };
 
     ops::registerCommand({
         .name = "setSymmetry",
         .doc = "Object-space mirror plane for component edits on meshes: 'off', 'x', 'y' or 'z'.",
         .positionalDoc = "objects",
         .flags = {{"axis", "", T::String, "x", "off, x, y or z."}},
-        .run = [](const Args& a) -> json {
+        .run = [warnIfAsymmetric](const Args& a) -> json {
             std::string axis = a.get<std::string>("axis", "x");
             int64_t v = axis == "off" ? 0 : axis == "x" ? 1 : axis == "y" ? 2 : axis == "z" ? 3 : -1;
             if (v < 0)
                 throw CommandError("setSymmetry: axis must be off, x, y or z");
             for (const std::string& name : a.objects())
-                graph().setValue({meshArg(name, "setSymmetry").id(), MeshNode::kSymmetry, -1}, v);
+            {
+                Node& n = meshArg(name, "setSymmetry");
+                // A custom plane belongs to the axis it was set on.
+                if (v > 0 && v != n.as<int64_t>(MeshNode::kSymmetry) && n.as<int64_t>(MeshNode::kSymmetryPlane) == 1)
+                    graph().setValue({n.id(), MeshNode::kSymmetryPlane, -1}, int64_t(0));
+                const bool changed = v != n.as<int64_t>(MeshNode::kSymmetry);
+                graph().setValue({n.id(), MeshNode::kSymmetry, -1}, v);
+                if (v > 0 && changed)
+                    warnIfAsymmetric(n.id());
+            }
             return nullptr;
+        },
+    });
+
+    ops::registerCommand({
+        .name = "setSymmetryPlane",
+        .doc = "Set where meshes' symmetry plane lies: through the selected edges or vertices (which must lie flat across an "
+               "axis; that axis becomes the symmetry axis), or back through the pivot with pivot=True. Returns the plane "
+               "per mesh as [axis, offset].",
+        .positionalDoc = "objects",
+        .flags = {{"pivot", "", T::Bool, false, "Put the plane back through the pivot."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = graph();
+            g.evaluate();
+            json out = json::object();
+            UndoChunk chunk("Set Symmetry Plane");
+            auto forget = [&](Node& n) {
+                // Pairs stored about the old plane pair the wrong points about the new one.
+                PlugRef base = basePlug(n);
+                geo::Mesh m = baseMesh(base);
+                for (int k = 0; k < 3; ++k)
+                    m.pointAttrs().remove(geo::symmetryLayerName(k));
+                g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
+            };
+            if (a.get<bool>("pivot"))
+            {
+                std::vector<std::string> names = a.objects();
+                if (names.empty())
+                    for (NodeId id : g.selection())
+                        names.push_back(g.path(id));
+                for (const std::string& name : names)
+                {
+                    Node* n = g.find(name);
+                    if (!n || !n->type().isA("mesh") || n->as<int64_t>(MeshNode::kSymmetryPlane) == 0)
+                        continue;
+                    g.setValue({n->id(), MeshNode::kSymmetryPlane, -1}, int64_t(0));
+                    forget(*n);
+                    const int axis = std::max(0, symmetryAxis(*n));
+                    out[n->path()] = {std::string(1, char('x' + axis)), symmetryOffset(*n, axis)};
+                }
+                return out;
+            }
+            const ComponentMode from = components::mode();
+            if (from == ComponentMode::Object)
+                throw CommandError("setSymmetryPlane: select edges or vertices lying on the plane");
+            for (auto& [id, ids] : components::selected(from))
+            {
+                Node* n = g.node(id);
+                MeshPtr cage = n && n->type().isA("mesh") ? modifiers::cage(g, id) : nullptr;
+                if (!cage)
+                    continue;
+                const geo::Mesh& m = *cage;
+                glm::dvec3 lo(1e300), hi(-1e300), sum(0.0);
+                int count = 0;
+                for (Index p : components::convert(m, from, ids, ComponentMode::Vertex))
+                    if (m.pointValid(p))
+                    {
+                        lo = glm::min(lo, m.position(p)), hi = glm::max(hi, m.position(p)), sum += m.position(p), ++count;
+                    }
+                if (count == 0)
+                    continue;
+                // The mesh's own axis when the selection is flat across it, else whichever axis it is flattest across.
+                const glm::dvec3 spread = hi - lo;
+                int axis = symmetryAxis(*n);
+                if (axis < 0 || spread[axis] > symmetryTolerance(m))
+                    axis = spread.x <= spread.y && spread.x <= spread.z ? 0 : spread.y <= spread.z ? 1 : 2;
+                if (spread[axis] > std::max(symmetryTolerance(m), glm::length(m.bounds().size()) * 1e-3))
+                    throw CommandError(std::format("setSymmetryPlane: the selection on {} does not lie flat across an axis", n->path()));
+                const double offset = sum[axis] / count;
+                g.setValue({id, MeshNode::kSymmetry, -1}, int64_t(axis + 1));
+                g.setValue({id, MeshNode::kSymmetryPlane, -1}, int64_t(1));
+                g.setValue({id, MeshNode::kSymmetryOffset, -1}, offset);
+                forget(*n);
+                out[n->path()] = {std::string(1, char('x' + axis)), offset};
+            }
+            if (out.empty())
+                throw CommandError("setSymmetryPlane: select edges or vertices lying on the plane");
+            return out;
         },
     });
 
@@ -1112,7 +1379,7 @@ void registerMeshEditCommands()
         .doc = "Symmetry off on the meshes if every one already has it on (on axis=, when given), else on for all of them. Non-meshes are skipped. Returns the axis set, or 'off'.",
         .positionalDoc = "objects",
         .flags = {{"axis", "", T::String, nullptr, "x, y or z to turn on with; default: the axis already in use, else the last one picked."}},
-        .run = [](const Args& a) -> json {
+        .run = [warnIfAsymmetric](const Args& a) -> json {
             std::vector<NodeId> ids;
             for (const std::string& name : a.objects())
                 if (Node* n = graph().find(name); n && n->type().isA("mesh"))
@@ -1128,7 +1395,12 @@ void registerMeshEditCommands()
             const bool off = st.on == st.meshes && (!a.has("axis") || st.axis == axis[0] - 'x');
             const int64_t v = off ? 0 : axis[0] - 'x' + 1;
             for (NodeId id : ids)
+            {
+                const bool changed = graph().node(id)->as<int64_t>(MeshNode::kSymmetry) != v;
                 graph().setValue({id, MeshNode::kSymmetry, -1}, v);
+                if (!off && changed)
+                    warnIfAsymmetric(id);
+            }
             if (!off)
                 PrefStore::get().set("general", "/symmetry/axis", axis);
             return off ? "off" : axis;
@@ -1170,7 +1442,7 @@ void registerMeshEditCommands()
                 const int axis = symmetryAxis(n);
                 const bool stored = m.pointAttrs().has(geo::symmetryLayerName(axis));
                 geo::SymmetrySync sync;
-                geo::SymmetryMap map = geo::SymmetryMap::persistent(m, axis, symmetryTolerance(m), &sync);
+                geo::SymmetryMap map = geo::SymmetryMap::persistent(m, axis, symmetryTolerance(m), &sync, symmetryOffset(n, axis));
                 geo::SymmetryCheck c = map.check(m);
                 out[n.path()] = {{"axis", std::string(1, char('x' + axis))},
                                  {"maxAsymmetry", c.maxAsymmetry},
@@ -1210,32 +1482,44 @@ void registerMeshEditCommands()
         },
     });
 
-    // +1 or -1 for the side most of the selected components of n lie on, 0 with nothing selected.
-    auto selectionSide = [](const Node& n, const geo::Mesh& m, int axis) {
+    /**
+     * The side to keep: the one most of the selected components lie on, else the side holding nearly all of the mesh (a
+     * half model), else positive.
+     */
+    auto keepSide = [](const Node& n, const geo::Mesh& m, int axis, double plane, double tol) {
         const ComponentMode from = components::mode();
-        if (from == ComponentMode::Object)
-            return 0;
         double sum = 0.0;
-        for (Index p : components::convert(m, from, components::selected(n.id(), from), ComponentMode::Vertex))
+        if (from != ComponentMode::Object)
+            for (Index p : components::convert(m, from, components::selected(n.id(), from), ComponentMode::Vertex))
+                if (m.pointValid(p))
+                    sum += m.position(p)[axis] - plane;
+        if (std::abs(sum) > tol)
+            return sum > 0.0 ? 1 : -1;
+        Index below = 0, above = 0;
+        for (Index p = 0; p < m.pointCapacity(); ++p)
             if (m.pointValid(p))
-                sum += m.position(p)[axis];
-        return sum > 0.0 ? 1 : sum < 0.0 ? -1 : 0;
+            {
+                const double d = m.position(p)[axis] - plane;
+                below += d < -tol, above += d > tol;
+            }
+        return below > 4 * above ? -1 : 1;
     };
 
     ops::registerCommand({
         .name = "symmetryRebuild",
-        .doc = "Rebuild meshes symmetric: the kept side is mirrored across the object-space plane, replacing the other side, "
+        .doc = "Rebuild meshes symmetric: the kept side is mirrored across the plane through the object's pivot, replacing the other side, "
                "welded on the plane, and the symmetry pairs are stored again. With pairsOnly, the geometry is left alone and only "
                "the stored pairs are matched again, by position or, for meshes that are no longer symmetric, by topology outward "
                "from the selected edge (which must lie on the plane). Returns the points left unmatched per mesh.",
         .positionalDoc = "objects",
         .flags = {{"axis", "", T::String, nullptr, "x, y or z; default: the mesh's symmetry axis, else x."},
-                  {"side", "", T::String, "auto", "The side that is kept; auto: the side of the selected components, else positive.",
+                  {"side", "", T::String, "auto", "The side that is kept; auto: the side of the selected components, else the side holding nearly all of the "
+                   "mesh, else positive.",
                    {"auto", "positive", "negative"}},
                   {"pairsOnly", "", T::Bool, false, "Only match the stored pairs again, leaving the geometry as it is."},
                   {"topological", "", T::Bool, false, "With pairsOnly: match by topology from the selected edge."},
                   {"tolerance", "", T::Float, 0.0, "Weld or match distance, cm (0: scaled to the mesh)."}},
-        .run = [symmetricMesh, symmetryTargets, selectionSide](const Args& a) -> json {
+        .run = [symmetricMesh, symmetryTargets, keepSide](const Args& a) -> json {
             Graph& g = graph();
             g.evaluate();
             const std::string side = a.get<std::string>("side", "auto");
@@ -1258,8 +1542,9 @@ void registerMeshEditCommands()
                 geo::SymmetryMap map;
                 if (!pairsOnly)
                 {
-                    const int keep = side == "positive" ? 1 : side == "negative" ? -1 : selectionSide(n, m, axis) < 0 ? -1 : 1;
-                    map = geo::symmetrizeTopology(m, axis, keep, tol);
+                    const double plane = symmetryOffset(n, axis);
+                    const int keep = side == "positive" ? 1 : side == "negative" ? -1 : keepSide(n, m, axis, plane, tol);
+                    map = geo::symmetrizeTopology(m, axis, keep, tol, plane);
                     if (m.numFaces() == 0)
                         throw CommandError(std::format("symmetryRebuild: {} has nothing on the {} side of the {} plane", n.path(),
                                                        keep > 0 ? "+" : "-", char('X' + axis)));
@@ -1271,14 +1556,14 @@ void registerMeshEditCommands()
                     Ids sel = from == ComponentMode::Object ? Ids{} : components::convert(m, from, components::selected(n.id(), from), ComponentMode::Edge);
                     if (sel.empty())
                         throw CommandError("symmetryRebuild: select an edge on the symmetry plane of " + n.path());
-                    map = geo::SymmetryMap::buildTopological(m, sel.front(), geo::axisPlane(axis));
+                    map = geo::SymmetryMap::buildTopological(m, sel.front(), geo::axisPlane(axis, symmetryOffset(n, axis)));
                     if (map.empty())
                         throw CommandError("symmetryRebuild: the topology of " + n.path() + " is not symmetric about that edge");
                     map.store(m, axis);
                 }
                 else
                 {
-                    map = geo::SymmetryMap::build(m, geo::axisPlane(axis), tol);
+                    map = geo::SymmetryMap::build(m, geo::axisPlane(axis, symmetryOffset(n, axis)), tol);
                     map.store(m, axis);
                 }
                 out[n.path()] = map.unmatchedCount();

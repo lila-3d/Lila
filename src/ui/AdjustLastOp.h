@@ -4,6 +4,10 @@
 
 #include <nlohmann/json.hpp>
 
+#include <functional>
+#include <map>
+#include <string>
+
 #include <QWidget>
 
 class QLabel;
@@ -45,6 +49,8 @@ private:
     std::string mCommand;
     uint64_t mBuiltFor = 0;
     nlohmann::json mPending = nlohmann::json::object();
+    /** Shows a flag's value in its field without applying it, by flag name. */
+    std::map<std::string, std::function<void(const nlohmann::json&)>> mShow;
     bool mUpdating = false;
     bool mSelfRerun = false;
     int mLastOpListener = 0;

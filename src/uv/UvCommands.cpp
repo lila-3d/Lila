@@ -420,7 +420,7 @@ std::optional<geo::SymmetryMap> uvSymmetryMap(const Node& n, const geo::Mesh& me
     if (axis < 0)
         return std::nullopt;
     geo::Mesh copy = mesh;
-    return geo::SymmetryMap::persistent(copy, axis, symmetryTolerance(copy));
+    return geo::SymmetryMap::persistent(copy, axis, symmetryTolerance(copy), nullptr, symmetryOffset(n, axis));
 }
 
 json withUvSymmetry(geo::Mesh& m, const Node& n, std::string_view uvSet, UvSymmetry mode, std::span<const Index> moved, const std::function<json()>& edit)
@@ -428,7 +428,7 @@ json withUvSymmetry(geo::Mesh& m, const Node& n, std::string_view uvSet, UvSymme
     const int axis = uvSymmetryAxis(n);
     if (axis < 0)
         return edit();
-    geo::SymmetryMap map = geo::SymmetryMap::persistent(m, axis, symmetryTolerance(m));
+    geo::SymmetryMap map = geo::SymmetryMap::persistent(m, axis, symmetryTolerance(m), nullptr, symmetryOffset(n, axis));
     std::optional<UvMirror> mirror;
     if (mode == UvSymmetry::Delta)
         mirror = buildUvMirror(m, map, uvSet);

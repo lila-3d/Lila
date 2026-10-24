@@ -21,6 +21,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <iterator>
+#include <map>
 #include <numbers>
 #include <unordered_set>
 
@@ -55,6 +56,19 @@ scene::Space spaceFor(Tool t)
 }
 
 bool normalSpace() { return PrefStore::get().value<std::string>("general", "/manipulator/moveSpace", "world") == "normal"; }
+
+/** "world", "object" or "component" (the selection's average normal). Objects always scale on their own axes. */
+std::string scaleSpace() { return PrefStore::get().value<std::string>("general", "/manipulator/scaleSpace", "world"); }
+
+/** A pivot placed with Edit Pivot on a component selection, shared by every viewport; it lasts until that selection changes. */
+struct ComponentPivot
+{
+    scene::ComponentMode mode = scene::ComponentMode::Object;
+    std::map<NodeId, scene::components::Ids> selection;
+    glm::dvec3 position{0.0};
+    std::optional<glm::dmat3> frame;
+};
+std::optional<ComponentPivot> gComponentPivot;
 
 /** A frame whose Z is the normal; X and Y are any perpendicular pair. */
 glm::dmat3 normalFrame(const glm::dvec3& n)
@@ -191,7 +205,7 @@ Tool Manipulator::effectiveTool() const
 {
     if (mDrag)
         return pivotTool(mDrag->pivotEdit, mDrag->tool);
-    return pivotTool(tools::pivotEdit() && !mComponents, tools::current());
+    return pivotTool(tools::pivotEdit(), tools::current());
 }
 
 void Manipulator::refresh()
@@ -218,12 +232,27 @@ void Manipulator::refresh()
         mComponents = true;
         mLead = mTargets.back();
         mPivot = scene::selectionCenter();
-        scene::Space space = spaceFor(tools::current() == Tool::Rotate ? Tool::Rotate : Tool::Move);
-        mFrame = scene::xformops::frame(g, mLead, tools::current() == Tool::Scale ? scene::Space::World : space);
-        if (tools::current() == Tool::Move && normalSpace())
+        const Tool t = pivotTool(tools::pivotEdit(), tools::current());
+        if (t == Tool::Scale)
+        {
+            const std::string s = scaleSpace();
+            mFrame = s == "component" ? normalFrame(scene::selectionNormal())
+                                      : scene::xformops::frame(g, mLead, s == "object" ? scene::Space::Object : scene::Space::World);
+        }
+        else
+            mFrame = scene::xformops::frame(g, mLead, spaceFor(t));
+        if (t == Tool::Move && normalSpace() && !tools::pivotEdit())
         {
             mNormal = true;
             mFrame = normalFrame(scene::selectionNormal());
+        }
+        if (gComponentPivot && (gComponentPivot->mode != mode || gComponentPivot->selection != scene::components::selected(mode)))
+            gComponentPivot.reset();
+        if (gComponentPivot)
+        {
+            mPivot = gComponentPivot->position;
+            if (gComponentPivot->frame && !mNormal)
+                mFrame = *gComponentPivot->frame;
         }
         return;
     }
@@ -425,15 +454,46 @@ bool Manipulator::hover(QPointF px)
 
 // ------------------------------------------------------------------- dragging
 
+void Manipulator::syncHandleResets()
+{
+    if (handlesCurrent())
+        return;
+    mHandleResets = tools::handleResets();
+    mLastHandle = H::None;
+    mLastExtrude = ExtrudeHandles::Handle::None;
+}
+
+bool Manipulator::handlesCurrent() const
+{
+    return mHandleResets == tools::handleResets();
+}
+
 bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifiers mods)
 {
+    syncHandleResets();
     if (button == Qt::LeftButton)
         if (ExtrudeHandles::Handle e = mExtrude.pick(px, mView); e != ExtrudeHandles::Handle::None)
         {
             mExtrude.begin(e, px, mView);
             mExtrudeHover = e;
+            if (mExtrude.dragging())
+            {
+                mLastExtrude = e;
+                mLastHandle = H::None;
+            }
             return mExtrude.dragging();
         }
+    // A middle drag off the handles keeps working the extrude handle used last, as it does a move axis.
+    if (button == Qt::MiddleButton && !(mods & Qt::ShiftModifier) && mLastExtrude != ExtrudeHandles::Handle::None)
+    {
+        if (!mExtrude.active())
+            mLastExtrude = ExtrudeHandles::Handle::None;
+        else if (!visible() || pick(px) == H::None)
+        {
+            mExtrude.begin(mLastExtrude, px, mView);
+            return mExtrude.dragging();
+        }
+    }
     if (!visible())
         return false;
     H h = pick(px);
@@ -457,7 +517,7 @@ bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifier
     }
     else if (button != Qt::LeftButton || h == H::None)
         return false;
-    const bool alongNormal = mNormal && effectiveTool() == Tool::Move;
+    const bool alongNormal = mNormal && effectiveTool() == Tool::Move && !tools::pivotEdit();
     if (alongNormal)
         h = H::Z, axisFromDrag = false;
     // Taken so it neither drags nor falls through to a selection click.
@@ -473,8 +533,14 @@ bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifier
     d.pressPx = d.virtualPx = d.lastPx = px;
     d.startPivot = mPivot;
     d.frame = mFrame;
-    d.components = mComponents;
-    d.pivotEdit = tools::pivotEdit() && !mComponents;
+    d.pivotEdit = tools::pivotEdit();
+    d.components = mComponents && !d.pivotEdit;
+    d.componentPivot = mComponents && d.pivotEdit;
+    if (d.componentPivot && !gComponentPivot)
+    {
+        const scene::ComponentMode mode = scene::components::mode();
+        gComponentPivot = ComponentPivot{mode, scene::components::selected(mode), mPivot, std::nullopt};
+    }
     d.tool = tools::current();
     d.axisFromDrag = d.axisPending = axisFromDrag;
     d.ctrlPlane = ctrlPlane && !axisFromDrag && !alongNormal && button == Qt::LeftButton;
@@ -491,7 +557,7 @@ bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifier
             d.saved.push_back(s);
         }
     }
-    else
+    else if (!d.componentPivot)
         for (NodeId id : mTargets)
         {
             Saved s;
@@ -543,7 +609,10 @@ bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifier
 
     mDrag = std::move(d);
     if (!axisFromDrag)
+    {
         mLastHandle = h;
+        mLastExtrude = ExtrudeHandles::Handle::None;
+    }
     mHover = h;
     return true;
 }
@@ -777,7 +846,10 @@ void Manipulator::update(QPointF px, Qt::KeyboardModifiers mods)
                 s[i] = std::round(s[i] * 10.0) / 10.0;
             else if (inc.enabled)
                 s[i] = gizmo::snapScale(s[i], inc.step);
-            if (std::abs(s[i]) < 1e-3)
+            // Components stop at 0 rather than flipping through, so scaling down an axis flattens them exactly.
+            if (d.components)
+                s[i] = std::max(s[i], 0.0);
+            else if (std::abs(s[i]) < 1e-3)
                 s[i] = 1e-3;
         }
         d.scale = s;
@@ -914,7 +986,14 @@ void Manipulator::apply()
     Tool t = pivotTool(d.pivotEdit, d.tool);
     try
     {
-        if (d.alongNormal)
+        if (d.componentPivot && gComponentPivot)
+        {
+            if (t == Tool::Rotate)
+                gComponentPivot->frame = glm::mat3_cast(d.rotation) * d.frame;
+            else
+                gComponentPivot->position = d.startPivot + d.moveDelta;
+        }
+        else if (d.alongNormal)
             scene::offsetSelectedComponents("Drag Components", glm::dot(d.moveDelta, d.frame[2]));
         else if (d.components)
             scene::transformSelectedComponents("Drag Components", componentXform());
@@ -978,6 +1057,8 @@ void Manipulator::commit()
     for (const Saved& s : d.saved)
         names.push_back(nameOf(s.id));
     Tool t = pivotTool(d.pivotEdit, d.tool);
+    if (d.componentPivot)
+        return;
     try
     {
         if (d.components)
@@ -989,7 +1070,14 @@ void Manipulator::commit()
                     ops::execute("moveComponents", {{"normal", tidy(offset)}}, CallSource::UI);
             }
             else if (t == Tool::Move && glm::length(d.moveDelta) > 1e-9)
+            {
                 ops::execute("moveComponents", {{"by", vecJson(d.moveDelta)}}, CallSource::UI);
+                if (gComponentPivot)
+                {
+                    gComponentPivot->position += d.moveDelta;
+                    gComponentPivot->selection = scene::components::selected(gComponentPivot->mode);
+                }
+            }
             else if (t == Tool::Rotate && std::abs(d.angle) > 1e-9)
             {
                 glm::dvec3 euler = scene::matrixToEuler(glm::mat3_cast(d.rotation), scene::RotateOrder::XYZ);
@@ -997,8 +1085,10 @@ void Manipulator::commit()
             }
             else if (t == Tool::Scale && glm::length(d.scale - glm::dvec3(1.0)) > 1e-9)
             {
-                // Scaling along a rotated frame isn't expressible per world axis; the command takes the world axes.
-                ops::execute("scaleComponents", {{"by", vecJson(d.scale)}, {"pivot", pivot}}, CallSource::UI);
+                json args = {{"by", vecJson(d.scale)}, {"pivot", pivot}};
+                if (glm::length(glm::dvec3(d.frame[0]) - glm::dvec3(1, 0, 0)) + glm::length(glm::dvec3(d.frame[1]) - glm::dvec3(0, 1, 0)) > 1e-9)
+                    args["orient"] = vecJson(scene::matrixToEuler(d.frame, scene::RotateOrder::XYZ));
+                ops::execute("scaleComponents", args, CallSource::UI);
             }
             return;
         }
@@ -1147,7 +1237,8 @@ glm::vec4 Manipulator::handleColor(H h, int axisIndex) const
 {
     if (handleLocked(h))
         return kLocked;
-    bool hot = (mDrag && mDrag->handle == h) || (!mDrag && mHover == h);
+    // The remembered handle stays highlighted, so it shows what a middle drag will do.
+    bool hot = (mDrag && mDrag->handle == h) || (!mDrag && (mHover == h || (handlesCurrent() && mLastHandle == h)));
     if (axisIndex >= 0 && viewportDisplay::accentColors(viewportDisplay::kManipulatorAxisColors))
     {
         glm::vec4 c(viewportDisplay::axisColor(axisIndex), 1.0f);
@@ -1173,7 +1264,9 @@ void Manipulator::draw(OverlayPainter& p)
         default: drawMove(p); break;
         }
     if (extrude)
-        mExtrude.draw(p, mView, mExtrudeHover);
+        mExtrude.draw(p, mView, mExtrudeHover != ExtrudeHandles::Handle::None ? mExtrudeHover
+                                : handlesCurrent()                             ? mLastExtrude
+                                                                               : ExtrudeHandles::Handle::None);
     p.setShadow(false);
     drawReadout(p);
 }

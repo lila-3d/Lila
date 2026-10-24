@@ -249,6 +249,83 @@ ExtrudeResult extrudeFaces(Mesh& mesh, std::span<const Index> faces, const Extru
     return runRegions(mesh, faces, opts.individual, opts.symmetry, {opts.offset, opts.inset});
 }
 
+EdgeExtrudeResult extrudeEdges(Mesh& mesh, std::span<const Index> edges, const EdgeExtrudeOptions& opts)
+{
+    LILA_ZONE();
+
+    std::vector<Index> sel = opts.symmetry ? opts.symmetry->expandEdges(mesh, edges) : uniqueSorted(edges);
+    std::erase_if(sel, [&](Index e) { return !mesh.edgeValid(e) || mesh.edgeCorner(e) == kInvalid; });
+    EdgeExtrudeResult out;
+    if (sel.empty())
+        return out;
+
+    // Per point: the summed normals of the faces its selected edges border, and their summed outward directions.
+    struct Push
+    {
+        glm::dvec3 normal{0.0}, out{0.0};
+        int count = 0;
+    };
+    std::unordered_map<Index, Push> push;
+    std::unordered_map<Index, Index> dup;
+    const Index firstNew = mesh.pointCapacity();
+    struct Strip
+    {
+        Index corner, a, b;
+    };
+    std::vector<Strip> strips;
+    for (Index e : sel)
+    {
+        const Index c = mesh.edgeCorner(e);
+        const Index a = mesh.cornerPoint(c), b = mesh.cornerNextPoint(c);
+        const glm::dvec3 n = mesh.faceNormal(mesh.cornerFace(c));
+        const glm::dvec3 d = mesh.position(b) - mesh.position(a);
+        const double len = glm::length(glm::cross(d, n));
+        const glm::dvec3 outward = len > 1e-12 ? glm::cross(d, n) / len : glm::dvec3(0.0);
+        for (Index p : {a, b})
+        {
+            Push& s = push[p];
+            s.normal += n;
+            s.out += outward;
+            ++s.count;
+            if (!dup.count(p))
+            {
+                const Index np = mesh.addPoint(mesh.position(p));
+                mesh.pointAttrs().copy(np, p);
+                dup[p] = np;
+            }
+        }
+        strips.push_back({c, a, b});
+    }
+
+    for (const Strip& s : strips)
+    {
+        // Wound against the face the edge borders, so the strip continues its surface.
+        const Index n = mesh.cornerNext(s.corner);
+        const Index quad[4] = {s.b, s.a, dup[s.a], dup[s.b]};
+        const Index src[4] = {n, s.corner, s.corner, n};
+        if (const Index f = mesh.addFace(quad, mesh.cornerFace(s.corner), src); f != kInvalid)
+            out.faces.push_back(f);
+        if (const Index e = mesh.findEdge(dup[s.a], dup[s.b]); e != kInvalid)
+            out.edges.push_back(e);
+    }
+
+    for (const auto& [p, s] : push)
+    {
+        glm::dvec3 move(0.0);
+        if (const double nl = glm::length(s.normal); nl > 1e-12)
+            move += s.normal / nl * opts.thickness;
+        if (const double ol = glm::length(s.out); ol > 1e-12)
+        {
+            // Miter: two edges meeting at an angle push further so the strip keeps its width.
+            const double cosHalf = s.count == 2 ? std::max(ol * 0.5, 0.1) : 1.0;
+            move += s.out / ol * (opts.offset / cosHalf);
+        }
+        mesh.setPosition(dup[p], mesh.position(p) + move);
+    }
+    applySymmetrySnap(mesh, opts.symmetry, firstNew);
+    return out;
+}
+
 ExtrudeResult insetFaces(Mesh& mesh, std::span<const Index> faces, const InsetOptions& opts)
 {
     LILA_ZONE();

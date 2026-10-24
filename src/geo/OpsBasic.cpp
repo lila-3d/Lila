@@ -1102,13 +1102,13 @@ std::vector<Index> mirrorMesh(Mesh& mesh, const MirrorOptions& opts)
     return out;
 }
 
-SymmetryMap symmetrizeTopology(Mesh& mesh, int axis, int keepSign, double tolerance)
+SymmetryMap symmetrizeTopology(Mesh& mesh, int axis, int keepSign, double tolerance, double offset)
 {
     LILA_ZONE();
 
     axis = std::clamp(axis, 0, 2);
     MirrorOptions o;
-    o.plane = axisPlane(axis);
+    o.plane = axisPlane(axis, offset);
     o.direction = keepSign < 0 ? MirrorDirection::Negative : MirrorDirection::Positive;
     o.tolerance = tolerance;
     mirrorMesh(mesh, o);

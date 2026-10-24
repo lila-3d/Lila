@@ -17,6 +17,7 @@ struct State
     std::optional<Op> op;
     ComponentMode pendingMode = ComponentMode::Object;
     bool rerunning = false;
+    json limited = json::object();
     std::map<int, std::function<void(Change)>> listeners;
     int nextListener = 1;
 };
@@ -42,6 +43,7 @@ void onExecute(const ExecuteEvent& e)
     if (!e.done)
     {
         s.pendingMode = components::mode();
+        s.limited = json::object();
         return;
     }
     UndoStack& undo = UndoStack::get();
@@ -51,6 +53,7 @@ void onExecute(const ExecuteEvent& e)
     if (recorded)
     {
         s.op = Op{std::string(e.name), e.call.is_object() ? e.call : json::object(), s.pendingMode, components::mode(), undo.serial()};
+        s.op->call.update(s.limited);
         notify(Change::Recorded);
     }
     else if (e.source == CallSource::UI)
@@ -102,6 +105,11 @@ bool live()
            (s.op->empty || UndoStack::get().undoLabel() == s.op->command);
 }
 
+void limitFlag(const std::string& name, const json& value)
+{
+    st().limited[name] = value;
+}
+
 void clear()
 {
     if (!st().op)
@@ -122,6 +130,7 @@ void rerun(const json& flags, CallSource source)
 
     UndoStack& undo = UndoStack::get();
     s.rerunning = true;
+    s.limited = json::object();
     if (!op.empty)
         undo.undo();
     components::setMode(op.modeBefore);
@@ -145,6 +154,7 @@ void rerun(const json& flags, CallSource source)
     }
     s.rerunning = false;
     s.op->empty = undo.serial() == before;
+    call.update(s.limited);
     s.op->call = std::move(call);
     s.op->modeAfter = components::mode();
     s.op->serial = undo.serial();

@@ -2,6 +2,7 @@
 
 #include "ops/Command.h"
 #include "ops/Undo.h"
+#include "geo/ComponentPaths.h"
 #include "geo/Mesh.h"
 #include "geo/Topology.h"
 #include "scene/Graph.h"
@@ -186,6 +187,13 @@ void setMode(ComponentMode m)
     notify();
 }
 
+void setModeUndoable(ComponentMode m)
+{
+    if (mode() != m)
+        UndoStack::get().record(std::make_unique<ModeAction>(mode(), m));
+    setMode(m);
+}
+
 const char* modeName(ComponentMode m)
 {
     switch (m)
@@ -350,7 +358,7 @@ Ids idsArg(const json& j)
 
 } // namespace
 
-Ids convert(const geo::Mesh& m, ComponentMode from, const Ids& ids, ComponentMode to)
+Ids convert(const geo::Mesh& m, ComponentMode from, const Ids& ids, ComponentMode to, bool touching)
 {
     Ids out;
     if (from == to)
@@ -384,14 +392,21 @@ Ids convert(const geo::Mesh& m, ComponentMode from, const Ids& ids, ComponentMod
                     m.forEachFaceCorner(f, [&](geo::Index c) { out.push_back(m.cornerEdge(c)); });
             return sortedUnique(out);
         }
-        // Edges whose both ends are selected.
+        // Edges with both ends selected, or either end when touching.
         Ids pts = pointsOfIds();
         std::set<uint32_t> in(pts.begin(), pts.end());
         for (uint32_t p : pts)
             m.forEachPointEdge(p, [&](geo::Index e) {
-                if (in.contains(m.edgeOtherPoint(e, p)))
+                if (touching || in.contains(m.edgeOtherPoint(e, p)))
                     out.push_back(e);
             });
+        return sortedUnique(out);
+    }
+    if (touching && from == ComponentMode::Edge)
+    {
+        for (uint32_t e : ids)
+            if (m.edgeValid(e))
+                m.forEachEdgeCorner(e, [&](geo::Index c) { out.push_back(m.cornerFace(c)); });
         return sortedUnique(out);
     }
     // Faces fully covered by the selected points.
@@ -401,7 +416,8 @@ Ids convert(const geo::Mesh& m, ComponentMode from, const Ids& ids, ComponentMod
         for (geo::Index f : m.pointFaces(p))
         {
             bool all = true;
-            m.forEachFaceCorner(f, [&](geo::Index c) { all = all && in.contains(m.cornerPoint(c)); });
+            if (!touching)
+                m.forEachFaceCorner(f, [&](geo::Index c) { all = all && in.contains(m.cornerPoint(c)); });
             if (all)
                 out.push_back(f);
         }
@@ -457,24 +473,7 @@ void registerCommands()
                 try
                 {
                     ComponentMode next = modeFromName(a.positional[0].get<std::string>());
-                    // Switching kinds carries the selection across, like Maya's convert on mode change.
-                    ComponentMode prev = mode();
-                    if (prev != ComponentMode::Object && next != ComponentMode::Object && prev != next)
-                    {
-                        std::map<NodeId, Ids> conv;
-                        for (auto& [node, ids] : selected(prev))
-                            if (MeshPtr m = meshOf(node))
-                                if (Ids c = isolation::visibleOnly(isolation::activeVisibility(node, *m), next, convert(*m, prev, ids, next)); !c.empty())
-                                    conv[node] = std::move(c);
-                        std::map<NodeId, Ids> sets[3] = {selected(ComponentMode::Vertex), selected(ComponentMode::Edge),
-                                                         selected(ComponentMode::Face)};
-                        sets[slot(next)] = std::move(conv);
-                        sets[slot(prev)].clear();
-                        bool was = UndoStack::get().enabled();
-                        UndoStack::get().setEnabled(false);
-                        setAll(sets[0], sets[1], sets[2]);
-                        UndoStack::get().setEnabled(was);
-                    }
+                    // Each kind keeps its own selection, so coming back to a mode brings back what was selected in it.
                     setMode(next);
                 }
                 catch (const std::invalid_argument& e)
@@ -561,7 +560,7 @@ void registerCommands()
             else
                 for (auto& [node, ids] : selected(from))
                     if (MeshPtr m = meshOf(node))
-                        sets[slot(to)][node] = isolation::visibleOnly(isolation::activeVisibility(node, *m), to, convert(*m, from, ids, to));
+                        sets[slot(to)][node] = isolation::visibleOnly(isolation::activeVisibility(node, *m), to, convert(*m, from, ids, to, true));
             setAll(sets[0], sets[1], sets[2]);
             if (from != to)
                 UndoStack::get().record(std::make_unique<ModeAction>(from, to));
@@ -609,22 +608,44 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "selectLoop",
-        .doc = "Extend the selected edges to full edge loops (or rings with ring=True).",
-        .flags = {{"ring", "", T::Bool, false, "Select edge rings instead of loops."}},
+        .doc = "Extend the selection to full loops (or rings with ring=True): edges along their own loops, vertices along "
+               "the loops of the edges joining them, faces along the face loops crossing the edges they share.",
+        .flags = {{"ring", "", T::Bool, false, "Select rings instead of loops. Faces have no ring and take their loops."}},
         .run = [](const Args& a) -> json {
+            ComponentMode k = mode();
+            if (k == ComponentMode::Object)
+                return nullptr;
             UndoChunk chunk("Select Loop");
-            bool ring = a.get<bool>("ring");
-            for (auto [node, ids] : selected(ComponentMode::Edge))
+            bool ring = a.get<bool>("ring") && k != ComponentMode::Face;
+            for (auto [node, ids] : selected(k))
             {
                 MeshPtr m = meshOf(node);
                 if (!m)
                     continue;
-                Ids out;
                 const isolation::Visibility vis = isolation::activeVisibility(node, *m);
-                for (uint32_t e : ids)
-                    for (geo::Index x : isolation::clipLoop(*m, vis, ring ? geo::edgeRing(*m, e) : geo::edgeLoop(*m, e), e, ComponentMode::Edge, ring))
-                        out.push_back(x);
-                select(node, ComponentMode::Edge, out, Op::Add);
+                Ids out;
+                if (k == ComponentMode::Face)
+                {
+                    std::vector<uint8_t> in = geo::makeMask(m->faceCapacity(), ids);
+                    for (geo::Index e : convert(*m, ComponentMode::Face, ids, ComponentMode::Edge))
+                    {
+                        int faces = 0;
+                        m->forEachEdgeCorner(e, [&](geo::Index c) { faces += in[m->cornerFace(c)]; });
+                        if (faces >= 2)
+                            for (geo::Index f : isolation::clipLoop(*m, vis, geo::faceLoop(*m, e), e, ComponentMode::Face, false))
+                                out.push_back(f);
+                    }
+                }
+                else
+                {
+                    Ids edges = k == ComponentMode::Vertex ? convert(*m, ComponentMode::Vertex, ids, ComponentMode::Edge) : ids;
+                    for (uint32_t e : edges)
+                        for (geo::Index x : isolation::clipLoop(*m, vis, ring ? geo::edgeRing(*m, e) : geo::edgeLoop(*m, e), e, ComponentMode::Edge, ring))
+                            out.push_back(x);
+                    if (k == ComponentMode::Vertex)
+                        out = convert(*m, ComponentMode::Edge, sortedUnique(out), ComponentMode::Vertex);
+                }
+                select(node, k, out, Op::Add);
             }
             return nullptr;
         },
@@ -797,6 +818,31 @@ void registerCommands()
                 select(node, k, isolation::visibleOnly(isolation::activeVisibility(node, *m), k, allIds(*m, k)), first ? Op::Replace : Op::Add);
                 first = false;
             }
+            return nullptr;
+        },
+    });
+
+    ops::registerCommand({
+        .name = "invertSelection",
+        .doc = "Invert the selection: the unselected components of the current kind on the hilited meshes, or in object mode "
+               "every unselected object. An isolated view inverts only what it shows.",
+        .run = [](const Args&) -> json {
+            ComponentMode k = mode();
+            if (k == ComponentMode::Object)
+            {
+                Graph& g = Graph::current();
+                const isolation::Set* iso = isolation::active();
+                std::vector<NodeId> shown;
+                for (NodeId id : g.nodes())
+                    if (const Node* n = g.node(id); n && n->type().dag && (!iso || iso->shows(id)))
+                        shown.push_back(id);
+                g.select(shown, SelectMode::Toggle);
+                return nullptr;
+            }
+            UndoChunk chunk("Invert Selection");
+            for (NodeId node : hilitedMeshes())
+                if (MeshPtr m = meshOf(node))
+                    select(node, k, isolation::visibleOnly(isolation::activeVisibility(node, *m), k, allIds(*m, k)), Op::Toggle);
             return nullptr;
         },
     });

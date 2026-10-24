@@ -121,6 +121,8 @@ QString itemLabel(const json& item)
         return {};
     if (item.value("separator", false))
         return "(separator)";
+    if (item.value("column", false))
+        return "(new column)";
     std::string label = item.value("label", std::string());
     if (label.empty())
         label = actions::labelFor(item.value("action", json()));
@@ -175,14 +177,27 @@ std::vector<RadialPreview::Box> RadialPreview::layoutBoxes() const
         b.rect = QRectF(x, p.y() - h / 2, w, h);
         boxes.push_back(b);
     }
-    double y = boxes[4].rect.bottom() + 10;
-    double width = 120;
+    const double top = boxes[4].rect.bottom() + 10;
+    std::vector<double> widths{120};
     for (int i = 0; i < overflowCount; ++i)
-        width = std::max(width, fm.horizontalAdvance(itemLabel(mLevel["overflow"][i])) + 28);
+        if (mLevel["overflow"][i].value("column", false))
+            widths.push_back(120);
+        else
+            widths.back() = std::max(widths.back(), fm.horizontalAdvance(itemLabel(mLevel["overflow"][i])) + 28);
+    double total = -8;
+    for (double w : widths)
+        total += w + 8;
+    double left = center.x() - total / 2, y = top;
+    size_t column = 0;
     for (int i = 0; i < overflowCount; ++i)
     {
-        boxes.push_back({kOverflow + i, QRectF(center.x() - width / 2, y, width, h - 2), itemLabel(mLevel["overflow"][i]), false, false});
+        boxes.push_back({kOverflow + i, QRectF(left, y, widths[column], h - 2), itemLabel(mLevel["overflow"][i]), false, false});
         y += h;
+        if (mLevel["overflow"][i].value("column", false))
+        {
+            left += widths[column++] + 8;
+            y = top;
+        }
     }
     return boxes;
 }
@@ -358,6 +373,8 @@ MarkingMenuEditor::MarkingMenuEditor(QWidget* parent) : QWidget(parent)
     auto* addOverflowButton = new QPushButton("Add Overflow Item");
     auto* addSeparatorButton = new QPushButton("Add Separator");
     addSeparatorButton->setToolTip("A divider line between groups of overflow rows");
+    auto* addColumnButton = new QPushButton("Add Column");
+    addColumnButton->setToolTip("Starts a new overflow column beside the previous one");
     itemButtons->addWidget(mToPython);
     itemButtons->addWidget(mRemove);
     itemButtons->addWidget(mUp);
@@ -365,6 +382,7 @@ MarkingMenuEditor::MarkingMenuEditor(QWidget* parent) : QWidget(parent)
     itemButtons->addStretch(1);
     itemButtons->addWidget(addOverflowButton);
     itemButtons->addWidget(addSeparatorButton);
+    itemButtons->addWidget(addColumnButton);
     rightLayout->addLayout(itemButtons);
     split->addWidget(right);
 
@@ -518,6 +536,7 @@ MarkingMenuEditor::MarkingMenuEditor(QWidget* parent) : QWidget(parent)
     connect(mDown, &QPushButton::clicked, this, [this] { moveOverflow(1); });
     connect(addOverflowButton, &QPushButton::clicked, this, [this] { addOverflow({{"label", "New Item"}}); });
     connect(addSeparatorButton, &QPushButton::clicked, this, [this] { addOverflow({{"separator", true}}); });
+    connect(addColumnButton, &QPushButton::clicked, this, [this] { addOverflow({{"column", true}}); });
 
     mPrefListener = PrefStore::get().onChanged([this](const std::string& file) {
         if (file.rfind("markingMenus/", 0) != 0)

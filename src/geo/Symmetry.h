@@ -24,8 +24,11 @@ struct SymmetryPlane
     glm::dvec3 project(const glm::dvec3& p) const { return p - distance(p) * normal; }
 };
 
-/** Plane through the origin normal to axis 0, 1 or 2. Reflecting across it negates one coordinate, which is exact. */
-LILA_SCENE_API SymmetryPlane axisPlane(int axis);
+/**
+ * Plane normal to axis 0, 1 or 2 at offset along it (an object's pivot). Reflecting across it maps one coordinate v to
+ * 2 * offset - v, which is exact at offset 0.
+ */
+LILA_SCENE_API SymmetryPlane axisPlane(int axis, double offset = 0.0);
 
 /**
  * Point int layer that keeps the symmetry pairs for an axis on the mesh, so they survive compaction, saving, undo and
@@ -81,7 +84,7 @@ public:
      * themselves, first through their paired neighbours, then by position within tolerance, and the new pairs are
      * stored back. A mesh without the layer gets it built here.
      */
-    static SymmetryMap persistent(Mesh& mesh, int axis, double tolerance, SymmetrySync* sync = nullptr);
+    static SymmetryMap persistent(Mesh& mesh, int axis, double tolerance, SymmetrySync* sync = nullptr, double offset = 0.0);
 
     /** Writes this map into the mesh's layer for axis, replacing what was there. */
     void store(Mesh& mesh, int axis) const;
@@ -101,7 +104,7 @@ public:
     int majoritySide(std::span<const Index> points) const;
 
     const SymmetryPlane& plane() const { return mPlane; }
-    /** 0, 1 or 2 for an axis plane through the origin, -1 for any other plane. */
+    /** 0, 1 or 2 for a plane normal to an axis, -1 for any other plane. */
     int axis() const { return mAxis; }
     double tolerance() const { return mTolerance; }
     bool empty() const { return mMirror.empty(); }

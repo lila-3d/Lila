@@ -57,6 +57,7 @@ lila_module(lila_scene Scene
     Simulation.cpp
     Skin.cpp
     SmartJoin.cpp
+    BatchRename.cpp
     SoftSelect.cpp
     Spaces.cpp
     Take.cpp

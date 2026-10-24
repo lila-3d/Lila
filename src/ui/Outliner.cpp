@@ -390,7 +390,9 @@ void Outliner::dropEvent(QDropEvent* e)
 void Outliner::keyPressEvent(QKeyEvent* e)
 {
     QWidget* editor = QApplication::focusWidget();
-    bool renameKey = Hotkeys::get().isKeyFor(e, "outliner.rename") || Hotkeys::get().isKeyFor(e, "edit.rename");
+    // Enter commits the edit rather than cancelling it.
+    bool renameKey = (Hotkeys::get().isKeyFor(e, "outliner.rename") || Hotkeys::get().isKeyFor(e, "edit.rename")) &&
+                     e->key() != Qt::Key_Return && e->key() != Qt::Key_Enter;
     if (state() == EditingState && renameKey && editor && viewport()->isAncestorOf(editor))
     {
         closeEditor(editor, QAbstractItemDelegate::RevertModelCache);

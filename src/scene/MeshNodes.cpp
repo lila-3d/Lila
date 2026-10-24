@@ -158,6 +158,10 @@ NodeType MeshNode::makeType(const NodeType& base)
          .fileAlias = "quadDrawReference"},
         {.name = "retopoDrawDots", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrHidden,
          .doc = "Retopo Draw's unconnected dots, a JSON list of object-space [x, y, z].", .fileAlias = "quadDrawDots"},
+        {.name = "symmetryPlane", .type = PlugType::Enum, .defaultValue = int64_t(0), .flags = AttrInput | AttrStorable,
+         .enumNames = {"pivot", "custom"}, .doc = "Where the symmetry plane lies: through the pivot, or at symmetryOffset."},
+        {.name = "symmetryOffset", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrInput | AttrStorable,
+         .doc = "The custom symmetry plane's position along the symmetry axis, object space, cm."},
     };
     t.create = [] { return std::make_unique<MeshNode>(); };
     return t;
@@ -176,6 +180,15 @@ void GeneratorNode::compute(const EvalContext&)
         log::warn("{}: {}", name(), e.what());
         setOutput(outAttr, MeshPtr());
     }
+}
+
+double symmetryOffset(const Node& mesh, int axis)
+{
+    if (axis < 0 || axis > 2 || !mesh.type().isA("transform"))
+        return 0.0;
+    if (mesh.type().isA("mesh") && mesh.as<int64_t>(MeshNode::kSymmetryPlane) == 1)
+        return mesh.as<double>(MeshNode::kSymmetryOffset);
+    return mesh.as<glm::dvec3>(Transform::kRotatePivot)[axis];
 }
 
 SymmetryState symmetryState(const Graph& g, const std::vector<NodeId>& nodes)

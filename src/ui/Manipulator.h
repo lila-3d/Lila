@@ -101,6 +101,7 @@ private:
         bool precise = false;      // Shift held at the last update
         bool ctrlPlane = false;
         bool alongNormal = false; // each component point moves along its own normal by the N axis distance
+        bool componentPivot = false; // Edit Pivot on components: moves or orients the transient component pivot
         QPointF linearDir;
         double linearSign = 1.0;
         Tool tool = Tool::Move;
@@ -146,6 +147,9 @@ private:
     void drawScale(OverlayPainter& p);
     void drawReadout(OverlayPainter& p);
     glm::vec4 handleColor(Handle h, int axisIndex) const;
+    /** Forgets the remembered handles once W/E/R has asked for a reset since they were taken. */
+    void syncHandleResets();
+    bool handlesCurrent() const;
     std::vector<QPointF> ringPoints(int axisIndex, bool frontOnly) const;
 
     ViewInfo mView;
@@ -158,7 +162,9 @@ private:
     glm::bvec3 mLockedAxes{false};
     bool mAllLocked = false; // every channel of the tool, for the view ring and trackball
     Handle mHover = Handle::None;
-    Handle mLastHandle = Handle::None;
+    Handle mLastHandle = Handle::None; // what a middle drag off the handles uses, drawn highlighted
+    ExtrudeHandles::Handle mLastExtrude = ExtrudeHandles::Handle::None; // the same for the extrude handles, first while they show
+    unsigned mHandleResets = 0;
     std::optional<Drag> mDrag;
     ExtrudeHandles mExtrude;
     ExtrudeHandles::Handle mExtrudeHover = ExtrudeHandles::Handle::None;

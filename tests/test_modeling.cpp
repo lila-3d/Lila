@@ -36,7 +36,7 @@ TEST_CASE("component selection and modeling ops")
     run("polyInset", {{"thickness", 5}});
     CHECK(faces(cube) == 14);
 
-    run("selectMode", {{"args", {"edge"}}});
+    run("convertSelection", {{"args", {"edge"}}});
     auto sel = run("componentSelection");
     CHECK(sel[cube]["edges"].size() == 4); // the inset face's border
     run("polyBevel", {{"offset", 1}});

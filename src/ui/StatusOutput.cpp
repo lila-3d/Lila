@@ -1,8 +1,10 @@
 #include "ui/StatusOutput.h"
 
+#include "core/PrefStore.h"
 #include "ui/Icons.h"
 #include "ui/Theme.h"
 #include "ui/ThemeModel.h"
+#include "ui/ViewportDisplay.h"
 
 #include <QMouseEvent>
 #include <QPainter>
@@ -27,10 +29,15 @@ const char* prefix(LogLevel level)
     }
 }
 
-/** Grey in every theme: the line sits under the viewport, where hue would pull the eye. Severity reads by icon, weight and brightness. */
+/** Messages stay grey; warnings and errors take the theme's colour unless the UI is monotone or the theme leaves the token at Monotone's. */
 QColor severityColor(LogLevel level)
 {
-    return themeShade(level == LogLevel::Error || level == LogLevel::Warning ? 242 : 160);
+    if (level != LogLevel::Error && level != LogLevel::Warning)
+        return themeShade(160);
+    const char* token = level == LogLevel::Error ? "statusError" : "statusWarning";
+    if (PrefStore::get().value<bool>("general", viewportDisplay::kMonotone, false) || themes::isDefault(*themes::current(), token))
+        return themeShade(242);
+    return themeColor(token);
 }
 } // namespace
 

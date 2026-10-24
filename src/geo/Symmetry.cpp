@@ -28,8 +28,6 @@ struct CellHash
 
 int planeAxis(const SymmetryPlane& plane)
 {
-    if (plane.offset != 0.0)
-        return -1;
     for (int k = 0; k < 3; ++k)
         if (plane.normal[k] == 1.0 && plane.normal[(k + 1) % 3] == 0.0 && plane.normal[(k + 2) % 3] == 0.0)
             return k;
@@ -52,11 +50,12 @@ std::vector<int8_t> sidesFromPositions(const Mesh& mesh, const SymmetryPlane& pl
 }
 } // namespace
 
-SymmetryPlane axisPlane(int axis)
+SymmetryPlane axisPlane(int axis, double offset)
 {
     SymmetryPlane plane;
     plane.normal = glm::dvec3(0.0);
     plane.normal[std::clamp(axis, 0, 2)] = 1.0;
+    plane.offset = offset;
     return plane;
 }
 
@@ -346,7 +345,7 @@ glm::dvec3 SymmetryMap::reflected(const glm::dvec3& p) const
     if (mAxis < 0)
         return mPlane.reflect(p);
     glm::dvec3 r = p;
-    r[mAxis] = -r[mAxis];
+    r[mAxis] = 2.0 * mPlane.offset - r[mAxis];
     return r;
 }
 
@@ -378,13 +377,13 @@ std::vector<Index> neighbours(const Mesh& mesh, Index p)
 }
 } // namespace
 
-SymmetryMap SymmetryMap::persistent(Mesh& mesh, int axis, double tolerance, SymmetrySync* sync)
+SymmetryMap SymmetryMap::persistent(Mesh& mesh, int axis, double tolerance, SymmetrySync* sync, double offset)
 {
     LILA_ZONE();
 
     SymmetryMap map;
     map.mAxis = std::clamp(axis, 0, 2);
-    map.mPlane = axisPlane(map.mAxis);
+    map.mPlane = axisPlane(map.mAxis, offset);
     map.mTolerance = tolerance;
     const Index pc = mesh.pointCapacity();
     map.mMirror.assign(pc, kInvalid);
@@ -643,7 +642,7 @@ void SymmetryMap::enforce(Mesh& mesh, std::span<const Index> points, int drive) 
         {
             glm::dvec3 v = mesh.position(p);
             if (mAxis >= 0)
-                v[mAxis] = 0.0;
+                v[mAxis] = mPlane.offset;
             else
                 v = mPlane.project(v);
             mesh.setPosition(p, v);

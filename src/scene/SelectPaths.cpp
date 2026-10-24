@@ -55,6 +55,45 @@ void selectAndShow(NodeId node, ComponentMode kind, const Ids& ids, Op op)
     select(node, kind, ids, op);
     setMode(kind);
 }
+
+/**
+ * The loop or ring through two neighbouring components: vertices sharing an edge, edges meeting along a loop or facing
+ * each other across a quad, faces sharing an edge. Empty when they are not neighbours.
+ */
+Ids neighbourLoop(const geo::Mesh& m, const isolation::Visibility& vis, ComponentMode kind, geo::Index a, geo::Index b)
+{
+    if (kind == ComponentMode::Vertex)
+    {
+        if (!m.pointValid(a) || !m.pointValid(b))
+            return {};
+        geo::Index e = m.findEdge(a, b);
+        if (e == geo::kInvalid)
+            return {};
+        return convert(m, ComponentMode::Edge, isolation::clipLoop(m, vis, geo::edgeLoop(m, e), e, ComponentMode::Edge, false), ComponentMode::Vertex);
+    }
+    if (kind == ComponentMode::Edge)
+    {
+        if (!m.edgeValid(a) || !m.edgeValid(b))
+            return {};
+        for (int i = 0; i < 2; ++i)
+            if (geo::edgeLoopNext(m, a, m.edgePoint(a, i)) == b)
+                return isolation::clipLoop(m, vis, geo::edgeLoop(m, a), a, ComponentMode::Edge, false);
+        bool facing = false;
+        m.forEachEdgeCorner(a, [&](geo::Index c) { facing = facing || geo::quadOppositeEdge(m, a, m.cornerFace(c)) == b; });
+        return facing ? isolation::clipLoop(m, vis, geo::edgeRing(m, a), a, ComponentMode::Edge, true) : Ids{};
+    }
+    if (!m.faceValid(a) || !m.faceValid(b))
+        return {};
+    geo::Index shared = geo::kInvalid;
+    m.forEachFaceCorner(a, [&](geo::Index c) {
+        geo::Index e = m.cornerEdge(c);
+        m.forEachEdgeCorner(e, [&](geo::Index d) {
+            if (m.cornerFace(d) == b)
+                shared = e;
+        });
+    });
+    return shared == geo::kInvalid ? Ids{} : isolation::clipLoop(m, vis, geo::faceLoop(m, shared), shared, ComponentMode::Face, false);
+}
 } // namespace
 
 void registerPathCommands()
@@ -95,10 +134,69 @@ void registerPathCommands()
         },
     });
 
+    std::vector<FlagDef> connectedFlags = {
+        {"kind", "", T::String, "face", "vertex | edge | face", {"vertex", "edge", "face"}},
+        {"id", "", T::Int, nullptr, "A component of the piece to select."},
+    };
+    connectedFlags.insert(connectedFlags.end(), std::begin(opFlags), std::end(opFlags));
+    ops::registerCommand({
+        .name = "selectConnected",
+        .doc = "Select every component of a kind on the connected piece (faces joined through shared edges) that one component "
+               "belongs to. Without add/deselect/toggle it replaces the selection of that kind. Returns the ids.",
+        .positionalDoc = "mesh",
+        .flags = connectedFlags,
+        .run = [](const Args& a) -> json {
+            Target t = meshArg(a, "selectConnected");
+            if (!a.has("id"))
+                throw CommandError("selectConnected: give id=");
+            ComponentMode kind = ComponentMode::Face;
+            try
+            {
+                kind = modeFromName(a.get<std::string>("kind", "face"));
+            }
+            catch (const std::invalid_argument&)
+            {
+                throw CommandError("selectConnected: kind must be vertex, edge or face");
+            }
+            if (kind == ComponentMode::Object)
+                throw CommandError("selectConnected: kind must be vertex, edge or face");
+            const geo::Mesh& m = *t.mesh;
+            const geo::Index id = geo::Index(a.get<int64_t>("id"));
+            const bool valid = kind == ComponentMode::Vertex ? m.pointValid(id) : kind == ComponentMode::Edge ? m.edgeValid(id) : m.faceValid(id);
+            if (!valid)
+                throw CommandError(std::string("selectConnected: no ") + modeName(kind) + " " + std::to_string(id));
+            std::vector<geo::Index> shell;
+            geo::faceComponents(m, shell);
+            std::vector<uint8_t> want(shell.size() + 1, 0);
+            auto seed = [&](geo::Index f) {
+                if (f < shell.size() && shell[f] != geo::kInvalid)
+                    want[shell[f]] = 1;
+            };
+            if (kind == ComponentMode::Face)
+                seed(id);
+            else if (kind == ComponentMode::Edge)
+                m.forEachEdgeCorner(id, [&](geo::Index c) { seed(m.cornerFace(c)); });
+            else
+                for (geo::Index f : m.pointFaces(id))
+                    seed(f);
+            Ids faces;
+            for (geo::Index f = 0; f < shell.size(); ++f)
+                if (shell[f] != geo::kInvalid && want[shell[f]])
+                    faces.push_back(f);
+            // A loose edge or point has no faces to spread through, so it is its own piece.
+            Ids ids = faces.empty() ? Ids{id} : convert(m, ComponentMode::Face, faces, kind);
+            ids = isolation::visibleOnly(isolation::activeVisibility(t.node, m), kind, std::move(ids));
+            UndoChunk chunk("Select Connected");
+            selectAndShow(t.node, kind, ids, opArg(a, Op::Replace));
+            return ids;
+        },
+    });
+
     ops::registerCommand({
         .name = "selectPathBetween",
         .doc = "Select the components between two of a mesh's vertices, edges or faces: the shorter way along a loop or ring "
-               "they share, else the shortest path across the surface. Adds to the selection unless replace or deselect. Returns the ids in order.",
+               "they share, else the shortest path across the surface. Neighbours (vertices on one edge, edges along a loop or across "
+               "a quad, faces sharing an edge) select the whole loop or ring through both instead. Adds to the selection unless replace or deselect. Returns the ids in order.",
         .positionalDoc = "mesh",
         .flags = {
             {"kind", "", T::String, "edge", "vertex | edge | face", {"vertex", "edge", "face"}},
@@ -121,10 +219,13 @@ void registerPathCommands()
                 throw CommandError("selectPathBetween: kind must be vertex, edge or face");
             }
             geo::Index from = geo::Index(a.get<int64_t>("from")), to = geo::Index(a.get<int64_t>("to"));
-            Ids path = kind == ComponentMode::Vertex ? geo::pointPathBetween(*t.mesh, from, to)
+            if (kind == ComponentMode::Object)
+                throw CommandError("selectPathBetween: kind must be vertex, edge or face");
+            Ids path = neighbourLoop(*t.mesh, isolation::activeVisibility(t.node, *t.mesh), kind, from, to);
+            if (path.empty())
+                path = kind == ComponentMode::Vertex ? geo::pointPathBetween(*t.mesh, from, to)
                        : kind == ComponentMode::Edge ? geo::edgePathBetween(*t.mesh, from, to)
-                       : kind == ComponentMode::Face ? geo::facePathBetween(*t.mesh, from, to)
-                                                     : throw CommandError("selectPathBetween: kind must be vertex, edge or face");
+                                                     : geo::facePathBetween(*t.mesh, from, to);
             if (path.empty())
                 throw CommandError("selectPathBetween: no path between " + std::to_string(from) + " and " + std::to_string(to));
             Op op = a.get<bool>("deselect") ? Op::Remove : a.get<bool>("replace") ? Op::Replace : Op::Add;

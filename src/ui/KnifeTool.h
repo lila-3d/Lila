@@ -22,6 +22,7 @@ namespace lila::ui
  * preview of the cut and the vertices it will make.
  *
  *   click                add a cut point: snaps to vertices and edges near the cursor, else a point inside the face
+ *   drag                 the new point follows the cursor (still snapping) until the button comes up
  *   Shift                edge points snap to steps of the snap step (10% by default, so midpoints too)
  *   Ctrl+click an edge   insert an edge loop across its ring there (Shift snaps it)
  *   click the first point   close the cut and finish it
@@ -71,7 +72,7 @@ private:
     void refresh();
     Target* target(scene::NodeId id);
     std::optional<std::pair<scene::NodeId, Spot>> pick(QPointF px, const ViewInfo& view, bool snapStep);
-    QPointF constrained(QPointF px, const ViewInfo& view) const;
+    QPointF constrained(QPointF px, const ViewInfo& view, size_t from) const;
     bool visible(const Target& t, const glm::dvec3& world, const ViewInfo& view) const;
     geo::KnifeOptions options(const Target& t, const ViewInfo& view) const;
     void finish(bool closed);
@@ -83,6 +84,7 @@ private:
     std::vector<Spot> mPoints;
     std::optional<std::pair<scene::NodeId, Spot>> mHover;
     bool mHoverFirst = false; // the cursor is on the first point, so a click closes the cut
+    bool mDragging = false; // the left button is down on the point just placed, which follows the cursor
     QPointF mCursor;
     std::string mCursorView;
     ViewInfo mView;

@@ -300,6 +300,7 @@ void registerOptimizeCommands()
                     int64_t stored = n.as<int64_t>(scene::MeshNode::kSymmetry);
                     oo.axis = stored >= 1 && stored <= 3 ? int(stored - 1) : 0;
                 }
+                oo.offset = scene::symmetryOffset(n, oo.axis);
                 SymmetryUvResult r = unwrapSymmetric(m, f, set, oo);
                 return {{"islands", r.islands},
                         {"pairs", r.pairs},

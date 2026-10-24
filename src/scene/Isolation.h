@@ -104,4 +104,12 @@ LILA_SCENE_API void setActiveProvider(std::function<const Set*()> provider);
 LILA_SCENE_API const Set* active();
 /** What the active view shows of the node's mesh (its cage, which component ids index). */
 LILA_SCENE_API Visibility activeVisibility(NodeId id, const geo::Mesh& mesh);
+
+/** Commands that make objects out of others (combine, extract) report it, so views isolating any source show the result. */
+LILA_SCENE_API void inherit(const std::vector<NodeId>& made, const std::vector<NodeId>& from);
+/** Called by inherit; returns an id for removeInheritListener. */
+LILA_SCENE_API int addInheritListener(std::function<void(const std::vector<NodeId>& made, const std::vector<NodeId>& from)> fn);
+LILA_SCENE_API void removeInheritListener(int id);
+/** Adds made to the set when it shows any of from whole or in part. True when it changed. */
+LILA_SCENE_API bool inheritInto(Set& set, const std::vector<NodeId>& made, const std::vector<NodeId>& from);
 } // namespace lila::scene::isolation

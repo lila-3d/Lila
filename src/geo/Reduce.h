@@ -21,6 +21,8 @@ struct ReduceOptions
     bool keepHardEdges = true;
     /** -1 off, 0/1/2 to reduce the +x/+y/+z half and mirror it, so the result stays exactly symmetric. */
     int symmetryAxis = -1;
+    /** Where the symmetry plane lies along its axis (the object's pivot). */
+    double symmetryOffset = 0.0;
     /** Points this close to the symmetry plane count as on it. */
     double symmetryTolerance = 1e-4;
     /** Join triangle pairs back into quads where they make good ones. */

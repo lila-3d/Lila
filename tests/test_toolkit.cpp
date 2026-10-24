@@ -125,8 +125,9 @@ TEST_CASE("execute listeners see top-level commands only")
     run("polyCube");
     CHECK(before == 1);
     CHECK(after == 1);
+    run("select", {{"clear", true}});
     CHECK_THROWS_AS(run("polyExtrude"), CommandError);
-    CHECK(after == 2);
+    CHECK(after == 3);
     ops::removeExecuteListener(id);
     uint64_t serial = UndoStack::get().serial();
     run("polyCube");

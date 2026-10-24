@@ -6,6 +6,7 @@
 #include "geo/Ops.h"
 #include "geo/Primitives.h"
 #include "scene/Graph.h"
+#include "scene/Components.h"
 #include "scene/LastOp.h"
 #include "scene/MeshNodes.h"
 
@@ -167,4 +168,37 @@ TEST_CASE("polyInset on every face of a symmetric cube adds rims without duplica
                 run("undo");
             }
         }
+}
+
+TEST_CASE("polyBevel offset adjusts through adjust-last-op and keeps edge mode")
+{
+    scene::lastOp::install();
+    run("newScene");
+    std::string cube = run("polyCube")[0];
+    run("selectMode", {{"args", {"edge"}}});
+    run("selectComponents", {{"args", {cube}}, {"edges", {0}}});
+    ui("polyBevel", {{"offset", 2}});
+    auto spread = [&] {
+        double lo = 1e9;
+        const geo::Mesh& m = meshOf(cube);
+        for (Index p = 0; p < m.pointCapacity(); ++p)
+            if (m.pointValid(p))
+                for (int i = 0; i < 3; ++i)
+                    if (std::abs(m.position(p)[i]) > 1e-6 && std::abs(m.position(p)[i]) < 49.9)
+                        lo = std::min(lo, std::abs(m.position(p)[i]));
+        return lo;
+    };
+    CHECK(spread() == doctest::Approx(48.0));
+    CHECK(scene::components::mode() == scene::ComponentMode::Edge);
+    REQUIRE(scene::lastOp::live());
+    scene::lastOp::rerun({{"offset", 10}});
+    CHECK(spread() == doctest::Approx(40.0));
+    // Past what the cube allows, the recorded offset stops at the clamp.
+    scene::lastOp::rerun({{"offset", 500}});
+    const double limit = scene::lastOp::current()->call["offset"].get<double>();
+    CHECK(limit < 100.0);
+    CHECK(limit > 10.0);
+    run("undo");
+    CHECK(scene::components::mode() == scene::ComponentMode::Edge);
+    CHECK(scene::components::selected(scene::Graph::current().find(cube)->id(), scene::ComponentMode::Edge) == std::vector<uint32_t>{0});
 }

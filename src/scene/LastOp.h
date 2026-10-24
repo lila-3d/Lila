@@ -48,6 +48,11 @@ LILA_SCENE_API void clear();
  * and the CommandError is rethrown.
  */
 LILA_SCENE_API void rerun(const json& flags, CallSource source = CallSource::Script);
+/**
+ * Called by a running command whose flag hit a limit (a bevel offset clamped by the mesh): the op records the value
+ * actually used, so adjusting it cannot run past the limit.
+ */
+LILA_SCENE_API void limitFlag(const std::string& name, const json& value);
 
 /** Flags of the op's command the UI can edit: Bool, Int, Float and String. */
 LILA_SCENE_API std::vector<const FlagDef*> editableFlags(const std::string& command);

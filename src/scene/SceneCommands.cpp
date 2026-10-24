@@ -7,6 +7,7 @@
 #include "scene/Anim.h"
 #include "scene/AnimLayer.h"
 #include "scene/Take.h"
+#include "scene/BatchRename.h"
 #include "scene/Camera.h"
 #include "scene/Components.h"
 #include "scene/Deformers.h"
@@ -135,6 +136,7 @@ void registerCommands()
     registerTransferCommands();
     registerBooleanCommands();
     registerSmartJoinCommands();
+    registerBatchRenameCommands();
     registerObjectCommands();
     registerBoundingMeshCommands();
     modifiers::registerCommands();
@@ -171,7 +173,9 @@ void registerCommands()
     ops::registerCommand({
         .name = "namingConvention",
         .doc = "Naming rules for this workspace (.lila/naming.json). Query with no flags; check lists violations; fix "
-               "renames them.",
+               "renames them, whether or not enforcement is on. check and fix cover the given objects and everything under "
+               "them, or the whole scene; referenced nodes keep their names.",
+        .positionalDoc = "[objects]",
         .flags = {
             {"enable", "e", T::Bool, nullptr, "Turn enforcement on or off for the workspace (user prefs if none open)."},
             {"mode", "m", T::String, nullptr, "fix | warn | block"},
@@ -195,10 +199,24 @@ void registerCommands()
             {
                 NamingPolicy policy = graph().namingPolicy();
                 policy.enabled = true;
+                std::vector<NodeId> ids;
+                if (a.positional.empty())
+                    ids = graph().nodes();
+                else
+                    for (const json& o : a.positional)
+                    {
+                        Node* n = graph().find(o.get<std::string>());
+                        if (!n)
+                            throw CommandError("namingConvention: no object '" + o.get<std::string>() + "'");
+                        ids.push_back(n->id());
+                        std::ranges::copy(graph().descendants(n->id()), std::back_inserter(ids));
+                    }
                 json out = json::array();
-                for (NodeId id : graph().nodes())
+                for (NodeId id : ids)
                 {
                     Node* n = graph().node(id);
+                    if (n->referenceId())
+                        continue;
                     std::string was = n->name();
                     std::string want = policy.conform(n->type(), was);
                     if (want == was)

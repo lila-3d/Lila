@@ -153,7 +153,7 @@ SymmetryUvResult unwrapSymmetric(geo::Mesh& mesh, std::span<const Index> faceIds
         return res;
     const int axis = std::clamp(opts.axis, 0, 2);
     const double tol = std::max(1e-4, glm::length(mesh.bounds().size()) * 1e-5);
-    geo::SymmetryMap map = geo::SymmetryMap::persistent(mesh, axis, tol);
+    geo::SymmetryMap map = geo::SymmetryMap::persistent(mesh, axis, tol, nullptr, opts.offset);
 
     if (opts.mirrorSeams)
         res.seamsAdded = symmetricSeams(mesh, map, faces);

@@ -231,10 +231,10 @@ void RetopoDrawTool::refresh()
         int64_t axis = n->as<int64_t>(scene::MeshNode::kSymmetry);
         if (axis > 0 && axis <= 3)
         {
-            // The object-space plane through the origin, carried into world space.
+            // The object-space plane through the pivot, carried into world space.
             glm::dvec3 nl(0.0);
             nl[int(axis - 1)] = 1.0;
-            glm::dvec3 o = glm::dvec3(mRetopoWorld * glm::dvec4(0, 0, 0, 1));
+            glm::dvec3 o = glm::dvec3(mRetopoWorld * glm::dvec4(nl * scene::symmetryOffset(*n, int(axis - 1)), 1.0));
             glm::dvec3 nw = glm::normalize(glm::transpose(glm::inverse(glm::dmat3(mRetopoWorld))) * nl);
             mSymmetry = geo::SymmetryPlane{nw, glm::dot(nw, o)};
         }

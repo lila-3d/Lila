@@ -25,6 +25,8 @@ struct SymmetryUvOptions
 {
     /** 0, 1 or 2: the mesh's persistent symmetry layer for that axis (built when missing). */
     int axis = 0;
+    /** Where the plane lies along the axis (the object's pivot). */
+    double offset = 0.0;
     MirrorUvMode mode = MirrorUvMode::Flip;
     UnwrapOptions unwrap;
     /** Seams are mirrored across the plane first, so islands pair up. */

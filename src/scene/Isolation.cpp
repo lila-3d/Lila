@@ -386,6 +386,41 @@ std::vector<uint8_t> subdividedFaces(const geo::Mesh& base, int levels, const st
 
 void setActiveProvider(std::function<const Set*()> p) { provider() = std::move(p); }
 
+namespace
+{
+std::map<int, std::function<void(const std::vector<NodeId>&, const std::vector<NodeId>&)>>& inheritListeners()
+{
+    static std::map<int, std::function<void(const std::vector<NodeId>&, const std::vector<NodeId>&)>> l;
+    return l;
+}
+} // namespace
+
+void inherit(const std::vector<NodeId>& made, const std::vector<NodeId>& from)
+{
+    auto listeners = inheritListeners();
+    for (auto& [id, fn] : listeners)
+        fn(made, from);
+}
+
+int addInheritListener(std::function<void(const std::vector<NodeId>&, const std::vector<NodeId>&)> fn)
+{
+    static int next = 0;
+    inheritListeners()[++next] = std::move(fn);
+    return next;
+}
+
+void removeInheritListener(int id) { inheritListeners().erase(id); }
+
+bool inheritInto(Set& set, const std::vector<NodeId>& made, const std::vector<NodeId>& from)
+{
+    if (!set.active() || std::ranges::none_of(from, [&](NodeId id) { return set.nodes.contains(id); }))
+        return false;
+    for (NodeId id : made)
+        set.nodes.insert(id);
+    set.touch();
+    return true;
+}
+
 const Set* active()
 {
     const Set* s = provider() ? provider()() : nullptr;

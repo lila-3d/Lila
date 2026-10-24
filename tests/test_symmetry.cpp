@@ -400,3 +400,28 @@ TEST_CASE("symmetryRebuild mirrors the kept side of an asymmetric mesh")
         CHECK(run("meshInfo", {{"args", {cube}}})["faces"].get<int>() == extruded);
     }
 }
+
+TEST_CASE("symmetryRebuild and symmetryCheck use the plane through the pivot")
+{
+    run("newScene");
+    std::string cube = run("polyCube", {{"subdivisionsX", 2}})[0];
+    // The geometry sits 30 cm along +X of the origin with the pivot at its centre, as on a part modelled in place.
+    run("selectComponents", {{"args", {cube}}, {"faces", {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}}});
+    run("moveComponents", {{"by", {30.0, 0.0, 0.0}}});
+    scene::Graph& g = scene::Graph::current();
+    g.setValue({g.find(cube)->id(), scene::Transform::kRotatePivot, -1}, glm::dvec3(30.0, 0.0, 0.0));
+    run("select", {{"args", {cube}}});
+    run("selectMode", {{"args", {"object"}}});
+
+    json out = run("symmetryRebuild", {{"args", {cube}}});
+    CHECK(out[cube].get<int>() == 0);
+    const geo::Mesh m = outMesh(cube);
+    CHECK(m.numFaces() == 10);
+    CHECK(m.bounds().min.x == doctest::Approx(-20.0));
+    CHECK(m.bounds().max.x == doctest::Approx(80.0));
+
+    run("setSymmetry", {{"args", {cube}}, {"axis", "x"}});
+    json c = run("symmetryCheck", {{"args", {cube}}})[cube];
+    CHECK(c["unmatched"].get<int>() == 0);
+    CHECK(c["maxAsymmetry"].get<double>() < 1e-9);
+}

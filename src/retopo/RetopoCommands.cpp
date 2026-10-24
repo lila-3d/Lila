@@ -69,10 +69,7 @@ std::optional<geo::SymmetryPlane> symmetryPlane(const Node& n)
     int64_t axis = n.as<int64_t>(MeshNode::kSymmetry);
     if (axis <= 0 || axis > 3)
         return std::nullopt;
-    geo::SymmetryPlane plane;
-    plane.normal = glm::dvec3(0.0);
-    plane.normal[int(axis - 1)] = 1.0;
-    return plane;
+    return geo::axisPlane(int(axis - 1), symmetryOffset(n, int(axis - 1)));
 }
 
 double symmetryTolerance(const geo::Mesh& m) { return std::max(1e-4, glm::length(m.bounds().size()) * 1e-5); }
@@ -520,7 +517,7 @@ void registerCommands()
                 std::vector<Index> activeIds;
                 if (int64_t axis = n.as<int64_t>(MeshNode::kSymmetry); axis >= 1 && axis <= 3)
                 {
-                    map = geo::SymmetryMap::persistent(m, int(axis - 1), symmetryTolerance(m));
+                    map = geo::SymmetryMap::persistent(m, int(axis - 1), symmetryTolerance(m), nullptr, symmetryOffset(n, int(axis - 1)));
                     for (Index p = 0; p < ro.active.size(); ++p)
                         if (ro.active[p])
                             activeIds.push_back(p);

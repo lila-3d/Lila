@@ -59,8 +59,8 @@ LILA_UI_API nlohmann::json resolve(const std::string& name);
 LILA_UI_API std::vector<std::string> contributedNames();
 
 /**
- * Which viewport menu a press opens: base + "Object" over an object, base + "Empty" over nothing. In a component mode
- * it is always the "Object" menu, since that is the component menu and the empty one is for object mode.
+ * Which viewport menu a press opens: base + "Object" over an object or with something selected, base + "Empty" otherwise.
+ * In a component mode it is always the "Object" menu, since that is the component menu and the empty one is for object mode.
  */
 LILA_UI_API std::string viewportMenuName(const std::string& base, bool overObject, bool componentMode);
 } // namespace markingMenus
@@ -74,7 +74,13 @@ LILA_UI_API std::string viewportMenuName(const std::string& base, bool overObjec
  *   { "N": {"label": "...", "action": <target>}, "NE": {..., "children": {<same shape>}}, "overflow": [ {...} ] }
  * An overflow item {"insert": "cameraNodes"} becomes one Look Through item per camera node in the scene, and
  * {"insert": "materials"} one Assign item per material (its option box shows the material in the Material Editor).
- * An overflow item {"separator": true} is a divider line between groups of rows.
+ * An overflow item {"separator": true} is a divider line between groups of rows, and {"column": true} starts a new
+ * column beside the previous one, so a long list spreads sideways instead of down.
+ * "outer": {"N": [ {...}, ... ]} stacks items outward beyond a compass slot (any but S, which has the overflow). They
+ * are picked by pointing at them, never by a flick, so they suit relatives of the slot's command (Merge to Center past
+ * Merge).
+ * "objectMode", "vertexMode", "edgeMode" and "faceMode" hold slots that replace the regular ones in that mode, and
+ * overflow rows that go in front of the regular ones (viewport menus only).
  * An overflow item with "children" cascades: its list opens to the right when the cursor reaches the row's arrow.
  * "optionAction" gives an item an option box that runs that target instead of the action's options dialog. An item
  * whose action is disabled (Action::enabled), or that has "enabled": false, is greyed out and can't be picked.
@@ -123,6 +129,8 @@ private:
         QRectF rect;
         bool enabled = true; // drawn greyed and never highlighted when false
         bool separator = false; // an overflow divider line: no label, never highlighted
+        bool column = false; // starts a new overflow column: never drawn or highlighted
+        int outerSlot = -1; // the compass slot an outer ring item stacks beyond, -1 for a plain overflow row
         QRectF box; // the option box square at the right end of rect, empty when the action has none
         nlohmann::json boxAction; // what the option box runs; null runs the action's options dialog
     };
@@ -135,12 +143,14 @@ private:
     };
 
     MarkingMenu(const nlohmann::json& def, Trigger trigger, Qt::MouseButton button, QPoint at);
+    ~MarkingMenu() override;
     Level buildLevel(const nlohmann::json& def, QPointF center, std::optional<QPointF> cascade = std::nullopt) const;
     void layout(Level& level) const;
     void updateHighlight(QPointF pos);
     Item* highlighted();
 
     std::vector<Level> mLevels;
+    QString mStatus; // the highlighted action's doc, shown in the main window's status bar
     QPointF mCursor;
     int mSlot = -1;     // highlighted compass slot on the top level
     int mOverflow = -1; // highlighted overflow row

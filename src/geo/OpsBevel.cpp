@@ -684,6 +684,8 @@ std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const 
             offset = lo * (1.0 - kClampMargin);
         }
     }
+    if (opts.appliedOffset)
+        *opts.appliedOffset = offset;
     if (offset <= 0.0)
         return {};
 

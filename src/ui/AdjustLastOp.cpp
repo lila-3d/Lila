@@ -152,6 +152,7 @@ void LastOpEditor::rebuild()
         delete item;
     }
     mPending = json::object();
+    mShow.clear();
     const lo::Op* op = lo::current();
     mCommand = op ? op->command : std::string();
     if (!op)
@@ -179,6 +180,7 @@ void LastOpEditor::rebuild()
         std::string name = f->name;
         FlagFieldWidgets w = makeFlagField(ops::options::fieldFor(*f), lo::flagValue(*op, *f), [this, name](const json& v) { setFlag(name, v); },
                                            mFields);
+        mShow[name] = w.set;
         if (w.label)
         {
             grid->addWidget(w.label, row, 0);
@@ -223,6 +225,11 @@ void LastOpEditor::applyPending()
     {
         lo::rerun(flags);
         mSelfRerun = false;
+        // A value the command had to limit shows as the limit, so the field stops where the mesh does.
+        if (const lo::Op* op = lo::current())
+            for (auto& [k, v] : flags.items())
+                if (auto used = op->call.find(k); used != op->call.end() && *used != v && mShow.count(k) && mShow[k])
+                    mShow[k](*used);
         mStatus->clear();
         mEcho->start();
     }

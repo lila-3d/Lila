@@ -3,7 +3,6 @@
   "W": { "label": "Vertex", "action": "select.vertexMode" },
   "S": { "label": "Face", "action": "select.faceMode" },
   "NE": { "label": "Object Mode", "action": "select.objectMode" },
-  "E": { "label": "Frame Selected", "action": "viewport.frameSelected" },
   "SE": { "label": "Delete", "action": "edit.delete" },
   "SW": { "label": "Grow", "action": "select.grow" },
   "overflow": [

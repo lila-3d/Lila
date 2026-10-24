@@ -576,6 +576,14 @@ ReduceResult reduceMesh(const Mesh& mesh, const ReduceOptions& opts)
     m.compact();
     const double tol = std::max(0.0, opts.symmetryTolerance);
     bool symmetric = opts.symmetryAxis >= 0 && opts.symmetryAxis < 3;
+    // The halves are found and mirrored about the origin, so the plane is moved there for the run.
+    const double shift = symmetric ? opts.symmetryOffset : 0.0;
+    auto shiftBy = [&](double d) {
+        if (d != 0.0)
+            for (glm::dvec3& p : m.positions())
+                p[opts.symmetryAxis] += d;
+    };
+    shiftBy(-shift);
     if (symmetric && !splitsCleanly(m, opts.symmetryAxis, tol))
     {
         symmetric = false;
@@ -659,6 +667,7 @@ ReduceResult reduceMesh(const Mesh& mesh, const ReduceOptions& opts)
         clearSymmetryKeys(m, firstNew);
         m.compact();
     }
+    shiftBy(shift);
     return r;
 }
 } // namespace lila::geo

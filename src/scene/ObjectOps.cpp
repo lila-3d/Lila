@@ -227,6 +227,14 @@ void registerObjectCommands()
         },
     });
 
+    // What the last hide hid, for showLastHidden.
+    struct LastHidden
+    {
+        const Graph* graph = nullptr;
+        std::vector<NodeId> ids;
+    };
+    static LastHidden lastHidden;
+
     ops::registerCommand({
         .name = "hide",
         .doc = "Hide objects (visibility off). Defaults to the selection.",
@@ -234,10 +242,35 @@ void registerObjectCommands()
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             UndoChunk chunk("Hide");
+            std::vector<NodeId> hidden;
             for (const std::string& name : a.objects())
                 if (Node& n = nodeNamed(name, "hide"); n.type().isA("transform"))
+                {
                     g.setValue({n.id(), Transform::kVisibility, -1}, false);
+                    hidden.push_back(n.id());
+                }
+            if (!hidden.empty())
+                lastHidden = {&g, std::move(hidden)};
             return nullptr;
+        },
+    });
+
+    ops::registerCommand({
+        .name = "showLastHidden",
+        .doc = "Show the objects the last hide (or hiding toggle) hid. Returns them.",
+        .run = [](const Args&) -> json {
+            Graph& g = graph();
+            UndoChunk chunk("Show Last Hidden");
+            json out = json::array();
+            if (lastHidden.graph != &g)
+                return out;
+            for (NodeId id : lastHidden.ids)
+                if (Node* n = g.node(id); n && n->type().isA("transform"))
+                {
+                    g.setValue({id, Transform::kVisibility, -1}, true);
+                    out.push_back(n->path());
+                }
+            return out;
         },
     });
 
@@ -263,6 +296,8 @@ void registerObjectCommands()
             for (NodeId id : ids)
                 if (g.node(id)->as<bool>(Transform::kVisibility) != show)
                     g.setValue({id, Transform::kVisibility, -1}, show);
+            if (!show)
+                lastHidden = {&g, ids};
             return show;
         },
     });

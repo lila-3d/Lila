@@ -45,6 +45,24 @@ struct ExtrudeResult
 
 LILA_SCENE_API ExtrudeResult extrudeFaces(Mesh& mesh, std::span<const Index> faces, const ExtrudeOptions& opts = {});
 
+struct EdgeExtrudeOptions
+{
+    /** Distance along the normals of the faces each edge borders. */
+    double thickness = 0.0;
+    /** Distance outward from those faces, in their plane. */
+    double offset = 0.0;
+    const SymmetryMap* symmetry = nullptr;
+};
+
+struct EdgeExtrudeResult
+{
+    std::vector<Index> edges; // the new outer edges
+    std::vector<Index> faces; // the new strip faces
+};
+
+/** Grows a strip of quads off each selected edge; edges that share a point share the new point. */
+LILA_SCENE_API EdgeExtrudeResult extrudeEdges(Mesh& mesh, std::span<const Index> edges, const EdgeExtrudeOptions& opts = {});
+
 struct InsetOptions
 {
     /** Inward distance in the face plane. */
@@ -70,6 +88,8 @@ struct BevelOptions
     /** New edges sharper than this are marked hard; negative leaves them soft. */
     double smoothingAngle = 30.0;
     const SymmetryMap* symmetry = nullptr;
+    /** When set, receives the offset actually used after clamping. */
+    double* appliedOffset = nullptr;
 };
 
 /** Bevels manifold edges. Returns the new bevel and corner faces. */
@@ -217,11 +237,11 @@ LILA_SCENE_API void cutAtPlane(Mesh& mesh, const SymmetryPlane& plane, int keepS
 LILA_SCENE_API std::vector<Index> mirrorMesh(Mesh& mesh, const MirrorOptions& opts = {});
 
 /**
- * Rebuilds the mesh symmetric about an axis plane through the origin: the side opposite keepSign (+1 or -1) is cut
+ * Rebuilds the mesh symmetric about an axis plane at offset along the axis: the side opposite keepSign (+1 or -1) is cut
  * away and replaced by the mirror of the kept side, welded on the plane. Compacts the mesh and stores the exact pairs
  * in the axis's symmetry layer (other axes' layers are dropped). Returns the map.
  */
-LILA_SCENE_API SymmetryMap symmetrizeTopology(Mesh& mesh, int axis, int keepSign, double tolerance = 1e-3);
+LILA_SCENE_API SymmetryMap symmetrizeTopology(Mesh& mesh, int axis, int keepSign, double tolerance = 1e-3, double offset = 0.0);
 
 /** A new mesh holding copies of the given faces with all attributes. */
 LILA_SCENE_API Mesh extractFaces(const Mesh& mesh, std::span<const Index> faces);

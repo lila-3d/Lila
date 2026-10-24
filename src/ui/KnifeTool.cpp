@@ -219,7 +219,7 @@ void KnifeTool::refresh()
         {
             geo::Mesh copy = *cage;
             const double tol = std::max(1e-4, glm::length(copy.bounds().size()) * 1e-5);
-            t.symmetry = geo::SymmetryMap::persistent(copy, int(axis - 1), tol);
+            t.symmetry = geo::SymmetryMap::persistent(copy, int(axis - 1), tol, nullptr, scene::symmetryOffset(*n, int(axis - 1)));
         }
     }
     if (mNode != scene::kNoNode && (!mTargets.contains(mNode) || !mTargets[mNode].mesh))
@@ -243,11 +243,12 @@ bool KnifeTool::visible(const Target& t, const glm::dvec3& world, const ViewInfo
     return len <= slack || !t.bvh.occluded(view.eye, d / len, len - slack);
 }
 
-QPointF KnifeTool::constrained(QPointF px, const ViewInfo& view) const
+/** Constrains px to the angle steps around point from - 1 (none for 0). */
+QPointF KnifeTool::constrained(QPointF px, const ViewInfo& view, size_t from) const
 {
-    if (!mAngle || mPoints.empty())
+    if (!mAngle || from == 0 || from > mPoints.size())
         return px;
-    std::optional<QPointF> last = view.project(mPoints.back().world);
+    std::optional<QPointF> last = view.project(mPoints[from - 1].world);
     if (!last)
         return px;
     const QPointF v = px - *last;
@@ -358,6 +359,7 @@ void KnifeTool::cancel()
     mPoints.clear();
     mNode = scene::kNoNode;
     mHoverFirst = false;
+    mDragging = false;
 }
 
 void KnifeTool::finish(bool closed)
@@ -442,13 +444,14 @@ bool KnifeTool::mousePress(QMouseEvent* e, const ViewInfo& view)
         finish(true);
         return true;
     }
-    auto h = pick(constrained(e->position(), view), view, mods & Qt::ShiftModifier);
+    auto h = pick(constrained(e->position(), view, mPoints.size()), view, mods & Qt::ShiftModifier);
     if (!h || (mNode != scene::kNoNode && h->first != mNode))
         return true;
     if (!mPoints.empty() && samePoint(mPoints.back().point, h->second.point))
         return true;
     mNode = h->first;
     mPoints.push_back(h->second);
+    mDragging = true;
     viewportTools::requestRedraw();
     return true;
 }
@@ -461,16 +464,37 @@ bool KnifeTool::mouseMove(QMouseEvent* e, const ViewInfo& view)
     refresh();
     const Qt::KeyboardModifiers mods = e->modifiers();
     mHoverFirst = false;
+    if (mDragging && (e->buttons() & Qt::LeftButton) && !mPoints.empty())
+    {
+        const size_t at = mPoints.size() - 1;
+        if (auto h = pick(constrained(e->position(), view, at), view, mods & Qt::ShiftModifier); h && h->first == mNode)
+            mPoints.back() = h->second;
+        mHover.reset();
+        viewportTools::requestRedraw();
+        return true;
+    }
+    mDragging = false;
     if (mPoints.size() >= 3 && !(mods & Qt::ControlModifier))
         if (std::optional<QPointF> first = view.project(mPoints.front().world); first && distPx(*first, e->position()) < kVertexRadius)
             mHoverFirst = true;
-    const QPointF at = mods & Qt::ControlModifier ? e->position() : constrained(e->position(), view);
+    const QPointF at = mods & Qt::ControlModifier ? e->position() : constrained(e->position(), view, mPoints.size());
     mHover = pick(at, view, mods & Qt::ShiftModifier);
     viewportTools::requestRedraw();
     return true;
 }
 
-bool KnifeTool::mouseRelease(QMouseEvent*, const ViewInfo&) { return true; }
+bool KnifeTool::mouseRelease(QMouseEvent* e, const ViewInfo&)
+{
+    if (e->button() == Qt::LeftButton && mDragging)
+    {
+        mDragging = false;
+        // Dragged back onto the point before it: the point adds nothing.
+        if (mPoints.size() >= 2 && samePoint(mPoints.back().point, mPoints[mPoints.size() - 2].point))
+            mPoints.pop_back();
+        viewportTools::requestRedraw();
+    }
+    return true;
+}
 
 bool KnifeTool::keyPress(QKeyEvent* e, const ViewInfo& view)
 {

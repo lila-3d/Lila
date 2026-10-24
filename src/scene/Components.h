@@ -29,6 +29,8 @@ using Ids = std::vector<uint32_t>;
 LILA_SCENE_API ComponentMode mode();
 /** Not undoable, like Maya's selectMode. */
 LILA_SCENE_API void setMode(ComponentMode m);
+/** setMode recorded on the undo stack, for commands that switch mode as part of an edit. */
+LILA_SCENE_API void setModeUndoable(ComponentMode m);
 LILA_SCENE_API const char* modeName(ComponentMode m);
 LILA_SCENE_API ComponentMode modeFromName(const std::string& name); // throws std::invalid_argument
 
@@ -51,8 +53,11 @@ LILA_SCENE_API void setAll(std::map<NodeId, Ids> points, std::map<NodeId, Ids> e
 /** Points touched by the node's selection of the current mode (verts as is, edge ends, face corners). */
 LILA_SCENE_API Ids pointsOf(NodeId node);
 
-/** Maya's polyListComponentConversion: edges/faces to their points, points to edges/faces they fully cover. */
-LILA_SCENE_API Ids convert(const geo::Mesh& mesh, ComponentMode from, const Ids& ids, ComponentMode to);
+/**
+ * Maya's polyListComponentConversion: edges/faces to their points, points to edges/faces they fully cover, or with
+ * touching to every edge/face that shares a point with them (Edge to Face: every face bordering an edge).
+ */
+LILA_SCENE_API Ids convert(const geo::Mesh& mesh, ComponentMode from, const Ids& ids, ComponentMode to, bool touching = false);
 
 LILA_SCENE_API int addListener(std::function<void()> fn);
 LILA_SCENE_API void removeListener(int id);

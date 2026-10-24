@@ -1,7 +1,10 @@
 {
-  "N": {"label": "Edit Pivot", "action": "tool.pivotEditToggle"},
-  "E": {"label": "Reset Pivot", "action": "modify.resetPivot"},
-  "S": {"label": "Soft Select", "action": "softSelect.toggle"},
-  "W": {"label": "Center Pivot", "action": "modify.centerPivot"},
+  "N": { "label": "World", "action": "manip.scale.world" },
+  "W": { "label": "Object", "action": "manip.scale.object" },
+  "E": { "label": "Component", "action": "manip.scale.component" },
+  "S": { "label": "Edit Pivot", "action": "tool.pivotEditToggle" },
+  "SE": { "label": "Soft Select", "action": "softSelect.toggle" },
+  "SW": { "label": "Reset Pivot", "action": "modify.resetPivot" },
+  "NW": { "label": "Center Pivot", "action": "modify.centerPivot" },
   "overflow": []
 }

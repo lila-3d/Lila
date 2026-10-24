@@ -7,25 +7,36 @@
   "NW": { "label": "Fill Hole", "action": "mesh.fillHole" },
   "W": { "label": "Knife", "action": "mesh.knife" },
   "SW": { "label": "Dissolve", "action": "mesh.dissolve" },
+  "outer": {
+    "N": [{ "label": "Merge to Center", "action": "mesh.mergeCenter" }, { "label": "Collapse", "action": "mesh.collapse" }],
+    "E": [{ "label": "Inset", "action": "mesh.inset" }],
+    "SW": [{ "label": "Poke", "action": "mesh.poke" }]
+  },
+  "objectMode": {
+    "NW": { "label": "Sculpt", "action": "sculpt.tool" }
+  },
+  "faceMode": {
+    "overflow": [
+      { "label": "Duplicate Faces", "action": "mesh.duplicateFaces" },
+      { "label": "Extract Faces", "action": "mesh.extract" },
+      { "separator": true }
+    ]
+  },
   "overflow": [
-    { "label": "Inset", "action": "mesh.inset" },
-    { "label": "Merge to Center", "action": "mesh.mergeCenter" },
-    { "label": "Collapse", "action": "mesh.collapse" },
-    { "label": "Poke", "action": "mesh.poke" },
     { "label": "Spin Edge", "action": "mesh.spin" },
-    { "separator": true },
     { "label": "Flip Normals", "action": "mesh.flip" },
     { "label": "Conform Normals", "action": "mesh.conform" },
     { "separator": true },
+    { "label": "Subdivide", "action": "mesh.subdivide" },
     { "label": "Triangulate", "action": "mesh.triangulate" },
     { "label": "Quadrangulate", "action": "mesh.quadrangulate" },
-    { "label": "Subdivide", "action": "mesh.subdivide" },
-    { "separator": true },
+    { "column": true },
     { "label": "Mirror", "action": "mesh.mirror" },
     { "label": "Separate", "action": "mesh.separate" },
     { "label": "Combine", "action": "mesh.combine" },
     { "separator": true },
     { "label": "Symmetry X", "action": "mesh.symmetryX" },
-    { "label": "Symmetry Off", "action": "mesh.symmetryOff" }
+    { "label": "Symmetry Off", "action": "mesh.symmetryOff" },
+    { "label": "Rebuild Symmetry", "action": "mesh.symmetryRebuild" }
   ]
 }

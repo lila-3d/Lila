@@ -43,6 +43,12 @@ double flag(const char* name)
     return 0.0;
 }
 
+/** Face or edge, whichever extrude is live in. */
+scene::ComponentMode extrudeKind()
+{
+    return scene::components::mode() == scene::ComponentMode::Edge ? scene::ComponentMode::Edge : scene::ComponentMode::Face;
+}
+
 double handlePixels() { return PrefStore::get().value<double>("general", "/manipulator/size", 100.0); }
 
 double segmentDistance(QPointF p, QPointF a, QPointF b)
@@ -60,8 +66,9 @@ bool ExtrudeHandles::active() const
     if (dragging())
         return true;
     const lo::Op* op = lo::current();
-    return op && op->command == kCommand && lo::live() && scene::components::mode() == scene::ComponentMode::Face &&
-           !scene::components::selected(scene::ComponentMode::Face).empty();
+    return op && op->command == kCommand && lo::live() &&
+           (scene::components::mode() == scene::ComponentMode::Face || scene::components::mode() == scene::ComponentMode::Edge) &&
+           !scene::components::selected(extrudeKind()).empty();
 }
 
 bool ExtrudeHandles::frame(Frame& f) const
@@ -70,9 +77,10 @@ bool ExtrudeHandles::frame(Frame& f) const
 
     scene::Graph& g = scene::Graph::current();
     g.evaluate();
-    glm::dvec3 normalSum(0.0);
+    const bool edges = extrudeKind() == scene::ComponentMode::Edge;
+    glm::dvec3 normalSum(0.0), outSum(0.0);
     bool scaled = false;
-    for (auto& [node, ids] : scene::components::selected(scene::ComponentMode::Face))
+    for (auto& [node, ids] : scene::components::selected(extrudeKind()))
     {
         scene::Node* n = g.node(node);
         scene::MeshPtr cage = n && n->type().isA("mesh") ? scene::modifiers::cage(g, node) : nullptr;
@@ -82,13 +90,32 @@ bool ExtrudeHandles::frame(Frame& f) const
         glm::dmat3 w(n->as<glm::dmat4>(scene::Transform::kWorldMatrix));
         glm::dmat3 normalXform = glm::transpose(glm::inverse(w));
         glm::dvec3 localSum(0.0);
-        for (geo::Index face : ids)
+        for (geo::Index id : ids)
+        {
+            geo::Index face = id;
+            if (edges)
+            {
+                // A selected edge is a strip's outer edge; the strip starts flat, so the face it grew from sets the frame.
+                if (id >= m.edgeCapacity() || !m.edgeValid(id) || m.edgeCorner(id) == geo::kInvalid)
+                    continue;
+                geo::Index from = geo::kInvalid;
+                m.forEachFaceCorner(m.cornerFace(m.edgeCorner(id)), [&](geo::Index c) {
+                    if (const geo::Index r = m.cornerRadial(c); r != c && from == geo::kInvalid)
+                        from = r;
+                });
+                if (from == geo::kInvalid)
+                    continue;
+                face = m.cornerFace(from);
+                const glm::dvec3 d = m.position(m.cornerNextPoint(from)) - m.position(m.cornerPoint(from));
+                outSum += w * glm::cross(d, m.faceNormal(face)) / std::max(1e-12, glm::length(d));
+            }
             if (face < m.faceCapacity() && m.faceValid(face))
             {
                 glm::dvec3 nl = m.faceNormal(face);
                 localSum += nl;
                 normalSum += normalXform * nl;
             }
+        }
         if (!scaled && glm::length(localSum) > 1e-12)
         {
             // Thickness is in the mesh's own units along its own normals.
@@ -108,6 +135,9 @@ bool ExtrudeHandles::frame(Frame& f) const
     glm::dvec3 t1 = glm::normalize(glm::cross(f.normal, ref));
     glm::dvec3 t2 = glm::cross(f.normal, t1);
     f.side = glm::normalize(t1 + t2);
+    if (edges)
+        if (glm::dvec3 o = outSum - f.normal * glm::dot(outSum, f.normal); glm::length(o) > 1e-9)
+            f.side = glm::normalize(o);
     return true;
 }
 
@@ -210,7 +240,9 @@ void ExtrudeHandles::drag(QPointF px, const ViewInfo& view)
     const Frame& f = mDrag.frame;
     double moved = (gizmo::lineParam(f.center, thickness ? f.normal : f.side, o, dir) - mDrag.startParam) / f.worldPerLocal;
     // Pulling the offset square toward the centre insets the cap further.
-    double value = thickness ? mDrag.startThickness + moved : mDrag.startOffset - moved;
+    // Edges offset outward, so their square pulls the other way.
+    const double sign = extrudeKind() == scene::ComponentMode::Edge ? 1.0 : -1.0;
+    double value = thickness ? mDrag.startThickness + moved : mDrag.startOffset + sign * moved;
     if (IncrementSnap inc = tools::incrementSnap(Tool::Move); inc.enabled && !(tools::snaps() & (SnapGrid | SnapEdge | SnapVertex)))
         value = gizmo::snapValue(value, inc.step);
     if (std::abs(value - mDrag.value) < 1e-9)

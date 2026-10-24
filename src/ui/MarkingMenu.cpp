@@ -15,12 +15,15 @@
 #include <QClipboard>
 #include <QCursor>
 #include <QKeyEvent>
+#include <QMainWindow>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QScreen>
+#include <QStatusBar>
 #include <QTimer>
 
+#include <algorithm>
 #include <cmath>
 
 namespace lila::ui
@@ -48,6 +51,17 @@ bool hasOptionBox(const json& action, const json& children, const json& boxActio
 }
 
 MarkingMenu* gActive = nullptr;
+
+void showStatus(const QString& text)
+{
+    for (QWidget* w : QApplication::topLevelWidgets())
+        if (auto* mw = qobject_cast<QMainWindow*>(w))
+            if (mw->statusBar())
+            {
+                text.isEmpty() ? mw->statusBar()->clearMessage() : mw->statusBar()->showMessage(text);
+                return;
+            }
+}
 } // namespace
 
 MarkingMenu* MarkingMenu::active()
@@ -234,6 +248,14 @@ MarkingMenu* MarkingMenu::popupDefinition(const json& def, Trigger trigger, Qt::
     return mm;
 }
 
+MarkingMenu::~MarkingMenu()
+{
+    if (!mStatus.isEmpty())
+        showStatus({});
+    if (gActive == this)
+        gActive = nullptr;
+}
+
 MarkingMenu::MarkingMenu(const json& def, Trigger trigger, Qt::MouseButton button, QPoint at)
     : QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::NoDropShadowWindowHint),
       mTrigger(trigger), mButton(button)
@@ -288,10 +310,23 @@ MarkingMenu::Level MarkingMenu::buildLevel(const json& def, QPointF center, std:
         {
             if (!j.is_object())
                 continue;
+            if (j.value("column", false))
+            {
+                if (!level.overflow.empty() && level.overflow.back().separator)
+                    level.overflow.pop_back();
+                if (!level.overflow.empty() && !level.overflow.back().column)
+                {
+                    Item col;
+                    col.column = true;
+                    col.enabled = false;
+                    level.overflow.push_back(std::move(col));
+                }
+                continue;
+            }
             if (j.value("separator", false))
             {
                 // Never leading or doubled; a trailing one is dropped after the loop.
-                if (!level.overflow.empty() && !level.overflow.back().separator)
+                if (!level.overflow.empty() && !level.overflow.back().separator && !level.overflow.back().column)
                 {
                     Item sep;
                     sep.separator = true;
@@ -327,8 +362,23 @@ MarkingMenu::Level MarkingMenu::buildLevel(const json& def, QPointF center, std:
             }
             level.overflow.push_back(toItem(j));
         }
-    if (!level.overflow.empty() && level.overflow.back().separator)
+    while (!level.overflow.empty() && (level.overflow.back().separator || level.overflow.back().column))
         level.overflow.pop_back();
+    // Outer ring items share the overflow rows' picking and drawing, so they go after them.
+    if (const json& outer = def.value("outer", json()); outer.is_object() && !cascade)
+        for (int i = 0; i < 8; ++i)
+        {
+            if (i == 4 || !outer.contains(kSlotNames[i]))
+                continue;
+            const json& items = outer[kSlotNames[i]];
+            for (const json& j : items.is_array() ? items : json::array({items}))
+                if (j.is_object())
+                {
+                    Item it = toItem(j);
+                    it.outerSlot = i;
+                    level.overflow.push_back(std::move(it));
+                }
+        }
     layout(level);
     return level;
 }
@@ -349,35 +399,93 @@ void MarkingMenu::layout(Level& level) const
         it.box = box ? QRectF(it.rect.right() - kBoxWidth, it.rect.top(), kBoxWidth, it.rect.height()) : QRectF();
     }
 
-    double y = level.compass[4] ? level.compass[4]->rect.bottom() + 10 : level.center.y() + kRadius + 10;
-    double width = 0;
-    bool anyBox = false;
-    for (Item& it : level.overflow)
+    // Each column is as wide as its own widest row, and the columns sit side by side centred under the menu.
+    struct Column
     {
-        width = std::max(width, fm.horizontalAdvance(it.label) + 2 * kPadX + 9 + (it.children.is_object() ? 12 : 0));
-        anyBox |= hasOptionBox(it.action, it.children, it.boxAction);
+        size_t begin = 0, end = 0;
+        double width = 0;
+    };
+    std::vector<Column> columns(1);
+    bool box = false;
+    const size_t rows = std::ranges::find_if(level.overflow, [](const Item& it) { return it.outerSlot >= 0; }) - level.overflow.begin();
+    for (size_t i = 0; i < rows; ++i)
+    {
+        Item& it = level.overflow[i];
+        if (it.column)
+        {
+            columns.back().end = i;
+            columns.back().width += box ? kBoxWidth : 0;
+            columns.push_back({i + 1});
+            box = false;
+            continue;
+        }
+        columns.back().width = std::max(columns.back().width, fm.horizontalAdvance(it.label) + 2 * kPadX + 9 + (it.children.is_object() ? 12 : 0));
+        box |= hasOptionBox(it.action, it.children, it.boxAction);
     }
-    if (anyBox)
-        width += kBoxWidth;
-    double left = level.center.x() - width / 2;
+    columns.back().end = rows;
+    columns.back().width += box ? kBoxWidth : 0;
+    constexpr double kColumnGap = 8.0;
+    double total = -kColumnGap;
+    for (const Column& c : columns)
+        total += c.width + kColumnGap;
+
+    double left = level.center.x() - total / 2;
+    double top = level.compass[4] ? level.compass[4]->rect.bottom() + 10 : level.center.y() + kRadius + 10;
     if (level.cascade)
     {
         left = level.cascade->x();
         // Kept on screen: a long list near the bottom moves up.
-        y = std::max(0.0, std::min(level.cascade->y(), height() - kItemHeight * double(level.overflow.size()) - 4));
+        top = std::max(0.0, std::min(level.cascade->y(), height() - kItemHeight * double(level.overflow.size()) - 4));
     }
-    for (Item& it : level.overflow)
+    for (const Column& c : columns)
     {
-        if (it.separator)
+        double y = top;
+        for (size_t i = c.begin; i < c.end; ++i)
         {
-            it.rect = QRectF(left, y - 1, width, kSeparatorHeight);
-            y += kSeparatorHeight;
-            continue;
+            Item& it = level.overflow[i];
+            if (it.separator)
+            {
+                it.rect = QRectF(left, y - 1, c.width, kSeparatorHeight);
+                y += kSeparatorHeight;
+                continue;
+            }
+            it.rect = QRectF(left, y, c.width, kItemHeight - 2);
+            it.box = hasOptionBox(it.action, it.children, it.boxAction) ? QRectF(it.rect.right() - kBoxWidth, y, kBoxWidth, it.rect.height())
+                                                                         : QRectF();
+            y += kItemHeight;
         }
-        it.rect = QRectF(left, y, width, kItemHeight - 2);
-        it.box = hasOptionBox(it.action, it.children, it.boxAction) ? QRectF(it.rect.right() - kBoxWidth, y, kBoxWidth, it.rect.height())
-                                                                     : QRectF();
-        y += kItemHeight;
+        left += c.width + kColumnGap;
+    }
+
+    // Each outer item stacks beyond the one before it in its slot, starting from the compass item (or where it would be).
+    std::array<QRectF, 8> last;
+    for (int i = 0; i < 8; ++i)
+    {
+        QPointF p = level.center + kDirs[i] * kRadius;
+        last[i] = level.compass[i] ? level.compass[i]->rect : QRectF(p.x() - 30, p.y() - kItemHeight / 2, 60, kItemHeight);
+    }
+    constexpr double kGap = 6.0;
+    for (size_t i = rows; i < level.overflow.size(); ++i)
+    {
+        Item& it = level.overflow[i];
+        const QPointF d = kDirs[it.outerSlot];
+        const QRectF& prev = last[it.outerSlot];
+        const bool box = hasOptionBox(it.action, it.children, it.boxAction);
+        const double w = fm.horizontalAdvance(it.label) + 2 * kPadX + 2 + (box ? kBoxWidth : 0);
+        double x = prev.center().x() - w / 2, y = prev.top();
+        if (std::abs(d.y()) < 0.1)
+            x = d.x() > 0 ? prev.right() + kGap : prev.left() - kGap - w;
+        else
+        {
+            y = d.y() < 0 ? prev.top() - kGap - kItemHeight : prev.bottom() + kGap;
+            if (d.x() > 0.1)
+                x = prev.left() + 16;
+            else if (d.x() < -0.1)
+                x = prev.right() - 16 - w;
+        }
+        it.rect = QRectF(x, y, w, kItemHeight);
+        it.box = box ? QRectF(it.rect.right() - kBoxWidth, it.rect.top(), kBoxWidth, it.rect.height()) : QRectF();
+        last[it.outerSlot] = it.rect;
     }
 }
 
@@ -444,6 +552,12 @@ void MarkingMenu::updateHighlight(QPointF pos)
         mSlot = -1;
         mOverflow = -1;
     }
+    QString status;
+    if (Item* it = highlighted(); it && it->action.is_string())
+        if (const Action* a = actions::find(it->action.get<std::string>()))
+            status = QString::fromStdString(a->doc);
+    if (status != mStatus)
+        showStatus(mStatus = status);
     update();
 }
 
@@ -460,6 +574,8 @@ bool MarkingMenu::release()
         options = mOnBox && !it->box.isEmpty() && (mOverflow >= 0 || (mOnBoxSince.isValid() && mOnBoxSince.elapsed() >= kBoxDwellMs));
     }
     gActive = nullptr;
+    if (!mStatus.isEmpty())
+        showStatus(mStatus = QString());
     releaseMouse();
     releaseKeyboard();
     close();
@@ -543,6 +659,8 @@ void MarkingMenu::paintEvent(QPaintEvent*)
         p.drawEllipse(l.center, 5, 5);
 
         auto drawItem = [&](const Item& it, bool hi, bool radial) {
+            if (it.column)
+                return;
             if (it.separator)
             {
                 p.setPen(QPen(itemBorder, 1));
@@ -581,7 +699,7 @@ void MarkingMenu::paintEvent(QPaintEvent*)
             if (l.compass[i])
                 drawItem(*l.compass[i], top && i == mSlot, true);
         for (int i = 0; i < int(l.overflow.size()); ++i)
-            drawItem(l.overflow[i], top && i == mOverflow, false);
+            drawItem(l.overflow[i], top && i == mOverflow, l.overflow[i].outerSlot >= 0);
     }
 
     p.setOpacity(1.0);
