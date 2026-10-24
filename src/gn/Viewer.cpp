@@ -17,8 +17,9 @@ struct Store
 
 Store& store()
 {
-    static Store s;
-    return s;
+    // Never destroyed: the scene graph's static nodes clear their entries during exit, after this would be gone.
+    static Store* s = new Store;
+    return *s;
 }
 } // namespace
 
