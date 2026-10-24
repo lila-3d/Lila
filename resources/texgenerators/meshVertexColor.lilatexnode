@@ -1,0 +1,23 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "meshVertexColor",
+  "label": "Vertex Color",
+  "category": "Mesh",
+  "doc": "The baked vertex colour map. Reads (u, v, 0) when the map isn't supplied.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [],
+  "cost": 1,
+  "externals": [
+    "vertexColor"
+  ],
+  "body": {
+    "out": "return vertexColor.sample(uv);"
+  }
+}

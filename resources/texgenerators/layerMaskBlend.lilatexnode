@@ -1,0 +1,63 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "layerMaskBlend",
+  "label": "Mask Blend",
+  "category": "Layer",
+  "doc": "One step of a layer's mask stack: blends a mask entry onto the masks below it, by mode and opacity, optionally inverted first.",
+  "inputs": [
+    {
+      "id": "below",
+      "type": "gray",
+      "default": 0.0
+    },
+    {
+      "id": "above",
+      "type": "gray",
+      "default": 1.0
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "mode",
+      "type": "enum",
+      "default": "normal",
+      "options": [
+        "normal",
+        "add",
+        "subtract",
+        "multiply",
+        "screen",
+        "overlay",
+        "darken",
+        "lighten",
+        "difference"
+      ]
+    },
+    {
+      "id": "opacity",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "max": 1
+    },
+    {
+      "id": "invert",
+      "type": "bool",
+      "default": false
+    }
+  ],
+  "cost": 4,
+  "helpers": [
+    "layers"
+  ],
+  "body": {
+    "out": "float b = below.sample(uv);\nfloat f = above.sample(uv);\nif (p.invert)\n    f = 1.0 - f;\nfloat r = layerBlendMode(p.mode, float3(b, b, b), float3(f, f, f)).x;\nreturn saturate(lerp(b, r, saturate(p.opacity)));"
+  }
+}

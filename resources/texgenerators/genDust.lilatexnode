@@ -1,0 +1,221 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "genDust",
+  "label": "Dust",
+  "category": "Generator",
+  "doc": "Dust settling top-down on upward-facing surfaces, less where they are occluded, broken up by clouds.",
+  "kind": "graph",
+  "graph": {
+    "name": "genDust",
+    "typeVersion": 1,
+    "description": "Dust settling top-down on upward-facing surfaces, less where they are occluded, broken up by clouds.",
+    "inputs": [
+      {
+        "name": "worldNormal",
+        "kind": "port",
+        "type": "vector",
+        "default": [
+          0,
+          1,
+          0
+        ],
+        "description": "World normal mesh map (-1 to 1)."
+      },
+      {
+        "name": "ao",
+        "kind": "port",
+        "type": "gray",
+        "default": 1.0,
+        "description": "Ambient occlusion mesh map."
+      },
+      {
+        "name": "upAxis",
+        "kind": "param",
+        "type": "enum",
+        "default": "y",
+        "targets": [
+          "Facing.upAxis"
+        ],
+        "options": [
+          "y",
+          "z"
+        ]
+      },
+      {
+        "name": "aoInfluence",
+        "kind": "param",
+        "type": "float",
+        "default": 0.5,
+        "targets": [
+          "Ao.weightB"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "level",
+        "kind": "param",
+        "type": "float",
+        "default": 0.6,
+        "targets": [
+          "Remap.level"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "softness",
+        "kind": "param",
+        "type": "float",
+        "default": 0.5,
+        "targets": [
+          "Remap.softness"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "breakup",
+        "kind": "param",
+        "type": "float",
+        "default": 0.4,
+        "targets": [
+          "Remap.breakup"
+        ],
+        "min": 0,
+        "softMax": 2
+      },
+      {
+        "name": "noiseScale",
+        "kind": "param",
+        "type": "int",
+        "default": 6,
+        "targets": [
+          "Noise.scale"
+        ],
+        "min": 1,
+        "softMax": 64
+      },
+      {
+        "name": "seed",
+        "kind": "param",
+        "type": "seed",
+        "default": 0,
+        "targets": [
+          "Noise.seed"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "mask",
+        "type": "gray"
+      }
+    ],
+    "nodes": [
+      {
+        "name": "GroupInput",
+        "type": "GroupInput",
+        "position": [
+          -400,
+          0
+        ]
+      },
+      {
+        "name": "GroupOutput",
+        "type": "GroupOutput",
+        "position": [
+          360,
+          0
+        ]
+      },
+      {
+        "name": "Facing",
+        "type": "maskFacing",
+        "position": [
+          -200,
+          0
+        ],
+        "values": {
+          "elevation": 90.0
+        }
+      },
+      {
+        "name": "Noise",
+        "type": "clouds",
+        "position": [
+          -80,
+          0
+        ],
+        "values": {
+          "scale": 6
+        }
+      },
+      {
+        "name": "Remap",
+        "type": "maskRemap",
+        "position": [
+          40,
+          0
+        ],
+        "values": {
+          "level": 0.6,
+          "softness": 0.5,
+          "breakup": 0.4
+        }
+      },
+      {
+        "name": "Ao",
+        "type": "maskMix",
+        "position": [
+          160,
+          0
+        ],
+        "values": {
+          "mode": "multiply",
+          "weightA": 1.0,
+          "weightB": 0.5
+        }
+      }
+    ],
+    "links": [
+      [
+        "GroupInput",
+        "worldNormal",
+        "Facing",
+        "normal"
+      ],
+      [
+        "Facing",
+        "out",
+        "Remap",
+        "value"
+      ],
+      [
+        "Noise",
+        "out",
+        "Remap",
+        "noise"
+      ],
+      [
+        "Remap",
+        "out",
+        "Ao",
+        "a"
+      ],
+      [
+        "GroupInput",
+        "ao",
+        "Ao",
+        "b"
+      ],
+      [
+        "Ao",
+        "out",
+        "GroupOutput",
+        "mask"
+      ]
+    ]
+  }
+}

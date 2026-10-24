@@ -1,0 +1,103 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "genIdSelect",
+  "label": "ID Select",
+  "category": "Generator",
+  "doc": "White where the baked ID map is exactly the picked colour.",
+  "kind": "graph",
+  "graph": {
+    "name": "genIdSelect",
+    "typeVersion": 1,
+    "description": "White where the baked ID map is exactly the picked colour.",
+    "inputs": [
+      {
+        "name": "id",
+        "kind": "port",
+        "type": "color",
+        "default": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "description": "ID mesh map."
+      },
+      {
+        "name": "color",
+        "kind": "param",
+        "type": "color",
+        "default": [
+          1,
+          0,
+          0,
+          1
+        ],
+        "targets": [
+          "Pick.color1"
+        ]
+      },
+      {
+        "name": "tolerance",
+        "kind": "param",
+        "type": "float",
+        "default": 0.02,
+        "targets": [
+          "Pick.tolerance"
+        ],
+        "min": 0,
+        "max": 1
+      }
+    ],
+    "outputs": [
+      {
+        "name": "mask",
+        "type": "gray"
+      }
+    ],
+    "nodes": [
+      {
+        "name": "GroupInput",
+        "type": "GroupInput",
+        "position": [
+          -400,
+          0
+        ]
+      },
+      {
+        "name": "GroupOutput",
+        "type": "GroupOutput",
+        "position": [
+          0,
+          0
+        ]
+      },
+      {
+        "name": "Pick",
+        "type": "colorPick",
+        "position": [
+          -200,
+          0
+        ],
+        "values": {
+          "source": "ids",
+          "count": 1
+        }
+      }
+    ],
+    "links": [
+      [
+        "GroupInput",
+        "id",
+        "Pick",
+        "ids"
+      ],
+      [
+        "Pick",
+        "out",
+        "GroupOutput",
+        "mask"
+      ]
+    ]
+  }
+}

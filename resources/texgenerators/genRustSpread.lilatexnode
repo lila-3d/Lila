@@ -1,0 +1,261 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "genRustSpread",
+  "label": "Rust Spread",
+  "category": "Generator",
+  "doc": "Rust starting in crevices and on worn edges and spreading out through noise as spread rises.",
+  "kind": "graph",
+  "graph": {
+    "name": "genRustSpread",
+    "typeVersion": 1,
+    "description": "Rust starting in crevices and on worn edges and spreading out through noise as spread rises.",
+    "inputs": [
+      {
+        "name": "curvature",
+        "kind": "port",
+        "type": "gray",
+        "default": 0.5,
+        "description": "Curvature mesh map (0.5 flat)."
+      },
+      {
+        "name": "cavity",
+        "kind": "port",
+        "type": "gray",
+        "default": 1.0,
+        "description": "Cavity mesh map."
+      },
+      {
+        "name": "ao",
+        "kind": "port",
+        "type": "gray",
+        "default": 1.0,
+        "description": "Ambient occlusion mesh map."
+      },
+      {
+        "name": "edgeWeight",
+        "kind": "param",
+        "type": "float",
+        "default": 0.8,
+        "targets": [
+          "Seeds.weightA"
+        ],
+        "min": 0,
+        "softMax": 4
+      },
+      {
+        "name": "cavityWeight",
+        "kind": "param",
+        "type": "float",
+        "default": 1.0,
+        "targets": [
+          "Seeds.weightB"
+        ],
+        "min": 0,
+        "softMax": 4
+      },
+      {
+        "name": "aoWeight",
+        "kind": "param",
+        "type": "float",
+        "default": 0.4,
+        "targets": [
+          "Occl.weightB"
+        ],
+        "min": 0,
+        "softMax": 4
+      },
+      {
+        "name": "level",
+        "kind": "param",
+        "type": "float",
+        "default": 0.45,
+        "targets": [
+          "Remap.level"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "softness",
+        "kind": "param",
+        "type": "float",
+        "default": 0.3,
+        "targets": [
+          "Remap.softness"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "breakup",
+        "kind": "param",
+        "type": "float",
+        "default": 0.9,
+        "targets": [
+          "Remap.breakup"
+        ],
+        "min": 0,
+        "softMax": 2
+      },
+      {
+        "name": "noiseScale",
+        "kind": "param",
+        "type": "int",
+        "default": 5,
+        "targets": [
+          "Noise.scale"
+        ],
+        "min": 1,
+        "softMax": 64
+      },
+      {
+        "name": "seed",
+        "kind": "param",
+        "type": "seed",
+        "default": 0,
+        "targets": [
+          "Noise.seed"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "mask",
+        "type": "gray"
+      }
+    ],
+    "nodes": [
+      {
+        "name": "GroupInput",
+        "type": "GroupInput",
+        "position": [
+          -400,
+          0
+        ]
+      },
+      {
+        "name": "GroupOutput",
+        "type": "GroupOutput",
+        "position": [
+          480,
+          0
+        ]
+      },
+      {
+        "name": "Split",
+        "type": "curvatureSplit",
+        "position": [
+          -200,
+          0
+        ],
+        "values": {
+          "strength": 2.0
+        }
+      },
+      {
+        "name": "Seeds",
+        "type": "maskMix",
+        "position": [
+          -80,
+          0
+        ],
+        "values": {
+          "mode": "max",
+          "weightA": 0.8,
+          "weightB": 1.0,
+          "invertB": true
+        }
+      },
+      {
+        "name": "Occl",
+        "type": "maskMix",
+        "position": [
+          40,
+          0
+        ],
+        "values": {
+          "mode": "add",
+          "weightA": 1.0,
+          "weightB": 0.4,
+          "invertB": true
+        }
+      },
+      {
+        "name": "Noise",
+        "type": "clouds",
+        "position": [
+          160,
+          0
+        ],
+        "values": {
+          "scale": 5,
+          "mode": "billow"
+        }
+      },
+      {
+        "name": "Remap",
+        "type": "maskRemap",
+        "position": [
+          280,
+          0
+        ],
+        "values": {
+          "level": 0.45,
+          "softness": 0.3,
+          "breakup": 0.9
+        }
+      }
+    ],
+    "links": [
+      [
+        "GroupInput",
+        "curvature",
+        "Split",
+        "curvature"
+      ],
+      [
+        "Split",
+        "convex",
+        "Seeds",
+        "a"
+      ],
+      [
+        "GroupInput",
+        "cavity",
+        "Seeds",
+        "b"
+      ],
+      [
+        "Seeds",
+        "out",
+        "Occl",
+        "a"
+      ],
+      [
+        "GroupInput",
+        "ao",
+        "Occl",
+        "b"
+      ],
+      [
+        "Occl",
+        "out",
+        "Remap",
+        "value"
+      ],
+      [
+        "Noise",
+        "out",
+        "Remap",
+        "noise"
+      ],
+      [
+        "Remap",
+        "out",
+        "GroupOutput",
+        "mask"
+      ]
+    ]
+  }
+}

@@ -1,0 +1,108 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "colorPick",
+  "label": "Color Pick",
+  "category": "Mask",
+  "doc": "White where a flat-colour map (UV islands or IDs) matches one of up to four picked colours within tolerance.",
+  "inputs": [
+    {
+      "id": "islands",
+      "type": "color",
+      "default": [
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "id": "ids",
+      "type": "color",
+      "default": [
+        0,
+        0,
+        0,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "source",
+      "type": "enum",
+      "default": "ids",
+      "options": [
+        "islands",
+        "ids"
+      ]
+    },
+    {
+      "id": "count",
+      "type": "int",
+      "default": 1,
+      "min": 1,
+      "max": 4
+    },
+    {
+      "id": "color1",
+      "type": "color",
+      "default": [
+        1,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "id": "color2",
+      "type": "color",
+      "default": [
+        0,
+        1,
+        0,
+        1
+      ]
+    },
+    {
+      "id": "color3",
+      "type": "color",
+      "default": [
+        0,
+        0,
+        1,
+        1
+      ]
+    },
+    {
+      "id": "color4",
+      "type": "color",
+      "default": [
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "id": "tolerance",
+      "type": "float",
+      "default": 0.02,
+      "min": 0,
+      "max": 1
+    }
+  ],
+  "cost": 4,
+  "helpers": [
+    "layers"
+  ],
+  "body": {
+    "out": "float4 c = p.source == 0 ? islands.sample(uv) : ids.sample(uv);\nfloat d = layerColorDistance(c, p.color1);\nif (p.count > 1)\n    d = min(d, layerColorDistance(c, p.color2));\nif (p.count > 2)\n    d = min(d, layerColorDistance(c, p.color3));\nif (p.count > 3)\n    d = min(d, layerColorDistance(c, p.color4));\nreturn d <= p.tolerance ? 1.0 : 0.0;"
+  }
+}

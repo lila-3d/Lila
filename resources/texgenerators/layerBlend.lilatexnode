@@ -1,0 +1,75 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "layerBlend",
+  "label": "Layer Blend",
+  "category": "Layer",
+  "doc": "Composites a layer's channel over the stack below it: the blend mode result, mixed in by mask times opacity. addSigned adds around 0.5 (heights).",
+  "inputs": [
+    {
+      "id": "below",
+      "type": "color",
+      "default": [
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "id": "above",
+      "type": "color",
+      "default": [
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "id": "mask",
+      "type": "gray",
+      "default": 1.0
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "mode",
+      "type": "enum",
+      "default": "normal",
+      "options": [
+        "normal",
+        "add",
+        "subtract",
+        "multiply",
+        "screen",
+        "overlay",
+        "darken",
+        "lighten",
+        "difference",
+        "softLight",
+        "addSigned"
+      ]
+    },
+    {
+      "id": "opacity",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "max": 1
+    }
+  ],
+  "cost": 6,
+  "helpers": [
+    "layers"
+  ],
+  "body": {
+    "out": "float4 b = below.sample(uv);\nfloat4 f = above.sample(uv);\nfloat k = saturate(mask.sample(uv) * p.opacity);\nreturn float4(lerp(b.rgb, layerBlendMode(p.mode, b.rgb, f.rgb), k), b.a);"
+  }
+}

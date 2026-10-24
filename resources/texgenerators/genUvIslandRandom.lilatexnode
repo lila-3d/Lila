@@ -1,0 +1,115 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "genUvIslandRandom",
+  "label": "UV Island Random",
+  "category": "Generator",
+  "doc": "A random value per UV island (from the uvIslands map), for per-plank or per-panel variation.",
+  "kind": "graph",
+  "graph": {
+    "name": "genUvIslandRandom",
+    "typeVersion": 1,
+    "description": "A random value per UV island (from the uvIslands map), for per-plank or per-panel variation.",
+    "inputs": [
+      {
+        "name": "uvIslands",
+        "kind": "port",
+        "type": "color",
+        "default": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "description": "UV island mesh map."
+      },
+      {
+        "name": "seed",
+        "kind": "param",
+        "type": "seed",
+        "default": 0,
+        "targets": [
+          "Rand.seed"
+        ]
+      },
+      {
+        "name": "low",
+        "kind": "param",
+        "type": "float",
+        "default": 0.0,
+        "targets": [
+          "Rand.low"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "high",
+        "kind": "param",
+        "type": "float",
+        "default": 1.0,
+        "targets": [
+          "Rand.high"
+        ],
+        "min": 0,
+        "max": 1
+      }
+    ],
+    "outputs": [
+      {
+        "name": "mask",
+        "type": "gray"
+      },
+      {
+        "name": "color",
+        "type": "color"
+      }
+    ],
+    "nodes": [
+      {
+        "name": "GroupInput",
+        "type": "GroupInput",
+        "position": [
+          -400,
+          0
+        ]
+      },
+      {
+        "name": "GroupOutput",
+        "type": "GroupOutput",
+        "position": [
+          0,
+          0
+        ]
+      },
+      {
+        "name": "Rand",
+        "type": "islandRandom",
+        "position": [
+          -200,
+          0
+        ]
+      }
+    ],
+    "links": [
+      [
+        "GroupInput",
+        "uvIslands",
+        "Rand",
+        "islands"
+      ],
+      [
+        "Rand",
+        "value",
+        "GroupOutput",
+        "mask"
+      ],
+      [
+        "Rand",
+        "color",
+        "GroupOutput",
+        "color"
+      ]
+    ]
+  }
+}

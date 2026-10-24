@@ -1,0 +1,99 @@
+#pragma once
+
+#include "core/Export.h"
+
+#include <QWidget>
+
+#include <functional>
+#include <memory>
+#include <string>
+
+class QComboBox;
+class QListWidget;
+class QTreeWidget;
+
+namespace lila::ui
+{
+/** Dock object name. */
+inline constexpr const char* kTextureSetsDock = "textureSets";
+
+/**
+ * Registers the Texture Set panel (window.textureSets), its textureSets.* actions and their Texture menu entries. Call
+ * after registerTextureGraphUi.
+ */
+LILA_UI_API void registerTextureSetPanel();
+
+namespace textureSets
+{
+/**
+ * The paint layer painting tools write into on a set: the paint layer last selected in the Texture Set panel (it stays
+ * active while a layer of another kind is selected). Empty when none was picked or it no longer exists.
+ */
+LILA_UI_API std::string activeLayer(const std::string& set);
+/** Makes a paint layer the set's active one (the panel selects it); a tool that adds a paint layer calls this. */
+LILA_UI_API void setActiveLayer(const std::string& set, const std::string& layer);
+/** Hears active layer changes (main thread). Returns an id. */
+LILA_UI_API int addActiveLayerListener(std::function<void(const std::string& set, const std::string& layer)> fn);
+LILA_UI_API void removeActiveLayerListener(int id);
+} // namespace textureSets
+
+/**
+ * The layer stack of one texture set, Painter style, as a view over texLayerStack. Every edit is a tex* command, so it
+ * undoes and echoes. Top layer first; a folder's children and a layer's masks sit under it.
+ */
+class LILA_UI_API TextureSetPanel : public QWidget
+{
+public:
+    /** Where a dragged layer lands relative to the row it is dropped on. */
+    enum class Drop
+    {
+        Above,
+        Below,
+        Into,
+    };
+
+    explicit TextureSetPanel(QWidget* parent = nullptr);
+    ~TextureSetPanel() override;
+
+    void setTextureSet(const std::string& set);
+    std::string textureSet() const;
+    /** Rereads the set now instead of on the next event loop turn. */
+    void refresh();
+
+    /** The selected layer's id, or the layer of a selected mask; empty for none. */
+    std::string selectedLayer() const;
+    std::string selectedMask() const;
+    void selectLayer(const std::string& id);
+    void selectMask(const std::string& layer, const std::string& mask);
+
+    /** Adds a layer of a kind (fill, paint, procedural, folder, instance, filter) above the selection, the way the menus do. */
+    std::string addLayer(const std::string& kind, const std::string& filter = {});
+    /** Adds a mask to the selected layer: fill, paint, levels, generator or filter (with the node type), anchor (with its name). */
+    std::string addMask(const std::string& kind, const std::string& type = {});
+    /** Moves a layer as a drop onto target's row does (a mask onto a mask of the same layer reorders the masks). */
+    void moveLayer(const std::string& id, const std::string& target, Drop where);
+    /** Adds a library material as a fill or procedural layer placed as a drop onto target's row; empty target puts it on top. */
+    void dropMaterial(const std::string& material, const std::string& target, Drop where);
+    void duplicateSelected();
+    void deleteSelected();
+    /** Shows the Texture Graph editor on the set with the selected layer's node selected. */
+    void openSelectedAsNodes();
+    /** Applies a smart material on top of the selection, or a smart mask to the selected layer. */
+    void applySmartMaterial(const std::string& name);
+
+    QTreeWidget* tree() const;
+    QComboBox* setPicker() const;
+    QListWidget* smartShelf() const;
+    /** The properties area's content (the selected layer or mask), rebuilt on selection. */
+    QWidget* properties() const;
+    /** The graph-mode banner, visible while the set's graph holds edits the stack can't show. */
+    QWidget* banner() const;
+
+    /** The panel the textureSets.* actions act on: the focused one, else the last focused, else any. */
+    static TextureSetPanel* active();
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> d;
+};
+} // namespace lila::ui

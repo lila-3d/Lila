@@ -1,0 +1,67 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "maskMix",
+  "label": "Mask Mix",
+  "category": "Mask",
+  "doc": "Combines two masks, each weighted and optionally inverted first: add (clamped sum), multiply (weight 0 ignores an input), max or min.",
+  "inputs": [
+    {
+      "id": "a",
+      "type": "gray",
+      "default": 0.0
+    },
+    {
+      "id": "b",
+      "type": "gray",
+      "default": 0.0
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "mode",
+      "type": "enum",
+      "default": "add",
+      "options": [
+        "add",
+        "multiply",
+        "max",
+        "min"
+      ]
+    },
+    {
+      "id": "weightA",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "softMax": 4
+    },
+    {
+      "id": "weightB",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "softMax": 4
+    },
+    {
+      "id": "invertA",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "id": "invertB",
+      "type": "bool",
+      "default": false
+    }
+  ],
+  "cost": 3,
+  "body": {
+    "out": "float x = a.sample(uv);\nfloat y = b.sample(uv);\nif (p.invertA)\n    x = 1.0 - x;\nif (p.invertB)\n    y = 1.0 - y;\nif (p.mode == 1)\n    return saturate(lerp(1.0, x, saturate(p.weightA)) * lerp(1.0, y, saturate(p.weightB)));\nif (p.mode == 2)\n    return saturate(max(x * p.weightA, y * p.weightB));\nif (p.mode == 3)\n    return saturate(min(x * p.weightA, y * p.weightB));\nreturn saturate(x * p.weightA + y * p.weightB);"
+  }
+}

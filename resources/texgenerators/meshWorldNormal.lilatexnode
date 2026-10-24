@@ -1,0 +1,23 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "meshWorldNormal",
+  "label": "World Normal",
+  "category": "Mesh",
+  "doc": "The high's normal in bake (world) space, -1 to 1, from the objectNormal map. Reads (u, v, 0) when the map isn't supplied.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "vector"
+    }
+  ],
+  "params": [],
+  "cost": 1,
+  "externals": [
+    "objectNormal"
+  ],
+  "body": {
+    "out": "return objectNormal.sample(uv).xyz * 2.0 - 1.0;"
+  }
+}

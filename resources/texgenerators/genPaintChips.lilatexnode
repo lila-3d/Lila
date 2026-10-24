@@ -1,0 +1,192 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "genPaintChips",
+  "label": "Paint Chips",
+  "category": "Generator",
+  "doc": "Hard-edged chips knocked out of paint, clustered on convex edges.",
+  "kind": "graph",
+  "graph": {
+    "name": "genPaintChips",
+    "typeVersion": 1,
+    "description": "Hard-edged chips knocked out of paint, clustered on convex edges.",
+    "inputs": [
+      {
+        "name": "curvature",
+        "kind": "port",
+        "type": "gray",
+        "default": 0.5,
+        "description": "Curvature mesh map (0.5 flat)."
+      },
+      {
+        "name": "edgeWeight",
+        "kind": "param",
+        "type": "float",
+        "default": 1.0,
+        "targets": [
+          "Mix.weightA"
+        ],
+        "min": 0,
+        "softMax": 4
+      },
+      {
+        "name": "chipWeight",
+        "kind": "param",
+        "type": "float",
+        "default": 0.6,
+        "targets": [
+          "Mix.weightB"
+        ],
+        "min": 0,
+        "softMax": 4
+      },
+      {
+        "name": "level",
+        "kind": "param",
+        "type": "float",
+        "default": 0.75,
+        "targets": [
+          "Remap.level"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "softness",
+        "kind": "param",
+        "type": "float",
+        "default": 0.04,
+        "targets": [
+          "Remap.softness"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "chipScale",
+        "kind": "param",
+        "type": "int",
+        "default": 12,
+        "targets": [
+          "Chips.scale"
+        ],
+        "min": 1,
+        "softMax": 64
+      },
+      {
+        "name": "seed",
+        "kind": "param",
+        "type": "seed",
+        "default": 0,
+        "targets": [
+          "Chips.seed"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "mask",
+        "type": "gray"
+      }
+    ],
+    "nodes": [
+      {
+        "name": "GroupInput",
+        "type": "GroupInput",
+        "position": [
+          -400,
+          0
+        ]
+      },
+      {
+        "name": "GroupOutput",
+        "type": "GroupOutput",
+        "position": [
+          360,
+          0
+        ]
+      },
+      {
+        "name": "Split",
+        "type": "curvatureSplit",
+        "position": [
+          -200,
+          0
+        ],
+        "values": {
+          "strength": 2.0
+        }
+      },
+      {
+        "name": "Chips",
+        "type": "cells",
+        "position": [
+          -80,
+          0
+        ],
+        "values": {
+          "scale": 12,
+          "mode": "f1"
+        }
+      },
+      {
+        "name": "Mix",
+        "type": "maskMix",
+        "position": [
+          40,
+          0
+        ],
+        "values": {
+          "mode": "add",
+          "weightA": 1.0,
+          "weightB": 0.6,
+          "invertB": true
+        }
+      },
+      {
+        "name": "Remap",
+        "type": "maskRemap",
+        "position": [
+          160,
+          0
+        ],
+        "values": {
+          "level": 0.75,
+          "softness": 0.04
+        }
+      }
+    ],
+    "links": [
+      [
+        "GroupInput",
+        "curvature",
+        "Split",
+        "curvature"
+      ],
+      [
+        "Split",
+        "convex",
+        "Mix",
+        "a"
+      ],
+      [
+        "Chips",
+        "out",
+        "Mix",
+        "b"
+      ],
+      [
+        "Mix",
+        "out",
+        "Remap",
+        "value"
+      ],
+      [
+        "Remap",
+        "out",
+        "GroupOutput",
+        "mask"
+      ]
+    ]
+  }
+}

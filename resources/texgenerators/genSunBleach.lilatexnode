@@ -1,0 +1,195 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "genSunBleach",
+  "label": "Sun Bleach",
+  "category": "Generator",
+  "doc": "Fading on surfaces facing the sun, less where they are occluded.",
+  "kind": "graph",
+  "graph": {
+    "name": "genSunBleach",
+    "typeVersion": 1,
+    "description": "Fading on surfaces facing the sun, less where they are occluded.",
+    "inputs": [
+      {
+        "name": "worldNormal",
+        "kind": "port",
+        "type": "vector",
+        "default": [
+          0,
+          1,
+          0
+        ],
+        "description": "World normal mesh map (-1 to 1)."
+      },
+      {
+        "name": "ao",
+        "kind": "port",
+        "type": "gray",
+        "default": 1.0,
+        "description": "Ambient occlusion mesh map."
+      },
+      {
+        "name": "azimuth",
+        "kind": "param",
+        "type": "float",
+        "default": 45.0,
+        "targets": [
+          "Facing.azimuth"
+        ],
+        "softMin": -180,
+        "softMax": 180
+      },
+      {
+        "name": "elevation",
+        "kind": "param",
+        "type": "float",
+        "default": 60.0,
+        "targets": [
+          "Facing.elevation"
+        ],
+        "min": -90,
+        "max": 90
+      },
+      {
+        "name": "upAxis",
+        "kind": "param",
+        "type": "enum",
+        "default": "y",
+        "targets": [
+          "Facing.upAxis"
+        ],
+        "options": [
+          "y",
+          "z"
+        ]
+      },
+      {
+        "name": "aoInfluence",
+        "kind": "param",
+        "type": "float",
+        "default": 0.7,
+        "targets": [
+          "Ao.weightB"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "level",
+        "kind": "param",
+        "type": "float",
+        "default": 0.5,
+        "targets": [
+          "Remap.level"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "softness",
+        "kind": "param",
+        "type": "float",
+        "default": 0.8,
+        "targets": [
+          "Remap.softness"
+        ],
+        "min": 0,
+        "max": 1
+      }
+    ],
+    "outputs": [
+      {
+        "name": "mask",
+        "type": "gray"
+      }
+    ],
+    "nodes": [
+      {
+        "name": "GroupInput",
+        "type": "GroupInput",
+        "position": [
+          -400,
+          0
+        ]
+      },
+      {
+        "name": "GroupOutput",
+        "type": "GroupOutput",
+        "position": [
+          240,
+          0
+        ]
+      },
+      {
+        "name": "Facing",
+        "type": "maskFacing",
+        "position": [
+          -200,
+          0
+        ],
+        "values": {
+          "azimuth": 45.0,
+          "elevation": 60.0
+        }
+      },
+      {
+        "name": "Ao",
+        "type": "maskMix",
+        "position": [
+          -80,
+          0
+        ],
+        "values": {
+          "mode": "multiply",
+          "weightA": 1.0,
+          "weightB": 0.7
+        }
+      },
+      {
+        "name": "Remap",
+        "type": "maskRemap",
+        "position": [
+          40,
+          0
+        ],
+        "values": {
+          "level": 0.5,
+          "softness": 0.8
+        }
+      }
+    ],
+    "links": [
+      [
+        "GroupInput",
+        "worldNormal",
+        "Facing",
+        "normal"
+      ],
+      [
+        "Facing",
+        "out",
+        "Ao",
+        "a"
+      ],
+      [
+        "GroupInput",
+        "ao",
+        "Ao",
+        "b"
+      ],
+      [
+        "Ao",
+        "out",
+        "Remap",
+        "value"
+      ],
+      [
+        "Remap",
+        "out",
+        "GroupOutput",
+        "mask"
+      ]
+    ]
+  }
+}

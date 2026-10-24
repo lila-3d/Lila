@@ -1,0 +1,104 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "genThickness",
+  "label": "Thickness",
+  "category": "Generator",
+  "doc": "A mask from the thickness map: thin parts (inverted) for subsurface, light bleed or wear.",
+  "kind": "graph",
+  "graph": {
+    "name": "genThickness",
+    "typeVersion": 1,
+    "description": "A mask from the thickness map: thin parts (inverted) for subsurface, light bleed or wear.",
+    "inputs": [
+      {
+        "name": "thickness",
+        "kind": "port",
+        "type": "gray",
+        "default": 0.5,
+        "description": "Thickness mesh map."
+      },
+      {
+        "name": "level",
+        "kind": "param",
+        "type": "float",
+        "default": 0.5,
+        "targets": [
+          "Remap.level"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "softness",
+        "kind": "param",
+        "type": "float",
+        "default": 0.5,
+        "targets": [
+          "Remap.softness"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "invert",
+        "kind": "param",
+        "type": "bool",
+        "default": false,
+        "targets": [
+          "Remap.invert"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "mask",
+        "type": "gray"
+      }
+    ],
+    "nodes": [
+      {
+        "name": "GroupInput",
+        "type": "GroupInput",
+        "position": [
+          -400,
+          0
+        ]
+      },
+      {
+        "name": "GroupOutput",
+        "type": "GroupOutput",
+        "position": [
+          0,
+          0
+        ]
+      },
+      {
+        "name": "Remap",
+        "type": "maskRemap",
+        "position": [
+          -200,
+          0
+        ],
+        "values": {
+          "level": 0.5,
+          "softness": 0.5
+        }
+      }
+    ],
+    "links": [
+      [
+        "GroupInput",
+        "thickness",
+        "Remap",
+        "value"
+      ],
+      [
+        "Remap",
+        "out",
+        "GroupOutput",
+        "mask"
+      ]
+    ]
+  }
+}

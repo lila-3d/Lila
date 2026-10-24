@@ -1,0 +1,201 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "genCavityGrime",
+  "label": "Cavity Grime",
+  "category": "Generator",
+  "doc": "Grime packed into crevices and tight corners (cavity, a little ambient occlusion), with fine grain.",
+  "kind": "graph",
+  "graph": {
+    "name": "genCavityGrime",
+    "typeVersion": 1,
+    "description": "Grime packed into crevices and tight corners (cavity, a little ambient occlusion), with fine grain.",
+    "inputs": [
+      {
+        "name": "cavity",
+        "kind": "port",
+        "type": "gray",
+        "default": 1.0,
+        "description": "Cavity mesh map."
+      },
+      {
+        "name": "ao",
+        "kind": "port",
+        "type": "gray",
+        "default": 1.0,
+        "description": "Ambient occlusion mesh map."
+      },
+      {
+        "name": "cavityWeight",
+        "kind": "param",
+        "type": "float",
+        "default": 1.5,
+        "targets": [
+          "Mix.weightA"
+        ],
+        "min": 0,
+        "softMax": 4
+      },
+      {
+        "name": "aoWeight",
+        "kind": "param",
+        "type": "float",
+        "default": 0.3,
+        "targets": [
+          "Mix.weightB"
+        ],
+        "min": 0,
+        "softMax": 4
+      },
+      {
+        "name": "level",
+        "kind": "param",
+        "type": "float",
+        "default": 0.25,
+        "targets": [
+          "Remap.level"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "softness",
+        "kind": "param",
+        "type": "float",
+        "default": 0.3,
+        "targets": [
+          "Remap.softness"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "breakup",
+        "kind": "param",
+        "type": "float",
+        "default": 0.3,
+        "targets": [
+          "Remap.breakup"
+        ],
+        "min": 0,
+        "softMax": 2
+      },
+      {
+        "name": "noiseScale",
+        "kind": "param",
+        "type": "int",
+        "default": 12,
+        "targets": [
+          "Noise.scale"
+        ],
+        "min": 1,
+        "softMax": 64
+      },
+      {
+        "name": "seed",
+        "kind": "param",
+        "type": "seed",
+        "default": 0,
+        "targets": [
+          "Noise.seed"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "mask",
+        "type": "gray"
+      }
+    ],
+    "nodes": [
+      {
+        "name": "GroupInput",
+        "type": "GroupInput",
+        "position": [
+          -400,
+          0
+        ]
+      },
+      {
+        "name": "GroupOutput",
+        "type": "GroupOutput",
+        "position": [
+          240,
+          0
+        ]
+      },
+      {
+        "name": "Mix",
+        "type": "maskMix",
+        "position": [
+          -200,
+          0
+        ],
+        "values": {
+          "mode": "add",
+          "weightA": 1.5,
+          "weightB": 0.3,
+          "invertA": true,
+          "invertB": true
+        }
+      },
+      {
+        "name": "Noise",
+        "type": "dirt",
+        "position": [
+          -80,
+          0
+        ],
+        "values": {
+          "scale": 12,
+          "grain": 0.8
+        }
+      },
+      {
+        "name": "Remap",
+        "type": "maskRemap",
+        "position": [
+          40,
+          0
+        ],
+        "values": {
+          "level": 0.25,
+          "softness": 0.3,
+          "breakup": 0.3
+        }
+      }
+    ],
+    "links": [
+      [
+        "GroupInput",
+        "cavity",
+        "Mix",
+        "a"
+      ],
+      [
+        "GroupInput",
+        "ao",
+        "Mix",
+        "b"
+      ],
+      [
+        "Mix",
+        "out",
+        "Remap",
+        "value"
+      ],
+      [
+        "Noise",
+        "out",
+        "Remap",
+        "noise"
+      ],
+      [
+        "Remap",
+        "out",
+        "GroupOutput",
+        "mask"
+      ]
+    ]
+  }
+}

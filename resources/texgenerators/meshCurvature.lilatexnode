@@ -1,0 +1,23 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "meshCurvature",
+  "label": "Curvature",
+  "category": "Mesh",
+  "doc": "Signed mean curvature from the set's bake: 0.5 flat, brighter on convex edges. Reads (u, v, 0) when the map isn't supplied.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [],
+  "cost": 1,
+  "externals": [
+    "curvature"
+  ],
+  "body": {
+    "out": "return curvature.sample(uv).x;"
+  }
+}

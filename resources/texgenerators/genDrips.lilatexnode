@@ -1,0 +1,222 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "genDrips",
+  "label": "Drips",
+  "category": "Generator",
+  "doc": "Streaks running down vertical surfaces (directional noise along v, masked to walls by the world normal).",
+  "kind": "graph",
+  "graph": {
+    "name": "genDrips",
+    "typeVersion": 1,
+    "description": "Streaks running down vertical surfaces (directional noise along v, masked to walls by the world normal).",
+    "inputs": [
+      {
+        "name": "worldNormal",
+        "kind": "port",
+        "type": "vector",
+        "default": [
+          0,
+          1,
+          0
+        ],
+        "description": "World normal mesh map (-1 to 1)."
+      },
+      {
+        "name": "angle",
+        "kind": "param",
+        "type": "float",
+        "default": 90.0,
+        "targets": [
+          "Streaks.angle"
+        ],
+        "softMin": -180,
+        "softMax": 180
+      },
+      {
+        "name": "density",
+        "kind": "param",
+        "type": "int",
+        "default": 24,
+        "targets": [
+          "Streaks.scaleAcross"
+        ],
+        "min": 1,
+        "softMax": 128
+      },
+      {
+        "name": "length",
+        "kind": "param",
+        "type": "int",
+        "default": 2,
+        "targets": [
+          "Streaks.scaleAlong"
+        ],
+        "min": 1,
+        "softMax": 16
+      },
+      {
+        "name": "upAxis",
+        "kind": "param",
+        "type": "enum",
+        "default": "y",
+        "targets": [
+          "Facing.upAxis"
+        ],
+        "options": [
+          "y",
+          "z"
+        ]
+      },
+      {
+        "name": "wallsOnly",
+        "kind": "param",
+        "type": "float",
+        "default": 1.0,
+        "targets": [
+          "Walls.weightB"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "level",
+        "kind": "param",
+        "type": "float",
+        "default": 0.6,
+        "targets": [
+          "Remap.level"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "softness",
+        "kind": "param",
+        "type": "float",
+        "default": 0.25,
+        "targets": [
+          "Remap.softness"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "seed",
+        "kind": "param",
+        "type": "seed",
+        "default": 0,
+        "targets": [
+          "Streaks.seed"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "mask",
+        "type": "gray"
+      }
+    ],
+    "nodes": [
+      {
+        "name": "GroupInput",
+        "type": "GroupInput",
+        "position": [
+          -400,
+          0
+        ]
+      },
+      {
+        "name": "GroupOutput",
+        "type": "GroupOutput",
+        "position": [
+          360,
+          0
+        ]
+      },
+      {
+        "name": "Streaks",
+        "type": "directional",
+        "position": [
+          -200,
+          0
+        ],
+        "values": {
+          "angle": 90.0,
+          "scaleAlong": 2,
+          "scaleAcross": 24
+        }
+      },
+      {
+        "name": "Remap",
+        "type": "maskRemap",
+        "position": [
+          -80,
+          0
+        ],
+        "values": {
+          "level": 0.6,
+          "softness": 0.25
+        }
+      },
+      {
+        "name": "Facing",
+        "type": "maskFacing",
+        "position": [
+          40,
+          0
+        ],
+        "values": {
+          "elevation": 90.0,
+          "twoSided": true
+        }
+      },
+      {
+        "name": "Walls",
+        "type": "maskMix",
+        "position": [
+          160,
+          0
+        ],
+        "values": {
+          "mode": "multiply",
+          "weightA": 1.0,
+          "weightB": 1.0,
+          "invertB": true
+        }
+      }
+    ],
+    "links": [
+      [
+        "Streaks",
+        "out",
+        "Remap",
+        "value"
+      ],
+      [
+        "GroupInput",
+        "worldNormal",
+        "Facing",
+        "normal"
+      ],
+      [
+        "Remap",
+        "out",
+        "Walls",
+        "a"
+      ],
+      [
+        "Facing",
+        "out",
+        "Walls",
+        "b"
+      ],
+      [
+        "Walls",
+        "out",
+        "GroupOutput",
+        "mask"
+      ]
+    ]
+  }
+}

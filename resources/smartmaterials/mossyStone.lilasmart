@@ -1,0 +1,202 @@
+{
+  "format": "lilasmart",
+  "version": 1,
+  "name": "Mossy Stone",
+  "description": "Weathered stone with grime in the cracks and moss growing on top, standing above the stone by height.",
+  "kind": "material",
+  "layer": {
+    "id": "L6",
+    "name": "Mossy Stone",
+    "kind": "folder",
+    "children": [
+      {
+        "id": "L1",
+        "name": "Stone",
+        "kind": "procedural",
+        "graph": {
+          "name": "stone",
+          "typeVersion": 1,
+          "inputs": [],
+          "outputs": [
+            {
+              "name": "baseColor",
+              "type": "color"
+            },
+            {
+              "name": "roughness",
+              "type": "gray"
+            },
+            {
+              "name": "height",
+              "type": "gray"
+            }
+          ],
+          "nodes": [
+            {
+              "name": "GroupInput",
+              "type": "GroupInput",
+              "position": [
+                -400,
+                0
+              ]
+            },
+            {
+              "name": "Tone",
+              "type": "clouds",
+              "position": [
+                -200,
+                0
+              ],
+              "values": {
+                "scale": 6
+              }
+            },
+            {
+              "name": "Tint",
+              "type": "colorize",
+              "position": [
+                -50,
+                0
+              ],
+              "values": {
+                "gradient": [
+                  [
+                    0.0,
+                    [
+                      0.16,
+                      0.16,
+                      0.15,
+                      1
+                    ]
+                  ],
+                  [
+                    1.0,
+                    [
+                      0.38,
+                      0.37,
+                      0.35,
+                      1
+                    ]
+                  ]
+                ]
+              }
+            },
+            {
+              "name": "Cracks",
+              "type": "cells",
+              "position": [
+                100,
+                0
+              ],
+              "values": {
+                "scale": 5,
+                "mode": "crackle"
+              }
+            },
+            {
+              "name": "Rough",
+              "type": "constant",
+              "position": [
+                250,
+                0
+              ],
+              "values": {
+                "value": 0.8
+              }
+            },
+            {
+              "name": "GroupOutput",
+              "type": "GroupOutput",
+              "position": [
+                400,
+                0
+              ]
+            }
+          ],
+          "links": [
+            [
+              "Tone",
+              "out",
+              "Tint",
+              "input"
+            ],
+            [
+              "Tint",
+              "out",
+              "GroupOutput",
+              "baseColor"
+            ],
+            [
+              "Rough",
+              "out",
+              "GroupOutput",
+              "roughness"
+            ],
+            [
+              "Cracks",
+              "out",
+              "GroupOutput",
+              "height"
+            ]
+          ]
+        },
+        "masks": []
+      },
+      {
+        "id": "L3",
+        "name": "Grime",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.06,
+            0.05,
+            0.04,
+            1
+          ],
+          "roughness": 0.9
+        },
+        "masks": [
+          {
+            "id": "M2",
+            "kind": "generator",
+            "type": "genCavityGrime",
+            "mode": "normal",
+            "opacity": 0.8,
+            "values": {}
+          }
+        ]
+      },
+      {
+        "id": "L5",
+        "name": "Moss",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.09,
+            0.16,
+            0.03,
+            1
+          ],
+          "roughness": 0.9,
+          "metallic": 0.0,
+          "height": 0.56
+        },
+        "masks": [
+          {
+            "id": "M4",
+            "kind": "generator",
+            "type": "genMoss",
+            "mode": "normal",
+            "opacity": 1.0,
+            "values": {}
+          }
+        ],
+        "heightBlend": {
+          "enabled": true,
+          "sharpness": 0.7,
+          "influence": 1.0
+        }
+      }
+    ]
+  }
+}

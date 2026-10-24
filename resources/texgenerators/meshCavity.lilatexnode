@@ -1,0 +1,23 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "meshCavity",
+  "label": "Cavity",
+  "category": "Mesh",
+  "doc": "Cavity from the set's bake: white on flat and convex areas, darker in crevices. Reads (u, v, 0) when the map isn't supplied.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [],
+  "cost": 1,
+  "externals": [
+    "cavity"
+  ],
+  "body": {
+    "out": "return cavity.sample(uv).x;"
+  }
+}

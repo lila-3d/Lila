@@ -1,0 +1,113 @@
+{
+  "format": "lilasmart",
+  "version": 1,
+  "name": "Rusty Iron",
+  "description": "Dark iron with rust spreading from crevices and edges (anchor: rust), rust streaks running down walls and grime.",
+  "kind": "material",
+  "layer": {
+    "id": "L8",
+    "name": "Rusty Iron",
+    "kind": "folder",
+    "children": [
+      {
+        "id": "L1",
+        "name": "Iron",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.2,
+            0.2,
+            0.21,
+            1
+          ],
+          "roughness": 0.55,
+          "metallic": 1.0,
+          "height": 0.5
+        },
+        "masks": []
+      },
+      {
+        "id": "L3",
+        "name": "Rust",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.32,
+            0.11,
+            0.04,
+            1
+          ],
+          "roughness": 0.85,
+          "metallic": 0.0,
+          "height": 0.53
+        },
+        "masks": [
+          {
+            "id": "M2",
+            "kind": "generator",
+            "type": "genRustSpread",
+            "mode": "normal",
+            "opacity": 1.0,
+            "values": {}
+          }
+        ],
+        "heightBlend": {
+          "enabled": true,
+          "sharpness": 0.6,
+          "influence": 1.0
+        },
+        "anchor": "rust"
+      },
+      {
+        "id": "L5",
+        "name": "Rust Streaks",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.25,
+            0.09,
+            0.03,
+            1
+          ],
+          "roughness": 0.8,
+          "metallic": 0.0
+        },
+        "masks": [
+          {
+            "id": "M4",
+            "kind": "generator",
+            "type": "genDrips",
+            "mode": "normal",
+            "opacity": 0.7,
+            "values": {}
+          }
+        ]
+      },
+      {
+        "id": "L7",
+        "name": "Grime",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.05,
+            0.04,
+            0.03,
+            1
+          ],
+          "roughness": 0.9,
+          "metallic": 0.0
+        },
+        "masks": [
+          {
+            "id": "M6",
+            "kind": "generator",
+            "type": "genCavityGrime",
+            "mode": "normal",
+            "opacity": 1.0,
+            "values": {}
+          }
+        ]
+      }
+    ]
+  }
+}

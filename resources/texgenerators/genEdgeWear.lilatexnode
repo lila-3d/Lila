@@ -1,0 +1,173 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "genEdgeWear",
+  "label": "Edge Wear",
+  "category": "Generator",
+  "doc": "Wear on convex edges from curvature, broken up by noise.",
+  "kind": "graph",
+  "graph": {
+    "name": "genEdgeWear",
+    "typeVersion": 1,
+    "description": "Wear on convex edges from curvature, broken up by noise.",
+    "inputs": [
+      {
+        "name": "curvature",
+        "kind": "port",
+        "type": "gray",
+        "default": 0.5,
+        "description": "Curvature mesh map (0.5 flat)."
+      },
+      {
+        "name": "strength",
+        "kind": "param",
+        "type": "float",
+        "default": 2.0,
+        "targets": [
+          "Split.strength"
+        ],
+        "min": 0,
+        "softMax": 8
+      },
+      {
+        "name": "level",
+        "kind": "param",
+        "type": "float",
+        "default": 0.3,
+        "targets": [
+          "Remap.level"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "softness",
+        "kind": "param",
+        "type": "float",
+        "default": 0.25,
+        "targets": [
+          "Remap.softness"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "breakup",
+        "kind": "param",
+        "type": "float",
+        "default": 0.5,
+        "targets": [
+          "Remap.breakup"
+        ],
+        "min": 0,
+        "softMax": 2
+      },
+      {
+        "name": "noiseScale",
+        "kind": "param",
+        "type": "int",
+        "default": 8,
+        "targets": [
+          "Noise.scale"
+        ],
+        "min": 1,
+        "softMax": 64
+      },
+      {
+        "name": "seed",
+        "kind": "param",
+        "type": "seed",
+        "default": 0,
+        "targets": [
+          "Noise.seed"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "mask",
+        "type": "gray"
+      }
+    ],
+    "nodes": [
+      {
+        "name": "GroupInput",
+        "type": "GroupInput",
+        "position": [
+          -400,
+          0
+        ]
+      },
+      {
+        "name": "GroupOutput",
+        "type": "GroupOutput",
+        "position": [
+          240,
+          0
+        ]
+      },
+      {
+        "name": "Split",
+        "type": "curvatureSplit",
+        "position": [
+          -200,
+          0
+        ],
+        "values": {
+          "strength": 2.0
+        }
+      },
+      {
+        "name": "Noise",
+        "type": "perlin",
+        "position": [
+          -80,
+          0
+        ],
+        "values": {
+          "scale": 8,
+          "octaves": 4
+        }
+      },
+      {
+        "name": "Remap",
+        "type": "maskRemap",
+        "position": [
+          40,
+          0
+        ],
+        "values": {
+          "level": 0.3,
+          "softness": 0.25,
+          "breakup": 0.5
+        }
+      }
+    ],
+    "links": [
+      [
+        "GroupInput",
+        "curvature",
+        "Split",
+        "curvature"
+      ],
+      [
+        "Split",
+        "convex",
+        "Remap",
+        "value"
+      ],
+      [
+        "Noise",
+        "out",
+        "Remap",
+        "noise"
+      ],
+      [
+        "Remap",
+        "out",
+        "GroupOutput",
+        "mask"
+      ]
+    ]
+  }
+}

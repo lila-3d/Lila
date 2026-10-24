@@ -1,0 +1,178 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "genScratches",
+  "label": "Scratches",
+  "category": "Generator",
+  "doc": "Fine scratches, stronger on exposed surfaces (less where occluded).",
+  "kind": "graph",
+  "graph": {
+    "name": "genScratches",
+    "typeVersion": 1,
+    "description": "Fine scratches, stronger on exposed surfaces (less where occluded).",
+    "inputs": [
+      {
+        "name": "ao",
+        "kind": "port",
+        "type": "gray",
+        "default": 1.0,
+        "description": "Ambient occlusion mesh map."
+      },
+      {
+        "name": "scale",
+        "kind": "param",
+        "type": "int",
+        "default": 6,
+        "targets": [
+          "Scratch.scale"
+        ],
+        "min": 1,
+        "softMax": 32
+      },
+      {
+        "name": "count",
+        "kind": "param",
+        "type": "int",
+        "default": 3,
+        "targets": [
+          "Scratch.count"
+        ],
+        "min": 1,
+        "softMax": 16
+      },
+      {
+        "name": "length",
+        "kind": "param",
+        "type": "float",
+        "default": 0.8,
+        "targets": [
+          "Scratch.length"
+        ],
+        "min": 0,
+        "softMax": 2
+      },
+      {
+        "name": "width",
+        "kind": "param",
+        "type": "float",
+        "default": 0.003,
+        "targets": [
+          "Scratch.width"
+        ],
+        "min": 0,
+        "softMax": 0.02
+      },
+      {
+        "name": "angle",
+        "kind": "param",
+        "type": "float",
+        "default": 30.0,
+        "targets": [
+          "Scratch.angle"
+        ],
+        "softMin": -180,
+        "softMax": 180
+      },
+      {
+        "name": "angleRandom",
+        "kind": "param",
+        "type": "float",
+        "default": 0.3,
+        "targets": [
+          "Scratch.angleRandom"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "aoInfluence",
+        "kind": "param",
+        "type": "float",
+        "default": 0.5,
+        "targets": [
+          "Mix.weightB"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "seed",
+        "kind": "param",
+        "type": "seed",
+        "default": 0,
+        "targets": [
+          "Scratch.seed"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "mask",
+        "type": "gray"
+      }
+    ],
+    "nodes": [
+      {
+        "name": "GroupInput",
+        "type": "GroupInput",
+        "position": [
+          -400,
+          0
+        ]
+      },
+      {
+        "name": "GroupOutput",
+        "type": "GroupOutput",
+        "position": [
+          120,
+          0
+        ]
+      },
+      {
+        "name": "Scratch",
+        "type": "scratches",
+        "position": [
+          -200,
+          0
+        ],
+        "values": {
+          "scale": 6,
+          "count": 3
+        }
+      },
+      {
+        "name": "Mix",
+        "type": "maskMix",
+        "position": [
+          -80,
+          0
+        ],
+        "values": {
+          "mode": "multiply",
+          "weightA": 1.0,
+          "weightB": 0.5
+        }
+      }
+    ],
+    "links": [
+      [
+        "Scratch",
+        "out",
+        "Mix",
+        "a"
+      ],
+      [
+        "GroupInput",
+        "ao",
+        "Mix",
+        "b"
+      ],
+      [
+        "Mix",
+        "out",
+        "GroupOutput",
+        "mask"
+      ]
+    ]
+  }
+}

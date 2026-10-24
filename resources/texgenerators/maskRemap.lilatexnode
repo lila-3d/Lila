@@ -1,0 +1,58 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "maskRemap",
+  "label": "Mask Remap",
+  "category": "Mask",
+  "doc": "Turns a value into a mask: a smooth step around level, softness wide, after inverting (optional) and breaking it up with noise.",
+  "inputs": [
+    {
+      "id": "value",
+      "type": "gray",
+      "default": 0.5
+    },
+    {
+      "id": "noise",
+      "type": "gray",
+      "default": 0.5
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "level",
+      "type": "float",
+      "default": 0.5,
+      "min": 0,
+      "max": 1
+    },
+    {
+      "id": "softness",
+      "type": "float",
+      "default": 0.2,
+      "min": 0,
+      "max": 1
+    },
+    {
+      "id": "breakup",
+      "type": "float",
+      "default": 0.0,
+      "min": 0,
+      "softMax": 2
+    },
+    {
+      "id": "invert",
+      "type": "bool",
+      "default": false
+    }
+  ],
+  "cost": 3,
+  "body": {
+    "out": "float v = value.sample(uv);\nif (p.invert)\n    v = 1.0 - v;\nv += (noise.sample(uv) - 0.5) * p.breakup;\nfloat s = max(p.softness, 1e-4) * 0.5;\nreturn smoothstep(p.level - s, p.level + s, v);"
+  }
+}

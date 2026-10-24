@@ -1,0 +1,51 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "layerHeightMask",
+  "label": "Layer Height Mask",
+  "category": "Layer",
+  "doc": "Height-aware layer mask: the layer shows first where its height stands above the stack's, so it fills cracks last and tops bumps first. Sharpness narrows the transition.",
+  "inputs": [
+    {
+      "id": "mask",
+      "type": "gray",
+      "default": 1.0
+    },
+    {
+      "id": "below",
+      "type": "gray",
+      "default": 0.5
+    },
+    {
+      "id": "above",
+      "type": "gray",
+      "default": 0.5
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "sharpness",
+      "type": "float",
+      "default": 0.8,
+      "min": 0,
+      "max": 1
+    },
+    {
+      "id": "influence",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "softMax": 8
+    }
+  ],
+  "cost": 6,
+  "body": {
+    "out": "float m = saturate(mask.sample(uv));\nfloat d = (m * 2.0 - 1.0) + (above.sample(uv) - below.sample(uv)) * p.influence;\nfloat width = lerp(1.0, 0.002, saturate(p.sharpness));\nreturn saturate(d / width * 0.5 + 0.5) * saturate(m * 8.0);"
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "islandRandom",
+  "label": "Island Random",
+  "category": "Mask",
+  "doc": "A random value and colour per flat colour region (UV islands, IDs), the same everywhere in the region.",
+  "inputs": [
+    {
+      "id": "islands",
+      "type": "color",
+      "default": [
+        0,
+        0,
+        0,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "value",
+      "type": "gray"
+    },
+    {
+      "id": "color",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "seed",
+      "type": "seed",
+      "default": 0
+    },
+    {
+      "id": "low",
+      "type": "float",
+      "default": 0.0,
+      "min": 0,
+      "max": 1
+    },
+    {
+      "id": "high",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "max": 1
+    }
+  ],
+  "cost": 4,
+  "body": {
+    "value": "uint3 q = uint3(round(saturate(islands.sample(uv).rgb) * 255.0));\nreturn lerp(p.low, p.high, texRand(uint2(q.x | (q.y << 8u), q.z), uint(p.seed)));",
+    "color": "uint3 q = uint3(round(saturate(islands.sample(uv).rgb) * 255.0));\nuint2 k = uint2(q.x | (q.y << 8u), q.z);\nreturn float4(texRand(k, uint(p.seed)), texRand(k, uint(p.seed) + 1u), texRand(k, uint(p.seed) + 2u), 1.0);"
+  }
+}

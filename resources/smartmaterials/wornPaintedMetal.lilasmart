@@ -1,0 +1,121 @@
+{
+  "format": "lilasmart",
+  "version": 1,
+  "name": "Worn Painted Metal",
+  "description": "Painted steel worn back to bare metal on the edges, with chips, dirt in the crevices and dust on top.",
+  "kind": "material",
+  "layer": {
+    "id": "L10",
+    "name": "Worn Painted Metal",
+    "kind": "folder",
+    "children": [
+      {
+        "id": "L1",
+        "name": "Bare Metal",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.56,
+            0.57,
+            0.58,
+            1
+          ],
+          "roughness": 0.35,
+          "metallic": 1.0,
+          "height": 0.5
+        },
+        "masks": []
+      },
+      {
+        "id": "L5",
+        "name": "Paint",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.05,
+            0.16,
+            0.35,
+            1
+          ],
+          "roughness": 0.55,
+          "metallic": 0.0,
+          "height": 0.52
+        },
+        "masks": [
+          {
+            "id": "M2",
+            "kind": "fill",
+            "value": 1.0,
+            "mode": "normal"
+          },
+          {
+            "id": "M3",
+            "kind": "generator",
+            "type": "genEdgeWear",
+            "mode": "subtract",
+            "opacity": 1.0,
+            "values": {}
+          },
+          {
+            "id": "M4",
+            "kind": "generator",
+            "type": "genPaintChips",
+            "mode": "subtract",
+            "opacity": 1.0,
+            "values": {}
+          }
+        ]
+      },
+      {
+        "id": "L7",
+        "name": "Dirt",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.12,
+            0.09,
+            0.06,
+            1
+          ],
+          "roughness": 0.85,
+          "metallic": 0.0
+        },
+        "masks": [
+          {
+            "id": "M6",
+            "kind": "generator",
+            "type": "genDirt",
+            "mode": "normal",
+            "opacity": 1.0,
+            "values": {}
+          }
+        ]
+      },
+      {
+        "id": "L9",
+        "name": "Dust",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.45,
+            0.42,
+            0.38,
+            1
+          ],
+          "roughness": 0.9,
+          "metallic": 0.0
+        },
+        "masks": [
+          {
+            "id": "M8",
+            "kind": "generator",
+            "type": "genDust",
+            "mode": "normal",
+            "opacity": 0.6,
+            "values": {}
+          }
+        ]
+      }
+    ]
+  }
+}

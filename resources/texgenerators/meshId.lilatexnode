@@ -1,0 +1,23 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "meshId",
+  "label": "ID",
+  "category": "Mesh",
+  "doc": "The baked ID map: a flat colour per material, object or group. Reads (u, v, 0) when the map isn't supplied.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [],
+  "cost": 1,
+  "externals": [
+    "id"
+  ],
+  "body": {
+    "out": "return id.sample(uv);"
+  }
+}

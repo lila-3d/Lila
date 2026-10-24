@@ -1,0 +1,31 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "layerPaint",
+  "label": "Layer Paint",
+  "category": "Layer",
+  "doc": "One channel of a paint layer: the painted value (rgb) and its coverage (alpha), which masks the layer's blend on that channel.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    },
+    {
+      "id": "coverage",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "file",
+      "type": "image",
+      "default": ""
+    }
+  ],
+  "cost": 2,
+  "body": {
+    "out": "return float4(file.sample(uv).rgb, 1.0);",
+    "coverage": "return saturate(file.sample(uv).a);"
+  }
+}

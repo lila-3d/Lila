@@ -1,0 +1,222 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "genMoss",
+  "label": "Moss",
+  "category": "Generator",
+  "doc": "Moss and growth on upward-facing surfaces, favouring sheltered (occluded) areas, in patches.",
+  "kind": "graph",
+  "graph": {
+    "name": "genMoss",
+    "typeVersion": 1,
+    "description": "Moss and growth on upward-facing surfaces, favouring sheltered (occluded) areas, in patches.",
+    "inputs": [
+      {
+        "name": "worldNormal",
+        "kind": "port",
+        "type": "vector",
+        "default": [
+          0,
+          1,
+          0
+        ],
+        "description": "World normal mesh map (-1 to 1)."
+      },
+      {
+        "name": "ao",
+        "kind": "port",
+        "type": "gray",
+        "default": 1.0,
+        "description": "Ambient occlusion mesh map."
+      },
+      {
+        "name": "upAxis",
+        "kind": "param",
+        "type": "enum",
+        "default": "y",
+        "targets": [
+          "Facing.upAxis"
+        ],
+        "options": [
+          "y",
+          "z"
+        ]
+      },
+      {
+        "name": "aoWeight",
+        "kind": "param",
+        "type": "float",
+        "default": 0.5,
+        "targets": [
+          "Mix.weightB"
+        ],
+        "min": 0,
+        "softMax": 4
+      },
+      {
+        "name": "level",
+        "kind": "param",
+        "type": "float",
+        "default": 0.6,
+        "targets": [
+          "Remap.level"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "softness",
+        "kind": "param",
+        "type": "float",
+        "default": 0.35,
+        "targets": [
+          "Remap.softness"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "breakup",
+        "kind": "param",
+        "type": "float",
+        "default": 0.7,
+        "targets": [
+          "Remap.breakup"
+        ],
+        "min": 0,
+        "softMax": 2
+      },
+      {
+        "name": "noiseScale",
+        "kind": "param",
+        "type": "int",
+        "default": 4,
+        "targets": [
+          "Noise.scale"
+        ],
+        "min": 1,
+        "softMax": 64
+      },
+      {
+        "name": "seed",
+        "kind": "param",
+        "type": "seed",
+        "default": 0,
+        "targets": [
+          "Noise.seed"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "mask",
+        "type": "gray"
+      }
+    ],
+    "nodes": [
+      {
+        "name": "GroupInput",
+        "type": "GroupInput",
+        "position": [
+          -400,
+          0
+        ]
+      },
+      {
+        "name": "GroupOutput",
+        "type": "GroupOutput",
+        "position": [
+          360,
+          0
+        ]
+      },
+      {
+        "name": "Facing",
+        "type": "maskFacing",
+        "position": [
+          -200,
+          0
+        ],
+        "values": {
+          "elevation": 90.0
+        }
+      },
+      {
+        "name": "Mix",
+        "type": "maskMix",
+        "position": [
+          -80,
+          0
+        ],
+        "values": {
+          "mode": "add",
+          "weightA": 1.0,
+          "weightB": 0.5,
+          "invertB": true
+        }
+      },
+      {
+        "name": "Noise",
+        "type": "clouds",
+        "position": [
+          40,
+          0
+        ],
+        "values": {
+          "scale": 4
+        }
+      },
+      {
+        "name": "Remap",
+        "type": "maskRemap",
+        "position": [
+          160,
+          0
+        ],
+        "values": {
+          "level": 0.6,
+          "softness": 0.35,
+          "breakup": 0.7
+        }
+      }
+    ],
+    "links": [
+      [
+        "GroupInput",
+        "worldNormal",
+        "Facing",
+        "normal"
+      ],
+      [
+        "Facing",
+        "out",
+        "Mix",
+        "a"
+      ],
+      [
+        "GroupInput",
+        "ao",
+        "Mix",
+        "b"
+      ],
+      [
+        "Mix",
+        "out",
+        "Remap",
+        "value"
+      ],
+      [
+        "Noise",
+        "out",
+        "Remap",
+        "noise"
+      ],
+      [
+        "Remap",
+        "out",
+        "GroupOutput",
+        "mask"
+      ]
+    ]
+  }
+}

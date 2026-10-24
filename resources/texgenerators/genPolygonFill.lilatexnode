@@ -1,0 +1,187 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "genPolygonFill",
+  "label": "Polygon Fill",
+  "category": "Generator",
+  "doc": "Fills whole UV islands or material/object/group IDs (the ID map's source) picked by colour, up to four.",
+  "kind": "graph",
+  "graph": {
+    "name": "genPolygonFill",
+    "typeVersion": 1,
+    "description": "Fills whole UV islands or material/object/group IDs (the ID map's source) picked by colour, up to four.",
+    "inputs": [
+      {
+        "name": "uvIslands",
+        "kind": "port",
+        "type": "color",
+        "default": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "description": "UV island mesh map."
+      },
+      {
+        "name": "id",
+        "kind": "port",
+        "type": "color",
+        "default": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "description": "ID mesh map."
+      },
+      {
+        "name": "source",
+        "kind": "param",
+        "type": "enum",
+        "default": "islands",
+        "targets": [
+          "Pick.source"
+        ],
+        "options": [
+          "islands",
+          "ids"
+        ]
+      },
+      {
+        "name": "count",
+        "kind": "param",
+        "type": "int",
+        "default": 1,
+        "targets": [
+          "Pick.count"
+        ],
+        "min": 1,
+        "max": 4
+      },
+      {
+        "name": "color1",
+        "kind": "param",
+        "type": "color",
+        "default": [
+          1,
+          0,
+          0,
+          1
+        ],
+        "targets": [
+          "Pick.color1"
+        ]
+      },
+      {
+        "name": "color2",
+        "kind": "param",
+        "type": "color",
+        "default": [
+          0,
+          1,
+          0,
+          1
+        ],
+        "targets": [
+          "Pick.color2"
+        ]
+      },
+      {
+        "name": "color3",
+        "kind": "param",
+        "type": "color",
+        "default": [
+          0,
+          0,
+          1,
+          1
+        ],
+        "targets": [
+          "Pick.color3"
+        ]
+      },
+      {
+        "name": "color4",
+        "kind": "param",
+        "type": "color",
+        "default": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "targets": [
+          "Pick.color4"
+        ]
+      },
+      {
+        "name": "tolerance",
+        "kind": "param",
+        "type": "float",
+        "default": 0.02,
+        "targets": [
+          "Pick.tolerance"
+        ],
+        "min": 0,
+        "max": 1
+      }
+    ],
+    "outputs": [
+      {
+        "name": "mask",
+        "type": "gray"
+      }
+    ],
+    "nodes": [
+      {
+        "name": "GroupInput",
+        "type": "GroupInput",
+        "position": [
+          -400,
+          0
+        ]
+      },
+      {
+        "name": "GroupOutput",
+        "type": "GroupOutput",
+        "position": [
+          0,
+          0
+        ]
+      },
+      {
+        "name": "Pick",
+        "type": "colorPick",
+        "position": [
+          -200,
+          0
+        ],
+        "values": {
+          "source": "islands",
+          "count": 1
+        }
+      }
+    ],
+    "links": [
+      [
+        "GroupInput",
+        "uvIslands",
+        "Pick",
+        "islands"
+      ],
+      [
+        "GroupInput",
+        "id",
+        "Pick",
+        "ids"
+      ],
+      [
+        "Pick",
+        "out",
+        "GroupOutput",
+        "mask"
+      ]
+    ]
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "meshHeight",
+  "label": "Height",
+  "category": "Mesh",
+  "doc": "Baked height of the high above the low: 0.5 at the low. Reads (u, v, 0) when the map isn't supplied.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [],
+  "cost": 1,
+  "externals": [
+    "height"
+  ],
+  "body": {
+    "out": "return height.sample(uv).x;"
+  }
+}

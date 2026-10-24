@@ -1,0 +1,23 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "meshAo",
+  "label": "Ambient Occlusion",
+  "category": "Mesh",
+  "doc": "Ambient occlusion from the set's bake: 1 open, darker where occluded. Reads (u, v, 0) when the map isn't supplied.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [],
+  "cost": 1,
+  "externals": [
+    "ao"
+  ],
+  "body": {
+    "out": "return ao.sample(uv).x;"
+  }
+}

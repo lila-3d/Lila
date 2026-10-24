@@ -1,0 +1,190 @@
+{
+  "format": "lilasmart",
+  "version": 1,
+  "name": "Dusty Wood",
+  "description": "Grained wood darkened where occluded, with dust settled on the upward faces.",
+  "kind": "material",
+  "layer": {
+    "id": "L6",
+    "name": "Dusty Wood",
+    "kind": "folder",
+    "children": [
+      {
+        "id": "L1",
+        "name": "Wood",
+        "kind": "procedural",
+        "graph": {
+          "name": "wood",
+          "typeVersion": 1,
+          "inputs": [],
+          "outputs": [
+            {
+              "name": "baseColor",
+              "type": "color"
+            },
+            {
+              "name": "roughness",
+              "type": "gray"
+            },
+            {
+              "name": "height",
+              "type": "gray"
+            }
+          ],
+          "nodes": [
+            {
+              "name": "GroupInput",
+              "type": "GroupInput",
+              "position": [
+                -400,
+                0
+              ]
+            },
+            {
+              "name": "Grain",
+              "type": "directional",
+              "position": [
+                -200,
+                0
+              ],
+              "values": {
+                "angle": 0.0,
+                "scaleAlong": 2,
+                "scaleAcross": 48
+              }
+            },
+            {
+              "name": "Tint",
+              "type": "colorize",
+              "position": [
+                -50,
+                0
+              ],
+              "values": {
+                "gradient": [
+                  [
+                    0.0,
+                    [
+                      0.18,
+                      0.09,
+                      0.04,
+                      1
+                    ]
+                  ],
+                  [
+                    1.0,
+                    [
+                      0.42,
+                      0.24,
+                      0.11,
+                      1
+                    ]
+                  ]
+                ]
+              }
+            },
+            {
+              "name": "Rough",
+              "type": "constant",
+              "position": [
+                100,
+                0
+              ],
+              "values": {
+                "value": 0.7
+              }
+            },
+            {
+              "name": "GroupOutput",
+              "type": "GroupOutput",
+              "position": [
+                400,
+                0
+              ]
+            }
+          ],
+          "links": [
+            [
+              "Grain",
+              "out",
+              "Tint",
+              "input"
+            ],
+            [
+              "Tint",
+              "out",
+              "GroupOutput",
+              "baseColor"
+            ],
+            [
+              "Rough",
+              "out",
+              "GroupOutput",
+              "roughness"
+            ],
+            [
+              "Grain",
+              "out",
+              "GroupOutput",
+              "height"
+            ]
+          ]
+        },
+        "masks": []
+      },
+      {
+        "id": "L3",
+        "name": "AO Darken",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.5,
+            0.45,
+            0.4,
+            1
+          ]
+        },
+        "masks": [
+          {
+            "id": "M2",
+            "kind": "generator",
+            "type": "genAoDarken",
+            "mode": "normal",
+            "opacity": 0.5,
+            "values": {}
+          }
+        ],
+        "channels": {
+          "baseColor": {
+            "mode": "multiply",
+            "opacity": 1.0
+          }
+        }
+      },
+      {
+        "id": "L5",
+        "name": "Dust",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.5,
+            0.47,
+            0.42,
+            1
+          ],
+          "roughness": 0.95
+        },
+        "masks": [
+          {
+            "id": "M4",
+            "kind": "generator",
+            "type": "genDust",
+            "mode": "normal",
+            "opacity": 1.0,
+            "values": {}
+          }
+        ]
+      }
+    ]
+  }
+}

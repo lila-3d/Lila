@@ -1,0 +1,60 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "materialChannels",
+  "label": "Material Channels",
+  "category": "Material",
+  "doc": "Splits a material into its channels.",
+  "inputs": [
+    {
+      "id": "material",
+      "type": "material"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "baseColor",
+      "type": "color"
+    },
+    {
+      "id": "roughness",
+      "type": "gray"
+    },
+    {
+      "id": "metallic",
+      "type": "gray"
+    },
+    {
+      "id": "normal",
+      "type": "color"
+    },
+    {
+      "id": "height",
+      "type": "gray"
+    },
+    {
+      "id": "ao",
+      "type": "gray"
+    },
+    {
+      "id": "emissive",
+      "type": "color"
+    },
+    {
+      "id": "opacity",
+      "type": "gray"
+    }
+  ],
+  "params": [],
+  "cost": 1,
+  "body": {
+    "baseColor": "return material.sample(uv).baseColor;",
+    "roughness": "return material.sample(uv).roughness;",
+    "metallic": "return material.sample(uv).metallic;",
+    "normal": "return material.sample(uv).normal;",
+    "height": "return material.sample(uv).height;",
+    "ao": "return material.sample(uv).ao;",
+    "emissive": "return material.sample(uv).emissive;",
+    "opacity": "return material.sample(uv).opacity;"
+  }
+}

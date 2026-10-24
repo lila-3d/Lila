@@ -1,0 +1,264 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "genWetness",
+  "label": "Wetness",
+  "category": "Generator",
+  "doc": "Wet from a water line up (along an axis of the bake bounds) plus puddles on upward-facing surfaces.",
+  "kind": "graph",
+  "graph": {
+    "name": "genWetness",
+    "typeVersion": 1,
+    "description": "Wet from a water line up (along an axis of the bake bounds) plus puddles on upward-facing surfaces.",
+    "inputs": [
+      {
+        "name": "position",
+        "kind": "port",
+        "type": "vector",
+        "default": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "description": "Position mesh map (0 to 1 over the bake bounds)."
+      },
+      {
+        "name": "worldNormal",
+        "kind": "port",
+        "type": "vector",
+        "default": [
+          0,
+          1,
+          0
+        ],
+        "description": "World normal mesh map (-1 to 1)."
+      },
+      {
+        "name": "axis",
+        "kind": "param",
+        "type": "enum",
+        "default": "y",
+        "targets": [
+          "Axis.axis"
+        ],
+        "options": [
+          "x",
+          "y",
+          "z"
+        ]
+      },
+      {
+        "name": "waterLine",
+        "kind": "param",
+        "type": "float",
+        "default": 0.2,
+        "targets": [
+          "Remap.level"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "softness",
+        "kind": "param",
+        "type": "float",
+        "default": 0.1,
+        "targets": [
+          "Remap.softness"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "puddles",
+        "kind": "param",
+        "type": "float",
+        "default": 1.0,
+        "targets": [
+          "Mix.weightB"
+        ],
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "upAxis",
+        "kind": "param",
+        "type": "enum",
+        "default": "y",
+        "targets": [
+          "Facing.upAxis"
+        ],
+        "options": [
+          "y",
+          "z"
+        ]
+      },
+      {
+        "name": "puddleScale",
+        "kind": "param",
+        "type": "int",
+        "default": 3,
+        "targets": [
+          "Noise.scale"
+        ],
+        "min": 1,
+        "softMax": 64
+      },
+      {
+        "name": "seed",
+        "kind": "param",
+        "type": "seed",
+        "default": 0,
+        "targets": [
+          "Noise.seed"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "mask",
+        "type": "gray"
+      }
+    ],
+    "nodes": [
+      {
+        "name": "GroupInput",
+        "type": "GroupInput",
+        "position": [
+          -400,
+          0
+        ]
+      },
+      {
+        "name": "GroupOutput",
+        "type": "GroupOutput",
+        "position": [
+          600,
+          0
+        ]
+      },
+      {
+        "name": "Axis",
+        "type": "maskAxis",
+        "position": [
+          -200,
+          0
+        ],
+        "values": {
+          "axis": "y"
+        }
+      },
+      {
+        "name": "Remap",
+        "type": "maskRemap",
+        "position": [
+          -80,
+          0
+        ],
+        "values": {
+          "level": 0.2,
+          "softness": 0.1,
+          "invert": true
+        }
+      },
+      {
+        "name": "Facing",
+        "type": "maskFacing",
+        "position": [
+          40,
+          0
+        ],
+        "values": {
+          "elevation": 90.0
+        }
+      },
+      {
+        "name": "Noise",
+        "type": "clouds",
+        "position": [
+          160,
+          0
+        ],
+        "values": {
+          "scale": 3
+        }
+      },
+      {
+        "name": "Puddles",
+        "type": "maskRemap",
+        "position": [
+          280,
+          0
+        ],
+        "values": {
+          "level": 0.95,
+          "softness": 0.2,
+          "breakup": 0.6
+        }
+      },
+      {
+        "name": "Mix",
+        "type": "maskMix",
+        "position": [
+          400,
+          0
+        ],
+        "values": {
+          "mode": "max",
+          "weightA": 1.0,
+          "weightB": 1.0
+        }
+      }
+    ],
+    "links": [
+      [
+        "GroupInput",
+        "position",
+        "Axis",
+        "position"
+      ],
+      [
+        "Axis",
+        "out",
+        "Remap",
+        "value"
+      ],
+      [
+        "GroupInput",
+        "worldNormal",
+        "Facing",
+        "normal"
+      ],
+      [
+        "Facing",
+        "out",
+        "Puddles",
+        "value"
+      ],
+      [
+        "Noise",
+        "out",
+        "Puddles",
+        "noise"
+      ],
+      [
+        "Remap",
+        "out",
+        "Mix",
+        "a"
+      ],
+      [
+        "Puddles",
+        "out",
+        "Mix",
+        "b"
+      ],
+      [
+        "Mix",
+        "out",
+        "GroupOutput",
+        "mask"
+      ]
+    ]
+  }
+}

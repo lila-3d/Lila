@@ -1,0 +1,55 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "maskAxis",
+  "label": "Mask Axis",
+  "category": "Mask",
+  "doc": "A gradient along one axis of a position map (0 to 1 over the bake bounds), 0 at start and 1 at end.",
+  "inputs": [
+    {
+      "id": "position",
+      "type": "vector",
+      "default": [
+        0.5,
+        0.5,
+        0.5
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "axis",
+      "type": "enum",
+      "default": "y",
+      "options": [
+        "x",
+        "y",
+        "z"
+      ]
+    },
+    {
+      "id": "start",
+      "type": "float",
+      "default": 0.0,
+      "softMin": 0,
+      "softMax": 1
+    },
+    {
+      "id": "end",
+      "type": "float",
+      "default": 1.0,
+      "softMin": 0,
+      "softMax": 1
+    }
+  ],
+  "cost": 2,
+  "body": {
+    "out": "float3 q = position.sample(uv);\nfloat t = p.axis == 0 ? q.x : (p.axis == 1 ? q.y : q.z);\nfloat span = p.end - p.start;\nreturn saturate((t - p.start) / (abs(span) < 1e-5 ? 1e-5 : span));"
+  }
+}

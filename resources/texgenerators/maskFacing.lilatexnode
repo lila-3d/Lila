@@ -1,0 +1,62 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "maskFacing",
+  "label": "Mask Facing",
+  "category": "Mask",
+  "doc": "How much a world normal faces a direction (elevation 90 is straight up): 1 facing it, 0 at right angles and beyond. twoSided counts facing away too.",
+  "inputs": [
+    {
+      "id": "normal",
+      "type": "vector",
+      "default": [
+        0,
+        1,
+        0
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "azimuth",
+      "type": "float",
+      "default": 0.0,
+      "softMin": -180,
+      "softMax": 180
+    },
+    {
+      "id": "elevation",
+      "type": "float",
+      "default": 90.0,
+      "min": -90,
+      "max": 90
+    },
+    {
+      "id": "upAxis",
+      "type": "enum",
+      "default": "y",
+      "options": [
+        "y",
+        "z"
+      ]
+    },
+    {
+      "id": "twoSided",
+      "type": "bool",
+      "default": false
+    }
+  ],
+  "cost": 4,
+  "helpers": [
+    "layers"
+  ],
+  "body": {
+    "out": "float3 n = normal.sample(uv);\nfloat d = dot(n / max(length(n), 1e-5), layerDirection(p.azimuth, p.elevation, p.upAxis));\nreturn saturate(p.twoSided ? abs(d) : d);"
+  }
+}

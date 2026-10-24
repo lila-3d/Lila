@@ -1,0 +1,189 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "genPositionGradient",
+  "label": "Position Gradient",
+  "category": "Generator",
+  "doc": "A gradient along an axis of the bake bounds (0 at start, 1 at end), optionally warped by noise.",
+  "kind": "graph",
+  "graph": {
+    "name": "genPositionGradient",
+    "typeVersion": 1,
+    "description": "A gradient along an axis of the bake bounds (0 at start, 1 at end), optionally warped by noise.",
+    "inputs": [
+      {
+        "name": "position",
+        "kind": "port",
+        "type": "vector",
+        "default": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "description": "Position mesh map (0 to 1 over the bake bounds)."
+      },
+      {
+        "name": "axis",
+        "kind": "param",
+        "type": "enum",
+        "default": "y",
+        "targets": [
+          "Axis.axis"
+        ],
+        "options": [
+          "x",
+          "y",
+          "z"
+        ]
+      },
+      {
+        "name": "start",
+        "kind": "param",
+        "type": "float",
+        "default": 0.0,
+        "targets": [
+          "Axis.start"
+        ],
+        "softMin": 0,
+        "softMax": 1
+      },
+      {
+        "name": "end",
+        "kind": "param",
+        "type": "float",
+        "default": 1.0,
+        "targets": [
+          "Axis.end"
+        ],
+        "softMin": 0,
+        "softMax": 1
+      },
+      {
+        "name": "invert",
+        "kind": "param",
+        "type": "bool",
+        "default": false,
+        "targets": [
+          "Remap.invert"
+        ]
+      },
+      {
+        "name": "breakup",
+        "kind": "param",
+        "type": "float",
+        "default": 0.0,
+        "targets": [
+          "Remap.breakup"
+        ],
+        "min": 0,
+        "softMax": 2
+      },
+      {
+        "name": "noiseScale",
+        "kind": "param",
+        "type": "int",
+        "default": 4,
+        "targets": [
+          "Noise.scale"
+        ],
+        "min": 1,
+        "softMax": 64
+      },
+      {
+        "name": "seed",
+        "kind": "param",
+        "type": "seed",
+        "default": 0,
+        "targets": [
+          "Noise.seed"
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "mask",
+        "type": "gray"
+      }
+    ],
+    "nodes": [
+      {
+        "name": "GroupInput",
+        "type": "GroupInput",
+        "position": [
+          -400,
+          0
+        ]
+      },
+      {
+        "name": "GroupOutput",
+        "type": "GroupOutput",
+        "position": [
+          240,
+          0
+        ]
+      },
+      {
+        "name": "Axis",
+        "type": "maskAxis",
+        "position": [
+          -200,
+          0
+        ],
+        "values": {
+          "axis": "y"
+        }
+      },
+      {
+        "name": "Noise",
+        "type": "perlin",
+        "position": [
+          -80,
+          0
+        ],
+        "values": {
+          "scale": 4,
+          "octaves": 3
+        }
+      },
+      {
+        "name": "Remap",
+        "type": "maskRemap",
+        "position": [
+          40,
+          0
+        ],
+        "values": {
+          "level": 0.5,
+          "softness": 1.0,
+          "breakup": 0.0
+        }
+      }
+    ],
+    "links": [
+      [
+        "GroupInput",
+        "position",
+        "Axis",
+        "position"
+      ],
+      [
+        "Axis",
+        "out",
+        "Remap",
+        "value"
+      ],
+      [
+        "Noise",
+        "out",
+        "Remap",
+        "noise"
+      ],
+      [
+        "Remap",
+        "out",
+        "GroupOutput",
+        "mask"
+      ]
+    ]
+  }
+}

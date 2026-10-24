@@ -1,0 +1,23 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "meshThickness",
+  "label": "Thickness",
+  "category": "Mesh",
+  "doc": "Thickness from the set's bake: white is thick. Reads (u, v, 0) when the map isn't supplied.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [],
+  "cost": 1,
+  "externals": [
+    "thickness"
+  ],
+  "body": {
+    "out": "return thickness.sample(uv).x;"
+  }
+}

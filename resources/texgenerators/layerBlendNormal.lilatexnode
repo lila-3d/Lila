@@ -1,0 +1,66 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "layerBlendNormal",
+  "label": "Layer Blend Normal",
+  "category": "Layer",
+  "doc": "Composites a layer's tangent-space normal over the normals below: rnm reorients the layer's detail onto them, normal replaces them. Mixed in by mask times opacity.",
+  "inputs": [
+    {
+      "id": "below",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        1,
+        1
+      ]
+    },
+    {
+      "id": "above",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        1,
+        1
+      ]
+    },
+    {
+      "id": "mask",
+      "type": "gray",
+      "default": 1.0
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "mode",
+      "type": "enum",
+      "default": "rnm",
+      "options": [
+        "rnm",
+        "normal"
+      ]
+    },
+    {
+      "id": "opacity",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "max": 1
+    }
+  ],
+  "cost": 10,
+  "helpers": [
+    "layers"
+  ],
+  "body": {
+    "out": "float3 nb = normalize(normalDecode(below.sample(uv)) + float3(0.0, 0.0, 1e-4));\nfloat3 nf = normalize(normalDecode(above.sample(uv)) + float3(0.0, 0.0, 1e-4));\nfloat k = saturate(mask.sample(uv) * p.opacity);\nfloat3 t = p.mode == 0 ? normalRnm(nb, nf) : nf;\nreturn normalEncode(lerp(nb, normalize(t), k) + float3(0.0, 0.0, 1e-4));"
+  }
+}

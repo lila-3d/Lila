@@ -1,0 +1,23 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "meshUvIslands",
+  "label": "UV Islands",
+  "category": "Mesh",
+  "doc": "The baked UV island map: a flat colour per island. Reads (u, v, 0) when the map isn't supplied.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [],
+  "cost": 1,
+  "externals": [
+    "uvIslands"
+  ],
+  "body": {
+    "out": "return uvIslands.sample(uv);"
+  }
+}

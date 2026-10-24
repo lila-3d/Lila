@@ -1,0 +1,26 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "layerImage",
+  "label": "Layer Image",
+  "category": "Layer",
+  "doc": "A paint layer's buffer: an image file sampled in uv (black when there is none yet).",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "file",
+      "type": "image",
+      "default": ""
+    }
+  ],
+  "cost": 2,
+  "body": {
+    "out": "return file.sample(uv);"
+  }
+}
