@@ -37,6 +37,7 @@
 #include "ui/AnimLayersPanel.h"
 #include "ui/OffsetsPanel.h"
 #include "ui/RenamePanel.h"
+#include "ui/DisplayAids.h"
 #include "ui/DockSidebar.h"
 #include "ui/Environments.h"
 #include "ui/ExtensionManagerDialog.h"
@@ -74,6 +75,7 @@
 #include "vcs/SourceControl.h"
 #include "ui/Terminal.h"
 #include "ui/Theme.h"
+#include "ui/ToolBox.h"
 #include "ui/editor/CodeEditor.h"
 #include "ui/editor/ScriptEditor.h"
 #include "ui/ScriptPanel.h"
@@ -100,6 +102,7 @@
 #include <QMessageBox>
 #include <QPointer>
 #include <QStatusBar>
+#include <QWidgetAction>
 #include <QTextDocumentFragment>
 #include <QTimer>
 #include <QToolButton>
@@ -184,6 +187,7 @@ MainWindow::MainWindow()
 
     mViewports = new ViewportLayout(this);
     setCentralWidget(mViewports);
+    toolBox::install(this, [this](const std::string& id) { return viewportActionState(id, mViewports->active()); });
 
     registerPanels();
     for (panels::Panel* p : panels::registry().allInOrder())
@@ -990,7 +994,9 @@ void MainWindow::registerActions()
     actions::add({"window.expandPanels", "Expand Collapsed Panels", "Windows", [this] { mSidebars->expandAll(); }, nullptr,
                   "Opens every panel collapsed to a sidebar tab."});
     actions::add({"window.searchMenus", "Search Menus...", "Windows", [this] { menuSearch::openBox(menuBar(), this); }, nullptr,
-                  "Finds any item in the main menus by typing part of its name or menu, and runs it."});
+                  "Finds any item in the main menus by typing part of its name or menu, and runs it or opens its options."});
+    actions::add({"window.searchScene", "Search Scene...", "Windows", [this] { menuSearch::openSceneFinder(menuBar(), this); }, nullptr,
+                  "Finds any object in the scene by name, wildcard, type: or path, selects it and reveals it in the outliner."});
     actions::add({"window.preferences", "Preferences...", "Windows", [this] {
                       if (!closeShownWindow<PreferencesDialog>())
                           PreferencesDialog::open(this);
@@ -1016,6 +1022,8 @@ void MainWindow::registerActions()
     MeshSequenceExporter::registerActions(this);
     animatedSend::registerActions(this);
     hud::registerActions([this] { return mViewports->active(); });
+    displayAids::registerActions([this] { return mViewports->active(); });
+    toolBox::registerItems([this] { return mViewports->active(); });
     cursorBadges::registerDefaults();
     actions::add({"viewport.toggleQuad", "Toggle Four Views", "View", [this] { mViewports->toggleQuad(); }, nullptr,
                   "Switches between one view and the top, front, side and perspective views together."});
@@ -1257,12 +1265,17 @@ void MainWindow::buildMenus()
     menus::addActions("Display/Display Layers", {"window.displayLayers", "layers.create", "layers.createFromSelected", "layers.addSelected",
                                           "layers.removeSelected"});
     menus::addActions("Display", {"#Camera"});
+    addSubmenu("Display", "Mesh Display", syncChecks);
+    for (const displayAids::Info& i : displayAids::all())
+        addItem({.menu = "Display/Mesh Display", .kind = Kind::Action, .action = std::string("viewport.aid.") + i.id});
+    addItem({.id = "Display/Mesh Display/normalLength", .menu = "Display/Mesh Display", .kind = Kind::Custom,
+             .setup = [](QMenu* m) { m->addAction(displayAids::normalLengthRow(m)); }});
     addSubmenu("Display", "Views", syncChecks);
     menus::addActions("Display/Views", {"viewport.view.persp", "viewport.view.top", "viewport.view.front", "viewport.view.right", "viewport.view.left",
                                  "viewport.view.back", "viewport.view.bottom"});
     menus::addActions("Display", {"viewport.frameSelected", "viewport.frameAll", "viewport.cameraUndo", "viewport.cameraRedo", "#Overlays",
                            "viewport.toggleGrid", "viewport.toggleResolutionGate", "viewport.toggleFilmGate", "viewport.cameraSettings",
-                           "window.renderSettings", "#View", "viewport.toggleToolbar", "viewport.resetExposure"});
+                           "window.renderSettings", "#View", "viewport.toggleToolbar", "window.toggleToolBox", "viewport.resetExposure"});
 
     menu("Animation", "Animation");
     menus::addActions("Animation", {"#Keys", "anim.setKey", "anim.setKeyTranslate", "anim.setKeyRotate", "anim.setKeyScale", "anim.autoKeyToggle", "#Playback",
@@ -1273,12 +1286,12 @@ void MainWindow::buildMenus()
     menus::addActions("Animation", {"window.poseLibrary", "pose.mirror", "window.controlPicker", "picker.editMode"});
     menus::addActions("Animation", {"#Offsets", "anim.createOffset", "anim.bakeOffset", "anim.deleteOffset", "window.offsets"});
 
-    menu("Windows", "Windows");
+    menu("Windows", "Windows", Area::MenuBar, syncChecks);
     addItem({.id = "Windows/panels", .menu = "Windows", .kind = Kind::Custom, .setup = [this](QMenu* m) {
                  for (QDockWidget* dock : findChildren<QDockWidget*>())
                      m->addAction(dock->toggleViewAction());
              }});
-    menus::addActions("Windows", {"", "window.toggleMaximizePanel", "window.toggleChannelBox", "window.toggleUvEditor", "viewport.frameAll",
+    menus::addActions("Windows", {"", "window.toggleToolBox", "window.toggleMaximizePanel", "window.toggleChannelBox", "window.toggleUvEditor", "viewport.frameAll",
                            "window.resetLayout"});
     addItem({.id = "Windows/layouts", .menu = "Windows", .kind = Kind::Custom, .setup = [this](QMenu* m) { m->addMenu(mLayouts->menu()); }});
     menus::addActions("Windows", {"window.expandPanels", "", "window.materialEditor", "window.scriptEditor", "window.apiReference", "window.terminal",
@@ -1286,7 +1299,7 @@ void MainWindow::buildMenus()
                            "window.extensionManager"});
 
     menu("Help", "Help");
-    menus::addActions("Help", {"window.searchMenus", "", "help.agentSetup", "help.prefsFolder", "help.crashReports", "help.copyLastCrash", "help.hotkeyCheatSheet", "help.about"});
+    menus::addActions("Help", {"window.searchMenus", "window.searchScene", "", "help.agentSetup", "help.prefsFolder", "help.crashReports", "help.copyLastCrash", "help.hotkeyCheatSheet", "help.about"});
 
     buildPanelMenus();
 
@@ -1330,6 +1343,7 @@ void MainWindow::buildPanelMenus()
     menus::addActions("panel.Panels", {"viewport.lookThroughSelected"});
     // Maya's Panels > Perspective / Orthographic: the views plus every camera node, rebuilt as the menu opens.
     addSubmenu("panel.Panels", "Cameras", [this](QMenu* cameras) {
+                                 "viewport.aid.twoSidedLighting", "viewport.aid.backfaceTint",
         connect(cameras, &QMenu::aboutToShow, cameras, [this, cameras] { fillCameraMenu(cameras, mViewports->active()); });
     });
     menus::addActions("panel.Panels", {"", "viewport.toggleQuad", "window.toggleMaximizePanel", "", "window.uvEditor", "window.graphEditor",

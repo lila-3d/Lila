@@ -6,7 +6,9 @@ add_executable(lila_tests
     test_references.cpp
     test_meshes.cpp
     test_modeling.cpp
+    test_normal_frames.cpp
     test_knife.cpp
+    test_conform.cpp
     test_modifiers.cpp
     test_modstack.cpp
     test_docs.cpp
@@ -19,6 +21,8 @@ add_executable(lila_tests
     test_hotkeys.cpp
     test_display.cpp
     test_preselect.cpp
+    test_display_aids.cpp
+    test_icon_bars.cpp
     test_layouts.cpp
     test_themes.cpp
     test_toolkit.cpp
@@ -31,6 +35,7 @@ add_executable(lila_tests
     test_component_query.cpp
     test_outliner.cpp
     test_value_reset.cpp
+    test_outliner_filter.cpp
     test_progress.cpp
     test_scene_scripts.cpp
     test_camera_history.cpp

@@ -17,7 +17,8 @@ struct MeshPush
     uint flags;      // render::MaterialFlags
     float gamma;     // display gamma
     uint style;      // word offset of the draw's style block in the frame's table; kNoStyle for default lit
-    float2 displayPad;
+    uint backTint;   // back-face tint: rgba8, display-encoded rgb and its mix in alpha; 0 is off
+    float displayPad;
     uint* textureTable; // the frame's table: bindless texture handles, then style blocks
     uint2 maps;         // bindless: 16-bit table handles, x: base color | normal << 16, y: ORM | emissive << 16
 };
@@ -298,6 +299,7 @@ static const uint kUv1 = 1 << 10;
 static const uint kVertexColorShaded = 1 << 11;
 static const uint kVertexColorUnlit = 1 << 12;
 static const uint kColorChannelShift = 13; // 3 bits: 0 rgb, 1 r, 2 g, 3 b, 4 a
+static const uint kOneSidedLighting = 1 << 16;
 
 struct VSIn
 {
@@ -499,13 +501,22 @@ float3 vertexColor(float4 c, uint flags)
 
 #include "stylised.slang"
 
+/** The back-face tint over a display-encoded colour. */
+float3 tintBack(float3 c, bool front)
+{
+    if (front || pc.backTint == 0)
+        return c;
+    float4 t = float4((uint4(pc.backTint, pc.backTint >> 8, pc.backTint >> 16, pc.backTint >> 24) & 0xff)) / 255.0;
+    return lerp(c, t.rgb, t.a);
+}
+
 [shader("fragment")]
 float4 meshPS(VSOut i, bool front : SV_IsFrontFace) : SV_Target
 {
     gVtPixel = uint2(i.pos.xy);
     uint flags = pc.flags;
     if ((flags & kVertexColorUnlit) != 0)
-        return float4(dither(vertexColor(i.color, flags), i.pos.xy), 1.0);
+        return float4(dither(tintBack(vertexColor(i.color, flags), front), i.pos.xy), 1.0);
     float3 baseColor = pc.base.rgb;
     float opacity = pc.surface.z;
     if ((flags & kBaseColorMap) != 0)
@@ -538,7 +549,7 @@ float4 meshPS(VSOut i, bool front : SV_IsFrontFace) : SV_Target
         stroke = painterlyStroke(i, ng, front);
         n = bendNormal(n, ng, stroke);
     }
-    if (!front)
+    if (!front && (flags & kOneSidedLighting) == 0)
         n = -n;
 
     Surface s;
@@ -588,6 +599,7 @@ float4 meshPS(VSOut i, bool front : SV_IsFrontFace) : SV_Target
     c *= pc.params.x;
     c = displayGamma(neutralTonemap(c));
     c = lerp(c, float3(1.0), pc.params.z);
+    c = tintBack(c, front);
     float alpha = (flags & kTranslucent) != 0 ? saturate(opacity) : 1.0;
     return float4(dither(c, i.pos.xy), alpha);
 }

@@ -437,6 +437,9 @@ bool Hotkeys::eventFilter(QObject* obj, QEvent* e)
     int mods = int(k->modifiers()) & kModMask;
     if (textInputFocused(focus) && isStandardTextEdit(mods, k->key()))
         return false;
+    // Code and text editors keep Ctrl+F for their own find bar.
+    if ((qobject_cast<QPlainTextEdit*>(focus) || qobject_cast<QTextEdit*>(focus)) && mods == Qt::ControlModifier && k->key() == Qt::Key_F)
+        return false;
     if (listNavigationFocused(focus) && mods == 0 && isArrowKey(k->key()))
         return false;
 

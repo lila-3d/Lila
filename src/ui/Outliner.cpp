@@ -10,9 +10,11 @@
 #include "scene/ObjectSets.h"
 #include "ui/Actions.h"
 #include "ui/Hotkeys.h"
+#include "ui/IconBars.h"
 #include "ui/Icons.h"
 #include "ui/OutlinerLogic.h"
 #include "ui/Theme.h"
+#include "ui/ViewportToolbar.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -23,11 +25,13 @@
 #include <QHash>
 #include <QHeaderView>
 #include <QInputDialog>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QSplitter>
 #include <QTimer>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -126,6 +130,13 @@ void runCommand(const char* name, const json& call)
     }
 }
 
+constexpr const char* kShowSetsPref = "/outliner/showSets";
+
+bool showSets()
+{
+    return PrefStore::get().value<bool>("general", kShowSetsPref, true);
+}
+
 void copyToClipboard(bool fullPath)
 {
     scene::Graph& g = scene::Graph::current();
@@ -155,6 +166,16 @@ void registerOutlinerActions()
                   "Opens every row of the outliner."});
     actions::add({"outliner.collapseAll", "Collapse All", "Outliner", onOutliner(&Outliner::collapseEverything), nullptr,
                   "Folds the outliner down to the top-level objects."});
+    actions::add({.id = "outliner.toggleSets", .label = "Show Sets", .category = "Outliner",
+                  .run =
+                      [] {
+                          PrefStore::get().set("general", kShowSetsPref, !showSets());
+                          for (Outliner* o : gOutliners)
+                              o->scheduleRebuild();
+                      },
+                  .doc = "Lists object sets after the hierarchy, each with its members under it.",
+                  .python = "lila.prefs.set(\"general\", \"/outliner/showSets\", False)",
+                  .checked = [] { return showSets(); }});
     actions::add({"outliner.copyName", "Copy Name", "Outliner", [] { copyToClipboard(false); }, nullptr,
                   "Puts the selected objects' names on the clipboard, one per line."});
     actions::add({"outliner.copyPath", "Copy Path", "Outliner", [] { copyToClipboard(true); }, nullptr,
@@ -170,6 +191,21 @@ void registerOutlinerActions()
                           runCommand("select", {{"args", namesOf(kids)}});
                   }, nullptr, "Replaces the selection with the direct children of the selected objects.",
                   "select(listRelatives(children=True))"});
+
+    using iconBars::Kind;
+    const std::string bar = iconBars::kOutliner;
+    iconBars::add({.id = "outliner/rename", .bar = bar, .action = "window.rename", .icon = "forms", .label = "Batch Rename"});
+    iconBars::add({.id = "outliner/naming", .bar = bar, .kind = Kind::Menu, .icon = "text-spellcheck", .label = "Naming Conventions",
+                   .menuActions = {"edit.checkNames", "edit.conformNames", "", "naming.toggleEnforce"}});
+    iconBars::add({.id = "outliner/-view", .bar = bar, .kind = Kind::Separator});
+    iconBars::add({.id = "outliner/reveal", .bar = bar, .action = "outliner.revealSelected", .icon = "focus-2"});
+    iconBars::add({.id = "outliner/expand", .bar = bar, .action = "outliner.expandAll", .icon = "fold-down"});
+    iconBars::add({.id = "outliner/collapse", .bar = bar, .action = "outliner.collapseAll", .icon = "fold-up"});
+    iconBars::add({.id = "outliner/show", .bar = bar, .kind = Kind::Menu, .icon = "eye", .label = "Show",
+                   .menuActions = {"outliner.toggleSets"}});
+    iconBars::add({.id = "outliner/-copy", .bar = bar, .kind = Kind::Separator});
+    iconBars::add({.id = "outliner/copy", .bar = bar, .kind = Kind::Menu, .icon = "copy", .label = "Copy",
+                   .menuActions = {"outliner.copyName", "outliner.copyPath"}});
 }
 
 /** Adds an action's menu item, labelled as the action (or label) with its hotkey, running it through run. */
@@ -542,7 +578,8 @@ void Outliner::rebuild()
     };
     for (scene::NodeId id : g.roots())
         add(id, nullptr);
-    addSetRows();
+    if (showSets())
+        addSetRows();
     // An unloaded reference has no nodes, so it gets a placeholder row to load it back from.
     for (const io::Reference& r : io::refs::all())
         if (!r.loaded)
@@ -565,6 +602,7 @@ void Outliner::rebuild()
     for (int i = 0; i < topLevelItemCount(); ++i)
         if (QTreeWidgetItem* top = topLevelItem(i); top->data(0, kSetRole).isValid())
             top->setExpanded(mOpenSets.contains(top->data(0, kSetRole).toULongLong()));
+    applyFilter();
     mSyncing = false;
     restyle();
     syncSelectionFromScene();
@@ -646,8 +684,9 @@ void Outliner::restyle()
             continue;
         bool referenced = n->referenceId() != 0;
         bool hidden = outliner::hiddenInHierarchy(g, id);
+        bool kept = mKept.contains(id);
         QString iconName = QString::fromStdString(outliner::iconName(*n));
-        QString style = iconName + (referenced ? "/r" : "") + (hidden ? "/h" : "");
+        QString style = iconName + (referenced ? "/r" : "") + (hidden ? "/h" : "") + (kept ? "/k" : "");
         if (item->data(0, kStyleRole).toString() == style)
             continue;
         item->setData(0, kStyleRole, style);
@@ -655,8 +694,44 @@ void Outliner::restyle()
         QFont f = item->font(0);
         f.setItalic(referenced);
         item->setFont(0, f);
-        QColor c = hidden ? themeShade(100) : referenced ? themeShade(150) : normal;
+        QColor c = hidden || kept ? themeShade(100) : referenced ? themeShade(150) : normal;
         item->setForeground(0, c);
+    }
+}
+
+void Outliner::setFilter(outliner::Filter filter)
+{
+    mFilter = std::move(filter);
+    rebuild();
+}
+
+void Outliner::applyFilter()
+{
+    LILA_ZONE();
+
+    mKept.clear();
+    if (mFilter.empty() || !mFilter.valid())
+        return;
+    scene::Graph& g = scene::Graph::current();
+    outliner::FilterRows rows = outliner::filterRows(g, mFilter);
+    mKept = std::move(rows.kept);
+    for (auto& [id, item] : mItems)
+        item->setHidden(!rows.matched.contains(id) && !mKept.contains(id));
+    // Opened without being remembered in mExpanded, so clearing the filter folds the rows back as they were.
+    for (scene::NodeId id : rows.matched)
+        for (scene::NodeId p = g.parent(id); p != scene::kNoNode; p = g.parent(p))
+            if (auto it = mItems.find(p); it != mItems.end())
+                it->second->setExpanded(true);
+    for (int i = 0; i < topLevelItemCount(); ++i)
+    {
+        QTreeWidgetItem* top = topLevelItem(i);
+        if (top->data(0, kSetRole).isValid())
+        {
+            const scene::Node* set = g.node(top->data(0, kSetRole).toULongLong());
+            top->setHidden(!set || !mFilter.matches(set->name(), g.fullPath(set->id()), &set->type()));
+        }
+        else if (top->data(0, kUnloadedRefRole).isValid())
+            top->setHidden(true);
     }
 }
 
@@ -906,9 +981,87 @@ void Outliner::showContextMenu(const QPoint& pos)
     menu.exec(viewport()->mapToGlobal(pos));
 }
 
+void revealSelectionInOutliners()
+{
+    for (Outliner* o : gOutliners)
+        if (o->isVisible())
+            o->revealSelected();
+}
+
 namespace
 {
 constexpr const char* kSplitPref = "/outliner/split";
+
+/** Clicking into it selects all of it, so typing replaces the filter; Esc clears it. */
+class FilterEdit : public QLineEdit
+{
+public:
+    using QLineEdit::QLineEdit;
+
+protected:
+    void focusInEvent(QFocusEvent* e) override
+    {
+        QLineEdit::focusInEvent(e);
+        // After the click that focused it has placed the cursor.
+        if (e->reason() == Qt::MouseFocusReason)
+            QTimer::singleShot(0, this, [this] { selectAll(); });
+    }
+    void keyPressEvent(QKeyEvent* e) override
+    {
+        if (e->key() == Qt::Key_Escape && !text().isEmpty())
+            return clear();
+        QLineEdit::keyPressEvent(e);
+    }
+};
+
+const char* kFilterSyntax = "Filter the outliner by name. Matches keep their parents, dimmed.\n"
+                            "  pCube*  ?  [a-c]  [!0-9]   wildcards over the whole name\n"
+                            "  cube sphere  or  cube, sphere   any of the terms\n"
+                            "  !*Shape   leaves out what matches\n"
+                            "  type:mesh   that type or one derived from it\n"
+                            "  |rig|*   a term with | matches the full path\n"
+                            "Case is ignored. Esc clears.";
+
+/** An outliner under its filter box. */
+QWidget* filteredOutliner(QWidget* parent)
+{
+    auto* pane = new QWidget(parent);
+    auto* v = new QVBoxLayout(pane);
+    v->setContentsMargins(0, 0, 0, 0);
+    v->setSpacing(2);
+    auto* row = new QHBoxLayout();
+    row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(2);
+    auto* edit = new FilterEdit(pane);
+    edit->setPlaceholderText("Filter");
+    edit->setClearButtonEnabled(true);
+    edit->addAction(icon("filter"), QLineEdit::LeadingPosition);
+    edit->setToolTip(kFilterSyntax);
+    auto* regex = new QToolButton(pane);
+    regex->setCheckable(true);
+    regex->setAutoRaise(true);
+    regex->setIcon(icon("regex"));
+    regex->setToolTip("Regular expressions: each space separated term is a regex searched in the name (in the full path "
+                      "when it holds \\|). ! and type: still apply.");
+    row->addWidget(edit, 1);
+    row->addWidget(regex);
+    v->addLayout(row);
+    auto* tree = new Outliner(pane);
+    v->addWidget(tree, 1);
+
+    auto* debounce = new QTimer(pane);
+    debounce->setSingleShot(true);
+    debounce->setInterval(120);
+    auto apply = [edit, regex, tree] {
+        outliner::Filter f(edit->text().toStdString(), regex->isChecked());
+        edit->setToolTip(f.valid() ? QString(kFilterSyntax) : QString::fromStdString(f.error()) + "\n\n" + kFilterSyntax);
+        tree->setFilter(std::move(f));
+    };
+    QObject::connect(debounce, &QTimer::timeout, pane, apply);
+    QObject::connect(edit, &QLineEdit::textChanged, debounce, qOverload<>(&QTimer::start));
+    QObject::connect(regex, &QToolButton::toggled, pane, apply);
+    return pane;
+}
 
 /** A splitter handle with a short grip line, so the collapsed second pane can still be found. */
 class GripHandle : public QSplitterHandle
@@ -951,10 +1104,13 @@ OutlinerPanel::OutlinerPanel(QWidget* parent) : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
+    auto* bar = new iconBars::IconBar(iconBars::kOutliner, Qt::Horizontal, 16, [](const std::string& id) { return viewportActionState(id, nullptr); }, this);
+    bar->setFill(true);
+    layout->addWidget(bar);
     auto* split = new GripSplitter(Qt::Vertical, this);
     split->setHandleWidth(5);
-    split->addWidget(new Outliner(split));
-    split->addWidget(new Outliner(split));
+    split->addWidget(filteredOutliner(split));
+    split->addWidget(filteredOutliner(split));
     split->setCollapsible(0, false);
     split->setCollapsible(1, true);
     split->setStretchFactor(0, 1);

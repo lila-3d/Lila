@@ -9,6 +9,7 @@
 #include "ui/AttributeEditor.h"
 #include "ui/ExtensionUi.h"
 #include "ui/Hotkeys.h"
+#include "ui/IconBars.h"
 #include "ui/Layouts.h"
 #include "ui/MarkingMenu.h"
 #include "ui/Menus.h"
@@ -185,6 +186,33 @@ json dispatch(const std::string& op, const json& a, const std::vector<PyCall>& f
         return menus::addItem({.id = str(a, "id"), .menu = str(a, "menu"), .kind = k, .action = str(a, "action"), .label = str(a, "label"),
                                .after = str(a, "after"), .before = str(a, "before")},
                               owner);
+    }
+    if (op == "iconBar.addItem")
+    {
+        std::string kind = str(a, "kind", "action");
+        std::vector<std::string> rows;
+        for (const json& r : a.value("actions", json::array()))
+            if (r.is_string())
+                rows.push_back(r.get<std::string>());
+        return iconBars::add({.id = str(a, "id"),
+                              .bar = str(a, "bar", iconBars::kToolBox),
+                              .kind = kind == "separator" ? iconBars::Kind::Separator : kind == "menu" ? iconBars::Kind::Menu : iconBars::Kind::Action,
+                              .action = str(a, "action"),
+                              .icon = str(a, "icon"),
+                              .label = str(a, "label"),
+                              .menuActions = std::move(rows),
+                              .after = str(a, "after"),
+                              .before = str(a, "before")},
+                             owner);
+    }
+    if (op == "iconBar.removeItem")
+        return iconBars::remove(str(a, "id"));
+    if (op == "iconBar.list")
+    {
+        json out = json::array();
+        for (const iconBars::Item* i : iconBars::itemsIn(str(a, "bar", iconBars::kToolBox)))
+            out.push_back({{"id", i->id}, {"action", i->action}, {"icon", i->icon}, {"label", i->label}, {"owner", *iconBars::registry().ownerOf(i->id)}});
+        return out;
     }
     if (op == "menu.remove")
         return menus::removeMenu(str(a, "id"));

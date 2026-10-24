@@ -84,6 +84,10 @@ struct FrameState
     int msaaSamples = 8;
     bool grid = true;
     bool backfaceCulling = false; // culls back faces even on two-sided materials
+    /** Back faces of two-sided materials shade with their normal flipped toward the camera; off, they light from behind. */
+    bool twoSidedLighting = true;
+    /** Display-encoded rgb mixed over back faces by alpha, to spot reversed normals; alpha 0 is off. */
+    glm::vec4 backfaceTint{0.0f};
     bool xray = false;            // shaded meshes see-through
     /** Shaded lighting: the environment (falls back to the studio rig while none is loaded), the studio rig, or flat. */
     enum class Lighting
@@ -124,6 +128,9 @@ struct FrameState
     /** Mesh edges on the symmetry plane: drawn like linesOnTop, under the selected edges and hover, at their own width in device pixels. */
     std::vector<LineVertex> symmetryLines;
     float symmetryLineWidth = 1.0f;
+    /** Highlighted mesh edges (hard, border, non-manifold...): drawn like linesOnTop, under the symmetry and selected edges, at their own width in device pixels. */
+    std::vector<LineVertex> highlightEdges;
+    float highlightEdgeWidth = 1.0f;
     std::vector<LineVertex> tris3d;     // world-space triangle list, blended and biased toward the camera, no depth write
     std::vector<LineVertex> linesXray;  // world-space lines with no depth test, over every surface (x-ray joints)
     std::vector<LineVertex> overlay; // NDC positions, drawn last with no depth test (marquee, HUD)

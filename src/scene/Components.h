@@ -6,10 +6,15 @@
 
 #include <functional>
 #include <map>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace lila::scene
 {
+class Graph;
+class Node;
+
 enum class ComponentMode : uint8_t
 {
     Object,
@@ -95,3 +100,28 @@ LILA_SCENE_API glm::dvec3 selectionNormal();
 /** Moves each selected point (with soft selection and symmetry) by a world distance along its own normal, as one undo step. */
 LILA_SCENE_API void offsetSelectedComponents(const char* label, double distance);
 } // namespace lila::scene
+/**
+ * Object-space frame per point, columns U tangent, V tangent and normal (zero where it has no faces): the axes the move tool's
+ * Normal orientation drags each point along. The normal is componentNormals'. U is the uv0 u direction (dP/du of its faces,
+ * area-weighted) projected into the normal's plane; where there are no uvs, or mirrored islands cancel at the point, it is
+ * reference projected instead. In edge mode a point on selected edges takes U along them. V = N x U.
+ */
+LILA_SCENE_API std::vector<glm::dmat3> componentFrames(const geo::Mesh& mesh, ComponentMode kind, const components::Ids& ids,
+                                                       const glm::dvec3& reference);
+/**
+ * World-space manipulator frame for the Normal orientation: Z the selection's average normal, X the average of its points' U
+ * tangents. The tangent reference is the world axis least aligned with that normal.
+ */
+LILA_SCENE_API glm::dmat3 selectionNormalFrame();
+/** Moves each selected point by uvn along its own world U, V and N (componentFrames), as one undo step. */
+LILA_SCENE_API void offsetSelectedComponents(const char* label, const glm::dvec3& uvn);
+
+/** Where a point goes at full weight, given its rest position (object space). */
+using PointTarget = std::function<glm::dvec3(uint32_t point, const glm::dvec3& rest)>;
+/** Sets up a mesh's PointTarget from its base mesh, world matrix and component selection; an empty one leaves the mesh alone. */
+using PointTargetSetup = std::function<PointTarget(const geo::Mesh&, const glm::dmat4& world, ComponentMode kind, const components::Ids& ids)>;
+/**
+ * Moves the selected components' points toward their targets, blended by soft selection, with the selection's side of the
+ * symmetry driving the other, as one undo step. Throws in object mode; returns how many meshes it changed.
+ */
+LILA_SCENE_API int deformSelectedComponents(const char* label, const PointTargetSetup& setup);

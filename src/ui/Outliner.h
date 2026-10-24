@@ -3,6 +3,7 @@
 #include "core/Export.h"
 
 #include "scene/Plug.h"
+#include "ui/OutlinerFilter.h"
 
 #include <QTreeWidget>
 #include <QWidget>
@@ -36,6 +37,10 @@ public:
     void renameSelected();
     void expandEverything();
     void collapseEverything();
+    /** Rebuilds the rows once the event loop comes round, however many changes arrive first. */
+    void scheduleRebuild();
+    /** Shows only the rows the filter matches, with their ancestors dimmed and opened so the hierarchy reads. */
+    void setFilter(outliner::Filter filter);
 
 protected:
     void resizeEvent(QResizeEvent* e) override;
@@ -47,7 +52,6 @@ protected:
     void keyPressEvent(QKeyEvent* e) override;
 
 private:
-    void scheduleRebuild();
     void scheduleRestyle();
     void rebuild();
     /** Updates each row's icon, font and color from its node's type, reference and visibility. */
@@ -62,6 +66,8 @@ private:
     void startMove();
     /** Shades the rows of the selection's unselected ancestors. */
     void shadeAncestors();
+    /** Hides the rows the filter leaves out and opens the ones leading to a match. */
+    void applyFilter();
 
     std::unordered_map<scene::NodeId, QTreeWidgetItem*> mItems;
     /** Rows start collapsed, as in Maya; these were opened. */
@@ -81,11 +87,18 @@ private:
     bool mSelectionPending = false;
     /** A rebuild was skipped while the pane was collapsed to nothing; it runs when the pane opens. */
     bool mStale = false;
+    outliner::Filter mFilter;
+    /** Ancestors kept only to place a match, drawn dimmed. */
+    std::set<scene::NodeId> mKept;
 };
 
+/** Expands every visible outliner down to the selected objects and scrolls to them. */
+LILA_UI_API void revealSelectionInOutliners();
+
 /**
- * The outliner panel: Maya's hidden second outliner sits under the first, collapsed to a grab handle at the bottom.
- * Drag the handle up to open it; each pane scrolls and expands on its own. The split is remembered.
+ * The outliner panel: an icon row (iconBars::kOutliner) on top, then Maya's hidden second outliner sits under the first, collapsed to a grab handle at the bottom.
+ * Drag the handle up to open it; each pane scrolls, expands and filters on its own. The split is remembered. Each pane
+ * has a filter box on top (see outliner::Filter for the syntax).
  */
 class LILA_UI_API OutlinerPanel : public QWidget
 {

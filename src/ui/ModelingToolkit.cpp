@@ -259,6 +259,14 @@ ModelingToolkit::ModelingToolkit(QWidget* parent) : QWidget(parent)
                    {"retopo.draw", "pencil", "Retopo Draw"}}, tools);
     root->addWidget(section("Tools", toolsBox, body));
 
+    FlowLayout* shape = nullptr;
+    QWidget* shapeBox = flowBox(body, &shape);
+    row(shapeBox,
+        {{"mesh.straighten", "line", "Straighten"}, {"mesh.circularize", "circle", "Circularize"}, {"mesh.spherize", "sphere", "Spherize"},
+         {"mesh.flatten", "layers-subtract", "Flatten"}, {"mesh.conformShape", "shape", "To Shape"}, {"mesh.conformToObject", "magnet", "To Object"}},
+        shape);
+    root->addWidget(section("Shape", shapeBox, body));
+
     FlowLayout* bevel = nullptr;
     QWidget* bevelBox = flowBox(body, &bevel);
     row(bevelBox,

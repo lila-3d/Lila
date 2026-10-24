@@ -26,7 +26,9 @@
 #include <format>
 #include <optional>
 #include <limits>
+#include <map>
 #include <queue>
+#include <set>
 #include <tbb/parallel_for.h>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -458,11 +460,173 @@ glm::dvec3 selectionNormal()
 
 namespace
 {
-/** Where each point would go at full weight, given its rest position; set up once per mesh. */
-using PointTarget = std::function<glm::dvec3(Index, const glm::dvec3&)>;
-using TargetSetup = std::function<PointTarget(const geo::Mesh&, const glm::dmat4& world, ComponentMode kind, const Ids& ids)>;
+/** The world axis least aligned with the normal: the U fallback, shared by every point so a region's tangents agree. */
+glm::dvec3 tangentReference(const glm::dvec3& normal)
+{
+    int axis = 0;
+    for (int i = 1; i < 3; ++i)
+        if (std::abs(normal[i]) < std::abs(normal[axis]) - 1e-9)
+            axis = i;
+    glm::dvec3 r(0.0);
+    r[axis] = 1.0;
+    return r;
+}
 
-void deformSelectedComponents(const char* label, const TargetSetup& setup)
+/** Direction of increasing u across face f (dP/du over its triangle fan), weighted by area; zero where its uvs are degenerate. */
+glm::dvec3 faceUTangent(const geo::Mesh& m, Index f, std::span<const glm::vec2> uv)
+{
+    glm::dvec3 sum(0.0);
+    const Index c0 = m.faceCorner(f);
+    const glm::dvec3 p0 = m.position(m.cornerPoint(c0));
+    const glm::dvec2 t0 = uv[c0];
+    for (Index c1 = m.cornerNext(c0), c2 = m.cornerNext(c1); c2 != c0; c1 = c2, c2 = m.cornerNext(c2))
+    {
+        glm::dvec3 e1 = m.position(m.cornerPoint(c1)) - p0, e2 = m.position(m.cornerPoint(c2)) - p0;
+        glm::dvec2 d1 = glm::dvec2(uv[c1]) - t0, d2 = glm::dvec2(uv[c2]) - t0;
+        double det = d1.x * d2.y - d2.x * d1.y;
+        if (std::abs(det) < 1e-14)
+            continue;
+        glm::dvec3 t = (e1 * d2.y - e2 * d1.y) / det;
+        if (double len = glm::length(t); len > 1e-12)
+            sum += t / len * glm::length(glm::cross(e1, e2));
+    }
+    return sum;
+}
+
+struct FrameContext
+{
+    const geo::Mesh& m;
+    std::span<const glm::vec2> uv;
+    std::vector<char> selFace, selEdge;
+    glm::dvec3 reference{1, 0, 0};
+};
+
+FrameContext frameContext(const geo::Mesh& m, ComponentMode kind, const Ids& ids, const glm::dvec3& reference)
+{
+    FrameContext x{m, m.cornerAttrs().get<glm::vec2>(geo::attr::uvName(0))};
+    if (x.uv.size() < m.cornerCapacity())
+        x.uv = {};
+    std::vector<char>& sel = kind == ComponentMode::Face ? x.selFace : x.selEdge;
+    if (kind == ComponentMode::Face || kind == ComponentMode::Edge)
+    {
+        sel.assign(kind == ComponentMode::Face ? m.faceCapacity() : m.edgeCapacity(), 0);
+        for (Index i : ids)
+            if (i < sel.size())
+                sel[i] = 1;
+    }
+    if (double len = glm::length(reference); len > 1e-12)
+        x.reference = reference / len;
+    return x;
+}
+
+glm::dmat3 pointFrame(const FrameContext& x, Index p)
+{
+    const geo::Mesh& m = x.m;
+    bool onSelected = false;
+    if (!x.selFace.empty())
+        m.forEachPointCorner(p, [&](Index c) { onSelected = onSelected || x.selFace[m.cornerFace(c)]; });
+    glm::dvec3 n(0.0), t(0.0);
+    double tWeight = 0.0;
+    m.forEachPointCorner(p, [&](Index c) {
+        const Index f = m.cornerFace(c);
+        if (onSelected && !x.selFace[f])
+            return;
+        n += m.faceAreaVector(f);
+        if (!x.uv.empty())
+        {
+            glm::dvec3 ft = faceUTangent(m, f, x.uv);
+            t += ft;
+            tWeight += glm::length(ft);
+        }
+    });
+    if (double len = glm::length(n); len > 1e-12)
+        n /= len;
+    else
+        return glm::dmat3(0.0);
+    auto inPlane = [&](const glm::dvec3& v) { return v - n * glm::dot(v, n); };
+    t = inPlane(t);
+    // Uv islands mirrored across the point cancel out, which counts as having no uvs.
+    glm::dvec3 u = tWeight > 0.0 && glm::length(t) > 0.25 * tWeight ? t : inPlane(x.reference);
+    if (glm::length(u) < 1e-3)
+        u = inPlane(std::abs(n.y) < 0.9 ? glm::dvec3(0, 1, 0) : glm::dvec3(1, 0, 0));
+    if (!x.selEdge.empty())
+    {
+        glm::dvec3 along(0.0);
+        m.forEachPointEdge(p, [&](Index e) {
+            if (!x.selEdge[e])
+                return;
+            glm::dvec3 d = inPlane(m.position(m.edgeOtherPoint(e, p)) - m.position(p));
+            along += glm::dot(d, u) < 0.0 ? -d : d;
+        });
+        if (glm::length(along) > 1e-9)
+            u = along;
+    }
+    u = glm::normalize(u);
+    return glm::dmat3(u, glm::cross(n, u), n);
+}
+
+/** An object-space point frame in world space, kept orthonormal under non-uniform scale; zero stays zero. */
+glm::dmat3 worldFrame(const glm::dmat3& f, const glm::dmat3& linear)
+{
+    glm::dvec3 n = glm::inverseTranspose(linear) * f[2];
+    if (glm::length(n) < 1e-12)
+        return glm::dmat3(0.0);
+    n = glm::normalize(n);
+    glm::dvec3 u = linear * f[0];
+    u -= n * glm::dot(u, n);
+    if (glm::length(u) < 1e-12)
+        return glm::dmat3(0.0);
+    u = glm::normalize(u);
+    return glm::dmat3(u, glm::cross(n, u), n);
+}
+} // namespace
+
+std::vector<glm::dmat3> componentFrames(const geo::Mesh& m, ComponentMode kind, const Ids& ids, const glm::dvec3& reference)
+{
+    LILA_ZONE();
+
+    const FrameContext x = frameContext(m, kind, ids, reference);
+    std::vector<glm::dmat3> frames(m.pointCapacity(), glm::dmat3(0.0));
+    tbb::parallel_for(Index(0), m.pointCapacity(), [&](Index p) {
+        if (m.pointValid(p))
+            frames[p] = pointFrame(x, p);
+    });
+    return frames;
+}
+
+glm::dmat3 selectionNormalFrame()
+{
+    LILA_ZONE();
+
+    const glm::dvec3 n = selectionNormal();
+    const glm::dvec3 ref = tangentReference(n);
+    Graph& g = graph();
+    ComponentMode kind = components::mode();
+    glm::dvec3 sum(0.0);
+    if (kind != ComponentMode::Object)
+        for (auto& [node, ids] : components::selected(kind))
+        {
+            Node* nd = g.node(node);
+            MeshPtr cage = nd && nd->type().isA("mesh") ? modifiers::cage(g, node) : nullptr;
+            if (!cage)
+                continue;
+            const geo::Mesh& m = *cage;
+            glm::dmat3 linear(nd->as<glm::dmat4>(Transform::kWorldMatrix));
+            // Only the selection's own points, since this runs on every manipulator refresh.
+            const FrameContext x = frameContext(m, kind, ids, glm::inverse(linear) * ref);
+            for (Index p : components::convert(m, kind, ids, ComponentMode::Vertex))
+                if (m.pointValid(p))
+                    sum += worldFrame(pointFrame(x, p), linear)[0];
+        }
+    glm::dvec3 u = sum - n * glm::dot(sum, n);
+    if (glm::length(u) < 1e-6)
+        u = ref - n * glm::dot(ref, n);
+    u = glm::normalize(u);
+    return glm::dmat3(u, glm::cross(n, u), n);
+}
+
+
+int deformSelectedComponents(const char* label, const PointTargetSetup& setup)
 {
     ComponentMode kind = components::mode();
     if (kind == ComponentMode::Object)
@@ -506,12 +670,14 @@ void deformSelectedComponents(const char* label, const TargetSetup& setup)
         g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
     }
 }
-} // namespace
+    LILA_ZONE();
+
 
 void transformSelectedComponents(const char* label, const glm::dmat4& worldXform)
 {
     LILA_ZONE();
 
+    int edited = 0;
     deformSelectedComponents(label, [&](const geo::Mesh&, const glm::dmat4& world, ComponentMode, const Ids&) -> PointTarget {
         glm::dmat4 local = glm::inverse(world) * worldXform * world;
         return [local](Index, const glm::dvec3& p) { return glm::dvec3(local * glm::dvec4(p, 1.0)); };
@@ -527,6 +693,8 @@ void transformSelectedComponentsOnto(const char* label, const glm::dmat4& worldX
         return [local, toLocal, world, &onto](Index, const glm::dvec3& p) {
             glm::dvec3 moved(world * local * glm::dvec4(p, 1.0));
             return glm::dvec3(toLocal * glm::dvec4(onto(moved), 1.0));
+        if (!targetOf)
+            continue;
         };
     });
 }
@@ -551,7 +719,9 @@ SurfaceProjector closestOnMeshes(const std::vector<NodeId>& meshes)
             continue;
         glm::dmat4 world = n->as<glm::dmat4>(Transform::kWorldMatrix);
         surfaces->push_back({std::make_shared<geo::MeshBvh>(*mesh), world, glm::inverse(world)});
+        ++edited;
     }
+    return edited;
     return [surfaces](const glm::dvec3& p) {
         glm::dvec3 best = p;
         double bestDist = std::numeric_limits<double>::max();
@@ -634,6 +804,23 @@ void registerMeshEditCommands()
     ops::registerCommand({
         .name = "polyBevel",
         .doc = "Bevel the selected edges (vertex or face selections convert to their edges).",
+void offsetSelectedComponents(const char* label, const glm::dvec3& uvn)
+{
+    LILA_ZONE();
+
+    if (uvn.x == 0.0 && uvn.y == 0.0)
+    {
+        offsetSelectedComponents(label, uvn.z);
+        return;
+    }
+    const glm::dvec3 ref = tangentReference(selectionNormal());
+    deformSelectedComponents(label, [&](const geo::Mesh& m, const glm::dmat4& world, ComponentMode kind, const Ids& ids) -> PointTarget {
+        glm::dmat3 linear(world), toLocal = glm::inverse(linear);
+        auto frames = std::make_shared<std::vector<glm::dmat3>>(componentFrames(m, kind, ids, toLocal * ref));
+        return [frames, linear, toLocal, uvn](Index p, const glm::dvec3& at) { return at + toLocal * (worldFrame((*frames)[p], linear) * uvn); };
+    });
+}
+
         .flags = {{"offset", "", T::Float, 2.0, "Width, cm."},
                   {"segments", "", T::Int, 1, "Segments across the bevel."},
                   {"profile", "", T::Float, 0.5, "0.5 round, 0.25 straight, toward 1 square."},
@@ -1350,13 +1537,15 @@ void registerMeshEditCommands()
     ops::registerCommand({
         .name = "moveComponents",
         .doc = "Move the selected components by an offset in world space, or with normal= push each point along its own vertex normal "
-               "(a face selection uses only the selected faces' normals, so the region inflates as a whole).",
+               "(a face selection uses only the selected faces' normals, so the region inflates as a whole). uvn= also slides each point "
+               "along its own surface tangents: U follows the uv0 u direction where the mesh has uvs (in edge mode, the selected edges), "
+               "else the world axis least aligned with the selection's normal, and V completes the frame.",
         .flags = {{"by", "", T::Vec3, nullptr, "Offset, cm."},
                   {"normal", "", T::Float, nullptr, "Distance along the vertex normals, cm."},
                   {"onto", "", T::List, nullptr, "Meshes whose surface each moved point then lands on, at its closest point."}},
         .run = [vec](const Args& a) -> json {
-            if (a.has("by") == a.has("normal"))
-                throw CommandError("moveComponents: give by= or normal=");
+            if (int(a.has("by")) + int(a.has("normal")) + int(a.has("uvn")) != 1)
+                throw CommandError("moveComponents: give one of by=, normal= or uvn=");
             if (a.has("normal"))
             {
                 offsetSelectedComponents("Move Components", a.get<double>("normal"));
@@ -1400,6 +1589,7 @@ void registerMeshEditCommands()
         .run = [vec, symmetricPivot](const Args& a) -> json {
             if (!a.has("by"))
                 throw CommandError("scaleComponents: give by=");
+                  {"uvn", "", T::Vec3, nullptr, "Distances along each point's own U tangent, V tangent and normal, cm."},
             glm::dvec3 pivot = a.has("pivot") ? vec(a.flags["pivot"]) : symmetricPivot();
             const glm::dmat4 r = a.has("orient") ? eulerToMatrix(vec(a.flags["orient"]), RotateOrder::XYZ) : glm::dmat4(1.0);
             transformSelectedComponents("Scale Components", glm::translate(glm::dmat4(1.0), pivot) * r * glm::scale(glm::dmat4(1.0), vec(a.flags["by"])) *
@@ -1409,6 +1599,11 @@ void registerMeshEditCommands()
     });
 
     // Warns when a mesh just given symmetry is not symmetric about its plane, so edits will not mirror cleanly.
+            if (a.has("uvn"))
+            {
+                offsetSelectedComponents("Move Components", vec(a.flags["uvn"]));
+                return nullptr;
+            }
     auto warnIfAsymmetric = [](NodeId id) {
         Graph& g = graph();
         g.evaluate();

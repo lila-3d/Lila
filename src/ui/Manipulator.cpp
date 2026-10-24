@@ -245,7 +245,7 @@ void Manipulator::refresh()
         if (t == Tool::Move && normalSpace() && !tools::pivotEdit())
         {
             mNormal = true;
-            mFrame = normalFrame(scene::selectionNormal());
+            mFrame = scene::selectionNormalFrame();
         }
         if (gComponentPivot && (gComponentPivot->mode != mode || gComponentPivot->selection != scene::components::selected(mode)))
             gComponentPivot.reset();
@@ -372,10 +372,12 @@ H Manipulator::pick(QPointF px) const
 
     if (t == Tool::Move && mNormal)
     {
-        auto tip = mView.project(mPivot + axis(2) * L);
         if (std::abs(px.x() - c->x()) <= 8 && std::abs(px.y() - c->y()) <= 8)
-            return H::Z;
-        return tip && segmentDistance(px, *c, *tip) < grab ? H::Z : H::None;
+            return H::Center;
+        for (int i = 0; i < 3; ++i)
+            if (auto tip = mView.project(mPivot + axis(i) * L); tip && segmentDistance(px, *c, *tip) < grab)
+                return H(int(H::X) + i);
+        return H::None;
     }
     if (t == Tool::Move || t == Tool::Scale)
     {
@@ -524,8 +526,6 @@ bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifier
     else if (button != Qt::LeftButton || h == H::None)
         return false;
     const bool alongNormal = mNormal && effectiveTool() == Tool::Move && !tools::pivotEdit();
-    if (alongNormal)
-        h = H::Z, axisFromDrag = false;
     // Taken so it neither drags nor falls through to a selection click.
     if (handleLocked(h))
     {
@@ -549,7 +549,7 @@ bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifier
     }
     d.tool = tools::current();
     d.axisFromDrag = d.axisPending = axisFromDrag;
-    d.ctrlPlane = ctrlPlane && !axisFromDrag && !alongNormal && button == Qt::LeftButton;
+    d.ctrlPlane = ctrlPlane && !axisFromDrag && button == Qt::LeftButton;
     d.alongNormal = alongNormal;
     d.surfaceSlide = surfaceSlide;
     if (d.components)
@@ -1043,7 +1043,7 @@ void Manipulator::apply()
                 gComponentPivot->position = d.startPivot + d.moveDelta;
         }
         else if (d.alongNormal)
-            scene::offsetSelectedComponents("Drag Components", glm::dot(d.moveDelta, d.frame[2]));
+            scene::offsetSelectedComponents("Drag Components", glm::transpose(d.frame) * d.moveDelta);
         else if (d.components && d.conform && t == Tool::Move)
             scene::transformSelectedComponentsOnto("Drag Components", componentXform(), d.conform);
         else if (d.components)
@@ -1119,8 +1119,11 @@ void Manipulator::commit()
             json pivot = vecJson(d.startPivot);
             if (d.alongNormal)
             {
-                if (double offset = glm::dot(d.moveDelta, d.frame[2]); std::abs(offset) > 1e-9)
-                    ops::execute("moveComponents", {{"normal", tidy(offset)}}, CallSource::UI);
+                const glm::dvec3 uvn = glm::transpose(d.frame) * d.moveDelta;
+                if (std::abs(uvn.x) <= 1e-9 && std::abs(uvn.y) <= 1e-9 && std::abs(uvn.z) > 1e-9)
+                    ops::execute("moveComponents", {{"normal", tidy(uvn.z)}}, CallSource::UI);
+                else if (glm::length(uvn) > 1e-9)
+                    ops::execute("moveComponents", {{"uvn", vecJson(uvn)}}, CallSource::UI);
             }
             else if (t == Tool::Move && glm::length(d.moveDelta) > 1e-9)
             {
@@ -1369,7 +1372,7 @@ void Manipulator::drawMove(OverlayPainter& p)
         H h = H(int(H::X) + i);
         if (active != H::None && active != h && active != H::Center && !isPlane(active))
             continue;
-        if ((isPlane(active) && axisOf(active) == i) || (mNormal && i != 2))
+        if (isPlane(active) && axisOf(active) == i)
             continue;
         auto tip = mView.project(mPivot + axis(i) * L);
         if (!tip || dist(*tip, *c) < 12)
@@ -1385,10 +1388,10 @@ void Manipulator::drawMove(OverlayPainter& p)
         QPointF n(-dirPx.y(), dirPx.x());
         QPointF arrowTip = *tip + dirPx * 10.0;
         p.triangle(arrowTip, *tip - dirPx * 4.0 + n * 5.0, *tip - dirPx * 4.0 - n * 5.0, col);
-        p.text(arrowTip + dirPx * 12.0 + QPointF(0, 4), QString(mNormal ? QChar('N') : QChar('X' + i)), col, OverlayPainter::Center);
+        p.text(arrowTip + dirPx * 12.0 + QPointF(0, 4), QString(mNormal ? QChar(u"UVN"[i]) : QChar('X' + i)), col, OverlayPainter::Center);
     }
 
-    glm::vec4 centerCol = handleColor(mNormal ? H::Z : H::Center, -1);
+    glm::vec4 centerCol = handleColor(H::Center, -1);
     if (pivotMode)
     {
         p.polyline({*c + QPointF(-7, 0), *c + QPointF(7, 0)}, 1.5f, centerCol);
@@ -1499,7 +1502,7 @@ QString Manipulator::readout() const
         if (d.handle >= H::X && d.handle <= H::Z)
         {
             double signedLen = glm::dot(d.moveDelta, d.frame[ai]);
-            text = QString("%1 %2 cm").arg(d.alongNormal ? QChar('N') : QChar('X' + ai)).arg(signedLen, 0, 'f', 2);
+            text = QString("%1 %2 cm").arg(d.alongNormal ? QChar(u"UVN"[ai]) : QChar('X' + ai)).arg(signedLen, 0, 'f', 2);
         }
         else
         {

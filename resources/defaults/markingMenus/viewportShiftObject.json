@@ -12,7 +12,8 @@
     "E": [{ "label": "Inset", "action": "mesh.inset" }],
     "SE": [{ "label": "Harden Normals", "action": "mesh.hardenEdges" }, { "label": "Soften by Angle", "action": "mesh.setNormalAngle" }],
     "SW": [{ "label": "Poke", "action": "mesh.poke" }, { "label": "Collapse", "action": "mesh.collapse" }],
-    "NW": [{ "label": "Fill Hole", "action": "mesh.fillHole" }]
+    "NW": [{ "label": "Fill Hole", "action": "mesh.fillHole" }],
+    "W": [{ "label": "Circularize", "action": "mesh.circularize" }, { "label": "Straighten", "action": "mesh.straighten" }]
   },
   "objectMode": {
     "NW": { "label": "Sculpt", "action": "sculpt.tool" }
@@ -28,6 +29,11 @@
     { "label": "Spin Edge", "action": "mesh.spin" },
     { "label": "Flip Normals", "action": "mesh.flip" },
     { "label": "Conform Normals", "action": "mesh.conform" },
+    { "separator": true },
+    { "label": "Spherize", "action": "mesh.spherize" },
+    { "label": "Flatten", "action": "mesh.flatten" },
+    { "label": "Conform to Shape", "action": "mesh.conformShape" },
+    { "label": "Conform to Object", "action": "mesh.conformToObject" },
     { "separator": true },
     { "label": "Subdivide", "action": "mesh.subdivide" },
     { "label": "Triangulate", "action": "mesh.triangulate" },

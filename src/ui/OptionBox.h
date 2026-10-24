@@ -16,8 +16,9 @@ class QWidget;
 /**
  * Maya's option boxes. A menu row whose action is a plain command call with flags left to set (Action::command)
  * gets a small square at its right: clicking the square, or Shift+clicking the row, opens the command's options
- * dialog instead of running it. The dialog is generated from the flags (ops/CommandOptions.h), remembers what
- * is set in it, and the menu item, hotkeys and shelf buttons then run with those values.
+ * dialog instead of running it. The dialog is generated from the flags (ops/CommandOptions.h). Apply, or
+ * Edit > Save Settings without running, remembers what is set in it, and the menu item, hotkeys and shelf buttons
+ * then run with those values. The menu search box (Ctrl+T) opens option boxes too.
  */
 namespace lila::ui::optionBox
 {

@@ -74,10 +74,13 @@ public:
 
         auto* bar = new QMenuBar(this);
         QMenu* edit = bar->addMenu("Edit");
+        edit->addAction("Save Settings", this, [this] { saveSettings(); })
+            ->setToolTip("Remembers these values for the menu item, hotkeys and shelf buttons without running the command.");
         edit->addAction("Reset Settings", this, [this] { resetSettings(); });
+        edit->setToolTipsVisible(true);
         QMenu* help = bar->addMenu("Help");
         help->addAction("Copy Python", this, [this] {
-            QGuiApplication::clipboard()->setText(QString::fromStdString(ops::toPython(mCommand, opt::callWith(mCommand, mCall))));
+            QGuiApplication::clipboard()->setText(QString::fromStdString(ops::toPython(mCommand, pendingCall())));
         });
         root->setMenuBar(bar);
 
@@ -103,7 +106,8 @@ public:
         scroll->setWidget(body);
         root->addWidget(scroll, 1);
 
-        json values = opt::values(mCommand, mCall);
+        mValues = opt::values(mCommand, mCall);
+        const json& values = mValues;
         std::vector<opt::Field> fields = opt::fields(mCommand, mCall);
         // Sections keep the order they first appear in; a field without one joins the untitled group at the top.
         std::vector<std::string> sections = {""};
@@ -131,7 +135,7 @@ public:
                     continue;
                 std::string flag = f.flag;
                 FlagFieldWidgets w = makeFlagField(f, values.value(flag, f.defaultValue), [this, flag](const json& v) {
-                    opt::setValue(mCommand, flag, v);
+                    mValues[flag] = v;
                 }, body);
                 mSetters[flag] = w.set;
                 if (w.label)
@@ -177,23 +181,43 @@ private:
 
     void run()
     {
-        // A line edit commits on focus loss, which a button click may not have caused yet.
+        saveSettings();
+        actions::runWithOptions(mCommand, mCall);
+    }
+
+    /** Stores the fields' values where Apply does, so the menu item, hotkeys and shelf run with them. */
+    void saveSettings()
+    {
+        // A line edit commits on focus loss, which a button click or menu item may not have caused yet.
         if (QWidget* f = focusWidget())
             f->clearFocus();
-        actions::runWithOptions(mCommand, mCall);
+        for (auto& [flag, v] : mValues.items())
+            opt::setValue(mCommand, flag, v);
     }
 
     void resetSettings()
     {
         opt::reset(mCommand);
-        json values = opt::values(mCommand, mCall);
+        mValues = opt::values(mCommand, mCall);
         for (auto& [flag, set] : mSetters)
-            if (set && values.contains(flag))
-                set(values[flag]);
+            if (set && mValues.contains(flag))
+                set(mValues[flag]);
+    }
+
+    /** The call Apply would make with the fields as they stand. */
+    json pendingCall() const
+    {
+        json call = mCall;
+        for (const opt::Field& f : opt::fields(mCommand, mCall))
+            if (mValues.contains(f.flag) && mValues[f.flag] != f.defaultValue && !call.contains(f.flag))
+                call[f.flag] = mValues[f.flag];
+        return call;
     }
 
     std::string mCommand;
     json mCall;
+    /** The fields' values, stored only by Apply or Save Settings so Close leaves the remembered ones alone. */
+    json mValues;
     std::map<std::string, std::function<void(const json&)>> mSetters;
 };
 

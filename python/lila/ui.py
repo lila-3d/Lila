@@ -419,6 +419,25 @@ def add_menu_item(menu, action=None, label=None, kind=None, id="", after="", bef
                  owner=_owner(owner))
 
 
+def add_bar_item(bar="toolBox", action=None, icon="", label="", kind=None, actions=None, id="", after="", before="", owner=None):
+    """Add a button to an icon bar: "toolBox" (the left edge of the window), "outliner", or a bar of your own. kind:
+    "action" (a button running action), "menu" (a dropdown of the action ids in actions, "" for a separator, "#Title" for
+    a section; with an action too, a click runs it and holding opens the menu) or "separator". icon is a Tabler icon name.
+    Returns the item's id."""
+    kind = kind or ("menu" if actions else "action" if action else "separator")
+    return _call("iconBar.addItem", bar=bar, action=action or "", icon=icon, label=label, kind=kind, actions=list(actions or []), id=id,
+                 after=after, before=before, owner=_owner(owner))
+
+
+def remove_bar_item(id):
+    return _call("iconBar.removeItem", id=id)
+
+
+def bar_items(bar="toolBox"):
+    """The items of an icon bar in display order: [{id, action, icon, label, owner}]."""
+    return _call("iconBar.list", bar=bar)
+
+
 def remove_menu(id):
     return _call("menu.remove", id=id)
 

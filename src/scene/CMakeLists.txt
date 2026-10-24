@@ -12,6 +12,7 @@ lila_module(lila_scene Scene
     CenterInMesh.cpp
     ComponentPick.cpp
     ComponentQuery.cpp
+    ConformCommands.cpp
     Components.cpp
     SelectPaths.cpp
     Constraint.cpp

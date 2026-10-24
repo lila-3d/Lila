@@ -13,6 +13,8 @@
 #include "render/VirtualTexture.h"
 #include "render/VulkanContext.h"
 
+#include <glm/gtc/packing.hpp>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -63,7 +65,9 @@ struct MeshPush
     float gamma = 1.0f;
     /** Word offset of the draw's style block (stylised shading models) in the frame's table, or kNoStyle. */
     uint32_t style = 0xffffffffu;
-    float displayPad[2]{};
+    /** Back-face tint: display-encoded rgb and mix, 8 bits each; 0 is off. */
+    uint32_t backTint = 0;
+    float displayPad = 0.0f;
     /** The device address of the frame's table: bindless texture handles, then style blocks. Maps hold 16-bit handles into it. */
     uint64_t textureTable = 0;
     uint32_t maps[2] = {0xffffffffu, 0xffffffffu}; // base color | normal << 16, ORM | emissive << 16
@@ -74,6 +78,7 @@ static_assert(sizeof(MeshPush) == 256, "matches MeshPush in mesh.slang");
 constexpr uint32_t kVertexColorShaded = 1u << 11;
 constexpr uint32_t kVertexColorUnlit = 1u << 12;
 constexpr uint32_t kColorChannelShift = 13;
+constexpr uint32_t kOneSidedLighting = 1u << 16;
 
 // Placeholder textures bound where a material has no map; never evicted.
 constexpr uint64_t kWhiteSrgbKey = ~uint64_t(0);
@@ -120,7 +125,33 @@ struct WirePush
     glm::mat4 viewProj;
     glm::mat4 world;
     glm::vec4 color;
+    glm::vec4 depthPull{1.0f, 0.0f, 0.0f, 0.0f};
 };
+
+struct LinesPush
+{
+    glm::mat4 viewProj;
+    glm::vec4 depthPull{1.0f, 0.0f, 0.0f, 0.0f};
+};
+
+/** Pixels' worth of world distance that lines over meshes are pulled toward the camera, plus half their width. */
+constexpr double kLinePullPixels = 2.0;
+
+/**
+ * Clip-space z scale (x) and w factor (y) that move a point toward the camera along its own view ray by `pixels`
+ * pixels' worth of world distance at its depth, leaving its screen position alone. Rasterizer depth bias never reaches
+ * line primitives, and an edge in a crease loses the depth test to the faces either side of it without this.
+ */
+glm::vec4 depthPull(const glm::dmat4& proj, uint32_t heightPx, double pixels)
+{
+    // World size of one pixel: at unit distance for perspective, everywhere for orthographic.
+    const double pixel = 2.0 / (std::abs(proj[1][1]) * double(std::max(heightPx, 1u)));
+    const double a = proj[2][2];
+    if (proj[3][3] != 0.0)
+        return {1.0f, float(a * pixels * pixel), 0.0f, 0.0f};
+    const double scale = 1.0 / (1.0 - std::min(pixels * pixel, 0.1));
+    return {float(scale), float(a * (scale - 1.0)), 0.0f, 0.0f};
+}
 
 struct ImagePlanePush
 {
@@ -2016,7 +2047,7 @@ struct Renderer::Impl
             return compute::pipelineLayout(vk, size, stages, set ? std::span(&set, 1) : std::span<const VkDescriptorSetLayout>());
         };
         gridLayout = layoutFor(sizeof(GridPush), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
-        linesLayout = layoutFor(sizeof(glm::mat4), VK_SHADER_STAGE_VERTEX_BIT);
+        linesLayout = layoutFor(sizeof(LinesPush), VK_SHADER_STAGE_VERTEX_BIT);
         overlayTrisLayout = layoutFor(sizeof(glm::vec2), VK_SHADER_STAGE_VERTEX_BIT, atlasSetLayout);
 
         VkShaderModule grid = module(loadSpirv("grid.spv"));
@@ -2042,7 +2073,7 @@ struct Renderer::Impl
             overlayPipeline =
                 buildPipeline(linesLayout, lines, "linesVS", "linesPS", format, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, vin, false, true, false);
             linesOnTopPipeline = buildPipeline(linesLayout, lines, "linesVS", "linesPS", format, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, vin, false,
-                                               true, true, 2.0f, false, false, true);
+                                               true, true, 0.0f, false, false, true);
             tris3dPipeline =
                 buildPipeline(linesLayout, lines, "linesVS", "linesPS", format, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, vin, false, true, true, 2.0f);
         }
@@ -2107,7 +2138,7 @@ struct Renderer::Impl
             wvin.pVertexBindingDescriptions = &wb;
             wvin.vertexAttributeDescriptionCount = 1;
             wvin.pVertexAttributeDescriptions = &wa;
-            wirePipeline = buildPipeline(wireLayout, wire, "wireVS", "wirePS", format, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, wvin, false, true, true, 2.0f,
+            wirePipeline = buildPipeline(wireLayout, wire, "wireVS", "wirePS", format, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, wvin, false, true, true, 0.0f,
                                          false, false, true);
             wireXrayPipeline = buildPipeline(wireLayout, wire, "wireVS", "wirePS", format, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, wvin, false, true, false,
                                              0.0f, false, false, true);
@@ -2303,7 +2334,7 @@ struct Renderer::Impl
 
         // One buffer per frame: lines, linesOnTop, tris3d, overlay and linesXray share the LineVertex stride, overlayTris follow.
         const std::vector<LineVertex>* lineSets[] = {&s.lines, &s.linesOnTop, &s.tris3d, &s.overlay, &s.linesXray, &s.selectedEdges, &s.seamLines,
-                                                     &s.symmetryLines};
+                                                     &s.symmetryLines, &s.highlightEdges};
         constexpr int kLineSets = int(std::size(lineSets));
         uint32_t lineFirst[kLineSets];
         size_t lineBytes = 0;
@@ -2465,7 +2496,7 @@ struct Renderer::Impl
         drawContactShadows(cmd, s, vpF);
         // Opaque planes in the scene write depth before the meshes; see-through ones blend over them afterwards.
         drawImagePlanes(cmd, s, vpF, ImagePlaneDraw::Depth::Scene, false);
-        drawMeshes(cmd, s, vpF, ao ? v.aoSampleSet : whiteAoSet);
+        drawMeshes(cmd, s, vpF, ao ? v.aoSampleSet : whiteAoSet, v.extent.height);
         drawImagePlanes(cmd, s, vpF, ImagePlaneDraw::Depth::Scene, true);
         drawImagePlanes(cmd, s, vpF, ImagePlaneDraw::Depth::Front, false);
         if (post)
@@ -2473,8 +2504,9 @@ struct Renderer::Impl
 
         if (linesPipeline && !s.lines.empty())
         {
+            const LinesPush lp{vpF};
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, linesPipeline);
-            vkCmdPushConstants(cmd, linesLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &vpF);
+            vkCmdPushConstants(cmd, linesLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(lp), &lp);
             VkDeviceSize offset = 0;
             vkCmdBindVertexBuffers(cmd, 0, 1, &f.lines, &offset);
             vkCmdDraw(cmd, uint32_t(s.lines.size()), 1, 0, 0);
@@ -2487,7 +2519,7 @@ struct Renderer::Impl
             int set;
             float width;
         };
-        const Biased biased[] = {{linesOnTopPipeline, 1, 1.0f}, {linesOnTopPipeline, 6, s.seamLineWidth},
+        const Biased biased[] = {{linesOnTopPipeline, 1, 1.0f}, {linesOnTopPipeline, 8, s.highlightEdgeWidth}, {linesOnTopPipeline, 6, s.seamLineWidth},
                                  {linesOnTopPipeline, 7, s.symmetryLineWidth}, {linesOnTopPipeline, 5, s.selectedEdgeWidth},
                                  {tris3dPipeline, 2, 0.0f}};
         for (const Biased& b : biased)
@@ -2498,7 +2530,8 @@ struct Renderer::Impl
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, b.pipeline);
             if (b.width > 0.0f)
                 vkCmdSetLineWidth(cmd, lineWidth(b.width));
-            vkCmdPushConstants(cmd, linesLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &vpF);
+            const LinesPush lp{vpF, depthPull(s.proj, v.extent.height, kLinePullPixels + 0.5 * lineWidth(std::max(b.width, 1.0f)))};
+            vkCmdPushConstants(cmd, linesLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(lp), &lp);
             VkDeviceSize offset = 0;
             vkCmdBindVertexBuffers(cmd, 0, 1, &f.lines, &offset);
             vkCmdDraw(cmd, uint32_t(verts.size()), 1, lineFirst[b.set], 0);
@@ -2506,8 +2539,9 @@ struct Renderer::Impl
 
         if (overlayPipeline && !s.linesXray.empty())
         {
+            const LinesPush lp{vpF};
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, overlayPipeline);
-            vkCmdPushConstants(cmd, linesLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &vpF);
+            vkCmdPushConstants(cmd, linesLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(lp), &lp);
             VkDeviceSize offset = 0;
             vkCmdBindVertexBuffers(cmd, 0, 1, &f.lines, &offset);
             vkCmdDraw(cmd, uint32_t(s.linesXray.size()), 1, lineFirst[4], 0);
@@ -2515,9 +2549,9 @@ struct Renderer::Impl
 
         if (overlayPipeline && !s.overlay.empty())
         {
-            glm::mat4 identity(1.0f);
+            const LinesPush lp{glm::mat4(1.0f)};
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, overlayPipeline);
-            vkCmdPushConstants(cmd, linesLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &identity);
+            vkCmdPushConstants(cmd, linesLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(lp), &lp);
             VkDeviceSize offset = 0;
             vkCmdBindVertexBuffers(cmd, 0, 1, &f.lines, &offset);
             vkCmdDraw(cmd, uint32_t(s.overlay.size()), 1, lineFirst[3], 0);
@@ -2845,6 +2879,10 @@ struct Renderer::Impl
         if (d.vertexColors != VertexColorMode::Off)
             p.flags |= (d.vertexColors == VertexColorMode::Unlit ? kVertexColorUnlit : kVertexColorShaded) |
                        (uint32_t(d.colorChannel) << kColorChannelShift);
+        if (!s.twoSidedLighting)
+            p.flags |= kOneSidedLighting;
+        if (s.backfaceTint.a > 0.0f)
+            p.backTint = glm::packUnorm4x8(glm::clamp(s.backfaceTint, 0.0f, 1.0f));
         if (s.xray)
         {
             p.flags |= MatTranslucent;
@@ -2868,7 +2906,7 @@ struct Renderer::Impl
         vkCmdDrawIndexed(cmd, std::min(sec.indexCount, g.indexCount - first), 1, first, 0, 0);
     }
 
-    void drawMeshes(VkCommandBuffer cmd, const FrameState& s, const glm::mat4& viewProj, VkDescriptorSet aoSet)
+    void drawMeshes(VkCommandBuffer cmd, const FrameState& s, const glm::mat4& viewProj, VkDescriptorSet aoSet, uint32_t heightPx)
     {
         LILA_ZONE();
 
@@ -2936,6 +2974,8 @@ struct Renderer::Impl
                       : d.wireColor.a > 0.0f          ? d.wireColor
                                                       : s.wireDefault;
             bool shaded = d.flags & (DrawShaded | DrawWireDepth);
+            if (shaded)
+                p.depthPull = depthPull(s.proj, heightPx, kLinePullPixels + 0.5 * lineWidth(d.wireWidth));
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shaded ? wirePipeline : wireXrayPipeline);
             vkCmdSetLineWidth(cmd, lineWidth(d.wireWidth));
             vkCmdPushConstants(cmd, wireLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);

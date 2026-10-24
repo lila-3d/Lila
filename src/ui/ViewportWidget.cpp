@@ -34,6 +34,7 @@
 #include "ui/Environments.h"
 #include "ui/MaterialDraw.h"
 #include "ui/Isolate.h"
+#include "ui/DisplayAids.h"
 #include "ui/MeshCache.h"
 #include "ui/PaintSelect.h"
 #include "ui/Outliner.h"
@@ -551,6 +552,7 @@ void ViewportWidget::submit()
         s.aoRadius = p.value<float>("general", "/viewport/ao/radius", 30.0f);
         s.aoIntensity = p.value<float>("general", "/viewport/ao/intensity", 1.0f);
         viewportDisplay::apply(s);
+        displayAids::apply(s, mHudPanel);
     }
 
     // Like Maya, everything under a selected transform highlights too, a step dimmer.
@@ -570,6 +572,8 @@ void ViewportWidget::submit()
     if (scene::components::mode() != scene::ComponentMode::Object)
         for (scene::NodeId id : hilited(mIsolation))
             hilite.insert(id);
+    const bool aids = displayAids::anyDrawn(mHudPanel);
+    std::vector<displayAids::MeshEntry> aidMeshes;
     for (scene::NodeId id : g.nodes())
     {
         scene::Node* n = g.node(id);
@@ -650,6 +654,8 @@ void ViewportWidget::submit()
     const ViewInfo view = viewInfo();
     // Locators and extension node types. Highlighted draws last: with an equal-depth test the later line wins, so a
     // selected locator sitting exactly on an unselected one stays visible.
+    if (aids)
+        displayAids::draw(s, painter, view, mHudPanel, aidMeshes, devicePixelRatioF());
     for (int pass = 0; pass < 3; ++pass)
         for (scene::NodeId id : g.nodes())
         {

@@ -161,8 +161,8 @@ void registerActions()
                       .python = std::string("lila.prefs.set(\"general\", \"/manipulator/scaleSpace\", \"") + space + "\")"});
     actions::add({.id = "manip.move.normal", .label = "Normal", .category = "Tools",
                   .run = [] { PrefStore::get().set("general", "/manipulator/moveSpace", "normal"); },
-                  .doc = "Moves components along their own vertex normals with a single N handle, so a face selection inflates. "
-                         "Objects move on their own axes.",
+                  .doc = "Moves each component along its own frame: N along its vertex normal (a face selection inflates), U and V along "
+                         "its surface tangents (U follows the uvs, or the selected edges in edge mode). Objects move on their own axes.",
                   .python = "lila.prefs.set(\"general\", \"/manipulator/moveSpace\", \"normal\")"});
 
     auto snap = [](const char* key, const char* label, SnapFlags f, const char* doc) {

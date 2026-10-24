@@ -355,5 +355,50 @@ void registerRenamePanel()
                   .doc = "Lists every object in the scene that breaks the naming conventions (Preferences > Naming) with "
                          "its new name, and renames them once you confirm. Referenced objects keep their names.",
                   .python = "namingConvention(fix=True)"});
+    actions::add({.id = "edit.checkNames",
+                  .label = "Check Names",
+                  .category = "Edit",
+                  .run =
+                      [] {
+                          try
+                          {
+                              nlohmann::json bad = ops::execute("namingConvention", {{"check", true}}, CallSource::Script);
+                              if (bad.empty())
+                              {
+                                  log::info("every name follows the naming conventions");
+                                  return;
+                              }
+                              nlohmann::json paths = nlohmann::json::array();
+                              for (const nlohmann::json& b : bad)
+                                  paths.push_back(b[0]);
+                              ops::execute("select", {{"args", paths}}, CallSource::UI);
+                              log::warn("{} name{} break the naming conventions; they are selected", bad.size(), bad.size() == 1 ? "" : "s");
+                          }
+                          catch (const CommandError& e)
+                          {
+                              log::warn("{}", e.what());
+                          }
+                      },
+                  .doc = "Selects every object whose name breaks the naming conventions (Preferences > Naming), whether or not "
+                         "they are enforced. Conform Names renames them.",
+                  .python = "select([bad[0] for bad in namingConvention(check=True)])"});
+    actions::add({.id = "naming.toggleEnforce",
+                  .label = "Enforce Naming Conventions",
+                  .category = "Edit",
+                  .run =
+                      [] {
+                          try
+                          {
+                              ops::execute("namingConvention", {{"enable", !scene::Graph::current().namingPolicy().enabled}}, CallSource::UI);
+                          }
+                          catch (const CommandError& e)
+                          {
+                              log::warn("{}", e.what());
+                          }
+                      },
+                  .doc = "New and renamed objects follow the naming conventions as they are named (for this workspace, else for "
+                         "you).",
+                  .python = "namingConvention(enable=True)",
+                  .checked = [] { return scene::Graph::current().namingPolicy().enabled; }});
 }
 } // namespace lila::ui

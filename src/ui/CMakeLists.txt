@@ -84,6 +84,7 @@ lila_module(lila_ui UI
     TargetWeldTool.cpp TargetWeldTool.h
     PythonBridge.cpp PythonBridge.h
     RigViewport.cpp RigViewport.h WeightPaintTool.cpp WeightPaintTool.h
+    ConformTool.cpp ConformTool.h
     SpacesUi.cpp SpacesUi.h
     DeformUi.cpp DeformUi.h
     MorphPanel.cpp MorphPanel.h
@@ -93,6 +94,7 @@ lila_module(lila_ui UI
     Outliner.cpp Outliner.h
     SetsUi.cpp SetsUi.h
     PreferencesDialog.cpp PreferencesDialog.h
+    OutlinerFilter.cpp OutlinerFilter.h
     ProgressOverlay.cpp ProgressOverlay.h
     ReferenceEditor.cpp ReferenceEditor.h
     RenderSettingsDialog.cpp RenderSettingsDialog.h
@@ -126,6 +128,9 @@ lila_module(lila_ui UI
     ViewportToolbar.cpp ViewportToolbar.h
     VertexPaintTool.cpp VertexPaintTool.h
     PaintSelect.cpp PaintSelect.h
+    DisplayAids.cpp DisplayAids.h
+    IconBars.cpp IconBars.h Arrange.h
+    ToolBox.cpp ToolBox.h
     ViewportTool.cpp ViewportTool.h
     ViewportWidget.cpp ViewportWidget.h)
 

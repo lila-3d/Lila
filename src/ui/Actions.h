@@ -34,6 +34,8 @@ struct Action
      */
     std::string command;
     nlohmann::json call;
+    /** Set for toggles: whether it is on now. Menus and icon bars show it as a check. */
+    std::function<bool()> checked;
 };
 
 namespace actions
