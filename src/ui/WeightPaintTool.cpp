@@ -3,6 +3,9 @@
 // Before Qt: Qt's emit macro breaks TBB's headers.
 #include <tbb/parallel_for.h>
 
+#include "brush/BrushUi.h"
+#include "brush/Surface.h"
+#include "brush/Symmetry.h"
 #include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/Profile.h"
@@ -36,7 +39,6 @@
 
 
 #include <cmath>
-#include <queue>
 #include <unordered_map>
 
 namespace lila::ui
@@ -50,25 +52,37 @@ using scene::WeightTable;
 using Mode = scene::skin::PaintMode;
 const char* kModeNames[] = {"Add", "Replace", "Smooth", "Scale"};
 
+constexpr const char* kPrefix = "/weightPaint";
+
 struct Settings
 {
     Mode mode = Mode::Replace;
     float value = 1.0f;
-    double radius = 40.0; // px
-    float strength = 1.0f;
-    bool mirror = false;
     int mirrorAxis = 0;
     int64_t influence = -1;
+    /** Radius, strength, mirror, falloff (bell: full in the middle, smooth to zero at the rim) and the shared brush. */
+    brush::BrushSettings stroke = [] {
+        brush::BrushSettings b;
+        b.radius = 40.0;
+        b.strength = 1.0;
+        b.spacing = 0.25;
+        b.falloff = "bell";
+        b.mirror = false;
+        return b;
+    }();
 };
 
 Settings& settings()
 {
-    static Settings s;
+    static Settings s = [] {
+        Settings out;
+        out.stroke.loadPrefs(kPrefix);
+        return out;
+    }();
     return s;
 }
 
-/** (1 - t^2)^2: full strength in the middle, smooth to zero at the rim. */
-float falloff(double t) { return t >= 1.0 ? 0.0f : float((1.0 - t * t) * (1.0 - t * t)); }
+void save() { settings().stroke.savePrefs(kPrefix); }
 
 QMainWindow* mainWindow()
 {
@@ -105,7 +119,7 @@ public:
         mValue->setDecimals(3);
         form->addRow("Value", mValue);
         mRadius = new QSpinBox(this);
-        mRadius->setRange(2, 1000);
+        mRadius->setRange(2, 2000);
         mRadius->setSuffix(" px");
         form->addRow("Radius", mRadius);
         mStrength = new QDoubleSpinBox(this);
@@ -121,6 +135,8 @@ public:
         mirrorRow->addWidget(mAxis);
         form->addRow(mirrorRow);
         col->addLayout(form);
+        mStrokeOptions = new brush::ui::StrokeOptions(this, []() -> brush::BrushSettings& { return settings().stroke; }, [this] { changed(); });
+        col->addWidget(mStrokeOptions);
 
         auto* buttons = new QHBoxLayout;
         auto* flood = new QPushButton("Flood", this);
@@ -132,9 +148,9 @@ public:
         syncFromSettings();
         connect(mMode, &QComboBox::currentIndexChanged, this, [this](int i) { settings().mode = Mode(i); changed(); });
         connect(mValue, &QDoubleSpinBox::valueChanged, this, [this](double v) { settings().value = float(v); changed(); });
-        connect(mRadius, &QSpinBox::valueChanged, this, [this](int v) { settings().radius = v; changed(); });
-        connect(mStrength, &QDoubleSpinBox::valueChanged, this, [this](double v) { settings().strength = float(v); changed(); });
-        connect(mMirror, &QCheckBox::toggled, this, [this](bool on) { settings().mirror = on; changed(); });
+        connect(mRadius, &QSpinBox::valueChanged, this, [this](int v) { settings().stroke.radius = v; changed(); });
+        connect(mStrength, &QDoubleSpinBox::valueChanged, this, [this](double v) { settings().stroke.strength = v; changed(); });
+        connect(mMirror, &QCheckBox::toggled, this, [this](bool on) { settings().stroke.mirror = on; changed(); });
         connect(mAxis, &QComboBox::currentIndexChanged, this, [this](int i) { settings().mirrorAxis = i; changed(); });
         connect(flood, &QPushButton::clicked, this, [this] { if (onFlood) onFlood(); });
         connect(normalize, &QPushButton::clicked, this, [this] { if (onNormalize) onNormalize(); });
@@ -161,10 +177,12 @@ public:
         QSignalBlocker b1(mMode), b2(mValue), b3(mRadius), b4(mStrength), b5(mMirror), b6(mAxis);
         mMode->setCurrentIndex(int(s.mode));
         mValue->setValue(s.value);
-        mRadius->setValue(int(std::lround(s.radius)));
-        mStrength->setValue(s.strength);
-        mMirror->setChecked(s.mirror);
+        mRadius->setValue(int(std::lround(s.stroke.radius)));
+        mStrength->setValue(s.stroke.strength);
+        mMirror->setChecked(s.stroke.mirror);
         mAxis->setCurrentIndex(s.mirrorAxis);
+        if (mStrokeOptions)
+            mStrokeOptions->sync();
     }
 
     void setInfluences(const QString& target, const std::vector<scene::skin::Influence>& infs)
@@ -200,6 +218,7 @@ protected:
 private:
     void changed()
     {
+        save();
         if (onChanged)
             onChanged();
     }
@@ -212,9 +231,10 @@ private:
     QDoubleSpinBox* mStrength = nullptr;
     QCheckBox* mMirror = nullptr;
     QComboBox* mAxis = nullptr;
+    brush::ui::StrokeOptions* mStrokeOptions = nullptr;
 };
 
-class WeightPaintTool final : public ViewportTool
+class WeightPaintTool final : public ViewportTool, public brush::DabSink
 {
 public:
     const char* name() const override { return "weightPaint"; }
@@ -222,6 +242,7 @@ public:
     void activate() override
     {
         mAlive = std::make_shared<bool>(true);
+        mControls.activate();
         mPanel = new WeightPaintPanel(mainWindow());
         mPanel->onChanged = [] { viewportTools::requestRedraw(); };
         mPanel->onFlood = [this] { flood(); };
@@ -250,6 +271,7 @@ public:
     {
         if (mStroking)
             endStroke();
+        mControls.deactivate();
         scene::Graph::current().removeListener(mListener);
         mAlive.reset();
         if (mPanel)
@@ -264,58 +286,40 @@ public:
     bool mousePress(QMouseEvent* e, const ViewInfo& view) override
     {
         mHover = e->position();
-        if (tools::brushRadiusDrag(e, mResizeArmed))
-        {
-            mResizing = true;
-            mResizeStart = e->position();
-            mResizeFrom = e->button() == Qt::MiddleButton ? 2.0 : settings().radius;
+        if (mControls.mousePress(e))
             return true;
-        }
         if (e->button() != Qt::LeftButton)
             return false;
         if (mSkin == kNoNode || settings().influence < 0)
             return true;
         beginStroke();
-        dab(e->position(), view, e->modifiers());
-        mLastDab = e->position();
+        mMods = e->modifiers();
+        const ViewInfo v = view;
+        mStroke.begin(settings().stroke, mControls.input(e),
+                      [this, v](glm::dvec2 px, brush::SurfaceHit& out) { return surfaceQuery(QPointF(px.x, px.y), v, out); }, *this, false);
         return true;
     }
 
-    bool mouseMove(QMouseEvent* e, const ViewInfo& view) override
+    bool mouseMove(QMouseEvent* e, const ViewInfo&) override
     {
         mHover = e->position();
-        if (mResizing)
-        {
-            settings().radius = std::clamp(mResizeFrom + (e->position().x() - mResizeStart.x()), 2.0, 1000.0);
-            if (mPanel)
-                mPanel->syncFromSettings();
-            viewportTools::requestRedraw();
+        if (mControls.mouseMove(e))
             return true;
-        }
         if (mStroking)
         {
-            // Dabs every quarter radius along the drag, so fast strokes stay continuous.
-            QPointF d = e->position() - mLastDab;
-            double len = std::hypot(d.x(), d.y()), step = std::max(1.0, settings().radius * 0.25);
-            int n = int(len / step);
-            for (int k = 1; k <= n; ++k)
-                dab(mLastDab + d * (k * step / len), view, e->modifiers());
-            if (n > 0)
-                mLastDab += d * (n * step / len);
+            mMods = e->modifiers();
+            mStroke.move(mControls.input(e));
+            viewportTools::requestRedraw();
             return true;
         }
         viewportTools::requestRedraw();
         return false;
     }
 
-    bool mouseRelease(QMouseEvent*, const ViewInfo&) override
+    bool mouseRelease(QMouseEvent* e, const ViewInfo&) override
     {
-        if (mResizing)
-        {
-            mResizing = false;
-            mResizeArmed = false;
+        if (mControls.mouseRelease(e))
             return true;
-        }
         if (mStroking)
             endStroke();
         return true;
@@ -323,19 +327,10 @@ public:
 
     bool keyPress(QKeyEvent* e, const ViewInfo&) override
     {
+        if (mControls.keyPress(e))
+            return true;
         switch (e->key())
         {
-        case Qt::Key_B:
-            if (!e->isAutoRepeat())
-                mResizeArmed = true;
-            return true;
-        case Qt::Key_BracketLeft:
-        case Qt::Key_BracketRight:
-            settings().radius = std::clamp(settings().radius * (e->key() == Qt::Key_BracketLeft ? 0.8 : 1.25), 2.0, 1000.0);
-            if (mPanel)
-                mPanel->syncFromSettings();
-            viewportTools::requestRedraw();
-            return true;
         case Qt::Key_Escape:
             QTimer::singleShot(0, [] { viewportTools::set(nullptr); });
             return true;
@@ -362,36 +357,17 @@ public:
                 infName = QString::fromStdString(i.name);
         drawToolMessage(p, view, QString("Paint weights: %1  (%2)").arg(infName, kModeNames[int(settings().mode)]));
 
-        // Brush rim: the radius circle laid on the surface under the cursor, or a flat one when off the mesh.
-        const glm::vec4 rim(0.95f, 0.95f, 0.95f, 1.0f);
+        const QPointF at = mControls.anchor(brush::ui::ringPosition(mStroke, mHover));
+        std::optional<brush::ui::CursorSurface> surface;
         geo::BvhHit hit;
-        if (raycast(mHover, view, hit))
+        if (raycast(at, view, hit))
         {
-            glm::dmat4 w = meshWorld();
-            glm::dvec3 c(w * glm::dvec4(hit.point, 1.0));
-            glm::dvec3 n = glm::normalize(glm::dvec3(glm::transpose(glm::inverse(glm::dmat3(w))) * triangleNormal(hit.triangle)));
-            double r = settings().radius * view.unitsPerPixel(c);
-            glm::dvec3 ref = std::abs(n.y) < 0.9 ? glm::dvec3(0, 1, 0) : glm::dvec3(1, 0, 0);
-            glm::dvec3 u = glm::normalize(glm::cross(n, ref)), v = glm::cross(n, u);
-            std::vector<QPointF> pts;
-            for (int k = 0; k < 48; ++k)
-            {
-                double a = 2.0 * 3.14159265358979 * k / 48;
-                if (auto q = view.project(c + (u * std::cos(a) + v * std::sin(a)) * r))
-                    pts.push_back(*q);
-            }
-            p.polyline(pts, 1.5f, rim, true);
+            const glm::dmat4 w = meshWorld();
+            surface = brush::ui::CursorSurface{glm::dvec3(w * glm::dvec4(hit.point, 1.0)),
+                                               glm::normalize(glm::dvec3(glm::transpose(glm::inverse(glm::dmat3(w))) * triangleNormal(hit.triangle)))};
         }
-        else
-        {
-            std::vector<QPointF> pts;
-            for (int k = 0; k < 48; ++k)
-            {
-                double a = 2.0 * 3.14159265358979 * k / 48;
-                pts.push_back(mHover + QPointF(std::cos(a), std::sin(a)) * settings().radius);
-            }
-            p.polyline(pts, 1.0f, {0.6f, 0.6f, 0.6f, 0.8f}, true);
-        }
+        brush::ui::drawCursor(p, view, settings().stroke, at, surface,
+                              {.strengthRing = mControls.adjusting() == brush::ui::BrushControls::Adjust::Strength, .stroke = &mStroke});
     }
 
 private:
@@ -502,7 +478,7 @@ private:
         mInfluences = scene::skin::influences(g, mSkin);
         mLocked = scene::skin::lockMask(mInfluences);
         mMaxInf = int(g.node(mSkin)->as<int64_t>(scene::SkinClusterNode::kMaxInfluences));
-        if (settings().mirror)
+        if (settings().stroke.mirror)
             buildSymmetry();
     }
 
@@ -533,94 +509,69 @@ private:
         }
     }
 
-    /** Points within the brush, by distance walked along edges from the hit (so it never jumps across a gap). */
-    std::vector<std::pair<uint32_t, float>> brushPoints(const geo::BvhHit& hit, double radius)
-    {
-        const geo::Mesh& m = *mBvhMesh;
-        const auto& tris = mBvh.triangles();
-        if (mDist.size() != m.pointCapacity())
-            mDist.assign(m.pointCapacity(), std::numeric_limits<double>::infinity());
-        using Item = std::pair<double, geo::Index>;
-        std::priority_queue<Item, std::vector<Item>, std::greater<>> queue;
-        std::vector<geo::Index> touched;
-        for (int k = 0; k < 3; ++k)
-        {
-            geo::Index p = m.cornerPoint(tris.corners[size_t(hit.triangle) * 3 + k]);
-            double d = glm::length(m.position(p) - hit.point);
-            if (d < mDist[p])
-            {
-                if (std::isinf(mDist[p]))
-                    touched.push_back(p);
-                mDist[p] = d;
-                queue.push({d, p});
-            }
-        }
-        while (!queue.empty())
-        {
-            auto [d, p] = queue.top();
-            queue.pop();
-            if (d > mDist[p] || d > radius)
-                continue;
-            m.forEachPointEdge(p, [&](geo::Index e) {
-                geo::Index o = m.edgeOtherPoint(e, p);
-                double nd = d + glm::length(m.position(o) - m.position(p));
-                if (nd < mDist[o] && nd <= radius)
-                {
-                    if (std::isinf(mDist[o]))
-                        touched.push_back(o);
-                    mDist[o] = nd;
-                    queue.push({nd, o});
-                }
-            });
-        }
-        std::vector<std::pair<uint32_t, float>> out;
-        for (geo::Index p : touched)
-        {
-            if (mDist[p] <= radius)
-                out.push_back({p, falloff(mDist[p] / radius)});
-            mDist[p] = std::numeric_limits<double>::infinity();
-        }
-        return out;
-    }
-
-    void apply(const std::vector<std::pair<uint32_t, float>>& pts, Mode mode, bool invert, uint32_t inf)
+    void apply(const std::vector<std::pair<uint32_t, float>>& pts, Mode mode, bool invert, uint32_t inf, float amount)
     {
         const Settings& s = settings();
         if (mode == Mode::Smooth)
         {
             std::vector<std::pair<uint32_t, float>> scaled;
             for (auto [p, f] : pts)
-                scaled.push_back({p, f * s.strength});
+                scaled.push_back({p, f * amount});
             scene::skin::smoothPoints(*mBvhMesh, mWork, scaled, mLocked, mMaxInf);
             return;
         }
         for (auto [p, f] : pts)
-            scene::skin::paintPoint(mWork, p, inf, mode, invert, s.value, f * s.strength, mLocked, mMaxInf);
+            scene::skin::paintPoint(mWork, p, inf, mode, invert, s.value, f * amount, mLocked, mMaxInf);
     }
 
-    void dab(QPointF px, const ViewInfo& view, Qt::KeyboardModifiers mods)
+    /** The shared stroke's view of the skinned surface under a pixel, in the mesh's object space. */
+    bool surfaceQuery(QPointF px, const ViewInfo& view, brush::SurfaceHit& out)
+    {
+        geo::BvhHit hit;
+        if (!raycast(px, view, hit))
+            return false;
+        const glm::dmat4 w = meshWorld();
+        const glm::dvec3 c(w * glm::dvec4(hit.point, 1.0));
+        const double scale = std::max(1e-12, glm::length(glm::dvec3(w[0])));
+        glm::dvec3 o, d;
+        view.ray(px, o, d);
+        out.center = hit.point;
+        out.normal = triangleNormal(hit.triangle);
+        out.viewDir = glm::normalize(glm::dvec3(glm::inverse(w) * glm::dvec4(d, 0.0)));
+        out.right = brush::ui::screenRight(view, w);
+        out.pixelSize = view.unitsPerPixel(c) / scale;
+        out.worldToLocal = 1.0 / scale;
+        return true;
+    }
+
+    void dab(const brush::Dab& d) override
     {
         LILA_ZONE();
 
-        geo::BvhHit hit;
-        if (!raycast(px, view, hit))
-            return;
-        glm::dmat4 w = meshWorld();
-        glm::dvec3 c(w * glm::dvec4(hit.point, 1.0));
-        double scale = std::max(1e-12, glm::length(glm::dvec3(w[0])));
-        double radius = settings().radius * view.unitsPerPixel(c) / scale;
-        auto pts = brushPoints(hit, radius);
-        Mode mode = (mods & Qt::ShiftModifier) ? Mode::Smooth : settings().mode;
-        bool invert = mods & Qt::ControlModifier;
-        auto inf = uint32_t(settings().influence);
-        apply(pts, mode, invert, inf);
-        if (settings().mirror && !mSymmetry.empty())
+        const Settings& s = settings();
+        const Mode mode = (mMods & Qt::ShiftModifier) ? Mode::Smooth : s.mode;
+        const bool invert = mMods & Qt::ControlModifier;
+        const auto inf = uint32_t(s.influence);
+        const float amount = float(s.stroke.strength * d.opacity * d.flow);
+        const brush::Falloff falloff = s.stroke.resolveFalloff();
+        std::vector<std::pair<uint32_t, float>> pts;
+        for (brush::Dab copy : brush::radialDabs(d, s.stroke.radial))
+        {
+            geo::Index tri = geo::kInvalid;
+            if (brush::SurfaceWalk::snap(mBvh, copy, tri))
+                for (auto [p, w] : mWalk.gather(*mBvhMesh, mBvh, tri, copy, falloff))
+                    pts.push_back({p, w});
+        }
+        if (s.stroke.radial.any())
+            brush::mergeHits(pts);
+        apply(pts, mode, invert, inf, amount);
+        if (s.stroke.mirror && !mSymmetry.empty())
         {
             std::vector<std::pair<uint32_t, float>> mirrored;
             for (auto [p, f] : pts)
                 if (geo::Index q = mSymmetry.mirrorPoint(p); q != geo::kInvalid && q != p)
                     mirrored.push_back({q, f});
-            apply(mirrored, mode, invert, mPartner.contains(inf) ? mPartner[inf] : inf);
+            apply(mirrored, mode, invert, mPartner.contains(inf) ? mPartner[inf] : inf, amount);
         }
         pushLive();
     }
@@ -638,6 +589,7 @@ private:
 
     void endStroke()
     {
+        mStroke.end();
         mStroking = false;
         scene::Graph& g = scene::Graph::current();
         if (!g.node(mSkin))
@@ -674,7 +626,7 @@ private:
         std::vector<std::pair<uint32_t, float>> pts;
         for (uint32_t p : ids)
             pts.push_back({p, 1.0f});
-        apply(pts, settings().mode, false, uint32_t(settings().influence));
+        apply(pts, settings().mode, false, uint32_t(settings().influence), float(settings().stroke.strength));
         UndoChunk chunk("floodSkinWeights");
         scene::skin::setWeights(g, mSkin, mWork);
         viewportTools::requestRedraw();
@@ -745,7 +697,7 @@ private:
 
     scene::MeshPtr mBvhMesh;
     geo::MeshBvh mBvh;
-    std::vector<double> mDist;
+    brush::SurfaceWalk mWalk;
 
     scene::MeshPtr mSymmetryFor;
     int mSymmetryAxis = -1;
@@ -757,13 +709,16 @@ private:
     WeightTable mWork;
     std::vector<char> mLocked;
     int mMaxInf = 4;
-    QPointF mLastDab;
     QPointF mHover;
-
-    bool mResizeArmed = false;
-    bool mResizing = false;
-    QPointF mResizeStart;
-    double mResizeFrom = 0.0;
+    Qt::KeyboardModifiers mMods;
+    brush::Stroke mStroke;
+    brush::ui::BrushControls mControls{[]() -> brush::BrushSettings& { return settings().stroke; },
+                                       [this] {
+                                           if (mPanel)
+                                               mPanel->syncFromSettings();
+                                           viewportTools::requestRedraw();
+                                       },
+                                       [] { save(); }};
 
     scene::MeshPtr mDrawnMesh;
     scene::DataPtr mDrawnWeights;

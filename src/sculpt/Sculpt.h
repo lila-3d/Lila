@@ -2,6 +2,7 @@
 
 #include "core/Export.h"
 
+#include "brush/Brush.h"
 #include "geo/Bvh.h"
 #include "geo/Mesh.h"
 #include "geo/Symmetry.h"
@@ -55,36 +56,30 @@ LILA_SCENE_API std::string_view brushName(Brush b);
 LILA_SCENE_API std::optional<Brush> brushFromName(std::string_view name);
 LILA_SCENE_API std::string_view falloffName(Falloff f);
 LILA_SCENE_API std::optional<Falloff> falloffFromName(std::string_view name);
-/** Weight at t = distance / radius: 1 at the centre, 0 from the rim on. */
+/** Weight at t = distance / radius: 1 at the centre, 0 from the rim on. The brush core's shape of the same name. */
 LILA_SCENE_API double falloffWeight(Falloff f, double t);
+inline brush::Shape toShape(Falloff f) { return brush::Shape(f); }
 
 struct BrushSettings
 {
     Brush brush = Brush::Draw;
-    Falloff falloff = Falloff::Smooth;
+    /** Any brush core falloff: the sculpt shapes, bell, or a soft select curve. */
+    brush::Falloff falloff = brush::Shape::Smooth;
     /** 0 to 1. */
     double strength = 0.5;
     /** Ctrl: dig instead of add, unmask, unfreeze, magnify instead of pinch. */
     bool invert = false;
     /** Leave points facing away from the view, so a stroke doesn't reach through thin parts. */
     bool frontFacesOnly = false;
+    /** Copies of every dab about an object axis, on top of the mesh's mirror symmetry. */
+    brush::Radial radial;
 };
 
-/** One brush stamp. */
-struct Dab
-{
-    glm::dvec3 center{0.0};
-    /** Surface normal under the cursor, unit length. */
-    glm::dvec3 normal{0.0, 1.0, 0.0};
-    double radius = 1.0;
-    double pressure = 1.0;
-    /** Into the screen; zero when unknown. */
-    glm::dvec3 viewDir{0.0};
-    /** Grab: how far the cursor moved since the last dab. */
-    glm::dvec3 delta{0.0};
-    /** Direction of travel, for clay strips' square footprint; zero when unknown. */
-    glm::dvec3 direction{0.0};
-};
+/**
+ * One brush stamp: the shared brush dab. Sculpting reads center, normal, radius, opacity times flow (the amount),
+ * viewDir, delta (grab), direction (clay strips' square footprint) and the tip shape.
+ */
+using Dab = brush::Dab;
 
 /** What a stroke or mask operation changed, enough to undo and redo it. */
 struct StrokeRecord
@@ -196,6 +191,7 @@ private:
     geo::SymmetryMap mSymmetry;
 
     BrushSettings mSettings;
+    brush::FalloffTable mFalloffTable;
     bool mStroking = false;
     std::vector<Side> mGrab;
     // Per stroke: the state before a point was first touched.

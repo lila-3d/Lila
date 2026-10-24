@@ -205,7 +205,7 @@ geo::SymmetryMap symmetryOf(const Node& n, const geo::Mesh& mesh)
     if (axis < 1 || axis > 3)
         return {};
     double tol = std::max(1e-4, glm::length(mesh.bounds().size()) * 1e-4);
-    return geo::SymmetryMap::build(mesh, geo::axisPlane(int(axis - 1)), tol);
+    return geo::SymmetryMap::build(mesh, geo::axisPlane(int(axis - 1), scene::symmetryOffset(n, int(axis - 1))), tol);
 }
 
 MeshPtr commit(NodeId mesh, std::shared_ptr<geo::Mesh> edited, const std::string& set, ColorDelta delta, bool created, const std::string& label)
@@ -384,6 +384,8 @@ void registerCommands()
                   {"paintThrough", "", T::Bool, false, "Paint points hidden behind other parts too."},
                   {"mirror", "", T::Bool, true, "Mirror across the mesh's symmetry when it is on."},
                   {"selectionOnly", "", T::Bool, true, "With selected components, only they change."},
+                  {"radialCount", "", T::Int, 1, "Copies of every dab turned evenly about an object axis; 1 is off."},
+                  {"radialAxis", "", T::String, "y", "The object axis radial copies turn about.", {"x", "y", "z"}},
                   {"dabs", "", T::List, json::array(), "The stamps, in order."},
                   {"live", "", T::Int, 0, "Internal: adopts the stroke the viewport tool already applied."}},
         .run = [](const Args& a) -> json {
@@ -426,6 +428,8 @@ void registerCommands()
                 s.falloff = falloffArg(a);
                 s.frontFacesOnly = a.get<bool>("frontFacesOnly", true);
                 s.paintThrough = a.get<bool>("paintThrough", false);
+                const std::string axis = a.get<std::string>("radialAxis", "y");
+                s.radial = {std::clamp(a.get<int>("radialCount", 1), 1, 64), axis == "x" ? 0 : axis == "z" ? 2 : 1};
                 PaintMesh pm(m, set);
                 if (a.get<bool>("mirror", true))
                 {

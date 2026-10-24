@@ -1,5 +1,6 @@
 #include "vcolor/Paint.h"
 
+#include "brush/Symmetry.h"
 #include "core/Profile.h"
 #include "geo/ColorSets.h"
 #include "geo/Normals.h"
@@ -217,8 +218,7 @@ glm::vec4 PaintMesh::sample(const geo::BvhHit& hit) const
 void PaintMesh::beginStroke(const BrushSettings& s)
 {
     mSettings = s;
-    for (size_t i = 0; i < mFalloff.size(); ++i)
-        mFalloff[i] = float(std::clamp(s.falloff.evaluate(double(i) / double(mFalloff.size() - 1)), 0.0, 1.0));
+    mFalloff = brush::FalloffTable(s.falloff);
     mStroking = true;
     if (++mStroke == 0)
     {
@@ -269,10 +269,7 @@ void PaintMesh::gather(const Dab& d, std::vector<std::pair<Index, float>>& out) 
             if (glm::length(toEye) > 0.0 && mBvh.occluded(pos + n * eps + glm::normalize(toEye) * eps, toEye, 1.0))
                 return;
         }
-        float t = float(dist / std::max(d.radius, 1e-12)) * float(mFalloff.size() - 1);
-        size_t k = std::min(size_t(t), mFalloff.size() - 2);
-        float f = mFalloff[k] + (mFalloff[k + 1] - mFalloff[k]) * (t - float(k));
-        w[i] = f * float(d.opacity);
+        w[i] = brush::tipWeight(d, mFalloff, pos - d.center) * float(d.opacity * d.flow);
     });
     out.clear();
     for (size_t i = 0; i < pts.size(); ++i)
@@ -305,17 +302,20 @@ void PaintMesh::dab(const Dab& d)
         return;
     std::vector<std::pair<Index, float>> hits;
     gather(d, hits);
-    if (mSettings.mirror && !mSymmetry.empty())
+    if (mSettings.radial.any())
     {
-        size_t n = hits.size();
-        for (size_t i = 0; i < n; ++i)
-            if (Index q = mSymmetry.mirrorPoint(hits[i].first); q != geo::kInvalid && q != hits[i].first &&
-                                                               (mMask.empty() || (q < mMask.size() && mMask[q])))
-                hits.emplace_back(q, hits[i].second);
-        // A point reached from both sides keeps the stronger weight, so mirrored strokes stay symmetric.
-        std::sort(hits.begin(), hits.end(), [](const auto& a, const auto& b) { return a.first < b.first || (a.first == b.first && a.second > b.second); });
-        hits.erase(std::unique(hits.begin(), hits.end(), [](const auto& a, const auto& b) { return a.first == b.first; }), hits.end());
+        std::vector<std::pair<Index, float>> more;
+        for (const Dab& copy : brush::radialDabs(d, mSettings.radial))
+            if (copy.copy != 0)
+            {
+                gather(copy, more);
+                hits.insert(hits.end(), more.begin(), more.end());
+            }
+        brush::mergeHits(hits);
     }
+    // A point reached from both sides keeps the stronger weight, so mirrored strokes stay symmetric.
+    if (mSettings.mirror)
+        brush::mirrorHits(hits, mSymmetry, mMask);
     for (auto& [p, w] : hits)
     {
         w *= mSettings.strength;
@@ -352,14 +352,14 @@ void PaintMesh::dab(const Dab& d)
     else
     {
         // From the stroke-start color at the strongest weight so far: passing over a spot again never builds up.
-        const glm::vec4 brush = mSettings.color;
+        const glm::vec4 color = mSettings.color;
         tbb::parallel_for(size_t(0), hits.size(), [&](size_t i) {
             auto [p, w] = hits[i];
             if (w <= mWeight[p])
                 return;
             mWeight[p] = w;
             for (Index c : pointCorners(p))
-                mColors[c] = blend(mode, mStart[mStartIndex[c]], brush, w, ch);
+                mColors[c] = blend(mode, mStart[mStartIndex[c]], color, w, ch);
         });
     }
     for (const auto& [p, w] : hits)

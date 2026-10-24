@@ -2,6 +2,7 @@
 
 #include "core/Export.h"
 
+#include "brush/Brush.h"
 #include "sculpt/Sculpt.h"
 
 #include <functional>
@@ -13,11 +14,15 @@ namespace lila::ui
 struct SculptSettings
 {
     sculpt::Brush brush = sculpt::Brush::Draw;
-    sculpt::Falloff falloff = sculpt::Falloff::Smooth;
-    double radius = 60.0; // screen px
-    double strength = 0.5;
-    /** Dab spacing as a fraction of the radius. */
-    double spacing = 0.1;
+    /** Radius (screen px), strength, spacing, falloff (a sculpt falloff name), pressure and the rest of the shared brush. */
+    brush::BrushSettings stroke = [] {
+        brush::BrushSettings b;
+        b.radius = 60.0;
+        b.strength = 0.5;
+        b.spacing = 0.1;
+        b.falloff = "smooth";
+        return b;
+    }();
     bool frontFacesOnly = false;
     bool showCage = true;
     std::string proxyMode = "subdivide";

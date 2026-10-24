@@ -1,5 +1,6 @@
 #include "sculpt/Sculpt.h"
 
+#include "brush/Symmetry.h"
 #include "core/Profile.h"
 
 #include <tbb/blocked_range.h>
@@ -78,23 +79,7 @@ std::optional<Falloff> falloffFromName(std::string_view name)
     return std::nullopt;
 }
 
-double falloffWeight(Falloff f, double t)
-{
-    if (t >= 1.0)
-        return 0.0;
-    t = std::max(t, 0.0);
-    switch (f)
-    {
-    case Falloff::Smooth: return 3.0 * (1.0 - t) * (1.0 - t) - 2.0 * (1.0 - t) * (1.0 - t) * (1.0 - t);
-    case Falloff::Sphere: return std::sqrt(1.0 - t * t);
-    case Falloff::Root: return std::sqrt(1.0 - t);
-    case Falloff::Sharp: return (1.0 - t) * (1.0 - t);
-    case Falloff::Linear: return 1.0 - t;
-    case Falloff::Constant: return 1.0;
-    case Falloff::Count: break;
-    }
-    return 0.0;
-}
+double falloffWeight(Falloff f, double t) { return f < Falloff::Count ? brush::shapeWeight(toShape(f), t) : 0.0; }
 
 SculptMesh::SculptMesh(geo::Mesh mesh) : mMesh(std::move(mesh))
 {
@@ -223,6 +208,7 @@ void SculptMesh::beginStroke(const BrushSettings& settings)
 {
     mSettings = settings;
     mSettings.strength = std::clamp(settings.strength, 0.0, 1.0);
+    mFalloffTable = brush::FalloffTable(mSettings.falloff);
     mStroking = true;
     mGrab.clear();
     mRecord = {};
@@ -262,6 +248,7 @@ void SculptMesh::gather(Side& s, bool forGrab)
     }
     const auto& corners = mBvh.triangles().corners;
     const bool front = mSettings.frontFacesOnly && glm::length(s.dab.viewDir) > 0.0;
+    const bool round = brush::roundTip(s.dab);
     for (Index t : mBvh.overlapping(box))
         for (int k = 0; k < 3; ++k)
         {
@@ -269,12 +256,13 @@ void SculptMesh::gather(Side& s, bool forGrab)
             if (mGatherStamp[p] == mGatherId)
                 continue;
             mGatherStamp[p] = mGatherId;
-            double d = glm::length(mMesh.position(p) - s.dab.center);
+            const glm::dvec3 rel = mMesh.position(p) - s.dab.center;
+            double d = glm::length(rel);
             if (d >= r)
                 continue;
             if (front && !forGrab && glm::dot(glm::dvec3(mNormals[p]), s.dab.viewDir) > 0.0)
                 continue;
-            double f = falloffWeight(mSettings.falloff, d / r);
+            double f = round ? mSettings.falloff.evaluate(d / r) : double(brush::tipWeight(s.dab, mFalloffTable, rel));
             if (f <= 0.0)
                 continue;
             s.points.push_back(p);
@@ -339,7 +327,7 @@ void SculptMesh::addDisplacement(const Side& s)
 
     const size_t n = s.points.size();
     std::vector<glm::dvec3> out(n, glm::dvec3(0.0));
-    const double r = s.dab.radius, sign = mSettings.invert ? -1.0 : 1.0, pressure = s.dab.pressure;
+    const double r = s.dab.radius, sign = mSettings.invert ? -1.0 : 1.0, pressure = s.dab.opacity * s.dab.flow;
     const glm::dvec3 N = s.areaNormal, C = s.areaCenter;
 
     // Clay strips: a square footprint in the plane, lined up with the stroke.
@@ -393,7 +381,7 @@ void SculptMesh::addDisplacement(const Side& s)
             {
                 const glm::dvec3 rel = P - C;
                 const double t = std::max(std::abs(glm::dot(rel, ax)), std::abs(glm::dot(rel, ay))) / r;
-                const double f = falloffWeight(mSettings.falloff, t) / std::max(s.weights[i], 1e-12);
+                const double f = mSettings.falloff.evaluate(t) / std::max(s.weights[i], 1e-12);
                 const double dist = glm::dot(P - clayPlane, N);
                 if (dist * sign < 0.0)
                     d = -N * (dist * std::min(w * f, 1.0));
@@ -425,7 +413,7 @@ void SculptMesh::addMaskChange(const Side& s)
         const Index p = s.points[i];
         touch(p);
         if (mSettings.brush == Brush::Mask)
-            mMaskDelta[p] += float(s.weights[i] * mSettings.strength * s.dab.pressure * sign);
+            mMaskDelta[p] += float(s.weights[i] * mSettings.strength * s.dab.opacity * s.dab.flow * sign);
         else
             mFreezeSet[p] = mSettings.invert ? -1 : 1;
     }
@@ -514,21 +502,12 @@ void SculptMesh::dab(const Dab& d)
     }
     mChanged.clear();
 
-    std::vector<Side> sides(1);
-    sides[0].dab = d;
-    sides[0].dab.normal = glm::length(d.normal) > 0.0 ? glm::normalize(d.normal) : glm::dvec3(0.0, 1.0, 0.0);
-    if (!mSymmetry.empty())
-    {
-        const geo::SymmetryPlane& pl = mSymmetry.plane();
-        Side m;
-        m.dab = sides[0].dab;
-        m.dab.center = pl.reflect(d.center);
-        m.dab.normal = reflectVector(pl, sides[0].dab.normal);
-        m.dab.viewDir = reflectVector(pl, d.viewDir);
-        m.dab.delta = reflectVector(pl, d.delta);
-        m.dab.direction = reflectVector(pl, d.direction);
-        sides.push_back(std::move(m));
-    }
+    Dab first = d;
+    first.normal = glm::length(d.normal) > 0.0 ? glm::normalize(d.normal) : glm::dvec3(0.0, 1.0, 0.0);
+    // The mirror plane's copies come after the radial ones, so grab keeps each side's gathered points by position in the list.
+    std::vector<Side> sides;
+    for (Dab& copy : brush::symmetricDabs(first, mSymmetry.empty() ? nullptr : &mSymmetry.plane(), mSettings.radial))
+        sides.push_back(Side{.dab = std::move(copy)});
 
     if (mSettings.brush == Brush::Grab)
     {
@@ -545,7 +524,7 @@ void SculptMesh::dab(const Dab& d)
             for (size_t i = 0; i < g.points.size(); ++i)
             {
                 const Index p = g.points[i];
-                double w = mFrozen[p] ? 0.0 : g.weights[i] * (1.0 - double(mMask[p])) * d.pressure;
+                double w = mFrozen[p] ? 0.0 : g.weights[i] * (1.0 - double(mMask[p])) * d.opacity * d.flow;
                 if (w <= 0.0)
                     continue;
                 touch(p);

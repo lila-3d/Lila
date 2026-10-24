@@ -142,19 +142,18 @@ const char* paintFalloffName(PaintFalloff f)
     return "smooth";
 }
 
-float paintFalloff(PaintFalloff f, double t)
+brush::Shape paintShape(PaintFalloff f)
 {
-    t = std::max(0.0, t);
-    if (t >= 1.0)
-        return 0.0f;
     switch (f)
     {
-    case PaintFalloff::Smooth: return float((1.0 - t * t) * (1.0 - t * t));
-    case PaintFalloff::Linear: return float(1.0 - t);
-    case PaintFalloff::Constant: return 1.0f;
+    case PaintFalloff::Smooth: return brush::Shape::Bell;
+    case PaintFalloff::Linear: return brush::Shape::Linear;
+    case PaintFalloff::Constant: return brush::Shape::Constant;
     }
-    return 0.0f;
+    return brush::Shape::Bell;
 }
+
+float paintFalloff(PaintFalloff f, double t) { return float(brush::shapeWeight(paintShape(f), t)); }
 
 UvLayout::UvLayout(const geo::Mesh& mesh)
 {

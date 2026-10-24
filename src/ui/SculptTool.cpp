@@ -3,6 +3,7 @@
 // Before Qt: Qt's emit macro breaks TBB's headers.
 #include <tbb/parallel_for.h>
 
+#include "brush/BrushUi.h"
 #include "ops/Command.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
@@ -27,7 +28,6 @@ namespace lila::ui
 {
 namespace
 {
-constexpr double kPi = 3.14159265358979323846;
 constexpr const char* kPrefs = "general";
 
 std::map<int, std::function<void()>>& settingsListeners()
@@ -42,11 +42,11 @@ SculptSettings loadSettings()
     const PrefStore& p = PrefStore::get();
     if (auto b = sculpt::brushFromName(p.value<std::string>(kPrefs, "/sculpt/brush", "draw")))
         s.brush = *b;
-    if (auto f = sculpt::falloffFromName(p.value<std::string>(kPrefs, "/sculpt/falloff", "smooth")))
-        s.falloff = *f;
-    s.radius = std::clamp(p.value<double>(kPrefs, "/sculpt/radius", s.radius), 2.0, 2000.0);
-    s.strength = std::clamp(p.value<double>(kPrefs, "/sculpt/strength", s.strength), 0.0, 1.0);
-    s.spacing = std::clamp(p.value<double>(kPrefs, "/sculpt/spacing", s.spacing), 0.02, 2.0);
+    s.stroke.loadPrefs("/sculpt");
+    if (!brush::Falloff::find(s.stroke.falloff))
+        s.stroke.falloff = "smooth";
+    s.stroke.radius = std::clamp(s.stroke.radius, 2.0, 2000.0);
+    s.stroke.spacing = std::clamp(s.stroke.spacing, 0.02, 2.0);
     s.frontFacesOnly = p.value<bool>(kPrefs, "/sculpt/frontFacesOnly", s.frontFacesOnly);
     s.showCage = p.value<bool>(kPrefs, "/sculpt/showCage", s.showCage);
     s.proxyMode = p.value<std::string>(kPrefs, "/sculpt/proxyMode", s.proxyMode);
@@ -57,42 +57,19 @@ SculptSettings loadSettings()
     return s;
 }
 
-bool isViewport(QWidget* w) { return w && w->inherits("lila::ui::ViewportWidget"); }
-
 glm::dvec3 xformPoint(const glm::dmat4& m, const glm::dvec3& p) { return glm::dvec3(m * glm::dvec4(p, 1.0)); }
 glm::dvec3 xformDir(const glm::dmat4& m, const glm::dvec3& d) { return glm::dvec3(m * glm::dvec4(d, 0.0)); }
 
 json vecJson(const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); }
 
-class SculptTool;
-
-/** Sees F, B and M before the hotkeys do while a viewport has focus, so they can be held to resize the brush. */
-class KeyFilter : public QObject
+class SculptTool final : public ViewportTool, public brush::DabSink
 {
 public:
-    explicit KeyFilter(SculptTool* tool) : mTool(tool) {}
-    bool eventFilter(QObject* obj, QEvent* e) override;
-
-private:
-    SculptTool* mTool;
-};
-
-class SculptTool final : public ViewportTool
-{
-public:
-    enum class Adjust
-    {
-        None,
-        Radius,
-        Strength
-    };
-
     const char* name() const override { return "sculpt"; }
 
     void activate() override
     {
-        mFilter = std::make_unique<KeyFilter>(this);
-        qApp->installEventFilter(mFilter.get());
+        mControls.activate();
         mListener = sculpt::addListener([] { viewportTools::requestRedraw(); });
     }
 
@@ -100,38 +77,9 @@ public:
     {
         if (mStroking)
             endStroke();
-        if (mFilter)
-            qApp->removeEventFilter(mFilter.get());
-        mFilter.reset();
+        mControls.deactivate();
         sculpt::removeListener(mListener);
         viewportTools::requestRedraw();
-    }
-
-    /** Held-key state from the key filter. Returns true when the key is ours. */
-    bool key(int k, Qt::KeyboardModifiers mods, bool down)
-    {
-        Adjust kind = Adjust::None;
-        if (k == Qt::Key_B || (k == Qt::Key_F && !(mods & Qt::ShiftModifier)))
-            kind = Adjust::Radius;
-        else if (k == Qt::Key_M || (k == Qt::Key_F && (mods & Qt::ShiftModifier)))
-            kind = Adjust::Strength;
-        if (kind == Adjust::None)
-            return false;
-        if (down)
-        {
-            mArmed = kind;
-            mArmedKey = k;
-            mArmedUsed = false;
-            return true;
-        }
-        if (k != mArmedKey)
-            return true;
-        // A tapped F still frames the selection, as everywhere else.
-        if (k == Qt::Key_F && !mArmedUsed && mAdjusting == Adjust::None)
-            QTimer::singleShot(0, [] { actions::run("viewport.frameSelected"); });
-        mArmed = Adjust::None;
-        mArmedKey = 0;
-        return true;
     }
 
     bool ownsBrushRadius() const override { return true; }
@@ -139,43 +87,29 @@ public:
     bool mousePress(QMouseEvent* e, const ViewInfo& view) override
     {
         mHover = e->position();
-        if (tools::brushRadiusDrag(e, mArmed != Adjust::None))
-        {
-            mAdjusting = mArmed != Adjust::None ? mArmed : Adjust::Radius;
-            mArmedUsed = true;
-            mAdjustStart = e->position();
-            mAdjustFrom = e->button() == Qt::MiddleButton ? 0.0 : mAdjusting == Adjust::Radius ? sculptSettings().radius : sculptSettings().strength;
+        if (mControls.mousePress(e))
             return true;
-        }
         if (e->button() != Qt::LeftButton)
             return false;
         auto s = sculpt::active();
         if (!s || !scene::Graph::current().node(s->node))
             return true;
         Hit hit;
-        if (!surfaceHit(*s, e->position(), view, hit))
+        const bool line = sculptSettings().stroke.mode == brush::StrokeMode::Line && sculptSettings().brush != sculpt::Brush::Grab;
+        if (!surfaceHit(*s, e->position(), view, hit) && !line)
             return false;
-        beginStroke(*s, e->modifiers(), hit, view);
+        beginStroke(*s, e, view);
         return true;
     }
 
     bool mouseMove(QMouseEvent* e, const ViewInfo& view) override
     {
         mHover = e->position();
-        if (mAdjusting != Adjust::None)
-        {
-            SculptSettings& st = sculptSettings();
-            double dx = e->position().x() - mAdjustStart.x();
-            if (mAdjusting == Adjust::Radius)
-                st.radius = std::clamp(mAdjustFrom + dx, 2.0, 2000.0);
-            else
-                st.strength = std::clamp(mAdjustFrom + dx / 300.0, 0.0, 1.0);
-            sculptSettingsChanged();
+        if (mControls.mouseMove(e))
             return true;
-        }
         if (mStroking)
         {
-            strokeTo(e->position(), view);
+            strokeTo(e, view);
             return true;
         }
         viewportTools::requestRedraw();
@@ -184,13 +118,10 @@ public:
 
     bool mouseRelease(QMouseEvent* e, const ViewInfo&) override
     {
-        if (e->button() != Qt::LeftButton && !(mAdjusting != Adjust::None && e->button() == Qt::MiddleButton))
-            return false;
-        if (mAdjusting != Adjust::None)
-        {
-            mAdjusting = Adjust::None;
+        if (mControls.mouseRelease(e))
             return true;
-        }
+        if (e->button() != Qt::LeftButton)
+            return false;
         if (mStroking)
             endStroke();
         return true;
@@ -198,13 +129,10 @@ public:
 
     bool keyPress(QKeyEvent* e, const ViewInfo&) override
     {
+        if (mControls.keyPress(e))
+            return true;
         switch (e->key())
         {
-        case Qt::Key_BracketLeft:
-        case Qt::Key_BracketRight:
-            sculptSettings().radius = std::clamp(sculptSettings().radius * (e->key() == Qt::Key_BracketLeft ? 0.8 : 1.25), 2.0, 2000.0);
-            sculptSettingsChanged();
-            return true;
         case Qt::Key_Escape:
             QTimer::singleShot(0, [] { viewportTools::set(nullptr); });
             return true;
@@ -224,57 +152,22 @@ public:
             drawToolMessage(p, view, "Sculpt: select a mesh and Enter Sculpt");
             return;
         }
-        QString brush = QString::fromUtf8(sculpt::brushName(st.brush).data(), qsizetype(sculpt::brushName(st.brush).size()));
+        QString name = QString::fromUtf8(sculpt::brushName(st.brush).data(), qsizetype(sculpt::brushName(st.brush).size()));
         drawToolMessage(p, view, QString("Sculpt %1: %2   radius %3 px   strength %4%5")
-                              .arg(QString::fromStdString(n->path()), brush)
-                              .arg(int(std::lround(st.radius)))
-                              .arg(st.strength, 0, 'f', 2)
+                              .arg(QString::fromStdString(n->path()), name)
+                              .arg(int(std::lround(st.stroke.radius)))
+                              .arg(st.stroke.strength, 0, 'f', 2)
                               .arg(s->sculpt.symmetric() ? "   symmetry" : ""));
 
-        // While adjusting, the circle stays where the drag began so its size reads against the surface there.
-        QPointF at = mAdjusting != Adjust::None ? mAdjustStart : mHover;
-        const glm::vec4 rim(0.95f, 0.95f, 0.95f, 1.0f), dim(0.6f, 0.6f, 0.6f, 0.8f);
+        const QPointF at = mControls.anchor(brush::ui::ringPosition(mStroke, mHover));
         Hit hit;
+        std::optional<brush::ui::CursorSurface> surface;
         if (surfaceHit(*s, at, view, hit))
-        {
-            double r = st.radius * view.unitsPerPixel(hit.world);
-            glm::dvec3 nrm = hit.worldNormal;
-            glm::dvec3 ref = std::abs(nrm.y) < 0.9 ? glm::dvec3(0, 1, 0) : glm::dvec3(1, 0, 0);
-            glm::dvec3 u = glm::normalize(glm::cross(nrm, ref)), v = glm::cross(nrm, u);
-            std::vector<QPointF> pts;
-            for (int k = 0; k < 64; ++k)
-            {
-                double a = 2.0 * kPi * k / 64;
-                if (auto q = view.project(hit.world + (u * std::cos(a) + v * std::sin(a)) * r))
-                    pts.push_back(*q);
-            }
-            p.polyline(pts, 1.5f, rim, true);
-            auto c = view.project(hit.world), tip = view.project(hit.world + nrm * r * 0.35);
-            if (c && tip)
-                p.line(*c, *tip, 1.5f, rim);
-            if (mAdjusting == Adjust::Strength)
-            {
-                // Inner circle at the strength fraction of the radius.
-                std::vector<QPointF> inner;
-                for (int k = 0; k < 48; ++k)
-                {
-                    double a = 2.0 * kPi * k / 48;
-                    if (auto q = view.project(hit.world + (u * std::cos(a) + v * std::sin(a)) * (r * st.strength)))
-                        inner.push_back(*q);
-                }
-                p.polyline(inner, 1.0f, dim, true);
-            }
-        }
-        else
-        {
-            std::vector<QPointF> pts;
-            for (int k = 0; k < 64; ++k)
-            {
-                double a = 2.0 * kPi * k / 64;
-                pts.push_back(at + QPointF(std::cos(a), std::sin(a)) * st.radius);
-            }
-            p.polyline(pts, 1.0f, dim, true);
-        }
+            surface = brush::ui::CursorSurface{hit.world, hit.worldNormal};
+        brush::ui::drawCursor(p, view, st.stroke, at, surface,
+                              {.strengthRing = mControls.adjusting() == brush::ui::BrushControls::Adjust::Strength,
+                               .normalTick = true,
+                               .stroke = &mStroke});
     }
 
 private:
@@ -308,58 +201,83 @@ private:
         return true;
     }
 
-    double localRadius(const sculpt::Session& s, const glm::dvec3& world, const ViewInfo& view) const
+    void beginStroke(sculpt::Session& s, const QMouseEvent* e, const ViewInfo& view)
     {
-        glm::dmat4 w = worldOf(s);
-        double scale = std::max(1e-12, std::cbrt(std::abs(glm::determinant(glm::dmat3(w)))));
-        return sculptSettings().radius * view.unitsPerPixel(world) / scale;
-    }
-
-    void beginStroke(sculpt::Session& s, Qt::KeyboardModifiers mods, const Hit& hit, const ViewInfo& view)
-    {
+        const Qt::KeyboardModifiers mods = e->modifiers();
         const SculptSettings& st = sculptSettings();
         mSession = sculpt::active();
         sculpt::syncSymmetry(s);
         mSettings.brush = (mods & Qt::ShiftModifier) ? sculpt::Brush::Smooth : st.brush;
-        mSettings.falloff = st.falloff;
-        mSettings.strength = st.strength;
+        mSettings.falloff = st.stroke.resolveFalloff();
+        mFalloffName = st.stroke.falloff;
+        mSettings.strength = st.stroke.strength;
         mSettings.invert = (mods & Qt::ControlModifier) != 0;
         mSettings.frontFacesOnly = st.frontFacesOnly;
+        mSettings.radial = st.stroke.radial;
         s.sculpt.beginStroke(mSettings);
         mDabs = json::array();
         mStroking = true;
-        mLast = mHover;
-        mLastLocal = hit.local;
-        mGrabLocal = hit.local;
-        mRadius = localRadius(s, hit.world, view);
-        dab(s, hit, glm::dvec3(0.0));
+        brush::BrushSettings stroke = st.stroke;
+        // Grab drags one dab across the view plane rather than laying a trail of them.
+        if (mSettings.brush == sculpt::Brush::Grab)
+            stroke.mode = brush::StrokeMode::Freehand;
+        stroke.seed = uint32_t(e->timestamp());
+        const ViewInfo v = view;
+        mStroke.begin(stroke, mControls.input(e), [this, v](glm::dvec2 px, brush::SurfaceHit& out) { return surfaceQuery(QPointF(px.x, px.y), v, out); },
+                      *this);
     }
 
-    void dab(sculpt::Session& s, const Hit& hit, const glm::dvec3& localDelta)
+    /** The shared stroke's view of the surface under a pixel, in the proxy's object space. */
+    bool surfaceQuery(QPointF px, const ViewInfo& view, brush::SurfaceHit& out) const
     {
-        sculpt::Dab d;
-        d.center = hit.local;
-        d.normal = hit.normal;
-        d.radius = mRadius;
-        d.viewDir = hit.viewDir;
-        d.delta = localDelta;
-        d.direction = hit.local - mLastLocal;
-        mLastLocal = hit.local;
-        s.sculpt.dab(d);
+        if (!mSession || !scene::Graph::current().node(mSession->node))
+            return false;
+        Hit hit;
+        if (!surfaceHit(*mSession, px, view, hit))
+            return false;
+        const glm::dmat4 w = worldOf(*mSession);
+        const double scale = std::max(1e-12, std::cbrt(std::abs(glm::determinant(glm::dmat3(w)))));
+        out.center = hit.local;
+        out.normal = hit.normal;
+        out.viewDir = hit.viewDir;
+        out.right = brush::ui::screenRight(view, w);
+        out.pixelSize = view.unitsPerPixel(hit.world) / scale;
+        out.worldToLocal = 1.0 / scale;
+        return true;
+    }
 
-        const glm::dmat4 w = worldOf(s);
+    void dab(const brush::Dab& d) override
+    {
+        if (!mSession)
+            return;
+        if (mDabs.empty())
+        {
+            mGrab = d;
+            mGrabLocal = d.center;
+        }
+        mLastLocal = d.center;
+        send(d);
+    }
+
+    void send(const brush::Dab& d)
+    {
+        mSession->sculpt.dab(d);
+        const glm::dmat4 w = worldOf(*mSession);
         const double scale = std::max(1e-12, std::cbrt(std::abs(glm::determinant(glm::dmat3(w)))));
         const glm::dmat3 nrm = glm::transpose(glm::inverse(glm::dmat3(w)));
         mDabs.push_back({{"center", vecJson(xformPoint(w, d.center))},
                          {"normal", vecJson(glm::normalize(nrm * d.normal))},
                          {"radius", d.radius * scale},
+                         {"pressure", d.pressure},
+                         {"opacity", d.opacity},
+                         {"flow", d.flow},
                          {"view", vecJson(xformDir(w, d.viewDir))},
                          {"delta", vecJson(xformDir(w, d.delta))},
                          {"direction", vecJson(xformDir(w, d.direction))}});
         viewportTools::requestRedraw();
     }
 
-    void strokeTo(QPointF px, const ViewInfo& view)
+    void strokeTo(const QMouseEvent* e, const ViewInfo& view)
     {
         LILA_ZONE();
 
@@ -368,9 +286,11 @@ private:
             return;
         if (mSettings.brush == sculpt::Brush::Grab)
         {
+            if (mDabs.empty())
+                return;
             // The grabbed point follows the cursor across the plane facing the view at its starting depth.
             glm::dvec3 o, dir;
-            view.ray(px, o, dir);
+            view.ray(e->position(), o, dir);
             glm::dmat4 w = worldOf(*s), inv = glm::inverse(w);
             glm::dvec3 world = xformPoint(w, mGrabLocal);
             glm::dvec3 axis = glm::normalize(world - view.eye);
@@ -379,29 +299,23 @@ private:
                 return;
             glm::dvec3 target = o + glm::normalize(dir) * (glm::dot(world - o, axis) / denom);
             glm::dvec3 local = xformPoint(inv, target);
-            Hit h;
-            h.local = local;
-            h.normal = glm::dvec3(0.0, 1.0, 0.0);
-            h.viewDir = glm::normalize(xformDir(inv, axis));
-            dab(*s, h, local - mGrabLocal);
+            brush::Dab d = mGrab;
+            d.center = local;
+            d.normal = glm::dvec3(0.0, 1.0, 0.0);
+            d.viewDir = glm::normalize(xformDir(inv, axis));
+            d.delta = local - mGrabLocal;
+            d.direction = local - mLastLocal;
+            mLastLocal = local;
+            send(d);
             mGrabLocal = local;
             return;
         }
-        QPointF d = px - mLast;
-        double len = std::hypot(d.x(), d.y()), step = std::max(1.0, sculptSettings().radius * sculptSettings().spacing);
-        int count = int(len / step);
-        for (int k = 1; k <= count; ++k)
-        {
-            Hit hit;
-            if (surfaceHit(*s, mLast + d * (k * step / len), view, hit))
-                dab(*s, hit, glm::dvec3(0.0));
-        }
-        if (count > 0)
-            mLast += d * (count * step / len);
+        mStroke.move(mControls.input(e));
     }
 
     void endStroke()
     {
+        mStroke.end();
         mStroking = false;
         auto s = sculpt::active();
         if (!s || s != mSession)
@@ -414,10 +328,12 @@ private:
         s->liveToken = token;
         s->live = std::move(rec);
         json call = {{"brush", std::string(sculpt::brushName(mSettings.brush))},
-                     {"falloff", std::string(sculpt::falloffName(mSettings.falloff))},
+                     {"falloff", mFalloffName},
                      {"strength", mSettings.strength},
                      {"invert", mSettings.invert},
                      {"frontFacesOnly", mSettings.frontFacesOnly},
+                     {"radialCount", mSettings.radial.count},
+                     {"radialAxis", std::string(1, "xyz"[std::clamp(mSettings.radial.axis, 0, 2)])},
                      {"dabs", std::move(mDabs)},
                      {"live", int64_t(token)}};
         mDabs = json::array();
@@ -432,46 +348,20 @@ private:
         }
     }
 
-    std::unique_ptr<KeyFilter> mFilter;
+    // The controls' changed callback saves the prefs on every step, as the panel needs them current.
+    brush::ui::BrushControls mControls{[]() -> brush::BrushSettings& { return sculptSettings().stroke; }, [] { sculptSettingsChanged(); }, {}};
     int mListener = 0;
-
-    Adjust mArmed = Adjust::None;
-    int mArmedKey = 0;
-    bool mArmedUsed = false;
-    Adjust mAdjusting = Adjust::None;
-    QPointF mAdjustStart;
-    double mAdjustFrom = 0.0;
 
     std::shared_ptr<sculpt::Session> mSession;
     sculpt::BrushSettings mSettings;
+    std::string mFalloffName;
+    brush::Stroke mStroke;
     bool mStroking = false;
     json mDabs = json::array();
-    QPointF mLast, mHover;
+    QPointF mHover;
     glm::dvec3 mLastLocal{0.0}, mGrabLocal{0.0};
-    double mRadius = 1.0;
+    brush::Dab mGrab;
 };
-
-bool KeyFilter::eventFilter(QObject* obj, QEvent* e)
-{
-    if (e->type() != QEvent::KeyPress && e->type() != QEvent::KeyRelease && e->type() != QEvent::ShortcutOverride)
-        return false;
-    QWidget* focus = QApplication::focusWidget();
-    if (obj != focus || !isViewport(focus))
-        return false;
-    auto* k = static_cast<QKeyEvent*>(e);
-    if (k->key() != Qt::Key_F && k->key() != Qt::Key_B && k->key() != Qt::Key_M)
-        return false;
-    if (k->modifiers() & (Qt::ControlModifier | Qt::AltModifier))
-        return false;
-    if (e->type() == QEvent::ShortcutOverride)
-    {
-        e->accept();
-        return true;
-    }
-    if (k->isAutoRepeat())
-        return true;
-    return mTool->key(k->key(), k->modifiers(), e->type() == QEvent::KeyPress);
-}
 
 /** Viewport content for the open session: the proxy instead of its mesh, the cage wire and the mask shading. */
 class SculptDrawer
@@ -595,10 +485,7 @@ void sculptSettingsChanged()
     const SculptSettings& s = sculptSettings();
     PrefStore& p = PrefStore::get();
     p.set(kPrefs, "/sculpt/brush", std::string(sculpt::brushName(s.brush)));
-    p.set(kPrefs, "/sculpt/falloff", std::string(sculpt::falloffName(s.falloff)));
-    p.set(kPrefs, "/sculpt/radius", s.radius);
-    p.set(kPrefs, "/sculpt/strength", s.strength);
-    p.set(kPrefs, "/sculpt/spacing", s.spacing);
+    s.stroke.savePrefs("/sculpt");
     p.set(kPrefs, "/sculpt/frontFacesOnly", s.frontFacesOnly);
     p.set(kPrefs, "/sculpt/showCage", s.showCage);
     p.set(kPrefs, "/sculpt/proxyMode", s.proxyMode);

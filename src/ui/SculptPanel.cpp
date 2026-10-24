@@ -1,5 +1,6 @@
 #include "ui/SculptPanel.h"
 
+#include "brush/BrushUi.h"
 #include "ops/Command.h"
 #include "core/Log.h"
 #include "scene/Graph.h"
@@ -235,26 +236,26 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     mRadius->setDecimals(0);
     mRadius->setSuffix(" px");
     mRadius->setToolTip("Brush radius on screen. Hold F or B and drag in the viewport to resize.");
-    setSpinDefault(mRadius, defaults.radius);
+    setSpinDefault(mRadius, defaults.stroke.radius);
     bform->addRow("Radius", mRadius);
     mStrength = new QDoubleSpinBox(settingsBox);
     mStrength->setRange(0.0, 1.0);
     mStrength->setSingleStep(0.05);
     mStrength->setDecimals(2);
     mStrength->setToolTip("Hold M (or Shift+F) and drag in the viewport to change.");
-    setSpinDefault(mStrength, defaults.strength);
+    setSpinDefault(mStrength, defaults.stroke.strength);
     bform->addRow("Strength", mStrength);
     mFalloff = new QComboBox(settingsBox);
     for (const char* f : {"Smooth", "Sphere", "Root", "Sharp", "Linear", "Constant"})
         mFalloff->addItem(f);
-    setComboDefault(mFalloff, int(defaults.falloff));
+    setComboDefault(mFalloff, int(sculpt::falloffFromName(defaults.stroke.falloff).value_or(sculpt::Falloff::Smooth)));
     bform->addRow("Falloff", mFalloff);
     mSpacing = new QDoubleSpinBox(settingsBox);
     mSpacing->setRange(0.02, 2.0);
     mSpacing->setSingleStep(0.05);
     mSpacing->setDecimals(2);
     mSpacing->setToolTip("Distance between dabs along a stroke, as a fraction of the radius.");
-    setSpinDefault(mSpacing, defaults.spacing);
+    setSpinDefault(mSpacing, defaults.stroke.spacing);
     bform->addRow("Spacing", mSpacing);
     mFrontFaces = new QCheckBox("Front faces only", settingsBox);
     mFrontFaces->setToolTip("Leave surfaces facing away from the view, so strokes don't reach through thin parts.");
@@ -272,6 +273,9 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     setCheckDefault(mShowCage, defaults.showCage);
     bform->addRow(mShowCage);
     col->addWidget(settingsBox);
+    mStrokeOptions = new brush::ui::StrokeOptions(this, []() -> brush::BrushSettings& { return sculptSettings().stroke; },
+                                                  [] { sculptSettingsChanged(); });
+    col->addWidget(mStrokeOptions);
 
     // Mask
     auto* maskBox = new QGroupBox("Mask and Freeze", this);
@@ -304,10 +308,13 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
         if (sculpt::active())
             startSculptTool();
     });
-    connect(mRadius, &QDoubleSpinBox::valueChanged, this, [changed](double v) { sculptSettings().radius = v; changed(); });
-    connect(mStrength, &QDoubleSpinBox::valueChanged, this, [changed](double v) { sculptSettings().strength = v; changed(); });
-    connect(mSpacing, &QDoubleSpinBox::valueChanged, this, [changed](double v) { sculptSettings().spacing = v; changed(); });
-    connect(mFalloff, &QComboBox::currentIndexChanged, this, [changed](int i) { sculptSettings().falloff = sculpt::Falloff(i); changed(); });
+    connect(mRadius, &QDoubleSpinBox::valueChanged, this, [changed](double v) { sculptSettings().stroke.radius = v; changed(); });
+    connect(mStrength, &QDoubleSpinBox::valueChanged, this, [changed](double v) { sculptSettings().stroke.strength = v; changed(); });
+    connect(mSpacing, &QDoubleSpinBox::valueChanged, this, [changed](double v) { sculptSettings().stroke.spacing = v; changed(); });
+    connect(mFalloff, &QComboBox::currentIndexChanged, this, [changed](int i) {
+        sculptSettings().stroke.falloff = std::string(sculpt::falloffName(sculpt::Falloff(i)));
+        changed();
+    });
     connect(mFrontFaces, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().frontFacesOnly = on; changed(); });
     connect(mShowCage, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().showCage = on; changed(); });
     connect(mMode, &QComboBox::currentIndexChanged, this, [this, changed](int) {
@@ -366,10 +373,12 @@ void SculptPanel::syncFromSettings()
         b9(mResolution), b10(mExitMethod), b11(mKeepProxy);
     if (QAbstractButton* b = mBrushes->button(int(s.brush)))
         b->setChecked(true);
-    mRadius->setValue(s.radius);
-    mStrength->setValue(s.strength);
-    mSpacing->setValue(s.spacing);
-    mFalloff->setCurrentIndex(int(s.falloff));
+    mRadius->setValue(s.stroke.radius);
+    mStrength->setValue(s.stroke.strength);
+    mSpacing->setValue(s.stroke.spacing);
+    mFalloff->setCurrentIndex(int(sculpt::falloffFromName(s.stroke.falloff).value_or(sculpt::Falloff::Smooth)));
+    if (mStrokeOptions)
+        mStrokeOptions->sync();
     mFrontFaces->setChecked(s.frontFacesOnly);
     mShowCage->setChecked(s.showCage);
     mMode->setCurrentIndex(std::max(0, mMode->findData(QString::fromStdString(s.proxyMode))));

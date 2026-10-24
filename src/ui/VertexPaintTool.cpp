@@ -3,6 +3,7 @@
 // Before Qt: Qt's emit macro breaks TBB's headers.
 #include <tbb/parallel_for.h>
 
+#include "brush/BrushUi.h"
 #include "ops/Command.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
@@ -43,7 +44,6 @@
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStyle>
-#include <QTabletEvent>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -59,7 +59,6 @@ using scene::kNoNode;
 using scene::MeshPtr;
 using scene::NodeId;
 
-constexpr double kPi = 3.14159265358979323846;
 constexpr const char* kPrefs = "general";
 constexpr size_t kRecentMax = 12;
 
@@ -79,22 +78,31 @@ QColor swatchColor(const glm::vec4& linear)
     return QColor::fromRgbF(s.r, s.g, s.b);
 }
 
+/** The shared brush's defaults for vertex paint. */
+brush::BrushSettings defaultStroke()
+{
+    brush::BrushSettings b;
+    b.radius = 50.0;
+    b.strength = 1.0;
+    b.spacing = 0.15;
+    b.falloff = "Smooth";
+    b.mirror = true;
+    b.pressureSize.enabled = true;
+    b.pressureOpacity.enabled = true;
+    return b;
+}
+
 struct Settings
 {
     glm::vec4 color{1.0f};
     glm::vec4 secondary{0.0f, 0.0f, 0.0f, 1.0f};
     std::string blend = "replace";
-    double strength = 1.0;
-    double radius = 50.0; // px
-    double spacing = 0.15;
     std::string channels = "rgba";
-    std::string falloff = "Smooth";
     bool frontFacesOnly = true;
     bool paintThrough = false;
-    bool mirror = true;
     bool selectionOnly = true;
-    bool pressureSize = true;
-    bool pressureOpacity = true;
+    /** Radius, strength, spacing, falloff, mirror, pressure and the rest of the shared brush. */
+    brush::BrushSettings stroke = defaultStroke();
     std::vector<glm::vec4> swatches;
     std::vector<glm::vec4> recent;
 };
@@ -106,17 +114,13 @@ Settings load()
     s.color = colorFrom(p.value<json>(kPrefs, "/vertexPaint/color", json()), s.color);
     s.secondary = colorFrom(p.value<json>(kPrefs, "/vertexPaint/secondary", json()), s.secondary);
     s.blend = p.value<std::string>(kPrefs, "/vertexPaint/blend", s.blend);
-    s.strength = std::clamp(p.value<double>(kPrefs, "/vertexPaint/strength", s.strength), 0.0, 1.0);
-    s.radius = std::clamp(p.value<double>(kPrefs, "/vertexPaint/radius", s.radius), 2.0, 2000.0);
-    s.spacing = std::clamp(p.value<double>(kPrefs, "/vertexPaint/spacing", s.spacing), 0.02, 2.0);
+    s.stroke.loadPrefs("/vertexPaint");
+    s.stroke.radius = std::clamp(s.stroke.radius, 2.0, 2000.0);
+    s.stroke.spacing = std::clamp(s.stroke.spacing, 0.02, 2.0);
     s.channels = p.value<std::string>(kPrefs, "/vertexPaint/channels", s.channels);
-    s.falloff = p.value<std::string>(kPrefs, "/vertexPaint/falloff", s.falloff);
     s.frontFacesOnly = p.value<bool>(kPrefs, "/vertexPaint/frontFacesOnly", s.frontFacesOnly);
     s.paintThrough = p.value<bool>(kPrefs, "/vertexPaint/paintThrough", s.paintThrough);
-    s.mirror = p.value<bool>(kPrefs, "/vertexPaint/mirror", s.mirror);
     s.selectionOnly = p.value<bool>(kPrefs, "/vertexPaint/selectionOnly", s.selectionOnly);
-    s.pressureSize = p.value<bool>(kPrefs, "/vertexPaint/pressureSize", s.pressureSize);
-    s.pressureOpacity = p.value<bool>(kPrefs, "/vertexPaint/pressureOpacity", s.pressureOpacity);
     for (const json& j : p.value<json>(kPrefs, "/vertexPaint/swatches", json::array()))
         s.swatches.push_back(colorFrom(j, glm::vec4(1.0f)));
     for (const json& j : p.value<json>(kPrefs, "/vertexPaint/recent", json::array()))
@@ -139,17 +143,11 @@ void save()
     p.set(kPrefs, "/vertexPaint/color", colorJson(s.color));
     p.set(kPrefs, "/vertexPaint/secondary", colorJson(s.secondary));
     p.set(kPrefs, "/vertexPaint/blend", s.blend);
-    p.set(kPrefs, "/vertexPaint/strength", s.strength);
-    p.set(kPrefs, "/vertexPaint/radius", s.radius);
-    p.set(kPrefs, "/vertexPaint/spacing", s.spacing);
+    s.stroke.savePrefs("/vertexPaint");
     p.set(kPrefs, "/vertexPaint/channels", s.channels);
-    p.set(kPrefs, "/vertexPaint/falloff", s.falloff);
     p.set(kPrefs, "/vertexPaint/frontFacesOnly", s.frontFacesOnly);
     p.set(kPrefs, "/vertexPaint/paintThrough", s.paintThrough);
-    p.set(kPrefs, "/vertexPaint/mirror", s.mirror);
     p.set(kPrefs, "/vertexPaint/selectionOnly", s.selectionOnly);
-    p.set(kPrefs, "/vertexPaint/pressureSize", s.pressureSize);
-    p.set(kPrefs, "/vertexPaint/pressureOpacity", s.pressureOpacity);
     json sw = json::array(), rc = json::array();
     for (const glm::vec4& c : s.swatches)
         sw.push_back(colorJson(c));
@@ -166,16 +164,6 @@ void pushRecent(const glm::vec4& c)
     r.insert(r.begin(), c);
     if (r.size() > kRecentMax)
         r.resize(kRecentMax);
-}
-
-scene::softSelect::Curve falloffCurve(const std::string& name)
-{
-    if (const auto* p = scene::softSelect::findBuiltin(name))
-        return p->curve;
-    for (const auto& p : scene::softSelect::userPresets())
-        if (p.name == name)
-            return p.curve;
-    return scene::softSelect::Curve();
 }
 
 /** Runs a command as the UI does (echoed), logging failures instead of throwing. */
@@ -199,8 +187,6 @@ QMainWindow* mainWindow()
             return mw;
     return nullptr;
 }
-
-bool isViewport(QWidget* w) { return w && w->inherits("lila::ui::ViewportWidget"); }
 
 /** The lead selected mesh, or kNoNode. */
 NodeId leadMesh()
@@ -404,23 +390,24 @@ public:
 
         auto* opts = new QGroupBox("Options", body);
         auto* optCol = new QVBoxLayout(opts);
-        auto check = [&](const char* label, const char* tip, bool Settings::* member) {
+        auto check = [&](const char* label, const char* tip, std::function<bool&()> ref) {
             auto* cb = new QCheckBox(label, opts);
             cb->setToolTip(tip);
             optCol->addWidget(cb);
-            connect(cb, &QCheckBox::toggled, this, [this, member](bool on) {
-                settings().*member = on;
+            connect(cb, &QCheckBox::toggled, this, [this, ref](bool on) {
+                ref() = on;
                 changed();
             });
-            mChecks.push_back({cb, member});
+            mChecks.push_back({cb, ref});
         };
-        check("Front faces only", "Leave points facing away from the view", &Settings::frontFacesOnly);
-        check("Paint through", "Reach points hidden behind other parts of the mesh", &Settings::paintThrough);
-        check("Mirror (mesh symmetry)", "Mirror strokes across the mesh's symmetry plane when it is on", &Settings::mirror);
-        check("Selected components only", "With components selected, only they change", &Settings::selectionOnly);
-        check("Pressure: size", "Pen pressure scales the radius", &Settings::pressureSize);
-        check("Pressure: opacity", "Pen pressure scales the strength", &Settings::pressureOpacity);
+        check("Front faces only", "Leave points facing away from the view", []() -> bool& { return settings().frontFacesOnly; });
+        check("Paint through", "Reach points hidden behind other parts of the mesh", []() -> bool& { return settings().paintThrough; });
+        check("Mirror (mesh symmetry)", "Mirror strokes across the mesh's symmetry plane when it is on",
+              []() -> bool& { return settings().stroke.mirror; });
+        check("Selected components only", "With components selected, only they change", []() -> bool& { return settings().selectionOnly; });
         col->addWidget(opts);
+        mStrokeOptions = new brush::ui::StrokeOptions(body, []() -> brush::BrushSettings& { return settings().stroke; }, [this] { changed(); });
+        col->addWidget(mStrokeOptions);
 
         // Display.
         auto* disp = new QGroupBox("Display", body);
@@ -547,19 +534,19 @@ public:
             changed();
         });
         connect(mStrength, &QDoubleSpinBox::valueChanged, this, [this](double v) {
-            settings().strength = v;
+            settings().stroke.strength = v;
             changed();
         });
         connect(mRadius, &QSpinBox::valueChanged, this, [this](int v) {
-            settings().radius = v;
+            settings().stroke.radius = v;
             changed();
         });
         connect(mSpacing, &QDoubleSpinBox::valueChanged, this, [this](double v) {
-            settings().spacing = v;
+            settings().stroke.spacing = v;
             changed();
         });
         connect(mFalloff, &QComboBox::activated, this, [this](int) {
-            settings().falloff = mFalloff->currentText().toStdString();
+            settings().stroke.falloff = mFalloff->currentText().toStdString();
             changed();
         });
 
@@ -583,15 +570,15 @@ public:
         {
             QSignalBlocker b1(mBlend), b2(mStrength), b3(mRadius), b4(mSpacing), b5(mFalloff);
             mBlend->setCurrentIndex(std::max(0, mBlend->findData(QString::fromStdString(s.blend))));
-            mStrength->setValue(s.strength);
-            mRadius->setValue(int(std::lround(s.radius)));
-            mSpacing->setValue(s.spacing);
+            mStrength->setValue(s.stroke.strength);
+            mRadius->setValue(int(std::lround(s.stroke.radius)));
+            mSpacing->setValue(s.stroke.spacing);
             mFalloff->clear();
             for (const auto& p : scene::softSelect::builtinPresets())
                 mFalloff->addItem(QString::fromStdString(p.name));
             for (const auto& p : scene::softSelect::userPresets())
                 mFalloff->addItem(QString::fromStdString(p.name));
-            mFalloff->setCurrentText(QString::fromStdString(s.falloff));
+            mFalloff->setCurrentText(QString::fromStdString(s.stroke.falloff));
         }
         uint8_t ch = vcolor::channelsFromString(s.channels);
         for (int k = 0; k < 4; ++k)
@@ -599,11 +586,13 @@ public:
             QSignalBlocker b(mChannel[k]);
             mChannel[k]->setChecked(ch & (1 << k));
         }
-        for (auto& [cb, member] : mChecks)
+        for (auto& [cb, ref] : mChecks)
         {
             QSignalBlocker b(cb);
-            cb->setChecked(s.*member);
+            cb->setChecked(ref());
         }
+        if (mStrokeOptions)
+            mStrokeOptions->sync();
         {
             QSignalBlocker b1(mDisplay), b2(mChannelView);
             std::string mode = PrefStore::get().value<std::string>(kPrefs, viewportDisplay::kVertexColors, "off");
@@ -687,7 +676,7 @@ private:
         c["color"] = colorJson(settings().color);
         std::string blend = settings().blend;
         c["blend"] = blend;
-        c["opacity"] = settings().strength;
+        c["opacity"] = settings().stroke.strength;
         runCommand("vertexColorFill", c);
         pushRecent(settings().color);
         changed();
@@ -810,7 +799,8 @@ private:
     QDoubleSpinBox* mSpacing = nullptr;
     QComboBox* mFalloff = nullptr;
     QToolButton* mChannel[4]{};
-    std::vector<std::pair<QCheckBox*, bool Settings::*>> mChecks;
+    std::vector<std::pair<QCheckBox*, std::function<bool&()>>> mChecks;
+    brush::ui::StrokeOptions* mStrokeOptions = nullptr;
     QComboBox* mDisplay = nullptr;
     QComboBox* mChannelView = nullptr;
     QComboBox* mGradType = nullptr;
@@ -820,39 +810,16 @@ private:
     QSpinBox* mBakeRays = nullptr;
 };
 
-/** Pen pressure from tablet events (left unaccepted, so Qt still sends the mouse events) and the tool's held keys. */
-class InputFilter : public QObject
+class VertexPaintTool final : public ViewportTool, public brush::DabSink
 {
 public:
-    explicit InputFilter(VertexPaintTool* tool) : mTool(tool) {}
-    bool eventFilter(QObject* obj, QEvent* e) override;
-
-    double pressure() const { return mClock.isValid() && mClock.elapsed() < 100 ? mPressure : 1.0; }
-
-private:
-    VertexPaintTool* mTool;
-    double mPressure = 1.0;
-    QElapsedTimer mClock;
-};
-
-class VertexPaintTool final : public ViewportTool
-{
-public:
-    enum class Adjust
-    {
-        None,
-        Radius,
-        Strength,
-    };
-
     const char* name() const override { return "vertexPaint"; }
 
     void activate() override
     {
         gTool = this;
         mAlive = std::make_shared<bool>(true);
-        mFilter = std::make_unique<InputFilter>(this);
-        qApp->installEventFilter(mFilter.get());
+        mControls.activate({Qt::Key_I, Qt::Key_G, Qt::Key_X}, [this](int k, Qt::KeyboardModifiers, bool down) { return key(k, down); });
         mPanel = new VertexPaintPanel(mainWindow());
         mPanel->target = [this] { return mMesh; };
         mPanel->onChanged = [] { viewportTools::requestRedraw(); };
@@ -884,9 +851,7 @@ public:
         if (mStroking)
             endStroke();
         scene::Graph::current().removeListener(mListener);
-        if (mFilter)
-            qApp->removeEventFilter(mFilter.get());
-        mFilter.reset();
+        mControls.deactivate();
         mAlive.reset();
         if (mPanel)
         {
@@ -897,8 +862,8 @@ public:
         viewportTools::requestRedraw();
     }
 
-    /** Held keys from the filter; true when the key is the tool's. */
-    bool key(int k, Qt::KeyboardModifiers mods, bool down)
+    /** The tool's own held keys; true when the key is the tool's. */
+    bool key(int k, bool down)
     {
         if (k == Qt::Key_X)
         {
@@ -922,27 +887,7 @@ public:
             mGradientHeld = down;
             return true;
         }
-        Adjust kind = Adjust::None;
-        if (k == Qt::Key_B || (k == Qt::Key_F && !(mods & Qt::ShiftModifier)))
-            kind = Adjust::Radius;
-        else if (k == Qt::Key_M || (k == Qt::Key_F && (mods & Qt::ShiftModifier)))
-            kind = Adjust::Strength;
-        if (kind == Adjust::None)
-            return false;
-        if (down)
-        {
-            mArmed = kind;
-            mArmedKey = k;
-            mArmedUsed = false;
-            return true;
-        }
-        if (k != mArmedKey)
-            return true;
-        if (k == Qt::Key_F && !mArmedUsed && mAdjusting == Adjust::None)
-            QTimer::singleShot(0, [] { actions::run(json("viewport.frameSelected")); });
-        mArmed = Adjust::None;
-        mArmedKey = 0;
-        return true;
+        return false;
     }
 
     bool ownsBrushRadius() const override { return true; }
@@ -950,14 +895,8 @@ public:
     bool mousePress(QMouseEvent* e, const ViewInfo& view) override
     {
         mHover = e->position();
-        if (tools::brushRadiusDrag(e, mArmed != Adjust::None))
-        {
-            mAdjusting = mArmed != Adjust::None ? mArmed : Adjust::Radius;
-            mArmedUsed = true;
-            mAdjustStart = e->position();
-            mAdjustFrom = e->button() == Qt::MiddleButton ? 0.0 : mAdjusting == Adjust::Radius ? settings().radius : settings().strength;
+        if (mControls.mousePress(e))
             return true;
-        }
         if (e->button() != Qt::LeftButton)
             return false;
         if (mMesh == kNoNode)
@@ -988,29 +927,18 @@ public:
         }
         if (!ensurePaint())
             return true;
-        if (!surfaceHit(e->position(), view, hit))
+        const bool line = settings().stroke.mode == brush::StrokeMode::Line;
+        if (!line && !surfaceHit(e->position(), view, hit))
             return false;
-        beginStroke(e->modifiers());
-        mLast = e->position();
-        dab(hit, view);
+        beginStroke(e, view);
         return true;
     }
 
     bool mouseMove(QMouseEvent* e, const ViewInfo& view) override
     {
         mHover = e->position();
-        if (mAdjusting != Adjust::None)
-        {
-            double dx = e->position().x() - mAdjustStart.x();
-            if (mAdjusting == Adjust::Radius)
-                settings().radius = std::clamp(mAdjustFrom + dx, 2.0, 2000.0);
-            else
-                settings().strength = std::clamp(mAdjustFrom + dx / 300.0, 0.0, 1.0);
-            if (mPanel)
-                mPanel->syncFromSettings();
-            viewportTools::requestRedraw();
+        if (mControls.mouseMove(e))
             return true;
-        }
         if (mGradientDrag)
         {
             Hit hit;
@@ -1021,7 +949,8 @@ public:
         }
         if (mStroking)
         {
-            strokeTo(e->position(), view);
+            mStroke.move(mControls.input(e));
+            viewportTools::requestRedraw();
             return true;
         }
         viewportTools::requestRedraw();
@@ -1030,14 +959,10 @@ public:
 
     bool mouseRelease(QMouseEvent* e, const ViewInfo&) override
     {
-        if (e->button() != Qt::LeftButton && !(mAdjusting != Adjust::None && e->button() == Qt::MiddleButton))
-            return false;
-        if (mAdjusting != Adjust::None)
-        {
-            mAdjusting = Adjust::None;
-            save();
+        if (mControls.mouseRelease(e))
             return true;
-        }
+        if (e->button() != Qt::LeftButton)
+            return false;
         if (mGradientDrag)
         {
             mGradientDrag = false;
@@ -1060,16 +985,10 @@ public:
 
     bool keyPress(QKeyEvent* e, const ViewInfo&) override
     {
+        if (mControls.keyPress(e))
+            return true;
         switch (e->key())
         {
-        case Qt::Key_BracketLeft:
-        case Qt::Key_BracketRight:
-            settings().radius = std::clamp(settings().radius * (e->key() == Qt::Key_BracketLeft ? 0.8 : 1.25), 2.0, 2000.0);
-            save();
-            if (mPanel)
-                mPanel->syncFromSettings();
-            viewportTools::requestRedraw();
-            return true;
         case Qt::Key_Escape:
             QTimer::singleShot(0, [] { viewportTools::set(nullptr); });
             return true;
@@ -1093,8 +1012,8 @@ public:
         drawToolMessage(p, view, QString("Vertex paint %1: %2   %3 %4   radius %5 px   strength %6%7")
                                      .arg(QString::fromStdString(n->path()), QString::fromStdString(mSet.empty() ? "(new set)" : mSet),
                                           QString::fromStdString(st.blend), QString::fromStdString(st.channels).toUpper())
-                                     .arg(int(std::lround(st.radius)))
-                                     .arg(st.strength, 0, 'f', 2)
+                                     .arg(int(std::lround(st.stroke.radius)))
+                                     .arg(st.stroke.strength, 0, 'f', 2)
                                      .arg(mSymmetryOn ? "   mirror" : ""));
         if (mGradientDrag)
         {
@@ -1108,39 +1027,14 @@ public:
             return;
         }
 
-        QPointF at = mAdjusting != Adjust::None ? mAdjustStart : mHover;
-        const glm::vec4 rim(0.95f, 0.95f, 0.95f, 1.0f), dim(0.6f, 0.6f, 0.6f, 0.8f);
+        const QPointF at = mControls.anchor(brush::ui::ringPosition(mStroke, mHover));
+        const glm::vec4 rim(0.95f, 0.95f, 0.95f, 1.0f);
         Hit hit;
+        std::optional<brush::ui::CursorSurface> surface;
         if (mPaint && surfaceHit(at, view, hit))
-        {
-            double r = st.radius * view.unitsPerPixel(hit.world);
-            glm::dvec3 nrm = hit.worldNormal;
-            glm::dvec3 ref = std::abs(nrm.y) < 0.9 ? glm::dvec3(0, 1, 0) : glm::dvec3(1, 0, 0);
-            glm::dvec3 u = glm::normalize(glm::cross(nrm, ref)), v = glm::cross(nrm, u);
-            auto ring = [&](double radius, int segs) {
-                std::vector<QPointF> pts;
-                for (int k = 0; k < segs; ++k)
-                {
-                    double a = 2.0 * kPi * k / segs;
-                    if (auto q = view.project(hit.world + (u * std::cos(a) + v * std::sin(a)) * radius))
-                        pts.push_back(*q);
-                }
-                return pts;
-            };
-            p.polyline(ring(r, 64), 1.5f, rim, true);
-            if (mAdjusting == Adjust::Strength)
-                p.polyline(ring(r * st.strength, 48), 1.0f, dim, true);
-        }
-        else
-        {
-            std::vector<QPointF> pts;
-            for (int k = 0; k < 64; ++k)
-            {
-                double a = 2.0 * kPi * k / 64;
-                pts.push_back(at + QPointF(std::cos(a), std::sin(a)) * st.radius);
-            }
-            p.polyline(pts, 1.0f, dim, true);
-        }
+            surface = brush::ui::CursorSurface{hit.world, hit.worldNormal};
+        brush::ui::drawCursor(p, view, st.stroke, at, surface,
+                              {.strengthRing = mControls.adjusting() == brush::ui::BrushControls::Adjust::Strength, .stroke = &mStroke});
         // The brush color beside the cursor; the eyedropper shows a ring instead.
         QPointF chip = at + QPointF(14, 14);
         if (mEyedropHeld || mEyedropArmed)
@@ -1153,8 +1047,6 @@ public:
     }
 
     std::optional<QCursor> cursor() const override { return QCursor(Qt::CrossCursor); }
-
-    double pressure() const { return mFilter ? mFilter->pressure() : 1.0; }
 
 private:
     struct Hit
@@ -1350,25 +1242,27 @@ private:
         }
     }
 
-    void beginStroke(Qt::KeyboardModifiers mods)
+    void beginStroke(const QMouseEvent* e, const ViewInfo& view)
     {
+        const Qt::KeyboardModifiers mods = e->modifiers();
         const Settings& st = settings();
         scene::Node* n = scene::Graph::current().node(mMesh);
         vcolor::BrushSettings b;
         b.blend = (mods & Qt::ShiftModifier) ? vcolor::Blend::Blur : vcolor::blendFromName(st.blend).value_or(vcolor::Blend::Replace);
         b.color = (mods & Qt::ControlModifier) ? st.secondary : st.color;
-        b.strength = float(st.strength);
+        b.strength = float(st.stroke.strength);
         b.channels = vcolor::channelsFromString(st.channels);
-        b.falloff = falloffCurve(st.falloff);
+        b.falloff = st.stroke.resolveFalloff();
         b.frontFacesOnly = st.frontFacesOnly;
         b.paintThrough = st.paintThrough;
+        b.radial = st.stroke.radial;
         int axis = n ? int(n->as<int64_t>(scene::MeshNode::kSymmetry)) : 0;
-        if (st.mirror && axis != mSymmetryFor)
+        if (st.stroke.mirror && axis != mSymmetryFor)
         {
             mPaint->setSymmetry(n ? vcolor::symmetryOf(*n, mPaint->mesh()) : geo::SymmetryMap());
             mSymmetryFor = axis;
         }
-        b.mirror = st.mirror && !mPaint->symmetry().empty();
+        b.mirror = st.stroke.mirror && !mPaint->symmetry().empty();
         mSymmetryOn = b.mirror;
         std::vector<uint8_t> mask;
         if (st.selectionOnly && scene::components::mode() != scene::ComponentMode::Object)
@@ -1385,20 +1279,33 @@ private:
         mPaint->beginStroke(b);
         mStroking = true;
         mPreviewClock.start();
+        brush::BrushSettings stroke = st.stroke;
+        stroke.seed = uint32_t(mPreviewClock.msecsSinceReference());
+        const ViewInfo v = view;
+        mStroke.begin(stroke, mControls.input(e), [this, v](glm::dvec2 px, brush::SurfaceHit& out) { return surfaceQuery(QPointF(px.x, px.y), v, out); },
+                      *this);
     }
 
-    void dab(const Hit& hit, const ViewInfo& view)
+    /** The shared stroke's view of the surface under a pixel, in the mesh's object space. */
+    bool surfaceQuery(QPointF px, const ViewInfo& view, brush::SurfaceHit& out) const
     {
-        const Settings& st = settings();
-        double pr = pressure();
-        glm::dmat4 w = world();
-        double scale = std::max(1e-12, std::cbrt(std::abs(glm::determinant(glm::dmat3(w)))));
-        vcolor::Dab d;
-        d.center = hit.local;
-        d.radius = st.radius * view.unitsPerPixel(hit.world) / scale * (st.pressureSize ? std::max(0.05, pr) : 1.0);
-        d.opacity = st.pressureOpacity ? pr : 1.0;
-        d.viewDir = hit.viewDir;
-        d.eye = hit.eye;
+        Hit hit;
+        if (!surfaceHit(px, view, hit))
+            return false;
+        const glm::dmat4 w = world();
+        const double scale = std::max(1e-12, std::cbrt(std::abs(glm::determinant(glm::dmat3(w)))));
+        out.center = hit.local;
+        out.normal = glm::normalize(glm::transpose(glm::dmat3(w)) * hit.worldNormal);
+        out.viewDir = hit.viewDir;
+        out.eye = hit.eye;
+        out.right = brush::ui::screenRight(view, w);
+        out.pixelSize = view.unitsPerPixel(hit.world) / scale;
+        out.worldToLocal = 1.0 / scale;
+        return true;
+    }
+
+    void dab(const brush::Dab& d) override
+    {
         mPaint->dab(d);
         if (mLive)
             refreshLiveColors(false);
@@ -1414,25 +1321,9 @@ private:
         }
     }
 
-    void strokeTo(QPointF px, const ViewInfo& view)
-    {
-        LILA_ZONE();
-
-        QPointF d = px - mLast;
-        double len = std::hypot(d.x(), d.y()), step = std::max(1.0, settings().radius * settings().spacing);
-        int count = int(len / step);
-        for (int k = 1; k <= count; ++k)
-        {
-            Hit hit;
-            if (surfaceHit(mLast + d * (k * step / len), view, hit))
-                dab(hit, view);
-        }
-        if (count > 0)
-            mLast += d * (count * step / len);
-    }
-
     void endStroke()
     {
+        mStroke.end();
         mStroking = false;
         save();
         if (mPanel)
@@ -1474,7 +1365,14 @@ private:
     }
 
     std::shared_ptr<bool> mAlive;
-    std::unique_ptr<InputFilter> mFilter;
+    brush::ui::BrushControls mControls{[]() -> brush::BrushSettings& { return settings().stroke; },
+                                       [this] {
+                                           if (mPanel)
+                                               mPanel->syncFromSettings();
+                                           viewportTools::requestRedraw();
+                                       },
+                                       [] { save(); }};
+    brush::Stroke mStroke;
     QPointer<VertexPaintPanel> mPanel;
     int mListener = 0;
     bool mRefreshQueued = false;
@@ -1493,14 +1391,7 @@ private:
 
     bool mStroking = false;
     QElapsedTimer mPreviewClock;
-    QPointF mLast, mHover;
-
-    Adjust mArmed = Adjust::None;
-    int mArmedKey = 0;
-    bool mArmedUsed = false;
-    Adjust mAdjusting = Adjust::None;
-    QPointF mAdjustStart;
-    double mAdjustFrom = 0.0;
+    QPointF mHover;
 
     bool mEyedropHeld = false;
     bool mEyedropArmed = false;
@@ -1509,38 +1400,6 @@ private:
     glm::dvec3 mGradientFrom{0.0}, mGradientTo{0.0};
 };
 
-bool InputFilter::eventFilter(QObject* obj, QEvent* e)
-{
-    switch (e->type())
-    {
-    case QEvent::TabletPress:
-    case QEvent::TabletMove:
-        mPressure = std::clamp(static_cast<QTabletEvent*>(e)->pressure(), 0.0, 1.0);
-        mClock.restart();
-        return false;
-    case QEvent::KeyPress:
-    case QEvent::KeyRelease:
-    case QEvent::ShortcutOverride: break;
-    default: return false;
-    }
-    QWidget* focus = QApplication::focusWidget();
-    if (obj != focus || !isViewport(focus))
-        return false;
-    auto* k = static_cast<QKeyEvent*>(e);
-    static const int keys[] = {Qt::Key_F, Qt::Key_B, Qt::Key_M, Qt::Key_I, Qt::Key_G, Qt::Key_X};
-    if (std::find(std::begin(keys), std::end(keys), k->key()) == std::end(keys))
-        return false;
-    if (k->modifiers() & (Qt::ControlModifier | Qt::AltModifier))
-        return false;
-    if (e->type() == QEvent::ShortcutOverride)
-    {
-        e->accept();
-        return true;
-    }
-    if (k->isAutoRepeat())
-        return true;
-    return mTool->key(k->key(), k->modifiers(), e->type() == QEvent::KeyPress);
-}
 } // namespace
 
 void startVertexPaint()

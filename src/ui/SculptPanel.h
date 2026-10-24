@@ -12,6 +12,11 @@ class QLabel;
 class QPushButton;
 class QSpinBox;
 
+namespace lila::brush::ui
+{
+class StrokeOptions;
+}
+
 namespace lila::ui
 {
 /** Dock object name for the sculpt panel. */
@@ -44,6 +49,7 @@ private:
     QComboBox* mExitMethod = nullptr;
     QCheckBox* mKeepProxy = nullptr;
     QComboBox* mSymmetry = nullptr;
+    brush::ui::StrokeOptions* mStrokeOptions = nullptr;
     QLabel* mStatus = nullptr;
     QPushButton* mEnter = nullptr;
     QPushButton* mExit = nullptr;

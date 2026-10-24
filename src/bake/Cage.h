@@ -3,6 +3,7 @@
 #include "core/Export.h"
 
 #include "bake/BakeTypes.h"
+#include "brush/Brush.h"
 #include "geo/Bvh.h"
 #include "geo/Symmetry.h"
 #include "scene/Node.h"
@@ -80,6 +81,8 @@ LILA_SCENE_API std::optional<PaintFalloff> paintFalloffFromName(std::string_view
 LILA_SCENE_API const char* paintFalloffName(PaintFalloff f);
 /** t is distance / radius; 0 at and past the rim. */
 LILA_SCENE_API float paintFalloff(PaintFalloff f, double t);
+/** The brush core shape a paint falloff is: smooth is bell. */
+LILA_SCENE_API brush::Shape paintShape(PaintFalloff f);
 
 /** A low's uv0 layout for dabs in UV space: corners and triangles bucketed on a grid. */
 class LILA_SCENE_API UvLayout

@@ -6,6 +6,9 @@
 #include "bake/Arrange.h"
 #include "bake/BakeNodes.h"
 #include "bake/Cage.h"
+#include "brush/BrushUi.h"
+#include "brush/Surface.h"
+#include "brush/Symmetry.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "geo/Mesh.h"
@@ -51,21 +54,46 @@ namespace
 using scene::kNoNode;
 using scene::NodeId;
 
+constexpr const char* kPrefix = "/bakePaint";
+
 struct Settings
 {
     std::string attr = bake::kOffsetAttr;
     bake::PaintOp op = bake::PaintOp::Add;
     double value = 0.25;
-    double radius = 40.0; // px
-    double strength = 0.5;
     int symmetry = -1;
-    bake::PaintFalloff falloff = bake::PaintFalloff::Smooth;
+    /** Radius, strength, falloff (bell, linear or constant: the paint falloffs) and the shared brush. */
+    brush::BrushSettings stroke = [] {
+        brush::BrushSettings b;
+        b.radius = 40.0;
+        b.strength = 0.5;
+        b.spacing = 0.25;
+        b.falloff = "bell";
+        return b;
+    }();
 };
 
 Settings& settings()
 {
-    static Settings s;
+    static Settings s = [] {
+        Settings out;
+        out.stroke.loadPrefs(kPrefix);
+        return out;
+    }();
     return s;
+}
+
+void save() { settings().stroke.savePrefs(kPrefix); }
+
+constexpr const char* kFalloffNames[] = {"bell", "linear", "constant"};
+
+/** The paint falloff of the brush's falloff name, for dabs in UV space. */
+bake::PaintFalloff paintFalloff(const std::string& name)
+{
+    for (int i = 0; i < 3; ++i)
+        if (name == kFalloffNames[i])
+            return bake::PaintFalloff(i);
+    return bake::PaintFalloff::Smooth;
 }
 
 const char* kOps[] = {"Add", "Subtract", "Smooth", "Set"};
@@ -127,7 +155,7 @@ public:
         mValue->setSingleStep(0.05);
         form->addRow("Value", mValue);
         mRadius = new QSpinBox(this);
-        mRadius->setRange(2, 1000);
+        mRadius->setRange(2, 2000);
         mRadius->setSuffix(" px");
         form->addRow("Radius", mRadius);
         mStrength = new QDoubleSpinBox(this);
@@ -142,6 +170,8 @@ public:
         mSymmetry->addItems({"Off", "X", "Y", "Z"});
         form->addRow("Symmetry", mSymmetry);
         col->addLayout(form);
+        mStrokeOptions = new brush::ui::StrokeOptions(this, []() -> brush::BrushSettings& { return settings().stroke; }, [this] { changed(); });
+        col->addWidget(mStrokeOptions);
 
         auto* buttons = new QHBoxLayout;
         auto* flood = new QPushButton("Flood", this);
@@ -180,11 +210,11 @@ public:
             changed();
         });
         connect(mRadius, &QSpinBox::valueChanged, this, [this](int v) {
-            settings().radius = v;
+            settings().stroke.radius = v;
             changed();
         });
         connect(mStrength, &QDoubleSpinBox::valueChanged, this, [this](double v) {
-            settings().strength = v;
+            settings().stroke.strength = v;
             changed();
         });
         connect(mSymmetry, &QComboBox::currentIndexChanged, this, [this](int i) {
@@ -192,7 +222,7 @@ public:
             changed();
         });
         connect(mFalloff, &QComboBox::currentIndexChanged, this, [this](int i) {
-            settings().falloff = bake::PaintFalloff(i);
+            settings().stroke.falloff = kFalloffNames[std::clamp(i, 0, 2)];
             changed();
         });
         connect(flood, &QPushButton::clicked, this, [this] {
@@ -208,13 +238,15 @@ public:
     {
         const Settings& s = settings();
         const QSignalBlocker b0(mAttr), b1(mOp), b2(mValue), b3(mRadius), b4(mStrength), b5(mSymmetry), b6(mFalloff);
-        mFalloff->setCurrentIndex(int(s.falloff));
+        mFalloff->setCurrentIndex(int(paintFalloff(s.stroke.falloff)));
         mAttr->setCurrentIndex(s.attr == bake::kSkewAttr ? 1 : 0);
         mOp->setCurrentIndex(int(s.op));
         mValue->setValue(s.value);
-        mRadius->setValue(int(s.radius));
-        mStrength->setValue(s.strength);
+        mRadius->setValue(int(s.stroke.radius));
+        mStrength->setValue(s.stroke.strength);
         mSymmetry->setCurrentIndex(s.symmetry + 1);
+        if (mStrokeOptions)
+            mStrokeOptions->sync();
     }
 
 protected:
@@ -228,6 +260,7 @@ protected:
 private:
     void changed()
     {
+        save();
         if (onChanged)
             onChanged();
     }
@@ -240,9 +273,10 @@ private:
     QDoubleSpinBox* mStrength = nullptr;
     QComboBox* mSymmetry = nullptr;
     QComboBox* mFalloff = nullptr;
+    brush::ui::StrokeOptions* mStrokeOptions = nullptr;
 };
 
-class BakePaintTool final : public ViewportTool, public uvTools::UvTool
+class BakePaintTool final : public ViewportTool, public uvTools::UvTool, public brush::DabSink
 {
 public:
     const char* name() const override { return "bakePaint"; }
@@ -250,6 +284,7 @@ public:
     void activate() override
     {
         mAlive = std::make_shared<bool>(true);
+        mControls.activate();
         mPanel = new BakePaintPanel(mainWindow());
         mPanel->onChanged = [this] {
             mPaint.reset();
@@ -290,6 +325,7 @@ public:
     {
         if (mStroking)
             endStroke();
+        mControls.deactivate();
         uvTools::set(nullptr);
         viewportHooks::removeHideHook("lila.bakePaintLow");
         bakeCage::setPainting(kNoNode);
@@ -309,21 +345,18 @@ public:
     bool mousePress(QMouseEvent* e, const ViewInfo& view) override
     {
         mHover = e->position();
-        if (tools::brushRadiusDrag(e, mResizeArmed))
-        {
-            mResizing = true;
-            mResizeStart = e->position();
-            mResizeFrom = e->button() == Qt::MiddleButton ? 2.0 : settings().radius;
+        if (mControls.mousePress(e))
             return true;
-        }
         if (e->button() != Qt::LeftButton)
             return false;
         pickUnder(e->position(), view);
         if (!ensurePaint())
             return true;
         mStroking = true;
-        dab(e->position(), view, e->modifiers());
-        mLastDab = e->position();
+        mMods = e->modifiers();
+        const ViewInfo v = view;
+        mStroke.begin(settings().stroke, mControls.input(e),
+                      [this, v](glm::dvec2 px, brush::SurfaceHit& out) { return surfaceQuery(QPointF(px.x, px.y), v, out); }, *this, false);
         return true;
     }
 
@@ -371,40 +404,24 @@ public:
     bool mouseMove(QMouseEvent* e, const ViewInfo& view) override
     {
         mHover = e->position();
-        if (!mStroking && !mResizing && e->buttons() == Qt::NoButton)
+        if (!mStroking && mControls.adjusting() == brush::ui::BrushControls::Adjust::None && e->buttons() == Qt::NoButton)
             pickUnder(mHover, view);
-        if (mResizing)
-        {
-            settings().radius = std::clamp(mResizeFrom + (e->position().x() - mResizeStart.x()), 2.0, 1000.0);
-            if (mPanel)
-                mPanel->syncFromSettings();
-            viewportTools::requestRedraw();
+        if (mControls.mouseMove(e))
             return true;
-        }
         if (mStroking)
         {
-            // Dabs every quarter radius along the drag, so fast strokes stay continuous.
-            const QPointF d = e->position() - mLastDab;
-            const double len = std::hypot(d.x(), d.y()), step = std::max(1.0, settings().radius * 0.25);
-            const int n = int(len / step);
-            for (int k = 1; k <= n; ++k)
-                dab(mLastDab + d * (k * step / len), view, e->modifiers());
-            if (n > 0)
-                mLastDab += d * (n * step / len);
+            mMods = e->modifiers();
+            mStroke.move(mControls.input(e));
             return true;
         }
         viewportTools::requestRedraw();
         return false;
     }
 
-    bool mouseRelease(QMouseEvent*, const ViewInfo&) override
+    bool mouseRelease(QMouseEvent* e, const ViewInfo&) override
     {
-        if (mResizing)
-        {
-            mResizing = false;
-            mResizeArmed = false;
+        if (mControls.mouseRelease(e))
             return true;
-        }
         if (mStroking)
             endStroke();
         return true;
@@ -412,19 +429,10 @@ public:
 
     bool keyPress(QKeyEvent* e, const ViewInfo&) override
     {
+        if (mControls.keyPress(e))
+            return true;
         switch (e->key())
         {
-        case Qt::Key_B:
-            if (!e->isAutoRepeat())
-                mResizeArmed = true;
-            return true;
-        case Qt::Key_BracketLeft:
-        case Qt::Key_BracketRight:
-            settings().radius = std::clamp(settings().radius * (e->key() == Qt::Key_BracketLeft ? 0.8 : 1.25), 2.0, 1000.0);
-            if (mPanel)
-                mPanel->syncFromSettings();
-            viewportTools::requestRedraw();
-            return true;
         case Qt::Key_Escape:
             QTimer::singleShot(0, [] { viewportTools::set(nullptr); });
             return true;
@@ -467,34 +475,18 @@ public:
                             .arg(st.value)
                             .arg(under, cage));
 
-        const glm::vec4 rim(0.95f, 0.95f, 0.95f, 1.0f);
-        std::vector<QPointF> pts;
-        if (over)
+        const QPointF at = mControls.anchor(brush::ui::ringPosition(mStroke, mHover));
+        std::optional<brush::ui::CursorSurface> surface;
+        geo::BvhHit ringHit;
+        if (raycast(at, view, ringHit))
         {
             const glm::dmat4 w = world();
-            const glm::dvec3 c(w * glm::dvec4(hit.point, 1.0));
-            const double r = st.radius * view.unitsPerPixel(c);
-            glm::dvec3 n = view.eye - c;
-            n = glm::length(n) > 0.0 ? glm::normalize(n) : glm::dvec3(0, 1, 0);
-            const glm::dvec3 ref = std::abs(n.y) < 0.9 ? glm::dvec3(0, 1, 0) : glm::dvec3(1, 0, 0);
-            const glm::dvec3 u = glm::normalize(glm::cross(n, ref)), v = glm::cross(n, u);
-            for (int k = 0; k < 48; ++k)
-            {
-                const double a = 2.0 * 3.14159265358979 * k / 48;
-                if (auto q = view.project(c + (u * std::cos(a) + v * std::sin(a)) * r))
-                    pts.push_back(*q);
-            }
-            p.polyline(pts, 1.5f, rim, true);
+            const glm::dvec3 c(w * glm::dvec4(ringHit.point, 1.0));
+            const glm::dvec3 n = view.eye - c;
+            surface = brush::ui::CursorSurface{c, glm::length(n) > 0.0 ? glm::normalize(n) : glm::dvec3(0, 1, 0)};
         }
-        else
-        {
-            for (int k = 0; k < 48; ++k)
-            {
-                const double a = 2.0 * 3.14159265358979 * k / 48;
-                pts.push_back(mHover + QPointF(std::cos(a), std::sin(a)) * st.radius);
-            }
-            p.polyline(pts, 1.0f, {0.6f, 0.6f, 0.6f, 0.8f}, true);
-        }
+        brush::ui::drawCursor(p, view, st.stroke, at, surface,
+                              {.strengthRing = mControls.adjusting() == brush::ui::BrushControls::Adjust::Strength, .stroke = &mStroke});
     }
 
 private:
@@ -570,7 +562,7 @@ private:
         if (mPaint)
         {
             mPaint->paint->setSymmetry(settings().symmetry);
-            mPaint->paint->setFalloff(settings().falloff);
+            mPaint->paint->setFalloff(paintFalloff(settings().stroke.falloff));
             return true;
         }
         scene::MeshPtr m = base();
@@ -581,7 +573,7 @@ private:
         mPaint->meshPtr = m;
         mPaint->paint = std::make_unique<bake::PointPaint>(m, *attr);
         mPaint->paint->setSymmetry(settings().symmetry);
-        mPaint->paint->setFalloff(settings().falloff);
+        mPaint->paint->setFalloff(paintFalloff(settings().stroke.falloff));
         mShellFor = nullptr;
         return true;
     }
@@ -596,18 +588,52 @@ private:
         return mPaint->paint->raycast(glm::dvec3(inv * glm::dvec4(o, 1.0)), glm::dvec3(inv * glm::dvec4(d, 0.0)), hit);
     }
 
-    void dab(QPointF px, const ViewInfo& view, Qt::KeyboardModifiers mods)
+    /** The shared stroke's view of the low under a pixel, in its object space. */
+    bool surfaceQuery(QPointF px, const ViewInfo& view, brush::SurfaceHit& out)
     {
-        LILA_ZONE();
-
         geo::BvhHit hit;
         if (!raycast(px, view, hit))
-            return;
+            return false;
         const glm::dmat4 w = world();
         const glm::dvec3 c(w * glm::dvec4(hit.point, 1.0));
         const double scale = std::max(1e-12, glm::length(glm::dvec3(w[0])));
-        const double radius = settings().radius * view.unitsPerPixel(c) / scale;
-        applyDab(mPaint->paint->brushPoints(hit, radius), mods);
+        glm::dvec3 o, d;
+        view.ray(px, o, d);
+        const auto& tris = mPaint->paint->bvh().triangles();
+        const geo::Mesh& m = mPaint->paint->mesh();
+        glm::dvec3 a = m.position(m.cornerPoint(tris.corners[size_t(hit.triangle) * 3]));
+        glm::dvec3 b = m.position(m.cornerPoint(tris.corners[size_t(hit.triangle) * 3 + 1]));
+        glm::dvec3 e = m.position(m.cornerPoint(tris.corners[size_t(hit.triangle) * 3 + 2]));
+        const glm::dvec3 n = glm::cross(b - a, e - a);
+        out.center = hit.point;
+        out.normal = glm::length(n) > 1e-18 ? glm::normalize(n) : glm::dvec3(0, 1, 0);
+        out.viewDir = glm::normalize(glm::dvec3(glm::inverse(w) * glm::dvec4(d, 0.0)));
+        out.right = brush::ui::screenRight(view, w);
+        out.pixelSize = view.unitsPerPixel(c) / scale;
+        out.worldToLocal = 1.0 / scale;
+        return true;
+    }
+
+    void dab(const brush::Dab& d) override
+    {
+        LILA_ZONE();
+
+        if (!mPaint)
+            return;
+        const brush::Falloff falloff = settings().stroke.resolveFalloff();
+        std::vector<std::pair<geo::Index, float>> pts;
+        for (brush::Dab copy : brush::radialDabs(d, settings().stroke.radial))
+        {
+            geo::Index tri = geo::kInvalid;
+            if (brush::SurfaceWalk::snap(mPaint->paint->bvh(), copy, tri))
+            {
+                auto more = mWalk.gather(mPaint->paint->mesh(), mPaint->paint->bvh(), tri, copy, falloff);
+                pts.insert(pts.end(), more.begin(), more.end());
+            }
+        }
+        if (settings().stroke.radial.any())
+            brush::mergeHits(pts);
+        applyDab(pts, mMods, float(d.opacity * d.flow));
     }
 
     static bake::PaintOp opFor(Qt::KeyboardModifiers mods)
@@ -622,9 +648,9 @@ private:
         return op;
     }
 
-    void applyDab(const std::vector<std::pair<geo::Index, float>>& pts, Qt::KeyboardModifiers mods)
+    void applyDab(const std::vector<std::pair<geo::Index, float>>& pts, Qt::KeyboardModifiers mods, float amount = 1.0f)
     {
-        mPaint->paint->apply(pts, opFor(mods), float(settings().value), float(settings().strength));
+        mPaint->paint->apply(pts, opFor(mods), float(settings().value), float(settings().stroke.strength) * amount);
         mShellFor = nullptr;
         if (mPaint->paint->attr().name == std::string(bake::kOffsetAttr))
             bakeCage::setWorkingOffsets(mMesh, mPaint->paint->values(), true);
@@ -634,11 +660,18 @@ private:
 
     // UV editor painting: the same brush, its footprint taken in uv0 under the cursor.
 
-    double uvRadius(const uvTools::Canvas& c) const { return settings().radius / std::max(1e-9, c.pixelsPerUv); }
+    double uvRadius(const uvTools::Canvas& c) const { return settings().stroke.radius / std::max(1e-9, c.pixelsPerUv); }
 
-    void uvDab(QPointF px, const uvTools::Canvas& c, Qt::KeyboardModifiers mods)
+    /** UV dabs for the sampler's new samples, sized and weighted by their pressure like the viewport's. */
+    void uvDabs(const uvTools::Canvas& c, Qt::KeyboardModifiers mods)
     {
-        applyDab(mPaint->paint->uvPoints(c.toUv(px), uvRadius(c)), mods);
+        const brush::BrushSettings& s = settings().stroke;
+        for (const brush::StrokeSample& sample : mUvSampler.take())
+        {
+            const double size = std::max(0.05, s.pressureSize.map(sample.pressure)) * sample.size;
+            const float amount = float(s.pressureOpacity.map(sample.pressure) * sample.opacity * s.flow * s.pressureFlow.map(sample.pressure));
+            applyDab(mPaint->paint->uvPoints(c.toUv(QPointF(sample.position.x, sample.position.y)), uvRadius(c) * size), mods, amount);
+        }
     }
 
     bool mousePress(QMouseEvent* e, const uvTools::Canvas& c) override
@@ -647,8 +680,8 @@ private:
             return false;
         mUvHover = e->position();
         mStroking = true;
-        uvDab(e->position(), c, e->modifiers());
-        mLastUvDab = e->position();
+        mUvSampler.begin(settings().stroke, mControls.input(e), settings().stroke.radius);
+        uvDabs(c, e->modifiers());
         return true;
     }
 
@@ -657,32 +690,24 @@ private:
         mUvHover = e->position();
         if (!mStroking)
             return true;
-        const QPointF d = e->position() - mLastUvDab;
-        const double len = std::hypot(d.x(), d.y()), step = std::max(1.0, settings().radius * 0.25);
-        const int n = int(len / step);
-        for (int k = 1; k <= n; ++k)
-            uvDab(mLastUvDab + d * (k * step / len), c, e->modifiers());
-        if (n > 0)
-            mLastUvDab += d * (n * step / len);
+        mUvSampler.move(mControls.input(e));
+        uvDabs(c, e->modifiers());
         return true;
     }
 
-    bool mouseRelease(QMouseEvent*, const uvTools::Canvas&) override
+    bool mouseRelease(QMouseEvent* e, const uvTools::Canvas& c) override
     {
+        if (mUvSampler.active())
+        {
+            mUvSampler.end();
+            uvDabs(c, e->modifiers());
+        }
         if (mStroking)
             endStroke();
         return true;
     }
 
-    bool keyPress(QKeyEvent* e, const uvTools::Canvas&) override
-    {
-        if (e->key() != Qt::Key_BracketLeft && e->key() != Qt::Key_BracketRight)
-            return false;
-        settings().radius = std::clamp(settings().radius * (e->key() == Qt::Key_BracketLeft ? 0.8 : 1.25), 2.0, 1000.0);
-        if (mPanel)
-            mPanel->syncFromSettings();
-        return true;
-    }
+    bool keyPress(QKeyEvent* e, const uvTools::Canvas&) override { return mControls.keyPress(e); }
 
     void leave() override { mUvHover.reset(); }
 
@@ -724,13 +749,14 @@ private:
         {
             p.setBrush(Qt::NoBrush);
             p.setPen(QPen(QColor(240, 240, 240), 1.5));
-            p.drawEllipse(*mUvHover, settings().radius, settings().radius);
+            p.drawEllipse(*mUvHover, settings().stroke.radius, settings().stroke.radius);
         }
         p.restore();
     }
 
     void endStroke()
     {
+        mStroke.end();
         mStroking = false;
         commit("Bake Paint Stroke");
         uvTools::requestRedraw();
@@ -740,7 +766,7 @@ private:
     {
         if (!ensurePaint())
             return;
-        mPaint->paint->flood(settings().op, float(settings().value), float(settings().strength));
+        mPaint->paint->flood(settings().op, float(settings().value), float(settings().stroke.strength));
         commit("Bake Paint Flood");
     }
 
@@ -804,18 +830,24 @@ private:
     std::vector<NodeId> mPickedSel;
     std::unique_ptr<Working> mPaint;
     bool mStroking = false;
-    QPointF mLastDab;
     QPointF mHover;
-    bool mResizeArmed = false;
-    bool mResizing = false;
-    QPointF mResizeStart;
-    double mResizeFrom = 0.0;
+    Qt::KeyboardModifiers mMods;
+    brush::Stroke mStroke;
+    brush::StrokeSampler mUvSampler;
+    brush::SurfaceWalk mWalk;
+    brush::ui::BrushControls mControls{[]() -> brush::BrushSettings& { return settings().stroke; },
+                                       [this] {
+                                           if (mPanel)
+                                               mPanel->syncFromSettings();
+                                           viewportTools::requestRedraw();
+                                           uvTools::requestRedraw();
+                                       },
+                                       [] { save(); }};
 
     const Working* mShellFor = nullptr;
     glm::dmat4 mDrawnWorld{0.0};
     std::vector<render::LineVertex> mTris;
     std::optional<QPointF> mUvHover;
-    QPointF mLastUvDab;
 };
 } // namespace
 

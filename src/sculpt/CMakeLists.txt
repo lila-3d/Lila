@@ -5,7 +5,7 @@ lila_module(lila_sculpt Scene
     Reproject.h
     Sculpt.cpp
     Sculpt.h)
-target_link_libraries(lila_sculpt PUBLIC lila_geo TBB::tbb PRIVATE lila_retopo Eigen3::Eigen)
+target_link_libraries(lila_sculpt PUBLIC lila_geo lila_brush TBB::tbb PRIVATE lila_retopo Eigen3::Eigen)
 if(MSVC)
     # Eigen's own headers trip a few /W4 checks.
     target_compile_options(lila_sculpt PRIVATE /wd4127 /wd4244)

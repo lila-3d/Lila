@@ -166,16 +166,18 @@ glm::dvec3 vec3(const json& j, const glm::dvec3& fallback = glm::dvec3(0.0))
 BrushSettings settingsFrom(const Args& a)
 {
     BrushSettings s;
-    std::string brush = a.get<std::string>("brush", "draw");
-    auto b = brushFromName(brush);
+    std::string name = a.get<std::string>("brush", "draw");
+    auto b = brushFromName(name);
     if (!b)
-        throw CommandError("sculptStroke: unknown brush " + brush);
+        throw CommandError("sculptStroke: unknown brush " + name);
     s.brush = *b;
     std::string falloff = a.get<std::string>("falloff", "smooth");
-    auto f = falloffFromName(falloff);
+    auto f = brush::Falloff::find(falloff);
     if (!f)
         throw CommandError("sculptStroke: unknown falloff " + falloff);
     s.falloff = *f;
+    const std::string axis = a.get<std::string>("radialAxis", "y");
+    s.radial = {std::clamp(a.get<int>("radialCount", 1), 1, 64), axis == "x" ? 0 : axis == "z" ? 2 : 1};
     s.strength = std::clamp(a.get<double>("strength", 0.5), 0.0, 1.0);
     s.invert = a.get<bool>("invert");
     s.frontFacesOnly = a.get<bool>("frontFacesOnly");
@@ -201,6 +203,9 @@ std::vector<Dab> dabsFrom(const json& list, const glm::dmat4& world)
         d.normal = glm::length(n) > 0.0 ? glm::normalize(n) : glm::dvec3(0.0, 1.0, 0.0);
         d.radius = j.value("radius", 1.0) / scale;
         d.pressure = j.value("pressure", 1.0);
+        // Scripts from before the brush core gave the amount as pressure.
+        d.opacity = j.value("opacity", d.pressure);
+        d.flow = j.value("flow", 1.0);
         d.viewDir = glm::dvec3(inv * glm::dvec4(vec3(j.value("view", json())), 0.0));
         d.delta = glm::dvec3(inv * glm::dvec4(vec3(j.value("delta", json())), 0.0));
         d.direction = glm::dvec3(inv * glm::dvec4(vec3(j.value("direction", json())), 0.0));
@@ -360,7 +365,7 @@ void syncSymmetry(Session& s)
     if (axis < 0)
         s.sculpt.setSymmetry(std::nullopt, 0.0);
     else
-        s.sculpt.setSymmetry(geo::axisPlane(axis), symmetryTolerance(s.sculpt.mesh()));
+        s.sculpt.setSymmetry(geo::axisPlane(axis, symmetryOffset(*n, axis)), symmetryTolerance(s.sculpt.mesh()));
 }
 
 uint64_t nextLiveToken() { return gLiveToken.fetch_add(1); }
@@ -444,7 +449,7 @@ void registerCommands()
             std::optional<geo::SymmetryMap> map;
             geo::Mesh cageCopy = s->cage;
             if (int axis = symmetryAxis(n); axis >= 0)
-                map = geo::SymmetryMap::persistent(cageCopy, axis, symmetryTolerance(cageCopy));
+                map = geo::SymmetryMap::persistent(cageCopy, axis, symmetryTolerance(cageCopy), nullptr, symmetryOffset(n, axis));
             std::vector<glm::dvec3> pos = exitPositions(*s, method, std::clamp(a.get<int>("iterations"), 1, 20), map ? &*map : nullptr);
             double maxMove = 0.0;
             for (Index p = 0; p < mesh.pointCapacity() && p < pos.size(); ++p)
@@ -490,14 +495,16 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "sculptStroke",
-        .doc = "One brush stroke on the sculpt proxy: dabs is a list of {center, normal, radius, pressure, view, delta, direction} "
-               "in world space (only center is required). Honours the mask, frozen points and the mesh's symmetry, mirrored "
-               "exactly. Returns {points} changed.",
+        .doc = "One brush stroke on the sculpt proxy: dabs is a list of {center, normal, radius, pressure, opacity, flow, view, "
+               "delta, direction} in world space (only center is required; opacity defaults to pressure). Honours the mask, "
+               "frozen points and the mesh's symmetry, mirrored exactly. Returns {points} changed.",
         .flags = {{"brush", "", T::String, "draw", "Brush.", {"draw", "clayStrips", "inflate", "grab", "smooth", "flatten", "pinch", "crease", "scrape", "mask", "relax", "freeze"}},
-                  {"falloff", "", T::String, "smooth", "Falloff curve.", {"smooth", "sphere", "root", "sharp", "linear", "constant"}},
+                  {"falloff", "", T::String, "smooth", "Falloff: smooth, sphere, root, sharp, linear, constant, bell, or a soft select preset name."},
                   {"strength", "", T::Float, 0.5, "0 to 1."},
                   {"invert", "", T::Bool, false, "Dig, unmask, unfreeze or magnify instead."},
                   {"frontFacesOnly", "", T::Bool, false, "Leave points facing away from the view."},
+                  {"radialCount", "", T::Int, 1, "Copies of every dab turned evenly about an object axis; 1 is off."},
+                  {"radialAxis", "", T::String, "y", "The object axis radial copies turn about.", {"x", "y", "z"}},
                   {"dabs", "", T::List, json::array(), "The stamps, in order."},
                   {"live", "", T::Int, 0, "Internal: adopts the stroke the viewport tool already applied."}},
         .run = [](const Args& a) -> json {
@@ -623,7 +630,7 @@ void registerCommands()
                 std::optional<geo::SymmetryMap> map;
                 if (int axis = symmetryAxis(n); axis >= 0)
                 {
-                    map = geo::SymmetryMap::persistent(cage, axis, symmetryTolerance(cage));
+                    map = geo::SymmetryMap::persistent(cage, axis, symmetryTolerance(cage), nullptr, symmetryOffset(n, axis));
                     fo.symmetry = &*map;
                 }
                 geo::Mesh fitted = fitCageToSurface(cage, surface, bvh, fo);

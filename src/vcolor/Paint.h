@@ -2,6 +2,7 @@
 
 #include "core/Export.h"
 
+#include "brush/Brush.h"
 #include "geo/Bvh.h"
 #include "geo/Mesh.h"
 #include "geo/Symmetry.h"
@@ -78,27 +79,22 @@ struct BrushSettings
     /** Most a stroke adds, 0..1. Strokes don't build up past it, however often they pass. */
     float strength = 1.0f;
     uint8_t channels = kRgba;
-    scene::softSelect::Curve falloff;
+    brush::Falloff falloff{scene::softSelect::Curve()};
     /** Skip points facing away from the view. */
     bool frontFacesOnly = true;
     /** Paint points hidden behind other parts of the mesh too. */
     bool paintThrough = false;
     /** Mirror across the symmetry map given to the PaintMesh. */
     bool mirror = false;
+    /** Copies of every dab about an object axis. */
+    brush::Radial radial;
 };
 
-/** One brush stamp, object space. */
-struct Dab
-{
-    glm::dvec3 center{0.0};
-    double radius = 1.0;
-    /** Multiplies the weight: pen pressure mapped to opacity. */
-    double opacity = 1.0;
-    /** Into the screen. Zero disables the facing test. */
-    glm::dvec3 viewDir{0.0};
-    /** Camera position, for the occlusion test. */
-    glm::dvec3 eye{0.0};
-};
+/**
+ * One brush stamp, object space: the shared brush dab. Paint reads center, radius, opacity times flow, viewDir (zero
+ * disables the facing test), eye (for the occlusion test) and the tip shape.
+ */
+using Dab = brush::Dab;
 
 /** Corner colors a stroke or edit changed, enough to undo and redo it. */
 struct ColorDelta
@@ -168,7 +164,7 @@ private:
     std::vector<uint8_t> mMask;
 
     BrushSettings mSettings;
-    std::array<float, 257> mFalloff{};
+    brush::FalloffTable mFalloff;
     bool mStroking = false;
     // Per stroke: each touched point's strongest weight and its corners' colors at stroke start.
     std::vector<uint32_t> mStamp;

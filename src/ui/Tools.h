@@ -42,6 +42,8 @@ namespace tools
 LILA_UI_API Tool current();
 LILA_UI_API void setCurrent(Tool t);
 LILA_UI_API const char* name(Tool t);
+/** Bumped when a tool is picked while already current: manipulators drop the handle MMB drags remember. */
+LILA_UI_API unsigned handleResets();
 
 /** Pivot editing: hold D, or toggle with Insert. */
 LILA_UI_API bool pivotEdit();

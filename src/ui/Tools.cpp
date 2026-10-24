@@ -8,6 +8,7 @@
 
 #include <QMouseEvent>
 #include <map>
+#include <tuple>
 
 namespace lila::ui::tools
 {
@@ -15,6 +16,7 @@ namespace
 {
 Tool gTool = Tool::Move;
 bool gPivotEdit = false;
+unsigned gHandleResets = 0;
 unsigned gSnaps = SnapNone;
 std::map<int, std::function<void()>> gListeners;
 int gNextListener = 1;
@@ -28,6 +30,8 @@ void notify()
 } // namespace
 
 Tool current() { return gTool; }
+
+unsigned handleResets() { return gHandleResets; }
 
 void setCurrent(Tool t)
 {
@@ -120,6 +124,8 @@ void registerActions()
                           [t] {
                               // Picking a transform tool leaves any viewport tool (retopo draw, sculpt...), as in Maya.
                               viewportTools::set(nullptr);
+                              if (t == current())
+                                  ++gHandleResets;
                               setCurrent(t);
                           },
                       .doc = doc,
@@ -147,6 +153,12 @@ void registerActions()
                           .doc = std::string("Aligns the ") + tool + " manipulator to " + what + ".",
                           .python = "lila.prefs.set(\"general\", \"" + key + "\", \"" + space + "\")"});
         }
+    for (auto [space, label, what] : {std::tuple{"world", "World", "the world axes"}, {"object", "Object", "the object's own axes"},
+                                      {"component", "Component", "the selected components' average normal"}})
+        actions::add({.id = std::string("manip.scale.") + space, .label = label, .category = "Tools",
+                      .run = [space] { PrefStore::get().set("general", "/manipulator/scaleSpace", space); },
+                      .doc = std::string("Scales components along ") + what + ". Objects always scale on their own axes.",
+                      .python = std::string("lila.prefs.set(\"general\", \"/manipulator/scaleSpace\", \"") + space + "\")"});
     actions::add({.id = "manip.move.normal", .label = "Normal", .category = "Tools",
                   .run = [] { PrefStore::get().set("general", "/manipulator/moveSpace", "normal"); },
                   .doc = "Moves components along their own vertex normals with a single N handle, so a face selection inflates. "
