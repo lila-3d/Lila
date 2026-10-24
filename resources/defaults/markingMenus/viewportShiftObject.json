@@ -2,15 +2,17 @@
   "S": { "label": "Extrude", "action": "mesh.extrude" },
   "E": { "label": "Bevel", "action": "mesh.bevel" },
   "NE": { "label": "Insert Loop", "action": "mesh.insertLoop" },
-  "SE": { "label": "Bridge", "action": "mesh.bridge" },
+  "SE": { "label": "Soften Normals", "action": "mesh.softenEdges" },
   "N": { "label": "Merge", "action": "mesh.merge" },
-  "NW": { "label": "Fill Hole", "action": "mesh.fillHole" },
+  "NW": { "label": "Bridge", "action": "mesh.bridge" },
   "W": { "label": "Knife", "action": "mesh.knife" },
   "SW": { "label": "Dissolve", "action": "mesh.dissolve" },
   "outer": {
     "N": [{ "label": "Merge to Center", "action": "mesh.mergeCenter" }, { "label": "Collapse", "action": "mesh.collapse" }],
     "E": [{ "label": "Inset", "action": "mesh.inset" }],
-    "SW": [{ "label": "Poke", "action": "mesh.poke" }]
+    "SE": [{ "label": "Harden Normals", "action": "mesh.hardenEdges" }, { "label": "Soften by Angle", "action": "mesh.setNormalAngle" }],
+    "SW": [{ "label": "Poke", "action": "mesh.poke" }],
+    "NW": [{ "label": "Fill Hole", "action": "mesh.fillHole" }]
   },
   "objectMode": {
     "NW": { "label": "Sculpt", "action": "sculpt.tool" }
