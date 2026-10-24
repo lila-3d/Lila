@@ -16,16 +16,20 @@ lila_module(lila_core Foundation
     Events.cpp
     ExtensionContext.cpp
     ExtensionManifest.cpp
+    ImageIO.cpp
     Log.cpp
     MainQueue.cpp
     Paths.cpp
     PrefStore.cpp
     Progress.cpp
+    ProjectTextures.cpp
     Registry.cpp
     ResourceKey.cpp
     TextMatch.cpp
     Workspace.cpp)
 
+find_package(miniz CONFIG REQUIRED)
+target_link_libraries(lila_core PRIVATE miniz::miniz)
 target_include_directories(lila_core PUBLIC ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/sdk/include)
 target_link_libraries(lila_core PUBLIC nlohmann_json::nlohmann_json TBB::tbb glm::glm ${LILA_CRASHKIT_LIBS})
 set_source_files_properties(CrashHandler.cpp PROPERTIES COMPILE_DEFINITIONS LILA_VERSION="${PROJECT_VERSION}")

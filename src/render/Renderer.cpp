@@ -19,6 +19,7 @@
 #include <deque>
 #include <fstream>
 #include <functional>
+#include <future>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -231,6 +232,13 @@ struct Renderer::Impl
     std::condition_variable removed;
     std::deque<std::shared_ptr<OffscreenJob>> offscreenJobs; // guarded by mutex
     std::condition_variable offscreenDone;
+    struct QueuedTask
+    {
+        GpuTask step;
+        std::promise<void> done;
+    };
+    std::deque<std::unique_ptr<QueuedTask>> tasks; // guarded by mutex
+    std::vector<std::function<void(VulkanContext&)>> stopHooks;
     ViewportId nextId = 1;
 
     VkPipelineLayout gridLayout = VK_NULL_HANDLE, linesLayout = VK_NULL_HANDLE, overlayTrisLayout = VK_NULL_HANDLE;
@@ -2482,6 +2490,24 @@ struct Renderer::Impl
         evictMeshes();
     }
 
+    /** One slice of a task; resets task when it finished or threw. */
+    void runTaskSlice(std::unique_ptr<QueuedTask>& task)
+    {
+        LILA_ZONE();
+
+        try
+        {
+            if (!task->step(vk))
+                return;
+            task->done.set_value();
+        }
+        catch (...)
+        {
+            task->done.set_exception(std::current_exception());
+        }
+        task.reset();
+    }
+
     void loop()
     {
         LILA_THREAD_NAME("Render");
@@ -2493,6 +2519,8 @@ struct Renderer::Impl
                     return true;
                 // Captures wait out an environment build in flight, so they are lit like the views.
                 if (!offscreenJobs.empty() && !envBusy)
+                    return true;
+                if (!tasks.empty())
                     return true;
                 for (auto& [id, v] : viewports)
                     if (v->pending)
@@ -2528,6 +2556,17 @@ struct Renderer::Impl
                 lock.lock();
                 job->done = true;
                 offscreenDone.notify_all();
+            }
+
+            if (!tasks.empty())
+            {
+                std::unique_ptr<QueuedTask> task = std::move(tasks.front());
+                tasks.pop_front();
+                lock.unlock();
+                runTaskSlice(task);
+                lock.lock();
+                if (task)
+                    tasks.push_back(std::move(task));
             }
 
             for (auto& [id, vp] : viewports)
@@ -2570,6 +2609,9 @@ struct Renderer::Impl
             }
         }
 
+        for (auto& t : tasks)
+            t->done.set_exception(std::make_exception_ptr(std::runtime_error("the renderer stopped")));
+        tasks.clear();
         for (auto& [id, v] : viewports)
             destroyViewport(*v);
         viewports.clear();
@@ -2607,6 +2649,7 @@ bool Renderer::start()
     if (m->vk.properties.limits.maxPushConstantsSize < 256)
         log::warn("render: GPU push constant limit is {} bytes; grid may not draw", m->vk.properties.limits.maxPushConstantsSize);
     m->initDescriptors();
+    m->quit = false;
     m->started = true;
     m->thread = std::thread([this] { m->loop(); });
     return true;
@@ -2622,10 +2665,17 @@ void Renderer::stop()
     }
     m->cv.notify_all();
     m->thread.join();
+    for (const auto& hook : m->stopHooks)
+        hook(m->vk);
     m->destroyPipelines();
     m->destroyDescriptors();
     m->vk.shutdown();
     m->started = false;
+}
+
+void Renderer::addStopHook(std::function<void(VulkanContext& vk)> fn)
+{
+    m->stopHooks.push_back(std::move(fn));
 }
 
 bool Renderer::running() const { return m->started; }
@@ -2727,6 +2777,27 @@ bool Renderer::renderOffscreen(FrameState state, int width, int height, std::vec
 std::string Renderer::deviceName() const
 {
     return m->vk.deviceName;
+}
+
+std::future<void> Renderer::runTask(GpuTask task)
+{
+    auto t = std::make_unique<Impl::QueuedTask>();
+    t->step = std::move(task);
+    std::future<void> f = t->done.get_future();
+    std::scoped_lock lock(m->mutex);
+    if (!m->started || m->quit)
+    {
+        t->done.set_exception(std::make_exception_ptr(std::runtime_error("the renderer is not running")));
+        return f;
+    }
+    m->tasks.push_back(std::move(t));
+    m->cv.notify_all();
+    return f;
+}
+
+VulkanContext* Renderer::context()
+{
+    return m->started ? &m->vk : nullptr;
 }
 
 std::shared_ptr<const EnvProbe> Renderer::environmentProbe(const std::string& path) const

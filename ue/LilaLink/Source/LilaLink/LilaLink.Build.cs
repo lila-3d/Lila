@@ -30,6 +30,12 @@ public class LilaLink : ModuleRules
 			"NiagaraCore",
 			"AlembicLibrary",
 			"GeometryCache",
+			"ImageCore",
+			"Slate",
+			"SlateCore",
+			"ToolMenus",
+			"DesktopPlatform",
+			"Settings",
 		});
 
 		// Header-only use: the module is looked up at runtime, so a project without Python still loads.

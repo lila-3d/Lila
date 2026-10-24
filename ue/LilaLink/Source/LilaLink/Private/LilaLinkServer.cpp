@@ -248,6 +248,7 @@ void FLilaLinkServer::Shutdown()
 		Client->Socket = nullptr;
 	}
 	Clients.Reset();
+	ClientCount = 0;
 	DestroySocket(Listener);
 	Listener = nullptr;
 }
@@ -270,6 +271,7 @@ uint32 FLilaLinkServer::Run()
 				TSharedPtr<FLilaLinkClient, ESPMode::ThreadSafe> Client = MakeShared<FLilaLinkClient, ESPMode::ThreadSafe>();
 				Client->Socket = Socket;
 				Clients.Add(Client);
+				ClientCount = Clients.Num();
 				bActive = true;
 				UE_LOG(LogLilaLink, Log, TEXT("Client connected"));
 			}
@@ -282,6 +284,7 @@ uint32 FLilaLinkServer::Run()
 				DestroySocket(Clients[Index]->Socket);
 				Clients[Index]->Socket = nullptr;
 				Clients.RemoveAtSwap(Index);
+				ClientCount = Clients.Num();
 				UE_LOG(LogLilaLink, Log, TEXT("Client disconnected"));
 			}
 		}

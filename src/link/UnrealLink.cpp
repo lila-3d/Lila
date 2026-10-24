@@ -267,6 +267,59 @@ seq::SequenceOptions sequenceOptions(const json& mapping, const fs::path& folder
     return o;
 }
 
+seq::VatOptions vertexAnimationOptions(const json& mapping, const fs::path& folder, const std::string& name)
+{
+    json v = mapping.value("vat", json::object());
+    if (!v.is_object())
+        throw std::invalid_argument("vat must be a dict");
+    seq::VatOptions o = seq::vatFromJson(v, sequenceOptions(mapping, folder));
+    o.folder = folder.generic_string();
+    o.name = name;
+    return o;
+}
+
+json vertexAnimationParams(const seq::VatResult& bake, const json& mapping)
+{
+    json options = json::object();
+    for (const char* key : kOptionKeys)
+        if (mapping.contains(key) && !mapping[key].is_null())
+            options[key] = mapping[key];
+    json params = {{"contentPath", mapping.value("contentPath", std::string())},
+                   {"fbx", bake.mesh.generic_string()},
+                   {"positions", bake.positions.generic_string()},
+                   {"metaFile", bake.meta.generic_string()},
+                   {"meta", bake.metadata},
+                   {"options", options}};
+    if (!bake.normals.empty())
+        params["normals"] = bake.normals.generic_string();
+    // The plugin names the textures T_<asset without SM_>_VATPos / _VATNrm beside the mesh.
+    std::string path = mapping.value("contentPath", std::string());
+    if (size_t dot = path.find('.', path.rfind('/') == std::string::npos ? 0 : path.rfind('/')); dot != std::string::npos)
+        path.resize(dot);
+    const size_t slash = path.rfind('/');
+    const std::string folder = slash == std::string::npos ? std::string() : path.substr(0, slash);
+    std::string asset = slash == std::string::npos ? path : path.substr(slash + 1);
+    if (asset.starts_with("SM_"))
+        asset = asset.substr(3);
+    auto objectPath = [&](const std::string& suffix) {
+        const std::string name = "T_" + asset + suffix;
+        return folder + "/" + name + "." + name;
+    };
+    json& mp = params["meta"]["materialParams"];
+    if (mp.is_object())
+    {
+        mp["PositionTexture"] = objectPath("_VATPos");
+        if (!bake.normals.empty())
+            mp["NormalTexture"] = objectPath("_VATNrm");
+    }
+    json v = mapping.value("vat", json::object());
+    if (v.is_object() && v.contains("materialParent") && v["materialParent"].is_string() && !v["materialParent"].get<std::string>().empty())
+        params["materialParent"] = v["materialParent"];
+    if (v.is_object() && v.value("rebuildMaterial", false))
+        params["options"]["rebuildMaterial"] = true;
+    return params;
+}
+
 json toJson(const Instance& i)
 {
     return {{"port", i.port},
@@ -660,6 +713,8 @@ int syncMappings(bool force)
         ExportFn exporter;
         /** meshSequence: the frame files, already written; the file above is then the first. */
         std::vector<fs::path> frames;
+        /** vertexAnimation: importVertexAnimation params for the bake, already written. */
+        json vat;
     };
     std::vector<Job> jobs;
     scene::Graph& graph = scene::Graph::current();
@@ -674,7 +729,7 @@ int syncMappings(bool force)
             continue;
         // "fbx:skeletal" / "fbx:animation" when registered, so the file matches the mapping's kind.
         const std::string kind = m.value("kind", std::string("static"));
-        const bool animated = kind == "meshSequence" || kind == "geometryCache";
+        const bool animated = kind == "meshSequence" || kind == "geometryCache" || kind == "vertexAnimation";
         if (!haveFbx && !animated)
         {
             ++skipped;
@@ -690,6 +745,23 @@ int syncMappings(bool force)
                 continue;
             if (ExportFn together = findExporter("fbx:set:" + kind))
                 exporter = together;
+        }
+        if (kind == "vertexAnimation")
+        {
+            try
+            {
+                const seq::VatOptions vo = vertexAnimationOptions(m, dir / (nodeFileStem(node) + "_vat"), nodeFileStem(node));
+                const seq::VatResult bake = seq::exportVat(graph, seq::meshNodes(graph, nodes), vo);
+                Job job{m, json(), nodes, bake.mesh, nullptr, {}};
+                job.vat = vertexAnimationParams(bake, m);
+                log::info("Unreal sync: {} material params: {}", node, seq::vatMaterialSummary(job.vat["meta"]["materialParams"]));
+                jobs.push_back(std::move(job));
+            }
+            catch (const std::exception& e)
+            {
+                log::error("Unreal sync: vertex animation bake of {} failed: {}", node, e.what());
+            }
+            continue;
         }
         json materials = materialParams(graph, nodes);
         if (animated)
@@ -762,6 +834,14 @@ int syncMappings(bool force)
         for (const Job& job : jobs)
         {
             std::string node = job.mapping.value("node", std::string());
+            if (!job.vat.is_null())
+            {
+                scope.setStatus("Unreal: sending vertex animation of " + node);
+                RpcResult r = client->call("importVertexAnimation", job.vat, importCallOptions());
+                mainq::post([node, r] { reportImport(node, r); });
+                scope.step();
+                continue;
+            }
             if (!job.frames.empty())
             {
                 syncSequence(*client, job.mapping, job.frames, job.materials, scope);

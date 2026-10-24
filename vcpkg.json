@@ -17,6 +17,7 @@
     "manifold",
     "meshoptimizer",
     "joltphysics",
+    "miniz",
     {
       "name": "tracy",
       "features": [

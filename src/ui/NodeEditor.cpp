@@ -9,6 +9,7 @@
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "ui/Actions.h"
+#include "ui/AnimatedSend.h"
 #include "ui/DockSidebar.h"
 #include "ui/GnViewerDraw.h"
 #include "ui/Icons.h"
@@ -1343,6 +1344,24 @@ NodeEditor::NodeEditor(QWidget* parent) : QWidget(parent)
     bar->addWidget(exportBtn);
     bar->addWidget(importBtn);
     bar->addStretch(1);
+    mSendBtn = new QToolButton(this);
+    mSendBtn->setIcon(icon("send"));
+    mSendBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    mSendBtn->setPopupMode(QToolButton::MenuButtonPopup);
+    auto* sendMenu = new QMenu(mSendBtn);
+    animatedSend::fillMenu(sendMenu, this, [this] { return sendTargets(); });
+    mSendBtn->setMenu(sendMenu);
+    connect(sendMenu, &QMenu::aboutToShow, this, [this] { refreshSendButton(); });
+    connect(mSendBtn, &QToolButton::clicked, this, [this] {
+        animatedSend::sendAgain(sendTargets());
+        refreshSendButton();
+    });
+    bar->addWidget(mSendBtn);
+    // Sends stored after the command returns, so the label is read on the next turn of the event loop.
+    mExecuteListener = ops::addExecuteListener([this](const ExecuteEvent& e) {
+        if (e.done && (e.name == "unrealMap" || e.name.starts_with("export")))
+            QTimer::singleShot(0, this, [this] { refreshSendButton(); });
+    });
     lay->addLayout(bar);
 
     auto* split = new QSplitter(Qt::Horizontal, this);
@@ -1412,7 +1431,10 @@ NodeEditor::NodeEditor(QWidget* parent) : QWidget(parent)
         scene::Graph& g = scene::Graph::current();
         if (c == scene::Change::Selection)
         {
-            QTimer::singleShot(0, this, [this] { followSelection(); });
+            QTimer::singleShot(0, this, [this] {
+                followSelection();
+                refreshSendButton();
+            });
             return;
         }
         if (c == scene::Change::Reset)
@@ -1455,6 +1477,7 @@ NodeEditor::~NodeEditor()
     mCanvas->onSelect = nullptr;
     mCanvas->onFocused = nullptr;
     scene::Graph::current().removeListener(mListener);
+    ops::removeExecuteListener(mExecuteListener);
     std::erase(editors(), this);
     if (lastFocused() == this)
         lastFocused() = nullptr;
@@ -1840,6 +1863,40 @@ scene::Node* NodeEditor::modifierInView() const
     return grp && qs(grp->name()) == mGroup ? m : nullptr;
 }
 
+std::vector<std::string> NodeEditor::sendTargets() const
+{
+    scene::Graph& g = scene::Graph::current();
+    scene::Node* grp = mGroup.isEmpty() ? nullptr : gn::findGroupNode(g, mGroup.toStdString());
+    if (!grp)
+        return {};
+    std::vector<scene::NodeId> meshes;
+    for (scene::NodeId m : gn::instancesOf(g, grp->id()))
+        if (scene::NodeId mesh = scene::modifiers::meshOf(g, m); g.node(mesh) && std::find(meshes.begin(), meshes.end(), mesh) == meshes.end())
+            meshes.push_back(mesh);
+    std::vector<std::string> out;
+    for (scene::NodeId id : g.selection())
+        if (std::find(meshes.begin(), meshes.end(), id) != meshes.end())
+            out.push_back(g.node(id)->path());
+    if (!out.empty())
+        return out;
+    if (scene::Node* m = modifierInView())
+        if (scene::Node* mesh = g.node(scene::modifiers::meshOf(g, m->id())))
+            return {mesh->path()};
+    for (scene::NodeId id : meshes)
+        out.push_back(g.node(id)->path());
+    return out;
+}
+
+void NodeEditor::refreshSendButton()
+{
+    std::vector<std::string> targets = sendTargets();
+    mSendBtn->setText(qs(animatedSend::lastLabel(targets)));
+    mSendBtn->setEnabled(!targets.empty());
+    mSendBtn->setToolTip(targets.empty() ? "Apply this group to a mesh to send its result"
+                                         : "Send " + qs(targets.size() == 1 ? targets.front() : std::to_string(targets.size()) + " meshes") +
+                                               " again the same way; the arrow picks Unreal or files and the kind");
+}
+
 void NodeEditor::refreshGroups()
 {
     mRefreshing = true;
@@ -1860,6 +1917,7 @@ void NodeEditor::refresh(bool panel)
     LILA_ZONE();
 
     refreshGroups();
+    refreshSendButton();
     std::set<std::string> selected = std::move(mSelectNext);
     mSelectNext.clear();
     if (selected.empty() && !mSelectedNode.isEmpty())

@@ -1,4 +1,5 @@
 #include "seq/MeshSequence.h"
+#include "seq/Vat.h"
 
 #include "core/Log.h"
 #include "core/Profile.h"
@@ -182,6 +183,82 @@ void registerCommands()
             o.pattern = p.stem().string();
             json files = run(targets(a, "exportAlembic"), o, a.get<bool>("dryRun"), "exportAlembic");
             return files.empty() ? json() : files[0];
+        },
+    });
+
+    std::vector<FlagDef> vatFlags;
+    for (FlagDef& f : sampleFlags())
+    {
+        if (f.name == "triangulate")
+            continue;
+        if (f.name == "normals")
+            f.doc = "Bake a normal texture (<name>_nrm.png).";
+        vatFlags.push_back(std::move(f));
+    }
+    vatFlags.push_back({"folder", "fo", T::String, "vat", "Output folder; relative paths are under the workspace."});
+    vatFlags.push_back({"name", "nm", T::String, "{name}", "File base name; {name} is the first mesh."});
+    vatFlags.push_back({"format", "f", T::String, "exr",
+                        "Position texture: exr (half float offsets, HDR=1), png16 or png8 (normalised by BoundsMin/BoundsMax, HDR=0).",
+                        {"exr", "png16", "png8"}});
+    vatFlags.push_back({"mode", "md", T::String, "auto",
+                        "constant (every frame keeps the rest frame's vertices), soup (unwelded triangles, for changing topology) or "
+                        "auto (constant when every frame matches, soup otherwise).",
+                        {"auto", "constant", "soup"}});
+    vatFlags.push_back({"positions", "po", T::String, "offset", "offset (from the rest mesh, for World Position Offset) or absolute.",
+                        {"offset", "absolute"}});
+    vatFlags.push_back({"normalBits", "nb", T::Int, 8, "Normal texture depth, 8 or 16."});
+    vatFlags.push_back({"restFrame", "rf", T::Float, nullptr, "Frame whose shape is the rest mesh (default the first sampled frame)."});
+    vatFlags.push_back({"maxWidth", "mw", T::Int, nullptr, "Widest texture before a frame wraps to more rows (default the vat maxWidth pref, 4096)."});
+    ops::registerCommand({
+        .name = "exportVertexAnimation",
+        .doc = "Bake animated meshes (geometry nodes, deformers, skins, anything that changes over time) into Vertex Animation "
+               "Textures: a rest mesh FBX with an extra UV channel addressing each vertex's texels, a position texture (offsets "
+               "or positions per vertex per frame, Unreal space), a normal texture and a JSON sidecar describing the layout. "
+               "Changing topology is baked as a padded triangle soup. Returns {files, meta, materialParams} (the material inputs: "
+               "HDR, BoundsMin, BoundsMax, FrameCount, RowsPerFrame, TextureHeight, FrameRate, PositionTexture, NormalTexture).",
+        .positionalDoc = "meshes",
+        .flags = vatFlags,
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            Args b = a;
+            for (const char* k : {"format", "normals"})
+                b.flags.erase(k);
+            SequenceOptions so = optionsFrom(b, "exportVertexAnimation");
+            json j = json::object();
+            for (const char* k : {"name", "format", "mode", "positions", "normals", "normalBits", "restFrame", "maxWidth"})
+                if (a.has(k))
+                    j[k] = a.flags[k];
+            seq::VatOptions o;
+            try
+            {
+                o = vatFromJson(j, so);
+            }
+            catch (const std::invalid_argument& e)
+            {
+                throw CommandError(std::string("exportVertexAnimation: ") + e.what());
+            }
+            o.folder = resolve(a.get<std::string>("folder", "vat")).generic_string();
+            const std::vector<scene::NodeId> meshes = targets(a, "exportVertexAnimation");
+            scene::Graph& g = scene::Graph::current();
+            VatResult r;
+            try
+            {
+                r = a.get<bool>("dryRun") ? plannedVat(g, meshes, o) : exportVat(g, meshes, o);
+            }
+            catch (const progress::Cancelled&)
+            {
+                throw CommandError("exportVertexAnimation: cancelled");
+            }
+            catch (const std::exception& e)
+            {
+                throw CommandError(std::string("exportVertexAnimation: ") + e.what());
+            }
+            json out = {{"files", r.files()}, {"meta", r.metadata}};
+            if (r.metadata.contains("materialParams"))
+                out["materialParams"] = r.metadata["materialParams"];
+            return out;
         },
     });
 }

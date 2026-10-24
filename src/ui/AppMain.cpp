@@ -1,5 +1,11 @@
 #include "ui/AppMain.h"
 
+#include "bake/Bake.h"
+#include "bake/BakePipeline.h"
+#include "bake/Maps.h"
+#include "core/ImageIO.h"
+#include "core/Paths.h"
+
 #include "core/CrashHandler.h"
 #include "core/Events.h"
 #include "core/MainQueue.h"
@@ -9,12 +15,15 @@
 #include "core/Workspace.h"
 #include "mcp/McpServer.h"
 #include "python/Python.h"
+#include "render/Baker.h"
 #include "render/Renderer.h"
 #include "scene/Components.h"
 #include "ui/Actions.h"
 #include "ui/AdjustLastOp.h"
 #include "ui/AgentCapture.h"
 #include "ui/AgentSetup.h"
+#include "ui/BakePaintTool.h"
+#include "ui/BakerPanel.h"
 #include "ui/Animation.h"
 #include "ui/AutoBevelUi.h"
 #include "ui/SmartJoinUi.h"
@@ -48,6 +57,7 @@
 
 #include <QAbstractEventDispatcher>
 #include <QApplication>
+#include <QImage>
 #include <QTimer>
 
 namespace fs = std::filesystem;
@@ -95,6 +105,32 @@ void registerUi()
     registerKnifeActions();
     registerSculptUi();
     registerVertexPaintUi();
+    registerBakePaintUi();
+    // Material textures in formats core ImageIO lacks (JPG, RGB PNG, BMP) come through Qt.
+    bake::setTextureLoader([](const std::string& path, int& w, int& h, std::vector<float>& rgba, std::string& error) {
+        image::Image img = image::read(paths::fromUtf8(path), &error);
+        if (img.width <= 0)
+        {
+            QImage q(QString::fromUtf8(path.c_str()));
+            if (q.isNull())
+                return false;
+            q.convertTo(QImage::Format_RGBA64);
+            img.width = q.width();
+            img.height = q.height();
+            img.rgba.resize(size_t(img.width) * img.height * 4);
+            for (int y = 0; y < img.height; ++y)
+            {
+                const auto* row = reinterpret_cast<const quint16*>(q.constScanLine(y));
+                for (int i = 0; i < img.width * 4; ++i)
+                    img.rgba[size_t(y) * img.width * 4 + i] = row[i] / 65535.0f;
+            }
+            error.clear();
+        }
+        w = img.width;
+        h = img.height;
+        rgba = std::move(img.rgba);
+        return true;
+    });
     paintSelect::registerPaintSelectUi();
     registerAnimationUi();
     registerGhostingUi();
@@ -119,6 +155,8 @@ void registerBatchCommands()
         return;
     done = true;
     capture::registerCommands();
+    // The gpu bake backend starts the renderer headless on first use.
+    render::registerGpuBakeBackend();
     registerScreenshotCommand();
     modes::registerBuiltins();
     // captureView starts the renderer on demand in batch mode.
@@ -139,8 +177,11 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
     registerUi();
     Hotkeys::get().install();
     render::Renderer::get().start();
+    render::registerGpuBakeBackend();
+    bake::setRebakeAsync(true);
     registerUiTools();
     capture::registerMcpTools();
+    registerBakerMcpTools();
     agentSetup::registerActions();
     registerRigViewport();
     registerDeformActions();
@@ -179,6 +220,9 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
         });
         rc = app.exec();
     }
+    // A bake still running on the GPU must stop before the renderer does.
+    bake::shutdownRebakes();
+    bake::cancelAsyncBake(true);
     io::recovery::endSession();
 
     mcp::Server::get().stop();

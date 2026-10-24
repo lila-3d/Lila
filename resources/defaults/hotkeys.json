@@ -140,6 +140,10 @@
       "F": "nodeEditor.frameSelected",
       "Home": "nodeEditor.frameAll"
     },
+    "baker": {
+      "Delete": "bake.removeRows",
+      "Backspace": "bake.removeRows"
+    },
     "graphEditor": {
       "F": "graphEditor.frameSelected",
       "A": "graphEditor.frameAll",

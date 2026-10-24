@@ -46,6 +46,8 @@ public:
     virtual void draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& view) { (void)s, (void)p, (void)view; }
     /** The viewport's cursor while this tool is active; nullopt is the arrow. */
     virtual std::optional<QCursor> cursor() const { return std::nullopt; }
+    /** B + LMB/MMB drag sets this tool's brush radius rather than soft select's. */
+    virtual bool ownsBrushRadius() const { return false; }
 };
 
 /** A tool's status or hint line, centred along the top of the view. Queued and drawn by flushToolMessages once the HUD is placed. */

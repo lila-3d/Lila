@@ -27,13 +27,10 @@ const char* prefix(LogLevel level)
     }
 }
 
-/** The theme's colour for the message's severity, kept on the grey ramp while the theme leaves the token at Monotone's. */
+/** Grey in every theme: the line sits under the viewport, where hue would pull the eye. Severity reads by icon, weight and brightness. */
 QColor severityColor(LogLevel level)
 {
-    const char* token = level == LogLevel::Error ? "statusError" : level == LogLevel::Warning ? "statusWarning" : "statusInfo";
-    if (themes::isDefault(*themes::current(), token))
-        return themeShade(level == LogLevel::Error || level == LogLevel::Warning ? 242 : 160);
-    return themeColor(token);
+    return themeShade(level == LogLevel::Error || level == LogLevel::Warning ? 242 : 160);
 }
 } // namespace
 

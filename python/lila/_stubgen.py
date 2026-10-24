@@ -1,5 +1,6 @@
 """Writes ops.pyi from the live command registry so editors and basedpyright see typed commands."""
 
+import keyword
 import os
 
 import _lila
@@ -15,9 +16,16 @@ def _render():
     ]
     for spec in sorted(_lila.commands(), key=lambda s: s["name"]):
         params = ["*objects: Any"] if spec["positional"] else []
+        reserved = False
         for f in spec["flags"]:
+            # A flag named like a Python keyword (async) is passed as **{"async": True}.
+            if keyword.iskeyword(f["name"]):
+                reserved = True
+                continue
             t = _TYPES.get(f["type"], "Any")
             params.append(f"{f['name']}: {t} | None = None")
+        if reserved:
+            params.append("**flags: Any")
         doc = spec["doc"].replace('"""', "'''")
         lines.append(f"def {spec['name']}({', '.join(params)}) -> Any:")
         lines.append(f'    """{doc}"""')

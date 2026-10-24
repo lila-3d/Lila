@@ -15,6 +15,7 @@ class QComboBox;
 class QScrollArea;
 class QSplitter;
 class QTimer;
+class QToolButton;
 
 namespace lila::scene
 {
@@ -70,6 +71,11 @@ public:
     void importGroups(const QStringList& files);
     /** Shows a node in a Viewer: reuses the group's first Viewer or adds one, links the node's outputs and activates it. */
     void viewNode(const std::string& node);
+    /**
+     * Meshes the Send button acts on: the selected meshes running this group, else the mesh of the modifier in view,
+     * else every mesh running it.
+     */
+    std::vector<std::string> sendTargets() const;
 
 private:
     void openAddMenu(QPointF scenePos, const WireDrag* wire);
@@ -77,6 +83,7 @@ private:
     void showError(const QString& message);
     /** panel false: only the canvas needs it, so a field being scrubbed in the side panel survives. */
     void scheduleRefresh(bool panel = true);
+    void refreshSendButton();
     void refresh(bool panel = true);
     void refreshGroups();
     void rebuildSidePanel();
@@ -100,7 +107,9 @@ private:
     NodeCanvas* mCanvas = nullptr;
     QScrollArea* mSide = nullptr;
     QTimer* mRefresh = nullptr;
+    QToolButton* mSendBtn = nullptr;
     int mListener = 0;
+    int mExecuteListener = 0;
     bool mRefreshing = false;
     bool mPanelDirty = false;
 };

@@ -1,0 +1,222 @@
+#pragma once
+
+#include "core/Export.h"
+
+#include <nlohmann/json.hpp>
+
+#include <QImage>
+#include <QWidget>
+
+#include <filesystem>
+#include <functional>
+#include <string>
+#include <vector>
+
+namespace lila::bake
+{
+struct BakeEvent;
+}
+
+class QCheckBox;
+class QComboBox;
+class QDoubleSpinBox;
+class QFormLayout;
+class QLabel;
+class QLineEdit;
+class QListWidget;
+class QMenu;
+class QProgressBar;
+class QPushButton;
+class QSpinBox;
+class QStackedWidget;
+class QTabWidget;
+class QTimer;
+class QToolButton;
+class QTreeWidget;
+class QTreeWidgetItem;
+
+namespace lila::ui
+{
+inline constexpr const char* kBakerDock = "baker";
+
+/**
+ * The Baker: a view over one bakeProject node and its bakeGroup nodes. Toolbar (project, target and its one-click
+ * "Bake for <target>", Bake, Bake Selected, Cancel, progress, backend badge), the groups tree (Low/High/Cage rows,
+ * meshes dropped from the outliner, auto-group, one group per selected mesh, inline lint), the selected group's
+ * distances and each high's bake-only modifier stack, then tabs for the maps, the outputs and the last bake's
+ * thumbnails. Every edit runs a bake command from the UI, so it is undoable and echoed.
+ */
+class LILA_UI_API BakerPanel : public QWidget
+{
+    Q_OBJECT
+
+public:
+    explicit BakerPanel(QWidget* parent = nullptr);
+    ~BakerPanel() override;
+
+    /** The project shown (node path), empty when the scene has none. */
+    std::string project() const { return mProject; }
+    void setProject(const std::string& path);
+    /** Rebuilds every section from the scene now. */
+    void refresh();
+    /** Shows a bake result (the bake command's return): stats, warnings and thumbnails, loaded off the main thread. */
+    void showResult(const nlohmann::json& result);
+    /** Thumbnails still loading. */
+    bool thumbnailsPending() const { return mThumbJobs > 0; }
+    /** Where the shown result's textures went, else where the project's would go; empty with no project. */
+    QString outputFolder() const;
+    /** The thumbnails' right-click menu for the selected ones: Open, Open Containing Folder, Copy Path, Copy File Name. */
+    QMenu* thumbnailMenu(QWidget* parent);
+    /**
+     * Removes the rows selected in the groups tree from their group: Low and High rows unassign their mesh, a Cage row
+     * goes back to the auto cage, a group row deletes the group. Scene meshes are never touched. One undo step.
+     */
+    void removeSelectedRows();
+
+protected:
+    void showEvent(QShowEvent* e) override;
+
+private:
+    QWidget* buildToolbar();
+    QWidget* buildGroups();
+    QWidget* buildGroupDetails();
+    QWidget* buildMaps();
+    QWidget* buildOutput();
+    QWidget* buildResults();
+
+    void scheduleRefresh();
+    void refreshProjects();
+    void refreshTargets();
+    void refreshGroups();
+    void refreshDetails();
+    void refreshMaps();
+    void refreshMapSettings();
+    void refreshOutput();
+    void updatePreview();
+    void updateButtons();
+    void scheduleLint();
+    /** full also loads the highs for the range and cage checks. */
+    void runLint(bool full);
+    void pollProgress();
+
+    /** Runs a bake command from the UI with project= filled in; null (and a logged warning) on failure. */
+    nlohmann::json run(const char* command, nlohmann::json call, bool withProject = true);
+    void bake(const std::vector<std::string>& groups);
+    void bakeForTarget(bool dryRun);
+    /** Saves the project's settings as a preset target named in the inline row, then selects it. */
+    void savePreset();
+    std::vector<std::string> selectedGroups() const;
+    std::string currentGroup() const;
+    void dropNodes(const QStringList& names, QTreeWidgetItem* target);
+    void groupMenu(const QPoint& at);
+    /** A running bake's events (async bakes report as they go): thumbnails fill in, then the result shows. */
+    void onBakeEvent(const bake::BakeEvent& e);
+    void addThumbnail(const nlohmann::json& output, uint64_t generation);
+    /** Sets the stack of the current High row, or of every high when the current row is elsewhere in a group. */
+    void setStack(const nlohmann::json& stack);
+    /** The current High row's stack, else the stack every high of the current group shares (empty when they differ). */
+    nlohmann::json currentStack() const;
+    /** Typed fields for the selected stack modifier's parameters, from its node type's input plugs. */
+    void refreshParams();
+
+    std::string mProject;
+    std::string mTarget;
+    bool mUpdating = false;
+    bool mPending = false;
+    int mGraphListener = 0;
+    int mExecListener = 0;
+    int mBakeListener = 0;
+    int mArrangeListener = 0;
+    /** The backend of the bake running now, empty when none. */
+    std::string mRunningBackend;
+    std::string mShownResult;
+    std::string mMapFormKey;
+    nlohmann::json mLint;
+    int mThumbJobs = 0;
+    uint64_t mThumbGeneration = 0;
+
+    QComboBox* mProjects = nullptr;
+    QToolButton* mProjectMenu = nullptr;
+    QComboBox* mTargets = nullptr;
+    /** The inline Save Settings as Preset row under the project row. */
+    QWidget* mPresetRow = nullptr;
+    QLineEdit* mPresetName = nullptr;
+    QComboBox* mPresetScope = nullptr;
+    QCheckBox* mPresetReplace = nullptr;
+    QToolButton* mBakeTarget = nullptr;
+    QToolButton* mBake = nullptr;
+    QToolButton* mBakeSelected = nullptr;
+    QToolButton* mCancel = nullptr;
+    QToolButton* mArrange = nullptr;
+    QProgressBar* mProgress = nullptr;
+    QToolButton* mBackend = nullptr;
+    QToolButton* mLintButton = nullptr;
+
+    QTreeWidget* mGroups = nullptr;
+    QWidget* mDetails = nullptr;
+    QDoubleSpinBox* mFrontal = nullptr;
+    QDoubleSpinBox* mRear = nullptr;
+    QDoubleSpinBox* mCageOffset = nullptr;
+    QWidget* mCageRow = nullptr;
+    QToolButton* mShowCage = nullptr;
+    QToolButton* mLivePreview = nullptr;
+    QLabel* mCageStatus = nullptr;
+    std::string mCageGroup;
+    QCheckBox* mBackfaces = nullptr;
+    QComboBox* mAoScope = nullptr;
+    QCheckBox* mSelf = nullptr;
+    QWidget* mStackBox = nullptr;
+    QLabel* mStackTitle = nullptr;
+    QComboBox* mPreset = nullptr;
+    QListWidget* mStack = nullptr;
+    QWidget* mStackButtons = nullptr;
+    QWidget* mParams = nullptr;
+    QFormLayout* mParamForm = nullptr;
+    std::string mParamKey;
+    /** Show new parameter values in the built fields without rebuilding them. */
+    std::vector<std::function<void(const nlohmann::json& params)>> mParamSetters;
+
+    QTabWidget* mTabs = nullptr;
+    QTreeWidget* mMaps = nullptr;
+    QToolButton* mAddMap = nullptr;
+    QWidget* mMapSettings = nullptr;
+    QFormLayout* mMapForm = nullptr;
+
+    QLineEdit* mFolder = nullptr;
+    QLabel* mFolderResolved = nullptr;
+    QCheckBox* mAutoAssign = nullptr;
+    QCheckBox* mRebakeOnSave = nullptr;
+    QLineEdit* mName = nullptr;
+    QLabel* mPreview = nullptr;
+    QComboBox* mFormat = nullptr;
+    QComboBox* mBits = nullptr;
+    QComboBox* mResolution = nullptr;
+    QComboBox* mSupersampling = nullptr;
+    QSpinBox* mPadding = nullptr;
+
+    QLabel* mSummary = nullptr;
+    /** The summary and its clear button, above the thumbnails in a splitter. */
+    QWidget* mSummaryBox = nullptr;
+    QListWidget* mThumbs = nullptr;
+    /** The folder of the result shown, empty before one. */
+    QString mResultFolder;
+
+    QTimer* mPoll = nullptr;
+    QTimer* mLintTimer = nullptr;
+};
+
+/**
+ * A written map scaled to fit size x size, on neutral grey where it is transparent. Reads anything core/ImageIO reads
+ * (PNG 8/16, EXR, TGA); values are clamped to 0-1 as stored. Null on failure. Any thread.
+ */
+LILA_UI_API QImage bakeThumbnail(const std::filesystem::path& file, int size);
+
+/** The outputs of a bake result tiled into one contact sheet with each file's map and UDIM under it. Any thread. */
+LILA_UI_API QImage bakeContactSheet(const nlohmann::json& result, int tile = 192, int columns = 0);
+
+/** The panel, window.baker, the bake.* actions and the Bake menu. */
+LILA_UI_API void registerBakerPanel();
+
+/** MCP tools bake, bake_lint and bake_inspect. */
+LILA_UI_API void registerBakerMcpTools();
+} // namespace lila::ui

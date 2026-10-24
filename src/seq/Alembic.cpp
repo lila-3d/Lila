@@ -348,3 +348,142 @@ std::vector<ObjectInfo> read(const fs::path& path, std::string* error)
     return out;
 }
 } // namespace lila::seq::abc
+
+namespace lila::seq::abc
+{
+namespace
+{
+glm::dmat4 toGlm(const Imath::M44d& m)
+{
+    glm::dmat4 out(1.0);
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j)
+            out[i][j] = m[i][j];
+    return out;
+}
+
+/** Facevarying values (in the file's corner order) per written corner, or per point; empty when neither fits. */
+template <class G, class V, class F>
+std::vector<G> cornerValues(const V& vals, AbcG::GeometryScope scope, size_t corners, const std::vector<int32_t>& indices, F conv)
+{
+    std::vector<G> out;
+    if (!vals)
+        return out;
+    if ((scope == AbcG::kFacevaryingScope || scope == AbcG::kUnknownScope) && vals->size() == corners)
+        for (size_t c = 0; c < corners; ++c)
+            out.push_back(conv((*vals)[c]));
+    else if (scope == AbcG::kVertexScope || scope == AbcG::kVaryingScope)
+        for (int32_t p : indices)
+            if (p >= 0 && size_t(p) < vals->size())
+                out.push_back(conv((*vals)[size_t(p)]));
+    if (out.size() != corners)
+        out.clear();
+    return out;
+}
+} // namespace
+
+std::vector<MeshSample> readMeshes(const fs::path& path, double time, const std::string& filter, std::string* error)
+{
+    LILA_ZONE();
+
+    std::vector<MeshSample> out;
+    try
+    {
+        Alembic::AbcCoreFactory::IFactory factory;
+        AbcG::IArchive archive = factory.getArchive(path.string());
+        if (!archive.valid())
+        {
+            if (error)
+                *error = "not an Alembic file: " + path.string();
+            return out;
+        }
+        const Alembic::Abc::ISampleSelector sel(time, Alembic::Abc::ISampleSelector::kNearIndex);
+        std::function<void(const AbcG::IObject&, const glm::dmat4&)> walk = [&](const AbcG::IObject& obj, const glm::dmat4& parent) {
+            for (size_t i = 0; i < obj.getNumChildren(); ++i)
+            {
+                AbcG::IObject child = obj.getChild(i);
+                glm::dmat4 world = parent;
+                if (AbcG::IXform::matches(child.getHeader()))
+                {
+                    AbcG::IXform x(child, Alembic::Abc::kWrapExisting);
+                    AbcG::XformSample xs;
+                    x.getSchema().get(xs, sel);
+                    world = (xs.getInheritsXforms() ? parent : glm::dmat4(1.0)) * toGlm(xs.getMatrix());
+                }
+                else if (AbcG::IPolyMesh::matches(child.getHeader()) && (filter.empty() || child.getFullName().find(filter) != std::string::npos))
+                {
+                    AbcG::IPolyMesh pm(child, Alembic::Abc::kWrapExisting);
+                    AbcG::IPolyMeshSchema& s = pm.getSchema();
+                    AbcG::IPolyMeshSchema::Sample sample;
+                    s.get(sample, sel);
+                    if (sample.getPositions() && sample.getFaceCounts() && sample.getFaceIndices())
+                    {
+                        std::vector<glm::dvec3> points;
+                        const auto& positions = *sample.getPositions();
+                        for (size_t p = 0; p < positions.size(); ++p)
+                            points.push_back(glm::dvec3(world * glm::dvec4(positions[p].x, positions[p].y, positions[p].z, 1.0)));
+                        const auto& counts = *sample.getFaceCounts();
+                        const auto& idx = *sample.getFaceIndices();
+                        std::vector<int32_t> written(idx.get(), idx.get() + idx.size());
+                        // Faces back to counter-clockwise: each face's corners reversed, remembering where each came from.
+                        std::vector<Index> sizes, ccw;
+                        std::vector<size_t> source;
+                        size_t at = 0;
+                        for (size_t f = 0; f < counts.size(); ++f)
+                        {
+                            const size_t n = size_t(counts[f]);
+                            sizes.push_back(Index(n));
+                            for (size_t k = 0; k < n; ++k)
+                            {
+                                ccw.push_back(Index(written[at + n - 1 - k]));
+                                source.push_back(at + n - 1 - k);
+                            }
+                            at += n;
+                        }
+                        MeshSample ms;
+                        ms.path = child.getFullName();
+                        ms.mesh = geo::Mesh::fromPolygons(points, sizes, ccw);
+                        std::vector<glm::vec2> uvs;
+                        std::vector<glm::vec3> normals;
+                        if (AbcG::IV2fGeomParam uvp = s.getUVsParam(); uvp.valid())
+                        {
+                            AbcG::IV2fGeomParam::Sample us = uvp.getExpandedValue(sel);
+                            uvs = cornerValues<glm::vec2>(us.getVals(), uvp.getScope(), idx.size(), written, [](const Imath::V2f& v) { return glm::vec2(v.x, v.y); });
+                        }
+                        if (AbcG::IN3fGeomParam np = s.getNormalsParam(); np.valid())
+                        {
+                            AbcG::IN3fGeomParam::Sample ns = np.getExpandedValue(sel);
+                            normals = cornerValues<glm::vec3>(ns.getVals(), np.getScope(), idx.size(), written, [](const Imath::V3f& v) { return glm::vec3(v.x, v.y, v.z); });
+                        }
+                        // Corners keep the order they were given in when no face was skipped.
+                        const geo::Mesh& m = ms.mesh;
+                        if (m.numFaces() == counts.size() && m.cornerCapacity() == ccw.size() && (!uvs.empty() || !normals.empty()))
+                        {
+                            std::span<glm::vec2> uv = uvs.empty() ? std::span<glm::vec2>{} : ms.mesh.cornerAttrs().getOrAdd<glm::vec2>("uv0");
+                            std::span<glm::vec3> nn = normals.empty() ? std::span<glm::vec3>{} : ms.mesh.cornerAttrs().getOrAdd<glm::vec3>(geo::attr::kNormal);
+                            const glm::dmat3 nm = glm::transpose(glm::inverse(glm::dmat3(world)));
+                            for (size_t c = 0; c < ccw.size(); ++c)
+                            {
+                                if (!uv.empty())
+                                    uv[c] = uvs[source[c]];
+                                if (!nn.empty())
+                                    nn[c] = glm::vec3(glm::normalize(nm * glm::dvec3(normals[source[c]])));
+                            }
+                        }
+                        out.push_back(std::move(ms));
+                    }
+                }
+                walk(child, world);
+            }
+        };
+        walk(archive.getTop(), glm::dmat4(1.0));
+    }
+    catch (const std::exception& e)
+    {
+        if (error)
+            *error = e.what();
+        out.clear();
+    }
+    return out;
+}
+} // namespace lila::seq::abc

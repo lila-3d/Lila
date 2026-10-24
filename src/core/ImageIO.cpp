@@ -1,0 +1,1233 @@
+#include "core/ImageIO.h"
+
+#include "core/Profile.h"
+
+#define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
+#include <miniz.h>
+#include <glm/gtc/packing.hpp>
+#include <tbb/parallel_for.h>
+
+#include <algorithm>
+#include <bit>
+#include <cctype>
+#include <cmath>
+#include <cstring>
+#include <fstream>
+#include <map>
+#include <stdexcept>
+
+namespace lila::image
+{
+namespace
+{
+void putBe32(std::vector<unsigned char>& out, uint32_t v)
+{
+    out.insert(out.end(), {static_cast<unsigned char>(v >> 24), static_cast<unsigned char>(v >> 16), static_cast<unsigned char>(v >> 8),
+                           static_cast<unsigned char>(v)});
+}
+
+uint32_t be32(const unsigned char* p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | uint32_t(p[3]); }
+
+void chunk(std::vector<unsigned char>& out, const char* type, const unsigned char* data, size_t size)
+{
+    putBe32(out, uint32_t(size));
+    const size_t start = out.size();
+    out.insert(out.end(), type, type + 4);
+    if (size)
+        out.insert(out.end(), data, data + size);
+    putBe32(out, uint32_t(mz_crc32(MZ_CRC32_INIT, out.data() + start, size + 4)));
+}
+
+/** adler32 of a ++ b from adler32(a), adler32(b) and b's length (zlib's adler32_combine). */
+uint32_t adlerCombine(uint32_t a1, uint32_t a2, size_t len2)
+{
+    constexpr uint32_t base = 65521;
+    const uint32_t rem = uint32_t(len2 % base);
+    uint32_t sum1 = a1 & 0xffff;
+    uint32_t sum2 = uint32_t((uint64_t(rem) * sum1) % base);
+    sum1 += (a2 & 0xffff) + base - 1;
+    sum2 += ((a1 >> 16) & 0xffff) + ((a2 >> 16) & 0xffff) + base - rem;
+    if (sum1 >= base)
+        sum1 -= base;
+    if (sum1 >= base)
+        sum1 -= base;
+    if (sum2 >= (base << 1))
+        sum2 -= (base << 1);
+    if (sum2 >= base)
+        sum2 -= base;
+    return sum1 | (sum2 << 16);
+}
+
+/**
+ * A zlib stream of data, its chunks deflated in parallel (pigz style): every chunk but the last ends on a sync flush, so
+ * the raw deflate pieces simply concatenate, and the chunks' adler32s combine into the stream's.
+ */
+std::vector<unsigned char> deflateParallel(const unsigned char* data, size_t size, int level)
+{
+    LILA_ZONE();
+
+    constexpr size_t kChunk = size_t(1) << 20;
+    const size_t chunks = std::max<size_t>(1, (size + kChunk - 1) / kChunk);
+    std::vector<std::vector<unsigned char>> parts(chunks);
+    std::vector<uint32_t> adler(chunks);
+    const mz_uint flags = tdefl_create_comp_flags_from_zip_params(std::clamp(level, 1, 9), -MZ_DEFAULT_WINDOW_BITS, MZ_DEFAULT_STRATEGY);
+    tbb::parallel_for(size_t(0), chunks, [&](size_t c) {
+        const size_t at = c * kChunk, n = std::min(kChunk, size - std::min(size, at));
+        auto comp = std::make_unique<tdefl_compressor>();
+        std::vector<unsigned char>& out = parts[c];
+        out.reserve(n / 2 + 64);
+        auto put = [](const void* buf, int len, void* user) -> mz_bool {
+            auto* v = static_cast<std::vector<unsigned char>*>(user);
+            v->insert(v->end(), static_cast<const unsigned char*>(buf), static_cast<const unsigned char*>(buf) + len);
+            return MZ_TRUE;
+        };
+        tdefl_init(comp.get(), put, &out, int(flags));
+        const tdefl_status st = tdefl_compress_buffer(comp.get(), data + at, n, c + 1 == chunks ? TDEFL_FINISH : TDEFL_SYNC_FLUSH);
+        if (st != (c + 1 == chunks ? TDEFL_STATUS_DONE : TDEFL_STATUS_OKAY))
+            throw std::runtime_error("deflate failed");
+        adler[c] = uint32_t(mz_adler32(MZ_ADLER32_INIT, data + at, n));
+    });
+    size_t total = 6;
+    for (const auto& p : parts)
+        total += p.size();
+    std::vector<unsigned char> out;
+    out.reserve(total);
+    // CMF 0x78 (deflate, 32K window), FLG 0x01: no dictionary, header checksum valid.
+    out.insert(out.end(), {0x78, 0x01});
+    uint32_t a = adler[0];
+    for (size_t c = 0; c < chunks; ++c)
+    {
+        out.insert(out.end(), parts[c].begin(), parts[c].end());
+        if (c)
+            a = adlerCombine(a, adler[c], std::min(kChunk, size - c * kChunk));
+    }
+    putBe32(out, a);
+    return out;
+}
+
+void writePngImpl(const fs::path& path, int w, int h, std::span<const float> rgba, int bits, bool dither, int level)
+{
+    LILA_ZONE();
+
+    const size_t bytes = size_t(bits / 8);
+    const size_t stride = 1 + size_t(w) * 4 * bytes;
+    std::vector<unsigned char> raw(stride * size_t(h)), filtered(raw.size());
+    tbb::parallel_for(0, h, [&](int y) {
+        unsigned char* row = raw.data() + stride * size_t(y);
+        row[0] = 0;
+        for (size_t i = 0; i < size_t(w) * 4; ++i)
+        {
+            const float v = std::clamp(rgba[size_t(y) * size_t(w) * 4 + i], 0.0f, 1.0f);
+            if (bits == 16)
+            {
+                const auto q = static_cast<uint16_t>(std::lround(v * 65535.0f));
+                row[1 + 2 * i] = static_cast<unsigned char>(q >> 8);
+                row[2 + 2 * i] = static_cast<unsigned char>(q & 0xff);
+            }
+            else
+                row[1 + i] = quantize8(v, int(i / 4), y, int(i % 4), dither);
+        }
+    });
+    // Filter Up: smooth maps become runs of small deltas, which deflate far better and faster at low levels.
+    tbb::parallel_for(0, h, [&](int y) {
+        const unsigned char* row = raw.data() + stride * size_t(y);
+        unsigned char* out = filtered.data() + stride * size_t(y);
+        out[0] = y ? 2 : 0;
+        if (!y)
+        {
+            std::memcpy(out + 1, row + 1, stride - 1);
+            return;
+        }
+        const unsigned char* up = row - stride;
+        for (size_t i = 1; i < stride; ++i)
+            out[i] = static_cast<unsigned char>(row[i] - up[i]);
+    });
+    raw = {};
+    const std::vector<unsigned char> packed = deflateParallel(filtered.data(), filtered.size(), level);
+    const mz_ulong packedSize = mz_ulong(packed.size());
+
+    std::vector<unsigned char> out = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
+    std::vector<unsigned char> ihdr;
+    putBe32(ihdr, uint32_t(w));
+    putBe32(ihdr, uint32_t(h));
+    ihdr.insert(ihdr.end(), {static_cast<unsigned char>(bits), 6, 0, 0, 0});
+    chunk(out, "IHDR", ihdr.data(), ihdr.size());
+    chunk(out, "IDAT", packed.data(), packedSize);
+    chunk(out, "IEND", nullptr, 0);
+    std::ofstream f(path, std::ios::binary);
+    f.write(reinterpret_cast<const char*>(out.data()), std::streamsize(out.size()));
+    if (!f)
+        throw std::runtime_error("can't write " + path.string());
+}
+
+Image readPngImpl(const fs::path& path, std::string* err)
+{
+    auto fail = [&](const std::string& why) {
+        if (err)
+            *err = path.string() + ": " + why;
+        return Image{};
+    };
+    std::ifstream f(path, std::ios::binary);
+    std::vector<unsigned char> data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (data.size() < 8 || data[1] != 'P' || data[2] != 'N' || data[3] != 'G')
+        return fail("not a PNG");
+    int w = 0, h = 0, bits = 0;
+    std::vector<unsigned char> idat;
+    for (size_t at = 8; at + 12 <= data.size();)
+    {
+        const uint32_t len = be32(&data[at]);
+        if (at + 12 + len > data.size())
+            return fail("truncated");
+        const std::string type(reinterpret_cast<const char*>(&data[at + 4]), 4);
+        const unsigned char* body = &data[at + 8];
+        if (type == "IHDR")
+        {
+            w = int(be32(body));
+            h = int(be32(body + 4));
+            bits = body[8];
+            if (body[9] != 6 || (bits != 8 && bits != 16) || body[12] != 0)
+                return fail("only non-interlaced RGBA 8 or 16 bit");
+        }
+        else if (type == "IDAT")
+            idat.insert(idat.end(), body, body + len);
+        at += 12 + len;
+    }
+    if (w <= 0 || h <= 0)
+        return fail("no IHDR");
+    const size_t bpp = size_t(bits / 8) * 4;
+    const size_t stride = 1 + size_t(w) * bpp;
+    std::vector<unsigned char> raw(stride * size_t(h));
+    mz_ulong rawSize = mz_ulong(raw.size());
+    if (mz_uncompress(raw.data(), &rawSize, idat.data(), mz_ulong(idat.size())) != MZ_OK || rawSize != raw.size())
+        return fail("bad image data");
+
+    std::vector<unsigned char> prev(stride - 1, 0), cur(stride - 1);
+    Image img{w, h, std::vector<float>(size_t(w) * size_t(h) * 4)};
+    for (int y = 0; y < h; ++y)
+    {
+        const unsigned char* row = raw.data() + stride * size_t(y);
+        const unsigned char filter = row[0];
+        for (size_t i = 0; i < stride - 1; ++i)
+        {
+            const int a = i >= bpp ? cur[i - bpp] : 0, b = prev[i], c = i >= bpp ? prev[i - bpp] : 0;
+            int pred = 0;
+            switch (filter)
+            {
+            case 1: pred = a; break;
+            case 2: pred = b; break;
+            case 3: pred = (a + b) / 2; break;
+            case 4:
+            {
+                const int p = a + b - c, pa = std::abs(p - a), pb = std::abs(p - b), pc = std::abs(p - c);
+                pred = pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+                break;
+            }
+            default: break;
+            }
+            cur[i] = static_cast<unsigned char>(row[1 + i] + pred);
+        }
+        for (size_t i = 0; i < size_t(w) * 4; ++i)
+            img.rgba[size_t(y) * size_t(w) * 4 + i] =
+                bits == 16 ? float((cur[2 * i] << 8) | cur[2 * i + 1]) / 65535.0f : float(cur[i]) / 255.0f;
+        prev.swap(cur);
+    }
+    return img;
+}
+
+// EXR -----------------------------------------------------------------------------------------------------------
+// Single-part scanline files: half RGBA (channels stored A, B, G, R as the format sorts them), ZIP blocks of 16 lines.
+
+constexpr int kExrZipLines = 16;
+constexpr uint32_t kExrHalf = 1;
+constexpr uint32_t kExrFloat = 2;
+
+void putLe32(std::vector<unsigned char>& out, uint32_t v)
+{
+    out.insert(out.end(), {static_cast<unsigned char>(v), static_cast<unsigned char>(v >> 8), static_cast<unsigned char>(v >> 16),
+                           static_cast<unsigned char>(v >> 24)});
+}
+
+uint32_t le32(const unsigned char* p) { return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24; }
+
+void exrAttr(std::vector<unsigned char>& out, const char* name, const char* type, const std::vector<unsigned char>& value)
+{
+    out.insert(out.end(), name, name + std::strlen(name) + 1);
+    out.insert(out.end(), type, type + std::strlen(type) + 1);
+    putLe32(out, uint32_t(value.size()));
+    out.insert(out.end(), value.begin(), value.end());
+}
+
+/** OpenEXR's ZIP preprocessing: bytes split into even and odd halves, then delta coded. */
+std::vector<unsigned char> exrPredict(const std::vector<unsigned char>& raw)
+{
+    std::vector<unsigned char> t(raw.size());
+    const size_t half = (raw.size() + 1) / 2;
+    for (size_t i = 0; i < raw.size(); ++i)
+        t[i % 2 ? half + i / 2 : i / 2] = raw[i];
+    for (size_t i = t.size(); i-- > 1;)
+        t[i] = static_cast<unsigned char>(int(t[i]) - int(t[i - 1]) + 128 + 256);
+    return t;
+}
+
+std::vector<unsigned char> exrUnpredict(std::vector<unsigned char> t)
+{
+    for (size_t i = 1; i < t.size(); ++i)
+        t[i] = static_cast<unsigned char>(int(t[i - 1]) + int(t[i]) - 128);
+    std::vector<unsigned char> raw(t.size());
+    const size_t half = (t.size() + 1) / 2;
+    for (size_t i = 0; i < raw.size(); ++i)
+        raw[i] = t[i % 2 ? half + i / 2 : i / 2];
+    return raw;
+}
+
+void writeExrImpl(const fs::path& path, int w, int h, std::span<const float> rgba, bool full, int level)
+{
+    LILA_ZONE();
+
+    std::vector<unsigned char> out = {0x76, 0x2f, 0x31, 0x01, 2, 0, 0, 0};
+    std::vector<unsigned char> chlist;
+    for (char c : {'A', 'B', 'G', 'R'})
+    {
+        chlist.insert(chlist.end(), {static_cast<unsigned char>(c), 0});
+        putLe32(chlist, full ? kExrFloat : kExrHalf);
+        chlist.insert(chlist.end(), {0, 0, 0, 0});
+        putLe32(chlist, 1);
+        putLe32(chlist, 1);
+    }
+    chlist.push_back(0);
+    exrAttr(out, "channels", "chlist", chlist);
+    exrAttr(out, "compression", "compression", {3});
+    std::vector<unsigned char> box;
+    for (int v : {0, 0, w - 1, h - 1})
+        putLe32(box, uint32_t(v));
+    exrAttr(out, "dataWindow", "box2i", box);
+    exrAttr(out, "displayWindow", "box2i", box);
+    exrAttr(out, "lineOrder", "lineOrder", {0});
+    std::vector<unsigned char> one;
+    putLe32(one, std::bit_cast<uint32_t>(1.0f));
+    exrAttr(out, "pixelAspectRatio", "float", one);
+    exrAttr(out, "screenWindowCenter", "v2f", {0, 0, 0, 0, 0, 0, 0, 0});
+    exrAttr(out, "screenWindowWidth", "float", one);
+    out.push_back(0);
+
+    const int blocks = (h + kExrZipLines - 1) / kExrZipLines;
+    const size_t tableAt = out.size();
+    out.resize(out.size() + size_t(blocks) * 8);
+    static constexpr int kChannelOf[4] = {3, 2, 1, 0};
+    struct Block
+    {
+        std::vector<unsigned char> raw, packed;
+        mz_ulong size = 0;
+    };
+    std::vector<Block> zipped(static_cast<size_t>(blocks));
+    tbb::parallel_for(0, blocks, [&](int b) {
+        const int y0 = b * kExrZipLines, y1 = std::min(h, y0 + kExrZipLines);
+        std::vector<unsigned char> raw;
+        raw.reserve(size_t(y1 - y0) * size_t(w) * (full ? 16 : 8));
+        for (int y = y0; y < y1; ++y)
+            for (int c : kChannelOf)
+                for (int x = 0; x < w; ++x)
+                {
+                    const float f = rgba[(size_t(y) * size_t(w) + size_t(x)) * 4 + size_t(c)];
+                    if (full)
+                        putLe32(raw, std::bit_cast<uint32_t>(f));
+                    else
+                    {
+                        const uint16_t v = uint16_t(glm::packHalf1x16(f));
+                        raw.insert(raw.end(), {static_cast<unsigned char>(v), static_cast<unsigned char>(v >> 8)});
+                    }
+                }
+        const std::vector<unsigned char> pre = exrPredict(raw);
+        mz_ulong size = mz_compressBound(mz_ulong(pre.size()));
+        std::vector<unsigned char> packed(size);
+        if (mz_compress2(packed.data(), &size, pre.data(), mz_ulong(pre.size()), std::clamp(level, 1, 9)) != MZ_OK)
+            throw std::runtime_error("can't compress " + path.string());
+        zipped[size_t(b)] = {std::move(raw), std::move(packed), size};
+    });
+    for (int b = 0; b < blocks; ++b)
+    {
+        const int y0 = b * kExrZipLines;
+        const std::vector<unsigned char>& raw = zipped[size_t(b)].raw;
+        const std::vector<unsigned char>& packed = zipped[size_t(b)].packed;
+        const mz_ulong size = zipped[size_t(b)].size;
+        // A block that does not shrink is stored raw, which readers tell apart by its size.
+        const bool stored = size >= raw.size();
+        const uint64_t at = out.size();
+        for (int i = 0; i < 8; ++i)
+            out[tableAt + size_t(b) * 8 + size_t(i)] = static_cast<unsigned char>(at >> (8 * i));
+        putLe32(out, uint32_t(y0));
+        putLe32(out, uint32_t(stored ? raw.size() : size));
+        if (stored)
+            out.insert(out.end(), raw.begin(), raw.end());
+        else
+            out.insert(out.end(), packed.begin(), packed.begin() + std::ptrdiff_t(size));
+    }
+    std::ofstream f(path, std::ios::binary);
+    f.write(reinterpret_cast<const char*>(out.data()), std::streamsize(out.size()));
+    if (!f)
+        throw std::runtime_error("can't write " + path.string());
+}
+
+Image readExrImpl(const fs::path& path, std::string* err)
+{
+    auto fail = [&](const std::string& why) {
+        if (err)
+            *err = path.string() + ": " + why;
+        return Image{};
+    };
+    std::ifstream f(path, std::ios::binary);
+    std::vector<unsigned char> d((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (d.size() < 8 || le32(d.data()) != 20000630u)
+        return fail("not an EXR");
+    size_t at = 8;
+    int w = 0, h = 0, compression = -1;
+    std::vector<std::string> channels;
+    std::vector<uint32_t> types;
+    auto cstr = [&]() {
+        std::string s;
+        while (at < d.size() && d[at])
+            s += char(d[at++]);
+        ++at;
+        return s;
+    };
+    for (;;)
+    {
+        if (at >= d.size())
+            return fail("truncated header");
+        if (d[at] == 0)
+        {
+            ++at;
+            break;
+        }
+        const std::string name = cstr(), type = cstr();
+        if (at + 4 > d.size())
+            return fail("truncated header");
+        const uint32_t size = le32(&d[at]);
+        at += 4;
+        if (at + size > d.size())
+            return fail("truncated header");
+        const unsigned char* v = &d[at];
+        if (name == "channels")
+        {
+            for (size_t p = 0; p < size && v[p];)
+            {
+                std::string c;
+                while (p < size && v[p])
+                    c += char(v[p++]);
+                ++p;
+                const uint32_t pixelType = le32(v + p);
+                if (pixelType != kExrHalf && pixelType != kExrFloat)
+                    return fail("only half or float channels");
+                channels.push_back(c);
+                types.push_back(pixelType);
+                p += 16;
+            }
+        }
+        else if (name == "compression")
+            compression = v[0];
+        else if (name == "dataWindow")
+        {
+            w = int(le32(v + 8)) - int(le32(v)) + 1;
+            h = int(le32(v + 12)) - int(le32(v + 4)) + 1;
+        }
+        at += size;
+    }
+    if (w <= 0 || h <= 0 || (compression != 0 && compression != 3))
+        return fail("only uncompressed or ZIP scanline images");
+    const int lines = compression == 3 ? kExrZipLines : 1;
+    const int blocks = (h + lines - 1) / lines;
+    Image img{w, h, std::vector<float>(size_t(w) * size_t(h) * 4, 0.0f)};
+    if (std::ranges::find(channels, std::string("A")) == channels.end())
+        for (size_t i = 3; i < img.rgba.size(); i += 4)
+            img.rgba[i] = 1.0f;
+    for (int b = 0; b < blocks; ++b)
+    {
+        const size_t entry = at + size_t(b) * 8;
+        if (entry + 8 > d.size())
+            return fail("truncated offsets");
+        uint64_t off = 0;
+        for (int i = 0; i < 8; ++i)
+            off |= uint64_t(d[entry + size_t(i)]) << (8 * i);
+        if (off + 8 > d.size())
+            return fail("bad offset");
+        const int y0 = int(le32(&d[off]));
+        const uint32_t size = le32(&d[off + 4]);
+        const int y1 = std::min(h, y0 + lines);
+        size_t pixelBytes = 0;
+        for (uint32_t t : types)
+            pixelBytes += t == kExrFloat ? 4 : 2;
+        const size_t rawSize = size_t(y1 - y0) * size_t(w) * pixelBytes;
+        if (off + 8 + size > d.size())
+            return fail("truncated block");
+        std::vector<unsigned char> raw(d.begin() + std::ptrdiff_t(off + 8), d.begin() + std::ptrdiff_t(off + 8 + size));
+        if (size < rawSize)
+        {
+            std::vector<unsigned char> pre(rawSize);
+            mz_ulong got = mz_ulong(rawSize);
+            if (mz_uncompress(pre.data(), &got, raw.data(), mz_ulong(raw.size())) != MZ_OK || got != rawSize)
+                return fail("bad block data");
+            raw = exrUnpredict(std::move(pre));
+        }
+        if (raw.size() < rawSize)
+            return fail("short block");
+        size_t p = 0;
+        for (int y = y0; y < y1; ++y)
+            for (size_t ci = 0; ci < channels.size(); ++ci)
+            {
+                const std::string& c = channels[ci];
+                const int slot = c == "R" ? 0 : c == "G" ? 1 : c == "B" ? 2 : c == "A" ? 3 : -1;
+                const bool full = types[ci] == kExrFloat;
+                for (int x = 0; x < w; ++x, p += full ? 4 : 2)
+                    if (slot >= 0)
+                        img.rgba[(size_t(y) * size_t(w) + size_t(x)) * 4 + size_t(slot)] =
+                            full ? std::bit_cast<float>(le32(&raw[p])) : glm::unpackHalf1x16(uint16_t(raw[p] | raw[p + 1] << 8));
+            }
+    }
+    return img;
+}
+
+
+// TIFF ----------------------------------------------------------------------------------------------------------
+// Little-endian baseline files: one IFD, chunky RGBA strips of about 1 MB.
+
+constexpr uint16_t kTiffShort = 3;
+constexpr uint16_t kTiffLong = 4;
+
+void putLe16(std::vector<unsigned char>& out, uint16_t v) { out.insert(out.end(), {static_cast<unsigned char>(v), static_cast<unsigned char>(v >> 8)}); }
+
+void putBe16(std::vector<unsigned char>& out, uint16_t v) { out.insert(out.end(), {static_cast<unsigned char>(v >> 8), static_cast<unsigned char>(v)}); }
+
+uint16_t be16(const unsigned char* p) { return uint16_t(p[0] << 8 | p[1]); }
+
+uint16_t quantize16(float v) { return static_cast<uint16_t>(std::lround(std::clamp(v, 0.0f, 1.0f) * 65535.0f)); }
+
+std::vector<unsigned char> readAll(const fs::path& path)
+{
+    std::ifstream f(path, std::ios::binary);
+    return std::vector<unsigned char>((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+}
+
+void writeFile(const fs::path& path, const std::vector<unsigned char>& out)
+{
+    std::ofstream f(path, std::ios::binary);
+    f.write(reinterpret_cast<const char*>(out.data()), std::streamsize(out.size()));
+    if (!f)
+        throw std::runtime_error("can't write " + path.string());
+}
+
+void writeTiffImpl(const fs::path& path, int w, int h, std::span<const float> rgba, int bits, bool deflate, bool dither, int level)
+{
+    LILA_ZONE();
+
+    const size_t bytes = size_t(bits / 8);
+    const size_t rowBytes = size_t(w) * 4 * bytes;
+    const int rowsPerStrip = std::clamp(int((size_t(1) << 20) / rowBytes), 1, h);
+    const int strips = (h + rowsPerStrip - 1) / rowsPerStrip;
+    const bool predict = deflate && bits != 32;
+
+    std::vector<unsigned char> out = {'I', 'I', 42, 0, 0, 0, 0, 0};
+    std::vector<uint32_t> offsets, counts;
+    std::vector<unsigned char> raw;
+    std::vector<uint32_t> row(size_t(w) * 4);
+    for (int s = 0; s < strips; ++s)
+    {
+        const int y0 = s * rowsPerStrip, y1 = std::min(h, y0 + rowsPerStrip);
+        raw.clear();
+        raw.reserve(size_t(y1 - y0) * rowBytes);
+        for (int y = y0; y < y1; ++y)
+        {
+            const float* src = rgba.data() + size_t(y) * size_t(w) * 4;
+            if (bits == 32)
+            {
+                for (size_t i = 0; i < row.size(); ++i)
+                    putLe32(raw, std::bit_cast<uint32_t>(src[i]));
+                continue;
+            }
+            for (size_t i = 0; i < row.size(); ++i)
+                row[i] = bits == 8 ? quantize8(src[i], int(i / 4), y, int(i % 4), dither) : quantize16(src[i]);
+            // Horizontal differencing per sample (TIFF predictor 2), modulo the sample size.
+            if (predict)
+                for (size_t i = row.size(); i-- > 4;)
+                    row[i] = (row[i] - row[i - 4]) & (bits == 8 ? 0xffu : 0xffffu);
+            for (uint32_t v : row)
+                if (bits == 8)
+                    raw.push_back(static_cast<unsigned char>(v));
+                else
+                    putLe16(raw, uint16_t(v));
+        }
+        offsets.push_back(uint32_t(out.size()));
+        if (deflate)
+        {
+            mz_ulong size = mz_compressBound(mz_ulong(raw.size()));
+            std::vector<unsigned char> packed(size);
+            if (mz_compress2(packed.data(), &size, raw.data(), mz_ulong(raw.size()), std::clamp(level, 1, 9)) != MZ_OK)
+                throw std::runtime_error("can't compress " + path.string());
+            out.insert(out.end(), packed.begin(), packed.begin() + std::ptrdiff_t(size));
+            counts.push_back(uint32_t(size));
+        }
+        else
+        {
+            out.insert(out.end(), raw.begin(), raw.end());
+            counts.push_back(uint32_t(raw.size()));
+        }
+        if (out.size() & 1)
+            out.push_back(0);
+        if (out.size() > 0xf0000000u)
+            throw std::runtime_error("too large for a TIFF: " + path.string());
+    }
+
+    struct Entry
+    {
+        uint16_t tag, type;
+        std::vector<uint32_t> values;
+    };
+    const uint16_t format = bits == 32 ? 3 : 1;
+    std::vector<Entry> entries = {
+        {256, kTiffLong, {uint32_t(w)}},
+        {257, kTiffLong, {uint32_t(h)}},
+        {258, kTiffShort, {uint32_t(bits), uint32_t(bits), uint32_t(bits), uint32_t(bits)}},
+        {259, kTiffShort, {deflate ? 8u : 1u}},
+        {262, kTiffShort, {2}},
+        {273, kTiffLong, offsets},
+        {277, kTiffShort, {4}},
+        {278, kTiffLong, {uint32_t(rowsPerStrip)}},
+        {279, kTiffLong, counts},
+        {284, kTiffShort, {1}},
+        {317, kTiffShort, {predict ? 2u : 1u}},
+        {338, kTiffShort, {2}},
+        {339, kTiffShort, {format, format, format, format}},
+    };
+    // Values over 4 bytes go before the IFD, which then starts on a word boundary.
+    std::vector<uint32_t> at(entries.size(), 0);
+    for (size_t e = 0; e < entries.size(); ++e)
+    {
+        const Entry& en = entries[e];
+        if (en.values.size() * (en.type == kTiffShort ? 2 : 4) <= 4)
+            continue;
+        at[e] = uint32_t(out.size());
+        for (uint32_t v : en.values)
+            en.type == kTiffShort ? putLe16(out, uint16_t(v)) : putLe32(out, v);
+        if (out.size() & 1)
+            out.push_back(0);
+    }
+    const uint32_t ifd = uint32_t(out.size());
+    putLe16(out, uint16_t(entries.size()));
+    for (size_t e = 0; e < entries.size(); ++e)
+    {
+        const Entry& en = entries[e];
+        putLe16(out, en.tag);
+        putLe16(out, en.type);
+        putLe32(out, uint32_t(en.values.size()));
+        if (at[e])
+            putLe32(out, at[e]);
+        else if (en.type == kTiffShort)
+        {
+            putLe16(out, uint16_t(en.values[0]));
+            putLe16(out, en.values.size() > 1 ? uint16_t(en.values[1]) : uint16_t(0));
+        }
+        else
+            putLe32(out, en.values[0]);
+    }
+    putLe32(out, 0);
+    for (int i = 0; i < 4; ++i)
+        out[4 + size_t(i)] = static_cast<unsigned char>(ifd >> (8 * i));
+    writeFile(path, out);
+}
+
+Image readTiffImpl(const fs::path& path, std::string* err)
+{
+    auto fail = [&](const std::string& why) {
+        if (err)
+            *err = path.string() + ": " + why;
+        return Image{};
+    };
+    const std::vector<unsigned char> d = readAll(path);
+    if (d.size() < 8 || !((d[0] == 'I' && d[1] == 'I') || (d[0] == 'M' && d[1] == 'M')))
+        return fail("not a TIFF");
+    const bool le = d[0] == 'I';
+    auto u16 = [&](size_t at) { return le ? uint16_t(d[at] | d[at + 1] << 8) : be16(&d[at]); };
+    auto u32 = [&](size_t at) { return le ? le32(&d[at]) : be32(&d[at]); };
+    if (u16(2) != 42)
+        return fail("not a TIFF");
+    const size_t ifd = u32(4);
+    if (ifd + 2 > d.size())
+        return fail("truncated");
+    const size_t n = u16(ifd);
+    if (ifd + 2 + n * 12 > d.size())
+        return fail("truncated IFD");
+    std::map<uint16_t, std::vector<uint32_t>> tags;
+    for (size_t e = 0; e < n; ++e)
+    {
+        const size_t p = ifd + 2 + e * 12;
+        const uint16_t tag = u16(p), type = u16(p + 2);
+        const uint32_t count = u32(p + 4);
+        const size_t size = type == kTiffShort ? 2 : type == kTiffLong ? 4 : 0;
+        if (!size)
+            continue;
+        const size_t base = size * count <= 4 ? p + 8 : u32(p + 8);
+        if (base + size * count > d.size())
+            return fail("bad tag offset");
+        std::vector<uint32_t> v(count);
+        for (uint32_t i = 0; i < count; ++i)
+            v[i] = size == 2 ? u16(base + i * 2) : u32(base + i * 4);
+        tags[tag] = std::move(v);
+    }
+    auto one = [&](uint16_t tag, uint32_t fallback) { return tags.contains(tag) && !tags[tag].empty() ? tags[tag][0] : fallback; };
+    const int w = int(one(256, 0)), h = int(one(257, 0));
+    const uint32_t spp = one(277, 1), compression = one(259, 1), predictor = one(317, 1), bits = one(258, 1), format = one(339, 1);
+    if (w <= 0 || h <= 0 || (spp != 3 && spp != 4) || one(262, 2) != 2 || one(284, 1) != 1)
+        return fail("only chunky RGB or RGBA");
+    if (!((bits == 8 || bits == 16) && format == 1) && !(bits == 32 && format == 3))
+        return fail("only 8/16 bit unsigned or 32 bit float samples");
+    if (compression != 1 && compression != 8 && compression != 32946)
+        return fail("only uncompressed or deflate");
+    const std::vector<uint32_t>& offsets = tags[273];
+    const std::vector<uint32_t>& counts = tags[279];
+    const int rowsPerStrip = int(std::min<uint32_t>(one(278, uint32_t(h)), uint32_t(h)));
+    if (offsets.empty() || offsets.size() != counts.size() || rowsPerStrip <= 0)
+        return fail("bad strips");
+    const size_t bytes = bits / 8;
+    const size_t rowBytes = size_t(w) * spp * bytes;
+    Image img{w, h, std::vector<float>(size_t(w) * size_t(h) * 4, 1.0f)};
+    for (size_t s = 0; s < offsets.size(); ++s)
+    {
+        const int y0 = int(s) * rowsPerStrip, y1 = std::min(h, y0 + rowsPerStrip);
+        if (y0 >= h)
+            break;
+        if (size_t(offsets[s]) + counts[s] > d.size())
+            return fail("truncated strip");
+        std::vector<unsigned char> raw(size_t(y1 - y0) * rowBytes);
+        if (compression == 1)
+        {
+            if (counts[s] < raw.size())
+                return fail("short strip");
+            std::memcpy(raw.data(), &d[offsets[s]], raw.size());
+        }
+        else
+        {
+            mz_ulong got = mz_ulong(raw.size());
+            if (mz_uncompress(raw.data(), &got, &d[offsets[s]], mz_ulong(counts[s])) != MZ_OK || got != raw.size())
+                return fail("bad strip data");
+        }
+        for (int y = y0; y < y1; ++y)
+        {
+            const unsigned char* r = raw.data() + size_t(y - y0) * rowBytes;
+            std::vector<uint32_t> v(size_t(w) * spp);
+            for (size_t i = 0; i < v.size(); ++i)
+                v[i] = bytes == 1 ? r[i] : bytes == 2 ? (le ? uint32_t(r[2 * i] | r[2 * i + 1] << 8) : be16(r + 2 * i)) : (le ? le32(r + 4 * i) : be32(r + 4 * i));
+            if (predictor == 2 && bits != 32)
+                for (size_t i = spp; i < v.size(); ++i)
+                    v[i] = (v[i] + v[i - spp]) & (bits == 8 ? 0xffu : 0xffffu);
+            for (int x = 0; x < w; ++x)
+                for (uint32_t c = 0; c < spp; ++c)
+                {
+                    const uint32_t q = v[size_t(x) * spp + c];
+                    img.rgba[(size_t(y) * size_t(w) + size_t(x)) * 4 + c] =
+                        bits == 32 ? std::bit_cast<float>(q) : bits == 16 ? float(q) / 65535.0f : float(q) / 255.0f;
+                }
+        }
+    }
+    return img;
+}
+
+// PSD -----------------------------------------------------------------------------------------------------------
+// Version 1 RGB documents, raw (uncompressed) channel data, big-endian.
+
+constexpr int kPsdMaxSize = 30000;
+constexpr int16_t kPsdChannels[4] = {-1, 0, 1, 2};
+
+void writePsdImpl(const fs::path& path, int w, int h, std::span<const Layer> layers, int bits, bool dither)
+{
+    LILA_ZONE();
+
+    const size_t bytes = size_t(bits / 8);
+    const size_t plane = size_t(w) * size_t(h) * bytes;
+    auto channel = [&](std::vector<unsigned char>& out, std::span<const float> rgba, int c) {
+        const size_t start = out.size();
+        out.resize(start + plane);
+        unsigned char* p = out.data() + start;
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x)
+            {
+                const float v = rgba[(size_t(y) * size_t(w) + size_t(x)) * 4 + size_t(c)];
+                if (bytes == 1)
+                    *p++ = quantize8(v, x, y, c, dither);
+                else
+                {
+                    const uint16_t q = quantize16(v);
+                    *p++ = static_cast<unsigned char>(q >> 8);
+                    *p++ = static_cast<unsigned char>(q);
+                }
+            }
+    };
+
+    // Layer records bottom first, so the first layer given ends up on top.
+    std::vector<unsigned char> info;
+    putBe16(info, uint16_t(layers.size()));
+    for (size_t k = layers.size(); k-- > 0;)
+    {
+        const Layer& l = layers[k];
+        putBe32(info, 0);
+        putBe32(info, 0);
+        putBe32(info, uint32_t(h));
+        putBe32(info, uint32_t(w));
+        putBe16(info, 4);
+        for (int16_t id : kPsdChannels)
+        {
+            putBe16(info, uint16_t(id));
+            putBe32(info, uint32_t(2 + plane));
+        }
+        info.insert(info.end(), {'8', 'B', 'I', 'M', 'n', 'o', 'r', 'm', 255, 0, 0, 0});
+        std::string name = l.name.substr(0, 255);
+        std::vector<unsigned char> pascal = {static_cast<unsigned char>(name.size())};
+        pascal.insert(pascal.end(), name.begin(), name.end());
+        while (pascal.size() % 4)
+            pascal.push_back(0);
+        putBe32(info, uint32_t(8 + pascal.size()));
+        putBe32(info, 0); // layer mask data
+        putBe32(info, 0); // blending ranges
+        info.insert(info.end(), pascal.begin(), pascal.end());
+    }
+    for (size_t k = layers.size(); k-- > 0;)
+        for (int16_t id : kPsdChannels)
+        {
+            putBe16(info, 0);
+            channel(info, layers[k].rgba, id < 0 ? 3 : id);
+        }
+
+    std::vector<unsigned char> section;
+    if (bits == 8)
+    {
+        if (info.size() & 1)
+            info.push_back(0);
+        putBe32(section, uint32_t(info.size()));
+        section.insert(section.end(), info.begin(), info.end());
+        putBe32(section, 0); // global layer mask
+    }
+    else
+    {
+        while (info.size() % 4)
+            info.push_back(0);
+        putBe32(section, 0);
+        putBe32(section, 0);
+        section.insert(section.end(), {'8', 'B', 'I', 'M', 'L', 'r', '1', '6'});
+        putBe32(section, uint32_t(info.size()));
+        section.insert(section.end(), info.begin(), info.end());
+    }
+    if (section.size() + plane * 4 * (layers.size() + 1) > 0xf0000000u)
+        throw std::runtime_error("too large for a PSD: " + path.string());
+
+    std::vector<unsigned char> out = {'8', 'B', 'P', 'S', 0, 1, 0, 0, 0, 0, 0, 0};
+    putBe16(out, 4);
+    putBe32(out, uint32_t(h));
+    putBe32(out, uint32_t(w));
+    putBe16(out, uint16_t(bits));
+    putBe16(out, 3);
+    putBe32(out, 0); // colour mode data
+    putBe32(out, 0); // image resources
+    putBe32(out, uint32_t(section.size()));
+    out.insert(out.end(), section.begin(), section.end());
+    putBe16(out, 0);
+    for (int c = 0; c < 4; ++c)
+        channel(out, layers.front().rgba, c);
+    writeFile(path, out);
+}
+
+struct PsdFile
+{
+    int width = 0;
+    int height = 0;
+    int bits = 0;
+    std::vector<std::pair<std::string, Image>> layers;
+    Image composite;
+};
+
+bool parsePsd(const fs::path& path, PsdFile& out, std::string* err, bool wantLayers)
+{
+    auto fail = [&](const std::string& why) {
+        if (err)
+            *err = path.string() + ": " + why;
+        return false;
+    };
+    const std::vector<unsigned char> d = readAll(path);
+    if (d.size() < 26 || std::memcmp(d.data(), "8BPS", 4) != 0 || be16(&d[4]) != 1)
+        return fail("not a PSD");
+    const int channels = be16(&d[12]);
+    const int h = int(be32(&d[14])), w = int(be32(&d[18])), bits = be16(&d[22]);
+    if (be16(&d[24]) != 3 || (bits != 8 && bits != 16) || channels < 3 || w <= 0 || h <= 0)
+        return fail("only 8/16 bit RGB");
+    out.width = w;
+    out.height = h;
+    out.bits = bits;
+    const size_t bytes = size_t(bits / 8);
+    size_t at = 26;
+    for (int skip = 0; skip < 2; ++skip)
+    {
+        if (at + 4 > d.size())
+            return fail("truncated");
+        at += 4 + be32(&d[at]);
+    }
+    if (at + 4 > d.size())
+        return fail("truncated");
+    const size_t sectionEnd = at + 4 + be32(&d[at]);
+    if (sectionEnd > d.size())
+        return fail("truncated layers");
+
+    auto sample = [&](const unsigned char* p) { return bytes == 1 ? float(*p) / 255.0f : float(be16(p)) / 65535.0f; };
+    auto parseLayers = [&](size_t p, size_t end) -> bool {
+        if (p + 2 > end)
+            return false;
+        const int count = std::abs(int16_t(be16(&d[p])));
+        p += 2;
+        struct Rec
+        {
+            std::string name;
+            int top, left, bottom, right;
+            std::vector<std::pair<int16_t, uint32_t>> channels;
+        };
+        std::vector<Rec> recs;
+        for (int i = 0; i < count; ++i)
+        {
+            if (p + 18 > end)
+                return false;
+            Rec r;
+            r.top = int(be32(&d[p]));
+            r.left = int(be32(&d[p + 4]));
+            r.bottom = int(be32(&d[p + 8]));
+            r.right = int(be32(&d[p + 12]));
+            const int nc = be16(&d[p + 16]);
+            p += 18;
+            for (int c = 0; c < nc; ++c, p += 6)
+            {
+                if (p + 6 > end)
+                    return false;
+                r.channels.emplace_back(int16_t(be16(&d[p])), be32(&d[p + 2]));
+            }
+            if (p + 16 > end)
+                return false;
+            const size_t extra = be32(&d[p + 12]);
+            const size_t ex = p + 16;
+            p = ex + extra;
+            if (p > end)
+                return false;
+            size_t q = ex;
+            q += 4 + be32(&d[q]);
+            q += 4 + be32(&d[q]);
+            if (q < p)
+                r.name.assign(reinterpret_cast<const char*>(&d[q + 1]), std::min<size_t>(d[q], p - q - 1));
+            recs.push_back(std::move(r));
+        }
+        for (const Rec& r : recs)
+        {
+            const int lw = r.right - r.left, lh = r.bottom - r.top;
+            Image img{w, h, std::vector<float>(size_t(w) * size_t(h) * 4, 0.0f)};
+            bool hasAlpha = false;
+            for (const auto& [id, len] : r.channels)
+            {
+                if (p + len > end || len < 2)
+                    return false;
+                if (be16(&d[p]) != 0 || size_t(len) < 2 + size_t(lw) * size_t(lh) * bytes)
+                    return false;
+                const int slot = id == -1 ? 3 : id;
+                hasAlpha |= id == -1;
+                if (slot >= 0 && slot < 4)
+                    for (int y = 0; y < lh; ++y)
+                        for (int x = 0; x < lw; ++x)
+                        {
+                            const int X = x + r.left, Y = y + r.top;
+                            if (X >= 0 && X < w && Y >= 0 && Y < h)
+                                img.rgba[(size_t(Y) * size_t(w) + size_t(X)) * 4 + size_t(slot)] =
+                                    sample(&d[p + 2 + (size_t(y) * size_t(lw) + size_t(x)) * bytes]);
+                        }
+                p += len;
+            }
+            if (!hasAlpha)
+                for (size_t i = 3; i < img.rgba.size(); i += 4)
+                    img.rgba[i] = 1.0f;
+            out.layers.emplace_back(r.name, std::move(img));
+        }
+        return true;
+    };
+
+    if (wantLayers)
+    {
+        size_t p = at + 4;
+        const size_t infoLen = be32(&d[p]);
+        if (infoLen && !parseLayers(p + 4, p + 4 + infoLen))
+            return fail("bad layer data (only uncompressed layers)");
+        p += 4 + infoLen;
+        if (p + 4 <= sectionEnd)
+            p += 4 + be32(&d[p]);
+        while (p + 12 <= sectionEnd)
+        {
+            const size_t len = be32(&d[p + 8]);
+            if (std::memcmp(&d[p + 4], "Lr16", 4) == 0 && !parseLayers(p + 12, std::min(sectionEnd, p + 12 + len)))
+                return fail("bad 16-bit layer data (only uncompressed layers)");
+            p += 12 + len;
+        }
+    }
+
+    at = sectionEnd;
+    const size_t plane = size_t(w) * size_t(h) * bytes;
+    if (at + 2 > d.size() || be16(&d[at]) != 0 || at + 2 + plane * size_t(channels) > d.size())
+        return fail("only an uncompressed flattened image");
+    at += 2;
+    out.composite = Image{w, h, std::vector<float>(size_t(w) * size_t(h) * 4, 1.0f)};
+    for (int c = 0; c < std::min(channels, 4); ++c)
+        for (size_t i = 0; i < size_t(w) * size_t(h); ++i)
+            out.composite.rgba[i * 4 + size_t(c)] = sample(&d[at + size_t(c) * plane + i * bytes]);
+    return true;
+}
+
+void checkSize(const fs::path& path, int w, int h, std::span<const float> rgba)
+{
+    if (w <= 0 || h <= 0 || rgba.size() < size_t(w) * size_t(h) * 4)
+        throw std::runtime_error("bad image size for " + path.string());
+}
+
+std::string lowerExt(const fs::path& p)
+{
+    std::string e = p.extension().string();
+    std::ranges::transform(e, e.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    return e;
+}
+} // namespace
+
+uint8_t quantize8(float v, int x, int y, int c, bool dither)
+{
+    const float s = std::clamp(v, 0.0f, 1.0f) * 255.0f;
+    const float r = std::round(s);
+    if (!dither || std::abs(s - r) < 1e-3f)
+        return static_cast<uint8_t>(r);
+    // Two uniform values from a per-texel hash; their sum minus one is triangular on (-1, 1).
+    auto hash = [](uint32_t h) {
+        h ^= h >> 16;
+        h *= 0x7feb352du;
+        h ^= h >> 15;
+        h *= 0x846ca68bu;
+        h ^= h >> 16;
+        return h;
+    };
+    const uint32_t seed = hash(uint32_t(x) * 0x9e3779b1u ^ hash(uint32_t(y) * 0x85ebca6bu ^ uint32_t(c)));
+    const float a = float(seed & 0xffff) / 65536.0f, b = float(seed >> 16) / 65536.0f;
+    return static_cast<uint8_t>(std::clamp(std::round(s + a + b - 1.0f), 0.0f, 255.0f));
+}
+
+void writePng(const fs::path& path, int width, int height, std::span<const float> rgba, int bits, bool dither, int level)
+{
+    checkSize(path, width, height, rgba);
+    if (bits != 8 && bits != 16)
+        throw std::runtime_error("PNG bit depth must be 8 or 16");
+    writePngImpl(path, width, height, rgba, bits, dither, level);
+}
+
+void writeExr(const fs::path& path, int width, int height, std::span<const float> rgba, int bits, int level)
+{
+    checkSize(path, width, height, rgba);
+    if (bits != 16 && bits != 32)
+        throw std::runtime_error("EXR bit depth must be 16 (half) or 32 (float)");
+    writeExrImpl(path, width, height, rgba, bits == 32, level);
+}
+
+void writeTga(const fs::path& path, int width, int height, std::span<const float> rgba, bool dither)
+{
+    LILA_ZONE();
+
+    checkSize(path, width, height, rgba);
+    std::vector<unsigned char> out(18 + size_t(width) * size_t(height) * 4);
+    out[2] = 2; // uncompressed true colour
+    out[12] = static_cast<unsigned char>(width & 0xff);
+    out[13] = static_cast<unsigned char>(width >> 8);
+    out[14] = static_cast<unsigned char>(height & 0xff);
+    out[15] = static_cast<unsigned char>(height >> 8);
+    out[16] = 32;
+    out[17] = 0x28; // 8 alpha bits, top-left origin
+    unsigned char* px = out.data() + 18;
+    for (size_t i = 0; i < size_t(width) * size_t(height); ++i)
+    {
+        const int x = int(i % size_t(width)), y = int(i / size_t(width));
+        auto q = [&](int c) { return quantize8(rgba[i * 4 + size_t(c)], x, y, c, dither); };
+        px[i * 4 + 0] = q(2);
+        px[i * 4 + 1] = q(1);
+        px[i * 4 + 2] = q(0);
+        px[i * 4 + 3] = q(3);
+    }
+    writeFile(path, out);
+}
+
+void writeTiff(const fs::path& path, int width, int height, std::span<const float> rgba, int bits, bool deflate, bool dither, int level)
+{
+    checkSize(path, width, height, rgba);
+    if (bits != 8 && bits != 16 && bits != 32)
+        throw std::runtime_error("TIFF bit depth must be 8, 16 or 32 (float)");
+    writeTiffImpl(path, width, height, rgba, bits, deflate, dither, level);
+}
+
+void writePsd(const fs::path& path, int width, int height, std::span<const Layer> layers, int bits, bool dither)
+{
+    if (layers.empty())
+        throw std::runtime_error("a PSD needs at least one layer: " + path.string());
+    for (const Layer& l : layers)
+        checkSize(path, width, height, l.rgba);
+    if (bits != 8 && bits != 16)
+        throw std::runtime_error("PSD bit depth must be 8 or 16");
+    if (width > kPsdMaxSize || height > kPsdMaxSize)
+        throw std::runtime_error("PSD documents are at most 30000 x 30000: " + path.string());
+    writePsdImpl(path, width, height, layers, bits, dither);
+}
+
+void write(const fs::path& path, const Image& image, const WriteOptions& o)
+{
+    const std::string ext = lowerExt(path);
+    if (ext == ".png")
+        writePng(path, image.width, image.height, image.rgba, o.bits >= 16 ? 16 : 8, o.dither, o.level);
+    else if (ext == ".exr")
+        writeExr(path, image.width, image.height, image.rgba, o.bits >= 32 ? 32 : 16, o.level);
+    else if (ext == ".tga")
+        writeTga(path, image.width, image.height, image.rgba, o.dither);
+    else if (ext == ".tif" || ext == ".tiff")
+        writeTiff(path, image.width, image.height, image.rgba, o.bits >= 32 ? 32 : o.bits >= 16 ? 16 : 8, o.compress, o.dither, o.level);
+    else if (ext == ".psd")
+    {
+        const Layer layer{path.stem().string(), image.rgba};
+        writePsd(path, image.width, image.height, std::span(&layer, 1), o.bits >= 16 ? 16 : 8, o.dither);
+    }
+    else
+        throw std::runtime_error("can't write " + ext + " images: " + path.string());
+}
+
+void write(const fs::path& path, const Image& image, int bits) { write(path, image, WriteOptions{.bits = bits}); }
+
+Image readPng(const fs::path& path, std::string* err) { return readPngImpl(path, err); }
+
+Image readExr(const fs::path& path, std::string* err) { return readExrImpl(path, err); }
+
+Image readTga(const fs::path& path, std::string* err)
+{
+    auto fail = [&](const std::string& why) {
+        if (err)
+            *err = path.string() + ": " + why;
+        return Image{};
+    };
+    const std::vector<unsigned char> d = readAll(path);
+    if (d.size() < 18 || d[2] != 2 || d[1] != 0)
+        return fail("only uncompressed true colour TGA");
+    const int w = d[12] | d[13] << 8, h = d[14] | d[15] << 8, bpp = d[16] / 8;
+    const bool topDown = (d[17] & 0x20) != 0;
+    const size_t at = 18 + size_t(d[0]);
+    if ((bpp != 3 && bpp != 4) || w <= 0 || h <= 0 || d.size() < at + size_t(w) * size_t(h) * size_t(bpp))
+        return fail("truncated or unsupported TGA");
+    Image img{w, h, std::vector<float>(size_t(w) * size_t(h) * 4, 1.0f)};
+    for (int y = 0; y < h; ++y)
+    {
+        const int row = topDown ? y : h - 1 - y;
+        for (int x = 0; x < w; ++x)
+        {
+            const unsigned char* p = &d[at + (size_t(row) * size_t(w) + size_t(x)) * size_t(bpp)];
+            float* o = &img.rgba[(size_t(y) * size_t(w) + size_t(x)) * 4];
+            o[0] = float(p[2]) / 255.0f;
+            o[1] = float(p[1]) / 255.0f;
+            o[2] = float(p[0]) / 255.0f;
+            if (bpp == 4)
+                o[3] = float(p[3]) / 255.0f;
+        }
+    }
+    return img;
+}
+
+Image readTiff(const fs::path& path, std::string* err) { return readTiffImpl(path, err); }
+
+Image readPsd(const fs::path& path, std::string* err)
+{
+    PsdFile f;
+    return parsePsd(path, f, err, false) ? std::move(f.composite) : Image{};
+}
+
+std::vector<std::pair<std::string, Image>> readPsdLayers(const fs::path& path, std::string* err)
+{
+    PsdFile f;
+    return parsePsd(path, f, err, true) ? std::move(f.layers) : std::vector<std::pair<std::string, Image>>{};
+}
+
+Image read(const fs::path& path, std::string* err)
+{
+    const std::string ext = lowerExt(path);
+    if (ext == ".exr")
+        return readExr(path, err);
+    if (ext == ".tga")
+        return readTga(path, err);
+    if (ext == ".tif" || ext == ".tiff")
+        return readTiff(path, err);
+    if (ext == ".psd")
+        return readPsd(path, err);
+    return readPng(path, err);
+}
+
+const std::vector<std::string>& writableFormats()
+{
+    static const std::vector<std::string> f = {"png", "exr", "tga", "tif", "tiff", "psd"};
+    return f;
+}
+
+std::string udimLabel(int udim, std::string_view style)
+{
+    const int u = (udim - 1001) % 10, v = (udim - 1001) / 10;
+    if (style == "uv")
+        return "u" + std::to_string(u + 1) + "_v" + std::to_string(v + 1);
+    if (style == "uv0")
+        return "u" + std::to_string(u) + "_v" + std::to_string(v);
+    return std::to_string(udim);
+}
+
+int udimFromLabel(std::string_view label, std::string_view style)
+{
+    auto number = [](std::string_view s, int& out) {
+        if (s.empty() || s.size() > 6)
+            return false;
+        out = 0;
+        for (char c : s)
+        {
+            if (c < '0' || c > '9')
+                return false;
+            out = out * 10 + (c - '0');
+        }
+        return true;
+    };
+    int u = 0, v = 0;
+    if (style != "uv" && style != "uv0")
+        return number(label, u) && u >= 1001 && u <= 1999 ? u : 0;
+    const size_t sep = label.find("_v");
+    if (label.size() < 4 || label[0] != 'u' || sep == std::string_view::npos || !number(label.substr(1, sep - 1), u) || !number(label.substr(sep + 2), v))
+        return 0;
+    if (style == "uv")
+    {
+        --u;
+        --v;
+    }
+    return u >= 0 && u < 10 && v >= 0 && v < 100 ? 1001 + u + 10 * v : 0;
+}
+
+fs::path sidecarPath(const fs::path& image)
+{
+    fs::path p = image;
+    p += ".json";
+    return p;
+}
+
+void writeSidecar(const fs::path& image, const nlohmann::json& meta)
+{
+    std::ofstream f(sidecarPath(image));
+    f << meta.dump(2);
+    if (!f)
+        throw std::runtime_error("can't write " + sidecarPath(image).string());
+}
+
+nlohmann::json readSidecar(const fs::path& image)
+{
+    std::ifstream f(sidecarPath(image));
+    if (!f)
+        return nullptr;
+    nlohmann::json j = nlohmann::json::parse(f, nullptr, false);
+    return j.is_discarded() ? nlohmann::json() : j;
+}
+} // namespace lila::image

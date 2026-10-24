@@ -1,0 +1,17 @@
+{
+  "name": "unreal",
+  "label": "Unreal Engine",
+  "version": 1,
+  "doc": "Unreal conventions: DirectX tangent normals in the MikkTSpace frame Unreal decodes, ORM packed (R occlusion, G roughness, B metallic from the high's material), T_{material}_{suffix} names (M_ prefix dropped), UDIM tiles as .1001.",
+  "output": {"name": "T_{[!M_]material}_{map}", "format": "png", "bits": 8},
+  "pipeline": {"autoAssign": true},
+  "maps": [
+    {"map": "normal", "suffix": "N", "slot": "Normal"},
+    {"map": "orm", "suffix": "ORM", "slot": "OcclusionRoughnessMetallic"},
+    {"map": "height", "suffix": "H", "slot": "Height", "bits": 16, "optional": true},
+    {"map": "ao", "suffix": "AO", "slot": "AmbientOcclusion", "optional": true},
+    {"map": "id", "suffix": "ID", "slot": "MaterialID", "optional": true},
+    {"map": "baseColor", "suffix": "BC", "slot": "BaseColor", "optional": true},
+    {"map": "emissive", "suffix": "E", "slot": "Emissive", "optional": true}
+  ]
+}

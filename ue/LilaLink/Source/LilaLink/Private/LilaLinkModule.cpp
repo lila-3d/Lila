@@ -2,6 +2,7 @@
 #include "LilaLinkMethods.h"
 #include "LilaLinkServer.h"
 #include "LilaLinkSettings.h"
+#include "LilaLinkToolbar.h"
 
 #include "Dom/JsonObject.h"
 #include "HAL/FileManager.h"
@@ -43,12 +44,19 @@ public:
 		ULilaLinkSettings* Settings = GetMutableDefault<ULilaLinkSettings>();
 		SettingsHandle = Settings->OnSettingChanged().AddRaw(this, &FLilaLinkModule::OnSettingsChanged);
 		Restart();
+
+		FLilaLinkToolbarHooks Hooks;
+		Hooks.Status = [this] { return StatusText(); };
+		Hooks.CanRestart = [] { return GetDefault<ULilaLinkSettings>()->bEnabled; };
+		Hooks.Restart = [this] { Restart(); };
+		LilaLinkToolbar::Register(MoveTemp(Hooks));
 	}
 
 	virtual void ShutdownModule() override
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkModule::ShutdownModule);
 
+		LilaLinkToolbar::Unregister();
 		if (UObjectInitialized() && SettingsHandle.IsValid())
 		{
 			GetMutableDefault<ULilaLinkSettings>()->OnSettingChanged().Remove(SettingsHandle);
@@ -57,6 +65,23 @@ public:
 	}
 
 private:
+	FText StatusText() const
+	{
+		if (!GetDefault<ULilaLinkSettings>()->bEnabled)
+		{
+			return NSLOCTEXT("LilaLink", "StatusOff", "Link off in Editor Preferences");
+		}
+		if (!Server)
+		{
+			return FText::Format(NSLOCTEXT("LilaLink", "StatusNoPort", "Link not running: no free port from {0}"), FText::AsNumber(RequestedPort, &FNumberFormattingOptions::DefaultNoGrouping()));
+		}
+		if (Server->GetClientCount() > 0)
+		{
+			return NSLOCTEXT("LilaLink", "StatusConnected", "Connected to Lila");
+		}
+		return FText::Format(NSLOCTEXT("LilaLink", "StatusWaiting", "Waiting for Lila on port {0}"), FText::AsNumber(Server->GetPort(), &FNumberFormattingOptions::DefaultNoGrouping()));
+	}
+
 	void OnSettingsChanged(UObject*, FPropertyChangedEvent&)
 	{
 		const ULilaLinkSettings* Settings = GetDefault<ULilaLinkSettings>();

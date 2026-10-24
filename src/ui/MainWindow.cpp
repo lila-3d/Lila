@@ -17,6 +17,7 @@
 #include "ui/Actions.h"
 #include "ui/GameExporter.h"
 #include "ui/MeshSequenceExporter.h"
+#include "ui/AnimatedSend.h"
 #include "ui/Hotbox.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
@@ -59,6 +60,7 @@
 #include "ui/StatusOutput.h"
 #include "ui/SceneDialogs.h"
 #include "ui/SourceControlPanel.h"
+#include "ui/BakerPanel.h"
 #include "ui/BatchRunPanel.h"
 #include "ui/SpacesUi.h"
 #include "ui/TearOff.h"
@@ -220,7 +222,7 @@ MainWindow::MainWindow()
             });
     });
 
-    io::onStateChanged([this] { refreshTitle(); });
+    io::onStateChanged([self = QPointer<MainWindow>(this)] { if (self) self->refreshTitle(); });
 
     mAutosaveTimer = new QTimer(this);
     connect(mAutosaveTimer, &QTimer::timeout, this, [] { io::autosave(); });
@@ -309,6 +311,7 @@ void MainWindow::registerPanels()
     registerAnimLayersPanel();
     registerOffsetsPanel();
     registerBatchRunPanel();
+    registerBakerPanel();
     panels::add({.id = kUndoHistoryDock, .title = "Undo History", .create = make([](QWidget* p) { return new UndoHistoryPanel(p); }),
                  .area = Qt::LeftDockWidgetArea, .icon = "history",
                  .place = [this, dock](QDockWidget* d) { splitDockWidget(dock("outliner"), d, Qt::Vertical); }});
@@ -989,6 +992,7 @@ void MainWindow::registerActions()
     sets::registerActions(this);
     GameExporter::registerActions(this);
     MeshSequenceExporter::registerActions(this);
+    animatedSend::registerActions(this);
     hud::registerActions([this] { return mViewports->active(); });
     cursorBadges::registerDefaults();
     actions::add({"viewport.toggleQuad", "Toggle Four Views", "View", [this] { mViewports->toggleQuad(); }, nullptr,
@@ -1088,7 +1092,7 @@ void MainWindow::buildMenus()
         });
     });
     menus::addActions("File", {"file.save", "file.saveAs", "file.incrementAndSave", "file.versions", "", "file.import", "file.convertMaya",
-                        "file.exportSelection", "file.gameExporter", "file.exportMeshSequence", "window.batchRun", "file.createReference", "", "unreal.send", "unreal.sync",
+                        "file.exportSelection", "file.gameExporter", "file.exportMeshSequence", "window.batchRun", "file.createReference", "", "unreal.send", "animated.sendOptions", "unreal.sync", "unreal.sendBake",
                         "unreal.connect", "unreal.collision", "", "file.openFolder"});
     addSubmenu("File", "Recent Folders", [this](QMenu* recent) {
         mRecentMenu = recent;

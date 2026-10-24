@@ -29,6 +29,20 @@ public:
     bool anisotropy = false; // samplerAnisotropy enabled
     std::string deviceName;
 
+    // Optional features, each enabled only when the device supports it.
+    /** VK_KHR_acceleration_structure, VK_KHR_ray_query and VK_KHR_deferred_host_operations. */
+    bool rayQuery = false;
+    /** Runtime-sized, partially bound, update-after-bind descriptor arrays (bindless). */
+    bool descriptorIndexing = false;
+    bool shaderFloat16 = false;
+    bool shaderInt64 = false;
+    /** Double precision in shaders (the baker's raster matches the CPU's coverage tests with it). */
+    bool shaderFloat64 = false;
+    bool int64Atomics = false;
+    /** VK_EXT_memory_budget: the allocator tracks per-heap budgets (vmaGetHeapBudgets). */
+    bool memoryBudget = false;
+    uint32_t asScratchAlignment = 256;
+
 private:
     VkDebugUtilsMessengerEXT mMessenger = VK_NULL_HANDLE;
 };

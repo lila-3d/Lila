@@ -44,6 +44,7 @@ add_executable(lila_tests
     test_camera.cpp
     test_locks.cpp
     test_paths.cpp
+    test_project_textures.cpp
     test_text_match.cpp
     test_ui_registries.cpp
     test_viewport_ext.cpp
@@ -79,6 +80,7 @@ add_subdirectory(hk)
 add_subdirectory(link)
 add_subdirectory(fbx)
 add_subdirectory(seq)
+add_subdirectory(bake)
 add_subdirectory(anim)
 add_subdirectory(sim)
 if(TARGET lila_puppeteer_extension)

@@ -17,6 +17,7 @@
 #include "ui/Icons.h"
 #include "ui/MarkingMenu.h"
 #include "ui/UvLive.h"
+#include "ui/UvTools.h"
 #include "ui/UvPackPanel.h"
 #include "ui/UvProjectTool.h"
 #include "ui/ViewportTool.h"
@@ -149,6 +150,15 @@ public:
         // Under the cursor the view's keys (F9-F12 modes) win over the focused panel's and the global ones.
         setProperty("hotkeyContext", "uvEditor");
         setProperty("hotkeyHover", true);
+        mUvToolListener = uvTools::addRedrawListener([this] { update(); });
+    }
+
+    ~UvView() override { uvTools::removeRedrawListener(mUvToolListener); }
+
+    /** The canvas a borrowed uvTools tool paints on. */
+    uvTools::Canvas canvas() const
+    {
+        return {[this](const glm::dvec2& uv) { return toScreen(uv); }, [this](const QPointF& s) { return toUv(s); }, mZoom};
     }
 
     void setTool(Tool t)
@@ -233,6 +243,8 @@ protected:
         drawManipulator(p);
         drawSewDrag(p);
         drawBrush(p);
+        if (uvTools::UvTool* t = uvTools::active())
+            t->draw(p, canvas());
         drawStacks(p);
         if (mMarquee)
         {
@@ -280,6 +292,12 @@ protected:
         }
         if (e->button() != Qt::LeftButton)
             return;
+        if (uvTools::UvTool* t = uvTools::active(); t && t->mousePress(e, canvas()))
+        {
+            mUvToolDrag = true;
+            update();
+            return;
+        }
         if (mTool == Tool::Brush)
         {
             brushPress(e);
@@ -320,6 +338,11 @@ protected:
             update();
             return;
         }
+        if (uvTools::UvTool* t = uvTools::active(); t && (mUvToolDrag || !(e->buttons() & Qt::LeftButton)) && t->mouseMove(e, canvas()))
+        {
+            update();
+            return;
+        }
         if (mTool == Tool::Brush)
         {
             brushMove(e);
@@ -356,6 +379,11 @@ protected:
 
     void leaveEvent(QEvent* e) override
     {
+        if (uvTools::UvTool* t = uvTools::active())
+        {
+            t->leave();
+            update();
+        }
         setPreselect({});
         QWidget::leaveEvent(e);
     }
@@ -370,6 +398,14 @@ protected:
         if (mDrag != Handle::None)
         {
             commitDrag();
+            return;
+        }
+        if (mUvToolDrag && e->button() == Qt::LeftButton)
+        {
+            mUvToolDrag = false;
+            if (uvTools::UvTool* t = uvTools::active())
+                t->mouseRelease(e, canvas());
+            update();
             return;
         }
         if (mTool == Tool::Brush && e->button() == Qt::LeftButton)
@@ -440,6 +476,11 @@ protected:
 
     void keyPressEvent(QKeyEvent* e) override
     {
+        if (uvTools::UvTool* t = uvTools::active(); t && t->keyPress(e, canvas()))
+        {
+            update();
+            return;
+        }
         if (mTool == Tool::Brush && brushKey(e, true))
             return;
         switch (e->key())
@@ -2136,6 +2177,8 @@ private:
     glm::dvec2 mPan{0.0};
     double mZoom = 300.0;
     Tool mTool = Tool::Select;
+    int mUvToolListener = 0;
+    bool mUvToolDrag = false;
     Display mDisplay = Display::Checker;
     bool mUdim = false;
     bool mShowStacks = false;

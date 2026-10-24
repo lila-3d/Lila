@@ -239,6 +239,7 @@ private:
     Gizmo* mGizmoDrag = nullptr; // took the press; null when no gizmo drag is under way
     int mGizmoListener = 0;
     int mHandlerListener = 0;
+    int mArrangeListener = 0;
     std::optional<selectionHandlers::Highlight> mHandlerHover;
     bool mChannelDrag = false; // middle drag driving the channel box's highlighted channels
     bool mToolDrag = false;

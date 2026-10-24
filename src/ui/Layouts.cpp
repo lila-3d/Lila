@@ -71,6 +71,8 @@ const std::vector<std::pair<std::string, json>>& presets()
                             {"modifierStack"})},
         {"UV Editing", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "uvEditor", "channelBox", "attributeEditor", "displayLayers"},
                               {"uvEditor", "channelBox"}, {{"uvEditor", {{"width", 0.42}}}})},
+        {"Baking", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "baker", "uvEditor", "channelBox", "attributeEditor", "displayLayers"},
+                          {"baker", "channelBox"}, {{"baker", {{"width", 0.3}}}})},
         {"Rigging", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "channelBox", "attributeEditor", "displayLayers", "scriptOutput",
                             "timeSlider"},
                            {"channelBox"})},

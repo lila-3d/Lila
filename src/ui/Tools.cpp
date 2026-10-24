@@ -6,6 +6,7 @@
 
 #include "core/PrefStore.h"
 
+#include <QMouseEvent>
 #include <map>
 
 namespace lila::ui::tools
@@ -102,6 +103,14 @@ static bool gSoftKeyUsed = false;
 
 bool softSelectAdjusting() { return gSoftAdjust; }
 void markSoftSelectAdjusted() { gSoftKeyUsed = true; }
+
+bool brushRadiusDrag(const QMouseEvent* e, bool armed)
+{
+    if (!(armed || gSoftAdjust) || (e->button() != Qt::LeftButton && e->button() != Qt::MiddleButton))
+        return false;
+    gSoftKeyUsed = true;
+    return true;
+}
 
 void registerActions()
 {

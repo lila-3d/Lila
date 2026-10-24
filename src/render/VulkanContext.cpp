@@ -7,7 +7,9 @@
 #include "core/Log.h"
 #include "core/Profile.h"
 
+#include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace lila::render
@@ -45,6 +47,18 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBits
     else if (severity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
         log::warn("vulkan: {}", data->pMessage);
     return VK_FALSE;
+}
+
+bool hasDeviceExtension(VkPhysicalDevice physical, const char* name)
+{
+    uint32_t n = 0;
+    vkEnumerateDeviceExtensionProperties(physical, nullptr, &n, nullptr);
+    std::vector<VkExtensionProperties> exts(n);
+    vkEnumerateDeviceExtensionProperties(physical, nullptr, &n, exts.data());
+    for (auto& e : exts)
+        if (std::strcmp(e.extensionName, name) == 0)
+            return true;
+    return false;
 }
 
 bool hasLayer(const char* name)
@@ -182,13 +196,66 @@ bool VulkanContext::init(bool validation)
     anisotropy = supported.samplerAnisotropy == VK_TRUE;
     f2.features.samplerAnisotropy = supported.samplerAnisotropy;
 
-    const char* devExts[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    // Optional features the baker uses: ask what the device has, enable only that.
+    VkPhysicalDeviceRayQueryFeaturesKHR rqHave{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR asHave{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR, &rqHave};
+    VkPhysicalDeviceVulkan12Features f12Have{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &asHave};
+    VkPhysicalDeviceFeatures2 f2Have{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &f12Have};
+    vkGetPhysicalDeviceFeatures2(physical, &f2Have);
+
+    std::vector<const char*> devExts = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    const bool hasRt = hasDeviceExtension(physical, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) &&
+                       hasDeviceExtension(physical, VK_KHR_RAY_QUERY_EXTENSION_NAME) &&
+                       hasDeviceExtension(physical, VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME) && asHave.accelerationStructure &&
+                       rqHave.rayQuery && std::getenv("LILA_VK_NO_RT") == nullptr;
+    VkPhysicalDeviceRayQueryFeaturesKHR rq{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR as{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR, &rq};
+    if (hasRt)
+    {
+        devExts.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+        devExts.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+        devExts.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+        as.accelerationStructure = VK_TRUE;
+        rq.rayQuery = VK_TRUE;
+        f13.pNext = &as;
+        rayQuery = true;
+        VkPhysicalDeviceAccelerationStructurePropertiesKHR asProps{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR};
+        VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &asProps};
+        vkGetPhysicalDeviceProperties2(physical, &p2);
+        asScratchAlignment = std::max(1u, asProps.minAccelerationStructureScratchOffsetAlignment);
+    }
+    if (hasDeviceExtension(physical, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME))
+    {
+        devExts.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+        memoryBudget = true;
+    }
+    descriptorIndexing = f12Have.descriptorIndexing && f12Have.runtimeDescriptorArray && f12Have.descriptorBindingPartiallyBound &&
+                         f12Have.shaderSampledImageArrayNonUniformIndexing && f12Have.descriptorBindingSampledImageUpdateAfterBind &&
+                         f12Have.descriptorBindingVariableDescriptorCount;
+    if (descriptorIndexing)
+    {
+        f12.descriptorIndexing = VK_TRUE;
+        f12.runtimeDescriptorArray = VK_TRUE;
+        f12.descriptorBindingPartiallyBound = VK_TRUE;
+        f12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+        f12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+        f12.descriptorBindingVariableDescriptorCount = VK_TRUE;
+    }
+    shaderFloat16 = f12Have.shaderFloat16 == VK_TRUE;
+    f12.shaderFloat16 = f12Have.shaderFloat16;
+    int64Atomics = f12Have.shaderBufferInt64Atomics == VK_TRUE;
+    f12.shaderBufferInt64Atomics = f12Have.shaderBufferInt64Atomics;
+    shaderInt64 = supported.shaderInt64 == VK_TRUE;
+    f2.features.shaderInt64 = supported.shaderInt64;
+    shaderFloat64 = supported.shaderFloat64 == VK_TRUE;
+    f2.features.shaderFloat64 = supported.shaderFloat64;
+
     VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     dci.pNext = &f2;
     dci.queueCreateInfoCount = 1;
     dci.pQueueCreateInfos = &qci;
-    dci.enabledExtensionCount = 1;
-    dci.ppEnabledExtensionNames = devExts;
+    dci.enabledExtensionCount = uint32_t(devExts.size());
+    dci.ppEnabledExtensionNames = devExts.data();
     if (VkResult r = vkCreateDevice(physical, &dci, nullptr, &device); r != VK_SUCCESS)
     {
         log::error("vulkan: vkCreateDevice failed ({})", vkResultName(r));
@@ -201,7 +268,7 @@ bool VulkanContext::init(bool validation)
     fns.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
     fns.vkGetDeviceProcAddr = vkGetDeviceProcAddr;
     VmaAllocatorCreateInfo aci{};
-    aci.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+    aci.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT | (memoryBudget ? VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT : 0);
     aci.vulkanApiVersion = VK_API_VERSION_1_3;
     aci.physicalDevice = physical;
     aci.device = device;
@@ -209,7 +276,7 @@ bool VulkanContext::init(bool validation)
     aci.pVulkanFunctions = &fns;
     vmaCreateAllocator(&aci, &allocator);
 
-    log::info("vulkan: {} ({}x MSAA{})", deviceName, int(msaa), validation ? ", validation on" : "");
+    log::info("vulkan: {} ({}x MSAA{}{})", deviceName, int(msaa), rayQuery ? ", ray query" : "", validation ? ", validation on" : "");
     return true;
 }
 

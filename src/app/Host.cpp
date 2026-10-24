@@ -1,6 +1,8 @@
 #include "app/Host.h"
 
 #include "ops/Command.h"
+#include "bake/Bake.h"
+#include "bake/BakePipeline.h"
 #include "batch/BatchCommands.h"
 #include "batch/BatchRunner.h"
 #include "core/Events.h"
@@ -125,6 +127,7 @@ void startCore()
     io::registerCommands();
     gn::registerCommands();
     seq::registerCommands();
+    bake::registerCommands();
     uv::registerCommands();
     retopo::registerCommands();
     sculpt::registerCommands();
@@ -155,6 +158,8 @@ void startCore()
         link::registerExporter("fbx:set:" + kind, [kind](const std::vector<scene::NodeId>& nodes, const fs::path& path, std::string* err) {
             return fbx::exportForUnreal(nodes, path, "ue5", err, kind, false);
         });
+    // Rebakes first, so a mapped mesh's sync to Unreal picks up fresh textures.
+    io::onSaved([](const fs::path&) { bake::onSceneSaved(); });
     io::onSaved([](const fs::path&) { link::onSceneSaved(); });
 }
 

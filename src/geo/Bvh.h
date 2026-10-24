@@ -32,6 +32,22 @@ struct BvhClosest
     glm::dvec3 point{0.0};
 };
 
+/** A MeshBvh as flat arrays a GPU traversal uploads as they are (std430). */
+struct FlatBvh
+{
+    /** 32 bytes. Interior nodes (count 0) have children first and first + 1; leaves hold count slots from first. */
+    struct Node
+    {
+        float min[3];
+        uint32_t first;
+        float max[3];
+        uint32_t count;
+    };
+    std::vector<Node> nodes;
+    /** Three corners per leaf slot, in leaf order. w of the first corner is the slot's triangle index (bit cast), else 0. */
+    std::vector<glm::vec4> corners;
+};
+
 /**
  * Bounding volume hierarchy over a mesh's triangles: binned SAH, built in parallel. Holds a copy of
  * the positions, so rebuild (or refit) after the mesh changes.
@@ -67,6 +83,8 @@ public:
                       double maxDistance = std::numeric_limits<double>::max()) const;
     /** Triangles whose bounds overlap the box. */
     std::vector<Index> overlapping(const Bounds& box) const;
+    /** The tree and its triangles in leaf order, positions as floats. Triangle indices are this BVH's (see triangles()). */
+    FlatBvh exportFlat() const;
 
     /** Blend of a corner attribute at a hit, e.g. the uv under the cursor. */
     template <class T> T interpolate(std::span<const T> cornerValues, Index triangle, const glm::dvec3& bary) const

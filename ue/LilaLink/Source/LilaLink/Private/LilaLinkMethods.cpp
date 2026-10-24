@@ -2,6 +2,8 @@
 
 #include "LilaLinkLog.h"
 #include "LilaLinkSequence.h"
+#include "LilaLinkTextures.h"
+#include "LilaLinkVat.h"
 
 #include "Animation/Skeleton.h"
 #include "AssetRegistry/IAssetRegistry.h"
@@ -96,7 +98,8 @@ TSharedPtr<FJsonValue> Hello(const TSharedPtr<FJsonObject>&, FString&)
 	Out->SetStringField(TEXT("axisProfile"), Version.GetMajor() >= 6 ? TEXT("ue6") : TEXT("ue5"));
 	Out->SetNumberField(TEXT("pid"), FPlatformProcess::GetCurrentProcessId());
 	// "progress": long methods send progress notifications, so Lila can tell a slow call from a hung editor.
-	Out->SetArrayField(TEXT("features"), {Str(TEXT("progress")), Str(TEXT("materials")), Str(TEXT("meshSequence")), Str(TEXT("geometryCache"))});
+	Out->SetArrayField(TEXT("features"), {Str(TEXT("progress")), Str(TEXT("materials")), Str(TEXT("meshSequence")), Str(TEXT("geometryCache")),
+		Str(TEXT("vertexAnimation")), Str(TEXT("textures")), Str(TEXT("materialInstances"))});
 	Out->SetBoolField(TEXT("python"), IPythonScriptPlugin::Get() != nullptr && IPythonScriptPlugin::Get()->IsPythonAvailable());
 	return Obj(Out);
 }
@@ -356,5 +359,7 @@ TMap<FString, FLilaLinkMethod> LilaLink::MakeMethods()
 	Methods.Add(TEXT("focusAsset"), LilaLink::Sync(&FocusAsset));
 	Methods.Add(TEXT("runPython"), LilaLink::Sync(&RunPython));
 	LilaLink::AddSequenceMethods(Methods);
+	LilaLink::AddVatMethods(Methods);
+	LilaLink::AddTextureMethods(Methods);
 	return Methods;
 }

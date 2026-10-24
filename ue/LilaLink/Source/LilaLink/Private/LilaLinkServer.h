@@ -80,6 +80,8 @@ public:
 	void Shutdown();
 
 	int32 GetPort() const { return Port; }
+	/** Connected clients. Any thread. */
+	int32 GetClientCount() const { return ClientCount.load(); }
 
 	virtual uint32 Run() override;
 	virtual void Stop() override { bStopping = true; }
@@ -107,6 +109,7 @@ private:
 	FThreadSafeBool bStopping = false;
 	int32 Port = 0;
 	TArray<TSharedPtr<FLilaLinkClient, ESPMode::ThreadSafe>> Clients;
+	std::atomic<int32> ClientCount = 0;
 
 	TQueue<FQueuedRequest, EQueueMode::Spsc> Requests;
 	std::atomic<int32> QueuedCount = 0;

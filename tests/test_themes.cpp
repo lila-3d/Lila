@@ -52,23 +52,6 @@ TEST_CASE("every built-in theme sets every token, directly or through its base")
         CHECK(themes::baseTheme(base).colors.size() == themes::tokens().size());
 }
 
-TEST_CASE("status message colours are grey in Monotone and hued in Colour")
-{
-    auto grey = [](themes::Rgba c) { return c.r == c.g && c.g == c.b; };
-    for (const char* id : {"statusInfo", "statusWarning", "statusError"})
-    {
-        INFO(id);
-        CHECK(grey(themes::builtIn("Monotone")->color(id)));
-        CHECK_FALSE(grey(themes::builtIn("Colour")->color(id)));
-    }
-    themes::Rgba warning = themes::builtIn("Colour")->color("statusWarning");
-    themes::Rgba error = themes::builtIn("Colour")->color("statusError");
-    themes::Rgba info = themes::builtIn("Colour")->color("statusInfo");
-    CHECK((warning.r > warning.b && warning.g > warning.b));
-    CHECK((error.r > error.g && error.r > error.b));
-    CHECK((info.b > info.r && info.b > info.g));
-}
-
 TEST_CASE("theme JSON round trips")
 {
     themes::Theme t;

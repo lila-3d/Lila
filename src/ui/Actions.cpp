@@ -512,6 +512,14 @@ void registerBuiltins()
         "Wraps the selection in a fitted box, sphere, capsule, cylinder or hull, named and parented as its Unreal collision.");
     cmd("unreal.collision", "Add Collision", "Unreal", "boundingMesh", json::object(),
         "Wraps the selection in a fitted collision shape named for Unreal (UBX_, USP_, UCP_, UCX_) and parents it under the mesh.");
+    cmd("unreal.sendBake", "Send Bake to Unreal", "Unreal", "unrealSendTextures", json::object(),
+        "Sends the bake project's textures to the connected Unreal editor, updating them in place, and wires them into the "
+        "materials (instances of the unreal pref materialParent when it is set).");
+    cmd("bake.assign", "Assign Bake to Materials", "Bake", "bakeAssign", json::object(),
+        "Wires the last bake's textures into the materials of the lows they were baked for.");
+    cmd("bake.all", "Bake All Projects", "Bake", "bakeAll", json::object(), "Bakes every bake project in the scene, one after another.");
+    cmd("bake.allChanged", "Bake Changed Projects", "Bake", "bakeAll", {{"changedOnly", true}},
+        "Bakes the bake projects whose inputs changed since their last bake.");
     cmd("mesh.extract", "Extract", "Mesh", "polyExtract", json::object(), "Moves the selected faces into a new object.");
     cmd("mesh.connect", "Connect", "Mesh", "polyConnect", json::object(), "Splits faces with new edges between the selected vertices or edges.");
     cmd("select.shrink", "Shrink Selection", "Select", "shrinkSelection", json::object(), "Drops the components on the selection's border.");

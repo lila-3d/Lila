@@ -1,0 +1,21 @@
+{
+  "name": "substancePainter",
+  "label": "Smart Material Inputs",
+  "version": 1,
+  "doc": "Painter's Mesh Maps slots, named {textureSet}_{suffix} (the Texture Set is the low's material, or the low's name when it has none) so Painter's auto-assign and the assign_texture_maps plugin pick them up. OpenGL normals, 16 bit PNG.",
+  "output": {"name": "{material}_{map}", "format": "png", "bits": 16},
+  "pipeline": {"autoAssign": false},
+  "maps": [
+    {"map": "normal", "suffix": "normal", "slot": "Normal", "options": {"greenUp": true}},
+    {"map": "objectNormal", "suffix": "normalobj", "slot": "WorldSpaceNormal"},
+    {"map": "ao", "suffix": "ao", "slot": "AO"},
+    {"map": "curvature", "suffix": "curvature", "slot": "Curvature"},
+    {"map": "position", "suffix": "position", "slot": "Position"},
+    {"map": "thickness", "suffix": "thickness", "slot": "Thickness"},
+    {"map": "height", "suffix": "height", "slot": "Height"},
+    {"map": "id", "suffix": "id", "slot": "ID", "optional": true},
+    {"map": "bentNormal", "suffix": "bentnormals", "slot": "BentNormals", "optional": true, "options": {"greenUp": true}},
+    {"map": "alpha", "suffix": "opacity", "slot": "Opacity", "optional": true},
+    {"map": "cavity", "suffix": "cavity", "slot": "User0"}
+  ]
+}

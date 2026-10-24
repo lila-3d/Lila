@@ -3,6 +3,7 @@
 #include "core/Profile.h"
 #include "core/Workspace.h"
 #include "link/Exporters.h"
+#include "link/TextureSend.h"
 #include "link/UnrealLink.h"
 #include "scene/Graph.h"
 
@@ -22,10 +23,11 @@ fs::path resolve(const std::string& s)
 
 void checkKind(const std::string& kind, bool sequences)
 {
-    if (kind == "static" || kind == "skeletal" || kind == "animation" || kind == "geometryCache" || (sequences && kind == "meshSequence"))
+    if (kind == "static" || kind == "skeletal" || kind == "animation" || kind == "geometryCache" ||
+        (sequences && (kind == "meshSequence" || kind == "vertexAnimation")))
         return;
-    throw CommandError("kind must be static, skeletal, animation, " + std::string(sequences ? "meshSequence " : "") + "or geometryCache, not '" +
-                       kind + "'");
+    throw CommandError("kind must be static, skeletal, animation, " + std::string(sequences ? "meshSequence, vertexAnimation " : "") +
+                       "or geometryCache, not '" + kind + "'");
 }
 
 /** Flags shared by unrealImport and unrealMap; they become importAsset options. */
@@ -36,7 +38,7 @@ std::vector<FlagDef> importFlags()
         {"contentPath", "cp", T::String, nullptr, "Destination asset, like /Game/Props/SM_Crate."},
         {"kind", "k", T::String, "static",
          "static | skeletal | animation | meshSequence (a static mesh per frame, <contentPath>_000...) | geometryCache (one Alembic "
-         "Geometry Cache)"},
+         "Geometry Cache) | vertexAnimation (a static mesh playing Vertex Animation Textures through a generated material)"},
         {"skeleton", "sk", T::String, nullptr, "Skeleton asset to reuse, like /Game/Chars/SK_Hero_Skeleton."},
         {"importMaterials", "im", T::Bool, nullptr, "Create the materials Unreal does not have yet (default on)."},
         {"materialFolder", "mf", T::String, nullptr,
@@ -66,6 +68,10 @@ std::vector<FlagDef> sequenceFlags()
         {"niagaraSystem", "ns", T::String, nullptr, "meshSequence: Niagara system whose mesh renderer gets the frames, in order, as its meshes."},
         {"niagaraEmitter", "ne", T::String, nullptr, "meshSequence: only this emitter of the system (default every emitter)."},
         {"niagaraRenderer", "nr", T::Int, nullptr, "meshSequence: only the n-th mesh renderer of each emitter (default all)."},
+        {"vat", "va", T::Any, nullptr,
+         "vertexAnimation: the exportVertexAnimation flags as a dict (format exr|png16|png8, mode auto|constant|soup, positions "
+         "offset|absolute, normals, normalBits, restFrame, maxWidth) plus materialParent (an Unreal material to instance "
+         "instead of the generated one) and rebuildMaterial (regenerate the shared VAT material)."},
     };
 }
 
@@ -98,6 +104,7 @@ std::shared_ptr<RpcClient> requireClient()
 void registerCommands()
 {
     using T = ArgType;
+    registerTextureCommands();
 
     ops::registerCommand({
         .name = "unrealConnect",
@@ -210,7 +217,9 @@ void registerCommands()
                "workspace (.lila/unreal.json). Replaces any existing mapping for the node. An object set maps its "
                "members as one asset, exported together where they sit. kind meshSequence sends an animated mesh "
                "as a static mesh per frame (<contentPath>_000, ...; reimported in place, frames past the end deleted) and "
-               "can point a Niagara mesh renderer at them; geometryCache sends it as one Alembic Geometry Cache.",
+               "can point a Niagara mesh renderer at them; geometryCache sends it as one Alembic Geometry Cache; "
+               "vertexAnimation bakes it to Vertex Animation Textures and sends the rest mesh, the textures and a material "
+               "instance that plays them (sequence for the range, vat for the bake).",
         .positionalDoc = "node",
         .flags = [] {
             std::vector<FlagDef> f = importFlags();
@@ -232,6 +241,8 @@ void registerCommands()
             checkKind(kind, true);
             if (a.has("sequence") && !a.flags["sequence"].is_object())
                 throw CommandError("unrealMap: sequence must be a dict, like {\"start\": 32, \"end\": 58, \"scale\": 0.1}");
+            if (a.has("vat") && !a.flags["vat"].is_object())
+                throw CommandError("unrealMap: vat must be a dict, like {\"format\": \"exr\", \"mode\": \"auto\"}");
 
             json m = optionFlags(a);
             for (const FlagDef& f : sequenceFlags())
@@ -246,6 +257,17 @@ void registerCommands()
                 catch (const std::invalid_argument& e)
                 {
                     throw CommandError(std::string("unrealMap: sequence: ") + e.what());
+                }
+            }
+            if (kind == "vertexAnimation")
+            {
+                try
+                {
+                    vertexAnimationOptions(m, {}, "check");
+                }
+                catch (const std::invalid_argument& e)
+                {
+                    throw CommandError(std::string("unrealMap: vat: ") + e.what());
                 }
             }
             m["node"] = target->fullPath();

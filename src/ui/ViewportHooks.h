@@ -4,6 +4,7 @@
 #include "core/ExtensionContext.h"
 
 #include "render/FrameState.h"
+#include "scene/Node.h"
 #include "ui/Overlay.h"
 #include "ui/ViewInfo.h"
 
@@ -19,6 +20,11 @@
  * planes...). Every viewport calls each drawer once a frame and each picker on every object-mode pick, in the order
  * they were added. To draw and pick nodes of one type, a draw override (ui/DrawOverrides.h) is usually simpler.
  */
+namespace lila::geo
+{
+class Mesh;
+}
+
 namespace lila::ui::viewportHooks
 {
 /** Adds scene content to every viewport frame (joints, constraints, curves...). Called on the main thread. */
@@ -55,4 +61,22 @@ LILA_UI_API std::vector<Drawer> drawers();
 LILA_UI_API std::vector<Picker> pickers();
 LILA_UI_API std::vector<std::string> drawerIds();
 LILA_UI_API std::vector<std::string> pickerIds();
+
+/**
+ * Replaces the materials a mesh node draws with (bake previews): fill one material per slot and return true to take the
+ * node over; it then draws textured, with tangents, whatever the materials toggle says. Called once a frame per mesh.
+ */
+using MaterialHook = std::function<bool(scene::NodeId id, const geo::Mesh& mesh, std::vector<render::Material>& materials)>;
+/** Adding an id again replaces it. */
+LILA_UI_API void setMaterialHook(std::string id, MaterialHook fn);
+LILA_UI_API bool removeMaterialHook(std::string_view id);
+/** The first hook (by id) that takes the node over, true then. */
+LILA_UI_API bool hookedMaterials(scene::NodeId id, const geo::Mesh& mesh, std::vector<render::Material>& materials);
+
+/** View-only hiding (a bake group's highs while its cage is painted): the node is neither drawn nor picked, and the scene is untouched. */
+using HideHook = std::function<bool(scene::NodeId id)>;
+/** Adding an id again replaces it. */
+LILA_UI_API void setHideHook(std::string id, HideHook fn);
+LILA_UI_API bool removeHideHook(std::string_view id);
+LILA_UI_API bool hiddenInView(scene::NodeId id);
 } // namespace lila::ui::viewportHooks

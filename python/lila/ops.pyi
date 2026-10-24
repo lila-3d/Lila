@@ -46,6 +46,9 @@ def angleMeasure(*objects: Any, points: Sequence[Any] | None = None, parents: Se
 def applyAllModifiers(*objects: Any) -> Any:
     """Bake every modifier of a mesh into its base mesh, leaving an empty stack over an editable source."""
 
+def applyBakeTarget(*objects: Any, project: str | None = None, optional: bool | None = None, overrideGroups: bool | None = None) -> Any:
+    """Apply a target profile or saved preset to a project without grouping or baking: its maps, output settings and group defaults. A group setting (or a high's modifier stack) takes the new default only while it still holds the project's previous default, so settings made on one group by hand survive; overrideGroups=True replaces them too. Groups created later start from the defaults. Returns {target, backend, skipped}."""
+
 def applyLayout(*objects: Any, name: str | None = None) -> Any:
     """Arrange the window's panels, viewports and shelf as the named layout. UI only."""
 
@@ -61,11 +64,53 @@ def assignMaterial(*objects: Any, faces: Sequence[Any] | None = None) -> Any:
 def autoBevel(*objects: Any, minAngle: float | None = None, maxAngle: float | None = None, side: str | None = None, thin: float | None = None, minLength: float | None = None, completeCorners: bool | None = None, mode: str | None = None, weightThreshold: float | None = None, offset: float | None = None, segments: int | None = None, profile: float | None = None, clamp: bool | None = None, smoothingAngle: float | None = None) -> Any:
     """Add an autoBevel modifier to the top of each mesh's stack: bevels fold edges found live on its input mesh. Returns the modifier names."""
 
+def autoGroupBake(*objects: Any, project: str | None = None, preset: str | None = None) -> Any:
+    """Make bake groups from names: lows ending _low, _lo or _LP pair with highs ending _high, _hi or _HP (numbered highs like _high1 join the same group). Uses the given meshes, else the selection, else every mesh. A group already holding the low is updated rather than duplicated. Returns {groups, unmatched}."""
+
 def autoKeyframe(state: bool | None = None) -> Any:
     """Auto key: when on, changing an animated channel keys it at the current time. With no flags, queries."""
 
 def autoSelectAs(*objects: Any, overwrite: bool | None = None, tokens: Sequence[Any] | None = None, query: bool | None = None) -> Any:
     """Point helper joints (twist, corrective, muscle bones by name) at their nearest non-helper ancestor, preferring one weighted on the same skin. Works on the joints and everything under them, every joint with none given or selected. Returns {joint: target} for what was (or with query, would be) set."""
+
+def bake(project: str | None = None, groups: Sequence[Any] | None = None, maps: Sequence[Any] | None = None, dryRun: bool | None = None, backend: str | None = None, **flags: Any) -> Any:
+    """Bake a project's maps (or maps=) for its groups (or groups=) and write the textures, plus a {project}_bake.json manifest. Synchronous and cancellable (async=True returns at once and bakes off the main thread). dryRun=True only plans the files. Returns {outputs, stats (samples, hits, misses, backfaces, per group), warnings, manifest, seconds, timings (seconds per stage), backend, backendMode}."""
+
+def bakeAll(changedOnly: bool | None = None, assign: bool | None = None, backend: str | None = None) -> Any:
+    """Bake every bake project in the scene, one after another. changedOnly=True skips projects whose inputs match their last bake. Projects with autoAssign (or assign=True) wire their outputs into materials. Returns [{project, baked, reason, outputs, misses, seconds}]."""
+
+def bakeArrange(project: str | None = None, on: bool | None = None, spacing: float | None = None, reset: bool | None = None) -> Any:
+    """Toggle the Arrange display: a project's groups drawn side by side along X (by their bounds) for inspection, each group's lows, highs and cage moved together. View only: scene meshes never move, the scene file doesn't change and bakes always run where the meshes are. on= sets it instead of toggling; reset=True turns it off. Returns {arranged, offsets: {group: [x, y, z]}}."""
+
+def bakeAssign(project: str | None = None, create: bool | None = None, channels: Any | None = None) -> Any:
+    """Wire a bake project's last outputs into the materials of the lows they were baked for: normal (DirectX or OpenGL as baked), ambient occlusion, ORM/MRO packed maps, base colour, roughness, metallic, emissive. Slots with no material get one. Returns {assigned, created, skipped}."""
+
+def bakeCage(*objects: Any, create: bool | None = None, name: str | None = None, fromPaint: bool | None = None, reset: bool | None = None, delete: bool | None = None) -> Any:
+    """A bake group's editable cage. create=True duplicates the low pushed out by the auto cage (frontal x cageOffset x the painted bakeOffset) as a mesh the group then uses; edit its points freely, its topology must stay the low's. fromPaint=True moves an existing cage to the auto cage as painted now. reset=True goes back to the auto cage (delete=True also removes the cage mesh). With no flag, reports the cage and whether it matches the low."""
+
+def bakeCageCoverage(*objects: Any, resolution: int | None = None) -> Any:
+    """How many of a bake group's rays miss its highs as it would bake now (one sample per texel): samples, misses, backfaces and missRate."""
+
+def bakeCancel() -> Any:
+    """Stop the running bake (an async one, or a synchronous one from another thread). Returns whether one was running."""
+
+def bakeEstimateCage(*objects: Any, resolution: int | None = None, iterations: int | None = None, margin: float | None = None, apply: bool | None = None) -> Any:
+    """Estimate a bake group's cage in one step: paints bakeOffset on its lows so every texel's ray starts just outside the high and meets it, and sets the group's frontal and rear distances (an editable cage moves to the result). Checks itself by tracing the lows as a bake would, growing the cage where rays still miss. One undo step. Returns the miss rates before and after."""
+
+def bakeForTarget(project: str | None = None, target: str | None = None, optional: bool | None = None, autoGroup: bool | None = None, dryRun: bool | None = None, backend: str | None = None, overrideGroups: bool | None = None, **flags: Any) -> Any:
+    """Bake everything a downstream tool needs in one go: applies the target profile's maps and file naming to the project (creating one if needed), auto-groups by _low/_high names when the project has no groups, bakes, and returns the bake result plus {target, skipped} (maps the target wants that are not implemented yet). Targets: unreal, substancePainter, or any in the user or workspace bake/targets folders (bakeTargets)."""
+
+def bakeGroup(*objects: Any, project: str | None = None, lows: Sequence[Any] | None = None, highs: Sequence[Any] | None = None, addLow: Sequence[Any] | None = None, removeLow: Sequence[Any] | None = None, addHigh: Sequence[Any] | None = None, removeHigh: Sequence[Any] | None = None, self: bool | None = None, modifiers: Any | None = None, preset: str | None = None, cage: str | None = None, cageOffset: float | None = None, frontal: float | None = None, rear: float | None = None, ignoreBackfaces: bool | None = None, aoScope: str | None = None, skew: float | None = None, addHighFile: Sequence[Any] | None = None, removeHighFile: Sequence[Any] | None = None, fileObject: str | None = None, fileFrame: float | None = None) -> Any:
+    """Create or edit a bake group: the lows that receive maps and the highs projected onto them. A group only traces its own highs, so groups overlapping in space never affect each other, and several groups can write into one texture. Each high carries a bake-only modifier stack (modifiers= or preset=, e.g. "Smooth x2") evaluated into the bake's snapshot only: nothing is added to the scene. self=True bakes the lows onto themselves through such a stack. Creates the group (and a project) when the name is new. Returns the group."""
+
+def bakeGroupPerMesh(*objects: Any, project: str | None = None, preset: str | None = None) -> Any:
+    """One bake group per mesh: each given (or selected) mesh becomes the low of its own group, so meshes that overlap or share a UV sheet still bake in isolation. Highs come from _high/_hi/_HP names matching the mesh's base name; a mesh without one bakes onto itself (self) through preset= (e.g. Smooth x2). A mesh already a low of a group of the project keeps that group. Returns the groups."""
+
+def bakeLint(project: str | None = None, groups: Sequence[Any] | None = None, checks: Sequence[Any] | None = None, highs: bool | None = None, backend: str | None = None) -> Any:
+    """Check a bake project before baking: hard edges off UV seams, overlapping UVs (also across groups writing one texture), missing or degenerate UVs, texel density outliers, mirrored islands against tangent signs, lows with no high in range, highs outside the cage, non-planar faces whose triangulation depends on the exporter, and cage topology. bake runs it first and lists its warnings. Returns {issues: [{check, severity, group, mesh, message, data}], warnings, checks, distances: [{group, frontal, rear, frontalAuto, rearAuto, measured}]} (Auto distances are measured against the highs when highs is on)."""
+
+def bakeMaps() -> Any:
+    """The maps the baker implements: id, label, default suffix, how texels resolve (average, exact, coverage) and options."""
 
 def bakeModifierStack(*objects: Any) -> Any:
     """Bake meshes to their current result, deleting the generator and modifiers feeding them. Objects that aren't meshes are skipped."""
@@ -73,8 +118,20 @@ def bakeModifierStack(*objects: Any) -> Any:
 def bakeOffset(*objects: Any) -> Any:
     """Merge offsets down into the layer below (or the base animation), sampled every frame across the keys."""
 
+def bakePaint(*objects: Any, attr: str | None = None, op: str | None = None, value: float | None = None, strength: float | None = None, points: Sequence[Any] | None = None, center: Sequence[float] | None = None, radius: float | None = None, flood: bool | None = None, symmetry: str | None = None) -> Any:
+    """Paint a low's bake cage attributes: offset (bakeOffset, scales the auto cage push per point, 1 unpainted) or skew (bakeSkew, added to the group's skew, tilts rays toward the face normal). op add, subtract, smooth or set, at points=, within radius of center= (world space), or flood=True everywhere (the component selection in component mode). symmetry mirrors across an axis. One undo step. Returns the attribute's min, max and mean."""
+
+def bakeStatus(project: str | None = None) -> Any:
+    """A bake project's settings, groups and last bake result this session; with several projects and no project=, every project."""
+
+def bakeTargets() -> Any:
+    """The bake target profiles available (built in, user and workspace): name, label, file, maps."""
+
 def bakeToDeformSkeleton(*objects: Any, start: float | None = None, end: float | None = None, fps: float | None = None, suffix: str | None = None) -> Any:
     """Make a clean copy of the deform joints (names plus suffix, hierarchy closed over non-deform joints) keyed every frame with the evaluated world transform of each original, so IK, spaces, layers, constraints and physics end up as plain translate, rotate and scale keys, as exporters write them. Returns the copy's top joints."""
+
+def bakeUpToDate(project: str | None = None) -> Any:
+    """Whether a bake project's textures match its inputs: {upToDate, reason, hash, bakedHash}. reason is never baked, inputs changed, missing <file> or up to date."""
 
 def batchRun(*objects: Any, script: str | None = None, scriptFile: str | None = None, sceneScript: str | None = None, recursive: bool | None = None, depth: int | None = None, extensions: Sequence[Any] | None = None, include: Sequence[Any] | None = None, exclude: Sequence[Any] | None = None, excludePrefix: str | None = None, excludeSuffix: str | None = None, excludeContains: str | None = None, fileList: str | None = None, save: str | None = None, outputDir: str | None = None, suffix: str | None = None, format: str | None = None, keepTree: bool | None = None, checkout: str | None = None, makeWritable: bool | None = None, workers: int | None = None, stopOnError: bool | None = None, timeout: float | None = None, dryRun: bool | None = None, scriptArgs: Any | None = None, csv: str | None = None, preset: str | None = None, wait: bool | None = None) -> Any:
     """Run a Python script over many scene files, each opened in its own lilabatch worker, several at once. The script sees ctx: ctx.file, ctx.output, ctx.index, ctx.args (scriptArgs), ctx.results (a dict collected into the summary and CSV), ctx.save = False to leave a file unsaved, ctx.skip(reason). Returns the run's summary (with files once finished): {id, state, total, counts, seconds, dir, csv, files}."""
@@ -166,6 +223,12 @@ def copySkinWeights(*objects: Any, surfaceAssociation: str | None = None) -> Any
 def createAnimLayer(*objects: Any, name: str | None = None, mode: str | None = None, accumulation: str | None = None, empty: bool | None = None) -> Any:
     """Make an animation layer at the top of the stack, with the given objects or plugs (default the selection) as members, and make it active. Returns its name."""
 
+def createBakeFromGenerator(*objects: Any, kind: str | None = None, target: str | None = None, name: str | None = None, lows: Sequence[Any] | None = None) -> Any:
+    """Make a bake project from a TerrainGenerator group or a TreeGenerator tree in one call, from their exported files: the high streams from its FBX at bake time (never loaded into the scene), the low is the terrain's bake plane or the tree's exported low, frontal and rear come from the generator's measurements, the ID map uses its palette and the height map its measured range, with the Substance Painter target's maps and names. Returns {project, group, kind, target, handoff}."""
+
+def createBakeProject(name: str | None = None, target: str | None = None, folder: str | None = None) -> Any:
+    """Create a bake project: output folder, file naming, resolution and the maps to bake (normal, object normal, height, position, curvature, cavity, thickness and ao by default). Add groups with bakeGroup or autoGroupBake, then bake. Returns its name."""
+
 def createDisplayLayer(*objects: Any, name: str | None = None, empty: bool | None = None) -> Any:
     """Create a display layer holding the objects (the selection by default), taking them out of any layer they were in. Returns its name."""
 
@@ -216,6 +279,9 @@ def delete(*objects: Any) -> Any:
 
 def deleteAnimLayer(*objects: Any) -> Any:
     """Delete animation layers with their curves; their members lose what the layers added."""
+
+def deleteBakeTarget(*objects: Any, scope: str | None = None) -> Any:
+    """Delete a saved bake preset (a user or workspace target profile file). Built-in targets can't be deleted. Returns the deleted file."""
 
 def deleteComponents() -> Any:
     """Delete the selected vertices, edges or faces (with whatever depends on them)."""
@@ -330,6 +396,9 @@ def exportPicker(*objects: Any, file: str | None = None) -> Any:
 
 def exportTheme(*objects: Any, name: str | None = None, file: str | None = None, full: bool | None = None) -> Any:
     """A theme as shareable JSON text (the current one when no name is given). file= also writes it to a .lilatheme file. full=True lists every token, not just the ones the theme sets."""
+
+def exportVertexAnimation(*objects: Any, start: float | None = None, end: float | None = None, step: float | None = None, playbackRange: bool | None = None, fps: float | None = None, scale: float | None = None, profile: str | None = None, applyModifiers: bool | None = None, worldSpace: bool | None = None, recenter: str | None = None, normals: bool | None = None, uvs: bool | None = None, colors: bool | None = None, dryRun: bool | None = None, folder: str | None = None, name: str | None = None, format: str | None = None, mode: str | None = None, positions: str | None = None, normalBits: int | None = None, restFrame: float | None = None, maxWidth: int | None = None) -> Any:
+    """Bake animated meshes (geometry nodes, deformers, skins, anything that changes over time) into Vertex Animation Textures: a rest mesh FBX with an extra UV channel addressing each vertex's texels, a position texture (offsets or positions per vertex per frame, Unreal space), a normal texture and a JSON sidecar describing the layout. Changing topology is baked as a padded triangle soup. Returns {files, meta, materialParams} (the material inputs: HDR, BoundsMin, BoundsMax, FrameCount, RowsPerFrame, TextureHeight, FrameRate, PositionTexture, NormalTexture)."""
 
 def extensionInfo(*objects: Any, autoload: bool | None = None) -> Any:
     """One extension: {name, path, kind, loaded, autoload, version, vendor, sdk, commands, types, registrations, error}."""
@@ -868,6 +937,9 @@ def poseDriver(*objects: Any, axis: str | None = None, radius: float | None = No
 def poseDrivers() -> Any:
     """The pose drivers: [{node, transform, twistAxis, radius, twistWeight, falloff, restRotation, targetRotation, multipliedBy, drives, output}]."""
 
+def projectTextures(all: bool | None = None, match: str | None = None, absolute: bool | None = None, refresh: bool | None = None) -> Any:
+    """Image files (png, tga, jpg, exr, tif, psd, hdr, bmp, dds) under the project folder that pass textureFolders, as paths relative to it, sorted. Hidden folders (.lila, .git) and build caches are never listed. The folder is scanned in the background and rescanned when files change; this waits for a scan in flight."""
+
 def pruneWeights(*objects: Any, threshold: float | None = None, vertices: Sequence[Any] | None = None) -> Any:
     """Drop weights below a threshold and beyond the skin's maxInfluences, then renormalize."""
 
@@ -993,6 +1065,9 @@ def rotate(*objects: Any, by: Sequence[float] | None = None, to: Sequence[float]
 
 def rotateComponents(by: Sequence[float] | None = None, pivot: Sequence[float] | None = None) -> Any:
     """Rotate the selected components about a world pivot (default: their centre; with symmetry, a pair clear of the mirror plane turns about each side's own centre). Degrees, XYZ order."""
+
+def saveBakeTarget(*objects: Any, project: str | None = None, label: str | None = None, scope: str | None = None, overwrite: bool | None = None, group: str | None = None, backend: str | None = None, doc: str | None = None) -> Any:
+    """Save a project's bake settings as a reusable preset (a target profile): output settings, maps with their options and channel packs, the backend, and group defaults (distances, cage offset, AO occluders, backfaces, the bake-only modifier stack, self as high) taken from group= or the project's first group. Meshes are never saved. scope=user (every project) or workspace (.lila/bake/targets). It then lists in bakeTargets and the Baker's target menu. Returns {name, file}."""
 
 def saveLayout(*objects: Any, name: str | None = None, workspace: bool | None = None) -> Any:
     """Save the current panel arrangement as a named layout. workspace=True saves it in the open folder's .lila/layouts."""
@@ -1123,7 +1198,7 @@ def selectLoopThrough(*objects: Any, edge: int | None = None, ring: bool | None 
 def selectMode(*objects: Any) -> Any:
     """Switch between object, vertex, edge and face selection. With no argument, returns the current mode."""
 
-def selectPathBetween(*objects: Any, kind: str | None = None, from: int | None = None, to: int | None = None, replace: bool | None = None, deselect: bool | None = None) -> Any:
+def selectPathBetween(*objects: Any, kind: str | None = None, to: int | None = None, replace: bool | None = None, deselect: bool | None = None, **flags: Any) -> Any:
     """Select the components between two of a mesh's vertices, edges or faces: the shorter way along a loop or ring they share, else the shortest path across the surface. Adds to the selection unless replace or deselect. Returns the ids in order."""
 
 def selectSetMembers(*objects: Any, add: bool | None = None) -> Any:
@@ -1140,6 +1215,15 @@ def setActiveTake(*objects: Any) -> Any:
 
 def setAttr(*objects: Any, lock: bool | None = None) -> Any:
     """setAttr('node.attr', value). Vec3 takes a list or three numbers. lock=True/False locks or unlocks the plug, with or without a value: a locked plug can't be changed until it is unlocked."""
+
+def setBakeMap(*objects: Any, project: str | None = None, enabled: bool | None = None, suffix: str | None = None, bits: int | None = None, format: str | None = None, options: Any | None = None, remove: bool | None = None) -> Any:
+    """Add or change a map of a bake project: on/off, file suffix ({map}), bit depth, format and options (normal: greenUp, flipX; height: range; id: source, palette; ao: rays, distance, scope). bakeMaps lists the maps. Returns the project's maps."""
+
+def setBakeOutput(project: str | None = None, folder: str | None = None, name: str | None = None, format: str | None = None, bits: int | None = None, dither: bool | None = None, compression: str | None = None, compressionLevel: int | None = None, udimNaming: str | None = None, sidecar: bool | None = None, resolution: int | None = None, width: int | None = None, height: int | None = None, supersampling: int | None = None, padding: int | None = None) -> Any:
+    """Set where and how a bake project writes: folder, file name template (tokens {project} {group} {mesh} {material} {map} {udim} {res} {ext}; several groups share a texture when their names resolve to the same file), format, bit depth, resolution, supersampling and padding. Returns the output settings."""
+
+def setBakeProject(project: str | None = None, rebakeOnSave: bool | None = None, autoAssign: bool | None = None) -> Any:
+    """Set a bake project's pipeline options: rebakeOnSave (saving the scene rebakes it when its inputs changed) and autoAssign (every bake wires its outputs into the lows' materials). Returns them."""
 
 def setDeformerWeights(*objects: Any, weights: Sequence[Any] | None = None, points: Sequence[Any] | None = None, value: float | None = None) -> Any:
     """Set a deformer's per-point weight map: weights= the whole map (one value per point), or points= ids with value=. Weights scale the envelope per point; 1 is full effect."""
@@ -1246,6 +1330,9 @@ def symmetryCheck(*objects: Any) -> Any:
 def symmetryRebuild(*objects: Any, axis: str | None = None, side: str | None = None, pairsOnly: bool | None = None, topological: bool | None = None, tolerance: float | None = None) -> Any:
     """Rebuild meshes symmetric: the kept side is mirrored across the object-space plane, replacing the other side, welded on the plane, and the symmetry pairs are stored again. With pairsOnly, the geometry is left alone and only the stored pairs are matched again, by position or, for meshes that are no longer symmetric, by topology outward from the selected edge (which must lie on the plane). Returns the points left unmatched per mesh."""
 
+def textureFolders(include: Sequence[Any] | None = None, exclude: Sequence[Any] | None = None, scene: bool | None = None, clear: bool | None = None) -> Any:
+    """Which project images the material editor's texture lists show. Globs relative to the project folder (the workspace root, else the scene's folder): `*` within a folder name, `**` across folders, a pattern without '/' matches at any depth, and a folder pattern takes everything under it, e.g. Textures/**, **/*_old.*, Saved. Empty include takes everything; exclude wins. Kept in the workspace's .lila/settings.json, or with scene=True in the scene, where each list overrides the workspace's. With no flags returns the effective lists, where each came from and both levels."""
+
 def toggleSymmetry(*objects: Any, axis: str | None = None) -> Any:
     """Symmetry off on the meshes if every one already has it on (on axis=, when given), else on for all of them. Non-meshes are skipped. Returns the axis set, or 'off'."""
 
@@ -1291,11 +1378,14 @@ def unrealConnect(project: str | None = None, port: int | None = None, host: str
 def unrealImport(*objects: Any, contentPath: str | None = None, kind: str | None = None, skeleton: str | None = None, importMaterials: bool | None = None, materialFolder: str | None = None, keepMaterials: bool | None = None, importTextures: bool | None = None, combineMeshes: bool | None = None, autoCollision: bool | None = None, generateLightmapUVs: bool | None = None, normals: str | None = None, lodGroup: str | None = None, nanite: bool | None = None, existing: str | None = None, reapplyOptions: bool | None = None, save: bool | None = None, file: str | None = None, wait: bool | None = None) -> Any:
     """Import (or reimport) a file into the connected Unreal project. Connects first if needed. Returns {assets, warnings, errors} with wait=True; otherwise queues it and logs the result."""
 
-def unrealMap(*objects: Any, contentPath: str | None = None, kind: str | None = None, skeleton: str | None = None, importMaterials: bool | None = None, materialFolder: str | None = None, keepMaterials: bool | None = None, importTextures: bool | None = None, combineMeshes: bool | None = None, autoCollision: bool | None = None, generateLightmapUVs: bool | None = None, normals: str | None = None, lodGroup: str | None = None, nanite: bool | None = None, existing: str | None = None, reapplyOptions: bool | None = None, save: bool | None = None, sequence: Any | None = None, niagaraSystem: str | None = None, niagaraEmitter: str | None = None, niagaraRenderer: int | None = None) -> Any:
-    """Map a node to an Unreal asset so saving the scene re-exports and reimports it. Stored in the workspace (.lila/unreal.json). Replaces any existing mapping for the node. An object set maps its members as one asset, exported together where they sit. kind meshSequence sends an animated mesh as a static mesh per frame (<contentPath>_000, ...; reimported in place, frames past the end deleted) and can point a Niagara mesh renderer at them; geometryCache sends it as one Alembic Geometry Cache."""
+def unrealMap(*objects: Any, contentPath: str | None = None, kind: str | None = None, skeleton: str | None = None, importMaterials: bool | None = None, materialFolder: str | None = None, keepMaterials: bool | None = None, importTextures: bool | None = None, combineMeshes: bool | None = None, autoCollision: bool | None = None, generateLightmapUVs: bool | None = None, normals: str | None = None, lodGroup: str | None = None, nanite: bool | None = None, existing: str | None = None, reapplyOptions: bool | None = None, save: bool | None = None, sequence: Any | None = None, niagaraSystem: str | None = None, niagaraEmitter: str | None = None, niagaraRenderer: int | None = None, vat: Any | None = None) -> Any:
+    """Map a node to an Unreal asset so saving the scene re-exports and reimports it. Stored in the workspace (.lila/unreal.json). Replaces any existing mapping for the node. An object set maps its members as one asset, exported together where they sit. kind meshSequence sends an animated mesh as a static mesh per frame (<contentPath>_000, ...; reimported in place, frames past the end deleted) and can point a Niagara mesh renderer at them; geometryCache sends it as one Alembic Geometry Cache; vertexAnimation bakes it to Vertex Animation Textures and sends the rest mesh, the textures and a material instance that plays them (sequence for the range, vat for the bake)."""
 
 def unrealMappings() -> Any:
     """Every node -> Unreal asset mapping in this workspace."""
+
+def unrealSendTextures(project: str | None = None, folder: str | None = None, materialMode: str | None = None, materialParent: str | None = None, materialFolder: str | None = None, parameters: Any | None = None, lodGroup: str | None = None, virtualTexture: bool | None = None, assign: bool | None = None, save: bool | None = None, wait: bool | None = None) -> Any:
+    """Send a bake project's last textures to Unreal, updating the texture assets in place (sRGB, compression, flip green and LOD group per map; UDIM sets as virtual textures). materialMode instance also creates or updates a material instance per material slot from materialParent and sets it on the slot of every mapped mesh (unrealMap). assign=True first wires the textures into the Lila materials (bakeAssign). Returns {queued} or, with wait=True, Unreal's {assets, warnings, errors}."""
 
 def unrealStatus(scan: bool | None = None) -> Any:
     """Connection state, the connected editor's hello reply, and with scan=True every editor that can be found."""

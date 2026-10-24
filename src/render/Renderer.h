@@ -4,6 +4,8 @@
 
 #include "render/FrameState.h"
 
+#include <functional>
+#include <future>
 #include <memory>
 #include <string>
 #include <vector>
@@ -12,6 +14,13 @@ namespace lila::render
 {
 using ViewportId = int;
 struct EnvProbe;
+class VulkanContext;
+
+/**
+ * Work for the render thread, run a slice at a time between frames: each call records, submits and waits for one slice
+ * (keep it near 50 ms of GPU time so viewports stay live and the driver never times out) and returns true when done.
+ */
+using GpuTask = std::function<bool(VulkanContext& vk)>;
 
 /**
  * Owns the GPU and a render thread. The main thread hands each viewport a FrameState and the render thread draws
@@ -34,6 +43,8 @@ public:
 
     bool start();
     void stop();
+    /** Runs fn in stop(), once the render thread is gone and before the device is: frees what others keep on it. */
+    void addStopHook(std::function<void(VulkanContext& vk)> fn);
     bool running() const;
 
     ViewportId addViewport(uintptr_t nativeWindow, int width, int height);
@@ -52,6 +63,14 @@ public:
                          FrameStats* timing = nullptr, int repeat = 1);
 
     std::string deviceName() const;
+
+    /**
+     * Queues a task on the render thread. Slices of queued tasks interleave round robin with frames drawn in between.
+     * The future holds what the task threw, or a std::runtime_error when the renderer stops first.
+     */
+    std::future<void> runTask(GpuTask task);
+    /** The device, for allocating from other threads (VMA is thread safe); null when not running. Submit only from tasks. */
+    VulkanContext* context();
 
     /** A CPU copy of the environment built for path (as FrameState::envPath names it), null until it is built. */
     std::shared_ptr<const EnvProbe> environmentProbe(const std::string& path) const;

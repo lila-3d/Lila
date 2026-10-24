@@ -433,19 +433,22 @@ public:
 
     void deactivate() override { mStroke.cancel(); }
 
+    bool ownsBrushRadius() const override { return true; }
+
     bool mousePress(QMouseEvent* e, const ViewInfo& view) override
     {
-        if (e->button() != Qt::LeftButton)
-            return false;
         mHover = e->position();
-        if (tools::softSelectAdjusting())
+        if (tools::brushRadiusDrag(e, false))
         {
-            tools::markSoftSelectAdjusted();
             mAdjusting = true;
             mAdjustStart = e->position();
+            if (e->button() == Qt::MiddleButton)
+                setBrushRadius(0.0);
             mAdjustFrom = brushRadius();
             return true;
         }
+        if (e->button() != Qt::LeftButton)
+            return false;
         mStroke.begin(Stroke::opFor(e->modifiers(), Stroke::Op::Add));
         mLast = e->position();
         mStroke.paint(view, mLast, mLast, brushRadius());
@@ -473,7 +476,7 @@ public:
 
     bool mouseRelease(QMouseEvent* e, const ViewInfo&) override
     {
-        if (e->button() != Qt::LeftButton)
+        if (e->button() != Qt::LeftButton && !(mAdjusting && e->button() == Qt::MiddleButton))
             return false;
         mAdjusting = false;
         mStroke.end();

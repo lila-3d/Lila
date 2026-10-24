@@ -5,6 +5,7 @@
 #include "link/RpcClient.h"
 #include "scene/Node.h"
 #include "seq/MeshSequence.h"
+#include "seq/Vat.h"
 
 #include <condition_variable>
 #include <deque>
@@ -91,6 +92,19 @@ LILA_SCENE_API std::vector<std::string> surplusFrames(const json& listed, const 
  * start and end), written to `folder` with the ue5 axes.
  */
 LILA_SCENE_API seq::SequenceOptions sequenceOptions(const json& mapping, const fs::path& folder);
+
+/**
+ * A vertexAnimation mapping's bake: sequenceOptions for the sampling plus its "vat" object (the exportVertexAnimation
+ * flags format, mode, positions, normals, normalBits, restFrame, maxWidth), written to `folder` as `name`. Throws
+ * std::invalid_argument.
+ */
+LILA_SCENE_API seq::VatOptions vertexAnimationOptions(const json& mapping, const fs::path& folder, const std::string& name);
+
+/**
+ * importVertexAnimation params for a bake: {contentPath, fbx, positions, normals?, metaFile, meta, materialParent?,
+ * options {lodGroup, save, ...}}.
+ */
+LILA_SCENE_API json vertexAnimationParams(const seq::VatResult& bake, const json& mapping);
 
 /** Where auto-sync writes exports: the "/cacheDir" pref, else <workspace>/.lila/cache/unreal, else the user dir. */
 LILA_SCENE_API fs::path cacheDir();

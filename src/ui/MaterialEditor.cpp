@@ -5,7 +5,6 @@
 #include "core/Log.h"
 #include "core/Paths.h"
 #include "core/Profile.h"
-#include "core/Workspace.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
 #include "scene/Materials.h"
@@ -15,6 +14,7 @@
 #include "ui/MaterialDraw.h"
 #include "ui/SpinScrub.h"
 #include "ui/TextureCache.h"
+#include "ui/TexturePicker.h"
 #include "ui/ValueReset.h"
 
 #include <QApplication>
@@ -23,7 +23,6 @@
 #include <QColorDialog>
 #include <QComboBox>
 #include <QDockWidget>
-#include <QFileDialog>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QInputDialog>
@@ -576,7 +575,8 @@ void MaterialEditor::rebuild()
         auto* path = new QLineEdit(box);
         path->setPlaceholderText("none");
         auto* browse = new QToolButton(box);
-        browse->setText("...");
+        browse->setArrowType(Qt::DownArrow);
+        browse->setToolTip("Project textures, Browse... for any file");
         auto* clear = new QToolButton(box);
         clear->setText("x");
         h->addWidget(thumb);
@@ -593,11 +593,9 @@ void MaterialEditor::rebuild()
             if (m && path->text().toStdString() != m->as<std::string>(attr))
                 apply(path->text().toStdString());
         });
-        connect(browse, &QToolButton::clicked, this, [this, apply] {
-            QString start = Workspace::get().isOpen() ? QString::fromStdU16String(Workspace::get().root().u16string()) : QString();
-            QString f = QFileDialog::getOpenFileName(this, "Texture", start, "Images (*.png *.jpg *.jpeg *.tga *.bmp *.hdr);;All files (*)");
-            if (!f.isEmpty())
-                apply(paths::storedPath(fs::path(f.toStdU16String())));
+        connect(browse, &QToolButton::clicked, this, [this, box, apply, attr] {
+            scene::Node* m = current();
+            texturePicker::open(box, m ? m->as<std::string>(attr) : std::string(), apply);
         });
         connect(clear, &QToolButton::clicked, this, [apply] { apply(""); });
         onMiddleClickReset(l, [apply] { apply(""); }, "none", path);
@@ -746,6 +744,10 @@ void registerMaterialUi()
                 return name;
             },
         });
+    actions::add({.id = "material.textureFolders", .label = "Texture Folders...", .category = "Materials",
+                  .run = [] { texturePicker::showFoldersDialog(QApplication::activeWindow()); },
+                  .doc = "Choose which folders of the project the texture lists show, for the workspace and this scene.",
+                  .python = "textureFolders(include=['Textures/**'], exclude=['**/*_old.*'])"});
     actions::add({.id = "viewport.textured", .label = "Textured", .category = "Display", .run = [] { setMaterialsShown(!materialsShown()); },
                   .doc = "Toggle materials and textures in the viewport; off draws flat gray for form checks.",
                   .python = "lila.prefs.set(\"general\", \"/viewport/materials\", not lila.prefs.get(\"general\", \"/viewport/materials\", True))"});

@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <functional>
 
 namespace lila::geo
@@ -454,6 +455,27 @@ void MeshBvh::refitPoints(const Mesh& mesh, std::span<const Index> points)
         }
         mNodeDirty[i] = 0;
     }
+}
+
+FlatBvh MeshBvh::exportFlat() const
+{
+    LILA_ZONE();
+
+    static_assert(sizeof(FlatBvh::Node) == sizeof(Node));
+    FlatBvh out;
+    out.nodes.resize(mNodes.size());
+    std::memcpy(out.nodes.data(), mNodes.data(), mNodes.size() * sizeof(Node));
+    out.corners.resize(mOrder.size() * 3);
+    tbb::parallel_for(size_t(0), mOrder.size(), [&](size_t k) {
+        glm::dvec3 p[3];
+        triPoints(mOrder[k], p[0], p[1], p[2]);
+        uint32_t tri = mOrder[k];
+        float w;
+        std::memcpy(&w, &tri, sizeof(w));
+        for (int c = 0; c < 3; ++c)
+            out.corners[k * 3 + size_t(c)] = glm::vec4(glm::vec3(p[c]), c == 0 ? w : 0.0f);
+    });
+    return out;
 }
 
 Bounds MeshBvh::bounds() const

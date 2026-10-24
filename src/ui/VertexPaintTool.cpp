@@ -945,19 +945,21 @@ public:
         return true;
     }
 
+    bool ownsBrushRadius() const override { return true; }
+
     bool mousePress(QMouseEvent* e, const ViewInfo& view) override
     {
-        if (e->button() != Qt::LeftButton)
-            return false;
         mHover = e->position();
-        if (mArmed != Adjust::None || tools::softSelectAdjusting())
+        if (tools::brushRadiusDrag(e, mArmed != Adjust::None))
         {
             mAdjusting = mArmed != Adjust::None ? mArmed : Adjust::Radius;
             mArmedUsed = true;
             mAdjustStart = e->position();
-            mAdjustFrom = mAdjusting == Adjust::Radius ? settings().radius : settings().strength;
+            mAdjustFrom = e->button() == Qt::MiddleButton ? 0.0 : mAdjusting == Adjust::Radius ? settings().radius : settings().strength;
             return true;
         }
+        if (e->button() != Qt::LeftButton)
+            return false;
         if (mMesh == kNoNode)
             return true;
         Hit hit;
@@ -1028,7 +1030,7 @@ public:
 
     bool mouseRelease(QMouseEvent* e, const ViewInfo&) override
     {
-        if (e->button() != Qt::LeftButton)
+        if (e->button() != Qt::LeftButton && !(mAdjusting != Adjust::None && e->button() == Qt::MiddleButton))
             return false;
         if (mAdjusting != Adjust::None)
         {

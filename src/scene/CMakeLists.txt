@@ -60,6 +60,7 @@ lila_module(lila_scene Scene
     SoftSelect.cpp
     Spaces.cpp
     Take.cpp
+    TextureFolders.cpp
     TransferAttributes.cpp
     Transform.cpp
     TransformCommands.cpp

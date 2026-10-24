@@ -67,4 +67,17 @@ struct ObjectInfo
 
 /** Every PolyMesh in the file. Empty with `error` set when it cannot be read. */
 LILA_SCENE_API std::vector<ObjectInfo> read(const fs::path& path, std::string* error = nullptr);
+
+struct MeshSample
+{
+    std::string path;
+    geo::Mesh mesh;
+};
+
+/**
+ * The PolyMeshes at a time in seconds (the nearest sample), through their parent transforms, faces turned back to
+ * counter-clockwise, with uv0 and normals when the file has them. filter keeps objects whose path contains it (empty
+ * keeps all). Empty with `error` set when the file cannot be read.
+ */
+LILA_SCENE_API std::vector<MeshSample> readMeshes(const fs::path& path, double time, const std::string& filter = {}, std::string* error = nullptr);
 } // namespace lila::seq::abc

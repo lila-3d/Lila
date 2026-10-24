@@ -259,18 +259,20 @@ public:
         }
     }
 
+    bool ownsBrushRadius() const override { return true; }
+
     bool mousePress(QMouseEvent* e, const ViewInfo& view) override
     {
-        if (e->button() != Qt::LeftButton)
-            return false;
         mHover = e->position();
-        if (mResizeArmed || tools::softSelectAdjusting())
+        if (tools::brushRadiusDrag(e, mResizeArmed))
         {
             mResizing = true;
             mResizeStart = e->position();
-            mResizeFrom = settings().radius;
+            mResizeFrom = e->button() == Qt::MiddleButton ? 2.0 : settings().radius;
             return true;
         }
+        if (e->button() != Qt::LeftButton)
+            return false;
         if (mSkin == kNoNode || settings().influence < 0)
             return true;
         beginStroke();

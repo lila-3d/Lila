@@ -119,6 +119,34 @@ TSharedPtr<FJsonValue> SetNiagaraMeshes(const TSharedPtr<FJsonObject>& Params, F
 	int32 RendererIndex = INDEX_NONE;
 	Params->TryGetNumberField(TEXT("renderer"), RendererIndex);
 
+	const TArray<FString> Updated = LilaLink::FillNiagaraMeshRenderers(System, Meshes, EmitterName, RendererIndex);
+	if (Updated.IsEmpty())
+	{
+		OutError = FString::Printf(TEXT("setNiagaraMeshes: %s has no mesh renderer%s"), *SystemPath,
+			EmitterName.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(" in emitter %s"), *EmitterName));
+		return nullptr;
+	}
+	bool bSave = false;
+	Params->TryGetBoolField(TEXT("save"), bSave);
+	TArray<FString> Errors;
+	if (bSave)
+	{
+		LilaLink::SaveAssetPaths({System->GetPathName()}, Errors);
+	}
+	UE_LOG(LogLilaLink, Log, TEXT("setNiagaraMeshes: %d mesh(es) on %d renderer(s) of %s"), Meshes.Num(), Updated.Num(), *SystemPath);
+
+	TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
+	Out->SetNumberField(TEXT("renderers"), Updated.Num());
+	Out->SetField(TEXT("updated"), StringArrayValue(Updated));
+	Out->SetField(TEXT("errors"), StringArrayValue(Errors));
+	return MakeShared<FJsonValueObject>(Out);
+}
+} // namespace
+
+TArray<FString> LilaLink::FillNiagaraMeshRenderers(UNiagaraSystem* System, const TArray<UStaticMesh*>& Meshes, const FString& EmitterName, int32 RendererIndex)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkSequence::FillNiagaraMeshRenderers);
+
 	FProperty* MeshesProperty = FindFProperty<FProperty>(UNiagaraMeshRendererProperties::StaticClass(), GET_MEMBER_NAME_CHECKED(UNiagaraMeshRendererProperties, Meshes));
 	TArray<FString> Updated;
 	for (FNiagaraEmitterHandle& Handle : System->GetEmitterHandles())
@@ -159,31 +187,13 @@ TSharedPtr<FJsonValue> SetNiagaraMeshes(const TSharedPtr<FJsonObject>& Params, F
 			Updated.Add(FString::Printf(TEXT("%s/%s"), *Handle.GetName().ToString(), *MeshRenderer->GetName()));
 		}
 	}
-	if (Updated.IsEmpty())
+	if (!Updated.IsEmpty())
 	{
-		OutError = FString::Printf(TEXT("setNiagaraMeshes: %s has no mesh renderer%s"), *SystemPath,
-			EmitterName.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(" in emitter %s"), *EmitterName));
-		return nullptr;
+		System->RequestCompile(false);
+		System->MarkPackageDirty();
 	}
-	System->RequestCompile(false);
-	System->MarkPackageDirty();
-
-	bool bSave = false;
-	Params->TryGetBoolField(TEXT("save"), bSave);
-	TArray<FString> Errors;
-	if (bSave)
-	{
-		LilaLink::SaveAssetPaths({System->GetPathName()}, Errors);
-	}
-	UE_LOG(LogLilaLink, Log, TEXT("setNiagaraMeshes: %d mesh(es) on %d renderer(s) of %s"), Meshes.Num(), Updated.Num(), *SystemPath);
-
-	TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
-	Out->SetNumberField(TEXT("renderers"), Updated.Num());
-	Out->SetField(TEXT("updated"), StringArrayValue(Updated));
-	Out->SetField(TEXT("errors"), StringArrayValue(Errors));
-	return MakeShared<FJsonValueObject>(Out);
+	return Updated;
 }
-} // namespace
 
 void LilaLink::AddSequenceMethods(TMap<FString, FLilaLinkMethod>& Methods)
 {

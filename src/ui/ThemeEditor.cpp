@@ -55,6 +55,7 @@ public:
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(0, 0, 0, 0);
         auto* row = new QHBoxLayout();
+        row->addWidget(new QLabel("Theme", this));
         mPick = new QComboBox(this);
         mPick->setMinimumWidth(180);
         mPick->setToolTip("The interface theme; switches at once");

@@ -12,6 +12,7 @@
 #include "ui/Icons.h"
 #include "ui/SoftSelectPanel.h"
 #include "ui/SpinScrub.h"
+#include "ui/TexturePicker.h"
 #include "ui/ThemeEditor.h"
 #include "ui/ThemeModel.h"
 #include "ui/ViewportDisplay.h"
@@ -66,6 +67,8 @@ struct PrefRow
     QWidget* field;
     std::vector<std::string> searchText;
     bool lifted = false;
+    /** Spans both columns on its page; the label only shows in search results. */
+    bool wide = false;
 };
 
 struct Page
@@ -121,9 +124,14 @@ public:
             category->setPalette(pal);
             mCategories.push_back(category);
             mGrid->addWidget(category, line, 0);
-            mGrid->addWidget(r.label, line, 1, Qt::AlignRight | Qt::AlignVCenter);
-            mGrid->addWidget(r.field, line, 2);
-            r.label->show();
+            if (r.wide)
+                mGrid->addWidget(r.field, line, 1, 1, 2);
+            else
+            {
+                mGrid->addWidget(r.label, line, 1, Qt::AlignRight | Qt::AlignVCenter);
+                mGrid->addWidget(r.field, line, 2);
+                r.label->show();
+            }
             r.field->show();
             ++line;
         }
@@ -139,7 +147,13 @@ private:
                 continue;
             mGrid->removeWidget(r.label);
             mGrid->removeWidget(r.field);
-            r.form->insertRow(r.index, r.label, r.field);
+            if (r.wide)
+            {
+                r.form->insertRow(r.index, r.field);
+                r.label->hide();
+            }
+            else
+                r.form->insertRow(r.index, r.label, r.field);
             r.form->setRowVisible(r.index, !r.section || r.section->header->isChecked());
             r.lifted = false;
         }
@@ -206,6 +220,26 @@ void addRow(Page& p, Label label, QWidget* field, const std::string& key)
     p.rows->push_back({p.form, row, p.section, category, labelWidget, field,
                        {labelText.toStdString(), labelWidget->toolTip().toStdString(), field->toolTip().toStdString(),
                         std::string(p.file) + key, category.toStdString()}});
+    if (!p.section)
+        return;
+    p.section->rows.push_back(row);
+    if (!p.section->header->isChecked())
+        p.form->setRowVisible(row, false);
+}
+
+/** A row spanning the page width, for an editor too big for the field column. */
+void addWideRow(Page& p, const QString& label, QWidget* field, const std::string& key)
+{
+    p.form->addRow(field);
+    int row = p.form->rowCount() - 1;
+    auto* labelWidget = new QLabel(label, p.widget);
+    labelWidget->hide();
+    QString category = QString::fromStdString(p.title);
+    if (p.section)
+        category += " / " + p.section->header->text();
+    p.rows->push_back({p.form, row, p.section, category, labelWidget, field,
+                       {label.toStdString(), field->toolTip().toStdString(), std::string(p.file) + key, category.toStdString()}});
+    p.rows->back().wide = true;
     if (!p.section)
         return;
     p.section->rows.push_back(row);
@@ -373,6 +407,13 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         number(general, "Memory budget (MB)", "/undo/memoryMB", 2048.0, 0.0, 1048576.0, 256.0, 0);
         number(general, "Held key repeats after (ms)", "/undo/repeatDelayMs", 180.0, 0.0, 2000.0, 10.0, 0);
         number(general, "Held key repeats every (ms, 0 = off)", "/undo/repeatIntervalMs", 100.0, 0.0, 2000.0, 10.0, 0);
+        section(general, "Textures");
+        {
+            auto* edit = new QPushButton("Texture Folders...");
+            edit->setToolTip("Which folders of the project the material editor's texture lists show, per workspace and per scene");
+            QObject::connect(edit, &QPushButton::clicked, edit, [edit] { texturePicker::showFoldersDialog(edit->window()); });
+            addRow(general, "Project texture folders", edit, "/textures");
+        }
         section(general, "References");
         toggle(general, "Reload changed references", "/references/autoReload", true);
         section(general, "Terminal");
@@ -385,7 +426,7 @@ void addBuiltIns(Registry<prefPages::Page>& r)
 
     builtIn(r, "interface", "Interface", "general", [](Page& ui) {
         section(ui, "Theme");
-        addRow(ui, "Theme", makeThemeEditor(), themes::kThemePref);
+        addWideRow(ui, "Theme", makeThemeEditor(), themes::kThemePref);
         section(ui, "Chrome");
         toggle(ui, "Show menu bar (the hotbox still has the menus)", "/ui/showMenuBar", true);
         toggle(ui, "Show shelf (` still opens the floating shelf)", "/ui/showShelf", true);

@@ -9,6 +9,7 @@ lila_module(lila_ui UI
     FlagFields.cpp FlagFields.h
     OptionBox.cpp OptionBox.h
     MenuSearch.cpp MenuSearch.h
+    TexturePicker.cpp TexturePicker.h
     AgentCapture.cpp AgentCapture.h
     AgentSetup.cpp AgentSetup.h
     Animation.cpp Animation.h
@@ -22,11 +23,15 @@ lila_module(lila_ui UI
     AnimLayersPanel.cpp AnimLayersPanel.h
     OffsetsPanel.cpp OffsetsPanel.h
     BatchRunPanel.cpp BatchRunPanel.h
+    BakerPanel.cpp BakerPanelMcp.cpp BakerPanel.h
+    BakeCageView.cpp BakeCageView.h
+    BakePaintTool.cpp BakePaintTool.h
     Editors.cpp Editors.h
     Environments.cpp Environments.h
     ExtensionManagerDialog.cpp ExtensionManagerDialog.h
     GameExporter.cpp GameExporter.h
     MeshSequenceExporter.cpp MeshSequenceExporter.h
+    AnimatedSend.cpp AnimatedSend.h
     Ghosting.cpp Ghosting.h
     GnViewerDraw.cpp GnViewerDraw.h
     GraphEditor.cpp GraphEditor.h
@@ -97,6 +102,7 @@ lila_module(lila_ui UI
     UiTools.cpp
     UndoHistory.cpp UndoHistory.h
     UvEditor.cpp UvEditor.h
+    UvTools.cpp UvTools.h
     UvLive.cpp UvLive.h
     UvPackPanel.cpp UvPackPanel.h
     UvProjectTool.cpp UvProjectTool.h

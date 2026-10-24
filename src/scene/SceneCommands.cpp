@@ -28,6 +28,7 @@
 #include "scene/SceneScripts.h"
 #include "scene/Simulation.h"
 #include "scene/Spaces.h"
+#include "scene/TextureFolders.h"
 #include "scene/Transform.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -157,6 +158,7 @@ void registerCommands()
     registerRenderSettingsCommands();
     scripts::registerCommands();
     data::registerCommands();
+    textureFolders::registerCommands();
     displayLayers::registerCommands();
     objectSets::registerCommands();
 

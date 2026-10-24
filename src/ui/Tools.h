@@ -5,6 +5,8 @@
 #include <functional>
 #include <string>
 
+class QMouseEvent;
+
 namespace lila::ui
 {
 enum class Tool
@@ -61,6 +63,11 @@ LILA_UI_API void removeListener(int id);
 LILA_UI_API bool softSelectAdjusting();
 /** A radius drag happened while the soft select key was down, so releasing it doesn't toggle. */
 LILA_UI_API void markSoftSelectAdjusted();
+/**
+ * A brush tool's press starts a radius drag: B held (or the tool's own armed key) with LMB, which drags from the current
+ * radius, or MMB, which starts from the smallest. Marks the soft select key used.
+ */
+LILA_UI_API bool brushRadiusDrag(const QMouseEvent* e, bool armed);
 
 LILA_UI_API void registerActions();
 } // namespace tools

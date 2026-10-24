@@ -1,5 +1,6 @@
 #include "ui/ViewportWidget.h"
 
+#include "bake/Arrange.h"
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "core/Log.h"
@@ -71,6 +72,12 @@ const glm::vec4 kSelectedColor(0.95f, 0.95f, 0.95f, 1.0f);
 const glm::vec4 kChildOfSelectedColor(0.55f, 0.55f, 0.55f, 1.0f);
 const glm::vec4 kPreselectColor(0.75f, 0.75f, 0.75f, 1.0f);
 const glm::vec4 kTemplateWireColor(0.22f, 0.22f, 0.22f, 1.0f);
+
+/** Where the viewport draws and picks a node: its world matrix plus any view-only display offset (bake Arrange). */
+glm::dmat4 shownWorld(const scene::Node& n)
+{
+    return bake::arrange::displayWorld(scene::Graph::current(), n.id(), n.as<glm::dmat4>(scene::Transform::kWorldMatrix));
+}
 
 /** An unhighlighted object's line color as its display layer has it: the layer's tint, template grey, else fallback. */
 glm::vec4 layerLineColor(const scene::Graph& g, scene::NodeId id, const glm::vec4& fallback)
@@ -193,6 +200,7 @@ ViewportWidget::ViewportWidget(QWidget* parent) : QWidget(parent)
         updateCursor();
         requestFrame();
     });
+    mArrangeListener = bake::arrange::addListener([this] { requestFrame(); });
     mHandlerListener = selectionHandlers::addListener([this] {
         mHandlerHover.reset();
         requestFrame();
@@ -224,6 +232,7 @@ ViewportWidget::~ViewportWidget()
     viewportTools::removeListener(mViewportToolListener);
     gizmos::removeListener(mGizmoListener);
     selectionHandlers::removeListener(mHandlerListener);
+    bake::arrange::removeListener(mArrangeListener);
     scene::removeRenderSettingsListener(mRenderSettingsListener);
     if (mId)
         render::Renderer::get().removeViewport(mId);
@@ -486,21 +495,26 @@ void ViewportWidget::submit()
     {
         scene::Node* n = g.node(id);
         if (!n->type().isA("mesh") || overridden(*n) || !scene::effectivelyVisible(g, id, inherit) || !mIsolation.shows(id) ||
-            !scene::selectionMask::shown(*n))
+            !scene::selectionMask::shown(*n) || viewportHooks::hiddenInView(id))
             continue;
         int smooth = int(n->as<int64_t>(scene::MeshNode::kSmoothPreview));
         scene::MeshPtr shown = smoothedFor(n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh), smooth);
-        bool textured = showMaterials && shown;
-        auto rm = renderMeshFor(shown, textured && needsTangents(*shown));
+        std::vector<render::Material> hooked;
+        const bool previewed = shown && viewportHooks::hookedMaterials(id, *shown, hooked);
+        bool textured = (showMaterials || previewed) && shown;
+        const bool tangents = textured && (previewed || needsTangents(*shown));
+        auto rm = renderMeshFor(shown, tangents);
         if (!rm)
             continue;
         render::MeshDraw d;
         d.mesh = std::move(rm);
-        if (auto part = isolate::masked(&mIsolation, id, shown, smooth, textured && needsTangents(*shown)))
+        if (auto part = isolate::masked(&mIsolation, id, shown, smooth, tangents))
             d.mesh = part->mesh;
-        if (textured)
+        if (previewed)
+            d.materials = std::move(hooked);
+        else if (textured)
             d.materials = drawMaterials(*shown);
-        d.world = glm::mat4(n->as<glm::dmat4>(scene::Transform::kWorldMatrix));
+        d.world = glm::mat4(shownWorld(*n));
         if (vertexColors != render::VertexColorMode::Off && shown && !geo::colors::current(*shown).empty())
         {
             d.vertexColors = vertexColors;
@@ -821,13 +835,13 @@ std::vector<std::string> ViewportWidget::hitTest(QPointF a, QPointF b)
     {
         scene::Node* n = g.node(id);
         if (!n->type().isA("mesh") || overridden(*n) || !viewportPickable(g, id, inherit) || !scene::selectionMask::pickable(*n) ||
-            !mIsolation.shows(id))
+            !mIsolation.shows(id) || viewportHooks::hiddenInView(id))
             continue;
         scene::MeshPtr outMesh = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
         auto rm = renderMeshFor(outMesh);
         if (!rm || rm->vertices.empty())
             continue;
-        glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+        glm::dmat4 world = shownWorld(*n);
         if (click)
         {
             if (auto t = isolate::raycast(&mIsolation, id, outMesh, world, rayO, rayD); t && t->distance < nearest)
@@ -927,7 +941,7 @@ scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
         for (scene::NodeId id : live)
         {
             scene::Node* n = g.node(id);
-            if (auto hit = isolate::raycast(&mIsolation, id, n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh), n->as<glm::dmat4>(scene::Transform::kWorldMatrix),
+            if (auto hit = isolate::raycast(&mIsolation, id, n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh), shownWorld(*n),
                                             view.eye, dir);
                 hit && hit->distance < dist * (1.0 - 1e-4) - 1e-3)
                 return false;
@@ -945,7 +959,7 @@ scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
         scene::MeshPtr mesh = scene::modifiers::cage(g, id);
         if (!mesh)
             continue;
-        glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+        glm::dmat4 world = shownWorld(*n);
         if (mode == ComponentMode::Face)
         {
             auto pd = pickDataFor(mesh);
@@ -1008,7 +1022,7 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
             for (scene::NodeId id : hilited(mIsolation))
             {
                 scene::Node* n = g.node(id);
-                if (auto hit = isolate::raycast(&mIsolation, id, n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh), n->as<glm::dmat4>(scene::Transform::kWorldMatrix),
+                if (auto hit = isolate::raycast(&mIsolation, id, n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh), shownWorld(*n),
                                                 eye, dir);
                     hit && hit->distance < dist * (1.0 - 1e-4) - 1e-3)
                     return false;
@@ -1022,7 +1036,7 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
             if (!mesh)
                 continue;
             const geo::Mesh& m = *mesh;
-            glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+            glm::dmat4 world = shownWorld(*n);
             auto worldOf = [&](uint32_t p) { return glm::dvec3(world * glm::dvec4(m.position(p), 1.0)); };
             if (mode == ComponentMode::Vertex)
             {
@@ -1068,7 +1082,7 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
         for (auto it = hits.begin(); it != hits.end();)
         {
             scene::MeshPtr mesh = scene::modifiers::cage(g, it->first);
-            glm::dmat4 world = g.node(it->first)->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+            glm::dmat4 world = shownWorld(*g.node(it->first));
             std::erase_if(it->second, [&](uint32_t id) { return !mesh || !paintSelect::frontFacing(*mesh, world, mode, id, view); });
             it = it->second.empty() ? hits.erase(it) : std::next(it);
         }
@@ -1129,7 +1143,7 @@ void ViewportWidget::drawComponents(render::FrameState& s)
         if (!mesh)
             continue;
         const geo::Mesh& m = *mesh;
-        glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+        glm::dmat4 world = shownWorld(*n);
         // With modifiers on, the cage's wire shows what you're editing.
         if (mesh != n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh))
             if (auto rm = renderMeshFor(mesh))
@@ -1309,7 +1323,7 @@ selectionHandlers::Hit ViewportWidget::selectionHit(QPointF px)
     auto pd = pickDataFor(mesh);
     if (!rm || !pd)
         return hit;
-    const glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+    const glm::dmat4 world = shownWorld(*n);
     glm::dvec3 o, d;
     viewInfo().ray(px, o, d);
     std::optional<RayHit> ray = isolate::raycast(&mIsolation, hit.node, mesh, world, o, d);
@@ -1347,7 +1361,7 @@ void ViewportWidget::drawHandlerHover(render::FrameState& s)
     if (!mesh)
         return;
     const geo::Mesh& m = *mesh;
-    const glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+    const glm::dmat4 world = shownWorld(*n);
     const glm::vec4 color = srgbToLinear(h.color);
     auto weight = [&](uint32_t i) { return i < h.weights.size() ? std::clamp(h.weights[i], 0.0f, 1.0f) : 0.0f; };
     if (!mIsolation.shows(h.mesh))
@@ -1403,7 +1417,7 @@ void ViewportWidget::drawPreselect(render::FrameState& s)
     if ((mode == ComponentMode::Vertex && !m.pointValid(id)) || (mode == ComponentMode::Edge && !m.edgeValid(id)) ||
         (mode == ComponentMode::Face && !m.faceValid(id)))
         return;
-    glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+    glm::dmat4 world = shownWorld(*n);
     auto wp = [&](uint32_t p) { return glm::dvec3(world * glm::dvec4(m.position(p), 1.0)); };
     ViewInfo view = viewInfo();
     glm::dvec3 right(view.view[0][0], view.view[1][0], view.view[2][0]), up(view.view[0][1], view.view[1][1], view.view[2][1]);
@@ -1991,7 +2005,7 @@ void ViewportWidget::frameSelection(bool all)
             const scene::MeshPtr& mesh = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
             if (!mesh)
                 continue;
-            glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+            glm::dmat4 world = shownWorld(*n);
             for (uint32_t p : scene::components::pointsOf(id))
                 if (mesh->pointValid(p))
                 {
@@ -2020,7 +2034,7 @@ void ViewportWidget::frameSelection(bool all)
         auto rm = renderMeshFor(n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh));
         if (!rm || rm->vertices.empty())
             return false;
-        glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+        glm::dmat4 world = shownWorld(*n);
         for (int c = 0; c < 8; ++c)
         {
             glm::dvec3 corner((c & 1) ? rm->boundsMax.x : rm->boundsMin.x, (c & 2) ? rm->boundsMax.y : rm->boundsMin.y,
@@ -2083,9 +2097,9 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
         submit();
         return;
     }
-    // The Paint Select tool takes B + drag for its own brush radius.
+    // Brush tools take B + drag for their own radius.
     if (tools::softSelectAdjusting() && (e->button() == Qt::LeftButton || e->button() == Qt::MiddleButton) &&
-        viewportTools::activeId() != paintSelect::kToolId)
+        !(viewportTools::active() && viewportTools::active()->ownsBrushRadius()))
     {
         mSoftDrag = true;
         tools::markSoftSelectAdjusted();
@@ -2407,7 +2421,7 @@ bool ViewportWidget::selectLoopAt(QPointF at, Qt::KeyboardModifiers mods)
         {
             // The face loop crosses the face's edge nearest the cursor.
             const geo::Mesh& m = *mesh;
-            glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+            glm::dmat4 world = shownWorld(*n);
             double best = 1e300;
             geo::Index nearest = geo::kInvalid;
             m.forEachFaceCorner(h.id, [&](geo::Index c) {

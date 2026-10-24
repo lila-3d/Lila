@@ -4,6 +4,7 @@
 #include "core/Registry.h"
 
 #include <algorithm>
+#include <map>
 
 namespace lila::ui::viewportHooks
 {
@@ -109,4 +110,58 @@ std::vector<Drawer> drawers() { return drawerHooks().fns(); }
 std::vector<Picker> pickers() { return pickerHooks().fns(); }
 std::vector<std::string> drawerIds() { return drawerHooks().ids(); }
 std::vector<std::string> pickerIds() { return pickerHooks().ids(); }
+namespace
+{
+std::map<std::string, MaterialHook, std::less<>>& materialHooks()
+{
+    static std::map<std::string, MaterialHook, std::less<>> h;
+    return h;
+}
+} // namespace
+
+void setMaterialHook(std::string id, MaterialHook fn) { materialHooks()[std::move(id)] = std::move(fn); }
+
+bool removeMaterialHook(std::string_view id)
+{
+    auto it = materialHooks().find(id);
+    if (it == materialHooks().end())
+        return false;
+    materialHooks().erase(it);
+    return true;
+}
+
+bool hookedMaterials(scene::NodeId id, const geo::Mesh& mesh, std::vector<render::Material>& materials)
+{
+    for (const auto& [name, fn] : materialHooks())
+        if (fn && fn(id, mesh, materials))
+            return true;
+    return false;
+}
+namespace
+{
+std::map<std::string, HideHook, std::less<>>& hideHooks()
+{
+    static std::map<std::string, HideHook, std::less<>> h;
+    return h;
+}
+} // namespace
+
+void setHideHook(std::string id, HideHook fn) { hideHooks()[std::move(id)] = std::move(fn); }
+
+bool removeHideHook(std::string_view id)
+{
+    auto it = hideHooks().find(id);
+    if (it == hideHooks().end())
+        return false;
+    hideHooks().erase(it);
+    return true;
+}
+
+bool hiddenInView(scene::NodeId id)
+{
+    for (const auto& [name, fn] : hideHooks())
+        if (fn && fn(id))
+            return true;
+    return false;
+}
 } // namespace lila::ui::viewportHooks

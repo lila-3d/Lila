@@ -820,3 +820,65 @@ TEST_CASE("a meshSequence mapping imports every frame, feeds the Niagara rendere
     PrefStore::get().setWorkspaceDir({});
     fs::remove_all(ws);
 }
+
+TEST_CASE("a vertexAnimation mapping bakes the textures and sends importVertexAnimation")
+{
+    setup();
+    fs::path ws = tempDir("vat");
+    PrefStore::get().setWorkspaceDir(ws / ".lila");
+    PrefStore::get().set("unreal", "/cacheDir", (ws / "cache").generic_string(), PrefScope::Workspace);
+
+    ops::execute("newScene", json::object());
+    scene::Graph& g = scene::Graph::current();
+    scene::Node* n = g.createNode(*scene::types::find("mesh"), "blob");
+    g.setValue({n->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(geo::makeCube())));
+    const std::string blob = n->name();
+
+    CHECK_THROWS_AS(ops::execute("unrealMap", {{"args", {blob}}, {"contentPath", "/Game/FX/SM_Blob"}, {"kind", "vertexAnimation"}, {"vat", 3}}),
+                    CommandError);
+    CHECK_THROWS_AS(ops::execute("unrealMap", {{"args", {blob}}, {"contentPath", "/Game/FX/SM_Blob"}, {"kind", "vertexAnimation"},
+                                               {"vat", {{"format", "tga"}}}}),
+                    CommandError);
+    json m = ops::execute("unrealMap", {{"args", {blob}},
+                                        {"contentPath", "/Game/FX/SM_Blob"},
+                                        {"kind", "vertexAnimation"},
+                                        {"sequence", {{"start", 1}, {"end", 4}}},
+                                        {"vat", {{"format", "png"}, {"materialParent", "/Game/FX/M_MyVat"}}}});
+    CHECK(m["vat"]["format"] == "png");
+
+    FakeServer server(editor([](const json& req) -> std::optional<json> {
+        if (req["method"] == "importVertexAnimation")
+            return FakeServer::reply(req, {{"assets", {req["params"]["contentPath"]}}, {"warnings", json::array()}, {"errors", json::array()}});
+        return std::nullopt;
+    }));
+    Link::ConnectOptions o;
+    o.port = server.port();
+    Link::get().connect(o);
+    unregisterExporter("fbx");
+    CHECK(syncMappings(true) == 1);
+    Link::get().waitIdle();
+    mainq::drain();
+
+    json req;
+    for (const json& r : server.requests())
+        if (r["method"] == "importVertexAnimation")
+            req = r["params"];
+    REQUIRE(req.is_object());
+    CHECK(req["contentPath"] == "/Game/FX/SM_Blob");
+    CHECK(req["materialParent"] == "/Game/FX/M_MyVat");
+    for (const char* k : {"fbx", "positions", "normals", "metaFile"})
+        CHECK(fs::exists(req[k].get<std::string>()));
+    CHECK(req["positions"].get<std::string>().ends_with("_pos.png"));
+    CHECK(req["meta"]["frameCount"] == 4);
+    CHECK(req["meta"]["mode"] == "constant");
+    CHECK(req["meta"]["vertexCount"] == 8);
+    // The texture parameters name the assets the plugin makes beside the mesh.
+    CHECK(req["meta"]["materialParams"]["PositionTexture"] == "/Game/FX/T_Blob_VATPos.T_Blob_VATPos");
+    CHECK(req["meta"]["materialParams"]["NormalTexture"] == "/Game/FX/T_Blob_VATNrm.T_Blob_VATNrm");
+    CHECK(req["meta"]["materialParams"]["HDR"] == 0);
+
+    Link::get().disconnect();
+    ops::execute("unrealUnmap", {{"args", {blob}}});
+    PrefStore::get().setWorkspaceDir({});
+    fs::remove_all(ws);
+}
