@@ -657,6 +657,41 @@ Index mergeToTarget(Mesh& mesh, std::span<const Index> points, Index target)
     return target;
 }
 
+std::vector<Index> targetWeld(Mesh& mesh, std::span<const WeldPair> pairs, bool center)
+{
+    LILA_ZONE();
+
+    std::vector<Index> map(mesh.pointCapacity(), kInvalid);
+    std::vector<bool> isTarget(mesh.pointCapacity(), false);
+    std::vector<Index> out;
+    for (const WeldPair& w : pairs)
+    {
+        if (!mesh.pointValid(w.source) || !mesh.pointValid(w.target) || w.source == w.target || isTarget[w.source] ||
+            map[w.source] != kInvalid || map[w.target] != kInvalid)
+            continue;
+        if (center)
+            mesh.setPosition(w.target, (mesh.position(w.source) + mesh.position(w.target)) * 0.5);
+        map[w.source] = w.target;
+        isTarget[w.target] = true;
+        out.push_back(w.target);
+    }
+    weldPoints(mesh, map);
+    return uniqueSorted(out);
+}
+
+std::array<WeldPair, 2> edgeWeldPairs(const Mesh& mesh, Index source, Index target)
+{
+    const Index s0 = mesh.edgePoint(source, 0), s1 = mesh.edgePoint(source, 1);
+    const Index t0 = mesh.edgePoint(target, 0), t1 = mesh.edgePoint(target, 1);
+    auto d = [&](Index a, Index b) { return glm::distance(mesh.position(a), mesh.position(b)); };
+    bool crossed = d(s0, t1) + d(s1, t0) < d(s0, t0) + d(s1, t1);
+    if (s0 == t0 || s1 == t1)
+        crossed = false;
+    else if (s0 == t1 || s1 == t0)
+        crossed = true;
+    return crossed ? std::array{WeldPair{s0, t1}, WeldPair{s1, t0}} : std::array{WeldPair{s0, t0}, WeldPair{s1, t1}};
+}
+
 std::vector<Index> collapseEdges(Mesh& mesh, std::span<const Index> edges)
 {
     LILA_ZONE();

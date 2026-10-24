@@ -1172,7 +1172,7 @@ void MainWindow::buildMenus()
 
     menu("Model", "Model");
     menus::addActions("Model", {"#Components", "mesh.extrude", "mesh.inset", "mesh.bevel", "mesh.insertLoop", "mesh.knife", "mesh.bridge",
-                                "mesh.fillHole", "mesh.poke", "#Merge", "mesh.merge", "mesh.mergeCenter", "mesh.collapse", "#Edges", "mesh.dissolve",
+                                "mesh.fillHole", "mesh.poke", "#Merge", "mesh.merge", "mesh.mergeCenter", "mesh.targetWeld", "mesh.collapse", "#Edges", "mesh.dissolve",
                                 "mesh.spin"});
 
     menu("Surface", "Surface", Area::MenuBar, syncChecks);

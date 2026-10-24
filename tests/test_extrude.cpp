@@ -220,3 +220,57 @@ TEST_CASE("edits run in a component mode stay in it")
     run("polyCollapse");
     CHECK(scene::components::mode() == scene::ComponentMode::Edge);
 }
+
+TEST_CASE("polyTargetWeld: vertex into target, halfway, edges, and across symmetry")
+{
+    auto hasPoint = [](const geo::Mesh& m, const glm::dvec3& p) {
+        for (Index i = 0; i < m.pointCapacity(); ++i)
+            if (m.pointValid(i) && glm::distance(m.position(i), p) < 1e-6)
+                return true;
+        return false;
+    };
+    run("newScene");
+    std::string cube = run("polyCube")[0];
+    const geo::Mesh before = meshOf(cube);
+    const Index a = before.edgePoint(0, 0), b = before.edgePoint(0, 1);
+    run("polyTargetWeld", {{"mesh", cube}, {"source", a}, {"target", b}});
+    CHECK(meshOf(cube).numPoints() == 7);
+    CHECK(hasPoint(meshOf(cube), before.position(b)));
+    CHECK_FALSE(hasPoint(meshOf(cube), before.position(a)));
+    run("undo");
+    CHECK(meshOf(cube).numPoints() == 8);
+
+    run("polyTargetWeld", {{"mesh", cube}, {"source", a}, {"target", b}, {"center", true}});
+    CHECK(hasPoint(meshOf(cube), (before.position(a) + before.position(b)) * 0.5));
+    run("undo");
+
+    Index apart = geo::kInvalid;
+    for (Index e = 1; e < before.edgeCapacity() && apart == geo::kInvalid; ++e)
+        if (before.edgeValid(e) && before.edgePoint(e, 0) != a && before.edgePoint(e, 0) != b && before.edgePoint(e, 1) != a &&
+            before.edgePoint(e, 1) != b)
+            apart = e;
+    REQUIRE(apart != geo::kInvalid);
+    run("polyTargetWeld", {{"mesh", cube}, {"source", 0}, {"target", apart}, {"edge", true}});
+    CHECK(meshOf(cube).numPoints() == 6);
+    run("undo");
+
+    // With X symmetry, welding a +X vertex to its neighbour welds the -X pair too; welding across the plane meets on it.
+    run("setSymmetry", {{"args", {cube}}, {"axis", "x"}});
+    Index px = geo::kInvalid, nx = geo::kInvalid, py = geo::kInvalid;
+    for (Index i = 0; i < before.pointCapacity(); ++i)
+    {
+        const glm::dvec3 p = before.position(i);
+        if (p.x > 0 && p.y > 0 && p.z > 0)
+            px = i;
+        if (p.x < 0 && p.y > 0 && p.z > 0)
+            nx = i;
+        if (p.x > 0 && p.y < 0 && p.z > 0)
+            py = i;
+    }
+    run("polyTargetWeld", {{"mesh", cube}, {"source", px}, {"target", py}});
+    CHECK(meshOf(cube).numPoints() == 6);
+    run("undo");
+    run("polyTargetWeld", {{"mesh", cube}, {"source", px}, {"target", nx}});
+    CHECK(meshOf(cube).numPoints() == 7);
+    CHECK(hasPoint(meshOf(cube), glm::dvec3(0.0, before.position(px).y, before.position(px).z)));
+}

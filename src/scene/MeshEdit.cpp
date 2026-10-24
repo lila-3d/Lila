@@ -266,6 +266,24 @@ Node& meshArg(const std::string& name, const char* cmd)
         throw CommandError(std::string(cmd) + ": " + name + " is not a mesh");
     return *n;
 }
+/** The mesh= flag's mesh, else the first selected or hilited mesh. */
+Node& meshFlag(const Args& a, const char* cmd)
+{
+    Graph& g = graph();
+    std::string name = a.get<std::string>("mesh", "");
+    if (name.empty())
+    {
+        std::vector<NodeId> candidates = g.selection();
+        for (auto& [node, ids] : components::selected(components::mode()))
+            candidates.push_back(node);
+        for (NodeId id : candidates)
+            if (Node* n = g.node(id); n && n->type().isA("mesh"))
+                return *n;
+        throw CommandError(std::string(cmd) + ": give mesh= or select a mesh");
+    }
+    return meshArg(name, cmd);
+}
+
 /** World-space distance along the edges from the nearest selected point, up to limit (infinity beyond it). */
 std::vector<double> surfaceDistances(const geo::Mesh& m, const glm::dmat4& world, const Ids& selected, double limit)
 {
@@ -710,6 +728,82 @@ void registerMeshEditCommands()
                 Index p = geo::mergeToCenter(m, sel);
                 return points(p == geo::kInvalid ? Ids{} : Ids{p});
             });
+        },
+    });
+
+    ops::registerCommand({
+        .name = "polyTargetWeld",
+        .doc = "Target weld: merge one vertex into another, which keeps its place (or both meet halfway with center=), or an "
+               "edge into another, end to nearest end. Follows the mesh's symmetry; a weld across the symmetry plane meets on it. "
+               "Returns the welded vertices.",
+        .flags = {{"mesh", "", T::String, nullptr, "Mesh to weld; default: the selected or hilited mesh."},
+                  {"source", "", T::Int, -1, "Vertex (or edge) that moves."},
+                  {"target", "", T::Int, -1, "Vertex (or edge) it merges into."},
+                  {"edge", "", T::Bool, false, "source and target are edges."},
+                  {"center", "", T::Bool, false, "Meet halfway instead of at the target."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = graph();
+            g.evaluate();
+            Node& n = meshFlag(a, "polyTargetWeld");
+            PlugRef base = basePlug(n);
+            geo::Mesh mesh = baseMesh(base);
+            const bool edge = a.get<bool>("edge");
+            const Index source = Index(a.get<int>("source")), target = Index(a.get<int>("target"));
+            const bool valid = edge ? mesh.edgeValid(source) && mesh.edgeValid(target) : mesh.pointValid(source) && mesh.pointValid(target);
+            if (!valid || source == target)
+                throw CommandError(std::format("polyTargetWeld: {} has no {} {} and {} to weld", n.path(), edge ? "edges" : "vertices",
+                                               a.get<int>("source"), a.get<int>("target")));
+            auto sym = symmetryFor(n, mesh);
+            std::vector<geo::WeldPair> pairs;
+            auto add = [&](Index s, Index t) {
+                if (edge)
+                    std::ranges::copy(geo::edgeWeldPairs(mesh, s, t), std::back_inserter(pairs));
+                else
+                    pairs.push_back({s, t});
+            };
+            add(source, target);
+            bool center = a.get<bool>("center");
+            if (sym)
+            {
+                const Index ms = edge ? sym->mirrorEdge(mesh, source) : sym->mirrorPoint(source);
+                const Index mt = edge ? sym->mirrorEdge(mesh, target) : sym->mirrorPoint(target);
+                if (ms == target)
+                    center = true;
+                else if (ms != geo::kInvalid && mt != geo::kInvalid && (ms != source || mt != target))
+                    add(ms, mt);
+            }
+
+            UndoChunk chunk("Target Weld");
+            std::vector<glm::dvec3> before;
+            int drive = 1;
+            if (sym)
+            {
+                before.assign(mesh.positions().begin(), mesh.positions().end());
+                drive = sym->majoritySide(edge ? components::convert(mesh, ComponentMode::Edge, {source}, ComponentMode::Vertex) : Ids{source});
+            }
+            Ids welded = geo::targetWeld(mesh, pairs, center);
+            if (welded.empty())
+                throw CommandError("polyTargetWeld: nothing to weld");
+            if (sym)
+                maintainSymmetry(n, mesh, before, drive);
+            geo::MeshRemap remap;
+            mesh.compact(&remap);
+            const std::vector<Index>* maps[3] = {&remap.points, &remap.edges, &remap.faces};
+            std::map<NodeId, Ids> sel[3] = {components::selected(ComponentMode::Vertex), components::selected(ComponentMode::Edge),
+                                            components::selected(ComponentMode::Face)};
+            for (int k = 0; k < 3; ++k)
+                if (auto it = sel[k].find(n.id()); it != sel[k].end())
+                    if (Ids kept = remapIds(it->second, *maps[k]); kept.empty())
+                        sel[k].erase(it);
+                    else
+                        it->second = std::move(kept);
+            Ids mapped = remapIds(welded, remap.points);
+            auto edited = std::make_shared<geo::Mesh>(std::move(mesh));
+            g.setValue(base, MeshPtr(edited));
+            autoBevel::baseRemapped(g, n.id(), remap, *edited);
+            objectSets::meshRemapped(g, n.id(), remap);
+            components::setAll(sel[0], sel[1], sel[2]);
+            return mapped;
         },
     });
 
@@ -1655,22 +1749,8 @@ void registerMeshEditCommands()
         .run = [vec](const Args& a) -> json {
             Graph& g = graph();
             g.evaluate();
-            std::string name = a.get<std::string>("mesh", "");
-            if (name.empty())
-            {
-                std::vector<NodeId> candidates = g.selection();
-                for (auto& [node, ids] : components::selected(components::mode()))
-                    candidates.push_back(node);
-                for (NodeId id : candidates)
-                    if (Node* n = g.node(id); n && n->type().isA("mesh"))
-                    {
-                        name = n->path();
-                        break;
-                    }
-                if (name.empty())
-                    throw CommandError("polyKnife: give mesh= or select a mesh");
-            }
-            Node& n = meshArg(name, "polyKnife");
+            Node& n = meshFlag(a, "polyKnife");
+            const std::string name = n.path();
             PlugRef base = basePlug(n);
             geo::Mesh mesh = baseMesh(base);
             const glm::dmat4 world = n.as<glm::dmat4>(Transform::kWorldMatrix);

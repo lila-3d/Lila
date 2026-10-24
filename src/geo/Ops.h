@@ -6,6 +6,7 @@
 #include "geo/Symmetry.h"
 #include "geo/Triangulate.h"
 
+#include <array>
 #include <span>
 #include <vector>
 
@@ -129,6 +130,21 @@ LILA_SCENE_API std::vector<Index> mergeByDistance(Mesh& mesh, std::span<const In
 LILA_SCENE_API Index mergeToCenter(Mesh& mesh, std::span<const Index> points);
 /** Welds the given points into target, keeping its position. */
 LILA_SCENE_API Index mergeToTarget(Mesh& mesh, std::span<const Index> points, Index target);
+
+/** One weld of a target weld: source merges into target. */
+struct WeldPair
+{
+    Index source = kInvalid;
+    Index target = kInvalid;
+};
+
+/**
+ * Target weld: each source merges into its target, which keeps its position, or with center both meet halfway. A pair
+ * whose source is another pair's target is dropped, so welds never chain. Returns the surviving targets.
+ */
+LILA_SCENE_API std::vector<Index> targetWeld(Mesh& mesh, std::span<const WeldPair> pairs, bool center = false);
+/** The source edge's two points paired with the target edge's the shorter way round; a shared point pairs with itself. */
+LILA_SCENE_API std::array<WeldPair, 2> edgeWeldPairs(const Mesh& mesh, Index source, Index target);
 /**
  * Welds points: target[p] is the point p merges into (or p / kInvalid to keep it). Survivors keep
  * their positions. Faces that collapse below three points are removed.

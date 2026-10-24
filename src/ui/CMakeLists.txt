@@ -81,6 +81,7 @@ lila_module(lila_ui UI
     Panels.cpp Panels.h
     RetopoDrawTool.cpp RetopoDrawTool.h
     KnifeTool.cpp KnifeTool.h
+    TargetWeldTool.cpp TargetWeldTool.h
     PythonBridge.cpp PythonBridge.h
     RigViewport.cpp RigViewport.h WeightPaintTool.cpp WeightPaintTool.h
     SpacesUi.cpp SpacesUi.h
