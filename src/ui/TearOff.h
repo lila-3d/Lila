@@ -20,7 +20,8 @@ class QVBoxLayout;
 /**
  * Maya's tear-off menus. Menu bar menus and their submenus get a dashed row at the top; clicking it turns the menu into
  * a panel of buttons bound to the same QActions, in a dock named for the menu's path (see TearOffLogic.h), so it docks,
- * tabs and is saved with layouts and the session like any other panel.
+ * tabs and is saved with layouts and the session like any other panel. Clicking a section's title tears off just that
+ * section's rows, as a dock whose path ends in "#<section>".
  */
 namespace lila::ui::tearoff
 {
@@ -36,8 +37,11 @@ LILA_UI_API std::optional<std::vector<std::string>> pathOf(QMenu* menu);
 /** The menu at that path in the window's menu bar. */
 LILA_UI_API QMenu* findMenu(QMainWindow* window, const std::vector<std::string>& path);
 
-/** Shows the menu's torn-off dock, creating it floating at `at` (the cursor when unset) if it has none yet. */
-LILA_UI_API QDockWidget* tearOff(QMenu* menu, std::optional<QPoint> at = std::nullopt);
+/**
+ * Shows the menu's torn-off dock, creating it floating at `at` (the cursor when unset) if it has none yet. With a section,
+ * only the rows under that section title.
+ */
+LILA_UI_API QDockWidget* tearOff(QMenu* menu, std::optional<QPoint> at = std::nullopt, const QString& section = {});
 
 /** Creates the docks for these dock names that do not exist yet, so a restored window state can place them. */
 LILA_UI_API void recreate(QMainWindow* window, const std::vector<std::string>& dockNames);
@@ -48,7 +52,8 @@ class LILA_UI_API TearOffPanel : public QWidget
     Q_OBJECT
 
 public:
-    explicit TearOffPanel(QMenu* menu, QWidget* parent = nullptr);
+    /** section: show only the rows under the separator with that title, up to the next titled one. */
+    explicit TearOffPanel(QMenu* menu, const QString& section = {}, QWidget* parent = nullptr);
     QMenu* menu() const;
     /** Big enough to show every row without scrolling. */
     QSize preferredSize() const;
@@ -64,6 +69,7 @@ private:
     void rebuild();
 
     QPointer<QMenu> mMenu;
+    QString mSection;
     QWidget* mBody = nullptr;
     QVBoxLayout* mRows = nullptr;
     std::vector<QAction*> mShown;

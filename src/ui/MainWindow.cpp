@@ -1098,7 +1098,7 @@ void MainWindow::buildMenus()
     };
 
     menu("File", "File");
-    menus::addActions("File", {"file.new", "file.open"});
+    menus::addActions("File", {"#Scene", "file.new", "file.open"});
     addSubmenu("File", "Recent Scenes", [this](QMenu* recent) {
         connect(recent, &QMenu::aboutToShow, this, [this, recent] {
             recent->clear();
@@ -1113,9 +1113,9 @@ void MainWindow::buildMenus()
                 recent->addAction("(none)")->setEnabled(false);
         });
     });
-    menus::addActions("File", {"file.save", "file.saveAs", "file.incrementAndSave", "file.versions", "", "file.import", "file.convertMaya",
-                        "file.exportSelection", "file.gameExporter", "file.exportMeshSequence", "window.batchRun", "file.createReference", "", "unreal.send", "animated.sendOptions", "unreal.sync", "unreal.sendBake",
-                        "unreal.connect", "unreal.collision", "", "file.openFolder"});
+    menus::addActions("File", {"file.save", "file.saveAs", "file.incrementAndSave", "file.versions", "#Import and Export", "file.import", "file.convertMaya",
+                        "file.exportSelection", "file.gameExporter", "file.exportMeshSequence", "window.batchRun", "file.createReference", "#Unreal", "unreal.send", "animated.sendOptions", "unreal.sync", "unreal.sendBake",
+                        "unreal.connect", "unreal.collision", "#Workspace", "file.openFolder"});
     addSubmenu("File", "Recent Folders", [this](QMenu* recent) {
         mRecentMenu = recent;
         refreshRecentFolders();
@@ -1123,10 +1123,10 @@ void MainWindow::buildMenus()
     menus::addActions("File", {"file.closeFolder", "", "file.exit"});
 
     menu("Edit", "Edit");
-    menus::addActions("Edit", {"edit.undo", "edit.redo", "edit.repeatLast", "edit.flushUndo", "edit.flushRedo", "edit.flushAll", "",
+    menus::addActions("Edit", {"#History", "edit.undo", "edit.redo", "edit.repeatLast", "edit.flushUndo", "edit.flushRedo", "edit.flushAll", "#Selection",
                         "edit.selectAll", "edit.deselect", "edit.invertSelection", "edit.delete"});
     addSubmenu("Edit", "Quick Select Sets", [](QMenu* m) { sets::attachQuickSelectMenu(m); });
-    menus::addActions("Edit", {"", "edit.duplicate", "edit.group", "edit.parent", "edit.parentChain", "edit.unparent", "", "edit.rename", "edit.batchRename", "edit.conformNames", "",
+    menus::addActions("Edit", {"#Hierarchy", "edit.duplicate", "edit.group", "edit.parent", "edit.parentChain", "edit.unparent", "#Naming", "edit.rename", "edit.batchRename", "edit.conformNames", "#Settings",
                         "window.preferences", "window.extensionManager"});
 
     menu("Modify", "M&odify");
@@ -1152,35 +1152,47 @@ void MainWindow::buildMenus()
         });
     };
     menu("Select", "Select", Area::MenuBar, syncChecks);
-    menus::addActions("Select", {"select.objectMode", "select.vertexMode", "select.edgeMode", "select.faceMode", "", "select.allComponents",
-                          "select.grow", "select.loop", "select.ring", "", "select.hierarchy", "select.pickWalkUp", "select.pickWalkDown",
-                          "select.pickWalkLeft", "select.pickWalkRight", "", "select.toVertices", "select.toEdges", "select.toFaces",
-                          "select.containedFaces", "", "select.paintTool", "select.toggleLasso", "select.toggleCameraBased", "select.toggleBackfaceCulling"});
+    menus::addActions("Select", {"#Mode", "select.objectMode", "select.vertexMode", "select.edgeMode", "select.faceMode", "#Components", "select.allComponents",
+                          "select.grow", "select.loop", "select.ring", "#Hierarchy", "select.hierarchy", "select.pickWalkUp", "select.pickWalkDown",
+                          "select.pickWalkLeft", "select.pickWalkRight", "#Convert", "select.toVertices", "select.toEdges", "select.toFaces",
+                          "select.containedFaces", "#Tools", "select.paintTool", "select.toggleLasso", "select.toggleCameraBased", "select.toggleBackfaceCulling"});
 
     menu("Mesh", "Mesh");
-    menus::addActions("Mesh", {"mesh.extrude", "mesh.inset", "mesh.bevel", "mesh.insertLoop", "mesh.knife", "mesh.bridge", "mesh.fillHole", "",
-                        "mesh.merge", "mesh.mergeCenter", "mesh.collapse", "mesh.dissolve", "mesh.poke", "mesh.spin", "", "mesh.flip",
-                        "mesh.conform", "mesh.triangulate", "mesh.quadrangulate", "mesh.subdivide", "", "mesh.mirror", "mesh.symmetryX",
-                        "mesh.symmetryOff", "mesh.combine", "mesh.smartJoin", "mesh.separate", "mesh.extract", "mesh.duplicateFaces", "mesh.boundingMesh", "mesh.bakeModifierStack"});
+    menus::addActions("Mesh", {"#Combine", "mesh.combine", "mesh.smartJoin", "mesh.separate", "mesh.extract", "mesh.duplicateFaces", "mesh.boundingMesh",
+                               "#Mirror", "mesh.mirror"});
     addSubmenu("Mesh", "Symmetry");
     menus::addActions("Mesh/Symmetry", {"mesh.toggleSymmetry", "mesh.symmetryX", "mesh.symmetryY", "mesh.symmetryZ", "mesh.symmetryOff", "",
                                  "mesh.symmetryCheck", "mesh.symmetrizePositive", "mesh.symmetrizeNegative", "mesh.symmetryRebuild",
                                  "mesh.symmetryRepair", "mesh.symmetryRebuildTopological"});
-    menus::addActions("Mesh", {"", "mesh.booleanDifference", "mesh.booleanUnion", "mesh.booleanIntersection", "mesh.transferAttributes",
-                               "mesh.softenEdges", "mesh.hardenEdges", "mesh.setNormalAngle", "mesh.softFoliageNormals"});
-    addSubmenu("Mesh", "Vertex Colors");
-    menus::addActions("Mesh/Vertex Colors", {"vcolor.paint", "vcolor.createSet", "", "vcolor.fill", "vcolor.gradient", "vcolor.invert",
-                                      "vcolor.levels", "vcolor.blur", "", "vcolor.bakeAO", "vcolor.bakeCavity", "vcolor.bakeCurvature",
-                                      "vcolor.bakeHeight"});
-    menus::addActions("Mesh", {"", "retopo.draw", "mesh.quadRemesh", "mesh.voxelRemesh", "mesh.repair", "mesh.selectIssues", "mesh.relax"});
-    addSubmenu("Mesh", "Sculpt");
-    menus::addActions("Mesh/Sculpt", {"sculpt.tool", "sculpt.enter", "sculpt.exit", "sculpt.cancel", "window.sculpt", "mesh.relaxKeepForm",
-                               "mesh.reproject", "mesh.transferShape"});
-    menus::addActions("Mesh", {"window.nodeEditor"});
-    addSubmenu("Mesh", "Add Modifier", [](QMenu* m) { fillAddModifierMenu(m); });
-    addSubmenu("Mesh", "Auto Bevel");
-    menus::addActions("Mesh/Auto Bevel", {"modifier.autoBevel", "select.foldEdges", "bevel.editEdges", "bevel.applyEdges", "bevel.cancelEdges",
-                                   "bevel.measureThin", "bevel.clearOverrides", "bevel.showEdges"});
+    menus::addActions("Mesh", {"#Topology", "mesh.triangulate", "mesh.quadrangulate", "mesh.subdivide", "#Attributes",
+                               "mesh.transferAttributes"});
+    menus::addActions("Mesh", {"#Retopology", "retopo.draw", "mesh.quadRemesh", "mesh.voxelRemesh", "mesh.relax", "#Cleanup", "mesh.repair",
+                               "mesh.selectIssues", "#Nodes", "window.nodeEditor"});
+
+    menu("Model", "Model");
+    menus::addActions("Model", {"#Components", "mesh.extrude", "mesh.inset", "mesh.bevel", "mesh.insertLoop", "mesh.knife", "mesh.bridge",
+                                "mesh.fillHole", "mesh.poke", "#Merge", "mesh.merge", "mesh.mergeCenter", "mesh.collapse", "#Edges", "mesh.dissolve",
+                                "mesh.spin"});
+
+    menu("Surface", "Surface", Area::MenuBar, syncChecks);
+    menus::addActions("Surface", {"#Normals", "mesh.softenEdges", "mesh.hardenEdges", "mesh.setNormalAngle", "mesh.flip", "mesh.conform",
+                                  "mesh.softFoliageNormals", "#Vertex Colors", "vcolor.paint", "vcolor.createSet", "vcolor.fill", "vcolor.gradient",
+                                  "vcolor.invert", "vcolor.levels", "vcolor.blur", "#Bake to Vertex Colors", "vcolor.bakeAO", "vcolor.bakeCavity",
+                                  "vcolor.bakeCurvature", "vcolor.bakeHeight", "#Display", "viewport.vertexColors.off", "viewport.vertexColors.shaded",
+                                  "viewport.vertexColors.unlit", "viewport.toggleBackfaceCulling"});
+
+    menu("Sculpt", "Sculpt");
+    menus::addActions("Sculpt", {"#Sculpt", "sculpt.tool", "sculpt.enter", "sculpt.exit", "sculpt.cancel", "window.sculpt", "#Shape",
+                                 "mesh.relaxKeepForm", "mesh.reproject", "mesh.transferShape"});
+
+    menu("Booleans", "Booleans");
+    menus::addActions("Booleans", {"mesh.booleanUnion", "mesh.booleanDifference", "mesh.booleanIntersection"});
+
+    // The modifier kinds fill in above these rows each time it opens.
+    menu("Modifiers", "Modifiers", Area::MenuBar, [](QMenu* m) { fillAddModifierMenu(m, false); });
+    menus::addActions("Modifiers", {"#Stack", "window.modifierStack", "modifier.applyAll", "mesh.bakeModifierStack", "#Auto Bevel",
+                                    "select.foldEdges", "bevel.editEdges", "bevel.applyEdges", "bevel.cancelEdges", "bevel.measureThin",
+                                    "bevel.clearOverrides", "bevel.showEdges"});
 
     menu("UV", "UV");
     menus::addActions("UV", {"window.uvEditor", "uv.auto", "uv.autoSeams", "uv.unwrap", "uv.projectPlanar", "uv.projectBox", "uv.projectCylindrical",
@@ -1197,30 +1209,30 @@ void MainWindow::buildMenus()
     menus::addActions("UV/Align", {"uv.straightenEdges", "uv.alignU", "uv.alignV", "uv.orientByEdge"});
 
     menu("Rig", "Rig");
-    menus::addActions("Rig", {"rig.jointTool", "rig.orientJoint", "rig.mirrorJoints", "rig.insertJoint", "rig.rerootSkeleton", "rig.centerJoint",
-                       "rig.snapToComponentCenter", "", "rig.bindSkin",
-                       "rig.bindSkinHeatmap", "rig.unbindSkin", "rig.goToBindPose", "rig.editSkeleton", "", "rig.paintWeights", "rig.mirrorSkinWeights",
-                       "rig.copySkinWeights", "rig.normalizeWeights", "rig.pruneWeights", "", "rig.parentConstraint", "rig.pointConstraint",
-                       "rig.orientConstraint", "rig.aimConstraint", "rig.removeConstraint", "", "rig.ikHandle", "", "rig.xrayJoints",
+    menus::addActions("Rig", {"#Skeleton", "rig.jointTool", "rig.orientJoint", "rig.mirrorJoints", "rig.insertJoint", "rig.rerootSkeleton", "rig.centerJoint",
+                       "rig.snapToComponentCenter", "#Skin", "rig.bindSkin",
+                       "rig.bindSkinHeatmap", "rig.unbindSkin", "rig.goToBindPose", "rig.editSkeleton", "#Weights", "rig.paintWeights", "rig.mirrorSkinWeights",
+                       "rig.copySkinWeights", "rig.normalizeWeights", "rig.pruneWeights", "#Constraints", "rig.parentConstraint", "rig.pointConstraint",
+                       "rig.orientConstraint", "rig.aimConstraint", "rig.removeConstraint", "#IK", "rig.ikHandle", "#Display", "rig.xrayJoints",
                        "rig.dominantInfluenceSelect"});
     addSubmenu("Rig", "Spaces");
     setupSpacesMenu();
 
     menu("Deform", "Deform");
-    menus::addActions("Deform", {"deform.morph", "deform.addMorphTarget", "window.morphTargets"});
+    menus::addActions("Deform", {"#Morph Targets", "deform.morph", "deform.addMorphTarget", "window.morphTargets"});
     addSubmenu("Deform", "Morph Tools");
     menus::addActions("Deform/Morph Tools", {"deform.editMorphTarget", "deform.extractMorphTarget", "deform.setMorphTarget", "deform.addInBetween",
                                              "", "deform.flipMorphTarget", "deform.symmetrizeMorphTarget", "", "deform.removeMorphTarget"});
     addSubmenu("Deform", "Correctives");
     menus::addActions("Deform/Correctives", {"deform.sculptCorrective", "deform.addCorrective", "", "deform.poseDriver", "deform.setPoseDriverTarget"});
-    menus::addActions("Deform", {"deform.driveChannel", "window.drivenChannels", "", "deform.lattice"});
+    menus::addActions("Deform", {"deform.driveChannel", "window.drivenChannels", "#Deformers", "deform.lattice"});
     addSubmenu("Deform", "Nonlinear");
     menus::addActions("Deform/Nonlinear", {"deform.bend", "deform.twist", "deform.taper", "deform.squash", "deform.sine", "deform.wave"});
     menus::addActions("Deform", {"deform.softMod", "deform.deltaMush", "deform.wrap", "deform.cage", "", "deform.rebind"});
 
     menu("Display", "Display", Area::MenuBar, syncChecks);
-    menus::addActions("Display", {"viewport.wireframe", "viewport.shaded", "viewport.textured", "viewport.wireOnShaded", "viewport.defaultMaterial",
-                           "viewport.toggleXray", "viewport.toggleBackfaceCulling", ""});
+    menus::addActions("Display", {"#Shading", "viewport.wireframe", "viewport.shaded", "viewport.textured", "viewport.wireOnShaded", "viewport.defaultMaterial",
+                           "viewport.toggleXray", "viewport.toggleBackfaceCulling", "#Lighting and Effects"});
     addSubmenu("Display", "Lighting", syncChecks);
     menus::addActions("Display/Lighting", {"viewport.lighting.environment", "viewport.lighting.studio", "viewport.lighting.flat"});
     addSubmenu("Display", "Vertex Colors", syncChecks);
@@ -1233,32 +1245,32 @@ void MainWindow::buildMenus()
     addSubmenu("Display", "Antialiasing Samples", syncChecks);
     menus::addActions("Display/Antialiasing Samples", {"viewport.aaSamples2", "viewport.aaSamples4", "viewport.aaSamples8"});
     addSubmenu("Display", "Environment", [](QMenu* env) { connect(env, &QMenu::aboutToShow, env, [env] { fillEnvironmentMenu(env); }); });
-    menus::addActions("Display", {"viewport.toggleEnvBackground", "", "display.toggleVisibility", "display.hide", "display.show", "display.showLastHidden", "display.showAll",
+    menus::addActions("Display", {"viewport.toggleEnvBackground", "#Visibility", "display.toggleVisibility", "display.hide", "display.show", "display.showLastHidden", "display.showAll",
                            "viewport.isolate", "viewport.isolateAdd", "viewport.isolateRemove"});
     addSubmenu("Display", "Measure", syncChecks);
     menus::addActions("Display/Measure", {"measure.selection", "measure.copyDistance", "measure.copyDiameter", "measure.copyLength", "",
                                    "measure.distanceTool", "measure.angleTool", "measure.radiusTool", "", "measure.distanceFromSelection",
                                    "measure.angleFromSelection", "measure.radiusFromSelection", "", "measure.toggleShow"});
-    menus::addActions("Display", {""});
+    menus::addActions("Display", {"#Layers"});
     addSubmenu("Display", "Display Layers");
     menus::addActions("Display/Display Layers", {"window.displayLayers", "layers.create", "layers.createFromSelected", "layers.addSelected",
                                           "layers.removeSelected"});
-    menus::addActions("Display", {""});
+    menus::addActions("Display", {"#Camera"});
     addSubmenu("Display", "Views", syncChecks);
     menus::addActions("Display/Views", {"viewport.view.persp", "viewport.view.top", "viewport.view.front", "viewport.view.right", "viewport.view.left",
                                  "viewport.view.back", "viewport.view.bottom"});
-    menus::addActions("Display", {"viewport.frameSelected", "viewport.frameAll", "viewport.cameraUndo", "viewport.cameraRedo", "",
+    menus::addActions("Display", {"viewport.frameSelected", "viewport.frameAll", "viewport.cameraUndo", "viewport.cameraRedo", "#Overlays",
                            "viewport.toggleGrid", "viewport.toggleResolutionGate", "viewport.toggleFilmGate", "viewport.cameraSettings",
-                           "window.renderSettings", "", "viewport.toggleToolbar", "viewport.resetExposure"});
+                           "window.renderSettings", "#View", "viewport.toggleToolbar", "viewport.resetExposure"});
 
     menu("Animation", "Animation");
-    menus::addActions("Animation", {"anim.setKey", "anim.setKeyTranslate", "anim.setKeyRotate", "anim.setKeyScale", "anim.autoKeyToggle", "",
+    menus::addActions("Animation", {"#Keys", "anim.setKey", "anim.setKeyTranslate", "anim.setKeyRotate", "anim.setKeyScale", "anim.autoKeyToggle", "#Playback",
                              "anim.play", "anim.playBackward", "anim.stop", "anim.firstFrame", "anim.lastFrame", "anim.nextFrame",
-                             "anim.prevFrame", "anim.nextKey", "anim.prevKey", "", "window.graphEditor", "window.timeSlider"});
-    menus::addActions("Animation", {""});
+                             "anim.prevFrame", "anim.nextKey", "anim.prevKey", "#Editors", "window.graphEditor", "window.timeSlider"});
+    menus::addActions("Animation", {"#Ghosting and Poses"});
     addGhostingMenu("Animation");
     menus::addActions("Animation", {"window.poseLibrary", "pose.mirror", "window.controlPicker", "picker.editMode"});
-    menus::addActions("Animation", {"", "anim.createOffset", "anim.bakeOffset", "anim.deleteOffset", "window.offsets"});
+    menus::addActions("Animation", {"#Offsets", "anim.createOffset", "anim.bakeOffset", "anim.deleteOffset", "window.offsets"});
 
     menu("Windows", "Windows");
     addItem({.id = "Windows/panels", .menu = "Windows", .kind = Kind::Custom, .setup = [this](QMenu* m) {

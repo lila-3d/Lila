@@ -32,7 +32,8 @@ namespace lila::ui::tearoff
 {
 namespace
 {
-constexpr const char* kEnabled = "lilaTearOff";
+constexpr const char* kEnabled = "lilaTearOff"; // Theme.cpp's style reads both
+constexpr const char* kHotSection = "lilaHotSection";
 
 std::function<QDockWidget*(const QString&, const QString&, QWidget*)>& dockHook()
 {
@@ -81,6 +82,13 @@ bool inTearOffRow(QMenu* menu, QPoint pos)
     return false;
 }
 
+/** The titled separator under the click, whose section tears off on its own. */
+QAction* sectionAt(QMenu* menu, QPoint pos)
+{
+    QAction* a = menu->rect().contains(pos) ? menu->actionAt(pos) : nullptr;
+    return a && a->isSeparator() && !a->text().isEmpty() ? a : nullptr;
+}
+
 void closeMenus()
 {
     while (QWidget* p = QApplication::activePopupWidget())
@@ -96,20 +104,38 @@ public:
 protected:
     bool eventFilter(QObject* obj, QEvent* e) override
     {
+        if (e->type() == QEvent::MouseMove || e->type() == QEvent::Leave || e->type() == QEvent::Hide)
+            if (auto* menu = qobject_cast<QMenu*>(obj))
+            {
+                // Section titles highlight on hover like the tear-off row; the style reads the hot rect.
+                QAction* a = e->type() == QEvent::MouseMove ? sectionAt(menu, static_cast<QMouseEvent*>(e)->position().toPoint()) : nullptr;
+                QRect hot = a ? menu->actionGeometry(a) : QRect();
+                if (menu->property(kHotSection).toRect() != hot)
+                {
+                    menu->setProperty(kHotSection, hot);
+                    menu->update();
+                }
+            }
         if (e->type() != QEvent::MouseButtonPress && e->type() != QEvent::MouseButtonRelease && e->type() != QEvent::MouseButtonDblClick)
             return false;
         auto* menu = qobject_cast<QMenu*>(obj);
         auto* me = static_cast<QMouseEvent*>(e);
-        if (!menu || me->button() != Qt::LeftButton || !inTearOffRow(menu, me->position().toPoint()))
+        if (!menu || me->button() != Qt::LeftButton)
+            return false;
+        QPoint pos = me->position().toPoint();
+        QString section;
+        if (QAction* a = sectionAt(menu, pos))
+            section = a->text();
+        else if (!inTearOffRow(menu, pos))
             return false;
         if (e->type() == QEvent::MouseButtonRelease)
         {
             QPointer<QMenu> m = menu;
             QPoint at = me->globalPosition().toPoint();
             closeMenus();
-            QTimer::singleShot(0, qApp, [m, at] {
+            QTimer::singleShot(0, qApp, [m, at, section] {
                 if (m)
-                    tearOff(m, at);
+                    tearOff(m, at, section);
             });
         }
         return true;
@@ -124,10 +150,10 @@ RowFilter* rowFilter()
     return f;
 }
 
-QDockWidget* makeDock(QMainWindow* window, QMenu* menu, const QString& name)
+QDockWidget* makeDock(QMainWindow* window, QMenu* menu, const QString& name, const QString& section)
 {
-    QString title = QString::fromStdString(itemLabel(menu->title().toStdString()));
-    auto* panel = new TearOffPanel(menu);
+    QString title = section.isEmpty() ? QString::fromStdString(itemLabel(menu->title().toStdString())) : section;
+    auto* panel = new TearOffPanel(menu, section);
     QDockWidget* dock = nullptr;
     if (dockHook())
         dock = dockHook()(title, name, panel);
@@ -203,13 +229,15 @@ QMenu* findMenu(QMainWindow* window, const std::vector<std::string>& path)
     return found;
 }
 
-QDockWidget* tearOff(QMenu* menu, std::optional<QPoint> at)
+QDockWidget* tearOff(QMenu* menu, std::optional<QPoint> at, const QString& section)
 {
     if (!menu)
         return nullptr;
     QMainWindow* window = windowOf(menu);
-    std::optional<std::vector<std::string>> path = pathOf(menu);
-    QString name = QString::fromStdString(path ? dockName(*path) : dockName({itemLabel(menu->title().toStdString())}));
+    std::vector<std::string> path = pathOf(menu).value_or(std::vector<std::string>{itemLabel(menu->title().toStdString())});
+    if (!section.isEmpty())
+        path.push_back("#" + section.toStdString());
+    QString name = QString::fromStdString(dockName(path));
     if (window)
         if (auto* existing = window->findChild<QDockWidget*>(name))
         {
@@ -217,7 +245,7 @@ QDockWidget* tearOff(QMenu* menu, std::optional<QPoint> at)
             return existing;
         }
 
-    QDockWidget* dock = makeDock(window, menu, name);
+    QDockWidget* dock = makeDock(window, menu, name, section);
     auto* panel = static_cast<TearOffPanel*>(dock->widget());
     dock->setFloating(true);
     QSize body = panel->preferredSize();
@@ -251,19 +279,25 @@ void recreate(QMainWindow* window, const std::vector<std::string>& dockNames)
         std::optional<std::vector<std::string>> path = parseDockName(name);
         if (!path)
             continue;
+        QString section;
+        if (path->size() > 1 && path->back().starts_with('#'))
+        {
+            section = QString::fromStdString(path->back().substr(1));
+            path->pop_back();
+        }
         QMenu* menu = findMenu(window, *path);
         if (!menu)
         {
             log::warn("layout: no menu at {} to tear off", name.substr(kDockPrefix.size()));
             continue;
         }
-        makeDock(window, menu, qname);
+        makeDock(window, menu, qname, section);
     }
 }
 
 // ------------------------------------------------------------------- TearOffPanel
 
-TearOffPanel::TearOffPanel(QMenu* menu, QWidget* parent) : QWidget(parent), mMenu(menu)
+TearOffPanel::TearOffPanel(QMenu* menu, const QString& section, QWidget* parent) : QWidget(parent), mMenu(menu), mSection(section)
 {
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
@@ -334,9 +368,19 @@ void TearOffPanel::scheduleRebuild()
 void TearOffPanel::rebuild()
 {
     std::vector<QAction*> now;
+    bool in = mSection.isEmpty();
     if (mMenu)
         for (QAction* a : mMenu->actions())
-            now.push_back(a);
+        {
+            bool titled = a->isSeparator() && !a->text().isEmpty();
+            if (!mSection.isEmpty() && titled)
+            {
+                in = a->text() == mSection;
+                continue;
+            }
+            if (in)
+                now.push_back(a);
+        }
     if (now == mShown && mRows->count() > 0)
         return;
     mShown = now;
@@ -361,15 +405,24 @@ void TearOffPanel::rebuild()
     {
         if (a->isSeparator())
         {
-            auto* line = new QFrame(mBody);
+            auto* sep = new QWidget(mBody);
+            auto* h = new QHBoxLayout(sep);
+            h->setContentsMargins(a->text().isEmpty() ? 0 : 6, 2, 0, 2);
+            h->setSpacing(6);
+            if (!a->text().isEmpty())
+            {
+                auto* title = new QLabel(a->text(), sep);
+                title->setObjectName("tearOffSection");
+                title->setEnabled(false);
+                h->addWidget(title);
+            }
+            auto* line = new QFrame(sep);
             line->setObjectName("tearOffSeparator");
             line->setFixedHeight(1);
-            line->setContentsMargins(0, 0, 0, 0);
-            line->setVisible(a->isVisible());
-            connect(a, &QAction::changed, line, [line, a] { line->setVisible(a->isVisible()); });
-            mRows->addSpacing(2);
-            mRows->addWidget(line);
-            mRows->addSpacing(2);
+            h->addWidget(line, 1, Qt::AlignVCenter);
+            sep->setVisible(a->isVisible());
+            connect(a, &QAction::changed, sep, [sep, a] { sep->setVisible(a->isVisible()); });
+            mRows->addWidget(sep);
             continue;
         }
         QPointer<QMenu> sub = a->menu();

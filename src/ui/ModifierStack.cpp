@@ -1418,14 +1418,27 @@ void ModifierStackWidget::dropModifier(const std::string& name, int to)
         run("moveModifier", {{"args", {name}}, {"by", to - from}});
 }
 
-void fillAddModifierMenu(QMenu* menu)
+void fillAddModifierMenu(QMenu* menu, bool stackRow)
 {
+    constexpr const char* kRow = "lilaModifierRow";
     menu->setToolTipsVisible(true);
-    QObject::connect(menu, &QMenu::aboutToShow, menu, [menu] {
-        menu->clear();
+    QObject::connect(menu, &QMenu::aboutToShow, menu, [menu, stackRow] {
+        for (QAction* a : menu->actions())
+            if (a->property(kRow).toBool())
+                delete a;
+        QAction* anchor = menu->actions().value(0);
+        auto add = [&](QAction* a) {
+            a->setProperty(kRow, true);
+            menu->insertAction(anchor, a);
+            return a;
+        };
+        if (!stackRow)
+            add(new QAction("Add", menu))->setSeparator(true);
+        bool any = false;
         for (const std::string& kind : scene::modifiers::kinds())
         {
-            QAction* a = menu->addAction(icon(modifierIconName(kind)), niceName(kind));
+            QAction* a = add(new QAction(icon(modifierIconName(kind)), niceName(kind), menu));
+            any = true;
             std::string id = "modifier." + kind;
             a->setData(QString::fromStdString(id));
             std::string doc = scene::modifiers::kindDoc(kind);
@@ -1451,10 +1464,15 @@ void fillAddModifierMenu(QMenu* menu)
                 showModifierStack();
             });
         }
-        if (menu->isEmpty())
-            menu->addAction("No modifier kinds registered")->setEnabled(false);
-        menu->addSeparator();
-        menu->addAction(icon("stack-2"), "Modifier Stack...", menu, [] { showModifierStack(); });
+        if (!any)
+            add(new QAction("No modifier kinds registered", menu))->setEnabled(false);
+        if (stackRow)
+        {
+            QAction* sep = add(new QAction(menu));
+            sep->setSeparator(true);
+            QAction* stack = add(new QAction(icon("stack-2"), "Modifier Stack...", menu));
+            QObject::connect(stack, &QAction::triggered, menu, [] { showModifierStack(); });
+        }
     });
 }
 

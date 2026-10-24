@@ -98,9 +98,11 @@ private:
 
 /**
  * Fills menu with every registered modifier kind (from the type registry, so extension modifiers appear). Picking one adds
- * it to the selected meshes and shows the Modifier Stack panel. The menu refills itself each time it opens.
+ * it to the selected meshes and shows the Modifier Stack panel. The rows refill each time the menu opens, ahead of any other
+ * rows it holds. stackRow ends them with a Modifier Stack... row; without it they sit under an Add section, for a menu with
+ * sections of its own.
  */
-LILA_UI_API void fillAddModifierMenu(QMenu* menu);
+LILA_UI_API void fillAddModifierMenu(QMenu* menu, bool stackRow = true);
 
 /** Tabler icon name for a modifier kind ("bevel") or node type; extensions may set their own. */
 LILA_UI_API void setModifierIcon(const std::string& kindOrType, const QString& tablerName);

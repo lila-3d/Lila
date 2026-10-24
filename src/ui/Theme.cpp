@@ -23,6 +23,7 @@
 #include <QProxyStyle>
 #include <QRegularExpression>
 #include <QStyleFactory>
+#include <QStyleOption>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -53,6 +54,68 @@ public:
         if (hint == SH_MenuBar_AltKeyNavigation)
             return 0;
         return QProxyStyle::styleHint(hint, option, widget, ret);
+    }
+
+    QSize sizeFromContents(ContentsType type, const QStyleOption* option, const QSize& size, const QWidget* widget) const override
+    {
+        if (const auto* item = section(type == CT_MenuItem, option))
+            return {size.width(), item->fontMetrics.height() + 6};
+        return QProxyStyle::sizeFromContents(type, option, size, widget);
+    }
+
+    void drawControl(ControlElement element, const QStyleOption* option, QPainter* painter, const QWidget* widget) const override
+    {
+        if (element == CE_MenuTearoff)
+            return drawTearRow(painter, option->rect, option->palette, option->state & State_Selected, {});
+        const auto* item = section(element == CE_MenuItem, option);
+        if (!item)
+            return QProxyStyle::drawControl(element, option, painter, widget);
+        painter->save();
+        painter->setFont(item->font);
+        // In a menu that tears off, a section title is its own tear-off row (see TearOff.cpp).
+        if (widget && widget->property("lilaTearOff").toBool())
+            drawTearRow(painter, item->rect, item->palette, widget->property("lilaHotSection").toRect() == item->rect, item->text);
+        else
+        {
+            // Maya's titled separator: the title dimmed, then a rule running on from it to the menu's edge.
+            QRect r = item->rect.adjusted(8, 2, -4, 0);
+            painter->setPen(item->palette.color(QPalette::Disabled, QPalette::Text));
+            QRect text;
+            painter->drawText(r, Qt::AlignLeft | Qt::AlignVCenter, item->text, &text);
+            painter->setPen(item->palette.color(QPalette::Midlight));
+            if (text.right() + 6 < r.right())
+                painter->drawLine(text.right() + 6, r.center().y() + 1, r.right(), r.center().y() + 1);
+        }
+        painter->restore();
+    }
+
+private:
+    /** The menu's dashed tear-off row, with a section's title at its left when it has one. */
+    static void drawTearRow(QPainter* p, const QRect& rect, const QPalette& pal, bool hot, const QString& title)
+    {
+        p->fillRect(rect, pal.brush(hot ? QPalette::Highlight : QPalette::Button));
+        int left = rect.x() + 2;
+        if (!title.isEmpty())
+        {
+            QRect text;
+            p->setPen(hot ? pal.color(QPalette::HighlightedText) : pal.color(QPalette::Disabled, QPalette::Text));
+            p->drawText(rect.adjusted(8, 0, -4, 0), Qt::AlignLeft | Qt::AlignVCenter, title, &text);
+            left = text.right() + 6;
+        }
+        int y = rect.y() + rect.height() / 2;
+        int right = rect.x() + rect.width() - 4;
+        if (left >= right)
+            return;
+        p->setPen(QPen(pal.dark().color(), 1, Qt::DashLine));
+        p->drawLine(left, y - 1, right, y - 1);
+        p->setPen(QPen(pal.light().color(), 1, Qt::DashLine));
+        p->drawLine(left, y, right, y);
+    }
+
+    static const QStyleOptionMenuItem* section(bool menuItem, const QStyleOption* option)
+    {
+        const auto* item = menuItem ? qstyleoption_cast<const QStyleOptionMenuItem*>(option) : nullptr;
+        return item && item->menuItemType == QStyleOptionMenuItem::Separator && !item->text.isEmpty() ? item : nullptr;
     }
 };
 

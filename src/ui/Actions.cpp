@@ -531,11 +531,11 @@ void registerBuiltins()
     cmd("bake.allChanged", "Bake Changed Projects", "Bake", "bakeAll", {{"changedOnly", true}},
         "Bakes the bake projects whose inputs changed since their last bake.");
     cmd("mesh.extract", "Extract", "Mesh", "polyExtract", json::object(), "Moves the selected faces into a new object.");
-    cmd("mesh.softenEdges", "Soften Edges", "Mesh", "polySoftEdge", {{"angle", 180.0}},
+    cmd("mesh.softenEdges", "Soften Normals", "Mesh", "polySoftEdge", {{"angle", 180.0}},
         "Makes the selected edges soft, or every edge of the selected meshes in object mode.");
-    cmd("mesh.hardenEdges", "Harden Edges", "Mesh", "polySoftEdge", {{"angle", 0.0}},
+    cmd("mesh.hardenEdges", "Harden Normals", "Mesh", "polySoftEdge", {{"angle", 0.0}},
         "Makes the selected edges hard, or every edge of the selected meshes in object mode.");
-    cmd("mesh.setNormalAngle", "Set Normal Angle", "Mesh", "polySoftEdge", {{"angle", 30.0}},
+    cmd("mesh.setNormalAngle", "Soften by Angle", "Mesh", "polySoftEdge", {{"angle", 30.0}},
         "Hardens the selected edges whose faces meet sharper than the angle and softens the rest.");
     cmd("mesh.duplicateFaces", "Duplicate Faces", "Mesh", "polyDuplicateFaces", json::object(),
         "Copies the selected faces into a separate shell of the same mesh and selects the copies.");

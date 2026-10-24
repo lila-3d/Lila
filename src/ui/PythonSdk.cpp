@@ -178,7 +178,10 @@ json dispatch(const std::string& op, const json& a, const std::vector<PyCall>& f
     if (op == "menu.addItem")
     {
         std::string kind = str(a, "kind", "action");
-        menus::Kind k = kind == "separator" ? menus::Kind::Separator : kind == "submenu" ? menus::Kind::Submenu : menus::Kind::Action;
+        menus::Kind k = kind == "separator" ? menus::Kind::Separator
+                       : kind == "section" ? menus::Kind::Section
+                       : kind == "submenu" ? menus::Kind::Submenu
+                                           : menus::Kind::Action;
         return menus::addItem({.id = str(a, "id"), .menu = str(a, "menu"), .kind = k, .action = str(a, "action"), .label = str(a, "label"),
                                .after = str(a, "after"), .before = str(a, "before")},
                               owner);

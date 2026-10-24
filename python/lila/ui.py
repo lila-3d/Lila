@@ -412,8 +412,8 @@ def add_menu(id, title=None, area="menuBar", before="", owner=None):
 
 
 def add_menu_item(menu, action=None, label=None, kind=None, id="", after="", before="", owner=None):
-    """Add a row to a menu path ("Mesh", "Mesh/Symmetry"). kind: "action" (default with an action), "separator" or
-    "submenu" (label names it; its rows use the path "<menu>/<label>"). Returns the item's id."""
+    """Add a row to a menu path ("Mesh", "Mesh/Symmetry"). kind: "action" (default with an action), "separator",
+    "section" (a separator titled by label) or "submenu" (label names it; its rows use the path "<menu>/<label>"). Returns the item's id."""
     kind = kind or ("action" if action else "submenu" if label else "separator")
     return _call("menu.addItem", menu=menu, action=action or "", label=label or "", kind=kind, id=id, after=after, before=before,
                  owner=_owner(owner))

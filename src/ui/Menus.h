@@ -44,6 +44,7 @@ enum class Kind
 {
     Action,
     Separator,
+    Section, // a titled separator heading the rows after it; label is the title
     Submenu, // a cascade; items under it use the path "<menu>/<label>"
     Custom,  // rows the item adds itself, each time its menu is built
 };
@@ -54,7 +55,7 @@ struct Item
     std::string menu; // "Mesh", or "Mesh/Symmetry" for a submenu's items
     Kind kind = Kind::Action;
     std::string action; // Kind::Action: the action id
-    std::string label;  // Kind::Submenu: its title
+    std::string label;  // Kind::Submenu or Kind::Section: its title
     /** An item id in the same menu to follow or precede; empty appends. */
     std::string after;
     std::string before;
@@ -68,7 +69,7 @@ LILA_UI_API Registry<Item>& itemRegistry();
 LILA_UI_API void addMenu(Menu m, std::string owner = kLilaOwner);
 /** Returns the item's id. */
 LILA_UI_API std::string addItem(Item item, std::string owner = kLilaOwner);
-/** Action items in order; "" adds a separator. */
+/** Action items in order; "" adds a separator and "#Title" a section. */
 LILA_UI_API void addActions(const std::string& menu, std::initializer_list<const char*> actionIds, std::string owner = kLilaOwner);
 LILA_UI_API std::string addSubmenu(const std::string& menu, const std::string& label, std::function<void(QMenu*)> setup = {},
                                    std::string owner = kLilaOwner);

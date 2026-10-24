@@ -67,6 +67,7 @@ std::string defaultId(const Item& item)
     case Kind::Action: return item.menu + "/" + item.action;
     case Kind::Submenu: return item.menu + "/" + item.label + "/";
     case Kind::Separator: return item.menu + "/-";
+    case Kind::Section: return item.menu + "/#" + item.label;
     case Kind::Custom: return item.menu + "/*";
     }
     return item.menu;
@@ -107,7 +108,12 @@ std::string addItem(Item item, std::string owner)
 void addActions(const std::string& menu, std::initializer_list<const char*> actionIds, std::string owner)
 {
     for (const char* id : actionIds)
-        addItem({.menu = menu, .kind = *id ? Kind::Action : Kind::Separator, .action = id}, owner);
+    {
+        if (*id == '#')
+            addItem({.menu = menu, .kind = Kind::Section, .label = id + 1}, owner);
+        else
+            addItem({.menu = menu, .kind = *id ? Kind::Action : Kind::Separator, .action = id}, owner);
+    }
 }
 
 std::string addSubmenu(const std::string& menu, const std::string& label, std::function<void(QMenu*)> setup, std::string owner)
@@ -301,12 +307,22 @@ void MenuBuilder::fill(QMenu* menu, const std::string& path, std::vector<std::st
                 delete a;
         }
     qsizetype before = menu->actions().size();
-    for (const Item* item : itemsIn(path))
+    std::vector<const Item*> items = itemsIn(path);
+    bool sectioned = std::ranges::any_of(items, [](const Item* i) { return i->kind == Kind::Section; });
+    bool lilaBefore = false;
+    for (const Item* item : items)
     {
+        const std::string* owner = itemRegistry().ownerOf(item->id);
+        bool lila = owner && *owner == kLilaOwner;
+        // Extension rows would otherwise read as part of whichever of Lila's sections ends the menu.
+        if (sectioned && lilaBefore && !lila && item->kind != Kind::Section && item->kind != Kind::Separator)
+            menu->addSection("Extensions");
+        lilaBefore = lila;
         switch (item->kind)
         {
         case Kind::Action: addActionRow(menu, item->action); break;
         case Kind::Separator: menu->addSeparator(); break;
+        case Kind::Section: menu->addSection(QString::fromStdString(item->label)); break;
         case Kind::Custom:
             if (item->setup)
                 item->setup(menu);

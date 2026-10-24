@@ -140,3 +140,47 @@ TEST_CASE("a torn-off menu is a dock of buttons bound to the menu's actions")
         CHECK(window.findChildren<QDockWidget*>("tearoff:Mesh/Symmetry").size() == 1);
     }
 }
+
+TEST_CASE("clicking a section title tears off only that section")
+{
+    QApplication::setStyle(QStyleFactory::create("Fusion"));
+    QMainWindow window;
+    window.setCentralWidget(new QWidget);
+    QMenu* mesh = tearoff::enable(window.menuBar()->addMenu("Mesh"));
+    mesh->addSection("Combine");
+    mesh->addAction("Combine");
+    mesh->addAction("Separate");
+    mesh->addSeparator();
+    mesh->addAction("Extract");
+    QAction* normals = mesh->addSection("Normals");
+    mesh->addAction("Soften Normals");
+    window.show();
+    settle();
+
+    mesh->popup(QPoint(50, 50));
+    settle();
+    QPoint at = mesh->actionGeometry(normals).center();
+    QMouseEvent press(QEvent::MouseButtonPress, at, mesh->mapToGlobal(at), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(mesh, &press);
+    QMouseEvent release(QEvent::MouseButtonRelease, at, mesh->mapToGlobal(at), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(mesh, &release);
+    settle();
+    QDockWidget* dock = window.findChild<QDockWidget*>("tearoff:Mesh/#Normals");
+    REQUIRE(dock);
+    CHECK(dock->windowTitle() == "Normals");
+    CHECK(row(dock, "Soften Normals"));
+    CHECK_FALSE(row(dock, "Combine"));
+
+    QDockWidget* combine = tearoff::tearOff(mesh, QPoint(200, 200), "Combine");
+    REQUIRE(combine);
+    settle();
+    CHECK(rows(combine).size() == 3);
+    CHECK(row(combine, "Extract"));
+    CHECK_FALSE(row(combine, "Soften Normals"));
+
+    delete combine;
+    tearoff::recreate(&window, {"tearoff:Mesh/#Combine"});
+    QDockWidget* again = window.findChild<QDockWidget*>("tearoff:Mesh/#Combine");
+    REQUIRE(again);
+    CHECK(row(again, "Separate"));
+}
