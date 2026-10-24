@@ -17,12 +17,14 @@
       "Ctrl+H": "display.hide",
       "Ctrl+M": "window.modifierStack",
       "Shift+H": "display.show",
-      "Ctrl+Shift+H": "display.showAll",
+      "Ctrl+Shift+H": "display.showLastHidden",
+      "\\": "modify.centerPivot",
       "P": "edit.parent",
       "Shift+P": "edit.unparent",
       "Ctrl+Shift+P": "edit.parentChain",
       "Ctrl+A": "window.toggleChannelBox",
       "Ctrl+Shift+A": "edit.deselect",
+      "Ctrl+Shift+I": "edit.invertSelection",
       "Ctrl+N": "file.new",
       "Ctrl+O": "file.open",
       "Ctrl+S": "file.save",
@@ -106,14 +108,16 @@
       "J": { "press": "snap.rotateHoldOn", "release": "snap.rotateHoldOff" },
       "L": { "press": "select.lassoHoldOn", "release": "select.lassoHoldOff" },
       "Space": { "press": "viewport.toggleQuad", "hold": "hotbox.show" },
-      "Esc": "anim.stop"
+      "Esc": "viewport.escape"
     },
     "timeSlider": {
       "Esc": "anim.stop"
     },
     "outliner": {
       "F": "outliner.revealSelected",
-      "F2": "outliner.rename"
+      "F2": "outliner.rename",
+      "Return": "outliner.rename",
+      "Enter": "outliner.rename"
     },
     "uvEditor": {
       "F9": "uv.vertexMode",
@@ -139,6 +143,12 @@
       "A": "nodeEditor.selectAll",
       "F": "nodeEditor.frameSelected",
       "Home": "nodeEditor.frameAll"
+    },
+    "textureSets": {
+      "Ctrl+G": "textureSets.openAsNodes",
+      "Ctrl+D": "textureSets.duplicate",
+      "Delete": "textureSets.delete",
+      "Backspace": "textureSets.delete"
     },
     "baker": {
       "Delete": "bake.removeRows",

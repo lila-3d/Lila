@@ -1,6 +1,8 @@
 // Shaded meshes and the environment background: Unreal's default lit model (metallic/specular/roughness, packed
 // ORM, DirectX or OpenGL normal maps, masked and translucent blending), split-sum image-based lighting with
 // energy-conserving GGX, a camera-relative studio rig while no environment is loaded, Khronos PBR Neutral tonemap.
+// mesh_bindless.slang compiles this with LILA_BINDLESS: material maps (and UDIM tiles) come from one runtime array.
+// Stylised models (Painterly, Toon, Foliage) read a style block from the frame's table; see render::packStyle.
 
 struct MeshPush
 {
@@ -13,7 +15,11 @@ struct MeshPush
     float4 surface; // x metallic, y specular, z opacity, w opacity mask clip
     float3 emissive; // linear; scales the emissive map when there is one
     uint flags;      // render::MaterialFlags
-    float4 display;  // x: display gamma
+    float gamma;     // display gamma
+    uint style;      // word offset of the draw's style block in the frame's table; kNoStyle for default lit
+    float2 displayPad;
+    uint* textureTable; // the frame's table: bindless texture handles, then style blocks
+    uint2 maps;         // bindless: 16-bit table handles, x: base color | normal << 16, y: ORM | emissive << 16
 };
 
 [[vk::push_constant]] MeshPush pc;
@@ -27,11 +33,202 @@ struct EnvUniforms
 [[vk::binding(1, 0)]] Sampler2D brdfLut;
 [[vk::binding(2, 0)]] ConstantBuffer<EnvUniforms> envU;
 
-// Per material. Missing maps are bound to 1x1 placeholders and ignored through the flags.
+static const uint kBaseColorSlot = 0;
+static const uint kNormalSlot = 1;
+static const uint kOrmSlot = 2; // R occlusion, G roughness, B metallic
+static const uint kEmissiveSlot = 3;
+
+#ifdef LILA_BINDLESS
+[[vk::binding(0, 1)]] Sampler2D materialTextures[];
+
+static const uint kUdimEntry = 0x80000000;
+
+/**
+ * The array index a map samples at uv. Its table entry is the index itself, or for a UDIM set a header (kUdimEntry |
+ * rows), the placeholder's index, then ten indices per row of tiles; the tile comes from floor of the V-up uv.
+ */
+uint mapIndex(uint slot, float2 uv)
+{
+    uint packed = slot < 2 ? pc.maps.x : pc.maps.y;
+    uint h = (packed >> ((slot & 1) * 16)) & 0xffff;
+    uint head = pc.textureTable[h];
+    if ((head & kUdimEntry) == 0)
+        return head;
+    int col = int(floor(uv.x));
+    int row = int(floor(1.0 - uv.y));
+    if (col < 0 || col >= 10 || row < 0 || row >= int(head & 0xffff))
+        return pc.textureTable[h + 1];
+    return pc.textureTable[h + 2 + uint(row) * 10 + uint(col)];
+}
+
+// Virtual texture maps (render/VirtualTexture.h). The map's table entry: kVtEntry | chunk count, the page table's
+// address (two words), the feedback group, then the bindless index of each chunk image of this map's layer. The page
+// table starts with a 10x10 grid of UDIM cells (entry base + 1, width, height, mip count), then per tile and level the
+// page entries: 0 for missing, else kVtResident | fade << 16 | slot.
+static const uint kVtEntry = 0x40000000;
+static const uint kVtResident = 0x80000000;
+static const uint kVtPage = 128;
+static const uint kVtBorder = 4;
+static const uint kVtSlot = 136;
+static const uint kVtChunkSlots = 16;
+static const uint kVtFeedbackCell = 4;
+
+// The pixel being shaded, for feedback (set at the top of each fragment entry point).
+static uint2 gVtPixel;
+
+struct VtTile
+{
+    uint base;
+    uint2 size;
+    uint mips;
+};
+
+uint* vtPageTable(uint h)
+{
+    uint64_t a = uint64_t(pc.textureTable[h + 1]) | (uint64_t(pc.textureTable[h + 2]) << 32);
+    return (uint*)a;
+}
+
+uint2 vtLevelSize(VtTile t, uint m) { return max(t.size >> m, uint2(1, 1)); }
+uint2 vtPages(uint2 levelSize) { return (levelSize + kVtPage - 1) / kVtPage; }
+
+uint vtLevelBase(VtTile t, uint m)
+{
+    uint b = t.base;
+    for (uint k = 0; k < m; ++k)
+    {
+        uint2 p = vtPages(vtLevelSize(t, k));
+        b += p.x * p.y;
+    }
+    return b;
+}
+
+/** The entry of the page holding f (tile fraction, rows down) at level m, and that page. */
+uint vtEntry(uint* pt, VtTile t, uint m, float2 f, out uint2 page)
+{
+    uint2 ls = vtLevelSize(t, m);
+    uint2 pages = vtPages(ls);
+    page = min(uint2(f * float2(ls)) / kVtPage, pages - 1);
+    return pt[vtLevelBase(t, m) + page.y * pages.x + page.x];
+}
+
+float4 vtSlotSample(uint h, uint entry, VtTile t, uint m, float2 f, uint2 page)
+{
+    uint slot = entry & 0xffff;
+    uint chunk = slot / (kVtChunkSlots * kVtChunkSlots);
+    if (chunk >= (pc.textureTable[h] & 0xffff))
+        return float4(0.0, 0.0, 0.0, 1.0);
+    uint within = slot % (kVtChunkSlots * kVtChunkSlots);
+    float2 origin = float2(float(within % kVtChunkSlots), float(within / kVtChunkSlots)) * float(kVtSlot) + float(kVtBorder);
+    float2 p = origin + f * float2(vtLevelSize(t, m)) - float2(page * kVtPage);
+    uint index = pc.textureTable[h + 4 + chunk];
+    return materialTextures[NonUniformResourceIndex(index)].SampleLevel(p / float(kVtSlot * kVtChunkSlots), 0.0);
+}
+
+/** Level m as resident: the finest resident page at or above it, fading in over the next resident one up. */
+float4 vtLevel(uint h, uint* pt, VtTile t, float2 f, uint m)
+{
+    uint2 page;
+    uint l = m;
+    uint e = 0;
+    for (; l < t.mips; ++l)
+    {
+        e = vtEntry(pt, t, l, f, page);
+        if (e != 0)
+            break;
+    }
+    if (e == 0)
+        return float4(0.0, 0.0, 0.0, 1.0);
+    float4 c = vtSlotSample(h, e, t, l, f, page);
+    float fade = float((e >> 16) & 0xff) / 255.0;
+    if (fade >= 1.0)
+        return c;
+    for (uint k = l + 1; k < t.mips; ++k)
+    {
+        uint2 up;
+        uint u = vtEntry(pt, t, k, f, up);
+        if (u != 0)
+            return lerp(vtSlotSample(h, u, t, k, f, up), c, fade);
+    }
+    return c;
+}
+
+/** One pixel of each 4x4 cell (cycling over frames) asks for the page it would sample at its level. */
+void vtFeedback(uint h, uint cell, uint m, VtTile t, float2 f)
+{
+    uint64_t a = uint64_t(pc.textureTable[0]) | (uint64_t(pc.textureTable[1]) << 32);
+    if (a == 0)
+        return;
+    uint jitter = pc.textureTable[3];
+    if (gVtPixel.x % kVtFeedbackCell != (jitter & 0xff) || gVtPixel.y % kVtFeedbackCell != (jitter >> 8))
+        return;
+    uint2 page = min(uint2(f * float2(vtLevelSize(t, m))) / kVtPage, vtPages(vtLevelSize(t, m)) - 1);
+    uint2* cells = (uint2*)a;
+    uint index = (gVtPixel.y / kVtFeedbackCell) * pc.textureTable[2] + gVtPixel.x / kVtFeedbackCell;
+    cells[index] = uint2(0x80000000 | (m << 24) | (cell << 16) | (pc.textureTable[h + 3] & 0xffff), page.x | (page.y << 16));
+}
+
+/** A virtual texture map at uv (V-up uv with the row flipped, as the vertex shader hands it on): trilinear over its levels. */
+float4 vtSample(uint h, float2 uv)
+{
+    uint* pt = vtPageTable(h);
+    // Derivatives first, while every pixel of the quad is still here.
+    float2 duvx = ddx(uv), duvy = ddy(uv);
+    int col = int(floor(uv.x));
+    int row = int(floor(1.0 - uv.y));
+    if (col < 0 || col >= 10 || row < 0 || row >= 10)
+        return float4(0.0, 0.0, 0.0, 1.0);
+    uint cell = uint(row) * 10 + uint(col);
+    VtTile t;
+    t.base = pt[cell * 4];
+    if (t.base == 0)
+        return float4(0.0, 0.0, 0.0, 1.0);
+    t.base -= 1;
+    t.size = uint2(pt[cell * 4 + 1], pt[cell * 4 + 2]);
+    t.mips = pt[cell * 4 + 3];
+    float2 f = float2(frac(uv.x), frac(uv.y));
+    float2 dx = duvx * float2(t.size), dy = duvy * float2(t.size);
+    float lod = clamp(0.5 * log2(max(max(dot(dx, dx), dot(dy, dy)), 1e-12)), 0.0, float(t.mips - 1));
+    uint m = uint(floor(lod));
+    float blend = lod - float(m);
+    vtFeedback(h, cell, m, t, f);
+    float4 c = vtLevel(h, pt, t, f, m);
+    if (blend > 0.01 && m + 1 < t.mips)
+        c = lerp(c, vtLevel(h, pt, t, f, m + 1), blend);
+    return c;
+}
+
+// A UDIM tile samples at uv itself: the repeating sampler wraps it into the tile.
+float4 sampleMap(uint slot, float2 uv)
+{
+    uint packed = slot < 2 ? pc.maps.x : pc.maps.y;
+    uint h = (packed >> ((slot & 1) * 16)) & 0xffff;
+    uint head = pc.textureTable[h];
+    if ((head & kUdimEntry) == 0 && (head & kVtEntry) != 0)
+        return vtSample(h, uv);
+    return materialTextures[NonUniformResourceIndex(mapIndex(slot, uv))].Sample(uv);
+}
+#else
+// Per material. Missing maps are bound to 1x1 placeholders and ignored through the flags; a UDIM set binds its first tile.
 [[vk::binding(0, 1)]] Sampler2D baseColorTex; // sRGB
 [[vk::binding(1, 1)]] Sampler2D normalTex;
-[[vk::binding(2, 1)]] Sampler2D ormTex;       // R occlusion, G roughness, B metallic
+[[vk::binding(2, 1)]] Sampler2D ormTex;
 [[vk::binding(3, 1)]] Sampler2D emissiveTex;  // sRGB
+[[vk::binding(4, 1)]] Sampler2D strokeTex;    // Painterly stroke sheet, linear
+
+static uint2 gVtPixel;
+
+float4 sampleMap(uint slot, float2 uv)
+{
+    switch (slot)
+    {
+    case kBaseColorSlot: return baseColorTex.Sample(uv);
+    case kNormalSlot: return normalTex.Sample(uv);
+    case kOrmSlot: return ormTex.Sample(uv);
+    default: return emissiveTex.Sample(uv);
+    }
+}
+#endif
 
 // Screen-space ambient occlusion at the viewport's resolution; 1x1 white while it is off.
 [[vk::binding(0, 2)]] Sampler2D aoTex;
@@ -121,6 +318,8 @@ struct VSOut
     centroid float4 tangent : TANGENT;
     centroid float2 uv : TEXCOORD;
     centroid float4 color : COLOR;
+    centroid float3 objPos : TEXCOORD1;
+    centroid float3 objNormal : TEXCOORD2;
 };
 
 [shader("vertex")]
@@ -139,6 +338,8 @@ VSOut meshVS(VSIn v)
     float2 uv = (pc.flags & kUv1) != 0 ? v.uv1 : v.uv;
     o.uv = float2(uv.x, 1.0 - uv.y);
     o.color = v.color;
+    o.objPos = v.pos;
+    o.objNormal = v.normal;
     return o;
 }
 
@@ -206,7 +407,7 @@ float3 neutralTonemap(float3 c)
 // Maya-style viewport gamma on the tonemapped linear color; 1 leaves it alone.
 float3 displayGamma(float3 c)
 {
-    return pow(max(c, 0.0), 1.0 / max(pc.display.x, 0.01));
+    return pow(max(c, 0.0), 1.0 / max(pc.gamma, 0.01));
 }
 
 // Half an 8-bit step of noise, applied in sRGB space since that is where the swapchain quantizes.
@@ -296,9 +497,12 @@ float3 vertexColor(float4 c, uint flags)
     return (v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4)).xxx;
 }
 
+#include "stylised.slang"
+
 [shader("fragment")]
 float4 meshPS(VSOut i, bool front : SV_IsFrontFace) : SV_Target
 {
+    gVtPixel = uint2(i.pos.xy);
     uint flags = pc.flags;
     if ((flags & kVertexColorUnlit) != 0)
         return float4(dither(vertexColor(i.color, flags), i.pos.xy), 1.0);
@@ -306,7 +510,7 @@ float4 meshPS(VSOut i, bool front : SV_IsFrontFace) : SV_Target
     float opacity = pc.surface.z;
     if ((flags & kBaseColorMap) != 0)
     {
-        float4 t = baseColorTex.Sample(i.uv);
+        float4 t = sampleMap(kBaseColorSlot, i.uv);
         baseColor = t.rgb;
         opacity *= t.a;
     }
@@ -319,13 +523,20 @@ float4 meshPS(VSOut i, bool front : SV_IsFrontFace) : SV_Target
     float3 n = ng;
     if ((flags & kNormalMap) != 0)
     {
-        float3 tn = normalTex.Sample(i.uv).xyz * 2.0 - 1.0;
+        float3 tn = sampleMap(kNormalSlot, i.uv).xyz * 2.0 - 1.0;
         // The bitangent points up the texture (V-up); DirectX maps store green pointing down it.
         if ((flags & kNormalGreenUp) == 0)
             tn.y = -tn.y;
         float3 t = normalize(i.tangent.xyz - ng * dot(ng, i.tangent.xyz) + 1e-7);
         float3 b = cross(ng, t) * (i.tangent.w < 0.0 ? -1.0 : 1.0);
         n = normalize(t * tn.x + b * tn.y + ng * max(tn.z, 1e-3));
+    }
+    const uint model = styleModel();
+    Stroke stroke = { float3(0, 0, 1), 0.5, 0.5 };
+    if (model == kPainterly && styleVec(0).z * styleVec(0).w > 0.0)
+    {
+        stroke = painterlyStroke(i, ng, front);
+        n = bendNormal(n, ng, stroke);
     }
     if (!front)
         n = -n;
@@ -341,7 +552,7 @@ float4 meshPS(VSOut i, bool front : SV_IsFrontFace) : SV_Target
     }
     if ((flags & (kMetallicMap | kRoughnessMap | kOcclusionMap)) != 0)
     {
-        float3 orm = ormTex.Sample(i.uv).rgb;
+        float3 orm = sampleMap(kOrmSlot, i.uv).rgb;
         if ((flags & kOcclusionMap) != 0)
             s.ao = orm.r;
         if ((flags & kRoughnessMap) != 0)
@@ -355,10 +566,24 @@ float4 meshPS(VSOut i, bool front : SV_IsFrontFace) : SV_Target
     s.f0 = lerp(float3(0.08 * pc.surface.y), baseColor, metallic);
 
     float3 v = normalize(pc.eye.xyz - i.worldPos);
-    float3 c = pc.params.w > 1.5 ? baseColor : pc.params.w > 0.5 ? imageBased(n, v, s) : studioRig(n, v, s);
+    float3 c;
+    if (pc.params.w > 1.5)
+        c = baseColor;
+    else if (model == kToon)
+        c = toonShade(n, v, baseColor, s);
+    else
+    {
+        if (model == kPainterly)
+            painterlySurface(stroke, n, v, baseColor, metallic, s);
+        else if (model == kFoliage)
+            foliageSurface(i, n, baseColor, metallic, s);
+        c = pc.params.w > 0.5 ? imageBased(n, v, s) : studioRig(n, v, s);
+        if (model == kFoliage)
+            c = foliageLight(c, n, v, s);
+    }
     float3 emissive = pc.emissive;
     if ((flags & kEmissiveMap) != 0)
-        emissive *= emissiveTex.Sample(i.uv).rgb;
+        emissive *= sampleMap(kEmissiveSlot, i.uv).rgb;
     c += emissive;
     c *= pc.params.x;
     c = displayGamma(neutralTonemap(c));
@@ -371,11 +596,12 @@ float4 meshPS(VSOut i, bool front : SV_IsFrontFace) : SV_Target
 [shader("fragment")]
 float4 prepassPS(VSOut i, bool front : SV_IsFrontFace) : SV_Target
 {
+    gVtPixel = uint2(i.pos.xy);
     if ((pc.flags & kMasked) != 0)
     {
         float opacity = pc.surface.z;
         if ((pc.flags & kBaseColorMap) != 0)
-            opacity *= baseColorTex.Sample(i.uv).a;
+            opacity *= sampleMap(kBaseColorSlot, i.uv).a;
         if (opacity < pc.surface.w)
             discard;
     }

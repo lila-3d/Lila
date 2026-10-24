@@ -164,4 +164,31 @@ bool hiddenInView(scene::NodeId id)
             return true;
     return false;
 }
+namespace
+{
+std::map<std::string, DropHandler, std::less<>>& dropHandlers()
+{
+    static std::map<std::string, DropHandler, std::less<>> h;
+    return h;
+}
+} // namespace
+
+void setDropHandler(std::string id, DropHandler fn) { dropHandlers()[std::move(id)] = std::move(fn); }
+
+bool removeDropHandler(std::string_view id)
+{
+    auto it = dropHandlers().find(id);
+    if (it == dropHandlers().end())
+        return false;
+    dropHandlers().erase(it);
+    return true;
+}
+
+bool handleDrop(const QMimeData& mime, const DropTarget& target, bool commit)
+{
+    for (const auto& [name, fn] : dropHandlers())
+        if (fn && fn(mime, target, commit))
+            return true;
+    return false;
+}
 } // namespace lila::ui::viewportHooks

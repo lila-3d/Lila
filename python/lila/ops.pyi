@@ -52,6 +52,9 @@ def applyBakeTarget(*objects: Any, project: str | None = None, optional: bool | 
 def applyLayout(*objects: Any, name: str | None = None) -> Any:
     """Arrange the window's panels, viewports and shelf as the named layout. UI only."""
 
+def applyLibraryMaterial(*objects: Any, faces: Sequence[Any] | None = None, slot: str | None = None, set: str | None = None, preset: str | None = None, values: Any | None = None, scale: bool | None = None, tiles: float | None = None, layer: bool | None = None) -> Any:
+    """Put a library material on meshes: faces= of one object, the face selection, else whole objects (default the selection). Faces get a new material slot; whole objects keep their one bound slot or get a new one. The slot's texture set takes the material's graph, tiled so one tile spans the material's scaleCm on the surface (from the meshes' uv texel density). With set= and no objects, replaces that set's graph. Returns {set, material, tiles, uvPerCm}."""
+
 def applyModifier(*objects: Any) -> Any:
     """Bake a modifier (and everything below it in the stack) into the base mesh."""
 
@@ -109,6 +112,12 @@ def bakeGroupPerMesh(*objects: Any, project: str | None = None, preset: str | No
 def bakeLint(project: str | None = None, groups: Sequence[Any] | None = None, checks: Sequence[Any] | None = None, highs: bool | None = None, backend: str | None = None) -> Any:
     """Check a bake project before baking: hard edges off UV seams, overlapping UVs (also across groups writing one texture), missing or degenerate UVs, texel density outliers, mirrored islands against tangent signs, lows with no high in range, highs outside the cage, non-planar faces whose triangulation depends on the exporter, and cage topology. bake runs it first and lists its warnings. Returns {issues: [{check, severity, group, mesh, message, data}], warnings, checks, distances: [{group, frontal, rear, frontalAuto, rearAuto, measured}]} (Auto distances are measured against the highs when highs is on)."""
 
+def bakeLiveMaps(project: str | None = None, enable: bool | None = None, disable: bool | None = None, update: bool | None = None, maps: Sequence[Any] | None = None, groups: Sequence[Any] | None = None, resolution: int | None = None, supersampling: int | None = None, padding: int | None = None, debounce: int | None = None, set: str | None = None) -> Any:
+    """Live mesh maps: keeps a bake project's maps on the GPU at a preview resolution, for texture graphs and the viewport, and rebakes only the texel tiles an edit to a low or cage touches. enable=True starts (or reconfigures) it, disable=True drops it, update=True rebakes what changed now and waits; with none of them, returns the status."""
+
+def bakeMapInfo(project: str | None = None, map: str | None = None, udim: int | None = None, low: str | None = None, set: str | None = None) -> Any:
+    """The live mesh map images of a bake project (bakeLiveMaps): per low, map and UDIM tile its version (bumped on every rebake), resolution, format, colour space and decode data. map=, udim= and low= narrow it down."""
+
 def bakeMaps() -> Any:
     """The maps the baker implements: id, label, default suffix, how texels resolve (average, exact, coverage) and options."""
 
@@ -132,6 +141,9 @@ def bakeToDeformSkeleton(*objects: Any, start: float | None = None, end: float |
 
 def bakeUpToDate(project: str | None = None) -> Any:
     """Whether a bake project's textures match its inputs: {upToDate, reason, hash, bakedHash}. reason is never baked, inputs changed, missing <file> or up to date."""
+
+def batchRename(*objects: Any, name: str | None = None, find: str | None = None, replace: str | None = None, regex: bool | None = None, matchCase: bool | None = None, stripStart: int | None = None, stripEnd: int | None = None, stripDigits: bool | None = None, case: str | None = None, prefix: str | None = None, suffix: str | None = None, start: int | None = None, step: int | None = None, hierarchy: bool | None = None, order: str | None = None, preview: bool | None = None) -> Any:
+    """Rename many objects at once: a new name, find/replace (plain or regex, $1 for groups), strip, case, prefix and suffix, in that order. In name, replace, prefix and suffix '#' runs number the objects (## is 01, 02...), and {name}, {parent} and {type} insert the original name, the parent's name and the node type. Defaults to the selection. Returns [{path, from, to, status}], status one of renamed, unchanged, reference, empty, clash (Lila numbers it)."""
 
 def batchRun(*objects: Any, script: str | None = None, scriptFile: str | None = None, sceneScript: str | None = None, recursive: bool | None = None, depth: int | None = None, extensions: Sequence[Any] | None = None, include: Sequence[Any] | None = None, exclude: Sequence[Any] | None = None, excludePrefix: str | None = None, excludeSuffix: str | None = None, excludeContains: str | None = None, fileList: str | None = None, save: str | None = None, outputDir: str | None = None, suffix: str | None = None, format: str | None = None, keepTree: bool | None = None, checkout: str | None = None, makeWritable: bool | None = None, workers: int | None = None, stopOnError: bool | None = None, timeout: float | None = None, dryRun: bool | None = None, scriptArgs: Any | None = None, csv: str | None = None, preset: str | None = None, wait: bool | None = None) -> Any:
     """Run a Python script over many scene files, each opened in its own lilabatch worker, several at once. The script sees ctx: ctx.file, ctx.output, ctx.index, ctx.args (scriptArgs), ctx.results (a dict collected into the summary and CSV), ctx.save = False to leave a file unsaved, ctx.skip(reason). Returns the run's summary (with files once finished): {id, state, total, counts, seconds, dir, csv, files}."""
@@ -232,7 +244,7 @@ def createBakeProject(name: str | None = None, target: str | None = None, folder
 def createDisplayLayer(*objects: Any, name: str | None = None, empty: bool | None = None) -> Any:
     """Create a display layer holding the objects (the selection by default), taking them out of any layer they were in. Returns its name."""
 
-def createMaterial(*objects: Any, baseColor: Sequence[float] | None = None, metallic: float | None = None, roughness: float | None = None, specular: float | None = None, emissive: Sequence[float] | None = None, emissiveIntensity: float | None = None, opacity: float | None = None, opacityMaskClipValue: float | None = None, blendMode: Any | None = None, twoSided: bool | None = None, uvSet: int | None = None, normalFormat: Any | None = None, flipGreen: bool | None = None, baseColorMap: str | None = None, metallicMap: str | None = None, roughnessMap: str | None = None, normalMap: str | None = None, ambientOcclusionMap: str | None = None, ormMap: str | None = None, packedLayout: Any | None = None, emissiveMap: str | None = None) -> Any:
+def createMaterial(*objects: Any, baseColor: Sequence[float] | None = None, metallic: float | None = None, roughness: float | None = None, specular: float | None = None, emissive: Sequence[float] | None = None, emissiveIntensity: float | None = None, opacity: float | None = None, opacityMaskClipValue: float | None = None, blendMode: Any | None = None, twoSided: bool | None = None, uvSet: int | None = None, normalFormat: Any | None = None, flipGreen: bool | None = None, baseColorMap: str | None = None, metallicMap: str | None = None, roughnessMap: str | None = None, normalMap: str | None = None, ambientOcclusionMap: str | None = None, ormMap: str | None = None, packedLayout: Any | None = None, emissiveMap: str | None = None, shadingModel: Any | None = None, painterlyStrength: float | None = None, strokeNormal: float | None = None, strokeScale: float | None = None, strokeLayerRatio: float | None = None, strokeMapping: Any | None = None, strokeMap: str | None = None, paletteCount: int | None = None, paletteShadow: Sequence[float] | None = None, paletteLight: Sequence[float] | None = None, paletteAccent: Sequence[float] | None = None, paletteContrast: float | None = None, paletteSpread: float | None = None, specularTint: float | None = None, boil: bool | None = None, boilFps: float | None = None, toonShadowColor: Sequence[float] | None = None, toonLightTint: Sequence[float] | None = None, toonThreshold: float | None = None, toonSoftness: float | None = None, toonOuterOffset: float | None = None, toonOuterColor: Sequence[float] | None = None, rimColor: Sequence[float] | None = None, rimWidth: float | None = None, rimStrength: float | None = None, foliageBottomColor: Sequence[float] | None = None, foliageTopColor: Sequence[float] | None = None, foliageGradient: float | None = None, foliageBottomShadow: float | None = None, foliageTopHighlight: float | None = None, foliageTranslucency: float | None = None, foliageWrap: float | None = None) -> Any:
     """Create a material (Unreal default lit inputs). Faces use it through a slot of the same name. Returns its name."""
 
 def createMesh(points: Sequence[Any] | None = None, faces: Sequence[Any] | None = None, name: str | None = None) -> Any:
@@ -607,6 +619,9 @@ def incrementAndSave() -> Any:
 def insertJoint(*objects: Any, count: int | None = None, child: str | None = None) -> Any:
     """Split a bone: insert count joints evenly between a joint and its child. Returns the new joints."""
 
+def invertSelection() -> Any:
+    """Invert the selection: the unselected components of the current kind on the hilited meshes, or in object mode every unselected object. An isolated view inverts only what it shows."""
+
 def joint(position: Sequence[float] | None = None, name: str | None = None, parent: str | None = None, orientation: Sequence[float] | None = None, radius: float | None = None, segmentScaleCompensate: bool | None = None, skipSelect: bool | None = None) -> Any:
     """Create a joint. With no parent given it goes under the selected joint, so repeated calls build a chain (the new joint is selected). Returns its name."""
 
@@ -679,8 +694,20 @@ def looker(*objects: Any, aimAxis: str | None = None, upAxis: str | None = None,
 def ls(*objects: Any, type: str | None = None, selection: bool | None = None, dag: bool | None = None) -> Any:
     """List nodes, optionally filtered by type or the selection."""
 
+def materialFavourite(*objects: Any, on: bool | None = None) -> Any:
+    """Mark a library material as a favourite (on=False to unmark). Returns the favourites."""
+
 def materialInfo(*objects: Any) -> Any:
     """Every input of a material plus the meshes using it: {name, baseColor, ..., flipGreen, usedBy: [{object, faces}]}."""
+
+def materialLibrary(search: str | None = None, category: str | None = None, tag: str | None = None, physical: str | None = None, tier: str | None = None, favourites: bool | None = None, id: str | None = None, categories: bool | None = None, reload: bool | None = None) -> Any:
+    """List or search the material library (built-in, extension packs, your materials, the workspace's and the scene's texture sets). Returns [{id, name, category, tags, physical, scaleCm, tileable, tier, file, favourite, ...}]; with id=, that material's full document and presets; with categories=True, {categories, tags}."""
+
+def materialLint(*objects: Any, fix: bool | None = None, size: int | None = None, backend: str | None = None, physical: str | None = None, all: bool | None = None, tier: str | None = None) -> Any:
+    """Check a material's values against physical ranges: a texture set, a library id or a .lilamat path, evaluated small. Checks albedo (dielectrics 30 to 240 sRGB), pure black/white, metal reflectance (per metal), binary metallic, roughness, normal validity and convention, height range and tile seams; stylised materials relax the albedo checks. fix=True clamps what it can with Levels nodes (sets undoably, user/workspace files in place). all=True checks every library material (tier= to narrow). Returns {passed, failures, warnings, checks}."""
+
+def materialPresets(*objects: Any, save: str | None = None, values: Any | None = None, set: str | None = None, delete: str | None = None) -> Any:
+    """A library material's parameter presets: {name: {"Node.param": value}}. save= stores one from values= or from set='s current values of the material's seed and variation parameters; delete= removes one of yours."""
 
 def mayaConvert(*objects: Any, source: str | None = None, destination: str | None = None, format: str | None = None, recursive: bool | None = None, overwrite: bool | None = None, force: bool | None = None, namespace: str | None = None, upAxis: str | None = None, skins: bool | None = None, animation: bool | None = None, materials: bool | None = None, references: Any | None = None, history: bool | None = None, setPlayback: bool | None = None) -> Any:
     """Convert Maya files to Lila scenes: a file to a .lila / .lilaa, or every .ma / .mb in a folder. Each file is opened as its own scene and saved; the scene is left empty afterwards. Returns one entry per file with its destination (or error), skipped features and warnings."""
@@ -760,8 +787,8 @@ def moveModifier(*objects: Any, by: int | None = None) -> Any:
 def moveSkinnedJoints(*objects: Any, translate: Sequence[float] | None = None, position: Sequence[float] | None = None, jointOrient: Sequence[float] | None = None, rotateAxis: Sequence[float] | None = None, rotatePivot: Sequence[float] | None = None, scalePivot: Sequence[float] | None = None, preserve: str | None = None) -> Any:
     """Change bound joints' layout without deforming the mesh or losing animation, in one step: the same as editSkeleton on, setting the values in bind pose, then editSkeleton off. Moving a joint leaves its children where they are. Values are bind-pose values."""
 
-def namingConvention(enable: bool | None = None, mode: str | None = None, uniqueNames: bool | None = None, check: bool | None = None, fix: bool | None = None) -> Any:
-    """Naming rules for this workspace (.lila/naming.json). Query with no flags; check lists violations; fix renames them."""
+def namingConvention(*objects: Any, enable: bool | None = None, mode: str | None = None, uniqueNames: bool | None = None, check: bool | None = None, fix: bool | None = None) -> Any:
+    """Naming rules for this workspace (.lila/naming.json). Query with no flags; check lists violations; fix renames them, whether or not enforcement is on. check and fix cover the given objects and everything under them, or the whole scene; referenced nodes keep their names."""
 
 def newScene() -> Any:
     """Clear the scene. Not undoable."""
@@ -862,11 +889,14 @@ def polyDisc(name: str | None = None, position: Sequence[float] | None = None, g
 def polyDissolve() -> Any:
     """Remove selected edges or vertices by merging the faces around them, cleanly."""
 
+def polyDuplicateFaces() -> Any:
+    """Copy the selected faces into a separate shell of the same mesh and select the copies."""
+
 def polyExtract() -> Any:
     """Move the selected faces out into new mesh objects (one per source mesh). Returns their names."""
 
 def polyExtrude(thickness: float | None = None, offset: float | None = None, individual: bool | None = None) -> Any:
-    """Extrude the selected faces along their normals. Connected faces extrude as regions unless individual=True."""
+    """Extrude the selected faces along their normals, or in edge mode grow a strip of faces off the selected edges. Connected faces extrude as regions unless individual=True."""
 
 def polyFillHole() -> Any:
     """Cap the holes bordered by the selected edges (every hole when nothing is selected)."""
@@ -887,13 +917,13 @@ def polyKnife(mesh: str | None = None, points: Sequence[Any] | None = None, clos
     """Knife / multi-cut: cut a mesh along a path of points, splitting the faces between them and the edges the path crosses. Between two points the cut follows the surface under the straight screen line joining them (seen from eye= or along direction=; without either, along the points' average normal). With loopEdge= it inserts an edge loop across that edge's quad ring instead. Follows the mesh's symmetry. Returns the new edges."""
 
 def polyMerge(distance: float | None = None, average: bool | None = None) -> Any:
-    """Weld selected vertices closer than a distance (all of a mesh's points if it has no component selection)."""
+    """Weld selected vertices closer than a distance (all of a mesh's points if it has no component selection). Exactly two selected vertices weld whatever the distance."""
 
 def polyMergeCenter() -> Any:
     """Weld the selected vertices into one at their centre."""
 
-def polyMirror(*objects: Any, axis: str | None = None, direction: str | None = None, space: str | None = None, weld: bool | None = None, tolerance: float | None = None) -> Any:
-    """Mirror whole meshes across the plane through the object's or the world's origin facing an axis, welding along the seam. direction positive keeps the + side and rebuilds the - side from it, cutting faces that cross the plane; negative does the reverse; both adds a mirrored copy of the whole mesh."""
+def polyMirror(*objects: Any, axis: str | None = None, direction: str | None = None, space: str | None = None, weld: bool | None = None, tolerance: float | None = None, flip: bool | None = None) -> Any:
+    """Mirror whole meshes across the plane through the object's or the world's origin facing an axis, welding along the seam. direction positive keeps the + side and rebuilds the - side from it, cutting faces that cross the plane; negative does the reverse; both adds a mirrored copy of the whole mesh. flip=True reflects the mesh across the plane instead, keeping nothing of the original."""
 
 def polyPipe(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, thickness: float | None = None, height: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, baseAtOrigin: bool | None = None) -> Any:
     """Create a Pipe mesh. Returns [mesh, generator] (generator is None with generator=False)."""
@@ -915,6 +945,9 @@ def polyReduce(*objects: Any, ratio: float | None = None, targetTriangles: int |
 
 def polySeparate(*objects: Any) -> Any:
     """Split meshes into one object per connected part. Returns the new names."""
+
+def polySoftEdge(angle: float | None = None) -> Any:
+    """Make the selected edges soft or hard by the angle their faces meet at: sharper than angle turns hard, the rest soft. 180 softens every edge, 0 hardens every edge. In object mode, whole selected meshes."""
 
 def polySphere(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, baseAtOrigin: bool | None = None) -> Any:
     """Create a Sphere mesh. Returns [mesh, generator] (generator is None with generator=False)."""
@@ -1027,6 +1060,9 @@ def renameTake(*objects: Any) -> Any:
 def renameTheme(*objects: Any, name: str | None = None, to: str | None = None) -> Any:
     """Rename a saved theme."""
 
+def renderMaterialThumbnail(*objects: Any, size: int | None = None, mesh: str | None = None, path: str | None = None, force: bool | None = None, backend: str | None = None, all: bool | None = None) -> Any:
+    """Render a material's thumbnail offscreen on the standard shader ball (or mesh= of the scene, at the material's real-world scale) and cache it by graph hash. material is a library id, .lilamat path or texture set; all=True renders every library material. Returns {file, cached} (a list with all)."""
+
 def reorderAnimLayer(*objects: Any, index: int | None = None, by: int | None = None) -> Any:
     """Move a layer in the stack: index (0 is just above the base animation) or by (+1 up, -1 down). Returns its new index."""
 
@@ -1072,6 +1108,9 @@ def saveBakeTarget(*objects: Any, project: str | None = None, label: str | None 
 def saveLayout(*objects: Any, name: str | None = None, workspace: bool | None = None) -> Any:
     """Save the current panel arrangement as a named layout. workspace=True saves it in the open folder's .lila/layouts."""
 
+def saveLibraryMaterial(*objects: Any, tier: str | None = None, id: str | None = None, path: str | None = None, name: str | None = None, category: str | None = None, tags: Sequence[Any] | None = None, physical: str | None = None, scaleCm: float | None = None, tileable: bool | None = None, seedParam: str | None = None, variationParams: Sequence[Any] | None = None, author: str | None = None, licence: str | None = None, version: str | None = None, description: str | None = None, overwrite: bool | None = None) -> Any:
+    """Save a texture set to the material library as a .lilamat with its metadata, in your materials (tier='user') or the workspace's. The tiling applyLibraryMaterial added is left out. Returns {id, file, tier}."""
+
 def savePose(*objects: Any, tier: str | None = None, character: str | None = None, nodes: Sequence[Any] | None = None, hierarchy: bool | None = None, channels: Sequence[Any] | None = None, tags: Sequence[Any] | None = None, thumbnail: bool | None = None) -> Any:
     """Store the current pose of the selected nodes (and everything under them) in the pose library, keyed by node name without namespace, rotations as quaternions. The character is the selection's root joint (or the given one). bind, ref and test are each character's reserved poses. Returns the pose's summary."""
 
@@ -1114,7 +1153,7 @@ def scSync(*objects: Any, path: str | None = None) -> Any:
 def scale(*objects: Any, by: Sequence[float] | None = None, to: Sequence[float] | None = None) -> Any:
     """Scale objects along their own axes. scale(by=(x, y, z)) multiplies; scale(to=(x, y, z)) sets."""
 
-def scaleComponents(by: Sequence[float] | None = None, pivot: Sequence[float] | None = None) -> Any:
+def scaleComponents(by: Sequence[float] | None = None, pivot: Sequence[float] | None = None, orient: Sequence[float] | None = None) -> Any:
     """Scale the selected components about a world pivot (default: their centre; with symmetry, a pair clear of the mirror plane scales about each side's own centre)."""
 
 def sceneData(*objects: Any, value: Any | None = None, remove: bool | None = None) -> Any:
@@ -1150,8 +1189,8 @@ def sculptMask(op: str | None = None, layer: str | None = None, iterations: int 
 def sculptState() -> Any:
     """The open sculpt session: {active, mesh, mode, levels, points, faces, symmetry, masked, frozen}."""
 
-def sculptStroke(brush: str | None = None, falloff: str | None = None, strength: float | None = None, invert: bool | None = None, frontFacesOnly: bool | None = None, dabs: Sequence[Any] | None = None, live: int | None = None) -> Any:
-    """One brush stroke on the sculpt proxy: dabs is a list of {center, normal, radius, pressure, view, delta, direction} in world space (only center is required). Honours the mask, frozen points and the mesh's symmetry, mirrored exactly. Returns {points} changed."""
+def sculptStroke(brush: str | None = None, falloff: str | None = None, strength: float | None = None, invert: bool | None = None, frontFacesOnly: bool | None = None, radialCount: int | None = None, radialAxis: str | None = None, dabs: Sequence[Any] | None = None, live: int | None = None) -> Any:
+    """One brush stroke on the sculpt proxy: dabs is a list of {center, normal, radius, pressure, opacity, flow, view, delta, direction} in world space (only center is required; opacity defaults to pressure). Honours the mask, frozen points and the mesh's symmetry, mirrored exactly. Returns {points} changed."""
 
 def select(*objects: Any, add: bool | None = None, deselect: bool | None = None, toggle: bool | None = None, clear: bool | None = None) -> Any:
     """Select objects. Replaces the selection unless add/deselect/toggle."""
@@ -1177,6 +1216,9 @@ def selectComponents(*objects: Any, vertices: Sequence[Any] | None = None, edges
 def selectComponentsWhere(*objects: Any, kind: str | None = None, normal: Sequence[float] | None = None, angle: float | None = None, side: str | None = None, box: Sequence[Any] | None = None, direction: Sequence[float] | None = None, near: Sequence[float] | None = None, radius: float | None = None, extreme: str | None = None, count: int | None = None, border: bool | None = None, shell: int | None = None, fromSelection: bool | None = None, tolerance: float | None = None, add: bool | None = None, deselect: bool | None = None) -> Any:
     """Select a mesh's components by predicates (the flags of findComponents) and switch to that component mode. With symmetry on, edits still mirror; select one side. Returns the selected ids."""
 
+def selectConnected(*objects: Any, kind: str | None = None, id: int | None = None, add: bool | None = None, deselect: bool | None = None, toggle: bool | None = None) -> Any:
+    """Select every component of a kind on the connected piece (faces joined through shared edges) that one component belongs to. Without add/deselect/toggle it replaces the selection of that kind. Returns the ids."""
+
 def selectContainedFaces(larger: bool | None = None) -> Any:
     """Select the faces enclosed by the selected edges: a flood fill that stops at selected edges and mesh borders. On each piece of a mesh the smaller regions are kept (every one but the largest by area), or with larger=True only the largest. Switches to face mode."""
 
@@ -1190,7 +1232,7 @@ def selectHierarchy() -> Any:
     """Add every transform below each selected object to the selection, parents before children."""
 
 def selectLoop(ring: bool | None = None) -> Any:
-    """Extend the selected edges to full edge loops (or rings with ring=True)."""
+    """Extend the selection to full loops (or rings with ring=True): edges along their own loops, vertices along the loops of the edges joining them, faces along the face loops crossing the edges they share."""
 
 def selectLoopThrough(*objects: Any, edge: int | None = None, ring: bool | None = None, faces: bool | None = None, add: bool | None = None, deselect: bool | None = None, toggle: bool | None = None) -> Any:
     """Select the edge loop (or ring) through one edge of a mesh, or with faces=True the face loop crossing it. Without add/deselect/toggle it replaces the selection of that kind. Returns the ids."""
@@ -1199,7 +1241,7 @@ def selectMode(*objects: Any) -> Any:
     """Switch between object, vertex, edge and face selection. With no argument, returns the current mode."""
 
 def selectPathBetween(*objects: Any, kind: str | None = None, to: int | None = None, replace: bool | None = None, deselect: bool | None = None, **flags: Any) -> Any:
-    """Select the components between two of a mesh's vertices, edges or faces: the shorter way along a loop or ring they share, else the shortest path across the surface. Adds to the selection unless replace or deselect. Returns the ids in order."""
+    """Select the components between two of a mesh's vertices, edges or faces: the shorter way along a loop or ring they share, else the shortest path across the surface. Neighbours (vertices on one edge, edges along a loop or across a quad, faces sharing an edge) select the whole loop or ring through both instead. Adds to the selection unless replace or deselect. Returns the ids in order."""
 
 def selectSetMembers(*objects: Any, add: bool | None = None) -> Any:
     """Select what sets hold: their objects, and their components in component mode. Returns the members."""
@@ -1261,6 +1303,9 @@ def setRenderResolution(width: int | None = None, height: int | None = None, pre
 def setSymmetry(*objects: Any, axis: str | None = None) -> Any:
     """Object-space mirror plane for component edits on meshes: 'off', 'x', 'y' or 'z'."""
 
+def setSymmetryPlane(*objects: Any, pivot: bool | None = None) -> Any:
+    """Set where meshes' symmetry plane lies: through the selected edges or vertices (which must lie flat across an axis; that axis becomes the symmetry axis), or back through the pivot with pivot=True. Returns the plane per mesh as [axis, offset]."""
+
 def setTheme(*objects: Any, name: str | None = None, workspace: bool | None = None) -> Any:
     """Switch the interface theme; takes effect at once. workspace=True sets it for the open folder only."""
 
@@ -1272,6 +1317,9 @@ def setVertexColorData(*objects: Any, colorSet: str | None = None, values: Seque
 
 def show(*objects: Any, all: bool | None = None) -> Any:
     """Show objects. all=True shows every hidden object."""
+
+def showLastHidden() -> Any:
+    """Show the objects the last hide (or hiding toggle) hid. Returns them."""
 
 def shrinkSelection() -> Any:
     """Shrink the component selection by dropping what lies on its border."""
@@ -1306,6 +1354,9 @@ def snapReverseFoot(*objects: Any, align: bool | None = None, key: bool | None =
 def snapToComponentCenter(*objects: Any, center: str | None = None, keepChildren: bool | None = None) -> Any:
     """Move transforms, joints or markers to the centre of the current component selection. Targets are the given nodes, else the selected transforms that aren't meshes holding the components."""
 
+def softFoliageNormals(*objects: Any, mix: float | None = None, proxy: str | None = None, up: str | None = None) -> Any:
+    """Soft Foliage Normals: transfer normals from a generated dome or sphere around each mesh onto it, mixed with the mesh's own, so leaf clumps shade as one soft volume instead of many cards."""
+
 def softMod(*objects: Any, position: Sequence[float] | None = None, radius: float | None = None, name: str | None = None) -> Any:
     """Add a soft modification handle: moving, rotating or scaling the handle moves nearby points, fading out over the radius with the soft select curve. Returns [handle, deformers...]."""
 
@@ -1328,7 +1379,139 @@ def symmetryCheck(*objects: Any) -> Any:
     """Report how symmetric meshes are across their symmetry plane: the largest distance between a point and its partner's reflection, and the points without a partner. Changes nothing."""
 
 def symmetryRebuild(*objects: Any, axis: str | None = None, side: str | None = None, pairsOnly: bool | None = None, topological: bool | None = None, tolerance: float | None = None) -> Any:
-    """Rebuild meshes symmetric: the kept side is mirrored across the object-space plane, replacing the other side, welded on the plane, and the symmetry pairs are stored again. With pairsOnly, the geometry is left alone and only the stored pairs are matched again, by position or, for meshes that are no longer symmetric, by topology outward from the selected edge (which must lie on the plane). Returns the points left unmatched per mesh."""
+    """Rebuild meshes symmetric: the kept side is mirrored across the plane through the object's pivot, replacing the other side, welded on the plane, and the symmetry pairs are stored again. With pairsOnly, the geometry is left alone and only the stored pairs are matched again, by position or, for meshes that are no longer symmetric, by topology outward from the selected edge (which must lie on the plane). Returns the points left unmatched per mesh."""
+
+def texAddAnchor(*objects: Any) -> Any:
+    """Put an anchor on a layer: a name for the composite right after it, which masks (kind anchor) and generator inputs (anchor:<name>.<channel>) of layers above read. Returns the name."""
+
+def texAddGenerator(*objects: Any, name: str | None = None, mode: str | None = None, opacity: float | None = None, invert: bool | None = None, values: Any | None = None, bindings: Any | None = None, index: int | None = None) -> Any:
+    """Add a generator mask to a layer: edge wear, dirt, dust, cavity grime, AO darken, position gradient, thickness, scratches, drips, rust spread, moss, wetness, paint chips, sun bleach, ID select, UV island random, polygon fill (genEdgeWear, genDirt, ...; texNodeTypes lists the Generator category). Its inputs bind to the set's mesh maps by name. Returns {id}."""
+
+def texAddLayer(*objects: Any, name: str | None = None, above: str | None = None, below: str | None = None, parent: str | None = None, index: int | None = None, material: Any | None = None, graph: Any | None = None, source: str | None = None, filter: str | None = None, values: Any | None = None, channels: Any | None = None) -> Any:
+    """Add a layer to a texture set's stack (on top unless placed). Kinds: fill (material + mask), paint (placeholder material, paint buffers and a painted mask), procedural (a graph with outputs named after channels, optionally mask), folder, instance (another layer's values and mask), filter (a filter node applied to the composite below). A graph made by hand joins the stack as its bottom layer. Returns {id}."""
+
+def texAddMask(*objects: Any, name: str | None = None, mode: str | None = None, opacity: float | None = None, invert: bool | None = None, values: Any | None = None, bindings: Any | None = None, index: int | None = None, type: str | None = None, value: float | None = None, image: str | None = None, anchor: str | None = None, channel: str | None = None) -> Any:
+    """Add a mask to a layer's mask stack. Kinds: fill (a value), generator (a mask graph over mesh maps), filter (any filter node over the masks below), levels, paint (an image), anchor (a channel of the composite at an anchor). Returns {id}."""
+
+def texAddNode(*objects: Any, position: Sequence[Any] | None = None, name: str | None = None) -> Any:
+    """Add a node to a texture set's graph. Returns its name. texNodeTypes lists the types."""
+
+def texApplySmartMaterial(*objects: Any, name: str | None = None, above: str | None = None, below: str | None = None, parent: str | None = None, index: int | None = None, layer: str | None = None, addMaps: bool | None = None) -> Any:
+    """Apply a smart material (a saved layer, usually a folder) to a texture set, or a smart mask to one of its layers. By name (built-in, extension pack, user or workspace library) or .lilasmart path. Its generators bind to the set's mesh maps by name; the maps it reads that the set's bake project doesn't make are added to it. Returns {layer or masks, maps, addedMaps}."""
+
+def texBrushPresets(name: str | None = None, reload: bool | None = None) -> Any:
+    """Texture brush presets (.lilabrush) from every tier: built-in, extensions, the user's and the workspace's. name= returns one preset with its brush, payload and particles; otherwise a list of {id, name, category, tier, kind}."""
+
+def texClearLayer(*objects: Any, layer: str | None = None) -> Any:
+    """Clear a paint layer: drop its strokes and pixels."""
+
+def texCompileStats(clear: bool | None = None) -> Any:
+    """CPU kernel cache counters: compiles, cache hits and failures since start (or the last clear)."""
+
+def texConnect(*objects: Any) -> Any:
+    """Link an output to an input: texConnect(set, 'Noise.out', 'Output.roughness'). Replaces the input's link."""
+
+def texCopyNodes(*objects: Any) -> Any:
+    """Nodes as shareable text (JSON with a format header): their values and the links between them. Paste with texPasteNodes."""
+
+def texCreateSet(*objects: Any, settings: Any | None = None, resolution: int | None = None) -> Any:
+    """Create a texture set: a texture graph with a Material Output, and the channels, tile sizes and export preset its maps use. Returns its name."""
+
+def texDeleteNode(*objects: Any) -> Any:
+    """Delete nodes from a texture set's graph, with their links."""
+
+def texDisconnect(*objects: Any, source: str | None = None) -> Any:
+    """Remove the link into an input, or only the one from `source` when given."""
+
+def texDuplicateNodes(*objects: Any, offset: Sequence[Any] | None = None) -> Any:
+    """Copy nodes with the links between them. Returns the new names in order."""
+
+def texEvaluate(*objects: Any, channels: Sequence[Any] | None = None, resolution: int | None = None, folder: str | None = None, format: str | None = None, bits: int | None = None, backend: str | None = None) -> Any:
+    """Evaluate a texture set and write its channels as images, on the GPU when there is one (else on the CPU). Returns the files, pass count, time, how many kernels compiled or came from the cache, and the backend used."""
+
+def texExport(*objects: Any, preset: str | None = None, folder: str | None = None, resolution: int | None = None, optional: bool | None = None, incremental: bool | None = None, backend: str | None = None) -> Any:
+    """Export a texture set's channels through an export preset (a bake target: unreal, substancePainter, or a saved one): its maps, channel packing (ORM), normal convention, names and bit depths. Returns the files."""
+
+def texExportGraph(*objects: Any) -> Any:
+    """Write a texture set to a file: .lilamat holds its graph and settings (import it to make the set again); .lilatexnodes holds its node groups as graph nodes for the node library. Returns the path."""
+
+def texExportImage(*objects: Any, resolution: int | None = None, udim: int | None = None, bits: int | None = None, field: str | None = None, backend: str | None = None) -> Any:
+    """Write one channel or any node output (node.socket) of a texture set as an image, for one tile. A material socket takes field= (baseColor by default). Returns {file, width, height, warnings}."""
+
+def texExportPsd(*objects: Any, channels: Sequence[Any] | None = None, folder: str | None = None, resolution: int | None = None, backend: str | None = None) -> Any:
+    """Export a texture set's layer stack as one layered PSD per channel (and tile): a Base layer, then each layer writing the channel with its values in RGB and its mask times opacity in alpha. Returns {files, warnings}."""
+
+def texFlattenLayer(*objects: Any, layer: str | None = None) -> Any:
+    """Flatten a paint layer: keep its pixels and drop its stroke records, so the layer no longer replays or re-rasterises them (the pixels resample instead)."""
+
+def texGraphInfo(*objects: Any, source: bool | None = None) -> Any:
+    """A texture set's graph definition, settings, nodes with resolved ports, parameters and values, and its evaluation plan (passes, buffers, structure hash) or compile error."""
+
+def texImportGraph(*objects: Any, name: str | None = None) -> Any:
+    """Read a texture graph file. A .lilamat becomes a new texture set (named after the file's set, made unique); a .lilatexnode(s) library is copied into the user's node folder and its nodes join the library. Returns the new set names."""
+
+def texImportImage(*objects: Any, kind: str | None = None, channel: str | None = None, material: Any | None = None, layers: bool | None = None, parent: str | None = None, folder: str | None = None) -> Any:
+    """Bring images into a texture set's stack as layers, bottom to top: each image (a PSD's layers each, unless layers=False) becomes a paint layer whose channel image is its colour and whose painted mask is its alpha, or with kind=fill a fill layer (material=) masked by the image's alpha (its luminance when it is opaque). The pixels are copied to textures/<set>/imported. Returns {layers, files}."""
+
+def texLayerStack(*objects: Any) -> Any:
+    """A texture set's layer stack as JSON: layers bottom first (with each channel's resolved enable, mode and opacity), masks, anchors, the base values, the mesh maps it reads, and mode: stack, or graph when the graph was edited as nodes beyond what the stack can show (or was never layered)."""
+
+def texMoveLayer(*objects: Any, above: str | None = None, below: str | None = None, parent: str | None = None, index: int | None = None) -> Any:
+    """Move a layer in a texture set's stack: right above or below another layer, into a folder, or to an index."""
+
+def texMoveNodes(*objects: Any, positions: Any | None = None) -> Any:
+    """Move nodes on the canvas: texMoveNodes(set, positions={'Noise': [0, 100]})."""
+
+def texNodeTypes(linkType: str | None = None, linkInput: bool | None = None, detail: bool | None = None, reload: bool | None = None) -> Any:
+    """The texture node library: type, label, category, kind, tier and description of each. With linkType, only nodes that can take a link from (or, with linkInput, give one to) a port of that type, each with the socket it would use."""
+
+def texPaintInfo(*objects: Any, layer: str | None = None) -> Any:
+    """A texture set's paint layers: per layer its strokes, whether it is flattened, its size and the GPU pages each channel and UDIM tile has allocated. layer= picks one."""
+
+def texPaintStroke(*objects: Any, stroke: Any | None = None, layer: str | None = None, mesh: str | None = None, payload: Any | None = None, brush: Any | None = None, points: Sequence[Any] | None = None, view: Any | None = None, space: str | None = None, particles: Any | None = None, id: int | None = None) -> Any:
+    """Paint a stroke into a texture set's paint layer (layer=, else the active one, else the stack's top paint layer, else a new paint layer). The stroke is a record: {mesh, brush (radius, strength, flow, spacing, falloff, roundness, angle, alpha, strokeMode line, lazyRadius, mirror...), payload {kind, channels {baseColor: [r, g, b], roughness: 0.3, ...}, blend normal|erase|add|subtract|multiply, mask}, occlusion, particles}, plus either space=surface with dabs [{triangle, bary [u, v], radius, pressure, opacity, angle}] or [{position [x, y, z], radius}] (object space), or space=screen with points [[x, y, pressure]] and view {width, height, camera | view + proj | viewProj + eye | eye + lookAt + fov}. Payload kinds: paint; direction (tilt, channel: normal, or another channel for a flow map); smudge (amount), blur and sharpen (filterRadius texels, amount), clone and heal (sourceOffset [du, dv] or cloneFrom [x, y, z]); fill (fillBy mesh|island|material|selection with at [x, y, z], triangle, material or faces; no dabs); project (image: a file path, {path, rect [x, y, w, h], opacity}, or {width, height, data}, through view; facingFade, colorChannel; no dabs); normal (normalMode bump|stamp, stampImage, intensity, channel). paint and fill take source {library id | graph | node type, values, resolution, scale} to paint a material's channels, and any kind tip {node | graph, values, resolution} for a texture graph brush tip. particles {kind drips|rain|sparks, count, length, size, spread, rate, seed} adds particle dabs. Each stroke is one undo step and is kept, so texRasterize can replay it. Returns {layer, stroke, dabs, pages}."""
+
+def texPasteNodes(*objects: Any, position: Sequence[Any] | None = None) -> Any:
+    """Add nodes from texCopyNodes text, centred at position; names are made unique. Returns the new names."""
+
+def texRasterize(*objects: Any, layer: str | None = None, resolution: int | None = None) -> Any:
+    """Re-rasterise a paint layer from its stroke records (and flattened pixels), at resolution= texels per side (0 follows the set's tiles) or its current size. Deterministic: the same records give the same pixels. Returns the layer's info."""
+
+def texRebuildLayers(*objects: Any) -> Any:
+    """Rebuild a texture set's graph from its layer stack, dropping node edits the stack can't show."""
+
+def texRemoveLayer(*objects: Any) -> Any:
+    """Remove layers (folders with their contents) from a texture set's stack."""
+
+def texRemoveMask(*objects: Any) -> Any:
+    """Remove masks from a layer."""
+
+def texSaveBrushPreset(*objects: Any, brush: Any | None = None, payload: Any | None = None, particles: Any | None = None, category: str | None = None, doc: str | None = None, tier: str | None = None) -> Any:
+    """Save a texture brush preset to the user's (or the workspace's) brushes folder: brush settings, payload and particles, each optional. Returns {id, file}."""
+
+def texSaveSmartMaterial(*objects: Any, name: str | None = None, description: str | None = None, mask: bool | None = None) -> Any:
+    """Save a layer (a folder, usually) as a smart material, or its masks as a smart mask (mask=True). Path optional: the user library otherwise. Returns the file."""
+
+def texSetDefinition(*objects: Any) -> Any:
+    """Replace a set's whole graph (JSON as texGraphInfo returns under 'definition'). The name is kept."""
+
+def texSetLayer(*objects: Any) -> Any:
+    """Change a layer: props is a merge patch over its JSON (texLayerStack shows it): name, enabled, channels {channel: {enabled, mode, opacity}}, material {channel: value, or null to drop it}, paint {channel or mask: image}, graph, source, filter, filterValues, anchor, heightBlend {enabled, sharpness, influence}, masks, kind. Returns the layer."""
+
+def texSetMask(*objects: Any) -> Any:
+    """Change a layer's mask: props is a merge patch over its JSON (name, enabled, mode, opacity, invert, value, type, values, bindings, image, anchor, channel). Returns the mask."""
+
+def texSetSettings(*objects: Any) -> Any:
+    """Change a texture set's settings: the keys given replace the set's (channels, width, height, tiles, normalConvention, bakeProject, exportPreset, material). Returns the full settings."""
+
+def texSetValue(*objects: Any) -> Any:
+    """Set a parameter or an unlinked input: texSetValue(set, 'Noise.scale', 8), texSetValue(set, 'Blend.mode', 'multiply'). GroupInput.<input> sets an exposed input's default. Value edits never recompile the graph."""
+
+def texSets() -> Any:
+    """Names of the texture sets in the scene."""
+
+def texSmartMaterials() -> Any:
+    """The smart materials and masks in the libraries: name, kind, description, tier and file."""
 
 def textureFolders(include: Sequence[Any] | None = None, exclude: Sequence[Any] | None = None, scene: bool | None = None, clear: bool | None = None) -> Any:
     """Which project images the material editor's texture lists show. Globs relative to the project folder (the workspace root, else the scene's folder): `*` within a folder name, `**` across folders, a pattern without '/' matches at any depth, and a folder pattern takes everything under it, e.g. Textures/**, **/*_old.*, Saved. Empty include takes everything; exclude wins. Kept in the workspace's .lila/settings.json, or with scene=True in the scene, where each list overrides the workspace's. With no flags returns the effective lists, where each came from and both levels."""
@@ -1383,6 +1566,9 @@ def unrealMap(*objects: Any, contentPath: str | None = None, kind: str | None = 
 
 def unrealMappings() -> Any:
     """Every node -> Unreal asset mapping in this workspace."""
+
+def unrealSendTextureSet(*objects: Any, folder: str | None = None, materialParent: str | None = None, materialFolder: str | None = None, exportFolder: str | None = None, preset: str | None = None, all: bool | None = None, remember: bool | None = None, save: bool | None = None, wait: bool | None = None) -> Any:
+    """Send a texture set to Unreal: exports it through the Unreal preset (only tiles and channels that changed since the last export are rewritten and sent, unless all=True) and updates the textures and the material instance of the set's slot (MI_<slot>), set on the slot of every mapped mesh using it. Painterly and Toon materials become instances of LilaLink's stylised masters with their palette values; others need materialParent (or the unreal pref), else only textures go. The set then also goes on every save. Returns {queued, textures} or, with wait=True, Unreal's {assets, warnings, errors}."""
 
 def unrealSendTextures(project: str | None = None, folder: str | None = None, materialMode: str | None = None, materialParent: str | None = None, materialFolder: str | None = None, parameters: Any | None = None, lodGroup: str | None = None, virtualTexture: bool | None = None, assign: bool | None = None, save: bool | None = None, wait: bool | None = None) -> Any:
     """Send a bake project's last textures to Unreal, updating the texture assets in place (sRGB, compression, flip green and LOD group per map; UDIM sets as virtual textures). materialMode instance also creates or updates a material instance per material slot from materialParent and sets it on the slot of every mapped mesh (unrealMap). assign=True first wires the textures into the Lila materials (bakeAssign). Returns {queued} or, with wait=True, Unreal's {assets, warnings, errors}."""
@@ -1498,7 +1684,7 @@ def vertexColorGradient(*objects: Any, colorSet: str | None = None, type: str | 
 def vertexColorSample(*objects: Any, colorSet: str | None = None, at: Sequence[float] | None = None) -> Any:
     """The vertex color on the mesh surface closest to a world-space point (the eyedropper). Returns linear [r, g, b, a]."""
 
-def vertexColorStroke(*objects: Any, colorSet: str | None = None, blend: str | None = None, color: Sequence[Any] | None = None, strength: float | None = None, channels: str | None = None, falloff: Any | None = None, frontFacesOnly: bool | None = None, paintThrough: bool | None = None, mirror: bool | None = None, selectionOnly: bool | None = None, dabs: Sequence[Any] | None = None, live: int | None = None) -> Any:
+def vertexColorStroke(*objects: Any, colorSet: str | None = None, blend: str | None = None, color: Sequence[Any] | None = None, strength: float | None = None, channels: str | None = None, falloff: Any | None = None, frontFacesOnly: bool | None = None, paintThrough: bool | None = None, mirror: bool | None = None, selectionOnly: bool | None = None, radialCount: int | None = None, radialAxis: str | None = None, dabs: Sequence[Any] | None = None, live: int | None = None) -> Any:
     """One vertex paint stroke: dabs is a list of {center, radius, opacity, view, eye} in world space (center and radius required). Mirrors through the mesh's symmetry and stays inside the component selection. One undo step that stores only the changed corners. Returns {corners} changed."""
 
 def viewPlace(*objects: Any, eye: Sequence[float] | None = None, lookAt: Sequence[float] | None = None, up: Sequence[float] | None = None, orthographicWidth: float | None = None) -> Any:

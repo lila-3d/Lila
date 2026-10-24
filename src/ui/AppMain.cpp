@@ -16,14 +16,20 @@
 #include "mcp/McpServer.h"
 #include "python/Python.h"
 #include "render/Baker.h"
+#include "render/MeshMaps.h"
+#include "render/PaintGpu.h"
 #include "render/Renderer.h"
+#include "render/TexEval.h"
 #include "scene/Components.h"
 #include "ui/Actions.h"
 #include "ui/AdjustLastOp.h"
 #include "ui/AgentCapture.h"
+#include "ui/MaterialThumbnails.h"
 #include "ui/AgentSetup.h"
 #include "ui/BakePaintTool.h"
+#include "ui/TexturePaintTool.h"
 #include "ui/BakerPanel.h"
+#include "ui/TexPipelineUi.h"
 #include "ui/Animation.h"
 #include "ui/AutoBevelUi.h"
 #include "ui/SmartJoinUi.h"
@@ -47,6 +53,7 @@
 #include "ui/RigViewport.h"
 #include "ui/SculptPanel.h"
 #include "ui/Shelf.h"
+#include "ui/TexLive.h"
 #include "ui/Theme.h"
 #include "ui/Tools.h"
 #include "ui/UiTools.h"
@@ -106,6 +113,7 @@ void registerUi()
     registerSculptUi();
     registerVertexPaintUi();
     registerBakePaintUi();
+    registerTexturePaintUi();
     // Material textures in formats core ImageIO lacks (JPG, RGB PNG, BMP) come through Qt.
     bake::setTextureLoader([](const std::string& path, int& w, int& h, std::vector<float>& rgba, std::string& error) {
         image::Image img = image::read(paths::fromUtf8(path), &error);
@@ -155,8 +163,11 @@ void registerBatchCommands()
         return;
     done = true;
     capture::registerCommands();
+    materialThumbs::registerCommands();
     // The gpu bake backend starts the renderer headless on first use.
     render::registerGpuBakeBackend();
+    render::texgpu::registerTexGpu();
+    render::paint::registerCommands();
     registerScreenshotCommand();
     modes::registerBuiltins();
     // captureView starts the renderer on demand in batch mode.
@@ -178,10 +189,15 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
     Hotkeys::get().install();
     render::Renderer::get().start();
     render::registerGpuBakeBackend();
+    render::texgpu::registerTexGpu();
+    render::paint::registerCommands();
+    texLive::install();
     bake::setRebakeAsync(true);
+    render::setLiveMapsAsync(true);
     registerUiTools();
     capture::registerMcpTools();
     registerBakerMcpTools();
+    registerTexturePipelineMcpTools();
     agentSetup::registerActions();
     registerRigViewport();
     registerDeformActions();

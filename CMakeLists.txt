@@ -51,6 +51,8 @@ add_subdirectory(extensions/PhysicsAnimation)
 add_subdirectory(extensions/TreeGenerator)
 add_subdirectory(extensions/TerrainTools)
 add_subdirectory(extensions/TerrainGenerator)
+add_subdirectory(extensions/Meadowlight)
+add_subdirectory(extensions/Brushwork)
 include(LilaSdkInstall)
 
 if(LILA_BUILD_TESTS)

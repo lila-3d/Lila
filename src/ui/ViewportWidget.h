@@ -71,6 +71,8 @@ public:
     /** Adds the selection (objects or components) to this view's isolation, starting one if none is on. */
     void addToIsolation();
     void removeFromIsolation();
+    /** Escape in the view: the active tool or a manipulator drag takes it first, else object mode drops the selection. */
+    void escape();
     bool isolating() const { return mIsolation.active(); }
     const scene::isolation::Set& isolation() const { return mIsolation; }
     void setIsolation(scene::isolation::Set set);
@@ -140,6 +142,8 @@ private:
     std::vector<std::string> hitTest(QPointF a, QPointF b);
     /** A drag selection's test for a projected point: inside the lasso being picked, else inside box. */
     bool inSelectRegion(const QRectF& box, QPointF p) const;
+    /** Whether a screen-space outline (two points: a segment) overlaps the marquee or lasso anywhere. */
+    bool touchesSelectRegion(const QRectF& box, const std::vector<glm::dvec2>& shape) const;
     /** Selects with the lasso drawn in mLasso, or clicks at the press when it is too small to enclose anything. */
     void pickLasso(Qt::KeyboardModifiers mods);
     /** Whether what a Tab press at the point would land on is selected; nullopt over nothing. */
@@ -153,6 +157,8 @@ private:
     void pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers mods);
     /** Double-click in a component mode: the loop through what is under the cursor, or with Shift the path to the last click. */
     bool selectLoopAt(QPointF at, Qt::KeyboardModifiers mods);
+    /** The selected meshes' symmetry plane edges, in object mode. */
+    void drawObjectSymmetryEdges(render::FrameState& s);
     void drawComponents(render::FrameState& s);
     /** What a click at the point would select in the current component mode: the nearest visible component. */
     scene::componentPick::Hover componentAt(QPointF at);
@@ -240,6 +246,7 @@ private:
     int mGizmoListener = 0;
     int mHandlerListener = 0;
     int mArrangeListener = 0;
+    int mInheritListener = 0;
     std::optional<selectionHandlers::Highlight> mHandlerHover;
     bool mChannelDrag = false; // middle drag driving the channel box's highlighted channels
     bool mToolDrag = false;

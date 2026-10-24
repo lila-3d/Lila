@@ -26,6 +26,10 @@
 #include "scene/SceneCommands.h"
 #include "sculpt/SculptSession.h"
 #include "seq/MeshSequence.h"
+#include "tex/GraphFiles.h"
+#include "tex/Interop.h"
+#include "tex/Library.h"
+#include "tex/TextureSet.h"
 #include "ui/Layouts.h"
 #include "ui/ThemeModel.h"
 #include "uv/UvCommands.h"
@@ -123,11 +127,15 @@ void startCore()
     ops::registerBuiltins();
     scene::types::registerBuiltins();
     gn::registerTypes();
+    tex::registerTypes();
     scene::registerCommands();
     io::registerCommands();
     gn::registerCommands();
     seq::registerCommands();
     bake::registerCommands();
+    tex::registerCommands();
+    tex::registerFileCommands();
+    tex::library::registerCommands();
     uv::registerCommands();
     retopo::registerCommands();
     sculpt::registerCommands();
@@ -160,6 +168,7 @@ void startCore()
         });
     // Rebakes first, so a mapped mesh's sync to Unreal picks up fresh textures.
     io::onSaved([](const fs::path&) { bake::onSceneSaved(); });
+    io::onSaved([](const fs::path& p) { tex::onSceneSaved(p); });
     io::onSaved([](const fs::path&) { link::onSceneSaved(); });
 }
 

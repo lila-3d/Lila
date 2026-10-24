@@ -4,10 +4,13 @@
 #include "core/Paths.h"
 #include "core/Profile.h"
 #include "render/Backdrop.h"
+#include "render/Compute.h"
 #include "render/Environment.h"
+#include "render/GpuImage.h"
 #include "render/HdrImage.h"
 #include "render/DisplayOptions.h"
 #include "render/Surface.h"
+#include "render/VirtualTexture.h"
 #include "render/VulkanContext.h"
 
 #include <algorithm>
@@ -57,9 +60,15 @@ struct MeshPush
     glm::vec4 surface;
     glm::vec3 emissive{0.0f};
     uint32_t flags = 0;
-    glm::vec4 display{1.0f, 0.0f, 0.0f, 0.0f};
+    float gamma = 1.0f;
+    /** Word offset of the draw's style block (stylised shading models) in the frame's table, or kNoStyle. */
+    uint32_t style = 0xffffffffu;
+    float displayPad[2]{};
+    /** The device address of the frame's table: bindless texture handles, then style blocks. Maps hold 16-bit handles into it. */
+    uint64_t textureTable = 0;
+    uint32_t maps[2] = {0xffffffffu, 0xffffffffu}; // base color | normal << 16, ORM | emissive << 16
 };
-static_assert(sizeof(MeshPush) == 240, "matches MeshPush in mesh.slang");
+static_assert(sizeof(MeshPush) == 256, "matches MeshPush in mesh.slang");
 
 // Draw-level bits above the material flags, matching mesh.slang.
 constexpr uint32_t kVertexColorShaded = 1u << 11;
@@ -71,6 +80,13 @@ constexpr uint64_t kWhiteSrgbKey = ~uint64_t(0);
 constexpr uint64_t kWhiteLinearKey = ~uint64_t(0) - 1;
 constexpr uint64_t kFlatNormalKey = ~uint64_t(0) - 2;
 constexpr uint32_t kMaxMaterialSets = 1024;
+/** Texture table entries: a bindless index, or a UDIM set's header (this bit, then its row count). */
+constexpr uint32_t kUdimEntry = 0x80000000u;
+constexpr uint32_t kNoSlot = 0xffffffffu;
+constexpr uint32_t kNoHandle = 0xffffu;
+constexpr uint32_t kMaxBindless = 16384;
+constexpr uint32_t kNoStyle = 0xffffffffu;
+constexpr uint32_t kMaterialBindings = 5; // base color, normal, ORM, emissive, stroke sheet
 
 struct ContactPush
 {
@@ -91,6 +107,13 @@ struct AoPush
 constexpr VkFormat kAoNormalFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 constexpr VkFormat kAoFormat = VK_FORMAT_R32_SFLOAT;
 constexpr uint32_t kMaxAoSets = 64;
+
+struct PostPush
+{
+    glm::vec4 size;
+    glm::vec4 params;  // Kuwahara on, radius, outlines on, outline width
+    glm::vec4 outline; // colour, depth sensitivity
+};
 
 struct WirePush
 {
@@ -143,6 +166,8 @@ struct Frame
     void* linesMapped = nullptr;
     size_t linesCapacity = 0;
     std::vector<Buffer> staging; // texture uploads recorded into this frame, freed once its fence signals
+    compute::Buffer table;       // bindless texture table, written before the frame is recorded
+    vt::Feedback feedback;       // virtual texture page requests, read once the fence signals
     // GPU timestamps: frame start, before and after ambient occlusion, frame end.
     VkQueryPool timestamps = VK_NULL_HANDLE;
     bool timed = false, aoTimed = false;
@@ -163,6 +188,9 @@ struct Viewport
     // Ambient occlusion: single-sample prepass, raw GTAO, denoised result sampled by the mesh pass.
     Image aoDepth, aoNormal, aoRaw, aoFinal;
     VkDescriptorSet gtaoSet = VK_NULL_HANDLE, denoiseSet = VK_NULL_HANDLE, aoSampleSet = VK_NULL_HANDLE;
+    // Viewport post: the scene resolved here, then filtered into the frame with the prepass depth and normals.
+    Image postColor;
+    VkDescriptorSet postSet = VK_NULL_HANDLE;
     std::array<Frame, kFramesInFlight> frames;
     int frameIndex = 0;
 
@@ -196,17 +224,10 @@ struct OffscreenJob
 
 std::vector<uint32_t> loadSpirv(const char* name)
 {
-    auto path = paths::executableDir() / "shaders" / name;
-    std::ifstream in(path, std::ios::binary | std::ios::ate);
-    if (!in)
-    {
-        log::error("render: missing shader {}", path.string());
-        return {};
-    }
-    size_t size = size_t(in.tellg());
-    std::vector<uint32_t> code(size / 4);
-    in.seekg(0);
-    in.read(reinterpret_cast<char*>(code.data()), std::streamsize(size));
+    std::string err;
+    std::vector<uint32_t> code = compute::loadSpirv(name, &err);
+    if (code.empty())
+        log::error("render: {}", err);
     return code;
 }
 
@@ -260,6 +281,8 @@ struct Renderer::Impl
     VkPipeline backgroundPipeline = VK_NULL_HANDLE, linesOnTopPipeline = VK_NULL_HANDLE, tris3dPipeline = VK_NULL_HANDLE;
     VkPipelineLayout contactLayout = VK_NULL_HANDLE;
     VkPipeline contactPipeline = VK_NULL_HANDLE;
+    VkPipelineLayout postLayout = VK_NULL_HANDLE;
+    VkPipeline postPipeline = VK_NULL_HANDLE;
 
     // Image-based lighting. The set always holds valid images (a black placeholder until the first environment).
     VkDescriptorSetLayout envSetLayout = VK_NULL_HANDLE;
@@ -282,7 +305,10 @@ struct Renderer::Impl
     // Material textures, uploaded through the frame's own command buffer with mips blitted on the GPU. Render thread only.
     struct GpuTexture
     {
-        Image image;
+        Image image; // owned; empty for a GPU image
+        VkImageView view = VK_NULL_HANDLE;
+        TexturePtr keep; // a GPU image's texture, kept alive while descriptors point at it
+        uint32_t slot = kNoSlot; // index in the bindless array
         uint64_t lastUsed = 0;
     };
     struct MaterialSet
@@ -291,12 +317,29 @@ struct Renderer::Impl
         uint64_t lastUsed = 0;
     };
     std::unordered_map<uint64_t, GpuTexture> textures;
-    std::map<std::array<uint64_t, 4>, MaterialSet> materialSets; // base color, normal, ORM, emissive texture keys
+    std::map<std::array<uint64_t, kMaterialBindings>, MaterialSet> materialSets; // base color, normal, ORM, emissive, stroke keys
     VkDescriptorSetLayout materialSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool materialPool = VK_NULL_HANDLE;
     VkSampler materialSampler = VK_NULL_HANDLE;
-    bool blitSrgb = false, blitLinear = false;
+    std::unordered_map<VkFormat, bool> blittable;
     bool warnedPool = false;
+    // Bindless materials: every texture holds a slot of one runtime array (set 1 of the mesh layout), and each frame
+    // writes a table the shader reads through push constants, mapping a material's maps (and UDIM tiles) to slots.
+    bool bindless = false;
+    VkDescriptorSetLayout bindlessLayout = VK_NULL_HANDLE;
+    VkDescriptorPool bindlessPool = VK_NULL_HANDLE;
+    VkDescriptorSet bindlessSet = VK_NULL_HANDLE;
+    uint32_t bindlessCapacity = 0, nextSlot = 0;
+    std::vector<uint32_t> freeSlots;
+    bool warnedSlots = false, warnedTable = false;
+    // The frame being recorded: its table, the handle of each (texture, placeholder) pair in it, and its address.
+    std::vector<uint32_t> frameTable;
+    std::map<std::pair<uint64_t, uint64_t>, uint32_t> frameHandles;
+    /** Style block offsets in the frame's table per (draw, material slot), for slots with a stylised shading model. */
+    std::map<std::pair<const MeshDraw*, uint32_t>, uint32_t> frameStyles;
+    VkDeviceAddress frameTableAddress = 0;
+    /** The frame draws a virtual texture map: it writes feedback. */
+    bool frameUsesVt = false;
     VkPipeline meshBlendPipeline = VK_NULL_HANDLE;
     // Image planes sample through set 0 of their layout, a material set holding the image as its base color.
     VkPipelineLayout imagePlaneLayout = VK_NULL_HANDLE;
@@ -367,7 +410,7 @@ struct Renderer::Impl
         v.images.clear();
         destroyImage(v.color);
         destroyImage(v.depth);
-        for (Image* img : {&v.aoDepth, &v.aoNormal, &v.aoRaw, &v.aoFinal})
+        for (Image* img : {&v.aoDepth, &v.aoNormal, &v.aoRaw, &v.aoFinal, &v.postColor})
             destroyImage(*img);
     }
 
@@ -501,6 +544,7 @@ struct Renderer::Impl
     {
         for (Frame& f : v.frames)
         {
+            f.feedback.destroy(vk);
             VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
             pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
             pci.queueFamilyIndex = vk.queueFamily;
@@ -526,6 +570,7 @@ struct Renderer::Impl
         v.gtaoSet = allocateSet(aoPool, aoComputeLayout);
         v.denoiseSet = allocateSet(aoPool, aoComputeLayout);
         v.aoSampleSet = allocateSet(aoPool, aoSampleLayout);
+        v.postSet = allocateSet(aoPool, aoSampleLayout);
     }
 
     void destroyViewport(Viewport& v)
@@ -534,6 +579,7 @@ struct Renderer::Impl
         for (Frame& f : v.frames)
         {
             freeStaging(f);
+            compute::destroy(vk, f.table);
             if (f.lines)
             {
                 vmaUnmapMemory(vk.allocator, f.linesAlloc);
@@ -546,7 +592,7 @@ struct Renderer::Impl
             vkDestroyCommandPool(vk.device, f.pool, nullptr);
         }
         destroySwapchain(v);
-        for (VkDescriptorSet set : {v.gtaoSet, v.denoiseSet, v.aoSampleSet})
+        for (VkDescriptorSet set : {v.gtaoSet, v.denoiseSet, v.aoSampleSet, v.postSet})
             if (set)
                 vkFreeDescriptorSets(vk.device, aoPool, 1, &set);
         if (v.swapchain)
@@ -631,7 +677,8 @@ struct Renderer::Impl
     }
 
     /** Sampled image with a full mip chain and optional cube layers, ready to be filled by uploadImage. */
-    Image createTexture(VkFormat format, VkExtent2D extent, uint32_t mips, bool cube, VkImageUsageFlags extraUsage = 0)
+    Image createTexture(VkFormat format, VkExtent2D extent, uint32_t mips, bool cube, VkImageUsageFlags extraUsage = 0,
+                        VkComponentMapping swizzle = {})
     {
         Image img;
         VkImageCreateInfo ici{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
@@ -651,6 +698,7 @@ struct Renderer::Impl
         vci.image = img.image;
         vci.viewType = cube ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D;
         vci.format = format;
+        vci.components = swizzle;
         vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mips, 0, ici.arrayLayers};
         vkCreateImageView(vk.device, &vci, nullptr, &img.view);
         return img;
@@ -995,15 +1043,15 @@ struct Renderer::Impl
     {
         LILA_ZONE();
 
-        VkDescriptorSetLayoutBinding b[4];
-        for (uint32_t i = 0; i < 4; ++i)
+        VkDescriptorSetLayoutBinding b[kMaterialBindings];
+        for (uint32_t i = 0; i < kMaterialBindings; ++i)
             b[i] = {i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
         VkDescriptorSetLayoutCreateInfo lci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        lci.bindingCount = 4;
+        lci.bindingCount = kMaterialBindings;
         lci.pBindings = b;
         vkCreateDescriptorSetLayout(vk.device, &lci, nullptr, &materialSetLayout);
 
-        VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxMaterialSets * 4};
+        VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxMaterialSets * kMaterialBindings};
         VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         pci.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
         pci.maxSets = kMaxMaterialSets;
@@ -1020,25 +1068,134 @@ struct Renderer::Impl
         sci.anisotropyEnable = vk.anisotropy;
         sci.maxAnisotropy = vk.anisotropy ? std::min(8.0f, vk.properties.limits.maxSamplerAnisotropy) : 1.0f;
         vkCreateSampler(vk.device, &sci, nullptr, &materialSampler);
-
-        auto canBlit = [&](VkFormat f) {
-            VkFormatProperties fp;
-            vkGetPhysicalDeviceFormatProperties(vk.physical, f, &fp);
-            VkFormatFeatureFlags need =
-                VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
-            return (fp.optimalTilingFeatures & need) == need;
-        };
-        blitSrgb = canBlit(VK_FORMAT_R8G8B8A8_SRGB);
-        blitLinear = canBlit(VK_FORMAT_R8G8B8A8_UNORM);
+        initBindless();
 
         auto placeholder = [&](uint64_t key, VkFormat format, std::array<uint8_t, 4> texel) {
             GpuTexture& t = textures[key];
             t.image = createTexture(format, {1, 1}, 1, false);
+            t.view = t.image.view;
             uploadImage(t.image.image, {1, 1}, 1, 1, 4, {texel.data()});
+            assignSlot(t);
         };
         placeholder(kWhiteSrgbKey, VK_FORMAT_R8G8B8A8_SRGB, {255, 255, 255, 255});
         placeholder(kWhiteLinearKey, VK_FORMAT_R8G8B8A8_UNORM, {255, 255, 255, 255});
         placeholder(kFlatNormalKey, VK_FORMAT_R8G8B8A8_UNORM, {128, 128, 255, 255});
+    }
+
+    /** Whether images of a format can have their mips blitted (and be filtered). */
+    bool canBlit(VkFormat f)
+    {
+        auto it = blittable.find(f);
+        if (it != blittable.end())
+            return it->second;
+        VkFormatProperties fp;
+        vkGetPhysicalDeviceFormatProperties(vk.physical, f, &fp);
+        VkFormatFeatureFlags need = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+        return blittable[f] = (fp.optimalTilingFeatures & need) == need;
+    }
+
+    /** The bindless array, when the device has descriptor indexing and the bindless mesh shader is there. */
+    void initBindless()
+    {
+        if (!vk.descriptorIndexing || loadSpirv("mesh_bindless.spv").empty())
+            return;
+        LILA_ZONE();
+
+        VkPhysicalDeviceVulkan12Properties p12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES};
+        VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &p12};
+        vkGetPhysicalDeviceProperties2(vk.physical, &p2);
+        // The rest of the mesh layout (environment and AO sets) counts against the same per-stage limits.
+        uint32_t limit = std::min({p12.maxDescriptorSetUpdateAfterBindSampledImages, p12.maxDescriptorSetUpdateAfterBindSamplers,
+                                   p12.maxPerStageDescriptorUpdateAfterBindSampledImages, p12.maxPerStageDescriptorUpdateAfterBindSamplers,
+                                   p12.maxPerStageUpdateAfterBindResources});
+        bindlessCapacity = std::min(kMaxBindless, limit > 16 ? limit - 16 : 0);
+        if (bindlessCapacity < 64)
+            return;
+
+        VkDescriptorBindingFlags flags = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
+                                         VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
+        VkDescriptorSetLayoutBindingFlagsCreateInfo bfi{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
+        bfi.bindingCount = 1;
+        bfi.pBindingFlags = &flags;
+        VkDescriptorSetLayoutBinding b{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, bindlessCapacity, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
+        VkDescriptorSetLayoutCreateInfo lci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        lci.pNext = &bfi;
+        lci.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
+        lci.bindingCount = 1;
+        lci.pBindings = &b;
+        if (vkCreateDescriptorSetLayout(vk.device, &lci, nullptr, &bindlessLayout) != VK_SUCCESS)
+            return;
+
+        VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, bindlessCapacity};
+        VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        pci.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+        pci.maxSets = 1;
+        pci.poolSizeCount = 1;
+        pci.pPoolSizes = &size;
+        if (vkCreateDescriptorPool(vk.device, &pci, nullptr, &bindlessPool) != VK_SUCCESS)
+        {
+            destroyBindless();
+            return;
+        }
+        VkDescriptorSetVariableDescriptorCountAllocateInfo vci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO};
+        vci.descriptorSetCount = 1;
+        vci.pDescriptorCounts = &bindlessCapacity;
+        VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        ai.pNext = &vci;
+        ai.descriptorPool = bindlessPool;
+        ai.descriptorSetCount = 1;
+        ai.pSetLayouts = &bindlessLayout;
+        if (vkAllocateDescriptorSets(vk.device, &ai, &bindlessSet) != VK_SUCCESS)
+        {
+            destroyBindless();
+            return;
+        }
+        bindless = true;
+        log::info("render: bindless materials ({} textures)", bindlessCapacity);
+    }
+
+    void destroyBindless()
+    {
+        if (bindlessPool)
+            vkDestroyDescriptorPool(vk.device, bindlessPool, nullptr);
+        if (bindlessLayout)
+            vkDestroyDescriptorSetLayout(vk.device, bindlessLayout, nullptr);
+        bindlessPool = VK_NULL_HANDLE;
+        bindlessLayout = VK_NULL_HANDLE;
+        bindlessSet = VK_NULL_HANDLE;
+        bindless = false;
+        freeSlots.clear();
+        nextSlot = 0;
+    }
+
+    /** Gives a texture a bindless slot pointing at its view. Without one it samples as its placeholder. */
+    void assignSlot(GpuTexture& t)
+    {
+        if (!bindless || t.slot != kNoSlot || !t.view)
+            return;
+        if (!freeSlots.empty())
+        {
+            t.slot = freeSlots.back();
+            freeSlots.pop_back();
+        }
+        else if (nextSlot < bindlessCapacity)
+            t.slot = nextSlot++;
+        else
+        {
+            if (!warnedSlots)
+                log::warn("render: more than {} material textures; the rest draw blank", bindlessCapacity);
+            warnedSlots = true;
+            return;
+        }
+        VkDescriptorImageInfo info{materialSampler, t.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        w.dstSet = bindlessSet;
+        w.dstBinding = 0;
+        w.dstArrayElement = t.slot;
+        w.descriptorCount = 1;
+        w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        w.pImageInfo = &info;
+        vkUpdateDescriptorSets(vk.device, 1, &w, 0, nullptr);
     }
 
     void destroyMaterials()
@@ -1047,6 +1204,7 @@ struct Renderer::Impl
             destroyImage(t.image);
         textures.clear();
         materialSets.clear();
+        destroyBindless();
         if (materialSampler)
             vkDestroySampler(vk.device, materialSampler, nullptr);
         if (materialPool)
@@ -1084,19 +1242,21 @@ struct Renderer::Impl
     {
         LILA_ZONE();
 
-        if (t.width <= 0 || t.height <= 0 || t.rgba.size() < size_t(t.width) * size_t(t.height) * 4)
+        const size_t bytes = size_t(t.width) * size_t(t.height) * size_t(texelBytes(t.format));
+        if (t.width <= 0 || t.height <= 0 || t.rgba.size() < bytes)
             return false;
-        VkFormat format = t.srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+        VkFormat format = vkFormat(t.format, t.srgb);
         VkExtent2D extent{uint32_t(t.width), uint32_t(t.height)};
         uint32_t mips = 1;
-        if (t.srgb ? blitSrgb : blitLinear)
+        if (canBlit(format))
             while ((std::max(extent.width, extent.height) >> mips) > 0)
                 ++mips;
 
         GpuTexture g;
-        g.image = createTexture(format, extent, mips, false, VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+        g.image = createTexture(format, extent, mips, false, VK_IMAGE_USAGE_TRANSFER_SRC_BIT, sampleSwizzle(t.format));
+        g.view = g.image.view;
         g.lastUsed = frameCounter;
-        Buffer staging = createBuffer(t.rgba.data(), size_t(t.width) * size_t(t.height) * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        Buffer staging = createBuffer(t.rgba.data(), bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         f.staging.push_back(staging);
 
         constexpr auto transfer = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
@@ -1127,15 +1287,50 @@ struct Renderer::Impl
                        VK_ACCESS_2_TRANSFER_READ_BIT, sampled, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
         mipBarrier(cmd, g.image.image, mips - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, transfer,
                    VK_ACCESS_2_TRANSFER_WRITE_BIT, sampled, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        assignSlot(g);
         textures[t.key] = g;
         return true;
     }
 
-    /** Key of an uploaded texture, or the placeholder's when the map is missing or failed to upload. */
+    /** Records a GPU image's queued updates and registers it as a texture on first use. False when it has no device image. */
+    bool prepareGpuImage(VkCommandBuffer cmd, Frame& f, const TexturePtr& t)
+    {
+        std::vector<compute::Buffer> staging;
+        const bool ok = t->gpu->prepare(vk, cmd, staging);
+        for (const compute::Buffer& b : staging)
+            f.staging.push_back({b.buffer, b.alloc});
+        if (!ok)
+            return false;
+        auto [it, added] = textures.try_emplace(t->key);
+        if (added)
+        {
+            it->second.view = t->gpu->view();
+            it->second.keep = t;
+            it->second.lastUsed = frameCounter;
+            assignSlot(it->second);
+        }
+        return true;
+    }
+
+    /**
+     * Key of an uploaded texture, or the placeholder's when the map is missing or failed to upload. A UDIM set gives its
+     * first uploaded tile (what the fixed sampler path shows) and keeps all its tiles alive.
+     */
     uint64_t textureKey(const TexturePtr& t, uint64_t placeholder)
     {
         if (!t)
             return placeholder;
+        if (t->vt)
+            return bindless ? t->key : placeholder;
+        if (t->isUdimSet())
+        {
+            uint64_t first = placeholder;
+            for (const UdimTile& tile : t->tiles)
+                if (tile.image && !tile.image->isUdimSet())
+                    if (uint64_t k = textureKey(tile.image, placeholder); k != placeholder && first == placeholder)
+                        first = k;
+            return first;
+        }
         auto it = textures.find(t->key);
         if (it == textures.end())
             return placeholder;
@@ -1143,23 +1338,187 @@ struct Renderer::Impl
         return t->key;
     }
 
-    /** Uploads every map this frame's materials use for the first time. Runs before rendering begins. */
+    /** Uploads a map (every tile of a UDIM set) the first time a frame uses it, and lands a GPU image's updates. */
+    void prepareTexture(VkCommandBuffer cmd, Frame& f, const TexturePtr& t, const char* what)
+    {
+        if (!t)
+            return;
+        if (t->isUdimSet())
+        {
+            for (const UdimTile& tile : t->tiles)
+                if (tile.image && !tile.image->isUdimSet())
+                    prepareTexture(cmd, f, tile.image, what);
+            return;
+        }
+        if (t->vt)
+        {
+            for (const TexturePtr& chunk : vt::chunkTextures(*t))
+                prepareGpuImage(cmd, f, chunk);
+            frameUsesVt = true;
+        }
+        else if (t->gpu)
+            prepareGpuImage(cmd, f, t);
+        else if (!textures.contains(t->key) && !uploadTexture(cmd, f, *t))
+            log::warn("render: skipped a malformed {}x{} {}", t->width, t->height, what);
+    }
+
+    /** Uploads every map this frame's materials use for the first time, then writes the frame's texture table. Runs before rendering begins. */
     void prepareTextures(VkCommandBuffer cmd, Frame& f, const FrameState& s)
     {
         LILA_ZONE();
+
+        frameUsesVt = false;
+        if (bindless)
+        {
+            std::vector<compute::Buffer> staging;
+            vt::recordFrame(vk, cmd, staging);
+            for (const compute::Buffer& b : staging)
+                f.staging.push_back({b.buffer, b.alloc});
+        }
 
         for (const MeshDraw& d : s.meshes)
         {
             if (!(d.flags & DrawShaded))
                 continue;
             for (const Material& mat : d.materials)
-                for (const TexturePtr* t : {&mat.baseColorMap, &mat.normalMap, &mat.ormMap, &mat.emissiveMap})
-                    if (*t && !textures.contains((*t)->key) && !uploadTexture(cmd, f, **t))
-                        log::warn("render: skipped a malformed {}x{} texture", (*t)->width, (*t)->height);
+                for (const TexturePtr* t : {&mat.baseColorMap, &mat.normalMap, &mat.ormMap, &mat.emissiveMap, &mat.style.strokeMap})
+                    prepareTexture(cmd, f, *t, "texture");
         }
         for (const ImagePlaneDraw& p : s.imagePlanes)
-            if (p.image && !textures.contains(p.image->key) && !uploadTexture(cmd, f, *p.image))
-                log::warn("render: skipped a malformed {}x{} image plane", p.image->width, p.image->height);
+            prepareTexture(cmd, f, p.image, "image plane");
+        writeTextureTable(f, s);
+    }
+
+    /** The bindless slot a texture key samples, its placeholder's when it has none. */
+    uint32_t slotOf(uint64_t key, uint64_t placeholder)
+    {
+        auto it = textures.find(key);
+        if (it != textures.end() && it->second.slot != kNoSlot)
+            return it->second.slot;
+        it = textures.find(placeholder);
+        return it != textures.end() && it->second.slot != kNoSlot ? it->second.slot : 0;
+    }
+
+    /**
+     * The frame's table handle for a map, added on first use: one entry holding the slot for a plain texture, or for a
+     * UDIM set a header (kUdimEntry | rows), the placeholder's slot, then ten slots per row of tiles (U 0..9).
+     */
+    uint32_t tableHandle(const TexturePtr& t, uint64_t placeholder)
+    {
+        if (!t)
+            return kNoHandle;
+        auto [it, added] = frameHandles.try_emplace({t->key, placeholder}, kNoHandle);
+        if (!added)
+            return it->second;
+        const uint32_t handle = uint32_t(frameTable.size());
+        const uint32_t fallback = slotOf(placeholder, placeholder);
+        if (t->vt)
+            vt::tableEntry(*t, frameTable, [&](const TexturePtr& chunk) { return slotOf(chunk->key, placeholder); });
+        else if (!t->isUdimSet())
+            frameTable.push_back(slotOf(textureKey(t, placeholder), placeholder));
+        else
+        {
+            int rows = 1;
+            for (const UdimTile& tile : t->tiles)
+                if (tile.udim >= 1001)
+                    rows = std::max(rows, (tile.udim - 1001) / 10 + 1);
+            rows = std::min(rows, 100);
+            frameTable.push_back(kUdimEntry | uint32_t(rows));
+            frameTable.push_back(fallback);
+            const size_t first = frameTable.size();
+            frameTable.resize(first + size_t(rows) * 10, fallback);
+            for (const UdimTile& tile : t->tiles)
+            {
+                const int index = tile.udim - 1001;
+                if (index >= 0 && index < rows * 10 && tile.image && !tile.image->isUdimSet())
+                    frameTable[first + size_t(index)] = slotOf(textureKey(tile.image, placeholder), placeholder);
+            }
+        }
+        if (handle >= kNoHandle)
+        {
+            if (!warnedTable)
+                log::warn("render: too many material maps in one frame; some draw without textures");
+            warnedTable = true;
+            frameTable.resize(handle);
+            return it->second = kNoHandle;
+        }
+        return it->second = handle;
+    }
+
+    /** Builds the table every bindless draw this frame reads its maps through and copies it into the frame's buffer. */
+    void writeTextureTable(Frame& f, const FrameState& s)
+    {
+        frameTable.clear();
+        frameHandles.clear();
+        frameStyles.clear();
+        // The virtual texture feedback header, filled in once the frame knows its feedback buffer.
+        frameTable.assign(vt::kTableHeaderWords, 0u);
+        if (bindless)
+            for (const MeshDraw& d : s.meshes)
+            {
+                if (!(d.flags & DrawShaded))
+                    continue;
+                for (const Material& mat : d.materials)
+                {
+                    tableHandle(mat.baseColorMap, kWhiteSrgbKey);
+                    tableHandle(mat.normalMap, kFlatNormalKey);
+                    tableHandle(mat.ormMap, kWhiteLinearKey);
+                    tableHandle(mat.emissiveMap, kWhiteSrgbKey);
+                    if (mat.style.strokeMap && !mat.style.strokeMap->isUdimSet())
+                        tableHandle(mat.style.strokeMap, kWhiteLinearKey);
+                }
+            }
+        writeStyles(s);
+        if (frameTable.size() <= vt::kTableHeaderWords)
+            frameTable.push_back(slotOf(kWhiteSrgbKey, kWhiteSrgbKey));
+        const size_t bytes = frameTable.size() * sizeof(uint32_t);
+        if (f.table.size < bytes)
+        {
+            // The frame's fence has signalled, so nothing reads the old table any more.
+            compute::destroy(vk, f.table);
+            try
+            {
+                f.table = compute::makeBuffer(vk, std::max<size_t>(bytes * 2, 4096), 0, compute::Host::Write);
+            }
+            catch (const std::exception& e)
+            {
+                log::error("render: {}", e.what());
+                frameTableAddress = 0;
+                return;
+            }
+        }
+        std::memcpy(f.table.mapped, frameTable.data(), bytes);
+        vmaFlushAllocation(vk.allocator, f.table.alloc, 0, VK_WHOLE_SIZE);
+        frameTableAddress = f.table.address;
+    }
+
+    /** Appends a style block per shaded draw section whose material uses a stylised shading model. */
+    void writeStyles(const FrameState& s)
+    {
+        for (const MeshDraw& d : s.meshes)
+        {
+            if (!(d.flags & DrawShaded) || !d.mesh)
+                continue;
+            for (uint32_t slot = 0; slot < d.materials.size(); ++slot)
+            {
+                const MaterialStyle& style = d.materials[slot].style;
+                if (style.model == ShadingModel::DefaultLit)
+                    continue;
+                uint32_t stroke = 0xffffffffu;
+                if (style.strokeMap && !style.strokeMap->isUdimSet() && textureKey(style.strokeMap, 0) != 0)
+                {
+                    // The fixed-sampler path binds the sheet itself; bindless reads its slot through the table.
+                    auto it = frameHandles.find({style.strokeMap->key, kWhiteLinearKey});
+                    if (!bindless)
+                        stroke = 0;
+                    else if (it != frameHandles.end() && it->second != kNoHandle)
+                        stroke = it->second;
+                }
+                const auto block = packStyle(style, stroke, d.mesh->boundsMin, d.mesh->boundsMax, s.zUp);
+                frameStyles[{&d, slot}] = uint32_t(frameTable.size());
+                frameTable.insert(frameTable.end(), block.begin(), block.end());
+            }
+        }
     }
 
     /** Copies the vertices edited since the last frame into the GPU copies of dynamic meshes. Runs before rendering begins. */
@@ -1247,10 +1606,10 @@ struct Renderer::Impl
     /** Descriptor set binding a material's maps, made on first use and kept while frames use it. */
     VkDescriptorSet materialSet(const Material* m)
     {
-        std::array<uint64_t, 4> keys = {kWhiteSrgbKey, kFlatNormalKey, kWhiteLinearKey, kWhiteSrgbKey};
+        std::array<uint64_t, kMaterialBindings> keys = {kWhiteSrgbKey, kFlatNormalKey, kWhiteLinearKey, kWhiteSrgbKey, kWhiteLinearKey};
         if (m)
             keys = {textureKey(m->baseColorMap, kWhiteSrgbKey), textureKey(m->normalMap, kFlatNormalKey), textureKey(m->ormMap, kWhiteLinearKey),
-                    textureKey(m->emissiveMap, kWhiteSrgbKey)};
+                    textureKey(m->emissiveMap, kWhiteSrgbKey), textureKey(m->style.strokeMap, kWhiteLinearKey)};
         auto it = materialSets.find(keys);
         if (it == materialSets.end())
         {
@@ -1264,15 +1623,15 @@ struct Renderer::Impl
                 if (!warnedPool)
                     log::warn("render: out of material descriptor sets; some materials draw without textures");
                 warnedPool = true;
-                std::array<uint64_t, 4> fallback = {kWhiteSrgbKey, kFlatNormalKey, kWhiteLinearKey, kWhiteSrgbKey};
+                std::array<uint64_t, kMaterialBindings> fallback = {kWhiteSrgbKey, kFlatNormalKey, kWhiteLinearKey, kWhiteSrgbKey, kWhiteLinearKey};
                 auto fb = materialSets.find(fallback);
                 return fb != materialSets.end() ? fb->second.set : VK_NULL_HANDLE;
             }
-            VkDescriptorImageInfo info[4];
-            VkWriteDescriptorSet w[4]{};
-            for (uint32_t i = 0; i < 4; ++i)
+            VkDescriptorImageInfo info[kMaterialBindings];
+            VkWriteDescriptorSet w[kMaterialBindings]{};
+            for (uint32_t i = 0; i < kMaterialBindings; ++i)
             {
-                info[i] = {materialSampler, textures[keys[i]].image.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+                info[i] = {materialSampler, textures[keys[i]].view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
                 w[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
                 w[i].dstSet = set;
                 w[i].dstBinding = i;
@@ -1280,7 +1639,7 @@ struct Renderer::Impl
                 w[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
                 w[i].pImageInfo = &info[i];
             }
-            vkUpdateDescriptorSets(vk.device, 4, w, 0, nullptr);
+            vkUpdateDescriptorSets(vk.device, kMaterialBindings, w, 0, nullptr);
             it = materialSets.emplace(keys, MaterialSet{set, 0}).first;
         }
         it->second.lastUsed = frameCounter;
@@ -1297,7 +1656,7 @@ struct Renderer::Impl
         for (auto& [key, t] : textures)
             if (key < kFlatNormalKey && stale(t.lastUsed))
                 deadTextures.push_back(key);
-        std::vector<std::array<uint64_t, 4>> deadSets;
+        std::vector<std::array<uint64_t, kMaterialBindings>> deadSets;
         for (auto& [keys, set] : materialSets)
             if (stale(set.lastUsed) || std::ranges::any_of(keys, [&](uint64_t k) { return std::ranges::find(deadTextures, k) != deadTextures.end(); }))
                 deadSets.push_back(keys);
@@ -1311,7 +1670,10 @@ struct Renderer::Impl
         }
         for (uint64_t key : deadTextures)
         {
-            destroyImage(textures[key].image);
+            GpuTexture& t = textures[key];
+            destroyImage(t.image);
+            if (t.slot != kNoSlot)
+                freeSlots.push_back(t.slot);
             textures.erase(key);
         }
     }
@@ -1439,6 +1801,11 @@ struct Renderer::Impl
         writeImage(v.aoSampleSet, 0, sampler, v.aoFinal.view, general);
         writeImage(v.aoSampleSet, 1, sampler, v.aoDepth.view, depthRead);
         writeImage(v.aoSampleSet, 2, sampler, v.aoNormal.view, shaderRead);
+
+        v.postColor = createImage(v.format, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | sampled, extent, VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+        writeImage(v.postSet, 0, sampler, v.postColor.view, shaderRead);
+        writeImage(v.postSet, 1, sampler, v.aoDepth.view, depthRead);
+        writeImage(v.postSet, 2, sampler, v.aoNormal.view, shaderRead);
     }
 
     static bool anyShaded(const FrameState& s)
@@ -1450,7 +1817,7 @@ struct Renderer::Impl
      * Records the depth/normal prepass and both AO dispatches ahead of the main pass, leaving v.aoFinal ready for the
      * mesh shader. The images are shared by both frames in flight, so each first use waits on the previous frame's reads.
      */
-    void recordAo(VkCommandBuffer cmd, Viewport& v, const FrameState& s, const glm::mat4& viewProj)
+    void recordAo(VkCommandBuffer cmd, Viewport& v, const FrameState& s, const glm::mat4& viewProj, bool gtao = true)
     {
         LILA_ZONE();
 
@@ -1464,9 +1831,9 @@ struct Renderer::Impl
         constexpr auto general = VK_IMAGE_LAYOUT_GENERAL;
         constexpr auto color = VK_IMAGE_ASPECT_COLOR_BIT;
 
-        barrier(cmd, v.aoDepth.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, compute, 0, depthStage, depthWrite,
-                VK_IMAGE_ASPECT_DEPTH_BIT);
-        barrier(cmd, v.aoNormal.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, compute, 0, colorStage,
+        barrier(cmd, v.aoDepth.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, compute | fragment, 0, depthStage,
+                depthWrite, VK_IMAGE_ASPECT_DEPTH_BIT);
+        barrier(cmd, v.aoNormal.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, compute | fragment, 0, colorStage,
                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, color);
 
         VkRenderingAttachmentInfo normal{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
@@ -1513,9 +1880,11 @@ struct Renderer::Impl
         vkCmdEndRendering(cmd);
 
         barrier(cmd, v.aoDepth.image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, depthStage,
-                depthWrite, compute, read, VK_IMAGE_ASPECT_DEPTH_BIT);
+                depthWrite, compute | fragment, read, VK_IMAGE_ASPECT_DEPTH_BIT);
         barrier(cmd, v.aoNormal.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, colorStage,
-                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, compute, read, color);
+                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, compute | fragment, read, color);
+        if (!gtao)
+            return;
         barrier(cmd, v.aoRaw.image, VK_IMAGE_LAYOUT_UNDEFINED, general, compute, 0, compute, storageWrite, color);
 
         glm::dmat4 proj = s.proj;
@@ -1543,15 +1912,7 @@ struct Renderer::Impl
 
     // ---------------------------------------------------------------- pipelines
 
-    VkShaderModule module(const std::vector<uint32_t>& code)
-    {
-        VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        ci.codeSize = code.size() * 4;
-        ci.pCode = code.data();
-        VkShaderModule mod = VK_NULL_HANDLE;
-        vkCreateShaderModule(vk.device, &ci, nullptr, &mod);
-        return mod;
-    }
+    VkShaderModule module(const std::vector<uint32_t>& code) { return compute::shaderModule(vk, code); }
 
     /** A requested line width within what the device rasterizes. */
     float lineWidth(float w) const
@@ -1638,11 +1999,8 @@ struct Renderer::Impl
 
     VkPipeline buildCompute(VkPipelineLayout layout, VkShaderModule mod, const char* entry)
     {
-        VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
-        ci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, mod, entry};
-        ci.layout = layout;
-        VkPipeline p = VK_NULL_HANDLE;
-        if (vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &ci, nullptr, &p) != VK_SUCCESS)
+        VkPipeline p = compute::computePipeline(vk, layout, mod, entry);
+        if (!p)
             log::error("render: compute pipeline creation failed ({})", entry);
         return p;
     }
@@ -1655,15 +2013,7 @@ struct Renderer::Impl
         pipelineFormat = format;
 
         auto layoutFor = [&](uint32_t size, VkShaderStageFlags stages, VkDescriptorSetLayout set = VK_NULL_HANDLE) {
-            VkPushConstantRange range{stages, 0, size};
-            VkPipelineLayoutCreateInfo lci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-            lci.pushConstantRangeCount = 1;
-            lci.pPushConstantRanges = &range;
-            lci.setLayoutCount = set ? 1 : 0;
-            lci.pSetLayouts = &set;
-            VkPipelineLayout l;
-            vkCreatePipelineLayout(vk.device, &lci, nullptr, &l);
-            return l;
+            return compute::pipelineLayout(vk, size, stages, set ? std::span(&set, 1) : std::span<const VkDescriptorSetLayout>());
         };
         gridLayout = layoutFor(sizeof(GridPush), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
         linesLayout = layoutFor(sizeof(glm::mat4), VK_SHADER_STAGE_VERTEX_BIT);
@@ -1698,17 +2048,11 @@ struct Renderer::Impl
         }
 
         {
-            VkPushConstantRange range{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(MeshPush)};
-            VkDescriptorSetLayout sets[3] = {envSetLayout, materialSetLayout, aoSampleLayout};
-            VkPipelineLayoutCreateInfo lci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-            lci.pushConstantRangeCount = 1;
-            lci.pPushConstantRanges = &range;
-            lci.setLayoutCount = 3;
-            lci.pSetLayouts = sets;
-            vkCreatePipelineLayout(vk.device, &lci, nullptr, &meshLayout);
+            const VkDescriptorSetLayout sets[3] = {envSetLayout, bindless ? bindlessLayout : materialSetLayout, aoSampleLayout};
+            meshLayout = compute::pipelineLayout(vk, sizeof(MeshPush), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sets);
         }
         wireLayout = layoutFor(sizeof(WirePush), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
-        if (VkShaderModule mesh = module(loadSpirv("mesh.spv")))
+        if (VkShaderModule mesh = module(loadSpirv(bindless ? "mesh_bindless.spv" : "mesh.spv")))
         {
             VkVertexInputBindingDescription mb{0, sizeof(MeshVertex), VK_VERTEX_INPUT_RATE_VERTEX};
             VkVertexInputAttributeDescription ma[6] = {
@@ -1740,6 +2084,12 @@ struct Renderer::Impl
             gtaoPipeline = buildCompute(aoLayout, ao, "gtaoCS");
             denoisePipeline = buildCompute(aoLayout, ao, "denoiseCS");
             vkDestroyShaderModule(vk.device, ao, nullptr);
+        }
+        postLayout = layoutFor(sizeof(PostPush), VK_SHADER_STAGE_FRAGMENT_BIT, aoSampleLayout);
+        if (VkShaderModule post = module(loadSpirv("post.spv")))
+        {
+            postPipeline = buildPipeline(postLayout, post, "postVS", "postPS", format, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, none, false, false, false);
+            vkDestroyShaderModule(vk.device, post, nullptr);
         }
         contactLayout = layoutFor(sizeof(ContactPush), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
         if (VkShaderModule contact = module(loadSpirv("contact.spv")))
@@ -1805,14 +2155,14 @@ struct Renderer::Impl
     {
         for (VkPipeline* p : {&gridPipeline, &linesPipeline, &overlayPipeline, &overlayTrisPipeline, &meshPipeline, &meshBlendPipeline, &wirePipeline,
                               &wireXrayPipeline, &backgroundPipeline, &linesOnTopPipeline, &tris3dPipeline, &contactPipeline, &prepassPipeline, &gtaoPipeline,
-                              &denoisePipeline, &imageOverPipeline, &imageDepthPipeline, &imageBlendPipeline})
+                              &denoisePipeline, &imageOverPipeline, &imageDepthPipeline, &imageBlendPipeline, &postPipeline})
             if (*p)
             {
                 vkDestroyPipeline(vk.device, *p, nullptr);
                 *p = VK_NULL_HANDLE;
             }
         for (VkPipelineLayout* l : {&gridLayout, &linesLayout, &overlayTrisLayout, &meshLayout, &wireLayout, &contactLayout, &aoLayout,
-                                    &imagePlaneLayout})
+                                    &imagePlaneLayout, &postLayout})
             if (*l)
             {
                 vkDestroyPipelineLayout(vk.device, *l, nullptr);
@@ -1926,8 +2276,10 @@ struct Renderer::Impl
 
         Frame& f = v.frames[v.frameIndex];
         vkWaitForFences(vk.device, 1, &f.fence, VK_TRUE, UINT64_MAX);
+        f.feedback.collect();
         freeStaging(f);
         readTimings(v, f);
+        GpuImage::collectGarbage(vk);
 
         uint32_t imageIndex = 0;
         VkResult r = v.offscreen ? VK_SUCCESS : vkAcquireNextImageKHR(vk.device, v.swapchain, UINT64_MAX, f.acquired, VK_NULL_HANDLE, &imageIndex);
@@ -1950,7 +2302,8 @@ struct Renderer::Impl
             uploadAtlas(s.atlas);
 
         // One buffer per frame: lines, linesOnTop, tris3d, overlay and linesXray share the LineVertex stride, overlayTris follow.
-        const std::vector<LineVertex>* lineSets[] = {&s.lines, &s.linesOnTop, &s.tris3d, &s.overlay, &s.linesXray, &s.selectedEdges, &s.seamLines};
+        const std::vector<LineVertex>* lineSets[] = {&s.lines, &s.linesOnTop, &s.tris3d, &s.overlay, &s.linesXray, &s.selectedEdges, &s.seamLines,
+                                                     &s.symmetryLines};
         constexpr int kLineSets = int(std::size(lineSets));
         uint32_t lineFirst[kLineSets];
         size_t lineBytes = 0;
@@ -1983,6 +2336,14 @@ struct Renderer::Impl
         }
         ++frameCounter;
         prepareTextures(cmd, f, s);
+        if (frameUsesVt && frameTableAddress && f.feedback.begin(vk, cmd, int(v.extent.width), int(v.extent.height), frameCounter))
+        {
+            const std::array<uint32_t, vt::kTableHeaderWords> header = f.feedback.header();
+            std::memcpy(f.table.mapped, header.data(), sizeof(header));
+            vmaFlushAllocation(vk.allocator, f.table.alloc, 0, sizeof(header));
+        }
+        else if (f.feedback.active())
+            f.feedback.destroy(vk);
         prepareDynamicMeshes(cmd, f, s);
 
         glm::dmat4 viewProj = s.proj * s.view;
@@ -1990,10 +2351,21 @@ struct Renderer::Impl
         bool ao = s.ambientOcclusion && s.aoIntensity > 0.0f && prepassPipeline && gtaoPipeline && denoisePipeline && v.gtaoSet && v.denoiseSet &&
                   v.aoSampleSet && anyShaded(s) && !s.xray;
         f.aoTimed = ao;
+        const bool post = (s.kuwahara || s.outline) && postPipeline && v.postSet && v.postColor.view;
+        const bool prepass = ao || (post && s.outline && prepassPipeline && anyShaded(s) && !s.xray);
         timestamp(cmd, f, 1);
         const auto aoStart = std::chrono::steady_clock::now();
-        if (ao)
-            recordAo(cmd, v, s, vpF);
+        if (prepass)
+            recordAo(cmd, v, s, vpF, ao);
+        else if (post)
+        {
+            // Nothing wrote them this frame; the post set still needs them in their sampled layouts.
+            barrier(cmd, v.aoDepth.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+                    VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                    VK_IMAGE_ASPECT_DEPTH_BIT);
+            barrier(cmd, v.aoNormal.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                    0, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+        }
         v.timing.aoCpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - aoStart).count();
         timestamp(cmd, f, 2);
 
@@ -2008,6 +2380,9 @@ struct Renderer::Impl
                     colorWrite, VK_IMAGE_ASPECT_COLOR_BIT);
         barrier(cmd, v.depth.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, depthStage, depthAccess, depthStage,
                 depthAccess, VK_IMAGE_ASPECT_DEPTH_BIT);
+        if (post)
+            barrier(cmd, v.postColor.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    colorStage | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0, colorStage, colorWrite, VK_IMAGE_ASPECT_COLOR_BIT);
 
         glm::vec3 bg = srgbToLinear(s.background);
         VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
@@ -2026,11 +2401,20 @@ struct Renderer::Impl
             color.resolveMode = VK_RESOLVE_MODE_NONE;
             color.resolveImageView = VK_NULL_HANDLE;
         }
+        // With post on, the scene resolves into postColor; the frame's own image is written by the post pass.
+        const VkRenderingAttachmentInfo frameColor = color;
+        if (post)
+        {
+            if (v.color.image)
+                color.resolveImageView = v.postColor.view;
+            else
+                color.imageView = v.postColor.view;
+        }
         VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
         depth.imageView = v.depth.view;
         depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
         depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depth.storeOp = post ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
         depth.clearValue.depthStencil = {0.0f, 0}; // reversed-Z
 
         VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
@@ -2054,7 +2438,7 @@ struct Renderer::Impl
                                s.envBackgroundExposure, 0.0f);
             p.params = glm::vec4(s.exposure, s.zUp ? 1.0f : 0.0f, 0.0f, 1.0f);
             p.env = envParams(s);
-            p.display.x = s.gamma;
+            p.gamma = s.gamma;
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, backgroundPipeline);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, 0, 1, &envSet, 0, nullptr);
             vkCmdPushConstants(cmd, meshLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
@@ -2084,6 +2468,8 @@ struct Renderer::Impl
         drawMeshes(cmd, s, vpF, ao ? v.aoSampleSet : whiteAoSet);
         drawImagePlanes(cmd, s, vpF, ImagePlaneDraw::Depth::Scene, true);
         drawImagePlanes(cmd, s, vpF, ImagePlaneDraw::Depth::Front, false);
+        if (post)
+            recordPost(cmd, v, s, ri, frameColor, depth);
 
         if (linesPipeline && !s.lines.empty())
         {
@@ -2101,7 +2487,9 @@ struct Renderer::Impl
             int set;
             float width;
         };
-        const Biased biased[] = {{linesOnTopPipeline, 1, 1.0f}, {linesOnTopPipeline, 6, s.seamLineWidth}, {linesOnTopPipeline, 5, s.selectedEdgeWidth}, {tris3dPipeline, 2, 0.0f}};
+        const Biased biased[] = {{linesOnTopPipeline, 1, 1.0f}, {linesOnTopPipeline, 6, s.seamLineWidth},
+                                 {linesOnTopPipeline, 7, s.symmetryLineWidth}, {linesOnTopPipeline, 5, s.selectedEdgeWidth},
+                                 {tris3dPipeline, 2, 0.0f}};
         for (const Biased& b : biased)
         {
             const std::vector<LineVertex>& verts = *lineSets[b.set];
@@ -2147,6 +2535,8 @@ struct Renderer::Impl
         }
 
         vkCmdEndRendering(cmd);
+        if (f.feedback.active())
+            f.feedback.end(vk, cmd);
         timestamp(cmd, f, 3);
         v.timing.cpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuStart).count();
         if (v.offscreen)
@@ -2188,6 +2578,47 @@ struct Renderer::Impl
         return false;
     }
 
+    /**
+     * Ends the scene pass (resolved into postColor), then restarts rendering on the frame's own targets with the depth
+     * kept, filtering postColor over every pixel; lines and overlays then draw on top unfiltered.
+     */
+    void recordPost(VkCommandBuffer cmd, Viewport& v, const FrameState& s, VkRenderingInfo ri, VkRenderingAttachmentInfo color,
+                    VkRenderingAttachmentInfo depth)
+    {
+        LILA_ZONE();
+
+        vkCmdEndRendering(cmd);
+        constexpr auto colorStage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        barrier(cmd, v.postColor.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, colorStage,
+                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                VK_IMAGE_ASPECT_COLOR_BIT);
+        constexpr auto depthStage = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        constexpr auto depthAccess = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+        barrier(cmd, v.depth.image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, depthStage, depthAccess,
+                depthStage, depthAccess, VK_IMAGE_ASPECT_DEPTH_BIT);
+
+        color.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        ri.pColorAttachments = &color;
+        ri.pDepthAttachment = &depth;
+        vkCmdBeginRendering(cmd, &ri);
+        VkViewport viewport{0, 0, float(v.extent.width), float(v.extent.height), 0, 1};
+        VkRect2D scissor{{0, 0}, v.extent};
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+        PostPush p;
+        p.size = glm::vec4(float(v.extent.width), float(v.extent.height), 1.0f / float(v.extent.width), 1.0f / float(v.extent.height));
+        p.params = glm::vec4(s.kuwahara ? 1.0f : 0.0f, std::clamp(s.kuwaharaRadius, 1.0f, 12.0f), s.outline && !s.xray ? 1.0f : 0.0f,
+                             std::clamp(s.outlineWidth, 0.5f, 8.0f));
+        p.outline = glm::vec4(s.outlineColor, 1.0f);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postLayout, 0, 1, &v.postSet, 0, nullptr);
+        vkCmdPushConstants(cmd, postLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+    }
+
     /** Copies the offscreen target into the readback buffer and waits for the GPU. Never asks for a retry. */
     bool finishOffscreen(Viewport& v, Frame& f, VkCommandBuffer cmd)
     {
@@ -2207,6 +2638,7 @@ struct Renderer::Impl
         si.pCommandBufferInfos = &cbi;
         vkQueueSubmit2(vk.queue, 1, &si, f.fence);
         vkWaitForFences(vk.device, 1, &f.fence, VK_TRUE, UINT64_MAX);
+        f.feedback.collect();
         readTimings(v, f);
         vmaInvalidateAllocation(vk.allocator, v.readback.alloc, 0, VK_WHOLE_SIZE);
         v.frameIndex = (v.frameIndex + 1) % kFramesInFlight;
@@ -2349,6 +2781,22 @@ struct Renderer::Impl
         }
     }
 
+    /**
+     * kNoHandle when a map is missing or none of it uploaded, else something other than kNoHandle: its table handle on
+     * the bindless path.
+     */
+    uint32_t mapHandle(const TexturePtr& t, uint64_t placeholder)
+    {
+        if (!t || textureKey(t, 0) == 0)
+            return kNoHandle;
+        if (!bindless)
+            return 0;
+        if (!frameTableAddress)
+            return kNoHandle;
+        auto it = frameHandles.find({t->key, placeholder});
+        return it != frameHandles.end() ? it->second : kNoHandle;
+    }
+
     /** One material section of a shaded mesh with whichever mesh pipeline is bound. */
     void drawSection(VkCommandBuffer cmd, const FrameState& s, const MeshDraw& d, GpuMesh& g, const MeshSection& sec, const glm::mat4& viewProj,
                      VkDescriptorSet& boundSet)
@@ -2363,7 +2811,7 @@ struct Renderer::Impl
                                                                                         : 0.0f;
         p.params = glm::vec4(s.exposure, s.zUp ? 1.0f : 0.0f, 0.0f, lighting);
         p.env = envParams(s);
-        p.display.x = s.gamma;
+        p.gamma = s.gamma;
         if (mat)
         {
             p.base = glm::vec4(mat->baseColor, mat->roughness);
@@ -2371,14 +2819,22 @@ struct Renderer::Impl
             p.emissive = mat->emissive;
             p.flags = mat->flags;
             // Maps whose upload failed fall back to the constants.
-            if (textureKey(mat->baseColorMap, 0) == 0)
+            const uint32_t base = mapHandle(mat->baseColorMap, kWhiteSrgbKey), normal = mapHandle(mat->normalMap, kFlatNormalKey);
+            const uint32_t orm = mapHandle(mat->ormMap, kWhiteLinearKey), emissive = mapHandle(mat->emissiveMap, kWhiteSrgbKey);
+            if (base == kNoHandle)
                 p.flags &= ~MatBaseColorMap;
-            if (textureKey(mat->normalMap, 0) == 0)
+            if (normal == kNoHandle)
                 p.flags &= ~(MatNormalMap | MatNormalGreenUp);
-            if (textureKey(mat->ormMap, 0) == 0)
+            if (orm == kNoHandle)
                 p.flags &= ~(MatMetallicMap | MatRoughnessMap | MatOcclusionMap);
-            if (textureKey(mat->emissiveMap, 0) == 0)
+            if (emissive == kNoHandle)
                 p.flags &= ~MatEmissiveMap;
+            p.maps[0] = base | normal << 16;
+            p.maps[1] = orm | emissive << 16;
+            p.textureTable = frameTableAddress;
+            if (frameTableAddress)
+                if (auto it = frameStyles.find({&d, sec.material}); it != frameStyles.end())
+                    p.style = it->second;
         }
         else
         {
@@ -2395,7 +2851,7 @@ struct Renderer::Impl
             p.surface.z *= kXrayOpacity;
             p.surface.w *= kXrayOpacity; // masked cutouts stay where they were
         }
-        VkDescriptorSet set = materialSet(mat);
+        VkDescriptorSet set = bindless ? bindlessSet : materialSet(mat);
         if (!set)
             return;
         if (set != boundSet)
@@ -2667,6 +3123,8 @@ void Renderer::stop()
     m->thread.join();
     for (const auto& hook : m->stopHooks)
         hook(m->vk);
+    compute::sharedPipelines().clear(m->vk);
+    GpuImage::releaseAll(m->vk);
     m->destroyPipelines();
     m->destroyDescriptors();
     m->vk.shutdown();

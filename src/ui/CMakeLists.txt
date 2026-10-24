@@ -22,10 +22,13 @@ lila_module(lila_ui UI
     DisplayLayersPanel.cpp DisplayLayersPanel.h
     AnimLayersPanel.cpp AnimLayersPanel.h
     OffsetsPanel.cpp OffsetsPanel.h
+    RenamePanel.cpp RenamePanel.h
     BatchRunPanel.cpp BatchRunPanel.h
     BakerPanel.cpp BakerPanelMcp.cpp BakerPanel.h
     BakeCageView.cpp BakeCageView.h
     BakePaintTool.cpp BakePaintTool.h
+    TexturePaintTool.cpp TexturePaintTool.h
+    TexPipelineUi.cpp TexPipelineUi.h
     Editors.cpp Editors.h
     Environments.cpp Environments.h
     ExtensionManagerDialog.cpp ExtensionManagerDialog.h
@@ -69,7 +72,8 @@ lila_module(lila_ui UI
     ModelingToolkit.cpp ModelingToolkit.h
     SoftSelectPanel.cpp SoftSelectPanel.h
     ModifierStack.cpp ModifierStack.h
-    NodeEditor.cpp NodeEditor.h
+    NodeEditor.cpp NodeEditor.h GraphBackend.cpp GraphBackend.h GnGraphBackend.cpp
+    TexGraphBackend.cpp TexParams.cpp TexParams.h TexPreview.cpp TexPreview.h Texture2DView.cpp TextureGraphUi.h TextureSetPanel.cpp TextureSetPanel.h
     Overlay.cpp Overlay.h
     CursorBadges.cpp CursorBadges.h
     Panels.cpp Panels.h
@@ -96,12 +100,15 @@ lila_module(lila_ui UI
     SourceControlPanel.cpp SourceControlPanel.h
     TearOff.cpp TearOff.h TearOffLogic.h
     Terminal.cpp Terminal.h
+    TexLive.cpp TexLive.h
+    MaterialBrowser.cpp MaterialBrowser.h MaterialThumbnails.cpp MaterialThumbnails.h
     TextureCache.cpp TextureCache.h
     Theme.cpp Theme.h ThemeEditor.cpp ThemeEditor.h
     TimeSlider.cpp TimeSlider.h
     UiTools.cpp
     UndoHistory.cpp UndoHistory.h
     UvEditor.cpp UvEditor.h
+    UvTexturePaint.cpp UvTexturePaint.h
     UvTools.cpp UvTools.h
     UvLive.cpp UvLive.h
     UvPackPanel.cpp UvPackPanel.h
@@ -125,6 +132,7 @@ target_link_libraries(lila_ui PUBLIC lila_term)
 target_link_libraries(lila_ui PUBLIC lila_layouts)
 target_link_libraries(lila_ui PUBLIC lila_uv_cmds)
 target_link_libraries(lila_ui PUBLIC lila_gn)
+target_link_libraries(lila_ui PUBLIC lila_tex)
 target_link_libraries(lila_ui PUBLIC lila_retopo_cmds)
 target_link_libraries(lila_ui PUBLIC lila_sculpt_cmds)
 target_link_libraries(lila_ui PUBLIC lila_vcolor)

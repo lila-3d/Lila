@@ -13,7 +13,7 @@ build\bin\RelWithDebInfo\lila.exe      # or: lila.exe <folder>  /  lila.exe scen
 
 Then: Shift+right-click in the viewport for primitives, W/E/R to move/rotate/scale (hold the key and click for its options), F8/F9/F11 for object/vertex/face mode (Shift+2 for edge; F10 resets the layout), Shift+right-click on a mesh for modeling ops, tap Space for four views, hold Space for the hotbox (Space + click outside its menus for a zone marking menu), hold F1 for the hotkey cheat sheet.
 
-Tests: `ctest --test-dir build -C RelWithDebInfo` (from a shell set up by `scripts\env.cmd`).
+Tests: `ctest --test-dir build -C RelWithDebInfo -LE slow` (from a shell set up by `scripts\env.cmd`). `-L slow` runs the slow suites (every shipped material evaluated and linted, about 20 minutes).
 
 ### Unreal
 

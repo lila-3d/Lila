@@ -7,6 +7,7 @@
 #include "core/TextMatch.h"
 #include "scene/Anim.h"
 #include "scene/Ghosts.h"
+#include "scene/Naming.h"
 #include "scene/ComponentPick.h"
 #include "scene/Transform.h"
 #include "ui/Icons.h"
@@ -39,6 +40,7 @@
 #include <QVBoxLayout>
 
 #include <memory>
+#include <functional>
 #include <tuple>
 
 namespace lila::ui
@@ -382,6 +384,33 @@ void text(Page& p, const char* label, const char* key, const std::string& fallba
     addRow(p, name, row, k);
 }
 
+/** Shows the page's last row only while shown() holds (and its section is open), checked whenever the page's prefs change. */
+void showLastRowWhen(Page& p, std::function<bool()> shown)
+{
+    QFormLayout* form = p.form;
+    const int row = form->rowCount() - 1;
+    std::shared_ptr<Section> section = p.section;
+    auto update = [form, row, section, shown] { form->setRowVisible(row, (!section || section->header->isChecked()) && shown()); };
+    update();
+    QWidget* field = form->itemAt(row, QFormLayout::FieldRole)->widget();
+    if (section)
+        QObject::connect(section->header, &QToolButton::toggled, field, update);
+    const std::string file = p.file;
+    int listener = PrefStore::get().onChanged([update, file](const std::string& changed) {
+        if (changed == file)
+            update();
+    });
+    QObject::connect(field, &QObject::destroyed, [listener] { PrefStore::get().removeOnChanged(listener); });
+}
+
+/** Whether a naming rule's case is one where underscores need allowing, and they are allowed. */
+bool namingUnderscores(const std::string& type, const std::string& fallbackCase, bool needAllowed)
+{
+    PrefStore& prefs = PrefStore::get();
+    return prefs.value<std::string>("naming", "/rules/" + type, fallbackCase) != "snake_case" &&
+           (!needAllowed || prefs.value<bool>("naming", "/allowUnderscores/" + type, true));
+}
+
 Page& rowsOf(void* page)
 {
     return *static_cast<Page*>(page);
@@ -448,6 +477,9 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         number(ui, "Hovered vertex thickness", vd::kVertexThicknessHover, thickness.vertexHover, 0.5, 32.0, 0.5, 1);
         number(ui, "Selected vertex thickness", vd::kVertexThicknessSelected, thickness.vertexSelected, 0.5, 32.0, 0.5, 1);
         number(ui, "UV seam thickness", vd::kUvSeamThickness, thickness.uvSeam, 1.0, 16.0, 0.5, 1);
+        toggle(ui, "Edges on the symmetry plane in red", vd::kSymmetryEdges, true);
+        toggle(ui, "Symmetry plane edges on selected objects in object mode", vd::kSymmetryEdgesObjectMode, true);
+        number(ui, "Symmetry plane edge thickness", vd::kSymmetryEdgeThickness, thickness.symmetryEdge, 1.0, 16.0, 0.5, 1);
         section(ui, "Floating Shelf");
         choice(ui, "Opens at", "/floatingShelf/openAt",
                {{"Cursor", "cursor"}, {"Center of viewport", "viewport"}, {"Center of screen", "screen"}}, "viewport");
@@ -497,6 +529,8 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         toggle(viewport, "Poly count", "/viewport/polyCount", true);
         toggle(viewport, "Panel toolbar", vd::kToolbar, true);
         toggle(viewport, "Hiding a parent hides its children", scene::kInheritVisibilityPref, true);
+        section(viewport, "Selection");
+        toggle(viewport, "Marquee selects edges and faces it touches (off: only those whose centre it covers)", "/select/marqueeTouch", true);
         section(viewport, "Highlight Under Cursor");
         toggle(viewport, "Components", "/viewport/preselect/components", true);
         toggle(viewport, "Objects", "/viewport/preselect/objects", false);
@@ -532,6 +566,7 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         number(manip, "Size (pixels)", "/manipulator/size", 100.0, 30.0, 400.0, 5.0, 0);
         choice(manip, "Move space", "/manipulator/moveSpace", {{"World", "world"}, {"Object", "object"}, {"Parent", "parent"}, {"Normal", "normal"}}, "world");
         choice(manip, "Rotate space", "/manipulator/rotateSpace", {{"World", "world"}, {"Object", "object"}, {"Parent", "parent"}}, "world");
+        choice(manip, "Scale space (components)", "/manipulator/scaleSpace", {{"World", "world"}, {"Object", "object"}, {"Component", "component"}}, "world");
         number(manip, "Rotate snap (degrees)", "/manipulator/rotateStep", 15.0, 0.1, 180.0, 1.0, 1);
         section(manip, "Soft Select");
         toggle(manip, "Enabled", "/softSelect/enabled", false);
@@ -627,6 +662,32 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         section(naming, "Case");
         choice(naming, "Joints", "/rules/joint", {{"snake_case", "snake_case"}, {"PascalCase", "PascalCase"}, {"camelCase", "camelCase"}}, "snake_case");
         choice(naming, "Everything else", "/rules/*", {{"PascalCase", "PascalCase"}, {"snake_case", "snake_case"}, {"camelCase", "camelCase"}}, "PascalCase");
+        for (auto [label, type, fallback] : {std::tuple{"Allow underscores in joints", "joint", "snake_case"},
+                                             {"Allow underscores in everything else", "*", "PascalCase"}})
+        {
+            toggle(naming, label, ("/allowUnderscores/" + std::string(type)).c_str(), true);
+            naming.form->itemAt(naming.form->rowCount() - 1, QFormLayout::FieldRole)
+                ->widget()
+                ->setToolTip("PascalCase and camelCase keep the underscores typed in a name: Arm_L, not ArmL.");
+            showLastRowWhen(naming, [type, fallback] { return namingUnderscores(type, fallback, false); });
+        }
+        auto anyUnderscores = [] { return namingUnderscores("joint", "snake_case", true) || namingUnderscores("*", "PascalCase", true); };
+        toggle(naming, "Underscores only before suffixes", "/underscoreSuffixesOnly", true);
+        naming.form->itemAt(naming.form->rowCount() - 1, QFormLayout::FieldRole)
+            ->widget()
+            ->setToolTip("An underscore must be followed by a listed suffix or a number: Arm_L and Wheel_LF stay, Dog_Leg_B becomes DogLeg_B.");
+        showLastRowWhen(naming, anyUnderscores);
+        text(naming, "Suffixes", "/underscoreSuffixes", scene::NamingPolicy::defaults()["underscoreSuffixes"].get<std::string>());
+        naming.form->itemAt(naming.form->rowCount() - 1, QFormLayout::FieldRole)
+            ->widget()
+            ->setToolTip("Comma-separated. Matched ignoring case and written as listed, so arm_l becomes Arm_L.");
+        auto suffixesOnly = [anyUnderscores] { return anyUnderscores() && PrefStore::get().value<bool>("naming", "/underscoreSuffixesOnly", true); };
+        showLastRowWhen(naming, suffixesOnly);
+        toggle(naming, "Allow suffixes as prefixes", "/underscorePrefixes", false);
+        naming.form->itemAt(naming.form->rowCount() - 1, QFormLayout::FieldRole)
+            ->widget()
+            ->setToolTip("A listed suffix may also lead the name before an underscore: L_Arm stays, rather than becoming LArm.");
+        showLastRowWhen(naming, suffixesOnly);
     });
 
     builtIn(r, "sourceControl", "Source Control", "sourceControl", [](Page& sc) {

@@ -11,6 +11,7 @@
 #include "io/SceneHistory.h"
 #include "mcp/McpServer.h"
 #include "render/Renderer.h"
+#include "scene/Anim.h"
 #include "scene/Camera.h"
 #include "scene/Graph.h"
 #include "scene/RenderSettings.h"
@@ -35,6 +36,7 @@
 #include "ui/DisplayLayersPanel.h"
 #include "ui/AnimLayersPanel.h"
 #include "ui/OffsetsPanel.h"
+#include "ui/RenamePanel.h"
 #include "ui/DockSidebar.h"
 #include "ui/Environments.h"
 #include "ui/ExtensionManagerDialog.h"
@@ -61,6 +63,10 @@
 #include "ui/SceneDialogs.h"
 #include "ui/SourceControlPanel.h"
 #include "ui/BakerPanel.h"
+#include "ui/TextureGraphUi.h"
+#include "ui/MaterialBrowser.h"
+#include "ui/TextureSetPanel.h"
+#include "ui/TexPipelineUi.h"
 #include "ui/BatchRunPanel.h"
 #include "ui/SpacesUi.h"
 #include "ui/TearOff.h"
@@ -310,8 +316,13 @@ void MainWindow::registerPanels()
                  .area = Qt::RightDockWidgetArea, .icon = "stack-2"});
     registerAnimLayersPanel();
     registerOffsetsPanel();
+    registerRenamePanel();
     registerBatchRunPanel();
     registerBakerPanel();
+    registerTextureGraphUi();
+    registerMaterialBrowserUi();
+    registerTextureSetPanel();
+    registerTexturePipelineUi();
     panels::add({.id = kUndoHistoryDock, .title = "Undo History", .create = make([](QWidget* p) { return new UndoHistoryPanel(p); }),
                  .area = Qt::LeftDockWidgetArea, .icon = "history",
                  .place = [this, dock](QDockWidget* d) { splitDockWidget(dock("outliner"), d, Qt::Vertical); }});
@@ -872,6 +883,17 @@ void MainWindow::registerActions()
                   "Opens a project folder: file browsing, source control and workspace layouts work from it."});
     actions::add({"file.closeFolder", "Close Folder", "File", [] { Workspace::get().close(); }, nullptr, "Closes the project folder; the scene stays open."});
     actions::add({"file.exit", "Exit", "File", [this] { close(); }, nullptr, "Quits Lila, asking to save changes first."});
+    actions::add({.id = "viewport.escape",
+                  .label = "Escape",
+                  .category = "View",
+                  .run =
+                      [this] {
+                          if (scene::anim::playDirection() != 0)
+                              actions::run("anim.stop");
+                          else
+                              mViewports->active()->escape();
+                      },
+                  .doc = "Stops playback, else cancels what the view is doing, else drops the object selection."});
     actions::add({"viewport.frameSelected", "Frame Selected", "View", [this] { mViewports->active()->frameSelection(false); }, nullptr,
                   "Moves the active view's camera to fit the selection."});
     actions::add({"viewport.frameAll", "Frame All", "View", [this] { mViewports->active()->frameSelection(true); }, nullptr,
@@ -1102,9 +1124,9 @@ void MainWindow::buildMenus()
 
     menu("Edit", "Edit");
     menus::addActions("Edit", {"edit.undo", "edit.redo", "edit.repeatLast", "edit.flushUndo", "edit.flushRedo", "edit.flushAll", "",
-                        "edit.selectAll", "edit.deselect", "edit.delete"});
+                        "edit.selectAll", "edit.deselect", "edit.invertSelection", "edit.delete"});
     addSubmenu("Edit", "Quick Select Sets", [](QMenu* m) { sets::attachQuickSelectMenu(m); });
-    menus::addActions("Edit", {"", "edit.duplicate", "edit.group", "edit.parent", "edit.parentChain", "edit.unparent", "", "edit.rename", "",
+    menus::addActions("Edit", {"", "edit.duplicate", "edit.group", "edit.parent", "edit.parentChain", "edit.unparent", "", "edit.rename", "edit.batchRename", "edit.conformNames", "",
                         "window.preferences", "window.extensionManager"});
 
     menu("Modify", "M&odify");
@@ -1139,12 +1161,13 @@ void MainWindow::buildMenus()
     menus::addActions("Mesh", {"mesh.extrude", "mesh.inset", "mesh.bevel", "mesh.insertLoop", "mesh.knife", "mesh.bridge", "mesh.fillHole", "",
                         "mesh.merge", "mesh.mergeCenter", "mesh.collapse", "mesh.dissolve", "mesh.poke", "mesh.spin", "", "mesh.flip",
                         "mesh.conform", "mesh.triangulate", "mesh.quadrangulate", "mesh.subdivide", "", "mesh.mirror", "mesh.symmetryX",
-                        "mesh.symmetryOff", "mesh.combine", "mesh.smartJoin", "mesh.separate", "mesh.boundingMesh", "mesh.bakeModifierStack"});
+                        "mesh.symmetryOff", "mesh.combine", "mesh.smartJoin", "mesh.separate", "mesh.extract", "mesh.duplicateFaces", "mesh.boundingMesh", "mesh.bakeModifierStack"});
     addSubmenu("Mesh", "Symmetry");
     menus::addActions("Mesh/Symmetry", {"mesh.toggleSymmetry", "mesh.symmetryX", "mesh.symmetryY", "mesh.symmetryZ", "mesh.symmetryOff", "",
                                  "mesh.symmetryCheck", "mesh.symmetrizePositive", "mesh.symmetrizeNegative", "mesh.symmetryRebuild",
                                  "mesh.symmetryRepair", "mesh.symmetryRebuildTopological"});
-    menus::addActions("Mesh", {"", "mesh.booleanDifference", "mesh.booleanUnion", "mesh.booleanIntersection", "mesh.transferAttributes"});
+    menus::addActions("Mesh", {"", "mesh.booleanDifference", "mesh.booleanUnion", "mesh.booleanIntersection", "mesh.transferAttributes",
+                               "mesh.softenEdges", "mesh.hardenEdges", "mesh.setNormalAngle", "mesh.softFoliageNormals"});
     addSubmenu("Mesh", "Vertex Colors");
     menus::addActions("Mesh/Vertex Colors", {"vcolor.paint", "vcolor.createSet", "", "vcolor.fill", "vcolor.gradient", "vcolor.invert",
                                       "vcolor.levels", "vcolor.blur", "", "vcolor.bakeAO", "vcolor.bakeCavity", "vcolor.bakeCurvature",
@@ -1205,11 +1228,12 @@ void MainWindow::buildMenus()
                                          "viewport.colorChannel.rgb", "viewport.colorChannel.r", "viewport.colorChannel.g",
                                          "viewport.colorChannel.b", "viewport.colorChannel.a", "", "viewport.grayscaleWeights",
                                          "viewport.monotone"});
-    menus::addActions("Display", {"viewport.toggleShadows", "viewport.toggleAO", "viewport.toggleAA"});
+    menus::addActions("Display", {"viewport.toggleShadows", "viewport.toggleAO", "viewport.toggleAA", "viewport.toggleKuwahara",
+                                  "viewport.toggleOutline"});
     addSubmenu("Display", "Antialiasing Samples", syncChecks);
     menus::addActions("Display/Antialiasing Samples", {"viewport.aaSamples2", "viewport.aaSamples4", "viewport.aaSamples8"});
     addSubmenu("Display", "Environment", [](QMenu* env) { connect(env, &QMenu::aboutToShow, env, [env] { fillEnvironmentMenu(env); }); });
-    menus::addActions("Display", {"viewport.toggleEnvBackground", "", "display.toggleVisibility", "display.hide", "display.show", "display.showAll",
+    menus::addActions("Display", {"viewport.toggleEnvBackground", "", "display.toggleVisibility", "display.hide", "display.show", "display.showLastHidden", "display.showAll",
                            "viewport.isolate", "viewport.isolateAdd", "viewport.isolateRemove"});
     addSubmenu("Display", "Measure", syncChecks);
     menus::addActions("Display/Measure", {"measure.selection", "measure.copyDistance", "measure.copyDiameter", "measure.copyLength", "",
@@ -1285,7 +1309,7 @@ void MainWindow::buildPanelMenus()
                               "viewport.cameraSettings", "", "viewport.imagePlaneImport"});
     menus::addActions("panel.Shading", {"viewport.wireframe", "viewport.shaded", "viewport.textured", "viewport.wireOnShaded", "", "viewport.toggleAO",
                                  "", "display.smoothOff", "display.smoothCage", "display.smoothOn"});
-    menus::addActions("panel.Show", {"display.hide", "display.show", "display.showAll", "", "viewport.isolate", "viewport.isolateAdd",
+    menus::addActions("panel.Show", {"display.hide", "display.show", "display.showLastHidden", "display.showAll", "", "viewport.isolate", "viewport.isolateAdd",
                               "viewport.isolateRemove", "viewport.show.mesh", "viewport.show.joint",
                               "viewport.show.locator", "rig.xrayJoints", "measure.toggleShow",
                               "viewport.toggleImagePlanes"});

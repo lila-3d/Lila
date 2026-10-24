@@ -18,11 +18,13 @@
 #include "scene/Components.h"
 #include "scene/DisplayLayers.h"
 #include "scene/Graph.h"
+#include "geo/Symmetry.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "scene/RenderSettings.h"
 #include "scene/Skin.h"
 #include "scene/Transform.h"
+#include "ui/Actions.h"
 #include "ui/Animation.h"
 #include "ui/ChannelBox.h"
 #include "ui/CursorBadges.h"
@@ -60,6 +62,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace lila::ui
@@ -150,6 +153,73 @@ glm::vec4 srgbToLinear(const glm::vec4& c)
     return {lin(c.r), lin(c.g), lin(c.b), c.a};
 }
 
+const glm::vec4 kSymmetryRed = srgbToLinear({0.95f, 0.18f, 0.16f, 1.0f});
+
+/** The edges of a mesh with symmetry on that lie in its plane, cached per mesh and plane. */
+const std::vector<uint32_t>& symmetryPlaneEdges(const scene::Node& n, const scene::MeshPtr& mesh)
+{
+    struct Cached
+    {
+        std::weak_ptr<const geo::Mesh> mesh;
+        int axis = -1;
+        double offset = 0.0;
+        std::vector<uint32_t> edges;
+    };
+    static std::unordered_map<scene::NodeId, Cached> cache;
+    static const std::vector<uint32_t> none;
+    const int64_t sym = n.as<int64_t>(scene::MeshNode::kSymmetry);
+    if (sym < 1 || sym > 3 || !mesh)
+        return none;
+    const int axis = int(sym - 1);
+    const double offset = scene::symmetryOffset(n, axis);
+    Cached& c = cache[n.id()];
+    if (c.mesh.lock() == mesh && c.axis == axis && c.offset == offset)
+        return c.edges;
+    const geo::Mesh& m = *mesh;
+    const double tol = std::max(1e-4, glm::length(m.bounds().size()) * 1e-5);
+    c = {mesh, axis, offset, {}};
+    // The stored pairs mark the on-plane points even after they drift; without them, go by position.
+    std::span<const int32_t> keys = m.pointAttrs().get<int32_t>(geo::symmetryLayerName(axis));
+    auto on = [&](geo::Index p) {
+        return keys.empty() ? std::abs(m.position(p)[axis] - offset) <= tol : keys[p] == geo::kSymmetryOnPlane;
+    };
+    for (geo::Index e = 0; e < m.edgeCapacity(); ++e)
+        if (m.edgeValid(e) && on(m.edgePoint(e, 0)) && on(m.edgePoint(e, 1)))
+            c.edges.push_back(e);
+    return c.edges;
+}
+
+/** Opacity of the mirror images of hovered and selected components while symmetry is on. */
+constexpr float kMirrorAlpha = 0.22f;
+
+/** The mirror map of a mesh with symmetry on, null when off. Moving points keeps the pairs, so only topology rebuilds it. */
+const geo::SymmetryMap* viewSymmetry(const scene::Node& n, const scene::MeshPtr& mesh)
+{
+    struct Cached
+    {
+        geo::Index points = 0, edges = 0, faces = 0;
+        int axis = -1;
+        double offset = 0.0;
+        std::optional<geo::SymmetryMap> map;
+    };
+    static std::unordered_map<scene::NodeId, Cached> cache;
+    const int64_t sym = n.as<int64_t>(scene::MeshNode::kSymmetry);
+    if (sym < 1 || sym > 3 || !mesh)
+        return nullptr;
+    const int axis = int(sym - 1);
+    const double offset = scene::symmetryOffset(n, axis);
+    const geo::Mesh& m = *mesh;
+    Cached& c = cache[n.id()];
+    if (!c.map || c.axis != axis || c.offset != offset || c.points != m.pointCapacity() || c.edges != m.edgeCapacity() ||
+        c.faces != m.faceCapacity())
+    {
+        geo::Mesh copy = m;
+        c = {m.pointCapacity(), m.edgeCapacity(), m.faceCapacity(), axis, offset,
+             geo::SymmetryMap::persistent(copy, axis, std::max(1e-4, glm::length(m.bounds().size()) * 1e-5), nullptr, offset)};
+    }
+    return &*c.map;
+}
+
 bool sameHighlight(const std::optional<selectionHandlers::Highlight>& a, const std::optional<selectionHandlers::Highlight>& b)
 {
     if (!a || !b)
@@ -201,6 +271,10 @@ ViewportWidget::ViewportWidget(QWidget* parent) : QWidget(parent)
         requestFrame();
     });
     mArrangeListener = bake::arrange::addListener([this] { requestFrame(); });
+    mInheritListener = scene::isolation::addInheritListener([this](const std::vector<scene::NodeId>& made, const std::vector<scene::NodeId>& from) {
+        if (scene::isolation::inheritInto(mIsolation, made, from))
+            setIsolation(std::move(mIsolation));
+    });
     mHandlerListener = selectionHandlers::addListener([this] {
         mHandlerHover.reset();
         requestFrame();
@@ -234,6 +308,7 @@ ViewportWidget::~ViewportWidget()
     selectionHandlers::removeListener(mHandlerListener);
     bake::arrange::removeListener(mArrangeListener);
     scene::removeRenderSettingsListener(mRenderSettingsListener);
+    scene::isolation::removeInheritListener(mInheritListener);
     if (mId)
         render::Renderer::get().removeViewport(mId);
 }
@@ -1029,6 +1104,8 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
             }
             return true;
         };
+        // Edges and faces count when the region touches them anywhere, or with the pref off only when it holds their centre.
+        const bool touch = PrefStore::get().value<bool>("general", "/select/marqueeTouch", true);
         for (scene::NodeId id : hilited(mIsolation))
         {
             scene::Node* n = g.node(id);
@@ -1038,6 +1115,7 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
             const geo::Mesh& m = *mesh;
             glm::dmat4 world = shownWorld(*n);
             auto worldOf = [&](uint32_t p) { return glm::dvec3(world * glm::dvec4(m.position(p), 1.0)); };
+            auto toPx = [](QPointF p) { return glm::dvec2(p.x(), p.y()); };
             if (mode == ComponentMode::Vertex)
             {
                 for (uint32_t p = 0; p < m.pointCapacity(); ++p)
@@ -1052,7 +1130,10 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
                     if (!m.edgeValid(e))
                         continue;
                     auto s0 = project(worldOf(m.edgePoint(e, 0))), s1 = project(worldOf(m.edgePoint(e, 1)));
-                    if (s0 && s1 && inSelectRegion(box, (*s0 + *s1) * 0.5) && visible((worldOf(m.edgePoint(e, 0)) + worldOf(m.edgePoint(e, 1))) * 0.5))
+                    if (!s0 || !s1)
+                        continue;
+                    const bool in = touch ? touchesSelectRegion(box, {toPx(*s0), toPx(*s1)}) : inSelectRegion(box, (*s0 + *s1) * 0.5);
+                    if (in && visible((worldOf(m.edgePoint(e, 0)) + worldOf(m.edgePoint(e, 1))) * 0.5))
                         hits[id].push_back(e);
                 }
             }
@@ -1062,7 +1143,22 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
                     if (m.faceValid(f))
                     {
                         glm::dvec3 c = glm::dvec3(world * glm::dvec4(m.faceCentroid(f), 1.0));
-                        if (auto s = project(c); s && inSelectRegion(box, *s) && visible(c))
+                        bool in = false;
+                        if (touch)
+                        {
+                            std::vector<glm::dvec2> poly;
+                            bool projected = true;
+                            m.forEachFaceCorner(f, [&](geo::Index k) {
+                                if (auto s = project(worldOf(m.cornerPoint(k))))
+                                    poly.push_back(toPx(*s));
+                                else
+                                    projected = false;
+                            });
+                            in = projected && touchesSelectRegion(box, poly);
+                        }
+                        else if (auto s = project(c))
+                            in = inSelectRegion(box, *s);
+                        if (in && visible(c))
                             hits[id].push_back(f);
                     }
             }
@@ -1121,6 +1217,34 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
     }
 }
 
+void ViewportWidget::drawObjectSymmetryEdges(render::FrameState& s)
+{
+    LILA_ZONE();
+
+    const PrefStore& prefs = PrefStore::get();
+    if (!prefs.value<bool>("general", viewportDisplay::kSymmetryEdges, true) ||
+        !prefs.value<bool>("general", viewportDisplay::kSymmetryEdgesObjectMode, true))
+        return;
+    scene::Graph& g = scene::Graph::current();
+    s.symmetryLineWidth = viewportDisplay::hairlineWidth(viewportDisplay::componentThickness().symmetryEdge, devicePixelRatioF());
+    for (scene::NodeId id : g.selection())
+    {
+        scene::Node* n = g.node(id);
+        if (!n || !n->type().isA("mesh") || !scene::effectivelyVisible(g, id) || !isolate::shows(&mIsolation, id))
+            continue;
+        scene::MeshPtr mesh = scene::modifiers::cage(g, id);
+        if (!mesh)
+            continue;
+        const geo::Mesh& m = *mesh;
+        const glm::dmat4 world = shownWorld(*n);
+        const auto vis = isolate::visibility(&mIsolation, id, mesh);
+        for (uint32_t e : symmetryPlaneEdges(*n, mesh))
+            if (vis->edge(e))
+                for (int k = 0; k < 2; ++k)
+                    s.symmetryLines.push_back({glm::vec3(world * glm::dvec4(m.position(m.edgePoint(e, k)), 1.0)), kSymmetryRed});
+    }
+}
+
 void ViewportWidget::drawComponents(render::FrameState& s)
 {
     LILA_ZONE();
@@ -1128,7 +1252,10 @@ void ViewportWidget::drawComponents(render::FrameState& s)
     using scene::ComponentMode;
     ComponentMode mode = scene::components::mode();
     if (mode == ComponentMode::Object)
+    {
+        drawObjectSymmetryEdges(s);
         return;
+    }
     scene::Graph& g = scene::Graph::current();
     std::vector<scene::NodeId> live = hilited(mIsolation);
     const ComponentPalette palette = componentPalette();
@@ -1136,6 +1263,8 @@ void ViewportWidget::drawComponents(render::FrameState& s)
     const viewportDisplay::ComponentThickness thickness = viewportDisplay::componentThickness();
     const float wireWidth = viewportDisplay::hairlineWidth(thickness.edge, devicePixelRatioF());
     s.selectedEdgeWidth = viewportDisplay::hairlineWidth(thickness.edgeSelected, devicePixelRatioF());
+    s.symmetryLineWidth = viewportDisplay::hairlineWidth(thickness.symmetryEdge, devicePixelRatioF());
+    const bool showSymmetry = PrefStore::get().value<bool>("general", viewportDisplay::kSymmetryEdges, true);
     for (scene::NodeId id : live)
     {
         scene::Node* n = g.node(id);
@@ -1187,6 +1316,38 @@ void ViewportWidget::drawComponents(render::FrameState& s)
                     s.selectedEdges.push_back({wp(m.edgePoint(e, 0)), hotLinear});
                     s.selectedEdges.push_back({wp(m.edgePoint(e, 1)), hotLinear});
                 }
+        if (const geo::SymmetryMap* sym = viewSymmetry(*n, mesh))
+        {
+            const glm::vec4 ghost(glm::vec3(hotLinear), kMirrorAlpha);
+            if (mode == ComponentMode::Face)
+                for (uint32_t f : sym->mirrorFaces(m, selFaces))
+                    if (f != geo::kInvalid && m.faceValid(f) && vis->face(f) && !std::ranges::binary_search(selFaces, f))
+                    {
+                        for (uint32_t p : scene::componentPick::fillTriangles(m, f))
+                            s.tris3d.push_back({wp(p), glm::vec4(glm::vec3(faceFillLinear), faceFillLinear.a * kMirrorAlpha)});
+                        std::vector<glm::vec3> poly;
+                        m.forEachFaceCorner(f, [&](geo::Index c) { poly.push_back(wp(m.cornerPoint(c))); });
+                        for (size_t k = 0; k < poly.size(); ++k)
+                        {
+                            s.linesOnTop.push_back({poly[k], ghost});
+                            s.linesOnTop.push_back({poly[(k + 1) % poly.size()], ghost});
+                        }
+                    }
+            if (mode == ComponentMode::Edge)
+                for (uint32_t e : sym->mirrorEdges(m, selEdges))
+                    if (e != geo::kInvalid && m.edgeValid(e) && vis->edge(e) && !std::ranges::binary_search(selEdges, e))
+                    {
+                        s.selectedEdges.push_back({wp(m.edgePoint(e, 0)), ghost});
+                        s.selectedEdges.push_back({wp(m.edgePoint(e, 1)), ghost});
+                    }
+        }
+        if (showSymmetry)
+            for (uint32_t e : symmetryPlaneEdges(*n, mesh))
+                if (vis->edge(e) && !(mode == ComponentMode::Edge && std::ranges::binary_search(selEdges, e)))
+                {
+                    s.symmetryLines.push_back({wp(m.edgePoint(e, 0)), kSymmetryRed});
+                    s.symmetryLines.push_back({wp(m.edgePoint(e, 1)), kSymmetryRed});
+                }
         bool soft = PrefStore::get().value<bool>("general", "/softSelect/enabled", false);
         std::vector<float> weights;
         if (soft)
@@ -1196,11 +1357,18 @@ void ViewportWidget::drawComponents(render::FrameState& s)
         }
         if (mode == ComponentMode::Vertex || soft)
         {
+            // 1 selected, 2 the mirror of a selected point.
             std::vector<char> on(m.pointCapacity(), 0);
             if (mode == ComponentMode::Vertex)
+            {
+                if (const geo::SymmetryMap* sym = viewSymmetry(*n, mesh))
+                    for (uint32_t p : sym->mirrorPoints(selPoints))
+                        if (p < on.size())
+                            on[p] = 2;
                 for (uint32_t p : selPoints)
                     if (p < on.size())
                         on[p] = 1;
+            }
             // Camera-facing squares a few pixels wide; size scales with depth so they stay constant on screen.
             ViewInfo view = viewInfo();
             glm::dvec3 right(view.view[0][0], view.view[1][0], view.view[2][0]), up(view.view[0][1], view.view[1][1], view.view[2][1]);
@@ -1221,9 +1389,12 @@ void ViewportWidget::drawComponents(render::FrameState& s)
                 // Outside vertex mode only the falloff shows, as dots shaded by weight.
                 if (mode != ComponentMode::Vertex && wgt <= 0.0f)
                     continue;
-                double half = 0.5 * (on[p] || wgt >= 1.0f ? thickness.vertexSelected : thickness.vertex) * perUnitDepth * depth;
+                double half = 0.5 * (on[p] == 1 || wgt >= 1.0f ? thickness.vertexSelected : thickness.vertex) * perUnitDepth * depth;
                 glm::dvec3 r = right * half, u = up * half;
-                glm::vec4 col = on[p] ? hotLinear : wgt > 0.0f ? viewportDisplay::falloffColor(wgt, grayWeights) : dotLinear;
+                glm::vec4 col = on[p] == 1 ? hotLinear
+                                : wgt > 0.0f ? viewportDisplay::falloffColor(wgt, grayWeights)
+                                : on[p] == 2 ? glm::mix(dotLinear, hotLinear, kMirrorAlpha)
+                                             : dotLinear;
                 glm::vec3 a(c - r - u), b(c + r - u), cc(c + r + u), d(c - r + u);
                 for (const glm::vec3& v : {a, b, cc, a, cc, d})
                     s.tris3d.push_back({v, col});
@@ -1438,39 +1609,61 @@ void ViewportWidget::drawPreselect(render::FrameState& s)
             s.tris3d.push_back({glm::vec3(v), col});
     };
     // Screen-constant width, facing the camera.
-    auto ribbon = [&](glm::dvec3 p0, glm::dvec3 p1, double halfPx) {
+    auto ribbon = [&](glm::dvec3 p0, glm::dvec3 p1, double halfPx, const glm::vec4& col) {
         glm::dvec3 side = glm::cross(p1 - p0, fwd);
         if (glm::length(side) < 1e-12)
             return;
         side = glm::normalize(side);
         glm::dvec3 s0 = side * (halfPx * view.unitsPerPixel(p0)), s1 = side * (halfPx * view.unitsPerPixel(p1));
-        quad(p0 - s0, p1 - s1, p1 + s1, p0 + s0, hot);
+        quad(p0 - s0, p1 - s1, p1 + s1, p0 + s0, col);
     };
     auto square = [&](glm::dvec3 c, double halfPx, const glm::vec4& col) {
         double half = halfPx * view.unitsPerPixel(c);
         glm::dvec3 r = right * half, u = up * half;
         quad(c - r - u, c + r - u, c + r + u, c - r + u, col);
     };
-    if (mode == ComponentMode::Vertex)
-        square(wp(id), 0.5 * thickness.vertexHover, hot);
-    else if (mode == ComponentMode::Edge)
+    auto component = [&](uint32_t id, float alpha) {
+        const glm::vec4 col(glm::vec3(hot), hot.a * alpha), fill(glm::vec3(faceFill), faceFill.a * alpha);
+        if (mode == ComponentMode::Vertex)
+            square(wp(id), 0.5 * thickness.vertexHover, col);
+        else if (mode == ComponentMode::Edge)
+            ribbon(wp(m.edgePoint(id, 0)), wp(m.edgePoint(id, 1)), 0.5 * thickness.edgeHover, col);
+        else
+        {
+            std::vector<glm::dvec3> poly;
+            m.forEachFaceCorner(id, [&](geo::Index c) { poly.push_back(wp(m.cornerPoint(c))); });
+            for (uint32_t p : cp::fillTriangles(m, id))
+                s.tris3d.push_back({glm::vec3(wp(p)), fill});
+            for (size_t k = 0; k < poly.size(); ++k)
+                ribbon(poly[k], poly[(k + 1) % poly.size()], 1.0, col);
+        }
+    };
+    if (const geo::SymmetryMap* sym = viewSymmetry(*n, mesh))
     {
-        ribbon(wp(m.edgePoint(id, 0)), wp(m.edgePoint(id, 1)), 0.5 * thickness.edgeHover);
-        // Edge hover calls out the poles at its ends.
+        const uint32_t mirror = mode == ComponentMode::Vertex ? sym->mirrorPoint(id)
+                                : mode == ComponentMode::Edge  ? sym->mirrorEdge(m, id)
+                                                               : sym->mirrorFace(m, id);
+        const auto vis = isolate::visibility(&mIsolation, mPreselect.node, mesh);
+        const bool shown = mode == ComponentMode::Vertex ? m.pointValid(mirror) && vis->point(mirror)
+                           : mode == ComponentMode::Edge ? m.edgeValid(mirror) && vis->edge(mirror)
+                                                         : m.faceValid(mirror) && vis->face(mirror);
+        if (mirror != geo::kInvalid && mirror != id && shown)
+            component(mirror, kMirrorAlpha);
+    }
+    component(id, 1.0f);
+    // Edge hover calls out the poles at its ends.
+    if (mode == ComponentMode::Edge)
         if (std::optional<glm::vec4> pole = topologyTint(cp::Topology::Pole))
             for (int k = 0; k < 2; ++k)
                 if (cp::pointTopology(m, m.edgePoint(id, k)) == cp::Topology::Pole)
                     square(wp(m.edgePoint(id, k)), 3.5, *pole);
-    }
-    else
-    {
-        std::vector<glm::dvec3> poly;
-        m.forEachFaceCorner(id, [&](geo::Index c) { poly.push_back(wp(m.cornerPoint(c))); });
-        for (uint32_t p : cp::fillTriangles(m, id))
-            s.tris3d.push_back({glm::vec3(wp(p)), faceFill});
-        for (size_t k = 0; k < poly.size(); ++k)
-            ribbon(poly[k], poly[(k + 1) % poly.size()], 1.0);
-    }
+}
+
+bool ViewportWidget::touchesSelectRegion(const QRectF& box, const std::vector<glm::dvec2>& shape) const
+{
+    if (mLassoPick)
+        return geo::lasso::touches(mLasso, shape);
+    return geo::lasso::touches({{box.left(), box.top()}, {box.right(), box.top()}, {box.right(), box.bottom()}, {box.left(), box.bottom()}}, shape);
 }
 
 bool ViewportWidget::inSelectRegion(const QRectF& box, QPointF p) const
@@ -1797,7 +1990,13 @@ scene::NodeId ViewportWidget::droppedCamera(const QMimeData* mime) const
 void ViewportWidget::dragEnterEvent(QDragEnterEvent* e)
 {
     if (droppedCamera(e->mimeData()) == scene::kNoNode)
-        return e->ignore();
+    {
+        // Hooks get the move events too: entering only asks whether any of them wants this kind of drag.
+        if (!e->mimeData() || !viewportHooks::handleDrop(*e->mimeData(), {}, false))
+            return e->ignore();
+        e->setDropAction(Qt::CopyAction);
+        return e->accept();
+    }
     e->setDropAction(Qt::LinkAction);
     e->accept();
 }
@@ -1805,7 +2004,13 @@ void ViewportWidget::dragEnterEvent(QDragEnterEvent* e)
 void ViewportWidget::dragMoveEvent(QDragMoveEvent* e)
 {
     if (droppedCamera(e->mimeData()) == scene::kNoNode)
-        return e->ignore();
+    {
+        selectionHandlers::Hit hit = selectionHit(e->position());
+        if (!e->mimeData() || !viewportHooks::handleDrop(*e->mimeData(), {hit.node, hit.face}, false))
+            return e->ignore();
+        e->setDropAction(Qt::CopyAction);
+        return e->accept();
+    }
     e->setDropAction(Qt::LinkAction);
     e->accept();
 }
@@ -1814,7 +2019,15 @@ void ViewportWidget::dropEvent(QDropEvent* e)
 {
     scene::NodeId cam = droppedCamera(e->mimeData());
     if (cam == scene::kNoNode)
-        return e->ignore();
+    {
+        selectionHandlers::Hit hit = selectionHit(e->position());
+        if (!e->mimeData() || !viewportHooks::handleDrop(*e->mimeData(), {hit.node, hit.face}, true))
+            return e->ignore();
+        e->setDropAction(Qt::CopyAction);
+        e->accept();
+        setFocus();
+        return;
+    }
     e->setDropAction(Qt::LinkAction);
     e->accept();
     // Focus makes this the active view, as a click would.
@@ -2156,8 +2369,24 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
                         return;
                 }
         bool componentMode = scene::components::mode() != scene::ComponentMode::Object;
-        if (!MarkingMenu::popup(markingMenus::viewportMenuName(base, overObject, componentMode), MarkingMenu::Trigger::MouseButton,
-                                Qt::RightButton, at))
+        std::string name = markingMenus::viewportMenuName(base, overObject || !scene::Graph::current().selection().empty(), componentMode);
+        json def = markingMenus::resolve(name);
+        // Slots under the current mode's key replace the regular ones; its overflow rows go in front of the regular ones.
+        static const char* kModeKeys[] = {"objectMode", "vertexMode", "edgeMode", "faceMode"};
+        if (const json& over = def.value(kModeKeys[int(scene::components::mode())], json()); over.is_object())
+            for (auto& [slot, item] : over.items())
+                if (slot != "overflow")
+                    def[slot] = item;
+                else if (item.is_array())
+                {
+                    json rows = item;
+                    for (const json& row : def.value("overflow", json::array()))
+                        rows.push_back(row);
+                    def["overflow"] = rows;
+                }
+        for (const char* key : kModeKeys)
+            def.erase(key);
+        if (!MarkingMenu::popupDefinition(def, MarkingMenu::Trigger::MouseButton, Qt::RightButton, at))
             MarkingMenu::popup(base, MarkingMenu::Trigger::MouseButton, Qt::RightButton, at);
         return;
     }
@@ -2399,10 +2628,12 @@ bool ViewportWidget::selectLoopAt(QPointF at, Qt::KeyboardModifiers mods)
             // The double-click's own first click is mClicked[0]; the one before it anchors the path.
             const scene::componentPick::Hover& prev = mClicked[0] == h ? mClicked[1] : mClicked[0];
             std::optional<uint32_t> from;
-            if (prev.node == h.node && prev.mode == mode && prev.id != h.id)
+            const auto selectedNow = scene::components::selected(h.node, mode);
+            // A click from before a marquee or deselect can be stale, so the anchor must still be selected.
+            if (prev.node == h.node && prev.mode == mode && prev.id != h.id && std::ranges::binary_search(selectedNow, prev.id))
                 from = prev.id;
             else
-                for (uint32_t id : scene::components::selected(h.node, mode))
+                for (uint32_t id : selectedNow)
                     if (id != h.id)
                     {
                         from = id;
@@ -2414,38 +2645,11 @@ bool ViewportWidget::selectLoopAt(QPointF at, Qt::KeyboardModifiers mods)
                          {{"args", {n->path()}}, {"kind", scene::components::modeName(mode)}, {"from", *from}, {"to", h.id}}, CallSource::UI);
             return true;
         }
-        if (mode == ComponentMode::Vertex)
-            return false;
-        json call = {{"args", {n->path()}}, {"edge", h.id}};
-        if (mode == ComponentMode::Face)
-        {
-            // The face loop crosses the face's edge nearest the cursor.
-            const geo::Mesh& m = *mesh;
-            glm::dmat4 world = shownWorld(*n);
-            double best = 1e300;
-            geo::Index nearest = geo::kInvalid;
-            m.forEachFaceCorner(h.id, [&](geo::Index c) {
-                geo::Index e = m.cornerEdge(c);
-                auto s0 = project(glm::dvec3(world * glm::dvec4(m.position(m.edgePoint(e, 0)), 1.0)));
-                auto s1 = project(glm::dvec3(world * glm::dvec4(m.position(m.edgePoint(e, 1)), 1.0)));
-                if (!s0 || !s1)
-                    return;
-                QPointF d = *s1 - *s0;
-                double len2 = QPointF::dotProduct(d, d);
-                double t = len2 > 0.0 ? std::clamp(QPointF::dotProduct(at - *s0, d) / len2, 0.0, 1.0) : 0.0;
-                QPointF q = *s0 + d * t - at;
-                if (double dist = std::hypot(q.x(), q.y()); dist < best)
-                {
-                    best = dist;
-                    nearest = e;
-                }
-            });
-            if (nearest == geo::kInvalid)
-                return false;
-            call["edge"] = nearest;
-            call["faces"] = true;
-        }
-        ops::execute("selectLoopThrough", call, CallSource::UI);
+        // Edges select their loop; vertices and faces the whole connected piece.
+        if (mode == ComponentMode::Edge)
+            ops::execute("selectLoopThrough", {{"args", {n->path()}}, {"edge", h.id}}, CallSource::UI);
+        else
+            ops::execute("selectConnected", {{"args", {n->path()}}, {"kind", scene::components::modeName(mode)}, {"id", h.id}}, CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -2493,5 +2697,24 @@ void ViewportWidget::keyPressEvent(QKeyEvent* e)
         return;
     }
     QWidget::keyPressEvent(e);
+}
+
+void ViewportWidget::escape()
+{
+    QKeyEvent e(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    if (ViewportTool* tool = viewportTools::active(); tool && tool->keyPress(&e, viewInfo()))
+    {
+        submit();
+        return;
+    }
+    if (Gizmo* gz = currentGizmo(); gz && gz->keyPress(&e))
+    {
+        mGizmoDrag = gz->dragging() ? gz : nullptr;
+        submit();
+        return;
+    }
+    // An Escape nothing else wanted drops the object selection.
+    if (!viewportTools::active() && scene::components::mode() == scene::ComponentMode::Object && !scene::Graph::current().selection().empty())
+        actions::run("edit.deselect");
 }
 } // namespace lila::ui

@@ -10,6 +10,8 @@
 
 #include <QRectF>
 
+class QMimeData;
+
 #include <functional>
 #include <string>
 #include <string_view>
@@ -79,4 +81,18 @@ using HideHook = std::function<bool(scene::NodeId id)>;
 LILA_UI_API void setHideHook(std::string id, HideHook fn);
 LILA_UI_API bool removeHideHook(std::string_view id);
 LILA_UI_API bool hiddenInView(scene::NodeId id);
+
+/** What a drag over a viewport is over: the object and, on a mesh, the face under the cursor. */
+struct DropTarget
+{
+    scene::NodeId node = scene::kNoNode;
+    uint32_t face = UINT32_MAX;
+};
+/** Return true to take the drag (commit false: hovering, commit true: dropped). */
+using DropHandler = std::function<bool(const QMimeData& mime, const DropTarget& target, bool commit)>;
+/** Adding an id again replaces it. */
+LILA_UI_API void setDropHandler(std::string id, DropHandler fn);
+LILA_UI_API bool removeDropHandler(std::string_view id);
+/** The first handler (by id) that takes the drag; true then. */
+LILA_UI_API bool handleDrop(const QMimeData& mime, const DropTarget& target, bool commit);
 } // namespace lila::ui::viewportHooks

@@ -21,6 +21,7 @@ add_executable(lila_tests
     test_layouts.cpp
     test_themes.cpp
     test_toolkit.cpp
+    test_modeling_defaults.cpp
     test_symmetry.cpp
     test_softselect.cpp
     test_gizmo.cpp
@@ -47,13 +48,16 @@ add_executable(lila_tests
     test_project_textures.cpp
     test_text_match.cpp
     test_ui_registries.cpp
+    test_graph_backends.cpp
     test_viewport_ext.cpp
     test_select_paths.cpp
     test_isolation.cpp
     test_smart_join.cpp
+    test_batch_rename.cpp
     test_batch_run.cpp
     test_node_paths.cpp
-    test_select_strokes.cpp)
+    test_select_strokes.cpp
+    test_render_textures.cpp)
 target_link_libraries(lila_tests PRIVATE LilaUI doctest::doctest)
 # The batch run tests start real lilabatch workers.
 add_dependencies(lila_tests lilabatch)
@@ -81,6 +85,7 @@ add_subdirectory(link)
 add_subdirectory(fbx)
 add_subdirectory(seq)
 add_subdirectory(bake)
+add_subdirectory(tex)
 add_subdirectory(anim)
 add_subdirectory(sim)
 if(TARGET lila_puppeteer_extension)
@@ -94,8 +99,10 @@ add_subdirectory(gn)
 add_subdirectory(retopo)
 add_subdirectory(sculpt)
 add_subdirectory(vcolor)
+add_subdirectory(brush)
 add_subdirectory(deform)
 add_subdirectory(materials)
+add_subdirectory(stylised)
 add_subdirectory(fbxskin)
 add_subdirectory(maya)
 add_subdirectory(agentic)

@@ -11,6 +11,7 @@
 #include "scene/Isolation.h"
 #include "scene/Modifiers.h"
 #include "ui/Hotkeys.h"
+#include "ui/MaterialDraw.h"
 #include "ui/OptionBox.h"
 #include "ui/ViewportDisplay.h"
 
@@ -245,7 +246,7 @@ bool repeatable(const json& target)
             "anim.nextFrame", "anim.prevFrame", "anim.nextKey", "anim.prevKey", "anim.play", "anim.stop", "anim.firstFrame",
             "anim.lastFrame", "anim.ghost", "anim.toggleGhosts", "anim.autoKeyToggle", "adjustLastOp.", "outliner.revealSelected",
             "graphEditor.", "nodeEditor.frame", "nodeEditor.selectAll", "mode.", "picker.frame", "measure.toggleShow"};
-        static const std::vector<std::string_view> ids = {"edit.undo", "edit.redo", "edit.repeatLast", "edit.selectAll", "edit.deselect"};
+        static const std::vector<std::string_view> ids = {"edit.undo", "edit.redo", "edit.repeatLast", "edit.selectAll", "edit.deselect", "edit.invertSelection"};
         if (std::ranges::any_of(prefixes, [&](std::string_view p) { return startsWith(id, p); }) || std::ranges::find(ids, id) != ids.end())
             return false;
         // Selection and mode switches under any category: uv.vertexMode, uv.selectStacks, rig.dominantInfluenceSelect.
@@ -392,6 +393,7 @@ void registerBuiltins()
         "Previews the selected meshes subdivided and smooth. Display only; the mesh is unchanged.");
     cmd("display.show", "Show Selection", "Display", "show", json::object(), "Unhides the selected objects.");
     cmd("display.showAll", "Show All", "Display", "show", {{"all", true}}, "Unhides every hidden object.");
+    cmd("display.showLastHidden", "Show Last Hidden", "Display", "showLastHidden", json::object(), "Unhides what the last hide hid.");
     for (const char* id : {"display.hide", "display.show", "display.smoothOff", "display.smoothCage", "display.smoothOn"})
         setEnabledWhen(id, hasSelection);
     cmd("modify.freezeTransforms", "Freeze Transformations", "Modify", "freezeTransforms", json::object(),
@@ -425,6 +427,8 @@ void registerBuiltins()
               }
           }, nullptr, "Selects every object in the scene.", "select(ls(dag=True))"});
     cmd("edit.deselect", "Deselect", "Edit", "select", {{"clear", true}}, "Clears the selection.");
+    cmd("edit.invertSelection", "Invert Selection", "Edit", "invertSelection", json::object(),
+        "Selects what is unselected and deselects the rest: objects, or components of the current kind.");
     cmd("file.new", "New Scene", "File", "newScene", json::object(), "Clears the scene and starts an empty one.");
     cmd("create.locator", "Locator", "Create", "spaceLocator", json::object(), "Creates a cross-hair transform to mark a spot, snap to or parent under.");
     cmd("create.camera", "Camera", "Create", "createNode", {{"args", {"camera"}}},
@@ -439,8 +443,8 @@ void registerBuiltins()
         cmd(std::string("select.") + mode + "Mode", label, "Select", "selectMode", {{"args", {mode}}}, doc);
     }
     cmd("select.grow", "Grow Selection", "Select", "growSelection", json::object(), "Adds the components bordering the selection.");
-    cmd("select.loop", "Select Edge Loop", "Select", "selectLoop", json::object(), "Extends the selected edges along their loops.");
-    cmd("select.ring", "Select Edge Ring", "Select", "selectLoop", {{"ring", true}}, "Selects the parallel edges around each selected edge's ring.");
+    cmd("select.loop", "Select Edge Loop", "Select", "selectLoop", json::object(), "Extends the selection along its loops: edges, the edges between selected vertices, or the faces either side of a shared edge.");
+    cmd("select.ring", "Select Edge Ring", "Select", "selectLoop", {{"ring", true}}, "Selects the parallel edges around each selected edge's ring, or the vertices of the rings between selected vertices.");
     cmd("select.allComponents", "Select All Components", "Select", "selectAllComponents", json::object(),
         "Selects every component of the current type on the selected meshes.");
     cmd("select.toVertices", "Convert to Vertices", "Select", "convertSelection", {{"args", {"vertex"}}}, "Turns the selection into the vertices it touches.");
@@ -474,6 +478,8 @@ void registerBuiltins()
         "Bakes the generator and modifier stack into the selected meshes, leaving plain geometry.");
     cmd("mesh.transferAttributes", "Transfer Attributes", "Mesh", "transferAttributes", json::object(),
         "Copies UVs, normals or other attributes from the first selected mesh onto the others.");
+    cmd("mesh.softFoliageNormals", "Soft Foliage Normals", "Mesh", "softFoliageNormals", json::object(),
+        "Points the normals of leaf cards out from a dome around the mesh (mixed 80% by default), so foliage shades as soft clumps.");
     cmd("mesh.quadRemesh", "Quad Remesh", "Mesh", "quadRemesh", json::object(), "Rebuilds the mesh as evenly sized, flowing quads.");
     cmd("mesh.repair", "Repair Mesh", "Mesh", "meshRepair", json::object(),
         "Fixes coincident points, lamina and zero-area faces, non-manifold geometry and flipped faces; the option box picks the checks.");
@@ -492,6 +498,10 @@ void registerBuiltins()
         cmd("modifier." + kind, modifierLabel(kind), "Modifiers", "addModifier", {{"kind", kind}}, scene::modifiers::kindDoc(kind));
     cmd("mesh.symmetryX", "Symmetry X", "Mesh", "setSymmetry", {{"axis", "x"}}, "Mirrors selections and edits across the object's X plane.");
     cmd("mesh.symmetryOff", "Symmetry Off", "Mesh", "setSymmetry", {{"axis", "off"}}, "Stops mirroring selections and edits.");
+    cmd("mesh.symmetryPlaneFromSelection", "Symmetry Plane from Selection", "Mesh", "setSymmetryPlane", json::object(),
+        "Puts the symmetry plane through the selected centre edges or vertices, on the axis they lie flat across.");
+    cmd("mesh.symmetryPlaneFromPivot", "Symmetry Plane at Pivot", "Mesh", "setSymmetryPlane", {{"pivot", true}},
+        "Puts the symmetry plane back through the object's pivot.");
     cmd("mesh.symmetryY", "Symmetry Y", "Mesh", "setSymmetry", {{"axis", "y"}}, "Mirrors selections and edits across the object's Y plane.");
     cmd("mesh.symmetryZ", "Symmetry Z", "Mesh", "setSymmetry", {{"axis", "z"}}, "Mirrors selections and edits across the object's Z plane.");
     cmd("mesh.toggleSymmetry", "Toggle Symmetry", "Mesh", "toggleSymmetry", json::object(),
@@ -503,7 +513,7 @@ void registerBuiltins()
     cmd("mesh.symmetrizeNegative", "Symmetrize (Keep - Side)", "Mesh", "symmetrize", {{"side", "negative"}},
         "Copies the - side of the mesh onto the + side.");
     cmd("mesh.symmetryRebuild", "Rebuild Symmetry", "Mesh", "symmetryRebuild", json::object(),
-        "Replaces the other side with a mirror of the kept one (the side of the selection, else +), welded on the plane.");
+        "Replaces the other side with a mirror of the kept one (the side of the selection, else the side holding most of the mesh), welded on the plane.");
     cmd("mesh.symmetryRepair", "Re-pair Symmetry", "Mesh", "symmetryRebuild", {{"pairsOnly", true}},
         "Pairs mirror vertices again from their positions, leaving the geometry as it is.");
     cmd("mesh.symmetryRebuildTopological", "Re-pair Symmetry from Edge", "Mesh", "symmetryRebuild", {{"topological", true}},
@@ -521,6 +531,14 @@ void registerBuiltins()
     cmd("bake.allChanged", "Bake Changed Projects", "Bake", "bakeAll", {{"changedOnly", true}},
         "Bakes the bake projects whose inputs changed since their last bake.");
     cmd("mesh.extract", "Extract", "Mesh", "polyExtract", json::object(), "Moves the selected faces into a new object.");
+    cmd("mesh.softenEdges", "Soften Edges", "Mesh", "polySoftEdge", {{"angle", 180.0}},
+        "Makes the selected edges soft, or every edge of the selected meshes in object mode.");
+    cmd("mesh.hardenEdges", "Harden Edges", "Mesh", "polySoftEdge", {{"angle", 0.0}},
+        "Makes the selected edges hard, or every edge of the selected meshes in object mode.");
+    cmd("mesh.setNormalAngle", "Set Normal Angle", "Mesh", "polySoftEdge", {{"angle", 30.0}},
+        "Hardens the selected edges whose faces meet sharper than the angle and softens the rest.");
+    cmd("mesh.duplicateFaces", "Duplicate Faces", "Mesh", "polyDuplicateFaces", json::object(),
+        "Copies the selected faces into a separate shell of the same mesh and selects the copies.");
     cmd("mesh.connect", "Connect", "Mesh", "polyConnect", json::object(), "Splits faces with new edges between the selected vertices or edges.");
     cmd("select.shrink", "Shrink Selection", "Select", "shrinkSelection", json::object(), "Drops the components on the selection's border.");
     cmd("select.border", "Select Border Edges", "Select", "selectBorder", json::object(), "Selects the open border edges of the selected meshes.");
@@ -561,7 +579,15 @@ void registerBuiltins()
                       .python = std::string("lila.prefs.set(\"general\", \"/viewport/displayMode\", \"") + mode + "\")"});
     };
     display("viewport.wireframe", "Wireframe", "wireframe", "Draws meshes as their edges only.");
-    display("viewport.shaded", "Shaded", "shaded", "Draws meshes as lit surfaces.");
+    actions::add({.id = "viewport.shaded", .label = "Shaded", .category = "Display",
+                  .run =
+                      [] {
+                          PrefStore::get().set("general", "/viewport/displayMode", "shaded");
+                          setMaterialsShown(false);
+                      },
+                  .doc = "Draws meshes as lit surfaces in flat gray, for form checks.",
+                  .python = "lila.prefs.set(\"general\", \"/viewport/displayMode\", \"shaded\")\n"
+                            "lila.prefs.set(\"general\", \"/viewport/materials\", False)"});
     actions::add({.id = "viewport.wireOnShaded", .label = "Wireframe on Shaded", .category = "Display", .run = [] {
                       bool on = PrefStore::get().value<bool>("general", "/viewport/wireOnShaded", false);
                       PrefStore::get().set("general", "/viewport/wireOnShaded", !on);
@@ -587,6 +613,10 @@ void registerBuiltins()
     togglePref("viewport.toggleGrid", "Grid", vd::kGrid, true, "The ground grid in every viewport.");
     togglePref("viewport.toggleXray", "X-Ray", vd::kXray, false, "Shaded meshes become see-through.");
     togglePref("viewport.toggleBackfaceCulling", "Backface Culling", vd::kBackfaceCulling, false, "Hides the back faces of shaded meshes.");
+    togglePref("viewport.toggleKuwahara", "Painterly Filter", vd::kKuwahara, false,
+               "Smooths the shaded view into flat, brushy patches that follow its edges (anisotropic Kuwahara). Viewport preview only.");
+    togglePref("viewport.toggleOutline", "Outlines", vd::kOutline, false,
+               "Draws dark lines where depth or surface direction jumps, like inked edges. Viewport preview only.");
     togglePref("viewport.toggleShadows", "Shadows", vd::kShadows, true, "The soft ground shadow under meshes.");
     togglePref("viewport.defaultMaterial", "Use Default Material", vd::kDefaultMaterial, false, "Shades every mesh with the plain default material.");
     togglePref("viewport.toggleEnvBackground", "Environment Background", "/viewport/env/background", true, "Shows the HDRI behind the scene.");
