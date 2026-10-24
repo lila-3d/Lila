@@ -121,8 +121,6 @@ struct EditResult
 {
     ComponentMode kind = ComponentMode::Object;
     Ids ids;
-    /** Selects the result without leaving the mode the edit started in. */
-    bool stayInMode = false;
 };
 
 using EditFn = std::function<EditResult(geo::Mesh&, const Ids& selection, const geo::SymmetryMap* symmetry)>;
@@ -163,9 +161,7 @@ json editSelected(const char* label, ComponentMode kind, const EditFn& fn, bool 
     UndoChunk chunk(label);
     std::map<NodeId, Ids> newSel[3] = {components::selected(ComponentMode::Vertex), components::selected(ComponentMode::Edge),
                                        components::selected(ComponentMode::Face)};
-    // An op that selects nothing leaves the mode alone.
     ComponentMode resultKind = ComponentMode::Object;
-    bool stayInMode = false;
     for (auto& [node, sel] : targets)
     {
         Node& n = *g.node(node);
@@ -197,7 +193,6 @@ json editSelected(const char* label, ComponentMode kind, const EditFn& fn, bool 
         if (r.kind != ComponentMode::Object)
         {
             resultKind = r.kind;
-            stayInMode = stayInMode || r.stayInMode;
             Ids mapped = remapIds(r.ids, *maps[int(r.kind) - 1]);
             if (mapped.empty())
                 newSel[int(r.kind) - 1].erase(node);
@@ -210,7 +205,8 @@ json editSelected(const char* label, ComponentMode kind, const EditFn& fn, bool 
         objectSets::meshRemapped(g, node, remap);
     }
     components::setAll(newSel[0], newSel[1], newSel[2]);
-    if (resultKind != ComponentMode::Object && !(stayInMode && from != ComponentMode::Object))
+    // A component mode is the user's: repeated edits (bridge after bridge) must not bounce it to the result's kind.
+    if (resultKind != ComponentMode::Object && from == ComponentMode::Object)
         components::setModeUndoable(resultKind);
     return nullptr;
 }
@@ -640,7 +636,6 @@ void registerMeshEditCommands()
                 o.appliedOffset = &applied;
                 EditResult r = faces(geo::bevelEdges(m, sel, o));
                 used = std::min(used, applied);
-                r.stayInMode = true;
                 return r;
             });
             if (a.get<bool>("clamp") && used < a.get<double>("offset") - 1e-9)
@@ -1748,7 +1743,8 @@ void registerMeshEditCommands()
             if (a.get<bool>("select"))
             {
                 components::setAll({}, {{n.id(), mapped}}, {});
-                components::setMode(ComponentMode::Edge);
+                if (components::mode() == ComponentMode::Object)
+                    components::setMode(ComponentMode::Edge);
             }
             return mapped;
         },

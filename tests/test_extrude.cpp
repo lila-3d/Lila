@@ -202,3 +202,21 @@ TEST_CASE("polyBevel offset adjusts through adjust-last-op and keeps edge mode")
     CHECK(scene::components::mode() == scene::ComponentMode::Edge);
     CHECK(scene::components::selected(scene::Graph::current().find(cube)->id(), scene::ComponentMode::Edge) == std::vector<uint32_t>{0});
 }
+
+TEST_CASE("edits run in a component mode stay in it")
+{
+    run("newScene");
+    std::string cube = run("polyCube")[0];
+    run("selectMode", {{"args", {"face"}}});
+    run("selectComponentsWhere", {{"args", {cube}}, {"kind", "face"}, {"extreme", "+z"}});
+    run("selectComponentsWhere", {{"args", {cube}}, {"kind", "face"}, {"extreme", "-z"}, {"add", true}});
+    run("deleteComponents");
+    run("selectComponentsWhere", {{"args", {cube}}, {"kind", "edge"}, {"border", true}});
+    REQUIRE(scene::components::mode() == scene::ComponentMode::Edge);
+    run("polyBridge");
+    CHECK(meshOf(cube).numFaces() == 8);
+    CHECK(scene::components::mode() == scene::ComponentMode::Edge);
+    run("selectComponents", {{"args", {cube}}, {"edges", {0}}});
+    run("polyCollapse");
+    CHECK(scene::components::mode() == scene::ComponentMode::Edge);
+}
