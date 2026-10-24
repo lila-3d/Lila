@@ -10,6 +10,9 @@
 #include "core/Profile.h"
 #include "core/Progress.h"
 #include "geo/Bvh.h"
+#include "render/Compute.h"
+#include "render/LiveBake.h"
+#include "render/MeshMaps.h"
 #include "render/Renderer.h"
 #include "render/VulkanContext.h"
 
@@ -271,94 +274,22 @@ struct GpuHighInfo
 };
 static_assert(sizeof(GpuHighInfo) == 64);
 
-struct GpuBuffer
-{
-    VkBuffer buffer = VK_NULL_HANDLE;
-    VmaAllocation alloc = VK_NULL_HANDLE;
-    void* mapped = nullptr;
-    VkDeviceAddress address = 0;
-    VkDeviceSize size = 0;
-};
-
-enum class Host
-{
-    None,
-    Write,
-    Read,
-};
-
-GpuBuffer makeBuffer(VulkanContext& vk, VkDeviceSize size, VkBufferUsageFlags usage, Host host)
-{
-    GpuBuffer b;
-    b.size = std::max<VkDeviceSize>(size, 16);
-    VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-    bci.size = b.size;
-    bci.usage = usage | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
-                VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    VmaAllocationCreateInfo aci{};
-    aci.usage = host == Host::None ? VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE : VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
-    if (host == Host::Write)
-        aci.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
-    else if (host == Host::Read)
-        aci.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
-    VmaAllocationInfo info{};
-    if (VkResult r = vmaCreateBuffer(vk.allocator, &bci, &aci, &b.buffer, &b.alloc, &info); r != VK_SUCCESS)
-        throw std::runtime_error(std::string("GPU bake: could not allocate ") + std::to_string(size >> 20) + " MB (" + vkResultName(r) + ")");
-    b.mapped = info.pMappedData;
-    VkBufferDeviceAddressInfo ai{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, b.buffer};
-    b.address = vkGetBufferDeviceAddress(vk.device, &ai);
-    return b;
-}
-
-void destroy(VulkanContext& vk, GpuBuffer& b)
-{
-    if (b.buffer)
-        vmaDestroyBuffer(vk.allocator, b.buffer, b.alloc);
-    b = {};
-}
-
-/** A host-visible buffer filled from data, for the GPU to read directly (small tables) or to copy from (staging). */
-GpuBuffer hostBuffer(VulkanContext& vk, const void* data, size_t size, VkBufferUsageFlags usage = 0)
-{
-    GpuBuffer b = makeBuffer(vk, size, usage, Host::Write);
-    if (size)
-        std::memcpy(b.mapped, data, size);
-    vmaFlushAllocation(vk.allocator, b.alloc, 0, VK_WHOLE_SIZE);
-    return b;
-}
-
-void memoryBarrier(VkCommandBuffer cmd, VkPipelineStageFlags2 dstStage = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                   VkAccessFlags2 dstAccess = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT)
-{
-    VkMemoryBarrier2 mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
-    mb.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    mb.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
-    mb.dstStageMask = dstStage;
-    mb.dstAccessMask = dstAccess;
-    VkDependencyInfo di{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-    di.memoryBarrierCount = 1;
-    di.pMemoryBarriers = &mb;
-    vkCmdPipelineBarrier2(cmd, &di);
-}
-
-void copy(VkCommandBuffer cmd, const GpuBuffer& from, const GpuBuffer& to, VkDeviceSize size)
-{
-    if (!size)
-        return;
-    VkBufferCopy region{0, 0, size};
-    vkCmdCopyBuffer(cmd, from.buffer, to.buffer, 1, &region);
-}
+using GpuBuffer = compute::Buffer;
+using compute::copy;
+using compute::destroy;
+using compute::dispatchChunks;
+using compute::Host;
+using compute::hostBuffer;
+using compute::makeBuffer;
+using compute::memoryBarrier;
+using compute::Submitter;
 
 std::vector<uint32_t> loadSpirv(const char* name)
 {
-    const auto path = paths::executableDir() / "shaders" / name;
-    std::ifstream in(path, std::ios::binary | std::ios::ate);
-    if (!in)
-        throw std::runtime_error("GPU bake: missing shader " + paths::toUtf8(path));
-    const size_t size = size_t(in.tellg());
-    std::vector<uint32_t> code(size / 4);
-    in.seekg(0);
-    in.read(reinterpret_cast<char*>(code.data()), std::streamsize(size));
+    std::string err;
+    std::vector<uint32_t> code = compute::loadSpirv(name, &err);
+    if (code.empty())
+        throw std::runtime_error("GPU bake: " + err);
     return code;
 }
 
@@ -552,80 +483,6 @@ struct GpuStep
     std::string label = "other";
 };
 
-/** Dispatches items [first, first + count) of a kernel in chunks under the workgroup limit; set fills a chunk's push. */
-template <class Push, class Set>
-void dispatchChunks(VkCommandBuffer cmd, VkPipelineLayout layout, Push push, uint32_t first, uint32_t count, uint32_t perGroup, Set&& set)
-{
-    const uint32_t maxItems = 65535u * perGroup;
-    for (uint32_t f = first; f < first + count; f += maxItems)
-    {
-        const uint32_t n = std::min(maxItems, first + count - f);
-        set(push, f, n);
-        vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(Push), &push);
-        vkCmdDispatch(cmd, (n + perGroup - 1) / perGroup, 1, 1);
-    }
-}
-
-/** Records commands, submits and waits: one slice. Render thread only. */
-struct Submitter
-{
-    VkCommandPool pool = VK_NULL_HANDLE;
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    VkFence fence = VK_NULL_HANDLE;
-
-    void init(VulkanContext& vk)
-    {
-        if (pool)
-            return;
-        VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-        pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        pci.queueFamilyIndex = vk.queueFamily;
-        vkCreateCommandPool(vk.device, &pci, nullptr, &pool);
-        VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-        ai.commandPool = pool;
-        ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        ai.commandBufferCount = 1;
-        vkAllocateCommandBuffers(vk.device, &ai, &cmd);
-        VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-        vkCreateFence(vk.device, &fci, nullptr, &fence);
-    }
-
-    void destroy(VulkanContext& vk)
-    {
-        if (fence)
-            vkDestroyFence(vk.device, fence, nullptr);
-        if (pool)
-            vkDestroyCommandPool(vk.device, pool, nullptr);
-        *this = {};
-    }
-
-    /** Returns the wall time from submit to fence, ms. */
-    template <class F> double run(VulkanContext& vk, F&& record)
-    {
-        LILA_ZONE();
-
-        vkResetCommandBuffer(cmd, 0);
-        VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-        bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        vkBeginCommandBuffer(cmd, &bi);
-        // Earlier slices' writes become visible to this one.
-        memoryBarrier(cmd);
-        record(cmd);
-        memoryBarrier(cmd, VK_PIPELINE_STAGE_2_HOST_BIT, VK_ACCESS_2_HOST_READ_BIT);
-        vkEndCommandBuffer(cmd);
-        VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-        si.commandBufferCount = 1;
-        si.pCommandBuffers = &cmd;
-        const auto t0 = std::chrono::steady_clock::now();
-        if (VkResult r = vkQueueSubmit(vk.queue, 1, &si, fence); r != VK_SUCCESS)
-            throw std::runtime_error(std::string("GPU bake: submit failed (") + vkResultName(r) + ")");
-        const VkResult r = vkWaitForFences(vk.device, 1, &fence, VK_TRUE, 30'000'000'000ull);
-        vkResetFences(vk.device, 1, &fence);
-        if (r != VK_SUCCESS)
-            throw std::runtime_error(std::string("GPU bake: the GPU did not finish (") + vkResultName(r) + ")");
-        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-    }
-};
 
 class GpuBackend final : public bake::Backend, public bake::Tracer
 {
@@ -638,6 +495,7 @@ public:
     std::string name() const override { return "gpu"; }
     std::string mode() const override { return mFailed ? "cpu" : mHardware ? "rt" : "compute"; }
     bool hardware() const { return mHardware; }
+    void setSliceMs(double ms) { mSliceMs = ms; }
     void prepare(const bake::BakeInputs& inputs) override;
     void traceProjection(size_t group, std::span<const TexelSample> samples, std::span<HitRecord> hits) const override;
     void shade(const bake::MapDef& def, const bake::MapContext& ctx, std::span<const TexelSample> samples, std::span<const HitRecord> hits,
@@ -709,7 +567,7 @@ private:
     mutable VkDescriptorSetLayout mSetLayout = VK_NULL_HANDLE;
     mutable VkDescriptorPool mPool = VK_NULL_HANDLE;
     mutable VkPipelineLayout mLayoutSw = VK_NULL_HANDLE, mLayoutHw = VK_NULL_HANDLE;
-    mutable VkShaderModule mModSw = VK_NULL_HANDLE, mModHw = VK_NULL_HANDLE, mModDilate = VK_NULL_HANDLE;
+    // Pipelines belong to compute::sharedPipelines, so the next bake finds them made.
     mutable VkPipeline mProjectSw = VK_NULL_HANDLE, mAoSw = VK_NULL_HANDLE, mShade = VK_NULL_HANDLE;
     mutable VkPipeline mProjectHw = VK_NULL_HANDLE, mAoHw = VK_NULL_HANDLE;
     mutable VkPipeline mJfaInit = VK_NULL_HANDLE, mJfaStep = VK_NULL_HANDLE;
@@ -717,7 +575,6 @@ private:
     mutable VkPipeline mThicknessSw = VK_NULL_HANDLE, mBentSw = VK_NULL_HANDLE, mRoundedSw = VK_NULL_HANDLE, mErrorSw = VK_NULL_HANDLE;
     mutable VkPipeline mThicknessHw = VK_NULL_HANDLE, mBentHw = VK_NULL_HANDLE, mRoundedHw = VK_NULL_HANDLE, mErrorHw = VK_NULL_HANDLE;
     mutable VkPipelineLayout mLayoutRaster = VK_NULL_HANDLE, mLayoutImage = VK_NULL_HANDLE;
-    mutable VkShaderModule mModRaster = VK_NULL_HANDLE, mModImage = VK_NULL_HANDLE;
     mutable VkPipeline mClaim = VK_NULL_HANDLE, mSamplesPipe = VK_NULL_HANDLE;
     mutable std::map<std::string, VkPipeline> mImagePipes;
     /** Timestamps around runSteps' steps, and the GPU milliseconds they measured per step label. */
@@ -755,6 +612,8 @@ private:
     mutable std::atomic<double> mRayRate{mHardware ? 200000.0 : 20000.0};
     mutable std::atomic<double> mRasterRate{2000000.0};
     mutable std::atomic<double> mImageRate{2000000.0};
+    /** GPU time runSteps aims each render-thread slice at; live bakes keep it short so frames keep their pace. */
+    double mSliceMs = kSliceMs;
 };
 
 GpuBackend::~GpuBackend()
@@ -768,15 +627,6 @@ GpuBackend::~GpuBackend()
             for (auto& s : mSlots)
                 for (GpuBuffer* b : {&s->staging, &s->samples, &s->hits, &s->hitsRead, &s->out, &s->outRead})
                     destroy(vk, *b);
-            for (VkPipeline p : {mProjectSw, mAoSw, mShade, mProjectHw, mAoHw, mJfaInit, mJfaStep, mThicknessSw, mBentSw, mRoundedSw, mErrorSw,
-                                 mThicknessHw, mBentHw, mRoundedHw, mErrorHw, mClaim, mSamplesPipe})
-                if (p)
-                    vkDestroyPipeline(vk.device, p, nullptr);
-            for (auto& [name, p] : mImagePipes)
-                vkDestroyPipeline(vk.device, p, nullptr);
-            for (VkShaderModule m : {mModSw, mModHw, mModDilate, mModRaster, mModImage})
-                if (m)
-                    vkDestroyShaderModule(vk.device, m, nullptr);
             for (VkPipelineLayout l : {mLayoutSw, mLayoutHw, mLayoutRaster, mLayoutImage})
                 if (l)
                     vkDestroyPipelineLayout(vk.device, l, nullptr);
@@ -858,60 +708,65 @@ void GpuBackend::initDevice(VulkanContext& vk) const
     LILA_ZONE();
 
     mSub.init(vk);
-    auto module = [&](const char* name) -> VkShaderModule {
-        const std::vector<uint32_t> code = loadSpirv(name);
-        VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        ci.codeSize = code.size() * 4;
-        ci.pCode = code.data();
-        VkShaderModule m = VK_NULL_HANDLE;
-        if (vkCreateShaderModule(vk.device, &ci, nullptr, &m) != VK_SUCCESS)
-            throw std::runtime_error(std::string("GPU bake: bad shader ") + name);
-        return m;
+    struct Module
+    {
+        std::vector<uint32_t> code;
+        uint64_t hash = 0;
     };
-    auto pipeline = [&](VkPipelineLayout layout, VkShaderModule mod, const char* entry) {
-        VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
-        ci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, mod, entry};
-        ci.layout = layout;
-        VkPipeline p = VK_NULL_HANDLE;
-        if (vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &ci, nullptr, &p) != VK_SUCCESS)
-            throw std::runtime_error(std::string("GPU bake: pipeline creation failed (") + entry + ")");
-        return p;
+    std::map<std::string, Module> modules;
+    auto module = [&](const char* name) -> const Module* {
+        Module& m = modules[name];
+        if (m.code.empty())
+        {
+            m.code = loadSpirv(name);
+            m.hash = compute::spirvHash(m.code);
+        }
+        return &m;
+    };
+    // Layout keys: equal keys go only to layouts made identically below.
+    const uint64_t pushKey = compute::layoutKey(sizeof(GpuBakePush), VK_SHADER_STAGE_COMPUTE_BIT);
+    const uint64_t rasterKey = compute::layoutKey(sizeof(GpuRasterPush), VK_SHADER_STAGE_COMPUTE_BIT);
+    const uint64_t imageKey = compute::layoutKey(sizeof(GpuImagePush), VK_SHADER_STAGE_COMPUTE_BIT);
+    const uint64_t hwKey = compute::layoutKey(sizeof(GpuBakePush), VK_SHADER_STAGE_COMPUTE_BIT, "bake:tlas");
+    auto pipeline = [&](VkPipelineLayout layout, const Module* mod, const char* entry) {
+        const uint64_t key = layout == mLayoutSw ? pushKey : layout == mLayoutRaster ? rasterKey : layout == mLayoutImage ? imageKey : hwKey;
+        return compute::sharedPipelines().get(vk, layout, key, mod->code, mod->hash, entry);
     };
     VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(GpuBakePush)};
     VkPipelineLayoutCreateInfo lci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     lci.pushConstantRangeCount = 1;
     lci.pPushConstantRanges = &range;
     vkCreatePipelineLayout(vk.device, &lci, nullptr, &mLayoutSw);
-    mModSw = module("bake_sw.spv");
-    mModDilate = module("bake_dilate.spv");
-    mShade = pipeline(mLayoutSw, mModSw, "shadeCS");
-    mProjectSw = pipeline(mLayoutSw, mModSw, "projectCS");
-    mAoSw = pipeline(mLayoutSw, mModSw, "aoCS");
-    mJfaInit = pipeline(mLayoutSw, mModDilate, "jfaInitCS");
-    mJfaStep = pipeline(mLayoutSw, mModDilate, "jfaStepCS");
-    mThicknessSw = pipeline(mLayoutSw, mModSw, "thicknessCS");
-    mBentSw = pipeline(mLayoutSw, mModSw, "bentCS");
-    mRoundedSw = pipeline(mLayoutSw, mModSw, "roundedCS");
-    mErrorSw = pipeline(mLayoutSw, mModSw, "errorCS");
+    const Module* sw = module("bake_sw.spv");
+    const Module* dilate = module("bake_dilate.spv");
+    mShade = pipeline(mLayoutSw, sw, "shadeCS");
+    mProjectSw = pipeline(mLayoutSw, sw, "projectCS");
+    mAoSw = pipeline(mLayoutSw, sw, "aoCS");
+    mJfaInit = pipeline(mLayoutSw, dilate, "jfaInitCS");
+    mJfaStep = pipeline(mLayoutSw, dilate, "jfaStepCS");
+    mThicknessSw = pipeline(mLayoutSw, sw, "thicknessCS");
+    mBentSw = pipeline(mLayoutSw, sw, "bentCS");
+    mRoundedSw = pipeline(mLayoutSw, sw, "roundedCS");
+    mErrorSw = pipeline(mLayoutSw, sw, "errorCS");
 
     VkPushConstantRange rasterRange{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(GpuRasterPush)};
     VkPipelineLayoutCreateInfo rci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     rci.pushConstantRangeCount = 1;
     rci.pPushConstantRanges = &rasterRange;
     vkCreatePipelineLayout(vk.device, &rci, nullptr, &mLayoutRaster);
-    mModRaster = module(vk.shaderFloat64 ? "bake_raster64.spv" : "bake_raster32.spv");
-    mClaim = pipeline(mLayoutRaster, mModRaster, "claimCS");
-    mSamplesPipe = pipeline(mLayoutRaster, mModRaster, "samplesCS");
+    const Module* raster = module(vk.shaderFloat64 ? "bake_raster64.spv" : "bake_raster32.spv");
+    mClaim = pipeline(mLayoutRaster, raster, "claimCS");
+    mSamplesPipe = pipeline(mLayoutRaster, raster, "samplesCS");
 
     VkPushConstantRange imageRange{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(GpuImagePush)};
     VkPipelineLayoutCreateInfo ici{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     ici.pushConstantRangeCount = 1;
     ici.pPushConstantRanges = &imageRange;
     vkCreatePipelineLayout(vk.device, &ici, nullptr, &mLayoutImage);
-    mModImage = module("bake_image.spv");
+    const Module* image = module("bake_image.spv");
     for (const char* entry : {"accumulateCS", "resolveCS", "renormalizeCS", "maxCS", "heightCS", "thicknessApplyCS", "copyRedCS", "slopeCurvatureCS",
-                              "histogramCS", "curvatureCS", "jfaInitCS", "jfaStepCS", "dilateApplyCS"})
-        mImagePipes[entry] = pipeline(mLayoutImage, mModImage, entry);
+                              "histogramCS", "curvatureCS", "jfaInitCS", "jfaStepCS", "dilateApplyCS", "clearTilesCS", "packTexelsCS"})
+        mImagePipes[entry] = pipeline(mLayoutImage, image, entry);
     if (!mHardware)
         return;
     VkDescriptorSetLayoutBinding b{0, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
@@ -922,13 +777,13 @@ void GpuBackend::initDevice(VulkanContext& vk) const
     lci.setLayoutCount = 1;
     lci.pSetLayouts = &mSetLayout;
     vkCreatePipelineLayout(vk.device, &lci, nullptr, &mLayoutHw);
-    mModHw = module("bake_hw.spv");
-    mProjectHw = pipeline(mLayoutHw, mModHw, "projectCS");
-    mAoHw = pipeline(mLayoutHw, mModHw, "aoCS");
-    mThicknessHw = pipeline(mLayoutHw, mModHw, "thicknessCS");
-    mBentHw = pipeline(mLayoutHw, mModHw, "bentCS");
-    mRoundedHw = pipeline(mLayoutHw, mModHw, "roundedCS");
-    mErrorHw = pipeline(mLayoutHw, mModHw, "errorCS");
+    const Module* hw = module("bake_hw.spv");
+    mProjectHw = pipeline(mLayoutHw, hw, "projectCS");
+    mAoHw = pipeline(mLayoutHw, hw, "aoCS");
+    mThicknessHw = pipeline(mLayoutHw, hw, "thicknessCS");
+    mBentHw = pipeline(mLayoutHw, hw, "bentCS");
+    mRoundedHw = pipeline(mLayoutHw, hw, "roundedCS");
+    mErrorHw = pipeline(mLayoutHw, hw, "errorCS");
 }
 
 Blas GpuBackend::buildBlas(VulkanContext& vk, const bake::MeshSoup& soup, uint32_t first, uint32_t count) const
@@ -1789,16 +1644,9 @@ void GpuBackend::runSteps(std::vector<GpuStep>& steps, const std::function<bool(
                 if (st.rate && n)
                 {
                     perItem = st.cost / std::max(st.rate->load(), 1e-3);
-                    const double room = kSliceMs - predicted;
-                    const size_t fit = room > 0.0 ? size_t(room / perItem) : 0;
-                    constexpr size_t kMinItems = 4096;
-                    if (fit < n)
-                    {
-                        // A full slice ends here; an empty one takes at least a few thousand items.
-                        if (predicted > 0.0 && fit < std::min(n, kMinItems))
-                            break;
-                        n = std::max(fit, std::min(n, kMinItems));
-                    }
+                    n = compute::sliceFit(n, perItem, predicted, mSliceMs);
+                    if (n == 0)
+                        break;
                     used.emplace_back(st.rate, double(n) * perItem);
                 }
                 if (n)
@@ -1829,10 +1677,9 @@ void GpuBackend::runSteps(std::vector<GpuStep>& steps, const std::function<bool(
         if (predicted > 2.0 && ms > 0.05)
         {
             // Each rate that ran a good share of the slice moves toward what the slice measured.
-            const double f = std::clamp(predicted / ms, 0.25, 4.0);
             for (auto& [rate, share] : used)
                 if (share > 0.2 * predicted)
-                    *rate = rate->load() * (0.5 + 0.5 * f);
+                    *rate = compute::adaptRate(rate->load(), predicted, ms);
         }
         return step >= steps.size();
     });
@@ -1946,22 +1793,15 @@ struct ResidentUploads
  * A bake kept on the device: per band the raster claims samples, the projection traces them once and every map's
  * kernel shades them into per-texel accumulators of the textures they write. Only finished textures come back.
  */
-class GpuResident final : public bake::ResidentBake
+class GpuResident final : public bake::ResidentBake, public DeviceBake
 {
 public:
     GpuResident(GpuBackend& backend, const bake::BakeInputs& inputs, std::vector<bake::ResidentMap> maps, const bake::OutputSettings& output)
-        : mB(backend), mVk(backend.mVk), mIn(inputs), mMaps(std::move(maps)), mOut(output)
+        : mB(backend), mVk(backend.mVk), mIn(&inputs), mMaps(std::move(maps)), mOut(output)
     {
         for (const bake::ResidentMap& m : mMaps)
             mNeedEdges = mNeedEdges || m.def->id == "wireframe" || m.def->id == "islandBorder";
-        mLows.resize(mIn.groups.size());
-        mLowTables.resize(mIn.groups.size());
-        for (size_t g = 0; g < mIn.groups.size(); ++g)
-        {
-            mLows[g].resize(mIn.groups[g].lows.size());
-            std::vector<GpuLowInfo> zero(std::max<size_t>(1, mIn.groups[g].lows.size()));
-            mLowTables[g] = hostBuffer(mVk, zero.data(), zero.size() * sizeof(GpuLowInfo));
-        }
+        initLows();
     }
 
     ~GpuResident() override
@@ -2018,6 +1858,11 @@ public:
     bake::ResidentStats bakeTile(const bake::ResidentTile& tile) override;
     bool finish(bake::TextureBuffer& tex, int padding) override;
 
+    void rebind(const bake::BakeInputs& inputs) override;
+    void clearTiles(const bake::TextureBuffer& tex, std::span<const uint32_t> tiles, int tile) override;
+    void finishInto(bake::TextureBuffer& tex, int padding, const GpuImageRef& image) override;
+    void drop(const bake::TextureBuffer& tex) override;
+
     bake::json timings() const override
     {
         bake::json t = bake::json::object();
@@ -2073,11 +1918,17 @@ private:
     void reserveBand(size_t slots, size_t items);
     /** Keeps a host-visible table alive for the bake and returns its address. */
     uint64_t table(const void* data, size_t bytes);
-    void release();
+    /** Frees everything made for the inputs; keepTextures keeps the textures' accumulators. */
+    void release(bool keepTextures = false);
+    /** Sizes the per-low tables for mIn. */
+    void initLows();
+    bool finishImpl(bake::TextureBuffer& tex, int padding, const GpuImageRef* into);
+    /** Steps that pack base's finished values into image's format and copy them into it. */
+    void writeImage(std::vector<GpuStep>& steps, const GpuImagePush& base, GpuImage& image);
 
     GpuBackend& mB;
     VulkanContext& mVk;
-    const bake::BakeInputs& mIn;
+    const bake::BakeInputs* mIn;
     std::vector<bake::ResidentMap> mMaps;
     bake::OutputSettings mOut;
     bool mNeedEdges = false;
@@ -2099,6 +1950,12 @@ private:
     // Finish buffers.
     GpuBuffer mSeeds[2], mScratch, mReduce, mReduceRead, mReadback;
     size_t mTexelCap = 0;
+    // Finishing into images: the accumulators' working copy and the packed texels.
+    GpuBuffer mWorkValue, mWorkCount, mPack;
+    size_t mWorkCap = 0;
+    std::vector<GpuBuffer> mStaging;
+    GpuBuffer mTileList;
+    size_t mTileListCap = 0;
     /** CPU time making kernels' tables and uploading lows (curvature, textures, ...). */
     double mSetupSeconds = 0.0;
 };
@@ -2109,7 +1966,142 @@ uint64_t GpuResident::table(const void* data, size_t bytes)
     return mOwned.back().address;
 }
 
-void GpuResident::release()
+void GpuResident::initLows()
+{
+    mLows.clear();
+    mLows.resize(mIn->groups.size());
+    mLowTables.resize(mIn->groups.size());
+    for (size_t g = 0; g < mIn->groups.size(); ++g)
+    {
+        mLows[g].resize(mIn->groups[g].lows.size());
+        std::vector<GpuLowInfo> zero(std::max<size_t>(1, mIn->groups[g].lows.size()));
+        mLowTables[g] = hostBuffer(mVk, zero.data(), zero.size() * sizeof(GpuLowInfo));
+    }
+}
+
+void GpuResident::rebind(const bake::BakeInputs& inputs)
+{
+    LILA_ZONE();
+
+    mB.runTask([this](VulkanContext&) {
+        release(true);
+        return true;
+    });
+    mKernels.clear();
+    mTextures.clear();
+    mNormalMapTables.clear();
+    mCurvatureTables.clear();
+    mMaterialTables.clear();
+    mColorTables.clear();
+    mIn = &inputs;
+    initLows();
+}
+
+void GpuResident::clearTiles(const bake::TextureBuffer& tex, std::span<const uint32_t> tiles, int tile)
+{
+    LILA_ZONE();
+
+    DevTex& d = texture(tex);
+    if (tiles.empty())
+    {
+        mB.runTask([&](VulkanContext& vk) {
+            mB.initDevice(vk);
+            mB.mSub.run(vk, [&](VkCommandBuffer cmd) {
+                for (GpuBuffer* buf : {&d.value, &d.weight, &d.count, &d.exact, &d.votes})
+                    if (buf->buffer)
+                        vkCmdFillBuffer(cmd, buf->buffer, 0, VK_WHOLE_SIZE, 0);
+            });
+            return true;
+        });
+        return;
+    }
+    if (tiles.size() > mTileListCap)
+    {
+        destroy(mVk, mTileList);
+        mTileListCap = std::max<size_t>(tiles.size(), 1024);
+        mTileList = makeBuffer(mVk, mTileListCap * sizeof(uint32_t), 0, Host::Write);
+    }
+    std::memcpy(mTileList.mapped, tiles.data(), tiles.size_bytes());
+    vmaFlushAllocation(mVk.allocator, mTileList.alloc, 0, VK_WHOLE_SIZE);
+    GpuImagePush q;
+    q.value = d.value.address;
+    q.weight = d.weight.address;
+    q.count = d.count.address;
+    q.exact = d.exact.address;
+    q.votes = d.votes.address;
+    q.seedsIn = mTileList.address;
+    q.width = uint32_t(tex.width);
+    q.height = uint32_t(tex.height);
+    q.step = tile;
+    q.shift = uint32_t((tex.width + tile - 1) / tile);
+    q.mode = tex.def && tex.def->resolve == bake::Resolve::Exact ? 1u : 0u;
+    GpuBackend& b = mB;
+    std::vector<GpuStep> steps;
+    steps.push_back({tiles.size() * size_t(tile) * size_t(tile), 1.0, &b.mImageRate, [&b, q](VkCommandBuffer cmd, uint32_t first, uint32_t count) {
+                         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, b.mImagePipes.at("clearTilesCS"));
+                         dispatchChunks(cmd, b.mLayoutImage, q, first, count, 64, [](GpuImagePush& r, uint32_t f, uint32_t c) {
+                             r.first = f;
+                             r.total = f + c;
+                         });
+                     },
+                     "clear"});
+    b.runSteps(steps);
+}
+
+void GpuResident::drop(const bake::TextureBuffer& tex)
+{
+    auto it = mTex.find(&tex);
+    if (it == mTex.end())
+        return;
+    mB.runTask([&](VulkanContext&) {
+        for (GpuBuffer* buf : {&it->second.value, &it->second.weight, &it->second.count, &it->second.exact, &it->second.votes})
+            destroy(mVk, *buf);
+        return true;
+    });
+    mTex.erase(it);
+}
+
+void GpuResident::writeImage(std::vector<GpuStep>& steps, const GpuImagePush& base, GpuImage& image)
+{
+    GpuBackend& b = mB;
+    const size_t n = size_t(base.width) * size_t(base.height);
+    GpuImagePush q = base;
+    q.seedsOut = mPack.address;
+    size_t items = n;
+    switch (image.format())
+    {
+    case TextureFormat::RGBA16F: q.mode = 0; break;
+    case TextureFormat::R16F:
+        q.mode = 1;
+        items = (n + 1) / 2;
+        break;
+    case TextureFormat::RGBA8: q.mode = 2; break;
+    default: throw std::invalid_argument("GPU bake: images take RGBA16F, R16F or RGBA8");
+    }
+    steps.push_back({items, 1.0, &b.mImageRate, [&b, q](VkCommandBuffer cmd, uint32_t first, uint32_t count) {
+                         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, b.mImagePipes.at("packTexelsCS"));
+                         dispatchChunks(cmd, b.mLayoutImage, q, first, count, 64, [](GpuImagePush& r, uint32_t f, uint32_t c) {
+                             r.first = f;
+                             r.total = f + c;
+                         });
+                     },
+                     "write"});
+    steps.push_back({1, 0.0, nullptr, [this, &image](VkCommandBuffer cmd, uint32_t, uint32_t) {
+                         if (!image.prepare(mVk, cmd, mStaging))
+                             throw std::runtime_error("GPU bake: cannot make the image " + image.desc().name);
+                         image.beginWrite(cmd);
+                         memoryBarrier(cmd);
+                         VkBufferImageCopy region{};
+                         region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                         region.imageExtent = {uint32_t(image.width()), uint32_t(image.height()), 1};
+                         vkCmdCopyBufferToImage(cmd, mPack.buffer, image.image(), VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+                         memoryBarrier(cmd);
+                         image.endWrite(cmd);
+                     },
+                     "write"});
+}
+
+void GpuResident::release(bool keepTextures)
 {
     for (auto& per : mLows)
         for (auto& l : per)
@@ -2121,16 +2113,21 @@ void GpuResident::release()
     for (GpuBuffer& b : mLowTables)
         destroy(mVk, b);
     mLowTables.clear();
+    for (GpuBuffer& b : mOwned)
+        destroy(mVk, b);
+    mOwned.clear();
+    if (keepTextures)
+        return;
     for (auto& [k, t] : mTex)
         for (GpuBuffer* b : {&t.value, &t.weight, &t.count, &t.exact, &t.votes})
             destroy(mVk, *b);
     mTex.clear();
-    for (GpuBuffer& b : mOwned)
-        destroy(mVk, b);
-    mOwned.clear();
     for (GpuBuffer* b : {&mClaim, &mSamples, &mHits, &mOutBuf, &mValid, &mItems, &mStats, &mStatsRead, &mSeeds[0], &mSeeds[1], &mScratch, &mReduce,
-                         &mReduceRead, &mReadback})
+                         &mReduceRead, &mReadback, &mWorkValue, &mWorkCount, &mPack, &mTileList})
         destroy(mVk, *b);
+    for (GpuBuffer& b : mStaging)
+        destroy(mVk, b);
+    mStaging.clear();
 }
 
 GpuResident::DevLow& GpuResident::low(size_t g, size_t l)
@@ -2140,7 +2137,7 @@ GpuResident::DevLow& GpuResident::low(size_t g, size_t l)
         return *slot;
     LILA_ZONE();
 
-    const bake::LowInput& in = mIn.groups[g].lows[l];
+    const bake::LowInput& in = mIn->groups[g].lows[l];
     const bake::MeshSoup& s = in.soup;
     auto d = std::make_unique<DevLow>();
     ResidentUploads up{mB};
@@ -2252,7 +2249,7 @@ void GpuResident::needHighSurfaces(size_t g, ResidentUploads& up)
     {
         const size_t k = b.mGroupBase[g] + h;
         GpuHigh& gh = *b.mHighs[k];
-        const bake::MeshSoup& soup = mIn.groups[g].highs[h].soup;
+        const bake::MeshSoup& soup = mIn->groups[g].highs[h].soup;
         if (!gh.positions.buffer && !soup.positions.empty())
         {
             up.add(gh.positions, soup.positions.data(), soup.positions.size() * sizeof(glm::vec3));
@@ -2277,7 +2274,7 @@ uint64_t GpuResident::normalMapTable(size_t g)
 {
     if (auto it = mNormalMapTables.find(g); it != mNormalMapTables.end())
         return it->second;
-    const bake::GroupInputs& gi = mIn.groups[g];
+    const bake::GroupInputs& gi = mIn->groups[g];
     std::vector<GpuTextureRef> refs;
     bool any = false;
     for (size_t h = 0; h < gi.highs.size(); ++h)
@@ -2290,8 +2287,8 @@ uint64_t GpuResident::normalMapTable(size_t g)
             continue;
         for (size_t m = 0; m < soup.materialNames.size() && m < gh.slotTriangle.size(); ++m)
         {
-            auto mat = mIn.materials.find(soup.materialNames[m]);
-            if (mat == mIn.materials.end() || mat->second.normalMap.empty())
+            auto mat = mIn->materials.find(soup.materialNames[m]);
+            if (mat == mIn->materials.end() || mat->second.normalMap.empty())
                 continue;
             GpuTextureRef r = loadTexture(mat->second.normalMap);
             r.flags = mat->second.normalOpenGL ? 1u : 0u;
@@ -2315,7 +2312,7 @@ uint64_t GpuResident::materialTable(size_t g, const std::string& map)
     const auto key = std::make_pair(g, map);
     if (auto it = mMaterialTables.find(key); it != mMaterialTables.end())
         return it->second;
-    const bake::GroupInputs& gi = mIn.groups[g];
+    const bake::GroupInputs& gi = mIn->groups[g];
     static const bake::MaterialInput kNeutral;
     std::vector<GpuMaterialSlot> slots;
     bool textured = false;
@@ -2330,8 +2327,8 @@ uint64_t GpuResident::materialTable(size_t g, const std::string& map)
         {
             GpuMaterialSlot& slot = slots[materialBase + m];
             const bool named = m < soup.materialNames.size() && m < count;
-            auto it = named ? mIn.materials.find(soup.materialNames[m]) : mIn.materials.end();
-            const bake::MaterialInput& mat = it != mIn.materials.end() ? it->second : kNeutral;
+            auto it = named ? mIn->materials.find(soup.materialNames[m]) : mIn->materials.end();
+            const bake::MaterialInput& mat = it != mIn->materials.end() ? it->second : kNeutral;
             slot.baseColor = glm::vec4(mat.baseColor, 1.0f);
             slot.emissive = glm::vec4(mat.emissive, float(mat.blendMode));
             slot.scalars = glm::vec4(mat.roughness, mat.metallic, mat.opacity, mat.emissiveIntensity);
@@ -2364,7 +2361,7 @@ uint64_t GpuResident::curvatureTable(size_t g)
     if (auto it = mCurvatureTables.find(g); it != mCurvatureTables.end())
         return it->second;
     GpuBackend& b = mB;
-    const bake::GroupInputs& gi = mIn.groups[g];
+    const bake::GroupInputs& gi = mIn->groups[g];
     std::vector<GpuCornerTable> entries(std::max<size_t>(1, gi.highs.size()));
     std::vector<std::shared_ptr<const std::vector<float>>> corner(gi.highs.size());
     tbb::parallel_for(size_t(0), gi.highs.size(), [&](size_t h) { corner[h] = bake::highCurvature(gi.highs[h].soup); });
@@ -2392,7 +2389,7 @@ uint64_t GpuResident::colorTable(size_t g, const std::string& set, bool first)
     if (auto it = mColorTables.find(key); it != mColorTables.end())
         return it->second;
     GpuBackend& b = mB;
-    const bake::GroupInputs& gi = mIn.groups[g];
+    const bake::GroupInputs& gi = mIn->groups[g];
     std::vector<GpuCornerTable> entries(std::max<size_t>(1, gi.highs.size()));
     ResidentUploads up{mB};
     std::vector<std::string> names(gi.highs.size());
@@ -2481,7 +2478,7 @@ GpuResident::Kernel GpuResident::makeKernel(size_t m, size_t g)
     const bake::ResidentMap& rm = mMaps[m];
     const std::string& id = rm.def->id;
     const bake::json& o = rm.settings.options;
-    const bake::GroupInputs& gi = mIn.groups[g];
+    const bake::GroupInputs& gi = mIn->groups[g];
     const float diag = glm::length(gi.highMax - gi.highMin);
     const float eps = std::max(1e-4f * diag, 1e-4f);
     Kernel k;
@@ -2491,8 +2488,8 @@ GpuResident::Kernel GpuResident::makeKernel(size_t m, size_t g)
     p.highList = b.mIota.address;
     p.highCount = uint32_t(b.mGroupHighs[g]);
     p.lows = mLowTables[g].address;
-    p.boundsMin = glm::vec4(mIn.highMin, 0.0f);
-    p.boundsExt = glm::vec4(mIn.highMax - mIn.highMin, 0.0f);
+    p.boundsMin = glm::vec4(mIn->highMin, 0.0f);
+    p.boundsExt = glm::vec4(mIn->highMax - mIn->highMin, 0.0f);
     p.width = uint32_t(mOut.width);
     p.height = uint32_t(mOut.height);
     k.pipe = b.mShade;
@@ -2546,7 +2543,7 @@ GpuResident::Kernel GpuResident::makeKernel(size_t m, size_t g)
         else
         {
             p.map = kMapId;
-            const bake::MapContext ctx{rm.settings, mIn, gi, g, nullptr, mOut.width, mOut.height, nullptr};
+            const bake::MapContext ctx{rm.settings, *mIn, gi, g, nullptr, mOut.width, mOut.height, nullptr};
             p.table = b.idTable(*rm.def, ctx).address;
         }
     }
@@ -2590,7 +2587,7 @@ GpuResident::Kernel GpuResident::makeKernel(size_t m, size_t g)
         const float dl = glm::length(d);
         d = dl > 1e-20f ? d / dl : glm::vec3(0.0f, 1.0f, 0.0f);
         const bool all = option(o, "bounds", std::string("group")) == "all";
-        const glm::vec3 lo = all ? mIn.highMin : gi.highMin, hi = all ? mIn.highMax : gi.highMax;
+        const glm::vec3 lo = all ? mIn->highMin : gi.highMin, hi = all ? mIn->highMax : gi.highMax;
         float mn = 1e30f, mx = -1e30f;
         for (int c = 0; c < 8; ++c)
         {
@@ -2679,7 +2676,7 @@ bake::ResidentStats GpuResident::bakeTile(const bake::ResidentTile& tile)
     const bake::TexelRaster& raster = *tile.raster;
     const int W = raster.settings().width, H = raster.settings().height, rows = raster.settings().bandRows;
     const uint32_t grid = uint32_t(raster.gridSize()), S = grid * grid;
-    const bake::LowInput& lowIn = mIn.groups[g].lows[tile.low];
+    const bake::LowInput& lowIn = mIn->groups[g].lows[tile.low];
     const auto setupStarted = std::chrono::steady_clock::now();
     low(g, tile.low);
     const uint64_t lowInfo = mLowTables[g].address + tile.low * sizeof(GpuLowInfo);
@@ -2715,10 +2712,15 @@ bake::ResidentStats GpuResident::bakeTile(const bake::ResidentTile& tile)
     mSetupSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - setupStarted).count();
     const int udim = tile.udim;
     const int tileU = (udim - 1001) % 10, tileV = (udim - 1001) / 10;
-    const bool cullBack = mIn.groups[g].settings.ignoreBackfaces;
+    const bool cullBack = mIn->groups[g].settings.ignoreBackfaces;
     const bool traceable = b.mGroupHighs[g] > 0 && (!b.mHardware || b.mGroupTlas[g].as);
     bake::ResidentStats stats;
     std::vector<uint32_t> items;
+    // Texel tiles: which the mask lets through, and which had work.
+    const int maskTile = std::max(8, tile.maskTile / 8 * 8);
+    const int tileCols = (W + maskTile - 1) / maskTile, tileRows = (H + maskTile - 1) / maskTile;
+    const std::vector<uint8_t>* mask = tile.mask && tile.mask->size() == size_t(tileCols) * size_t(tileRows) ? tile.mask : nullptr;
+    std::vector<uint8_t> worked(size_t(tileCols) * size_t(tileRows), 0);
     for (size_t band = 0; band < raster.bandCount(); ++band)
     {
         const int y0 = int(band) * rows, y1 = std::min(H, y0 + rows);
@@ -2748,7 +2750,19 @@ bake::ResidentStats GpuResident::bakeTile(const bake::ResidentTile& tile)
                 continue;
             for (int by = ya / 8; by <= (yb - 1) / 8; ++by)
                 for (int bx = xa / 8; bx <= (xb - 1) / 8; ++bx)
+                {
+                    const size_t mt = size_t(std::min(by * 8 / maskTile, tileRows - 1)) * size_t(tileCols) + size_t(bx * 8 / maskTile);
+                    if (mask && !(*mask)[mt])
+                        continue;
+                    worked[mt] = 1;
                     items.insert(items.end(), {t, uint32_t(bx), uint32_t(by)});
+                }
+        }
+        if (items.empty())
+        {
+            if (tile.onBand)
+                tile.onBand(y1 - y0);
+            continue;
         }
         const size_t texels = size_t(W) * size_t(y1 - y0);
         const size_t slots = texels * S;
@@ -2875,10 +2889,22 @@ bake::ResidentStats GpuResident::bakeTile(const bake::ResidentTile& tile)
         if (tile.onBand)
             tile.onBand(y1 - y0);
     }
+    stats.tiles = uint64_t(std::ranges::count(worked, uint8_t(1)));
     return stats;
 }
 
-bool GpuResident::finish(bake::TextureBuffer& tex, int padding)
+bool GpuResident::finish(bake::TextureBuffer& tex, int padding) { return finishImpl(tex, padding, nullptr); }
+
+void GpuResident::finishInto(bake::TextureBuffer& tex, int padding, const GpuImageRef& image)
+{
+    if (!image || image->width() != tex.width || image->height() != tex.height)
+        throw std::invalid_argument("GPU bake: the image does not match the texture");
+    if (finishOf(tex.def->id) == Finish::Cpu)
+        throw std::runtime_error("GPU bake: " + tex.def->id + " finalizes on the CPU and cannot finish into an image");
+    finishImpl(tex, padding, &image);
+}
+
+bool GpuResident::finishImpl(bake::TextureBuffer& tex, int padding, const GpuImageRef* into)
 {
     LILA_ZONE();
 
@@ -2888,6 +2914,15 @@ bool GpuResident::finish(bake::TextureBuffer& tex, int padding)
     const bake::MapDef& def = *tex.def;
     const bake::MapSettings& ms = tex.settings;
     const Finish kind = finishOf(def.id);
+    if (into && n > mWorkCap)
+    {
+        for (GpuBuffer* buf : {&mWorkValue, &mWorkCount, &mPack})
+            destroy(mVk, *buf);
+        mWorkValue = makeBuffer(mVk, n * sizeof(glm::vec4), 0, Host::None);
+        mWorkCount = makeBuffer(mVk, n * sizeof(uint32_t), 0, Host::None);
+        mPack = makeBuffer(mVk, n * 8, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, Host::None);
+        mWorkCap = n;
+    }
     if (n > mTexelCap)
     {
         for (GpuBuffer* buf : {&mSeeds[0], &mSeeds[1], &mScratch, &mReadback})
@@ -2905,9 +2940,10 @@ bool GpuResident::finish(bake::TextureBuffer& tex, int padding)
     }
 
     GpuImagePush base;
-    base.value = d.value.address;
+    // Into an image, the passes work on a copy so the accumulators stay for the next incremental update.
+    base.value = into ? mWorkValue.address : d.value.address;
     base.weight = d.weight.address;
-    base.count = d.count.address;
+    base.count = into ? mWorkCount.address : d.count.address;
     base.exact = d.exact.address;
     base.votes = d.votes.address;
     base.scratch = mScratch.address;
@@ -2952,6 +2988,12 @@ bool GpuResident::finish(bake::TextureBuffer& tex, int padding)
         return std::bit_cast<float>(readReduce()[0]);
     };
 
+    if (into)
+        steps.push_back({1, 0.0, nullptr, [&](VkCommandBuffer cmd, uint32_t, uint32_t) {
+                             copy(cmd, d.value, mWorkValue, n * sizeof(glm::vec4));
+                             copy(cmd, d.count, mWorkCount, n * sizeof(uint32_t));
+                         },
+                         "resolve"});
     pass("resolveCS", base);
     bool deviceFinalized = kind != Finish::Cpu;
     switch (kind)
@@ -3100,6 +3142,15 @@ bool GpuResident::finish(bake::TextureBuffer& tex, int padding)
         q.padding = padding;
         pass("dilateApplyCS", q);
     }
+    if (into)
+    {
+        writeImage(steps, base, **into);
+        run();
+        for (GpuBuffer& buf : mStaging)
+            destroy(mVk, buf);
+        mStaging.clear();
+        return true;
+    }
     steps.push_back({1, 0.0, nullptr, [&](VkCommandBuffer cmd, uint32_t, uint32_t) {
                          VkBufferCopy regions[2] = {{0, 0, n * sizeof(glm::vec4)}, {0, n * sizeof(glm::vec4), n * sizeof(uint32_t)}};
                          vkCmdCopyBuffer(cmd, d.value.buffer, mReadback.buffer, 1, &regions[0]);
@@ -3121,7 +3172,7 @@ bool GpuResident::finish(bake::TextureBuffer& tex, int padding)
         destroy(mVk, *buf);
     mTex.erase(&tex);
     if (kind == Finish::None && def.finalize)
-        def.finalize(ms, mIn, tex, tex.meta);
+        def.finalize(ms, *mIn, tex, tex.meta);
     return deviceFinalized;
 }
 
@@ -3149,6 +3200,19 @@ std::unique_ptr<bake::ResidentBake> GpuBackend::beginResident(const bake::BakeIn
     return std::make_unique<GpuResident>(*this, inputs, maps, output);
 }
 } // namespace
+
+std::unique_ptr<DeviceBake> beginDeviceBake(bake::Backend& backend, const bake::BakeInputs& inputs, std::vector<bake::ResidentMap> maps,
+                                            const bake::OutputSettings& output, double sliceMs)
+{
+    auto* gpu = dynamic_cast<GpuBackend*>(&backend);
+    if (!gpu || maps.empty())
+        return nullptr;
+    gpu->setSliceMs(std::clamp(sliceMs, 2.0, kSliceMs));
+    std::unique_ptr<bake::ResidentBake> r = gpu->beginResident(inputs, maps, output);
+    if (!r)
+        return nullptr;
+    return std::unique_ptr<DeviceBake>(static_cast<GpuResident*>(r.release()));
+}
 
 std::unique_ptr<bake::Backend> createGpuBakeBackend(GpuTrace trace)
 {
@@ -3183,6 +3247,8 @@ std::unique_ptr<bake::Backend> createGpuBakeBackend(GpuTrace trace)
 void registerGpuBakeBackend()
 {
     bake::registerBackend("gpu", [] { return createGpuBakeBackend(GpuTrace::Auto); });
+    static std::once_flag commands;
+    std::call_once(commands, [] { registerLiveMapCommands(); });
 }
 
 std::string gpuBakeMode(const bake::Backend& backend)

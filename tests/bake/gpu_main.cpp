@@ -5,6 +5,8 @@
 #include "core/MainQueue.h"
 #include "io/SceneFile.h"
 #include "ops/Command.h"
+#include "render/Baker.h"
+#include "render/MeshMaps.h"
 #include "render/Renderer.h"
 #include "scene/Node.h"
 #include "scene/SceneCommands.h"
@@ -27,9 +29,11 @@ int main(int argc, char** argv)
     lila::scene::registerCommands();
     lila::io::registerCommands();
     lila::bake::registerCommands();
+    lila::render::registerGpuBakeBackend();
 
     doctest::Context ctx(argc, argv);
     const int rc = ctx.run();
+    lila::render::shutdownLiveMaps();
     lila::render::Renderer::get().stop();
     return rc;
 }

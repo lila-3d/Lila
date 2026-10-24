@@ -406,3 +406,55 @@ void dilateApplyCS(uint3 id: SV_DispatchThreadID)
     if (ip.padding < 0 || max(dx, dy) <= ip.padding)
         ip.value[i] = ip.value[s];
 }
+
+// Incremental rebakes: zeroes the accumulators of the texel tiles listed in seedsIn (index ty * columns + tx, columns in
+// shift), step x step texels each. Thread i is texel i % (step * step) of listed tile i / (step * step).
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void clearTilesCS(uint3 id: SV_DispatchThreadID)
+{
+    uint i = ip.first + id.x;
+    if (i >= ip.total)
+        return;
+    uint s = uint(ip.step);
+    uint tile = ip.seedsIn[i / (s * s)];
+    uint x = (tile % ip.shift) * s + i % s;
+    uint y = (tile / ip.shift) * s + (i / s) % s;
+    if (x >= ip.width || y >= ip.height)
+        return;
+    uint t = y * ip.width + x;
+    ip.value[t] = float4(0, 0, 0, 0);
+    ip.weight[t] = 0.0;
+    ip.count[t] = 0;
+    if (ip.mode == kResolveExact)
+    {
+        ip.exact[t] = 0;
+        ip.votes[t] = 0;
+    }
+}
+
+// Finished values into an image's texel layout in seedsOut, for a buffer to image copy: mode 0 RGBA16F, 1 R16F (thread i
+// packs texels 2i and 2i + 1), 2 RGBA8 unorm.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void packTexelsCS(uint3 id: SV_DispatchThreadID)
+{
+    uint i = ip.first + id.x;
+    if (i >= ip.total)
+        return;
+    if (ip.mode == 0)
+    {
+        float4 v = ip.value[i];
+        ip.seedsOut[i * 2] = f32tof16(v.x) | (f32tof16(v.y) << 16);
+        ip.seedsOut[i * 2 + 1] = f32tof16(v.z) | (f32tof16(v.w) << 16);
+    }
+    else if (ip.mode == 1)
+    {
+        uint n = ip.width * ip.height;
+        uint a = f32tof16(ip.value[i * 2].x);
+        uint b = i * 2 + 1 < n ? f32tof16(ip.value[i * 2 + 1].x) : 0u;
+        ip.seedsOut[i] = a | (b << 16);
+    }
+    else
+        ip.seedsOut[i] = packRgba8(ip.value[i]);
+}

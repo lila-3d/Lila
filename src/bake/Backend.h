@@ -86,6 +86,12 @@ struct ResidentTile
     std::function<void(int rows)> onBand;
     /** Polled between GPU slices, from any thread: true stops the tile with progress::Cancelled. */
     std::function<bool()> cancelled;
+    /**
+     * Incremental rebakes: one flag per texel tile of maskTile x maskTile texels, row major from the top left, and only
+     * flagged tiles are rasterised and traced. Null bakes the whole tile.
+     */
+    const std::vector<uint8_t>* mask = nullptr;
+    int maskTile = 32;
 };
 
 struct ResidentStats
@@ -93,6 +99,8 @@ struct ResidentStats
     uint64_t samples = 0;
     uint64_t hits = 0;
     uint64_t backfaces = 0;
+    /** Texel tiles (ResidentTile::maskTile square) that had triangles to rasterise. */
+    uint64_t tiles = 0;
 };
 
 /**

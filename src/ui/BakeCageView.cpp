@@ -5,12 +5,15 @@
 
 #include "bake/Arrange.h"
 #include "bake/BakeNodes.h"
+#include "bake/BakePipeline.h"
 #include "bake/Cage.h"
 #include "bake/CagePreview.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "geo/Mesh.h"
 #include "geo/Triangulate.h"
+#include "render/GpuImage.h"
+#include "render/MeshMaps.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
@@ -23,6 +26,7 @@
 #include <QTimer>
 
 #include <chrono>
+#include <cmath>
 #include <deque>
 #include <map>
 #include <set>
@@ -75,11 +79,18 @@ struct Shell
     std::vector<render::LineVertex> wire;
 };
 
+/** Preview maps of one low: GPU images the renderer samples, written in place by each new preview. */
+struct PreviewMaps
+{
+    render::GpuImageRef normal, error;
+    render::TexturePtr normalTexture, errorTexture;
+};
+
 /** Preview textures of one group as the renderer takes them. */
 struct PreviewTextures
 {
     uint64_t generation = 0;
-    std::map<std::string, std::pair<render::TexturePtr, render::TexturePtr>> byMesh;
+    std::map<std::string, PreviewMaps> byMesh;
     bool greenUp = false;
 };
 
@@ -103,6 +114,9 @@ struct State
     QTimer* debounce = nullptr;
     int graphListener = 0;
     bool listening = false;
+    /** GPU previews: per project, the groups its cage preview set bakes. */
+    std::map<NodeId, std::vector<NodeId>> liveGroups;
+    int mapListener = 0;
     std::vector<std::pair<QPointer<QObject>, std::function<void()>>> changed;
 };
 
@@ -162,10 +176,92 @@ void rebuildWatch()
     }
 }
 
+/** Previews bake through the GPU's live mesh maps when there is a GPU: per stroke only the touched tiles, never read back. */
+bool gpuPreview() { return bake::preferredBackend() != "cpu"; }
+
+/** The project's tangent normal map settings (its convention), else the default. */
+bake::MapSettings normalMapOf(const bake::ProjectSettings& ps)
+{
+    for (const bake::MapSettings& m : ps.maps)
+        if (m.map == "normal" && m.enabled)
+            return m;
+    bake::MapSettings m;
+    m.map = "normal";
+    return m;
+}
+
+/** GPU previews: one cage preview set per project over its displayed groups while live preview is on. Main thread. */
+void syncLiveSets()
+{
+    State& st = state();
+    if (!gpuPreview())
+        return;
+    scene::Graph& g = scene::Graph::current();
+    std::map<NodeId, std::vector<NodeId>> want;
+    if (st.live)
+        for (NodeId gid : displayed())
+            if (scene::Node* grp = g.node(gid); grp && bake::isGroup(*grp))
+                if (scene::Node* p = bake::groupProject(g, *grp))
+                    want[p->id()].push_back(gid);
+    for (const auto& [pid, groups] : st.liveGroups)
+        if (!want.contains(pid))
+            render::disableLiveMaps(pid, render::kCagePreviewSet);
+    std::map<NodeId, std::vector<NodeId>> enabled;
+    for (const auto& [pid, groups] : want)
+    {
+        if (auto it = st.liveGroups.find(pid); it != st.liveGroups.end() && it->second == groups && render::liveMapsEnabled(pid, render::kCagePreviewSet))
+        {
+            enabled[pid] = groups;
+            continue;
+        }
+        bake::MapSettings error;
+        error.map = "error";
+        render::LiveMapsOptions o;
+        o.mapSettings = {normalMapOf(bake::projectSettings(*g.node(pid))), error};
+        o.groups = groups;
+        o.resolution = 512;
+        o.supersampling = 1;
+        o.padding = 4;
+        try
+        {
+            render::enableLiveMaps(g, pid, o, render::kCagePreviewSet);
+            enabled[pid] = groups;
+            for (const auto& [low, values] : st.working)
+                if (scene::Node* n = g.node(low); n && st.lowGroup.contains(low) && std::ranges::find(groups, st.lowGroup[low]) != groups.end())
+                    render::setLiveCageOffsets(pid, render::kCagePreviewSet, n->path(), values);
+        }
+        catch (const std::exception& e)
+        {
+            log::warn("Cage preview of {}: {}", g.node(pid)->name(), e.what());
+        }
+    }
+    st.liveGroups = std::move(enabled);
+    if (!st.mapListener)
+        st.mapListener = render::addMeshMapSetListener([](const render::MeshMapChange& c) {
+            if (c.set == render::kCagePreviewSet)
+                viewportTools::requestRedraw();
+        });
+}
+
+/** The project of a displayed group's low, or null. */
+scene::Node* projectOfLow(scene::Graph& g, NodeId low)
+{
+    State& st = state();
+    auto it = st.lowGroup.find(low);
+    scene::Node* grp = it != st.lowGroup.end() ? g.node(it->second) : nullptr;
+    return grp && bake::isGroup(*grp) ? bake::groupProject(g, *grp) : nullptr;
+}
+
 /** Starts the next queued preview when none runs. */
 void pump()
 {
     State& st = state();
+    if (st.live && gpuPreview())
+    {
+        st.queue.clear();
+        syncLiveSets();
+        return;
+    }
     if (!st.live || bake::cagePreviewBusy())
         return;
     scene::Graph& g = scene::Graph::current();
@@ -235,6 +331,7 @@ void listen()
                 std::erase_if(st.shown, [&](NodeId gid) { return !g.node(gid); });
                 if (st.painting != kNoNode && !g.node(st.painting))
                     st.painting = kNoNode;
+                std::erase_if(st.liveGroups, [&](const auto& kv) { return !g.node(kv.first); });
             }
             rebuildWatch();
             for (NodeId gid : displayed())
@@ -254,17 +351,24 @@ void listen()
     });
 }
 
-render::TexturePtr toTexture(const bake::CagePreviewTexture& t, bool srgb)
+/** Writes a preview map into image (made anew when missing or resized). srgb: the values are sRGB-encoded colours. */
+render::TexturePtr upload(render::GpuImageRef& image, const bake::CagePreviewTexture& t, bool srgb)
 {
-    auto img = std::make_shared<render::TextureImage>();
-    img->width = t.width;
-    img->height = t.height;
-    img->srgb = srgb;
-    img->rgba.resize(size_t(t.width) * size_t(t.height) * 4);
+    if (t.width < 1 || t.height < 1 || t.value.size() != size_t(t.width) * size_t(t.height))
+        return nullptr;
+    if (!image || image->width() != t.width || image->height() != t.height)
+        image = render::GpuImage::create({t.width, t.height, render::TextureFormat::RGBA16F, false, true, "cage preview " + t.map});
+    std::vector<float> rgba(t.value.size() * 4);
     for (size_t i = 0; i < t.value.size(); ++i)
         for (int k = 0; k < 4; ++k)
-            img->rgba[i * 4 + size_t(k)] = uint8_t(std::clamp(t.value[i][k], 0.0f, 1.0f) * 255.0f + 0.5f);
-    return img;
+        {
+            float v = std::clamp(t.value[i][k], 0.0f, 1.0f);
+            if (srgb && k < 3)
+                v = v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f);
+            rgba[i * 4 + size_t(k)] = v;
+        }
+    image->updateRgba(0, 0, t.width, t.height, rgba);
+    return image->asTexture();
 }
 
 const PreviewTextures* texturesOf(NodeId gid)
@@ -276,18 +380,66 @@ const PreviewTextures* texturesOf(NodeId gid)
     PreviewTextures& pt = st.textures[gid];
     if (pt.generation != pv->generation)
     {
-        pt = {};
         pt.generation = pv->generation;
+        std::map<std::string, PreviewMaps> next;
         for (const bake::CagePreviewTexture& t : pv->textures)
         {
             if (t.map != "normal")
                 continue;
+            PreviewMaps maps;
+            if (auto old = pt.byMesh.find(t.mesh); old != pt.byMesh.end())
+                maps = std::move(old->second);
             const bake::CagePreviewTexture* err = pv->find(t.mesh, "error");
-            pt.byMesh[t.mesh] = {toTexture(t, false), err ? toTexture(*err, true) : nullptr};
+            maps.normalTexture = upload(maps.normal, t, false);
+            maps.errorTexture = err ? upload(maps.error, *err, true) : nullptr;
+            next[t.mesh] = std::move(maps);
             pt.greenUp = t.greenUp;
         }
+        pt.byMesh = std::move(next);
     }
     return &pt;
+}
+
+/** GPU previews: the low's normal and error images from its project's cage preview set. */
+bool livePreviewMaterials(NodeId id, const geo::Mesh& mesh, std::vector<render::Material>& out)
+{
+    scene::Graph& g = scene::Graph::current();
+    scene::Node* n = g.node(id);
+    scene::Node* p = n ? projectOfLow(g, id) : nullptr;
+    if (!p)
+        return false;
+    const render::MeshMapInfo* normal = nullptr;
+    const render::MeshMapInfo* error = nullptr;
+    const std::vector<render::MeshMapInfo> maps = render::meshMapSet(p->id(), render::kCagePreviewSet);
+    for (const render::MeshMapInfo& m : maps)
+        if (m.low == n->path())
+        {
+            const render::MeshMapInfo*& slot = m.map == "normal" ? normal : error;
+            if (!slot || m.udim < slot->udim)
+                slot = &m;
+        }
+    if (!normal)
+        return false;
+    const bool greenUp = normalMapOf(bake::projectSettings(*p)).options.value("greenUp", false);
+    out = drawMaterials(mesh);
+    if (out.empty())
+        out.resize(1);
+    for (render::Material& m : out)
+    {
+        m.normalMap = normal->image->asTexture();
+        m.flags |= render::MatNormalMap;
+        if (greenUp)
+            m.flags |= render::MatNormalGreenUp;
+        else
+            m.flags &= ~uint32_t(render::MatNormalGreenUp);
+        if (error)
+        {
+            m.emissiveMap = error->image->asTexture();
+            m.emissive = glm::vec3(1.0f);
+            m.flags |= render::MatEmissiveMap;
+        }
+    }
+    return true;
 }
 
 bool previewMaterials(NodeId id, const geo::Mesh& mesh, std::vector<render::Material>& out)
@@ -295,6 +447,8 @@ bool previewMaterials(NodeId id, const geo::Mesh& mesh, std::vector<render::Mate
     State& st = state();
     if (!st.live)
         return false;
+    if (gpuPreview())
+        return st.lowGroup.contains(id) && livePreviewMaterials(id, mesh, out);
     auto it = st.lowGroup.find(id);
     if (it == st.lowGroup.end())
         return false;
@@ -303,22 +457,22 @@ bool previewMaterials(NodeId id, const geo::Mesh& mesh, std::vector<render::Mate
     if (!pt || !n)
         return false;
     auto tex = pt->byMesh.find(n->path());
-    if (tex == pt->byMesh.end())
+    if (tex == pt->byMesh.end() || !tex->second.normalTexture)
         return false;
     out = drawMaterials(mesh);
     if (out.empty())
         out.resize(1);
     for (render::Material& m : out)
     {
-        m.normalMap = tex->second.first;
+        m.normalMap = tex->second.normalTexture;
         m.flags |= render::MatNormalMap;
         if (pt->greenUp)
             m.flags |= render::MatNormalGreenUp;
         else
             m.flags &= ~uint32_t(render::MatNormalGreenUp);
-        if (tex->second.second)
+        if (tex->second.errorTexture)
         {
-            m.emissiveMap = tex->second.second;
+            m.emissiveMap = tex->second.errorTexture;
             m.emissive = glm::vec3(1.0f);
             m.flags |= render::MatEmissiveMap;
         }
@@ -349,6 +503,11 @@ double frontalOf(scene::Graph& g, NodeId gid, const bake::GroupSettings& s)
         return s.frontal;
     if (const auto pv = bake::latestCagePreview(gid); pv && pv->stats.measured && pv->stats.frontal > 0.0)
         return pv->stats.frontal;
+    if (scene::Node* grp = g.node(gid); grp && gpuPreview())
+        if (scene::Node* p = bake::groupProject(g, *grp))
+            for (const json& gs : render::liveMapsStatus(p->id(), render::kCagePreviewSet)["last"].value("groups", json::array()))
+                if (gs.value("group", std::string()) == grp->name() && gs.value("measured", false) && gs.value("frontal", 0.0) > 0.0)
+                    return gs["frontal"].get<double>();
     return bake::groupFrontal(g, s);
 }
 
@@ -471,6 +630,8 @@ void setShown(NodeId group, bool on)
         st.textures.erase(group);
     }
     rebuildWatch();
+    if (st.live && !on)
+        syncLiveSets();
     if (on)
         schedule(group);
     viewportTools::requestRedraw();
@@ -491,6 +652,7 @@ void setLivePreview(bool on)
     {
         st.queue.clear();
         bake::cancelCagePreview(false);
+        syncLiveSets();
     }
     viewportTools::requestRedraw();
     notifyChanged();
@@ -511,6 +673,14 @@ void setWorkingOffsets(NodeId low, std::span<const float> values, bool rebake)
     auto it = st.lowGroup.find(low);
     if (it == st.lowGroup.end())
         return;
+    if (gpuPreview())
+    {
+        // The live set rebakes the stroke's tiles on its own schedule.
+        scene::Graph& g = scene::Graph::current();
+        if (scene::Node* p = projectOfLow(g, low))
+            render::setLiveCageOffsets(p->id(), render::kCagePreviewSet, g.node(low)->path(), std::vector<float>(values.begin(), values.end()));
+        return;
+    }
     // Throttled: a preview at most every 150 ms, and never queued behind a running one mid-stroke.
     if (bake::cagePreviewBusy() || Clock::now() - st.lastRequest < std::chrono::milliseconds(150))
         return;
@@ -522,7 +692,12 @@ void clearWorkingOffsets(NodeId low)
 {
     State& st = state();
     if (st.working.erase(low))
+    {
         ++st.workingVersion;
+        scene::Graph& g = scene::Graph::current();
+        if (scene::Node* p = gpuPreview() ? projectOfLow(g, low) : nullptr)
+            render::setLiveCageOffsets(p->id(), render::kCagePreviewSet, g.node(low)->path(), {});
+    }
 }
 
 void setPainting(NodeId group)
@@ -533,6 +708,8 @@ void setPainting(NodeId group)
     listen();
     st.painting = group;
     rebuildWatch();
+    if (st.live && group == kNoNode)
+        syncLiveSets();
     if (group != kNoNode)
         schedule(group);
     viewportTools::requestRedraw();
