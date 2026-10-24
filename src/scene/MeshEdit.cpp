@@ -1690,7 +1690,7 @@ void registerMeshEditCommands()
     });
 
     for (const char* name : {"polyExtrude", "polyInset", "polyBevel", "polyInsertLoop", "polyMerge", "polyBridge", "polyQuadrangulate",
-                             "polySubdivide", "polyMirror", "polyTriangulate", "polyReduce"})
+                             "polySubdivide", "polyMirror", "polyTriangulate", "polyReduce", "polySoftEdge"})
         ops::setAdjustable(name);
 }
 } // namespace lila::scene
