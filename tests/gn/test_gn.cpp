@@ -269,3 +269,42 @@ TEST_CASE("node library evaluates")
     CHECK(half->mesh->numFaces() == 32 * 8);
     CHECK(half->mesh->bounds().max.y < 1e-6);
 }
+
+TEST_CASE("primitive commands take a fraction and stand on a surface point")
+{
+    run("newScene");
+    std::string dome = run("polyQuadSphere", {{"fraction", 0.5}, {"position", {10.0, 20.0, 30.0}}, {"normal", {1.0, 0.0, 0.0}}})[0];
+    CHECK(faces(dome) == 9 + 4 * 3 * 2);
+    json b = bounds(dome);
+    CHECK(b["worldBoundsMin"][0].get<double>() == doctest::Approx(10.0).epsilon(1e-3));
+    // Three segments leave no point on the apex, so the far side falls a little short of the radius.
+    CHECK(b["worldBoundsMax"][0].get<double>() > 55.0);
+    CHECK(b["worldBoundsMax"][0].get<double>() <= 60.0 + 1e-3);
+    CHECK(b["worldBoundsMin"][1].get<double>() + b["worldBoundsMax"][1].get<double>() == doctest::Approx(40.0).epsilon(1e-3));
+    CHECK(b["worldBoundsMin"][2].get<double>() + b["worldBoundsMax"][2].get<double>() == doctest::Approx(60.0).epsilon(1e-3));
+
+    // Whole spheres and swept shapes keep their centre on the point.
+    std::string ball = run("polySphere", {{"position", {0.0, 0.0, 0.0}}, {"normal", {0.0, -1.0, 0.0}}})[0];
+    CHECK(bounds(ball)["worldBoundsMax"][1].get<double>() == doctest::Approx(50.0).epsilon(1e-3));
+    std::string half = run("polyCylinder", {{"fraction", 0.5}})[0];
+    CHECK(bounds(half)["worldBoundsMax"][2].get<double>() == doctest::Approx(0.0).scale(100.0));
+    CHECK(run("meshInfo", args({half}))["closed"].get<bool>());
+}
+
+TEST_CASE("primitive nodes take a fraction")
+{
+    for (const char* type : {"MeshUVSphere", "MeshIcoSphere", "MeshQuadSphere", "MeshCylinder", "MeshCone", "MeshTorus"})
+    {
+        CAPTURE(type);
+        gn::Group grp = gn::Group::makeDefault("Part");
+        grp.links.clear();
+        grp.nodes.push_back({"P", type, {0, 0}, {{"fraction", 0.5}}});
+        grp.links.push_back({"P", "mesh", "GroupOutput", "geometry"});
+        gn::GeometryPtr r = gn::execute(*gn::compile(grp), {});
+        REQUIRE(r->mesh);
+        CHECK(r->mesh->validate().empty());
+        const geo::Bounds b = r->mesh->bounds();
+        // Domes keep the top half; sweeps keep the -Z half.
+        CHECK((b.min.y > -1e-6 || b.max.z < 1e-6));
+    }
+}

@@ -78,6 +78,12 @@ LILA_SCENE_API std::vector<float> softWeights(const geo::Mesh& mesh, const glm::
 LILA_SCENE_API glm::dvec3 selectionCenter();
 /** Applies a world-space transform to the selected components' points (with symmetry), as one undo step. */
 LILA_SCENE_API void transformSelectedComponents(const char* label, const glm::dmat4& worldXform);
+/** Where a world point lands on a surface, for conforming moved components to it. */
+using SurfaceProjector = std::function<glm::dvec3(const glm::dvec3& world)>;
+/** transformSelectedComponents with each moved point then placed by onto (soft selection blends toward it), as one undo step. */
+LILA_SCENE_API void transformSelectedComponentsOnto(const char* label, const glm::dmat4& worldXform, const SurfaceProjector& onto);
+/** Closest points on the evaluated surfaces of the given meshes, each BVH built once; returns the point unchanged when none has faces. */
+LILA_SCENE_API SurfaceProjector closestOnMeshes(const std::vector<NodeId>& meshes);
 
 /**
  * Object-space unit normal per point (zero where it has no faces): the area-weighted sum of its faces' normals. With a face

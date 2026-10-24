@@ -373,6 +373,14 @@ TEST_CASE("retopo draw resumes on its retopo mesh after save and load")
     // A "<name>_retopo" drawn before the pair was connected resumes on its source mesh.
     makeMeshNode("other_retopo", geo::Mesh());
     CHECK(retopo::resolveRetopoDraw(g, {g.find("other_retopo")->id()})->reference == g.find("other")->id());
+
+    // Retargeting the surface is one undoable step.
+    ops::execute("retopoDrawSetReference", {{"mesh", "topo"}, {"reference", "other"}});
+    CHECK(retopo::retopoDrawReference(g, g.find("topo")->id()) == g.find("other")->id());
+    UndoStack::get().undo();
+    CHECK(retopo::retopoDrawReference(g, g.find("topo")->id()) == g.find("body")->id());
+    CHECK_THROWS_AS(ops::execute("retopoDrawSetReference", {{"mesh", "topo"}, {"reference", "topo"}}), CommandError);
+    CHECK_THROWS_AS(ops::execute("retopoDrawSetReference", {{"mesh", "missing"}, {"reference", "other"}}), CommandError);
     g.clear();
     UndoStack::get().clear();
 }

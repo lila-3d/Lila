@@ -16,6 +16,7 @@
 #include "ui/ImagePlaneUi.h"
 #include "ui/MaterialDraw.h"
 #include "ui/OptionBox.h"
+#include "ui/RetopoDrawTool.h"
 #include "ui/SpinScrub.h"
 #include "ui/Tools.h"
 #include "ui/ViewportDisplay.h"
@@ -149,6 +150,8 @@ std::optional<bool> viewportActionState(const std::string& id, const ViewportWid
         return !wire && materialsShown();
     if (id == "rig.xrayJoints")
         return pref("/rig/xrayJoints", false);
+    if (id == "retopo.toggleSnapSpace")
+        return RetopoDrawTool::snapObjectSpace();
     struct Toggle
     {
         const char* id;
@@ -488,6 +491,7 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
     snapGroup(Tool::Scale, "resize", {0.0625, 0.1, 0.125, 0.25, 0.5, 1}, "");
     buildSymmetryRow();
     buildMaskRow();
+    buildRetopoRow();
 
     mChevron = new QToolButton(this);
     mChevron->setIcon(icon("chevrons-right"));
@@ -502,11 +506,17 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
         for (const Item& item : mItems)
             if (item.overflow && item.widget->isHidden())
                 item.overflow(overflow);
-        if (mMaskRow->isHidden())
+        if (mMaskRow->isHidden() && !activeRetopoDraw())
         {
             overflow->addSeparator();
             for (QAction* a : mMaskActions)
                 overflow->addAction(a);
+        }
+        if (mRetopoRow->isHidden() && activeRetopoDraw())
+        {
+            overflow->addSeparator();
+            overflow->addAction(mRetopoSpace->defaultAction());
+            overflow->addAction(mRetopoSurface->defaultAction());
         }
         if (mSymmetryRow->isHidden())
         {
@@ -527,6 +537,7 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
     });
     mRenderSettingsListener = scene::addRenderSettingsListener([this] { refresh(); });
     mToolsListener = tools::addListener([this] { refresh(); });
+    mViewportToolListener = viewportTools::addListener([this] { refreshRetopo(); });
     connect(mView, &ViewportWidget::viewStateChanged, this, &ViewportToolbar::refresh);
     refresh();
     refreshTooltips();
@@ -537,6 +548,7 @@ ViewportToolbar::~ViewportToolbar()
     PrefStore::get().removeOnChanged(mPrefListener);
     scene::removeRenderSettingsListener(mRenderSettingsListener);
     tools::removeListener(mToolsListener);
+    viewportTools::removeListener(mViewportToolListener);
     scene::Graph::current().removeListener(mGraphListener);
 }
 
@@ -808,6 +820,106 @@ void ViewportToolbar::buildMaskRow()
     }
 }
 
+void ViewportToolbar::buildRetopoRow()
+{
+    mRetopoRow = new QWidget(this);
+    auto* layout = new QHBoxLayout(mRetopoRow);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(kSpacing);
+    auto* title = new QLabel("Retopo", mRetopoRow);
+    title->setStyleSheet("color: #8c8c8c; padding: 0 4px;");
+    layout->addWidget(title);
+
+    mRetopoSpace = new QToolButton(mRetopoRow);
+    auto* space = new QAction(labelOf("retopo.toggleSnapSpace"), mRetopoSpace);
+    space->setCheckable(true);
+    mRetopoSpace->setDefaultAction(space);
+    mRetopoSpace->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    connect(space, &QAction::triggered, this, [this] {
+        actions::run("retopo.toggleSnapSpace");
+        refreshRetopo();
+    });
+    layout->addWidget(mRetopoSpace);
+
+    mRetopoAngle = new QToolButton(mRetopoRow);
+    mRetopoAngle->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    mRetopoAngle->setPopupMode(QToolButton::InstantPopup);
+    mRetopoAngle->setToolTip("Retopo Draw snap angle: Shift places the next dot on a line from the last one at a multiple of this");
+    auto* menu = new QMenu(mRetopoAngle);
+    mRetopoAngle->setMenu(menu);
+    connect(menu, &QMenu::aboutToShow, this, [this, menu] {
+        menu->clear();
+        double current = RetopoDrawTool::snapAngle();
+        bool matched = false;
+        menu->addAction(rotateStepColumns(menu, current, "/retopoDraw/snapAngle", matched));
+        menu->addSeparator();
+        QAction* other = menu->addAction(!matched ? "Custom (" + stepText(current) + QChar(0x00B0) + ")..." : QString("Custom..."));
+        other->setCheckable(true);
+        other->setChecked(!matched);
+        connect(other, &QAction::triggered, this, [this, current] {
+            bool ok = false;
+            double v = QInputDialog::getDouble(this, "Retopo Snap Angle", "Snap angle (degrees)", current, 0.1, 180.0, 2, &ok);
+            if (ok)
+                RetopoDrawTool::setSnapAngle(v);
+        });
+    });
+    layout->addWidget(mRetopoAngle);
+
+    auto* line = new QFrame(mRetopoRow);
+    line->setFrameShape(QFrame::VLine);
+    line->setObjectName("toolbarSeparator");
+    line->setFixedSize(7, kHeight - 8);
+    layout->addWidget(line);
+
+    mRetopoSurface = new QToolButton(mRetopoRow);
+    auto* surface = new QAction(icon("target"), labelOf("retopo.setReference"), mRetopoSurface);
+    mRetopoSurface->setDefaultAction(surface);
+    mRetopoSurface->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    mRetopoSurface->setIconSize(QSize(kIcon, kIcon));
+    connect(surface, &QAction::triggered, this, [this] {
+        activateView();
+        actions::run("retopo.setReference");
+        refreshRetopo();
+    });
+    layout->addWidget(mRetopoSurface);
+    mRetopoRow->setVisible(false);
+}
+
+void ViewportToolbar::refreshRetopo()
+{
+    RetopoDrawTool* tool = activeRetopoDraw();
+    const bool active = tool != nullptr;
+    if (mRetopoRow->property("active").toBool() != active)
+    {
+        mRetopoRow->setProperty("active", active);
+        layoutItems();
+    }
+    if (!tool)
+        return;
+    const bool object = RetopoDrawTool::snapObjectSpace();
+    QAction* space = mRetopoSpace->defaultAction();
+    if (QString text = object ? "Object" : "World"; space->text() != text)
+    {
+        QSignalBlocker block(space);
+        space->setChecked(object);
+        space->setText(text);
+        space->setToolTip(tipFor("retopo.toggleSnapSpace") + "\nNow: " + (object ? "object axes" : "world axes"));
+    }
+    QString angle = stepText(RetopoDrawTool::snapAngle()) + QChar(0x00B0);
+    const scene::Node* ref = scene::Graph::current().node(tool->reference());
+    QString name = ref ? QString::fromStdString(ref->name()) : QString("(none)");
+    if (mRetopoAngle->text() != angle || mRetopoSurface->defaultAction()->text() != name)
+    {
+        mRetopoAngle->setText(angle);
+        QAction* surface = mRetopoSurface->defaultAction();
+        surface->setText(name);
+        surface->setToolTip("Retopo surface: " + (ref ? QString::fromStdString(ref->path()) : QString("none")) + "\n" +
+                            tipFor("retopo.setReference"));
+        mRetopoRow->adjustSize();
+        layoutItems();
+    }
+}
+
 void ViewportToolbar::refreshSymmetry()
 {
     scene::Graph& g = scene::Graph::current();
@@ -885,6 +997,7 @@ void ViewportToolbar::refresh()
         g.value->setText(stepText(tools::incrementSnap(g.tool).step) + g.unit.trimmed());
     }
     mSnapRow->adjustSize();
+    refreshRetopo();
     mCameraButton->setToolTip("Camera: " + QString::fromStdString(mView->viewName()) + "\nRight-click to select it");
     int samples = PrefStore::get().value<int>("general", vd::kAaSamples, vd::kDefaultSamples);
     mSamplesButton->setText(QString::number(samples) + "x");
@@ -904,7 +1017,8 @@ void ViewportToolbar::refreshTooltips()
 
 QSize ViewportToolbar::sizeHint() const
 {
-    int w = 4 + mSnapRow->sizeHint().width() + 8 + mSymmetryRow->sizeHint().width() + 16 + mMaskRow->sizeHint().width();
+    int w = 4 + mSnapRow->sizeHint().width() + 8 + mSymmetryRow->sizeHint().width() + 16 +
+            std::max(mMaskRow->sizeHint().width(), mRetopoRow->sizeHint().width());
     for (const Item& item : mItems)
         w += item.widget->sizeHint().width() + kSpacing;
     return {w, kHeight};
@@ -938,8 +1052,12 @@ void ViewportToolbar::layoutItems()
         mSymmetryRow->setGeometry(available - sym.width(), (kHeight - sym.height()) / 2, sym.width(), sym.height());
         available -= sym.width() + 8;
     }
-    // The masks keep their place while the whole left row fits beside them, and go to the chevron menu first.
-    QSize mask = mMaskRow->sizeHint();
+    // The masks (Retopo Draw's row while it runs) keep their place while the whole left row fits beside them, and go to
+    // the chevron menu first.
+    const bool retopo = activeRetopoDraw() != nullptr;
+    QWidget* centre = retopo ? mRetopoRow : mMaskRow;
+    (retopo ? mMaskRow : mRetopoRow)->setVisible(false);
+    QSize mask = centre->sizeHint();
     int leftWidth = 0;
     for (const Item& item : mItems)
     {
@@ -948,11 +1066,11 @@ void ViewportToolbar::layoutItems()
     }
     const int maskGap = 16;
     bool maskFits = x + leftWidth + maskGap + mask.width() + maskGap <= available;
-    mMaskRow->setVisible(maskFits);
+    centre->setVisible(maskFits);
     if (maskFits)
     {
         int left = x + leftWidth, gap = available - left;
-        mMaskRow->setGeometry(left + (gap - mask.width()) / 2, (kHeight - mask.height()) / 2, mask.width(), mask.height());
+        centre->setGeometry(left + (gap - mask.width()) / 2, (kHeight - mask.height()) / 2, mask.width(), mask.height());
     }
     bool overflowed = false;
     for (size_t i = 0; i < mItems.size(); ++i)

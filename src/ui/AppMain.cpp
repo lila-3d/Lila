@@ -27,6 +27,7 @@
 #include "ui/MaterialThumbnails.h"
 #include "ui/AgentSetup.h"
 #include "ui/BakePaintTool.h"
+#include "ui/SurfaceSnap.h"
 #include "ui/TexturePaintTool.h"
 #include "ui/BakerPanel.h"
 #include "ui/TexPipelineUi.h"
@@ -42,6 +43,7 @@
 #include "ui/MainWindow.h"
 #include "ui/MaterialEditor.h"
 #include "ui/MeasureTool.h"
+#include "ui/PlacePrimitive.h"
 #include "ui/ModelingToolkit.h"
 #include "ui/Modes.h"
 #include "ui/ModifierStack.h"
@@ -99,6 +101,7 @@ void registerUi()
 {
     actions::registerBuiltins();
     tools::registerActions();
+    surfaceSnap::registerCommands();
     registerShelfActions();
     registerEditorActions();
     registerPanelActions();
@@ -204,6 +207,7 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
     registerAutoBevelUi();
     registerSmartJoinUi();
     registerMeasureUi();
+    registerPlacePrimitiveUi();
     mcp::startFromPrefs();
     crash::addSecret(mcp::Server::get().token());
     crash::setContext("app", "qt", qVersion());

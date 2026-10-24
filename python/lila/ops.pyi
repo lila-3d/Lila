@@ -778,7 +778,7 @@ def morphTargets(*objects: Any) -> Any:
 def move(*objects: Any, by: Sequence[float] | None = None, to: Sequence[float] | None = None, space: str | None = None) -> Any:
     """Move objects. move(by=(x, y, z)) moves relative in `space`; move(to=(x, y, z)) puts each pivot at a world position. A selected parent and child move once."""
 
-def moveComponents(by: Sequence[float] | None = None, normal: float | None = None) -> Any:
+def moveComponents(by: Sequence[float] | None = None, normal: float | None = None, onto: Sequence[Any] | None = None) -> Any:
     """Move the selected components by an offset in world space, or with normal= push each point along its own vertex normal (a face selection uses only the selected faces' normals, so the region inflates as a whole)."""
 
 def moveModifier(*objects: Any, by: int | None = None) -> Any:
@@ -856,7 +856,7 @@ def polyBoolean(*objects: Any, operation: str | None = None, keepCutters: bool |
 def polyBridge(divisions: int | None = None) -> Any:
     """Join two selected boundary loops with faces."""
 
-def polyCapsule(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, height: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, subdivisionsCaps: int | None = None, baseAtOrigin: bool | None = None) -> Any:
+def polyCapsule(name: str | None = None, position: Sequence[float] | None = None, rotation: Sequence[float] | None = None, normal: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, height: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, subdivisionsCaps: int | None = None, baseAtOrigin: bool | None = None) -> Any:
     """Create a Capsule mesh. Returns [mesh, generator] (generator is None with generator=False)."""
 
 def polyCollapse() -> Any:
@@ -868,7 +868,7 @@ def polyColorSet(*objects: Any, create: bool | None = None, delete: bool | None 
 def polyCombine(*objects: Any, name: str | None = None) -> Any:
     """Merge meshes into one object (world space kept). Returns its name."""
 
-def polyCone(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, height: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, subdivisionsCap: int | None = None, baseAtOrigin: bool | None = None) -> Any:
+def polyCone(name: str | None = None, position: Sequence[float] | None = None, rotation: Sequence[float] | None = None, normal: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, height: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, subdivisionsCap: int | None = None, baseAtOrigin: bool | None = None, fraction: float | None = None, cutCaps: bool | None = None) -> Any:
     """Create a Cone mesh. Returns [mesh, generator] (generator is None with generator=False)."""
 
 def polyConform() -> Any:
@@ -877,13 +877,13 @@ def polyConform() -> Any:
 def polyConnect() -> Any:
     """Connect selected vertices that share a face with new edges, or the midpoints of selected edges across their faces."""
 
-def polyCube(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, width: float | None = None, height: float | None = None, depth: float | None = None, subdivisionsX: int | None = None, subdivisionsY: int | None = None, subdivisionsZ: int | None = None, baseAtOrigin: bool | None = None) -> Any:
+def polyCube(name: str | None = None, position: Sequence[float] | None = None, rotation: Sequence[float] | None = None, normal: Sequence[float] | None = None, generator: bool | None = None, width: float | None = None, height: float | None = None, depth: float | None = None, subdivisionsX: int | None = None, subdivisionsY: int | None = None, subdivisionsZ: int | None = None, baseAtOrigin: bool | None = None) -> Any:
     """Create a Cube mesh. Returns [mesh, generator] (generator is None with generator=False)."""
 
-def polyCylinder(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, height: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, subdivisionsCaps: int | None = None, caps: bool | None = None, baseAtOrigin: bool | None = None) -> Any:
+def polyCylinder(name: str | None = None, position: Sequence[float] | None = None, rotation: Sequence[float] | None = None, normal: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, height: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, subdivisionsCaps: int | None = None, caps: bool | None = None, baseAtOrigin: bool | None = None, fraction: float | None = None, cutCaps: bool | None = None) -> Any:
     """Create a Cylinder mesh. Returns [mesh, generator] (generator is None with generator=False)."""
 
-def polyDisc(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, subdivisionsAxis: int | None = None, subdivisionsRings: int | None = None) -> Any:
+def polyDisc(name: str | None = None, position: Sequence[float] | None = None, rotation: Sequence[float] | None = None, normal: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, subdivisionsAxis: int | None = None, subdivisionsRings: int | None = None, fraction: float | None = None) -> Any:
     """Create a Disc mesh. Returns [mesh, generator] (generator is None with generator=False)."""
 
 def polyDissolve() -> Any:
@@ -904,7 +904,7 @@ def polyFillHole() -> Any:
 def polyFlip() -> Any:
     """Reverse the winding of the selected faces (the whole mesh in object mode)."""
 
-def polyIcoSphere(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, subdivisions: int | None = None, baseAtOrigin: bool | None = None) -> Any:
+def polyIcoSphere(name: str | None = None, position: Sequence[float] | None = None, rotation: Sequence[float] | None = None, normal: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, subdivisions: int | None = None, baseAtOrigin: bool | None = None, fraction: float | None = None) -> Any:
     """Create a IcoSphere mesh. Returns [mesh, generator] (generator is None with generator=False)."""
 
 def polyInsertLoop(fraction: float | None = None, count: int | None = None) -> Any:
@@ -925,16 +925,16 @@ def polyMergeCenter() -> Any:
 def polyMirror(*objects: Any, axis: str | None = None, direction: str | None = None, space: str | None = None, weld: bool | None = None, tolerance: float | None = None, flip: bool | None = None) -> Any:
     """Mirror whole meshes across the plane through the object's or the world's origin facing an axis, welding along the seam. direction positive keeps the + side and rebuilds the - side from it, cutting faces that cross the plane; negative does the reverse; both adds a mirrored copy of the whole mesh. flip=True reflects the mesh across the plane instead, keeping nothing of the original."""
 
-def polyPipe(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, thickness: float | None = None, height: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, baseAtOrigin: bool | None = None) -> Any:
+def polyPipe(name: str | None = None, position: Sequence[float] | None = None, rotation: Sequence[float] | None = None, normal: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, thickness: float | None = None, height: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, baseAtOrigin: bool | None = None, fraction: float | None = None, cutCaps: bool | None = None) -> Any:
     """Create a Pipe mesh. Returns [mesh, generator] (generator is None with generator=False)."""
 
-def polyPlane(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, width: float | None = None, depth: float | None = None, subdivisionsX: int | None = None, subdivisionsZ: int | None = None) -> Any:
+def polyPlane(name: str | None = None, position: Sequence[float] | None = None, rotation: Sequence[float] | None = None, normal: Sequence[float] | None = None, generator: bool | None = None, width: float | None = None, depth: float | None = None, subdivisionsX: int | None = None, subdivisionsZ: int | None = None) -> Any:
     """Create a Plane mesh. Returns [mesh, generator] (generator is None with generator=False)."""
 
 def polyPoke() -> Any:
     """Fan each selected face into triangles around its centre."""
 
-def polyQuadSphere(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, subdivisions: int | None = None) -> Any:
+def polyQuadSphere(name: str | None = None, position: Sequence[float] | None = None, rotation: Sequence[float] | None = None, normal: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, subdivisions: int | None = None, fraction: float | None = None) -> Any:
     """Create a QuadSphere mesh. Returns [mesh, generator] (generator is None with generator=False)."""
 
 def polyQuadrangulate(maxAngle: float | None = None) -> Any:
@@ -949,7 +949,7 @@ def polySeparate(*objects: Any) -> Any:
 def polySoftEdge(angle: float | None = None) -> Any:
     """Make the selected edges soft or hard by the angle their faces meet at: sharper than angle turns hard, the rest soft. 180 softens every edge, 0 hardens every edge. In object mode, whole selected meshes."""
 
-def polySphere(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, baseAtOrigin: bool | None = None) -> Any:
+def polySphere(name: str | None = None, position: Sequence[float] | None = None, rotation: Sequence[float] | None = None, normal: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, baseAtOrigin: bool | None = None, fraction: float | None = None) -> Any:
     """Create a Sphere mesh. Returns [mesh, generator] (generator is None with generator=False)."""
 
 def polySpinEdge() -> Any:
@@ -958,7 +958,7 @@ def polySpinEdge() -> Any:
 def polySubdivide(*objects: Any, levels: int | None = None) -> Any:
     """Catmull-Clark subdivide whole meshes (crease-aware)."""
 
-def polyTorus(name: str | None = None, position: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, sectionRadius: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None) -> Any:
+def polyTorus(name: str | None = None, position: Sequence[float] | None = None, rotation: Sequence[float] | None = None, normal: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, sectionRadius: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, fraction: float | None = None, cutCaps: bool | None = None) -> Any:
     """Create a Torus mesh. Returns [mesh, generator] (generator is None with generator=False)."""
 
 def polyTriangulate(beauty: bool | None = None, quadSplit: str | None = None) -> Any:
@@ -1092,6 +1092,9 @@ def retopoDrawMove(mesh: str | None = None, points: Sequence[Any] | None = None,
 
 def retopoDrawSetDots(mesh: str | None = None, dots: Sequence[Any] | None = None, reference: str | None = None, create: bool | None = None) -> Any:
     """Retopo Draw: replace the retopo mesh's dots (the loose points a fill turns into a face) with world points. Creates the mesh when create=True. Returns the mesh name."""
+
+def retopoDrawSetReference(mesh: str | None = None, reference: str | None = None) -> Any:
+    """Retopo Draw: connect a different reference mesh to the retopo mesh, so drawing continues on that surface and resumes on it later. Returns the mesh name."""
 
 def reverseFoot(*objects: Any, ankle: str | None = None, ball: str | None = None, toe: str | None = None, name: str | None = None, pivots: Any | None = None, parent: str | None = None) -> Any:
     """Make a reverse foot on an IK chain's ankle: a control on the sole that poses the leg and rolls the foot over heel, ball and toe (roll), swivels on the ball (twist) and tips over its edges (bank). Pivots come from the skinned sole when the foot has a mesh, else from the joints, unless given. Returns it."""

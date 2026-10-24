@@ -269,4 +269,28 @@ struct BorderRun
  * corner comes back open, with that corner's point first and last.
  */
 LILA_SCENE_API BorderRun walkBorder(const geo::Mesh& mesh, Index edge, double maxTurnDegrees = 180.0);
+
+// Retopo Draw
+
+/** Where Retopo Draw's angle snap puts a point, and the plane it snapped in. */
+struct AngleSnap
+{
+    glm::dvec3 point{0.0};
+    /** The frame axis normal to the snap plane. Landing the point on the surface along it keeps the line straight seen down it. */
+    glm::dvec3 axis{0.0};
+    /** The snapped direction in the plane, degrees from the plane's first axis, in (-180, 180]. */
+    double degrees = 0.0;
+};
+
+/**
+ * Snaps the line from anchor toward target to the nearest multiple of stepDegrees. frame's columns are orthonormal axes
+ * (the reference object's rotation, or identity for world). The snap happens in whichever of their three principal planes
+ * faces surfaceNormal most, so on a surface the line follows the frame's axes and their diagonals. The point is target
+ * projected onto the snapped direction, in that plane through anchor. stepDegrees <= 0 only flattens into the plane.
+ */
+LILA_SCENE_API AngleSnap angleSnap(const glm::dvec3& anchor, const glm::dvec3& target, const glm::dvec3& surfaceNormal,
+                                   const glm::dmat3& frame, double stepDegrees);
+
+/** A world matrix's rotation as orthonormal columns, without its scale and shear; identity where it is degenerate. */
+LILA_SCENE_API glm::dmat3 rotationFrame(const glm::dmat4& world);
 } // namespace lila::retopo

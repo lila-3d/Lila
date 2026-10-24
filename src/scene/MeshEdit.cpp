@@ -3,6 +3,7 @@
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
+#include "geo/Bvh.h"
 #include "geo/Knife.h"
 #include "geo/Mesh.h"
 #include "geo/Normals.h"
@@ -501,6 +502,59 @@ void transformSelectedComponents(const char* label, const glm::dmat4& worldXform
         glm::dmat4 local = glm::inverse(world) * worldXform * world;
         return [local](Index, const glm::dvec3& p) { return glm::dvec3(local * glm::dvec4(p, 1.0)); };
     });
+}
+
+void transformSelectedComponentsOnto(const char* label, const glm::dmat4& worldXform, const SurfaceProjector& onto)
+{
+    LILA_ZONE();
+
+    deformSelectedComponents(label, [&](const geo::Mesh&, const glm::dmat4& world, ComponentMode, const Ids&) -> PointTarget {
+        glm::dmat4 local = glm::inverse(world) * worldXform * world, toLocal = glm::inverse(world);
+        return [local, toLocal, world, &onto](Index, const glm::dvec3& p) {
+            glm::dvec3 moved(world * local * glm::dvec4(p, 1.0));
+            return glm::dvec3(toLocal * glm::dvec4(onto(moved), 1.0));
+        };
+    });
+}
+
+SurfaceProjector closestOnMeshes(const std::vector<NodeId>& meshes)
+{
+    LILA_ZONE();
+
+    struct Surface
+    {
+        std::shared_ptr<geo::MeshBvh> bvh;
+        glm::dmat4 world, toLocal;
+    };
+    Graph& g = graph();
+    g.evaluate();
+    auto surfaces = std::make_shared<std::vector<Surface>>();
+    for (NodeId id : meshes)
+    {
+        Node* n = g.node(id);
+        MeshPtr mesh = n && n->type().isA("mesh") ? n->as<MeshPtr>(MeshNode::kOutMesh) : nullptr;
+        if (!mesh || mesh->numFaces() == 0)
+            continue;
+        glm::dmat4 world = n->as<glm::dmat4>(Transform::kWorldMatrix);
+        surfaces->push_back({std::make_shared<geo::MeshBvh>(*mesh), world, glm::inverse(world)});
+    }
+    return [surfaces](const glm::dvec3& p) {
+        glm::dvec3 best = p;
+        double bestDist = std::numeric_limits<double>::max();
+        for (const Surface& s : *surfaces)
+        {
+            geo::BvhClosest c;
+            if (!s.bvh->closestPoint(glm::dvec3(s.toLocal * glm::dvec4(p, 1.0)), c))
+                continue;
+            glm::dvec3 w(s.world * glm::dvec4(c.point, 1.0));
+            if (double d = glm::length(w - p); d < bestDist)
+            {
+                bestDist = d;
+                best = w;
+            }
+        }
+        return best;
+    };
 }
 
 void offsetSelectedComponents(const char* label, double distance)
@@ -1208,7 +1262,9 @@ void registerMeshEditCommands()
         .name = "moveComponents",
         .doc = "Move the selected components by an offset in world space, or with normal= push each point along its own vertex normal "
                "(a face selection uses only the selected faces' normals, so the region inflates as a whole).",
-        .flags = {{"by", "", T::Vec3, nullptr, "Offset, cm."}, {"normal", "", T::Float, nullptr, "Distance along the vertex normals, cm."}},
+        .flags = {{"by", "", T::Vec3, nullptr, "Offset, cm."},
+                  {"normal", "", T::Float, nullptr, "Distance along the vertex normals, cm."},
+                  {"onto", "", T::List, nullptr, "Meshes whose surface each moved point then lands on, at its closest point."}},
         .run = [vec](const Args& a) -> json {
             if (a.has("by") == a.has("normal"))
                 throw CommandError("moveComponents: give by= or normal=");
@@ -1217,7 +1273,16 @@ void registerMeshEditCommands()
                 offsetSelectedComponents("Move Components", a.get<double>("normal"));
                 return nullptr;
             }
-            transformSelectedComponents("Move Components", glm::translate(glm::dmat4(1.0), vec(a.flags["by"])));
+            glm::dmat4 by = glm::translate(glm::dmat4(1.0), vec(a.flags["by"]));
+            if (a.has("onto"))
+            {
+                std::vector<NodeId> onto;
+                for (const json& name : a.flags["onto"])
+                    onto.push_back(meshArg(name.get<std::string>(), "moveComponents").id());
+                transformSelectedComponentsOnto("Move Components", by, closestOnMeshes(onto));
+                return nullptr;
+            }
+            transformSelectedComponents("Move Components", by);
             return nullptr;
         },
     });

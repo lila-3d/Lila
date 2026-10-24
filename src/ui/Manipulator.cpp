@@ -13,6 +13,7 @@
 #include "geo/Mesh.h"
 #include "ui/GizmoMath.h"
 #include "ui/Isolate.h"
+#include "ui/SurfaceSnap.h"
 #include "ui/Theme.h"
 #include "ui/ViewportDisplay.h"
 
@@ -150,8 +151,8 @@ glm::dvec3 moveMask(H h)
     return mask;
 }
 
-/** Hold X/C/V: Maya's grid and point snaps, which win over the toolbar's increment snapping. */
-bool heldSnap() { return tools::snaps() & (SnapGrid | SnapEdge | SnapVertex); }
+/** Hold X/C/V/N: Maya's grid and point snaps and surface sliding, which win over the toolbar's increment snapping. */
+bool heldSnap() { return tools::snaps() & (SnapGrid | SnapEdge | SnapVertex | SnapSurface); }
 
 using gizmo::lineParam;
 
@@ -483,8 +484,10 @@ bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifier
             }
             return mExtrude.dragging();
         }
+    const bool ctrlMiddleMove = button == Qt::MiddleButton && (mods & Qt::ControlModifier) && !(mods & Qt::ShiftModifier) &&
+                                effectiveTool() == Tool::Move && !tools::pivotEdit() && !mNormal;
     // A middle drag off the handles keeps working the extrude handle used last, as it does a move axis.
-    if (button == Qt::MiddleButton && !(mods & Qt::ShiftModifier) && mLastExtrude != ExtrudeHandles::Handle::None)
+    if (button == Qt::MiddleButton && !(mods & Qt::ShiftModifier) && !ctrlMiddleMove && mLastExtrude != ExtrudeHandles::Handle::None)
     {
         if (!mExtrude.active())
             mLastExtrude = ExtrudeHandles::Handle::None;
@@ -498,6 +501,9 @@ bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifier
         return false;
     H h = pick(px);
     bool axisFromDrag = button == Qt::MiddleButton && (mods & Qt::ShiftModifier);
+    const bool surfaceSlide = ctrlMiddleMove && h == H::None;
+    if (surfaceSlide)
+        h = H::Center;
     // Ctrl on an axis isolates it away, like Maya: move or scale in the plane of the other two.
     const bool ctrlPlane = (mods & Qt::ControlModifier) && h >= H::X && h <= H::Z && effectiveTool() != Tool::Rotate;
     if (ctrlPlane)
@@ -545,6 +551,7 @@ bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifier
     d.axisFromDrag = d.axisPending = axisFromDrag;
     d.ctrlPlane = ctrlPlane && !axisFromDrag && !alongNormal && button == Qt::LeftButton;
     d.alongNormal = alongNormal;
+    d.surfaceSlide = surfaceSlide;
     if (d.components)
     {
         // Live edits write the base mesh directly; resolving it freezes a procedural source first (its own undo step).
@@ -567,7 +574,26 @@ bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifier
             d.saved.push_back(s);
             d.startPivots.push_back(scene::xformops::worldPivot(g, id));
             d.startPivotFrames.push_back(scene::xformops::pivotFrame(g, id));
+            d.startFrames.push_back(scene::xformops::frame(g, id, scene::Space::Object));
         }
+    if (pivotTool(d.pivotEdit, d.tool) == Tool::Move && !d.pivotEdit && !d.componentPivot && !d.alongNormal)
+    {
+        for (const Saved& s : d.saved)
+        {
+            d.surfaceExclude.push_back(s.id);
+            if (!d.components)
+                for (NodeId c : g.descendants(s.id))
+                    d.surfaceExclude.push_back(c);
+        }
+        for (NodeId id : surfaceSnap::surfaces())
+            if (std::find(d.surfaceExclude.begin(), d.surfaceExclude.end(), id) == d.surfaceExclude.end())
+                d.conformTo.push_back(id);
+        if (!d.conformTo.empty())
+            d.conform = [ids = d.conformTo](const glm::dvec3& p) {
+                auto hit = surfaceSnap::closestAmong(p, ids);
+                return hit ? hit->position : p;
+            };
+    }
 
     glm::dvec3 o, dir;
     mView.ray(px, o, dir);
@@ -608,7 +634,7 @@ bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifier
     }
 
     mDrag = std::move(d);
-    if (!axisFromDrag)
+    if (!axisFromDrag && !surfaceSlide)
     {
         mLastHandle = h;
         mLastExtrude = ExtrudeHandles::Handle::None;
@@ -727,7 +753,11 @@ void Manipulator::update(QPointF px, Qt::KeyboardModifiers mods)
         else if (inc.enabled)
             delta = inc.absolute ? gizmo::snapAbsolute(d.startPivot, delta, d.frame, moveMask(h), inc.step)
                                  : gizmo::snapRelative(delta, d.frame, moveMask(h), inc.step);
-        if (auto snap = snapTarget(cur, tools::snaps()))
+        std::optional<glm::dvec3> snap = snapTarget(cur, tools::snaps());
+        d.alignRotations.clear();
+        if (!snap && (d.surfaceSlide || (tools::snaps() & SnapSurface)))
+            snap = surfaceSlide(cur);
+        if (snap)
         {
             // Point snaps keep the handle's constraint: an axis drag slides to the snap point's projection.
             glm::dvec3 full = *snap - d.startPivot;
@@ -738,6 +768,8 @@ void Manipulator::update(QPointF px, Qt::KeyboardModifiers mods)
             else
                 delta = full;
         }
+        if (d.conform && !d.components)
+            delta = d.conform(d.startPivot + delta) - d.startPivot;
         d.moveDelta = delta;
     }
     else if (t == Tool::Rotate)
@@ -935,6 +967,23 @@ std::optional<glm::dvec3> Manipulator::snapTarget(QPointF px, unsigned snaps) co
     return out;
 }
 
+std::optional<glm::dvec3> Manipulator::surfaceSlide(QPointF px)
+{
+    LILA_ZONE();
+
+    Drag& d = *mDrag;
+    auto hit = surfaceSnap::underCursor(px, mView, d.surfaceExclude);
+    if (!hit)
+        return std::nullopt;
+    if (!d.components && !d.pivotEdit && surfaceSnap::alignToNormal())
+    {
+        glm::dvec3 up = PrefStore::get().value<std::string>("general", "/scene/upAxis", "y") == "z" ? glm::dvec3(0, 0, 1) : glm::dvec3(0, 1, 0);
+        for (const glm::dmat3& start : d.startFrames)
+            d.alignRotations.push_back(glm::quat_cast(surfaceSnap::alignUp(start, up, hit->normal) * glm::transpose(start)));
+    }
+    return hit->position;
+}
+
 void Manipulator::restore()
 {
     Graph& g = Graph::current();
@@ -995,6 +1044,8 @@ void Manipulator::apply()
         }
         else if (d.alongNormal)
             scene::offsetSelectedComponents("Drag Components", glm::dot(d.moveDelta, d.frame[2]));
+        else if (d.components && d.conform && t == Tool::Move)
+            scene::transformSelectedComponentsOnto("Drag Components", componentXform(), d.conform);
         else if (d.components)
             scene::transformSelectedComponents("Drag Components", componentXform());
         else if (d.pivotEdit && t == Tool::Rotate)
@@ -1011,6 +1062,8 @@ void Manipulator::apply()
         else if (t == Tool::Move)
         {
             scene::xformops::moveBy(g, ids, d.moveDelta);
+            for (size_t i = 0; i < ids.size() && i < d.alignRotations.size(); ++i)
+                scene::xformops::rotateBy(g, {ids[i]}, d.alignRotations[i]);
             for (NodeId id : ids)
                 if (scene::rig::centerEnabled(*g.node(id)))
                     scene::rig::centerNode(g, id);
@@ -1071,7 +1124,14 @@ void Manipulator::commit()
             }
             else if (t == Tool::Move && glm::length(d.moveDelta) > 1e-9)
             {
-                ops::execute("moveComponents", {{"by", vecJson(d.moveDelta)}}, CallSource::UI);
+                json args = {{"by", vecJson(d.moveDelta)}};
+                if (d.conform)
+                {
+                    args["onto"] = json::array();
+                    for (NodeId id : d.conformTo)
+                        args["onto"].push_back(nameOf(id));
+                }
+                ops::execute("moveComponents", args, CallSource::UI);
                 if (gComponentPivot)
                 {
                     gComponentPivot->position += d.moveDelta;
@@ -1125,9 +1185,15 @@ void Manipulator::commit()
                 if (scene::Node* n = Graph::current().node(s.id); n && scene::rig::centerEnabled(*n))
                     centred.push_back(n->path());
             std::optional<UndoChunk> chunk;
-            if (!centred.empty())
+            if (!centred.empty() || !d.alignRotations.empty())
                 chunk.emplace("Move");
             ops::execute("move", {{"args", names}, {"by", vecJson(d.moveDelta)}}, CallSource::UI);
+            for (size_t i = 0; i < d.alignRotations.size() && i < names.size(); ++i)
+                if (glm::angle(d.alignRotations[i]) > 1e-9)
+                {
+                    glm::dvec3 euler = scene::matrixToEuler(glm::mat3_cast(d.alignRotations[i]), scene::RotateOrder::XYZ);
+                    ops::execute("rotate", {{"args", {names[i]}}, {"by", vecJson(euler)}}, CallSource::UI);
+                }
             if (!centred.empty())
                 ops::execute("centerJoint", {{"args", centred}}, CallSource::UI);
         }

@@ -1130,7 +1130,8 @@ void MainWindow::buildMenus()
                         "window.preferences", "window.extensionManager"});
 
     menu("Modify", "M&odify");
-    menus::addActions("Modify", {"modify.freezeTransforms", "modify.resetTransforms", "modify.centerPivot", "modify.resetPivot"});
+    menus::addActions("Modify", {"#Transforms", "modify.freezeTransforms", "modify.resetTransforms", "modify.centerPivot", "modify.resetPivot",
+                                 "#Snapping", "snapSurface.set", "snapSurface.clear", "snapSurface.toggle", "snapSurface.alignToNormal"});
 
     menu("Create", "Create");
     addSubmenu("Create", "Polygon Primitives");
@@ -1166,7 +1167,7 @@ void MainWindow::buildMenus()
                                  "mesh.symmetryRepair", "mesh.symmetryRebuildTopological"});
     menus::addActions("Mesh", {"#Topology", "mesh.triangulate", "mesh.quadrangulate", "mesh.subdivide", "#Attributes",
                                "mesh.transferAttributes"});
-    menus::addActions("Mesh", {"#Retopology", "retopo.draw", "mesh.quadRemesh", "mesh.voxelRemesh", "mesh.relax", "#Cleanup", "mesh.repair",
+    menus::addActions("Mesh", {"#Retopology", "retopo.draw", "retopo.setReference", "mesh.quadRemesh", "mesh.voxelRemesh", "mesh.relax", "#Cleanup", "mesh.repair",
                                "mesh.selectIssues", "#Nodes", "window.nodeEditor"});
 
     menu("Model", "Model");

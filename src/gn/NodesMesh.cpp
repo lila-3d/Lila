@@ -93,6 +93,11 @@ void primitive(const char* type, const char* label, std::vector<SocketDecl> inpu
     });
 }
 
+SocketDecl heightFraction() { return in("fraction", T::Float, 1.0, "Portion of the height kept, from the top: 1 is whole, 0.5 a dome open at the bottom."); }
+SocketDecl sweepFraction() { return in("fraction", T::Float, 1.0, "Portion of a full turn swept around the up axis: 1 is whole, 0.5 half."); }
+SocketDecl cutCaps() { return in("cutCaps", T::Bool, true, "Close the flat ends a partial sweep leaves."); }
+double fraction(ExecContext& c) { return std::clamp(c.f("fraction"), 0.01, 1.0); }
+
 void primitives()
 {
     primitive(
@@ -111,37 +116,52 @@ void primitives()
         },
         "A flat grid in the ground plane, facing up. sizeY runs along depth.");
     primitive(
-        "MeshUVSphere", "UV Sphere", {in("segments", T::Int, 32), in("rings", T::Int, 16), in("radius", T::Float, 50.0)}, {},
-        [](ExecContext& c) { return geo::makeSphere({c.f("radius"), clampInt(c.i("segments"), 3, 1000), clampInt(c.i("rings"), 2, 1000)}); },
+        "MeshUVSphere", "UV Sphere", {in("segments", T::Int, 32), in("rings", T::Int, 16), in("radius", T::Float, 50.0), heightFraction()}, {},
+        [](ExecContext& c) {
+            return geo::makeSphere({c.f("radius"), clampInt(c.i("segments"), 3, 1000), clampInt(c.i("rings"), 2, 1000), false, fraction(c)});
+        },
         "Latitude-longitude sphere.");
     primitive(
-        "MeshIcoSphere", "Ico Sphere", {in("radius", T::Float, 50.0), in("subdivisions", T::Int, 2)}, {},
-        [](ExecContext& c) { return icoSphere(c.f("radius"), clampInt(c.i("subdivisions"), 1, 7)); }, "Evenly triangulated sphere.");
+        "MeshIcoSphere", "Ico Sphere", {in("radius", T::Float, 50.0), in("subdivisions", T::Int, 2), heightFraction()}, {},
+        [](ExecContext& c) {
+            const int subdiv = clampInt(c.i("subdivisions"), 1, 7);
+            if (fraction(c) < 1.0)
+                return geo::makeIcoSphere({c.f("radius"), subdiv, false, fraction(c)});
+            return icoSphere(c.f("radius"), subdiv);
+        },
+        "Evenly triangulated sphere.");
     primitive(
-        "MeshQuadSphere", "Quad Sphere", {in("radius", T::Float, 50.0), in("subdivisions", T::Int, 8)}, {},
-        [](ExecContext& c) { return geo::makeQuadSphere({c.f("radius"), clampInt(c.i("subdivisions"), 1, 200)}); }, "All-quad sphere, no poles.");
+        "MeshQuadSphere", "Quad Sphere", {in("radius", T::Float, 50.0), in("subdivisions", T::Int, 3), heightFraction()}, {},
+        [](ExecContext& c) { return geo::makeQuadSphere({c.f("radius"), clampInt(c.i("subdivisions"), 1, 200), fraction(c)}); },
+        "All-quad sphere, no poles.");
     primitive(
         "MeshCylinder", "Cylinder",
-        {in("vertices", T::Int, 32), in("sideSegments", T::Int, 1), in("fillSegments", T::Int, 0), in("radius", T::Float, 50.0), in("depth", T::Float, 100.0)},
+        {in("vertices", T::Int, 32), in("sideSegments", T::Int, 1), in("fillSegments", T::Int, 0), in("radius", T::Float, 50.0), in("depth", T::Float, 100.0),
+         sweepFraction(), cutCaps()},
         {prop("fillType", {"ngon", "none"}, "ngon")},
         [](ExecContext& c) {
             return geo::makeCylinder({c.f("radius"), c.f("depth"), clampInt(c.i("vertices"), 3, 1000), clampInt(c.i("sideSegments"), 1, 1000),
-                                      clampInt(c.i("fillSegments"), 0, 1000), c.prop("fillType") != "none"});
+                                      clampInt(c.i("fillSegments"), 0, 1000), c.prop("fillType") != "none", false, fraction(c), c.b("cutCaps")});
         },
         "Upright cylinder centred on the origin.");
     primitive(
         "MeshCone", "Cone",
-        {in("vertices", T::Int, 32), in("sideSegments", T::Int, 1), in("fillSegments", T::Int, 0), in("radius", T::Float, 50.0), in("depth", T::Float, 100.0)}, {},
+        {in("vertices", T::Int, 32), in("sideSegments", T::Int, 1), in("fillSegments", T::Int, 0), in("radius", T::Float, 50.0), in("depth", T::Float, 100.0),
+         sweepFraction(), cutCaps()},
+        {},
         [](ExecContext& c) {
             return geo::makeCone({c.f("radius"), c.f("depth"), clampInt(c.i("vertices"), 3, 1000), clampInt(c.i("sideSegments"), 1, 1000),
-                                  clampInt(c.i("fillSegments"), 0, 1000)});
+                                  clampInt(c.i("fillSegments"), 0, 1000), false, fraction(c), c.b("cutCaps")});
         },
         "Upright cone centred on the origin.");
     primitive(
         "MeshTorus", "Torus",
-        {in("radius", T::Float, 50.0), in("sectionRadius", T::Float, 20.0), in("segments", T::Int, 32), in("sectionSegments", T::Int, 16)}, {},
+        {in("radius", T::Float, 50.0), in("sectionRadius", T::Float, 20.0), in("segments", T::Int, 32), in("sectionSegments", T::Int, 16),
+         sweepFraction(), cutCaps()},
+        {},
         [](ExecContext& c) {
-            return geo::makeTorus({c.f("radius"), c.f("sectionRadius"), clampInt(c.i("segments"), 3, 1000), clampInt(c.i("sectionSegments"), 3, 1000)});
+            return geo::makeTorus({c.f("radius"), c.f("sectionRadius"), clampInt(c.i("segments"), 3, 1000), clampInt(c.i("sectionSegments"), 3, 1000),
+                                   fraction(c), c.b("cutCaps")});
         },
         "Ring in the ground plane.");
     primitive(

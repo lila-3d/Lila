@@ -7,6 +7,7 @@
 #include "ui/Manipulator.h"
 #include "ui/Overlay.h"
 #include "ui/PaintSelect.h"
+#include "ui/SurfaceSnap.h"
 #include "ui/Tools.h"
 
 #include <QStringList>
@@ -178,6 +179,7 @@ void registerDefaults()
     add({"snap.grid", "grid-pattern", snap(SnapGrid), "Grid snapping enabled", {"snap.gridOn"}});
     add({"snap.edge", "line", snap(SnapEdge), "Edge snapping enabled", {"snap.edgeOn"}});
     add({"snap.vertex", "point", snap(SnapVertex), "Vertex snapping enabled", {"snap.vertexOn"}});
+    add({"snap.surface", "magnet", snap(SnapSurface), "Surface snapping enabled", {"snap.surfaceOn"}});
     add({"snap.rotateHold", "angle", snap(SnapRotateHold), "Rotate snap toggled", {"snap.rotateHoldOn"}});
     add({"pivotEdit", "target", [](const ViewportState&) { return tools::pivotEdit(); }, "Pivot edit",
          {"tool.pivotEditOn", "tool.pivotEditToggle"}});
@@ -195,5 +197,14 @@ void registerDefaults()
              return m && m->ctrlPlaneDrag();
          },
          "Dragging in the plane of the other two axes", {}, "Ctrl"});
+    add({"manipulator.surfaceSlide", "magnet",
+         [](const ViewportState& v) {
+             auto* m = dynamic_cast<const Manipulator*>(v.gizmo);
+             return m && m->surfaceSlideDrag();
+         },
+         "Sliding along the surface under the cursor", {}, "Ctrl+MMB"});
+    add({"snapSurface", "layers-intersect",
+         [](const ViewportState&) { return tools::current() == Tool::Move && surfaceSnap::active(); },
+         "Moves conform to the snap surface", {"snapSurface.clear"}});
 }
 } // namespace lila::ui::cursorBadges

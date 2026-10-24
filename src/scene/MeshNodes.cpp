@@ -10,6 +10,8 @@
 #include "scene/Graph.h"
 #include "scene/Modifiers.h"
 
+#include <glm/gtx/quaternion.hpp>
+
 namespace lila::scene
 {
 namespace
@@ -36,12 +38,28 @@ double f(const Node& n, const char* attr) { return n.as<double>(n.type().attrInd
 int i(const Node& n, const char* attr, int lo = 1) { return std::max(lo, int(n.as<int64_t>(n.type().attrIndex(attr)))); }
 bool b(const Node& n, const char* attr) { return n.as<bool>(n.type().attrIndex(attr)); }
 
+AttrDef heightFraction()
+{
+    return floatAttr("fraction", 1.0, "Portion of the height kept, from the top: 1 is whole, 0.5 a dome open at the bottom.");
+}
+
+AttrDef sweepFraction()
+{
+    return floatAttr("fraction", 1.0, "Portion of a full turn swept around the up axis: 1 is whole, 0.5 half.");
+}
+
+AttrDef cutCaps() { return boolAttr("cutCaps", true, "Close the flat ends a partial sweep leaves."); }
+
+double frac(const Node& n) { return std::clamp(f(n, "fraction"), 0.01, 1.0); }
+
 struct Primitive
 {
     const char* type;    // node type, also the command name
     const char* display; // default object name
     std::vector<AttrDef> attrs;
     GeneratorNode::Build build;
+    /** Its fraction cuts the height, so a partial one is placed on a surface by its open base. */
+    bool domed = false;
 };
 
 std::vector<Primitive> primitives()
@@ -58,17 +76,20 @@ std::vector<Primitive> primitives()
          }},
         {"polySphere", "Sphere",
          {floatAttr("radius", 50, "cm."), intAttr("subdivisionsAxis", 20, "Segments around."),
-          intAttr("subdivisionsHeight", 20, "Segments pole to pole."), boolAttr("baseAtOrigin", false, "Sit on the ground.")},
+          intAttr("subdivisionsHeight", 20, "Segments pole to pole."), boolAttr("baseAtOrigin", false, "Sit on the ground."),
+          heightFraction()},
          [](const Node& n) {
-             return geo::makeSphere({f(n, "radius"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsHeight", 2), b(n, "baseAtOrigin")});
-         }},
+             return geo::makeSphere(
+                 {f(n, "radius"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsHeight", 2), b(n, "baseAtOrigin"), frac(n)});
+         },
+         true},
         {"polyCylinder", "Cylinder",
          {floatAttr("radius", 50, "cm."), floatAttr("height", 100, "cm."), intAttr("subdivisionsAxis", 20, "Segments around."),
           intAttr("subdivisionsHeight", 1, "Segments up."), intAttr("subdivisionsCaps", 0, "Rings on each cap; 0 is one n-gon."),
-          boolAttr("caps", true, "Close the ends."), boolAttr("baseAtOrigin", false, "Sit on the ground.")},
+          boolAttr("caps", true, "Close the ends."), boolAttr("baseAtOrigin", false, "Sit on the ground."), sweepFraction(), cutCaps()},
          [](const Node& n) {
              return geo::makeCylinder({f(n, "radius"), f(n, "height"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsHeight"),
-                                       i(n, "subdivisionsCaps", 0), b(n, "caps"), b(n, "baseAtOrigin")});
+                                       i(n, "subdivisionsCaps", 0), b(n, "caps"), b(n, "baseAtOrigin"), frac(n), b(n, "cutCaps")});
          }},
         {"polyCapsule", "Capsule",
          {floatAttr("radius", 50, "cm."), floatAttr("height", 200, "End to end, caps included, cm."),
@@ -81,10 +102,10 @@ std::vector<Primitive> primitives()
         {"polyCone", "Cone",
          {floatAttr("radius", 50, "cm."), floatAttr("height", 100, "cm."), intAttr("subdivisionsAxis", 20, "Segments around."),
           intAttr("subdivisionsHeight", 1, "Segments up."), intAttr("subdivisionsCap", 0, "Rings on the base; 0 is one n-gon."),
-          boolAttr("baseAtOrigin", false, "Sit on the ground.")},
+          boolAttr("baseAtOrigin", false, "Sit on the ground."), sweepFraction(), cutCaps()},
          [](const Node& n) {
              return geo::makeCone({f(n, "radius"), f(n, "height"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsHeight"),
-                                   i(n, "subdivisionsCap", 0), b(n, "baseAtOrigin")});
+                                   i(n, "subdivisionsCap", 0), b(n, "baseAtOrigin"), frac(n), b(n, "cutCaps")});
          }},
         {"polyPlane", "Plane",
          {floatAttr("width", 100, "Size along X, cm."), floatAttr("depth", 100, "Size along Z, cm."),
@@ -92,29 +113,33 @@ std::vector<Primitive> primitives()
          [](const Node& n) { return geo::makePlane({f(n, "width"), f(n, "depth"), i(n, "subdivisionsX"), i(n, "subdivisionsZ")}); }},
         {"polyTorus", "Torus",
          {floatAttr("radius", 50, "Ring radius, cm."), floatAttr("sectionRadius", 20, "Tube radius, cm."),
-          intAttr("subdivisionsAxis", 20, "Segments around the ring."), intAttr("subdivisionsHeight", 20, "Segments around the tube.")},
+          intAttr("subdivisionsAxis", 20, "Segments around the ring."), intAttr("subdivisionsHeight", 20, "Segments around the tube."),
+          sweepFraction(), cutCaps()},
          [](const Node& n) {
-             return geo::makeTorus({f(n, "radius"), f(n, "sectionRadius"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsHeight", 3)});
+             return geo::makeTorus({f(n, "radius"), f(n, "sectionRadius"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsHeight", 3), frac(n),
+                                    b(n, "cutCaps")});
          }},
         {"polyDisc", "Disc",
          {floatAttr("radius", 50, "cm."), intAttr("subdivisionsAxis", 20, "Segments around."),
-          intAttr("subdivisionsRings", 1, "Rings; 0 is one n-gon.")},
-         [](const Node& n) { return geo::makeDisc({f(n, "radius"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsRings", 0)}); }},
+          intAttr("subdivisionsRings", 1, "Rings; 0 is one n-gon."), sweepFraction()},
+         [](const Node& n) { return geo::makeDisc({f(n, "radius"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsRings", 0), frac(n)}); }},
         {"polyPipe", "Pipe",
          {floatAttr("radius", 50, "Outer radius, cm."), floatAttr("thickness", 10, "Wall thickness, cm."), floatAttr("height", 100, "cm."),
           intAttr("subdivisionsAxis", 20, "Segments around."), intAttr("subdivisionsHeight", 1, "Segments up."),
-          boolAttr("baseAtOrigin", false, "Sit on the ground.")},
+          boolAttr("baseAtOrigin", false, "Sit on the ground."), sweepFraction(), cutCaps()},
          [](const Node& n) {
              return geo::makePipe({f(n, "radius"), f(n, "thickness"), f(n, "height"), i(n, "subdivisionsAxis", 3),
-                                   i(n, "subdivisionsHeight"), b(n, "baseAtOrigin")});
+                                   i(n, "subdivisionsHeight"), b(n, "baseAtOrigin"), frac(n), b(n, "cutCaps")});
          }},
         {"polyQuadSphere", "QuadSphere",
-         {floatAttr("radius", 50, "cm."), intAttr("subdivisions", 8, "Segments per cube face edge.")},
-         [](const Node& n) { return geo::makeQuadSphere({f(n, "radius"), i(n, "subdivisions")}); }},
+         {floatAttr("radius", 50, "cm."), intAttr("subdivisions", 3, "Segments per cube face edge."), heightFraction()},
+         [](const Node& n) { return geo::makeQuadSphere({f(n, "radius"), i(n, "subdivisions"), frac(n)}); },
+         true},
         {"polyIcoSphere", "IcoSphere",
          {floatAttr("radius", 50, "cm."), intAttr("subdivisions", 3, "1 is an icosahedron; each level splits every triangle in four."),
-          boolAttr("baseAtOrigin", false, "Sit on the ground.")},
-         [](const Node& n) { return geo::makeIcoSphere({f(n, "radius"), i(n, "subdivisions", 1), b(n, "baseAtOrigin")}); }},
+          boolAttr("baseAtOrigin", false, "Sit on the ground."), heightFraction()},
+         [](const Node& n) { return geo::makeIcoSphere({f(n, "radius"), i(n, "subdivisions", 1), b(n, "baseAtOrigin"), frac(n)}); },
+         true},
     };
 }
 
@@ -241,6 +266,31 @@ void registerMeshTypes()
 
 json meshStats(Node& n); // ComponentQuery.cpp
 
+void placePrimitive(Graph& g, NodeId meshId, const glm::dvec3& position, const glm::dvec3& normal)
+{
+    Node* mesh = g.node(meshId);
+    if (!mesh)
+        return;
+    glm::dvec3 at = position;
+    if (glm::length(normal) > 1e-12)
+    {
+        const glm::dvec3 up = glm::normalize(normal);
+        const glm::dmat3 r = glm::mat3_cast(glm::rotation(glm::dvec3(0.0, 1.0, 0.0), up));
+        g.setValue({meshId, Transform::kRotate, -1}, matrixToEuler(r, RotateOrder(mesh->as<int64_t>(Transform::kRotateOrder))));
+        static const std::vector<Primitive> all = primitives();
+        std::optional<PlugRef> src = g.source({meshId, MeshNode::kInMesh, -1});
+        Node* gen = src ? g.node(src->node) : nullptr;
+        const bool domed = gen && std::ranges::any_of(all, [&](const Primitive& p) { return p.domed && gen->type().name == p.type; });
+        if (domed && gen->as<double>(gen->type().attrIndex("fraction")) < 1.0)
+        {
+            g.evaluate();
+            if (MeshPtr m = gen->as<MeshPtr>(src->attr))
+                at -= up * m->bounds().min.y;
+        }
+    }
+    g.setValue({meshId, Transform::kTranslate, -1}, at);
+}
+
 void registerMeshCommands()
 {
     using T = ArgType;
@@ -250,6 +300,9 @@ void registerMeshCommands()
         std::vector<FlagDef> flags = {
             {"name", "n", T::String, nullptr, "Name of the mesh; made unique."},
             {"position", "", T::Vec3, nullptr, "World position."},
+            {"rotation", "", T::Vec3, nullptr, "Rotation in degrees."},
+            {"normal", "", T::Vec3, nullptr,
+             "Turn the up axis to this direction, as for placing on a surface; a dome cut by fraction then sits on position by its open base."},
             {"generator", "", T::Bool, true, "Keep the generator node so its parameters stay editable."},
         };
         for (const AttrDef& a : p.attrs)
@@ -271,9 +324,13 @@ void registerMeshCommands()
                 }
                 Node* mesh = g.createNode(*types::find("mesh"), a.get<std::string>("name", display), kNoNode, true);
                 g.connect({gen->id(), static_cast<GeneratorNode*>(gen)->outAttr, -1}, {mesh->id(), MeshNode::kInMesh, -1});
-                if (a.has("position"))
-                    g.setValue({mesh->id(), Transform::kTranslate, -1},
-                               glm::dvec3(a.flags["position"][0], a.flags["position"][1], a.flags["position"][2]));
+                auto vec = [&](const char* flag) { return glm::dvec3(a.flags[flag][0], a.flags[flag][1], a.flags[flag][2]); };
+                if (a.has("rotation"))
+                    g.setValue({mesh->id(), Transform::kRotate, -1}, vec("rotation"));
+                if (a.has("normal"))
+                    placePrimitive(g, mesh->id(), a.has("position") ? vec("position") : glm::dvec3(0.0), vec("normal"));
+                else if (a.has("position"))
+                    g.setValue({mesh->id(), Transform::kTranslate, -1}, vec("position"));
                 json genName = gen->path();
                 if (!a.get<bool>("generator", true))
                 {

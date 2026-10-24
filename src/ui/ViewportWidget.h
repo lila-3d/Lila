@@ -231,6 +231,7 @@ private:
     int mGraphListener = 0;
     int mPrefListener = 0;
     int mToolListener = 0;
+    int mSnapSurfaceListener = 0;
     int mComponentListener = 0;
     int mPlaybackListener = 0;
     int mViewportToolListener = 0;

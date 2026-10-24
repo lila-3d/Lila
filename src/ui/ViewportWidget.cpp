@@ -40,6 +40,7 @@
 #include "ui/Overlay.h"
 #include "ui/RenderPasses.h"
 #include "ui/SelectionHandlers.h"
+#include "ui/SurfaceSnap.h"
 #include "ui/TabSelectLogic.h"
 #include "ui/Theme.h"
 #include "ui/Tools.h"
@@ -75,6 +76,7 @@ const glm::vec4 kSelectedColor(0.95f, 0.95f, 0.95f, 1.0f);
 const glm::vec4 kChildOfSelectedColor(0.55f, 0.55f, 0.55f, 1.0f);
 const glm::vec4 kPreselectColor(0.75f, 0.75f, 0.75f, 1.0f);
 const glm::vec4 kTemplateWireColor(0.22f, 0.22f, 0.22f, 1.0f);
+const glm::vec4 kSnapSurfaceWireColor(0.10f, 0.35f, 0.22f, 1.0f);
 
 /** Where the viewport draws and picks a node: its world matrix plus any view-only display offset (bake Arrange). */
 glm::dmat4 shownWorld(const scene::Node& n)
@@ -261,6 +263,7 @@ ViewportWidget::ViewportWidget(QWidget* parent) : QWidget(parent)
     mWheelCommit->setInterval(500);
     connect(mWheelCommit, &QTimer::timeout, this, [this] { commitCameraEdit(); });
     mToolListener = tools::addListener([this] { requestFrame(); });
+    mSnapSurfaceListener = surfaceSnap::addListener([this] { requestFrame(); });
     mComponentListener = scene::components::addListener([this] { requestFrame(); });
     // Display layers hide on playback: starting or stopping changes what is drawn without changing the time.
     mPlaybackListener = scene::anim::addPlaybackListener([this] { requestFrame(); });
@@ -301,6 +304,7 @@ ViewportWidget::~ViewportWidget()
     scene::Graph::current().removeListener(mGraphListener);
     PrefStore::get().removeOnChanged(mPrefListener);
     tools::removeListener(mToolListener);
+    surfaceSnap::removeListener(mSnapSurfaceListener);
     scene::components::removeListener(mComponentListener);
     scene::anim::removePlaybackListener(mPlaybackListener);
     viewportTools::removeListener(mViewportToolListener);
@@ -610,6 +614,11 @@ void ViewportWidget::submit()
             d.wireColor = glm::vec4(glm::vec3(*layer.color), 1.0f);
         else if (templated)
             d.wireColor = kTemplateWireColor;
+        if (surfaceSnap::isSurface(id))
+        {
+            d.flags |= render::DrawWire;
+            d.wireColor = themeLinear("wireSnapSurface", kSnapSurfaceWireColor);
+        }
         if (hilite.contains(id))
         {
             if (componentWire.a > 0.0f)

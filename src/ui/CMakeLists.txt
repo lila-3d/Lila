@@ -67,7 +67,9 @@ lila_module(lila_ui UI
     MaterialDraw.cpp MaterialDraw.h
     MaterialEditor.cpp MaterialEditor.h
     MeasureTool.cpp MeasureTool.h
+    PlacePrimitive.cpp PlacePrimitive.h
     MeshCache.cpp MeshCache.h
+    SurfaceSnap.cpp SurfaceSnap.h
     Isolate.cpp Isolate.h
     ModelingToolkit.cpp ModelingToolkit.h
     SoftSelectPanel.cpp SoftSelectPanel.h

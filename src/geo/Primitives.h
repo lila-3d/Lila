@@ -34,6 +34,8 @@ struct SphereOptions
     int subdivAxis = 20;
     int subdivHeight = 20;
     bool baseAtOrigin = false;
+    /** Portion of the height kept, from the top: 1 is whole, 0.5 a dome open at the bottom (-Y). */
+    double fraction = 1.0;
 };
 
 struct CylinderOptions
@@ -46,6 +48,10 @@ struct CylinderOptions
     int subdivCaps = 0;
     bool caps = true;
     bool baseAtOrigin = false;
+    /** Portion of a full turn swept around Y from +X: 1 is whole, 0.5 half. */
+    double fraction = 1.0;
+    /** Close the two flat ends a partial sweep leaves. */
+    bool cutCaps = true;
 };
 
 struct CapsuleOptions
@@ -68,6 +74,10 @@ struct ConeOptions
     int subdivHeight = 1;
     int subdivCap = 0;
     bool baseAtOrigin = false;
+    /** Portion of a full turn swept around Y from +X: 1 is whole, 0.5 half. */
+    double fraction = 1.0;
+    /** Close the two flat ends a partial sweep leaves. */
+    bool cutCaps = true;
 };
 
 struct TorusOptions
@@ -76,6 +86,10 @@ struct TorusOptions
     double sectionRadius = 20.0;
     int subdivAxis = 20;
     int subdivHeight = 20;
+    /** Portion of a full turn swept around Y from +X: 1 is whole, 0.5 half. */
+    double fraction = 1.0;
+    /** Close the two flat ends a partial sweep leaves. */
+    bool cutCaps = true;
 };
 
 struct DiscOptions
@@ -84,6 +98,8 @@ struct DiscOptions
     int subdivAxis = 20;
     /** 0 makes a single n-gon. */
     int subdivRings = 1;
+    /** Portion of a full turn swept around Y from +X: 1 is whole, 0.5 half. */
+    double fraction = 1.0;
 };
 
 struct PipeOptions
@@ -94,12 +110,18 @@ struct PipeOptions
     int subdivAxis = 20;
     int subdivHeight = 1;
     bool baseAtOrigin = false;
+    /** Portion of a full turn swept around Y from +X: 1 is whole, 0.5 half. */
+    double fraction = 1.0;
+    /** Close the two flat ends a partial sweep leaves. */
+    bool cutCaps = true;
 };
 
 struct QuadSphereOptions
 {
     double radius = 50.0;
-    int subdiv = 8;
+    int subdiv = 3;
+    /** Portion of the height kept, from the top: 1 is whole, 0.5 a dome open at the bottom (-Y). */
+    double fraction = 1.0;
 };
 
 struct IcoSphereOptions
@@ -108,6 +130,8 @@ struct IcoSphereOptions
     /** 1 is the plain icosahedron; each level splits every triangle in four. */
     int subdivisions = 3;
     bool baseAtOrigin = false;
+    /** Portion of the height kept, from the top: 1 is whole, 0.5 a dome open at the bottom (-Y). */
+    double fraction = 1.0;
 };
 
 LILA_SCENE_API Mesh makeCube(const CubeOptions& o = {});

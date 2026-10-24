@@ -26,8 +26,8 @@ struct GridFace
     glm::vec2 uvMax;
 };
 
-/** Six welded grids on the surface of an sx*sy*sz lattice; pos maps lattice coords to space. */
-Mesh buildBox(int sx, int sy, int sz, const std::function<glm::dvec3(const glm::ivec3&)>& pos, bool hardSides)
+/** Six welded grids on the surface of an sx*sy*sz lattice (five with openBottom); pos maps lattice coords to space. */
+Mesh buildBox(int sx, int sy, int sz, const std::function<glm::dvec3(const glm::ivec3&)>& pos, bool hardSides, bool openBottom = false)
 {
     LILA_ZONE();
 
@@ -60,6 +60,8 @@ Mesh buildBox(int sx, int sy, int sz, const std::function<glm::dvec3(const glm::
     cornerUv.reserve(faceCount * 4);
     for (int s = 0; s < 6; ++s)
     {
+        if (openBottom && s == 3)
+            continue;
         const GridFace& g = faces[s];
         for (int b = 0; b < g.nv; ++b)
             for (int a = 0; a < g.nu; ++a)
@@ -120,17 +122,94 @@ struct Band
 };
 
 /**
+ * Closes both ends of a partial lathe with the profile polygon at each, run back along the axis when the profile is open.
+ * The caps get their own uv islands in a strip along the bottom, with the swept surface scaled into the space above.
+ */
+std::vector<Index> closeCuts(Mesh& m, std::vector<glm::vec2>& cornerUv, const std::vector<ProfilePoint>& profile, const std::vector<bool>& pole,
+                             const std::function<Index(int, int)>& pid, int axis, double sweep, bool closed)
+{
+    const int np = int(profile.size());
+    Index axisFirst = kInvalid, axisLast = kInvalid;
+    auto axisPoint = [&](Index& id, double y) {
+        if (id == kInvalid)
+            id = m.addPoint({0.0, y, 0.0});
+        return id;
+    };
+    struct Cap
+    {
+        std::vector<Index> pts;
+        std::vector<glm::dvec2> local;
+    };
+    std::vector<Cap> caps;
+    for (int end = 0; end < 2; ++end)
+    {
+        const glm::dvec3 out = end ? glm::dvec3(-std::sin(sweep), 0.0, -std::cos(sweep)) : glm::dvec3(0.0, 0.0, 1.0);
+        Cap cap;
+        for (int k = 0; k < np; ++k)
+            cap.pts.push_back(pid(k, end ? axis : 0));
+        if (!closed)
+        {
+            if (!pole[np - 1])
+                cap.pts.push_back(axisPoint(axisLast, profile[np - 1].y));
+            if (!pole[0])
+                cap.pts.push_back(axisPoint(axisFirst, profile[0].y));
+        }
+        glm::dvec3 normal(0.0);
+        for (size_t a = 0; a < cap.pts.size(); ++a)
+            normal += glm::cross(m.position(cap.pts[a]), m.position(cap.pts[(a + 1) % cap.pts.size()]));
+        if (glm::length(normal) < 1e-9)
+            continue;
+        if (glm::dot(normal, out) < 0.0)
+            std::reverse(cap.pts.begin(), cap.pts.end());
+        const glm::dvec3 u = glm::cross(glm::dvec3(0.0, 1.0, 0.0), out);
+        for (Index p : cap.pts)
+            cap.local.push_back({glm::dot(m.position(p), u), m.position(p).y});
+        caps.push_back(std::move(cap));
+    }
+    if (caps.empty())
+        return {};
+
+    for (glm::vec2& uv : cornerUv)
+        uv = uv * 0.78f + glm::vec2(0.0f, 0.22f);
+    std::vector<Index> faces;
+    for (size_t k = 0; k < caps.size(); ++k)
+    {
+        const Index f = m.addFace(caps[k].pts);
+        if (f == kInvalid)
+            continue;
+        faces.push_back(f);
+        glm::dvec2 lo(std::numeric_limits<double>::max()), hi(-std::numeric_limits<double>::max());
+        for (const glm::dvec2& l : caps[k].local)
+        {
+            lo = glm::min(lo, l);
+            hi = glm::max(hi, l);
+        }
+        const glm::dvec2 boxMin(0.01 + 0.5 * double(k), 0.01), boxSize(0.48, 0.19);
+        const glm::dvec2 extent = glm::max(hi - lo, glm::dvec2(1e-12));
+        const double scale = std::min(boxSize.x / extent.x, boxSize.y / extent.y);
+        const glm::dvec2 offset = boxMin + (boxSize - extent * scale) * 0.5;
+        for (const glm::dvec2& l : caps[k].local)
+            cornerUv.push_back(glm::vec2(offset + (l - lo) * scale));
+    }
+    return faces;
+}
+
+/**
  * Revolves a profile in (r, y) around +Y. Profile points with r == 0 become a single pole point.
  * Walking the profile with the outside on the right gives outward faces. A closed profile wraps its
- * last band back to point 0.
+ * last band back to point 0. A fraction below 1 sweeps only that part of the turn, from +X toward -Z;
+ * cutCaps then closes each cut end with the profile polygon, run back along the axis when it is open.
  */
-Mesh lathe(const std::vector<ProfilePoint>& profile, const std::vector<Band>& bands, int axis, bool closed)
+Mesh lathe(const std::vector<ProfilePoint>& profile, const std::vector<Band>& bands, int axis, bool closed, double fraction = 1.0,
+           bool cutCaps = false)
 {
     LILA_ZONE();
 
     Mesh m;
     const int np = int(profile.size());
-    const double twoPi = glm::two_pi<double>();
+    const bool partial = fraction < 1.0 - 1e-9;
+    const double sweep = glm::two_pi<double>() * std::clamp(fraction, 0.01, 1.0);
+    const int ring = partial ? axis + 1 : axis;
     std::vector<Index> ringStart(np);
     std::vector<bool> pole(np);
     for (int k = 0; k < np; ++k)
@@ -142,13 +221,13 @@ Mesh lathe(const std::vector<ProfilePoint>& profile, const std::vector<Band>& ba
             m.addPoint({0.0, profile[k].y, 0.0});
             continue;
         }
-        for (int i = 0; i < axis; ++i)
+        for (int i = 0; i < ring; ++i)
         {
-            const double t = twoPi * i / axis;
+            const double t = sweep * i / axis;
             m.addPoint({profile[k].r * std::cos(t), profile[k].y, -profile[k].r * std::sin(t)});
         }
     }
-    auto pid = [&](int k, int i) { return pole[k] ? ringStart[k] : ringStart[k] + Index(i % axis); };
+    auto pid = [&](int k, int i) { return pole[k] ? ringStart[k] : ringStart[k] + Index(i % ring); };
 
     std::vector<glm::vec2> cornerUv;
     auto planarUv = [&](const Band& b, Index p, bool facingUp) {
@@ -185,12 +264,15 @@ Mesh lathe(const std::vector<ProfilePoint>& profile, const std::vector<Band>& ba
             if (b.ngon && (pole[k0] || pole[k1]))
             {
                 const int rim = pole[k0] ? k1 : k0;
-                for (int i = 0; i < axis; ++i)
-                {
-                    const int ii = pole[k0] ? axis - 1 - i : i;
-                    pts.push_back(pid(rim, ii));
-                    uvs.push_back(planarUv(b, pts.back(), up));
-                }
+                // A partial sweep's cap is a wedge, so it keeps its centre point.
+                if (partial && pole[k0])
+                    pts.push_back(pid(k0, 0));
+                for (int i = 0; i < ring; ++i)
+                    pts.push_back(pid(rim, pole[k0] ? ring - 1 - i : i));
+                if (partial && pole[k1])
+                    pts.push_back(pid(k1, 0));
+                for (Index p : pts)
+                    uvs.push_back(planarUv(b, p, up));
                 emit();
                 continue;
             }
@@ -229,6 +311,10 @@ Mesh lathe(const std::vector<ProfilePoint>& profile, const std::vector<Band>& ba
         }
     }
 
+    std::vector<Index> capFaces;
+    if (partial && cutCaps)
+        capFaces = closeCuts(m, cornerUv, profile, pole, [&](int k, int i) { return pid(k, i); }, axis, sweep, closed);
+
     std::span<glm::vec2> uv = m.cornerAttrs().getOrAdd<glm::vec2>(attr::uvName(0));
     std::copy(cornerUv.begin(), cornerUv.end(), uv.begin());
 
@@ -241,7 +327,8 @@ Mesh lathe(const std::vector<ProfilePoint>& profile, const std::vector<Band>& ba
                 if (e != kInvalid)
                     hard[e] = true;
             }
-    (void)closed;
+    for (Index f : capFaces)
+        m.forEachFaceCorner(f, [&](Index c) { hard[m.cornerEdge(c)] = true; });
     // N-gon caps leave their centre point unused.
     m.removeAllLoose();
     if (m.hasDeleted())
@@ -318,15 +405,38 @@ Mesh makeQuadSphere(const QuadSphereOptions& o)
     LILA_ZONE();
 
     const int n = std::max(1, o.subdiv);
+    const double q = glm::quarter_pi<double>();
+    if (o.fraction >= 1.0 - 1e-6)
+        return buildBox(
+            n, n, n,
+            [&](const glm::ivec3& c) {
+                // Tangent warp spreads the grid evenly over the sphere.
+                glm::dvec3 a = glm::dvec3(c) / double(n) * 2.0 - 1.0;
+                a = glm::tan(a * q);
+                return glm::normalize(a) * o.radius;
+            },
+            false);
+
+    // The top face keeps its grid; each side column runs down its meridian from the top face to the cut circle.
+    const double s = 1.0 - 2.0 * std::clamp(o.fraction, 0.01, 1.0);
+    const double rho = std::sqrt(1.0 - s * s);
+    // Shallow domes shrink the top face so it stays well inside the cut.
+    const double g = std::min(1.0, std::tan(std::acos(s) * std::atan(std::sqrt(2.0)) / glm::half_pi<double>()) / std::sqrt(2.0));
+    auto cutRow = [&](double h) { return std::atan(s * h / rho) / q; };
+    const int m = std::max(1, int(std::lround(0.5 * n * (1.0 - cutRow(g)))));
     return buildBox(
-        n, n, n,
+        n, m, n,
         [&](const glm::ivec3& c) {
-            // Tangent warp spreads the grid evenly over the sphere.
-            glm::dvec3 a = glm::dvec3(c) / double(n) * 2.0 - 1.0;
-            a = glm::tan(a * glm::quarter_pi<double>());
-            return glm::normalize(a) * o.radius;
+            const glm::dvec2 h = g * glm::tan((glm::dvec2(c.x, c.z) / double(n) * 2.0 - 1.0) * q);
+            if (c.y == 0)
+            {
+                const glm::dvec2 d = glm::normalize(h) * rho;
+                return glm::dvec3(d.x, s, d.y) * o.radius;
+            }
+            const double ay = c.y == m ? 1.0 : glm::mix(cutRow(glm::length(h)), 1.0, double(c.y) / m);
+            return glm::normalize(glm::dvec3(h.x, std::tan(ay * q), h.y)) * o.radius;
         },
-        false);
+        false, true);
 }
 
 Mesh makeIcoSphere(const IcoSphereOptions& o)
@@ -341,38 +451,78 @@ Mesh makeIcoSphere(const IcoSphereOptions& o)
                               {3, 8, 9},  {4, 9, 5},  {2, 4, 11}, {6, 2, 10}, {8, 6, 7},   {9, 8, 1}};
     // Each level splits every triangle in four, as in Blender.
     const int n = 1 << std::clamp(o.subdivisions - 1, 0, 7);
+    const bool cut = o.fraction < 1.0 - 1e-6;
+    const double yc = 1.0 - 2.0 * std::clamp(o.fraction, 0.01, 1.0);
+    const double rho = std::sqrt(1.0 - yc * yc);
+    auto onCut = [&](const glm::dvec3& s) {
+        const glm::dvec2 d = glm::normalize(glm::dvec2(s.x, s.z)) * rho;
+        return glm::dvec3(d.x, yc, d.y);
+    };
+    // Points this close to the cut move onto it, so clipping leaves no slivers; never so far that a shallow cap flattens.
+    const double snap = std::min(0.3 * 1.05 / n, 0.25 * (1.0 - yc));
 
     Mesh m;
     // Lattice points on shared icosahedron edges coincide exactly, so welding by rounded position is safe.
     std::map<std::array<int64_t, 3>, Index> welded;
-    auto point = [&](const glm::dvec3& p) {
-        glm::dvec3 s = glm::normalize(p);
+    auto point = [&](const glm::dvec3& s) {
         std::array<int64_t, 3> key = {std::llround(s.x * 1e9), std::llround(s.y * 1e9), std::llround(s.z * 1e9)};
         auto [it, added] = welded.try_emplace(key, 0);
         if (added)
             it->second = m.addPoint(s * o.radius);
-        return std::pair(it->second, s);
+        return it->second;
     };
     auto uvOf = [](const glm::dvec3& s) {
         return glm::vec2(float(0.5 + std::atan2(s.x, s.z) / glm::two_pi<double>()), float(0.5 + std::asin(std::clamp(s.y, -1.0, 1.0)) / glm::pi<double>()));
     };
     std::vector<glm::vec2> uvs;
+    std::vector<Index> ids;
+    std::vector<glm::vec2> polyUv;
     auto addTri = [&](const glm::dvec3& a, const glm::dvec3& b, const glm::dvec3& c) {
-        auto [ia, sa] = point(a);
-        auto [ib, sb] = point(b);
-        auto [ic, sc] = point(c);
-        m.addFace({ia, ib, ic});
-        glm::vec2 tri[3] = {uvOf(sa), uvOf(sb), uvOf(sc)};
+        glm::dvec3 ss[3] = {glm::normalize(a), glm::normalize(b), glm::normalize(c)};
+        if (cut)
+            for (glm::dvec3& p : ss)
+                if (std::abs(p.y - yc) < snap && glm::length(glm::dvec2(p.x, p.z)) > 1e-6)
+                    p = onCut(p);
+        glm::vec2 tri[3] = {uvOf(ss[0]), uvOf(ss[1]), uvOf(ss[2])};
         // Unwrap triangles straddling the u seam, and give pole corners the u of their face.
         float maxU = std::max({tri[0].x, tri[1].x, tri[2].x});
         for (glm::vec2& uv : tri)
             if (maxU - uv.x > 0.5f)
                 uv.x += 1.0f;
-        glm::dvec3 ss[3] = {sa, sb, sc};
         for (int k = 0; k < 3; ++k)
             if (std::abs(ss[k].y) > 1.0 - 1e-9)
                 tri[k].x = (tri[(k + 1) % 3].x + tri[(k + 2) % 3].x) * 0.5f;
-        uvs.insert(uvs.end(), tri, tri + 3);
+
+        ids.clear();
+        polyUv.clear();
+        auto keep = [&](const glm::dvec3& p, const glm::vec2& uv) {
+            const Index id = point(p);
+            if (!ids.empty() && (ids.back() == id || ids.front() == id))
+                return;
+            ids.push_back(id);
+            polyUv.push_back(uv);
+        };
+        bool above = !cut;
+        for (int k = 0; k < 3; ++k)
+        {
+            const glm::dvec3& p0 = ss[k];
+            const glm::dvec3& p1 = ss[(k + 1) % 3];
+            const bool in0 = !cut || p0.y >= yc - 1e-12, in1 = !cut || p1.y >= yc - 1e-12;
+            if (in0)
+            {
+                keep(p0, tri[k]);
+                above = above || p0.y > yc + 1e-12;
+            }
+            if (in0 != in1)
+            {
+                const double t = (p0.y - yc) / (p0.y - p1.y);
+                keep(onCut(glm::mix(p0, p1, t)), glm::mix(tri[k], tri[(k + 1) % 3], float(t)));
+            }
+        }
+        // A triangle touching the cut only along its edge, or lying in it, leaves nothing.
+        if (ids.size() < 3 || !above || m.addFace(ids) == kInvalid)
+            return;
+        uvs.insert(uvs.end(), polyUv.begin(), polyUv.end());
     };
     for (const auto& f : faces)
     {
@@ -390,9 +540,12 @@ Mesh makeIcoSphere(const IcoSphereOptions& o)
     std::copy(uvs.begin(), uvs.end(), uv.begin());
     m.edgeAttrs().add(attr::kHard, AttrType::Bool);
     m.edgeAttrs().add(attr::kSeam, AttrType::Bool);
+    m.removeAllLoose();
+    if (m.hasDeleted())
+        m.compact();
     markUvSeams(m);
     if (o.baseAtOrigin)
-        shiftY(m, o.radius);
+        shiftY(m, -(cut ? yc : -1.0) * o.radius);
     return m;
 }
 
@@ -430,16 +583,19 @@ Mesh makeSphere(const SphereOptions& o)
 {
     LILA_ZONE();
 
-    const int h = std::max(2, o.subdivHeight);
+    const double pi = glm::pi<double>();
+    // The cut sits on a ring: the rings kept are spread evenly from it to the top pole, about as many as that arc had.
+    const double cut = o.fraction >= 1.0 - 1e-9 ? 0.0 : std::acos(2.0 * std::clamp(o.fraction, 0.01, 1.0) - 1.0);
+    const int h = std::max(cut > 0.0 ? 1 : 2, int(std::lround(std::max(2, o.subdivHeight) * (pi - cut) / pi)));
     std::vector<ProfilePoint> profile;
     for (int j = 0; j <= h; ++j)
     {
-        const double phi = glm::pi<double>() * j / h;
-        profile.push_back({j == 0 || j == h ? 0.0 : o.radius * std::sin(phi), -o.radius * std::cos(phi)});
+        const double phi = cut + (pi - cut) * j / h;
+        profile.push_back({j == h || (j == 0 && cut == 0.0) ? 0.0 : o.radius * std::sin(phi), -o.radius * std::cos(phi)});
     }
     Mesh m = lathe(profile, {{0, h, Band::Cylindrical}}, std::max(3, o.subdivAxis), false);
     if (o.baseAtOrigin)
-        shiftY(m, o.radius);
+        shiftY(m, o.radius * std::cos(cut));
     return m;
 }
 
@@ -471,7 +627,7 @@ Mesh makeCylinder(const CylinderOptions& o)
             profile.push_back({o.radius * r / rings, y0 + o.height});
         bands.push_back({top, top + rings, Band::Planar, {}, kCapRight, scale, cs == 0});
     }
-    return lathe(profile, bands, std::max(3, o.subdivAxis), false);
+    return lathe(profile, bands, std::max(3, o.subdivAxis), false, o.fraction, o.caps && o.cutCaps);
 }
 
 Mesh makeCapsule(const CapsuleOptions& o)
@@ -515,7 +671,7 @@ Mesh makeCone(const ConeOptions& o)
         profile.push_back({o.radius * (1.0 - double(j) / hs), y0 + o.height * j / hs, j == 0});
     std::vector<Band> bands = {{0, rings, Band::Planar, {}, kCapLeft, kCapScale / float(o.radius), cs == 0},
                                {rings, rings + hs, Band::Cylindrical, {0.5f, 1.0f}}};
-    return lathe(profile, bands, std::max(3, o.subdivAxis), false);
+    return lathe(profile, bands, std::max(3, o.subdivAxis), false, o.fraction, o.cutCaps);
 }
 
 Mesh makeTorus(const TorusOptions& o)
@@ -530,7 +686,7 @@ Mesh makeTorus(const TorusOptions& o)
         const double t = glm::two_pi<double>() * j / h + glm::pi<double>();
         profile.push_back({o.radius + o.sectionRadius * std::cos(t), o.sectionRadius * std::sin(t)});
     }
-    return lathe(profile, {{0, h, Band::Cylindrical}}, std::max(3, o.subdivAxis), true);
+    return lathe(profile, {{0, h, Band::Cylindrical}}, std::max(3, o.subdivAxis), true, o.fraction, o.cutCaps);
 }
 
 Mesh makeDisc(const DiscOptions& o)
@@ -543,7 +699,7 @@ Mesh makeDisc(const DiscOptions& o)
     for (int r = rings; r >= 0; --r)
         profile.push_back({o.radius * r / rings, 0.0});
     return lathe(profile, {{0, rings, Band::Planar, {}, {0.5f, 0.5f}, 0.5f / float(o.radius), rs == 0}},
-                 std::max(3, o.subdivAxis), false);
+                 std::max(3, o.subdivAxis), false, o.fraction);
 }
 
 Mesh makePipe(const PipeOptions& o)
@@ -567,6 +723,6 @@ Mesh makePipe(const PipeOptions& o)
         {innerTop, innerBottom, Band::Cylindrical, {0.75f, 1.0f}},
         {innerBottom, innerBottom + 1, Band::Planar, {}, kCapLeft, scale},
     };
-    return lathe(profile, bands, std::max(3, o.subdivAxis), true);
+    return lathe(profile, bands, std::max(3, o.subdivAxis), true, o.fraction, o.cutCaps);
 }
 } // namespace lila::geo

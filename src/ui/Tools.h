@@ -25,6 +25,7 @@ enum SnapFlags : unsigned
     SnapEdge = 1 << 1,
     SnapVertex = 1 << 2,
     SnapRotateHold = 1 << 3, // J held: flips the rotate increment snap for the drag, like Maya
+    SnapSurface = 1 << 4,    // N held: moves slide along the mesh surface under the cursor
 };
 
 /** A manipulator tool's increment snap, from the general prefs /manipulator/snap/<move|rotate|scale>/{enabled,step}. */

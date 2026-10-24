@@ -1,5 +1,6 @@
 add_executable(lila_retopo_tests
     main.cpp
+    test_anglesnap.cpp
     test_border.cpp
     test_corpus.cpp
     test_repair.cpp

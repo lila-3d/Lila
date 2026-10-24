@@ -15,6 +15,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 class QObject;
@@ -25,7 +26,8 @@ namespace lila::ui
  * Retopo Draw: draws a new low-poly mesh on top of a live reference surface.
  *
  *   click                place a dot on the surface
- *   Shift hover/click    preview, then fill, a quad from the four dots/vertices around the cursor
+ *   Shift hover/click    preview, then fill, a quad from the four dots/vertices around the cursor; with nothing to fill,
+ *                        place a dot on the line from the last dot (else the last hovered vertex) snapped to the snap angle
  *   Shift drag           relax brush (Shift wheel resizes), points slide on the surface
  *   Ctrl drag            insert an edge loop across the strip under the cursor
  *   Tab drag             extend a strip of quads from a border edge
@@ -37,7 +39,8 @@ namespace lila::ui
  *
  * Targets come from retopo::resolveRetopoDraw. The retopo mesh is created with the first dot, and keeps its reference
  * connected and its dots stored, so a later session resumes on it. Every edit, dots included, is a retopoDraw* command,
- * so it undoes and echoes like any other. Symmetry follows the retopo mesh's symmetry setting.
+ * so it undoes and echoes like any other. Symmetry follows the retopo mesh's symmetry setting. The snap angle and its
+ * space (the reference object's axes or world), and the reference itself, are on the viewport toolbar while it runs.
  */
 class LILA_UI_API RetopoDrawTool : public ViewportTool
 {
@@ -68,6 +71,17 @@ public:
     /** Tab Ctrl drag's turn limit, degrees; kept in the general prefs. */
     static double extrudeAngle();
     static void setExtrudeAngle(double degrees);
+    /** Shift's line snap step, degrees; kept in the general prefs. */
+    static double snapAngle();
+    static void setSnapAngle(double degrees);
+    /** Whether Shift's line snap measures angles in the reference object's axes (else world axes). */
+    static bool snapObjectSpace();
+    static void setSnapObjectSpace(bool object);
+
+    scene::NodeId reference() const { return mReference; }
+    const std::string& retopoName() const { return mRetopoName; }
+    /** Draws over another mesh from here on; an existing retopo mesh gets it connected as its reference (undoable). */
+    bool setReference(scene::NodeId reference);
 
 private:
     enum class Drag
@@ -102,6 +116,12 @@ private:
     void refresh();
     bool surfaceHit(QPointF px, const ViewInfo& view, glm::dvec3& out) const;
     glm::dvec3 onSurface(const glm::dvec3& p) const;
+    /** The surface hit nearest p along +-axis, else the closest surface point. */
+    glm::dvec3 onSurfaceAlong(const glm::dvec3& p, const glm::dvec3& axis) const;
+    /** Where the Shift line snap puts the cursor's dot: the anchor it starts from and the snapped point on the surface. */
+    std::optional<std::pair<glm::dvec3, retopo::AngleSnap>> lineSnap(QPointF px, const ViewInfo& view) const;
+    std::optional<glm::dvec3> anchorWorld() const;
+    void drawLineSnap(OverlayPainter& p, const ViewInfo& view) const;
     std::vector<std::optional<QPointF>> projectPoints(const ViewInfo& view) const;
     bool visible(const glm::dvec3& p, const ViewInfo& view) const;
     Hover pick(QPointF px, const ViewInfo& view) const;
@@ -112,6 +132,7 @@ private:
     std::optional<Fill> findFill(QPointF px, const ViewInfo& view) const;
     bool setDots(const std::vector<glm::dvec3>& dots);
     void placeDot(QPointF px, const ViewInfo& view);
+    void placeSnappedDot(QPointF px, const ViewInfo& view);
     void fillAt(QPointF px, const ViewInfo& view);
     void deleteAt(QPointF px, const ViewInfo& view);
     void relaxStep(QPointF px, const ViewInfo& view);
@@ -138,6 +159,7 @@ private:
     scene::MeshPtr mRefMesh;
     glm::dmat4 mRefWorld{1.0};
     geo::MeshBvh mRefBvh;
+    std::vector<glm::dvec3> mRefFaceNormals; // world space, per face of the mesh mRefBvh was built from
     scene::MeshPtr mRetopo; // base mesh of the retopo node; ids are what the commands take
     glm::dmat4 mRetopoWorld{1.0};
     std::optional<geo::SymmetryPlane> mSymmetry; // world space
@@ -146,6 +168,7 @@ private:
     std::string mDotsText;
     glm::dmat4 mDotsWorld{1.0};
     Hover mHover;
+    geo::Index mAnchorPoint = geo::kInvalid; // the vertex last hovered; Shift's line snap starts there while there are no dots
     QPointF mCursor;
     std::string mCursorView; // camera of the viewport the cursor was last in; hover previews draw only there
     Qt::KeyboardModifiers mMods;
@@ -171,6 +194,9 @@ private:
     std::unique_ptr<QObject> mFilter;
 };
 
-/** Registers "retopo.draw". */
+/** The running Retopo Draw tool, or null. */
+LILA_UI_API RetopoDrawTool* activeRetopoDraw();
+
+/** Registers "retopo.draw", "retopo.setReference" and the snap angle and space actions. */
 LILA_UI_API void registerRetopoActions();
 } // namespace lila::ui

@@ -76,6 +76,9 @@ private:
      * row and the right-hand groups.
      */
     void buildMaskRow();
+    /** Retopo Draw's line snap angle and space and its surface, in the mask row's place while the tool runs. */
+    void buildRetopoRow();
+    void refreshRetopo();
     /** Makes this panel's view the active one, so actions that target "the viewport" act on it. */
     void activateView();
     void refresh();
@@ -100,6 +103,10 @@ private:
     QWidget* mSnapRow = nullptr; // right-aligned, outside the overflowing left row
     QWidget* mSymmetryRow = nullptr; // right of the snap row
     QWidget* mMaskRow = nullptr;
+    QWidget* mRetopoRow = nullptr;
+    QToolButton* mRetopoSpace = nullptr;
+    QToolButton* mRetopoAngle = nullptr;
+    QToolButton* mRetopoSurface = nullptr;
     std::vector<QAction*> mMaskActions;
     QToolButton* mSymmetryToggle = nullptr;
     QToolButton* mSymmetryAxis = nullptr;
@@ -108,6 +115,7 @@ private:
     int mPrefListener = 0;
     int mRenderSettingsListener = 0;
     int mToolsListener = 0;
+    int mViewportToolListener = 0;
 };
 
 /** One viewport with its toolbar above it, as a cell of the viewport layout. */

@@ -1,0 +1,15 @@
+{
+  "N": { "label": "Ico Sphere", "action": "createAt.icoSphere" },
+  "NE": { "label": "Cylinder", "action": "createAt.cylinder" },
+  "E": { "label": "Plane", "action": "createAt.plane" },
+  "SE": { "label": "Torus", "action": "createAt.torus" },
+  "S": { "label": "Cube", "action": "createAt.cube" },
+  "SW": { "label": "Disc", "action": "createAt.disc" },
+  "W": { "label": "Quad Sphere", "action": "createAt.quadSphere" },
+  "NW": { "label": "Cone", "action": "createAt.cone" },
+  "overflow": [
+    { "label": "Sphere", "action": "createAt.sphere" },
+    { "label": "Pipe", "action": "createAt.pipe" },
+    { "label": "Capsule", "action": "createAt.capsule" }
+  ]
+}

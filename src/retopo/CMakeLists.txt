@@ -2,6 +2,7 @@ find_package(Eigen3 CONFIG REQUIRED)
 find_package(meshoptimizer CONFIG REQUIRED)
 
 lila_module(lila_retopo Scene
+    AngleSnap.cpp
     Extract.cpp
     Border.cpp
     Field.cpp

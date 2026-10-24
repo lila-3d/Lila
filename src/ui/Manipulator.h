@@ -13,6 +13,7 @@
 #include <QString>
 
 #include <array>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -70,6 +71,8 @@ public:
     bool precisionDrag() const override { return mDrag && mDrag->precise; }
     /** The current drag is Ctrl's plane of the two axes other than the one pressed. */
     bool ctrlPlaneDrag() const { return mDrag && mDrag->ctrlPlane; }
+    /** The current drag is Ctrl+MMB's slide along the mesh surface under the cursor. */
+    bool surfaceSlideDrag() const { return mDrag && mDrag->surfaceSlide; }
     /** Numeric entry while dragging. True when consumed. */
     bool keyPress(QKeyEvent* e) override;
     QString typed() const override { return mDrag ? mDrag->typed : QString(); }
@@ -102,12 +105,21 @@ private:
         bool ctrlPlane = false;
         bool alongNormal = false; // each component point moves along its own normal by the N axis distance
         bool componentPivot = false; // Edit Pivot on components: moves or orients the transient component pivot
+        bool surfaceSlide = false; // Ctrl+MMB off the handles: the pivot follows the surface under the cursor
         QPointF linearDir;
         double linearSign = 1.0;
         Tool tool = Tool::Move;
         std::vector<Saved> saved;
         std::vector<glm::dvec3> startPivots;
         std::vector<glm::dmat3> startPivotFrames;
+        std::vector<glm::dmat3> startFrames; // objects' own axes, for aligning to a surface normal
+        /** Meshes a surface slide never lands on: the moved objects and their children, or the meshes being edited. */
+        std::vector<scene::NodeId> surfaceExclude;
+        /** Set while a snap surface is designated: moved points (components) or the pivot (objects) land on it. */
+        std::function<glm::dvec3(const glm::dvec3&)> conform;
+        std::vector<scene::NodeId> conformTo;
+        /** Per saved object: the world rotation that turns its up axis to the surface normal, when aligning. */
+        std::vector<glm::dquat> alignRotations;
         double startAngle = 0.0;
         glm::dvec3 startHit{0.0};
         // results of the last update
@@ -141,6 +153,8 @@ private:
     glm::dvec3 snapGrid(const glm::dvec3& p, const glm::dvec3& mask) const;
     /** Nearest mesh vertex/edge point under the cursor for V/C snapping, skipping whatever is being moved. */
     std::optional<glm::dvec3> snapTarget(QPointF px, unsigned snaps) const;
+    /** N held or Ctrl+MMB: the move delta that puts the pivot on the surface under the cursor; sets alignRotations. */
+    std::optional<glm::dvec3> surfaceSlide(QPointF px);
 
     void drawMove(OverlayPainter& p);
     void drawRotate(OverlayPainter& p);

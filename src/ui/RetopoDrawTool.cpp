@@ -5,6 +5,7 @@
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
+#include "geo/Normals.h"
 #include "geo/Topology.h"
 #include "retopo/RetopoCommands.h"
 #include "scene/Graph.h"
@@ -12,6 +13,7 @@
 #include "scene/Modifiers.h"
 #include "ui/Actions.h"
 #include "ui/CursorBadges.h"
+#include "ui/GizmoMath.h"
 #include "ui/NodeLookup.h"
 #include "ui/OptionBox.h"
 
@@ -37,6 +39,8 @@ constexpr double kPickRadius = 12.0; // px
 constexpr double kWeldRadius = 10.0; // px
 constexpr const char* kPrefs = "general";
 constexpr const char* kExtrudeAnglePref = "/retopoDraw/extrudeAngle";
+constexpr const char* kSnapAnglePref = "/retopoDraw/snapAngle";
+constexpr const char* kSnapSpacePref = "/retopoDraw/snapSpace";
 constexpr const char* kMergeBadge = "retopo.draw.merge";
 
 // Overlay colours are sRGB; the 3D streams take linear.
@@ -175,8 +179,8 @@ void RetopoDrawTool::activate()
     qApp->installEventFilter(mFilter.get());
     cursorBadges::add({kMergeBadge, "arrow-merge", [this](const ViewportState&) { return merging(); }, "Vertex merges on release"});
     refresh();
-    log::info("Retopo Draw on {} into {}: click dots, Shift-click to fill, Ctrl-drag loops, Tab-drag extends (Shift: whole loop, "
-              "Ctrl: up to the extrude angle), Shift-drag relaxes, Ctrl+Shift-click deletes, Esc exits",
+    log::info("Retopo Draw on {} into {}: click dots, Shift-click to fill or place an angle-snapped dot, Ctrl-drag loops, "
+              "Tab-drag extends (Shift: whole loop, Ctrl: up to the extrude angle), Shift-drag relaxes, Ctrl+Shift-click deletes, Esc exits",
               mRefMesh ? scene::Graph::current().node(mReference)->path() : std::string("(no reference)"), mRetopoName);
 }
 
@@ -194,6 +198,43 @@ void RetopoDrawTool::setExtrudeAngle(double degrees)
 {
     PrefStore::get().set(kPrefs, kExtrudeAnglePref, std::clamp(degrees, 1.0, 179.0));
     viewportTools::requestRedraw();
+}
+
+double RetopoDrawTool::snapAngle() { return std::clamp(PrefStore::get().value<double>(kPrefs, kSnapAnglePref, 15.0), 0.1, 180.0); }
+
+void RetopoDrawTool::setSnapAngle(double degrees)
+{
+    PrefStore::get().set(kPrefs, kSnapAnglePref, std::clamp(degrees, 0.1, 180.0));
+    viewportTools::requestRedraw();
+}
+
+bool RetopoDrawTool::snapObjectSpace() { return PrefStore::get().value<std::string>(kPrefs, kSnapSpacePref, "object") != "world"; }
+
+void RetopoDrawTool::setSnapObjectSpace(bool object)
+{
+    PrefStore::get().set(kPrefs, kSnapSpacePref, std::string(object ? "object" : "world"));
+    viewportTools::requestRedraw();
+}
+
+bool RetopoDrawTool::setReference(scene::NodeId reference)
+{
+    scene::Graph& g = scene::Graph::current();
+    scene::Node* ref = g.node(reference);
+    if (!ref || !ref->type().isA("mesh"))
+        return false;
+    scene::Node* retopo = retopoNode();
+    if (retopo && retopo->id() == reference)
+    {
+        log::warn("Retopo Draw: the surface can't be the retopo mesh itself");
+        return false;
+    }
+    if (retopo && !run("retopoDrawSetReference", {{"mesh", retopo->path()}, {"reference", ref->path()}}))
+        return false;
+    mReference = reference;
+    refresh();
+    log::info("Retopo Draw: drawing on {}", ref->path());
+    viewportTools::requestRedraw();
+    return true;
 }
 
 void RetopoDrawTool::refresh()
@@ -216,9 +257,13 @@ void RetopoDrawTool::refresh()
             for (glm::dvec3& p : world.positions())
                 p = glm::dvec3(refWorld * glm::dvec4(p, 1.0));
             mRefBvh.build(world);
+            mRefFaceNormals = geo::faceNormals(world);
         }
         else
+        {
             mRefBvh = geo::MeshBvh();
+            mRefFaceNormals.clear();
+        }
     }
     mRetopo = nullptr;
     mSymmetry.reset();
@@ -253,6 +298,8 @@ void RetopoDrawTool::refresh()
     }
     if (mHover.dot >= int(mDots.size()))
         mHover.dot = -1;
+    if (!mRetopo || mAnchorPoint >= mRetopo->pointCapacity() || !mRetopo->pointValid(mAnchorPoint))
+        mAnchorPoint = kInvalid;
 }
 
 scene::Node* RetopoDrawTool::retopoNode() const
@@ -295,6 +342,42 @@ glm::dvec3 RetopoDrawTool::onSurface(const glm::dvec3& p) const
 {
     geo::BvhClosest c;
     return !mRefBvh.empty() && mRefBvh.closestPoint(p, c) ? c.point : p;
+}
+
+glm::dvec3 RetopoDrawTool::onSurfaceAlong(const glm::dvec3& p, const glm::dvec3& axis) const
+{
+    geo::BvhHit up, down;
+    bool hitUp = !mRefBvh.empty() && mRefBvh.raycast(p, axis, up);
+    bool hitDown = !mRefBvh.empty() && mRefBvh.raycast(p, -axis, down);
+    if (hitUp && (!hitDown || up.t < down.t))
+        return up.point;
+    if (hitDown)
+        return down.point;
+    return onSurface(p);
+}
+
+std::optional<glm::dvec3> RetopoDrawTool::anchorWorld() const
+{
+    if (!mDots.empty())
+        return mDots.back();
+    if (mRetopo && mAnchorPoint != kInvalid)
+        return pointWorld(mAnchorPoint);
+    return std::nullopt;
+}
+
+std::optional<std::pair<glm::dvec3, retopo::AngleSnap>> RetopoDrawTool::lineSnap(QPointF px, const ViewInfo& view) const
+{
+    std::optional<glm::dvec3> anchor = anchorWorld();
+    glm::dvec3 hit;
+    if (!anchor || !surfaceHit(px, view, hit))
+        return std::nullopt;
+    glm::dvec3 normal = -view.viewDir(*anchor);
+    if (geo::BvhClosest c; mRefBvh.closestPoint(*anchor, c) && c.face < mRefFaceNormals.size())
+        normal = mRefFaceNormals[c.face];
+    glm::dmat3 frame = snapObjectSpace() ? retopo::rotationFrame(mRefWorld) : glm::dmat3(1.0);
+    retopo::AngleSnap snap = retopo::angleSnap(*anchor, hit, normal, frame, snapAngle());
+    snap.point = onSurfaceAlong(snap.point, snap.axis);
+    return std::pair{*anchor, snap};
 }
 
 bool RetopoDrawTool::visible(const glm::dvec3& p, const ViewInfo& view) const
@@ -449,6 +532,25 @@ void RetopoDrawTool::placeDot(QPointF px, const ViewInfo& view)
         hit = onSurface(mSymmetry->project(hit));
     std::vector<glm::dvec3> dots = mDots;
     dots.push_back(hit);
+    setDots(dots);
+}
+
+void RetopoDrawTool::placeSnappedDot(QPointF px, const ViewInfo& view)
+{
+    auto snap = lineSnap(px, view);
+    if (!snap)
+    {
+        placeDot(px, view);
+        return;
+    }
+    glm::dvec3 at = snap->second.point;
+    if (auto s = view.project(at))
+        if (Hover h = pick(*s, view); h.point != kInvalid || h.dot >= 0)
+            return;
+    if (mSymmetry && std::abs(mSymmetry->distance(at)) < view.unitsPerPixel(at) * kWeldRadius)
+        at = onSurface(mSymmetry->project(at));
+    std::vector<glm::dvec3> dots = mDots;
+    dots.push_back(at);
     setDots(dots);
 }
 
@@ -826,6 +928,8 @@ bool RetopoDrawTool::mouseMove(QMouseEvent* e, const ViewInfo& view)
     {
         refresh();
         mHover = pick(e->position(), view);
+        if (mHover.point != kInvalid && !(mMods & Qt::ShiftModifier))
+            mAnchorPoint = mHover.point;
         if (mMods & Qt::ControlModifier && mHover.edge != kInvalid)
             mLoopFraction = edgeFraction(mHover.edge, e->position(), view);
         viewportTools::requestRedraw();
@@ -910,7 +1014,12 @@ void RetopoDrawTool::commitDrag(const ViewInfo& view)
     switch (mDrag)
     {
     case Drag::DotClick: placeDot(mCursor, view); break;
-    case Drag::FillClick: fillAt(mCursor, view); break;
+    case Drag::FillClick:
+        if (findFill(mCursor, view))
+            fillAt(mCursor, view);
+        else
+            placeSnappedDot(mCursor, view);
+        break;
     case Drag::DeleteClick: deleteAt(mCursor, view); break;
     case Drag::DotMove:
         if (mDotTo && mDragDot >= 0 && mDragDot < int(mDots.size()))
@@ -1165,6 +1274,8 @@ void RetopoDrawTool::draw(render::FrameState& s, OverlayPainter& p, const ViewIn
             s.linesOnTop.push_back({glm::vec3(q[(k + 1) % q.size()]), kHotLinear});
         }
     }
+    if (here && shift && !ctrl && !mTabDown && !fill && (mDrag == Drag::None || mDrag == Drag::FillClick))
+        drawLineSnap(p, view);
     if (del)
         drawDeleteTarget(s, p, view);
 
@@ -1185,6 +1296,40 @@ void RetopoDrawTool::draw(render::FrameState& s, OverlayPainter& p, const ViewIn
         drawToolMessage(p, view, QString("Extrude to angle: %1\u00b0   (wheel adjusts)").arg(int(std::lround(extrudeAngle()))));
     else if (here && mTabDown && shift && !ctrl)
         drawToolMessage(p, view, "Extrude edge loop");
+}
+
+void RetopoDrawTool::drawLineSnap(OverlayPainter& p, const ViewInfo& view) const
+{
+    auto snap = lineSnap(mCursor, view);
+    if (!snap)
+        return;
+    const auto& [anchor, s] = *snap;
+    // Sampled along the surface, so the dashes follow it over curves.
+    std::vector<QPointF> run;
+    const int samples = 32;
+    for (int i = 0; i <= samples; ++i)
+    {
+        glm::dvec3 w = i == 0 ? anchor : i == samples ? s.point : onSurfaceAlong(glm::mix(anchor, s.point, i / double(samples)), s.axis);
+        std::optional<QPointF> sp = visible(w, view) ? view.project(w) : std::nullopt;
+        if (sp)
+            run.push_back(*sp);
+        if ((!sp || i == samples) && run.size() > 1)
+            p.dashedPolyline(run, 1.5f, 6.0f, kHot);
+        if (!sp)
+            run.clear();
+    }
+    if (auto sp = view.project(s.point); sp && visible(s.point, view))
+    {
+        std::vector<QPointF> ring;
+        for (int k = 0; k < 24; ++k)
+        {
+            double a = k / 24.0 * 6.283185307179586;
+            ring.push_back(*sp + QPointF(std::cos(a), std::sin(a)) * 7.0);
+        }
+        p.polyline(ring, 1.5f, kHot, true);
+        p.disc(*sp, 3.5f, kDotFill, 16);
+        p.label(*sp + QPointF(10.0, -10.0), QString("%1\u00b0 %2").arg(s.degrees, 0, 'g', 4).arg(snapObjectSpace() ? "object" : "world"));
+    }
 }
 
 void RetopoDrawTool::drawDeleteTarget(render::FrameState& s, OverlayPainter& p, const ViewInfo& view) const
@@ -1232,6 +1377,75 @@ void RetopoDrawTool::drawDeleteTarget(render::FrameState& s, OverlayPainter& p, 
         }
 }
 
+RetopoDrawTool* activeRetopoDraw() { return dynamic_cast<RetopoDrawTool*>(viewportTools::active()); }
+
+namespace
+{
+/** The surface Set Retopo Surface picks: the first selected mesh that isn't the retopo mesh. */
+scene::Node* selectedSurface(const std::string& retopo)
+{
+    scene::Graph& g = scene::Graph::current();
+    for (scene::NodeId id : g.selection())
+        if (scene::Node* n = g.node(id); n && n->type().isA("mesh") && n->path() != retopo)
+            return n;
+    return nullptr;
+}
+
+void setReferenceFromSelection()
+{
+    if (RetopoDrawTool* tool = activeRetopoDraw())
+    {
+        scene::Node* ref = selectedSurface(tool->retopoName());
+        if (!ref)
+            log::warn("Set Retopo Surface: select the mesh to draw on");
+        else
+            tool->setReference(ref->id());
+        return;
+    }
+    // Outside the tool: a selected retopo mesh takes the other selected mesh as its surface.
+    scene::Graph& g = scene::Graph::current();
+    for (scene::NodeId id : g.selection())
+        if (retopo::retopoDrawReference(g, id) != scene::kNoNode)
+        {
+            std::string retopo = g.node(id)->path();
+            if (scene::Node* ref = selectedSurface(retopo))
+            {
+                try
+                {
+                    ops::execute("retopoDrawSetReference", {{"mesh", retopo}, {"reference", ref->path()}}, CallSource::UI);
+                }
+                catch (const CommandError& e)
+                {
+                    log::error("{}", e.what());
+                }
+                return;
+            }
+        }
+    log::warn("Set Retopo Surface: run it in Retopo Draw with the new surface selected, or select a retopo mesh and its new surface");
+}
+
+void stepSnapAngle(int dir)
+{
+    double current = RetopoDrawTool::snapAngle();
+    double next = current;
+    if (dir > 0)
+    {
+        for (double v : gizmo::kRotateSteps)
+            if (v > current + 1e-9)
+            {
+                next = v;
+                break;
+            }
+    }
+    else
+        for (double v : gizmo::kRotateSteps)
+            if (v < current - 1e-9)
+                next = v;
+    RetopoDrawTool::setSnapAngle(next);
+    log::info("Retopo Draw snap angle: {}\u00b0", next);
+}
+} // namespace
+
 void registerRetopoActions()
 {
     actions::add({
@@ -1249,9 +1463,43 @@ void registerRetopoActions()
             viewportTools::set(std::make_unique<RetopoDrawTool>(t->reference, t->retopo));
         },
         nullptr,
-        "Draw a new quad mesh over the selected reference, or resume on a selected retopo mesh: click dots, Shift-click to fill, "
+        "Draw a new quad mesh over the selected reference, or resume on a selected retopo mesh: click dots, Shift-click to fill "
+        "(or, with nothing to fill, place a dot on an angle-snapped line), "
         "Ctrl-drag loops, Tab-drag extends (Tab+Shift: whole loop, Tab+Ctrl: up to the extrude angle), Shift-drag relaxes, MMB-drag tweaks, Ctrl+Shift-click deletes. Esc or Q/W/E/R exits.",
         "lila.ui.run_action(\"retopo.draw\")",
+    });
+    actions::add({
+        .id = "retopo.setReference",
+        .label = "Set Retopo Surface",
+        .category = "Mesh",
+        .run = setReferenceFromSelection,
+        .doc = "Retopo Draw draws over the selected mesh from here on, and the retopo mesh keeps it as its surface. Works in "
+               "the running tool, or with a retopo mesh and its new surface selected.",
+        .python = "lila.ui.run_action(\"retopo.setReference\")",
+    });
+    actions::add({
+        .id = "retopo.toggleSnapSpace",
+        .label = "Retopo Snap in Object Space",
+        .category = "Mesh",
+        .run = [] { RetopoDrawTool::setSnapObjectSpace(!RetopoDrawTool::snapObjectSpace()); },
+        .doc = "Retopo Draw's Shift line snap measures angles from the surface object's axes when on, from the world axes when off.",
+        .python = "lila.prefs.set(\"general\", \"/retopoDraw/snapSpace\", \"world\")",
+    });
+    actions::add({
+        .id = "retopo.increaseSnapAngle",
+        .label = "Increase Retopo Snap Angle",
+        .category = "Mesh",
+        .run = [] { stepSnapAngle(1); },
+        .doc = "Steps Retopo Draw's Shift line snap angle up to the next common angle.",
+        .python = "lila.ui.run_action(\"retopo.increaseSnapAngle\")",
+    });
+    actions::add({
+        .id = "retopo.decreaseSnapAngle",
+        .label = "Decrease Retopo Snap Angle",
+        .category = "Mesh",
+        .run = [] { stepSnapAngle(-1); },
+        .doc = "Steps Retopo Draw's Shift line snap angle down to the next common angle.",
+        .python = "lila.ui.run_action(\"retopo.decreaseSnapAngle\")",
     });
     optionBox::addCustom("retopo.draw", [] {
         bool ok = false;

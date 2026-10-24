@@ -20,6 +20,7 @@
 #include "ui/ModifierStack.h"
 #include "ui/NodeEditor.h"
 #include "ui/Panels.h"
+#include "ui/PlacePrimitive.h"
 #include "ui/RetopoDrawTool.h"
 #include "ui/RigViewport.h"
 #include "ui/SculptPanel.h"
@@ -63,6 +64,7 @@ TEST_CASE("every registered action has a doc")
     ui::registerRigViewport();
     ui::registerAutoBevelUi();
     ui::registerMeasureUi();
+    ui::registerPlacePrimitiveUi();
 
     std::vector<const ui::Action*> all = ui::actions::all();
     REQUIRE(all.size() > 100);
