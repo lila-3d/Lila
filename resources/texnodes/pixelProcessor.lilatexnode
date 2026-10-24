@@ -1,0 +1,86 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "pixelProcessor",
+  "label": "Pixel Processor",
+  "category": "Utility",
+  "doc": "Runs a Slang function body per texel: it sees uv, inputs a and b (colours) and c and d (grays) as a.sample(uv), the values x, y, z and w as p.x, and texel(), and returns a float4. Editing the code recompiles; the values don't.",
+  "inputs": [
+    {
+      "id": "a",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ]
+    },
+    {
+      "id": "b",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ]
+    },
+    {
+      "id": "c",
+      "type": "gray",
+      "default": 0.5
+    },
+    {
+      "id": "d",
+      "type": "gray",
+      "default": 0.5
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "expression",
+      "type": "code",
+      "default": "float4 col = a.sample(uv);\nreturn float4(col.rgb * p.x, col.a);",
+      "doc": "Slang statements ending in a return of a float4."
+    },
+    {
+      "id": "x",
+      "type": "float",
+      "default": 1.0,
+      "softMin": 0,
+      "softMax": 1
+    },
+    {
+      "id": "y",
+      "type": "float",
+      "default": 0.0,
+      "softMin": 0,
+      "softMax": 1
+    },
+    {
+      "id": "z",
+      "type": "float",
+      "default": 0.0,
+      "softMin": 0,
+      "softMax": 1
+    },
+    {
+      "id": "w",
+      "type": "float",
+      "default": 0.0,
+      "softMin": 0,
+      "softMax": 1
+    }
+  ],
+  "cost": 20,
+  "body": {
+    "out": "$expression"
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "gabor",
+  "label": "Gabor Noise",
+  "category": "Noise",
+  "doc": "Sparse convolution of oriented wavelets: stripes with a controllable frequency and direction, from fibrous to isotropic. Tileable, 0.5 is the mean.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "scale",
+      "type": "int",
+      "default": 8,
+      "min": 1,
+      "softMax": 64,
+      "doc": "Cells across the texture."
+    },
+    {
+      "id": "impulses",
+      "type": "int",
+      "default": 8,
+      "min": 1,
+      "max": 32,
+      "doc": "Wavelets per cell."
+    },
+    {
+      "id": "frequency",
+      "type": "float",
+      "default": 2.0,
+      "min": 0,
+      "softMax": 8,
+      "doc": "Stripes per cell."
+    },
+    {
+      "id": "angle",
+      "type": "float",
+      "default": 0.0,
+      "softMin": -180,
+      "softMax": 180,
+      "doc": "Stripe direction, degrees."
+    },
+    {
+      "id": "angleRandom",
+      "type": "float",
+      "default": 0.0,
+      "min": 0,
+      "max": 1,
+      "doc": "0 keeps every wavelet on the angle, 1 turns each at random."
+    },
+    {
+      "id": "seed",
+      "type": "seed",
+      "default": 0,
+      "doc": "Changes the pattern without changing its look."
+    }
+  ],
+  "cost": 250,
+  "code": "float gaborNoise(float2 uv, int scale, int impulses, float frequency, float angle, float angleRandom, uint seed)\n{\n    int2 sc = int2(max(scale, 1), max(scale, 1));\n    float2 q = uv * float2(sc);\n    int2 c = int2(floor(q));\n    float sum = 0.0;\n    for (int y = -1; y <= 1; ++y)\n    {\n        for (int x = -1; x <= 1; ++x)\n        {\n            int2 n = c + int2(x, y);\n            uint2 w = uint2(((n % sc) + sc) % sc);\n            for (int k = 0; k < impulses; ++k)\n            {\n                uint s = seed + uint(k) * 0x632be5abu;\n                float2 d = q - (float2(n) + texRand2(w, s));\n                float r2 = dot(d, d);\n                if (r2 >= 1.0)\n                    continue;\n                float a = radians(angle) + (texRand(w, s ^ 0x5bd1e995u) - 0.5) * 6.28318530718 * angleRandom;\n                float sgn = texRand(w, s ^ 0x1b873593u) < 0.5 ? -1.0 : 1.0;\n                sum += sgn * exp(-7.0685835 * r2) * cos(6.28318530718 * frequency * dot(d, float2(cos(a), sin(a))));\n            }\n        }\n    }\n    return saturate(0.5 + 0.75 * sum / sqrt(float(max(impulses, 1))));\n}",
+  "body": {
+    "out": "return gaborNoise(uv, p.scale, p.impulses, p.frequency, p.angle, p.angleRandom, uint(p.seed));"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "materialBlend",
+  "label": "Material Blend",
+  "category": "Material",
+  "doc": "Mixes two materials channel by channel through a mask: 0 is a, 1 is b.",
+  "inputs": [
+    {
+      "id": "a",
+      "type": "material"
+    },
+    {
+      "id": "b",
+      "type": "material"
+    },
+    {
+      "id": "mask",
+      "type": "gray",
+      "default": 0.5
+    }
+  ],
+  "outputs": [
+    {
+      "id": "material",
+      "type": "material"
+    }
+  ],
+  "params": [],
+  "cost": 12,
+  "helpers": [
+    "material"
+  ],
+  "body": {
+    "material": "return materialLerp(a.sample(uv), b.sample(uv), saturate(mask.sample(uv)));"
+  }
+}

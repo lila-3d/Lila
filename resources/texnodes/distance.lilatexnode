@@ -1,0 +1,43 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "distance",
+  "label": "Distance",
+  "category": "Filter",
+  "doc": "Distance from the white parts of a mask, wrapping: a falloff from 1 at the shape to 0 at the max distance, the raw distance in uv, or a signed distance (negative inside). Runs as its own pass.",
+  "kind": "native",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "gray",
+      "default": 0.0
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "maxDistance",
+      "type": "float",
+      "default": 0.1,
+      "min": 0.0001,
+      "softMax": 0.5,
+      "doc": "Falloff length, uv."
+    },
+    {
+      "id": "mode",
+      "type": "enum",
+      "default": "falloff",
+      "options": [
+        "falloff",
+        "distance",
+        "signed"
+      ]
+    }
+  ],
+  "cost": 60
+}

@@ -1,0 +1,31 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "color",
+  "label": "Colour",
+  "category": "Input",
+  "doc": "A single colour.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "color",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ]
+    }
+  ],
+  "cost": 0,
+  "body": {
+    "out": "return p.color;"
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "voronoi",
+  "label": "Voronoi",
+  "category": "Noise",
+  "doc": "Tileable cellular noise: distance to the nearest point (f1), the second nearest (f2), the cell edges (f2 - f1) and a random value per cell.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "f1",
+      "type": "gray"
+    },
+    {
+      "id": "f2",
+      "type": "gray"
+    },
+    {
+      "id": "edge",
+      "type": "gray"
+    },
+    {
+      "id": "random",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "scale",
+      "type": "int",
+      "default": 6,
+      "min": 1,
+      "softMax": 64
+    },
+    {
+      "id": "jitter",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "max": 1,
+      "doc": "0 is a regular grid."
+    },
+    {
+      "id": "seed",
+      "type": "seed",
+      "default": 0,
+      "doc": "Changes the pattern without changing its look."
+    }
+  ],
+  "cost": 60,
+  "helpers": [
+    "voronoi"
+  ],
+  "body": {
+    "f1": "VoronoiResult r = voronoi(uv, int2(p.scale, p.scale), p.jitter, uint(p.seed));\nreturn saturate(r.f1);",
+    "f2": "VoronoiResult r = voronoi(uv, int2(p.scale, p.scale), p.jitter, uint(p.seed));\nreturn saturate(r.f2);",
+    "edge": "VoronoiResult r = voronoi(uv, int2(p.scale, p.scale), p.jitter, uint(p.seed));\nreturn saturate(r.f2 - r.f1);",
+    "random": "VoronoiResult r = voronoi(uv, int2(p.scale, p.scale), p.jitter, uint(p.seed));\nreturn r.cellRandom;"
+  }
+}

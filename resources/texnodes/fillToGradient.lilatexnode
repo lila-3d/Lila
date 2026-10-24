@@ -1,0 +1,57 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "fillToGradient",
+  "label": "Fill to Gradient",
+  "category": "Fill",
+  "doc": "A linear ramp across each Flood Fill region, at an angle with an optional random turn per region.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0,
+        0,
+        -1,
+        -1
+      ],
+      "doc": "A Flood Fill output."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "angle",
+      "type": "float",
+      "default": 0.0,
+      "softMin": -180,
+      "softMax": 180,
+      "doc": "Degrees."
+    },
+    {
+      "id": "angleRandom",
+      "type": "float",
+      "default": 0.0,
+      "min": 0,
+      "max": 1
+    },
+    {
+      "id": "seed",
+      "type": "seed",
+      "default": 0,
+      "doc": "Changes the pattern without changing its look."
+    }
+  ],
+  "cost": 8,
+  "helpers": [
+    "fill"
+  ],
+  "body": {
+    "out": "FillRegion r = fillRegion(input.sample(uv), uv);\nfloat a = radians(p.angle) + (texRand(uint2(r.key), uint(p.seed) ^ 0x7f4a7c15u) - 0.5) * 6.28318530718 * p.angleRandom;\nfloat2 d = float2(cos(a), sin(a));\nfloat span = 0.5 * (abs(d.x) + abs(d.y));\nreturn r.valid ? saturate(dot(r.local - 0.5, d) / max(span, 1e-5) * 0.5 + 0.5) : 0.0;"
+  }
+}

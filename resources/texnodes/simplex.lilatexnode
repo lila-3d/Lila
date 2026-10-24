@@ -1,0 +1,53 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "simplex",
+  "label": "Simplex Noise",
+  "category": "Noise",
+  "doc": "Tileable simplex-style gradient noise on a triangular lattice, summed over octaves (FBM). Fewer grid artefacts than Perlin. 0 to 1.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "scale",
+      "type": "int",
+      "default": 4,
+      "min": 2,
+      "softMax": 64,
+      "doc": "Lattice cells across the texture at the first octave (at least 2)."
+    },
+    {
+      "id": "octaves",
+      "type": "int",
+      "default": 5,
+      "min": 1,
+      "max": 12
+    },
+    {
+      "id": "persistence",
+      "type": "float",
+      "default": 0.5,
+      "min": 0,
+      "max": 1,
+      "doc": "Amplitude of each octave relative to the one before."
+    },
+    {
+      "id": "seed",
+      "type": "seed",
+      "default": 0,
+      "doc": "Changes the pattern without changing its look."
+    }
+  ],
+  "cost": 70,
+  "helpers": [
+    "simplex"
+  ],
+  "body": {
+    "out": "return simplexFbm(uv, p.scale, p.octaves, p.persistence, uint(p.seed));"
+  }
+}

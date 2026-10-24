@@ -1,0 +1,59 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "sdfSegment",
+  "label": "SDF Line",
+  "category": "SDF",
+  "doc": "Signed distance (uv) to a line segment with a thickness: negative inside.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "sdf",
+      "type": "sdf2d"
+    }
+  ],
+  "params": [
+    {
+      "id": "startX",
+      "type": "float",
+      "default": 0.25,
+      "softMin": 0,
+      "softMax": 1
+    },
+    {
+      "id": "startY",
+      "type": "float",
+      "default": 0.5,
+      "softMin": 0,
+      "softMax": 1
+    },
+    {
+      "id": "endX",
+      "type": "float",
+      "default": 0.75,
+      "softMin": 0,
+      "softMax": 1
+    },
+    {
+      "id": "endY",
+      "type": "float",
+      "default": 0.5,
+      "softMin": 0,
+      "softMax": 1
+    },
+    {
+      "id": "thickness",
+      "type": "float",
+      "default": 0.04,
+      "min": 0,
+      "softMax": 0.5
+    }
+  ],
+  "cost": 6,
+  "helpers": [
+    "sdf"
+  ],
+  "body": {
+    "sdf": "return sdfSegment(uv, float2(p.startX, p.startY), float2(p.endX, p.endY)) - p.thickness * 0.5;"
+  }
+}

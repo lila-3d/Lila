@@ -1,0 +1,47 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "gradient",
+  "label": "Gradient",
+  "category": "Pattern",
+  "doc": "A ramp from 0 to 1: linear (along angle), radial, angular or diamond around the centre, repeated.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "mode",
+      "type": "enum",
+      "default": "linear",
+      "options": [
+        "linear",
+        "radial",
+        "angular",
+        "diamond"
+      ]
+    },
+    {
+      "id": "angle",
+      "type": "float",
+      "default": 0.0,
+      "softMin": -180,
+      "softMax": 180,
+      "doc": "Degrees; linear only."
+    },
+    {
+      "id": "repeat",
+      "type": "float",
+      "default": 1.0,
+      "min": 1,
+      "softMax": 16
+    }
+  ],
+  "cost": 4,
+  "body": {
+    "out": "float2 c = uv - 0.5;\nfloat t;\nif (p.mode == 0)\n{\n    float a = radians(p.angle);\n    t = dot(c, float2(cos(a), sin(a))) + 0.5;\n}\nelse if (p.mode == 1)\n    t = length(c) * 2.0;\nelse if (p.mode == 2)\n    t = atan2(c.y, c.x) / 6.28318530718 + 0.5;\nelse\n    t = (abs(c.x) + abs(c.y)) * 2.0;\nif (p.repeat > 1.0)\n    t = frac(t * p.repeat);\nreturn saturate(t);"
+  }
+}

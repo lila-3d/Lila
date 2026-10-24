@@ -1,0 +1,56 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "sdfToMask",
+  "label": "SDF to Mask",
+  "category": "SDF",
+  "doc": "A gray mask from a signed distance: the filled shape, its outline, or a glow fading outwards over the width.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "sdf2d",
+      "default": 1.0
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "mode",
+      "type": "enum",
+      "default": "fill",
+      "options": [
+        "fill",
+        "outline",
+        "glow"
+      ]
+    },
+    {
+      "id": "width",
+      "type": "float",
+      "default": 0.02,
+      "min": 0,
+      "softMax": 0.2,
+      "doc": "Outline width or glow distance, uv."
+    },
+    {
+      "id": "softness",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "softMax": 16,
+      "doc": "Edge blur, in texels."
+    }
+  ],
+  "cost": 3,
+  "helpers": [
+    "sdf"
+  ],
+  "body": {
+    "out": "float d = input.sample(uv);\nfloat soft = texel().x * max(p.softness, 0.01);\nif (p.mode == 1)\n    return sdfFill(abs(d) - p.width * 0.5, soft);\nif (p.mode == 2)\n    return d <= 0.0 ? 1.0 : saturate(1.0 - d / max(p.width, 1e-5));\nreturn sdfFill(d, soft);"
+  }
+}

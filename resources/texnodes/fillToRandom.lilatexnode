@@ -1,0 +1,47 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "fillToRandom",
+  "label": "Fill to Random",
+  "category": "Fill",
+  "doc": "A random gray value and colour per Flood Fill region; black outside the regions.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0,
+        0,
+        -1,
+        -1
+      ],
+      "doc": "A Flood Fill output."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    },
+    {
+      "id": "color",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "seed",
+      "type": "seed",
+      "default": 0,
+      "doc": "Changes the pattern without changing its look."
+    }
+  ],
+  "cost": 6,
+  "helpers": [
+    "fill"
+  ],
+  "body": {
+    "out": "FillRegion r = fillRegion(input.sample(uv), uv);\nreturn r.valid ? texRand(uint2(r.key), uint(p.seed)) : 0.0;",
+    "color": "FillRegion r = fillRegion(input.sample(uv), uv);\nuint2 k = uint2(r.key);\nuint s = uint(p.seed);\nreturn r.valid ? float4(texRand(k, s ^ 0x51ed270bu), texRand(k, s ^ 0x2545f491u), texRand(k, s ^ 0x9e3779b9u), 1.0) : float4(0.0, 0.0, 0.0, 1.0);"
+  }
+}

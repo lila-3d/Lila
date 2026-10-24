@@ -1,0 +1,68 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "sdfStar",
+  "label": "SDF Star",
+  "category": "SDF",
+  "doc": "Signed distance (uv) to a star: negative inside.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "sdf",
+      "type": "sdf2d"
+    }
+  ],
+  "params": [
+    {
+      "id": "centerX",
+      "type": "float",
+      "default": 0.5,
+      "softMin": 0,
+      "softMax": 1
+    },
+    {
+      "id": "centerY",
+      "type": "float",
+      "default": 0.5,
+      "softMin": 0,
+      "softMax": 1
+    },
+    {
+      "id": "radius",
+      "type": "float",
+      "default": 0.35,
+      "min": 0,
+      "softMax": 1
+    },
+    {
+      "id": "inner",
+      "type": "float",
+      "default": 0.45,
+      "min": 0,
+      "max": 1,
+      "doc": "Valley radius, a fraction of the outer."
+    },
+    {
+      "id": "points",
+      "type": "int",
+      "default": 5,
+      "min": 2,
+      "softMax": 16
+    },
+    {
+      "id": "rotation",
+      "type": "float",
+      "default": 0.0,
+      "softMin": -180,
+      "softMax": 180,
+      "doc": "Degrees, anticlockwise."
+    }
+  ],
+  "cost": 12,
+  "helpers": [
+    "sdf"
+  ],
+  "body": {
+    "sdf": "return sdfStar(sdfRotate(uv - float2(p.centerX, p.centerY), p.rotation), p.radius, p.inner, p.points);"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "blur",
+  "label": "Blur",
+  "category": "Filter",
+  "doc": "Gaussian blur, its radius a fraction of the texture width. Runs as its own pass.",
+  "kind": "native",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "radius",
+      "type": "float",
+      "default": 0.01,
+      "min": 0,
+      "softMax": 0.1
+    }
+  ],
+  "cost": 50
+}

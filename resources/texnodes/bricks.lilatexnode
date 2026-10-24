@@ -1,0 +1,76 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "bricks",
+  "label": "Bricks",
+  "category": "Pattern",
+  "doc": "A running-bond brick pattern: a mask with bevelled edges, a random value per brick, and each brick's own uv.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "mask",
+      "type": "gray"
+    },
+    {
+      "id": "random",
+      "type": "gray"
+    },
+    {
+      "id": "brickUv",
+      "type": "vector"
+    }
+  ],
+  "params": [
+    {
+      "id": "rows",
+      "type": "int",
+      "default": 8,
+      "min": 1,
+      "softMax": 64
+    },
+    {
+      "id": "columns",
+      "type": "int",
+      "default": 4,
+      "min": 1,
+      "softMax": 64
+    },
+    {
+      "id": "offset",
+      "type": "float",
+      "default": 0.5,
+      "min": 0,
+      "max": 1,
+      "doc": "Shift of every other row, in bricks."
+    },
+    {
+      "id": "mortar",
+      "type": "float",
+      "default": 0.05,
+      "min": 0,
+      "max": 0.5,
+      "doc": "Gap, in brick heights."
+    },
+    {
+      "id": "bevel",
+      "type": "float",
+      "default": 0.1,
+      "min": 0,
+      "max": 0.5,
+      "doc": "Edge falloff, in brick heights."
+    },
+    {
+      "id": "seed",
+      "type": "seed",
+      "default": 0,
+      "doc": "Changes the pattern without changing its look."
+    }
+  ],
+  "cost": 8,
+  "code": "float4 bricksCell(float2 uv, int rows, int columns, float offset)\n{\n    float2 g = float2(uv.x * float(columns), uv.y * float(rows));\n    float row = floor(g.y);\n    g.x += offset * (row - 2.0 * floor(row * 0.5));\n    float2 cell = floor(g);\n    return float4(g - cell, cell);\n}",
+  "body": {
+    "mask": "float4 b = bricksCell(uv, p.rows, p.columns, p.offset);\nfloat2 e = min(b.xy, 1.0 - b.xy);\nfloat d = min(e.x * float(p.rows) / float(p.columns), e.y);\nreturn saturate((d - p.mortar * 0.5) / max(p.bevel, 1e-4));",
+    "random": "float4 b = bricksCell(uv, p.rows, p.columns, p.offset);\nint2 cell = int2(b.zw);\nint2 n = int2(p.columns, p.rows);\nint2 w = ((cell % n) + n) % n;\nreturn texRand(uint2(w), uint(p.seed));",
+    "brickUv": "float4 b = bricksCell(uv, p.rows, p.columns, p.offset);\nreturn float3(b.xy, 0.0);"
+  }
+}

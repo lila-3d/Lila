@@ -1,0 +1,57 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "mirror",
+  "label": "Mirror",
+  "category": "Transform",
+  "doc": "Reflects one side of the input onto the other, about a line across u, v or both.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "axis",
+      "type": "enum",
+      "default": "horizontal",
+      "options": [
+        "horizontal",
+        "vertical",
+        "both"
+      ],
+      "doc": "Horizontal mirrors left onto right."
+    },
+    {
+      "id": "position",
+      "type": "float",
+      "default": 0.5,
+      "min": 0,
+      "max": 1,
+      "doc": "Where the mirror line sits."
+    },
+    {
+      "id": "flip",
+      "type": "bool",
+      "default": false,
+      "doc": "Keep the other side."
+    }
+  ],
+  "cost": 2,
+  "body": {
+    "out": "float2 q = uv;\nif (p.axis != 1)\n{\n    float d = q.x - p.position;\n    if ((d > 0.0) != p.flip)\n        q.x = p.position - d;\n}\nif (p.axis != 0)\n{\n    float d = q.y - p.position;\n    if ((d > 0.0) != p.flip)\n        q.y = p.position - d;\n}\nreturn input.sample(q);"
+  }
+}

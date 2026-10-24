@@ -1,0 +1,67 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "worley",
+  "label": "Worley Noise",
+  "category": "Noise",
+  "doc": "Distance to the nearest feature point (F1), summed over octaves: soft cellular blobs. Tileable, 0 to 1.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "scale",
+      "type": "int",
+      "default": 4,
+      "min": 1,
+      "softMax": 64,
+      "doc": "Cells across the texture at the first octave."
+    },
+    {
+      "id": "octaves",
+      "type": "int",
+      "default": 3,
+      "min": 1,
+      "max": 12
+    },
+    {
+      "id": "persistence",
+      "type": "float",
+      "default": 0.5,
+      "min": 0,
+      "max": 1,
+      "doc": "Amplitude of each octave relative to the one before."
+    },
+    {
+      "id": "jitter",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "max": 1
+    },
+    {
+      "id": "invert",
+      "type": "bool",
+      "default": false,
+      "doc": "Bright centres instead of bright edges."
+    },
+    {
+      "id": "seed",
+      "type": "seed",
+      "default": 0,
+      "doc": "Changes the pattern without changing its look."
+    }
+  ],
+  "cost": 150,
+  "helpers": [
+    "cellular"
+  ],
+  "code": "float worleyFbm(float2 uv, int scale, int octaves, float persistence, float jitter, uint seed)\n{\n    float sum = 0.0;\n    float weight = 0.0;\n    float amp = 1.0;\n    int f = max(scale, 1);\n    for (int o = 0; o < octaves; ++o)\n    {\n        CellResult r = cellular(uv, int2(f, f), jitter, 0, seed + uint(o) * 0x9e3779b9u);\n        sum += amp * saturate(r.f1);\n        weight += amp;\n        amp *= persistence;\n        f *= 2;\n    }\n    return weight > 0.0 ? sum / weight : 0.5;\n}",
+  "body": {
+    "out": "float v = worleyFbm(uv, p.scale, p.octaves, p.persistence, p.jitter, uint(p.seed));\nreturn p.invert ? 1.0 - v : v;"
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "tile",
+  "label": "Tile",
+  "category": "Transform",
+  "doc": "Repeats the input a whole number of times across the texture.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "countX",
+      "type": "int",
+      "default": 2,
+      "min": 1,
+      "softMax": 32
+    },
+    {
+      "id": "countY",
+      "type": "int",
+      "default": 2,
+      "min": 1,
+      "softMax": 32
+    }
+  ],
+  "cost": 1,
+  "body": {
+    "out": "return input.sample(frac(uv * float2(float(p.countX), float(p.countY))));"
+  }
+}

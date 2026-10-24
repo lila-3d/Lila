@@ -1,0 +1,43 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "emboss",
+  "label": "Emboss",
+  "category": "Filter",
+  "doc": "Lights a height from an angle: 0.5 is flat, brighter on slopes facing the light.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "gray",
+      "default": 0.5,
+      "taps": 4
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "angle",
+      "type": "float",
+      "default": 135.0,
+      "softMin": -180,
+      "softMax": 180,
+      "doc": "Light direction, degrees."
+    },
+    {
+      "id": "intensity",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "softMax": 8
+    }
+  ],
+  "cost": 6,
+  "body": {
+    "out": "float2 e = texel();\nfloat2 g = float2(input.sample(uv + float2(e.x, 0.0)) - input.sample(uv - float2(e.x, 0.0)), input.sample(uv + float2(0.0, e.y)) - input.sample(uv - float2(0.0, e.y))) / (2.0 * e);\nfloat a = radians(p.angle);\nreturn saturate(0.5 + dot(g, float2(cos(a), sin(a))) * p.intensity * 0.02);"
+  }
+}

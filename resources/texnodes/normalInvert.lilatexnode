@@ -1,0 +1,42 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "normalInvert",
+  "label": "Normal Invert",
+  "category": "Normal",
+  "doc": "Flips a normal map's green (OpenGL and DirectX conventions) and optionally red channel.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        1,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "invertX",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "id": "invertY",
+      "type": "bool",
+      "default": true
+    }
+  ],
+  "cost": 1,
+  "body": {
+    "out": "float4 c = input.sample(uv);\nif (p.invertX)\n    c.r = 1.0 - c.r;\nif (p.invertY)\n    c.g = 1.0 - c.g;\nreturn c;"
+  }
+}

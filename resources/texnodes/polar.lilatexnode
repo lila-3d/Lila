@@ -1,0 +1,41 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "polar",
+  "label": "Polar",
+  "category": "Transform",
+  "doc": "Wraps the input around the centre (to polar: its u becomes the angle and its v the distance from the centre), or unwraps a circular image back to a strip (to cartesian).",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "mode",
+      "type": "enum",
+      "default": "toPolar",
+      "options": [
+        "toPolar",
+        "toCartesian"
+      ]
+    }
+  ],
+  "cost": 6,
+  "body": {
+    "out": "if (p.mode == 0)\n{\n    float2 d = uv - 0.5;\n    return input.sample(float2(atan2(d.y, d.x) / 6.28318530718 + 0.5, length(d) * 2.0));\n}\nfloat a = (uv.x - 0.5) * 6.28318530718;\nreturn input.sample(0.5 + uv.y * 0.5 * float2(cos(a), sin(a)));"
+  }
+}

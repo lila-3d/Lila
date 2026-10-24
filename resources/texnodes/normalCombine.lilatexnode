@@ -1,0 +1,63 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "normalCombine",
+  "label": "Normal Combine",
+  "category": "Normal",
+  "doc": "Combines a detail normal onto a base normal: reoriented (RNM, most accurate), UDN, whiteout or linear.",
+  "inputs": [
+    {
+      "id": "base",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        1,
+        1
+      ]
+    },
+    {
+      "id": "detail",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        1,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "mode",
+      "type": "enum",
+      "default": "rnm",
+      "options": [
+        "rnm",
+        "udn",
+        "whiteout",
+        "linear"
+      ]
+    },
+    {
+      "id": "amount",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "max": 1
+    }
+  ],
+  "cost": 10,
+  "helpers": [
+    "normals"
+  ],
+  "body": {
+    "out": "float3 b = normalDecode(base.sample(uv));\nfloat3 d = normalize(lerp(float3(0.0, 0.0, 1.0), normalDecode(detail.sample(uv)), p.amount));\nfloat3 n;\nif (p.mode == 1)\n    n = float3(b.xy + d.xy, b.z);\nelse if (p.mode == 2)\n    n = float3(b.xy + d.xy, b.z * d.z);\nelse if (p.mode == 3)\n    n = b + d;\nelse\n    n = normalRnm(b, d);\nreturn normalEncode(n);"
+  }
+}

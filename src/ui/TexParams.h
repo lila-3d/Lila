@@ -1,0 +1,38 @@
+#pragma once
+
+#include "core/Export.h"
+
+#include <nlohmann/json.hpp>
+
+#include <functional>
+#include <string>
+
+class QWidget;
+
+/** Side-panel editors for texture-graph node parameters and unlinked inputs. */
+namespace lila::ui::texParams
+{
+using json = nlohmann::json;
+
+/** changed gets the parameter's id and new value. */
+using SetFn = std::function<void(const std::string& id, const json& value)>;
+
+/**
+ * Editors for one node as texGraphInfo lists it ("nodes" entry): its parameters (float and int sliders, enums, bools,
+ * colour swatches, gradient and curve editors, seeds with a randomise button, image pickers, code editors), then its unlinked
+ * inputs. A graph node's parameters are its exposed ones. Every edit goes to set.
+ */
+LILA_UI_API QWidget* nodePanel(QWidget* parent, const json& node, SetFn set);
+
+/** Colour stops on a bar: click the bar to add one, drag to move, double-click to pick its colour, right-click to remove. */
+LILA_UI_API QWidget* gradientEditor(QWidget* parent, const json& value, std::function<void(const json&)> changed);
+/** Points on a 0 to 1 graph: click to add, drag to move, right-click to remove; smooth or linear like the evaluator. */
+LILA_UI_API QWidget* curveEditor(QWidget* parent, const json& value, std::function<void(const json&)> changed);
+
+/** Stops as [[t, [r, g, b, a]], ...] (linear) from any value the evaluator accepts. */
+LILA_UI_API json gradientStops(const json& value);
+/** Points as [[x, y], ...], sorted by x. */
+LILA_UI_API json curvePoints(const json& value);
+/** The curve's value at x, matching the evaluator (Hermite through the points when smooth). */
+LILA_UI_API double evalCurve(const json& points, bool smooth, double x);
+} // namespace lila::ui::texParams

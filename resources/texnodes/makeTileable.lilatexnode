@@ -1,0 +1,41 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "makeTileable",
+  "label": "Make Tileable",
+  "category": "Filter",
+  "doc": "Hides the seams of a non-tiling input by cross-fading it with a half-shifted copy near the edges, one axis at a time.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ],
+      "taps": 4
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "width",
+      "type": "float",
+      "default": 0.15,
+      "min": 0.001,
+      "max": 0.5,
+      "doc": "Blend band, uv."
+    }
+  ],
+  "cost": 4,
+  "body": {
+    "out": "float2 f = frac(uv);\nfloat wx = smoothstep(0.0, 1.0, 1.0 - saturate(min(f.x, 1.0 - f.x) / p.width));\nfloat wy = smoothstep(0.0, 1.0, 1.0 - saturate(min(f.y, 1.0 - f.y) / p.width));\nfloat2 g = frac(f + float2(0.0, 0.5));\nfloat4 a = lerp(input.sample(f), input.sample(frac(f + float2(0.5, 0.0))), wx);\nfloat4 b = lerp(input.sample(g), input.sample(frac(g + float2(0.5, 0.0))), wx);\nreturn lerp(a, b, wy);"
+  }
+}

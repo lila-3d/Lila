@@ -1,0 +1,56 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "materialTiling",
+  "label": "Material Tiling",
+  "category": "Material",
+  "doc": "Repeats a whole material across the texture: tiles per uv unit and an offset. Applying a library material sets it from the material's real-world size and the mesh's texel density.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "material"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "material",
+      "type": "material"
+    }
+  ],
+  "params": [
+    {
+      "id": "tilesX",
+      "type": "float",
+      "default": 1.0,
+      "min": 0.001,
+      "softMin": 0.25,
+      "softMax": 16
+    },
+    {
+      "id": "tilesY",
+      "type": "float",
+      "default": 1.0,
+      "min": 0.001,
+      "softMin": 0.25,
+      "softMax": 16
+    },
+    {
+      "id": "offsetX",
+      "type": "float",
+      "default": 0.0,
+      "softMin": 0,
+      "softMax": 1
+    },
+    {
+      "id": "offsetY",
+      "type": "float",
+      "default": 0.0,
+      "softMin": 0,
+      "softMax": 1
+    }
+  ],
+  "cost": 1,
+  "body": {
+    "material": "return input.sample(uv * float2(p.tilesX, p.tilesY) + float2(p.offsetX, p.offsetY));"
+  }
+}

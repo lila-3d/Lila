@@ -1,0 +1,76 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "material",
+  "label": "Material",
+  "category": "Material",
+  "doc": "Bundles channel values into a material, for material blends and the Material Output's material input.",
+  "inputs": [
+    {
+      "id": "baseColor",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ]
+    },
+    {
+      "id": "roughness",
+      "type": "gray",
+      "default": 0.5
+    },
+    {
+      "id": "metallic",
+      "type": "gray",
+      "default": 0.0
+    },
+    {
+      "id": "normal",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        1,
+        1
+      ]
+    },
+    {
+      "id": "height",
+      "type": "gray",
+      "default": 0.5
+    },
+    {
+      "id": "ao",
+      "type": "gray",
+      "default": 1.0
+    },
+    {
+      "id": "emissive",
+      "type": "color",
+      "default": [
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "id": "opacity",
+      "type": "gray",
+      "default": 1.0
+    }
+  ],
+  "outputs": [
+    {
+      "id": "material",
+      "type": "material"
+    }
+  ],
+  "params": [],
+  "cost": 0,
+  "body": {
+    "material": "TexMaterial m;\nm.baseColor = baseColor.sample(uv);\nm.roughness = roughness.sample(uv);\nm.metallic = metallic.sample(uv);\nm.normal = normal.sample(uv);\nm.height = height.sample(uv);\nm.ao = ao.sample(uv);\nm.emissive = emissive.sample(uv);\nm.opacity = opacity.sample(uv);\nreturn m;"
+  }
+}

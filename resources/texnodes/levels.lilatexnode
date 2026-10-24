@@ -1,0 +1,67 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "levels",
+  "label": "Levels",
+  "category": "Filter",
+  "doc": "Remaps the input range to the output range with a gamma in between, per channel (alpha untouched).",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "inLow",
+      "type": "float",
+      "default": 0.0,
+      "min": 0,
+      "max": 1
+    },
+    {
+      "id": "inHigh",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "max": 1
+    },
+    {
+      "id": "gamma",
+      "type": "float",
+      "default": 1.0,
+      "min": 0.01,
+      "softMax": 4
+    },
+    {
+      "id": "outLow",
+      "type": "float",
+      "default": 0.0,
+      "min": 0,
+      "max": 1
+    },
+    {
+      "id": "outHigh",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "max": 1
+    }
+  ],
+  "cost": 4,
+  "body": {
+    "out": "float4 c = input.sample(uv);\nfloat3 t = saturate((c.rgb - p.inLow) / max(p.inHigh - p.inLow, 1e-5));\nt = pow(t, float3(1.0 / max(p.gamma, 1e-3)));\nreturn float4(lerp(float3(p.outLow), float3(p.outHigh), t), c.a);"
+  }
+}

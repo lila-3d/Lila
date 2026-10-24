@@ -1,0 +1,63 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "dirt",
+  "label": "Dirt",
+  "category": "Noise",
+  "doc": "Grime: blotches, spots and fine grain combined, thresholded to a coverage amount. A starting point for dirt and dust masks. Tileable, 0 to 1.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "scale",
+      "type": "int",
+      "default": 4,
+      "min": 1,
+      "softMax": 64,
+      "doc": "Size of the blotches: cells across the texture."
+    },
+    {
+      "id": "amount",
+      "type": "float",
+      "default": 0.5,
+      "min": 0,
+      "max": 1,
+      "doc": "Coverage."
+    },
+    {
+      "id": "contrast",
+      "type": "float",
+      "default": 3.0,
+      "min": 0,
+      "softMax": 16
+    },
+    {
+      "id": "grain",
+      "type": "float",
+      "default": 0.5,
+      "min": 0,
+      "max": 1,
+      "doc": "Fine speckle."
+    },
+    {
+      "id": "seed",
+      "type": "seed",
+      "default": 0,
+      "doc": "Changes the pattern without changing its look."
+    }
+  ],
+  "cost": 200,
+  "helpers": [
+    "noise",
+    "cellular"
+  ],
+  "code": "float dirtValue(float2 uv, int scale, float amount, float contrast, float grain, uint seed)\n{\n    int s = max(scale, 1);\n    float blobs = noiseFbm(uv, s, 5, 0.55, seed, true);\n    float spots = 1.0 - saturate(cellular(uv, int2(s * 4, s * 4), 1.0, 0, seed ^ 0x3c6ef372u).f1 * 1.6);\n    float fine = noiseFbm(uv, s * 16, 2, 0.5, seed ^ 0xa54ff53au, false);\n    float v = blobs + spots * spots * 0.3 + (fine - 0.5) * grain * 0.6;\n    return saturate((v - (1.15 - amount)) * contrast + 0.5);\n}",
+  "body": {
+    "out": "return dirtValue(uv, p.scale, p.amount, p.contrast, p.grain, uint(p.seed));"
+  }
+}

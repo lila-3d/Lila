@@ -1,0 +1,61 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "transform",
+  "label": "Transform",
+  "category": "Transform",
+  "doc": "Moves, rotates and scales the input around the texture's centre.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "offsetX",
+      "type": "float",
+      "default": 0.0,
+      "softMin": -1,
+      "softMax": 1
+    },
+    {
+      "id": "offsetY",
+      "type": "float",
+      "default": 0.0,
+      "softMin": -1,
+      "softMax": 1
+    },
+    {
+      "id": "rotation",
+      "type": "float",
+      "default": 0.0,
+      "softMin": -180,
+      "softMax": 180,
+      "doc": "Degrees."
+    },
+    {
+      "id": "scale",
+      "type": "float",
+      "default": 1.0,
+      "softMin": 0.1,
+      "softMax": 4
+    }
+  ],
+  "cost": 3,
+  "body": {
+    "out": "float a = radians(-p.rotation);\nfloat2 c = uv - 0.5 - float2(p.offsetX, p.offsetY);\nfloat2 r = float2(c.x * cos(a) - c.y * sin(a), c.x * sin(a) + c.y * cos(a));\nfloat s = abs(p.scale) > 1e-4 ? p.scale : 1e-4;\nreturn input.sample(r / s + 0.5);"
+  }
+}

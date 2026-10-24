@@ -1,0 +1,68 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "sdfBox",
+  "label": "SDF Box",
+  "category": "SDF",
+  "doc": "Signed distance (uv) to a rectangle with optionally rounded corners: negative inside.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "sdf",
+      "type": "sdf2d"
+    }
+  ],
+  "params": [
+    {
+      "id": "centerX",
+      "type": "float",
+      "default": 0.5,
+      "softMin": 0,
+      "softMax": 1
+    },
+    {
+      "id": "centerY",
+      "type": "float",
+      "default": 0.5,
+      "softMin": 0,
+      "softMax": 1
+    },
+    {
+      "id": "width",
+      "type": "float",
+      "default": 0.5,
+      "min": 0,
+      "softMax": 1
+    },
+    {
+      "id": "height",
+      "type": "float",
+      "default": 0.3,
+      "min": 0,
+      "softMax": 1
+    },
+    {
+      "id": "rotation",
+      "type": "float",
+      "default": 0.0,
+      "softMin": -180,
+      "softMax": 180,
+      "doc": "Degrees, anticlockwise."
+    },
+    {
+      "id": "corner",
+      "type": "float",
+      "default": 0.0,
+      "min": 0,
+      "softMax": 0.5,
+      "doc": "Corner radius, uv."
+    }
+  ],
+  "cost": 6,
+  "helpers": [
+    "sdf"
+  ],
+  "body": {
+    "sdf": "float2 h = float2(p.width, p.height) * 0.5;\nreturn sdfBox(sdfRotate(uv - float2(p.centerX, p.centerY), p.rotation), h, min(p.corner, min(h.x, h.y)));"
+  }
+}

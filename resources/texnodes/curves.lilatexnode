@@ -1,0 +1,48 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "curves",
+  "label": "Curves",
+  "category": "Filter",
+  "doc": "Remaps values through a curve: all colour channels, or one channel alone.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "curve",
+      "type": "curve"
+    },
+    {
+      "id": "channel",
+      "type": "enum",
+      "default": "rgb",
+      "options": [
+        "rgb",
+        "red",
+        "green",
+        "blue",
+        "alpha"
+      ]
+    }
+  ],
+  "cost": 20,
+  "body": {
+    "out": "float4 c = input.sample(uv);\nif (p.channel == 0)\n    return float4(p.curve.eval(c.r), p.curve.eval(c.g), p.curve.eval(c.b), c.a);\nif (p.channel == 1)\n    c.r = p.curve.eval(c.r);\nelse if (p.channel == 2)\n    c.g = p.curve.eval(c.g);\nelse if (p.channel == 3)\n    c.b = p.curve.eval(c.b);\nelse\n    c.a = p.curve.eval(c.a);\nreturn c;"
+  }
+}

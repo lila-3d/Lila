@@ -1,0 +1,45 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "sdfCircle",
+  "label": "SDF Circle",
+  "category": "SDF",
+  "doc": "Signed distance (uv) to a circle: negative inside.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "sdf",
+      "type": "sdf2d"
+    }
+  ],
+  "params": [
+    {
+      "id": "centerX",
+      "type": "float",
+      "default": 0.5,
+      "softMin": 0,
+      "softMax": 1
+    },
+    {
+      "id": "centerY",
+      "type": "float",
+      "default": 0.5,
+      "softMin": 0,
+      "softMax": 1
+    },
+    {
+      "id": "radius",
+      "type": "float",
+      "default": 0.25,
+      "min": 0,
+      "softMax": 1
+    }
+  ],
+  "cost": 6,
+  "helpers": [
+    "sdf"
+  ],
+  "body": {
+    "sdf": "return sdfCircle(uv - float2(p.centerX, p.centerY), p.radius);"
+  }
+}

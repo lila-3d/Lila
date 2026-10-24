@@ -1,0 +1,67 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "hex",
+  "label": "Hexagons",
+  "category": "Pattern",
+  "doc": "Hexagonal tiles with gaps and bevelled edges: a mask, a random value and colour per cell, and each cell's own uv. Rows are fitted to tile, so cells are within a few percent of regular.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "mask",
+      "type": "gray"
+    },
+    {
+      "id": "random",
+      "type": "gray"
+    },
+    {
+      "id": "color",
+      "type": "color"
+    },
+    {
+      "id": "cellUv",
+      "type": "vector"
+    }
+  ],
+  "params": [
+    {
+      "id": "scale",
+      "type": "int",
+      "default": 6,
+      "min": 1,
+      "softMax": 64,
+      "doc": "Cells across the texture."
+    },
+    {
+      "id": "gap",
+      "type": "float",
+      "default": 0.06,
+      "min": 0,
+      "max": 0.5,
+      "doc": "In cell widths."
+    },
+    {
+      "id": "bevel",
+      "type": "float",
+      "default": 0.08,
+      "min": 0,
+      "max": 0.5,
+      "doc": "Edge falloff, in cell widths."
+    },
+    {
+      "id": "seed",
+      "type": "seed",
+      "default": 0,
+      "doc": "Changes the pattern without changing its look."
+    }
+  ],
+  "cost": 40,
+  "code": "struct HexCell\n{\n    /** Distance to the cell's edge, in cell widths. */\n    float edge;\n    int2 key;\n    float2 local;\n};\n\nHexCell hexAt(float2 uv, int columns)\n{\n    int cols = max(columns, 1);\n    int rows = max(2, 2 * int(round(float(cols) / (2.0 * 0.8660254))));\n    float rowHeight = float(cols) / float(rows);\n    float2 q = uv * float(cols);\n    int j0 = int(floor(q.y / rowHeight));\n    float d1 = 1e9;\n    float d2 = 1e9;\n    float2 c1 = float2(0.0, 0.0);\n    float2 c2 = float2(0.0, 0.0);\n    int2 k1 = int2(0, 0);\n    for (int dj = -1; dj <= 1; ++dj)\n    {\n        int j = j0 + dj;\n        float offset = (j & 1) != 0 ? 0.5 : 0.0;\n        int i0 = int(floor(q.x - offset));\n        for (int di = -1; di <= 1; ++di)\n        {\n            int i = i0 + di;\n            float2 c = float2(float(i) + 0.5 + offset, (float(j) + 0.5) * rowHeight);\n            float d = length(q - c);\n            if (d < d1)\n            {\n                d2 = d1;\n                c2 = c1;\n                d1 = d;\n                c1 = c;\n                k1 = int2(i, j);\n            }\n            else if (d < d2)\n            {\n                d2 = d;\n                c2 = c;\n            }\n        }\n    }\n    HexCell h;\n    float2 n = c2 - c1;\n    float len = max(length(n), 1e-6);\n    h.edge = max(dot(0.5 * (c1 + c2) - q, n / len), 0.0);\n    h.key = int2(((k1.x % cols) + cols) % cols, ((k1.y % rows) + rows) % rows);\n    h.local = (q - c1) / 1.1547 + 0.5;\n    return h;\n}",
+  "body": {
+    "mask": "HexCell h = hexAt(uv, p.scale);\nreturn saturate((h.edge - p.gap * 0.5) / max(p.bevel, 1e-4));",
+    "random": "HexCell h = hexAt(uv, p.scale);\nreturn texRand(uint2(h.key), uint(p.seed));",
+    "color": "HexCell h = hexAt(uv, p.scale);\nuint2 c = uint2(h.key);\nreturn float4(texRand(c, uint(p.seed) ^ 0x51ed270bu), texRand(c, uint(p.seed) ^ 0x2545f491u), texRand(c, uint(p.seed) ^ 0x9e3779b9u), 1.0);",
+    "cellUv": "HexCell h = hexAt(uv, p.scale);\nreturn float3(h.local, 0.0);"
+  }
+}

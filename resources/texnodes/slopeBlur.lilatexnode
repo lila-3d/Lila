@@ -1,0 +1,64 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "slopeBlur",
+  "label": "Slope Blur",
+  "category": "Filter",
+  "doc": "Drags the input down the slope of the slope input (uphill with a negative intensity), averaging, or keeping the darkest or brightest along the way. Gives eroded, melted edges.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ],
+      "taps": 16
+    },
+    {
+      "id": "slope",
+      "type": "gray",
+      "default": 0.5,
+      "taps": 48
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "samples",
+      "type": "int",
+      "default": 8,
+      "min": 1,
+      "max": 16
+    },
+    {
+      "id": "intensity",
+      "type": "float",
+      "default": 0.03,
+      "softMin": -0.2,
+      "softMax": 0.2,
+      "doc": "Distance travelled, uv."
+    },
+    {
+      "id": "mode",
+      "type": "enum",
+      "default": "blur",
+      "options": [
+        "blur",
+        "min",
+        "max"
+      ]
+    }
+  ],
+  "cost": 40,
+  "body": {
+    "out": "float2 e = texel();\nint n = clamp(p.samples, 1, 16);\nfloat2 q = uv;\nfloat4 first = input.sample(q);\nfloat4 acc = first;\nfloat4 extreme = first;\nfloat count = 1.0;\nfor (int i = 0; i < n; ++i)\n{\n    float h = slope.sample(q);\n    float2 g = float2(slope.sample(q + float2(e.x, 0.0)) - h, slope.sample(q + float2(0.0, e.y)) - h);\n    float len = length(g);\n    if (len < 1e-7)\n        break;\n    q -= g / len * (p.intensity / float(n));\n    float4 s = input.sample(q);\n    acc += s;\n    extreme = p.mode == 1 ? min(extreme, s) : max(extreme, s);\n    count += 1.0;\n}\nreturn p.mode == 0 ? acc / count : extreme;"
+  }
+}

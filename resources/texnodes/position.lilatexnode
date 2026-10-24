@@ -1,0 +1,23 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "position",
+  "label": "Position",
+  "category": "Input",
+  "doc": "Object-space position from the texture set's mesh maps; (u, v, 0) when no mesh map is supplied.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "position",
+      "type": "vector"
+    }
+  ],
+  "params": [],
+  "cost": 1,
+  "externals": [
+    "position"
+  ],
+  "body": {
+    "position": "return position.sample(uv).xyz;"
+  }
+}

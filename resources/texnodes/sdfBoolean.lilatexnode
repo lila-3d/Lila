@@ -1,0 +1,53 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "sdfBoolean",
+  "label": "SDF Boolean",
+  "category": "SDF",
+  "doc": "Combines two signed distances: union, subtract (a minus b), intersect or exclusive or. Smoothness blends the seam over that distance (uv).",
+  "inputs": [
+    {
+      "id": "a",
+      "type": "sdf2d",
+      "default": 1.0
+    },
+    {
+      "id": "b",
+      "type": "sdf2d",
+      "default": 1.0
+    }
+  ],
+  "outputs": [
+    {
+      "id": "sdf",
+      "type": "sdf2d"
+    }
+  ],
+  "params": [
+    {
+      "id": "operation",
+      "type": "enum",
+      "default": "union",
+      "options": [
+        "union",
+        "subtract",
+        "intersect",
+        "exclusiveOr"
+      ]
+    },
+    {
+      "id": "smoothness",
+      "type": "float",
+      "default": 0.0,
+      "min": 0,
+      "softMax": 0.2
+    }
+  ],
+  "cost": 4,
+  "helpers": [
+    "sdf"
+  ],
+  "body": {
+    "sdf": "return sdfBoolean(p.operation, a.sample(uv), b.sample(uv), p.smoothness);"
+  }
+}

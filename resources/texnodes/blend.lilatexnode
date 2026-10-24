@@ -1,0 +1,74 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "blend",
+  "label": "Blend",
+  "category": "Filter",
+  "doc": "Blends the foreground over the background with a blend mode, through the mask and opacity.",
+  "inputs": [
+    {
+      "id": "foreground",
+      "type": "color",
+      "default": [
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "id": "background",
+      "type": "color",
+      "default": [
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "id": "mask",
+      "type": "gray",
+      "default": 1.0
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "mode",
+      "type": "enum",
+      "default": "normal",
+      "options": [
+        "normal",
+        "add",
+        "subtract",
+        "multiply",
+        "screen",
+        "overlay",
+        "darken",
+        "lighten",
+        "difference",
+        "softLight"
+      ]
+    },
+    {
+      "id": "opacity",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "max": 1
+    }
+  ],
+  "cost": 6,
+  "helpers": [
+    "blend"
+  ],
+  "body": {
+    "out": "float4 b = background.sample(uv);\nfloat4 f = foreground.sample(uv);\nfloat k = saturate(mask.sample(uv) * p.opacity * f.a);\nreturn float4(lerp(b.rgb, blendMode(p.mode, b.rgb, f.rgb), k), b.a);"
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "scratches",
+  "label": "Scratches",
+  "category": "Pattern",
+  "doc": "Thin tapered strokes at random positions, lengths and strengths around an angle, for scratched metal and worn paint. Tileable, 0 to 1.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "scale",
+      "type": "int",
+      "default": 6,
+      "min": 1,
+      "softMax": 64,
+      "doc": "Cells across the texture."
+    },
+    {
+      "id": "count",
+      "type": "int",
+      "default": 3,
+      "min": 1,
+      "max": 8,
+      "doc": "Scratches per cell."
+    },
+    {
+      "id": "length",
+      "type": "float",
+      "default": 0.8,
+      "min": 0,
+      "max": 1,
+      "doc": "In cells."
+    },
+    {
+      "id": "width",
+      "type": "float",
+      "default": 0.003,
+      "min": 0,
+      "softMax": 0.02,
+      "doc": "In uv."
+    },
+    {
+      "id": "angle",
+      "type": "float",
+      "default": 30.0,
+      "softMin": -180,
+      "softMax": 180,
+      "doc": "Degrees."
+    },
+    {
+      "id": "angleRandom",
+      "type": "float",
+      "default": 0.3,
+      "min": 0,
+      "max": 1
+    },
+    {
+      "id": "seed",
+      "type": "seed",
+      "default": 0,
+      "doc": "Changes the pattern without changing its look."
+    }
+  ],
+  "cost": 150,
+  "code": "float scratchesAt(float2 uv, int scale, int count, float len, float width, float angle, float angleRandom, uint seed)\n{\n    int2 n = int2(max(scale, 1), max(scale, 1));\n    float2 q = uv * float2(n);\n    int2 c = int2(floor(q));\n    float v = 0.0;\n    for (int y = -1; y <= 1; ++y)\n    {\n        for (int x = -1; x <= 1; ++x)\n        {\n            int2 cell = c + int2(x, y);\n            uint2 w = uint2(((cell % n) + n) % n);\n            for (int k = 0; k < count; ++k)\n            {\n                uint s = seed + uint(k) * 0x632be5abu;\n                float2 mid = float2(cell) + texRand2(w, s);\n                float a = radians(angle) + (texRand(w, s ^ 0x5bd1e995u) - 0.5) * 3.14159265 * angleRandom;\n                float halfLen = 0.5 * len * (0.5 + 0.5 * texRand(w, s ^ 0x1b873593u));\n                float2 dir = float2(cos(a), sin(a)) * halfLen;\n                float2 pa = q - (mid - dir);\n                float2 ba = 2.0 * dir;\n                float h = saturate(dot(pa, ba) / max(dot(ba, ba), 1e-9));\n                float d = length(pa - ba * h);\n                float wd = width * float(n.x) * sin(h * 3.14159265);\n                float strength = 0.4 + 0.6 * texRand(w, s ^ 0x85ebca6bu);\n                v = max(v, strength * saturate(1.0 - d / max(wd, 1e-5)));\n            }\n        }\n    }\n    return v;\n}",
+  "body": {
+    "out": "return scratchesAt(uv, p.scale, p.count, p.length, p.width, p.angle, p.angleRandom, uint(p.seed));"
+  }
+}

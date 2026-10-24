@@ -1,0 +1,46 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "random",
+  "label": "Random",
+  "category": "Utility",
+  "doc": "One random value and colour for the whole texture, from a seed: expose the seed to vary several nodes together.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "value",
+      "type": "gray"
+    },
+    {
+      "id": "color",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "seed",
+      "type": "seed",
+      "default": 0,
+      "doc": "Changes the pattern without changing its look."
+    },
+    {
+      "id": "low",
+      "type": "float",
+      "default": 0.0,
+      "softMin": 0,
+      "softMax": 1
+    },
+    {
+      "id": "high",
+      "type": "float",
+      "default": 1.0,
+      "softMin": 0,
+      "softMax": 1
+    }
+  ],
+  "cost": 1,
+  "body": {
+    "value": "return lerp(p.low, p.high, texRand(uint2(0x2545f491u, 0x9e3779b9u), uint(p.seed)));",
+    "color": "uint s = uint(p.seed);\nreturn float4(texRand(uint2(1u, 7u), s), texRand(uint2(2u, 7u), s), texRand(uint2(3u, 7u), s), 1.0);"
+  }
+}

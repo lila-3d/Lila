@@ -1,0 +1,49 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "scales",
+  "label": "Scales",
+  "category": "Pattern",
+  "doc": "Overlapping round scales in offset rows, like fish scales or roof shingles: a height rising towards each scale's rim, and a random value per scale.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "height",
+      "type": "gray"
+    },
+    {
+      "id": "random",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "scale",
+      "type": "int",
+      "default": 6,
+      "min": 1,
+      "softMax": 64,
+      "doc": "Scales across the texture."
+    },
+    {
+      "id": "size",
+      "type": "float",
+      "default": 1.2,
+      "min": 0.5,
+      "max": 2,
+      "doc": "Scale diameter, in scale spacings."
+    },
+    {
+      "id": "seed",
+      "type": "seed",
+      "default": 0,
+      "doc": "Changes the pattern without changing its look."
+    }
+  ],
+  "cost": 40,
+  "code": "/** Height and random of the frontmost scale covering uv. Rows are half a spacing apart; lower rows lie on top. */\nfloat2 scalesAt(float2 uv, int count, float size, uint seed)\n{\n    int cols = max(count, 1);\n    int rows = cols * 2;\n    float2 q = uv * float(cols);\n    float rowHeight = 0.5;\n    float radius = 0.5 * size;\n    int jLo = int(floor((q.y - radius) / rowHeight)) - 1;\n    int jHi = int(ceil((q.y + radius) / rowHeight)) + 1;\n    for (int j = jLo; j <= jHi; ++j)\n    {\n        float offset = (j & 1) != 0 ? 0.5 : 0.0;\n        int i0 = int(floor(q.x - offset));\n        for (int di = -1; di <= 1; ++di)\n        {\n            int i = i0 + di;\n            float2 c = float2(float(i) + 0.5 + offset, float(j) * rowHeight);\n            float d = length(q - c) / radius;\n            if (d < 1.0 && q.y >= c.y - radius * 0.2)\n            {\n                int2 key = int2(((i % cols) + cols) % cols, ((j % rows) + rows) % rows);\n                return float2(0.25 + 0.75 * d * d, texRand(uint2(key), seed));\n            }\n        }\n    }\n    return float2(0.0, 0.0);\n}",
+  "body": {
+    "height": "return scalesAt(uv, p.scale, p.size, uint(p.seed)).x;",
+    "random": "return scalesAt(uv, p.scale, p.size, uint(p.seed)).y;"
+  }
+}

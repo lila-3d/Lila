@@ -1,0 +1,98 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "shape",
+  "label": "Shape",
+  "category": "Pattern",
+  "doc": "A circle, square, polygon, star or ring, repeated on a grid: an antialiased mask and its signed distance.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "mask",
+      "type": "gray"
+    },
+    {
+      "id": "sdf",
+      "type": "sdf2d"
+    }
+  ],
+  "params": [
+    {
+      "id": "shape",
+      "type": "enum",
+      "default": "circle",
+      "options": [
+        "circle",
+        "square",
+        "polygon",
+        "star",
+        "ring"
+      ]
+    },
+    {
+      "id": "tiles",
+      "type": "int",
+      "default": 1,
+      "min": 1,
+      "softMax": 32,
+      "doc": "Copies across the texture."
+    },
+    {
+      "id": "size",
+      "type": "float",
+      "default": 0.8,
+      "min": 0,
+      "softMax": 1,
+      "doc": "A fraction of the tile."
+    },
+    {
+      "id": "sides",
+      "type": "int",
+      "default": 6,
+      "min": 2,
+      "softMax": 16,
+      "doc": "Polygon sides, star points."
+    },
+    {
+      "id": "inner",
+      "type": "float",
+      "default": 0.5,
+      "min": 0,
+      "max": 1,
+      "doc": "Star valley radius, a fraction of the outer."
+    },
+    {
+      "id": "thickness",
+      "type": "float",
+      "default": 0.15,
+      "min": 0,
+      "max": 1,
+      "doc": "Ring width, a fraction of the tile."
+    },
+    {
+      "id": "rotation",
+      "type": "float",
+      "default": 0.0,
+      "softMin": -180,
+      "softMax": 180,
+      "doc": "Degrees, anticlockwise."
+    },
+    {
+      "id": "softness",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "softMax": 16,
+      "doc": "Edge blur, in texels."
+    }
+  ],
+  "cost": 12,
+  "helpers": [
+    "sdf"
+  ],
+  "code": "float shapeSdf(float2 uv, int shape, int tiles, float size, int sides, float inner, float thickness, float rotation)\n{\n    float n = float(max(tiles, 1));\n    float2 q = sdfRotate(frac(uv * n) - 0.5, rotation);\n    float r = size * 0.5;\n    float d;\n    if (shape == 1)\n        d = sdfBox(q, float2(r, r), 0.0);\n    else if (shape == 2)\n        d = sdfPolygon(q, r, sides);\n    else if (shape == 3)\n        d = sdfStar(q, r, inner, sides);\n    else if (shape == 4)\n        d = abs(sdfCircle(q, r - thickness * 0.5)) - thickness * 0.5;\n    else\n        d = sdfCircle(q, r);\n    return d / n;\n}",
+  "body": {
+    "mask": "return saturate(0.5 - shapeSdf(uv, p.shape, p.tiles, p.size, p.sides, p.inner, p.thickness, p.rotation) / (texel().x * max(p.softness, 0.01)));",
+    "sdf": "return shapeSdf(uv, p.shape, p.tiles, p.size, p.sides, p.inner, p.thickness, p.rotation);"
+  }
+}

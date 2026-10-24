@@ -1,0 +1,43 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "curvatureFromNormal",
+  "label": "Curvature from Normal",
+  "category": "Normal",
+  "doc": "Convexity from a normal map: above 0.5 on ridges, below in creases.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        1,
+        1
+      ],
+      "taps": 4
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "intensity",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "softMax": 8
+    }
+  ],
+  "cost": 8,
+  "helpers": [
+    "normals"
+  ],
+  "body": {
+    "out": "float2 e = texel();\nfloat r = normalDecode(input.sample(uv + float2(e.x, 0.0))).x;\nfloat l = normalDecode(input.sample(uv - float2(e.x, 0.0))).x;\nfloat t = normalDecode(input.sample(uv + float2(0.0, e.y))).y;\nfloat b = normalDecode(input.sample(uv - float2(0.0, e.y))).y;\nreturn saturate(0.5 + (r - l + t - b) * p.intensity);"
+  }
+}

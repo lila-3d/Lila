@@ -1,0 +1,42 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "normalStrength",
+  "label": "Normal Strength",
+  "category": "Normal",
+  "doc": "Scales how far a normal map tilts: 0 is flat, above 1 exaggerates.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        1,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "strength",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "softMax": 4
+    }
+  ],
+  "cost": 4,
+  "helpers": [
+    "normals"
+  ],
+  "body": {
+    "out": "float3 n = normalDecode(input.sample(uv));\nreturn normalEncode(float3(n.xy * p.strength, max(n.z, 1e-4)));"
+  }
+}

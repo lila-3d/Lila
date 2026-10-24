@@ -1,0 +1,20 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "uv",
+  "label": "UV",
+  "category": "Input",
+  "doc": "The texture coordinate: u, v and 0. Feed it through math or transforms for custom patterns.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "uv",
+      "type": "vector"
+    }
+  ],
+  "params": [],
+  "cost": 0,
+  "body": {
+    "uv": "return float3(uv, 0.0);"
+  }
+}

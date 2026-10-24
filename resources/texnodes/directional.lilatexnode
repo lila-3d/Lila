@@ -1,0 +1,70 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "directional",
+  "label": "Directional Noise",
+  "category": "Noise",
+  "doc": "Gradient noise streaked along an angle. The angle snaps to the nearest direction that still tiles (small whole-number slopes), within a few degrees.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "angle",
+      "type": "float",
+      "default": 30.0,
+      "softMin": -180,
+      "softMax": 180,
+      "doc": "Streak direction, degrees."
+    },
+    {
+      "id": "scaleAlong",
+      "type": "int",
+      "default": 2,
+      "min": 1,
+      "softMax": 32,
+      "doc": "Cells along the streaks."
+    },
+    {
+      "id": "scaleAcross",
+      "type": "int",
+      "default": 24,
+      "min": 1,
+      "softMax": 128,
+      "doc": "Cells across the streaks."
+    },
+    {
+      "id": "octaves",
+      "type": "int",
+      "default": 4,
+      "min": 1,
+      "max": 12
+    },
+    {
+      "id": "persistence",
+      "type": "float",
+      "default": 0.5,
+      "min": 0,
+      "max": 1,
+      "doc": "Amplitude of each octave relative to the one before."
+    },
+    {
+      "id": "seed",
+      "type": "seed",
+      "default": 0,
+      "doc": "Changes the pattern without changing its look."
+    }
+  ],
+  "cost": 120,
+  "helpers": [
+    "lattice"
+  ],
+  "code": "float directionalFbm(float2 uv, float angle, int along, int across, int octaves, float persistence, uint seed)\n{\n    int2 dir = latticeDirection(angle);\n    float len = length(float2(dir));\n    int a = max(1, int(round(float(along) / len)));\n    int c = max(1, int(round(float(across) / len)));\n    LatticePeriod l = latticePeriodFor(dir, a, c);\n    float sum = 0.0;\n    float weight = 0.0;\n    float amp = 1.0;\n    for (int o = 0; o < octaves; ++o)\n    {\n        sum += amp * latticePerlin(latticeCoords(uv, dir, a, c), l, seed + uint(o) * 0x9e3779b9u);\n        weight += amp;\n        amp *= persistence;\n        a *= 2;\n        c *= 2;\n        l.a *= 2;\n        l.b *= 2;\n        l.c *= 2;\n    }\n    return weight > 0.0 ? sum / weight : 0.5;\n}",
+  "body": {
+    "out": "return directionalFbm(uv, p.angle, p.scaleAlong, p.scaleAcross, p.octaves, p.persistence, uint(p.seed));"
+  }
+}

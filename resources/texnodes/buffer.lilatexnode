@@ -1,0 +1,29 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "buffer",
+  "label": "Buffer",
+  "category": "Utility",
+  "doc": "Caches its input in a texture, so what feeds it is computed once and not per read.",
+  "kind": "buffer",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [],
+  "cost": 0
+}

@@ -1,0 +1,74 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "planks",
+  "label": "Planks",
+  "category": "Pattern",
+  "doc": "Rows of boards, each row shifted by a random amount: a mask with gaps and bevelled ends, a random value and colour per board, and each board's own uv.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "mask",
+      "type": "gray"
+    },
+    {
+      "id": "random",
+      "type": "gray"
+    },
+    {
+      "id": "color",
+      "type": "color"
+    },
+    {
+      "id": "plankUv",
+      "type": "vector"
+    }
+  ],
+  "params": [
+    {
+      "id": "rows",
+      "type": "int",
+      "default": 6,
+      "min": 1,
+      "softMax": 64
+    },
+    {
+      "id": "planks",
+      "type": "int",
+      "default": 2,
+      "min": 1,
+      "softMax": 16,
+      "doc": "Boards along each row."
+    },
+    {
+      "id": "gap",
+      "type": "float",
+      "default": 0.06,
+      "min": 0,
+      "max": 0.5,
+      "doc": "In board widths."
+    },
+    {
+      "id": "bevel",
+      "type": "float",
+      "default": 0.1,
+      "min": 0,
+      "max": 0.5,
+      "doc": "Edge falloff, in board widths."
+    },
+    {
+      "id": "seed",
+      "type": "seed",
+      "default": 0,
+      "doc": "Changes the pattern without changing its look."
+    }
+  ],
+  "cost": 10,
+  "code": "/** The board's uv (xy) and its wrapped cell (zw). */\nfloat4 plankAt(float2 uv, int rows, int planks, uint seed)\n{\n    int nr = max(rows, 1);\n    int np = max(planks, 1);\n    float gy = uv.y * float(nr);\n    float row = floor(gy);\n    int wr = ((int(row) % nr) + nr) % nr;\n    float gx = uv.x * float(np) + texRand(uint2(uint(wr), 0x51u), seed ^ 0x6c8e9cf5u);\n    float col = floor(gx);\n    int wc = ((int(col) % np) + np) % np;\n    return float4(gx - col, gy - row, float(wc), float(wr));\n}",
+  "body": {
+    "mask": "float4 b = plankAt(uv, p.rows, p.planks, uint(p.seed));\nfloat2 e = min(b.xy, 1.0 - b.xy);\nfloat d = min(e.x * float(p.rows) / float(max(p.planks, 1)), e.y);\nreturn saturate((d - p.gap * 0.5) / max(p.bevel, 1e-4));",
+    "random": "float4 b = plankAt(uv, p.rows, p.planks, uint(p.seed));\nreturn texRand(uint2(b.zw), uint(p.seed));",
+    "color": "uint2 c = uint2(plankAt(uv, p.rows, p.planks, uint(p.seed)).zw);\nreturn float4(texRand(c, uint(p.seed) ^ 0x51ed270bu), texRand(c, uint(p.seed) ^ 0x2545f491u), texRand(c, uint(p.seed) ^ 0x9e3779b9u), 1.0);",
+    "plankUv": "return float3(plankAt(uv, p.rows, p.planks, uint(p.seed)).xy, 0.0);"
+  }
+}

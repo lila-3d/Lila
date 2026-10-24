@@ -1,0 +1,52 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "normalBlend",
+  "label": "Normal Blend",
+  "category": "Normal",
+  "doc": "Combines a detail normal onto a base normal with reoriented normal mapping (RNM).",
+  "inputs": [
+    {
+      "id": "base",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        1,
+        1
+      ]
+    },
+    {
+      "id": "detail",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        1,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "amount",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "max": 1
+    }
+  ],
+  "cost": 10,
+  "helpers": [
+    "normals"
+  ],
+  "body": {
+    "out": "float3 b = normalDecode(base.sample(uv));\nfloat3 d = normalize(lerp(float3(0.0, 0.0, 1.0), normalDecode(detail.sample(uv)), p.amount));\nreturn normalEncode(normalRnm(b, d));"
+  }
+}

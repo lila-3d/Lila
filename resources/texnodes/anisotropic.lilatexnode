@@ -1,0 +1,70 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "anisotropic",
+  "label": "Anisotropic Noise",
+  "category": "Noise",
+  "doc": "Value noise with separate frequencies across u and v: horizontal streaks by default (brushed metal, wood fibres). Tileable, 0 to 1.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "scaleX",
+      "type": "int",
+      "default": 4,
+      "min": 1,
+      "softMax": 64,
+      "doc": "Cells across u."
+    },
+    {
+      "id": "scaleY",
+      "type": "int",
+      "default": 64,
+      "min": 1,
+      "softMax": 256,
+      "doc": "Cells across v."
+    },
+    {
+      "id": "octaves",
+      "type": "int",
+      "default": 4,
+      "min": 1,
+      "max": 12
+    },
+    {
+      "id": "persistence",
+      "type": "float",
+      "default": 0.5,
+      "min": 0,
+      "max": 1,
+      "doc": "Amplitude of each octave relative to the one before."
+    },
+    {
+      "id": "smoothness",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "max": 1,
+      "doc": "Interpolation along the streaks: 0 linear, 1 smooth."
+    },
+    {
+      "id": "seed",
+      "type": "seed",
+      "default": 0,
+      "doc": "Changes the pattern without changing its look."
+    }
+  ],
+  "cost": 50,
+  "helpers": [
+    "lattice"
+  ],
+  "code": "float anisotropicFbm(float2 uv, int2 scale, int octaves, float persistence, float smoothness, uint seed)\n{\n    int2 f = max(scale, int2(1, 1));\n    float sum = 0.0;\n    float weight = 0.0;\n    float amp = 1.0;\n    for (int o = 0; o < octaves; ++o)\n    {\n        LatticePeriod l = latticePeriodFor(int2(1, 0), f.x, f.y);\n        sum += amp * latticeValue(uv * float2(f), l, seed + uint(o) * 0x9e3779b9u, smoothness);\n        weight += amp;\n        amp *= persistence;\n        f *= 2;\n    }\n    return weight > 0.0 ? sum / weight : 0.5;\n}",
+  "body": {
+    "out": "return anisotropicFbm(uv, int2(p.scaleX, p.scaleY), p.octaves, p.persistence, p.smoothness, uint(p.seed));"
+  }
+}

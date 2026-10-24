@@ -1,0 +1,52 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "directionalWarp",
+  "label": "Directional Warp",
+  "category": "Transform",
+  "doc": "Shifts the input along an angle by the intensity input's value times the amount (uv).",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ]
+    },
+    {
+      "id": "intensity",
+      "type": "gray",
+      "default": 0.5
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "angle",
+      "type": "float",
+      "default": 0.0,
+      "softMin": -180,
+      "softMax": 180,
+      "doc": "Degrees."
+    },
+    {
+      "id": "amount",
+      "type": "float",
+      "default": 0.05,
+      "softMin": -0.5,
+      "softMax": 0.5
+    }
+  ],
+  "cost": 4,
+  "body": {
+    "out": "float a = radians(p.angle);\nreturn input.sample(uv - float2(cos(a), sin(a)) * intensity.sample(uv) * p.amount);"
+  }
+}

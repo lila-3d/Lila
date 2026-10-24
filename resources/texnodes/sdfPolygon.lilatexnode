@@ -1,0 +1,60 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "sdfPolygon",
+  "label": "SDF Polygon",
+  "category": "SDF",
+  "doc": "Signed distance (uv) to a regular polygon; radius is to the middle of its sides. Negative inside.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "sdf",
+      "type": "sdf2d"
+    }
+  ],
+  "params": [
+    {
+      "id": "centerX",
+      "type": "float",
+      "default": 0.5,
+      "softMin": 0,
+      "softMax": 1
+    },
+    {
+      "id": "centerY",
+      "type": "float",
+      "default": 0.5,
+      "softMin": 0,
+      "softMax": 1
+    },
+    {
+      "id": "radius",
+      "type": "float",
+      "default": 0.3,
+      "min": 0,
+      "softMax": 1
+    },
+    {
+      "id": "sides",
+      "type": "int",
+      "default": 6,
+      "min": 3,
+      "softMax": 16
+    },
+    {
+      "id": "rotation",
+      "type": "float",
+      "default": 0.0,
+      "softMin": -180,
+      "softMax": 180,
+      "doc": "Degrees, anticlockwise."
+    }
+  ],
+  "cost": 10,
+  "helpers": [
+    "sdf"
+  ],
+  "body": {
+    "sdf": "return sdfPolygon(sdfRotate(uv - float2(p.centerX, p.centerY), p.rotation), p.radius, p.sides);"
+  }
+}

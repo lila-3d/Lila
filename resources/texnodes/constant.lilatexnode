@@ -1,0 +1,28 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "constant",
+  "label": "Constant",
+  "category": "Input",
+  "doc": "A single value.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "value",
+      "type": "float",
+      "default": 0.5,
+      "softMin": 0,
+      "softMax": 1
+    }
+  ],
+  "cost": 0,
+  "body": {
+    "out": "return p.value;"
+  }
+}

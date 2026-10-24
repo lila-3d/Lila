@@ -1,0 +1,41 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "histogramScan",
+  "label": "Histogram Scan",
+  "category": "Filter",
+  "doc": "Slides a threshold through the values: position 0 is all black, 1 all white; contrast sharpens the edge. Good for growing masks from noise.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "gray",
+      "default": 0.5
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "position",
+      "type": "float",
+      "default": 0.5,
+      "min": 0,
+      "max": 1
+    },
+    {
+      "id": "contrast",
+      "type": "float",
+      "default": 0.5,
+      "min": 0,
+      "max": 1
+    }
+  ],
+  "cost": 2,
+  "body": {
+    "out": "float x = input.sample(uv);\nfloat width = max(1.0 - p.contrast, 1e-4);\nreturn saturate((x - (1.0 - p.position)) / width + 0.5);"
+  }
+}

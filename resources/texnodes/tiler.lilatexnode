@@ -1,0 +1,152 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "tiler",
+  "label": "Tiler",
+  "category": "Scatter",
+  "doc": "Places one copy of the pattern in every cell of a grid, each with its own random offset, size, rotation and value. The mask thins out instances (sampled at each one's centre). Per-instance outputs: random colour, uv inside the instance (z is 1 on an instance), random value, rotation and size.",
+  "inputs": [
+    {
+      "id": "pattern",
+      "type": "gray",
+      "default": 1.0,
+      "doc": "Sampled in each instance's own 0 to 1 uv.",
+      "taps": 25
+    },
+    {
+      "id": "mask",
+      "type": "gray",
+      "default": 1.0,
+      "doc": "Instance density, read at each instance's centre.",
+      "taps": 25
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    },
+    {
+      "id": "color",
+      "type": "color"
+    },
+    {
+      "id": "instanceUv",
+      "type": "vector"
+    },
+    {
+      "id": "random",
+      "type": "gray"
+    },
+    {
+      "id": "rotation",
+      "type": "gray"
+    },
+    {
+      "id": "size",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "countX",
+      "type": "int",
+      "default": 4,
+      "min": 1,
+      "softMax": 64,
+      "doc": "Cells across u."
+    },
+    {
+      "id": "countY",
+      "type": "int",
+      "default": 4,
+      "min": 1,
+      "softMax": 64,
+      "doc": "Cells across v."
+    },
+    {
+      "id": "size",
+      "type": "float",
+      "default": 0.8,
+      "min": 0,
+      "max": 2,
+      "doc": "Instance size, a fraction of the cell."
+    },
+    {
+      "id": "sizeRandom",
+      "type": "float",
+      "default": 0.0,
+      "min": 0,
+      "max": 1
+    },
+    {
+      "id": "rotation",
+      "type": "float",
+      "default": 0.0,
+      "softMin": -180,
+      "softMax": 180,
+      "doc": "Instance rotation, degrees."
+    },
+    {
+      "id": "rotationRandom",
+      "type": "float",
+      "default": 0.0,
+      "min": 0,
+      "max": 1
+    },
+    {
+      "id": "offsetRandom",
+      "type": "float",
+      "default": 0.0,
+      "min": 0,
+      "max": 1,
+      "doc": "How far instances wander from their cell centre."
+    },
+    {
+      "id": "valueRandom",
+      "type": "float",
+      "default": 0.0,
+      "min": 0,
+      "max": 1,
+      "doc": "Random darkening per instance."
+    },
+    {
+      "id": "maskSize",
+      "type": "float",
+      "default": 0.0,
+      "min": 0,
+      "max": 1,
+      "doc": "How much the mask shrinks instances, as well as thinning them."
+    },
+    {
+      "id": "blend",
+      "type": "enum",
+      "default": "max",
+      "options": [
+        "max",
+        "add",
+        "top"
+      ],
+      "doc": "Where instances overlap: the brightest, their sum, or the topmost."
+    },
+    {
+      "id": "seed",
+      "type": "seed",
+      "default": 0,
+      "doc": "Changes the pattern without changing its look."
+    }
+  ],
+  "cost": 60,
+  "helpers": [
+    "scatter"
+  ],
+  "code": "ScatterSettings tilerSettings(TexP_tiler p)\n{\n    ScatterSettings s;\n    s.count = int2(p.countX, p.countY);\n    s.perCell = 1;\n    s.size = p.size;\n    s.sizeRandom = p.sizeRandom;\n    s.rotation = p.rotation;\n    s.rotationRandom = p.rotationRandom;\n    s.offsetRandom = p.offsetRandom;\n    s.valueRandom = p.valueRandom;\n    s.maskSize = p.maskSize;\n    s.blend = p.blend;\n    s.seed = uint(p.seed);\n    return s;\n}",
+  "body": {
+    "out": "ScatterHit h = scatter(uv, pattern, mask, tilerSettings(p));\nreturn h.value;",
+    "color": "ScatterHit h = scatter(uv, pattern, mask, tilerSettings(p));\nreturn h.color;",
+    "instanceUv": "ScatterHit h = scatter(uv, pattern, mask, tilerSettings(p));\nreturn float3(h.local, h.value > 0.0 ? 1.0 : 0.0);",
+    "random": "ScatterHit h = scatter(uv, pattern, mask, tilerSettings(p));\nreturn h.random;",
+    "rotation": "ScatterHit h = scatter(uv, pattern, mask, tilerSettings(p));\nreturn h.rotation;",
+    "size": "ScatterHit h = scatter(uv, pattern, mask, tilerSettings(p));\nreturn h.size;"
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "materialHeightBlend",
+  "label": "Material Height Blend",
+  "category": "Material",
+  "doc": "Mixes two materials by mask and height: b shows first where it stands higher than a, so it fills cracks last and tops bumps first. Sharpness narrows the transition.",
+  "inputs": [
+    {
+      "id": "a",
+      "type": "material"
+    },
+    {
+      "id": "b",
+      "type": "material"
+    },
+    {
+      "id": "mask",
+      "type": "gray",
+      "default": 0.5
+    }
+  ],
+  "outputs": [
+    {
+      "id": "material",
+      "type": "material"
+    }
+  ],
+  "params": [
+    {
+      "id": "sharpness",
+      "type": "float",
+      "default": 0.8,
+      "min": 0,
+      "max": 1
+    },
+    {
+      "id": "heightInfluence",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "softMax": 4,
+      "doc": "How much height differences matter against the mask."
+    }
+  ],
+  "cost": 14,
+  "helpers": [
+    "material"
+  ],
+  "body": {
+    "material": "TexMaterial x = a.sample(uv);\nTexMaterial y = b.sample(uv);\nfloat d = (saturate(mask.sample(uv)) * 2.0 - 1.0) + (y.height - x.height) * p.heightInfluence;\nfloat width = lerp(1.0, 0.002, saturate(p.sharpness));\nreturn materialLerp(x, y, saturate(d / width * 0.5 + 0.5));"
+  }
+}

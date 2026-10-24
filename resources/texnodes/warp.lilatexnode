@@ -1,0 +1,59 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "warp",
+  "label": "Warp",
+  "category": "Transform",
+  "doc": "Displaces the input: along the slope of the warp input's brightness (gradient), or by its red and green as a direction (vector, 0.5 is no move).",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ]
+    },
+    {
+      "id": "warp",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ],
+      "taps": 3
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "mode",
+      "type": "enum",
+      "default": "gradient",
+      "options": [
+        "gradient",
+        "vector"
+      ]
+    },
+    {
+      "id": "intensity",
+      "type": "float",
+      "default": 1.0,
+      "softMin": 0,
+      "softMax": 4
+    }
+  ],
+  "cost": 6,
+  "body": {
+    "out": "float2 d;\nif (p.mode == 0)\n{\n    float2 e = texel();\n    float h = texToFloat(warp.sample(uv));\n    float hx = texToFloat(warp.sample(uv + float2(e.x, 0.0)));\n    float hy = texToFloat(warp.sample(uv + float2(0.0, e.y)));\n    d = float2(hx - h, hy - h) / e * 0.002;\n}\nelse\n    d = (warp.sample(uv).rg - 0.5) * 0.2;\nreturn input.sample(uv + d * p.intensity);"
+  }
+}

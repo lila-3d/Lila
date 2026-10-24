@@ -1,0 +1,45 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "normalToHeight",
+  "label": "Normal to Height",
+  "category": "Normal",
+  "doc": "Rebuilds a height from a tangent-space normal (OpenGL, as Height to Normal makes; use the same intensity to round-trip). The result averages 0.5. Runs as its own pass.",
+  "kind": "native",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        1,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "intensity",
+      "type": "float",
+      "default": 1.0,
+      "min": 0.01,
+      "softMax": 8
+    },
+    {
+      "id": "iterations",
+      "type": "int",
+      "default": 32,
+      "min": 1,
+      "max": 256,
+      "doc": "Relaxation steps per pyramid level."
+    }
+  ],
+  "cost": 200
+}

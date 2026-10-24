@@ -1,0 +1,71 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "clouds",
+  "label": "Clouds",
+  "category": "Noise",
+  "doc": "Layered gradient noise for skies, smoke and broad variation: soft, billowy (folded) or ridged. Tileable, 0 to 1.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "scale",
+      "type": "int",
+      "default": 3,
+      "min": 1,
+      "softMax": 64,
+      "doc": "Cells across the texture at the first octave."
+    },
+    {
+      "id": "octaves",
+      "type": "int",
+      "default": 6,
+      "min": 1,
+      "max": 12
+    },
+    {
+      "id": "persistence",
+      "type": "float",
+      "default": 0.55,
+      "min": 0,
+      "max": 1,
+      "doc": "Amplitude of each octave relative to the one before."
+    },
+    {
+      "id": "mode",
+      "type": "enum",
+      "default": "soft",
+      "options": [
+        "soft",
+        "billow",
+        "ridged"
+      ]
+    },
+    {
+      "id": "contrast",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "softMax": 4
+    },
+    {
+      "id": "seed",
+      "type": "seed",
+      "default": 0,
+      "doc": "Changes the pattern without changing its look."
+    }
+  ],
+  "cost": 80,
+  "helpers": [
+    "noise"
+  ],
+  "code": "float cloudsFbm(float2 uv, int scale, int octaves, float persistence, int mode, uint seed)\n{\n    float sum = 0.0;\n    float weight = 0.0;\n    float amp = 1.0;\n    int f = max(scale, 1);\n    for (int o = 0; o < octaves; ++o)\n    {\n        float n = perlinNoise(uv * float(f), int2(f, f), seed + uint(o) * 0x9e3779b9u);\n        if (mode == 1)\n            n = abs(n * 2.0 - 1.0);\n        else if (mode == 2)\n        {\n            n = 1.0 - abs(n * 2.0 - 1.0);\n            n *= n;\n        }\n        sum += amp * n;\n        weight += amp;\n        amp *= persistence;\n        f *= 2;\n    }\n    return weight > 0.0 ? sum / weight : 0.5;\n}",
+  "body": {
+    "out": "float v = cloudsFbm(uv, p.scale, p.octaves, p.persistence, p.mode, uint(p.seed));\nreturn saturate((v - 0.5) * p.contrast + 0.5);"
+  }
+}

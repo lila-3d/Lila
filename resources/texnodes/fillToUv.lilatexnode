@@ -1,0 +1,35 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "fillToUv",
+  "label": "Fill to UV",
+  "category": "Fill",
+  "doc": "Each Flood Fill region's own 0 to 1 uv across its bounding box; z is 1 inside a region.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0,
+        0,
+        -1,
+        -1
+      ],
+      "doc": "A Flood Fill output."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "uv",
+      "type": "vector"
+    }
+  ],
+  "params": [],
+  "cost": 6,
+  "helpers": [
+    "fill"
+  ],
+  "body": {
+    "uv": "FillRegion r = fillRegion(input.sample(uv), uv);\nreturn r.valid ? float3(r.local, 1.0) : float3(0.0, 0.0, 0.0);"
+  }
+}

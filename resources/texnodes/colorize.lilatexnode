@@ -1,0 +1,31 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "colorize",
+  "label": "Colorize",
+  "category": "Filter",
+  "doc": "Maps a gray value through a gradient.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "gray",
+      "default": 0.5
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "gradient",
+      "type": "gradient"
+    }
+  ],
+  "cost": 8,
+  "body": {
+    "out": "return p.gradient.eval(saturate(input.sample(uv)));"
+  }
+}

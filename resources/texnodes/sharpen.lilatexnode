@@ -1,0 +1,40 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "sharpen",
+  "label": "Sharpen",
+  "category": "Filter",
+  "doc": "Boosts local contrast against the four neighbouring texels.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ],
+      "taps": 5
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "amount",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "softMax": 4
+    }
+  ],
+  "cost": 4,
+  "body": {
+    "out": "float2 e = texel();\nfloat4 c = input.sample(uv);\nfloat4 n = input.sample(uv + float2(e.x, 0.0)) + input.sample(uv - float2(e.x, 0.0)) + input.sample(uv + float2(0.0, e.y)) + input.sample(uv - float2(0.0, e.y));\nreturn float4(c.rgb + p.amount * (4.0 * c.rgb - n.rgb) * 0.25, c.a);"
+  }
+}

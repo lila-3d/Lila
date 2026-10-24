@@ -1,0 +1,51 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "switch",
+  "label": "Switch",
+  "category": "Utility",
+  "doc": "Passes on input a or b, for toggling variations without relinking.",
+  "inputs": [
+    {
+      "id": "a",
+      "type": "color",
+      "default": [
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "id": "b",
+      "type": "color",
+      "default": [
+        1,
+        1,
+        1,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "selected",
+      "type": "enum",
+      "default": "a",
+      "options": [
+        "a",
+        "b"
+      ]
+    }
+  ],
+  "cost": 1,
+  "body": {
+    "out": "return p.selected == 0 ? a.sample(uv) : b.sample(uv);"
+  }
+}

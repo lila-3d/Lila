@@ -1,0 +1,41 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "threshold",
+  "label": "Threshold",
+  "category": "Filter",
+  "doc": "Black below the threshold, white above, with an optional soft ramp across it.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "gray",
+      "default": 0.5
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "threshold",
+      "type": "float",
+      "default": 0.5,
+      "min": 0,
+      "max": 1
+    },
+    {
+      "id": "softness",
+      "type": "float",
+      "default": 0.0,
+      "min": 0,
+      "max": 1
+    }
+  ],
+  "cost": 2,
+  "body": {
+    "out": "float x = input.sample(uv);\nfloat s = max(p.softness * 0.5, 1e-5);\nreturn saturate((x - p.threshold) / (2.0 * s) + 0.5);"
+  }
+}

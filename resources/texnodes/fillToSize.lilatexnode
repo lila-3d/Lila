@@ -1,0 +1,55 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "fillToSize",
+  "label": "Fill to Size",
+  "category": "Fill",
+  "doc": "Each Flood Fill region's bounding box size in uv: its larger or smaller side, their average, or the square root of its area.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0,
+        0,
+        -1,
+        -1
+      ],
+      "doc": "A Flood Fill output."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "mode",
+      "type": "enum",
+      "default": "maximum",
+      "options": [
+        "maximum",
+        "minimum",
+        "average",
+        "area"
+      ]
+    },
+    {
+      "id": "scale",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "softMax": 16,
+      "doc": "Multiplies the size."
+    }
+  ],
+  "cost": 6,
+  "helpers": [
+    "fill"
+  ],
+  "body": {
+    "out": "FillRegion r = fillRegion(input.sample(uv), uv);\nfloat2 s = r.size;\nfloat v = p.mode == 1 ? min(s.x, s.y) : (p.mode == 2 ? 0.5 * (s.x + s.y) : (p.mode == 3 ? sqrt(s.x * s.y) : max(s.x, s.y)));\nreturn r.valid ? saturate(v * p.scale) : 0.0;"
+  }
+}

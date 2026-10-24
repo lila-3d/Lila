@@ -1,0 +1,48 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "weave",
+  "label": "Weave",
+  "category": "Pattern",
+  "doc": "Plain over-under weave of rounded threads: a height, a thread mask and which thread is on top (0 warp, running along v; 1 weft). The count rounds up to even so it tiles.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "height",
+      "type": "gray"
+    },
+    {
+      "id": "mask",
+      "type": "gray"
+    },
+    {
+      "id": "direction",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "count",
+      "type": "int",
+      "default": 8,
+      "min": 2,
+      "softMax": 64,
+      "doc": "Threads across the texture."
+    },
+    {
+      "id": "width",
+      "type": "float",
+      "default": 0.8,
+      "min": 0.05,
+      "max": 1,
+      "doc": "Thread width, a fraction of the spacing."
+    }
+  ],
+  "cost": 12,
+  "code": "/** Height, coverage and the top thread (0 warp, 1 weft). */\nfloat3 weaveAt(float2 uv, int count, float width)\n{\n    int n = max(2, count + (count & 1));\n    float2 g = uv * float(n);\n    float2 cell = floor(g);\n    float2 f = g - cell;\n    int2 c = int2(cell);\n    float side = ((c.x + c.y) & 1) == 0 ? 1.0 : -1.0;\n    float hw = max(width * 0.5, 1e-3);\n    float warpAcross = abs(f.x - 0.5) / hw;\n    float weftAcross = abs(f.y - 0.5) / hw;\n    float warpRound = warpAcross < 1.0 ? sqrt(1.0 - warpAcross * warpAcross) : 0.0;\n    float weftRound = weftAcross < 1.0 ? sqrt(1.0 - weftAcross * weftAcross) : 0.0;\n    // Along its length a thread rises over the crossing it tops and dips under the next.\n    float warpAlong = 0.5 + 0.5 * side * cos((f.y - 0.5) * 3.14159265);\n    float weftAlong = 0.5 - 0.5 * side * cos((f.x - 0.5) * 3.14159265);\n    float warp = warpRound > 0.0 ? warpRound * (0.3 + 0.7 * warpAlong) : 0.0;\n    float weft = weftRound > 0.0 ? weftRound * (0.3 + 0.7 * weftAlong) : 0.0;\n    float mask = max(step(1e-6, warpRound), step(1e-6, weftRound));\n    return float3(max(warp, weft), mask, weft > warp ? 1.0 : 0.0);\n}",
+  "body": {
+    "height": "return weaveAt(uv, p.count, p.width).x;",
+    "mask": "return weaveAt(uv, p.count, p.width).y;",
+    "direction": "return weaveAt(uv, p.count, p.width).z;"
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "edgeDetect",
+  "label": "Edge Detect",
+  "category": "Filter",
+  "doc": "Brightness where the input changes quickly (Sobel), for outlines and edge masks.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "gray",
+      "default": 0.5,
+      "taps": 8
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "width",
+      "type": "float",
+      "default": 1.0,
+      "min": 0.5,
+      "softMax": 8,
+      "doc": "Texels."
+    },
+    {
+      "id": "intensity",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "softMax": 8
+    }
+  ],
+  "cost": 10,
+  "body": {
+    "out": "float2 e = texel() * p.width;\nfloat tl = input.sample(uv + float2(-e.x, e.y));\nfloat t = input.sample(uv + float2(0.0, e.y));\nfloat tr = input.sample(uv + float2(e.x, e.y));\nfloat l = input.sample(uv - float2(e.x, 0.0));\nfloat r = input.sample(uv + float2(e.x, 0.0));\nfloat bl = input.sample(uv - float2(e.x, e.y));\nfloat b = input.sample(uv - float2(0.0, e.y));\nfloat br = input.sample(uv + float2(e.x, -e.y));\nfloat gx = (tr + 2.0 * r + br) - (tl + 2.0 * l + bl);\nfloat gy = (tl + 2.0 * t + tr) - (bl + 2.0 * b + br);\nreturn saturate(length(float2(gx, gy)) * 0.25 * p.intensity);"
+  }
+}

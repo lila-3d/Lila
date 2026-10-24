@@ -1,0 +1,38 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "invert",
+  "label": "Invert",
+  "category": "Filter",
+  "doc": "One minus each colour channel (alpha too, optionally).",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "alpha",
+      "type": "bool",
+      "default": false,
+      "doc": "Invert alpha as well."
+    }
+  ],
+  "cost": 1,
+  "body": {
+    "out": "float4 c = input.sample(uv);\nreturn float4(1.0 - c.rgb, p.alpha ? 1.0 - c.a : c.a);"
+  }
+}

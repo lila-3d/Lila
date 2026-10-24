@@ -1,0 +1,61 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "crystal",
+  "label": "Crystal Noise",
+  "category": "Noise",
+  "doc": "Faceted cells: each cell is a randomly tilted plane, like cut crystal or shattered glass. Tileable, 0 to 1.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "scale",
+      "type": "int",
+      "default": 5,
+      "min": 1,
+      "softMax": 64,
+      "doc": "Cells across the texture at the first octave."
+    },
+    {
+      "id": "octaves",
+      "type": "int",
+      "default": 2,
+      "min": 1,
+      "max": 12
+    },
+    {
+      "id": "persistence",
+      "type": "float",
+      "default": 0.5,
+      "min": 0,
+      "max": 1,
+      "doc": "Amplitude of each octave relative to the one before."
+    },
+    {
+      "id": "jitter",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "max": 1
+    },
+    {
+      "id": "seed",
+      "type": "seed",
+      "default": 0,
+      "doc": "Changes the pattern without changing its look."
+    }
+  ],
+  "cost": 140,
+  "helpers": [
+    "cellular"
+  ],
+  "code": "float crystalFacets(float2 uv, int scale, float jitter, uint seed)\n{\n    CellResult r = cellular(uv, int2(scale, scale), jitter, 0, seed);\n    float a = texRand(uint2(r.cell), seed ^ 0x68e31da4u) * 6.28318530718;\n    float base = texRand(uint2(r.cell), seed ^ 0xb5297a4du);\n    return saturate(0.2 + 0.6 * base + dot(-r.d1, float2(cos(a), sin(a))) * 0.4);\n}\n\nfloat crystalFbm(float2 uv, int scale, int octaves, float persistence, float jitter, uint seed)\n{\n    float sum = 0.0;\n    float weight = 0.0;\n    float amp = 1.0;\n    int f = max(scale, 1);\n    for (int o = 0; o < octaves; ++o)\n    {\n        sum += amp * crystalFacets(uv, f, jitter, seed + uint(o) * 0x9e3779b9u);\n        weight += amp;\n        amp *= persistence;\n        f *= 2;\n    }\n    return weight > 0.0 ? sum / weight : 0.5;\n}",
+  "body": {
+    "out": "return crystalFbm(uv, p.scale, p.octaves, p.persistence, p.jitter, uint(p.seed));"
+  }
+}

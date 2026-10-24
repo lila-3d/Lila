@@ -1,0 +1,61 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "swirl",
+  "label": "Swirl",
+  "category": "Transform",
+  "doc": "Twists the input around a centre, most at the centre and fading to none at the radius.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "amount",
+      "type": "float",
+      "default": 180.0,
+      "softMin": -720,
+      "softMax": 720,
+      "doc": "Degrees of twist at the centre."
+    },
+    {
+      "id": "radius",
+      "type": "float",
+      "default": 0.5,
+      "min": 0,
+      "softMax": 1
+    },
+    {
+      "id": "centerX",
+      "type": "float",
+      "default": 0.5,
+      "softMin": 0,
+      "softMax": 1
+    },
+    {
+      "id": "centerY",
+      "type": "float",
+      "default": 0.5,
+      "softMin": 0,
+      "softMax": 1
+    }
+  ],
+  "cost": 6,
+  "body": {
+    "out": "float2 c = float2(p.centerX, p.centerY);\nfloat2 d = uv - c;\nfloat t = saturate(1.0 - length(d) / max(p.radius, 1e-5));\nfloat a = radians(p.amount) * t * t;\nreturn input.sample(c + float2(cos(a) * d.x - sin(a) * d.y, sin(a) * d.x + cos(a) * d.y));"
+  }
+}

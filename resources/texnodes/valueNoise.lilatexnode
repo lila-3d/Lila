@@ -1,0 +1,53 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "valueNoise",
+  "label": "Value Noise",
+  "category": "Noise",
+  "doc": "Tileable value noise, summed over octaves (FBM). 0 to 1.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "scale",
+      "type": "int",
+      "default": 4,
+      "min": 1,
+      "softMax": 64,
+      "doc": "Cells across the texture at the first octave."
+    },
+    {
+      "id": "octaves",
+      "type": "int",
+      "default": 5,
+      "min": 1,
+      "max": 12
+    },
+    {
+      "id": "persistence",
+      "type": "float",
+      "default": 0.5,
+      "min": 0,
+      "max": 1,
+      "doc": "Amplitude of each octave relative to the one before."
+    },
+    {
+      "id": "seed",
+      "type": "seed",
+      "default": 0,
+      "doc": "Changes the pattern without changing its look."
+    }
+  ],
+  "cost": 40,
+  "helpers": [
+    "noise"
+  ],
+  "body": {
+    "out": "return noiseFbm(uv, p.scale, p.octaves, p.persistence, uint(p.seed), false);"
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "ambientOcclusion",
+  "label": "Ambient Occlusion",
+  "category": "Normal",
+  "doc": "Horizon-based occlusion from a height: darkens texels whose surroundings rise above them. Runs as its own pass.",
+  "kind": "native",
+  "inputs": [
+    {
+      "id": "height",
+      "type": "gray",
+      "default": 0.5
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "radius",
+      "type": "float",
+      "default": 0.05,
+      "min": 0,
+      "softMax": 0.25,
+      "doc": "How far to look, uv."
+    },
+    {
+      "id": "depth",
+      "type": "float",
+      "default": 0.1,
+      "min": 0,
+      "softMax": 1,
+      "doc": "Height of 1, in uv."
+    },
+    {
+      "id": "directions",
+      "type": "int",
+      "default": 8,
+      "min": 1,
+      "max": 64
+    },
+    {
+      "id": "steps",
+      "type": "int",
+      "default": 8,
+      "min": 1,
+      "max": 64,
+      "doc": "Samples per direction."
+    },
+    {
+      "id": "strength",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "softMax": 2
+    }
+  ],
+  "cost": 200
+}

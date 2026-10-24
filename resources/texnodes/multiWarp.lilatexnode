@@ -1,0 +1,52 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "multiWarp",
+  "label": "Multi Warp",
+  "category": "Transform",
+  "doc": "Warps the input in several small steps along the slope of the warp input, following its contours. Smoother than one large warp.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ]
+    },
+    {
+      "id": "warp",
+      "type": "gray",
+      "default": 0.5,
+      "taps": 24
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "iterations",
+      "type": "int",
+      "default": 4,
+      "min": 1,
+      "max": 8
+    },
+    {
+      "id": "intensity",
+      "type": "float",
+      "default": 1.0,
+      "softMin": 0,
+      "softMax": 4
+    }
+  ],
+  "cost": 8,
+  "body": {
+    "out": "float2 e = texel();\nfloat2 q = uv;\nint n = clamp(p.iterations, 1, 8);\nfor (int i = 0; i < n; ++i)\n{\n    float h = warp.sample(q);\n    float hx = warp.sample(q + float2(e.x, 0.0));\n    float hy = warp.sample(q + float2(0.0, e.y));\n    q += float2(hx - h, hy - h) / e * (0.002 * p.intensity / float(n));\n}\nreturn input.sample(q);"
+  }
+}

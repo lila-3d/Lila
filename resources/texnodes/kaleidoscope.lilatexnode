@@ -1,0 +1,61 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "kaleidoscope",
+  "label": "Kaleidoscope",
+  "category": "Transform",
+  "doc": "Repeats a wedge of the input around a centre, mirroring alternate wedges so the seams match.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "segments",
+      "type": "int",
+      "default": 6,
+      "min": 1,
+      "softMax": 32
+    },
+    {
+      "id": "rotation",
+      "type": "float",
+      "default": 0.0,
+      "softMin": -180,
+      "softMax": 180,
+      "doc": "Degrees, anticlockwise."
+    },
+    {
+      "id": "centerX",
+      "type": "float",
+      "default": 0.5,
+      "softMin": 0,
+      "softMax": 1
+    },
+    {
+      "id": "centerY",
+      "type": "float",
+      "default": 0.5,
+      "softMin": 0,
+      "softMax": 1
+    }
+  ],
+  "cost": 6,
+  "body": {
+    "out": "float2 c = float2(p.centerX, p.centerY);\nfloat2 d = uv - c;\nfloat r = length(d);\nfloat wedge = 6.28318530718 / float(max(p.segments, 1));\nfloat a = atan2(d.y, d.x) - radians(p.rotation);\na -= wedge * floor(a / wedge);\nif (a > wedge * 0.5)\n    a = wedge - a;\na += radians(p.rotation);\nreturn input.sample(c + r * float2(cos(a), sin(a)));"
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "tiles",
+  "label": "Tiles",
+  "category": "Pattern",
+  "doc": "A grid of square tiles with gaps and bevelled edges, optionally varied in size and rotation per tile: a mask, a random value and colour per tile, and each tile's own uv.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "mask",
+      "type": "gray"
+    },
+    {
+      "id": "random",
+      "type": "gray"
+    },
+    {
+      "id": "color",
+      "type": "color"
+    },
+    {
+      "id": "tileUv",
+      "type": "vector"
+    }
+  ],
+  "params": [
+    {
+      "id": "countX",
+      "type": "int",
+      "default": 4,
+      "min": 1,
+      "softMax": 64
+    },
+    {
+      "id": "countY",
+      "type": "int",
+      "default": 4,
+      "min": 1,
+      "softMax": 64
+    },
+    {
+      "id": "gap",
+      "type": "float",
+      "default": 0.06,
+      "min": 0,
+      "max": 0.5,
+      "doc": "In tile heights."
+    },
+    {
+      "id": "bevel",
+      "type": "float",
+      "default": 0.08,
+      "min": 0,
+      "max": 0.5,
+      "doc": "Edge falloff, in tile heights."
+    },
+    {
+      "id": "sizeRandom",
+      "type": "float",
+      "default": 0.0,
+      "min": 0,
+      "max": 1
+    },
+    {
+      "id": "rotationRandom",
+      "type": "float",
+      "default": 0.0,
+      "min": 0,
+      "max": 1,
+      "doc": "Up to 22.5 degrees either way."
+    },
+    {
+      "id": "seed",
+      "type": "seed",
+      "default": 0,
+      "doc": "Changes the pattern without changing its look."
+    }
+  ],
+  "cost": 12,
+  "code": "struct TileInfo\n{\n    float2 local;\n    int2 cell;\n    float mask;\n};\n\nTileInfo tilesAt(float2 uv, int countX, int countY, float gap, float bevel, float sizeRandom, float rotationRandom, uint seed)\n{\n    int2 n = int2(max(countX, 1), max(countY, 1));\n    float2 g = uv * float2(n);\n    float2 cell = floor(g);\n    int2 w = ((int2(cell) % n) + n) % n;\n    float2 l = g - cell - 0.5;\n    float size = 1.0 - sizeRandom * 0.5 * texRand(uint2(w), seed ^ 0x2f8a4c1bu);\n    float a = (texRand(uint2(w), seed ^ 0x7a3b19c5u) - 0.5) * 0.78539816 * rotationRandom;\n    float2 r = float2(cos(a) * l.x + sin(a) * l.y, -sin(a) * l.x + cos(a) * l.y) / size;\n    float2 e = 0.5 - abs(r);\n    float d = min(e.x * float(n.y) / float(n.x), e.y) * size;\n    TileInfo t;\n    t.local = r + 0.5;\n    t.cell = w;\n    t.mask = saturate((d - gap * 0.5) / max(bevel, 1e-4));\n    return t;\n}",
+  "body": {
+    "mask": "return tilesAt(uv, p.countX, p.countY, p.gap, p.bevel, p.sizeRandom, p.rotationRandom, uint(p.seed)).mask;",
+    "random": "return texRand(uint2(tilesAt(uv, p.countX, p.countY, p.gap, p.bevel, p.sizeRandom, p.rotationRandom, uint(p.seed)).cell), uint(p.seed));",
+    "color": "uint2 c = uint2(tilesAt(uv, p.countX, p.countY, p.gap, p.bevel, p.sizeRandom, p.rotationRandom, uint(p.seed)).cell);\nreturn float4(texRand(c, uint(p.seed) ^ 0x51ed270bu), texRand(c, uint(p.seed) ^ 0x2545f491u), texRand(c, uint(p.seed) ^ 0x9e3779b9u), 1.0);",
+    "tileUv": "return float3(tilesAt(uv, p.countX, p.countY, p.gap, p.bevel, p.sizeRandom, p.rotationRandom, uint(p.seed)).local, 0.0);"
+  }
+}

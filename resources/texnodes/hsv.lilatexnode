@@ -1,0 +1,57 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "hsv",
+  "label": "HSV",
+  "category": "Filter",
+  "doc": "Shifts hue and scales saturation and value.",
+  "inputs": [
+    {
+      "id": "input",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "hue",
+      "type": "float",
+      "default": 0.0,
+      "min": -0.5,
+      "max": 0.5,
+      "doc": "Turns, either way."
+    },
+    {
+      "id": "saturation",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "softMax": 2
+    },
+    {
+      "id": "value",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "softMax": 2
+    }
+  ],
+  "cost": 10,
+  "helpers": [
+    "color"
+  ],
+  "body": {
+    "out": "float4 c = input.sample(uv);\nfloat3 h = rgbToHsv(saturate(c.rgb));\nh.x = frac(h.x + p.hue);\nh.y = saturate(h.y * p.saturation);\nh.z *= p.value;\nreturn float4(hsvToRgb(h), c.a);"
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "materialOutput",
+  "label": "Material Output",
+  "category": "Output",
+  "doc": "The texture set's channels. Unlinked channels take their value here, or from the material input when it is linked. Extra set channels appear as more inputs.",
+  "kind": "output",
+  "inputs": [
+    {
+      "id": "baseColor",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ]
+    },
+    {
+      "id": "roughness",
+      "type": "gray",
+      "default": 0.5
+    },
+    {
+      "id": "metallic",
+      "type": "gray",
+      "default": 0.0
+    },
+    {
+      "id": "normal",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        1,
+        1
+      ]
+    },
+    {
+      "id": "height",
+      "type": "gray",
+      "default": 0.5
+    },
+    {
+      "id": "ao",
+      "type": "gray",
+      "default": 1.0
+    },
+    {
+      "id": "emissive",
+      "type": "color",
+      "default": [
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "id": "opacity",
+      "type": "gray",
+      "default": 1.0
+    },
+    {
+      "id": "material",
+      "type": "material"
+    }
+  ],
+  "outputs": [],
+  "params": [],
+  "cost": 0
+}

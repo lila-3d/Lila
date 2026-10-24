@@ -1,0 +1,55 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "math",
+  "label": "Math",
+  "category": "Filter",
+  "doc": "Arithmetic on two values.",
+  "inputs": [
+    {
+      "id": "a",
+      "type": "float",
+      "default": 0.0
+    },
+    {
+      "id": "b",
+      "type": "float",
+      "default": 0.0
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "float"
+    }
+  ],
+  "params": [
+    {
+      "id": "operation",
+      "type": "enum",
+      "default": "add",
+      "options": [
+        "add",
+        "subtract",
+        "multiply",
+        "divide",
+        "minimum",
+        "maximum",
+        "power",
+        "absolute",
+        "oneMinus",
+        "step",
+        "modulo",
+        "sine",
+        "cosine",
+        "floor",
+        "fraction",
+        "clamp"
+      ]
+    }
+  ],
+  "cost": 2,
+  "body": {
+    "out": "float x = a.sample(uv);\nfloat y = b.sample(uv);\nswitch (p.operation)\n{\ncase 1: return x - y;\ncase 2: return x * y;\ncase 3: return abs(y) > 1e-8 ? x / y : 0.0;\ncase 4: return min(x, y);\ncase 5: return max(x, y);\ncase 6: return pow(abs(x), y);\ncase 7: return abs(x);\ncase 8: return 1.0 - x;\ncase 9: return step(y, x);\ncase 10: return abs(y) > 1e-8 ? x - y * floor(x / y) : 0.0;\ncase 11: return sin(x);\ncase 12: return cos(x);\ncase 13: return floor(x);\ncase 14: return frac(x);\ncase 15: return saturate(x);\ndefault: return x + y;\n}"
+  }
+}
