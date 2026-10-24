@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -95,6 +96,24 @@ LILA_FOUNDATION_API uint8_t quantize8(float v, int x, int y, int c, bool dither)
 LILA_FOUNDATION_API std::string udimLabel(int udim, std::string_view style);
 /** The UDIM a udimLabel of that style names, 0 when it isn't one. */
 LILA_FOUNDATION_API int udimFromLabel(std::string_view label, std::string_view style);
+
+/** A UDIM set named by one path: what comes before and after the tile label, and the label's style ("1001" or "uv"). */
+struct UdimPattern
+{
+    std::string prefix;
+    std::string suffix;
+    std::string style = "1001";
+};
+
+/**
+ * The UDIM set a path names (UTF-8): a <UDIM> token (1001 style) or a <UVTILE> token (u1_v1), either case, or, with
+ * tileNumbers, a tile number 1001 to 1999 after a dot or underscore right before the extension (name.1001.png).
+ */
+LILA_FOUNDATION_API std::optional<UdimPattern> udimPattern(std::string_view path, bool tileNumbers);
+/** The path of one tile of the set. */
+LILA_FOUNDATION_API std::string udimTilePath(const UdimPattern& pattern, int udim);
+/** The tiles of the set that exist on disk, ascending by udim, with their paths. */
+LILA_FOUNDATION_API std::vector<std::pair<int, std::string>> findUdimTiles(const UdimPattern& pattern);
 
 /** <image>.json, the metadata sidecar of an image. */
 LILA_FOUNDATION_API fs::path sidecarPath(const fs::path& image);

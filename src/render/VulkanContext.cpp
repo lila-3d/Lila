@@ -231,7 +231,8 @@ bool VulkanContext::init(bool validation)
     }
     descriptorIndexing = f12Have.descriptorIndexing && f12Have.runtimeDescriptorArray && f12Have.descriptorBindingPartiallyBound &&
                          f12Have.shaderSampledImageArrayNonUniformIndexing && f12Have.descriptorBindingSampledImageUpdateAfterBind &&
-                         f12Have.descriptorBindingVariableDescriptorCount;
+                         f12Have.descriptorBindingVariableDescriptorCount && f12Have.descriptorBindingUpdateUnusedWhilePending &&
+                         std::getenv("LILA_VK_NO_BINDLESS") == nullptr;
     if (descriptorIndexing)
     {
         f12.descriptorIndexing = VK_TRUE;
@@ -240,6 +241,7 @@ bool VulkanContext::init(bool validation)
         f12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
         f12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
         f12.descriptorBindingVariableDescriptorCount = VK_TRUE;
+        f12.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
     }
     shaderFloat16 = f12Have.shaderFloat16 == VK_TRUE;
     f12.shaderFloat16 = f12Have.shaderFloat16;
@@ -249,6 +251,8 @@ bool VulkanContext::init(bool validation)
     f2.features.shaderInt64 = supported.shaderInt64;
     shaderFloat64 = supported.shaderFloat64 == VK_TRUE;
     f2.features.shaderFloat64 = supported.shaderFloat64;
+    fragmentStores = supported.fragmentStoresAndAtomics == VK_TRUE;
+    f2.features.fragmentStoresAndAtomics = supported.fragmentStoresAndAtomics;
 
     VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     dci.pNext = &f2;

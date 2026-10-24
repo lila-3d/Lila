@@ -32,13 +32,15 @@ public:
     // Optional features, each enabled only when the device supports it.
     /** VK_KHR_acceleration_structure, VK_KHR_ray_query and VK_KHR_deferred_host_operations. */
     bool rayQuery = false;
-    /** Runtime-sized, partially bound, update-after-bind descriptor arrays (bindless). */
+    /** Runtime-sized, partially bound, update-after-bind (also while pending) descriptor arrays (bindless). LILA_VK_NO_BINDLESS turns it off. */
     bool descriptorIndexing = false;
     bool shaderFloat16 = false;
     bool shaderInt64 = false;
     /** Double precision in shaders (the baker's raster matches the CPU's coverage tests with it). */
     bool shaderFloat64 = false;
     bool int64Atomics = false;
+    /** Fragment shaders writing storage buffers (virtual texture feedback). */
+    bool fragmentStores = false;
     /** VK_EXT_memory_budget: the allocator tracks per-heap budgets (vmaGetHeapBudgets). */
     bool memoryBudget = false;
     uint32_t asScratchAlignment = 256;

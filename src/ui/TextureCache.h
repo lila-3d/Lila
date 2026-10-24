@@ -13,11 +13,15 @@
 namespace lila::ui::textures
 {
 /**
- * Texture images for the viewport, read with QImage (.hdr through the renderer's loader) on worker threads and
- * handed to the renderer as RGBA8. Main thread only. Every getter returns null while its file loads (the viewport
- * redraws once it arrives) or when it can't be read, and reloads a file that changes on disk.
+ * Texture images for the viewport, read on worker threads: EXR, TIFF and PSD through image::read, .hdr through the
+ * renderer's loader, the rest with QImage. 8-bit files arrive as RGBA8; files with more bits (16-bit PNG/TIFF/PSD, EXR,
+ * HDR) keep their precision as linear RGBA16F. Main thread only. Every getter returns null while its file loads (the
+ * viewport redraws once it arrives) or when it can't be read, and reloads a file that changes on disk.
+ *
+ * A path with a <UDIM> or <UVTILE> token loads the tile set on disk. With udimTiles (material maps), so does a tile's own
+ * name (name.1001.png) when sibling tiles exist; image planes leave it off, since frame numbers look the same.
  */
-LILA_UI_API render::TexturePtr get(const std::string& path, bool srgb);
+LILA_UI_API render::TexturePtr get(const std::string& path, bool srgb, bool udimTiles = false);
 
 /**
  * One linear image with occlusion in R, roughness in G and metallic in B: the packed map when given, its channels

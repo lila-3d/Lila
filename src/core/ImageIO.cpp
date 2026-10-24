@@ -1207,6 +1207,61 @@ int udimFromLabel(std::string_view label, std::string_view style)
     return u >= 0 && u < 10 && v >= 0 && v < 100 ? 1001 + u + 10 * v : 0;
 }
 
+std::optional<UdimPattern> udimPattern(std::string_view path, bool tileNumbers)
+{
+    auto findToken = [&](std::string_view token) -> size_t {
+        for (size_t i = 0; i + token.size() <= path.size(); ++i)
+            if (std::equal(token.begin(), token.end(), path.begin() + std::ptrdiff_t(i),
+                           [](char t, char c) { return std::toupper(static_cast<unsigned char>(c)) == t; }))
+                return i;
+        return std::string_view::npos;
+    };
+    for (auto [token, style] : {std::pair<std::string_view, const char*>{"<UDIM>", "1001"}, {"<UVTILE>", "uv"}})
+        if (size_t at = findToken(token); at != std::string_view::npos)
+            return UdimPattern{std::string(path.substr(0, at)), std::string(path.substr(at + token.size())), style};
+    if (!tileNumbers)
+        return std::nullopt;
+    const size_t slash = path.find_last_of("/\\");
+    const size_t nameStart = slash == std::string_view::npos ? 0 : slash + 1;
+    const size_t dot = path.rfind('.');
+    if (dot == std::string_view::npos || dot < nameStart + 5)
+        return std::nullopt;
+    const size_t label = dot - 4;
+    const char before = path[label - 1];
+    if ((before != '.' && before != '_') || label - 1 < nameStart || udimFromLabel(path.substr(label, 4), "1001") == 0)
+        return std::nullopt;
+    return UdimPattern{std::string(path.substr(0, label)), std::string(path.substr(dot)), "1001"};
+}
+
+std::string udimTilePath(const UdimPattern& pattern, int udim)
+{
+    return pattern.prefix + udimLabel(udim, pattern.style) + pattern.suffix;
+}
+
+std::vector<std::pair<int, std::string>> findUdimTiles(const UdimPattern& pattern)
+{
+    std::vector<std::pair<int, std::string>> tiles;
+    const fs::path prefix(reinterpret_cast<const char8_t*>(pattern.prefix.c_str()));
+    // A prefix ending in a separator names the directory itself, with an empty file name before the label.
+    const bool bare = !pattern.prefix.empty() && (pattern.prefix.back() == '/' || pattern.prefix.back() == '\\');
+    const fs::path dir = bare ? prefix : prefix.parent_path();
+    const std::u8string head = bare ? std::u8string() : prefix.filename().u8string();
+    const std::u8string tail(reinterpret_cast<const char8_t*>(pattern.suffix.c_str()));
+    std::error_code ec;
+    for (fs::directory_iterator it(dir.empty() ? fs::path(".") : dir, ec), end; !ec && it != end; it.increment(ec))
+    {
+        const std::u8string name = it->path().filename().u8string();
+        if (name.size() <= head.size() + tail.size() || !name.starts_with(head) || !name.ends_with(tail))
+            continue;
+        const std::u8string mid = name.substr(head.size(), name.size() - head.size() - tail.size());
+        const int udim = udimFromLabel(std::string_view(reinterpret_cast<const char*>(mid.data()), mid.size()), pattern.style);
+        if (udim && it->is_regular_file(ec))
+            tiles.emplace_back(udim, udimTilePath(pattern, udim));
+    }
+    std::ranges::sort(tiles);
+    return tiles;
+}
+
 fs::path sidecarPath(const fs::path& image)
 {
     fs::path p = image;

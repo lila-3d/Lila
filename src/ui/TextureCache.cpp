@@ -1,5 +1,6 @@
 #include "ui/TextureCache.h"
 
+#include "core/ImageIO.h"
 #include "core/MainQueue.h"
 #include "core/Profile.h"
 #include "render/HdrImage.h"
@@ -30,6 +31,8 @@ struct Result
     QImage thumb;
     std::string error;
     std::vector<fs::file_time_type> times;
+    /** When not empty, the files the result came from (a UDIM set's tiles), replacing the slot's. */
+    std::vector<std::string> files;
 };
 
 struct Slot
@@ -143,62 +146,174 @@ QImage readTga(const fs::path& path, std::string& error)
     return img;
 }
 
-/** Radiance HDR, encoded to 8-bit sRGB; the viewport only needs it as a color map. */
-QImage readHdr(const fs::path& path, std::string& error)
+/**
+ * A decoded file: 8-bit RGBA, or RGBA floats when the file holds more than 8 bits (16-bit PNG, TIFF and PSD as stored,
+ * EXR and HDR linear).
+ */
+struct Pixels
 {
-    render::HdrImage hdr;
-    if (!render::loadHdr(path, hdr, error))
-        return {};
-    QImage img(hdr.width, hdr.height, QImage::Format_RGBA8888);
-    auto encode = [](float v) {
-        v = std::clamp(v, 0.0f, 1.0f);
-        v = v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1.0f / 2.4f) - 0.055f;
-        return uchar(std::lround(v * 255.0f));
-    };
-    for (int y = 0; y < hdr.height; ++y)
-    {
-        uchar* row = img.scanLine(y);
-        for (int x = 0; x < hdr.width; ++x)
-        {
-            glm::vec3 c = hdr.at(x, y);
-            row[x * 4] = encode(c.r);
-            row[x * 4 + 1] = encode(c.g);
-            row[x * 4 + 2] = encode(c.b);
-            row[x * 4 + 3] = 255;
-        }
-    }
-    return img;
+    QImage rgba8;
+    image::Image floats;
+    bool linear = false;
+
+    bool empty() const { return rgba8.isNull() && floats.rgba.empty(); }
+};
+
+float encodeSrgb(float v)
+{
+    v = std::clamp(v, 0.0f, 1.0f);
+    return v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1.0f / 2.4f) - 0.055f;
 }
 
-QImage readImage(const std::string& file, std::string& error)
+float decodeSrgb(float v)
+{
+    return v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f);
+}
+
+/** True when every value sits on an 8-bit step, so 8 bits hold it exactly (a 16-bit file saved from 8-bit data). */
+bool onByteGrid(const image::Image& img)
+{
+    for (float v : img.rgba)
+    {
+        const float s = v * 255.0f;
+        if (v < 0.0f || v > 1.0f || std::abs(s - std::round(s)) > 1e-3f)
+            return false;
+    }
+    return true;
+}
+
+/** Floats as 8-bit RGBA: linear data sRGB-encoded when encode, else stored as it is (clamped). */
+QImage toRgba8(const image::Image& img, bool encode)
+{
+    QImage out(img.width, img.height, QImage::Format_RGBA8888);
+    for (int y = 0; y < img.height; ++y)
+    {
+        uchar* row = out.scanLine(y);
+        const float* src = &img.rgba[size_t(y) * size_t(img.width) * 4];
+        for (int i = 0; i < img.width * 4; ++i)
+        {
+            const float v = encode && i % 4 != 3 ? encodeSrgb(src[i]) : std::clamp(src[i], 0.0f, 1.0f);
+            row[i] = uchar(std::lround(v * 255.0f));
+        }
+    }
+    return out;
+}
+
+/** Halves an image (box filter) until it fits kMaxSize. */
+void shrinkToFit(image::Image& img)
+{
+    while (img.width > kMaxSize || img.height > kMaxSize)
+    {
+        const int w = std::max(img.width / 2, 1), h = std::max(img.height / 2, 1);
+        std::vector<float> out(size_t(w) * size_t(h) * 4);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x)
+                for (int c = 0; c < 4; ++c)
+                {
+                    float sum = 0.0f;
+                    for (int k = 0; k < 4; ++k)
+                    {
+                        const int sx = std::min(x * 2 + (k & 1), img.width - 1), sy = std::min(y * 2 + (k >> 1), img.height - 1);
+                        sum += img.rgba[(size_t(sy) * size_t(img.width) + size_t(sx)) * 4 + size_t(c)];
+                    }
+                    out[(size_t(y) * size_t(w) + size_t(x)) * 4 + size_t(c)] = sum * 0.25f;
+                }
+        img = {w, h, std::move(out)};
+    }
+}
+
+Pixels readPixels(const std::string& file, std::string& error)
 {
     LILA_ZONE();
 
+    Pixels px;
     fs::path path = toPath(file);
     std::error_code ec;
     if (!fs::exists(path, ec))
     {
         error = "file not found";
-        return {};
+        return px;
     }
     std::string ext = path.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-    QImage img;
     if (ext == ".tga")
-        img = readTga(path, error);
+        px.rgba8 = readTga(path, error);
     else if (ext == ".hdr")
-        img = readHdr(path, error);
+    {
+        render::HdrImage hdr;
+        if (render::loadHdr(path, hdr, error))
+        {
+            px.floats.width = hdr.width;
+            px.floats.height = hdr.height;
+            px.floats.rgba.reserve(size_t(hdr.width) * size_t(hdr.height) * 4);
+            for (int y = 0; y < hdr.height; ++y)
+                for (int x = 0; x < hdr.width; ++x)
+                {
+                    const glm::vec3 c = hdr.at(x, y);
+                    px.floats.rgba.insert(px.floats.rgba.end(), {c.r, c.g, c.b, 1.0f});
+                }
+            px.linear = true;
+        }
+    }
+    else if (ext == ".exr" || ext == ".tif" || ext == ".tiff" || ext == ".psd")
+    {
+        std::string err;
+        px.floats = image::read(path, &err);
+        if (px.floats.rgba.empty())
+        {
+            // Qt's image format plugins read variants the built-in readers do not (tiled TIFF, compressed PSD).
+            if (ext != ".exr")
+                px.rgba8 = QImage(QString::fromStdU16String(path.u16string()));
+            if (px.rgba8.isNull())
+                error = err.empty() ? "unsupported or unreadable image" : err;
+        }
+        else if (ext == ".exr")
+            px.linear = true;
+        else if (onByteGrid(px.floats))
+        {
+            px.rgba8 = toRgba8(px.floats, false);
+            px.floats = {};
+        }
+    }
     else
     {
-        img = QImage(QString::fromStdU16String(path.u16string()));
+        QImage img(QString::fromStdU16String(path.u16string()));
         if (img.isNull())
             error = "unsupported or unreadable image";
+        else if (img.depth() > 32 || img.format() == QImage::Format_Grayscale16)
+        {
+            img = img.convertToFormat(QImage::Format_RGBA64);
+            px.floats.width = img.width();
+            px.floats.height = img.height();
+            px.floats.rgba.resize(size_t(img.width()) * size_t(img.height()) * 4);
+            for (int y = 0; y < img.height(); ++y)
+            {
+                const auto* row = reinterpret_cast<const quint16*>(img.constScanLine(y));
+                for (int i = 0; i < img.width() * 4; ++i)
+                    px.floats.rgba[size_t(y) * size_t(img.width()) * 4 + size_t(i)] = float(row[i]) / 65535.0f;
+            }
+        }
+        else
+            px.rgba8 = img;
     }
-    if (img.isNull())
-        return {};
-    if (img.width() > kMaxSize || img.height() > kMaxSize)
-        img = img.scaled(kMaxSize, kMaxSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-    return img.convertToFormat(QImage::Format_RGBA8888);
+    if (!px.floats.rgba.empty())
+        shrinkToFit(px.floats);
+    else if (!px.rgba8.isNull())
+    {
+        if (px.rgba8.width() > kMaxSize || px.rgba8.height() > kMaxSize)
+            px.rgba8 = px.rgba8.scaled(kMaxSize, kMaxSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        px.rgba8 = px.rgba8.convertToFormat(QImage::Format_RGBA8888);
+    }
+    return px;
+}
+
+/** A file as 8-bit RGBA, for packing and thumbnails: linear float data sRGB-encoded when encodeLinear. */
+QImage readImage(const std::string& file, std::string& error, bool encodeLinear = false)
+{
+    Pixels px = readPixels(file, error);
+    if (!px.floats.rgba.empty())
+        return toRgba8(px.floats, encodeLinear && px.linear);
+    return px.rgba8;
 }
 
 render::TexturePtr toTexture(const QImage& rgba, bool srgb)
@@ -211,6 +326,75 @@ render::TexturePtr toTexture(const QImage& rgba, bool srgb)
     for (int y = 0; y < t->height; ++y)
         std::memcpy(t->rgba.data() + size_t(y) * size_t(t->width) * 4, rgba.constScanLine(y), size_t(t->width) * 4);
     return t;
+}
+
+/** Float pixels upload as RGBA16F, always linear: sRGB-encoded colour data is decoded here. */
+render::TexturePtr toTexture(const Pixels& px, bool srgb)
+{
+    if (px.floats.rgba.empty())
+        return px.rgba8.isNull() ? nullptr : toTexture(px.rgba8, srgb);
+    std::vector<float> rgba = px.floats.rgba;
+    if (srgb && !px.linear)
+        for (size_t i = 0; i < rgba.size(); ++i)
+            if (i % 4 != 3)
+                rgba[i] = decodeSrgb(rgba[i]);
+    auto t = std::make_shared<render::TextureImage>();
+    t->width = px.floats.width;
+    t->height = px.floats.height;
+    t->format = render::TextureFormat::RGBA16F;
+    t->srgb = false;
+    render::encodeTexels(t->format, false, rgba, t->rgba);
+    return t;
+}
+
+/** One file as a texture. */
+Result loadSingle(const std::string& path, bool srgb)
+{
+    Result r;
+    r.times = stamps({path});
+    Pixels px = readPixels(path, r.error);
+    if (!px.empty())
+        r.image = toTexture(px, srgb);
+    return r;
+}
+
+/** A UDIM set: every tile found on disk, each its own texture. */
+Result loadTiles(const std::vector<std::pair<int, std::string>>& found, bool srgb)
+{
+    LILA_ZONE();
+
+    Result r;
+    for (const auto& [udim, file] : found)
+        r.files.push_back(file);
+    r.times = stamps(r.files);
+    auto set = std::make_shared<render::TextureImage>();
+    for (const auto& [udim, file] : found)
+    {
+        std::string err;
+        Pixels px = readPixels(file, err);
+        render::TexturePtr tile = px.empty() ? nullptr : toTexture(px, srgb);
+        if (!tile)
+        {
+            r.error += (r.error.empty() ? "" : "; ") + file + ": " + err;
+            continue;
+        }
+        if (set->tiles.empty())
+        {
+            set->width = tile->width;
+            set->height = tile->height;
+            set->format = tile->format;
+            set->srgb = tile->srgb;
+        }
+        set->tiles.push_back({udim, std::move(tile)});
+    }
+    if (set->tiles.empty())
+    {
+        if (r.error.empty())
+            r.error = "no UDIM tiles found";
+        return r;
+    }
+    r.image = std::move(set);
+    return r;
 }
 
 Result loadPacked(const std::vector<std::string>& files, std::array<int, 3> channels)
@@ -279,6 +463,8 @@ void finish(const std::string& key, Result r)
         return;
     Slot& s = it->second;
     s.loading = false;
+    if (!r.files.empty())
+        s.files = std::move(r.files);
     s.times = std::move(r.times);
     s.error = std::move(r.error);
     // A failed reload keeps the last good image on screen.
@@ -324,18 +510,20 @@ Slot& entry(const std::string& key, std::vector<std::string> files, const std::f
 }
 } // namespace
 
-render::TexturePtr get(const std::string& path, bool srgb)
+render::TexturePtr get(const std::string& path, bool srgb, bool udimTiles)
 {
     if (path.empty())
         return nullptr;
-    std::string key = (srgb ? "c|" : "d|") + path;
-    return entry(key, {path}, [path, srgb] {
-               Result r;
-               r.times = stamps({path});
-               QImage img = readImage(path, r.error);
-               if (!img.isNull())
-                   r.image = toTexture(img, srgb);
-               return r;
+    std::string key = (srgb ? "c" : "d") + std::string(udimTiles ? "u|" : "|") + path;
+    return entry(key, {path}, [path, srgb, udimTiles] {
+               if (auto pattern = image::udimPattern(path, udimTiles))
+               {
+                   std::vector<std::pair<int, std::string>> found = image::findUdimTiles(*pattern);
+                   // A lone name.1001.png stays a plain texture, so UVs outside 0..1 keep repeating it.
+                   if (image::udimPattern(path, false) || found.size() > 1)
+                       return loadTiles(found, srgb);
+               }
+               return loadSingle(path, srgb);
            }).image;
 }
 
@@ -349,7 +537,39 @@ render::TexturePtr packed(const std::string& orm, const std::string& occlusion, 
         channels = {0, 1, 2};
     std::string key = std::format("p{}{}{}|", channels[0], channels[1], channels[2]) + files[0] + "|" + files[1] + "|" + files[2] + "|" +
                       files[3];
-    return entry(key, files, [files, channels] { return loadPacked(files, channels); }).image;
+    return entry(key, files, [files, channels] {
+               // A packed map can be a UDIM set too; separate maps cannot (their tiles would have to line up).
+               if (auto pattern = image::udimPattern(files[0], true))
+               {
+                   std::vector<std::pair<int, std::string>> found = image::findUdimTiles(*pattern);
+                   if (image::udimPattern(files[0], false) || found.size() > 1)
+                   {
+                       Result r;
+                       auto set = std::make_shared<render::TextureImage>();
+                       for (const auto& [udim, file] : found)
+                       {
+                           r.files.push_back(file);
+                           Result tile = loadPacked({file, "", "", ""}, channels);
+                           if (tile.image)
+                               set->tiles.push_back({udim, tile.image});
+                           else
+                               r.error += (r.error.empty() ? "" : "; ") + file + ": " + tile.error;
+                       }
+                       r.times = stamps(r.files);
+                       if (!set->tiles.empty())
+                       {
+                           set->width = set->tiles.front().image->width;
+                           set->height = set->tiles.front().image->height;
+                           set->srgb = false;
+                           r.image = std::move(set);
+                       }
+                       else if (r.error.empty())
+                           r.error = "no UDIM tiles found";
+                       return r;
+                   }
+               }
+               return loadPacked(files, channels);
+           }).image;
 }
 
 QImage thumbnail(const std::string& path, int size)
@@ -360,7 +580,14 @@ QImage thumbnail(const std::string& path, int size)
     return entry(key, {path}, [path, size] {
                Result r;
                r.times = stamps({path});
-               QImage img = readImage(path, r.error);
+               std::string file = path;
+               if (auto pattern = image::udimPattern(path, false))
+               {
+                   std::vector<std::pair<int, std::string>> found = image::findUdimTiles(*pattern);
+                   if (!found.empty())
+                       file = found.front().second;
+               }
+               QImage img = readImage(file, r.error, true);
                if (!img.isNull())
                    r.thumb = img.scaled(size, size, Qt::KeepAspectRatio, Qt::SmoothTransformation);
                return r;
@@ -375,7 +602,7 @@ void release(const std::string& path, bool srgb)
 std::string error(const std::string& path)
 {
     auto& c = cache();
-    for (const char* prefix : {"c|", "d|"})
+    for (const char* prefix : {"c|", "d|", "cu|", "du|"})
         if (auto it = c.entries.find(prefix + path); it != c.entries.end() && !it->second.error.empty())
             return it->second.error;
     return {};
