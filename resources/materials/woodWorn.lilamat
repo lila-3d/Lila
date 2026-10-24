@@ -1,0 +1,636 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "WoodWorn",
+ "meta": {
+  "name": "Weathered Wood",
+  "category": "Wood/Planks",
+  "tags": [
+   "wood",
+   "weathered",
+   "grey",
+   "old",
+   "driftwood",
+   "planks"
+  ],
+  "physical": "organic",
+  "scaleCm": 200,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation",
+   "hue"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "Sun-greyed weathered boards: silvered surface, soft earlywood eroded away so the grain stands proud."
+ },
+ "graph": {
+  "name": "WoodWorn",
+  "typeVersion": 1,
+  "description": "Sun-greyed weathered boards: silvered surface, soft earlywood eroded away so the grain stands proud.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Wear",
+    "description": "Scuffs and splits.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Age",
+    "description": "Greying and grime.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   },
+   {
+    "name": "hue",
+    "kind": "param",
+    "type": "float",
+    "default": 0.0,
+    "label": "Hue",
+    "description": "Shifts the base colour's hue, in turns.",
+    "min": -0.5,
+    "max": 0.5,
+    "targets": [
+     "Material.hue"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "WoodWorn",
+     "seed": 0,
+     "wear": 0.5,
+     "age": 0.5,
+     "colorVariation": 0.5,
+     "hue": 0.0
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ]
+  ],
+  "subgroups": {
+   "WoodWorn": {
+    "name": "WoodWorn",
+    "typeVersion": 1,
+    "description": "Sun-greyed weathered boards: silvered surface, soft earlywood eroded away so the grain stands proud.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "Boards.seed",
+       "GrainWarp.seed",
+       "GrainFibre.seed",
+       "Dents.seed",
+       "Grime.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Wear",
+      "description": "Scuffs and splits.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Wear.x"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Age",
+      "description": "Greying and grime.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Wear.y"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "WoodColor.z"
+      ]
+     },
+     {
+      "name": "hue",
+      "kind": "param",
+      "type": "float",
+      "default": 0.0,
+      "label": "Hue",
+      "description": "Shifts the base colour's hue, in turns.",
+      "min": -0.5,
+      "max": 0.5,
+      "targets": [
+       "Tint.hue"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "Boards",
+      "type": "planks",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "rows": 5,
+       "planks": 1,
+       "gap": 0.05,
+       "bevel": 0.08
+      }
+     },
+     {
+      "name": "GrainWarp",
+      "type": "perlin",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "scale": 5,
+       "octaves": 5,
+       "persistence": 0.5
+      }
+     },
+     {
+      "name": "GrainFibre",
+      "type": "anisotropic",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "scaleX": 4,
+       "scaleY": 200,
+       "octaves": 4,
+       "persistence": 0.65
+      }
+     },
+     {
+      "name": "Grain",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float2 q = a.sample(uv).xy;\nfloat r = texToFloat(b.sample(uv));\nfloat w = c.sample(uv);\nfloat fb = d.sample(uv);\nfloat Y = q.y * 40.0000;\nfloat X = q.x * 200.0000;\nfloat y0 = frac(r * 7.13) * 40.0000 * 1.4 - 40.0000 * 0.2;\nfloat dep = 2.0 + frac(r * 3.71) * 14.0;\nfloat taper = (0.04 + frac(r * 5.3) * 0.08) * (frac(r * 9.1) > 0.5 ? 1.0 : -1.0);\nfloat rad = sqrt((Y - y0) * (Y - y0) + dep * dep) + X * taper + (w - 0.5) * 1.6 + sin(X * 0.08 + r * 20.0) * 0.4;\nfloat spacing = 0.7000 * (0.75 + frac(r * 2.9) * 0.5) * (1.0 + (w - 0.5) * 0.3);\nfloat t = frac(rad / spacing);\nfloat late = smoothstep(0.45, 0.8, t) * (1.0 - smoothstep(0.88, 1.0, t));\nreturn float4(t, late, fb, r);"
+      }
+     },
+     {
+      "name": "Dents",
+      "type": "scratches",
+      "position": [
+       0.0,
+       480.0
+      ],
+      "values": {
+       "scale": 5,
+       "count": 5,
+       "length": 0.25,
+       "width": 0.002,
+       "angleRandom": 1.0
+      }
+     },
+     {
+      "name": "Grime",
+      "type": "dirt",
+      "position": [
+       0.0,
+       640.0
+      ],
+      "values": {
+       "scale": 6,
+       "amount": 0.5,
+       "contrast": 1.0,
+       "grain": 0.4
+      }
+     },
+     {
+      "name": "Wear",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float mask = texToFloat(a.sample(uv));\nfloat sc = c.sample(uv) * smoothstep(0.0, 0.6, p.x);\nfloat g = texToFloat(b.sample(uv));\nfloat gap = 1.0 - smoothstep(0.0, 0.5, mask);\nfloat grime = saturate(gap * (0.4 + p.y) + smoothstep(1.0 - p.y * 0.6, 1.3 - p.y * 0.6, g) * 0.6);\nreturn float4(mask, sc, grime, gap);",
+       "x": 0.5,
+       "y": 0.5
+      }
+     },
+     {
+      "name": "WoodColor",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 g = a.sample(uv);\nfloat tone = (g.w - 0.5) * 0.35 * (0.3 + p.z);\nfloat3 e = float3(0.6039, 0.5412, 0.4627) * (1.0 + tone) * (1.0 + (g.z - 0.5) * 0.18);\nfloat3 l = float3(0.4314, 0.3725, 0.3059) * (1.0 + tone * 0.8);\nfloat3 c0 = lerp(e, l, g.y);\n\nfloat4 w = b.sample(uv);\nfloat grey = 0.6000 + p.y * 0.3 * 0.6000;\nc0 = lerp(c0, dot(c0, float3(0.33, 0.34, 0.33)) * float3(0.8392, 0.8157, 0.7765) * 1.1, saturate(grey));\nc0 = lerp(c0, c0 * 0.55, w.z * 0.7);\nc0 = lerp(c0, c0 * 1.12, w.y * 0.4);\nreturn float4(saturate(c0), 1.0);",
+       "z": 0.5
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float4 g = a.sample(uv);\nfloat4 w = b.sample(uv);\nfloat r = lerp(0.7000, 0.9000, saturate(0.5 + (g.z - 0.5) * 0.8 - g.y * 0.3));\nr = lerp(r, 0.85, w.z * 0.6);\nr = lerp(r, r * 0.8, w.y);\nreturn float4(r, r, r, 1.0);"
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float4 g = a.sample(uv);\nfloat4 w = b.sample(uv);\nfloat relief = g.y * (0.012 + 0.6000 * 0.04) + (g.z - 0.5) * 0.008;\nfloat h = 0.35 + w.x * 0.15 + relief - w.y * 0.03;\nreturn float4(h, h, h, 1.0);"
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "intensity": 1.4
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       720.0,
+       160.0
+      ],
+      "values": {
+       "radius": 0.02,
+       "depth": 0.08,
+       "strength": 0.8
+      }
+     },
+     {
+      "name": "Tint",
+      "type": "hsv",
+      "position": [
+       720.0,
+       320.0
+      ],
+      "values": {
+       "hue": 0.0
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       960.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Metallic",
+      "type": "constant",
+      "position": [
+       0.0,
+       800.0
+      ],
+      "values": {
+       "value": 0.0
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       1440.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "Boards",
+      "plankUv",
+      "Grain",
+      "a"
+     ],
+     [
+      "Boards",
+      "random",
+      "Grain",
+      "b"
+     ],
+     [
+      "GrainWarp",
+      "out",
+      "Grain",
+      "c"
+     ],
+     [
+      "GrainFibre",
+      "out",
+      "Grain",
+      "d"
+     ],
+     [
+      "Boards",
+      "mask",
+      "Wear",
+      "a"
+     ],
+     [
+      "Grime",
+      "out",
+      "Wear",
+      "b"
+     ],
+     [
+      "Dents",
+      "out",
+      "Wear",
+      "c"
+     ],
+     [
+      "Grain",
+      "out",
+      "WoodColor",
+      "a"
+     ],
+     [
+      "Wear",
+      "out",
+      "WoodColor",
+      "b"
+     ],
+     [
+      "Grain",
+      "out",
+      "Roughness",
+      "a"
+     ],
+     [
+      "Wear",
+      "out",
+      "Roughness",
+      "b"
+     ],
+     [
+      "Grain",
+      "out",
+      "Height",
+      "a"
+     ],
+     [
+      "Wear",
+      "out",
+      "Height",
+      "b"
+     ],
+     [
+      "Height",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "Height",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "WoodColor",
+      "out",
+      "Tint",
+      "input"
+     ],
+     [
+      "Tint",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "Metallic",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "Height",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.5,
+   "age": 0.5,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.9,
+   "age": 0.95
+  }
+ }
+}

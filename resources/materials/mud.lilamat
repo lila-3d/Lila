@@ -1,0 +1,551 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "Mud",
+ "meta": {
+  "name": "Wet Mud",
+  "category": "Ground/Mud",
+  "tags": [
+   "mud",
+   "wet",
+   "ground",
+   "dirt",
+   "puddles"
+  ],
+  "physical": "organic",
+  "scaleCm": 150,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation",
+   "hue"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "Churned wet mud: slumped ridges, glossy films and water pooling in the hollows."
+ },
+ "graph": {
+  "name": "Mud",
+  "typeVersion": 1,
+  "description": "Churned wet mud: slumped ridges, glossy films and water pooling in the hollows.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.4,
+    "label": "Wear",
+    "description": "Churned ruts and ridges.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Age",
+    "description": "Water level in the hollows.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   },
+   {
+    "name": "hue",
+    "kind": "param",
+    "type": "float",
+    "default": 0.0,
+    "label": "Hue",
+    "description": "Shifts the base colour's hue, in turns.",
+    "min": -0.5,
+    "max": 0.5,
+    "targets": [
+     "Material.hue"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "Mud",
+     "seed": 0,
+     "wear": 0.4,
+     "age": 0.5,
+     "colorVariation": 0.5,
+     "hue": 0.0
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ]
+  ],
+  "subgroups": {
+   "Mud": {
+    "name": "Mud",
+    "typeVersion": 1,
+    "description": "Churned wet mud: slumped ridges, glossy films and water pooling in the hollows.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "Slump.seed",
+       "Ruts.seed",
+       "Fine.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.4,
+      "label": "Wear",
+      "description": "Churned ruts and ridges.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Surface.x"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Age",
+      "description": "Water level in the hollows.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Surface.y",
+       "Height.y"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.z"
+      ]
+     },
+     {
+      "name": "hue",
+      "kind": "param",
+      "type": "float",
+      "default": 0.0,
+      "label": "Hue",
+      "description": "Shifts the base colour's hue, in turns.",
+      "min": -0.5,
+      "max": 0.5,
+      "targets": [
+       "Tint.hue"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "Slump",
+      "type": "clouds",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "scale": 3,
+       "octaves": 6,
+       "persistence": 0.5
+      }
+     },
+     {
+      "name": "Ruts",
+      "type": "directional",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "angle": 10.0,
+       "scaleAlong": 2,
+       "scaleAcross": 8,
+       "octaves": 4
+      }
+     },
+     {
+      "name": "Fine",
+      "type": "perlin",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "scale": 40,
+       "octaves": 3
+      }
+     },
+     {
+      "name": "Surface",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float s = texToFloat(a.sample(uv));\nfloat r = texToFloat(b.sample(uv));\nfloat hgt = s * 0.7 + (abs(r - 0.5) * 2.0) * 0.5 * p.x + (c.sample(uv) - 0.5) * 0.05;\nfloat water = 1.0 - smoothstep(0.2 + p.y * 0.4, 0.24 + p.y * 0.4, hgt);\nreturn float4(hgt, water, c.sample(uv), 1.0);",
+       "x": 0.4,
+       "y": 0.5
+      }
+     },
+     {
+      "name": "BaseColor",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 s = a.sample(uv);\nfloat3 c0 = lerp(float3(0.2275, 0.1725, 0.1255), float3(0.3686, 0.2902, 0.2118), saturate(s.x * 1.1 + (s.z - 0.5) * 0.4 * (0.5 + p.z)));\nc0 = lerp(c0, float3(0.1804, 0.1490, 0.1176), s.y * 0.85);\nreturn float4(c0, 1.0);",
+       "z": 0.5
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float v = lerp(lerp(0.35, 0.75, a.sample(uv).x), 0.04, a.sample(uv).y);\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float v = max(a.sample(uv).x, 0.2 + p.y * 0.4) * 0.5 + 0.2;\nreturn float4(v, v, v, 1.0);",
+       "y": 0.5
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "intensity": 1.0
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       720.0,
+       160.0
+      ],
+      "values": {
+       "radius": 0.03,
+       "depth": 0.1,
+       "strength": 0.8
+      }
+     },
+     {
+      "name": "Tint",
+      "type": "hsv",
+      "position": [
+       720.0,
+       320.0
+      ],
+      "values": {
+       "hue": 0.0
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       960.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Metallic",
+      "type": "constant",
+      "position": [
+       0.0,
+       480.0
+      ],
+      "values": {
+       "value": 0.0
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       1440.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "Slump",
+      "out",
+      "Surface",
+      "a"
+     ],
+     [
+      "Ruts",
+      "out",
+      "Surface",
+      "b"
+     ],
+     [
+      "Fine",
+      "out",
+      "Surface",
+      "c"
+     ],
+     [
+      "Surface",
+      "out",
+      "BaseColor",
+      "a"
+     ],
+     [
+      "Surface",
+      "out",
+      "Roughness",
+      "a"
+     ],
+     [
+      "Surface",
+      "out",
+      "Height",
+      "a"
+     ],
+     [
+      "Height",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "Height",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "BaseColor",
+      "out",
+      "Tint",
+      "input"
+     ],
+     [
+      "Tint",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "Metallic",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "Height",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.4,
+   "age": 0.5,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.8,
+   "age": 0.95
+  }
+ }
+}

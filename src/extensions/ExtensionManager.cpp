@@ -22,7 +22,7 @@ namespace
 {
 const char* kindName(ExtensionKind k)
 {
-    return k == ExtensionKind::Native ? "native" : "python";
+    return k == ExtensionKind::Native ? "native" : k == ExtensionKind::Resources ? "resources" : "python";
 }
 
 std::string pathKey(const fs::path& p)
@@ -59,7 +59,9 @@ std::optional<ExtensionInfo> probe(const fs::path& path, bool explicitPath = fal
         {
             info.manifest = ext::Manifest::load(path);
             info.name = info.manifest->id;
-            info.kind = info.manifest->library() ? ExtensionKind::Native : ExtensionKind::Python;
+            info.kind = info.manifest->library()       ? ExtensionKind::Native
+                        : info.manifest->resourcesOnly() ? ExtensionKind::Resources
+                                                         : ExtensionKind::Python;
         }
         catch (const ext::ManifestError& e)
         {

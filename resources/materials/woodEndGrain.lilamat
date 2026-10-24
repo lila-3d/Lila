@@ -1,0 +1,567 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "WoodEndGrain",
+ "meta": {
+  "name": "End Grain Blocks",
+  "category": "Wood/End Grain",
+  "tags": [
+   "wood",
+   "end grain",
+   "rings",
+   "blocks",
+   "butcher block"
+  ],
+  "physical": "organic",
+  "scaleCm": 40,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation",
+   "hue"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "End-grain wood blocks, as on a butcher block: concentric rings around off-centre piths, radial drying cracks."
+ },
+ "graph": {
+  "name": "WoodEndGrain",
+  "typeVersion": 1,
+  "description": "End-grain wood blocks, as on a butcher block: concentric rings around off-centre piths, radial drying cracks.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.3,
+    "label": "Wear",
+    "description": "Radial drying cracks and knife marks.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.2,
+    "label": "Age",
+    "description": "Darkening and grime.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   },
+   {
+    "name": "hue",
+    "kind": "param",
+    "type": "float",
+    "default": 0.0,
+    "label": "Hue",
+    "description": "Shifts the base colour's hue, in turns.",
+    "min": -0.5,
+    "max": 0.5,
+    "targets": [
+     "Material.hue"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "WoodEndGrain",
+     "seed": 0,
+     "wear": 0.3,
+     "age": 0.2,
+     "colorVariation": 0.5,
+     "hue": 0.0
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ]
+  ],
+  "subgroups": {
+   "WoodEndGrain": {
+    "name": "WoodEndGrain",
+    "typeVersion": 1,
+    "description": "End-grain wood blocks, as on a butcher block: concentric rings around off-centre piths, radial drying cracks.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "Blocks.seed",
+       "RingWarp.seed",
+       "Pores.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.3,
+      "label": "Wear",
+      "description": "Radial drying cracks and knife marks.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Rings.x"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.2,
+      "label": "Age",
+      "description": "Darkening and grime.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.y"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.z"
+      ]
+     },
+     {
+      "name": "hue",
+      "kind": "param",
+      "type": "float",
+      "default": 0.0,
+      "label": "Hue",
+      "description": "Shifts the base colour's hue, in turns.",
+      "min": -0.5,
+      "max": 0.5,
+      "targets": [
+       "Tint.hue"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "Blocks",
+      "type": "tiles",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "countX": 4,
+       "countY": 4,
+       "gap": 0.015,
+       "bevel": 0.03
+      }
+     },
+     {
+      "name": "RingWarp",
+      "type": "perlin",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "scale": 8,
+       "octaves": 5
+      }
+     },
+     {
+      "name": "Pores",
+      "type": "worley",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "scale": 48,
+       "octaves": 1,
+       "invert": true
+      }
+     },
+     {
+      "name": "Rings",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float2 q = a.sample(uv).xy - 0.5;\nfloat r = texToFloat(b.sample(uv));\nfloat2 pith = float2(cos(r * 40.0), sin(r * 40.0)) * (0.3 + r * 0.6);\nfloat2 dq = q - pith;\nfloat dist = length(dq) + (c.sample(uv) - 0.5) * 0.05;\nfloat ring = dist * (7.0 + r * 5.0);\nfloat t = frac(ring);\nfloat late = smoothstep(0.55, 0.85, t) * (1.0 - smoothstep(0.9, 1.0, t));\nfloat ang = atan2(dq.y, dq.x);\nfloat crack = pow(saturate(abs(sin(ang * (1.0 + floor(r * 2.0)) + r * 9.0))), 400.0) * smoothstep(0.1, 0.45, dist) * step(0.5, frac(r * 13.7)) * smoothstep(0.0, 0.7, p.x);\nreturn float4(t, late, crack, r);",
+       "x": 0.3
+      }
+     },
+     {
+      "name": "BaseColor",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 g = a.sample(uv);\nfloat tone = (g.w - 0.5) * 0.4 * (0.3 + p.z);\nfloat3 c0 = lerp(float3(0.7216, 0.5412, 0.3529), float3(0.4941, 0.3294, 0.1961), g.y) * (1.0 + tone);\nc0 *= 0.9 + c.sample(uv) * 0.12;\nc0 = lerp(c0, float3(0.2431, 0.1647, 0.1098), g.z);\nc0 *= 1.0 - p.y * 0.25;\nreturn float4(saturate(c0), 1.0);",
+       "z": 0.5,
+       "y": 0.2
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float v = 0.6 + a.sample(uv).y * 0.08 + a.sample(uv).z * 0.2;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float v = 0.35 + texToFloat(b.sample(uv)) * 0.15 + a.sample(uv).y * 0.01 - a.sample(uv).z * 0.06 - (1.0 - c.sample(uv)) * 0.004;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "intensity": 0.8
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       720.0,
+       160.0
+      ],
+      "values": {
+       "radius": 0.015,
+       "depth": 0.06,
+       "strength": 0.7
+      }
+     },
+     {
+      "name": "Tint",
+      "type": "hsv",
+      "position": [
+       720.0,
+       320.0
+      ],
+      "values": {
+       "hue": 0.0
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       960.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Metallic",
+      "type": "constant",
+      "position": [
+       0.0,
+       480.0
+      ],
+      "values": {
+       "value": 0.0
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       1440.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "Blocks",
+      "tileUv",
+      "Rings",
+      "a"
+     ],
+     [
+      "Blocks",
+      "random",
+      "Rings",
+      "b"
+     ],
+     [
+      "RingWarp",
+      "out",
+      "Rings",
+      "c"
+     ],
+     [
+      "Rings",
+      "out",
+      "BaseColor",
+      "a"
+     ],
+     [
+      "Pores",
+      "out",
+      "BaseColor",
+      "c"
+     ],
+     [
+      "Rings",
+      "out",
+      "Roughness",
+      "a"
+     ],
+     [
+      "Rings",
+      "out",
+      "Height",
+      "a"
+     ],
+     [
+      "Blocks",
+      "mask",
+      "Height",
+      "b"
+     ],
+     [
+      "Pores",
+      "out",
+      "Height",
+      "c"
+     ],
+     [
+      "Height",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "Height",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "BaseColor",
+      "out",
+      "Tint",
+      "input"
+     ],
+     [
+      "Tint",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "Metallic",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "Height",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.3,
+   "age": 0.2,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.7,
+   "age": 0.65
+  }
+ }
+}

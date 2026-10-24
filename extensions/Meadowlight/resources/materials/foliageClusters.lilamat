@@ -1,0 +1,766 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "FoliageClusters",
+ "meta": {
+  "name": "Dappled Foliage",
+  "category": "Meadowlight/Foliage",
+  "tags": [
+   "meadowlight",
+   "stylised",
+   "hand-painted",
+   "painterly",
+   "foliage",
+   "leaves",
+   "tree",
+   "canopy",
+   "cards"
+  ],
+  "physical": "stylised",
+  "scaleCm": 100,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation",
+   "hue"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "Leaf clusters for foliage cards: round clumps lit from above, sun-dappled tops and cool cores, with opacity for cut-outs.",
+  "shadingModel": "foliage",
+  "shading": {
+   "shadingModel": "foliage",
+   "strokeMap": "strokes_soft",
+   "strokeScale": 20.0,
+   "strokeNormal": 0.45,
+   "paletteShadow": [
+    0.0137,
+    0.0513,
+    0.0648
+   ],
+   "paletteLight": [
+    0.9216,
+    0.8228,
+    0.3916
+   ],
+   "paletteAccent": [
+    0.4342,
+    0.6308,
+    0.0802
+   ],
+   "paletteContrast": 0.4,
+   "specularTint": 0.6,
+   "foliageBottomColor": [
+    0.0116,
+    0.0423,
+    0.0369
+   ],
+   "foliageTopColor": [
+    0.3325,
+    0.552,
+    0.0802
+   ],
+   "foliageGradient": 0.6,
+   "foliageBottomShadow": 0.5,
+   "foliageTopHighlight": 0.35,
+   "foliageTranslucency": 0.5,
+   "foliageWrap": 0.6,
+   "twoSided": true,
+   "blendMode": "masked"
+  }
+ },
+ "graph": {
+  "name": "FoliageClusters",
+  "typeVersion": 1,
+  "description": "Leaf clusters for foliage cards: round clumps lit from above, sun-dappled tops and cool cores, with opacity for cut-outs.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.1,
+    "label": "Wear",
+    "description": "Gaps between the clumps.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.2,
+    "label": "Age",
+    "description": "Autumn turn.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   },
+   {
+    "name": "hue",
+    "kind": "param",
+    "type": "float",
+    "default": 0.0,
+    "label": "Hue",
+    "description": "Shifts the base colour's hue, in turns.",
+    "min": -0.5,
+    "max": 0.5,
+    "targets": [
+     "Material.hue"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "FoliageClusters",
+     "seed": 0,
+     "wear": 0.1,
+     "age": 0.2,
+     "colorVariation": 0.5,
+     "hue": 0.0
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ],
+   [
+    "Material",
+    "opacity",
+    "Output",
+    "opacity"
+   ]
+  ],
+  "subgroups": {
+   "FoliageClusters": {
+    "name": "FoliageClusters",
+    "typeVersion": 1,
+    "description": "Leaf clusters for foliage cards: round clumps lit from above, sun-dappled tops and cool cores, with opacity for cut-outs.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "Clumps.seed",
+       "Leaves.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.1,
+      "label": "Wear",
+      "description": "Gaps between the clumps.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Opacity.x"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.2,
+      "label": "Age",
+      "description": "Autumn turn.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Autumn.y"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Paint.z"
+      ]
+     },
+     {
+      "name": "hue",
+      "kind": "param",
+      "type": "float",
+      "default": 0.0,
+      "label": "Hue",
+      "description": "Shifts the base colour's hue, in turns.",
+      "min": -0.5,
+      "max": 0.5,
+      "targets": [
+       "Tint.hue"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     },
+     {
+      "name": "opacity",
+      "type": "gray"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "Clump",
+      "type": "pixelProcessor",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float2 q = uv - 0.5;\nfloat r = length(q);\nfloat lobes = 0.4 + 0.05 * sin(atan2(q.y, q.x) * 7.0);\nfloat v = sqrt(saturate(1.0 - r / lobes));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Clumps",
+      "type": "splatter",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "countX": 5,
+       "countY": 5,
+       "perCell": 4,
+       "size": 0.9,
+       "sizeRandom": 0.4,
+       "rotationRandom": 1.0,
+       "valueRandom": 0.15,
+       "blend": "max"
+      }
+     },
+     {
+      "name": "Leaves",
+      "type": "worley",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "scale": 40,
+       "octaves": 2,
+       "invert": true
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float v = c.sample(uv) * (0.85 + texToFloat(d.sample(uv)) * 0.15);\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "ValueLight",
+      "type": "emboss",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "angle": 135.0,
+       "intensity": 1.4
+      }
+     },
+     {
+      "name": "ValueOcclusion",
+      "type": "blur",
+      "position": [
+       720.0,
+       160.0
+      ],
+      "values": {
+       "radius": 0.02
+      }
+     },
+     {
+      "name": "Value",
+      "type": "pixelProcessor",
+      "position": [
+       960.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float h = texToFloat(c.sample(uv));\nfloat l = texToFloat(a.sample(uv));\nfloat cav = saturate((texToFloat(b.sample(uv)) - h) * 8.0);\nfloat v = 0.5 + (l - 0.5) * 1.6000 + (h - 0.5) * 0.5 - cav * 0.6000 + 0.0000;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Strokes",
+      "type": "image",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "file": "strokes/strokes_dabs.png",
+       "tiles": 5
+      }
+     },
+     {
+      "name": "Paint",
+      "type": "pixelProcessor",
+      "position": [
+       1200.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float t = texToFloat(a.sample(uv));\nfloat4 s = b.sample(uv);\nt = saturate(t + (s.a - 0.5) * 0.3500 * (0.4 + p.z) + (s.b - 0.5) * 0.25);\nfloat k = t * 5.0000;\nt = (floor(k) + smoothstep(0.3, 0.7, frac(k))) / 5.0000;\nfloat3 c = t < 0.34 ? lerp(float3(0.1098, 0.2275, 0.2275), float3(0.1804, 0.4157, 0.2510), t / 0.34) : (t < 0.67 ? lerp(float3(0.1804, 0.4157, 0.2510), float3(0.4314, 0.6353, 0.2353), (t - 0.34) / 0.33) : lerp(float3(0.4314, 0.6353, 0.2353), float3(0.8471, 0.8784, 0.4784), (t - 0.67) / 0.33));\nreturn float4(c, 1.0);",
+       "z": 0.5
+      }
+     },
+     {
+      "name": "Autumn",
+      "type": "pixelProcessor",
+      "position": [
+       1440.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float3 c0 = a.sample(uv).rgb;\nfloat k = dot(c0, float3(0.3, 0.5, 0.2));\nc0 = lerp(c0, lerp(float3(0.4784, 0.2275, 0.1412), float3(0.8784, 0.6275, 0.2510), k * 1.6), p.y * 0.8);\nreturn float4(c0, 1.0);",
+       "y": 0.2
+      }
+     },
+     {
+      "name": "Opacity",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float v = smoothstep(0.05 + p.x * 0.3, 0.12 + p.x * 0.3, c.sample(uv));\nreturn float4(v, v, v, 1.0);",
+       "x": 0.1
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float v = 0.8000 + (texToFloat(a.sample(uv)) - 0.5) * 0.05;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       720.0,
+       640.0
+      ],
+      "values": {
+       "intensity": 0.5
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       720.0,
+       800.0
+      ],
+      "values": {
+       "radius": 0.03,
+       "depth": 0.1,
+       "strength": 0.5
+      }
+     },
+     {
+      "name": "Tint",
+      "type": "hsv",
+      "position": [
+       1680.0,
+       0.0
+      ],
+      "values": {
+       "hue": 0.0
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       1920.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       960.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Metallic",
+      "type": "constant",
+      "position": [
+       0.0,
+       480.0
+      ],
+      "values": {
+       "value": 0.0
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       2400.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "Clump",
+      "out",
+      "Clumps",
+      "pattern"
+     ],
+     [
+      "Clumps",
+      "out",
+      "Height",
+      "c"
+     ],
+     [
+      "Leaves",
+      "out",
+      "Height",
+      "d"
+     ],
+     [
+      "Height",
+      "out",
+      "ValueLight",
+      "input"
+     ],
+     [
+      "Height",
+      "out",
+      "ValueOcclusion",
+      "input"
+     ],
+     [
+      "ValueLight",
+      "out",
+      "Value",
+      "a"
+     ],
+     [
+      "ValueOcclusion",
+      "out",
+      "Value",
+      "b"
+     ],
+     [
+      "Height",
+      "out",
+      "Value",
+      "c"
+     ],
+     [
+      "Value",
+      "out",
+      "Paint",
+      "a"
+     ],
+     [
+      "Strokes",
+      "out",
+      "Paint",
+      "b"
+     ],
+     [
+      "Paint",
+      "out",
+      "Autumn",
+      "a"
+     ],
+     [
+      "Height",
+      "out",
+      "Opacity",
+      "c"
+     ],
+     [
+      "Height",
+      "out",
+      "Roughness",
+      "a"
+     ],
+     [
+      "Height",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "Height",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "Autumn",
+      "out",
+      "Tint",
+      "input"
+     ],
+     [
+      "Tint",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "Metallic",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "Height",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ],
+     [
+      "Opacity",
+      "out",
+      "GroupOutput",
+      "opacity"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.1,
+   "age": 0.2,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.5,
+   "age": 0.65
+  }
+ },
+ "settings": {
+  "channels": [
+   {
+    "name": "baseColor",
+    "type": "color",
+    "bits": 8
+   },
+   {
+    "name": "roughness",
+    "type": "gray",
+    "bits": 8
+   },
+   {
+    "name": "metallic",
+    "type": "gray",
+    "bits": 8
+   },
+   {
+    "name": "normal",
+    "type": "color",
+    "bits": 8
+   },
+   {
+    "name": "height",
+    "type": "gray",
+    "bits": 16
+   },
+   {
+    "name": "ao",
+    "type": "gray",
+    "bits": 8
+   },
+   {
+    "name": "emissive",
+    "type": "color",
+    "bits": 8
+   },
+   {
+    "name": "opacity",
+    "type": "gray",
+    "bits": 8
+   }
+  ],
+  "width": 2048,
+  "height": 2048,
+  "tiles": [
+   {
+    "udim": 1001
+   }
+  ],
+  "normalConvention": "opengl",
+  "bakeProject": "",
+  "exportPreset": "unreal",
+  "material": ""
+ }
+}

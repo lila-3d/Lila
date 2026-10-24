@@ -1,0 +1,620 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "Cotton",
+ "meta": {
+  "name": "Cotton",
+  "category": "Fabric/Cotton",
+  "tags": [
+   "cotton",
+   "fabric",
+   "cloth",
+   "textile",
+   "plain weave"
+  ],
+  "physical": "organic",
+  "scaleCm": 4,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation",
+   "hue"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "Plain-weave cotton: fine even threads, slight slubs and fuzz, soft matte sheen."
+ },
+ "graph": {
+  "name": "Cotton",
+  "typeVersion": 1,
+  "description": "Plain-weave cotton: fine even threads, slight slubs and fuzz, soft matte sheen.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.2,
+    "label": "Wear",
+    "description": "Washed-out, thin patches.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.15,
+    "label": "Age",
+    "description": "Stains and yellowing.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   },
+   {
+    "name": "hue",
+    "kind": "param",
+    "type": "float",
+    "default": 0.0,
+    "label": "Hue",
+    "description": "Shifts the base colour's hue, in turns.",
+    "min": -0.5,
+    "max": 0.5,
+    "targets": [
+     "Material.hue"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "Cotton",
+     "seed": 0,
+     "wear": 0.2,
+     "age": 0.15,
+     "colorVariation": 0.5,
+     "hue": 0.0
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ]
+  ],
+  "subgroups": {
+   "Cotton": {
+    "name": "Cotton",
+    "typeVersion": 1,
+    "description": "Plain-weave cotton: fine even threads, slight slubs and fuzz, soft matte sheen.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "Slubs.seed",
+       "SlubsWeft.seed",
+       "Fuzz.seed",
+       "WearPatches.seed",
+       "Grime.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.2,
+      "label": "Wear",
+      "description": "Washed-out, thin patches.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.x"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.15,
+      "label": "Age",
+      "description": "Stains and yellowing.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.y"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.z"
+      ]
+     },
+     {
+      "name": "hue",
+      "kind": "param",
+      "type": "float",
+      "default": 0.0,
+      "label": "Hue",
+      "description": "Shifts the base colour's hue, in turns.",
+      "min": -0.5,
+      "max": 0.5,
+      "targets": [
+       "Tint.hue"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "Weave",
+      "type": "weave",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "count": 40,
+       "width": 0.85
+      }
+     },
+     {
+      "name": "Slubs",
+      "type": "anisotropic",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "scaleX": 2,
+       "scaleY": 80,
+       "octaves": 3,
+       "persistence": 0.5
+      }
+     },
+     {
+      "name": "SlubsWeft",
+      "type": "anisotropic",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "scaleX": 80,
+       "scaleY": 2,
+       "octaves": 3,
+       "persistence": 0.5
+      }
+     },
+     {
+      "name": "Fuzz",
+      "type": "perlin",
+      "position": [
+       0.0,
+       480.0
+      ],
+      "values": {
+       "scale": 80,
+       "octaves": 2
+      }
+     },
+     {
+      "name": "Threads",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float h = texToFloat(a.sample(uv));\nfloat dir = texToFloat(b.sample(uv));\nfloat s = lerp(texToFloat(c.sample(uv)), d.sample(uv), dir);\nfloat hgt = h * (1.0 + (s - 0.5) * 0.2500);\nreturn float4(hgt, dir, s, 1.0);"
+      }
+     },
+     {
+      "name": "WearPatches",
+      "type": "clouds",
+      "position": [
+       0.0,
+       640.0
+      ],
+      "values": {
+       "scale": 4,
+       "octaves": 5
+      }
+     },
+     {
+      "name": "Grime",
+      "type": "dirt",
+      "position": [
+       0.0,
+       800.0
+      ],
+      "values": {
+       "scale": 3,
+       "amount": 0.5,
+       "contrast": 1.0,
+       "grain": 0.4
+      }
+     },
+     {
+      "name": "BaseColor",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 t = a.sample(uv);\nfloat3 c0 = lerp(float3(0.8392, 0.8196, 0.7765), float3(0.8118, 0.7882, 0.7412), t.y) * (0.82 + t.x * 0.22) * (1.0 + (t.z - 0.5) * 0.25 * (0.4 + p.z));\nfloat wr = smoothstep(1.0 - p.x * 0.6, 1.2 - p.x * 0.6, texToFloat(b.sample(uv)));\nc0 = lerp(c0, c0 * 1.12 + 0.03, wr * 0.7);\nfloat st = smoothstep(1.0 - p.y * 0.5, 1.15 - p.y * 0.5, texToFloat(c.sample(uv)));\nc0 = lerp(c0, c0 * float3(0.7216, 0.6588, 0.5412), st * 0.8);\nreturn float4(saturate(c0), 1.0);",
+       "z": 0.5,
+       "x": 0.2,
+       "y": 0.15
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float v = lerp(0.9500, 0.8200, a.sample(uv).x) + (d.sample(uv) - 0.5) * 0.0800;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float v = 0.3 + a.sample(uv).x * 0.4 + (d.sample(uv) - 0.5) * 0.0200;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "intensity": 0.6
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       720.0,
+       160.0
+      ],
+      "values": {
+       "radius": 0.005,
+       "depth": 0.1,
+       "strength": 0.8
+      }
+     },
+     {
+      "name": "Tint",
+      "type": "hsv",
+      "position": [
+       720.0,
+       320.0
+      ],
+      "values": {
+       "hue": 0.0
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       960.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Metallic",
+      "type": "constant",
+      "position": [
+       0.0,
+       960.0
+      ],
+      "values": {
+       "value": 0.0
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       1440.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "Weave",
+      "height",
+      "Threads",
+      "a"
+     ],
+     [
+      "Weave",
+      "direction",
+      "Threads",
+      "b"
+     ],
+     [
+      "Slubs",
+      "out",
+      "Threads",
+      "c"
+     ],
+     [
+      "SlubsWeft",
+      "out",
+      "Threads",
+      "d"
+     ],
+     [
+      "Threads",
+      "out",
+      "BaseColor",
+      "a"
+     ],
+     [
+      "WearPatches",
+      "out",
+      "BaseColor",
+      "b"
+     ],
+     [
+      "Grime",
+      "out",
+      "BaseColor",
+      "c"
+     ],
+     [
+      "Threads",
+      "out",
+      "Roughness",
+      "a"
+     ],
+     [
+      "Fuzz",
+      "out",
+      "Roughness",
+      "d"
+     ],
+     [
+      "Threads",
+      "out",
+      "Height",
+      "a"
+     ],
+     [
+      "Fuzz",
+      "out",
+      "Height",
+      "d"
+     ],
+     [
+      "Height",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "Height",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "BaseColor",
+      "out",
+      "Tint",
+      "input"
+     ],
+     [
+      "Tint",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "Metallic",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "Height",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.2,
+   "age": 0.15,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.6000000000000001,
+   "age": 0.6
+  }
+ }
+}

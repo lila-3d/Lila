@@ -1,0 +1,530 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "PaintedWater",
+ "meta": {
+  "name": "Painted Water",
+  "category": "Meadowlight/Water",
+  "tags": [
+   "meadowlight",
+   "stylised",
+   "hand-painted",
+   "painterly",
+   "water",
+   "river",
+   "pond",
+   "lake",
+   "ripples"
+  ],
+  "physical": "stylised",
+  "scaleCm": 200,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "Stylised pond and river water: deep teal to sky-blue, with crisp painted highlight squiggles and soft ripple bands.",
+  "shadingModel": "painterly",
+  "shading": {
+   "shadingModel": "painterly",
+   "strokeMap": "strokes_soft",
+   "strokeScale": 20.0,
+   "strokeNormal": 0.45,
+   "paletteShadow": [
+    0.0137,
+    0.0685,
+    0.1441
+   ],
+   "paletteLight": [
+    0.9387,
+    0.9647,
+    1.0
+   ],
+   "paletteAccent": [
+    0.1946,
+    0.6308,
+    0.6308
+   ],
+   "paletteContrast": 0.5,
+   "specularTint": 0.2
+  }
+ },
+ "graph": {
+  "name": "PaintedWater",
+  "typeVersion": 1,
+  "description": "Stylised pond and river water: deep teal to sky-blue, with crisp painted highlight squiggles and soft ripple bands.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.3,
+    "label": "Wear",
+    "description": "Choppiness: more highlight squiggles.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.2,
+    "label": "Age",
+    "description": "Murk: greener, darker water.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "PaintedWater",
+     "seed": 0,
+     "wear": 0.3,
+     "age": 0.2,
+     "colorVariation": 0.5
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ]
+  ],
+  "subgroups": {
+   "PaintedWater": {
+    "name": "PaintedWater",
+    "typeVersion": 1,
+    "description": "Stylised pond and river water: deep teal to sky-blue, with crisp painted highlight squiggles and soft ripple bands.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "Swell.seed",
+       "Ripples.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.3,
+      "label": "Wear",
+      "description": "Choppiness: more highlight squiggles.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Waves.x"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.2,
+      "label": "Age",
+      "description": "Murk: greener, darker water.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.y"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.z"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "Swell",
+      "type": "perlin",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "scale": 3,
+       "octaves": 4
+      }
+     },
+     {
+      "name": "Ripples",
+      "type": "directional",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "angle": 0.0,
+       "scaleAlong": 3,
+       "scaleAcross": 30,
+       "octaves": 3
+      }
+     },
+     {
+      "name": "Waves",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float sw = texToFloat(a.sample(uv));\nfloat r0 = texToFloat(b.sample(uv + float2(0.0, (sw - 0.5) * 0.06)));\nfloat band = sin((uv.y * 22.0 + sw * 4.0) * 3.14159);\nfloat glint = smoothstep(0.82 - p.x * 0.15, 0.86 - p.x * 0.15, r0) * smoothstep(0.3, 0.9, band);\nreturn float4(sw, r0, glint, band * 0.5 + 0.5);",
+       "x": 0.3
+      }
+     },
+     {
+      "name": "Strokes",
+      "type": "image",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "file": "strokes/strokes_soft.png",
+       "tiles": 4
+      }
+     },
+     {
+      "name": "BaseColor",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 s = a.sample(uv);\nfloat4 k = b.sample(uv);\nfloat t = saturate(s.x * 0.6 + s.w * 0.25 + (k.a - 0.5) * 0.25 * (0.4 + p.z));\nt = (floor(t * 4.0) + smoothstep(0.3, 0.7, frac(t * 4.0))) / 4.0;\nfloat3 c0 = t < 0.5 ? lerp(float3(0.1137, 0.2745, 0.3765), float3(0.1843, 0.4784, 0.5412), t / 0.5) : lerp(float3(0.1843, 0.4784, 0.5412), float3(0.4784, 0.7216, 0.7843), (t - 0.5) / 0.5);\nc0 = lerp(c0, c0 * float3(0.6588, 0.7216, 0.4392), p.y * 0.5);\nc0 = lerp(c0, float3(0.9569, 0.9725, 0.9569), s.z);\nreturn float4(c0, 1.0);",
+       "z": 0.5,
+       "y": 0.2
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float v = 0.5 + (a.sample(uv).x - 0.5) * 0.04 + (a.sample(uv).w - 0.5) * 0.01;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float v = 0.08 + (1.0 - a.sample(uv).z) * 0.04;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "intensity": 0.5
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       720.0,
+       160.0
+      ],
+      "values": {
+       "radius": 0.01,
+       "depth": 0.01,
+       "strength": 0.0
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Metallic",
+      "type": "constant",
+      "position": [
+       0.0,
+       480.0
+      ],
+      "values": {
+       "value": 0.0
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       1200.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "Swell",
+      "out",
+      "Waves",
+      "a"
+     ],
+     [
+      "Ripples",
+      "out",
+      "Waves",
+      "b"
+     ],
+     [
+      "Waves",
+      "out",
+      "BaseColor",
+      "a"
+     ],
+     [
+      "Strokes",
+      "out",
+      "BaseColor",
+      "b"
+     ],
+     [
+      "Waves",
+      "out",
+      "Height",
+      "a"
+     ],
+     [
+      "Waves",
+      "out",
+      "Roughness",
+      "a"
+     ],
+     [
+      "Height",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "Height",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "BaseColor",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "Metallic",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "Height",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.3,
+   "age": 0.2,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.7,
+   "age": 0.65
+  }
+ }
+}

@@ -1,0 +1,680 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "PaintedTimber",
+ "meta": {
+  "name": "Painted Timber",
+  "category": "Meadowlight/Wood",
+  "tags": [
+   "meadowlight",
+   "stylised",
+   "hand-painted",
+   "painterly",
+   "wood",
+   "timber",
+   "beams",
+   "grain",
+   "warm"
+  ],
+  "physical": "stylised",
+  "scaleCm": 100,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation",
+   "hue"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "Hand-painted timber beams: long warm grain strokes, honey highlights, plum-brown shadows in the cracks.",
+  "shadingModel": "painterly",
+  "shading": {
+   "shadingModel": "painterly",
+   "strokeMap": "strokes_bristle",
+   "strokeScale": 20.0,
+   "strokeNormal": 0.45,
+   "paletteShadow": [
+    0.0685,
+    0.0296,
+    0.0648
+   ],
+   "paletteLight": [
+    1.0,
+    0.7454,
+    0.3515
+   ],
+   "paletteAccent": [
+    0.6867,
+    0.2542,
+    0.0648
+   ],
+   "paletteContrast": 0.4,
+   "specularTint": 0.6
+  }
+ },
+ "graph": {
+  "name": "PaintedTimber",
+  "typeVersion": 1,
+  "description": "Hand-painted timber beams: long warm grain strokes, honey highlights, plum-brown shadows in the cracks.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.2,
+    "label": "Wear",
+    "description": "Splits along the grain.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.3,
+    "label": "Age",
+    "description": "Greying.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   },
+   {
+    "name": "hue",
+    "kind": "param",
+    "type": "float",
+    "default": 0.0,
+    "label": "Hue",
+    "description": "Shifts the base colour's hue, in turns.",
+    "min": -0.5,
+    "max": 0.5,
+    "targets": [
+     "Material.hue"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "PaintedTimber",
+     "seed": 0,
+     "wear": 0.2,
+     "age": 0.3,
+     "colorVariation": 0.5,
+     "hue": 0.0
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ]
+  ],
+  "subgroups": {
+   "PaintedTimber": {
+    "name": "PaintedTimber",
+    "typeVersion": 1,
+    "description": "Hand-painted timber beams: long warm grain strokes, honey highlights, plum-brown shadows in the cracks.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "Beams.seed",
+       "Grain.seed",
+       "Splits.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.2,
+      "label": "Wear",
+      "description": "Splits along the grain.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Wood.x"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.3,
+      "label": "Age",
+      "description": "Greying.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Greying.y"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Paint.z"
+      ]
+     },
+     {
+      "name": "hue",
+      "kind": "param",
+      "type": "float",
+      "default": 0.0,
+      "label": "Hue",
+      "description": "Shifts the base colour's hue, in turns.",
+      "min": -0.5,
+      "max": 0.5,
+      "targets": [
+       "Tint.hue"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "Beams",
+      "type": "planks",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "rows": 3,
+       "planks": 1,
+       "gap": 0.05,
+       "bevel": 0.2
+      }
+     },
+     {
+      "name": "Grain",
+      "type": "directional",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "angle": 0.0,
+       "scaleAlong": 2,
+       "scaleAcross": 24,
+       "octaves": 5,
+       "persistence": 0.6
+      }
+     },
+     {
+      "name": "Splits",
+      "type": "directional",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "angle": 0.0,
+       "scaleAlong": 3,
+       "scaleAcross": 60,
+       "octaves": 2
+      }
+     },
+     {
+      "name": "Wood",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float g = texToFloat(a.sample(uv));\nfloat sp = smoothstep(0.86 - p.x * 0.1, 0.9 - p.x * 0.1, texToFloat(b.sample(uv)));\nreturn float4(g, sp, texToFloat(c.sample(uv)), 1.0);",
+       "x": 0.2
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float v = 0.2 + a.sample(uv).z * 0.5 + (a.sample(uv).x - 0.5) * 0.08 - a.sample(uv).y * 0.15;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "ValueLight",
+      "type": "emboss",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "angle": 135.0,
+       "intensity": 1.0
+      }
+     },
+     {
+      "name": "ValueOcclusion",
+      "type": "blur",
+      "position": [
+       720.0,
+       160.0
+      ],
+      "values": {
+       "radius": 0.02
+      }
+     },
+     {
+      "name": "Value",
+      "type": "pixelProcessor",
+      "position": [
+       960.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float h = texToFloat(c.sample(uv));\nfloat l = texToFloat(a.sample(uv));\nfloat cav = saturate((texToFloat(b.sample(uv)) - h) * 8.0);\nfloat v = 0.5 + (l - 0.5) * 1.2000 + (h - 0.5) * 0.5 - cav * 1.0000 + 0.0000;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Strokes",
+      "type": "image",
+      "position": [
+       0.0,
+       480.0
+      ],
+      "values": {
+       "file": "strokes/strokes_bristle.png",
+       "tiles": 4
+      }
+     },
+     {
+      "name": "Paint",
+      "type": "pixelProcessor",
+      "position": [
+       1200.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float t = texToFloat(a.sample(uv));\nfloat4 s = b.sample(uv);\nt = saturate(t + (s.a - 0.5) * 0.3000 * (0.4 + p.z) + (s.b - 0.5) * 0.25);\nfloat k = t * 5.0000;\nt = (floor(k) + smoothstep(0.3, 0.7, frac(k))) / 5.0000;\nfloat3 c = t < 0.34 ? lerp(float3(0.2431, 0.1569, 0.2196), float3(0.4784, 0.2902, 0.2039), t / 0.34) : (t < 0.67 ? lerp(float3(0.4784, 0.2902, 0.2039), float3(0.7216, 0.4706, 0.2902), (t - 0.34) / 0.33) : lerp(float3(0.7216, 0.4706, 0.2902), float3(0.9373, 0.7686, 0.5020), (t - 0.67) / 0.33));\nreturn float4(c, 1.0);",
+       "z": 0.5
+      }
+     },
+     {
+      "name": "Greying",
+      "type": "pixelProcessor",
+      "position": [
+       1440.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float3 c0 = a.sample(uv).rgb;\nc0 = lerp(c0, dot(c0, float3(0.3, 0.5, 0.2)).xxx * float3(0.95, 0.95, 1.05), p.y * 0.5);\nreturn float4(c0, 1.0);",
+       "y": 0.3
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float v = 0.8500 + (texToFloat(a.sample(uv)) - 0.5) * 0.05;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       720.0,
+       480.0
+      ],
+      "values": {
+       "intensity": 0.6
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       720.0,
+       640.0
+      ],
+      "values": {
+       "radius": 0.03,
+       "depth": 0.1,
+       "strength": 0.5
+      }
+     },
+     {
+      "name": "Tint",
+      "type": "hsv",
+      "position": [
+       1680.0,
+       0.0
+      ],
+      "values": {
+       "hue": 0.0
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       1920.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       960.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Metallic",
+      "type": "constant",
+      "position": [
+       0.0,
+       640.0
+      ],
+      "values": {
+       "value": 0.0
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       2400.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "Grain",
+      "out",
+      "Wood",
+      "a"
+     ],
+     [
+      "Splits",
+      "out",
+      "Wood",
+      "b"
+     ],
+     [
+      "Beams",
+      "mask",
+      "Wood",
+      "c"
+     ],
+     [
+      "Wood",
+      "out",
+      "Height",
+      "a"
+     ],
+     [
+      "Height",
+      "out",
+      "ValueLight",
+      "input"
+     ],
+     [
+      "Height",
+      "out",
+      "ValueOcclusion",
+      "input"
+     ],
+     [
+      "ValueLight",
+      "out",
+      "Value",
+      "a"
+     ],
+     [
+      "ValueOcclusion",
+      "out",
+      "Value",
+      "b"
+     ],
+     [
+      "Height",
+      "out",
+      "Value",
+      "c"
+     ],
+     [
+      "Value",
+      "out",
+      "Paint",
+      "a"
+     ],
+     [
+      "Strokes",
+      "out",
+      "Paint",
+      "b"
+     ],
+     [
+      "Paint",
+      "out",
+      "Greying",
+      "a"
+     ],
+     [
+      "Height",
+      "out",
+      "Roughness",
+      "a"
+     ],
+     [
+      "Height",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "Height",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "Greying",
+      "out",
+      "Tint",
+      "input"
+     ],
+     [
+      "Tint",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "Metallic",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "Height",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.2,
+   "age": 0.3,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.6000000000000001,
+   "age": 0.75
+  }
+ }
+}

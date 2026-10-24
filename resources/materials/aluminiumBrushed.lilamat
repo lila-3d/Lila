@@ -1,0 +1,618 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "AluminiumBrushed",
+ "meta": {
+  "name": "Brushed Aluminium",
+  "category": "Metal/Aluminium",
+  "tags": [
+   "aluminium",
+   "aluminum",
+   "brushed",
+   "metal",
+   "anisotropic"
+  ],
+  "physical": "metal",
+  "scaleCm": 40,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "Brushed aluminium: fine directional streaks, as on appliances and machined panels."
+ },
+ "graph": {
+  "name": "AluminiumBrushed",
+  "typeVersion": 1,
+  "description": "Brushed aluminium: fine directional streaks, as on appliances and machined panels.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.2,
+    "label": "Wear",
+    "description": "Scratches and worn spots.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.05,
+    "label": "Age",
+    "description": "Dull oxide bloom and grime.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "AluminiumBrushed",
+     "seed": 0,
+     "wear": 0.2,
+     "age": 0.05,
+     "colorVariation": 0.5
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ]
+  ],
+  "subgroups": {
+   "AluminiumBrushed": {
+    "name": "AluminiumBrushed",
+    "typeVersion": 1,
+    "description": "Brushed aluminium: fine directional streaks, as on appliances and machined panels.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "Mottle.seed",
+       "Brushing.seed",
+       "Scratches.seed",
+       "FineScratches.seed",
+       "Grime.seed",
+       "Pits.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.2,
+      "label": "Wear",
+      "description": "Scratches and worn spots.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Surface.x"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.05,
+      "label": "Age",
+      "description": "Dull oxide bloom and grime.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Age.x"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.z"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "Mottle",
+      "type": "clouds",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "scale": 3,
+       "octaves": 6,
+       "persistence": 0.55
+      }
+     },
+     {
+      "name": "Brushing",
+      "type": "anisotropic",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "scaleX": 3,
+       "scaleY": 220,
+       "octaves": 4,
+       "persistence": 0.6
+      }
+     },
+     {
+      "name": "Scratches",
+      "type": "scratches",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "scale": 5,
+       "count": 4,
+       "length": 0.7,
+       "width": 0.0012,
+       "angle": 0.0,
+       "angleRandom": 0.15
+      }
+     },
+     {
+      "name": "FineScratches",
+      "type": "scratches",
+      "position": [
+       0.0,
+       480.0
+      ],
+      "values": {
+       "scale": 11,
+       "count": 6,
+       "length": 0.35,
+       "width": 0.0007,
+       "angle": 70.0,
+       "angleRandom": 1.0
+      }
+     },
+     {
+      "name": "Surface",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float s = max(c.sample(uv), d.sample(uv) * 0.7) * 1.0000;\nfloat worn = saturate(s * smoothstep(0.0, 0.6, p.x) * 1.6);\nreturn float4(a.sample(uv).r, b.sample(uv).r, worn, 1.0);",
+       "x": 0.2
+      }
+     },
+     {
+      "name": "Grime",
+      "type": "dirt",
+      "position": [
+       0.0,
+       640.0
+      ],
+      "values": {
+       "scale": 5,
+       "amount": 0.5,
+       "contrast": 1.0,
+       "grain": 0.4
+      }
+     },
+     {
+      "name": "Pits",
+      "type": "voronoi",
+      "position": [
+       0.0,
+       800.0
+      ],
+      "values": {
+       "scale": 28,
+       "jitter": 0.9
+      }
+     },
+     {
+      "name": "Age",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float g = texToFloat(a.sample(uv));\nfloat t = texToFloat(b.sample(uv));\nfloat pit = (1.0 - smoothstep(0.05, 0.2 + d.sample(uv) * 0.2, c.sample(uv))) * step(0.82, d.sample(uv)) * 0.0000;\nfloat grime = smoothstep(1.0 - (p.x * 0.7) * (1.0 + 0.2500), 1.0 - (p.x * 0.7) * (1.0 + 0.2500) + 0.2500, g);\nfloat tarnish = smoothstep(1.0 - (p.x) * (1.0 + 0.3500), 1.0 - (p.x) * (1.0 + 0.3500) + 0.3500, 1.0 - t);\nreturn float4(grime, tarnish, pit, 1.0);",
+       "x": 0.05
+      }
+     },
+     {
+      "name": "BaseColor",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 s = a.sample(uv);\nfloat4 g = b.sample(uv);\nfloat3 c0 = float3(0.9255, 0.9294, 0.9294) * (1.0 + (s.x - 0.5) * 0.0400 * (0.5 + p.z)) * (1.0 + (s.y - 0.5) * 0.06);\nc0 = lerp(c0, float3(0.7765, 0.7765, 0.7647), g.y * 0.85);\nc0 = lerp(c0, float3(0.9255, 0.9294, 0.9294), s.z * 0.8);\nc0 = lerp(c0, c0 * 0.8, g.z);\nc0 = lerp(c0, float3(0.2902, 0.2549, 0.2235), g.x);\nreturn float4(saturate(c0), 1.0);",
+       "z": 0.5
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float4 s = a.sample(uv);\nfloat4 g = b.sample(uv);\nfloat r = lerp(0.1800, 0.3600, saturate(s.x * 0.6 + s.y * 0.6 - 0.1));\nr = lerp(r, r + 0.15, g.y);\nr = lerp(r, max(r - 0.08, 0.04), s.z);\nr = lerp(r, 0.7, g.z);\nr = lerp(r, 0.85, g.x);\nreturn float4(r, r, r, 1.0);"
+      }
+     },
+     {
+      "name": "MetalMask",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float4 g = b.sample(uv);\nfloat v = 1.0 - smoothstep(0.45, 0.55, g.x) - smoothstep(0.55, 0.65, g.y) * 0.4000;\nv = saturate(v);\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float4 s = a.sample(uv);\nfloat4 g = b.sample(uv);\nfloat h = 0.5 + (s.y - 0.5) * 0.0100 - s.z * 0.06 - g.z * 0.12 + g.x * 0.015;\nreturn float4(h, h, h, 1.0);"
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "intensity": 0.2
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       720.0,
+       160.0
+      ],
+      "values": {
+       "radius": 0.01,
+       "depth": 0.05,
+       "strength": 0.6
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       1200.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "Mottle",
+      "out",
+      "Surface",
+      "a"
+     ],
+     [
+      "Brushing",
+      "out",
+      "Surface",
+      "b"
+     ],
+     [
+      "Scratches",
+      "out",
+      "Surface",
+      "c"
+     ],
+     [
+      "FineScratches",
+      "out",
+      "Surface",
+      "d"
+     ],
+     [
+      "Grime",
+      "out",
+      "Age",
+      "a"
+     ],
+     [
+      "Mottle",
+      "out",
+      "Age",
+      "b"
+     ],
+     [
+      "Pits",
+      "f1",
+      "Age",
+      "c"
+     ],
+     [
+      "Pits",
+      "random",
+      "Age",
+      "d"
+     ],
+     [
+      "Surface",
+      "out",
+      "BaseColor",
+      "a"
+     ],
+     [
+      "Age",
+      "out",
+      "BaseColor",
+      "b"
+     ],
+     [
+      "Surface",
+      "out",
+      "Roughness",
+      "a"
+     ],
+     [
+      "Age",
+      "out",
+      "Roughness",
+      "b"
+     ],
+     [
+      "Age",
+      "out",
+      "MetalMask",
+      "b"
+     ],
+     [
+      "Surface",
+      "out",
+      "Height",
+      "a"
+     ],
+     [
+      "Age",
+      "out",
+      "Height",
+      "b"
+     ],
+     [
+      "Height",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "Height",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "BaseColor",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "MetalMask",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "Height",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.2,
+   "age": 0.05,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.6000000000000001,
+   "age": 0.5
+  }
+ }
+}

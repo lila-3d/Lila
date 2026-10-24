@@ -89,6 +89,11 @@ TEST_CASE("manifest: parse, defaults and every problem at once")
     }
     CHECK_THROWS_WITH_AS(ext::Manifest::parse({{"id", "a"}, {"version", "1"}, {"sdk", "1.0"}}, "C:/x"), doctest::Contains("give an 'entry'"),
                          ext::ManifestError);
+
+    ext::Manifest pack = ext::Manifest::parse({{"id", "a"}, {"version", "1"}, {"sdk", "1.0"}, {"resources", "resources"}}, "C:/x");
+    CHECK(pack.resourcesOnly());
+    CHECK_FALSE(pack.library());
+    CHECK_FALSE(pack.pythonModule());
 }
 
 TEST_CASE("manifest: dependency order and versions")

@@ -161,7 +161,9 @@ void ExtensionManagerDialog::refresh()
             tip += "\n\nNeeds " + deps.join(", ");
         }
         name->setToolTip(tip);
-        name->setIcon(icon(info.kind == extensions::ExtensionKind::Native ? "puzzle" : "brand-python"));
+        name->setIcon(icon(info.kind == extensions::ExtensionKind::Native      ? "puzzle"
+                           : info.kind == extensions::ExtensionKind::Resources ? "package"
+                                                                              : "brand-python"));
         mTable->setItem(row, Name, name);
         mTable->setItem(row, Version, new QTableWidgetItem(info.manifest ? qs(info.manifest->version) : QString()));
         mTable->setItem(row, Vendor, new QTableWidgetItem(info.manifest ? qs(info.manifest->vendor) : QString()));

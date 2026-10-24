@@ -1,0 +1,517 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "Scales",
+ "meta": {
+  "name": "Reptile Scales",
+  "category": "Organic/Scales",
+  "tags": [
+   "scales",
+   "reptile",
+   "snake",
+   "lizard",
+   "dragon",
+   "organic"
+  ],
+  "physical": "organic",
+  "scaleCm": 20,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation",
+   "hue"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "Overlapping reptile scales: each its own green-olive, darker at the overlap, glossier on the crown."
+ },
+ "graph": {
+  "name": "Scales",
+  "typeVersion": 1,
+  "description": "Overlapping reptile scales: each its own green-olive, darker at the overlap, glossier on the crown.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.2,
+    "label": "Wear",
+    "description": "Scuffed, dulled crowns.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.2,
+    "label": "Age",
+    "description": "Shedding: pale dry scales.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   },
+   {
+    "name": "hue",
+    "kind": "param",
+    "type": "float",
+    "default": 0.0,
+    "label": "Hue",
+    "description": "Shifts the base colour's hue, in turns.",
+    "min": -0.5,
+    "max": 0.5,
+    "targets": [
+     "Material.hue"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "Scales",
+     "seed": 0,
+     "wear": 0.2,
+     "age": 0.2,
+     "colorVariation": 0.5,
+     "hue": 0.0
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ]
+  ],
+  "subgroups": {
+   "Scales": {
+    "name": "Scales",
+    "typeVersion": 1,
+    "description": "Overlapping reptile scales: each its own green-olive, darker at the overlap, glossier on the crown.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "Scales.seed",
+       "Pattern.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.2,
+      "label": "Wear",
+      "description": "Scuffed, dulled crowns.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Roughness.x"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.2,
+      "label": "Age",
+      "description": "Shedding: pale dry scales.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.y"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.z"
+      ]
+     },
+     {
+      "name": "hue",
+      "kind": "param",
+      "type": "float",
+      "default": 0.0,
+      "label": "Hue",
+      "description": "Shifts the base colour's hue, in turns.",
+      "min": -0.5,
+      "max": 0.5,
+      "targets": [
+       "Tint.hue"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "Scales",
+      "type": "scales",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "scale": 12,
+       "size": 1.25
+      }
+     },
+     {
+      "name": "Pattern",
+      "type": "clouds",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "scale": 3,
+       "octaves": 5
+      }
+     },
+     {
+      "name": "BaseColor",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float hgt = texToFloat(a.sample(uv));\nfloat r = texToFloat(b.sample(uv));\nfloat pat = c.sample(uv);\nfloat3 c0 = lerp(float3(0.2431, 0.3529, 0.1804), float3(0.4314, 0.5412, 0.2353), saturate(r * 0.6 * (0.4 + p.z) + pat * 0.6));\nc0 = lerp(c0, float3(0.1647, 0.2039, 0.1255), smoothstep(0.55, 0.75, pat) * 0.7);\nc0 *= 0.55 + hgt * 0.55;\nc0 = lerp(c0, float3(0.7216, 0.7059, 0.6039), step(1.0 - p.y * 0.3, frac(r * 7.0)) * 0.6);\nreturn float4(c0, 1.0);",
+       "z": 0.5,
+       "y": 0.2
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float v = lerp(0.65, 0.35, texToFloat(a.sample(uv))) + p.x * 0.2;\nreturn float4(v, v, v, 1.0);",
+       "x": 0.2
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float v = 0.3 + texToFloat(a.sample(uv)) * 0.4;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "intensity": 1.0
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       480.0,
+       160.0
+      ],
+      "values": {
+       "radius": 0.01,
+       "depth": 0.08,
+       "strength": 0.8
+      }
+     },
+     {
+      "name": "Tint",
+      "type": "hsv",
+      "position": [
+       480.0,
+       320.0
+      ],
+      "values": {
+       "hue": 0.0
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Metallic",
+      "type": "constant",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "value": 0.0
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       1200.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "Scales",
+      "height",
+      "BaseColor",
+      "a"
+     ],
+     [
+      "Scales",
+      "random",
+      "BaseColor",
+      "b"
+     ],
+     [
+      "Pattern",
+      "out",
+      "BaseColor",
+      "c"
+     ],
+     [
+      "Scales",
+      "height",
+      "Roughness",
+      "a"
+     ],
+     [
+      "Scales",
+      "height",
+      "Height",
+      "a"
+     ],
+     [
+      "Height",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "Height",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "BaseColor",
+      "out",
+      "Tint",
+      "input"
+     ],
+     [
+      "Tint",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "Metallic",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "Height",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.2,
+   "age": 0.2,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.6000000000000001,
+   "age": 0.65
+  }
+ }
+}

@@ -1,0 +1,655 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "SciFiTrim",
+ "meta": {
+  "name": "Sci-Fi Trim Sheet",
+  "category": "Sci-Fi/Trims",
+  "tags": [
+   "sci-fi",
+   "scifi",
+   "trim",
+   "trim sheet",
+   "emissive",
+   "hazard"
+  ],
+  "physical": "metal",
+  "scaleCm": 100,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation",
+   "glowColor"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "A horizontal trim sheet: grooved strip, glowing light strip, ribbed vent, bolted plate, chamfered rails and hazard stripes. Emissive."
+ },
+ "graph": {
+  "name": "SciFiTrim",
+  "typeVersion": 1,
+  "description": "A horizontal trim sheet: grooved strip, glowing light strip, ribbed vent, bolted plate, chamfered rails and hazard stripes. Emissive.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.3,
+    "label": "Wear",
+    "description": "Paint chipped off the edges.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.2,
+    "label": "Age",
+    "description": "Grime in the recesses.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   },
+   {
+    "name": "glowColor",
+    "kind": "param",
+    "type": "color",
+    "default": [
+     0.03955,
+     0.63076,
+     1.0,
+     1.0
+    ],
+    "label": "Glow Colour",
+    "description": "The light strip's colour.",
+    "targets": [
+     "Material.glowColor"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "SciFiTrim",
+     "seed": 0,
+     "wear": 0.3,
+     "age": 0.2,
+     "colorVariation": 0.5,
+     "glowColor": [
+      0.03955,
+      0.63076,
+      1.0,
+      1.0
+     ]
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ],
+   [
+    "Material",
+    "emissive",
+    "Output",
+    "emissive"
+   ]
+  ],
+  "subgroups": {
+   "SciFiTrim": {
+    "name": "SciFiTrim",
+    "typeVersion": 1,
+    "description": "A horizontal trim sheet: grooved strip, glowing light strip, ribbed vent, bolted plate, chamfered rails and hazard stripes. Emissive.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "ChipNoise.seed",
+       "Grime.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.3,
+      "label": "Wear",
+      "description": "Paint chipped off the edges.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Wear.x"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.2,
+      "label": "Age",
+      "description": "Grime in the recesses.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Wear.y"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.z"
+      ]
+     },
+     {
+      "name": "glowColor",
+      "kind": "param",
+      "type": "color",
+      "default": [
+       0.03955,
+       0.63076,
+       1.0,
+       1.0
+      ],
+      "label": "Glow Colour",
+      "description": "The light strip's colour.",
+      "targets": [
+       "GlowColor.color"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     },
+     {
+      "name": "emissive",
+      "type": "color"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "Bands",
+      "type": "pixelProcessor",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float v = uv.y;\nfloat hgt = 0.5;\nfloat seam = 0.0;\nfloat edge = 0.0;\nfloat band = 0.0;\nfloat lv;\nif (v < 0.14) { lv = v / 0.14; hgt = 0.55 - (1.0 - smoothstep(0.0, 0.08, abs(frac(lv * 3.0) - 0.5) - 0.3)) * 0.2; band = 0.0; }\nelse if (v < 0.26) { lv = (v - 0.14) / 0.12; hgt = 0.4 + smoothstep(0.0, 0.2, lv) * (1.0 - smoothstep(0.8, 1.0, lv)) * 0.1; band = 1.0; }\nelse if (v < 0.48) { lv = (v - 0.26) / 0.22; hgt = 0.45 + 0.2 * abs(sin(uv.x * 3.14159 * 48.0)); band = 2.0; }\nelse if (v < 0.7) { lv = (v - 0.48) / 0.22; float2 bq = float2(frac(uv.x * 8.0) - 0.5, lv - 0.5); float bolt = 1.0 - smoothstep(0.08, 0.1, length(bq * float2(1.0, 0.35))); hgt = 0.6 + bolt * 0.1; band = 3.0; edge = bolt * 0.5; }\nelse if (v < 0.86) { lv = (v - 0.7) / 0.16; hgt = 0.5 + min(lv, 1.0 - lv) * 0.6; band = 4.0; }\nelse { lv = (v - 0.86) / 0.14; hgt = 0.55; band = 5.0; }\nfloat bandEdge = min(lv, 1.0 - lv);\nseam = 1.0 - smoothstep(0.0, 0.04, bandEdge);\nedge = max(edge, 1.0 - smoothstep(0.04, 0.12, bandEdge));\nhgt -= seam * 0.2;\nreturn float4(hgt, seam, edge, band / 5.0);"
+      }
+     },
+     {
+      "name": "ChipNoise",
+      "type": "perlin",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "scale": 24,
+       "octaves": 5,
+       "persistence": 0.6
+      }
+     },
+     {
+      "name": "Grime",
+      "type": "dirt",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "scale": 5,
+       "amount": 0.5,
+       "contrast": 1.0,
+       "grain": 0.4
+      }
+     },
+     {
+      "name": "Wear",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 s = a.sample(uv);\nfloat ch = smoothstep(1.0 - p.x * 0.9, 1.05 - p.x * 0.9, s.z * 0.9 + texToFloat(b.sample(uv)) * 0.4);\nfloat g = smoothstep(1.0 - p.y * 0.8, 1.2 - p.y * 0.8, texToFloat(c.sample(uv)) * 0.6 + s.y * 0.6);\nreturn float4(ch, g, 0.0, 1.0);",
+       "x": 0.3,
+       "y": 0.2
+      }
+     },
+     {
+      "name": "GlowColor",
+      "type": "color",
+      "position": [
+       0.0,
+       480.0
+      ],
+      "values": {
+       "color": [
+        0.03955,
+        0.63076,
+        1.0,
+        1.0
+       ]
+      }
+     },
+     {
+      "name": "GlowColorSrgb",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 l = saturate(c.rgb);\nreturn float4(lerp(1.055 * pow(l, 1.0 / 2.4) - 0.055, l * 12.92, step(l, 0.0031308)), c.a);"
+      }
+     },
+     {
+      "name": "BaseColor",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 s = a.sample(uv);\nfloat4 w = b.sample(uv);\nint band = int(round(s.w * 5.0));\nfloat3 c0 = float3(0.3647, 0.3804, 0.4000);\nif (band == 1) c0 = float3(0.1647, 0.1725, 0.1882);\nif (band == 2) c0 = float3(0.7608, 0.7725, 0.7843);\nif (band == 4) c0 = float3(0.8157, 0.8235, 0.8314);\nif (band == 5) c0 = frac((uv.x - uv.y) * 12.0) < 0.5 ? float3(0.8471, 0.6471, 0.1255) : float3(0.1647, 0.1647, 0.1647);\nc0 *= 1.0 + (p.z - 0.5) * 0.1;\nc0 = lerp(c0, float3(0.8471, 0.8549, 0.8627), w.x * (band == 1 ? 0.0 : 1.0));\nc0 = lerp(c0, float3(0.2275, 0.2118, 0.1961), w.y * 0.7);\nc0 = lerp(c0, c0 * 0.45, s.y);\nreturn float4(c0, 1.0);",
+       "z": 0.5
+      }
+     },
+     {
+      "name": "Emissive",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float4 s = a.sample(uv);\nfloat on = (abs(s.w - 0.2) < 0.05 ? 1.0 : 0.0);\nfloat lv = saturate((uv.y - 0.14) / 0.12);\nfloat strip = smoothstep(0.3, 0.4, lv) * (1.0 - smoothstep(0.6, 0.7, lv));\nreturn float4(b.sample(uv).rgb * on * strip, 1.0);"
+      }
+     },
+     {
+      "name": "MetalMask",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float4 s = a.sample(uv);\nint band = int(round(s.w * 5.0));\nfloat v = (band == 2 || band == 4) ? 1.0 : b.sample(uv).x;\nv *= 1.0 - b.sample(uv).y;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float v = 0.35 + a.sample(uv).y * 0.3 + b.sample(uv).y * 0.4 - b.sample(uv).x * 0.1;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float v = a.sample(uv).x;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       480.0,
+       640.0
+      ],
+      "values": {
+       "intensity": 1.0
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       480.0,
+       800.0
+      ],
+      "values": {
+       "radius": 0.01,
+       "depth": 0.1,
+       "strength": 0.9
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "EmissiveLinear",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       1200.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "Bands",
+      "out",
+      "Wear",
+      "a"
+     ],
+     [
+      "ChipNoise",
+      "out",
+      "Wear",
+      "b"
+     ],
+     [
+      "Grime",
+      "out",
+      "Wear",
+      "c"
+     ],
+     [
+      "GlowColor",
+      "out",
+      "GlowColorSrgb",
+      "a"
+     ],
+     [
+      "Bands",
+      "out",
+      "BaseColor",
+      "a"
+     ],
+     [
+      "Wear",
+      "out",
+      "BaseColor",
+      "b"
+     ],
+     [
+      "Bands",
+      "out",
+      "Emissive",
+      "a"
+     ],
+     [
+      "GlowColorSrgb",
+      "out",
+      "Emissive",
+      "b"
+     ],
+     [
+      "Bands",
+      "out",
+      "MetalMask",
+      "a"
+     ],
+     [
+      "Wear",
+      "out",
+      "MetalMask",
+      "b"
+     ],
+     [
+      "Bands",
+      "out",
+      "Roughness",
+      "a"
+     ],
+     [
+      "Wear",
+      "out",
+      "Roughness",
+      "b"
+     ],
+     [
+      "Bands",
+      "out",
+      "Height",
+      "a"
+     ],
+     [
+      "Height",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "Height",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "BaseColor",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "Emissive",
+      "out",
+      "EmissiveLinear",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "MetalMask",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "Height",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ],
+     [
+      "EmissiveLinear",
+      "out",
+      "GroupOutput",
+      "emissive"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.3,
+   "age": 0.2,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.7,
+   "age": 0.65
+  }
+ }
+}

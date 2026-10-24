@@ -44,6 +44,30 @@ function(lila_add_extension target)
     cmake_language(EVAL CODE "cmake_language(DEFER CALL lila_check_extension_includes [[${target}]])")
 endfunction()
 
+# lila_add_resource_extension(<target> ID <Id> MANIFEST <extension.json> RESOURCES <dir> [OUTPUT_DIR <dir>])
+#
+# Packages a resource-only extension (materials, nodes, presets; no library, no Python): <OUTPUT_DIR>/<Id>.lilaext/
+# holding the manifest and the resources, refreshed on every build.
+function(lila_add_resource_extension target)
+    cmake_parse_arguments(ARG "" "ID;MANIFEST;RESOURCES;OUTPUT_DIR" "" ${ARGN})
+    if(NOT ARG_ID OR NOT ARG_MANIFEST OR NOT ARG_RESOURCES)
+        message(FATAL_ERROR "lila_add_resource_extension(${target}): give ID, MANIFEST and RESOURCES")
+    endif()
+    if(NOT ARG_OUTPUT_DIR AND CMAKE_RUNTIME_OUTPUT_DIRECTORY)
+        set(ARG_OUTPUT_DIR ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/extensions)
+    elseif(NOT ARG_OUTPUT_DIR)
+        set(ARG_OUTPUT_DIR ${CMAKE_BINARY_DIR}/$<CONFIG>/extensions)
+    endif()
+    set(package ${ARG_OUTPUT_DIR}/${ARG_ID}.lilaext)
+    cmake_path(ABSOLUTE_PATH ARG_MANIFEST BASE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} OUTPUT_VARIABLE manifest)
+    cmake_path(ABSOLUTE_PATH ARG_RESOURCES BASE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} OUTPUT_VARIABLE resources)
+    add_custom_target(${target} ALL
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${package}
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${manifest} ${package}/extension.json
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${resources} ${package}/resources
+        COMMENT "Packaging ${ARG_ID}.lilaext")
+endfunction()
+
 # An extension's sources may include <lila/...>, the standard library, third-party headers and their own files only.
 function(lila_check_extension_sources target)
     set(internal core ops math scene geo deform io fbx uv gn link maya retopo sculpt vcolor vcs mcp python extensions render ui app)

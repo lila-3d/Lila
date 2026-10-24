@@ -1,0 +1,532 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "SteelGalvanised",
+ "meta": {
+  "name": "Galvanised Steel",
+  "category": "Metal/Steel",
+  "tags": [
+   "steel",
+   "galvanised",
+   "galvanized",
+   "zinc",
+   "spangle",
+   "metal"
+  ],
+  "physical": "metal",
+  "scaleCm": 60,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "Hot-dip galvanised steel: zinc spangle crystals of varying sheen, whitening with zinc oxide as it ages."
+ },
+ "graph": {
+  "name": "SteelGalvanised",
+  "typeVersion": 1,
+  "description": "Hot-dip galvanised steel: zinc spangle crystals of varying sheen, whitening with zinc oxide as it ages.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.2,
+    "label": "Wear",
+    "description": "Scratches and worn spots.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.3,
+    "label": "Age",
+    "description": "White zinc oxide bloom.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "SteelGalvanised",
+     "seed": 0,
+     "wear": 0.2,
+     "age": 0.3,
+     "colorVariation": 0.5
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ]
+  ],
+  "subgroups": {
+   "SteelGalvanised": {
+    "name": "SteelGalvanised",
+    "typeVersion": 1,
+    "description": "Hot-dip galvanised steel: zinc spangle crystals of varying sheen, whitening with zinc oxide as it ages.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "Spangle.seed",
+       "SpangleFine.seed",
+       "Bloom.seed",
+       "Scratches.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.2,
+      "label": "Wear",
+      "description": "Scratches and worn spots.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Zinc.y"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.3,
+      "label": "Age",
+      "description": "White zinc oxide bloom.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Zinc.x"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.z"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "Spangle",
+      "type": "cells",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "scale": 7,
+       "mode": "cells",
+       "jitter": 1.0
+      }
+     },
+     {
+      "name": "SpangleFine",
+      "type": "cells",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "scale": 19,
+       "mode": "cells",
+       "jitter": 1.0
+      }
+     },
+     {
+      "name": "Bloom",
+      "type": "clouds",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "scale": 4,
+       "octaves": 6
+      }
+     },
+     {
+      "name": "Scratches",
+      "type": "scratches",
+      "position": [
+       0.0,
+       480.0
+      ],
+      "values": {
+       "scale": 6,
+       "count": 3,
+       "length": 0.6,
+       "width": 0.001,
+       "angleRandom": 1.0
+      }
+     },
+     {
+      "name": "Zinc",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float s = texToFloat(a.sample(uv)) * 0.7 + texToFloat(b.sample(uv)) * 0.3;\nfloat o = smoothstep(1.0 - p.x, 1.0 - p.x + 0.3, c.sample(uv));\nfloat w = d.sample(uv) * smoothstep(0.0, 0.5, p.y);\nreturn float4(s, o, w, 1.0);",
+       "x": 0.3,
+       "y": 0.2
+      }
+     },
+     {
+      "name": "BaseColor",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 s = a.sample(uv);\nfloat3 z = float3(0.8392, 0.8549, 0.8627) * (0.9 + s.x * 0.16 * (0.5 + p.z));\nz = lerp(z, float3(0.7882, 0.7922, 0.7765), s.y * 0.9);\nreturn float4(saturate(z), 1.0);",
+       "z": 0.5
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float v = lerp(lerp(0.18, 0.5, a.sample(uv).x), 0.75, a.sample(uv).y) - a.sample(uv).z * 0.1;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "MetalMask",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float v = 1.0 - smoothstep(0.65, 0.75, a.sample(uv).y);\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float v = 0.5 + a.sample(uv).x * 0.01 + a.sample(uv).y * 0.01 - a.sample(uv).z * 0.04;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "intensity": 0.3
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       720.0,
+       160.0
+      ],
+      "values": {
+       "radius": 0.01,
+       "depth": 0.03,
+       "strength": 0.4
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       1200.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "Spangle",
+      "out",
+      "Zinc",
+      "a"
+     ],
+     [
+      "SpangleFine",
+      "out",
+      "Zinc",
+      "b"
+     ],
+     [
+      "Bloom",
+      "out",
+      "Zinc",
+      "c"
+     ],
+     [
+      "Scratches",
+      "out",
+      "Zinc",
+      "d"
+     ],
+     [
+      "Zinc",
+      "out",
+      "BaseColor",
+      "a"
+     ],
+     [
+      "Zinc",
+      "out",
+      "Roughness",
+      "a"
+     ],
+     [
+      "Zinc",
+      "out",
+      "MetalMask",
+      "a"
+     ],
+     [
+      "Zinc",
+      "out",
+      "Height",
+      "a"
+     ],
+     [
+      "Height",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "Height",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "BaseColor",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "MetalMask",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "Height",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.2,
+   "age": 0.3,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.6000000000000001,
+   "age": 0.75
+  }
+ }
+}

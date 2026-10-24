@@ -1,0 +1,747 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "DirtPath",
+ "meta": {
+  "name": "Dirt Path",
+  "category": "Meadowlight/Ground",
+  "tags": [
+   "meadowlight",
+   "stylised",
+   "hand-painted",
+   "painterly",
+   "path",
+   "dirt",
+   "ground",
+   "trail",
+   "earth",
+   "warm"
+  ],
+  "physical": "stylised",
+  "scaleCm": 150,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation",
+   "hue"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "A worn painted footpath: warm ochre earth, scattered pebbles, soft dappled shade, grass creeping in from the edges.",
+  "shadingModel": "painterly",
+  "shading": {
+   "shadingModel": "painterly",
+   "strokeMap": "strokes_soft",
+   "strokeScale": 20.0,
+   "strokeNormal": 0.45,
+   "paletteShadow": [
+    0.1022,
+    0.0513,
+    0.117
+   ],
+   "paletteLight": [
+    1.0,
+    0.8714,
+    0.5271
+   ],
+   "paletteAccent": [
+    0.7454,
+    0.3515,
+    0.117
+   ],
+   "paletteContrast": 0.4,
+   "specularTint": 0.6
+  }
+ },
+ "graph": {
+  "name": "DirtPath",
+  "typeVersion": 1,
+  "description": "A worn painted footpath: warm ochre earth, scattered pebbles, soft dappled shade, grass creeping in from the edges.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.3,
+    "label": "Wear",
+    "description": "Ruts and footworn hollows.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.3,
+    "label": "Age",
+    "description": "Grass creeping in.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   },
+   {
+    "name": "hue",
+    "kind": "param",
+    "type": "float",
+    "default": 0.0,
+    "label": "Hue",
+    "description": "Shifts the base colour's hue, in turns.",
+    "min": -0.5,
+    "max": 0.5,
+    "targets": [
+     "Material.hue"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "DirtPath",
+     "seed": 0,
+     "wear": 0.3,
+     "age": 0.3,
+     "colorVariation": 0.5,
+     "hue": 0.0
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ]
+  ],
+  "subgroups": {
+   "DirtPath": {
+    "name": "DirtPath",
+    "typeVersion": 1,
+    "description": "A worn painted footpath: warm ochre earth, scattered pebbles, soft dappled shade, grass creeping in from the edges.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "Pebbles.seed",
+       "Ground.seed",
+       "Dapple.seed",
+       "Grassy.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.3,
+      "label": "Wear",
+      "description": "Ruts and footworn hollows.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Height.x"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.3,
+      "label": "Age",
+      "description": "Grass creeping in.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.y"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Paint.z",
+       "GrassPaint.z"
+      ]
+     },
+     {
+      "name": "hue",
+      "kind": "param",
+      "type": "float",
+      "default": 0.0,
+      "label": "Hue",
+      "description": "Shifts the base colour's hue, in turns.",
+      "min": -0.5,
+      "max": 0.5,
+      "targets": [
+       "Tint.hue"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "Pebble",
+      "type": "pixelProcessor",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float2 q = uv - 0.5;\nfloat v = sqrt(saturate(1.0 - dot(q, q) / 0.16));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Pebbles",
+      "type": "splatter",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "countX": 8,
+       "countY": 8,
+       "perCell": 2,
+       "size": 0.35,
+       "sizeRandom": 0.6,
+       "valueRandom": 0.2,
+       "blend": "max"
+      }
+     },
+     {
+      "name": "Ground",
+      "type": "clouds",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "scale": 4,
+       "octaves": 5
+      }
+     },
+     {
+      "name": "Dapple",
+      "type": "cells",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "scale": 5,
+       "mode": "f1",
+       "jitter": 1.0
+      }
+     },
+     {
+      "name": "Grassy",
+      "type": "clouds",
+      "position": [
+       0.0,
+       480.0
+      ],
+      "values": {
+       "scale": 3,
+       "octaves": 5
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float v = 0.3 + (texToFloat(a.sample(uv)) - 0.5) * 0.2 * (0.5 + p.x) + c.sample(uv) * 0.3;\nreturn float4(v, v, v, 1.0);",
+       "x": 0.3
+      }
+     },
+     {
+      "name": "ValueLight",
+      "type": "emboss",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "angle": 135.0,
+       "intensity": 1.0
+      }
+     },
+     {
+      "name": "ValueOcclusion",
+      "type": "blur",
+      "position": [
+       720.0,
+       160.0
+      ],
+      "values": {
+       "radius": 0.02
+      }
+     },
+     {
+      "name": "Value",
+      "type": "pixelProcessor",
+      "position": [
+       960.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float h = texToFloat(c.sample(uv));\nfloat l = texToFloat(a.sample(uv));\nfloat cav = saturate((texToFloat(b.sample(uv)) - h) * 8.0);\nfloat v = 0.5 + (l - 0.5) * 1.2000 + (h - 0.5) * 0.5 - cav * 1.0000 + 0.0800;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Dappled",
+      "type": "pixelProcessor",
+      "position": [
+       1200.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float v = texToFloat(a.sample(uv)) - smoothstep(0.35, 0.2, c.sample(uv)) * 0.18;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Strokes",
+      "type": "image",
+      "position": [
+       0.0,
+       640.0
+      ],
+      "values": {
+       "file": "strokes/strokes_soft.png",
+       "tiles": 5
+      }
+     },
+     {
+      "name": "Paint",
+      "type": "pixelProcessor",
+      "position": [
+       1440.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float t = texToFloat(a.sample(uv));\nfloat4 s = b.sample(uv);\nt = saturate(t + (s.a - 0.5) * 0.3000 * (0.4 + p.z) + (s.b - 0.5) * 0.25);\nfloat k = t * 5.0000;\nt = (floor(k) + smoothstep(0.3, 0.7, frac(k))) / 5.0000;\nfloat3 c = t < 0.34 ? lerp(float3(0.3529, 0.2510, 0.3451), float3(0.6039, 0.4157, 0.2902), t / 0.34) : (t < 0.67 ? lerp(float3(0.6039, 0.4157, 0.2902), float3(0.8157, 0.6275, 0.3765), (t - 0.34) / 0.33) : lerp(float3(0.8157, 0.6275, 0.3765), float3(0.9490, 0.8471, 0.6275), (t - 0.67) / 0.33));\nreturn float4(c, 1.0);",
+       "z": 0.5
+      }
+     },
+     {
+      "name": "GrassPaint",
+      "type": "pixelProcessor",
+      "position": [
+       1440.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float t = texToFloat(a.sample(uv));\nfloat4 s = b.sample(uv);\nt = saturate(t + (s.a - 0.5) * 0.3000 * (0.4 + p.z) + (s.b - 0.5) * 0.25);\nfloat k = t * 5.0000;\nt = (floor(k) + smoothstep(0.3, 0.7, frac(k))) / 5.0000;\nfloat3 c = t < 0.34 ? lerp(float3(0.1647, 0.2980, 0.2902), float3(0.2471, 0.4784, 0.2902), t / 0.34) : (t < 0.67 ? lerp(float3(0.2471, 0.4784, 0.2902), float3(0.4745, 0.6588, 0.2902), (t - 0.34) / 0.33) : lerp(float3(0.4745, 0.6588, 0.2902), float3(0.8118, 0.8392, 0.4784), (t - 0.67) / 0.33));\nreturn float4(c, 1.0);",
+       "z": 0.5
+      }
+     },
+     {
+      "name": "BaseColor",
+      "type": "pixelProcessor",
+      "position": [
+       1680.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float g = smoothstep(0.75 - p.y * 0.4, 0.85 - p.y * 0.4, texToFloat(c.sample(uv)));\nreturn float4(lerp(a.sample(uv).rgb, b.sample(uv).rgb, g), 1.0);",
+       "y": 0.3
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float v = 0.9000 + (texToFloat(a.sample(uv)) - 0.5) * 0.05;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       720.0,
+       480.0
+      ],
+      "values": {
+       "intensity": 0.6
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       720.0,
+       640.0
+      ],
+      "values": {
+       "radius": 0.03,
+       "depth": 0.1,
+       "strength": 0.5
+      }
+     },
+     {
+      "name": "Tint",
+      "type": "hsv",
+      "position": [
+       1920.0,
+       0.0
+      ],
+      "values": {
+       "hue": 0.0
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       2160.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       960.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Metallic",
+      "type": "constant",
+      "position": [
+       0.0,
+       800.0
+      ],
+      "values": {
+       "value": 0.0
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       2640.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "Pebble",
+      "out",
+      "Pebbles",
+      "pattern"
+     ],
+     [
+      "Ground",
+      "out",
+      "Height",
+      "a"
+     ],
+     [
+      "Pebbles",
+      "out",
+      "Height",
+      "c"
+     ],
+     [
+      "Height",
+      "out",
+      "ValueLight",
+      "input"
+     ],
+     [
+      "Height",
+      "out",
+      "ValueOcclusion",
+      "input"
+     ],
+     [
+      "ValueLight",
+      "out",
+      "Value",
+      "a"
+     ],
+     [
+      "ValueOcclusion",
+      "out",
+      "Value",
+      "b"
+     ],
+     [
+      "Height",
+      "out",
+      "Value",
+      "c"
+     ],
+     [
+      "Value",
+      "out",
+      "Dappled",
+      "a"
+     ],
+     [
+      "Dapple",
+      "out",
+      "Dappled",
+      "c"
+     ],
+     [
+      "Dappled",
+      "out",
+      "Paint",
+      "a"
+     ],
+     [
+      "Strokes",
+      "out",
+      "Paint",
+      "b"
+     ],
+     [
+      "Dappled",
+      "out",
+      "GrassPaint",
+      "a"
+     ],
+     [
+      "Strokes",
+      "out",
+      "GrassPaint",
+      "b"
+     ],
+     [
+      "Paint",
+      "out",
+      "BaseColor",
+      "a"
+     ],
+     [
+      "GrassPaint",
+      "out",
+      "BaseColor",
+      "b"
+     ],
+     [
+      "Grassy",
+      "out",
+      "BaseColor",
+      "c"
+     ],
+     [
+      "Height",
+      "out",
+      "Roughness",
+      "a"
+     ],
+     [
+      "Height",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "Height",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "BaseColor",
+      "out",
+      "Tint",
+      "input"
+     ],
+     [
+      "Tint",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "Metallic",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "Height",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.3,
+   "age": 0.3,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.7,
+   "age": 0.75
+  }
+ }
+}

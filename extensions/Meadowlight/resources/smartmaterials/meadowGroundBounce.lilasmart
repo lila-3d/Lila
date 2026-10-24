@@ -1,0 +1,35 @@
+{
+  "format": "lilasmart",
+  "version": 1,
+  "name": "Ground Bounce",
+  "description": "Downward-facing surfaces, catching light bounced up from the ground. Fill with a warm earthy orange or grass green (screen, low opacity).",
+  "kind": "mask",
+  "masks": [
+    {
+      "id": "M1",
+      "kind": "generator",
+      "type": "maskFacing",
+      "mode": "normal",
+      "opacity": 1.0,
+      "invert": false,
+      "values": {
+        "elevation": -90.0
+      },
+      "bindings": {
+        "normal": "worldNormal"
+      }
+    },
+    {
+      "id": "M2",
+      "kind": "levels",
+      "mode": "normal",
+      "opacity": 1.0,
+      "invert": false,
+      "values": {
+        "inLow": 0.2,
+        "inHigh": 0.9,
+        "gamma": 0.8
+      }
+    }
+  ]
+}

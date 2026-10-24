@@ -1,0 +1,593 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "Bone",
+ "meta": {
+  "name": "Bone",
+  "category": "Organic/Bone",
+  "tags": [
+   "bone",
+   "ivory",
+   "skeleton",
+   "organic",
+   "porous"
+  ],
+  "physical": "organic",
+  "scaleCm": 15,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation",
+   "hue"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "Weathered bone: ivory surface over porous, open bone where it is worn, fine cracks and brown staining."
+ },
+ "graph": {
+  "name": "Bone",
+  "typeVersion": 1,
+  "description": "Weathered bone: ivory surface over porous, open bone where it is worn, fine cracks and brown staining.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.3,
+    "label": "Wear",
+    "description": "Worn through to porous bone.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.3,
+    "label": "Age",
+    "description": "Cracks and staining.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   },
+   {
+    "name": "hue",
+    "kind": "param",
+    "type": "float",
+    "default": 0.0,
+    "label": "Hue",
+    "description": "Shifts the base colour's hue, in turns.",
+    "min": -0.5,
+    "max": 0.5,
+    "targets": [
+     "Material.hue"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "Bone",
+     "seed": 0,
+     "wear": 0.3,
+     "age": 0.3,
+     "colorVariation": 0.5,
+     "hue": 0.0
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ]
+  ],
+  "subgroups": {
+   "Bone": {
+    "name": "Bone",
+    "typeVersion": 1,
+    "description": "Weathered bone: ivory surface over porous, open bone where it is worn, fine cracks and brown staining.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "Porous.seed",
+       "Fibre.seed",
+       "Exposed.seed",
+       "Cracks.seed",
+       "Grime.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.3,
+      "label": "Wear",
+      "description": "Worn through to porous bone.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Bone.x"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.3,
+      "label": "Age",
+      "description": "Cracks and staining.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Bone.y",
+       "BaseColor.y"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.z"
+      ]
+     },
+     {
+      "name": "hue",
+      "kind": "param",
+      "type": "float",
+      "default": 0.0,
+      "label": "Hue",
+      "description": "Shifts the base colour's hue, in turns.",
+      "min": -0.5,
+      "max": 0.5,
+      "targets": [
+       "Tint.hue"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "Porous",
+      "type": "worley",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "scale": 30,
+       "octaves": 3,
+       "persistence": 0.5
+      }
+     },
+     {
+      "name": "Fibre",
+      "type": "directional",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "angle": 90.0,
+       "scaleAlong": 2,
+       "scaleAcross": 40,
+       "octaves": 4
+      }
+     },
+     {
+      "name": "Exposed",
+      "type": "clouds",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "scale": 4,
+       "octaves": 6
+      }
+     },
+     {
+      "name": "Cracks",
+      "type": "cells",
+      "position": [
+       0.0,
+       480.0
+      ],
+      "values": {
+       "scale": 4,
+       "mode": "crackle",
+       "width": 0.006,
+       "jitter": 1.0
+      }
+     },
+     {
+      "name": "Bone",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float ex = smoothstep(0.85 - p.x * 0.4, 0.9 - p.x * 0.4, texToFloat(c.sample(uv)));\nfloat po = smoothstep(0.1, 0.3, a.sample(uv).r);\nfloat ck = texToFloat(d.sample(uv)) * smoothstep(0.1, 0.8, p.y);\nreturn float4(ex, po, texToFloat(b.sample(uv)), ck);",
+       "x": 0.3,
+       "y": 0.3
+      }
+     },
+     {
+      "name": "Grime",
+      "type": "dirt",
+      "position": [
+       0.0,
+       640.0
+      ],
+      "values": {
+       "scale": 4,
+       "amount": 0.5,
+       "contrast": 1.0,
+       "grain": 0.4
+      }
+     },
+     {
+      "name": "BaseColor",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 s = a.sample(uv);\nfloat3 c0 = lerp(float3(0.8314, 0.7843, 0.6667), float3(0.8863, 0.8471, 0.7529), s.z * (0.5 + p.z * 0.5));\nfloat3 por = lerp(float3(0.5412, 0.4784, 0.3686), float3(0.7765, 0.7059, 0.5569), s.y);\nc0 = lerp(c0, por, s.x);\nc0 = lerp(c0, float3(0.3529, 0.2745, 0.1961), s.w * 0.8);\nc0 = lerp(c0, c0 * float3(0.7216, 0.5961, 0.4392), smoothstep(1.0 - p.y * 0.6, 1.3 - p.y * 0.6, texToFloat(b.sample(uv))));\nreturn float4(c0, 1.0);",
+       "z": 0.5,
+       "y": 0.3
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float v = lerp(0.55, 0.85, a.sample(uv).x) + a.sample(uv).w * 0.1;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float v = 0.5 - a.sample(uv).x * (1.0 - a.sample(uv).y) * 0.08 + (a.sample(uv).z - 0.5) * 0.01 - a.sample(uv).w * 0.03;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "intensity": 0.8
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       720.0,
+       160.0
+      ],
+      "values": {
+       "radius": 0.01,
+       "depth": 0.05,
+       "strength": 0.7
+      }
+     },
+     {
+      "name": "Tint",
+      "type": "hsv",
+      "position": [
+       720.0,
+       320.0
+      ],
+      "values": {
+       "hue": 0.0
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       960.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Metallic",
+      "type": "constant",
+      "position": [
+       0.0,
+       800.0
+      ],
+      "values": {
+       "value": 0.0
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       1440.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "Porous",
+      "out",
+      "Bone",
+      "a"
+     ],
+     [
+      "Fibre",
+      "out",
+      "Bone",
+      "b"
+     ],
+     [
+      "Exposed",
+      "out",
+      "Bone",
+      "c"
+     ],
+     [
+      "Cracks",
+      "out",
+      "Bone",
+      "d"
+     ],
+     [
+      "Bone",
+      "out",
+      "BaseColor",
+      "a"
+     ],
+     [
+      "Grime",
+      "out",
+      "BaseColor",
+      "b"
+     ],
+     [
+      "Bone",
+      "out",
+      "Roughness",
+      "a"
+     ],
+     [
+      "Bone",
+      "out",
+      "Height",
+      "a"
+     ],
+     [
+      "Height",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "Height",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "BaseColor",
+      "out",
+      "Tint",
+      "input"
+     ],
+     [
+      "Tint",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "Metallic",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "Height",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.3,
+   "age": 0.3,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.7,
+   "age": 0.75
+  }
+ }
+}

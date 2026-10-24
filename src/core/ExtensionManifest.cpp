@@ -102,8 +102,8 @@ Manifest Manifest::parse(const json& j, const fs::path& root)
             problems.push_back("'entry." + platform + "' must be a path inside the package");
     if (!m.python.empty() && !insidePackage(m.python))
         problems.push_back("'python' must be a path inside the package");
-    if (m.entry.empty() && m.python.empty())
-        problems.push_back("give an 'entry' library, a 'python' module or both");
+    if (m.entry.empty() && m.python.empty() && !j.contains("resources"))
+        problems.push_back("give an 'entry' library, a 'python' module or both, or only 'resources' for a resource pack");
 
     if (auto it = j.find("dependencies"); it != j.end() && !it->is_null())
     {

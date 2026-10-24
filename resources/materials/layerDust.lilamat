@@ -1,0 +1,537 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "LayerDust",
+ "meta": {
+  "name": "Dust",
+  "category": "Layer/Dust",
+  "tags": [
+   "layer",
+   "dust",
+   "dusty",
+   "smart"
+  ],
+  "physical": "dielectric",
+  "scaleCm": 60,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation",
+   "hue"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "Settled dust as a layer: soft pale grey-beige, fully matte, thicker in drifts.",
+  "layer": {
+   "generator": "genDust",
+   "channels": [
+    "baseColor",
+    "roughness",
+    "height"
+   ],
+   "blend": {}
+  }
+ },
+ "graph": {
+  "name": "LayerDust",
+  "typeVersion": 1,
+  "description": "Settled dust as a layer: soft pale grey-beige, fully matte, thicker in drifts.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.2,
+    "label": "Wear",
+    "description": "Softens the relief, as if worn down.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Age",
+    "description": "Dust thickness.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   },
+   {
+    "name": "hue",
+    "kind": "param",
+    "type": "float",
+    "default": 0.0,
+    "label": "Hue",
+    "description": "Shifts the base colour's hue, in turns.",
+    "min": -0.5,
+    "max": 0.5,
+    "targets": [
+     "Material.hue"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "LayerDust",
+     "seed": 0,
+     "wear": 0.2,
+     "age": 0.5,
+     "colorVariation": 0.5,
+     "hue": 0.0
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ]
+  ],
+  "subgroups": {
+   "LayerDust": {
+    "name": "LayerDust",
+    "typeVersion": 1,
+    "description": "Settled dust as a layer: soft pale grey-beige, fully matte, thicker in drifts.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "Drifts.seed",
+       "Fluff.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.2,
+      "label": "Wear",
+      "description": "Softens the relief, as if worn down.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "WornRelief.x"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Age",
+      "description": "Dust thickness.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.y",
+       "Height.y"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.z"
+      ]
+     },
+     {
+      "name": "hue",
+      "kind": "param",
+      "type": "float",
+      "default": 0.0,
+      "label": "Hue",
+      "description": "Shifts the base colour's hue, in turns.",
+      "min": -0.5,
+      "max": 0.5,
+      "targets": [
+       "Tint.hue"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "Drifts",
+      "type": "clouds",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "scale": 5,
+       "octaves": 6
+      }
+     },
+     {
+      "name": "Fluff",
+      "type": "perlin",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "scale": 80,
+       "octaves": 2
+      }
+     },
+     {
+      "name": "BaseColor",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float d = texToFloat(a.sample(uv));\nfloat3 c0 = lerp(float3(0.6039, 0.5725, 0.5176), float3(0.7608, 0.7255, 0.6588), saturate(d * 0.7 + p.y * 0.3 + (c.sample(uv) - 0.5) * 0.3 * p.z));\nreturn float4(c0, 1.0);",
+       "y": 0.5,
+       "z": 0.5
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float v = 0.95;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float v = 0.5 + texToFloat(a.sample(uv)) * 0.01 * (0.5 + p.y) + (c.sample(uv) - 0.5) * 0.004;\nreturn float4(v, v, v, 1.0);",
+       "y": 0.5
+      }
+     },
+     {
+      "name": "WornRelief",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float v = 0.5 + (texToFloat(a.sample(uv)) - 0.5) * (1.0 - p.x * 0.6);\nreturn float4(v, v, v, 1.0);",
+       "x": 0.2
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "intensity": 0.3
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       720.0,
+       160.0
+      ],
+      "values": {
+       "radius": 0.005,
+       "depth": 0.01,
+       "strength": 0.0
+      }
+     },
+     {
+      "name": "Tint",
+      "type": "hsv",
+      "position": [
+       480.0,
+       160.0
+      ],
+      "values": {
+       "hue": 0.0
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Metallic",
+      "type": "constant",
+      "position": [
+       0.0,
+       480.0
+      ],
+      "values": {
+       "value": 0.0
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       1200.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "Drifts",
+      "out",
+      "BaseColor",
+      "a"
+     ],
+     [
+      "Fluff",
+      "out",
+      "BaseColor",
+      "c"
+     ],
+     [
+      "Drifts",
+      "out",
+      "Height",
+      "a"
+     ],
+     [
+      "Fluff",
+      "out",
+      "Height",
+      "c"
+     ],
+     [
+      "Height",
+      "out",
+      "WornRelief",
+      "a"
+     ],
+     [
+      "WornRelief",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "WornRelief",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "BaseColor",
+      "out",
+      "Tint",
+      "input"
+     ],
+     [
+      "Tint",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "Metallic",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "WornRelief",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.2,
+   "age": 0.5,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.6000000000000001,
+   "age": 0.95
+  }
+ }
+}

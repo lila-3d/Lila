@@ -1,0 +1,561 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "LayerMoss",
+ "meta": {
+  "name": "Moss",
+  "category": "Layer/Moss",
+  "tags": [
+   "layer",
+   "moss",
+   "growth",
+   "green",
+   "smart"
+  ],
+  "physical": "organic",
+  "scaleCm": 40,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation",
+   "hue"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "Moss as a layer: soft cushions of bright and olive green with fuzzy height, for growth on stone, wood and roofs.",
+  "layer": {
+   "generator": "genMoss",
+   "channels": [
+    "baseColor",
+    "roughness",
+    "normal",
+    "height",
+    "ao"
+   ],
+   "blend": {}
+  }
+ },
+ "graph": {
+  "name": "LayerMoss",
+  "typeVersion": 1,
+  "description": "Moss as a layer: soft cushions of bright and olive green with fuzzy height, for growth on stone, wood and roofs.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.2,
+    "label": "Wear",
+    "description": "Trampled, browned moss.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.4,
+    "label": "Age",
+    "description": "Thicker, darker cushions.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   },
+   {
+    "name": "hue",
+    "kind": "param",
+    "type": "float",
+    "default": 0.0,
+    "label": "Hue",
+    "description": "Shifts the base colour's hue, in turns.",
+    "min": -0.5,
+    "max": 0.5,
+    "targets": [
+     "Material.hue"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "LayerMoss",
+     "seed": 0,
+     "wear": 0.2,
+     "age": 0.4,
+     "colorVariation": 0.5,
+     "hue": 0.0
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ]
+  ],
+  "subgroups": {
+   "LayerMoss": {
+    "name": "LayerMoss",
+    "typeVersion": 1,
+    "description": "Moss as a layer: soft cushions of bright and olive green with fuzzy height, for growth on stone, wood and roofs.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "Cushions.seed",
+       "Fuzz.seed",
+       "Tone.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.2,
+      "label": "Wear",
+      "description": "Trampled, browned moss.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.x"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.4,
+      "label": "Age",
+      "description": "Thicker, darker cushions.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.y",
+       "Height.y"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.z"
+      ]
+     },
+     {
+      "name": "hue",
+      "kind": "param",
+      "type": "float",
+      "default": 0.0,
+      "label": "Hue",
+      "description": "Shifts the base colour's hue, in turns.",
+      "min": -0.5,
+      "max": 0.5,
+      "targets": [
+       "Tint.hue"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "Cushions",
+      "type": "worley",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "scale": 10,
+       "octaves": 3,
+       "persistence": 0.5,
+       "invert": true
+      }
+     },
+     {
+      "name": "Fuzz",
+      "type": "perlin",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "scale": 120,
+       "octaves": 2
+      }
+     },
+     {
+      "name": "Tone",
+      "type": "clouds",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "scale": 4,
+       "octaves": 5
+      }
+     },
+     {
+      "name": "Moss",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float cu = texToFloat(a.sample(uv));\nfloat fz = c.sample(uv);\nfloat hgt = cu * 0.8 + fz * 0.2;\nreturn float4(hgt, fz, d.sample(uv), 1.0);"
+      }
+     },
+     {
+      "name": "BaseColor",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 s = a.sample(uv);\nfloat3 c0 = lerp(float3(0.2353, 0.3294, 0.1255), float3(0.4784, 0.6039, 0.2039), saturate(s.x * 0.8 + (s.z - 0.5) * 0.6 * (0.4 + p.z)));\nc0 = lerp(c0, float3(0.1804, 0.2431, 0.1020), p.y * 0.3 * (1.0 - s.x));\nc0 = lerp(c0, float3(0.4784, 0.4314, 0.2431), smoothstep(0.6, 0.9, s.z) * p.x);\nc0 *= 0.8 + s.y * 0.3;\nreturn float4(c0, 1.0);",
+       "z": 0.5,
+       "y": 0.4,
+       "x": 0.2
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float v = 0.9 + (a.sample(uv).y - 0.5) * 0.1;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float v = 0.5 + a.sample(uv).x * 0.15 * (0.5 + p.y);\nreturn float4(v, v, v, 1.0);",
+       "y": 0.4
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "intensity": 1.0
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       720.0,
+       160.0
+      ],
+      "values": {
+       "radius": 0.01,
+       "depth": 0.06,
+       "strength": 0.8
+      }
+     },
+     {
+      "name": "Tint",
+      "type": "hsv",
+      "position": [
+       720.0,
+       320.0
+      ],
+      "values": {
+       "hue": 0.0
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       960.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Metallic",
+      "type": "constant",
+      "position": [
+       0.0,
+       480.0
+      ],
+      "values": {
+       "value": 0.0
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       1440.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "Cushions",
+      "out",
+      "Moss",
+      "a"
+     ],
+     [
+      "Fuzz",
+      "out",
+      "Moss",
+      "c"
+     ],
+     [
+      "Tone",
+      "out",
+      "Moss",
+      "d"
+     ],
+     [
+      "Moss",
+      "out",
+      "BaseColor",
+      "a"
+     ],
+     [
+      "Moss",
+      "out",
+      "Roughness",
+      "a"
+     ],
+     [
+      "Moss",
+      "out",
+      "Height",
+      "a"
+     ],
+     [
+      "Height",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "Height",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "BaseColor",
+      "out",
+      "Tint",
+      "input"
+     ],
+     [
+      "Tint",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "Metallic",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "Height",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.2,
+   "age": 0.4,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.6000000000000001,
+   "age": 0.8500000000000001
+  }
+ }
+}

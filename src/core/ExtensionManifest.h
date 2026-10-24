@@ -34,7 +34,7 @@ struct Dependency
  *       "description": "...",
  *       "entry": {"windows": "Hello.dll", "linux": "libHello.so", "macos": "libHello.dylib"},
  *       "python": "hello",                  // optional: module (folder or .py) relative to the package
- *       "resources": "resources",           // optional, the default
+ *       "resources": "resources",           // optional, the default; alone (no entry, no python) for a resource pack
  *       "dependencies": ["Other", {"id": "Base", "version": "1.2"}],
  *       "enabledByDefault": true,
  *       "license": {}                       // reserved
@@ -65,6 +65,8 @@ struct Manifest
     LILA_FOUNDATION_API std::optional<std::filesystem::path> library() const;
     /** The Python module's file or package folder, absolute; nullopt when there is none. */
     LILA_FOUNDATION_API std::optional<std::filesystem::path> pythonModule() const;
+    /** Ships only resources (materials, nodes, presets): no library and no Python module. */
+    bool resourcesOnly() const { return entry.empty() && python.empty(); }
     LILA_FOUNDATION_API nlohmann::json toJson() const;
 };
 

@@ -1,0 +1,643 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "PlasticGloss",
+ "meta": {
+  "name": "Glossy Plastic",
+  "category": "Plastic/Gloss",
+  "tags": [
+   "plastic",
+   "abs",
+   "glossy",
+   "toy",
+   "product"
+  ],
+  "physical": "dielectric",
+  "scaleCm": 30,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation",
+   "hue",
+   "plasticColor"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "Glossy injection-moulded ABS: saturated colour, faint orange peel, micro-scuffs and dust."
+ },
+ "graph": {
+  "name": "PlasticGloss",
+  "typeVersion": 1,
+  "description": "Glossy injection-moulded ABS: saturated colour, faint orange peel, micro-scuffs and dust.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.2,
+    "label": "Wear",
+    "description": "Micro-scuffs.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.1,
+    "label": "Age",
+    "description": "Dust and yellowing.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   },
+   {
+    "name": "hue",
+    "kind": "param",
+    "type": "float",
+    "default": 0.0,
+    "label": "Hue",
+    "description": "Shifts the base colour's hue, in turns.",
+    "min": -0.5,
+    "max": 0.5,
+    "targets": [
+     "Material.hue"
+    ]
+   },
+   {
+    "name": "plasticColor",
+    "kind": "param",
+    "type": "color",
+    "default": [
+     0.47932,
+     0.0382,
+     0.02624,
+     1.0
+    ],
+    "label": "Colour",
+    "description": "The plastic's colour (sRGB).",
+    "targets": [
+     "Material.plasticColor"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "PlasticGloss",
+     "seed": 0,
+     "wear": 0.2,
+     "age": 0.1,
+     "colorVariation": 0.5,
+     "hue": 0.0,
+     "plasticColor": [
+      0.47932,
+      0.0382,
+      0.02624,
+      1.0
+     ]
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ]
+  ],
+  "subgroups": {
+   "PlasticGloss": {
+    "name": "PlasticGloss",
+    "typeVersion": 1,
+    "description": "Glossy injection-moulded ABS: saturated colour, faint orange peel, micro-scuffs and dust.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "Peel.seed",
+       "Grime.seed",
+       "Scuffs.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.2,
+      "label": "Wear",
+      "description": "Micro-scuffs.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "DustScuffs.x"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.1,
+      "label": "Age",
+      "description": "Dust and yellowing.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "DustScuffs.y",
+       "BaseColor.y"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.z"
+      ]
+     },
+     {
+      "name": "hue",
+      "kind": "param",
+      "type": "float",
+      "default": 0.0,
+      "label": "Hue",
+      "description": "Shifts the base colour's hue, in turns.",
+      "min": -0.5,
+      "max": 0.5,
+      "targets": [
+       "Tint.hue"
+      ]
+     },
+     {
+      "name": "plasticColor",
+      "kind": "param",
+      "type": "color",
+      "default": [
+       0.47932,
+       0.0382,
+       0.02624,
+       1.0
+      ],
+      "label": "Colour",
+      "description": "The plastic's colour (sRGB).",
+      "targets": [
+       "PlasticColor.color"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "PlasticColor",
+      "type": "color",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "color": [
+        0.47932,
+        0.0382,
+        0.02624,
+        1.0
+       ]
+      }
+     },
+     {
+      "name": "PlasticColorSrgb",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 l = saturate(c.rgb);\nreturn float4(lerp(1.055 * pow(l, 1.0 / 2.4) - 0.055, l * 12.92, step(l, 0.0031308)), c.a);"
+      }
+     },
+     {
+      "name": "Peel",
+      "type": "perlin",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "scale": 64,
+       "octaves": 2
+      }
+     },
+     {
+      "name": "Grime",
+      "type": "dirt",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "scale": 5,
+       "amount": 0.5,
+       "contrast": 1.0,
+       "grain": 0.4
+      }
+     },
+     {
+      "name": "Scuffs",
+      "type": "scratches",
+      "position": [
+       0.0,
+       480.0
+      ],
+      "values": {
+       "scale": 6,
+       "count": 5,
+       "length": 0.4,
+       "width": 0.0012,
+       "angleRandom": 1.0
+      }
+     },
+     {
+      "name": "DustScuffs",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float d0 = smoothstep(1.0 - p.y * 0.6, 1.25 - p.y * 0.6, texToFloat(a.sample(uv)));\nfloat s = c.sample(uv) * smoothstep(0.0, 0.6, p.x);\nreturn float4(d0, s, 0.0, 1.0);",
+       "x": 0.2,
+       "y": 0.1
+      }
+     },
+     {
+      "name": "BaseColor",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 d = b.sample(uv);\nfloat3 c0 = a.sample(uv).rgb * (1.0 + (c.sample(uv) - 0.5) * 0.03 * (0.5 + p.z));\nc0 = lerp(c0, c0 * float3(0.9412, 0.9020, 0.7843), p.y * 0.3);\nc0 = lerp(c0, c0 * 1.1 + 0.04, d.y * 0.5);\nc0 = lerp(c0, float3(0.6588, 0.6392, 0.6039), d.x * 0.7);\nreturn float4(saturate(c0), 1.0);",
+       "z": 0.5,
+       "y": 0.1
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float v = 0.12 + (c.sample(uv) - 0.5) * 0.04 + b.sample(uv).y * 0.3 + b.sample(uv).x * 0.7;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float v = 0.5 + (c.sample(uv) - 0.5) * 0.002 - b.sample(uv).y * 0.004;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "intensity": 0.4
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       720.0,
+       160.0
+      ],
+      "values": {
+       "radius": 0.005,
+       "depth": 0.01,
+       "strength": 0.2
+      }
+     },
+     {
+      "name": "Tint",
+      "type": "hsv",
+      "position": [
+       720.0,
+       320.0
+      ],
+      "values": {
+       "hue": 0.0
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       960.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Metallic",
+      "type": "constant",
+      "position": [
+       0.0,
+       640.0
+      ],
+      "values": {
+       "value": 0.0
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       1440.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "PlasticColor",
+      "out",
+      "PlasticColorSrgb",
+      "a"
+     ],
+     [
+      "Grime",
+      "out",
+      "DustScuffs",
+      "a"
+     ],
+     [
+      "Scuffs",
+      "out",
+      "DustScuffs",
+      "c"
+     ],
+     [
+      "PlasticColorSrgb",
+      "out",
+      "BaseColor",
+      "a"
+     ],
+     [
+      "DustScuffs",
+      "out",
+      "BaseColor",
+      "b"
+     ],
+     [
+      "Peel",
+      "out",
+      "BaseColor",
+      "c"
+     ],
+     [
+      "DustScuffs",
+      "out",
+      "Roughness",
+      "b"
+     ],
+     [
+      "Peel",
+      "out",
+      "Roughness",
+      "c"
+     ],
+     [
+      "DustScuffs",
+      "out",
+      "Height",
+      "b"
+     ],
+     [
+      "Peel",
+      "out",
+      "Height",
+      "c"
+     ],
+     [
+      "Height",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "Height",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "BaseColor",
+      "out",
+      "Tint",
+      "input"
+     ],
+     [
+      "Tint",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "Metallic",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "Height",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.2,
+   "age": 0.1,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.6000000000000001,
+   "age": 0.55
+  }
+ }
+}

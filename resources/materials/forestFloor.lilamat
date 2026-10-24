@@ -1,0 +1,708 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "ForestFloor",
+ "meta": {
+  "name": "Forest Floor",
+  "category": "Ground/Forest",
+  "tags": [
+   "forest",
+   "leaves",
+   "litter",
+   "ground",
+   "autumn",
+   "woodland"
+  ],
+  "physical": "organic",
+  "scaleCm": 120,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation",
+   "hue"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "Leaf litter over dark humus: fallen leaves in browns and ochres, twigs, needles and moss."
+ },
+ "graph": {
+  "name": "ForestFloor",
+  "typeVersion": 1,
+  "description": "Leaf litter over dark humus: fallen leaves in browns and ochres, twigs, needles and moss.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.2,
+    "label": "Wear",
+    "description": "Trodden, broken-down litter.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.4,
+    "label": "Age",
+    "description": "Decay: darker, wetter leaves and more moss.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   },
+   {
+    "name": "hue",
+    "kind": "param",
+    "type": "float",
+    "default": 0.0,
+    "label": "Hue",
+    "description": "Shifts the base colour's hue, in turns.",
+    "min": -0.5,
+    "max": 0.5,
+    "targets": [
+     "Material.hue"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "ForestFloor",
+     "seed": 0,
+     "wear": 0.2,
+     "age": 0.4,
+     "colorVariation": 0.5,
+     "hue": 0.0
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ]
+  ],
+  "subgroups": {
+   "ForestFloor": {
+    "name": "ForestFloor",
+    "typeVersion": 1,
+    "description": "Leaf litter over dark humus: fallen leaves in browns and ochres, twigs, needles and moss.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "Leaves.seed",
+       "SmallLeaves.seed",
+       "Twigs.seed",
+       "Moss.seed",
+       "Humus.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.2,
+      "label": "Wear",
+      "description": "Trodden, broken-down litter.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Height.x"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.4,
+      "label": "Age",
+      "description": "Decay: darker, wetter leaves and more moss.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "LitterColor.y",
+       "Roughness.y"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "LitterColor.z"
+      ]
+     },
+     {
+      "name": "hue",
+      "kind": "param",
+      "type": "float",
+      "default": 0.0,
+      "label": "Hue",
+      "description": "Shifts the base colour's hue, in turns.",
+      "min": -0.5,
+      "max": 0.5,
+      "targets": [
+       "Tint.hue"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "Leaf",
+      "type": "pixelProcessor",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float2 q = (uv - 0.5) * float2(1.0, 1.0);\nfloat y = q.y * 2.0;\nfloat halfw = 0.3 * sqrt(saturate(1.0 - y * y)) * (1.0 - 0.25 * y);\nfloat v = 1.0 - smoothstep(halfw - 0.03, halfw, abs(q.x));\nfloat vein = 1.0 - smoothstep(0.0, 0.015, abs(q.x));\nfloat h = v * (0.75 + 0.25 * (1.0 - abs(q.x) / max(halfw, 0.01)) - vein * 0.1);\nreturn float4(h, h, h, 1.0);"
+      }
+     },
+     {
+      "name": "Twig",
+      "type": "sdfSegment",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "startX": 0.1,
+       "startY": 0.5,
+       "endX": 0.9,
+       "endY": 0.5,
+       "thickness": 0.025
+      }
+     },
+     {
+      "name": "TwigMask",
+      "type": "sdfToMask",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "mode": "fill",
+       "softness": 2.0
+      }
+     },
+     {
+      "name": "Leaves",
+      "type": "splatter",
+      "position": [
+       240.0,
+       160.0
+      ],
+      "values": {
+       "countX": 8,
+       "countY": 8,
+       "perCell": 5,
+       "size": 0.9,
+       "sizeRandom": 0.4,
+       "rotationRandom": 1.0,
+       "valueRandom": 0.2,
+       "blend": "top"
+      }
+     },
+     {
+      "name": "SmallLeaves",
+      "type": "splatter",
+      "position": [
+       240.0,
+       320.0
+      ],
+      "values": {
+       "countX": 14,
+       "countY": 14,
+       "perCell": 4,
+       "size": 0.8,
+       "sizeRandom": 0.4,
+       "rotationRandom": 1.0,
+       "valueRandom": 0.2,
+       "blend": "top"
+      }
+     },
+     {
+      "name": "Twigs",
+      "type": "splatter",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "countX": 5,
+       "countY": 5,
+       "perCell": 2,
+       "size": 0.9,
+       "sizeRandom": 0.5,
+       "rotationRandom": 1.0,
+       "valueRandom": 0.1,
+       "blend": "max"
+      }
+     },
+     {
+      "name": "Litter",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float l1 = c.sample(uv);\nfloat l2 = d.sample(uv) * 0.8;\nfloat top = step(l2, l1);\nfloat hgt = max(l1, l2);\nfloat k = lerp(b.sample(uv).r, a.sample(uv).r, top);\nreturn float4(hgt, k, step(0.02, hgt), top);"
+      }
+     },
+     {
+      "name": "Moss",
+      "type": "clouds",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "scale": 4,
+       "octaves": 6
+      }
+     },
+     {
+      "name": "Humus",
+      "type": "perlin",
+      "position": [
+       0.0,
+       480.0
+      ],
+      "values": {
+       "scale": 30,
+       "octaves": 4
+      }
+     },
+     {
+      "name": "LitterColor",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 s = a.sample(uv);\nfloat k = s.y;\nfloat3 lf = lerp(float3(0.4314, 0.2667, 0.1412), float3(0.6039, 0.4157, 0.1961), k);\nlf = lerp(lf, float3(0.6588, 0.5098, 0.2275), step(0.7, k) * (0.4 + p.z * 0.6));\nlf = lerp(lf, float3(0.3529, 0.2745, 0.1882), step(0.85, frac(k * 7.0)) * 0.7);\nlf = lerp(lf, lf * 0.6, p.y * 0.5);\nfloat3 hm = lerp(float3(0.1647, 0.1255, 0.0941), float3(0.2627, 0.2078, 0.1647), texToFloat(c.sample(uv)));\nfloat mo = smoothstep(0.75 - p.y * 0.4, 0.95 - p.y * 0.4, texToFloat(b.sample(uv))) * (1.0 - s.z * 0.7);\nhm = lerp(hm, float3(0.3020, 0.3686, 0.1490), mo);\nfloat3 c0 = lerp(hm, lf * (0.75 + s.x * 0.35), s.z);\nreturn float4(c0, 1.0);",
+       "z": 0.5,
+       "y": 0.4
+      }
+     },
+     {
+      "name": "BaseColor",
+      "type": "pixelProcessor",
+      "position": [
+       960.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float t = c.sample(uv);\nfloat3 c0 = lerp(a.sample(uv).rgb, float3(0.2902, 0.2118, 0.1490) * (0.8 + texToFloat(b.sample(uv)) * 0.4), step(0.3, t));\nreturn float4(c0, 1.0);"
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float v = lerp(0.9, lerp(0.7, 0.45, p.y), a.sample(uv).z);\nreturn float4(v, v, v, 1.0);",
+       "y": 0.4
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float v = 0.15 + a.sample(uv).x * 0.35 * (1.0 - p.x * 0.5) + c.sample(uv) * 0.25;\nreturn float4(v, v, v, 1.0);",
+       "x": 0.2
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       960.0,
+       160.0
+      ],
+      "values": {
+       "intensity": 1.2
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       960.0,
+       320.0
+      ],
+      "values": {
+       "radius": 0.02,
+       "depth": 0.15,
+       "strength": 1.0
+      }
+     },
+     {
+      "name": "Tint",
+      "type": "hsv",
+      "position": [
+       1200.0,
+       0.0
+      ],
+      "values": {
+       "hue": 0.0
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       1440.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       960.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Metallic",
+      "type": "constant",
+      "position": [
+       0.0,
+       640.0
+      ],
+      "values": {
+       "value": 0.0
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       1920.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "Twig",
+      "sdf",
+      "TwigMask",
+      "input"
+     ],
+     [
+      "Leaf",
+      "out",
+      "Leaves",
+      "pattern"
+     ],
+     [
+      "Leaf",
+      "out",
+      "SmallLeaves",
+      "pattern"
+     ],
+     [
+      "TwigMask",
+      "out",
+      "Twigs",
+      "pattern"
+     ],
+     [
+      "Leaves",
+      "color",
+      "Litter",
+      "a"
+     ],
+     [
+      "SmallLeaves",
+      "color",
+      "Litter",
+      "b"
+     ],
+     [
+      "Leaves",
+      "out",
+      "Litter",
+      "c"
+     ],
+     [
+      "SmallLeaves",
+      "out",
+      "Litter",
+      "d"
+     ],
+     [
+      "Litter",
+      "out",
+      "LitterColor",
+      "a"
+     ],
+     [
+      "Moss",
+      "out",
+      "LitterColor",
+      "b"
+     ],
+     [
+      "Humus",
+      "out",
+      "LitterColor",
+      "c"
+     ],
+     [
+      "LitterColor",
+      "out",
+      "BaseColor",
+      "a"
+     ],
+     [
+      "Humus",
+      "out",
+      "BaseColor",
+      "b"
+     ],
+     [
+      "Twigs",
+      "out",
+      "BaseColor",
+      "c"
+     ],
+     [
+      "Litter",
+      "out",
+      "Roughness",
+      "a"
+     ],
+     [
+      "Litter",
+      "out",
+      "Height",
+      "a"
+     ],
+     [
+      "Twigs",
+      "out",
+      "Height",
+      "c"
+     ],
+     [
+      "Height",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "Height",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "BaseColor",
+      "out",
+      "Tint",
+      "input"
+     ],
+     [
+      "Tint",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "Metallic",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "Height",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.2,
+   "age": 0.4,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.6000000000000001,
+   "age": 0.8500000000000001
+  }
+ }
+}

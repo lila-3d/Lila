@@ -1,0 +1,746 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "FlowerMeadow",
+ "meta": {
+  "name": "Flower Meadow",
+  "category": "Meadowlight/Grass",
+  "tags": [
+   "meadowlight",
+   "stylised",
+   "hand-painted",
+   "painterly",
+   "grass",
+   "flowers",
+   "meadow",
+   "wildflowers",
+   "spring"
+  ],
+  "physical": "stylised",
+  "scaleCm": 150,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation",
+   "hue"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "Painted meadow grass sprinkled with flowers: daisies, buttercups, pink clover and blue speedwell, each a few bright dabs.",
+  "shadingModel": "painterly",
+  "shading": {
+   "shadingModel": "painterly",
+   "strokeMap": "strokes_soft",
+   "strokeScale": 20.0,
+   "strokeNormal": 0.45,
+   "paletteShadow": [
+    0.0284,
+    0.1022,
+    0.1022
+   ],
+   "paletteLight": [
+    0.9387,
+    0.855,
+    0.4342
+   ],
+   "paletteAccent": [
+    0.8714,
+    0.3515,
+    0.5271
+   ],
+   "paletteContrast": 0.4,
+   "specularTint": 0.6
+  }
+ },
+ "graph": {
+  "name": "FlowerMeadow",
+  "typeVersion": 1,
+  "description": "Painted meadow grass sprinkled with flowers: daisies, buttercups, pink clover and blue speedwell, each a few bright dabs.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.15,
+    "label": "Wear",
+    "description": "Fewer flowers.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.2,
+    "label": "Age",
+    "description": "Darkens and dulls the colour.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   },
+   {
+    "name": "hue",
+    "kind": "param",
+    "type": "float",
+    "default": 0.0,
+    "label": "Hue",
+    "description": "Shifts the base colour's hue, in turns.",
+    "min": -0.5,
+    "max": 0.5,
+    "targets": [
+     "Material.hue"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "FlowerMeadow",
+     "seed": 0,
+     "wear": 0.15,
+     "age": 0.2,
+     "colorVariation": 0.5,
+     "hue": 0.0
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ]
+  ],
+  "subgroups": {
+   "FlowerMeadow": {
+    "name": "FlowerMeadow",
+    "typeVersion": 1,
+    "description": "Painted meadow grass sprinkled with flowers: daisies, buttercups, pink clover and blue speedwell, each a few bright dabs.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "Tufts.seed",
+       "Flowers.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.15,
+      "label": "Wear",
+      "description": "Fewer flowers.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Blooms.x"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.2,
+      "label": "Age",
+      "description": "Darkens and dulls the colour.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Aged.y"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Paint.z"
+      ]
+     },
+     {
+      "name": "hue",
+      "kind": "param",
+      "type": "float",
+      "default": 0.0,
+      "label": "Hue",
+      "description": "Shifts the base colour's hue, in turns.",
+      "min": -0.5,
+      "max": 0.5,
+      "targets": [
+       "Tint.hue"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "Tuft",
+      "type": "pixelProcessor",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float2 q = uv - 0.5;\nfloat r = length(q * float2(1.0, 1.4));\nfloat v = sqrt(saturate(1.0 - r / 0.45)) * (0.6 + 0.4 * saturate(0.5 - q.y));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Tufts",
+      "type": "splatter",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "countX": 10,
+       "countY": 10,
+       "perCell": 6,
+       "size": 0.8,
+       "sizeRandom": 0.5,
+       "rotationRandom": 0.15,
+       "valueRandom": 0.3,
+       "blend": "max"
+      }
+     },
+     {
+      "name": "GrassHeight",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float v = 0.25 + c.sample(uv) * 0.5;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "ValueLight",
+      "type": "emboss",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "angle": 135.0,
+       "intensity": 1.0
+      }
+     },
+     {
+      "name": "ValueOcclusion",
+      "type": "blur",
+      "position": [
+       720.0,
+       160.0
+      ],
+      "values": {
+       "radius": 0.02
+      }
+     },
+     {
+      "name": "Value",
+      "type": "pixelProcessor",
+      "position": [
+       960.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float h = texToFloat(c.sample(uv));\nfloat l = texToFloat(a.sample(uv));\nfloat cav = saturate((texToFloat(b.sample(uv)) - h) * 8.0);\nfloat v = 0.5 + (l - 0.5) * 1.2000 + (h - 0.5) * 0.5 - cav * 0.8000 + 0.0000;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Strokes",
+      "type": "image",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "file": "strokes/strokes_soft.png",
+       "tiles": 6
+      }
+     },
+     {
+      "name": "Paint",
+      "type": "pixelProcessor",
+      "position": [
+       1200.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float t = texToFloat(a.sample(uv));\nfloat4 s = b.sample(uv);\nt = saturate(t + (s.a - 0.5) * 0.3000 * (0.4 + p.z) + (s.b - 0.5) * 0.25);\nfloat k = t * 5.0000;\nt = (floor(k) + smoothstep(0.3, 0.7, frac(k))) / 5.0000;\nfloat3 c = t < 0.34 ? lerp(float3(0.1647, 0.2980, 0.2902), float3(0.2471, 0.4784, 0.2902), t / 0.34) : (t < 0.67 ? lerp(float3(0.2471, 0.4784, 0.2902), float3(0.4745, 0.6588, 0.2902), (t - 0.34) / 0.33) : lerp(float3(0.4745, 0.6588, 0.2902), float3(0.8118, 0.8392, 0.4784), (t - 0.67) / 0.33));\nreturn float4(c, 1.0);",
+       "z": 0.5
+      }
+     },
+     {
+      "name": "Flower",
+      "type": "pixelProcessor",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float2 q = uv - 0.5;\nfloat ang = atan2(q.y, q.x);\nfloat r = length(q);\nfloat petal = 0.32 + 0.12 * cos(ang * 5.0);\nfloat v = 1.0 - smoothstep(petal - 0.04, petal, r);\nfloat centre = 1.0 - smoothstep(0.08, 0.11, r);\nreturn float4(v, centre, v, 1.0);"
+      }
+     },
+     {
+      "name": "FlowerShape",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float v = a.sample(uv).r;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Flowers",
+      "type": "splatter",
+      "position": [
+       480.0,
+       160.0
+      ],
+      "values": {
+       "countX": 9,
+       "countY": 9,
+       "perCell": 2,
+       "size": 0.4,
+       "sizeRandom": 0.4,
+       "rotationRandom": 1.0,
+       "valueRandom": 0.0,
+       "blend": "top"
+      }
+     },
+     {
+      "name": "Blooms",
+      "type": "pixelProcessor",
+      "position": [
+       1440.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 rc = b.sample(uv);\nfloat fl = c.sample(uv) * step(p.x * 0.8, rc.g);\nfloat k = rc.r;\nfloat3 fc = k < 0.4 ? float3(0.9647, 0.9490, 0.9098) : (k < 0.65 ? float3(0.9490, 0.8157, 0.2510) : (k < 0.85 ? float3(0.9098, 0.5333, 0.6902) : float3(0.4392, 0.5647, 0.8784)));\nfloat3 c0 = lerp(a.sample(uv).rgb, fc * (0.85 + fl * 0.2), step(0.3, fl));\nreturn float4(c0, 1.0);",
+       "x": 0.15
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float v = 0.25 + c.sample(uv) * 0.5 + step(0.3, d.sample(uv)) * 0.2;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       960.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float v = 0.8500 + (texToFloat(a.sample(uv)) - 0.5) * 0.05;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Aged",
+      "type": "pixelProcessor",
+      "position": [
+       1680.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nreturn float4(lerp(c.rgb, c.rgb * 0.85, p.y), c.a);",
+       "y": 0.2
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       960.0,
+       320.0
+      ],
+      "values": {
+       "intensity": 0.6
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       960.0,
+       480.0
+      ],
+      "values": {
+       "radius": 0.03,
+       "depth": 0.1,
+       "strength": 0.5
+      }
+     },
+     {
+      "name": "Tint",
+      "type": "hsv",
+      "position": [
+       1920.0,
+       0.0
+      ],
+      "values": {
+       "hue": 0.0
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       2160.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       1200.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Metallic",
+      "type": "constant",
+      "position": [
+       0.0,
+       480.0
+      ],
+      "values": {
+       "value": 0.0
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       2640.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "Tuft",
+      "out",
+      "Tufts",
+      "pattern"
+     ],
+     [
+      "Tufts",
+      "out",
+      "GrassHeight",
+      "c"
+     ],
+     [
+      "GrassHeight",
+      "out",
+      "ValueLight",
+      "input"
+     ],
+     [
+      "GrassHeight",
+      "out",
+      "ValueOcclusion",
+      "input"
+     ],
+     [
+      "ValueLight",
+      "out",
+      "Value",
+      "a"
+     ],
+     [
+      "ValueOcclusion",
+      "out",
+      "Value",
+      "b"
+     ],
+     [
+      "GrassHeight",
+      "out",
+      "Value",
+      "c"
+     ],
+     [
+      "Value",
+      "out",
+      "Paint",
+      "a"
+     ],
+     [
+      "Strokes",
+      "out",
+      "Paint",
+      "b"
+     ],
+     [
+      "Flower",
+      "out",
+      "FlowerShape",
+      "a"
+     ],
+     [
+      "FlowerShape",
+      "out",
+      "Flowers",
+      "pattern"
+     ],
+     [
+      "Paint",
+      "out",
+      "Blooms",
+      "a"
+     ],
+     [
+      "Flowers",
+      "color",
+      "Blooms",
+      "b"
+     ],
+     [
+      "Flowers",
+      "out",
+      "Blooms",
+      "c"
+     ],
+     [
+      "Tufts",
+      "out",
+      "Height",
+      "c"
+     ],
+     [
+      "Flowers",
+      "out",
+      "Height",
+      "d"
+     ],
+     [
+      "Height",
+      "out",
+      "Roughness",
+      "a"
+     ],
+     [
+      "Blooms",
+      "out",
+      "Aged",
+      "a"
+     ],
+     [
+      "Height",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "Height",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "Aged",
+      "out",
+      "Tint",
+      "input"
+     ],
+     [
+      "Tint",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "Metallic",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "Height",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.15,
+   "age": 0.2,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.55,
+   "age": 0.65
+  }
+ }
+}

@@ -1,0 +1,667 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "SciFiPanels",
+ "meta": {
+  "name": "Sci-Fi Panels",
+  "category": "Sci-Fi/Panels",
+  "tags": [
+   "sci-fi",
+   "scifi",
+   "panels",
+   "hull",
+   "spaceship",
+   "plating"
+  ],
+  "physical": "metal",
+  "scaleCm": 200,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation",
+   "hue",
+   "paintColor"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "Hull plating: large and subdivided painted panels, recessed seams, corner bolts, vent slots, chipped edges."
+ },
+ "graph": {
+  "name": "SciFiPanels",
+  "typeVersion": 1,
+  "description": "Hull plating: large and subdivided painted panels, recessed seams, corner bolts, vent slots, chipped edges.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.3,
+    "label": "Wear",
+    "description": "Paint chipped off the panel edges.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.25,
+    "label": "Age",
+    "description": "Grime in the seams.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   },
+   {
+    "name": "hue",
+    "kind": "param",
+    "type": "float",
+    "default": 0.0,
+    "label": "Hue",
+    "description": "Shifts the base colour's hue, in turns.",
+    "min": -0.5,
+    "max": 0.5,
+    "targets": [
+     "Material.hue"
+    ]
+   },
+   {
+    "name": "paintColor",
+    "kind": "param",
+    "type": "color",
+    "default": [
+     0.39676,
+     0.41789,
+     0.43966,
+     1.0
+    ],
+    "label": "Paint Colour",
+    "description": "The hull paint (sRGB).",
+    "targets": [
+     "Material.paintColor"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "SciFiPanels",
+     "seed": 0,
+     "wear": 0.3,
+     "age": 0.25,
+     "colorVariation": 0.5,
+     "hue": 0.0,
+     "paintColor": [
+      0.39676,
+      0.41789,
+      0.43966,
+      1.0
+     ]
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ]
+  ],
+  "subgroups": {
+   "SciFiPanels": {
+    "name": "SciFiPanels",
+    "typeVersion": 1,
+    "description": "Hull plating: large and subdivided painted panels, recessed seams, corner bolts, vent slots, chipped edges.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "ChipNoise.seed",
+       "Grime.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.3,
+      "label": "Wear",
+      "description": "Paint chipped off the panel edges.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Wear.x"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.25,
+      "label": "Age",
+      "description": "Grime in the seams.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Wear.y"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "PanelTone.z"
+      ]
+     },
+     {
+      "name": "hue",
+      "kind": "param",
+      "type": "float",
+      "default": 0.0,
+      "label": "Hue",
+      "description": "Shifts the base colour's hue, in turns.",
+      "min": -0.5,
+      "max": 0.5,
+      "targets": [
+       "Tint.hue"
+      ]
+     },
+     {
+      "name": "paintColor",
+      "kind": "param",
+      "type": "color",
+      "default": [
+       0.39676,
+       0.41789,
+       0.43966,
+       1.0
+      ],
+      "label": "Paint Colour",
+      "description": "The hull paint (sRGB).",
+      "targets": [
+       "PaintColor.color"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "Panels",
+      "type": "pixelProcessor",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float2 g1 = uv * 2.0;\nfloat2 c1 = floor(g1);\nfloat r1 = texRand(uint2(c1 + 17.0), 7u);\nfloat sub = r1 > 0.45 ? 2.0 : 1.0;\nfloat2 g = uv * 2.0 * sub;\nfloat2 c2 = floor(g);\nfloat2 fr = frac(g);\nfloat r2 = texRand(uint2(c2 + 31.0), 11u);\nfloat2 e2 = min(fr, 1.0 - fr) / (2.0 * sub);\nfloat ed = min(e2.x, e2.y);\nfloat seam = 1.0 - smoothstep(0.002, 0.005, ed);\nfloat bevel = smoothstep(0.003, 0.012, ed);\nfloat2 bq = min(fr, 1.0 - fr) / (2.0 * sub);\nfloat bolt = 1.0 - smoothstep(0.004, 0.006, length(bq - 0.018));\nfloat vent = 0.0;\nif (r2 > 0.72)\n{\n    float2 vq = fr - 0.5;\n    float inside = step(abs(vq.x), 0.3) * step(abs(vq.y), 0.22);\n    vent = inside * (1.0 - smoothstep(0.25, 0.45, abs(frac(vq.y * 9.0) - 0.5) * 2.0));\n}\nfloat hgt = bevel * 0.7 + bolt * 0.15 - vent * 0.35 + (r2 - 0.5) * 0.02;\nfloat edge = (1.0 - smoothstep(0.005, 0.03, ed)) + bolt * 0.5;\nreturn float4(saturate(hgt + 0.2), saturate(seam + vent), saturate(edge), r2);"
+      }
+     },
+     {
+      "name": "ChipNoise",
+      "type": "perlin",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "scale": 24,
+       "octaves": 5,
+       "persistence": 0.6
+      }
+     },
+     {
+      "name": "Grime",
+      "type": "dirt",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "scale": 5,
+       "amount": 0.5,
+       "contrast": 1.0,
+       "grain": 0.4
+      }
+     },
+     {
+      "name": "Wear",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 s = a.sample(uv);\nfloat ch = smoothstep(1.0 - p.x * 0.9, 1.05 - p.x * 0.9, s.z * 0.9 + texToFloat(b.sample(uv)) * 0.4);\nfloat g = smoothstep(1.0 - p.y * 0.8, 1.2 - p.y * 0.8, texToFloat(c.sample(uv)) * 0.6 + s.y * 0.6);\nreturn float4(ch, g, 0.0, 1.0);",
+       "x": 0.3,
+       "y": 0.25
+      }
+     },
+     {
+      "name": "PaintColor",
+      "type": "color",
+      "position": [
+       0.0,
+       480.0
+      ],
+      "values": {
+       "color": [
+        0.39676,
+        0.41789,
+        0.43966,
+        1.0
+       ]
+      }
+     },
+     {
+      "name": "PaintColorSrgb",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 l = saturate(c.rgb);\nreturn float4(lerp(1.055 * pow(l, 1.0 / 2.4) - 0.055, l * 12.92, step(l, 0.0031308)), c.a);"
+      }
+     },
+     {
+      "name": "PanelTone",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 s = a.sample(uv);\nreturn float4(b.sample(uv).rgb * (1.0 + (s.w - 0.5) * 0.12 * (0.3 + p.z)), s.y);",
+       "z": 0.5
+      }
+     },
+     {
+      "name": "BaseColor",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 pc = a.sample(uv);\nfloat4 w = b.sample(uv);\nfloat3 c0 = lerp(pc.rgb, float3(0.9020, 0.9059, 0.9098), w.x);\nc0 = lerp(c0, float3(0.2275, 0.2118, 0.1961), w.y * 0.7);\nc0 = lerp(c0, c0 * 0.4, pc.a);\nreturn float4(c0, 1.0);"
+      }
+     },
+     {
+      "name": "MetalMask",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float v = b.sample(uv).x * (1.0 - b.sample(uv).y);\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float v = lerp(0.38 + (a.sample(uv).w - 0.5) * 0.08, 0.3, b.sample(uv).x) + b.sample(uv).y * 0.4 + a.sample(uv).y * 0.3;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float v = 0.3 + a.sample(uv).x * 0.4 - b.sample(uv).x * 0.004;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       720.0,
+       160.0
+      ],
+      "values": {
+       "intensity": 1.0
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       720.0,
+       320.0
+      ],
+      "values": {
+       "radius": 0.01,
+       "depth": 0.1,
+       "strength": 0.9
+      }
+     },
+     {
+      "name": "Tint",
+      "type": "hsv",
+      "position": [
+       960.0,
+       0.0
+      ],
+      "values": {
+       "hue": 0.0
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       1200.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       1680.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "Panels",
+      "out",
+      "Wear",
+      "a"
+     ],
+     [
+      "ChipNoise",
+      "out",
+      "Wear",
+      "b"
+     ],
+     [
+      "Grime",
+      "out",
+      "Wear",
+      "c"
+     ],
+     [
+      "PaintColor",
+      "out",
+      "PaintColorSrgb",
+      "a"
+     ],
+     [
+      "Panels",
+      "out",
+      "PanelTone",
+      "a"
+     ],
+     [
+      "PaintColorSrgb",
+      "out",
+      "PanelTone",
+      "b"
+     ],
+     [
+      "PanelTone",
+      "out",
+      "BaseColor",
+      "a"
+     ],
+     [
+      "Wear",
+      "out",
+      "BaseColor",
+      "b"
+     ],
+     [
+      "Wear",
+      "out",
+      "MetalMask",
+      "b"
+     ],
+     [
+      "Panels",
+      "out",
+      "Roughness",
+      "a"
+     ],
+     [
+      "Wear",
+      "out",
+      "Roughness",
+      "b"
+     ],
+     [
+      "Panels",
+      "out",
+      "Height",
+      "a"
+     ],
+     [
+      "Wear",
+      "out",
+      "Height",
+      "b"
+     ],
+     [
+      "Height",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "Height",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "BaseColor",
+      "out",
+      "Tint",
+      "input"
+     ],
+     [
+      "Tint",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "MetalMask",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "Height",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.3,
+   "age": 0.25,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.7,
+   "age": 0.7
+  }
+ }
+}

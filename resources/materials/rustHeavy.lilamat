@@ -1,0 +1,587 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "RustHeavy",
+ "meta": {
+  "name": "Heavy Rust",
+  "category": "Metal/Rust",
+  "tags": [
+   "rust",
+   "steel",
+   "corrosion",
+   "heavy",
+   "flaking"
+  ],
+  "physical": "metal",
+  "scaleCm": 80,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "Steel lost under thick, flaking, pitted rust; only scraps of metal show."
+ },
+ "graph": {
+  "name": "RustHeavy",
+  "typeVersion": 1,
+  "description": "Steel lost under thick, flaking, pitted rust; only scraps of metal show.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.45,
+    "label": "Wear",
+    "description": "Flaking where the rust is deep.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.95,
+    "label": "Age",
+    "description": "Rust coverage.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "RustHeavy",
+     "seed": 0,
+     "wear": 0.45,
+     "age": 0.95,
+     "colorVariation": 0.5
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ]
+  ],
+  "subgroups": {
+   "RustHeavy": {
+    "name": "RustHeavy",
+    "typeVersion": 1,
+    "description": "Steel lost under thick, flaking, pitted rust; only scraps of metal show.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "Spread.seed",
+       "Spots.seed",
+       "Flakes.seed",
+       "FlakeWarp.seed",
+       "Grain.seed",
+       "SteelMottle.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.45,
+      "label": "Wear",
+      "description": "Flaking where the rust is deep.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Rust.y"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.95,
+      "label": "Age",
+      "description": "Rust coverage.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Rust.x"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.z"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "Spread",
+      "type": "clouds",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "scale": 4,
+       "octaves": 7,
+       "persistence": 0.6
+      }
+     },
+     {
+      "name": "Spots",
+      "type": "worley",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "scale": 9,
+       "octaves": 3,
+       "persistence": 0.55,
+       "invert": true
+      }
+     },
+     {
+      "name": "Flakes",
+      "type": "cells",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "scale": 22,
+       "mode": "cells",
+       "jitter": 1.0
+      }
+     },
+     {
+      "name": "FlakeWarp",
+      "type": "perlin",
+      "position": [
+       0.0,
+       480.0
+      ],
+      "values": {
+       "scale": 8,
+       "octaves": 4
+      }
+     },
+     {
+      "name": "FlakeShape",
+      "type": "warp",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "mode": "gradient",
+       "intensity": 1.5
+      }
+     },
+     {
+      "name": "Grain",
+      "type": "perlin",
+      "position": [
+       0.0,
+       640.0
+      ],
+      "values": {
+       "scale": 40,
+       "octaves": 5,
+       "persistence": 0.6
+      }
+     },
+     {
+      "name": "Rust",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float s = texToFloat(a.sample(uv)) * 0.65 + texToFloat(b.sample(uv)) * 0.5 - 0.1;\nfloat t = 1.0 - p.x * 1.15;\nfloat cov = smoothstep(t, t + 0.1, s);\nfloat deep = smoothstep(t + 0.08, t + 0.4, s);\nfloat fl = smoothstep(1.0 - p.y * 0.8000, 1.0 - p.y * 0.8000 + 0.1, texToFloat(c.sample(uv))) * deep;\nreturn float4(cov, deep, fl, d.sample(uv));",
+       "x": 0.95,
+       "y": 0.45
+      }
+     },
+     {
+      "name": "SteelMottle",
+      "type": "clouds",
+      "position": [
+       0.0,
+       800.0
+      ],
+      "values": {
+       "scale": 3,
+       "octaves": 5
+      }
+     },
+     {
+      "name": "BaseColor",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 r = a.sample(uv);\nfloat sm = texToFloat(b.sample(uv));\nfloat g = saturate(r.w + (sm - 0.5) * p.z);\nfloat3 steel = float3(0.7255, 0.7333, 0.7373) * (1.0 + (sm - 0.5) * 0.1);\nfloat3 powder = lerp(float3(0.4784, 0.2392, 0.1216), float3(0.6588, 0.3529, 0.1647), saturate(g * 1.6 - 0.35));\nfloat3 dark = lerp(float3(0.2314, 0.1216, 0.0784), float3(0.3529, 0.1843, 0.1059), g);\nfloat3 rust = lerp(powder, dark, saturate(r.y * 0.8 - g * 0.6 + 0.15));\nrust = lerp(rust, float3(0.5804, 0.4039, 0.2275), smoothstep(0.72, 0.92, g) * 0.45);\nfloat halo = r.x * (1.0 - r.x) * 4.0;\nfloat3 c0 = lerp(steel, rust, r.x);\nc0 = lerp(c0, float3(0.3608, 0.2706, 0.2078), halo * 0.45);\nc0 = lerp(c0, lerp(float3(0.2275, 0.1294, 0.0902), float3(0.3686, 0.2275, 0.1490), g), r.z);\nreturn float4(c0, 1.0);",
+       "z": 0.5
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float v = lerp(0.42, lerp(0.8, 0.96, a.sample(uv).w), a.sample(uv).x);\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "MetalMask",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float v = 1.0 - smoothstep(0.36, 0.44, a.sample(uv).x);\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float4 r = a.sample(uv);\nfloat h = 0.5 + r.x * 0.03 + r.y * 0.04 * (r.w + 0.5) - r.z * 0.07 - r.y * (1.0 - r.w) * 1.0000 * 0.04;\nreturn float4(h, h, h, 1.0);"
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       960.0,
+       0.0
+      ],
+      "values": {
+       "intensity": 0.7
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       960.0,
+       160.0
+      ],
+      "values": {
+       "radius": 0.02,
+       "depth": 0.06,
+       "strength": 0.9
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       960.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       960.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       1440.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "Flakes",
+      "out",
+      "FlakeShape",
+      "input"
+     ],
+     [
+      "FlakeWarp",
+      "out",
+      "FlakeShape",
+      "warp"
+     ],
+     [
+      "Spread",
+      "out",
+      "Rust",
+      "a"
+     ],
+     [
+      "Spots",
+      "out",
+      "Rust",
+      "b"
+     ],
+     [
+      "FlakeShape",
+      "out",
+      "Rust",
+      "c"
+     ],
+     [
+      "Grain",
+      "out",
+      "Rust",
+      "d"
+     ],
+     [
+      "Rust",
+      "out",
+      "BaseColor",
+      "a"
+     ],
+     [
+      "SteelMottle",
+      "out",
+      "BaseColor",
+      "b"
+     ],
+     [
+      "Rust",
+      "out",
+      "Roughness",
+      "a"
+     ],
+     [
+      "Rust",
+      "out",
+      "MetalMask",
+      "a"
+     ],
+     [
+      "Rust",
+      "out",
+      "Height",
+      "a"
+     ],
+     [
+      "Height",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "Height",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "BaseColor",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "MetalMask",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "Height",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.45,
+   "age": 0.95,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.8500000000000001,
+   "age": 1.0
+  }
+ }
+}

@@ -1,0 +1,669 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "SunlitStone",
+ "meta": {
+  "name": "Sunlit Stone",
+  "category": "Meadowlight/Stone",
+  "tags": [
+   "meadowlight",
+   "stylised",
+   "hand-painted",
+   "painterly",
+   "stone",
+   "wall",
+   "blocks",
+   "masonry",
+   "warm"
+  ],
+  "physical": "stylised",
+  "scaleCm": 150,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation",
+   "hue"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "Chunky painted stone blocks: warm cream tops catching the sun, lavender shadows in the joints.",
+  "shadingModel": "painterly",
+  "shading": {
+   "shadingModel": "painterly",
+   "strokeMap": "strokes_soft",
+   "strokeScale": 20.0,
+   "strokeNormal": 0.45,
+   "paletteShadow": [
+    0.1022,
+    0.0685,
+    0.1878
+   ],
+   "paletteLight": [
+    1.0,
+    0.8714,
+    0.5776
+   ],
+   "paletteAccent": [
+    0.7454,
+    0.3916,
+    0.1878
+   ],
+   "paletteContrast": 0.4,
+   "specularTint": 0.6
+  }
+ },
+ "graph": {
+  "name": "SunlitStone",
+  "typeVersion": 1,
+  "description": "Chunky painted stone blocks: warm cream tops catching the sun, lavender shadows in the joints.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.2,
+    "label": "Wear",
+    "description": "Softens the relief, as if worn down.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.25,
+    "label": "Age",
+    "description": "Moss in the joints.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   },
+   {
+    "name": "hue",
+    "kind": "param",
+    "type": "float",
+    "default": 0.0,
+    "label": "Hue",
+    "description": "Shifts the base colour's hue, in turns.",
+    "min": -0.5,
+    "max": 0.5,
+    "targets": [
+     "Material.hue"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "SunlitStone",
+     "seed": 0,
+     "wear": 0.2,
+     "age": 0.25,
+     "colorVariation": 0.5,
+     "hue": 0.0
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ]
+  ],
+  "subgroups": {
+   "SunlitStone": {
+    "name": "SunlitStone",
+    "typeVersion": 1,
+    "description": "Chunky painted stone blocks: warm cream tops catching the sun, lavender shadows in the joints.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "Blocks.seed",
+       "Lumps.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.2,
+      "label": "Wear",
+      "description": "Softens the relief, as if worn down.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "WornRelief.x"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.25,
+      "label": "Age",
+      "description": "Moss in the joints.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "JointMoss.y"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Paint.z"
+      ]
+     },
+     {
+      "name": "hue",
+      "kind": "param",
+      "type": "float",
+      "default": 0.0,
+      "label": "Hue",
+      "description": "Shifts the base colour's hue, in turns.",
+      "min": -0.5,
+      "max": 0.5,
+      "targets": [
+       "Tint.hue"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "Blocks",
+      "type": "bricks",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "rows": 5,
+       "columns": 3,
+       "offset": 0.45,
+       "mortar": 0.06,
+       "bevel": 0.25
+      }
+     },
+     {
+      "name": "Lumps",
+      "type": "clouds",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "scale": 6,
+       "octaves": 4
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float v = 0.15 + texToFloat(a.sample(uv)) * (0.55 + c.sample(uv) * 0.15) + (texToFloat(b.sample(uv)) - 0.5) * 0.12;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "ValueLight",
+      "type": "emboss",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "angle": 135.0,
+       "intensity": 1.0
+      }
+     },
+     {
+      "name": "ValueOcclusion",
+      "type": "blur",
+      "position": [
+       480.0,
+       160.0
+      ],
+      "values": {
+       "radius": 0.02
+      }
+     },
+     {
+      "name": "Value",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float h = texToFloat(c.sample(uv));\nfloat l = texToFloat(a.sample(uv));\nfloat cav = saturate((texToFloat(b.sample(uv)) - h) * 8.0);\nfloat v = 0.5 + (l - 0.5) * 1.4000 + (h - 0.5) * 0.5 - cav * 1.2000 + 0.0500;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Strokes",
+      "type": "image",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "file": "strokes/strokes_soft.png",
+       "tiles": 5
+      }
+     },
+     {
+      "name": "Paint",
+      "type": "pixelProcessor",
+      "position": [
+       960.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float t = texToFloat(a.sample(uv));\nfloat4 s = b.sample(uv);\nt = saturate(t + (s.a - 0.5) * 0.3000 * (0.4 + p.z) + (s.b - 0.5) * 0.25);\nfloat k = t * 5.0000;\nt = (floor(k) + smoothstep(0.3, 0.7, frac(k))) / 5.0000;\nfloat3 c = t < 0.34 ? lerp(float3(0.3608, 0.3098, 0.4471), float3(0.6039, 0.5412, 0.5412), t / 0.34) : (t < 0.67 ? lerp(float3(0.6039, 0.5412, 0.5412), float3(0.8471, 0.7529, 0.6039), (t - 0.34) / 0.33) : lerp(float3(0.8471, 0.7529, 0.6039), float3(0.9647, 0.9098, 0.7686), (t - 0.67) / 0.33));\nreturn float4(c, 1.0);",
+       "z": 0.5
+      }
+     },
+     {
+      "name": "JointMoss",
+      "type": "pixelProcessor",
+      "position": [
+       1200.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float3 c0 = a.sample(uv).rgb;\nfloat j = 1.0 - smoothstep(0.1, 0.4, texToFloat(c.sample(uv)));\nc0 = lerp(c0, float3(0.3686, 0.5412, 0.2667), j * smoothstep(0.0, 1.0, p.y) * 0.8);\nreturn float4(c0, 1.0);",
+       "y": 0.25
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float v = 0.8500 + (texToFloat(a.sample(uv)) - 0.5) * 0.05;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "WornRelief",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float v = 0.5 + (texToFloat(a.sample(uv)) - 0.5) * (1.0 - p.x * 0.6);\nreturn float4(v, v, v, 1.0);",
+       "x": 0.2
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       720.0,
+       160.0
+      ],
+      "values": {
+       "intensity": 0.8
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       720.0,
+       320.0
+      ],
+      "values": {
+       "radius": 0.03,
+       "depth": 0.1,
+       "strength": 0.5
+      }
+     },
+     {
+      "name": "Tint",
+      "type": "hsv",
+      "position": [
+       1440.0,
+       0.0
+      ],
+      "values": {
+       "hue": 0.0
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       1680.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Metallic",
+      "type": "constant",
+      "position": [
+       0.0,
+       480.0
+      ],
+      "values": {
+       "value": 0.0
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       2160.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "Blocks",
+      "mask",
+      "Height",
+      "a"
+     ],
+     [
+      "Lumps",
+      "out",
+      "Height",
+      "b"
+     ],
+     [
+      "Blocks",
+      "random",
+      "Height",
+      "c"
+     ],
+     [
+      "Height",
+      "out",
+      "ValueLight",
+      "input"
+     ],
+     [
+      "Height",
+      "out",
+      "ValueOcclusion",
+      "input"
+     ],
+     [
+      "ValueLight",
+      "out",
+      "Value",
+      "a"
+     ],
+     [
+      "ValueOcclusion",
+      "out",
+      "Value",
+      "b"
+     ],
+     [
+      "Height",
+      "out",
+      "Value",
+      "c"
+     ],
+     [
+      "Value",
+      "out",
+      "Paint",
+      "a"
+     ],
+     [
+      "Strokes",
+      "out",
+      "Paint",
+      "b"
+     ],
+     [
+      "Paint",
+      "out",
+      "JointMoss",
+      "a"
+     ],
+     [
+      "Blocks",
+      "mask",
+      "JointMoss",
+      "c"
+     ],
+     [
+      "Height",
+      "out",
+      "Roughness",
+      "a"
+     ],
+     [
+      "Height",
+      "out",
+      "WornRelief",
+      "a"
+     ],
+     [
+      "WornRelief",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "WornRelief",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "JointMoss",
+      "out",
+      "Tint",
+      "input"
+     ],
+     [
+      "Tint",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "Metallic",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "WornRelief",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.2,
+   "age": 0.25,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.6000000000000001,
+   "age": 0.7
+  }
+ }
+}

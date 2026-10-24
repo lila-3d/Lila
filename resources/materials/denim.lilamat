@@ -1,0 +1,551 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "Denim",
+ "meta": {
+  "name": "Denim",
+  "category": "Fabric/Denim",
+  "tags": [
+   "denim",
+   "jeans",
+   "twill",
+   "indigo",
+   "fabric",
+   "textile"
+  ],
+  "physical": "organic",
+  "scaleCm": 5,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation",
+   "hue"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "Indigo denim: 3/1 twill with ring-dyed blue warp over white weft, fading where it wears."
+ },
+ "graph": {
+  "name": "Denim",
+  "typeVersion": 1,
+  "description": "Indigo denim: 3/1 twill with ring-dyed blue warp over white weft, fading where it wears.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.3,
+    "label": "Wear",
+    "description": "Faded, abraded areas.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.1,
+    "label": "Age",
+    "description": "Grime and stains.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   },
+   {
+    "name": "hue",
+    "kind": "param",
+    "type": "float",
+    "default": 0.0,
+    "label": "Hue",
+    "description": "Shifts the base colour's hue, in turns.",
+    "min": -0.5,
+    "max": 0.5,
+    "targets": [
+     "Material.hue"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "Denim",
+     "seed": 0,
+     "wear": 0.3,
+     "age": 0.1,
+     "colorVariation": 0.5,
+     "hue": 0.0
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ]
+  ],
+  "subgroups": {
+   "Denim": {
+    "name": "Denim",
+    "typeVersion": 1,
+    "description": "Indigo denim: 3/1 twill with ring-dyed blue warp over white weft, fading where it wears.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "Slubs.seed",
+       "Fade.seed",
+       "Grime.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.3,
+      "label": "Wear",
+      "description": "Faded, abraded areas.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.x"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.1,
+      "label": "Age",
+      "description": "Grime and stains.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.y"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.z"
+      ]
+     },
+     {
+      "name": "hue",
+      "kind": "param",
+      "type": "float",
+      "default": 0.0,
+      "label": "Hue",
+      "description": "Shifts the base colour's hue, in turns.",
+      "min": -0.5,
+      "max": 0.5,
+      "targets": [
+       "Tint.hue"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "Slubs",
+      "type": "anisotropic",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "scaleX": 3,
+       "scaleY": 128,
+       "octaves": 3,
+       "persistence": 0.6
+      }
+     },
+     {
+      "name": "Fade",
+      "type": "clouds",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "scale": 4,
+       "octaves": 6
+      }
+     },
+     {
+      "name": "Twill",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float N = 64.0;\nfloat2 g = uv * N;\nint2 cell = int2(floor(g));\nfloat2 fr = frac(g);\nbool warpTop = ((cell.x - cell.y + 4096) % 4) != 3;\nfloat dw = sin(fr.x * 3.14159);\nfloat df = sin(fr.y * 3.14159);\nfloat hgt = warpTop ? 0.55 + 0.45 * dw * (0.6 + 0.4 * sin(fr.y * 3.14159)) : 0.45 + 0.4 * df;\nfloat sl = texToFloat(a.sample(float2(uv.y, uv.x)));\nfloat ring = warpTop ? saturate(0.6 - dw * 0.8 + (sl - 0.5) * 0.8) : 0.0;\nreturn float4(hgt, warpTop ? 1.0 : 0.0, ring, sl);"
+      }
+     },
+     {
+      "name": "Grime",
+      "type": "dirt",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "scale": 4,
+       "amount": 0.5,
+       "contrast": 1.0,
+       "grain": 0.4
+      }
+     },
+     {
+      "name": "BaseColor",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 t = a.sample(uv);\nfloat fd = smoothstep(1.0 - p.x * 0.8, 1.3 - p.x * 0.8, texToFloat(b.sample(uv)) + t.x * 0.2);\nfloat3 indigo = lerp(float3(0.1412, 0.2118, 0.3529), float3(0.2431, 0.3373, 0.5098), saturate(t.w * 0.8 + fd * 0.6) * (0.5 + p.z * 0.5));\nindigo = lerp(indigo, float3(0.5294, 0.5882, 0.6902), saturate(t.z * 0.2 + fd * 0.3));\nfloat3 weft = float3(0.5569, 0.5843, 0.6353);\nfloat3 c0 = lerp(weft, indigo, t.y) * (0.8 + t.x * 0.25);\nc0 = lerp(c0, c0 * 0.75, smoothstep(1.0 - p.y * 0.5, 1.2 - p.y * 0.5, texToFloat(c.sample(uv))));\nreturn float4(saturate(c0), 1.0);",
+       "z": 0.5,
+       "x": 0.3,
+       "y": 0.1
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float v = 0.95 - a.sample(uv).x * 0.12;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float v = 0.3 + a.sample(uv).x * 0.4;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "intensity": 0.6
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       720.0,
+       160.0
+      ],
+      "values": {
+       "radius": 0.004,
+       "depth": 0.1,
+       "strength": 0.8
+      }
+     },
+     {
+      "name": "Tint",
+      "type": "hsv",
+      "position": [
+       720.0,
+       320.0
+      ],
+      "values": {
+       "hue": 0.0
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       960.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Metallic",
+      "type": "constant",
+      "position": [
+       0.0,
+       480.0
+      ],
+      "values": {
+       "value": 0.0
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       1440.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "Slubs",
+      "out",
+      "Twill",
+      "a"
+     ],
+     [
+      "Twill",
+      "out",
+      "BaseColor",
+      "a"
+     ],
+     [
+      "Fade",
+      "out",
+      "BaseColor",
+      "b"
+     ],
+     [
+      "Grime",
+      "out",
+      "BaseColor",
+      "c"
+     ],
+     [
+      "Twill",
+      "out",
+      "Roughness",
+      "a"
+     ],
+     [
+      "Twill",
+      "out",
+      "Height",
+      "a"
+     ],
+     [
+      "Height",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "Height",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "BaseColor",
+      "out",
+      "Tint",
+      "input"
+     ],
+     [
+      "Tint",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "Metallic",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "Height",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.3,
+   "age": 0.1,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.7,
+   "age": 0.55
+  }
+ }
+}

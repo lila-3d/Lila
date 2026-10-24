@@ -1,0 +1,613 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "Grass",
+ "meta": {
+  "name": "Lawn Grass",
+  "category": "Ground/Grass",
+  "tags": [
+   "grass",
+   "lawn",
+   "ground",
+   "vegetation",
+   "green"
+  ],
+  "physical": "organic",
+  "scaleCm": 60,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation",
+   "hue"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "Dense short grass seen from above: overlapping blades in mixed greens with yellowed tips, soil glimpsed between."
+ },
+ "graph": {
+  "name": "Grass",
+  "typeVersion": 1,
+  "description": "Dense short grass seen from above: overlapping blades in mixed greens with yellowed tips, soil glimpsed between.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.2,
+    "label": "Wear",
+    "description": "Trampled, flattened patches.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.25,
+    "label": "Age",
+    "description": "Dry, yellowed blades.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   },
+   {
+    "name": "hue",
+    "kind": "param",
+    "type": "float",
+    "default": 0.0,
+    "label": "Hue",
+    "description": "Shifts the base colour's hue, in turns.",
+    "min": -0.5,
+    "max": 0.5,
+    "targets": [
+     "Material.hue"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "Grass",
+     "seed": 0,
+     "wear": 0.2,
+     "age": 0.25,
+     "colorVariation": 0.5,
+     "hue": 0.0
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ]
+  ],
+  "subgroups": {
+   "Grass": {
+    "name": "Grass",
+    "typeVersion": 1,
+    "description": "Dense short grass seen from above: overlapping blades in mixed greens with yellowed tips, soil glimpsed between.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "Density.seed",
+       "Blades.seed",
+       "BladesFine.seed",
+       "Dry.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.2,
+      "label": "Wear",
+      "description": "Trampled, flattened patches.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Height.x"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.25,
+      "label": "Age",
+      "description": "Dry, yellowed blades.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.y"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.z"
+      ]
+     },
+     {
+      "name": "hue",
+      "kind": "param",
+      "type": "float",
+      "default": 0.0,
+      "label": "Hue",
+      "description": "Shifts the base colour's hue, in turns.",
+      "min": -0.5,
+      "max": 0.5,
+      "targets": [
+       "Tint.hue"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "Blade",
+      "type": "pixelProcessor",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float2 q = uv - 0.5;\nfloat t = saturate(q.y + 0.5);\nfloat bend = q.x + (t * t) * 0.12;\nfloat w = 0.085 * (1.0 - t * 0.9);\nfloat v = (1.0 - smoothstep(w * 0.55, w, abs(bend))) * step(-0.5, q.y) * (1.0 - step(0.48, q.y));\nfloat h = v * (0.35 + t * 0.65);\nreturn float4(h, h, h, 1.0);"
+      }
+     },
+     {
+      "name": "Density",
+      "type": "clouds",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "scale": 4,
+       "octaves": 4
+      }
+     },
+     {
+      "name": "Blades",
+      "type": "splatter",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "countX": 10,
+       "countY": 10,
+       "perCell": 14,
+       "size": 1.3,
+       "sizeRandom": 0.4,
+       "rotationRandom": 1.0,
+       "valueRandom": 0.25,
+       "maskSize": 0.3,
+       "blend": "max"
+      }
+     },
+     {
+      "name": "BladesFine",
+      "type": "splatter",
+      "position": [
+       240.0,
+       160.0
+      ],
+      "values": {
+       "countX": 18,
+       "countY": 18,
+       "perCell": 12,
+       "size": 1.3,
+       "sizeRandom": 0.5,
+       "rotationRandom": 1.0,
+       "valueRandom": 0.3,
+       "blend": "max"
+      }
+     },
+     {
+      "name": "Sward",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float h1 = c.sample(uv);\nfloat h2 = d.sample(uv) * 0.7;\nfloat top = step(h2, h1);\nfloat hgt = max(h1, h2);\nfloat r = lerp(b.sample(uv).r, a.sample(uv).r, top);\nreturn float4(hgt, r, step(0.02, hgt), top);"
+      }
+     },
+     {
+      "name": "Dry",
+      "type": "clouds",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "scale": 5,
+       "octaves": 5
+      }
+     },
+     {
+      "name": "BaseColor",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 s = a.sample(uv);\nfloat k = s.y;\nfloat3 g0 = lerp(float3(0.2471, 0.3529, 0.1333), float3(0.4353, 0.5412, 0.1961), saturate(s.x * 1.2));\ng0 = lerp(g0, float3(0.3451, 0.4392, 0.1647), step(0.6, k) * (0.3 + p.z * 0.7));\ng0 = lerp(g0, float3(0.5569, 0.5608, 0.2431), step(0.88, k) * (0.3 + p.z * 0.7));\nfloat dr = smoothstep(1.0 - p.y * 0.8, 1.2 - p.y * 0.8, texToFloat(b.sample(uv)) * 0.6 + k * 0.5);\ng0 = lerp(g0, lerp(float3(0.6392, 0.6039, 0.3529), float3(0.7608, 0.6902, 0.4392), s.x), dr);\nfloat3 under = lerp(float3(0.1725, 0.2275, 0.1020), float3(0.2275, 0.1804, 0.1255), smoothstep(0.6, 1.0, texToFloat(b.sample(uv))) * 0.6);\nfloat3 c0 = lerp(under, g0, s.z);\nc0 *= 0.7 + s.x * 0.4;\nreturn float4(c0, 1.0);",
+       "z": 0.5,
+       "y": 0.25
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float v = lerp(0.95, 0.62 + (1.0 - a.sample(uv).x) * 0.2, a.sample(uv).z);\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float v = 0.1 + a.sample(uv).x * (0.8 - p.x * 0.5);\nreturn float4(v, v, v, 1.0);",
+       "x": 0.2
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       960.0,
+       0.0
+      ],
+      "values": {
+       "intensity": 1.0
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       960.0,
+       160.0
+      ],
+      "values": {
+       "radius": 0.02,
+       "depth": 0.2,
+       "strength": 1.0
+      }
+     },
+     {
+      "name": "Tint",
+      "type": "hsv",
+      "position": [
+       960.0,
+       320.0
+      ],
+      "values": {
+       "hue": 0.0
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       1200.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       960.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Metallic",
+      "type": "constant",
+      "position": [
+       0.0,
+       480.0
+      ],
+      "values": {
+       "value": 0.0
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       1680.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "Blade",
+      "out",
+      "Blades",
+      "pattern"
+     ],
+     [
+      "Density",
+      "out",
+      "Blades",
+      "mask"
+     ],
+     [
+      "Blade",
+      "out",
+      "BladesFine",
+      "pattern"
+     ],
+     [
+      "Blades",
+      "color",
+      "Sward",
+      "a"
+     ],
+     [
+      "BladesFine",
+      "color",
+      "Sward",
+      "b"
+     ],
+     [
+      "Blades",
+      "out",
+      "Sward",
+      "c"
+     ],
+     [
+      "BladesFine",
+      "out",
+      "Sward",
+      "d"
+     ],
+     [
+      "Sward",
+      "out",
+      "BaseColor",
+      "a"
+     ],
+     [
+      "Dry",
+      "out",
+      "BaseColor",
+      "b"
+     ],
+     [
+      "Sward",
+      "out",
+      "Roughness",
+      "a"
+     ],
+     [
+      "Sward",
+      "out",
+      "Height",
+      "a"
+     ],
+     [
+      "Height",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "Height",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "BaseColor",
+      "out",
+      "Tint",
+      "input"
+     ],
+     [
+      "Tint",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "Metallic",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "Height",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.2,
+   "age": 0.25,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.6000000000000001,
+   "age": 0.7
+  }
+ }
+}

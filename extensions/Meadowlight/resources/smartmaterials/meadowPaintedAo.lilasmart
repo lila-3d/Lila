@@ -1,0 +1,33 @@
+{
+  "format": "lilasmart",
+  "version": 1,
+  "name": "Painted AO",
+  "description": "Soft painted occlusion in creases and contact areas. Fill with a desaturated plum or deep teal (multiply) rather than black, the way a painter darkens.",
+  "kind": "mask",
+  "masks": [
+    {
+      "id": "M1",
+      "kind": "generator",
+      "type": "genAoDarken",
+      "mode": "normal",
+      "opacity": 1.0,
+      "invert": false,
+      "values": {
+        "level": 0.35,
+        "softness": 0.9
+      }
+    },
+    {
+      "id": "M2",
+      "kind": "levels",
+      "mode": "normal",
+      "opacity": 1.0,
+      "invert": false,
+      "values": {
+        "inLow": 0.0,
+        "inHigh": 0.85,
+        "gamma": 1.2
+      }
+    }
+  ]
+}

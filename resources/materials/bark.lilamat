@@ -1,0 +1,588 @@
+{
+ "format": "lilamat",
+ "version": 1,
+ "name": "Bark",
+ "meta": {
+  "name": "Pine Bark",
+  "category": "Wood/Bark",
+  "tags": [
+   "bark",
+   "tree",
+   "pine",
+   "trunk",
+   "organic"
+  ],
+  "physical": "organic",
+  "scaleCm": 60,
+  "tileable": true,
+  "seedParam": "seed",
+  "variationParams": [
+   "wear",
+   "age",
+   "colorVariation",
+   "hue"
+  ],
+  "author": "Lila",
+  "licence": "CC0-1.0",
+  "version": "1.0",
+  "description": "Deeply furrowed bark: long irregular plates split by dark fissures, flaky layered surfaces, lichen-grey highlights."
+ },
+ "graph": {
+  "name": "Bark",
+  "typeVersion": 1,
+  "description": "Deeply furrowed bark: long irregular plates split by dark fissures, flaky layered surfaces, lichen-grey highlights.",
+  "inputs": [
+   {
+    "name": "seed",
+    "kind": "param",
+    "type": "seed",
+    "default": 0,
+    "label": "Seed",
+    "description": "Changes the pattern without changing the look.",
+    "targets": [
+     "Material.seed"
+    ]
+   },
+   {
+    "name": "wear",
+    "kind": "param",
+    "type": "float",
+    "default": 0.3,
+    "label": "Wear",
+    "description": "Flaking of the plates.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.wear"
+    ]
+   },
+   {
+    "name": "age",
+    "kind": "param",
+    "type": "float",
+    "default": 0.3,
+    "label": "Age",
+    "description": "Grey lichen and moss in the fissures.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.age"
+    ]
+   },
+   {
+    "name": "colorVariation",
+    "kind": "param",
+    "type": "float",
+    "default": 0.5,
+    "label": "Colour Variation",
+    "description": "How much the colour wanders across the surface.",
+    "min": 0.0,
+    "max": 1.0,
+    "targets": [
+     "Material.colorVariation"
+    ]
+   },
+   {
+    "name": "hue",
+    "kind": "param",
+    "type": "float",
+    "default": 0.0,
+    "label": "Hue",
+    "description": "Shifts the base colour's hue, in turns.",
+    "min": -0.5,
+    "max": 0.5,
+    "targets": [
+     "Material.hue"
+    ]
+   }
+  ],
+  "nodes": [
+   {
+    "name": "Material",
+    "type": "Group",
+    "position": [
+     0.0,
+     0.0
+    ],
+    "values": {
+     "group": "Bark",
+     "seed": 0,
+     "wear": 0.3,
+     "age": 0.3,
+     "colorVariation": 0.5,
+     "hue": 0.0
+    }
+   },
+   {
+    "name": "Output",
+    "type": "materialOutput",
+    "position": [
+     320.0,
+     0.0
+    ],
+    "values": {}
+   }
+  ],
+  "links": [
+   [
+    "Material",
+    "baseColor",
+    "Output",
+    "baseColor"
+   ],
+   [
+    "Material",
+    "roughness",
+    "Output",
+    "roughness"
+   ],
+   [
+    "Material",
+    "metallic",
+    "Output",
+    "metallic"
+   ],
+   [
+    "Material",
+    "height",
+    "Output",
+    "height"
+   ],
+   [
+    "Material",
+    "normal",
+    "Output",
+    "normal"
+   ],
+   [
+    "Material",
+    "ao",
+    "Output",
+    "ao"
+   ]
+  ],
+  "subgroups": {
+   "Bark": {
+    "name": "Bark",
+    "typeVersion": 1,
+    "description": "Deeply furrowed bark: long irregular plates split by dark fissures, flaky layered surfaces, lichen-grey highlights.",
+    "inputs": [
+     {
+      "name": "seed",
+      "kind": "param",
+      "type": "seed",
+      "default": 0,
+      "label": "Seed",
+      "description": "Changes the pattern without changing the look.",
+      "targets": [
+       "Plates.seed",
+       "PlateId.seed",
+       "Ridges.seed",
+       "Flake.seed"
+      ]
+     },
+     {
+      "name": "wear",
+      "kind": "param",
+      "type": "float",
+      "default": 0.3,
+      "label": "Wear",
+      "description": "Flaking of the plates.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "Bark.x"
+      ]
+     },
+     {
+      "name": "age",
+      "kind": "param",
+      "type": "float",
+      "default": 0.3,
+      "label": "Age",
+      "description": "Grey lichen and moss in the fissures.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.y"
+      ]
+     },
+     {
+      "name": "colorVariation",
+      "kind": "param",
+      "type": "float",
+      "default": 0.5,
+      "label": "Colour Variation",
+      "description": "How much the colour wanders across the surface.",
+      "min": 0.0,
+      "max": 1.0,
+      "targets": [
+       "BaseColor.z"
+      ]
+     },
+     {
+      "name": "hue",
+      "kind": "param",
+      "type": "float",
+      "default": 0.0,
+      "label": "Hue",
+      "description": "Shifts the base colour's hue, in turns.",
+      "min": -0.5,
+      "max": 0.5,
+      "targets": [
+       "Tint.hue"
+      ]
+     }
+    ],
+    "outputs": [
+     {
+      "name": "baseColor",
+      "type": "color"
+     },
+     {
+      "name": "roughness",
+      "type": "gray"
+     },
+     {
+      "name": "metallic",
+      "type": "gray"
+     },
+     {
+      "name": "height",
+      "type": "gray"
+     },
+     {
+      "name": "normal",
+      "type": "color"
+     },
+     {
+      "name": "ao",
+      "type": "gray"
+     }
+    ],
+    "nodes": [
+     {
+      "name": "Plates",
+      "type": "cells",
+      "position": [
+       0.0,
+       0.0
+      ],
+      "values": {
+       "scale": 3,
+       "mode": "f2MinusF1",
+       "jitter": 1.0
+      }
+     },
+     {
+      "name": "PlateId",
+      "type": "cells",
+      "position": [
+       0.0,
+       160.0
+      ],
+      "values": {
+       "scale": 3,
+       "mode": "cells",
+       "jitter": 1.0
+      }
+     },
+     {
+      "name": "Ridges",
+      "type": "directional",
+      "position": [
+       0.0,
+       320.0
+      ],
+      "values": {
+       "angle": 90.0,
+       "scaleAlong": 2,
+       "scaleAcross": 14,
+       "octaves": 5,
+       "persistence": 0.55
+      }
+     },
+     {
+      "name": "Flake",
+      "type": "perlin",
+      "position": [
+       0.0,
+       480.0
+      ],
+      "values": {
+       "scale": 12,
+       "octaves": 6,
+       "persistence": 0.6
+      }
+     },
+     {
+      "name": "Wobble",
+      "type": "pixelProcessor",
+      "position": [
+       240.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float n = texToFloat(a.sample(uv));\nfloat n2 = texToFloat(a.sample(uv + float2(0.37, 0.71)));\nreturn float4(n, n2, 0.0, 1.0);"
+      }
+     },
+     {
+      "name": "Bark",
+      "type": "pixelProcessor",
+      "position": [
+       480.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float2 wv = b.sample(uv).xy - 0.5;\nfloat2 s = float2(uv.x * 4.0 + wv.x * 0.45, uv.y + wv.y * 0.12);\nfloat edge = c.sample(s);\nfloat id = d.sample(s);\nfloat rd = texToFloat(a.sample(uv));\nfloat fl = b.sample(uv).x;\nfloat plate = smoothstep(0.03, 0.35, edge + (rd - 0.5) * 0.12);\nfloat fissure = 1.0 - smoothstep(0.02, 0.14, edge + (rd - 0.5) * 0.1);\nfloat layers = floor(saturate(fl * 1.6 - 0.2 + id * 0.3) * 3.0) / 3.0;\nfloat flaked = smoothstep(0.65 - p.x * 0.2, 0.7 - p.x * 0.2, fl) * plate;\nreturn float4(plate * (0.75 + layers * 0.25 + rd * 0.2), fissure, flaked, id);",
+       "x": 0.3
+      }
+     },
+     {
+      "name": "BaseColor",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 s = a.sample(uv);\nfloat3 c0 = lerp(float3(0.3059, 0.2157, 0.1490), float3(0.5020, 0.3765, 0.2902), saturate(s.x * 0.8 + (s.w - 0.5) * 0.4 * (0.3 + p.z)));\nc0 = lerp(c0, float3(0.6039, 0.3725, 0.2431), s.z * 0.65);\nc0 = lerp(c0, float3(0.1804, 0.1294, 0.0902), s.y);\nfloat lichen = smoothstep(0.8 - p.y * 0.4, 1.0 - p.y * 0.4, s.x * (0.6 + s.w * 0.6));\nc0 = lerp(c0, float3(0.5569, 0.5608, 0.4941), lichen * 0.55);\nc0 = lerp(c0, float3(0.2706, 0.3294, 0.1647), s.y * smoothstep(0.2, 1.0, p.y) * 0.6);\nreturn float4(c0, 1.0);",
+       "z": 0.5,
+       "y": 0.3
+      }
+     },
+     {
+      "name": "Roughness",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       160.0
+      ],
+      "values": {
+       "expression": "float v = lerp(0.75, 0.92, a.sample(uv).y) - a.sample(uv).z * 0.05;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Height",
+      "type": "pixelProcessor",
+      "position": [
+       720.0,
+       320.0
+      ],
+      "values": {
+       "expression": "float v = 0.15 + a.sample(uv).x * 0.6 - a.sample(uv).z * 0.06;\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Normal",
+      "type": "heightToNormal",
+      "position": [
+       960.0,
+       0.0
+      ],
+      "values": {
+       "intensity": 1.6
+      }
+     },
+     {
+      "name": "Occlusion",
+      "type": "ambientOcclusion",
+      "position": [
+       960.0,
+       160.0
+      ],
+      "values": {
+       "radius": 0.04,
+       "depth": 0.3,
+       "strength": 1.0
+      }
+     },
+     {
+      "name": "Tint",
+      "type": "hsv",
+      "position": [
+       960.0,
+       320.0
+      ],
+      "values": {
+       "hue": 0.0
+      }
+     },
+     {
+      "name": "BaseColorLinear",
+      "type": "pixelProcessor",
+      "position": [
+       1200.0,
+       0.0
+      ],
+      "values": {
+       "expression": "float4 c = a.sample(uv);\nfloat3 s = saturate(c.rgb);\nreturn float4(lerp(pow((s + 0.055) / 1.055, 2.4), s / 12.92, step(s, 0.04045)), c.a);"
+      }
+     },
+     {
+      "name": "RoughnessClamp",
+      "type": "pixelProcessor",
+      "position": [
+       960.0,
+       480.0
+      ],
+      "values": {
+       "expression": "float v = saturate(texToFloat(a.sample(uv)));\nreturn float4(v, v, v, 1.0);"
+      }
+     },
+     {
+      "name": "Metallic",
+      "type": "constant",
+      "position": [
+       0.0,
+       640.0
+      ],
+      "values": {
+       "value": 0.0
+      }
+     },
+     {
+      "name": "GroupOutput",
+      "type": "GroupOutput",
+      "position": [
+       1680.0,
+       0.0
+      ],
+      "values": {}
+     }
+    ],
+    "links": [
+     [
+      "Flake",
+      "out",
+      "Wobble",
+      "a"
+     ],
+     [
+      "Ridges",
+      "out",
+      "Bark",
+      "a"
+     ],
+     [
+      "Wobble",
+      "out",
+      "Bark",
+      "b"
+     ],
+     [
+      "Plates",
+      "out",
+      "Bark",
+      "c"
+     ],
+     [
+      "PlateId",
+      "out",
+      "Bark",
+      "d"
+     ],
+     [
+      "Bark",
+      "out",
+      "BaseColor",
+      "a"
+     ],
+     [
+      "Bark",
+      "out",
+      "Roughness",
+      "a"
+     ],
+     [
+      "Bark",
+      "out",
+      "Height",
+      "a"
+     ],
+     [
+      "Height",
+      "out",
+      "Normal",
+      "height"
+     ],
+     [
+      "Height",
+      "out",
+      "Occlusion",
+      "height"
+     ],
+     [
+      "BaseColor",
+      "out",
+      "Tint",
+      "input"
+     ],
+     [
+      "Tint",
+      "out",
+      "BaseColorLinear",
+      "a"
+     ],
+     [
+      "Roughness",
+      "out",
+      "RoughnessClamp",
+      "a"
+     ],
+     [
+      "BaseColorLinear",
+      "out",
+      "GroupOutput",
+      "baseColor"
+     ],
+     [
+      "RoughnessClamp",
+      "out",
+      "GroupOutput",
+      "roughness"
+     ],
+     [
+      "Metallic",
+      "out",
+      "GroupOutput",
+      "metallic"
+     ],
+     [
+      "Height",
+      "out",
+      "GroupOutput",
+      "height"
+     ],
+     [
+      "Normal",
+      "normal",
+      "GroupOutput",
+      "normal"
+     ],
+     [
+      "Occlusion",
+      "out",
+      "GroupOutput",
+      "ao"
+     ]
+    ]
+   }
+  }
+ },
+ "presets": {
+  "Pristine": {
+   "wear": 0.0,
+   "age": 0.0
+  },
+  "Default": {
+   "wear": 0.3,
+   "age": 0.3,
+   "colorVariation": 0.5
+  },
+  "Weathered": {
+   "wear": 0.7,
+   "age": 0.75
+  }
+ }
+}

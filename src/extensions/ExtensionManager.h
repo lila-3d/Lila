@@ -34,6 +34,7 @@ enum class ExtensionKind : uint8_t
 {
     Native, // a package with a library exporting lilaExtensionInit (and maybe a Python module too)
     Python, // a package with only a Python module, or a bare .py file or package defining initialize_extension()
+    Resources, // a package with only resources (materials, nodes, presets) that Lila's libraries scan
 };
 
 struct LILA_SCENE_API ExtensionInfo

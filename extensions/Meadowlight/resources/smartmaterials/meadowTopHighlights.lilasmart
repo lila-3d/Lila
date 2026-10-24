@@ -1,0 +1,35 @@
+{
+  "format": "lilasmart",
+  "version": 1,
+  "name": "Top Highlights",
+  "description": "Upward-facing surfaces, tightened to the tops. Fill with a pale sky-lit cream or lime (screen) for the painted top light on foliage, rocks and roofs.",
+  "kind": "mask",
+  "masks": [
+    {
+      "id": "M1",
+      "kind": "generator",
+      "type": "maskFacing",
+      "mode": "normal",
+      "opacity": 1.0,
+      "invert": false,
+      "values": {
+        "elevation": 90.0
+      },
+      "bindings": {
+        "normal": "worldNormal"
+      }
+    },
+    {
+      "id": "M2",
+      "kind": "levels",
+      "mode": "normal",
+      "opacity": 1.0,
+      "invert": false,
+      "values": {
+        "inLow": 0.55,
+        "inHigh": 0.95,
+        "gamma": 1.0
+      }
+    }
+  ]
+}

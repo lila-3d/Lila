@@ -1,0 +1,10 @@
+{
+    "id": "Meadowlight",
+    "name": "Meadowlight",
+    "version": "1.0.0",
+    "vendor": "Lila",
+    "description": "Hand-painted pastoral materials: soft painted grass and moss, dappled foliage, sunlit stone and river rock, warm stucco and plaster, timber, shingles, thatch, painted skies and water, dirt paths and flowers. Warm light, cool shadows, painted occlusion.",
+    "sdk": "1.0",
+    "resources": "resources",
+    "enabledByDefault": true
+}
