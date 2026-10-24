@@ -1,0 +1,16 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Direction",
+  "category": "Normal",
+  "doc": "Tilts the normal along the stroke.",
+  "brush": {
+    "falloff": "smooth",
+    "spacing": 0.1
+  },
+  "payload": {
+    "kind": "direction",
+    "tilt": 0.5,
+    "channel": "normal"
+  }
+}

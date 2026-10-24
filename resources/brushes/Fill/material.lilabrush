@@ -1,0 +1,12 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Fill Material",
+  "category": "Fill",
+  "doc": "Fills every face using the material under the cursor.",
+  "brush": {},
+  "payload": {
+    "kind": "fill",
+    "fillBy": "material"
+  }
+}

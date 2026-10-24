@@ -1,0 +1,15 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Eraser",
+  "category": "Basic",
+  "doc": "Removes paint from the layer.",
+  "brush": {
+    "falloff": "smooth",
+    "spacing": 0.1
+  },
+  "payload": {
+    "kind": "paint",
+    "blend": "erase"
+  }
+}

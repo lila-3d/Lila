@@ -1,0 +1,15 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Line",
+  "category": "Basic",
+  "doc": "Drag from the start of a straight line to its end.",
+  "brush": {
+    "falloff": "smooth",
+    "strokeMode": "line",
+    "spacing": 0.1
+  },
+  "payload": {
+    "kind": "paint"
+  }
+}

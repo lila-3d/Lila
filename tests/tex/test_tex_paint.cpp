@@ -1,0 +1,426 @@
+#include "TexTest.h"
+
+#include "core/MainQueue.h"
+#include "geo/Attribute.h"
+#include "geo/Mesh.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
+#include "render/GpuImage.h"
+#include "render/PaintGpu.h"
+#include "render/Renderer.h"
+#include "scene/Graph.h"
+#include "scene/MeshNodes.h"
+#include "tex/PaintStrokes.h"
+#include "tex/TextureSet.h"
+#include "ui/TexLive.h"
+
+#include <cmath>
+#include <filesystem>
+
+using namespace textest;
+using namespace lila::render;
+namespace fs = std::filesystem;
+namespace gp = lila::render::paint;
+
+namespace
+{
+bool gpu()
+{
+    Renderer& r = Renderer::get();
+    if (r.running() || r.start())
+        return true;
+    MESSAGE("no GPU for texture painting tests");
+    return false;
+}
+
+json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
+
+scene::Graph& sg() { return scene::Graph::current(); }
+
+void newScene()
+{
+    run("newScene");
+    UndoStack::get().clear();
+    mainq::drain();
+}
+
+/**
+ * Two quads sharing the edge x = 0, as two UV islands far apart: the left quad's seam side lands at u = 0.45, the right
+ * quad's (mirrored in u and v) at u = 0.95. 100 units across, facing +Y.
+ */
+glm::vec2 seamUv(int face, double x, double z)
+{
+    const double t = (z + 50.0) / 100.0;
+    if (face == 0)
+        return {float(0.05 + (x + 50.0) / 50.0 * 0.4), float(0.9 - t * 0.8)};
+    return {float(0.95 - x / 50.0 * 0.4), float(0.1 + t * 0.8)};
+}
+
+geo::Mesh seamPanel()
+{
+    const std::vector<glm::dvec3> pts = {{-50, 0, -50}, {0, 0, -50}, {50, 0, -50}, {-50, 0, 50}, {0, 0, 50}, {50, 0, 50}};
+    const std::vector<geo::Index> sizes = {4, 4};
+    const std::vector<geo::Index> idx = {0, 3, 4, 1, 1, 4, 5, 2};
+    geo::Mesh m = geo::Mesh::fromPolygons(pts, sizes, idx);
+    auto uv = m.cornerAttrs().getOrAdd<glm::vec2>(geo::attr::uvName(0));
+    for (geo::Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f))
+            for (geo::Index c : m.faceCorners(f))
+            {
+                const glm::dvec3 p = m.position(m.cornerPoint(c));
+                // The shared edge belongs to both faces; each face's own island decides.
+                uv[c] = seamUv(int(f), p.x, p.z);
+            }
+    return m;
+}
+
+std::string addMesh(const std::string& name, geo::Mesh m)
+{
+    scene::Node* n = sg().createNode(*scene::types::find("mesh"), name);
+    sg().setValue({n->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
+    return n->path();
+}
+
+scene::Node& makeSet(const std::string& name, int resolution)
+{
+    run("texCreateSet", {{"args", {name}}, {"resolution", resolution}});
+    return *tex::findSet(sg(), name);
+}
+
+json brushJson(double strength = 1.0) { return {{"falloff", "smooth"}, {"strength", strength}, {"flow", 1.0}, {"spacing", 0.15}}; }
+
+json redStroke(std::vector<glm::dvec3> points, double radius, json channels = {{"baseColor", {1.0, 0.0, 0.0}}, {"roughness", 0.2}})
+{
+    json dabs = json::array();
+    for (const glm::dvec3& p : points)
+        dabs.push_back({{"position", {p.x, p.y, p.z}}, {"radius", radius}});
+    return {{"space", "surface"}, {"brush", brushJson()}, {"payload", {{"channels", channels}}}, {"dabs", dabs}, {"mesh", "PanelMesh"}};
+}
+
+json paintStroke(const std::string& set, const std::string& layer, const json& stroke)
+{
+    return run("texPaintStroke", {{"args", {set, layer}}, {"stroke", stroke}});
+}
+
+const float* at(const image::Image& img, glm::vec2 uv)
+{
+    const int x = std::clamp(int(uv.x * img.width), 0, img.width - 1), y = std::clamp(int((1.0f - uv.y) * img.height), 0, img.height - 1);
+    return &img.rgba[(size_t(y) * img.width + x) * 4];
+}
+} // namespace
+
+TEST_CASE("texture paint: strokes replay bit for bit, live or recorded")
+{
+    if (!gpu())
+        return;
+    newScene();
+    addMesh("PanelMesh", seamPanel());
+    scene::Node& a = makeSet("PanelA", 256);
+    scene::Node& b = makeSet("PanelB", 256);
+    const json stroke = redStroke({{-30, 0, 0}, {-20, 0, 5}, {-10, 0, 8}, {0, 0, 10}, {10, 0, 8}, {25, 0, -5}}, 12.0);
+    const json r = paintStroke("PanelA", "P", stroke);
+    CHECK(r["dabs"].get<int>() == 6);
+    CHECK(r["pages"].get<int>() > 0);
+    const auto first = gp::pageBytes(a.id(), "P");
+    REQUIRE(!first.empty());
+
+    // The same record painted elsewhere, and the layer rebuilt from its records, give the same bytes.
+    paintStroke("PanelB", "P", stroke);
+    CHECK(gp::pageBytes(b.id(), "P") == first);
+    run("texRasterize", {{"args", {"PanelA", "P"}}});
+    CHECK(gp::pageBytes(a.id(), "P") == first);
+
+    // Painted live in three batches and then committed: the same pixels as the record replayed.
+    const tex::paint::PaintPtr data = tex::paint::readPaint(a);
+    tex::paint::Stroke rec = *data->buffer("P")->strokes.front();
+    scene::Node& c = makeSet("PanelC", 256);
+    rec.id = 7;
+    gp::beginLive(sg(), c, "P", std::make_shared<const tex::paint::Stroke>(rec));
+    gp::liveDabs(c.id(), "P", std::span(rec.dabs).subspan(0, 2));
+    gp::liveDabs(c.id(), "P", std::span(rec.dabs).subspan(2, 1));
+    gp::liveDabs(c.id(), "P", std::span(rec.dabs).subspan(3));
+    CHECK(gp::liveActive(c.id(), "P"));
+    json recJson = rec.toJson(false);
+    paintStroke("PanelC", "P", recJson);
+    CHECK_FALSE(gp::liveActive(c.id(), "P"));
+    CHECK(gp::pageBytes(c.id(), "P") == first);
+}
+
+TEST_CASE("texture paint: seams stay continuous across UV islands")
+{
+    if (!gpu())
+        return;
+    newScene();
+    addMesh("PanelMesh", seamPanel());
+    scene::Node& set = makeSet("Panel", 512);
+    paintStroke("Panel", "P", redStroke({{0, 0, 0}}, 15.0, {{"roughness", 1.0}}));
+    const image::Image img = gp::readChannel(set.id(), "P", "roughness");
+    REQUIRE(img.width == 512);
+    int compared = 0;
+    double worst = 0.0;
+    for (double z = -12.0; z <= 12.0; z += 2.0)
+    {
+        const float left = at(img, seamUv(0, -0.01, z))[0], right = at(img, seamUv(1, 0.01, z))[0];
+        CAPTURE(z);
+        CHECK(left > 0.05f);
+        worst = std::max(worst, double(std::abs(left - right)));
+        ++compared;
+    }
+    CHECK(compared > 5);
+    CHECK(worst < 0.03);
+    // Away from the dab nothing is painted, on either island.
+    CHECK(at(img, seamUv(0, -45, -40))[0] == 0.0f);
+    CHECK(at(img, seamUv(1, 45, 40))[0] == 0.0f);
+    // The padding just outside an island's seam edge is painted as well (dilation by the edge's surface point).
+    const glm::vec2 outside = seamUv(0, 0.0, 0.0) + glm::vec2(3.0f / 512.0f, 0.0f);
+    CHECK(at(img, outside)[0] > 0.05f);
+}
+
+TEST_CASE("texture paint: pages are allocated in proportion to what is painted")
+{
+    if (!gpu())
+        return;
+    newScene();
+    addMesh("PanelMesh", seamPanel());
+    scene::Node& set = makeSet("Panel", 1024);
+    const size_t before = gp::pagesInUse();
+    paintStroke("Panel", "P", redStroke({{-25, 0, 0}}, 2.0, {{"roughness", 1.0}}));
+    const json small = run("texPaintInfo", {{"args", {"Panel", "P"}}});
+    const size_t smallPages = small["pages"].get<size_t>();
+    // A dab of radius 2 (about 8 texels at this density) touches a page or four per channel (roughness and the mask).
+    CHECK(smallPages >= 2);
+    CHECK(smallPages <= 8);
+    CHECK(gp::pagesInUse() - before == smallPages);
+
+    paintStroke("Panel", "P", redStroke({{-25, 0, 0}}, 30.0, {{"roughness", 1.0}}));
+    const size_t bigPages = run("texPaintInfo", {{"args", {"Panel", "P"}}})["pages"].get<size_t>();
+    CHECK(bigPages > smallPages * 3);
+    // Never more than the islands' pages: a 1024 tile has 64 pages per channel.
+    CHECK(bigPages < 2 * 64);
+    const json info = gp::bufferInfo(set.id(), "P");
+    CHECK(info["channels"].contains("roughness"));
+    CHECK(info["channels"].contains("mask"));
+}
+
+TEST_CASE("texture paint: undo restores pages bit for bit")
+{
+    if (!gpu())
+        return;
+    newScene();
+    addMesh("PanelMesh", seamPanel());
+    scene::Node& set = makeSet("Panel", 256);
+    paintStroke("Panel", "P", redStroke({{-20, 0, 0}}, 10.0));
+    const auto one = gp::pageBytes(set.id(), "P");
+    paintStroke("Panel", "P", redStroke({{-15, 0, 4}, {5, 0, 4}}, 14.0, {{"baseColor", {0.0, 0.0, 1.0}}}));
+    const auto two = gp::pageBytes(set.id(), "P");
+    CHECK(two != one);
+    CHECK(tex::paint::readPaint(set)->buffer("P")->strokes.size() == 2);
+
+    UndoStack::get().undo();
+    mainq::drain();
+    CHECK(gp::pageBytes(set.id(), "P") == one);
+    CHECK(tex::paint::readPaint(set)->buffer("P")->strokes.size() == 1);
+    UndoStack::get().redo();
+    mainq::drain();
+    CHECK(gp::pageBytes(set.id(), "P") == two);
+
+    run("texClearLayer", {{"args", {"Panel", "P"}}});
+    mainq::drain();
+    CHECK(gp::pageBytes(set.id(), "P").empty());
+    UndoStack::get().undo();
+    mainq::drain();
+    CHECK(gp::pageBytes(set.id(), "P") == two);
+}
+
+TEST_CASE("texture paint: re-rasterising at twice the resolution matches a downsample")
+{
+    if (!gpu())
+        return;
+    newScene();
+    addMesh("PanelMesh", seamPanel());
+    scene::Node& set = makeSet("Panel", 256);
+    paintStroke("Panel", "P", redStroke({{-30, 0, -10}, {-20, 0, 0}, {-10, 0, 10}, {10, 0, 10}}, 9.0, {{"roughness", 1.0}}));
+    const image::Image low = gp::readChannel(set.id(), "P", "roughness");
+    run("texRasterize", {{"args", {"Panel", "P"}}, {"resolution", 512}});
+    const image::Image high = gp::readChannel(set.id(), "P", "roughness");
+    REQUIRE(high.width == 512);
+    // Values are straight (unpremultiplied): what composites is value times coverage, so compare that.
+    image::Image premul = high;
+    for (size_t i = 0; i < premul.rgba.size(); i += 4)
+        premul.rgba[i] *= premul.rgba[i + 3];
+    const image::Image down = downsample(premul, 2);
+    double sum = 0.0, worst = 0.0;
+    int n = 0;
+    for (int y = 0; y < low.height; ++y)
+        for (int x = 0; x < low.width; ++x)
+        {
+            // Inside the islands only: the padding is narrower in uv at the higher resolution.
+            const float u = (x + 0.5f) / low.width, v = 1.0f - (y + 0.5f) / low.height;
+            const bool inside = v > 0.12f && v < 0.88f && ((u > 0.07f && u < 0.43f) || (u > 0.57f && u < 0.93f));
+            if (!inside)
+                continue;
+            const float* l = texel(low, x, y);
+            const double d = std::abs(double(l[0]) * l[3] - double(texel(down, x, y)[0]));
+            sum += d;
+            worst = std::max(worst, d);
+            ++n;
+        }
+    CHECK(n > 1000);
+    CHECK(sum / n < 0.01);
+    CHECK(worst < 0.08);
+    CHECK(run("texPaintInfo", {{"args", {"Panel", "P"}}})["width"].get<int>() == 512);
+}
+
+TEST_CASE("texture paint: texPaintStroke from JSON, screen space, scene files and flatten")
+{
+    if (!gpu())
+        return;
+    newScene();
+    addMesh("PanelMesh", seamPanel());
+    scene::Node& set = makeSet("Panel", 256);
+    // Looking straight down at the panel: screen x runs along world x.
+    const json view = {{"eye", {0.0, 200.0, 0.01}}, {"lookAt", {0.0, 0.0, 0.0}}, {"up", {0.0, 0.0, -1.0}}, {"fov", 40.0}, {"width", 800}, {"height", 600}};
+    json brush = brushJson();
+    brush["radius"] = 25.0;
+    const json r = run("texPaintStroke", {{"args", {"Panel"}},
+                                          {"layer", "P"},
+                                          {"points", {{300.0, 300.0, 1.0}, {400.0, 300.0, 0.8}, {500.0, 300.0, 0.5}}},
+                                          {"view", view},
+                                          {"brush", brush},
+                                          {"payload", {{"channels", {{"baseColor", {0.0, 1.0, 0.0}}}}}}});
+    CHECK(r["dabs"].get<int>() > 5);
+    const tex::paint::PaintPtr data = tex::paint::readPaint(set);
+    REQUIRE(data->buffer("P"));
+    const tex::paint::Stroke& s = *data->buffer("P")->strokes.front();
+    CHECK(s.view.has_value());
+    CHECK(s.dabs.size() == size_t(r["dabs"].get<int>()));
+    const image::Image img = gp::readChannel(set.id(), "P", "baseColor");
+    CHECK(at(img, seamUv(1, 0.5, 0.0))[1] > 0.5f);
+    CHECK(at(img, seamUv(0, -45.0, 45.0))[3] == 0.0f);
+    const auto painted = gp::pageBytes(set.id(), "P");
+
+    // The records survive an ASCII scene file and rasterise back to the same pages.
+    const fs::path file = fs::temp_directory_path() / "lila_tex_paint.lilaa";
+    run("saveScene", {{"args", {file.generic_string()}}});
+    newScene();
+    run("openScene", {{"args", {file.generic_string()}}, {"force", true}});
+    mainq::drain();
+    scene::Node* loaded = tex::findSet(sg(), "Panel");
+    REQUIRE(loaded);
+    gp::sync(sg(), *loaded);
+    CHECK(gp::pageBytes(loaded->id(), "P") == painted);
+
+    // Flatten keeps the pixels and drops the records; rasterising again restores them from the kept pixels.
+    run("texFlattenLayer", {{"args", {"Panel", "P"}}});
+    CHECK(tex::paint::readPaint(*loaded)->buffer("P")->strokes.empty());
+    CHECK(gp::pageBytes(loaded->id(), "P") == painted);
+    run("texRasterize", {{"args", {"Panel", "P"}}});
+    CHECK(gp::pageBytes(loaded->id(), "P") == painted);
+    fs::remove(file);
+}
+
+TEST_CASE("texture paint: height, direction strokes and occlusion")
+{
+    if (!gpu())
+        return;
+    newScene();
+    addMesh("PanelMesh", seamPanel());
+    scene::Node& set = makeSet("Panel", 256);
+    json d = redStroke({{-35, 0, 0}, {-30, 0, 0}, {-25, 0, 0}, {-20, 0, 0}}, 6.0, json::object());
+    d["payload"] = {{"kind", "direction"}, {"tilt", 0.8}};
+    paintStroke("Panel", "P", d);
+    const image::Image n = gp::readChannel(set.id(), "P", "normal");
+    const float* mid = at(n, seamUv(0, -27.5, 0.0));
+    CHECK(mid[3] > 0.5f);
+    // Tilted along the stroke (+x in object space, +u on the left island): x away from 0.5, y close to it.
+    CHECK(std::abs(mid[0] - 0.5f) > 0.1f);
+    CHECK(std::abs(mid[1] - 0.5f) < 0.05f);
+
+    paintStroke("Panel", "P", redStroke({{20, 0, 0}}, 8.0, {{"height", 1.0}}));
+    const image::Image h = gp::readChannel(set.id(), "P", "height");
+    CHECK(at(h, seamUv(1, 20.0, 0.0))[0] > 0.9f);
+
+}
+
+TEST_CASE("texture paint: the stroke's view hides what it can't see")
+{
+    if (!gpu())
+        return;
+    newScene();
+    // The panel with a small quad floating 20 above its middle, in its own corner of uv.
+    geo::Mesh m = seamPanel();
+    {
+        const std::vector<glm::dvec3> pts = {{-10, 20, -10}, {-10, 20, 10}, {10, 20, 10}, {10, 20, -10}};
+        const std::vector<geo::Index> sizes = {4}, idx = {0, 1, 2, 3};
+        geo::Mesh lid = geo::Mesh::fromPolygons(pts, sizes, idx);
+        auto uv = lid.cornerAttrs().getOrAdd<glm::vec2>(geo::attr::uvName(0));
+        for (geo::Index c : lid.faceCorners(0))
+        {
+            const glm::dvec3 p = lid.position(lid.cornerPoint(c));
+            uv[c] = {float(0.47 + (p.x + 10.0) / 20.0 * 0.06), float(0.93 + (p.z + 10.0) / 20.0 * 0.05)};
+        }
+        m.append(lid);
+    }
+    addMesh("PanelMesh", std::move(m));
+    scene::Node& set = makeSet("Panel", 512);
+    const json view = {{"eye", {0.0, 300.0, 0.01}}, {"lookAt", {0.0, 0.0, 0.0}}, {"up", {0.0, 0.0, -1.0}}, {"fov", 40.0}, {"width", 400}, {"height", 400}};
+    json brush = brushJson();
+    brush["radius"] = 1.0;
+    brush["radiusUnit"] = "world";
+    brush["worldRadius"] = 30.0;
+    brush["falloff"] = "constant";
+    run("texPaintStroke", {{"args", {"Panel", "P"}}, {"points", {{200.0, 200.0}}}, {"view", view}, {"brush", brush},
+                           {"payload", {{"channels", {{"roughness", 1.0}}}}}});
+    const image::Image img = gp::readChannel(set.id(), "P", "roughness");
+    REQUIRE(img.width == 512);
+    // Under the lid: hidden. Beside it, within reach of the dab on the lid: painted.
+    CHECK(at(img, seamUv(0, -5.0, 0.0))[3] == 0.0f);
+    CHECK(at(img, seamUv(1, 5.0, 3.0))[3] == 0.0f);
+    CHECK(at(img, seamUv(0, -15.0, 0.0))[3] > 0.5f);
+    CHECK(at(img, seamUv(1, 15.0, 0.0))[3] > 0.5f);
+
+    // Without occlusion the same stroke paints under the lid too.
+    run("texPaintStroke", {{"args", {"Panel", "Q"}}, {"points", {{200.0, 200.0}}}, {"view", view}, {"brush", brush},
+                           {"stroke", {{"occlusion", false}}}, {"payload", {{"channels", {{"roughness", 1.0}}}}}});
+    CHECK(at(gp::readChannel(set.id(), "Q", "roughness"), seamUv(0, -5.0, 0.0))[3] > 0.5f);
+}
+
+TEST_CASE("texture paint: the live viewport composites a painted buffer")
+{
+    if (!gpu())
+        return;
+    newScene();
+    addMesh("PanelMesh", seamPanel());
+    scene::Node& set = makeSet("Panel", 128);
+    tex::Graph g = tex::Graph::makeMaterial("Panel");
+    add(g, "Paint", "image", {{"file", tex::paint::imageRef("P", "baseColor")}});
+    link(g, "Paint.out", "Output.baseColor");
+    tex::writeGraph(sg(), set, g);
+    paintStroke("Panel", "P", redStroke({{25, 0, 0}}, 20.0));
+    ui::texLive::install();
+    REQUIRE(ui::texLive::mapsFor("Panel"));
+    REQUIRE(ui::texLive::waitIdle());
+    GpuImageRef img = ui::texLive::channelImage("Panel", "baseColor");
+    REQUIRE(img);
+    std::vector<uint8_t> bytes = readGpuImage(img);
+    const glm::vec2 uv = seamUv(1, 25.0, 0.0);
+    const int x = int(uv.x * img->width()), y = int((1.0f - uv.y) * img->height());
+    // RGBA8 sRGB: red painted.
+    const uint8_t* t = &bytes[(size_t(y) * img->width() + x) * 4];
+    CHECK(t[0] > 200);
+    CHECK(t[1] < 40);
+
+    // A second stroke reaches the viewport through the change listener.
+    paintStroke("Panel", "P", redStroke({{-25, 0, 0}}, 20.0, {{"baseColor", {0.0, 0.0, 1.0}}}));
+    REQUIRE(ui::texLive::waitIdle());
+    bytes = readGpuImage(img);
+    const glm::vec2 uv2 = seamUv(0, -25.0, 0.0);
+    const uint8_t* t2 = &bytes[(size_t(int((1.0f - uv2.y) * img->height())) * img->width() + int(uv2.x * img->width())) * 4];
+    CHECK(t2[2] > 200);
+
+    // texEvaluate (CPU or GPU) reads the same paint.
+    const json out = run("texEvaluate", {{"args", {"Panel"}}, {"channels", {"baseColor"}}, {"folder", (fs::temp_directory_path() / "lila_tex_paint_eval").generic_string()}});
+    REQUIRE(out["files"].size() == 1);
+    image::Image file = image::read(fs::path(out["files"][0].get<std::string>()));
+    CHECK(at(file, uv)[0] > 0.8f);
+}

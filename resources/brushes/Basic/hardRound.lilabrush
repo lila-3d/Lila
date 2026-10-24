@@ -1,0 +1,17 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Hard Round",
+  "category": "Basic",
+  "doc": "A hard-edged round brush.",
+  "brush": {
+    "falloff": "sharp",
+    "spacing": 0.08,
+    "roundness": 1.0,
+    "alpha": ""
+  },
+  "payload": {
+    "kind": "paint",
+    "blend": "normal"
+  }
+}

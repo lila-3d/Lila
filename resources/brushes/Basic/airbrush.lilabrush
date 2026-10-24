@@ -1,0 +1,16 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Airbrush",
+  "category": "Basic",
+  "doc": "Low flow, builds up.",
+  "brush": {
+    "falloff": "bell",
+    "flow": 0.15,
+    "spacing": 0.05,
+    "pressureFlow": true
+  },
+  "payload": {
+    "kind": "paint"
+  }
+}

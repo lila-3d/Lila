@@ -1,0 +1,19 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Moss",
+  "category": "Material",
+  "doc": "Paints moss.",
+  "brush": {
+    "falloff": "smooth",
+    "spacing": 0.1
+  },
+  "payload": {
+    "kind": "paint",
+    "source": {
+      "library": "layerMoss",
+      "resolution": 512,
+      "scale": 2
+    }
+  }
+}

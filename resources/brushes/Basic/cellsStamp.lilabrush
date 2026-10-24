@@ -1,0 +1,22 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Cells Stamp",
+  "category": "Basic",
+  "doc": "A cellular stamp tip from a texture graph.",
+  "brush": {
+    "falloff": "constant",
+    "spacing": 0.8,
+    "jitter": {
+      "angle": 180,
+      "size": 0.3
+    }
+  },
+  "payload": {
+    "kind": "paint",
+    "tip": {
+      "node": "cells",
+      "resolution": 128
+    }
+  }
+}

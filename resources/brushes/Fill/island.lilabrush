@@ -1,0 +1,12 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Fill UV Island",
+  "category": "Fill",
+  "doc": "Fills the UV island under the cursor.",
+  "brush": {},
+  "payload": {
+    "kind": "fill",
+    "fillBy": "island"
+  }
+}

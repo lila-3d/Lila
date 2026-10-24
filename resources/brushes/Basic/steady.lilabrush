@@ -1,0 +1,16 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Steady",
+  "category": "Basic",
+  "doc": "Lazy mouse: the brush trails the cursor for smooth strokes.",
+  "brush": {
+    "falloff": "smooth",
+    "lazyRadius": 40,
+    "smoothing": 0.5,
+    "spacing": 0.1
+  },
+  "payload": {
+    "kind": "paint"
+  }
+}

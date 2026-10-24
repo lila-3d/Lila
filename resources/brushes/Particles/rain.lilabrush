@@ -1,0 +1,21 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Rain",
+  "category": "Particles",
+  "doc": "Spatters of small drops.",
+  "brush": {
+    "falloff": "smooth",
+    "spacing": 0.5
+  },
+  "payload": {
+    "kind": "paint"
+  },
+  "particles": {
+    "kind": "rain",
+    "count": 8,
+    "size": 0.12,
+    "spread": 1.5,
+    "rate": 0.8
+  }
+}

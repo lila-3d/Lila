@@ -1,0 +1,15 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Flow Map",
+  "category": "Normal",
+  "doc": "Writes the stroke direction into a strokeDir channel.",
+  "brush": {
+    "falloff": "smooth",
+    "spacing": 0.1
+  },
+  "payload": {
+    "kind": "direction",
+    "channel": "strokeDir"
+  }
+}

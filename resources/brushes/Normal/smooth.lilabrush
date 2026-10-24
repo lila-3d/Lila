@@ -1,0 +1,18 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Smooth Normal",
+  "category": "Normal",
+  "doc": "Blurs the normal channel.",
+  "brush": {
+    "falloff": "smooth",
+    "spacing": 0.15
+  },
+  "payload": {
+    "kind": "blur",
+    "filterRadius": 4,
+    "channels": {
+      "normal": 0.0
+    }
+  }
+}

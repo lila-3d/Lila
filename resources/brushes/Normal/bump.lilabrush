@@ -1,0 +1,17 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Bump",
+  "category": "Normal",
+  "doc": "Raises the normal under the brush (RNM over what is there).",
+  "brush": {
+    "falloff": "smooth",
+    "spacing": 0.1,
+    "strength": 1.0
+  },
+  "payload": {
+    "kind": "normal",
+    "normalMode": "bump",
+    "intensity": 1.0
+  }
+}

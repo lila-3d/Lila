@@ -1,0 +1,197 @@
+#include "tex/PaintSymmetry.h"
+
+#include "geo/Mesh.h"
+
+#include <algorithm>
+#include <cmath>
+
+namespace lila::tex::paint
+{
+struct PaintSymmetry::Index
+{
+    /** Sorted corner points -> triangle. */
+    std::map<std::array<uint32_t, 3>, uint32_t> triangles;
+};
+
+namespace
+{
+constexpr double kPi = 3.14159265358979323846;
+
+glm::dmat4 rotation(int axis, double angle)
+{
+    glm::dvec3 a(0.0);
+    a[std::clamp(axis, 0, 2)] = 1.0;
+    const double c = std::cos(angle), s = std::sin(angle);
+    glm::dmat4 m(1.0);
+    for (int col = 0; col < 3; ++col)
+    {
+        glm::dvec3 e(0.0);
+        e[col] = 1.0;
+        const glm::dvec3 r = e * c + glm::cross(a, e) * s + a * glm::dot(a, e) * (1.0 - c);
+        m[col] = glm::dvec4(r, 0.0);
+    }
+    return m;
+}
+
+glm::dmat4 reflection(const geo::SymmetryPlane& p)
+{
+    glm::dmat4 m(1.0);
+    for (int col = 0; col < 3; ++col)
+    {
+        glm::dvec3 e(0.0);
+        e[col] = 1.0;
+        m[col] = glm::dvec4(e - 2.0 * glm::dot(e, p.normal) * p.normal, 0.0);
+    }
+    m[3] = glm::dvec4(2.0 * p.offset * p.normal, 1.0);
+    return m;
+}
+} // namespace
+
+uint32_t PaintSymmetry::count() const { return uint32_t(std::max(radial.count, 1)) * (mirror ? 2u : 1u); }
+
+bool PaintSymmetry::mirrored(uint32_t copy) const { return mirror && copy >= uint32_t(std::max(radial.count, 1)); }
+
+glm::dmat4 PaintSymmetry::transform(uint32_t copy) const
+{
+    const uint32_t n = uint32_t(std::max(radial.count, 1));
+    const uint32_t r = copy % n;
+    glm::dmat4 t = r ? rotation(radial.axis, 2.0 * kPi * double(r) / double(n)) : glm::dmat4(1.0);
+    if (mirrored(copy))
+        t = reflection(*mirror) * t;
+    return t;
+}
+
+nlohmann::json PaintSymmetry::toJson() const
+{
+    if (!any())
+        return nullptr;
+    nlohmann::json j = {{"radial", {{"count", radial.count}, {"axis", radial.axis}}}, {"mirror", nullptr}};
+    if (mirror)
+        j["mirror"] = {mirror->normal.x, mirror->normal.y, mirror->normal.z, mirror->offset};
+    return j;
+}
+
+PaintSymmetry PaintSymmetry::fromJson(const nlohmann::json& j)
+{
+    PaintSymmetry s;
+    if (!j.is_object())
+        return s;
+    if (const auto it = j.find("mirror"); it != j.end() && it->is_array() && it->size() == 4)
+    {
+        geo::SymmetryPlane p;
+        p.normal = glm::dvec3((*it)[0].get<double>(), (*it)[1].get<double>(), (*it)[2].get<double>());
+        if (glm::length(p.normal) > 1e-12)
+        {
+            p.normal = glm::normalize(p.normal);
+            p.offset = (*it)[3].get<double>();
+            s.mirror = p;
+        }
+    }
+    if (const auto it = j.find("radial"); it != j.end() && it->is_object())
+    {
+        s.radial.count = std::clamp(it->value("count", 1), 1, 64);
+        s.radial.axis = std::clamp(it->value("axis", 1), 0, 2);
+    }
+    return s;
+}
+
+bool PaintSymmetry::copyPoint(const PaintMesh& mesh, uint32_t tri, float u, float v, uint32_t copy, Dab& out) const
+{
+    if (tri >= mesh.triangleCount())
+        return false;
+    // A plain mirror follows the mesh's point pairs when there are some: exact on a deformed mesh too.
+    if (map && copy == uint32_t(std::max(radial.count, 1)) && mesh.points.size() == mesh.triangleCount() * 3)
+    {
+        if (mIndexed != &mesh || !mIndex)
+        {
+            mIndex = std::make_shared<Index>();
+            for (uint32_t t = 0; t < mesh.triangleCount(); ++t)
+            {
+                std::array<uint32_t, 3> k = {mesh.points[t * 3], mesh.points[t * 3 + 1], mesh.points[t * 3 + 2]};
+                std::sort(k.begin(), k.end());
+                mIndex->triangles.emplace(k, t);
+            }
+            mIndexed = &mesh;
+        }
+        std::array<uint32_t, 3> q;
+        bool ok = true;
+        for (int i = 0; i < 3; ++i)
+        {
+            const geo::Index m = map->mirrorPoint(mesh.points[size_t(tri) * 3 + size_t(i)]);
+            ok = ok && m != geo::kInvalid;
+            q[size_t(i)] = uint32_t(m);
+        }
+        if (ok)
+        {
+            std::array<uint32_t, 3> key = q;
+            std::sort(key.begin(), key.end());
+            if (auto it = mIndex->triangles.find(key); it != mIndex->triangles.end() && mesh.paintable[it->second])
+            {
+                const uint32_t t2 = it->second;
+                const float w[3] = {1.0f - u - v, u, v};
+                float w2[3] = {0.0f, 0.0f, 0.0f};
+                for (int j = 0; j < 3; ++j)
+                    for (int i = 0; i < 3; ++i)
+                        if (mesh.points[size_t(t2) * 3 + size_t(j)] == q[size_t(i)])
+                            w2[j] = w[i];
+                out.triangle = t2;
+                out.u = w2[1];
+                out.v = w2[2];
+                return true;
+            }
+        }
+    }
+    const glm::dvec3 p = glm::dvec3(transform(copy) * glm::dvec4(glm::dvec3(mesh.point(tri, u, v)), 1.0));
+    geo::BvhClosest hit;
+    // The copy of a surface point lies on the surface of a symmetric mesh; allow some asymmetry.
+    const glm::vec3* c = &mesh.positions[size_t(tri) * 3];
+    const double reach = std::max({glm::length(glm::dvec3(c[1] - c[0])), glm::length(glm::dvec3(c[2] - c[0])), 1e-6});
+    if (!mesh.bvh->closestPoint(p, hit, reach) || hit.triangle >= mesh.triangleCount() || !mesh.paintable[hit.triangle])
+        return false;
+    out.triangle = uint32_t(hit.triangle);
+    out.u = float(hit.bary.y);
+    out.v = float(hit.bary.z);
+    return true;
+}
+
+std::vector<Dab> PaintSymmetry::copies(const PaintMesh& mesh, const Dab& d) const
+{
+    std::vector<Dab> out{d};
+    out.back().copy = 0;
+    if (!any() || d.triangle >= mesh.triangleCount())
+        return out;
+    const glm::vec3 n0 = mesh.normal(d.triangle, d.u, d.v), t0 = tipFrame(n0), b0 = glm::cross(n0, t0);
+    const glm::vec3 axis = t0 * std::cos(d.angle) + b0 * std::sin(d.angle);
+    for (uint32_t k = 1; k < count(); ++k)
+    {
+        Dab c = d;
+        if (!copyPoint(mesh, d.triangle, d.u, d.v, k, c))
+            continue;
+        c.copy = k;
+        // The tip's axis carried over, measured from the frame where the copy lands.
+        const glm::vec3 a = glm::vec3(glm::dmat3(transform(k)) * glm::dvec3(axis));
+        const glm::vec3 n = mesh.normal(c.triangle, c.u, c.v), t = tipFrame(n), b = glm::cross(n, t);
+        c.angle = std::atan2(glm::dot(a, b), glm::dot(a, t));
+        out.push_back(c);
+    }
+    return out;
+}
+
+PaintSymmetry brushSymmetry(const brush::BrushSettings& b, const geo::Mesh* mesh, int axis, double offset)
+{
+    PaintSymmetry s;
+    s.radial = b.radial;
+    if (b.mirror)
+    {
+        s.mirror = geo::axisPlane(axis, offset);
+        if (mesh)
+        {
+            geo::Mesh copy = *mesh;
+            auto map = std::make_shared<geo::SymmetryMap>(geo::SymmetryMap::persistent(copy, axis, 1e-3, nullptr, offset));
+            if (!map->empty())
+                s.map = map;
+        }
+    }
+    return s;
+}
+} // namespace lila::tex::paint

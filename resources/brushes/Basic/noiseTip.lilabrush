@@ -1,0 +1,24 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Noise Tip",
+  "category": "Basic",
+  "doc": "A procedural tip from a texture graph (perlin noise).",
+  "brush": {
+    "falloff": "smooth",
+    "spacing": 0.3,
+    "jitter": {
+      "angle": 180
+    }
+  },
+  "payload": {
+    "kind": "paint",
+    "tip": {
+      "node": "perlin",
+      "values": {
+        "scale": 6
+      },
+      "resolution": 128
+    }
+  }
+}

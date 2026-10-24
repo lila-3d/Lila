@@ -1,0 +1,16 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Flat Bristle",
+  "category": "Basic",
+  "doc": "A flat tip that follows the stroke.",
+  "brush": {
+    "falloff": "smooth",
+    "roundness": 0.25,
+    "followStroke": true,
+    "spacing": 0.05
+  },
+  "payload": {
+    "kind": "paint"
+  }
+}

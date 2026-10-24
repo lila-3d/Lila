@@ -1,0 +1,15 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Heal",
+  "category": "Filters",
+  "doc": "Clones detail while keeping the target's colour.",
+  "brush": {
+    "falloff": "smooth",
+    "spacing": 0.1
+  },
+  "payload": {
+    "kind": "heal",
+    "filterRadius": 8
+  }
+}

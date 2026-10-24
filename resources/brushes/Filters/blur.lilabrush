@@ -1,0 +1,16 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Blur",
+  "category": "Filters",
+  "doc": "Softens what is painted.",
+  "brush": {
+    "falloff": "smooth",
+    "spacing": 0.15,
+    "strength": 0.7
+  },
+  "payload": {
+    "kind": "blur",
+    "filterRadius": 4
+  }
+}

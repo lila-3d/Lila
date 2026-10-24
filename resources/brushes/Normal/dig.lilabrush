@@ -1,0 +1,16 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Dig",
+  "category": "Normal",
+  "doc": "Sinks the normal under the brush.",
+  "brush": {
+    "falloff": "smooth",
+    "spacing": 0.1
+  },
+  "payload": {
+    "kind": "normal",
+    "normalMode": "bump",
+    "intensity": -1.0
+  }
+}

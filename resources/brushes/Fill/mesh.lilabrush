@@ -1,0 +1,12 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Fill Mesh",
+  "category": "Fill",
+  "doc": "Fills the whole mesh.",
+  "brush": {},
+  "payload": {
+    "kind": "fill",
+    "fillBy": "mesh"
+  }
+}

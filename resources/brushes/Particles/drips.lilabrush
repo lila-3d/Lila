@@ -1,0 +1,21 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Drips",
+  "category": "Particles",
+  "doc": "Paint that runs down the surface.",
+  "brush": {
+    "falloff": "smooth",
+    "spacing": 0.2
+  },
+  "payload": {
+    "kind": "paint"
+  },
+  "particles": {
+    "kind": "drips",
+    "count": 2,
+    "length": 5,
+    "size": 0.25,
+    "rate": 0.3
+  }
+}

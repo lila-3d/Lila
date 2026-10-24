@@ -1,0 +1,19 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Soft Round",
+  "category": "Basic",
+  "doc": "A soft round brush painting the enabled channels.",
+  "brush": {
+    "falloff": "smooth",
+    "spacing": 0.1,
+    "strength": 1.0,
+    "roundness": 1.0,
+    "alpha": "",
+    "strokeMode": "freehand"
+  },
+  "payload": {
+    "kind": "paint",
+    "blend": "normal"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Sparks",
+  "category": "Particles",
+  "doc": "Streaks flying out from the brush.",
+  "brush": {
+    "falloff": "smooth",
+    "spacing": 0.4
+  },
+  "payload": {
+    "kind": "paint"
+  },
+  "particles": {
+    "kind": "sparks",
+    "count": 4,
+    "length": 3,
+    "size": 0.15,
+    "rate": 0.5
+  }
+}

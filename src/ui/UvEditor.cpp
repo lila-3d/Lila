@@ -17,6 +17,7 @@
 #include "ui/Icons.h"
 #include "ui/MarkingMenu.h"
 #include "ui/UvLive.h"
+#include "ui/UvTexturePaint.h"
 #include "ui/UvTools.h"
 #include "ui/UvPackPanel.h"
 #include "ui/UvProjectTool.h"
@@ -151,7 +152,10 @@ public:
         setProperty("hotkeyContext", "uvEditor");
         setProperty("hotkeyHover", true);
         mUvToolListener = uvTools::addRedrawListener([this] { update(); });
+        mTexPaint.onUpdate = [this] { update(); };
     }
+
+    UvTexturePaint& texturePaint() { return mTexPaint; }
 
     ~UvView() override { uvTools::removeRedrawListener(mUvToolListener); }
 
@@ -243,6 +247,7 @@ protected:
         drawManipulator(p);
         drawSewDrag(p);
         drawBrush(p);
+        mTexPaint.drawCursor(p, mMousePos);
         if (uvTools::UvTool* t = uvTools::active())
             t->draw(p, canvas());
         drawStacks(p);
@@ -292,6 +297,11 @@ protected:
         }
         if (e->button() != Qt::LeftButton)
             return;
+        if (mTexPaint.mousePress(e, uvOf(), mZoom))
+        {
+            update();
+            return;
+        }
         if (uvTools::UvTool* t = uvTools::active(); t && t->mousePress(e, canvas()))
         {
             mUvToolDrag = true;
@@ -337,6 +347,12 @@ protected:
             updateDrag(e->modifiers());
             update();
             return;
+        }
+        if (mTexPaint.mouseMove(e, uvOf(), mZoom) || mTexPaint.painting())
+        {
+            update();
+            if (e->buttons() & Qt::LeftButton)
+                return;
         }
         if (uvTools::UvTool* t = uvTools::active(); t && (mUvToolDrag || !(e->buttons() & Qt::LeftButton)) && t->mouseMove(e, canvas()))
         {
@@ -393,6 +409,11 @@ protected:
         if (mNav != Nav::None)
         {
             mNav = Nav::None;
+            return;
+        }
+        if (mTexPaint.mouseRelease(e, uvOf(), mZoom))
+        {
+            update();
             return;
         }
         if (mDrag != Handle::None)
@@ -556,6 +577,10 @@ private:
     // View mapping: v points up.
     QPointF toScreen(const glm::dvec2& uv) const { return QPointF(mPan.x + uv.x * mZoom, mPan.y - uv.y * mZoom); }
     glm::dvec2 toUv(const QPointF& s) const { return {(s.x() - mPan.x) / mZoom, (mPan.y - s.y()) / mZoom}; }
+    UvTexturePaint::ToUv uvOf() const
+    {
+        return [this](const QPointF& s) { return toUv(s); };
+    }
 
     void frame(glm::dvec2 lo, glm::dvec2 hi)
     {
@@ -845,6 +870,7 @@ private:
                     p.drawText(tile.adjusted(4, 2, -4, -2), Qt::AlignLeft | Qt::AlignTop, QString::number(1001 + tu + 10 * tv));
                 }
             }
+        mTexPaint.drawBackground(p, rect(), [this](const glm::dvec2& uv) { return toScreen(uv); }, uvOf(), mUdim);
         // Tenths grid inside the tiles, tile borders brighter.
         p.setPen(QPen(gray(58), 0));
         for (int i = 1; i < 10 * tilesU; ++i)
@@ -2176,6 +2202,7 @@ private:
     bool mFramed = false;
     glm::dvec2 mPan{0.0};
     double mZoom = 300.0;
+    UvTexturePaint mTexPaint;
     Tool mTool = Tool::Select;
     int mUvToolListener = 0;
     bool mUvToolDrag = false;
@@ -2305,6 +2332,39 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     auto* udim = new QCheckBox("UDIM", this);
     udim->setIcon(icon("grid-4x4"));
     row1->addWidget(udim);
+    // A texture set channel under the UVs, and the texture paint brush in UV space.
+    auto* texture = new QToolButton(this);
+    texture->setText("Texture");
+    texture->setIcon(icon("photo"));
+    texture->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    texture->setPopupMode(QToolButton::InstantPopup);
+    texture->setToolTip("Show a texture set channel under the UVs (drawn on the GPU at the view's resolution)");
+    auto* textureMenu = new QMenu(texture);
+    texture->setMenu(textureMenu);
+    connect(textureMenu, &QMenu::aboutToShow, this, [this, textureMenu, texture] {
+        textureMenu->clear();
+        textureMenu->addAction("None", this, [this, texture] {
+            mView->texturePaint().setChannel({}, {});
+            texture->setText("Texture");
+        });
+        for (const auto& [set, channel] : UvTexturePaint::choices())
+        {
+            const QString label = QString::fromStdString(set + " / " + channel);
+            textureMenu->addAction(label, this, [this, texture, set, channel, label] {
+                mView->texturePaint().setChannel(set, channel);
+                texture->setText(label);
+            });
+        }
+    });
+    row1->addWidget(texture);
+    auto* paint = new QCheckBox("Paint", this);
+    paint->setIcon(icon("brush"));
+    paint->setToolTip("Paint the shown texture set in UV space with the Texture Paint tool's brush and channels");
+    connect(paint, &QCheckBox::toggled, this, [this](bool on) {
+        mView->texturePaint().setPainting(on);
+        mView->update();
+    });
+    row1->addWidget(paint);
     root->addLayout(row1);
 
     // Operations.

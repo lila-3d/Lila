@@ -1,0 +1,20 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Dirt",
+  "category": "Material",
+  "doc": "Paints dirt.",
+  "brush": {
+    "falloff": "bell",
+    "spacing": 0.1,
+    "flow": 0.4
+  },
+  "payload": {
+    "kind": "paint",
+    "source": {
+      "library": "layerDirt",
+      "resolution": 512,
+      "scale": 2
+    }
+  }
+}

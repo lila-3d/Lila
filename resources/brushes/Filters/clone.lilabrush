@@ -1,0 +1,14 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Clone",
+  "category": "Filters",
+  "doc": "Copies from the clone source (Ctrl+Alt+click sets it).",
+  "brush": {
+    "falloff": "smooth",
+    "spacing": 0.1
+  },
+  "payload": {
+    "kind": "clone"
+  }
+}

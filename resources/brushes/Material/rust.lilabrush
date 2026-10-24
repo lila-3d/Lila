@@ -1,0 +1,19 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Rust",
+  "category": "Material",
+  "doc": "Paints the rust material's channels through the mask.",
+  "brush": {
+    "falloff": "smooth",
+    "spacing": 0.1
+  },
+  "payload": {
+    "kind": "paint",
+    "source": {
+      "library": "rustMedium",
+      "resolution": 512,
+      "scale": 2
+    }
+  }
+}

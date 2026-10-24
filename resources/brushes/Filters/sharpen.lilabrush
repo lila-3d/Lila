@@ -1,0 +1,17 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Sharpen",
+  "category": "Filters",
+  "doc": "Crispens what is painted.",
+  "brush": {
+    "falloff": "smooth",
+    "spacing": 0.15,
+    "strength": 0.6
+  },
+  "payload": {
+    "kind": "sharpen",
+    "filterRadius": 3,
+    "amount": 1.0
+  }
+}

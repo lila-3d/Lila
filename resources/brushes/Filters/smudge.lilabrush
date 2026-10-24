@@ -1,0 +1,16 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Smudge",
+  "category": "Filters",
+  "doc": "Drags the paint along the stroke.",
+  "brush": {
+    "falloff": "smooth",
+    "spacing": 0.1,
+    "strength": 0.8
+  },
+  "payload": {
+    "kind": "smudge",
+    "amount": 0.8
+  }
+}

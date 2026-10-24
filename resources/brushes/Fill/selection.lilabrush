@@ -1,0 +1,12 @@
+{
+  "format": "lilabrush",
+  "version": 1,
+  "name": "Fill Selection",
+  "category": "Fill",
+  "doc": "Fills the selected faces.",
+  "brush": {},
+  "payload": {
+    "kind": "fill",
+    "fillBy": "selection"
+  }
+}
