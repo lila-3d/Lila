@@ -436,6 +436,8 @@ void registerSculptUi()
                   .label = "Sculpt",
                   .category = "Sculpt",
                   .run = [] {
+                      if (sculpt::active() && sculptToolActive())
+                          return exitSculpt();
                       showDock();
                       if (!sculpt::active())
                       {
@@ -448,7 +450,7 @@ void registerSculptUi()
                       }
                       startSculptTool();
                   },
-                  .doc = "Sculpt the selected mesh: enters sculpt mode if needed and picks up the sculpt brush.",
+                  .doc = "Sculpt the selected mesh: enters sculpt mode if needed and picks up the sculpt brush. Again while sculpting exits sculpt mode.",
                   .python = "lila.ui.run_action(\"sculpt.tool\")"});
     actions::add({.id = "sculpt.enter",
                   .label = "Enter Sculpt",

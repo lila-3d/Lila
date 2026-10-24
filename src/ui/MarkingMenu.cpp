@@ -399,6 +399,38 @@ void MarkingMenu::layout(Level& level) const
         it.box = box ? QRectF(it.rect.right() - kBoxWidth, it.rect.top(), kBoxWidth, it.rect.height()) : QRectF();
     }
 
+    // Each outer item stacks beyond the one before it in its slot, starting from the compass item (or where it would be).
+    std::array<QRectF, 8> last;
+    for (int i = 0; i < 8; ++i)
+    {
+        QPointF p = level.center + kDirs[i] * kRadius;
+        last[i] = level.compass[i] ? level.compass[i]->rect : QRectF(p.x() - 30, p.y() - kItemHeight / 2, 60, kItemHeight);
+    }
+    constexpr double kGap = 6.0;
+    const size_t rows = std::ranges::find_if(level.overflow, [](const Item& it) { return it.outerSlot >= 0; }) - level.overflow.begin();
+    for (size_t i = rows; i < level.overflow.size(); ++i)
+    {
+        Item& it = level.overflow[i];
+        const QPointF d = kDirs[it.outerSlot];
+        const QRectF& prev = last[it.outerSlot];
+        const bool box = hasOptionBox(it.action, it.children, it.boxAction);
+        const double w = fm.horizontalAdvance(it.label) + 2 * kPadX + 2 + (box ? kBoxWidth : 0);
+        double x = prev.center().x() - w / 2, y = prev.top();
+        if (std::abs(d.y()) < 0.1)
+            x = d.x() > 0 ? prev.right() + kGap : prev.left() - kGap - w;
+        else
+        {
+            y = d.y() < 0 ? prev.top() - kGap - kItemHeight : prev.bottom() + kGap;
+            if (d.x() > 0.1)
+                x = prev.left() + 16;
+            else if (d.x() < -0.1)
+                x = prev.right() - 16 - w;
+        }
+        it.rect = QRectF(x, y, w, kItemHeight);
+        it.box = box ? QRectF(it.rect.right() - kBoxWidth, it.rect.top(), kBoxWidth, it.rect.height()) : QRectF();
+        last[it.outerSlot] = it.rect;
+    }
+
     // Each column is as wide as its own widest row, and the columns sit side by side centred under the menu.
     struct Column
     {
@@ -407,7 +439,6 @@ void MarkingMenu::layout(Level& level) const
     };
     std::vector<Column> columns(1);
     bool box = false;
-    const size_t rows = std::ranges::find_if(level.overflow, [](const Item& it) { return it.outerSlot >= 0; }) - level.overflow.begin();
     for (size_t i = 0; i < rows; ++i)
     {
         Item& it = level.overflow[i];
@@ -430,7 +461,11 @@ void MarkingMenu::layout(Level& level) const
         total += c.width + kColumnGap;
 
     double left = level.center.x() - total / 2;
-    double top = level.compass[4] ? level.compass[4]->rect.bottom() + 10 : level.center.y() + kRadius + 10;
+    // Below the compass and the outer ring, which can stack down past the south item.
+    double top = level.center.y() + kRadius + kItemHeight / 2;
+    for (const QRectF& r : last)
+        top = std::max(top, r.bottom());
+    top += 10;
     if (level.cascade)
     {
         left = level.cascade->x();
@@ -455,37 +490,6 @@ void MarkingMenu::layout(Level& level) const
             y += kItemHeight;
         }
         left += c.width + kColumnGap;
-    }
-
-    // Each outer item stacks beyond the one before it in its slot, starting from the compass item (or where it would be).
-    std::array<QRectF, 8> last;
-    for (int i = 0; i < 8; ++i)
-    {
-        QPointF p = level.center + kDirs[i] * kRadius;
-        last[i] = level.compass[i] ? level.compass[i]->rect : QRectF(p.x() - 30, p.y() - kItemHeight / 2, 60, kItemHeight);
-    }
-    constexpr double kGap = 6.0;
-    for (size_t i = rows; i < level.overflow.size(); ++i)
-    {
-        Item& it = level.overflow[i];
-        const QPointF d = kDirs[it.outerSlot];
-        const QRectF& prev = last[it.outerSlot];
-        const bool box = hasOptionBox(it.action, it.children, it.boxAction);
-        const double w = fm.horizontalAdvance(it.label) + 2 * kPadX + 2 + (box ? kBoxWidth : 0);
-        double x = prev.center().x() - w / 2, y = prev.top();
-        if (std::abs(d.y()) < 0.1)
-            x = d.x() > 0 ? prev.right() + kGap : prev.left() - kGap - w;
-        else
-        {
-            y = d.y() < 0 ? prev.top() - kGap - kItemHeight : prev.bottom() + kGap;
-            if (d.x() > 0.1)
-                x = prev.left() + 16;
-            else if (d.x() < -0.1)
-                x = prev.right() - 16 - w;
-        }
-        it.rect = QRectF(x, y, w, kItemHeight);
-        it.box = box ? QRectF(it.rect.right() - kBoxWidth, it.rect.top(), kBoxWidth, it.rect.height()) : QRectF();
-        last[it.outerSlot] = it.rect;
     }
 }
 

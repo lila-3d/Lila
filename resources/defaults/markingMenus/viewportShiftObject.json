@@ -8,10 +8,10 @@
   "W": { "label": "Knife", "action": "mesh.knife" },
   "SW": { "label": "Dissolve", "action": "mesh.dissolve" },
   "outer": {
-    "N": [{ "label": "Merge to Center", "action": "mesh.mergeCenter" }, { "label": "Collapse", "action": "mesh.collapse" }],
+    "N": [{ "label": "Merge to Center", "action": "mesh.mergeCenter" }],
     "E": [{ "label": "Inset", "action": "mesh.inset" }],
     "SE": [{ "label": "Harden Normals", "action": "mesh.hardenEdges" }, { "label": "Soften by Angle", "action": "mesh.setNormalAngle" }],
-    "SW": [{ "label": "Poke", "action": "mesh.poke" }],
+    "SW": [{ "label": "Poke", "action": "mesh.poke" }, { "label": "Collapse", "action": "mesh.collapse" }],
     "NW": [{ "label": "Fill Hole", "action": "mesh.fillHole" }]
   },
   "objectMode": {
