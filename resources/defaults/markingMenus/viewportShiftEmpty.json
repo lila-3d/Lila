@@ -7,10 +7,11 @@
   "SW": { "label": "Empty Group", "action": "create.emptyGroup" },
   "W": { "label": "Quad Sphere", "action": "create.quadSphere" },
   "NW": { "label": "Cone", "action": "create.cone" },
+  "outer": {
+    "SE": [{ "label": "Pipe", "action": "create.pipe" }],
+    "W": [{ "label": "Sphere", "action": "create.sphere" }, { "label": "Ico Sphere", "action": "create.icoSphere" }]
+  },
   "overflow": [
-    { "label": "Sphere", "action": "create.sphere" },
-    { "label": "Ico Sphere", "action": "create.icoSphere" },
-    { "label": "Disc", "action": "create.disc" },
-    { "label": "Pipe", "action": "create.pipe" }
+    { "label": "Disc", "action": "create.disc" }
   ]
 }
