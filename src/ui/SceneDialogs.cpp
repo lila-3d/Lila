@@ -27,6 +27,7 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QScreen>
+#include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -305,6 +306,12 @@ void StartupDialog::present()
 
 bool StartupDialog::eventFilter(QObject* obj, QEvent* e)
 {
+    // The main window finishes activating after the dialog is shown at startup and would take the keyboard.
+    if (e->type() == QEvent::WindowActivate && obj == parentWidget() && isVisible())
+        QTimer::singleShot(0, this, [this] {
+            activateWindow();
+            mList->setFocus();
+        });
     if (e->type() == QEvent::MouseButtonPress && isVisible())
     {
         auto* me = static_cast<QMouseEvent*>(e);
