@@ -17,6 +17,7 @@
 #include "ui/NodeLookup.h"
 #include "ui/OptionBox.h"
 #include "ui/RetopoPolesTool.h"
+#include "ui/TopologyTool.h"
 
 #include <QApplication>
 #include <QInputDialog>
@@ -1457,6 +1458,8 @@ void registerRetopoActions()
         [] {
             scene::Graph& g = scene::Graph::current();
             std::optional<retopo::RetopoDrawTargets> t = retopo::resolveRetopoDraw(g, g.selection());
+            if (TopologyTool* topo = activeTopologyTool())
+                t = retopo::RetopoDrawTargets{topo->reference(), topo->retopoName()};
             if (!t)
             {
                 log::warn("Retopo Draw: select the reference mesh, or a retopo mesh to resume on");

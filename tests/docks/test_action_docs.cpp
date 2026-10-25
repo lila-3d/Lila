@@ -22,6 +22,8 @@
 #include "ui/Panels.h"
 #include "ui/PlacePrimitive.h"
 #include "ui/RetopoDrawTool.h"
+#include "ui/TopologyTool.h"
+#include "ui/TopologyToolkit.h"
 #include "ui/RigViewport.h"
 #include "ui/SculptPanel.h"
 #include "ui/Shelf.h"
@@ -58,6 +60,8 @@ TEST_CASE("every registered action has a doc")
     ui::registerModifierStackActions();
     ui::adjustLastOp::install();
     ui::registerRetopoActions();
+    ui::registerTopologyActions();
+    ui::registerTopologyToolkitActions();
     ui::registerSculptUi();
     ui::registerAnimationUi();
     ui::agentSetup::registerActions();

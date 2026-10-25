@@ -217,6 +217,10 @@ NodeType MeshNode::makeType(const NodeType& base)
          .enumNames = {"pivot", "custom"}, .doc = "Where the symmetry plane lies: through the pivot, or at symmetryOffset."},
         {.name = "symmetryOffset", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrInput | AttrStorable,
          .doc = "The custom symmetry plane's position along the symmetry axis, object space, cm."},
+        {.name = "retopoGuides", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrHidden,
+         .doc = "Topology guides drawn with the Pencil: JSON, object space."},
+        {.name = "retopoConstructs", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrHidden,
+         .doc = "Live topology constructs (patches, strips, cylinders...) and their settings: JSON, object space."},
     };
     t.create = [] { return std::make_unique<MeshNode>(); };
     return t;

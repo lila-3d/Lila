@@ -25,6 +25,8 @@ public:
         kRetopoDrawDots,
         kSymmetryPlane,
         kSymmetryOffset,
+        kRetopoGuides,
+        kRetopoConstructs,
         kCount
     };
 

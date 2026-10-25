@@ -56,6 +56,8 @@
 #include "ui/PoseLibrary.h"
 #include "ui/ControlPicker.h"
 #include "ui/RetopoDrawTool.h"
+#include "ui/TopologyTool.h"
+#include "ui/TopologyToolkit.h"
 #include "ui/RigViewport.h"
 #include "ui/SculptPanel.h"
 #include "ui/Shelf.h"
@@ -117,6 +119,8 @@ void registerUi()
     registerModifierStackActions();
     adjustLastOp::install();
     registerRetopoActions();
+    registerTopologyActions();
+    registerTopologyToolkitActions();
     registerKnifeActions();
     registerTargetWeldActions();
     registerCurveUi();

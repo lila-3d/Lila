@@ -52,6 +52,7 @@
 #include "ui/Menus.h"
 #include "ui/Modes.h"
 #include "ui/ModelingToolkit.h"
+#include "ui/TopologyToolkit.h"
 #include "ui/ModifierStack.h"
 #include "ui/OptionBox.h"
 #include "ui/NodeEditor.h"
@@ -403,6 +404,11 @@ void MainWindow::registerPanels()
                  .area = Qt::RightDockWidgetArea, .open = false, .place = [tabWithAttributes](QDockWidget* toolkit) {
                      tabWithAttributes(toolkit);
                      toolkit->setProperty(kDefaultTabExtent, kDefaultSidePanelWidth * 5 / 2);
+                 }});
+    panels::add({.id = kTopologyToolkitDock, .title = "Topology Toolkit", .create = make([](QWidget* p) { return new TopologyToolkit(p); }),
+                 .area = Qt::RightDockWidgetArea, .open = false, .place = [tabWithAttributes](QDockWidget* toolkit) {
+                     tabWithAttributes(toolkit);
+                     toolkit->setProperty(kDefaultTabExtent, kDefaultSidePanelWidth * 2);
                  }});
     panels::add({.id = kModifierStackDock, .title = "Modifier Stack", .create = make([](QWidget* p) { return new ModifierStackWidget(p); }),
                  .area = Qt::RightDockWidgetArea, .place = tabWithAttributes});
@@ -1242,8 +1248,13 @@ void MainWindow::buildMenus()
                                  "mesh.symmetryRepair", "mesh.symmetryRebuildTopological"});
     menus::addActions("Mesh", {"#Topology", "mesh.triangulate", "mesh.quadrangulate", "mesh.subdivide", "#Attributes",
                                "mesh.transferAttributes"});
-    menus::addActions("Mesh", {"#Retopology", "retopo.draw", "retopo.setReference", "mesh.quadRemesh", "mesh.voxelRemesh", "mesh.relax", "#Cleanup", "mesh.repair",
-                               "mesh.selectIssues", "#Nodes", "window.nodeEditor"});
+    menus::addActions("Mesh", {"#Cleanup", "mesh.repair", "mesh.selectIssues", "#Nodes", "window.nodeEditor"});
+
+    menu("Topology", "Topology", Area::MenuBar, syncChecks);
+    menus::addActions("Topology", {"#Session", "retopo.setReference", "window.topologyToolkit", "#Draw", "retopo.draw", "topo.pencil", "topo.patch",
+                                   "topo.strip", "topo.stroke", "topo.cylinder", "#Shape", "topo.handles", "topo.relax", "topo.settle", "mesh.relax",
+                                   "#Auto Retopo", "topo.region", "topo.runRegion", "mesh.quadRemesh", "retopo.poles", "mesh.voxelRemesh",
+                                   "#Constructs", "topo.freezeAll", "#Display", "topo.qualityOverlay"});
 
     menu("Model", "Model");
     menus::addActions("Model", {"#Components", "mesh.extrude", "mesh.inset", "mesh.bevel", "mesh.insertLoop", "mesh.knife", "mesh.bridge",

@@ -9,6 +9,7 @@
 #include "geo/Symmetry.h"
 #include "geo/Topology.h"
 #include "retopo/Retopo.h"
+#include "retopo/TopologyCommands.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
@@ -377,6 +378,8 @@ Node& retopoDrawTarget(const Args& a, const char* cmd, bool create)
     return *n;
 }
 } // namespace
+
+scene::Node& retopoTargetNode(const Args& a, const char* cmd, bool create) { return retopoDrawTarget(a, cmd, create); }
 
 void registerCommands()
 {
@@ -938,6 +941,8 @@ void registerCommands()
             return nullptr;
         },
     });
+
+    registerTopologyCommands();
 }
 
 scene::NodeId retopoDrawReference(const scene::Graph& g, scene::NodeId retopo)
