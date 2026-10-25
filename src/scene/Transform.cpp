@@ -113,16 +113,23 @@ glm::dmat4 Transform::localMatrix(const Node& n)
 
 glm::dmat4 Transform::localMatrix(const Node& n, const glm::dmat4& rotation)
 {
+    glm::dmat4 before, after;
+    splitLocal(n, before, after);
+    return before * rotation * after;
+}
+
+void Transform::splitLocal(const Node& n, glm::dmat4& before, glm::dmat4& after)
+{
     auto v3 = [&](int a) { return n.as<glm::dvec3>(a); };
     auto tr = [](const glm::dvec3& v) { return glm::translate(glm::dmat4(1.0), v); };
     glm::dvec3 rp = v3(kRotatePivot);
     glm::dvec3 sp = v3(kScalePivot);
     const auto* t = dynamic_cast<const Transform*>(&n);
     glm::dmat4 pre = t ? t->preRotation() : glm::dmat4(1.0);
-    glm::dmat4 rot = t ? rotation * t->rotateAxisMatrix() : rotation;
+    glm::dmat4 axis = t ? t->rotateAxisMatrix() : glm::dmat4(1.0);
 
-    return tr(v3(kTranslate)) * tr(v3(kRotatePivotTranslate)) * tr(rp) * pre * rot * tr(-rp) *
-           tr(v3(kScalePivotTranslate)) * tr(sp) * glm::scale(glm::dmat4(1.0), v3(kScale)) * tr(-sp);
+    before = tr(v3(kTranslate)) * tr(v3(kRotatePivotTranslate)) * tr(rp) * pre;
+    after = axis * tr(-rp) * tr(v3(kScalePivotTranslate)) * tr(sp) * glm::scale(glm::dmat4(1.0), v3(kScale)) * tr(-sp);
 }
 
 void Transform::compute(const EvalContext&)

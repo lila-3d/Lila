@@ -1,5 +1,6 @@
 #include "ops/Command.h"
 #include "extensions/ExtensionManager.h"
+#include "scene/AutoPose.h"
 #include "scene/CenterInMesh.h"
 #include "scene/Graph.h"
 #include "scene/Picker.h"
@@ -460,4 +461,45 @@ TEST_CASE("rig templates: Manny builds as a working rig in one step")
     run("ikPose", {{"args", {"foot_l"}}, {"moveBy", json::array({0, 10, 0})}});
     CHECK(glm::length(glm::dvec3(world("foot_l")[3]) - (ankle0 + glm::dvec3(0, 10, 0))) < 1e-6);
     CHECK(g.find("calf_l")->as<double>(Joint::kIkBlend) == doctest::Approx(0.0));
+}
+
+TEST_CASE("full-body IK poses Manny, with and without the auto-poser")
+{
+    if (!std::filesystem::exists(LILA_TEST_MANNY_FBX))
+        return;
+    auto pos = [](const char* n) { return glm::dvec3(world(n)[3]); };
+    auto pose = [&](bool autoPose) {
+        run("newScene");
+        run("importFbx", {{"args", {LILA_TEST_MANNY_FBX}}, {"animation", false}});
+        const glm::dvec3 foot = pos("foot_l"), ball = pos("ball_r");
+        // Reach down to the floor in front: a person bends at the hips and knees to get there.
+        const glm::dvec3 target = (foot + ball) * 0.5 + glm::dvec3(0.0, 10.0, 0.0);
+        const json r = run("fullBodyIk", {{"pins", {{{"joint", "hand_l"}, {"position", {target.x, target.y, target.z}}}}},
+                                          {"hold", {"foot_l", "foot_r"}},
+                                          {"autoPose", autoPose}});
+        CHECK(r["error"].get<double>() < 0.05);
+        CHECK(glm::length(pos("hand_l") - target) < 0.05);
+        CHECK(glm::length(pos("foot_l") - foot) < 0.05);
+        // The root stays where it is; the pelvis is what moves.
+        CHECK(glm::length(pos("root")) < 1e-6);
+        return pos("pelvis");
+    };
+    const glm::dvec3 plain = pose(false), predicted = pose(true);
+    // Reaching that low, a person crouches; plain IK mostly bends the spine.
+    if (autopose::shipped())
+        CHECK(predicted.y < plain.y - 5.0);
+}
+
+TEST_CASE("Manny's template says how stiff its spine is for full-body posing, and bad entries are refused")
+{
+    ensureLoaded();
+    json t = run("rigTemplateInfo", {{"args", {"UE5_Manny"}}});
+    CHECK(t["rig"]["fullBody"]["stiffness"]["spine_01"].get<double>() == doctest::Approx(0.4));
+    CHECK(t["rig"]["fullBody"]["stiffness"]["clavicle_l"].get<double>() == doctest::Approx(0.7));
+
+    t["id"] = "BadStiffness";
+    t["rig"]["fullBody"]["stiffness"]["no_such_marker"] = 0.5;
+    const auto file = std::filesystem::temp_directory_path() / "lila_bad_stiffness.lilarig";
+    std::ofstream(file) << t.dump();
+    CHECK_THROWS(run("loadRigTemplate", {{"args", {file.generic_string()}}}));
 }

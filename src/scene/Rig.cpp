@@ -3,6 +3,7 @@
 #include "core/Profile.h"
 #include "scene/CenterInMesh.h"
 #include "scene/DominantInfluence.h"
+#include "scene/FullBodyIk.h"
 #include "scene/RigElements.h"
 #include "scene/SelectAs.h"
 #include "scene/RigUtil.h"
@@ -589,6 +590,7 @@ void registerRigCommands()
     registerConstraintCommands();
     registerIkCommands();
     rigel::registerCommands();
+    fbik::registerCommands();
     registerEditSkeletonCommands();
     registerCenterCommands();
     registerDominantInfluenceCommands();

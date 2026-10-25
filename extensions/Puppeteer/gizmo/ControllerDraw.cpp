@@ -1,5 +1,5 @@
 // Reverse foot and IK controllers in the viewport: a sole loop under each reverse foot and a ring around each IK goal
-// without one, red while the key there is locked. Clicking one selects its controller; right-clicking it (through the
+// without one, red while the key there is locked. Pinned joints get a red diamond. Clicking one selects its controller; right-clicking it (through the
 // Spinner) locks or unlocks the key.
 
 #include "gizmo/ControllerDraw.h"
@@ -101,6 +101,26 @@ void drawPivots(drawOverrides::DrawContext& c, Graph& g, const Node& foot)
         }
     }
 }
+/** A diamond around each joint full-body moves hold, in the same red as a locked controller. */
+void drawPins(render::FrameState& frame, const ViewInfo& view)
+{
+    Graph& g = Graph::current();
+    for (NodeId c : characters(g))
+        for (NodeId j : pinsOf(g, c))
+        {
+            const glm::dvec3 p(worldOf(g, j)[3]);
+            const double r = 7.0 * view.unitsPerPixel(p);
+            const glm::dvec3 tips[6] = {{r, 0, 0}, {0, r, 0}, {-r, 0, 0}, {0, -r, 0}, {0, 0, r}, {0, 0, -r}};
+            for (int a : {0, 1, 2, 3})
+                for (int b : {4, 5})
+                {
+                    frame.linesOnTop.push_back({glm::vec3(p + tips[a]), kLocked});
+                    frame.linesOnTop.push_back({glm::vec3(p + tips[b]), kLocked});
+                    frame.linesOnTop.push_back({glm::vec3(p + tips[a]), kLocked});
+                    frame.linesOnTop.push_back({glm::vec3(p + tips[(a + 1) % 4]), kLocked});
+                }
+        }
+}
 } // namespace
 
 std::vector<glm::dvec3> controllerOutline(Graph& g, NodeId chain)
@@ -166,6 +186,7 @@ NodeId controllerAt(Graph& g, const ViewInfo& view, QPointF px, double tolerance
 
 void registerControllerDrawing(ext::Context& ctx)
 {
+    viewportHooks::addDrawer(ctx, "puppeteer.pins", [](render::FrameState& frame, OverlayPainter&, const ViewInfo& view) { drawPins(frame, view); });
     drawOverrides::add(ctx, {.id = "puppeteer.reverseFoot",
                              .nodeType = kReverseFootType,
                              .draw =

@@ -437,6 +437,14 @@ Template Template::fromJson(const json& j)
                 for (const char* key : {"start", "end", "ball", "toe", "joint", "source"})
                     needMarker(e, key, section);
         }
+    if (const json fb = t.rig.value("fullBody", json::object()); fb.contains("stiffness"))
+    {
+        if (!fb["stiffness"].is_object())
+            throw std::invalid_argument("rig fullBody stiffness should map markers to numbers");
+        for (const auto& [m, v] : fb["stiffness"].items())
+            if (!v.is_number() || !t.marker(m))
+                throw std::invalid_argument("rig fullBody stiffness names unknown marker " + m + " or is not a number");
+    }
     for (auto& [k, v] : j.items())
         if (k != "format" && k != "version" && k != "id" && k != "name" && k != "description" && k != "source" && k != "lateral" &&
             k != "markers" && k != "limbs" && k != "picker" && k != "poses" && k != "aliases" && k != "spaces" && k != "rig")

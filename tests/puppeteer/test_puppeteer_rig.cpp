@@ -437,3 +437,78 @@ TEST_CASE("puppeteer: older puppeteerSpace scenes migrate to base spaces with th
         CHECK(nearRotation(w, before[size_t(f)], 1e-6));
     }
 }
+
+namespace
+{
+/** A stick biped in cm with a character: hips at 100, a spine, arms out to the sides, legs down. */
+void bipedScene()
+{
+    run("newScene");
+    run("autoKeyframe", {{"state", false}});
+    auto j = [](const char* name, double x, double y, double z, const char* parent) {
+        run("joint", {{"position", v3(x, y, z)}, {"name", name}, {"parent", parent}, {"skipSelect", true}});
+    };
+    j("hips", 0, 100, 0, "");
+    j("spine_01", 0, 115, 0, "hips");
+    j("spine_02", 0, 134, 0, "spine_01");
+    j("head", 0, 160, 0, "spine_02");
+    for (const char* side : {"l", "r"})
+    {
+        const double s = side[0] == 'l' ? 1.0 : -1.0;
+        auto n = [&](const char* base) { return std::string(base) + "_" + side; };
+        j(n("upperarm").c_str(), 18 * s, 140, 0, "spine_02");
+        j(n("lowerarm").c_str(), 46 * s, 140, -2, n("upperarm").c_str());
+        j(n("hand").c_str(), 72 * s, 140, 0, n("lowerarm").c_str());
+        j(n("thigh").c_str(), 10 * s, 95, 0, "hips");
+        j(n("calf").c_str(), 10 * s, 52, 2, n("thigh").c_str());
+        j(n("foot").c_str(), 10 * s, 8, 0, n("calf").c_str());
+    }
+    run("puppeteerCharacter", {{"args", {"hips"}}, {"name", "hero"}});
+}
+} // namespace
+
+TEST_CASE("pins toggle on the character and full-body moves hold them")
+{
+    loadPuppeteer();
+    bipedScene();
+    CHECK(run("puppeteerPin", {{"args", {"foot_l", "foot_r"}}}).size() == 2);
+    CHECK(run("puppeteerPin", {{"args", {"foot_r"}}}).size() == 1);
+    CHECK(run("puppeteerPin", {{"args", {"foot_r"}}, {"pin", true}}).size() == 2);
+
+    const glm::dvec3 footL = pos("foot_l"), footR = pos("foot_r"), hand = pos("hand_l");
+    const glm::dmat4 footWorld = world("foot_l");
+    const glm::dvec3 handTranslate = std::get<glm::dvec3>(graph().value({id("hand_l"), Transform::kTranslate, -1}));
+    CHECK(run("puppeteerMove", {{"args", {"hand_l"}}, {"by", v3(-25, -45, 30)}, {"fullBody", true}}).get<int>() == 1);
+    CHECK(near(pos("hand_l"), hand + glm::dvec3(-25, -45, 30), 1e-3));
+    CHECK(near(pos("foot_l"), footL, 1e-3));
+    CHECK(near(pos("foot_r"), footR, 1e-3));
+    CHECK(nearRotation(world("foot_l"), footWorld, 1e-4));
+    // The arm was posed by turning joints, not by translating the hand.
+    CHECK(near(std::get<glm::dvec3>(graph().value({id("hand_l"), Transform::kTranslate, -1})), handTranslate, 1e-9));
+
+    run("undo");
+    CHECK(near(pos("hand_l"), hand, 1e-6));
+}
+
+TEST_CASE("a full-body move of the hips crouches over pinned feet")
+{
+    loadPuppeteer();
+    bipedScene();
+    run("puppeteerPin", {{"args", {"foot_l", "foot_r"}}, {"pin", true}});
+    const glm::dvec3 footL = pos("foot_l");
+    run("puppeteerMove", {{"args", {"hips"}}, {"by", v3(0, -20, 5)}, {"fullBody", true}});
+    CHECK(near(pos("hips"), glm::dvec3(0, 80, 5), 1e-3));
+    CHECK(near(pos("foot_l"), footL, 1e-3));
+    // The knees bent to get there.
+    CHECK(glm::length(std::get<glm::dvec3>(graph().value({id("calf_l"), Transform::kRotate, -1}))) > 5.0);
+}
+
+TEST_CASE("without fullBody a move still translates the joint")
+{
+    loadPuppeteer();
+    bipedScene();
+    const glm::dvec3 hand = pos("hand_l");
+    run("puppeteerMove", {{"args", {"hand_l"}}, {"by", v3(0, 10, 0)}});
+    CHECK(near(pos("hand_l"), hand + glm::dvec3(0, 10, 0), 1e-6));
+    CHECK(near(pos("lowerarm_l"), glm::dvec3(46, 140, -2), 1e-6));
+}

@@ -103,7 +103,8 @@ struct Template
     /**
      * Rig elements a build makes, by marker name: ikChains [{name, start, end, pole (world direction)}], reverseFeet
      * [{chain, ball, toe, pivots {heel, ball, toe, inner, outer} in the ankle marker's frame}], lookers [{joint, aimAxis,
-     * upAxis, distance, weight}], twists [{joint, source, weight}] and nonDeform [marker names].
+     * upAxis, distance, weight}], twists [{joint, source, weight}] and nonDeform [marker names]. fullBody {stiffness
+     * {marker: 0..1}} is read by full-body posing (how much each joint resists turning).
      */
     json rig = json::object();
     json source = json::object();  // where the template came from

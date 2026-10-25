@@ -33,6 +33,17 @@ inline NodeId ikGoalOf(Graph& g, NodeId chain) { return lila::scene::rigel::cont
 /** Whether the chain's key at time is locked. */
 inline bool chainLocked(Graph& g, NodeId chain, double time) { return lila::scene::rigel::locked(g, chain, time); }
 
+/** The joints full-body moves hold where they are. */
+std::vector<NodeId> pinsOf(Graph& g, NodeId character);
+/** Every joint of the character joint belongs to, its root first; empty outside a character. */
+std::vector<NodeId> fullBodyJoints(Graph& g, NodeId joint);
+/**
+ * Moves joints by a world offset by posing their whole character: the joints go there and the pins and locked hands and
+ * feet hold, through full-body IK writing every joint's rotate; autoPose lets the auto-poser place the rest. Returns the joints moved; the rest (not deform joints in
+ * a character, or a root above the hips) are left to an ordinary move.
+ */
+std::vector<NodeId> fullBodyMove(Graph& g, const std::vector<NodeId>& nodes, const glm::dvec3& by, bool autoPose = false);
+
 /** Converts older scenes' puppeteerSpace nodes to base spaces with the same keys. Returns how many. Records undo. */
 int migrateSpaces(Graph& g);
 /**

@@ -37,6 +37,8 @@ bool registerRigElements(lila::ext::Context& ctx);
 void registerControllers(lila::ext::Context& ctx);
 /** How reverse foot controllers look and pick in the viewport. */
 void registerControllerDrawing(lila::ext::Context& ctx);
+/** Pins for full-body posing. */
+void registerFullBody(lila::ext::Context& ctx);
 /** Joint tools: commands and actions. */
 void registerJointTools(lila::ext::Context& ctx);
 /** The Spinner's commands (rotate with inherit, toon scale, aim moves, breakdown), usable without the UI. */

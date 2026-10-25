@@ -62,6 +62,8 @@ struct Settings
     bool sticky2nd = false;
     bool keepDirection = false;
     bool footAlign = false;   // the reverse foot context button aligns (levels) instead of snapping
+    bool fullBody = true;     // animate: moving a joint poses the whole body around its pins
+    bool autoPose = true;     // full-body moves let the auto-poser place the unpinned body
     bool help = false;
     double moveStep = 5.0;
     double rotateStep = 15.0;
@@ -92,6 +94,8 @@ struct Settings
         read(p, "/spinner/sticky2nd", sticky2nd);
         read(p, "/spinner/keepDirection", keepDirection);
         read(p, "/spinner/footAlign", footAlign);
+        read(p, "/spinner/fullBody", fullBody);
+        read(p, "/spinner/autoPose", autoPose);
         read(p, "/spinner/moveStep", moveStep);
         read(p, "/spinner/rotateStep", rotateStep);
         read(p, "/spinner/scaleStep", scaleStep);
@@ -124,6 +128,8 @@ struct Settings
         p.set(kPrefs, "/spinner/sticky2nd", sticky2nd);
         p.set(kPrefs, "/spinner/keepDirection", keepDirection);
         p.set(kPrefs, "/spinner/footAlign", footAlign);
+        p.set(kPrefs, "/spinner/fullBody", fullBody);
+        p.set(kPrefs, "/spinner/autoPose", autoPose);
         p.set(kPrefs, "/spinner/moveStep", moveStep);
         p.set(kPrefs, "/spinner/rotateStep", rotateStep);
         p.set(kPrefs, "/spinner/scaleStep", scaleStep);
@@ -995,6 +1001,8 @@ private:
         m->addSeparator();
         toggle("Inherit Rotate", s.inherit);
         toggle("Toon Scale", s.toon);
+        toggle("Full Body Move", s.fullBody);
+        toggle("Auto Pose", s.autoPose);
         toggle("Sticky Aim (rigging)", s.stickyAim);
         toggle("Pivot (rigging)", s.pivot);
         m->addSeparator();
@@ -1051,6 +1059,11 @@ private:
         }
         if (t.foot)
             touch(t.foot);
+        // A full-body move writes every joint of the character.
+        if (d.tool == Tool::Move && !t.rig && settings().fullBody)
+            for (const std::string& n : t.names)
+                for (NodeId j : fullBodyJoints(g, g.find(n)->id()))
+                    touch(j);
         // Posing a controller writes its chain's joint rotations, which a preview step must put back.
         if (t.chain)
         {
@@ -1184,6 +1197,11 @@ private:
                 call["stickyAim"] = s.stickyAim;
                 call["sticky2nd"] = s.sticky2nd;
                 call["keepDirection"] = s.keepDirection;
+            }
+            else if (s.fullBody)
+            {
+                call["fullBody"] = true;
+                call["autoPose"] = s.autoPose;
             }
             return {"puppeteerMove", call};
         }
@@ -1374,6 +1392,10 @@ void registerActions(ext::Context& ctx)
     flag("puppeteer.spinner.discrete", "Discrete Steps", &Settings::discrete, "Spinner drags move, turn and scale in fixed steps.");
     flag("puppeteer.spinner.stickyAim", "Sticky Aim", &Settings::stickyAim, "Rigging: orients follow the bones as joints move.");
     flag("puppeteer.spinner.pivot", "Pivot", &Settings::pivot, "Rigging: the Spinner moves joints without their children.");
+    flag("puppeteer.spinner.fullBody", "Full Body Move", &Settings::fullBody,
+         "Animating: moving a joint poses the whole body, holding pinned joints and locked hands and feet.");
+    flag("puppeteer.spinner.autoPose", "Auto Pose", &Settings::autoPose,
+         "Full-body moves let the auto-poser place the rest of the body, as a person would move to reach.");
 }
 } // namespace
 

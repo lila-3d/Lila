@@ -198,9 +198,16 @@ void reaim(Graph& g, NodeId joint, const glm::dvec3& target, bool sticky2nd, boo
 json moveNodes(const Args& a)
 {
     Graph& g = graph();
-    const std::vector<NodeId> nodes = transformArgs(g, a, "puppeteerMove");
     const glm::dvec3 by = a.has("by") ? jsonVec(a.flags["by"]) : glm::dvec3(0.0);
     const bool sticky = a.get<bool>("stickyAim", false);
+    std::vector<NodeId> nodes = transformArgs(g, a, "puppeteerMove");
+    if (a.get<bool>("fullBody", false))
+    {
+        const std::vector<NodeId> posed = fullBodyMove(g, nodes, by, a.get<bool>("autoPose", false));
+        std::erase_if(nodes, [&](NodeId n) { return std::find(posed.begin(), posed.end(), n) != posed.end(); });
+        if (nodes.empty())
+            return int(posed.size());
+    }
     if (!a.get<bool>("aim", false))
     {
         g.evaluate();
@@ -319,6 +326,9 @@ void registerSpinnerOps(ext::Context& ctx)
             {"stickyAim", "sa", T::Bool, false, "Rigging: re-aim the parent's and the joint's orients along the bones."},
             {"sticky2nd", "s2", T::Bool, false, "With sticky aim: the secondary axis lies in the chain's plane."},
             {"keepDirection", "kd", T::Bool, false, "With sticky 2nd: the secondary axis keeps pointing the way it did."},
+            {"fullBody", "fb", T::Bool, false,
+             "Joints in a character move by posing the whole body: their pins and locked hands and feet hold."},
+            {"autoPose", "ap", T::Bool, false, "With fullBody: the auto-poser places the unpinned body (UE5 Manny joint names)."},
         },
         .run = moveNodes,
     });

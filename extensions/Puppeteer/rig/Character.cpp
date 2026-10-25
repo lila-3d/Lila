@@ -183,6 +183,7 @@ bool registerTypes(ext::Context& ctx)
         text("meshes", "The character's meshes, space separated."),
         text("templateId", "The rig template it was built from, when Rig Templates is loaded; empty for none."),
         text("poseLibrary", "Pose library group. Empty: the template id, else the root joint's name."),
+        text("pins", "Joints full-body moves hold where they are, space separated."),
     };
     return types::registerType(ctx, std::move(t)) != nullptr;
 }

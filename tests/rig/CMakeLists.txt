@@ -5,6 +5,7 @@ add_executable(lila_rig_tests
     test_constraints.cpp
     test_center.cpp
     test_ik.cpp
+    test_fbik.cpp
     test_edit_skeleton.cpp
     test_ghosts.cpp
     test_poses.cpp

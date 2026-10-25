@@ -90,6 +90,8 @@ public:
     static glm::dmat4 localMatrix(const Node& n);
     /** localMatrix with `rotation` standing in for the R term (rotate, or a joint's IK blend). */
     static glm::dmat4 localMatrix(const Node& n, const glm::dmat4& rotation);
+    /** The terms either side of R, so localMatrix(n, R) == before * R * after. */
+    static void splitLocal(const Node& n, glm::dmat4& before, glm::dmat4& after);
 
     /** Sets translate/rotate/scale (undoably) so the local matrix becomes m, keeping pivots. Shear is dropped. */
     static void setLocalMatrix(Graph& g, NodeId id, const glm::dmat4& m);

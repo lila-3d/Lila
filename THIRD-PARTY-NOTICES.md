@@ -51,3 +51,16 @@ Qt and PySide6 are dynamically linked and unmodified. You may replace the Qt and
 | Studio Small 09 HDRI | CC0-1.0 | Sergej Majboroda, Poly Haven | https://polyhaven.com/a/studio_small_09 |
 | stb_truetype | MIT OR Unlicense | Sean Barrett | `src/curve/third_party/stb` |
 | NanoSVG | Zlib | Mikko Mononen | `src/curve/third_party/nanosvg` |
+
+## Training data
+
+The auto-pose model weights are trained on the motion capture data below. The data itself is not distributed with Lila. Terms as retrieved are recorded in `tools/autopose/DATA-PROVENANCE.md`.
+
+| Dataset | License | Copyright | Source |
+|---|---|---|---|
+| CMU Graphics Lab Motion Capture Database | Free for all uses; may be included in commercially sold products; the data may not be resold, even converted | Carnegie Mellon University | http://mocap.cs.cmu.edu |
+| Open Motion Project | CC-BY-3.0 (https://creativecommons.org/licenses/by/3.0/) | ACCAD, The Ohio State University | https://accad.ohio-state.edu/research/motion-lab/mocap-system-and-data |
+
+The data used in this project was obtained from mocap.cs.cmu.edu. The database was created with funding from NSF EIA-0196217.
+
+Open Motion Project by ACCAD/The Ohio State University is licensed under a Creative Commons Attribution 3.0 Unported License.

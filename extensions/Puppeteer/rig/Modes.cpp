@@ -191,6 +191,9 @@ void registerActions(ext::Context& ctx)
     actions::add(ctx, {.id = "puppeteer.anim.lock", .label = "Lock or Unlock Key", .category = animCat,
                        .doc = "Plant the selected controllers' key at this frame, or free it: a locked foot or hand holds until the next key.",
                        .command = "puppeteerFootLock"});
+    actions::add(ctx, {.id = "puppeteer.anim.pin", .label = "Pin or Unpin Joints", .category = animCat,
+                       .doc = "Pin the selected joints so full-body moves hold them where they are, or unpin them.",
+                       .command = "puppeteerPin"});
     actions::add(ctx, {.id = "puppeteer.anim.matchControllers", .label = "Match Controllers to Pose", .category = animCat,
                        .doc = "Put the selected IK controllers on the joints' current pose.", .command = "ikMatch"});
     actions::add(ctx, {.id = "puppeteer.anim.snapFoot", .label = "Snap Foot to Sole", .category = animCat,
@@ -215,8 +218,9 @@ void registerMenus(ext::Context& ctx)
                           "puppeteer.joint.orient", "puppeteer.joint.center", "puppeteer.joint.centerInMesh", "puppeteer.joint.mirror"})
         menus::addItem(ctx, {.menu = "Puppeteer/Joints", .action = a});
     menus::addItem(ctx, {.menu = "Puppeteer", .kind = menus::Kind::Separator});
-    for (const char* a : {"puppeteer.anim.lock", "puppeteer.anim.matchControllers", "puppeteer.anim.snapFoot",
-                          "puppeteer.anim.alignFoot", "puppeteer.spinner.inheritRotate", "puppeteer.spinner.toonScale", "puppeteer.graphFullScreen"})
+    for (const char* a : {"puppeteer.anim.lock", "puppeteer.anim.pin", "puppeteer.anim.matchControllers", "puppeteer.anim.snapFoot",
+                          "puppeteer.anim.alignFoot", "puppeteer.spinner.inheritRotate", "puppeteer.spinner.toonScale",
+                          "puppeteer.spinner.fullBody", "puppeteer.spinner.autoPose", "puppeteer.graphFullScreen"})
         menus::addItem(ctx, {.menu = "Puppeteer", .action = a});
 }
 
@@ -234,6 +238,7 @@ void registerShelf(ext::Context& ctx)
                                            {"Looker", "eye", "puppeteer.rig.looker"},
                                            {"Spaces", "world", "puppeteer.rig.space"},
                                            {"Lock", "lock", "puppeteer.anim.lock"},
+                                           {"Pin", "pin", "puppeteer.anim.pin"},
                                            {"Match", "target", "puppeteer.anim.matchControllers"},
                                            {"Stacker", "list-numbers", "window.puppeteerStacker"},
                                            {"Mixer", "stack-2", "window.puppeteerMixer"},
@@ -269,6 +274,7 @@ void registerModeBundles(ext::Context& ctx)
     json animKeys = {{"viewport", common}, {"graphEditor", {{"Space", {{"press", "puppeteer.graphFullScreen"}}}}}};
     animKeys["viewport"]["Space"] = {{"press", "puppeteer.graphFullScreen"}};
     animKeys["viewport"]["Shift+L"] = {{"press", "puppeteer.anim.lock"}};
+    animKeys["viewport"]["Shift+P"] = {{"press", "puppeteer.anim.pin"}};
 
     modes::add(ctx, {.id = kRigMode,
                      .label = "Puppeteer Rig",

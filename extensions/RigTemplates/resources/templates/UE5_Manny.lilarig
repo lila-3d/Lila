@@ -8536,6 +8536,19 @@
 		}
 	},
 	"rig": {
+		"fullBody": {
+			"stiffness": {
+				"spine_01": 0.4,
+				"spine_02": 0.35,
+				"spine_03": 0.3,
+				"spine_04": 0.3,
+				"spine_05": 0.3,
+				"neck_01": 0.5,
+				"neck_02": 0.5,
+				"clavicle_l": 0.7,
+				"clavicle_r": 0.7
+			}
+		},
 		"ikChains": [
 			{
 				"end": "foot_l",
