@@ -44,6 +44,11 @@ public:
     explicit ScriptEditor(QWidget* parent = nullptr);
     ~ScriptEditor() override;
 
+    QFont editorFont() const { return mFont; }
+    /** Shared with other Python fields, such as the command line, so they complete like the editor does. */
+    LspClient* languageClient() const { return mLsp; }
+    QString ruffExe() const { return mRuffExe; }
+
     void setEditorFont(const QFont& font);
     /** Tab icons by Tabler name; the editor library can't reach the app's icon set itself. */
     void setIconProvider(std::function<QIcon(const QString&)> fn);

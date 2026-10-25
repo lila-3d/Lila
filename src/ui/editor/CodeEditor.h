@@ -113,6 +113,8 @@ public:
     static constexpr bool kRelativeLineNumbersDefault = false;
     /** Repaints the line numbers, after their pref changed. */
     void refreshGutter();
+    /** Shows or hides the line numbers, for one-line uses such as the command line. */
+    void setGutterVisible(bool visible);
 
     int lineNumberAreaWidth() const;
     void paintGutter(QPaintEvent* e);
@@ -242,6 +244,7 @@ private:
     QList<Diagnostic> filterInterpreterKnown(QList<Diagnostic> list) const;
 
     QWidget* mGutter;
+    bool mGutterVisible = true;
     PythonHighlighter* mHighlighter;
     CompletionPopup* mPopup;
     DocPopup* mSignature;

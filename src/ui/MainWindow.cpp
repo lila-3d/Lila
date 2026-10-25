@@ -1032,7 +1032,7 @@ void MainWindow::registerActions()
     actions::add({"script.runCell", "Run Cell", "Script Editor", [scriptEditor] {
                       if (ScriptEditor* e = scriptEditor())
                           e->runCurrent(true);
-                  }, nullptr, "Runs the script editor's # %% cell under the caret."});
+                  }, nullptr, "Runs the script editor's cell at the caret: the lines between two # %% marker comments."});
     actions::add({"script.searchApi", "Search Scripting API...", "Script Editor", [this] {
                       QDockWidget* d = findChild<QDockWidget*>(kScriptEditorDock);
                       QPointer<ScriptEditor> editor = d ? qobject_cast<ScriptEditor*>(d->widget()) : nullptr;
@@ -1117,6 +1117,7 @@ void MainWindow::registerActions()
                               if (d && showing)
                                   d->raise();
                           mMaximizeHidden.clear();
+                          scheduleLayoutSave();
                           return;
                       }
                       for (QDockWidget* d : findChildren<QDockWidget*>())
@@ -1124,6 +1125,7 @@ void MainWindow::registerActions()
                               mMaximizeHidden.emplace_back(d, d->isVisible());
                       for (auto& [d, showing] : mMaximizeHidden)
                           d->hide();
+                      scheduleLayoutSave();
                   }, nullptr, "Hides every docked panel so the viewports fill the window; again to bring them back."});
     actions::add({"help.about", "About Lila", "Help", [this] { showAbout(); }, nullptr, "Version and copyright."});
     actions::add({"help.prefsFolder", "Open Prefs Folder", "Help", [] {
@@ -1597,6 +1599,9 @@ void MainWindow::restoreLayout()
             if (size.is_number_integer())
                 tabSizes[QString::fromStdString(name)] = size.get<int>();
         mSidebars->setTabSizes(std::move(tabSizes));
+        for (const json& entry : p.value(kLayoutFile, "/maximizeHidden", json::array()))
+            if (auto* d = entry.is_object() ? findChild<QDockWidget*>(QString::fromStdString(entry.value("name", ""))) : nullptr; d && d->isHidden())
+                mMaximizeHidden.emplace_back(d, entry.value("showing", false));
     }
     else
         QTimer::singleShot(0, this, [this] {
@@ -1773,6 +1778,11 @@ void MainWindow::saveLayout()
         if (tearoff::parseDockName(d->objectName().toStdString()) && (d->toggleViewAction()->isChecked() || mSidebars->isCollapsed(d)))
             tearOffs.push_back(d->objectName().toStdString());
     p.set(kLayoutFile, "/tearOffs", tearOffs);
+    json maximizeHidden = json::array();
+    for (auto& [d, showing] : mMaximizeHidden)
+        if (d)
+            maximizeHidden.push_back({{"name", d->objectName().toStdString()}, {"showing", showing}});
+    p.set(kLayoutFile, "/maximizeHidden", maximizeHidden);
     p.set(kLayoutFile, "/version", kLayoutVersion);
 }
 

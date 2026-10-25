@@ -146,7 +146,7 @@ ScriptEditor::ScriptEditor(QWidget* parent) : QWidget(parent)
     bar->addSeparator();
     add("Run", "player-play", "Run the selection or the whole tab (Ctrl+Enter, numpad Enter)", [this] { runCurrent(false); });
     add("Run Line", "arrow-bar-to-right", "Run the caret's line, or the selection (Shift+Enter)", [this] { runLine(); });
-    add("Run Cell", "player-track-next", "Run the # %% cell under the cursor (Ctrl+Shift+Enter)", [this] { runCurrent(true); });
+    add("Run Cell", "player-track-next", "Run the cell at the caret: the lines between two # %% marker comments (Ctrl+Shift+Enter)", [this] { runCurrent(true); });
     add("Batch Run", "file-stack", "Batch Script Execution: run a script over many scene files in background workers",
         [this] { emit batchRunRequested(); });
     bar->addSeparator();

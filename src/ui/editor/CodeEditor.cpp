@@ -408,8 +408,17 @@ void CodeEditor::refreshGutter()
     mGutter->update();
 }
 
+void CodeEditor::setGutterVisible(bool visible)
+{
+    mGutterVisible = visible;
+    mGutter->setVisible(visible);
+    updateGutterWidth();
+}
+
 int CodeEditor::lineNumberAreaWidth() const
 {
+    if (!mGutterVisible)
+        return 0;
     int digits = std::max(3, int(QString::number(std::max(1, blockCount())).size()));
     return 14 + fontMetrics().horizontalAdvance('9') * digits + 10;
 }

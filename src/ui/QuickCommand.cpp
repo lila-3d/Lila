@@ -6,10 +6,13 @@
 #include "ui/Actions.h"
 #include "ui/CommandHistory.h"
 #include "ui/Theme.h"
+#include "ui/editor/CodeEditor.h"
+#include "ui/editor/ScriptEditor.h"
 
+#include <QApplication>
 #include <QFrame>
 #include <QKeyEvent>
-#include <QLineEdit>
+#include <QRegularExpression>
 #include <QPointer>
 #include <QVBoxLayout>
 
@@ -55,49 +58,91 @@ void runLine(const QString& code)
     history().add(code);
     saveHistory();
     log::write(LogLevel::Echo, code.toStdString() + "\n");
+    // A bare command name runs it, as a command line should, rather than printing the function.
+    static const QRegularExpression bareName(R"(^\s*([A-Za-z_][\w.]*)\s*$)");
+    if (QRegularExpressionMatch m = bareName.match(code); m.hasMatch())
+    {
+        std::string name = m.captured(1).toStdString();
+        python::run(name + "() if callable(" + name + ") else " + name, "<command>");
+        return;
+    }
     python::run(code.toStdString(), "<command>");
 }
 
 class CommandBox : public QFrame
 {
 public:
-    explicit CommandBox(QWidget* over) : QFrame(over, Qt::Popup)
+    explicit CommandBox(QWidget* over) : QFrame(over, Qt::Tool | Qt::FramelessWindowHint)
     {
         setAttribute(Qt::WA_DeleteOnClose);
         setFrameShape(QFrame::StyledPanel);
         auto* lay = new QVBoxLayout(this);
         lay->setContentsMargins(4, 4, 4, 4);
-        mEdit = new QLineEdit(this);
-        mEdit->setFont(monoFont());
+        mEdit = new CodeEditor(this);
+        mEdit->setGutterVisible(false);
+        mEdit->setLineWrapMode(QPlainTextEdit::NoWrap);
+        mEdit->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        mEdit->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        mEdit->setUntitledName("Command");
         mEdit->setPlaceholderText("Python");
-        mEdit->installEventFilter(this);
+        QFont font = monoFont();
+        if (auto* editor = over->window()->findChild<ScriptEditor*>())
+        {
+            font = editor->editorFont();
+            mEdit->setRuffExe(editor->ruffExe());
+            mEdit->setLanguageClient(editor->languageClient());
+        }
+        mEdit->setEditorFont(font);
+        mEdit->hostKeyHandler = [this](QKeyEvent* k) { return hostKey(k); };
         lay->addWidget(mEdit);
         setFocusProxy(mEdit);
 
         history().resetWalk();
-        mEdit->setText(history().last());
+        mEdit->setPlainText(history().last());
         mEdit->selectAll();
 
         int w = std::min(640, over->width() - 40);
-        resize(w, sizeHint().height());
+        int line = QFontMetrics(font).lineSpacing() + 2 * int(mEdit->document()->documentMargin()) + 2 * mEdit->frameWidth();
+        mEdit->setFixedHeight(line);
+        resize(w, line + 8);
         move(over->mapToGlobal(QPoint((over->width() - w) / 2, over->height() - height() - 48)));
+
+        // Closes like a popup when focus goes elsewhere; the completion and doc popups never take focus.
+        connect(qApp, &QApplication::focusChanged, this, [this](QWidget*, QWidget* now) {
+            if (now && now != this && !isAncestorOf(now))
+                close();
+        });
+        connect(qApp, &QApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
+            if (state != Qt::ApplicationActive)
+                close();
+        });
     }
 
-protected:
-    bool eventFilter(QObject* obj, QEvent* e) override
+private:
+    bool hostKey(QKeyEvent* k)
     {
-        if (obj != mEdit || e->type() != QEvent::KeyPress)
-            return false;
-        auto* k = static_cast<QKeyEvent*>(e);
+        Qt::KeyboardModifiers mods = k->modifiers() & ~Qt::KeypadModifier;
         switch (k->key())
         {
-        case Qt::Key_Up: mEdit->setText(history().older()); return true;
-        case Qt::Key_Down: mEdit->setText(history().newer()); return true;
+        case Qt::Key_Up:
+        case Qt::Key_Down:
+            if (mods != Qt::NoModifier)
+                return false;
+            mEdit->setPlainText(k->key() == Qt::Key_Up ? history().older() : history().newer());
+            mEdit->moveCursor(QTextCursor::End);
+            return true;
         case Qt::Key_Escape: close(); return true;
+        case Qt::Key_QuoteLeft:
+            if (mods != Qt::ControlModifier)
+                return false;
+            close();
+            return true;
         case Qt::Key_Return:
         case Qt::Key_Enter:
         {
-            QString code = mEdit->text();
+            if (mods != Qt::NoModifier)
+                return false;
+            QString code = mEdit->toPlainText();
             close();
             if (!code.trimmed().isEmpty())
                 runLine(code);
@@ -107,8 +152,7 @@ protected:
         }
     }
 
-private:
-    QLineEdit* mEdit = nullptr;
+    CodeEditor* mEdit = nullptr;
 };
 
 QPointer<CommandBox>& instance()
@@ -128,6 +172,8 @@ void toggle(QWidget* over)
     }
     box = new CommandBox(over);
     box->show();
+    box->raise();
+    box->activateWindow();
     box->setFocus();
 }
 
