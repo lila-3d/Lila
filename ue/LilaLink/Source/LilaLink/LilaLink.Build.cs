@@ -30,6 +30,7 @@ public class LilaLink : ModuleRules
 			"NiagaraCore",
 			"AlembicLibrary",
 			"GeometryCache",
+			"Landscape",
 			"ImageCore",
 			"Slate",
 			"SlateCore",

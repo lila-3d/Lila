@@ -1,10 +1,25 @@
 add_executable(lila_curve_tests
     main.cpp
+    test_along.cpp
+    test_along_scene.cpp
+    test_curve_deform.cpp
     test_curve_frames.cpp
     test_curve_objects.cpp
     test_curve_math.cpp
     test_curve_scene.cpp
     test_edge_to_curve.cpp
-    test_pipe.cpp)
+    test_bevel.cpp
+    test_environment.cpp
+    test_groom.cpp
+    test_pipe.cpp
+    test_planar.cpp
+    test_planar_robust.cpp
+    test_planar_scene.cpp
+    test_roof.cpp
+    test_sketch.cpp
+    test_svg.cpp
+    test_text.cpp
+    test_vehicle_math.cpp
+    test_vehicle_scene.cpp)
 target_link_libraries(lila_curve_tests PRIVATE LilaScene doctest::doctest)
 add_test(NAME lila_curve_tests COMMAND lila_curve_tests)

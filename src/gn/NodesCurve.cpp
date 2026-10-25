@@ -1,6 +1,7 @@
 #include "gn/NodesCommon.h"
 
 #include "core/Profile.h"
+#include "curve/Along.h"
 #include "curve/Ops.h"
 #include "geo/Ops.h"
 
@@ -445,6 +446,108 @@ void splineNodes()
             },
     });
 }
+const std::vector<std::string> kAlongAxes = {"+x", "-x", "+y", "-y", "+z", "-z"};
+
+curve::AlongAxis alongAxisOf(const std::string& s)
+{
+    auto it = std::ranges::find(kAlongAxes, s);
+    return curve::AlongAxis(it == kAlongAxes.end() ? 0 : it - kAlongAxes.begin());
+}
+
+/** The rail along the set's first curve (curves after the first are ignored). */
+curve::Rail firstRail(const GeometryPtr& g, const std::string& upMode)
+{
+    if (!g->curves || g->curves->numCurves() == 0)
+        return {};
+    curve::RailOptions ro;
+    ro.up = upMode == "autoNormals" ? curve::UpMode::AutoNormals : curve::UpMode::CurveFrames;
+    return curve::Rail(g->curves->spline(0), ro);
+}
+
+void alongNodes()
+{
+    registerDecl({
+        .type = "DeformAlongCurve",
+        .label = "Deform Along Curve",
+        .category = "Curve",
+        .doc = "Bends the mesh along the first curve: its forward axis runs along the curve from the start, the cross-section rides the "
+               "curve's frame (tilt and radius included). Stretch fits the mesh to the curve's length.",
+        .props = {prop("forwardAxis", kAlongAxes, "+x"), prop("upMode", {"curveFrames", "autoNormals"}, "curveFrames")},
+        .sockets = {.inputs = {geoIn("geometry"), geoIn("curve"), in("offset", T::Float, 0.0, "Where the mesh starts along the curve, cm."),
+                               in("stretch", T::Bool, false), in("twist", T::Float, 0.0, "Twist from start to end, radians."),
+                               in("roll", T::Float, 0.0, "Turn about the curve, radians.")},
+                    .outputs = {geoOut("geometry")}},
+        .exec =
+            [](ExecContext& c) {
+                LILA_ZONE();
+
+                GeometryPtr g = c.geometry("geometry");
+                curve::Rail rail = firstRail(c.geometry("curve"), c.prop("upMode"));
+                if (!rail.valid() || !g->mesh)
+                {
+                    c.out("geometry", g);
+                    return;
+                }
+                curve::DeformAlongOptions o;
+                o.forward = alongAxisOf(c.prop("forwardAxis"));
+                o.offset = c.f("offset");
+                o.stretch = c.b("stretch");
+                o.roll = c.f("roll");
+                double twist = c.f("twist");
+                if (twist != 0.0)
+                    o.twist = [twist](double t) { return twist * t; };
+                c.out("geometry", editComponents(g, {.mesh = [&](geo::Mesh& m) { curve::deformAlongCurve(m, rail, o); }}));
+            },
+    });
+
+    registerDecl({
+        .type = "InstanceOnCurve",
+        .label = "Instance on Curve",
+        .category = "Instances",
+        .doc = "Places copies of the instance geometry along the first curve, by count or by spacing (0 spacing is the instance's own "
+               "length along the forward axis), each turned onto the curve's frame.",
+        .props = {prop("fill", {"count", "spacing"}, "count"), prop("forwardAxis", kAlongAxes, "+x"),
+                  prop("upMode", {"curveFrames", "autoNormals"}, "curveFrames")},
+        .sockets = {.inputs = {geoIn("curve"), geoIn("instance"), in("count", T::Int, 5), in("spacing", T::Float, 0.0, "Step between copies, cm."),
+                               in("fitToLength", T::Bool, true, "Spacing: even the step so copies run end to end."),
+                               in("startOffset", T::Float, 0.0, "cm."), in("endOffset", T::Float, 0.0, "cm."), in("align", T::Bool, true)},
+                    .outputs = {geoOut("instances")}},
+        .exec =
+            [](ExecContext& c) {
+                LILA_ZONE();
+
+                GeometryPtr inst = c.geometry("instance");
+                curve::Rail rail = firstRail(c.geometry("curve"), c.prop("upMode"));
+                Instances out;
+                out.references.push_back(inst);
+                if (rail.valid())
+                {
+                    curve::ArrayAlongOptions o;
+                    o.fill = c.prop("fill") == "spacing" ? curve::ArrayFill::Spacing : curve::ArrayFill::Count;
+                    o.count = int(std::clamp<int64_t>(c.i("count"), 1, 100000));
+                    o.spacing = std::max(0.0, c.f("spacing"));
+                    o.fitToLength = c.b("fitToLength");
+                    o.startOffset = std::max(0.0, c.f("startOffset"));
+                    o.endOffset = std::max(0.0, c.f("endOffset"));
+                    o.forward = alongAxisOf(c.prop("forwardAxis"));
+                    o.align = c.b("align");
+                    auto [lo, hi] = inst->mesh ? curve::forwardExtent(*inst->mesh, o.forward) : std::pair{0.0, 0.0};
+                    try
+                    {
+                        for (const curve::ArrayPlacement& p : curve::arrayPlacements(rail, o, hi - lo))
+                            out.add(p.transform, 0);
+                    }
+                    catch (const std::invalid_argument&)
+                    {
+                        // Nothing fits (no room, or a flat instance with no spacing): no instances.
+                    }
+                }
+                Geometry g;
+                g.instances = std::make_shared<const Instances>(std::move(out));
+                c.out("instances", makeGeometry(std::move(g)));
+            },
+    });
+}
 } // namespace
 
 void registerCurveNodes()
@@ -452,5 +555,6 @@ void registerCurveNodes()
     splineNodes();
     primitives();
     curveOps();
+    alongNodes();
 }
 } // namespace lila::gn::nodes

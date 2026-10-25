@@ -9,6 +9,7 @@
 #include "scene/Graph.h"
 #include "ui/Actions.h"
 #include "ui/DrawOverrides.h"
+#include "ui/SketchUi.h"
 #include "ui/Theme.h"
 
 #include <cmath>
@@ -107,16 +108,22 @@ void drawCurve(drawOverrides::DrawContext& c)
     auto& halo = bold ? c.frame.curveHaloBold : c.frame.curveHalo;
     auto& body = bold ? c.frame.curveLinesBold : c.frame.curveLines;
     const glm::vec4 color = curveColor(c);
-    for (const curve::Polyline& pl : linesOf(n))
+    // Fully constrained sketch geometry takes its own colour unless a highlight or layer colour says otherwise.
+    const sketchUi::Display* sketch = color == themeLinear("curve", kCurve) ? sketchUi::display(n) : nullptr;
+    const glm::vec4 fixedColor = sketchUi::constrainedColor();
+    const std::vector<curve::Polyline>& lines = linesOf(n);
+    for (size_t li = 0; li < lines.size(); ++li)
     {
+        const curve::Polyline& pl = lines[li];
         size_t segs = pl.closed ? pl.size() : (pl.size() ? pl.size() - 1 : 0);
         for (size_t i = 0; i < segs; ++i)
         {
             glm::vec3 a(xf(c.world, pl.points[i])), b(xf(c.world, pl.points[(i + 1) % pl.size()]));
+            const glm::vec4& col = sketch && sketchUi::spanFixed(*sketch, splines, li, pl.params[i]) ? fixedColor : color;
             halo.push_back({a, kHalo});
             halo.push_back({b, kHalo});
-            body.push_back({a, color});
-            body.push_back({b, color});
+            body.push_back({a, col});
+            body.push_back({b, col});
         }
     }
     if (n.as<bool>(CurveShape::kDisplayComb))
@@ -280,6 +287,12 @@ void registerActions()
                   .doc = "Projects the selected curves onto the selected mesh (closest point, or along the direction in the option box), live.",
                   .python = "lila.ops.projectCurve(\"Curve\", mesh=\"Mesh\")",
                   .command = "projectCurve"});
+    cmd("curve.keepOnSurface", "Keep on Surface", "conformCurve", json::object(),
+        "Keeps the selected curves on the selected mesh: their points stay on it however they or the mesh move (Make Live).");
+    cmd("curve.releaseFromSurface", "Release from Surface", "conformCurve", {{"release", true}},
+        "Lets the selected curves off the surface they were kept on, leaving them where they are.");
+    cmd("curve.sendToUnreal", "Send Curve to Unreal", "unrealSendCurve", json::object(),
+        "Sends the selected curves to the connected Unreal editor as spline actors (or landscape splines), resent on every save.");
     cmd("curve.attach", "Attach", "attachCurve", json::object(), "Joins the second selected curve onto the first at their nearest ends.");
     cmd("curve.detach", "Detach", "detachCurve", json::object(), "Splits the curve at the selected points.");
     cmd("curve.reverse", "Reverse Direction", "reverseCurve", json::object(), "Reverses the selected curves' direction.");
@@ -292,6 +305,21 @@ void registerActions()
         cmd(std::string("curve.handle") + label, label + " Handles", "setCurveHandleType", {{"type", t}},
             "Sets the selected Bezier points' handles to " + std::string(t) + ".");
     }
+    cmd("curve.bend", "Bend", "bendCurve", json::object(), "Bends the selected curves (or selected points) around an axis by an angle.");
+    cmd("curve.curl", "Curl", "curlCurve", json::object(), "Coils the selected curves around themselves.");
+    cmd("curve.scaleCurvature", "Scale Curvature", "scaleCurvature", json::object(),
+        "Flattens (below 1) or exaggerates (above 1) the selected curves' bends, keeping their length.");
+    cmd("curve.smooth", "Smooth", "smoothCurve", json::object(), "Smooths the selected curves, or only the selected points.");
+    cmd("curve.evenSpacing", "Even Spacing", "rebuildCurve", {{"keepPointCount", true}},
+        "Spreads the selected curves' points evenly along them, keeping their kind, point count and corners.");
+    cmd("curve.deformAlongCurve", "Deform Along Curve", "deformAlongCurve", json::object(),
+        "Bends the selected meshes along the selected curve with a live modifier.");
+    cmd("curve.arrayAlongCurve", "Array Along Curve", "arrayAlongCurve", json::object(),
+        "Repeats the selected meshes along the selected curve with a live modifier.");
+    cmd("curve.instanceAlongCurve", "Instance Along Curve", "arrayAlongCurve", {{"output", "instances"}},
+        "Places instances of the selected meshes along the selected curve, under a group.");
+    cmd("curve.flowAlongSurface", "Flow Along Surface", "flowAlongSurface", json::object(),
+        "Flows the selected meshes onto the surface selected last (its UVs, or its selected quad patch), live.");
     cmd("curve.toBezier", "Convert to Bezier", "convertCurve", {{"type", "bezier"}}, "Converts the selected curves to Beziers.");
     cmd("curve.toNurbs", "Convert to NURBS", "convertCurve", {{"type", "nurbs"}}, "Converts the selected curves to NURBS (exact).");
     cmd("curve.toPoly", "Convert to Poly", "convertCurve", {{"type", "poly"}}, "Converts the selected curves to poly lines.");
@@ -317,5 +345,11 @@ void registerCurveUi()
     registerActions();
     registerCurveTools();
     registerPipeTool();
+    registerCableTool();
+    registerSectionTool();
+    registerVehicleCurveUi();
+    registerSketchTool();
+    registerCurveSculptTool();
+    registerPlanarCurveUi();
 }
 } // namespace lila::ui

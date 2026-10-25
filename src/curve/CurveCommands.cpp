@@ -1,10 +1,16 @@
 #include "curve/CurveNodes.h"
 
 #include "core/Profile.h"
+#include "curve/AlongNodes.h"
 #include "curve/EdgeToCurve.h"
+#include "curve/EnvironmentNodes.h"
 #include "curve/Fit.h"
+#include "curve/GroomNode.h"
 #include "curve/Ops.h"
 #include "curve/PipeNode.h"
+#include "curve/VehicleNodes.h"
+#include "curve/SketchNode.h"
+#include "curve/PlanarNodes.h"
 #include "ops/Command.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
@@ -880,6 +886,14 @@ void registerCommands()
     });
 
     registerPipeCommands();
+    registerPlanarCommands();
     registerEdgeToCurveCommand();
+    registerAlongCommands();
+    registerContourCommands();
+    registerCableCommands();
+    registerLiveSurfaceCommands();
+    registerVehicleCommands();
+    registerSketchCommands();
+    registerGroomCommands();
 }
 } // namespace lila::curve

@@ -1320,12 +1320,29 @@ void MainWindow::buildMenus()
 
     menu("Curves", "Curves");
     menus::addActions("Curves", {"#Create", "curve.bezierPen", "curve.cvTool", "curve.epTool", "curve.pencil", "curve.catmullRom", "curve.kappa",
-                                 "curve.circle", "curve.fromEdges", "#Surfaces", "curve.extrude", "curve.revolve", "curve.loft", "curve.patchFill", "#Pipes",
-                                 "curve.pipeTool", "curve.pipe", "curve.pipePresetPipe", "curve.pipePresetHose", "curve.pipePresetCable",
-                                 "curve.pipePresetConduit", "#Edit", "curve.fillet", "curve.offset", "curve.rebuild", "curve.fit", "curve.project",
-                                 "curve.attach", "curve.detach", "curve.reverse", "curve.close", "curve.open", "curve.deletePoints", "#Handles",
-                                 "curve.handleAuto", "curve.handleVector", "curve.handleAligned", "curve.handleFree", "#Convert", "curve.toBezier",
-                                 "curve.toNurbs", "curve.toPoly", "#Display", "curve.toggleComb"});
+                                 "curve.circle", "curve.fromEdges", "curve.sketchTool", "#Surfaces", "curve.extrude", "curve.revolve", "curve.loft",
+                                 "curve.patchFill", "curve.network", "curve.borderBlend", "#Pipes and Cables", "curve.pipeTool", "curve.pipe",
+                                 "curve.pipePresetPipe", "curve.pipePresetHose", "curve.pipePresetCable", "curve.pipePresetConduit", "curve.cableTool",
+                                 "curve.cable", "#Edit", "curve.fillet", "curve.offset", "curve.rebuild", "curve.evenSpacing", "curve.fit", "curve.project",
+                                 "curve.attach", "curve.detach", "curve.reverse", "curve.close", "curve.open", "curve.deletePoints", "#Blend and Trim",
+                                 "curve.blendTool", "curve.blend", "curve.match", "curve.trimTool", "curve.extend", "curve.split", "curve.fair"});
+    addSubmenu("Curves", "Planar");
+    menus::addActions("Curves/Planar", {"curve.text", "curve.bevelPlus", "", "curve.booleanUnion", "curve.booleanSubtract", "curve.booleanIntersect",
+                                        "curve.booleanXor", "", "curve.offsetRegion", "curve.insetSkeleton", "curve.centerLine", "", "curve.roof"});
+    addSubmenu("Curves", "Deform Curves");
+    menus::addActions("Curves/Deform Curves", {"curve.bend", "curve.curl", "curve.scaleCurvature", "curve.smooth"});
+    addSubmenu("Curves", "Along Curve");
+    menus::addActions("Curves/Along Curve", {"curve.deformAlongCurve", "curve.arrayAlongCurve", "curve.instanceAlongCurve", "", "curve.flowAlongSurface"});
+    addSubmenu("Curves", "On Surface");
+    menus::addActions("Curves/On Surface", {"curve.drawOnSurfaces", "curve.keepDrawnOnSurface", "", "curve.keepOnSurface", "curve.releaseFromSurface"});
+    addSubmenu("Curves", "Sections");
+    menus::addActions("Curves/Sections", {"curve.contour", "curve.sectionTool"});
+    addSubmenu("Curves", "Sketch");
+    menus::addActions("Curves/Sketch", {"curve.sketchTool", "", "curve.sketchCombine", "curve.sketchSolve", "curve.sketchClear"});
+    addSubmenu("Curves", "Groom");
+    menus::addActions("Curves/Groom", {"curve.sculptCurves", "curve.groomSurface", "curve.groomGuides", "", "curve.hairCards"});
+    menus::addActions("Curves", {"#Handles", "curve.handleAuto", "curve.handleVector", "curve.handleAligned", "curve.handleFree", "#Convert",
+                                 "curve.toBezier", "curve.toNurbs", "curve.toPoly", "#Display", "curve.toggleComb", "#Unreal", "curve.sendToUnreal"});
 
     menu("Surface", "Surface", Area::MenuBar, syncChecks);
     menus::addActions("Surface", {"#Normals", "mesh.softenEdges", "mesh.hardenEdges", "mesh.setNormalAngle", "mesh.flip", "mesh.conform",
@@ -1381,7 +1398,7 @@ void MainWindow::buildMenus()
     menus::addActions("Deform", {"deform.driveChannel", "window.drivenChannels", "#Deformers", "deform.lattice"});
     addSubmenu("Deform", "Nonlinear");
     menus::addActions("Deform/Nonlinear", {"deform.bend", "deform.twist", "deform.taper", "deform.squash", "deform.sine", "deform.wave"});
-    menus::addActions("Deform", {"deform.softMod", "deform.deltaMush", "deform.wrap", "deform.cage", "", "deform.rebind"});
+    menus::addActions("Deform", {"deform.softMod", "deform.deltaMush", "deform.wrap", "deform.cage", "curve.deformAlongCurve", "curve.flowAlongSurface", "", "deform.rebind"});
 
     menu("Display", "Display", Area::MenuBar, syncChecks);
     menus::addActions("Display", {"#Shading", "viewport.wireframe", "viewport.shaded", "viewport.textured", "viewport.wireOnShaded", "viewport.defaultMaterial",

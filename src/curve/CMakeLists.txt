@@ -1,21 +1,77 @@
 lila_module(lila_curve Scene
+    Along.cpp
+    Along.h
+    BevelPlus.cpp
+    BevelPlus.h
+    Blend.cpp
+    Blend.h
+    BorderBlend.cpp
+    BorderBlend.h
+    Cable.cpp
+    Cable.h
+    CapFill.cpp
+    CapFill.h
+    Contour.cpp
+    Contour.h
+    CurveBoolean.cpp
+    CurveBoolean.h
+    CurveDeform.cpp
+    CurveDeform.h
     EdgeCurve.cpp
     EdgeCurve.h
+    Fair.cpp
+    Fair.h
     Fit.cpp
     Fit.h
+    Groom.cpp
+    Groom.h
+    HairCards.cpp
+    HairCards.h
     Internal.cpp
     Internal.h
+    Intersect.cpp
+    Intersect.h
+    Network.cpp
+    Network.h
     Ops.cpp
     Ops.h
     Pipe.cpp
     Pipe.h
+    Planar.cpp
+    Planar.h
+    Roof.cpp
+    Roof.h
+    Skeleton.cpp
+    Skeleton.h
+    Sketch.cpp
+    Sketch.h
     Spline.cpp
     Spline.h
+    SurfaceConform.cpp
+    SurfaceConform.h
+    Svg.cpp
+    Svg.h
     Sweep.cpp
     Sweep.h
     Tessellate.cpp
-    Tessellate.h)
+    Tessellate.h
+    Text.cpp
+    Text.h
+    third_party/clipper2/clipper.engine.cpp
+    third_party/clipper2/clipper.offset.cpp
+    third_party/clipper2/clipper.rectclip.cpp)
 target_link_libraries(lila_curve PUBLIC lila_geo)
+# Clipper2 built here with Z values (vertex ids traced through clips); the vcpkg build targets a newer toolset's STL.
+target_include_directories(lila_curve BEFORE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/clipper2/include)
+target_compile_definitions(lila_curve PRIVATE USINGZ CLIPPER2_MAX_DECIMAL_PRECISION=8)
+if(MSVC)
+    set_source_files_properties(third_party/clipper2/clipper.engine.cpp third_party/clipper2/clipper.offset.cpp
+                                third_party/clipper2/clipper.rectclip.cpp PROPERTIES COMPILE_OPTIONS "/W0")
+endif()
 
-lila_module(lila_curve_scene Scene CurveCommands.cpp CurveNodes.cpp CurveNodes.h EdgeToCurve.cpp EdgeToCurve.h PipeNode.cpp PipeNode.h)
-target_link_libraries(lila_curve_scene PUBLIC lila_curve lila_scene)
+lila_module(lila_curve_scene Scene AlongNodes.cpp AlongNodes.h CurveCommands.cpp CurveDeformCommands.cpp CurveNodes.cpp CurveNodes.h EdgeToCurve.cpp EdgeToCurve.h PipeNode.cpp PipeNode.h
+    CableNode.cpp ContourNode.cpp EnvAttrs.h EnvironmentNodes.h LiveSurface.cpp
+    VehicleCommands.cpp VehicleNodes.cpp VehicleNodes.h
+    SketchCommands.cpp SketchNode.h GroomCommands.cpp GroomNode.h
+    PlanarNodes.cpp PlanarNodes.h)
+target_link_libraries(lila_curve_scene PUBLIC lila_curve lila_scene lila_brush lila_io)

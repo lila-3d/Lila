@@ -377,14 +377,7 @@ private:
     /** Points go on mesh surfaces (lifted by the radius so the pipe rests on them) or where the curve tools put them. */
     std::optional<D3> placeAt(QPointF px, const ViewInfo& view, D3* normalOut)
     {
-        unsigned snaps = tools::snaps();
-        if (mSurface && !(snaps & (SnapVertex | SnapEdge | SnapGrid)))
-            if (auto hit = surfaceSnap::underCursor(px, view))
-            {
-                if (normalOut)
-                    *normalOut = hit->normal;
-                return hit->position + hit->normal * mRadius;
-            }
+        mPlacer.onSurface(mSurface, mRadius);
         return mPlacer.place(px, view, normalOut);
     }
 

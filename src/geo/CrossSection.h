@@ -37,6 +37,16 @@ struct SectionContour
 LILA_SCENE_API std::vector<SectionContour> crossSections(std::span<const SectionMesh> meshes, const glm::dvec3& origin,
                                                           const glm::dvec3& normal);
 
+/** One chain of a planar cut, world space: a closed loop, or an open run from a mesh boundary or junction to another. */
+struct SectionChain
+{
+    std::vector<glm::dvec3> points;
+    bool closed = false;
+};
+
+/** The cut crossSections makes, with open chains kept open rather than bridged into loops. */
+LILA_SCENE_API std::vector<SectionChain> sectionChains(std::span<const SectionMesh> meshes, const glm::dvec3& origin, const glm::dvec3& normal);
+
 struct SectionPick
 {
     glm::dvec3 center{0.0}; // area centroid of the chosen loop, on the cutting plane

@@ -184,3 +184,22 @@ TEST_CASE("object info follows another object and refuses cycles")
     CHECK_THROWS(run("gnSetValue", args({"Copy", oi + ".object", mesh})));
     CHECK(faces(mesh) == 6 + sphereFaces);
 }
+
+TEST_CASE("along curve nodes")
+{
+    // A 100 cm cube laid along a 300 cm line up Y, stretched to its length.
+    auto bent = evalNodes({N{"C", "MeshCube", {}, {{"verticesX", 5}}}, N{"L", "CurveLine", {}, {{"end", {0, 300, 0}}}},
+                           N{"D", "DeformAlongCurve", {}, {{"stretch", true}}}},
+                          {L{"C", "mesh", "D", "geometry"}, L{"L", "curve", "D", "curve"}, L{"D", "geometry", "GroupOutput", "geometry"}});
+    REQUIRE(bent->mesh);
+    CHECK(bent->mesh->bounds().min.y == doctest::Approx(0.0));
+    CHECK(bent->mesh->bounds().max.y == doctest::Approx(300.0));
+
+    auto inst = evalNodes({N{"C", "MeshCube", {}, {{"size", {10, 10, 10}}}}, N{"L", "CurveLine", {}, {{"end", {200, 0, 0}}}},
+                           N{"I", "InstanceOnCurve", {}, {{"count", 3}}}, N{"R", "RealizeInstances", {}, {}}},
+                          {L{"C", "mesh", "I", "instance"}, L{"L", "curve", "I", "curve"}, L{"I", "instances", "R", "geometry"},
+                           L{"R", "geometry", "GroupOutput", "geometry"}});
+    REQUIRE(inst->mesh);
+    CHECK(inst->mesh->numFaces() == 18);
+    CHECK(inst->mesh->bounds().max.x == doctest::Approx(205.0));
+}

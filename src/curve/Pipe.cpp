@@ -186,6 +186,71 @@ double nearestS(const Path& P, const D3& p, double* dist)
     return bestS;
 }
 
+/** Blur width of a swell as a fraction of the shortest span between points whose radii differ. */
+constexpr double kSwellSoftness = 0.3;
+
+/**
+ * Gaussian blur of per-point values by arc length (sigma in cm). Closed paths wrap; open ends reflect through the end
+ * value, which keeps the ends and any straight taper exact. Samples are weighted by the length they cover, so uneven
+ * spacing doesn't bias the result.
+ */
+void blurAlong(const Path& P, std::vector<double>& v, double sigma)
+{
+    const size_t n = P.size();
+    if (sigma <= kEps || n < 3 || v.size() != n)
+        return;
+    const double L = P.closed ? P.length : P.s.back();
+    const double reach = 3.0 * sigma;
+    struct Sample
+    {
+        double s, v, w;
+    };
+    std::vector<Sample> ext;
+    ext.reserve(n * 3);
+    for (size_t i = 0; i < n; ++i)
+    {
+        const double prev = i > 0 ? P.s[i - 1] : (P.closed ? P.s[n - 1] - L : P.s[0]);
+        const double next = i + 1 < n ? P.s[i + 1] : (P.closed ? P.s[0] + L : P.s[n - 1]);
+        const double w = std::max(0.5 * (next - prev), 1e-9);
+        ext.push_back({P.s[i], v[i], w});
+        if (P.closed)
+        {
+            ext.push_back({P.s[i] - L, v[i], w});
+            ext.push_back({P.s[i] + L, v[i], w});
+        }
+        else
+        {
+            ext.push_back({-P.s[i], 2.0 * v.front() - v[i], w});
+            ext.push_back({2.0 * L - P.s[i], 2.0 * v.back() - v[i], w});
+        }
+    }
+    std::ranges::sort(ext, {}, &Sample::s);
+    const double k = -0.5 / (sigma * sigma);
+    for (size_t j = 0; j < n; ++j)
+    {
+        const double sj = P.s[j];
+        auto it = std::ranges::lower_bound(ext, sj - reach, {}, &Sample::s);
+        // A weighted line fit rather than a weighted mean, so uneven spacing can't bend a straight taper.
+        double s0 = 0.0, s1 = 0.0, s2 = 0.0, t0 = 0.0, t1 = 0.0;
+        for (; it != ext.end() && it->s <= sj + reach; ++it)
+        {
+            // Tapered to zero at the reach, so a sample landing on either edge of the window can't tip the balance.
+            const double d = it->s - sj, edge = 1.0 - d * d / (reach * reach);
+            const double w = it->w * std::exp(k * d * d) * edge * edge;
+            s0 += w;
+            s1 += w * d;
+            s2 += w * d * d;
+            t0 += w * it->v;
+            t1 += w * d * it->v;
+        }
+        const double det = s0 * s2 - s1 * s1;
+        if (std::abs(det) > 1e-12 * s0 * s2)
+            v[j] = (s2 * t0 - s1 * t1) / det;
+        else if (s0 > 0.0)
+            v[j] = t0 / s0;
+    }
+}
+
 /**
  * The input's per-point radius at each path point, by arc length: a monotone cubic (Fritsch-Carlson) through the
  * input points' stations, so the pipe swells and narrows smoothly through them with no plateaus or overshoot.
@@ -261,6 +326,13 @@ std::vector<double> radiusAlong(const Path& P, const Spline& input)
         out[j] = (2 * t3 - 3 * t2 + 1) * ys[i] + (t3 - 2 * t2 + t) * h * tan[i] + (-2 * t3 + 3 * t2) * ys[i + 1] +
                  (t3 - t2) * h * tan[i + 1];
     }
+    // The cubic is only C1, so its curvature jumps at every station and shows as a ring-shaped ridge in the shading.
+    double gap = std::numeric_limits<double>::max();
+    for (size_t i = 0; i + 1 < m; ++i)
+        if (std::abs(ys[i + 1] - ys[i]) > 1e-9)
+            gap = std::min(gap, xs[i + 1] - xs[i]);
+    if (gap < std::numeric_limits<double>::max())
+        blurAlong(P, out, gap * kSwellSoftness);
     return out;
 }
 
@@ -605,7 +677,13 @@ PipeResult makePipe(const Spline& input, const PipeOptions& o)
     const bool swells = input.radius.size() == input.size() && std::ranges::adjacent_find(input.radius, std::not_equal_to<>()) != input.radius.end();
     // Rings close enough together to follow the swell, which straight spans would otherwise jump across in one cone.
     if (swells && pl.length > 1e-6)
-        pl = resample(pl, std::max(R * 0.5, pl.length / 400.0));
+    {
+        double step = R * std::ranges::min(input.radius) * 0.5;
+        for (size_t k = 0; k + 1 < input.size(); ++k)
+            if (std::abs(input.radius[k + 1] - input.radius[k]) > 1e-9)
+                step = std::min(step, glm::distance(input.points[k], input.points[k + 1]) * kSwellSoftness * 0.5);
+        pl = resample(pl, std::max(step, pl.length / 1500.0));
+    }
     std::vector<Frame> fr = frames(pl, o.frames, tiltAlong(path, pl));
     Path P = makePath(pl, fr, {});
     if (swells)

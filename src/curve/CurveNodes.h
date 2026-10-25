@@ -33,7 +33,9 @@ LILA_SCENE_API Spline splineFromJson(const nlohmann::json& j);
 
 /**
  * A curve in the hierarchy. `create` holds its splines in object space (or is fed by a curve history node); `local`
- * repeats them and `worldSpace` carries them through the world matrix, which is what history nodes read.
+ * repeats them and `worldSpace` carries them through the world matrix, which is what history nodes read. With a mesh
+ * connected to liveSurface, `local` holds the points conformed to that surface (see conformToSurface), so editing them
+ * keeps the curve on it.
  */
 class LILA_SCENE_API CurveShape : public scene::Transform
 {
@@ -50,6 +52,9 @@ public:
         kCombSamples,
         kTessMode,
         kTessSegments,
+        kLiveSurface,
+        kLiveSurfaceMatrix,
+        kSurfaceOffset,
         kCount
     };
 

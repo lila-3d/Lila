@@ -8,6 +8,7 @@
 #include "core/Progress.h"
 #include "core/Workspace.h"
 #include "link/Exporters.h"
+#include "link/SplineSend.h"
 #include "link/TextureSetSend.h"
 #include "scene/Graph.h"
 #include "scene/LodGroup.h"
@@ -722,6 +723,8 @@ int syncMappings(bool force)
         std::vector<fs::path> frames;
         /** vertexAnimation: importVertexAnimation params for the bake, already written. */
         json vat;
+        /** spline: setSpline params, taken from the curve here on the main thread. */
+        json spline;
     };
     std::vector<Job> jobs;
     scene::Graph& graph = scene::Graph::current();
@@ -732,10 +735,24 @@ int syncMappings(bool force)
             continue;
         std::string node = m.value("node", std::string());
         scene::Node* n = mappedNode(node);
-        if (!n || m.value("contentPath", std::string()).empty())
-            continue;
-        // "fbx:skeletal" / "fbx:animation" when registered, so the file matches the mapping's kind.
         const std::string kind = m.value("kind", std::string("static"));
+        if (!n || (kind != "spline" && m.value("contentPath", std::string()).empty()))
+            continue;
+        if (kind == "spline")
+        {
+            try
+            {
+                Job job{m, json(), {n->id()}, {}, nullptr, {}};
+                job.spline = splineParams(graph, n->id(), m);
+                jobs.push_back(std::move(job));
+            }
+            catch (const std::exception& e)
+            {
+                log::error("Unreal sync: {}: {}", node, e.what());
+            }
+            continue;
+        }
+        // "fbx:skeletal" / "fbx:animation" when registered, so the file matches the mapping's kind.
         const bool animated = kind == "meshSequence" || kind == "geometryCache" || kind == "vertexAnimation";
         if (!haveFbx && !animated)
         {
@@ -845,6 +862,26 @@ int syncMappings(bool force)
         for (const Job& job : jobs)
         {
             std::string node = job.mapping.value("node", std::string());
+            if (!job.spline.is_null())
+            {
+                scope.setStatus("Unreal: sending spline " + node);
+                json features = Link::get().status().value("features", json::array());
+                if (!features.is_array() || std::ranges::find(features, json(kSplineFeature)) == features.end())
+                    mainq::post([node] { log::error("Unreal sync: {} not sent: the LilaLink plugin predates splines; rebuild it from Lila's ue/LilaLink", node); });
+                else
+                {
+                    RpcResult r = client->call("setSpline", job.spline, importCallOptions());
+                    mainq::post([node, r] {
+                        if (!r.ok)
+                            return log::error("Unreal: sending {} failed: {}", node, r.error);
+                        for (const json& w : r.result.value("warnings", json::array()))
+                            log::warn("Unreal: {}: {}", node, w.is_string() ? w.get<std::string>() : w.dump());
+                        log::info("Unreal: {} -> {}", node, r.result.value("actor", std::string("spline")));
+                    });
+                }
+                scope.step();
+                continue;
+            }
             if (!job.vat.is_null())
             {
                 scope.setStatus("Unreal: sending vertex animation of " + node);

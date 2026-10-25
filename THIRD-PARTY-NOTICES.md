@@ -22,7 +22,7 @@ Qt and PySide6 are dynamically linked and unmodified. You may replace the Qt and
 | Alembic | BSD-3-Clause | Lucasfilm Entertainment Company Ltd. and Sony Pictures Imageworks Inc. | https://github.com/alembic/alembic |
 | Imath | BSD-3-Clause | Contributors to the OpenEXR Project | https://github.com/AcademySoftwareFoundation/Imath |
 | Manifold | Apache-2.0 | The Manifold Authors | https://github.com/elalish/manifold |
-| Clipper2 | BSL-1.0 | Angus Johnson | https://github.com/AngusJohnson/Clipper2 |
+| Clipper2 | BSL-1.0 | Angus Johnson | https://github.com/AngusJohnson/Clipper2 (also built with Z values from `src/curve/third_party/clipper2`) |
 | Slang | Apache-2.0 WITH LLVM-exception | Slang contributors | https://github.com/shader-slang/slang |
 | Vulkan-Headers | Apache-2.0 OR MIT | The Khronos Group Inc. | https://github.com/KhronosGroup/Vulkan-Headers |
 | Vulkan Memory Allocator | MIT | Advanced Micro Devices, Inc. | https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator |
@@ -49,3 +49,5 @@ Qt and PySide6 are dynamically linked and unmodified. You may replace the Qt and
 | JetBrains Mono | OFL-1.1 | The JetBrains Mono Project Authors | `resources/fonts/JetBrainsMono-LICENSE.txt` |
 | Tabler Icons | MIT | Paweł Kuna | `resources/icons/tabler/LICENSE` |
 | Studio Small 09 HDRI | CC0-1.0 | Sergej Majboroda, Poly Haven | https://polyhaven.com/a/studio_small_09 |
+| stb_truetype | MIT OR Unlicense | Sean Barrett | `src/curve/third_party/stb` |
+| NanoSVG | Zlib | Mikko Mononen | `src/curve/third_party/nanosvg` |

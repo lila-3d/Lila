@@ -22,7 +22,9 @@ lila_module(lila_ui UI
     SmartJoinUi.cpp SmartJoinUi.h
     Camera.cpp
     ChannelBox.cpp ChannelBox.h
-    CurveTools.cpp CurveToolsCommon.h CurveUi.cpp CurveUi.h PipeTool.cpp
+    CurveTools.cpp CurveToolsCommon.h CurveUi.cpp CurveUi.h PipeTool.cpp CableTool.cpp SectionTool.cpp PlanarCurveUi.cpp
+    BlendCurveTool.cpp CurvePick.cpp CurvePick.h TrimCurveTool.cpp VehicleCurveUi.cpp
+    SketchTool.cpp SketchUi.cpp SketchUi.h CurveSculptTool.cpp
     DisplayLayersPanel.cpp DisplayLayersPanel.h
     AnimLayersPanel.cpp AnimLayersPanel.h
     OffsetsPanel.cpp OffsetsPanel.h

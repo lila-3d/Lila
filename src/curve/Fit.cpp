@@ -1,6 +1,7 @@
 #include "curve/Fit.h"
 
 #include "core/Profile.h"
+#include "curve/CurveDeform.h"
 #include "curve/Internal.h"
 #include "curve/Tessellate.h"
 
@@ -627,6 +628,9 @@ std::vector<D3> resampleRun(const Polyline& pl, double s0, double s1, int count)
 Spline rebuild(const Spline& s, const RebuildOptions& o)
 {
     LILA_ZONE();
+
+    if (o.keepPointCount)
+        return evenSpacing(s, o.keepCorners);
 
     TessOptions to;
     to.chordError = 1e-3;

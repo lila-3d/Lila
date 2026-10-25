@@ -28,6 +28,8 @@ struct RebuildOptions
     /** Keep tangent breaks: each run between kinks is rebuilt separately and the kinks stay sharp. */
     bool keepCorners = true;
     double tolerance = 0.01; // Bezier fitting, cm
+    /** Keep the curve's kind and point count and only spread the points evenly by arc length (kind and spans are ignored). */
+    bool keepPointCount = false;
 };
 /** Even, clean parameterisation: samples the curve and refits it with the given span count. */
 LILA_SCENE_API Spline rebuild(const Spline& s, const RebuildOptions& o);

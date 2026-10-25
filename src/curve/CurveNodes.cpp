@@ -2,12 +2,19 @@
 
 #include "core/Log.h"
 #include "core/Profile.h"
+#include "curve/AlongNodes.h"
 #include "curve/EdgeToCurve.h"
+#include "curve/EnvironmentNodes.h"
 #include "curve/Fit.h"
+#include "curve/GroomNode.h"
 #include "curve/Ops.h"
 #include "curve/PipeNode.h"
+#include "curve/SurfaceConform.h"
+#include "curve/SketchNode.h"
+#include "curve/PlanarNodes.h"
 #include "curve/Sweep.h"
 #include "curve/Tessellate.h"
+#include "curve/VehicleNodes.h"
 #include "geo/Bvh.h"
 #include "scene/Components.h"
 #include "scene/ConformTargets.h"
@@ -17,6 +24,8 @@
 
 #include <algorithm>
 #include <map>
+#include <mutex>
+#include <unordered_map>
 
 namespace lila::curve
 {
@@ -170,10 +179,56 @@ const Splines& splinesOf(const scene::PlugValue& v)
     return none;
 }
 
+namespace
+{
+/** Object-space BVH of a surface snapshot, rebuilt only when the snapshot changes. */
+std::shared_ptr<const geo::MeshBvh> liveSurfaceBvh(const MeshPtr& mesh)
+{
+    struct Entry
+    {
+        std::weak_ptr<const geo::Mesh> source;
+        std::shared_ptr<const geo::MeshBvh> bvh;
+    };
+    static std::mutex mutex;
+    static std::unordered_map<const geo::Mesh*, Entry> cache;
+    std::scoped_lock lock(mutex);
+    auto it = cache.find(mesh.get());
+    if (it != cache.end() && it->second.source.lock() == mesh)
+        return it->second.bvh;
+    if (cache.size() > 16)
+        std::erase_if(cache, [](const auto& kv) { return kv.second.source.expired(); });
+    auto bvh = std::make_shared<geo::MeshBvh>(*mesh);
+    cache[mesh.get()] = {mesh, bvh};
+    return bvh;
+}
+
+/** The splines conformed to the live surface, worked out in the surface's object space and brought back. */
+Splines onLiveSurface(const Splines& in, const MeshPtr& surface, const glm::dmat4& surfaceWorld, const glm::dmat4& curveWorld, double offset)
+{
+    LILA_ZONE();
+
+    const glm::dmat4 toSurface = glm::inverse(surfaceWorld) * curveWorld, back = glm::inverse(toSurface);
+    // The offset is world cm; a scaled surface takes it in its own units.
+    const double scale = std::cbrt(std::abs(glm::determinant(glm::dmat3(surfaceWorld))));
+    auto bvh = liveSurfaceBvh(surface);
+    Splines out = in;
+    for (Spline& s : out)
+    {
+        transform(s, toSurface);
+        conformToSurface(s, *surface, *bvh, scale > 1e-12 ? offset / scale : offset);
+        transform(s, back);
+    }
+    return out;
+}
+} // namespace
+
 void CurveShape::compute(const EvalContext& ctx)
 {
     Transform::compute(ctx);
     DataPtr in = as<DataPtr>(kCreate);
+    if (const MeshPtr& surface = as<MeshPtr>(kLiveSurface); surface && surface->numFaces() > 0 && !splinesOf(in).empty())
+        in = makeCurveData(onLiveSurface(splinesOf(in), surface, as<glm::dmat4>(kLiveSurfaceMatrix), as<glm::dmat4>(kWorldMatrix),
+                                         as<double>(kSurfaceOffset)));
     setOutput(kLocal, in);
     const glm::dmat4& w = as<glm::dmat4>(kWorldMatrix);
     const Splines& s = splinesOf(in);
@@ -661,6 +716,7 @@ PlugValue rebuildRun(const Node& n)
     o.spans = int(std::max<int64_t>(1, i(n, "spans")));
     o.degree = int(std::clamp<int64_t>(i(n, "degree"), 1, 7));
     o.keepCorners = b(n, "keepCorners");
+    o.keepPointCount = b(n, "keepPointCount");
     Splines out;
     for (const Spline& s : in(n, "inCurve"))
         out.push_back(rebuild(s, o));
@@ -775,7 +831,10 @@ void registerHistoryTypes()
                offsetRun);
     registerOp("rebuildCurve", "refresh", "Rebuilds curves with an even parameterisation and a given span count, keeping corners.",
                {curveIn(), eAttr("kind", {"poly", "bezier", "nurbs"}, 2, "What it rebuilds them as."), iAttr("spans", 8, "Spans.", 1),
-                iAttr("degree", 3, "NURBS degree.", 1), bAttr("keepCorners", true, "Keep tangent breaks sharp."), curveOut()},
+                iAttr("degree", 3, "NURBS degree.", 1), bAttr("keepCorners", true, "Keep tangent breaks sharp."),
+                bAttr("keepPointCount", false,
+                      "Even spacing: keep the kind and point count and spread the points evenly along the curve (kind, spans and degree are ignored)."),
+                curveOut()},
                rebuildRun);
     registerOp("fitCurve", "scribble", "Refits curves as Beziers with as few points as the tolerance allows, corners kept.",
                {curveIn(), fAttr("tolerance", 0.05, "Largest distance from the original, cm.", 1e-5), curveOut()}, fitRun);
@@ -814,7 +873,7 @@ void registerProvider()
             [](Graph& g, NodeId id, const std::vector<std::pair<uint32_t, glm::dvec3>>& moves) {
                 PlugRef plug = curveEditPlug(g, id);
                 Splines s = splinesOf(g.storedValue(plug));
-                g.setValue(plug, makeCurveData(movedComponents(s, moves)));
+                g.setValue(plug, makeCurveData(sketchMoved(*g.node(id), s, moves)));
             },
         .editPlug = curveEditPlug,
         .frames = [](Graph& g, NodeId id, const components::Ids& ids) { return componentFrames(shapeSplines(g, id), ids); },
@@ -878,11 +937,27 @@ void registerTypes()
             t.ownAttrs.push_back(a);
         }
     }
+    t.ownAttrs.push_back({.name = "liveSurface", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden,
+                          .doc = "A mesh the curve's points stay on (conformCurve): they are placed on it however they are moved."});
+    t.ownAttrs.push_back({.name = "liveSurfaceMatrix", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = AttrInput | AttrHidden,
+                          .doc = "The live surface's world matrix."});
+    t.ownAttrs.push_back(fAttr("surfaceOffset", 0.0, "Lift off the live surface along its normal, cm."));
+    // After the attrs CurveShape::Attr indexes; found by name.
+    t.ownAttrs.push_back({.name = "sketch", .type = PlugType::String, .defaultValue = std::string(), .flags = kIn | AttrHidden,
+                          .doc = "Sketch constraints and dimensions between its points, lines and circles, as JSON (see sketchInfo)."});
+    t.ownAttrs.push_back({.name = "groomSurface", .type = PlugType::String, .defaultValue = std::string(), .flags = kIn,
+                          .doc = "Mesh the curves' roots grow from: curve sculpting keeps them on it and plants new ones there."});
     t.create = [] { return std::make_unique<CurveShape>(); };
     types::registerType(std::move(t));
     registerHistoryTypes();
     registerPipeType();
+    registerPlanarTypes();
     registerEdgeToCurveType();
+    registerAlongTypes();
+    registerContourType();
+    registerCableType();
+    registerVehicleTypes();
+    registerGroomType();
     registerProvider();
 }
 } // namespace lila::curve

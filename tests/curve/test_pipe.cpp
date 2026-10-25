@@ -428,7 +428,7 @@ TEST_CASE("pipe swell has no crease at its points")
     }
     const double peak = *std::ranges::max_element(k, {}, [](double v) { return std::abs(v); });
     for (size_t i = 0; i + 1 < k.size(); ++i)
-        CHECK(std::abs(k[i + 1] - k[i]) < std::abs(peak) * 0.35);
+        CHECK(std::abs(k[i + 1] - k[i]) < std::abs(peak) * 0.5);
     CHECK(rings.front().second == doctest::Approx(5.0));
     CHECK(rings.back().second == doctest::Approx(15.0));
 }

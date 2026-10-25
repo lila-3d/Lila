@@ -250,6 +250,29 @@ std::vector<SectionContour> crossSections(std::span<const SectionMesh> meshes, c
     return out;
 }
 
+std::vector<SectionChain> sectionChains(std::span<const SectionMesh> meshes, const glm::dvec3& origin, const glm::dvec3& normal)
+{
+    LILA_ZONE();
+
+    std::vector<SectionChain> out;
+    if (glm::length(normal) < 1e-12)
+        return out;
+    Basis b = planeBasis(normal);
+    CutGraph g;
+    for (size_t i = 0; i < meshes.size(); ++i)
+        if (meshes[i].mesh)
+            cutMesh(g, uint32_t(i), meshes[i], origin, b.n);
+    std::vector<std::vector<glm::dvec3>> closed, open;
+    chains(g, closed, open);
+    for (auto& c : closed)
+        if (c.size() >= 3)
+            out.push_back({std::move(c), true});
+    for (auto& c : open)
+        if (c.size() >= 2)
+            out.push_back({std::move(c), false});
+    return out;
+}
+
 std::optional<SectionPick> sectionCenter(std::span<const SectionContour> contours, const glm::dvec3& point, const glm::dvec3& direction)
 {
     if (contours.empty() || glm::length(direction) < 1e-12)

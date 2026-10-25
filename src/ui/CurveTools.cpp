@@ -10,6 +10,7 @@
 #include "geo/Mesh.h"
 #include "math/MathCore.h"
 #include "ops/Command.h"
+#include "ops/Undo.h"
 #include "scene/Graph.h"
 #include "scene/Isolation.h"
 #include "scene/MeshNodes.h"
@@ -104,7 +105,8 @@ using curve::Spline;
 
 int degreePref() { return std::clamp(prefs().value<int>("general", "/curveTools/degree", 3), 1, 7); }
 
-void createCurve(const Spline& s)
+/** Creates the drawn curve; when the tool keeps curves on surfaces, it stays live on the mesh most of its points landed on. */
+void createCurve(const Spline& s, const SurfaceDraw* surface = nullptr)
 {
     std::string why;
     if (!curve::isValid(s, &why))
@@ -114,7 +116,12 @@ void createCurve(const Spline& s)
     }
     try
     {
-        ops::execute("curve", {{"splines", json::array({curve::splineToJson(s)})}}, CallSource::UI);
+        std::optional<scene::NodeId> keepOn = surface ? surface->conformTarget() : std::nullopt;
+        const scene::Node* mesh = keepOn ? scene::Graph::current().node(*keepOn) : nullptr;
+        UndoChunk chunk("Curve");
+        json made = ops::execute("curve", {{"splines", json::array({curve::splineToJson(s)})}}, CallSource::UI);
+        if (mesh && made.is_string())
+            ops::execute("conformCurve", {{"args", {made}}, {"mesh", mesh->path()}, {"offset", surface->offset()}}, CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -132,7 +139,12 @@ public:
 
     const char* name() const override { return mName; }
     std::optional<QCursor> cursor() const override { return QCursor(Qt::CrossCursor); }
-    void activate() override { log::info("{}: {}", mName, mHelp); }
+    void activate() override
+    {
+        mSurface.load();
+        mSurface.apply(mPlacer);
+        log::info("{}: {}", mName, mHelp);
+    }
 
     bool mousePress(QMouseEvent* e, const ViewInfo& view) override
     {
@@ -144,11 +156,13 @@ public:
                 finish(true);
                 return true;
             }
-        if (auto p = mPlacer.place(e->position(), view))
+        scene::NodeId on = scene::kNoNode;
+        if (auto p = mPlacer.place(e->position(), view, nullptr, &on))
         {
             if (mPts.empty())
                 mPlacer.lockTo(*p);
             mPts.push_back(*p);
+            mSurface.landed(on);
             mHistory.clear();
         }
         viewportTools::requestRedraw();
@@ -163,8 +177,23 @@ public:
         return false;
     }
 
+    bool wheel(QWheelEvent* e, const ViewInfo&) override
+    {
+        if (!mSurface.wheel(e))
+            return false;
+        mSurface.apply(mPlacer);
+        viewportTools::requestRedraw();
+        return true;
+    }
+
     bool keyPress(QKeyEvent* e, const ViewInfo&) override
     {
+        if (mSurface.key(e->key()))
+        {
+            mSurface.apply(mPlacer);
+            viewportTools::requestRedraw();
+            return true;
+        }
         switch (e->key())
         {
         case Qt::Key_Return:
@@ -184,6 +213,7 @@ public:
                 exitTool();
             mPts.clear();
             mHistory.clear();
+            mSurface.clearHits();
             mPlacer.unlock();
             viewportTools::requestRedraw();
             return true;
@@ -219,17 +249,18 @@ public:
             dot(p, view, q);
         if (mHover && view.camera == mHoverView)
             dot(p, view, *mHover, 3.0f, kGhost);
-        drawToolMessage(p, view, QString("%1: %2  Enter: finish, click the first point: close, Z/Backspace: undo point, Shift+Z: redo point, L: planar lock %3, Esc: exit")
-                                     .arg(mName, mHelp, mPlacer.lockEnabled() ? "on" : "off"));
+        drawToolMessage(p, view, QString("%1: %2  Enter: finish, click the first point: close, Z/Backspace: undo point, Shift+Z: redo point, L: planar lock %3, %4, Esc: exit")
+                                     .arg(mName, mHelp, mPlacer.lockEnabled() ? "on" : "off", mSurface.status()));
     }
 
 private:
     void finish(bool closed)
     {
         if (mPts.size() >= 2)
-            createCurve(mBuild(mPts, closed));
+            createCurve(mBuild(mPts, closed), &mSurface);
         mPts.clear();
         mHistory.clear();
+        mSurface.clearHits();
         mPlacer.unlock();
         viewportTools::requestRedraw();
     }
@@ -251,6 +282,7 @@ private:
     std::optional<D3> mHover;
     std::string mHoverView;
     Placer mPlacer;
+    SurfaceDraw mSurface;
 };
 
 /** Bezier pen: click for corners, drag to pull out smooth handles, Ctrl while dragging to break them. */
@@ -259,7 +291,12 @@ class PenTool final : public ViewportTool
 public:
     const char* name() const override { return "Bezier Pen"; }
     std::optional<QCursor> cursor() const override { return QCursor(Qt::CrossCursor); }
-    void activate() override { log::info("Bezier Pen: click for corners, drag for smooth points, Ctrl while dragging breaks the handle"); }
+    void activate() override
+    {
+        mSurface.load();
+        mSurface.apply(mPlacer);
+        log::info("Bezier Pen: click for corners, drag for smooth points, Ctrl while dragging breaks the handle");
+    }
 
     bool mousePress(QMouseEvent* e, const ViewInfo& view) override
     {
@@ -275,9 +312,11 @@ public:
                 return true;
             }
         D3 normal(0.0);
-        auto p = mPlacer.place(e->position(), view, &normal);
+        scene::NodeId on = scene::kNoNode;
+        auto p = mPlacer.place(e->position(), view, &normal, &on);
         if (!p)
             return true;
+        mSurface.landed(on);
         if (mSpline.size() == 0)
         {
             mSpline.kind = curve::Kind::Bezier;
@@ -359,8 +398,23 @@ public:
         return true;
     }
 
+    bool wheel(QWheelEvent* e, const ViewInfo&) override
+    {
+        if (!mSurface.wheel(e))
+            return false;
+        mSurface.apply(mPlacer);
+        viewportTools::requestRedraw();
+        return true;
+    }
+
     bool keyPress(QKeyEvent* e, const ViewInfo&) override
     {
+        if (mSurface.key(e->key()))
+        {
+            mSurface.apply(mPlacer);
+            viewportTools::requestRedraw();
+            return true;
+        }
         switch (e->key())
         {
         case Qt::Key_Return:
@@ -378,6 +432,7 @@ public:
                 exitTool();
             mSpline = {};
             mHistory.clear();
+            mSurface.clearHits();
             mPlacer.unlock();
             viewportTools::requestRedraw();
             return true;
@@ -424,17 +479,18 @@ public:
         }
         drawToolMessage(p, view,
                         QString("Bezier Pen: click a corner, drag a smooth point, Ctrl breaks the handle  Enter: finish, click the first point: close, "
-                                "Z/Backspace: undo point, Shift+Z: redo point, L: planar lock %1, Esc: exit")
-                            .arg(mPlacer.lockEnabled() ? "on" : "off"));
+                                "Z/Backspace: undo point, Shift+Z: redo point, L: planar lock %1, %2, Esc: exit")
+                            .arg(mPlacer.lockEnabled() ? "on" : "off", mSurface.status()));
     }
 
 private:
     void finish()
     {
         if (mSpline.size() >= 2)
-            createCurve(mSpline);
+            createCurve(mSpline, &mSurface);
         mSpline = {};
         mHistory.clear();
+        mSurface.clearHits();
         mPlacer.unlock();
         viewportTools::requestRedraw();
     }
@@ -488,6 +544,7 @@ private:
     std::optional<D3> mHover;
     std::string mHoverView;
     Placer mPlacer;
+    SurfaceDraw mSurface;
 };
 
 /** Pencil: draw a stroke, get a Bezier fitted to it (corners kept). Ending on the start closes it. */
@@ -496,7 +553,12 @@ class PencilTool final : public ViewportTool
 public:
     const char* name() const override { return "Pencil Curve"; }
     std::optional<QCursor> cursor() const override { return QCursor(Qt::CrossCursor); }
-    void activate() override { log::info("Pencil Curve: draw a stroke; it is fitted with a Bezier, corners kept"); }
+    void activate() override
+    {
+        mSurface.load();
+        mSurface.apply(mPlacer);
+        log::info("Pencil Curve: draw a stroke; it is fitted with a Bezier, corners kept");
+    }
 
     bool mousePress(QMouseEvent* e, const ViewInfo& view) override
     {
@@ -504,12 +566,15 @@ public:
             return false;
         mStroke.clear();
         mPx.clear();
-        if (auto p = mPlacer.place(e->position(), view))
+        mSurface.clearHits();
+        scene::NodeId on = scene::kNoNode;
+        if (auto p = mPlacer.place(e->position(), view, nullptr, &on))
         {
             mPlacer.lockTo(*p);
             mStroke.push_back(*p);
             mPx.push_back(e->position());
             mUpp = view.unitsPerPixel(*p);
+            mSurface.landed(on);
         }
         mDrawing = true;
         return true;
@@ -521,10 +586,12 @@ public:
             return false;
         if (!mPx.empty() && distPx(mPx.back(), e->position()) < 3.0)
             return true;
-        if (auto p = mPlacer.place(e->position(), view))
+        scene::NodeId on = scene::kNoNode;
+        if (auto p = mPlacer.place(e->position(), view, nullptr, &on))
         {
             mStroke.push_back(*p);
             mPx.push_back(e->position());
+            mSurface.landed(on);
         }
         viewportTools::requestRedraw();
         return true;
@@ -539,7 +606,7 @@ public:
         {
             bool closed = mStroke.size() > 6 && distPx(mPx.front(), mPx.back()) < 12.0;
             double tolPx = std::max(0.5, prefs().value<double>("general", "/curveTools/pencilTolerance", 2.0));
-            createCurve(curve::fitBezier(mStroke, closed, tolPx * mUpp));
+            createCurve(curve::fitBezier(mStroke, closed, tolPx * mUpp), &mSurface);
         }
         mStroke.clear();
         mPx.clear();
@@ -548,8 +615,23 @@ public:
         return true;
     }
 
+    bool wheel(QWheelEvent* e, const ViewInfo&) override
+    {
+        if (!mSurface.wheel(e))
+            return false;
+        mSurface.apply(mPlacer);
+        viewportTools::requestRedraw();
+        return true;
+    }
+
     bool keyPress(QKeyEvent* e, const ViewInfo&) override
     {
+        if (mSurface.key(e->key()))
+        {
+            mSurface.apply(mPlacer);
+            viewportTools::requestRedraw();
+            return true;
+        }
         if (e->key() != Qt::Key_Escape)
             return false;
         exitTool();
@@ -563,7 +645,7 @@ public:
             f.linesOnTop.push_back({glm::vec3(mStroke[i - 1]), kPreview});
             f.linesOnTop.push_back({glm::vec3(mStroke[i]), kPreview});
         }
-        drawToolMessage(p, view, "Pencil Curve: draw a stroke (end on its start to close), Esc: exit");
+        drawToolMessage(p, view, QString("Pencil Curve: draw a stroke (end on its start to close), %1, Esc: exit").arg(mSurface.status()));
     }
 
 private:
@@ -572,6 +654,7 @@ private:
     double mUpp = 0.1;
     bool mDrawing = false;
     Placer mPlacer;
+    SurfaceDraw mSurface;
 };
 
 Spline cvBuild(const std::vector<D3>& pts, bool closed)
@@ -610,6 +693,21 @@ void registerCurveTools()
         return std::make_unique<ClickCurveTool>("Catmull-Rom Curve", "click points the curve passes through",
                                                 [](const std::vector<D3>& p, bool c) { return curve::catmullRom(p, c); });
     });
+    actions::add({.id = "curve.drawOnSurfaces",
+                  .label = "Draw on Surfaces",
+                  .category = "Curves",
+                  .run = [] { curveTools::prefs().set("general", "/curveTools/onSurface", !curveTools::SurfaceDraw::onPref()); },
+                  .doc = "The curve draw tools place points on the mesh under the cursor (S in the tool), lifted by the surface offset "
+                         "(Ctrl+scroll in the tool).",
+                  .python = "lila.prefs.set(\"general\", \"/curveTools/onSurface\", True)",
+                  .checked = [] { return curveTools::SurfaceDraw::onPref(); }});
+    actions::add({.id = "curve.keepDrawnOnSurface",
+                  .label = "Keep Drawn Curves on Surface",
+                  .category = "Curves",
+                  .run = [] { curveTools::prefs().set("general", "/curveTools/conform", !curveTools::SurfaceDraw::conformPref()); },
+                  .doc = "Curves drawn on a surface stay live on it, so moving their points later slides them along it (K in the tool).",
+                  .python = "lila.prefs.set(\"general\", \"/curveTools/conform\", True)",
+                  .checked = [] { return curveTools::SurfaceDraw::conformPref(); }});
     tool("curve.kappa", "Kappa Curve", "ease-in-out", "Draws a curve whose tightest bends land exactly on the points you place (kappa curve).", [] {
         return std::make_unique<ClickCurveTool>("Kappa Curve", "click where the curve bends most",
                                                 [](const std::vector<D3>& p, bool c) { return curve::kappaCurve(p, c); });
