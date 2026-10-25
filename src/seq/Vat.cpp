@@ -11,6 +11,7 @@
 #include "math/MathCore.h"
 #include "scene/Anim.h"
 #include "scene/Graph.h"
+#include "seq/RigidPieces.h"
 
 #include <glm/gtc/packing.hpp>
 
@@ -47,19 +48,6 @@ std::string baseName(scene::Graph& g, const std::vector<scene::NodeId>& meshes, 
     return fileSafe(s);
 }
 
-/** Lila space to the space Unreal's importer gives the FBX's vertices (a signed permutation). */
-glm::dmat3 unrealBasis(const std::string& profile)
-{
-    fbx::AxisProfile p = fbx::AxisProfile::Ue5;
-    fbx::parseProfile(profile, &p);
-    const math::UpAxis up = math::upAxis();
-    const glm::dmat3 file = fbx::profileBasis(p, up);
-    const bool zUp = p == fbx::AxisProfile::Ue5 || (p == fbx::AxisProfile::Generic && up == math::UpAxis::Z);
-    // Unreal reads Z-up files by negating Y and Y-up (ue6) files by negating X.
-    const glm::dmat3 mirror = zUp ? glm::dmat3(glm::dvec3(1, 0, 0), glm::dvec3(0, -1, 0), glm::dvec3(0, 0, 1))
-                                  : glm::dmat3(glm::dvec3(-1, 0, 0), glm::dvec3(0, 1, 0), glm::dvec3(0, 0, 1));
-    return mirror * file;
-}
 
 /** One sampled frame in Lila space: a column per point (constant) and per soup corner (soup). */
 struct Sample
@@ -91,7 +79,8 @@ std::vector<glm::vec3> cornerNormalsOf(const geo::Mesh& m)
     return geo::cornerNormals(m);
 }
 
-Sample measure(const geo::Mesh& m, double frame)
+/** positionsOnly fills pointPos and the counts, all rigid mode reads. */
+Sample measure(const geo::Mesh& m, double frame, bool positionsOnly = false)
 {
     LILA_ZONE();
 
@@ -99,6 +88,14 @@ Sample measure(const geo::Mesh& m, double frame)
     s.frame = frame;
     s.points = m.numPoints();
     s.faces = m.numFaces();
+    if (positionsOnly)
+    {
+        s.pointPos.reserve(s.points);
+        for (Index p = 0; p < m.pointCapacity(); ++p)
+            if (m.pointValid(p))
+                s.pointPos.push_back(m.position(p));
+        return s;
+    }
     const std::vector<glm::vec3> cn = cornerNormalsOf(m);
 
     std::vector<glm::dvec3> sum(m.pointCapacity(), glm::dvec3(0.0));
@@ -177,12 +174,30 @@ geo::Mesh soupMesh(const geo::Mesh& m, Index slots)
     return out;
 }
 
+using Pieces = RigidPieces;
+using RigidTrack = RigidFit;
+
+RigidTrack fitRigid(const std::vector<Sample>& samples, const Sample& rest, const Pieces& pieces, const glm::dmat3& toUe)
+{
+    std::vector<std::span<const glm::dvec3>> frames;
+    std::vector<double> times;
+    frames.reserve(samples.size());
+    for (const Sample& f : samples)
+    {
+        frames.push_back(f.pointPos);
+        times.push_back(f.frame);
+    }
+    return fitRigidPieces(frames, times, rest.pointPos, pieces, toUe);
+}
+
 void checkOptions(const VatOptions& o)
 {
     if (o.format != "exr" && o.format != "png16" && o.format != "png8")
         throw std::invalid_argument("format must be exr, png16 or png8");
-    if (o.mode != "auto" && o.mode != "constant" && o.mode != "soup")
-        throw std::invalid_argument("mode must be auto, constant or soup");
+    if (o.mode != "auto" && o.mode != "constant" && o.mode != "soup" && o.mode != "rigid")
+        throw std::invalid_argument("mode must be auto, constant, soup or rigid");
+    if (o.exrBits != 0 && o.exrBits != 16 && o.exrBits != 32)
+        throw std::invalid_argument("exrBits must be 16 or 32");
     if (o.positions != "offset" && o.positions != "absolute")
         throw std::invalid_argument("positions must be offset or absolute");
     if (o.normalBits != 8 && o.normalBits != 16)
@@ -202,8 +217,11 @@ VatResult planned(scene::Graph& g, const std::vector<scene::NodeId>& meshes, con
     const fs::path folder(o.folder);
     VatResult r;
     r.mesh = folder / (base + ".fbx");
-    r.positions = folder / (base + (o.format == "exr" ? "_pos.exr" : "_pos.png"));
-    if (o.normals)
+    const std::string ext = o.format == "exr" ? ".exr" : ".png";
+    r.positions = folder / (base + "_pos" + ext);
+    if (o.mode == "rigid")
+        r.rotations = folder / (base + "_rot" + ext);
+    else if (o.normals)
         r.normals = folder / (base + "_nrm.png");
     r.meta = folder / (base + ".json");
     const std::vector<double> list = frames(o.sampling);
@@ -218,16 +236,194 @@ VatResult planned(scene::Graph& g, const std::vector<scene::NodeId>& meshes, con
                   {"format", o.format},
                   {"modeRequested", o.mode},
                   {"positions", o.positions},
-                  {"normals", o.normals},
+                  {"normals", !r.normals.empty()},
                   {"normalBits", o.normalBits},
                   {"profile", o.sampling.profile},
                   {"scale", o.sampling.scale},
                   {"space", "unreal"},
                   {"files", {{"mesh", r.mesh.filename().generic_string()},
                              {"positions", r.positions.filename().generic_string()},
-                             {"normals", o.normals ? json(r.normals.filename().generic_string()) : json()},
+                             {"normals", r.normals.empty() ? json() : json(r.normals.filename().generic_string())},
                              {"meta", r.meta.filename().generic_string()}}}};
+    if (!r.rotations.empty())
+        r.metadata["files"]["rotations"] = r.rotations.filename().generic_string();
     return r;
+}
+
+int exrBitsFor(const VatOptions& o, const std::string& mode)
+{
+    return o.exrBits ? o.exrBits : mode == "rigid" ? 32 : 16;
+}
+
+void writeMeta(const VatResult& r)
+{
+    std::ofstream out(r.meta, std::ios::binary);
+    out << r.metadata.dump(2);
+    if (!out)
+        throw std::runtime_error("can't write " + r.meta.string());
+}
+
+/** The first of `count` consecutive free UV sets on m; throws when the 8 sets cannot hold them. */
+int freeUvSets(const geo::Mesh& m, int count)
+{
+    int set = 0;
+    while (set < 8 && m.cornerAttrs().get<glm::vec2>(geo::attr::uvName(set)).size() == m.cornerCapacity())
+        ++set;
+    for (int k = set; k < set + count && k < 8; ++k)
+        if (m.cornerAttrs().get<glm::vec2>(geo::attr::uvName(k)).size() == m.cornerCapacity())
+            throw std::runtime_error(std::format("UV set {} is taken; the vertex animation needs sets {} to {} free", k, set, set + count - 1));
+    if (set + count > 8)
+        throw std::runtime_error(count == 1 ? std::string("the mesh uses all 8 UV sets; the vertex animation needs one free")
+                                            : std::format("the mesh uses {} UV sets; the rigid vertex animation needs {} more of the 8", set, count));
+    return set;
+}
+
+void writeRestFbx(geo::Mesh&& restMesh, const VatResult& r, const SequenceOptions& so, bool tangents)
+{
+    LILA_ZONE();
+
+    std::error_code ec;
+    fs::create_directories(r.mesh.parent_path(), ec);
+    fbx::ExportScene es;
+    es.upAxis = math::upAxis();
+    fbx::ExportNode node;
+    node.name = r.metadata["name"].get<std::string>();
+    node.mesh = std::make_shared<const geo::Mesh>(std::move(restMesh));
+    es.nodes.push_back(std::move(node));
+    fbx::ExportOptions fo;
+    fbx::parseProfile(so.profile, &fo.profile);
+    fo.triangulate = true;
+    fo.normals = true;
+    fo.tangents = tangents;
+    std::string err;
+    if (!fbx::writeFbx(es, r.mesh, fo, &err))
+        throw std::runtime_error(err);
+}
+
+/** Writes the rigid bake's textures, rest mesh and metadata into r. */
+void writeRigid(VatResult& r, const VatOptions& o, const SequenceOptions& so, const std::vector<Sample>& samples, const Sample& restSample,
+                geo::Mesh restMesh, const Pieces& pieces, const RigidTrack& track, const glm::dmat3& toUe)
+{
+    LILA_ZONE();
+
+    const size_t n = pieces.count;
+    if (n == 0)
+        throw std::runtime_error("nothing to bake: no pieces");
+    const int width = int(std::min<size_t>(n, size_t(o.maxWidth)));
+    const int rowsPerFrame = int((n + size_t(width) - 1) / size_t(width));
+    const int height = int(samples.size()) * rowsPerFrame;
+    if (height > kVatMaxHeight)
+        throw std::runtime_error(std::format("{} frames of {} rows need a texture {} rows tall; Unreal takes {} at most (raise maxWidth or "
+                                             "export fewer frames)",
+                                             samples.size(), rowsPerFrame, height, kVatMaxHeight));
+    if (track.residual > kVatRigidTolerance)
+        log::warn("Vertex animation {}: the pieces are not rigid; the worst fit is {:.4g} units off (piece {}, frame {:g}), so the bake "
+                  "will not match the animation there",
+                  base(r), track.residual, track.residualPiece, track.residualFrame);
+
+    const bool absolute = o.positions == "absolute";
+    geo::Bounds valueBounds, meshBounds;
+    for (size_t f = 0; f < samples.size(); ++f)
+    {
+        for (size_t k = 0; k < n; ++k)
+            valueBounds.extend(absolute ? track.centres[f * n + k] : track.centres[f * n + k] - track.pivots[k]);
+        for (const glm::dvec3& p : samples[f].pointPos)
+            meshBounds.extend(toUe * p);
+    }
+    for (const glm::dvec3& p : restSample.pointPos)
+        meshBounds.extend(toUe * p);
+
+    const bool png = o.format != "exr";
+    const glm::dvec3 lo = valueBounds.min, extent = valueBounds.max - valueBounds.min;
+    std::vector<float> pos(size_t(width) * size_t(height) * 4, 0.0f), rot(pos.size(), 0.0f);
+    for (size_t f = 0; f < samples.size(); ++f)
+        for (size_t k = 0; k < n; ++k)
+        {
+            const size_t texel = (f * size_t(rowsPerFrame) + k / size_t(width)) * size_t(width) + k % size_t(width);
+            const glm::dvec3 v = absolute ? track.centres[f * n + k] : track.centres[f * n + k] - track.pivots[k];
+            float* px = &pos[texel * 4];
+            for (int c = 0; c < 3; ++c)
+                px[c] = png ? (extent[c] > 0.0 ? float((v[c] - lo[c]) / extent[c]) : 0.0f) : float(v[c]);
+            px[3] = 1.0f;
+            const glm::dvec4 q = track.rotations[f * n + k];
+            float* rx = &rot[texel * 4];
+            for (int c = 0; c < 4; ++c)
+                rx[c] = png ? float(q[c] * 0.5 + 0.5) : float(q[c]);
+        }
+
+    const int uvSet = freeUvSets(restMesh, 3);
+    {
+        for (int k = 0; k < 3; ++k)
+            restMesh.cornerAttrs().getOrAdd<glm::vec2>(geo::attr::uvName(uvSet + k));
+        std::span<glm::vec2> address = restMesh.cornerAttrs().get<glm::vec2>(geo::attr::uvName(uvSet));
+        std::span<glm::vec2> pivotXY = restMesh.cornerAttrs().get<glm::vec2>(geo::attr::uvName(uvSet + 1));
+        std::span<glm::vec2> pivotZ = restMesh.cornerAttrs().get<glm::vec2>(geo::attr::uvName(uvSet + 2));
+        std::vector<Index> column(restMesh.pointCapacity(), 0);
+        Index next = 0;
+        for (Index p = 0; p < restMesh.pointCapacity(); ++p)
+            if (restMesh.pointValid(p))
+                column[p] = next++;
+        for (Index c = 0; c < restMesh.cornerCapacity(); ++c)
+        {
+            if (!restMesh.cornerValid(c))
+                continue;
+            const size_t k = pieces.of[column[restMesh.cornerPoint(c)]];
+            const float u = float((double(k % size_t(width)) + 0.5) / width);
+            const float v = float((double(k / size_t(width)) + 0.5) / height);
+            const glm::dvec3 pivot = track.pivots[k];
+            // Unreal flips V on import, so V is written as 1 - V.
+            address[c] = glm::vec2(u, 1.0f - v);
+            pivotXY[c] = glm::vec2(float(pivot.x), float(1.0 - pivot.y));
+            pivotZ[c] = glm::vec2(float(pivot.z), 1.0f);
+        }
+    }
+    writeRestFbx(std::move(restMesh), r, so, true);
+    const int exrBits = exrBitsFor(o, "rigid");
+    if (png)
+    {
+        image::writePng(r.positions, width, height, pos, o.format == "png8" ? 8 : 16);
+        image::writePng(r.rotations, width, height, rot, o.format == "png8" ? 8 : 16);
+    }
+    else
+    {
+        image::writeExr(r.positions, width, height, pos, exrBits);
+        image::writeExr(r.rotations, width, height, rot, exrBits);
+    }
+
+    json& m = r.metadata;
+    const int bits = png ? (o.format == "png8" ? 8 : 16) : exrBits;
+    m["mode"] = "rigid";
+    m["frameCount"] = samples.size();
+    m["restFrame"] = restSample.frame;
+    m["vertexCount"] = restSample.points;
+    m["pieceCount"] = n;
+    m["pieceSource"] = pieces.fromAttribute ? "attribute" : "components";
+    m["width"] = width;
+    m["height"] = height;
+    m["rowsPerFrame"] = rowsPerFrame;
+    m["uvChannel"] = uvSet;
+    m["pivotChannels"] = {uvSet + 1, uvSet + 2};
+    m["bounds"] = {{"min", vec(valueBounds.min)}, {"max", vec(valueBounds.max)}};
+    m["positionBits"] = bits;
+    m["rotationBits"] = bits;
+    m["rigid"] = {{"maxResidual", track.residual}, {"piece", track.residualPiece}, {"frame", track.residualFrame}, {"tolerance", kVatRigidTolerance}};
+    json mp = {{"HDR", png ? 0 : 1},
+               {"BoundsMin", vec(valueBounds.min)},
+               {"BoundsMax", vec(valueBounds.max)},
+               {"FrameCount", samples.size()},
+               {"RowsPerFrame", rowsPerFrame},
+               {"TextureHeight", height},
+               {"FrameRate", m["fps"]},
+               {"PieceCount", n},
+               {"PivotChannelXY", uvSet + 1},
+               {"PivotChannelZ", uvSet + 2},
+               {"PositionTexture", r.positions.filename().generic_string()},
+               {"RotationTexture", r.rotations.filename().generic_string()}};
+    m["materialParams"] = mp;
+    m["meshBounds"] = {{"min", vec(meshBounds.min)}, {"max", vec(meshBounds.max)}};
+    writeMeta(r);
+    log::info("Vertex animation {} (rigid mode, {} pieces, {} frames, {}x{}, worst fit {:.3g}): {}", base(r), n, samples.size(), width, height,
+              track.residual, vatMaterialSummary(mp));
 }
 } // namespace
 
@@ -243,6 +439,8 @@ std::string vatMaterialSummary(const nlohmann::json& p)
                                 num(p.value("FrameRate", json(0))), p.value("PositionTexture", std::string()));
     if (p.contains("NormalTexture"))
         s += " NormalTexture=" + p["NormalTexture"].get<std::string>();
+    if (p.contains("RotationTexture"))
+        s += std::format(" RotationTexture={} PieceCount={}", p["RotationTexture"].get<std::string>(), num(p.value("PieceCount", json(0))));
     return s;
 }
 
@@ -268,6 +466,7 @@ VatOptions vatFromJson(const nlohmann::json& j, const SequenceOptions& sampling)
     o.normals = j.value("normals", o.normals);
     o.normalBits = j.value("normalBits", o.normalBits);
     o.maxWidth = j.value("maxWidth", o.maxWidth);
+    o.exrBits = j.value("exrBits", o.exrBits);
     if (j.contains("restFrame") && j["restFrame"].is_number())
         o.restFrame = j["restFrame"].get<double>();
     checkOptions(o);
@@ -279,6 +478,8 @@ nlohmann::json VatResult::files() const
     nlohmann::json f = {{"mesh", mesh.generic_string()}, {"positions", positions.generic_string()}, {"meta", meta.generic_string()}};
     if (!normals.empty())
         f["normals"] = normals.generic_string();
+    if (!rotations.empty())
+        f["rotations"] = rotations.generic_string();
     return f;
 }
 
@@ -308,11 +509,16 @@ VatResult exportVat(scene::Graph& g, const std::vector<scene::NodeId>& meshes, c
     if (std::isnan(o.restFrame))
         restIndex = 0;
 
+    std::optional<Pieces> restPieces;
+    const bool positionsOnly = o.mode == "rigid";
     sample(g, meshes, so, [&](FrameMeshes& f) {
         geo::Mesh m = combine(f);
-        samples.push_back(measure(m, f.frame));
+        samples.push_back(measure(m, f.frame, positionsOnly));
         if (f.index == restIndex)
+        {
+            restPieces = findRigidPieces(f.meshes);
             rest = std::move(m);
+        }
     }, "Exporting vertex animation");
     if (restIndex >= 0)
         restSample = samples[size_t(restIndex)];
@@ -324,7 +530,8 @@ VatResult exportVat(scene::Graph& g, const std::vector<scene::NodeId>& meshes, c
         one.step = 1.0;
         sample(g, meshes, one, [&](FrameMeshes& f) {
             rest = combine(f);
-            restSample = measure(*rest, f.frame);
+            restSample = measure(*rest, f.frame, positionsOnly);
+            restPieces = findRigidPieces(f.meshes);
         }, "Sampling the rest frame");
     }
     if (!rest || rest->numPoints() == 0)
@@ -338,7 +545,30 @@ VatResult exportVat(scene::Graph& g, const std::vector<scene::NodeId>& meshes, c
             mismatch = &s;
             break;
         }
-    std::string mode = o.mode == "auto" ? (mismatch ? "soup" : "constant") : o.mode;
+    if (o.mode == "rigid" && mismatch)
+        throw std::runtime_error(std::format("frame {} has {} points and {} faces where the rest frame has {} and {}; rigid needs the "
+                                             "same points on every frame",
+                                             mismatch->frame, mismatch->points, mismatch->faces, restSample->points, restSample->faces));
+    const glm::dmat3 toUe = unrealBasis(so.profile);
+    std::optional<RigidTrack> track;
+    if (o.mode == "rigid" || (o.mode == "auto" && !mismatch && restPieces->fromAttribute))
+        track = fitRigid(samples, *restSample, *restPieces, toUe);
+    std::string mode = o.mode;
+    if (o.mode == "auto")
+        mode = mismatch ? "soup" : track && track->residual <= kVatRigidTolerance ? "rigid" : "constant";
+    if (mode == "rigid")
+    {
+        if (o.mode == "auto")
+        {
+            VatOptions ro = o;
+            ro.mode = "rigid";
+            const json requested = r.metadata["modeRequested"];
+            r = planned(g, meshes, ro);
+            r.metadata["modeRequested"] = requested;
+        }
+        writeRigid(r, o, so, samples, *restSample, std::move(*rest), *restPieces, *track, toUe);
+        return r;
+    }
     if (mode == "constant" && mismatch)
         throw std::runtime_error(std::format("frame {} has {} points and {} faces where the rest frame has {} and {}; use mode soup",
                                              mismatch->frame, mismatch->points, mismatch->faces, restSample->points, restSample->faces));
@@ -359,7 +589,6 @@ VatResult exportVat(scene::Graph& g, const std::vector<scene::NodeId>& meshes, c
                                              "export fewer frames)",
                                              samples.size(), rowsPerFrame, height, kVatMaxHeight));
 
-    const glm::dmat3 toUe = unrealBasis(so.profile);
     const std::vector<glm::dvec3>& restPos = soup ? restSample->soupPos : restSample->pointPos;
     auto restAt = [&](size_t i) { return i < restPos.size() ? restPos[i] : glm::dvec3(0.0); };
     // Slots a frame does not fill collapse onto their triangle's first rest corner.
@@ -420,11 +649,7 @@ VatResult exportVat(scene::Graph& g, const std::vector<scene::NodeId>& meshes, c
 
     // The rest mesh with the addressing UV in the first free set.
     geo::Mesh restMesh = soup ? soupMesh(*rest, Index(maxTris)) : *rest;
-    int uvSet = 0;
-    while (uvSet < 8 && restMesh.cornerAttrs().get<glm::vec2>(geo::attr::uvName(uvSet)).size() == restMesh.cornerCapacity())
-        ++uvSet;
-    if (uvSet == 8)
-        throw std::runtime_error("the mesh uses all 8 UV sets; the vertex animation needs one free");
+    const int uvSet = freeUvSets(restMesh, 1);
     {
         std::span<glm::vec2> uv = restMesh.cornerAttrs().getOrAdd<glm::vec2>(geo::attr::uvName(uvSet));
         std::vector<Index> column(restMesh.pointCapacity(), 0);
@@ -444,28 +669,12 @@ VatResult exportVat(scene::Graph& g, const std::vector<scene::NodeId>& meshes, c
         }
     }
 
-    std::error_code ec;
-    fs::create_directories(r.mesh.parent_path(), ec);
-    {
-        fbx::ExportScene es;
-        es.upAxis = math::upAxis();
-        fbx::ExportNode node;
-        node.name = r.metadata["name"].get<std::string>();
-        node.mesh = std::make_shared<const geo::Mesh>(std::move(restMesh));
-        es.nodes.push_back(std::move(node));
-        fbx::ExportOptions fo;
-        fbx::parseProfile(so.profile, &fo.profile);
-        fo.triangulate = true;
-        fo.normals = true;
-        fo.tangents = uvSet > 0;
-        std::string err;
-        if (!fbx::writeFbx(es, r.mesh, fo, &err))
-            throw std::runtime_error(err);
-    }
+    writeRestFbx(std::move(restMesh), r, so, uvSet > 0);
+    const int exrBits = exrBitsFor(o, mode);
     if (png)
         image::writePng(r.positions, width, height, pos, o.format == "png8" ? 8 : 16);
     else
-        image::writeExr(r.positions, width, height, pos);
+        image::writeExr(r.positions, width, height, pos, exrBits);
     if (o.normals)
         image::writePng(r.normals, width, height, nrm, o.normalBits);
 
@@ -480,7 +689,7 @@ VatResult exportVat(scene::Graph& g, const std::vector<scene::NodeId>& meshes, c
     m["rowsPerFrame"] = rowsPerFrame;
     m["uvChannel"] = uvSet;
     m["bounds"] = {{"min", vec(valueBounds.min)}, {"max", vec(valueBounds.max)}};
-    m["positionBits"] = o.format == "exr" ? 16 : o.format == "png8" ? 8 : 16;
+    m["positionBits"] = o.format == "exr" ? exrBits : o.format == "png8" ? 8 : 16;
     json mp = {{"HDR", png ? 0 : 1},
                {"BoundsMin", vec(valueBounds.min)},
                {"BoundsMax", vec(valueBounds.max)},
@@ -493,12 +702,7 @@ VatResult exportVat(scene::Graph& g, const std::vector<scene::NodeId>& meshes, c
         mp["NormalTexture"] = r.normals.filename().generic_string();
     m["materialParams"] = mp;
     m["meshBounds"] = {{"min", vec(meshBounds.min)}, {"max", vec(meshBounds.max)}};
-    {
-        std::ofstream out(r.meta, std::ios::binary);
-        out << m.dump(2);
-        if (!out)
-            throw std::runtime_error("can't write " + r.meta.string());
-    }
+    writeMeta(r);
     log::info("Vertex animation {} ({} mode, {} frames, {}x{}): {}", base(r), mode, samples.size(), width, height, vatMaterialSummary(mp));
     return r;
 }

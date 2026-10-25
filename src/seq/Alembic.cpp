@@ -279,6 +279,44 @@ void Writer::addFrame(const std::vector<std::string>& names, const std::vector<c
     ++im.frames;
 }
 
+void Writer::addTransformFrame(const std::vector<std::string>& names, const std::vector<const geo::Mesh*>& shapes,
+                               const std::vector<glm::dmat4>& transforms)
+{
+    LILA_ZONE();
+
+    if (!mImpl || !mImpl->archive.valid())
+        throw std::runtime_error("Alembic writer is not open");
+    Impl& im = *mImpl;
+    const double spf = 1.0 / im.opts.fps;
+    for (size_t i = 0; i < names.size() && i < transforms.size(); ++i)
+    {
+        const std::string name = objectName(names[i]);
+        auto it = im.objects.find(name);
+        if (it == im.objects.end())
+        {
+            const geo::Mesh* shape = i < shapes.size() ? shapes[i] : nullptr;
+            if (!shape || shape->numFaces() == 0)
+                continue;
+            uint32_t ts = im.archive.addTimeSampling(AbcG::TimeSampling(spf, im.opts.startTime + im.frames * spf));
+            Object o;
+            o.xform = AbcG::OXform(im.archive.getTop(), name, ts);
+            o.mesh = AbcG::OPolyMesh(o.xform, name + "Shape", ts);
+            it = im.objects.emplace(name, std::move(o)).first;
+            im.order.push_back(name);
+            im.write(it->second, shape);
+        }
+        const glm::dmat4& m = transforms[i];
+        Imath::M44d mat;
+        for (int c = 0; c < 4; ++c)
+            for (int r = 0; r < 4; ++r)
+                mat[c][r] = m[c][r];
+        AbcG::XformSample sample;
+        sample.setMatrix(mat);
+        it->second.xform.getSchema().set(sample);
+    }
+    ++im.frames;
+}
+
 void Writer::close()
 {
     if (!mImpl)

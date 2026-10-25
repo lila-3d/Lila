@@ -10,6 +10,8 @@ lila_module(lila_gn Scene
     NodeLibrary.cpp
     NodesBoolean.cpp
     NodesCurve.cpp
+    NodesDestruction.cpp
+    NodesFracture.cpp
     NodesGroup.cpp
     NodesGeometry.cpp
     NodesInput.cpp
@@ -18,7 +20,9 @@ lila_module(lila_gn Scene
     NodesShading.cpp
     NodesTexture.cpp
     NodesUtility.cpp
+    Stateful.cpp
     GroupCommands.cpp
+    InstanceView.cpp
     Viewer.cpp)
 
 find_package(manifold CONFIG REQUIRED)

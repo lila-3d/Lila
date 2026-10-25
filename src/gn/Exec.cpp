@@ -1,6 +1,7 @@
 #include "gn/Exec.h"
 
 #include "core/Profile.h"
+#include "gn/Stateful.h"
 
 #include <functional>
 #include <map>
@@ -8,6 +9,40 @@
 
 namespace lila::gn
 {
+namespace
+{
+/** Fills Step::dynamic (forward from Scene Time and simulation nodes) and Step::feedsStateful (back from the latter). */
+void markDependencies(Plan& plan)
+{
+    plan.statefulStep = -1;
+    for (size_t s = 0; s < plan.steps.size(); ++s)
+    {
+        Plan::Step& step = plan.steps[s];
+        const bool stateful = step.decl->stateful != nullptr;
+        if (stateful && plan.statefulStep < 0)
+            plan.statefulStep = int(s);
+        step.dynamic = stateful || step.decl->type == "SceneTime" || (step.decl->type == "Group" && plan.usesTime) ||
+                       step.decl->type == "Viewer" || int(s) == plan.outputStep;
+        for (const std::vector<Plan::Source>& links : step.inputs)
+            for (const Plan::Source& src : links)
+                step.dynamic = step.dynamic || plan.steps[size_t(src.step)].dynamic;
+        step.feedsStateful = false;
+    }
+    if (plan.statefulStep < 0)
+        return;
+    plan.statefulInputsUseTime = false;
+    for (const std::vector<Plan::Source>& links : plan.steps[size_t(plan.statefulStep)].inputs)
+        for (const Plan::Source& src : links)
+            plan.statefulInputsUseTime = plan.statefulInputsUseTime || plan.steps[size_t(src.step)].dynamic;
+    plan.steps[size_t(plan.statefulStep)].feedsStateful = true;
+    for (size_t s = plan.steps.size(); s-- > 0;)
+        if (plan.steps[s].feedsStateful)
+            for (const std::vector<Plan::Source>& links : plan.steps[s].inputs)
+                for (const Plan::Source& src : links)
+                    plan.steps[size_t(src.step)].feedsStateful = true;
+}
+} // namespace
+
 PlanPtr compile(const Group& g)
 {
     LILA_ZONE();
@@ -88,13 +123,17 @@ PlanPtr compile(const Group& g)
         return plan;
     }
     plan->outputStep = stepOf[outIndex];
+    markDependencies(*plan);
     if (const GNode* viewer = activeViewer(grp))
     {
         std::string error = plan->error;
         size_t vi = size_t(viewer - grp.nodes.data());
         // A broken viewer branch only loses the preview, never the result.
         if (visit(vi))
+        {
             plan->viewerStep = stepOf[vi];
+            markDependencies(*plan);
+        }
         plan->error = error;
     }
     return plan;
@@ -136,10 +175,23 @@ std::vector<Value> executeOutputs(const Plan& plan, const ExecEnv& env)
 
     std::vector<std::vector<Value>> results(plan.steps.size());
     std::vector<Value> outputs;
+    StepCache* cache = env.cache && env.cache->plan == &plan ? env.cache : nullptr;
+    if (cache && cache->valid.size() != plan.steps.size())
+    {
+        cache->valid.assign(plan.steps.size(), 0);
+        cache->results.assign(plan.steps.size(), {});
+    }
     for (size_t s = 0; s < plan.steps.size(); ++s)
     {
         const Plan::Step& step = plan.steps[s];
         const GNode& node = plan.group.nodes[step.node];
+        if (env.sampleOnly && !step.feedsStateful)
+            continue;
+        if (cache && !step.dynamic && cache->valid[s])
+        {
+            results[s] = cache->results[s];
+            continue;
+        }
         ExecContext ctx(plan.group, node, *step.decl, step.sockets, env);
         ctx.inputs.resize(step.sockets.inputs.size());
         ctx.outputs.resize(step.sockets.outputs.size());
@@ -172,7 +224,9 @@ std::vector<Value> executeOutputs(const Plan& plan, const ExecEnv& env)
         bool isViewer = int(s) == plan.viewerStep;
         try
         {
-            if (step.decl->exec)
+            if (step.decl->stateful)
+                execStateful(ctx);
+            else if (step.decl->exec)
                 step.decl->exec(ctx);
         }
         catch (const std::exception& e)
@@ -186,7 +240,14 @@ std::vector<Value> executeOutputs(const Plan& plan, const ExecEnv& env)
         if (int(s) == plan.outputStep)
             for (size_t k = 0; k < ctx.inputs.size(); ++k)
                 outputs.push_back(ctx.inputs[k].empty() ? defaultValue(step.sockets.inputs[k].type) : ctx.inputs[k][0]);
+        if (cache && !step.dynamic)
+        {
+            cache->results[s] = ctx.outputs;
+            cache->valid[s] = 1;
+        }
         results[s] = std::move(ctx.outputs);
+        if (env.sampleOnly && int(s) == plan.statefulStep)
+            break;
     }
     return outputs;
 }

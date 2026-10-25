@@ -359,6 +359,20 @@ void Graph::deleteNode(NodeId id)
 
     if (!node(id))
         return;
+    struct Depth
+    {
+        int& d;
+        explicit Depth(int& v) : d(v) { ++d; }
+        ~Depth() { --d; }
+    };
+    if (mDeleteHook && mDeleteDepth == 0)
+    {
+        std::vector<NodeId> doomed = descendants(id);
+        doomed.insert(doomed.begin(), id);
+        Depth hook(mDeleteDepth);
+        mDeleteHook(*this, doomed);
+    }
+    Depth inner(mDeleteDepth);
     for (NodeId child : std::vector<NodeId>(children(id)))
         deleteNode(child);
 
@@ -1060,7 +1074,56 @@ void Graph::setTime(double seconds)
         events::send({.type = events::Event::TimeChanged, .time = seconds});
 }
 
+namespace
+{
+Graph::EvaluateHook& evaluateHook()
+{
+    static Graph::EvaluateHook h;
+    return h;
+}
+std::vector<Graph::EvaluateHook>& extraHooks()
+{
+    static std::vector<Graph::EvaluateHook> h;
+    return h;
+}
+bool gInEvaluateHook = false;
+
+struct HookGuard
+{
+    HookGuard() { gInEvaluateHook = true; }
+    ~HookGuard() { gInEvaluateHook = false; }
+};
+} // namespace
+
+void Graph::setEvaluateHook(EvaluateHook hook) { evaluateHook() = std::move(hook); }
+
+void Graph::addEvaluateHook(EvaluateHook hook) { extraHooks().push_back(std::move(hook)); }
+
 void Graph::evaluate()
+{
+    const EvaluateHook& hook = evaluateHook();
+    if ((!hook && extraHooks().empty()) || gInEvaluateHook)
+    {
+        evaluateDirty();
+        return;
+    }
+    auto call = [&](bool after) {
+        if (hook)
+            hook(*this, after);
+        for (const EvaluateHook& h : extraHooks())
+            h(*this, after);
+    };
+    if (mAnyDirty)
+    {
+        HookGuard guard;
+        call(false);
+    }
+    evaluateDirty();
+    HookGuard guard;
+    call(true);
+}
+
+void Graph::evaluateDirty()
 {
     LILA_ZONE();
 

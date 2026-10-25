@@ -176,7 +176,9 @@ void objectInfo()
         .doc = "Another mesh object's evaluated mesh and transform. Its outMesh and worldMatrix are connected into the modifier, so "
                "editing it re-evaluates this group.",
         .props = {prop("object", {}, "", "Name of the mesh object."),
-                  prop("transformSpace", {"original", "world"}, "original", "original keeps the mesh in its own space; world applies its world matrix.")},
+                  prop("transformSpace", {"original", "world", "instance"}, "original",
+                       "original keeps the mesh in its own space; world applies its world matrix; instance passes one instance "
+                       "of the mesh placed by its world matrix, which simulation nodes follow as a moving object.")},
         .sockets = {.outputs = {out("location", T::Vector), out("rotation", T::Rotation), out("scale", T::Vector), geoOut("geometry")}},
         .exec =
             [](ExecContext& c) {
@@ -192,6 +194,25 @@ void objectInfo()
                 c.out("scale", constantVector(s));
                 if (it->second.mesh)
                 {
+                    if (c.prop("transformSpace") == "instance")
+                    {
+                        GeometryPtr ref;
+                        if (it->second.mesh->hasDeleted())
+                            ref = meshGeometry(*it->second.mesh);
+                        else
+                        {
+                            Geometry shared;
+                            shared.mesh = it->second.mesh;
+                            ref = makeGeometry(std::move(shared));
+                        }
+                        auto inst = std::make_shared<Instances>();
+                        inst->references.push_back(std::move(ref));
+                        inst->add(m, 0);
+                        Geometry g;
+                        g.instances = std::move(inst);
+                        c.out("geometry", makeGeometry(std::move(g)));
+                        return;
+                    }
                     geo::Mesh mesh = *it->second.mesh;
                     if (c.prop("transformSpace") == "world")
                         transformMesh(mesh, m);

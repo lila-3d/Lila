@@ -135,6 +135,12 @@ public:
      */
     using DrivenVecSetHook = std::function<DrivenEdit(Graph& g, const PlugRef& dst, const PlugRef& src, const glm::dvec3& value)>;
     void setDrivenVecSetHook(DrivenVecSetHook fn) { mDrivenVecSet = std::move(fn); }
+    /**
+     * Called by the outermost deleteNode with the node and its descendants before anything is disconnected, so data
+     * other nodes depend on can move (an instance source handing its mesh to an instance). Edits it makes record undo.
+     */
+    using DeleteHook = std::function<void(Graph& g, const std::vector<NodeId>& doomed)>;
+    void setDeleteHook(DeleteHook fn) { mDeleteHook = std::move(fn); }
     /** True while a driven plug shows a held value instead of its source's. */
     bool isHeld(const PlugRef& dst) const { return mHeld.contains(dst); }
     /** Raw stored value, no evaluation. */
@@ -154,6 +160,16 @@ public:
 
     // Evaluation
     void evaluate();
+    /** Marks a node for recompute on the next evaluate(), like an input change would. */
+    void touch(NodeId id) { markDirty(id); }
+    /**
+     * Called on the main thread by evaluate(): before computing anything dirty (after = false) and once done (after =
+     * true). Evaluations the hook makes itself don't call it again. Simulations use it to step on the main thread.
+     */
+    using EvaluateHook = std::function<void(Graph& g, bool after)>;
+    static void setEvaluateHook(EvaluateHook hook);
+    /** Further hooks, called after the one set above in the order added. */
+    static void addEvaluateHook(EvaluateHook hook);
     double time() const { return mCtx.time; }
     void setTime(double seconds);
     /** Bumped on every change; the renderer uses it to skip unchanged frames. */
@@ -222,6 +238,7 @@ private:
     /** Routes a set on a driven scalar through the hook. Returns false when it is rejected. */
     bool setDriven(const PlugRef& dst, const PlugRef& src, double v);
     void markDirty(NodeId id);
+    void evaluateDirty();
     bool dependsOn(NodeId node, NodeId upstream) const;
     void changed(Change c, NodeId id);
     /** Node and selection changes of the current graph, to the event bus. */
@@ -238,6 +255,8 @@ private:
     std::set<PlugRef> mHeld; // driven plugs keeping a user-set value
     DrivenSetHook mDrivenSet;
     DrivenVecSetHook mDrivenVecSet;
+    DeleteHook mDeleteHook;
+    int mDeleteDepth = 0;
     struct ListenerEntry
     {
         Listener fn;

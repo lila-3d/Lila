@@ -1,6 +1,8 @@
 lila_module(lila_seq Scene
     Alembic.cpp
     MeshSequence.cpp
+    PieceJoints.cpp
+    RigidPieces.cpp
     SeqCommands.cpp
     Vat.cpp)
 

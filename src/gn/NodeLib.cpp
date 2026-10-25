@@ -25,7 +25,8 @@ void retire(std::unique_ptr<NodeDecl> d)
     // Its functions may live in an extension library that is about to be unloaded.
     std::string type = d->type;
     d->dynamicSockets = nullptr;
-    d->exec = [type](ExecContext&) { throw std::runtime_error("node type " + type + " was unloaded"); };
+    d->stateful = nullptr;
+    d->exec =[type](ExecContext&) { throw std::runtime_error("node type " + type + " was unloaded"); };
     retired().push_back(std::move(d));
 }
 

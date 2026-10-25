@@ -13,8 +13,10 @@
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "seq/Alembic.h"
+#include "seq/RigidPieces.h"
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <cmath>
 #include <format>
@@ -307,6 +309,87 @@ std::vector<fs::path> plannedFiles(scene::Graph& g, const std::vector<scene::Nod
     return out;
 }
 
+namespace
+{
+/** Every frame sampled, then each mesh's pieces fitted and written as static shapes under per-frame transforms. */
+void writeRigidPieces(scene::Graph& g, const std::vector<scene::NodeId>& meshes, const SequenceOptions& o, const glm::dmat4& basis,
+                      abc::Writer& writer)
+{
+    LILA_ZONE();
+
+    std::vector<std::string> names;
+    std::vector<geo::Mesh> first;
+    std::vector<std::vector<std::vector<glm::dvec3>>> points; // [mesh][frame]
+    std::vector<double> times;
+    sample(g, meshes, o, [&](FrameMeshes& f) {
+        if (names.empty())
+        {
+            names = f.names;
+            points.resize(f.meshes.size());
+        }
+        times.push_back(f.frame);
+        for (size_t i = 0; i < f.meshes.size() && i < points.size(); ++i)
+        {
+            geo::Mesh& m = f.meshes[i];
+            m.compact();
+            if (basis != glm::dmat4(1.0))
+                gn::transformMesh(m, basis);
+            if (first.size() <= i)
+                first.push_back(m);
+            if (m.numPoints() != first[i].numPoints())
+                throw std::invalid_argument(names[i] + ": the point count changes between frames; rigid pieces must stay whole");
+            points[i].emplace_back(m.positions().begin(), m.positions().end());
+        }
+    }, "Exporting Alembic");
+
+    struct Track
+    {
+        std::vector<std::string> names;
+        std::vector<geo::Mesh> shapes;
+        RigidFit fit;
+        geo::Index count = 0;
+    };
+    std::vector<Track> tracks(first.size());
+    for (size_t i = 0; i < first.size(); ++i)
+    {
+        Track& t = tracks[i];
+        const RigidPieces pieces = findRigidPieces({first[i]});
+        std::vector<std::span<const glm::dvec3>> spans;
+        for (const std::vector<glm::dvec3>& f : points[i])
+            spans.push_back(f);
+        t.fit = fitRigidPieces(spans, times, first[i].positions(), pieces, glm::dmat3(1.0));
+        t.count = pieces.count;
+        std::vector<std::vector<geo::Index>> faces(pieces.count);
+        for (geo::Index f = 0; f < first[i].faceCapacity(); ++f)
+            if (first[i].faceValid(f))
+                faces[pieces.of[first[i].cornerPoint(first[i].faceCorner(f))]].push_back(f);
+        for (geo::Index k = 0; k < pieces.count; ++k)
+        {
+            geo::Mesh shape = geo::extractFaces(first[i], faces[k]);
+            gn::transformMesh(shape, glm::translate(glm::dmat4(1.0), -t.fit.pivots[k]));
+            t.shapes.push_back(std::move(shape));
+            t.names.push_back(std::format("{}_piece{:03}", names[i], k));
+        }
+    }
+    for (size_t f = 0; f < times.size(); ++f)
+    {
+        std::vector<std::string> frameNames;
+        std::vector<const geo::Mesh*> shapes;
+        std::vector<glm::dmat4> xforms;
+        for (const Track& t : tracks)
+            for (geo::Index k = 0; k < t.count; ++k)
+            {
+                const glm::dvec4& q = t.fit.rotations[f * t.count + k];
+                frameNames.push_back(t.names[k]);
+                shapes.push_back(f == 0 ? &t.shapes[k] : nullptr);
+                xforms.push_back(glm::translate(glm::dmat4(1.0), t.fit.centres[f * t.count + k]) *
+                                 glm::mat4_cast(glm::dquat(q.w, q.x, q.y, q.z)));
+            }
+        writer.addTransformFrame(frameNames, shapes, xforms);
+    }
+}
+} // namespace
+
 std::vector<fs::path> exportSequence(scene::Graph& g, const std::vector<scene::NodeId>& meshes, const SequenceOptions& o)
 {
     LILA_ZONE();
@@ -329,6 +412,12 @@ std::vector<fs::path> exportSequence(scene::Graph& g, const std::vector<scene::N
             fs::create_directories(files[0].parent_path(), ec);
         writer.open(files[0], wo);
         const glm::dmat4 basis(yUpBasis(o.profile));
+        if (o.rigidPieces)
+        {
+            writeRigidPieces(g, meshes, o, basis, writer);
+            writer.close();
+            return files;
+        }
         sample(g, meshes, o, [&](FrameMeshes& f) {
             std::vector<const geo::Mesh*> ptrs;
             for (geo::Mesh& m : f.meshes)
@@ -366,6 +455,7 @@ SequenceOptions fromJson(const nlohmann::json& j)
     o.uvs = j.value("uvs", o.uvs);
     o.colors = j.value("colors", o.colors);
     o.triangulate = j.value("triangulate", o.triangulate);
+    o.rigidPieces = j.value("rigidPieces", o.rigidPieces);
     if (j.contains("recenter") && j["recenter"].is_string() && !parseRecenter(j["recenter"].get<std::string>(), &o.recenter))
         throw std::invalid_argument("recenter must be none, first or each");
     if (o.format != "obj" && o.format != "fbx" && o.format != "abc")
@@ -388,6 +478,7 @@ nlohmann::json toJson(const SequenceOptions& o)
             {"folder", o.folder},     {"pattern", o.pattern}, {"padding", o.padding},
             {"scale", o.scale},       {"profile", o.profile}, {"applyModifiers", o.applyModifiers},
             {"worldSpace", o.worldSpace}, {"recenter", recenter}, {"normals", o.normals},
-            {"uvs", o.uvs},           {"colors", o.colors},   {"triangulate", o.triangulate}};
+            {"uvs", o.uvs},           {"colors", o.colors},   {"triangulate", o.triangulate},
+            {"rigidPieces", o.rigidPieces}};
 }
 } // namespace lila::seq

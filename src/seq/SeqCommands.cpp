@@ -1,4 +1,5 @@
 #include "seq/MeshSequence.h"
+#include "seq/RigidPieces.h"
 #include "seq/Vat.h"
 
 #include "core/Log.h"
@@ -161,6 +162,9 @@ void registerCommands()
 
     std::vector<FlagDef> abcFlags = sampleFlags();
     abcFlags.push_back({"path", "p", T::String, nullptr, "The .abc file; relative paths are under the workspace."});
+    abcFlags.push_back({"rigidPieces", "rp", T::Bool, false,
+                        "Write each rigid piece (the piece point attribute, or each connected part) as its own object: its shape once "
+                        "and a transform per frame. Far smaller for a broken-apart mesh."});
     ops::registerCommand({
         .name = "exportAlembic",
         .doc = "Write animated meshes to one Alembic (.abc, Ogawa) file: a sample per frame with points, faces (topology may change), "
@@ -179,6 +183,7 @@ void registerCommands()
             Args b = a;
             b.flags["format"] = "abc";
             SequenceOptions o = optionsFrom(b, "exportAlembic");
+            o.rigidPieces = a.get<bool>("rigidPieces", false);
             o.folder = p.parent_path().generic_string();
             o.pattern = p.stem().string();
             json files = run(targets(a, "exportAlembic"), o, a.get<bool>("dryRun"), "exportAlembic");
@@ -201,21 +206,26 @@ void registerCommands()
                         "Position texture: exr (half float offsets, HDR=1), png16 or png8 (normalised by BoundsMin/BoundsMax, HDR=0).",
                         {"exr", "png16", "png8"}});
     vatFlags.push_back({"mode", "md", T::String, "auto",
-                        "constant (every frame keeps the rest frame's vertices), soup (unwelded triangles, for changing topology) or "
-                        "auto (constant when every frame matches, soup otherwise).",
-                        {"auto", "constant", "soup"}});
+                        "constant (every frame keeps the rest frame's vertices), soup (unwelded triangles, for changing topology), "
+                        "rigid (loose pieces that only move and rotate: one position and one rotation texel per piece per frame, pieces "
+                        "from the int point attribute 'piece' or connected components) or auto (soup when the topology changes, rigid "
+                        "when every mesh has 'piece' and every piece fits a rigid motion within 0.01 units, constant otherwise).",
+                        {"auto", "constant", "soup", "rigid"}});
     vatFlags.push_back({"positions", "po", T::String, "offset", "offset (from the rest mesh, for World Position Offset) or absolute.",
                         {"offset", "absolute"}});
     vatFlags.push_back({"normalBits", "nb", T::Int, 8, "Normal texture depth, 8 or 16."});
     vatFlags.push_back({"restFrame", "rf", T::Float, nullptr, "Frame whose shape is the rest mesh (default the first sampled frame)."});
     vatFlags.push_back({"maxWidth", "mw", T::Int, nullptr, "Widest texture before a frame wraps to more rows (default the vat maxWidth pref, 4096)."});
+    vatFlags.push_back({"exrBits", "eb", T::Int, nullptr, "EXR depth: 16 (half float) or 32 (float). Default 32 for rigid, 16 otherwise."});
     ops::registerCommand({
         .name = "exportVertexAnimation",
         .doc = "Bake animated meshes (geometry nodes, deformers, skins, anything that changes over time) into Vertex Animation "
                "Textures: a rest mesh FBX with an extra UV channel addressing each vertex's texels, a position texture (offsets "
                "or positions per vertex per frame, Unreal space), a normal texture and a JSON sidecar describing the layout. "
-               "Changing topology is baked as a padded triangle soup. Returns {files, meta, materialParams} (the material inputs: "
-               "HDR, BoundsMin, BoundsMax, FrameCount, RowsPerFrame, TextureHeight, FrameRate, PositionTexture, NormalTexture).",
+               "Changing topology is baked as a padded triangle soup; rigid pieces as a position and a rotation texture with one "
+               "column per piece. Returns {files, meta, materialParams} (the material inputs: HDR, BoundsMin, BoundsMax, FrameCount, "
+               "RowsPerFrame, TextureHeight, FrameRate, PositionTexture, NormalTexture; rigid adds RotationTexture, PieceCount, "
+               "PivotChannelXY, PivotChannelZ).",
         .positionalDoc = "meshes",
         .flags = vatFlags,
         .undoable = false,
@@ -227,7 +237,7 @@ void registerCommands()
                 b.flags.erase(k);
             SequenceOptions so = optionsFrom(b, "exportVertexAnimation");
             json j = json::object();
-            for (const char* k : {"name", "format", "mode", "positions", "normals", "normalBits", "restFrame", "maxWidth"})
+            for (const char* k : {"name", "format", "mode", "positions", "normals", "normalBits", "restFrame", "maxWidth", "exrBits"})
                 if (a.has(k))
                     j[k] = a.flags[k];
             seq::VatOptions o;
@@ -260,6 +270,39 @@ void registerCommands()
                 out["materialParams"] = r.metadata["materialParams"];
             return out;
         },
+    });
+    std::vector<FlagDef> jointFlags;
+    for (const FlagDef& f : sampleFlags())
+        if (f.name == "start" || f.name == "end" || f.name == "step" || f.name == "playbackRange" || f.name == "fps")
+            jointFlags.push_back(f);
+    jointFlags.push_back({"name", "n", T::String, nullptr, "Name of the new mesh (its joints take it as a prefix); default <mesh>_Rigid."});
+    jointFlags.push_back({"hideSource", "hs", T::Bool, true, "Hide the animated mesh baked from."});
+    ops::registerCommand({
+        .name = "bakePiecesToJoints",
+        .doc = "Bake a mesh of moving rigid pieces (a destruction simulation) onto joints.\n\n"
+               "Makes a new mesh at the first frame's shape, skinned one piece per joint under a root at the origin, and keys the "
+               "joints on every frame, so the motion can be edited with the animation tools or exported as an FBX skeletal "
+               "mesh with animation. Pieces are the int piece point attribute, or the connected parts. Returns {mesh, root, "
+               "joints, residual} (residual: worst point error of the fit, cm).",
+        .positionalDoc = "mesh (default the selection)",
+        .flags = jointFlags,
+        .run = [](const Args& a) -> json {
+            std::vector<scene::NodeId> meshes = targets(a, "bakePiecesToJoints");
+            if (meshes.size() != 1)
+                throw CommandError("bakePiecesToJoints: give one mesh");
+            const SequenceOptions o = optionsFrom(a, "bakePiecesToJoints");
+            try
+            {
+                PieceJointsResult r = bakePiecesToJoints(scene::Graph::current(), meshes[0], o, a.get<std::string>("name", ""),
+                                                         a.get<bool>("hideSource", true));
+                return {{"mesh", r.mesh}, {"root", r.root}, {"joints", r.joints}, {"residual", r.residual}};
+            }
+            catch (const std::invalid_argument& e)
+            {
+                throw CommandError(std::string("bakePiecesToJoints: ") + e.what());
+            }
+        },
+        .examples = {"bakePiecesToJoints('Wall', start=1, end=72)"},
     });
 }
 } // namespace lila::seq

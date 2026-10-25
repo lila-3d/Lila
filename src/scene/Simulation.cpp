@@ -5,6 +5,7 @@
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
+#include "core/Progress.h"
 #include "scene/Anim.h"
 #include "scene/AnimLayer.h"
 #include "scene/Graph.h"
@@ -18,6 +19,7 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include <optional>
 #include <set>
 
 namespace lila::scene::sim
@@ -83,10 +85,13 @@ void watch(Graph& g)
         true);
 }
 
-const SolverType* solverTypeFor(const NodeType& t)
+const SolverType* solverTypeFor(const Node& n)
 {
-    for (const NodeType* cur = &t; cur; cur = cur->base)
-        if (const SolverType* s = solverTypes().find(cur->name))
+    for (const NodeType* cur = &n.type(); cur; cur = cur->base)
+        if (const SolverType* s = solverTypes().find(cur->name); s && !s->matches)
+            return s;
+    for (const SolverType* s : solverTypes().all())
+        if (s->matches && s->matches(n))
             return s;
     return nullptr;
 }
@@ -97,7 +102,7 @@ Sim& simFor(Graph& g, NodeId node)
     Node* n = g.node(node);
     if (!n)
         throw std::invalid_argument("no such node");
-    const SolverType* type = solverTypeFor(n->type());
+    const SolverType* type = solverTypeFor(*n);
     if (!type)
         throw std::invalid_argument(n->path() + " is not a simulation");
     Sim& s = sims()[node];
@@ -343,7 +348,8 @@ void simulateLoop(Graph& g, NodeId node, Sim& s)
     const size_t n = stateSize(s.setup);
     std::vector<double> state(n, 0.0);
     s.solver->reset(inputs[0], state);
-    state.resize(n, 0.0);
+    if (!s.setup.variableState)
+        state.resize(n, 0.0);
     auto pass = [&](const std::function<void(int64_t step)>& after) {
         for (int64_t i = 1; i <= steps; ++i)
         {
@@ -422,6 +428,8 @@ void simulateLinear(Graph& g, NodeId node, Sim& s, int64_t upTo)
     const size_t n = stateSize(s.setup);
     std::vector<double> inputs;
 
+    if (s.validGeneration != gGeneration && !s.frames.empty() && !s.solver->inputsMayHaveChanged(g))
+        s.validGeneration = gGeneration;
     const bool validate = s.validGeneration != gGeneration && !s.frames.empty();
     if (!validate && int64_t(s.frames.size()) > upTo)
         return;
@@ -468,11 +476,22 @@ void simulateLinear(Graph& g, NodeId node, Sim& s, int64_t upTo)
         scope.at(*s.solver, stepSeconds(start, sub, 0), inputs);
         state.assign(n, 0.0);
         s.solver->reset(inputs, state);
-        state.resize(n, 0.0);
+        if (!s.setup.variableState)
+            state.resize(n, 0.0);
         s.frames.push_back(makeFrame(s, start, hashDoubles(inputs, s.params), state, inputs));
     }
+    // Long runs (jumping far ahead, or the first play) show progress and can be cancelled; the frames made so far stay cached.
+    const int64_t todo = upTo + 1 - int64_t(s.frames.size());
+    std::optional<progress::Scope> bar;
+    if (todo >= 8)
+        bar.emplace("Simulating", double(todo), progress::Cancellable);
     for (int64_t k = int64_t(s.frames.size()); k <= upTo; ++k)
     {
+        if (bar)
+        {
+            bar->checkCancel();
+            bar->setStatus("Frame " + std::to_string(start + k));
+        }
         state = s.frames.back()->state;
         uint64_t h = s.frames.back()->hash;
         for (int j = 1; j <= sub; ++j)
@@ -489,6 +508,8 @@ void simulateLinear(Graph& g, NodeId node, Sim& s, int64_t upTo)
         if (k % hold != 0)
             f->world = s.frames[size_t(k - k % hold)]->world;
         s.frames.push_back(std::move(f));
+        if (bar)
+            bar->step();
     }
 }
 
@@ -604,7 +625,9 @@ double framesPerSecond() { return fps(); }
 
 int64_t frameOf(double seconds) { return frameAt(seconds); }
 
-bool isSimulation(const Node& n) { return solverTypeFor(n.type()) != nullptr; }
+bool isSimulation(const Node& n) { return solverTypeFor(n) != nullptr; }
+
+bool sampling() { return gSampling; }
 
 std::vector<NodeId> simulations(Graph& g)
 {

@@ -16,8 +16,10 @@
 #include "seq/MeshSequence.h"
 #include "seq/Vat.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <set>
 
 using namespace lila;
@@ -475,5 +477,331 @@ TEST_CASE("exportVertexAnimation bakes changing topology as a padded triangle so
     for (const auto& c : cols)
         seen.insert(c.second);
     CHECK(seen.size() == 18);
+    fs::remove_all(dir);
+}
+
+namespace
+{
+/** Three 100 cm cubes, Rigid0..2, each translating and tumbling on all three axes over frames 1 to 6 (linear keys at 30 fps). */
+std::vector<std::string> tumblingCubes()
+{
+    ops::execute("newScene", json::object());
+    ops::execute("playbackOptions", {{"fps", 30.0}, {"minTime", 1.0 / 30.0}, {"maxTime", 6.0 / 30.0}});
+    scene::Graph& g = scene::Graph::current();
+    std::vector<std::string> names;
+    for (int i = 0; i < 3; ++i)
+    {
+        scene::Node* n = g.createNode(*scene::types::find("mesh"), "Rigid" + std::to_string(i));
+        g.setValue({n->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(geo::makeCube())));
+        const std::string name = n->name();
+        auto key = [&](const char* attr, double frame, double value) {
+            ops::execute("setKeyframe", {{"args", {name + "." + attr}}, {"time", frame / 30.0}, {"value", value}, {"inTangentType", "linear"},
+                                         {"outTangentType", "linear"}});
+        };
+        key("tx", 1.0, 300.0 * i);
+        key("tx", 6.0, 300.0 * i + 120.0 * (i + 1));
+        key("ty", 1.0, 50.0 * i);
+        key("ty", 6.0, -80.0);
+        key("tz", 1.0, 0.0);
+        key("tz", 6.0, 250.0 + 40.0 * i);
+        // Up to 75 degrees a frame on rz, so the quaternion sign has to be kept continuous.
+        key("rx", 1.0, 10.0 * i);
+        key("rx", 6.0, 200.0 + 30.0 * i);
+        key("ry", 1.0, 0.0);
+        key("ry", 6.0, -140.0);
+        key("rz", 1.0, 0.0);
+        key("rz", 6.0, 375.0);
+        names.push_back(name);
+    }
+    return names;
+}
+
+/** Every sampled point of every frame, in Unreal space. */
+std::vector<std::vector<glm::dvec3>> sampledPoints(const std::vector<std::string>& names)
+{
+    scene::Graph& g = scene::Graph::current();
+    std::vector<scene::NodeId> ids;
+    for (const std::string& n : names)
+        ids.push_back(g.find(n)->id());
+    seq::SequenceOptions so;
+    so.playbackRange = true;
+    so.triangulate = false;
+    std::vector<std::vector<glm::dvec3>> out;
+    seq::sample(g, seq::meshNodes(g, ids), so, [&](seq::FrameMeshes& f) {
+        std::vector<glm::dvec3> pts;
+        for (const geo::Mesh& m : f.meshes)
+            for (geo::Index p = 0; p < m.pointCapacity(); ++p)
+                if (m.pointValid(p))
+                    pts.push_back(ue(m.position(p)));
+        out.push_back(std::move(pts));
+    });
+    return out;
+}
+
+glm::dvec4 texel4(const seq::VatImage& img, int col, int row)
+{
+    const float* p = &img.rgba[(size_t(row) * size_t(img.width) + size_t(col)) * 4];
+    return {p[0], p[1], p[2], p[3]};
+}
+
+glm::dvec3 rotateQ(const glm::dvec4& q, const glm::dvec3& v)
+{
+    const glm::dvec3 u(q.x, q.y, q.z);
+    const glm::dvec3 t = 2.0 * glm::cross(u, v);
+    return v + q.w * t + glm::cross(u, t);
+}
+
+/** One rest mesh corner run through the rigid material's math, as Unreal sees the FBX (V flipped on import). */
+struct RigidCorner
+{
+    glm::dvec3 rest;
+    int piece = 0;
+    glm::dvec3 pivot;
+    std::vector<glm::dvec3> frames;
+    std::vector<glm::dvec4> rotations;
+};
+
+std::vector<RigidCorner> decodeRigid(const json& files, const json& meta)
+{
+    std::string err;
+    seq::VatImage pos = seq::readVatImage(files["positions"].get<std::string>(), &err);
+    INFO(err);
+    seq::VatImage rot = seq::readVatImage(files["rotations"].get<std::string>(), &err);
+    INFO(err);
+    const json& mp = meta["materialParams"];
+    const int w = meta["width"], h = meta["height"], rpf = meta["rowsPerFrame"], frames = mp["FrameCount"];
+    REQUIRE(pos.width == w);
+    REQUIRE(pos.height == h);
+    REQUIRE(rot.width == w);
+    REQUIRE(rot.height == h);
+    const bool hdr = mp["HDR"] == 1, absolute = meta["positions"] == "absolute";
+    const glm::dvec3 lo(mp["BoundsMin"][0], mp["BoundsMin"][1], mp["BoundsMin"][2]), hi(mp["BoundsMax"][0], mp["BoundsMax"][1], mp["BoundsMax"][2]);
+
+    ops::execute("newScene", json::object());
+    scene::Graph& g = scene::Graph::current();
+    fbx::ImportResult r = fbx::importFbx(g, files["mesh"].get<std::string>());
+    REQUIRE(r.ok);
+    std::vector<RigidCorner> out;
+    for (scene::NodeId id : r.nodes)
+    {
+        scene::Node* n = g.node(id);
+        if (!n->type().isA("mesh"))
+            continue;
+        g.evaluate();
+        const geo::Mesh& m = *n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+        std::span<const glm::vec2> address = m.cornerAttrs().get<glm::vec2>(geo::attr::uvName(meta["uvChannel"].get<int>()));
+        std::span<const glm::vec2> pivotXY = m.cornerAttrs().get<glm::vec2>(geo::attr::uvName(meta["pivotChannels"][0].get<int>()));
+        std::span<const glm::vec2> pivotZ = m.cornerAttrs().get<glm::vec2>(geo::attr::uvName(meta["pivotChannels"][1].get<int>()));
+        REQUIRE(address.size() == m.cornerCapacity());
+        REQUIRE(pivotXY.size() == m.cornerCapacity());
+        REQUIRE(pivotZ.size() == m.cornerCapacity());
+        for (geo::Index c = 0; c < m.cornerCapacity(); ++c)
+        {
+            if (!m.cornerValid(c))
+                continue;
+            RigidCorner rc;
+            rc.rest = ue(m.position(m.cornerPoint(c)));
+            // Unreal's importer flips V, in float like the UVs themselves.
+            const glm::dvec2 uvA(address[c].x, 1.0f - address[c].y), uvXY(pivotXY[c].x, 1.0f - pivotXY[c].y), uvZ(pivotZ[c].x, 1.0f - pivotZ[c].y);
+            CHECK(uvZ.y == 0.0);
+            rc.pivot = glm::dvec3(uvXY.x, uvXY.y, uvZ.x);
+            const int col = int(std::floor(uvA.x * w)), row = int(std::floor(uvA.y * h));
+            REQUIRE(row < rpf);
+            rc.piece = row * w + col;
+            for (int f = 0; f < frames; ++f)
+            {
+                const glm::dvec4 rt = texel4(rot, col, f * rpf + row);
+                const glm::dvec4 q = glm::normalize(hdr ? rt : rt * 2.0 - 1.0);
+                const glm::dvec3 pt = texel(pos, col, f * rpf + row);
+                const glm::dvec3 centre = (absolute ? glm::dvec3(0.0) : rc.pivot) + (hdr ? pt : lo + pt * (hi - lo));
+                rc.frames.push_back(rotateQ(q, rc.rest - rc.pivot) + centre);
+                rc.rotations.push_back(q);
+            }
+            out.push_back(std::move(rc));
+        }
+    }
+    return out;
+}
+
+/** Largest decode error against the sampled points (each corner matched by its rest position), and largest arm angle in degrees. */
+std::pair<double, double> rigidError(const std::vector<RigidCorner>& corners, const std::vector<std::vector<glm::dvec3>>& truth)
+{
+    double worst = 0.0, worstAngle = 0.0;
+    for (const RigidCorner& c : corners)
+    {
+        size_t best = 0;
+        double bestDist = 1e30;
+        for (size_t i = 0; i < truth[0].size(); ++i)
+            if (const double d = glm::length(truth[0][i] - c.rest); d < bestDist)
+            {
+                bestDist = d;
+                best = i;
+            }
+        REQUIRE(bestDist < 1e-3);
+        REQUIRE(c.frames.size() == truth.size());
+        for (size_t f = 0; f < truth.size(); ++f)
+        {
+            worst = std::max(worst, glm::length(c.frames[f] - truth[f][best]));
+            // The piece is the cube whose rest corners lie within 90 cm of the pivot; its centre is their mean.
+            glm::dvec3 centre(0.0);
+            int count = 0;
+            for (size_t i = 0; i < truth[0].size(); ++i)
+                if (glm::length(truth[0][i] - c.pivot) < 90.0)
+                {
+                    centre += truth[f][i];
+                    ++count;
+                }
+            REQUIRE(count == 8);
+            const glm::dvec3 decodedArm = rotateQ(c.rotations[f], c.rest - c.pivot);
+            const glm::dvec3 trueArm = truth[f][best] - centre / double(count);
+            const double cosA = glm::dot(glm::normalize(decodedArm), glm::normalize(trueArm));
+            worstAngle = std::max(worstAngle, glm::degrees(std::acos(std::clamp(cosA, -1.0, 1.0))));
+        }
+    }
+    return {worst, worstAngle};
+}
+
+std::string fileBytes(const std::string& path)
+{
+    std::ifstream in(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+} // namespace
+
+TEST_CASE("exportVertexAnimation rigid mode bakes a transform per piece that decodes back to the animation")
+{
+    setup();
+    fs::path dir = tempDir("vatrigid");
+    std::vector<std::string> cubes = tumblingCubes();
+    const std::vector<std::vector<glm::dvec3>> truth = sampledPoints(cubes);
+    REQUIRE(truth.size() == 6);
+    REQUIRE(truth[0].size() == 24);
+
+    json r = ops::execute("exportVertexAnimation", {{"args", cubes}, {"folder", (dir / "a").generic_string()}, {"name", "rigid"}, {"mode", "rigid"}});
+    const json& meta = r["meta"];
+    CHECK(meta["mode"] == "rigid");
+    CHECK(meta["pieceCount"] == 3);
+    CHECK(meta["pieceSource"] == "components");
+    CHECK(meta["width"] == 3);
+    CHECK(meta["rowsPerFrame"] == 1);
+    CHECK(meta["height"] == 6);
+    CHECK(meta["uvChannel"] == 1);
+    CHECK(meta["pivotChannels"] == json::array({2, 3}));
+    CHECK(meta["positionBits"] == 32);
+    CHECK(meta["rigid"]["maxResidual"].get<double>() < 1e-6);
+    CHECK_FALSE(r["files"].contains("normals"));
+    for (const char* k : {"mesh", "positions", "rotations", "meta"})
+        CHECK(fs::exists(r["files"][k].get<std::string>()));
+    CHECK(fs::path(r["files"]["rotations"].get<std::string>()).filename() == "rigid_rot.exr");
+    const json& mp = r["materialParams"];
+    CHECK(mp["HDR"] == 1);
+    CHECK(mp["PieceCount"] == 3);
+    CHECK(mp["FrameCount"] == 6);
+    CHECK(mp["PivotChannelXY"] == 2);
+    CHECK(mp["PivotChannelZ"] == 3);
+    CHECK(mp["RotationTexture"] == "rigid_rot.exr");
+    CHECK_FALSE(mp.contains("NormalTexture"));
+    CHECK(seq::vatMaterialSummary(mp).find("RotationTexture=rigid_rot.exr PieceCount=3") != std::string::npos);
+    // Mesh bounds hold every frame's vertices.
+    const glm::dvec3 bmin(meta["meshBounds"]["min"][0], meta["meshBounds"]["min"][1], meta["meshBounds"]["min"][2]);
+    const glm::dvec3 bmax(meta["meshBounds"]["max"][0], meta["meshBounds"]["max"][1], meta["meshBounds"]["max"][2]);
+    for (const auto& frame : truth)
+        for (const glm::dvec3& p : frame)
+            CHECK((glm::all(glm::greaterThanEqual(p, bmin - 1e-6)) && glm::all(glm::lessThanEqual(p, bmax + 1e-6))));
+
+    // Same scene, same options: identical bytes.
+    json again = ops::execute("exportVertexAnimation", {{"args", cubes}, {"folder", (dir / "b").generic_string()}, {"name", "rigid"}, {"mode", "rigid"}});
+    for (const char* k : {"mesh", "positions", "rotations", "meta"})
+        CHECK(fileBytes(r["files"][k].get<std::string>()) == fileBytes(again["files"][k].get<std::string>()));
+
+    // Absolute positions and 16-bit PNGs, wrapped onto two rows a frame.
+    json absPng = ops::execute("exportVertexAnimation", {{"args", cubes}, {"folder", (dir / "c").generic_string()}, {"name", "png"}, {"mode", "rigid"},
+                                                         {"format", "png16"}, {"positions", "absolute"}, {"maxWidth", 2}});
+    CHECK(absPng["meta"]["rowsPerFrame"] == 2);
+    CHECK(absPng["meta"]["height"] == 12);
+    CHECK(absPng["materialParams"]["HDR"] == 0);
+    CHECK(fs::path(absPng["files"]["rotations"].get<std::string>()).extension() == ".png");
+
+    {
+        std::vector<RigidCorner> corners = decodeRigid(r["files"], meta);
+        REQUIRE(corners.size() == 3 * 36);
+        std::set<int> pieces;
+        for (const RigidCorner& c : corners)
+        {
+            pieces.insert(c.piece);
+            for (size_t f = 1; f < c.rotations.size(); ++f)
+                CHECK(glm::dot(c.rotations[f], c.rotations[f - 1]) >= 0.0);
+            CHECK(c.rotations[0].w >= 0.0);
+        }
+        CHECK(pieces == std::set<int>{0, 1, 2});
+        const auto [err, angle] = rigidError(corners, truth);
+        MESSAGE("rigid exr decode error " << err << " cm, " << angle << " deg");
+        CHECK(err < 0.01);
+        CHECK(angle < 0.05);
+    }
+    {
+        std::vector<RigidCorner> corners = decodeRigid(absPng["files"], absPng["meta"]);
+        REQUIRE(corners.size() == 3 * 36);
+        const auto [err, angle] = rigidError(corners, truth);
+        MESSAGE("rigid png16 decode error " << err << " cm, " << angle << " deg");
+        CHECK(err < 0.05);
+        CHECK(angle < 0.05);
+    }
+    fs::remove_all(dir);
+}
+
+TEST_CASE("exportVertexAnimation auto picks rigid only for a piece attribute that moves rigidly")
+{
+    setup();
+    fs::path dir = tempDir("vatrigidauto");
+    auto twoPieces = [](bool stretch) {
+        const std::string box = animatedBox();
+        scene::Graph& g = scene::Graph::current();
+        geo::Mesh m = geo::makeCube();
+        geo::Mesh other = geo::makeCube();
+        for (geo::Index p = 0; p < other.pointCapacity(); ++p)
+            other.setPosition(p, other.position(p) + glm::dvec3(400.0, 0.0, 0.0));
+        m.append(other);
+        std::span<int32_t> piece = m.pointAttrs().getOrAdd<int32_t>(seq::kVatPieceAttr);
+        REQUIRE(piece.size() == 16);
+        for (geo::Index p = 0; p < 16; ++p)
+            piece[p] = p < 8 ? 7 : 3;
+        g.setValue({g.find(box)->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
+        ops::execute("setKeyframe", {{"args", {box + ".rz"}}, {"time", 1.0 / 30.0}, {"value", 0.0}});
+        ops::execute("setKeyframe", {{"args", {box + ".rz"}}, {"time", 3.0 / 30.0}, {"value", 90.0}});
+        if (stretch)
+        {
+            ops::execute("setKeyframe", {{"args", {box + ".sx"}}, {"time", 1.0 / 30.0}, {"value", 1.0}});
+            ops::execute("setKeyframe", {{"args", {box + ".sx"}}, {"time", 3.0 / 30.0}, {"value", 2.0}});
+        }
+        return box;
+    };
+
+    const std::string box = twoPieces(false);
+    json r = ops::execute("exportVertexAnimation", {{"args", {box}}, {"folder", dir.generic_string()}, {"name", "auto"}});
+    CHECK(r["meta"]["mode"] == "rigid");
+    CHECK(r["meta"]["modeRequested"] == "auto");
+    CHECK(r["meta"]["pieceSource"] == "attribute");
+    CHECK(r["meta"]["pieceCount"] == 2);
+    CHECK(r["files"].contains("rotations"));
+    CHECK_FALSE(r["files"].contains("normals"));
+    {
+        // Piece values order the columns: piece 3 (the cube at x = 400 at rest) is column 0.
+        std::vector<RigidCorner> corners = decodeRigid(r["files"], r["meta"]);
+        REQUIRE_FALSE(corners.empty());
+        for (const RigidCorner& c : corners)
+            CHECK(glm::length(c.pivot - ue(glm::dvec3(c.piece == 0 ? 400.0 : 0.0, 0.0, 0.0))) < 1e-3);
+    }
+
+    const std::string stretched = twoPieces(true);
+    json c = ops::execute("exportVertexAnimation", {{"args", {stretched}}, {"folder", dir.generic_string()}, {"name", "stretch"}});
+    CHECK(c["meta"]["mode"] == "constant");
+    json forced = ops::execute("exportVertexAnimation", {{"args", {stretched}}, {"folder", dir.generic_string()}, {"name", "forced"}, {"mode", "rigid"}});
+    CHECK(forced["meta"]["mode"] == "rigid");
+    CHECK(forced["meta"]["rigid"]["maxResidual"].get<double>() > seq::kVatRigidTolerance);
+
+    // A mesh without the attribute never turns rigid on its own.
+    const std::string plain = animatedBox();
+    CHECK(ops::execute("exportVertexAnimation", {{"args", {plain}}, {"folder", dir.generic_string()}, {"name", "plain"}})["meta"]["mode"] == "constant");
     fs::remove_all(dir);
 }

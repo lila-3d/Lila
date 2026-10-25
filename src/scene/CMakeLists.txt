@@ -5,6 +5,8 @@ lila_module(lila_scene Scene
     AnimInterpolator.cpp
     RotationCurve.cpp
     RotationCommands.cpp
+    Repeat.cpp
+    ArrayGroup.cpp ArrayGroup.h
     AutoBevel.cpp
     BooleanModifier.cpp
     Booleans.cpp
@@ -18,15 +20,27 @@ lila_module(lila_scene Scene
     SelectPaths.cpp
     Constraint.cpp
     Deformers.cpp
+    ShapeDeformers.cpp ShapeDeformers.h
+    SurfaceDeformers.cpp SurfaceDeformers.h
+    TextureDeformers.cpp TextureDeformers.h
+    DeformEval.cpp DeformEval.h
+    DeformWeights.cpp DeformWeights.h
+    CorrectionDeformer.cpp
+    Fields.cpp Fields.h
     Drivers.cpp
+    Duplicate.cpp
     DisplayLayers.cpp
     EditSkeleton.cpp
     ExtrudeModifier.cpp ExtrudeModifier.h
+    AutoPose.cpp AutoPose.h
+    FullBodyIk.cpp FullBodyIk.h
+    Fracture.cpp Fracture.h
     DominantInfluence.cpp
     Ghosts.cpp
     Graph.cpp
     HudStats.cpp HudStats.h
     Ik.cpp
+    Instancing.cpp
     IkSolverRegistry.cpp
     ImagePlane.cpp
     Isolation.cpp
@@ -62,6 +76,9 @@ lila_module(lila_scene Scene
     SelectAs.cpp
     Simulation.cpp
     Skin.cpp
+    SkinBake.cpp SkinBake.h
+    SkinMethods.cpp SkinMethods.h
+    Jiggle.cpp Jiggle.h
     SmartJoin.cpp
     BatchRename.cpp
     SoftSelect.cpp
@@ -73,6 +90,7 @@ lila_module(lila_scene Scene
     TransformCommands.cpp
     TransformOps.cpp)
 
+find_package(Eigen3 CONFIG REQUIRED)
 find_package(meshoptimizer CONFIG REQUIRED)
 find_package(manifold CONFIG REQUIRED)
-target_link_libraries(lila_scene PUBLIC lila_ops lila_geo PRIVATE lila_deform lila_retopo meshoptimizer::meshoptimizer manifold::manifold)
+target_link_libraries(lila_scene PUBLIC lila_ops lila_geo PRIVATE lila_deform lila_retopo meshoptimizer::meshoptimizer manifold::manifold Eigen3::Eigen)

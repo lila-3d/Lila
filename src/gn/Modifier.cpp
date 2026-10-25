@@ -1,6 +1,8 @@
 #include "gn/Exec.h"
 #include "gn/Gn.h"
+#include "gn/InstanceView.h"
 #include "gn/NodesCommon.h"
+#include "gn/Stateful.h"
 #include "gn/Viewer.h"
 
 #include "core/Log.h"
@@ -8,6 +10,7 @@
 #include "geo/Mesh.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
+#include "scene/Simulation.h"
 #include "scene/Transform.h"
 
 #include <atomic>
@@ -63,6 +66,8 @@ public:
         const scene::MeshPtr& in = as<scene::MeshPtr>(inAttr);
         if (!as<bool>(enabledAttr) || scene::modifiers::bypassed(in))
         {
+            noteSimulationModifier(id(), false, false);
+            clearInstanceView(id());
             setOutput(outAttr, in);
             return;
         }
@@ -71,6 +76,7 @@ public:
         {
             mCachedDef = def;
             mPlan.reset();
+            mCache = StepCache{};
             try
             {
                 if (!def.empty())
@@ -81,8 +87,10 @@ public:
                 log::warn("{}: {}", name(), e.what());
             }
         }
+        noteSimulationModifier(id(), mPlan && mPlan->statefulStep >= 0, mPlan && mPlan->statefulInputsUseTime);
         if (!mPlan)
         {
+            clearInstanceView(id());
             setOutput(outAttr, in);
             return;
         }
@@ -90,6 +98,8 @@ public:
         {
             ExecEnv env;
             env.time = ctx.time;
+            env.owner = id();
+            env.sampleOnly = mPlan->statefulStep >= 0 && scene::sim::sampling();
             if (in)
             {
                 if (in->hasDeleted())
@@ -109,11 +119,24 @@ public:
             }
             for (const TypeLayout::Object& o : mLayout->objects)
                 env.objects[o.node] = {as<scene::MeshPtr>(o.meshAttr), as<glm::dmat4>(o.matrixAttr)};
+            prepareCache(env.input);
+            env.cache = &mCache;
+            if (env.sampleOnly)
+            {
+                execute(*mPlan, env);
+                setOutput(outAttr, in);
+                return;
+            }
             ViewerSink sink;
             if (mPlan->viewerStep >= 0)
                 env.viewer = &sink;
             GeometryPtr result = execute(*mPlan, env);
-            setOutput(outAttr, scene::MeshPtr(std::make_shared<geo::Mesh>(toOutputMesh(*result))));
+            scene::MeshPtr out = std::make_shared<geo::Mesh>(toOutputMesh(*result));
+            if (InstanceViewPtr view = makeInstanceView(*result, out))
+                setInstanceView(id(), std::move(view));
+            else
+                clearInstanceView(id());
+            setOutput(outAttr, out);
             if (sink.captured)
                 publishViewer(sink);
             else
@@ -124,12 +147,46 @@ public:
             log::warn("{}: {}", name(), e.what());
             setOutput(outAttr, in);
             clearViewerData(id());
+            clearInstanceView(id());
         }
     }
 
-    ~GnModifierNode() override { clearViewerData(id()); }
+    ~GnModifierNode() override
+    {
+        clearViewerData(id());
+        forgetSimulationModifier(id());
+        clearInstanceView(id());
+    }
 
 private:
+    /**
+     * Keeps the cached step results only while nothing a time-independent step reads has changed. The input mesh counts
+     * by content: upstream nodes can hand over a new copy of the same mesh on every evaluation.
+     */
+    void prepareCache(const GeometryPtr& in)
+    {
+        uint64_t key = scene::sim::hashBytes(&mPlan, sizeof mPlan);
+        key = in ? hashGeometry(*in, key) : key;
+        for (const TypeLayout::Param& p : mLayout->params)
+        {
+            std::string j = scene::toJson(value(p.attr)).dump();
+            key = scene::sim::hashBytes(j.data(), j.size(), key);
+        }
+        for (const TypeLayout::Object& o : mLayout->objects)
+        {
+            Geometry object;
+            object.mesh = as<scene::MeshPtr>(o.meshAttr);
+            key = hashGeometry(object, key);
+            key = scene::sim::hashBytes(&as<glm::dmat4>(o.matrixAttr), sizeof(glm::dmat4), key);
+        }
+        if (mCache.plan != mPlan.get() || mCache.key != key)
+        {
+            mCache = StepCache{};
+            mCache.plan = mPlan.get();
+            mCache.key = key;
+        }
+    }
+
     void publishViewer(const ViewerSink& sink)
     {
         LILA_ZONE();
@@ -189,6 +246,7 @@ private:
     std::shared_ptr<const TypeLayout> mLayout;
     std::string mCachedDef;
     PlanPtr mPlan;
+    StepCache mCache;
 };
 
 /** Node holding a group definition. Nothing to compute: modifiers read the definition through connections. */
@@ -219,7 +277,7 @@ Interface interfaceOf(const Group& g)
     for (const GNode& n : g.nodes)
         if (n.type == "ObjectInfo")
             i.objects.push_back(n.name);
-    i.usesTime = usesSceneTime(g);
+    i.usesTime = usesSceneTime(g) || hasStateful(g);
     return i;
 }
 
@@ -733,6 +791,7 @@ void createGroupNode(Graph& g, const Group& given)
 void registerTypes()
 {
     registerNodeLibrary();
+    registerSimulationSupport();
     if (scene::types::find(kGroupNodeType))
         return;
     scene::NodeType t;

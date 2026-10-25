@@ -6,6 +6,7 @@
 #include <tbb/parallel_for.h>
 
 #include <array>
+#include <mutex>
 
 namespace lila::gn
 {
@@ -13,6 +14,104 @@ namespace
 {
 constexpr std::array<const char*, 8> kSocketNames = {"geometry", "float", "int", "bool", "vector", "rotation", "string", "color"};
 constexpr std::array<const char*, 6> kDomainNames = {"point", "edge", "face", "corner", "curve", "instance"};
+
+/**
+ * Many instances of plain meshes joined once, untransformed, so realizing them again with new transforms (a simulation
+ * playing) only moves points instead of rebuilding the topology. Kept while its references are alive.
+ */
+struct JoinedTopology
+{
+    std::vector<std::weak_ptr<const Geometry>> refs;
+    std::vector<int> reference;
+    std::shared_ptr<const geo::Mesh> rest;
+    std::vector<geo::Index> pointStart, cornerStart;
+};
+
+std::mutex gJoinedMutex;
+std::vector<std::shared_ptr<const JoinedTopology>> gJoined;
+
+bool sameTopology(const JoinedTopology& t, const Instances& inst)
+{
+    if (t.reference != inst.reference || t.refs.size() != inst.references.size())
+        return false;
+    for (size_t r = 0; r < t.refs.size(); ++r)
+        if (t.refs[r].expired() || t.refs[r].lock() != inst.references[r])
+            return false;
+    return true;
+}
+
+std::shared_ptr<const JoinedTopology> joinedTopology(const Instances& inst)
+{
+    {
+        std::lock_guard lock(gJoinedMutex);
+        for (const auto& t : gJoined)
+            if (sameTopology(*t, inst))
+                return t;
+    }
+    auto t = std::make_shared<JoinedTopology>();
+    t->reference = inst.reference;
+    for (const GeometryPtr& r : inst.references)
+        t->refs.push_back(r);
+    // The first mesh copied and the rest appended, as join() builds it, so both paths give the same mesh.
+    geo::Mesh rest;
+    for (size_t k = 0; k < inst.size(); ++k)
+    {
+        t->pointStart.push_back(rest.pointCapacity());
+        t->cornerStart.push_back(rest.cornerCapacity());
+        const geo::Mesh& piece = *inst.references[size_t(inst.reference[k])]->mesh;
+        if (k == 0)
+            rest = piece;
+        else
+            rest.append(piece);
+    }
+    t->pointStart.push_back(rest.pointCapacity());
+    t->cornerStart.push_back(rest.cornerCapacity());
+    t->rest = std::make_shared<const geo::Mesh>(std::move(rest));
+    std::lock_guard lock(gJoinedMutex);
+    std::erase_if(gJoined, [](const auto& j) { return std::any_of(j->refs.begin(), j->refs.end(), [](const auto& r) { return r.expired(); }); });
+    if (gJoined.size() >= 4)
+        gJoined.erase(gJoined.begin());
+    gJoined.push_back(t);
+    return t;
+}
+
+/** Instances of compact meshes only, none mirrored: what joinedTopology can place by moving points alone. */
+bool joinable(const Geometry& g)
+{
+    if (g.mesh || g.points || g.curves || !g.instances || g.instances->size() < 2)
+        return false;
+    const Instances& inst = *g.instances;
+    for (const GeometryPtr& r : inst.references)
+        if (!r || !r->mesh || r->points || r->curves || r->instances || r->mesh->hasDeleted())
+            return false;
+    for (size_t k = 0; k < inst.size(); ++k)
+        if (inst.reference[k] < 0 || size_t(inst.reference[k]) >= inst.references.size() || glm::determinant(glm::dmat3(inst.transforms[k])) <= 0.0)
+            return false;
+    return true;
+}
+
+Geometry realizeJoined(const Instances& inst)
+{
+    LILA_ZONE();
+
+    std::shared_ptr<const JoinedTopology> t = joinedTopology(inst);
+    geo::Mesh m = *t->rest;
+    std::span<glm::dvec3> pos = m.positions();
+    std::span<glm::vec3> normals = m.cornerAttrs().get<glm::vec3>(geo::attr::kNormal);
+    tbb::parallel_for(size_t(0), inst.size(), [&](size_t k) {
+        const glm::dmat4& xf = inst.transforms[k];
+        for (geo::Index p = t->pointStart[k]; p < t->pointStart[k + 1]; ++p)
+            pos[p] = glm::dvec3(xf * glm::dvec4(pos[p], 1.0));
+        if (normals.empty())
+            return;
+        const glm::mat3 nm = glm::mat3(glm::transpose(glm::inverse(glm::dmat3(xf))));
+        for (geo::Index c = t->cornerStart[k]; c < t->cornerStart[k + 1]; ++c)
+            normals[c] = glm::normalize(nm * normals[c]);
+    });
+    Geometry out;
+    out.mesh = std::make_shared<const geo::Mesh>(std::move(m));
+    return out;
+}
 } // namespace
 
 const char* socketTypeName(SocketType t) { return kSocketNames[size_t(t)]; }
@@ -397,6 +496,8 @@ Geometry realize(const Geometry& g)
         out.instances = nullptr;
         return out;
     }
+    if (joinable(g))
+        return realizeJoined(*g.instances);
     const Instances& inst = *g.instances;
     // Each reference is realized once, then copied per instance.
     std::vector<Geometry> refs(inst.references.size());

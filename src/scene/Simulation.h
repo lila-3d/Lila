@@ -82,6 +82,11 @@ struct Setup
     uint64_t paramsHash = 0;
     /** Hold each output pose this many frames (2 = on twos). Applied when posing and recording. */
     int stepped = 1;
+    /**
+     * The state may grow past the layout (solver-owned bytes such as a physics engine's snapshot). The layout then
+     * covers only its leading values, which are all the loop test compares.
+     */
+    bool variableState = false;
 };
 
 /** Where a step sits in time; seconds = (startFrame * substeps + index) / (substeps * fps), from integers. */
@@ -113,13 +118,21 @@ public:
     virtual void step(const std::vector<double>& inputs, std::vector<double>& state, const StepInfo& at) = 0;
     /** World matrices of the outputs, in Setup::outputs order, from the state and the inputs sampled at that frame. */
     virtual void pose(const std::vector<double>& inputs, const std::vector<double>& state, std::vector<glm::dmat4>& world) = 0;
+    /**
+     * Asked when the scene changed since the cache was last checked. False keeps the cache without sampling every
+     * cached step again, for solvers that can tell from the current time alone that no step's inputs changed.
+     */
+    virtual bool inputsMayHaveChanged(Graph&) { return true; }
 };
 
 /** A node type whose nodes are simulations, and how to make their solvers. */
 struct SolverType
 {
+    /** The node type, or with `matches` set an id for the registry. */
     std::string nodeType;
     std::function<std::unique_ptr<Solver>(Graph& g, NodeId node)> create;
+    /** For nodes whose type alone doesn't tell (a geometry-nodes modifier whose group holds a simulation node). */
+    std::function<bool(const Node& n)> matches;
 };
 
 LILA_SCENE_API Registry<SolverType>& solverTypes();
@@ -203,6 +216,9 @@ struct RecordOptions
  * layer node.
  */
 LILA_SCENE_API NodeId record(Graph& g, NodeId node, const RecordOptions& options);
+
+/** True while the framework moves time to sample a simulation's inputs. */
+LILA_SCENE_API bool sampling();
 
 /** The scene's frame rate, and the whole frame nearest a time in seconds. */
 LILA_SCENE_API double framesPerSecond();

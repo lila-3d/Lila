@@ -216,4 +216,24 @@ LILA_SCENE_API void registerBooleanNode();
 LILA_SCENE_API void registerTextureNodes();
 LILA_SCENE_API void registerShadingNodes();
 LILA_SCENE_API void registerGroupNodes();
+LILA_SCENE_API void registerDestructionNodes();
+void registerFractureNode();
+
+/** A link between two pieces (b = -1: the world) at an anchor, as the Rigid Body Solver reads them. */
+struct PieceLink
+{
+    int a = -1, b = -1;
+    glm::dvec3 anchor{0.0};
+    double strength = 0.0; // N
+};
+
+/**
+ * Pieces as the destruction nodes pass them: one instance per mesh, each mesh moved so its origin is origins[k] (the
+ * centre of its bounds when not given) and that origin its instance's translation; points and instances get "piece".
+ */
+GeometryPtr piecesFromMeshes(std::vector<geo::Mesh> parts, const std::vector<glm::dvec3>& origins);
+/** Links as two-point curves with pieceA, pieceB, type and strength curve attributes. */
+GeometryPtr linkGeometry(const std::vector<PieceLink>& links, const std::string& type);
+/** glue, spring, hard: the "type" property options of nodes making links. */
+const std::vector<std::string>& pieceLinkTypes();
 } // namespace lila::gn::nodes

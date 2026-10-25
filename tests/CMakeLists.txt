@@ -12,11 +12,17 @@ add_executable(lila_tests
     test_command_history.cpp
     test_conform.cpp
     test_modifiers.cpp
+    test_array_modifier.cpp
+    test_draw_batches.cpp
     test_modstack.cpp
+    test_instancing.cpp
+    test_duplicate.cpp
+    test_array_group.cpp
     test_docs.cpp
     test_user_docs.cpp
     test_transfer.cpp
     test_boolean.cpp
+    test_fracture.cpp
     test_gate.cpp
     test_autobevel.cpp
     test_measure.cpp
@@ -33,6 +39,7 @@ add_executable(lila_tests
     test_toolkit.cpp
     test_modeling_defaults.cpp
     test_symmetry.cpp
+    test_radial_symmetry.cpp
     test_softselect.cpp
     test_gizmo.cpp
     test_history.cpp
@@ -98,6 +105,7 @@ add_subdirectory(terminal)
 add_subdirectory(hk)
 add_subdirectory(link)
 add_subdirectory(fbx)
+add_subdirectory(gltf)
 add_subdirectory(seq)
 add_subdirectory(bake)
 add_subdirectory(tex)
@@ -124,3 +132,4 @@ add_subdirectory(agentic)
 add_subdirectory(terraintools)
 add_subdirectory(treegen)
 add_subdirectory(terraingen)
+add_subdirectory(usd)

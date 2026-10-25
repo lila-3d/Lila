@@ -1,0 +1,14 @@
+{
+    "id": "Destruction",
+    "name": "Destruction",
+    "version": "1.0.0",
+    "vendor": "Lila",
+    "description": "Break things apart and let them fall: a rigid-body solver for fractured pieces held together by breakable links, simulated deterministically with Jolt as a geometry node, ready to bake to vertex animation textures, Alembic or FBX for Unreal.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "Destruction.dll",
+        "linux": "Destruction.so",
+        "macos": "Destruction.dylib"
+    },
+    "enabledByDefault": true
+}

@@ -67,6 +67,11 @@ struct SequenceOptions
     bool uvs = true;
     bool colors = true;
     bool triangulate = true;
+    /**
+     * Alembic only: each rigid piece (the int piece point attribute, or each connected part) as its own object, its
+     * shape written once and a transform per frame. Far smaller than a mesh per frame for a broken-apart object.
+     */
+    bool rigidPieces = false;
 };
 
 /** Frame numbers the options sample: start to end inclusive by step. Throws std::invalid_argument for a bad range. */

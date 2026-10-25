@@ -10,6 +10,7 @@
 #include "link/Exporters.h"
 #include "link/SplineSend.h"
 #include "link/TextureSetSend.h"
+#include "scene/Deformers.h"
 #include "scene/Graph.h"
 #include "scene/LodGroup.h"
 #include "scene/Materials.h"
@@ -37,7 +38,7 @@ constexpr int kImportIdleTimeoutMs = 60 * 1000;
 const char* const kOptionKeys[] = {
     "skeleton", "importMaterials", "importTextures", "combineMeshes", "autoCollision", "generateLightmapUVs",
     "normals",  "lodGroup",        "existing",       "nanite",        "importAnimations", "reapplyOptions", "save",
-    "materialFolder", "keepMaterials", "lodScreenSizes",
+    "materialFolder", "keepMaterials", "lodScreenSizes", "materialCurves",
 };
 
 std::string lower(std::string s)
@@ -295,7 +296,9 @@ json vertexAnimationParams(const seq::VatResult& bake, const json& mapping)
                    {"options", options}};
     if (!bake.normals.empty())
         params["normals"] = bake.normals.generic_string();
-    // The plugin names the textures T_<asset without SM_>_VATPos / _VATNrm beside the mesh.
+    if (!bake.rotations.empty())
+        params["rotations"] = bake.rotations.generic_string();
+    // The plugin names the textures T_<asset without SM_>_VATPos / _VATNrm / _VATRot beside the mesh.
     std::string path = mapping.value("contentPath", std::string());
     if (size_t dot = path.find('.', path.rfind('/') == std::string::npos ? 0 : path.rfind('/')); dot != std::string::npos)
         path.resize(dot);
@@ -314,6 +317,8 @@ json vertexAnimationParams(const seq::VatResult& bake, const json& mapping)
         mp["PositionTexture"] = objectPath("_VATPos");
         if (!bake.normals.empty())
             mp["NormalTexture"] = objectPath("_VATNrm");
+        if (!bake.rotations.empty())
+            mp["RotationTexture"] = objectPath("_VATRot");
     }
     json v = mapping.value("vat", json::object());
     if (v.is_object() && v.contains("materialParent") && v["materialParent"].is_string() && !v["materialParent"].get<std::string>().empty())
@@ -424,6 +429,18 @@ bool removeMapping(const std::string& node)
         return false;
     writeMappings(kept);
     return true;
+}
+
+/** Tension curves go out as plain animation curves; the plugin flags them as material curves on the skeleton. */
+void addMaterialCurves(scene::Graph& g, json& mapping, const std::string& kind)
+{
+    if ((kind != "skeletal" && kind != "animation") || mapping.contains("materialCurves"))
+        return;
+    json names = json::array();
+    for (const scene::deformers::TensionCurve& t : scene::deformers::tensionCurves(g))
+        names.push_back(t.name);
+    if (!names.empty())
+        mapping["materialCurves"] = names;
 }
 
 json importParams(const fs::path& file, const json& mapping, const json& materials)
@@ -827,6 +844,7 @@ int syncMappings(bool force)
             {
                 std::string take = graph.node(t)->name();
                 json tm = m;
+                addMaterialCurves(graph, tm, kind);
                 std::string path = m.value("contentPath", std::string());
                 tm["contentPath"] = path.ends_with('/') ? path + take : path + "_" + take;
                 ExportFn fn = [takeExporter, take](const std::vector<scene::NodeId>& ns, const fs::path& file, std::string* err) {
@@ -837,6 +855,7 @@ int syncMappings(bool force)
             continue;
         }
         json mapping = m;
+        addMaterialCurves(graph, mapping, kind);
         // FBX carries the levels but not their screen sizes, so the plugin sets them on the mesh after the import.
         if (std::vector<double> sizes = scene::lod::exportScreenSizes(graph, nodes); !sizes.empty() && !mapping.contains("lodScreenSizes"))
             mapping["lodScreenSizes"] = sizes;

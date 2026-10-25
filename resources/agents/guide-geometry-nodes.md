@@ -68,6 +68,22 @@ A `Group` node runs another group: `{"name": "Box", "type": "Group", "group": "B
 
 Library groups that ship with Lila (load with `gnLoadGroup(name)`, or name them in a spec's Group node): `BoxSelection` (center, size -> selection, inverted), `SphereSelection` (center, radius -> selection, inverted, distance). `gnLibrary()` lists every library group.
 
+## Destruction (break apart, simulate, bake)
+
+The fast path is one command: `breakApart(mesh, material="concrete"|"glass"|"wood", impact=[x, y, z] (world cm), pieces=, seed=, blast=, startFrame=, simulate=True, anchor=True)`. It builds a group (Fracture -> Anchor Pieces -> Rigid Body Solver -> Realize Instances) with `pieces`, `seed`, `impact`, `roughness`, `strength`, `blast` and `startFrame` exposed on the modifier, and returns the modifier. Then `exportVertexAnimation(mesh, start=, end=, folder=, mode="rigid")` bakes one position and rotation per piece per frame, or `unrealMap(mesh, kind="vertexAnimation", vat={"mode": "rigid"}, contentPath=...)` and `unrealSync()` send it.
+
+More outputs: `exportBreaks(mesh, path="x.csv"|"x.json", end=, profile="ue5")` writes each break's frame, time, position and impulse (a .csv imports into Unreal as a Data Table); `wedgeDestruction(mesh, count=, seed=, folder=)` bakes one rigid VAT per seed; `bakePiecesToJoints(mesh, start=, end=)` makes a skinned mesh with a keyed joint per piece for editing and FBX skeletal export; `exportAlembic(mesh, path=, rigidPieces=True)` writes each piece once with a transform per frame.
+
+Building your own graph (needs the Destruction extension, which ships enabled):
+
+- `Fracture` (mesh -> pieces, links): props `material`, `grain` (wood), `linkType`; values `pieces`, `seed`, `impact`, `impactFocus`, `impactRadius`, `roughness`, `roughnessSize`, `chunks`, `interiorMaterial`, `interiorUvScale`, `linkStrength` (N per cm2 of shared area). Needs a closed mesh.
+- `MeshToPieces` (mesh -> pieces): one piece per connected part, or per value of an integer attribute (`by: "attribute"`).
+- `ConnectPieces` (pieces -> links) for pieces that didn't come from Fracture; `AnchorPieces` (pieces, links -> links) ties pieces reaching the ground to the world.
+- `RigidBodySolver` (pieces, links, colliders -> pieces, links, breaks): `startFrame`, `substeps`, `gravity` (cm/s2), `ground`, `groundHeight`, `density`, `friction`, `bounce`, `damping`, `sleep`, `strength` (multiplier), `blastCenter`, `blastSpeed` (cm/s), `blastRadius`, `blastFrame`. It caches per frame through the simulation framework: changing anything upstream re-simulates from the first frame it touches, and results are identical on every run.
+- Pieces are instances; the solver reads instance attributes `density`, `friction`, `bounce`, `active` (0 = follows its transform until it turns 1), `guide` (0 to 1, pull toward its own animated transform; `guideStiffness` on the solver), `velocity`, `angularVelocity`. Links are two-point curves with curve attributes `pieceA`, `pieceB` (-1 = world), `type` (0 glue, 1 spring, 2 hard), `strength` (N). `breaks` is a point per broken link with `frame`, `impulse`, `pieceA`, `pieceB`.
+- Moving colliders: `ObjectInfo` with `transformSpace: "instance"` into `colliders`.
+- One `RigidBodySolver` per group, at the top level of the modifier's group. Keep `RealizeInstances` after it so the modifier outputs a mesh whose points carry `piece`, which the rigid VAT bake reads.
+
 ## Colours and normals for export
 
 - `StoreNamedAttribute` with `dataType: "color"` writes a vertex colour set (`color:<name>` on corners) that FBX exports as vertex colour; point and face values spread to the corners. Vectors stored under `Col`, `Cd`, `color:<set>` or an existing set's name become a colour set too.

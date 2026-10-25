@@ -8,13 +8,18 @@ class UTexture2D;
 namespace LilaLink
 {
 /**
- * importVertexAnimation {contentPath, fbx, positions, normals?, meta | metaFile, materialParent?, options {materialFolder,
- * rebuildMaterial, lodGroup, save}}: Lila's Vertex Animation Texture bake as a static mesh (no recomputed normals, the
- * addressing UV channel kept at full precision, no Nanite, bounds grown to the whole animation), its position and normal
- * textures (nearest, no mips, no sRGB, never streamed; EXR half float, 16-bit PNG RGBA32F, 8-bit RGBA8) and a material instance of a generated VAT material (or
- * materialParent) assigned to every slot. The instance sets PositionTexture, NormalTexture, HDR, BoundsMin, BoundsMax,
- * FrameCount, RowsPerFrame, TextureHeight, FrameRate and Absolute, each only when the parent has it. Reimporting
- * updates all of them in place.
+ * importVertexAnimation {contentPath, fbx, positions, normals?, rotations?, meta | metaFile, materialParent?, options
+ * {materialFolder, rebuildMaterial, lodGroup, save}}: Lila's Vertex Animation Texture bake as a static mesh (no recomputed
+ * normals, UVs at full precision, no Nanite, bounds grown to the whole animation), its data textures (nearest, no mips,
+ * no sRGB, never streamed; half float EXR as half, float EXR and 16-bit PNG as RGBA32F, 8-bit PNG as RGBA8) and a
+ * material instance of a generated VAT material (or materialParent) assigned to every slot. The instance sets
+ * PositionTexture, NormalTexture, RotationTexture, HDR, BoundsMin, BoundsMax, FrameCount, RowsPerFrame, TextureHeight,
+ * FrameRate and Absolute, each only when the parent has it. Reimporting updates all of them in place.
+ *
+ * A rigid bake (meta mode "rigid") takes its rotation texture from "rotations" or from the metadata's files.rotations
+ * beside the position texture, and its parent is M_LilaVatRigid_UV<n>, built on the material function
+ * MF_LilaVatRigid_UV<n> that any other material can call to play the same bake (outputs WorldPositionOffset, Normal,
+ * Tangent, Rotation), with an Interpolate static switch for blending between frames.
  */
 void AddVatMethods(TMap<FString, FLilaLinkMethod>& Methods);
 

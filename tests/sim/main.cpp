@@ -4,10 +4,12 @@
 #include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "extensions/ExtensionManager.h"
+#include "gn/Gn.h"
 #include "io/SceneFile.h"
 #include "scene/Anim.h"
 #include "scene/Node.h"
 #include "scene/SceneCommands.h"
+#include "seq/MeshSequence.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -27,9 +29,12 @@ int main(int argc, char** argv)
     lila::mainq::init();
     lila::ops::registerBuiltins();
     lila::scene::types::registerBuiltins();
+    lila::gn::registerTypes();
     lila::scene::registerCommands();
     lila::io::registerCommands();
     lila::extensions::registerCommands();
+    lila::gn::registerCommands();
+    lila::seq::registerCommands();
 
     doctest::Context ctx(argc, argv);
     int result = ctx.run();

@@ -23,6 +23,10 @@ struct Plan
         const NodeDecl* decl = nullptr;
         Sockets sockets;
         std::vector<std::vector<Source>> inputs; // links per input socket
+        /** Depends on time: a Scene Time or simulation node upstream, or is one. Never cached between evaluations. */
+        bool dynamic = false;
+        /** Upstream of the simulation node (or is it): what runs while its inputs are sampled. */
+        bool feedsStateful = false;
     };
 
     Group group;
@@ -33,6 +37,22 @@ struct Plan
     /** Set when the group can't run (a cycle, unknown nodes); evaluation then passes the input through. */
     std::string error;
     bool usesTime = false;
+    /** The simulation node's step, -1 when the group has none. */
+    int statefulStep = -1;
+    /** A step feeding the simulation node depends on time, so its inputs differ from frame to frame. */
+    bool statefulInputsUseTime = false;
+};
+
+/**
+ * Results of a plan's time-independent steps, kept by a modifier between evaluations. Valid while the plan and key
+ * (a hash of everything a step can read from outside: group inputs, the input mesh, Object Info) are unchanged.
+ */
+struct StepCache
+{
+    const Plan* plan = nullptr;
+    uint64_t key = 0;
+    std::vector<std::vector<Value>> results;
+    std::vector<uint8_t> valid;
 };
 
 using PlanPtr = std::shared_ptr<const Plan>;

@@ -19,8 +19,8 @@
  * Files, all named after VatOptions::name in VatOptions::folder:
  *
  *   <name>.fbx       the rest mesh, with one extra UV channel (meta "uvChannel") that addresses each vertex's texels
- *   <name>_pos.exr   positions, RGBA half float (format exr), or <name>_pos.png, RGBA normalised by bounds, 16 bit (png16)
- *                    or 8 bit (png8)
+ *   <name>_pos.exr   positions, RGBA half float (format exr; float with exrBits 32), or <name>_pos.png, RGBA
+ *                    normalised by bounds, 16 bit (png16) or 8 bit (png8)
  *   <name>_nrm.png   normals, RGBA 8 or 16 bit, n * 0.5 + 0.5 (normals on)
  *   <name>.json      the metadata below
  *
@@ -43,7 +43,41 @@
  * Topology. constant: every frame has the rest frame's point and face counts, a column per point, normals averaged
  * per point. soup: each frame is triangulated into an unwelded triangle soup, three columns per triangle, padded to
  * the largest frame's triangle count; slots a frame does not use collapse onto one point (zero area), so the rest
- * mesh is the largest soup with split normals. auto picks constant when every frame matches and soup otherwise.
+ * mesh is the largest soup with split normals. rigid: below. auto picks soup when the topology changes, rigid when
+ * every mesh has an int point attribute `piece` and every piece fits a rigid motion within kVatRigidTolerance, and
+ * constant otherwise.
+ *
+ * Rigid (mode rigid): loose pieces that only move and rotate, like a fracture simulation, baked as one transform per
+ * piece per frame instead of one value per vertex. Files:
+ *
+ *   <name>.fbx       the rest mesh with three extra UV channels: meta "uvChannel" addresses the piece's texels,
+ *                    meta "pivotChannels" [a, b] hold the piece's pivot as (x, y) in channel a and (z, 0) in channel b
+ *   <name>_pos.exr   pivot translation per piece per frame, RGBA (.png when normalised)
+ *   <name>_rot.exr   rotation per piece per frame, a unit quaternion in RGBA = xyzw (.png when normalised)
+ *   <name>.json      the metadata
+ *
+ * Pieces come from each mesh's int point attribute `piece` (one piece per distinct value, columns in ascending value
+ * order) or, for a mesh without it, from its connected components (columns in order of each component's lowest point
+ * index); meshes follow one another. Columns are pieces with the wrapping above (width = min(pieceCount, maxWidth),
+ * rowsPerFrame = ceil(pieceCount / width)) and the addressing UV is the texel centre of the piece's column in frame 0,
+ * exactly as for a vertex. The pivot is the piece's rest centroid in Unreal space; the pivot channels store it at the
+ * UV's full float precision, written so that Unreal's V flip lands (x, y) and (z, 0). Every frame, the rotation q and
+ * the frame centre c are a least squares rigid fit of the piece's rest points onto that frame's points (Horn's
+ * quaternion method in double precision, c = the frame centroid); q is sign continuous over the frames (dot with the
+ * previous frame >= 0, the first frame w >= 0), so neighbouring frames blend with a normalised lerp. The position
+ * texel is c - pivot (positions offset) or c (absolute); EXR stores it and q as is, PNG stores the position
+ * normalised by bounds like the vertex modes and q * 0.5 + 0.5. EXR is 32-bit float by default here, since half
+ * floats would put centimetre steps into a metre-scale offset. The material decodes, per vertex at rest position P:
+ *
+ *   q = normalize(HDR ? rotTexel : rotTexel * 2 - 1)
+ *   c = (Absolute ? 0 : pivot) + (HDR ? posTexel : lerp(BoundsMin, BoundsMax, posTexel))
+ *   P' = rotate(q, P - pivot) + c,     World Position Offset = P' - P
+ *   rotate(q, v) = v + 2 q.w (q.xyz x v) + 2 q.xyz x (q.xyz x v);  normals and tangents rotate by q the same way
+ *
+ * There is no normal texture. The metadata records the largest fit error over all pieces and frames ("rigid":
+ * {maxResidual (Unreal units), piece, frame}); above kVatRigidTolerance the export logs a warning, since the input
+ * is not rigid. materialParams adds PieceCount, RotationTexture, PivotChannelXY and PivotChannelZ, and has no
+ * NormalTexture. "bounds" is the range of the position texels and "meshBounds" every vertex over the whole bake.
  */
 namespace lila::seq
 {
@@ -56,7 +90,7 @@ struct VatOptions
     std::string name = "{name}";
     /** exr | png16 | png8 ("png" reads as png16) */
     std::string format = "exr";
-    /** auto | constant | soup */
+    /** auto | constant | soup | rigid */
     std::string mode = "auto";
     /** offset | absolute */
     std::string positions = "offset";
@@ -67,7 +101,15 @@ struct VatOptions
     double restFrame = std::numeric_limits<double>::quiet_NaN();
     /** Widest texture before a frame wraps onto more rows. */
     int maxWidth = 4096;
+    /** EXR channel depth, 16 (half) or 32 (float); 0 means 32 for rigid and 16 otherwise. */
+    int exrBits = 0;
 };
+
+/** Largest rigid fit error, in Unreal units (cm for ue5), that auto accepts as rigid; rigid warns above it. */
+inline constexpr double kVatRigidTolerance = 0.01;
+
+/** The int point attribute naming each point's rigid piece. */
+inline constexpr const char* kVatPieceAttr = "piece";
 
 /** Tallest texture Unreal takes. */
 inline constexpr int kVatMaxHeight = 16384;
@@ -82,11 +124,12 @@ struct VatResult
 {
     fs::path mesh;
     fs::path positions;
-    fs::path normals; // empty with normals off
+    fs::path normals; // empty with normals off and in rigid mode
+    fs::path rotations; // rigid mode only
     fs::path meta;
     nlohmann::json metadata;
 
-    /** {mesh, positions, normals?, meta}, generic paths. */
+    /** {mesh, positions, normals?, rotations?, meta}, generic paths. */
     nlohmann::json files() const;
 };
 

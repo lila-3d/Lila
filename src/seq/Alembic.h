@@ -42,6 +42,12 @@ public:
     void open(const fs::path& path, const WriteOptions& opts);
     /** One sample per object; objects are matched by name, so they need not all exist on every frame. */
     void addFrame(const std::vector<std::string>& names, const std::vector<const geo::Mesh*>& meshes);
+    /**
+     * Rigid objects: one transform sample per object per frame over a shape written once, the first time a name appears
+     * (shapes may be null after that). Matrices are in file space.
+     */
+    void addTransformFrame(const std::vector<std::string>& names, const std::vector<const geo::Mesh*>& shapes,
+                           const std::vector<glm::dmat4>& transforms);
     void close();
     int frameCount() const;
 

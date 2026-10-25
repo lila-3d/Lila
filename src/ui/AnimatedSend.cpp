@@ -100,7 +100,7 @@ json defaults(const std::string& mesh)
         {"folder", "Export/" + name},
         {"frames", {{"contentPath", "/Game/Meshes/" + name + "/SM_" + name}, {"niagaraSystem", ""}}},
         {"cache", {{"contentPath", "/Game/Meshes/GC_" + name}}},
-        {"vat", {{"contentPath", "/Game/Meshes/SM_" + name + "_VAT"}, {"format", "exr"}, {"materialParent", ""}}},
+        {"vat", {{"contentPath", "/Game/Meshes/SM_" + name + "_VAT"}, {"format", "exr"}, {"mode", "auto"}, {"materialParent", ""}}},
     };
 }
 
@@ -147,7 +147,7 @@ bool sendOne(const std::string& mesh, Dest dest, Kind kind, const json& s)
             call["niagaraSystem"] = per["niagaraSystem"];
         if (kind == Kind::Vat)
         {
-            call["vat"] = {{"format", per.value("format", "exr")}};
+            call["vat"] = {{"format", per.value("format", "exr")}, {"mode", per.value("mode", "auto")}};
             if (!per.value("materialParent", std::string()).empty())
                 call["vat"]["materialParent"] = per["materialParent"];
         }
@@ -173,6 +173,7 @@ bool sendOne(const std::string& mesh, Dest dest, Kind kind, const json& s)
         call["folder"] = folder;
         call["name"] = name;
         call["format"] = per.value("format", "exr");
+        call["mode"] = per.value("mode", "auto");
         files = runUi("exportVertexAnimation", call);
         break;
     }
@@ -337,6 +338,16 @@ void openOptions(QWidget* parent, const std::vector<std::string>& meshes)
     vatFormat->setToolTip("Vertex Animation Texture only: the position texture. PNGs are normalised to BoundsMin/BoundsMax, "
                           "which the export reports with FrameCount and the texture names.");
     form->addRow("VAT positions", vatFormat);
+    auto* vatMode = new QComboBox(dialog);
+    vatMode->addItem("Automatic", "auto");
+    vatMode->addItem("Every point", "constant");
+    vatMode->addItem("Rigid pieces", "rigid");
+    vatMode->addItem("Changing topology", "soup");
+    vatMode->setCurrentIndex(std::max(0, vatMode->findData(QString::fromStdString(s["vat"].value("mode", "auto")))));
+    vatMode->setToolTip("Vertex Animation Texture only. Rigid pieces stores one position and rotation per piece per frame (a "
+                        "broken-apart mesh): far smaller textures. Automatic picks it for meshes with a piece attribute that "
+                        "move rigidly, every point for the rest, and changing topology when the point count changes.");
+    form->addRow("VAT layout", vatMode);
     auto* vatParent = new QLineEdit(QString::fromStdString(s["vat"].value("materialParent", std::string())), dialog);
     vatParent->setPlaceholderText("Generated VAT material (default)");
     vatParent->setToolTip("Vertex Animation Texture to Unreal: your own parent material. Its HDR, BoundsMin, BoundsMax, "
@@ -358,6 +369,7 @@ void openOptions(QWidget* parent, const std::vector<std::string>& meshes)
         niagara->setEnabled(!files && frames);
         const bool vat = kind->currentData().toString() == "vat";
         vatFormat->setEnabled(vat);
+        vatMode->setEnabled(vat);
         vatParent->setEnabled(vat && !files);
     };
     QObject::connect(kind, &QComboBox::currentIndexChanged, dialog, [=] {
@@ -375,6 +387,7 @@ void openOptions(QWidget* parent, const std::vector<std::string>& meshes)
         (*paths)[*shownKind]["contentPath"] = contentPath->text().trimmed().toStdString();
         (*paths)["frames"]["niagaraSystem"] = niagara->text().trimmed().toStdString();
         (*paths)["vat"]["format"] = vatFormat->currentData().toString().toStdString();
+        (*paths)["vat"]["mode"] = vatMode->currentData().toString().toStdString();
         (*paths)["vat"]["materialParent"] = vatParent->text().trimmed().toStdString();
         json out = {
             {"dest", dest->currentData().toString().toStdString()},

@@ -60,6 +60,8 @@ struct LILA_SCENE_API Sockets
 };
 
 class ExecContext;
+struct StatefulDecl;
+struct StepCache;
 
 struct LILA_SCENE_API NodeDecl
 {
@@ -72,6 +74,8 @@ struct LILA_SCENE_API NodeDecl
     /** For nodes whose sockets follow a property or the group interface. */
     std::function<Sockets(const Group&, const GNode&)> dynamicSockets;
     std::function<void(ExecContext&)> exec;
+    /** Set for simulation nodes (gn/Stateful.h), which run through it instead of exec. */
+    std::shared_ptr<const StatefulDecl> stateful;
 
     Sockets socketsFor(const Group& g, const GNode& n) const;
     const PropDecl* prop(std::string_view id) const;
@@ -136,6 +140,12 @@ struct ExecEnv
     std::map<std::string, ObjectInput> objects; // by Object Info node name
     /** Set by the modifier while a Viewer is active; nested groups run without one. */
     ViewerSink* viewer = nullptr;
+    /** The modifier node (scene::NodeId) running the group, which simulation nodes publish under; 0 elsewhere. */
+    uint64_t owner = 0;
+    /** The simulation framework is sampling inputs: only the steps feeding the simulation node run. */
+    bool sampleOnly = false;
+    /** Results of time-independent steps, kept by the modifier between evaluations (gn/Exec.h). */
+    StepCache* cache = nullptr;
 };
 
 /** Turns a JSON value (node value, exposed default) into a socket value. Rotations are given in degrees. */
