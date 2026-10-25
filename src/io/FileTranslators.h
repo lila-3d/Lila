@@ -78,7 +78,10 @@ LILA_SCENE_API const FileTranslator* find(std::string_view id);
 
 /** The translator that handles path for op (highest priority, then id), or null. */
 LILA_SCENE_API const FileTranslator* forPath(Op op, const fs::path& path);
-/** Translators supporting op, highest priority first. */
+/**
+ * Translators supporting op, highest priority first. Open includes import-only translators, after the ones that open
+ * natively: opening such a file starts a new untitled scene and imports into it.
+ */
 LILA_SCENE_API std::vector<const FileTranslator*> supporting(Op op);
 
 /**

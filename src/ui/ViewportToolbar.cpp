@@ -15,6 +15,7 @@
 #include "ui/GizmoMath.h"
 #include "ui/Icons.h"
 #include "ui/ImagePlaneUi.h"
+#include "ui/LodDisplay.h"
 #include "ui/MaterialDraw.h"
 #include "ui/OptionBox.h"
 #include "ui/PaintSelect.h"
@@ -503,6 +504,7 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
     actionButton("viewport.toggleKuwahara", "brush");
     actionButton("viewport.toggleOutline", "border-outer");
     menuButton("eye", "Mesh Display", [this](QMenu* m) { displayAids::fillMenu(m, mView); });
+    menuButton("stack-2", "Level of Detail", [this](QMenu* m) { lodDisplay::fillMenu(m, mView); });
     separator();
     actionButton("viewport.frameSelected", "focus-centered");
     actionButton("viewport.frameAll", "arrows-maximize");

@@ -83,6 +83,18 @@ bool isStandardTextEdit(int mods, int key)
         }
     return false;
 }
+
+bool sFromKey = false;
+
+/** Runs a key's action with Hotkeys::fromKey() true. */
+void runFromKey(const json& target)
+{
+    const bool outer = sFromKey;
+    sFromKey = true;
+    actions::run(target);
+    sFromKey = outer;
+}
+
 /** The hotbox shows on key down rather than after the hold delay, as in Maya. */
 bool isHotbox(const json& target)
 {
@@ -236,6 +248,11 @@ void Hotkeys::reload()
                 [this](const std::string& context, Chord chord, QString keyText, const json& value) {
                     mModeContexts[context].emplace_back(chord, Over{value, std::move(keyText)});
                 });
+}
+
+bool Hotkeys::fromKey()
+{
+    return sFromKey;
 }
 
 void Hotkeys::setMode(const std::string& mode)
@@ -396,7 +413,7 @@ bool Hotkeys::eventFilter(QObject* obj, QEvent* e)
                 hb->keyReleased(up == hotkeys::HeldKey::Up::Tap);
             }
         if (up == hotkeys::HeldKey::Up::Tap)
-            actions::run(t.press);
+            runFromKey(t.press);
         if (up != hotkeys::HeldKey::Up::Used)
             actions::run(t.release);
         return !pass;
@@ -473,7 +490,7 @@ bool Hotkeys::eventFilter(QObject* obj, QEvent* e)
     }
     if (t.hold.is_null() && t.release.is_null() && !t.hasButtons())
     {
-        actions::run(t.press);
+        runFromKey(t.press);
         if (hotkeys::repeatsWhileHeld(t.press))
             startRepeat(k, t.press);
         return true;
@@ -483,7 +500,7 @@ bool Hotkeys::eventFilter(QObject* obj, QEvent* e)
         // Press/release pairs (hold D for pivot mode) are tracked apart so other keys can come and go meanwhile.
         mHeldKeys.push_back(Pending{*b, eventScancode(k), k->key(), hotkeys::HeldKey(t)});
         if (!t.press.is_null())
-            actions::run(t.press);
+            runFromKey(t.press);
         return true;
     }
     mPending.emplace(Pending{*b, eventScancode(k), k->key(), hotkeys::HeldKey(t)});

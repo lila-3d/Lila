@@ -74,6 +74,9 @@ public:
     void setMode(const std::string& mode);
     const std::string& mode() const { return mMode; }
 
+    /** True while an action runs because its key went down, rather than from a menu, a button or a script. */
+    static bool fromKey();
+
 protected:
     bool eventFilter(QObject* obj, QEvent* e) override;
 

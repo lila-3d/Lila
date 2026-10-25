@@ -28,6 +28,19 @@ struct PlaneOptions
     int subdivZ = 1;
 };
 
+/** How the flat end of a cylinder or cone is filled inside its rings. */
+enum class CapFill : uint8_t
+{
+    /** A grid of quads joined to the rim by a ring of quads; one triangle when the side count is odd. Wedges pair up their fan. */
+    Quads,
+    /** Triangles meeting at the centre. */
+    Fan,
+    /** One polygon. */
+    Ngon,
+    /** Left open. */
+    None,
+};
+
 struct SphereOptions
 {
     double radius = 50.0;
@@ -44,7 +57,7 @@ struct CylinderOptions
     double height = 100.0;
     int subdivAxis = 20;
     int subdivHeight = 1;
-    /** 0 makes each cap a single n-gon. */
+    /** Rings of quads around each cap's fill; 0 and 1 both leave just the fill. */
     int subdivCaps = 0;
     bool caps = true;
     bool baseAtOrigin = false;
@@ -52,6 +65,7 @@ struct CylinderOptions
     double fraction = 1.0;
     /** Close the two flat ends a partial sweep leaves. */
     bool cutCaps = true;
+    CapFill capFill = CapFill::Quads;
 };
 
 struct CapsuleOptions
@@ -78,6 +92,7 @@ struct ConeOptions
     double fraction = 1.0;
     /** Close the two flat ends a partial sweep leaves. */
     bool cutCaps = true;
+    CapFill capFill = CapFill::Quads;
 };
 
 struct TorusOptions

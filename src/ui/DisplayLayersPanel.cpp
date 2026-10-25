@@ -5,6 +5,7 @@
 #include "scene/DisplayLayers.h"
 #include "scene/Graph.h"
 #include "ui/Actions.h"
+#include "ui/Deletion.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
 #include "ui/NodeLookup.h"
@@ -186,6 +187,10 @@ DisplayLayersPanel::DisplayLayersPanel(QWidget* parent) : QWidget(parent)
     mTree->setContextMenuPolicy(Qt::CustomContextMenu);
     mTree->setIconSize(QSize(14, 14));
     Hotkeys::passThrough(mTree);
+    deletion::claim(mTree, [this] {
+        if (std::string layer = currentLayer(); !layer.empty())
+            run("deleteDisplayLayer", {{"args", {layer}}});
+    });
     QHeaderView* header = mTree->header();
     header->setStretchLastSection(true);
     header->setMinimumSectionSize(20);

@@ -8,6 +8,7 @@
 #include "scene/Modifiers.h"
 #include "scene/Morphs.h"
 #include "ui/Actions.h"
+#include "ui/Deletion.h"
 #include "ui/Hotkeys.h"
 #include "ui/NodeLookup.h"
 #include "ui/Icons.h"
@@ -282,6 +283,10 @@ MorphTargetsPanel::MorphTargetsPanel(QWidget* parent) : QWidget(parent)
     v->addWidget(mHeader);
 
     mTree = new QTreeWidget(this);
+    deletion::claim(mTree, [] {
+        if (std::string t = currentMorphTarget(); !t.empty())
+            run("removeMorphTarget", {{"args", {t}}});
+    });
     mTree->setColumnCount(5);
     mTree->setHeaderLabels({"Target", "Weight", "", "", ""});
     mTree->setRootIsDecorated(false);
@@ -480,6 +485,10 @@ DrivenChannelsPanel::DrivenChannelsPanel(QWidget* parent) : QWidget(parent)
     mTree = new QTreeWidget(split);
     mTree->setColumnCount(3);
     mTree->setHeaderLabels({"Driver", "Driven", "Curve"});
+    deletion::claim(mTree, [this] {
+        if (std::string c = current(); !c.empty())
+            run("removeDrivenChannel", {{"args", {c}}});
+    });
     mTree->setRootIsDecorated(false);
     mTree->setIndentation(0);
     mTree->setUniformRowHeights(true);
@@ -527,11 +536,13 @@ DrivenChannelsPanel::DrivenChannelsPanel(QWidget* parent) : QWidget(parent)
         double out = keys.empty() ? 0.0 : keys.back()[1].get<double>();
         run("setDrivenKey", {{"args", {c}}, {"input", in}, {"value", out}});
     });
-    connect(removeKey, &QToolButton::clicked, this, [this] {
+    auto removeDrivenKey = [this] {
         std::string c = current();
         if (!c.empty() && mKeys->currentRow() >= 0)
             run("removeDrivenKey", {{"args", {c}}, {"index", mKeys->currentRow()}});
-    });
+    };
+    connect(removeKey, &QToolButton::clicked, this, removeDrivenKey);
+    deletion::claim(mKeys, removeDrivenKey);
 
     QPointer<DrivenChannelsPanel> self(this);
     mGraphListener = Graph::current().addListener([self](scene::Change c, scene::NodeId) {

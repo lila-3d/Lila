@@ -118,7 +118,7 @@ struct Band
     glm::vec2 v{0.0f, 1.0f};     // cylindrical v range
     glm::vec2 center{0.5f, 0.5f}; // planar
     float scale = 0.0f;           // planar uv per cm
-    bool ngon = false;            // a single cap polygon instead of the fan
+    CapFill fill = CapFill::Fan;  // how a band ending in a pole closes
 };
 
 /**
@@ -243,6 +243,79 @@ Mesh lathe(const std::vector<ProfilePoint>& profile, const std::vector<Band>& ba
         pts.clear();
         uvs.clear();
     };
+    // Cap faces are built wound for a top cap (rim i, rim i + 1, inside) and reversed for a bottom one.
+    auto emitCap = [&](const Band& b, std::vector<Index> face, bool bottom, bool up) {
+        if (bottom)
+            std::reverse(face.begin(), face.end());
+        for (Index p : face)
+        {
+            pts.push_back(p);
+            uvs.push_back(planarUv(b, p, up));
+        }
+        emit();
+    };
+    /**
+     * Fills a whole circle of rim points with a Coons-patch grid of a x c quads (2(a + c) border points), joined to the rim
+     * by a ring of quads. An odd rim has one point more than the grid's border, so its ring closes with a triangle.
+     */
+    auto quadCap = [&](const Band& b, int rim, bool bottom, bool up) {
+        const int border = axis - axis % 2;
+        const int a = border / 4, c = border / 2 - a;
+        const double y = profile[rim].y;
+        // Sized so the ring is about as wide as the grid's cells.
+        const double rho = profile[rim].r / (1.0 + 1.3 / std::max(a, c));
+        auto onCircle = [&](int j) {
+            // Each border point faces its rim point; with an odd rim the last border gap spans the triangle's two segments.
+            const double t = glm::two_pi<double>() * (j == border ? axis : j) / axis;
+            return glm::dvec3(rho * std::cos(t), y, -rho * std::sin(t));
+        };
+        const std::array<int, 5> corner = {0, a, a + c, 2 * a + c, border};
+        std::vector<glm::dvec3> loop(border);
+        for (int side = 0; side < 4; ++side)
+        {
+            const int len = corner[side + 1] - corner[side];
+            for (int k = 0; k < len; ++k)
+            {
+                const int j = corner[side] + k;
+                // Straight sides rounded toward the circle keep the grid's corner quads square.
+                loop[j] = glm::mix(glm::mix(onCircle(corner[side]), onCircle(corner[side + 1]), double(k) / len), onCircle(j), 0.4);
+            }
+        }
+        auto borderIndex = [&](int u, int v) {
+            if (v == 0)
+                return u;
+            if (u == a)
+                return a + v;
+            if (v == c)
+                return a + c + (a - u);
+            return (2 * a + c + (c - v)) % border;
+        };
+        std::vector<Index> inner(border);
+        for (int j = 0; j < border; ++j)
+            inner[j] = m.addPoint(loop[j]);
+        std::vector<Index> grid((a + 1) * (c + 1));
+        auto at = [&](int u, int v) { return loop[borderIndex(u, v)]; };
+        for (int v = 0; v <= c; ++v)
+            for (int u = 0; u <= a; ++u)
+            {
+                if (u == 0 || v == 0 || u == a || v == c)
+                {
+                    grid[v * (a + 1) + u] = inner[borderIndex(u, v)];
+                    continue;
+                }
+                const double s = double(u) / a, t = double(v) / c;
+                const glm::dvec3 p = (1 - s) * at(0, v) + s * at(a, v) + (1 - t) * at(u, 0) + t * at(u, c) -
+                                     ((1 - s) * (1 - t) * at(0, 0) + s * (1 - t) * at(a, 0) + (1 - s) * t * at(0, c) + s * t * at(a, c));
+                grid[v * (a + 1) + u] = m.addPoint(p);
+            }
+        for (int v = 0; v < c; ++v)
+            for (int u = 0; u < a; ++u)
+                emitCap(b, {grid[v * (a + 1) + u], grid[v * (a + 1) + u + 1], grid[(v + 1) * (a + 1) + u + 1], grid[(v + 1) * (a + 1) + u]}, bottom, up);
+        for (int j = 0; j < border; ++j)
+            emitCap(b, {pid(rim, j), pid(rim, j + 1), inner[(j + 1) % border], inner[j]}, bottom, up);
+        if (border < axis)
+            emitCap(b, {pid(rim, axis - 1), pid(rim, 0), inner[0]}, bottom, up);
+    };
 
     for (const Band& b : bands)
     {
@@ -261,7 +334,21 @@ Mesh lathe(const std::vector<ProfilePoint>& profile, const std::vector<Band>& ba
             if (pole[k0] && pole[k1])
                 continue;
             const bool up = profile[k1].r < profile[k0].r;
-            if (b.ngon && (pole[k0] || pole[k1]))
+            if (b.fill == CapFill::Quads && (pole[k0] || pole[k1]) && (partial || axis >= 4))
+            {
+                const int rim = pole[k0] ? k1 : k0;
+                const Index centre = pid(pole[k0] ? k0 : k1, 0);
+                if (!partial)
+                    quadCap(b, rim, pole[k0], up);
+                // A wedge pairs up its fan: each quad spans two segments, an odd one out stays a triangle.
+                else
+                    for (int i = 0; i < axis; i += 2)
+                        emitCap(b, i + 1 < axis ? std::vector<Index>{pid(rim, i), pid(rim, i + 1), pid(rim, i + 2), centre}
+                                                : std::vector<Index>{pid(rim, i), pid(rim, i + 1), centre},
+                                pole[k0], up);
+                continue;
+            }
+            if (b.fill != CapFill::Fan && (pole[k0] || pole[k1]))
             {
                 const int rim = pole[k0] ? k1 : k0;
                 // A partial sweep's cap is a wedge, so it keeps its centre point.
@@ -604,30 +691,30 @@ Mesh makeCylinder(const CylinderOptions& o)
     LILA_ZONE();
 
     const int hs = std::max(1, o.subdivHeight);
-    const int cs = std::max(0, o.subdivCaps);
-    const int rings = std::max(1, cs);
+    const int rings = std::max(1, o.subdivCaps);
     const double y0 = o.baseAtOrigin ? 0.0 : -0.5 * o.height;
     std::vector<ProfilePoint> profile;
     std::vector<Band> bands;
     const float scale = kCapScale / float(o.radius);
-    if (o.caps)
+    const bool caps = o.caps && o.capFill != CapFill::None;
+    if (caps)
     {
         for (int r = 0; r < rings; ++r)
             profile.push_back({o.radius * r / rings, y0});
-        bands.push_back({0, rings, Band::Planar, {}, kCapLeft, scale, cs == 0});
+        bands.push_back({0, rings, Band::Planar, {}, kCapLeft, scale, o.capFill});
     }
     const int sideStart = int(profile.size());
     for (int j = 0; j <= hs; ++j)
-        profile.push_back({o.radius, y0 + o.height * j / hs, o.caps && (j == 0 || j == hs)});
+        profile.push_back({o.radius, y0 + o.height * j / hs, caps && (j == 0 || j == hs)});
     bands.push_back({sideStart, sideStart + hs, Band::Cylindrical, {0.5f, 1.0f}});
-    if (o.caps)
+    if (caps)
     {
         const int top = int(profile.size()) - 1;
         for (int r = rings - 1; r >= 0; --r)
             profile.push_back({o.radius * r / rings, y0 + o.height});
-        bands.push_back({top, top + rings, Band::Planar, {}, kCapRight, scale, cs == 0});
+        bands.push_back({top, top + rings, Band::Planar, {}, kCapRight, scale, o.capFill});
     }
-    return lathe(profile, bands, std::max(3, o.subdivAxis), false, o.fraction, o.caps && o.cutCaps);
+    return lathe(profile, bands, std::max(3, o.subdivAxis), false, o.fraction, caps && o.cutCaps);
 }
 
 Mesh makeCapsule(const CapsuleOptions& o)
@@ -661,17 +748,18 @@ Mesh makeCone(const ConeOptions& o)
     LILA_ZONE();
 
     const int hs = std::max(1, o.subdivHeight);
-    const int cs = std::max(0, o.subdivCap);
-    const int rings = std::max(1, cs);
+    const bool cap = o.capFill != CapFill::None;
+    const int rings = cap ? std::max(1, o.subdivCap) : 0;
     const double y0 = o.baseAtOrigin ? 0.0 : -0.5 * o.height;
     std::vector<ProfilePoint> profile;
     for (int r = 0; r < rings; ++r)
         profile.push_back({o.radius * r / rings, y0});
     for (int j = 0; j <= hs; ++j)
-        profile.push_back({o.radius * (1.0 - double(j) / hs), y0 + o.height * j / hs, j == 0});
-    std::vector<Band> bands = {{0, rings, Band::Planar, {}, kCapLeft, kCapScale / float(o.radius), cs == 0},
-                               {rings, rings + hs, Band::Cylindrical, {0.5f, 1.0f}}};
-    return lathe(profile, bands, std::max(3, o.subdivAxis), false, o.fraction, o.cutCaps);
+        profile.push_back({o.radius * (1.0 - double(j) / hs), y0 + o.height * j / hs, cap && j == 0});
+    std::vector<Band> bands = {{rings, rings + hs, Band::Cylindrical, {0.5f, 1.0f}}};
+    if (cap)
+        bands.insert(bands.begin(), Band{0, rings, Band::Planar, {}, kCapLeft, kCapScale / float(o.radius), o.capFill});
+    return lathe(profile, bands, std::max(3, o.subdivAxis), false, o.fraction, cap && o.cutCaps);
 }
 
 Mesh makeTorus(const TorusOptions& o)
@@ -698,7 +786,7 @@ Mesh makeDisc(const DiscOptions& o)
     std::vector<ProfilePoint> profile;
     for (int r = rings; r >= 0; --r)
         profile.push_back({o.radius * r / rings, 0.0});
-    return lathe(profile, {{0, rings, Band::Planar, {}, {0.5f, 0.5f}, 0.5f / float(o.radius), rs == 0}},
+    return lathe(profile, {{0, rings, Band::Planar, {}, {0.5f, 0.5f}, 0.5f / float(o.radius), rs == 0 ? CapFill::Ngon : CapFill::Fan}},
                  std::max(3, o.subdivAxis), false, o.fraction);
 }
 

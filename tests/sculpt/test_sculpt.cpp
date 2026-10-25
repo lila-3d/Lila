@@ -296,6 +296,146 @@ TEST_CASE("mask and freeze are respected")
     CHECK(s.mask()[0] == mask[0]);
 }
 
+namespace
+{
+struct FitResult
+{
+    double sculptMove = 0.0; // the proxy's largest move
+    double cageMove = 0.0;   // the fitted cage's largest move
+    double rms = 0.0;        // fitted subdivision to the sculpt
+};
+
+/** Sculpts a mesh with these strokes and fits its cage, with and without the move limit. */
+std::pair<FitResult, FitResult> sculptAndFit(geo::Mesh cage, const std::vector<json>& strokes)
+{
+    makeMeshNode("fitProbe", std::move(cage));
+    ops::execute("sculptEnter", {{"args", {"fitProbe"}}, {"levels", 2}});
+    auto s = sculpt::active();
+    REQUIRE(s);
+    const std::vector<glm::dvec3> start(s->sculpt.mesh().positions().begin(), s->sculpt.mesh().positions().end());
+    for (const json& st : strokes)
+        ops::execute("sculptStroke", st);
+    std::span<const glm::dvec3> now = s->sculpt.mesh().positions();
+    auto fit = [&](double ratio) {
+        FitResult r;
+        for (size_t i = 0; i < now.size(); ++i)
+            r.sculptMove = std::max(r.sculptMove, glm::length(now[i] - start[i]));
+        sculpt::FitOptions fo;
+        fo.maxMoveRatio = ratio;
+        std::vector<glm::dvec3> x = sculpt::fitCage(s->cage, s->stencils, now, fo);
+        for (Index p = 0; p < s->cage.pointCapacity(); ++p)
+            r.cageMove = std::max(r.cageMove, glm::length(x[p] - s->cage.position(p)));
+        for (const auto& st : s->stencils)
+            x = st.apply(x);
+        for (size_t i = 0; i < now.size(); ++i)
+            r.rms += glm::dot(x[i] - now[i], x[i] - now[i]);
+        r.rms = std::sqrt(r.rms / double(now.size()));
+        return r;
+    };
+    auto out = std::pair{fit(sculpt::FitOptions{}.maxMoveRatio), fit(0.0)};
+    ops::execute("sculptCancel", json::object());
+    return out;
+}
+
+std::vector<json> strokes(glm::dvec3 c, glm::dvec3 n, double radius, int count)
+{
+    json d = {{"center", {c.x, c.y, c.z}}, {"normal", {n.x, n.y, n.z}}, {"radius", radius}};
+    return std::vector<json>(size_t(count), json{{"brush", "draw"}, {"strength", 1.0}, {"dabs", std::vector<json>(6, d)}});
+}
+} // namespace
+
+TEST_CASE("exit fit keeps a coarse cage from overshooting the sculpt")
+{
+    const geo::CubeOptions co{.subdivX = 2, .subdivY = 2, .subdivZ = 2};
+    const double ratio = sculpt::FitOptions{}.maxMoveRatio;
+
+    SUBCASE("a small pull on a face")
+    {
+        auto [limited, plain] = sculptAndFit(geo::makeCube(co), strokes({0.0, 0.0, 40.0}, {0.0, 0.0, 1.0}, 45.0, 5));
+        CHECK(plain.cageMove > ratio * limited.sculptMove);
+        CHECK(limited.cageMove <= ratio * limited.sculptMove * 1.01);
+        CHECK(limited.rms < plain.rms * 1.25);
+    }
+    SUBCASE("a stroke on a corner")
+    {
+        auto [limited, plain] = sculptAndFit(geo::makeCube(co), strokes({50.0, 50.0, 50.0}, glm::normalize(glm::dvec3(1.0)), 60.0, 6));
+        // Unlimited, the corner lands three and a half times as far off as the sculpt moved.
+        CHECK(plain.cageMove > 3.0 * limited.sculptMove);
+        CHECK(limited.cageMove <= ratio * limited.sculptMove * 1.01);
+    }
+}
+
+TEST_CASE("exit fit still follows a broad sculpt")
+{
+    // Big strokes on a cage dense enough to hold them: the limit never bites and the fit stays close.
+    std::vector<json> all = strokes({0.0, 0.0, 50.0}, {0.0, 0.0, 1.0}, 70.0, 6);
+    for (json& s : strokes({50.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, 40.0, 6))
+        all.push_back(std::move(s));
+    auto [limited, plain] = sculptAndFit(sphere(8), all);
+    CHECK(limited.sculptMove > 30.0);
+    CHECK(limited.rms < 0.05 * limited.sculptMove);
+    CHECK(limited.rms <= plain.rms * 1.01);
+}
+
+TEST_CASE("exitPositions previews exactly what sculptExit leaves")
+{
+    json dab = {{"center", {0.0, 0.0, 50.0}}, {"normal", {0.0, 0.0, 1.0}}, {"radius", 40.0}};
+    for (const char* mode : {"subdivide", "remesh"})
+        for (const char* method : {"fit", "closest"})
+        {
+            CAPTURE(mode);
+            CAPTURE(method);
+            // Subdivided, so the closest point fit has a cage point under the stroke.
+            scene::Node* n = makeMeshNode("previewCube", geo::makeCube({.subdivX = 2, .subdivY = 2, .subdivZ = 2}));
+            scene::Graph::current().setValue({n->id(), scene::MeshNode::kSymmetry, -1}, int64_t(1));
+            ops::execute("sculptEnter", {{"args", {"previewCube"}}, {"mode", mode}, {"levels", 2}, {"resolution", 32}});
+            auto s = sculpt::active();
+            REQUIRE(s);
+            // Each stroke moves the preview, from the solver kept on the session.
+            std::vector<glm::dvec3> first = sculpt::exitPositions(*s, method);
+            ops::execute("sculptStroke", {{"brush", "draw"}, {"strength", 1.0}, {"dabs", json::array({dab, dab})}});
+            std::vector<glm::dvec3> second = sculpt::exitPositions(*s, method);
+            CHECK(s->exitSolver);
+            double moved = 0.0;
+            for (size_t p = 0; p < first.size(); ++p)
+                moved = std::max(moved, glm::length(second[p] - first[p]));
+            CHECK(moved > 0.1);
+            ops::execute("sculptExit", {{"method", method}});
+            const geo::Mesh& out = inMesh("previewCube");
+            double diff = 0.0;
+            for (Index p = 0; p < out.pointCapacity(); ++p)
+                if (out.pointValid(p))
+                    diff = std::max(diff, glm::length(out.position(p) - second[p]));
+            CHECK(diff < 1e-9);
+        }
+}
+
+TEST_CASE("CageFitter matches fitCage from any start")
+{
+    geo::Mesh cage = sphere(6);
+    geo::SubdivideOptions o;
+    o.levels = 2;
+    auto stencils = geo::subdivideStencils(cage, o);
+    std::vector<glm::dvec3> target(cage.positions().begin(), cage.positions().end());
+    for (glm::dvec3& p : target)
+        p *= 1.1;
+    for (const auto& s : stencils)
+        target = s.apply(target);
+    const sculpt::CageFitter fitter(cage, stencils);
+    std::vector<glm::dvec3> a = sculpt::fitCage(cage, stencils, target);
+    std::vector<glm::dvec3> b = fitter.solve(cage.positions(), target);
+    double err = 0.0;
+    for (Index p = 0; p < cage.pointCapacity(); ++p)
+        err = std::max(err, glm::length(a[p] - b[p]));
+    CHECK(err < 1e-12);
+    // Starting from the answer leaves it there.
+    std::vector<glm::dvec3> c = fitter.solve(b, target);
+    err = 0.0;
+    for (Index p = 0; p < cage.pointCapacity(); ++p)
+        err = std::max(err, glm::length(c[p] - b[p]));
+    CHECK(err < 1e-3);
+}
+
 TEST_CASE("sculpt commands undo as single steps")
 {
     scene::Node* n = makeMeshNode("undoCube", geo::makeCube({}));

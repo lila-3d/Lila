@@ -2,6 +2,7 @@
 
 #include "core/PrefStore.h"
 #include "ui/Actions.h"
+#include "ui/Deletion.h"
 #include "ui/Hotkeys.h"
 #include "ui/Theme.h"
 
@@ -545,10 +546,13 @@ HotkeyEditor::HotkeyEditor(QWidget* parent) : QWidget(parent)
     connect(mTree, &QTreeWidget::currentItemChanged, this, &HotkeyEditor::updateButtons);
     connect(mTree, &QTreeWidget::itemDoubleClicked, this, [this] { assignSelected(); });
     connect(mAssign, &QPushButton::clicked, this, &HotkeyEditor::assignSelected);
-    connect(mUnbind, &QPushButton::clicked, this, [this] {
+    auto unbind = [this] {
         if (const Binding* b = selectedBinding())
             hotkeys::unbind(b->context, b->keyText);
-    });
+    };
+    connect(mUnbind, &QPushButton::clicked, this, unbind);
+    deletion::claim(mTree, unbind);
+    deletion::claim(mMap, nullptr);
     connect(mReset, &QPushButton::clicked, this, [this] {
         if (QTreeWidgetItem* it = mTree->currentItem())
             hotkeys::resetToDefault(it->data(0, ContextRole).toString().toStdString(),

@@ -1,6 +1,8 @@
 #include "io/Recovery.h"
 
+#include "ops/Command.h"
 #include "core/CrashHandler.h"
+#include "core/Log.h"
 #include "core/Paths.h"
 #include "core/Workspace.h"
 #include "io/SceneFile.h"
@@ -13,6 +15,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <optional>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -270,5 +273,190 @@ void forget(const std::vector<Session>& sessions)
 void installCrashSave()
 {
     crash::setEmergencySave(crashSave);
+}
+
+namespace
+{
+fs::path sidecarOf(const fs::path& file)
+{
+    fs::path p = file;
+    p += ".json";
+    return p;
+}
+
+std::optional<Recovered> readKept(const fs::path& sidecar, json* doc = nullptr)
+{
+    try
+    {
+        std::ifstream in(sidecar, std::ios::binary);
+        json j = json::parse(in);
+        Recovered r;
+        r.file = fs::path(sidecar).replace_extension();
+        r.scene = fs::path(std::u8string(reinterpret_cast<const char8_t*>(j.value("scene", std::string()).c_str())));
+        r.kind = j.value("kind", std::string()) == "emergency" ? history::Kind::Emergency : history::Kind::Autosave;
+        r.time = j.value("time", int64_t(0));
+        if (doc)
+            *doc = std::move(j);
+        std::error_code ec;
+        if (!fs::is_regular_file(r.file, ec))
+            return std::nullopt;
+        return r;
+    }
+    catch (...)
+    {
+        return std::nullopt;
+    }
+}
+
+std::string utf8(const fs::path& p)
+{
+    std::u8string u8 = p.generic_u8string();
+    return std::string(u8.begin(), u8.end());
+}
+
+void removeKept(const fs::path& file)
+{
+    std::error_code ec;
+    fs::remove(file, ec);
+    fs::remove(sidecarOf(file), ec);
+}
+} // namespace
+
+fs::path recoveredDir()
+{
+    return paths::userConfigDir() / "recovered";
+}
+
+std::vector<Recovered> keep(const std::vector<Candidate>& candidates, const fs::path& dir)
+{
+    std::vector<Recovered> out;
+    if (candidates.empty())
+        return out;
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    std::vector<std::pair<std::string, int64_t>> kept;
+    for (const auto& e : fs::directory_iterator(dir, ec))
+    {
+        json doc;
+        if (e.path().extension() == ".json" && readKept(e.path(), &doc))
+            kept.emplace_back(doc.value("source", std::string()), doc.value("time", int64_t(0)));
+    }
+    for (const Candidate& c : candidates)
+    {
+        std::string source = utf8(c.file);
+        if (std::find(kept.begin(), kept.end(), std::pair{source, c.fileTime}) != kept.end())
+            continue;
+        const char* tag = c.kind == history::Kind::Emergency ? "emergency" : "autosave";
+        std::string stamp = history::timestamp(std::chrono::system_clock::time_point(std::chrono::seconds(c.fileTime)));
+        fs::path target = history::uniqueName(dir, history::stemFor(c.scene), stamp, tag);
+        if (!fs::copy_file(c.file, target, ec) || ec)
+        {
+            log::warn("could not keep recovered scene {}: {}", c.file.string(), ec.message());
+            continue;
+        }
+        json doc = {{"scene", utf8(c.scene)}, {"source", source}, {"kind", tag}, {"time", c.fileTime}};
+        std::ofstream(sidecarOf(target), std::ios::binary) << doc.dump(2);
+        kept.emplace_back(source, c.fileTime);
+        out.push_back({target, c.scene, c.kind, c.fileTime});
+    }
+    return out;
+}
+
+std::vector<Recovered> recovered(const fs::path& dir)
+{
+    std::vector<Recovered> out;
+    std::error_code ec;
+    for (const auto& e : fs::directory_iterator(dir, ec))
+        if (e.path().extension() == ".json")
+            if (auto r = readKept(e.path()))
+                out.push_back(std::move(*r));
+    std::sort(out.begin(), out.end(), [](const Recovered& a, const Recovered& b) {
+        return a.time != b.time ? a.time > b.time : a.file.filename() > b.file.filename();
+    });
+    return out;
+}
+
+int prune(int days, const fs::path& dir, int64_t nowSeconds)
+{
+    if (days <= 0)
+        return 0;
+    if (nowSeconds == 0)
+        nowSeconds = nowMs() / 1000;
+    int removed = 0;
+    for (const Recovered& r : recovered(dir))
+        if (r.time < nowSeconds - int64_t(days) * 86400)
+        {
+            removeKept(r.file);
+            ++removed;
+        }
+    return removed;
+}
+
+int clear(const fs::path& dir)
+{
+    int removed = 0;
+    for (const Recovered& r : recovered(dir))
+    {
+        removeKept(r.file);
+        ++removed;
+    }
+    return removed;
+}
+
+void registerCommands()
+{
+    using T = ArgType;
+    ops::registerCommand({
+        .name = "recoveredScenes",
+        .doc = "Scenes recovered after a crash and kept for File > Recovered Scenes, newest first: {path, scene, kind, time}. "
+               "scene is where it belongs (null when untitled), time when it was written (unix seconds).",
+        .undoable = false,
+        .run = [](const Args&) -> json {
+            json out = json::array();
+            for (const Recovered& r : recovered())
+                out.push_back({{"path", utf8(r.file)},
+                               {"scene", r.scene.empty() ? json(nullptr) : json(utf8(r.scene))},
+                               {"kind", history::kindName(r.kind)},
+                               {"time", r.time}});
+            return out;
+        },
+    });
+
+    ops::registerCommand({
+        .name = "openRecoveredScene",
+        .doc = "Open a recovered scene (a path from recoveredScenes) as a new untitled scene with unsaved changes; its "
+               "references resolve against the scene it came from. Saving asks for a file, so the original is never "
+               "overwritten by accident. Not undoable.",
+        .positionalDoc = "path",
+        .flags = {{"force", "f", T::Bool, false, "Discard unsaved changes in the current scene."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            if (a.positional.size() != 1 || !a.positional[0].is_string())
+                throw CommandError("openRecoveredScene: give one path");
+            if (io::modified() && !a.get<bool>("force"))
+                throw CommandError("openRecoveredScene: the scene has unsaved changes; save it or pass force=True");
+            const std::string& arg = a.positional[0].get_ref<const std::string&>();
+            fs::path file(std::u8string(arg.begin(), arg.end()));
+            std::optional<Recovered> r = readKept(sidecarOf(file));
+            if (!r)
+                throw CommandError("openRecoveredScene: not a recovered scene: " + arg);
+            try
+            {
+                loadVersion(r->file, r->scene, false, "untitled (recovered)");
+            }
+            catch (const std::exception& e)
+            {
+                throw CommandError(e.what());
+            }
+            return r->scene.empty() ? json(nullptr) : json(utf8(r->scene));
+        },
+    });
+
+    ops::registerCommand({
+        .name = "clearRecoveredScenes",
+        .doc = "Delete every recovered scene kept for File > Recovered Scenes. Returns how many were deleted.",
+        .undoable = false,
+        .run = [](const Args&) -> json { return clear(); },
+    });
 }
 } // namespace lila::io::recovery

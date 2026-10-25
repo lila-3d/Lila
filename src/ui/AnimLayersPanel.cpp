@@ -4,6 +4,7 @@
 #include "core/Log.h"
 #include "scene/AnimLayer.h"
 #include "scene/Graph.h"
+#include "ui/Deletion.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
 #include "ui/NodeLookup.h"
@@ -132,6 +133,10 @@ AnimLayersPanel::AnimLayersPanel(QWidget* parent) : QWidget(parent)
     mTree->setSelectionMode(QAbstractItemView::SingleSelection);
     mTree->setEditTriggers(QAbstractItemView::NoEditTriggers);
     Hotkeys::passThrough(mTree);
+    deletion::claim(mTree, [this] {
+        if (std::string l = currentLayer(); !l.empty() && l != al::kBaseLayerName)
+            run("deleteAnimLayer", {{"args", {l}}});
+    });
     QHeaderView* header = mTree->header();
     header->setStretchLastSection(true);
     header->setMinimumSectionSize(20);

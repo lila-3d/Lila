@@ -14,6 +14,7 @@
 #include "scene/DisplayLayers.h"
 #include "scene/Graph.h"
 #include "scene/ImagePlane.h"
+#include "scene/LodGroup.h"
 #include "scene/Materials.h"
 #include "scene/MeshNodes.h"
 #include "scene/Rig.h"
@@ -1073,4 +1074,24 @@ TEST_CASE("maya convert: file paths are stored relative to the converted scene")
     fresh();
     io::setCurrentPath({});
     io::markClean();
+}
+
+TEST_CASE("maya import: lodGroup keeps its level order and screen height percentages")
+{
+    Graph& g = fresh();
+    maya::ImportResult r = load("lod.ma");
+    scene::Node* rock = node(g, "rockLod");
+    CHECK(rock->type().name == "lodGroup");
+    CHECK(rock->as<glm::dvec3>(Transform::kTranslate).x == doctest::Approx(10.0));
+    CHECK(lod::parseSizes(rock->as<std::string>(LodGroup::kScreenSizes)) == std::vector<double>{1.0, 0.4, 0.15});
+    const std::vector<NodeId> levels = lod::levels(g, rock->id());
+    REQUIRE(levels.size() == 3);
+    CHECK(g.node(levels[0])->name() == "z_high");
+    CHECK(g.node(levels[1])->name() == "a_mid");
+    CHECK(g.node(levels[2])->name() == "m_low");
+
+    scene::Node* tree = node(g, "treeLod");
+    CHECK(tree->type().name == "lodGroup");
+    CHECK(tree->as<std::string>(LodGroup::kScreenSizes).empty());
+    CHECK(std::ranges::any_of(r.warnings, [](const std::string& w) { return w.find("treeLod") != std::string::npos; }));
 }

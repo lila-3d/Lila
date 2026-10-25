@@ -4,6 +4,7 @@
 #include "core/Paths.h"
 #include "core/PrefStore.h"
 #include "ui/Actions.h"
+#include "ui/Deletion.h"
 #include "ui/Theme.h"
 
 #include <QComboBox>
@@ -425,6 +426,10 @@ MarkingMenuEditor::MarkingMenuEditor(QWidget* parent) : QWidget(parent)
         openMenu(mName);
     });
     connect(mSave, &QPushButton::clicked, this, &MarkingMenuEditor::save);
+    // Delete removes the picked slot or item from the unsaved menu; the menu list and the action picker keep theirs.
+    deletion::claim(this, [this] { removeSelected(); });
+    deletion::claim(mMenus, nullptr);
+    deletion::claim(mActionList, nullptr);
     connect(mRevert, &QPushButton::clicked, this, [this] {
         setDirty(false);
         openMenu(mName);

@@ -11,9 +11,11 @@
 #include "geo/Topology.h"
 #include "scene/AutoBevel.h"
 #include "scene/Components.h"
+#include "scene/ExtrudeModifier.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 
+#include <map>
 #include <set>
 
 namespace lila::scene
@@ -215,6 +217,12 @@ std::vector<ModifierType> modifierTypes()
 
 Graph& graph() { return Graph::current(); }
 
+std::map<std::string, std::function<void(Graph&, Node&, NodeId)>>& createHooks()
+{
+    static std::map<std::string, std::function<void(Graph&, Node&, NodeId)>> hooks;
+    return hooks;
+}
+
 Node& meshNamed(const std::string& name, const char* cmd)
 {
     Node* n = graph().find(name);
@@ -266,6 +274,17 @@ namespace modifiers
 bool bypassed(const MeshPtr& mesh) { return mesh && mesh->pointAttrs().has(kBypassLayer); }
 
 bool isModifier(const Node& n) { return (n.traits() & Node::kModifier) != 0; }
+
+void setCreateHook(const std::string& type, std::function<void(Graph&, Node& modifier, NodeId mesh)> hook)
+{
+    createHooks()[type] = std::move(hook);
+}
+
+void baseRemapped(Graph& g, NodeId mesh, const geo::MeshRemap& remap, const geo::Mesh& base)
+{
+    autoBevel::baseRemapped(g, mesh, remap, base);
+    extrudeModifier::baseRemapped(g, mesh, remap, base);
+}
 
 std::vector<NodeId> stack(Graph& g, NodeId mesh)
 {
@@ -399,6 +418,7 @@ void registerTypes()
         types::registerType(std::move(t));
     }
     autoBevel::registerTypes();
+    extrudeModifier::registerTypes();
     registerTransferModifier();
     registerBooleanModifier();
 }
@@ -433,6 +453,8 @@ void registerCommands()
             auto src = g.source(top);
             Node* mod = g.createNode(*t, {}, kNoNode, true);
             auto* mn = static_cast<ModifierNode*>(mod);
+            if (auto hook = createHooks().find(t->name); hook != createHooks().end())
+                hook->second(g, *mod, mesh.id());
             if (src)
             {
                 g.disconnect(top);

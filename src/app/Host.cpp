@@ -15,6 +15,7 @@
 #include "fbx/Fbx.h"
 #include "gn/Gn.h"
 #include "io/FileTranslators.h"
+#include "io/Recovery.h"
 #include "io/SceneFile.h"
 #include "link/Exporters.h"
 #include "link/UnrealLink.h"
@@ -132,6 +133,7 @@ void startCore()
     tex::registerTypes();
     scene::registerCommands();
     io::registerCommands();
+    io::recovery::registerCommands();
     gn::registerCommands();
     seq::registerCommands();
     bake::registerCommands();

@@ -54,6 +54,8 @@ struct FImportRequest
 	EKind Kind = EKind::Static;
 	FString Skeleton;
 	FString LodGroup;
+	/** Screen size per LOD; empty leaves them automatic. */
+	TArray<float> LodScreenSizes;
 	bool bImportMaterials = true;
 	bool bImportTextures = true;
 	bool bCombineMeshes = true;
@@ -138,6 +140,14 @@ bool ParseRequest(const TSharedPtr<FJsonObject>& Params, FImportRequest& Out, FS
 	TSharedPtr<FJsonObject> Options = Params->TryGetObjectField(TEXT("options"), OptionsPtr) ? *OptionsPtr : MakeShared<FJsonObject>();
 	Options->TryGetStringField(TEXT("skeleton"), Out.Skeleton);
 	Options->TryGetStringField(TEXT("lodGroup"), Out.LodGroup);
+	const TArray<TSharedPtr<FJsonValue>>* Sizes = nullptr;
+	if (Options->TryGetArrayField(TEXT("lodScreenSizes"), Sizes))
+	{
+		for (const TSharedPtr<FJsonValue>& Size : *Sizes)
+		{
+			Out.LodScreenSizes.Add(Size.IsValid() ? float(Size->AsNumber()) : 0.0f);
+		}
+	}
 	Options->TryGetBoolField(TEXT("importMaterials"), Out.bImportMaterials);
 	Options->TryGetBoolField(TEXT("importTextures"), Out.bImportTextures);
 	Options->TryGetBoolField(TEXT("combineMeshes"), Out.bCombineMeshes);
@@ -223,6 +233,8 @@ UInterchangeGenericAssetsPipeline* MakePipeline(const FImportRequest& R)
 	Mesh->bGenerateLightmapUVs = R.bGenerateLightmapUVs;
 	Mesh->bBuildNanite = R.bNanite;
 	Mesh->LodGroup = R.LodGroup.IsEmpty() ? NAME_None : FName(*R.LodGroup);
+	Mesh->bAutoComputeLODScreenSizes = R.LodScreenSizes.IsEmpty();
+	Mesh->LODScreenSizes = R.LodScreenSizes;
 	// UCX_ and friends still import; this only stops the fallback hull when there are none.
 	Mesh->bCollision = true;
 	Mesh->bImportCollisionAccordingToMeshName = true;
@@ -438,11 +450,20 @@ UFbxImportUI* MakeFbxOptions(const FImportRequest& R)
 	Static->bGenerateLightmapUVs = R.bGenerateLightmapUVs;
 	Static->bBuildNanite = R.bNanite;
 	Static->NormalImportMethod = Normals;
+	Static->bImportMeshLODs = true;
 	if (!R.LodGroup.IsEmpty())
 	{
 		Static->StaticMeshLODGroup = FName(*R.LodGroup);
 	}
 	Options->SkeletalMeshImportData->NormalImportMethod = Normals;
+	Options->SkeletalMeshImportData->bImportMeshLODs = true;
+	Options->bAutoComputeLodDistances = R.LodScreenSizes.IsEmpty();
+	float* Distances[] = {&Options->LodDistance0, &Options->LodDistance1, &Options->LodDistance2, &Options->LodDistance3,
+	                      &Options->LodDistance4, &Options->LodDistance5, &Options->LodDistance6, &Options->LodDistance7};
+	for (int32 Lod = 0; Lod < R.LodScreenSizes.Num() && Lod < UE_ARRAY_COUNT(Distances); ++Lod)
+	{
+		*Distances[Lod] = R.LodScreenSizes[Lod];
+	}
 	return Options;
 }
 
@@ -583,9 +604,66 @@ TSharedPtr<FJsonValue> ToJson(const FImportOutcome& Out)
 	return MakeShared<FJsonValueObject>(Json);
 }
 
+/**
+ * Sets the requested LOD screen sizes on the imported meshes. The import pipelines only apply theirs to new assets, so a
+ * reimport needs this to pick up changed sizes. Rebuilds only meshes whose sizes changed.
+ */
+void ApplyLodScreenSizes(const FImportRequest& Request, FImportOutcome& Outcome)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImport::ApplyLodScreenSizes);
+
+	const TArray<float>& Sizes = Request.LodScreenSizes;
+	for (const FString& Path : Outcome.Assets)
+	{
+		UObject* Asset = FindObject<UObject>(nullptr, *Path);
+		if (UStaticMesh* Mesh = Cast<UStaticMesh>(Asset))
+		{
+			bool bChanged = Mesh->GetAutoComputeLODScreenSize();
+			for (int32 Lod = 0; Lod < Mesh->GetNumSourceModels() && Lod < Sizes.Num(); ++Lod)
+			{
+				bChanged |= !FMath::IsNearlyEqual(Mesh->GetSourceModel(Lod).ScreenSize.Default, Sizes[Lod]);
+			}
+			if (!bChanged)
+			{
+				continue;
+			}
+			Mesh->Modify();
+			Mesh->SetAutoComputeLODScreenSize(false);
+			for (int32 Lod = 0; Lod < Mesh->GetNumSourceModels() && Lod < Sizes.Num(); ++Lod)
+			{
+				Mesh->GetSourceModel(Lod).ScreenSize = Sizes[Lod];
+			}
+			Mesh->PostEditChange();
+		}
+		else if (USkeletalMesh* Skel = Cast<USkeletalMesh>(Asset))
+		{
+			bool bChanged = false;
+			for (int32 Lod = 0; Lod < Skel->GetLODNum() && Lod < Sizes.Num(); ++Lod)
+			{
+				bChanged |= !FMath::IsNearlyEqual(Skel->GetLODInfo(Lod)->ScreenSize.Default, Sizes[Lod]);
+			}
+			if (!bChanged)
+			{
+				continue;
+			}
+			Skel->Modify();
+			for (int32 Lod = 0; Lod < Skel->GetLODNum() && Lod < Sizes.Num(); ++Lod)
+			{
+				Skel->GetLODInfo(Lod)->ScreenSize = Sizes[Lod];
+			}
+			Skel->PostEditChange();
+		}
+	}
+}
+
 void FinishImport(const FImportRequest& Request, FImportOutcome& Outcome, const FLilaLinkCallRef& Call)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImport::FinishImport);
+
+	if (!Request.LodScreenSizes.IsEmpty() && !Outcome.Assets.IsEmpty())
+	{
+		ApplyLodScreenSizes(Request, Outcome);
+	}
 
 	if (Request.Materials.bManaged && !Outcome.Assets.IsEmpty())
 	{

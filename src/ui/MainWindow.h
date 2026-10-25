@@ -91,6 +91,7 @@ private:
     void incrementAndSave();
     void showVersions();
     void openScene(const std::filesystem::path& path);
+    void openRecoveredScene(const std::filesystem::path& file);
     void addRecentFile(const std::filesystem::path& path);
     void refreshTitle();
     void refreshSourceStatus();

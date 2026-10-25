@@ -1,6 +1,7 @@
 #include "ui/SoftSelectPanel.h"
 
 #include "core/PrefStore.h"
+#include "ui/Deletion.h"
 #include "ui/FlowLayout.h"
 #include "ui/Icons.h"
 #include "ui/SpinScrub.h"
@@ -86,10 +87,19 @@ constexpr ss::Interp kInterps[] = {ss::Interp::Linear, ss::Interp::Smooth, ss::I
 FalloffCurveEditor::FalloffCurveEditor(QWidget* parent) : QWidget(parent)
 {
     setMouseTracking(true);
+    setFocusPolicy(Qt::ClickFocus);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     setFixedHeight(110);
-    setToolTip("Falloff from the selection (left) to the radius (right).\nDrag keys, click to add, right-click a key to delete it "
-               "or set its interpolation, double-click to reset.");
+    setToolTip("Falloff from the selection (left) to the radius (right).\nDrag keys, click to add, Delete or right-click a key to "
+               "delete it, right-click to set its interpolation, double-click to reset.");
+    deletion::claim(this, [this] {
+        if (mHover >= 0 && mDrag < 0 && mCurve.keys().size() > 2)
+        {
+            mCurve.removeKey(mHover);
+            mHover = -1;
+            edited();
+        }
+    });
 }
 
 void FalloffCurveEditor::setCurve(const ss::Curve& c)

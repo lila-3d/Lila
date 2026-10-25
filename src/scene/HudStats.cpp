@@ -3,7 +3,9 @@
 #include "core/Profile.h"
 #include "geo/Mesh.h"
 #include "scene/Components.h"
+#include "scene/Isolation.h"
 #include "scene/MeshNodes.h"
+#include "scene/Transform.h"
 
 #include <algorithm>
 #include <chrono>
@@ -36,8 +38,19 @@ struct ComponentEntry
 
 constexpr std::chrono::milliseconds kSettle(150);
 
+/** A mesh a view shows only some faces of, per isolation change. */
+struct PartialEntry
+{
+    std::weak_ptr<const geo::Mesh> mesh;
+    std::string uvSet;
+    uint64_t version = 0;
+    isolation::Visibility vis;
+    PolyCount count;
+};
+
 std::unordered_map<NodeId, MeshEntry> gMeshes;
 std::unordered_map<NodeId, ComponentEntry> gComponents;
+std::unordered_map<NodeId, PartialEntry> gPartial;
 uint64_t gComponentGeneration = 1;
 
 uint64_t componentGeneration()
@@ -115,6 +128,50 @@ const PolyCount& cachedSelected(NodeId id, const MeshPtr& mesh, ComponentMode mo
     return e.count;
 }
 
+/** The shown faces' counts: their edges, points, and the uvs of their corners. */
+PolyCount countVisible(const geo::Mesh& m, const isolation::Visibility& vis, std::string_view uvSet)
+{
+    LILA_ZONE();
+    PolyCount c;
+    for (geo::Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f) && vis.face(f))
+        {
+            ++c.faces;
+            c.tris += m.faceSize(f) - 2;
+        }
+    for (geo::Index e = 0; e < m.edgeCapacity(); ++e)
+        c.edges += m.edgeValid(e) && vis.edge(e) ? 1 : 0;
+    std::span<const glm::vec2> uv = m.cornerAttrs().get<glm::vec2>(uvSet);
+    std::vector<glm::vec2> seen;
+    for (geo::Index p = 0; p < m.pointCapacity(); ++p)
+    {
+        if (!m.pointValid(p) || !vis.point(p))
+            continue;
+        ++c.verts;
+        if (uv.empty())
+            continue;
+        seen.clear();
+        m.forEachPointCorner(p, [&](geo::Index k) {
+            if (vis.face(m.cornerFace(k)) && std::find(seen.begin(), seen.end(), uv[k]) == seen.end())
+                seen.push_back(uv[k]);
+        });
+        c.uvs += seen.size();
+    }
+    return c;
+}
+
+const PartialEntry& cachedPartial(NodeId id, const MeshPtr& mesh, std::string_view uvSet, const isolation::Set& iso)
+{
+    PartialEntry& e = gPartial[id];
+    if (e.mesh.lock() != mesh || e.uvSet != uvSet || e.version != iso.version)
+    {
+        isolation::Visibility vis = isolation::visibility(*mesh, iso.shownFaces(id, *mesh));
+        PolyCount count = countVisible(*mesh, vis, uvSet);
+        e = {mesh, std::string(uvSet), iso.version, std::move(vis), count};
+    }
+    return e;
+}
+
 template <class Map> void dropUnseen(Map& map, const std::unordered_set<NodeId>& seen)
 {
     std::erase_if(map, [&](const auto& kv) { return !seen.contains(kv.first); });
@@ -160,9 +217,9 @@ PolyCount countMesh(const geo::Mesh& mesh, std::string_view uvSet)
     return c;
 }
 
-bool visibleInHierarchy(const Graph& g, NodeId id) { return effectivelyVisible(g, id); }
+bool visibleInHierarchy(const Graph& g, NodeId id) { return effectivelyVisible(g, id, inheritVisibility()); }
 
-PolyStats polyStats(Graph& g, std::string_view uvSet, const std::function<bool(NodeId)>& shown)
+PolyStats polyStats(Graph& g, std::string_view uvSet, const std::function<bool(NodeId)>& shown, const isolation::Set* partial)
 {
     LILA_ZONE();
     PolyStats out;
@@ -185,17 +242,19 @@ PolyStats polyStats(Graph& g, std::string_view uvSet, const std::function<bool(N
         const MeshPtr& mesh = n->as<MeshPtr>(MeshNode::kOutMesh);
         if (!mesh || !visibleInHierarchy(g, id) || (shown && !shown(id)))
             continue;
-        const PolyCount& c = cachedCount(id, mesh, uvSet, out.pending);
+        const PartialEntry* part = partial && partial->isPartial(id) ? &cachedPartial(id, mesh, uvSet, *partial) : nullptr;
+        const PolyCount& c = part ? part->count : cachedCount(id, mesh, uvSet, out.pending);
         out.scene += c;
         if (selected.contains(id))
             out.objects += c;
         if (mode == ComponentMode::Object)
             continue;
         if (const components::Ids& ids = components::selected(id, mode); !ids.empty())
-            out.components += cachedSelected(id, mesh, mode, ids);
+            out.components += part ? countSelected(*mesh, mode, isolation::visibleOnly(part->vis, mode, ids)) : cachedSelected(id, mesh, mode, ids);
     }
     dropUnseen(gMeshes, seen);
     dropUnseen(gComponents, seen);
+    dropUnseen(gPartial, seen);
     return out;
 }
 } // namespace lila::scene::hud

@@ -11,6 +11,7 @@
 #include "scene/Materials.h"
 #include "scene/MeshNodes.h"
 #include "ui/Actions.h"
+#include "ui/Deletion.h"
 #include "ui/DockSidebar.h"
 #include "ui/MaterialDraw.h"
 #include "ui/SpinScrub.h"
@@ -256,10 +257,12 @@ MaterialEditor::MaterialEditor(QWidget* parent) : QWidget(parent)
         if (name.is_string())
             showMaterial(name.get<std::string>());
     });
-    connect(del, &QPushButton::clicked, this, [this] {
+    auto deleteMaterial = [this] {
         if (scene::Node* n = current())
             run("delete", {{"args", json::array({n->path()})}});
-    });
+    };
+    connect(del, &QPushButton::clicked, this, deleteMaterial);
+    deletion::claim(mList, deleteMaterial);
     connect(mAssign, &QPushButton::clicked, this, [this] {
         if (scene::Node* n = current())
             run("assignMaterial", {{"args", json::array({n->path()})}});

@@ -13,6 +13,7 @@
 #include "scene/Isolation.h"
 #include "scene/MeshNodes.h"
 #include "ui/Actions.h"
+#include "ui/Deletion.h"
 #include "ui/FlowLayout.h"
 #include "ui/Icons.h"
 #include "ui/MarkingMenu.h"
@@ -151,6 +152,8 @@ public:
         // Under the cursor the view's keys (F9-F12 modes) win over the focused panel's and the global ones.
         setProperty("hotkeyContext", "uvEditor");
         setProperty("hotkeyHover", true);
+        // Its selection is the meshes' components, so Delete removes them as in the viewport.
+        deletion::claimScene(this);
         mUvToolListener = uvTools::addRedrawListener([this] { update(); });
         mTexPaint.onUpdate = [this] { update(); };
     }

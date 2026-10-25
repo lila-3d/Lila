@@ -471,7 +471,7 @@ public:
                 cage = QString("   (%1 uses cage %2: Bake Into Cage to apply)").arg(QString::fromStdString(grp->name()), QString::fromStdString(c));
         drawToolMessage(p, view,
                         QString("Paint bake %1: %2 %3%4%5")
-                            .arg(st.attr == bake::kSkewAttr ? "skew" : "offset", kOps[int(st.op)])
+                            .arg(st.attr == bake::kSkewAttr ? "skew" : "offset", kOps[int(opFor(mStroking ? mMods : QApplication::keyboardModifiers()))])
                             .arg(st.value)
                             .arg(under, cage));
 

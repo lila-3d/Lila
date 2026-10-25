@@ -447,6 +447,12 @@ public:
             mAdjustFrom = brushRadius();
             return true;
         }
+        // The brush tools' B + right drag sets strength, which paint select has none of; it still opens no menu.
+        if (e->button() == Qt::RightButton && tools::softSelectAdjusting())
+        {
+            tools::markSoftSelectAdjusted();
+            return true;
+        }
         if (e->button() != Qt::LeftButton)
             return false;
         mStroke.begin(Stroke::opFor(e->modifiers(), Stroke::Op::Add));

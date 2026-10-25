@@ -230,14 +230,14 @@ inline std::vector<Case> all()
     c.push_back({"plane10", geo::makePlane({100, 100, 10, 10})});
     c.push_back({"sphere8x6", geo::makeSphere({50, 8, 6})});
     c.push_back({"sphere32", geo::makeSphere({50, 32, 32})});
-    c.push_back({"cylinder", geo::makeCylinder()});
+    c.push_back({"cylinder", geo::makeCylinder({.capFill = geo::CapFill::Ngon})});
     {
         geo::CylinderOptions o;
         o.caps = false;
         o.subdivHeight = 4;
         c.push_back({"openCylinder", geo::makeCylinder(o)});
     }
-    c.push_back({"cone", geo::makeCone()});
+    c.push_back({"cone", geo::makeCone({.capFill = geo::CapFill::Ngon})});
     c.push_back({"torus", geo::makeTorus()});
     c.push_back({"disc", geo::makeDisc()});
     c.push_back({"pipe", geo::makePipe()});

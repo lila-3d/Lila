@@ -7,6 +7,7 @@
 #include "geo/Ops.h"
 #include "geo/Symmetry.h"
 
+#include <memory>
 #include <span>
 #include <vector>
 
@@ -36,6 +37,12 @@ struct FitOptions
      * place; a cage that already fits is returned unchanged whatever the value.
      */
     double regularization = 1e-6;
+    /**
+     * The furthest a cage point may move, as a multiple of the largest move of the subdivided surface it shapes; 0 is no
+     * limit. Subdivision carries a point's move only part of the way to its surface, so an exact fit moves points up to
+     * about 2.5 times the surface; a bump finer than the cage can drive plain least squares much further off.
+     */
+    double maxMoveRatio = 2.0;
     /** Project-and-solve rounds when fitting to a surface without point correspondence. */
     int iterations = 3;
     /** Per point capacity; nonzero points stay put. Optional. */
@@ -50,6 +57,32 @@ struct FitOptions
  */
 LILA_SCENE_API std::vector<glm::dvec3> fitCage(const geo::Mesh& cage, std::span<const geo::PointStencil> stencils, std::span<const glm::dvec3> target,
                                 const FitOptions& opts = {});
+
+/**
+ * fitCage with its normal equations factored once, for fitting the same cage topology to target after target (a live
+ * preview of the fit while sculpting, or the project-and-solve rounds of fitCageToSurface). The stencils, and the
+ * symmetry map in opts, must outlive it.
+ */
+class LILA_SCENE_API CageFitter
+{
+public:
+    CageFitter(const geo::Mesh& cage, std::span<const geo::PointStencil> stencils, const FitOptions& opts = {});
+    ~CageFitter();
+
+    /** fitCage's result for a cage starting at `start` (per point capacity). */
+    std::vector<glm::dvec3> solve(std::span<const glm::dvec3> start, std::span<const glm::dvec3> target) const;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> m;
+};
+
+/**
+ * fitCageToSurface's least squares rounds with a prepared fitter: subdivide `start` through stencils, project onto the
+ * surface bvh holds, solve, repeat. Returns the cage positions.
+ */
+LILA_SCENE_API std::vector<glm::dvec3> fitToSurface(const CageFitter& fitter, std::span<const geo::PointStencil> stencils,
+                                                    std::span<const glm::dvec3> start, const geo::MeshBvh& bvh, int iterations);
 
 /**
  * Moves the cage onto a surface it has no point correspondence with (an imported high poly, a remeshed sculpt). With

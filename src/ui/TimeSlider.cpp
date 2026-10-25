@@ -9,6 +9,7 @@
 #include "scene/Graph.h"
 #include "ui/Actions.h"
 #include "ui/Animation.h"
+#include "ui/Deletion.h"
 #include "ui/Ghosting.h"
 #include "ui/Icons.h"
 #include "ui/ViewportDisplay.h"
@@ -410,6 +411,8 @@ private:
 TimeSlider::TimeSlider(QWidget* parent) : QWidget(parent)
 {
     setProperty("hotkeyContext", "timeSlider");
+    // The selection's keys at the current frame, as the ruler's Delete Key does.
+    deletion::claim(this, [] { runUi("cutKey", {{"time", Graph::current().time()}, {"clear", true}}); });
     auto* outer = new QVBoxLayout(this);
     outer->setContentsMargins(4, 2, 4, 2);
     outer->setSpacing(2);

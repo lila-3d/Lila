@@ -6,6 +6,7 @@
 #include "scene/Anim.h"
 #include "scene/Components.h"
 #include "scene/HudStats.h"
+#include "scene/Isolation.h"
 #include "scene/MeshNodes.h"
 #include "scene/SoftSelect.h"
 #include "scene/Transform.h"
@@ -204,17 +205,50 @@ Block smoothBlock(scene::Graph& g, const Context& ctx, const PartOn& on)
     return b;
 }
 
-Block selectionBlock(scene::Graph& g, const PartOn& on)
+/** Whether the view draws the node: hidden things never count. */
+bool drawnIn(scene::Graph& g, const Context& ctx, scene::NodeId id)
+{
+    return g.node(id) && scene::hud::visibleInHierarchy(g, id) && (!ctx.shownNode || ctx.shownNode(id));
+}
+
+uint64_t drawnSelectedObjects(scene::Graph& g, const Context& ctx)
+{
+    return uint64_t(std::ranges::count_if(g.selection(), [&](scene::NodeId id) { return drawnIn(g, ctx, id); }));
+}
+
+/** Selected components the view draws: on drawn nodes, and on a mesh isolated by components only those on its shown faces. */
+uint64_t drawnSelectedComponents(scene::Graph& g, const Context& ctx, scene::ComponentMode mode)
+{
+    uint64_t n = 0;
+    for (const auto& [node, ids] : scene::components::selected(mode))
+    {
+        if (!drawnIn(g, ctx, node))
+            continue;
+        const scene::Node* mn = g.node(node);
+        if (ctx.isolation && ctx.isolation->isPartial(node) && mn->type().isA("mesh"))
+            if (const scene::MeshPtr& mesh = mn->as<scene::MeshPtr>(scene::MeshNode::kOutMesh))
+            {
+                const auto vis = scene::isolation::visibility(*mesh, ctx.isolation->shownFaces(node, *mesh));
+                n += scene::isolation::visibleOnly(vis, mode, ids).size();
+                continue;
+            }
+        n += ids.size();
+    }
+    return n;
+}
+
+Block selectionBlock(scene::Graph& g, const Context& ctx, const PartOn& on)
 {
     scene::ComponentMode mode = scene::components::mode();
     QString what;
     if (mode == scene::ComponentMode::Object)
-        what = count(g.selection().size()) + (g.selection().size() == 1 ? " object" : " objects");
+    {
+        const uint64_t n = drawnSelectedObjects(g, ctx);
+        what = count(n) + (n == 1 ? " object" : " objects");
+    }
     else
     {
-        uint64_t n = 0;
-        for (const auto& [node, ids] : scene::components::selected(mode))
-            n += ids.size();
+        const uint64_t n = drawnSelectedComponents(g, ctx, mode);
         const char* kind = mode == scene::ComponentMode::Vertex ? "vert" : mode == scene::ComponentMode::Edge ? "edge" : "face";
         what = count(n) + " " + kind + (n == 1 ? "" : "s");
     }
@@ -327,7 +361,7 @@ Block objectBlock(scene::Graph& g, const Context& ctx, const PartOn& on)
         }
     }
     if (on("count"))
-        b.push_back({"Selected Objects:", {count(sel.size())}});
+        b.push_back({"Selected Objects:", {count(drawnSelectedObjects(g, ctx))}});
     return b;
 }
 
@@ -599,14 +633,14 @@ bool draw(OverlayPainter& p, const Context& ctx)
     Stack topLeft{.edge = kTop, .width = ctx.view.width};
     if (on("polyCount"))
     {
-        scene::hud::PolyStats stats = scene::hud::polyStats(g, uv::currentUvSet(), ctx.shownNode);
+        scene::hud::PolyStats stats = scene::hud::polyStats(g, uv::currentUvSet(), ctx.shownNode, ctx.isolation);
         pending = stats.pending;
         topLeft.place(polyCountBlock(stats, parts("polyCount")));
     }
     if (on("smoothDetails"))
         topLeft.place(smoothBlock(g, ctx, parts("smoothDetails")));
     if (on("selectionDetails"))
-        topLeft.place(selectionBlock(g, parts("selectionDetails")));
+        topLeft.place(selectionBlock(g, ctx, parts("selectionDetails")));
     if (on("texelDensity"))
         topLeft.place(texelBlock(g, parts("texelDensity")));
 

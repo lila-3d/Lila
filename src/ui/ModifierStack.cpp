@@ -11,6 +11,7 @@
 #include "scene/Modifiers.h"
 #include "ui/Actions.h"
 #include "ui/AttributeEditor.h"
+#include "ui/Deletion.h"
 #include "ui/NodeLookup.h"
 #include "ui/DockSidebar.h"
 #include "ui/Icons.h"
@@ -22,6 +23,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QCursor>
 #include <QDockWidget>
 #include <QDrag>
 #include <QElapsedTimer>
@@ -774,7 +776,23 @@ ModifierStackWidget::ModifierStackWidget(QWidget* parent) : QWidget(parent)
     mRefresh->setInterval(0);
     connect(mRefresh, &QTimer::timeout, this, &ModifierStackWidget::refresh);
     mListener = Graph::current().addListener([this](scene::Change, NodeId) { scheduleRefresh(); });
+    // Clicking a card focuses the panel, so Delete then goes to the card rather than the viewport.
+    setFocusPolicy(Qt::ClickFocus);
+    deletion::claim(this, [this] { removeCardModifier(); });
     refresh();
+}
+
+void ModifierStackWidget::removeCardModifier()
+{
+    for (QWidget* from : {QApplication::focusWidget(), QApplication::widgetAt(QCursor::pos())})
+        for (QWidget* w = from; w && w != this; w = w->parentWidget())
+            for (auto& [id, card] : mCards)
+                if (card.first == w)
+                {
+                    if (scene::Node* n = Graph::current().node(id); n && scene::modifiers::isModifier(*n))
+                        run("removeModifier", {{"args", {nameOf(id)}}});
+                    return;
+                }
 }
 
 ModifierStackWidget::~ModifierStackWidget()

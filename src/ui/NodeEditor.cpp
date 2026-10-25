@@ -7,6 +7,7 @@
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "ui/Actions.h"
+#include "ui/Deletion.h"
 #include "ui/AnimatedSend.h"
 #include "ui/DockSidebar.h"
 #include "ui/Icons.h"
@@ -1365,6 +1366,7 @@ NodeEditor::NodeEditor(QWidget* parent, const std::string& backend) : QWidget(pa
     connect(mRefresh, &QTimer::timeout, this, [this] { refresh(std::exchange(mPanelDirty, false)); });
 
     setProperty("hotkeyContext", "nodeEditor");
+    deletion::claim(this, [this] { deleteSelected(); });
     mCanvas->onAddMenu = [this](QPointF scenePos) { openAddMenu(scenePos, nullptr); };
     mCanvas->onWireDropped = [this](QPointF scenePos, const WireDrag& w) { openAddMenu(scenePos, &w); };
     mCanvas->onFocused = [this] { lastFocused() = this; };

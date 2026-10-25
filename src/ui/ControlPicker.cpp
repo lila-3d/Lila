@@ -9,6 +9,7 @@
 #include "scene/Picker.h"
 #include "scene/Poses.h"
 #include "ui/Actions.h"
+#include "ui/Deletion.h"
 #include "ui/Icons.h"
 #include "ui/Panels.h"
 #include "ui/Theme.h"
@@ -292,6 +293,11 @@ public:
 
         mCanvas = new PickerCanvas(this, this);
         layout->addWidget(mCanvas, 1);
+        // Outside edit mode the picked items are rig controls, which Delete must not remove from the scene.
+        deletion::claim(this, [this] {
+            if (editing())
+                removeItems();
+        });
 
         connect(snapButton, &QToolButton::toggled, this, [this](bool on) { mCanvas->snapping = on; });
         connect(gridSize, &QDoubleSpinBox::valueChanged, this, [this](double v) {

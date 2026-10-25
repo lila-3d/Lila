@@ -1,11 +1,13 @@
 #include "ui/ExtrudeHandles.h"
 
 #include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "geo/Mesh.h"
 #include "scene/Components.h"
+#include "scene/ExtrudeModifier.h"
 #include "scene/Graph.h"
 #include "scene/LastOp.h"
 #include "scene/Modifiers.h"
@@ -16,6 +18,8 @@
 #include "ui/Tools.h"
 
 #include <cmath>
+#include <map>
+#include <utility>
 
 namespace lila::ui
 {
@@ -28,8 +32,58 @@ constexpr const char* kCommand = "polyExtrude";
 const glm::vec4 kGray(0.70f, 0.70f, 0.70f, 1.0f);
 const glm::vec4 kHot(1.0f, 1.0f, 1.0f, 1.0f);
 
+/** The selected extrudeModifier the handles work on when no polyExtrude is live, else 0. */
+scene::NodeId selectedModifier()
+{
+    scene::Graph& g = scene::Graph::current();
+    const auto& sel = g.selection();
+    for (auto it = sel.rbegin(); it != sel.rend(); ++it)
+        if (scene::Node* n = g.node(*it); n && scene::extrudeModifier::isExtrude(*n) && scene::modifiers::meshOf(g, *it) != scene::kNoNode)
+            return *it;
+    return scene::kNoNode;
+}
+
+bool extrudeLive()
+{
+    const lo::Op* op = lo::current();
+    return op && op->command == kCommand && lo::reachable();
+}
+
+/** The components the live extrude made: the handles stay on them whatever is selected since. */
+const std::map<scene::NodeId, scene::components::Ids>& extruded()
+{
+    static const std::map<scene::NodeId, scene::components::Ids> none;
+    const lo::Op* op = lo::current();
+    return op && extrudeLive() ? op->made : none;
+}
+
+scene::PlugRef modifierPlug(scene::NodeId mod, const char* name)
+{
+    scene::Node* n = scene::Graph::current().node(mod);
+    return {mod, n ? n->type().attrIndex(name) : -1, -1};
+}
+
+double modifierValue(scene::NodeId mod, const char* name)
+{
+    scene::Node* n = scene::Graph::current().node(mod);
+    return n ? n->as<double>(n->type().attrIndex(name)) : 0.0;
+}
+
+/** Sets a modifier plug without an undo step, for the ticks of a drag. */
+void setQuietly(scene::NodeId mod, const char* name, double value)
+{
+    UndoStack& undo = UndoStack::get();
+    const bool was = undo.enabled();
+    undo.setEnabled(false);
+    scene::Graph::current().setValue(modifierPlug(mod, name), value);
+    undo.setEnabled(was);
+}
+
 double flag(const char* name)
 {
+    if (!extrudeLive())
+        if (scene::NodeId mod = selectedModifier())
+            return modifierValue(mod, name);
     const lo::Op* op = lo::current();
     const CommandDef* def = ops::find(kCommand);
     if (!op || !def)
@@ -44,9 +98,14 @@ double flag(const char* name)
 }
 
 /** Face or edge, whichever extrude is live in. */
-scene::ComponentMode extrudeKind()
+scene::ComponentMode extrudeKind(scene::NodeId modifier = scene::kNoNode)
 {
-    return scene::components::mode() == scene::ComponentMode::Edge ? scene::ComponentMode::Edge : scene::ComponentMode::Face;
+    if (modifier)
+        if (auto r = scene::extrudeModifier::resolve(scene::Graph::current(), modifier))
+            return r->kind;
+    const lo::Op* op = lo::current();
+    const scene::ComponentMode mode = op && extrudeLive() ? op->modeAfter : scene::components::mode();
+    return mode == scene::ComponentMode::Edge ? scene::ComponentMode::Edge : scene::ComponentMode::Face;
 }
 
 double handlePixels() { return PrefStore::get().value<double>("general", "/manipulator/size", 100.0); }
@@ -65,31 +124,94 @@ bool ExtrudeHandles::active() const
 {
     if (dragging())
         return true;
-    const lo::Op* op = lo::current();
-    return op && op->command == kCommand && lo::live() &&
-           (scene::components::mode() == scene::ComponentMode::Face || scene::components::mode() == scene::ComponentMode::Edge) &&
-           !scene::components::selected(extrudeKind()).empty();
+    if (!extrudeLive())
+        return selectedModifier() != scene::kNoNode;
+    return (scene::components::mode() == scene::ComponentMode::Face || scene::components::mode() == scene::ComponentMode::Edge) &&
+           !extruded().empty();
+}
+
+bool ExtrudeHandles::modifierFrame(uint64_t modifier, Frame& f) const
+{
+    LILA_ZONE();
+
+    scene::Graph& g = scene::Graph::current();
+    auto r = scene::extrudeModifier::resolve(g, modifier);
+    scene::Node* mesh = g.node(scene::modifiers::meshOf(g, modifier));
+    if (!r || r->ids.empty() || !mesh)
+        return false;
+    const geo::Mesh& m = *r->input;
+    const bool edges = r->kind == scene::ComponentMode::Edge;
+    const glm::dmat4 world = mesh->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+    const glm::dmat3 w(world);
+    const glm::dmat3 normalXform = glm::transpose(glm::inverse(w));
+    glm::dvec3 normalSum(0.0), outSum(0.0), centre(0.0);
+    for (geo::Index id : r->ids)
+    {
+        geo::Index face = id;
+        if (edges)
+        {
+            const geo::Index c = m.edgeCorner(id);
+            face = m.cornerFace(c);
+            const glm::dvec3 a = m.position(m.cornerPoint(c)), b = m.position(m.cornerNextPoint(c));
+            outSum += glm::cross(b - a, m.faceNormal(face)) / std::max(1e-12, glm::length(b - a));
+            centre += (a + b) * 0.5;
+        }
+        else
+            centre += m.faceCentroid(face);
+        normalSum += m.faceNormal(face);
+    }
+    if (glm::length(normalSum) < 1e-12)
+        return false;
+    const glm::dvec3 localNormal = glm::normalize(normalSum);
+    const glm::dvec3 nw = normalXform * localNormal;
+    if (glm::length(nw) < 1e-12)
+        return false;
+    f.normal = glm::normalize(nw);
+    f.worldPerLocal = std::max(1e-9, std::abs(glm::dot(w * localNormal, f.normal)));
+    // The handles sit on the cap, where the extrusion put the faces.
+    glm::dvec3 local = centre / double(r->ids.size()) + localNormal * modifierValue(modifier, "thickness");
+    const glm::dvec3 out = outSum - localNormal * glm::dot(outSum, localNormal);
+    if (edges && glm::length(out) > 1e-9)
+        local += glm::normalize(out) * modifierValue(modifier, "offset");
+    f.center = glm::dvec3(world * glm::dvec4(local, 1.0));
+    const glm::dvec3 ref = std::abs(f.normal.y) < 0.9 ? glm::dvec3(0, 1, 0) : glm::dvec3(1, 0, 0);
+    const glm::dvec3 t1 = glm::normalize(glm::cross(f.normal, ref));
+    f.side = glm::normalize(t1 + glm::cross(f.normal, t1));
+    if (edges && glm::length(w * out) > 1e-9)
+        f.side = glm::normalize(w * out);
+    return true;
 }
 
 bool ExtrudeHandles::frame(Frame& f) const
 {
     LILA_ZONE();
 
+    if (const uint64_t mod = dragging() ? mDrag.modifier : extrudeLive() ? scene::kNoNode : selectedModifier())
+        return modifierFrame(mod, f);
+
     scene::Graph& g = scene::Graph::current();
     g.evaluate();
     const bool edges = extrudeKind() == scene::ComponentMode::Edge;
-    glm::dvec3 normalSum(0.0), outSum(0.0);
+    glm::dvec3 normalSum(0.0), outSum(0.0), pointSum(0.0);
+    size_t points = 0;
     bool scaled = false;
-    for (auto& [node, ids] : scene::components::selected(extrudeKind()))
+    for (auto& [node, ids] : extruded())
     {
         scene::Node* n = g.node(node);
         scene::MeshPtr cage = n && n->type().isA("mesh") ? scene::modifiers::cage(g, node) : nullptr;
         if (!cage)
             continue;
         const geo::Mesh& m = *cage;
-        glm::dmat3 w(n->as<glm::dmat4>(scene::Transform::kWorldMatrix));
+        const glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+        glm::dmat3 w(world);
         glm::dmat3 normalXform = glm::transpose(glm::inverse(w));
         glm::dvec3 localSum(0.0);
+        for (geo::Index p : scene::components::convert(m, extrudeKind(), ids, scene::ComponentMode::Vertex))
+            if (m.pointValid(p))
+            {
+                pointSum += glm::dvec3(world * glm::dvec4(m.position(p), 1.0));
+                ++points;
+            }
         for (geo::Index id : ids)
         {
             geo::Index face = id;
@@ -126,10 +248,10 @@ bool ExtrudeHandles::frame(Frame& f) const
             scaled = true;
         }
     }
-    if (glm::length(normalSum) < 1e-12)
+    if (glm::length(normalSum) < 1e-12 || points == 0)
         return false;
     f.normal = glm::normalize(normalSum);
-    f.center = scene::selectionCenter();
+    f.center = pointSum / double(points);
     // The offset handle sits on a diagonal of the cap's plane, clear of the move manipulator's axis arrows.
     glm::dvec3 ref = std::abs(f.normal.y) < 0.9 ? glm::dvec3(0, 1, 0) : glm::dvec3(1, 0, 0);
     glm::dvec3 t1 = glm::normalize(glm::cross(f.normal, ref));
@@ -218,7 +340,9 @@ void ExtrudeHandles::begin(Handle h, QPointF px, const ViewInfo& view)
     Drag d;
     if (h == H::None || !frame(d.frame))
         return;
-    lo::endDrag();
+    d.modifier = extrudeLive() ? scene::kNoNode : selectedModifier();
+    if (!d.modifier)
+        lo::endDrag();
     d.handle = h;
     d.startThickness = flag("thickness");
     d.startOffset = flag("offset");
@@ -242,12 +366,18 @@ void ExtrudeHandles::drag(QPointF px, const ViewInfo& view)
     double moved = (gizmo::lineParam(f.center, thickness ? f.normal : f.side, o, dir) - mDrag.startParam) / f.worldPerLocal;
     // Pulling the offset square toward the centre insets the cap further.
     // Edges offset outward, so their square pulls the other way.
-    const double sign = extrudeKind() == scene::ComponentMode::Edge ? 1.0 : -1.0;
+    const double sign = extrudeKind(mDrag.modifier) == scene::ComponentMode::Edge ? 1.0 : -1.0;
     double value = thickness ? mDrag.startThickness + moved : mDrag.startOffset + sign * moved;
     if (IncrementSnap inc = tools::incrementSnap(Tool::Move); inc.enabled && !(tools::snaps() & (SnapGrid | SnapEdge | SnapVertex)))
         value = gizmo::snapValue(value, inc.step);
     if (std::abs(value - mDrag.value) < 1e-9)
         return;
+    if (mDrag.modifier)
+    {
+        setQuietly(mDrag.modifier, thickness ? "thickness" : "offset", value);
+        mDrag.value = value;
+        return;
+    }
     try
     {
         lo::rerun({{thickness ? "thickness" : "offset", value}}, CallSource::Script, true);
@@ -263,7 +393,21 @@ void ExtrudeHandles::end()
 {
     if (!dragging())
         return;
-    mDrag = {};
+    if (const Drag d = std::exchange(mDrag, {}); d.modifier)
+    {
+        const bool thickness = d.handle == H::Thickness;
+        const char* name = thickness ? "thickness" : "offset";
+        setQuietly(d.modifier, name, thickness ? d.startThickness : d.startOffset);
+        try
+        {
+            ops::execute("setAttr", {{"args", {scene::Graph::current().plugName(modifierPlug(d.modifier, name)), d.value}}}, CallSource::UI);
+        }
+        catch (const CommandError& e)
+        {
+            log::error("{}", e.what());
+        }
+        return;
+    }
     lo::endDrag();
     if (const lo::Op* op = lo::current())
         log::write(LogLevel::Echo, ops::toPython(op->command, op->call) + "\n");
@@ -273,7 +417,12 @@ void ExtrudeHandles::cancel()
 {
     if (!dragging())
         return;
-    mDrag = {};
+    if (const Drag d = std::exchange(mDrag, {}); d.modifier)
+    {
+        setQuietly(d.modifier, "thickness", d.startThickness);
+        setQuietly(d.modifier, "offset", d.startOffset);
+        return;
+    }
     lo::endDrag(false);
 }
 } // namespace lila::ui

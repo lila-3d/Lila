@@ -355,7 +355,9 @@ public:
         for (const auto& i : mInfluences)
             if (int64_t(i.index) == settings().influence)
                 infName = QString::fromStdString(i.name);
-        drawToolMessage(p, view, QString("Paint weights: %1  (%2)").arg(infName, kModeNames[int(settings().mode)]));
+        const Qt::KeyboardModifiers mods = mStroking ? mMods : QApplication::keyboardModifiers();
+        const Mode mode = (mods & Qt::ShiftModifier) ? Mode::Smooth : settings().mode;
+        drawToolMessage(p, view, QString("Paint weights: %1  (%2)").arg(infName, kModeNames[int(mode)]));
 
         const QPointF at = mControls.anchor(brush::ui::ringPosition(mStroke, mHover));
         std::optional<brush::ui::CursorSurface> surface;

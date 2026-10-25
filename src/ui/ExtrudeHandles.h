@@ -15,7 +15,8 @@ struct ViewInfo;
  * Handles over a just-run polyExtrude, like Maya's extrude manipulator: an arrow along the extruded faces' normal sets
  * thickness, a square beside it sets offset (the cap's inset). Dragging re-runs the op live through scene::lastOp, so
  * the result stays one undo step and the adjust-last-op popup follows. The cap's move/rotate/scale is the regular
- * manipulator's.
+ * manipulator's. With an extrudeModifier selected instead, the handles drag its thickness and offset plugs, set as one
+ * setAttr on release.
  */
 class LILA_UI_API ExtrudeHandles
 {
@@ -27,7 +28,7 @@ public:
         Offset,
     };
 
-    /** True while the last op is a live polyExtrude and its faces are selected. */
+    /** True while the last op is a live polyExtrude and its faces are selected, or an extrudeModifier is selected. */
     bool active() const;
     void draw(OverlayPainter& p, const ViewInfo& view, Handle hover) const;
     Handle pick(QPointF px, const ViewInfo& view) const;
@@ -47,6 +48,7 @@ private:
         double worldPerLocal = 1.0; // world length of one cm of thickness
     };
     bool frame(Frame& f) const;
+    bool modifierFrame(uint64_t modifier, Frame& f) const;
     /** Screen points of the handles: thickness arrow base and tip, offset square. */
     bool layout(const Frame& f, const ViewInfo& view, QPointF& base, QPointF& tip, QPointF& offset) const;
 
@@ -59,6 +61,8 @@ private:
         double startParam = 0.0;
         double value = 0.0;
         QPointF lastPx;
+        /** The extrudeModifier being dragged, 0 for the last op. */
+        uint64_t modifier = 0;
     } mDrag;
 };
 } // namespace lila::ui

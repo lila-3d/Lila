@@ -11,6 +11,7 @@
 #include "scene/ComponentPick.h"
 #include "scene/Transform.h"
 #include "ui/Icons.h"
+#include "ui/LodDisplay.h"
 #include "ui/SoftSelectPanel.h"
 #include "ui/SpinScrub.h"
 #include "ui/TexturePicker.h"
@@ -463,6 +464,7 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         choice(general, "Up axis", "/scene/upAxis", {{"Y up", "y"}, {"Z up", "z"}}, "y");
         choice(general, "Save format", "/scene/defaultFormat", {{"Binary (.lila)", "binary"}, {"Text (.lilaa)", "ascii"}}, "binary");
         number(general, "Autosave every (seconds)", "/autosave/intervalSeconds", 30.0, 5.0, 3600.0, 5.0, 0);
+        number(general, "Keep recovered scenes (days, 0 = forever)", "/recovery/keepDays", 30.0, 0.0, 3650.0, 1.0, 0);
         section(general, "Undo");
         toggle(general, "Infinite undo", "/undo/infinite", true);
         number(general, "Steps (when not infinite)", "/undo/steps", 500.0, 1.0, 100000.0, 50.0, 0);
@@ -564,6 +566,10 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         toggle(viewport, "Poly count", "/viewport/polyCount", true);
         toggle(viewport, "Panel toolbar", vd::kToolbar, true);
         toggle(viewport, "Hiding a parent hides its children", scene::kInheritVisibilityPref, true);
+        section(viewport, "Level of Detail");
+        choice(viewport, "LOD groups show by default", lodDisplay::kMode,
+               {{"The level for their screen size", "screenSize"}, {"A fixed level", "level"}, {"All levels", "all"}}, "screenSize");
+        number(viewport, "Fixed level", lodDisplay::kLevel, 0.0, 0.0, double(scene::lod::kMaxLevels - 1), 1.0, 0);
         section(viewport, "Selection");
         toggle(viewport, "Marquee selects edges and faces it touches (off: only those whose centre it covers)", "/select/marqueeTouch", true);
         section(viewport, "Highlight Under Cursor");

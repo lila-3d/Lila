@@ -11,6 +11,7 @@
 #include "core/Profile.h"
 #include "core/Progress.h"
 #include "core/Workspace.h"
+#include "io/FileTranslators.h"
 #include "io/References.h"
 #include "io/SceneFormats.h"
 #include "io/SceneHistory.h"
@@ -146,7 +147,7 @@ void ensureListener()
             return;
         if (c == scene::Change::Cleared)
         {
-            state().title.clear();
+            setCurrentPath({});
             state().ui = json::object();
             refs::clear();
             scene::renderSettings().fromJson({});
@@ -742,16 +743,20 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "openScene",
-        .doc = "Open a .lila or .lilaa scene, replacing the current one. Not undoable.",
+        .doc = "Open a .lila or .lilaa scene, replacing the current one. Other formats File > Open takes (.ma, .fbx, "
+               ".obj, ...) go to their translator: import-only ones open as a new untitled scene. Not undoable.",
         .positionalDoc = "path",
         .flags = {{"force", "f", T::Bool, false, "Discard unsaved changes without asking."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             if (a.positional.empty())
                 throw CommandError("openScene: path required");
+            fs::path path(a.positional[0].get<std::string>());
+            if (const translators::FileTranslator* t = translators::forPath(translators::Op::Open, path); t && t->id != "lila")
+                return translators::run(translators::Op::Open, path, json::object(), CallSource::Script, t->id);
             try
             {
-                load(fs::path(a.positional[0].get<std::string>()));
+                load(path);
             }
             catch (const std::exception& e)
             {

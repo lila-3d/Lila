@@ -11,6 +11,7 @@
 #include "scene/Morphs.h"
 #include "scene/Spaces.h"
 #include "ui/Animation.h"
+#include "ui/Deletion.h"
 #include "ui/NodeLookup.h"
 #include "ui/NumberExpr.h"
 #include "ui/SpinScrub.h"
@@ -313,6 +314,8 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
     });
 
     mTable = new QTableWidget(0, 2, this);
+    // The rows are the scene selection's channels, so Delete removes the selection as in Maya.
+    deletion::claimScene(this);
     mTable->horizontalHeader()->hide();
     mTable->verticalHeader()->hide();
     mTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);

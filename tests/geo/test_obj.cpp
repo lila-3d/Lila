@@ -79,7 +79,7 @@ f 6 7
 
 TEST_CASE("obj: round trip keeps topology, uvs, hard edges and materials")
 {
-    Mesh cyl = makeCylinder({50.0, 100.0, 12, 2});
+    Mesh cyl = makeCylinder({.radius = 50.0, .height = 100.0, .subdivAxis = 12, .subdivHeight = 2, .capFill = CapFill::Ngon});
     std::span<int32_t> mat = cyl.faceAttrs().getOrAdd<int32_t>(attr::kMaterial);
     cyl.materialNames() = {"side", "cap"};
     for (Index f = 0; f < cyl.faceCapacity(); ++f)

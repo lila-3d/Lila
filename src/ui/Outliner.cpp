@@ -9,6 +9,7 @@
 #include "scene/Graph.h"
 #include "scene/ObjectSets.h"
 #include "ui/Actions.h"
+#include "ui/Deletion.h"
 #include "ui/Hotkeys.h"
 #include "ui/IconBars.h"
 #include "ui/Icons.h"
@@ -285,6 +286,7 @@ Outliner::Outliner(QWidget* parent) : QTreeWidget(parent)
     setProperty("pickWalk", true);
     setProperty("hotkeyContext", "outliner");
     setProperty("hotkeyHover", true);
+    deletion::claimScene(this);
     Hotkeys::passThrough(this);
     // Drops land through dropEvent; drags start only from MMB (startMove), so an LMB drag selects instead.
     setDragDropMode(QAbstractItemView::InternalMove);

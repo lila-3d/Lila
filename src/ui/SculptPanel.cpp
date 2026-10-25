@@ -242,7 +242,7 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     mStrength->setRange(0.0, 1.0);
     mStrength->setSingleStep(0.05);
     mStrength->setDecimals(2);
-    mStrength->setToolTip("Hold M (or Shift+F) and drag in the viewport to change.");
+    mStrength->setToolTip("Hold M (or Shift+F) and drag in the viewport, or hold B and drag with the right button, to change.");
     setSpinDefault(mStrength, defaults.stroke.strength);
     bform->addRow("Strength", mStrength);
     mFalloff = new QComboBox(settingsBox);
@@ -269,7 +269,7 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     mSymmetry->setToolTip("The mesh's symmetry setting: strokes mirror exactly across it.");
     bform->addRow("Symmetry", mSymmetry);
     mShowCage = new QCheckBox("Show cage", settingsBox);
-    mShowCage->setToolTip("Draw the low-poly cage's edges over the sculpt.");
+    mShowCage->setToolTip("Draw the low-poly cage over the sculpt as Exit will leave it, refitted as you sculpt.");
     setCheckDefault(mShowCage, defaults.showCage);
     bform->addRow(mShowCage);
     col->addWidget(settingsBox);

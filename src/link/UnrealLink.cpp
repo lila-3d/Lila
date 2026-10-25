@@ -10,6 +10,7 @@
 #include "link/Exporters.h"
 #include "link/TextureSetSend.h"
 #include "scene/Graph.h"
+#include "scene/LodGroup.h"
 #include "scene/Materials.h"
 #include "scene/MeshNodes.h"
 #include "scene/ObjectSets.h"
@@ -35,7 +36,7 @@ constexpr int kImportIdleTimeoutMs = 60 * 1000;
 const char* const kOptionKeys[] = {
     "skeleton", "importMaterials", "importTextures", "combineMeshes", "autoCollision", "generateLightmapUVs",
     "normals",  "lodGroup",        "existing",       "nanite",        "importAnimations", "reapplyOptions", "save",
-    "materialFolder", "keepMaterials",
+    "materialFolder", "keepMaterials", "lodScreenSizes",
 };
 
 std::string lower(std::string s)
@@ -818,7 +819,11 @@ int syncMappings(bool force)
             }
             continue;
         }
-        jobs.push_back({m, materials, nodes, dir / (nodeFileStem(node) + ".fbx"), exporter ? exporter : findExporter("fbx")});
+        json mapping = m;
+        // FBX carries the levels but not their screen sizes, so the plugin sets them on the mesh after the import.
+        if (std::vector<double> sizes = scene::lod::exportScreenSizes(graph, nodes); !sizes.empty() && !mapping.contains("lodScreenSizes"))
+            mapping["lodScreenSizes"] = sizes;
+        jobs.push_back({mapping, materials, nodes, dir / (nodeFileStem(node) + ".fbx"), exporter ? exporter : findExporter("fbx")});
     }
     if (skipped > 0)
         log::warn("Unreal sync: no FBX exporter registered, {} mapping(s) skipped", skipped);

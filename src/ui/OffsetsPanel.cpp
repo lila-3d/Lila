@@ -6,6 +6,7 @@
 #include "scene/Graph.h"
 #include "scene/Offsets.h"
 #include "ui/Actions.h"
+#include "ui/Deletion.h"
 #include "ui/NodeLookup.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
@@ -112,6 +113,10 @@ OffsetsPanel::OffsetsPanel(QWidget* parent) : QWidget(parent)
     v->addLayout(bar);
 
     mTree = new QTreeWidget(this);
+    deletion::claim(mTree, [this] {
+        if (std::string o = currentOffset(); !o.empty())
+            run("deleteOffset", {{"args", {o}}});
+    });
     mTree->setColumnCount(4);
     mTree->setHeaderHidden(true);
     mTree->setRootIsDecorated(false);

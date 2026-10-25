@@ -17,6 +17,11 @@
 
 class QMenu;
 
+namespace lila::scene::isolation
+{
+struct Set;
+}
+
 namespace lila::ui
 {
 class ViewportWidget;
@@ -75,8 +80,10 @@ struct Context
 {
     int panel = 0;
     ViewInfo view;
-    /** The view's isolate; null shows everything. */
+    /** Whether the view draws the node at all (isolate, LOD level, show filters); null shows everything. */
     std::function<bool(scene::NodeId)> shownNode;
+    /** The view's isolation, for meshes it shows only some faces of; null when not isolating. */
+    const scene::isolation::Set* isolation = nullptr;
     double framesPerSecond = 0.0;
     /** GPU time of the last drawn frame and the ambient occlusion part of it; 0 when unknown. */
     double gpuMs = 0.0;

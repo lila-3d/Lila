@@ -52,6 +52,19 @@ AttrDef sweepFraction()
 
 AttrDef cutCaps() { return boolAttr("cutCaps", true, "Close the flat ends a partial sweep leaves."); }
 
+AttrDef capTypeAttr()
+{
+    AttrDef a{.name = "capType", .type = PlugType::Enum, .defaultValue = int64_t(geo::CapFill::Quads),
+              .flags = AttrInput | AttrStorable | AttrKeyable, .enumNames = {"quads", "fan", "ngon", "none"},
+              .doc = "How each flat end is filled inside its rings: quads (a grid joined to the rim by a ring, one triangle when "
+                     "subdivisionsAxis is odd), fan (triangles to the centre), ngon (one polygon) or none (left open)."};
+    // Scene files saved before capType had n-gon caps.
+    a.fileDefault = int64_t(geo::CapFill::Ngon);
+    return a;
+}
+
+geo::CapFill capFill(const Node& n) { return geo::CapFill(std::clamp<int64_t>(n.as<int64_t>(n.type().attrIndex("capType")), 0, 3)); }
+
 double frac(const Node& n) { return std::clamp(f(n, "fraction"), 0.01, 1.0); }
 
 const std::vector<std::string> kUpAxes = {"x", "y", "z", "-x", "-y", "-z"};
@@ -115,11 +128,13 @@ std::vector<Primitive> primitives()
          true},
         {"polyCylinder", "Cylinder",
          {floatAttr("radius", 50, "cm."), floatAttr("height", 100, "cm."), intAttr("subdivisionsAxis", 20, "Segments around."),
-          intAttr("subdivisionsHeight", 1, "Segments up."), intAttr("subdivisionsCaps", 0, "Rings on each cap; 0 is one n-gon."),
-          boolAttr("caps", true, "Close the ends."), boolAttr("baseAtOrigin", false, "Sit on the ground."), sweepFraction(), cutCaps()},
+          intAttr("subdivisionsHeight", 1, "Segments up."),
+          intAttr("subdivisionsCaps", 0, "Rings of quads around each cap's fill; 0 and 1 both leave just the fill."), capTypeAttr(),
+          boolAttr("caps", true, "Close the ends; off leaves them open whatever capType says."), boolAttr("baseAtOrigin", false, "Sit on the ground."),
+          sweepFraction(), cutCaps()},
          [](const Node& n) {
              return geo::makeCylinder({f(n, "radius"), f(n, "height"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsHeight"),
-                                       i(n, "subdivisionsCaps", 0), b(n, "caps"), b(n, "baseAtOrigin"), frac(n), b(n, "cutCaps")});
+                                       i(n, "subdivisionsCaps", 0), b(n, "caps"), b(n, "baseAtOrigin"), frac(n), b(n, "cutCaps"), capFill(n)});
          }},
         {"polyCapsule", "Capsule",
          {floatAttr("radius", 50, "cm."), floatAttr("height", 200, "End to end, caps included, cm."),
@@ -131,11 +146,12 @@ std::vector<Primitive> primitives()
          }},
         {"polyCone", "Cone",
          {floatAttr("radius", 50, "cm."), floatAttr("height", 100, "cm."), intAttr("subdivisionsAxis", 20, "Segments around."),
-          intAttr("subdivisionsHeight", 1, "Segments up."), intAttr("subdivisionsCap", 0, "Rings on the base; 0 is one n-gon."),
+          intAttr("subdivisionsHeight", 1, "Segments up."),
+          intAttr("subdivisionsCap", 0, "Rings of quads around the base's fill; 0 and 1 both leave just the fill."), capTypeAttr(),
           boolAttr("baseAtOrigin", false, "Sit on the ground."), sweepFraction(), cutCaps()},
          [](const Node& n) {
              return geo::makeCone({f(n, "radius"), f(n, "height"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsHeight"),
-                                   i(n, "subdivisionsCap", 0), b(n, "baseAtOrigin"), frac(n), b(n, "cutCaps")});
+                                   i(n, "subdivisionsCap", 0), b(n, "baseAtOrigin"), frac(n), b(n, "cutCaps"), capFill(n)});
          }},
         {"polyPlane", "Plane",
          {floatAttr("width", 100, "Size along X, cm."), floatAttr("depth", 100, "Size along Z, cm."),
@@ -350,7 +366,10 @@ void registerMeshCommands()
             {"generator", "", T::Bool, true, "Keep the generator node so its parameters stay editable."},
         };
         for (const AttrDef& a : p.attrs)
-            flags.push_back({a.name, "", a.type == PlugType::Bool ? T::Bool : a.type == PlugType::Int ? T::Int : T::Float, toJson(a.defaultValue), a.doc});
+            if (a.type == PlugType::Enum)
+                flags.push_back({a.name, "", T::String, a.enumNames[std::get<int64_t>(a.defaultValue)], a.doc, a.enumNames});
+            else
+                flags.push_back({a.name, "", a.type == PlugType::Bool ? T::Bool : a.type == PlugType::Int ? T::Int : T::Float, toJson(a.defaultValue), a.doc});
         flags.push_back({"upAxis", "", T::String, nullptr, "Direction the primitive's up points: x, y, z, -x, -y or -z; the scene up axis when left out.",
                          kUpAxes});
         std::string type = p.type, display = p.display;

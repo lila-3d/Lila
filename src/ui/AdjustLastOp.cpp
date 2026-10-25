@@ -84,7 +84,7 @@ LastOpEditor::LastOpEditor(QWidget* parent) : QWidget(parent)
     mLiveCheck->setSingleShot(true);
     mLiveCheck->setInterval(0);
     connect(mLiveCheck, &QTimer::timeout, this, [this] {
-        bool live = lo::live();
+        bool live = lo::reachable();
         mFields->setEnabled(live);
         mNonDestructive->setEnabled(live);
     });
@@ -423,24 +423,25 @@ void install()
         else if (c == lo::Change::Other || c == lo::Change::Cleared)
             hidePopup();
     });
-    // Selection changes and undo land on the undo stack, which ends the op's adjustability.
+    // Edits outside the undo stack end the op's adjustability too; selection changes never do.
     auto checkLive = [] {
-        if (popup() && popup()->isVisible() && !lo::live())
+        if (popup() && popup()->isVisible() && !lo::reachable())
             QTimer::singleShot(0, [] {
-                if (!lo::live())
+                if (!lo::reachable())
                     hidePopup();
             });
     };
     scene::Graph::current().addListener([checkLive](scene::Change, scene::NodeId) { checkLive(); });
     scene::components::addListener(checkLive);
 
-    actions::add({.id = "adjustLastOp.show", .label = "Adjust Last Operation", .category = "Mesh", .run = [] {
-                      if (lo::live())
+    actions::add({.id = "adjustLastOp.show", .label = "Adjust Last Operation", .category = "Edit", .run = [] {
+                      if (lo::reachable())
                           showPopup();
                       else
-                          log::warn("Adjust Last Operation: nothing to adjust (the last modeling operation is no longer the latest undo step)");
+                          log::warn("Adjust Last Operation: nothing to adjust (another edit came after the last modeling operation)");
                   },
-                  .doc = "Reopens the in-view settings of the last modeling operation, to change them live.",
+                  .doc = "Reopens the in-view settings of the last modeling operation, to change them live. Selection changes made since "
+                         "are undone when a setting changes.",
                   .python = "lila.ui.run_action(\"adjustLastOp.show\")"});
     actions::add({.id = "adjustLastOp.makeNonDestructive", .label = "Make Last Operation Non-Destructive", .category = "Mesh", .run = [] {
                       try

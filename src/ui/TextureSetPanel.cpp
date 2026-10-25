@@ -19,6 +19,7 @@
 #include "scene/Graph.h"
 #include "scene/Node.h"
 #include "ui/Actions.h"
+#include "ui/Deletion.h"
 #include "ui/GraphBackend.h"
 #include "ui/Icons.h"
 #include "ui/MaterialBrowser.h"
@@ -1784,6 +1785,7 @@ TextureSetPanel::TextureSetPanel(QWidget* parent) : QWidget(parent), d(std::make
     auto* split = new QSplitter(Qt::Vertical, this);
     d->tree = new LayerTree(split);
     d->tree->setObjectName("layerTree");
+    deletion::claim(d->tree, [this] { deleteSelected(); });
     d->propsScroll = new QScrollArea(split);
     d->propsScroll->setWidgetResizable(true);
     d->propsScroll->setFrameShape(QFrame::NoFrame);
@@ -1814,6 +1816,7 @@ TextureSetPanel::TextureSetPanel(QWidget* parent) : QWidget(parent), d(std::make
     connect(d->shelf, &QListWidget::itemDoubleClicked, this,
             [this](QListWidgetItem* it) { applySmartMaterial(it->data(Qt::UserRole).toString().toStdString()); });
     sv->addWidget(d->shelf, 1);
+    deletion::claim(d->shelf, nullptr);
     auto* apply = new QPushButton(icon("sparkles"), "Apply", shelfBox);
     apply->setToolTip("Apply the chosen smart material above the selected layer, or the smart mask to it");
     connect(apply, &QPushButton::clicked, this, [this] {

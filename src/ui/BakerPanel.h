@@ -72,6 +72,8 @@ public:
      * goes back to the auto cage, a group row deletes the group. Scene meshes are never touched. One undo step.
      */
     void removeSelectedRows();
+    /** Removes the maps selected in the Maps tab from the project. One undo step. */
+    void removeSelectedMaps();
 
 protected:
     void showEvent(QShowEvent* e) override;

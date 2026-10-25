@@ -6,6 +6,7 @@
 #include "core/Profile.h"
 #include "ops/Command.h"
 #include "python/Python.h"
+#include "ui/Deletion.h"
 #include "ui/editor/CodeEditor.h"
 #include "ui/editor/FindBar.h"
 #include "ui/editor/Interpreter.h"
@@ -100,6 +101,7 @@ ScriptEditor::ScriptEditor(QWidget* parent) : QWidget(parent)
     mFont.setStyleHint(QFont::Monospace);
     mFont.setPointSizeF(9.5);
     setProperty("hotkeyContext", "scriptEditor");
+    deletion::claim(this, nullptr);
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);

@@ -3,6 +3,7 @@
 /** Every UI extension point. Each lives in lila::ui; register through the extension's ext::Context so unloading removes it. */
 #include "lila/Actions.h"
 #include "lila/AttributeEditor.h"
+#include "lila/Delete.h"
 #include "lila/GraphBackends.h"
 #include "lila/Hotkeys.h"
 #include "lila/Layouts.h"

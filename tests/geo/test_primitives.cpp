@@ -104,7 +104,7 @@ TEST_CASE("primitives: round")
 
     Mesh cyl = makeCylinder();
     checkClosedPrimitive(cyl);
-    CHECK(cyl.numFaces() == 22);
+    CHECK(cyl.numFaces() == 20 + 2 * (5 * 5 + 20));
     Mesh cyl2 = makeCylinder({50.0, 100.0, 16, 3, 2, true, true});
     checkClosedPrimitive(cyl2);
     CHECK(cyl2.bounds().min.y == doctest::Approx(0.0));
@@ -200,6 +200,77 @@ TEST_CASE("primitives: sphere and ico sphere fraction")
     based.fraction = 0.5;
     based.baseAtOrigin = true;
     CHECK(makeIcoSphere(based).bounds().min.y == doctest::Approx(0.0).scale(100.0));
+}
+
+TEST_CASE("primitives: cap fills")
+{
+    auto sides = [](const Mesh& m, int n) {
+        int count = 0;
+        for (Index f = 0; f < m.faceCapacity(); ++f)
+            count += m.faceValid(f) && int(m.faceSize(f)) == n;
+        return count;
+    };
+    for (int axis : {3, 4, 5, 6, 7, 12, 20, 21, 32})
+        for (int rings : {0, 1, 3})
+        {
+            CAPTURE(axis);
+            CAPTURE(rings);
+            CylinderOptions o{.subdivAxis = axis, .subdivHeight = 2, .subdivCaps = rings};
+            Mesh quads = makeCylinder(o);
+            checkClosedPrimitive(quads);
+            CHECK(isValid(quads, kValidateDefault | kValidateDegenerate));
+            const int border = axis - axis % 2, a = border / 4, c = border / 2 - a;
+            const int extra = 2 * (std::max(1, rings) - 1) * axis;
+            if (axis >= 4)
+            {
+                CHECK(quads.numFaces() == 2 * axis + 2 * (a * c + border + axis % 2) + extra);
+                CHECK(sides(quads, 3) == 2 * (axis % 2));
+                CHECK(sides(quads, 4) == int(quads.numFaces()) - 2 * (axis % 2));
+            }
+            else
+                CHECK(quads.numFaces() == 2 * axis + 2 + extra);
+
+            o.capFill = CapFill::Fan;
+            Mesh fan = makeCylinder(o);
+            checkClosedPrimitive(fan);
+            CHECK(fan.numFaces() == 2 * axis + 2 * axis + extra);
+            o.capFill = CapFill::Ngon;
+            Mesh ngon = makeCylinder(o);
+            checkClosedPrimitive(ngon);
+            CHECK(ngon.numFaces() == 2 * axis + 2 + extra);
+            o.capFill = CapFill::None;
+            Mesh open = makeCylinder(o);
+            CHECK(isValid(open));
+            CHECK(open.numFaces() == 2 * axis);
+            CHECK(boundaryEdgeCount(open) == 2 * axis);
+
+            ConeOptions k{.subdivAxis = axis, .subdivCap = rings};
+            Mesh cone = makeCone(k);
+            checkClosedPrimitive(cone);
+            if (axis >= 4)
+                CHECK(sides(cone, 3) == axis + axis % 2);
+            k.capFill = CapFill::None;
+            Mesh openCone = makeCone(k);
+            CHECK(isValid(openCone));
+            CHECK(boundaryEdgeCount(openCone) == axis);
+        }
+    // Quad caps are flat, inside the rim, and their uvs stay in their island.
+    Mesh m = makeCylinder({.radius = 30.0, .height = 80.0, .subdivAxis = 24});
+    std::span<const glm::vec2> uv = std::as_const(m).cornerAttrs().get<glm::vec2>(attr::uvName(0));
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f) && std::abs(m.faceNormal(f).y) > 0.5)
+            m.forEachFaceCorner(f, [&](Index c) {
+                const glm::dvec3 p = m.position(m.cornerPoint(c));
+                CHECK(std::abs(std::abs(p.y) - 40.0) < 1e-9);
+                CHECK(std::hypot(p.x, p.z) <= 30.0 + 1e-9);
+                CHECK(uv[c].y < 0.5f);
+                CHECK(uv[c].x >= 0.0f);
+                CHECK(uv[c].x <= 1.0f);
+            });
+    // Wedges pair their fan into quads.
+    Mesh wedge = makeCylinder({.subdivAxis = 9, .fraction = 0.5});
+    checkClosedPrimitive(wedge);
+    CHECK(sides(wedge, 3) == 2);
 }
 
 TEST_CASE("primitives: partial sweeps")

@@ -17,7 +17,7 @@ namespace lila::ui
 {
 /**
  * Makes every spin box in the app a virtual slider: middle-drag left/right steps its value by its single step every few
- * pixels (Shift x10, Ctrl x0.1 on decimal fields). A middle click (no drag) restores the box's kDefaultProperty, when it
+ * pixels (Shift x10, Ctrl x0.1 on decimal fields). Its form label scrubs it the same way with the left button too. A middle click (no drag) restores the box's kDefaultProperty, when it
  * has one. Installed once on the application.
  */
 LILA_UI_API void installSpinScrub(QObject* parent);

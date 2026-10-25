@@ -5,6 +5,8 @@
 #include "scene/Components.h"
 #include "scene/Graph.h"
 #include "scene/HudStats.h"
+#include "scene/Isolation.h"
+#include "scene/LodGroup.h"
 #include "scene/MeshNodes.h"
 
 #include <chrono>
@@ -124,6 +126,40 @@ TEST_CASE("hud poly count: scene, selected objects and selected components")
     {
         NodeId keep = idOf(c);
         CHECK(hud::polyStats(g, "uv0", [&](NodeId id) { return id == keep; }).scene.faces == 6);
+    }
+
+    SUBCASE("a mesh isolated by components counts only the faces shown, and only the selected components on them")
+    {
+        NodeId plane = g.createNode(*types::find("mesh"), "TwoQuads")->id();
+        g.setValue({plane, MeshNode::kInMesh, -1}, MeshPtr(twoQuads(true)));
+        g.evaluate();
+        isolation::Set iso;
+        iso.nodes.insert(plane);
+        iso.partial[plane] = {{0}, 2};
+        iso.touch();
+        auto shown = [&](NodeId id) { return iso.shows(id); };
+        CHECK(hud::polyStats(g, "uv0", shown, &iso).scene == PolyCount{4, 4, 1, 2, 4});
+        CHECK(hud::polyStats(g, "uv0", shown).scene == PolyCount{6, 7, 2, 4, 8});
+        run("selectComponents", {{"args", {"TwoQuads"}}, {"vertices", {0, 2, 4}}});
+        CHECK(hud::polyStats(g, "uv0", shown, &iso).components == PolyCount{2, 0, 0, 0, 0});
+        iso.partial[plane] = {{0, 1}, 2};
+        iso.touch();
+        CHECK(hud::polyStats(g, "uv0", shown, &iso).components == PolyCount{3, 0, 0, 0, 0});
+    }
+
+    SUBCASE("LOD levels a view does not show leave the counts")
+    {
+        std::string grp = run("lodGroup", {{"args", {a, b, c}}}).get<std::string>();
+        g.evaluate();
+        lod::View view;
+        view.mode = lod::Mode::Level;
+        view.level = 1;
+        const std::unordered_set<NodeId> hidden = lod::hidden(g, view);
+        hud::PolyStats h = hud::polyStats(g, "uv0", [&](NodeId id) { return !hidden.contains(id); });
+        CHECK(h.scene.faces == 6);
+        CHECK(h.objects.faces == 6);
+        view.mode = lod::Mode::All;
+        CHECK(lod::hidden(g, view).empty());
     }
 }
 

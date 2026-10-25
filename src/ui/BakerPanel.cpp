@@ -23,6 +23,7 @@
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "ui/Actions.h"
+#include "ui/Deletion.h"
 #include "ui/FlagFields.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
@@ -1095,8 +1096,8 @@ QWidget* BakerPanel::buildGroups()
     mGroups->header()->setStretchLastSection(true);
     mGroups->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     Hotkeys::passThrough(mGroups);
-    // Its own context binds Delete to bake.removeRows, ahead of the global edit.delete.
     mGroups->setProperty("hotkeyContext", "baker");
+    deletion::claim(mGroups, [this] { removeSelectedRows(); });
     tree->dropped = [this](const QStringList& names, QTreeWidgetItem* at) { dropNodes(names, at); };
     tree->removeRows = [this] { removeSelectedRows(); };
     connect(mGroups, &QTreeWidget::currentItemChanged, this, [this] {
@@ -1299,15 +1300,17 @@ QWidget* BakerPanel::buildGroupDetails()
     QToolButton* down = toolButton(mStackButtons, "arrow-down", "Move the modifier later");
     connect(down, &QToolButton::clicked, this, [move] { move(1); });
     sb->addWidget(down);
-    QToolButton* del = toolButton(mStackButtons, "trash", "Remove the modifier");
-    connect(del, &QToolButton::clicked, this, [this] {
+    auto removeModifier = [this] {
         json s = currentStack();
         const int r = mStack->currentRow();
         if (r < 0 || r >= int(s.size()))
             return;
         s.erase(s.begin() + r);
         setStack(s);
-    });
+    };
+    deletion::claim(mStack, removeModifier);
+    QToolButton* del = toolButton(mStackButtons, "trash", "Remove the modifier");
+    connect(del, &QToolButton::clicked, this, removeModifier);
     sb->addWidget(del);
     sb->addStretch(1);
     sv->addWidget(mStackButtons);
@@ -1355,10 +1358,7 @@ QWidget* BakerPanel::buildMaps()
     bar->addWidget(mAddMap);
     bar->addStretch(1);
     QToolButton* remove = toolButton(w, "trash", "Remove the selected map from the project");
-    connect(remove, &QToolButton::clicked, this, [this] {
-        if (QTreeWidgetItem* it = mMaps->currentItem())
-            run("setBakeMap", {{"args", {ss(it->data(0, kNodeRole).toString())}}, {"remove", true}});
-    });
+    connect(remove, &QToolButton::clicked, this, [this] { removeSelectedMaps(); });
     bar->addWidget(remove);
     v->addLayout(bar);
 
@@ -1369,7 +1369,9 @@ QWidget* BakerPanel::buildMaps()
     mMaps->setRootIsDecorated(false);
     mMaps->setUniformRowHeights(true);
     mMaps->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    mMaps->setSelectionMode(QAbstractItemView::ExtendedSelection);
     Hotkeys::passThrough(mMaps);
+    deletion::claim(mMaps, [this] { removeSelectedMaps(); });
     connect(mMaps, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem* it, int column) {
         if (mUpdating || column != 0)
             return;
@@ -1567,6 +1569,8 @@ QWidget* BakerPanel::buildResults()
     mThumbs->setToolTip("Double-click to open a map; right-click to show it in its folder or copy its path");
     mThumbs->setSelectionMode(QAbstractItemView::ExtendedSelection);
     mThumbs->setContextMenuPolicy(Qt::CustomContextMenu);
+    // Baked files are left on disk: removing them can't be undone.
+    deletion::claim(mThumbs, nullptr);
     connect(mThumbs, &QListWidget::itemDoubleClicked, this,
             [](QListWidgetItem* it) { QDesktopServices::openUrl(QUrl::fromLocalFile(it->data(kFileRole).toString())); });
     connect(mThumbs, &QListWidget::customContextMenuRequested, this, [this](const QPoint& at) {
@@ -1817,6 +1821,21 @@ void BakerPanel::removeSelectedRows()
     }
     if (!doomed.empty())
         runUi("delete", {{"args", doomed}});
+}
+
+void BakerPanel::removeSelectedMaps()
+{
+    QList<QTreeWidgetItem*> rows = mMaps->selectedItems();
+    if (rows.isEmpty() && mMaps->currentItem())
+        rows << mMaps->currentItem();
+    std::vector<std::string> maps;
+    for (QTreeWidgetItem* it : rows)
+        maps.push_back(ss(it->data(0, kNodeRole).toString()));
+    if (maps.empty())
+        return;
+    UndoChunk chunk("Remove Bake Maps");
+    for (const std::string& m : maps)
+        run("setBakeMap", {{"args", {m}}, {"remove", true}});
 }
 
 std::string BakerPanel::currentGroup() const

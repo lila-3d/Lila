@@ -67,9 +67,11 @@ protected:
         case QEvent::MouseButtonPress:
         {
             auto* m = static_cast<QMouseEvent*>(e);
-            if (m->button() != Qt::MiddleButton)
+            // A spin box's form label also scrubs it with the left button, as option box labels and channel names do.
+            const bool labelDrag = m->button() == Qt::LeftButton && scrubsBuddy(obj);
+            if (m->button() != Qt::MiddleButton && !labelDrag)
                 return false;
-            if (QWidget* choice = choiceOf(obj))
+            if (QWidget* choice = labelDrag ? nullptr : choiceOf(obj))
             {
                 mChoice = choice;
                 mClick.press(int(m->globalPosition().x()), int(m->globalPosition().y()), nowMs());
@@ -79,6 +81,7 @@ protected:
             if (!box || !box->isEnabled() || box->isReadOnly())
                 return false;
             mBox = box;
+            mButton = m->button();
             mLastX = m->globalPosition().x();
             mCarry = 0.0;
             mClick.press(int(m->globalPosition().x()), int(m->globalPosition().y()), nowMs());
@@ -94,7 +97,7 @@ protected:
                 return false;
             auto* m = static_cast<QMouseEvent*>(e);
             // The release can go missing when focus moves mid-drag.
-            if (!(m->buttons() & Qt::MiddleButton))
+            if (!(m->buttons() & mButton))
             {
                 endDrag();
                 return false;
@@ -122,14 +125,17 @@ protected:
                     resetChoice(choice);
                 return true;
             }
-            if (!mBox || m->button() != Qt::MiddleButton)
+            if (!mBox || m->button() != mButton)
                 return false;
             QPointer<QAbstractSpinBox> box = mBox;
             endDrag();
-            if (mClick.release(int(m->globalPosition().x()), int(m->globalPosition().y()), nowMs()))
+            if (m->button() == Qt::MiddleButton && mClick.release(int(m->globalPosition().x()), int(m->globalPosition().y()), nowMs()))
                 resetToDefault(box);
             return true;
         }
+        case QEvent::Enter:
+            scrubsBuddy(obj);
+            return false;
         case QEvent::ToolTip:
             if (QWidget* choice = choiceOf(obj))
             {
@@ -164,6 +170,24 @@ private:
             else if (o->isWidgetType() && static_cast<QWidget*>(o)->isWindow())
                 break;
         return nullptr;
+    }
+
+    /**
+     * A plain form label whose buddy is a spin box, which left-drags scrub; it gets the scrub cursor. Labels that set
+     * their own cursor scrub by themselves.
+     */
+    static bool scrubsBuddy(QObject* obj)
+    {
+        auto* label = qobject_cast<QLabel*>(obj);
+        if (!label || !qobject_cast<QAbstractSpinBox*>(label->buddy()))
+            return false;
+        if (label->property("lilaScrubsBuddy").toBool())
+            return true;
+        if (label->testAttribute(Qt::WA_SetCursor))
+            return false;
+        label->setProperty("lilaScrubsBuddy", true);
+        label->setCursor(Qt::SizeHorCursor);
+        return true;
     }
 
     /** A check box or combo box with a default, or the form label naming one as its buddy. */
@@ -241,6 +265,7 @@ private:
     }
 
     QPointer<QAbstractSpinBox> mBox;
+    Qt::MouseButton mButton = Qt::MiddleButton;
     QPointer<QWidget> mChoice;
     double mLastX = 0.0;
     double mCarry = 0.0;

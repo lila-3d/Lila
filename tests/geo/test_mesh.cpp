@@ -194,7 +194,7 @@ TEST_CASE("topology: edge loops run through valence-4 points and stop at poles")
 {
     SUBCASE("cylinder with n-gon caps: rims and rings close, verticals stop at the rims")
     {
-        Mesh m = makeCylinder({.subdivAxis = 12, .subdivHeight = 3});
+        Mesh m = makeCylinder({.subdivAxis = 12, .subdivHeight = 3, .capFill = CapFill::Ngon});
         for (Index e = 0; e < m.edgeCapacity(); ++e)
         {
             if (!m.edgeValid(e))

@@ -161,11 +161,11 @@ protected:
     }
 
 private:
-    /** The join this dialog ran, or an adjustment of it, is still the latest undo step. */
+    /** The join this dialog ran, or an adjustment of it, is still the latest undo step apart from selection changes. */
     bool live() const
     {
         const lo::Op* op = lo::current();
-        return !mTargets.empty() && lo::live() && op && op->command == kCommand;
+        return !mTargets.empty() && lo::reachable() && op && op->command == kCommand;
     }
 
     /** Ends the edit in progress, so the next one is an undo step of its own. */

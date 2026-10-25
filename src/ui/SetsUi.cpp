@@ -5,6 +5,7 @@
 #include "scene/Graph.h"
 #include "scene/ObjectSets.h"
 #include "ui/Actions.h"
+#include "ui/Deletion.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
 #include "ui/Panels.h"
@@ -122,6 +123,10 @@ QuickSelectSetsPanel::QuickSelectSetsPanel(QWidget* parent) : QWidget(parent)
     mTree->setContextMenuPolicy(Qt::CustomContextMenu);
     mTree->setIconSize(QSize(14, 14));
     Hotkeys::passThrough(mTree);
+    deletion::claim(mTree, [this] {
+        if (std::string set = currentSet(); !set.empty())
+            sets::run("deleteSet", {{"args", {set}}});
+    });
     QHeaderView* header = mTree->header();
     header->setStretchLastSection(false);
     header->setSectionResizeMode(0, QHeaderView::Stretch);

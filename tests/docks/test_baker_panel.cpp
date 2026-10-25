@@ -16,6 +16,7 @@
 #include "scene/Transform.h"
 #include "ui/Actions.h"
 #include "ui/BakerPanel.h"
+#include "ui/Deletion.h"
 #include "ui/Menus.h"
 #include "ui/Outliner.h"
 #include "ui/Panels.h"
@@ -495,8 +496,43 @@ TEST_CASE("baker panel: presets stick on group and High rows, typed params edit 
         ops::execute("deleteBakeTarget", {{"args", {"PanelPreset"}}});
     }
 
+    SUBCASE("Delete in the Maps tab removes the selected maps from the project in one undo step")
+    {
+        auto* maps = child<QTreeWidget>(&panel, "bakerMaps");
+        auto mapIds = [&] {
+            std::set<std::string> out;
+            for (const bake::MapSettings& m : bake::projectSettings(*scene::Graph::current().find(panel.project())).maps)
+                out.insert(m.map);
+            return out;
+        };
+        const std::set<std::string> before = mapIds();
+        REQUIRE(before.contains("ao"));
+        REQUIRE(before.contains("normal"));
+        maps->clearSelection();
+        for (int r = 0; r < maps->topLevelItemCount(); ++r)
+            if (const QString id = maps->topLevelItem(r)->data(0, Qt::UserRole + 2).toString(); id == "ao" || id == "normal")
+                maps->topLevelItem(r)->setSelected(true);
+
+        CHECK(ui::deletion::route(maps, groups).target == ui::deletion::Target::Panel);
+        ui::deletion::run(maps, groups, [] { FAIL("Delete in the Maps tab reached the scene"); });
+        pump();
+        std::set<std::string> after = mapIds();
+        CHECK(after.size() == before.size() - 2);
+        CHECK_FALSE(after.contains("ao"));
+        CHECK_FALSE(after.contains("normal"));
+        for (const std::string& m : {low, high, bolts})
+            CHECK(scene::Graph::current().find(m));
+        REQUIRE(UndoStack::get().undo());
+        pump();
+        CHECK(mapIds() == before);
+
+        CHECK(ui::deletion::route(child<QListWidget>(&panel, "bakerThumbs"), nullptr).target == ui::deletion::Target::Nothing);
+        CHECK(ui::deletion::route(child<QListWidget>(&panel, "bakerStack"), nullptr).target == ui::deletion::Target::Panel);
+    }
+
     SUBCASE("Delete in the tree removes the tree's rows from the group, never the scene meshes")
     {
+        CHECK(ui::deletion::route(groups, nullptr).target == ui::deletion::Target::Panel);
         CHECK(groups->property("hotkeyContext").toString() == "baker");
         ops::execute("select", {{"args", {low}}});
         select("bolts");

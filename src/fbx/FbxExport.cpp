@@ -12,6 +12,7 @@
 #include "scene/Deformers.h"
 #include "scene/Drivers.h"
 #include "scene/Graph.h"
+#include "scene/LodGroup.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "scene/Morphs.h"
@@ -520,7 +521,7 @@ void writeGeometry(Record& objects, int64_t id, const std::string& name, const G
 
 struct ModelInfo
 {
-    std::string_view type = "Null"; // Mesh, Null or LimbNode
+    std::string_view type = "Null"; // Mesh, Null, LimbNode or LodGroup
     Trs trs;
     glm::dvec3 pre{0.0};
     glm::dvec3 post{0.0};
@@ -567,6 +568,23 @@ void writeLimbAttribute(Record& objects, int64_t id, const std::string& name)
     Record& props = attr.add("Properties70");
     pDouble(props, "Size", 33.333333);
     attr.add("TypeFlags").str("Skeleton");
+}
+
+/**
+ * An FbxLODGroup, laid out as Maya writes it. ThresholdsUsedAsPercentage makes LevelN the screen percentage at which
+ * level N+1 takes over, which is that level's Unreal screen size times 100.
+ */
+void writeLodGroupAttribute(Record& objects, int64_t id, const std::string& name, const std::vector<double>& screenSizes, size_t levels)
+{
+    Record& attr = objects.add("NodeAttribute");
+    attr.i64(id).str(bin::objectName(name, "NodeAttribute")).str("LodGroup");
+    Record& props = attr.add("Properties70");
+    pBool(props, "ThresholdsUsedAsPercentage", true);
+    for (size_t i = 1; i < screenSizes.size(); ++i)
+        props.addP(std::format("Thresholds|Level{}", i - 1), "Distance", "", "").f64(screenSizes[i] * 100.0).str("cm");
+    for (size_t i = 0; i < levels; ++i)
+        pEnum(props, std::format("DisplayLevels|Level{}", i), 0);
+    attr.add("TypeFlags").str("LodGroup");
 }
 
 /** FBX GateFit for scene::FilmFit fill, horizontal, vertical, overscan. */
@@ -799,7 +817,7 @@ void writeGlobalSettings(Record& root, const AxisDecl& a, double fps, int64_t sp
 
 struct ObjectCounts
 {
-    int models = 0, nulls = 0, limbs = 0, cameras = 0, geometries = 0, materials = 0;
+    int models = 0, nulls = 0, limbs = 0, cameras = 0, lodGroups = 0, geometries = 0, materials = 0;
     int deformers = 0, poses = 0, stacks = 0, layers = 0, curveNodes = 0, curves = 0;
 };
 
@@ -807,7 +825,7 @@ void writeDefinitions(Record& root, const ObjectCounts& n)
 {
     Record& defs = root.add("Definitions");
     defs.add("Version").i32(100);
-    defs.add("Count").i32(1 + n.models + n.nulls + n.limbs + n.cameras + n.geometries + n.materials + n.deformers + n.poses + n.stacks + n.layers +
+    defs.add("Count").i32(1 + n.models + n.nulls + n.limbs + n.cameras + n.lodGroups + n.geometries + n.materials + n.deformers + n.poses + n.stacks + n.layers +
                           n.curveNodes + n.curves);
     auto type = [&](std::string_view name, int count, std::string_view tmpl) -> Record* {
         Record& t = defs.add("ObjectType");
@@ -832,9 +850,10 @@ void writeDefinitions(Record& root, const ObjectCounts& n)
         pBool(*p, "Show", true);
         p->addP("Visibility", "Visibility", "", "A").f64(1.0);
     }
-    if (n.nulls || n.limbs || n.cameras)
+    if (n.nulls || n.limbs || n.cameras || n.lodGroups)
     {
-        Record* p = type("NodeAttribute", n.nulls + n.limbs + n.cameras, n.nulls ? "FbxNull" : n.limbs ? "FbxSkeleton" : "FbxCamera");
+        Record* p = type("NodeAttribute", n.nulls + n.limbs + n.cameras + n.lodGroups,
+                         n.nulls ? "FbxNull" : n.limbs ? "FbxSkeleton" : n.cameras ? "FbxCamera" : "FbxLODGroup");
         if (n.nulls || n.limbs)
         {
             p3(*p, "Color", "ColorRGB", "Color", "", glm::dvec3(0.8));
@@ -1037,6 +1056,12 @@ struct Gather
         if (n->type().isA("mesh") && !n->type().isA("lattice") && opts.kind != ExportKind::Sequence)
             e.mesh = modifiers::exportMesh(graph, id);
         e.camera = cameraOf(*n);
+        if (lod::isGroup(*n) && !flatten)
+        {
+            e.lodGroup = true;
+            if (!lod::parseSizes(n->as<std::string>(LodGroup::kScreenSizes)).empty())
+                e.lodScreenSizes = lod::screenSizes(*n, lod::levels(graph, id).size());
+        }
         const glm::dmat4 w = world(id);
         if (flatten)
         {
@@ -1843,7 +1868,8 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
 
         // Joints and keyed nodes keep their rotate order through the axis swap, so channels map one to one.
         ModelInfo& mi = info[i];
-        mi.type = isMesh ? "Mesh" : n.joint ? "LimbNode" : "Null";
+        const bool lodGroup = n.lodGroup && !isMesh && !n.joint && !n.camera;
+        mi.type = isMesh ? "Mesh" : n.joint ? "LimbNode" : lodGroup ? "LodGroup" : "Null";
         mi.order = n.joint || keyed ? axes.order(n.rotateOrder) : scene::RotateOrder::XYZ;
         const glm::dmat3 pre = basis3 * glm::dmat3(n.pre) * glm::transpose(basis3);
         mi.pre = cleanVec(scene::matrixToEuler(pre, scene::RotateOrder::XYZ));
@@ -1876,6 +1902,12 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
             {
                 writeLimbAttribute(objects, attrId, n.name);
                 ++counts.limbs;
+            }
+            else if (lodGroup)
+            {
+                const size_t levels = size_t(std::count_if(scene.nodes.begin(), scene.nodes.end(), [&](const ExportNode& c) { return c.parent == int(i); }));
+                writeLodGroupAttribute(objects, attrId, n.name, n.lodScreenSizes, levels);
+                ++counts.lodGroups;
             }
             else
             {

@@ -15,6 +15,7 @@
 #include "scene/DisplayLayers.h"
 #include "scene/Ghosts.h"
 #include "scene/Graph.h"
+#include "scene/LodGroup.h"
 #include "scene/ImagePlane.h"
 #include "scene/Materials.h"
 #include "scene/Measure.h"
@@ -148,6 +149,7 @@ void registerCommands()
     deformers::registerCommands();
     registerMeasureCommands();
     registerImagePlaneCommands();
+    lod::registerCommands();
     registerCameraCommands();
     spaces::registerCommands();
     anim::registerCommands();

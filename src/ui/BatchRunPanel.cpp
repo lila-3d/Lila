@@ -9,6 +9,7 @@
 #include "ops/Command.h"
 #include "scene/SceneScripts.h"
 #include "ui/Actions.h"
+#include "ui/Deletion.h"
 #include "ui/Icons.h"
 #include "ui/Panels.h"
 #include "ui/Theme.h"
@@ -478,6 +479,7 @@ QWidget* BatchRunPanel::buildFilesTab()
             addInputs({dir});
     });
     connect(remove, &QToolButton::clicked, this, [this] { qDeleteAll(mInputs->selectedItems()); });
+    deletion::claim(mInputs, [this] { qDeleteAll(mInputs->selectedItems()); });
     connect(clear, &QToolButton::clicked, mInputs, &QListWidget::clear);
 
     auto* form = new QFormLayout;

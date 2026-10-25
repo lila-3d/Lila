@@ -6,6 +6,7 @@
 #include "core/Workspace.h"
 #include "python/Python.h"
 #include "ui/Actions.h"
+#include "ui/Deletion.h"
 #include "ui/DockSidebar.h"
 #include "ui/Icons.h"
 #include "ui/Layouts.h"
@@ -591,6 +592,10 @@ void LayoutController::manage()
     connect(shelfButton, &QPushButton::clicked, &dlg, [&] {
         if (const layouts::Entry* e = selected())
             addToShelf(e->name);
+    });
+    deletion::claim(tree, [deleteButton] {
+        if (deleteButton->isEnabled())
+            deleteButton->click();
     });
     connect(closeButton, &QPushButton::clicked, &dlg, &QDialog::accept);
     reload(layouts::current());

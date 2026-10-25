@@ -6,6 +6,11 @@
 
 #include <functional>
 
+namespace lila::geo
+{
+struct MeshRemap;
+}
+
 namespace lila::scene
 {
 class Graph;
@@ -82,6 +87,12 @@ LILA_SCENE_API NodeId stackSource(Graph& g, NodeId mesh);
 
 /** The mesh node at the top of a modifier's chain, kNoNode if it feeds none. */
 LILA_SCENE_API NodeId meshOf(Graph& g, NodeId modifier);
+
+/** Runs as addModifier creates a modifier of the type, before it is wired in, so it can take context such as the selected components. */
+LILA_SCENE_API void setCreateHook(const std::string& type, std::function<void(Graph&, Node& modifier, NodeId mesh)> hook);
+
+/** A direct edit compacted the base mesh: modifiers holding component ids on it follow them. Records undo with the edit. */
+LILA_SCENE_API void baseRemapped(Graph& g, NodeId mesh, const geo::MeshRemap& remap, const geo::Mesh& base);
 
 /** Whether a modifier is applied on export (its exportEnabled attr; true when the type has none). */
 LILA_SCENE_API bool exportEnabled(const Node& modifier);

@@ -9,6 +9,7 @@
 #include "scene/Camera.h"
 #include "scene/Deformers.h"
 #include "scene/Graph.h"
+#include "scene/LodGroup.h"
 #include "scene/Materials.h"
 #include "scene/MeshNodes.h"
 #include "scene/Morphs.h"
@@ -379,6 +380,27 @@ void applyCamera(scene::Graph& g, scene::NodeId id, const ufbx_camera& cam, doub
     default: break;
     }
     set(Camera::kFilmFit, fit);
+}
+
+/**
+ * Screen sizes from the group's thresholds when they are screen percentages, which is how Lila and Maya's percentage
+ * mode write them; distance thresholds have no screen size to become, so the group keeps automatic sizes.
+ */
+void applyLodGroup(scene::Graph& graph, scene::NodeId id, const ufbx_lod_group& lod, ImportResult& r)
+{
+    if (!ufbx_find_prop(&lod.props, "Thresholds|Level0"))
+        return;
+    if (!lod.relative_distances)
+    {
+        r.warnings.push_back(std::format("{}: LOD distances kept as automatic screen sizes", graph.path(id)));
+        return;
+    }
+    std::vector<double> sizes;
+    for (size_t i = 0; i < lod.lod_levels.count; ++i)
+        sizes.push_back(double(lod.lod_levels.data[i].distance) / 100.0);
+    if (!sizes.empty())
+        sizes[0] = 1.0;
+    graph.setValue({id, scene::LodGroup::kScreenSizes, -1}, scene::lod::formatSizes(sizes));
 }
 
 std::string attribName(ufbx_element_type t)
@@ -772,6 +794,7 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
     const NodeType* xformType = types::find("transform");
     const NodeType* jointType = types::find("joint");
     const NodeType* cameraType = types::find("camera");
+    const NodeType* lodType = types::find("lodGroup");
     CameraList cameras;
     std::map<uint32_t, MeshPtr> meshCache;
     std::map<uint32_t, std::vector<Index>> pointCache;
@@ -794,7 +817,8 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
         const bool isMesh = fn->mesh && fn->mesh->num_faces > 0;
         const bool isJoint = jointType && !isMesh && (fn->bone || bones.count(fn));
         const bool isCamera = cameraType && !isMesh && !isJoint && fn->camera;
-        const NodeType& type = isMesh ? *meshType : isJoint ? *jointType : isCamera ? *cameraType : *xformType;
+        const bool isLod = lodType && !isMesh && !isJoint && !isCamera && fn->attrib_type == UFBX_ELEMENT_LOD_GROUP;
+        const NodeType& type = isMesh ? *meshType : isJoint ? *jointType : isCamera ? *cameraType : isLod ? *lodType : *xformType;
         Node* n = graph.createNode(type, safeName(fbxName, isMesh ? "Mesh" : isJoint ? "joint" : isCamera ? "camera" : "Transform"), parent,
                                    false);
         r.nodes.push_back(n->id());
@@ -872,6 +896,11 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
             }
             if (mesh.blend_deformers.count)
                 blended.push_back({fn, n->id()});
+        }
+        else if (isLod)
+        {
+            if (const ufbx_lod_group* lod = ufbx_as_lod_group(fn->attrib))
+                applyLodGroup(graph, n->id(), *lod, r);
         }
         else if (fn->attrib && fn->attrib_type != UFBX_ELEMENT_EMPTY && !fn->mesh && !isJoint && !isCamera)
         {

@@ -20,6 +20,7 @@ struct Entry
     uint64_t step = 0;
     json call;
     ComponentMode modeAfter = ComponentMode::Object;
+    std::map<NodeId, components::Ids> made;
 };
 
 struct State
@@ -32,6 +33,7 @@ struct State
     bool dragging = false;
     /** Undo went below the op or another step went on top, so landing back on an entry restores it. */
     bool away = false;
+    bool wasReachable = false;
     ComponentMode pendingMode = ComponentMode::Object;
     uint64_t pendingStep = 0;
     bool rerunning = false;
@@ -53,12 +55,21 @@ void notify(Change c)
         fn(c);
 }
 
+std::map<NodeId, components::Ids> madeNow()
+{
+    const ComponentMode m = components::mode();
+    if (m == ComponentMode::Vertex || m == ComponentMode::Edge || m == ComponentMode::Face)
+        return components::selected(m);
+    return {};
+}
+
 void moveTo(size_t index)
 {
     State& s = st();
     s.at = index;
     s.op->call = s.entries[index].call;
     s.op->modeAfter = s.entries[index].modeAfter;
+    s.op->made = s.entries[index].made;
     components::setMode(s.op->modeAfter);
 }
 
@@ -80,17 +91,15 @@ void onExecute(const ExecuteEvent& e)
                     undo.newestId() != s.pendingStep;
     if (recorded)
     {
-        s.op = Op{std::string(e.name), e.call.is_object() ? e.call : json::object(), s.pendingMode, components::mode()};
+        s.op = Op{std::string(e.name), e.call.is_object() ? e.call : json::object(), s.pendingMode, components::mode(), madeNow()};
         s.op->call.update(s.limited);
-        s.entries = {Entry{undo.newestId(), s.op->call, s.op->modeAfter}};
+        s.entries = {Entry{undo.newestId(), s.op->call, s.op->modeAfter, s.op->made}};
         s.at = 0;
         s.dragging = false;
         s.away = false;
+        s.wasReachable = true;
         notify(Change::Recorded);
     }
-    // Undo and redo move through the op's settings rather than ending it.
-    else if (e.source == CallSource::UI && def && def->undoable)
-        notify(Change::Other);
 }
 
 void onUndoChanged()
@@ -98,10 +107,12 @@ void onUndoChanged()
     State& s = st();
     if (s.rerunning || !s.op)
         return;
-    const uint64_t newest = UndoStack::get().newestId();
+    UndoStack& undo = UndoStack::get();
+    const uint64_t newest = undo.newestId();
     for (size_t i = 0; i < s.entries.size(); ++i)
         if (s.entries[i].step == newest)
         {
+            s.wasReachable = true;
             if (i != s.at || std::exchange(s.away, false))
             {
                 s.dragging = false;
@@ -111,6 +122,29 @@ void onUndoChanged()
             return;
         }
     s.away = true;
+    // Selection steps on top of an entry keep it adjustable; a jump in the history can land on another entry.
+    const uint64_t edit = undo.stateId();
+    for (size_t i = 0; i < s.entries.size(); ++i)
+        if (s.entries[i].step == edit && i != s.at)
+            moveTo(i);
+    const bool now = reachable();
+    if (const bool was = std::exchange(s.wasReachable, now); was != now)
+        notify(now ? Change::Restored : Change::Other);
+}
+
+/** Undoes the selection steps above the op's current entry, so it is the newest step again. False if it is not reachable. */
+bool undoSelectionOnTop()
+{
+    State& s = st();
+    if (!reachable())
+        return false;
+    UndoStack& undo = UndoStack::get();
+    s.rerunning = true;
+    while (undo.newestId() != s.entries[s.at].step && undo.undo())
+    {
+    }
+    s.rerunning = false;
+    return live();
 }
 
 std::vector<std::string> meshesOf(const Op& op)
@@ -158,6 +192,13 @@ bool live()
     return s.op && !s.rerunning && s.at < s.entries.size() && UndoStack::get().newestId() == s.entries[s.at].step;
 }
 
+bool reachable()
+{
+    const State& s = st();
+    // A selection op (selectByAngle) is itself a selection step, so only live() keeps it.
+    return live() || (s.op && !s.rerunning && s.at < s.entries.size() && UndoStack::get().stateId() == s.entries[s.at].step);
+}
+
 void limitFlag(const std::string& name, const json& value)
 {
     st().limited[name] = value;
@@ -169,6 +210,7 @@ void clear()
         return;
     st().op.reset();
     st().entries.clear();
+    st().wasReachable = false;
     notify(Change::Cleared);
 }
 
@@ -177,15 +219,20 @@ json rerun(const json& flags, CallSource source, bool drag)
     LILA_ZONE();
 
     State& s = st();
-    if (!live())
+    if (!reachable())
         throw CommandError("nothing to adjust: the last operation is no longer the latest undo step");
     json call = s.op->call;
     for (auto& [k, v] : flags.items())
         call[k] = v;
-    // A drag keeps replacing the step it made, never the op's own run.
-    const bool replace = drag && s.dragging && s.at > 0 && s.at + 1 == s.entries.size();
     if (call == s.op->call)
         return nullptr;
+    UndoStack& undo = UndoStack::get();
+    const size_t redoBefore = undo.redoCount();
+    if (!undoSelectionOnTop())
+        throw CommandError("nothing to adjust: the last operation is no longer the latest undo step");
+    const size_t selectionUndone = undo.redoCount() - redoBefore;
+    // A drag keeps replacing the step it made, never the op's own run.
+    const bool replace = drag && s.dragging && s.at > 0 && s.at + 1 == s.entries.size();
 
     // Named after the flags that differ from the settings the step replaces.
     const json& from = replace ? s.entries[s.at - 1].call : s.op->call;
@@ -194,11 +241,15 @@ json rerun(const json& flags, CallSource source, bool drag)
         if (k != "args" && (!from.contains(k) || from[k] != v))
             changed += (changed.empty() ? "" : ", ") + k;
     const std::string label = "Adjust " + displayName(s.op->command) + (changed.empty() ? "" : ": " + changed);
-    UndoStack& undo = UndoStack::get();
+    auto redoSelection = [&] {
+        for (size_t i = 0; i < selectionUndone; ++i)
+            undo.redo();
+    };
     s.rerunning = true;
     s.limited = json::object();
     if (!(replace ? undo.reopenNewest(label) : undo.openAmend(label)))
     {
+        redoSelection();
         s.rerunning = false;
         throw CommandError("nothing to adjust: the undo stack is busy");
     }
@@ -211,6 +262,7 @@ json rerun(const json& flags, CallSource source, bool drag)
     catch (...)
     {
         undo.cancelChunk();
+        redoSelection();
         s.rerunning = false;
         // A replaced drag step is gone with the cancelled chunk.
         if (replace)
@@ -225,7 +277,7 @@ json rerun(const json& flags, CallSource source, bool drag)
     undo.closeChunk();
     s.rerunning = false;
     call.update(s.limited);
-    Entry entry{undo.newestId(), call, components::mode()};
+    Entry entry{undo.newestId(), call, components::mode(), madeNow()};
     if (replace)
         s.entries.back() = std::move(entry);
     else
@@ -291,19 +343,21 @@ std::string displayName(const std::string& command)
 std::string modifierEquivalent(const std::string& command)
 {
     static const std::map<std::string, std::string> kinds = {
-        {"polyBevel", "bevel"}, {"polyMirror", "mirror"}, {"polySubdivide", "subdivision"}, {"polyTriangulate", "triangulate"}};
+        {"polyBevel", "bevel"},           {"polyExtrude", "extrude"},         {"polyMirror", "mirror"},
+        {"polySubdivide", "subdivision"}, {"polyTriangulate", "triangulate"}};
     auto it = kinds.find(command);
     return it == kinds.end() ? std::string() : it->second;
 }
 
 void makeNonDestructive()
 {
-    if (!live())
+    if (!reachable())
         throw CommandError("makeNonDestructive: the last operation is no longer the latest undo step");
     Op op = *st().op;
     std::string kind = modifierEquivalent(op.command);
     if (kind.empty())
         throw CommandError("makeNonDestructive: " + op.command + " has no modifier equivalent");
+    undoSelectionOnTop();
     const CommandDef* def = ops::find(op.command);
     auto value = [&](const char* flag) {
         for (const FlagDef& f : def->flags)
@@ -324,6 +378,9 @@ void makeNonDestructive()
     }
     else if (kind == "subdivision")
         params = {{"levels", value("levels")}};
+    // The modifier takes the selected faces or edges as addModifier creates it, once undo has put the selection back.
+    else if (kind == "extrude")
+        params = {{"thickness", value("thickness")}, {"offset", value("offset")}, {"individual", value("individual")}};
 
     // Back past every adjustment and the op's own run.
     st().rerunning = true;

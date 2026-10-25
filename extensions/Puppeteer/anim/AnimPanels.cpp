@@ -208,6 +208,7 @@ QWidget* makeStacker(QWidget* parent)
     table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     table->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
     table->setProperty("hotkeyPassThrough", "global");
+    ui::deletion::claim(table, [] { onKeys("stackerDeleteKey"); });
     v->addWidget(table, 1);
 
     auto* quick = new QHBoxLayout;
@@ -420,10 +421,12 @@ QWidget* makeMixer(QWidget* parent)
         if (!current().empty())
             runCommand("duplicateAnimLayer", {{"args", {current()}}});
     }));
-    row1->addWidget(toolButton(w, "trash", "Delete the selected layers", [selectedLayers] {
+    auto deleteLayers = [selectedLayers] {
         if (!selectedLayers().empty())
             runCommand("deleteAnimLayer", {{"args", selectedLayers()}});
-    }));
+    };
+    row1->addWidget(toolButton(w, "trash", "Delete the selected layers", deleteLayers));
+    ui::deletion::claim(tree, deleteLayers);
     row1->addWidget(toolButton(w, "arrow-up", "Move the layer up the stack", [current] {
         if (!current().empty())
             runCommand("reorderAnimLayer", {{"args", {current()}}, {"by", 1}});
@@ -577,10 +580,12 @@ QWidget* makeBank(QWidget* parent)
         if (!currentTake().empty())
             runCommand("bankDuplicateTake", {{"args", {currentTake()}}});
     }));
-    row->addWidget(toolButton(w, "trash", "Delete the take and its animation", [currentTake] {
+    auto deleteTake = [currentTake] {
         if (!currentTake().empty())
             runCommand("deleteTake", {{"args", {currentTake()}}});
-    }));
+    };
+    row->addWidget(toolButton(w, "trash", "Delete the take and its animation", deleteTake));
+    ui::deletion::claim(tree, deleteTake);
     row->addWidget(toolButton(w, "folder-plus", "File the take under a folder", [w, tree, currentTake] {
         if (currentTake().empty())
             return;

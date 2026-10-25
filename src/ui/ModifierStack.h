@@ -73,6 +73,8 @@ private:
     /** A connected mesh input: the source's name and a button to set it from the selection. Null when not offered. */
     QWidget* buildMeshInputRow(const scene::PlugRef& ref, QWidget* parent);
     void setCollapsed(scene::NodeId id, bool collapsed, bool all);
+    /** Delete: removes the modifier whose card holds focus, else the one under the cursor. */
+    void removeCardModifier();
     /** Drop target: the modifier dragged to position `to` in the stack (0 is applied first). */
     void dropModifier(const std::string& name, int to);
 

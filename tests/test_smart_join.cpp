@@ -16,7 +16,7 @@ namespace
 /** Lays a Y-up cylinder along +X starting at x0 (its bottom cap ends up at x0). */
 geo::Mesh arm(int segments, double radius, double length, double x0, bool caps = true)
 {
-    geo::Mesh m = geo::makeCylinder({.radius = radius, .height = length, .subdivAxis = segments, .caps = caps, .baseAtOrigin = true});
+    geo::Mesh m = geo::makeCylinder({.radius = radius, .height = length, .subdivAxis = segments, .caps = caps, .baseAtOrigin = true, .capFill = geo::CapFill::Ngon});
     for (geo::Index p = 0; p < m.pointCapacity(); ++p)
         if (m.pointValid(p))
         {
@@ -46,7 +46,7 @@ int facesOfSize(const geo::Mesh& m, bool (*pred)(geo::Index))
 
 json run(const char* name, const json& call = nlohmann::json::object()) { return ops::execute(name, call); }
 
-geo::Mesh body8() { return geo::makeCylinder({.radius = 50.0, .height = 200.0, .subdivAxis = 8}); }
+geo::Mesh body8() { return geo::makeCylinder({.radius = 50.0, .height = 200.0, .subdivAxis = 8, .capFill = geo::CapFill::Ngon}); }
 } // namespace
 
 TEST_CASE("smartJoin: perpendicular 8-segment cylinders")
@@ -147,8 +147,8 @@ TEST_CASE("smartJoin: parameters")
 TEST_CASE("smartJoin command: undoable, scriptable")
 {
     run("newScene");
-    std::string body = run("polyCylinder", {{"radius", 50}, {"height", 200}, {"subdivisionsAxis", 8}})[0];
-    std::string limb = run("polyCylinder", {{"radius", 20}, {"height", 100}, {"subdivisionsAxis", 8}, {"position", {80, 0, 0}}})[0];
+    std::string body = run("polyCylinder", {{"radius", 50}, {"height", 200}, {"subdivisionsAxis", 8}, {"capType", "ngon"}})[0];
+    std::string limb = run("polyCylinder", {{"radius", 20}, {"height", 100}, {"subdivisionsAxis", 8}, {"capType", "ngon"}, {"position", {80, 0, 0}}})[0];
     run("rotate", {{"args", {limb}}, {"to", {0, 0, 90}}});
     // Selection order does not matter: the smaller mesh is the limb.
     json r = run("smartJoin", {{"args", {body, limb}}, {"name", "Joined"}});

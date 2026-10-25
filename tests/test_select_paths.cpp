@@ -125,7 +125,7 @@ TEST_CASE("face loop crosses the edge's ring")
 
 TEST_CASE("contained faces flood fill inside closed borders")
 {
-    geo::Mesh cyl = geo::makeCylinder({.radius = 1.0, .height = 2.0, .subdivAxis = 8, .subdivHeight = 2});
+    geo::Mesh cyl = geo::makeCylinder({.radius = 1.0, .height = 2.0, .subdivAxis = 8, .subdivHeight = 2, .capFill = geo::CapFill::Ngon});
     std::vector<Index> topRing;
     for (Index e = 0; e < cyl.edgeCapacity(); ++e)
         if (cyl.edgeValid(e) && cyl.position(cyl.edgePoint(e, 0)).y > 0.999 && cyl.position(cyl.edgePoint(e, 1)).y > 0.999)
@@ -177,7 +177,7 @@ TEST_CASE("loop, path and contained face commands select as one undo step")
     CHECK_THROWS_AS(run("selectPathBetween", {{"args", {plane}}, {"kind", "face"}, {"from", 0}}), CommandError);
 
     run("newScene");
-    std::string cyl = run("polyCylinder", {{"radius", 1}, {"height", 2}, {"subdivisionsAxis", 8}, {"subdivisionsHeight", 2}})[0];
+    std::string cyl = run("polyCylinder", {{"radius", 1}, {"height", 2}, {"subdivisionsAxis", 8}, {"subdivisionsHeight", 2}, {"capType", "ngon"}})[0];
     scene::NodeId cid = scene::Graph::current().find(cyl)->id();
     json top = run("findComponents", {{"args", {cyl}}, {"kind", "edge"}, {"extreme", "+y"}, {"count", 8}});
     REQUIRE(top.size() == 8);

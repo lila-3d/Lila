@@ -9,6 +9,7 @@
 #include "core/Profile.h"
 #include "ops/Command.h"
 #include "ui/Actions.h"
+#include "ui/Deletion.h"
 #include "ui/Icons.h"
 #include "ui/Panels.h"
 #include "ui/Theme.h"
@@ -585,6 +586,7 @@ public:
         mBookmarks->setEditTriggers(QAbstractItemView::EditKeyPressed);
         mBookmarks->setContextMenuPolicy(Qt::CustomContextMenu);
         mBookmarks->setToolTip("Bookmarks: drag to reorder, F2 to rename, Delete to remove");
+        deletion::claim(mBookmarks, [this] { removeBookmark(mBookmarks->currentRow()); });
         mLeft = new QStackedWidget(leftSplit);
         mSidebar = new QTreeWidget(mLeft);
         mSidebar->setHeaderHidden(true);

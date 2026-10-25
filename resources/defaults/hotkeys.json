@@ -134,8 +134,6 @@
     "nodeEditor": {
       "Tab": "nodeEditor.addNode",
       "Shift+A": "nodeEditor.addNode",
-      "Delete": "nodeEditor.delete",
-      "Backspace": "nodeEditor.delete",
       "X": "nodeEditor.delete",
       "Ctrl+C": "nodeEditor.copy",
       "Ctrl+X": "nodeEditor.cut",
@@ -150,9 +148,7 @@
     },
     "textureSets": {
       "Ctrl+G": "textureSets.openAsNodes",
-      "Ctrl+D": "textureSets.duplicate",
-      "Delete": "textureSets.delete",
-      "Backspace": "textureSets.delete"
+      "Ctrl+D": "textureSets.duplicate"
     },
     "scriptEditor": {
       "Ctrl+T": "script.searchApi",
@@ -162,15 +158,9 @@
       "Shift+Return": "script.runLine",
       "Ctrl+Shift+Return": "script.runCell"
     },
-    "baker": {
-      "Delete": "bake.removeRows",
-      "Backspace": "bake.removeRows"
-    },
     "graphEditor": {
       "F": "graphEditor.frameSelected",
       "A": "graphEditor.frameAll",
-      "Delete": "anim.deleteKeys",
-      "Backspace": "anim.deleteKeys",
       "Esc": "anim.stop"
     }
   }

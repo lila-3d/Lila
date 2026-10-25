@@ -203,7 +203,7 @@ json editSelected(const char* label, ComponentMode kind, const EditFn& fn, bool 
         }
         auto edited = std::make_shared<geo::Mesh>(std::move(mesh));
         g.setValue(base, MeshPtr(edited));
-        autoBevel::baseRemapped(g, node, remap, *edited);
+        modifiers::baseRemapped(g, node, remap, *edited);
         objectSets::meshRemapped(g, node, remap);
     }
     components::setAll(newSel[0], newSel[1], newSel[2]);
@@ -1091,7 +1091,7 @@ void registerMeshEditCommands()
             Ids mapped = remapIds(welded, remap.points);
             auto edited = std::make_shared<geo::Mesh>(std::move(mesh));
             g.setValue(base, MeshPtr(edited));
-            autoBevel::baseRemapped(g, n.id(), remap, *edited);
+            modifiers::baseRemapped(g, n.id(), remap, *edited);
             objectSets::meshRemapped(g, n.id(), remap);
             components::setAll(sel[0], sel[1], sel[2]);
             return mapped;
@@ -2119,7 +2119,7 @@ void registerMeshEditCommands()
             Ids mapped = remapIds(cut, remap.edges);
             auto edited = std::make_shared<geo::Mesh>(std::move(mesh));
             g.setValue(base, MeshPtr(edited));
-            autoBevel::baseRemapped(g, n.id(), remap, *edited);
+            modifiers::baseRemapped(g, n.id(), remap, *edited);
             if (a.get<bool>("select"))
             {
                 components::setAll({}, {{n.id(), mapped}}, {});
@@ -2133,5 +2133,7 @@ void registerMeshEditCommands()
     for (const char* name : {"polyExtrude", "polyInset", "polyBevel", "polyInsertLoop", "polyMerge", "polyBridge", "polyQuadrangulate",
                              "polySubdivide", "polyMirror", "polyTriangulate", "polyReduce", "polySoftEdge"})
         ops::setAdjustable(name);
+    // Recording the last op is what makes these adjustable, in any host and not only once the UI installs it.
+    lastOp::install();
 }
 } // namespace lila::scene

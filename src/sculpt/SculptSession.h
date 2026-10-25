@@ -8,6 +8,8 @@
 
 #include <functional>
 #include <memory>
+#include <string>
+#include <vector>
 
 /**
  * Sculpt mode on a scene mesh. Entering builds a temporary high-resolution proxy of the mesh's cage (subdivided,
@@ -32,6 +34,9 @@ enum class ProxyMode : uint8_t
     Direct,
 };
 
+/** sculptExit's solver for a session, kept between calls: see exitPositions. */
+struct ExitSolver;
+
 struct Session
 {
     scene::NodeId node = scene::kNoNode;
@@ -49,6 +54,8 @@ struct Session
     /** A stroke the viewport tool already applied live, adopted by the sculptStroke call carrying this token. */
     uint64_t liveToken = 0;
     StrokeRecord live;
+
+    std::shared_ptr<ExitSolver> exitSolver;
 };
 
 /** The open session, or null. */
@@ -63,6 +70,13 @@ LILA_SCENE_API void notify();
 LILA_SCENE_API void syncSymmetry(Session& s);
 
 LILA_SCENE_API uint64_t nextLiveToken();
+
+/**
+ * The cage positions (per point capacity, object space) sculptExit would leave with this method ("fit", "closest" or
+ * "normal") and the mesh's current symmetry: what Exit Sculpt is about to make, for showing it live. The fit's solver
+ * is kept on the session, so after the first call each one costs a subdivision and a back substitution.
+ */
+LILA_SCENE_API std::vector<glm::dvec3> exitPositions(Session& s, const std::string& method, int iterations = 3);
 
 LILA_SCENE_API void registerCommands();
 } // namespace lila::sculpt

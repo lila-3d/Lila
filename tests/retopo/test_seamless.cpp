@@ -48,7 +48,7 @@ TEST_CASE("seamless lattice only turns at the poles")
     compare("sphere", geo::makeSphere({.radius = 50.0, .subdivAxis = 48, .subdivHeight = 48}), 600, 8);
     compare("torus", geo::makeTorus({.subdivAxis = 64, .subdivHeight = 32}), 800, 0);
     compare("cube", geo::makeCube({.subdivX = 8, .subdivY = 8, .subdivZ = 8}), 600, 8);
-    compare("cylinder", geo::makeCylinder({.radius = 30.0, .height = 120.0, .subdivAxis = 48, .subdivHeight = 8, .subdivCaps = 4}), 600, 8);
+    compare("cylinder", geo::makeCylinder({.radius = 30.0, .height = 120.0, .subdivAxis = 48, .subdivHeight = 8, .subdivCaps = 4, .capFill = geo::CapFill::Fan}), 600, 8);
 }
 
 TEST_CASE("zz seamless corpus timing" * doctest::skip())

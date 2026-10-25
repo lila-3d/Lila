@@ -3,6 +3,8 @@
 #include "ops/CommandOptions.h"
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
+#include "io/SceneFile.h"
+#include "ops/Undo.h"
 
 #include <algorithm>
 #include <cctype>
@@ -30,9 +32,32 @@ std::string pathArg(const fs::path& path)
     return std::string(u8.begin(), u8.end());
 }
 
-void sortByPriority(std::vector<const FileTranslator*>& list)
+bool supports(const FileTranslator& t, Op op)
 {
-    std::stable_sort(list.begin(), list.end(), [](const FileTranslator* a, const FileTranslator* b) { return a->priority > b->priority; });
+    return t.operation(op).supported() || (op == Op::Open && t.import.supported());
+}
+
+void sortByPriority(std::vector<const FileTranslator*>& list, Op op)
+{
+    std::stable_sort(list.begin(), list.end(), [op](const FileTranslator* a, const FileTranslator* b) {
+        if (op == Op::Open && a->open.supported() != b->open.supported())
+            return a->open.supported();
+        return a->priority > b->priority;
+    });
+}
+
+json invoke(const Operation& o, const fs::path& path, const json& options, CallSource source)
+{
+    if (o.run)
+        return o.run(path, options.is_object() ? options : json::object());
+
+    json call = options.is_object() ? options : json::object();
+    if (source == CallSource::UI)
+        call = ops::options::callWith(o.command, call);
+    for (auto& [k, v] : o.flags.items())
+        call[k] = v;
+    call["args"] = json::array({pathArg(path)});
+    return ops::execute(o.command, call, source);
 }
 
 json describeOp(const Operation& o)
@@ -131,9 +156,9 @@ std::vector<const FileTranslator*> supporting(Op op)
 {
     std::vector<const FileTranslator*> out;
     for (const FileTranslator* t : registry().all())
-        if (t->operation(op).supported())
+        if (supports(*t, op))
             out.push_back(t);
-    sortByPriority(out);
+    sortByPriority(out, op);
     return out;
 }
 
@@ -178,19 +203,21 @@ json run(Op op, const fs::path& path, const json& options, CallSource source, st
     if (!t)
         throw CommandError(translatorId.empty() ? std::string("no file translator can ") + opName(op) + " " + pathArg(path.filename())
                                                 : "unknown file translator '" + std::string(translatorId) + "'");
-    const Operation& o = t->operation(op);
+    const bool openByImport = op == Op::Open && !t->open.supported() && t->import.supported();
+    const Operation& o = openByImport ? t->import : t->operation(op);
     if (!o.supported())
         throw CommandError(t->label + " files can't be " + (op == Op::Open ? "opened" : op == Op::Import ? "imported" : "exported"));
-    if (o.run)
-        return o.run(path, options.is_object() ? options : json::object());
+    if (!openByImport)
+        return invoke(o, path, options, source);
 
-    json call = options.is_object() ? options : json::object();
-    if (source == CallSource::UI)
-        call = ops::options::callWith(o.command, call);
-    for (auto& [k, v] : o.flags.items())
-        call[k] = v;
-    call["args"] = json::array({pathArg(path)});
-    return ops::execute(o.command, call, source);
+    ops::execute("newScene", json::object(), source);
+    setCurrentPath({});
+    json result = invoke(o, path, options, source);
+    // Like any open: no undo back into the empty scene, and unsaved until it is saved as a .lila.
+    UndoStack::get().clear();
+    markClean();
+    markModified();
+    return result;
 }
 
 json describe(const FileTranslator& t)
@@ -277,7 +304,8 @@ void registerCommands()
             },
         });
     };
-    fileCommand("openFile", Op::Open, "Open a scene file with the translator for its extension (.lila, .ma, ...), replacing the scene.");
+    fileCommand("openFile", Op::Open, "Open a file with the translator for its extension (.lila, .ma, ...), replacing the scene. Formats that only "
+                                     "import (.fbx, .obj, ...) open as a new untitled scene with the file imported into it.");
     fileCommand("importFile", Op::Import, "Import a file into the scene with the translator for its extension (.fbx, .obj, .ma, ...).");
     fileCommand("exportFile", Op::Export, "Export the selection with the translator for the file's extension (.fbx, .obj, ...).");
 }

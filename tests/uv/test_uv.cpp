@@ -437,7 +437,7 @@ TEST_CASE("plane fit on a rotated plane gives undistorted uvs along its sides")
 
 TEST_CASE("projecting through a fitted frame's explicit values reproduces the fit")
 {
-    geo::Mesh m = geo::makeCylinder({});
+    geo::Mesh m = geo::makeCylinder({.capFill = geo::CapFill::Ngon});
     transformPoints(m, uv::eulerFrame({10.0, 20.0, 30.0}), {1.0, 2.0, 3.0});
     for (uv::Projection type : {uv::Projection::Planar, uv::Projection::Box, uv::Projection::Cylindrical, uv::Projection::Spherical})
     {

@@ -22,6 +22,7 @@
 #include "scene/DisplayLayers.h"
 #include "scene/Graph.h"
 #include "scene/ImagePlane.h"
+#include "scene/LodGroup.h"
 #include "scene/Materials.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
@@ -925,6 +926,7 @@ private:
         const bool cameraXform = !joint && meshes.empty() && !cameras.empty();
         const bool planeXform = !joint && meshes.empty() && cameras.empty() && locators.empty() && !planes.empty();
         const char* type = joint             ? "joint"
+                           : mn.type == "lodGroup" ? "lodGroup"
                            : !meshes.empty() ? "mesh"
                            : cameraXform     ? (mIdentityAxes ? "camera" : "transform")
                            : planeXform      ? (mIdentityAxes ? "imagePlane" : "transform")
@@ -940,6 +942,8 @@ private:
             mR.joints.push_back(id);
 
         setTransform(i, id);
+        if (std::string_view(type) == "lodGroup")
+            lodSizes(mn, id);
         bool visible = num(mn, {"v", "visibility"}, 1.0) != 0.0;
         if (num(mn, {"it", "inheritsTransform"}, 1.0) == 0.0)
             mR.warnings.push_back(std::format("{}: inheritsTransform off is not supported; it inherits", n->path()));
@@ -2255,6 +2259,27 @@ private:
         case 5: return Infinity::Oscillate;
         default: return Infinity::Constant;
         }
+    }
+
+    /**
+     * Maya keeps a group's switch points as percentageThreshold (screen height percent, level i+1 at element i) when
+     * useScreenHeightPercentage is on, and as threshold distances otherwise. Percentages become screen sizes, as FBX's
+     * percentage thresholds do; distances have no screen size, so the group keeps Unreal's automatic sizes.
+     */
+    void lodSizes(const MNode& mn, NodeId id)
+    {
+        const std::map<int, double> percent = elements(mn, {"pth", "percentageThreshold"});
+        if (num(mn, {"ush", "useScreenHeightPercentage"}, 0.0) == 0.0 || percent.empty())
+        {
+            if (!elements(mn, {"th", "threshold"}).empty())
+                mR.warnings.push_back(std::format("{}: LOD distances kept as automatic screen sizes", mG.path(id)));
+            return;
+        }
+        std::vector<double> sizes = {1.0};
+        for (const auto& [k, v] : percent)
+            if (k == int(sizes.size()) - 1)
+                sizes.push_back(v / 100.0);
+        mG.setValue({id, scene::LodGroup::kScreenSizes, -1}, scene::lod::formatSizes(sizes));
     }
 
     /** Values of a ranged multi such as kit[0:9], by element index. */

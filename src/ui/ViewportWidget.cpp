@@ -30,12 +30,14 @@
 #include "ui/Animation.h"
 #include "ui/ChannelBox.h"
 #include "ui/CursorBadges.h"
+#include "ui/Deletion.h"
 #include "ui/NodeLookup.h"
 #include "ui/DrawOverrides.h"
 #include "ui/MarkingMenu.h"
 #include "ui/Environments.h"
 #include "ui/MaterialDraw.h"
 #include "ui/Isolate.h"
+#include "ui/LodDisplay.h"
 #include "ui/DisplayAids.h"
 #include "ui/MeshCache.h"
 #include "ui/PaintSelect.h"
@@ -244,6 +246,7 @@ ViewportWidget::ViewportWidget(QWidget* parent) : QWidget(parent)
     setCursor(Qt::ArrowCursor);
     setMinimumSize(64, 64);
     setProperty("hotkeyContext", "viewport");
+    deletion::claimScene(this);
     setAcceptDrops(true);
     static int panels = 0;
     mHudPanel = panels++;
@@ -584,11 +587,12 @@ void ViewportWidget::submit()
             hilite.insert(id);
     const bool aids = displayAids::anyDrawn(mHudPanel);
     std::vector<displayAids::MeshEntry> aidMeshes;
+    const std::unordered_set<scene::NodeId> lodHidden = scene::lod::hidden(g, lodDisplay::view(mHudPanel, viewInfo()));
     for (scene::NodeId id : g.nodes())
     {
         scene::Node* n = g.node(id);
         if (!n->type().isA("mesh") || overridden(*n) || !scene::effectivelyVisible(g, id, inherit) || !mIsolation.shows(id) ||
-            !scene::selectionMask::shown(*n) || viewportHooks::hiddenInView(id))
+            !scene::selectionMask::shown(*n) || viewportHooks::hiddenInView(id) || lodHidden.contains(id))
             continue;
         int smooth = int(n->as<int64_t>(scene::MeshNode::kSmoothPreview));
         scene::MeshPtr shown = smoothedFor(n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh), smooth);
@@ -940,11 +944,12 @@ std::vector<std::string> ViewportWidget::hitTest(QPointF a, QPointF b)
     view.ray(a, rayO, rayD);
     double nearest = 1e300;
     std::string nearestMesh;
+    const std::unordered_set<scene::NodeId> lodHidden = scene::lod::hidden(g, lodDisplay::view(mHudPanel, view));
     for (scene::NodeId id : g.nodes())
     {
         scene::Node* n = g.node(id);
         if (!n->type().isA("mesh") || overridden(*n) || !viewportPickable(g, id, inherit) || !scene::selectionMask::pickable(*n) ||
-            !mIsolation.shows(id) || viewportHooks::hiddenInView(id))
+            !mIsolation.shows(id) || viewportHooks::hiddenInView(id) || lodHidden.contains(id))
             continue;
         scene::MeshPtr outMesh = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
         auto rm = renderMeshFor(outMesh);
@@ -1085,7 +1090,6 @@ scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
                                             view.eye, dir);
                 hit && hit->distance < dist * (1.0 - 1e-4) - 1e-3)
                 return false;
-        }
         return true;
     };
 
@@ -1110,7 +1114,7 @@ scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
             {
                 bestRay = hit->distance;
                 best.node = id;
-                best.id = pd->triangleFaces[hit->triangle];
+                best.id = f;
             }
             continue;
         }
@@ -1120,9 +1124,10 @@ scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
             {
                 bestPx = c.px;
                 best.node = id;
-                best.id = c.id;
+                best.id = cid;
                 break;
             }
+        }
     }
     if (mode == ComponentMode::Vertex)
         for (scene::NodeId id : pointNodes(mIsolation))
@@ -1176,7 +1181,6 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
                                                 eye, dir);
                     hit && hit->distance < dist * (1.0 - 1e-4) - 1e-3)
                     return false;
-            }
             return true;
         };
         // Edges and faces count when the region touches them anywhere, or with the pref off only when it holds their centre.
@@ -1229,8 +1233,6 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
                                 else
                                     projected = false;
                             });
-                            in = projected && touchesSelectRegion(box, poly);
-                        }
                         else if (auto s = project(c))
                             in = inSelectRegion(box, *s);
                         if (in && visible(c))
@@ -1404,58 +1406,28 @@ void ViewportWidget::drawComponents(render::FrameState& s)
         // Depth-tested so components behind the surface stay hidden. These streams take linear colors.
         if (mode == ComponentMode::Face)
             for (uint32_t f : selFaces)
-            {
-                if (!m.faceValid(f) || !vis->face(f))
-                    continue;
-                std::vector<glm::vec3> poly;
-                m.forEachFaceCorner(f, [&](geo::Index c) { poly.push_back(wp(m.cornerPoint(c))); });
-                for (uint32_t p : scene::componentPick::fillTriangles(m, f))
-                    s.tris3d.push_back({wp(p), faceFillLinear});
-                for (size_t k = 0; k < poly.size(); ++k)
-                {
-                    s.linesOnTop.push_back({poly[k], hotLinear});
-                    s.linesOnTop.push_back({poly[(k + 1) % poly.size()], hotLinear});
-                }
-            }
+                if (m.faceValid(f) && vis->face(f))
+                    faceLines(f, faceFillLinear, hotLinear);
         if (mode == ComponentMode::Edge)
             for (uint32_t e : selEdges)
                 if (m.edgeValid(e) && vis->edge(e))
-                {
-                    s.selectedEdges.push_back({wp(m.edgePoint(e, 0)), hotLinear});
-                    s.selectedEdges.push_back({wp(m.edgePoint(e, 1)), hotLinear});
-                }
+                    edgeLines(e, s.selectedEdges, hotLinear);
         if (const geo::SymmetryMap* sym = viewSymmetry(*n, mesh))
         {
             const glm::vec4 ghost(glm::vec3(hotLinear), kMirrorAlpha);
             if (mode == ComponentMode::Face)
                 for (uint32_t f : sym->mirrorFaces(m, selFaces))
                     if (f != geo::kInvalid && m.faceValid(f) && vis->face(f) && !std::ranges::binary_search(selFaces, f))
-                    {
-                        for (uint32_t p : scene::componentPick::fillTriangles(m, f))
-                            s.tris3d.push_back({wp(p), glm::vec4(glm::vec3(faceFillLinear), faceFillLinear.a * kMirrorAlpha)});
-                        std::vector<glm::vec3> poly;
-                        m.forEachFaceCorner(f, [&](geo::Index c) { poly.push_back(wp(m.cornerPoint(c))); });
-                        for (size_t k = 0; k < poly.size(); ++k)
-                        {
-                            s.linesOnTop.push_back({poly[k], ghost});
-                            s.linesOnTop.push_back({poly[(k + 1) % poly.size()], ghost});
-                        }
-                    }
+                        faceLines(f, glm::vec4(glm::vec3(faceFillLinear), faceFillLinear.a * kMirrorAlpha), ghost);
             if (mode == ComponentMode::Edge)
                 for (uint32_t e : sym->mirrorEdges(m, selEdges))
                     if (e != geo::kInvalid && m.edgeValid(e) && vis->edge(e) && !std::ranges::binary_search(selEdges, e))
-                    {
-                        s.selectedEdges.push_back({wp(m.edgePoint(e, 0)), ghost});
-                        s.selectedEdges.push_back({wp(m.edgePoint(e, 1)), ghost});
-                    }
+                        edgeLines(e, s.selectedEdges, ghost);
         }
         if (showSymmetry)
             for (uint32_t e : symmetryPlaneEdges(*n, mesh))
                 if (vis->edge(e) && !(mode == ComponentMode::Edge && std::ranges::binary_search(selEdges, e)))
-                {
-                    s.symmetryLines.push_back({wp(m.edgePoint(e, 0)), kSymmetryRed});
-                    s.symmetryLines.push_back({wp(m.edgePoint(e, 1)), kSymmetryRed});
-                }
+                    edgeLines(e, s.symmetryLines, kSymmetryRed);
         bool soft = PrefStore::get().value<bool>("general", "/softSelect/enabled", false);
         std::vector<float> weights;
         if (soft)
@@ -2243,7 +2215,12 @@ void ViewportWidget::drawHud(OverlayPainter& p)
     ctx.panel = mHudPanel;
     ctx.view = viewInfo();
     if (mIsolation.active())
-        ctx.shownNode = [this](scene::NodeId id) { return mIsolation.shows(id); };
+        ctx.isolation = &mIsolation;
+    // Counts cover what this view draws, so they skip the same nodes the mesh pass does.
+    ctx.shownNode = [this, lodHidden = scene::lod::hidden(scene::Graph::current(), lodDisplay::view(mHudPanel, ctx.view))](scene::NodeId id) {
+        const scene::Node* n = scene::Graph::current().node(id);
+        return n && mIsolation.shows(id) && !lodHidden.contains(id) && scene::selectionMask::shown(*n) && !viewportHooks::hiddenInView(id);
+    };
     // Frames the renderer drew, not states submitted: mouse moves submit far more often than the display can show.
     double span = mFrameSamples.back().first - mFrameSamples.front().first;
     ctx.framesPerSecond = span > 100.0 ? double(mFrameSamples.back().second - mFrameSamples.front().second) * 1000.0 / span : 0.0;
@@ -2771,6 +2748,12 @@ bool ViewportWidget::selectLoopAt(QPointF at, Qt::KeyboardModifiers mods)
                     }
             if (!from)
                 return false;
+            // Like Maya, a second edge adds its own loop unless it shares one with the first, then only the run between them.
+            if (mode == ComponentMode::Edge && std::ranges::count(geo::edgeLoop(*mesh, h.id), *from) == 0)
+            {
+                ops::execute("selectLoopThrough", {{"args", {n->path()}}, {"edge", h.id}, {"add", true}}, CallSource::UI);
+                return true;
+            }
             ops::execute("selectPathBetween",
                          {{"args", {n->path()}}, {"kind", scene::components::modeName(mode)}, {"from", *from}, {"to", h.id}}, CallSource::UI);
             return true;
@@ -2848,9 +2831,3 @@ void ViewportWidget::escape()
         actions::run("edit.deselect");
 }
 } // namespace lila::ui
-            // Like Maya, a second edge adds its own loop unless it shares one with the first, then only the run between them.
-            if (mode == ComponentMode::Edge && std::ranges::count(geo::edgeLoop(*mesh, h.id), *from) == 0)
-            {
-                ops::execute("selectLoopThrough", {{"args", {n->path()}}, {"edge", h.id}, {"add", true}}, CallSource::UI);
-                return true;
-            }

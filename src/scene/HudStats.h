@@ -13,6 +13,11 @@ namespace lila::geo
 class Mesh;
 }
 
+namespace lila::scene::isolation
+{
+struct Set;
+}
+
 /** The counts behind the viewport's heads-up display, cheap enough to ask for every frame. */
 namespace lila::scene::hud
 {
@@ -47,13 +52,16 @@ LILA_SCENE_API uint64_t countUvs(const geo::Mesh& mesh, std::string_view uvSet);
 /** One mesh's counts, uncached. */
 LILA_SCENE_API PolyCount countMesh(const geo::Mesh& mesh, std::string_view uvSet);
 
-/** effectivelyVisible(), for the HUD. */
+/** effectivelyVisible() under the inherit visibility preference, as the viewports draw it. */
 LILA_SCENE_API bool visibleInHierarchy(const Graph& g, NodeId id);
 
 /**
  * Counts for the HUD. Meshes are immutable snapshots, so each mesh's counts are cached per snapshot; a new snapshot
  * with the same element counts (a deform or drag) carries its uv count over until it settles. shown narrows the scene
- * further, as a view's isolate does; null shows everything. Instances sharing one mesh count once each.
+ * further to the meshes a view draws; null shows everything. partial is the view's isolation: of a mesh it isolates by
+ * components, only the faces it shows count, with their edges, points and uvs, and only the selected components on
+ * them. Instances sharing one mesh count once each.
  */
-LILA_SCENE_API PolyStats polyStats(Graph& g, std::string_view uvSet = "uv0", const std::function<bool(NodeId)>& shown = {});
+LILA_SCENE_API PolyStats polyStats(Graph& g, std::string_view uvSet = "uv0", const std::function<bool(NodeId)>& shown = {},
+                                   const isolation::Set* partial = nullptr);
 } // namespace lila::scene::hud

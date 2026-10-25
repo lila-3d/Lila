@@ -21,6 +21,7 @@ lila_module(lila_scene Scene
     Drivers.cpp
     DisplayLayers.cpp
     EditSkeleton.cpp
+    ExtrudeModifier.cpp ExtrudeModifier.h
     DominantInfluence.cpp
     Ghosts.cpp
     Graph.cpp
@@ -30,6 +31,7 @@ lila_module(lila_scene Scene
     ImagePlane.cpp
     Isolation.cpp
     LastOp.cpp
+    LodGroup.cpp LodGroup.h
     Materials.cpp
     Measure.cpp
     MeasureMath.cpp

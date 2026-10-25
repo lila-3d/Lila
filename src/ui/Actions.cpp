@@ -10,10 +10,14 @@
 #include "scene/Graph.h"
 #include "scene/Isolation.h"
 #include "scene/Modifiers.h"
+#include "ui/Deletion.h"
 #include "ui/Hotkeys.h"
 #include "ui/MaterialDraw.h"
 #include "ui/OptionBox.h"
 #include "ui/ViewportDisplay.h"
+
+#include <QApplication>
+#include <QCursor>
 
 #include <algorithm>
 #include <cctype>
@@ -367,11 +371,19 @@ void registerBuiltins()
     cmd("edit.flushAll", "Flush All Undo", "Edit", "flushUndo", {{"which", "all"}}, "Clears both the undo and the redo history.");
     // Delete removes components in component mode, objects otherwise.
     add({"edit.delete", "Delete", "Edit", [] {
-             bool components = runCommandResult("selectMode", json::object()) != "object" &&
-                               !runCommandResult("componentSelection", json::object()).empty();
-             runCommand(components ? "deleteComponents" : "delete", json::object());
+             auto scene = [] {
+                 bool components = runCommandResult("selectMode", json::object()) != "object" &&
+                                   !runCommandResult("componentSelection", json::object()).empty();
+                 runCommand(components ? "deleteComponents" : "delete", json::object());
+             };
+             if (Hotkeys::fromKey())
+                 deletion::run(QApplication::focusWidget(), QApplication::widgetAt(QCursor::pos()), scene);
+             else
+                 scene();
          },
-         nullptr, "Removes the selected objects, or the selected components in component mode.",
+         nullptr,
+         "Removes the selected objects, or the selected components in component mode. The Delete key removes what is selected in "
+         "the panel with focus, or under the cursor: bake groups and maps, modifiers, layers, keys, nodes.",
          "delete()  # or deleteComponents() in component mode"});
     cmd("select.hierarchy", "Select Hierarchy", "Select", "selectHierarchy", json::object(), "Adds everything below the selected objects to the selection.");
     cmd("select.pickWalkUp", "Pick Walk Up (Parent)", "Select", "pickWalk", {{"direction", "up"}}, "Moves the selection to each object's parent.");

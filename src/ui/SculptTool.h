@@ -45,7 +45,7 @@ LILA_UI_API void removeSculptSettingsListener(int id);
  *   Ctrl                 inverts (dig, unmask, unfreeze, magnify)
  *   Shift                smooths for the stroke
  *   F or B held + drag   brush radius (F tapped still frames the selection)
- *   M or Shift+F + drag  brush strength
+ *   M or Shift+F + drag  brush strength (or B held + RMB drag)
  *   [ ]                  radius smaller / larger
  *   Esc                  leaves the tool; the session stays open until Exit Sculpt
  *

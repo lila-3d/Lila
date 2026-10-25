@@ -149,6 +149,56 @@ TEST_CASE("polyInset and polyExtrude through the command and adjust-last-op path
     CHECK(meshOf(cube).numFaces() == 6);
 }
 
+TEST_CASE("adjust-last-op stays reachable through selection changes")
+{
+    scene::lastOp::install();
+    run("newScene");
+    std::string cube = run("polyCube")[0];
+    run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
+    ui("polyInset", {{"thickness", 5}});
+    std::vector<scene::lastOp::Change> changes;
+    int listener = scene::lastOp::addListener([&](scene::lastOp::Change c) { changes.push_back(c); });
+
+    ui("selectComponents", {{"args", {cube}}, {"faces", {1}}});
+    ui("selectComponents", {{"args", {cube}}, {"faces", {2}}});
+    CHECK_FALSE(scene::lastOp::live());
+    CHECK(scene::lastOp::reachable());
+    CHECK(changes.empty());
+
+    run("undo");
+    CHECK(scene::lastOp::reachable());
+    run("undo");
+    CHECK(scene::lastOp::live());
+    REQUIRE(changes.size() == 1);
+    CHECK(changes.back() == scene::lastOp::Change::Restored);
+    run("redo");
+    run("redo");
+
+    scene::lastOp::rerun({{"thickness", 10}});
+    CHECK(scene::lastOp::live());
+    CHECK(meshOf(cube).numFaces() == 10);
+    CHECK(UndoStack::get().redoCount() == 0);
+    run("undo");
+    CHECK(scene::lastOp::live());
+    CHECK(scene::lastOp::current()->call["thickness"] == 5);
+    run("undo");
+    CHECK(meshOf(cube).numFaces() == 6);
+    CHECK_FALSE(scene::lastOp::reachable());
+    CHECK(changes.back() == scene::lastOp::Change::Other);
+
+    run("redo");
+    CHECK(scene::lastOp::live());
+    CHECK(changes.back() == scene::lastOp::Change::Restored);
+    ui("selectComponents", {{"args", {cube}}, {"faces", {3}}});
+    run("polyCube");
+    CHECK_FALSE(scene::lastOp::reachable());
+    CHECK(changes.back() == scene::lastOp::Change::Other);
+    run("undo");
+    CHECK(scene::lastOp::reachable());
+    CHECK(changes.back() == scene::lastOp::Change::Restored);
+    scene::lastOp::removeListener(listener);
+}
+
 TEST_CASE("polyInset on every face of a symmetric cube adds rims without duplicates")
 {
     for (bool symmetric : {false, true})

@@ -401,3 +401,34 @@ TEST_CASE("pipe radius swells smoothly through its points")
     CHECK(byX.begin()->second == doctest::Approx(5.0));
     CHECK(prev == doctest::Approx(15.0));
 }
+
+TEST_CASE("pipe swell has no crease at its points")
+{
+    curve::Spline s = poly({D3(0), D3(100, 0, 0), D3(130, 0, 0), D3(230, 0, 0)});
+    s.radius = {1.0, 1.0, 3.0, 3.0};
+    curve::PipeOptions o;
+    o.radius = 5.0;
+    o.sides = 8;
+    curve::PipeResult r = curve::makePipe(s, o);
+    std::map<long, double> byX;
+    for (const D3& p : r.mesh.positions())
+        byX[std::lround(p.x * 1000.0)] = std::max(byX[std::lround(p.x * 1000.0)], std::hypot(p.y, p.z));
+    std::vector<std::pair<double, double>> rings;
+    for (auto [x, rad] : byX)
+        rings.push_back({x / 1000.0, rad});
+    REQUIRE(rings.size() > 20);
+    // Curvature of the radius profile, ring to ring: a crease shows as a jump many times the steady change.
+    std::vector<double> k;
+    for (size_t i = 1; i + 1 < rings.size(); ++i)
+    {
+        const auto [x0, r0] = rings[i - 1];
+        const auto [x1, r1] = rings[i];
+        const auto [x2, r2] = rings[i + 1];
+        k.push_back(((r2 - r1) / (x2 - x1) - (r1 - r0) / (x1 - x0)) / ((x2 - x0) * 0.5));
+    }
+    const double peak = *std::ranges::max_element(k, {}, [](double v) { return std::abs(v); });
+    for (size_t i = 0; i + 1 < k.size(); ++i)
+        CHECK(std::abs(k[i + 1] - k[i]) < std::abs(peak) * 0.35);
+    CHECK(rings.front().second == doctest::Approx(5.0));
+    CHECK(rings.back().second == doctest::Approx(15.0));
+}

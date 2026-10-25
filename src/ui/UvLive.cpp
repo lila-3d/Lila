@@ -13,6 +13,7 @@
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
+#include "sculpt/SculptSession.h"
 #include "ui/Actions.h"
 #include "ui/Isolate.h"
 #include "ui/MeshCache.h"
@@ -220,11 +221,13 @@ void draw3d(render::FrameState& s, OverlayPainter&, const ViewInfo& view)
         return;
     scene::Graph& g = scene::Graph::current();
     const std::string set = uv::currentUvSet();
+    const auto sculpting = sculpt::active();
     for (NodeId id : shownMeshes())
     {
         scene::Node* n = g.node(id);
         MeshPtr out = n ? n->as<MeshPtr>(scene::MeshNode::kOutMesh) : nullptr;
-        if (!out || !scene::effectivelyVisible(g, id) || !isolate::shows(view.isolation, id))
+        // A sculpt proxy stands in for the mesh it sculpts, and the mesh's seams would not follow the strokes.
+        if (!out || !scene::effectivelyVisible(g, id) || !isolate::shows(view.isolation, id) || (sculpting && sculpting->node == id))
             continue;
         if (checker)
         {

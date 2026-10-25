@@ -9,6 +9,7 @@
 #include "scene/Graph.h"
 #include "scene/RotationCurve.h"
 #include "ui/Animation.h"
+#include "ui/Deletion.h"
 #include "ui/Icons.h"
 #include "ui/Theme.h"
 #include "ui/ViewportDisplay.h"
@@ -1062,6 +1063,7 @@ GraphEditor::GraphEditor(QWidget* parent) : QWidget(parent)
 {
     current() = this;
     setProperty("hotkeyContext", "graphEditor");
+    deletion::claim(this, [this] { deleteSelectedKeys(); });
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(2, 2, 2, 2);
     layout->setSpacing(2);

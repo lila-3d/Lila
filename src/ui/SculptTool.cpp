@@ -18,6 +18,7 @@
 #include "ui/Tools.h"
 
 #include <QApplication>
+#include <QElapsedTimer>
 #include <QWidget>
 #include <QTimer>
 
@@ -152,7 +153,13 @@ public:
             drawToolMessage(p, view, "Sculpt: select a mesh and Enter Sculpt");
             return;
         }
-        QString name = QString::fromUtf8(sculpt::brushName(st.brush).data(), qsizetype(sculpt::brushName(st.brush).size()));
+        // Shift smooths and Ctrl inverts the next stroke, so the message names the brush that stroke would use.
+        const Qt::KeyboardModifiers mods = QApplication::keyboardModifiers();
+        const sculpt::Brush brush = mStroking ? mSettings.brush : (mods & Qt::ShiftModifier) ? sculpt::Brush::Smooth : st.brush;
+        const bool invert = mStroking ? mSettings.invert : (mods & Qt::ControlModifier) != 0;
+        QString name = QString::fromUtf8(sculpt::brushName(brush).data(), qsizetype(sculpt::brushName(brush).size()));
+        if (invert)
+            name += " (inverted)";
         drawToolMessage(p, view, QString("Sculpt %1: %2   radius %3 px   strength %4%5")
                               .arg(QString::fromStdString(n->path()), name)
                               .arg(int(std::lround(st.stroke.radius)))
@@ -392,24 +399,58 @@ public:
         s.meshes.push_back(std::move(d));
 
         if (sculptSettings().showCage)
-            addCage(s, *session, world);
+            addCage(s, *session, *n, world);
         addMask(s, *session, world);
     }
 
 private:
-    void addCage(render::FrameState& s, const sculpt::Session& session, const glm::dmat4& world)
+    /** The cage as Exit Sculpt will leave it, refitted as the sculpt changes. */
+    void addCage(render::FrameState& s, sculpt::Session& session, const scene::Node& node, const glm::dmat4& world)
     {
-        if (&session != mCageFor || world != mCageWorld)
+        LILA_ZONE();
+
+        const std::string& method = sculptSettings().exitMethod;
+        const int64_t symmetry = node.as<int64_t>(scene::MeshNode::kSymmetry);
+        const bool stale = &session != mCageFor || session.sculpt.version() != mCageVersion || method != mCageMethod ||
+                           symmetry != mCageSymmetry || world != mCageWorld;
+        if (stale && mCageClock.isValid() && mCageClock.elapsed() < mCageCost * 3)
+        {
+            // A slow fit (a remeshed proxy) refits a few times a second at most; the frame after catches up.
+            if (!mCageQueued)
+            {
+                mCageQueued = true;
+                QTimer::singleShot(int(mCageCost * 3 - mCageClock.elapsed()) + 1, [this] {
+                    mCageQueued = false;
+                    viewportTools::requestRedraw();
+                });
+            }
+        }
+        else if (stale)
         {
             mCageFor = &session;
+            mCageVersion = session.sculpt.version();
+            mCageMethod = method;
+            mCageSymmetry = symmetry;
             mCageWorld = world;
             mCage.clear();
+            mCageClock.start();
+            std::vector<glm::dvec3> pos;
+            try
+            {
+                pos = sculpt::exitPositions(session, method);
+            }
+            catch (const std::exception& e)
+            {
+                log::warn("Sculpt cage preview: {}", e.what());
+            }
+            mCageCost = mCageClock.elapsed();
             const geo::Mesh& c = session.cage;
             const glm::vec4 color(0.78f, 0.78f, 0.78f, 0.7f);
-            for (geo::Index e = 0; e < c.edgeCapacity(); ++e)
-                if (c.edgeValid(e))
-                    for (int k = 0; k < 2; ++k)
-                        mCage.push_back({glm::vec3(xformPoint(world, c.position(c.edgePoint(e, k)))), color});
+            if (pos.size() >= c.pointCapacity())
+                for (geo::Index e = 0; e < c.edgeCapacity(); ++e)
+                    if (c.edgeValid(e))
+                        for (int k = 0; k < 2; ++k)
+                            mCage.push_back({glm::vec3(xformPoint(world, pos[c.edgePoint(e, k)])), color});
         }
         s.lines.insert(s.lines.end(), mCage.begin(), mCage.end());
     }
@@ -462,8 +503,14 @@ private:
     }
 
     const sculpt::Session* mCageFor = nullptr;
+    uint64_t mCageVersion = 0;
+    std::string mCageMethod;
+    int64_t mCageSymmetry = 0;
     glm::dmat4 mCageWorld{0.0};
     std::vector<render::LineVertex> mCage;
+    QElapsedTimer mCageClock;
+    int64_t mCageCost = 0;
+    bool mCageQueued = false;
 
     const sculpt::Session* mMaskFor = nullptr;
     uint64_t mMaskVersion = 0;

@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -23,6 +24,8 @@ struct Op
     json call;
     ComponentMode modeBefore = ComponentMode::Object;
     ComponentMode modeAfter = ComponentMode::Object;
+    /** Components selected in modeAfter when the op, or the adjustment the stack is on, finished: what it made. */
+    std::map<NodeId, components::Ids> made;
 };
 
 enum class Change
@@ -31,7 +34,7 @@ enum class Change
     Rerun,    // the op was re-run with new flags
     Restored, // undo or redo landed on one of the op's settings
     Cleared,  // forgotten
-    Other,    // some other undoable command ran from the UI
+    Other,    // the op stopped being reachable(): another edit went on top, or undo went below it
 };
 
 /** Starts listening to executes. Idempotent. */
@@ -41,6 +44,12 @@ LILA_SCENE_API void install();
 LILA_SCENE_API const Op* current();
 /** True while the op, or an adjustment of it, is the newest undo step, so it can be re-run. */
 LILA_SCENE_API bool live();
+/**
+ * True while the op, or an adjustment of it, is the newest undo step other than selection changes. rerun() and
+ * makeNonDestructive() accept this: they first undo the selection steps above the op and drop them, since component
+ * ids they name may not survive a re-run.
+ */
+LILA_SCENE_API bool reachable();
 LILA_SCENE_API void clear();
 
 /**

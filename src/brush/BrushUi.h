@@ -39,7 +39,7 @@ using SettingsRef = std::function<BrushSettings&()>;
  * Held-key brush controls while a brush tool is active, the same in every tool:
  *
  *   B or F held + LMB drag   radius (F tapped still frames the selection); MMB drag starts from the smallest
- *   M or Shift+F + drag      strength
+ *   M or Shift+F + drag      strength; B or F held + RMB drag too
  *   [ ]                      radius smaller / larger
  *
  * Also reads pen pressure from tablet events, which it leaves unaccepted so Qt still sends the mouse events.

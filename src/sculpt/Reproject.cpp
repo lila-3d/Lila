@@ -48,38 +48,99 @@ void symmetrizePositions(std::span<glm::dvec3> positions, const geo::SymmetryMap
     }
 }
 
-std::vector<glm::dvec3> fitCage(const geo::Mesh& cage, std::span<const geo::PointStencil> stencils, std::span<const glm::dvec3> target,
-                                const FitOptions& opts)
+struct CageFitter::Impl
+{
+    int n = 0;
+    std::vector<uint8_t> held;
+    std::vector<SpMat> transposed;
+    std::span<const geo::PointStencil> stencils;
+    const geo::SymmetryMap* symmetry = nullptr;
+    double maxMoveRatio = 0.0;
+    SpMat normal;
+    Eigen::SimplicialLDLT<SpMat> solver;
+
+    /** Per cage point, the largest of the values over the subdivided points it reaches. */
+    Eigen::VectorXd reachMax(Eigen::VectorXd v) const
+    {
+        for (size_t l = transposed.size(); l-- > 0;)
+        {
+            const SpMat& t = transposed[l];
+            Eigen::VectorXd out = Eigen::VectorXd::Zero(t.rows());
+            for (int k = 0; k < t.outerSize(); ++k)
+                for (SpMat::InnerIterator it(t, k); it; ++it)
+                    if (it.value() != 0.0)
+                        out(it.row()) = std::max(out(it.row()), v(it.col()));
+            v = std::move(out);
+        }
+        return v;
+    }
+
+    /**
+     * Refits with every point the fit moves further than maxMoveRatio times the largest move of the surface it shapes
+     * held at that limit, along its own direction. A few rounds, as holding some points pushes others out.
+     */
+    Eigen::MatrixX3d capMoves(Eigen::MatrixX3d dx, const Eigen::MatrixX3d& rhs, const Eigen::VectorXd& reach) const
+    {
+        LILA_ZONE();
+
+        std::vector<double> weight(size_t(n), 0.0);
+        std::vector<Eigen::RowVector3d> goal(size_t(n), Eigen::RowVector3d::Zero());
+        for (int round = 0; round < 4; ++round)
+        {
+            bool capped = false;
+            for (int i = 0; i < n; ++i)
+            {
+                const double limit = maxMoveRatio * reach(i);
+                const double len = dx.row(i).norm();
+                if (held[size_t(i)] || len <= limit * 1.001)
+                    continue;
+                weight[size_t(i)] = 1e3 * normal.coeff(i, i);
+                goal[size_t(i)] = len > 0.0 ? Eigen::RowVector3d(dx.row(i) * (limit / len)) : Eigen::RowVector3d::Zero();
+                capped = true;
+            }
+            if (!capped)
+                break;
+            std::vector<Eigen::Triplet<double>> diag;
+            Eigen::MatrixX3d b = rhs;
+            for (int i = 0; i < n; ++i)
+                if (weight[size_t(i)] > 0.0)
+                {
+                    diag.emplace_back(i, i, weight[size_t(i)]);
+                    b.row(i) += weight[size_t(i)] * goal[size_t(i)];
+                }
+            SpMat W(n, n);
+            W.setFromTriplets(diag.begin(), diag.end());
+            Eigen::SimplicialLDLT<SpMat> refit(SpMat(normal + W));
+            if (refit.info() != Eigen::Success)
+                break;
+            dx = refit.solve(b);
+        }
+        return dx;
+    }
+};
+
+CageFitter::CageFitter(const geo::Mesh& cage, std::span<const geo::PointStencil> stencils, const FitOptions& opts) : m(std::make_unique<Impl>())
 {
     LILA_ZONE();
 
     const int n = int(cage.pointCapacity());
-    std::vector<glm::dvec3> x(cage.positions().begin(), cage.positions().end());
-    if (stencils.empty() || int(stencils.front().inputs) != n || target.size() != stencils.back().rows())
-        throw std::invalid_argument("fitCage: the stencils don't match the cage and target");
-
-    // Solved for the change from the starting cage: a cage that already fits then gives a zero right-hand side, and
-    // the parts of the cage the subdivision cannot see (a cube's alternating corners) stay exactly where they were.
-    std::vector<glm::dvec3> fitted = x;
-    for (const geo::PointStencil& s : stencils)
-        fitted = s.apply(fitted);
-    Eigen::MatrixX3d residual(Eigen::Index(target.size()), 3);
-    for (size_t i = 0; i < target.size(); ++i)
-    {
-        const glm::dvec3 r = target[i] - fitted[i];
-        residual.row(Eigen::Index(i)) << r.x, r.y, r.z;
-    }
+    if (stencils.empty() || int(stencils.front().inputs) != n)
+        throw std::invalid_argument("fitCage: the stencils don't match the cage");
+    m->n = n;
+    m->stencils = stencils;
+    m->symmetry = opts.symmetry;
+    m->maxMoveRatio = std::max(opts.maxMoveRatio, 0.0);
 
     // Normal equations without forming the full product: M = S1' (S2' (... SL' SL ...) S2) S1, rhs likewise.
     SpMat last = toEigen(stencils.back());
-    SpMat M = SpMat(last.transpose()) * last;
-    Eigen::MatrixX3d rhs = last.transpose() * residual;
+    m->transposed.resize(stencils.size());
+    m->transposed.back() = last.transpose();
+    SpMat M = m->transposed.back() * last;
     for (size_t l = stencils.size() - 1; l-- > 0;)
     {
         SpMat s = toEigen(stencils[l]);
-        SpMat st = s.transpose();
-        M = SpMat(st * M) * s;
-        rhs = st * rhs;
+        m->transposed[l] = s.transpose();
+        M = SpMat(m->transposed[l] * M) * s;
     }
     M.prune(0.0);
 
@@ -94,6 +155,7 @@ std::vector<glm::dvec3> fitCage(const geo::Mesh& cage, std::span<const geo::Poin
     meanDiag = counted ? meanDiag / counted : 1.0;
     const double lambda = std::max(opts.regularization, 0.0) * meanDiag;
     std::vector<Eigen::Triplet<double>> diag;
+    m->held.assign(size_t(n), 0);
     for (int i = 0; i < n; ++i)
     {
         double w = lambda;
@@ -106,22 +168,85 @@ std::vector<glm::dvec3> fitCage(const geo::Mesh& cage, std::span<const geo::Poin
             w = 1e8 * meanDiag;
         if (w > 0.0)
             diag.emplace_back(i, i, w);
-        if (!valid || pinned)
-            rhs.row(i).setZero();
+        m->held[size_t(i)] = !valid || pinned;
     }
     SpMat D(n, n);
     D.setFromTriplets(diag.begin(), diag.end());
     M += D;
 
-    Eigen::SimplicialLDLT<SpMat> solver(M);
-    if (solver.info() != Eigen::Success)
+    m->solver.compute(M);
+    if (m->solver.info() != Eigen::Success)
         throw std::runtime_error("fitCage: the normal equations are singular");
-    Eigen::MatrixX3d dx = solver.solve(rhs);
-    for (int i = 0; i < n; ++i)
-        if (cage.pointValid(geo::Index(i)) && !(size_t(i) < opts.pinned.size() && opts.pinned[size_t(i)]))
+    if (m->maxMoveRatio > 0.0)
+        m->normal = std::move(M);
+}
+
+CageFitter::~CageFitter() = default;
+
+std::vector<glm::dvec3> CageFitter::solve(std::span<const glm::dvec3> start, std::span<const glm::dvec3> target) const
+{
+    LILA_ZONE();
+
+    std::vector<glm::dvec3> x(start.begin(), start.end());
+    if (int(x.size()) != m->n || target.size() != m->stencils.back().rows())
+        throw std::invalid_argument("fitCage: the stencils don't match the cage and target");
+
+    // Solved for the change from the starting cage: a cage that already fits then gives a zero right-hand side, and
+    // the parts of the cage the subdivision cannot see (a cube's alternating corners) stay exactly where they were.
+    std::vector<glm::dvec3> fitted = x;
+    for (const geo::PointStencil& s : m->stencils)
+        fitted = s.apply(fitted);
+    Eigen::MatrixX3d rhs(Eigen::Index(target.size()), 3);
+    Eigen::VectorXd gap(Eigen::Index(target.size()));
+    for (size_t i = 0; i < target.size(); ++i)
+    {
+        const glm::dvec3 r = target[i] - fitted[i];
+        rhs.row(Eigen::Index(i)) << r.x, r.y, r.z;
+        gap(Eigen::Index(i)) = glm::length(r);
+    }
+    for (size_t l = m->transposed.size(); l-- > 0;)
+        rhs = Eigen::MatrixX3d(m->transposed[l] * rhs);
+    for (int i = 0; i < m->n; ++i)
+        if (m->held[size_t(i)])
+            rhs.row(i).setZero();
+
+    Eigen::MatrixX3d dx = m->solver.solve(rhs);
+    if (m->maxMoveRatio > 0.0)
+        dx = m->capMoves(std::move(dx), rhs, m->reachMax(std::move(gap)));
+    for (int i = 0; i < m->n; ++i)
+        if (!m->held[size_t(i)])
             x[size_t(i)] += glm::dvec3(dx(i, 0), dx(i, 1), dx(i, 2));
-    if (opts.symmetry)
-        symmetrizePositions(x, *opts.symmetry);
+    if (m->symmetry)
+        symmetrizePositions(x, *m->symmetry);
+    return x;
+}
+
+std::vector<glm::dvec3> fitCage(const geo::Mesh& cage, std::span<const geo::PointStencil> stencils, std::span<const glm::dvec3> target,
+                                const FitOptions& opts)
+{
+    LILA_ZONE();
+
+    return CageFitter(cage, stencils, opts).solve(cage.positions(), target);
+}
+
+std::vector<glm::dvec3> fitToSurface(const CageFitter& fitter, std::span<const geo::PointStencil> stencils, std::span<const glm::dvec3> start,
+                                     const geo::MeshBvh& bvh, int iterations)
+{
+    LILA_ZONE();
+
+    std::vector<glm::dvec3> x(start.begin(), start.end());
+    for (int it = 0; it < std::max(1, iterations); ++it)
+    {
+        std::vector<glm::dvec3> pts = x;
+        for (const geo::PointStencil& s : stencils)
+            pts = s.apply(pts);
+        tbb::parallel_for(size_t(0), pts.size(), [&](size_t i) {
+            geo::BvhClosest c;
+            if (bvh.closestPoint(pts[i], c))
+                pts[i] = c.point;
+        });
+        x = fitter.solve(x, pts);
+    }
     return x;
 }
 
@@ -146,21 +271,11 @@ geo::Mesh fitCageToSurface(const geo::Mesh& cage, const geo::Mesh& surface, cons
         return out;
     }
 
-    std::vector<geo::PointStencil> stencils = geo::subdivideStencils(cage, opts.subdivide);
-    for (int it = 0; it < std::max(1, opts.iterations); ++it)
-    {
-        std::vector<glm::dvec3> pts(out.positions().begin(), out.positions().end());
-        for (const geo::PointStencil& s : stencils)
-            pts = s.apply(pts);
-        tbb::parallel_for(size_t(0), pts.size(), [&](size_t i) {
-            geo::BvhClosest c;
-            if (bvh.closestPoint(pts[i], c))
-                pts[i] = c.point;
-        });
-        std::vector<glm::dvec3> x = fitCage(out, stencils, pts, opts);
-        for (geo::Index p = 0; p < out.pointCapacity(); ++p)
-            out.setPosition(p, x[p]);
-    }
+    const std::vector<geo::PointStencil> stencils = geo::subdivideStencils(cage, opts.subdivide);
+    const CageFitter fitter(cage, stencils, opts);
+    std::vector<glm::dvec3> x = fitToSurface(fitter, stencils, cage.positions(), bvh, opts.iterations);
+    for (geo::Index p = 0; p < out.pointCapacity(); ++p)
+        out.setPosition(p, x[p]);
     return out;
 }
 } // namespace lila::sculpt

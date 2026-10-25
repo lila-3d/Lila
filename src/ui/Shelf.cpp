@@ -5,6 +5,7 @@
 #include "core/PrefStore.h"
 #include "ops/Command.h"
 #include "ui/Actions.h"
+#include "ui/Deletion.h"
 #include "ui/FlowLayout.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
@@ -526,6 +527,7 @@ std::string editShelf(QWidget* parent, const std::string& shelf)
         }
     });
     QObject::connect(del, &QPushButton::clicked, &dlg, [&] { delete list->currentItem(); });
+    deletion::claim(list, [list] { delete list->currentItem(); });
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     if (dlg.exec() != QDialog::Accepted)

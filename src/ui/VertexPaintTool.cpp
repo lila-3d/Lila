@@ -1009,9 +1009,11 @@ public:
         }
         substituteLiveMesh(s, *n);
         const Settings& st = settings();
+        const bool blur = ((mStroking ? mStrokeMods : QApplication::keyboardModifiers()) & Qt::ShiftModifier) != 0;
+        const std::string blend = blur ? std::string(vcolor::blendName(vcolor::Blend::Blur)) : st.blend;
         drawToolMessage(p, view, QString("Vertex paint %1: %2   %3 %4   radius %5 px   strength %6%7")
                                      .arg(QString::fromStdString(n->path()), QString::fromStdString(mSet.empty() ? "(new set)" : mSet),
-                                          QString::fromStdString(st.blend), QString::fromStdString(st.channels).toUpper())
+                                          QString::fromStdString(blend), QString::fromStdString(st.channels).toUpper())
                                      .arg(int(std::lround(st.stroke.radius)))
                                      .arg(st.stroke.strength, 0, 'f', 2)
                                      .arg(mSymmetryOn ? "   mirror" : ""));
@@ -1245,6 +1247,7 @@ private:
     void beginStroke(const QMouseEvent* e, const ViewInfo& view)
     {
         const Qt::KeyboardModifiers mods = e->modifiers();
+        mStrokeMods = mods;
         const Settings& st = settings();
         scene::Node* n = scene::Graph::current().node(mMesh);
         vcolor::BrushSettings b;
@@ -1390,6 +1393,7 @@ private:
     std::vector<geo::Index> mCornerVertex;
 
     bool mStroking = false;
+    Qt::KeyboardModifiers mStrokeMods;
     QElapsedTimer mPreviewClock;
     QPointF mHover;
 

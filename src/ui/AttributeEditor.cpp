@@ -7,6 +7,7 @@
 #include "core/Profile.h"
 #include "core/Workspace.h"
 #include "scene/Graph.h"
+#include "ui/Deletion.h"
 #include "ui/Icons.h"
 #include "ui/NumberExpr.h"
 #include "ui/SpinScrub.h"
@@ -160,6 +161,7 @@ std::vector<std::pair<std::string, QWidget*>> attributeEditor::buildSections(sce
 
 AttributeEditor::AttributeEditor(QWidget* parent) : QWidget(parent)
 {
+    deletion::claimScene(this);
     auto* outer = new QVBoxLayout(this);
     outer->setContentsMargins(4, 4, 4, 4);
     outer->setSpacing(4);

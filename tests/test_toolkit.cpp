@@ -80,6 +80,49 @@ TEST_CASE("polyMirror directions and world space")
     CHECK(faces(cube) == 12);
 }
 
+TEST_CASE("polyMirror adjusts through every direction and space, undoing and redoing on a transformed mesh")
+{
+    namespace lo = scene::lastOp;
+    auto points = [](const std::string& m) { return run("meshData", {{"args", {m}}, {"base", true}}); };
+    run("newScene");
+    std::string cube = run("polyCube", {{"subdivisionsX", 3}})[0];
+    run("setAttr", {{"args", {cube + ".translate", {30.0, 10.0, -5.0}}}});
+    run("setAttr", {{"args", {cube + ".rotate", {0.0, 35.0, 20.0}}}});
+    run("setAttr", {{"args", {cube + ".scale", {1.0, 2.0, 0.5}}}});
+    run("select", {{"args", {cube}}});
+    const json original = points(cube);
+    ui("polyMirror", {{"axis", "x"}});
+    REQUIRE(lo::live());
+    std::vector<json> results = {points(cube)};
+    for (const char* space : {"object", "world"})
+        for (const char* direction : {"positive", "negative", "both"})
+            for (bool weld : {true, false})
+                for (const char* axis : {"x", "y", "z"})
+                {
+                    CAPTURE(space);
+                    CAPTURE(direction);
+                    CAPTURE(axis);
+                    lo::rerun({{"axis", axis}, {"direction", direction}, {"space", space}, {"weld", weld}});
+                    CHECK(faces(cube) > 0);
+                    results.push_back(points(cube));
+                }
+    // Undo walks back through every setting to the original, redo forward again, twice over.
+    for (int pass = 0; pass < 2; ++pass)
+    {
+        for (size_t k = results.size(); k-- > 0;)
+        {
+            CHECK(points(cube) == results[k]);
+            run("undo");
+        }
+        CHECK(points(cube) == original);
+        for (size_t k = 0; k < results.size(); ++k)
+        {
+            run("redo");
+            CHECK(points(cube) == results[k]);
+        }
+    }
+}
+
 TEST_CASE("extract, connect and selection helpers")
 {
     run("newScene");

@@ -45,7 +45,7 @@ double handlePixels() { return PrefStore::get().value<double>("general", "/manip
 bool sessionLive()
 {
     const lo::Op* op = lo::current();
-    return op && op->command == kCommand && lo::live() && !uv::lastProjections().empty() &&
+    return op && op->command == kCommand && lo::reachable() && !uv::lastProjections().empty() &&
            uv::lastProjections().front().type != Projection::Camera;
 }
 

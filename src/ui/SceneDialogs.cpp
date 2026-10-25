@@ -183,7 +183,7 @@ RecoveryDialog::RecoveryDialog(const std::vector<io::recovery::Candidate>& candi
 
     auto* buttons = new QHBoxLayout();
     auto* discard = new QPushButton("Discard", this);
-    discard->setToolTip("Keep the saved files as they are. The autosaves stay under File > Versions.");
+    discard->setToolTip("Keep the saved files as they are. The recovered versions stay under File > Recovered Scenes.");
     mOpenSaved = new QPushButton("Open Saved", this);
     mOpenSaved->setToolTip("Open the last saved version of the selected scene");
     auto* recover = new QPushButton("Recover", this);

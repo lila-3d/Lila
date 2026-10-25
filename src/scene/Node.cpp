@@ -12,6 +12,7 @@
 #include "scene/ObjectSets.h"
 #include "scene/Graph.h"
 #include "scene/ImagePlane.h"
+#include "scene/LodGroup.h"
 #include "scene/Materials.h"
 #include "scene/Measure.h"
 #include "scene/MeshNodes.h"
@@ -178,6 +179,7 @@ void registerBuiltins()
     deformers::registerTypes();
     registerMeasureTypes();
     registerImagePlaneTypes();
+    lod::registerTypes();
     registerCameraTypes();
     anim::registerTypes();
     drivers::registerTypes();

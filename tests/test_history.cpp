@@ -3,6 +3,7 @@
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "core/Paths.h"
+#include "io/FileTranslators.h"
 #include "io/Recovery.h"
 #include "io/SceneFile.h"
 #include "io/SceneHistory.h"
@@ -464,4 +465,74 @@ TEST_CASE("undoJump undoes and redoes to a position with one notification")
     CHECK_FALSE(g.find("A"));
     counting = false;
     CHECK_THROWS(run("undoJump", {{"position", 4}}));
+}
+
+TEST_CASE("recovered scenes are kept apart from their autosaves until pruned or cleared")
+{
+    fs::path dir = freshDir("recovered");
+    fs::path source = freshDir("recovered_source");
+    fs::path scene = source / "level.lila";
+    fs::path older = source / "level.20261001-100000.autosave.lila";
+    fs::path newer = source / "untitled.20261020-100000.emergency.lila";
+    touch(older, "older");
+    touch(newer, "newer");
+    const int64_t now = 2000000000;
+    std::vector<recovery::Candidate> found = {{scene, older, history::Kind::Autosave, now - 40 * 86400, 0},
+                                              {{}, newer, history::Kind::Emergency, now - 86400, 0}};
+
+    REQUIRE(recovery::keep(found, dir).size() == 2);
+    CHECK(recovery::keep(found, dir).empty());
+    // The autosave folder pruning its originals does not touch the kept copies.
+    fs::remove(older);
+    fs::remove(newer);
+    auto kept = recovery::recovered(dir);
+    REQUIRE(kept.size() == 2);
+    CHECK(kept[0].scene.empty());
+    CHECK(kept[0].kind == history::Kind::Emergency);
+    CHECK(slurp(kept[0].file) == "newer");
+    CHECK(kept[1].scene == scene);
+    CHECK(slurp(kept[1].file) == "older");
+
+    CHECK(recovery::prune(0, dir, now) == 0);
+    CHECK(recovery::prune(30, dir, now) == 1);
+    kept = recovery::recovered(dir);
+    REQUIRE(kept.size() == 1);
+    CHECK(kept[0].kind == history::Kind::Emergency);
+    CHECK(recovery::clear(dir) == 1);
+    CHECK(recovery::recovered(dir).empty());
+    CHECK(fs::is_empty(dir));
+}
+
+TEST_CASE("opening an import-only format starts a new untitled scene")
+{
+    namespace tr = io::translators;
+    tr::registerBuiltins();
+    tr::add({.id = "testImportOnly",
+             .label = "Test import",
+             .extensions = {".tstimp"},
+             .import = {.run = [](const fs::path&, const json&) -> json { return run("spaceLocator", {{"name", "Imported"}}); }}});
+    CHECK(tr::forPath(tr::Op::Open, "a.lila")->id == "lila");
+    CHECK(tr::forPath(tr::Op::Open, "a.tstimp")->id == "testImportOnly");
+    CHECK(tr::forPath(tr::Op::Open, "a.fbx")->id == "fbx");
+    std::string filter = tr::dialogFilter(tr::Op::Open, "All supported");
+    CHECK(filter.starts_with("All supported ("));
+    CHECK(filter.find("*.fbx") != std::string::npos);
+    CHECK(filter.find("Test import (*.tstimp)") != std::string::npos);
+    CHECK(filter.find("Lila scenes") < filter.find("FBX ("));
+
+    fs::path dir = freshDir("open_import");
+    fs::path saved = dir / "before.lila";
+    run("newScene");
+    run("spaceLocator", {{"name", "Old"}});
+    run("saveScene", {{"args", {saved.generic_string()}}});
+    fs::path file = dir / "thing.tstimp";
+    touch(file);
+    run("openScene", {{"args", {file.generic_string()}}});
+    scene::Graph& g = scene::Graph::current();
+    CHECK(g.find("Imported"));
+    CHECK_FALSE(g.find("Old"));
+    CHECK(io::currentPath().empty());
+    CHECK(io::modified());
+    CHECK_FALSE(UndoStack::get().canUndo());
+    tr::remove("testImportOnly");
 }

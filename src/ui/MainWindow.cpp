@@ -40,6 +40,7 @@
 #include "ui/OffsetsPanel.h"
 #include "ui/RenamePanel.h"
 #include "ui/DisplayAids.h"
+#include "ui/LodDisplay.h"
 #include "ui/DockDragCancel.h"
 #include "ui/DockSidebar.h"
 #include "ui/Environments.h"
@@ -93,6 +94,7 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QCursor>
+#include <QDateTime>
 #include <QDesktopServices>
 #include <QDockWidget>
 #include <QFileDialog>
@@ -651,7 +653,7 @@ void MainWindow::openScene(const std::filesystem::path& given)
     {
         QString start = Workspace::get().isOpen() ? QString::fromStdWString(Workspace::get().root().wstring()) : QString();
         QString chosen = QFileDialog::getOpenFileName(this, "Open Scene", start,
-                                                      QString::fromStdString(io::translators::dialogFilter(io::translators::Op::Open, "Scenes")));
+                                                      QString::fromStdString(io::translators::dialogFilter(io::translators::Op::Open, "All supported")));
         if (chosen.isEmpty())
             return;
         path = chosen.toStdWString();
@@ -661,6 +663,21 @@ void MainWindow::openScene(const std::filesystem::path& given)
         io::translators::run(io::translators::Op::Open, path, json::object(), CallSource::UI);
         addRecentFile(path);
         refreshSourceStatus();
+        mViewports->frameUnlessRestored();
+    }
+    catch (const CommandError& e)
+    {
+        QMessageBox::warning(this, "Open failed", e.what());
+    }
+}
+
+void MainWindow::openRecoveredScene(const std::filesystem::path& file)
+{
+    if (!confirmDiscard())
+        return;
+    try
+    {
+        ops::execute("openRecoveredScene", {{"args", {QString::fromStdWString(file.generic_wstring()).toStdString()}}, {"force", true}}, CallSource::UI);
         mViewports->frameUnlessRestored();
     }
     catch (const CommandError& e)
@@ -712,7 +729,9 @@ std::filesystem::path pendingCrashReport(const std::vector<io::recovery::Session
 void MainWindow::startup(const std::vector<io::recovery::Session>& stale, bool showStartup)
 {
     std::vector<io::recovery::Candidate> candidates = io::recovery::findRecoverable(stale);
+    io::recovery::keep(candidates);
     io::recovery::forget(stale);
+    io::recovery::prune(PrefStore::get().value<int>("general", "/recovery/keepDays", 30));
     std::filesystem::path crashReport = pendingCrashReport(stale, !candidates.empty());
     if (!crashReport.empty() && candidates.empty())
     {
@@ -899,7 +918,7 @@ void MainWindow::registerActions()
                       if (confirmDiscard())
                           actions::run(json{{"command", "newScene"}});
                   }, nullptr, "Clears the scene and starts an empty one, asking to save changes first."});
-    actions::add({"file.open", "Open Scene...", "File", [this] { openScene({}); }, nullptr, "Opens a Lila or Maya scene, replacing the current one."});
+    actions::add({"file.open", "Open Scene...", "File", [this] { openScene({}); }, nullptr, "Opens a Lila or Maya scene, replacing the current one. An FBX, OBJ or other importable file opens as a new untitled scene with it imported."});
     actions::add({"file.save", "Save Scene", "File", [this] { saveScene(false); }, nullptr, "Saves the scene to its file, asking for a name the first time."});
     actions::add({"file.saveAs", "Save Scene As...", "File", [this] { saveScene(true); }, nullptr, "Saves the scene under a new name and keeps working in that file."});
     actions::add({"file.incrementAndSave", "Increment and Save", "File", [this] { incrementAndSave(); }, nullptr,
@@ -907,6 +926,19 @@ void MainWindow::registerActions()
     actions::add({"file.versions", "Versions...", "File", [this] { showVersions(); }, nullptr,
                   "Backups, autosaves, emergency saves, increments and source control revisions of this scene",
                   "sceneVersions()"});
+    actions::add({"file.openRecoveryFolder", "Open Recovery Folder", "File",
+                  [] {
+                      std::error_code ec;
+                      std::filesystem::create_directories(io::recovery::recoveredDir(), ec);
+                      QDesktopServices::openUrl(QUrl::fromLocalFile(QString::fromStdWString(io::recovery::recoveredDir().wstring())));
+                  },
+                  nullptr, "Shows the folder of scenes recovered after a crash in the file browser."});
+    actions::add({"file.clearRecoveredScenes", "Clear Recovered Scenes", "File",
+                  [this] {
+                      if (QMessageBox::question(this, "Clear Recovered Scenes", "Delete every recovered scene? This can't be undone.") == QMessageBox::Yes)
+                          ops::execute("clearRecoveredScenes", json::object(), CallSource::UI);
+                  },
+                  nullptr, "Deletes the scenes recovered after crashes, listed under File > Recovered Scenes.", "clearRecoveredScenes()"});
     actions::add({"file.openFolder", "Open Folder...", "File", [this] { openFolder(); }, nullptr,
                   "Opens a project folder: file browsing, source control and workspace layouts work from it."});
     actions::add({"file.closeFolder", "Close Folder", "File", [] { Workspace::get().close(); }, nullptr, "Closes the project folder; the scene stays open."});
@@ -1084,6 +1116,7 @@ void MainWindow::registerActions()
     animatedSend::registerActions(this);
     hud::registerActions([this] { return mViewports->active(); });
     displayAids::registerActions([this] { return mViewports->active(); });
+    lodDisplay::registerActions([this] { return mViewports->active(); });
     toolBox::registerItems([this] { return mViewports->active(); });
     cursorBadges::registerDefaults();
     actions::add({"viewport.toggleQuad", "Toggle Four Views", "View", [this] { mViewports->toggleQuad(); }, nullptr,
@@ -1194,6 +1227,29 @@ void MainWindow::buildMenus()
                 recent->addAction("(none)")->setEnabled(false);
         });
     });
+    addSubmenu("File", "Recovered Scenes", [this](QMenu* menu) {
+        menu->setToolTipsVisible(true);
+        connect(menu, &QMenu::aboutToShow, this, [this, menu] {
+            menu->clear();
+            for (const io::recovery::Recovered& r : io::recovery::recovered())
+            {
+                QString text = r.scene.empty() ? QString("untitled") : QString::fromStdWString(r.scene.filename().wstring());
+                text += "    " + QDateTime::fromSecsSinceEpoch(r.time).toString("yyyy-MM-dd hh:mm");
+                if (r.kind == io::history::Kind::Emergency)
+                    text += "    emergency save";
+                if (!r.scene.empty())
+                    text += "    " + QString::fromStdWString(r.scene.generic_wstring());
+                QAction* a = menu->addAction(text, [this, file = r.file] { openRecoveredScene(file); });
+                a->setToolTip("Opens as a new untitled scene. Recovered from " + QString::fromStdWString(r.file.wstring()));
+            }
+            if (menu->isEmpty())
+                menu->addAction("(none)")->setEnabled(false);
+            menu->addSeparator();
+            for (const char* id : {"file.openRecoveryFolder", "file.clearRecoveredScenes"})
+                menu->addAction(QString::fromStdString(actions::displayLabel(id)), [id] { actions::run(id); })
+                    ->setToolTip(QString::fromStdString(actions::tooltip(id)));
+        });
+    });
     menus::addActions("File", {"file.save", "file.saveAs", "file.incrementAndSave", "file.versions", "#Import and Export", "file.import", "file.convertMaya",
                         "file.exportSelection", "file.gameExporter", "file.exportMeshSequence", "window.batchRun", "file.createReference", "#Unreal", "unreal.send", "animated.sendOptions", "unreal.sync", "unreal.sendBake",
                         "unreal.connect", "unreal.collision", "#Workspace", "file.openFolder"});
@@ -1204,10 +1260,10 @@ void MainWindow::buildMenus()
     menus::addActions("File", {"file.closeFolder", "", "file.exit"});
 
     menu("Edit", "Edit");
-    menus::addActions("Edit", {"#History", "edit.undo", "edit.redo", "edit.repeatLast", "edit.flushUndo", "edit.flushRedo", "edit.flushAll", "#Selection",
+    menus::addActions("Edit", {"#History", "edit.undo", "edit.redo", "edit.repeatLast", "adjustLastOp.show", "edit.flushUndo", "edit.flushRedo", "edit.flushAll", "#Selection",
                         "edit.selectAll", "edit.deselect", "edit.invertSelection", "edit.delete"});
     addSubmenu("Edit", "Quick Select Sets", [](QMenu* m) { sets::attachQuickSelectMenu(m); });
-    menus::addActions("Edit", {"#Hierarchy", "edit.duplicate", "edit.group", "edit.parent", "edit.parentChain", "edit.unparent", "#Naming", "edit.rename", "edit.batchRename", "edit.conformNames", "#Settings",
+    menus::addActions("Edit", {"#Hierarchy", "edit.duplicate", "edit.group", "edit.lodGroup", "edit.generateLods", "edit.parent", "edit.parentChain", "edit.unparent", "#Naming", "edit.rename", "edit.batchRename", "edit.conformNames", "#Settings",
                         "window.preferences", "window.extensionManager"});
 
     menu("Modify", "M&odify");
@@ -1344,6 +1400,10 @@ void MainWindow::buildMenus()
     addSubmenu("Display", "Environment", [](QMenu* env) { connect(env, &QMenu::aboutToShow, env, [env] { fillEnvironmentMenu(env); }); });
     menus::addActions("Display", {"viewport.toggleEnvBackground", "#Visibility", "display.toggleVisibility", "display.hide", "display.show", "display.showLastHidden", "display.showAll",
                            "viewport.isolate", "viewport.isolateAdd", "viewport.isolateRemove"});
+    addSubmenu("Display", "Level of Detail", syncChecks);
+    menus::addActions("Display/Level of Detail", {"viewport.lod.screenSize", "viewport.lod.all", "", "viewport.lod.level0", "viewport.lod.level1",
+                                                  "viewport.lod.level2", "viewport.lod.level3", "viewport.lod.level4", "viewport.lod.level5",
+                                                  "viewport.lod.level6", "viewport.lod.level7"});
     addSubmenu("Display", "Mesh Display", syncChecks);
     for (const displayAids::Info& i : displayAids::all())
         addItem({.menu = "Display/Mesh Display", .kind = Kind::Action, .action = std::string("viewport.aid.") + i.id});

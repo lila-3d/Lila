@@ -573,6 +573,10 @@ QWidget* makePanel(QWidget* parent)
             if (list->item(i)->text() == current)
                 list->setCurrentRow(i);
     };
+    ui::deletion::claim(list, [list] {
+        if (QListWidgetItem* it = list->currentItem())
+            runCommand("delete", {{"args", {it->text().toStdString()}}});
+    });
     QObject::connect(list, &QListWidget::currentTextChanged, w, [holder, w](const QString& name) {
         while (QLayoutItem* item = holder->takeAt(0))
         {

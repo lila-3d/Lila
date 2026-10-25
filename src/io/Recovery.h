@@ -68,6 +68,32 @@ LILA_SCENE_API std::vector<Candidate> findRecoverable(const std::vector<Session>
 /** Deletes the session files, once their recovery has been offered. */
 LILA_SCENE_API void forget(const std::vector<Session>& sessions);
 
+/**
+ * A recovered scene kept for File > Recovered Scenes: a copy of an offered candidate in recoveredDir(), with its
+ * details in a .json beside it, so it outlives the pruning of the autosave it came from. Kept until the user clears
+ * them or they are older than /recovery/keepDays.
+ */
+struct Recovered
+{
+    fs::path file;  // the copy
+    fs::path scene; // where it belongs; empty for an untitled scene
+    history::Kind kind = history::Kind::Autosave;
+    int64_t time = 0; // when the original was written, unix seconds
+};
+
+LILA_SCENE_API fs::path recoveredDir();
+/** Copies the candidates into dir, skipping ones already kept. Returns the copies made. */
+LILA_SCENE_API std::vector<Recovered> keep(const std::vector<Candidate>& candidates, const fs::path& dir = recoveredDir());
+/** The kept scenes in dir, newest first. */
+LILA_SCENE_API std::vector<Recovered> recovered(const fs::path& dir = recoveredDir());
+/** Deletes kept scenes older than days (none when days <= 0). nowSeconds 0 means now. Returns how many went. */
+LILA_SCENE_API int prune(int days, const fs::path& dir = recoveredDir(), int64_t nowSeconds = 0);
+/** Deletes every kept scene. Returns how many went. */
+LILA_SCENE_API int clear(const fs::path& dir = recoveredDir());
+
+/** recoveredScenes, openRecoveredScene, clearRecoveredScenes. */
+LILA_SCENE_API void registerCommands();
+
 /** Hooks io::emergencySave() into the crash handler. */
 LILA_SCENE_API void installCrashSave();
 } // namespace lila::io::recovery

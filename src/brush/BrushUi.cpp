@@ -6,6 +6,7 @@
 #include "ui/Overlay.h"
 #include "ui/Tools.h"
 #include "ui/ViewInfo.h"
+#include "ui/ViewportTool.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -69,10 +70,13 @@ public:
         case QEvent::ShortcutOverride: break;
         default: return false;
         }
+        auto* k = static_cast<QKeyEvent*>(e);
+        // Shift and Ctrl change what a stroke would do, which the tools' messages and cursors show.
+        if (e->type() != QEvent::ShortcutOverride && (k->key() == Qt::Key_Shift || k->key() == Qt::Key_Control))
+            lila::ui::viewportTools::requestRedraw();
         QWidget* focus = QApplication::focusWidget();
         if (obj != focus || !isViewport(focus))
             return false;
-        auto* k = static_cast<QKeyEvent*>(e);
         const int key = k->key();
         const bool ours = key == Qt::Key_F || key == Qt::Key_B || key == Qt::Key_M ||
                           std::find(mControls->mExtraKeys.begin(), mControls->mExtraKeys.end(), key) != mControls->mExtraKeys.end();
@@ -159,9 +163,16 @@ StrokeInput BrushControls::input(const QMouseEvent* e) const
 
 bool BrushControls::mousePress(const QMouseEvent* e)
 {
-    if (!lila::ui::tools::brushRadiusDrag(e, mArmed != Adjust::None))
+    const bool right = e->button() == Qt::RightButton;
+    if (right)
+    {
+        if (mArmed == Adjust::None && !lila::ui::tools::softSelectAdjusting())
+            return false;
+        lila::ui::tools::markSoftSelectAdjusted();
+    }
+    else if (!lila::ui::tools::brushRadiusDrag(e, mArmed != Adjust::None))
         return false;
-    mAdjusting = mArmed != Adjust::None ? mArmed : Adjust::Radius;
+    mAdjusting = right ? Adjust::Strength : mArmed != Adjust::None ? mArmed : Adjust::Radius;
     mArmedUsed = true;
     mStart = e->position();
     const BrushSettings& s = mSettings();
@@ -193,7 +204,7 @@ bool BrushControls::mouseRelease(const QMouseEvent* e)
 {
     if (mAdjusting == Adjust::None)
         return false;
-    if (e->button() != Qt::LeftButton && e->button() != Qt::MiddleButton)
+    if (e->button() != Qt::LeftButton && e->button() != Qt::MiddleButton && e->button() != Qt::RightButton)
         return true;
     mAdjusting = Adjust::None;
     if (mFinished)

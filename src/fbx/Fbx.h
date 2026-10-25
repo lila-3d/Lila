@@ -195,6 +195,10 @@ struct ExportNode
     std::shared_ptr<const ExportMorphs> morphs;
     /** Written as an FBX camera, which looks down its local +X with +Y up where a Lila camera looks down -Z. */
     std::optional<ExportCamera> camera;
+    /** An LOD group: written as an FbxLODGroup whose children are the levels. */
+    bool lodGroup = false;
+    /** Its Unreal screen size per level, written as screen percentage thresholds; empty leaves them to the importer. */
+    std::vector<double> lodScreenSizes;
 };
 
 /** Sampled (or keyed) animation of the exported nodes over one range. */

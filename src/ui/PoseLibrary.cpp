@@ -7,6 +7,7 @@
 #include "scene/Poses.h"
 #include "ui/Actions.h"
 #include "ui/AgentCapture.h"
+#include "ui/Deletion.h"
 #include "ui/Icons.h"
 #include "ui/Panels.h"
 
@@ -91,6 +92,10 @@ public:
         mList->setWordWrap(true);
         mList->setContextMenuPolicy(Qt::CustomContextMenu);
         mList->setToolTip("Double-click to apply, Ctrl+double-click to apply mirrored");
+        deletion::claim(mList, [this] {
+            if (QListWidgetItem* it = mList->currentItem(); it && it->isSelected())
+                deleteItem(it);
+        });
         layout->addWidget(mList, 1);
 
         auto* blendRow = new QHBoxLayout;
@@ -280,6 +285,18 @@ private:
         runUi("savePose", call);
     }
 
+    /** Asks first: a pose saved to a file doesn't come back with undo. */
+    void deleteItem(QListWidgetItem* item)
+    {
+        if (item->data(kTierRole).toString() == "template")
+            return;
+        if (QMessageBox::question(this, "Delete Pose", QString("Delete the pose '%1'?").arg(item->text())) != QMessageBox::Yes)
+            return;
+        json call = poseCall(item);
+        call["force"] = poses::isReserved(item->data(kNameRole).toString().toStdString());
+        runUi("deletePose", call);
+    }
+
     void contextMenu(const QPoint& at)
     {
         QListWidgetItem* item = mList->itemAt(at);
@@ -303,13 +320,7 @@ private:
                 }
             });
             rename->setEnabled(!readOnly && !reserved);
-            QAction* del = menu.addAction("Delete", this, [this, item, reserved] {
-                if (QMessageBox::question(this, "Delete Pose", QString("Delete the pose '%1'?").arg(item->text())) != QMessageBox::Yes)
-                    return;
-                json call = poseCall(item);
-                call["force"] = reserved;
-                runUi("deletePose", call);
-            });
+            QAction* del = menu.addAction("Delete", this, [this, item] { deleteItem(item); });
             del->setEnabled(!readOnly);
             menu.addSeparator();
         }

@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <atomic>
 #include <map>
+#include <optional>
 
 namespace lila::sculpt
 {
@@ -303,25 +304,6 @@ void buildProxy(Session& s, const Args& a, Node& n)
     (void)g;
 }
 
-/** New cage positions from the sculpt, per point capacity of the cage. */
-std::vector<glm::dvec3> exitPositions(Session& s, const std::string& method, int iterations, const geo::SymmetryMap* symmetry)
-{
-    LILA_ZONE();
-
-    const geo::Mesh& proxy = s.sculpt.mesh();
-    if (s.mode == ProxyMode::Direct)
-        return {proxy.positions().begin(), proxy.positions().end()};
-    FitOptions fo;
-    fo.method = method == "closest" ? FitMethod::Closest : method == "normal" ? FitMethod::Normal : FitMethod::LeastSquares;
-    fo.subdivide = s.subdivide;
-    fo.iterations = iterations;
-    fo.symmetry = symmetry;
-    if (fo.method == FitMethod::LeastSquares && s.mode == ProxyMode::Subdivide)
-        return fitCage(s.cage, s.stencils, proxy.positions(), fo);
-    geo::Mesh fitted = fitCageToSurface(s.cage, proxy, s.sculpt.bvh(), fo);
-    return {fitted.positions().begin(), fitted.positions().end()};
-}
-
 /** The proxy as a mesh to keep in the scene, with its mask and freeze state. */
 MeshPtr proxyToKeep(const Session& s)
 {
@@ -369,6 +351,61 @@ void syncSymmetry(Session& s)
 }
 
 uint64_t nextLiveToken() { return gLiveToken.fetch_add(1); }
+
+struct ExitSolver
+{
+    int axis = -1;
+    double offset = 0.0;
+    /** The cage the symmetry map keyed, kept apart from the session's. */
+    geo::Mesh keyed;
+    std::optional<geo::SymmetryMap> map;
+    /** The cage's own subdivision, for fitting a remeshed proxy. */
+    std::vector<geo::PointStencil> stencils;
+    std::unique_ptr<CageFitter> fitter;
+};
+
+std::vector<glm::dvec3> exitPositions(Session& s, const std::string& method, int iterations)
+{
+    LILA_ZONE();
+
+    const geo::Mesh& proxy = s.sculpt.mesh();
+    if (s.mode == ProxyMode::Direct)
+        return {proxy.positions().begin(), proxy.positions().end()};
+    const Node* n = graph().node(s.node);
+    const int axis = n ? symmetryAxis(*n) : -1;
+    const double offset = axis >= 0 ? scene::symmetryOffset(*n, axis) : 0.0;
+    std::shared_ptr<ExitSolver>& x = s.exitSolver;
+    if (!x || x->axis != axis || x->offset != offset)
+    {
+        x = std::make_shared<ExitSolver>();
+        x->axis = axis;
+        x->offset = offset;
+        if (axis >= 0)
+        {
+            x->keyed = s.cage;
+            x->map = geo::SymmetryMap::persistent(x->keyed, axis, symmetryTolerance(x->keyed), nullptr, offset);
+        }
+    }
+    FitOptions fo;
+    fo.method = method == "closest" ? FitMethod::Closest : method == "normal" ? FitMethod::Normal : FitMethod::LeastSquares;
+    fo.subdivide = s.subdivide;
+    fo.iterations = iterations;
+    fo.symmetry = x->map ? &*x->map : nullptr;
+    if (fo.method != FitMethod::LeastSquares)
+    {
+        geo::Mesh fitted = fitCageToSurface(s.cage, proxy, s.sculpt.bvh(), fo);
+        return {fitted.positions().begin(), fitted.positions().end()};
+    }
+    if (!x->fitter)
+    {
+        if (s.mode != ProxyMode::Subdivide)
+            x->stencils = geo::subdivideStencils(s.cage, s.subdivide);
+        x->fitter = std::make_unique<CageFitter>(s.cage, s.mode == ProxyMode::Subdivide ? s.stencils : x->stencils, fo);
+    }
+    if (s.mode == ProxyMode::Subdivide)
+        return x->fitter->solve(s.cage.positions(), proxy.positions());
+    return fitToSurface(*x->fitter, x->stencils, s.cage.positions(), s.sculpt.bvh(), iterations);
+}
 
 void registerCommands()
 {
@@ -446,11 +483,7 @@ void registerCommands()
             if (mesh.pointCapacity() != s->cage.pointCapacity() || mesh.numFaces() != s->cage.numFaces())
                 throw CommandError("sculptExit: " + n.path() + "'s topology changed since sculptEnter; undo that edit or run sculptCancel");
 
-            std::optional<geo::SymmetryMap> map;
-            geo::Mesh cageCopy = s->cage;
-            if (int axis = symmetryAxis(n); axis >= 0)
-                map = geo::SymmetryMap::persistent(cageCopy, axis, symmetryTolerance(cageCopy), nullptr, symmetryOffset(n, axis));
-            std::vector<glm::dvec3> pos = exitPositions(*s, method, std::clamp(a.get<int>("iterations"), 1, 20), map ? &*map : nullptr);
+            std::vector<glm::dvec3> pos = exitPositions(*s, method, std::clamp(a.get<int>("iterations"), 1, 20));
             double maxMove = 0.0;
             for (Index p = 0; p < mesh.pointCapacity() && p < pos.size(); ++p)
                 if (mesh.pointValid(p))

@@ -508,7 +508,7 @@ TEST_CASE("bevel: cylinder rim")
     for (int seg = 1; seg <= 4; ++seg)
     {
         CAPTURE(seg);
-        Mesh m = makeCylinder({.radius = 50.0, .height = 100.0, .subdivAxis = 20});
+        Mesh m = makeCylinder({.radius = 50.0, .height = 100.0, .subdivAxis = 20, .capFill = CapFill::Ngon});
         const Bounds b = m.bounds();
         std::vector<Index> rim;
         for (Index e : allEdges(m))
@@ -525,7 +525,7 @@ TEST_CASE("bevel: cylinder rim")
         CHECK(convexOutward(m, 1e-6));
 
         // Every edge: n-gon caps meet the sides at corners that are not square.
-        Mesh all = makeCylinder({.radius = 50.0, .height = 100.0, .subdivAxis = 20});
+        Mesh all = makeCylinder({.radius = 50.0, .height = 100.0, .subdivAxis = 20, .capFill = CapFill::Ngon});
         bevelEdges(all, allEdges(all), {.offset = 5.0, .segments = seg});
         checkClosedSound(all, 5.0);
         CHECK(convexOutward(all, 0.02 * 5.0));
