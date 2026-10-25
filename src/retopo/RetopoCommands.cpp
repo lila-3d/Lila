@@ -425,6 +425,8 @@ void registerCommands()
             for (auto& [stage, sec] : r.timings)
                 total += sec;
             log::info("quadRemesh {}: {} ({:.2f} s)", src.path(), r.metrics.summary(), total);
+            if (r.defects > 0)
+                log::warn("quadRemesh {}: {} folds or other flaws left; a higher targetFaces or adaptivity may clear them", src.path(), r.defects);
 
             std::string name = a.get<std::string>("name", src.name() + "_remesh");
             Node* out = g.createNode(*scene::types::find("mesh"), name, g.parent(src.id()), true);

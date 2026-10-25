@@ -45,6 +45,8 @@ public:
 
     static void reached(const char* stage, double fraction);
     static void checkpoint();
+    /** Seconds left before the deadline; infinite with no Budget open or no limit. */
+    static double remaining();
     /** Facts for the error message if it runs out ("24k working triangles"). */
     static void note(std::string fact);
     /** "after cross field (24k working triangles)", for the error. */

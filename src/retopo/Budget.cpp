@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <limits>
 
 namespace lila::retopo::detail
 {
@@ -50,6 +51,13 @@ void Budget::checkpoint()
 {
     if (tCurrent)
         tCurrent->check();
+}
+
+double Budget::remaining()
+{
+    if (!tCurrent || tCurrent->mSeconds <= 0.0)
+        return std::numeric_limits<double>::infinity();
+    return tCurrent->mSeconds - (now() - tCurrent->mStart);
 }
 
 void Budget::note(std::string fact)

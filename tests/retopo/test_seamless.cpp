@@ -25,6 +25,8 @@ retopo::QuadRemeshResult remesh(const geo::Mesh& m, int faces, bool seamless)
         o.softCreaseAngle = 0.0;
     if (const char* a = std::getenv("LILA_AB_ADAPT"))
         o.adaptivity = std::atof(a);
+    if (const char* t = std::getenv("LILA_AB_TIMEOUT"))
+        o.timeout = std::atof(t);
     return retopo::quadRemesh(m, o);
 }
 
@@ -70,6 +72,10 @@ TEST_CASE("zz seamless corpus timing" * doctest::skip())
     retopo::QuadRemeshResult r = remesh(cases[i].mesh, 600, !std::getenv("LILA_CORPUS_LOCAL"));
     double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     std::printf("%s: %.2f s %s, %d defects\n", cases[i].name.c_str(), s, r.ok() ? r.metrics.summary().c_str() : r.error.c_str(), r.defects);
+    if (const char* out = std::getenv("LILA_AB_OUT"))
+        std::ofstream(out) << geo::writeObj(r.mesh);
+    if (const char* src = std::getenv("LILA_AB_SRC"))
+        std::ofstream(src) << geo::writeObj(cases[i].mesh);
 }
 
 TEST_CASE("zz remesh obj" * doctest::skip())

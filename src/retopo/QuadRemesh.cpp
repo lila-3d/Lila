@@ -961,27 +961,9 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
  * Folds, slivers, pinched edges, holes in a closed source, and fans of many faces round one point: what makes a lattice
  * too coarse for the shape. None in a clean result.
  */
-/** Faces turned over against the source and against the faces round them too: a fold, not a face following noise. */
-Index turnedOver(const geo::Mesh& m, const geo::Mesh& src, const geo::MeshBvh& bvh)
-{
-    Index count = 0;
-    for (Index f : foldedFaces(m, src, bvh))
-    {
-        glm::dvec3 around(0.0);
-        m.forEachFaceCorner(f, [&](Index c) {
-            m.forEachEdgeCorner(m.cornerEdge(c), [&](Index other) {
-                if (m.cornerFace(other) != f)
-                    around += m.faceAreaVector(m.cornerFace(other));
-            });
-        });
-        count += glm::dot(m.faceAreaVector(f), around) < 0.0;
-    }
-    return count;
-}
-
 Index defects(const geo::Mesh& m, const geo::Mesh& src, const geo::MeshBvh& bvh, bool sourceClosed)
 {
-    Index count = turnedOver(m, src, bvh) + Index(m.validate(geo::kValidateManifold).size());
+    Index count = Index(foldedFaces(m, src, bvh).size() + m.validate(geo::kValidateManifold).size());
     const double size = glm::length(src.bounds().size());
     for (Index f = 0; f < m.faceCapacity(); ++f)
         count += m.faceValid(f) && m.faceArea(f) <= 1e-9 * size * size;
@@ -1072,7 +1054,9 @@ QuadRemeshResult quadRemesh(const geo::Mesh& source, const QuadRemeshOptions& op
 
 static QuadRemeshResult quadRemeshWithin(const geo::Mesh& source, const QuadRemeshOptions& opts)
 {
+    auto started = std::chrono::steady_clock::now();
     QuadRemeshResult result = quadRemeshOnce(source, opts);
+    double lastTook = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     // Pinned points tie the lattice to the source's own spacing; a finer retry would no longer meet them.
     if (source.numFaces() == 0 || !opts.pinnedPoints.empty())
         return result;
@@ -1090,9 +1074,14 @@ static QuadRemeshResult quadRemeshWithin(const geo::Mesh& source, const QuadReme
     double length = opts.targetEdgeLength > 0.0 ? opts.targetEdgeLength : std::sqrt(area / std::max(8, opts.targetFaces));
     for (int attempt = 0; attempt < 4; ++attempt)
     {
+        // A finer lattice takes longer; one that wouldn't finish in time gives way to the best result so far.
+        if (result.ok() && Budget::remaining() < 2.0 * lastTook)
+            break;
         length *= 0.85;
         finer.targetEdgeLength = length;
+        started = std::chrono::steady_clock::now();
         QuadRemeshResult again = quadRemeshOnce(source, finer);
+        lastTook = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
         if (again.ok() && again.defects == 0)
             return again;
         if (better(again, again.defects, result, result.defects))
