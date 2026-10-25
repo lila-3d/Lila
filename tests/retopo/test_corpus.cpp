@@ -182,6 +182,9 @@ TEST_CASE("corpus: quad remesh")
     {
         retopo::QuadRemeshOptions o;
         o.targetFaces = 600;
+        // Noise still needs denser cells on its bumps to come out unfolded.
+        if (c.name == "noisySphere")
+            o.adaptivity = 0.5;
         retopo::QuadRemeshResult r = retopo::quadRemesh(c.mesh, o);
         const Mesh& m = r.mesh;
         std::vector<std::string> p = r.ok() ? introduced(c.mesh, m) : std::vector<std::string>{"error: " + r.error};

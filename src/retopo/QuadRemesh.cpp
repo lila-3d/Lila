@@ -155,11 +155,45 @@ std::vector<Index> foldedFaces(const geo::Mesh& m, const geo::Mesh& src, const g
     return out;
 }
 
+bool isClosed(const geo::Mesh& m)
+{
+    for (Index e = 0; e < m.edgeCapacity(); ++e)
+        if (m.edgeValid(e) && m.isBoundaryEdge(e))
+            return false;
+    return true;
+}
+
+/** A face squashed onto a line, like a quad whose points all landed on one crease. */
+bool isSliver(const geo::Mesh& m, Index f)
+{
+    double longest = 0.0;
+    m.forEachFaceCorner(f, [&](Index c) { longest = std::max(longest, m.edgeLength(m.cornerEdge(c))); });
+    return m.faceArea(f) < 1e-3 * longest * longest;
+}
+
 /**
- * Smooths out folds the snapping and relaxing left: points of faces that face against the source move to the middle
- * of their neighbours, back on the surface (or their crease), until nothing is folded. Corners stay.
+ * The points of a sliver other than the ends of its longest edge: they were snapped onto the line the face lies along
+ * and have to come off it for the face to open up.
  */
-void untangle(geo::Mesh& m, const std::vector<FeatureKind>& feature, const geo::Mesh& src, const geo::MeshBvh& bvh,
+void releaseSliver(const geo::Mesh& m, Index f, std::vector<FeatureKind>& feature)
+{
+    Index longest = geo::kInvalid;
+    m.forEachFaceCorner(f, [&](Index c) {
+        const Index e = m.cornerEdge(c);
+        if (longest == geo::kInvalid || m.edgeLength(e) > m.edgeLength(longest))
+            longest = e;
+    });
+    const Index a = m.edgePoint(longest, 0), b = m.edgePoint(longest, 1);
+    for (Index p : m.facePoints(f))
+        if (p != a && p != b && feature[p] == FeatureKind::Line)
+            feature[p] = FeatureKind::None;
+}
+
+/**
+ * Smooths out folds the snapping and relaxing left: points of faces that face against the source, or are squashed flat,
+ * move to the middle of their neighbours, back on the surface (or their crease), until nothing is folded. Corners stay.
+ */
+void untangle(geo::Mesh& m, std::vector<FeatureKind>& feature, const geo::Mesh& src, const geo::MeshBvh& bvh,
               const FeatureLines& lines, double h)
 {
     LILA_ZONE();
@@ -167,7 +201,13 @@ void untangle(geo::Mesh& m, const std::vector<FeatureKind>& feature, const geo::
     for (int it = 0; it < 20; ++it)
     {
         Budget::checkpoint();
-        const std::vector<Index> folded = foldedFaces(m, src, bvh);
+        std::vector<Index> folded = foldedFaces(m, src, bvh);
+        for (Index f = 0; f < m.faceCapacity(); ++f)
+            if (m.faceValid(f) && isSliver(m, f))
+            {
+                releaseSliver(m, f, feature);
+                folded.push_back(f);
+            }
         if (folded.empty())
             return;
         std::vector<Index> pts;
@@ -536,9 +576,8 @@ namespace
 {
 /**
  * Caps the lattice spacing where the surface comes close to itself across a gap, like a ball sitting in a pocket. A lattice
- * cell wider than the gap bridges it and the result collapses into it. At most twice as fine. The face count grows by
- * what the gaps need. The cap then grows out
- * gradually so the spacing still varies slowly.
+ * cell wider than the gap bridges it and the result collapses into it. At most twice as fine. The cap grows out gradually
+ * so the spacing still varies slowly.
  */
 void fitGaps(const Surface& s, const geo::Mesh& src, const geo::MeshBvh& bvh, std::vector<double>& scale)
 {
@@ -656,9 +695,7 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
     clock.lap("surface");
 
     // Gaps across air only bridge on a closed shape; an open sheet's folds remesh fine as they are.
-    bool closedSource = true;
-    for (Index e = 0; e < w.src.edgeCapacity() && closedSource; ++e)
-        closedSource = !w.src.edgeValid(e) || !w.src.isBoundaryEdge(e);
+    const bool closedSource = isClosed(w.src);
 
     // Lattice spacing per vertex from painted density and curvature, normalized to the face budget.
     std::vector<double>& scale = w.scale;
@@ -767,6 +804,9 @@ std::vector<glm::dvec3> crossField(Work& w, const QuadRemeshOptions& opts, std::
     }
     return solveCrossField(w.s, w.fo);
 }
+
+Index defects(const geo::Mesh& m, const geo::Mesh& src, const geo::MeshBvh& bvh, bool sourceClosed);
+bool better(const QuadRemeshResult& a, int defectsA, const QuadRemeshResult& b, int defectsB);
 
 QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions& opts)
 {
@@ -887,6 +927,25 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
     const bool preferSeamless = !opts.pinnedPoints.empty();
     if (seamless && seamless->ok() && (!best.ok() || preferSeamless || seamless->metrics.irregular <= best.metrics.irregular))
         best = std::move(*seamless);
+    // Where lattice points land against a tight spot is down to where the lattice happens to sit; a lattice shifted by
+    // half a cell often fits where the first didn't, at the same density.
+    const bool closed = isClosed(src);
+    int bestDefects = best.ok() ? int(defects(best.mesh, src, bvh, closed)) : 0;
+    if (!preferSeamless && !(best.ok() && bestDefects == 0))
+        for (glm::dvec2 shift : {glm::dvec2(0.5, 0.0), glm::dvec2(0.0, 0.5), glm::dvec2(0.5, 0.5)})
+        {
+            QuadRemeshResult again = build(solvePositionField(s, q, scale, shift));
+            clock.lap("shifted");
+            const int againDefects = again.ok() ? int(defects(again.mesh, src, bvh, closed)) : 0;
+            if (better(again, againDefects, best, bestDefects))
+            {
+                best = std::move(again);
+                bestDefects = againDefects;
+            }
+            if (best.ok() && bestDefects == 0)
+                break;
+        }
+    result.defects = best.ok() ? int(bestDefects) : 0;
     if (!best.ok())
     {
         result.error = best.error;
@@ -898,20 +957,46 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
     return result;
 }
 
-/** Folds, slivers, pinched edges, or holes in a closed source: what makes a lattice too coarse for the shape. */
-bool isClean(const geo::Mesh& m, const geo::Mesh& src, const geo::MeshBvh& bvh, bool sourceClosed)
+/**
+ * Folds, slivers, pinched edges, holes in a closed source, and fans of many faces round one point: what makes a lattice
+ * too coarse for the shape. None in a clean result.
+ */
+/** Faces turned over against the source and against the faces round them too: a fold, not a face following noise. */
+Index turnedOver(const geo::Mesh& m, const geo::Mesh& src, const geo::MeshBvh& bvh)
 {
-    if (!foldedFaces(m, src, bvh).empty() || !m.validate(geo::kValidateManifold).empty())
-        return false;
+    Index count = 0;
+    for (Index f : foldedFaces(m, src, bvh))
+    {
+        glm::dvec3 around(0.0);
+        m.forEachFaceCorner(f, [&](Index c) {
+            m.forEachEdgeCorner(m.cornerEdge(c), [&](Index other) {
+                if (m.cornerFace(other) != f)
+                    around += m.faceAreaVector(m.cornerFace(other));
+            });
+        });
+        count += glm::dot(m.faceAreaVector(f), around) < 0.0;
+    }
+    return count;
+}
+
+Index defects(const geo::Mesh& m, const geo::Mesh& src, const geo::MeshBvh& bvh, bool sourceClosed)
+{
+    Index count = turnedOver(m, src, bvh) + Index(m.validate(geo::kValidateManifold).size());
     const double size = glm::length(src.bounds().size());
     for (Index f = 0; f < m.faceCapacity(); ++f)
-        if (m.faceValid(f) && m.faceArea(f) <= 1e-9 * size * size)
-            return false;
+        count += m.faceValid(f) && m.faceArea(f) <= 1e-9 * size * size;
     if (sourceClosed)
         for (Index e = 0; e < m.edgeCapacity(); ++e)
-            if (m.edgeValid(e) && m.isBoundaryEdge(e))
-                return false;
-    return true;
+            count += m.edgeValid(e) && m.isBoundaryEdge(e);
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        count += m.pointValid(p) && m.pointValence(p) > 8;
+    return count;
+}
+
+/** Of two results, the one that worked with fewer defects. */
+bool better(const QuadRemeshResult& a, int defectsA, const QuadRemeshResult& b, int defectsB)
+{
+    return a.ok() && (!b.ok() || defectsA < defectsB);
 }
 } // namespace
 
@@ -991,29 +1076,26 @@ static QuadRemeshResult quadRemeshWithin(const geo::Mesh& source, const QuadReme
     // Pinned points tie the lattice to the source's own spacing; a finer retry would no longer meet them.
     if (source.numFaces() == 0 || !opts.pinnedPoints.empty())
         return result;
+    if (result.ok() && result.defects == 0)
+        return result;
     geo::Mesh src = source;
     src.compact();
-    const geo::MeshBvh bvh(src);
-    bool closed = true;
-    for (Index e = 0; e < src.edgeCapacity() && closed; ++e)
-        closed = !src.edgeValid(e) || !src.isBoundaryEdge(e);
-    if (result.ok() && isClean(result.mesh, src, bvh, closed))
-        return result;
-    // Too coarse for a thin strip or a tight spot: a finer lattice fits. Keep the first usable result to fall back on.
+    // Too coarse for a thin strip or a tight spot: a finer lattice fits, up to about four times the faces asked for. The
+    // result with the fewest defects is the fallback.
     double area = 0.0;
     for (Index f = 0; f < src.faceCapacity(); ++f)
         if (src.faceValid(f))
             area += src.faceArea(f);
     QuadRemeshOptions finer = opts;
     double length = opts.targetEdgeLength > 0.0 ? opts.targetEdgeLength : std::sqrt(area / std::max(8, opts.targetFaces));
-    for (int attempt = 0; attempt < 6; ++attempt)
+    for (int attempt = 0; attempt < 4; ++attempt)
     {
-        length *= 0.7;
+        length *= 0.85;
         finer.targetEdgeLength = length;
         QuadRemeshResult again = quadRemeshOnce(source, finer);
-        if (again.ok() && isClean(again.mesh, src, bvh, closed))
+        if (again.ok() && again.defects == 0)
             return again;
-        if (!result.ok() && again.ok())
+        if (better(again, again.defects, result, result.defects))
             result = std::move(again);
     }
     return result;

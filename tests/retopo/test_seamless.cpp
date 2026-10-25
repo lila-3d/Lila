@@ -1,4 +1,5 @@
 #include "retopo/Corpus.h"
+#include "geo/ObjIO.h"
 #include "geo/Primitives.h"
 #include "retopo/Retopo.h"
 
@@ -7,6 +8,8 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <sstream>
 
 using namespace lila;
 
@@ -20,6 +23,8 @@ retopo::QuadRemeshResult remesh(const geo::Mesh& m, int faces, bool seamless)
         o.resolveGaps = false;
     if (std::getenv("LILA_NO_SOFT"))
         o.softCreaseAngle = 0.0;
+    if (const char* a = std::getenv("LILA_AB_ADAPT"))
+        o.adaptivity = std::atof(a);
     return retopo::quadRemesh(m, o);
 }
 
@@ -64,7 +69,40 @@ TEST_CASE("zz seamless corpus timing" * doctest::skip())
     auto start = std::chrono::steady_clock::now();
     retopo::QuadRemeshResult r = remesh(cases[i].mesh, 600, !std::getenv("LILA_CORPUS_LOCAL"));
     double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-    std::printf("%s: %.2f s %s %s\n", cases[i].name.c_str(), s, r.ok() ? r.metrics.summary().c_str() : r.error.c_str(), "");
+    std::printf("%s: %.2f s %s, %d defects\n", cases[i].name.c_str(), s, r.ok() ? r.metrics.summary().c_str() : r.error.c_str(), r.defects);
+}
+
+TEST_CASE("zz remesh obj" * doctest::skip())
+{
+    // LILA_AB_OBJ=world-space obj, LILA_AB_MATRIX=its world matrix (16 numbers, column major), LILA_AB_FACES, LILA_AB_SYM, LILA_AB_OUT=result obj.
+    const char* path = std::getenv("LILA_AB_OBJ");
+    if (!path)
+        return;
+    geo::ObjReadResult read = geo::readObjFile(path);
+    REQUIRE(read.ok());
+    geo::Mesh m = read.objects.front().mesh;
+    if (const char* mat = std::getenv("LILA_AB_MATRIX"))
+    {
+        std::istringstream in(mat);
+        glm::dmat4 w(1.0);
+        for (int c = 0; c < 4; ++c)
+            for (int r = 0; r < 4; ++r)
+                in >> w[c][r];
+        glm::dmat4 inv = glm::inverse(w);
+        for (glm::dvec3& p : m.positions())
+            p = glm::dvec3(inv * glm::dvec4(p, 1.0));
+    }
+    retopo::QuadRemeshOptions o;
+    o.targetFaces = std::getenv("LILA_AB_FACES") ? std::atoi(std::getenv("LILA_AB_FACES")) : 500;
+    o.symmetryAxis = std::getenv("LILA_AB_SYM") ? std::atoi(std::getenv("LILA_AB_SYM")) : 0;
+    o.resolveGaps = !std::getenv("LILA_NO_GAPS");
+    o.seamless = std::getenv("LILA_SEAMLESS") != nullptr;
+    if (const char* a = std::getenv("LILA_AB_ADAPT"))
+        o.adaptivity = std::atof(a);
+    retopo::QuadRemeshResult r = retopo::quadRemesh(m, o);
+    std::printf("%s, %d defects, %.2f s\n", r.ok() ? r.metrics.summary().c_str() : r.error.c_str(), r.defects, seconds(r));
+    if (const char* out = std::getenv("LILA_AB_OUT"))
+        std::ofstream(out) << geo::writeObj(r.mesh);
 }
 
 TEST_CASE("quad remesh gives up past its timeout and says how far it got")

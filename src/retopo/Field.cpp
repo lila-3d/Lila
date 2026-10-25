@@ -662,7 +662,7 @@ glm::dvec3 compatLatticePair(const glm::dvec3& vi, const glm::dvec3& ni, const g
 
 glm::dvec3 matchQuarterRotation(const glm::dvec3& q0, const glm::dvec3& q1, const glm::dvec3& n1) { return matchRotation(q0, q1, n1); }
 
-std::vector<glm::dvec3> solvePositionField(const Surface& s, const std::vector<glm::dvec3>& q, const std::vector<double>& scale)
+std::vector<glm::dvec3> solvePositionField(const Surface& s, const std::vector<glm::dvec3>& q, const std::vector<double>& scale, glm::dvec2 shift)
 {
     LILA_ZONE();
 
@@ -688,6 +688,11 @@ std::vector<glm::dvec3> solvePositionField(const Surface& s, const std::vector<g
     }
 
     std::vector<glm::dvec3> o = levels.back().v;
+    {
+        const Level& C = levels.back();
+        for (Index i = 0; i < C.size(); ++i)
+            o[i] += C.s[i] * (shift.x * C.q[i] + shift.y * glm::cross(C.n[i], C.q[i]));
+    }
     for (size_t li = levels.size(); li-- > 0;)
     {
         Level& L = levels[li];

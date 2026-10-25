@@ -202,8 +202,12 @@ struct Curvature
 };
 LILA_SCENE_API Curvature estimateCurvature(const Surface& s);
 
-/** Lattice origin per vertex, the lattice point nearest the vertex. */
-LILA_SCENE_API std::vector<glm::dvec3> solvePositionField(const Surface& s, const std::vector<glm::dvec3>& q, const std::vector<double>& scale);
+/**
+ * Lattice origin per vertex, the lattice point nearest the vertex. shift starts the lattice that fraction of a cell
+ * along the field instead, for a differently placed lattice at the same spacing.
+ */
+LILA_SCENE_API std::vector<glm::dvec3> solvePositionField(const Surface& s, const std::vector<glm::dvec3>& q, const std::vector<double>& scale,
+                                                          glm::dvec2 shift = glm::dvec2(0.0));
 
 /**
  * The same, from one global seamless parametrization (mixed-integer quadrangulation, Bommes et al. 2009): the surface is

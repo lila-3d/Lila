@@ -241,7 +241,7 @@ std::vector<FlagDef> remeshFlags()
     return {{"targetFaces", "", T::Int, 500, "Approximate face count."},
             {"timeout", "", T::Float, 5.0, "Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits forever."},
             {"targetEdgeLength", "", T::Float, 0.0, "Edge length, cm; overrides targetFaces when positive."},
-            {"adaptivity", "", T::Float, 0.5, "0 uniform, 1 much denser where curved; painted point 'density' multiplies."},
+            {"adaptivity", "", T::Float, 0.25, "0 uniform, 1 much denser where curved; painted point 'density' multiplies."},
             {"useHardEdges", "", T::Bool, true, "Follow edges marked hard."},
             {"sharpAngle", "", T::Float, 40.0, "Also follow creases sharper than this, degrees; negative disables."},
             {"symmetry", "", T::String, "off", "off, x, y or z: remesh half and mirror, exactly symmetric."},
@@ -261,7 +261,7 @@ QuadRemeshOptions remeshOptions(const Args& a, const Node& src, const char* cmd)
     o.targetFaces = std::max(8, a.get<int>("targetFaces", 500));
     o.timeout = std::max(0.0, a.get<double>("timeout", 5.0));
     o.targetEdgeLength = a.get<double>("targetEdgeLength", 0.0);
-    o.adaptivity = std::clamp(a.get<double>("adaptivity", 0.5), 0.0, 1.0);
+    o.adaptivity = std::clamp(a.get<double>("adaptivity", 0.25), 0.0, 1.0);
     o.useHardEdges = a.get<bool>("useHardEdges", true);
     o.sharpAngle = a.get<double>("sharpAngle", 40.0);
     std::string sym = a.get<std::string>("symmetry", "off");

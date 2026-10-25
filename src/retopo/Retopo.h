@@ -130,7 +130,7 @@ struct QuadRemeshOptions
     /** Positive overrides targetFaces. */
     double targetEdgeLength = 0.0;
     /** 0 uniform, 1 strongly denser where curved. The point float "density" attribute multiplies on top. */
-    double adaptivity = 0.5;
+    double adaptivity = 0.25;
     /** Make the lattice finer where the surface comes close to itself across a gap, so it doesn't bridge it. */
     bool resolveGaps = true;
     /** Edges bending at least this many degrees (gentler than sharpAngle, like a bevel's segments) steer the edge flow; 0 off. */
@@ -201,6 +201,8 @@ struct QuadRemeshResult
     QualityMetrics metrics;
     /** Wall time per stage, seconds. */
     std::vector<std::pair<std::string, double>> timings;
+    /** Folds, holes, pinched edges and fans left in the mesh when no lattice tried came out clean; 0 normally. */
+    int defects = 0;
     std::string error;
     bool ok() const { return error.empty(); }
 };
