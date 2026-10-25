@@ -154,15 +154,22 @@ void registerActions()
                           .python = "lila.prefs.set(\"general\", \"" + key + "\", \"" + space + "\")"});
         }
     for (auto [space, label, what] : {std::tuple{"world", "World", "the world axes"}, {"object", "Object", "the object's own axes"},
-                                      {"component", "Component", "the selected components' average normal"}})
+                                      {"component", "Component", "the selected components' average normal and tangent"}})
         actions::add({.id = std::string("manip.scale.") + space, .label = label, .category = "Tools",
                       .run = [space] { PrefStore::get().set("general", "/manipulator/scaleSpace", space); },
                       .doc = std::string("Scales components along ") + what + ". Objects always scale on their own axes.",
                       .python = std::string("lila.prefs.set(\"general\", \"/manipulator/scaleSpace\", \"") + space + "\")"});
+    actions::add({.id = "manip.rotate.component", .label = "Component", .category = "Tools",
+                  .run = [] { PrefStore::get().set("general", "/manipulator/rotateSpace", "component"); },
+                  .doc = "Rotates components on their average normal and tangent (on a curve, its tangent frame). Objects rotate on "
+                         "their own axes.",
+                  .python = "lila.prefs.set(\"general\", \"/manipulator/rotateSpace\", \"component\")"});
     actions::add({.id = "manip.move.normal", .label = "Normal", .category = "Tools",
                   .run = [] { PrefStore::get().set("general", "/manipulator/moveSpace", "normal"); },
                   .doc = "Moves each component along its own frame: N along its vertex normal (a face selection inflates), U and V along "
-                         "its surface tangents (U follows the uvs, or the selected edges in edge mode). Objects move on their own axes.",
+                         "its surface tangents (U follows the uvs, or the selected edges in edge mode). Curve points move along the curve: U its "
+                         "tangent (a handle slides along itself), N across it within its plane, V out of the plane. Objects move on their "
+                         "own axes.",
                   .python = "lila.prefs.set(\"general\", \"/manipulator/moveSpace\", \"normal\")"});
 
     auto snap = [](const char* key, const char* label, SnapFlags f, const char* doc) {

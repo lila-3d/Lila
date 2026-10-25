@@ -1,6 +1,7 @@
 #include "gn/NodesCommon.h"
 
 #include "core/Profile.h"
+#include "curve/Ops.h"
 #include "geo/Ops.h"
 
 namespace lila::gn::nodes
@@ -149,6 +150,7 @@ void curveOps()
                 int count = int(std::clamp<int64_t>(c.i("count"), 1, 1000000));
                 double seg = std::max(1e-6, c.f("length"));
                 c.out("curve", editComponents(c.geometry("curve"), {.curves = [&](CurveSet& cs) {
+                                                                        cs = cs.evaluated();
                                                                         CurveSet out;
                                                                         out.curveAttrs.mergeLayout(cs.curveAttrs);
                                                                         for (size_t cu = 0; cu < cs.numCurves(); ++cu)
@@ -178,8 +180,11 @@ void curveOps()
             [](ExecContext& c) {
                 double l = 0.0;
                 if (GeometryPtr g = c.geometry("curve"); g->curves)
-                    for (size_t cu = 0; cu < g->curves->numCurves(); ++cu)
-                        l += polyLength(g->curves->curvePoints(cu), g->curves->cyclic[cu] != 0);
+                {
+                    CurveSet e = g->curves->evaluated();
+                    for (size_t cu = 0; cu < e.numCurves(); ++cu)
+                        l += polyLength(e.curvePoints(cu), e.cyclic[cu] != 0);
+                }
                 c.out("length", constantFloat(l));
             },
     });
@@ -201,7 +206,8 @@ void curveOps()
                     c.out("mesh", makeGeometry({}));
                     return;
                 }
-                const CurveSet& cs = *g->curves;
+                const CurveSet cs = g->curves->evaluated();
+                const CurveSet profile = prof->curves ? prof->curves->evaluated() : CurveSet();
                 std::vector<double> radius = evaluateAll<double>(radiusField(), FieldContext::forCurves(cs, Domain::Point));
                 bool caps = c.b("fillCaps");
                 geo::Mesh m;
@@ -213,7 +219,7 @@ void curveOps()
                     size_t n = path.size();
                     if (n < 2)
                         continue;
-                    if (!prof->curves || prof->curves->numCurves() == 0)
+                    if (profile.numCurves() == 0)
                     {
                         Index base = m.pointCapacity();
                         for (const D3& p : path)
@@ -226,10 +232,10 @@ void curveOps()
                     }
                     std::vector<D3> tan, nrm;
                     curveFrames(path, pathCyc, tan, nrm);
-                    for (size_t pc = 0; pc < prof->curves->numCurves(); ++pc)
+                    for (size_t pc = 0; pc < profile.numCurves(); ++pc)
                     {
-                        std::span<const D3> pr = prof->curves->curvePoints(pc);
-                        bool profCyc = prof->curves->cyclic[pc] != 0;
+                        std::span<const D3> pr = profile.curvePoints(pc);
+                        bool profCyc = profile.cyclic[pc] != 0;
                         size_t np = pr.size();
                         if (np < 2)
                             continue;
@@ -284,10 +290,11 @@ void curveOps()
             [](ExecContext& c) {
                 GeometryPtr g = c.geometry("curve");
                 geo::Mesh m;
+                CurveSet e = g->curves ? g->curves->evaluated() : CurveSet();
                 if (g->curves)
-                    for (size_t cu = 0; cu < g->curves->numCurves(); ++cu)
+                    for (size_t cu = 0; cu < e.numCurves(); ++cu)
                     {
-                        std::span<const D3> pts = g->curves->curvePoints(cu);
+                        std::span<const D3> pts = e.curvePoints(cu);
                         if (pts.size() < 3)
                             continue;
                         std::vector<Index> ids;
@@ -369,10 +376,80 @@ void curveOps()
             },
     });
 }
+
+void splineNodes()
+{
+    registerDecl({
+        .type = "SetSplineType",
+        .label = "Set Spline Type",
+        .category = "Curve",
+        .doc = "Converts curves to poly, Bezier or NURBS, keeping their shape (fitted where it can't be exact).",
+        .props = {prop("type", {"poly", "bezier", "nurbs"}, "bezier")},
+        .sockets = {.inputs = {geoIn("curve")}, .outputs = {geoOut("curve")}},
+        .exec =
+            [](ExecContext& c) {
+                curve::Kind k = curve::Kind::Bezier;
+                curve::parseKind(c.prop("type"), &k);
+                c.out("curve", editComponents(c.geometry("curve"), {.curves = [&](CurveSet& cs) {
+                                                                        CurveSet out;
+                                                                        for (size_t cu = 0; cu < cs.numCurves(); ++cu)
+                                                                            out.addSpline(curve::convert(cs.spline(cu), k));
+                                                                        cs = std::move(out);
+                                                                    }}));
+            },
+    });
+
+    registerDecl({
+        .type = "SetHandleType",
+        .label = "Set Handle Type",
+        .category = "Curve",
+        .doc = "Sets the handle type of every Bezier point: auto, vector, aligned or free.",
+        .props = {prop("type", {"auto", "vector", "aligned", "free"}, "auto")},
+        .sockets = {.inputs = {geoIn("curve")}, .outputs = {geoOut("curve")}},
+        .exec =
+            [](ExecContext& c) {
+                curve::HandleType t = curve::HandleType::Auto;
+                curve::parseHandleType(c.prop("type"), &t);
+                c.out("curve", editComponents(c.geometry("curve"), {.curves = [&](CurveSet& cs) {
+                                                                        CurveSet out;
+                                                                        for (size_t cu = 0; cu < cs.numCurves(); ++cu)
+                                                                        {
+                                                                            curve::Spline sp = cs.spline(cu);
+                                                                            for (size_t i = 0; i < sp.size(); ++i)
+                                                                                curve::setHandleType(sp, i, t);
+                                                                            out.addSpline(sp);
+                                                                        }
+                                                                        cs = std::move(out);
+                                                                    }}));
+            },
+    });
+
+    registerDecl({
+        .type = "FilletCurve",
+        .label = "Fillet Curve",
+        .category = "Curve",
+        .doc = "Rounds (arc), cuts (chamfer) or blends (g2) curve corners by radius; a point's cornerRadius attribute wins where set.",
+        .props = {prop("mode", {"arc", "chamfer", "g2"}, "arc")},
+        .sockets = {.inputs = {geoIn("curve"), in("radius", T::Float, 10.0, "cm.")}, .outputs = {geoOut("curve")}},
+        .exec =
+            [](ExecContext& c) {
+                curve::FilletOptions o;
+                curve::parseCornerMode(c.prop("mode"), &o.mode);
+                o.radius = std::max(0.0, c.f("radius"));
+                c.out("curve", editComponents(c.geometry("curve"), {.curves = [&](CurveSet& cs) {
+                                                                        CurveSet out;
+                                                                        for (size_t cu = 0; cu < cs.numCurves(); ++cu)
+                                                                            out.addSpline(curve::fillet(cs.spline(cu), o));
+                                                                        cs = std::move(out);
+                                                                    }}));
+            },
+    });
+}
 } // namespace
 
 void registerCurveNodes()
 {
+    splineNodes();
     primitives();
     curveOps();
 }

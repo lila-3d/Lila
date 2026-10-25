@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <sstream>
+#include <unordered_set>
 
 namespace lila::scene
 {
@@ -142,6 +143,16 @@ std::vector<glm::dvec3> componentPoints(Graph& g)
         for (auto& [id, ids] : components::selected(kind))
         {
             Node* n = g.node(id);
+            const components::PointProvider* pp = n ? components::pointProvider(*n) : nullptr;
+            if (pp && kind == ComponentMode::Vertex)
+            {
+                std::unordered_set<uint32_t> want(ids.begin(), ids.end());
+                glm::dmat4 w = n->as<glm::dmat4>(Transform::kWorldMatrix);
+                for (const auto& [cid, p] : pp->points(g, id))
+                    if (want.contains(cid))
+                        out.push_back(glm::dvec3(w * glm::dvec4(p, 1.0)));
+                continue;
+            }
             MeshPtr cage = isMesh(n) ? modifiers::cage(g, id) : nullptr;
             if (!cage || ids.empty())
                 continue;

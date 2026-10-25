@@ -12,6 +12,7 @@
 #include "ui/Shelf.h"
 #include "ui/TearOff.h"
 #include "ui/TearOffLogic.h"
+#include "ui/ToolBox.h"
 #include "ui/ViewportLayout.h"
 #include "ui/ViewportWidget.h"
 
@@ -359,6 +360,7 @@ void LayoutController::apply(const json& layout)
     {
         mSidebars->expandAll();
         mWindow->restoreState(QByteArray::fromBase64(QByteArray::fromStdString(layout["state"].get<std::string>())));
+        toolBox::place(mWindow);
         for (QDockWidget* d : mWindow->findChildren<QDockWidget*>())
         {
             if (d->parentWidget() != mWindow || d->objectName().isEmpty())

@@ -18,10 +18,17 @@
   "objectMode": {
     "NW": { "label": "Sculpt", "action": "sculpt.tool" }
   },
+  "edgeMode": {
+    "overflow": [
+      { "label": "Edges to Curve", "action": "curve.fromEdges" },
+      { "separator": true }
+    ]
+  },
   "faceMode": {
     "overflow": [
       { "label": "Duplicate Faces", "action": "mesh.duplicateFaces" },
       { "label": "Extract Faces", "action": "mesh.extract" },
+      { "label": "Border to Curve", "action": "curve.fromEdges" },
       { "separator": true }
     ]
   },

@@ -146,12 +146,18 @@ TEST_CASE("adjusting the last operation re-runs it as one undo step")
     CHECK(lo::current()->command == "selectByAngle");
     CHECK(lo::live());
     CHECK(selectedCount(cube, "faces") == 6);
-    // A re-run that changes nothing leaves no undo step but stays adjustable.
     lo::rerun({{"angle", 30}});
     CHECK(selectedCount(cube, "faces") == 1);
     CHECK(lo::live());
     lo::rerun({{"angle", 100}});
     CHECK(selectedCount(cube, "faces") == 6);
+    // Each adjustment undoes on its own, then the op itself.
+    run("undo");
+    CHECK(selectedCount(cube, "faces") == 1);
+    CHECK(lo::live());
+    run("undo");
+    CHECK(selectedCount(cube, "faces") == 6);
+    CHECK(lo::live());
     run("undo");
     CHECK(selectedCount(cube, "faces") == 1);
     CHECK_FALSE(lo::live());
@@ -163,6 +169,10 @@ TEST_CASE("adjusting the last operation re-runs it as one undo step")
     int three = faces(cube);
     CHECK(three > one);
     lo::rerun({{"segments", 1}});
+    CHECK(faces(cube) == one);
+    run("undo");
+    CHECK(faces(cube) == three);
+    run("undo");
     CHECK(faces(cube) == one);
     run("undo");
     CHECK(faces(cube) == 6);
@@ -187,5 +197,100 @@ TEST_CASE("adjusting the last operation re-runs it as one undo step")
     CHECK(faces(cube) == 24);
     run("undo");
     CHECK(run("modifiers", {{"args", {cube}}}).empty());
+    CHECK(faces(cube) == 6);
+}
+
+TEST_CASE("adjust-last-op edits are undo steps of their own")
+{
+    namespace lo = scene::lastOp;
+    lo::install();
+    UndoStack& undo = UndoStack::get();
+    run("newScene");
+    std::string cube = run("polyCube")[0];
+    run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
+    auto points = [&] { return run("meshData", {{"args", {cube}}})["points"]; };
+    auto thickness = [] { return lo::current()->call["thickness"].get<double>(); };
+
+    ui("polyInset", {{"thickness", 5}});
+    json p5 = points();
+    lo::rerun({{"thickness", 10}});
+    CHECK(undo.undoLabel() == "Adjust Inset: thickness");
+    json p10 = points();
+    lo::rerun({{"thickness", 15}});
+    json p15 = points();
+    CHECK(p5 != p10);
+    CHECK(p10 != p15);
+    // The same value again is no step at all.
+    size_t steps = undo.undoCount();
+    CHECK(lo::rerun({{"thickness", 15}}).is_null());
+    CHECK(undo.undoCount() == steps);
+
+    run("undo");
+    CHECK(points() == p10);
+    CHECK(thickness() == 10);
+    CHECK(lo::live());
+    run("undo");
+    CHECK(points() == p5);
+    CHECK(thickness() == 5);
+    CHECK(lo::live());
+    run("redo");
+    CHECK(points() == p10);
+    CHECK(thickness() == 10);
+    run("redo");
+    CHECK(points() == p15);
+    CHECK(thickness() == 15);
+
+    run("undo");
+    run("undo");
+    run("undo");
+    CHECK(faces(cube) == 6);
+    CHECK_FALSE(lo::live());
+    run("redo");
+    CHECK(points() == p5);
+    CHECK(lo::live());
+    CHECK(thickness() == 5);
+
+    // A new edit after undoing drops the redo steps.
+    lo::rerun({{"thickness", 20}});
+    json p20 = points();
+    CHECK_FALSE(undo.canRedo());
+    run("undo");
+    CHECK(points() == p5);
+    run("redo");
+    CHECK(points() == p20);
+    CHECK(thickness() == 20);
+
+    // A drag is one step, and a cancelled drag leaves none.
+    steps = undo.undoCount();
+    for (double t : {21.0, 22.0, 23.0})
+        lo::rerun({{"thickness", t}}, CallSource::Script, true);
+    lo::endDrag();
+    CHECK(undo.undoCount() == steps + 1);
+    CHECK(thickness() == 23);
+    run("undo");
+    CHECK(points() == p20);
+    for (double t : {30.0, 31.0})
+        lo::rerun({{"thickness", t}}, CallSource::Script, true);
+    lo::endDrag(false);
+    CHECK(undo.undoCount() == steps);
+    CHECK(points() == p20);
+    CHECK(thickness() == 20);
+    CHECK(lo::live());
+
+    // Jumping through the history lands on the op's settings too.
+    run("undoJump", {{"position", int(steps) - 1}});
+    CHECK(points() == p5);
+    CHECK(thickness() == 5);
+    CHECK(lo::live());
+    run("undoJump", {{"position", int(steps)}});
+    CHECK(points() == p20);
+    CHECK(thickness() == 20);
+
+    // Back through every setting to before the op.
+    lo::rerun({{"thickness", 8}});
+    run("undo");
+    CHECK(thickness() == 20);
+    run("undo");
+    run("undo");
     CHECK(faces(cube) == 6);
 }

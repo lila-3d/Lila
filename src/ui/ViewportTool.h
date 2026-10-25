@@ -42,6 +42,12 @@ public:
     virtual bool mouseRelease(QMouseEvent* e, const ViewInfo& view) { (void)e, (void)view; return false; }
     virtual bool wheel(QWheelEvent* e, const ViewInfo& view) { (void)e, (void)view; return false; }
     virtual bool keyPress(QKeyEvent* e, const ViewInfo& view) { (void)e, (void)view; return false; }
+    /**
+     * A key bound to a hotkey, offered to the tool before the hotkeys run action (the action id its press runs, or empty),
+     * wherever the focus is. True takes the key and nothing else runs, e.g. edit.undo stepping back a point placed but not
+     * yet committed. Keys no hotkey binds go to keyPress instead.
+     */
+    virtual bool hotkey(const QKeyEvent& e, std::string_view action) { (void)e, (void)action; return false; }
 
     virtual void draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& view) { (void)s, (void)p, (void)view; }
     /** The viewport's cursor while this tool is active; nullopt is the arrow. */

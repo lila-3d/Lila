@@ -7,6 +7,7 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <vector>
 
 #include <QWidget>
 
@@ -18,8 +19,8 @@ class QVBoxLayout;
 namespace lila::ui
 {
 /**
- * Editable flags of the last adjustable command (scene::lastOp). Editing a field undoes the command and runs it
- * again with the new value, coalesced while dragging, as one undo step. Shown in the viewport's in-view popup and
+ * Editable flags of the last adjustable command (scene::lastOp). Editing a field re-runs the command with the new
+ * value; each settled edit (a release, a confirmed entry) is one undo step, a drag coalesced into it. Shown in the viewport's in-view popup and
  * in the Modeling Toolkit's Tool Options section.
  */
 class LILA_UI_API LastOpEditor : public QWidget
@@ -32,6 +33,9 @@ public:
 
     /** Rebuilds or refreshes the fields for the current op. */
     void refresh();
+
+protected:
+    bool eventFilter(QObject* obj, QEvent* e) override;
 
 private:
     void rebuild();
@@ -49,6 +53,8 @@ private:
     std::string mCommand;
     uint64_t mBuiltFor = 0;
     nlohmann::json mPending = nlohmann::json::object();
+    /** Flags the edit in progress changes; editing others starts a new undo step. */
+    std::vector<std::string> mDragFlags;
     /** Shows a flag's value in its field without applying it, by flag name. */
     std::map<std::string, std::function<void(const nlohmann::json&)>> mShow;
     bool mUpdating = false;

@@ -10,12 +10,14 @@
 #include "scene/MeshNodes.h"
 #include "scene/RenderSettings.h"
 #include "ui/Actions.h"
+#include "ui/DisplayAids.h"
 #include "ui/Environments.h"
 #include "ui/GizmoMath.h"
 #include "ui/Icons.h"
 #include "ui/ImagePlaneUi.h"
 #include "ui/MaterialDraw.h"
 #include "ui/OptionBox.h"
+#include "ui/PaintSelect.h"
 #include "ui/RetopoDrawTool.h"
 #include "ui/SpinScrub.h"
 #include "ui/Tools.h"
@@ -136,6 +138,24 @@ QWidgetAction* rotateStepColumns(QMenu* menu, double current, const std::string&
     action->setDefaultWidget(holder);
     return action;
 }
+/** The select, transform and selection tools, and the component modes: which one is in use. */
+std::optional<bool> toolActionState(const std::string& id)
+{
+    const bool viewportTool = viewportTools::active() != nullptr;
+    for (Tool t : {Tool::Select, Tool::Move, Tool::Rotate, Tool::Scale})
+        if (id == std::string("tool.") + tools::name(t))
+            return !viewportTool && tools::current() == t;
+    if (id == "select.marqueeTool" || id == "select.lassoTool")
+        return !viewportTool && tools::current() == Tool::Select && pref(paintSelect::kLassoPref, false) == (id == "select.lassoTool");
+    if (id == "select.paintTool")
+        return viewportTools::activeId() == paintSelect::kToolId;
+    using scene::ComponentMode;
+    for (auto [mode, action] : {std::pair{ComponentMode::Object, "select.objectMode"}, {ComponentMode::Vertex, "select.vertexMode"},
+                                {ComponentMode::Edge, "select.edgeMode"}, {ComponentMode::Face, "select.faceMode"}})
+        if (id == action)
+            return scene::components::mode() == mode;
+    return std::nullopt;
+}
 } // namespace
 
 std::optional<bool> viewportActionState(const std::string& id, const ViewportWidget* view)
@@ -152,6 +172,8 @@ std::optional<bool> viewportActionState(const std::string& id, const ViewportWid
         return pref("/rig/xrayJoints", false);
     if (id == "retopo.toggleSnapSpace")
         return RetopoDrawTool::snapObjectSpace();
+    if (std::optional<bool> tool = toolActionState(id))
+        return tool;
     struct Toggle
     {
         const char* id;
@@ -174,6 +196,8 @@ std::optional<bool> viewportActionState(const std::string& id, const ViewportWid
         {"viewport.grayscaleWeights", vd::kGrayscaleWeights, false},
         {"viewport.monotone", vd::kMonotone, false},
         {"viewport.togglePreselectObjects", "/viewport/preselect/objects", false},
+        {"window.toggleToolBox", "/ui/showToolBox", true},
+        {"softSelect.toggle", "/softSelect/enabled", false},
         {"measure.toggleShow", "/measure/show", true},
         {"select.toggleCameraBased", "/select/cameraBased", false},
         {"select.toggleBackfaceCulling", "/select/backfaceCulling", false},
@@ -200,6 +224,10 @@ std::optional<bool> viewportActionState(const std::string& id, const ViewportWid
         return PrefStore::get().value<std::string>("general", vd::kColorChannel, "rgb") == id.substr(22);
     if (id.starts_with("viewport.lighting."))
         return PrefStore::get().value<std::string>("general", vd::kLighting, "environment") == id.substr(18);
+    if (view && id.starts_with("viewport.aid."))
+        return displayAids::actionState(id, view);
+    if (const Action* a = actions::find(id); a && a->checked)
+        return a->checked();
     if (!view)
         return std::nullopt;
     if (std::optional<bool> hudState = hud::actionState(id, view))
@@ -474,6 +502,7 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
     actionButton("viewport.toggleBackfaceCulling", "square-toggle");
     actionButton("viewport.toggleKuwahara", "brush");
     actionButton("viewport.toggleOutline", "border-outer");
+    menuButton("eye", "Mesh Display", [this](QMenu* m) { displayAids::fillMenu(m, mView); });
     separator();
     actionButton("viewport.frameSelected", "focus-centered");
     actionButton("viewport.frameAll", "arrows-maximize");

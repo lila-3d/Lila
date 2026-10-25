@@ -3,6 +3,7 @@
 #include "core/Export.h"
 
 #include "geo/Attribute.h"
+#include "geo/Mesh.h"
 #include "render/FrameState.h"
 #include "scene/Plug.h"
 #include "ui/Overlay.h"
@@ -106,6 +107,8 @@ struct MeshEntry
 {
     scene::MeshPtr mesh;
     glm::dmat4 world{1.0};
+    /** Object-space bounds of an entry without a mesh (a curve): only the bounding box aid draws for it. */
+    geo::Bounds bounds;
 };
 
 /** Whether any aid that draw() handles is on in panel, so callers can skip collecting meshes. */

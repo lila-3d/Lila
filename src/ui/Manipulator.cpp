@@ -11,6 +11,7 @@
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "geo/Mesh.h"
+#include "ui/GeometrySnap.h"
 #include "ui/GizmoMath.h"
 #include "ui/Isolate.h"
 #include "ui/SurfaceSnap.h"
@@ -52,13 +53,15 @@ scene::Space spaceFor(Tool t)
 {
     std::string key = t == Tool::Rotate ? "/manipulator/rotateSpace" : "/manipulator/moveSpace";
     std::string s = PrefStore::get().value<std::string>("general", key, "world");
-    // Normal has no meaning for whole objects, so they move on their own axes.
-    return s == "object" || s == "normal" ? scene::Space::Object : s == "parent" ? scene::Space::Parent : scene::Space::World;
+    // Normal and component have no meaning for whole objects, so they use their own axes.
+    return s == "object" || s == "normal" || s == "component" ? scene::Space::Object : s == "parent" ? scene::Space::Parent : scene::Space::World;
 }
 
 bool normalSpace() { return PrefStore::get().value<std::string>("general", "/manipulator/moveSpace", "world") == "normal"; }
 
-/** "world", "object" or "component" (the selection's average normal). Objects always scale on their own axes. */
+bool rotateComponentSpace() { return PrefStore::get().value<std::string>("general", "/manipulator/rotateSpace", "world") == "component"; }
+
+/** "world", "object" or "component" (the selection's average normal and tangent). Objects always scale on their own axes. */
 std::string scaleSpace() { return PrefStore::get().value<std::string>("general", "/manipulator/scaleSpace", "world"); }
 
 /** A pivot placed with Edit Pivot on a component selection, shared by every viewport; it lasts until that selection changes. */
@@ -70,13 +73,6 @@ struct ComponentPivot
     std::optional<glm::dmat3> frame;
 };
 std::optional<ComponentPivot> gComponentPivot;
-
-/** A frame whose Z is the normal; X and Y are any perpendicular pair. */
-glm::dmat3 normalFrame(const glm::dvec3& n)
-{
-    glm::dvec3 x = glm::normalize(glm::cross(std::abs(n.y) < 0.9 ? glm::dvec3(0, 1, 0) : glm::dvec3(1, 0, 0), n));
-    return glm::dmat3(x, glm::cross(n, x), n);
-}
 
 int axisOf(H h)
 {
@@ -237,9 +233,11 @@ void Manipulator::refresh()
         if (t == Tool::Scale)
         {
             const std::string s = scaleSpace();
-            mFrame = s == "component" ? normalFrame(scene::selectionNormal())
+            mFrame = s == "component" ? scene::selectionNormalFrame()
                                       : scene::xformops::frame(g, mLead, s == "object" ? scene::Space::Object : scene::Space::World);
         }
+        else if (t == Tool::Rotate && rotateComponentSpace())
+            mFrame = scene::selectionNormalFrame();
         else
             mFrame = scene::xformops::frame(g, mLead, spaceFor(t));
         if (t == Tool::Move && normalSpace() && !tools::pivotEdit())
@@ -905,12 +903,19 @@ std::optional<glm::dvec3> Manipulator::snapTarget(QPointF px, unsigned snaps) co
             for (NodeId c : g.descendants(s.id))
                 moving.insert(c);
         }
-    double best = 16.0; // px
-    std::optional<glm::dvec3> out;
+    geometrySnap::Nearest nearest(px, mView, 16.0);
     for (NodeId id : g.nodes())
     {
         scene::Node* n = g.node(id);
-        if (!n->type().isA("mesh") || moving.contains(id) || !scene::effectivelyVisible(g, id) || !isolate::shows(scene::isolation::active(), id))
+        if (moving.contains(id))
+            continue;
+        if (n->type().isA("curve"))
+        {
+            geometrySnap::addCurve(nearest, g, id, snaps,
+                                   d.components ? scene::components::selected(id, scene::components::mode()) : scene::components::Ids{});
+            continue;
+        }
+        if (!n->type().isA("mesh") || !scene::effectivelyVisible(g, id) || !isolate::shows(scene::isolation::active(), id))
             continue;
         scene::MeshPtr mesh = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
         if (!mesh)
@@ -930,17 +935,8 @@ std::optional<glm::dvec3> Manipulator::snapTarget(QPointF px, unsigned snaps) co
         auto worldOf = [&](geo::Index p) { return glm::dvec3(world * glm::dvec4(m.position(p), 1.0)); };
         if (snaps & SnapVertex)
             for (geo::Index p = 0; p < m.pointCapacity(); ++p)
-            {
-                if (!m.pointValid(p) || !vis->point(p) || (!skip.empty() && skip[p]))
-                    continue;
-                glm::dvec3 w = worldOf(p);
-                if (auto s = mView.project(w))
-                    if (double dd = dist(*s, px); dd < best)
-                    {
-                        best = dd;
-                        out = w;
-                    }
-            }
+                if (m.pointValid(p) && vis->point(p) && (skip.empty() || !skip[p]))
+                    nearest.point(worldOf(p));
         if (snaps & SnapEdge)
             for (geo::Index e = 0; e < m.edgeCapacity(); ++e)
             {
@@ -949,22 +945,10 @@ std::optional<glm::dvec3> Manipulator::snapTarget(QPointF px, unsigned snaps) co
                 geo::Index p0 = m.edgePoint(e, 0), p1 = m.edgePoint(e, 1);
                 if (!skip.empty() && (skip[p0] || skip[p1]))
                     continue;
-                glm::dvec3 a = worldOf(p0), b = worldOf(p1);
-                auto sa = mView.project(a), sb = mView.project(b);
-                if (!sa || !sb)
-                    continue;
-                QPointF dir = *sb - *sa;
-                double len2 = QPointF::dotProduct(dir, dir);
-                double t = len2 > 0 ? std::clamp(QPointF::dotProduct(px - *sa, dir) / len2, 0.0, 1.0) : 0.0;
-                if (double dd = dist(*sa + dir * t, px); dd < best)
-                {
-                    best = dd;
-                    // Screen-space t is close enough along short edges; perspective skew is tiny at snap distances.
-                    out = glm::mix(a, b, t);
-                }
+                nearest.segment(worldOf(p0), worldOf(p1));
             }
     }
-    return out;
+    return nearest.hit();
 }
 
 std::optional<glm::dvec3> Manipulator::surfaceSlide(QPointF px)

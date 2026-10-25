@@ -8,6 +8,35 @@
 
 namespace lila
 {
+namespace
+{
+/** Reverts a step's own edits on redo and reapplies them on undo; shares them with that step. */
+struct RevertAction : UndoAction
+{
+    std::vector<std::shared_ptr<UndoAction>> edits;
+
+    void undo() override
+    {
+        for (auto& a : edits)
+            a->redo();
+    }
+    void redo() override
+    {
+        for (auto& a : std::views::reverse(edits))
+            a->undo();
+    }
+    bool selectionOnly() const override
+    {
+        return std::ranges::all_of(edits, [](const auto& a) { return a->selectionOnly(); });
+    }
+    void sharedBytes(UndoShared& s) const override
+    {
+        for (const auto& a : edits)
+            a->sharedBytes(s);
+    }
+};
+} // namespace
+
 UndoStack& UndoStack::get()
 {
     static UndoStack stack;
@@ -25,10 +54,74 @@ void UndoStack::closeChunk()
     if (mDepth == 0 || --mDepth > 0)
         return;
     if (mOpen.actions.empty())
+    {
+        // A reopened step that now records nothing is gone from the stack.
+        if (std::exchange(mReopened, false))
+        {
+            ++mSerial;
+            notify();
+        }
         return;
+    }
+    mReopened = false;
     Chunk c = std::move(mOpen);
     mOpen = {};
     push(std::move(c));
+}
+
+void UndoStack::cancelChunk()
+{
+    if (mDepth == 0)
+        return;
+    mDepth = 0;
+    mReopened = false;
+    Chunk c = std::move(mOpen);
+    mOpen = {};
+    mReplaying = true;
+    for (auto& a : std::views::reverse(c.actions))
+        a->undo();
+    mReplaying = false;
+    ++mSerial;
+    notify();
+}
+
+bool UndoStack::openAmend(std::string label)
+{
+    LILA_ZONE();
+
+    if (mDepth > 0 || mDone.empty())
+        return false;
+    const Chunk& newest = mDone.back();
+    auto revert = std::make_shared<RevertAction>();
+    revert->edits.assign(newest.actions.begin() + ptrdiff_t(newest.amends), newest.actions.end());
+    mReplaying = true;
+    revert->redo();
+    mReplaying = false;
+    openChunk(std::move(label));
+    mOpen.actions.push_back(std::move(revert));
+    mOpen.amends = 1;
+    return true;
+}
+
+bool UndoStack::reopenNewest(std::string label)
+{
+    LILA_ZONE();
+
+    if (mDepth > 0 || mDone.empty())
+        return false;
+    Chunk c = std::move(mDone.back());
+    mDone.pop_back();
+    account(c, false);
+    mReplaying = true;
+    for (size_t i = c.actions.size(); i > c.amends; --i)
+        c.actions[i - 1]->undo();
+    mReplaying = false;
+    c.actions.resize(c.amends);
+    mOpen = Chunk{std::move(label), std::move(c.actions)};
+    mOpen.amends = c.amends;
+    mDepth = 1;
+    mReopened = true;
+    return true;
 }
 
 uint64_t UndoStack::stateId() const

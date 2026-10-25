@@ -19,6 +19,7 @@ lila_module(lila_ui UI
     SmartJoinUi.cpp SmartJoinUi.h
     Camera.cpp
     ChannelBox.cpp ChannelBox.h
+    CurveTools.cpp CurveToolsCommon.h CurveUi.cpp CurveUi.h PipeTool.cpp
     DisplayLayersPanel.cpp DisplayLayersPanel.h
     AnimLayersPanel.cpp AnimLayersPanel.h
     OffsetsPanel.cpp OffsetsPanel.h
@@ -70,6 +71,7 @@ lila_module(lila_ui UI
     PlacePrimitive.cpp PlacePrimitive.h
     MeshCache.cpp MeshCache.h
     SurfaceSnap.cpp SurfaceSnap.h
+    GeometrySnap.cpp GeometrySnap.h
     Isolate.cpp Isolate.h
     ModelingToolkit.cpp ModelingToolkit.h
     SoftSelectPanel.cpp SoftSelectPanel.h
@@ -83,8 +85,8 @@ lila_module(lila_ui UI
     KnifeTool.cpp KnifeTool.h
     TargetWeldTool.cpp TargetWeldTool.h
     PythonBridge.cpp PythonBridge.h
-    RigViewport.cpp RigViewport.h WeightPaintTool.cpp WeightPaintTool.h
     ConformTool.cpp ConformTool.h
+    RigViewport.cpp RigViewport.h WeightPaintTool.cpp WeightPaintTool.h
     SpacesUi.cpp SpacesUi.h
     DeformUi.cpp DeformUi.h
     MorphPanel.cpp MorphPanel.h
@@ -93,8 +95,8 @@ lila_module(lila_ui UI
     Tools.cpp Tools.h
     Outliner.cpp Outliner.h
     SetsUi.cpp SetsUi.h
-    PreferencesDialog.cpp PreferencesDialog.h
     OutlinerFilter.cpp OutlinerFilter.h
+    PreferencesDialog.cpp PreferencesDialog.h
     ProgressOverlay.cpp ProgressOverlay.h
     ReferenceEditor.cpp ReferenceEditor.h
     RenderSettingsDialog.cpp RenderSettingsDialog.h
@@ -126,12 +128,12 @@ lila_module(lila_ui UI
     ViewportHud.cpp ViewportHud.h
     ViewportLayout.cpp ViewportLayout.h
     ViewportToolbar.cpp ViewportToolbar.h
-    VertexPaintTool.cpp VertexPaintTool.h
-    PaintSelect.cpp PaintSelect.h
     DisplayAids.cpp DisplayAids.h
     IconBars.cpp IconBars.h Arrange.h
     ToolBox.cpp ToolBox.h
-    ViewportTool.cpp ViewportTool.h
+    VertexPaintTool.cpp VertexPaintTool.h
+    PaintSelect.cpp PaintSelect.h
+    ViewportTool.cpp ViewportTool.h StepHistory.h
     ViewportWidget.cpp ViewportWidget.h)
 
 set_target_properties(lila_ui PROPERTIES AUTOMOC ON)

@@ -67,6 +67,31 @@ LILA_SCENE_API Ids convert(const geo::Mesh& mesh, ComponentMode from, const Ids&
 LILA_SCENE_API int addListener(std::function<void()> fn);
 LILA_SCENE_API void removeListener(int id);
 
+/**
+ * Point-like components of nodes that aren't meshes (curve points and handles): vertex mode picks, centres and moves them
+ * through these, by node type. Ids are the provider's own.
+ */
+struct PointProvider
+{
+    std::string nodeType;
+    /** Object-space position of every component, by id. */
+    std::function<std::vector<std::pair<uint32_t, glm::dvec3>>(Graph&, NodeId)> points;
+    /** Moves components to object-space positions, as an undoable edit of the node. */
+    std::function<void(Graph&, NodeId, const std::vector<std::pair<uint32_t, glm::dvec3>>&)> setPoints;
+    /** The plug a live drag writes and restores, any history feeding it frozen first. */
+    std::function<PlugRef(Graph&, NodeId)> editPlug;
+    /**
+     * Optional object-space frame of each given component, columns U, V and N (zero where it has none): the axes the move
+     * tool's Normal orientation drags each one along, averaged for the manipulator's Normal and Component orientations.
+     */
+    std::function<std::vector<glm::dmat3>(Graph&, NodeId, const Ids&)> frames;
+    /** Applies an object-space matrix to all of the node's geometry, as an undoable edit (Freeze Transformations). */
+    std::function<void(Graph&, NodeId, const glm::dmat4&)> bake;
+};
+LILA_SCENE_API void registerPointProvider(PointProvider p);
+/** The provider for the node's type or a base type; null for meshes and anything else. */
+LILA_SCENE_API const PointProvider* pointProvider(const Node& n);
+
 LILA_SCENE_API void registerCommands();
 /** selectLoopThrough, selectPathBetween and selectContainedFaces (scene/SelectPaths.cpp); called by registerCommands. */
 LILA_SCENE_API void registerPathCommands();
@@ -99,7 +124,6 @@ LILA_SCENE_API std::vector<glm::dvec3> componentNormals(const geo::Mesh& mesh, C
 LILA_SCENE_API glm::dvec3 selectionNormal();
 /** Moves each selected point (with soft selection and symmetry) by a world distance along its own normal, as one undo step. */
 LILA_SCENE_API void offsetSelectedComponents(const char* label, double distance);
-} // namespace lila::scene
 /**
  * Object-space frame per point, columns U tangent, V tangent and normal (zero where it has no faces): the axes the move tool's
  * Normal orientation drags each point along. The normal is componentNormals'. U is the uv0 u direction (dP/du of its faces,
@@ -110,10 +134,11 @@ LILA_SCENE_API std::vector<glm::dmat3> componentFrames(const geo::Mesh& mesh, Co
                                                        const glm::dvec3& reference);
 /**
  * World-space manipulator frame for the Normal orientation: Z the selection's average normal, X the average of its points' U
- * tangents. The tangent reference is the world axis least aligned with that normal.
+ * tangents. The tangent reference is the world axis least aligned with that normal. Provided points (curves) use their
+ * provider's frames.
  */
 LILA_SCENE_API glm::dmat3 selectionNormalFrame();
-/** Moves each selected point by uvn along its own world U, V and N (componentFrames), as one undo step. */
+/** Moves each selected point by uvn along its own world U, V and N (componentFrames, or its provider's frames), as one undo step. */
 LILA_SCENE_API void offsetSelectedComponents(const char* label, const glm::dvec3& uvn);
 
 /** Where a point goes at full weight, given its rest position (object space). */
@@ -125,3 +150,4 @@ using PointTargetSetup = std::function<PointTarget(const geo::Mesh&, const glm::
  * symmetry driving the other, as one undo step. Throws in object mode; returns how many meshes it changed.
  */
 LILA_SCENE_API int deformSelectedComponents(const char* label, const PointTargetSetup& setup);
+} // namespace lila::scene

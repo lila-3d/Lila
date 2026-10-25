@@ -4,6 +4,7 @@
 #include "geo/Conform.h"
 #include "geo/Mesh.h"
 #include "scene/Components.h"
+#include "scene/ConformTargets.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Transform.h"
@@ -11,6 +12,7 @@
 #include <cmath>
 #include <format>
 #include <limits>
+#include <map>
 #include <memory>
 
 namespace lila::scene
@@ -95,24 +97,32 @@ void conformSelected(const char* command, const char* what, double strength, con
         throw CommandError(std::format("{}: {}", command, what));
 }
 
-/** The target= mesh, else the one selected mesh with no components selected in the current mode. */
+std::map<std::string, conformTargets::Provider>& providers()
+{
+    static std::map<std::string, conformTargets::Provider> p;
+    return p;
+}
+
+bool conformable(Node& n) { return n.type().isA("mesh") || providers().contains(n.type().name); }
+
+/** The target= mesh or curve, else the one selected mesh or curve with no components selected in the current mode. */
 Node& conformTarget(const Args& a)
 {
     Graph& g = Graph::current();
     if (std::string name = a.get<std::string>("target", ""); !name.empty())
     {
         Node* n = g.find(name);
-        if (!n || !n->type().isA("mesh"))
-            throw CommandError("polyConformToObject: " + name + " is not a mesh");
+        if (!n || !conformable(*n))
+            throw CommandError("polyConformToObject: " + name + " is not a mesh or curve");
         return *n;
     }
     Node* found = nullptr;
     const auto& selected = components::selected(components::mode());
     for (NodeId id : g.selection())
-        if (Node* n = g.node(id); n && n->type().isA("mesh") && !selected.contains(id))
+        if (Node* n = g.node(id); n && conformable(*n) && !selected.contains(id))
             found = n;
     if (!found)
-        throw CommandError("polyConformToObject: give target= or also select the mesh to conform to");
+        throw CommandError("polyConformToObject: give target= or also select the mesh or curve to conform to");
     return *found;
 }
 
@@ -182,6 +192,17 @@ void registerOptionLayouts()
     opt::setOverride("polyConformToObject", std::move(object));
 }
 } // namespace
+
+namespace conformTargets
+{
+void add(std::string nodeType, Provider p) { providers()[std::move(nodeType)] = std::move(p); }
+
+std::optional<geo::Mesh> worldGeometry(Graph& g, Node& n)
+{
+    auto it = providers().find(n.type().name);
+    return it == providers().end() ? std::nullopt : it->second(g, n);
+}
+} // namespace conformTargets
 
 void registerConformCommands()
 {
@@ -265,11 +286,12 @@ void registerConformCommands()
 
     ops::registerCommand({
         .name = "polyConformToObject",
-        .doc = "Conform the selected components onto another mesh. loop: each selected edge loop (or face region border) lands "
+        .doc = "Conform the selected components onto another mesh or a curve. loop: each selected edge loop (or face region border) lands "
                "one to one on the target's nearest closed loop (a cylinder's rim, a ring), at the turn that moves it least, or "
                "spread along it when the counts differ; face interiors follow. surface: every point to the nearest surface point. "
-               "vertex: every point to the nearest target vertex.",
-        .flags = {{"target", "", T::String, nullptr, "Mesh to conform to; default: the selected mesh that has no components selected."},
+               "vertex: every point to the nearest target vertex. A curve target works through its line: loop spreads a loop along a "
+               "closed curve, surface puts each point on the nearest point of the curve.",
+        .flags = {{"target", "", T::String, nullptr, "Mesh or curve to conform to; default: the selected mesh or curve that has no components selected."},
                   {"mode", "", T::String, "loop", "loop, surface or vertex.", {"loop", "surface", "vertex"}},
                   {"spacing", "", T::String, "even", "Loop mode with unequal counts: even, keep or project.", spacings},
                   strength},
@@ -277,10 +299,17 @@ void registerConformCommands()
             Graph& g = Graph::current();
             g.evaluate();
             Node& t = conformTarget(a);
-            MeshPtr target = t.as<MeshPtr>(MeshNode::kOutMesh);
+            MeshPtr target;
+            glm::dmat4 targetWorld(1.0);
+            if (t.type().isA("mesh"))
+            {
+                target = t.as<MeshPtr>(MeshNode::kOutMesh);
+                targetWorld = t.as<glm::dmat4>(Transform::kWorldMatrix);
+            }
+            else if (std::optional<geo::Mesh> w = conformTargets::worldGeometry(g, t))
+                target = std::make_shared<geo::Mesh>(std::move(*w));
             if (!target || target->numPoints() == 0)
                 throw CommandError("polyConformToObject: " + t.path() + " has no geometry");
-            const glm::dmat4 targetWorld = t.as<glm::dmat4>(Transform::kWorldMatrix);
             const std::string mode = a.get<std::string>("mode", "loop");
             geo::ConformOptions o{mode == "surface" ? geo::ConformMode::Surface : mode == "vertex" ? geo::ConformMode::Vertex : geo::ConformMode::Loop,
                                   spacingArg(a, "even")};

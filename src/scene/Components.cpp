@@ -332,6 +332,35 @@ void removeListener(int id) { st().listeners.erase(id); }
 
 namespace
 {
+std::vector<PointProvider>& providers()
+{
+    static std::vector<PointProvider> p;
+    return p;
+}
+} // namespace
+
+void registerPointProvider(PointProvider p)
+{
+    for (PointProvider& q : providers())
+        if (q.nodeType == p.nodeType)
+        {
+            q = std::move(p);
+            return;
+        }
+    providers().push_back(std::move(p));
+}
+
+const PointProvider* pointProvider(const Node& n)
+{
+    for (const NodeType* t = &n.type(); t; t = t->base)
+        for (const PointProvider& p : providers())
+            if (p.nodeType == t->name)
+                return &p;
+    return nullptr;
+}
+
+namespace
+{
 Node& meshNode(const std::string& name, const char* cmd)
 {
     Node* n = Graph::current().find(name);
@@ -502,7 +531,10 @@ void registerCommands()
             auto objs = a.objects();
             if (objs.empty())
                 throw CommandError("selectComponents: no mesh");
-            Node& n = meshNode(objs.back(), "selectComponents");
+            Node* found = Graph::current().find(objs.back());
+            if (found && pointProvider(*found) && (a.has("edges") || a.has("faces")))
+                throw CommandError("selectComponents: " + objs.back() + " has only points");
+            Node& n = found && pointProvider(*found) ? *found : meshNode(objs.back(), "selectComponents");
             Op op = a.get<bool>("add") ? Op::Add : a.get<bool>("deselect") ? Op::Remove : a.get<bool>("toggle") ? Op::Toggle : Op::Replace;
             UndoChunk chunk("Select Components");
             bool any = false;

@@ -149,7 +149,7 @@ void KnifeTool::activate()
     qApp->installEventFilter(mFilter.get());
     refresh();
     log::info("Knife: click points to cut, Enter or RMB finishes, Ctrl+click an edge inserts a loop, Shift snaps, A angle, X cut through, "
-              "Backspace removes a point, Esc cancels or exits");
+              "Backspace or Z removes a point, Shift+Z puts it back, Esc cancels or exits");
 }
 
 void KnifeTool::deactivate()
@@ -357,6 +357,7 @@ geo::KnifeOptions KnifeTool::options(const Target& t, const ViewInfo& view) cons
 void KnifeTool::cancel()
 {
     mPoints.clear();
+    mHistory.clear();
     mNode = scene::kNoNode;
     mHoverFirst = false;
     mDragging = false;
@@ -396,6 +397,7 @@ void KnifeTool::finish(bool closed)
 
 void KnifeTool::insertLoop(const Spot& spot)
 {
+    mHistory.clear();
     if (spot.point.kind != Kind::Edge)
         return;
     scene::Node* n = scene::Graph::current().node(mNode != scene::kNoNode ? mNode : mHover->first);
@@ -451,6 +453,7 @@ bool KnifeTool::mousePress(QMouseEvent* e, const ViewInfo& view)
         return true;
     mNode = h->first;
     mPoints.push_back(h->second);
+    mHistory.clear();
     mDragging = true;
     viewportTools::requestRedraw();
     return true;
@@ -502,6 +505,38 @@ bool KnifeTool::keyPress(QKeyEvent* e, const ViewInfo& view)
     return key(e->key(), e->modifiers());
 }
 
+bool KnifeTool::hotkey(const QKeyEvent& e, std::string_view action)
+{
+    switch (mHistory.route(e.key(), action))
+    {
+    case StepKey::Undo: stepBack(); return true;
+    case StepKey::Redo: stepForward(); return true;
+    case StepKey::None: return false;
+    }
+    return false;
+}
+
+void KnifeTool::stepBack()
+{
+    if (mPoints.empty())
+        return;
+    mHistory.undone({mNode, mPoints.back()});
+    mPoints.pop_back();
+    mDragging = false;
+    mHoverFirst = false;
+    if (mPoints.empty())
+        mNode = scene::kNoNode;
+}
+
+void KnifeTool::stepForward()
+{
+    std::optional<std::pair<scene::NodeId, Spot>> s = mHistory.take();
+    if (!s)
+        return;
+    mNode = s->first;
+    mPoints.push_back(s->second);
+}
+
 bool KnifeTool::key(int key, Qt::KeyboardModifiers mods)
 {
     if (!KeyFilter::owns(key, mods))
@@ -510,12 +545,7 @@ bool KnifeTool::key(int key, Qt::KeyboardModifiers mods)
     {
     case Qt::Key_Return:
     case Qt::Key_Enter: finish(false); break;
-    case Qt::Key_Backspace:
-        if (!mPoints.empty())
-            mPoints.pop_back();
-        if (mPoints.empty())
-            mNode = scene::kNoNode;
-        break;
+    case Qt::Key_Backspace: stepBack(); break;
     case Qt::Key_Escape:
         if (mPoints.empty())
         {
@@ -612,7 +642,7 @@ void KnifeTool::draw(render::FrameState&, OverlayPainter& p, const ViewInfo& vie
             p.disc(*s, hot ? 6.0f : 4.0f, kHot, 16);
         }
 
-    QString help = "Knife: click to cut, Enter/RMB finish, Ctrl+click edge: loop, Shift: snap %1%, Backspace: remove point, Esc: cancel";
+    QString help = "Knife: click to cut, Enter/RMB finish, Ctrl+click edge: loop, Shift: snap %1%, Z/Backspace: remove point, Shift+Z: restore it, Esc: cancel";
     help = help.arg(snapStepFraction() * 100.0, 0, 'g', 3);
     help += QString("   A angle: %1   X through: %2").arg(mAngle ? "on" : "off", mThrough ? "on" : "off");
     drawToolMessage(p, view, help);

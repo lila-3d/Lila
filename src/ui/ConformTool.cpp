@@ -1,14 +1,20 @@
 #include "ui/ConformTool.h"
 
 #include "core/Log.h"
+#include "curve/CurveNodes.h"
+#include "curve/Tessellate.h"
 #include "ops/Command.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
+#include "scene/Transform.h"
 #include "ui/Actions.h"
 #include "ui/SurfaceSnap.h"
 #include "ui/ViewportTool.h"
 
 #include <QTimer>
+
+#include <algorithm>
+#include <cmath>
 
 namespace lila::ui
 {
@@ -30,9 +36,53 @@ bool hasImplicitTarget()
     const auto& edited = scene::components::selected(scene::components::mode());
     scene::Graph& g = scene::Graph::current();
     for (scene::NodeId id : g.selection())
-        if (scene::Node* n = g.node(id); n && n->type().isA("mesh") && !edited.contains(id))
+        if (scene::Node* n = g.node(id); n && (n->type().isA("mesh") || n->type().isA("curve")) && !edited.contains(id))
             return true;
     return false;
+}
+
+/** The visible curve drawn within a few pixels of the cursor. */
+scene::Node* curveUnder(QPointF px, const ViewInfo& view)
+{
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    scene::Node* best = nullptr;
+    double bestD = 8.0;
+    for (scene::NodeId id : g.nodes())
+    {
+        scene::Node* n = g.node(id);
+        if (!n || !n->type().isA("curve") || !scene::effectivelyVisible(g, id))
+            continue;
+        for (const curve::Spline& s : curve::splinesOf(n->value(curve::CurveShape::kWorldSpace)))
+        {
+            curve::Polyline pl = curve::tessellate(s);
+            size_t segs = pl.closed ? pl.size() : (pl.size() ? pl.size() - 1 : 0);
+            for (size_t i = 0; i < segs; ++i)
+            {
+                auto a = view.project(pl.points[i]), b = view.project(pl.points[(i + 1) % pl.size()]);
+                if (!a || !b)
+                    continue;
+                QPointF d = *b - *a;
+                double len2 = QPointF::dotProduct(d, d);
+                double t = len2 > 0 ? std::clamp(QPointF::dotProduct(px - *a, d) / len2, 0.0, 1.0) : 0.0;
+                QPointF q = *a + d * t - px;
+                if (double dist = std::hypot(q.x(), q.y()); dist < bestD)
+                {
+                    bestD = dist;
+                    best = n;
+                }
+            }
+        }
+    }
+    return best;
+}
+
+scene::Node* targetUnder(QPointF px, const ViewInfo& view)
+{
+    if (scene::Node* c = curveUnder(px, view))
+        return c;
+    std::optional<surfaceSnap::Hit> hit = surfaceSnap::underCursor(px, view, editedMeshes());
+    return hit ? scene::Graph::current().node(hit->node) : nullptr;
 }
 
 class ConformPickTool final : public ViewportTool
@@ -40,7 +90,7 @@ class ConformPickTool final : public ViewportTool
 public:
     const char* name() const override { return "Conform to Object"; }
 
-    void activate() override { log::info("Conform to Object: click the mesh to conform the selection to, Esc cancels"); }
+    void activate() override { log::info("Conform to Object: click the mesh or curve to conform the selection to, Esc cancels"); }
 
     std::optional<QCursor> cursor() const override { return QCursor(Qt::PointingHandCursor); }
 
@@ -48,11 +98,10 @@ public:
     {
         if (e->button() != Qt::LeftButton)
             return false;
-        std::optional<surfaceSnap::Hit> hit = surfaceSnap::underCursor(e->position(), view, editedMeshes());
-        scene::Node* n = hit ? scene::Graph::current().node(hit->node) : nullptr;
+        scene::Node* n = targetUnder(e->position(), view);
         if (!n)
         {
-            log::warn("Conform to Object: no mesh there to conform to");
+            log::warn("Conform to Object: no mesh or curve there to conform to");
             return true;
         }
         actions::runWithOptions(kConformCommand, {{"target", n->path()}});
@@ -63,8 +112,7 @@ public:
 
     bool mouseMove(QMouseEvent* e, const ViewInfo& view) override
     {
-        std::optional<surfaceSnap::Hit> hit = surfaceSnap::underCursor(e->position(), view, editedMeshes());
-        scene::Node* n = hit ? scene::Graph::current().node(hit->node) : nullptr;
+        scene::Node* n = targetUnder(e->position(), view);
         QString hover = n ? QString::fromStdString(n->path()) : QString();
         if (hover != mHover)
         {
@@ -84,7 +132,7 @@ public:
 
     void draw(render::FrameState&, OverlayPainter& p, const ViewInfo& view) override
     {
-        drawToolMessage(p, view, mHover.isEmpty() ? QString("Conform to Object: click the mesh to conform the selection to, Esc: cancel")
+        drawToolMessage(p, view, mHover.isEmpty() ? QString("Conform to Object: click the mesh or curve to conform the selection to, Esc: cancel")
                                                   : QString("Conform to %1").arg(mHover));
     }
 
@@ -123,7 +171,7 @@ void registerConformActions()
                     viewportTools::set(std::make_unique<ConformPickTool>());
             },
         .doc = "Snaps the selected loop onto the nearest edge loop of another mesh, one vertex to each (or onto its surface, in the option "
-               "box). Uses the other selected mesh, or click one.",
+               "box), or onto a curve. Uses the other selected mesh or curve, or click one.",
         .python = "lila.ui.run_action(\"mesh.conformToObject\")",
         .command = kConformCommand,
         .call = json::object(),

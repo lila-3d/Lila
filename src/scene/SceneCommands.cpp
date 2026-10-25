@@ -118,6 +118,7 @@ void loadNamingPolicy()
 
 void registerTransformCommands();
 void registerMeshEditCommands();
+void registerConformCommands();
 void registerTransferCommands();
 void registerBooleanCommands();
 void registerSmartJoinCommands();
@@ -132,6 +133,7 @@ void registerCommands()
     registerTransformCommands();
     registerMeshCommands();
     registerMeshEditCommands();
+    registerConformCommands();
     registerComponentQueryCommands();
     registerTransferCommands();
     registerBooleanCommands();

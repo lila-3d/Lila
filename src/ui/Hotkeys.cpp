@@ -6,6 +6,7 @@
 #include "ui/Actions.h"
 #include "ui/Hotbox.h"
 #include "ui/MarkingMenu.h"
+#include "ui/ViewportTool.h"
 
 #include <QAbstractItemView>
 #include <QAbstractSlider>
@@ -344,6 +345,13 @@ std::optional<Hotkeys::Binding> Hotkeys::lookup(QKeyEvent* e, QWidget* focus) co
     return std::nullopt;
 }
 
+namespace
+{
+/** A key bound only with mouse buttons (Tab+RMB): its own events and its unbound buttons still reach the widget, so the
+ * viewport keeps Tab as its drag-select modifier. */
+bool buttonsOnly(const hotkeys::Slots& t) { return t.press.is_null() && t.hold.is_null() && t.release.is_null(); }
+} // namespace
+
 bool Hotkeys::eventFilter(QObject* obj, QEvent* e)
 {
     // Key-ups are lost when the app loses focus mid-hold, so release everything then.
@@ -365,8 +373,9 @@ bool Hotkeys::eventFilter(QObject* obj, QEvent* e)
     // repeats as presses of its highlighted item.
     if (mPending && (mPending->scan ? mPending->scan == eventScancode(k) : mPending->qtKey == k->key()))
     {
+        const bool pass = buttonsOnly(mPending->binding.targets);
         if (e->type() == QEvent::KeyPress || k->isAutoRepeat())
-            return true;
+            return !pass;
         Pending p = std::move(*mPending);
         mPending.reset();
         mHoldTimer.stop();
@@ -390,7 +399,7 @@ bool Hotkeys::eventFilter(QObject* obj, QEvent* e)
             actions::run(t.press);
         if (up != hotkeys::HeldKey::Up::Used)
             actions::run(t.release);
-        return true;
+        return !pass;
     }
 
     // The OS key repeat is eaten so the repeat cadence comes from the prefs alone.
@@ -456,6 +465,12 @@ bool Hotkeys::eventFilter(QObject* obj, QEvent* e)
         return true;
 
     const hotkeys::Slots& t = b->targets;
+    if (ViewportTool* tool = viewportTools::active();
+        tool && tool->hotkey(*k, t.press.is_string() ? std::string_view(t.press.get_ref<const std::string&>()) : std::string_view()))
+    {
+        viewportTools::requestRedraw();
+        return true;
+    }
     if (t.hold.is_null() && t.release.is_null() && !t.hasButtons())
     {
         actions::run(t.press);
@@ -477,7 +492,7 @@ bool Hotkeys::eventFilter(QObject* obj, QEvent* e)
     if (isHotbox(t.hold))
         if (Hotbox* hb = Hotbox::instance())
             hb->showAt(QCursor::pos(), true);
-    return true;
+    return !buttonsOnly(t);
 }
 
 bool Hotkeys::onMousePress(QObject* obj, QMouseEvent* e)
@@ -488,7 +503,11 @@ bool Hotkeys::onMousePress(QObject* obj, QMouseEvent* e)
     switch (mPending->state.mouseDown(index))
     {
     case hotkeys::HeldKey::Mouse::Pass: return false;
-    case hotkeys::HeldKey::Mouse::Swallow: mSwallowRelease |= int(e->button()); return true;
+    case hotkeys::HeldKey::Mouse::Swallow:
+        if (buttonsOnly(mPending->binding.targets))
+            return false;
+        mSwallowRelease |= int(e->button());
+        return true;
     case hotkeys::HeldKey::Mouse::Fire: break;
     }
     mHoldTimer.stop();

@@ -1,5 +1,6 @@
 #include "gn/Geometry.h"
 
+#include "core/Log.h"
 #include "core/Profile.h"
 
 #include <tbb/parallel_for.h>
@@ -47,7 +48,155 @@ void CurveSet::addCurve(std::span<const glm::dvec3> points, bool closed)
     positions.insert(positions.end(), points.begin(), points.end());
     offsets.push_back(geo::Index(positions.size()));
     cyclic.push_back(closed ? 1 : 0);
+    if (!knots.empty())
+        knots.resize(cyclic.size());
     syncSizes();
+}
+
+namespace
+{
+constexpr std::string_view kSplinePointAttrs[] = {"handle_left", "handle_right", "handle_type_left", "handle_type_right", "weight"};
+constexpr std::string_view kSplineCurveAttrs[] = {"curve_type", "degree", "resolution"};
+
+/** A float point layer, created with def on the points that existed before it. */
+std::span<float> floatLayer(geo::AttributeSet& set, std::string_view name, float def)
+{
+    bool had = set.has(name);
+    std::span<float> v = set.getOrAdd<float>(name);
+    if (!had)
+    {
+        set.find(name)->setDefault(def);
+        for (float& x : v)
+            x = def;
+    }
+    return v;
+}
+} // namespace
+
+void CurveSet::addSpline(const curve::Spline& sp)
+{
+    size_t p0 = positions.size();
+    addCurve(sp.points, sp.closed);
+    size_t c = numCurves() - 1, n = sp.size();
+    if (sp.kind != curve::Kind::Poly || curveAttrs.has("curve_type"))
+    {
+        curveAttrs.getOrAdd<int32_t>("curve_type")[c] = int32_t(sp.kind);
+        curveAttrs.getOrAdd<int32_t>("degree")[c] = sp.degree;
+    }
+    if (sp.kind == curve::Kind::Bezier && sp.handleL.size() == n)
+    {
+        auto hl = pointAttrs.getOrAdd<glm::vec3>("handle_left");
+        auto hr = pointAttrs.getOrAdd<glm::vec3>("handle_right");
+        auto tl = pointAttrs.getOrAdd<int32_t>("handle_type_left");
+        auto tr = pointAttrs.getOrAdd<int32_t>("handle_type_right");
+        for (size_t i = 0; i < n; ++i)
+        {
+            hl[p0 + i] = glm::vec3(sp.handleL[i]);
+            hr[p0 + i] = glm::vec3(sp.handleR[i]);
+            tl[p0 + i] = int32_t(sp.typeL[i]);
+            tr[p0 + i] = int32_t(sp.typeR[i]);
+        }
+    }
+    auto put = [&](const std::vector<double>& v, std::string_view name, float def) {
+        if (v.size() != n)
+            return;
+        std::span<float> layer = floatLayer(pointAttrs, name, def);
+        for (size_t i = 0; i < n; ++i)
+            layer[p0 + i] = float(v[i]);
+    };
+    put(sp.weights, "weight", 1.0f);
+    put(sp.tilt, "tilt", 0.0f);
+    put(sp.radius, "radius", 1.0f);
+    put(sp.cornerRadius, "cornerRadius", 0.0f);
+    if (!sp.knots.empty())
+    {
+        knots.resize(numCurves());
+        knots[c] = sp.knots;
+    }
+}
+
+curve::Spline CurveSet::spline(size_t c) const
+{
+    curve::Spline s;
+    s.closed = cyclic[c] != 0;
+    size_t p0 = offsets[c], n = curveSize(c);
+    s.points.assign(positions.begin() + ptrdiff_t(p0), positions.begin() + ptrdiff_t(p0 + n));
+    if (auto t = curveAttrs.get<int32_t>("curve_type"); !t.empty())
+        s.kind = curve::Kind(std::clamp(t[c], 0, 2));
+    if (auto d = curveAttrs.get<int32_t>("degree"); !d.empty())
+        s.degree = std::clamp(d[c], 1, 7);
+    if (s.kind == curve::Kind::Nurbs && c < knots.size())
+        s.knots = knots[c];
+    auto read = [&](std::string_view name, std::vector<double>& dst) {
+        if (auto v = pointAttrs.get<float>(name); !v.empty())
+            for (size_t i = 0; i < n; ++i)
+                dst.push_back(v[p0 + i]);
+    };
+    if (s.kind == curve::Kind::Bezier)
+    {
+        auto hl = pointAttrs.get<glm::vec3>("handle_left"), hr = pointAttrs.get<glm::vec3>("handle_right");
+        auto tl = pointAttrs.get<int32_t>("handle_type_left"), tr = pointAttrs.get<int32_t>("handle_type_right");
+        if (!hl.empty() && !hr.empty())
+            for (size_t i = 0; i < n; ++i)
+            {
+                s.handleL.push_back(glm::dvec3(hl[p0 + i]));
+                s.handleR.push_back(glm::dvec3(hr[p0 + i]));
+                s.typeL.push_back(tl.empty() ? curve::HandleType::Free : curve::HandleType(std::clamp(tl[p0 + i], 0, 3)));
+                s.typeR.push_back(tr.empty() ? curve::HandleType::Free : curve::HandleType(std::clamp(tr[p0 + i], 0, 3)));
+            }
+    }
+    if (s.kind == curve::Kind::Nurbs)
+        read("weight", s.weights);
+    read("tilt", s.tilt);
+    read("radius", s.radius);
+    read("cornerRadius", s.cornerRadius);
+    s.normalize();
+    return s;
+}
+
+bool CurveSet::isPoly() const
+{
+    auto t = curveAttrs.get<int32_t>("curve_type");
+    return t.empty() || std::ranges::all_of(t, [](int32_t k) { return k == 0; });
+}
+
+CurveSet CurveSet::evaluated(const curve::TessOptions& o) const
+{
+    if (isPoly())
+        return *this;
+    LILA_ZONE();
+
+    CurveSet out;
+    out.pointAttrs.mergeLayout(pointAttrs);
+    out.curveAttrs.mergeLayout(curveAttrs);
+    for (std::string_view name : kSplinePointAttrs)
+        out.pointAttrs.remove(name);
+    for (std::string_view name : kSplineCurveAttrs)
+        out.curveAttrs.remove(name);
+    for (size_t c = 0; c < numCurves(); ++c)
+    {
+        curve::Spline sp = spline(c);
+        size_t p0 = offsets[c], n = curveSize(c);
+        if (!curve::isValid(sp) || n == 0)
+            continue;
+        curve::Polyline pl = sp.kind == curve::Kind::Poly ? curve::polylineFrom(sp.points, sp.closed) : curve::tessellate(sp, o);
+        size_t q0 = out.positions.size();
+        out.addCurve(pl.points, sp.closed);
+        out.curveAttrs.copyFrom(curveAttrs, out.numCurves() - 1, c);
+        int spans = std::max(1, curve::spanCount(sp));
+        for (size_t k = 0; k < pl.size(); ++k)
+        {
+            // Point values blend between the two control points around the sample.
+            double x = sp.kind == curve::Kind::Nurbs ? pl.params[k] / spans * double(sp.closed ? n : n - 1) : pl.params[k];
+            x = std::clamp(x, 0.0, double(sp.closed ? n : n - 1));
+            size_t a = std::min(size_t(std::floor(x)), sp.closed ? n - 1 : (n > 1 ? n - 2 : 0));
+            float t = float(x - double(a));
+            geo::Index srcs[2] = {geo::Index(p0 + a), geo::Index(p0 + (a + 1) % n)};
+            float w[2] = {1.0f - t, t};
+            out.pointAttrs.mixFrom(pointAttrs, q0 + k, srcs, w);
+        }
+    }
+    return out;
 }
 
 void CurveSet::syncSizes()
@@ -64,6 +213,12 @@ void CurveSet::append(const CurveSet& other)
     positions.insert(positions.end(), other.positions.begin(), other.positions.end());
     for (size_t c = 0; c < other.numCurves(); ++c)
         offsets.push_back(geo::Index(p0 + other.offsets[c + 1]));
+    if (!knots.empty() || !other.knots.empty())
+    {
+        knots.resize(c0);
+        for (size_t c = 0; c < other.numCurves(); ++c)
+            knots.push_back(c < other.knots.size() ? other.knots[c] : std::vector<double>{});
+    }
     cyclic.insert(cyclic.end(), other.cyclic.begin(), other.cyclic.end());
     syncSizes();
     for (size_t p = 0; p < other.numPoints(); ++p)
@@ -128,6 +283,9 @@ void transformCurves(CurveSet& c, const glm::dmat4& xf)
 {
     for (glm::dvec3& p : c.positions)
         p = glm::dvec3(xf * glm::dvec4(p, 1.0));
+    for (const char* name : {"handle_left", "handle_right"})
+        for (glm::vec3& h : c.pointAttrs.get<glm::vec3>(name))
+            h = glm::vec3(xf * glm::dvec4(glm::dvec3(h), 1.0));
 }
 
 Geometry transformed(const Geometry& g, const glm::dmat4& xf)

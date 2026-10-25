@@ -7,10 +7,8 @@
 #include "ui/Tools.h"
 #include "ui/ViewportTool.h"
 
-#include <QEvent>
 #include <QMainWindow>
 #include <QMenu>
-#include <QTimer>
 #include <QToolBar>
 
 namespace lila::ui::toolBox
@@ -22,13 +20,12 @@ bool shown()
     return PrefStore::get().value<bool>("general", kShownPref, true);
 }
 
-/** Keeps the tool box's toolbar at the far left in its own column, and shown as the pref says. */
+/** Shows or hides the tool box as the pref says. */
 class Keeper : public QObject
 {
 public:
-    Keeper(QMainWindow* window, QToolBar* bar) : QObject(window), mWindow(window), mBar(bar)
+    Keeper(QMainWindow* window, QToolBar* bar) : QObject(window), mBar(bar)
     {
-        window->installEventFilter(this);
         mPrefListener = PrefStore::get().onChanged([this](const std::string& file) {
             if (file == "general")
                 QMetaObject::invokeMethod(this, [this] { sync(); });
@@ -38,39 +35,11 @@ public:
 
     void sync()
     {
-        // The collapsed-panel strip shares the left toolbar area; the tool box keeps a column of its own left of it.
-        auto* strip = mWindow->findChild<QToolBar*>("sidebarLeft", Qt::FindDirectChildrenOnly);
-        const bool inArea = mWindow->toolBarArea(mBar) == Qt::LeftToolBarArea;
-        if (strip && mWindow->toolBarArea(strip) == Qt::LeftToolBarArea)
-        {
-            const bool sharing = mBar->isVisible() && strip->isVisible() && mBar->x() >= strip->x();
-            if (!inArea || !mWindow->toolBarBreak(strip) || sharing)
-            {
-                mWindow->insertToolBar(strip, mBar);
-                if (!mWindow->toolBarBreak(strip))
-                    mWindow->insertToolBarBreak(strip);
-            }
-        }
-        else if (!inArea)
-        {
-            mWindow->addToolBar(Qt::LeftToolBarArea, mBar);
-            mWindow->addToolBarBreak(Qt::LeftToolBarArea);
-        }
         if (mBar->isVisible() != shown())
             mBar->setVisible(shown());
     }
 
-protected:
-    bool eventFilter(QObject* obj, QEvent* e) override
-    {
-        // A state restored before the first show is applied lazily by the layout, so check again whenever it settles.
-        if (obj == mWindow && (e->type() == QEvent::Show || e->type() == QEvent::LayoutRequest))
-            QTimer::singleShot(0, this, [this] { sync(); });
-        return false;
-    }
-
 private:
-    QMainWindow* mWindow;
     QToolBar* mBar;
     int mPrefListener = 0;
 };
@@ -93,6 +62,24 @@ void install(QMainWindow* window, iconBars::StateFn state)
     window->addToolBarBreak(Qt::LeftToolBarArea);
     auto* keeper = new Keeper(window, bar);
     keeper->sync();
+}
+
+void place(QMainWindow* window)
+{
+    auto* bar = window->findChild<QToolBar*>("toolBox", Qt::FindDirectChildrenOnly);
+    auto* strip = window->findChild<QToolBar*>("sidebarLeft", Qt::FindDirectChildrenOnly);
+    if (!bar)
+        return;
+    if (!strip || window->toolBarArea(strip) != Qt::LeftToolBarArea)
+    {
+        if (window->toolBarArea(bar) != Qt::LeftToolBarArea)
+            window->addToolBar(Qt::LeftToolBarArea, bar);
+        return;
+    }
+    // Inserted before the collapsed-panel strip with a break between, so each keeps a column of its own.
+    window->insertToolBar(strip, bar);
+    if (!window->toolBarBreak(strip))
+        window->insertToolBarBreak(strip);
 }
 
 void registerItems(std::function<ViewportWidget*()> active)

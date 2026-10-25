@@ -21,6 +21,7 @@
 #include "math/MathCore.h"
 #include "maya/Maya.h"
 #include "python/Python.h"
+#include "curve/CurveNodes.h"
 #include "retopo/RetopoCommands.h"
 #include "scene/Node.h"
 #include "scene/SceneCommands.h"
@@ -127,6 +128,7 @@ void startCore()
     ops::registerBuiltins();
     scene::types::registerBuiltins();
     gn::registerTypes();
+    curve::registerTypes();
     tex::registerTypes();
     scene::registerCommands();
     io::registerCommands();
@@ -138,6 +140,7 @@ void startCore()
     tex::library::registerCommands();
     uv::registerCommands();
     retopo::registerCommands();
+    curve::registerCommands();
     sculpt::registerCommands();
     vcolor::registerCommands();
     vcs::registerCommands();

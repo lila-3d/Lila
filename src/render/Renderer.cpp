@@ -2334,7 +2334,7 @@ struct Renderer::Impl
 
         // One buffer per frame: lines, linesOnTop, tris3d, overlay and linesXray share the LineVertex stride, overlayTris follow.
         const std::vector<LineVertex>* lineSets[] = {&s.lines, &s.linesOnTop, &s.tris3d, &s.overlay, &s.linesXray, &s.selectedEdges, &s.seamLines,
-                                                     &s.symmetryLines, &s.highlightEdges};
+                                                     &s.symmetryLines, &s.highlightEdges, &s.curveHalo, &s.curveLines, &s.curveHaloBold, &s.curveLinesBold};
         constexpr int kLineSets = int(std::size(lineSets));
         uint32_t lineFirst[kLineSets];
         size_t lineBytes = 0;
@@ -2519,7 +2519,9 @@ struct Renderer::Impl
             int set;
             float width;
         };
-        const Biased biased[] = {{linesOnTopPipeline, 1, 1.0f}, {linesOnTopPipeline, 8, s.highlightEdgeWidth}, {linesOnTopPipeline, 6, s.seamLineWidth},
+        const Biased biased[] = {{linesOnTopPipeline, 9, s.curveHaloWidth},     {linesOnTopPipeline, 10, s.curveWidth},
+                                 {linesOnTopPipeline, 11, s.curveHaloBoldWidth}, {linesOnTopPipeline, 12, s.curveBoldWidth},
+                                 {linesOnTopPipeline, 1, 1.0f}, {linesOnTopPipeline, 8, s.highlightEdgeWidth}, {linesOnTopPipeline, 6, s.seamLineWidth},
                                  {linesOnTopPipeline, 7, s.symmetryLineWidth}, {linesOnTopPipeline, 5, s.selectedEdgeWidth},
                                  {tris3dPipeline, 2, 0.0f}};
         for (const Biased& b : biased)

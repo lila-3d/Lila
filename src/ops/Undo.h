@@ -51,6 +51,21 @@ public:
     /** Chunks nest; only the outermost one lands on the stack. */
     void openChunk(std::string label);
     void closeChunk();
+    /** Closes the outermost chunk, reverting and dropping everything recorded in it. */
+    void cancelChunk();
+
+    /**
+     * Opens a chunk that amends the newest step: that step's own edits are reverted now, again whenever the new
+     * chunk is redone, and come back when it is undone. Whatever runs inside the chunk then records the replacement,
+     * so re-running the newest step with other settings stays a step of its own. False if a chunk is open or the
+     * stack is empty.
+     */
+    bool openAmend(std::string label);
+    /**
+     * Takes the newest step back off the stack to record it again: its own edits are reverted and dropped, what it
+     * amends is kept, and it is reopened as the open chunk under `label`. False if a chunk is open or the stack is empty.
+     */
+    bool reopenNewest(std::string label);
 
     /** Dropped silently while undoing/redoing or when recording is off. */
     void record(std::unique_ptr<UndoAction> action);
@@ -69,6 +84,8 @@ public:
     bool canRedo() const { return !mUndone.empty(); }
     std::string undoLabel() const { return mDone.empty() ? std::string() : mDone.back().label; }
     std::string redoLabel() const { return mUndone.empty() ? std::string() : mUndone.back().label; }
+    /** Identifies the newest undo step for as long as it exists, through undo and redo; 0 when there is none. */
+    uint64_t newestId() const { return mDone.empty() ? 0 : mDone.back().id; }
 
     void setEnabled(bool on) { mEnabled = on; }
     bool enabled() const { return mEnabled; }
@@ -109,7 +126,9 @@ private:
     struct Chunk
     {
         std::string label;
-        std::vector<std::unique_ptr<UndoAction>> actions;
+        std::vector<std::shared_ptr<UndoAction>> actions;
+        /** Leading actions that revert the step below (an amend); the rest are this step's own edits. */
+        size_t amends = 0;
         uint64_t id = 0;
         bool selectionOnly = false;
         size_t owned = 0;
@@ -133,6 +152,7 @@ private:
     int mDepth = 0;
     bool mEnabled = true;
     bool mReplaying = false;
+    bool mReopened = false;
     size_t mLimit = 0;
     size_t mBudget = 0;
     size_t mOwnedBytes = 0;

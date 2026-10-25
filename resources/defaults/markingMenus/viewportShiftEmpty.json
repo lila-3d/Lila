@@ -12,6 +12,11 @@
     "W": [{ "label": "Sphere", "action": "create.sphere" }, { "label": "Ico Sphere", "action": "create.icoSphere" }]
   },
   "overflow": [
-    { "label": "Disc", "action": "create.disc" }
+    { "label": "Disc", "action": "create.disc" },
+    { "label": "Bezier Pen", "action": "curve.bezierPen" },
+    { "label": "EP Curve", "action": "curve.epTool" },
+    { "label": "Pencil Curve", "action": "curve.pencil" },
+    { "label": "Pipe Tool", "action": "curve.pipeTool" },
+    { "label": "Circle", "action": "curve.circle" }
   ]
 }

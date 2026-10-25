@@ -2,7 +2,7 @@
 
 #include "ops/Command.h"
 #include "ops/CommandOptions.h"
-#include "ops/Undo.h"
+#include "scene/LastOp.h"
 #include "ui/FlagFields.h"
 #include "ui/OptionBox.h"
 
@@ -10,6 +10,7 @@
 #include <QCheckBox>
 #include <QDialog>
 #include <QFont>
+#include <QKeyEvent>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -25,6 +26,7 @@ namespace lila::ui
 namespace
 {
 namespace opt = ops::options;
+namespace lo = scene::lastOp;
 constexpr const char* kCommand = "smartJoin";
 
 QWidget* mainWindow()
@@ -76,6 +78,10 @@ public:
             const std::string flag = f.flag;
             FlagFieldWidgets w = makeFlagField(f, values.value(flag, f.defaultValue), [this, flag](const json& v) {
                 opt::setValue(kCommand, flag, v);
+                // Another setting starts an undo step of its own.
+                if (flag != mEditing)
+                    settle();
+                mEditing = flag;
                 if (mLive->isChecked())
                     mRerun->start();
             }, this);
@@ -134,14 +140,43 @@ public:
         });
         connect(closeButton, &QPushButton::clicked, this, &QDialog::close);
         resize(400, sizeHint().height());
+        qApp->installEventFilter(this);
+    }
+
+protected:
+    bool eventFilter(QObject*, QEvent* e) override
+    {
+        bool settles = e->type() == QEvent::MouseButtonRelease || e->type() == QEvent::FocusOut;
+        if (e->type() == QEvent::KeyPress)
+        {
+            const int key = static_cast<QKeyEvent*>(e)->key();
+            settles = key == Qt::Key_Return || key == Qt::Key_Enter || key == Qt::Key_Tab;
+        }
+        if (settles)
+        {
+            settle();
+            mEditing.clear();
+        }
+        return false;
     }
 
 private:
-    /** The join this dialog ran is still the latest undo step. */
+    /** The join this dialog ran, or an adjustment of it, is still the latest undo step. */
     bool live() const
     {
-        const UndoStack& u = UndoStack::get();
-        return !mTargets.empty() && u.serial() == mSerial && u.undoLabel() == kCommand;
+        const lo::Op* op = lo::current();
+        return !mTargets.empty() && lo::live() && op && op->command == kCommand;
+    }
+
+    /** Ends the edit in progress, so the next one is an undo step of its own. */
+    void settle()
+    {
+        if (mRerun->isActive())
+        {
+            mRerun->stop();
+            rerun();
+        }
+        lo::endDrag();
     }
 
     void showResult(const json& r)
@@ -171,7 +206,6 @@ private:
         {
             const json r = ops::execute(kCommand, opt::callWith(kCommand), CallSource::UI);
             mTargets = {r.value("limb", std::string()), r.value("body", std::string())};
-            mSerial = UndoStack::get().serial();
             showResult(r);
         }
         catch (const CommandError& e)
@@ -185,22 +219,16 @@ private:
     {
         if (!live())
             return;
-        UndoStack& u = UndoStack::get();
-        u.undo();
-        const uint64_t before = u.serial();
         json call = opt::callWith(kCommand);
-        // Undo brought the inputs back under their names.
+        // The join's own result is reverted first, which brings the inputs back under their names.
         call["args"] = mTargets;
         try
         {
-            showResult(ops::execute(kCommand, call, CallSource::Script));
-            mSerial = u.serial();
+            if (json r = lo::rerun(call, CallSource::Script, true); !r.is_null())
+                showResult(r);
         }
         catch (const CommandError& e)
         {
-            if (u.serial() == before)
-                u.redo();
-            mSerial = u.serial();
             showError(e.what());
         }
     }
@@ -211,7 +239,7 @@ private:
     QTimer* mRerun = nullptr;
     std::map<std::string, std::function<void(const json&)>> mSetters;
     json mTargets = json::array();
-    uint64_t mSerial = 0;
+    std::string mEditing;
 };
 
 void openDialog()

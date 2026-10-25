@@ -259,6 +259,15 @@ ModelingToolkit::ModelingToolkit(QWidget* parent) : QWidget(parent)
                    {"retopo.draw", "pencil", "Retopo Draw"}}, tools);
     root->addWidget(section("Tools", toolsBox, body));
 
+    FlowLayout* curves = nullptr;
+    QWidget* curvesBox = flowBox(body, &curves);
+    row(curvesBox, {{"curve.bezierPen", "vector-bezier", "Pen"}, {"curve.epTool", "vector-spline", "EP"}, {"curve.cvTool", "vector-bezier-2", "CV"},
+                    {"curve.pencil", "scribble", "Pencil"}, {"curve.fromEdges", "polygon", "Edges"}, {"curve.extrude", "route", "Sweep"},
+                    {"curve.revolve", "rotate-360", "Revolve"}, {"curve.loft", "stack-3", "Loft"}, {"curve.pipeTool", "route-2", "Pipe"},
+                    {"curve.fillet", "vector-bezier-arc", "Fillet"}, {"curve.offset", "ripple", "Offset"}},
+        curves);
+    root->addWidget(section("Curves", curvesBox, body));
+
     FlowLayout* shape = nullptr;
     QWidget* shapeBox = flowBox(body, &shape);
     row(shapeBox,

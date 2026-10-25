@@ -1181,7 +1181,17 @@ void MainWindow::buildMenus()
     menu("Model", "Model");
     menus::addActions("Model", {"#Components", "mesh.extrude", "mesh.inset", "mesh.bevel", "mesh.insertLoop", "mesh.knife", "mesh.bridge",
                                 "mesh.fillHole", "mesh.poke", "#Merge", "mesh.merge", "mesh.mergeCenter", "mesh.targetWeld", "mesh.collapse", "#Edges", "mesh.dissolve",
-                                "mesh.spin"});
+                                "mesh.spin", "#Shape", "mesh.straighten", "mesh.circularize", "mesh.spherize", "mesh.flatten", "mesh.conformShape",
+                                "mesh.conformToObject"});
+
+    menu("Curves", "Curves");
+    menus::addActions("Curves", {"#Create", "curve.bezierPen", "curve.cvTool", "curve.epTool", "curve.pencil", "curve.catmullRom", "curve.kappa",
+                                 "curve.circle", "curve.fromEdges", "#Surfaces", "curve.extrude", "curve.revolve", "curve.loft", "curve.patchFill", "#Pipes",
+                                 "curve.pipeTool", "curve.pipe", "curve.pipePresetPipe", "curve.pipePresetHose", "curve.pipePresetCable",
+                                 "curve.pipePresetConduit", "#Edit", "curve.fillet", "curve.offset", "curve.rebuild", "curve.fit", "curve.project",
+                                 "curve.attach", "curve.detach", "curve.reverse", "curve.close", "curve.open", "curve.deletePoints", "#Handles",
+                                 "curve.handleAuto", "curve.handleVector", "curve.handleAligned", "curve.handleFree", "#Convert", "curve.toBezier",
+                                 "curve.toNurbs", "curve.toPoly", "#Display", "curve.toggleComb"});
 
     menu("Surface", "Surface", Area::MenuBar, syncChecks);
     menus::addActions("Surface", {"#Normals", "mesh.softenEdges", "mesh.hardenEdges", "mesh.setNormalAngle", "mesh.flip", "mesh.conform",
@@ -1256,6 +1266,11 @@ void MainWindow::buildMenus()
     addSubmenu("Display", "Environment", [](QMenu* env) { connect(env, &QMenu::aboutToShow, env, [env] { fillEnvironmentMenu(env); }); });
     menus::addActions("Display", {"viewport.toggleEnvBackground", "#Visibility", "display.toggleVisibility", "display.hide", "display.show", "display.showLastHidden", "display.showAll",
                            "viewport.isolate", "viewport.isolateAdd", "viewport.isolateRemove"});
+    addSubmenu("Display", "Mesh Display", syncChecks);
+    for (const displayAids::Info& i : displayAids::all())
+        addItem({.menu = "Display/Mesh Display", .kind = Kind::Action, .action = std::string("viewport.aid.") + i.id});
+    addItem({.id = "Display/Mesh Display/normalLength", .menu = "Display/Mesh Display", .kind = Kind::Custom,
+             .setup = [](QMenu* m) { m->addAction(displayAids::normalLengthRow(m)); }});
     addSubmenu("Display", "Measure", syncChecks);
     menus::addActions("Display/Measure", {"measure.selection", "measure.copyDistance", "measure.copyDiameter", "measure.copyLength", "",
                                    "measure.distanceTool", "measure.angleTool", "measure.radiusTool", "", "measure.distanceFromSelection",
@@ -1265,11 +1280,6 @@ void MainWindow::buildMenus()
     menus::addActions("Display/Display Layers", {"window.displayLayers", "layers.create", "layers.createFromSelected", "layers.addSelected",
                                           "layers.removeSelected"});
     menus::addActions("Display", {"#Camera"});
-    addSubmenu("Display", "Mesh Display", syncChecks);
-    for (const displayAids::Info& i : displayAids::all())
-        addItem({.menu = "Display/Mesh Display", .kind = Kind::Action, .action = std::string("viewport.aid.") + i.id});
-    addItem({.id = "Display/Mesh Display/normalLength", .menu = "Display/Mesh Display", .kind = Kind::Custom,
-             .setup = [](QMenu* m) { m->addAction(displayAids::normalLengthRow(m)); }});
     addSubmenu("Display", "Views", syncChecks);
     menus::addActions("Display/Views", {"viewport.view.persp", "viewport.view.top", "viewport.view.front", "viewport.view.right", "viewport.view.left",
                                  "viewport.view.back", "viewport.view.bottom"});
@@ -1334,6 +1344,7 @@ void MainWindow::buildPanelMenus()
                               "viewport.cameraUndo", "viewport.cameraRedo", "", "viewport.toggleResolutionGate", "viewport.toggleFilmGate",
                               "viewport.cameraSettings", "", "viewport.imagePlaneImport"});
     menus::addActions("panel.Shading", {"viewport.wireframe", "viewport.shaded", "viewport.textured", "viewport.wireOnShaded", "", "viewport.toggleAO",
+                                 "viewport.aid.twoSidedLighting", "viewport.aid.backfaceTint",
                                  "", "display.smoothOff", "display.smoothCage", "display.smoothOn"});
     menus::addActions("panel.Show", {"display.hide", "display.show", "display.showLastHidden", "display.showAll", "", "viewport.isolate", "viewport.isolateAdd",
                               "viewport.isolateRemove", "viewport.show.mesh", "viewport.show.joint",
@@ -1343,7 +1354,6 @@ void MainWindow::buildPanelMenus()
     menus::addActions("panel.Panels", {"viewport.lookThroughSelected"});
     // Maya's Panels > Perspective / Orthographic: the views plus every camera node, rebuilt as the menu opens.
     addSubmenu("panel.Panels", "Cameras", [this](QMenu* cameras) {
-                                 "viewport.aid.twoSidedLighting", "viewport.aid.backfaceTint",
         connect(cameras, &QMenu::aboutToShow, cameras, [this, cameras] { fillCameraMenu(cameras, mViewports->active()); });
     });
     menus::addActions("panel.Panels", {"", "viewport.toggleQuad", "window.toggleMaximizePanel", "", "window.uvEditor", "window.graphEditor",
@@ -1509,6 +1519,7 @@ void MainWindow::restoreLayout()
                 tearOffs.push_back(name.get<std::string>());
         tearoff::recreate(this, tearOffs);
         restoreState(QByteArray::fromBase64(QByteArray::fromStdString(state)));
+        toolBox::place(this);
         QStringList collapsed;
         for (auto& name : p.value(kLayoutFile, "/collapsed", json::array()))
             if (name.is_string())
@@ -1643,6 +1654,7 @@ void MainWindow::resetLayout()
 {
     mSidebars->expandAll();
     restoreState(mDefaultState);
+    toolBox::place(this);
     for (QDockWidget* d : findChildren<QDockWidget*>())
         if (tearoff::parseDockName(d->objectName().toStdString()))
             d->hide();

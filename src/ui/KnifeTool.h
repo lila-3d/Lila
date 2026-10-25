@@ -6,6 +6,7 @@
 #include "geo/Knife.h"
 #include "geo/Symmetry.h"
 #include "scene/Plug.h"
+#include "ui/StepHistory.h"
 #include "ui/ViewportTool.h"
 
 #include <map>
@@ -27,7 +28,8 @@ namespace lila::ui
  *   Ctrl+click an edge   insert an edge loop across its ring there (Shift snaps it)
  *   click the first point   close the cut and finish it
  *   Enter or RMB         finish the cut; the tool stays for the next one
- *   Backspace            remove the last point
+ *   Backspace or Z       remove the last point (Ctrl+Z too: whatever undo is bound to); scene undo waits until the tool is left
+ *   Shift+Z              put the removed point back (whatever redo is bound to)
  *   A                    toggle the angle constraint: the line from the last point snaps to 45 degree steps on screen
  *   X                    toggle cut through: hidden faces under the line are cut too
  *   Esc                  drop the points, or leave the tool when there are none
@@ -47,6 +49,7 @@ public:
     bool mouseMove(QMouseEvent* e, const ViewInfo& view) override;
     bool mouseRelease(QMouseEvent* e, const ViewInfo& view) override;
     bool keyPress(QKeyEvent* e, const ViewInfo& view) override;
+    bool hotkey(const QKeyEvent& e, std::string_view action) override;
     void draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& view) override;
     std::optional<QCursor> cursor() const override;
 
@@ -78,10 +81,14 @@ private:
     void finish(bool closed);
     void insertLoop(const Spot& spot);
     void cancel();
+    void stepBack();
+    void stepForward();
 
     std::map<scene::NodeId, Target> mTargets;
     scene::NodeId mNode = scene::kNoNode; // the mesh being cut, fixed by the first point
     std::vector<Spot> mPoints;
+    /** Points undo took off, with the mesh they were on. */
+    StepHistory<std::pair<scene::NodeId, Spot>> mHistory;
     std::optional<std::pair<scene::NodeId, Spot>> mHover;
     bool mHoverFirst = false; // the cursor is on the first point, so a click closes the cut
     bool mDragging = false; // the left button is down on the point just placed, which follows the cursor

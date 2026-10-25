@@ -254,6 +254,8 @@ TEST_CASE("conform commands: straighten, circularize, spherize, shape and object
     scene::lastOp::rerun({{"strength", 0.5}});
     CHECK(meshOf(plane).position(gridId(4, 2, 0)).y == doctest::Approx(5.0));
     run("undo");
+    CHECK(meshOf(plane).position(gridId(4, 2, 0)).y == doctest::Approx(0.0));
+    run("undo");
     CHECK(meshOf(plane).position(gridId(4, 2, 0)).y == doctest::Approx(10.0));
 
     // Circularize a face region, then square it, then adjust the radius live.

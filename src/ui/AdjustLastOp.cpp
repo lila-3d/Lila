@@ -42,23 +42,6 @@ namespace lila::ui
 {
 namespace lo = scene::lastOp;
 
-namespace
-{
-/** "polyInsertLoop" reads as "Insert Loop". */
-QString prettyName(const std::string& command)
-{
-    std::string s = command.rfind("poly", 0) == 0 && command.size() > 4 ? command.substr(4) : command;
-    QString out;
-    for (size_t i = 0; i < s.size(); ++i)
-    {
-        if (i > 0 && std::isupper(static_cast<unsigned char>(s[i])))
-            out += ' ';
-        out += i == 0 ? QChar(std::toupper(static_cast<unsigned char>(s[i]))) : QChar(s[i]);
-    }
-    return out;
-}
-} // namespace
-
 LastOpEditor::LastOpEditor(QWidget* parent) : QWidget(parent)
 {
     auto* root = new QVBoxLayout(this);
@@ -118,14 +101,37 @@ LastOpEditor::LastOpEditor(QWidget* parent) : QWidget(parent)
 
     mLastOpListener = lo::addListener([this](lo::Change c) {
         // A rerun from elsewhere (the extrude handles) changes the values the fields show.
-        if (c == lo::Change::Recorded || c == lo::Change::Cleared || (c == lo::Change::Rerun && !mSelfRerun))
+        if (c == lo::Change::Recorded || c == lo::Change::Cleared || c == lo::Change::Restored || (c == lo::Change::Rerun && !mSelfRerun))
             rebuild();
         else
             refresh();
     });
     mGraphListener = scene::Graph::current().addListener([this](scene::Change, scene::NodeId) { mLiveCheck->start(); });
     mComponentListener = scene::components::addListener([this] { mLiveCheck->start(); });
+    qApp->installEventFilter(this);
     rebuild();
+}
+
+bool LastOpEditor::eventFilter(QObject*, QEvent* e)
+{
+    // A release or a confirmed entry ends the edit, so the next one is an undo step of its own.
+    bool settles = e->type() == QEvent::MouseButtonRelease || e->type() == QEvent::FocusOut;
+    if (e->type() == QEvent::KeyPress)
+    {
+        const int key = static_cast<QKeyEvent*>(e)->key();
+        settles = key == Qt::Key_Return || key == Qt::Key_Enter || key == Qt::Key_Tab;
+    }
+    if (settles)
+    {
+        if (mApply->isActive())
+        {
+            mApply->stop();
+            applyPending();
+        }
+        lo::endDrag();
+        mDragFlags.clear();
+    }
+    return false;
 }
 
 LastOpEditor::~LastOpEditor()
@@ -163,7 +169,7 @@ void LastOpEditor::rebuild()
         mFields->hide();
         return;
     }
-    mTitle->setText(prettyName(op->command));
+    mTitle->setText(QString::fromStdString(lo::displayName(op->command)));
     mStatus->clear();
     mFields->show();
     std::vector<const FlagDef*> flags = lo::editableFlags(op->command);
@@ -220,10 +226,16 @@ void LastOpEditor::applyPending()
         return;
     json flags = std::move(mPending);
     mPending = json::object();
+    std::vector<std::string> names;
+    for (auto& [k, v] : flags.items())
+        names.push_back(k);
+    if (names != mDragFlags)
+        lo::endDrag();
+    mDragFlags = std::move(names);
     mSelfRerun = true;
     try
     {
-        lo::rerun(flags);
+        lo::rerun(flags, CallSource::Script, true);
         mSelfRerun = false;
         // A value the command had to limit shows as the limit, so the field stops where the mesh does.
         if (const lo::Op* op = lo::current())
@@ -399,7 +411,7 @@ void install()
 {
     lo::install();
     lo::addListener([](lo::Change c) {
-        if (c == lo::Change::Recorded)
+        if (c == lo::Change::Recorded || c == lo::Change::Restored)
         {
             const std::string& command = lo::current()->command;
             bool worthShowing = !lo::editableFlags(command).empty() || !lo::modifierEquivalent(command).empty();

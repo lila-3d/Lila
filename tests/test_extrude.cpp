@@ -143,6 +143,9 @@ TEST_CASE("polyInset and polyExtrude through the command and adjust-last-op path
     glm::dvec3 size = meshOf(cube).bounds().size();
     CHECK(size.x + size.y + size.z == doctest::Approx(330.0));
     run("undo");
+    size = meshOf(cube).bounds().size();
+    CHECK(size.x + size.y + size.z == doctest::Approx(320.0));
+    run("undo");
     CHECK(meshOf(cube).numFaces() == 6);
 }
 
@@ -198,6 +201,9 @@ TEST_CASE("polyBevel offset adjusts through adjust-last-op and keeps edge mode")
     const double limit = scene::lastOp::current()->call["offset"].get<double>();
     CHECK(limit < 100.0);
     CHECK(limit > 10.0);
+    run("undo");
+    CHECK(spread() == doctest::Approx(40.0));
+    run("undo");
     run("undo");
     CHECK(scene::components::mode() == scene::ComponentMode::Edge);
     CHECK(scene::components::selected(scene::Graph::current().find(cube)->id(), scene::ComponentMode::Edge) == std::vector<uint32_t>{0});

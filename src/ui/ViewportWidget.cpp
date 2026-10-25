@@ -21,6 +21,7 @@
 #include "geo/Symmetry.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
+#include "scene/NodeBounds.h"
 #include "scene/RenderSettings.h"
 #include "scene/Skin.h"
 #include "scene/Transform.h"
@@ -257,6 +258,13 @@ ViewportWidget::ViewportWidget(QWidget* parent) : QWidget(parent)
         }
         if (c == scene::Change::Cleared && mIsolation.active())
             mIsolation.clear();
+        // Nodes made while the active view isolates join it, so a curve drawn or primitive placed there stays visible.
+        // Undo/redo restoring a node is not making one.
+        if (c == scene::Change::Created && mIsolation.active() && scene::isolation::active() == &mIsolation && !UndoStack::get().replaying())
+        {
+            mIsolation.nodes.insert(id);
+            mIsolation.touch();
+        }
         requestFrame();
     });
     mWheelCommit = new QTimer(this);
@@ -552,6 +560,7 @@ void ViewportWidget::submit()
         s.aoRadius = p.value<float>("general", "/viewport/ao/radius", 30.0f);
         s.aoIntensity = p.value<float>("general", "/viewport/ao/intensity", 1.0f);
         viewportDisplay::apply(s);
+        viewportDisplay::applyCurveWidths(s, devicePixelRatioF());
         displayAids::apply(s, mHudPanel);
     }
 
@@ -598,6 +607,8 @@ void ViewportWidget::submit()
         else if (textured)
             d.materials = drawMaterials(*shown);
         d.world = glm::mat4(shownWorld(*n));
+        if (aids)
+            aidMeshes.push_back({shown, shownWorld(*n)});
         if (vertexColors != render::VertexColorMode::Off && shown && !geo::colors::current(*shown).empty())
         {
             d.vertexColors = vertexColors;
@@ -652,10 +663,16 @@ void ViewportWidget::submit()
     }
     drawGate(painter);
     const ViewInfo view = viewInfo();
+    if (aids)
+    {
+        for (scene::NodeId id : g.nodes())
+            if (scene::Node* n = g.node(id); scene::components::pointProvider(*n) && id != mLookThrough && scene::effectivelyVisible(g, id, inherit) &&
+                                             mIsolation.shows(id) && scene::selectionMask::shown(*n))
+                aidMeshes.push_back({nullptr, shownWorld(*n), scene::objectBounds(g, id)});
+        displayAids::draw(s, painter, view, mHudPanel, aidMeshes, devicePixelRatioF());
+    }
     // Locators and extension node types. Highlighted draws last: with an equal-depth test the later line wins, so a
     // selected locator sitting exactly on an unselected one stays visible.
-    if (aids)
-        displayAids::draw(s, painter, view, mHudPanel, aidMeshes, devicePixelRatioF());
     for (int pass = 0; pass < 3; ++pass)
         for (scene::NodeId id : g.nodes())
         {
@@ -1004,6 +1021,37 @@ std::vector<scene::NodeId> hilited(const scene::isolation::Set& iso)
                 out.push_back(id);
     return out;
 }
+
+/** Selected nodes whose points a provider gives (curves), and those already holding a point selection. */
+std::vector<scene::NodeId> pointNodes(const scene::isolation::Set& iso)
+{
+    scene::Graph& g = scene::Graph::current();
+    std::vector<scene::NodeId> out;
+    auto add = [&](scene::NodeId id) {
+        scene::Node* n = g.node(id);
+        if (n && scene::components::pointProvider(*n) && iso.shows(id) && std::ranges::find(out, id) == out.end())
+            out.push_back(id);
+    };
+    for (scene::NodeId id : g.selection())
+        add(id);
+    for (auto& [id, ids] : scene::components::selected(scene::ComponentMode::Vertex))
+        add(id);
+    return out;
+}
+
+/** Provider points of the node, world space, with their component ids. */
+std::vector<std::pair<uint32_t, glm::dvec3>> worldPoints(scene::Graph& g, scene::NodeId id)
+{
+    scene::Node* n = g.node(id);
+    const scene::components::PointProvider* pp = n ? scene::components::pointProvider(*n) : nullptr;
+    if (!pp)
+        return {};
+    glm::dmat4 w = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+    auto pts = pp->points(g, id);
+    for (auto& [cid, p] : pts)
+        p = glm::dvec3(w * glm::dvec4(p, 1.0));
+    return pts;
+}
 } // namespace
 
 scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
@@ -1074,6 +1122,16 @@ scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
                 break;
             }
     }
+    if (mode == ComponentMode::Vertex)
+        for (scene::NodeId id : pointNodes(mIsolation))
+            for (auto& [cid, p] : worldPoints(g, id))
+                if (auto s = view.project(p))
+                    if (double d = std::hypot(s->x() - a.x(), s->y() - a.y()); d < bestPx)
+                    {
+                        bestPx = d;
+                        best.node = id;
+                        best.id = cid;
+                    }
     return best;
 }
 
@@ -1180,6 +1238,12 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
         }
     }
 
+    if (!click && mode == ComponentMode::Vertex)
+        for (scene::NodeId id : pointNodes(mIsolation))
+            for (auto& [cid, p] : worldPoints(g, id))
+                if (auto sp = project(p); sp && inSelectRegion(box, *sp))
+                    hits[id].push_back(cid);
+
     for (auto it = hits.begin(); it != hits.end();)
     {
         auto vis = isolate::visibility(&mIsolation, it->first, scene::modifiers::cage(g, it->first));
@@ -1193,6 +1257,11 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
         for (auto it = hits.begin(); it != hits.end();)
         {
             scene::MeshPtr mesh = scene::modifiers::cage(g, it->first);
+            if (!mesh && scene::components::pointProvider(*g.node(it->first)))
+            {
+                ++it;
+                continue;
+            }
             glm::dmat4 world = shownWorld(*g.node(it->first));
             std::erase_if(it->second, [&](uint32_t id) { return !mesh || !paintSelect::frontFacing(*mesh, world, mode, id, view); });
             it = it->second.empty() ? hits.erase(it) : std::next(it);
@@ -2230,6 +2299,18 @@ void ViewportWidget::frameSelection(bool all)
             scene::Node* n = g.node(id);
             if (!n || picked.empty())
                 continue;
+            if (scene::components::pointProvider(*n))
+            {
+                std::unordered_set<uint32_t> want(picked.begin(), picked.end());
+                for (auto& [cid, w] : worldPoints(g, id))
+                    if (want.contains(cid))
+                    {
+                        lo = glm::min(lo, w);
+                        hi = glm::max(hi, w);
+                        ++count;
+                    }
+                continue;
+            }
             const scene::MeshPtr& mesh = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
             if (!mesh)
                 continue;
@@ -2257,6 +2338,16 @@ void ViewportWidget::frameSelection(bool all)
         }
     }
     auto addGeometry = [&](scene::Node* n) {
+        if (scene::components::pointProvider(*n))
+        {
+            auto pts = worldPoints(g, n->id());
+            for (auto& [cid, w] : pts)
+            {
+                lo = glm::min(lo, w);
+                hi = glm::max(hi, w);
+            }
+            return !pts.empty();
+        }
         if (!n->type().isA("mesh"))
             return false;
         auto rm = renderMeshFor(n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh));

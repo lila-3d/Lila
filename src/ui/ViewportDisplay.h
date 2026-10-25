@@ -78,6 +78,15 @@ LILA_UI_API ComponentThickness componentThickness();
  */
 inline float hairlineWidth(double logical, double dpr) { return float(std::max(1.0, 1.0 + (logical - 1.0) * dpr)); }
 
+/** Curve line and halo widths for the display scale: 2 px curves, 3 px highlighted, each with a 1 px dark rim. */
+inline void applyCurveWidths(render::FrameState& s, double dpr)
+{
+    s.curveWidth = hairlineWidth(2.0, dpr);
+    s.curveBoldWidth = hairlineWidth(3.0, dpr);
+    s.curveHaloWidth = s.curveWidth + float(2.0 * dpr);
+    s.curveHaloBoldWidth = s.curveBoldWidth + float(2.0 * dpr);
+}
+
 inline bool accentColors(bool monotone, bool selective) { return selective && !monotone; }
 /** Whether the display behind one of the accent toggles above draws in colour right now. */
 LILA_UI_API bool accentColors(const char* key);

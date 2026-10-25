@@ -2,10 +2,12 @@
 #include "ops/Undo.h"
 #include "core/Profile.h"
 #include "geo/Mesh.h"
+#include "scene/Components.h"
 #include "scene/DisplayLayers.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
+#include "scene/NodeBounds.h"
 #include "scene/TransformOps.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -86,6 +88,15 @@ void duplicateHistory(Graph& g, NodeId srcMesh, NodeId dstMesh, std::unordered_m
     }
 }
 
+/** Driven inputs of a shape without a mesh stack (curves) take their current value, so the copy keeps its shape without the history. */
+void copyEvaluatedInputs(Graph& g, const Node& from, Node& to)
+{
+    const auto& defs = from.type().attrs;
+    for (int i = 0; i < int(defs.size()); ++i)
+        if ((defs[i].flags & AttrInput) && g.source({from.id(), i, -1}))
+            g.setValue({to.id(), i, -1}, g.value({from.id(), i, -1}));
+}
+
 std::vector<NodeId> topLevel(Graph& g, const std::vector<std::string>& names, const char* cmd)
 {
     std::vector<NodeId> ids;
@@ -124,6 +135,8 @@ void registerObjectCommands()
                     displayLayers::addMembers(g, layer->id(), {c->id()});
                 if (n->type().isA("mesh"))
                     duplicateHistory(g, src, c->id(), copies);
+                else if (components::pointProvider(*n))
+                    copyEvaluatedInputs(g, *n, *c);
                 for (NodeId child : std::vector<NodeId>(g.children(src)))
                     copyTree(child, c->id(), false);
                 return c->id();
@@ -141,7 +154,8 @@ void registerObjectCommands()
 
     ops::registerCommand({
         .name = "centerPivot",
-        .doc = "Move pivots to the centre of each object's bounding box (meshes) without moving the object.",
+        .doc = "Move pivots to the centre of each object's bounding box (mesh points, curve points and handles) without moving the "
+               "object.",
         .positionalDoc = "objects",
         .run = [](const Args& a) -> json {
             Graph& g = graph();
@@ -151,10 +165,8 @@ void registerObjectCommands()
                 Node& n = nodeNamed(name, "centerPivot");
                 if (!n.type().isA("transform"))
                     continue;
-                glm::dvec3 centre(0.0);
-                if (n.type().isA("mesh"))
-                    if (MeshPtr m = n.as<MeshPtr>(MeshNode::kOutMesh); m && m->numPoints())
-                        centre = m->bounds().center();
+                geo::Bounds b = objectBounds(g, n.id());
+                glm::dvec3 centre = b.valid() ? b.center() : glm::dvec3(0.0);
                 glm::dvec3 world = glm::dvec3(n.as<glm::dmat4>(Transform::kWorldMatrix) * glm::dvec4(centre, 1.0));
                 xformops::setWorldPivot(g, n.id(), world);
             }
@@ -164,7 +176,7 @@ void registerObjectCommands()
 
     ops::registerCommand({
         .name = "freezeTransforms",
-        .doc = "Bake translate/rotate/scale into mesh points (and children's transforms), leaving identity values. "
+        .doc = "Bake translate/rotate/scale into mesh or curve points (and children's transforms), leaving identity values. "
                "World positions don't change.",
         .positionalDoc = "objects",
         .flags = {{"translate", "", T::Bool, true, "Freeze translation."},
@@ -217,6 +229,8 @@ void registerObjectCommands()
                         g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(copy))));
                     }
                 }
+                else if (const components::PointProvider* pp = components::pointProvider(*n); pp && pp->bake)
+                    pp->bake(g, id, bake);
                 // The pivot stays where it was in the world, like Maya.
                 xformops::setWorldPivot(g, id, pivot);
                 g.evaluate();

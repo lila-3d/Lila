@@ -1,21 +1,39 @@
 #include "scene/LastOp.h"
 
+#include "core/Profile.h"
 #include "ops/Undo.h"
 #include "scene/Graph.h"
 
 #include <algorithm>
+#include <cctype>
 #include <map>
 #include <optional>
+#include <utility>
 
 namespace lila::scene::lastOp
 {
 namespace
 {
+/** One setting of the op: the undo step holding its result and the call that made it. */
+struct Entry
+{
+    uint64_t step = 0;
+    json call;
+    ComponentMode modeAfter = ComponentMode::Object;
+};
+
 struct State
 {
     bool installed = false;
     std::optional<Op> op;
+    /** The op's original run first, then each adjustment still reachable by undo or redo. */
+    std::vector<Entry> entries;
+    size_t at = 0;
+    bool dragging = false;
+    /** Undo went below the op or another step went on top, so landing back on an entry restores it. */
+    bool away = false;
     ComponentMode pendingMode = ComponentMode::Object;
+    uint64_t pendingStep = 0;
     bool rerunning = false;
     json limited = json::object();
     std::map<int, std::function<void(Change)>> listeners;
@@ -35,29 +53,64 @@ void notify(Change c)
         fn(c);
 }
 
+void moveTo(size_t index)
+{
+    State& s = st();
+    s.at = index;
+    s.op->call = s.entries[index].call;
+    s.op->modeAfter = s.entries[index].modeAfter;
+    components::setMode(s.op->modeAfter);
+}
+
 void onExecute(const ExecuteEvent& e)
 {
     State& s = st();
     if (s.rerunning)
         return;
+    UndoStack& undo = UndoStack::get();
     if (!e.done)
     {
         s.pendingMode = components::mode();
+        s.pendingStep = undo.newestId();
         s.limited = json::object();
         return;
     }
-    UndoStack& undo = UndoStack::get();
     const CommandDef* def = ops::find(e.name);
     bool recorded = e.ok && e.source == CallSource::UI && def && def->adjustable && def->undoable && undo.undoLabel() == def->name &&
-                    (!s.op || undo.serial() != s.op->serial);
+                    undo.newestId() != s.pendingStep;
     if (recorded)
     {
-        s.op = Op{std::string(e.name), e.call.is_object() ? e.call : json::object(), s.pendingMode, components::mode(), undo.serial()};
+        s.op = Op{std::string(e.name), e.call.is_object() ? e.call : json::object(), s.pendingMode, components::mode()};
         s.op->call.update(s.limited);
+        s.entries = {Entry{undo.newestId(), s.op->call, s.op->modeAfter}};
+        s.at = 0;
+        s.dragging = false;
+        s.away = false;
         notify(Change::Recorded);
     }
-    else if (e.source == CallSource::UI)
+    // Undo and redo move through the op's settings rather than ending it.
+    else if (e.source == CallSource::UI && def && def->undoable)
         notify(Change::Other);
+}
+
+void onUndoChanged()
+{
+    State& s = st();
+    if (s.rerunning || !s.op)
+        return;
+    const uint64_t newest = UndoStack::get().newestId();
+    for (size_t i = 0; i < s.entries.size(); ++i)
+        if (s.entries[i].step == newest)
+        {
+            if (i != s.at || std::exchange(s.away, false))
+            {
+                s.dragging = false;
+                moveTo(i);
+                notify(Change::Restored);
+            }
+            return;
+        }
+    s.away = true;
 }
 
 std::vector<std::string> meshesOf(const Op& op)
@@ -91,6 +144,7 @@ void install()
         return;
     st().installed = true;
     ops::addExecuteListener(onExecute);
+    UndoStack::get().addListener(onUndoChanged);
 }
 
 const Op* current()
@@ -101,8 +155,7 @@ const Op* current()
 bool live()
 {
     const State& s = st();
-    return s.op && !s.rerunning && UndoStack::get().serial() == s.op->serial &&
-           (s.op->empty || UndoStack::get().undoLabel() == s.op->command);
+    return s.op && !s.rerunning && s.at < s.entries.size() && UndoStack::get().newestId() == s.entries[s.at].step;
 }
 
 void limitFlag(const std::string& name, const json& value)
@@ -115,49 +168,89 @@ void clear()
     if (!st().op)
         return;
     st().op.reset();
+    st().entries.clear();
     notify(Change::Cleared);
 }
 
-void rerun(const json& flags, CallSource source)
+json rerun(const json& flags, CallSource source, bool drag)
 {
+    LILA_ZONE();
+
     State& s = st();
     if (!live())
         throw CommandError("nothing to adjust: the last operation is no longer the latest undo step");
-    Op op = *s.op;
-    json call = op.call;
+    json call = s.op->call;
     for (auto& [k, v] : flags.items())
         call[k] = v;
+    // A drag keeps replacing the step it made, never the op's own run.
+    const bool replace = drag && s.dragging && s.at > 0 && s.at + 1 == s.entries.size();
+    if (call == s.op->call)
+        return nullptr;
 
+    // Named after the flags that differ from the settings the step replaces.
+    const json& from = replace ? s.entries[s.at - 1].call : s.op->call;
+    std::string changed;
+    for (auto& [k, v] : flags.items())
+        if (k != "args" && (!from.contains(k) || from[k] != v))
+            changed += (changed.empty() ? "" : ", ") + k;
+    const std::string label = "Adjust " + displayName(s.op->command) + (changed.empty() ? "" : ": " + changed);
     UndoStack& undo = UndoStack::get();
     s.rerunning = true;
     s.limited = json::object();
-    if (!op.empty)
-        undo.undo();
-    components::setMode(op.modeBefore);
-    uint64_t before = undo.serial();
-    auto restore = [&] {
-        // Nothing new landed on the stack, so the original result can come back.
-        if (!op.empty && undo.serial() == before && undo.redo())
-            components::setMode(op.modeAfter);
+    if (!(replace ? undo.reopenNewest(label) : undo.openAmend(label)))
+    {
         s.rerunning = false;
-        s.op->serial = undo.serial();
-    };
+        throw CommandError("nothing to adjust: the undo stack is busy");
+    }
+    components::setMode(s.op->modeBefore);
+    json result;
     try
     {
-        ops::execute(op.command, call, source);
+        result = ops::execute(s.op->command, call, source);
     }
     catch (...)
     {
-        restore();
+        undo.cancelChunk();
+        s.rerunning = false;
+        // A replaced drag step is gone with the cancelled chunk.
+        if (replace)
+        {
+            s.entries.pop_back();
+            s.dragging = false;
+        }
+        moveTo(std::min(s.at, s.entries.size() - 1));
         notify(Change::Rerun);
         throw;
     }
+    undo.closeChunk();
     s.rerunning = false;
-    s.op->empty = undo.serial() == before;
     call.update(s.limited);
-    s.op->call = std::move(call);
-    s.op->modeAfter = components::mode();
-    s.op->serial = undo.serial();
+    Entry entry{undo.newestId(), call, components::mode()};
+    if (replace)
+        s.entries.back() = std::move(entry);
+    else
+    {
+        s.entries.resize(s.at + 1);
+        s.entries.push_back(std::move(entry));
+    }
+    s.dragging = drag;
+    moveTo(s.entries.size() - 1);
+    notify(Change::Rerun);
+    return result;
+}
+
+void endDrag(bool keep)
+{
+    State& s = st();
+    if (!std::exchange(s.dragging, false) || keep || !live() || s.at == 0)
+        return;
+    UndoStack& undo = UndoStack::get();
+    s.rerunning = true;
+    undo.undo();
+    undo.flushFuture();
+    s.rerunning = false;
+    s.entries.pop_back();
+    moveTo(s.entries.size() - 1);
     notify(Change::Rerun);
 }
 
@@ -179,6 +272,20 @@ json flagValue(const Op& op, const FlagDef& flag)
     if (!flag.shortName.empty() && op.call.contains(flag.shortName))
         return op.call[flag.shortName];
     return flag.defaultValue;
+}
+
+std::string displayName(const std::string& command)
+{
+    std::string s = command.rfind("poly", 0) == 0 && command.size() > 4 ? command.substr(4) : command;
+    std::string out;
+    for (size_t i = 0; i < s.size(); ++i)
+    {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        if (i > 0 && std::isupper(c))
+            out += ' ';
+        out += i == 0 ? char(std::toupper(c)) : char(c);
+    }
+    return out;
 }
 
 std::string modifierEquivalent(const std::string& command)
@@ -218,11 +325,15 @@ void makeNonDestructive()
     else if (kind == "subdivision")
         params = {{"levels", value("levels")}};
 
-    if (!op.empty)
+    // Back past every adjustment and the op's own run.
+    st().rerunning = true;
+    for (size_t i = 0; i <= st().at; ++i)
         UndoStack::get().undo();
+    st().rerunning = false;
     components::setMode(op.modeBefore);
     std::vector<std::string> meshes = meshesOf(op);
     st().op.reset();
+    st().entries.clear();
     notify(Change::Cleared);
     UndoChunk chunk("Make Non-Destructive");
     for (const std::string& mesh : meshes)

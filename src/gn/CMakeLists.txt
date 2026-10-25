@@ -22,4 +22,4 @@ lila_module(lila_gn Scene
     Viewer.cpp)
 
 find_package(manifold CONFIG REQUIRED)
-target_link_libraries(lila_gn PUBLIC lila_scene PRIVATE lila_fbx manifold::manifold)
+target_link_libraries(lila_gn PUBLIC lila_scene lila_curve PRIVATE lila_fbx manifold::manifold)

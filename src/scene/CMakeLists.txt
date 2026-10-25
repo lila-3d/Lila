@@ -42,6 +42,7 @@ lila_module(lila_scene Scene
     Naming.cpp
     ObjectOps.cpp
     ObjectSets.cpp
+    NodeBounds.cpp NodeBounds.h
     Offsets.cpp
     Node.cpp
     Plug.cpp
@@ -70,4 +71,4 @@ lila_module(lila_scene Scene
 
 find_package(meshoptimizer CONFIG REQUIRED)
 find_package(manifold CONFIG REQUIRED)
-target_link_libraries(lila_scene PUBLIC lila_ops lila_geo PRIVATE lila_deform meshoptimizer::meshoptimizer manifold::manifold)
+target_link_libraries(lila_scene PUBLIC lila_ops lila_geo PRIVATE lila_deform lila_retopo meshoptimizer::meshoptimizer manifold::manifold)

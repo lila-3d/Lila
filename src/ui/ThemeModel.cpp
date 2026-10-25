@@ -54,6 +54,7 @@ const std::vector<TokenInfo> kTokens = {
     {"wireSelected", "Selected wireframe", "Viewport"},
     {"wirePreselect", "Preselected wireframe", "Viewport"},
     {"wireUnderSelected", "Child of selected", "Viewport"},
+    {"curve", "Curves", "Viewport"},
     {"componentWire", "Component mode wire", "Viewport"},
     {"componentPoint", "Vertices", "Viewport"},
     {"componentSelected", "Selected components", "Viewport"},
@@ -101,7 +102,7 @@ const Pairs kMonotone = {
     {"statusWarning", "#f2f2f2"}, {"statusError", "#f2f2f2"},
     {"iconNormal", "#c8c8c8"},    {"iconActive", "#f2f2f2"},    {"iconDisabled", "#6e6e6e"},   {"viewportBackground", "#4d4d4d"},
     {"grid", "#adadad"},          {"gridAxisX", "#000000"},     {"gridAxisZ", "#000000"},      {"wireframe", "#272727"},
-    {"wireSelected", "#f6f6f6"},  {"wirePreselect", "#e1e1e1"}, {"wireUnderSelected", "#c4c4c4"},
+    {"wireSelected", "#f6f6f6"},  {"wirePreselect", "#e1e1e1"}, {"wireUnderSelected", "#c4c4c4"}, {"curve", "#a8a8a8"},
     {"componentWire", "#73c7ff"}, {"componentPoint", "#f26bc7"}, {"componentSelected", "#fff226"}, {"componentHover", "#ff2e2e"},
     {"axisX", "#d96666"},         {"axisY", "#80cc6b"},         {"axisZ", "#6b8fe6"},          {"manipNeutral", "#b3b3b3"},
     {"manipActive", "#ffffff"},   {"hudText", "#ffffff"},       {"keyTick", "#db5c5c"},        {"nodeBody", "#3a3a3a"},
@@ -138,6 +139,7 @@ const Pairs kLight = {
     {"iconNormal", "#2a4470"},     {"iconActive", "#05215b"},     {"iconDisabled", "#9aaabd"},     {"viewportBackground", "#6b7787"},
     {"grid", "#c6d0dc"},           {"gridAxisX", "#8a3434"},      {"gridAxisZ", "#34508a"},        {"wireframe", "#1a2233"},
     {"wireSelected", "#5ce6a5"},   {"wirePreselect", "#f2d16b"},  {"wireUnderSelected", "#3fa07a"}, {"componentWire", "#73c7ff"},
+    {"curve", "#e7eff7"},
     {"componentPoint", "#f26bc7"}, {"componentSelected", "#fff226"}, {"componentHover", "#ff2e2e"}, {"axisX", "#e5534b"},
     {"axisY", "#6cc24a"},          {"axisZ", "#4a8fe5"},          {"manipNeutral", "#c8d2de"},     {"manipActive", "#ffd84a"},
     {"hudText", "#ffffff"},        {"keyTick", "#d0362c"},        {"nodeBody", "#e7eff7"},         {"nodeHeader", "#b8cbe0"},
@@ -159,7 +161,7 @@ const Pairs kHighContrast = {
     {"iconNormal", "#ffffff"},   {"iconActive", "#ffd400"},    {"iconDisabled", "#808080"},  {"wireSelected", "#ffd400"},
     {"wirePreselect", "#00e5ff"}, {"axisX", "#ff5c5c"},        {"axisY", "#5cff5c"},         {"axisZ", "#5c9dff"},
     {"manipActive", "#ffd400"},  {"keyTick", "#ff5c5c"},       {"nodeSelected", "#ffd400"},  {"nodeBody", "#1a1a1a"},
-    {"nodeHeader", "#333333"},    {"statusWarning", "#ffd400"}, {"statusError", "#ff5c5c"},
+    {"nodeHeader", "#333333"},    {"statusWarning", "#ffd400"}, {"statusError", "#ff5c5c"},  {"curve", "#ffffff"},
 };
 
 Theme make(const char* name, const char* base, const char* description, Pairs colors)

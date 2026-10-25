@@ -218,6 +218,7 @@ void ExtrudeHandles::begin(Handle h, QPointF px, const ViewInfo& view)
     Drag d;
     if (h == H::None || !frame(d.frame))
         return;
+    lo::endDrag();
     d.handle = h;
     d.startThickness = flag("thickness");
     d.startOffset = flag("offset");
@@ -249,7 +250,7 @@ void ExtrudeHandles::drag(QPointF px, const ViewInfo& view)
         return;
     try
     {
-        lo::rerun({{thickness ? "thickness" : "offset", value}});
+        lo::rerun({{thickness ? "thickness" : "offset", value}}, CallSource::Script, true);
         mDrag.value = value;
     }
     catch (const CommandError& e)
@@ -263,6 +264,7 @@ void ExtrudeHandles::end()
     if (!dragging())
         return;
     mDrag = {};
+    lo::endDrag();
     if (const lo::Op* op = lo::current())
         log::write(LogLevel::Echo, ops::toPython(op->command, op->call) + "\n");
 }
@@ -271,15 +273,7 @@ void ExtrudeHandles::cancel()
 {
     if (!dragging())
         return;
-    Drag d = mDrag;
     mDrag = {};
-    try
-    {
-        lo::rerun({{"thickness", d.startThickness}, {"offset", d.startOffset}});
-    }
-    catch (const CommandError& e)
-    {
-        log::warn("extrude: {}", e.what());
-    }
+    lo::endDrag(false);
 }
 } // namespace lila::ui

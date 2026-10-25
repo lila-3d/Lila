@@ -519,6 +519,7 @@ private:
 
     void beginDrag(const Shape& s, const Handle& h, QMouseEvent* e, const ViewInfo& view)
     {
+        lo::endDrag();
         Drag d{.h = h, .start = s, .base = frameFlags(s)};
         d.startPx = d.lastPx = e->position();
         glm::dvec3 o, dir;
@@ -661,7 +662,7 @@ private:
             return;
         try
         {
-            lo::rerun(flags);
+            lo::rerun(flags, CallSource::Script, true);
             d.last = flags;
         }
         catch (const CommandError& e)
@@ -674,6 +675,7 @@ private:
     void finishDrag()
     {
         mDrag.reset();
+        lo::endDrag();
         if (const lo::Op* op = lo::current(); op && op->command == kCommand)
             log::write(LogLevel::Echo, ops::toPython(op->command, op->call) + "\n");
         viewportTools::requestRedraw();
@@ -681,18 +683,8 @@ private:
 
     void cancelDrag()
     {
-        json base = mDrag->base;
-        bool moved = mDrag->last != base;
         mDrag.reset();
-        if (moved)
-            try
-            {
-                lo::rerun(base);
-            }
-            catch (const CommandError& e)
-            {
-                log::warn("uvProject: {}", e.what());
-            }
+        lo::endDrag(false);
         viewportTools::requestRedraw();
     }
 
@@ -703,7 +695,7 @@ private:
 void onLastOp(lo::Change change)
 {
     bool ours = viewportTools::active() && std::string_view(viewportTools::active()->name()) == kToolName;
-    if ((change == lo::Change::Recorded || change == lo::Change::Rerun) && sessionLive())
+    if ((change == lo::Change::Recorded || change == lo::Change::Rerun || change == lo::Change::Restored) && sessionLive())
     {
         if (!ours)
             QTimer::singleShot(0, [] {

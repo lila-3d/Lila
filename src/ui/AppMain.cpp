@@ -29,6 +29,7 @@
 #include "ui/BakePaintTool.h"
 #include "ui/SurfaceSnap.h"
 #include "ui/TargetWeldTool.h"
+#include "ui/CurveUi.h"
 #include "ui/ConformTool.h"
 #include "ui/TexturePaintTool.h"
 #include "ui/BakerPanel.h"
@@ -116,8 +117,9 @@ void registerUi()
     registerRetopoActions();
     registerKnifeActions();
     registerTargetWeldActions();
-    registerSculptUi();
+    registerCurveUi();
     registerConformActions();
+    registerSculptUi();
     registerVertexPaintUi();
     registerBakePaintUi();
     registerTexturePaintUi();

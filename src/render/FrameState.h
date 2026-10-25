@@ -131,6 +131,12 @@ struct FrameState
     /** Highlighted mesh edges (hard, border, non-manifold...): drawn like linesOnTop, under the symmetry and selected edges, at their own width in device pixels. */
     std::vector<LineVertex> highlightEdges;
     float highlightEdgeWidth = 1.0f;
+    /**
+     * Curve shapes, drawn like linesOnTop at their own widths in device pixels: each width's dark halo under its lines,
+     * plain curves first, then the bold (highlighted) ones over them.
+     */
+    std::vector<LineVertex> curveHalo, curveLines, curveHaloBold, curveLinesBold;
+    float curveWidth = 2.0f, curveBoldWidth = 3.0f, curveHaloWidth = 4.0f, curveHaloBoldWidth = 5.0f;
     std::vector<LineVertex> tris3d;     // world-space triangle list, blended and biased toward the camera, no depth write
     std::vector<LineVertex> linesXray;  // world-space lines with no depth test, over every surface (x-ray joints)
     std::vector<LineVertex> overlay; // NDC positions, drawn last with no depth test (marquee, HUD)

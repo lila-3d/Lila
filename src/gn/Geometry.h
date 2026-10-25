@@ -2,6 +2,8 @@
 
 #include "core/Export.h"
 
+#include "curve/Spline.h"
+#include "curve/Tessellate.h"
 #include "geo/Mesh.h"
 
 #include <glm/glm.hpp>
@@ -44,7 +46,13 @@ enum class Domain : uint8_t
 LILA_SCENE_API const char* domainName(Domain d);
 LILA_SCENE_API bool parseDomain(std::string_view name, Domain* out);
 
-/** Poly curves: curve c owns points [offsets[c], offsets[c + 1]). */
+/**
+ * Curves: curve c owns points [offsets[c], offsets[c + 1]). Without spline attributes every curve is poly. Spline data
+ * rides in builtin attributes, so filtering, joining and fields carry it: per curve "curve_type" (curve::Kind), "degree"
+ * and "resolution"; per point "handle_left", "handle_right", "handle_type_left", "handle_type_right" (curve::HandleType),
+ * "weight", "tilt", "radius" and "cornerRadius". Positions are Bezier anchors or NURBS control points; nodes that want the
+ * shape read evaluated().
+ */
 struct LILA_SCENE_API CurveSet
 {
     std::vector<glm::dvec3> positions;
@@ -52,6 +60,8 @@ struct LILA_SCENE_API CurveSet
     std::vector<uint8_t> cyclic;
     geo::AttributeSet pointAttrs;
     geo::AttributeSet curveAttrs;
+    /** Per curve NURBS knots in curve::Spline's form, empty for uniform. Nodes that rebuild curves point by point drop them. */
+    std::vector<std::vector<double>> knots;
 
     size_t numCurves() const { return cyclic.size(); }
     size_t numPoints() const { return positions.size(); }
@@ -59,6 +69,14 @@ struct LILA_SCENE_API CurveSet
     std::span<const glm::dvec3> curvePoints(size_t c) const { return {positions.data() + offsets[c], curveSize(c)}; }
 
     void addCurve(std::span<const glm::dvec3> points, bool closed);
+    /** Adds a spline of any kind, its data in the builtin attributes. */
+    void addSpline(const curve::Spline& s);
+    /** Curve c as a spline (poly when the set has no spline attributes). */
+    curve::Spline spline(size_t c) const;
+    /** True when every curve is poly, so positions are the shape. */
+    bool isPoly() const;
+    /** Every curve tessellated to poly, point attributes interpolated along; a poly set comes back unchanged. */
+    CurveSet evaluated(const curve::TessOptions& o = {}) const;
     /** Merges attribute layers by name, like Mesh::append. */
     void append(const CurveSet& other);
     /** Brings attribute sizes in line after positions or curves were added directly. */

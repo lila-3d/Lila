@@ -1,5 +1,6 @@
 #include "ops/Command.h"
 #include "scene/Graph.h"
+#include "scene/LastOp.h"
 #include "scene/MeshNodes.h"
 #include "uv/Chart.h"
 #include "uv/Uv.h"
@@ -221,4 +222,43 @@ TEST_CASE("uvTransform perIsland turns each island about its own centre")
     REQUIRE(after.size() == 6);
     for (size_t i = 0; i < 6; ++i)
         CHECK(glm::distance(before[i], after[i]) < 1e-4);
+}
+
+TEST_CASE("uvProject adjustments undo and redo one at a time")
+{
+    namespace lo = scene::lastOp;
+    lo::install();
+    run("newScene");
+    std::string cube = run("polyCube")[0];
+    run("select", {{"args", {cube}}});
+    auto scale = [] { return uv::lastProjections().front().scale.x; };
+    auto uvs = [] { return run("uvTexelDensity"); };
+
+    ops::execute("uvProject", {{"type", "planar"}, {"scaleU", 1.0}, {"normalize", false}}, CallSource::UI);
+    REQUIRE(lo::live());
+    json u1 = uvs();
+    lo::rerun({{"scaleU", 2.0}});
+    json u2 = uvs();
+    CHECK(u1 != u2);
+    lo::rerun({{"scaleU", 3.0}});
+    CHECK(scale() == doctest::Approx(3.0));
+
+    run("undo");
+    CHECK(scale() == doctest::Approx(2.0));
+    CHECK(uvs() == u2);
+    CHECK(lo::current()->call["scaleU"].get<double>() == doctest::Approx(2.0));
+    CHECK(lo::live());
+    run("undo");
+    CHECK(scale() == doctest::Approx(1.0));
+    CHECK(uvs() == u1);
+    CHECK(lo::live());
+    run("redo");
+    CHECK(scale() == doctest::Approx(2.0));
+    CHECK(uvs() == u2);
+    run("undo");
+    run("undo");
+    CHECK_FALSE(lo::live());
+    run("redo");
+    CHECK(lo::live());
+    CHECK(scale() == doctest::Approx(1.0));
 }

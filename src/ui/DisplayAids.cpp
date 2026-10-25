@@ -420,8 +420,21 @@ void draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& view, int pa
 
     Nearest<Label> nearest(kMaxLabels);
     std::vector<QPointF> nonManifoldPoints;
+    auto box = [&](const geo::Bounds& b, const glm::mat4& world) {
+        if (!b.valid())
+            return;
+        const glm::vec4 color = linear(pal.bounds);
+        glm::vec3 lo(b.min), hi(b.max);
+        auto corner = [&](int i) { return glm::vec3(world * glm::vec4(i & 1 ? hi.x : lo.x, i & 2 ? hi.y : lo.y, i & 4 ? hi.z : lo.z, 1.0f)); };
+        for (int i = 0; i < 8; ++i)
+            for (int bit : {1, 2, 4})
+                if (!(i & bit))
+                    push(s.lines, corner(i), corner(i | bit), color);
+    };
     for (const MeshEntry& m : meshes)
     {
+        if (!m.mesh && is(Aid::BoundingBoxes))
+            box(m.bounds, glm::mat4(m.world));
         if (!m.mesh || m.mesh->empty())
             continue;
         const geo::Mesh& mesh = *m.mesh;
@@ -492,16 +505,7 @@ void draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& view, int pa
         {
             if (!std::exchange(c.boundsBuilt, true))
                 c.bounds = mesh.bounds();
-            if (c.bounds.valid())
-            {
-                const glm::vec4 color = linear(pal.bounds);
-                glm::vec3 lo(c.bounds.min), hi(c.bounds.max);
-                auto corner = [&](int i) { return at({i & 1 ? hi.x : lo.x, i & 2 ? hi.y : lo.y, i & 4 ? hi.z : lo.z}); };
-                for (int i = 0; i < 8; ++i)
-                    for (int bit : {1, 2, 4})
-                        if (!(i & bit))
-                            push(s.lines, corner(i), corner(i | bit), color);
-            }
+            box(c.bounds, world);
         }
         if (edgesShown)
         {

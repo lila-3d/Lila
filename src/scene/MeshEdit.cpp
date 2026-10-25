@@ -334,6 +334,18 @@ glm::dvec3 selectionCenter()
     for (auto& [node, ids] : components::selected(kind))
     {
         Node* n = g.node(node);
+        if (const components::PointProvider* pp = n ? components::pointProvider(*n) : nullptr)
+        {
+            glm::dmat4 w = n->as<glm::dmat4>(Transform::kWorldMatrix);
+            std::set<uint32_t> want(ids.begin(), ids.end());
+            for (auto& [id, p] : pp->points(g, node))
+                if (want.contains(id))
+                {
+                    sum += glm::dvec3(w * glm::dvec4(p, 1.0));
+                    ++count;
+                }
+            continue;
+        }
         MeshPtr cage = n && n->type().isA("mesh") ? modifiers::cage(g, node) : nullptr;
         if (!cage)
             continue;
@@ -426,6 +438,24 @@ std::vector<glm::dvec3> componentNormals(const geo::Mesh& m, ComponentMode kind,
     return n;
 }
 
+namespace
+{
+glm::dmat3 worldFrame(const glm::dmat3& f, const glm::dmat3& linear);
+
+/** World frames of a point provider's given components, those without one left out. */
+std::vector<glm::dmat3> providedWorldFrames(Graph& g, Node& n, const components::PointProvider& pp, const Ids& ids)
+{
+    std::vector<glm::dmat3> out;
+    if (!pp.frames)
+        return out;
+    glm::dmat3 linear(n.as<glm::dmat4>(Transform::kWorldMatrix));
+    for (const glm::dmat3& f : pp.frames(g, n.id(), ids))
+        if (glm::dmat3 w = worldFrame(f, linear); glm::length(w[2]) > 0.5)
+            out.push_back(w);
+    return out;
+}
+} // namespace
+
 glm::dvec3 selectionNormal()
 {
     Graph& g = graph();
@@ -437,6 +467,12 @@ glm::dvec3 selectionNormal()
     for (auto& [node, ids] : components::selected(kind))
     {
         Node* n = g.node(node);
+        if (const components::PointProvider* pp = n ? components::pointProvider(*n) : nullptr)
+        {
+            for (const glm::dmat3& f : providedWorldFrames(g, *n, *pp, ids))
+                sum += f[2];
+            continue;
+        }
         MeshPtr cage = n && n->type().isA("mesh") ? modifiers::cage(g, node) : nullptr;
         if (!cage)
             continue;
@@ -607,6 +643,12 @@ glm::dmat3 selectionNormalFrame()
         for (auto& [node, ids] : components::selected(kind))
         {
             Node* nd = g.node(node);
+            if (const components::PointProvider* pp = nd ? components::pointProvider(*nd) : nullptr)
+            {
+                for (const glm::dmat3& f : providedWorldFrames(g, *nd, *pp, ids))
+                    sum += f[0];
+                continue;
+            }
             MeshPtr cage = nd && nd->type().isA("mesh") ? modifiers::cage(g, node) : nullptr;
             if (!cage)
                 continue;
@@ -625,18 +667,62 @@ glm::dmat3 selectionNormalFrame()
     return glm::dmat3(u, glm::cross(n, u), n);
 }
 
-
-int deformSelectedComponents(const char* label, const PointTargetSetup& setup)
+namespace
 {
+/** Sets up a point provider node's targets by provider id, for edits that need more than a loose point mesh; empty skips the node. */
+using ProvidedSetup = std::function<PointTarget(Graph&, Node&, const components::PointProvider&, const Ids&)>;
+
+/**
+ * deformSelectedComponents for a point provider's node: its selected points moved to their targets, from provided when set,
+ * else from setup given them as a loose point mesh.
+ */
+bool deformProvidedPoints(Graph& g, Node& n, const components::PointProvider& pp, const Ids& ids, const PointTargetSetup& setup,
+                          const ProvidedSetup& provided)
+{
+    std::map<uint32_t, glm::dvec3> all;
+    for (auto& [id, p] : pp.points(g, n.id()))
+        all[id] = p;
+    geo::Mesh m;
+    Ids local;
+    std::vector<uint32_t> source;
+    for (uint32_t id : ids)
+        if (auto it = all.find(id); it != all.end())
+        {
+            local.push_back(m.addPoint(it->second));
+            source.push_back(id);
+        }
+    if (source.empty())
+        return false;
+    glm::dmat4 world = n.as<glm::dmat4>(Transform::kWorldMatrix);
+    PointTarget targetOf = provided ? provided(g, n, pp, source) : setup(m, world, ComponentMode::Vertex, local);
+    if (!targetOf)
+        return false;
+    std::vector<std::pair<uint32_t, glm::dvec3>> moves;
+    for (size_t i = 0; i < source.size(); ++i)
+        moves.push_back({source[i], targetOf(provided ? source[i] : local[i], m.position(local[i]))});
+    pp.setPoints(g, n.id(), moves);
+    return true;
+}
+
+int deformSelected(const char* label, const PointTargetSetup& setup, const ProvidedSetup& provided)
+{
+    LILA_ZONE();
+
     ComponentMode kind = components::mode();
     if (kind == ComponentMode::Object)
         throw CommandError(std::string(label) + ": select some components first");
     Graph& g = graph();
     UndoChunk chunk(label);
     auto selection = components::selected(kind);
+    int edited = 0;
     for (auto& [node, ids] : selection)
     {
         Node* n = g.node(node);
+        if (const components::PointProvider* pp = n ? components::pointProvider(*n) : nullptr; pp && kind == ComponentMode::Vertex)
+        {
+            edited += deformProvidedPoints(g, *n, *pp, ids, setup, provided) ? 1 : 0;
+            continue;
+        }
         if (!n || !n->type().isA("mesh"))
             continue;
         PlugRef base = basePlug(*n);
@@ -644,6 +730,8 @@ int deformSelectedComponents(const char* label, const PointTargetSetup& setup)
         Ids pts = components::convert(m, kind, ids, ComponentMode::Vertex);
         glm::dmat4 world = n->as<glm::dmat4>(Transform::kWorldMatrix);
         PointTarget targetOf = setup(m, world, kind, ids);
+        if (!targetOf)
+            continue;
         auto sym = symmetryFor(*n, m);
 
         // With symmetry, the side the selection is on drives and the other side follows as its exact reflection.
@@ -668,16 +756,36 @@ int deformSelectedComponents(const char* label, const PointTargetSetup& setup)
         if (sym)
             sym->enforce(m, moved, drive);
         g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
+        ++edited;
     }
+    return edited;
 }
-    LILA_ZONE();
 
+/** Provided points moved by uvn along their own world frames; points without a frame stay put. */
+ProvidedSetup alongProvidedFrames(const glm::dvec3& uvn)
+{
+    return [uvn](Graph& g, Node& n, const components::PointProvider& pp, const Ids& ids) -> PointTarget {
+        if (!pp.frames)
+            return {};
+        glm::dmat3 linear(n.as<glm::dmat4>(Transform::kWorldMatrix)), toLocal = glm::inverse(linear);
+        std::vector<glm::dmat3> frames = pp.frames(g, n.id(), ids);
+        auto offsets = std::make_shared<std::map<uint32_t, glm::dvec3>>();
+        for (size_t i = 0; i < ids.size() && i < frames.size(); ++i)
+            (*offsets)[ids[i]] = toLocal * (worldFrame(frames[i], linear) * uvn);
+        return [offsets](uint32_t id, const glm::dvec3& at) {
+            auto it = offsets->find(id);
+            return it == offsets->end() ? at : at + it->second;
+        };
+    };
+}
+} // namespace
+
+int deformSelectedComponents(const char* label, const PointTargetSetup& setup) { return deformSelected(label, setup, nullptr); }
 
 void transformSelectedComponents(const char* label, const glm::dmat4& worldXform)
 {
     LILA_ZONE();
 
-    int edited = 0;
     deformSelectedComponents(label, [&](const geo::Mesh&, const glm::dmat4& world, ComponentMode, const Ids&) -> PointTarget {
         glm::dmat4 local = glm::inverse(world) * worldXform * world;
         return [local](Index, const glm::dvec3& p) { return glm::dvec3(local * glm::dvec4(p, 1.0)); };
@@ -693,8 +801,6 @@ void transformSelectedComponentsOnto(const char* label, const glm::dmat4& worldX
         return [local, toLocal, world, &onto](Index, const glm::dvec3& p) {
             glm::dvec3 moved(world * local * glm::dvec4(p, 1.0));
             return glm::dvec3(toLocal * glm::dvec4(onto(moved), 1.0));
-        if (!targetOf)
-            continue;
         };
     });
 }
@@ -719,9 +825,7 @@ SurfaceProjector closestOnMeshes(const std::vector<NodeId>& meshes)
             continue;
         glm::dmat4 world = n->as<glm::dmat4>(Transform::kWorldMatrix);
         surfaces->push_back({std::make_shared<geo::MeshBvh>(*mesh), world, glm::inverse(world)});
-        ++edited;
     }
-    return edited;
     return [surfaces](const glm::dvec3& p) {
         glm::dvec3 best = p;
         double bestDist = std::numeric_limits<double>::max();
@@ -745,7 +849,7 @@ void offsetSelectedComponents(const char* label, double distance)
 {
     LILA_ZONE();
 
-    deformSelectedComponents(label, [&](const geo::Mesh& m, const glm::dmat4& world, ComponentMode kind, const Ids& ids) -> PointTarget {
+    deformSelected(label, [&](const geo::Mesh& m, const glm::dmat4& world, ComponentMode kind, const Ids& ids) -> PointTarget {
         auto normals = std::make_shared<std::vector<glm::dvec3>>(componentNormals(m, kind, ids));
         glm::dmat3 toWorld = glm::inverseTranspose(glm::dmat3(world)), toLocal = glm::inverse(glm::dmat3(world));
         // The distance is world space, so a scaled object still moves by it.
@@ -754,7 +858,24 @@ void offsetSelectedComponents(const char* label, double distance)
             double len = glm::length(nw);
             return len > 1e-12 ? at + toLocal * (nw / len * distance) : at;
         };
-    });
+    }, alongProvidedFrames(glm::dvec3(0.0, 0.0, distance)));
+}
+
+void offsetSelectedComponents(const char* label, const glm::dvec3& uvn)
+{
+    LILA_ZONE();
+
+    if (uvn.x == 0.0 && uvn.y == 0.0)
+    {
+        offsetSelectedComponents(label, uvn.z);
+        return;
+    }
+    const glm::dvec3 ref = tangentReference(selectionNormal());
+    deformSelected(label, [&](const geo::Mesh& m, const glm::dmat4& world, ComponentMode kind, const Ids& ids) -> PointTarget {
+        glm::dmat3 linear(world), toLocal = glm::inverse(linear);
+        auto frames = std::make_shared<std::vector<glm::dmat3>>(componentFrames(m, kind, ids, toLocal * ref));
+        return [frames, linear, toLocal, uvn](Index p, const glm::dvec3& at) { return at + toLocal * (worldFrame((*frames)[p], linear) * uvn); };
+    }, alongProvidedFrames(uvn));
 }
 
 void registerMeshEditCommands()
@@ -804,23 +925,6 @@ void registerMeshEditCommands()
     ops::registerCommand({
         .name = "polyBevel",
         .doc = "Bevel the selected edges (vertex or face selections convert to their edges).",
-void offsetSelectedComponents(const char* label, const glm::dvec3& uvn)
-{
-    LILA_ZONE();
-
-    if (uvn.x == 0.0 && uvn.y == 0.0)
-    {
-        offsetSelectedComponents(label, uvn.z);
-        return;
-    }
-    const glm::dvec3 ref = tangentReference(selectionNormal());
-    deformSelectedComponents(label, [&](const geo::Mesh& m, const glm::dmat4& world, ComponentMode kind, const Ids& ids) -> PointTarget {
-        glm::dmat3 linear(world), toLocal = glm::inverse(linear);
-        auto frames = std::make_shared<std::vector<glm::dmat3>>(componentFrames(m, kind, ids, toLocal * ref));
-        return [frames, linear, toLocal, uvn](Index p, const glm::dvec3& at) { return at + toLocal * (worldFrame((*frames)[p], linear) * uvn); };
-    });
-}
-
         .flags = {{"offset", "", T::Float, 2.0, "Width, cm."},
                   {"segments", "", T::Int, 1, "Segments across the bevel."},
                   {"profile", "", T::Float, 0.5, "0.5 round, 0.25 straight, toward 1 square."},
@@ -1539,9 +1643,11 @@ void offsetSelectedComponents(const char* label, const glm::dvec3& uvn)
         .doc = "Move the selected components by an offset in world space, or with normal= push each point along its own vertex normal "
                "(a face selection uses only the selected faces' normals, so the region inflates as a whole). uvn= also slides each point "
                "along its own surface tangents: U follows the uv0 u direction where the mesh has uvs (in edge mode, the selected edges), "
-               "else the world axis least aligned with the selection's normal, and V completes the frame.",
+               "else the world axis least aligned with the selection's normal, and V completes the frame. Curve points use the curve's frame: "
+               "U its tangent (a handle's own direction), N across it within its plane, V out of the plane.",
         .flags = {{"by", "", T::Vec3, nullptr, "Offset, cm."},
                   {"normal", "", T::Float, nullptr, "Distance along the vertex normals, cm."},
+                  {"uvn", "", T::Vec3, nullptr, "Distances along each point's own U tangent, V tangent and normal, cm."},
                   {"onto", "", T::List, nullptr, "Meshes whose surface each moved point then lands on, at its closest point."}},
         .run = [vec](const Args& a) -> json {
             if (int(a.has("by")) + int(a.has("normal")) + int(a.has("uvn")) != 1)
@@ -1549,6 +1655,11 @@ void offsetSelectedComponents(const char* label, const glm::dvec3& uvn)
             if (a.has("normal"))
             {
                 offsetSelectedComponents("Move Components", a.get<double>("normal"));
+                return nullptr;
+            }
+            if (a.has("uvn"))
+            {
+                offsetSelectedComponents("Move Components", vec(a.flags["uvn"]));
                 return nullptr;
             }
             glm::dmat4 by = glm::translate(glm::dmat4(1.0), vec(a.flags["by"]));
@@ -1589,7 +1700,6 @@ void offsetSelectedComponents(const char* label, const glm::dvec3& uvn)
         .run = [vec, symmetricPivot](const Args& a) -> json {
             if (!a.has("by"))
                 throw CommandError("scaleComponents: give by=");
-                  {"uvn", "", T::Vec3, nullptr, "Distances along each point's own U tangent, V tangent and normal, cm."},
             glm::dvec3 pivot = a.has("pivot") ? vec(a.flags["pivot"]) : symmetricPivot();
             const glm::dmat4 r = a.has("orient") ? eulerToMatrix(vec(a.flags["orient"]), RotateOrder::XYZ) : glm::dmat4(1.0);
             transformSelectedComponents("Scale Components", glm::translate(glm::dmat4(1.0), pivot) * r * glm::scale(glm::dmat4(1.0), vec(a.flags["by"])) *
@@ -1599,11 +1709,6 @@ void offsetSelectedComponents(const char* label, const glm::dvec3& uvn)
     });
 
     // Warns when a mesh just given symmetry is not symmetric about its plane, so edits will not mirror cleanly.
-            if (a.has("uvn"))
-            {
-                offsetSelectedComponents("Move Components", vec(a.flags["uvn"]));
-                return nullptr;
-            }
     auto warnIfAsymmetric = [](NodeId id) {
         Graph& g = graph();
         g.evaluate();

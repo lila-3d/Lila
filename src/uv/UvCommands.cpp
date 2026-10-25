@@ -138,6 +138,14 @@ std::vector<ProjectionRecord>& lastProjectionsMutable()
     return records;
 }
 
+/** Keeps lastProjections() matching the projection undo and redo land on, for the projection handles. */
+struct ProjectionsAction : UndoAction
+{
+    std::vector<ProjectionRecord> before, after;
+    void undo() override { lastProjectionsMutable() = before; }
+    void redo() override { lastProjectionsMutable() = after; }
+};
+
 glm::dmat3 worldLinear(Node& n)
 {
     return glm::dmat3(n.as<glm::dmat4>(scene::Transform::kWorldMatrix));
@@ -700,6 +708,10 @@ void registerCommands()
                     r["radius"] = fr.radius, r["seamAngle"] = glm::degrees(fr.seamAngle);
                 return r;
             });
+            auto action = std::make_unique<ProjectionsAction>();
+            action->before = lastProjectionsMutable();
+            action->after = records;
+            UndoStack::get().record(std::move(action));
             lastProjectionsMutable() = std::move(records);
             return out;
         },

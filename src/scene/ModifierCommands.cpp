@@ -53,6 +53,45 @@ void dropIfOrphan(Graph& g, NodeId id)
         g.deleteNode(id);
 }
 
+/**
+ * A shape fed through a "create" data plug (a curve with history): stores what the history makes and drops the nodes
+ * that fed only it.
+ */
+void bakeCreateHistory(Graph& g, Node& n)
+{
+    int create = n.type().attrIndex("create");
+    if (create < 0 || n.type().attrs[size_t(create)].type != PlugType::Data)
+        return;
+    PlugRef in{n.id(), create, -1};
+    std::optional<PlugRef> src = g.source(in);
+    if (!src)
+        return;
+    g.evaluate();
+    PlugValue baked = g.value(in);
+    g.disconnect(in);
+    g.setValue(in, baked);
+    // Upstream history nodes nothing else reads go too.
+    std::vector<NodeId> stackIds{src->node};
+    while (!stackIds.empty())
+    {
+        NodeId id = stackIds.back();
+        stackIds.pop_back();
+        Node* up = g.node(id);
+        if (!up || up->type().dag)
+            continue;
+        bool used = false;
+        for (size_t a = 0; a < up->type().attrs.size(); ++a)
+            if (!g.destinations({id, int(a), -1}).empty())
+                used = true;
+        if (used)
+            continue;
+        for (const auto& [dst, from] : g.connections())
+            if (dst.node == id)
+                stackIds.push_back(from.node);
+        g.deleteNode(id);
+    }
+}
+
 json describe(Graph& g, NodeId id)
 {
     Node* n = g.node(id);
@@ -269,14 +308,17 @@ void registerStackCommands()
 
     ops::registerCommand({
         .name = "bakeModifierStack",
-        .doc = "Bake meshes to their current result, deleting the generator and modifiers feeding them. Objects that aren't meshes are skipped.",
+        .doc = "Bake meshes to their current result, deleting the generator and modifiers feeding them. Curves likewise keep what their history makes and lose the history; other objects are skipped.",
         .positionalDoc = "objects",
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             for (const std::string& name : a.objects())
             {
                 if (Node* n = g.find(name); n && !n->type().isA("mesh"))
+                {
+                    bakeCreateHistory(g, *n);
                     continue;
+                }
                 Node& mesh = meshNamed(name, "bakeModifierStack");
                 std::vector<NodeId> mods = stack(g, mesh.id());
                 for (NodeId id : mods)

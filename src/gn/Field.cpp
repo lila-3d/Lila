@@ -1,5 +1,7 @@
 #include "gn/Field.h"
 
+#include "curve/Tessellate.h"
+
 #include "core/Profile.h"
 #include "geo/ColorSets.h"
 #include "geo/Normals.h"
@@ -871,30 +873,17 @@ void curveFrames(std::span<const glm::dvec3> pts, bool cyclic, std::vector<glm::
     normals.assign(n, glm::dvec3(0.0, 1.0, 0.0));
     if (n < 2)
         return;
+    // Smooth tangents throughout (no kinks), rotation minimising frames, closed loops twisted shut.
+    curve::Polyline pl = curve::polylineFrom(pts, cyclic, 4.0);
+    curve::FrameOptions o;
+    // Start from the axis least aligned with the first tangent, so results stay put across releases.
+    glm::dvec3 t0 = pl.tangent(0);
+    o.startNormal = std::abs(t0.y) < 0.9 ? glm::dvec3(0.0, 1.0, 0.0) : glm::dvec3(1.0, 0.0, 0.0);
+    std::vector<curve::Frame> fr = curve::frames(pl, o);
     for (size_t k = 0; k < n; ++k)
     {
-        glm::dvec3 prev = k > 0 ? pts[k - 1] : (cyclic ? pts[n - 1] : pts[k]);
-        glm::dvec3 next = k + 1 < n ? pts[k + 1] : (cyclic ? pts[0] : pts[k]);
-        glm::dvec3 t = next - prev;
-        tangents[k] = glm::length(t) > 1e-12 ? glm::normalize(t) : (k > 0 ? tangents[k - 1] : glm::dvec3(0.0, 0.0, 1.0));
-    }
-    // Start from the axis least aligned with the first tangent, then parallel-transport it along the curve.
-    glm::dvec3 t0 = tangents[0];
-    glm::dvec3 a = std::abs(t0.y) < 0.9 ? glm::dvec3(0.0, 1.0, 0.0) : glm::dvec3(1.0, 0.0, 0.0);
-    glm::dvec3 nrm = glm::normalize(glm::cross(glm::cross(t0, a), t0));
-    normals[0] = nrm;
-    for (size_t k = 1; k < n; ++k)
-    {
-        glm::dvec3 axis = glm::cross(tangents[k - 1], tangents[k]);
-        double s = glm::length(axis);
-        if (s > 1e-12)
-        {
-            axis /= s;
-            double ang = std::atan2(s, glm::dot(tangents[k - 1], tangents[k]));
-            nrm = nrm * std::cos(ang) + glm::cross(axis, nrm) * std::sin(ang) + axis * glm::dot(axis, nrm) * (1.0 - std::cos(ang));
-        }
-        nrm = glm::normalize(nrm - tangents[k] * glm::dot(nrm, tangents[k]));
-        normals[k] = nrm;
+        tangents[k] = fr[k].t;
+        normals[k] = fr[k].n;
     }
 }
 } // namespace lila::gn
