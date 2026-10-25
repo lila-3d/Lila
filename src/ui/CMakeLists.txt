@@ -89,8 +89,8 @@ lila_module(lila_ui UI
     KnifeTool.cpp KnifeTool.h
     TargetWeldTool.cpp TargetWeldTool.h
     ConformTool.cpp ConformTool.h
-    RigViewport.cpp RigViewport.h WeightPaintTool.cpp WeightPaintTool.h
     PythonBridge.cpp PythonBridge.h
+    RigViewport.cpp RigViewport.h WeightPaintTool.cpp WeightPaintTool.h
     SpacesUi.cpp SpacesUi.h
     DeformUi.cpp DeformUi.h
     MorphPanel.cpp MorphPanel.h
@@ -99,10 +99,10 @@ lila_module(lila_ui UI
     Tools.cpp Tools.h
     Outliner.cpp Outliner.h
     OutlinerFilter.cpp OutlinerFilter.h
-    PreferencesDialog.cpp PreferencesDialog.h
     TokenCompleter.cpp TokenCompleter.h
     WheelGuard.cpp WheelGuard.h
     SetsUi.cpp SetsUi.h
+    PreferencesDialog.cpp PreferencesDialog.h
     ProgressOverlay.cpp ProgressOverlay.h
     ReferenceEditor.cpp ReferenceEditor.h
     RenderSettingsDialog.cpp RenderSettingsDialog.h
@@ -128,8 +128,8 @@ lila_module(lila_ui UI
     UvProjectTool.cpp UvProjectTool.h
     FlowLayout.cpp FlowLayout.h
     DockSidebar.cpp DockSidebar.h
-    DominantInfluenceUi.cpp DominantInfluenceUi.h
     DockDragCancel.cpp DockDragCancel.h
+    DominantInfluenceUi.cpp DominantInfluenceUi.h
     ViewportHooks.cpp ViewportHooks.h
     ViewportDisplay.cpp ViewportDisplay.h
     ViewportHud.cpp ViewportHud.h

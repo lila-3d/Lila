@@ -302,10 +302,10 @@ std::pair<PlugRef, std::optional<PlugRef>> chainBase(Graph& g, NodeId mesh)
 
 PlugRef editPlug(Graph& g, NodeId mesh)
 {
-    for (NodeId id : stack(g, mesh))
     if (Node* n = g.node(mesh); n && !n->type().isA("mesh"))
         if (const components::PointProvider* pp = components::pointProvider(*n); pp && pp->editPlug)
             return pp->editPlug(g, mesh);
+    for (NodeId id : stack(g, mesh))
         if (static_cast<ModifierNode*>(g.node(id))->editingInput())
             throw CommandError(g.node(id)->path() + " is editing its edges: apply or cancel that first");
     auto [base, src] = chainBase(g, mesh);
@@ -337,9 +337,9 @@ PlugRef editPlug(Graph& g, NodeId mesh)
 MeshPtr cage(Graph& g, NodeId mesh)
 {
     g.evaluate();
-    for (NodeId id : stack(g, mesh))
     if (Node* n = g.node(mesh); !n || !n->type().isA("mesh"))
         return nullptr;
+    for (NodeId id : stack(g, mesh))
         if (auto* m = static_cast<ModifierNode*>(g.node(id)); m->editingInput())
             return m->as<MeshPtr>(m->inAttr);
     auto [base, src] = chainBase(g, mesh);

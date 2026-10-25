@@ -119,7 +119,7 @@ def _class_signature(name, cls):
     init = vars(cls).get("__init__")
     if init is not None and hasattr(init, "__nb_signature__"):
         sigs, _ = _signatures(name, init)
-        return sigs
+        return [name + s[len("__init__"):] if s.startswith("__init__") else s for s in sigs]
     try:
         return [name + str(inspect.signature(cls))]
     except (TypeError, ValueError):
@@ -167,9 +167,13 @@ def _strip_self(text):
 
 def _doc(obj):
     try:
+        if inspect.isclass(obj):
+            # Only its own: getdoc falls back to a base's (RuntimeError's, Enum's), which isn't about this class.
+            own = vars(obj).get("__doc__")
+            return inspect.cleandoc(own) if isinstance(own, str) else ""
         doc = inspect.getdoc(obj)
-        if not doc or inspect.isclass(obj):
-            return doc or ""
+        if not doc:
+            return ""
         # Instances without their own docstring report their type's; that isn't about this member.
         type_doc = getattr(type(obj), "__doc__", None)
         if isinstance(type_doc, str) and doc == inspect.cleandoc(type_doc):

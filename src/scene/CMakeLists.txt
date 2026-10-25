@@ -42,9 +42,9 @@ lila_module(lila_scene Scene
     Morphs.cpp
     Modifiers.cpp
     Naming.cpp
+    NodeBounds.cpp NodeBounds.h
     ObjectOps.cpp
     ObjectSets.cpp
-    NodeBounds.cpp NodeBounds.h
     Offsets.cpp
     Node.cpp
     Plug.cpp
