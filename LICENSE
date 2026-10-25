@@ -6,13 +6,15 @@ This license covers Lila, including its source code, binaries, resources and doc
 
 1. Grant
 
-Subject to the terms of this license, you are granted a free, non-exclusive, non-transferable, worldwide license to install and use the Software for any purpose, personal or commercial, with no revenue limit, and to create content, assets and extensions with it. Content and assets you create with the Software belong to you.
+Subject to the terms of this license, you are granted a free, perpetual, irrevocable (except under section 6), non-exclusive, worldwide license to install and use the Software for any purpose, personal or commercial, with no revenue limit, and to create content, assets and extensions with it. Content and assets you create with the Software belong to you.
+
+This license is non-transferable, except that an organisation's license passes to its successor in a merger, acquisition, reorganisation or sale of all or substantially all of the business or assets in which it uses the Software.
 
 2. Restrictions
 
 You may not, except as expressly permitted in writing by the copyright holder:
 
-a. Redistribute, sell, rent, lease, sublicense or host the Software, in whole or in part, other than by pointing others to an official distribution.
+a. Redistribute, sell, rent, lease, sublicense or host the Software for others, in whole or in part, other than by pointing them to an official distribution. Copying, deploying and hosting the Software within your organisation, including on its servers and on machines used by its employees and by contractors working on its behalf, is permitted.
 b. Distribute modified versions, derivative works or forks of the Software. You may modify the Software for your own use or for internal use within your organisation, including its employees and contractors working on its behalf. Extensions built against the Extension SDK are not derivative works for the purpose of this clause.
 c. Remove or alter any copyright, license or attribution notice in the Software.
 d. Use the name "Lila" or its logos to endorse or promote a product other than the Software.
@@ -35,7 +37,7 @@ The copyright holder has no obligation to provide support, maintenance, updates 
 
 6. Termination
 
-This license terminates automatically if you breach it. On termination you must stop using the Software and delete all copies. Content you created before termination remains yours.
+If you breach this license and do not cure the breach within 30 days of receiving written notice of it from the copyright holder, this license terminates. On termination you must stop using the Software and delete all copies. Content you created before termination remains yours.
 
 7. No warranty
 
@@ -52,6 +54,14 @@ The Software includes third-party components distributed under their own license
 10. Governing law
 
 This license is governed by the laws of New Zealand.
+
+11. Successors
+
+This license, including sections 4 and 12, binds the copyright holder and its successors and assigns, including any party that acquires the Software, its copyright or the business that owns it. A license granted under it cannot be revoked or narrowed by a change of ownership.
+
+12. Continuity
+
+If no official release of the Software is made for 24 consecutive months, then from the end of that period the source code of the most recent official release is also licensed under the Apache License, Version 2.0, and the copyright holder shall make that source code publicly available. From then on, anyone may use, modify and distribute that version, and works derived from it, under the Apache License, Version 2.0. An "official release" is a new version of the Software made generally available by the copyright holder through an official distribution.
 
 MIT-licensed components
 
