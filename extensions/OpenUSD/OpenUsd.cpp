@@ -1,19 +1,31 @@
-// The OpenUSD extension: importUsd and exportUsd, and the "usd" file translator File > Open, Import and Export use.
-// Pixar's libraries live in OpenUSDCore beside this file, loaded on the first USD command so startup never pays for them.
+// The OpenUSD extension: importUsd and exportUsd, live USD stages (the usdStage node and its commands), and the "usd"
+// file translator File > Open, Import and Export use. Pixar's libraries live in OpenUSDCore beside this file, loaded on
+// the first USD command (or when a scene holding a stage opens), so startup never pays for them.
 
+#include "OpenUsd.h"
 #include "UsdBackend.h"
 
 #include <lila/Command.h>
+#include <lila/Events.h>
 #include <lila/Extension.h>
 #include <lila/FileTranslator.h>
+#include <lila/Graph.h>
 #include <lila/Log.h>
+#include <lila/Node.h>
+#include <lila/Transform.h>
 
+#include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <mutex>
 
 #if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <dlfcn.h>
@@ -27,6 +39,7 @@ namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 fs::path gPackageRoot;
+std::atomic<bool> gLoaded{false};
 
 std::string utf8(const fs::path& p)
 {
@@ -81,10 +94,81 @@ const Backend& backend()
             return;
         }
         b.run = reinterpret_cast<usd::BackendRun>(run);
+        gLoaded = true;
     });
     return b;
 }
 
+using usd::runBackend;
+using scene::Graph;
+using scene::NodeId;
+
+bool sceneHasStage()
+{
+    const Graph& g = Graph::current();
+    for (NodeId id : g.nodes())
+        if (const scene::Node* n = g.node(id); n && n->type().isA(usd::kStageType))
+            return true;
+    return false;
+}
+
+/** Scene events the stages follow; failures are logged, never thrown into the event loop. */
+void forward(const char* event)
+{
+    try
+    {
+        runBackend(event, Args{});
+    }
+    catch (const std::exception& e)
+    {
+        log::error("OpenUSD: {}", e.what());
+    }
+}
+
+scene::AttrDef stringAttr(const char* name, const char* nice, uint32_t flags, const char* doc)
+{
+    scene::AttrDef d;
+    d.name = name;
+    d.type = scene::PlugType::String;
+    d.defaultValue = std::string();
+    d.flags = scene::AttrInput | scene::AttrStorable | flags;
+    d.niceName = nice;
+    d.doc = doc;
+    return d;
+}
+
+bool registerStageType(ext::Context& ctx)
+{
+    const scene::NodeType* transform = scene::types::find("transform");
+    if (!transform)
+        return false;
+    using namespace usd::stageAttr;
+    const uint32_t hidden = scene::AttrHidden;
+    scene::NodeType t{.name = usd::kStageType,
+                      .base = transform,
+                      .dag = true,
+                      .doc = "A live USD stage: the composed file, its prims as objects below it. Edits are written as overs to "
+                             "the stage's edit layer; the source files are never changed.",
+                      .icon = "stack-2",
+                      .create = transform->create};
+    t.ownAttrs = {
+        stringAttr(kFile, "File", scene::AttrFile, "The USD file the stage composes. It is read, never written."),
+        stringAttr(kEditLayer, "Edit layer", scene::AttrFile,
+                   "Where edits are written. Empty keeps them inside the .lila; a .usda path writes them to that file, to share "
+                   "it; one of the stage's own sublayers edits that file directly."),
+        stringAttr(kEditData, "", hidden, "The edit layer's text, when it is kept inside the scene."),
+        stringAttr(kMap, "", hidden, "Which object stands for which prim."),
+        stringAttr(kBaseline, "", hidden, "What each prim held when its object was last built or written, to tell edits apart."),
+        stringAttr(kMaterials, "", hidden, "The material prim each material came from."),
+        stringAttr(kLoadRules, "", hidden, "Which payloads are loaded."),
+        stringAttr(kStamps, "", hidden, "The source files' times and sizes at the last save, to reload when they change."),
+    };
+    return scene::types::registerType(ctx, std::move(t)) != nullptr;
+}
+} // namespace
+
+namespace lila::usd
+{
 json runBackend(const char* command, const Args& a)
 {
     const Backend& b = backend();
@@ -96,12 +180,31 @@ json runBackend(const char* command, const Args& a)
         throw CommandError(error);
     return result;
 }
-} // namespace
+
+bool backendLoaded() { return gLoaded; }
+
+bool isStageNode(NodeId node)
+{
+    const scene::Node* n = Graph::current().node(node);
+    return n && n->type().isA(kStageType);
+}
+
+NodeId stageAbove(NodeId node)
+{
+    const Graph& g = Graph::current();
+    for (NodeId p = g.parent(node); p != scene::kNoNode; p = g.parent(p))
+        if (isStageNode(p))
+            return p;
+    return scene::kNoNode;
+}
+} // namespace lila::usd
 
 LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
 {
     gPackageRoot = ctx.root();
     using T = ArgType;
+    if (!registerStageType(ctx))
+        return 5;
     if (!ctx.registerCommand({
             .name = "importUsd",
             .doc = "Import a USD file (.usd, .usda, .usdc or .usdz) into the scene. The stage is opened and composed first, so "
@@ -212,13 +315,151 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
         }))
         return 3;
 
+    const auto stageCommand = [&](CommandDef def) {
+        def.run = [command = def.name](const Args& a) { return runBackend(command.c_str(), a); };
+        return ctx.registerCommand(std::move(def)) != 0;
+    };
+    const bool stagesOk =
+        stageCommand({
+            .name = "usdStageOpen",
+            .doc = "Open a USD file as a live stage: a usdStage node holding the composed stage, its prims built below it as "
+                   "objects. Nothing is flattened: variants, payloads, references and sublayers stay live. Edits to the objects "
+                   "are written as overs to the stage's edit layer when the scene saves (and before a reload or a variant or "
+                   "payload switch); the source files are never changed. File > Open and Import of a USD file run this; "
+                   "importUsd flattens instead.\n\n"
+                   "Written: moving objects (with animation), hiding them, deleting them (the prim is deactivated), mesh edits, "
+                   "material assignments and edits, new objects under the stage, variant selections and payload loading. Joint, "
+                   "skin weight and blend shape edits and reparenting are not written; saving lists them as warnings. Returns "
+                   "the stage node, or with report=True a dict of stage, prims, nodes, materials, skipped and warnings.",
+            .positionalDoc = "path",
+            .flags = {{"parent", "p", T::String, nullptr, "Parent the stage node under this node."},
+                      {"name", "n", T::String, nullptr, "The stage node's name; the file's name by default."},
+                      {"editLayer", "el", T::String, "",
+                       "Where edits go: empty keeps them inside the .lila, a .usda path writes them to that file, one of the "
+                       "stage's sublayers edits it directly."},
+                      {"loadPayloads", "", T::Bool, true, "Load payloads; False leaves them unloaded (usdStageLoad loads them)."},
+                      {"variants", "", T::Any, nullptr,
+                       "Variant selections, written to the edit layer: {'set': 'variant'} for every prim with that set, or "
+                       "{'/prim/path': {'set': 'variant'}} for one prim.",
+                       {},
+                       "usdStageOpen(\"chair.usd\", variants={\"modelingVariant\": \"Rocking\"})"},
+                      {"setPlayback", "", T::Bool, true, "Set the scene fps and playback range from the stage."},
+                      {"report", "", T::Bool, false, "Return the report instead of just the stage node."},
+                      {"select", "", T::Bool, true, "Select the stage node."}},
+            .examples = {"usdStageOpen(\"C:/assets/kitchen.usd\")", "usdStageOpen(\"shot.usda\", editLayer=\"shot_lila.usda\")"},
+        }) &&
+        stageCommand({
+            .name = "usdStageReload",
+            .doc = "Read a stage's files again, keeping its edits. Edits made in Lila are written to the edit layer first; the "
+                   "objects of the prims the files changed are rebuilt. A scene also reloads its stages on open when their "
+                   "source files changed since it was saved. Returns {stage: {reloaded, updated}}.",
+            .positionalDoc = "stages... (default all)",
+            .undoable = false,
+            .examples = {"usdStageReload()", "usdStageReload(\"kitchen\")"},
+        }) &&
+        stageCommand({
+            .name = "usdStageUpdate",
+            .doc = "Take in what other tools and scripts changed in the stages' layers: files changed on disk are read again "
+                   "and the objects of the prims they touch rebuilt. Lila does this by itself while idle. Returns how many "
+                   "prims were rebuilt.",
+            .undoable = false,
+        }) &&
+        stageCommand({
+            .name = "usdStageVariant",
+            .doc = "Switch a variant on a stage, written to its edit layer. The prim's objects are rebuilt from the new "
+                   "selection. Without prim, every prim with that variant set switches. Returns {prim: variant}.",
+            .positionalDoc = "stage (default the selected one)",
+            .flags = {{"set", "s", T::String, nullptr, "The variant set."},
+                      {"variant", "v", T::String, nullptr, "The variant to select."},
+                      {"prim", "", T::String, "", "The prim, by its path in the stage (\"/World/Chair\")."}},
+            .examples = {"usdStageVariant(\"kitchen\", prim=\"/Kitchen/Chair\", set=\"style\", variant=\"metal\")"},
+        }) &&
+        stageCommand({
+            .name = "usdStageLoad",
+            .doc = "Load or unload the payloads at and below a prim of a stage, rebuilding its objects. The load state is "
+                   "saved with the scene. Returns {loaded: [prim paths]}.",
+            .positionalDoc = "stage (default the selected one)",
+            .flags = {{"prim", "", T::String, "/", "The prim, by its path in the stage; / is every payload."},
+                      {"load", "l", T::Bool, true, "False unloads."}},
+            .examples = {"usdStageLoad(\"set\", prim=\"/Set/Building\")", "usdStageLoad(\"set\", load=False)"},
+        }) &&
+        stageCommand({
+            .name = "usdStageExtract",
+            .doc = "Turn stage objects into plain Lila objects: each one moves out of its stage, keeping its place, modifiers "
+                   "and everything below it, and its prim is deactivated in the edit layer. Use it before adding modifiers "
+                   "or deformers that should stay live, since a stage's layer holds only their result. Returns the objects.",
+            .positionalDoc = "objects (default the selection)",
+        }) &&
+        stageCommand({
+            .name = "usdStageWriteShot",
+            .doc = "Write a stage's edits as a small .usda that sublayers the source, ready to open in Houdini or Maya or to "
+                   "sublayer elsewhere. Edits made in Lila are written first. Returns the path.",
+            .positionalDoc = "path stage (default the selected one)",
+            .undoable = false,
+            .examples = {"usdStageWriteShot(\"C:/shots/sh010_lila.usda\", \"kitchen\")"},
+        }) &&
+        stageCommand({
+            .name = "usdStageInfo",
+            .doc = "A stage's file, edit layer (mode embedded, file or sublayer, and path), the layers it reads, its variant "
+                   "sets with their selections, its payloads and whether they are loaded, how many prims have objects, and "
+                   "the warnings of its last save. edits=True adds the edit layer's text.",
+            .positionalDoc = "stage (default the selected one)",
+            .flags = {{"edits", "", T::Bool, false, "Include the edit layer as usda text."}},
+            .undoable = false,
+        }) &&
+        stageCommand({
+            .name = "usdStagePrim",
+            .doc = "Every composed property of a stage object's prim, custom schemas included: {prim, type, schemas, "
+                   "instanceProxy, properties: [{name, type, value, custom, timeSamples, authored}]}. Values are usda text "
+                   "at the current time; long arrays are summarized unless full=True; relationships list their targets.",
+            .positionalDoc = "object",
+            .flags = {{"full", "", T::Bool, false, "Every value in full, however long."}},
+            .undoable = false,
+        }) &&
+        stageCommand({
+            .name = "usdStageSetProperty",
+            .doc = "Set a property of a stage object's prim, written as an over to the edit layer; the object updates to "
+                   "match. The value is usda text (\"(1, 2, 3)\", \"[1, 2]\") or a number, bool, string "
+                   "or list. An attribute with time samples gets a sample at the current time. A property the prim lacks is "
+                   "added, custom, when type gives its USD type (\"float\", \"token\", \"double3\"). Relationships take "
+                   "a list of target paths. Returns the property as usdStagePrim lists it.",
+            .positionalDoc = "object property value",
+            .flags = {{"type", "", T::String, nullptr, "The USD value type, to add an attribute the prim doesn't have."}},
+            .examples = {"usdStageSetProperty(\"Chair\", \"xformOp:translate\", \"(0, 0, 50)\")",
+                         "usdStageSetProperty(\"Chair\", \"studio:assetId\", \"CH_014\", type=\"string\")"},
+        });
+    if (!stagesOk)
+        return 6;
+
+    ctx.subscribe(events::Event::SceneNew, [](const events::EventData&) {
+        if (usd::backendLoaded())
+            forward("usdStage.sceneNew");
+    });
+    ctx.subscribe(events::Event::SceneOpened, [](const events::EventData&) {
+        if (usd::backendLoaded() || sceneHasStage())
+            forward("usdStage.sceneOpened");
+    });
+    ctx.subscribe(events::Event::SceneBeforeSave, [](const events::EventData&) {
+        if (sceneHasStage())
+            forward("usdStage.beforeSave");
+    });
+    ctx.subscribe(events::Event::AppIdle, [](const events::EventData&) {
+        static auto last = std::chrono::steady_clock::now();
+        const auto now = std::chrono::steady_clock::now();
+        if (!usd::backendLoaded() || now - last < std::chrono::seconds(1))
+            return;
+        last = now;
+        forward("usdStage.idle");
+    });
+
     if (!io::translators::add(ctx, {.id = "usd",
                                     .label = "USD",
-                                    .doc = "Universal Scene Description through OpenUSD: meshes, materials, skeletons, cameras, curves and "
-                                           "animation, composition resolved on import.",
+                                    .doc = "Universal Scene Description through OpenUSD: Open and Import make a live stage (usdStage), "
+                                           "Export writes meshes, materials, skeletons, cameras, curves and animation.",
                                     .extensions = {".usd", ".usda", ".usdc", ".usdz"},
-                                    .import = {.command = "importUsd"},
+                                    .import = {.command = "usdStageOpen"},
                                     .exportSelection = {.command = "exportUsd"}}))
         return 4;
+    usd::registerUi(ctx);
     return 0;
 }

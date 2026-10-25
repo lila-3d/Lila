@@ -5,6 +5,7 @@
 #include "link/Exporters.h"
 #include "mcp/McpServer.h"
 #include "python/Python.h"
+#include "stream/ChangeStream.h"
 
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
@@ -82,7 +83,7 @@ namespace lila::python
 {
 /**
  * _lila.registries: the scene-side registries lila/extension.py wraps (file translators, MCP tools, link exporters,
- * scene ui sections). Values cross as JSON text. With an owner (a loaded or loading extension) a registration is that
+ * scene ui sections), and the change stream lila/stream.py wraps. Values cross as JSON text. With an owner (a loaded or loading extension) a registration is that
  * extension's and goes when it unloads.
  */
 void bindRegistries(nb::module_& m)
@@ -202,5 +203,34 @@ void bindRegistries(nb::module_& m)
         },
         nb::arg("owner"), nb::arg("key"), nb::arg("save"), nb::arg("load"));
     r.def("unregister_scene_ui_section", [](const std::string& key) { return io::unregisterUiSection(key); });
+
+    auto filter = [](const std::string& text) {
+        try
+        {
+            return stream::Filter::fromJson(parse(text, "filter"));
+        }
+        catch (const std::invalid_argument& e)
+        {
+            throw nb::value_error(e.what());
+        }
+    };
+    r.def(
+        "stream_subscribe",
+        [filter](const std::string& owner, nb::callable fn, const std::string& filterJson) {
+            stream::Handler handler = [fn = hold(fn)](const json& message) {
+                withGil("change stream", [&] {
+                    nb::handle(fn.get())(message.dump(-1, ' ', false, json::error_handler_t::replace));
+                    return 0;
+                });
+            };
+            if (ext::Context* ctx = contextFor(owner))
+                return stream::subscribe(*ctx, std::move(handler), filter(filterJson));
+            return stream::subscribe(std::move(handler), filter(filterJson));
+        },
+        nb::arg("owner"), nb::arg("fn"), nb::arg("filter"));
+    r.def("stream_unsubscribe", [](uint64_t id) { return stream::unsubscribe(id); });
+    r.def("stream_snapshot", [filter](const std::string& filterJson) {
+        return stream::snapshot(filter(filterJson)).dump(-1, ' ', false, json::error_handler_t::replace);
+    });
 }
 } // namespace lila::python

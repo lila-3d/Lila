@@ -1,6 +1,7 @@
 #include "UsdImport.h"
 
 #include <lila/Anim.h>
+#include <lila/Deformer.h>
 #include <lila/Mesh.h>
 #include <lila/MeshOps.h>
 #include <lila/Node.h>
@@ -889,17 +890,93 @@ struct Builder
 
     NodeId makeNode(const UsdPrim& prim, const scene::NodeType& type, NodeId parent, const char* fallback)
     {
-        // Lila's exporter keeps a node's own name when the prim had to be named otherwise (LOD levels, clashes).
-        std::string name = identifier(prim.GetName().GetString(), fallback);
-        const VtDictionary d = lilaData(prim);
-        if (auto it = d.find("name"); it != d.end() && it->second.IsHolding<std::string>() && scene::Graph::validName(it->second.UncheckedGet<std::string>()))
-            name = it->second.UncheckedGet<std::string>();
-        scene::Node* n = im.g.createNode(type, name, parent, false);
-        im.r.nodes.push_back(n->id());
+        NodeId replaced = kNoNode;
+        NodeId id = takeOver(prim, type, parent, replaced);
+        if (!id)
+        {
+            // Lila's exporter keeps a node's own name when the prim had to be named otherwise (LOD levels, clashes).
+            std::string name = identifier(prim.GetName().GetString(), fallback);
+            const VtDictionary d = lilaData(prim);
+            if (auto it = d.find("name"); it != d.end() && it->second.IsHolding<std::string>() && scene::Graph::validName(it->second.UncheckedGet<std::string>()))
+                name = it->second.UncheckedGet<std::string>();
+            if (replaced)
+                name = im.g.node(replaced)->name();
+            id = im.g.createNode(type, name, parent, false)->id();
+            if (replaced)
+            {
+                for (NodeId c : std::vector<NodeId>(im.g.children(replaced)))
+                    im.g.setParent(c, id, false);
+                deleteWithInputs(im.g, replaced);
+                im.g.rename(id, name);
+            }
+        }
+        im.r.nodes.push_back(id);
         if (parent == im.opts.parent)
-            im.r.roots.push_back(n->id());
-        im.nodeOf[prim.GetPath()] = n->id();
-        return n->id();
+            im.r.roots.push_back(id);
+        if (im.inCopy)
+            im.r.copies.push_back({id, prim.GetPath()});
+        else
+            im.nodeOf[im.linkPath(prim.GetPath())] = id;
+        return id;
+    }
+
+    /**
+     * opts.reuse: the existing node for prim, back under parent with its transform reset and its curves gone, ready to
+     * fill again. A mesh fed by a stack keeps it (stacked). kNoNode when there is none, or when it can't be reused
+     * (another type); then replaced is the node to swap out.
+     */
+    NodeId takeOver(const UsdPrim& prim, const scene::NodeType& type, NodeId parent, NodeId& replaced)
+    {
+        if (!im.opts.reuse || im.inCopy)
+            return kNoNode;
+        auto it = im.opts.reuse->find(im.linkPath(prim.GetPath()));
+        if (it == im.opts.reuse->end())
+            return kNoNode;
+        const NodeId id = it->second;
+        im.opts.reuse->erase(it);
+        const scene::Node* n = im.g.node(id);
+        if (!n)
+            return kNoNode;
+        if (&n->type() != &type)
+        {
+            replaced = id;
+            return kNoNode;
+        }
+        if (type.isA("mesh") && im.g.source({id, scene::MeshNode::kInMesh, -1}))
+            im.stacked.insert(id);
+        using scene::Transform;
+        if (im.g.parent(id) != parent)
+            im.g.setParent(id, parent, false);
+        std::set<NodeId> curves;
+        for (int a = 0; a < int(n->type().attrs.size()); ++a)
+            for (int c = -1; c < 3; ++c)
+                if (auto src = im.g.source({id, a, c}); src && im.g.node(src->node)->type().name.starts_with("animCurve"))
+                    curves.insert(src->node);
+        for (NodeId c : curves)
+            im.g.deleteNode(c);
+        set(id, Transform::kRotateOrder, int64_t(0));
+        set(id, Transform::kRotatePivot, glm::dvec3(0.0));
+        set(id, Transform::kScalePivot, glm::dvec3(0.0));
+        set(id, Transform::kVisibility, true);
+        return id;
+    }
+
+    /** A value on a node; a reused node may have the plug driven or locked by the user, which then keeps it. */
+    void set(NodeId node, int attr, scene::PlugValue v)
+    {
+        if (!im.opts.reuse)
+        {
+            im.g.setValue({node, attr, -1}, std::move(v));
+            return;
+        }
+        try
+        {
+            im.g.setValue({node, attr, -1}, std::move(v));
+        }
+        catch (const std::exception& e)
+        {
+            im.r.warnings.push_back(std::format("{}: {}", im.g.node(node)->name(), e.what()));
+        }
     }
 
     /** The node's rest transform, and whether it animates. */
@@ -932,22 +1009,22 @@ struct Builder
         if (c.sheared)
             im.r.warnings.push_back(std::format("{}: shear dropped from its transform", prim.GetPath().GetString()));
         using scene::Transform;
-        im.g.setValue({node, Transform::kTranslate, -1}, c.t);
-        im.g.setValue({node, Transform::kRotate, -1}, c.r);
-        im.g.setValue({node, Transform::kScale, -1}, c.s);
+        set(node, Transform::kTranslate, c.t);
+        set(node, Transform::kRotate, c.r);
+        set(node, Transform::kScale, c.s);
         if (c.order != scene::RotateOrder::XYZ)
-            im.g.setValue({node, Transform::kRotateOrder, -1}, int64_t(c.order));
+            set(node, Transform::kRotateOrder, int64_t(c.order));
         if (c.pivot != glm::dvec3(0.0))
         {
-            im.g.setValue({node, Transform::kRotatePivot, -1}, c.pivot);
-            im.g.setValue({node, Transform::kScalePivot, -1}, c.pivot);
+            set(node, Transform::kRotatePivot, c.pivot);
+            set(node, Transform::kScalePivot, c.pivot);
         }
         if (im.opts.animation && !resets && xf.TransformMightBeTimeVarying())
             im.animated.push_back({prim.GetPath(), node});
 
         UsdGeomImageable img(prim);
         if (valueOr<TfToken>(img.GetVisibilityAttr(), im.restTime, UsdGeomTokens->inherited) == UsdGeomTokens->invisible)
-            im.g.setValue({node, Transform::kVisibility, -1}, false);
+            set(node, Transform::kVisibility, false);
         if (std::vector<double> vis; img.GetVisibilityAttr().GetTimeSamples(&vis) && vis.size() > 1)
             im.r.warnings.push_back(std::format("{}: animated visibility kept at its first value", prim.GetPath().GetString()));
     }
@@ -985,6 +1062,8 @@ struct Builder
     /** By path: an LOD group below switches variants, which recomposes its subtree under any prim handle held across it. */
     void children(const UsdPrim& prim, NodeId node)
     {
+        if (im.shallowRoots.count(prim.GetPath()))
+            return;
         std::vector<SdfPath> paths;
         for (const UsdPrim& c : prim.GetFilteredChildren(kChildren))
             paths.push_back(c.GetPath());
@@ -1015,17 +1094,28 @@ struct Builder
         const NodeId id = makeNode(prim, *lodType, parent, "LOD");
         place(prim, id, parent);
         const std::string original = prim.GetVariantSets().GetVariantSet("LOD").GetVariantSelection();
+        const SdfPrimSpecHandle sessionSpec = im.stage->GetSessionLayer()->GetPrimAtPath(path);
+        const bool sessionHad = sessionSpec && sessionSpec->GetVariantSelections().count("LOD");
         auto select = [&](const std::string& v) {
             UsdEditContext session(im.stage, im.stage->GetSessionLayer());
             im.stage->GetPrimAtPath(path).GetVariantSets().GetVariantSet("LOD").SetVariantSelection(v);
         };
+        const SdfPath link = im.linkPath(path);
         for (const std::string& v : variants)
         {
             select(v);
+            im.lodScope.push_back({path, link.AppendVariantSelection("LOD", v)});
             if (UsdPrim now = im.stage->GetPrimAtPath(path))
                 children(now, id);
+            im.lodScope.pop_back();
         }
-        select(original);
+        if (im.opts.live && !sessionHad)
+        {
+            UsdEditContext session(im.stage, im.stage->GetSessionLayer());
+            im.stage->GetPrimAtPath(path).GetVariantSets().GetVariantSet("LOD").ClearVariantSelection();
+        }
+        else
+            select(original);
         const VtDictionary d = lilaData(im.stage->GetPrimAtPath(path));
         if (auto it = d.find("lodScreenSizes"); it != d.end() && it->second.IsHolding<VtDoubleArray>())
         {
@@ -1057,7 +1147,19 @@ struct Builder
             im.pointMaps[key] = b.pointOf;
             im.pointMaps[prim.GetPath()] = std::move(b.pointOf);
         }
-        im.g.setValue({id, scene::MeshNode::kInMesh, -1}, ptr);
+        if (!im.stacked.count(id))
+            im.g.setValue({id, scene::MeshNode::kInMesh, -1}, ptr);
+        else if (im.opts.keepShape && im.opts.keepShape->count(im.linkPath(prim.GetPath())))
+            im.keptShape.insert(id);
+        else
+            try
+            {
+                im.g.setValue(im.basePlug(id), ptr);
+            }
+            catch (const std::exception& e)
+            {
+                im.r.warnings.push_back(std::format("{}: its new shape couldn't go under its modifiers: {}", prim.GetPath().GetString(), e.what()));
+            }
         UsdGeomMesh usdMesh(prim);
         if (TfToken scheme; usdMesh.GetSubdivisionSchemeAttr().HasAuthoredValue() && usdMesh.GetSubdivisionSchemeAttr().Get(&scheme) &&
                             scheme != UsdGeomTokens->none)
@@ -1066,7 +1168,21 @@ struct Builder
             im.r.warnings.push_back(std::format("{}: animated points (a point cache) kept at the rest frame", prim.GetPath().GetString()));
         if (prim.HasAPI<UsdSkelBindingAPI>())
             im.bound.push_back({prim.GetPath(), id});
+        else if (im.stacked.count(id))
+            dropDeadSkin(id);
         return id;
+    }
+
+    /** A kept stack's skin whose joints are all gone, on a prim no longer skinned: taken out of the stack. */
+    void dropDeadSkin(NodeId mesh)
+    {
+        const NodeId sk = scene::skin::find(im.g, mesh);
+        if (!sk)
+            return;
+        const std::vector<scene::skin::Influence> infs = scene::skin::influences(im.g, sk);
+        if (std::any_of(infs.begin(), infs.end(), [](const scene::skin::Influence& i) { return i.joint != kNoNode; }))
+            return;
+        removeFromStack(im.g, sk);
     }
 
     void instancer(const UsdPrim& prim, NodeId node)
@@ -1098,11 +1214,14 @@ struct Builder
             scene::Node* holder =
                 im.g.createNode(*xformType, identifier(proto.GetName().GetString(), "instance") + "_" + std::to_string(i), node, false);
             im.r.nodes.push_back(holder->id());
+            im.r.pointInstances.push_back({holder->id(), prim.GetPath(), i});
             Trs trs = decompose(im.axes.matrixToLila(toGlm(xforms[i])), scene::RotateOrder::XYZ, glm::dvec3(0.0));
             im.g.setValue({holder->id(), scene::Transform::kTranslate, -1}, trs.t);
             im.g.setValue({holder->id(), scene::Transform::kRotate, -1}, trs.r);
             im.g.setValue({holder->id(), scene::Transform::kScale, -1}, trs.s);
+            ++im.inCopy;
             build(proto, holder->id());
+            --im.inCopy;
             ++made;
         }
         im.r.instances += int(made);
@@ -1277,6 +1396,153 @@ void applyVariants(const UsdStageRefPtr& stage, const ImportOptions& opts, Impor
 }
 } // namespace
 
+SdfPath Importer::linkPath(const SdfPath& composed) const
+{
+    if (lodScope.empty() || composed == lodScope.back().first || !composed.HasPrefix(lodScope.back().first))
+        return composed;
+    SdfPath out = lodScope.back().second;
+    for (const SdfPath& p : composed.MakeRelativePath(lodScope.back().first).GetPrefixes())
+        out = out.AppendChild(p.GetNameToken());
+    return out;
+}
+
+scene::PlugRef Importer::basePlug(NodeId mesh)
+{
+    if (stacked.count(mesh))
+        return scene::modifiers::editPlug(g, mesh);
+    return {mesh, scene::MeshNode::kInMesh, -1};
+}
+
+void removeFromStack(scene::Graph& graph, NodeId modifier)
+{
+    const scene::ModifierNode* mod = scene::modifiers::asModifier(graph.node(modifier));
+    if (!mod)
+        return;
+    const std::optional<scene::PlugRef> below = graph.source({modifier, mod->inAttr, -1});
+    for (const scene::PlugRef& d : graph.destinations({modifier, mod->outAttr, -1}))
+    {
+        graph.disconnect(d);
+        if (below)
+            graph.connect(*below, d);
+    }
+    if (below)
+        graph.disconnect({modifier, mod->inAttr, -1});
+    if (graph.node(modifier)->type().isA("morph"))
+        for (NodeId t : scene::morphs::targetNodes(graph, modifier))
+            deleteWithInputs(graph, t);
+    deleteWithInputs(graph, modifier);
+}
+
+namespace
+{
+/** How far a key may sit from a sample and still count as reproducing it. */
+double tolerance(const std::vector<double>& values)
+{
+    double big = 1.0;
+    for (double v : values)
+        big = std::max(big, std::abs(v));
+    return 1e-6 * big;
+}
+
+/** Sample indices kept so that linear (or held) interpolation between them reproduces every sample of every channel. */
+std::vector<size_t> thinSamples(const std::vector<double>& times, const std::vector<const std::vector<double>*>& channels, bool held)
+{
+    const size_t n = times.size();
+    std::vector<double> tol;
+    for (const std::vector<double>* c : channels)
+        tol.push_back(tolerance(*c));
+    auto fits = [&](size_t a, size_t b, size_t i) {
+        const double u = held ? 0.0 : (times[i] - times[a]) / (times[b] - times[a]);
+        for (size_t k = 0; k < channels.size(); ++k)
+        {
+            const std::vector<double>& v = *channels[k];
+            if (std::abs(v[a] + (v[b] - v[a]) * u - v[i]) > tol[k])
+                return false;
+        }
+        return true;
+    };
+    std::vector<size_t> kept;
+    if (n == 0)
+        return kept;
+    kept.push_back(0);
+    for (size_t i = 1; i + 1 < n; ++i)
+    {
+        const size_t a = kept.back();
+        bool ok = true;
+        for (size_t j = a + 1; j <= i && ok; ++j)
+            ok = fits(a, i + 1, j);
+        if (!ok)
+            kept.push_back(i);
+    }
+    if (n > 1)
+        kept.push_back(n - 1);
+    return kept;
+}
+
+/** A scalar curve Lila's exporter recorded beside the samples, when it still reproduces them. */
+std::optional<scene::anim::Curve> storedCurve(const json& j, const std::vector<double>& times, const std::vector<double>& values)
+{
+    using namespace scene::anim;
+    if (!j.is_object() || !j.contains("keys"))
+        return std::nullopt;
+    Curve c;
+    try
+    {
+        c.keys = Curve::keysFromJson(j["keys"]);
+        c.pre = infinityFromName(j.value("pre", std::string(infinityName(Infinity::Constant))));
+        c.post = infinityFromName(j.value("post", std::string(infinityName(Infinity::Constant))));
+        c.weighted = j.value("weighted", false);
+        c.loop = j.value("loop", false);
+    }
+    catch (const std::exception&)
+    {
+        return std::nullopt;
+    }
+    if (c.keys.empty())
+        return std::nullopt;
+    const double tol = tolerance(values);
+    for (size_t i = 0; i < times.size() && i < values.size(); ++i)
+        if (std::abs(c.evaluate(times[i]) - values[i]) > tol)
+            return std::nullopt;
+    return c;
+}
+
+/** The recorded rotation curve, when it still poses every sample (Euler degrees in order). */
+std::optional<scene::anim::RotationCurve> storedRotation(const json& j, const std::vector<double>& times, const std::vector<glm::dvec3>& euler,
+                                                         scene::RotateOrder order)
+{
+    using namespace scene::anim;
+    if (!j.is_object() || !j.contains("keys"))
+        return std::nullopt;
+    RotationCurve rc;
+    try
+    {
+        rc.order = scene::RotateOrder(std::clamp(j.value("order", 0), 0, 5));
+        rc.keys = RotationCurve::keysFromJson(j["keys"], rc.order);
+        rc.pre = infinityFromName(j.value("pre", std::string(infinityName(Infinity::Constant))));
+        rc.post = infinityFromName(j.value("post", std::string(infinityName(Infinity::Constant))));
+        rc.weighted = j.value("weighted", false);
+        rc.loop = j.value("loop", false);
+        rc.interp = rotInterpFromName(j.value("interp", std::string(rotInterpName(rc.interp))));
+    }
+    catch (const std::exception&)
+    {
+        return std::nullopt;
+    }
+    if (rc.keys.empty())
+        return std::nullopt;
+    for (size_t i = 0; i < times.size() && i < euler.size(); ++i)
+    {
+        const glm::dquat a = rc.evaluateQuat(times[i]), b = eulerToQuat(euler[i], order);
+        if (1.0 - std::abs(glm::dot(a, b)) > 1e-9)
+            return std::nullopt;
+    }
+    if (rc.order != order)
+        rc.reorder(order);
+    return rc;
+}
+} // namespace
+
 void keyPlug(Importer& im, const scene::PlugRef& plug, const std::vector<double>& times, const std::vector<double>& values)
 {
     using namespace scene;
@@ -1284,7 +1550,7 @@ void keyPlug(Importer& im, const scene::PlugRef& plug, const std::vector<double>
         return;
     const anim::Tangent tan = im.held ? anim::Tangent::Step : anim::Tangent::Linear;
     anim::Curve c;
-    for (size_t i = 0; i < times.size() && i < values.size(); ++i)
+    for (size_t i : thinSamples(times, {&values}, im.held))
         c.keys.push_back({.time = times[i], .value = values[i], .in = tan, .out = tan});
     NodeId curve = im.g.createNode(*types::find("animCurveTU"), im.g.node(plug.node)->name() + "_" + im.g.attr(plug).name, kNoNode, false)->id();
     anim::setCurve(im.g, curve, c);
@@ -1296,10 +1562,11 @@ void keyPlug(Importer& im, const scene::PlugRef& plug, const std::vector<double>
 }
 
 void keyChannels(Importer& im, NodeId node, const std::vector<double>& times, const std::vector<glm::dvec3>& t,
-                 const std::vector<glm::dvec3>& r, const std::vector<glm::dvec3>& s)
+                 const std::vector<glm::dvec3>& r, const std::vector<glm::dvec3>& s, const json* recorded)
 {
     using namespace scene;
     static constexpr const char* kCurveType[3] = {"animCurveTL", "animCurveTA", "animCurveTU"};
+    static constexpr const char* kGroup[3] = {"translate", "rotate", "scale"};
     static constexpr int kAttr[3] = {Transform::kTranslate, Transform::kRotate, Transform::kScale};
     if (times.size() < 2)
         return;
@@ -1307,10 +1574,35 @@ void keyChannels(Importer& im, NodeId node, const std::vector<double>& times, co
     Node* n = im.g.node(node);
     const glm::dvec3 rest[3] = {n->as<glm::dvec3>(Transform::kTranslate), n->as<glm::dvec3>(Transform::kRotate), n->as<glm::dvec3>(Transform::kScale)};
     const std::vector<glm::dvec3>* groups[3] = {&t, &r, &s};
-    std::array<anim::Curve, 9> curves;
+    std::array<std::vector<double>, 9> values;
     for (int ch = 0; ch < 9; ++ch)
         for (size_t i = 0; i < times.size(); ++i)
-            curves[size_t(ch)].keys.push_back({.time = times[i], .value = (*groups[ch / 3])[i][ch % 3], .in = tan, .out = tan});
+            values[size_t(ch)].push_back((*groups[ch / 3])[i][ch % 3]);
+    auto recordedOf = [&](int ch) -> const json* {
+        if (!recorded || !recorded->is_object() || !recorded->contains(kGroup[ch / 3]))
+            return nullptr;
+        const json& g = (*recorded)[kGroup[ch / 3]];
+        return g.is_array() && g.size() == 3 ? &g[size_t(ch % 3)] : nullptr;
+    };
+    auto sampled = [&](const std::vector<size_t>& kept, int ch) {
+        anim::Curve c;
+        for (size_t i : kept)
+            c.keys.push_back({.time = times[i], .value = values[size_t(ch)][i], .in = tan, .out = tan});
+        return c;
+    };
+    std::array<anim::Curve, 9> curves;
+    std::array<bool, 9> stored{};
+    for (int ch = 0; ch < 9; ++ch)
+    {
+        const json* rec = recordedOf(ch);
+        if (std::optional<anim::Curve> c = rec ? storedCurve(*rec, times, values[size_t(ch)]) : std::nullopt)
+        {
+            curves[size_t(ch)] = std::move(*c);
+            stored[size_t(ch)] = true;
+        }
+        else
+            curves[size_t(ch)] = sampled(thinSamples(times, {&values[size_t(ch)]}, im.held), ch);
+    }
     im.firstKey = std::min(im.firstKey, times.front());
     im.lastKey = std::max(im.lastKey, times.back());
 
@@ -1320,14 +1612,29 @@ void keyChannels(Importer& im, NodeId node, const std::vector<double>& times, co
     {
         bool moves = false;
         for (int ch = 3; ch < 6; ++ch)
-            for (const anim::Key& k : curves[size_t(ch)].keys)
-                moves = moves || std::abs(k.value - rest[1][ch % 3]) >= 1e-6;
+            for (double v : values[size_t(ch)])
+                moves = moves || std::abs(v - rest[1][ch % 3]) >= 1e-6;
         if (moves)
         {
             auto order = RotateOrder(n->as<int64_t>(Transform::kRotateOrder));
-            anim::RotationCurve rc = anim::rotationFromEuler({&curves[3], &curves[4], &curves[5]}, rest[1], order, anim::RotInterp::Slerp);
+            std::optional<anim::RotationCurve> rc;
+            if (recorded && recorded->is_object() && recorded->contains("rotateQ"))
+                rc = storedRotation((*recorded)["rotateQ"], times, r, order);
+            if (!rc)
+            {
+                // The three axes keyed at the same samples, so each rotation key poses all of them.
+                std::array<anim::Curve, 3> axes;
+                if (stored[3] && stored[4] && stored[5])
+                    axes = {curves[3], curves[4], curves[5]};
+                else
+                {
+                    const std::vector<size_t> kept = thinSamples(times, {&values[3], &values[4], &values[5]}, false);
+                    axes = {sampled(kept, 3), sampled(kept, 4), sampled(kept, 5)};
+                }
+                rc = anim::rotationFromEuler({&axes[0], &axes[1], &axes[2]}, rest[1], order, anim::RotInterp::Slerp);
+            }
             NodeId curve = im.g.createNode(*types::find("animCurveRQ"), n->name() + "_rotate", kNoNode, false)->id();
-            anim::setRotationCurve(im.g, curve, rc);
+            anim::setRotationCurve(im.g, curve, *rc);
             im.g.connect({curve, anim::RotationCurveNode::kOutput, -1}, rotate);
             ++im.r.keyedCurves;
         }
@@ -1337,16 +1644,15 @@ void keyChannels(Importer& im, NodeId node, const std::vector<double>& times, co
     {
         if (rotationCurve && ch / 3 == 1)
             continue;
-        anim::Curve& c = curves[size_t(ch)];
         const double v0 = rest[ch / 3][ch % 3];
-        if (std::all_of(c.keys.begin(), c.keys.end(), [&](const anim::Key& k) { return std::abs(k.value - v0) < 1e-6; }))
+        if (std::all_of(values[size_t(ch)].begin(), values[size_t(ch)].end(), [&](double v) { return std::abs(v - v0) < 1e-6; }))
             continue;
         const PlugRef plug{node, kAttr[ch / 3], ch % 3};
         if (im.g.source(plug))
             continue;
         std::string name = n->name() + "_" + im.g.attr(plug).childNames[size_t(ch % 3)];
         NodeId curve = im.g.createNode(*types::find(kCurveType[ch / 3]), name, kNoNode, false)->id();
-        anim::setCurve(im.g, curve, c);
+        anim::setCurve(im.g, curve, curves[size_t(ch)]);
         im.g.connect({curve, anim::CurveNode::kOutput, -1}, plug);
         ++im.r.keyedCurves;
     }
@@ -1357,38 +1663,56 @@ ImportResult importUsd(scene::Graph& graph, const fs::path& path, const ImportOp
     LILA_ZONE();
 
     ImportResult r;
-    Diagnostics diag;
-    UsdStageRefPtr stage = UsdStage::Open(utf8(path), opts.loadPayloads ? UsdStage::LoadAll : UsdStage::LoadNone);
-    if (!stage)
+    UsdStageRefPtr stage;
+    std::vector<std::string> opening;
     {
-        std::vector<std::string> errors = diag.errors();
-        r.error = "can't open " + utf8(path) + (errors.empty() ? std::string() : ": " + errors.front());
-        return r;
-    }
-
-    // Take variants written by Lila's exporter.
-    UsdPrim defaultPrim = stage->GetDefaultPrim();
-    if (defaultPrim && defaultPrim.GetVariantSets().HasVariantSet("take"))
-    {
-        UsdVariantSet takes = defaultPrim.GetVariantSets().GetVariantSet("take");
-        r.takes = takes.GetVariantNames();
-        if (!opts.take.empty())
+        Diagnostics diag;
+        stage = UsdStage::Open(utf8(path), opts.loadPayloads ? UsdStage::LoadAll : UsdStage::LoadNone);
+        if (!stage)
         {
-            if (std::find(r.takes.begin(), r.takes.end(), opts.take) == r.takes.end())
-                r.warnings.push_back(std::format("no take named {}; imported {}", opts.take, takes.GetVariantSelection()));
-            else
-            {
-                UsdEditContext session(stage, stage->GetSessionLayer());
-                takes.SetVariantSelection(opts.take);
-            }
+            std::vector<std::string> errors = diag.errors();
+            r.error = "can't open " + utf8(path) + (errors.empty() ? std::string() : ": " + errors.front());
+            return r;
         }
-        r.take = takes.GetVariantSelection();
-        for (const std::string& t : r.takes)
-            if (t != r.take)
-                r.skipped.push_back(std::format("take {} (import it with take='{}')", t, t));
-    }
-    applyVariants(stage, opts, r);
 
+        // Take variants written by Lila's exporter.
+        UsdPrim defaultPrim = stage->GetDefaultPrim();
+        if (defaultPrim && defaultPrim.GetVariantSets().HasVariantSet("take"))
+        {
+            UsdVariantSet takes = defaultPrim.GetVariantSets().GetVariantSet("take");
+            r.takes = takes.GetVariantNames();
+            if (!opts.take.empty())
+            {
+                if (std::find(r.takes.begin(), r.takes.end(), opts.take) == r.takes.end())
+                    r.warnings.push_back(std::format("no take named {}; imported {}", opts.take, takes.GetVariantSelection()));
+                else
+                {
+                    UsdEditContext session(stage, stage->GetSessionLayer());
+                    takes.SetVariantSelection(opts.take);
+                }
+            }
+            r.take = takes.GetVariantSelection();
+            for (const std::string& t : r.takes)
+                if (t != r.take)
+                    r.skipped.push_back(std::format("take {} (import it with take='{}')", t, t));
+        }
+        applyVariants(stage, opts, r);
+        for (const std::string& e : diag.errors())
+            opening.push_back("OpenUSD: " + e);
+        for (const std::string& w : diag.warnings())
+            opening.push_back("OpenUSD: " + w);
+    }
+    importStage(graph, stage, path, opts, r);
+    r.warnings.insert(r.warnings.end(), opening.begin(), opening.end());
+    return r;
+}
+
+void importStage(scene::Graph& graph, const UsdStageRefPtr& stage, const fs::path& path, const ImportOptions& opts, ImportResult& r)
+{
+    LILA_ZONE();
+
+    Diagnostics diag;
+    UsdPrim defaultPrim = stage->GetDefaultPrim();
     const TfToken up = UsdGeomGetStageUpAxis(stage);
     r.upAxis = up.GetString();
     r.metersPerUnit = UsdGeomGetStageMetersPerUnit(stage);
@@ -1408,21 +1732,29 @@ ImportResult importUsd(scene::Graph& graph, const fs::path& path, const ImportOp
         if (!p)
         {
             r.error = "no prim at " + opts.prim;
-            return r;
+            return;
         }
         tops.push_back(p);
+        if (opts.shallow)
+            im.shallowRoots.insert(p.GetPath());
     }
     else
         for (const UsdPrim& p : stage->GetPseudoRoot().GetFilteredChildren(kChildren))
             tops.push_back(p);
 
     Builder b{im};
-    std::vector<SdfPath> topPaths;
+    std::vector<std::pair<SdfPath, NodeId>> topPaths;
     for (const UsdPrim& p : tops)
-        topPaths.push_back(p.GetPath());
-    for (const SdfPath& p : topPaths)
+        topPaths.push_back({p.GetPath(), opts.parent});
+    for (const auto& [extra, parent] : opts.alsoBuild)
+        if (SdfPath::IsValidPathString(extra))
+        {
+            topPaths.push_back({SdfPath(extra), parent});
+            im.shallowRoots.insert(SdfPath(extra));
+        }
+    for (const auto& [p, parent] : topPaths)
         if (UsdPrim prim = stage->GetPrimAtPath(p))
-            b.build(prim, opts.parent);
+            b.build(prim, parent);
     b.reportUnkept();
 
     im.bindAll();
@@ -1461,13 +1793,19 @@ ImportResult importUsd(scene::Graph& graph, const fs::path& path, const ImportOp
             }
             if (sheared)
                 r.warnings.push_back(std::format("{}: shear dropped from its animation", prim.GetPath().GetString()));
-            keyChannels(im, node, times, t, rr, s);
+            json recorded;
+            const VtDictionary d = lilaData(xf.GetXformOpOrderAttr());
+            if (auto it = d.find("curves"); it != d.end() && it->second.IsHolding<std::string>())
+                recorded = json::parse(it->second.UncheckedGet<std::string>(), nullptr, false);
+            keyChannels(im, node, times, t, rr, s, recorded.is_object() ? &recorded : nullptr);
         }
         im.keySkeletons();
     }
 
+    r.nodeOf = im.nodeOf;
     if (im.materials)
     {
+        r.materialSlots = im.materials->slots();
         r.materials = im.materials->created;
         r.warnings.insert(r.warnings.end(), im.materials->warnings.begin(), im.materials->warnings.end());
     }
@@ -1521,6 +1859,37 @@ ImportResult importUsd(scene::Graph& graph, const fs::path& path, const ImportOp
     for (const std::string& w : diag.warnings())
         r.warnings.push_back("OpenUSD: " + w);
     r.ok = true;
-    return r;
+}
+
+void deleteWithInputs(scene::Graph& graph, NodeId id)
+{
+    if (!graph.node(id))
+        return;
+    std::set<NodeId> doomed{id};
+    for (NodeId d : graph.descendants(id))
+        doomed.insert(d);
+    std::unordered_map<NodeId, std::set<NodeId>> feeds;
+    for (const auto& [dst, src] : graph.connections())
+        feeds[src.node].insert(dst.node);
+    std::vector<NodeId> inputs;
+    for (bool grew = true; grew;)
+    {
+        grew = false;
+        for (const auto& [src, dsts] : feeds)
+        {
+            const scene::Node* n = graph.node(src);
+            if (doomed.count(src) || !n || n->type().dag)
+                continue;
+            if (std::all_of(dsts.begin(), dsts.end(), [&](NodeId d) { return doomed.count(d) > 0; }))
+            {
+                doomed.insert(src);
+                inputs.push_back(src);
+                grew = true;
+            }
+        }
+    }
+    graph.deleteNode(id);
+    for (NodeId n : inputs)
+        graph.deleteNode(n);
 }
 } // namespace lila::usd

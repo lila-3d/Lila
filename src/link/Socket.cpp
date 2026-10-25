@@ -227,7 +227,7 @@ TcpListener::~TcpListener()
     close();
 }
 
-bool TcpListener::listen(uint16_t port, std::string* err)
+bool TcpListener::listen(uint16_t port, std::string* err, bool localOnly)
 {
     LILA_ZONE();
 
@@ -240,15 +240,17 @@ bool TcpListener::listen(uint16_t port, std::string* err)
             *err = "socket() failed";
         return false;
     }
-#ifndef _WIN32
-    // POSIX only: on Windows this flag lets two listeners share a port.
     int one = 1;
+#ifdef _WIN32
+    // Without it a second listener could bind the same port and take half the connections.
+    setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&one), sizeof(one));
+#else
     setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
 #endif
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_addr.s_addr = htonl(localOnly ? INADDR_LOOPBACK : INADDR_ANY);
     if (::bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0 || ::listen(s, 8) != 0)
     {
         closeNative(s);

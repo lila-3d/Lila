@@ -22,6 +22,8 @@ struct Options
     /** --batch-run-worker <job> <index>: one file of a batch run. */
     std::string workerJob;
     size_t workerIndex = 0;
+    /** --change-stream [port]: serve the change stream on 127.0.0.1 during a batch run; -1 when not given. */
+    int changeStreamPort = -1;
 };
 
 LILA_SCENE_API Options parse(int argc, char** argv);

@@ -4,6 +4,7 @@
 #include "UsdBackend.h"
 #include "UsdCommon.h"
 #include "UsdImport.h"
+#include "UsdStage.h"
 
 #include <lila/Anim.h>
 #include <lila/Command.h>
@@ -225,7 +226,7 @@ USD_BACKEND_EXPORT int lilaUsdRun(const char* command, const Args* args, json* r
             *result = importCommand(*args);
         else if (name == "exportUsd")
             *result = exportCommand(*args);
-        else
+        else if (!usd::stage::run(name, *args, *result))
             throw CommandError("OpenUSD: no command " + std::string(name));
         return 0;
     }

@@ -10,6 +10,7 @@
 #include "scene/Naming.h"
 #include "scene/ComponentPick.h"
 #include "scene/Transform.h"
+#include "stream/ChangeStream.h"
 #include "ui/Icons.h"
 #include "ui/LodDisplay.h"
 #include "ui/SoftSelectPanel.h"
@@ -488,6 +489,13 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         toggle(general, "Offer agent setup per workspace", "/agents/promptOnTerminal", true);
         section(general, "Docs");
         toggle(general, "Download docs updates at startup", "/docs/autoUpdate", true);
+        section(general, "Change Stream");
+        toggle(general, "Stream scene changes to other processes", "/changeStream/enabled", false);
+        number(general, "Port", "/changeStream/port", double(stream::kDefaultPort), 1.0, 65535.0, 1.0, 0);
+        toggle(general, "Localhost only", "/changeStream/localOnly", true);
+        general.form->itemAt(general.form->rowCount() - 1, QFormLayout::FieldRole)
+            ->widget()
+            ->setToolTip("Off, anyone who can reach this machine on the port can read the scene.");
     });
 
     builtIn(r, "interface", "Interface", "general", [](Page& ui) {

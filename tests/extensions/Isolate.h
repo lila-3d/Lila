@@ -26,8 +26,10 @@ inline void isolate()
     });
 #ifdef _WIN32
     _putenv_s("LILA_CONFIG_DIR", dir.string().c_str());
+    _putenv_s("LILA_NO_STUB_WRITE", "1");
 #else
     setenv("LILA_CONFIG_DIR", dir.c_str(), 1);
+    setenv("LILA_NO_STUB_WRITE", "1", 1);
 #endif
     lila::mainq::init();
     lila::ops::registerBuiltins();

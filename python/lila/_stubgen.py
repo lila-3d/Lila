@@ -145,7 +145,10 @@ def namespace_dir():
 
 
 def write(force=False):
-    """Rewrites the stubs only when the registry changed. Silently skips read-only installs."""
+    """Rewrites the stubs only when the registry changed. Silently skips read-only installs, and test runs that set
+    LILA_NO_STUB_WRITE (their registry is partial)."""
+    if os.environ.get("LILA_NO_STUB_WRITE"):
+        return None
     _write_if_changed(os.path.join(namespace_dir(), "__builtins__.pyi"), _render_builtins(), force)
     _write_if_changed(os.path.join(namespace_dir(), "ruff_builtins.toml"), _render_ruff_builtins(), force)
     return _write_if_changed(os.path.join(os.path.dirname(__file__), "ops.pyi"), _render(), force)

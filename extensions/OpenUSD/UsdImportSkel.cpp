@@ -119,6 +119,7 @@ void Importer::buildSkeleton(const UsdPrim& prim, NodeId node)
         s.joints[i] = n->id();
         r.nodes.push_back(n->id());
         r.joints.push_back(n->id());
+        r.jointSkeletons.push_back({n->id(), prim.GetPath()});
         if (parent == opts.parent)
             r.roots.push_back(n->id());
         Trs trs = decompose(axes.matrixToLila(toGlm(pose[i])), scene::RotateOrder::XYZ, glm::dvec3(0.0));
@@ -148,6 +149,8 @@ void Importer::bindAll()
         const std::string where = prim.GetPath().GetString();
         UsdSkelBindingAPI binding(prim);
         UsdSkelSkeleton skel = binding.GetInheritedSkeleton();
+        const NodeId existing = skin::find(g, meshId);
+        const bool kept = keptShape.count(meshId) > 0;
         if (!skel)
         {
             r.warnings.push_back(std::format("{}: skinned but bound to no skeleton; imported unskinned", where));
@@ -156,7 +159,9 @@ void Importer::bindAll()
         auto found = skeletons.find(skel.GetPath());
         if (found == skeletons.end())
         {
-            r.warnings.push_back(std::format("{}: its skeleton {} was not imported; imported unskinned", where, skel.GetPath().GetString()));
+            // Built alone, its skeleton's joints were left as they are, and so is the skin they drive.
+            if (!existing)
+                r.warnings.push_back(std::format("{}: its skeleton {} was not imported; imported unskinned", where, skel.GetPath().GetString()));
             continue;
         }
         const Skel& s = found->second;
@@ -172,8 +177,8 @@ void Importer::bindAll()
         // bind time, so points carry any difference between the two.
         const glm::dmat4 toMesh = glm::inverse(meshWorld) * geomWorld;
         const bool moved = !nearMatrix(toMesh, glm::dmat4(1.0), 1e-9);
-        const PlugRef top{meshId, MeshNode::kInMesh, -1};
-        if (moved)
+        const PlugRef top = basePlug(meshId);
+        if (moved && !kept)
             if (MeshPtr m = std::get<MeshPtr>(g.storedValue(top)))
             {
                 auto copy = std::make_shared<geo::Mesh>(*m);
@@ -194,7 +199,13 @@ void Importer::bindAll()
         const bool hasSkin = ji && jw && ji.HasValue() && jw.HasValue() && !s.synthetic;
         if (hasSkin && !opts.skins)
             r.skipped.push_back(std::format("skin on '{}' (imported unskinned)", where));
-        if (hasSkin && opts.skins && types::find("skinCluster"))
+        const std::vector<skin::Influence> oldInfluences = existing ? skin::influences(g, existing) : std::vector<skin::Influence>();
+        const bool liveInfluences = std::all_of(oldInfluences.begin(), oldInfluences.end(), [](const skin::Influence& i) { return i.joint != kNoNode; });
+        if (existing && !hasSkin && !liveInfluences)
+            removeFromStack(g, existing);
+        if (hasSkin && opts.skins && types::find("skinCluster") && existing && kept && liveInfluences)
+            r.skins.push_back(existing);
+        else if (hasSkin && opts.skins && types::find("skinCluster"))
         {
             VtIntArray indices;
             VtFloatArray weights;
@@ -230,13 +241,35 @@ void Importer::bindAll()
                     bind[i] = topo.GetParent(i) >= 0 ? rest[i] * bind[size_t(topo.GetParent(i))] : rest[i];
             }
 
-            Node* sc = g.createNode(*types::find("skinCluster"), "SkinCluster", kNoNode, true);
-            const NodeId skinId = sc->id();
-            Node* source = g.createNode(*types::find("meshSource"), "meshSource", kNoNode, true);
-            g.setValue({source->id(), MeshSourceNode::kMesh, -1}, g.storedValue(top));
-            g.setValue(top, MeshPtr());
-            g.connect({source->id(), MeshSourceNode::kOutMesh, -1}, {skinId, SkinClusterNode::kInMesh, -1});
-            g.connect({skinId, SkinClusterNode::kOutMesh, -1}, top);
+            NodeId skinId = existing;
+            if (existing)
+            {
+                // The skin stays where it is in the stack, with its settings; only its influences and weights are made again.
+                g.disconnect({skinId, SkinClusterNode::kInfluences, -1});
+                for (const skin::Influence& inf : oldInfluences)
+                    if (g.node(inf.link))
+                        g.deleteNode(inf.link);
+            }
+            else
+            {
+                skinId = g.createNode(*types::find("skinCluster"), "SkinCluster", kNoNode, true)->id();
+                const std::vector<NodeId> stack = modifiers::stack(g, meshId);
+                const ModifierNode* bottom = stack.empty() ? nullptr : modifiers::asModifier(g.node(stack.front()));
+                const PlugRef feed = bottom ? PlugRef{bottom->id(), bottom->inAttr, -1} : PlugRef{meshId, MeshNode::kInMesh, -1};
+                if (const std::optional<PlugRef> below = g.source(feed))
+                {
+                    g.disconnect(feed);
+                    g.connect(*below, {skinId, SkinClusterNode::kInMesh, -1});
+                }
+                else
+                {
+                    Node* source = g.createNode(*types::find("meshSource"), "meshSource", kNoNode, true);
+                    g.setValue({source->id(), MeshSourceNode::kMesh, -1}, g.storedValue(feed));
+                    g.setValue(feed, MeshPtr());
+                    g.connect({source->id(), MeshSourceNode::kOutMesh, -1}, {skinId, SkinClusterNode::kInMesh, -1});
+                }
+                g.connect({skinId, SkinClusterNode::kOutMesh, -1}, feed);
+            }
             g.setValue({skinId, SkinClusterNode::kGeomMatrix, -1}, meshWorld);
 
             MeshPtr bindMesh = skin::inputMesh(g, skinId);
@@ -290,6 +323,12 @@ void Importer::bindAll()
         binding.GetBlendShapeTargetsRel().GetTargets(&shapeTargets);
         if (shapeNames.empty() || shapeTargets.empty())
             continue;
+        if (const NodeId oldMorph = scene::morphs::find(g, meshId))
+        {
+            if (kept)
+                continue;
+            removeFromStack(g, oldMorph);
+        }
         if (shapeNames.size() != shapeTargets.size())
             r.warnings.push_back(std::format("{}: {} blend shape names for {} targets; the extra ones are left out", where, shapeNames.size(),
                                              shapeTargets.size()));

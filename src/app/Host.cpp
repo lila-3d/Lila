@@ -27,6 +27,7 @@
 #include "scene/Node.h"
 #include "scene/SceneCommands.h"
 #include "sculpt/SculptSession.h"
+#include "stream/ChangeStream.h"
 #include "seq/MeshSequence.h"
 #include "tex/GraphFiles.h"
 #include "tex/Interop.h"
@@ -40,6 +41,7 @@
 #include "vcs/VcsCommands.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #ifdef _WIN32
@@ -107,6 +109,14 @@ Options parse(int argc, char** argv)
         }
         else if ((a == "-c" || a == "--command") && i + 1 < argc)
             o.command = argv[++i];
+        else if (a == "--change-stream")
+        {
+            o.changeStreamPort = stream::kDefaultPort;
+            if (i + 1 < argc && std::isdigit(static_cast<unsigned char>(argv[i + 1][0])))
+                o.changeStreamPort = std::atoi(argv[++i]);
+        }
+        else if (a.starts_with("--change-stream="))
+            o.changeStreamPort = std::atoi(a.c_str() + 16);
         else if (a[0] != '-')
             o.path = a;
     }
@@ -148,6 +158,7 @@ void startCore()
     vcs::registerCommands();
     extensions::registerCommands();
     link::registerCommands();
+    stream::registerCommands();
     fbx::registerCommands();
     maya::registerCommands();
     batch::registerCommands();
@@ -247,6 +258,9 @@ int runBatch(const Options& o, bool pythonOk)
     installConsoleProgress();
     if (!pythonOk)
         return 2;
+    // Opt-in rather than the GUI's prefs: batch jobs run many at once, and none should open a port unasked.
+    if (std::string err; !stream::startForBatch(o.changeStreamPort, &err))
+        log::error("change stream: {}", err);
     int rc = 0;
     if (!o.command.empty() && !python::run(o.command, "<command>").ok)
         rc = 1;

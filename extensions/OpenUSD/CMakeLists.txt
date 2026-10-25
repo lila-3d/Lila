@@ -3,15 +3,15 @@
 # first USD command, so startup never loads them. Their DLLs and plugInfo trees are deployed inside the package, so
 # neither the core exe nor the environment needs anything.
 find_package(pxr CONFIG REQUIRED)
-lila_add_extension(lila_openusd_extension ID OpenUSD MANIFEST extension.json SOURCES OpenUsd.cpp UsdBackend.h)
+lila_add_extension(lila_openusd_extension ID OpenUSD MANIFEST extension.json UI SOURCES OpenUsd.cpp OpenUsdUi.cpp OpenUsd.h UsdBackend.h)
 
 if(CMAKE_RUNTIME_OUTPUT_DIRECTORY)
     set(_usd_pkg ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/extensions/OpenUSD.lilaext)
 else()
     set(_usd_pkg ${CMAKE_BINARY_DIR}/$<CONFIG>/extensions/OpenUSD.lilaext)
 endif()
-set(_usd_core_sources UsdBackend.cpp UsdCommon.cpp UsdImport.cpp UsdImportSkel.cpp UsdExport.cpp UsdMaterials.cpp
-    UsdBackend.h UsdCommon.h UsdImport.h UsdExport.h UsdMaterials.h)
+set(_usd_core_sources UsdBackend.cpp UsdCommon.cpp UsdImport.cpp UsdImportSkel.cpp UsdExport.cpp UsdMaterials.cpp UsdStage.cpp
+    UsdBackend.h UsdCommon.h UsdImport.h UsdExport.h UsdMaterials.h UsdStage.h)
 add_library(lila_openusd_core SHARED ${_usd_core_sources})
 target_link_libraries(lila_openusd_core PRIVATE LilaScene usd usdGeom usdShade usdSkel usdLux usdUtils)
 set_target_properties(lila_openusd_core PROPERTIES

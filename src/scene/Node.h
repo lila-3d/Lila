@@ -95,6 +95,8 @@ public:
     /** Locked parts of an attr: bit 0 for a scalar, bits 0-2 for a Vec3's components. See Graph::setLocked. */
     uint8_t lockMask(int attr) const { return size_t(attr) < mLocks.size() ? mLocks[size_t(attr)] : uint8_t(0); }
     template <class T> const T& as(int attr) const { return std::get<T>(mValues[attr]); }
+    /** Graph::evaluationPass() when this node last computed; 0 before it ever has. */
+    uint64_t evaluatedPass() const { return mEvaluatedPass; }
 
     virtual void compute(const EvalContext& ctx) { (void)ctx; }
 
@@ -121,5 +123,6 @@ private:
     std::vector<PlugValue> mValues;
     std::vector<uint8_t> mLocks; // per attr, empty until something is locked
     bool mDirty = true;
+    uint64_t mEvaluatedPass = 0;
 };
 } // namespace lila::scene

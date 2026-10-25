@@ -5,6 +5,8 @@
 #include "extensions/ExtensionManager.h"
 #include "python/Python.h"
 #include "scene/Graph.h"
+#include "scene/Node.h"
+#include "stream/ChangeStream.h"
 
 #include <doctest/doctest.h>
 
@@ -223,5 +225,33 @@ TEST_CASE("python extension: load, call, errors, unload")
                       "assert {'lila', 'ops', 'Node', 'pyDocs'} <= ruff\n")
               .ok);
     CHECK(python::run("assert extension.unregister_command('pyDocs')").ok);
+
+    // lila.stream: the change stream's groups as dicts, filtered, and a snapshot. No scene commands here, so the
+    // edits are made directly and flushed.
+    scene::Graph& g = scene::Graph::current();
+    g.clear();
+    REQUIRE(python::run("from lila import stream\n"
+                        "heard = []\n"
+                        "sub = stream.subscribe(heard.append, attrs=['translate'])\n")
+                .ok);
+    scene::Node* p = g.createNode(*scene::types::find("transform"), "P");
+    g.setValue(g.plug("P.tx"), 2.0);
+    g.setValue(g.plug("P.sx"), 2.0);
+    stream::flush();
+    CHECK(python::run("try:\n"
+                      "    assert len(heard) == 1, heard\n"
+                      "    kinds = [c['kind'] for c in heard[0]['changes']]\n"
+                      "    assert kinds == ['created', 'value'], kinds\n"
+                      "    assert heard[0]['changes'][1]['value'] == [2.0, 0.0, 0.0]\n"
+                      "    snap = stream.snapshot(under=['P'], world=True)\n"
+                      "    assert [n['path'] for n in snap['nodes']] == ['|P'], snap\n"
+                      "    assert snap['nodes'][0]['world'][12] == 2.0, snap\n"
+                      "    snap = stream.snapshot(under=['P'], evaluated=True)\n"
+                      "    assert snap['nodes'][0]['outputs']['matrix'][12] == 2.0, snap\n"
+                      "finally:\n"
+                      "    assert stream.unsubscribe(sub)\n")
+              .ok);
+    CHECK_FALSE(stream::recording());
+    g.deleteNode(p->id());
     python::shutdown();
 }

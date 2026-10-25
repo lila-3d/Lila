@@ -15,6 +15,7 @@
 #include <charconv>
 #include <stdexcept>
 #include <unordered_set>
+#include <utility>
 
 namespace lila::scene
 {
@@ -693,7 +694,7 @@ void Graph::setRaw(const PlugRef& p, const PlugValue& v)
     else
         slot = v;
     markDirty(p.node);
-    changed(Change::Value, p.node);
+    changed(Change::Value, p.node, &p);
 }
 
 namespace
@@ -744,7 +745,8 @@ void Graph::setLockRaw(NodeId id, int attr, uint8_t mask)
     if (n->mLocks.size() <= size_t(attr))
         n->mLocks.resize(n->type().attrs.size());
     n->mLocks[size_t(attr)] = mask;
-    changed(Change::Value, id);
+    const PlugRef plug{id, attr, -1};
+    changed(Change::Value, id, &plug);
 }
 
 PlugValue Graph::keepLocked(const PlugRef& p, PlugValue v) const
@@ -878,14 +880,14 @@ void Graph::holdRaw(const PlugRef& dst, const PlugValue& v)
         assignScalar(slot, std::get<double>(v));
     markDirty(dst.node);
     mHeld.insert(dst);
-    changed(Change::Value, dst.node);
+    changed(Change::Value, dst.node, &dst);
 }
 
 void Graph::releaseRaw(const PlugRef& dst)
 {
     mHeld.erase(dst);
     markDirty(dst.node);
-    changed(Change::Value, dst.node);
+    changed(Change::Value, dst.node, &dst);
 }
 
 PlugValue Graph::value(const PlugRef& p)
@@ -928,7 +930,7 @@ void Graph::connectRaw(const PlugRef& src, const PlugRef& dst)
     mInputs[dst] = src;
     mOutgoingDst[src.node].push_back(dst);
     markDirty(dst.node);
-    changed(Change::Connection, dst.node);
+    changed(Change::Connection, dst.node, &dst);
 }
 
 void Graph::disconnectRaw(const PlugRef& dst)
@@ -943,7 +945,7 @@ void Graph::disconnectRaw(const PlugRef& dst)
         if (const AttrDef& a = n->type().attrs[size_t(dst.attr)]; a.flags & AttrResetOnDisconnect)
             n->mValues[size_t(dst.attr)] = a.defaultValue;
     markDirty(dst.node);
-    changed(Change::Connection, dst.node);
+    changed(Change::Connection, dst.node, &dst);
 }
 
 void Graph::connect(const PlugRef& src, const PlugRef& dst, bool force)
@@ -1130,6 +1132,7 @@ void Graph::evaluateDirty()
     if (!mAnyDirty)
         return;
     mAnyDirty = false;
+    const uint64_t pass = ++mEvaluationPass;
 
     // Kahn levels over the dirty subgraph; each level computes in parallel.
     std::vector<Node*> dirty;
@@ -1213,6 +1216,7 @@ void Graph::evaluateDirty()
                     n->mValues[Transform::kParentMatrix] = *frame;
             n->compute(mCtx);
             n->mDirty = false;
+            n->mEvaluatedPass = pass;
         };
 
         if (level.size() < 16)
@@ -1288,14 +1292,16 @@ void Graph::removeListener(int id)
     mListeners.erase(id);
 }
 
-void Graph::changed(Change c, NodeId id)
+void Graph::changed(Change c, NodeId id, const PlugRef* plug)
 {
     mVersion.fetch_add(1, std::memory_order_relaxed);
+    const PlugRef* outer = std::exchange(mChangedPlug, plug);
     for (auto& [lid, l] : mListeners)
         if (mBatchDepth == 0 || l.immediate)
             l.fn(c, id);
         else
             mBatchPending = true;
+    mChangedPlug = outer;
     if (mBatchDepth == 0 && this == &current())
         forwardEvent(c, id);
 }

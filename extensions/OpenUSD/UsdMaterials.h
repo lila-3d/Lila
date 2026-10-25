@@ -47,6 +47,8 @@ public:
 
     /** Package mode: texture files on disk and their paths inside the package. */
     const std::vector<std::pair<fs::path, std::string>>& packaged() const { return mPackaged; }
+    /** Every material written so far, by slot. */
+    const std::map<std::string, pxr::UsdShadeMaterial>& written() const { return mDone; }
     std::vector<std::string> warnings;
 
 private:
@@ -75,6 +77,8 @@ public:
     std::string slot(const pxr::UsdShadeMaterial& m);
     /** Marks the material behind slot two-sided, as a doubleSided mesh using it asks. */
     void setTwoSided(const std::string& slot);
+    /** The slot each USD material read so far became. */
+    const std::map<pxr::SdfPath, std::string>& slots() const { return mSlots; }
 
     std::vector<std::string> created;
     std::vector<std::string> warnings;

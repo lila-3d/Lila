@@ -4,7 +4,11 @@
 
 #include <lila/Graph.h>
 
+#include <pxr/usd/usd/stage.h>
+
 #include <limits>
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -51,6 +55,16 @@ struct ExportOptions
     bool lods = true;
     /** Geometry, materials and animation in their own sublayers, referenced from the file as its root layer. */
     bool splitLayers = false;
+    /** Time codes per second of the stage; 0 takes the animation's fps. */
+    double timeCodesPerSecond = 0.0;
+    /** The roots' transforms relative to this node instead of the world. */
+    scene::NodeId relativeTo = scene::kNoNode;
+    /** Roots written alone, without their descendants. */
+    std::set<scene::NodeId> childless;
+    /** Roots below a node other than relativeTo keep their own local transforms (fbx::ExportOptions::localRoots). */
+    bool localRoots = false;
+    /** Keep the stage in memory instead of writing it: ExportResult::stage, with where each node and material went. */
+    bool inMemory = false;
 };
 
 struct ExportResult
@@ -60,6 +74,11 @@ struct ExportResult
     std::vector<std::string> warnings;
     /** Every file written, the root layer first. */
     std::vector<std::string> files;
+
+    /** inMemory: the stage, the prim each node was written as and the material prim of each slot. */
+    pxr::UsdStageRefPtr stage;
+    std::vector<std::pair<scene::NodeId, pxr::SdfPath>> prims;
+    std::map<std::string, pxr::SdfPath> materials;
 };
 
 /** Main thread: snapshots the scene (fbx::gatherExport) and writes it as a USD stage. */

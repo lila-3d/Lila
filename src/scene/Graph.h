@@ -172,6 +172,8 @@ public:
     static void addEvaluateHook(EvaluateHook hook);
     double time() const { return mCtx.time; }
     void setTime(double seconds);
+    /** Counts evaluations that computed something; each node records the pass it last computed in (Node::evaluatedPass). */
+    uint64_t evaluationPass() const { return mEvaluationPass; }
     /** Bumped on every change; the renderer uses it to skip unchanged frames. */
     uint64_t version() const { return mVersion.load(std::memory_order_relaxed); }
 
@@ -187,6 +189,8 @@ public:
      */
     int addListener(Listener fn, bool immediate = false);
     void removeListener(int id);
+    /** Inside a listener's Change::Value or Change::Connection call: the plug that changed, when one did. Null otherwise. */
+    const PlugRef* changedPlug() const { return mChangedPlug; }
 
     /** Scene loads and imports: batched listeners hear nothing until the end, then one Reset. Nests. Main thread. */
     class LILA_SCENE_API Batch
@@ -240,7 +244,7 @@ private:
     void markDirty(NodeId id);
     void evaluateDirty();
     bool dependsOn(NodeId node, NodeId upstream) const;
-    void changed(Change c, NodeId id);
+    void changed(Change c, NodeId id, const PlugRef* plug = nullptr);
     /** Node and selection changes of the current graph, to the event bus. */
     void forwardEvent(Change c, NodeId id);
     std::vector<NodeId>& siblings(NodeId parent);
@@ -264,6 +268,7 @@ private:
     };
     std::map<int, ListenerEntry> mListeners;
     int mNextListener = 1;
+    const PlugRef* mChangedPlug = nullptr;
     int mBatchDepth = 0;
     bool mBatchPending = false;
     NodeId mNextId = 1;
@@ -271,5 +276,6 @@ private:
     NamingPolicy mNaming;
     std::atomic<uint64_t> mVersion{1};
     bool mAnyDirty = false;
+    uint64_t mEvaluationPass = 0;
 };
 } // namespace lila::scene

@@ -2,6 +2,7 @@
 #include <doctest/doctest.h>
 
 #include "ops/Command.h"
+#include "core/Events.h"
 #include "core/MainQueue.h"
 #include "curve/CurveNodes.h"
 #include "extensions/ExtensionManager.h"
@@ -13,8 +14,12 @@
 #include <filesystem>
 
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #endif
 
@@ -40,6 +45,11 @@ int main(int argc, char** argv)
     lila::io::registerCommands();
     lila::extensions::registerCommands();
     lila::extensions::ExtensionManager::get().load(LILA_TEST_OPENUSD_PACKAGE);
+    // Scene events with no usdStage in the scene leave OpenUSD unloaded too.
+    lila::ops::execute("newScene", {});
+    lila::events::send({.type = lila::events::Event::SceneOpened});
+    lila::events::send({.type = lila::events::Event::SceneBeforeSave});
+    lila::events::send({.type = lila::events::Event::AppIdle});
 #ifdef _WIN32
     gUsdLoadedWithExtension = GetModuleHandleW(L"usd_usd.dll") || GetModuleHandleW(L"OpenUSDCore.dll");
 #endif

@@ -244,6 +244,7 @@ private:
     void writeSkeleton(size_t k);
     void writeSkelRoots();
     void writeTake(const ExportTake* take, bool restForStill);
+    void recordCurves(size_t i);
     void writeAnimatedRest();
     UsdTimeCode code(double seconds) const { return UsdTimeCode(seconds * tcps); }
     bool save();
@@ -1100,6 +1101,8 @@ void Writer::writeTake(const ExportTake* take, bool restForStill)
         {
             for (size_t f = 0; f < frames; ++f)
                 setXform(i, take, f, code(take->times[f]));
+            if (takes.size() == 1)
+                recordCurves(i);
         }
         else if (restForStill && animatedAnywhere[i])
             setXform(i, nullptr, 0, UsdTimeCode::Default());
@@ -1181,6 +1184,55 @@ void Writer::writeTake(const ExportTake* take, bool restForStill)
         else if (restForStill && weightsAnimated[k])
             s.anim.GetBlendShapeWeightsAttr().Set(weightsAt(nullptr, 0), UsdTimeCode::Default());
     }
+}
+
+/**
+ * The node's own curves beside its samples (lila:curves on xformOpOrder), so building it again from the samples gets the
+ * same keys back. Only where the prim's channels are the node's: the importer checks them against the samples anyway.
+ */
+void Writer::recordCurves(size_t i)
+{
+    using namespace scene;
+    const ExportNode& e = snap.nodes[i];
+    if (ops[i].matrix || !e.plainTrs || usdParent[i] != e.parent || e.camera || !g.node(e.source))
+        return;
+    static constexpr const char* kGroup[3] = {"translate", "rotate", "scale"};
+    static constexpr int kAttr[3] = {Transform::kTranslate, Transform::kRotate, Transform::kScale};
+    json out = json::object();
+    for (int a = 0; a < 3; ++a)
+    {
+        json channels = json::array();
+        bool any = false;
+        for (int c = 0; c < 3; ++c)
+        {
+            json entry;
+            if (auto src = g.source({e.source, kAttr[a], c}))
+                if (const Node* cn = g.node(src->node); cn && anim::isCurve(*cn))
+                {
+                    const anim::Curve cv = anim::curveOf(*cn);
+                    entry = {{"keys", cv.keysToJson()}, {"pre", anim::infinityName(cv.pre)}, {"post", anim::infinityName(cv.post)},
+                             {"weighted", cv.weighted}, {"loop", cv.loop}};
+                    any = true;
+                }
+            channels.push_back(std::move(entry));
+        }
+        if (any)
+            out[kGroup[a]] = std::move(channels);
+    }
+    if (auto src = g.source({e.source, Transform::kRotate, -1}))
+        if (const Node* cn = g.node(src->node); cn && anim::isRotationCurve(*cn))
+        {
+            const anim::RotationCurve rc = anim::rotationCurveOf(*cn);
+            out["rotateQ"] = {{"keys", rc.keysToJson()},
+                              {"pre", anim::infinityName(rc.pre)},
+                              {"post", anim::infinityName(rc.post)},
+                              {"weighted", rc.weighted},
+                              {"loop", rc.loop},
+                              {"interp", anim::rotInterpName(rc.interp)},
+                              {"order", int(rc.order)}};
+        }
+    if (!out.empty())
+        setLilaData(UsdGeomXformable(stage->GetPrimAtPath(prims[i])).GetXformOpOrderAttr(), "curves", VtValue(out.dump()));
 }
 
 /** The rest values of what some take animates, when there is no take variant to hold them. */
@@ -1304,6 +1356,9 @@ bool Writer::run(const std::vector<scene::NodeId>& roots)
     f.atOrigin = opts.atOrigin;
     f.children = opts.children;
     f.deformOnly = opts.deformOnly;
+    f.relativeTo = opts.relativeTo;
+    f.childless = opts.childless;
+    f.localRoots = opts.localRoots;
     snap = fbx::gatherExport(g, roots, f);
     for (const std::string& w : snap.warnings)
         if (w.find("worldSpace is ignored") == std::string::npos)
@@ -1320,6 +1375,8 @@ bool Writer::run(const std::vector<scene::NodeId>& roots)
     for (const ExportTake& t : snap.extraTakes)
         takes.push_back(&t);
     tcps = !takes.empty() && takes[0]->fps > 0.0 ? takes[0]->fps : (snap.fps > 0.0 ? snap.fps : 30.0);
+    if (opts.timeCodesPerSecond > 0.0)
+        tcps = opts.timeCodesPerSecond;
 
     std::string ext = utf8(path.extension());
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return char(std::tolower(c)); });
@@ -1485,6 +1542,17 @@ bool Writer::run(const std::vector<scene::NodeId>& roots)
     }
     if (mats)
         res.warnings.insert(res.warnings.end(), mats->warnings.begin(), mats->warnings.end());
+    if (opts.inMemory)
+    {
+        res.stage = stage;
+        for (size_t i = 0; i < snap.nodes.size(); ++i)
+            if (!prims[i].IsEmpty())
+                res.prims.push_back({snap.nodes[i].source, prims[i]});
+        if (mats)
+            for (const auto& [slot, m] : mats->written())
+                res.materials[slot] = m.GetPath();
+        return true;
+    }
     const bool ok = save();
     if (package)
     {

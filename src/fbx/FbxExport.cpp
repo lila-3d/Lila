@@ -1015,7 +1015,14 @@ struct Gather
         const ExportNode& e = out.nodes[i];
         const Node* n = graph.node(e.source);
         if (e.parent < 0)
+        {
+            if (const NodeId above = graph.parent(e.source); opts.localRoots && above != scene::kNoNode && above != opts.relativeTo)
+                return scene::spaces::hasSpaces(graph, e.source) ? glm::inverse(world(above)) * world(e.source)
+                                                                 : n->as<glm::dmat4>(scene::Transform::kMatrix);
+            if (opts.relativeTo != scene::kNoNode && graph.node(opts.relativeTo))
+                return glm::inverse(world(opts.relativeTo)) * world(e.source);
             return rootInv[i] * world(e.source);
+        }
         NodeId parentSource = out.nodes[size_t(e.parent)].source;
         // A node in another space has its local matrix in that space's frame, not its parent's.
         if (parentSource == graph.parent(e.source) && !scene::spaces::hasSpaces(graph, e.source))
@@ -1029,6 +1036,10 @@ struct Gather
         const ExportNode& e = out.nodes[i];
         if (e.parent >= 0)
             return out.nodes[size_t(e.parent)].source == graph.parent(e.source);
+        if (const NodeId above = graph.parent(e.source); opts.localRoots && above != scene::kNoNode && above != opts.relativeTo)
+            return !scene::spaces::hasSpaces(graph, e.source);
+        if (opts.relativeTo != scene::kNoNode)
+            return graph.parent(e.source) == opts.relativeTo && !scene::spaces::hasSpaces(graph, e.source);
         return graph.parent(e.source) == scene::kNoNode && nearMat(rootInv[i], glm::dmat4(1.0), 1e-12);
     }
 
@@ -1075,7 +1086,9 @@ struct Gather
         else
         {
             e.parent = parent;
-            if (isRoot)
+            if (const NodeId up = graph.parent(id); isRoot && opts.localRoots && up != kNoNode && up != opts.relativeTo)
+                e.local = spaces::hasSpaces(graph, id) ? glm::inverse(world(up)) * w : n->as<glm::dmat4>(Transform::kMatrix);
+            else if (isRoot)
                 e.local = inv * w;
             else if (const NodeId above = out.nodes[size_t(parent)].source; above != graph.parent(id))
                 e.local = glm::inverse(world(above)) * w;
@@ -1697,7 +1710,7 @@ ExportScene gatherExport(scene::Graph& graph, const std::vector<scene::NodeId>& 
             wanted.insert(id);
     auto coveredByAncestor = [&](NodeId id) {
         for (NodeId p = graph.parent(id); p != kNoNode; p = graph.parent(p))
-            if (wanted.count(p))
+            if (wanted.count(p) && !opts.childless.count(p))
                 return true;
         return false;
     };
@@ -1717,7 +1730,9 @@ ExportScene gatherExport(scene::Graph& graph, const std::vector<scene::NodeId>& 
         glm::dmat4 rootInv(1.0);
         if (opts.atOrigin)
             rootInv = glm::inverse(g.world(id));
-        g.walk(id, -1, rootInv, true, opts.children);
+        else if (opts.relativeTo != kNoNode && graph.node(opts.relativeTo))
+            rootInv = glm::inverse(g.world(opts.relativeTo));
+        g.walk(id, -1, rootInv, true, opts.children && !opts.childless.count(id));
     }
     warnDuplicateNames(graph, out);
 

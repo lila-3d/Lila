@@ -73,6 +73,7 @@ add_executable(lila_tests
     test_isolation.cpp
     test_smart_join.cpp
     test_batch_rename.cpp
+    test_change_stream.cpp
     test_batch_run.cpp
     test_node_paths.cpp
     test_select_strokes.cpp

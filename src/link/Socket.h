@@ -42,7 +42,7 @@ private:
     Handle mHandle = kInvalid;
 };
 
-/** Listening socket on 127.0.0.1, for tests and anything that wants to serve the same protocol. */
+/** Listening socket, on 127.0.0.1 unless told otherwise. */
 class LILA_SCENE_API TcpListener
 {
 public:
@@ -51,8 +51,8 @@ public:
     TcpListener(const TcpListener&) = delete;
     TcpListener& operator=(const TcpListener&) = delete;
 
-    /** Port 0 picks a free one; see port(). */
-    bool listen(uint16_t port, std::string* err = nullptr);
+    /** Port 0 picks a free one; see port(). localOnly = false binds every interface. */
+    bool listen(uint16_t port, std::string* err = nullptr, bool localOnly = true);
     uint16_t port() const { return mPort; }
 
     /** Waits up to timeoutMs for a connection; invalid socket on timeout. */

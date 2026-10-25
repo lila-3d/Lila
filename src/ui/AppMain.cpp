@@ -22,6 +22,7 @@
 #include "render/Renderer.h"
 #include "render/TexEval.h"
 #include "scene/Components.h"
+#include "stream/ChangeStream.h"
 #include "ui/Actions.h"
 #include "ui/AdjustLastOp.h"
 #include "ui/AgentCapture.h"
@@ -223,6 +224,7 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
     registerMeasureUi();
     registerPlacePrimitiveUi();
     mcp::startFromPrefs();
+    stream::startFromPrefs();
     crash::addSecret(mcp::Server::get().token());
     crash::setContext("app", "qt", qVersion());
     crash::startWatchdog(host::crashOptions(true));
@@ -264,6 +266,7 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
     io::recovery::endSession();
 
     mcp::Server::get().stop();
+    stream::stopServer();
     render::Renderer::get().stop();
     mainq::setWakeup(nullptr);
     return rc;

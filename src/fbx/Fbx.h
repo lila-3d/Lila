@@ -14,6 +14,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -112,8 +113,17 @@ struct ExportOptions
     bool worldSpace = false;
     /** Put the given roots at the origin: their own transform is dropped, their children stay relative to them. */
     bool atOrigin = false;
+    /** The roots' transforms relative to this node rather than to the world (a USD stage's nodes, to its stage node). */
+    scene::NodeId relativeTo = scene::kNoNode;
     /** Export the descendants of the given nodes too. */
     bool children = true;
+    /** Roots written without their descendants, whatever children says. */
+    std::set<scene::NodeId> childless;
+    /**
+     * Roots below a node other than relativeTo keep their own local transforms, as they would under their exported
+     * parent, so a node written alone matches what a write of its whole hierarchy gives it.
+     */
+    bool localRoots = false;
     /** Write each edge's smoothing (hard or soft) as a smoothing layer. */
     bool smoothingGroups = true;
     /** Centimetres per file unit (100 writes metres): lengths are scaled and UnitScaleFactor declares it. */

@@ -90,6 +90,8 @@ public:
     void setEnabled(bool on) { mEnabled = on; }
     bool enabled() const { return mEnabled; }
     bool replaying() const { return mReplaying; }
+    /** True while a chunk is open: edits are still being gathered into the next step. */
+    bool chunkOpen() const { return mDepth > 0; }
 
     /** 0 keeps every step. */
     void setLimit(size_t limit);
