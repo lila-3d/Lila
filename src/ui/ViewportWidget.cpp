@@ -19,6 +19,7 @@
 #include "scene/DisplayLayers.h"
 #include "scene/Graph.h"
 #include "geo/Symmetry.h"
+#include "geo/Topology.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "scene/NodeBounds.h"
@@ -2727,9 +2728,9 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* e)
 
 void ViewportWidget::mouseDoubleClickEvent(QMouseEvent* e)
 {
-    Gizmo* gz = currentGizmo();
+    // The gizmo is ignored: the first click moved it under the cursor onto the component it selected.
     if (e->button() == Qt::LeftButton && !(e->modifiers() & (Qt::AltModifier | Qt::ControlModifier)) && !viewportTools::active() &&
-        !mTabHeld && !(gz && gz->hovering()) && scene::components::mode() != scene::ComponentMode::Object &&
+        !mTabHeld && scene::components::mode() != scene::ComponentMode::Object &&
         selectLoopAt(e->position(), e->modifiers()))
     {
         mSwallowRelease = true;
@@ -2847,3 +2848,9 @@ void ViewportWidget::escape()
         actions::run("edit.deselect");
 }
 } // namespace lila::ui
+            // Like Maya, a second edge adds its own loop unless it shares one with the first, then only the run between them.
+            if (mode == ComponentMode::Edge && std::ranges::count(geo::edgeLoop(*mesh, h.id), *from) == 0)
+            {
+                ops::execute("selectLoopThrough", {{"args", {n->path()}}, {"edge", h.id}, {"add", true}}, CallSource::UI);
+                return true;
+            }

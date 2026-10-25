@@ -413,9 +413,11 @@ Ids convert(const geo::Mesh& m, ComponentMode from, const Ids& ids, ComponentMod
                 pts.push_back(m.edgePoint(e, 1));
             }
         else if (from == ComponentMode::Face)
+        {
             for (uint32_t f : ids)
                 if (m.faceValid(f))
                     m.forEachFaceCorner(f, [&](geo::Index c) { pts.push_back(m.cornerPoint(c)); });
+        }
         else
             pts = ids;
         return sortedUnique(pts);
