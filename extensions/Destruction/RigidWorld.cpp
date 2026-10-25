@@ -14,11 +14,14 @@
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyInterface.h>
 #include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/GroupFilterTable.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/PlaneShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Collision/TransformedShape.h>
 #include <Jolt/Physics/Constraints/DistanceConstraint.h>
 #include <Jolt/Physics/Constraints/FixedConstraint.h>
 #include <Jolt/Physics/PhysicsSettings.h>
@@ -517,6 +520,26 @@ void guide(RigidWorld::Impl& w, size_t i, const PieceDesc& p, double dt)
     const glm::dvec3 newAng = ang + (rotVec * omega - ang) * blend;
     bi.SetLinearAndAngularVelocity(id, toJ(newVel), toJ(newAng));
 }
+
+/** How deep two pieces' hulls overlap, cm; 0 when apart. */
+double overlap(RigidWorld::Impl& w, int a, int b)
+{
+    JPH::BodyInterface& bi = w.bi();
+    const JPH::TransformedShape ta = bi.GetTransformedShape(w.pieces[size_t(a)]);
+    const JPH::TransformedShape tb = bi.GetTransformedShape(w.pieces[size_t(b)]);
+    if (!ta.GetWorldSpaceBounds().Overlaps(tb.GetWorldSpaceBounds()))
+        return 0.0;
+    JPH::CollideShapeSettings settings;
+    JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> hits;
+    tb.CollideShape(ta.mShape, ta.GetShapeScale(), ta.GetCenterOfMassTransform(), settings, JPH::RVec3::sZero(), hits);
+    double deepest = 0.0;
+    for (const JPH::CollideShapeResult& h : hits.mHits)
+        deepest = std::max(deepest, double(h.mPenetrationDepth));
+    return deepest / kM;
+}
+
+/** Overlap Jolt leaves alone (its penetration slop is 2 cm), so pieces rejoined at it don't pop apart. */
+constexpr double kRejoinOverlap = 1.5;
 } // namespace
 
 void RigidWorld::advance(const SceneDesc& current, int64_t index, double dt)
@@ -541,27 +564,31 @@ void RigidWorld::advance(const SceneDesc& current, int64_t index, double dt)
             bi.MoveKinematic(w.colliders[c], JPH::RVec3(toJ(current.colliders[c].position * kM)), toJ(current.colliders[c].rotation), fdt);
 
     const Settings& st = w.settings;
-    const int64_t blastStep = (st.blastFrame - st.startFrame) * std::max(1, st.substeps) + 1;
-    if (st.blastSpeed != 0.0 && index == std::max<int64_t>(1, blastStep))
-    {
-        const double radius = std::max(st.blastRadius, 1e-6);
+    auto blast = [&](const BlastDesc& b) {
+        const int64_t at = (b.frame - st.startFrame) * std::max(1, st.substeps) + 1;
+        if (b.speed == 0.0 || index != std::max<int64_t>(1, at))
+            return;
+        const double radius = std::max(b.radius, 1e-6);
         for (size_t i = 0; i < w.pieceCount; ++i)
         {
             if (!w.active[i])
                 continue;
-            const glm::dvec3 at = glm::dvec3(bi.GetCenterOfMassPosition(w.pieces[i]).GetX(), bi.GetCenterOfMassPosition(w.pieces[i]).GetY(),
-                                             bi.GetCenterOfMassPosition(w.pieces[i]).GetZ()) /
-                                  kM;
-            const glm::dvec3 d = at - st.blastCenter;
+            const JPH::RVec3 com = bi.GetCenterOfMassPosition(w.pieces[i]);
+            const glm::dvec3 d = glm::dvec3(com.GetX(), com.GetY(), com.GetZ()) / kM - b.center;
             const double dist = glm::length(d);
             if (dist >= radius)
                 continue;
             const double fall = 1.0 - dist / radius;
             const glm::dvec3 dir = dist > 1e-9 ? d / dist : glm::dvec3(0, 1, 0);
-            const glm::dvec3 dv = dir * (st.blastSpeed * fall * kM);
-            bi.AddLinearVelocity(w.pieces[i], toJ(dv));
+            bi.AddLinearVelocity(w.pieces[i], toJ(dir * (b.speed * fall * kM)));
         }
-    }
+    };
+    blast({st.blastCenter, st.blastSpeed, st.blastRadius, st.blastFrame});
+    for (const BlastDesc& b : current.blasts)
+        blast(b);
+    if (current.links.size() == w.linkDescs.size())
+        for (size_t i = 0; i < w.linkDescs.size(); ++i)
+            w.linkDescs[i].strength = current.links[i].strength;
 
     w.system.Update(fdt, 1, gRuntime.temp.get(), w.jobs);
     ++w.step;
@@ -573,6 +600,7 @@ void RigidWorld::advance(const SceneDesc& current, int64_t index, double dt)
         const LinkDesc& l = w.linkDescs[i];
         if (!w.links[i] || r.brokenStep >= 0 || l.type == LinkType::Hard)
             continue;
+        const double limit = l.strength * scale;
         double impulse = 0.0;
         if (l.type == LinkType::Spring)
             impulse = std::abs(double(static_cast<const JPH::DistanceConstraint*>(w.links[i].GetPtr())->GetTotalLambdaPosition()));
@@ -582,23 +610,23 @@ void RigidWorld::advance(const SceneDesc& current, int64_t index, double dt)
             // Torque counts as the force it takes at a 10 cm lever, so bending a slab breaks it as pulling would.
             impulse = double(f->GetTotalLambdaPosition().Length()) + double(f->GetTotalLambdaRotation().Length()) / 0.1;
         }
-        if (impulse / dt > l.strength * scale)
+        // A link whose strength drops to 0 is cut, even with nothing pulling on it (pieces held still).
+        if (limit <= 0.0 || impulse / dt > limit)
         {
             r.brokenStep = int32_t(w.step);
             r.impulse = float(impulse);
             w.links[i]->SetEnabled(false);
         }
     }
-    // Broken pieces collide again once their bounds part, so pieces cut from one another don't pop apart.
+    // Broken pieces collide again once their hulls barely overlap, so a stack whose links broke rests on itself instead of
+    // sinking through, while rough-cut pieces whose hulls cross wait until they have moved apart.
     for (size_t i = 0; i < w.links.size(); ++i)
     {
         LinkRecord& r = w.linkState[i];
         const LinkDesc& l = w.linkDescs[i];
         if (r.brokenStep < 0 || r.colliding || l.b < 0)
             continue;
-        const JPH::AABox ba = bi.GetTransformedShape(w.pieces[size_t(l.a)]).GetWorldSpaceBounds();
-        const JPH::AABox bb = bi.GetTransformedShape(w.pieces[size_t(l.b)]).GetWorldSpaceBounds();
-        if (!ba.Overlaps(bb))
+        if (overlap(w, l.a, l.b) <= kRejoinOverlap)
         {
             r.colliding = 1;
             w.enablePair(l.a, l.b, true);

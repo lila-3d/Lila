@@ -870,8 +870,27 @@ void volumeOf(const manifold::MeshGL64& gl, double& volume, glm::dvec3& centroid
     centroid = volume != 0.0 ? ref + moment / (24.0 * volume) : ref;
 }
 
-/** Box-projected uvs in cm / scale on the cut faces, hard edges and uv seams where they meet the rest, normals on them. */
-void finishCutFaces(geo::Mesh& m, double uvScale)
+/** The sharpest angle between faces the source shades smoothly across, degrees: creases sharper than it are hard edges. */
+double smoothCrease(const geo::Mesh& source)
+{
+    std::span<const bool> hard = source.edgeAttrs().get<bool>(geo::attr::kHard);
+    double most = 0.0;
+    for (Index e = 0; e < source.edgeCapacity(); ++e)
+    {
+        if (!source.edgeValid(e) || source.edgeFaceCount(e) != 2 || (e < hard.size() && hard[e]))
+            continue;
+        const Index c = source.edgeCorner(e);
+        const double d = glm::dot(source.faceNormal(source.cornerFace(c)), source.faceNormal(source.cornerFace(source.cornerRadial(c))));
+        most = std::max(most, glm::degrees(std::acos(std::clamp(d, -1.0, 1.0))));
+    }
+    return most;
+}
+
+/**
+ * Box-projected uvs in cm / scale on the cut faces, hard edges and uv seams where they meet the rest, normals on them.
+ * The source's own surface keeps its hard creases (those sharper than crease degrees), which the cut rebuilt.
+ */
+void finishCutFaces(geo::Mesh& m, double uvScale, double crease)
 {
     LILA_ZONE();
 
@@ -898,7 +917,7 @@ void finishCutFaces(geo::Mesh& m, double uvScale)
 
     auto hard = m.edgeAttrs().getOrAdd<bool>(geo::attr::kHard);
     auto seam = m.edgeAttrs().getOrAdd<bool>(geo::attr::kSeam);
-    std::vector<Index> cutCut;
+    std::vector<Index> cutCut, outer;
     for (Index e = 0; e < m.edgeCapacity(); ++e)
     {
         if (!m.edgeValid(e) || m.edgeFaceCount(e) != 2)
@@ -912,17 +931,14 @@ void finishCutFaces(geo::Mesh& m, double uvScale)
             seam[e] = axis[f0] != axis[f1];
             cutCut.push_back(e);
         }
+        else
+            outer.push_back(e);
     }
     geo::setHardEdgesByAngle(m, 30.0, cutCut);
+    geo::setHardEdgesByAngle(m, crease + 1.0, outer);
 
-    if (auto stored = m.cornerAttrs().get<glm::vec3>(geo::attr::kNormal); !stored.empty())
-    {
-        const std::vector<glm::vec3> normals = geo::cornerNormals(m);
-        stored = m.cornerAttrs().get<glm::vec3>(geo::attr::kNormal);
-        for (Index f = 0; f < m.faceCapacity(); ++f)
-            if (m.faceValid(f) && cut[f])
-                m.forEachFaceCorner(f, [&](Index c) { stored[c] = normals[c]; });
-    }
+    if (m.cornerAttrs().has(geo::attr::kNormal))
+        geo::updateCornerNormals(m);
     if (m.cornerAttrs().has(geo::attr::kTangent))
         geo::updateTangents(m);
 }
@@ -1272,6 +1288,7 @@ FractureResult voronoiFracture(const geo::Mesh& source, std::span<const glm::dve
         slotIt = names.insert(names.end(), interior);
     const int32_t slot = int32_t(slotIt - names.begin());
     const uint64_t cutBase = uint64_t(source.faceCapacity());
+    const double crease = smoothCrease(source);
 
     std::vector<std::optional<Piece>> pieces(points.size());
     std::vector<std::string> errors(points.size());
@@ -1294,7 +1311,7 @@ FractureResult voronoiFracture(const geo::Mesh& source, std::span<const glm::dve
         const Operand op{&source, 0};
         const CutSurface surface{cutBase, cell.groupNeighbor, slot};
         piece.mesh = fromManifold(gl, std::span(&op, 1), layout, &surface, names);
-        finishCutFaces(piece.mesh, o.interiorUvScale);
+        finishCutFaces(piece.mesh, o.interiorUvScale, crease);
         piece.mesh.faceAttrs().remove(kCutAttr);
         piece.cell = int(i);
         pieces[i] = std::move(piece);

@@ -319,3 +319,49 @@ TEST_CASE("a destruction exports to Alembic as one transform per piece")
     run("exportAlembic", {{"args", {w.mesh}}, {"path", meshes}, {"start", 1.0}, {"end", 24.0}});
     CHECK(std::filesystem::file_size(path) * 3 < std::filesystem::file_size(meshes));
 }
+
+TEST_CASE("meshes broken together hit each other; explosions go off on their frames; collapse drops the ground in a sweep")
+{
+    loadDestruction();
+    run("newScene");
+    run("playbackOptions", {{"minTime", 1.0 / 24.0}, {"maxTime", 3.0}, {"fps", 24.0}});
+    run("polyCube", {{"name", "Ground"}, {"position", json::array({0, -30, 0})}, {"width", 800.0}, {"height", 30.0}, {"depth", 300.0},
+                     {"baseAtOrigin", true}, {"generator", false}});
+    run("polyCube", {{"name", "Wall"}, {"position", json::array({0, 0, 0})}, {"width", 200.0}, {"height", 100.0}, {"depth", 20.0},
+                     {"baseAtOrigin", true}, {"generator", false}});
+    json mods = run("breakApart", {{"args", {"Ground", "Wall"}}, {"pieces", 20}});
+    REQUIRE(mods.size() == 1);
+    const std::string mod = mods[0].get<std::string>();
+    CHECK(Graph::current().find("Destruction") != nullptr);
+
+    // Nothing moves before the explosions; the wall stands on the slab.
+    CHECK(largestMove("Destruction", 1, 12) < 1.0);
+    run("addExplosion", {{"args", {"Destruction"}}, {"position", json::array({-60, 50, 40})}, {"frame", 12}, {"blast", 2500.0}, {"radius", 150.0}});
+    run("addExplosion", {{"args", {"Destruction"}}, {"position", json::array({60, 50, 40})}, {"frame", 30}, {"blast", 2500.0}, {"radius", 150.0}});
+    CHECK(largestMove("Destruction", 1, 11) < 1.0);
+    CHECK(largestMove("Destruction", 11, 20) > 20.0);
+
+    // The ground fails from -X to +X between frames 40 and 60 and falls into the pit.
+    run("collapse", {{"args", {"Destruction"}}, {"part", "Ground"}, {"start", 40.0}, {"duration", 20.0}, {"direction", json::array({1, 0, 0})},
+                     {"rumble", 2.0}, {"lead", 10.0}, {"raggedness", 0.0}, {"depth", 1000.0}});
+    run("currentTime", args({frameTime(1)}));
+    const std::vector<glm::dvec3> rest(evaluated("Destruction")->positions().begin(), evaluated("Destruction")->positions().end());
+    // The slab's own points (below its top at frame 1), by where they started.
+    auto groundBelow = [&](int frame, double xMin, double xMax) {
+        run("currentTime", args({frameTime(frame)}));
+        std::span<const glm::dvec3> now = evaluated("Destruction")->positions();
+        int below = 0, total = 0;
+        for (size_t i = 0; i < rest.size() && i < now.size(); ++i)
+            if (rest[i].y < -1.0 && rest[i].x >= xMin && rest[i].x <= xMax)
+            {
+                ++total;
+                below += now[i].y < -80.0 ? 1 : 0;
+            }
+        return total ? double(below) / total : 0.0;
+    };
+    CHECK(groundBelow(38, -400, 400) == 0.0);
+    CHECK(groundBelow(55, -400, -250) > 0.5);
+    CHECK(groundBelow(55, 250, 400) < 0.1);
+    CHECK(groundBelow(72, -400, 400) > 0.9);
+    CHECK(worldBoundsAt("Destruction", 72).min.y > -1040.0);
+}

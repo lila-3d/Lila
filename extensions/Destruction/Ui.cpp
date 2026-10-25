@@ -1,5 +1,5 @@
 // The Effects menu and the impact tool: pick a material, click where the selected mesh is hit, and breakApart builds the
-// destruction there.
+// destruction there; or click a destruction to set off another explosion at the current frame.
 
 #include "Destruction.h"
 #include "PieceTransform.h"
@@ -39,11 +39,12 @@ using json = nlohmann::json;
 /** What the next impact click makes; set by the action that starts the tool. */
 std::string gMaterial = "concrete";
 bool gSimulate = true;
+bool gExplode = false;
 
 class ImpactTool final : public ViewportTool
 {
 public:
-    const char* name() const override { return "Break Apart"; }
+    const char* name() const override { return gExplode ? "Add Explosion" : "Break Apart"; }
 
     void activate() override
     {
@@ -91,13 +92,21 @@ public:
         }
         if (!best)
             return true;
-        const std::string path = best->path;
         const glm::dvec3 at = bestHit.point;
         try
         {
-            ops::execute("breakApart",
-                         {{"args", {path}}, {"material", gMaterial}, {"impact", json::array({at.x, at.y, at.z})}, {"simulate", gSimulate}},
-                         CallSource::UI);
+            if (gExplode)
+                ops::execute("addExplosion", {{"args", {best->path}}, {"position", json::array({at.x, at.y, at.z})}}, CallSource::UI);
+            else
+            {
+                // Everything selected breaks together, hit where the click landed.
+                json paths = json::array();
+                for (const Target& t : mTargets)
+                    paths.push_back(t.path);
+                ops::execute("breakApart",
+                             {{"args", paths}, {"material", gMaterial}, {"impact", json::array({at.x, at.y, at.z})}, {"simulate", gSimulate}},
+                             CallSource::UI);
+            }
         }
         catch (const std::exception& ex)
         {
@@ -117,8 +126,10 @@ public:
 
     void draw(render::FrameState&, OverlayPainter& p, const ViewInfo& view) override
     {
-        const QString text = mTargets.empty() ? QString("Select a mesh to break apart first (Esc to cancel)")
-                                              : QString("Click where the %1 is hit (Esc to cancel)").arg(QString::fromStdString(gMaterial));
+        const QString text = gExplode ? (mTargets.empty() ? QString("Select a destruction first (Esc to cancel)")
+                                                          : QString("Click where it explodes, on this frame (Esc to cancel)"))
+                             : mTargets.empty() ? QString("Select a mesh to break apart first (Esc to cancel)")
+                                                : QString("Click where the %1 is hit (Esc to cancel)").arg(QString::fromStdString(gMaterial));
         drawToolMessage(p, view, text);
     }
 
@@ -239,6 +250,7 @@ void registerUi(ext::Context& ctx)
                                [material, simulate] {
                                    gMaterial = material;
                                    gSimulate = simulate;
+                                   gExplode = false;
                                    viewportTools::activate("destruction.impact");
                                },
                            .doc = doc,
@@ -255,11 +267,22 @@ void registerUi(ext::Context& ctx)
         breakAction("glass", "Fracture: Glass", false, "Click where the selected pane is hit: it's cut into shards, without simulating."),
         breakAction("wood", "Fracture: Wood", false, "Click where the selected mesh is hit: it's cut into splinters, without simulating."),
         "",
+        "destruction.addExplosion",
         "destruction.showLinks",
         "",
         "animated.unreal.vat",
         "animated.sendOptions",
     };
+    actions::add(ctx, {.id = "destruction.addExplosion",
+                       .label = "Add Explosion",
+                       .category = "Effects",
+                       .run =
+                           [] {
+                               gExplode = true;
+                               viewportTools::activate("destruction.impact");
+                           },
+                       .doc = "Click the selected destruction where another explosion goes off, on the current frame.",
+                       .python = "addExplosion(position=[x, y, z], frame=f)"});
     menus::addMenu(ctx, {.id = "Effects", .title = "Effects", .before = "Rig"});
     menus::addItem(ctx, {.id = "destruction.menu", .menu = "Effects", .kind = menus::Kind::Submenu, .label = "Destruction"});
     int sep = 0;

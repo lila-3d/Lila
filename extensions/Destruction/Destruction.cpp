@@ -29,7 +29,7 @@ using gn::GeometryPtr;
 using gn::SimInputs;
 using T = gn::SocketType;
 
-constexpr uint64_t kSolverVersion = 1;
+constexpr uint64_t kSolverVersion = 2;
 
 double readFloat(const geo::AttributeSet& set, std::string_view name, size_t i, double fallback)
 {
@@ -38,7 +38,7 @@ double readFloat(const geo::AttributeSet& set, std::string_view name, size_t i, 
         return fallback;
     switch (a->type())
     {
-    case geo::AttrType::Float: return a->values<float>()[i];
+    case geo::AttrType::Float: return std::isnan(a->values<float>()[i]) ? fallback : a->values<float>()[i];
     case geo::AttrType::Int: return a->values<int32_t>()[i];
     case geo::AttrType::Bool: return a->values<bool>()[i] ? 1.0 : 0.0;
     default: return fallback;
@@ -174,6 +174,18 @@ SceneDesc describe(const SimInputs& in, bool shapes)
             l.anchor = c.curvePoints(k)[0];
             d.links.push_back(l);
         }
+    }
+
+    GeometryPtr blasts = in.geometry("blasts");
+    for (const std::shared_ptr<const geo::Mesh>& m : {blasts->points, blasts->mesh})
+    {
+        if (!m)
+            continue;
+        const geo::AttributeSet& attrs = m->pointAttrs();
+        for (geo::Index p = 0; p < m->pointCapacity(); ++p)
+            if (m->pointValid(p))
+                d.blasts.push_back({m->position(p), readFloat(attrs, "speed", p, 1500.0), readFloat(attrs, "radius", p, 300.0),
+                                    int64_t(std::llround(readFloat(attrs, "frame", p, double(d.settings.startFrame))))});
     }
 
     GeometryPtr colliders = in.geometry("colliders");
@@ -362,11 +374,12 @@ gn::NodeDecl solverDecl()
         .category = "Destruction",
         .doc = "Simulates pieces falling, colliding and breaking apart, the same on every machine. Pieces are instances (from "
                "Fracture or Mesh to Pieces); links are two-point curves (from Connect Pieces) that hold pieces together until "
-               "the force through them passes their strength. Pieces with active = 0 follow their own transform until it turns "
-               "1. The simulation is cached frame by frame; changing anything upstream re-simulates from the first frame it "
+               "the force through them passes their strength; a link's strength can change over time, and 0 cuts it. Pieces with "
+               "active = 0 follow their own transform until it turns 1. The simulation is cached frame by frame; changing anything upstream re-simulates from the first frame it "
                "affects.",
         .sockets = {.inputs = {geo("pieces", "The pieces, as instances."), geo("links", "Links holding pieces together, as two-point curves."),
                                geo("colliders", "Things pieces hit: instances move with their transforms, a mesh stays put."),
+                               geo("blasts", "Explosions, as points with frame, speed (cm/s) and radius (cm) attributes: join Explosion nodes here."),
                                in("startFrame", T::Int, 1, "Frame the simulation starts on."),
                                in("substeps", T::Int, 4, "Physics steps per frame. More is more accurate and slower."),
                                in("gravity", T::Vector, vec(0, -981, 0), "cm/s2."), in("ground", T::Bool, true, "A floor at Ground Height."),

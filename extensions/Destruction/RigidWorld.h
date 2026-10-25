@@ -46,6 +46,15 @@ struct LinkDesc
     glm::dvec3 anchor{0.0};   // cm
 };
 
+/** A push outward from a point on one frame, fading linearly to nothing at the radius. */
+struct BlastDesc
+{
+    glm::dvec3 center{0.0}; // cm
+    double speed = 0.0;     // cm/s at the centre
+    double radius = 100.0;  // cm
+    int64_t frame = 1;
+};
+
 struct ColliderDesc
 {
     std::shared_ptr<const std::vector<glm::dvec3>> triangles; // own space, three points each, scale applied
@@ -78,6 +87,8 @@ struct SceneDesc
     std::vector<PieceDesc> pieces;
     std::vector<LinkDesc> links;
     std::vector<ColliderDesc> colliders;
+    /** Read every step, so they can be added or moved without restarting the simulation before their frame. */
+    std::vector<BlastDesc> blasts;
     Settings settings;
 };
 
@@ -98,8 +109,8 @@ public:
     /** Puts the world in the saved state exactly. */
     void restore(const StateView& state);
     /**
-     * One step of dt seconds, to `current` sampled at the step's end (kinematic targets, activation, moving colliders).
-     * index is the step's number since the start, which places the blast.
+     * One step of dt seconds, to `current` sampled at the step's end (kinematic targets, activation, moving colliders,
+     * link strengths). index is the step's number since the start, which places the blasts.
      */
     void advance(const SceneDesc& current, int64_t index, double dt);
     /** The state bytes of where the world is now; without full, no Jolt snapshot (a substep inside a frame). */
