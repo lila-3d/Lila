@@ -16,6 +16,7 @@ add_executable(lila_tests
     test_docs.cpp
     test_user_docs.cpp
     test_transfer.cpp
+    test_boolean.cpp
     test_gate.cpp
     test_autobevel.cpp
     test_measure.cpp

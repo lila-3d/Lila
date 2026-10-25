@@ -6,6 +6,7 @@ lila_module(lila_scene Scene
     RotationCurve.cpp
     RotationCommands.cpp
     AutoBevel.cpp
+    BooleanModifier.cpp
     Booleans.cpp
     BoundingMesh.cpp
     Camera.cpp
@@ -35,6 +36,7 @@ lila_module(lila_scene Scene
     MeasureSelection.cpp
     MeshData.cpp
     MeshEdit.cpp
+    MeshBoolean.cpp
     MeshNodes.cpp
     ModifierCommands.cpp
     Morphs.cpp

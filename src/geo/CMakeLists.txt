@@ -20,6 +20,7 @@ lila_module(lila_geo Scene
     Primitives.cpp
     Reduce.cpp
     SmartJoin.cpp
+    SplitNgons.cpp
     RenderMesh.cpp
     Subdivide.cpp
     Symmetry.cpp

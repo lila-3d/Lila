@@ -4,6 +4,7 @@
 #include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/Profile.h"
+#include "core/Progress.h"
 #include "geo/Ops.h"
 #include "geo/Symmetry.h"
 #include "geo/Topology.h"
@@ -73,6 +74,12 @@ std::optional<geo::SymmetryPlane> symmetryPlane(const Node& n)
 }
 
 double symmetryTolerance(const geo::Mesh& m) { return std::max(1e-4, glm::length(m.bounds().size()) * 1e-5); }
+
+std::vector<FlagDef> flagsWith(std::vector<FlagDef> base, std::vector<FlagDef> more)
+{
+    base.insert(base.end(), std::make_move_iterator(more.begin()), std::make_move_iterator(more.end()));
+    return base;
+}
 
 std::vector<FlagDef> repairFlags()
 {
@@ -197,6 +204,78 @@ std::vector<std::vector<glm::dvec3>> guidesFor(const Args& a, const Node& src)
     return out;
 }
 
+/** Poles from a list of {position: world [x, y, z], valence}, in the source's object space. */
+std::vector<Pole> polesFor(const json& list, const Node& src, const char* cmd)
+{
+    glm::dmat4 toLocal = glm::inverse(worldOf(src));
+    std::vector<Pole> out;
+    for (const json& j : list)
+    {
+        if (!j.is_object() || !j.contains("position"))
+            throw CommandError(std::string(cmd) + ": each pole is {position: [x, y, z], valence: 3 or 5}");
+        std::vector<glm::dvec3> at = vecList(json::array({j["position"]}), cmd);
+        int valence = j.value("valence", 3);
+        if (valence < 2 || valence > 8)
+            throw CommandError(std::string(cmd) + ": a pole's valence is 2 to 8");
+        out.push_back({glm::dvec3(toLocal * glm::dvec4(at.front(), 1.0)), valence});
+    }
+    return out;
+}
+
+json polesJson(const std::vector<Pole>& poles, const Node& src)
+{
+    glm::dmat4 world = worldOf(src);
+    json out = json::array();
+    for (const Pole& p : poles)
+    {
+        glm::dvec3 w = glm::dvec3(world * glm::dvec4(p.position, 1.0));
+        out.push_back({{"position", {w.x, w.y, w.z}}, {"valence", p.valence}});
+    }
+    return out;
+}
+
+std::vector<FlagDef> remeshFlags()
+{
+    using T = ArgType;
+    return {{"targetFaces", "", T::Int, 500, "Approximate face count."},
+            {"timeout", "", T::Float, 5.0, "Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits forever."},
+            {"targetEdgeLength", "", T::Float, 0.0, "Edge length, cm; overrides targetFaces when positive."},
+            {"adaptivity", "", T::Float, 0.5, "0 uniform, 1 much denser where curved; painted point 'density' multiplies."},
+            {"useHardEdges", "", T::Bool, true, "Follow edges marked hard."},
+            {"sharpAngle", "", T::Float, 40.0, "Also follow creases sharper than this, degrees; negative disables."},
+            {"symmetry", "", T::String, "off", "off, x, y or z: remesh half and mirror, exactly symmetric."},
+            {"guides", "", T::List, nullptr, "Mesh nodes whose edges are guide curves."},
+            {"guidePoints", "", T::List, nullptr, "Guide polylines as lists of world [x, y, z]."},
+            {"pureQuads", "", T::Bool, true, "All quads; false allows a few triangles and pentagons."},
+            {"resolveGaps", "", T::Bool, true, "Finer where the surface comes close to itself across a gap (a ball in a pocket), so the gap isn't bridged; costs faces."},
+            {"seamless", "", T::Bool, false, "Experimental: also try a global layout that only turns at the poles, kept when it has fewer irregular points."},
+            {"poles", "", T::List, nullptr,
+             "The poles the edge flow turns at, as {position: world [x, y, z], valence: 3 or 5}, and nowhere else. Start from "
+             "retopoPoles; on a closed shell (4 - valence) must sum to what retopoPoles reports."}};
+}
+
+QuadRemeshOptions remeshOptions(const Args& a, const Node& src, const char* cmd)
+{
+    QuadRemeshOptions o;
+    o.targetFaces = std::max(8, a.get<int>("targetFaces", 500));
+    o.timeout = std::max(0.0, a.get<double>("timeout", 5.0));
+    o.targetEdgeLength = a.get<double>("targetEdgeLength", 0.0);
+    o.adaptivity = std::clamp(a.get<double>("adaptivity", 0.5), 0.0, 1.0);
+    o.useHardEdges = a.get<bool>("useHardEdges", true);
+    o.sharpAngle = a.get<double>("sharpAngle", 40.0);
+    std::string sym = a.get<std::string>("symmetry", "off");
+    if (sym != "off" && (sym.size() != 1 || sym[0] < 'x' || sym[0] > 'z'))
+        throw CommandError(std::string(cmd) + ": symmetry must be off, x, y or z");
+    o.symmetryAxis = sym == "off" ? -1 : sym[0] - 'x';
+    o.guides = guidesFor(a, src);
+    o.pureQuads = a.get<bool>("pureQuads", true);
+    o.seamless = a.get<bool>("seamless", false);
+    o.resolveGaps = a.get<bool>("resolveGaps", true);
+    if (a.has("poles") && !a.flags["poles"].is_null())
+        o.poles = polesFor(a.flags["poles"], src, cmd);
+    return o;
+}
+
 void copyTransform(Graph& g, const Node& from, const Node& to)
 {
     for (int attr : {Transform::kTranslate, Transform::kRotate, Transform::kScale, Transform::kRotatePivot, Transform::kScalePivot,
@@ -308,23 +387,16 @@ void registerCommands()
         .doc = "Auto quad remesh: a new all-quad mesh whose edge flow follows curvature, hard edges and guide curves, at about "
                "the target face count, with UVs (and optionally normals) transferred from the source. Open borders, sharp "
                "creases, crease corners and cone tips are kept. Where the shape is too thin or tight for the requested size "
-               "(a strip narrower than the edge length) it retries finer, so the face count can come out higher. Returns "
-               "{name, metrics}.",
+               "(a strip narrower than the edge length) it retries finer, so the face count can come out higher. The kept source "
+               "is hidden. Runs off the UI thread with a cancellable progress bar, and gives up after timeout= seconds with "
+               "an error saying how far it got, changing nothing. Returns {name, metrics}.",
         .positionalDoc = "source",
-        .flags = {{"targetFaces", "", T::Int, 5000, "Approximate face count."},
-                  {"targetEdgeLength", "", T::Float, 0.0, "Edge length, cm; overrides targetFaces when positive."},
-                  {"adaptivity", "", T::Float, 0.5, "0 uniform, 1 much denser where curved; painted point 'density' multiplies."},
-                  {"useHardEdges", "", T::Bool, true, "Follow edges marked hard."},
-                  {"sharpAngle", "", T::Float, 40.0, "Also follow creases sharper than this, degrees; negative disables."},
-                  {"symmetry", "", T::String, "off", "off, x, y or z: remesh half and mirror, exactly symmetric."},
-                  {"guides", "", T::List, nullptr, "Mesh nodes whose edges are guide curves."},
-                  {"guidePoints", "", T::List, nullptr, "Guide polylines as lists of world [x, y, z]."},
-                  {"pureQuads", "", T::Bool, true, "All quads; false allows a few triangles and pentagons."},
-                  {"relaxIterations", "", T::Int, 6, "Tangential relax passes on the surface."},
+        .flags = flagsWith(remeshFlags(), {{"relaxIterations", "", T::Int, 6, "Tangential relax passes on the surface."},
                   {"transferUvs", "", T::Bool, true, "Copy UV sets from the source."},
                   {"transferNormals", "", T::Bool, false, "Copy the source's normals as custom normals."},
                   {"keepSource", "", T::Bool, true, "Keep the source mesh; false deletes it."},
-                  {"name", "", T::String, nullptr, "Name of the new mesh."}},
+                  {"hideSource", "", T::Bool, true, "Hide the kept source mesh."},
+                  {"name", "", T::String, nullptr, "Name of the new mesh."}}),
         .run = [](const Args& a) -> json {
             auto objs = a.objects();
             if (objs.empty())
@@ -336,23 +408,16 @@ void registerCommands()
             if (!srcMesh || srcMesh->numFaces() == 0)
                 throw CommandError("quadRemesh: " + src.path() + " has no faces");
 
-            QuadRemeshOptions o;
-            o.targetFaces = std::max(8, a.get<int>("targetFaces"));
-            o.targetEdgeLength = a.get<double>("targetEdgeLength");
-            o.adaptivity = std::clamp(a.get<double>("adaptivity"), 0.0, 1.0);
-            o.useHardEdges = a.get<bool>("useHardEdges");
-            o.sharpAngle = a.get<double>("sharpAngle");
-            std::string sym = a.get<std::string>("symmetry", "off");
-            if (sym != "off" && (sym.size() != 1 || sym[0] < 'x' || sym[0] > 'z'))
-                throw CommandError("quadRemesh: symmetry must be off, x, y or z");
-            o.symmetryAxis = sym == "off" ? -1 : sym[0] - 'x';
-            o.guides = guidesFor(a, src);
-            o.pureQuads = a.get<bool>("pureQuads");
+            QuadRemeshOptions o = remeshOptions(a, src, "quadRemesh");
             o.relaxIterations = std::clamp(a.get<int>("relaxIterations"), 0, 100);
 
-            QuadRemeshResult r = quadRemesh(*srcMesh, o);
+            QuadRemeshResult r;
+            {
+                progress::Scope scope("Quad remesh " + src.name(), 1.0, progress::Cancellable);
+                progress::runOnWorker([&] { r = quadRemesh(*srcMesh, o); });
+            }
             if (!r.ok())
-                throw CommandError("quadRemesh: " + r.error);
+                throw CommandError("quadRemesh: " + r.error + (r.error.rfind("gave up", 0) == 0 ? "; raise timeout= or lower targetFaces" : ""));
             double total = 0.0;
             for (auto& [stage, sec] : r.timings)
                 total += sec;
@@ -373,8 +438,43 @@ void registerCommands()
             std::string outName = out->path();
             if (!a.get<bool>("keepSource"))
                 g.deleteNode(src.id());
+            else if (a.get<bool>("hideSource", true))
+                g.setValue({src.id(), Transform::kVisibility, -1}, false);
             g.select({out->id()});
             return {{"name", outName}, {"metrics", metricsJson(r.metrics)}};
+        },
+    });
+
+    ops::registerCommand({
+        .name = "retopoPoles",
+        .doc = "The poles quadRemesh's edge flow would turn at with these options, without remeshing: where each one is and "
+               "its valence (3 or 5). Move, add or remove them and pass them back as quadRemesh(poles=...). Also returns, per "
+               "closed shell, what (4 - valence) over its poles has to sum to.",
+        .positionalDoc = "source",
+        .flags = remeshFlags(),
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            auto objs = a.objects();
+            if (objs.empty())
+                throw CommandError("retopoPoles: give a source mesh");
+            Graph& g = graph();
+            Node& src = meshArg(objs.front(), "retopoPoles");
+            g.evaluate();
+            MeshPtr srcMesh = src.as<MeshPtr>(MeshNode::kOutMesh);
+            if (!srcMesh || srcMesh->numFaces() == 0)
+                throw CommandError("retopoPoles: " + src.path() + " has no faces");
+            QuadRemeshOptions o = remeshOptions(a, src, "retopoPoles");
+            PoleResult r;
+            {
+                progress::Scope scope("Finding poles on " + src.name(), 1.0, progress::Cancellable);
+                progress::runOnWorker([&] { r = findPoles(*srcMesh, o); });
+            }
+            if (!r.ok())
+                throw CommandError("retopoPoles: " + r.error);
+            json totals = json::array();
+            for (const std::optional<int>& t : r.shellTotals)
+                totals.push_back(t ? json(*t) : json(nullptr));
+            return {{"poles", polesJson(r.poles, src)}, {"shellTotals", totals}};
         },
     });
 

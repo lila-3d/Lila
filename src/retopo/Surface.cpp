@@ -9,6 +9,7 @@
 #include <glm/gtc/constants.hpp>
 
 #include <algorithm>
+#include <cstring>
 #include <cmath>
 #include <numeric>
 #include <unordered_map>
@@ -248,6 +249,32 @@ void Surface::detectFeatures(double sharpAngleDeg, double cornerDeficitDeg, doub
         feature[v] = FeatureKind::Line;
         featureDir[v] = t / len;
     }
+
+    // Pinned positions are corners wherever the mesh has a vertex exactly there.
+    pinned.assign(pos.size(), 0);
+    if (!pins.empty())
+    {
+        auto key = [](const glm::dvec3& p) {
+            uint64_t h = 1469598103934665603ull;
+            for (int i = 0; i < 3; ++i)
+            {
+                double d = p[i] == 0.0 ? 0.0 : p[i];
+                uint64_t bits;
+                std::memcpy(&bits, &d, sizeof(bits));
+                h = (h ^ bits) * 1099511628211ull;
+            }
+            return h;
+        };
+        std::unordered_set<uint64_t> at;
+        for (const glm::dvec3& p : pins)
+            at.insert(key(p));
+        for (Index v = 0; v < vertexCount(); ++v)
+            if (at.contains(key(pos[v])))
+            {
+                pinned[v] = 1;
+                feature[v] = FeatureKind::Corner;
+            }
+    }
 }
 
 void Surface::thinCorners(const std::vector<double>& spacing)
@@ -266,8 +293,9 @@ void Surface::thinCorners(const std::vector<double>& spacing)
     for (auto [neg, v] : corners)
     {
         bool clear = true;
-        for (Index k : kept)
-            clear &= glm::length(pos[k] - pos[v]) >= 0.6 * std::max(spacing[k], spacing[v]);
+        if (!(v < pinned.size() && pinned[v]))
+            for (Index k : kept)
+                clear &= glm::length(pos[k] - pos[v]) >= 0.6 * std::max(spacing[k], spacing[v]);
         if (clear)
             kept.push_back(v);
         else

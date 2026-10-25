@@ -20,6 +20,7 @@ namespace lila::scene
 {
 /** TransferAttributes.cpp. */
 void registerTransferModifier();
+void registerBooleanModifier();
 
 namespace
 {
@@ -399,6 +400,7 @@ void registerTypes()
     }
     autoBevel::registerTypes();
     registerTransferModifier();
+    registerBooleanModifier();
 }
 
 void registerCommands()

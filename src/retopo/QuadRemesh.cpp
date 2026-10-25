@@ -1,6 +1,7 @@
 #include "retopo/Retopo.h"
 
 #include "core/Profile.h"
+#include "core/Progress.h"
 #include "geo/Normals.h"
 #include "geo/Ops.h"
 #include "geo/Topology.h"
@@ -10,7 +11,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <climits>
 #include <cmath>
+#include <optional>
 #include <unordered_map>
 
 namespace lila::retopo
@@ -28,11 +31,21 @@ public:
         auto now = std::chrono::steady_clock::now();
         mOut.emplace_back(name, std::chrono::duration<double>(now - mLast).count());
         mLast = now;
+        // Roughly where each stage ends in a typical run, for the progress bar.
+        static const std::pair<const char*, double> kAt[] = {{"bvh", 0.03}, {"surface", 0.12}, {"density", 0.18}, {"cross field", 0.3},
+                                                             {"seamless", 0.6}, {"local", 0.9}, {"finish", 1.0}};
+        double at = mAt;
+        for (auto [stage, f] : kAt)
+            if (std::string_view(stage) == name)
+                at = f;
+        mAt = at;
+        Budget::reached(name, at);
     }
 
 private:
     std::vector<std::pair<std::string, double>>& mOut;
     std::chrono::steady_clock::time_point mLast = std::chrono::steady_clock::now();
+    double mAt = 0.0;
 };
 
 std::vector<std::vector<Index>> pointNeighbours(const geo::Mesh& m)
@@ -87,6 +100,7 @@ void relaxOnSurface(geo::Mesh& m, const std::vector<FeatureKind>& feature, const
     std::vector<glm::dvec3> next(m.pointCapacity());
     for (int it = 0; it < iterations; ++it)
     {
+        Budget::checkpoint();
         std::vector<glm::vec3> normals = geo::pointNormals(m);
         tbb::parallel_for(Index(0), m.pointCapacity(), [&](Index p) {
             if (!m.pointValid(p))
@@ -152,6 +166,7 @@ void untangle(geo::Mesh& m, const std::vector<FeatureKind>& feature, const geo::
 
     for (int it = 0; it < 20; ++it)
     {
+        Budget::checkpoint();
         const std::vector<Index> folded = foldedFaces(m, src, bvh);
         if (folded.empty())
             return;
@@ -519,41 +534,107 @@ void compactTagged(geo::Mesh& m, std::vector<FeatureKind>& feature, std::vector<
 
 namespace
 {
-QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions& opts)
+/**
+ * Caps the lattice spacing where the surface comes close to itself across a gap, like a ball sitting in a pocket. A lattice
+ * cell wider than the gap bridges it and the result collapses into it. At most twice as fine. The face count grows by
+ * what the gaps need. The cap then grows out
+ * gradually so the spacing still varies slowly.
+ */
+void fitGaps(const Surface& s, const geo::Mesh& src, const geo::MeshBvh& bvh, std::vector<double>& scale)
 {
     LILA_ZONE();
 
-    QuadRemeshResult result;
-    Stopwatch clock(result.timings);
+    const Index n = s.vertexCount();
+    std::vector<double> cap(n, std::numeric_limits<double>::max());
+    tbb::parallel_for(Index(0), n, [&](Index v) {
+        const glm::dvec3 nrm = s.normal[v];
+        if (glm::dot(nrm, nrm) < 0.5)
+            return;
+        // Out along the normal to a surface facing back: a gap across air. Hitting the far side of a thin wall from
+        // inside isn't one, and the two sides of a wall don't bridge.
+        const double eps = 1e-3 * scale[v];
+        geo::BvhHit hit;
+        // The far side has to face straight back and be a fair part of a cell away: noise bumps next door are hit close
+        // by or at a glancing angle.
+        if (bvh.raycast(s.pos[v] + eps * nrm, nrm, hit, 2.0 * scale[v], false) && hit.t > 0.2 * scale[v] && hit.frontFacing &&
+            hit.face != geo::kInvalid && glm::dot(src.faceNormal(hit.face), nrm) < -0.7)
+            cap[v] = std::min(cap[v], std::max(0.8 * (hit.t + eps), scale[v] / 2.0));
+    });
+    // The caps fade out over a few cells around where they were found, so the spacing still varies slowly.
+    for (int it = 0; it < 30; ++it)
+    {
+        bool changed = false;
+        for (Index v = 0; v < n; ++v)
+            for (Index k = s.adjStart[v]; k < s.adjStart[v + 1]; ++k)
+            {
+                Index w = s.adj[k];
+                double limit = cap[w] + 0.25 * glm::length(s.pos[v] - s.pos[w]);
+                if (cap[v] > limit)
+                {
+                    cap[v] = limit;
+                    changed = true;
+                }
+            }
+        if (!changed)
+            break;
+    }
+    for (Index v = 0; v < n; ++v)
+        scale[v] = std::min(scale[v], cap[v]);
+}
+
+/** The working surface and lattice spacing everything after it shares. Not movable: the bvh points into src. */
+struct Work
+{
+    geo::Mesh src;
+    std::optional<geo::MeshBvh> bvh;
+    Surface s;
+    bool symmetric = false;
+    geo::SymmetryPlane plane;
+    double h = 0.0, cf = 1.0;
+    std::vector<double> scale;
+    FieldOptions fo;
+    std::string error;
+
+    Work() = default;
+    Work(const Work&) = delete;
+};
+
+void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts, Stopwatch& clock)
+{
+    LILA_ZONE();
+
     if (source.numFaces() == 0)
     {
-        result.error = "source has no faces";
-        return result;
+        w.error = "source has no faces";
+        return;
     }
-
-    geo::Mesh src = source;
-    src.compact();
-    geo::MeshBvh bvh(src);
+    w.src = source;
+    w.src.compact();
+    w.bvh.emplace(w.src);
+    const geo::MeshBvh& bvh = *w.bvh;
     clock.lap("bvh");
 
-    Surface s = surfaceFromMesh(src, opts.useHardEdges);
-    const bool symmetric = opts.symmetryAxis >= 0 && opts.symmetryAxis < 3;
-    geo::SymmetryPlane plane;
+    Surface& s = w.s;
+    s = surfaceFromMesh(w.src, opts.useHardEdges);
+    s.pins = opts.pinnedPoints;
+    w.symmetric = opts.symmetryAxis >= 0 && opts.symmetryAxis < 3;
+    const bool symmetric = w.symmetric;
     if (symmetric)
     {
-        plane.normal = glm::dvec3(0.0);
-        plane.normal[opts.symmetryAxis] = 1.0;
-        clipSurface(s, plane, opts.symmetryAxis);
+        w.plane.normal = glm::dvec3(0.0);
+        w.plane.normal[opts.symmetryAxis] = 1.0;
+        clipSurface(s, w.plane, opts.symmetryAxis);
         if (s.tris.empty())
         {
-            result.error = "nothing on the positive side of the symmetry plane";
-            return result;
+            w.error = "nothing on the positive side of the symmetry plane";
+            return;
         }
     }
     const double area = s.totalArea();
     const double faces = std::max(8.0, double(opts.targetFaces) * (symmetric ? 0.5 : 1.0));
     const double h0 = opts.targetEdgeLength > 0.0 ? opts.targetEdgeLength : std::sqrt(area / faces);
     const double cf = opts.pureQuads ? 2.0 : 1.0;
+    w.cf = cf;
     double workLength = cf * h0 / 4.0;
     const double workTris = std::max(64.0, area / (0.433 * workLength * workLength));
     bool decimated = double(s.tris.size()) > 1.5 * workTris;
@@ -574,8 +655,13 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
     }
     clock.lap("surface");
 
+    // Gaps across air only bridge on a closed shape; an open sheet's folds remesh fine as they are.
+    bool closedSource = true;
+    for (Index e = 0; e < w.src.edgeCapacity() && closedSource; ++e)
+        closedSource = !w.src.edgeValid(e) || !w.src.isBoundaryEdge(e);
+
     // Lattice spacing per vertex from painted density and curvature, normalized to the face budget.
-    std::vector<double> scale;
+    std::vector<double>& scale = w.scale;
     double h = h0;
     for (int pass = 0; pass < 2; ++pass)
     {
@@ -611,12 +697,13 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
             h = std::sqrt(weighted / faces);
         }
         scale.resize(n);
+        for (Index v = 0; v < n; ++v)
+            scale[v] = cf * h / std::sqrt(rho[v]);
+        if (opts.resolveGaps && closedSource)
+            fitGaps(s, w.src, bvh, scale);
         double minScale = std::numeric_limits<double>::max();
         for (Index v = 0; v < n; ++v)
-        {
-            scale[v] = cf * h / std::sqrt(rho[v]);
             minScale = std::min(minScale, scale[v]);
-        }
         if (pass == 1 || minScale >= 2.5 * workLength)
             break;
         // Denser spots need a finer working mesh to resolve their lattice.
@@ -624,94 +711,189 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         refineSurface(s, 1.5 * workLength);
         prepare();
     }
+    w.h = h;
     clock.lap("density");
 
-    FieldOptions fo;
     {
         std::vector<double> sorted = scale;
         std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
-        fo.scale = sorted[sorted.size() / 2];
+        w.fo.scale = sorted[sorted.size() / 2];
     }
-    fo.guides = opts.guides;
+    w.fo.guides = opts.guides;
+    w.fo.softCreaseAngle = opts.softCreaseAngle;
     s.thinCorners(scale);
-    std::vector<glm::dvec3> q = solveCrossField(s, fo);
-    clock.lap("cross field");
+    Budget::note(std::to_string(s.tris.size()) + " working triangles for about " + std::to_string(int(faces)) + " faces");
+}
 
-    std::vector<glm::dvec3> o = solvePositionField(s, q, scale);
-    clock.lap("position field");
-
-    Extracted ex = extractMesh(s, q, o, scale);
-    if (ex.mesh.numFaces() == 0)
+/** Each pole's triangle on the working surface: the one with the nearest centre. Poles behind the symmetry plane drop. */
+std::vector<FieldSingularity> polesOnSurface(const Work& w, const std::vector<Pole>& poles)
+{
+    std::vector<FieldSingularity> out;
+    for (const Pole& p : poles)
     {
-        result.error = "extraction produced no faces";
+        if (p.valence == 4 || (w.symmetric && w.plane.distance(p.position) < 0.0))
+            continue;
+        Index best = kInvalid;
+        double bestD = std::numeric_limits<double>::max();
+        for (size_t t = 0; t < w.s.tris.size(); ++t)
+        {
+            const auto& tri = w.s.tris[t];
+            glm::dvec3 c = (w.s.pos[tri[0]] + w.s.pos[tri[1]] + w.s.pos[tri[2]]) / 3.0;
+            double d = glm::dot(c - p.position, c - p.position);
+            if (d < bestD)
+            {
+                bestD = d;
+                best = Index(t);
+            }
+        }
+        if (best != kInvalid)
+            out.push_back({best, 4 - p.valence});
+    }
+    return out;
+}
+
+/** The cross field, turning exactly at opts.poles when given. */
+std::vector<glm::dvec3> crossField(Work& w, const QuadRemeshOptions& opts, std::string& error)
+{
+    if (opts.poles)
+    {
+        PrescribedTwist pt = prescribeSingularities(w.s, polesOnSurface(w, *opts.poles));
+        if (!pt.error.empty())
+        {
+            error = pt.error;
+            return {};
+        }
+        w.fo.twist = std::move(pt.twist);
+    }
+    return solveCrossField(w.s, w.fo);
+}
+
+QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions& opts)
+{
+    LILA_ZONE();
+
+    QuadRemeshResult result;
+    Stopwatch clock(result.timings);
+    Work w;
+    prepareWork(w, source, opts, clock);
+    if (!w.error.empty())
+    {
+        result.error = w.error;
         return result;
     }
-    clock.lap("extract");
+    const geo::Mesh& src = w.src;
+    const geo::MeshBvh& bvh = *w.bvh;
+    Surface& s = w.s;
+    const bool symmetric = w.symmetric;
+    const geo::SymmetryPlane& plane = w.plane;
+    const double h = w.h, cf = w.cf;
+    const std::vector<double>& scale = w.scale;
+    const FieldOptions& fo = w.fo;
 
-    FeatureLines lines;
-    lines.build(s, fo.scale * 0.5);
-    geo::Mesh& m = ex.mesh;
-    std::vector<FeatureKind>& feature = ex.feature;
-    std::vector<uint8_t>& boundary = ex.boundary;
-    removeValence2(m, feature);
-    geo::conformNormals(m);
-    fillHoles(m, boundary);
-    {
-        std::vector<Index> tris;
-        for (Index f = 0; f < m.faceCapacity(); ++f)
-            if (m.faceValid(f) && m.faceSize(f) == 3)
-                tris.push_back(f);
-        geo::QuadrangulateOptions qo;
-        qo.maxFaceAngle = 60.0;
-        geo::quadrangulateFaces(m, tris, qo);
-    }
-    removeValence2(m, feature);
-    feature.resize(m.pointCapacity(), FeatureKind::None);
-    boundary.resize(m.pointCapacity(), 0);
-    compactTagged(m, feature, boundary);
-    geo::conformNormals(m);
-    const double coarseH = cf * h;
-    FeatureLines border;
-    border.build(s, fo.scale * 0.5, true);
-    snapCorners(m, feature, s, 1.25 * coarseH);
-    boundary.resize(m.pointCapacity(), 0);
-    snapBorder(m, feature, border, 1.5 * coarseH);
-    projectPoints(m, feature, bvh, lines, 0.6 * coarseH);
-    relaxOnSurface(m, feature, bvh, lines, coarseH, std::max(1, opts.relaxIterations / 2));
-    clock.lap("cleanup");
+    std::vector<glm::dvec3> q = crossField(w, opts, result.error);
+    if (!result.ok())
+        return result;
+    Budget::note(std::to_string(fieldSingularities(s, q).size()) + " poles");
+    clock.lap("cross field");
 
-    if (opts.pureQuads)
-    {
-        m = splitToQuads(m, feature, boundary, lines, coarseH);
-        snapBorder(m, feature, border, coarseH);
-        projectPoints(m, feature, bvh, lines, 0.4 * coarseH);
-    }
-    relaxOnSurface(m, feature, bvh, lines, h, opts.relaxIterations);
-    untangle(m, feature, src, bvh, lines, h);
-    clock.lap("refine");
+    // Extraction and cleanup for one lattice layout.
+    auto build = [&](const std::vector<glm::dvec3>& o) {
+        QuadRemeshResult out;
+        Extracted ex = extractMesh(s, q, o, scale);
+        if (ex.mesh.numFaces() == 0)
+        {
+            out.error = "extraction produced no faces";
+            return out;
+        }
+        clock.lap("extract");
 
-    if (symmetric)
+        FeatureLines lines;
+        lines.build(s, fo.scale * 0.5);
+        geo::Mesh& m = ex.mesh;
+        std::vector<FeatureKind>& feature = ex.feature;
+        std::vector<uint8_t>& boundary = ex.boundary;
+        removeValence2(m, feature);
+        geo::conformNormals(m);
+        fillHoles(m, boundary);
+        {
+            std::vector<Index> tris;
+            for (Index f = 0; f < m.faceCapacity(); ++f)
+                if (m.faceValid(f) && m.faceSize(f) == 3)
+                    tris.push_back(f);
+            geo::QuadrangulateOptions qo;
+            qo.maxFaceAngle = 60.0;
+            geo::quadrangulateFaces(m, tris, qo);
+        }
+        removeValence2(m, feature);
+        feature.resize(m.pointCapacity(), FeatureKind::None);
+        boundary.resize(m.pointCapacity(), 0);
+        compactTagged(m, feature, boundary);
+        geo::conformNormals(m);
+        const double coarseH = cf * h;
+        FeatureLines border;
+        border.build(s, fo.scale * 0.5, true);
+        snapCorners(m, feature, s, 1.25 * coarseH);
+        boundary.resize(m.pointCapacity(), 0);
+        snapBorder(m, feature, border, 1.5 * coarseH);
+        projectPoints(m, feature, bvh, lines, 0.6 * coarseH);
+        relaxOnSurface(m, feature, bvh, lines, coarseH, std::max(1, opts.relaxIterations / 2));
+        clock.lap("cleanup");
+
+        if (opts.pureQuads)
+        {
+            m = splitToQuads(m, feature, boundary, lines, coarseH);
+            snapBorder(m, feature, border, coarseH);
+            projectPoints(m, feature, bvh, lines, 0.4 * coarseH);
+        }
+        relaxOnSurface(m, feature, bvh, lines, h, opts.relaxIterations);
+        untangle(m, feature, src, bvh, lines, h);
+        clock.lap("refine");
+
+        if (symmetric)
+        {
+            // Seam points sit exactly on the plane so the mirror welds them and the halves match bit for bit.
+            const int axis = opts.symmetryAxis;
+            for (Index p = 0; p < m.pointCapacity(); ++p)
+                if (m.pointValid(p) && m.isBoundaryPoint(p) && std::abs(plane.distance(m.position(p))) < 0.35 * h)
+                {
+                    glm::dvec3 at = m.position(p);
+                    at[axis] = 0.0;
+                    m.setPosition(p, at);
+                }
+            geo::MirrorOptions mo;
+            mo.plane = plane;
+            mo.weld = true;
+            mo.tolerance = std::max(1e-9, h * 1e-6);
+            geo::mirrorMesh(m, mo);
+            m.compact();
+        }
+        if (opts.sharpAngle > 0.0 && !lines.empty())
+            geo::setHardEdgesByAngle(m, opts.sharpAngle);
+        out.metrics = measureQuality(m, &bvh);
+        out.mesh = std::move(m);
+        return out;
+    };
+
+    // The seamless layout only turns at the poles, but rounding can tangle it near tight features; keep whichever of it
+    // and the local position field comes out with fewer irregular points.
+    std::vector<glm::dvec3> o = opts.seamless ? solveSeamlessPositions(s, q, scale) : std::vector<glm::dvec3>{};
+    std::optional<QuadRemeshResult> seamless;
+    if (!o.empty())
+        seamless = build(o);
+    clock.lap("seamless");
+    QuadRemeshResult best = build(solvePositionField(s, q, scale));
+    clock.lap("local");
+    // Pins only hold exactly in the seamless layout.
+    const bool preferSeamless = !opts.pinnedPoints.empty();
+    if (seamless && seamless->ok() && (!best.ok() || preferSeamless || seamless->metrics.irregular <= best.metrics.irregular))
+        best = std::move(*seamless);
+    if (!best.ok())
     {
-        // Seam points sit exactly on the plane so the mirror welds them and the halves match bit for bit.
-        const int axis = opts.symmetryAxis;
-        for (Index p = 0; p < m.pointCapacity(); ++p)
-            if (m.pointValid(p) && m.isBoundaryPoint(p) && std::abs(plane.distance(m.position(p))) < 0.35 * h)
-            {
-                glm::dvec3 at = m.position(p);
-                at[axis] = 0.0;
-                m.setPosition(p, at);
-            }
-        geo::MirrorOptions mo;
-        mo.plane = plane;
-        mo.weld = true;
-        mo.tolerance = std::max(1e-9, h * 1e-6);
-        geo::mirrorMesh(m, mo);
-        m.compact();
+        result.error = best.error;
+        return result;
     }
-    if (opts.sharpAngle > 0.0 && !lines.empty())
-        geo::setHardEdgesByAngle(m, opts.sharpAngle);
-    result.metrics = measureQuality(m, &bvh);
-    result.mesh = std::move(m);
+    result.mesh = std::move(best.mesh);
+    result.metrics = best.metrics;
     clock.lap("finish");
     return result;
 }
@@ -733,12 +915,81 @@ bool isClean(const geo::Mesh& m, const geo::Mesh& src, const geo::MeshBvh& bvh, 
 }
 } // namespace
 
+static PoleResult findPolesWithin(const geo::Mesh& source, const QuadRemeshOptions& opts);
+static QuadRemeshResult quadRemeshWithin(const geo::Mesh& source, const QuadRemeshOptions& opts);
+
+PoleResult findPoles(const geo::Mesh& source, const QuadRemeshOptions& opts)
+{
+    LILA_ZONE();
+
+    progress::Scope scope("Finding poles", 1.0, progress::Cancellable);
+    Budget budget(opts.timeout, &scope);
+    try
+    {
+        return findPolesWithin(source, opts);
+    }
+    catch (const Interrupted& e)
+    {
+        PoleResult out;
+        out.error = e.what();
+        return out;
+    }
+}
+
+static PoleResult findPolesWithin(const geo::Mesh& source, const QuadRemeshOptions& opts)
+{
+    PoleResult out;
+    std::vector<std::pair<std::string, double>> timings;
+    Stopwatch clock(timings);
+    Work w;
+    prepareWork(w, source, opts, clock);
+    if (!w.error.empty())
+    {
+        out.error = w.error;
+        return out;
+    }
+    std::vector<glm::dvec3> q = crossField(w, opts, out.error);
+    if (!out.ok())
+        return out;
+    for (const FieldSingularity& f : fieldSingularities(w.s, q))
+    {
+        const auto& tri = w.s.tris[f.tri];
+        glm::dvec3 c = (w.s.pos[tri[0]] + w.s.pos[tri[1]] + w.s.pos[tri[2]]) / 3.0;
+        out.poles.push_back({c, 4 - f.index});
+        if (w.symmetric && std::abs(w.plane.distance(c)) > 1e-9)
+        {
+            c[opts.symmetryAxis] = -c[opts.symmetryAxis];
+            out.poles.push_back({c, 4 - f.index});
+        }
+    }
+    for (int total : shellIndexTotals(w.s).indexTotal)
+        out.shellTotals.push_back(total == INT_MIN ? std::optional<int>() : std::optional<int>(total));
+    return out;
+}
+
 QuadRemeshResult quadRemesh(const geo::Mesh& source, const QuadRemeshOptions& opts)
 {
     LILA_ZONE();
 
+    progress::Scope scope("Quad remesh", 1.0, progress::Cancellable);
+    Budget budget(opts.timeout, &scope);
+    try
+    {
+        return quadRemeshWithin(source, opts);
+    }
+    catch (const Interrupted& e)
+    {
+        QuadRemeshResult out;
+        out.error = e.what();
+        return out;
+    }
+}
+
+static QuadRemeshResult quadRemeshWithin(const geo::Mesh& source, const QuadRemeshOptions& opts)
+{
     QuadRemeshResult result = quadRemeshOnce(source, opts);
-    if (source.numFaces() == 0)
+    // Pinned points tie the lattice to the source's own spacing; a finer retry would no longer meet them.
+    if (source.numFaces() == 0 || !opts.pinnedPoints.empty())
         return result;
     geo::Mesh src = source;
     src.compact();

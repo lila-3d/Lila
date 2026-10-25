@@ -8,6 +8,7 @@
 #include <glm/glm.hpp>
 
 #include <array>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -116,13 +117,24 @@ LILA_SCENE_API geo::Mesh voxelRemesh(const geo::Mesh& mesh, const VoxelOptions& 
 
 // Auto quad remesh
 
+/** A point the edge flow turns round: valence 3 (a corner like a cube's) or 5 (where a loop splits in two). */
+struct Pole
+{
+    glm::dvec3 position{0.0};
+    int valence = 3;
+};
+
 struct QuadRemeshOptions
 {
-    int targetFaces = 5000;
+    int targetFaces = 500;
     /** Positive overrides targetFaces. */
     double targetEdgeLength = 0.0;
     /** 0 uniform, 1 strongly denser where curved. The point float "density" attribute multiplies on top. */
     double adaptivity = 0.5;
+    /** Make the lattice finer where the surface comes close to itself across a gap, so it doesn't bridge it. */
+    bool resolveGaps = true;
+    /** Edges bending at least this many degrees (gentler than sharpAngle, like a bevel's segments) steer the edge flow; 0 off. */
+    double softCreaseAngle = 0.0;
     /** Align to edges flagged "hard". */
     bool useHardEdges = true;
     /** Also align to edges whose faces meet sharper than this many degrees; negative disables. */
@@ -134,6 +146,17 @@ struct QuadRemeshOptions
     /** All quads (extract at half density and split each polygon); otherwise quad dominant. */
     bool pureQuads = true;
     int relaxIterations = 6;
+    /** Also try one global parametrization, which only turns at the poles, and keep it when it has fewer irregular points. */
+    bool seamless = false;
+    /** Source points (object space, exact) the result keeps as vertices, like a patch's border points to stitch it back by. */
+    std::vector<glm::dvec3> pinnedPoints;
+    /** Seconds before giving up with an error saying how far it got; 0 is unlimited. The progress overlay can cancel too. */
+    double timeout = 0.0;
+    /**
+     * When set, the edge flow turns exactly at these poles and nowhere else: start from findPoles, then move, add or
+     * remove them. On a closed shell the poles must balance: (4 - valence) over them sums to the shell's total.
+     */
+    std::optional<std::vector<Pole>> poles;
 };
 
 struct LILA_SCENE_API QualityMetrics
@@ -156,6 +179,18 @@ struct LILA_SCENE_API QualityMetrics
     double meanDistance = 0.0;
     std::string summary() const;
 };
+
+struct PoleResult
+{
+    std::vector<Pole> poles;
+    /** Per closed shell, what (4 - valence) over its poles must sum to; empty for a shell with a border, which takes any. */
+    std::vector<std::optional<int>> shellTotals;
+    std::string error;
+    bool ok() const { return error.empty(); }
+};
+
+/** The poles quadRemesh's edge flow has with these options, in the mesh's space, without extracting a mesh. */
+LILA_SCENE_API PoleResult findPoles(const geo::Mesh& source, const QuadRemeshOptions& opts = {});
 
 /** Measures a mesh; distances need the source's Bvh. */
 LILA_SCENE_API QualityMetrics measureQuality(const geo::Mesh& mesh, const geo::MeshBvh* source = nullptr);

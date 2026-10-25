@@ -5,13 +5,16 @@ lila_module(lila_retopo Scene
     AngleSnap.cpp
     Extract.cpp
     Border.cpp
+    Budget.cpp
     Field.cpp
     Internal.h
     Metrics.cpp
+    Poles.cpp
     QuadRemesh.cpp
     Relax.cpp
     Repair.cpp
     Retopo.h
+    Seamless.cpp
     Surface.cpp
     Voxel.cpp)
 target_link_libraries(lila_retopo PUBLIC lila_geo TBB::tbb PRIVATE Eigen3::Eigen meshoptimizer::meshoptimizer)

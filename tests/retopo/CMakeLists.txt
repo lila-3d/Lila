@@ -4,7 +4,9 @@ add_executable(lila_retopo_tests
     test_border.cpp
     test_corpus.cpp
     test_repair.cpp
+    test_poles.cpp
     test_retopo.cpp
+    test_seamless.cpp
     test_tools.cpp)
 target_link_libraries(lila_retopo_tests PRIVATE LilaScene doctest::doctest)
 target_include_directories(lila_retopo_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests)

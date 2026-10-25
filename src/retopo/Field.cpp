@@ -217,6 +217,49 @@ std::vector<glm::dvec3> solveCrossField(const Surface& s, const FieldOptions& op
         alignValue[v] = std::polar(1.0, 4.0 * angleIn(fr[v], curv.maxDir[v]));
     }
 
+    // Soft creases (a bevel's segment edges, too gentle to be features) pull harder than curvature, which faceting blurs.
+    if (opts.softCreaseAngle > 0.0)
+    {
+        const double minAngle = glm::radians(opts.softCreaseAngle);
+        std::vector<double> bend(s.edges.size(), 0.0);
+        for (size_t e = 0; e < s.edges.size(); ++e)
+            if (s.edgeTriCount[e] == 2)
+                bend[e] = std::acos(std::clamp(glm::dot(s.triNormal[s.edgeTris[e][0]], s.triNormal[s.edgeTris[e][1]]), -1.0, 1.0));
+        // Per triangle, its edges' summed bend, so an edge's neighbours' mean comes cheaply.
+        std::vector<double> triBend(s.tris.size(), 0.0);
+        for (size_t e = 0; e < s.edges.size(); ++e)
+            for (int k = 0; k < std::min<int>(2, s.edgeTriCount[e]); ++k)
+                triBend[s.edgeTris[e][k]] += bend[e];
+        std::vector<std::complex<double>> pull(n, 0.0);
+        std::vector<double> weight(n, 0.0);
+        for (size_t e = 0; e < s.edges.size(); ++e)
+        {
+            if (s.edgeTriCount[e] != 2 || s.edgeFeature[e])
+                continue;
+            double angle = bend[e];
+            if (angle < minAngle)
+                continue;
+            // A crease concentrates its bend on the edge; on a faceted or noisy surface every edge bends alike.
+            double around = (triBend[s.edgeTris[e][0]] + triBend[s.edgeTris[e][1]] - 2.0 * angle) / 4.0;
+            if (angle < 2.0 * around)
+                continue;
+            glm::dvec3 d = s.pos[s.edges[e][1]] - s.pos[s.edges[e][0]];
+            for (Index v : s.edges[e])
+            {
+                pull[v] += angle * std::polar(1.0, 4.0 * angleIn(fr[v], d));
+                weight[v] += angle;
+            }
+        }
+        for (Index v = 0; v < n; ++v)
+        {
+            if (weight[v] <= 0.0 || std::abs(pull[v]) < 1e-12)
+                continue;
+            double g = 2.0 * std::clamp(weight[v] / (4.0 * minAngle), 0.0, 1.0);
+            align[v] = std::max(align[v], g * s.area[v] * 10.0 / (scale * scale));
+            alignValue[v] = pull[v] / std::abs(pull[v]);
+        }
+    }
+
     std::vector<Index> unknown(n, kInvalid);
     Index free = 0;
     for (Index v = 0; v < n; ++v)
@@ -238,13 +281,10 @@ std::vector<glm::dvec3> solveCrossField(const Surface& s, const FieldOptions& op
 
     // Transport per edge: a direction at a reads as rotated by r[e] at b.
     std::vector<double> w = edgeWeights(s);
+    std::vector<double> theta = transportAngles(s);
     std::vector<std::complex<double>> r(s.edges.size());
     for (size_t e = 0; e < s.edges.size(); ++e)
-    {
-        Index a = s.edges[e][0], b = s.edges[e][1];
-        glm::dvec3 d = s.pos[b] - s.pos[a];
-        r[e] = std::polar(1.0, 4.0 * (angleIn(fr[b], d) - angleIn(fr[a], d)));
-    }
+        r[e] = std::polar(1.0, theta[e] + (e < opts.twist.size() ? opts.twist[e] : 0.0));
 
     const double mu = 1.0 / (4.0 * scale * scale);
     auto assemble = [&](double inertia, bool withAlign) {
@@ -349,6 +389,7 @@ std::vector<glm::dvec3> solveCrossField(const Surface& s, const FieldOptions& op
     Eigen::VectorXd b(free * 2);
     for (int it = 0; it < 10; ++it)
     {
+        Budget::checkpoint();
         for (Index v = 0; v < n; ++v)
             if (unknown[v] != kInvalid)
             {
@@ -366,6 +407,37 @@ std::vector<glm::dvec3> solveCrossField(const Surface& s, const FieldOptions& op
         double phi = std::arg(u[v]) / 4.0;
         q[v] = std::cos(phi) * fr[v].e1 + std::sin(phi) * fr[v].e2;
     }
+    return q;
+}
+
+std::vector<double> transportAngles(const Surface& s)
+{
+    std::vector<Frame> fr = frames(s);
+    std::vector<double> theta(s.edges.size());
+    for (size_t e = 0; e < s.edges.size(); ++e)
+    {
+        Index a = s.edges[e][0], b = s.edges[e][1];
+        glm::dvec3 d = s.pos[b] - s.pos[a];
+        theta[e] = 4.0 * (angleIn(fr[b], d) - angleIn(fr[a], d));
+    }
+    return theta;
+}
+
+std::vector<double> fieldAngles(const Surface& s, const std::vector<glm::dvec3>& q)
+{
+    std::vector<Frame> fr = frames(s);
+    std::vector<double> phi(s.vertexCount());
+    for (Index v = 0; v < s.vertexCount(); ++v)
+        phi[v] = 4.0 * angleIn(fr[v], q[v]);
+    return phi;
+}
+
+std::vector<glm::dvec3> fieldFromAngles(const Surface& s, const std::vector<double>& phi)
+{
+    std::vector<Frame> fr = frames(s);
+    std::vector<glm::dvec3> q(s.vertexCount());
+    for (Index v = 0; v < s.vertexCount(); ++v)
+        q[v] = std::cos(phi[v] / 4.0) * fr[v].e1 + std::sin(phi[v] / 4.0) * fr[v].e2;
     return q;
 }
 
@@ -516,7 +588,7 @@ void smoothPositions(const Level& L, std::vector<glm::dvec3>& o, int sweeps)
 {
     LILA_ZONE();
 
-    for (int it = 0; it < sweeps; ++it)
+    for (int it = 0; it < sweeps; ++it, Budget::checkpoint())
         for (Index i = 0; i < L.size(); ++i)
         {
             const glm::dvec3 &vi = L.v[i], &ni = L.n[i], &qi = L.q[i];

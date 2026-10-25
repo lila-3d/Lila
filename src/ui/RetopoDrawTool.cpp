@@ -16,6 +16,7 @@
 #include "ui/GizmoMath.h"
 #include "ui/NodeLookup.h"
 #include "ui/OptionBox.h"
+#include "ui/RetopoPolesTool.h"
 
 #include <QApplication>
 #include <QInputDialog>
@@ -1448,6 +1449,7 @@ void stepSnapAngle(int dir)
 
 void registerRetopoActions()
 {
+    registerRetopoPolesActions();
     actions::add({
         "retopo.draw",
         "Retopo Draw",

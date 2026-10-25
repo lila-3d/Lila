@@ -10,11 +10,58 @@
 
 #include <array>
 #include <cstdint>
+#include <span>
+#include <stdexcept>
+#include <string>
 #include <unordered_set>
 #include <vector>
 
+namespace lila::progress
+{
+class Scope;
+}
+
 namespace lila::retopo::detail
 {
+/** Why a remesh stopped early: it ran past its time budget, or was cancelled from the progress overlay. */
+struct Interrupted : std::runtime_error
+{
+    using std::runtime_error::runtime_error;
+};
+
+/**
+ * The running remesh's time budget on this thread. reached() records a finished stage, moves the progress bar and checks;
+ * checkpoint() only checks. Both throw Interrupted past the deadline or once the progress root is cancelled, and do
+ * nothing while no Budget is open on the thread.
+ */
+class LILA_SCENE_API Budget
+{
+public:
+    /** seconds <= 0 is unlimited. scope may be null. */
+    Budget(double seconds, progress::Scope* scope);
+    ~Budget();
+    Budget(const Budget&) = delete;
+    Budget& operator=(const Budget&) = delete;
+
+    static void reached(const char* stage, double fraction);
+    static void checkpoint();
+    /** Facts for the error message if it runs out ("24k working triangles"). */
+    static void note(std::string fact);
+    /** "after cross field (24k working triangles)", for the error. */
+    std::string where() const;
+    double seconds() const { return mSeconds; }
+
+private:
+    void check() const;
+
+    double mSeconds;
+    double mStart;
+    progress::Scope* mScope;
+    std::string mStage;
+    std::vector<std::string> mNotes;
+    Budget* mPrev;
+};
+
 using geo::Index;
 using geo::kInvalid;
 
@@ -39,6 +86,7 @@ struct LILA_SCENE_API Surface
     std::vector<std::array<Index, 3>> tris;
     std::vector<float> density;           // per vertex, 1 is neutral
     std::unordered_set<uint64_t> hard;    // vertex pairs of user feature edges
+    std::vector<glm::dvec3> pins;         // positions that must stay result vertices; detectFeatures makes them corners
 
     // From buildTopology()
     std::vector<std::array<Index, 2>> edges; // sorted endpoints
@@ -60,6 +108,7 @@ struct LILA_SCENE_API Surface
     std::vector<FeatureKind> feature;
     std::vector<glm::dvec3> featureDir; // unit, in the vertex tangent plane, for Line
     std::vector<uint8_t> onBoundary;
+    std::vector<uint8_t> pinned; // per vertex: sits on one of pins
 
     Index vertexCount() const { return Index(pos.size()); }
     void buildTopology();
@@ -94,9 +143,55 @@ struct FieldOptions
 {
     double scale = 1.0;           // target lattice spacing, for the smoothing length
     double curvatureWeight = 1.0; // alignment to principal directions
+    double softCreaseAngle = 0.0; // edges bending at least this many degrees (short of features) pull the field along them; <= 0 off
     std::vector<std::vector<glm::dvec3>> guides;
+    /** Per surface edge, an angle (in the field's fourth power) added to its transport; from prescribeSingularities. */
+    std::vector<double> twist;
 };
 LILA_SCENE_API std::vector<glm::dvec3> solveCrossField(const Surface& s, const FieldOptions& opts);
+
+/**
+ * Per surface edge, the angle a direction at edges[e][0] turns by on its way to edges[e][1], in the field's fourth
+ * power (a quarter turn is 2pi), measured in each vertex's own tangent frame.
+ */
+LILA_SCENE_API std::vector<double> transportAngles(const Surface& s);
+/** Per vertex, the field's direction as a fourth-power angle in the vertex frame. */
+LILA_SCENE_API std::vector<double> fieldAngles(const Surface& s, const std::vector<glm::dvec3>& q);
+/** The inverse of fieldAngles. */
+LILA_SCENE_API std::vector<glm::dvec3> fieldFromAngles(const Surface& s, const std::vector<double>& phi);
+
+/** A cross field singularity: a triangle the field turns round in, by index quarter turns. */
+struct FieldSingularity
+{
+    Index tri = kInvalid;
+    /** +1 becomes a three-edge pole, -1 a five-edge pole. */
+    int index = 0;
+};
+
+/** The singular triangles of a field, in triangle order. */
+LILA_SCENE_API std::vector<FieldSingularity> fieldSingularities(const Surface& s, const std::vector<glm::dvec3>& q);
+
+/**
+ * The smallest twist (a trivial connection, Crane et al. 2010) whose smooth fields turn exactly at the given triangles.
+ * Every closed shell's indices must add up to its total turning (shellIndexTotals); error says which doesn't.
+ */
+struct PrescribedTwist
+{
+    std::vector<double> twist;
+    std::string error;
+};
+LILA_SCENE_API PrescribedTwist prescribeSingularities(const Surface& s, std::span<const FieldSingularity> singularities);
+
+/** Per triangle, its shell (connected through edges); and per shell, the index total its singularities must reach, or INT_MIN when it has a border. */
+struct Shells
+{
+    std::vector<Index> shellOfTri;
+    std::vector<int> indexTotal;
+};
+LILA_SCENE_API Shells shellIndexTotals(const Surface& s);
+
+/** A field parallel under the twisted transport, spread from one vertex per component and turned to fit the features best. Instant. */
+LILA_SCENE_API std::vector<glm::dvec3> propagateField(const Surface& s, const std::vector<double>& twist);
 
 /** Per-vertex principal curvature tensor in the vertex frame: direction angle doubled and magnitudes. */
 struct Curvature
@@ -109,6 +204,15 @@ LILA_SCENE_API Curvature estimateCurvature(const Surface& s);
 
 /** Lattice origin per vertex, the lattice point nearest the vertex. */
 LILA_SCENE_API std::vector<glm::dvec3> solvePositionField(const Surface& s, const std::vector<glm::dvec3>& q, const std::vector<double>& scale);
+
+/**
+ * The same, from one global seamless parametrization (mixed-integer quadrangulation, Bommes et al. 2009): the surface is
+ * cut to a disk through the field's singularities, the parameter jumps across the cuts by quarter turns and whole
+ * lattice steps, and singularities land on lattice points. So the lattice only turns at the singularities. Empty, with
+ * error set, when it can't be solved.
+ */
+LILA_SCENE_API std::vector<glm::dvec3> solveSeamlessPositions(const Surface& s, const std::vector<glm::dvec3>& q,
+                                                              const std::vector<double>& scale, std::string* error = nullptr);
 
 /** Lattice points of i and j (returned and outJ) that coincide best near the two vertices. */
 LILA_SCENE_API glm::dvec3 compatLatticePair(const glm::dvec3& vi, const glm::dvec3& ni, const glm::dvec3& qi, const glm::dvec3& oi, double si,

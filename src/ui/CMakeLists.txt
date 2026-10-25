@@ -85,6 +85,7 @@ lila_module(lila_ui UI
     CursorBadges.cpp CursorBadges.h
     Panels.cpp Panels.h
     RetopoDrawTool.cpp RetopoDrawTool.h
+    RetopoPolesTool.cpp RetopoPolesTool.h
     KnifeTool.cpp KnifeTool.h
     TargetWeldTool.cpp TargetWeldTool.h
     ConformTool.cpp ConformTool.h

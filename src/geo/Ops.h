@@ -190,6 +190,21 @@ struct QuadrangulateOptions
 /** Joins pairs of neighbouring triangles into quads, best shaped first. Returns the resulting faces. */
 LILA_SCENE_API std::vector<Index> quadrangulateFaces(Mesh& mesh, std::span<const Index> faces, const QuadrangulateOptions& opts = {});
 
+struct NgonSplitOptions
+{
+    /** Faces with more sides than this are cut. */
+    int maxSides = 4;
+    /** No cut leaves a corner narrower than this many degrees; a face with no such cut stays as it is. */
+    double minAngle = 30.0;
+};
+
+/**
+ * Cuts each face with more than maxSides sides into quads, and a triangle where the count is odd, between its own
+ * points. Cuts that carry on an edge arriving from outside the face win, so edge loops run on through it. A face that
+ * can't be cut without thin corners keeps its remaining sides. Returns the resulting faces.
+ */
+LILA_SCENE_API std::vector<Index> splitNgons(Mesh& mesh, std::span<const Index> faces, const NgonSplitOptions& opts = {});
+
 struct SubdivideOptions
 {
     int levels = 1;
