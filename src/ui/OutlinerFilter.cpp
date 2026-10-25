@@ -1,6 +1,8 @@
 #include "ui/OutlinerFilter.h"
 
 #include "core/Profile.h"
+#include "scene/Node.h"
+#include "ui/TokenCompleter.h"
 
 #include <algorithm>
 #include <cctype>
@@ -140,6 +142,36 @@ int fuzzyScore(std::string_view pattern, std::string_view text)
         prev = at;
     }
     return std::clamp(score, 1, 99);
+}
+
+std::vector<std::string> filterCompletions(std::string_view token, const std::vector<std::string>& typeNames)
+{
+    constexpr std::string_view kKey = "type:";
+    std::string negate = token.starts_with('!') ? "!" : "";
+    std::string_view rest = token.substr(negate.size());
+    std::string low = lowered(rest);
+    std::vector<std::string> out;
+    if (low.starts_with(kKey))
+    {
+        std::string_view value = rest.substr(kKey.size());
+        if (isGlob(value))
+            return out;
+        for (const std::string& name : completion::rank(typeNames, value))
+            out.push_back(negate + std::string(kKey) + name);
+    }
+    else if (!low.empty() && std::string_view(kKey).starts_with(low))
+        out.push_back(negate + std::string(kKey));
+    return out;
+}
+
+std::vector<std::string> nodeTypeNames()
+{
+    std::vector<std::string> names;
+    for (const scene::NodeType* t : scene::types::all())
+        names.push_back(t->name);
+    std::sort(names.begin(), names.end());
+    names.erase(std::unique(names.begin(), names.end()), names.end());
+    return names;
 }
 
 bool typeMatches(const scene::NodeType* type, std::string_view pattern)

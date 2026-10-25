@@ -50,6 +50,11 @@ struct Panel
     std::function<void(QDockWidget*)> place;
     /** An action that shows or tucks away the panel, registered with it under the same owner; empty for none. */
     std::string toggleAction;
+    /**
+     * Opens as a floating window, about 1000x750 and centred on the main window, whatever a saved layout says, until the
+     * user docks it themselves; from then on it opens wherever they put it.
+     */
+    bool floatFirst = false;
 };
 
 LILA_UI_API Registry<Panel>& registry();
@@ -63,5 +68,7 @@ LILA_UI_API bool remove(const std::string& id);
 LILA_UI_API void show(const std::string& id);
 /** Shows the panel, or tucks it away when it is showing. */
 LILA_UI_API void toggle(const std::string& id);
+/** For a floatFirst panel the user has never docked: floats the dock, sized and centred. Called as a dock is revealed. */
+LILA_UI_API void floatUnplaced(QDockWidget* dock);
 } // namespace panels
 } // namespace lila::ui

@@ -87,3 +87,32 @@ TEST_CASE("creating a node lands in object mode with the new node selected")
     CHECK(run("selectMode") == "face");
     run("selectMode", {{"args", {"object"}}});
 }
+
+TEST_CASE("picking another object from the UI leaves component mode")
+{
+    run("newScene");
+    std::string a = run("polyCube")[0];
+    std::string b = run("polySphere")[0];
+    run("select", {{"args", {a}}});
+    auto pick = [](json call) { ops::execute("select", call, CallSource::UI); };
+
+    faceMode(a);
+    pick({{"args", {b}}});
+    CHECK(run("selectMode") == "object");
+    CHECK(run("ls", {{"selection", true}}) == json::array({b}));
+
+    // Reselecting what is already selected, or deselecting, keeps the mode.
+    run("select", {{"args", {a, b}}});
+    faceMode(a);
+    pick({{"args", {a}}});
+    CHECK(run("selectMode") == "face");
+    pick({{"args", {a}}, {"deselect", true}});
+    CHECK(run("selectMode") == "face");
+
+    // Scripts select without changing the mode.
+    run("select", {{"args", {a}}});
+    faceMode(a);
+    run("select", {{"args", {b}}});
+    CHECK(run("selectMode") == "face");
+    run("selectMode", {{"args", {"object"}}});
+}

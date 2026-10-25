@@ -39,14 +39,27 @@ enum class MouseEncoding : uint8_t
     Urxvt,   // 1015: CSI b;x;y M
 };
 
-/** Gray level 0..255, or kDefaultColor for the terminal's own foreground/background. */
-constexpr int16_t kDefaultColor = -1;
+/** A cell colour: kDefaultColor, an xterm 256-colour index (0..255), or 24-bit sRGB tagged with kRgbColor. */
+using Color = int32_t;
+/** The terminal's own foreground/background. */
+constexpr Color kDefaultColor = -1;
+constexpr Color kRgbColor = 1 << 24;
+
+constexpr Color rgbColor(int r, int g, int b)
+{
+    return kRgbColor | (r << 16) | (g << 8) | b;
+}
+
+struct Rgb
+{
+    int r, g, b;
+};
 
 struct Cell
 {
     char32_t ch = U' ';
-    int16_t fg = kDefaultColor;
-    int16_t bg = kDefaultColor;
+    Color fg = kDefaultColor;
+    Color bg = kDefaultColor;
     uint8_t attrs = 0;
     uint8_t width = 1; // 2 = first half of a wide char, 0 = its trailing half
 
@@ -59,12 +72,16 @@ using Line = std::vector<Cell>;
 LILA_UI_API int grayFromRgb(int r, int g, int b);
 /** Gray level for an xterm 256-color index. */
 LILA_UI_API int grayFromIndex(int index);
+/** Gray level of a non-default cell colour. */
+LILA_UI_API int grayFromColor(Color c);
+/** sRGB of a non-default cell colour; indexes below 16 come from `ansi16`, the rest from the xterm cube and ramp. */
+LILA_UI_API Rgb rgbFromColor(Color c, const Rgb* ansi16);
 /** Display width of a code point: 0, 1 or 2. */
 LILA_UI_API int charWidth(char32_t c);
 
 /**
  * VT100/xterm screen model: feed it the bytes a program writes and it keeps the grid, cursor and scrollback.
- * Handles UTF-8, C0 controls, CSI cursor movement/erase/scroll/insert/delete, SGR (colors folded to gray),
+ * Handles UTF-8, C0 controls, CSI cursor movement/erase/scroll/insert/delete, SGR (indexed and 24-bit colors kept as given),
  * DECSTBM, DECSC/DECRC, the alternate screen, cursor visibility, application cursor keys, bracketed paste, mouse
  * tracking modes, focus reporting and synchronized output. Erasing the whole main screen (ED 2) first moves its
  * contents into the scrollback, as Windows Terminal does, so full redraws keep their history; ED 3 clears it.

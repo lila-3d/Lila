@@ -187,6 +187,40 @@ bool parseJoinType(std::string_view name, JoinType* out)
     return false;
 }
 
+namespace
+{
+/**
+ * Gives a spline rebuilt by fromPieces the tilt and radius of the one it came from. Output piece i runs from
+ * spans[i].first to spans[i].second on the input, in its pieces' index + t parameter, which runs past the end across a
+ * closed input's wrap. A Bezier or poly result has one point per piece; a NURBS one has `degree` controls per piece.
+ */
+void carryPointValues(const Spline& from, const std::vector<std::pair<double, double>>& spans, Spline& to)
+{
+    const size_t D = to.kind == Kind::Nurbs ? size_t(std::max(1, to.degree)) : 1;
+    if (spans.empty() || to.size() != spans.size() * D + (from.closed ? 0 : 1))
+        return;
+    auto valueAt = [&](const std::vector<double>& v, double def, double u) {
+        const double n = double(from.size());
+        if (from.closed && u >= n)
+            u -= n;
+        return pointValueAt(from, v, def, u);
+    };
+    auto carry = [&](const std::vector<double>& src, double def, std::vector<double>& dst) {
+        if (src.size() != from.size())
+            return;
+        dst.clear();
+        for (size_t c = 0; c < to.size(); ++c)
+        {
+            const size_t i = std::min(c / D, spans.size() - 1);
+            const double f = c / D < spans.size() ? double(c % D) / double(D) : 1.0;
+            dst.push_back(valueAt(src, def, spans[i].first + (spans[i].second - spans[i].first) * f));
+        }
+    };
+    carry(from.tilt, 0.0, to.tilt);
+    carry(from.radius, 1.0, to.radius);
+}
+} // namespace
+
 Spline fillet(const Spline& s, const FilletOptions& o)
 {
     LILA_ZONE();
@@ -291,18 +325,32 @@ Spline fillet(const Spline& s, const FilletOptions& o)
         }
     };
     std::vector<Piece> out;
+    // Where each output piece starts and ends on the input, so per-point values follow the trimmed path.
+    std::vector<std::pair<double, double>> spans;
     for (size_t k = 0; k < K; ++k)
     {
         if (corners[k].on && (s.closed || k > 0))
-            for (Piece& c : cornerPiece(k))
-                out.push_back(std::move(c));
+        {
+            std::vector<Piece> blend = cornerPiece(k);
+            const double a = double((k + K - 1) % K) + t1[(k + K - 1) % K];
+            const double b = double(k) + t0[k] + (k == 0 ? double(K) : 0.0);
+            for (size_t i = 0; i < blend.size(); ++i)
+            {
+                out.push_back(std::move(blend[i]));
+                spans.push_back({a + (b - a) * double(i) / double(blend.size()), a + (b - a) * double(i + 1) / double(blend.size())});
+            }
+        }
         if (t1[k] - t0[k] > 1e-9)
+        {
             out.push_back(subPiece(ps[k], t0[k], t1[k]));
+            spans.push_back({double(k) + t0[k], double(k) + t1[k]});
+        }
     }
     Kind want = s.kind;
     Spline result = fromPieces(out, s.closed, want);
     if (want == Kind::Poly && result.kind != Kind::Poly)
         result = fromPieces(out, s.closed, Kind::Nurbs);
+    carryPointValues(s, spans, result);
     return result;
 }
 

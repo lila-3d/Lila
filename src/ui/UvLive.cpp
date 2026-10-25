@@ -12,7 +12,9 @@
 #include "scene/Components.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
+#include "scene/Modifiers.h"
 #include "ui/Actions.h"
+#include "ui/Isolate.h"
 #include "ui/MeshCache.h"
 #include "ui/ViewportDisplay.h"
 #include "ui/ViewportHooks.h"
@@ -158,19 +160,26 @@ const render::Material& checkerMaterial(int checks)
     return m;
 }
 
-/** Object-space seam segments of a mesh: edges marked as seams or where the uv set splits. Cached per mesh. */
-const std::vector<glm::vec3>& seamLines(const MeshPtr& mesh, const std::string& set)
+/** Object-space seam segments of a mesh, two points per edge in edges. */
+struct Seams
+{
+    std::vector<glm::vec3> lines;
+    std::vector<geo::Index> edges;
+};
+
+/** Edges marked as seams or where the uv set splits. Cached per mesh. */
+const Seams& seamLines(const MeshPtr& mesh, const std::string& set)
 {
     struct Entry
     {
         MeshPtr mesh;
         std::string set;
-        std::vector<glm::vec3> lines;
+        Seams seams;
     };
     static std::vector<Entry> cache;
     for (Entry& e : cache)
         if (e.mesh == mesh && e.set == set)
-            return e.lines;
+            return e.seams;
     if (cache.size() > 8)
         cache.erase(cache.begin());
     Entry e{mesh, set, {}};
@@ -192,15 +201,16 @@ const std::vector<glm::vec3>& seamLines(const MeshPtr& mesh, const std::string& 
         }
         if (split)
         {
-            e.lines.push_back(glm::vec3(m.position(m.edgePoint(ed, 0))));
-            e.lines.push_back(glm::vec3(m.position(m.edgePoint(ed, 1))));
+            e.seams.lines.push_back(glm::vec3(m.position(m.edgePoint(ed, 0))));
+            e.seams.lines.push_back(glm::vec3(m.position(m.edgePoint(ed, 1))));
+            e.seams.edges.push_back(ed);
         }
     }
     cache.push_back(std::move(e));
-    return cache.back().lines;
+    return cache.back().seams;
 }
 
-void draw3d(render::FrameState& s, OverlayPainter&, const ViewInfo&)
+void draw3d(render::FrameState& s, OverlayPainter&, const ViewInfo& view)
 {
     LILA_ZONE();
 
@@ -214,7 +224,7 @@ void draw3d(render::FrameState& s, OverlayPainter&, const ViewInfo&)
     {
         scene::Node* n = g.node(id);
         MeshPtr out = n ? n->as<MeshPtr>(scene::MeshNode::kOutMesh) : nullptr;
-        if (!out || !scene::effectivelyVisible(g, id))
+        if (!out || !scene::effectivelyVisible(g, id) || !isolate::shows(view.isolation, id))
             continue;
         if (checker)
         {
@@ -234,8 +244,17 @@ void draw3d(render::FrameState& s, OverlayPainter&, const ViewInfo&)
             glm::mat4 w = glm::mat4(n->as<glm::dmat4>(scene::Transform::kWorldMatrix));
             const glm::vec4 color(1.0f, 1.0f, 1.0f, 1.0f);
             s.seamLineWidth = viewportDisplay::hairlineWidth(viewportDisplay::componentThickness().uvSeam, qApp->devicePixelRatio());
-            for (const glm::vec3& p : seamLines(out, set))
-                s.seamLines.push_back({glm::vec3(w * glm::vec4(p, 1.0f)), color});
+            const Seams& seams = seamLines(out, set);
+            MeshPtr cage = scene::modifiers::cage(g, id);
+            // Visibility indexes the cage, so it only applies while the output keeps the cage's edges.
+            const auto vis = isolate::visibility(view.isolation, id, cage);
+            const bool clip = !vis->all() && cage && cage->edgeCapacity() == out->edgeCapacity();
+            for (size_t i = 0; i < seams.edges.size(); ++i)
+                if (!clip || vis->edge(seams.edges[i]))
+                {
+                    s.seamLines.push_back({glm::vec3(w * glm::vec4(seams.lines[2 * i], 1.0f)), color});
+                    s.seamLines.push_back({glm::vec3(w * glm::vec4(seams.lines[2 * i + 1], 1.0f)), color});
+                }
         }
     }
 }

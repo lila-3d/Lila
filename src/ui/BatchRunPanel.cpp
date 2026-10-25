@@ -12,6 +12,7 @@
 #include "ui/Icons.h"
 #include "ui/Panels.h"
 #include "ui/Theme.h"
+#include "ui/TokenCompleter.h"
 #include "ui/editor/CodeEditor.h"
 #include "ui/editor/ScriptEditor.h"
 
@@ -494,6 +495,12 @@ QWidget* BatchRunPanel::buildFilesTab()
     mExtensions = new QLineEdit(page);
     mExtensions->setPlaceholderText("every type Lila opens");
     mExtensions->setToolTip("File types folders are searched for, comma separated: lila, ma, fbx");
+    completion::attachValues(mExtensions, [] {
+        QStringList out;
+        for (const std::string& e : batch::openableExtensions())
+            out << QString::fromStdString(e).remove(0, e.starts_with('.') ? 1 : 0);
+        return out;
+    }, true);
     form->addRow("Types", mExtensions);
     mInclude = new QLineEdit(page);
     mInclude->setPlaceholderText("char_*, props/*");

@@ -9,24 +9,26 @@ add_executable(lila_tests
     test_normal_frames.cpp
     test_knife.cpp
     test_step_history.cpp
+    test_command_history.cpp
     test_conform.cpp
     test_modifiers.cpp
     test_modstack.cpp
     test_docs.cpp
+    test_user_docs.cpp
     test_transfer.cpp
     test_gate.cpp
     test_autobevel.cpp
     test_measure.cpp
     test_surface_snap.cpp
-    test_imageplane.cpp
     test_geometry_snap.cpp
     test_hotkeys.cpp
+    test_imageplane.cpp
     test_display.cpp
     test_display_aids.cpp
     test_icon_bars.cpp
-    test_layouts.cpp
     test_preselect.cpp
     test_themes.cpp
+    test_layouts.cpp
     test_toolkit.cpp
     test_modeling_defaults.cpp
     test_symmetry.cpp
@@ -37,9 +39,9 @@ add_executable(lila_tests
     test_component_query.cpp
     test_outliner.cpp
     test_outliner_filter.cpp
-    test_progress.cpp
     test_value_reset.cpp
     test_scene_scripts.cpp
+    test_progress.cpp
     test_camera_history.cpp
     test_options.cpp
     test_extrude.cpp
@@ -51,6 +53,7 @@ add_executable(lila_tests
     test_object_sets.cpp
     test_create_select.cpp
     test_camera.cpp
+    test_primitive_axis.cpp
     test_locks.cpp
     test_paths.cpp
     test_project_textures.cpp
@@ -68,6 +71,8 @@ add_executable(lila_tests
     test_render_textures.cpp)
 target_link_libraries(lila_tests PRIVATE LilaUI doctest::doctest)
 # The batch run tests start real lilabatch workers.
+find_package(miniz CONFIG REQUIRED)
+target_link_libraries(lila_tests PRIVATE miniz::miniz)
 add_dependencies(lila_tests lilabatch)
 add_test(NAME lila_tests COMMAND lila_tests)
 
@@ -83,9 +88,9 @@ endif()
 
 add_subdirectory(math)
 add_subdirectory(geo)
-add_subdirectory(vcs)
 add_subdirectory(curve)
 add_subdirectory(editor)
+add_subdirectory(vcs)
 add_subdirectory(docks)
 add_subdirectory(extensions)
 add_subdirectory(terminal)

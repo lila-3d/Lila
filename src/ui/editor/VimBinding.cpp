@@ -63,7 +63,7 @@ QString VimBinding::token(const QKeyEvent* e)
     {
     case Qt::Key_Escape: return "<Esc>";
     case Qt::Key_Return:
-        // Shift+Enter runs the cell.
+        // Shift+Enter is a run key.
         return mods & Qt::ShiftModifier ? QString() : QStringLiteral("<CR>");
     case Qt::Key_Enter:
         // The numeric keypad's Enter runs the script.

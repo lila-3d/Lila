@@ -44,6 +44,7 @@ Qt and PySide6 are dynamically linked and unmodified. You may replace the Qt and
 
 | Asset | License | Copyright | Source |
 |---|---|---|---|
+| Archivo (Latin static instances) | OFL-1.1 | The Archivo Project Authors | `resources/fonts/Archivo-LICENSE.txt` |
 | Inter | OFL-1.1 | The Inter Project Authors | `resources/fonts/Inter-LICENSE.txt` |
 | JetBrains Mono | OFL-1.1 | The JetBrains Mono Project Authors | `resources/fonts/JetBrainsMono-LICENSE.txt` |
 | Tabler Icons | MIT | Paweł Kuna | `resources/icons/tabler/LICENSE` |

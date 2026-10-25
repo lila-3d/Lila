@@ -87,19 +87,26 @@ def _refresh():
     ops.refresh()
 
 
-def register_command(name, fn, doc="", flags=(), positional="", undoable=True, owner=None):
+def register_command(name, fn, doc="", flags=(), positional="", undoable=True, owner=None, examples=()):
     """Register fn as the Lila command `name`.
 
-    flags: dicts {"name", "short", "type", "default", "doc"} or (name, type, default, doc) tuples, where type is
-    bool, int, float, str, list, tuple (a vec3), None (anything) or one of those names as a string.
+    doc: a summary line, then optionally a blank line and a longer description. Defaults to fn's docstring.
+    flags: dicts {"name", "short", "type", "default", "doc", "choices", "example"} or (name, type, default, doc)
+    tuples, where type is bool, int, float, str, list, tuple (a vec3), None (anything) or one of those names as a
+    string. choices lists a str flag's allowed values; example is a short call using the flag.
     positional: description of the positional args; leave empty if the command takes none.
     owner: extension name to file it under; defaults to the extension being loaded or the one fn comes from.
+    examples: Python snippets showing the command in use.
+
+    The docs show in the API reference, in script editor completion and signature help, and in help().
     """
     if owner is None:
         owner = _loading or _owner_of(fn)
     if not doc:
         doc = (getattr(fn, "__doc__", None) or "").strip()
-    _native().register_command(name, fn, doc, positional, [_flag(f) for f in flags], undoable, owner)
+    # Passed only when given, so builds whose native side predates examples still register.
+    extra = {"examples": [str(e) for e in examples]} if examples else {}
+    _native().register_command(name, fn, doc, positional, [_flag(f) for f in flags], undoable, owner, **extra)
     if _loading is None:
         _refresh()
 

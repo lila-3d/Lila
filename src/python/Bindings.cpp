@@ -132,6 +132,8 @@ NB_MODULE(_lila, m)
                 fd["type"] = argTypeName(f.type);
                 fd["default"] = toPy(f.defaultValue);
                 fd["doc"] = f.doc;
+                fd["choices"] = toPy(json(f.choices));
+                fd["example"] = f.example;
                 flags.append(fd);
             }
             nb::dict cd;
@@ -141,6 +143,7 @@ NB_MODULE(_lila, m)
             cd["flags"] = flags;
             cd["undoable"] = d->undoable;
             cd["owner"] = d->owner;
+            cd["examples"] = toPy(json(d->examples));
             out.append(cd);
         }
         return out;

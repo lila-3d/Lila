@@ -25,17 +25,6 @@ constexpr double kCornerAngle = 0.0175;
 
 double angleOf(const D3& a, const D3& b) { return std::atan2(glm::length(glm::cross(a, b)), glm::dot(a, b)); }
 
-/** The path's per-point radius at u, eased between points so a change of radius swells smoothly instead of kinking. */
-double easedRadius(const Spline& s, double u)
-{
-    const size_t n = s.radius.size();
-    double perPoint = 1.0;
-    if (s.kind == Kind::Nurbs && n > 1)
-        perPoint = double(s.closed ? n : n - 1) / std::max(1, spanCount(s));
-    double x = u * perPoint, i = std::floor(x), t = x - i;
-    return pointValueAt(s, s.radius, 1.0, (i + t * t * (3.0 - 2.0 * t)) / perPoint);
-}
-
 D3 perpUnit(const D3& v, const D3& t)
 {
     D3 r = v - t * glm::dot(v, t);
@@ -195,6 +184,84 @@ double nearestS(const Path& P, const D3& p, double* dist)
     if (dist)
         *dist = best;
     return bestS;
+}
+
+/**
+ * The input's per-point radius at each path point, by arc length: a monotone cubic (Fritsch-Carlson) through the
+ * input points' stations, so the pipe swells and narrows smoothly through them with no plateaus or overshoot.
+ */
+std::vector<double> radiusAlong(const Path& P, const Spline& input)
+{
+    const size_t n = P.size();
+    const double L = P.closed ? P.length : P.s.back();
+    std::vector<double> xs, ys;
+    // Stations in order: each point is searched for only past the previous one, so a path crossing itself can't jump.
+    size_t from = 0;
+    for (size_t k = 0; k < input.size(); ++k)
+    {
+        double best = std::numeric_limits<double>::max(), bestS = xs.empty() ? 0.0 : xs.back();
+        for (size_t i = from; i + 1 < n; ++i)
+        {
+            const D3 &a = P.points[i], &b = P.points[i + 1], d = b - a;
+            const double l2 = glm::dot(d, d);
+            const double t = l2 > 0.0 ? std::clamp(glm::dot(input.points[k] - a, d) / l2, 0.0, 1.0) : 0.0;
+            const double dd = glm::distance(a + d * t, input.points[k]);
+            if (dd < best - 1e-9)
+            {
+                best = dd;
+                bestS = P.s[i] + t * std::sqrt(l2);
+                from = i;
+            }
+        }
+        if (k == 0)
+            bestS = 0.0;
+        else if (k + 1 == input.size() && !input.closed)
+            bestS = L;
+        if (!xs.empty() && bestS <= xs.back() + 1e-6)
+            continue;
+        xs.push_back(bestS);
+        ys.push_back(input.radius[k]);
+    }
+    if (input.closed && !xs.empty())
+    {
+        xs.push_back(L);
+        ys.push_back(ys.front());
+    }
+    std::vector<double> out(n, ys.empty() ? 1.0 : ys.front());
+    const size_t m = xs.size();
+    if (m < 2)
+        return out;
+    std::vector<double> delta(m - 1), tan(m, 0.0);
+    for (size_t i = 0; i + 1 < m; ++i)
+        delta[i] = (ys[i + 1] - ys[i]) / (xs[i + 1] - xs[i]);
+    tan[0] = delta[0];
+    tan[m - 1] = delta[m - 2];
+    for (size_t i = 1; i + 1 < m; ++i)
+        tan[i] = delta[i - 1] * delta[i] <= 0.0 ? 0.0 : (delta[i - 1] + delta[i]) * 0.5;
+    for (size_t i = 0; i + 1 < m; ++i)
+    {
+        if (std::abs(delta[i]) < 1e-12)
+        {
+            tan[i] = tan[i + 1] = 0.0;
+            continue;
+        }
+        const double a = tan[i] / delta[i], b = tan[i + 1] / delta[i], h = a * a + b * b;
+        if (h > 9.0)
+        {
+            const double t = 3.0 / std::sqrt(h);
+            tan[i] = t * a * delta[i];
+            tan[i + 1] = t * b * delta[i];
+        }
+    }
+    for (size_t j = 0; j < n; ++j)
+    {
+        const double x = std::clamp(P.s[j], xs.front(), xs.back());
+        const size_t i = std::min(size_t(std::upper_bound(xs.begin(), xs.end(), x) - xs.begin()), m - 1) - 1;
+        const double h = xs[i + 1] - xs[i], t = (x - xs[i]) / h, t2 = t * t, t3 = t2 * t;
+        out[j] = (2 * t3 - 3 * t2 + 1) * ys[i] + (t3 - 2 * t2 + t) * h * tan[i] + (-2 * t3 + 3 * t2) * ys[i + 1] +
+                 (t3 - t2) * h * tan[i + 1];
+    }
+    return out;
 }
 
 /** Extra points so no segment is longer than step, at whole multiples of it along the curve. */
@@ -535,12 +602,14 @@ PipeResult makePipe(const Spline& input, const PipeOptions& o)
     const bool corrugated = o.corrugationDepth > 0.0 && o.corrugationPeriod > 1e-4;
     if (corrugated)
         pl = resample(pl, o.corrugationPeriod / std::max(2, o.corrugationRings));
+    const bool swells = input.radius.size() == input.size() && std::ranges::adjacent_find(input.radius, std::not_equal_to<>()) != input.radius.end();
+    // Rings close enough together to follow the swell, which straight spans would otherwise jump across in one cone.
+    if (swells && pl.length > 1e-6)
+        pl = resample(pl, std::max(R * 0.5, pl.length / 400.0));
     std::vector<Frame> fr = frames(pl, o.frames, tiltAlong(path, pl));
-    std::vector<double> pathScale;
-    if (!path.radius.empty())
-        for (double u : pl.params)
-            pathScale.push_back(easedRadius(path, u));
-    Path P = makePath(pl, fr, pathScale);
+    Path P = makePath(pl, fr, {});
+    if (swells)
+        P.scale = radiusAlong(P, input);
     const double L = P.closed ? P.length : P.s.back();
     r.length = L;
 

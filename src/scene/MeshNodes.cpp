@@ -7,7 +7,9 @@
 #include "geo/Mesh.h"
 #include "geo/ObjIO.h"
 #include "geo/Primitives.h"
+#include "math/MathCore.h"
 #include "scene/Graph.h"
+#include "scene/LastOp.h"
 #include "scene/Modifiers.h"
 
 #include <glm/gtx/quaternion.hpp>
@@ -51,6 +53,34 @@ AttrDef sweepFraction()
 AttrDef cutCaps() { return boolAttr("cutCaps", true, "Close the flat ends a partial sweep leaves."); }
 
 double frac(const Node& n) { return std::clamp(f(n, "fraction"), 0.01, 1.0); }
+
+const std::vector<std::string> kUpAxes = {"x", "y", "z", "-x", "-y", "-z"};
+
+AttrDef upAxisAttr()
+{
+    return {.name = "upAxis", .type = PlugType::Enum, .defaultValue = int64_t(1), .flags = AttrInput | AttrStorable | AttrKeyable,
+            .enumNames = kUpAxes, .doc = "The direction the primitive's up (its height, poles or face normal) points in object space."};
+}
+
+/** Turns a mesh built up +Y so that its up points along axis (an upAxis index), keeping it a rotation so winding holds. */
+void orientUp(geo::Mesh& m, int64_t axis)
+{
+    if (axis == 1 || axis < 0 || axis >= int64_t(kUpAxes.size()))
+        return;
+    auto turn = [axis](const glm::dvec3& p) -> glm::dvec3 {
+        switch (axis)
+        {
+        case 0: return {p.y, -p.x, p.z};
+        case 2: return {p.x, -p.z, p.y};
+        case 3: return {-p.y, p.x, p.z};
+        case 4: return {p.x, -p.y, -p.z};
+        default: return {p.x, p.z, -p.y};
+        }
+    };
+    for (geo::Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p))
+            m.setPosition(p, turn(m.position(p)));
+}
 
 struct Primitive
 {
@@ -250,10 +280,15 @@ void registerMeshTypes()
         t.icon = "cube-plus";
         t.doc = std::string("Builds the ") + p.display + " primitive from these settings. Editing its components bakes it into a stored base mesh.";
         t.ownAttrs = p.attrs;
+        t.ownAttrs.push_back(upAxisAttr());
         t.ownAttrs.push_back({.name = "outMesh", .shortName = "o", .type = PlugType::Mesh, .defaultValue = MeshPtr(),
                               .flags = AttrOutput | AttrHidden, .doc = "Generated mesh."});
         int out = int(t.ownAttrs.size()) - 1;
-        GeneratorNode::Build build = p.build;
+        GeneratorNode::Build build = [shape = p.build](const Node& n) {
+            geo::Mesh m = shape(n);
+            orientUp(m, n.as<int64_t>(n.type().attrIndex("upAxis")));
+            return m;
+        };
         t.create = [build, out] {
             auto n = std::make_unique<GeneratorNode>();
             n->build = build;
@@ -266,6 +301,11 @@ void registerMeshTypes()
 
 json meshStats(Node& n); // ComponentQuery.cpp
 
+glm::dvec3 sceneUp()
+{
+    return math::upAxis() == math::UpAxis::Z ? glm::dvec3(0.0, 0.0, 1.0) : glm::dvec3(0.0, 1.0, 0.0);
+}
+
 void placePrimitive(Graph& g, NodeId meshId, const glm::dvec3& position, const glm::dvec3& normal)
 {
     Node* mesh = g.node(meshId);
@@ -275,7 +315,7 @@ void placePrimitive(Graph& g, NodeId meshId, const glm::dvec3& position, const g
     if (glm::length(normal) > 1e-12)
     {
         const glm::dvec3 up = glm::normalize(normal);
-        const glm::dmat3 r = glm::mat3_cast(glm::rotation(glm::dvec3(0.0, 1.0, 0.0), up));
+        const glm::dmat3 r = glm::mat3_cast(glm::rotation(sceneUp(), up));
         g.setValue({meshId, Transform::kRotate, -1}, matrixToEuler(r, RotateOrder(mesh->as<int64_t>(Transform::kRotateOrder))));
         static const std::vector<Primitive> all = primitives();
         std::optional<PlugRef> src = g.source({meshId, MeshNode::kInMesh, -1});
@@ -285,7 +325,7 @@ void placePrimitive(Graph& g, NodeId meshId, const glm::dvec3& position, const g
         {
             g.evaluate();
             if (MeshPtr m = gen->as<MeshPtr>(src->attr))
-                at -= up * m->bounds().min.y;
+                at -= up * m->bounds().min[math::upAxis() == math::UpAxis::Z ? 2 : 1];
         }
     }
     g.setValue({meshId, Transform::kTranslate, -1}, at);
@@ -306,7 +346,9 @@ void registerMeshCommands()
             {"generator", "", T::Bool, true, "Keep the generator node so its parameters stay editable."},
         };
         for (const AttrDef& a : p.attrs)
-            flags.push_back({a.name, "", a.type == PlugType::Bool ? T::Bool : a.type == PlugType::Int ? T::Int : T::Float, nullptr, a.doc});
+            flags.push_back({a.name, "", a.type == PlugType::Bool ? T::Bool : a.type == PlugType::Int ? T::Int : T::Float, toJson(a.defaultValue), a.doc});
+        flags.push_back({"upAxis", "", T::String, nullptr, "Direction the primitive's up points: x, y, z, -x, -y or -z; the scene up axis when left out.",
+                         kUpAxes});
         std::string type = p.type, display = p.display;
         ops::registerCommand({
             .name = type,
@@ -314,9 +356,16 @@ void registerMeshCommands()
             .flags = flags,
             .run = [type, display](const Args& a) -> json {
                 Graph& g = graph();
+                const std::string up = a.get<std::string>("upAxis", math::upAxis() == math::UpAxis::Z ? "z" : "y");
+                if (std::ranges::find(kUpAxes, up) == kUpAxes.end())
+                    throw CommandError(type + ": upAxis must be x, y, z, -x, -y or -z");
+                // Recorded so adjusting the op later keeps the axis it was made with, whatever the scene up is then.
+                lastOp::limitFlag("upAxis", up);
                 const NodeType* genType = types::find(type);
                 Node* gen = g.createNode(*genType, {}, kNoNode, true);
-                for (auto& [flag, value] : a.flags.items())
+                json values = a.flags;
+                values["upAxis"] = up;
+                for (auto& [flag, value] : values.items())
                 {
                     int idx = genType->attrIndex(flag);
                     if (idx >= 0 && !value.is_null())
@@ -345,6 +394,7 @@ void registerMeshCommands()
                 return json::array({mesh->path(), genName});
             },
         });
+        ops::setAdjustable(type);
     }
 
     ops::registerCommand({

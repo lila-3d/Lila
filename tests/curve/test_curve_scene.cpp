@@ -3,6 +3,7 @@
 #include "curve/CurveNodes.h"
 #include "curve/Tessellate.h"
 #include "geo/Mesh.h"
+#include "math/MathCore.h"
 #include "ops/Command.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
@@ -161,4 +162,21 @@ TEST_CASE("curve to curve history")
     CHECK(!run("objExists", {{"args", {b2}}}).get<bool>());
     json parts = run("detachCurve", {{"args", {a2}}, {"parameter", 1.0}});
     CHECK(parts.size() == 2);
+}
+
+TEST_CASE("revolve axis and sweep up default to the scene up axis")
+{
+    run("newScene");
+    std::string prof = run("curve", {{"type", "poly"}, {"points", pts({D3(10, 0, 0), D3(10, 0, 20)})}, {"name", "Prof"}});
+    json y = run("revolve", {{"args", {prof}}});
+    CHECK(run("getAttr", {{"args", {y[1].get<std::string>() + ".axis"}}}) == json::array({0.0, 1.0, 0.0}));
+    math::setUpAxis(math::UpAxis::Z);
+    json z = run("revolve", {{"args", {prof}}});
+    json sweep = run("extrude", {{"args", {prof}}});
+    math::setUpAxis(math::UpAxis::Y);
+    CHECK(run("getAttr", {{"args", {z[1].get<std::string>() + ".axis"}}}) == json::array({0.0, 0.0, 1.0}));
+    CHECK(run("getAttr", {{"args", {sweep[1].get<std::string>() + ".upVector"}}}) == json::array({0.0, 0.0, 1.0}));
+    // Around z the profile, parallel to it, sweeps a tube 20 tall.
+    CHECK(meshOf(z[0])->bounds().size().z == doctest::Approx(20.0));
+    CHECK(meshOf(z[0])->bounds().size().x == doctest::Approx(20.0).epsilon(0.01));
 }

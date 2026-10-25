@@ -47,6 +47,64 @@ QByteArray LspFramer::frame(const json& message)
     return out;
 }
 
+QHash<int, std::vector<Token>> semanticTokensFromLsp(const json& result, const json& legend)
+{
+    LILA_ZONE();
+
+    QHash<int, std::vector<Token>> out;
+    const json data = result.is_object() ? result.value("data", json::array()) : json::array();
+    if (!data.is_array())
+        return out;
+    std::vector<int> kinds;
+    for (const json& t : legend.value("tokenTypes", json::array()))
+    {
+        std::string type = t.is_string() ? t.get<std::string>() : std::string();
+        TokenKind k = TokenKind::Count;
+        if (type == "namespace")
+            k = TokenKind::Module;
+        else if (type == "class" || type == "type" || type == "enum" || type == "typeParameter")
+            k = TokenKind::ClassName;
+        else if (type == "function" || type == "method")
+            k = TokenKind::Function;
+        else if (type == "parameter")
+            k = TokenKind::Parameter;
+        else if (type == "variable" || type == "property")
+            k = TokenKind::Variable;
+        else if (type == "enumMember")
+            k = TokenKind::ConstantName;
+        else if (type == "decorator")
+            k = TokenKind::Decorator;
+        else if (type == "selfParameter" || type == "clsParameter")
+            k = TokenKind::Self;
+        kinds.push_back(int(k));
+    }
+    int readonlyBit = -1;
+    const json modifiers = legend.value("tokenModifiers", json::array());
+    for (size_t i = 0; i < modifiers.size(); ++i)
+        if (modifiers[i] == "readonly")
+            readonlyBit = int(i);
+
+    int line = 0;
+    int col = 0;
+    for (size_t i = 0; i + 4 < data.size(); i += 5)
+    {
+        int dLine = data[i].get<int>();
+        int dCol = data[i + 1].get<int>();
+        line += dLine;
+        col = dLine == 0 ? col + dCol : dCol;
+        int length = data[i + 2].get<int>();
+        int type = data[i + 3].get<int>();
+        int mods = data[i + 4].get<int>();
+        if (type < 0 || type >= int(kinds.size()) || kinds[size_t(type)] == int(TokenKind::Count))
+            continue;
+        auto kind = TokenKind(kinds[size_t(type)]);
+        if (kind == TokenKind::Variable && readonlyBit >= 0 && (mods >> readonlyBit) & 1)
+            kind = TokenKind::ConstantName;
+        out[line].push_back({col, length, kind});
+    }
+    return out;
+}
+
 Diagnostic diagnosticFromLsp(const json& d)
 {
     Diagnostic out;
@@ -115,6 +173,14 @@ void LspClient::start(const QString& program, const QStringList& args, const jso
                 {{"documentationFormat", {"plaintext"}}, {"parameterInformation", {{"labelOffsetSupport", true}}}, {"activeParameterSupport", true}}}}},
              {"definition", {{"linkSupport", true}}},
              {"documentHighlight", json::object()},
+             {"semanticTokens",
+              {{"requests", {{"full", true}, {"range", false}}},
+               {"tokenTypes", {"namespace", "type", "class", "enum", "typeParameter", "parameter", "variable", "property", "enumMember",
+                               "function", "method", "decorator"}},
+               {"tokenModifiers", {"declaration", "definition", "readonly", "static", "async", "defaultLibrary"}},
+               {"formats", {"relative"}},
+               {"overlappingTokenSupport", false},
+               {"multilineTokenSupport", false}}},
              {"rename", {{"prepareSupport", false}}},
              {"publishDiagnostics", {{"relatedInformation", false}, {"tagSupport", {{"valueSet", {1, 2}}}}}},
          }},

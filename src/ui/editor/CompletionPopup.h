@@ -7,7 +7,7 @@
 #include <QFrame>
 
 class QListWidget;
-class QPlainTextEdit;
+class QTextBrowser;
 
 namespace lila::ui
 {
@@ -43,7 +43,7 @@ signals:
 
 private:
     QListWidget* mList;
-    QPlainTextEdit* mDoc;
+    QTextBrowser* mDoc;
     QList<CompletionEntry> mEntries;
     QString mTyped;
 };

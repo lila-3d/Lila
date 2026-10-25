@@ -10,11 +10,56 @@
 #include <QTextBlock>
 #include <QUrl>
 
+#include <vector>
+
 namespace lila::ui
 {
 namespace
 {
 constexpr const char* kScheme = "lila-trace";
+constexpr int kLevelProperty = QTextFormat::UserProperty + 1;
+
+QColor levelColor(LogLevel lvl, bool link)
+{
+    const palette::Scheme& s = palette::scheme();
+    if (link)
+        return s.outputLink;
+    return lvl == LogLevel::Error     ? s.outputError
+           : lvl == LogLevel::Warning ? s.outputWarning
+           : lvl == LogLevel::Info    ? s.outputInfo
+           : lvl == LogLevel::Echo    ? s.outputEcho
+                                      : s.outputText;
+}
+} // namespace
+
+QTextCharFormat logFormat(int level)
+{
+    QTextCharFormat fmt;
+    fmt.setForeground(levelColor(LogLevel(level), false));
+    fmt.setProperty(kLevelProperty, level);
+    return fmt;
+}
+
+void recolorLog(QTextDocument* doc)
+{
+    struct Run
+    {
+        int pos, length;
+        QTextCharFormat format;
+    };
+    std::vector<Run> runs;
+    for (QTextBlock b = doc->begin(); b.isValid(); b = b.next())
+        for (auto it = b.begin(); !it.atEnd(); ++it)
+            if (QTextFragment frag = it.fragment(); frag.charFormat().hasProperty(kLevelProperty))
+                runs.push_back({frag.position(), frag.length(), frag.charFormat()});
+    QTextCursor c(doc);
+    for (Run& r : runs)
+    {
+        r.format.setForeground(levelColor(LogLevel(r.format.intProperty(kLevelProperty)), r.format.isAnchor()));
+        c.setPosition(r.pos);
+        c.setPosition(r.pos + r.length, QTextCursor::KeepAnchor);
+        c.setCharFormat(r.format);
+    }
 }
 
 OutputView::OutputView(QWidget* parent) : QPlainTextEdit(parent)
@@ -24,10 +69,8 @@ OutputView::OutputView(QWidget* parent) : QPlainTextEdit(parent)
     setLineWrapMode(QPlainTextEdit::NoWrap);
     setMouseTracking(true);
     setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
-    QPalette p = palette();
-    p.setColor(QPalette::Base, palette::gray(26));
-    p.setColor(QPalette::Text, palette::gray(205));
-    setPalette(p);
+    palette::onLookChanged(this, [this] { applyLook(); });
+    applyLook();
 
     QFont f("JetBrains Mono");
     f.setStyleHint(QFont::Monospace);
@@ -52,12 +95,22 @@ void OutputView::setEditorFont(const QFont& font)
     document()->setDefaultFont(font);
 }
 
+void OutputView::applyLook()
+{
+    QPalette p = palette();
+    p.setColor(QPalette::Base, palette::scheme().outputBg);
+    p.setColor(QPalette::Text, palette::scheme().outputText);
+    setPalette(p);
+
+    recolorLog(document());
+}
+
 void OutputView::append(int level, const QString& text)
 {
     auto lvl = LogLevel(level);
     if (lvl == LogLevel::Debug)
         return;
-    // Grayscale: severity reads by prefix and brightness, not hue.
+    // Severity reads by prefix as well as colour, so it survives the monotone look.
     QString line = text;
     if (lvl == LogLevel::Warning)
         line = "# Warning: " + text;
@@ -68,11 +121,7 @@ void OutputView::append(int level, const QString& text)
     if (lvl != LogLevel::Output && lvl != LogLevel::Echo && !line.endsWith('\n'))
         line += '\n';
 
-    QTextCharFormat fmt;
-    fmt.setForeground(lvl == LogLevel::Error || lvl == LogLevel::Warning ? palette::gray(250)
-                      : lvl == LogLevel::Info                             ? palette::gray(135)
-                      : lvl == LogLevel::Echo                             ? palette::gray(160)
-                                                                          : palette::gray(208));
+    QTextCharFormat fmt = logFormat(level);
     if (lvl == LogLevel::Error)
         fmt.setFontWeight(QFont::Bold);
 
@@ -95,7 +144,7 @@ void OutputView::append(int level, const QString& text)
         link.setAnchor(true);
         link.setAnchorHref(QString("%1:%2:%3").arg(kScheme).arg(ref->line).arg(QString::fromUtf8(QUrl::toPercentEncoding(ref->file))));
         link.setFontUnderline(true);
-        link.setForeground(palette::gray(240));
+        link.setForeground(levelColor(lvl, true));
         c.insertText(rest.mid(ref->start, ref->length).toString(), link);
         rest = rest.mid(ref->start + ref->length);
     }

@@ -11,7 +11,8 @@ namespace lila::geo
 {
 /**
  * Maya-style edge loop through e: crosses valence-4 points to the edge sharing no face with the
- * current one, and follows boundaries. Ordered; closed loops start at e.
+ * current one, follows borders wherever they do not branch, and runs along an n-gon's rim through
+ * valence-3 points between quads. Stops at other poles. Ordered; closed loops start at e.
  */
 LILA_SCENE_API std::vector<Index> edgeLoop(const Mesh& mesh, Index e);
 

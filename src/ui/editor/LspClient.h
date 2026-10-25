@@ -3,6 +3,7 @@
 #include "core/Export.h"
 
 #include "ui/editor/EditorTypes.h"
+#include "ui/editor/PythonHighlighter.h"
 
 #include <nlohmann/json.hpp>
 
@@ -32,6 +33,12 @@ private:
 
 /** Converts an LSP `Diagnostic` object. */
 LILA_UI_API Diagnostic diagnosticFromLsp(const nlohmann::json& d);
+
+/**
+ * Decodes a `textDocument/semanticTokens/full` result against the server's legend into highlighter tokens by line.
+ * Token types the highlighter has no kind for are left out, so the lexical colour stays.
+ */
+LILA_UI_API QHash<int, std::vector<Token>> semanticTokensFromLsp(const nlohmann::json& result, const nlohmann::json& legend);
 
 /**
  * A language server over stdio. Requests made before the server is initialized are dropped (the callback never

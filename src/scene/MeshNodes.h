@@ -59,9 +59,12 @@ LILA_SCENE_API SymmetryState symmetryState(const Graph& g, const std::vector<Nod
  */
 LILA_SCENE_API double symmetryOffset(const Node& mesh, int axis);
 
+/** World up as the scene's up axis pref sets it: +Y, or +Z in a Z-up scene. */
+LILA_SCENE_API glm::dvec3 sceneUp();
+
 /**
- * Stands a mesh on a surface point: its up axis turned to normal (left alone when normal is zero) and its origin on
- * position, or, for a sphere primitive cut short by its fraction, its open base on position.
+ * Stands a mesh on a surface point: its object space scene up (sceneUp) turned to normal (left alone when normal is
+ * zero) and its origin on position, or, for a sphere primitive cut short by its fraction, its open base on position.
  */
 LILA_SCENE_API void placePrimitive(Graph& g, NodeId mesh, const glm::dvec3& position, const glm::dvec3& normal);
 

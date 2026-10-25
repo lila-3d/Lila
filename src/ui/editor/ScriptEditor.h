@@ -12,8 +12,11 @@
 #include <functional>
 #include <vector>
 
+class QAction;
+class QKeyEvent;
 class QLabel;
 class QMenu;
+class QToolBar;
 class QSplitter;
 class QTabWidget;
 
@@ -25,8 +28,9 @@ class LspClient;
 class OutputView;
 
 /**
- * The Python script editor panel: tabs of CodeEditor over an output pane, run with Ctrl+Enter (or numpad Enter)
- * and Shift+Enter per `# %%` cell. Open tabs, unsaved buffers included, come back from the "scriptEditor" prefs.
+ * The Python script editor panel: tabs of CodeEditor over an output pane, run with Ctrl+Enter (or numpad Enter),
+ * Shift+Enter for the caret's line and Ctrl+Shift+Enter per `# %%` cell. Open tabs, unsaved buffers included, come
+ * back from the "scriptEditor" prefs.
  * Language tools are fetched on first show and the editor works without them meanwhile.
  *
  * Each tab saves to a storage::Location: inside the scene (the sceneScript command), the workspace's .lila/scripts,
@@ -60,6 +64,14 @@ public:
 
     /** Runs the selection or the whole tab, or the cell under the cursor. */
     void runCurrent(bool cell);
+    /** Runs the caret's line, or the selection when there is one. */
+    void runLine();
+
+    /**
+     * Routes the run keys through the app's rebindable hotkeys: `fn` names the action a key is bound to ("script.run",
+     * "script.runLine", "script.runCell"), or returns empty. Without it the editor's default keys apply.
+     */
+    void setRunKeyLookup(std::function<QString(QKeyEvent*)> fn);
 
     CodeEditor* currentEditor() const;
     CodeEditor* editorAt(int index) const;
@@ -70,6 +82,12 @@ public:
 signals:
     /** F1 / Ctrl+Q on a symbol, fully qualified when the interpreter can resolve it. */
     void showDocs(const QString& symbol);
+    /** The toolbar's API Docs button: the scripting section of the docs. */
+    void apiDocsRequested();
+    /** The toolbar's API Reference button: the live reference panel. */
+    void apiReferenceRequested();
+    /** The toolbar's Batch Run button: the batch script execution window. */
+    void batchRunRequested();
 
 protected:
     void showEvent(QShowEvent* e) override;
@@ -99,10 +117,23 @@ private:
     void runOpenedSceneScripts(const std::vector<scene::scripts::Script>& list);
     void fillSaveMenu(QMenu* menu);
     void fillOpenMenu(QMenu* menu);
+    void fillFormatMenu(QMenu* menu);
+    void run(CodeEditor* editor, QString code, int firstLine);
     void applyVim();
     void attachVim(CodeEditor* editor);
     void updateVimStatus();
 
+    /** A toolbar toggle bound to a bool pref, kept in step when the pref changes elsewhere. */
+    struct PrefToggle
+    {
+        QAction* action;
+        const char* key;
+        bool fallback;
+    };
+
+    QToolBar* mBar;
+    std::vector<PrefToggle> mPrefToggles;
+    std::function<QString(QKeyEvent*)> mRunKeyLookup;
     QTabWidget* mTabs;
     FindBar* mFind;
     OutputView* mOutput;

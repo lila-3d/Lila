@@ -3,6 +3,8 @@
 #include "core/Log.h"
 #include "python/Python.h"
 #include "ui/Theme.h"
+#include "ui/editor/EditorPalette.h"
+#include "ui/editor/OutputView.h"
 
 #include <QFontDatabase>
 #include <QKeyEvent>
@@ -35,6 +37,7 @@ ScriptPanel::ScriptPanel(QWidget* parent) : QWidget(parent)
         delete menu;
     });
     layout->addWidget(mOutput, 1);
+    palette::onLookChanged(mOutput, [this] { recolorLog(mOutput->document()); });
 
     mInput = new QLineEdit(this);
     mInput->setFont(mono);
@@ -60,7 +63,7 @@ void ScriptPanel::append(int level, const QString& text)
     auto lvl = LogLevel(level);
     if (lvl == LogLevel::Debug)
         return;
-    // Grayscale: severity reads by prefix and brightness, not hue.
+    // Severity reads by prefix as well as colour, so it survives the monotone look.
     QString line = text;
     if (lvl == LogLevel::Warning)
         line = "# Warning: " + text;
@@ -71,10 +74,7 @@ void ScriptPanel::append(int level, const QString& text)
 
     QTextCursor c(mOutput->document());
     c.movePosition(QTextCursor::End);
-    QTextCharFormat fmt;
-    fmt.setForeground(lvl == LogLevel::Error || lvl == LogLevel::Warning ? themeShade(250)
-                      : lvl == LogLevel::Info                             ? themeShade(140)
-                                                                          : themeShade(205));
+    QTextCharFormat fmt = logFormat(level);
     if (lvl == LogLevel::Error)
         fmt.setFontWeight(QFont::Bold);
     if (lvl == LogLevel::Output || lvl == LogLevel::Echo)

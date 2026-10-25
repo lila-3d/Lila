@@ -6,6 +6,8 @@ here too after refresh().
 
 import _lila
 
+from ._stubgen import command_doc
+
 __all__ = []
 
 
@@ -20,13 +22,7 @@ def _make(spec):
 
     command.__name__ = name
     command.__qualname__ = name
-    lines = [spec["doc"]]
-    if spec["flags"]:
-        lines.append("")
-        for f in spec["flags"]:
-            short = f" ({f['short']})" if f["short"] and f["short"] != f["name"] else ""
-            lines.append(f"{f['name']}{short}: {f['type']}  {f['doc']}".rstrip())
-    command.__doc__ = "\n".join(lines)
+    command.__doc__ = command_doc(spec)
     return command
 
 

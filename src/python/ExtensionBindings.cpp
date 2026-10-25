@@ -150,7 +150,7 @@ void bindExtensions(nb::module_& m)
     p.def(
         "register_command",
         [](const std::string& name, nb::callable fn, const std::string& doc, const std::string& positional, nb::list flags,
-           bool undoable, const std::string& owner) {
+           bool undoable, const std::string& owner, nb::list examples) {
             if (name.empty())
                 throw nb::value_error("command name is empty");
             // Re-registering a Python command (a reloaded script) is fine; replacing anything else is not.
@@ -165,6 +165,8 @@ void bindExtensions(nb::module_& m)
             def.positionalDoc = positional;
             def.undoable = undoable;
             def.owner = owner;
+            for (nb::handle e : examples)
+                def.examples.push_back(nb::cast<std::string>(nb::str(e)));
             for (nb::handle f : flags)
             {
                 if (!nb::isinstance<nb::dict>(f))
@@ -176,9 +178,13 @@ void bindExtensions(nb::module_& m)
                 fd.shortName = str(f, "short");
                 fd.type = argType(str(f, "type"));
                 fd.doc = str(f, "doc");
+                fd.example = str(f, "example");
                 nb::dict d = nb::borrow<nb::dict>(f);
                 if (d.contains("default"))
                     fd.defaultValue = toJson(d["default"]);
+                if (d.contains("choices") && !d["choices"].is_none())
+                    for (nb::handle c : d["choices"])
+                        fd.choices.push_back(nb::cast<std::string>(nb::str(c)));
                 def.flags.push_back(std::move(fd));
             }
             def.run = [fn = hold(fn), name](const Args& a) { return callPython(fn, name, a); };
@@ -186,7 +192,7 @@ void bindExtensions(nb::module_& m)
             fromPython.insert(name);
         },
         nb::arg("name"), nb::arg("fn"), nb::arg("doc") = "", nb::arg("positional") = "", nb::arg("flags") = nb::list(),
-        nb::arg("undoable") = true, nb::arg("owner") = "");
+        nb::arg("undoable") = true, nb::arg("owner") = "", nb::arg("examples") = nb::list());
 
     p.def("unregister_command", [](const std::string& name) {
         bool had = ops::find(name) != nullptr;

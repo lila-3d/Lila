@@ -43,6 +43,7 @@
       "F2": "edit.rename",
       "`": { "press": "shelf.floatingOpen", "release": "shelf.floatingRelease" },
       "Shift+`": "select.objectMode",
+      "Ctrl+`": "window.commandLine",
       "Shift+1": "select.vertexMode",
       "Shift+2": "select.edgeMode",
       "Shift+3": "select.faceMode",
@@ -152,6 +153,14 @@
       "Ctrl+D": "textureSets.duplicate",
       "Delete": "textureSets.delete",
       "Backspace": "textureSets.delete"
+    },
+    "scriptEditor": {
+      "Ctrl+T": "script.searchApi",
+      "Ctrl+Return": "script.run",
+      "Ctrl+Enter": "script.run",
+      "Enter": "script.run",
+      "Shift+Return": "script.runLine",
+      "Ctrl+Shift+Return": "script.runCell"
     },
     "baker": {
       "Delete": "bake.removeRows",

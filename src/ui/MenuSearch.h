@@ -2,6 +2,10 @@
 
 #include "core/Export.h"
 
+#include <QString>
+
+#include <functional>
+
 class QMenuBar;
 class QWidget;
 
@@ -28,4 +32,20 @@ LILA_UI_API void openBox(QMenuBar* bar, QWidget* over);
  * same way openBox does.
  */
 LILA_UI_API void openSceneFinder(QMenuBar* bar, QWidget* over);
+
+/** Where the scripting API mode sends its picks: the script editor that opened it. */
+struct ApiTarget
+{
+    /** Source to insert at the cursor; ends in "(" for a call. */
+    std::function<void(const QString& code)> insert;
+    /** Full docs for an ApiSymbol key. */
+    std::function<void(const QString& key)> showDocs;
+};
+
+/**
+ * The same box listing the scripting API (apiSymbols): commands, their flags and the lila Python package, matched on
+ * name and summary. Enter inserts the call, Shift+Enter or the book at a row's right shows its docs. The box's tabs
+ * switch to menus or the scene and back.
+ */
+LILA_UI_API void openApiSearch(QMenuBar* bar, QWidget* over, ApiTarget target);
 } // namespace lila::ui::menuSearch

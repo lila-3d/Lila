@@ -45,6 +45,7 @@ namespace
 {
 constexpr const char* kPrefs = "scriptEditor";
 constexpr const char* kSceneProperty = "lilaSceneScript";
+constexpr const char* kIconProperty = "lilaIcon";
 using storage::Location;
 
 bool vimEnabled()
@@ -66,6 +67,21 @@ bool samePath(const QString& a, const QString& b)
 #endif
 }
 
+/** Python's own library and installed packages: opened to read, from go to definition, never to edit. */
+bool isLibraryPath(const QString& path)
+{
+    // Asked again until the interpreter can answer.
+    static QString home;
+    if (home.isEmpty())
+        if (QString exe = interp::basePython(); !exe.isEmpty())
+            home = QFileInfo(exe).absolutePath();
+    const QString p = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+    for (const char* part : {"/site-packages/", "/dist-packages/", "/typeshed/"})
+        if (p.contains(part, Qt::CaseInsensitive))
+            return true;
+    return !home.isEmpty() && p.startsWith(home + "/", Qt::CaseInsensitive);
+}
+
 QString readText(const QString& path, bool* ok)
 {
     QFile f(path);
@@ -83,25 +99,35 @@ ScriptEditor::ScriptEditor(QWidget* parent) : QWidget(parent)
     mFont = QFont("JetBrains Mono");
     mFont.setStyleHint(QFont::Monospace);
     mFont.setPointSizeF(9.5);
+    setProperty("hotkeyContext", "scriptEditor");
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    auto* bar = new QToolBar(this);
-    bar->setIconSize(QSize(14, 14));
+    mBar = new QToolBar(this);
+    QToolBar* bar = mBar;
+    bar->setIconSize(QSize(16, 16));
     bar->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    auto add = [&](const QString& text, const QString& tip, auto fn) {
+    auto add = [&](const QString& text, const QString& icon, const QString& tip, auto fn) {
         QAction* a = bar->addAction(text);
         a->setToolTip(tip);
+        a->setProperty(kIconProperty, icon);
         connect(a, &QAction::triggered, this, fn);
         return a;
     };
-    add("New", "New tab (Ctrl+N)", [this] { newTab(); });
-    auto addMenuButton = [&](const QString& text, const QString& tip, auto fn, void (ScriptEditor::*fill)(QMenu*)) {
+    auto addToggle = [&](const QString& text, const QString& icon, const QString& tip, const char* key, bool fallback) {
+        QAction* a = add(text, icon, tip, [key](bool on) { PrefStore::get().set(kPrefs, key, on); });
+        a->setCheckable(true);
+        a->setChecked(PrefStore::get().value<bool>(kPrefs, key, fallback));
+        mPrefToggles.push_back({a, key, fallback});
+    };
+    add("New", "file-plus", "New tab (Ctrl+N)", [this] { newTab(); });
+    auto addMenuButton = [&](const QString& text, const QString& icon, const QString& tip, auto fn, void (ScriptEditor::*fill)(QMenu*)) {
         auto* button = new QToolButton(bar);
         button->setText(text);
         button->setToolTip(tip);
+        button->setProperty(kIconProperty, icon);
         button->setPopupMode(QToolButton::MenuButtonPopup);
         auto* menu = new QMenu(button);
         menu->setToolTipsVisible(true);
@@ -113,19 +139,36 @@ ScriptEditor::ScriptEditor(QWidget* parent) : QWidget(parent)
         connect(button, &QToolButton::clicked, this, fn);
         bar->addWidget(button);
     };
-    addMenuButton("Open", "Open file (Ctrl+O); the arrow lists scene, project and global scripts", [this] { openFileDialog(); },
+    addMenuButton("Open", "folder-open", "Open file (Ctrl+O); the arrow lists scene, project and global scripts", [this] { openFileDialog(); },
                   &ScriptEditor::fillOpenMenu);
-    addMenuButton("Save", "Save (Ctrl+S, Ctrl+Shift+S to save as); the arrow picks where", [this] { saveTab(mTabs->currentIndex()); },
+    addMenuButton("Save", "device-floppy", "Save (Ctrl+S, Ctrl+Shift+S to save as); the arrow picks where", [this] { saveTab(mTabs->currentIndex()); },
                   &ScriptEditor::fillSaveMenu);
     bar->addSeparator();
-    add("Run", "Run selection or tab (Ctrl+Enter, numpad Enter)", [this] { runCurrent(false); });
-    add("Run Cell", "Run the # %% cell under the cursor (Shift+Enter)", [this] { runCurrent(true); });
+    add("Run", "player-play", "Run the selection or the whole tab (Ctrl+Enter, numpad Enter)", [this] { runCurrent(false); });
+    add("Run Line", "arrow-bar-to-right", "Run the caret's line, or the selection (Shift+Enter)", [this] { runLine(); });
+    add("Run Cell", "player-track-next", "Run the # %% cell under the cursor (Ctrl+Shift+Enter)", [this] { runCurrent(true); });
+    add("Batch Run", "file-stack", "Batch Script Execution: run a script over many scene files in background workers",
+        [this] { emit batchRunRequested(); });
     bar->addSeparator();
-    add("Format", "Format with ruff (Ctrl+Alt+L)", [this] {
-        if (CodeEditor* e = currentEditor())
-            e->formatDocument();
-    });
-    add("Clear Output", "Clear the output pane", [this] { mOutput->clear(); });
+    addMenuButton("Format", "align-left", "Format the selection or the tab with ruff (Ctrl+Alt+L); the arrow has imports and fixes",
+                  [this] {
+                      if (CodeEditor* e = currentEditor())
+                          e->formatDocument();
+                  },
+                  &ScriptEditor::fillFormatMenu);
+    add("Clear Output", "clear-all", "Clear the output pane", [this] { mOutput->clear(); });
+    bar->addSeparator();
+    addToggle("Relative Line Numbers", "list-numbers", "Relative line numbers: the others count from the caret's line",
+              CodeEditor::kRelativeLineNumbersPref, CodeEditor::kRelativeLineNumbersDefault);
+    addToggle("Vim", "keyboard", "Vim keybindings", "/vim", false);
+    auto* spacer = new QWidget(bar);
+    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    bar->addWidget(spacer);
+    add("API Reference", "list-search", "The API Reference panel: every command, flag and lila module, searchable, from the running Lila",
+        [this] { emit apiReferenceRequested(); });
+    add("API Docs", "book", "The Python API pages of the docs in the Docs panel; Shift+click opens them in the web browser. F1 or Ctrl+click on a "
+        "lila name opens its page",
+        [this] { emit apiDocsRequested(); });
     layout->addWidget(bar);
 
     mSplitter = new QSplitter(Qt::Vertical, this);
@@ -207,8 +250,16 @@ ScriptEditor::ScriptEditor(QWidget* parent) : QWidget(parent)
         QTimer::singleShot(0, this, [this, list] { runOpenedSceneScripts(list); });
     });
     mPrefsListener = PrefStore::get().onChanged([this](const std::string& file) {
-        if (file == kPrefs)
-            applyVim();
+        if (file != kPrefs)
+            return;
+        applyVim();
+        for (const PrefToggle& t : mPrefToggles)
+        {
+            QSignalBlocker block(t.action);
+            t.action->setChecked(PrefStore::get().value<bool>(kPrefs, t.key, t.fallback));
+        }
+        for (int i = 0; i < mTabs->count(); ++i)
+            editorAt(i)->refreshGutter();
     });
 
     restoreSession();
@@ -237,6 +288,38 @@ void ScriptEditor::setIconProvider(std::function<QIcon(const QString&)> fn)
     mIconProvider = std::move(fn);
     for (int i = 0; i < mTabs->count(); ++i)
         updateTabTitle(editorAt(i));
+    if (!mIconProvider)
+        return;
+    // Icons only from here on; the labels stay as the tooltips' first words.
+    mBar->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    for (QAction* a : mBar->actions())
+        if (QString name = a->property(kIconProperty).toString(); !name.isEmpty())
+            a->setIcon(mIconProvider(name));
+    for (QToolButton* b : mBar->findChildren<QToolButton*>(QString(), Qt::FindDirectChildrenOnly))
+        if (QString name = b->property(kIconProperty).toString(); !name.isEmpty())
+        {
+            b->setIcon(mIconProvider(name));
+            b->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        }
+}
+
+void ScriptEditor::setRunKeyLookup(std::function<QString(QKeyEvent*)> fn)
+{
+    mRunKeyLookup = std::move(fn);
+    for (int i = 0; i < mTabs->count(); ++i)
+        editorAt(i)->hostOwnsRunKeys = bool(mRunKeyLookup);
+}
+
+void ScriptEditor::fillFormatMenu(QMenu* menu)
+{
+    CodeEditor* e = currentEditor();
+    if (!e)
+        return;
+    const bool selection = e->textCursor().hasSelection();
+    menu->addAction(selection ? "Format Selection\tCtrl+Alt+L" : "Format Document\tCtrl+Alt+L", e, &CodeEditor::formatDocument);
+    menu->addAction("Organize Imports\tCtrl+Alt+O", e, &CodeEditor::organizeImports);
+    menu->addAction("Fix All (safe fixes)", e, &CodeEditor::fixAll);
+    menu->addAction("Show Quick Fixes\tAlt+Enter", e, &CodeEditor::showQuickFixes);
 }
 
 void ScriptEditor::setEditorFont(const QFont& font)
@@ -279,7 +362,9 @@ CodeEditor* ScriptEditor::addEditor(const QString& path, const QString& text, bo
     editor->setPlainText(text);
     editor->document()->setModified(modified);
     editor->setFilePath(path);
+    editor->setReadOnly(!path.isEmpty() && isLibraryPath(path));
     editor->setRuffExe(mRuffExe);
+    editor->hostOwnsRunKeys = bool(mRunKeyLookup);
     editor->setLanguageClient(mLsp);
     wire(editor);
     if (vimEnabled())
@@ -309,12 +394,25 @@ void ScriptEditor::wire(CodeEditor* editor)
     editor->hostKeyHandler = [this](QKeyEvent* e) { return hostKey(e); };
     connect(editor, &CodeEditor::runRequested, this, [this] { runCurrent(false); });
     connect(editor, &CodeEditor::runCellRequested, this, [this] { runCurrent(true); });
+    connect(editor, &CodeEditor::runLineRequested, this, &ScriptEditor::runLine);
     connect(editor, &CodeEditor::findRequested, this, [this, editor](bool replace) {
         mFind->setEditor(editor);
         mFind->activate(replace);
     });
     connect(editor, &CodeEditor::showDocs, this, &ScriptEditor::showDocs);
     connect(editor, &CodeEditor::openLocation, this, [this](const QString& path, int line, int col) { openFile(path, line, col); });
+    connect(editor, &CodeEditor::openDefinition, this, [this](const QString& path, int line, int col, int endLine, int endCol) {
+        // An untitled tab is analysed as a temp file; its definitions belong to the tab, not that file.
+        for (int i = 0; i < mTabs->count(); ++i)
+            if (samePath(editorAt(i)->analysisPath(), path))
+            {
+                mTabs->setCurrentIndex(i);
+                editorAt(i)->selectRange(line, col, endLine, endCol);
+                return;
+            }
+        if (CodeEditor* target = openFile(path))
+            target->selectRange(line, col, endLine, endCol);
+    });
     connect(editor, &CodeEditor::statusMessage, this, [this](const QString& text) {
         mStatus->setText(text);
         QTimer::singleShot(4000, this, &ScriptEditor::updateStatus);
@@ -352,6 +450,8 @@ void ScriptEditor::updateTabTitle(CodeEditor* editor)
     case Location::Global: tip = "Global script: " + path; break;
     case Location::File: tip = path; break;
     }
+    if (editor->isReadOnly())
+        tip += " (read only)";
     mTabs->setTabToolTip(index, tip);
     if (mIconProvider)
         mTabs->setTabIcon(index, mIconProvider(storage::iconName(loc)));
@@ -567,8 +667,7 @@ bool ScriptEditor::saveTabAs(int index, Location preset)
 
 bool ScriptEditor::saveToScene(CodeEditor* editor, const QString& name, bool runOnOpen)
 {
-    if (PrefStore::get().value<bool>(kPrefs, "/formatOnSave", false))
-        editor->formatDocument();
+    editor->prepareForSave();
     try
     {
         ops::execute("sceneScript", {{"args", {name.toStdString()}}, {"text", editor->toPlainText().toStdString()}, {"runOnOpen", runOnOpen}});
@@ -589,8 +688,7 @@ bool ScriptEditor::saveToScene(CodeEditor* editor, const QString& name, bool run
 
 bool ScriptEditor::saveToFile(CodeEditor* editor, const QString& path)
 {
-    if (PrefStore::get().value<bool>(kPrefs, "/formatOnSave", false))
-        editor->formatDocument();
+    editor->prepareForSave();
 
     QSaveFile f(path);
     if (!f.open(QIODevice::WriteOnly))
@@ -899,6 +997,18 @@ bool ScriptEditor::closeTab(int index)
 
 bool ScriptEditor::hostKey(QKeyEvent* e)
 {
+    if (mRunKeyLookup)
+    {
+        const QString id = mRunKeyLookup(e);
+        if (id == "script.run")
+            runCurrent(false);
+        else if (id == "script.runLine")
+            runLine();
+        else if (id == "script.runCell")
+            runCurrent(true);
+        if (!id.isEmpty())
+            return true;
+    }
     Qt::KeyboardModifiers mods = e->modifiers() & ~Qt::KeypadModifier;
     int key = e->key();
     if (mods == Qt::ControlModifier)
@@ -938,7 +1048,33 @@ void ScriptEditor::runCurrent(bool cell)
     if (!editor)
         return;
     int firstLine = 0;
-    QString code = text::dedent(editor->codeToRun(cell, &firstLine));
+    QString code = editor->codeToRun(cell, &firstLine);
+    if (cell)
+        editor->flashLines(firstLine, firstLine + int(code.count('\n')));
+    run(editor, code, firstLine);
+}
+
+void ScriptEditor::runLine()
+{
+    CodeEditor* editor = currentEditor();
+    if (!editor)
+        return;
+    if (editor->textCursor().hasSelection())
+    {
+        runCurrent(false);
+        return;
+    }
+    int line = 0;
+    QString code = editor->lineToRun(&line);
+    editor->flashLines(line, line);
+    run(editor, code, line);
+}
+
+void ScriptEditor::run(CodeEditor* editor, QString code, int firstLine)
+{
+    LILA_ZONE();
+
+    code = text::dedent(code);
     if (code.trimmed().isEmpty())
         return;
     if (!python::initialized())
@@ -1013,7 +1149,8 @@ void ScriptEditor::startLanguageServer()
         return;
     QString pythonDir = QString::fromStdWString(paths::pythonDir().wstring());
     nlohmann::json analysis = {
-        {"extraPaths", {QDir::cleanPath(pythonDir).toStdString()}},
+        // _namespace holds the generated __builtins__.pyi: the interactive namespace's bare command names.
+        {"extraPaths", {QDir::cleanPath(pythonDir).toStdString(), QDir::cleanPath(pythonDir + "/lila/_namespace").toStdString()}},
         {"typeCheckingMode", "standard"},
         {"diagnosticMode", "openFilesOnly"},
         {"autoImportCompletions", true},

@@ -13,10 +13,10 @@ try:
 except ImportError:  # an older lila binary running against newer python files
     Progress = None
 
-from . import ops, events, math, nodes, prefs, scene_data, ui
+from . import ops, docs, events, math, nodes, prefs, scene_data, ui
 from .nodes import Node, exists, group, locator, node, selected
 
-__all__ = ["ops", "events", "math", "nodes", "prefs", "scene_data", "ui", "CommandError", "Progress", "workspace", "Node", "node", "selected", "exists", "locator", "group"]
+__all__ = ["ops", "docs", "events", "math", "nodes", "prefs", "scene_data", "ui", "CommandError", "Progress", "workspace", "Node", "node", "selected", "exists", "locator", "group"]
 
 
 def workspace():

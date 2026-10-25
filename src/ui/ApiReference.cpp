@@ -309,16 +309,29 @@ void ApiReference::addCommands()
                         "<tr><th>Flag</th><th>Short</th><th>Type</th><th>Default</th><th>Description</th></tr>";
             for (const FlagDef& f : def->flags)
             {
+                QString about = inlineMarkup(qs(f.doc));
+                if (!f.choices.empty())
+                {
+                    QStringList quoted;
+                    for (const std::string& c : f.choices)
+                        quoted << "<code>" + esc(pyValue(c)) + "</code>";
+                    about += " One of " + quoted.join(", ") + ".";
+                }
+                if (!f.example.empty())
+                    about += "<br><code>" + esc(qs(f.example)) + "</code>";
                 bool hasShort = !f.shortName.empty() && f.shortName != f.name;
                 t += "<tr><td class=\"f\">" + esc(qs(f.name)) + "</td><td class=\"f\">" + (hasShort ? esc(qs(f.shortName)) : QString()) +
                      "</td><td class=\"muted\">" + typeName(f.type) + "</td><td class=\"f\">" +
                      (f.defaultValue.is_null() ? QString("<span class=\"muted\">unset</span>") : esc(pyValue(f.defaultValue))) +
-                     "</td><td>" + inlineMarkup(qs(f.doc)) + "</td></tr>";
+                     "</td><td>" + about + "</td></tr>";
             }
             e.extraHtml = t + "</table>";
         }
 
-        e.example = firstExample(e.doc);
+        QStringList examples;
+        for (const std::string& x : def->examples)
+            examples << qs(x).trimmed();
+        e.example = examples.isEmpty() ? firstExample(e.doc) : examples.join("\n\n");
         if (e.example.isEmpty())
         {
             QString arg;
@@ -670,5 +683,46 @@ bool ApiReference::showSymbol(const QString& symbol)
     }
     display(index, note);
     return true;
+}
+
+std::vector<ApiSymbol> apiSymbols()
+{
+    LILA_ZONE();
+
+    std::vector<ApiSymbol> out;
+    for (const CommandDef* def : ops::all())
+    {
+        QString name = qs(def->name);
+        QString key = "lila.ops." + name;
+        out.push_back({key, name, "command", firstLine(qs(def->doc)), name + "("});
+        for (const FlagDef& f : def->flags)
+        {
+            QString call = name + "(" + qs(f.name) + "=";
+            out.push_back({key, call + ")", "flag", firstLine(qs(f.doc)), call});
+        }
+    }
+
+    json modules = json::parse(pybridge::apiDocJson(), nullptr, false);
+    if (!modules.is_array())
+        return out;
+    auto str = [](const json& j, const char* key) { return j.contains(key) && j[key].is_string() ? qs(j[key].get<std::string>()) : QString(); };
+    std::function<void(const json&)> walk = [&](const json& j) {
+        QString kind = str(j, "kind");
+        QString qualname = str(j, "qualname");
+        // Commands are listed above from the registry.
+        if (!qualname.isEmpty() && !qualname.startsWith("lila.ops."))
+        {
+            bool member = kind == "method" || kind == "staticmethod" || kind == "classmethod" || kind == "property" || kind == "attribute";
+            bool callable = kind == "function" || kind == "class" || kind.endsWith("method");
+            QString insert = member ? str(j, "name") : qualname;
+            out.push_back({qualname, qualname, kind, firstLine(str(j, "doc")), callable ? insert + "(" : insert});
+        }
+        if (j.contains("members") && j["members"].is_array())
+            for (const json& m : j["members"])
+                walk(m);
+    };
+    for (const json& m : modules)
+        walk(m);
+    return out;
 }
 } // namespace lila::ui

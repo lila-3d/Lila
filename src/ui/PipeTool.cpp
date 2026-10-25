@@ -120,6 +120,8 @@ public:
         mAttach = prefB("attach", false);
         mSurface = prefB("surface", true);
         mStart = selectedLoop();
+        if (mStart && mFromLoop)
+            mRadius = startRadius();
         restart();
         log::info("Pipe: click and drag to draw the path, B-drag or Ctrl+scroll sets the next point's radius, +/- sides, Enter builds it");
     }
@@ -128,7 +130,7 @@ public:
 
     bool mousePress(QMouseEvent* e, const ViewInfo& view) override
     {
-        if (tools::softSelectAdjusting() && (e->button() == Qt::LeftButton || e->button() == Qt::MiddleButton))
+        if (tools::brushRadiusDrag(e, false))
         {
             mRadiusDrag = true;
             mPressPx = e->position();
@@ -258,6 +260,8 @@ public:
         case Qt::Key_F:
             mFromLoop = !mFromLoop;
             setPref("fromLoop", mFromLoop);
+            if (mStart && mFromLoop)
+                mRadius = startRadius();
             if (mStart && mSpline.size())
                 mSpline.radius[0] = startRadius();
             break;

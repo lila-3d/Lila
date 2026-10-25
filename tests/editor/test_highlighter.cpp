@@ -38,7 +38,8 @@ TEST_CASE("keywords, builtins, names")
     CHECK(kindAt(t, int(line.indexOf("None"))) == TokenKind::Constant);
     CHECK(kindAt(t, int(line.indexOf("return"))) == TokenKind::Keyword);
     CHECK(kindAt(t, int(line.indexOf("len"))) == TokenKind::Builtin);
-    CHECK(kindAt(t, int(line.indexOf("(n)")) + 1) == TokenKind::Count);
+    CHECK(kindAt(t, int(line.indexOf("n=None"))) == TokenKind::Parameter);
+    CHECK(kindAt(t, int(line.indexOf("(n)")) + 1) == TokenKind::Variable);
 }
 
 TEST_CASE("class names, decorators, attributes")
@@ -50,13 +51,13 @@ TEST_CASE("class names, decorators, attributes")
     CHECK(kindAt(t, 8) == TokenKind::Decorator);
     // An attribute named like a builtin is not the builtin.
     t = lex("x.list");
-    CHECK(kindAt(t, 2) == TokenKind::Count);
+    CHECK(kindAt(t, 2) == TokenKind::Variable);
 }
 
 TEST_CASE("soft keywords stay names when used as names")
 {
     auto t = lex("match = re.match(x)");
-    CHECK(kindAt(t, 0) == TokenKind::Count);
+    CHECK(kindAt(t, 0) == TokenKind::Variable);
     t = lex("match command:");
     CHECK(kindAt(t, 0) == TokenKind::Keyword);
 }
@@ -134,4 +135,87 @@ TEST_CASE("block data tells strings and comments apart")
     CHECK(!data.inStringOrComment(1));
     CHECK(data.inStringOrComment(5));
     CHECK(data.inStringOrComment(10));
+}
+
+TEST_CASE("calls, variables and keyword arguments")
+{
+    QString line = R"(cube = polyCube(n="NewCube", size = 2))";
+    auto t = lex(line);
+    CHECK(kindAt(t, 0) == TokenKind::Variable);
+    CHECK(kindAt(t, int(line.indexOf("polyCube"))) == TokenKind::Function);
+    CHECK(kindAt(t, int(line.indexOf("n="))) == TokenKind::Parameter);
+    CHECK(kindAt(t, int(line.indexOf("size"))) == TokenKind::Parameter);
+    t = lex("xform(piv)");
+    CHECK(kindAt(t, 0) == TokenKind::Function);
+    CHECK(kindAt(t, 6) == TokenKind::Variable);
+    line = "obj.method(a == b, key=lambda v, w=1: v.x)";
+    t = lex(line);
+    CHECK(kindAt(t, 0) == TokenKind::Variable);
+    CHECK(kindAt(t, 4) == TokenKind::Function);
+    CHECK(kindAt(t, int(line.indexOf("a =="))) == TokenKind::Variable);
+    CHECK(kindAt(t, int(line.indexOf("key"))) == TokenKind::Parameter);
+    CHECK(kindAt(t, int(line.indexOf("v,"))) == TokenKind::Parameter);
+    CHECK(kindAt(t, int(line.indexOf("w="))) == TokenKind::Parameter);
+    CHECK(kindAt(t, int(line.indexOf("v.x"))) == TokenKind::Variable);
+    // Names inside brackets that are not a call are not keyword arguments.
+    line = "if (x == 1): d = {k: v}";
+    t = lex(line);
+    CHECK(kindAt(t, int(line.indexOf("x"))) == TokenKind::Variable);
+    CHECK(kindAt(t, int(line.indexOf("d ="))) == TokenKind::Variable);
+}
+
+TEST_CASE("def parameters, classes, constants and modules")
+{
+    QString line = "def f(a, b: int = MAX, *args, **kw) -> Vec3:";
+    auto t = lex(line);
+    CHECK(kindAt(t, int(line.indexOf("a,"))) == TokenKind::Parameter);
+    CHECK(kindAt(t, int(line.indexOf("b:"))) == TokenKind::Parameter);
+    CHECK(kindAt(t, int(line.indexOf("int"))) == TokenKind::Builtin);
+    CHECK(kindAt(t, int(line.indexOf("MAX"))) == TokenKind::ConstantName);
+    CHECK(kindAt(t, int(line.indexOf("args"))) == TokenKind::Parameter);
+    CHECK(kindAt(t, int(line.indexOf("kw"))) == TokenKind::Parameter);
+    CHECK(kindAt(t, int(line.indexOf("Vec3"))) == TokenKind::ClassName);
+    t = lex("v = Vector(1, 2)");
+    CHECK(kindAt(t, 4) == TokenKind::ClassName);
+    line = "import lila.ops as ops";
+    t = lex(line);
+    CHECK(kindAt(t, 7) == TokenKind::Module);
+    CHECK(kindAt(t, 12) == TokenKind::Module);
+    CHECK(kindAt(t, int(line.lastIndexOf("ops"))) == TokenKind::Module);
+    line = "from lila.ops import polyCube, AXES";
+    t = lex(line);
+    CHECK(kindAt(t, 5) == TokenKind::Module);
+    CHECK(kindAt(t, int(line.indexOf("polyCube"))) == TokenKind::Variable);
+    CHECK(kindAt(t, int(line.indexOf("AXES"))) == TokenKind::ConstantName);
+}
+
+TEST_CASE("brackets carry across lines")
+{
+    int state = 0;
+    lex("cube = polyCube(", 0, &state);
+    CHECK(state != 0);
+    int next = 0;
+    auto t = lex(R"(    n="NewCube",)", state, &next);
+    CHECK(kindAt(t, 4) == TokenKind::Parameter);
+    t = lex(")", next, &next);
+    CHECK(next == 0);
+
+    lex("def run(", 0, &state);
+    t = lex("    count: int = 3,", state, &next);
+    CHECK(kindAt(t, 4) == TokenKind::Parameter);
+    t = lex("    name=None):", next, &next);
+    CHECK(kindAt(t, 4) == TokenKind::Parameter);
+    CHECK(next == 0);
+
+    // An unclosed bracket stops at the next statement at column 0.
+    lex("x = f(", 0, &state);
+    t = lex("y = 2", state, &next);
+    CHECK(next == 0);
+    CHECK(kindAt(t, 0) == TokenKind::Variable);
+
+    // A call opened inside a triple-quoted string's line keeps both.
+    lex(R"(f(""")", 0, &state);
+    t = lex(R"(""", n=1))", state, &next);
+    CHECK(kindAt(t, 5) == TokenKind::Parameter);
+    CHECK(next == 0);
 }

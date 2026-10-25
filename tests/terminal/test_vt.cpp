@@ -103,7 +103,7 @@ TEST_CASE("scrollback limit drops the oldest lines")
     CHECK(s.droppedLines() == 6);
 }
 
-TEST_CASE("SGR attributes and colors fold to gray")
+TEST_CASE("SGR attributes and colors")
 {
     VtScreen s(20, 2, 0);
     s.feed("\x1b[1;4;7mA\x1b[0mB\x1b[2mC\x1b[22mD");
@@ -114,17 +114,24 @@ TEST_CASE("SGR attributes and colors fold to gray")
     CHECK(l[3].attrs == 0);
 
     s.feed("\x1b[31mR\x1b[92mG\x1b[38;5;21mI\x1b[38;2;255;255;255mW\x1b[48;2;0;0;0mK\x1b[39;49mN");
-    CHECK(l[4].fg == term::grayFromIndex(1));
-    CHECK(l[5].fg == term::grayFromIndex(10));
-    CHECK(l[6].fg == term::grayFromIndex(21));
-    CHECK(l[7].fg == 255);
-    CHECK(l[8].bg == 0);
+    CHECK(l[4].fg == 1);
+    CHECK(l[5].fg == 10);
+    CHECK(l[6].fg == 21);
+    CHECK(l[7].fg == term::rgbColor(255, 255, 255));
+    CHECK(l[8].bg == term::rgbColor(0, 0, 0));
     CHECK(l[9].fg == term::kDefaultColor);
     CHECK(l[9].bg == term::kDefaultColor);
 
     // Colon form with an empty color-space slot.
     s.feed("\x1b[38:2::0:0:0mX");
-    CHECK(l[10].fg == 0);
+    CHECK(l[10].fg == term::rgbColor(0, 0, 0));
+
+    CHECK(term::grayFromColor(l[4].fg) == term::grayFromIndex(1));
+    CHECK(term::grayFromColor(l[7].fg) == 255);
+    term::Rgb blue = term::rgbFromColor(21, nullptr);
+    CHECK((blue.r == 0 && blue.g == 0 && blue.b == 255));
+    term::Rgb ramp = term::rgbFromColor(232, nullptr);
+    CHECK((ramp.r == 8 && ramp.g == 8 && ramp.b == 8));
 }
 
 TEST_CASE("gray mapping follows perceived lightness")

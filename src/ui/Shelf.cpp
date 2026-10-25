@@ -3,11 +3,13 @@
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
+#include "ops/Command.h"
 #include "ui/Actions.h"
 #include "ui/FlowLayout.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
 #include "ui/Theme.h"
+#include "ui/TokenCompleter.h"
 #include "ui/ViewportLayout.h"
 #include "ui/ViewportWidget.h"
 
@@ -16,6 +18,7 @@
 #include <QClipboard>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QCompleter>
 #include <QContextMenuEvent>
 #include <QCursor>
 #include <QDateTime>
@@ -38,6 +41,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QPushButton>
@@ -48,6 +52,7 @@
 #include <QStringListModel>
 #include <QTabBar>
 #include <QTimer>
+#include <QWindow>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -383,6 +388,13 @@ bool editItem(QWidget* parent, json& item, const QString& title = "Edit Shelf Bu
     auto* args = new QPlainTextEdit(QString::fromStdString(isCommand ? target.value("args", json::object()).dump(2) : "{}"));
     args->setFont(monoFont());
     command->setPlaceholderText("resetPivot");
+    completion::attachValues(command, [] {
+        QStringList names;
+        for (const CommandDef* c : ops::all())
+            names << QString::fromStdString(c->name);
+        names.sort(Qt::CaseInsensitive);
+        return names;
+    });
     commandForm->addRow("Command", command);
     commandForm->addRow("Args (JSON)", args);
     pages->addWidget(commandPage);
@@ -391,6 +403,8 @@ bool editItem(QWidget* parent, json& item, const QString& title = "Edit Shelf Bu
     action->setEditable(true);
     for (const Action* a : actions::all())
         action->addItem(QString::fromStdString(a->category + ": " + a->label), QString::fromStdString(a->id));
+    action->completer()->setCompletionMode(QCompleter::PopupCompletion);
+    action->completer()->setFilterMode(Qt::MatchContains);
     pages->addWidget(action);
 
     if (target.is_string())
@@ -995,10 +1009,11 @@ void FloatingShelf::setIconSize(int size)
     mPage->rebuild();
 }
 
-FloatingShelf::FloatingShelf(QWidget* parent, bool pinned) : QWidget(parent, Qt::Tool), mPinned(pinned)
+FloatingShelf::FloatingShelf(QWidget* parent, bool pinned) : QWidget(parent, Qt::Tool | Qt::FramelessWindowHint), mPinned(pinned)
 {
     setWindowTitle("Floating Shelf");
     setAttribute(Qt::WA_DeleteOnClose);
+    setMouseTracking(true);
     if (!pinned)
         setAttribute(Qt::WA_ShowWithoutActivating);
     // Qt::Popup would close the moment another app has focus, so click-away is handled here instead.
@@ -1025,6 +1040,11 @@ void FloatingShelf::build()
     v->setSpacing(2);
     auto* top = new QHBoxLayout;
     top->setSpacing(1);
+    mGrip = new QLabel(this);
+    mGrip->setPixmap(icon("grip-vertical").pixmap(16, 16));
+    mGrip->setCursor(Qt::SizeAllCursor);
+    mGrip->setToolTip("Drag to move the shelf");
+    top->addWidget(mGrip);
     mPicker = new QComboBox(this);
     mPicker->setMinimumWidth(110);
     mPicker->setToolTip("Shelf");
@@ -1045,6 +1065,9 @@ void FloatingShelf::build()
     QToolButton* del = tool("trash", "Delete this shelf");
     QToolButton* settings = tool("settings", "Floating shelf settings");
     QToolButton* help = tool("help", "How the floating shelf works");
+    top->addSpacing(6);
+    QToolButton* closeButton = tool("x", "Close the floating shelf (`)");
+    connect(closeButton, &QToolButton::clicked, this, &QWidget::close);
     v->addLayout(top);
 
     auto* scroll = new QScrollArea(this);
@@ -1202,9 +1225,8 @@ void FloatingShelf::place()
         if (QScreen* there = QGuiApplication::screenAt(topLeft + QPoint(s.width() / 2, 16)))
             avail = there->availableGeometry();
     }
-    // Room for the native title bar, which is not part of size() yet.
     topLeft.setX(std::clamp(topLeft.x(), avail.left(), std::max(avail.left(), avail.right() - s.width())));
-    topLeft.setY(std::clamp(topLeft.y(), avail.top(), std::max(avail.top(), avail.bottom() - s.height() - 32)));
+    topLeft.setY(std::clamp(topLeft.y(), avail.top(), std::max(avail.top(), avail.bottom() - s.height())));
     move(topLeft);
 }
 
@@ -1259,6 +1281,26 @@ bool FloatingShelf::eventFilter(QObject* obj, QEvent* e)
     auto* inside = qobject_cast<QWidget*>(obj);
     if (inside && inside->window() == this)
     {
+        if (e->type() == QEvent::Enter && obj != this)
+            unsetCursor();
+        if (e->type() == QEvent::MouseMove)
+        {
+            Qt::Edges edges = obj == this ? frameEdges(static_cast<QMouseEvent*>(e)->position().toPoint()) : Qt::Edges();
+            if (edges)
+                setCursor(edgeCursor(edges));
+            else
+                unsetCursor();
+        }
+        if (e->type() == QEvent::MouseButtonPress && (obj == mGrip || obj == this) &&
+            static_cast<QMouseEvent*>(e)->button() == Qt::LeftButton && windowHandle())
+        {
+            Qt::Edges edges = obj == this ? frameEdges(static_cast<QMouseEvent*>(e)->position().toPoint()) : Qt::Edges();
+            if (edges)
+                windowHandle()->startSystemResize(edges);
+            else
+                windowHandle()->startSystemMove();
+            return true;
+        }
         if (e->type() == QEvent::Wheel)
             if (auto* we = static_cast<QWheelEvent*>(e); we->modifiers() & Qt::ControlModifier)
             {
@@ -1288,6 +1330,43 @@ bool FloatingShelf::eventFilter(QObject* obj, QEvent* e)
             close();
     }
     return QWidget::eventFilter(obj, e);
+}
+
+Qt::Edges FloatingShelf::frameEdges(QPoint p) const
+{
+    // The layout margin is the frame: a press there resizes from that side.
+    constexpr int kBand = 5;
+    Qt::Edges edges;
+    if (p.x() < kBand)
+        edges |= Qt::LeftEdge;
+    if (p.x() >= width() - kBand)
+        edges |= Qt::RightEdge;
+    if (p.y() < kBand)
+        edges |= Qt::TopEdge;
+    if (p.y() >= height() - kBand)
+        edges |= Qt::BottomEdge;
+    return edges;
+}
+
+Qt::CursorShape FloatingShelf::edgeCursor(Qt::Edges edges)
+{
+    if (edges == (Qt::LeftEdge | Qt::TopEdge) || edges == (Qt::RightEdge | Qt::BottomEdge))
+        return Qt::SizeFDiagCursor;
+    if (edges == (Qt::RightEdge | Qt::TopEdge) || edges == (Qt::LeftEdge | Qt::BottomEdge))
+        return Qt::SizeBDiagCursor;
+    if (edges & (Qt::LeftEdge | Qt::RightEdge))
+        return Qt::SizeHorCursor;
+    if (edges & (Qt::TopEdge | Qt::BottomEdge))
+        return Qt::SizeVerCursor;
+    return Qt::ArrowCursor;
+}
+
+void FloatingShelf::paintEvent(QPaintEvent*)
+{
+    QPainter p(this);
+    p.fillRect(rect(), palette().window());
+    p.setPen(palette().mid().color());
+    p.drawRect(rect().adjusted(0, 0, -1, -1));
 }
 
 void FloatingShelf::rememberPosition()

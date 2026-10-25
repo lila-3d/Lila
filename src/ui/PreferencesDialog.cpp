@@ -17,6 +17,9 @@
 #include "ui/ThemeEditor.h"
 #include "ui/ThemeModel.h"
 #include "ui/ViewportDisplay.h"
+#include "ui/editor/CodeEditor.h"
+#include "ui/editor/EditorPalette.h"
+#include "ui/editor/Format.h"
 
 #include <QCheckBox>
 #include <QColorDialog>
@@ -35,6 +38,7 @@
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QTabWidget>
+#include <QTimer>
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -403,6 +407,35 @@ void showLastRowWhen(Page& p, std::function<bool()> shown)
     QObject::connect(field, &QObject::destroyed, [listener] { PrefStore::get().removeOnChanged(listener); });
 }
 
+/**
+ * Disables a row while disabled() holds, with `reason` as its tooltip. Checked whenever the page's prefs or the general
+ * prefs (theme, app-wide switches) change.
+ */
+void disableRowWhen(Page& p, int row, std::function<bool()> disabled, const QString& reason)
+{
+    QWidget* label = p.form->itemAt(row, QFormLayout::LabelRole)->widget();
+    QWidget* field = p.form->itemAt(row, QFormLayout::FieldRole)->widget();
+    QPointer<QWidget> labelPtr(label), fieldPtr(field);
+    auto update = [labelPtr, fieldPtr, disabled, reason] {
+        if (!labelPtr || !fieldPtr)
+            return;
+        bool off = disabled();
+        for (QWidget* w : {labelPtr.data(), fieldPtr.data()})
+        {
+            w->setEnabled(!off);
+            w->setToolTip(off ? reason : QString());
+        }
+    };
+    update();
+    const std::string file = p.file;
+    int listener = PrefStore::get().onChanged([field, update, file](const std::string& changed) {
+        // Deferred: the theme cache drops on this same change.
+        if (changed == file || changed == "general")
+            QTimer::singleShot(0, field, update);
+    });
+    QObject::connect(field, &QObject::destroyed, [listener] { PrefStore::get().removeOnChanged(listener); });
+}
+
 /** Whether a naming rule's case is one where underscores need allowing, and they are allowed. */
 bool namingUnderscores(const std::string& type, const std::string& fallbackCase, bool needAllowed)
 {
@@ -451,6 +484,8 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         toggle(general, "Typing scrolls to bottom", "/terminal/scrollOnInput", true);
         toggle(general, "Output scrolls to bottom", "/terminal/scrollOnOutput", false);
         toggle(general, "Offer agent setup per workspace", "/agents/promptOnTerminal", true);
+        section(general, "Docs");
+        toggle(general, "Download docs updates at startup", "/docs/autoUpdate", true);
     });
 
     builtIn(r, "interface", "Interface", "general", [](Page& ui) {
@@ -710,9 +745,41 @@ void addBuiltIns(Registry<prefPages::Page>& r)
 
     builtIn(r, "scripting", "Scripting", "scriptEditor", [](Page& script) {
         section(script, "Script Editor");
-        toggle(script, "Format with ruff on save", "/formatOnSave", true);
-        toggle(script, "Relative line numbers", "/relativeLineNumbers", true);
+        toggle(script, "Relative line numbers", CodeEditor::kRelativeLineNumbersPref, CodeEditor::kRelativeLineNumbersDefault);
         toggle(script, "Vim keybindings", "/vim", false);
+        toggle(script, "Monotone", palette::kMonotonePref, false);
+        const int monotoneRow = script.form->rowCount() - 1;
+        toggle(script, "App Monotone overrides script editor", palette::kFollowAppMonotonePref, true);
+        disableRowWhen(script, monotoneRow, palette::monotoneForcedByApp,
+                       "The app is Monotone and \"App Monotone overrides script editor\" is on, so the script editor stays grey");
+
+        section(script, "Formatting");
+        namespace fk = format::key;
+        const format::Settings d;
+        auto tip = [&script](const char* text) {
+            script.form->itemAt(script.form->rowCount() - 1, QFormLayout::FieldRole)->widget()->setToolTip(text);
+        };
+        toggle(script, "Format on save", fk::onSave, d.onSave);
+        toggle(script, "Organize imports on save", fk::organizeImportsOnSave, d.organizeImportsOnSave);
+        tip("Sorts and groups imports with ruff's isort rules (Ctrl+Alt+O does it on demand).");
+        toggle(script, "Fix all on save", fk::fixAllOnSave, d.fixAllOnSave);
+        tip("Applies ruff's safe fixes, such as removing unused imports.");
+        toggle(script, "Format on paste", fk::onPaste, d.onPaste);
+        tip("Formats the statements the pasted text lands in.");
+        toggle(script, "Format on type", fk::onType, d.onType);
+        tip("Formats a statement once it is complete: on Enter at the end of a line, or on typing the bracket or colon that ends it.");
+        toggle(script, "Format on focus loss", fk::onFocusLoss, d.onFocusLoss);
+        toggle(script, "Trim trailing whitespace on save", fk::trimTrailingWhitespace, d.trimTrailingWhitespace);
+        tip("Leaves strings and the caret's line alone.");
+        toggle(script, "Ensure final newline on save", fk::finalNewline, d.finalNewline);
+        toggle(script, "Use project ruff config", fk::useProjectConfig, d.useProjectConfig);
+        tip("A ruff.toml, .ruff.toml or pyproject.toml with [tool.ruff] beside the script or above it overrides the style below.");
+        number(script, "Line length", fk::lineLength, d.lineLength, 40, 320, 1, 0);
+        choice(script, "Quote style", fk::quoteStyle, {{"Double", "double"}, {"Single", "single"}, {"Preserve", "preserve"}},
+               d.quoteStyle.toStdString());
+        number(script, "Indent width", fk::indentWidth, d.indentWidth, 1, 8, 1, 0);
+        tip("Indentation ruff formats with. Tab in the editor always indents by 4.");
+
         section(script, "Scene Scripts");
         choice(script, "Scripts set to run on open", "/sceneScriptsOnOpen", {{"Ask first", "ask"}, {"Never run", "never"}}, "ask");
     });

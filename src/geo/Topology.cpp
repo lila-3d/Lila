@@ -23,11 +23,47 @@ std::vector<uint8_t> makeMask(size_t n, std::span<const Index> ids)
     return mask;
 }
 
+namespace
+{
+/** The edge at p other than e on face f, kInvalid if f does not hold e at p. */
+Index otherFaceEdgeAt(const Mesh& mesh, Index f, Index e, Index p)
+{
+    Index found = kInvalid;
+    mesh.forEachFaceCorner(f, [&](Index c) {
+        const Index fe = mesh.cornerEdge(c);
+        if (fe != e && (mesh.edgePoint(fe, 0) == p || mesh.edgePoint(fe, 1) == p))
+            found = fe;
+    });
+    return found;
+}
+
+/**
+ * At a valence-3 point, the loop along an n-gon's border (a cap's rim): e and the next edge share the n-gon and every
+ * other face at p is a quad.
+ */
+Index ngonBorderNext(const Mesh& mesh, Index e, Index p)
+{
+    if (!mesh.isManifoldEdge(e))
+        return kInvalid;
+    const Index c = mesh.edgeCorner(e);
+    Index fa = mesh.cornerFace(c), fb = mesh.oppositeFace(e, fa);
+    if (mesh.faceSize(fa) == 4)
+        std::swap(fa, fb);
+    if (mesh.faceSize(fa) < 5 || mesh.faceSize(fb) != 4)
+        return kInvalid;
+    const Index next = otherFaceEdgeAt(mesh, fa, e, p);
+    if (next == kInvalid || !mesh.isManifoldEdge(next))
+        return kInvalid;
+    const Index beyond = mesh.oppositeFace(next, fa);
+    return beyond != kInvalid && mesh.faceSize(beyond) == 4 ? next : kInvalid;
+}
+} // namespace
+
 Index edgeLoopNext(const Mesh& mesh, Index e, Index p)
 {
     if (mesh.isBoundaryEdge(e))
     {
-        // Follow the boundary through points with exactly two boundary edges.
+        // Follow the border through every point where it does not branch.
         Index next = kInvalid;
         int count = 0;
         mesh.forEachPointEdge(p, [&](Index x) {
@@ -37,20 +73,18 @@ Index edgeLoopNext(const Mesh& mesh, Index e, Index p)
                 ++count;
             }
         });
-        return count == 1 && mesh.pointValence(p) <= 3 ? next : kInvalid;
+        return count == 1 ? next : kInvalid;
     }
-    if (mesh.pointValence(p) != 4 || mesh.isBoundaryPoint(p))
+    if (mesh.isBoundaryPoint(p))
+        return kInvalid;
+    const Index valence = mesh.pointValence(p);
+    if (valence == 3)
+        return ngonBorderNext(mesh, e, p);
+    if (valence != 4)
         return kInvalid;
     // The edge sharing no face with e.
     std::vector<Index> touching;
-    mesh.forEachEdgeCorner(e, [&](Index c) {
-        const Index f = mesh.cornerFace(c);
-        mesh.forEachFaceCorner(f, [&](Index fc) {
-            const Index fe = mesh.cornerEdge(fc);
-            if (mesh.edgePoint(fe, 0) == p || mesh.edgePoint(fe, 1) == p)
-                touching.push_back(fe);
-        });
-    });
+    mesh.forEachEdgeCorner(e, [&](Index c) { touching.push_back(otherFaceEdgeAt(mesh, mesh.cornerFace(c), e, p)); });
     Index found = kInvalid;
     mesh.forEachPointEdge(p, [&](Index x) {
         if (x != e && std::find(touching.begin(), touching.end(), x) == touching.end())

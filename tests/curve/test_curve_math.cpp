@@ -737,3 +737,26 @@ TEST_CASE("geometry node curve sets carry splines")
     gn::curveFrames(loop, true, tan, nrm);
     CHECK(glm::dot(nrm.front(), nrm.back()) > 0.9);
 }
+
+TEST_CASE("fillet keeps per-point radius and tilt")
+{
+    Spline b = convert(poly({D3(0), D3(20, 0, 0), D3(20, 20, 0), D3(40, 20, 0)}), Kind::Bezier);
+    b.radius = {1.0, 1.0, 2.0, 3.0};
+    b.tilt = {0.0, 0.0, 0.0, 0.5};
+    for (bool exact : {false, true})
+    {
+        FilletOptions o;
+        o.radius = 5.0;
+        o.exactArcs = exact;
+        Spline f = fillet(b, o);
+        CHECK(f.kind == (exact ? Kind::Nurbs : Kind::Bezier));
+        REQUIRE(f.radius.size() == f.size());
+        REQUIRE(f.tilt.size() == f.size());
+        const int spans = spanCount(f);
+        CHECK(pointValueAt(f, f.radius, 1.0, 0.0) == doctest::Approx(1.0));
+        CHECK(pointValueAt(f, f.radius, 1.0, spans) == doctest::Approx(3.0));
+        CHECK(pointValueAt(f, f.tilt, 0.0, spans) == doctest::Approx(0.5));
+        for (size_t i = 1; i < f.size(); ++i)
+            CHECK(f.radius[i] >= f.radius[i - 1] - 1e-12);
+    }
+}

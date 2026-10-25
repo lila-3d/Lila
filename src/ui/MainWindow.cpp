@@ -27,9 +27,11 @@
 #include "ui/LayoutsUi.h"
 #include "ui/Animation.h"
 #include "ui/ApiReference.h"
+#include "ui/DocsUi.h"
 #include "ui/Ghosting.h"
 #include "ui/GraphEditor.h"
 #include "ui/SpinScrub.h"
+#include "ui/WheelGuard.h"
 #include "ui/Theme.h"
 #include "ui/TimeSlider.h"
 #include "ui/AttributeEditor.h"
@@ -38,6 +40,7 @@
 #include "ui/OffsetsPanel.h"
 #include "ui/RenamePanel.h"
 #include "ui/DisplayAids.h"
+#include "ui/DockDragCancel.h"
 #include "ui/DockSidebar.h"
 #include "ui/Environments.h"
 #include "ui/ExtensionManagerDialog.h"
@@ -53,6 +56,7 @@
 #include "ui/OptionBox.h"
 #include "ui/NodeEditor.h"
 #include "ui/Panels.h"
+#include "ui/QuickCommand.h"
 #include "ui/UvEditor.h"
 #include "ui/PreferencesDialog.h"
 #include "ui/ProgressOverlay.h"
@@ -184,6 +188,7 @@ MainWindow::MainWindow()
     DwmSetWindowAttribute(HWND(winId()), 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
 #endif
     setDockOptions(AnimatedDocks | AllowNestedDocks | AllowTabbedDocks | GroupedDragging);
+    dockDragCancel::install();
 
     mViewports = new ViewportLayout(this);
     setCentralWidget(mViewports);
@@ -340,6 +345,12 @@ void MainWindow::registerPanels()
                      auto* scriptEditor = new ScriptEditor(p);
                      scriptEditor->setEditorFont(monoFont());
                      scriptEditor->setIconProvider([](const QString& name) { return icon(name); });
+                     scriptEditor->setRunKeyLookup([](QKeyEvent* k) -> QString {
+                         for (const char* id : {"script.run", "script.runLine", "script.runCell"})
+                             if (Hotkeys::get().isKeyFor(k, id))
+                                 return id;
+                         return {};
+                     });
                      return scriptEditor;
                  }),
                  .area = Qt::BottomDockWidgetArea});
@@ -350,11 +361,16 @@ void MainWindow::registerPanels()
                      auto* apiRef = qobject_cast<ApiReference*>(apiDock->widget());
                      if (!scriptEditor || !apiRef)
                          return;
+                     // The docs site's API page when there is one, else the live reference.
                      connect(scriptEditor, &ScriptEditor::showDocs, this, [apiRef, apiDock](const QString& symbol) {
-                         apiDock->show();
-                         apiDock->raise();
+                         if (docs::openApi(symbol.toStdString()))
+                             return;
+                         revealDock(apiDock);
                          apiRef->showSymbol(symbol);
                      });
+                     connect(scriptEditor, &ScriptEditor::apiDocsRequested, this, [] { docs::open("python/"); });
+                     connect(scriptEditor, &ScriptEditor::apiReferenceRequested, this, [] { panels::show(kApiReferenceDock); });
+                     connect(scriptEditor, &ScriptEditor::batchRunRequested, this, [] { actions::run("window.batchRun"); });
                      connect(apiRef, &ApiReference::insertCode, this, [scriptEditor, editorDock](const QString& code) {
                          editorDock->show();
                          editorDock->raise();
@@ -364,7 +380,8 @@ void MainWindow::registerPanels()
                          ed->insertPlainText(code);
                          ed->setFocus();
                      });
-                 }});
+                 },
+                 .floatFirst = true});
     panels::add({.id = kTerminalDock, .title = "Terminal", .create = make([](QWidget* p) { return new TerminalPanel(p); }),
                  .area = Qt::BottomDockWidgetArea});
     // The UV editor opens as its own column left of the channel box.
@@ -995,8 +1012,44 @@ void MainWindow::registerActions()
                   "Opens every panel collapsed to a sidebar tab."});
     actions::add({"window.searchMenus", "Search Menus...", "Windows", [this] { menuSearch::openBox(menuBar(), this); }, nullptr,
                   "Finds any item in the main menus by typing part of its name or menu, and runs it or opens its options."});
+    quickCommand::registerActions(this);
     actions::add({"window.searchScene", "Search Scene...", "Windows", [this] { menuSearch::openSceneFinder(menuBar(), this); }, nullptr,
                   "Finds any object in the scene by name, wildcard, type: or path, selects it and reveals it in the outliner."});
+    auto scriptEditor = [this]() -> ScriptEditor* {
+        QDockWidget* d = findChild<QDockWidget*>(kScriptEditorDock);
+        return d ? qobject_cast<ScriptEditor*>(d->widget()) : nullptr;
+    };
+    actions::add({"script.run", "Run Script", "Script Editor", [scriptEditor] {
+                      if (ScriptEditor* e = scriptEditor())
+                          e->runCurrent(false);
+                  }, nullptr, "Runs the script editor's selection, or its whole tab."});
+    actions::add({"script.runLine", "Run Line", "Script Editor", [scriptEditor] {
+                      if (ScriptEditor* e = scriptEditor())
+                          e->runLine();
+                  }, nullptr, "Runs the script editor's line under the caret, or the selection when there is one."});
+    actions::add({"script.runCell", "Run Cell", "Script Editor", [scriptEditor] {
+                      if (ScriptEditor* e = scriptEditor())
+                          e->runCurrent(true);
+                  }, nullptr, "Runs the script editor's # %% cell under the caret."});
+    actions::add({"script.searchApi", "Search Scripting API...", "Script Editor", [this] {
+                      QDockWidget* d = findChild<QDockWidget*>(kScriptEditorDock);
+                      QPointer<ScriptEditor> editor = d ? qobject_cast<ScriptEditor*>(d->widget()) : nullptr;
+                      if (!editor)
+                          return;
+                      menuSearch::openApiSearch(menuBar(), this,
+                                                {.insert = [editor](const QString& code) {
+                                                     if (!editor)
+                                                         return;
+                                                     CodeEditor* ed = editor->currentEditor();
+                                                     ed = ed ? ed : editor->newTab();
+                                                     ed->insertCall(code);
+                                                 },
+                                                 .showDocs = [editor](const QString& key) {
+                                                     if (editor)
+                                                         emit editor->showDocs(key);
+                                                 }});
+                  }, nullptr,
+                  "Finds a command, flag or lila Python class or function by name or description and inserts the call into the script editor."});
     actions::add({"window.preferences", "Preferences...", "Windows", [this] {
                       if (!closeShownWindow<PreferencesDialog>())
                           PreferencesDialog::open(this);
@@ -1304,12 +1357,12 @@ void MainWindow::buildMenus()
     menus::addActions("Windows", {"", "window.toggleToolBox", "window.toggleMaximizePanel", "window.toggleChannelBox", "window.toggleUvEditor", "viewport.frameAll",
                            "window.resetLayout"});
     addItem({.id = "Windows/layouts", .menu = "Windows", .kind = Kind::Custom, .setup = [this](QMenu* m) { m->addMenu(mLayouts->menu()); }});
-    menus::addActions("Windows", {"window.expandPanels", "", "window.materialEditor", "window.scriptEditor", "window.apiReference", "window.terminal",
+    menus::addActions("Windows", {"window.expandPanels", "", "window.materialEditor", "window.scriptEditor", "window.commandLine", "window.apiReference", "window.terminal",
                            "window.displayLayers", "window.animLayers", "window.undoHistory", "window.hotkeyEditor", "window.markingMenuEditor",
                            "window.extensionManager"});
 
     menu("Help", "Help");
-    menus::addActions("Help", {"window.searchMenus", "window.searchScene", "", "help.agentSetup", "help.prefsFolder", "help.crashReports", "help.copyLastCrash", "help.hotkeyCheatSheet", "help.about"});
+    menus::addActions("Help", {"help.docs", "help.updateDocs", "", "window.searchMenus", "window.searchScene", "", "help.agentSetup", "help.prefsFolder", "help.crashReports", "help.copyLastCrash", "help.hotkeyCheatSheet", "help.about"});
 
     buildPanelMenus();
 
@@ -1387,6 +1440,7 @@ void MainWindow::buildStatusBar()
         connect(output, &QDockWidget::visibilityChanged, line, qOverload<>(&QWidget::update));
     }
     installSpinScrub(this);
+    installWheelGuard(this);
 
     mWorkspaceLabel = new QLabel(this);
     mWorkspaceLabel->setTextFormat(Qt::RichText);

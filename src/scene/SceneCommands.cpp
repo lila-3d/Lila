@@ -701,15 +701,23 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "xform",
-        .doc = "Query or set translation/rotation/scale, local or world space.",
-        .positionalDoc = "objects",
+        .doc = "Query or set the transform of objects, in local or world space.\n\n"
+               "Sets every flag given on each object, or with query=True returns one value of the first object: pass the flag "
+               "to read as True. Values are local to the parent unless worldSpace is on.",
+        .positionalDoc = "Transforms to edit or query; the selection when none are given.",
         .flags = {
-            {"query", "q", T::Bool, false, "Return values instead of setting."},
-            {"worldSpace", "ws", T::Bool, false, "World space."},
-            {"translation", "t", T::Any, nullptr, "Vec3 to set, or True with query."},
-            {"rotation", "ro", T::Any, nullptr, "Vec3 degrees to set, or True with query."},
-            {"scale", "s", T::Any, nullptr, "Vec3 to set, or True with query."},
-            {"matrix", "m", T::Any, nullptr, "16 floats to set, or True with query."},
+            {"query", "q", T::Bool, false, "Return a value of the first object instead of setting. Pick it by passing one of translation, rotation, scale or matrix as True.", {},
+             "xform(\"cube1\", query=True, translation=True)"},
+            {"worldSpace", "ws", T::Bool, false, "Read and write in world space instead of relative to the parent. Rotation and scale queries stay local.", {},
+             "xform(\"cube1\", worldSpace=True, translation=(0, 2, 0))"},
+            {"translation", "t", T::Any, nullptr, "Position as (x, y, z) to set, or True to read it with query.", {},
+             "xform(\"cube1\", translation=(1, 0, 0))"},
+            {"rotation", "ro", T::Any, nullptr, "Euler rotation in degrees as (x, y, z) to set, or True to read it with query.", {},
+             "xform(\"cube1\", rotation=(0, 45, 0))"},
+            {"scale", "s", T::Any, nullptr, "Scale as (x, y, z) to set, or True to read it with query.", {},
+             "xform(\"cube1\", scale=(2, 2, 2))"},
+            {"matrix", "m", T::Any, nullptr, "The whole transform as 16 floats, column-major, to set; or True to read it with query.", {},
+             "xform(\"cube1\", query=True, worldSpace=True, matrix=True)"},
         },
         .run = [](const Args& a) -> json {
             Graph& g = graph();
@@ -769,6 +777,10 @@ void registerCommands()
                 }
             }
             return nullptr;
+        },
+        .examples = {
+            "xform(\"cube1\", translation=(0, 1, 0), rotation=(0, 90, 0))",
+            "pos = xform(\"cube1\", query=True, worldSpace=True, translation=True)",
         },
     });
 

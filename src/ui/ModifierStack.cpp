@@ -189,25 +189,6 @@ QToolButton* toolButton(const QString& iconName, const QString& tip, QWidget* pa
     return b;
 }
 
-/** Combo boxes in a scrolling panel ignore the wheel unless focused, so scrolling the panel never changes a value. */
-class WheelGuard : public QObject
-{
-public:
-    using QObject::QObject;
-
-protected:
-    bool eventFilter(QObject* obj, QEvent* e) override
-    {
-        if (e->type() == QEvent::Wheel)
-            if (auto* w = qobject_cast<QWidget*>(obj); w && !w->hasFocus())
-            {
-                e->ignore();
-                return true;
-            }
-        return false;
-    }
-};
-
 /** Keyed (or driven) look of a field, shared by every field type. */
 enum class PlugState
 {
@@ -1159,7 +1140,6 @@ QWidget* ModifierStackWidget::buildParams(NodeId id, bool isModifier)
     form->setContentsMargins(8, 2, 6, 4);
     form->setSpacing(3);
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-    auto* guard = new WheelGuard(box);
     int rows = 0;
     const auto& attrs = n->type().attrs;
     // Attrs keep their order; a category gets its heading the first time one of its attrs shows.
@@ -1260,8 +1240,6 @@ QWidget* ModifierStackWidget::buildParams(NodeId id, bool isModifier)
             auto* combo = new QComboBox(box);
             for (const std::string& e : def.enumNames)
                 combo->addItem(niceName(e));
-            combo->setFocusPolicy(Qt::StrongFocus);
-            combo->installEventFilter(guard);
             connect(combo, &QComboBox::activated, this, [ref](int k) { setAttr(ref, int64_t(k)); });
             mUpdaters.push_back([combo, ref] {
                 Graph& gr = Graph::current();

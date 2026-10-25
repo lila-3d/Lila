@@ -2,9 +2,16 @@
 
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
+#include "core/PrefStore.h"
 #include "ui/Actions.h"
 #include "ui/DisplayLayersPanel.h"
 #include "ui/UndoHistory.h"
+
+#include <QDockWidget>
+#include <QGuiApplication>
+#include <QScreen>
+
+#include <algorithm>
 
 namespace lila::ui
 {
@@ -14,6 +21,16 @@ std::function<void(const char*)>& showDockHook()
 {
     static std::function<void(const char*)> hook;
     return hook;
+}
+
+constexpr const char* kDockedByUserPref = "/ui/dockedByUser";
+
+bool dockedByUser(const std::string& id)
+{
+    for (const auto& v : PrefStore::get().value("general", kDockedByUserPref, nlohmann::json::array()))
+        if (v.is_string() && v.get<std::string>() == id)
+            return true;
+    return false;
 }
 
 std::function<void(const char*)>& toggleDockHook()
@@ -80,6 +97,41 @@ void panels::show(const std::string& id)
 void panels::toggle(const std::string& id)
 {
     lila::ui::toggle(id.c_str());
+}
+
+void panels::floatUnplaced(QDockWidget* dock)
+{
+    const std::string id = dock ? dock->objectName().toStdString() : std::string();
+    const Panel* p = dock ? registry().find(id) : nullptr;
+    if (!p || !p->floatFirst)
+        return;
+    if (!dock->property("lilaWatchesDocking").toBool())
+    {
+        dock->setProperty("lilaWatchesDocking", true);
+        QObject::connect(dock, &QDockWidget::topLevelChanged, dock, [dock, id](bool floating) {
+            // Only the user docks a dock while the window is up: a saved layout is restored before anything shows.
+            if (floating || !dock->isVisible() || !dock->window()->isVisible() || dockedByUser(id))
+                return;
+            nlohmann::json list = PrefStore::get().value("general", kDockedByUserPref, nlohmann::json::array());
+            if (!list.is_array())
+                list = nlohmann::json::array();
+            list.push_back(id);
+            PrefStore::get().set("general", kDockedByUserPref, list);
+        });
+    }
+    if (dock->isFloating() || dockedByUser(id))
+        return;
+    QWidget* window = dock->parentWidget() ? dock->parentWidget()->window() : nullptr;
+    QScreen* screen = window && window->screen() ? window->screen() : QGuiApplication::primaryScreen();
+    if (!screen)
+        return;
+    const QRect avail = screen->availableGeometry();
+    QRect r(0, 0, std::min(1000, avail.width() * 9 / 10), std::min(750, avail.height() * 9 / 10));
+    r.moveCenter(window && window->isVisible() ? window->frameGeometry().center() : avail.center());
+    r.moveLeft(std::clamp(r.left(), avail.left(), avail.right() - r.width()));
+    r.moveTop(std::clamp(r.top(), avail.top(), avail.bottom() - r.height()));
+    dock->setFloating(true);
+    dock->setGeometry(r);
 }
 
 void setShowDockHook(std::function<void(const char* dockName)> showDock)

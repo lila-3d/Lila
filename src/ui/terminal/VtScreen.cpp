@@ -11,11 +11,6 @@ constexpr int kTabWidth = 8;
 constexpr size_t kMaxOsc = 4096;
 constexpr int kMaxParam = 65535;
 
-struct Rgb
-{
-    int r, g, b;
-};
-
 constexpr Rgb kAnsi[16] = {
     {0, 0, 0},       {205, 0, 0},     {0, 205, 0},     {205, 205, 0},   {0, 0, 238},     {205, 0, 205},
     {0, 205, 205},   {229, 229, 229}, {127, 127, 127}, {255, 0, 0},     {0, 255, 0},     {255, 255, 0},
@@ -99,6 +94,30 @@ int grayFromIndex(int index)
         return grayFromRgb(kLevels[i / 36], kLevels[(i / 6) % 6], kLevels[i % 6]);
     }
     return 8 + (index - 232) * 10;
+}
+
+int grayFromColor(Color c)
+{
+    if (c & kRgbColor)
+        return grayFromRgb((c >> 16) & 0xff, (c >> 8) & 0xff, c & 0xff);
+    return grayFromIndex(c);
+}
+
+Rgb rgbFromColor(Color c, const Rgb* ansi16)
+{
+    if (c & kRgbColor)
+        return {(c >> 16) & 0xff, (c >> 8) & 0xff, c & 0xff};
+    int index = std::clamp(int(c), 0, 255);
+    if (index < 16)
+        return (ansi16 ? ansi16 : kAnsi)[index];
+    if (index < 232)
+    {
+        static constexpr int kLevels[6] = {0, 95, 135, 175, 215, 255};
+        int i = index - 16;
+        return {kLevels[i / 36], kLevels[(i / 6) % 6], kLevels[i % 6]};
+    }
+    int v = 8 + (index - 232) * 10;
+    return {v, v, v};
 }
 
 int charWidth(char32_t c)
@@ -734,13 +753,13 @@ void VtScreen::sgr()
         mPen = Cell{};
         return;
     }
-    auto extended = [&](size_t& i) -> int16_t {
+    auto extended = [&](size_t& i) -> Color {
         int mode = param(i + 1, -1);
         if (mode == 5)
         {
             int idx = param(i + 2, 0);
             i += 2;
-            return int16_t(grayFromIndex(idx));
+            return std::clamp(idx, 0, 255);
         }
         if (mode == 2)
         {
@@ -750,7 +769,7 @@ void VtScreen::sgr()
                 first = i + 3;
             int r = param(first, 0), g = param(first + 1, 0), b = param(first + 2, 0);
             i = first + 2;
-            return int16_t(grayFromRgb(std::clamp(r, 0, 255), std::clamp(g, 0, 255), std::clamp(b, 0, 255)));
+            return rgbColor(std::clamp(r, 0, 255), std::clamp(g, 0, 255), std::clamp(b, 0, 255));
         }
         i += 1;
         return kDefaultColor;
@@ -821,13 +840,13 @@ void VtScreen::sgr()
             break;
         default:
             if (p >= 30 && p <= 37)
-                mPen.fg = int16_t(grayFromIndex(p - 30));
+                mPen.fg = p - 30;
             else if (p >= 40 && p <= 47)
-                mPen.bg = int16_t(grayFromIndex(p - 40));
+                mPen.bg = p - 40;
             else if (p >= 90 && p <= 97)
-                mPen.fg = int16_t(grayFromIndex(p - 90 + 8));
+                mPen.fg = p - 90 + 8;
             else if (p >= 100 && p <= 107)
-                mPen.bg = int16_t(grayFromIndex(p - 100 + 8));
+                mPen.bg = p - 100 + 8;
             break;
         }
     }

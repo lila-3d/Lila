@@ -192,5 +192,36 @@ TEST_CASE("python extension: load, call, errors, unload")
     CHECK_FALSE(ops::find("pyUserHello"));
     CHECK_FALSE(ops::find("pyBaseHello"));
     CHECK(pm.loaded().empty());
+
+    // Command docs: one registration feeds help(), the stubs the script editor's language server reads, and its namespace.
+    REQUIRE(python::run("extension.register_command('pyDocs', _add, 'Summary line.\\n\\nLonger text.', positional='Things.',"
+                        " flags=[{'name': 'mode', 'short': 'md', 'type': str, 'default': 'a', 'doc': 'How', 'choices': ['a', 'b'],"
+                        " 'example': 'pyDocs(mode=\"b\")'}], owner='tests', examples=['pyDocs(\"x\", mode=\"a\")'])\n")
+                .ok);
+    const CommandDef* docs = ops::find("pyDocs");
+    REQUIRE(docs);
+    CHECK(docs->examples == std::vector<std::string>{"pyDocs(\"x\", mode=\"a\")"});
+    REQUIRE(docs->flags.size() == 1);
+    CHECK(docs->flags[0].choices == std::vector<std::string>{"a", "b"});
+    CHECK(docs->flags[0].example == "pyDocs(mode=\"b\")");
+    CHECK(python::run("from lila import _stubgen, ops\n"
+                      "stub = _stubgen._render()\n"
+                      "assert 'def pyDocs(*objects: Any, mode: str | None = None, md: str | None = None) -> Any:' in stub, stub\n"
+                      "doc = ops.pyDocs.__doc__\n"
+                      "for part in ('Summary line.', 'Args:', 'objects: Things.',"
+                      " \"mode: How. Short form md. One of 'a', 'b'. Default 'a'. Example: `pyDocs(mode=\\\"b\\\")`\","
+                      " 'Examples:', '    pyDocs(\\\"x\\\", mode=\\\"a\\\")'):\n"
+                      "    assert part in doc, (part, doc)\n"
+                      "    assert part.strip() in stub, part\n"
+                      "assert 'from lila.ops import pyDocs as pyDocs' in _stubgen._render_builtins()\n"
+                      "assert 'from lila.ops import print as print' not in _stubgen._render_builtins()\n"
+                      // ruff's builtins and the language server's namespace stub come from one list.
+                      "import re, tomllib\n"
+                      "ruff = set(tomllib.loads(_stubgen._render_ruff_builtins())['builtins'])\n"
+                      "stub = set(re.findall(r' as (\\w+)', _stubgen._render_builtins()))\n"
+                      "assert ruff == stub, (ruff ^ stub)\n"
+                      "assert {'lila', 'ops', 'Node', 'pyDocs'} <= ruff\n")
+              .ok);
+    CHECK(python::run("assert extension.unregister_command('pyDocs')").ok);
     python::shutdown();
 }

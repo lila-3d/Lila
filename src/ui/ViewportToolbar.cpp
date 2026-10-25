@@ -435,9 +435,9 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
     separator();
     actionButton("viewport.wireframe", "cube");
     actionButton("viewport.shaded", "sphere");
+    actionButton("viewport.textured", "texture");
     actionButton("viewport.wireOnShaded", "box-model");
     actionButton("viewport.defaultMaterial", "ball-bowling");
-    actionButton("viewport.textured", "texture");
     menuButton("palette", "Vertex Colors", [this](QMenu* m) {
         for (const char* group : {"vertexColors", "colorChannel"})
         {

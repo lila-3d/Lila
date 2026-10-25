@@ -14,6 +14,19 @@ class QTreeWidgetItem;
 
 namespace lila::ui
 {
+/** One scripting API symbol for the script editor's API search. */
+struct ApiSymbol
+{
+    QString key;     // what ApiReference::showSymbol takes: lila.ops.xform, lila.math.Vector
+    QString name;    // shown: xform, xform(worldSpace=), lila.math.Vector
+    QString kind;    // command, flag, class, function, method, property, ...
+    QString summary; // first line of the doc
+    QString insert;  // source to insert, ending in "(" for something callable
+};
+
+/** Every command, each command flag and the lila Python API (from the running interpreter), from the same sources as ApiReference. */
+LILA_UI_API std::vector<ApiSymbol> apiSymbols();
+
 /**
  * Searchable reference for every command in the registry and the lila Python package, built live: commands from
  * ops::all(), Python by walking the modules in the embedded interpreter (lila._apidoc). Built on first show and on

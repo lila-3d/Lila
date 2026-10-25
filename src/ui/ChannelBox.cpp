@@ -23,6 +23,7 @@
 #include <QStyledItemDelegate>
 #include <QKeyEvent>
 #include <QHeaderView>
+#include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -31,6 +32,8 @@
 #include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>
+
+#include <algorithm>
 
 namespace lila::ui
 {
@@ -772,15 +775,18 @@ bool ChannelBox::eventFilter(QObject* obj, QEvent* e)
         if (me->button() == Qt::MiddleButton)
         {
             QModelIndex idx = mTable->indexAt(me->position().toPoint());
-            bool highlighted = !highlightedRows().empty();
+            std::vector<int> highlighted = highlightedRows();
             QPoint at = me->globalPosition().toPoint();
             mMidClick.press(at.x(), at.y(), mClock.elapsed());
-            bool name = idx.isValid() && idx.column() == 0 && idx.row() < int(mRows.size()) && !mRows[idx.row()].header;
-            mMidRow = name ? idx.row() : -1;
-            if (idx.isValid() || highlighted)
+            bool channel = idx.isValid() && idx.row() < int(mRows.size()) && !mRows[idx.row()].header;
+            mMidRow = channel && idx.column() == 0 ? idx.row() : -1;
+            if (idx.isValid() || !highlighted.empty())
             {
-                if (idx.isValid() && !highlighted)
-                    mTable->selectRow(idx.row());
+                // Pressing a channel outside the highlight makes it the one dragged; on a highlighted one, all of them drag.
+                bool inHighlight = std::binary_search(highlighted.begin(), highlighted.end(), idx.row());
+                if (idx.isValid() && (highlighted.empty() || (channel && !inHighlight)))
+                    mTable->selectionModel()->setCurrentIndex(mTable->model()->index(idx.row(), 0),
+                                                              QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
                 beginScrub(at);
                 return true;
             }

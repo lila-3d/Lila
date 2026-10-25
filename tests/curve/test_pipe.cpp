@@ -11,6 +11,7 @@
 #include <glm/gtc/constants.hpp>
 
 #include <filesystem>
+#include <map>
 
 using namespace lila;
 using json = nlohmann::json;
@@ -345,18 +346,15 @@ TEST_CASE("conform to curve")
             CHECK(m->position(p).z == doctest::Approx(20.0));
 }
 
-TEST_CASE("pipe per-point radius: eased between points, the node's radius scales it")
+TEST_CASE("pipe per-point radius: smooth between points, the node's radius scales it")
 {
     curve::Spline s = poly({D3(0), D3(100, 0, 0)});
     s.radius = {1.0, 2.0};
     curve::PipeOptions o;
     o.radius = 3.0;
     o.sides = 8;
-    // A negligible corrugation only to put rings along the straight run, a quarter of the way apart.
-    o.corrugationDepth = 1e-12;
-    o.corrugationPeriod = 100.0;
     curve::PipeResult r = curve::makePipe(s, o);
-    REQUIRE(r.rings == 5);
+    REQUIRE(r.rings > 5);
     auto radiusAt = [](const geo::Mesh& m, double x) {
         double best = 0.0;
         for (const D3& p : m.positions())
@@ -365,8 +363,10 @@ TEST_CASE("pipe per-point radius: eased between points, the node's radius scales
         return best;
     };
     CHECK(radiusAt(r.mesh, 0.0) == doctest::Approx(3.0));
-    CHECK(radiusAt(r.mesh, 25.0) == doctest::Approx(3.0 * (1.0 + 0.15625)));
-    CHECK(radiusAt(r.mesh, 50.0) == doctest::Approx(4.5));
+    // Two points: a straight taper, every ring on the line between their radii.
+    for (const D3& p : r.mesh.positions())
+        if (std::hypot(p.y, p.z) > 1e-6)
+            CHECK(std::hypot(p.y, p.z) == doctest::Approx(3.0 * (1.0 + p.x / 100.0)));
     CHECK(radiusAt(r.mesh, 100.0) == doctest::Approx(6.0));
 
     run("newScene");
@@ -377,4 +377,27 @@ TEST_CASE("pipe per-point radius: eased between points, the node's radius scales
     run("setAttr", {{"args", {node + ".radius", 1.5}}});
     CHECK(radiusAt(*meshOf(mesh), 100.0) == doctest::Approx(3.0));
     CHECK(radiusAt(*meshOf(mesh), 0.0) == doctest::Approx(1.5));
+}
+
+TEST_CASE("pipe radius swells smoothly through its points")
+{
+    curve::Spline s = poly({D3(0), D3(100, 0, 0), D3(200, 0, 0)});
+    s.radius = {1.0, 1.0, 3.0};
+    curve::PipeOptions o;
+    o.radius = 5.0;
+    o.sides = 8;
+    curve::PipeResult r = curve::makePipe(s, o);
+    // Ring radius by x: rises monotonically from 5 to 15, with rings in between rather than one long cone.
+    std::map<long, double> byX;
+    for (const D3& p : r.mesh.positions())
+        byX[std::lround(p.x * 1000.0)] = std::max(byX[std::lround(p.x * 1000.0)], std::hypot(p.y, p.z));
+    CHECK(byX.size() > 10);
+    double prev = 0.0;
+    for (auto [x, rad] : byX)
+    {
+        CHECK(rad >= prev - 1e-6);
+        prev = rad;
+    }
+    CHECK(byX.begin()->second == doctest::Approx(5.0));
+    CHECK(prev == doctest::Approx(15.0));
 }

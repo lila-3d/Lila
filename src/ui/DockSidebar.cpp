@@ -1,6 +1,7 @@
 #include "ui/DockSidebar.h"
 
 #include "ui/Icons.h"
+#include "ui/Panels.h"
 #include "ui/Theme.h"
 
 #include <QAction>
@@ -366,13 +367,20 @@ void revealDock(QDockWidget* dock)
     if (!dock)
         return;
     auto* window = qobject_cast<QMainWindow*>(dock->parentWidget());
-    if (auto* sidebars = window ? window->findChild<DockSidebars*>(Qt::FindDirectChildrenOnly) : nullptr)
+    auto* sidebars = window ? window->findChild<DockSidebars*>(Qt::FindDirectChildrenOnly) : nullptr;
+    // Out of a collapsed strip first, so the strip lets go of it before it floats.
+    if (sidebars && sidebars->isCollapsed(dock))
+        sidebars->reveal(dock);
+    panels::floatUnplaced(dock);
+    if (sidebars && !dock->isFloating())
     {
         sidebars->reveal(dock);
         return;
     }
     dock->show();
     dock->raise();
+    if (dock->isFloating())
+        dock->activateWindow();
     if (QWidget* w = dock->widget())
         w->setFocus(Qt::OtherFocusReason);
 }

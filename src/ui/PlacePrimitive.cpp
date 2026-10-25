@@ -9,10 +9,13 @@
 #include "scene/MeshNodes.h"
 #include "ui/Actions.h"
 #include "ui/SurfaceSnap.h"
+#include "ui/Tools.h"
 #include "ui/ViewportTool.h"
 
 #include <QTimer>
 
+#include <cmath>
+#include <map>
 #include <optional>
 #include <string>
 
@@ -30,25 +33,50 @@ struct Placement
 
 json vec(const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); }
 
-void setVisible(NodeId mesh, bool on)
+/** Runs fn without recording undo: the live preview is replaced by one undoable create on drop. */
+template <class Fn> void unrecorded(Fn&& fn)
 {
     UndoStack& u = UndoStack::get();
     const bool was = u.enabled();
     u.setEnabled(false);
-    scene::Graph::current().setValue({mesh, scene::Transform::kVisibility, -1}, on);
+    fn();
     u.setEnabled(was);
+}
+
+void setVisible(NodeId mesh, bool on)
+{
+    unrecorded([&] { scene::Graph::current().setValue({mesh, scene::Transform::kVisibility, -1}, on); });
+}
+
+scene::Node* generatorOf(NodeId mesh)
+{
+    scene::Graph& g = scene::Graph::current();
+    std::optional<scene::PlugRef> src = g.source({mesh, scene::MeshNode::kInMesh, -1});
+    return src ? g.node(src->node) : nullptr;
+}
+
+/** The generator's size settings, in cm, by name: what the resize gesture scales. */
+std::map<std::string, double> sizesOf(NodeId mesh)
+{
+    std::map<std::string, double> out;
+    if (scene::Node* gen = generatorOf(mesh))
+        for (const char* attr : {"width", "height", "depth", "radius", "sectionRadius", "thickness"})
+            if (int idx = gen->type().attrIndex(attr); idx >= 0)
+                out[attr] = gen->as<double>(idx);
+    return out;
 }
 
 /**
  * Carries a just-created primitive under the cursor, standing on whatever surface is there (the ground plane where there
- * is none), until a click drops it. Dropping replaces the creation with one made at the spot, so create and place are a
- * single undo step; Esc or a right-click undoes the creation.
+ * is none), until a click drops it. Shift keeps it upright instead of turning it to the surface; B-drag or Ctrl+scroll
+ * resizes it. Dropping replaces the creation with one made at the spot and size, so create and place are a single undo
+ * step; Esc or a right-click undoes the creation.
  */
 class PlacePrimitiveTool : public ViewportTool
 {
 public:
     PlacePrimitiveTool(NodeId mesh, std::string command, QString label, uint64_t undoSerial)
-        : mMesh(mesh), mCommand(std::move(command)), mLabel(std::move(label)), mSerial(undoSerial)
+        : mMesh(mesh), mCommand(std::move(command)), mLabel(std::move(label)), mSerial(undoSerial), mSizes(sizesOf(mesh))
     {
     }
 
@@ -60,11 +88,19 @@ public:
             drop();
     }
 
+    bool ownsBrushRadius() const override { return true; }
+
     bool mousePress(QMouseEvent* e, const ViewInfo& view) override
     {
+        if (tools::brushRadiusDrag(e, false))
+        {
+            mResizeFrom = e->position();
+            mResizeStart = mScale;
+            return true;
+        }
         if (e->button() == Qt::LeftButton)
         {
-            follow(e->position(), view);
+            follow(e->position(), view, e->modifiers());
             drop();
         }
         else if (e->button() == Qt::RightButton)
@@ -82,14 +118,40 @@ public:
             end();
             return false;
         }
-        follow(e->position(), view);
+        if (mResizeFrom)
+        {
+            resize(mResizeStart * std::exp((e->position().x() - mResizeFrom->x()) * 0.01));
+            return true;
+        }
+        follow(e->position(), view, e->modifiers());
         return true;
     }
 
-    bool mouseRelease(QMouseEvent* e, const ViewInfo&) override { return e->button() != Qt::MiddleButton; }
-
-    bool keyPress(QKeyEvent* e, const ViewInfo&) override
+    bool mouseRelease(QMouseEvent* e, const ViewInfo&) override
     {
+        if (mResizeFrom && (e->button() == Qt::LeftButton || e->button() == Qt::MiddleButton))
+        {
+            mResizeFrom.reset();
+            return true;
+        }
+        return e->button() != Qt::MiddleButton;
+    }
+
+    bool wheel(QWheelEvent* e, const ViewInfo&) override
+    {
+        if (!(e->modifiers() & Qt::ControlModifier) || mSizes.empty())
+            return false;
+        resize(mScale * std::pow(1.1, e->angleDelta().y() / 120.0));
+        return true;
+    }
+
+    bool keyPress(QKeyEvent* e, const ViewInfo& view) override
+    {
+        if (e->key() == Qt::Key_Shift && mLastPx && !mResizeFrom)
+        {
+            follow(*mLastPx, view, Qt::ShiftModifier);
+            return false;
+        }
         if (e->key() != Qt::Key_Escape)
             return false;
         cancel();
@@ -98,32 +160,64 @@ public:
 
     void draw(render::FrameState&, OverlayPainter& p, const ViewInfo& view) override
     {
-        drawToolMessage(p, view, QString("Click to drop the %1 on the surface. Esc or right-click cancels.").arg(mLabel));
+        drawToolMessage(p, view,
+                        QString("Click to drop the %1 on the surface. Shift keeps it upright, B-drag or Ctrl+scroll resizes. Esc or "
+                                "right-click cancels.")
+                            .arg(mLabel));
     }
 
     std::optional<QCursor> cursor() const override { return QCursor(Qt::CrossCursor); }
 
 private:
-    void follow(QPointF px, const ViewInfo& view)
+    void follow(QPointF px, const ViewInfo& view, Qt::KeyboardModifiers mods)
     {
+        mLastPx = px;
+        const glm::dvec3 up = scene::sceneUp();
         if (std::optional<surfaceSnap::Hit> hit = surfaceSnap::underCursor(px, view, {mMesh}))
             mLast = Placement{hit->position, hit->normal};
         else
         {
             glm::dvec3 o, d;
             view.ray(px, o, d);
-            const double t = std::abs(d.y) > 1e-9 ? -o.y / d.y : -1.0;
+            const double den = glm::dot(d, up);
+            const double t = std::abs(den) > 1e-9 ? -glm::dot(o, up) / den : -1.0;
             if (t <= 0.0)
                 return;
-            mLast = Placement{o + d * t, {0.0, 1.0, 0.0}};
+            mLast = Placement{o + d * t, up};
         }
-        UndoStack& u = UndoStack::get();
-        const bool was = u.enabled();
-        u.setEnabled(false);
-        scene::placePrimitive(scene::Graph::current(), mMesh, mLast->position, mLast->normal);
-        u.setEnabled(was);
+        if (mods & Qt::ShiftModifier)
+            mLast->normal = up;
+        place();
         setVisible(mMesh, true);
+    }
+
+    void place()
+    {
+        if (mLast)
+            unrecorded([&] { scene::placePrimitive(scene::Graph::current(), mMesh, mLast->position, mLast->normal); });
         viewportTools::requestRedraw();
+    }
+
+    void resize(double scale)
+    {
+        mScale = std::clamp(scale, 0.01, 100.0);
+        scene::Node* gen = generatorOf(mMesh);
+        if (!gen)
+            return;
+        unrecorded([&] {
+            for (const auto& [attr, size] : mSizes)
+                scene::Graph::current().setValue({gen->id(), gen->type().attrIndex(attr), -1}, size * mScale);
+        });
+        place();
+    }
+
+    json sizeFlags() const
+    {
+        json out = json::object();
+        if (mScale != 1.0)
+            for (const auto& [attr, size] : mSizes)
+                out[attr] = size * mScale;
+        return out;
     }
 
     void drop()
@@ -141,7 +235,10 @@ private:
         if (u.serial() == mSerial && u.undo())
         {
             u.flushFuture();
-            actions::runWithOptions(mCommand, {{"position", vec(mLast->position)}, {"normal", vec(mLast->normal)}});
+            json call = sizeFlags();
+            call["position"] = vec(mLast->position);
+            call["normal"] = vec(mLast->normal);
+            actions::runWithOptions(mCommand, call);
         }
         else
         {
@@ -185,6 +282,12 @@ private:
     QString mLabel;
     uint64_t mSerial;
     std::optional<Placement> mLast;
+    std::optional<QPointF> mLastPx;
+    /** The generator's sizes when it was created; the resize gesture scales them all by mScale. */
+    std::map<std::string, double> mSizes;
+    double mScale = 1.0;
+    double mResizeStart = 1.0;
+    std::optional<QPointF> mResizeFrom;
     bool mEnded = false;
 };
 
@@ -209,7 +312,8 @@ void createAt(const std::string& command, const QString& label)
     json result;
     try
     {
-        result = ops::execute(command, ops::options::callWith(command), CallSource::UI);
+        // Not as UI: the create made on drop is the one echoed and offered for adjusting.
+        result = ops::execute(command, ops::options::callWith(command), CallSource::Script);
     }
     catch (const CommandError& e)
     {
@@ -249,7 +353,8 @@ void registerPlacePrimitiveUi()
                       .run = [cmd, text] { createAt(cmd, text); },
                       .doc = std::string("Creates a ") + QString(label).toLower().toStdString() +
                              " standing on the selected components, centred on them and facing along their normal. With no components "
-                             "selected it follows the cursor over the surfaces until you click to drop it. Uses the option box settings.",
+                             "selected it follows the cursor over the surfaces until you click to drop it: Shift keeps it upright, B-drag "
+                             "or Ctrl+scroll resizes it. Uses the option box settings.",
                       .python = std::string(command) + "(position=[0, 0, 0], normal=[0, 1, 0])"});
     }
 }

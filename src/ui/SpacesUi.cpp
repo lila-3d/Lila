@@ -10,6 +10,8 @@
 #include "ui/Icons.h"
 #include "ui/NodeLookup.h"
 #include "ui/Menus.h"
+#include "ui/OutlinerFilter.h"
+#include "ui/TokenCompleter.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -121,6 +123,14 @@ QWidget* spacesPanel(NodeId id)
     auto* add = new QHBoxLayout;
     auto* target = new QLineEdit;
     target->setPlaceholderText("world or a node name");
+    completion::attachValues(target, [id] {
+        QStringList names{"world"};
+        const Graph& graph = Graph::current();
+        for (NodeId other : outliner::hierarchyNodes(graph))
+            if (const scene::Node* n = graph.node(other); other != id && outliner::typeMatches(&n->type(), "transform"))
+                names << QString::fromStdString(n->name());
+        return names;
+    });
     add->addWidget(target, 1);
     auto* addButton = new QPushButton("Add Space");
     addButton->setToolTip("Add a space: world, or another node to follow");

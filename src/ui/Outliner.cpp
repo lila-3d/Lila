@@ -14,6 +14,7 @@
 #include "ui/Icons.h"
 #include "ui/OutlinerLogic.h"
 #include "ui/Theme.h"
+#include "ui/TokenCompleter.h"
 #include "ui/ViewportToolbar.h"
 
 #include <QApplication>
@@ -1037,6 +1038,7 @@ QWidget* filteredOutliner(QWidget* parent)
     edit->setClearButtonEnabled(true);
     edit->addAction(icon("filter"), QLineEdit::LeadingPosition);
     edit->setToolTip(kFilterSyntax);
+    completion::attachSceneFilter(edit);
     auto* regex = new QToolButton(pane);
     regex->setCheckable(true);
     regex->setAutoRaise(true);

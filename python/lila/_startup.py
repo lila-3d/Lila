@@ -4,6 +4,10 @@ import sys
 import _lila
 
 
+# Object API names put in the interactive namespace beside the commands; they don't collide with any.
+API_NAMES = ("Node", "node", "selected", "exists")
+
+
 class _LogWriter:
     def __init__(self, level):
         self._level = level
@@ -42,8 +46,7 @@ def boot():
     __main__.lila = lila
     __main__.ops = lila.ops
     expose_commands()
-    # Object API names that don't collide with commands.
-    for name in ("Node", "node", "selected", "exists"):
+    for name in API_NAMES:
         setattr(__main__, name, getattr(lila, name))
 
     _run_user_setup()

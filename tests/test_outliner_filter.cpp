@@ -4,6 +4,8 @@
 #include "scene/Graph.h"
 #include "ui/OutlinerFilter.h"
 
+#include <algorithm>
+
 using namespace lila;
 using json = nlohmann::json;
 namespace outliner = lila::ui::outliner;
@@ -156,4 +158,22 @@ TEST_CASE("outliner filter keeps the ancestors of matches")
     rows = outliner::filterRows(g, Filter("|outer|*|*"));
     CHECK(rows.matched == std::set<scene::NodeId>{idOf("target")});
     run("newScene");
+}
+
+TEST_CASE("outliner filter completes the type key and type names")
+{
+    const std::vector<std::string> types{"camera", "locator", "mesh", "polyMeshEdit", "transform"};
+    using V = std::vector<std::string>;
+    CHECK(outliner::filterCompletions("ty", types) == V{"type:"});
+    CHECK(outliner::filterCompletions("!T", types) == V{"!type:"});
+    CHECK(outliner::filterCompletions("cube", types).empty());
+    CHECK(outliner::filterCompletions("", types).empty());
+    CHECK(outliner::filterCompletions("type:", types).size() == types.size());
+    CHECK(outliner::filterCompletions("type:mesh", types) == V{"type:mesh", "type:polyMeshEdit"});
+    CHECK(outliner::filterCompletions("!TYPE:Cam", types) == V{"!type:camera"});
+    CHECK(outliner::filterCompletions("type:me*", types).empty());
+
+    std::vector<std::string> real = outliner::nodeTypeNames();
+    CHECK(std::find(real.begin(), real.end(), "transform") != real.end());
+    CHECK(std::is_sorted(real.begin(), real.end()));
 }

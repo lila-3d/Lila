@@ -27,6 +27,7 @@ struct State
     int graphListener = 0;
     bool commandRunning = false;
     std::set<NodeId> created; // by the top-level command now running
+    std::vector<NodeId> selectedBefore; // objects selected when a UI select began
 };
 
 State& st()
@@ -134,6 +135,14 @@ void ensureGraphListener()
     }, true);
 }
 
+/** Picking another object from the UI (outliner, viewport, menus) leaves component mode, Maya style. Scripts keep it. */
+bool pickedAnotherObject(const ExecuteEvent& e, const std::vector<NodeId>& before)
+{
+    if (e.name != "select" || e.source != CallSource::UI)
+        return false;
+    return std::ranges::any_of(Graph::current().selection(), [&](NodeId id) { return std::ranges::find(before, id) == before.end(); });
+}
+
 /** Whatever command creates something and selects it, the result lands in object mode so the new node shows as selected. */
 void watchCreations()
 {
@@ -144,17 +153,18 @@ void watchCreations()
             ensureGraphListener();
             s.created.clear();
             s.commandRunning = true;
+            s.selectedBefore = Graph::current().selection();
             return;
         }
         s.commandRunning = false;
         if (e.ok && s.mode != ComponentMode::Object)
-            for (NodeId id : Graph::current().selection())
-                if (s.created.contains(id))
-                {
-                    setMode(ComponentMode::Object);
-                    break;
-                }
+        {
+            bool created = std::ranges::any_of(Graph::current().selection(), [&](NodeId id) { return s.created.contains(id); });
+            if (created || pickedAnotherObject(e, s.selectedBefore))
+                setMode(ComponentMode::Object);
+        }
         s.created.clear();
+        s.selectedBefore.clear();
     });
 }
 

@@ -158,3 +158,143 @@ TEST_CASE("topology: loops, rings, boundaries, components")
     std::vector<Index> comp;
     CHECK(faceComponents(two, comp) == 2);
 }
+
+namespace
+{
+bool loopClosed(const Mesh& m, const std::vector<Index>& loop)
+{
+    if (loop.size() < 3)
+        return false;
+    const Index a = loop.front(), b = loop.back();
+    for (int i = 0; i < 2; ++i)
+        for (int j = 0; j < 2; ++j)
+            if (m.edgePoint(a, i) == m.edgePoint(b, j))
+                return true;
+    return false;
+}
+
+bool horizontal(const Mesh& m, Index e)
+{
+    return std::abs(m.position(m.edgePoint(e, 0)).y - m.position(m.edgePoint(e, 1)).y) < 1e-6;
+}
+
+bool onSide(const Mesh& m, Index e, double radius)
+{
+    for (int i = 0; i < 2; ++i)
+    {
+        const glm::dvec3 q = m.position(m.edgePoint(e, i));
+        if (std::abs(std::hypot(q.x, q.z) - radius) > 1e-6)
+            return false;
+    }
+    return true;
+}
+} // namespace
+
+TEST_CASE("topology: edge loops run through valence-4 points and stop at poles")
+{
+    SUBCASE("cylinder with n-gon caps: rims and rings close, verticals stop at the rims")
+    {
+        Mesh m = makeCylinder({.subdivAxis = 12, .subdivHeight = 3});
+        for (Index e = 0; e < m.edgeCapacity(); ++e)
+        {
+            if (!m.edgeValid(e))
+                continue;
+            const std::vector<Index> loop = edgeLoop(m, e);
+            if (horizontal(m, e))
+            {
+                CHECK(loop.size() == 12);
+                CHECK(loopClosed(m, loop));
+            }
+            else
+                CHECK(loop.size() == 3);
+        }
+    }
+    SUBCASE("cylinder with fan caps")
+    {
+        Mesh m = makeCylinder({.subdivAxis = 12, .subdivHeight = 2, .subdivCaps = 1});
+        for (Index e = 0; e < m.edgeCapacity(); ++e)
+            if (m.edgeValid(e) && horizontal(m, e) && onSide(m, e, 50.0))
+                CHECK(edgeLoop(m, e).size() == 12);
+    }
+    SUBCASE("torus: every loop closes")
+    {
+        Mesh m = makeTorus({.subdivAxis = 12, .subdivHeight = 8});
+        for (Index e = 0; e < m.edgeCapacity(); ++e)
+        {
+            if (!m.edgeValid(e))
+                continue;
+            const std::vector<Index> loop = edgeLoop(m, e);
+            CHECK((loop.size() == 12 || loop.size() == 8));
+            CHECK(loopClosed(m, loop));
+        }
+    }
+    SUBCASE("quad sphere: loops close or end on its valence-3 poles")
+    {
+        Mesh m = makeQuadSphere({.subdiv = 4});
+        for (Index e = 0; e < m.edgeCapacity(); ++e)
+        {
+            if (!m.edgeValid(e))
+                continue;
+            const std::vector<Index> loop = edgeLoop(m, e);
+            if (loopClosed(m, loop))
+                CHECK(loop.size() == 16);
+            else
+            {
+                // Each open end sits on a pole.
+                Index endA = m.edgePoint(loop.front(), 0), endB = m.edgePoint(loop.back(), 0);
+                if (loop.size() > 1)
+                {
+                    const Index f1 = loop[1], b1 = loop[loop.size() - 2];
+                    endA = m.edgePoint(f1, 0) == endA || m.edgePoint(f1, 1) == endA ? m.edgePoint(loop.front(), 1) : endA;
+                    endB = m.edgePoint(b1, 0) == endB || m.edgePoint(b1, 1) == endB ? m.edgePoint(loop.back(), 1) : endB;
+                }
+                CHECK(m.pointValence(endA) == 3);
+                CHECK(m.pointValence(endB) == 3);
+            }
+        }
+    }
+    SUBCASE("UV sphere: meridians run pole to pole, parallels close")
+    {
+        Mesh m = makeSphere({.subdivAxis = 12, .subdivHeight = 8});
+        for (Index e = 0; e < m.edgeCapacity(); ++e)
+        {
+            if (!m.edgeValid(e))
+                continue;
+            const std::vector<Index> loop = edgeLoop(m, e);
+            if (horizontal(m, e))
+            {
+                CHECK(loop.size() == 12);
+                CHECK(loopClosed(m, loop));
+            }
+            else
+                CHECK(loop.size() == 8);
+        }
+    }
+    SUBCASE("grid with mixed winding and its border")
+    {
+        Mesh m = quadGrid(4, 3);
+        m.flipFace(1);
+        m.flipFace(4);
+        m.flipFace(6);
+        CHECK(edgeLoop(m, m.findEdge(6, 7)).size() == 4);
+        CHECK(edgeLoop(m, m.findEdge(1, 6)).size() == 3);
+        const std::vector<Index> border = edgeLoop(m, m.findEdge(0, 1));
+        CHECK(border.size() == 14);
+        CHECK(loopClosed(m, border));
+    }
+    SUBCASE("border runs on past a pole sitting on it")
+    {
+        // Point 2 on the bottom border gets a second interior edge.
+        Mesh m = quadGrid(4, 2);
+        Index c2 = kInvalid, c6 = kInvalid;
+        m.forEachFaceCorner(1, [&](Index c) {
+            c2 = m.cornerPoint(c) == 2 ? c : c2;
+            c6 = m.cornerPoint(c) == 6 ? c : c6;
+        });
+        m.splitFace(1, c2, c6);
+        CHECK(m.pointValence(2) == 4);
+        const std::vector<Index> border = edgeLoop(m, m.findEdge(0, 1));
+        CHECK(border.size() == 12);
+        CHECK(loopClosed(m, border));
+    }
+}

@@ -32,6 +32,10 @@ enum class ArgType : uint8_t
     Any,
 };
 
+/**
+ * One flag. `doc` is read by the API reference, the generated Python stubs (completion, hover and signature help in
+ * the script editor) and runtime help(), so write it for someone typing the call.
+ */
 struct FlagDef
 {
     std::string name;
@@ -41,6 +45,8 @@ struct FlagDef
     std::string doc;
     /** Allowed values of a String flag, for menus and combo boxes; empty means free text. */
     std::vector<std::string> choices;
+    /** A short Python call showing the flag in use, e.g. `xform("cube1", worldSpace=True, query=True, translation=True)`. */
+    std::string example;
 };
 
 /** Normalized call: positional args plus long-name flags, defaults filled in. */
@@ -69,6 +75,10 @@ enum class CallSource : uint8_t
     UI,     // menus, hotkeys, tools: echoed to the script editor
 };
 
+/**
+ * A registered command. `doc` is the summary line, then optionally a blank line and a longer description. It feeds the
+ * API reference, the generated Python stubs and runtime help(), together with the flag docs and `examples`.
+ */
 struct CommandDef
 {
     std::string name;
@@ -80,6 +90,8 @@ struct CommandDef
     std::string owner; // extension that registered it; empty = built in
     /** Re-running it with different flags after undoing it is safe, so the UI may offer to adjust the last call live. */
     bool adjustable = false;
+    /** Python snippets, each one or more lines of runnable source. */
+    std::vector<std::string> examples;
 };
 
 /** One top-level execute, reported before the command runs and again after it finished or failed. */

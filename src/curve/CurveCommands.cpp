@@ -471,6 +471,8 @@ void registerCommands()
             if (a.has("profileCurve"))
                 prof = &curveNamed(a.get<std::string>("profileCurve"), "extrude");
             return meshOp("curveSweep", a, [&](Graph& g, Node& op) {
+                if (!a.has("upVector"))
+                    g.setValue({op.id(), op.type().attrIndex("upVector"), -1}, sceneUp());
                 g.connect(worldSpace(*path), {op.id(), op.type().attrIndex("path"), -1});
                 if (prof)
                     g.connect(worldSpace(*prof), {op.id(), op.type().attrIndex("profile"), -1});
@@ -488,6 +490,8 @@ void registerCommands()
             if (cs.size() > 1)
                 throw CommandError("revolve: give one profile curve");
             return meshOp("curveRevolve", a, [&](Graph& g, Node& op) {
+                if (!a.has("axis"))
+                    g.setValue({op.id(), op.type().attrIndex("axis"), -1}, sceneUp());
                 g.connect(worldSpace(*cs[0]), {op.id(), op.type().attrIndex("profile"), -1});
             }, "Revolve");
         },

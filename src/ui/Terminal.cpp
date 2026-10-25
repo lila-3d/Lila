@@ -9,6 +9,7 @@
 #include "ui/AgentSetup.h"
 #include "ui/PythonBridge.h"
 #include "ui/Theme.h"
+#include "ui/editor/EditorPalette.h"
 #include "ui/terminal/VtInput.h"
 
 #include <QApplication>
@@ -28,6 +29,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <array>
 #include <thread>
 
 #ifdef _WIN32
@@ -67,6 +69,17 @@ constexpr int kWheelLine = 40; // angle delta per scrolled line: three lines per
 constexpr int kWheelNotch = 120;
 // A program that never ends its synchronized frame still gets painted.
 constexpr int kSyncTimeoutMs = 150;
+
+constexpr term::Rgb kAnsiDark[16] = {
+    {0x00, 0x00, 0x00}, {0xcd, 0x31, 0x31}, {0x0d, 0xbc, 0x79}, {0xe5, 0xe5, 0x10}, {0x24, 0x72, 0xc8}, {0xbc, 0x3f, 0xbc},
+    {0x11, 0xa8, 0xcd}, {0xe5, 0xe5, 0xe5}, {0x66, 0x66, 0x66}, {0xf1, 0x4c, 0x4c}, {0x23, 0xd1, 0x8b}, {0xf5, 0xf5, 0x43},
+    {0x3b, 0x8e, 0xea}, {0xd6, 0x70, 0xd6}, {0x29, 0xb8, 0xdb}, {0xe5, 0xe5, 0xe5},
+};
+constexpr term::Rgb kAnsiLight[16] = {
+    {0x00, 0x00, 0x00}, {0xcd, 0x31, 0x31}, {0x10, 0x7c, 0x10}, {0x94, 0x98, 0x00}, {0x04, 0x51, 0xa5}, {0xbc, 0x05, 0xbc},
+    {0x05, 0x98, 0xbc}, {0x55, 0x55, 0x55}, {0x66, 0x66, 0x66}, {0xcd, 0x31, 0x31}, {0x14, 0xce, 0x14}, {0xb5, 0xba, 0x00},
+    {0x04, 0x51, 0xa5}, {0xbc, 0x05, 0xbc}, {0x05, 0x98, 0xbc}, {0xa5, 0xa5, 0xa5},
+};
 
 bool pref(const char* key, bool fallback)
 {
@@ -422,6 +435,7 @@ TerminalView::TerminalView(QWidget* parent)
     viewport()->setProperty("hotkeysOff", true);
     updateFontMetrics();
     updateScrollBar();
+    palette::onLookChanged(this, [this] { viewport()->update(); });
 }
 
 TerminalView::~TerminalView() = default;
@@ -679,19 +693,29 @@ void TerminalView::paintEvent(QPaintEvent*)
     LILA_ZONE();
 
     QPainter p(viewport());
-    p.fillRect(viewport()->rect(), themeShade(kDefaultBg));
 
-    // Explicit colors are compressed into the readable range and kept clear of their background.
+    // Monotone: explicit colors are compressed into the readable range and kept clear of their background.
     auto foreground = [](int fg, int bg) {
         int g = 96 + fg * (255 - 96) / 255;
         if (std::abs(g - bg) < 90)
             g = bg > 127 ? std::max(0, bg - 130) : std::min(255, bg + 130);
         return g;
     };
+    const palette::Look look = palette::currentLook();
+    std::array<QColor, 256> shades;
+    for (int v = 0; v < 256; ++v)
+        shades[v] = themeShade(v);
+    const QColor defaultFg = shades[kDefaultFg], defaultBg = shades[kDefaultBg];
+    p.fillRect(viewport()->rect(), defaultBg);
+    const term::Rgb* ansi = look.light ? kAnsiLight : kAnsiDark;
+    auto rgb = [ansi](term::Color c) {
+        term::Rgb v = term::rgbFromColor(c, ansi);
+        return QColor(v.r, v.g, v.b);
+    };
 
     struct Style
     {
-        int fg, bg;
+        QColor fg, bg;
         bool bold, italic, underline, strike;
         bool operator==(const Style&) const = default;
     };
@@ -709,10 +733,9 @@ void TerminalView::paintEvent(QPaintEvent*)
         int y = mPad + r * mCellH;
         bool cursorRow = showCursor && idx == mScreen.cursorY() && mFocused && !mExited;
 
-        auto styleAt = [&](int x) {
-            const term::Cell& c = line[x];
-            int bg = c.bg == term::kDefaultColor ? kDefaultBg : c.bg;
-            int fg = c.fg == term::kDefaultColor ? kDefaultFg : foreground(c.fg, bg);
+        auto monoStyle = [&](const term::Cell& c, bool sel, bool cursor) {
+            int bg = c.bg == term::kDefaultColor ? kDefaultBg : term::grayFromColor(c.bg);
+            int fg = c.fg == term::kDefaultColor ? kDefaultFg : foreground(term::grayFromColor(c.fg), bg);
             if (c.attrs & term::Bold)
                 fg = std::min(255, fg + 30);
             if (c.attrs & term::Dim)
@@ -721,16 +744,45 @@ void TerminalView::paintEvent(QPaintEvent*)
                 std::swap(fg, bg);
             if (c.attrs & term::Hidden)
                 fg = bg;
-            if (hasSel && selected(abs, x))
+            if (sel)
             {
                 bg = kSelectionBg;
                 fg = 255;
             }
-            if (cursorRow && x == mScreen.cursorX())
+            if (cursor)
             {
                 bg = c.attrs & term::Inverse ? kDefaultBg : kDefaultFg;
                 fg = kDefaultBg;
             }
+            return std::pair{shades[fg], shades[bg]};
+        };
+        auto colourStyle = [&](const term::Cell& c, bool sel, bool cursor) {
+            QColor bg = c.bg == term::kDefaultColor ? defaultBg : rgb(c.bg);
+            term::Color fgc = c.fg;
+            // Bold brightens the eight basic colors, as most terminals do.
+            if ((c.attrs & term::Bold) && fgc >= 0 && fgc < 8)
+                fgc += 8;
+            QColor fg = fgc == term::kDefaultColor ? defaultFg : rgb(fgc);
+            if (c.attrs & term::Dim)
+                fg = QColor((fg.red() + bg.red()) / 2, (fg.green() + bg.green()) / 2, (fg.blue() + bg.blue()) / 2);
+            if (c.attrs & term::Inverse)
+                std::swap(fg, bg);
+            if (c.attrs & term::Hidden)
+                fg = bg;
+            if (sel)
+                bg = palette::selection;
+            if (cursor)
+            {
+                bg = c.attrs & term::Inverse ? defaultBg : defaultFg;
+                fg = defaultBg;
+            }
+            return std::pair{fg, bg};
+        };
+        auto styleAt = [&](int x) {
+            const term::Cell& c = line[x];
+            bool sel = hasSel && selected(abs, x);
+            bool cursor = cursorRow && x == mScreen.cursorX();
+            auto [fg, bg] = look.monotone ? monoStyle(c, sel, cursor) : colourStyle(c, sel, cursor);
             return Style{fg, bg, bool(c.attrs & term::Bold), bool(c.attrs & term::Italic), bool(c.attrs & term::Underline),
                          bool(c.attrs & term::Strike)};
         };
@@ -760,17 +812,17 @@ void TerminalView::paintEvent(QPaintEvent*)
             }
 
             QRectF rect(mPad + x * mCellW, y, span * mCellW, mCellH);
-            if (st.bg != kDefaultBg)
-                p.fillRect(rect, themeShade(st.bg));
+            if (st.bg != defaultBg)
+                p.fillRect(rect, st.bg);
             if (!text.trimmed().isEmpty())
             {
                 p.setFont(st.bold ? (st.italic ? mBoldItalic : mBold) : (st.italic ? mItalic : mFont));
-                p.setPen(themeShade(st.fg));
+                p.setPen(st.fg);
                 p.drawText(QPointF(rect.left(), y + mAscent), text);
             }
             if (st.underline || st.strike)
             {
-                p.setPen(themeShade(st.fg));
+                p.setPen(st.fg);
                 qreal ly = st.underline ? y + mAscent + 1.5 : y + mCellH * 0.55;
                 p.drawLine(QPointF(rect.left(), ly), QPointF(rect.right(), ly));
             }
@@ -783,12 +835,12 @@ void TerminalView::paintEvent(QPaintEvent*)
             QRectF cell(mPad + mScreen.cursorX() * mCellW, y, mCellW, mCellH);
             if (!mFocused)
             {
-                p.setPen(themeShade(kDefaultFg));
+                p.setPen(defaultFg);
                 p.setBrush(Qt::NoBrush);
                 p.drawRect(cell.adjusted(0.5, 0.5, -0.5, -0.5));
             }
             else if (mScreen.cursorX() >= cols)
-                p.fillRect(cell, themeShade(kDefaultFg));
+                p.fillRect(cell, defaultFg);
         }
     }
 }

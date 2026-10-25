@@ -140,6 +140,8 @@ private:
     std::optional<QPointF> project(const glm::dvec3& world) const;
     /** Names under a click point (nearest only) or inside a box (the lasso instead while mLassoPick is set). */
     std::vector<std::string> hitTest(QPointF a, QPointF b);
+    /** In a component mode, a click on an object components can't be picked on selects it, which leaves component mode. */
+    bool pickOtherObject(QPointF at);
     /** A drag selection's test for a projected point: inside the lasso being picked, else inside box. */
     bool inSelectRegion(const QRectF& box, QPointF p) const;
     /** Whether a screen-space outline (two points: a segment) overlaps the marquee or lasso anywhere. */

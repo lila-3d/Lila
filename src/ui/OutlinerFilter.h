@@ -72,6 +72,14 @@ private:
     bool mFuzzy = false;
 };
 
+/**
+ * Completions for token, the filter term being typed: a `type:` term (optionally `!type:`) completes to the type
+ * names, prefix matches first; a partial `ty` completes to the `type:` key. Empty when there is nothing to offer.
+ */
+LILA_UI_API std::vector<std::string> filterCompletions(std::string_view token, const std::vector<std::string>& typeNames);
+/** Every registered node type name, sorted. */
+LILA_UI_API std::vector<std::string> nodeTypeNames();
+
 /** True when type, or one of its base types, is named by pattern (a glob, case-insensitive). */
 LILA_UI_API bool typeMatches(const scene::NodeType* type, std::string_view pattern);
 

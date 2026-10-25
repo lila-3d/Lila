@@ -21,6 +21,7 @@ function(lila_add_extension target)
     set(package ${ARG_OUTPUT_DIR}/${ARG_ID}.lilaext)
 
     add_library(${target} MODULE ${ARG_SOURCES})
+    set_property(GLOBAL APPEND PROPERTY LILA_EXTENSION_TARGETS ${target})
     target_link_libraries(${target} PRIVATE LilaScene)
     if(ARG_UI)
         target_link_libraries(${target} PRIVATE LilaUI)

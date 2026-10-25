@@ -9,11 +9,14 @@ lila_module(lila_ui UI
     FlagFields.cpp FlagFields.h
     OptionBox.cpp OptionBox.h
     MenuSearch.cpp MenuSearch.h
+    QuickCommand.cpp QuickCommand.h CommandHistory.h
     TexturePicker.cpp TexturePicker.h
     AgentCapture.cpp AgentCapture.h
     AgentSetup.cpp AgentSetup.h
     Animation.cpp Animation.h
     ApiReference.cpp ApiReference.h
+    Docs.cpp Docs.h
+    DocsUi.cpp DocsUi.h
     AttributeEditor.cpp AttributeEditor.h
     AutoBevelUi.cpp AutoBevelUi.h
     SmartJoinUi.cpp SmartJoinUi.h
@@ -84,9 +87,9 @@ lila_module(lila_ui UI
     RetopoDrawTool.cpp RetopoDrawTool.h
     KnifeTool.cpp KnifeTool.h
     TargetWeldTool.cpp TargetWeldTool.h
-    PythonBridge.cpp PythonBridge.h
     ConformTool.cpp ConformTool.h
     RigViewport.cpp RigViewport.h WeightPaintTool.cpp WeightPaintTool.h
+    PythonBridge.cpp PythonBridge.h
     SpacesUi.cpp SpacesUi.h
     DeformUi.cpp DeformUi.h
     MorphPanel.cpp MorphPanel.h
@@ -94,9 +97,11 @@ lila_module(lila_ui UI
     SculptTool.cpp SculptTool.h
     Tools.cpp Tools.h
     Outliner.cpp Outliner.h
-    SetsUi.cpp SetsUi.h
     OutlinerFilter.cpp OutlinerFilter.h
     PreferencesDialog.cpp PreferencesDialog.h
+    TokenCompleter.cpp TokenCompleter.h
+    WheelGuard.cpp WheelGuard.h
+    SetsUi.cpp SetsUi.h
     ProgressOverlay.cpp ProgressOverlay.h
     ReferenceEditor.cpp ReferenceEditor.h
     RenderSettingsDialog.cpp RenderSettingsDialog.h
@@ -123,6 +128,7 @@ lila_module(lila_ui UI
     FlowLayout.cpp FlowLayout.h
     DockSidebar.cpp DockSidebar.h
     DominantInfluenceUi.cpp DominantInfluenceUi.h
+    DockDragCancel.cpp DockDragCancel.h
     ViewportHooks.cpp ViewportHooks.h
     ViewportDisplay.cpp ViewportDisplay.h
     ViewportHud.cpp ViewportHud.h
@@ -147,3 +153,6 @@ target_link_libraries(lila_ui PUBLIC lila_retopo_cmds)
 target_link_libraries(lila_ui PUBLIC lila_sculpt_cmds)
 target_link_libraries(lila_ui PUBLIC lila_vcolor)
 target_link_libraries(lila_ui PRIVATE Python::Python Qt6::Svg)
+find_package(miniz CONFIG REQUIRED)
+target_link_libraries(lila_ui PRIVATE Qt6::Network miniz::miniz)
+set_source_files_properties(Docs.cpp PROPERTIES COMPILE_DEFINITIONS LILA_VERSION="${PROJECT_VERSION}")

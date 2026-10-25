@@ -3,6 +3,8 @@
 #include "core/Log.h"
 #include "ops/Command.h"
 #include "scene/Graph.h"
+#include "ui/ApiReference.h"
+#include "ui/DocsUi.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
 #include "ui/OptionBox.h"
@@ -10,6 +12,7 @@
 #include "ui/OutlinerFilter.h"
 #include "ui/OutlinerLogic.h"
 #include "ui/Theme.h"
+#include "ui/TokenCompleter.h"
 
 #include <QApplication>
 #include <QHeaderView>
@@ -21,6 +24,7 @@
 #include <QPainter>
 #include <QPointer>
 #include <QStyledItemDelegate>
+#include <QTabBar>
 #include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -218,21 +222,45 @@ int score(const Item& it, const QString& query)
     return it.label.contains(query, Qt::CaseInsensitive) ? 2 : 1;
 }
 
+/** Also the tab index of each mode in the box. */
 enum class Mode
 {
     Menus,
     Scene,
+    Api,
 };
 
 QString& lastQuery(Mode m)
 {
-    static QString q[2];
+    static QString q[3];
     return q[int(m)];
+}
+
+/** Every word in the name, kind or summary; name matches first, then commands and functions ahead of flags and members. */
+int apiScore(const ApiSymbol& s, const QString& query)
+{
+    int rank = s.kind == "command" ? 3 : s.kind == "function" || s.kind == "class" ? 2 : s.kind == "flag" ? 1 : 0;
+    if (query.isEmpty())
+        return rank + 1;
+    QString hay = s.name + ' ' + s.kind + ' ' + s.summary;
+    for (const QString& w : query.split(' ', Qt::SkipEmptyParts))
+        if (!hay.contains(w, Qt::CaseInsensitive))
+            return 0;
+    QString last = s.name.section('.', -1);
+    int match = 1;
+    if (s.name.compare(query, Qt::CaseInsensitive) == 0 || last.compare(query, Qt::CaseInsensitive) == 0)
+        match = 5;
+    else if (s.name.startsWith(query, Qt::CaseInsensitive) || last.startsWith(query, Qt::CaseInsensitive))
+        match = 4;
+    else if (s.name.contains(query, Qt::CaseInsensitive))
+        match = 3;
+    return match * 10 + rank + 1;
 }
 
 constexpr int kActionRole = Qt::UserRole;
 constexpr int kNodeRole = Qt::UserRole + 1;
 constexpr int kParentPathRole = Qt::UserRole + 2; // "|group|sub|" in front of the row's name
+constexpr int kSymbolRole = Qt::UserRole + 3;     // index into the box's API symbols
 
 enum Column
 {
@@ -292,7 +320,8 @@ QPointer<SearchBox>& openBoxInstance()
 
 /**
  * The Ctrl+T / Ctrl+F box. Menus mode lists every menu item and runs it, or opens its option box; Scene mode lists
- * every node the outliner shows and selects it. The other mode's hotkey switches in place.
+ * every node the outliner shows and selects it; Api mode, opened from the script editor, lists the scripting API and
+ * inserts a call. The other mode's hotkey, a tab or Ctrl+Tab switches in place.
  */
 class SearchBox : public QFrame
 {
@@ -305,6 +334,17 @@ public:
         auto* lay = new QVBoxLayout(this);
         lay->setContentsMargins(6, 6, 6, 6);
         lay->setSpacing(4);
+        mTabs = new QTabBar(this);
+        mTabs->setFocusPolicy(Qt::NoFocus);
+        mTabs->setDrawBase(false);
+        mTabs->setExpanding(false);
+        mTabs->addTab("Menus");
+        mTabs->addTab("Scene");
+        connect(mTabs, &QTabBar::currentChanged, this, [this](int i) {
+            if (i >= 0 && i != int(mMode))
+                setMode(Mode(i));
+        });
+        lay->addWidget(mTabs);
         mEdit = new QLineEdit(this);
         mEdit->setClearButtonEnabled(true);
         mList = new QTreeWidget(this);
@@ -328,11 +368,20 @@ public:
         mPathDelegate = new PathDelegate(mList);
         mEdit->installEventFilter(this);
         connect(mEdit, &QLineEdit::textChanged, this, [this] { refill(); });
+        completion::attach(mEdit, [this](const QString& token) {
+            QStringList out;
+            if (mMode == Mode::Scene)
+                for (const std::string& s : outliner::filterCompletions(token.toStdString(), outliner::nodeTypeNames()))
+                    out << QString::fromStdString(s);
+            return out;
+        });
         connect(mList, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* row, int column) {
             mList->setCurrentItem(row);
             Qt::KeyboardModifiers mods = QApplication::keyboardModifiers();
             if (mMode == Mode::Scene)
                 pick(mods);
+            else if (mMode == Mode::Api)
+                (column == kOptions || (mods & Qt::ShiftModifier)) ? apiDocs(column == kOptions && (mods & Qt::ShiftModifier)) : apiInsert();
             else if (column == kOptions || (mods & Qt::ShiftModifier))
                 openOptions();
             else
@@ -347,9 +396,18 @@ public:
     ~SearchBox() override { lastQuery(mMode) = mEdit->text(); }
 
     Mode mode() const { return mMode; }
+    bool hasApi() const { return bool(mTarget.insert); }
+
+    void setApiTarget(ApiTarget target)
+    {
+        mTarget = std::move(target);
+        if (mTabs->count() <= int(Mode::Api))
+            mTabs->addTab("Scripting API");
+    }
 
     void start(Mode m)
     {
+        mHome = m == Mode::Api ? Mode::Api : Mode::Menus;
         setMode(m);
         show();
         mEdit->setFocus();
@@ -363,9 +421,19 @@ public:
             lastQuery(mMode) = mEdit->text();
         mStarted = true;
         mMode = m;
+        {
+            QSignalBlocker block(mTabs);
+            mTabs->setCurrentIndex(int(m));
+        }
         bool scene = m == Mode::Scene;
+        bool api = m == Mode::Api;
         if (scene)
             collectScene();
+        else if (api)
+        {
+            if (mSymbols.empty())
+                mSymbols = apiSymbols();
+        }
         else if (mItems.empty() && mBar)
             for (QAction* a : mBar->actions())
                 if (QMenu* menu = a->menu(); menu && a->isVisible())
@@ -374,6 +442,7 @@ public:
         mList->setColumnHidden(kKey, scene);
         mList->setColumnHidden(kOptions, scene);
         mEdit->setPlaceholderText(scene ? "Search the scene: names, wildcards (pCube*), type:mesh, |group|path, !exclude"
+                                  : api ? "Search the scripting API: commands, flags, lila classes and functions"
                                         : "Search menus");
         auto key = [](const char* id, const char* fallback) {
             QString k = Hotkeys::get().keyFor(id);
@@ -381,6 +450,7 @@ public:
         };
         mHint->setText(scene ? QString("Enter selects    Shift+Enter adds    Ctrl+Enter toggles    %1 searches menus")
                                    .arg(key("window.searchMenus", "Ctrl+T"))
+                       : api ? QString("Enter inserts the call    Shift+Enter or the book shows the docs    Ctrl+Tab switches")
                              : QString("Enter runs    Shift+Enter or the square opens the options    %1 searches the scene")
                                    .arg(key("window.searchScene", "Ctrl+F")));
         QSignalBlocker block(mEdit);
@@ -395,13 +465,22 @@ protected:
         if (obj != mEdit || e->type() != QEvent::KeyPress)
             return false;
         auto* k = static_cast<QKeyEvent*>(e);
-        if (Hotkeys::get().isKeyFor(k, "window.searchMenus") || Hotkeys::get().isKeyFor(k, "window.searchScene"))
+        bool menusKey = Hotkeys::get().isKeyFor(k, "window.searchMenus");
+        bool sceneKey = Hotkeys::get().isKeyFor(k, "window.searchScene");
+        bool apiKey = hasApi() && Hotkeys::get().isKeyFor(k, "script.searchApi");
+        if (menusKey || sceneKey || apiKey)
         {
-            Mode want = Hotkeys::get().isKeyFor(k, "window.searchScene") ? Mode::Scene : Mode::Menus;
+            // One key can mean both menus and the API (Ctrl+T); it then means whichever the box opened as.
+            Mode want = sceneKey ? Mode::Scene : menusKey && apiKey ? mHome : apiKey ? Mode::Api : Mode::Menus;
             if (want == mMode)
                 close();
             else
                 setMode(want);
+            return true;
+        }
+        if (k->key() == Qt::Key_Tab && k->modifiers() == Qt::ControlModifier)
+        {
+            setMode(Mode((int(mMode) + 1) % mTabs->count()));
             return true;
         }
         int n = mList->topLevelItemCount();
@@ -423,6 +502,8 @@ protected:
         case Qt::Key_Enter:
             if (mMode == Mode::Scene)
                 pick(k->modifiers());
+            else if (mMode == Mode::Api)
+                (k->modifiers() & Qt::ShiftModifier) ? apiDocs() : apiInsert();
             else if (k->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier))
                 openOptions();
             else
@@ -439,6 +520,8 @@ private:
         mList->clear();
         if (mMode == Mode::Scene)
             fillScene();
+        else if (mMode == Mode::Api)
+            fillApi();
         else
             fillMenus();
         if (mList->topLevelItemCount())
@@ -470,6 +553,65 @@ private:
                 row->setToolTip(kOptions, "Options (Shift+Enter, or Shift+click the row)");
             }
         }
+    }
+
+    void fillApi()
+    {
+        constexpr size_t kMaxRows = 300;
+        QString q = mEdit->text().trimmed();
+        std::vector<std::pair<int, size_t>> hits;
+        for (size_t i = 0; i < mSymbols.size(); ++i)
+            if (int s = apiScore(mSymbols[i], q))
+                hits.emplace_back(-s, i);
+        std::stable_sort(hits.begin(), hits.end(), [](auto& a, auto& b) { return a.first < b.first; });
+        if (hits.size() > kMaxRows)
+            hits.resize(kMaxRows);
+        QBrush dim = palette().brush(QPalette::Disabled, QPalette::Text);
+        for (auto& [s, i] : hits)
+        {
+            const ApiSymbol& sym = mSymbols[i];
+            auto* row = new QTreeWidgetItem(mList, {sym.name, sym.summary, sym.kind, QString()});
+            row->setData(kLabel, kSymbolRole, qulonglong(i));
+            row->setForeground(kWhere, dim);
+            row->setForeground(kKey, dim);
+            row->setToolTip(kWhere, sym.summary);
+            row->setIcon(kOptions, icon("book-2"));
+            row->setToolTip(kOptions, "Docs (Shift+Enter, or Shift+click the row). Shift+click the book opens them in the web browser");
+        }
+    }
+
+    const ApiSymbol* currentSymbol() const
+    {
+        QTreeWidgetItem* row = mList->currentItem();
+        size_t i = row ? size_t(row->data(kLabel, kSymbolRole).toULongLong()) : mSymbols.size();
+        return i < mSymbols.size() ? &mSymbols[i] : nullptr;
+    }
+
+    void apiInsert()
+    {
+        const ApiSymbol* sym = currentSymbol();
+        if (!sym)
+            return;
+        QString code = sym->insert;
+        auto insert = mTarget.insert;
+        close();
+        // After the box has closed, so focus is back in the editor that receives the text.
+        QTimer::singleShot(0, [insert, code] { insert(code); });
+    }
+
+    /** Shift+Enter and Shift+click on the row use Shift to mean docs, so only Shift+click on the book means the browser. */
+    void apiDocs(bool inBrowser = false)
+    {
+        const ApiSymbol* sym = currentSymbol();
+        if (!sym || !mTarget.showDocs)
+            return;
+        QString key = sym->key;
+        auto showDocs = mTarget.showDocs;
+        close();
+        QTimer::singleShot(0, [showDocs, key, inBrowser] {
+            docs::RouteScope route(inBrowser ? docs::Route::Browser : docs::Route::Panel);
+            showDocs(key);
+        });
     }
 
     /** Snapshot of the hierarchy when the scene mode opens; the scene does not change while the box has focus. */
@@ -581,6 +723,10 @@ private:
 
     QPointer<QMenuBar> mBar;
     Mode mMode = Mode::Menus;
+    Mode mHome = Mode::Menus;
+    ApiTarget mTarget;
+    std::vector<ApiSymbol> mSymbols;
+    QTabBar* mTabs = nullptr;
     bool mStarted = false;
     std::vector<Item> mItems;
     std::vector<SceneRow> mScene;
@@ -590,11 +736,13 @@ private:
     PathDelegate* mPathDelegate = nullptr;
 };
 
-void openIn(Mode m, QMenuBar* bar, QWidget* over)
+void openIn(Mode m, QMenuBar* bar, QWidget* over, ApiTarget target = {})
 {
     QPointer<SearchBox>& box = openBoxInstance();
     if (box && box->isVisible())
     {
+        if (target.insert)
+            box->setApiTarget(std::move(target));
         if (box->mode() == m)
             box->close();
         else
@@ -602,6 +750,8 @@ void openIn(Mode m, QMenuBar* bar, QWidget* over)
         return;
     }
     box = new SearchBox(bar, over);
+    if (target.insert)
+        box->setApiTarget(std::move(target));
     box->start(m);
 }
 } // namespace
@@ -624,5 +774,10 @@ void openBox(QMenuBar* bar, QWidget* over)
 void openSceneFinder(QMenuBar* bar, QWidget* over)
 {
     openIn(Mode::Scene, bar, over);
+}
+
+void openApiSearch(QMenuBar* bar, QWidget* over, ApiTarget target)
+{
+    openIn(Mode::Api, bar, over, std::move(target));
 }
 } // namespace lila::ui::menuSearch

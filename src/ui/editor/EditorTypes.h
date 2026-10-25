@@ -16,6 +16,16 @@ enum class Severity : int
     Hint = 4,
 };
 
+/** Replaces a range, in lines and UTF-16 columns, with `text`. */
+struct TextEdit
+{
+    int line = 0;
+    int col = 0;
+    int endLine = 0;
+    int endCol = 0;
+    QString text;
+};
+
 /** A document range in lines and UTF-16 columns, which is what both QTextDocument and LSP count in. */
 struct Diagnostic
 {
@@ -28,6 +38,10 @@ struct Diagnostic
     QString source;
     QString code;
     bool unnecessary = false; // rendered faded rather than underlined
+    /** The quick fix offered for it, if any. */
+    QString fixTitle;
+    QList<TextEdit> fix;
+    bool fixUnsafe = false;
 };
 
 /** LSP completion kinds, the subset that changes how a row is drawn. */

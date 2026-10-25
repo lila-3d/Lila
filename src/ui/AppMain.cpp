@@ -24,6 +24,7 @@
 #include "ui/Actions.h"
 #include "ui/AdjustLastOp.h"
 #include "ui/AgentCapture.h"
+#include "ui/DocsUi.h"
 #include "ui/MaterialThumbnails.h"
 #include "ui/AgentSetup.h"
 #include "ui/BakePaintTool.h"
@@ -108,6 +109,7 @@ void registerUi()
     registerShelfActions();
     registerEditorActions();
     registerPanelActions();
+    docs::registerDocsUi();
     registerMaterialUi();
     registerNodeEditorActions();
     registerUvActions();
@@ -244,7 +246,9 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
             if (!opts.command.empty())
                 python::run(opts.command, "<command>");
         });
+        QTimer::singleShot(3000, &window, [] { docs::startAutoUpdate(); });
         rc = app.exec();
+        docs::shutdown();
     }
     // A bake still running on the GPU must stop before the renderer does.
     bake::shutdownRebakes();

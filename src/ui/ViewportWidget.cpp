@@ -801,6 +801,7 @@ ViewInfo ViewportWidget::viewInfo() const
     v.camera = mViewName;
     v.ortho = mCamera.ortho;
     v.film = mCamera.filmExtents();
+    v.isolation = &mIsolation;
     return v;
 }
 
@@ -1269,6 +1270,8 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
     }
 
     bool shift = mods & Qt::ShiftModifier, ctrl = mods & Qt::ControlModifier;
+    if (click && hits.empty() && !shift && !ctrl && pickOtherObject(a))
+        return;
     const char* flag = mode == ComponentMode::Vertex ? "vertices" : mode == ComponentMode::Edge ? "edges" : "faces";
     try
     {
@@ -1299,6 +1302,26 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
     {
         log::error("{}", e.what());
     }
+}
+
+bool ViewportWidget::pickOtherObject(QPointF at)
+{
+    std::vector<std::string> hits = hitTest(at, at);
+    const scene::Node* n = hits.empty() ? nullptr : findNode(hits.front());
+    if (!n)
+        return false;
+    const std::vector<scene::NodeId> live = hilited(mIsolation);
+    if (std::ranges::find(live, n->id()) != live.end())
+        return false;
+    try
+    {
+        ops::execute("select", {{"args", {n->path()}}}, CallSource::UI);
+    }
+    catch (const CommandError& e)
+    {
+        log::error("{}", e.what());
+    }
+    return true;
 }
 
 void ViewportWidget::drawObjectSymmetryEdges(render::FrameState& s)

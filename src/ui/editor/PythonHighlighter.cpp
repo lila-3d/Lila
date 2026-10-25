@@ -4,6 +4,9 @@
 #include "ui/editor/TextUtil.h"
 
 #include <QSet>
+#include <QTextBlock>
+
+#include <algorithm>
 
 namespace lila::ui
 {
@@ -15,7 +18,60 @@ enum StateBits
     TripleDouble = 2,
     FString = 4,
     Raw = 8,
+    StringBits = 15,
 };
+
+/** What an open bracket is, kept in the block state so multi-line calls and signatures carry on. */
+enum class Bracket : uint8_t
+{
+    Other,
+    Call,
+    DefParams,
+};
+
+/** Bracket depth in bits 4-7, the kinds of the outermost eight levels in two bits each from bit 8. */
+constexpr int kDepthShift = 4;
+constexpr int kKindShift = 8;
+constexpr int kMaxDepth = 15;
+constexpr int kKeptKinds = 8;
+
+int encodeBrackets(const std::vector<Bracket>& b)
+{
+    int depth = std::min(int(b.size()), kMaxDepth);
+    int out = depth << kDepthShift;
+    for (int i = 0; i < std::min(depth, kKeptKinds); ++i)
+        out |= int(b[size_t(i)]) << (kKindShift + 2 * i);
+    return out;
+}
+
+std::vector<Bracket> decodeBrackets(int state)
+{
+    int depth = (state >> kDepthShift) & kMaxDepth;
+    std::vector<Bracket> b(size_t(depth), Bracket::Other);
+    for (int i = 0; i < std::min(depth, kKeptKinds); ++i)
+        b[size_t(i)] = Bracket((state >> (kKindShift + 2 * i)) & 3);
+    return b;
+}
+
+bool isAllCaps(const QString& w)
+{
+    bool letter = false;
+    for (QChar c : w)
+    {
+        if (c.isLower())
+            return false;
+        letter |= c.isLetter();
+    }
+    return letter && w.size() > 1;
+}
+
+bool isCapWords(const QString& w)
+{
+    int i = 0;
+    while (i < w.size() && w[i] == '_')
+        ++i;
+    return i < w.size() && w[i].isUpper() && !isAllCaps(w);
+}
 
 const QSet<QString>& keywords()
 {
@@ -61,15 +117,19 @@ public:
 
     int run(int state)
     {
+        mBrackets = decodeBrackets(state);
         int i = 0;
-        if (state != 0)
+        if (state & StringBits)
         {
-            i = tripleBody(0, 0, state);
+            i = tripleBody(0, 0, state & StringBits);
             if (i < 0)
-                return mEndState;
+                return mEndState | encodeBrackets(mBrackets);
         }
+        else if (!mBrackets.empty() && !mLine.isEmpty() && (text::isIdentChar(mLine[0]) || mLine[0] == '@'))
+            // A statement at column 0 cannot be inside brackets, so an unclosed one above stops here.
+            mBrackets.clear();
         code(i, int(mLine.size()));
-        return mEndState;
+        return mEndState | encodeBrackets(mBrackets);
     }
 
 private:
@@ -79,11 +139,31 @@ private:
             mOut.push_back({start, end - start, kind});
     }
 
+    enum class Import
+    {
+        None,
+        Modules,
+        FromNames,
+    };
+
     /** Plain code over [i, end). Sets mEndState if a triple-quoted string runs off the line. */
     void code(int i, int end)
     {
+        enum class Last
+        {
+            Other,
+            Name,
+            Close,
+            DefName,
+        };
         QString prevWord;
         bool lineStart = true;
+        bool firstWord = true;
+        Last last = Last::Other;
+        Import import = Import::None;
+        bool expectParam = top() == Bracket::DefParams;
+        int lambdaDepth = -1;
+        bool lambdaParam = false;
         while (i < end)
         {
             QChar c = mLine[i];
@@ -106,6 +186,7 @@ private:
                 add(i, j, TokenKind::Decorator);
                 i = j;
                 lineStart = false;
+                last = Last::Name;
                 continue;
             }
             lineStart = false;
@@ -116,6 +197,7 @@ private:
                     return;
                 i = r;
                 prevWord.clear();
+                last = Last::Other;
                 continue;
             }
             if (c.isDigit() || (c == '.' && i + 1 < end && mLine[i + 1].isDigit()))
@@ -124,6 +206,7 @@ private:
                 add(i, j, TokenKind::Number);
                 i = j;
                 prevWord.clear();
+                last = Last::Other;
                 continue;
             }
             if (text::isIdentChar(c))
@@ -134,27 +217,116 @@ private:
                 QString word = mLine.mid(i, j - i).toString();
                 bool afterDot = i > 0 && mLine[i - 1] == '.';
                 bool soft = word == "match" || word == "case" || word == "type";
+                bool keyword = !afterDot && keywords().contains(word) && !(soft && softKeywordUsedAsName(mLine, j));
+                last = keyword ? Last::Other : Last::Name;
                 if (prevWord == "def")
+                {
                     add(i, j, TokenKind::DefName);
+                    last = Last::DefName;
+                }
                 else if (prevWord == "class")
                     add(i, j, TokenKind::ClassName);
                 else if (word == "True" || word == "False" || word == "None")
                     add(i, j, TokenKind::Constant);
-                else if (afterDot)
-                    ;
-                else if (keywords().contains(word) && !(soft && softKeywordUsedAsName(mLine, j)))
+                else if (keyword)
+                {
                     add(i, j, TokenKind::Keyword);
-                else if (word == "self" || word == "cls")
+                    if (word == "from" && firstWord)
+                        import = Import::Modules;
+                    else if (word == "import")
+                        import = firstWord ? Import::Modules : Import::FromNames;
+                    else if (word == "lambda")
+                    {
+                        lambdaDepth = int(mBrackets.size());
+                        lambdaParam = true;
+                    }
+                }
+                else if (!afterDot && (word == "self" || word == "cls"))
                     add(i, j, TokenKind::Self);
-                else if (builtins().contains(word) || (word == "type" && soft))
+                else if (!afterDot && (builtins().contains(word) || (word == "type" && soft)))
                     add(i, j, TokenKind::Builtin);
+                else
+                {
+                    bool param = expectParam || (lambdaParam && lambdaDepth == int(mBrackets.size()));
+                    add(i, j, nameKind(word, j, end, import, param));
+                }
                 prevWord = word;
+                firstWord = false;
                 i = j;
                 continue;
             }
             prevWord.clear();
+            int depth = int(mBrackets.size());
+            if (c == '(' || c == '[' || c == '{')
+            {
+                Bracket kind = Bracket::Other;
+                if (c == '(' && last == Last::DefName)
+                    kind = Bracket::DefParams;
+                else if (c == '(' && (last == Last::Name || last == Last::Close))
+                    kind = Bracket::Call;
+                mBrackets.push_back(kind);
+                expectParam = kind == Bracket::DefParams;
+                last = Last::Other;
+            }
+            else if (c == ')' || c == ']' || c == '}')
+            {
+                if (!mBrackets.empty())
+                    mBrackets.pop_back();
+                expectParam = false;
+                if (lambdaDepth > int(mBrackets.size()))
+                    lambdaDepth = -1;
+                last = Last::Close;
+            }
+            else
+            {
+                if (c == ',')
+                {
+                    expectParam = top() == Bracket::DefParams;
+                    if (lambdaDepth == depth)
+                        lambdaParam = true;
+                }
+                else if (c == '=' || c == ':')
+                {
+                    expectParam = false;
+                    if (lambdaDepth == depth)
+                    {
+                        lambdaParam = false;
+                        if (c == ':')
+                            lambdaDepth = -1;
+                    }
+                }
+                else if (c == ';')
+                {
+                    import = Import::None;
+                    firstWord = true;
+                }
+                last = Last::Other;
+            }
             ++i;
         }
+    }
+
+    Bracket top() const { return mBrackets.empty() ? Bracket::Other : mBrackets.back(); }
+
+    /** A plain name: keyword argument, parameter, module, constant, class, call or variable. */
+    TokenKind nameKind(const QString& word, int j, int end, Import import, bool param) const
+    {
+        if (import == Import::Modules)
+            return TokenKind::Module;
+        if (param)
+            return TokenKind::Parameter;
+        while (j < end && mLine[j] == ' ')
+            ++j;
+        QChar next = j < end ? mLine[j] : QChar();
+        if (next == '=' && top() == Bracket::Call && !(j + 1 < end && mLine[j + 1] == '='))
+            return TokenKind::Parameter;
+        if (isAllCaps(word))
+            return TokenKind::ConstantName;
+        if (isCapWords(word))
+            return TokenKind::ClassName;
+        if (next == '(')
+            return TokenKind::Function;
+        return TokenKind::Variable;
     }
 
     int number(int i, int end) const
@@ -334,6 +506,7 @@ private:
 
     QStringView mLine;
     std::vector<Token>& mOut;
+    std::vector<Bracket> mBrackets;
     int mEndState = 0;
 };
 } // namespace
@@ -359,30 +532,96 @@ bool PythonBlockData::inStringOrComment(int col) const
     return false;
 }
 
-PythonHighlighter::PythonHighlighter(QTextDocument* doc) : QSyntaxHighlighter(doc)
+SyntaxFormats syntaxFormats()
 {
     using palette::gray;
-    auto set = [this](TokenKind k, QColor c, bool bold = false, bool italic = false) {
+    SyntaxFormats out;
+    auto format = [](QColor c, bool bold = false, bool italic = false) {
         QTextCharFormat f;
         f.setForeground(c);
         if (bold)
             f.setFontWeight(QFont::Bold);
         f.setFontItalic(italic);
-        mFormats[size_t(k)] = f;
+        return f;
     };
-    set(TokenKind::Keyword, gray(242), true);
-    set(TokenKind::Constant, gray(242), true, true);
-    set(TokenKind::Builtin, gray(224));
-    set(TokenKind::Self, gray(160), false, true);
-    set(TokenKind::DefName, gray(255), true);
-    set(TokenKind::ClassName, gray(255), true);
-    set(TokenKind::Decorator, gray(172), false, true);
-    set(TokenKind::String, gray(146));
-    set(TokenKind::StringEscape, gray(210), true);
-    set(TokenKind::FStringBrace, gray(228), true);
-    set(TokenKind::Number, gray(232));
-    set(TokenKind::Comment, gray(112), false, true);
-    set(TokenKind::CellMarker, gray(185), true, true);
+    auto set = [&](TokenKind k, QColor c, bool bold = false, bool italic = false) { out.tokens[size_t(k)] = format(c, bold, italic); };
+    palette::Look look = palette::currentLook();
+    if (look.monotone)
+    {
+        set(TokenKind::Keyword, gray(242), true);
+        set(TokenKind::Constant, gray(242), true, true);
+        set(TokenKind::Builtin, gray(224));
+        set(TokenKind::Self, gray(160), false, true);
+        set(TokenKind::DefName, gray(255), true);
+        set(TokenKind::ClassName, gray(255), true);
+        set(TokenKind::Decorator, gray(172), false, true);
+        set(TokenKind::String, gray(146));
+        set(TokenKind::StringEscape, gray(210), true);
+        set(TokenKind::FStringBrace, gray(228), true);
+        set(TokenKind::Number, gray(232));
+        set(TokenKind::Comment, gray(112), false, true);
+        set(TokenKind::CellMarker, gray(185), true, true);
+        set(TokenKind::Function, gray(236));
+        set(TokenKind::Variable, gray(206));
+        set(TokenKind::Parameter, gray(206), false, true);
+        set(TokenKind::Module, gray(186));
+        set(TokenKind::ConstantName, gray(228));
+        out.control = out.tokens[size_t(TokenKind::Keyword)];
+        out.builtinType = out.tokens[size_t(TokenKind::Builtin)];
+        return out;
+    }
+    struct Hues
+    {
+        const char *keyword, *control, *function, *type, *string, *escape, *number, *comment, *variable, *constant;
+    };
+    const Hues h = look.light ? Hues{"#0000ff", "#af00db", "#795e26", "#267f99", "#a31515", "#ee0000", "#098658", "#008000", "#001080", "#0070c1"}
+                              : Hues{"#569cd6", "#c586c0", "#dcdcaa", "#4ec9b0", "#ce9178", "#d7ba7d", "#b5cea8", "#6a9955", "#9cdcfe", "#4fc1ff"};
+    auto c = [](const char* hex) { return QColor(QString::fromLatin1(hex)); };
+    set(TokenKind::Keyword, c(h.keyword));
+    set(TokenKind::Constant, c(h.keyword));
+    set(TokenKind::Builtin, c(h.function));
+    set(TokenKind::Self, c(h.keyword), false, true);
+    set(TokenKind::DefName, c(h.function));
+    set(TokenKind::ClassName, c(h.type));
+    set(TokenKind::Decorator, c(h.function), false, true);
+    set(TokenKind::String, c(h.string));
+    set(TokenKind::StringEscape, c(h.escape));
+    set(TokenKind::FStringBrace, c(h.keyword));
+    set(TokenKind::Number, c(h.number));
+    set(TokenKind::Comment, c(h.comment), false, true);
+    set(TokenKind::CellMarker, c(h.comment), true, true);
+    set(TokenKind::Function, c(h.function));
+    set(TokenKind::Variable, c(h.variable));
+    set(TokenKind::Parameter, c(h.variable), false, true);
+    set(TokenKind::Module, c(h.type));
+    set(TokenKind::ConstantName, c(h.constant));
+    out.control = format(c(h.control));
+    out.builtinType = format(c(h.type));
+    return out;
+}
+
+const QTextCharFormat& SyntaxFormats::forToken(QStringView line, const Token& t) const
+{
+    static const QSet<QString> controlWords{"if",  "elif",  "else",    "for",   "while", "break", "continue", "return",
+                                            "try", "except", "finally", "raise", "with",  "yield", "import",   "from",
+                                            "as",  "pass",  "await",   "match", "case",  "assert", "del"};
+    static const QSet<QString> types{"int",    "float", "str",   "bool",      "list",        "dict",         "set",
+                                     "tuple",  "bytes", "bytearray", "frozenset", "object", "type",        "complex",
+                                     "range",  "slice", "memoryview", "property", "classmethod", "staticmethod", "super"};
+    QString word = line.mid(t.start, t.length).toString();
+    if (t.kind == TokenKind::Keyword && controlWords.contains(word))
+        return control;
+    if (t.kind == TokenKind::Builtin && (word.front().isUpper() || types.contains(word)))
+        return builtinType;
+    return tokens[size_t(t.kind)];
+}
+
+PythonHighlighter::PythonHighlighter(QTextDocument* doc) : QSyntaxHighlighter(doc), mFormats(syntaxFormats())
+{
+    palette::onLookChanged(this, [this] {
+        mFormats = syntaxFormats();
+        rehighlight();
+    });
 }
 
 void PythonHighlighter::highlightBlock(const QString& text)
@@ -396,7 +635,48 @@ void PythonHighlighter::highlightBlock(const QString& text)
     data->tokens.clear();
     int state = tokenizePython(text, previousBlockState(), data->tokens);
     for (const Token& t : data->tokens)
-        setFormat(t.start, t.length, mFormats[size_t(t.kind)]);
+        setFormat(t.start, t.length, mFormats.forToken(text, t));
+    if (data->semanticText != text)
+        data->semantic.clear();
+    for (const Token& s : data->semantic)
+    {
+        auto lexical = std::find_if(data->tokens.begin(), data->tokens.end(), [&](const Token& t) { return t.start == s.start; });
+        if (lexical != data->tokens.end() && !overridable(lexical->kind))
+            continue;
+        setFormat(s.start, s.length, mFormats.tokens[size_t(s.kind)]);
+    }
     setCurrentBlockState(state);
+}
+
+bool PythonHighlighter::overridable(TokenKind k)
+{
+    switch (k)
+    {
+    case TokenKind::Function:
+    case TokenKind::Variable:
+    case TokenKind::Parameter:
+    case TokenKind::Module:
+    case TokenKind::ConstantName:
+    case TokenKind::ClassName:
+        return true;
+    default:
+        return false;
+    }
+}
+
+void PythonHighlighter::setSemanticTokens(const QHash<int, std::vector<Token>>& byLine)
+{
+    static const std::vector<Token> none;
+    for (QTextBlock b = document()->begin(); b.isValid(); b = b.next())
+    {
+        auto it = byLine.constFind(b.blockNumber());
+        const std::vector<Token>& tokens = it == byLine.constEnd() ? none : *it;
+        auto* data = static_cast<PythonBlockData*>(b.userData());
+        if (!data || (data->semantic == tokens && data->semanticText == b.text()))
+            continue;
+        data->semantic = tokens;
+        data->semanticText = b.text();
+        rehighlightBlock(b);
+    }
 }
 } // namespace lila::ui

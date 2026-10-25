@@ -1,9 +1,13 @@
 #include "ui/editor/CodeEditor.h"
 
+#include "core/Paths.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "ui/editor/CompletionPopup.h"
+#include "ui/editor/DocFormat.h"
+#include "ui/editor/DocPopup.h"
 #include "ui/editor/EditorPalette.h"
+#include "ui/editor/Format.h"
 #include "ui/editor/Interpreter.h"
 #include "ui/editor/LspClient.h"
 #include "ui/editor/PythonHighlighter.h"
@@ -12,19 +16,24 @@
 
 #include <QAbstractTextDocumentLayout>
 #include <QApplication>
+#include <QContextMenuEvent>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QInputDialog>
 #include <QKeyEvent>
-#include <QLabel>
+#include <QMenu>
+#include <QMimeData>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QRegularExpression>
 #include <QScrollBar>
 #include <QSet>
+#include <QScreen>
 #include <QTextBlock>
-#include <QToolTip>
 
 #include <algorithm>
+#include <optional>
 
 namespace lila::ui
 {
@@ -109,19 +118,73 @@ bool isCloser(QChar c)
     return c == ')' || c == ']' || c == '}';
 }
 
-/** Escaped HTML for tooltips, with the leading signature block in the editor font. */
-QString tooltipHtml(const QString& text, const QFont& mono)
+/** Keys a read-only buffer still takes from the editor: docs, definition, find and go to line. */
+bool isReadOnlyChord(QKeyEvent* e)
 {
-    QString t = text.trimmed();
-    if (t.size() > 4000)
-        t = t.left(4000) + "\n...";
-    qsizetype split = t.indexOf("\n\n");
-    QString head = split >= 0 ? t.left(split) : t;
-    QString body = split >= 0 ? t.mid(split + 2) : QString();
-    QString html = QString("<pre style=\"font-family:'%1'; margin:0\">%2</pre>").arg(mono.family(), head.toHtmlEscaped());
-    if (!body.isEmpty())
-        html += "<p style=\"white-space:pre-wrap; margin-top:6px\">" + body.toHtmlEscaped() + "</p>";
-    return "<div style=\"max-width:640px\">" + html + "</div>";
+    Qt::KeyboardModifiers mods = e->modifiers() & ~Qt::KeypadModifier;
+    if (mods == Qt::ShiftModifier && e->key() == Qt::Key_F1)
+        return true;
+    if (mods == Qt::NoModifier)
+        return e->key() == Qt::Key_F1 || e->key() == Qt::Key_F12;
+    return mods == Qt::ControlModifier &&
+           (e->key() == Qt::Key_Q || e->key() == Qt::Key_B || e->key() == Qt::Key_F || e->key() == Qt::Key_G);
+}
+
+struct Definition
+{
+    QString uri;
+    int line = 0, col = 0, endLine = 0, endCol = 0;
+};
+
+/** The first location of a textDocument/definition result (Location, Location[] or LocationLink[]). */
+std::optional<Definition> firstDefinition(const nlohmann::json& r)
+{
+    const nlohmann::json* loc = nullptr;
+    if (r.is_array() && !r.empty())
+        loc = &r[0];
+    else if (r.is_object())
+        loc = &r;
+    if (!loc || !loc->is_object())
+        return std::nullopt;
+    Definition d;
+    d.uri = QString::fromStdString(loc->value("uri", loc->value("targetUri", std::string())));
+    const nlohmann::json range = loc->contains("targetSelectionRange") ? (*loc)["targetSelectionRange"] : loc->value("range", nlohmann::json::object());
+    d.line = range.value("/start/line"_json_pointer, 0);
+    d.col = range.value("/start/character"_json_pointer, 0);
+    d.endLine = range.value("/end/line"_json_pointer, d.line);
+    d.endCol = range.value("/end/character"_json_pointer, d.col);
+    return d;
+}
+
+/** Lila's own Python API: the lila package, its stubs and the interactive namespace's generated builtins. */
+bool isLilaApiPath(const QString& path)
+{
+    static const QString lila = QDir::cleanPath(QString::fromStdWString((paths::pythonDir() / "lila").wstring()));
+    QString p = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+    return p.compare(lila, Qt::CaseInsensitive) == 0 || p.startsWith(lila + "/", Qt::CaseInsensitive);
+}
+
+/** The server's `name=` items for the call the cursor is in. */
+bool isKeywordArgument(const CompletionEntry& e)
+{
+    return e.kind == CompletionKind::Variable && e.label.endsWith('=');
+}
+
+QList<Diagnostic> withFixHints(QList<Diagnostic> list)
+{
+    for (Diagnostic& d : list)
+        if (!d.fixTitle.isEmpty())
+            d.message += "\nAlt+Enter: " + d.fixTitle;
+    return list;
+}
+
+/** Absolute position of a line and UTF-16 column in `text`, clamped to its line. */
+int offsetOf(const QStringList& lines, const std::vector<int>& starts, int line, int col)
+{
+    if (line >= lines.size())
+        return starts.back();
+    line = std::max(0, line);
+    return starts[line] + std::clamp(col, 0, int(lines[line].size()));
 }
 } // namespace
 
@@ -134,36 +197,50 @@ CodeEditor::CodeEditor(QWidget* parent) : QPlainTextEdit(parent)
     mPopup = new CompletionPopup(this);
     mPopup->hide();
     mRuff = new ruff::Checker(this);
+    mFormatter = new ruff::Runner(this);
+    mFlashTimer.setSingleShot(true);
+    mFlashTimer.setInterval(350);
+    connect(&mFlashTimer, &QTimer::timeout, this, [this] { setLayer(Layer::Flash, {}); });
 
-    mSignature = new QLabel(this, Qt::ToolTip | Qt::FramelessWindowHint);
-    mSignature->setAttribute(Qt::WA_ShowWithoutActivating);
-    mSignature->setTextFormat(Qt::RichText);
-    mSignature->setStyleSheet("QLabel { background: #262626; color: #a0a0a0; border: 1px solid #5a5a5a; padding: 3px 6px; }");
-    mSignature->hide();
+    mSignature = new DocPopup(this);
+    mHover = new DocPopup(this);
 
     setLineWrapMode(QPlainTextEdit::NoWrap);
     setCursorWidth(2);
     setMouseTracking(true);
+    viewport()->setMouseTracking(true);
+    mPeekTimer.setSingleShot(true);
+    mPeekTimer.setInterval(250);
+    connect(&mPeekTimer, &QTimer::timeout, this, [this] { requestPeek(); });
 
-    QPalette p = palette();
-    p.setColor(QPalette::Base, palette::background);
-    p.setColor(QPalette::Text, palette::text);
-    p.setColor(QPalette::Highlight, palette::selection);
-    p.setColor(QPalette::HighlightedText, palette::gray(250));
-    setPalette(p);
+    auto applyLook = [this] {
+        QPalette p = palette();
+        p.setColor(QPalette::Base, palette::background);
+        p.setColor(QPalette::Text, palette::text);
+        p.setColor(QPalette::Highlight, palette::selection);
+        p.setColor(QPalette::HighlightedText, palette::scheme().selectedText);
+        setPalette(p);
+    };
+    palette::onLookChanged(this, [this, applyLook] {
+        applyLook();
+        onCursorMoved();
+        mGutter->update();
+    });
+    applyLook();
 
     QFont f("JetBrains Mono");
     f.setStyleHint(QFont::Monospace);
     f.setPointSizeF(9.5);
     setEditorFont(f);
 
-    for (QTimer* t : {&mSyncTimer, &mLintTimer, &mCompletionTimer, &mSignatureTimer, &mOccurrenceTimer})
+    for (QTimer* t : {&mSyncTimer, &mLintTimer, &mCompletionTimer, &mSignatureTimer, &mOccurrenceTimer, &mSemanticTimer})
         t->setSingleShot(true);
     mSyncTimer.setInterval(150);
     mLintTimer.setInterval(450);
     mCompletionTimer.setInterval(30);
     mSignatureTimer.setInterval(90);
     mOccurrenceTimer.setInterval(300);
+    mSemanticTimer.setInterval(350);
     connect(&mSyncTimer, &QTimer::timeout, this, &CodeEditor::syncDocument);
     connect(&mLintTimer, &QTimer::timeout, this, [this] {
         if (!mRuffExe.isEmpty())
@@ -172,6 +249,7 @@ CodeEditor::CodeEditor(QWidget* parent) : QPlainTextEdit(parent)
     connect(&mCompletionTimer, &QTimer::timeout, this, [this] { requestCompletion(mCompletionManual); });
     connect(&mSignatureTimer, &QTimer::timeout, this, &CodeEditor::requestSignatureHelp);
     connect(&mOccurrenceTimer, &QTimer::timeout, this, &CodeEditor::requestOccurrences);
+    connect(&mSemanticTimer, &QTimer::timeout, this, &CodeEditor::requestSemanticTokens);
 
     connect(mRuff, &ruff::Checker::finished, this, [this](const QList<Diagnostic>& d) { setDiagnostics("ruff", d); });
     connect(mPopup, &CompletionPopup::activated, this, &CodeEditor::acceptCompletion);
@@ -202,8 +280,6 @@ void CodeEditor::setEditorFont(const QFont& font)
     document()->setDefaultFont(font);
     mGutter->setFont(font);
     mPopup->setEditorFont(font);
-    QFont sig = font;
-    mSignature->setFont(sig);
     setTabStopDistance(QFontMetricsF(font).horizontalAdvance(' ') * text::kIndent);
     updateGutterWidth();
 }
@@ -288,6 +364,7 @@ void CodeEditor::openInLsp()
     mOpenUri = uri();
     mLsp->openDocument(mOpenUri, toPlainText());
     mDocDirty = false;
+    mSemanticTimer.start();
 }
 
 void CodeEditor::syncDocument()
@@ -296,6 +373,26 @@ void CodeEditor::syncDocument()
         return;
     mDocDirty = false;
     mLsp->changeDocument(mOpenUri, toPlainText());
+    mSemanticTimer.start();
+}
+
+void CodeEditor::requestSemanticTokens()
+{
+    if (!mLsp || !mLsp->isReady() || mOpenUri.isEmpty())
+        return;
+    json legend = mLsp->capabilities().value("/semanticTokensProvider/legend"_json_pointer, json());
+    if (!legend.is_object())
+        return;
+    if (mSemanticRequest >= 0)
+        mLsp->cancel(mSemanticRequest);
+    int revision = document()->revision();
+    mSemanticRequest = mLsp->request("textDocument/semanticTokens/full", {{"textDocument", {{"uri", mOpenUri.toStdString()}}}},
+                                     [this, revision, legend](const json& r, const json&) {
+                                         mSemanticRequest = -1;
+                                         // Tokens for older text would land on the wrong columns.
+                                         if (document()->revision() == revision && !mDocDirty)
+                                             mHighlighter->setSemanticTokens(semanticTokensFromLsp(r, legend));
+                                     });
 }
 
 void CodeEditor::scheduleLint()
@@ -305,6 +402,11 @@ void CodeEditor::scheduleLint()
 }
 
 // --- Geometry and painting ---------------------------------------------------------------------------------------
+
+void CodeEditor::refreshGutter()
+{
+    mGutter->update();
+}
 
 int CodeEditor::lineNumberAreaWidth() const
 {
@@ -354,7 +456,7 @@ void CodeEditor::paintGutter(QPaintEvent* e)
         }
 
     int current = textCursor().blockNumber();
-    bool relative = PrefStore::get().value<bool>("scriptEditor", "/relativeLineNumbers", false);
+    bool relative = PrefStore::get().value<bool>("scriptEditor", kRelativeLineNumbersPref, kRelativeLineNumbersDefault);
     QTextBlock block = firstVisibleBlock();
     int top = qRound(blockBoundingGeometry(block).translated(contentOffset()).top());
     int bottom = top + qRound(blockBoundingRect(block).height());
@@ -415,17 +517,22 @@ bool CodeEditor::gutterEvent(QEvent* e)
     {
         auto* he = static_cast<QHelpEvent*>(e);
         QTextCursor c = cursorForPosition(QPoint(0, he->pos().y()));
-        QStringList lines;
+        QList<Diagnostic> line;
         for (const auto& list : mDiagnostics)
             for (const Diagnostic& d : list)
                 if (d.line == c.blockNumber() && d.severity != Severity::Hint)
-                    lines.append(d.message + (d.code.isEmpty() ? "" : "  [" + d.source + " " + d.code + "]"));
-        if (lines.isEmpty())
-            QToolTip::hideText();
+                    line.append(d);
+        if (line.isEmpty())
+            hideHover();
         else
-            QToolTip::showText(he->globalPos(), lines.join('\n'), mGutter);
+            showHover(doc::diagnosticsHtml(withFixHints(line), doc::currentTheme(font())), he->globalPos());
         return true;
     }
+    if (e->type() == QEvent::Leave)
+        hideHover();
+    if (e->type() == QEvent::MouseMove && mHover->isVisible() &&
+        (static_cast<QMouseEvent*>(e)->globalPosition().toPoint() - mHoverPos).manhattanLength() > fontMetrics().height())
+        hideHover();
     if (e->type() == QEvent::MouseButtonPress)
     {
         auto* me = static_cast<QMouseEvent*>(e);
@@ -461,6 +568,7 @@ void CodeEditor::paintEvent(QPaintEvent* e)
 
 void CodeEditor::wheelEvent(QWheelEvent* e)
 {
+    hideHover();
     if (e->modifiers() & Qt::ControlModifier)
     {
         QFont f = font();
@@ -498,7 +606,7 @@ void CodeEditor::onCursorMoved()
     line.cursor.clearSelection();
     mLayers[size_t(Layer::CurrentLine)] = {line};
     matchBrackets();
-    if (PrefStore::get().value<bool>("scriptEditor", "/relativeLineNumbers", false))
+    if (PrefStore::get().value<bool>("scriptEditor", kRelativeLineNumbersPref, kRelativeLineNumbersDefault))
         mGutter->update();
 
     if (mPopup->isVisible())
@@ -680,18 +788,19 @@ void CodeEditor::rebuildDiagnosticSelections()
     rebuildExtraSelections();
 }
 
-QString CodeEditor::diagnosticsTextAt(int line, int col) const
+QList<Diagnostic> CodeEditor::diagnosticsAt(int line, int col) const
 {
-    QStringList out;
+    QList<Diagnostic> out;
     for (const auto& list : mDiagnostics)
         for (const Diagnostic& d : list)
         {
             bool after = line > d.line || (line == d.line && col >= d.col);
             bool before = line < d.endLine || (line == d.endLine && col <= std::max(d.endCol, d.col + 1));
             if (after && before && !(d.severity == Severity::Hint && !d.unnecessary))
-                out.append(d.message + (d.code.isEmpty() ? "" : "  [" + d.source + " " + d.code + "]"));
+                out.append(d);
         }
-    return out.join('\n');
+    std::stable_sort(out.begin(), out.end(), [](const Diagnostic& a, const Diagnostic& b) { return a.severity < b.severity; });
+    return out;
 }
 
 // --- Keys --------------------------------------------------------------------------------------------------------------
@@ -715,8 +824,18 @@ bool CodeEditor::event(QEvent* e)
 
 void CodeEditor::keyPressEvent(QKeyEvent* e)
 {
+    if (e->key() != Qt::Key_Control)
+        hideHover();
+    if (e->key() == Qt::Key_Control && viewport()->underMouse())
+        updateLinkHover(viewport()->mapFromGlobal(QCursor::pos()));
     if (mPopup->isVisible() && handleCompletionKey(e))
         return;
+    if (isReadOnly())
+    {
+        if (!(isReadOnlyChord(e) && handleEditingKey(e)))
+            QPlainTextEdit::keyPressEvent(e);
+        return;
+    }
     if (modalKeyHandler && modalKeyHandler(e))
     {
         if (e->key() == Qt::Key_Escape)
@@ -768,20 +887,41 @@ bool CodeEditor::handleEditingKey(QKeyEvent* e)
     bool ctrl = mods == Qt::ControlModifier;
     int key = e->key();
 
-    if ((key == Qt::Key_Return || key == Qt::Key_Enter) && ctrl)
+    const bool enter = key == Qt::Key_Return || key == Qt::Key_Enter;
+    if (enter && !hostOwnsRunKeys)
     {
-        emit runRequested();
+        // The numeric keypad's Enter runs too.
+        if (ctrl || (key == Qt::Key_Enter && (e->modifiers() & Qt::KeypadModifier) && mods == Qt::NoModifier))
+        {
+            emit runRequested();
+            return true;
+        }
+        if (mods == Qt::ShiftModifier)
+        {
+            emit runLineRequested();
+            return true;
+        }
+        if (mods == (Qt::ControlModifier | Qt::ShiftModifier))
+        {
+            emit runCellRequested();
+            return true;
+        }
+    }
+    if (enter && mods == Qt::AltModifier)
+    {
+        showQuickFixes();
         return true;
     }
-    // The numeric keypad's Enter runs, as in Maya.
-    if (key == Qt::Key_Enter && (e->modifiers() & Qt::KeypadModifier) && mods == Qt::NoModifier)
+    // A run key the user unbound: never let Qt insert a soft line break for Shift+Enter.
+    if (enter && mods != Qt::NoModifier)
     {
-        emit runRequested();
+        if (mods == Qt::ShiftModifier)
+            newlineAndIndent();
         return true;
     }
-    if ((key == Qt::Key_Return || key == Qt::Key_Enter) && mods == Qt::ShiftModifier)
+    if (mods == (Qt::ControlModifier | Qt::AltModifier) && key == Qt::Key_O)
     {
-        emit runCellRequested();
+        organizeImports();
         return true;
     }
     if ((key == Qt::Key_Return || key == Qt::Key_Enter) && mods == Qt::NoModifier)
@@ -846,9 +986,10 @@ bool CodeEditor::handleEditingKey(QKeyEvent* e)
         renameSymbol();
         return true;
     }
-    if ((key == Qt::Key_F1 && mods == Qt::NoModifier) || (ctrl && key == Qt::Key_Q))
+    // Shift+F1 opens the page in the web browser: the docs route reads Shift when it opens.
+    if ((key == Qt::Key_F1 && (mods == Qt::NoModifier || mods == Qt::ShiftModifier)) || (ctrl && key == Qt::Key_Q))
     {
-        emitShowDocs();
+        emitShowDocs(textCursor());
         return true;
     }
     if (key == Qt::Key_Tab && mods == Qt::NoModifier)
@@ -927,6 +1068,9 @@ void CodeEditor::newlineAndIndent()
     c.endEditBlock();
     setTextCursor(c);
     ensureCursorVisible();
+    // Only a line finished at its end; splitting a line leaves both halves to the user.
+    if (right.isEmpty() && format::Settings::load().onType)
+        formatStatementAt(c.blockNumber() - 1);
 }
 
 bool CodeEditor::smartBackspace()
@@ -1231,40 +1375,345 @@ void CodeEditor::goToLineDialog()
 
 void CodeEditor::replaceAllText(const QString& text)
 {
+    applyFormatted(text);
+}
+
+// --- Formatting ------------------------------------------------------------------------------------------------------
+
+bool CodeEditor::applyFormatted(const QString& text)
+{
+    LILA_ZONE();
+
+    const QString before = toPlainText();
+    const std::vector<format::Edit> edits = format::diff(before, text);
+    if (edits.empty())
+        return false;
     QTextCursor c = textCursor();
-    int line = c.blockNumber(), col = c.positionInBlock();
-    int scroll = verticalScrollBar()->value();
+    const int anchor = format::mapPosition(c.anchor(), before, edits);
+    const int pos = format::mapPosition(c.position(), before, edits);
+    const int topLine = format::mapPosition(firstVisibleBlock().position(), before, edits);
+    const int hScroll = horizontalScrollBar()->value();
+
     QTextCursor e(document());
     e.beginEditBlock();
-    e.select(QTextCursor::Document);
-    e.insertText(text);
+    for (auto it = edits.rbegin(); it != edits.rend(); ++it)
+    {
+        e.setPosition(it->start);
+        e.setPosition(it->end, QTextCursor::KeepAnchor);
+        e.insertText(it->text);
+    }
     e.endEditBlock();
-    setTextCursor(cursorAt(line, col));
-    verticalScrollBar()->setValue(scroll);
+
+    const int length = document()->characterCount() - 1;
+    c.setPosition(std::clamp(anchor, 0, length));
+    c.setPosition(std::clamp(pos, 0, length), QTextCursor::KeepAnchor);
+    setTextCursor(c);
+    verticalScrollBar()->setValue(document()->findBlock(std::clamp(topLine, 0, length)).blockNumber());
+    horizontalScrollBar()->setValue(hScroll);
+    return true;
+}
+
+QStringList CodeEditor::styleArgs(bool forCheck) const
+{
+    const format::Settings s = format::Settings::load();
+    return format::styleArgs(s, !format::findProjectConfig(analysisPath()).isEmpty(), forCheck);
+}
+
+void CodeEditor::runFormatter(const QStringList& args, const QString& source, std::function<QString(const QString&)> finish, bool quiet,
+                              const QString& done)
+{
+    if (mRuffExe.isEmpty() || isReadOnly())
+    {
+        if (!quiet && !isReadOnly())
+            emit statusMessage("Formatting needs ruff, which is not installed yet");
+        return;
+    }
+    const int revision = document()->revision();
+    mFormatter->start(mRuffExe, args, source, analysisPath(), [this, revision, finish, quiet, done](const ruff::FormatResult& r) {
+        // Typing went on meanwhile, or a completion is open on the text: the result is stale.
+        if (document()->revision() != revision || mPopup->isVisible())
+            return;
+        if (!r.ok)
+        {
+            if (!quiet)
+                emit statusMessage("ruff: " + r.error.section('\n', 0, 0));
+            return;
+        }
+        const bool changed = applyFormatted(finish ? finish(r.text) : r.text);
+        mFormattedRevision = document()->revision();
+        if (changed && !done.isEmpty())
+            emit statusMessage(done);
+    });
 }
 
 void CodeEditor::formatDocument()
 {
-    if (mRuffExe.isEmpty())
+    if (textCursor().hasSelection())
     {
-        emit statusMessage("Formatting needs ruff, which is not installed yet");
+        formatSelection();
         return;
     }
-    QString source = toPlainText();
-    ruff::FormatResult r = ruff::format(mRuffExe, source, analysisPath());
-    if (!r.ok)
+    const QString source = toPlainText();
+    const bool keepNoNewline = !source.endsWith('\n') && !format::Settings::load().finalNewline;
+    runFormatter(QStringList{"format"} + styleArgs(false), source,
+                 [keepNoNewline](const QString& out) { return keepNoNewline && out.endsWith('\n') ? out.chopped(1) : out; }, false,
+                 "Formatted with ruff");
+}
+
+void CodeEditor::formatSelection()
+{
+    QTextCursor c = textCursor();
+    if (!c.hasSelection())
     {
-        emit statusMessage("ruff format: " + r.error.section('\n', 0, 0));
+        formatDocument();
         return;
     }
-    // ruff always ends with a newline; keep a buffer that had none from gaining one each time.
-    QString out = r.text;
-    out.replace("\r\n", "\n");
-    if (out != source)
+    formatRange(c.selectionStart(), c.selectionEnd(), false);
+}
+
+void CodeEditor::formatRange(int start, int end, bool quiet)
+{
+    const QString source = toPlainText();
+    const QStringList lines = source.split('\n');
+    QTextBlock a = document()->findBlock(start), b = document()->findBlock(end);
+    QStringList args{"format", format::rangeArg(lines, a.blockNumber(), start - a.position(), b.blockNumber(), end - b.position())};
+    runFormatter(args + styleArgs(false), source, {}, quiet, "Formatted the selection with ruff");
+}
+
+void CodeEditor::formatStatementAt(int line)
+{
+    QStringList lines = toPlainText().split('\n');
+    const std::optional<format::Statement> statement = format::statementAt(lines, line);
+    if (!statement)
+        return;
+    const QString range = format::rangeArg(lines, statement->first, 0, statement->last, int(lines[statement->last].size()));
+    const bool placeholder = format::needsPlaceholder(lines, *statement);
+    // A header without its body yet would not parse, and ruff formats nothing that does not parse.
+    if (placeholder)
+        lines.insert(statement->last + 1, format::placeholderLine(lines[statement->first]));
+    runFormatter(QStringList{"format", range} + styleArgs(false), lines.join('\n'),
+                 [placeholder](const QString& out) { return placeholder ? format::removePlaceholder(out) : out; }, true, {});
+}
+
+void CodeEditor::formatOnType(QChar typed)
+{
+    QTextCursor c = textCursor();
+    if (c.hasSelection() || inStringOrComment(c))
+        return;
+    const QString line = c.block().text();
+    const int col = c.positionInBlock();
+    if (typed == ':' && QStringView(line).mid(col).trimmed().isEmpty())
     {
-        replaceAllText(out);
-        emit statusMessage("Formatted with ruff");
+        QStringList lines = toPlainText().split('\n');
+        if (std::optional<int> indent = format::keywordDedent(lines, c.blockNumber()))
+        {
+            const int current = text::leadingSpaces(line);
+            QTextCursor e(c.block());
+            e.joinPreviousEditBlock();
+            e.setPosition(c.block().position() + std::min(current - *indent, int(line.size())), QTextCursor::KeepAnchor);
+            e.removeSelectedText();
+            e.endEditBlock();
+        }
     }
+    if (!format::Settings::load().onType)
+        return;
+    c = textCursor();
+    const QString now = c.block().text();
+    // Only with nothing but closers after the caret, so the statement is finished and the caret can't jump.
+    const QStringView rest = QStringView(now).mid(c.positionInBlock());
+    if (!std::all_of(rest.begin(), rest.end(), [typed](QChar ch) { return ch.isSpace() || (typed != ':' && isCloser(ch)); }))
+        return;
+    formatStatementAt(c.blockNumber());
+}
+
+void CodeEditor::insertFromMimeData(const QMimeData* source)
+{
+    const int start = textCursor().selectionStart();
+    QPlainTextEdit::insertFromMimeData(source);
+    if (!isReadOnly() && format::Settings::load().onPaste && textCursor().position() > start)
+        formatRange(start, textCursor().position(), true);
+}
+
+void CodeEditor::organizeImports()
+{
+    runFormatter(ruff::fixArgs({"--select", "I"}) + styleArgs(true), toPlainText(), {}, false, "Organized imports");
+}
+
+void CodeEditor::fixAll()
+{
+    runFormatter(ruff::fixArgs({}) + styleArgs(true), toPlainText(), {}, false, "Applied ruff's safe fixes");
+}
+
+void CodeEditor::prepareForSave()
+{
+    LILA_ZONE();
+
+    if (isReadOnly())
+        return;
+    const format::Settings s = format::Settings::load();
+    const QString source = toPlainText();
+    QString text = source;
+    if (!mRuffExe.isEmpty() && (s.fixAllOnSave || s.organizeImportsOnSave || s.onSave))
+    {
+        // A save never waits on the background formatter, and its result would be stale after this.
+        mFormatter->cancel();
+        const QString path = analysisPath();
+        const QStringList check = styleArgs(true);
+        auto step = [&](const QStringList& args) {
+            ruff::FormatResult r = ruff::run(mRuffExe, args, text, path);
+            if (r.ok)
+                text = r.text;
+        };
+        if (s.fixAllOnSave)
+            step(ruff::fixArgs({}) + check);
+        if (s.organizeImportsOnSave)
+            step(ruff::fixArgs({"--select", "I"}) + check);
+        if (s.onSave)
+            step(QStringList{"format"} + styleArgs(false));
+    }
+    // The caret's line keeps its indent, so saving mid-line never moves the caret.
+    const int keepLine = text == source ? textCursor().blockNumber() : -1;
+    text = format::cleanupForSave(text, s.trimTrailingWhitespace, s.finalNewline, keepLine);
+    if (applyFormatted(text))
+        mFormattedRevision = document()->revision();
+}
+
+void CodeEditor::applyFix(const Diagnostic& d)
+{
+    const QString source = toPlainText();
+    const QStringList lines = source.split('\n');
+    std::vector<int> starts{0};
+    for (const QString& l : lines)
+        starts.push_back(starts.back() + int(l.size()) + 1);
+    starts.back() = int(source.size());
+    struct Range
+    {
+        int start, end;
+        QString text;
+    };
+    std::vector<Range> ranges;
+    for (const TextEdit& e : d.fix)
+        ranges.push_back({offsetOf(lines, starts, e.line, e.col), offsetOf(lines, starts, e.endLine, e.endCol), e.text});
+    std::sort(ranges.begin(), ranges.end(), [](const Range& a, const Range& b) { return a.start > b.start; });
+    QString text = source;
+    for (const Range& r : ranges)
+        text.replace(r.start, std::max(0, r.end - r.start), r.text);
+    applyFormatted(text);
+    scheduleLint();
+}
+
+void CodeEditor::suppress(const Diagnostic& d)
+{
+    QTextBlock block = document()->findBlockByNumber(d.line);
+    if (!block.isValid() || d.code.isEmpty())
+        return;
+    const QString line = block.text();
+    QString out;
+    if (d.source == "ruff")
+    {
+        static const QRegularExpression noqa(R"(#\s*noqa:\s*([\w, ]+))");
+        QRegularExpressionMatch m = noqa.match(line);
+        out = m.hasMatch() ? QString(line).insert(m.capturedEnd(1), ", " + d.code) : line + "  # noqa: " + d.code;
+    }
+    else
+    {
+        static const QRegularExpression ignore(R"(#\s*pyright:\s*ignore\[([^\]]*))");
+        QRegularExpressionMatch m = ignore.match(line);
+        out = m.hasMatch() ? QString(line).insert(m.capturedEnd(1), ", " + d.code) : line + "  # pyright: ignore[" + d.code + "]";
+    }
+    QTextCursor e(block);
+    e.beginEditBlock();
+    e.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+    e.insertText(out);
+    e.endEditBlock();
+}
+
+void CodeEditor::addFormatActions(QMenu* menu)
+{
+    const bool selection = textCursor().hasSelection();
+    const bool editable = !isReadOnly() && !mRuffExe.isEmpty();
+    QAction* a = menu->addAction(selection ? "Format Selection\tCtrl+Alt+L" : "Format Document\tCtrl+Alt+L", this, &CodeEditor::formatDocument);
+    a->setEnabled(editable);
+    menu->addAction("Organize Imports\tCtrl+Alt+O", this, &CodeEditor::organizeImports)->setEnabled(editable);
+    menu->addAction("Fix All (safe fixes)", this, &CodeEditor::fixAll)->setEnabled(editable);
+}
+
+void CodeEditor::showQuickFixes()
+{
+    LILA_ZONE();
+
+    if (isReadOnly())
+        return;
+    const int line = textCursor().blockNumber();
+    // Fresh diagnostics: the background lint may be behind the text, and fixes carry exact positions.
+    if (!mRuffExe.isEmpty())
+        setDiagnostics("ruff", ruff::checkNow(mRuffExe, toPlainText(), analysisPath()));
+    QList<Diagnostic> here;
+    for (const Diagnostic& d : diagnostics())
+        if (d.line == line && d.severity != Severity::Hint)
+            here.append(d);
+
+    QMenu menu(this);
+    QSet<QString> fixAllCodes;
+    for (const Diagnostic& d : here)
+        if (!d.fix.isEmpty())
+        {
+            menu.addAction(d.fixTitle + (d.fixUnsafe ? " (unsafe)" : ""), this, [this, d] { applyFix(d); });
+            int count = 0;
+            for (const Diagnostic& o : mDiagnostics.value("ruff"))
+                count += o.code == d.code && !o.fix.isEmpty() && !o.fixUnsafe ? 1 : 0;
+            if (count > 1 && !fixAllCodes.contains(d.code))
+            {
+                fixAllCodes.insert(d.code);
+                const QString code = d.code;
+                menu.addAction(QString("Fix all %1 in this file").arg(code), this, [this, code] {
+                    runFormatter(ruff::fixArgs({"--select", code}) + styleArgs(true), toPlainText(), {}, false, "Fixed " + code);
+                });
+            }
+        }
+    for (const Diagnostic& d : here)
+        if (!d.code.isEmpty() && (d.source == "ruff" || d.source.contains("pyright")))
+            menu.addAction(QString("Suppress %1 on this line").arg(d.code), this, [this, d] { suppress(d); });
+    if (!menu.isEmpty())
+        menu.addSeparator();
+    addFormatActions(&menu);
+    menu.exec(viewport()->mapToGlobal(cursorRect().bottomLeft()));
+}
+
+void CodeEditor::contextMenuEvent(QContextMenuEvent* e)
+{
+    QMenu* menu = createStandardContextMenu(e->pos());
+    if (!isReadOnly())
+    {
+        menu->addSeparator();
+        menu->addAction("Show Quick Fixes\tAlt+Enter", this, &CodeEditor::showQuickFixes);
+        addFormatActions(menu);
+    }
+    menu->exec(e->globalPos());
+    delete menu;
+}
+
+QString CodeEditor::lineToRun(int* line) const
+{
+    QTextBlock b = textCursor().block();
+    if (line)
+        *line = b.blockNumber();
+    return b.text();
+}
+
+void CodeEditor::flashLines(int first, int last)
+{
+    QList<QTextEdit::ExtraSelection> list;
+    for (QTextBlock b = document()->findBlockByNumber(first); b.isValid() && b.blockNumber() <= last; b = b.next())
+    {
+        QTextEdit::ExtraSelection s;
+        s.cursor = QTextCursor(b);
+        s.format.setBackground(palette::searchCurrent);
+        s.format.setProperty(QTextFormat::FullWidthSelection, true);
+        list.append(s);
+    }
+    setLayer(Layer::Flash, list);
+    mFlashTimer.start();
 }
 
 QString CodeEditor::codeToRun(bool cell, int* firstLine) const
@@ -1296,8 +1745,18 @@ QString CodeEditor::codeToRun(bool cell, int* firstLine) const
 
 void CodeEditor::focusOutEvent(QFocusEvent* e)
 {
+    if (e->reason() != Qt::PopupFocusReason && !isReadOnly() && document()->revision() != mFormattedRevision &&
+        format::Settings::load().onFocusLoss)
+    {
+        const QString source = toPlainText();
+        runFormatter(QStringList{"format"} + styleArgs(false), source,
+                     [keepNoNewline = !source.endsWith('\n')](const QString& out) { return keepNoNewline && out.endsWith('\n') ? out.chopped(1) : out; },
+                     true, {});
+    }
+    clearLinkHover();
     hideCompletion();
     hideSignature();
+    hideHover();
     QPlainTextEdit::focusOutEvent(e);
 }
 
@@ -1351,8 +1810,14 @@ void CodeEditor::applyTextEdits(const json& edits)
 
 void CodeEditor::afterTyping(const QString& typed)
 {
+    if (!typed.isEmpty() && (typed.back() == ':' || isCloser(typed.back())))
+        formatOnType(typed.back());
     QTextCursor c = textCursor();
     QChar ch = typed.isEmpty() ? QChar() : typed.back();
+    const QString line = c.block().text();
+    const int col = c.positionInBlock();
+    // `, ` is typed as two keys; the space would close the list the comma opened.
+    const bool argumentTrigger = ch == '(' || ch == ',' || (ch == ' ' && col >= 2 && line[col - 2] == ',');
 
     if (ch == '(' || ch == ',')
         mSignatureTimer.start();
@@ -1367,7 +1832,7 @@ void CodeEditor::afterTyping(const QString& typed)
         if (!stillWord || (typed.isEmpty() && pos < mCompletionStart))
         {
             hideCompletion();
-            if (ch != '.')
+            if (ch != '.' && !argumentTrigger)
                 return;
         }
         else
@@ -1387,8 +1852,12 @@ void CodeEditor::afterTyping(const QString& typed)
 
     if (inStringOrComment(c))
         return;
-    QString line = c.block().text();
-    int col = c.positionInBlock();
+    if (argumentTrigger)
+    {
+        mCompletionManual = false;
+        mCompletionTimer.start();
+        return;
+    }
     if (ch == '.')
     {
         // Not after a number: `1.` starts a float.
@@ -1425,6 +1894,14 @@ void CodeEditor::requestCompletion(bool manual)
     mCompletionStart = c.block().position() + ws;
     mCompletionBase = text::dottedPrefixAt(line, col).base;
     int generation = ++mCompletionGeneration;
+    bool arguments = false;
+    if (!manual && ws == col)
+    {
+        int k = col;
+        while (k > 0 && line[k - 1] == ' ')
+            --k;
+        arguments = k > 0 && (line[k - 1] == '(' || line[k - 1] == ',');
+    }
 
     if (mLsp && mLsp->isReady() && !mOpenUri.isEmpty())
     {
@@ -1435,18 +1912,19 @@ void CodeEditor::requestCompletion(bool manual)
         if (prev == '.' && ws == col)
             params["context"] = {{"triggerKind", 2}, {"triggerCharacter", "."}};
         else
-            params["context"] = {{"triggerKind", manual ? 1 : 3}};
-        mCompletionRequest = mLsp->request("textDocument/completion", params, [this, manual, generation](const json& r, const json&) {
-            mCompletionRequest = -1;
-            showCompletions(r, manual, generation);
-        });
+            params["context"] = {{"triggerKind", manual || arguments ? 1 : 3}};
+        mCompletionRequest =
+            mLsp->request("textDocument/completion", params, [this, manual, arguments, generation](const json& r, const json&) {
+                mCompletionRequest = -1;
+                showCompletions(r, manual, arguments, generation);
+            });
         if (mCompletionRequest >= 0)
             return;
     }
-    showCompletions(json(), manual, generation);
+    showCompletions(json(), manual, arguments, generation);
 }
 
-void CodeEditor::showCompletions(const json& result, bool manual, int generation)
+void CodeEditor::showCompletions(const json& result, bool manual, bool arguments, int generation)
 {
     LILA_ZONE();
 
@@ -1486,6 +1964,11 @@ void CodeEditor::showCompletions(const json& result, bool manual, int generation
             seen.insert(e.label);
             entries.append(std::move(e));
         }
+    if (arguments && std::none_of(entries.begin(), entries.end(), isKeywordArgument))
+    {
+        hideCompletion();
+        return;
+    }
 
     // The live interpreter knows what analysis can't: commands generated at runtime, objects built by earlier runs.
     for (CompletionEntry& e : interp::complete(mCompletionBase))
@@ -1507,6 +1990,7 @@ void CodeEditor::showCompletions(const json& result, bool manual, int generation
     QRect r = cursorRect();
     r.moveTopLeft(viewport()->mapToGlobal(r.topLeft()));
     mPopup->showBelow(r);
+    documentKeywordArguments();
     resolveCompletion(mPopup->currentEntry());
 }
 
@@ -1596,7 +2080,36 @@ void CodeEditor::acceptCompletion()
     if (auto extra = e.lspItem.find("additionalTextEdits"); extra != e.lspItem.end())
         applyTextEdits(*extra);
     if (callable)
+    {
         mSignatureTimer.start();
+        mCompletionManual = false;
+        mCompletionTimer.start();
+    }
+}
+
+void CodeEditor::insertCall(const QString& code)
+{
+    hideCompletion();
+    QTextCursor c = textCursor();
+    bool call = code.endsWith('(') || code.endsWith('=');
+    c.beginEditBlock();
+    c.insertText(code);
+    if (call)
+    {
+        c.insertText(")");
+        c.movePosition(QTextCursor::PreviousCharacter);
+    }
+    c.endEditBlock();
+    setTextCursor(c);
+    setFocus();
+    if (!call)
+        return;
+    mSignatureTimer.start();
+    if (code.endsWith('('))
+    {
+        mCompletionManual = false;
+        mCompletionTimer.start();
+    }
 }
 
 void CodeEditor::hideCompletion()
@@ -1629,12 +2142,15 @@ void CodeEditor::showSignature(const json& r)
 {
     if (!r.is_object() || !r.contains("signatures") || r["signatures"].empty() || !hasFocus())
     {
+        mLastSignature = json();
         hideSignature();
         return;
     }
     const json& sigs = r["signatures"];
     int active = std::clamp(r.value("activeSignature", 0), 0, int(sigs.size()) - 1);
     const json& sig = sigs[size_t(active)];
+    mLastSignature = sig;
+    documentKeywordArguments();
     QString label = QString::fromStdString(sig.value("label", std::string()));
     int activeParam = sig.value("activeParameter", r.value("activeParameter", 0));
 
@@ -1655,39 +2171,99 @@ void CodeEditor::showSignature(const json& r)
             hlEnd = hlStart >= 0 ? hlStart + int(s.size()) : -1;
         }
     }
-    QString html;
-    if (hlStart >= 0 && hlEnd <= label.size())
-        html = label.left(hlStart).toHtmlEscaped() + "<b style=\"color:#f5f5f5\">" + label.mid(hlStart, hlEnd - hlStart).toHtmlEscaped() +
-               "</b>" + label.mid(hlEnd).toHtmlEscaped();
-    else
-        html = label.toHtmlEscaped();
-    html = "<span style=\"white-space:pre\">" + html + "</span>";
-    QString doc = markupText(sig.value("documentation", json())).section("\n\n", 0, 0).simplified();
-    if (!doc.isEmpty())
-        html += "<br><span style=\"color:#8a8a8a\">" + (doc.size() > 160 ? doc.left(157) + "..." : doc).toHtmlEscaped() + "</span>";
-    mSignature->setText(html);
-    mSignature->adjustSize();
+    if (hlStart < 0 || hlEnd > label.size())
+        hlStart = hlEnd = -1;
+    const doc::Theme theme = doc::currentTheme(font());
+    QString html = doc::codeBlockHtml(label, theme, hlStart, hlEnd);
+    // The argument being typed says more than the function's summary: its Args entry, else the summary paragraph.
+    QString docs;
+    if (activeParam >= 0 && activeParam < int(params.size()))
+    {
+        docs = markupText(params[size_t(activeParam)].value("documentation", json())).trimmed();
+        const QString name = hlStart >= 0 ? label.mid(hlStart, hlEnd - hlStart).section(':', 0, 0).remove('*').trimmed() : QString();
+        if (docs.isEmpty() && !name.isEmpty())
+            for (const QString& line : markupText(sig.value("documentation", json())).split('\n'))
+                if (line.trimmed().startsWith(name + ": "))
+                {
+                    docs = "Args:\n" + line;
+                    break;
+                }
+    }
+    if (docs.isEmpty())
+        docs = markupText(sig.value("documentation", json())).section("\n\n", 0, 0).trimmed();
+    if (!docs.isEmpty())
+        html += doc::docstringHtml(docs, theme, doc::parameterAnnotations(label));
+    html = QString("<table%1 cellspacing=\"0\" cellpadding=\"6\"><tr><td>%2</td></tr></table>").arg(QString::fromLatin1(doc::kFullWidth), html);
+    mSignature->setHtml(html, theme, docPopupWidth());
 
     QRect cr = cursorRect();
-    QPoint pos = viewport()->mapToGlobal(QPoint(cr.left(), cr.top() - mSignature->height() - 2));
-    mSignature->move(pos);
-    mSignature->show();
+    QPoint lineTop = viewport()->mapToGlobal(cr.topLeft());
+    // Above the line being typed; below it when there is no room above.
+    QPoint pos = lineTop - QPoint(0, mSignature->height() + 2);
+    if (QScreen* screen = QGuiApplication::screenAt(lineTop); screen && pos.y() < screen->availableGeometry().top())
+        pos = viewport()->mapToGlobal(cr.bottomLeft() + QPoint(0, 2));
+    mSignature->showAt(pos, lineTop.y());
+}
+
+void CodeEditor::documentKeywordArguments()
+{
+    if (!mPopup->isVisible() || !mLastSignature.is_object())
+        return;
+    const QStringList docLines = markupText(mLastSignature.value("documentation", json())).split('\n');
+    const QString label = QString::fromStdString(mLastSignature.value("label", std::string()));
+    bool changed = false;
+    for (CompletionEntry& e : mPopup->entries())
+    {
+        if (!isKeywordArgument(e) || !e.documentation.isEmpty())
+            continue;
+        const QString name = e.label.chopped(1);
+        for (const QString& line : docLines)
+            if (line.trimmed().startsWith(name + ": "))
+            {
+                e.documentation = line.trimmed().mid(name.size() + 2);
+                changed = true;
+                break;
+            }
+        // The parameter's annotation from the signature, "bool | None = None".
+        qsizetype at = label.indexOf(QRegularExpression("\\b" + QRegularExpression::escape(name) + ": "));
+        if (e.detail.isEmpty() && at >= 0)
+        {
+            qsizetype start = at + name.size() + 2;
+            qsizetype end = label.indexOf(QRegularExpression(", (?=\\*|\\w+:)|\\) ->"), start);
+            e.detail = label.mid(start, end < 0 ? -1 : end - start);
+            changed = true;
+        }
+    }
+    if (changed)
+    {
+        mPopup->refreshDocumentation();
+        mPopup->update();
+    }
 }
 
 void CodeEditor::hideSignature()
 {
     mSignatureTimer.stop();
     mSignature->hide();
+    mLastSignature = json();
 }
 
 bool CodeEditor::viewportEvent(QEvent* e)
 {
     if (e->type() == QEvent::ToolTip)
     {
-        auto* he = static_cast<QHelpEvent*>(e);
-        requestHover(he->pos());
+        // Ctrl+hover shows the definition peek instead.
+        if (mLinkStart < 0)
+            requestHover(static_cast<QHelpEvent*>(e)->pos());
         return true;
     }
+    if (e->type() == QEvent::Leave)
+    {
+        clearLinkHover();
+        hideHover();
+    }
+    if (e->type() == QEvent::MouseButtonPress)
+        hideHover();
     return QPlainTextEdit::viewportEvent(e);
 }
 
@@ -1698,23 +2274,20 @@ void CodeEditor::requestHover(const QPoint& viewportPos)
     QRect cr = cursorRect(c);
     if (std::abs(cr.center().x() - viewportPos.x()) > fontMetrics().horizontalAdvance('M') * 2 && c.atBlockEnd())
     {
-        QToolTip::hideText();
+        hideHover();
         return;
     }
-    mHoverPos = viewport()->mapToGlobal(viewportPos);
-    QString diag = diagnosticsTextAt(c.blockNumber(), c.positionInBlock());
-    QPoint global = mHoverPos;
+    const QPoint global = viewport()->mapToGlobal(viewportPos);
+    const QList<Diagnostic> diags = withFixHints(diagnosticsAt(c.blockNumber(), c.positionInBlock()));
 
-    auto show = [this, diag, global](const QString& info) {
-        QString combined = diag;
-        if (!info.isEmpty())
-            combined = combined.isEmpty() ? info : diag + "\n\n" + info;
-        if (combined.isEmpty() || (QCursor::pos() - global).manhattanLength() > 12)
+    auto show =[this, diags, global](const QString& info) {
+        if ((diags.isEmpty() && info.trimmed().isEmpty()) || (QCursor::pos() - global).manhattanLength() > 12)
         {
-            QToolTip::hideText();
+            hideHover();
             return;
         }
-        QToolTip::showText(global, tooltipHtml(combined, font()), viewport());
+        QString text = info.size() > 6000 ? info.left(6000) + "\n..." : info;
+        showHover(doc::hoverHtml(diags, text, doc::currentTheme(font())), global);
     };
 
     if (inStringOrComment(c) || !mLsp || !mLsp->isReady() || mOpenUri.isEmpty())
@@ -1732,33 +2305,58 @@ void CodeEditor::requestHover(const QPoint& viewportPos)
     });
 }
 
+void CodeEditor::showHover(const QString& html, const QPoint& global)
+{
+    mHoverPos = global;
+    mHover->setHtml(html, doc::currentTheme(font()), docPopupWidth());
+    mHover->showAt(global + QPoint(0, fontMetrics().height()), global.y() - fontMetrics().height() / 2);
+}
+
+void CodeEditor::hideHover()
+{
+    if (mHoverRequest >= 0 && mLsp)
+        mLsp->cancel(mHoverRequest);
+    mHoverRequest = -1;
+    mHover->hide();
+}
+
+int CodeEditor::docPopupWidth() const
+{
+    int width = fontMetrics().horizontalAdvance(QString(90, 'x'));
+    if (QScreen* s = screen())
+        width = std::min(width, s->availableGeometry().width() * 2 / 3);
+    return std::max(width, 240);
+}
+
 void CodeEditor::goToDefinition(const QTextCursor& at)
 {
+    const QString symbol = docsSymbolAt(at);
     if (!mLsp || !mLsp->isReady() || mOpenUri.isEmpty())
     {
-        emit statusMessage("Go to definition needs the language server");
+        if (symbol.startsWith("lila"))
+            emit showDocs(symbol);
+        else
+            emit statusMessage("Go to definition needs the language server");
         return;
     }
     syncDocument();
-    mLsp->request("textDocument/definition", textDocumentPosition(at), [this](const json& r, const json&) {
-        const json* loc = nullptr;
-        if (r.is_array() && !r.empty())
-            loc = &r[0];
-        else if (r.is_object())
-            loc = &r;
-        if (!loc)
+    mLsp->request("textDocument/definition", textDocumentPosition(at), [this, symbol](const json& r, const json&) {
+        std::optional<Definition> d = firstDefinition(r);
+        // Lila's API opens its docs; the stubs say less than the docs do.
+        if ((d && isLilaApiPath(text::uriToPath(d->uri))) || (!d && symbol.startsWith("lila")))
+        {
+            emit showDocs(symbol);
+            return;
+        }
+        if (!d)
         {
             emit statusMessage("No definition found");
             return;
         }
-        QString uri = QString::fromStdString(loc->value("uri", loc->value("targetUri", std::string())));
-        const json& range = loc->contains("targetSelectionRange") ? (*loc)["targetSelectionRange"] : loc->value("range", json::object());
-        int line = range.value("/start/line"_json_pointer, 0);
-        int col = range.value("/start/character"_json_pointer, 0);
-        if (text::sameUri(uri, mOpenUri))
-            goToLine(line, col);
+        if (text::sameUri(d->uri, mOpenUri))
+            selectRange(d->line, d->col, d->endLine, d->endCol);
         else
-            emit openLocation(text::uriToPath(uri), line, col);
+            emit openDefinition(text::uriToPath(d->uri), d->line, d->col, d->endLine, d->endCol);
     });
 }
 
@@ -1834,13 +2432,147 @@ void CodeEditor::requestOccurrences()
     });
 }
 
-void CodeEditor::emitShowDocs()
+QString CodeEditor::docsSymbolAt(const QTextCursor& at) const
 {
-    QTextCursor c = textCursor();
-    QString symbol = text::dottedSymbolAt(c.block().text(), c.positionInBlock());
+    QString symbol = text::dottedSymbolAt(at.block().text(), at.positionInBlock());
     if (symbol.isEmpty())
-        return;
+        return {};
     QString qualified = interp::qualifiedName(symbol);
-    emit showDocs(qualified.isEmpty() ? symbol : qualified);
+    return qualified.isEmpty() ? symbol : qualified;
+}
+
+void CodeEditor::emitShowDocs(const QTextCursor& at)
+{
+    QString symbol = docsSymbolAt(at);
+    if (!symbol.isEmpty())
+        emit showDocs(symbol);
+}
+
+void CodeEditor::selectRange(int line, int col, int endLine, int endCol)
+{
+    QTextCursor c = cursorAt(line, col);
+    c.setPosition(cursorAt(endLine, endCol).position(), QTextCursor::KeepAnchor);
+    setTextCursor(c);
+    centerCursor();
+    setFocus();
+}
+
+void CodeEditor::mouseMoveEvent(QMouseEvent* e)
+{
+    QPlainTextEdit::mouseMoveEvent(e);
+    if ((e->modifiers() & Qt::ControlModifier) && e->buttons() == Qt::NoButton)
+    {
+        updateLinkHover(e->position().toPoint());
+        return;
+    }
+    clearLinkHover();
+    if (mHover->isVisible() && (e->globalPosition().toPoint() - mHoverPos).manhattanLength() > fontMetrics().height())
+        hideHover();
+}
+
+void CodeEditor::keyReleaseEvent(QKeyEvent* e)
+{
+    if (e->key() == Qt::Key_Control)
+        clearLinkHover();
+    QPlainTextEdit::keyReleaseEvent(e);
+}
+
+void CodeEditor::updateLinkHover(const QPoint& viewportPos)
+{
+    QTextCursor c = cursorForPosition(viewportPos);
+    const QString line = c.block().text();
+    const int col = c.positionInBlock();
+    int start = text::wordStart(line, col), end = col;
+    while (end < line.size() && text::isIdentChar(line[end]))
+        ++end;
+    // Past the end of the line, or on a gap between words.
+    bool over = std::abs(cursorRect(c).center().x() - viewportPos.x()) <= fontMetrics().horizontalAdvance('M') * 2;
+    if (start == end || !over || inStringOrComment(c))
+    {
+        clearLinkHover();
+        return;
+    }
+    start += c.block().position();
+    end += c.block().position();
+    if (start == mLinkStart && end == mLinkEnd)
+        return;
+    clearLinkHover();
+    mLinkStart = start;
+    mLinkEnd = end;
+    QTextEdit::ExtraSelection link;
+    link.cursor = QTextCursor(document());
+    link.cursor.setPosition(start);
+    link.cursor.setPosition(end, QTextCursor::KeepAnchor);
+    link.format.setFontUnderline(true);
+    setLayer(Layer::Link, {link});
+    viewport()->setCursor(Qt::PointingHandCursor);
+    mPeekPos = viewportPos;
+    mPeekTimer.start();
+}
+
+void CodeEditor::clearLinkHover()
+{
+    mPeekTimer.stop();
+    if (mPeekRequest >= 0 && mLsp)
+        mLsp->cancel(mPeekRequest);
+    mPeekRequest = -1;
+    if (mLinkStart < 0)
+        return;
+    mLinkStart = mLinkEnd = -1;
+    setLayer(Layer::Link, {});
+    viewport()->setCursor(Qt::IBeamCursor);
+    hideHover();
+}
+
+void CodeEditor::requestPeek()
+{
+    if (mLinkStart < 0 || !mLsp || !mLsp->isReady() || mOpenUri.isEmpty())
+        return;
+    syncDocument();
+    QTextCursor at(document());
+    at.setPosition(mLinkStart);
+    const int start = mLinkStart;
+    const QString symbol = docsSymbolAt(at);
+    mPeekRequest = mLsp->request("textDocument/definition", textDocumentPosition(at), [this, start, symbol](const json& r, const json&) {
+        mPeekRequest = -1;
+        if (start != mLinkStart)
+            return;
+        std::optional<Definition> d = firstDefinition(r);
+        const QPoint global = viewport()->mapToGlobal(mPeekPos);
+        const doc::Theme theme = doc::currentTheme(font());
+        auto showPeek = [&](const QString& html) {
+            showHover(QString("<table%1 cellspacing=\"0\" cellpadding=\"6\"><tr><td>%2</td></tr></table>")
+                          .arg(QString::fromLatin1(doc::kFullWidth), html),
+                      global);
+        };
+        if ((d && isLilaApiPath(text::uriToPath(d->uri))) || (!d && symbol.startsWith("lila")))
+        {
+            showPeek(doc::codeBlockHtml(symbol, theme) + "Click to open its API docs");
+            return;
+        }
+        if (!d)
+        {
+            // Nothing to go to: not a link after all.
+            setLayer(Layer::Link, {});
+            viewport()->setCursor(Qt::IBeamCursor);
+            return;
+        }
+        QStringList lines;
+        const bool here = text::sameUri(d->uri, mOpenUri);
+        const QString path = text::uriToPath(d->uri);
+        if (here)
+            for (QTextBlock b = document()->findBlockByNumber(d->line); b.isValid() && lines.size() < 8; b = b.next())
+                lines << b.text();
+        else if (QFile f(path); f.open(QIODevice::ReadOnly))
+            lines = QString::fromUtf8(f.readAll()).split('\n').mid(d->line, 8);
+        while (!lines.isEmpty() && lines.back().trimmed().isEmpty())
+            lines.removeLast();
+        for (QString& l : lines)
+            if (l.endsWith('\r'))
+                l.chop(1);
+        QString where = here ? QString("line %1").arg(d->line + 1) : QString("%1:%2").arg(QFileInfo(path).fileName()).arg(d->line + 1);
+        showPeek(QString("<p style=\"margin-top:0px; margin-bottom:2px; color:%1\">%2</p>").arg(theme.dim.name(), where.toHtmlEscaped()) +
+                 doc::codeBlockHtml(lines.join('\n'), theme));
+    });
 }
 } // namespace lila::ui

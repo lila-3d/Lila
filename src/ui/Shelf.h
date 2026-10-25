@@ -11,6 +11,7 @@
 
 class QComboBox;
 class QDockWidget;
+class QLabel;
 class QLayout;
 class QMenu;
 class QTabBar;
@@ -154,6 +155,7 @@ protected:
     void keyPressEvent(QKeyEvent* e) override;
     void closeEvent(QCloseEvent* e) override;
     void moveEvent(QMoveEvent* e) override;
+    void paintEvent(QPaintEvent* e) override;
     bool eventFilter(QObject* obj, QEvent* e) override;
 
 private:
@@ -168,7 +170,11 @@ private:
     /** With the remember-position pref on, stores where the shelf is so the next one opens there. */
     void rememberPosition();
     void setIconSize(int size);
+    /** The window sides within the frame band at p, in local coordinates; the shelf has no native frame. */
+    Qt::Edges frameEdges(QPoint p) const;
+    static Qt::CursorShape edgeCursor(Qt::Edges edges);
 
+    QLabel* mGrip = nullptr;
     QComboBox* mPicker = nullptr;
     ShelfPage* mPage = nullptr;
     bool mPinned = false;

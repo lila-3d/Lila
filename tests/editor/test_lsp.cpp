@@ -76,3 +76,24 @@ TEST_CASE("ruff check output converts to UTF-16 columns")
     // Column 7 (1-based code points) is the closing quote, after a surrogate pair.
     CHECK(w[0].col == 7);
 }
+
+TEST_CASE("semantic tokens decode against the legend")
+{
+    using json = nlohmann::json;
+    json legend = {{"tokenTypes", {"namespace", "keyword", "function", "variable", "parameter"}},
+                   {"tokenModifiers", {"declaration", "readonly"}}};
+    // ops (namespace) at 0:7, then on line 2: f (function) at 0, MAX (readonly variable) at 4, `if` (keyword) at 9.
+    json result = {{"data", {0, 7, 3, 0, 0, 2, 0, 1, 2, 0, 0, 4, 3, 3, 2, 0, 5, 2, 1, 0}}};
+    auto byLine = lila::ui::semanticTokensFromLsp(result, legend);
+    using lila::ui::TokenKind;
+    REQUIRE(byLine.value(0).size() == 1);
+    CHECK(byLine.value(0)[0].start == 7);
+    CHECK(byLine.value(0)[0].kind == TokenKind::Module);
+    const auto line2 = byLine.value(2);
+    REQUIRE(line2.size() == 2);
+    CHECK(line2[0].kind == TokenKind::Function);
+    CHECK(line2[1].start == 4);
+    CHECK(line2[1].length == 3);
+    CHECK(line2[1].kind == TokenKind::ConstantName);
+    CHECK(lila::ui::semanticTokensFromLsp(json(), legend).isEmpty());
+}

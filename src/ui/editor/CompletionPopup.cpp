@@ -1,6 +1,7 @@
 #include "ui/editor/CompletionPopup.h"
 
 #include "core/Profile.h"
+#include "ui/editor/DocFormat.h"
 #include "ui/editor/EditorPalette.h"
 #include "ui/editor/TextUtil.h"
 
@@ -8,9 +9,9 @@
 #include <QHBoxLayout>
 #include <QListWidget>
 #include <QPainter>
-#include <QPlainTextEdit>
 #include <QScreen>
 #include <QStyledItemDelegate>
+#include <QTextBrowser>
 
 #include <algorithm>
 
@@ -122,7 +123,6 @@ CompletionPopup::CompletionPopup(QWidget* owner) : QFrame(owner, Qt::ToolTip | Q
     setAttribute(Qt::WA_ShowWithoutActivating);
     setFocusPolicy(Qt::NoFocus);
     setFrameShape(QFrame::Box);
-    setStyleSheet("lila--ui--CompletionPopup { border: 1px solid #5a5a5a; background: #262626; }");
 
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(1, 1, 1, 1);
@@ -134,17 +134,27 @@ CompletionPopup::CompletionPopup(QWidget* owner) : QFrame(owner, Qt::ToolTip | Q
     mList->setUniformItemSizes(true);
     mList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     mList->setFrameShape(QFrame::NoFrame);
-    mList->setStyleSheet("QListWidget { background: #262626; }");
     mList->setFixedWidth(440);
     layout->addWidget(mList);
 
-    mDoc = new QPlainTextEdit(this);
-    mDoc->setReadOnly(true);
+    mDoc = new QTextBrowser(this);
     mDoc->setFocusPolicy(Qt::NoFocus);
     mDoc->setFrameShape(QFrame::NoFrame);
     mDoc->setFixedWidth(380);
-    mDoc->setStyleSheet("QPlainTextEdit { background: #2e2e2e; color: #c8c8c8; border-left: 1px solid #444; }");
+    mDoc->setOpenLinks(false);
     layout->addWidget(mDoc);
+
+    auto applyLook = [this] {
+        using palette::gray;
+        const doc::Theme theme = doc::currentTheme(mList->font());
+        setStyleSheet(QString("lila--ui--CompletionPopup { border: 1px solid %1; background: %2; }").arg(theme.border.name(), gray(36).name()));
+        mList->setStyleSheet(QString("QListWidget { background: %1; }").arg(gray(36).name()));
+        mDoc->setStyleSheet(QString("QTextBrowser { background: %1; color: %2; border-left: 1px solid %3; }")
+                                .arg(theme.background.name(), theme.text.name(), theme.border.name()));
+        refreshDocumentation();
+    };
+    palette::onLookChanged(this, applyLook);
+    applyLook();
 
     connect(mList, &QListWidget::currentRowChanged, this, [this](int) {
         refreshDocumentation();
@@ -156,9 +166,6 @@ CompletionPopup::CompletionPopup(QWidget* owner) : QFrame(owner, Qt::ToolTip | Q
 void CompletionPopup::setEditorFont(const QFont& font)
 {
     mList->setFont(font);
-    QFont doc = font;
-    doc.setPointSizeF(font.pointSizeF() * 0.95);
-    mDoc->setFont(doc);
 }
 
 void CompletionPopup::setEntries(QList<CompletionEntry> entries)
@@ -244,11 +251,16 @@ void CompletionPopup::refreshDocumentation()
         return;
     }
     const CompletionEntry& entry = mEntries[e];
-    QString doc = entry.documentation.trimmed();
-    QString detail = entry.detail.trimmed();
-    QString text = detail.isEmpty() ? doc : (doc.isEmpty() ? detail : detail + "\n\n" + doc);
-    mDoc->setPlainText(text);
-    mDoc->setVisible(!text.isEmpty());
+    const QString docs = entry.documentation.trimmed();
+    const QString detail = entry.detail.trimmed();
+    const doc::Theme theme = doc::currentTheme(mList->font());
+    QString html;
+    if (!detail.isEmpty())
+        html += doc::codeBlockHtml(detail, theme);
+    if (!docs.isEmpty())
+        html += doc::docstringHtml(docs, theme, doc::parameterAnnotations(detail));
+    mDoc->setHtml(html);
+    mDoc->setVisible(!html.isEmpty());
     adjustSize();
 }
 
