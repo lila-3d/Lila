@@ -524,7 +524,7 @@ std::optional<std::string> pageSpecFromUrl(std::string_view text)
         size_t slash = l.find_first_of("/#");
         std::string host = l.substr(0, slash);
         host = host.substr(0, host.find(':'));
-        if (host != "lila-dcc.github.io" && host != "127.0.0.1" && host != "localhost")
+        if (host != "lila-3d.github.io" && host != "127.0.0.1" && host != "localhost")
             return std::nullopt;
         route = slash == std::string::npos ? std::string() : afterDocs(s.substr(slash));
     }

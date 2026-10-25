@@ -14,7 +14,7 @@
 #include <vector>
 
 /**
- * The user docs (the lila-dcc.github.io site, docsify pages under docs/) kept offline: which copy to read, how a copy is
+ * The user docs (the lila-3d.github.io site, docsify pages under docs/) kept offline: which copy to read, how a copy is
  * fetched from GitHub and swapped in, and page lookup and search over it. No Qt here; DocsUi supplies the network and the
  * panel.
  */
@@ -22,8 +22,8 @@ namespace lila::ui::docs
 {
 namespace fs = std::filesystem;
 
-inline constexpr const char* kRepo = "lila-dcc/lila-dcc.github.io";
-inline constexpr const char* kPublicSite = "https://lila-dcc.github.io/docs/";
+inline constexpr const char* kRepo = "lila-3d/lila-3d.github.io";
+inline constexpr const char* kPublicSite = "https://lila-3d.github.io/docs/";
 /** Written into each cached copy: {"ref", "sha"}. */
 inline constexpr const char* kStampFile = ".lila-docs.json";
 

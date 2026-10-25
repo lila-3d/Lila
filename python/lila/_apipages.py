@@ -1,4 +1,4 @@
-"""Writes the Python API pages of the docs site (lila-dcc.github.io, docs/python/) from the command registry and the lila
+"""Writes the Python API pages of the docs site (lila-3d.github.io, docs/python/) from the command registry and the lila
 package, so the reference online and in the Docs panel is the same one the script editor shows.
 
     lila.exe -b -c "import lila._apipages as p; p.write(r'X:/Lila-DCC/docs')"
