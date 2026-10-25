@@ -7,18 +7,29 @@
 #include "deform/Deform.h"
 #include "geo/Mesh.h"
 #include "geo/Normals.h"
+#include "scene/DeformEval.h"
+#include "scene/DeformWeights.h"
+#include "scene/Fields.h"
 #include "scene/Graph.h"
+#include "scene/Jiggle.h"
 #include "scene/MeshNodes.h"
 #include "scene/Morphs.h"
 #include "scene/RigUtil.h"
+#include "scene/ShapeDeformers.h"
 #include "scene/Skin.h"
+#include "scene/SkinBake.h"
+#include "scene/SurfaceDeformers.h"
+#include "scene/TextureDeformers.h"
 #include "scene/SoftSelect.h"
 
 #include <tbb/parallel_for.h>
 
+#include <bit>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <format>
+#include <mutex>
 
 namespace lila::scene
 {
@@ -69,52 +80,6 @@ struct RestPoints final : Data
         readArray(j, "points", f);
         r->points = unflatten(f);
         return r;
-    }
-};
-
-struct WrapData final : Data
-{
-    deform::WrapBinding bind;
-    const char* kind() const override { return "wrapBinding"; }
-    size_t bytes() const override { return bind.offsets.size() * 4 + bind.influences.size() * sizeof(deform::WrapBinding::Influence); }
-    json toJson() const override
-    {
-        std::vector<uint32_t> tris;
-        std::vector<double> bary, offset, weight;
-        for (const auto& inf : bind.influences)
-        {
-            tris.insert(tris.end(), {inf.tri[0], inf.tri[1], inf.tri[2]});
-            bary.insert(bary.end(), {inf.bary.x, inf.bary.y, inf.bary.z});
-            offset.insert(offset.end(), {inf.offset.x, inf.offset.y, inf.offset.z});
-            weight.push_back(inf.weight);
-        }
-        return {{"kind", kind()}, {"offsets", bind.offsets}, {"tris", tris}, {"bary", bary}, {"offset", offset}, {"weight", weight},
-                {"driverPoints", bind.driverPoints}};
-    }
-    static DataPtr fromJson(const json& j)
-    {
-        auto d = std::make_shared<WrapData>();
-        std::vector<uint32_t> tris;
-        std::vector<double> bary, offset, weight;
-        readArray(j, "offsets", d->bind.offsets);
-        readArray(j, "tris", tris);
-        readArray(j, "bary", bary);
-        readArray(j, "offset", offset);
-        readArray(j, "weight", weight);
-        d->bind.driverPoints = j.value("driverPoints", 0u);
-        size_t n = std::min({tris.size() / 3, bary.size() / 3, offset.size() / 3, weight.size()});
-        for (size_t i = 0; i < n; ++i)
-            d->bind.influences.push_back({{tris[i * 3], tris[i * 3 + 1], tris[i * 3 + 2]},
-                                          {bary[i * 3], bary[i * 3 + 1], bary[i * 3 + 2]},
-                                          {offset[i * 3], offset[i * 3 + 1], offset[i * 3 + 2]},
-                                          weight[i]});
-        if (d->bind.offsets.empty())
-            d->bind.offsets = {0};
-        for (uint32_t& o : d->bind.offsets)
-            o = uint32_t(std::min<size_t>(o, n));
-        for (size_t i = 1; i < d->bind.offsets.size(); ++i)
-            d->bind.offsets[i] = std::max(d->bind.offsets[i], d->bind.offsets[i - 1]);
-        return d;
     }
 };
 
@@ -190,12 +155,6 @@ template <class F> void parallelPoints(size_t n, F&& fn)
     });
 }
 
-/** A deformer whose binding is not captured yet: reported on the node, not logged, as it happens while binding. */
-struct Unbound : std::runtime_error
-{
-    Unbound() : std::runtime_error("not bound: run rebindDeformer") {}
-};
-
 glm::dmat4 safeInverse(const glm::dmat4& m, const char* what)
 {
     if (std::abs(glm::determinant(m)) < 1e-18)
@@ -269,6 +228,49 @@ public:
         });
     }
 
+    bool gpuProgram(const geo::Mesh&, deformEval::Program& out) const override
+    {
+        const glm::dmat4 geom = matrix("geomMatrix");
+        const glm::dmat4 handle = matrix("handleMatrix");
+        out.kernel = deformEval::Kernel::Nonlinear;
+        out.push(safeInverse(handle, "the handle") * geom);
+        out.push(safeInverse(geom, "the mesh") * handle);
+        out.push(float(num("falloffRadius")));
+        out.push(float(num("falloffSoftness")));
+        out.push(uint32_t(mKind));
+        auto push = [&](std::initializer_list<const char*> names) {
+            for (const char* a : names)
+                out.push(float(num(a)));
+        };
+        switch (mKind)
+        {
+        case NonlinearKind::Bend:
+            push({"angle", "lowBound", "highBound"});
+            break;
+        case NonlinearKind::Twist:
+            push({"startAngle", "endAngle", "lowBound", "highBound"});
+            break;
+        case NonlinearKind::Taper:
+            push({"startScale", "endScale", "curve", "lowBound", "highBound"});
+            break;
+        case NonlinearKind::Squash:
+            push({"factor", "expand", "maxExpandPos", "lowBound", "highBound"});
+            break;
+        case NonlinearKind::Sine:
+        case NonlinearKind::Wave:
+            push({"amplitude", "wavelength"});
+            // Whole waves of phase change nothing, and dropping them keeps the GPU's float sine accurate.
+            out.push(float(num("offset") - std::floor(num("offset"))));
+            push({"dropoff"});
+            if (mKind == NonlinearKind::Sine)
+                push({"lowBound", "highBound"});
+            else
+                push({"minRadius", "maxRadius"});
+            break;
+        }
+        return true;
+    }
+
 private:
     NonlinearKind mKind;
 };
@@ -280,22 +282,8 @@ public:
     {
         LILA_ZONE();
 
-        const MeshPtr& lattice = as<MeshPtr>(attr("lattice"));
-        if (!lattice)
-            throw std::runtime_error("no lattice connected");
-        glm::dvec3 dv = as<glm::dvec3>(attr("divisions"));
-        glm::ivec3 n(std::max(2, int(dv.x)), std::max(2, int(dv.y)), std::max(2, int(dv.z)));
-        size_t count = size_t(n.x) * size_t(n.y) * size_t(n.z);
-        if (lattice->pointCapacity() != count)
-            throw std::runtime_error("the lattice's points no longer match its divisions");
-        std::vector<glm::dvec3> disp(count);
-        for (int k = 0; k < n.z; ++k)
-            for (int j = 0; j < n.y; ++j)
-                for (int i = 0; i < n.x; ++i)
-                {
-                    size_t idx = deform::latticeIndex(n, i, j, k);
-                    disp[idx] = lattice->position(geo::Index(idx)) - deform::latticeRest(n, i, j, k);
-                }
+        glm::ivec3 n;
+        const std::vector<glm::dvec3> disp = displacements(n);
         const glm::dmat4 geom = matrix("geomMatrix");
         const glm::dmat4 geomInv = safeInverse(geom, "the mesh");
         const glm::dmat4 baseInv = safeInverse(matrix("baseMatrix"), "the lattice base");
@@ -314,6 +302,86 @@ public:
             points[i] = xform(geomInv, glm::mix(w, moved, fall));
         });
     }
+
+    bool gpuProgram(const geo::Mesh&, deformEval::Program& out) const override
+    {
+        glm::ivec3 n;
+        const std::vector<glm::dvec3> disp = displacements(n);
+        if (n.x > 32 || n.y > 32 || n.z > 32)
+            return false;
+        const glm::dmat4 geom = matrix("geomMatrix");
+        out.kernel = deformEval::Kernel::Ffd;
+        out.push(safeInverse(matrix("baseMatrix"), "the lattice base") * geom);
+        out.push(safeInverse(geom, "the mesh") * matrix("latticeMatrix"));
+        for (int k = 0; k < 3; ++k)
+            out.push(uint32_t(n[k]));
+        out.push(uint32_t(std::clamp<int64_t>(integer("interpolation"), 0, 2)));
+        out.push(float(num("outsideFalloff")));
+        out.push(std::span<const glm::dvec3>(disp));
+        return true;
+    }
+
+private:
+    /** Each lattice point's offset from its rest place, lattice units, and the lattice's points per axis. */
+    std::vector<glm::dvec3> displacements(glm::ivec3& n) const
+    {
+        const MeshPtr& lattice = as<MeshPtr>(attr("lattice"));
+        if (!lattice)
+            throw std::runtime_error("no lattice connected");
+        glm::dvec3 dv = as<glm::dvec3>(attr("divisions"));
+        n = glm::ivec3(std::max(2, int(dv.x)), std::max(2, int(dv.y)), std::max(2, int(dv.z)));
+        size_t count = size_t(n.x) * size_t(n.y) * size_t(n.z);
+        if (lattice->pointCapacity() != count)
+            throw std::runtime_error("the lattice's points no longer match its divisions");
+        std::vector<glm::dvec3> disp(count);
+        for (int k = 0; k < n.z; ++k)
+            for (int j = 0; j < n.y; ++j)
+                for (int i = 0; i < n.x; ++i)
+                {
+                    size_t idx = deform::latticeIndex(n, i, j, k);
+                    disp[idx] = lattice->position(geo::Index(idx)) - deform::latticeRest(n, i, j, k);
+                }
+        return disp;
+    }
+};
+
+/** A delta mush binding and the adjacency it smooths over, shared through the bind cache. */
+struct DeltaMushBound
+{
+    deform::Adjacency adj;
+    deform::DeltaMushBind bind;
+    /** deform.slang's copies: neighbour and corner CSR, border flags, rest deltas. Built on first GPU use. */
+    mutable std::once_flag gpuOnce;
+    mutable std::vector<uint32_t> gpuNeighbors, gpuCorners, gpuBorder;
+    mutable std::vector<float> gpuLocal;
+
+    size_t bytes() const { return (adj.offsets.size() + adj.neighbors.size()) * 4 + adj.boundary.size() + bind.local.size() * sizeof(glm::dvec3); }
+
+    void buildGpu(const geo::Mesh& topology) const
+    {
+        LILA_ZONE();
+
+        const size_t n = adj.offsets.size() - 1;
+        gpuNeighbors.assign(adj.offsets.begin(), adj.offsets.end());
+        gpuNeighbors.insert(gpuNeighbors.end(), adj.neighbors.begin(), adj.neighbors.end());
+        gpuBorder.assign(adj.boundary.begin(), adj.boundary.end());
+        gpuCorners.assign(n + 1, 0);
+        std::vector<uint32_t> pairs;
+        for (size_t p = 0; p < n; ++p)
+        {
+            if (p < topology.pointCapacity() && topology.pointValid(geo::Index(p)))
+                topology.forEachPointCorner(geo::Index(p), [&](geo::Index c) {
+                    pairs.push_back(uint32_t(topology.cornerNextPoint(c)));
+                    pairs.push_back(uint32_t(topology.cornerPoint(topology.cornerPrev(c))));
+                });
+            gpuCorners[p + 1] = uint32_t(pairs.size() / 2);
+        }
+        gpuCorners.insert(gpuCorners.end(), pairs.begin(), pairs.end());
+        gpuLocal.resize(bind.local.size() * 3);
+        for (size_t p = 0; p < bind.local.size(); ++p)
+            for (int k = 0; k < 3; ++k)
+                gpuLocal[p * 3 + k] = float(bind.local[p][k]);
+    }
 };
 
 class DeltaMushNode : public DeformerNode
@@ -323,64 +391,65 @@ public:
     {
         LILA_ZONE();
 
+        std::shared_ptr<const DeltaMushBound> b = bound(in, points.size());
+        points = deform::deltaMushApply(in, points, b->adj, b->bind, num("displacement"));
+    }
+
+    bool gpuProgram(const geo::Mesh& in, deformEval::Program& out) const override
+    {
+        std::shared_ptr<const DeltaMushBound> b = bound(in, in.pointCapacity());
+        if (b->bind.local.size() != in.pointCapacity() || b->adj.offsets.size() != size_t(in.pointCapacity()) + 1)
+            return false;
+        std::call_once(b->gpuOnce, [&] { b->buildGpu(in); });
+        out.kernel = deformEval::Kernel::DeltaMush;
+        out.iterations = uint32_t(b->bind.iterations);
+        out.push(float(b->bind.step));
+        out.push(uint32_t(b->bind.pinBoundary));
+        out.push(float(num("displacement")));
+        out.push(uint32_t(b->adj.offsets.size() - 1));
+        out.blobs = {deformEval::blob(mKey ^ 1, b, b->gpuNeighbors), deformEval::blob(mKey ^ 2, b, b->gpuCorners),
+                     deformEval::blob(mKey ^ 3, b, b->gpuBorder), deformEval::blob(mKey ^ 4, b, b->gpuLocal)};
+        return true;
+    }
+
+private:
+    /** The binding for this input from the bind cache, by topology, rest shape and settings: binding is the costly half. */
+    std::shared_ptr<const DeltaMushBound> bound(const geo::Mesh& in, size_t points) const
+    {
         DataPtr restData = as<DataPtr>(attr("rest"));
         const auto* rest = dynamic_cast<const RestPoints*>(restData.get());
         if (!rest)
             throw Unbound();
-        if (rest->points.size() != points.size())
+        if (rest->points.size() != points)
             throw std::runtime_error("the mesh's points changed since binding: run rebindDeformer");
-        int iterations = int(std::clamp<int64_t>(integer("iterations"), 0, 1000));
-        double step = std::clamp(num("smoothStep"), 0.0, 1.0);
-        bool pin = as<bool>(attr("pinBorders"));
-        // Rebinding is the costly half, so it is kept until the rest shape, settings or topology change.
-        if (mRestKey != restData || mIterations != iterations || mStep != step || mPin != pin || mEdges != in.numEdges())
+        const int iterations = int(std::clamp<int64_t>(integer("iterations"), 0, 1000));
+        const double step = std::clamp(num("smoothStep"), 0.0, 1.0);
+        const bool pin = as<bool>(attr("pinBorders"));
+        if (mRestKey != restData)
         {
-            mAdj = deform::pointAdjacency(in);
-            mBind = deform::deltaMushBind(in, rest->points, mAdj, iterations, step, pin);
+            mRestHash = deformEval::hashBytes(rest->points.data(), rest->points.size() * sizeof(glm::dvec3));
             mRestKey = restData;
-            mIterations = iterations;
-            mStep = step;
-            mPin = pin;
-            mEdges = in.numEdges();
         }
-        points = deform::deltaMushApply(in, points, mAdj, mBind, num("displacement"));
+        uint64_t key = deformEval::hashCombine(deformEval::topologyHash(in), mRestHash);
+        key = deformEval::hashCombine(key, uint64_t(iterations) << 1 | uint64_t(pin));
+        key = deformEval::hashCombine(key, std::bit_cast<uint64_t>(step));
+        if (!mBound || key != mKey)
+        {
+            mBound = deformEval::cachedBind<DeltaMushBound>(key, [&] {
+                auto b = std::make_shared<DeltaMushBound>();
+                b->adj = deform::pointAdjacency(in);
+                b->bind = deform::deltaMushBind(in, rest->points, b->adj, iterations, step, pin);
+                return std::shared_ptr<const DeltaMushBound>(std::move(b));
+            });
+            mKey = key;
+        }
+        return mBound;
     }
 
-private:
     mutable DataPtr mRestKey;
-    mutable int mIterations = -1;
-    mutable double mStep = -1.0;
-    mutable bool mPin = false;
-    mutable geo::Index mEdges = 0;
-    mutable deform::Adjacency mAdj;
-    mutable deform::DeltaMushBind mBind;
-};
-
-class WrapNode : public DeformerNode
-{
-public:
-    void deform(const geo::Mesh&, std::vector<glm::dvec3>& points) const override
-    {
-        LILA_ZONE();
-
-        const auto* b = dynamic_cast<const WrapData*>(as<DataPtr>(attr("binding")).get());
-        const MeshPtr& driver = as<MeshPtr>(attr("driver"));
-        if (!b)
-            throw Unbound();
-        if (!driver)
-            throw std::runtime_error("no driver connected");
-        if (driver->pointCapacity() != b->bind.driverPoints)
-            throw std::runtime_error("the driver's points changed since binding: run rebindDeformer");
-        const glm::dmat4 dm = matrix("driverMatrix"), geom = matrix("geomMatrix");
-        const glm::dmat4 geomInv = safeInverse(geom, "the mesh");
-        std::vector<glm::dvec3> drv(driver->pointCapacity());
-        for (geo::Index p = 0; p < driver->pointCapacity(); ++p)
-            drv[p] = xform(dm, driver->position(p));
-        std::vector<glm::dvec3> world(points.size());
-        parallelPoints(points.size(), [&](size_t i) { world[i] = xform(geom, points[i]); });
-        std::vector<glm::dvec3> moved = deform::wrapApply(b->bind, drv, world);
-        parallelPoints(points.size(), [&](size_t i) { points[i] = xform(geomInv, moved[i]); });
-    }
+    mutable uint64_t mRestHash = 0;
+    mutable uint64_t mKey = 0;
+    mutable std::shared_ptr<const DeltaMushBound> mBound;
 };
 
 class CageNode : public DeformerNode
@@ -390,6 +459,8 @@ public:
     {
         LILA_ZONE();
 
+        if (deformers::cageUsesCoordinates(*this))
+            return deformers::cageDeform(*this, points, mCoordinates);
         const auto* b = dynamic_cast<const CageData*>(as<DataPtr>(attr("binding")).get());
         const MeshPtr& cage = as<MeshPtr>(attr("driver"));
         if (!b)
@@ -414,6 +485,38 @@ public:
             points[i] = xform(geomInv, xform(geom, points[i]) + d);
         });
     }
+
+    bool gpuProgram(const geo::Mesh& in, deformEval::Program& out) const override
+    {
+        if (deformers::cageUsesCoordinates(*this))
+            return deformers::cageGpuProgram(*this, in.pointCapacity(), out, mCoordinates);
+        DataPtr bindData = as<DataPtr>(attr("binding"));
+        const auto* b = dynamic_cast<const CageData*>(bindData.get());
+        const MeshPtr& cage = as<MeshPtr>(attr("driver"));
+        if (!b)
+            throw Unbound();
+        if (!cage)
+            throw std::runtime_error("no cage connected");
+        const size_t nv = b->rest.size();
+        if (cage->pointCapacity() != nv)
+            throw std::runtime_error("the cage's points changed since binding: run rebindDeformer");
+        if (b->points != in.pointCapacity())
+            throw std::runtime_error("the mesh's points changed since binding: run rebindDeformer");
+        if (b->weights.size() != size_t(b->points) * nv || b->weights.size() >= size_t(UINT32_MAX))
+            return false;
+        const glm::dmat4 dm = matrix("driverMatrix");
+        out.kernel = deformEval::Kernel::CageLinear;
+        out.push(glm::dmat3(safeInverse(matrix("geomMatrix"), "the mesh")));
+        out.push(uint32_t(nv));
+        out.push(uint32_t(0));
+        for (size_t j = 0; j < nv; ++j)
+            out.push(xform(dm, cage->position(geo::Index(j))) - b->rest[j]);
+        out.blobs[0] = deformEval::blob(deformEval::identityKey(bindData), bindData, b->weights);
+        return true;
+    }
+
+private:
+    mutable std::shared_ptr<deformers::CageCache> mCoordinates;
 };
 
 class SoftModNode : public DeformerNode
@@ -463,6 +566,15 @@ NodeType deformerType(deformers::DeformerSpec s)
         stored("exportEnabled", PlugType::Bool, true, "Apply the deformer when exporting."),
         keyable("envelope", PlugType::Float, 1.0, "How much of the deformation applies: 0 none, 1 all."),
         hiddenStored("weights", PlugType::Data, DataPtr(), "Per-point weight map; points past its end weigh 1."),
+        {.name = "field", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrHidden | AttrResetOnDisconnect,
+         .doc = "A field's outField (connectField): shapes where the deformer acts."},
+        enumAttr("fieldMode", 0, {"multiply", "replace"},
+                 "How a connected field combines with the weight map: multiply scales the painted weights by it, replace uses the "
+                 "field instead of them."),
+        hiddenStored("membership", PlugType::Data, DataPtr(),
+                     "The points the deformer may move (setDeformerMembership); unset means every point."),
+        {.name = "evalTime", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrOutput,
+         .doc = "How long the last evaluation took, milliseconds."},
     };
     for (AttrDef& p : s.params)
     {
@@ -644,20 +756,10 @@ std::pair<MeshPtr, glm::dmat4> driverOf(Graph& graph, DeformerNode& d)
     return {m, std::get<glm::dmat4>(graph.value({d.id(), d.attr("driverMatrix"), -1}))};
 }
 
-void bindWrap(Graph& graph, DeformerNode& d)
-{
-    auto [driver, dm] = driverOf(graph, d);
-    geo::Mesh world = *driver;
-    for (geo::Index p = 0; p < world.pointCapacity(); ++p)
-        world.setPosition(p, xform(dm, driver->position(p)));
-    std::vector<glm::dvec3> targets = inputWorld(graph, d);
-    auto data = std::make_shared<WrapData>();
-    data->bind = deform::wrapBind(world, targets, int(d.integer("maxDrivers")), d.num("falloff"));
-    graph.setValue({d.id(), d.attr("binding"), -1}, DataPtr(std::move(data)));
-}
-
 void bindCage(Graph& graph, DeformerNode& d)
 {
+    if (d.integer("coordinates") != 0)
+        return deformers::bindCageCoordinates(graph, d);
     auto [cage, dm] = driverOf(graph, d);
     auto data = std::make_shared<CageData>();
     data->rest.resize(cage->pointCapacity());
@@ -761,19 +863,25 @@ glm::dmat4 DeformerNode::matrix(const char* name) const
     return a < 0 ? glm::dmat4(1.0) : as<glm::dmat4>(a);
 }
 
-geo::Mesh DeformerNode::run(const geo::Mesh& in) const
+geo::Mesh DeformerNode::run(const geo::Mesh& in) const { return run(in, nullptr); }
+
+geo::Mesh DeformerNode::run(const geo::Mesh& in, bool* ranOnGpu) const
 {
     LILA_ZONE();
 
     std::vector<glm::dvec3> points(in.positions().begin(), in.positions().end());
-    deform(in, points);
-    const auto* map = dynamic_cast<const PointWeights*>(as<DataPtr>(kWeights).get());
+    const bool gpu = deformEval::tryGpu(*this, in, points);
+    if (!gpu)
+        deform(in, points);
+    if (ranOnGpu)
+        *ranOnGpu = gpu;
+    const std::vector<float> weight = deformWeights::effective(*this, in);
     const double envelope = as<double>(kEnvelope);
     geo::Mesh out = in;
     parallelPoints(points.size(), [&](size_t p) {
         if (!in.pointValid(geo::Index(p)))
             return;
-        double w = envelope * (map && p < map->values.size() ? double(map->values[p]) : 1.0);
+        double w = envelope * double(weight[p]);
         const glm::dvec3& rest = in.position(geo::Index(p));
         glm::dvec3 moved = rest + (points[p] - rest) * w;
         if (std::isfinite(moved.x) && std::isfinite(moved.y) && std::isfinite(moved.z))
@@ -790,16 +898,40 @@ void DeformerNode::compute(const EvalContext&)
 {
     LILA_ZONE();
 
+    // compute reads nothing but this node's inputs, so the same inputs give the same output.
+    const bool canCache = cacheable() && !type().timeDependent;
+    const std::vector<AttrDef>& attrs = type().attrs;
+    if (canCache && mLastInputs.size() == attrs.size() && mLastOut)
+    {
+        bool same = true;
+        for (size_t a = 0; a < attrs.size() && same; ++a)
+            same = !(attrs[a].flags & AttrInput) || mLastInputs[a] == value(int(a));
+        if (same)
+        {
+            deformEval::countCompute(true);
+            setOutput(outAttr, mLastOut);
+            setOutput(kEvalTime, 0.0);
+            return;
+        }
+    }
+    deformEval::countCompute(false);
+    mLastInputs.clear();
+    mLastOut.reset();
+    mRanOnGpu = false;
+
     mError.clear();
+    setOutput(kEvalTime, 0.0);
     const MeshPtr& in = as<MeshPtr>(kInMesh);
     if (!in || !as<bool>(kEnabled) || modifiers::bypassed(in) || as<double>(kEnvelope) == 0.0)
     {
         setOutput(outAttr, in);
         return;
     }
+    const auto start = std::chrono::steady_clock::now();
     try
     {
-        setOutput(outAttr, MeshPtr(std::make_shared<geo::Mesh>(run(*in))));
+        setOutput(outAttr, MeshPtr(std::make_shared<geo::Mesh>(run(*in, &mRanOnGpu))));
+        setOutput(kEvalTime, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
     }
     catch (const Unbound& e)
     {
@@ -811,6 +943,14 @@ void DeformerNode::compute(const EvalContext&)
         log::warn("{}: {}", name(), e.what());
         mError = e.what();
         setOutput(outAttr, in);
+    }
+    if (canCache)
+    {
+        mLastInputs.assign(attrs.size(), PlugValue());
+        for (size_t a = 0; a < attrs.size(); ++a)
+            if (attrs[a].flags & AttrInput)
+                mLastInputs[a] = value(int(a));
+        mLastOut = as<MeshPtr>(outAttr);
     }
 }
 
@@ -874,7 +1014,6 @@ void registerTypes()
         return;
     data::registerKind("pointWeights", &PointWeights::fromJson);
     data::registerKind("restPoints", &RestPoints::fromJson);
-    data::registerKind("wrapBinding", &WrapData::fromJson);
     data::registerKind("cageBinding", &CageData::fromJson);
 
     registerDeformer({"bendDeformer", "rainbow",
@@ -946,24 +1085,15 @@ void registerTypes()
                        hiddenStored("rest", PlugType::Data, DataPtr(), "The rest shape captured at bind time.")},
                       [] { return std::make_unique<DeltaMushNode>(); }});
 
-    registerDeformer({"wrap", "layers-intersect",
-                      "Makes the mesh follow another mesh (a low-res proxy or cage), each point riding its nearest driver triangles. "
-                      "Use it to drive a detailed mesh from a simple one.",
-                      {connected("driver", PlugType::Mesh, MeshPtr(), "The driver's outMesh."),
-                       connected("driverMatrix", PlugType::Matrix, glm::dmat4(1.0), "The driver's worldMatrix."), geomMatrixAttr(),
-                       stored("maxDrivers", PlugType::Int, int64_t(4), "Driver triangles each point follows, 1 to 32. Used when binding."),
-                       stored("falloff", PlugType::Float, 2.0,
-                              "Triangles within this many times the nearest distance count; higher is smoother. Used when binding."),
-                       hiddenStored("binding", PlugType::Data, DataPtr(), "Each point's driver triangles and offsets.")},
-                      [] { return std::make_unique<WrapNode>(); }});
-
+    std::vector<AttrDef> cageAttrs = {connected("driver", PlugType::Mesh, MeshPtr(), "The cage's outMesh."),
+                                      connected("driverMatrix", PlugType::Matrix, glm::dmat4(1.0), "The cage's worldMatrix."), geomMatrixAttr(),
+                                      hiddenStored("binding", PlugType::Data, DataPtr(), "Each point's coordinates against the rest cage.")};
+    for (AttrDef& a : cageParams())
+        cageAttrs.push_back(std::move(a));
     registerDeformer({"cage", "box",
-                      "Deforms the mesh by a closed low-poly cage around it (mean value coordinates): edit the cage, the mesh inside "
-                      "follows smoothly.",
-                      {connected("driver", PlugType::Mesh, MeshPtr(), "The cage's outMesh."),
-                       connected("driverMatrix", PlugType::Matrix, glm::dmat4(1.0), "The cage's worldMatrix."), geomMatrixAttr(),
-                       hiddenStored("binding", PlugType::Data, DataPtr(), "Each point's coordinates against the rest cage.")},
-                      [] { return std::make_unique<CageNode>(); }});
+                      "Deforms the mesh by a closed low-poly cage around it (mean value, Green or Somigliana coordinates): edit the "
+                      "cage, the mesh inside follows smoothly.",
+                      std::move(cageAttrs), [] { return std::make_unique<CageNode>(); }});
 
     registerDeformer({"softMod", "focus-2",
                       "Moves points with a handle, fading out with distance through the soft select falloff curve. Radius 0 moves "
@@ -986,7 +1116,13 @@ void registerTypes()
     lattice.create = [] { return std::make_unique<MeshNode>(); };
     types::registerType(std::move(lattice));
 
+    registerSurfaceTypes();
     morphs::registerTypes();
+    jiggle::registerTypes();
+    registerShapeTypes();
+    registerTextureTypes();
+    fields::registerTypes();
+    deformWeights::registerTypes();
 }
 
 void registerCommands()
@@ -1131,8 +1267,8 @@ void registerCommands()
         },
     });
 
-    auto driverCommand = [](const char* cmd, const char* type, const char* label, bool isWrap) {
-        return [cmd, type, label, isWrap](const Args& a) -> json {
+    auto driverCommand = [](const char* cmd, const char* type, const char* label) {
+        return [cmd, type, label](const Args& a) -> json {
             Graph& graph = g();
             std::vector<std::string> objs = a.objects();
             if (objs.size() < 2)
@@ -1150,14 +1286,9 @@ void registerCommands()
                     connectPlug(graph, driver.id(), "worldMatrix", d.id(), "driverMatrix");
                     return 0;
                 });
-                if (isWrap)
-                {
-                    setPlug(graph, d.id(), "maxDrivers", int64_t(a.get<int>("maxDrivers")));
-                    setPlug(graph, d.id(), "falloff", a.get<double>("falloff"));
-                    bindWrap(graph, d);
-                }
-                else
-                    bindCage(graph, d);
+                if (a.has("coordinates"))
+                    applyParams(graph, d, {{"coordinates", a.get<std::string>("coordinates")}});
+                bindCage(graph, d);
                 out.push_back(d.name());
             }
             return out;
@@ -1165,23 +1296,13 @@ void registerCommands()
     };
 
     ops::registerCommand({
-        .name = "wrap",
-        .doc = "Make meshes follow a driver mesh (proximity wrap): each point binds to its nearest driver triangles. Give the "
-               "meshes to deform first and the driver last. Returns the deformers.",
-        .positionalDoc = "meshes..., driver",
-        .flags = {{"maxDrivers", "", T::Int, 4, "Driver triangles each point follows, 1 to 32."},
-                  {"falloff", "", T::Float, 2.0, "Triangles within this many times the nearest distance count; higher is smoother."},
-                  {"name", "", T::String, nullptr, "Name for the deformer."}},
-        .run = driverCommand("wrap", "wrap", "Wrap", true),
-    });
-
-    ops::registerCommand({
         .name = "cage",
         .doc = "Deform meshes by a closed cage mesh around them (mean value coordinates). Give the meshes first and the cage last; "
                "then edit the cage's points. Returns the deformers.",
         .positionalDoc = "meshes..., cage",
-        .flags = {{"name", "", T::String, nullptr, "Name for the deformer."}},
-        .run = driverCommand("cage", "cage", "Cage", false),
+        .flags = {{"coordinates", "", T::String, nullptr, "meanValue (default) | green | somigliana", {"meanValue", "green", "somigliana"}},
+                  {"name", "", T::String, nullptr, "Name for the deformer."}},
+        .run = driverCommand("cage", "cage", "Cage"),
     });
 
     ops::registerCommand({
@@ -1230,11 +1351,11 @@ void registerCommands()
                 graph.evaluate();
                 if (int ga = d.attr("geomMatrix"); ga >= 0 && mesh != kNoNode)
                     graph.setValue({d.id(), ga, -1}, worldOf(*graph.node(mesh)));
+                if (rebindSurface(graph, d) || rebindShape(graph, d) || rebindTexture(graph, d))
+                    continue;
                 const std::string& t = d.type().name;
                 if (t == "deltaMush")
                     bindDeltaMush(graph, d);
-                else if (t == "wrap")
-                    bindWrap(graph, d);
                 else if (t == "cage")
                     bindCage(graph, d);
                 else if (t == "softMod")
@@ -1311,7 +1432,14 @@ void registerCommands()
         },
     });
 
+    registerSurfaceCommands();
     morphs::registerCommands();
+    jiggle::registerCommands();
+    skinbake::registerCommands();
+    registerShapeCommands();
+    registerTextureCommands();
+    fields::registerCommands();
+    deformWeights::registerCommands();
 }
 } // namespace deformers
 } // namespace lila::scene

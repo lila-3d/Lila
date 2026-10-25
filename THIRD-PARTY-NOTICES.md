@@ -39,6 +39,7 @@ Qt and PySide6 are dynamically linked and unmodified. You may replace the Qt and
 | Tracy Profiler | BSD-3-Clause | Bartosz Taudul | https://github.com/wolfpld/tracy |
 | doctest (tests only, not distributed) | MIT | Viktor Kirilov | https://github.com/doctest/doctest |
 | MikkTSpace | Zlib | Morten S. Mikkelsen | `src/geo/third_party/mikktspace` |
+| Dem Bones | BSD-3-Clause | Electronic Arts Inc. | `third_party/dem-bones` (licence in `third_party/dem-bones/LICENSE.md`), from https://github.com/electronicarts/dem-bones at 09b899b |
 
 ## Assets
 

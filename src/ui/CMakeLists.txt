@@ -96,6 +96,7 @@ lila_module(lila_ui UI
     RigViewport.cpp RigViewport.h WeightPaintTool.cpp WeightPaintTool.h
     SpacesUi.cpp SpacesUi.h
     DeformUi.cpp DeformUi.h
+    DeformHandles.cpp DeformHandles.h
     Deletion.cpp Deletion.h
     MorphPanel.cpp MorphPanel.h
     SculptPanel.cpp SculptPanel.h

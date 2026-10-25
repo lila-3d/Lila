@@ -10,13 +10,17 @@
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "scene/Graph.h"
+#include "scene/TextureDeformers.h"
 #include "scene/Node.h"
 #include "tex/Evaluate.h"
 #include "tex/Layers.h"
+#include "tex/PaintStrokes.h"
 #include "tex/Ports.h"
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <mutex>
 
 namespace lila::tex
 {
@@ -324,8 +328,35 @@ void onSceneSaved(const fs::path& scene)
     bake::addOutputs(sceneTextureFiles(scene::Graph::current(), scene));
 }
 
+/** Texture sets as textureDeformer's source: evaluated on the CPU, cached until the set's graph, settings or paint change. */
+static void installDeformerSource()
+{
+    scene::deformers::setTextureSetSource([](const std::string& name, const std::string& source, bool refresh) -> std::shared_ptr<const image::Image> {
+        LILA_ZONE_N("tex::deformerSource");
+
+        static std::mutex mutex;
+        static std::map<std::string, std::pair<std::string, std::shared_ptr<const image::Image>>> cache;
+        scene::Node* set = findSet(scene::Graph::current(), name);
+        if (!set)
+            return nullptr;
+        const std::string stamp = set->as<std::string>(set->type().attrIndex("graph")) + '\n' + set->as<std::string>(set->type().attrIndex("settings")) +
+                                  '\n' + std::to_string(reinterpret_cast<uintptr_t>(set->as<scene::DataPtr>(set->type().attrIndex(paint::kPaintAttr)).get()));
+        std::lock_guard lock(mutex);
+        auto& slot = cache[name + '\n' + source];
+        if (!refresh && slot.second && slot.first == stamp)
+            return slot.second;
+        const Graph g = readGraph(*set);
+        const SetSettings s = readSettings(*set);
+        const OutputRequest r = requestFor(g, s, source, "");
+        auto out = evaluateOutputs(*set, {r}, s.tiles.front().udim, 0, 0, "cpu");
+        slot = {stamp, std::make_shared<image::Image>(std::move(out.at(r.name)))};
+        return slot.second;
+    });
+}
+
 void registerInteropCommands()
 {
+    installDeformerSource();
     ops::registerCommand({
         .name = "texExportImage",
         .doc = "Write one channel or any node output (node.socket) of a texture set as an image, for one tile. A material socket takes "

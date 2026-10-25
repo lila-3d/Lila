@@ -16,6 +16,7 @@
 #include "mcp/McpServer.h"
 #include "python/Python.h"
 #include "render/Baker.h"
+#include "render/DeformGpu.h"
 #include "render/MeshMaps.h"
 #include "render/PaintGpu.h"
 #include "render/Renderer.h"
@@ -204,6 +205,7 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
     Hotkeys::get().install();
     render::Renderer::get().start();
     render::registerGpuBakeBackend();
+    render::registerGpuDeformers();
     render::texgpu::registerTexGpu();
     render::paint::registerCommands();
     texLive::install();
@@ -244,6 +246,8 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
         window.show();
         // One callback, in order: a -c command must not run inside the scene load's event pumping.
         QTimer::singleShot(0, &window, [&window, &opts, stale, startupScene] {
+            // lila.ops was built at Python boot, before the UI registered its own commands.
+            python::run("__import__('lila.ops', fromlist=['refresh']).refresh()", "<startup>");
             window.startup(stale, io::currentPath().empty() && startupScene.empty());
             if (!startupScene.empty())
                 window.openFile(startupScene);

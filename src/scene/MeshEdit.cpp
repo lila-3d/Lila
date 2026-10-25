@@ -13,6 +13,7 @@
 #include "geo/Topology.h"
 #include "scene/AutoBevel.h"
 #include "scene/Components.h"
+#include "scene/Fields.h"
 #include "scene/Graph.h"
 #include "scene/Isolation.h"
 #include "scene/LastOp.h"
@@ -361,7 +362,9 @@ glm::dvec3 selectionCenter()
     return count ? sum / double(count) : sum;
 }
 
-std::vector<float> softWeights(const geo::Mesh& m, const glm::dmat4& world, const Ids& selected)
+namespace
+{
+std::vector<float> falloffWeights(const geo::Mesh& m, const glm::dmat4& world, const Ids& selected)
 {
     LILA_ZONE();
 
@@ -401,6 +404,14 @@ std::vector<float> softWeights(const geo::Mesh& m, const glm::dmat4& world, cons
             return;
         w[p] = float(curve.evaluate(std::sqrt(best) / radius));
     });
+    return w;
+}
+} // namespace
+
+std::vector<float> softWeights(const geo::Mesh& m, const glm::dmat4& world, const Ids& selected)
+{
+    std::vector<float> w = falloffWeights(m, world, selected);
+    fields::modulateSoftSelection(m, world, w);
     return w;
 }
 

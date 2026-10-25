@@ -110,6 +110,8 @@ std::shared_ptr<RpcClient> requireClient()
 }
 } // namespace
 
+void registerMlDeformerCommands();
+
 void registerCommands()
 {
     using T = ArgType;
@@ -334,5 +336,6 @@ void registerCommands()
         .run = [](const Args&) -> json { return syncMappings(true); },
     });
 
+    registerMlDeformerCommands();
 }
 } // namespace lila::link

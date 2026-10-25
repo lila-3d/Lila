@@ -11,6 +11,7 @@
 #include "scene/MeshNodes.h"
 #include "scene/Rig.h"
 #include "scene/RigUtil.h"
+#include "scene/SkinMethods.h"
 
 #include <glm/gtc/quaternion.hpp>
 #include <tbb/parallel_for.h>
@@ -201,7 +202,12 @@ void SkinClusterNode::compute(const EvalContext&)
         have[link->index] = 1;
         d = link->prev;
     }
-    bool dq = as<int64_t>(kSkinningMethod) == 1;
+    if (int64_t method = as<int64_t>(kSkinningMethod); method == kCentresOfRotation || method == kDirectDeltaMush)
+    {
+        setOutput(kOutMesh, skin::skinWithMethod(*this, *in, *w, palette, envelope));
+        return;
+    }
+    bool dq = as<int64_t>(kSkinningMethod) == kDualQuaternion;
     std::vector<DualQuat> dqs;
     if (dq)
         for (const glm::dmat4& m : palette)
@@ -746,7 +752,7 @@ void registerSkinCommandsImpl()
             {"method", "m", T::String, "closest", "closest | heatmap"},
             {"dropoffRate", "dr", T::Float, 4.0, "How fast a bone's weight falls off with distance."},
             {"bindTo", "bt", T::String, "hierarchy", "hierarchy | selected"},
-            {"skinningMethod", "sm", T::String, "linear", "linear | dualQuaternion"},
+            {"skinningMethod", "sm", T::String, "linear", "linear | dualQuaternion | centresOfRotation | directDeltaMush"},
             {"name", "n", T::String, nullptr, "Name for the skinCluster."},
         },
         .run = [](const Args& a) -> json {
@@ -803,7 +809,7 @@ void registerSkinCommandsImpl()
             }
             g.connect({skin, SkinClusterNode::kOutMesh, -1}, top);
             g.setValue({skin, SkinClusterNode::kMaxInfluences}, int64_t(maxInf));
-            g.setValue({skin, SkinClusterNode::kSkinningMethod}, int64_t(a.get<std::string>("skinningMethod") == "dualQuaternion" ? 1 : 0));
+            g.setValue({skin, SkinClusterNode::kSkinningMethod}, skin::methodOf(a.get<std::string>("skinningMethod"), "skinCluster"));
             glm::dmat4 geom = worldOf(*g.node(mesh));
             g.setValue({skin, SkinClusterNode::kGeomMatrix}, geom);
             for (NodeId j : joints)
@@ -1304,7 +1310,10 @@ void registerSkinTypes()
         {.name = "envelope", .type = PlugType::Float, .defaultValue = 1.0, .flags = AttrInput | AttrStorable | AttrKeyable,
          .doc = "Blend between the bind shape (0) and the skinned shape (1)."},
         {.name = "skinningMethod", .type = PlugType::Enum, .defaultValue = int64_t(0), .flags = AttrInput | AttrStorable,
-         .enumNames = {"linear", "dualQuaternion"}, .doc = "Unreal skins linearly; dual quaternion keeps volume at twists."},
+         .enumNames = {"linear", "dualQuaternion", "centresOfRotation", "directDeltaMush"},
+         .doc = "Unreal skins linearly; dual quaternion keeps volume at twists; centres of rotation keeps volume without dual "
+                "quaternion bulges; direct delta mush smooths like a delta mush in one pass. The last three export as linear "
+                "weights fitted to them (bakeSkinWeights)."},
         {.name = "normalizeWeights", .type = PlugType::Bool, .defaultValue = true, .flags = AttrInput | AttrStorable,
          .doc = "Divide by each point's weight sum when skinning."},
         {.name = "maxInfluences", .type = PlugType::Int, .defaultValue = int64_t(4), .flags = AttrInput | AttrStorable,
@@ -1316,6 +1325,14 @@ void registerSkinTypes()
         {.name = "influences", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrHidden,
          .doc = "The last skinInfluence link."},
         {.name = "outMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrOutput | AttrHidden},
+        {.name = "ddmIterations", .type = PlugType::Int, .defaultValue = int64_t(20), .flags = AttrInput | AttrStorable,
+         .doc = "Direct delta mush: smoothing passes; more spreads the smoothing further."},
+        {.name = "ddmSmoothStep", .type = PlugType::Float, .defaultValue = 0.5, .flags = AttrInput | AttrStorable,
+         .doc = "Direct delta mush: how far each pass moves toward the neighbours, 0 to 1."},
+        {.name = "corSigma", .type = PlugType::Float, .defaultValue = 0.1, .flags = AttrInput | AttrStorable,
+         .doc = "Centres of rotation: how alike two points' weights must be to share a centre."},
+        {.name = "exportWeights", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrStorable | AttrHidden,
+         .doc = "Linear weights fitted by bakeSkinWeights keep=true, exported in place of fitting at export time."},
     };
     sc.create = [] {
         auto n = std::make_unique<SkinClusterNode>();

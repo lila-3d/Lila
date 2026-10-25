@@ -43,4 +43,20 @@ def refresh():
         pass
 
 
+def __getattr__(name):
+    """A command registered after the last refresh (the UI registers some after Python starts): picks it up on first use."""
+    if not name.startswith("_"):
+        for spec in _lila.commands():
+            if spec["name"] == name:
+                command = _make(spec)
+                globals()[name] = command
+                __all__.append(name)
+                return command
+    raise AttributeError(f"module 'lila.ops' has no command {name!r}")
+
+
+def __dir__():
+    return sorted(set(globals()) | {spec["name"] for spec in _lila.commands()})
+
+
 refresh()

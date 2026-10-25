@@ -20,6 +20,7 @@
 #include "scene/RigElements.h"
 #include "scene/RotationCurve.h"
 #include "scene/Skin.h"
+#include "scene/SkinBake.h"
 #include "scene/Spaces.h"
 #include "scene/Take.h"
 
@@ -1105,12 +1106,13 @@ struct Gather
     /** Exported node index and its morph, for the meshes that export morph targets. */
     std::vector<std::pair<size_t, NodeId>> morphed;
 
-    /** Where each of out.curveNames is sampled from: a drivenChannel's output, or one weight of a morph. */
+    /** Where each of out.curveNames is sampled from: a drivenChannel's output, one weight of a morph, or a plug (tension). */
     struct CurveSource
     {
         NodeId channel = scene::kNoNode;
         NodeId morph = scene::kNoNode;
         size_t index = 0;
+        scene::PlugRef plug{scene::kNoNode, -1, -1};
     };
     std::vector<CurveSource> curveSources;
 
@@ -1167,7 +1169,20 @@ void Gather::buildSkins()
         MeshPtr bind = skin::inputMesh(graph, skinId);
         if (!bind)
             continue;
-        if (auto src = graph.source({e.source, MeshNode::kInMesh, -1}); !src || src->node != skinId)
+        // Unreal skins linearly, so whatever the skin's method and the deformers after it add goes out as fitted weights.
+        std::optional<WeightTable> routed;
+        std::string routeNote;
+        try
+        {
+            routed = skinbake::exportWeights(graph, skinId, &routeNote);
+        }
+        catch (const std::exception& ex)
+        {
+            out.warnings.push_back(std::format("{}: fitting linear weights to its deformation failed: {}", e.name, ex.what()));
+        }
+        if (routed)
+            out.warnings.push_back(std::format("{}: {}", e.name, routeNote));
+        else if (auto src = graph.source({e.source, MeshNode::kInMesh, -1}); !src || src->node != skinId)
             out.warnings.push_back(std::format("{}: modifiers after the skinCluster are not exported", e.name));
         e.mesh = bind;
 
@@ -1190,7 +1205,7 @@ void Gather::buildSkins()
             skin->clusters.push_back(std::move(c));
         }
 
-        WeightTable t = skin::table(graph, skinId);
+        WeightTable t = routed ? std::move(*routed) : skin::table(graph, skinId);
         int pruned = 0;
         int32_t vertex = 0;
         for (geo::Index p = 0; p < bind->pointCapacity(); ++p)
@@ -1315,20 +1330,28 @@ void Gather::buildCurves()
             curveSources.push_back({c, kNoNode, 0});
         }
     }
+    auto onSkeleton = [&](NodeId mesh) {
+        const NodeId s = mesh != kNoNode ? skin::find(graph, mesh) : kNoNode;
+        if (s == kNoNode)
+            return false;
+        for (const skin::Influence& inf : skin::influences(graph, s))
+            if (indexOf.count(inf.joint))
+                return true;
+        return false;
+    };
+    for (const deformers::TensionCurve& t : deformers::tensionCurves(graph))
+        if (onSkeleton(t.mesh) && names.insert(t.name).second)
+        {
+            out.curveNames.push_back(t.name);
+            curveSources.push_back({kNoNode, kNoNode, 0, {t.deformer, t.attr, -1}});
+        }
     if (opts.kind != ExportKind::Animation)
         return;
     for (NodeId id : graph.nodes())
     {
         if (!graph.node(id)->type().isA("morph") || !modifiers::exportEnabled(*graph.node(id)))
             continue;
-        const NodeId mesh = modifiers::meshOf(graph, id);
-        const NodeId s = mesh != kNoNode ? skin::find(graph, mesh) : kNoNode;
-        if (s == kNoNode)
-            continue;
-        bool onSkeleton = false;
-        for (const skin::Influence& inf : skin::influences(graph, s))
-            onSkeleton = onSkeleton || indexOf.count(inf.joint);
-        if (!onSkeleton)
+        if (!onSkeleton(modifiers::meshOf(graph, id)))
             continue;
         std::vector<morphs::Target> targets = morphs::targets(graph, id);
         for (size_t k = 0; k < targets.size(); ++k)
@@ -1576,6 +1599,8 @@ std::optional<ExportTake> Gather::sampleRange(const std::string& name, double st
             double v = 0.0;
             if (src.channel != scene::kNoNode)
                 v = std::get<double>(graph.value({src.channel, scene::drivers::kChannelOutput, -1}));
+            else if (src.plug.node != scene::kNoNode)
+                v = std::get<double>(graph.value(src.plug));
             else
             {
                 auto it = morphNow.find(src.morph);

@@ -82,8 +82,11 @@ public:
     void compute(const EvalContext& ctx) override;
 };
 
+struct SkinMethodCache;
+
 /**
- * Linear blend (or dual quaternion) skinning as a modifier, so it sits in a mesh's stack like any other:
+ * Linear blend (or dual quaternion, optimized centres of rotation, direct delta mush) skinning as a modifier, so it sits
+ * in a mesh's stack like any other:
  *   meshSource -> SkinCluster1 -> Body.inMesh
  * Points are skinned in bind space: out = G^-1 * sum(w * jointWorld * bindPre) * G * p, with G the mesh's world
  * matrix at bind time (geomMatrix), so moving the mesh's own transform double-transforms it, as in Maya.
@@ -103,8 +106,22 @@ public:
         kWeights,
         kInfluences,
         kOutMesh,
+        kDdmIterations,
+        kDdmSmoothStep,
+        kCorSigma,
+        kExportWeights,
+    };
+    enum Method : int64_t
+    {
+        kLinear,
+        kDualQuaternion,
+        kCentresOfRotation,
+        kDirectDeltaMush,
     };
     void compute(const EvalContext& ctx) override;
+
+    /** Bind data of the centres of rotation and direct delta mush methods, rebuilt when the weights or topology change. */
+    mutable std::shared_ptr<SkinMethodCache> methodCache;
 };
 
 namespace skin

@@ -6,12 +6,23 @@
 
 #include <glm/glm.hpp>
 
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace lila::scene
 {
 class Graph;
+namespace deformEval
+{
+struct Program;
+}
+
+/** A deformer whose binding is not captured yet: reported on the node, not logged, as it happens while binding. */
+struct Unbound : std::runtime_error
+{
+    Unbound() : std::runtime_error("not bound: run rebindDeformer") {}
+};
 
 /** A per-point weight map on a deformer: missing entries (past the end) weigh 1. */
 struct LILA_SCENE_API PointWeights final : Data
@@ -24,9 +35,10 @@ struct LILA_SCENE_API PointWeights final : Data
 };
 
 /**
- * A deformer: a modifier that only moves points. Every one has envelope and a per-point weight map, and blends each
- * point between its input and deformed position by envelope times weight. Normals and tangents the input carried
- * are rebuilt.
+ * A deformer: a modifier that only moves points. Every one has envelope, a per-point weight map, an optional field
+ * and an optional membership (the points it may move), and blends each point between its input and deformed position
+ * by envelope times its weight (scene/DeformWeights.h). Normals and tangents the input carried are rebuilt. evalTime
+ * reports how long the last evaluation took.
  */
 class LILA_SCENE_API DeformerNode : public ModifierNode
 {
@@ -38,6 +50,10 @@ public:
         kExportEnabled,
         kEnvelope,
         kWeights,
+        kField,
+        kFieldMode,
+        kMembership,
+        kEvalTime,
         kFirstParam,
     };
 
@@ -47,13 +63,41 @@ public:
     /** Moves points (input positions in, deformed out). Throws to report an error and pass the input through. */
     virtual void deform(const geo::Mesh& in, std::vector<glm::dvec3>& points) const = 0;
 
+    /**
+     * The deformer as a GPU program (scene/DeformEval.h) for this input, or false when it has no GPU form for the
+     * current settings. Throws like deform. The default has none.
+     */
+    virtual bool gpuProgram(const geo::Mesh& in, deformEval::Program& out) const
+    {
+        (void)in;
+        (void)out;
+        return false;
+    }
+
     /** The deformed mesh: deform, then the envelope and weight map blend, then normals. Throws like deform. */
     geo::Mesh run(const geo::Mesh& in) const;
+    /** run, reporting whether the GPU deformed the points. */
+    geo::Mesh run(const geo::Mesh& in, bool* ranOnGpu) const;
+
+    /**
+     * False for a deformer whose output depends on more than its inputs (a simulation's published state), so it
+     * recomputes whenever it is dirty. The others reuse their last output while every input is unchanged.
+     */
+    virtual bool cacheable() const { return true; }
+
+    /** Whether the last evaluation ran on the GPU, so its points carry float precision: exports re-run it on the CPU. */
+    bool ranOnGpu() const { return mRanOnGpu; }
 
     int attr(const char* name) const { return type().attrIndex(name); }
     double num(const char* name) const;
     int64_t integer(const char* name) const;
     glm::dmat4 matrix(const char* name) const;
+
+private:
+    /** The inputs the last evaluation saw and what it produced, so evaluating with identical inputs costs nothing. */
+    std::vector<PlugValue> mLastInputs;
+    MeshPtr mLastOut;
+    bool mRanOnGpu = false;
 };
 
 namespace deformers
@@ -88,6 +132,18 @@ LILA_SCENE_API std::vector<NodeId> addDeformer(Graph& g, const std::string& type
 
 /** The deformers in a mesh's stack, applied first first. */
 LILA_SCENE_API std::vector<NodeId> list(Graph& g, NodeId mesh);
+
+/** A tension deformer output named for Unreal: exports sample it as a curve, and the link flags it as a material curve. */
+struct TensionCurve
+{
+    NodeId deformer = kNoNode;
+    NodeId mesh = kNoNode;
+    int attr = -1;
+    std::string name;
+};
+
+/** Every export-enabled tension deformer's stretchCurve and compressCurve that is set, deduplicated by name. */
+LILA_SCENE_API std::vector<TensionCurve> tensionCurves(Graph& g);
 
 /** The deformer's per-point weight map, expanded to n points. */
 LILA_SCENE_API std::vector<float> pointWeights(Graph& g, NodeId deformer, size_t n);

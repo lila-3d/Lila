@@ -566,6 +566,9 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         toggle(viewport, "Poly count", "/viewport/polyCount", true);
         toggle(viewport, "Panel toolbar", vd::kToolbar, true);
         toggle(viewport, "Hiding a parent hides its children", scene::kInheritVisibilityPref, true);
+        section(viewport, "Deformers");
+        toggle(viewport, "Evaluate deformers on the GPU (exports always use the CPU)", "/deformers/gpu", true);
+        number(viewport, "GPU for meshes from (points)", "/deformers/gpuMinPoints", 20000.0, 0.0, 100000000.0, 1000.0, 0);
         section(viewport, "Level of Detail");
         choice(viewport, "LOD groups show by default", lodDisplay::kMode,
                {{"The level for their screen size", "screenSize"}, {"A fixed level", "level"}, {"All levels", "all"}}, "screenSize");

@@ -2,6 +2,7 @@ lila_module(lila_render UI
     Backdrop.cpp
     Baker.cpp
     Compute.cpp
+    DeformGpu.cpp
     Environment.cpp
     GpuImage.cpp
     HdrImage.cpp
@@ -27,6 +28,7 @@ lila_add_shaders(lila_render FILES
     shaders/bake_raster64.slang
     shaders/bake_sw.slang
     shaders/contact.slang
+    shaders/deform.slang
     shaders/grid.slang
     shaders/imageplane.slang
     shaders/lines.slang

@@ -4,6 +4,8 @@
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "geo/Mesh.h"
+#include "scene/DeformEval.h"
+#include "scene/Deformers.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 
@@ -179,16 +181,19 @@ MeshPtr exportMesh(Graph& g, NodeId mesh)
         return nullptr;
     std::vector<NodeId> mods = stack(g, mesh);
     auto ranInViewport = [](const ModifierNode& mod) { return mod.as<bool>(mod.enabledAttr) && !bypassed(mod.as<MeshPtr>(mod.inAttr)); };
-    // Evaluated results stay valid up to the first modifier whose export state differs from what the viewport ran.
+    auto ranOnGpu = [](const ModifierNode& mod) { return (mod.traits() & Node::kDeformer) && static_cast<const DeformerNode&>(mod).ranOnGpu(); };
+    // Evaluated results stay valid up to the first modifier whose export state differs from what the viewport ran, or
+    // that ran on the GPU in float: exports get the CPU reference.
     auto split = std::find_if(mods.begin(), mods.end(), [&](NodeId id) {
         auto* mod = static_cast<ModifierNode*>(g.node(id));
-        return ranInViewport(*mod) != exportEnabled(*mod);
+        return ranInViewport(*mod) != exportEnabled(*mod) || ranOnGpu(*mod);
     });
     if (split == mods.end())
         return m->as<MeshPtr>(MeshNode::kOutMesh);
 
     auto* first = static_cast<ModifierNode*>(g.node(*split));
     MeshPtr cur = first->as<MeshPtr>(first->inAttr);
+    deformEval::CpuOnly cpu;
     for (auto it = split; it != mods.end(); ++it)
     {
         auto* mod = static_cast<ModifierNode*>(g.node(*it));

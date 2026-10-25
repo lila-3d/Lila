@@ -1252,7 +1252,7 @@ void MainWindow::buildMenus()
     });
     menus::addActions("File", {"file.save", "file.saveAs", "file.incrementAndSave", "file.versions", "#Import and Export", "file.import", "file.convertMaya",
                         "file.exportSelection", "file.gameExporter", "file.exportMeshSequence", "window.batchRun", "file.createReference", "#Unreal", "unreal.send", "animated.sendOptions", "unreal.sync", "unreal.sendBake",
-                        "unreal.connect", "unreal.collision", "#Workspace", "file.openFolder"});
+                        "deform.exportMLDeformer", "unreal.connect", "unreal.collision", "#Workspace", "file.openFolder"});
     addSubmenu("File", "Recent Folders", [this](QMenu* recent) {
         mRecentMenu = recent;
         refreshRecentFolders();
@@ -1387,6 +1387,8 @@ void MainWindow::buildMenus()
                        "rig.dominantInfluenceSelect"});
     addSubmenu("Rig", "Spaces");
     setupSpacesMenu();
+    addSubmenu("Rig", "Skinning Method");
+    menus::addActions("Rig/Skinning Method", {"rig.skinLinear", "rig.skinDualQuaternion", "rig.skinCentresOfRotation", "rig.skinDirectDeltaMush"});
 
     menu("Deform", "Deform");
     menus::addActions("Deform", {"#Morph Targets", "deform.morph", "deform.addMorphTarget", "window.morphTargets"});
@@ -1398,7 +1400,30 @@ void MainWindow::buildMenus()
     menus::addActions("Deform", {"deform.driveChannel", "window.drivenChannels", "#Deformers", "deform.lattice"});
     addSubmenu("Deform", "Nonlinear");
     menus::addActions("Deform/Nonlinear", {"deform.bend", "deform.twist", "deform.taper", "deform.squash", "deform.sine", "deform.wave"});
-    menus::addActions("Deform", {"deform.softMod", "deform.deltaMush", "deform.wrap", "deform.cage", "curve.deformAlongCurve", "curve.flowAlongSurface", "", "deform.rebind"});
+    menus::addActions("Deform", {"deform.softMod", "deform.deltaMush", "deform.wrap", "deform.cage", "curve.deformAlongCurve", "curve.flowAlongSurface"});
+    addSubmenu("Deform", "Cage Coordinates");
+    menus::addActions("Deform/Cage Coordinates", {"deform.cageGreen", "deform.cageSomigliana"});
+    addSubmenu("Deform", "Handles");
+    menus::addActions("Deform/Handles", {"deform.kelvinlet", "", "deform.arap", "deform.laplacian", "deform.addHandle", "deform.setAnchors", "",
+                                         "deform.bbw", "deform.bbwSkinWeights"});
+    addSubmenu("Deform", "Shape");
+    menus::addActions("Deform/Shape", {"deform.shear", "deform.inflate", "deform.cast", "deform.smooth", "deform.warp", "deform.noise", "deform.textureDeformer", "",
+                                       "deform.tension"});
+    addSubmenu("Deform", "Surface");
+    menus::addActions("Deform/Surface", {"deform.shrinkwrap", "deform.surfaceDeform", "deform.addWrapDriver", "", "deform.collision", "deform.addCollider", "",
+                                         "deform.rigidify", "deform.skinSlide", "", "deform.uvPin", "deform.proximityPin"});
+    menus::addActions("Deform", {"deform.correction", "deform.editCorrection"});
+    addSubmenu("Deform", "Fields");
+    menus::addActions("Deform/Fields", {"deform.field", "deform.addFieldLayer", "deform.connectField", "deform.disconnectField", "", "deform.softSelectField"});
+    addSubmenu("Deform", "Weights");
+    menus::addActions("Deform/Weights", {"deform.paintWeights", "deform.floodWeights", "deform.smoothWeights", "deform.mirrorWeights", "deform.copyWeights", "",
+                                         "deform.exportWeights", "deform.importWeights", "", "deform.setMembership", "deform.clearMembership"});
+    addSubmenu("Deform", "Display");
+    menus::addActions("Deform/Display", {"deform.heatmap", "deform.timing"});
+    menus::addActions("Deform", {"", "deform.rebind", "#Secondary Motion", "deform.jiggle"});
+    addSubmenu("Deform", "Bake for Unreal");
+    menus::addActions("Deform/Bake for Unreal", {"deform.bakeSkinWeights", "deform.bakeHelperJoints", "deform.bakeCorrectiveMorphs", "",
+                                                 "deform.rangeOfMotion", "deform.exportMLDeformer", "", "deform.bakeTension", "deform.bakeSurfacePin"});
 
     menu("Display", "Display", Area::MenuBar, syncChecks);
     menus::addActions("Display", {"#Shading", "viewport.wireframe", "viewport.shaded", "viewport.textured", "viewport.wireOnShaded", "viewport.defaultMaterial",

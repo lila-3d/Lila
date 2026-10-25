@@ -12,7 +12,12 @@
 #include "geo/Bvh.h"
 #include "geo/Symmetry.h"
 #include "scene/Components.h"
+#include "scene/DeformWeights.h"
+#include "scene/Deformers.h"
+#include "scene/Fields.h"
 #include "scene/Graph.h"
+#include "scene/MeshNodes.h"
+#include "scene/Modifiers.h"
 #include "scene/Rig.h"
 #include "scene/Skin.h"
 #include "ui/Actions.h"
@@ -60,6 +65,9 @@ struct Settings
     float value = 1.0f;
     int mirrorAxis = 0;
     int64_t influence = -1;
+    /** The deformer or field whose map is painted instead of an influence, kNoNode for skin weights. */
+    NodeId mapNode = kNoNode;
+    int mapLayer = -1;
     /** Radius, strength, mirror, falloff (bell: full in the middle, smooth to zero at the rim) and the shared brush. */
     brush::BrushSettings stroke = [] {
         brush::BrushSettings b;
@@ -100,12 +108,13 @@ public:
 
     explicit WeightPaintPanel(QWidget* parent) : QWidget(parent, Qt::Tool)
     {
-        setWindowTitle("Paint Skin Weights");
+        setWindowTitle("Paint Weights");
         auto* col = new QVBoxLayout(this);
         mTarget = new QLabel(this);
         col->addWidget(mTarget);
         mList = new QListWidget(this);
-        mList->setToolTip("Current influence. Checked influences are locked: painting and normalizing leave them alone.");
+        mList->setToolTip("What to paint: a skin influence (checked ones are locked: painting and normalizing leave them alone), a "
+                          "deformer's weights or a field's painted layer.");
         col->addWidget(mList, 1);
 
         auto* form = new QFormLayout;
@@ -157,10 +166,21 @@ public:
         connect(mList, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* item) {
             if (!item)
                 return;
-            settings().influence = item->data(Qt::UserRole).toLongLong();
+            if (item->data(kMapRole).isValid())
+            {
+                settings().mapNode = item->data(kMapRole).toULongLong();
+                settings().mapLayer = item->data(kMapRole + 1).toInt();
+            }
+            else
+            {
+                settings().mapNode = kNoNode;
+                settings().influence = item->data(Qt::UserRole).toLongLong();
+            }
             changed();
         });
         connect(mList, &QListWidget::itemChanged, this, [](QListWidgetItem* item) {
+            if (item->data(kMapRole).isValid())
+                return;
             std::string link = item->data(Qt::UserRole + 1).toString().toStdString();
             bool lock = item->checkState() == Qt::Checked;
             actions::run({{"command", "setAttr"}, {"args", {{"args", {link + ".lockWeights", lock}}}}});
@@ -185,7 +205,8 @@ public:
             mStrokeOptions->sync();
     }
 
-    void setInfluences(const QString& target, const std::vector<scene::skin::Influence>& infs)
+    void setInfluences(const QString& target, const std::vector<scene::skin::Influence>& infs,
+                       const std::vector<scene::deformWeights::MapTarget>& maps = {})
     {
         QSignalBlocker block(mList);
         mTarget->setText(target);
@@ -197,13 +218,32 @@ public:
             item->setCheckState(i.locked ? Qt::Checked : Qt::Unchecked);
             item->setData(Qt::UserRole, qlonglong(i.index));
             item->setData(Qt::UserRole + 1, QString::fromStdString(scene::Graph::current().node(i.link)->path()));
-            if (int64_t(i.index) == settings().influence)
+            if (settings().mapNode == kNoNode && int64_t(i.index) == settings().influence)
+                mList->setCurrentItem(item);
+        }
+        for (const auto& m : maps)
+        {
+            auto* item = new QListWidgetItem(QString::fromStdString(m.label), mList);
+            item->setData(kMapRole, qulonglong(m.node));
+            item->setData(kMapRole + 1, m.layer);
+            item->setToolTip(m.layer < 0 ? "The deformer's weight map" : "A painted layer of the field the deformers read");
+            if (settings().mapNode == m.node && settings().mapLayer == m.layer)
                 mList->setCurrentItem(item);
         }
         if (!mList->currentItem() && mList->count() > 0)
         {
             mList->setCurrentRow(0);
-            settings().influence = mList->item(0)->data(Qt::UserRole).toLongLong();
+            QListWidgetItem* first = mList->item(0);
+            if (first->data(kMapRole).isValid())
+            {
+                settings().mapNode = first->data(kMapRole).toULongLong();
+                settings().mapLayer = first->data(kMapRole + 1).toInt();
+            }
+            else
+            {
+                settings().mapNode = kNoNode;
+                settings().influence = first->data(Qt::UserRole).toLongLong();
+            }
         }
     }
 
@@ -216,6 +256,8 @@ protected:
     }
 
 private:
+    static constexpr int kMapRole = Qt::UserRole + 2;
+
     void changed()
     {
         save();
@@ -247,7 +289,7 @@ public:
         mPanel->onChanged = [] { viewportTools::requestRedraw(); };
         mPanel->onFlood = [this] { flood(); };
         mPanel->onNormalize = [this] {
-            if (mSkin != kNoNode)
+            if (mSkin != kNoNode && !mapMode())
                 actions::run({{"command", "normalizeWeights"}, {"args", {{"args", {nodeName(mSkin)}}}}});
         };
         mPanel->onClosed = [] { QTimer::singleShot(0, [] { if (viewportTools::active() && std::string(viewportTools::active()->name()) == "weightPaint") viewportTools::set(nullptr); }); };
@@ -290,7 +332,7 @@ public:
             return true;
         if (e->button() != Qt::LeftButton)
             return false;
-        if (mSkin == kNoNode || settings().influence < 0)
+        if (!canPaint())
             return true;
         beginStroke();
         mMods = e->modifiers();
@@ -343,9 +385,9 @@ public:
         LILA_ZONE();
 
         scene::Graph& g = scene::Graph::current();
-        if (mSkin == kNoNode || !g.node(mSkin) || !g.node(mMesh))
+        if (!g.node(mMesh) || (mapMode() ? !g.node(mMap.node) : (mSkin == kNoNode || !g.node(mSkin))))
         {
-            drawToolMessage(p, view, "Paint weights: select a skinned mesh");
+            drawToolMessage(p, view, "Paint weights: select a skinned mesh or a mesh with deformers");
             return;
         }
         ensureBvh();
@@ -355,6 +397,8 @@ public:
         for (const auto& i : mInfluences)
             if (int64_t(i.index) == settings().influence)
                 infName = QString::fromStdString(i.name);
+        if (mapMode())
+            infName = QString::fromStdString(mMap.label);
         const Qt::KeyboardModifiers mods = mStroking ? mMods : QApplication::keyboardModifiers();
         const Mode mode = (mods & Qt::ShiftModifier) ? Mode::Smooth : settings().mode;
         drawToolMessage(p, view, QString("Paint weights: %1  (%2)").arg(infName, kModeNames[int(mode)]));
@@ -377,12 +421,34 @@ private:
 
     glm::dmat4 meshWorld() const { return scene::Graph::current().node(mMesh)->as<glm::dmat4>(scene::Transform::kWorldMatrix); }
 
-    /** The skin's own output: point ids match the weights even if topology modifiers sit above it. */
+    /** Painting a deformer's or field's map rather than a skin influence. */
+    bool mapMode() const { return mMap.node != kNoNode; }
+    bool canPaint() const { return mapMode() ? mMap.mesh != nullptr : mSkin != kNoNode && settings().influence >= 0; }
+
+    /**
+     * The surface painted on, with point ids matching the weights: the skin's own output, or for a map the mesh as shown
+     * when nothing above changes its points, else the deformer's input.
+     */
     scene::MeshPtr deformed() const
     {
         scene::Graph& g = scene::Graph::current();
         g.evaluate();
+        if (mapMode())
+        {
+            scene::MeshPtr shown = g.node(mMesh) ? g.node(mMesh)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh) : nullptr;
+            return shown && mMap.mesh && shown->pointCapacity() == mMap.mesh->pointCapacity() ? shown : mMap.mesh;
+        }
         return g.node(mSkin)->as<scene::MeshPtr>(scene::SkinClusterNode::kOutMesh);
+    }
+
+    /** What changes when the painted map changes, for redraws. */
+    scene::DataPtr mapKey() const
+    {
+        scene::Graph& g = scene::Graph::current();
+        if (!mapMode() || !g.node(mMap.node))
+            return nullptr;
+        int attr = mMap.layer < 0 ? int(scene::DeformerNode::kWeights) : int(scene::fields::kLayers);
+        return std::get<scene::DataPtr>(g.storedValue({mMap.node, attr, -1}));
     }
 
     void retarget()
@@ -390,40 +456,67 @@ private:
         scene::Graph& g = scene::Graph::current();
         NodeId mesh = kNoNode, skin = kNoNode;
         const auto& sel = g.selection();
-        for (auto it = sel.rbegin(); it != sel.rend() && skin == kNoNode; ++it)
+        for (auto it = sel.rbegin(); it != sel.rend() && mesh == kNoNode; ++it)
         {
             scene::Node* n = g.node(*it);
             if (!n)
                 continue;
-            if (n->type().isA("mesh"))
+            if (n->type().isA("mesh") && !n->type().isA("lattice"))
             {
-                if (NodeId s = scene::skin::find(g, n->id()); s != kNoNode)
-                {
+                skin = scene::skin::find(g, n->id());
+                if (skin != kNoNode || !scene::deformers::list(g, n->id()).empty())
                     mesh = n->id();
-                    skin = s;
-                }
             }
             else if (dynamic_cast<scene::SkinClusterNode*>(n))
             {
                 skin = n->id();
                 mesh = scene::skin::meshOf(g, skin);
             }
+            else if (scene::deformers::isDeformer(*n))
+            {
+                mesh = scene::modifiers::meshOf(g, n->id());
+                skin = mesh != kNoNode ? scene::skin::find(g, mesh) : kNoNode;
+                settings().mapNode = n->id();
+                settings().mapLayer = -1;
+            }
         }
         // Keep painting the current mesh when the selection moves to a joint (picking influences from the viewport).
-        if (skin == kNoNode && mSkin != kNoNode && g.node(mSkin) && g.node(mMesh))
+        if (mesh == kNoNode && mMesh != kNoNode && g.node(mMesh) && (mSkin == kNoNode || g.node(mSkin)))
         {
             mesh = mMesh;
             skin = mSkin;
         }
-        if (skin != kNoNode && mesh == kNoNode)
+        if (mesh == kNoNode)
             skin = kNoNode;
-        if (skin != mSkin)
+        std::vector<scene::deformWeights::MapTarget> maps;
+        if (mesh != kNoNode)
+            try
+            {
+                maps = scene::deformWeights::paintable(g, mesh);
+            }
+            catch (const std::exception& e)
+            {
+                log::warn("paint weights: {}", e.what());
+            }
+        scene::deformWeights::MapTarget map;
+        for (const auto& m : maps)
+            if (m.node == settings().mapNode && m.layer == settings().mapLayer)
+                map = m;
+        if (map.node == kNoNode && skin == kNoNode && !maps.empty())
+        {
+            map = maps.front();
+            settings().mapNode = map.node;
+            settings().mapLayer = map.layer;
+        }
+        if (skin != mSkin || mesh != mMesh || map.node != mMap.node || map.layer != mMap.layer || map.mesh != mMap.mesh)
         {
             mBvhMesh.reset();
             mSymmetryFor.reset();
         }
         mMesh = mesh;
         mSkin = skin;
+        mMap = map;
+        mMaps = maps;
         mInfluences = skin != kNoNode ? scene::skin::influences(g, skin) : std::vector<scene::skin::Influence>{};
         // A selected joint that is an influence becomes the one painted, like Maya's paint tool.
         [&] {
@@ -432,11 +525,14 @@ private:
                     if (i.joint == *it)
                     {
                         settings().influence = i.index;
+                        settings().mapNode = kNoNode;
+                        mMap = {};
                         return;
                     }
         }();
         if (mPanel)
-            mPanel->setInfluences(skin != kNoNode ? QString::fromStdString(nodeName(mesh)) : QString("Select a skinned mesh"), mInfluences);
+            mPanel->setInfluences(mesh != kNoNode ? QString::fromStdString(nodeName(mesh)) : QString("Select a skinned mesh or a mesh with deformers"),
+                                  mInfluences, mMaps);
         viewportTools::requestRedraw();
     }
 
@@ -462,7 +558,7 @@ private:
 
     bool raycast(QPointF px, const ViewInfo& view, geo::BvhHit& hit)
     {
-        if (mSkin == kNoNode || !mBvhMesh || mBvh.empty())
+        if (mMesh == kNoNode || !mBvhMesh || mBvh.empty())
             return false;
         glm::dvec3 o, d;
         view.ray(px, o, d);
@@ -475,6 +571,14 @@ private:
         scene::Graph& g = scene::Graph::current();
         ensureBvh();
         mStroking = true;
+        if (mapMode())
+        {
+            mMapStart = scene::deformWeights::read(g, mMap);
+            mMapWork = mMapStart;
+            if (settings().stroke.mirror)
+                buildSymmetry();
+            return;
+        }
         mStart = std::get<scene::DataPtr>(g.storedValue({mSkin, scene::SkinClusterNode::kWeights, -1}));
         mWork = scene::skin::table(g, mSkin);
         mInfluences = scene::skin::influences(g, mSkin);
@@ -487,11 +591,11 @@ private:
     void buildSymmetry()
     {
         scene::Graph& g = scene::Graph::current();
-        scene::MeshPtr input = scene::skin::inputMesh(g, mSkin);
+        scene::MeshPtr input = mapMode() ? mMap.mesh : scene::skin::inputMesh(g, mSkin);
         if (!input || (input == mSymmetryFor && mSymmetryAxis == settings().mirrorAxis))
             return;
         geo::Mesh world = *input;
-        glm::dmat4 geom = g.node(mSkin)->as<glm::dmat4>(scene::SkinClusterNode::kGeomMatrix);
+        glm::dmat4 geom = mapMode() ? mMap.world : g.node(mSkin)->as<glm::dmat4>(scene::SkinClusterNode::kGeomMatrix);
         for (geo::Index p = 0; p < world.pointCapacity(); ++p)
             world.setPosition(p, glm::dvec3(geom * glm::dvec4(input->position(p), 1.0)));
         geo::SymmetryPlane plane;
@@ -514,6 +618,21 @@ private:
     void apply(const std::vector<std::pair<uint32_t, float>>& pts, Mode mode, bool invert, uint32_t inf, float amount)
     {
         const Settings& s = settings();
+        if (mapMode())
+        {
+            if (mode == Mode::Smooth)
+            {
+                std::vector<std::pair<uint32_t, float>> scaled;
+                for (auto [p, f] : pts)
+                    scaled.push_back({p, f * amount});
+                scene::deformWeights::smooth(*mMap.mesh, mMapWork, scaled);
+                return;
+            }
+            for (auto [p, f] : pts)
+                if (p < mMapWork.size())
+                    scene::deformWeights::paint(mMapWork[p], mode, invert, s.value, f * amount);
+            return;
+        }
         if (mode == Mode::Smooth)
         {
             std::vector<std::pair<uint32_t, float>> scaled;
@@ -584,7 +703,10 @@ private:
         UndoStack& u = UndoStack::get();
         bool was = u.enabled();
         u.setEnabled(false);
-        scene::Graph::current().setValue({mSkin, scene::SkinClusterNode::kWeights, -1}, scene::DataPtr(mWork.pack()));
+        if (mapMode())
+            scene::deformWeights::write(scene::Graph::current(), mMap, mMapWork);
+        else
+            scene::Graph::current().setValue({mSkin, scene::SkinClusterNode::kWeights, -1}, scene::DataPtr(mWork.pack()));
         u.setEnabled(was);
         viewportTools::requestRedraw();
     }
@@ -594,6 +716,19 @@ private:
         mStroke.end();
         mStroking = false;
         scene::Graph& g = scene::Graph::current();
+        if (mapMode())
+        {
+            if (!g.node(mMap.node))
+                return;
+            UndoStack& u = UndoStack::get();
+            bool was = u.enabled();
+            u.setEnabled(false);
+            scene::deformWeights::write(g, mMap, mMapStart);
+            u.setEnabled(was);
+            UndoChunk chunk("paintDeformerWeights");
+            scene::deformWeights::write(g, mMap, mMapWork);
+            return;
+        }
         if (!g.node(mSkin))
             return;
         UndoStack& u = UndoStack::get();
@@ -608,6 +743,25 @@ private:
 
     void flood()
     {
+        if (mapMode())
+        {
+            static const char* kModeArgs[] = {"add", "replace", "smooth", "scale"};
+            nlohmann::json call = {{"args", {nodeName(mMap.node)}},
+                                   {"value", settings().value},
+                                   {"mode", kModeArgs[int(settings().mode)]},
+                                   {"strength", settings().stroke.strength}};
+            if (mMap.layer >= 0)
+            {
+                call["layer"] = mMap.layer;
+                call["mesh"] = nodeName(mMesh);
+            }
+            if (scene::components::mode() != scene::ComponentMode::Object)
+                if (auto ids = scene::components::pointsOf(mMesh); !ids.empty())
+                    call["points"] = ids;
+            actions::run({{"command", "floodDeformerWeights"}, {"args", call}});
+            viewportTools::requestRedraw();
+            return;
+        }
         if (mSkin == kNoNode || settings().influence < 0)
             return;
         scene::Graph& g = scene::Graph::current();
@@ -641,7 +795,7 @@ private:
 
         scene::Graph& g = scene::Graph::current();
         scene::MeshPtr m = deformed();
-        scene::DataPtr w = std::get<scene::DataPtr>(g.storedValue({mSkin, scene::SkinClusterNode::kWeights, -1}));
+        scene::DataPtr w = mapMode() ? mapKey() : std::get<scene::DataPtr>(g.storedValue({mSkin, scene::SkinClusterNode::kWeights, -1}));
         glm::dmat4 world = meshWorld();
         bool same = m == mDrawnMesh && w == mDrawnWeights && settings().influence == mDrawnInfluence && world == mDrawnWorld &&
                     glm::dvec3(s.eye) == mDrawnEye;
@@ -653,9 +807,15 @@ private:
             mDrawnWorld = world;
             mDrawnEye = s.eye;
             const auto* sw = dynamic_cast<const scene::SkinWeights*>(w.get());
-            const bool gray = viewportDisplay::grayscaleWeights();
+            const bool gray = mapMode() || viewportDisplay::grayscaleWeights();
             std::vector<glm::vec4> ramp(m->pointCapacity(), viewportDisplay::weightColor(0.0f, gray));
-            if (sw)
+            if (mapMode())
+            {
+                std::vector<float> values = mStroking ? mMapWork : scene::deformWeights::read(g, mMap);
+                for (size_t p = 0; p < std::min(values.size(), ramp.size()); ++p)
+                    ramp[p] = viewportDisplay::weightColor(values[p], true);
+            }
+            else if (sw)
                 for (uint32_t p = 0; p < std::min<uint32_t>(sw->pointCount(), uint32_t(ramp.size())); ++p)
                     for (uint32_t k = sw->offsets[p]; k < sw->offsets[p + 1]; ++k)
                         if (int64_t(sw->influences[k]) == settings().influence)
@@ -696,6 +856,9 @@ private:
     NodeId mMesh = kNoNode;
     NodeId mSkin = kNoNode;
     std::vector<scene::skin::Influence> mInfluences;
+    scene::deformWeights::MapTarget mMap;
+    std::vector<scene::deformWeights::MapTarget> mMaps;
+    std::vector<float> mMapStart, mMapWork;
 
     scene::MeshPtr mBvhMesh;
     geo::MeshBvh mBvh;

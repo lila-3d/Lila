@@ -26,6 +26,8 @@
 #include "InterchangeMeshDefinitions.h"
 #include "InterchangeResult.h"
 #include "InterchangeResultsContainer.h"
+#include "Animation/AnimCurveMetadata.h"
+#include "Animation/AnimSequence.h"
 #include "Animation/Skeleton.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
@@ -68,6 +70,8 @@ struct FImportRequest
 	bool bReapplyOptions = false;
 	bool bReplace = false;
 	bool bSave = false;
+	/** Curves the skeleton marks as material curves, so a material parameter of the same name follows them. */
+	TArray<FName> MaterialCurves;
 	LilaLink::FMaterialRequest Materials;
 };
 
@@ -157,6 +161,18 @@ bool ParseRequest(const TSharedPtr<FJsonObject>& Params, FImportRequest& Out, FS
 	Options->TryGetBoolField(TEXT("importAnimations"), Out.bImportAnimations);
 	Options->TryGetBoolField(TEXT("reapplyOptions"), Out.bReapplyOptions);
 	Options->TryGetBoolField(TEXT("save"), Out.bSave);
+	const TArray<TSharedPtr<FJsonValue>>* Curves = nullptr;
+	if (Options->TryGetArrayField(TEXT("materialCurves"), Curves))
+	{
+		for (const TSharedPtr<FJsonValue>& Curve : *Curves)
+		{
+			FString Name;
+			if (Curve.IsValid() && Curve->TryGetString(Name) && !Name.IsEmpty())
+			{
+				Out.MaterialCurves.AddUnique(FName(*Name));
+			}
+		}
+	}
 
 	FString Normals = TEXT("import");
 	Options->TryGetStringField(TEXT("normals"), Normals);
@@ -522,6 +538,8 @@ void ImportGeometryCache(const FImportRequest& R, FImportOutcome& Out)
 	Settings->MaterialSettings.bFindMaterials = true;
 	Settings->MaterialSettings.bCreateMaterials = false;
 	Settings->GeometryCacheSettings.bFlattenTracks = true;
+	// ML Deformer training maps cache vertices to the skeletal mesh's by these.
+	Settings->GeometryCacheSettings.bStoreImportedVertexNumbers = true;
 
 	TStrongObjectPtr<UAssetImportTask> Task(NewObject<UAssetImportTask>(GetTransientPackage()));
 	Task->Filename = R.File;
@@ -656,6 +674,56 @@ void ApplyLodScreenSizes(const FImportRequest& Request, FImportOutcome& Outcome)
 	}
 }
 
+/** Flags the requested curves as material curves on the skeletons of the imported meshes and animations. */
+void ApplyMaterialCurves(const FImportRequest& Request, FImportOutcome& Outcome)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImport::ApplyMaterialCurves);
+
+	TSet<USkeleton*> Skeletons;
+	for (const FString& Path : Outcome.Assets)
+	{
+		UObject* Asset = FindObject<UObject>(nullptr, *Path);
+		if (USkeleton* Skeleton = Cast<USkeleton>(Asset))
+		{
+			Skeletons.Add(Skeleton);
+		}
+		else if (USkeletalMesh* Mesh = Cast<USkeletalMesh>(Asset))
+		{
+			Skeletons.Add(Mesh->GetSkeleton());
+		}
+		else if (UAnimSequence* Anim = Cast<UAnimSequence>(Asset))
+		{
+			Skeletons.Add(Anim->GetSkeleton());
+		}
+	}
+	if (!Request.Skeleton.IsEmpty())
+	{
+		Skeletons.Add(LoadObject<USkeleton>(nullptr, *Request.Skeleton));
+	}
+	Skeletons.Remove(nullptr);
+	for (USkeleton* Skeleton : Skeletons)
+	{
+		bool bChanged = false;
+		for (const FName& Curve : Request.MaterialCurves)
+		{
+			const FCurveMetaData* Meta = Skeleton->GetCurveMetaData(Curve);
+			if (!Meta || !Meta->Type.bMaterial)
+			{
+				if (!bChanged)
+				{
+					Skeleton->Modify();
+				}
+				Skeleton->AccumulateCurveMetaData(Curve, true, Meta && Meta->Type.bMorphtarget);
+				bChanged = true;
+			}
+		}
+		if (bChanged)
+		{
+			Outcome.Assets.AddUnique(Skeleton->GetPathName());
+		}
+	}
+}
+
 void FinishImport(const FImportRequest& Request, FImportOutcome& Outcome, const FLilaLinkCallRef& Call)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImport::FinishImport);
@@ -663,6 +731,11 @@ void FinishImport(const FImportRequest& Request, FImportOutcome& Outcome, const 
 	if (!Request.LodScreenSizes.IsEmpty() && !Outcome.Assets.IsEmpty())
 	{
 		ApplyLodScreenSizes(Request, Outcome);
+	}
+
+	if (!Request.MaterialCurves.IsEmpty())
+	{
+		ApplyMaterialCurves(Request, Outcome);
 	}
 
 	if (Request.Materials.bManaged && !Outcome.Assets.IsEmpty())
