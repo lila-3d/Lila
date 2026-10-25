@@ -67,6 +67,8 @@ private:
     void restoreLayout();
     void applyDefaultDockSizes();
     void resetLayout();
+    /** Brings a window that a layout grew past its screen back onto it. */
+    void fitToScreen();
     /** The menu bar and shelf dock as the /ui/showMenuBar and /ui/showShelf prefs say. */
     void applyChromePrefs();
     /** Raises the channel box in its tab group, or the tab that was up before it when it already is (Maya's Ctrl+A). */
@@ -111,6 +113,8 @@ private:
     DockSidebars* mSidebars = nullptr;
     LayoutController* mLayouts = nullptr;
     QPointer<QDockWidget> mTabBeforeChannelBox;
+    /** Docks Maximize Viewport hid, with whether each was the showing tab, for its second press to bring back. */
+    std::vector<std::pair<QPointer<QDockWidget>, bool>> mMaximizeHidden;
     bool mShelfShown = true;
 };
 } // namespace lila::ui

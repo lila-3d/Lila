@@ -105,6 +105,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPointer>
+#include <QScreen>
 #include <QStatusBar>
 #include <QWidgetAction>
 #include <QTextDocumentFragment>
@@ -997,6 +998,7 @@ void MainWindow::registerActions()
                       try
                       {
                           ops::execute("applyLayout", {{"name", current}}, CallSource::UI);
+                          fitToScreen();
                       }
                       catch (const CommandError& e)
                       {
@@ -1106,12 +1108,22 @@ void MainWindow::registerActions()
                   }, nullptr,
                   "Render resolution and per-camera settings.", "lila.ops.setRenderResolution(width=1920, height=1080)"});
     actions::add({"window.toggleMaximizePanel", "Maximize Viewport", "Windows", [this] {
-                      bool hide = false;
+                      if (!mMaximizeHidden.empty())
+                      {
+                          for (auto& [d, showing] : mMaximizeHidden)
+                              if (d)
+                                  d->show();
+                          for (auto& [d, showing] : mMaximizeHidden)
+                              if (d && showing)
+                                  d->raise();
+                          mMaximizeHidden.clear();
+                          return;
+                      }
                       for (QDockWidget* d : findChildren<QDockWidget*>())
-                          hide |= d->isVisible() && !d->isFloating();
-                      for (QDockWidget* d : findChildren<QDockWidget*>())
-                          if (!d->isFloating())
-                              d->setVisible(!hide);
+                          if (d->parentWidget() == this && !d->isHidden() && !d->isFloating())
+                              mMaximizeHidden.emplace_back(d, d->isVisible());
+                      for (auto& [d, showing] : mMaximizeHidden)
+                          d->hide();
                   }, nullptr, "Hides every docked panel so the viewports fill the window; again to bring them back."});
     actions::add({"help.about", "About Lila", "Help", [this] { showAbout(); }, nullptr, "Version and copyright."});
     actions::add({"help.prefsFolder", "Open Prefs Folder", "Help", [] {
@@ -1591,6 +1603,7 @@ void MainWindow::restoreLayout()
             applyDefaultDockSizes();
             mSidebars->restoreCollapsed(kDefaultCollapsed);
         });
+    QTimer::singleShot(0, this, &MainWindow::fitToScreen);
     mRestoring = false;
 }
 
@@ -1706,6 +1719,7 @@ void MainWindow::renameSelection()
 
 void MainWindow::resetLayout()
 {
+    mMaximizeHidden.clear();
     mSidebars->expandAll();
     restoreState(mDefaultState);
     toolBox::place(this);
@@ -1714,7 +1728,25 @@ void MainWindow::resetLayout()
             d->hide();
     applyDefaultDockSizes();
     mSidebars->restoreCollapsed(kDefaultCollapsed);
+    fitToScreen();
     scheduleLayoutSave();
+}
+
+void MainWindow::fitToScreen()
+{
+    QRect avail = screen()->availableGeometry();
+    if (geometry().width() <= avail.width() && geometry().height() <= avail.height())
+        return;
+    if (isMaximized())
+    {
+        // Re-maximizing is what makes Windows drop the oversized frame; resizing a maximized window does nothing.
+        showNormal();
+        showMaximized();
+        return;
+    }
+    QMargins frame(geometry().left() - frameGeometry().left(), geometry().top() - frameGeometry().top(),
+                   frameGeometry().right() - geometry().right(), frameGeometry().bottom() - geometry().bottom());
+    setGeometry(avail.marginsRemoved(frame));
 }
 
 void MainWindow::scheduleLayoutSave()

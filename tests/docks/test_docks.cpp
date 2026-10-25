@@ -602,3 +602,27 @@ TEST_CASE("a dock split under the channel box before its tabs join sits under th
     CHECK(layers->geometry().top() > toolkit->geometry().bottom());
     CHECK(layers->geometry().left() == toolkit->geometry().left());
 }
+
+TEST_CASE("showing collapsed docks directly and then restoring a state never touches a deleted sidebar tab")
+{
+    Window w;
+    QByteArray before = w.win.saveState();
+    for (const char* name : {"outliner", "channelBox", "scriptEditor", "terminal"})
+        w.sidebars->collapse(w.docks[name]);
+    settle();
+    for (int round = 0; round < 3; ++round)
+    {
+        for (auto& [name, d] : w.docks)
+            d->setVisible(false);
+        for (auto& [name, d] : w.docks)
+            d->setVisible(true);
+        w.sidebars->expandAll();
+        w.win.restoreState(before);
+        w.sidebars->restoreCollapsed({"outliner", "scriptEditor"});
+        settle();
+    }
+    CHECK(w.sidebars->collapsedNames().size() == 2);
+    for (QWidget* c : w.win.findChildren<QWidget*>())
+        if (c->inherits("QToolButton") && c->toolTip().startsWith("Expand "))
+            CHECK(c->parentWidget()->isVisible());
+}
