@@ -10,6 +10,7 @@ add_executable(lila_geo_tests
     test_obj.cpp
     test_ops.cpp
     test_primitives.cpp
+    test_stl_ply.cpp
     test_triangulate.cpp)
 target_link_libraries(lila_geo_tests PRIVATE LilaScene doctest::doctest)
 add_test(NAME lila_geo_tests COMMAND lila_geo_tests)

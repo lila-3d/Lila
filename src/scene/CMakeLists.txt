@@ -53,6 +53,7 @@ lila_module(lila_scene Scene
     MeshData.cpp
     MeshEdit.cpp
     MeshBoolean.cpp
+    MeshFileCommands.cpp
     MeshNodes.cpp
     ModifierCommands.cpp
     Morphs.cpp

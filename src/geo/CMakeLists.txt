@@ -17,10 +17,12 @@ lila_module(lila_geo Scene
     OpsExtrude.cpp
     OpsKnife.cpp
     OpsLoop.cpp
+    PlyIO.cpp
     Primitives.cpp
     Reduce.cpp
     SmartJoin.cpp
     SplitNgons.cpp
+    StlIO.cpp
     RenderMesh.cpp
     Subdivide.cpp
     Symmetry.cpp

@@ -1,0 +1,18 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "Up"
+{
+    double3 xformOp:translate = (0, 2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+
+    def Mesh "Tri"
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    }
+}

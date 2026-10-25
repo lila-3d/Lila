@@ -1,6 +1,6 @@
 # Startup and shutdown shared by both hosts, without the UI.
 lila_module(lila_host Scene Host.cpp Host.h)
-target_link_libraries(lila_host PUBLIC lila_scene lila_io lila_python lila_mcp lila_extensions lila_vcs lila_link lila_fbx lila_maya lila_gn
+target_link_libraries(lila_host PUBLIC lila_scene lila_io lila_python lila_mcp lila_extensions lila_vcs lila_link lila_fbx lila_gltf lila_maya lila_gn
     lila_uv_cmds lila_retopo_cmds lila_sculpt_cmds lila_vcolor lila_layouts lila_batch)
 
 # lila is the GUI app (no console window); lilabatch is the console app for --batch from shells and CI, without the UI library.

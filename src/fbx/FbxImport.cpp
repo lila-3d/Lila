@@ -3,6 +3,7 @@
 #include "core/Profile.h"
 #include "core/Progress.h"
 #include "fbx/FbxAxes.h"
+#include "fbx/ImportCommon.h"
 #include "geo/ColorSets.h"
 #include "geo/Mesh.h"
 #include "scene/Anim.h"
@@ -88,41 +89,6 @@ glm::dmat4 toGlm(const ufbx_matrix& m)
 }
 
 std::string toString(const ufbx_string& s) { return std::string(s.data, s.length); }
-
-/** A valid Lila node name from an FBX one; collision and socket prefixes survive as they are. */
-std::string safeName(std::string_view raw, const char* fallback)
-{
-    std::string s;
-    for (char c : raw)
-    {
-        bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
-        s.push_back(ok ? c : '_');
-    }
-    if (s.empty())
-        return fallback;
-    if (s[0] >= '0' && s[0] <= '9')
-        s.insert(s.begin(), '_');
-    return s;
-}
-
-/** Hard where the corner normals of an edge's two faces disagree. Smoothing groups land here, since ufbx keeps only a flag per face. */
-void hardEdgesFromNormals(geo::Mesh& m)
-{
-    std::span<const glm::vec3> normals = m.cornerAttrs().get<glm::vec3>(geo::attr::kNormal);
-    std::span<bool> hard = m.edgeAttrs().getOrAdd<bool>(geo::attr::kHard);
-    for (Index e = 0; e < m.edgeCapacity(); ++e)
-    {
-        if (!m.edgeValid(e) || !m.isManifoldEdge(e))
-            continue;
-        Index c0 = m.edgeCorner(e), c1 = m.cornerRadial(c0);
-        auto at = [&](Index c, Index p) { return m.cornerPoint(c) == p ? c : m.cornerNext(c); };
-        for (int i = 0; i < 2 && !hard[e]; ++i)
-        {
-            Index p = m.edgePoint(e, i);
-            hard[e] = glm::dot(normals[at(c0, p)], normals[at(c1, p)]) < 0.9999f;
-        }
-    }
-}
 
 struct MeshBuild
 {
@@ -281,39 +247,6 @@ MeshBuild convertMesh(const ufbx_mesh& src, const ufbx_node& node, const glm::dm
             p = p < remap.points.size() ? remap.points[p] : kInvalid;
     }
     return b;
-}
-
-struct Trs
-{
-    glm::dvec3 t{0.0}, r{0.0}, s{1.0};
-    bool sheared = false;
-};
-
-Trs decompose(const glm::dmat4& m)
-{
-    Trs out;
-    glm::dquat q;
-    glm::dvec3 skew;
-    glm::dvec4 persp;
-    if (!glm::decompose(m, out.s, q, out.t, skew, persp))
-        return out;
-    out.sheared = glm::length(skew) > 1e-6;
-    out.r = scene::matrixToEuler(glm::mat3_cast(q), scene::RotateOrder::XYZ);
-    return out;
-}
-
-/** TRS of a Lila-space local matrix with the pre-rotation (jointOrient) taken out, Euler angles near ref. */
-Trs decomposeWith(const glm::dmat4& m, const glm::dmat3& pre, scene::RotateOrder order, const glm::dvec3& ref)
-{
-    Trs out;
-    glm::dquat q;
-    glm::dvec3 skew;
-    glm::dvec4 persp;
-    if (!glm::decompose(m, out.s, q, out.t, skew, persp))
-        return out;
-    out.sheared = glm::length(skew) > 1e-6;
-    out.r = eulerNear(glm::transpose(pre) * glm::dmat3(glm::mat3_cast(q)), order, ref);
-    return out;
 }
 
 glm::dvec3 vec3Of(const ufbx_vec3& v) { return {v.x, v.y, v.z}; }
@@ -622,9 +555,7 @@ void importCameraCurves(scene::Graph& g, const ufbx_anim_stack& stack, const Cam
                 c.keys.push_back({.time = t, .value = double(v.value_real) * (cp.length ? unitScale : 1.0), .in = anim::Tangent::Linear,
                                   .out = anim::Tangent::Linear});
             }
-            NodeId curve = g.createNode(*types::find("animCurveTU"), g.node(id)->name() + "_" + g.attr(plug).name, kNoNode, false)->id();
-            anim::setCurve(g, curve, c);
-            g.connect({curve, anim::CurveNode::kOutput, -1}, plug);
+            connectCurve(g, plug, "animCurveTU", c, g.node(id)->name() + "_" + g.attr(plug).name);
             ++r.curves;
         }
 }
@@ -690,9 +621,7 @@ void importTake(scene::Graph& g, const ufbx_scene& fbx, const ImportOptions& opt
                 anim::RotationCurve rc = anim::rotationFromEuler({&curves[3], &curves[4], &curves[5]}, rest[1], order,
                                                                  mode == RotationInterpolation::Slerp ? anim::RotInterp::Slerp
                                                                                                       : anim::RotInterp::Smooth);
-                NodeId curve = g.createNode(*types::find("animCurveRQ"), n->name() + "_rotate", kNoNode, false)->id();
-                anim::setRotationCurve(g, curve, rc);
-                g.connect({curve, anim::RotationCurveNode::kOutput, -1}, rotate);
+                connectRotationCurve(g, nf.id, rc);
                 ++r.curves;
             }
             rotationCurve = true;
@@ -708,10 +637,7 @@ void importTake(scene::Graph& g, const ufbx_scene& fbx, const ImportOptions& opt
             const PlugRef plug{nf.id, kAttr[ch / 3], ch % 3};
             if (g.source(plug))
                 continue;
-            std::string name = g.node(nf.id)->name() + "_" + g.attr(plug).childNames[size_t(ch % 3)];
-            NodeId curve = g.createNode(*types::find(kCurveType[ch / 3]), name, kNoNode, false)->id();
-            anim::setCurve(g, curve, c);
-            g.connect({curve, anim::CurveNode::kOutput, -1}, plug);
+            connectCurve(g, plug, kCurveType[ch / 3], c, g.node(nf.id)->name() + "_" + g.attr(plug).childNames[size_t(ch % 3)]);
             ++r.curves;
         }
     }
@@ -719,13 +645,7 @@ void importTake(scene::Graph& g, const ufbx_scene& fbx, const ImportOptions& opt
     importCameraCurves(g, *stack, cameras, times, unitScale, r);
 
     if (opts.setPlayback)
-    {
-        anim::Playback& pb = anim::playback();
-        pb.fps = r.fps;
-        pb.minTime = pb.animStart = r.start;
-        pb.maxTime = pb.animEnd = r.end;
-        anim::playbackChanged();
-    }
+        fbx::setPlayback(r.fps, r.start, r.end);
 }
 
 struct SceneDeleter

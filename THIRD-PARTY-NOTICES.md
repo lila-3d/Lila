@@ -20,6 +20,8 @@ Qt and PySide6 are dynamically linked and unmodified. You may replace the Qt and
 | oneTBB | Apache-2.0 | Intel Corporation | https://github.com/uxlfoundation/oneTBB |
 | hwloc | BSD-3-Clause | The hwloc contributors (Indiana University, University of Tennessee, HLRS Stuttgart, Inria and others) | https://github.com/open-mpi/hwloc |
 | Alembic | BSD-3-Clause | Lucasfilm Entertainment Company Ltd. and Sony Pictures Imageworks Inc. | https://github.com/alembic/alembic |
+| OpenUSD (with the components it bundles: RapidJSON, double-conversion, PEGTL and others, listed in its notice) | Tomorrow Open Source Technology License 1.0 (Apache-2.0 with a different trademark section); bundled components under their own permissive licenses | Pixar Animation Studios | https://github.com/PixarAnimationStudios/OpenUSD |
+| Draco | Apache-2.0 | Google LLC | https://github.com/google/draco |
 | Imath | BSD-3-Clause | Contributors to the OpenEXR Project | https://github.com/AcademySoftwareFoundation/Imath |
 | Manifold | Apache-2.0 | The Manifold Authors | https://github.com/elalish/manifold |
 | Clipper2 | BSL-1.0 | Angus Johnson | https://github.com/AngusJohnson/Clipper2 (also built with Z values from `src/curve/third_party/clipper2`) |
@@ -34,12 +36,16 @@ Qt and PySide6 are dynamically linked and unmodified. You may replace the Qt and
 | cpp-httplib | MIT | yhirose | https://github.com/yhirose/cpp-httplib |
 | Brotli | MIT | The Brotli Authors | https://github.com/google/brotli |
 | ufbx | MIT OR Unlicense | Samuli Raivio | https://github.com/ufbx/ufbx |
+| cgltf | MIT | Johannes Kuhlmann | `third_party/cgltf` (licence in `third_party/cgltf/LICENSE`), from https://github.com/jkuhlmann/cgltf at v1.15 |
+| stb_image | MIT OR Unlicense | Sean Barrett | `third_party/stb/stb_image.h` (licence at the end of the file), from https://github.com/nothings/stb, v2.30 |
 | nanobind | BSD-3-Clause | Wenzel Jakob | https://github.com/wjakob/nanobind |
 | Zstandard | BSD-3-Clause (dual GPL-2.0, BSD chosen) | Meta Platforms, Inc. and affiliates | https://github.com/facebook/zstd |
 | Tracy Profiler | BSD-3-Clause | Bartosz Taudul | https://github.com/wolfpld/tracy |
 | doctest (tests only, not distributed) | MIT | Viktor Kirilov | https://github.com/doctest/doctest |
 | MikkTSpace | Zlib | Morten S. Mikkelsen | `src/geo/third_party/mikktspace` |
 | Dem Bones | BSD-3-Clause | Electronic Arts Inc. | `third_party/dem-bones` (licence in `third_party/dem-bones/LICENSE.md`), from https://github.com/electronicarts/dem-bones at 09b899b |
+| stb_truetype | MIT OR Unlicense | Sean Barrett | `src/curve/third_party/stb` |
+| NanoSVG | Zlib | Mikko Mononen | `src/curve/third_party/nanosvg` |
 
 ## Assets
 
@@ -50,8 +56,6 @@ Qt and PySide6 are dynamically linked and unmodified. You may replace the Qt and
 | JetBrains Mono | OFL-1.1 | The JetBrains Mono Project Authors | `resources/fonts/JetBrainsMono-LICENSE.txt` |
 | Tabler Icons | MIT | Paweł Kuna | `resources/icons/tabler/LICENSE` |
 | Studio Small 09 HDRI | CC0-1.0 | Sergej Majboroda, Poly Haven | https://polyhaven.com/a/studio_small_09 |
-| stb_truetype | MIT OR Unlicense | Sean Barrett | `src/curve/third_party/stb` |
-| NanoSVG | Zlib | Mikko Mononen | `src/curve/third_party/nanosvg` |
 
 ## Training data
 

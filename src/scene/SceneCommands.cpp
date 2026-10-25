@@ -133,6 +133,7 @@ void registerCommands()
 
     registerTransformCommands();
     registerMeshCommands();
+    registerMeshFileCommands();
     registerMeshEditCommands();
     registerConformCommands();
     registerComponentQueryCommands();

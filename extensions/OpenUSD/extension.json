@@ -1,0 +1,14 @@
+{
+    "id": "OpenUSD",
+    "name": "OpenUSD",
+    "version": "1.0.0",
+    "vendor": "Lila",
+    "description": "Universal Scene Description: open, import and export .usd, .usda, .usdc and .usdz through Pixar's OpenUSD. Hierarchies, meshes with every UV and color set, UsdPreviewSurface materials and textures, UsdSkel skeletons, skins and blend shapes, cameras, curves and animation, with composition (references, payloads, sublayers, variants) resolved on import and Unreal-ready defaults on export.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "OpenUSD.dll",
+        "linux": "OpenUSD.so",
+        "macos": "OpenUSD.dylib"
+    },
+    "enabledByDefault": true
+}

@@ -1,0 +1,51 @@
+#usda 1.0
+(
+    defaultPrim = "Root"
+    metersPerUnit = 0.01
+    upAxis = "Z"
+    subLayers = [@./sub.usda@]
+)
+
+def Xform "Root"
+{
+    def "Referenced" (
+        prepend references = @./part.usda@
+    )
+    {
+        double3 xformOp:translate = (100, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def "Payloaded" (
+        prepend payload = @./part.usda@</Part>
+    )
+    {
+    }
+
+    def Xform "Chair" (
+        variants = {
+            string style = "wood"
+        }
+        prepend variantSets = "style"
+    )
+    {
+        variantSet "style" = {
+            "metal" {
+                def Mesh "Frame"
+                {
+                    int[] faceVertexCounts = [3]
+                    int[] faceVertexIndices = [0, 1, 2]
+                    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+                }
+            }
+            "wood" {
+                def Mesh "Seat"
+                {
+                    int[] faceVertexCounts = [4]
+                    int[] faceVertexIndices = [0, 1, 2, 3]
+                    point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+                }
+            }
+        }
+    }
+}

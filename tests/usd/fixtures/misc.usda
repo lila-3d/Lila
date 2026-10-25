@@ -1,0 +1,81 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 0.01
+    upAxis = "Z"
+    timeCodesPerSecond = 24
+    framesPerSecond = 24
+    startTimeCode = 0
+    endTimeCode = 48
+)
+
+def Xform "World" (
+    kind = "assembly"
+)
+{
+    custom float userProperties:weight = 3
+
+    def SphereLight "Key"
+    {
+        float inputs:radius = 5
+    }
+
+    def Points "Dust"
+    {
+        point3f[] points = [(0, 0, 0), (1, 1, 1)]
+    }
+
+    def Cube "Crate"
+    {
+        double size = 20
+    }
+
+    def Xform "Hidden"
+    {
+        token visibility = "invisible"
+    }
+
+    def Xform "Guides"
+    {
+        uniform token purpose = "guide"
+
+        def Xform "GuideChild"
+        {
+        }
+    }
+
+    def Camera "Shot"
+    {
+        float focalLength = 35
+        float focalLength.timeSamples = {
+            0: 35,
+            48: 85,
+        }
+        float horizontalAperture = 36
+        float verticalAperture = 24
+        float2 clippingRange = (1, 5000)
+        token projection = "perspective"
+        double3 xformOp:translate = (0, -500, 100)
+        float3 xformOp:rotateXYZ = (90, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+    }
+
+    def Mesh "Holey"
+    {
+        int[] faceVertexCounts = [4, 4, 5]
+        int[] faceVertexIndices = [0, 1, 2, 3, 1, 4, 5, 2, 4, 6, 7, 8, 5]
+        int[] holeIndices = [1]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (2, 0, 0), (2, 1, 0), (3, 0, 0), (3.5, 0.5, 0), (3, 1, 0)]
+        uniform token orientation = "leftHanded"
+        uniform token subdivisionScheme = "catmullClark"
+        int[] creaseIndices = [0, 1, 2]
+        int[] creaseLengths = [3]
+        float[] creaseSharpnesses = [2.5]
+        float[] primvars:heat = [0, 1, 2, 3, 4, 5, 6, 7, 8] (
+            interpolation = "vertex"
+        )
+        color3f[] primvars:displayColor = [(1, 0, 0), (0, 1, 0), (0, 0, 1)] (
+            interpolation = "uniform"
+        )
+    }
+}

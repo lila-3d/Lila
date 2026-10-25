@@ -31,4 +31,4 @@
 - UVs: `uvAuto`, `uvUnwrap`, `uvProject`, `uvPack`, ...
 - Looking: `captureView` / `captureTurntable` (PNG files), and the MCP tools `viewport_capture` / `capture_turntable` (images returned to you), `scene_summary`, `mesh_check` (compact validation), `mesh_info`.
 - Seeing the UI itself (menus, panels, HUD, gizmos): `ops.screenshot(path=r"C:/tmp/ui.png", target="window")` writes a PNG of the window as shown; `target="viewport"` crops to the active view, or name a panel (`"outliner"`, `"channelBox"`). The MCP tool `capture_window` (same `target`) does it over MCP. Needs the window: in batch mode use `captureView`.
-- Export: `exportFbx`, `exportObj`, `unrealSync` (Unreal link).
+- Import and export: `importFbx` / `exportFbx`, `importGltf` / `exportGltf` (.gltf and .glb), `exportObj`, `unrealSync` (Unreal link).

@@ -72,4 +72,6 @@ LILA_SCENE_API void placePrimitive(Graph& g, NodeId mesh, const glm::dvec3& posi
 
 LILA_SCENE_API void registerMeshTypes();
 LILA_SCENE_API void registerMeshCommands();
+/** importStl, exportStl, importPly, exportPly. */
+LILA_SCENE_API void registerMeshFileCommands();
 } // namespace lila::scene

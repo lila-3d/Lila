@@ -18,6 +18,8 @@
     "meshoptimizer",
     "joltphysics",
     "miniz",
+    "usd",
+    "draco",
     {
       "name": "tracy",
       "features": [

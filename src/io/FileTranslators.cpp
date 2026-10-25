@@ -256,12 +256,32 @@ void registerBuiltins()
          .import = {.command = "importFbx"},
          .exportSelection = {.command = "exportFbx", .flags = {{"profile", "ue5"}}},
          .priority = 1});
+    add({.id = "gltf",
+         .label = "glTF",
+         .doc = "Khronos glTF 2.0, JSON .gltf and binary .glb: meshes, skeletons, skin weights, morph targets, animation, cameras and "
+                "PBR materials with their textures. Converts to and from glTF's Y-up metres.",
+         .extensions = {".gltf", ".glb"},
+         .import = {.command = "importGltf"},
+         .exportSelection = {.command = "exportGltf"}});
     add({.id = "obj",
          .label = "OBJ",
          .doc = "Wavefront OBJ meshes.",
          .extensions = {".obj"},
          .import = {.command = "importObj"},
          .exportSelection = {.command = "exportObj"}});
+    add({.id = "stl",
+         .label = "STL",
+         .doc = "STL, binary and ASCII: triangle meshes for 3D printing and CAD, welded on import. Millimetres, Z up by default.",
+         .extensions = {".stl"},
+         .import = {.command = "importStl"},
+         .exportSelection = {.command = "exportStl"}});
+    add({.id = "ply",
+         .label = "PLY",
+         .doc = "Stanford PLY, binary and ASCII: meshes and point clouds with normals, UVs and colors, as scanners and "
+                "photogrammetry write them. Metres, Z up by default.",
+         .extensions = {".ply"},
+         .import = {.command = "importPly"},
+         .exportSelection = {.command = "exportPly"}});
 }
 
 void registerCommands()
@@ -305,8 +325,8 @@ void registerCommands()
         });
     };
     fileCommand("openFile", Op::Open, "Open a file with the translator for its extension (.lila, .ma, ...), replacing the scene. Formats that only "
-                                     "import (.fbx, .obj, ...) open as a new untitled scene with the file imported into it.");
-    fileCommand("importFile", Op::Import, "Import a file into the scene with the translator for its extension (.fbx, .obj, .ma, ...).");
-    fileCommand("exportFile", Op::Export, "Export the selection with the translator for the file's extension (.fbx, .obj, ...).");
+                                     "import (.fbx, .gltf, .obj, ...) open as a new untitled scene with the file imported into it.");
+    fileCommand("importFile", Op::Import, "Import a file into the scene with the translator for its extension (.fbx, .gltf, .glb, .obj, .ma, ...).");
+    fileCommand("exportFile", Op::Export, "Export the selection with the translator for the file's extension (.fbx, .gltf, .glb, .obj, ...).");
 }
 } // namespace lila::io::translators

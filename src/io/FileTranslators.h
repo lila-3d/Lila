@@ -101,7 +101,7 @@ LILA_SCENE_API json run(Op op, const fs::path& path, const json& options = json:
 /** {id, label, doc, extensions, open, import, export, owner} per translator. */
 LILA_SCENE_API json describe(const FileTranslator& t);
 
-/** Lila's own: lila, fbx, obj, maya. Idempotent. */
+/** Lila's own: lila, maya, fbx, gltf, obj, stl, ply. Idempotent. */
 LILA_SCENE_API void registerBuiltins();
 /** fileTranslators, openFile, importFile, exportFile. */
 LILA_SCENE_API void registerCommands();

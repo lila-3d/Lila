@@ -1,0 +1,76 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 0.01
+    upAxis = "Z"
+)
+
+class "ProtoClass"
+{
+}
+
+def Xform "Library" (
+    active = false
+)
+{
+}
+
+over "Protos"
+{
+    def Mesh "Tri"
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    }
+}
+
+def Xform "World"
+{
+    def PointInstancer "Scatter"
+    {
+        rel prototypes = [</World/Scatter/Prototypes/Pebble>, </World/Scatter/Prototypes/Rock>]
+        int[] protoIndices = [0, 1, 0, 1]
+        point3f[] positions = [(0, 0, 0), (10, 0, 0), (20, 0, 0), (30, 0, 0)]
+        quath[] orientations = [(1, 0, 0, 0), (1, 0, 0, 0), (0.70710677, 0, 0, 0.70710677), (1, 0, 0, 0)]
+        float3[] scales = [(1, 1, 1), (2, 2, 2), (1, 1, 1), (1, 1, 1)]
+        int64[] invisibleIds = [3]
+
+        def Scope "Prototypes"
+        {
+            def Mesh "Pebble"
+            {
+                int[] faceVertexCounts = [3]
+                int[] faceVertexIndices = [0, 1, 2]
+                point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            }
+            def Xform "Rock"
+            {
+                def Mesh "Body"
+                {
+                    int[] faceVertexCounts = [4]
+                    int[] faceVertexIndices = [0, 1, 2, 3]
+                    point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+                }
+            }
+        }
+    }
+
+    def Xform "InstA" (
+        instanceable = true
+        prepend references = </Protos>
+    )
+    {
+        double3 xformOp:translate = (0, 50, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Xform "InstB" (
+        instanceable = true
+        prepend references = </Protos>
+    )
+    {
+        double3 xformOp:translate = (0, 100, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}

@@ -1,0 +1,120 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 0.01
+    upAxis = "Z"
+)
+
+def Xform "World" (
+    prepend apiSchemas = ["MaterialBindingAPI", "CollectionAPI:shiny"]
+)
+{
+    uniform token collection:shiny:expansionRule = "expandPrims"
+    rel collection:shiny:includes = [</World/Ball>]
+    rel material:binding:collection:shiny = [</World.collection:shiny>, </World/Looks/Gold>]
+
+    def Mesh "Ball"
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)] (
+            interpolation = "vertex"
+        )
+    }
+
+    def Mesh "Leaf" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        uniform bool doubleSided = 1
+        rel material:binding = </World/Looks/Foliage>
+    }
+
+    def Scope "Looks"
+    {
+        def Material "Gold"
+        {
+            token outputs:surface.connect = </World/Looks/Gold/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (1, 0.8, 0.2)
+                float inputs:metallic = 1
+                float inputs:roughness = 0.25
+                float inputs:ior = 2
+                color3f inputs:emissiveColor = (0.5, 0, 0)
+                token outputs:surface
+            }
+        }
+
+        def Material "Foliage"
+        {
+            token outputs:surface.connect = </World/Looks/Foliage/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor.connect = </World/Looks/Foliage/Albedo.outputs:rgb>
+                float inputs:opacity.connect = </World/Looks/Foliage/Albedo.outputs:a>
+                float inputs:opacityThreshold = 0.5
+                float inputs:occlusion.connect = </World/Looks/Foliage/Packed.outputs:r>
+                float inputs:roughness.connect = </World/Looks/Foliage/Packed.outputs:g>
+                float inputs:metallic.connect = </World/Looks/Foliage/Packed.outputs:b>
+                normal3f inputs:normal.connect = </World/Looks/Foliage/Normal.outputs:rgb>
+                token outputs:surface
+            }
+
+            def Shader "Reader"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                token inputs:varname = "st1"
+                float2 outputs:result
+            }
+
+            def Shader "Tiling"
+            {
+                uniform token info:id = "UsdTransform2d"
+                float2 inputs:in.connect = </World/Looks/Foliage/Reader.outputs:result>
+                float2 inputs:scale = (2, 2)
+                float2 outputs:result
+            }
+
+            def Shader "Albedo"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @./tex/leaf_albedo.png@
+                float2 inputs:st.connect = </World/Looks/Foliage/Tiling.outputs:result>
+                token inputs:sourceColorSpace = "sRGB"
+                float3 outputs:rgb
+                float outputs:a
+            }
+
+            def Shader "Packed"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @./tex/leaf_orm.png@
+                float2 inputs:st.connect = </World/Looks/Foliage/Reader.outputs:result>
+                token inputs:sourceColorSpace = "raw"
+                float outputs:r
+                float outputs:g
+                float outputs:b
+            }
+
+            def Shader "Normal"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @./tex/leaf_normal.png@
+                float2 inputs:st.connect = </World/Looks/Foliage/Reader.outputs:result>
+                token inputs:sourceColorSpace = "raw"
+                float4 inputs:scale = (2, 2, 2, 1)
+                float4 inputs:bias = (-1, -1, -1, 0)
+                float3 outputs:rgb
+            }
+        }
+    }
+}
