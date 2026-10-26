@@ -16,6 +16,8 @@ for it again.
 """
 
 import ctypes
+import importlib.abc
+import importlib.machinery
 import os
 import sys
 
@@ -82,22 +84,39 @@ def update():
     return ops.usdStageUpdate()
 
 
+class _PxrLoader(importlib.abc.Loader):
+    """pxr's own loader, then the extension's start-up, which imports the rest of pxr while pxr itself initializes, the
+    way a package's __init__ imports its submodules."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def create_module(self, spec):
+        return self._inner.create_module(spec)
+
+    def exec_module(self, module):
+        self._inner.exec_module(module)
+        _prepare()
+
+
 class _PxrFinder:
-    """Loads the OpenUSD extension's libraries the first time a script imports pxr; the path finder then finds pxr."""
+    """Finds pxr in the OpenUSD extension and loads the extension's libraries with it, the same ones its stages use."""
 
-    busy = False
-
-    @classmethod
-    def find_spec(cls, name, path=None, target=None):
-        if name == "pxr" and _core is None and not cls.busy:
-            cls.busy = True
-            try:
-                _prepare()
-            except Exception:
-                pass
-            finally:
-                cls.busy = False
-        return None
+    @staticmethod
+    def find_spec(name, path=None, target=None):
+        if name != "pxr" or _core is not None:
+            return None
+        try:
+            py = os.path.join(package_root(), "python")
+        except Exception:
+            return None
+        spec = importlib.machinery.PathFinder.find_spec(name, [py])
+        if spec is None:
+            return None
+        if py not in sys.path:
+            sys.path.append(py)
+        spec.loader = _PxrLoader(spec.loader)
+        return spec
 
 
 def _install_import_hook():

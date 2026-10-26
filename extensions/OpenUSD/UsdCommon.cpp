@@ -13,6 +13,16 @@
 #include <mutex>
 #include <set>
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace lila::usd
@@ -163,6 +173,15 @@ std::vector<std::string> Diagnostics::warnings()
 
 bool registerPlugins(const fs::path& packageRoot, std::string* error)
 {
+#if defined(_WIN32)
+    // Plug loads plugin libraries with a plain LoadLibrary, whose dependency search skips the library's own folder:
+    // a plugin needing a package library nothing has loaded yet (MaterialX, Hydra) finds it through PATH.
+    const std::wstring dir = packageRoot.wstring();
+    std::wstring path(GetEnvironmentVariableW(L"PATH", nullptr, 0), L'\0');
+    path.resize(GetEnvironmentVariableW(L"PATH", path.data(), DWORD(path.size())));
+    if ((L";" + path + L";").find(L";" + dir + L";") == std::wstring::npos)
+        SetEnvironmentVariableW(L"PATH", (path.empty() ? dir : path + L";" + dir).c_str());
+#endif
     PlugRegistry& reg = PlugRegistry::GetInstance();
     std::vector<std::string> paths;
     for (const fs::path& dir : {packageRoot / "usd", packageRoot / "plugin" / "usd"})
