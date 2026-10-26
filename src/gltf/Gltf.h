@@ -60,6 +60,7 @@ struct ImportResult
     std::vector<scene::NodeId> joints;
     std::vector<scene::NodeId> skins; // skinCluster nodes
     std::vector<scene::NodeId> cameras;
+    std::vector<scene::NodeId> lights;
     std::vector<scene::NodeId> morphs;
     std::vector<std::string> materials; // material node names
     std::vector<std::string> images;    // image files written (embedded or converted)

@@ -4,6 +4,8 @@
 #include "scene/Anim.h"
 #include "scene/Graph.h"
 
+#include <tbb/parallel_for.h>
+
 #include <glm/gtx/matrix_decompose.hpp>
 
 namespace lila::fbx
@@ -29,10 +31,9 @@ void hardEdgesFromNormals(geo::Mesh& m)
 {
     std::span<const glm::vec3> normals = m.cornerAttrs().get<glm::vec3>(geo::attr::kNormal);
     std::span<bool> hard = m.edgeAttrs().getOrAdd<bool>(geo::attr::kHard);
-    for (Index e = 0; e < m.edgeCapacity(); ++e)
-    {
+    tbb::parallel_for(Index(0), m.edgeCapacity(), [&](Index e) {
         if (!m.edgeValid(e) || !m.isManifoldEdge(e))
-            continue;
+            return;
         Index c0 = m.edgeCorner(e), c1 = m.cornerRadial(c0);
         auto at = [&](Index c, Index p) { return m.cornerPoint(c) == p ? c : m.cornerNext(c); };
         for (int i = 0; i < 2 && !hard[e]; ++i)
@@ -40,7 +41,7 @@ void hardEdgesFromNormals(geo::Mesh& m)
             Index p = m.edgePoint(e, i);
             hard[e] = glm::dot(normals[at(c0, p)], normals[at(c1, p)]) < 0.9999f;
         }
-    }
+    });
 }
 
 Trs decompose(const glm::dmat4& m)

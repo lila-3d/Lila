@@ -4,8 +4,12 @@
 #include "geo/PlyIO.h"
 #include "geo/Primitives.h"
 #include "geo/StlIO.h"
+#include "geo/Triangulate.h"
 
+#include <array>
 #include <cstring>
+#include <format>
+#include <map>
 
 using namespace lila::geo;
 using namespace lila::geo::test;
@@ -218,4 +222,184 @@ TEST_CASE("ply: bad files fail cleanly")
     CHECK(!readPly("not a ply").ok());
     CHECK(!readPly("ply\nformat ascii 1.0\nelement vertex 2\nproperty float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n").ok());
     CHECK(!readPly("ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nend_header\n0\n").ok());
+}
+
+namespace
+{
+/** Big enough that every reader and mesh build step takes its parallel path. */
+Mesh bigSphere() { return makeSphere({.radius = 10.0, .subdivAxis = 150, .subdivHeight = 150}); }
+
+/** Each face's corner positions in order, the same for any point numbering. */
+std::vector<std::vector<glm::dvec3>> faceShapes(const Mesh& m)
+{
+    std::vector<std::vector<glm::dvec3>> out;
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+    {
+        if (!m.faceValid(f))
+            continue;
+        std::vector<glm::dvec3>& face = out.emplace_back();
+        m.forEachFaceCorner(f, [&](Index c) { face.push_back(m.position(m.cornerPoint(c))); });
+    }
+    return out;
+}
+
+/** Positions in order of first use by the faces, as a reader adding points one at a time would number them. */
+std::vector<glm::dvec3> firstUse(const std::vector<std::vector<glm::dvec3>>& faces)
+{
+    std::vector<glm::dvec3> out;
+    std::map<std::array<double, 3>, size_t> seen;
+    for (const auto& f : faces)
+        for (const glm::dvec3& p : f)
+            if (seen.try_emplace({p.x, p.y, p.z}, out.size()).second)
+                out.push_back(p);
+    return out;
+}
+
+std::vector<glm::dvec3> positions(const Mesh& m)
+{
+    std::vector<glm::dvec3> out;
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p))
+            out.push_back(m.position(p));
+    return out;
+}
+
+/** The sphere with its positions rounded to float, as STL and PLY store them. */
+Mesh asFloat(Mesh m)
+{
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        m.setPosition(p, glm::dvec3(glm::vec3(m.position(p))));
+    return m;
+}
+} // namespace
+
+TEST_CASE("stl: big binary and ascii files weld in first-use order")
+{
+    const Mesh sphere = asFloat(bigSphere());
+    std::vector<StlSolid> solids{{"ball", sphere}};
+    for (bool binary : {true, false})
+    {
+        CAPTURE(binary);
+        StlReadResult r = readStl(writeStl(solids, {.binary = binary}));
+        REQUIRE(r.ok());
+        REQUIRE(r.solids.size() == 1);
+        const Mesh& m = r.solids[0].mesh;
+        CHECK(isValid(m));
+        CHECK(boundaryEdgeCount(m) == 0);
+        CHECK(m.numPoints() == sphere.numPoints());
+        const auto faces = faceShapes(m);
+        CHECK(positions(m) == firstUse(faces));
+        CHECK(faces.size() == triangulate(sphere).triangleCount());
+    }
+}
+
+TEST_CASE("stl: big binary drops degenerate triangles and the points only they used")
+{
+    std::string s(80, '\0');
+    const uint32_t n = 30000;
+    s.append(reinterpret_cast<const char*>(&n), 4);
+    auto tri = [&](glm::vec3 a, glm::vec3 b, glm::vec3 c) {
+        const float v[12] = {0, 0, 1, a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z};
+        s.append(reinterpret_cast<const char*>(v), sizeof(v));
+        s.append(2, '\0');
+    };
+    for (uint32_t i = 0; i < n; ++i)
+    {
+        const float x = float(i);
+        if (i % 1000 == 7)
+            tri({x, 0, 0}, {x, 5, 0}, {x, 0, 0}); // two corners at one position
+        else
+            tri({x, 0, 0}, {x + 1, 0, 0}, {x, 1, 0});
+    }
+    StlReadResult r = readStl(s);
+    REQUIRE(r.ok());
+    const Mesh& m = r.solids[0].mesh;
+    CHECK(m.numFaces() == n - 30);
+    CHECK(isValid(m));
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        CHECK(m.pointEdge(p) != kInvalid);
+    CHECK(positions(m) == firstUse(faceShapes(m)));
+}
+
+TEST_CASE("stl: ascii with everything on one line still reads")
+{
+    StlReadResult r = readStl("solid t facet normal 0 0 1 outer loop vertex 0 0 0 vertex 1 0 0 vertex 0 1 0 endloop endfacet endsolid t");
+    REQUIRE(r.ok());
+    REQUIRE(r.solids.size() == 1);
+    CHECK(r.solids[0].name == "t facet normal 0 0 1 outer loop vertex 0 0 0 vertex 1 0 0 vertex 0 1 0 endloop endfacet endsolid t");
+}
+
+TEST_CASE("ply: big binary and ascii files read the same mesh")
+{
+    const Mesh sphere = asFloat(bigSphere());
+    const auto want = faceShapes(sphere);
+    for (bool binary : {true, false})
+    {
+        CAPTURE(binary);
+        PlyReadResult r = readPly(writePly(sphere, {.binary = binary, .normals = false, .uvs = false, .colors = false}));
+        REQUIRE(r.ok());
+        CHECK(isValid(r.mesh));
+        CHECK(r.mesh.numPoints() == sphere.numPoints());
+        CHECK(faceShapes(r.mesh) == want);
+    }
+}
+
+TEST_CASE("ply: big ascii with mixed polygons, bad faces and face properties")
+{
+    const int faces = 20000;
+    std::string s = "ply\nformat ascii 1.0\nelement vertex " + std::to_string(faces * 4) +
+                    "\nproperty float x\nproperty float y\nproperty float z\nelement face " + std::to_string(faces) +
+                    "\nproperty list uchar int vertex_indices\nproperty float id\nend_header\n";
+    for (int i = 0; i < faces; ++i)
+        s += std::format("{} 0 0\n{} 1 0\n{} 1 1\n{} 0 1\n", i, i, i, i);
+    for (int i = 0; i < faces; ++i)
+    {
+        const int b = i * 4;
+        if (i == 123)
+            s += std::format("3 {} {} {} {}\n", b, b + 1, faces * 4 + 5, i); // out of range
+        else if (i == 9876)
+            s += std::format("3 {} {} {} {}\n", b, b + 1, b, i); // repeats a point
+        else if (i % 2)
+            s += std::format("3 {} {} {} {}\n", b, b + 1, b + 2, i);
+        else
+            s += std::format("4 {} {} {} {} {}\n", b, b + 1, b + 2, b + 3, i);
+    }
+    PlyReadResult r = readPly(s);
+    REQUIRE(r.ok());
+    CHECK(r.mesh.numFaces() == faces - 2);
+    CHECK(std::ranges::find(r.skipped, "2 bad faces") != r.skipped.end());
+    std::span<const float> id = r.mesh.faceAttrs().get<float>("id");
+    REQUIRE(id.size() == size_t(faces - 2));
+    int expect = 0;
+    for (Index f = 0; f < r.mesh.faceCapacity(); ++f, ++expect)
+    {
+        if (expect == 123 || expect == 9876)
+            ++expect;
+        CHECK(id[f] == float(expect));
+        CHECK(r.mesh.faceSize(f) == (expect % 2 ? 3u : 4u));
+        CHECK(r.mesh.position(r.mesh.cornerPoint(r.mesh.faceCorner(f))).x == double(expect));
+    }
+    // Points no kept face uses go: the triangles' fourth, and all of the bad faces'.
+    CHECK(r.mesh.numPoints() == size_t((faces / 2 - 1) * 4 + (faces / 2 - 1) * 3));
+}
+
+TEST_CASE("ply: ascii records broken across lines")
+{
+    const char* text = "ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nelement face 1\n"
+                       "property list uchar int vertex_indices\nend_header\n0 0\n0 1 0 0 0\n1 0 3\n0 1 2\n";
+    PlyReadResult r = readPly(text);
+    REQUIRE(r.ok());
+    CHECK(r.mesh.numFaces() == 1);
+    CHECK(r.mesh.position(1) == glm::dvec3(1, 0, 0));
+}
+
+TEST_CASE("ply: big binary point cloud")
+{
+    Mesh cloud;
+    for (int i = 0; i < 100000; ++i)
+        cloud.addPoint({double(i), double(i % 7), 0.5});
+    PlyReadResult r = readPly(writePly(cloud));
+    REQUIRE(r.ok());
+    CHECK(r.pointCloud);
+    CHECK(positions(r.mesh) == positions(cloud));
 }

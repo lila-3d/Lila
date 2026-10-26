@@ -1,5 +1,7 @@
 #include "scene/MeshNodes.h"
 #include "ops/Command.h"
+#include "core/FileBytes.h"
+#include "core/Paths.h"
 #include "core/Progress.h"
 #include "geo/ColorSets.h"
 #include "geo/PlyIO.h"
@@ -8,8 +10,9 @@
 #include "scene/Graph.h"
 #include "scene/Modifiers.h"
 
+#include <tbb/parallel_for.h>
+
 #include <filesystem>
-#include <fstream>
 
 namespace lila::scene
 {
@@ -53,15 +56,20 @@ glm::dmat4 fileToScene(const Args& a, const char* cmd)
 /** Positions by m, file normals (corner and point) by its inverse transpose. */
 void transformMesh(geo::Mesh& mesh, const glm::dmat4& m)
 {
-    for (geo::Index p = 0; p < mesh.pointCapacity(); ++p)
+    tbb::parallel_for(geo::Index(0), mesh.pointCapacity(), [&](geo::Index p) {
         if (mesh.pointValid(p))
             mesh.setPosition(p, glm::dvec3(m * glm::dvec4(mesh.position(p), 1.0)));
+    });
     const glm::mat3 n(glm::transpose(glm::inverse(glm::dmat3(m))));
     const bool flip = glm::determinant(glm::dmat3(m)) < 0.0;
     for (geo::AttributeSet* set : {&mesh.cornerAttrs(), &mesh.pointAttrs()})
-        for (glm::vec3& v : set->get<glm::vec3>(geo::attr::kNormal))
-            if (glm::dot(v, v) > 0.0f)
-                v = glm::normalize(n * v);
+    {
+        std::span<glm::vec3> normals = set->get<glm::vec3>(geo::attr::kNormal);
+        tbb::parallel_for(size_t(0), normals.size(), [&](size_t i) {
+            if (glm::dot(normals[i], normals[i]) > 0.0f)
+                normals[i] = glm::normalize(n * normals[i]);
+        });
+    }
     if (flip)
         for (geo::Index f = 0; f < mesh.faceCapacity(); ++f)
             if (mesh.faceValid(f))
@@ -136,9 +144,14 @@ std::vector<std::pair<std::string, geo::Mesh>> gatherMeshes(const Args& a, const
 
 void writeFile(const std::string& path, const std::string& data, const char* cmd)
 {
-    std::ofstream f(fs::path(path), std::ios::binary);
-    if (!f || !f.write(data.data(), std::streamsize(data.size())))
+    try
+    {
+        writeFileBytes(paths::fromUtf8(path), data);
+    }
+    catch (const std::runtime_error&)
+    {
         throw CommandError(std::string(cmd) + ": can't write " + path);
+    }
 }
 
 FlagDef unitFlag(const char* fallback, const char* doc) { return {"unit", "", ArgType::String, fallback, doc, {"mm", "cm", "m", "in"}}; }
@@ -163,14 +176,17 @@ void registerMeshFileCommands()
             const glm::dmat4 m = fileToScene(a, "importStl");
             progress::Scope scope("Importing " + path + "...");
             geo::StlReadResult r;
-            progress::runOnWorker([&] { r = geo::readStlFile(path, {.weld = a.get<bool>("weld", true), .hardAngle = a.get<double>("hardAngle", 30.0)}); });
+            progress::runOnWorker([&] {
+                r = geo::readStlFile(path, {.weld = a.get<bool>("weld", true), .hardAngle = a.get<double>("hardAngle", 30.0)});
+                for (geo::StlSolid& s : r.solids)
+                    transformMesh(s.mesh, m);
+            });
             if (!r.ok())
                 throw CommandError("importStl: " + r.error);
             std::vector<std::pair<std::string, geo::Mesh>> meshes;
             const std::string stem = fs::path(path).stem().string();
             for (geo::StlSolid& s : r.solids)
             {
-                transformMesh(s.mesh, m);
                 meshes.emplace_back(s.name.empty() || r.binary ? stem : s.name, std::move(s.mesh));
             }
             return addMeshes(meshes);
@@ -216,10 +232,13 @@ void registerMeshFileCommands()
             const glm::dmat4 m = fileToScene(a, "importPly");
             progress::Scope scope("Importing " + path + "...");
             geo::PlyReadResult r;
-            progress::runOnWorker([&] { r = geo::readPlyFile(path, {.keepNormals = a.get<bool>("normals", true)}); });
+            progress::runOnWorker([&] {
+                r = geo::readPlyFile(path, {.keepNormals = a.get<bool>("normals", true)});
+                if (r.ok())
+                    transformMesh(r.mesh, m);
+            });
             if (!r.ok())
                 throw CommandError("importPly: " + r.error);
-            transformMesh(r.mesh, m);
             std::vector<std::pair<std::string, geo::Mesh>> meshes;
             meshes.emplace_back(fs::path(path).stem().string(), std::move(r.mesh));
             json names = addMeshes(meshes);
@@ -244,9 +263,10 @@ void registerMeshFileCommands()
         .run = [](const Args& a) -> json {
             const std::string path = readPath(a, "exportPly");
             const glm::dmat4 toFile = glm::inverse(fileToScene(a, "exportPly"));
-            geo::Mesh merged;
-            for (auto& [name, mesh] : gatherMeshes(a, "exportPly", toFile))
-                merged.append(mesh);
+            std::vector<std::pair<std::string, geo::Mesh>> meshes = gatherMeshes(a, "exportPly", toFile);
+            geo::Mesh merged = std::move(meshes[0].second);
+            for (size_t i = 1; i < meshes.size(); ++i)
+                merged.append(meshes[i].second);
             progress::Scope scope("Exporting " + path + "...");
             std::string data;
             progress::runOnWorker([&] {

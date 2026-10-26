@@ -2,9 +2,9 @@
 
 Usage: python perf_table.py results.json > tables.md
 
-Input: {"apps": [...], "tables": [{"title", "unit", "rows": [{"task", "values", "notes"?}]}]}.
-Values are times (lower is better). null means not measured; a string such as
-"crashed" is shown as text and always loses.
+Input: {"apps": [...], "tables": [{"title", "unit", "better"?, "rows": [{"task", "values", "notes"?}]}]}.
+Values are times or sizes (lower is better); "better" words the lead, "faster" by default. null means not
+measured; a string such as "crashed" is shown as text and always loses.
 """
 
 import json
@@ -32,7 +32,7 @@ def span(colour, text, bold=False):
 
 
 LEGEND = (
-    "Times are coloured by how far they are from the best on their row: "
+    "Results are coloured by how far they are from the best on their row: "
     f"{span(solid(GREEN), 'green')} is the fastest (brighter for a bigger lead), "
     f"{span(solid(YELLOW), 'yellow')} is close to it and "
     f"{span(solid(RED), 'red')} is 10x slower or worse; results within 5% count as even."
@@ -47,6 +47,13 @@ def fmt(v):
     """Three significant figures."""
     places = max(0, 2 - math.floor(math.log10(abs(v)))) if v else 0
     return str(Decimal(str(v)).quantize(Decimal(1).scaleb(-places), ROUND_HALF_UP))
+
+
+def with_unit(v, unit):
+    """The value and its unit, in microseconds when a time in seconds is under a millisecond."""
+    if unit == "s" and abs(v) < 1e-3:
+        return f"{fmt(v * 1e6)} µs"
+    return f"{fmt(v)} {unit}"
 
 
 def fmt_factor(r):
@@ -70,7 +77,7 @@ def app_name(app, full=True):
     return f'<span style="{style}">{text}</span>'
 
 
-def render_row(apps, row, unit):
+def render_row(apps, row, unit, better="faster"):
     values = row["values"]
     nums = sorted((v, i) for i, v in enumerate(values) if isinstance(v, (int, float)))
     failed = [i for i, v in enumerate(values) if isinstance(v, str)]
@@ -86,7 +93,7 @@ def render_row(apps, row, unit):
         elif isinstance(v, str):
             cells.append(span(solid(RED), v))
         elif runner_ratio is None:
-            cells.append(f"{fmt(v)} {unit}")
+            cells.append(with_unit(v, unit))
         else:
             r = v / best
             bold = False
@@ -97,14 +104,14 @@ def render_row(apps, row, unit):
                 bold = True
             else:
                 colour = lerp(YELLOW, RED, intensity(r))
-            cells.append(span(colour, f"{fmt(v)} {unit}", bold))
+            cells.append(span(colour, with_unit(v, unit), bold))
 
     if runner_ratio is None:
         diff = ""
     elif tie:
         diff = "≈ even"
     elif len(nums) > 1:
-        diff = f"**{app_name(apps[best_i], False)} {fmt_factor(runner_ratio)}x faster**"
+        diff = f"**{app_name(apps[best_i], False)} {fmt_factor(runner_ratio)}x {better}**"
     else:
         diff = "**" + ", ".join(f"{app_name(apps[i], False)} {values[i]}" for i in failed) + "**"
 
@@ -121,7 +128,7 @@ def render_table(apps, table):
         "| Task | " + " | ".join(app_name(a) for a in apps) + " | Difference |",
         "|" + "---|" * (len(apps) + 2),
     ]
-    lines += [render_row(apps, row, table["unit"]) for row in table["rows"]]
+    lines += [render_row(apps, row, table["unit"], table.get("better", "faster")) for row in table["rows"]]
     return "\n".join(lines)
 
 

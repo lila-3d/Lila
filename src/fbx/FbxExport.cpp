@@ -628,6 +628,48 @@ void writeCameraAttribute(Record& objects, int64_t id, const std::string& name, 
     attr.add("GeometryVersion").i32(124);
 }
 
+/**
+ * A Light attribute as Maya writes one (FBX intensity is percent, cone angles are whole), plus Lila's own settings as
+ * user properties so a Lila round trip keeps what FBX has no word for.
+ */
+void writeLightAttribute(Record& objects, int64_t id, const std::string& name, const scene::lights::Settings& l)
+{
+    using scene::lights::Kind;
+    Record& attr = objects.add("NodeAttribute");
+    attr.i64(id).str(bin::objectName(name, "NodeAttribute")).str("Light");
+    Record& props = attr.add("Properties70");
+    const int type = l.kind == Kind::Directional ? 1 : l.kind == Kind::Spot ? 2 : l.kind == Kind::Area || l.kind == Kind::Disc ? 3 : 0;
+    pEnum(props, "LightType", type);
+    p3(props, "Color", "Color", "", "A", scene::lights::effectiveColor(l));
+    props.addP("Intensity", "Number", "", "A").f64(l.intensity * 100.0);
+    props.addP("InnerAngle", "Number", "", "A").f64(l.innerConeAngle * 2.0);
+    props.addP("OuterAngle", "Number", "", "A").f64(l.outerConeAngle * 2.0);
+    if (type == 3)
+        pEnum(props, "AreaLightShape", 0);
+    int decay = l.kind == Kind::Directional || l.kind == Kind::Dome ? 0 : 2;
+    if (const nlohmann::json extra = nlohmann::json::parse(l.extra.empty() ? "{}" : l.extra, nullptr, false);
+        extra.is_object() && extra.contains("decayRate") && extra["decayRate"].is_number())
+        decay = std::clamp(extra["decayRate"].get<int>(), 0, 3);
+    pEnum(props, "DecayType", decay);
+    pBool(props, "CastShadows", l.castShadows);
+    auto user = [&](std::string_view prop, double v) { props.addP(prop, "double", "Number", "A+U").f64(v); };
+    user("LilaLightType", double(l.kind));
+    user("LilaIntensityUnits", double(l.units));
+    user("LilaUseTemperature", l.useTemperature ? 1.0 : 0.0);
+    user("LilaTemperature", l.temperature);
+    user("LilaRange", l.range);
+    user("LilaWidth", l.width);
+    user("LilaHeight", l.height);
+    user("LilaSourceRadius", l.sourceRadius);
+    props.addP("LilaColor", "Vector3D", "Vector", "U").f64(l.color.x).f64(l.color.y).f64(l.color.z);
+    if (!l.texture.empty())
+        props.addP("LilaTexture", "KString", "", "U").str(l.texture);
+    if (!l.extra.empty())
+        props.addP("LilaExtra", "KString", "", "U").str(l.extra);
+    attr.add("TypeFlags").str("Light");
+    attr.add("GeometryVersion").i32(124);
+}
+
 void writeMaterial(Record& objects, int64_t id, const std::string& name)
 {
     Record& mat = objects.add("Material");
@@ -820,7 +862,7 @@ void writeGlobalSettings(Record& root, const AxisDecl& a, double fps, int64_t sp
 
 struct ObjectCounts
 {
-    int models = 0, nulls = 0, limbs = 0, cameras = 0, lodGroups = 0, geometries = 0, materials = 0;
+    int models = 0, nulls = 0, limbs = 0, cameras = 0, lights = 0, lodGroups = 0, geometries = 0, materials = 0;
     int deformers = 0, poses = 0, stacks = 0, layers = 0, curveNodes = 0, curves = 0;
 };
 
@@ -828,7 +870,7 @@ void writeDefinitions(Record& root, const ObjectCounts& n)
 {
     Record& defs = root.add("Definitions");
     defs.add("Version").i32(100);
-    defs.add("Count").i32(1 + n.models + n.nulls + n.limbs + n.cameras + n.lodGroups + n.geometries + n.materials + n.deformers + n.poses + n.stacks + n.layers +
+    defs.add("Count").i32(1 + n.models + n.nulls + n.limbs + n.cameras + n.lights + n.lodGroups + n.geometries + n.materials + n.deformers + n.poses + n.stacks + n.layers +
                           n.curveNodes + n.curves);
     auto type = [&](std::string_view name, int count, std::string_view tmpl) -> Record* {
         Record& t = defs.add("ObjectType");
@@ -853,10 +895,10 @@ void writeDefinitions(Record& root, const ObjectCounts& n)
         pBool(*p, "Show", true);
         p->addP("Visibility", "Visibility", "", "A").f64(1.0);
     }
-    if (n.nulls || n.limbs || n.cameras || n.lodGroups)
+    if (n.nulls || n.limbs || n.cameras || n.lights || n.lodGroups)
     {
-        Record* p = type("NodeAttribute", n.nulls + n.limbs + n.cameras + n.lodGroups,
-                         n.nulls ? "FbxNull" : n.limbs ? "FbxSkeleton" : n.cameras ? "FbxCamera" : "FbxLODGroup");
+        Record* p = type("NodeAttribute", n.nulls + n.limbs + n.cameras + n.lights + n.lodGroups,
+                         n.nulls ? "FbxNull" : n.limbs ? "FbxSkeleton" : n.cameras ? "FbxCamera" : n.lights ? "FbxLight" : "FbxLODGroup");
         if (n.nulls || n.limbs)
         {
             p3(*p, "Color", "ColorRGB", "Color", "", glm::dvec3(0.8));
@@ -1081,6 +1123,8 @@ struct Gather
         if (n->type().isA("mesh") && !n->type().isA("lattice") && opts.kind != ExportKind::Sequence)
             e.mesh = exportMeshOf(id);
         e.camera = cameraOf(*n);
+        if (n->type().isA("light"))
+            e.light = scene::lights::settings(*n);
         if (lod::isGroup(*n) && !flatten)
         {
             e.lodGroup = true;
@@ -1645,8 +1689,9 @@ std::optional<ExportTake> Gather::sampleRange(const std::string& name, double st
     take.locals.assign(count, {});
     take.curves.assign(count, std::nullopt);
     std::vector<char> sampled(count, 1);
-    // A camera's file frame is turned from its channels, and so is its children's parent frame.
-    auto reframed = [&](size_t i) { return out.nodes[i].camera || (out.nodes[i].parent >= 0 && out.nodes[size_t(out.nodes[i].parent)].camera); };
+    // A camera's or light's file frame is turned from its channels, and so is its children's parent frame.
+    auto turned = [&](size_t i) { return out.nodes[i].camera || out.nodes[i].light; };
+    auto reframed = [&](size_t i) { return turned(i) || (out.nodes[i].parent >= 0 && turned(size_t(out.nodes[i].parent))); };
     if (!opts.bakeAnimation)
         for (size_t i = 0; i < count; ++i)
             if (!reframed(i) && plainChannels(*graph.node(out.nodes[i].source)) && ownLocal(i) &&
@@ -1847,6 +1892,22 @@ glm::dmat4 cameraFrame(const glm::dmat3& basis)
     return glm::dmat4(basis * lilaFromFbx);
 }
 
+/** The same for lights: an FBX light shines down its local -Y with -Z up, a Lila light down -Z with +Y up. */
+glm::dmat4 lightFrame(const glm::dmat3& basis)
+{
+    const glm::dmat3 lilaFromFbx(glm::dvec3(1, 0, 0), glm::dvec3(0, 0, 1), glm::dvec3(0, -1, 0));
+    return glm::dmat4(basis * lilaFromFbx);
+}
+
+scene::lights::Settings inUnits(scene::lights::Settings l, double k)
+{
+    l.range *= k;
+    l.width *= k;
+    l.height *= k;
+    l.sourceRadius *= k;
+    return l;
+}
+
 ExportCamera inUnits(ExportCamera c, double k)
 {
     c.nearClip *= k;
@@ -1873,6 +1934,8 @@ ExportScene inUnits(const ExportScene& in, double cmPerUnit)
         n.bindWorld = conj(n.bindWorld);
         if (n.camera)
             n.camera = inUnits(*n.camera, k);
+        if (n.light)
+            n.light = inUnits(*n.light, k);
         if (n.skin)
         {
             auto skin = std::make_shared<ExportSkin>(*n.skin);
@@ -1926,15 +1989,17 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
     const std::string creator = "Lila FBX exporter (" + std::string(profileName(opts.profile)) + ")";
     const ExportTake* take = scene.take ? &*scene.take : nullptr;
     auto toFile = [&](const glm::dmat4& m) { return basis * m * basisInv; };
-    const glm::dmat4 camFrame = cameraFrame(basis3);
-    const glm::dmat4 camFrameInv = glm::transpose(camFrame);
-    /** A node's local matrix in the file, with cameras turned to look down +X and their children turned back. */
+    const glm::dmat4 camFrame = cameraFrame(basis3), lightFrm = lightFrame(basis3);
+    /** The turn between a node's Lila frame and its file frame: cameras look down +X and lights shine down -Y in FBX. */
+    auto frameOf = [&](const ExportNode& n) { return n.camera ? camFrame : n.light ? lightFrm : glm::dmat4(1.0); };
+    auto turned = [&](const ExportNode& n) { return n.camera || n.light; };
+    /** A node's local matrix in the file, with cameras and lights turned and their children turned back. */
     auto fileLocal = [&](size_t i, const glm::dmat4& local) {
         const ExportNode& n = scene.nodes[i];
         glm::dmat4 m = toFile(local);
-        if (n.parent >= 0 && scene.nodes[size_t(n.parent)].camera)
-            m = camFrameInv * m;
-        return n.camera ? m * camFrame : m;
+        if (n.parent >= 0 && turned(scene.nodes[size_t(n.parent)]))
+            m = glm::transpose(frameOf(scene.nodes[size_t(n.parent)])) * m;
+        return m * frameOf(n);
     };
 
     Record root("");
@@ -1986,7 +2051,7 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
         // Joints and keyed nodes keep their rotate order through the axis swap, so channels map one to one.
         ModelInfo& mi = info[i];
         const bool lodGroup = n.lodGroup && !isMesh && !n.joint && !n.camera;
-        mi.type = isMesh ? "Mesh" : n.joint ? "LimbNode" : lodGroup ? "LodGroup" : "Null";
+        mi.type = isMesh ? "Mesh" : n.joint ? "LimbNode" : lodGroup ? "LodGroup" : n.light ? "Light" : "Null";
         mi.order = n.joint || keyed ? axes.order(n.rotateOrder) : scene::RotateOrder::XYZ;
         const glm::dmat3 pre = basis3 * glm::dmat3(n.pre) * glm::transpose(basis3);
         mi.pre = cleanVec(scene::matrixToEuler(pre, scene::RotateOrder::XYZ));
@@ -1994,7 +2059,7 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
         const glm::dmat3 post = basis3 * glm::transpose(glm::dmat3(n.post)) * glm::transpose(basis3);
         mi.post = cleanVec(scene::matrixToEuler(post, scene::RotateOrder::XYZ));
         const glm::dmat3 postExact(scene::eulerToMatrix(mi.post, scene::RotateOrder::XYZ));
-        const bool reframed = n.camera || (n.parent >= 0 && scene.nodes[size_t(n.parent)].camera);
+        const bool reframed = turned(n) || (n.parent >= 0 && turned(scene.nodes[size_t(n.parent)]));
         if (n.plainTrs && !reframed && mi.order == axes.order(n.rotateOrder))
             mi.trs = {axes.translate(n.translate), axes.rotate(n.rotate), axes.scale(n.scale)};
         else
@@ -2014,6 +2079,11 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
             {
                 writeCameraAttribute(objects, attrId, n.name, *n.camera);
                 ++counts.cameras;
+            }
+            else if (n.light && !n.joint)
+            {
+                writeLightAttribute(objects, attrId, n.name, *n.light);
+                ++counts.lights;
             }
             else if (n.joint)
             {
@@ -2156,7 +2226,7 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
             const ExportNode& n = scene.nodes[i];
             Record& pn = pose.add("PoseNode");
             pn.add("Node").i64(modelIds[i]);
-            pn.add("Matrix").f64s(flat(toFile(n.skin ? n.skin->meshBindWorld : n.bindWorld) * (n.camera ? camFrame : glm::dmat4(1.0))));
+            pn.add("Matrix").f64s(flat(toFile(n.skin ? n.skin->meshBindWorld : n.bindWorld) * frameOf(n)));
         }
         ++counts.poses;
     }

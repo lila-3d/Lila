@@ -455,7 +455,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
     if (!io::translators::add(ctx, {.id = "usd",
                                     .label = "USD",
                                     .doc = "Universal Scene Description through OpenUSD: Open and Import make a live stage (usdStage), "
-                                           "Export writes meshes, materials, skeletons, cameras, curves and animation.",
+                                           "Export writes meshes, materials, skeletons, cameras, lights, curves and animation.",
                                     .extensions = {".usd", ".usda", ".usdc", ".usdz"},
                                     .import = {.command = "usdStageOpen"},
                                     .exportSelection = {.command = "exportUsd"}}))

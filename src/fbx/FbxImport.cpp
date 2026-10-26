@@ -1,6 +1,7 @@
 #include "fbx/Fbx.h"
 
 #include "core/Profile.h"
+#include "core/UninitVector.h"
 #include "core/Progress.h"
 #include "fbx/FbxAxes.h"
 #include "fbx/ImportCommon.h"
@@ -21,10 +22,14 @@
 
 #include <ufbx.h>
 
+#include <tbb/parallel_for.h>
+#include <tbb/task_group.h>
+
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 
 #include <algorithm>
+#include <array>
 #include <format>
 #include <functional>
 #include <map>
@@ -112,46 +117,63 @@ MeshBuild convertMesh(const ufbx_mesh& src, const ufbx_node& node, const glm::dm
     const glm::dmat3 normalMat = glm::inverse(glm::transpose(lin));
     const bool mirrored = glm::determinant(lin) < 0.0;
 
-    m.reserve(src.num_vertices, src.num_edges, src.num_faces, src.num_indices);
-    for (size_t v = 0; v < src.vertices.count; ++v)
-    {
+    UninitVector<glm::dvec3> points(src.vertices.count);
+    tbb::parallel_for(size_t(0), src.vertices.count, [&](size_t v) {
         const ufbx_vec3& p = src.vertices.data[v];
-        m.addPoint(glm::dvec3(toLila * glm::dvec4(p.x, p.y, p.z, 1.0)));
-    }
+        points[v] = glm::dvec3(toLila * glm::dvec4(p.x, p.y, p.z, 1.0));
+    });
 
-    std::vector<Index> cornerOf(src.num_indices, kInvalid);
-    std::vector<uint32_t> sourceFace;
-    std::vector<Index> pts;
-    std::vector<uint32_t> idx;
-    for (size_t f = 0; f < src.faces.count; ++f)
-    {
+    // FBX index of a face's k-th corner in Lila order (reversed when the axis change mirrors).
+    auto fileIndex = [&](const ufbx_face& face, uint32_t k) { return face.index_begin + (mirrored ? face.num_indices - 1 - k : k); };
+    // Faces addFace would refuse are dropped up front, so the rest build in parallel and keep their order.
+    const size_t nf = src.faces.count;
+    UninitVector<uint8_t> keep(nf);
+    UninitVector<Index> faceStart(nf + 1);
+    tbb::parallel_for(size_t(0), nf, [&](size_t f) {
         const ufbx_face face = src.faces.data[f];
-        if (face.num_indices < 3)
-            continue;
-        pts.clear();
-        idx.clear();
+        bool ok = face.num_indices >= 3;
+        for (uint32_t k = 0; k < face.num_indices && ok; ++k)
+        {
+            const uint32_t pk = src.vertex_indices.data[face.index_begin + k];
+            ok = pk < src.vertices.count;
+            for (uint32_t j = 0; j < k && ok; ++j)
+                ok = src.vertex_indices.data[face.index_begin + j] != pk;
+        }
+        keep[f] = ok;
+    });
+    std::vector<uint32_t> sourceFace;
+    sourceFace.reserve(nf);
+    Index corners = 0;
+    for (size_t f = 0; f < nf; ++f)
+        if (keep[f])
+        {
+            faceStart[sourceFace.size()] = corners;
+            corners += src.faces.data[f].num_indices;
+            sourceFace.push_back(uint32_t(f));
+        }
+        else if (src.faces.data[f].num_indices >= 3)
+            ++b.badFaces;
+    faceStart[sourceFace.size()] = corners;
+    UninitVector<Index> sizes(sourceFace.size()), indices(corners);
+    std::vector<Index> cornerOf(src.num_indices, kInvalid);
+    tbb::parallel_for(size_t(0), sourceFace.size(), [&](size_t lf) {
+        const ufbx_face face = src.faces.data[sourceFace[lf]];
+        sizes[lf] = face.num_indices;
         for (uint32_t k = 0; k < face.num_indices; ++k)
         {
-            uint32_t i = face.index_begin + (mirrored ? face.num_indices - 1 - k : k);
-            idx.push_back(i);
-            pts.push_back(src.vertex_indices.data[i]);
+            const uint32_t i = fileIndex(face, k);
+            indices[faceStart[lf] + k] = src.vertex_indices.data[i];
+            cornerOf[i] = faceStart[lf] + k;
         }
-        Index lf = m.addFace(pts);
-        if (lf == kInvalid)
-        {
-            ++b.badFaces;
-            continue;
-        }
-        const Index first = m.faceCorner(lf);
-        for (size_t k = 0; k < idx.size(); ++k)
-            cornerOf[idx[k]] = first + Index(k);
-        sourceFace.push_back(uint32_t(f));
-    }
+    });
+    m = geo::Mesh::fromPolygons(points, sizes, indices);
 
     auto eachCorner = [&](auto&& fn) {
-        for (size_t i = 0; i < cornerOf.size(); ++i)
-            if (cornerOf[i] != kInvalid)
-                fn(i, cornerOf[i]);
+        tbb::parallel_for(tbb::blocked_range<size_t>(0, cornerOf.size(), 16384), [&](const tbb::blocked_range<size_t>& r) {
+            for (size_t i = r.begin(); i < r.end(); ++i)
+                if (cornerOf[i] != kInvalid)
+                    fn(i, cornerOf[i]);
+        });
     };
 
     if (src.vertex_normal.exists)
@@ -202,8 +224,7 @@ MeshBuild convertMesh(const ufbx_mesh& src, const ufbx_node& node, const glm::dm
         }
         std::span<int32_t> out = m.faceAttrs().getOrAdd<int32_t>(geo::attr::kMaterial);
         if (src.face_material.count == src.num_faces)
-            for (size_t f = 0; f < sourceFace.size(); ++f)
-                out[f] = int32_t(src.face_material.data[sourceFace[f]]);
+            tbb::parallel_for(size_t(0), sourceFace.size(), [&](size_t f) { out[f] = int32_t(src.face_material.data[sourceFace[f]]); });
     }
 
     auto edgeOf = [&](const ufbx_edge& e) {
@@ -212,9 +233,10 @@ MeshBuild convertMesh(const ufbx_mesh& src, const ufbx_node& node, const glm::dm
     if (src.edge_smoothing.count == src.edges.count && src.edges.count)
     {
         std::span<bool> hard = m.edgeAttrs().getOrAdd<bool>(geo::attr::kHard);
-        for (size_t e = 0; e < src.edges.count; ++e)
+        tbb::parallel_for(size_t(0), src.edges.count, [&](size_t e) {
             if (Index le = edgeOf(src.edges.data[e]); le != kInvalid)
                 hard[le] = !src.edge_smoothing.data[e];
+        });
     }
     else if (src.vertex_normal.exists)
     {
@@ -231,9 +253,10 @@ MeshBuild convertMesh(const ufbx_mesh& src, const ufbx_node& node, const glm::dm
     if (src.edge_crease.count == src.edges.count && src.edges.count)
     {
         std::span<float> crease = m.edgeAttrs().getOrAdd<float>(geo::attr::kCrease);
-        for (size_t e = 0; e < src.edges.count; ++e)
+        tbb::parallel_for(size_t(0), src.edges.count, [&](size_t e) {
             if (Index le = edgeOf(src.edges.data[e]); le != kInvalid)
                 crease[le] = float(src.edge_crease.data[e]);
+        });
     }
 
     m.removeAllLoose();
@@ -272,6 +295,63 @@ glm::dmat4 cameraFrame(const glm::dmat3& fileToLila)
 {
     const glm::dmat3 lilaFromFbx(glm::dvec3(0, 0, -1), glm::dvec3(0, 1, 0), glm::dvec3(1, 0, 0));
     return glm::dmat4(fileToLila * glm::transpose(lilaFromFbx));
+}
+
+/** The same for lights: FBX lights shine down their local -Y with -Z up, Lila lights down -Z with +Y up. */
+glm::dmat4 lightFrame(const glm::dmat3& fileToLila)
+{
+    const glm::dmat3 lilaFromFbx(glm::dvec3(1, 0, 0), glm::dvec3(0, 0, 1), glm::dvec3(0, -1, 0));
+    return glm::dmat4(fileToLila * glm::transpose(lilaFromFbx));
+}
+
+/**
+ * A file light's settings. FBX knows kind, colour, intensity (in percent), whole cone angles, decay and shadows;
+ * lights Lila wrote also carry its own settings as user properties, which win.
+ */
+scene::lights::Settings lightSettings(const ufbx_light& l, double unitScale)
+{
+    using scene::lights::Kind;
+    scene::lights::Settings s;
+    switch (l.type)
+    {
+    case UFBX_LIGHT_DIRECTIONAL: s.kind = Kind::Directional; break;
+    case UFBX_LIGHT_SPOT: s.kind = Kind::Spot; break;
+    case UFBX_LIGHT_AREA: s.kind = l.area_shape == UFBX_LIGHT_AREA_SHAPE_SPHERE ? Kind::Point : Kind::Area; break;
+    default: s.kind = Kind::Point; break;
+    }
+    static constexpr const char* kTypeNames[] = {"point", "directional", "spot", "area", "volume"};
+    s.sourceFormat = std::string("fbx:") + kTypeNames[std::clamp(int(l.type), 0, 4)];
+    s.color = glm::dvec3(l.color.x, l.color.y, l.color.z);
+    s.intensity = double(l.intensity);
+    s.innerConeAngle = double(l.inner_angle) / 2.0;
+    s.outerConeAngle = double(l.outer_angle) / 2.0;
+    s.castShadows = l.cast_shadows;
+    // Maya's area lights are 2 units square before their node's scale, and FBX has no size of its own.
+    s.width = s.height = 2.0 * unitScale;
+    nlohmann::json extra = nlohmann::json::object();
+    extra["decayRate"] = int(l.decay);
+    const ufbx_props& p = l.props;
+    if (const ufbx_prop* kind = ufbx_find_prop(&p, "LilaLightType"))
+    {
+        s.kind = Kind(std::clamp(int(kind->value_real), 0, int(Kind::Dome)));
+        s.units = scene::lights::Units(std::clamp(int(ufbx_find_real(&p, "LilaIntensityUnits", 0.0)), 0, int(scene::lights::Units::Watts)));
+        s.useTemperature = ufbx_find_real(&p, "LilaUseTemperature", 0.0) != 0.0;
+        s.temperature = ufbx_find_real(&p, "LilaTemperature", 6500.0);
+        s.range = ufbx_find_real(&p, "LilaRange", 0.0) * unitScale;
+        s.width = ufbx_find_real(&p, "LilaWidth", 100.0) * unitScale;
+        s.height = ufbx_find_real(&p, "LilaHeight", 100.0) * unitScale;
+        s.sourceRadius = ufbx_find_real(&p, "LilaSourceRadius", 0.0) * unitScale;
+        if (const ufbx_prop* c = ufbx_find_prop(&p, "LilaColor"))
+            s.color = glm::dvec3(c->value_vec3.x, c->value_vec3.y, c->value_vec3.z);
+        const ufbx_string tex = ufbx_find_string(&p, "LilaTexture", ufbx_string{});
+        s.texture = std::string(tex.data, tex.length);
+        const ufbx_string ex = ufbx_find_string(&p, "LilaExtra", ufbx_string{});
+        s.extra = std::string(ex.data, ex.length);
+        s.sourceFormat.clear();
+        return s;
+    }
+    s.extra = extra.dump();
+    return s;
 }
 
 /** Animatable FBX camera properties and the camera attributes they land on; lengths scale with the file's units. */
@@ -653,6 +733,28 @@ struct SceneDeleter
 {
     void operator()(ufbx_scene* s) const { ufbx_free_scene(s); }
 };
+
+/** ufbx's batches of work (inflating compressed arrays, parsing) on TBB, one task group per ufbx group. */
+struct TbbPool
+{
+    std::array<tbb::task_group, UFBX_THREAD_GROUP_COUNT> groups;
+
+    static void run(void* user, ufbx_thread_pool_context ctx, uint32_t group, uint32_t start, uint32_t count)
+    {
+        static_cast<TbbPool*>(user)->groups[group].run([ctx, start, count] {
+            tbb::parallel_for(start, start + count, [ctx](uint32_t i) { ufbx_thread_pool_run_task(ctx, i); });
+        });
+    }
+    static void wait(void* user, ufbx_thread_pool_context, uint32_t group, uint32_t) { static_cast<TbbPool*>(user)->groups[group].wait(); }
+
+    void use(ufbx_load_opts& lo)
+    {
+        lo.thread_opts.pool.run_fn = &TbbPool::run;
+        lo.thread_opts.pool.wait_fn = &TbbPool::wait;
+        lo.thread_opts.pool.user = this;
+        lo.thread_opts.memory_limit = size_t(1) << 30;
+    }
+};
 } // namespace
 
 std::optional<ImportAxes> importAxes(const fs::path& path)
@@ -684,6 +786,8 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
     ufbx_load_opts lo{};
     lo.load_external_files = false;
     lo.geometry_transform_handling = UFBX_GEOMETRY_TRANSFORM_HANDLING_PRESERVE;
+    TbbPool pool;
+    pool.use(lo);
     ufbx_error err{};
     std::u8string u8 = path.u8string();
     progress::Scope scope("Importing " + path.filename().string(), 10.0);
@@ -715,6 +819,7 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
     const NodeType* xformType = types::find("transform");
     const NodeType* jointType = types::find("joint");
     const NodeType* cameraType = types::find("camera");
+    const NodeType* lightType = types::find("light");
     const NodeType* lodType = types::find("lodGroup");
     CameraList cameras;
     std::map<uint32_t, MeshPtr> meshCache;
@@ -739,10 +844,16 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
         const bool isMesh = fn->mesh && fn->mesh->num_faces > 0;
         const bool isJoint = jointType && !isMesh && (fn->bone || bones.count(fn));
         const bool isCamera = cameraType && !isMesh && !isJoint && fn->camera;
-        const bool isLod = lodType && !isMesh && !isJoint && !isCamera && fn->attrib_type == UFBX_ELEMENT_LOD_GROUP;
-        const NodeType& type = isMesh ? *meshType : isJoint ? *jointType : isCamera ? *cameraType : isLod ? *lodType : *xformType;
-        Node* n = graph.createNode(type, safeName(fbxName, isMesh ? "Mesh" : isJoint ? "joint" : isCamera ? "camera" : "Transform"), parent,
-                                   false);
+        const bool isLight = lightType && !isMesh && !isJoint && !isCamera && fn->light;
+        const bool isLod = lodType && !isMesh && !isJoint && !isCamera && !isLight && fn->attrib_type == UFBX_ELEMENT_LOD_GROUP;
+        const NodeType& type = isMesh     ? *meshType
+                               : isJoint  ? *jointType
+                               : isCamera ? *cameraType
+                               : isLight  ? *lightType
+                               : isLod    ? *lodType
+                                          : *xformType;
+        Node* n = graph.createNode(
+            type, safeName(fbxName, isMesh ? "Mesh" : isJoint ? "joint" : isCamera ? "camera" : isLight ? "light" : "Transform"), parent, false);
         r.nodes.push_back(n->id());
         if (parent == opts.parent)
             r.roots.push_back(n->id());
@@ -756,6 +867,12 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
             applyCamera(graph, n->id(), *fn->camera, unitScale);
             cameras.push_back({fn->camera, n->id()});
             r.cameras.push_back(n->id());
+        }
+        if (isLight)
+        {
+            nf.after = lightFrame(C3);
+            scene::lights::setSettings(graph, n->id(), lightSettings(*fn->light, unitScale));
+            r.lights.push_back(n->id());
         }
         if (auto above = fn->parent ? frames.find(fn->parent->element_id) : frames.end(); above != frames.end())
             nf.before = glm::transpose(above->second.after);
@@ -834,7 +951,7 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
             if (const ufbx_lod_group* lod = ufbx_as_lod_group(fn->attrib))
                 applyLodGroup(graph, n->id(), *lod, r);
         }
-        else if (fn->attrib && fn->attrib_type != UFBX_ELEMENT_EMPTY && !fn->mesh && !isJoint && !isCamera)
+        else if (fn->attrib && fn->attrib_type != UFBX_ELEMENT_EMPTY && !fn->mesh && !isJoint && !isCamera && !isLight)
         {
             r.skipped.push_back(std::format("{} '{}' (imported as a transform)", attribName(fn->attrib_type), fbxName));
         }

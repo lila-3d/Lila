@@ -14,6 +14,7 @@ lila_module(lila_core Foundation
     ${LILA_CRASHKIT_SOURCES}
     CrashHandler.cpp
     Events.cpp
+    FileBytes.cpp
     ExtensionContext.cpp
     ExtensionManifest.cpp
     ImageIO.cpp

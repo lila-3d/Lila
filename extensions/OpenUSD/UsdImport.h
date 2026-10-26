@@ -65,6 +65,7 @@ struct ImportResult
     std::vector<scene::NodeId> joints;
     std::vector<scene::NodeId> skins;
     std::vector<scene::NodeId> cameras;
+    std::vector<scene::NodeId> lights;
     std::vector<scene::NodeId> curves;
     std::vector<std::string> materials;
     std::vector<std::string> skipped;

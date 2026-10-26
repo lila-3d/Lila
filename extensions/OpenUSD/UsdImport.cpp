@@ -2,6 +2,7 @@
 
 #include <lila/Anim.h>
 #include <lila/Deformer.h>
+#include <lila/Lights.h>
 #include <lila/Mesh.h>
 #include <lila/MeshOps.h>
 #include <lila/Node.h>
@@ -32,7 +33,14 @@
 #include <pxr/usd/usdGeom/sphere.h>
 #include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdGeom/xformCommonAPI.h>
+#include <pxr/usd/usdLux/diskLight.h>
+#include <pxr/usd/usdLux/distantLight.h>
+#include <pxr/usd/usdLux/domeLight.h>
 #include <pxr/usd/usdLux/lightAPI.h>
+#include <pxr/usd/usdLux/rectLight.h>
+#include <pxr/usd/usdLux/shadowAPI.h>
+#include <pxr/usd/usdLux/shapingAPI.h>
+#include <pxr/usd/usdLux/sphereLight.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
 #include <pxr/usd/usdShade/nodeGraph.h>
@@ -858,6 +866,96 @@ LocalChannels localChannels(Importer& im, const UsdGeomXformable& xf, NodeId nod
     return out;
 }
 
+/** The UsdLux lights Lila converts; all shine down their local -Z, as Lila's do. */
+bool isLuxLight(const UsdPrim& p)
+{
+    return p.IsA<UsdLuxSphereLight>() || p.IsA<UsdLuxRectLight>() || p.IsA<UsdLuxDiskLight>() || p.IsA<UsdLuxDistantLight>() ||
+           p.IsA<UsdLuxDomeLight>();
+}
+
+/**
+ * A UsdLux light's settings: sphere lights are points (spots with ShapingAPI), rect, disk, distant and dome lights
+ * their Lila kinds, intensity with exposure folded in, sizes in scene units. Lights Lila wrote also carry its own
+ * settings in custom data, which win.
+ */
+void applyLight(Importer& im, NodeId id, const UsdPrim& prim, UsdTimeCode t)
+{
+    using scene::lights::Kind;
+    namespace lights = scene::lights;
+    lights::Settings s;
+    UsdLuxLightAPI light(prim);
+    const double k = im.axes.cmPerUnit;
+    if (prim.IsA<UsdLuxSphereLight>())
+    {
+        UsdLuxSphereLight sphere(prim);
+        s.kind = Kind::Point;
+        if (!valueOr<bool>(sphere.GetTreatAsPointAttr(), t, false))
+            s.sourceRadius = valueOr<float>(sphere.GetRadiusAttr(), t, 0.5f) * k;
+        if (prim.HasAPI<UsdLuxShapingAPI>())
+        {
+            UsdLuxShapingAPI shaping(prim);
+            const double cone = valueOr<float>(shaping.GetShapingConeAngleAttr(), t, 90.0f);
+            if (cone < 90.0)
+            {
+                s.kind = Kind::Spot;
+                s.outerConeAngle = cone;
+                s.innerConeAngle = cone * (1.0 - std::clamp(double(valueOr<float>(shaping.GetShapingConeSoftnessAttr(), t, 0.0f)), 0.0, 1.0));
+            }
+            if (const std::string ies = valueOr<SdfAssetPath>(shaping.GetShapingIesFileAttr(), t, SdfAssetPath()).GetAssetPath(); !ies.empty())
+                s.texture = ies;
+        }
+    }
+    else if (prim.IsA<UsdLuxRectLight>())
+    {
+        UsdLuxRectLight rect(prim);
+        s.kind = Kind::Area;
+        s.width = valueOr<float>(rect.GetWidthAttr(), t, 1.0f) * k;
+        s.height = valueOr<float>(rect.GetHeightAttr(), t, 1.0f) * k;
+    }
+    else if (prim.IsA<UsdLuxDiskLight>())
+    {
+        s.kind = Kind::Disc;
+        s.width = s.height = 2.0 * valueOr<float>(UsdLuxDiskLight(prim).GetRadiusAttr(), t, 0.5f) * k;
+    }
+    else if (prim.IsA<UsdLuxDistantLight>())
+        s.kind = Kind::Directional;
+    else
+    {
+        s.kind = Kind::Dome;
+        s.texture = valueOr<SdfAssetPath>(UsdLuxDomeLight(prim).GetTextureFileAttr(), t, SdfAssetPath()).GetAssetPath();
+    }
+    s.sourceFormat = "usd:" + prim.GetTypeName().GetString();
+    const GfVec3f c = valueOr<GfVec3f>(light.GetColorAttr(), t, GfVec3f(1.0f));
+    s.color = glm::dvec3(c[0], c[1], c[2]);
+    s.intensity = valueOr<float>(light.GetIntensityAttr(), t, 1.0f) * std::exp2(double(valueOr<float>(light.GetExposureAttr(), t, 0.0f)));
+    s.units = lights::Units::Nits;
+    s.useTemperature = valueOr<bool>(light.GetEnableColorTemperatureAttr(), t, false);
+    s.temperature = valueOr<float>(light.GetColorTemperatureAttr(), t, 6500.0f);
+    if (prim.HasAPI<UsdLuxShadowAPI>())
+        s.castShadows = valueOr<bool>(UsdLuxShadowAPI(prim).GetShadowEnableAttr(), t, true);
+    const VtDictionary d = lilaData(prim);
+    if (auto it = d.find("light"); it != d.end() && it->second.IsHolding<std::string>())
+    {
+        const nlohmann::json j = nlohmann::json::parse(it->second.UncheckedGet<std::string>(), nullptr, false);
+        if (j.is_object())
+        {
+            s.kind = Kind(std::clamp(j.value("kind", int(s.kind)), 0, int(Kind::Dome)));
+            s.units = lights::Units(std::clamp(j.value("units", int(s.units)), 0, int(lights::Units::Watts)));
+            s.intensity = j.value("intensity", s.intensity);
+            s.range = j.value("range", 0.0) * k;
+            s.innerConeAngle = j.value("innerConeAngle", s.innerConeAngle);
+            s.outerConeAngle = j.value("outerConeAngle", s.outerConeAngle);
+            s.width = j.value("width", s.width / k) * k;
+            s.height = j.value("height", s.height / k) * k;
+            s.sourceRadius = j.value("sourceRadius", s.sourceRadius / k) * k;
+            s.texture = j.value("texture", s.texture);
+            s.extra = j.value("extra", std::string());
+            s.sourceFormat.clear();
+        }
+    }
+    lights::setSettings(im.g, id, s);
+}
+
 const char* attribLabel(const UsdPrim& p)
 {
     if (p.IsA<UsdGeomPoints>())
@@ -873,6 +971,7 @@ struct Builder
     const scene::NodeType* xformType = scene::types::find("transform");
     const scene::NodeType* meshType = scene::types::find("mesh");
     const scene::NodeType* cameraType = scene::types::find("camera");
+    const scene::NodeType* lightType = scene::types::find("light");
     const scene::NodeType* curveType = scene::types::find("curve");
     const scene::NodeType* lodType = scene::types::find("lodGroup");
 
@@ -987,7 +1086,7 @@ struct Builder
         UsdGeomXformable xf(prim);
         if (auto above = im.frames.find(parent); above != im.frames.end() && !nearMatrix(above->second.after, glm::dmat4(1.0)))
             im.frames[node].before = glm::transpose(above->second.after);
-        const bool camera = prim.IsA<UsdGeomCamera>();
+        const bool camera = prim.IsA<UsdGeomCamera>() || isLuxLight(prim);
         if (camera)
             im.frames[node].after = glm::dmat4(glm::transpose(im.axes.basis));
         GfMatrix4d m;
@@ -1266,6 +1365,15 @@ struct Builder
             applyCamera(im, id, UsdGeomCamera(prim), im.restTime);
             if (im.opts.animation)
                 keyCamera(im, id, UsdGeomCamera(prim));
+            children(prim, id);
+            return;
+        }
+        if (isLuxLight(prim) && lightType)
+        {
+            NodeId id = makeNode(prim, *lightType, parent, "light");
+            im.r.lights.push_back(id);
+            place(prim, id, parent);
+            applyLight(im, id, prim, im.restTime);
             children(prim, id);
             return;
         }

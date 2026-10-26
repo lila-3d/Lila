@@ -7,8 +7,11 @@
 #include "math/MathCore.h"
 #include "scene/Anim.h"
 #include "scene/Camera.h"
+#include "scene/Light.h"
 #include "fbx/Fbx.h"
 #include "scene/Materials.h"
+
+#include <glm/gtc/constants.hpp>
 
 #include <map>
 #include <set>
@@ -473,6 +476,85 @@ TEST_CASE("animated cameras and their children keep their motion in Y-up and Z-u
             CAPTURE(i);
             CHECK(nearMat(after[i], before[i], 1e-4));
         }
+    }
+    math::setUpAxis(math::UpAxis::Y);
+}
+
+TEST_CASE("lights round-trip through KHR_lights_punctual in Y-up and Z-up scenes")
+{
+    for (math::UpAxis up : {math::UpAxis::Y, math::UpAxis::Z})
+    {
+        math::setUpAxis(up);
+        CAPTURE(int(up));
+        run("newScene");
+        Graph& g = graph();
+        lights::Settings spot;
+        spot.kind = lights::Kind::Spot;
+        spot.color = {1.0, 0.5, 0.25};
+        spot.intensity = 800.0;
+        spot.units = lights::Units::Candela;
+        spot.innerConeAngle = 15.0;
+        spot.outerConeAngle = 30.0;
+        spot.range = 2000.0;
+        Node& key = lights::create(g, "Key", kNoNode, spot);
+        setTrs(g, &key, {100, 200, 300}, {-20, 35, 5});
+        Node* child = addNode(g, "locator", "Target", key.id());
+        setTrs(g, child, {0, 0, -100});
+        lights::Settings sun;
+        sun.kind = lights::Kind::Directional;
+        sun.intensity = 3.0;
+        sun.units = lights::Units::Lux;
+        lights::create(g, "Sun", kNoNode, sun);
+        lights::Settings bulb;
+        bulb.intensity = 1000.0;
+        bulb.units = lights::Units::Lumens;
+        lights::create(g, "Bulb", kNoNode, bulb);
+        lights::Settings panel;
+        panel.kind = lights::Kind::Area;
+        lights::create(g, "Panel", kNoNode, panel);
+        g.evaluate();
+        const glm::dmat4 keyWorld = key.as<glm::dmat4>(Transform::kWorldMatrix);
+        const glm::dmat4 childWorld = child->as<glm::dmat4>(Transform::kWorldMatrix);
+
+        const fs::path file = tempDir("lights") / "lights.gltf";
+        run("exportGltf", {{"args", {file.string(), "Key", "Sun", "Bulb", "Panel"}}});
+        {
+            Parsed p(file);
+            REQUIRE(p.data);
+            REQUIRE(p.data->lights_count == 3);
+            const cgltf_node* k = p.find("Key");
+            REQUIRE(k->light);
+            CHECK(k->light->type == cgltf_light_type_spot);
+            CHECK(k->light->range == doctest::Approx(20.0));
+            CHECK(k->light->spot_outer_cone_angle == doctest::Approx(glm::radians(30.0)));
+            float m[16];
+            cgltf_node_transform_world(k, m);
+            const glm::dvec3 fileAim(-m[8], -m[9], -m[10]);
+            const glm::dvec3 expected = fbx::profileBasis(fbx::AxisProfile::Ue6, up) * glm::normalize(-glm::dvec3(keyWorld[2]));
+            CHECK(glm::length(glm::normalize(fileAim) - expected) < 1e-5);
+            CHECK(p.find("Bulb")->light->intensity == doctest::Approx(1000.0 / (4.0 * glm::pi<double>())));
+            CHECK_FALSE(p.find("Panel")->light);
+        }
+        run("newScene");
+        run("importGltf", {{"args", {file.string()}}});
+        g.evaluate();
+        Node& k2 = node("Key");
+        CHECK(k2.type().isA("light"));
+        const lights::Settings s = lights::settings(k2);
+        CHECK(s.kind == lights::Kind::Spot);
+        CHECK(s.units == lights::Units::Candela);
+        CHECK(s.intensity == doctest::Approx(800.0));
+        CHECK(s.range == doctest::Approx(2000.0));
+        CHECK(s.innerConeAngle == doctest::Approx(15.0));
+        CHECK(s.outerConeAngle == doctest::Approx(30.0));
+        CHECK(glm::length(s.color - glm::dvec3(1.0, 0.5, 0.25)) < 1e-6);
+        CHECK(s.sourceFormat == "gltf:spot");
+        const glm::dmat4 w = k2.as<glm::dmat4>(Transform::kWorldMatrix);
+        for (int c = 0; c < 4; ++c)
+            CHECK(glm::length(glm::dvec4(w[c]) - glm::dvec4(keyWorld[c])) < 1e-4);
+        const glm::dmat4 cw = node("Target").as<glm::dmat4>(Transform::kWorldMatrix);
+        CHECK(glm::length(glm::dvec3(cw[3]) - glm::dvec3(childWorld[3])) < 1e-4);
+        CHECK(lights::settings(node("Sun")).units == lights::Units::Lux);
     }
     math::setUpAxis(math::UpAxis::Y);
 }

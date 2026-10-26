@@ -70,6 +70,7 @@ struct ImportResult
     std::vector<scene::NodeId> joints;
     std::vector<scene::NodeId> skins;
     std::vector<scene::NodeId> cameras;
+    std::vector<scene::NodeId> lights;
     std::vector<scene::NodeId> imagePlanes;
     std::vector<std::string> materials;
     std::vector<std::string> displayLayers;

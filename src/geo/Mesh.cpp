@@ -992,7 +992,7 @@ Mesh Mesh::fromPolygons(std::span<const glm::dvec3> points, std::span<const Inde
     LILA_ZONE();
 
     Mesh m;
-    if (faceIndices.size() < (size_t(1) << 16))
+    if (faceIndices.size() < (size_t(1) << 16) && points.size() < (size_t(1) << 16))
     {
         m.reserve(points.size(), faceIndices.size(), faceSizes.size(), faceIndices.size());
         for (const glm::dvec3& p : points)

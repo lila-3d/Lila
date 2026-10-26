@@ -1,13 +1,20 @@
 #include "curve/Dxf.h"
 
+#include "core/UninitVector.h"
+
 #include "curve/Fit.h"
 #include "curve/Tessellate.h"
+#include "geo/PointWeld.h"
 #include "geo/Triangulate.h"
+
+#include <tbb/parallel_for.h>
+#include <tbb/parallel_reduce.h>
 
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <charconv>
 #include <cmath>
@@ -15,6 +22,7 @@
 #include <iterator>
 #include <map>
 #include <set>
+#include <span>
 #include <unordered_map>
 
 namespace lila::curve
@@ -27,12 +35,15 @@ using M4 = glm::dmat4;
 struct Group
 {
     int code = -1;
-    std::string s;
+    std::string_view s; // into the file's bytes
     double num = 0.0;
 
     double d() const { return num; }
     int64_t i() const { return int64_t(num); }
 };
+
+/** Left unset on resize: a big file has hundreds of millions, each written once. */
+using Groups = UninitVector<Group>;
 
 enum class ValueType
 {
@@ -72,58 +83,96 @@ std::string_view trim(std::string_view v)
     return v;
 }
 
-bool readAscii(std::string_view data, std::vector<Group>& out, std::string& error)
+/** Code and value line pairs, parsed in parallel chunks of whole lines; everything after the EOF group is ignored. */
+bool readAscii(std::string_view data, Groups& out, std::string& error)
 {
-    size_t pos = 0;
-    auto line = [&](std::string_view& l) {
-        if (pos >= data.size())
-            return false;
-        size_t e = data.find('\n', pos);
+    constexpr size_t kChunk = size_t(4) << 20;
+    // Chunk k is the lines starting in [k * kChunk, (k + 1) * kChunk).
+    const size_t chunks = std::max<size_t>(1, (data.size() + kChunk - 1) / kChunk);
+    std::vector<size_t> from(chunks + 1, data.size());
+    from[0] = 0;
+    tbb::parallel_for(size_t(1), chunks, [&](size_t k) {
+        const size_t nl = data.find('\n', k * kChunk - 1);
+        from[k] = nl == std::string_view::npos ? data.size() : nl + 1;
+    });
+    std::vector<size_t> lines(chunks + 1, 0);
+    tbb::parallel_for(size_t(0), chunks, [&](size_t k) {
+        const auto first = data.begin() + std::ptrdiff_t(from[k]), last = data.begin() + std::ptrdiff_t(from[k + 1]);
+        lines[k + 1] = size_t(std::count(first, last, '\n')) + (from[k + 1] == data.size() && last != first && *(last - 1) != '\n');
+    });
+    for (size_t k = 0; k < chunks; ++k)
+        lines[k + 1] += lines[k];
+    const size_t pairs = lines[chunks] / 2;
+    out.resize(pairs);
+
+    auto lineAt = [&](size_t at, size_t& next) {
+        size_t e = data.find('\n', at);
         if (e == std::string_view::npos)
             e = data.size();
-        l = data.substr(pos, e - pos);
+        next = e + 1;
+        std::string_view l = data.substr(at, e - at);
         if (!l.empty() && l.back() == '\r')
             l.remove_suffix(1);
-        pos = e + 1;
-        return true;
+        return l;
     };
-    std::string_view codeLine, valueLine;
-    size_t lineNo = 0;
-    while (line(codeLine))
+    struct Found
     {
-        ++lineNo;
-        codeLine = trim(codeLine);
-        if (codeLine.empty() && pos >= data.size())
-            break;
-        Group g;
-        if (std::from_chars(codeLine.data(), codeLine.data() + codeLine.size(), g.code).ec != std::errc())
-        {
-            error = "line " + std::to_string(lineNo) + " is not a group code";
-            return false;
-        }
-        if (!line(valueLine))
-            break;
-        ++lineNo;
-        ValueType t = valueType(g.code);
-        if (t == ValueType::String || t == ValueType::Bytes)
-            g.s = std::string(t == ValueType::String ? valueLine : trim(valueLine));
-        else
-        {
-            std::string_view v = trim(valueLine);
-            if (!v.empty() && v.front() == '+')
-                v.remove_prefix(1);
-            std::from_chars(v.data(), v.data() + v.size(), g.num);
-        }
-        out.push_back(std::move(g));
-        if (out.back().code == 0 && out.back().s == "EOF")
-            break;
+        size_t bad, eof;
+    };
+    const Found f = tbb::parallel_reduce(
+        tbb::blocked_range<size_t>(0, chunks, 1), Found{pairs, pairs},
+        [&](const tbb::blocked_range<size_t>& r, Found found) {
+            for (size_t k = r.begin(); k < r.end(); ++k)
+            {
+                size_t at = from[k], line = lines[k];
+                // A pair belongs to the chunk its code line starts in.
+                if (line % 2 && at < data.size())
+                {
+                    lineAt(at, at);
+                    ++line;
+                }
+                for (; line < lines[k + 1] && line / 2 < pairs; line += 2)
+                {
+                    const size_t p = line / 2;
+                    Group& g = out[p];
+                    const std::string_view code = trim(lineAt(at, at));
+                    const std::string_view value = lineAt(at, at);
+                    if (std::from_chars(code.data(), code.data() + code.size(), g.code).ec != std::errc())
+                    {
+                        found.bad = std::min(found.bad, p);
+                        continue;
+                    }
+                    const ValueType t = valueType(g.code);
+                    g.s = {};
+                    g.num = 0.0;
+                    if (t == ValueType::String || t == ValueType::Bytes)
+                        g.s = t == ValueType::String ? value : trim(value);
+                    else
+                    {
+                        std::string_view v = trim(value);
+                        if (!v.empty() && v.front() == '+')
+                            v.remove_prefix(1);
+                        std::from_chars(v.data(), v.data() + v.size(), g.num);
+                    }
+                    if (g.code == 0 && g.s == "EOF")
+                        found.eof = std::min(found.eof, p);
+                }
+            }
+            return found;
+        },
+        [](Found a, Found b) { return Found{std::min(a.bad, b.bad), std::min(a.eof, b.eof)}; });
+    if (f.bad < f.eof)
+    {
+        error = "line " + std::to_string(f.bad * 2 + 1) + " is not a group code";
+        return false;
     }
+    out.resize(f.eof < pairs ? f.eof + 1 : pairs);
     return true;
 }
 
 constexpr std::string_view kBinarySentinel{"AutoCAD Binary DXF\r\n\x1a\0", 22};
 
-bool readBinary(std::string_view data, std::vector<Group>& out, std::string& error)
+bool readBinary(std::string_view data, Groups& out, std::string& error)
 {
     size_t pos = kBinarySentinel.size();
     // R13 and later write two-byte group codes; R12 one byte, with 255 escaping a two-byte code.
@@ -170,7 +219,7 @@ bool readBinary(std::string_view data, std::vector<Group>& out, std::string& err
                 error = "unterminated string in binary DXF";
                 return false;
             }
-            g.s = std::string(data.substr(pos, e - pos));
+            g.s = data.substr(pos, e - pos);
             pos = e + 1;
             break;
         }
@@ -267,11 +316,11 @@ void appendUtf8(std::string& out, uint32_t cp)
 }
 
 /** Pre-2007 files are in the drawing's code page; anything that isn't UTF-8 is read as Latin-1. \U+XXXX escapes decode either way. */
-std::string decodeName(const std::string& raw)
+std::string decodeName(std::string_view raw)
 {
     std::string s;
     if (validUtf8(raw))
-        s = raw;
+        s = std::string(raw);
     else
         for (char c : raw)
             appendUtf8(s, uint8_t(c));
@@ -293,8 +342,8 @@ std::string decodeName(const std::string& raw)
 
 struct Entity
 {
-    std::string type;
-    std::vector<Group> g;
+    std::string_view type;
+    std::span<const Group> g;
     std::vector<Entity> sub; // a POLYLINE's VERTEX records
 
     const Group* find(int code) const
@@ -317,10 +366,44 @@ struct Entity
     std::string s(int code, const std::string& def = {}) const
     {
         const Group* x = find(code);
-        return x ? x->s : def;
+        return x ? std::string(x->s) : def;
     }
     D3 point(int code, const D3& def = D3(0.0)) const { return D3(d(code, def.x), d(code + 10, def.y), d(code + 20, def.z)); }
 };
+
+/** A polyface mesh's VERTEX record: a point (flags 192) or a face of up to four 1-based point numbers (flags 128). */
+struct PolyfaceRecord
+{
+    int64_t flags = 0;
+    D3 point{0.0};
+    std::array<int64_t, 4> corners{};
+};
+
+/** One record, read in one pass over its groups, the first of each code counting. */
+PolyfaceRecord polyfaceRecord(const Entity& e)
+{
+    PolyfaceRecord v;
+    uint32_t seen = 0;
+    auto once = [&](uint32_t bit) {
+        const bool fresh = !(seen & bit);
+        seen |= bit;
+        return fresh;
+    };
+    for (const Group& g : e.g)
+    {
+        if (g.code == 70 && once(1))
+            v.flags = g.i();
+        else if (g.code == 10 && once(2))
+            v.point.x = g.d();
+        else if (g.code == 20 && once(4))
+            v.point.y = g.d();
+        else if (g.code == 30 && once(8))
+            v.point.z = g.d();
+        else if (g.code >= 71 && g.code <= 74 && once(16u << (g.code - 71)))
+            v.corners[size_t(g.code - 71)] = g.i();
+    }
+    return v;
+}
 
 struct Block
 {
@@ -329,15 +412,16 @@ struct Block
 };
 
 /** Groups from `at` up to the next code 0 become one entity; POLYLINE gathers its VERTEX records through SEQEND. */
-std::vector<Entity> readEntities(const std::vector<Group>& gs, size_t& at, std::initializer_list<std::string_view> stops)
+std::vector<Entity> readEntities(const Groups& gs, size_t& at, std::initializer_list<std::string_view> stops)
 {
     std::vector<Entity> out;
     auto one = [&]() {
         Entity e;
         e.type = gs[at].s;
-        ++at;
+        const size_t first = ++at;
         while (at < gs.size() && gs[at].code != 0)
-            e.g.push_back(gs[at++]);
+            ++at;
+        e.g = std::span<const Group>(gs).subspan(first, at - first);
         return e;
     };
     while (at < gs.size())
@@ -426,9 +510,8 @@ double sweepOf(double start, double end, double full)
 struct LayerBuild
 {
     DxfLayer layer;
-    std::vector<D3> points;
-    std::vector<geo::Index> sizes, indices;
-    std::unordered_map<std::string, geo::Index> weld;
+    std::vector<D3> corners; // welded when the layer is finished
+    std::vector<geo::Index> sizes;
 };
 
 class Reader
@@ -436,7 +519,7 @@ class Reader
 public:
     DxfDocument doc;
 
-    void read(const std::vector<Group>& gs)
+    void read(const Groups& gs)
     {
         std::vector<Entity> entities;
         for (size_t at = 0; at < gs.size();)
@@ -446,7 +529,7 @@ public:
                 ++at;
                 continue;
             }
-            const std::string& name = gs[at + 1].s;
+            const std::string_view name = gs[at + 1].s;
             at += 2;
             if (name == "HEADER")
                 readHeader(gs, at);
@@ -474,9 +557,11 @@ private:
     std::map<std::string, size_t> mLayerIndex;
     std::map<std::string, int> mSkipped;
     int mPaperSpace = 0;
+    std::unordered_map<std::string_view, std::string> mDecoded;
+    size_t mLastLayer = 0;
     std::set<std::string> mActive;
 
-    void readHeader(const std::vector<Group>& gs, size_t& at)
+    void readHeader(const Groups& gs, size_t& at)
     {
         for (; at < gs.size() && gs[at].code != 0; ++at)
             if (gs[at].code == 9 && gs[at].s == "$INSUNITS" && at + 1 < gs.size())
@@ -487,7 +572,7 @@ private:
             }
     }
 
-    void readTables(const std::vector<Group>& gs, size_t& at)
+    void readTables(const Groups& gs, size_t& at)
     {
         for (; at < gs.size() && !(gs[at].code == 0 && gs[at].s == "ENDSEC"); ++at)
         {
@@ -510,7 +595,7 @@ private:
         }
     }
 
-    void readBlocks(const std::vector<Group>& gs, size_t& at)
+    void readBlocks(const Groups& gs, size_t& at)
     {
         while (at < gs.size() && !(gs[at].code == 0 && gs[at].s == "ENDSEC"))
         {
@@ -520,8 +605,10 @@ private:
                 continue;
             }
             Entity head;
-            for (++at; at < gs.size() && gs[at].code != 0; ++at)
-                head.g.push_back(gs[at]);
+            const size_t first = ++at;
+            while (at < gs.size() && gs[at].code != 0)
+                ++at;
+            head.g = std::span<const Group>(gs).subspan(first, at - first);
             Block b;
             b.base = head.point(10);
             b.entities = readEntities(gs, at, {"ENDBLK", "ENDSEC"});
@@ -533,7 +620,10 @@ private:
 
     LayerBuild& layer(const std::string& name)
     {
+        if (mLastLayer < mLayers.size() && mLayers[mLastLayer].layer.name == name)
+            return mLayers[mLastLayer];
         auto [it, added] = mLayerIndex.try_emplace(name, mLayers.size());
+        mLastLayer = it->second;
         if (added)
         {
             LayerBuild& l = mLayers.emplace_back();
@@ -552,29 +642,42 @@ private:
         layer(layerName).layer.curves.push_back(std::move(s));
     }
 
-    void addFace(const std::string& layerName, const std::vector<D3>& pts, const M4& m)
+    void addFace(const std::string& layerName, std::span<const D3> pts, const M4& m)
     {
         LayerBuild& l = layer(layerName);
-        std::vector<geo::Index> ids;
+        const size_t start = l.corners.size();
+        // Corners weld when they are the same bit for bit.
+        auto same = [](const D3& a, const D3& b) { return std::memcmp(&a, &b, sizeof(D3)) == 0; };
         for (const D3& p : pts)
         {
-            D3 w = D3(m * glm::dvec4(p, 1.0));
-            std::string key(reinterpret_cast<const char*>(&w), sizeof(w));
-            auto [it, added] = l.weld.try_emplace(key, geo::Index(l.points.size()));
-            if (added)
-                l.points.push_back(w);
-            if (ids.empty() || ids.back() != it->second)
-                ids.push_back(it->second);
+            const D3 w = D3(m * glm::dvec4(p, 1.0));
+            if (l.corners.size() == start || !same(l.corners.back(), w))
+                l.corners.push_back(w);
         }
-        while (ids.size() > 1 && ids.back() == ids.front())
-            ids.pop_back();
-        if (ids.size() < 3)
-            return;
-        l.sizes.push_back(geo::Index(ids.size()));
-        l.indices.insert(l.indices.end(), ids.begin(), ids.end());
+        while (l.corners.size() - start > 1 && same(l.corners.back(), l.corners[start]))
+            l.corners.pop_back();
+        if (l.corners.size() - start < 3)
+            l.corners.resize(start);
+        else
+            l.sizes.push_back(geo::Index(l.corners.size() - start));
+    }
+    void addFace(const std::string& layerName, std::initializer_list<D3> pts, const M4& m)
+    {
+        addFace(layerName, std::span<const D3>(pts.begin(), pts.size()), m);
     }
 
-    void skip(const std::string& type) { ++mSkipped[type]; }
+    /** An entity's layer name, decoded once per name. */
+    const std::string& layerName(const Entity& e)
+    {
+        const Group* g = e.find(8);
+        const std::string_view raw = g ? g->s : std::string_view("0");
+        auto it = mDecoded.find(raw);
+        if (it == mDecoded.end())
+            it = mDecoded.emplace(raw, decodeName(raw)).first;
+        return it->second;
+    }
+
+    void skip(std::string_view type) { ++mSkipped[std::string(type)]; }
 
     void emit(const Entity& e, const M4& m, const std::string& inherited, int depth)
     {
@@ -585,10 +688,9 @@ private:
         }
         if (e.i(60) == 1)
             return;
-        std::string ln = decodeName(e.s(8, "0"));
-        if (ln == "0" && depth > 0)
-            ln = inherited;
-        const std::string& t = e.type;
+        const std::string& named = layerName(e);
+        const std::string& ln = named == "0" && depth > 0 ? inherited : named;
+        const std::string_view t = e.type;
         if (t == "LINE")
         {
             Spline s;
@@ -675,18 +777,18 @@ private:
         int64_t flags = e.i(70);
         if (flags & 64)
         {
-            std::vector<D3> pts;
-            for (const Entity& v : e.sub)
+            std::vector<D3> pts, face;
+            for (const Entity& sub : e.sub)
             {
-                int64_t vf = v.i(70);
-                if ((vf & 128) && (vf & 64))
-                    pts.push_back(v.point(10));
-                else if (vf & 128)
+                const PolyfaceRecord v = polyfaceRecord(sub);
+                if ((v.flags & 128) && (v.flags & 64))
+                    pts.push_back(v.point);
+                else if (v.flags & 128)
                 {
-                    std::vector<D3> face;
-                    for (int c = 71; c <= 74; ++c)
+                    face.clear();
+                    for (int64_t k : v.corners)
                     {
-                        int64_t k = std::abs(v.i(c));
+                        k = std::abs(k);
                         if (k > 0 && size_t(k) <= pts.size())
                             face.push_back(pts[size_t(k - 1)]);
                     }
@@ -861,7 +963,13 @@ private:
         for (LayerBuild& l : mLayers)
         {
             if (!l.sizes.empty())
-                l.layer.mesh = geo::Mesh::fromPolygons(l.points, l.sizes, l.indices);
+            {
+                UninitVector<geo::Index> pointOf;
+                UninitVector<D3> points;
+                geo::weldIdentical(l.corners, pointOf, points, true);
+                std::vector<D3>().swap(l.corners);
+                l.layer.mesh = geo::Mesh::fromPolygons(points, l.sizes, pointOf);
+            }
             if (!l.layer.curves.empty() || l.layer.mesh.numFaces() > 0)
                 doc.layers.push_back(std::move(l.layer));
         }
@@ -1253,76 +1361,118 @@ private:
     void mesh(const geo::Mesh& m, const std::string& layer)
     {
         constexpr size_t kMaxPoints = 32767;
-        std::vector<std::vector<geo::Index>> faces;
-        std::vector<geo::Index> tri;
+        // Faces of up to four corners, as point lists; bigger ones triangulated.
+        std::vector<geo::Index> facePoints;
+        std::vector<size_t> faceStart{0};
+        std::vector<geo::Index> tri, pts;
         for (geo::Index f = 0; f < m.faceCapacity(); ++f)
         {
             if (!m.faceValid(f))
                 continue;
-            std::vector<geo::Index> pts = m.facePoints(f);
-            if (pts.size() <= 4)
+            if (m.faceSize(f) <= 4)
             {
-                faces.push_back(std::move(pts));
+                m.forEachFaceCorner(f, [&](geo::Index c) { facePoints.push_back(m.cornerPoint(c)); });
+                faceStart.push_back(facePoints.size());
                 continue;
             }
             tri.clear();
             geo::triangulateFace(m, f, tri);
             for (size_t k = 0; k + 2 < tri.size(); k += 3)
-                faces.push_back({m.cornerPoint(tri[k]), m.cornerPoint(tri[k + 1]), m.cornerPoint(tri[k + 2])});
+            {
+                for (size_t j = 0; j < 3; ++j)
+                    facePoints.push_back(m.cornerPoint(tri[k + j]));
+                faceStart.push_back(facePoints.size());
+            }
         }
-        std::unordered_map<geo::Index, int> local;
-        std::vector<D3> pts;
-        std::vector<std::vector<int>> chunk;
-        auto flush = [&]() {
-            if (!chunk.empty())
-                polyface(pts, chunk, layer);
-            local.clear();
-            pts.clear();
-            chunk.clear();
+        // Polyfaces hold at most kMaxPoints points: faces go in order, a new one starting when the next face's new points
+        // would not fit. Each point is numbered from 1 in the polyface that first uses it.
+        struct Chunk
+        {
+            size_t firstFace = 0, endFace = 0;
+            std::vector<geo::Index> points;
         };
-        for (const std::vector<geo::Index>& f : faces)
+        std::vector<Chunk> chunks(1);
+        std::vector<int> local(m.pointCapacity(), 0);
+        std::vector<uint32_t> stamp(m.pointCapacity(), 0);
+        uint32_t epoch = 1;
+        std::vector<int> faceLocal(facePoints.size());
+        const size_t faces = faceStart.size() - 1;
+        for (size_t f = 0; f < faces; ++f)
         {
             size_t fresh = 0;
-            for (geo::Index p : f)
-                fresh += local.count(p) ? 0 : 1;
-            if (pts.size() + fresh > kMaxPoints)
-                flush();
-            std::vector<int> ids;
-            for (geo::Index p : f)
+            for (size_t k = faceStart[f]; k < faceStart[f + 1]; ++k)
+                fresh += stamp[facePoints[k]] == epoch ? 0 : 1;
+            if (chunks.back().points.size() + fresh > kMaxPoints)
             {
-                auto [it, added] = local.try_emplace(p, int(pts.size()) + 1);
-                if (added)
-                    pts.push_back(m.position(p));
-                ids.push_back(it->second);
+                chunks.back().endFace = f;
+                chunks.push_back({f, f, {}});
+                ++epoch;
             }
-            chunk.push_back(std::move(ids));
+            Chunk& c = chunks.back();
+            for (size_t k = faceStart[f]; k < faceStart[f + 1]; ++k)
+            {
+                const geo::Index p = facePoints[k];
+                if (stamp[p] != epoch)
+                {
+                    stamp[p] = epoch;
+                    c.points.push_back(p);
+                    local[p] = int(c.points.size());
+                }
+                faceLocal[k] = local[p];
+            }
         }
-        flush();
+        chunks.back().endFace = faces;
+        std::erase_if(chunks, [](const Chunk& c) { return c.endFace == c.firstFace; });
+
+        // Each polyface takes 2 handles plus one per point and face, so they are written in parallel from known handles.
+        std::vector<uint64_t> firstHandle(chunks.size());
+        for (size_t i = 0; i < chunks.size(); ++i)
+        {
+            firstHandle[i] = mNext;
+            mNext += 2 + chunks[i].points.size() + (chunks[i].endFace - chunks[i].firstFace);
+        }
+        std::vector<std::string> text(chunks.size());
+        tbb::parallel_for(size_t(0), chunks.size(), [&](size_t i) {
+            Writer w(mO);
+            w.mNext = firstHandle[i];
+            w.mModelSpace = mModelSpace;
+            const Chunk& c = chunks[i];
+            w.polyface(m, c.points, std::span<const size_t>(faceStart).subspan(c.firstFace, c.endFace - c.firstFace + 1), faceLocal, layer);
+            text[i] = std::move(w.mOut);
+        });
+        size_t total = mOut.size();
+        for (const std::string& part : text)
+            total += part.size();
+        mOut.reserve(total);
+        for (const std::string& part : text)
+            mOut += part;
     }
 
-    void polyface(const std::vector<D3>& pts, const std::vector<std::vector<int>>& faces, const std::string& layer)
+    /** One polyface POLYLINE: faces [start[0], start.back()) of local, which numbers points from 1. */
+    void polyface(const geo::Mesh& m, std::span<const geo::Index> points, std::span<const size_t> start, std::span<const int> local,
+                  const std::string& layer)
     {
         uint64_t pl = entity("POLYLINE", layer, mModelSpace, "AcDbPolyFaceMesh");
         pairI(66, 1);
         point(10, D3(0.0));
         pairI(70, 64);
-        pairI(71, int64_t(pts.size()));
-        pairI(72, int64_t(faces.size()));
-        for (const D3& p : pts)
+        pairI(71, int64_t(points.size()));
+        pairI(72, int64_t(start.size() - 1));
+        for (geo::Index p : points)
         {
             entity("VERTEX", layer, pl, "AcDbVertex");
             if (mModern)
                 pair(100, "AcDbPolyFaceMeshVertex");
-            point(10, p);
+            point(10, m.position(p));
             pairI(70, 192);
         }
-        for (const std::vector<int>& f : faces)
+        for (size_t f = 0; f + 1 < start.size(); ++f)
         {
             entity("VERTEX", layer, pl, mModern ? "AcDbFaceRecord" : nullptr);
             point(10, D3(0.0));
             pairI(70, 128);
-            for (size_t k = 0; k < f.size(); ++k)
-                pairI(71 + int(k), f[k]);
+            for (size_t k = start[f]; k < start[f + 1]; ++k)
+                pairI(71 + int(k - start[f]), local[k]);
         }
         entity("SEQEND", layer, pl, nullptr);
     }
@@ -1331,7 +1481,7 @@ private:
 
 DxfDocument readDxf(std::string_view data)
 {
-    std::vector<Group> gs;
+    Groups gs;
     std::string error;
     bool ok = data.substr(0, kBinarySentinel.size()) == kBinarySentinel ? readBinary(data, gs, error) : readAscii(data, gs, error);
     Reader r;

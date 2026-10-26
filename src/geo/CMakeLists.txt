@@ -20,6 +20,7 @@ lila_module(lila_geo Scene
     OpsKnife.cpp
     OpsLoop.cpp
     PlyIO.cpp
+    PointWeld.cpp
     Primitives.cpp
     Reduce.cpp
     SmartJoin.cpp

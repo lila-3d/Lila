@@ -825,7 +825,7 @@ bool writesAlone(Stage& s, Graph& g, NodeId n)
     if (parent == s.node)
         return true;
     const Node* p = g.node(parent);
-    return p && s.primOf.count(parent) && !p->type().isA("joint") && !p->type().isA("camera");
+    return p && s.primOf.count(parent) && !p->type().isA("joint") && !p->type().isA("camera") && !p->type().isA("light");
 }
 
 /** The prims of these nodes, compared alone: the full plan when one of them can't be. */

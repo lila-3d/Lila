@@ -1,0 +1,43 @@
+//Maya ASCII 2026 scene
+//Name: lights_zup.ma
+// Handmade: one of each light Lila converts, plus an Arnold mesh light it does not. Z up: the top camera looks down -Z.
+requires maya "2026";
+currentUnit -l centimeter -a degree -t film;
+fileInfo "application" "maya";
+createNode transform -s -n "top";
+	setAttr ".v" no;
+	setAttr ".t" -type "double3" 0 0 1000.1 ;
+	setAttr ".r" -type "double3" 0 0 0 ;
+createNode camera -s -n "topShape" -p "top";
+	setAttr -k off ".v" no;
+	setAttr ".o" yes;
+createNode transform -n "key";
+	setAttr ".t" -type "double3" 0 50 0 ;
+	setAttr ".r" -type "double3" 0 0 0 ;
+createNode spotLight -n "keyShape" -p "key";
+	setAttr -k off ".v";
+	setAttr ".cl" -type "float3" 1 0.5 0.25 ;
+	setAttr ".in" 2;
+	setAttr ".de" 2;
+	setAttr ".ca" 60;
+	setAttr ".pa" 5;
+	setAttr ".dro" 3;
+	setAttr ".ai_exposure" 1;
+	setAttr ".ai_use_color_temperature" yes;
+	setAttr ".ai_color_temperature" 3200;
+createNode transform -n "bulb";
+createNode pointLight -n "bulbShape" -p "bulb";
+	setAttr ".lr" 4;
+	setAttr ".urs" yes;
+createNode transform -n "sun";
+createNode directionalLight -n "sunShape" -p "sun";
+	setAttr ".in" 3;
+createNode transform -n "panel";
+	setAttr ".s" -type "double3" 10 5 1 ;
+createNode areaLight -n "panelShape" -p "panel";
+	setAttr ".ed" no;
+createNode transform -n "sky";
+createNode aiSkyDomeLight -n "skyShape" -p "sky";
+	setAttr ".in" 0.5;
+createNode transform -n "glow";
+createNode aiMeshLight -n "glowShape" -p "glow";

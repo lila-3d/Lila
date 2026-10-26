@@ -13,6 +13,7 @@
 #include "scene/Materials.h"
 #include "scene/MeshNodes.h"
 
+#include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
@@ -37,6 +38,7 @@ using fbx::ExportTake;
 using geo::Index;
 using geo::kInvalid;
 namespace anim = scene::anim;
+namespace lights = scene::lights;
 
 constexpr int kFloat = 5126, kUByte = 5121, kUShort = 5123, kUInt = 5125;
 constexpr int kArrayBuffer = 34962, kElementArrayBuffer = 34963;
@@ -398,10 +400,11 @@ struct Writer
     {
         const ExportNode& n = scene.nodes[i];
         glm::dmat4 m = K * local * Kinv;
-        // A camera's frame is turned so it looks down file -Z wherever the scene's up axis puts Lila's -Z.
-        if (n.camera)
+        // A camera's or light's frame is turned so it looks down file -Z wherever the scene's up axis puts Lila's -Z.
+        auto turned = [](const ExportNode& e) { return e.camera || e.light; };
+        if (turned(n))
             m = m * glm::dmat4(B);
-        if (n.parent >= 0 && scene.nodes[size_t(n.parent)].camera)
+        if (n.parent >= 0 && turned(scene.nodes[size_t(n.parent)]))
             m = glm::transpose(glm::dmat4(B)) * m;
         return m;
     }
@@ -409,8 +412,41 @@ struct Writer
     int writeMesh(size_t i, const std::vector<int>& jointSlots);
     json dracoPrimitive(const std::vector<Stream>& streams, const std::vector<uint32_t>& idx, const TargetsFn* targets, const std::string& name);
     json cameraJson(const fbx::ExportCamera& c) const;
+    std::optional<json> lightJson(const ExportNode& n);
     void writeTake(const ExportTake& take, json& animations);
 };
+
+/**
+ * A KHR_lights_punctual light: candela for point and spot, lux for directional, converted from lumens or watts when
+ * the light uses them. Area, disc and dome lights have no punctual form, so they are left out with a warning.
+ */
+std::optional<json> Writer::lightJson(const ExportNode& n)
+{
+    using lights::Kind;
+    const lights::Settings& l = *n.light;
+    if (l.kind == Kind::Area || l.kind == Kind::Disc || l.kind == Kind::Dome)
+    {
+        warnings.push_back(std::format("{}: {} light not written (glTF only has point, spot and directional lights)", n.name, lights::kindName(l.kind)));
+        return std::nullopt;
+    }
+    double intensity = l.intensity;
+    if (l.units == lights::Units::Watts)
+        intensity *= 683.0;
+    if ((l.units == lights::Units::Lumens || l.units == lights::Units::Watts) && l.kind != Kind::Directional)
+        intensity /= 4.0 * glm::pi<double>();
+    const glm::dvec3 c = lights::effectiveColor(l);
+    json j = {{"name", n.name},
+              {"type", l.kind == Kind::Directional ? "directional" : l.kind == Kind::Spot ? "spot" : "point"},
+              {"color", {c.x, c.y, c.z}},
+              {"intensity", intensity}};
+    if (l.range > 0.0 && l.kind != Kind::Directional)
+        j["range"] = l.range / opts.gather.unitScale;
+    if (l.kind == Kind::Spot)
+        j["spot"] = {{"innerConeAngle", glm::radians(std::min(l.innerConeAngle, l.outerConeAngle))},
+                     {"outerConeAngle", glm::radians(std::clamp(l.outerConeAngle, 0.0, 90.0))}};
+    extensionsUsed.insert("KHR_lights_punctual");
+    return j;
+}
 
 json Writer::cameraJson(const fbx::ExportCamera& c) const
 {
@@ -1051,7 +1087,7 @@ bool writeGltf(const ExportSnapshot& snap, const fs::path& path, const ExportOpt
     }
 
     // Nodes, with their meshes, cameras and skins.
-    json nodes = json::array(), cameras = json::array(), skins = json::array();
+    json nodes = json::array(), cameras = json::array(), skins = json::array(), lightList = json::array();
     std::vector<std::vector<int>> children(scene.nodes.size());
     std::vector<int> rootNodes;
     std::map<const geo::Mesh*, int> sharedMesh;
@@ -1085,6 +1121,12 @@ bool writeGltf(const ExportSnapshot& snap, const fs::path& path, const ExportOpt
             cameras.push_back(std::move(cam));
             node["camera"] = int(cameras.size()) - 1;
         }
+        if (n.light)
+            if (std::optional<json> light = w.lightJson(n))
+            {
+                lightList.push_back(std::move(*light));
+                node["extensions"]["KHR_lights_punctual"] = {{"light", int(lightList.size()) - 1}};
+            }
         if (n.mesh && n.mesh->numFaces() > 0)
         {
             std::vector<int> jointSlots;
@@ -1173,6 +1215,8 @@ bool writeGltf(const ExportSnapshot& snap, const fs::path& path, const ExportOpt
     }
     if (!cameras.empty())
         doc["cameras"] = cameras;
+    if (!lightList.empty())
+        doc["extensions"]["KHR_lights_punctual"] = {{"lights", lightList}};
     if (!skins.empty())
         doc["skins"] = skins;
     if (!animations.empty())

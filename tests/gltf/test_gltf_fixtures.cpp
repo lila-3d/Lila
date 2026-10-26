@@ -302,7 +302,7 @@ TEST_CASE("EXT_meshopt_compression buffers decode")
     CHECK(lo.z == doctest::Approx(-100.0));
 }
 
-TEST_CASE("a Draco primitive that doesn't decode and has no fallback is an error, the rest still imports; lights are reported")
+TEST_CASE("a Draco primitive that doesn't decode and has no fallback is an error, the rest still imports, lights too")
 {
     Builder b;
     const int position = b.floats(quadPositions(), "VEC3", 3, true);
@@ -327,7 +327,8 @@ TEST_CASE("a Draco primitive that doesn't decode and has no fallback is an error
     CHECK(r["errors"][0].get<std::string>().find("Draco") != std::string::npos);
     CHECK(meshOf("Plain"));
     CHECK(graph().find("Squashed"));
-    CHECK(hasEntry(r["skipped"], "light 'Sun'"));
+    CHECK(graph().find("SunNode")->type().isA("light"));
+    CHECK(r["lights"].size() == 1);
 }
 
 TEST_CASE("separate metallic-roughness and occlusion images pack into an ORM map; unlit becomes emissive")

@@ -9,6 +9,7 @@
 #include "scene/Anim.h"
 #include "scene/AnimCurve.h"
 #include "scene/Camera.h"
+#include "scene/Light.h"
 #include "scene/LodGroup.h"
 #include "scene/Morphs.h"
 #include "scene/Skin.h"
@@ -526,6 +527,85 @@ TEST_CASE("usd round trip: camera lens, film back, clipping and animation")
         graph().evaluate();
         CHECK(std::get<double>(graph().value({c.id(), Camera::kFocalLength, -1})) == doctest::Approx(75.0).epsilon(1e-3));
         graph().setTime(0.0);
+    }
+}
+
+TEST_CASE("usd round trip: lights as UsdLux, with Lila's settings kept")
+{
+    for (math::UpAxis up : {math::UpAxis::Y, math::UpAxis::Z})
+    {
+        UpAxisScope axis(up);
+        fresh();
+        Graph& g = graph();
+        lights::Settings spot;
+        spot.kind = lights::Kind::Spot;
+        spot.color = {1.0, 0.5, 0.25};
+        spot.intensity = 40.0;
+        spot.units = lights::Units::Lumens;
+        spot.innerConeAngle = 10.0;
+        spot.outerConeAngle = 25.0;
+        spot.range = 900.0;
+        spot.sourceRadius = 3.0;
+        Node& key = lights::create(g, "Key", kNoNode, spot);
+        g.setValue({key.id(), Transform::kTranslate, -1}, glm::dvec3(100, 50, -300));
+        g.setValue({key.id(), Transform::kRotate, -1}, glm::dvec3(-10, 160, 5));
+        g.createNode(*types::find("transform"), "Aim", key.id(), false);
+        g.setValue({g.find("Aim")->id(), Transform::kTranslate, -1}, glm::dvec3(0, 0, -50));
+        lights::Settings area;
+        area.kind = lights::Kind::Area;
+        area.width = 80.0;
+        area.height = 20.0;
+        area.castShadows = false;
+        lights::create(g, "Panel", kNoNode, area);
+        lights::Settings disc;
+        disc.kind = lights::Kind::Disc;
+        disc.width = 30.0;
+        lights::create(g, "Disc", kNoNode, disc);
+        lights::Settings sun;
+        sun.kind = lights::Kind::Directional;
+        sun.useTemperature = true;
+        sun.temperature = 5000.0;
+        lights::create(g, "Sun", kNoNode, sun);
+        lights::Settings sky;
+        sky.kind = lights::Kind::Dome;
+        sky.texture = "sky.exr";
+        lights::create(g, "Sky", kNoNode, sky);
+        g.evaluate();
+        std::map<std::string, std::pair<lights::Settings, glm::dmat4>> before;
+        for (const char* name : {"Key", "Panel", "Disc", "Sun", "Sky"})
+            before[name] = {lights::settings(*g.find(name)), world(name)};
+        const glm::dmat4 aim = world("Aim");
+        const fs::path file = tempDir() / "lights.usda";
+        run("exportUsd", {{"args", {file.generic_string(), "Key", "Panel", "Disc", "Sun", "Sky"}}});
+        const std::string text = readAll(file);
+        for (const char* kind : {"def SphereLight", "def RectLight", "def DiskLight", "def DistantLight", "def DomeLight", "ShapingAPI"})
+            CHECK(text.find(kind) != std::string::npos);
+
+        fresh();
+        run("importUsd", {{"args", {file.generic_string()}}});
+        for (auto& [name, was] : before)
+        {
+            CAPTURE(name);
+            Node& n = node(name);
+            CHECK(n.type().isA("light"));
+            CHECK(near(world(name), was.second, 1e-4));
+            lights::Settings now = lights::settings(n);
+            now.sourceFormat = was.first.sourceFormat;
+            CHECK(now.kind == was.first.kind);
+            CHECK(now.units == was.first.units);
+            CHECK(now.intensity == doctest::Approx(was.first.intensity));
+            CHECK(glm::length(now.color - was.first.color) < 1e-6);
+            CHECK(now.range == doctest::Approx(was.first.range));
+            CHECK(now.innerConeAngle == doctest::Approx(was.first.innerConeAngle));
+            CHECK(now.outerConeAngle == doctest::Approx(was.first.outerConeAngle));
+            CHECK(now.width == doctest::Approx(was.first.width));
+            CHECK(now.height == doctest::Approx(was.first.height));
+            CHECK(now.sourceRadius == doctest::Approx(was.first.sourceRadius));
+            CHECK(now.useTemperature == was.first.useTemperature);
+            CHECK(now.castShadows == was.first.castShadows);
+            CHECK(now.texture == was.first.texture);
+        }
+        CHECK(near(world("Aim"), aim, 1e-4));
     }
 }
 

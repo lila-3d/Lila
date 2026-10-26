@@ -187,9 +187,9 @@ TEST_CASE("usd fixture: cameras, hidden and guide prims, holes, creases, primvar
     UpAxisScope axis(math::UpAxis::Z);
     json r = importFixture("misc.usda");
     INFO(r.dump());
-    CHECK(listed(r["skipped"], "light '/World/Key'"));
+    CHECK(listed(r["lights"], "Key"));
     CHECK(listed(r["skipped"], "point cloud '/World/Dust'"));
-    CHECK(graph().find("Key"));
+    CHECK(graph().find("Key")->type().isA("light"));
     CHECK(listed(r["skipped"], "purpose guide"));
     CHECK(listed(r["skipped"], "model kind on 1 prim"));
     CHECK(listed(r["skipped"], "/World.userProperties:weight"));

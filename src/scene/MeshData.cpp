@@ -2,13 +2,17 @@
 
 #include "core/PackedArray.h"
 #include "core/Profile.h"
+#include "core/UninitVector.h"
 #include "geo/ColorSets.h"
 #include "geo/Mesh.h"
 
 #include <tbb/blocked_range.h>
 #include <tbb/parallel_for.h>
 #include <tbb/parallel_reduce.h>
+#include <tbb/parallel_scan.h>
 
+#include <atomic>
+#include <functional>
 #include <stdexcept>
 
 namespace lila::scene
@@ -229,36 +233,83 @@ template <class F> void blocks(size_t n, F&& fn)
     tbb::parallel_for(tbb::blocked_range<size_t>(0, n, kGrain), [&](const tbb::blocked_range<size_t>& r) { fn(r.begin(), r.end()); });
 }
 
-/** Layer values in the order given, packed as-is: Int and float components are 4 bytes each, Bool one. */
-json packedLayer(const geo::Attribute& a, const std::vector<Index>& order)
+/**
+ * Which elements are written, in order: ids[k] is the k-th, or element k itself while ids is empty (nothing of the
+ * kind is deleted).
+ */
+struct Order
 {
+    size_t size = 0;
+    UninitVector<Index> ids;
+
+    Index operator[](size_t k) const { return ids.empty() ? Index(k) : ids[k]; }
+};
+
+/** The valid elements of a capacity in id order, found in parallel; identity when all are valid. */
+template <class Valid> Order validOrder(Index capacity, size_t count, Valid&& valid)
+{
+    Order o;
+    o.size = count;
+    if (count == capacity)
+        return o;
+    constexpr size_t kBlock = 1 << 16;
+    const size_t blockCount = (size_t(capacity) + kBlock - 1) / kBlock;
+    std::vector<size_t> start(blockCount + 1, 0);
+    tbb::parallel_for(size_t(0), blockCount, [&](size_t b) {
+        size_t n = 0;
+        for (Index i = Index(b * kBlock); i < std::min<size_t>(capacity, (b + 1) * kBlock); ++i)
+            n += valid(i) ? 1 : 0;
+        start[b + 1] = n;
+    });
+    for (size_t b = 0; b < blockCount; ++b)
+        start[b + 1] += start[b];
+    o.ids.resize(start[blockCount]);
+    o.size = o.ids.size();
+    tbb::parallel_for(size_t(0), blockCount, [&](size_t b) {
+        size_t at = start[b];
+        for (Index i = Index(b * kBlock); i < std::min<size_t>(capacity, (b + 1) * kBlock); ++i)
+            if (valid(i))
+                o.ids[at++] = i;
+    });
+    return o;
+}
+
+/** Layer values in the order given, packed as-is: Int and float components are 4 bytes each, Bool one. */
+json packedLayer(const geo::Attribute& a, const Order& order)
+{
+    const size_t stride = a.type() == geo::AttrType::Bool ? 1 : size_t(geo::attrTypeComponents(a.type())) * 4;
+    auto fill = [&](unsigned char* out) {
+        if (order.size == 0)
+            return;
+        if (order.ids.empty() && a.stride() == stride)
+        {
+            const auto* src = reinterpret_cast<const unsigned char*>(a.raw(0));
+            blocks(order.size, [&](size_t b, size_t e) { std::memcpy(out + b * stride, src + b * stride, (e - b) * stride); });
+            return;
+        }
+        blocks(order.size, [&](size_t b, size_t e) {
+            for (size_t k = b; k < e; ++k)
+                std::memcpy(out + k * stride, a.raw(order[k]), stride);
+        });
+    };
     if (a.type() == geo::AttrType::Bool)
     {
         bool* out;
-        json data = packed::alloc(order.size(), out);
-        blocks(order.size(), [&](size_t b, size_t e) {
-            for (size_t k = b; k < e; ++k)
-                out[k] = *reinterpret_cast<const bool*>(a.raw(order[k]));
-        });
+        json data = packed::alloc(order.size, out);
+        fill(reinterpret_cast<unsigned char*>(out));
         return data;
     }
-    const size_t n = size_t(geo::attrTypeComponents(a.type()));
-    auto gather = [&](auto* out) {
-        blocks(order.size(), [&](size_t b, size_t e) {
-            for (size_t k = b; k < e; ++k)
-                std::memcpy(out + k * n, a.raw(order[k]), n * 4);
-        });
-    };
+    const size_t n = stride / 4;
     if (a.type() == geo::AttrType::Int)
     {
         int32_t* out;
-        json data = packed::alloc(order.size() * n, out);
-        gather(out);
+        json data = packed::alloc(order.size * n, out);
+        fill(reinterpret_cast<unsigned char*>(out));
         return data;
     }
     float* out;
-    json data = packed::alloc(order.size() * n, out);
-    gather(out);
+    json data = packed::alloc(order.size * n, out);
+    fill(reinterpret_cast<unsigned char*>(out));
     return data;
 }
 } // namespace
@@ -267,48 +318,61 @@ json meshToJsonPacked(const geo::Mesh& mesh)
 {
     LILA_ZONE();
 
-    std::vector<Index> pointOrder, pointRemap(mesh.pointCapacity(), geo::kInvalid);
-    pointOrder.reserve(mesh.numPoints());
-    for (Index p = 0; p < mesh.pointCapacity(); ++p)
-        if (mesh.pointValid(p))
-        {
-            pointRemap[p] = Index(pointOrder.size());
-            pointOrder.push_back(p);
-        }
+    const Order pointOrder = validOrder(mesh.pointCapacity(), mesh.numPoints(), [&](Index p) { return mesh.pointValid(p); });
+    const Order faceOrder = validOrder(mesh.faceCapacity(), mesh.numFaces(), [&](Index f) { return mesh.faceValid(f); });
+    const Order edgeOrder = validOrder(mesh.edgeCapacity(), mesh.numEdges(), [&](Index e) { return mesh.edgeValid(e); });
+    UninitVector<Index> pointRemap;
+    if (!pointOrder.ids.empty())
+    {
+        pointRemap.resize(mesh.pointCapacity());
+        tbb::parallel_for(size_t(0), pointOrder.size, [&](size_t k) { pointRemap[pointOrder.ids[k]] = Index(k); });
+    }
+    auto remap = [&](Index p) { return pointRemap.empty() ? p : pointRemap[p]; };
 
     // Face sizes first; their running sum says where each face's corners go, so the corners fill in parallel.
-    std::vector<Index> faceOrder, sizes, cornerStart;
-    faceOrder.reserve(mesh.numFaces());
-    sizes.reserve(mesh.numFaces());
-    cornerStart.reserve(mesh.numFaces());
-    size_t corners = 0;
-    for (Index f = 0; f < mesh.faceCapacity(); ++f)
-        if (mesh.faceValid(f))
-        {
-            faceOrder.push_back(f);
-            sizes.push_back(mesh.faceSize(f));
-            cornerStart.push_back(Index(corners));
-            corners += mesh.faceSize(f);
-        }
-    std::vector<Index> cornerOrder(corners);
+    Index* sizes;
+    json sizesJson = packed::alloc(faceOrder.size, sizes);
+    UninitVector<Index> cornerStart(faceOrder.size);
+    blocks(faceOrder.size, [&](size_t b, size_t e) {
+        for (size_t k = b; k < e; ++k)
+            sizes[k] = mesh.faceSize(faceOrder[k]);
+    });
+    const size_t corners = tbb::parallel_scan(
+        tbb::blocked_range<size_t>(0, faceOrder.size), size_t(0),
+        [&](const tbb::blocked_range<size_t>& r, size_t sum, bool final) {
+            for (size_t k = r.begin(); k < r.end(); ++k)
+            {
+                if (final)
+                    cornerStart[k] = Index(sum);
+                sum += sizes[k];
+            }
+            return sum;
+        },
+        std::plus<size_t>());
+    Order cornerOrder;
+    cornerOrder.size = corners;
+    cornerOrder.ids.resize(corners);
     Index* indices;
     json faceIndices = packed::alloc(corners, indices);
-
-    std::vector<Index> edgeOrder;
-    edgeOrder.reserve(mesh.numEdges());
-    for (Index e = 0; e < mesh.edgeCapacity(); ++e)
-        if (mesh.edgeValid(e))
-            edgeOrder.push_back(e);
-
     double* points;
-    json pointsJson = packed::alloc(pointOrder.size() * 3, points, 3);
+    json pointsJson = packed::alloc(pointOrder.size * 3, points, 3);
     Index* edges;
-    json edgesJson = packed::alloc(edgeOrder.size() * 2, edges);
-    blocks(pointOrder.size(), [&](size_t b, size_t e) {
-        for (size_t k = b; k < e; ++k)
-            std::memcpy(points + k * 3, &mesh.position(pointOrder[k]), sizeof(glm::dvec3));
-    });
-    blocks(faceOrder.size(), [&](size_t b, size_t e) {
+    json edgesJson = packed::alloc(edgeOrder.size * 2, edges);
+    if (pointOrder.ids.empty())
+    {
+        const auto* src = reinterpret_cast<const unsigned char*>(mesh.positions().data());
+        blocks(pointOrder.size, [&](size_t b, size_t e) {
+            std::memcpy(points + b * 3, src + b * sizeof(glm::dvec3), (e - b) * sizeof(glm::dvec3));
+        });
+    }
+    else
+        blocks(pointOrder.size, [&](size_t b, size_t e) {
+            for (size_t k = b; k < e; ++k)
+                std::memcpy(points + k * 3, &mesh.position(pointOrder.ids[k]), sizeof(glm::dvec3));
+        });
+    std::atomic<bool> cornersInOrder = true;
+    blocks(faceOrder.size, [&](size_t b, size_t e) {
+        bool inOrder = true;
         for (size_t k = b; k < e; ++k)
         {
             Index at = cornerStart[k];
@@ -316,22 +380,28 @@ json meshToJsonPacked(const geo::Mesh& mesh)
             mesh.forEachFaceCorner(faceOrder[k], [&](Index c) {
                 if (at == end)
                     return;
-                cornerOrder[at] = c;
-                indices[at++] = pointRemap[mesh.cornerPoint(c)];
+                inOrder = inOrder && c == at;
+                cornerOrder.ids[at] = c;
+                indices[at++] = remap(mesh.cornerPoint(c));
             });
         }
+        if (!inOrder)
+            cornersInOrder = false;
     });
-    blocks(edgeOrder.size(), [&](size_t b, size_t e) {
+    // Corners laid out face after face, as a mesh built in one go has them, copy straight across.
+    if (cornersInOrder && corners == mesh.cornerCapacity())
+        cornerOrder.ids = {};
+    blocks(edgeOrder.size, [&](size_t b, size_t e) {
         for (size_t k = b; k < e; ++k)
         {
-            edges[k * 2] = pointRemap[mesh.edgePoint(edgeOrder[k], 0)];
-            edges[k * 2 + 1] = pointRemap[mesh.edgePoint(edgeOrder[k], 1)];
+            edges[k * 2] = remap(mesh.edgePoint(edgeOrder[k], 0));
+            edges[k * 2 + 1] = remap(mesh.edgePoint(edgeOrder[k], 1));
         }
     });
 
     std::vector<std::pair<const geo::Attribute*, geo::Domain>> layerList;
-    std::vector<const std::vector<Index>*> layerOrder;
-    const std::pair<geo::Domain, const std::vector<Index>*> domains[] = {
+    std::vector<const Order*> layerOrder;
+    const std::pair<geo::Domain, const Order*> domains[] = {
         {geo::Domain::Point, &pointOrder}, {geo::Domain::Edge, &edgeOrder}, {geo::Domain::Face, &faceOrder}, {geo::Domain::Corner, &cornerOrder}};
     for (auto [domain, order] : domains)
     {
@@ -352,9 +422,8 @@ json meshToJsonPacked(const geo::Mesh& mesh)
                           {"data", std::move(layerValues[i])}});
     }
 
-    json out = {{"points", std::move(pointsJson)}, {"faceSizes", packed::make(std::span<const Index>(sizes))},
-                {"faceIndices", std::move(faceIndices)}};
-    if (!edgeOrder.empty())
+    json out = {{"points", std::move(pointsJson)}, {"faceSizes", std::move(sizesJson)}, {"faceIndices", std::move(faceIndices)}};
+    if (edgeOrder.size)
         out["edges"] = std::move(edgesJson);
     if (!layers.empty())
         out["layers"] = std::move(layers);

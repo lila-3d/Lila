@@ -81,9 +81,9 @@ void registerCommands()
                "(kept OpenGL style), double sided, KHR_materials_ior/specular as specular, KHR_texture_transform baked into the UVs, "
                "and KHR_materials_unlit approximated as emissive. Embedded and converted images are written to textureDir. "
                "KHR_mesh_quantization, sparse accessors, EXT_meshopt_compression and KHR_draco_mesh_compression are decoded (a Draco "
-               "primitive that fails to decode falls back to its uncompressed data when the file has it). Lights are reported, not "
-               "imported (Lila has no lights).\n\n"
-               "Returns the new node names, or with report=True a dict of nodes, roots, joints, skinClusters, cameras, morphs, "
+               "primitive that fails to decode falls back to its uncompressed data when the file has it). KHR_lights_punctual "
+               "lights come in as lights, intensity in candela or lux.\n\n"
+               "Returns the new node names, or with report=True a dict of nodes, roots, joints, skinClusters, cameras, lights, morphs, "
                "materials, images, takes, take, fps, start, end, curves, skipped, warnings and errors.",
         .positionalDoc = "path",
         .flags = {{"parent", "p", T::String, nullptr, "Parent the imported roots under this node."},
@@ -129,7 +129,7 @@ void registerCommands()
             if (!a.get<bool>("report", false))
                 return names(g, r.nodes);
             return {{"nodes", names(g, r.nodes)},     {"roots", names(g, r.roots)},   {"joints", names(g, r.joints)},
-                    {"skinClusters", names(g, r.skins)}, {"cameras", names(g, r.cameras)}, {"morphs", names(g, r.morphs)},
+                    {"skinClusters", names(g, r.skins)}, {"cameras", names(g, r.cameras)}, {"lights", names(g, r.lights)}, {"morphs", names(g, r.morphs)},
                     {"materials", r.materials},       {"images", r.images},           {"takes", r.takes},
                     {"take", r.take},                 {"fps", r.fps},                 {"start", r.start},
                     {"end", r.end},                   {"curves", r.curves},           {"generator", r.generator},

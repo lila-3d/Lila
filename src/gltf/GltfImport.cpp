@@ -11,6 +11,7 @@
 #include "scene/Anim.h"
 #include "scene/Camera.h"
 #include "scene/Deformers.h"
+#include "scene/Light.h"
 #include "scene/Graph.h"
 #include "scene/Materials.h"
 #include "scene/MeshNodes.h"
@@ -660,6 +661,30 @@ struct Importer
     void holdRest(const NodeFrame& nf, int path, double time);
 };
 
+/**
+ * A KHR_lights_punctual light. Its intensity is in candela (point, spot) or lux (directional), its cone half angles in
+ * radians and its range in metres; a range of 0 or none means no cutoff.
+ */
+lights::Settings lightSettings(const cgltf_light& l)
+{
+    lights::Settings s;
+    s.kind = l.type == cgltf_light_type_directional ? lights::Kind::Directional
+             : l.type == cgltf_light_type_spot      ? lights::Kind::Spot
+                                                    : lights::Kind::Point;
+    static constexpr const char* kKinds[] = {"point", "directional", "point", "spot"};
+    s.sourceFormat = std::string("gltf:") + kKinds[std::clamp(int(l.type), 0, 3)];
+    s.color = glm::dvec3(l.color[0], l.color[1], l.color[2]);
+    s.intensity = double(l.intensity);
+    s.units = s.kind == lights::Kind::Directional ? lights::Units::Lux : lights::Units::Candela;
+    s.range = l.range > 0.0f ? double(l.range) * kCmPerMetre : 0.0;
+    if (s.kind == lights::Kind::Spot)
+    {
+        s.innerConeAngle = glm::degrees(double(l.spot_inner_cone_angle));
+        s.outerConeAngle = glm::degrees(double(l.spot_outer_cone_angle));
+    }
+    return s;
+}
+
 void Importer::applyCamera(NodeId id, const cgltf_camera& cam)
 {
     auto set = [&](int attr, PlugValue v) { graph.setValue({id, attr, -1}, std::move(v)); };
@@ -754,13 +779,22 @@ void Importer::create(const cgltf_node* gn, NodeId parent)
     const NodeType* cameraType = types::find("camera");
     const bool isJoint = !isMesh && jointType && joints.count(gn);
     const bool isCamera = !isMesh && !isJoint && gn->camera && cameraType;
-    const NodeType& type = isMesh ? *types::find("mesh") : isJoint ? *jointType : isCamera ? *cameraType : *types::find("transform");
+    const NodeType* lightType = types::find("light");
+    const bool isLight = !isMesh && !isJoint && !isCamera && gn->light && lightType;
+    const NodeType& type = isMesh     ? *types::find("mesh")
+                           : isJoint  ? *jointType
+                           : isCamera ? *cameraType
+                           : isLight  ? *lightType
+                                      : *types::find("transform");
     std::string raw = str(gn->name);
     if (raw.empty() && gn->mesh && gn->mesh->name)
         raw = gn->mesh->name;
     if (raw.empty() && gn->camera && gn->camera->name)
         raw = gn->camera->name;
-    Node* n = graph.createNode(type, fbx::safeName(raw, isMesh ? "Mesh" : isJoint ? "joint" : isCamera ? "camera" : "Transform"), parent, false);
+    if (raw.empty() && gn->light && gn->light->name)
+        raw = gn->light->name;
+    Node* n = graph.createNode(type, fbx::safeName(raw, isMesh ? "Mesh" : isJoint ? "joint" : isCamera ? "camera" : isLight ? "light" : "Transform"),
+                               parent, false);
     const NodeId id = n->id();
     r.nodes.push_back(id);
     if (parent == opts.parent)
@@ -769,7 +803,8 @@ void Importer::create(const cgltf_node* gn, NodeId parent)
     NodeFrame& nf = frames[gn];
     nf.id = id;
     nf.joint = isJoint;
-    if (isCamera)
+    // Cameras and lights look down their local -Z in both, so only the axes turn between them.
+    if (isCamera || isLight)
         nf.after = glm::dmat4(F);
     if (auto above = gn->parent ? frames.find(gn->parent) : frames.end(); above != frames.end())
         nf.before = glm::transpose(above->second.after);
@@ -811,11 +846,20 @@ void Importer::create(const cgltf_node* gn, NodeId parent)
         graph.setValue({c->id(), Transform::kRotate, -1}, clean(trs.r));
         applyCamera(c->id(), *gn->camera);
     }
-    if (gn->light)
+    if (isLight)
     {
-        static constexpr const char* kKinds[] = {"", "directional", "point", "spot"};
-        r.skipped.push_back(std::format("KHR_lights_punctual {} light '{}' on {} (Lila has no lights; kept as its transform)",
-                                        kKinds[std::clamp(int(gn->light->type), 0, 3)], str(gn->light->name), n->path()));
+        lights::setSettings(graph, id, lightSettings(*gn->light));
+        r.lights.push_back(id);
+    }
+    else if (gn->light && lightType)
+    {
+        // A light on a mesh, joint or camera node rides along as a child.
+        Node* c = graph.createNode(*lightType, n->name() + "_light", id, false);
+        r.nodes.push_back(c->id());
+        const fbx::Trs trs = fbx::decompose(glm::dmat4(F));
+        graph.setValue({c->id(), Transform::kRotate, -1}, clean(trs.r));
+        lights::setSettings(graph, c->id(), lightSettings(*gn->light));
+        r.lights.push_back(c->id());
     }
     if (gn->mesh && !built)
         r.warnings.push_back(std::format("{}: its mesh has no triangles to import", n->path()));

@@ -4,6 +4,7 @@
 
 #include <lila/Anim.h>
 #include <lila/Deformer.h>
+#include <lila/Lights.h>
 #include <lila/Mesh.h>
 #include <lila/MeshOps.h>
 #include <lila/Node.h>
@@ -22,6 +23,14 @@
 #include <pxr/usd/usd/variantSets.h>
 #include <pxr/usd/usdGeom/basisCurves.h>
 #include <pxr/usd/usdGeom/camera.h>
+#include <pxr/usd/usdLux/diskLight.h>
+#include <pxr/usd/usdLux/distantLight.h>
+#include <pxr/usd/usdLux/domeLight.h>
+#include <pxr/usd/usdLux/lightAPI.h>
+#include <pxr/usd/usdLux/rectLight.h>
+#include <pxr/usd/usdLux/shadowAPI.h>
+#include <pxr/usd/usdLux/shapingAPI.h>
+#include <pxr/usd/usdLux/sphereLight.h>
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/usdGeom/nurbsCurves.h>
@@ -211,14 +220,16 @@ private:
         }
         return false;
     }
-    /** File-space local of a prim, with cameras turned between their Lila and file frames. */
+    /** Cameras and lights, whose look down -Z is turned between their Lila and file frames. */
+    static bool turned(const ExportNode& e) { return e.camera || e.light; }
+    /** File-space local of a prim, with cameras and lights turned between their Lila and file frames. */
     glm::dmat4 fileLocal(size_t i, const glm::dmat4& lila) const
     {
         glm::dmat4 m = axes.matrixToFile(lila);
         const int p = usdParent[i];
-        if (p >= 0 && snap.nodes[size_t(p)].camera)
+        if (p >= 0 && turned(snap.nodes[size_t(p)]))
             m = glm::dmat4(glm::transpose(axes.basis)) * m;
-        if (snap.nodes[i].camera)
+        if (turned(snap.nodes[i]))
             m = m * glm::dmat4(axes.basis);
         return m;
     }
@@ -240,6 +251,7 @@ private:
     void setXform(size_t i, const ExportTake* take, size_t f, UsdTimeCode t);
     void writeMesh(size_t i, const UsdPrim& prim);
     void writeCamera(size_t i, const UsdPrim& prim);
+    UsdPrim defineLight(size_t i, const SdfPath& at);
     void writeCurves(size_t i, const SdfPath& at);
     void writeSkeleton(size_t k);
     void writeSkelRoots();
@@ -441,7 +453,7 @@ void Writer::writeXform(size_t i, const UsdPrim& prim)
                 check(fileLocal(i, usdLocal(i, t, f)));
         }
     o.matrix = sheared;
-    const bool channels = e.plainTrs && usdParent[i] == e.parent && !e.camera && (e.parent < 0 || !snap.nodes[size_t(e.parent)].camera) &&
+    const bool channels = e.plainTrs && usdParent[i] == e.parent && !turned(e) && (e.parent < 0 || !turned(snap.nodes[size_t(e.parent)])) &&
                           nearMatrix(e.pre, glm::dmat4(1.0)) && nearMatrix(e.post, glm::dmat4(1.0));
     o.order = channels ? axes.map.order(e.rotateOrder) : scene::RotateOrder::XYZ;
     if (o.matrix)
@@ -476,7 +488,7 @@ void Writer::setXform(size_t i, const ExportTake* take, size_t f, UsdTimeCode t)
         return;
     }
     glm::dvec3 tr, rot, sc;
-    if (!take && e.plainTrs && o.order == axes.map.order(e.rotateOrder) && usdParent[i] == e.parent && !e.camera)
+    if (!take && e.plainTrs && o.order == axes.map.order(e.rotateOrder) && usdParent[i] == e.parent && !turned(e))
     {
         tr = axes.map.translate(e.translate) / axes.cmPerUnit;
         rot = axes.map.rotate(e.rotate);
@@ -822,6 +834,81 @@ void Writer::writeCamera(size_t i, const UsdPrim& prim)
     setLilaData(prim, "filmFit", VtValue(c.filmFit));
 }
 
+/**
+ * A UsdLux light: points and spots as sphere lights (spots shaped with ShapingAPI), areas as rect lights, discs as
+ * disk lights, directional as distant and dome as dome lights. Lila's own settings go in custom data for a round trip.
+ */
+UsdPrim Writer::defineLight(size_t i, const SdfPath& at)
+{
+    using scene::lights::Kind;
+    const scene::lights::Settings& l = *snap.nodes[i].light;
+    const double perCm = 1.0 / axes.cmPerUnit;
+    UsdPrim prim;
+    switch (l.kind)
+    {
+    case Kind::Point:
+    case Kind::Spot:
+    {
+        UsdLuxSphereLight sphere = UsdLuxSphereLight::Define(stage, at);
+        sphere.CreateRadiusAttr().Set(float(l.sourceRadius * perCm));
+        sphere.CreateTreatAsPointAttr().Set(l.sourceRadius <= 0.0);
+        prim = sphere.GetPrim();
+        if (l.kind == Kind::Spot)
+        {
+            UsdLuxShapingAPI shaping = UsdLuxShapingAPI::Apply(prim);
+            shaping.CreateShapingConeAngleAttr().Set(float(l.outerConeAngle));
+            shaping.CreateShapingConeSoftnessAttr().Set(float(l.outerConeAngle > 0.0 ? 1.0 - l.innerConeAngle / l.outerConeAngle : 0.0));
+        }
+        if (!l.texture.empty())
+            UsdLuxShapingAPI::Apply(prim).CreateShapingIesFileAttr().Set(SdfAssetPath(l.texture));
+        break;
+    }
+    case Kind::Directional: prim = UsdLuxDistantLight::Define(stage, at).GetPrim(); break;
+    case Kind::Area:
+    {
+        UsdLuxRectLight rect = UsdLuxRectLight::Define(stage, at);
+        rect.CreateWidthAttr().Set(float(l.width * perCm));
+        rect.CreateHeightAttr().Set(float(l.height * perCm));
+        prim = rect.GetPrim();
+        break;
+    }
+    case Kind::Disc:
+    {
+        UsdLuxDiskLight disk = UsdLuxDiskLight::Define(stage, at);
+        disk.CreateRadiusAttr().Set(float(l.width * 0.5 * perCm));
+        prim = disk.GetPrim();
+        break;
+    }
+    case Kind::Dome:
+    {
+        UsdLuxDomeLight dome = UsdLuxDomeLight::Define(stage, at);
+        if (!l.texture.empty())
+            dome.CreateTextureFileAttr().Set(SdfAssetPath(l.texture));
+        prim = dome.GetPrim();
+        break;
+    }
+    }
+    UsdLuxLightAPI light(prim);
+    light.CreateIntensityAttr().Set(float(l.intensity));
+    light.CreateColorAttr().Set(GfVec3f(float(l.color.x), float(l.color.y), float(l.color.z)));
+    light.CreateEnableColorTemperatureAttr().Set(l.useTemperature);
+    light.CreateColorTemperatureAttr().Set(float(l.temperature));
+    UsdLuxShadowAPI::Apply(prim).CreateShadowEnableAttr().Set(l.castShadows);
+    const nlohmann::json j = {{"kind", int(l.kind)},
+                              {"units", int(l.units)},
+                              {"intensity", l.intensity},
+                              {"range", l.range * perCm},
+                              {"innerConeAngle", l.innerConeAngle},
+                              {"outerConeAngle", l.outerConeAngle},
+                              {"width", l.width * perCm},
+                              {"height", l.height * perCm},
+                              {"sourceRadius", l.sourceRadius * perCm},
+                              {"texture", l.texture},
+                              {"extra", l.extra}};
+    setLilaData(prim, "light", VtValue(j.dump()));
+    return prim;
+}
+
 void Writer::writeCurves(size_t i, const SdfPath& at)
 {
     const curve::Splines& splines = curve::shapeSplines(g, snap.nodes[i].source);
@@ -941,6 +1028,8 @@ void Writer::writeNode(size_t i)
             prim = UsdGeomMesh::Define(stage, at).GetPrim();
         else if (e.camera)
             prim = UsdGeomCamera::Define(stage, at).GetPrim();
+        else if (e.light)
+            prim = defineLight(i, at);
         else if (isCurve)
         {
             writeCurves(i, at);
@@ -1194,7 +1283,7 @@ void Writer::recordCurves(size_t i)
 {
     using namespace scene;
     const ExportNode& e = snap.nodes[i];
-    if (ops[i].matrix || !e.plainTrs || usdParent[i] != e.parent || e.camera || !g.node(e.source))
+    if (ops[i].matrix || !e.plainTrs || usdParent[i] != e.parent || turned(e) || !g.node(e.source))
         return;
     static constexpr const char* kGroup[3] = {"translate", "rotate", "scale"};
     static constexpr int kAttr[3] = {Transform::kTranslate, Transform::kRotate, Transform::kScale};

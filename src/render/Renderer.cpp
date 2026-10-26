@@ -1911,6 +1911,22 @@ struct Renderer::Impl
         f.staging.clear();
     }
 
+    /** Frees the staging of frames the GPU has finished; true while some frame still holds staging. */
+    bool reclaimStaging()
+    {
+        bool held = false;
+        for (auto& [id, v] : viewports)
+            for (Frame& f : v->frames)
+                if (!f.staging.empty())
+                {
+                    if (vkGetFenceStatus(vk.device, f.fence) == VK_SUCCESS)
+                        freeStaging(f);
+                    else
+                        held = true;
+                }
+        return held;
+    }
+
     // ---------------------------------------------------------------- ambient occlusion
 
     VkDescriptorSet allocateSet(VkDescriptorPool pool, VkDescriptorSetLayout layout)
@@ -3390,22 +3406,28 @@ struct Renderer::Impl
     {
         LILA_THREAD_NAME("Render");
         std::unique_lock lock(mutex);
+        auto ready = [&] {
+            if (quit || !toRemove.empty())
+                return true;
+            // Captures wait out an environment build in flight, so they are lit like the views.
+            if (!offscreenJobs.empty() && !envBusy)
+                return true;
+            if (!tasks.empty())
+                return true;
+            // A viewport with no frame state yet can't draw, and waking for it would spin with the mutex held.
+            for (auto& [id, v] : viewports)
+                if (v->pending && v->hasState)
+                    return true;
+            return false;
+        };
         while (true)
         {
-            cv.wait(lock, [&] {
-                if (quit || !toRemove.empty())
-                    return true;
-                // Captures wait out an environment build in flight, so they are lit like the views.
-                if (!offscreenJobs.empty() && !envBusy)
-                    return true;
-                if (!tasks.empty())
-                    return true;
-                // A viewport with no frame state yet can't draw, and waking for it would spin with the mutex held.
-                for (auto& [id, v] : viewports)
-                    if (v->pending && v->hasState)
-                        return true;
-                return false;
-            });
+            // Big uploads leave big staging buffers, slow to free: they go once the GPU is done with them, while the
+            // thread is idle, instead of in front of the next frame drawn into the same slot.
+            if (reclaimStaging())
+                cv.wait_for(lock, std::chrono::milliseconds(20), ready);
+            else
+                cv.wait(lock, ready);
             if (quit)
                 break;
 

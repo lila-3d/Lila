@@ -53,7 +53,7 @@ def main():
 
     points, gather_s = timed(lambda: gather(meshes))
     print(f"vertices: {len(points):,}")
-    print(f"gather:   {gather_s:.4f} s")
+    print(f"gather:   {gather_s * 1e6:.1f} us")
 
     (mean, cov), numpy_s = timed(lambda: mesh_compute.compute(points))
     print(f"numpy:    {numpy_s:.3f} s  {mesh_compute.checksum(mean, cov)}")

@@ -2,6 +2,7 @@
 
 #include "ops/Command.h"
 #include "ops/Undo.h"
+#include "core/FileBytes.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "core/UninitVector.h"
@@ -11,10 +12,7 @@
 #include "io/SceneFormats.h"
 #include "scene/Graph.h"
 
-#include <tbb/parallel_for.h>
-
 #include <algorithm>
-#include <atomic>
 #include <fstream>
 #include <sstream>
 #include <thread>
@@ -212,35 +210,12 @@ struct NoUndo
 };
 } // namespace
 
-namespace
-{
-/** The whole file, read in slices on several threads at once (each slice under the 2 GB MSVC streams stop at). */
-UninitVector<char> readBytes(const fs::path& path)
-{
-    std::error_code ec;
-    const uintmax_t size = fs::file_size(path, ec);
-    if (ec)
-        throw std::runtime_error("can't open " + path.string());
-    UninitVector<char> bytes(static_cast<size_t>(size));
-    constexpr size_t kSlice = size_t(32) << 20;
-    std::atomic<bool> failed = false;
-    tbb::parallel_for(size_t(0), (bytes.size() + kSlice - 1) / kSlice, [&](size_t k) {
-        std::ifstream in(path, std::ios::binary);
-        const size_t at = k * kSlice;
-        if (!in || !in.seekg(std::streamoff(at)) || !in.read(bytes.data() + at, std::streamsize(std::min(kSlice, bytes.size() - at))))
-            failed = true;
-    });
-    if (failed)
-        throw std::runtime_error("can't read " + path.string());
-    return bytes;
-}
-} // namespace
 
 json readSceneFile(const fs::path& path, std::vector<std::string>* warnings)
 {
     LILA_ZONE();
 
-    UninitVector<char> bytes = readBytes(path);
+    UninitVector<char> bytes = readFileBytes(path);
     const std::string_view text(bytes.data(), bytes.size());
     json doc;
     switch (detectFormat(text))
@@ -262,7 +237,7 @@ json readSceneHeader(const fs::path& path)
 {
     LILA_ZONE();
 
-    const UninitVector<char> bytes = readBytes(path);
+    const UninitVector<char> bytes = readFileBytes(path);
     if (const std::string_view text(bytes.data(), bytes.size()); detectFormat(text) == SceneFormat::Binary)
         return decodeBinaryHeader(text);
     return readSceneFile(path, nullptr);

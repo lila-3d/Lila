@@ -2,8 +2,10 @@
 #include "curve/Dxf.h"
 #include "curve/PlanarNodes.h"
 
+#include "core/FileBytes.h"
 #include "core/Log.h"
 #include "core/Paths.h"
+#include "core/Progress.h"
 #include "io/FileTranslators.h"
 #include "math/MathCore.h"
 #include "ops/Command.h"
@@ -11,10 +13,10 @@
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 
+#include <tbb/parallel_for.h>
+
 #include <algorithm>
-#include <fstream>
 #include <memory>
-#include <sstream>
 
 namespace lila::curve
 {
@@ -38,16 +40,6 @@ glm::dmat4 fileToScene(double scale, const std::string& up, const char* cmd)
     glm::dmat4 m(s);
     m[3][3] = 1.0;
     return m;
-}
-
-std::string readFile(const std::string& path, const char* cmd)
-{
-    std::ifstream in(paths::fromUtf8(path), std::ios::binary);
-    if (!in)
-        throw CommandError(std::string(cmd) + ": cannot read " + path);
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    return ss.str();
 }
 
 std::string nodeName(const std::string& want, const char* fallback) { return Graph::validName(want) ? want : std::string(fallback); }
@@ -106,7 +98,23 @@ void registerImport()
             if (a.positional.empty() || !a.positional[0].is_string())
                 throw CommandError("importDxf: path required");
             std::string path = a.positional[0].get<std::string>();
-            DxfDocument doc = readDxf(readFile(path, "importDxf"));
+            DxfDocument doc;
+            {
+                progress::Scope scope("Importing " + path + "...");
+                progress::runOnWorker([&] {
+                    UninitVector<char> bytes;
+                    try
+                    {
+                        bytes = readFileBytes(paths::fromUtf8(path));
+                    }
+                    catch (const std::runtime_error&)
+                    {
+                        throw CommandError("importDxf: cannot read " + path);
+                    }
+                    doc = readDxf(std::string_view(bytes.data(), bytes.size()));
+                    freeInBackground(std::move(bytes));
+                });
+            }
             if (!doc.ok())
                 throw CommandError("importDxf: " + path + ": " + doc.error);
             for (const std::string& w : doc.warnings)
@@ -129,9 +137,11 @@ void registerImport()
                     if (polylines)
                         s = convert(s, Kind::Poly, tol);
                 }
-                for (geo::Index p = 0; p < l.mesh.pointCapacity(); ++p)
-                    if (l.mesh.pointValid(p))
-                        l.mesh.setPosition(p, glm::dvec3(m * glm::dvec4(l.mesh.position(p), 1.0)));
+                geo::Mesh& mesh = l.mesh;
+                tbb::parallel_for(geo::Index(0), mesh.pointCapacity(), [&](geo::Index p) {
+                    if (mesh.pointValid(p))
+                        mesh.setPosition(p, glm::dvec3(m * glm::dvec4(mesh.position(p), 1.0)));
+                });
             }
 
             Graph& g = Graph::current();
@@ -275,19 +285,29 @@ void registerExport()
                         continue;
                     auto mesh = std::make_unique<geo::Mesh>(*m);
                     const glm::dmat4 w = toFile * n->as<glm::dmat4>(Transform::kWorldMatrix);
-                    for (geo::Index p = 0; p < mesh->pointCapacity(); ++p)
-                        if (mesh->pointValid(p))
-                            mesh->setPosition(p, glm::dvec3(w * glm::dvec4(mesh->position(p), 1.0)));
+                    geo::Mesh& out = *mesh;
+                    tbb::parallel_for(geo::Index(0), out.pointCapacity(), [&](geo::Index p) {
+                        if (out.pointValid(p))
+                            out.setPosition(p, glm::dvec3(w * glm::dvec4(out.position(p), 1.0)));
+                    });
                     objects.push_back({.layer = n->name(), .mesh = mesh.get()});
                     meshes.push_back(std::move(mesh));
                 }
             }
             if (objects.empty())
                 throw CommandError("exportDxf: select curves or meshes to export");
-            std::ofstream out(paths::fromUtf8(path), std::ios::binary);
-            std::string data = writeDxf(objects, o);
-            if (!out || !out.write(data.data(), std::streamsize(data.size())))
-                throw CommandError("exportDxf: cannot write " + path);
+            progress::Scope scope("Exporting " + path + "...");
+            progress::runOnWorker([&] {
+                const std::string data = writeDxf(objects, o);
+                try
+                {
+                    writeFileBytes(paths::fromUtf8(path), data);
+                }
+                catch (const std::runtime_error&)
+                {
+                    throw CommandError("exportDxf: cannot write " + path);
+                }
+            });
             return path;
         },
     });

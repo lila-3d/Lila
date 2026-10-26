@@ -14,6 +14,7 @@
 #include "scene/DisplayLayers.h"
 #include "scene/Graph.h"
 #include "scene/ImagePlane.h"
+#include "scene/Light.h"
 #include "scene/LodGroup.h"
 #include "scene/Instancing.h"
 #include "scene/Materials.h"
@@ -1123,4 +1124,51 @@ TEST_CASE("maya import: a mesh shape parented under a second transform becomes a
     CHECK(contains(r.skipped, "markerShape"));
     CHECK_FALSE(contains(r.skipped, "boxShape"));
     fs::remove(path);
+}
+
+TEST_CASE("maya import: lights")
+{
+    for (const char* file : {"lights.ma", "lights_zup.ma"})
+    {
+        CAPTURE(file);
+        Graph& g = fresh();
+        maya::ImportResult r = load(file);
+        CHECK(r.lights.size() == 5);
+        CHECK(contains(r.skipped, "aiMeshLight"));
+        // The light looks down its local -Z in both apps, so this is where Maya's key light points.
+        auto aim = [&](const std::string& name) {
+            scene::Node* n = node(g, name);
+            for (NodeId c : g.children(n->id()))
+                if (g.node(c)->type().isA("light"))
+                    n = g.node(c);
+            REQUIRE(n->type().isA("light"));
+            const glm::dmat4 w = n->as<glm::dmat4>(Transform::kWorldMatrix);
+            return std::pair(n, glm::normalize(glm::dvec3(w * glm::dvec4(0, 0, -1, 0))));
+        };
+        auto [key, dir] = aim("key");
+        checkVec(dir, math::upAxis() == math::UpAxis::Z ? glm::dvec3(0, 0, -1) : glm::dvec3(0, -1, 0), 1e-9);
+        lights::Settings s = lights::settings(*key);
+        CHECK(s.kind == lights::Kind::Spot);
+        checkVec(s.color, {1, 0.5, 0.25});
+        CHECK(s.intensity == doctest::Approx(4.0)); // exposure 1 doubles it
+        CHECK(s.useTemperature);
+        CHECK(s.temperature == doctest::Approx(3200.0));
+        CHECK(s.outerConeAngle == doctest::Approx(35.0));
+        CHECK(s.innerConeAngle == doctest::Approx(30.0));
+        CHECK(s.sourceFormat == "maya:spotLight");
+        CHECK(s.extra.find("\"decayRate\":2") != std::string::npos);
+
+        lights::Settings bulb = lights::settings(*aim("bulb").first);
+        CHECK(bulb.kind == lights::Kind::Point);
+        CHECK(bulb.sourceRadius == doctest::Approx(4.0));
+        CHECK(bulb.castShadows);
+        CHECK(lights::settings(*aim("sun").first).kind == lights::Kind::Directional);
+        lights::Settings panel = lights::settings(*aim("panel").first);
+        CHECK(panel.kind == lights::Kind::Area);
+        CHECK(panel.width == doctest::Approx(2.0));
+        CHECK(panel.extra.find("\"emitDiffuse\":false") != std::string::npos);
+        lights::Settings sky = lights::settings(*aim("sky").first);
+        CHECK(sky.kind == lights::Kind::Dome);
+        CHECK(sky.intensity == doctest::Approx(0.5));
+    }
 }

@@ -22,6 +22,7 @@
 #include "scene/DisplayLayers.h"
 #include "scene/Graph.h"
 #include "scene/ImagePlane.h"
+#include "scene/Light.h"
 #include "scene/LodGroup.h"
 #include "scene/Instancing.h"
 #include "scene/Materials.h"
@@ -145,6 +146,23 @@ const std::set<std::string_view>& quietTypes()
 bool isLight(std::string_view t)
 {
     return t.ends_with("Light") || t.ends_with("light") || t == "aiSkyDomeLight" || t == "aiMeshLight" || t == "aiPhotometricLight";
+}
+
+/** The Lila kind a Maya or Arnold light shape converts to; nothing for lights Lila has no equivalent of (mesh lights). */
+std::optional<scene::lights::Kind> lightKind(std::string_view t)
+{
+    using scene::lights::Kind;
+    if (t == "pointLight" || t == "volumeLight" || t == "aiPhotometricLight")
+        return Kind::Point;
+    if (t == "spotLight")
+        return Kind::Spot;
+    if (t == "directionalLight")
+        return Kind::Directional;
+    if (t == "areaLight" || t == "aiAreaLight")
+        return Kind::Area;
+    if (t == "ambientLight" || t == "aiSkyDomeLight")
+        return Kind::Dome;
+    return std::nullopt;
 }
 
 struct Plug
@@ -670,7 +688,7 @@ struct Nested
 };
 
 /** Bumped when a conversion would come out differently, so cached .lila files of referenced Maya files are redone. */
-constexpr int kConverterVersion = 4;
+constexpr int kConverterVersion = 5;
 
 /**
  * How a referenced file's node is named relative to its namespace: the bare name when no other node has it, else its
@@ -933,7 +951,7 @@ private:
             return;
         }
 
-        std::vector<int> meshes, locators, cameras, planes, others, kids;
+        std::vector<int> meshes, locators, cameras, planes, lights, others, kids;
         for (int c : mIx.children[size_t(i)])
         {
             const std::string& t = mIx.node(c).type;
@@ -951,6 +969,8 @@ private:
                 cameras.push_back(c);
             else if (t == "imagePlane")
                 planes.push_back(c);
+            else if (lightKind(t) && !isIntermediate(c))
+                lights.push_back(c);
             else
                 others.push_back(c);
         }
@@ -962,11 +982,14 @@ private:
         // child holding the turn between the axes, since both look along fixed local axes.
         const bool cameraXform = !joint && !instanceXform && meshes.empty() && !cameras.empty();
         const bool planeXform = !joint && !instanceXform && meshes.empty() && cameras.empty() && locators.empty() && !planes.empty();
+        const bool lightXform =
+            !joint && !instanceXform && meshes.empty() && cameras.empty() && locators.empty() && planes.empty() && !lights.empty();
         const char* type = joint                               ? "joint"
                            : mn.type == "lodGroup"             ? "lodGroup"
                            : !meshes.empty() || instanceXform ? "mesh"
                            : cameraXform     ? (mIdentityAxes ? "camera" : "transform")
                            : planeXform      ? (mIdentityAxes ? "imagePlane" : "transform")
+                           : lightXform      ? (mIdentityAxes ? "light" : "transform")
                            : !locators.empty() ? "locator"
                                                : "transform";
         scene::Node* n = mG.createNode(*scene::types::find(type), lilaName(mn.name, mOpts.nameSpace, "transform"), parent, false);
@@ -1024,6 +1047,11 @@ private:
             NodeId pid = k == 0 && planeXform && mIdentityAxes ? id : shapeChild("imagePlane", planes[k], id);
             buildPlane(planes[k], i, pid);
             buildFreePlane(planes[k], pid);
+        }
+        for (size_t k = 0; k < lights.size(); ++k)
+        {
+            mHandled.insert(lights[k]);
+            buildLight(lights[k], k == 0 && lightXform && mIdentityAxes ? id : shapeChild("light", lights[k], id));
         }
         for (int o : others)
         {
@@ -1129,6 +1157,63 @@ private:
             mR.warnings.push_back(std::format("{}: camera {} dropped", name, d));
         mCameraNode[shape] = camId;
         mR.cameras.push_back(camId);
+    }
+
+    // ---- lights ---------------------------------------------------------------------------------------------
+
+    /**
+     * Maya and Arnold lights: kind, colour, intensity (with Arnold's exposure folded in), temperature, cone, area size
+     * and shadows. Maya's decay, dropoff and emit flags have no Lila equivalent and are kept in the light's extra JSON.
+     */
+    void buildLight(int shape, NodeId lightId)
+    {
+        namespace lights = scene::lights;
+        const MNode& n = mIx.node(shape);
+        lights::Settings s;
+        s.kind = *lightKind(n.type);
+        s.sourceFormat = "maya:" + n.type;
+        s.color = color(n, {"cl", "color"}, glm::dvec3(1.0));
+        const double exposure = num(n, {"ai_exposure", "aiExposure", "exposure"}, 0.0);
+        s.intensity = num(n, {"in", "intensity"}, 1.0) * std::exp2(exposure);
+        s.useTemperature = num(n, {"ai_use_color_temperature", "aiUseColorTemperature"}, 0.0) != 0.0;
+        s.temperature = num(n, {"ai_color_temperature", "aiColorTemperature"}, 6500.0);
+        s.sourceRadius = num(n, {"ai_radius", "aiRadius", "lr", "lightRadius"}, 0.0) * mU.lin;
+        if (const AttrValue* a = lastAttr(n, {"ai_cast_shadows", "aiCastShadows"}); a && !a->nums.empty())
+            s.castShadows = a->nums[0] != 0.0;
+        else if (lastAttr(n, {"dms", "useDepthMapShadows"}) || lastAttr(n, {"urs", "useRayTraceShadows"}))
+            s.castShadows = num(n, {"dms", "useDepthMapShadows"}, 0.0) != 0.0 || num(n, {"urs", "useRayTraceShadows"}, 0.0) != 0.0;
+        json extra = json::object();
+        if (s.kind == lights::Kind::Spot)
+        {
+            const double half = num(n, {"ca", "coneAngle"}, 40.0) * mU.ang / 2.0;
+            const double penumbra = num(n, {"pa", "penumbraAngle"}, 0.0) * mU.ang;
+            s.outerConeAngle = std::clamp(half + std::max(penumbra, 0.0), 0.0, 90.0);
+            s.innerConeAngle = std::clamp(half + std::min(penumbra, 0.0), 0.0, s.outerConeAngle);
+            extra["dropoff"] = num(n, {"dro", "dropoff"}, 0.0);
+        }
+        if (s.kind == lights::Kind::Area)
+            s.width = s.height = 2.0 * mU.lin; // Maya's area lights are 2 units square before their transform's scale
+        if (n.type == "aiSkyDomeLight")
+            if (std::optional<Plug> tex = mIx.input(shape, {"cl", "color", "sc"}); tex && mIx.node(tex->node).type == "file")
+            {
+                mHandled.insert(tex->node);
+                s.texture = resolveImage(text(mIx.node(tex->node), {"ftn", "fileTextureName"}), mG.node(lightId)->path());
+            }
+        if (n.type == "aiPhotometricLight")
+            s.texture = resolveImage(text(n, {"ai_filename", "aiFilename"}), mG.node(lightId)->path());
+        if (const AttrValue* a = lastAttr(n, {"de", "decayRate"}); a && !a->nums.empty())
+            extra["decayRate"] = a->nums[0];
+        for (auto [shortName, longName] : {std::pair("ed", "emitDiffuse"), std::pair("sn", "emitSpecular")})
+            if (const AttrValue* a = lastAttr(n, {shortName, longName}); a && !a->nums.empty())
+                extra[longName] = a->nums[0] != 0.0;
+        if (exposure != 0.0)
+            extra["exposure"] = exposure;
+        if (!extra.empty())
+            s.extra = extra.dump();
+        lights::setSettings(mG, lightId, s);
+        if (num(n, {"v", "visibility"}, 1.0) == 0.0)
+            mG.setValue({lightId, scene::Transform::kVisibility, -1}, false);
+        mR.lights.push_back(lightId);
     }
 
     /** An image file as Lila stores it, looked for where Maya projects keep them when the stored path is gone. */
