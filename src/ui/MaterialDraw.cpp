@@ -36,8 +36,8 @@ glm::vec2 boilOffset(double seconds, double fps)
 render::MaterialStyle style(const scene::Node& n)
 {
     render::MaterialStyle s;
-    s.model = render::ShadingModel(std::clamp<int64_t>(n.as<int64_t>(kShadingModel), 0, 3));
-    if (s.model == render::ShadingModel::DefaultLit)
+    s.model = render::ShadingModel(std::clamp<int64_t>(n.as<int64_t>(kShadingModel), 0, 4));
+    if (s.model == render::ShadingModel::DefaultLit || s.model == render::ShadingModel::Unlit)
         return s;
     s.painterlyStrength = num(n, kPainterlyStrength);
     s.strokeNormal = num(n, kStrokeNormal);
@@ -105,6 +105,27 @@ void applyTextureSet(const scene::Node& n, render::Material& m)
     }
 }
 
+/** render::Material::sampling bits of one map. */
+uint32_t samplingBits(const scene::Node& n, int mapAttr)
+{
+    const TextureSampling s = scene::materials::sampling(n, mapAttr);
+    return uint32_t(s.wrapU) | uint32_t(s.wrapV) << 2 | (s.filter == TextureFilter::Nearest ? 16u : 0u);
+}
+
+/** The sampling of the four viewport maps; the packed map follows the first separate map set when there is no ORM map. */
+uint32_t samplingOf(const scene::Node& n)
+{
+    int orm = kOrmMap;
+    if (str(n, kOrmMap).empty())
+        for (int a : {kAmbientOcclusionMap, kRoughnessMap, kMetallicMap})
+            if (!str(n, a).empty())
+            {
+                orm = a;
+                break;
+            }
+    return samplingBits(n, kBaseColorMap) | samplingBits(n, kNormalMap) << 8 | samplingBits(n, orm) << 16 | samplingBits(n, kEmissiveMap) << 24;
+}
+
 render::Material convert(const scene::Node& n)
 {
     render::Material m;
@@ -115,6 +136,7 @@ render::Material convert(const scene::Node& n)
     m.opacity = num(n, kOpacity);
     m.opacityClip = num(n, kOpacityMaskClip);
     m.flags = 0;
+    m.sampling = samplingOf(n);
 
     if ((m.baseColorMap = textures::get(file(n, kBaseColorMap), true, true)))
         m.flags |= render::MatBaseColorMap;

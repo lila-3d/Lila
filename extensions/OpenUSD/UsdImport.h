@@ -15,6 +15,16 @@
 #include <unordered_map>
 #include <vector>
 
+namespace lila::geo
+{
+class Mesh;
+}
+
+namespace lila::scene
+{
+struct MeshCacheSamples;
+}
+
 namespace lila::usd
 {
 struct ImportOptions
@@ -67,6 +77,8 @@ struct ImportResult
     std::vector<scene::NodeId> cameras;
     std::vector<scene::NodeId> lights;
     std::vector<scene::NodeId> curves;
+    /** meshCache deformers made for meshes with time-sampled points. */
+    std::vector<scene::NodeId> meshCaches;
     std::vector<std::string> materials;
     std::vector<std::string> skipped;
     std::vector<std::string> warnings;
@@ -158,6 +170,8 @@ struct Importer
     scene::PlugRef basePlug(scene::NodeId mesh);
     /** Meshes shared between instances of one prototype prim. */
     std::unordered_map<pxr::SdfPath, scene::MeshPtr, pxr::SdfPath::Hash> meshCache;
+    /** The point cache samples read for each rest mesh, shared by the instances of a prototype. */
+    std::unordered_map<const geo::Mesh*, std::shared_ptr<const scene::MeshCacheSamples>> pointCaches;
     /** Lila point per USD point of each mesh prim built, kInvalid for dropped ones. */
     std::unordered_map<pxr::SdfPath, std::vector<uint32_t>, pxr::SdfPath::Hash> pointMaps;
 

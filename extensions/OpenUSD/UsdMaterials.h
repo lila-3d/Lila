@@ -4,9 +4,12 @@
 
 #include <lila/Graph.h>
 
+#include <pxr/base/gf/vec4f.h>
 #include <pxr/usd/usd/stage.h>
 #include <pxr/usd/usdShade/material.h>
+#include <pxr/usd/usdShade/shader.h>
 
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -17,8 +20,10 @@
  * reading its UV set through one UsdPrimvarReader_float2, packed ORM/MRO maps as one texture feeding occlusion,
  * roughness and metallic from its channels, DirectX normal maps as a texture with a negative green scale (USD's normal
  * input is OpenGL style), emissive intensity as the emissive texture's scale and masked opacity from the base color
- * texture's alpha. Settings with no UsdPreviewSurface input (blend mode, two-sided, the stylised models) also go in the
- * material's "lila" customData.
+ * texture's alpha. Each texture's wrap goes in its wrapS and wrapT, nearest filtering in Hydra's magFilter and minFilter.
+ * Unlit materials write their base color as emission over a black surface that reflects nothing; on import that (marked
+ * by Lila) and MaterialX's ND_surface_unlit become unlit materials. Settings with no UsdPreviewSurface input (blend mode,
+ * two-sided, the stylised models) also go in the material's "lila" customData.
  */
 namespace lila::usd
 {
@@ -53,6 +58,10 @@ public:
 
 private:
     std::string assetPath(const std::string& lilaPath);
+    /** The surface of an unlit material: its base color as emission over a black surface that reflects nothing. */
+    pxr::UsdShadeMaterial writeUnlit(const pxr::UsdShadeMaterial& m, pxr::UsdShadeShader surface, const scene::Node& n,
+                                     const std::string& slot,
+                                     const std::function<pxr::UsdShadeShader(const std::string&, pxr::GfVec4f)>& texture);
 
     scene::Graph& mGraph;
     pxr::UsdStagePtr mStage;
@@ -85,6 +94,8 @@ public:
 
 private:
     std::string texturePath(const pxr::UsdShadeShader& tex, const std::string& material);
+    /** Fills an unlit material from MaterialX's ND_surface_unlit. */
+    void readMtlxUnlit(const pxr::UsdShadeShader& surface, scene::NodeId id, const std::string& name);
 
     scene::Graph& mGraph;
     fs::path mFile;

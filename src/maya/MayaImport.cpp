@@ -1826,8 +1826,8 @@ private:
         return name;
     }
 
-    /** The file texture feeding a material input, or empty. Reports inputs from anything else. */
-    std::string textureInput(int mat, Names names, const std::string& matName, bool* bumpOnly = nullptr)
+    /** The file texture feeding a material input, or empty. Reports inputs from anything else. fileNode gets the file node. */
+    std::string textureInput(int mat, Names names, const std::string& matName, bool* bumpOnly = nullptr, int* fileNode = nullptr)
     {
         auto src = mIx.input(mat, names);
         if (!src)
@@ -1857,8 +1857,31 @@ private:
         }
         if (auto uv = mIx.input(s, {"uvc", "uvCoord"}))
             mHandled.insert(uv->node);
+        if (fileNode)
+            *fileNode = s;
         std::string path = text(mIx.node(s), {"ftn", "fileTextureName", "filename"});
         return resolveTexture(path);
+    }
+
+    /** A file node's wrap and filter: wrap and mirror from its place2dTexture (or itself), filter type Off as nearest. */
+    scene::material::TextureSampling fileSampling(int file)
+    {
+        using namespace scene::material;
+        const MNode& f = mIx.node(file);
+        const auto place = mIx.input(file, {"uv", "uvc", "uvCoord"});
+        const MNode& p = place ? mIx.node(place->node) : f;
+        TextureSampling s;
+        if (num(p, {"mu", "mirrorU"}, 0.0) != 0.0)
+            s.wrapU = TextureWrap::Mirror;
+        else if (num(p, {"wu", "wrapU"}, 1.0) == 0.0)
+            s.wrapU = TextureWrap::Black;
+        if (num(p, {"mv", "mirrorV"}, 0.0) != 0.0)
+            s.wrapV = TextureWrap::Mirror;
+        else if (num(p, {"wv", "wrapV"}, 1.0) == 0.0)
+            s.wrapV = TextureWrap::Black;
+        if (num(f, {"ft", "filterType"}, 1.0) == 0.0)
+            s.filter = TextureFilter::Nearest;
+        return s;
     }
 
     std::string resolveTexture(std::string path) const
@@ -1902,8 +1925,13 @@ private:
         const NodeId id = m->id();
         auto set = [&](int attr, PlugValue v) { mG.setValue({id, attr, -1}, std::move(v)); };
         auto map = [&](int attr, Names names) {
-            if (std::string p = textureInput(mat, names, name); !p.empty())
+            int file = -1;
+            if (std::string p = textureInput(mat, names, name, nullptr, &file); !p.empty())
+            {
                 set(attr, p);
+                if (file >= 0)
+                    materials::setSampling(mG, id, attr, fileSampling(file));
+            }
         };
         auto opacityFrom = [&](double opacity) {
             if (opacity < 0.999)
@@ -1971,6 +1999,20 @@ private:
             map(material::kRoughnessMap, {"sr", "specularRoughness"});
             map(material::kEmissiveMap, {"ec", "emissionColor"});
             map(material::kNormalMap, {"n", "normalCamera"});
+        }
+        else if (t == "surfaceShader")
+        {
+            // Maya's surface shader shows its color with no lighting.
+            set(material::kShadingModel, int64_t(material::ShadingModel::Unlit));
+            set(material::kBaseColor, color(n, {"oc", "outColor"}, glm::dvec3(0.0)));
+            map(material::kBaseColorMap, {"oc", "outColor"});
+            opacityFrom(1.0 - avg(color(n, {"ot", "outTransparency"}, glm::dvec3(0.0))));
+        }
+        else if (t == "aiFlat")
+        {
+            set(material::kShadingModel, int64_t(material::ShadingModel::Unlit));
+            set(material::kBaseColor, color(n, {"color"}, glm::dvec3(1.0)));
+            map(material::kBaseColorMap, {"color"});
         }
         else if (t == "usdPreviewSurface")
         {

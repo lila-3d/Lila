@@ -15,6 +15,7 @@
 #include "scene/Graph.h"
 #include "scene/LodGroup.h"
 #include "scene/Instancing.h"
+#include "scene/MeshCache.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "scene/Morphs.h"
@@ -1708,10 +1709,20 @@ std::optional<ExportTake> Gather::sampleRange(const std::string& name, double st
     for (const auto& [i, bs] : morphed)
         take.morphWeights[i].assign(out.nodes[i].morphs->targets.size(), {});
     take.namedCurves.assign(curveSources.size(), {});
+    // Meshes a meshCache drives, unless a skin or morphs already carry their motion.
+    std::vector<size_t> cached;
+    for (size_t i = 0; i < count; ++i)
+        if (const ExportNode& e = out.nodes[i]; e.mesh && !e.skin && !e.morphs && scene::meshCache::find(graph, e.source) != scene::kNoNode)
+            cached.push_back(i);
+    take.meshPoints.assign(count, {});
     for (double t : take.times)
     {
         graph.setTime(t);
         graph.evaluate();
+        for (size_t i : cached)
+            if (const scene::MeshPtr m = scene::modifiers::exportMesh(graph, scene::instancing::root(graph, out.nodes[i].source));
+                m && m->pointCapacity() == out.nodes[i].mesh->pointCapacity())
+                take.meshPoints[i].emplace_back(m->positions().begin(), m->positions().end());
         for (size_t i = 0; i < count; ++i)
         {
             if (sampled[i])
@@ -1747,6 +1758,12 @@ std::optional<ExportTake> Gather::sampleRange(const std::string& name, double st
     }
     graph.setTime(saved);
     graph.evaluate();
+    for (size_t i : cached)
+        if (take.meshPoints[i].size() != take.times.size())
+        {
+            out.warnings.push_back(std::format("{}: its point count changes over the range; its point cache is not exported", out.nodes[i].name));
+            take.meshPoints[i].clear();
+        }
     for (const auto& [i, bs] : morphed)
     {
         auto& perTarget = take.morphWeights[i];
@@ -1768,7 +1785,7 @@ std::optional<ExportTake> Gather::sampleRange(const std::string& name, double st
         auto& cams = take.cameras[i];
         if (std::all_of(cams.begin(), cams.end(), [&](const ExportCamera& c) { return c == *out.nodes[i].camera; }))
             cams.clear();
-        animated = animated || !samples.empty() || take.curves[i] || !take.morphWeights[i].empty() || !cams.empty();
+        animated = animated || !samples.empty() || take.curves[i] || !take.morphWeights[i].empty() || !cams.empty() || !take.meshPoints[i].empty();
     }
     animated = animated || !curveSources.empty();
     if (animated || keep || opts.kind == ExportKind::Animation)

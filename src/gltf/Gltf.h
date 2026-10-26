@@ -3,11 +3,13 @@
 #include "core/Export.h"
 
 #include "fbx/Fbx.h"
+#include "scene/Materials.h"
 #include "scene/Plug.h"
 
 #include <glm/glm.hpp>
 
 #include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -135,6 +137,14 @@ struct MaterialSnapshot
     bool twoSided = false;
     int uvSet = 0;
     int shadingModel = 0;
+    /** How each map samples, by its material attr (scene::material::kBaseColorMap, ...); a missing entry is the default. */
+    std::map<int, scene::material::TextureSampling> sampling;
+
+    scene::material::TextureSampling samplingOf(int mapAttr) const
+    {
+        auto it = sampling.find(mapAttr);
+        return it == sampling.end() ? scene::material::TextureSampling{} : it->second;
+    }
 };
 
 /** What an export needs, taken on the main thread. */

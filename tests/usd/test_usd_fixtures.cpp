@@ -8,6 +8,7 @@
 #include "geo/ColorSets.h"
 #include "scene/Anim.h"
 #include "scene/Camera.h"
+#include "scene/MeshCache.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -180,6 +181,77 @@ TEST_CASE("usd fixture: UsdPreviewSurface materials, packed maps and collection 
     CHECK(leaf->as<int64_t>(material::kUvSet) == 1);
     CHECK(leaf->as<bool>(material::kTwoSided));
     CHECK(listed(r["warnings"], "UsdTransform2d"));
+
+    // Texture wrap and filter.
+    const material::TextureSampling albedo = materials::sampling(*leaf, material::kBaseColorMap);
+    CHECK(albedo.wrapU == material::TextureWrap::Clamp);
+    CHECK(albedo.wrapV == material::TextureWrap::Mirror);
+    CHECK(albedo.filter == material::TextureFilter::Linear);
+    const material::TextureSampling normal = materials::sampling(*leaf, material::kNormalMap);
+    CHECK(normal.wrapU == material::TextureWrap::Black);
+    CHECK(normal.wrapV == material::TextureWrap::Repeat);
+    CHECK(normal.filter == material::TextureFilter::Nearest);
+    CHECK(materials::sampling(*leaf, material::kOrmMap).isDefault());
+
+    // MaterialX's unlit surface, textured and plain.
+    Node* sky = materials::find(graph(), "Sky");
+    REQUIRE(sky);
+    CHECK(sky->as<int64_t>(material::kShadingModel) == int64_t(material::ShadingModel::Unlit));
+    CHECK(sky->as<std::string>(material::kBaseColorMap).ends_with("tex/leaf_albedo.png"));
+    const material::TextureSampling skyMap = materials::sampling(*sky, material::kBaseColorMap);
+    CHECK(skyMap.wrapU == material::TextureWrap::Clamp);
+    CHECK(skyMap.wrapV == material::TextureWrap::Repeat);
+    CHECK(skyMap.filter == material::TextureFilter::Nearest);
+    CHECK(sky->as<int64_t>(material::kBlendMode) == int64_t(material::BlendMode::Translucent));
+    CHECK(sky->as<double>(material::kOpacity) == doctest::Approx(0.5));
+    Node* neon = materials::find(graph(), "Neon");
+    REQUIRE(neon);
+    CHECK(neon->as<int64_t>(material::kShadingModel) == int64_t(material::ShadingModel::Unlit));
+    CHECK(near(neon->as<glm::dvec3>(material::kBaseColor), {0.5, 1.0, 0.0}, 1e-6));
+}
+
+TEST_CASE("usd fixture: time-sampled points become a mesh cache; changing topology stays at rest")
+{
+    UpAxisScope axis(math::UpAxis::Z);
+    json r = importFixture("pointcache.usda");
+    INFO(r.dump());
+    REQUIRE(r["meshCaches"].size() == 1);
+    CHECK(listed(r["warnings"], "/World/Growing: the topology changes over time"));
+    CHECK(!listed(r["warnings"], "/World/Flag"));
+    const NodeId flag = node("Flag").id();
+    const NodeId cache = meshCache::find(graph(), flag);
+    REQUIRE(cache != kNoNode);
+    CHECK(graph().node(cache)->name() == r["meshCaches"][0].get<std::string>());
+    CHECK(meshCache::find(graph(), node("Growing").id()) == kNoNode);
+    const auto samples = meshCache::samples(graph(), cache);
+    REQUIRE(samples);
+    CHECK(samples->sampleCount() == 3);
+    CHECK(samples->times.back() == doctest::Approx(1.0));
+
+    auto corner = [&](double t) {
+        graph().setTime(t);
+        MeshPtr m = outMesh("Flag");
+        REQUIRE(m);
+        glm::dvec3 hi(-1e9);
+        for (const glm::dvec3& p : m->positions())
+            hi = glm::max(hi, p);
+        return hi;
+    };
+    CHECK(corner(0.0).z == doctest::Approx(0.0));
+    CHECK(corner(0.5).z == doctest::Approx(4.0));
+    CHECK(corner(0.75).z == doctest::Approx(6.0));
+    CHECK(corner(1.0).z == doctest::Approx(8.0));
+    // Normals follow the moving points.
+    graph().setTime(1.0);
+    MeshPtr m = outMesh("Flag");
+    auto normals = m->cornerAttrs().get<glm::vec3>(geo::attr::kNormal);
+    REQUIRE(!normals.empty());
+    CHECK(normals[0].x == doctest::Approx(-0.625).epsilon(0.01));
+    graph().setTime(0.0);
+    CHECK(r["end"].get<double>() == doctest::Approx(1.0));
+
+    run("undo");
+    CHECK(!graph().find("Flag"));
 }
 
 TEST_CASE("usd fixture: cameras, hidden and guide prims, holes, creases, primvars, and what is reported")

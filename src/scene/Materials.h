@@ -5,6 +5,7 @@
 #include "scene/Node.h"
 
 #include <array>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -95,7 +96,9 @@ enum Attr
     kFoliageTopHighlight,
     kFoliageTranslucency,
     kFoliageWrap,
-    kCount
+    // Per-texture sampling: wrapU, wrapV and filter for each of materials::sampledMaps(), in that order.
+    kTextureSampling,
+    kCount = kTextureSampling + 7 * 3
 };
 
 /** The viewport (and Unreal master material) lighting model; DefaultLit is Unreal's default lit. */
@@ -105,6 +108,7 @@ enum class ShadingModel
     Painterly,
     Toon,
     Foliage,
+    Unlit, // base color (plus emissive) as is, no lighting: Unreal's Unlit, glTF's KHR_materials_unlit
 };
 
 /** Where Painterly stroke sheets are projected. */
@@ -134,6 +138,32 @@ enum class PackedLayout
     ORM,
     MRO,
 };
+
+/** What a texture shows outside 0..1 along one axis. Black is a transparent black border (USD's "black"). */
+enum class TextureWrap
+{
+    Repeat,
+    Clamp,
+    Mirror,
+    Black,
+};
+
+enum class TextureFilter
+{
+    Linear, // trilinear, mipmapped
+    Nearest,
+};
+
+/** How one texture of a material is sampled. */
+struct TextureSampling
+{
+    TextureWrap wrapU = TextureWrap::Repeat;
+    TextureWrap wrapV = TextureWrap::Repeat;
+    TextureFilter filter = TextureFilter::Linear;
+
+    bool operator==(const TextureSampling&) const = default;
+    bool isDefault() const { return *this == TextureSampling{}; }
+};
 } // namespace material
 
 namespace materials
@@ -153,6 +183,17 @@ LILA_SCENE_API std::array<int, 3> packedChannels(material::PackedLayout layout);
 
 /** Texture channel names for setMaterialTexture ("baseColor", "normal", "orm", ...) and their attrs. */
 LILA_SCENE_API const std::vector<std::pair<std::string, int>>& textureChannels();
+
+/** The map attrs with sampling settings: base color, metallic, roughness, normal, occlusion, packed and emissive. */
+LILA_SCENE_API std::span<const int> sampledMaps();
+/** The first of a map attr's three sampling attrs (wrapU, wrapV, filter), or -1 for an attr without them. */
+LILA_SCENE_API int samplingAttr(int mapAttr);
+/** How a material samples one of its maps; the default for an attr without sampling settings. */
+LILA_SCENE_API material::TextureSampling sampling(const Node& material, int mapAttr);
+/** Sets a map's sampling, touching only the attrs that change. Undoable. */
+LILA_SCENE_API void setSampling(Graph& g, NodeId material, int mapAttr, const material::TextureSampling& s);
+/** "repeat", "clamp", "mirror" or "black". */
+LILA_SCENE_API const char* wrapName(material::TextureWrap w);
 
 /** The stroke sheets shipped in resources/strokes, by file stem; a material's strokeMap may name one instead of a path. */
 LILA_SCENE_API std::vector<std::string> builtinStrokeSheets();

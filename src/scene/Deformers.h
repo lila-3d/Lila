@@ -119,6 +119,8 @@ struct DeformerSpec
     std::function<std::unique_ptr<DeformerNode>()> make;
     /** Attr names older scene files may hold that mean nothing now (NodeType::retiredAttrs). */
     std::vector<std::string> retired;
+    /** Recomputed whenever the scene time changes (NodeType::timeDependent); compute's EvalContext has the time. */
+    bool timeDependent = false;
 };
 
 /** Throws std::invalid_argument when the name is taken. */

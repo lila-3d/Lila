@@ -4,4 +4,5 @@
 #include "scene/Modifiers.h"
 #include "scene/Deformers.h"
 #include "scene/Drivers.h"
+#include "scene/MeshCache.h"
 #include "scene/Morphs.h"

@@ -7,6 +7,7 @@ static const uint kDefaultLit = 0;
 static const uint kPainterly = 1;
 static const uint kToon = 2;
 static const uint kFoliage = 3;
+static const uint kUnlit = 4;
 
 static const uint kMapObject = 0;
 static const uint kMapWorld = 1;

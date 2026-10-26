@@ -233,6 +233,11 @@ struct ExportTake
     std::vector<std::vector<std::vector<double>>> morphWeights;
     /** [curve][frame] values of ExportScene::curveNames. */
     std::vector<std::vector<double>> namedCurves;
+    /**
+     * [node][frame] points of a mesh a meshCache drives, laid out like its ExportNode::mesh; empty for other nodes. FBX
+     * leaves them out; USD writes them as the points' time samples.
+     */
+    std::vector<std::vector<std::vector<glm::dvec3>>> meshPoints;
 };
 
 /** What an export needs from the scene, taken on the main thread so the file can be written anywhere. */
