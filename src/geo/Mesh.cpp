@@ -1,11 +1,15 @@
 #include "geo/Mesh.h"
 
 #include "core/Profile.h"
+#include "core/UninitVector.h"
 
 #include <tbb/blocked_range.h>
+#include <tbb/parallel_for.h>
 #include <tbb/parallel_reduce.h>
+#include <tbb/parallel_scan.h>
 
 #include <algorithm>
+#include <atomic>
 #include <format>
 
 namespace lila::geo
@@ -26,6 +30,51 @@ bool hasRepeats(std::span<const Index> pts)
     std::vector<Index> sorted(pts.begin(), pts.end());
     std::sort(sorted.begin(), sorted.end());
     return std::adjacent_find(sorted.begin(), sorted.end()) != sorted.end();
+}
+
+/** Exclusive prefix sum of v in place; returns the total. */
+template <class Vec>
+Index exclusiveScan(Vec& v)
+{
+    return tbb::parallel_scan(
+        tbb::blocked_range<size_t>(0, v.size(), 1 << 16), Index(0),
+        [&](const tbb::blocked_range<size_t>& r, Index sum, bool final) {
+            for (size_t i = r.begin(); i < r.end(); ++i)
+            {
+                const Index x = v[i];
+                if (final)
+                    v[i] = sum;
+                sum += x;
+            }
+            return sum;
+        },
+        std::plus<Index>());
+}
+
+/**
+ * item(i) for i in 0..n-1, grouped by key(i) (kInvalid drops it): group k is the returned [offsets[k], offsets[k + 1]),
+ * sorted.
+ */
+template <class Key, class Item>
+auto bucketBy(size_t n, size_t keys, Key key, Item item, std::vector<Index>& offsets)
+{
+    using T = decltype(item(size_t(0)));
+    std::vector<std::atomic<Index>> counts(keys + 1);
+    tbb::parallel_for(size_t(0), n, [&](size_t i) {
+        if (const Index k = key(i); k != kInvalid)
+            counts[k].fetch_add(1, std::memory_order_relaxed);
+    });
+    offsets.resize(keys + 1);
+    tbb::parallel_for(size_t(0), keys + 1, [&](size_t k) { offsets[k] = counts[k].load(std::memory_order_relaxed); });
+    exclusiveScan(offsets);
+    tbb::parallel_for(size_t(0), keys + 1, [&](size_t k) { counts[k].store(offsets[k], std::memory_order_relaxed); });
+    UninitVector<T> items(offsets[keys]);
+    tbb::parallel_for(size_t(0), n, [&](size_t i) {
+        if (const Index k = key(i); k != kInvalid)
+            items[counts[k].fetch_add(1, std::memory_order_relaxed)] = item(i);
+    });
+    tbb::parallel_for(size_t(0), keys, [&](size_t k) { std::sort(items.begin() + offsets[k], items.begin() + offsets[k + 1]); });
+    return items;
 }
 } // namespace
 
@@ -675,15 +724,15 @@ void Mesh::compact(MeshRemap* remap)
 
     auto mapIdx = [](const std::vector<Index>& m, Index i) { return i == kInvalid ? kInvalid : m[i]; };
 
-    std::vector<glm::dvec3> pos(pOld.size());
-    std::vector<Index> pEdge(pOld.size());
+    UninitVector<glm::dvec3> pos(pOld.size());
+    UninitVector<Index> pEdge(pOld.size());
     for (size_t i = 0; i < pOld.size(); ++i)
     {
         pos[i] = mPointPos[pOld[i]];
         pEdge[i] = mapIdx(r.edges, mPointEdge[pOld[i]]);
     }
 
-    std::vector<Edge> edges(eOld.size());
+    UninitVector<Edge> edges(eOld.size());
     for (size_t i = 0; i < eOld.size(); ++i)
     {
         const Edge& o = mEdges[eOld[i]];
@@ -697,8 +746,8 @@ void Mesh::compact(MeshRemap* remap)
         n.corner = mapIdx(r.corners, o.corner);
     }
 
-    std::vector<Face> faces(fOld.size());
-    std::vector<Corner> corners(cOld.size());
+    UninitVector<Face> faces(fOld.size());
+    UninitVector<Corner> corners(cOld.size());
     for (size_t i = 0; i < fOld.size(); ++i)
         faces[i] = {r.corners[mFaces[fOld[i]].corner], mFaces[fOld[i]].size};
     for (size_t i = 0; i < cOld.size(); ++i)
@@ -943,17 +992,127 @@ Mesh Mesh::fromPolygons(std::span<const glm::dvec3> points, std::span<const Inde
     LILA_ZONE();
 
     Mesh m;
-    m.reserve(points.size(), faceIndices.size(), faceSizes.size(), faceIndices.size());
-    for (const glm::dvec3& p : points)
-        m.addPoint(p);
-    size_t at = 0;
-    for (Index n : faceSizes)
+    if (faceIndices.size() < (size_t(1) << 16))
     {
-        if (at + n > faceIndices.size())
-            break;
-        m.addFace(faceIndices.subspan(at, n));
-        at += n;
+        m.reserve(points.size(), faceIndices.size(), faceSizes.size(), faceIndices.size());
+        for (const glm::dvec3& p : points)
+            m.addPoint(p);
+        size_t at = 0;
+        for (Index n : faceSizes)
+        {
+            if (at + n > faceIndices.size())
+                break;
+            m.addFace(faceIndices.subspan(at, n));
+            at += n;
+        }
+        return m;
     }
+
+    // The mesh addFace builds face by face, ids and disk and radial order included, built in parallel.
+    UninitVector<Index> inStart(faceSizes.size());
+    size_t inFaces = 0;
+    for (size_t at = 0; inFaces < faceSizes.size() && at + faceSizes[inFaces] <= faceIndices.size(); ++inFaces)
+    {
+        inStart[inFaces] = Index(at);
+        at += faceSizes[inFaces];
+    }
+    inStart.resize(inFaces);
+    const Index numPoints = Index(points.size());
+    UninitVector<char> valid(inFaces);
+    UninitVector<Index> faceOf(inFaces), cornerOf(inFaces);
+    tbb::parallel_for(size_t(0), inFaces, [&](size_t f) {
+        const std::span<const Index> pts = faceIndices.subspan(inStart[f], faceSizes[f]);
+        valid[f] = pts.size() >= 3 && std::ranges::all_of(pts, [&](Index p) { return p < numPoints; }) && !hasRepeats(pts);
+        faceOf[f] = valid[f] ? 1 : 0;
+        cornerOf[f] = valid[f] ? Index(pts.size()) : 0;
+    });
+    const Index numFaces = exclusiveScan(faceOf);
+    const Index numCorners = exclusiveScan(cornerOf);
+
+    m.mPointPos.resize(numPoints);
+    m.mPointEdge.resize(numPoints);
+    m.mPointDead.resize(numPoints);
+    tbb::parallel_for(Index(0), numPoints, [&](Index p) {
+        m.mPointPos[p] = points[p];
+        m.mPointEdge[p] = kInvalid;
+        m.mPointDead[p] = 0;
+    });
+    m.mFaces.resize(numFaces);
+    m.mCorners.resize(numCorners);
+    tbb::parallel_for(size_t(0), inFaces, [&](size_t f) {
+        if (!valid[f])
+            return;
+        const Index n = faceSizes[f], face = faceOf[f], first = cornerOf[f];
+        m.mFaces[face] = {first, n};
+        for (Index i = 0; i < n; ++i)
+            m.mCorners[first + i] = {faceIndices[inStart[f] + i], kInvalid, face, first + (i + 1) % n, first + (i + n - 1) % n,
+                                     kInvalid, kInvalid};
+    });
+
+    // Corners on one edge, grouped under the edge's lower point and sorted by (higher point, corner): the first corner
+    // of each run makes the edge.
+    std::vector<Index> lowStart;
+    const auto byLow = bucketBy(
+        numCorners, numPoints, [&](size_t c) { return std::min(m.mCorners[c].point, m.mCorners[m.mCorners[c].next].point); },
+        [&](size_t c) { return uint64_t(std::max(m.mCorners[c].point, m.mCorners[m.mCorners[c].next].point)) << 32 | c; }, lowStart);
+    auto forEachEdgeGroup = [&](Index p, auto&& fn) {
+        for (Index i = lowStart[p], end = lowStart[p + 1]; i < end;)
+        {
+            Index j = i + 1;
+            while (j < end && byLow[j] >> 32 == byLow[i] >> 32)
+                ++j;
+            fn(i, j - i);
+            i = j;
+        }
+    };
+    auto cornerAt = [&](Index i) { return Index(byLow[i]); };
+    std::vector<Index> edgeOf(numCorners, 0);
+    tbb::parallel_for(Index(0), numPoints, [&](Index p) { forEachEdgeGroup(p, [&](Index i, Index) { edgeOf[cornerAt(i)] = 1; }); });
+    const Index numEdges = exclusiveScan(edgeOf);
+    m.mEdges.resize(numEdges);
+    tbb::parallel_for(Index(0), numPoints, [&](Index p) {
+        forEachEdgeGroup(p, [&](Index at, Index k) {
+            const Index c0 = cornerAt(at), e = edgeOf[c0];
+            m.mEdges[e] = {{m.mCorners[c0].point, m.mCorners[m.mCorners[c0].next].point}, {kInvalid, kInvalid}, {kInvalid, kInvalid}, c0};
+            // radialInsert links each new corner straight after the first: c0, then the rest newest first.
+            for (Index i = 0; i < k; ++i)
+            {
+                Corner& c = m.mCorners[cornerAt(at + i)];
+                c.edge = e;
+                c.radialNext = cornerAt(at + (i == 0 ? k - 1 : i - 1));
+                c.radialPrev = cornerAt(at + (i == k - 1 ? 0 : i + 1));
+            }
+        });
+    });
+
+    // Disk cycles in diskInsert's order: the point's first edge, then the rest newest first.
+    std::vector<Index> diskStart;
+    const auto byPoint = bucketBy(
+        size_t(numEdges) * 2, numPoints, [&](size_t i) { return m.mEdges[i / 2].v[i % 2]; }, [](size_t i) { return Index(i); },
+        diskStart);
+    tbb::parallel_for(Index(0), numPoints, [&](Index p) {
+        const Index lo = diskStart[p], k = diskStart[p + 1] - lo;
+        if (k == 0)
+            return;
+        auto edge = [&](Index i) { return byPoint[lo + i] / 2; };
+        m.mPointEdge[p] = edge(0);
+        for (Index i = 0; i < k; ++i)
+        {
+            Edge& ed = m.mEdges[edge(i)];
+            const int s = ed.v[0] == p ? 0 : 1;
+            ed.next[s] = edge(i == 0 ? k - 1 : i - 1);
+            ed.prev[s] = edge(i == k - 1 ? 0 : i + 1);
+        }
+    });
+
+    m.mNumPoints = numPoints;
+    m.mNumEdges = numEdges;
+    m.mNumFaces = numFaces;
+    m.mNumCorners = numCorners;
+    m.pointAttrs().resize(numPoints);
+    m.edgeAttrs().resize(numEdges);
+    m.faceAttrs().resize(numFaces);
+    m.cornerAttrs().resize(numCorners);
     return m;
 }
 } // namespace lila::geo

@@ -223,6 +223,7 @@ void registerCommands()
                   {"atOrigin", "", T::Bool, false, "Drop the exported roots' own transforms, keeping their children relative."},
                   {"children", "", T::Bool, true, "Include the descendants of the given objects."},
                   {"smoothingGroups", "sg", T::Bool, true, "Write edge smoothing (hard and soft edges)."},
+                  {"compress", "", T::Bool, true, "Deflate the larger arrays as the FBX SDK does; False writes them raw."},
                   {"units", "u", T::String, "cm", "File units: cm, m, mm, in or ft. Lengths are scaled to them.", {"cm", "m", "mm", "in", "ft"}},
                   {"selectionOnly", "sl", T::Bool, true, "Without objects: the selection, or every root when False."}},
         .undoable = false,
@@ -242,6 +243,7 @@ void registerCommands()
             opts.atOrigin = a.get<bool>("atOrigin", false);
             opts.children = a.get<bool>("children", true);
             opts.smoothingGroups = a.get<bool>("smoothingGroups", true);
+            opts.compress = a.get<bool>("compress", true);
             opts.unitScale = game::cmPerUnit(a.get<std::string>("units", "cm"));
             if (opts.unitScale <= 0.0)
                 throw CommandError("exportFbx: units must be cm, m, mm, in or ft");

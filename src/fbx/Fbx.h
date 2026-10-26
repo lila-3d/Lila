@@ -135,6 +135,8 @@ struct ExportOptions
     bool deformOnly = true;
     /** Write the split normals; off leaves them for the importer to compute. */
     bool normals = true;
+    /** Deflate the larger arrays (zlib, as the FBX SDK writes them); off writes every array raw. */
+    bool compress = true;
 };
 
 /** A skin on an exported mesh, already pruned to the influence limit. Matrices are export space, Lila axes. */

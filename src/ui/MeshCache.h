@@ -61,7 +61,7 @@ LILA_UI_API std::shared_ptr<const geo::RenderMesh> pickDataFor(const scene::Mesh
  * Gives `to` the render copy of `from` with its vertices passed through edit, for a snapshot that differs from `from`
  * only in vertex colors, so it needn't be rebuilt. False when `from` has no copy yet.
  */
-LILA_UI_API bool reuseRenderMesh(const scene::MeshPtr& from, const scene::MeshPtr& to, const std::function<void(std::vector<render::MeshVertex>&)>& edit);
+LILA_UI_API bool reuseRenderMesh(const scene::MeshPtr& from, const scene::MeshPtr& to, const std::function<void(UninitVector<render::MeshVertex>&)>& edit);
 
 /** A render copy drawing only some faces of its mesh, sharing the full copy's vertices on the GPU. */
 struct MaskedMesh

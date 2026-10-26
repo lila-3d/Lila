@@ -176,14 +176,15 @@ const Seams& seamLines(const MeshPtr& mesh, const std::string& set)
 {
     struct Entry
     {
-        MeshPtr mesh;
+        std::weak_ptr<const geo::Mesh> mesh;
         std::string set;
         Seams seams;
     };
     static std::vector<Entry> cache;
     for (Entry& e : cache)
-        if (e.mesh == mesh && e.set == set)
+        if (e.mesh.lock() == mesh && e.set == set)
             return e.seams;
+    std::erase_if(cache, [](const Entry& e) { return e.mesh.expired(); });
     if (cache.size() > 8)
         cache.erase(cache.begin());
     Entry e{mesh, set, {}};

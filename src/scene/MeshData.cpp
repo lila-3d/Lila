@@ -7,6 +7,7 @@
 
 #include <tbb/blocked_range.h>
 #include <tbb/parallel_for.h>
+#include <tbb/parallel_reduce.h>
 
 #include <stdexcept>
 
@@ -91,16 +92,33 @@ struct Numbers
     }
 };
 
-void setLayerData(geo::Attribute& a, const json& data, std::span<const Index> order)
+/** The packed element type that holds an attribute's values byte for byte. */
+packed::DType storageType(geo::AttrType t)
+{
+    return t == geo::AttrType::Int ? packed::DType::I32 : t == geo::AttrType::Bool ? packed::DType::Bool : packed::DType::F32;
+}
+
+/** Fills a layer from its saved values; entry k goes to element order[k], or to element k when identity is set. */
+void setLayerData(geo::Attribute& a, const json& data, std::span<const Index> order, bool identity)
 {
     const Numbers values(data);
     const int n = geo::attrTypeComponents(a.type());
     // Every entry, dropped or not, takes the same number of values, so each one's offset is known up front.
     const size_t stride = a.type() == geo::AttrType::Int || a.type() == geo::AttrType::Bool ? 1 : size_t(n);
-    tbb::parallel_for(tbb::blocked_range<size_t>(0, order.size(), 16384), [&](const tbb::blocked_range<size_t>& r) {
+    const size_t entries = identity ? a.size() : order.size();
+    if (identity && values.data && values.dtype == storageType(a.type()) && values.size() == entries * stride)
+    {
+        const size_t bytes = entries * a.stride();
+        constexpr size_t kBlock = size_t(4) << 20;
+        tbb::parallel_for(size_t(0), (bytes + kBlock - 1) / kBlock, [&](size_t b) {
+            std::memcpy(a.raw(0) + b * kBlock, values.data + b * kBlock, std::min(kBlock, bytes - b * kBlock));
+        });
+        return;
+    }
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, entries, 16384), [&](const tbb::blocked_range<size_t>& r) {
         for (size_t k = r.begin(); k != r.end(); ++k)
         {
-            const Index i = order[k];
+            const Index i = identity ? Index(k) : order[k];
             if (i == geo::kInvalid)
                 continue;
             const size_t at = k * stride;
@@ -372,12 +390,12 @@ MeshPtr meshFromJson(const json& j)
     std::vector<Index> indices = Numbers(member("faceIndices")).indices();
     auto mesh = std::make_shared<geo::Mesh>(geo::Mesh::fromPolygons(points, sizes, indices));
 
-    std::vector<Index> pointOrder(mesh->pointCapacity());
-    for (Index p = 0; p < mesh->pointCapacity(); ++p)
-        pointOrder[p] = p;
+    // Entries saved in element order need no order vector.
+    const std::vector<Index> pointOrder;
 
     // Faces that fromPolygons rejected leave holes in the order; match by walking the input.
     std::vector<Index> faceOrder, cornerOrder;
+    if (mesh->faceCapacity() != sizes.size() || mesh->cornerCapacity() != indices.size())
     {
         Index f = 0, at = 0;
         for (Index s : sizes)
@@ -396,8 +414,22 @@ MeshPtr meshFromJson(const json& j)
     }
 
     const std::vector<Index> edges = Numbers(member("edges")).indices();
-    std::vector<Index> edgeOrder(edges.size() / 2);
-    tbb::parallel_for(size_t(0), edgeOrder.size(), [&](size_t i) { edgeOrder[i] = mesh->findEdge(edges[i * 2], edges[i * 2 + 1]); });
+    // A mesh saved by Lila rebuilds with the same edge ids, which saves a lookup per edge.
+    std::vector<Index> edgeOrder;
+    const bool sameEdges = edges.size() == size_t(mesh->edgeCapacity()) * 2 &&
+                           tbb::parallel_reduce(
+                               tbb::blocked_range<Index>(0, mesh->edgeCapacity(), 1 << 16), true,
+                               [&](const tbb::blocked_range<Index>& r, bool ok) {
+                                   for (Index e = r.begin(); ok && e < r.end(); ++e)
+                                       ok = mesh->edgePoint(e, 0) == edges[e * 2] && mesh->edgePoint(e, 1) == edges[e * 2 + 1];
+                                   return ok;
+                               },
+                               std::logical_and<bool>());
+    if (!sameEdges)
+    {
+        edgeOrder.resize(edges.size() / 2);
+        tbb::parallel_for(size_t(0), edgeOrder.size(), [&](size_t i) { edgeOrder[i] = mesh->findEdge(edges[i * 2], edges[i * 2 + 1]); });
+    }
 
     for (const json& layer : member("layers"))
     {
@@ -410,8 +442,15 @@ MeshPtr meshFromJson(const json& j)
             domain = geo::Domain::Face, order = &faceOrder;
         else if (domainName == "corner")
             domain = geo::Domain::Corner, order = &cornerOrder;
-        geo::Attribute& a = mesh->attributes(domain).add(layer.value("name", ""), typeFromName(layer.value("type", "")));
-        setLayerData(a, layer["data"], *order);
+        const std::string name = layer.value("name", "");
+        const geo::AttrType type = typeFromName(layer.value("type", ""));
+        const Numbers values(layer["data"]);
+        const bool identity = domain == geo::Domain::Point || (domain == geo::Domain::Edge ? sameEdges : faceOrder.empty());
+        // A layer whose saved values cover every element in order is filled whole, so it skips zeroing first.
+        const bool whole = identity && values.data && values.dtype == storageType(type) &&
+                           values.size() == mesh->attributes(domain).size() * size_t(geo::attrTypeComponents(type));
+        geo::Attribute& a = whole ? mesh->attributes(domain).addUnset(name, type) : mesh->attributes(domain).add(name, type);
+        setLayerData(a, layer["data"], *order, identity);
     }
     if (j.contains("materials"))
         mesh->materialNames() = j["materials"].get<std::vector<std::string>>();

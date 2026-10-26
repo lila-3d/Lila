@@ -7,10 +7,12 @@
 
 #include "core/Profile.h"
 
+#include <tbb/blocked_range.h>
 #include <tbb/parallel_for.h>
 #include <tbb/task_arena.h>
 
 #include <algorithm>
+#include <atomic>
 #include <charconv>
 #include <cstring>
 #include <fstream>
@@ -234,6 +236,17 @@ std::vector<std::pair<const char*, const char*>> splitLines(std::string_view tex
     return out;
 }
 
+/** A layer holding exactly values, one per element of the set, copied in parallel. */
+template <class T>
+void fillLayer(AttributeSet& set, std::string_view name, const std::vector<T>& values)
+{
+    Attribute& a = values.size() == set.size() ? set.addUnset(name, AttrTypeOf<T>::value) : set.add(name, AttrTypeOf<T>::value);
+    const std::span<T> dst = a.template values<T>();
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, std::min(dst.size(), values.size()), 1 << 16), [&](const tbb::blocked_range<size_t>& r) {
+        std::copy(values.begin() + r.begin(), values.begin() + r.end(), dst.begin() + r.begin());
+    });
+}
+
 struct ObjectBuilder
 {
     ObjObject obj;
@@ -431,9 +444,30 @@ ObjReadResult readObj(std::string_view text, const ObjReadOptions& opts)
         for (size_t g = 0; g < referenced.size(); ++g)
             if (referenced[g])
                 used.push_back(int64_t(g));
-        m.reserve(used.size(), b.refs.size() / 3, b.faceSize.size(), b.refs.size() / 3);
-        for (int64_t g : used)
-            pointOf[size_t(g)] = m.addPoint(v[size_t(g)]);
+        const size_t corners = b.refs.size() / 3;
+        std::vector<glm::dvec3> positions(used.size());
+        tbb::parallel_for(size_t(0), used.size(), [&](size_t i) {
+            pointOf[size_t(used[i])] = Index(i);
+            positions[i] = v[size_t(used[i])];
+        });
+        {
+            std::vector<Index> pts(corners);
+            tbb::parallel_for(size_t(0), corners, [&](size_t i) { pts[i] = pointOf[size_t(b.refs[i * 3])]; });
+            std::vector<std::string> names = std::move(m.materialNames());
+            m = Mesh::fromPolygons(positions, b.faceSize, pts);
+            m.materialNames() = std::move(names);
+        }
+        // Every face made it, so faces and corners line up with the file's; otherwise build again face by face.
+        const bool allFaces = m.faceCapacity() == b.faceSize.size();
+        if (!allFaces)
+        {
+            std::vector<std::string> names = std::move(m.materialNames());
+            m = Mesh();
+            m.materialNames() = std::move(names);
+            m.reserve(used.size(), corners, b.faceSize.size(), corners);
+            for (const glm::dvec3& pos : positions)
+                m.addPoint(pos);
+        }
         if (anyColor)
         {
             std::span<glm::vec4> col = m.pointAttrs().getOrAdd<glm::vec4>(attr::kColor);
@@ -450,9 +484,35 @@ ObjReadResult readObj(std::string_view text, const ObjReadOptions& opts)
         faceMat.reserve(b.faceSize.size());
         faceGroup.reserve(b.faceSize.size());
         faceSmooth.reserve(b.faceSize.size());
+        if (allFaces)
+        {
+            faceMat = b.material;
+            faceGroup = b.group;
+            faceSmooth = b.smooth;
+            uv.resize(corners);
+            normal.resize(corners);
+            std::atomic<bool> uvSeen = false, normalSeen = false;
+            tbb::parallel_for(tbb::blocked_range<size_t>(0, corners), [&](const tbb::blocked_range<size_t>& r) {
+                bool u = false, nm = false;
+                for (size_t i = r.begin(); i < r.end(); ++i)
+                {
+                    const int64_t ti = b.refs[i * 3 + 1], ni = b.refs[i * 3 + 2];
+                    uv[i] = ti >= 0 ? vt[size_t(ti)] : glm::vec2(0.0f);
+                    normal[i] = ni >= 0 ? vn[size_t(ni)] : glm::vec3(0.0f);
+                    u |= ti >= 0;
+                    nm |= ni >= 0;
+                }
+                if (u)
+                    uvSeen = true;
+                if (nm)
+                    normalSeen = true;
+            });
+            anyUv = uvSeen;
+            anyNormal = normalSeen;
+        }
         std::vector<Index> pts;
         size_t at = 0;
-        for (size_t f = 0; f < b.faceSize.size(); ++f)
+        for (size_t f = 0; f < b.faceSize.size() && !allFaces; ++f)
         {
             const uint32_t n = b.faceSize[f];
             const int64_t* refs = b.refs.data() + at * 3;
@@ -484,17 +544,17 @@ ObjReadResult readObj(std::string_view text, const ObjReadOptions& opts)
 
         // Faces and corners were added in order, so ids match the vectors.
         if (!m.materialNames().empty())
-            std::ranges::copy(faceMat, m.faceAttrs().getOrAdd<int32_t>(attr::kMaterial).begin());
+            fillLayer(m.faceAttrs(), attr::kMaterial, faceMat);
         if (!b.obj.groupNames.empty())
-            std::ranges::copy(faceGroup, m.faceAttrs().getOrAdd<int32_t>("group").begin());
+            fillLayer(m.faceAttrs(), "group", faceGroup);
         if (anyUv)
-            std::ranges::copy(uv, m.cornerAttrs().getOrAdd<glm::vec2>(attr::uvName(0)).begin());
+            fillLayer(m.cornerAttrs(), attr::uvName(0), uv);
         if (anyNormal && opts.keepNormals)
-            std::ranges::copy(normal, m.cornerAttrs().getOrAdd<glm::vec3>(attr::kNormal).begin());
+            fillLayer(m.cornerAttrs(), attr::kNormal, normal);
 
         if (anySmoothStatement)
         {
-            std::ranges::copy(faceSmooth, m.faceAttrs().getOrAdd<int32_t>(attr::kSmoothGroup).begin());
+            fillLayer(m.faceAttrs(), attr::kSmoothGroup, faceSmooth);
             if (opts.smoothingGroupsToHardEdges)
                 hardEdgesFromSmoothingGroups(m, faceSmooth);
         }
@@ -502,10 +562,9 @@ ObjReadResult readObj(std::string_view text, const ObjReadOptions& opts)
         {
             // Without smoothing groups, edges whose file normals disagree are hard.
             std::span<bool> hard = m.edgeAttrs().getOrAdd<bool>(attr::kHard);
-            for (Index e = 0; e < m.edgeCapacity(); ++e)
-            {
+            tbb::parallel_for(Index(0), m.edgeCapacity(), [&](Index e) {
                 if (!m.isManifoldEdge(e))
-                    continue;
+                    return;
                 const Index c = m.edgeCorner(e);
                 const Index r = m.cornerRadial(c);
                 const bool same = m.cornerPoint(r) == m.cornerPoint(c);
@@ -513,7 +572,7 @@ ObjReadResult readObj(std::string_view text, const ObjReadOptions& opts)
                 const Index rb = same ? m.cornerNext(r) : r;
                 auto close = [&](Index x, Index y) { return glm::dot(normal[x], normal[y]) > 0.9999f; };
                 hard[e] = !close(c, ra) || !close(m.cornerNext(c), rb);
-            }
+            });
         }
         if (anyUv)
             markUvSeams(m, attr::uvName(0));

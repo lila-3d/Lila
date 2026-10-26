@@ -59,8 +59,8 @@ std::shared_ptr<const scene::isolation::Visibility> visibility(const Set* set, s
     if (auto it = cache.find(key); it != cache.end() && it->second.source.lock() == cage)
         return it->second.vis;
     LILA_ZONE();
-    if (cache.size() > 64)
-        std::erase_if(cache, [](const auto& kv) { return kv.second.source.expired(); });
+    // Entries of deleted meshes hold gigabytes on dense meshes, so they go as soon as anything new is cached.
+    std::erase_if(cache, [](const auto& kv) { return kv.second.source.expired(); });
     auto vis = std::make_shared<const scene::isolation::Visibility>(scene::isolation::visibility(*cage, set->shownFaces(id, *cage)));
     cache[key] = {cage, vis};
     return vis;

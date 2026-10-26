@@ -1181,7 +1181,7 @@ private:
             return;
         auto live = std::make_shared<render::RenderMesh>();
         live->dynamic = std::make_shared<render::DynamicVertices>();
-        live->dynamic->vertices = built->vertices;
+        live->dynamic->vertices.assign(built->vertices.begin(), built->vertices.end());
         live->indices = built->indices;
         live->sections = built->sections;
         live->edgePoints = built->edgePoints;
@@ -1192,7 +1192,7 @@ private:
         mLive = std::move(live);
         mLiveBuilt = built;
         mLiveFor = mPaint->meshPtr();
-        mCornerVertex = pick->cornerVertex;
+        mCornerVertex.assign(pick->cornerVertex.begin(), pick->cornerVertex.end());
         refreshLiveColors(true);
     }
 
@@ -1363,9 +1363,9 @@ private:
         {
             // The new snapshot only differs in colors: hand it the live vertices instead of rebuilding its render copy.
             auto live = mLive;
-            reuseRenderMesh(before, after, [&](std::vector<render::MeshVertex>& verts) {
+            reuseRenderMesh(before, after, [&](UninitVector<render::MeshVertex>& verts) {
                 std::lock_guard lock(live->dynamic->mutex);
-                verts = live->dynamic->vertices;
+                verts.assign(live->dynamic->vertices.begin(), live->dynamic->vertices.end());
             });
             mLiveFor = after;
             mLiveBuilt = renderMeshFor(after);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Export.h"
+#include "core/UninitVector.h"
 
 #include "geo/Mesh.h"
 #include "geo/Normals.h"
@@ -40,20 +41,20 @@ struct RenderSection
  */
 struct RenderMesh
 {
-    std::vector<glm::vec3> positions;
-    std::vector<glm::vec3> normals;
+    UninitVector<glm::vec3> positions;
+    UninitVector<glm::vec3> normals;
     std::vector<glm::vec4> tangents;            // empty unless requested and uv0 exists
     std::vector<glm::vec4> colors;              // empty unless the mesh has a color set
-    std::vector<std::vector<glm::vec2>> uvs;    // uv0, uv1, ... as present
-    std::vector<Index> vertexPoint;             // source point per vertex
-    std::vector<Index> vertexCorner;            // one source corner per vertex
-    std::vector<Index> cornerVertex;            // vertex per source corner, kInvalid for dead corners
-    std::vector<Index> indices;                 // 3 per triangle, ordered by section
-    std::vector<Index> triangleFaces;           // source face per triangle
-    std::vector<uint8_t> triangleSides;         // per triangle, bit k set when side k (vertex k to k + 1) is a polygon edge
+    std::vector<UninitVector<glm::vec2>> uvs;   // uv0, uv1, ... as present
+    UninitVector<Index> vertexPoint;            // source point per vertex
+    UninitVector<Index> vertexCorner;           // one source corner per vertex
+    UninitVector<Index> cornerVertex;           // vertex per source corner, kInvalid for dead corners
+    UninitVector<Index> indices;                // 3 per triangle, ordered by section
+    UninitVector<Index> triangleFaces;          // source face per triangle
+    UninitVector<uint8_t> triangleSides;        // per triangle, bit k set when side k (vertex k to k + 1) is a polygon edge
     std::vector<RenderSection> sections;
-    std::vector<Index> lineIndices;             // 2 per edge, into the vertex buffers
-    std::vector<Index> lineEdges;               // source edge per line
+    UninitVector<Index> lineIndices;            // 2 per edge, into the vertex buffers
+    UninitVector<Index> lineEdges;              // source edge per line
 
     Index vertexCount() const { return Index(positions.size()); }
     Index triangleCount() const { return Index(indices.size() / 3); }

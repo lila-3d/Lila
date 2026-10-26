@@ -13,6 +13,7 @@
 #include "scene/MeshNodes.h"
 
 #include <ufbx.h>
+#include <zlib.h>
 
 #include <filesystem>
 #include <fstream>
@@ -416,6 +417,102 @@ TEST_CASE("world-space export bakes mirrored transforms with outward winding")
         glm::dvec3 out = glm::normalize(mesh->faceCentroid(f) - mesh->bounds().center());
         CHECK(glm::dot(fn, out) > 0.5);
         mesh->forEachFaceCorner(f, [&](geo::Index c) { CHECK(glm::dot(glm::dvec3(normals[c]), fn) > 0.99); });
+    }
+}
+
+namespace
+{
+MeshPtr importedMesh(const fs::path& path, const std::string& name)
+{
+    Graph& g = Graph::current();
+    g.clear();
+    fbx::ImportResult r = fbx::importFbx(g, path);
+    REQUIRE_MESSAGE(r.ok, r.error);
+    g.evaluate();
+    Node* n = g.find(name);
+    REQUIRE(n);
+    return n->as<MeshPtr>(MeshNode::kOutMesh);
+}
+
+template <class T> bool sameCorners(const geo::Mesh& a, const geo::Mesh& b, std::string_view attr)
+{
+    std::span<const T> va = a.cornerAttrs().get<T>(attr);
+    std::span<const T> vb = b.cornerAttrs().get<T>(attr);
+    return va.size() == vb.size() && std::equal(va.begin(), va.end(), vb.begin());
+}
+} // namespace
+
+TEST_CASE("compressed fbx arrays import back exactly")
+{
+    math::setUpAxis(math::UpAxis::Y);
+    Graph& g = Graph::current();
+    g.clear();
+    Node* n = addMesh(g, "Dense", geo::makeSphere({.subdivAxis = 200, .subdivHeight = 200}));
+    g.evaluate();
+    MeshPtr source = n->as<MeshPtr>(MeshNode::kOutMesh);
+    REQUIRE(source);
+    fs::path packed = tempFile("compressed.fbx"), raw = tempFile("uncompressed.fbx");
+    ops::execute("exportFbx", {{"args", {packed.string(), "Dense"}}, {"triangulate", false}});
+    ops::execute("exportFbx", {{"args", {raw.string(), "Dense"}}, {"triangulate", false}, {"compress", false}});
+    MESSAGE("compressed " << fs::file_size(packed) << " bytes, raw " << fs::file_size(raw));
+    CHECK(fs::file_size(packed) < fs::file_size(raw) * 3 / 4);
+    {
+        UfbxScene s(packed);
+        REQUIRE(s.scene);
+        CHECK(s.scene->metadata.warnings.count == 0);
+    }
+
+    MeshPtr a = importedMesh(packed, "Dense");
+    MeshPtr b = importedMesh(raw, "Dense");
+    REQUIRE(a);
+    REQUIRE(b);
+    checkMeshesMatch(*source, *a, true);
+    REQUIRE(a->pointCapacity() == b->pointCapacity());
+    REQUIRE(a->faceCapacity() == b->faceCapacity());
+    REQUIRE(a->cornerCapacity() == b->cornerCapacity());
+    bool samePoints = true, sameTopology = true;
+    for (geo::Index p = 0; p < a->pointCapacity(); ++p)
+        samePoints = samePoints && a->position(p) == b->position(p);
+    for (geo::Index c = 0; c < a->cornerCapacity(); ++c)
+        sameTopology = sameTopology && a->cornerPoint(c) == b->cornerPoint(c);
+    for (geo::Index f = 0; f < a->faceCapacity(); ++f)
+        sameTopology = sameTopology && a->faceCorner(f) == b->faceCorner(f);
+    CHECK(samePoints);
+    CHECK(sameTopology);
+    CHECK(sameCorners<glm::vec3>(*a, *b, geo::attr::kNormal));
+    CHECK(sameCorners<glm::vec2>(*a, *b, geo::attr::uvName(0)));
+}
+
+TEST_CASE("zlibDeflate writes one zlib stream across many blocks")
+{
+    std::vector<uint8_t> data(3 * 1024 * 1024 + 12345);
+    uint32_t x = 1;
+    for (size_t i = 0; i < data.size(); ++i)
+    {
+        x = x * 1664525u + 1013904223u;
+        data[i] = uint8_t((i / 7) % 251) ^ uint8_t(x >> 30);
+    }
+    for (size_t blockBytes : {size_t(64 * 1024), fbx::bin::kDeflateBlockBytes, data.size() * 2})
+    {
+        CAPTURE(blockBytes);
+        std::string z = fbx::bin::zlibDeflate(data, blockBytes);
+        CHECK(z.size() < data.size());
+
+        std::vector<uint8_t> back(data.size());
+        uLongf n = uLongf(back.size());
+        REQUIRE(uncompress(back.data(), &n, reinterpret_cast<const Bytef*>(z.data()), uLong(z.size())) == Z_OK);
+        CHECK(n == data.size());
+        CHECK(back == data);
+
+        std::vector<uint8_t> viaUfbx(data.size());
+        ufbx_inflate_input in{};
+        in.total_size = z.size();
+        in.data = z.data();
+        in.data_size = z.size();
+        ufbx_inflate_retain retain;
+        retain.initialized = false;
+        CHECK(ufbx_inflate(viaUfbx.data(), viaUfbx.size(), &in, &retain) == ptrdiff_t(data.size()));
+        CHECK(viaUfbx == data);
     }
 }
 

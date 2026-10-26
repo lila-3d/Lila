@@ -2333,7 +2333,7 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
         t.add("LocalTime").i64(ktime(tk->start)).i64(ktime(tk->end));
         t.add("ReferenceTime").i64(ktime(tk->start)).i64(ktime(tk->end));
     }
-    return bin::encodeFile(root);
+    return bin::encodeFile(root, 7400, opts.compress);
 }
 
 bool writeFbx(const ExportScene& scene, const fs::path& path, const ExportOptions& opts, std::string* error)

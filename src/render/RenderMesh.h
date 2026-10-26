@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Export.h"
+#include "core/UninitVector.h"
 #include "render/TextureFormat.h"
 
 #include <glm/glm.hpp>
@@ -66,7 +67,7 @@ struct RenderMesh
     std::shared_ptr<DynamicVertices> dynamic;
     /** When set, draws with this mesh's vertex buffer and `vertices` stays empty: a subset of its triangles (isolated faces). */
     std::shared_ptr<const RenderMesh> shareVertices;
-    std::vector<MeshVertex> vertices;
+    UninitVector<MeshVertex> vertices;
     std::vector<uint32_t> indices;     // triangle list, grouped by section
     std::vector<MeshSection> sections; // empty means one section of slot 0
     std::vector<glm::vec3> edgePoints; // line list for wireframe, original polygon edges only; with edgeIndices, the points they index

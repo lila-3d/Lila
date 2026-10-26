@@ -2,6 +2,7 @@
 
 #include "core/PackedArray.h"
 #include "core/Profile.h"
+#include "core/UninitVector.h"
 
 #include <tbb/parallel_for.h>
 #include <zstd.h>
@@ -234,6 +235,9 @@ void extractBlobs(json& j, std::vector<Blob>& blobs)
 }
 
 /** Each placeholder, and whether it sits inside a mesh (which meshFromJson reads packed, so it stays packed). */
+/** A blob's bytes as read from a binary scene. */
+using BlobBytes = UninitVector<char>;
+
 void findPlaceholders(json& j, std::vector<std::pair<json*, bool>>& found, bool inMesh = false)
 {
     if (j.is_object() && j.contains("$blob"))
@@ -248,12 +252,12 @@ void findPlaceholders(json& j, std::vector<std::pair<json*, bool>>& found, bool 
             findPlaceholders(child, found, inMesh);
 }
 
-void restoreBlobs(json& j, const std::vector<std::string>& blobs, std::vector<std::string>* warnings)
+void restoreBlobs(json& j, const std::vector<BlobBytes>& blobs, std::vector<std::string>* warnings)
 {
     struct Use
     {
         json* at;
-        const std::string* bytes; // null when missing, damaged or the wrong size
+        const BlobBytes* bytes; // null when missing, damaged or the wrong size
         packed::DType dtype = packed::DType::F64;
         int width = 1;
         bool keepPacked = false;
@@ -420,7 +424,10 @@ bool isFlatNumbers(const json& v)
     return true;
 }
 
-/** One value of a packed array, formatted as its plain json value would be by appendScalar. */
+/**
+ * One value of a packed array, formatted as its plain json value would be by appendScalar, except that f32 values take
+ * the shortest text that reads back as the same float: half the digits of the double they would print as.
+ */
 void appendPacked(std::string& s, packed::DType t, const uint8_t* data, size_t i)
 {
     char buf[32];
@@ -436,7 +443,16 @@ void appendPacked(std::string& s, packed::DType t, const uint8_t* data, size_t i
         if (t == packed::DType::F32)
         {
             float f;
+            uint32_t bits;
             std::memcpy(&f, data + i * 4, 4);
+            std::memcpy(&bits, &f, 4);
+            // Text is read back as a double and then rounded to float. Checked over every float, that rounds twice to
+            // a different float for this one value (and its negative) only, so it is written with double digits.
+            if (f != 0.0f && (bits & 0x7FFFFFFFu) != 0x15AE43FDu)
+            {
+                s.append(buf, std::to_chars(buf, buf + sizeof(buf), f).ptr);
+                return;
+            }
             d = f;
         }
         else
@@ -872,6 +888,7 @@ private:
     static void parsePiece(std::string_view text, bool nested, int width, Piece& out)
     {
         size_t k = 0, inRow = 0;
+        bool inside = false;
         while (k < text.size())
         {
             const char c = text[k];
@@ -882,14 +899,20 @@ private:
             }
             if (c == '[' || c == ']')
             {
-                if (!nested || (c == ']' && int(inRow) != width))
+                if (!nested || inside != (c == ']') || (c == ']' && int(inRow) != width))
                 {
                     out.ok = false;
                     return;
                 }
+                inside = c == '[';
                 inRow = 0;
                 ++k;
                 continue;
+            }
+            if (nested && !inside)
+            {
+                out.ok = false;
+                return;
             }
             size_t e = k;
             while (e < text.size() && numeric(text[e]))
@@ -937,36 +960,21 @@ private:
         expect('[');
         const size_t open = i;
         const bool nested = peek() == '[';
-        // The extent: only numbers, commas, spaces and (when nested) one level of brackets may appear.
-        size_t end = open;
-        int depth = 0, width = 0, inRow = 0;
-        for (; end < s.size(); ++end)
+        // The extent: the first ']' (flat) or "]]" (rows) closes it. Only numbers, commas, spaces and one level of
+        // brackets may appear inside, which parsePiece checks; anything else falls back to the general parser.
+        int width = 0;
+        if (nested)
         {
-            const char c = s[end];
-            if (c == '[')
-            {
-                if (!nested || depth != 0)
-                    return false;
-                depth = 1;
-                inRow = 0;
-            }
-            else if (c == ']')
-            {
-                if (depth == 0)
-                    break;
-                depth = 0;
-                if (width == 0)
-                    width = inRow + 1;
-            }
-            else if (c == ',')
-            {
-                if (depth == 1 && width == 0)
-                    ++inRow;
-            }
-            else if (!numeric(c) && c != ' ' && c != '\t' && c != '\r' && c != '\n')
+            const size_t rowEnd = s.find(']', open);
+            if (rowEnd == std::string_view::npos)
                 return false;
+            const std::string_view row = s.substr(open + 1, rowEnd - open - 1);
+            if (row.find_first_of("[]{}\"") != std::string_view::npos)
+                return false;
+            width = int(std::count(row.begin(), row.end(), ',')) + 1;
         }
-        if (end >= s.size())
+        const size_t end = nested ? s.find("]]", open) + 1 : s.find(']', open);
+        if (end == std::string_view::npos || end == 0 || end >= s.size())
             return false;
         if (nested && width < 2)
             return false;
@@ -1214,55 +1222,59 @@ json decodeBinaryImpl(std::string_view in, std::vector<std::string>* warnings, b
         raws.push_back(r);
     }
 
-    std::vector<std::string> data(raws.size());
+    // A blob is its BLOB chunk plus the BLB+ chunks right after it, decompressed straight into one buffer per blob.
+    struct Part
+    {
+        size_t blob = SIZE_MAX, offset = 0;
+    };
+    std::vector<Part> parts(raws.size());
+    std::vector<size_t> blobSizes;
+    for (size_t i = 1; i < raws.size() && !headerOnly; ++i)
+    {
+        if (raws[i].fourcc == "BLOB")
+            blobSizes.push_back(0);
+        else if (raws[i].fourcc != "BLB+" || blobSizes.empty() || parts[i - 1].blob != blobSizes.size() - 1)
+            continue;
+        parts[i] = {blobSizes.size() - 1, blobSizes.back()};
+        blobSizes.back() += size_t(raws[i].rawSize);
+    }
+    std::vector<BlobBytes> blobs(blobSizes.size());
+    for (size_t b = 0; b < blobs.size(); ++b)
+        blobs[b].resize(blobSizes[b]);
+    std::string header;
+    if (!raws.empty())
+        header.resize(size_t(raws[0].rawSize));
     std::vector<char> ok(raws.size(), 0);
     tbb::parallel_for(size_t(0), headerOnly ? std::min<size_t>(raws.size(), 1) : raws.size(), [&](size_t i) {
         const Raw& r = raws[i];
-        std::string& d = data[i];
+        char* dst = i == 0 ? header.data() : parts[i].blob != SIZE_MAX ? blobs[parts[i].blob].data() + parts[i].offset : nullptr;
+        if (!dst)
+            return;
         if (r.flags & kFlagZstd)
         {
-            d.resize(size_t(r.rawSize));
-            size_t n = ZSTD_decompressDCtx(decompressContext(), d.data(), d.size(), r.stored.data(), r.stored.size());
+            size_t n = ZSTD_decompressDCtx(decompressContext(), dst, size_t(r.rawSize), r.stored.data(), r.stored.size());
             if (ZSTD_isError(n) || n != r.rawSize)
                 return;
         }
+        else if (r.stored.size() == r.rawSize)
+            std::memcpy(dst, r.stored.data(), r.stored.size());
         else
-            d.assign(r.stored);
-        ok[i] = crc32(d.data(), d.size()) == r.crc;
+            return;
+        ok[i] = crc32(dst, size_t(r.rawSize)) == r.crc;
     });
 
     if (raws.empty() || raws[0].fourcc != "JSON" || !ok[0])
         throw std::runtime_error("the scene header is damaged; try the .lilaa copy or an autosave");
-    json doc = json::parse(data[0]);
+    json doc = json::parse(header);
     if (headerOnly)
         return doc;
-
-    // A blob is its BLOB chunk plus the BLB+ chunks right after it; a damaged part loses the whole array.
-    std::vector<std::string> blobs;
+    // A damaged part loses its whole array.
     for (size_t i = 1; i < raws.size(); ++i)
-    {
-        if (raws[i].fourcc != "BLOB")
-            continue;
-        size_t end = i + 1, total = data[i].size();
-        bool intact = ok[i];
-        for (; end < raws.size() && raws[end].fourcc == "BLB+"; ++end)
-        {
-            total += data[end].size();
-            intact = intact && ok[end];
-        }
-        std::string& b = blobs.emplace_back();
-        if (!intact)
-            continue;
-        if (end == i + 1)
-            b = std::move(data[i]);
-        else
-        {
-            b.reserve(total);
-            for (size_t k = i; k < end; ++k)
-                b += data[k];
-        }
-    }
+        if (parts[i].blob != SIZE_MAX && !ok[i])
+            BlobBytes().swap(blobs[parts[i].blob]);
     restoreBlobs(doc, blobs, warnings);
+    // Gigabytes take long enough to free that it is done off this thread.
+    std::thread([b = std::move(blobs)] {}).detach();
     return doc;
 }
 } // namespace

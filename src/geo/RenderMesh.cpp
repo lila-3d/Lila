@@ -6,6 +6,7 @@
 #include <tbb/blocked_range.h>
 #include <tbb/enumerable_thread_specific.h>
 #include <tbb/parallel_for.h>
+#include <tbb/parallel_scan.h>
 
 #include <cstring>
 
@@ -78,9 +79,11 @@ RenderMesh buildRenderMesh(const Mesh& mesh, const RenderMeshOptions& opts)
         cd.tangents = computedTangents;
     }
 
-    // Pass 1: slot of each corner among the unique vertices of its point.
-    std::vector<Index> slot(cc, kInvalid);
-    std::vector<Index> base(size_t(pc) + 1, 0);
+    // Pass 1: slot of each corner among the unique vertices of its point. Dead corners and points keep none.
+    UninitVector<Index> slot(cc);
+    tbb::parallel_for(Index(0), cc, [&](Index c) { slot[c] = kInvalid; });
+    UninitVector<Index> base(size_t(pc) + 1);
+    tbb::parallel_for(Index(0), pc + 1, [&](Index p) { base[p] = 0; });
     {
         LILA_ZONE_N("RenderMesh::assignSlots");
 
@@ -106,9 +109,18 @@ RenderMesh buildRenderMesh(const Mesh& mesh, const RenderMeshOptions& opts)
             }
         });
     }
-    for (Index p = 0; p < pc; ++p)
-        base[p + 1] += base[p];
-    const Index vertexCount = base[pc];
+    const Index vertexCount = tbb::parallel_scan(
+        tbb::blocked_range<Index>(0, pc + 1, 1 << 16), Index(0),
+        [&](const tbb::blocked_range<Index>& r, Index sum, bool final) {
+            for (Index i = r.begin(); i < r.end(); ++i)
+            {
+                sum += base[i];
+                if (final)
+                    base[i] = sum;
+            }
+            return sum;
+        },
+        std::plus<Index>());
 
     out.positions.resize(vertexCount);
     out.normals.resize(vertexCount);
@@ -124,7 +136,8 @@ RenderMesh buildRenderMesh(const Mesh& mesh, const RenderMeshOptions& opts)
         out.tangents.resize(vertexCount);
 
     // Pass 2: the first corner of each slot writes the vertex.
-    std::vector<Index> cornerVertex(cc, kInvalid);
+    UninitVector<Index> cornerVertex(cc);
+    tbb::parallel_for(Index(0), cc, [&](Index c) { cornerVertex[c] = kInvalid; });
     {
         LILA_ZONE_N("RenderMesh::fillVertices");
 
@@ -217,9 +230,19 @@ RenderMesh buildRenderMesh(const Mesh& mesh, const RenderMeshOptions& opts)
         LILA_ZONE_N("RenderMesh::lines");
 
         const Index ec = mesh.edgeCapacity();
-        std::vector<Index> lineSlot(size_t(ec) + 1, 0);
-        for (Index e = 0; e < ec; ++e)
-            lineSlot[e + 1] = lineSlot[e] + (mesh.edgeValid(e) && mesh.edgeCorner(e) != kInvalid ? 1 : 0);
+        UninitVector<Index> lineSlot(size_t(ec) + 1);
+        tbb::parallel_scan(
+            tbb::blocked_range<Index>(0, ec + 1, 1 << 16), Index(0),
+            [&](const tbb::blocked_range<Index>& r, Index sum, bool final) {
+                for (Index e = r.begin(); e < r.end(); ++e)
+                {
+                    if (final)
+                        lineSlot[e] = sum;
+                    sum += e < ec && mesh.edgeValid(e) && mesh.edgeCorner(e) != kInvalid ? 1 : 0;
+                }
+                return sum;
+            },
+            std::plus<Index>());
         out.lineIndices.resize(size_t(lineSlot[ec]) * 2);
         out.lineEdges.resize(lineSlot[ec]);
         tbb::parallel_for(tbb::blocked_range<Index>(0, ec, kGrain * 4), [&](const tbb::blocked_range<Index>& r) {

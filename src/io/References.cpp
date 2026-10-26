@@ -4,15 +4,20 @@
 #include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/Profile.h"
+#include "core/UninitVector.h"
 #include "core/Progress.h"
 #include "core/Paths.h"
 #include "io/SceneFile.h"
 #include "io/SceneFormats.h"
 #include "scene/Graph.h"
 
+#include <tbb/parallel_for.h>
+
 #include <algorithm>
+#include <atomic>
 #include <fstream>
 #include <sstream>
+#include <thread>
 #include <unordered_map>
 
 namespace lila::io
@@ -201,18 +206,24 @@ struct NoUndo
 
 namespace
 {
-std::string readBytes(const fs::path& path)
+/** The whole file, read in slices on several threads at once (each slice under the 2 GB MSVC streams stop at). */
+UninitVector<char> readBytes(const fs::path& path)
 {
-    std::ifstream in(path, std::ios::binary | std::ios::ate);
-    if (!in)
+    std::error_code ec;
+    const uintmax_t size = fs::file_size(path, ec);
+    if (ec)
         throw std::runtime_error("can't open " + path.string());
-    std::string bytes(size_t(in.tellg()), char(0));
-    in.seekg(0);
-    // In slices: MSVC's streams stop a single read at 2 GB.
-    constexpr size_t kSlice = size_t(64) << 20;
-    for (size_t at = 0; at < bytes.size(); at += kSlice)
-        if (!in.read(bytes.data() + at, std::streamsize(std::min(kSlice, bytes.size() - at))))
-            throw std::runtime_error("can't read " + path.string());
+    UninitVector<char> bytes(static_cast<size_t>(size));
+    constexpr size_t kSlice = size_t(32) << 20;
+    std::atomic<bool> failed = false;
+    tbb::parallel_for(size_t(0), (bytes.size() + kSlice - 1) / kSlice, [&](size_t k) {
+        std::ifstream in(path, std::ios::binary);
+        const size_t at = k * kSlice;
+        if (!in || !in.seekg(std::streamoff(at)) || !in.read(bytes.data() + at, std::streamsize(std::min(kSlice, bytes.size() - at))))
+            failed = true;
+    });
+    if (failed)
+        throw std::runtime_error("can't read " + path.string());
     return bytes;
 }
 } // namespace
@@ -221,29 +232,31 @@ json readSceneFile(const fs::path& path, std::vector<std::string>* warnings)
 {
     LILA_ZONE();
 
-    std::string bytes = readBytes(path);
-    switch (detectFormat(bytes))
+    UninitVector<char> bytes = readBytes(path);
+    const std::string_view text(bytes.data(), bytes.size());
+    json doc;
+    switch (detectFormat(text))
     {
-    case SceneFormat::Binary: return decodeBinary(bytes, warnings);
-    case SceneFormat::Ascii: return decodeAscii(bytes, warnings);
+    case SceneFormat::Binary: doc = decodeBinary(text, warnings); break;
+    case SceneFormat::Ascii: doc = decodeAscii(text, warnings); break;
     case SceneFormat::Json:
-    {
-        json doc = json::parse(bytes, nullptr, false);
+        doc = json::parse(text, nullptr, false);
         if (doc.is_discarded())
             throw std::runtime_error(path.string() + " is not valid JSON");
-        return doc;
+        break;
     }
-    }
-    return {};
+    // Gigabytes take long enough to free that it is done off this thread.
+    std::thread([b = std::move(bytes)] {}).detach();
+    return doc;
 }
 
 json readSceneHeader(const fs::path& path)
 {
     LILA_ZONE();
 
-    std::string bytes = readBytes(path);
-    if (detectFormat(bytes) == SceneFormat::Binary)
-        return decodeBinaryHeader(bytes);
+    const UninitVector<char> bytes = readBytes(path);
+    if (const std::string_view text(bytes.data(), bytes.size()); detectFormat(text) == SceneFormat::Binary)
+        return decodeBinaryHeader(text);
     return readSceneFile(path, nullptr);
 }
 

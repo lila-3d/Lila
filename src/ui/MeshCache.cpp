@@ -1,5 +1,6 @@
 #include "ui/MeshCache.h"
 
+#include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "geo/Ops.h"
@@ -55,8 +56,7 @@ Entry build(const scene::MeshPtr& source, bool tangents)
         v.tangent = i < rm.tangents.size() ? rm.tangents[i] : glm::vec4(1, 0, 0, 1);
         v.uv = uvs ? rm.uvs[0][i] : glm::vec2(0.0f);
         v.uv1 = uvs1 ? rm.uvs[1][i] : v.uv;
-        if (colors)
-            v.color = rm.colors[i];
+        v.color = colors ? rm.colors[i] : glm::vec4(1.0f);
     });
     out->indices.assign(rm.indices.begin(), rm.indices.end());
     for (const geo::RenderSection& sec : rm.sections)
@@ -76,12 +76,15 @@ Entry build(const scene::MeshPtr& source, bool tangents)
     tbb::parallel_for(size_t(0), rm.lineIndices.size(), [&](size_t i) { out->edgeIndices[i] = rm.vertexPoint[rm.lineIndices[i]]; });
     if (n)
     {
-        out->boundsMin = out->boundsMax = rm.positions[0];
-        for (const glm::vec3& p : rm.positions)
-        {
-            out->boundsMin = glm::min(out->boundsMin, p);
-            out->boundsMax = glm::max(out->boundsMax, p);
-        }
+        using Bounds = std::pair<glm::vec3, glm::vec3>;
+        std::tie(out->boundsMin, out->boundsMax) = tbb::parallel_reduce(
+            tbb::blocked_range<size_t>(0, n, 1 << 16), Bounds(rm.positions[0], rm.positions[0]),
+            [&](const tbb::blocked_range<size_t>& r, Bounds b) {
+                for (size_t i = r.begin(); i < r.end(); ++i)
+                    b = {glm::min(b.first, rm.positions[i]), glm::max(b.second, rm.positions[i])};
+                return b;
+            },
+            [](const Bounds& a, const Bounds& b) { return Bounds(glm::min(a.first, b.first), glm::max(a.second, b.second)); });
     }
     return {source, out, pick, tangents};
 }
@@ -94,10 +97,23 @@ const Entry* entryFor(const scene::MeshPtr& mesh, bool tangents = false)
     auto it = c.find(mesh.get());
     if (it != c.end() && it->second.source.lock() == mesh && (it->second.tangents || !tangents))
         return &it->second;
-    // Snapshots die as the scene changes; drop their entries when the table gets busy.
-    if (c.size() > 64)
-        std::erase_if(c, [](const auto& kv) { return kv.second.source.expired(); });
-    return &(c[mesh.get()] = build(mesh, tangents));
+    // Entries of deleted meshes hold gigabytes on dense meshes, so they go as soon as anything new is cached.
+    std::erase_if(c, [](const auto& kv) { return kv.second.source.expired(); });
+    // A mesh too big for the memory left stays undrawn, reported once, rather than taking the app down.
+    static std::weak_ptr<const geo::Mesh> failed;
+    if (failed.lock() == mesh)
+        return nullptr;
+    try
+    {
+        Entry e = build(mesh, tangents);
+        return &(c[mesh.get()] = std::move(e));
+    }
+    catch (const std::bad_alloc&)
+    {
+        failed = mesh;
+        log::error("not enough memory to draw a mesh of {} faces; free some memory and change the mesh to try again", mesh->numFaces());
+        return nullptr;
+    }
 }
 } // namespace
 
@@ -107,7 +123,7 @@ std::shared_ptr<const render::RenderMesh> renderMeshFor(const scene::MeshPtr& me
     return e ? e->built : nullptr;
 }
 
-bool reuseRenderMesh(const scene::MeshPtr& from, const scene::MeshPtr& to, const std::function<void(std::vector<render::MeshVertex>&)>& edit)
+bool reuseRenderMesh(const scene::MeshPtr& from, const scene::MeshPtr& to, const std::function<void(UninitVector<render::MeshVertex>&)>& edit)
 {
     LILA_ZONE();
 
@@ -143,8 +159,8 @@ std::shared_ptr<const MaskedMesh> maskedRenderMeshFor(const scene::MeshPtr& mesh
     auto key = std::make_tuple(mesh.get(), maskKey, cageWire != nullptr);
     if (auto it = cache.find(key); it != cache.end() && it->second.source.lock() == mesh && it->second.base == full->built)
         return it->second.result;
-    if (cache.size() > 64)
-        std::erase_if(cache, [](const auto& kv) { return kv.second.source.expired(); });
+    // Entries of deleted meshes hold gigabytes on dense meshes, so they go as soon as anything new is cached.
+    std::erase_if(cache, [](const auto& kv) { return kv.second.source.expired(); });
 
     const geo::RenderMesh& pd = *full->pick;
     const render::RenderMesh& rm = *full->built;
@@ -237,8 +253,8 @@ std::shared_ptr<const SmoothCage> smoothCageFor(const scene::MeshPtr& mesh, int 
     if (it != cache.end() && it->second.level == level && it->second.keepHardEdges == keepHardEdges && it->second.source.lock() == mesh)
         return it->second.result;
     LILA_ZONE();
-    if (cache.size() > 64)
-        std::erase_if(cache, [](const auto& kv) { return kv.second.source.expired(); });
+    // Entries of deleted meshes hold gigabytes on dense meshes, so they go as soon as anything new is cached.
+    std::erase_if(cache, [](const auto& kv) { return kv.second.source.expired(); });
     geo::SubdivideOptions o;
     o.levels = level;
     o.keepHardEdges = keepHardEdges;

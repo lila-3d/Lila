@@ -1633,7 +1633,7 @@ static std::shared_ptr<const render::PointCloud> vertexDots(scene::NodeId id, co
 {
     struct Entry
     {
-        scene::MeshPtr mesh;
+        std::weak_ptr<const geo::Mesh> mesh;
         std::shared_ptr<const SmoothCage> smooth;
         std::shared_ptr<const scene::isolation::Visibility> vis;
         glm::dmat4 world;
@@ -1644,7 +1644,7 @@ static std::shared_ptr<const render::PointCloud> vertexDots(scene::NodeId id, co
     static std::unordered_map<scene::NodeId, Entry> cache;
     Entry& e = cache[id];
     const uint64_t serial = scene::components::serial();
-    if (e.cloud && e.mesh == mesh && e.smooth == shape.smooth && e.vis == vis && e.world == shape.world && e.sym == sym && e.serial == serial)
+    if (e.cloud && e.mesh.lock() == mesh && e.smooth == shape.smooth && e.vis == vis && e.world == shape.world && e.sym == sym && e.serial == serial)
         return e.cloud;
     LILA_ZONE_N("vertexDots");
 
@@ -1666,6 +1666,8 @@ static std::shared_ptr<const render::PointCloud> vertexDots(scene::NodeId id, co
             cloud->points[p] = {shown ? glm::vec3(shape.point(p)) : glm::vec3(0.0f), shown ? uint32_t(on[p]) : uint32_t(render::PointDraw::Hidden)};
         }
     });
+    // Dots of meshes that are gone are not needed again, and each holds a point per vertex.
+    std::erase_if(cache, [&](const auto& kv) { return kv.first != id && kv.second.mesh.expired(); });
     if (cache.size() > 64)
         std::erase_if(cache, [&](const auto& kv) { return kv.first != id; });
     Entry& slot = cache[id];

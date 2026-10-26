@@ -15,6 +15,7 @@
 #include "render/VulkanContext.h"
 
 #include <glm/gtc/packing.hpp>
+#include <tbb/parallel_for.h>
 
 #include <algorithm>
 #include <array>
@@ -1024,7 +1025,13 @@ struct Renderer::Impl
         aci.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
         VmaAllocationInfo info{};
         vmaCreateBuffer(vk.allocator, &bci, &aci, &b.buffer, &b.alloc, &info);
-        if (size)
+        constexpr size_t kBlock = size_t(4) << 20;
+        if (size > kBlock)
+            tbb::parallel_for(size_t(0), (size + kBlock - 1) / kBlock, [&](size_t k) {
+                std::memcpy(static_cast<char*>(info.pMappedData) + k * kBlock, static_cast<const char*>(data) + k * kBlock,
+                            std::min(kBlock, size - k * kBlock));
+            });
+        else if (size)
             std::memcpy(info.pMappedData, data, size);
         vmaFlushAllocation(vk.allocator, b.alloc, 0, VK_WHOLE_SIZE);
         return b;
@@ -1138,14 +1145,16 @@ struct Renderer::Impl
         }
     }
 
-    /** Drops GPU copies no frame has drawn for a while. */
+    /**
+     * Drops GPU copies no frame has drawn for a while, and at once those nothing else holds any more: views draw on
+     * demand, so an idle viewport would otherwise keep a replaced dense mesh in memory indefinitely.
+     */
     void evictMeshes()
     {
-        if (frameCounter % 120 != 0)
-            return;
+        const bool sweep = frameCounter % 120 == 0;
         std::vector<uint64_t> stale;
         for (auto& [key, g] : meshCache)
-            if (g.lastUsed + 240 < frameCounter)
+            if ((sweep && g.lastUsed + 240 < frameCounter) || (g.keep.use_count() == 1 && g.lastUsed != frameCounter))
                 stale.push_back(key);
         if (stale.empty())
             return;

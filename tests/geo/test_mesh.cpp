@@ -298,3 +298,61 @@ TEST_CASE("topology: edge loops run through valence-4 points and stop at poles")
         CHECK(loopClosed(m, border));
     }
 }
+
+TEST_CASE("mesh: fromPolygons builds in parallel what addFace builds")
+{
+    // A grid with mixed winding, a non-manifold fin, a duplicate face and faces fromPolygons must reject.
+    const int n = 140;
+    std::vector<glm::dvec3> points;
+    for (int j = 0; j <= n; ++j)
+        for (int i = 0; i <= n; ++i)
+            points.push_back({double(i), double((i * 7 + j * 3) % 5), double(-j)});
+    std::vector<Index> sizes, indices;
+    auto face = [&](std::initializer_list<Index> pts) {
+        sizes.push_back(Index(pts.size()));
+        indices.insert(indices.end(), pts);
+    };
+    for (int j = 0; j < n; ++j)
+        for (int i = 0; i < n; ++i)
+        {
+            const Index a = Index(j * (n + 1) + i), b = a + 1, c = b + Index(n + 1), d = a + Index(n + 1);
+            if ((i + j) % 3 == 0)
+                face({a, b, c}), face({a, c, d});
+            else if ((i + j) % 3 == 1)
+                face({d, c, b, a});
+            else
+                face({a, b, c, d});
+        }
+    face({0, 1, 2});
+    face({0, 1, Index(points.size() - 1)});
+    face({3, 4, 3});
+    face({5, 6});
+    face({7, 8, Index(points.size() + 10)});
+    REQUIRE(indices.size() >= (size_t(1) << 16));
+
+    Mesh serial;
+    for (const glm::dvec3& p : points)
+        serial.addPoint(p);
+    for (size_t f = 0, at = 0; f < sizes.size(); at += sizes[f++])
+        serial.addFace(std::span<const Index>(indices.data() + at, sizes[f]));
+    const Mesh parallel = Mesh::fromPolygons(points, sizes, indices);
+
+    REQUIRE(parallel.numFaces() == serial.numFaces());
+    REQUIRE(parallel.numEdges() == serial.numEdges());
+    REQUIRE(parallel.numCorners() == serial.numCorners());
+    REQUIRE(parallel.edgeCapacity() == serial.edgeCapacity());
+    bool same = true;
+    for (Index p = 0; p < serial.pointCapacity(); ++p)
+        same = same && parallel.pointEdge(p) == serial.pointEdge(p);
+    for (Index e = 0; e < serial.edgeCapacity(); ++e)
+        for (int k = 0; k < 2; ++k)
+            same = same && parallel.edgePoint(e, k) == serial.edgePoint(e, k) && parallel.edgeCorner(e) == serial.edgeCorner(e) &&
+                   parallel.edgeNextAround(e, serial.edgePoint(e, k)) == serial.edgeNextAround(e, serial.edgePoint(e, k));
+    for (Index c = 0; c < serial.cornerCapacity(); ++c)
+        same = same && parallel.cornerPoint(c) == serial.cornerPoint(c) && parallel.cornerEdge(c) == serial.cornerEdge(c) &&
+               parallel.cornerFace(c) == serial.cornerFace(c) && parallel.cornerNext(c) == serial.cornerNext(c) &&
+               parallel.cornerPrev(c) == serial.cornerPrev(c) && parallel.cornerRadial(c) == serial.cornerRadial(c);
+    for (Index f = 0; f < serial.faceCapacity(); ++f)
+        same = same && parallel.faceCorner(f) == serial.faceCorner(f) && parallel.faceSize(f) == serial.faceSize(f);
+    CHECK(same);
+}

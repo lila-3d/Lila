@@ -418,7 +418,7 @@ glm::dvec3 selectionCenter()
         // The object-space sum only changes with the mesh or the selection; the manipulator asks every frame.
         struct Cached
         {
-            MeshPtr cage;
+            std::weak_ptr<const geo::Mesh> cage;
             uint64_t serial = 0;
             ComponentMode kind = ComponentMode::Object;
             glm::dvec3 sum{0.0};
@@ -426,7 +426,7 @@ glm::dvec3 selectionCenter()
         };
         static std::unordered_map<NodeId, Cached> cache;
         Cached& c = cache[node];
-        if (c.cage != cage || c.serial != components::serial() || c.kind != kind)
+        if (c.cage.lock() != cage || c.serial != components::serial() || c.kind != kind)
         {
             const geo::Mesh& m = *cage;
             c = {cage, components::serial(), kind};

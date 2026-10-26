@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Export.h"
+#include "core/UninitVector.h"
 
 #include "geo/Attribute.h"
 
@@ -307,12 +308,12 @@ private:
     void radialRemove(Index c);
     void killCorner(Index c);
 
-    std::vector<glm::dvec3> mPointPos;
-    std::vector<Index> mPointEdge;
-    std::vector<uint8_t> mPointDead;
-    std::vector<Edge> mEdges;
-    std::vector<Corner> mCorners;
-    std::vector<Face> mFaces;
+    UninitVector<glm::dvec3> mPointPos;
+    UninitVector<Index> mPointEdge;
+    UninitVector<uint8_t> mPointDead;
+    UninitVector<Edge> mEdges;
+    UninitVector<Corner> mCorners;
+    UninitVector<Face> mFaces;
     Index mNumPoints = 0;
     Index mNumEdges = 0;
     Index mNumFaces = 0;

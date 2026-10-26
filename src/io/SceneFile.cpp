@@ -556,6 +556,8 @@ void load(const fs::path& path)
         const auto size = fs::file_size(path, ec);
         progress::Scope build("", 0.0, progress::None, 7.0);
         deserialize(doc, path.parent_path(), ec ? 0.0 : double(size));
+        // The document holds a copy of every mesh array, slow enough to free that it goes on its own thread.
+        std::thread([d = std::move(doc)] {}).detach();
     }
     setCurrentPath(path);
     markClean();

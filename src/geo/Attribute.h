@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Export.h"
+#include "core/UninitVector.h"
 
 #include <glm/glm.hpp>
 
@@ -71,7 +72,8 @@ LILA_SCENE_API std::string uvName(int set);
 class LILA_SCENE_API Attribute
 {
 public:
-    Attribute(std::string name, AttrType type, size_t count);
+    /** count elements, zeroed; or left unset with zeroed = false, for a layer that is about to be filled whole. */
+    Attribute(std::string name, AttrType type, size_t count, bool zeroed = true);
 
     const std::string& name() const { return mName; }
     void setName(std::string name) { mName = std::move(name); }
@@ -123,7 +125,7 @@ private:
     AttrType mType;
     size_t mStride;
     alignas(16) std::byte mDefault[16] = {};
-    std::vector<std::byte> mData;
+    UninitVector<std::byte> mData;
 };
 
 /** All attributes of one domain. Element count is kept in sync by the Mesh. */
@@ -135,6 +137,8 @@ public:
 
     /** Returns the existing layer when the type matches; a layer of another type is replaced. */
     Attribute& add(std::string_view name, AttrType type);
+    /** add(), except a new layer's values are left unset: every element must be written before it is read. */
+    Attribute& addUnset(std::string_view name, AttrType type);
     bool remove(std::string_view name);
     /** Renames in place, keeping the layer's position. False when from is missing or to is taken. */
     bool rename(std::string_view from, std::string_view to);

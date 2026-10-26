@@ -1,3 +1,5 @@
+find_package(ZLIB REQUIRED)
+
 add_executable(lila_fbx_tests
     main.cpp
     test_fbx.cpp
@@ -8,5 +10,5 @@ add_executable(lila_fbx_tests
     test_clean_bake.cpp
     test_game_export.cpp
     test_fbx_lod.cpp)
-target_link_libraries(lila_fbx_tests PRIVATE LilaScene lila_ufbx doctest::doctest)
+target_link_libraries(lila_fbx_tests PRIVATE LilaScene lila_ufbx ZLIB::ZLIB doctest::doctest)
 add_test(NAME lila_fbx_tests COMMAND lila_fbx_tests)

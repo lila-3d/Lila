@@ -18,6 +18,7 @@
     "meshoptimizer",
     "joltphysics",
     "miniz",
+    "zlib",
     "usd",
     "draco",
     {

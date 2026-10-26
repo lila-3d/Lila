@@ -65,19 +65,26 @@ std::string attr::uvName(int set)
     return "uv" + std::to_string(set);
 }
 
-Attribute::Attribute(std::string name, AttrType type, size_t count)
+Attribute::Attribute(std::string name, AttrType type, size_t count, bool zeroed)
     : mName(std::move(name)), mType(type), mStride(attrTypeSize(type))
 {
-    mData.resize(count * mStride);
+    if (zeroed)
+        mData.assign(count * mStride, std::byte{0});
+    else
+        mData.resize(count * mStride);
 }
 
 void Attribute::resize(size_t n)
 {
     const size_t old = size();
     mData.resize(n * mStride);
-    if (n > old && std::any_of(mDefault, mDefault + mStride, [](std::byte b) { return b != std::byte{0}; }))
+    if (n <= old)
+        return;
+    if (std::any_of(mDefault, mDefault + mStride, [](std::byte b) { return b != std::byte{0}; }))
         for (size_t i = old; i < n; ++i)
             reset(i);
+    else
+        std::memset(raw(old), 0, (n - old) * mStride);
 }
 
 void Attribute::copyFrom(const Attribute& other, size_t dst, size_t src)
@@ -136,7 +143,7 @@ void Attribute::mix(size_t dst, std::span<const Index> srcs, std::span<const flo
 
 void Attribute::reorder(std::span<const Index> newToOld)
 {
-    std::vector<std::byte> out(newToOld.size() * mStride);
+    UninitVector<std::byte> out(newToOld.size() * mStride);
     for (size_t i = 0; i < newToOld.size(); ++i)
         std::memcpy(out.data() + i * mStride, raw(newToOld[i]), mStride);
     mData = std::move(out);
@@ -167,6 +174,14 @@ Attribute& AttributeSet::add(std::string_view name, AttrType type)
         remove(name);
     }
     return mLayers.emplace_back(std::string(name), type, mSize);
+}
+
+Attribute& AttributeSet::addUnset(std::string_view name, AttrType type)
+{
+    if (Attribute* a = find(name); a && a->type() == type)
+        return *a;
+    remove(name);
+    return mLayers.emplace_back(std::string(name), type, mSize, false);
 }
 
 bool AttributeSet::remove(std::string_view name)
