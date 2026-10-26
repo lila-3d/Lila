@@ -205,7 +205,11 @@ NodeId copyAnim(Graph& g, NodeId id, std::map<NodeId, NodeId>& memo, const std::
     memo[id] = cid;
     const auto& attrs = n.type().attrs;
     for (int i = 0; i < int(attrs.size()); ++i)
-        if ((attrs[i].flags & AttrInput) && (attrs[i].flags & AttrStorable) && !(g.node(cid)->value(i) == n.value(i)))
+        if (!(attrs[i].flags & AttrInput) || !(attrs[i].flags & AttrStorable))
+            continue;
+        else if (attrs[i].flags & AttrArray)
+            g.copyElements(id, cid, i, false);
+        else if (!(g.node(cid)->value(i) == n.value(i)))
             g.setValue({cid, i}, n.value(i));
     std::vector<std::pair<PlugRef, PlugRef>> inputs;
     for (const auto& [dst, src] : g.connections())

@@ -265,7 +265,7 @@ nlohmann::json serializeScene(const fs::path& sceneDir, bool packed, std::vector
         for (int i = 0; i < int(defs.size()); ++i)
         {
             const scene::AttrDef& a = defs[i];
-            if (!(a.flags & scene::AttrStorable) || !(a.flags & scene::AttrInput))
+            if (!(a.flags & scene::AttrStorable) || !(a.flags & scene::AttrInput) || (a.flags & scene::AttrArray))
                 continue;
             if (g.source({order[k], i, -1}))
                 continue;
@@ -313,6 +313,23 @@ nlohmann::json serializeScene(const fs::path& sceneDir, bool packed, std::vector
         json node = {{"name", n->name()}, {"type", n->type().name}};
         if (NodeId p = g.parent(id); p != scene::kNoNode)
             node["parent"] = g.fullPath(p);
+        json user = json::array();
+        for (const scene::AttrDef& a : n->type().attrs)
+            if (a.flags & scene::AttrUser)
+                user.push_back(scene::attrDefToJson(a));
+        if (!user.empty())
+            node["userAttrs"] = std::move(user);
+        for (int i = 0; i < int(n->type().attrs.size()); ++i)
+            if (const scene::AttrDef& a = n->type().attrs[size_t(i)];
+                (a.flags & scene::AttrArray) && (a.flags & scene::AttrStorable) && (a.flags & scene::AttrInput))
+            {
+                json els = json::object();
+                for (const auto& [index, value] : n->elements(i))
+                    if (!g.source({id, i, -1, index}))
+                        els[std::to_string(index)] = scene::toJson(value);
+                if (!els.empty())
+                    attrs[a.name] = std::move(els);
+            }
         if (!attrs.empty())
             node["attrs"] = std::move(attrs);
         json locked = json::array();

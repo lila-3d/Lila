@@ -73,7 +73,8 @@ enum AttrFlags : uint32_t
     AttrResetOnDisconnect = 1 << 6, // only meaningful while driven: losing the connection puts the default back
     AttrColor = 1 << 7,             // Vec3 holding a linear RGB colour: editors show a swatch
     AttrUnique = 1 << 8,            // an identity: duplicates don't inherit it
-    AttrArray = 1 << 9,             // an input taking any number of connections, one per element (node.attr[3])
+    AttrArray = 1 << 9,             // any number of elements (node.attr[3]); with AttrStorable they hold values, else only connections
+    AttrUser = 1 << 10,             // added to one node by addAttr rather than declared by its type
 };
 
 struct AttrDef
@@ -93,8 +94,9 @@ struct AttrDef
      */
     std::optional<PlugValue> fileDefault;
     /**
-     * An older name scene files may store this attr under. Only loading reads it. On an array, the prefix of numbered
-     * attrs it replaces: "section" reads section0, section1 ... as elements 0, 1 ...
+     * An older name scene files may store this attr under. Only loading reads it. On an array, the numbered attrs it
+     * replaces, # standing for the number: "section#" (or just "section") reads section0, section1 ... as elements 0, 1 ...,
+     * "target#Weight" reads target0Weight ...
      */
     std::string fileAlias;
     /** Editor hints. niceName replaces the label made from the name; the limits bound sliders and typed values. */
@@ -111,7 +113,11 @@ struct AttrDef
     const PlugValue& storedDefault() const { return fileDefault ? *fileDefault : defaultValue; }
 };
 
-/** node.attr, optionally one component of a Vec3 (node.tx) or one element of an array input (node.attr[3]). */
+/**
+ * node.attr, optionally one component of a Vec3 (node.tx) or one element of an array (node.attr[3]). An attr named
+ * "group.child" is a child of a grouped array: its elements read as node.group[3].child, matched by index with the group's
+ * other children.
+ */
 struct PlugRef
 {
     NodeId node = kNoNode;
@@ -129,6 +135,12 @@ LILA_SCENE_API json toJson(const PlugValue& v);
 LILA_SCENE_API PlugValue fromJson(const AttrDef& def, const json& j);
 LILA_SCENE_API PlugValue defaultFor(PlugType type);
 LILA_SCENE_API const char* typeName(PlugType type);
+/** The type typeName names. Throws std::invalid_argument for anything else. */
+LILA_SCENE_API PlugType typeNamed(std::string_view name);
+/** A user attr's definition as scene files store it: name, type, flags and the editor hints set on it. */
+LILA_SCENE_API json attrDefToJson(const AttrDef& def);
+/** attrDefToJson read back. Throws std::invalid_argument for a bad type or default. */
+LILA_SCENE_API AttrDef attrDefFromJson(const json& j);
 
 /**
  * toJson of each value, in order; meshes and data convert in parallel. packed writes meshes with meshToJsonPacked, for a

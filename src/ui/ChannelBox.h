@@ -58,6 +58,8 @@ private:
         bool header = false;
         /** Shown instead of the attr's nice name (a morph target's name for its weight). */
         std::string label;
+        /** An array's element, whose plug name attr holds ("targets[0].weight"). */
+        int element = -1;
     };
 
     /** The rows the lead node needs: its channels, then INPUTS (modifiers top first, then the generator). */

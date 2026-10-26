@@ -439,7 +439,16 @@ void registerCommands()
             // Unlock before setting and lock after, so setAttr(plug, v, lock=...) works either way.
             if (a.has("lock") && !a.get<bool>("lock"))
                 guarded([&] { graph().setLocked(p, false); return 0; });
-            if (!lockOnly)
+            if (!lockOnly && (graph().attr(p).flags & AttrArray) && p.element < 0)
+            {
+                if (!a.positional[1].is_array())
+                    throw CommandError("setAttr: " + graph().plugName(p) + " is an array; give a list of its values");
+                std::vector<PlugValue> values;
+                for (const json& v : a.positional[1])
+                    values.push_back(guarded([&] { return fromJson(graph().attr(p), v); }));
+                guarded([&] { graph().setElements(p, values); return 0; });
+            }
+            else if (!lockOnly)
             {
                 json v = a.positional.size() == 4 ? json::array({a.positional[1], a.positional[2], a.positional[3]}) : a.positional[1];
                 AttrDef def = graph().attr(p);
@@ -455,9 +464,11 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "getAttr",
-        .doc = "Value of 'node.attr'; a whole array input gives its elements' values in order. lock=True returns whether it is locked instead.",
+        .doc = "Value of 'node.attr'; a whole array gives its elements' values in index order. lock=True returns whether it is locked "
+               "instead; multiIndices=True an array's element indices.",
         .positionalDoc = "plug",
-        .flags = {{"lock", "l", T::Bool, false, "Return the lock state instead of the value."}},
+        .flags = {{"lock", "l", T::Bool, false, "Return the lock state instead of the value."},
+                  {"multiIndices", "mi", T::Bool, false, "Return an array's element indices, ascending."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             if (a.positional.empty() || !a.positional[0].is_string())
@@ -465,6 +476,13 @@ void registerCommands()
             PlugRef p = plugArg(a.positional[0].get<std::string>());
             if (a.get<bool>("lock"))
                 return graph().isLocked(p);
+            if (a.get<bool>("multiIndices"))
+            {
+                json out = json::array();
+                for (const PlugRef& e : graph().elements(p))
+                    out.push_back(e.element);
+                return out;
+            }
             if ((graph().attr(p).flags & AttrArray) && p.element < 0)
             {
                 json out = json::array();
@@ -513,12 +531,156 @@ void registerCommands()
     });
 
     ops::registerCommand({
+        .name = "addAttr",
+        .doc = "Add an attribute to objects (Maya's addAttr): attributeType for a single value or, with multi, an array of them; "
+               "dataType for strings and arrays (stringArray, doubleArray, Int32Array, vectorArray). Saved with the scene. "
+               "Returns the new plugs.",
+        .positionalDoc = "objects",
+        .flags = {
+            {"longName", "ln", T::String, nullptr, "The attribute's name."},
+            {"shortName", "sn", T::String, nullptr, "A short name."},
+            {"niceName", "nn", T::String, nullptr, "The label editors show."},
+            {"attributeType", "at", T::String, nullptr, "bool, long, float, double, double3, enum or matrix (Lila's int, vec3 too)."},
+            {"dataType", "dt", T::String, nullptr, "string, stringArray, doubleArray, floatArray, Int32Array, vectorArray or matrix."},
+            {"multi", "m", T::Bool, false, "An array of attributeType: any number of elements, attr[0], attr[1] ..."},
+            {"defaultValue", "dv", T::Any, nullptr, "Default value (each element's, for an array)."},
+            {"minValue", "min", T::Float, nullptr, "Lowest value editors allow."},
+            {"maxValue", "max", T::Float, nullptr, "Highest value editors allow."},
+            {"softMinValue", "smn", T::Float, nullptr, "Slider minimum."},
+            {"softMaxValue", "smx", T::Float, nullptr, "Slider maximum."},
+            {"enumName", "en", T::String, nullptr, "Enum labels, 'low:medium:high'."},
+            {"keyable", "k", T::Bool, false, "Show it in the channel box, where it can be keyed."},
+            {"hidden", "h", T::Bool, false, "Hide it from editors."},
+            {"usedAsColor", "uac", T::Bool, false, "A double3 holding a colour: editors show a swatch."},
+            {"doc", "", T::String, nullptr, "What it is for: editors show it as a tooltip."},
+        },
+        .run = [](const Args& a) -> json {
+            std::vector<std::string> objs = a.objects();
+            if (objs.empty())
+                throw CommandError("addAttr: no object");
+            if (!a.has("longName"))
+                throw CommandError("addAttr: give longName");
+            AttrDef def;
+            def.name = a.get<std::string>("longName");
+            def.shortName = a.get<std::string>("shortName", "");
+            def.niceName = a.get<std::string>("niceName", "");
+            def.doc = a.get<std::string>("doc", "");
+            static const std::map<std::string, std::pair<PlugType, bool>> kinds = {
+                {"bool", {PlugType::Bool, false}},       {"long", {PlugType::Int, false}},         {"short", {PlugType::Int, false}},
+                {"byte", {PlugType::Int, false}},        {"int", {PlugType::Int, false}},          {"float", {PlugType::Float, false}},
+                {"double", {PlugType::Float, false}},    {"doubleLinear", {PlugType::Float, false}}, {"doubleAngle", {PlugType::Float, false}},
+                {"double3", {PlugType::Vec3, false}},    {"float3", {PlugType::Vec3, false}},      {"vec3", {PlugType::Vec3, false}},
+                {"enum", {PlugType::Enum, false}},       {"matrix", {PlugType::Matrix, false}},    {"string", {PlugType::String, false}},
+                {"stringArray", {PlugType::String, true}}, {"doubleArray", {PlugType::Float, true}}, {"floatArray", {PlugType::Float, true}},
+                {"Int32Array", {PlugType::Int, true}},   {"intArray", {PlugType::Int, true}},      {"vectorArray", {PlugType::Vec3, true}},
+                {"pointArray", {PlugType::Vec3, true}}};
+            std::string kind = a.has("dataType") ? a.get<std::string>("dataType") : a.get<std::string>("attributeType", "float");
+            auto k = kinds.find(kind);
+            if (k == kinds.end())
+                throw CommandError("addAttr: unknown type '" + kind + "'");
+            def.type = k->second.first;
+            if (k->second.second || a.get<bool>("multi"))
+                def.flags |= AttrArray;
+            def.defaultValue = defaultFor(def.type);
+            if (def.type == PlugType::Enum)
+            {
+                std::string names = a.get<std::string>("enumName", "");
+                for (size_t start = 0; start <= names.size();)
+                {
+                    size_t end = names.find(':', start);
+                    std::string n = names.substr(start, end == std::string::npos ? std::string::npos : end - start);
+                    if (!n.empty())
+                        def.enumNames.push_back(n);
+                    if (end == std::string::npos)
+                        break;
+                    start = end + 1;
+                }
+                if (def.enumNames.empty())
+                    throw CommandError("addAttr: an enum needs enumName, 'a:b:c'");
+            }
+            if (a.has("defaultValue"))
+                def.defaultValue = guarded([&] { return fromJson(def, a.get<json>("defaultValue")); });
+            for (auto [flag, slot] : {std::pair{"minValue", &def.minValue}, {"maxValue", &def.maxValue}, {"softMinValue", &def.softMin},
+                                      {"softMaxValue", &def.softMax}})
+                if (a.has(flag))
+                    *slot = a.get<double>(flag);
+            if (a.get<bool>("keyable"))
+                def.flags |= AttrKeyable;
+            if (a.get<bool>("hidden"))
+                def.flags |= AttrHidden;
+            if (a.get<bool>("usedAsColor"))
+                def.flags |= AttrColor;
+            json out = json::array();
+            for (const std::string& o : objs)
+            {
+                Node& n = nodeNamed(o);
+                int index = guarded([&] { return graph().addAttr(n.id(), def); });
+                out.push_back(graph().plugName({n.id(), index}));
+            }
+            return out;
+        },
+    });
+
+    ops::registerCommand({
+        .name = "deleteAttr",
+        .doc = "Delete attributes added with addAttr: deleteAttr('node.attr'), or deleteAttr(objects, attribute=name).",
+        .positionalDoc = "plugs or objects",
+        .flags = {{"attribute", "at", T::String, nullptr, "The attribute to delete from each object."}},
+        .run = [](const Args& a) -> json {
+            std::vector<PlugRef> plugs;
+            if (a.has("attribute"))
+                for (const std::string& o : a.objects())
+                    plugs.push_back(plugArg(nodeNamed(o).path() + "." + a.get<std::string>("attribute")));
+            else
+                for (const json& v : a.positional)
+                    plugs.push_back(plugArg(v.get<std::string>()));
+            if (plugs.empty())
+                throw CommandError("deleteAttr: expected 'node.attr'");
+            for (const PlugRef& p : plugs)
+                guarded([&] { graph().deleteAttr({p.node, p.attr}); return 0; });
+            return nullptr;
+        },
+    });
+
+    ops::registerCommand({
+        .name = "removeMultiInstance",
+        .doc = "Remove array elements with their connections and values: 'node.attr[3]', or 'node.group[3]' for every child of a "
+               "grouped array.",
+        .positionalDoc = "plugs",
+        .run = [](const Args& a) -> json {
+            for (const json& v : a.positional)
+            {
+                const std::string path = v.get<std::string>();
+                // node.group[3]: no attr is named group, its children are group.<child>.
+                size_t dot = path.find('.'), open = path.rfind('[');
+                if (dot != std::string::npos && open != std::string::npos && open > dot && path.ends_with(']'))
+                {
+                    Node& n = nodeNamed(path.substr(0, dot));
+                    std::string group = path.substr(dot + 1, open - dot - 1);
+                    std::vector<int> children = n.type().groupChildren(group);
+                    if (!children.empty() && n.type().attrIndex(group) < 0)
+                    {
+                        int index = std::stoi(path.substr(open + 1, path.size() - open - 2));
+                        for (int c : children)
+                            guarded([&] { graph().removeElement({n.id(), c, -1, index}); return 0; });
+                        continue;
+                    }
+                }
+                PlugRef p = plugArg(path);
+                guarded([&] { graph().removeElement(p); return 0; });
+            }
+            return nullptr;
+        },
+    });
+
+    ops::registerCommand({
         .name = "listAttr",
         .doc = "Attribute names of a node.",
         .positionalDoc = "object",
         .flags = {
             {"keyable", "k", T::Bool, false, "Only keyable attributes."},
             {"locked", "l", T::Bool, false, "Only locked plugs; a Vec3 lists each locked component (translateX)."},
+            {"userDefined", "ud", T::Bool, false, "Only attributes added with addAttr."},
         },
         .undoable = false,
         .run = [](const Args& a) -> json {
@@ -531,7 +693,8 @@ void registerCommands()
             for (int i = 0; i < int(attrs.size()); ++i)
             {
                 const AttrDef& d = attrs[i];
-                if ((d.flags & AttrHidden) || (a.get<bool>("keyable") && !(d.flags & AttrKeyable)))
+                if ((d.flags & AttrHidden) || (a.get<bool>("keyable") && !(d.flags & AttrKeyable)) ||
+                    (a.get<bool>("userDefined") && !(d.flags & AttrUser)))
                     continue;
                 if (!a.get<bool>("locked"))
                     out.push_back(d.name);

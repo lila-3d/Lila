@@ -25,7 +25,17 @@ const std::vector<NodeId> kNoChildren;
 
 bool isArray(const AttrDef& a) { return (a.flags & AttrArray) != 0; }
 
-std::string elementSuffix(const PlugRef& p) { return p.element >= 0 ? "[" + std::to_string(p.element) + "]" : ""; }
+/** The attr part of a plug's name: attr, attr[3], or group[3].child for a grouped array's child. */
+std::string attrPart(const AttrDef& a, const PlugRef& p)
+{
+    if (p.component >= 0)
+        return a.childNames[size_t(p.component)];
+    if (p.element < 0)
+        return a.name;
+    const std::string index = "[" + std::to_string(p.element) + "]";
+    size_t dot = a.name.find('.');
+    return dot == std::string::npos ? a.name + index : a.name.substr(0, dot) + index + a.name.substr(dot);
+}
 
 /** A whole non-negative number, or -1. */
 int parseIndex(std::string_view digits)
@@ -342,7 +352,7 @@ Node* Graph::createNode(const NodeType& type, std::string_view name, NodeId pare
 
     std::unique_ptr<Node> n = type.create();
     n->mId = mNextId++;
-    n->mType = &type;
+    n->mType = &type.registered();
     // Default names follow the convention's style even when enforcement is off.
     std::string fallback = applyCase(type.name, mNaming.styleFor(type));
     NodeId p = type.dag ? parent : kNoNode;
@@ -351,8 +361,16 @@ Node* Graph::createNode(const NodeType& type, std::string_view name, NodeId pare
     if (auto colon = n->mName.rfind(':'); colon != std::string::npos)
         n->mNamespace = n->mName.substr(0, colon);
     n->mValues.reserve(type.attrs.size());
-    for (const AttrDef& a : type.attrs)
+    for (const AttrDef& a : type.registered().attrs)
         n->mValues.push_back(a.defaultValue);
+    // A copy of a node with user attrs (type is its private type) gets them too, as part of being created.
+    if (type.userOf)
+    {
+        n->mOwnType = std::make_shared<NodeType>(type);
+        n->mType = n->mOwnType.get();
+        for (size_t i = n->mValues.size(); i < type.attrs.size(); ++i)
+            n->mValues.push_back(type.attrs[i].defaultValue);
+    }
 
     NodeId id = n->id();
     attach(std::move(n), p, SIZE_MAX);
@@ -672,7 +690,18 @@ PlugRef Graph::plug(std::string_view path) const
         throw std::invalid_argument("no node named '" + std::string(path.substr(0, dot)) + "'");
     std::string_view attrName = path.substr(dot + 1);
     int element = -1;
-    if (attrName.ends_with(']'))
+    std::string grouped;
+    if (size_t close = attrName.find("]."); close != std::string_view::npos)
+    {
+        // group[3].child names the child attr "group.child", element 3.
+        size_t open = attrName.rfind('[', close);
+        element = open == std::string_view::npos ? -1 : parseIndex(attrName.substr(open + 1, close - open - 1));
+        if (element < 0)
+            throw std::invalid_argument("bad element index in '" + std::string(path) + "'");
+        grouped = std::string(attrName.substr(0, open)) + "." + std::string(attrName.substr(close + 2));
+        attrName = grouped;
+    }
+    else if (attrName.ends_with(']'))
     {
         size_t open = attrName.rfind('[');
         element = open == std::string_view::npos ? -1 : parseIndex(attrName.substr(open + 1, attrName.size() - open - 2));
@@ -695,11 +724,10 @@ PlugRef Graph::plug(std::string_view path) const
                 if (a.childNames[c] == attrName || a.childShort[c] == attrName)
                     return {n->id(), i, c};
     }
-    // Numbered inputs an array replaced, as older scene files name them.
-    for (int i = 0; i < int(attrs.size()) && element < 0; ++i)
-        if (const AttrDef& a = attrs[i]; isArray(a) && !a.fileAlias.empty() && attrName.starts_with(a.fileAlias))
-            if (int k = parseIndex(attrName.substr(a.fileAlias.size())); k >= 0)
-                return {n->id(), i, -1, k};
+    // Numbered attrs an array replaced, as older scene files and scripts name them.
+    if (element < 0)
+        if (int k = -1, i = n->type().fileAttrIndex(attrName, &k); i >= 0 && k >= 0)
+            return {n->id(), i, -1, k};
     throw std::invalid_argument("'" + n->name() + "' has no attribute '" + std::string(attrName) + "'");
 }
 
@@ -709,7 +737,7 @@ std::string Graph::plugName(const PlugRef& p) const
     if (!n)
         return "?";
     const AttrDef& a = n->type().attrs[p.attr];
-    return path(p.node) + "." + (p.component >= 0 ? a.childNames[p.component] : a.name) + elementSuffix(p);
+    return path(p.node) + "." + attrPart(a, p);
 }
 
 std::string Graph::fullPlugName(const PlugRef& p) const
@@ -718,7 +746,7 @@ std::string Graph::fullPlugName(const PlugRef& p) const
     if (!n)
         return "?";
     const AttrDef& a = n->type().attrs[p.attr];
-    return fullPath(p.node) + "." + (p.component >= 0 ? a.childNames[p.component] : a.name) + elementSuffix(p);
+    return fullPath(p.node) + "." + attrPart(a, p);
 }
 
 const AttrDef& Graph::attr(const PlugRef& p) const
@@ -731,8 +759,7 @@ void Graph::setRaw(const PlugRef& p, const PlugValue& v)
     Node* n = node(p.node);
     if (p.element >= 0)
     {
-        if (PlugValue* e = elementSlot(n->mElements, p))
-            *e = v;
+        elementRaw(p) = v;
         markDirty(p.node);
         changed(Change::Value, p.node, &p);
         return;
@@ -823,8 +850,10 @@ void Graph::setValue(const PlugRef& p, PlugValue v)
     const AttrDef& a = n->type().attrs[p.attr];
     if (!(a.flags & AttrInput))
         throw std::invalid_argument(plugName(p) + " is an output and can't be set");
-    if (isArray(a))
+    if (isArray(a) && !(a.flags & AttrStorable))
         throw std::invalid_argument(plugName(p) + " is an array input and takes connections, not values");
+    if (isArray(a) && (p.element < 0 || p.component >= 0))
+        throw std::invalid_argument(plugName(p) + " is an array: set one element (" + plugName(p) + "[0]), or all with setElements");
     if (uint8_t mask = n->lockMask(p.attr))
     {
         const glm::dvec3* x = std::get_if<glm::dvec3>(&v);
@@ -864,6 +893,26 @@ void Graph::setValue(const PlugRef& p, PlugValue v)
             return;
         }
 
+    if (p.element >= 0)
+    {
+        const PlugValue* was = nullptr;
+        for (const auto& [i, ev] : n->elements(p.attr))
+            if (i == p.element)
+                was = &ev;
+        if (was && *was == v)
+            return;
+        std::optional<PlugValue> old = was ? std::optional(*was) : std::nullopt;
+        setRaw(p, v);
+        recordUndo(
+            [this, p, old] {
+                if (old)
+                    setRaw(p, *old);
+                else
+                    eraseElementRaw(p);
+            },
+            [this, p, v] { setRaw(p, v); });
+        return;
+    }
     PlugValue old = p.component >= 0 ? PlugValue(std::get<glm::dvec3>(n->mValues[p.attr])[p.component]) : n->mValues[p.attr];
     if (old == v)
         return;
@@ -984,15 +1033,8 @@ bool Graph::dependsOn(NodeId n, NodeId upstream) const
 
 void Graph::connectRaw(const PlugRef& src, const PlugRef& dst)
 {
-    if (Node* n = node(dst.node); n && dst.element >= 0)
-    {
-        if (n->mElements.size() <= size_t(dst.attr))
-            n->mElements.resize(n->type().attrs.size());
-        auto& els = n->mElements[size_t(dst.attr)];
-        auto at = std::lower_bound(els.begin(), els.end(), dst.element, [](const auto& e, int i) { return e.first < i; });
-        if (at == els.end() || at->first != dst.element)
-            els.insert(at, {dst.element, n->type().attrs[size_t(dst.attr)].defaultValue});
-    }
+    if (dst.element >= 0 && node(dst.node))
+        elementRaw(dst);
     mHeld.erase(dst);
     mInputs[dst] = src;
     mOutgoingDst[src.node].push_back(dst);
@@ -1010,8 +1052,12 @@ void Graph::disconnectRaw(const PlugRef& dst)
     mHeld.erase(dst);
     if (Node* n = node(dst.node))
     {
-        if (dst.element >= 0 && size_t(dst.attr) < n->mElements.size())
-            std::erase_if(n->mElements[size_t(dst.attr)], [&](const auto& e) { return e.first == dst.element; });
+        // A storable array keeps the element, holding the last value pulled through; an input-only one drops it.
+        if (dst.element >= 0)
+        {
+            if (!(n->type().attrs[size_t(dst.attr)].flags & AttrStorable))
+                eraseElementRaw(dst);
+        }
         else if (const AttrDef& a = n->type().attrs[size_t(dst.attr)]; a.flags & AttrResetOnDisconnect)
             n->mValues[size_t(dst.attr)] = a.defaultValue;
     }
@@ -1075,16 +1121,27 @@ PlugRef Graph::connect(const PlugRef& src, const PlugRef& to, bool force)
     }
     // Undo puts back the value the plug held before it was driven, not the last one pulled through the connection.
     std::optional<PlugValue> before;
-    if (da.type != PlugType::Mesh && da.type != PlugType::Data && dst.element < 0)
+    bool newElement = false;
+    if (dst.element >= 0)
+    {
+        const auto& els = node(dst.node)->elements(dst.attr);
+        auto it = std::ranges::find(els, dst.element, [](const auto& e) { return e.first; });
+        newElement = it == els.end();
+        if (!newElement && da.type != PlugType::Mesh && da.type != PlugType::Data)
+            before = it->second;
+    }
+    else if (da.type != PlugType::Mesh && da.type != PlugType::Data)
     {
         const PlugValue& v = node(dst.node)->value(dst.attr);
         before = dst.component >= 0 ? PlugValue(std::get<glm::dvec3>(v)[dst.component]) : v;
     }
     connectRaw(src, dst);
     recordUndo(
-        [this, dst, before] {
+        [this, dst, before, newElement] {
             disconnectRaw(dst);
-            if (before && node(dst.node))
+            if (newElement)
+                eraseElementRaw(dst);
+            else if (before && node(dst.node))
                 setRaw(dst, *before);
         },
         [this, src, dst] { connectRaw(src, dst); });
@@ -1110,10 +1167,212 @@ std::optional<PlugRef> Graph::source(const PlugRef& dst) const
 std::vector<PlugRef> Graph::elements(const PlugRef& array) const
 {
     std::vector<PlugRef> out;
-    for (auto it = mInputs.lower_bound({array.node, array.attr, -1, 0});
-         it != mInputs.end() && it->first.node == array.node && it->first.attr == array.attr && it->first.component == -1; ++it)
-        out.push_back(it->first);
+    if (Node* n = node(array.node))
+        for (const auto& [i, v] : n->elements(array.attr))
+            out.push_back({array.node, array.attr, -1, i});
     return out;
+}
+
+std::vector<int> Graph::groupIndices(NodeId id, std::string_view group) const
+{
+    std::vector<int> out;
+    if (Node* n = node(id))
+        for (int a : n->type().groupChildren(group))
+            for (const auto& [i, v] : n->elements(a))
+                out.push_back(i);
+    std::ranges::sort(out);
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+PlugValue& Graph::elementRaw(const PlugRef& p)
+{
+    Node* n = node(p.node);
+    if (n->mElements.size() < n->type().attrs.size())
+        n->mElements.resize(n->type().attrs.size());
+    auto& els = n->mElements[size_t(p.attr)];
+    auto at = std::lower_bound(els.begin(), els.end(), p.element, [](const auto& e, int i) { return e.first < i; });
+    if (at == els.end() || at->first != p.element)
+        at = els.insert(at, {p.element, n->type().attrs[size_t(p.attr)].defaultValue});
+    return at->second;
+}
+
+void Graph::eraseElementRaw(const PlugRef& p)
+{
+    Node* n = node(p.node);
+    if (!n || size_t(p.attr) >= n->mElements.size())
+        return;
+    std::erase_if(n->mElements[size_t(p.attr)], [&](const auto& e) { return e.first == p.element; });
+    markDirty(p.node);
+    changed(Change::Value, p.node, &p);
+}
+
+void Graph::setElementsRaw(const PlugRef& array, const std::vector<std::pair<int, PlugValue>>& elements)
+{
+    Node* n = node(array.node);
+    if (n->mElements.size() < n->type().attrs.size())
+        n->mElements.resize(n->type().attrs.size());
+    n->mElements[size_t(array.attr)] = elements;
+    markDirty(array.node);
+    changed(Change::Value, array.node, &array);
+}
+
+void Graph::setElements(const PlugRef& array, const std::vector<PlugValue>& values)
+{
+    Node* n = node(array.node);
+    if (!n)
+        throw std::invalid_argument("no such node");
+    const AttrDef& a = n->type().attrs[size_t(array.attr)];
+    if (!isArray(a) || !(a.flags & AttrStorable) || !(a.flags & AttrInput))
+        throw std::invalid_argument(plugName({array.node, array.attr}) + " is not an array that holds values");
+    if (isLocked({array.node, array.attr}))
+        throw std::invalid_argument(plugName({array.node, array.attr}) + " is locked and can't be changed");
+    for (const PlugRef& e : elements({array.node, array.attr}))
+        if (source(e))
+            throw std::invalid_argument(plugName(e) + " is driven by a connection");
+    std::vector<std::pair<int, PlugValue>> before = n->elements(array.attr), after;
+    for (size_t i = 0; i < values.size(); ++i)
+        after.emplace_back(int(i), values[i]);
+    if (before == after)
+        return;
+    PlugRef whole{array.node, array.attr};
+    setElementsRaw(whole, after);
+    recordUndo([this, whole, before] { setElementsRaw(whole, before); }, [this, whole, after] { setElementsRaw(whole, after); });
+}
+
+void Graph::removeElement(const PlugRef& e)
+{
+    Node* n = node(e.node);
+    if (!n || e.element < 0)
+        throw std::invalid_argument("removeElement: expected an element plug (node.attr[n])");
+    disconnect(e);
+    const auto& els = n->elements(e.attr);
+    auto it = std::ranges::find(els, e.element, [](const auto& x) { return x.first; });
+    if (it == els.end())
+        return;
+    PlugValue was = it->second;
+    eraseElementRaw(e);
+    recordUndo([this, e, was] { setRaw(e, was); }, [this, e] { eraseElementRaw(e); });
+}
+
+void Graph::copyElements(NodeId from, NodeId to, int attr, bool shareSources)
+{
+    const bool stores = (node(from)->type().attrs[size_t(attr)].flags & AttrStorable) != 0;
+    for (const PlugRef& e : elements({from, attr}))
+    {
+        PlugRef dst{to, attr, -1, e.element};
+        if (auto src = source(e))
+        {
+            if (shareSources)
+                connect(*src, dst, true);
+        }
+        else if (stores)
+            setValue(dst, value(e));
+    }
+}
+
+void Graph::shiftAttrRefs(NodeId id, int from, int delta)
+{
+    auto moved = [&](PlugRef p) {
+        if (p.node == id && p.attr >= from)
+            p.attr += delta;
+        return p;
+    };
+    std::map<PlugRef, PlugRef> inputs;
+    for (const auto& [dst, src] : mInputs)
+        inputs.emplace(moved(dst), moved(src));
+    mInputs = std::move(inputs);
+    for (auto& [srcNode, dsts] : mOutgoingDst)
+        for (PlugRef& d : dsts)
+            d = moved(d);
+    std::set<PlugRef> held;
+    for (const PlugRef& h : mHeld)
+        held.insert(moved(h));
+    mHeld = std::move(held);
+}
+
+void Graph::insertAttrRaw(NodeId id, int index, const AttrState& s)
+{
+    Node* n = node(id);
+    if (!n->mOwnType)
+    {
+        n->mOwnType = std::make_shared<NodeType>(*n->mType);
+        n->mOwnType->userOf = &n->mType->registered();
+        n->mType = n->mOwnType.get();
+    }
+    shiftAttrRefs(id, index, 1);
+    n->mOwnType->attrs.insert(n->mOwnType->attrs.begin() + index, s.def);
+    n->mValues.insert(n->mValues.begin() + index, s.value);
+    if (!n->mLocks.empty() || s.lock)
+    {
+        n->mLocks.resize(std::max(n->mLocks.size(), size_t(index)));
+        n->mLocks.insert(n->mLocks.begin() + index, s.lock);
+    }
+    if (!n->mElements.empty() || !s.elements.empty())
+    {
+        n->mElements.resize(std::max(n->mElements.size(), size_t(index)));
+        n->mElements.insert(n->mElements.begin() + index, s.elements);
+    }
+    markDirty(id);
+    changed(Change::Attrs, id);
+}
+
+Graph::AttrState Graph::removeAttrRaw(NodeId id, int index)
+{
+    Node* n = node(id);
+    AttrState s{n->mOwnType->attrs[size_t(index)], n->mValues[size_t(index)], n->elements(index), n->lockMask(index)};
+    n->mOwnType->attrs.erase(n->mOwnType->attrs.begin() + index);
+    n->mValues.erase(n->mValues.begin() + index);
+    if (size_t(index) < n->mLocks.size())
+        n->mLocks.erase(n->mLocks.begin() + index);
+    if (size_t(index) < n->mElements.size())
+        n->mElements.erase(n->mElements.begin() + index);
+    shiftAttrRefs(id, index + 1, -1);
+    markDirty(id);
+    changed(Change::Attrs, id);
+    return s;
+}
+
+int Graph::addAttr(NodeId id, AttrDef def)
+{
+    Node* n = node(id);
+    if (!n)
+        throw std::invalid_argument("no such node");
+    if (!validName(def.name))
+        throw std::invalid_argument("invalid attribute name '" + def.name + "'");
+    const NodeType& t = n->type();
+    for (const std::string& want : {def.name, def.shortName})
+        if (!want.empty() && t.attrIndex(want) >= 0)
+            throw std::invalid_argument("'" + n->name() + "' already has an attribute '" + want + "'");
+    def.flags |= AttrUser | AttrInput | AttrStorable;
+    if (def.type == PlugType::Vec3)
+        for (int c = 0; c < 3; ++c)
+            if (def.childNames[size_t(c)].empty())
+                def.childNames[size_t(c)] = def.name + "XYZ"[c];
+    const int index = int(t.attrs.size());
+    AttrState s{def, def.defaultValue, {}, 0};
+    insertAttrRaw(id, index, s);
+    recordUndo([this, id, index] { removeAttrRaw(id, index); }, [this, id, index, s] { insertAttrRaw(id, index, s); });
+    return index;
+}
+
+void Graph::deleteAttr(const PlugRef& p)
+{
+    Node* n = node(p.node);
+    if (!n)
+        throw std::invalid_argument("no such node");
+    if (!(n->type().attrs[size_t(p.attr)].flags & AttrUser))
+        throw std::invalid_argument(plugName({p.node, p.attr}) + " belongs to the node's type; only attributes added with addAttr can be deleted");
+    std::vector<PlugRef> touching;
+    for (const auto& [dst, src] : mInputs)
+        if ((dst.node == p.node && dst.attr == p.attr) || (src.node == p.node && src.attr == p.attr))
+            touching.push_back(dst);
+    for (const PlugRef& dst : touching)
+        disconnect(dst);
+    const NodeId id = p.node;
+    const int index = p.attr;
+    AttrState s = removeAttrRaw(id, index);
+    recordUndo([this, id, index, s] { insertAttrRaw(id, index, s); }, [this, id, index] { removeAttrRaw(id, index); });
 }
 
 std::vector<PlugRef> Graph::destinations(const PlugRef& src) const

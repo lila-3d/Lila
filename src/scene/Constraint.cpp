@@ -60,7 +60,6 @@ void ConstraintNode::compute(const EvalContext&)
 {
     LILA_ZONE();
 
-    int count = int(std::clamp<int64_t>(as<int64_t>(kTargetCount), 0, kMaxTargets));
     glm::dmat4 parent = as<glm::dmat4>(kParentMatrix);
     glm::dmat4 parentInv = glm::inverse(parent);
     glm::dmat3 parentRot = orthonormal(glm::dmat3(parent));
@@ -80,14 +79,14 @@ void ConstraintNode::compute(const EvalContext&)
     double wsum = 0.0;
     glm::dvec3 pos(0.0);
     QuatBlend rot;
-    for (int i = 0; i < count; ++i)
+    for (const auto& [i, target] : elements(kTargetMatrix))
     {
-        double w = as<double>(targetWeight(i));
+        double w = elementOr<double>(kTargetWeight, i);
         if (w <= 0.0)
             continue;
-        glm::dmat4 m = as<glm::dmat4>(targetMatrix(i));
+        glm::dmat4 m = std::get<glm::dmat4>(target);
         if (kind == Kind::Parent)
-            m = m * as<glm::dmat4>(targetOffset(i));
+            m = m * elementOr<glm::dmat4>(kTargetOffset, i);
         pos += glm::dvec3(m[3]) * w;
         rot.add(glm::quat_cast(orthonormal(glm::dmat3(m))), w);
         wsum += w;
@@ -270,35 +269,33 @@ json makeConstraint(Kind kind, const Args& a)
     }
     NodeId id = c->id();
 
-    int count = int(c->as<int64_t>(ConstraintNode::kTargetCount));
     double weight = a.get<double>("weight", 1.0);
     std::vector<int> added;
     for (NodeId t : targets)
     {
         bool already = false;
-        for (int s = 0; s < count; ++s)
-            if (auto src = g.source({id, ConstraintNode::targetMatrix(s), -1}); src && src->node == t)
+        for (const PlugRef& e : g.elements({id, ConstraintNode::kTargetMatrix}))
+            if (auto src = g.source(e); src && src->node == t)
             {
-                g.setValue({id, ConstraintNode::targetWeight(s)}, weight);
+                g.setValue({id, ConstraintNode::kTargetWeight, -1, e.element}, weight);
                 already = true;
             }
         if (already)
             continue;
-        if (count >= ConstraintNode::kMaxTargets)
-            throw CommandError(std::string(cmd) + ": at most " + std::to_string(ConstraintNode::kMaxTargets) + " targets");
-        guarded([&] { g.connect({t, Transform::kWorldMatrix, -1}, {id, ConstraintNode::targetMatrix(count), -1}); return 0; });
-        g.setValue({id, ConstraintNode::targetWeight(count)}, weight);
-        added.push_back(count++);
+        std::vector<int> used = g.groupIndices(id, "targets");
+        const int slot = used.empty() ? 0 : used.back() + 1;
+        guarded([&] { g.connect({t, Transform::kWorldMatrix, -1}, {id, ConstraintNode::kTargetMatrix, -1, slot}); return 0; });
+        g.setValue({id, ConstraintNode::kTargetWeight, -1, slot}, weight);
+        added.push_back(slot);
     }
-    g.setValue({id, ConstraintNode::kTargetCount}, int64_t(count));
 
     if (a.get<bool>("maintainOffset"))
     {
         g.evaluate();
         if (kind == Kind::Parent)
             for (int s : added)
-                g.setValue({id, ConstraintNode::targetOffset(s)},
-                           glm::inverse(c->as<glm::dmat4>(ConstraintNode::targetMatrix(s))) * objWorld);
+                g.setValue({id, ConstraintNode::kTargetOffset, -1, s},
+                           glm::inverse(c->elementOr<glm::dmat4>(ConstraintNode::kTargetMatrix, s)) * objWorld);
         else
         {
             g.setValue({id, ConstraintNode::kOffset}, glm::dvec3(0.0));
@@ -450,7 +447,6 @@ void registerConstraintTypes()
     base.name = "constraint";
     base.icon = "link";
     base.ownAttrs = {
-        {.name = "targetCount", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = stored | AttrHidden, .doc = "Target slots in use."},
         matrixAttr("constraintParentMatrix", AttrInput | AttrHidden, "World matrix of the constrained object's parent."),
         {.name = "constraintRotateOrder", .type = PlugType::Enum, .defaultValue = int64_t(0), .flags = stored,
          .enumNames = {"xyz", "yzx", "zxy", "xzy", "yxz", "zyx"}, .doc = "The constrained object's rotate order."},
@@ -467,14 +463,15 @@ void registerConstraintTypes()
         boolAttr("skipRotateZ", "Leave rotateZ alone."),
         vec3Attr("offset", glm::dvec3(0.0), stored | AttrKeyable, "Translate (point) or rotation (orient, aim) offset."),
     };
-    for (int i = 0; i < ConstraintNode::kMaxTargets; ++i)
-    {
-        std::string t = "target" + std::to_string(i);
-        base.ownAttrs.push_back(matrixAttr(t + "Matrix", AttrInput | AttrHidden, "Target world matrix."));
-        base.ownAttrs.push_back({.name = t + "Weight", .shortName = "w" + std::to_string(i), .type = PlugType::Float, .defaultValue = 1.0,
-                                 .flags = stored | AttrKeyable, .doc = "Target weight."});
-        base.ownAttrs.push_back(matrixAttr(t + "Offset", stored | AttrHidden, "Parent constraint: the object relative to the target."));
-    }
+    // One element per target, matched by index; the numbered target0Matrix ... attrs of older scenes load into them.
+    base.ownAttrs.push_back({.name = "targets.matrix", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0),
+                             .flags = AttrInput | AttrHidden | AttrArray, .doc = "Target world matrix.", .fileAlias = "target#Matrix"});
+    base.ownAttrs.push_back({.name = "targets.weight", .type = PlugType::Float, .defaultValue = 1.0, .flags = stored | AttrKeyable | AttrArray,
+                             .doc = "Target weight.", .fileAlias = "target#Weight"});
+    base.ownAttrs.push_back({.name = "targets.offset", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0),
+                             .flags = stored | AttrHidden | AttrArray, .doc = "Parent constraint: the object relative to the target.",
+                             .fileAlias = "target#Offset"});
+    base.retiredAttrs = {"targetCount"};
     base.ownAttrs.push_back(vec3Attr("constraintTranslate", glm::dvec3(0.0), AttrOutput, "Drives the object's translate."));
     base.ownAttrs.push_back(vec3Attr("constraintRotate", glm::dvec3(0.0), AttrOutput, "Drives the object's rotate."));
     const NodeType& b = types::registerType(std::move(base));

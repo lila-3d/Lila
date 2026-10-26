@@ -17,6 +17,7 @@ add_executable(lila_tests
     test_modstack.cpp
     test_instancing.cpp
     test_duplicate.cpp
+    test_user_attrs.cpp
     test_array_group.cpp
     test_docs.cpp
     test_user_docs.cpp

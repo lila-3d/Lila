@@ -197,6 +197,73 @@ PlugValue defaultFor(PlugType type)
     return 0.0;
 }
 
+PlugType typeNamed(std::string_view name)
+{
+    for (PlugType t : {PlugType::Bool, PlugType::Int, PlugType::Float, PlugType::Vec3, PlugType::Matrix, PlugType::String, PlugType::Enum,
+                       PlugType::Mesh, PlugType::Data})
+        if (name == typeName(t))
+            return t;
+    throw std::invalid_argument("unknown attribute type '" + std::string(name) + "'");
+}
+
+json attrDefToJson(const AttrDef& d)
+{
+    json j = {{"name", d.name}, {"type", typeName(d.type)}};
+    if (!d.shortName.empty())
+        j["short"] = d.shortName;
+    if (d.flags & AttrArray)
+        j["array"] = true;
+    if (d.flags & AttrKeyable)
+        j["keyable"] = true;
+    if (d.flags & AttrHidden)
+        j["hidden"] = true;
+    if (d.flags & AttrColor)
+        j["color"] = true;
+    if (d.defaultValue != defaultFor(d.type))
+        j["default"] = toJson(d.defaultValue);
+    if (!d.enumNames.empty())
+        j["enum"] = d.enumNames;
+    if (d.type == PlugType::Vec3)
+        j["children"] = d.childNames;
+    for (auto [key, v] : {std::pair{"min", d.minValue}, {"max", d.maxValue}, {"softMin", d.softMin}, {"softMax", d.softMax}})
+        if (v)
+            j[key] = *v;
+    if (!d.niceName.empty())
+        j["niceName"] = d.niceName;
+    if (!d.doc.empty())
+        j["doc"] = d.doc;
+    return j;
+}
+
+AttrDef attrDefFromJson(const json& j)
+{
+    AttrDef d;
+    d.name = j.at("name").get<std::string>();
+    d.shortName = j.value("short", "");
+    d.type = typeNamed(j.at("type").get<std::string>());
+    d.defaultValue = defaultFor(d.type);
+    d.flags = AttrInput | AttrStorable | AttrUser;
+    if (j.value("array", false))
+        d.flags |= AttrArray;
+    if (j.value("keyable", false))
+        d.flags |= AttrKeyable;
+    if (j.value("hidden", false))
+        d.flags |= AttrHidden;
+    if (j.value("color", false))
+        d.flags |= AttrColor;
+    d.enumNames = j.value("enum", std::vector<std::string>{});
+    if (j.contains("children"))
+        d.childNames = j["children"].get<std::array<std::string, 3>>();
+    if (j.contains("default"))
+        d.defaultValue = fromJson(d, j["default"]);
+    for (auto [key, v] : {std::pair{"min", &d.minValue}, {"max", &d.maxValue}, {"softMin", &d.softMin}, {"softMax", &d.softMax}})
+        if (j.contains(key))
+            *v = j[key].get<double>();
+    d.niceName = j.value("niceName", "");
+    d.doc = j.value("doc", "");
+    return d;
+}
+
 const char* typeName(PlugType type)
 {
     switch (type)

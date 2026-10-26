@@ -43,11 +43,24 @@ struct LILA_SCENE_API NodeType
 
     /** Base attrs first, then own. Filled by registerType. */
     std::vector<AttrDef> attrs;
+    /** Set on a node's private copy of its type, which adds its user attrs (AttrUser) after the type's own: the type it copies. */
+    const NodeType* userOf = nullptr;
 
     int attrIndex(std::string_view name) const;
-    /** attrIndex, falling back to the attrs' fileAlias: for reading scene files. */
-    int fileAttrIndex(std::string_view name) const;
+    /**
+     * attrIndex, falling back to the attrs' fileAlias: for reading scene files. With element, also reads "<alias><n>", an
+     * array's numbered predecessor, setting *element to n (else -1).
+     */
+    int fileAttrIndex(std::string_view name, int* element = nullptr) const;
     bool isA(std::string_view typeName) const;
+    /** The registered type: this one, or the one a node's private copy (see userOf) was made from. */
+    const NodeType& registered() const { return userOf ? *userOf : *this; }
+    /** The children of a grouped array ("group.child" attrs), in declaration order. */
+    std::vector<int> groupChildren(std::string_view group) const;
+    /** Attr names older scene files may hold that no longer mean anything; loading skips them without a warning. */
+    std::vector<std::string> retiredAttrs;
+    /** True when this type or a base retired the attr name. */
+    bool isRetired(std::string_view name) const;
 };
 
 namespace types
@@ -93,8 +106,16 @@ public:
     uint32_t referenceId() const { return mReference; }
 
     const PlugValue& value(int attr) const { return mValues[attr]; }
-    /** An array input's values, one per connected element, by ascending element index. Empty for other attrs. */
+    /** An array's elements (index, value), by ascending index: connected ones carry what was pulled. Empty for other attrs. */
     LILA_SCENE_API const std::vector<std::pair<int, PlugValue>>& elements(int attr) const;
+    /** One element's value, or null when the array has no such element. */
+    LILA_SCENE_API const PlugValue* element(int attr, int index) const;
+    /** An element's value, or the attr's default when it has no such element. */
+    template <class T> const T& elementOr(int attr, int index) const
+    {
+        const PlugValue* v = element(attr, index);
+        return std::get<T>(v ? *v : mType->attrs[size_t(attr)].defaultValue);
+    }
     /** Locked parts of an attr: bit 0 for a scalar, bits 0-2 for a Vec3's components. See Graph::setLocked. */
     uint8_t lockMask(int attr) const { return size_t(attr) < mLocks.size() ? mLocks[size_t(attr)] : uint8_t(0); }
     template <class T> const T& as(int attr) const { return std::get<T>(mValues[attr]); }
@@ -124,7 +145,8 @@ private:
     std::string mNamespace;
     uint32_t mReference = 0;
     std::vector<PlugValue> mValues;
-    std::vector<std::vector<std::pair<int, PlugValue>>> mElements; // per attr, empty until an array input is connected
+    std::vector<std::vector<std::pair<int, PlugValue>>> mElements; // per attr, empty until an array gets an element
+    std::shared_ptr<NodeType> mOwnType; // the private type copy holding user attrs, once one is added
     std::vector<uint8_t> mLocks; // per attr, empty until something is locked
     bool mDirty = true;
     uint64_t mEvaluatedPass = 0;

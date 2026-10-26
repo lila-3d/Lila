@@ -526,7 +526,8 @@ TEST_CASE("collision, rigidify, skinSlide and pins from commands")
         CHECK_FALSE(collider.inside(p));
     std::string loc = run("spaceLocator", {{"name", "Bone"}}).get<std::string>();
     run("addCollider", {{"args", {c, loc}}, {"capsuleRadius", 3.0}});
-    CHECK(g.find(c)->as<bool>(g.find(c)->type().attrIndex("capsuleOn0")));
+    CHECK(run("getAttr", {{"args", {c + ".capsules[0].radius"}}}).get<double>() == doctest::Approx(3.0));
+    CHECK(g.source(g.plug(c + ".capsules[0].matrix")).has_value());
 
     run("newScene");
     std::string cube = run("polyCube", {{"name", "Plate"}, {"width", 4}, {"height", 4}, {"depth", 4}, {"subdivisionsX", 3}})[0];

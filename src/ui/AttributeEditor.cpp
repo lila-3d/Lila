@@ -29,6 +29,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <set>
 #include <cmath>
 #include <filesystem>
 
@@ -203,7 +204,9 @@ AttributeEditor::AttributeEditor(QWidget* parent) : QWidget(parent)
         scheduleRefresh();
     });
     mListener = Graph::current().addListener([this](scene::Change c, scene::NodeId) {
-        if (c != scene::Change::Value)
+        // An array element's change may add or drop a row, so element edits rebuild too.
+        const scene::PlugRef* plug = Graph::current().changedPlug();
+        if (c != scene::Change::Value || (plug && plug->element >= 0))
             mRebuild = true;
         scheduleRefresh();
     });
@@ -246,6 +249,45 @@ void AttributeEditor::set(const std::string& attr, const json& value)
     {
         log::error("{}", e.what());
         updateValues();
+    }
+}
+
+void AttributeEditor::addElement(const std::vector<int>& attrs, int element)
+{
+    scene::Node* n = Graph::current().node(mNode);
+    if (!n)
+        return;
+    try
+    {
+        for (int a : attrs)
+        {
+            const scene::AttrDef& def = n->type().attrs[size_t(a)];
+            std::string plug = Graph::current().plugName({mNode, a, -1, element});
+            ops::execute("setAttr", {{"args", {plug, scene::toJson(def.defaultValue)}}}, CallSource::UI);
+        }
+    }
+    catch (const CommandError& e)
+    {
+        log::error("{}", e.what());
+    }
+}
+
+void AttributeEditor::removeElement(const std::string& attr)
+{
+    scene::Node* n = Graph::current().node(mNode);
+    if (!n)
+        return;
+    // A grouped child's element goes as a whole: group[3], every child at index 3.
+    std::string plug = attr;
+    if (size_t close = plug.find("]."); close != std::string::npos)
+        plug = plug.substr(0, close + 1);
+    try
+    {
+        ops::execute("removeMultiInstance", {{"args", {n->path() + "." + plug}}}, CallSource::UI);
+    }
+    catch (const CommandError& e)
+    {
+        log::error("{}", e.what());
     }
 }
 
@@ -307,12 +349,18 @@ void AttributeEditor::rebuild()
 
     scene::NodeId id = mNode;
     /** Adds one attr's row to form; false when the attr shows no editor. */
-    auto addRow = [&](QFormLayout* form, const scene::AttrDef& def) -> bool {
+    auto addRow = [&](QFormLayout* form, const scene::AttrDef& def, int element, QString labelText) -> bool {
         if (def.flags & scene::AttrHidden)
             return false;
         int index = n->type().attrIndex(def.name);
-        bool readOnly = !(def.flags & scene::AttrInput);
+        const scene::PlugRef ref{id, index, -1, element};
+        bool readOnly = !(def.flags & scene::AttrInput) || (element >= 0 && g.source(ref));
         std::string attr = def.name;
+        if (element >= 0)
+        {
+            std::string plug = g.plugName(ref);
+            attr = plug.substr(plug.find('.') + 1);
+        }
         QWidget* field = nullptr;
 
         auto numberEdit = [&](int component) {
@@ -322,14 +370,14 @@ void AttributeEditor::rebuild()
             e->setMinimumWidth(36);
             e->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
             std::string target = component >= 0 ? def.childNames[component] : attr;
-            connect(e, &QLineEdit::editingFinished, this, [this, e, target, def, id, index, component] {
+            connect(e, &QLineEdit::editingFinished, this, [this, e, target, def, ref, component] {
                 if (!e->isModified())
                     return;
                 e->setModified(false);
                 double current = 0.0;
-                if (Graph::current().node(id))
+                if (Graph::current().node(ref.node))
                 {
-                    const scene::PlugValue& pv = Graph::current().value({id, index});
+                    const scene::PlugValue& pv = Graph::current().value(ref);
                     if (auto* v3 = std::get_if<glm::dvec3>(&pv); v3 && component >= 0)
                         current = (*v3)[component];
                     else if (auto* f = std::get_if<double>(&pv))
@@ -349,13 +397,13 @@ void AttributeEditor::rebuild()
                     v = std::min(*v, *def.maxValue);
                 set(target, def.type == PlugType::Int ? json(int64_t(std::llround(*v))) : json(*v));
             });
-            mUpdaters.push_back([e, id, index, component] {
+            mUpdaters.push_back([e, ref, component] {
                 if (e->hasFocus())
                     return;
-                scene::Node* node = Graph::current().node(id);
+                scene::Node* node = Graph::current().node(ref.node);
                 if (!node)
                     return;
-                const scene::PlugValue& v = Graph::current().value({id, index});
+                const scene::PlugValue& v = Graph::current().value(ref);
                 double d = 0.0;
                 if (auto* v3 = std::get_if<glm::dvec3>(&v))
                     d = (*v3)[component];
@@ -380,7 +428,7 @@ void AttributeEditor::rebuild()
             h->setSpacing(3);
             for (int c = 0; c < 3; ++c)
                 h->addWidget(numberEdit(c));
-            if (def.flags & scene::AttrColor)
+            if ((def.flags & scene::AttrColor) && element < 0)
                 h->addWidget(colorSwatch(def, id, index, readOnly));
             break;
         }
@@ -389,9 +437,9 @@ void AttributeEditor::rebuild()
             auto* cb = new QCheckBox;
             cb->setEnabled(!readOnly);
             connect(cb, &QCheckBox::clicked, this, [this, attr](bool on) { set(attr, on); });
-            mUpdaters.push_back([cb, id, index] {
+            mUpdaters.push_back([cb, ref] {
                 QSignalBlocker block(cb);
-                cb->setChecked(std::get<bool>(Graph::current().value({id, index})));
+                cb->setChecked(std::get<bool>(Graph::current().value(ref)));
             });
             field = cb;
             break;
@@ -403,9 +451,9 @@ void AttributeEditor::rebuild()
                 combo->addItem(QString::fromStdString(e));
             combo->setEnabled(!readOnly);
             connect(combo, &QComboBox::activated, this, [this, attr](int i) { set(attr, int64_t(i)); });
-            mUpdaters.push_back([combo, id, index] {
+            mUpdaters.push_back([combo, ref] {
                 QSignalBlocker block(combo);
-                combo->setCurrentIndex(int(std::get<int64_t>(Graph::current().value({id, index}))));
+                combo->setCurrentIndex(int(std::get<int64_t>(Graph::current().value(ref))));
             });
             field = combo;
             break;
@@ -421,9 +469,9 @@ void AttributeEditor::rebuild()
                     set(attr, e->text().toStdString());
                 }
             });
-            mUpdaters.push_back([e, id, index] {
+            mUpdaters.push_back([e, ref] {
                 if (!e->hasFocus())
-                    e->setText(QString::fromStdString(std::get<std::string>(Graph::current().value({id, index}))));
+                    e->setText(QString::fromStdString(std::get<std::string>(Graph::current().value(ref))));
             });
             field = e;
             if ((def.flags & scene::AttrFile) && !readOnly)
@@ -451,8 +499,8 @@ void AttributeEditor::rebuild()
             auto* label = new QLabel;
             label->setFont(monoFont());
             label->setTextInteractionFlags(Qt::TextSelectableByMouse);
-            mUpdaters.push_back([label, id, index] {
-                const auto& m = std::get<glm::dmat4>(Graph::current().value({id, index}));
+            mUpdaters.push_back([label, ref] {
+                const auto& m = std::get<glm::dmat4>(Graph::current().value(ref));
                 QString text;
                 // Rows of the matrix as written on paper (column-major storage).
                 for (int r = 0; r < 4; ++r)
@@ -471,7 +519,24 @@ void AttributeEditor::rebuild()
         if (!field)
             return false;
         field->setToolTip(QString::fromStdString(def.doc));
-        auto* label = new QLabel(def.niceName.empty() ? niceName(def.name) : QString::fromStdString(def.niceName));
+        if (element >= 0)
+        {
+            // An element's row ends in a button that removes it.
+            auto* row = new QWidget;
+            auto* h = new QHBoxLayout(row);
+            h->setContentsMargins(0, 0, 0, 0);
+            h->setSpacing(3);
+            h->addWidget(field, 1);
+            auto* remove = new QToolButton;
+            remove->setIcon(icon("x"));
+            remove->setToolTip("Remove this element");
+            remove->setAutoRaise(true);
+            connect(remove, &QToolButton::clicked, this, [this, attr] { removeElement(attr); });
+            h->addWidget(remove);
+            field->setToolTip(QString::fromStdString(def.doc));
+            field = row;
+        }
+        auto* label = new QLabel(!labelText.isEmpty() ? labelText : def.niceName.empty() ? niceName(def.name) : QString::fromStdString(def.niceName));
         if (def.flags & scene::AttrKeyable)
         {
             label->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -502,6 +567,64 @@ void AttributeEditor::rebuild()
                                QString::fromStdString(valueReset::describe(*d, def.enumNames)), field);
         form->addRow(label, field);
         return true;
+    };
+    /** Rows for an array: one per element and an Add button; a grouped array shows each element's children together. */
+    std::set<std::string> groupsShown;
+    auto addAttrRows = [&](QFormLayout* form, const scene::AttrDef& def) -> int {
+        if (!(def.flags & scene::AttrArray))
+            return addRow(form, def, -1, {}) ? 1 : 0;
+        if (def.flags & scene::AttrHidden)
+            return 0;
+        const size_t dot = def.name.find('.');
+        const int index = n->type().attrIndex(def.name);
+        std::vector<int> children = {index};
+        std::vector<int> indices;
+        std::string addPlug = def.name;
+        if (dot != std::string::npos)
+        {
+            const std::string group = def.name.substr(0, dot);
+            if (!groupsShown.insert(group).second)
+                return 0;
+            children = n->type().groupChildren(group);
+            indices = g.groupIndices(id, group);
+            addPlug = group;
+        }
+        else
+            for (const scene::PlugRef& e : g.elements({id, index}))
+                indices.push_back(e.element);
+        auto* heading = new QLabel(niceName(addPlug));
+        heading->setStyleSheet("color: #c8c8c8; padding-top: 4px;");
+        heading->setToolTip(QString::fromStdString(def.doc));
+        form->addRow(heading);
+        int added = 1;
+        for (int i : indices)
+        {
+            if (dot == std::string::npos)
+                added += addRow(form, def, i, QString("[%1]").arg(i)) ? 1 : 0;
+            else
+                for (int c : children)
+                {
+                    const scene::AttrDef& cd = n->type().attrs[size_t(c)];
+                    QString child = niceName(cd.name.substr(dot + 1));
+                    added += addRow(form, cd, i, QString("[%1] %2").arg(i).arg(child)) ? 1 : 0;
+                }
+        }
+        // Only arrays that hold values can grow here; connection-only ones grow by connecting.
+        bool addable = true;
+        for (int c : children)
+            addable = addable && (n->type().attrs[size_t(c)].flags & scene::AttrStorable) && (n->type().attrs[size_t(c)].flags & scene::AttrInput);
+        if (addable)
+        {
+            auto* add = new QToolButton;
+            add->setIcon(icon("plus"));
+            add->setText("Add");
+            add->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+            add->setToolTip("Add an element after the last one");
+            const int next = indices.empty() ? 0 : indices.back() + 1;
+            connect(add, &QToolButton::clicked, this, [this, children, next] { addElement(children, next); });
+            form->addRow(QString(), add);
+        }
+        return added;
     };
     auto newForm = [](QWidget* content) {
         auto* form = new QFormLayout(content);
@@ -543,7 +666,7 @@ void AttributeEditor::rebuild()
                     subHeading(form, c);
                     headed = true;
                 }
-                added += addRow(form, *d) ? 1 : 0;
+                added += addAttrRows(form, *d);
             }
         }
         if (added)
@@ -561,7 +684,7 @@ void AttributeEditor::rebuild()
         {
             if (std::find(parameters.begin(), parameters.end(), &def) != parameters.end())
                 continue;
-            added += addRow(form, def) ? 1 : 0;
+            added += addAttrRows(form, def);
         }
         if (added && !t->doc.empty())
         {
@@ -572,6 +695,18 @@ void AttributeEditor::rebuild()
         }
         if (added)
             mBodyLayout->addWidget(section(niceName(t->name) + " Attributes", content));
+        else
+            delete content;
+    }
+    {
+        auto* content = new QWidget;
+        QFormLayout* form = newForm(content);
+        int added = 0;
+        for (const scene::AttrDef& def : n->type().attrs)
+            if (def.flags & scene::AttrUser)
+                added += addAttrRows(form, def);
+        if (added)
+            mBodyLayout->addWidget(section("Extra Attributes", content));
         else
             delete content;
     }

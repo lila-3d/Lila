@@ -96,6 +96,7 @@ public:
 private:
     /** The inputs the last evaluation saw and what it produced, so evaluating with identical inputs costs nothing. */
     std::vector<PlugValue> mLastInputs;
+    std::vector<std::vector<std::pair<int, PlugValue>>> mLastElements; // arrays' elements, beside mLastInputs
     MeshPtr mLastOut;
     bool mRanOnGpu = false;
 };
@@ -116,6 +117,8 @@ struct DeformerSpec
     std::string doc;
     std::vector<AttrDef> params;
     std::function<std::unique_ptr<DeformerNode>()> make;
+    /** Attr names older scene files may hold that mean nothing now (NodeType::retiredAttrs). */
+    std::vector<std::string> retired;
 };
 
 /** Throws std::invalid_argument when the name is taken. */

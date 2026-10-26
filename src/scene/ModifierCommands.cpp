@@ -278,8 +278,7 @@ void registerStackCommands()
                     continue;
                 // Driven inputs (keys, geometry-node groups, object info) share the same driver.
                 if (def.flags & AttrArray)
-                    for (const PlugRef& e : g.elements({orig.id(), i}))
-                        g.connect(*g.source(e), {copy->id(), i, -1, e.element});
+                    g.copyElements(orig.id(), copy->id(), i, true);
                 else if (auto src = g.source({orig.id(), i, -1}))
                     g.connect(*src, {copy->id(), i, -1});
                 else if (def.type != PlugType::Mesh)

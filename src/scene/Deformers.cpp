@@ -560,6 +560,7 @@ NodeType deformerType(deformers::DeformerSpec s)
     t.name = s.name;
     t.icon = s.icon;
     t.doc = s.doc;
+    t.retiredAttrs = std::move(s.retired);
     t.ownAttrs = {
         {.name = "inMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden},
         keyable("enabled", PlugType::Bool, true, "Turn the deformer off without removing it."),
@@ -905,7 +906,7 @@ void DeformerNode::compute(const EvalContext&)
     {
         bool same = true;
         for (size_t a = 0; a < attrs.size() && same; ++a)
-            same = !(attrs[a].flags & AttrInput) || mLastInputs[a] == value(int(a));
+            same = !(attrs[a].flags & AttrInput) || (mLastInputs[a] == value(int(a)) && mLastElements[a] == elements(int(a)));
         if (same)
         {
             deformEval::countCompute(true);
@@ -947,9 +948,13 @@ void DeformerNode::compute(const EvalContext&)
     if (canCache)
     {
         mLastInputs.assign(attrs.size(), PlugValue());
+        mLastElements.assign(attrs.size(), {});
         for (size_t a = 0; a < attrs.size(); ++a)
             if (attrs[a].flags & AttrInput)
+            {
                 mLastInputs[a] = value(int(a));
+                mLastElements[a] = elements(int(a));
+            }
         mLastOut = as<MeshPtr>(outAttr);
     }
 }

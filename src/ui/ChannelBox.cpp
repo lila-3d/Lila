@@ -495,6 +495,17 @@ std::vector<ChannelBox::Row> ChannelBox::buildRows(scene::NodeId lead) const
             const bool space = i == scene::Transform::kSpace && scene::spaces::hasSpaces(g, n->id());
             if (!(a.flags & scene::AttrKeyable) || ((a.flags & scene::AttrHidden) && !space))
                 continue;
+            if (a.flags & scene::AttrArray)
+            {
+                // One row per element of a number array; a vector array's elements stay in the attribute editor.
+                if (a.type != scene::PlugType::Vec3)
+                    for (const scene::PlugRef& e : g.elements({n->id(), i}))
+                    {
+                        std::string plug = g.plugName(e);
+                        rows.push_back({plug.substr(plug.find('.') + 1), i, -1, a.type, owner, false, {}, e.element});
+                    }
+                continue;
+            }
             if (a.type == scene::PlugType::Vec3)
                 for (int c = 0; c < 3; ++c)
                     rows.push_back({a.childNames[c], i, c, scene::PlugType::Float, owner});
@@ -553,7 +564,8 @@ void ChannelBox::refresh()
     std::vector<Row> rows = buildRows(lead);
     bool sameLayout = rows.size() == mRows.size() &&
                       std::equal(rows.begin(), rows.end(), mRows.begin(), [](const Row& a, const Row& b) {
-                          return a.attr == b.attr && a.node == b.node && a.header == b.header && a.component == b.component && a.label == b.label;
+                          return a.attr == b.attr && a.node == b.node && a.header == b.header && a.component == b.component && a.label == b.label &&
+                                 a.element == b.element;
                       });
     // A scrub holds row indices, so it only ever sees values change.
     if (!sameLayout && mScrub)
@@ -613,9 +625,9 @@ void ChannelBox::refresh()
         if (row.header)
             continue;
         scene::NodeId owner = row.node ? row.node : lead;
-        scene::PlugRef ref{owner, row.attrIndex, row.component};
+        scene::PlugRef ref{owner, row.attrIndex, row.component, row.element};
         const scene::AttrDef& def = g.node(owner)->type().attrs[row.attrIndex];
-        scene::PlugValue v = g.value(scene::PlugRef{owner, row.attrIndex});
+        scene::PlugValue v = g.value(scene::PlugRef{owner, row.attrIndex, -1, row.element});
         QString text;
         if (row.type == scene::PlugType::Bool)
             text = std::get<bool>(v) ? "on" : "off";
@@ -632,7 +644,7 @@ void ChannelBox::refresh()
         item->setText(text);
         // Keyed channels get a gray tint, brighter on a key; other driven channels read as locked.
         scene::NodeId curve = scene::anim::curveFor(g, ref);
-        bool driven = !curve && (g.source(ref).has_value() || g.source(scene::PlugRef{owner, row.attrIndex}).has_value());
+        bool driven = !curve && (g.source(ref).has_value() || g.source(scene::PlugRef{owner, row.attrIndex, -1, row.element}).has_value());
         QBrush tint;
         if (curve)
             tint = scene::anim::hasKeyAt(*g.node(curve), g.time()) ? themeShade(84) : themeShade(60);
@@ -1026,7 +1038,7 @@ void ChannelBox::copyValues()
         scene::Node* n = g.node(owner);
         if (!n)
             continue;
-        scene::PlugValue v = g.value(scene::PlugRef{owner, row.attrIndex});
+        scene::PlugValue v = g.value(scene::PlugRef{owner, row.attrIndex, -1, row.element});
         CopiedValue c{row.attr, row.node ? n->type().name : std::string(), json()};
         QString text;
         if (row.type == scene::PlugType::Bool)

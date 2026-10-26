@@ -33,6 +33,8 @@ struct Reference
         std::optional<std::string> parent;
         /** Nonzero lock masks by attribute index (see Node::lockMask). */
         std::map<int, uint8_t> locks;
+        /** Storable arrays' elements by attribute index. */
+        std::map<int, std::vector<std::pair<int, scene::PlugValue>>> elements;
     };
     /** Each node right after loading, by its path through the reference's nodes with ns stripped ("Body|Arm"). */
     std::map<std::string, Baseline> baseline;

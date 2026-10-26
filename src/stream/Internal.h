@@ -44,7 +44,7 @@ struct Entry
     scene::NodeId id = scene::kNoNode;
     int attr = -1;
     int component = -1; // connection: one component of a Vec3
-    int element = -1; // connection: one element of an array input
+    int element = -1; // one element of an array
     int only = -1; // an index into Message::keys: only filters with that key see it; -1 for every filter
     NodeInfo node;
     std::string oldPath;  // renamed, reparented

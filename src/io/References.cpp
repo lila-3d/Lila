@@ -112,7 +112,13 @@ void appendLockNames(const scene::AttrDef& def, uint8_t bits, json& out)
 bool isStoredInput(Graph& g, scene::Node* n, int i)
 {
     const scene::AttrDef& a = n->type().attrs[size_t(i)];
-    return (a.flags & scene::AttrStorable) && (a.flags & scene::AttrInput) && !g.source({n->id(), i, -1});
+    return (a.flags & scene::AttrStorable) && (a.flags & scene::AttrInput) && !(a.flags & scene::AttrArray) && !g.source({n->id(), i, -1});
+}
+
+bool isStoredArray(scene::Node* n, int i)
+{
+    const scene::AttrDef& a = n->type().attrs[size_t(i)];
+    return (a.flags & scene::AttrStorable) && (a.flags & scene::AttrInput) && (a.flags & scene::AttrArray);
 }
 
 void captureBaseline(Reference& r)
@@ -132,6 +138,8 @@ void captureBaseline(Reference& r)
         {
             if (isStoredInput(g, n, i))
                 b.attrs.emplace(i, n->value(i));
+            else if (isStoredArray(n, i) && !n->elements(i).empty())
+                b.elements.emplace(i, n->elements(i));
             if (uint8_t mask = n->lockMask(i))
                 b.locks.emplace(i, mask);
         }
@@ -382,13 +390,26 @@ std::vector<NodeId> instantiate(const json& doc, const std::string& ns, uint32_t
             g.setReference(n->id(), refId);
         created.push_back(n->id());
 
+        for (const json& def : member(jn, "userAttrs", kNoArray))
+            try
+            {
+                g.addAttr(n->id(), scene::attrDefFromJson(def));
+            }
+            catch (const std::exception& e)
+            {
+                warnings.push_back(name + ": user attribute " + def.dump() + " skipped: " + e.what());
+            }
         const json& stored = member(jn, "attrs", kNoObject);
         for (size_t i = 0; i < t->attrs.size(); ++i)
             if (const scene::AttrDef& a = t->attrs[i]; a.fileDefault && !stored.contains(a.name))
                 g.setValue({n->id(), int(i), -1}, *a.fileDefault);
+        const scene::NodeType& nt = n->type();
         for (auto& [attr, value] : stored.items())
         {
-            int idx = t->fileAttrIndex(attr);
+            int element = -1;
+            int idx = nt.fileAttrIndex(attr, &element);
+            if (idx < 0 && nt.isRetired(attr))
+                continue;
             if (idx < 0)
             {
                 warnings.push_back(name + "." + attr + ": no such attribute, ignored");
@@ -396,7 +417,15 @@ std::vector<NodeId> instantiate(const json& doc, const std::string& ns, uint32_t
             }
             try
             {
-                if (auto m = meshAt.find(&value); m != meshAt.end())
+                const scene::AttrDef& def = nt.attrs[size_t(idx)];
+                if (element >= 0)
+                    g.setValue({n->id(), idx, -1, element}, scene::fromJson(def, value));
+                else if (def.flags & scene::AttrArray)
+                {
+                    for (auto& [index, ev] : value.items())
+                        g.setValue({n->id(), idx, -1, std::stoi(index)}, scene::fromJson(def, ev));
+                }
+                else if (auto m = meshAt.find(&value); m != meshAt.end())
                 {
                     scene::FromJsonResult& r = meshValues[m->second];
                     if (!r.error.empty())
@@ -404,7 +433,7 @@ std::vector<NodeId> instantiate(const json& doc, const std::string& ns, uint32_t
                     g.setValue({n->id(), idx, -1}, std::move(r.value));
                 }
                 else
-                    g.setValue({n->id(), idx, -1}, scene::fromJson(t->attrs[idx], value));
+                    g.setValue({n->id(), idx, -1}, scene::fromJson(def, value));
             }
             catch (const std::exception& e)
             {
@@ -551,6 +580,28 @@ json currentEdits(const Reference& r, const fs::path& sceneDir)
         const auto& defs = n->type().attrs;
         for (int i = 0; i < int(defs.size()); ++i)
         {
+            if (isStoredArray(n, i))
+            {
+                // Elements are edited one by one, by their plug name (attr[3], group[3].child).
+                auto was = base.elements.find(i);
+                for (const auto& [index, value] : n->elements(i))
+                {
+                    const scene::PlugRef e{id, i, -1, index};
+                    if (g.source(e))
+                        continue;
+                    const scene::PlugValue* before = nullptr;
+                    if (was != base.elements.end())
+                        for (const auto& [k, v] : was->second)
+                            if (k == index)
+                                before = &v;
+                    if (!before || !(*before == value))
+                    {
+                        std::string plug = g.plugName(e);
+                        changed[plug.substr(plug.find('.') + 1)] = scene::toJson(value);
+                    }
+                }
+                continue;
+            }
             if (!isStoredInput(g, n, i))
                 continue;
             const scene::PlugValue& now = n->value(i);

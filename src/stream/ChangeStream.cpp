@@ -1044,7 +1044,7 @@ void onChange(scene::Change c, NodeId id)
         const int attr = plug ? plug->attr : -1;
         // A value is reported per attr whatever component changed; a connection per plug it lands on.
         const int component = kind == Kind::Connection && plug ? plug->component : -1;
-        const int element = kind == Kind::Connection && plug ? plug->element : -1;
+        const int element = plug ? plug->element : -1;
         auto key = std::make_tuple(kind, id, attr, component, element);
         if (p.resync.empty() && !p.plugs.contains(key))
         {
@@ -1123,7 +1123,8 @@ void fill(Message& m, std::vector<Entry>& entries)
                 e.attrName += "[" + std::to_string(e.element) + "]";
             if (e.kind == Kind::Value)
             {
-                e.value = n->value(e.attr);
+                const scene::PlugValue* el = e.element >= 0 ? n->element(e.attr, e.element) : nullptr;
+                e.value = el ? *el : n->value(e.attr);
                 e.locked = g.anyLocked({e.id, e.attr, -1});
             }
             else if (std::optional<scene::PlugRef> src = g.source({e.id, e.attr, e.component, e.element}))

@@ -25,7 +25,6 @@ namespace lila::scene::spaces
 {
 inline constexpr const char* kSwitchType = "spaceSwitch";
 inline constexpr const char* kFramesKind = "spaceFrames";
-inline constexpr int kMaxSpaces = 16;
 
 enum class Kind
 {
@@ -60,9 +59,9 @@ public:
     {
         kKinds, // one word per space: parent, world or node
         kFrames,
-        kTarget0,
-        kOffset0 = kTarget0 + kMaxSpaces,
-        kCount = kOffset0 + kMaxSpaces,
+        kTarget, // spaces[i].target
+        kOffset, // spaces[i].offset
+        kCount,
     };
 
     void compute(const EvalContext& ctx) override;
@@ -88,7 +87,7 @@ LILA_SCENE_API int find(const Graph& g, NodeId node, const std::string& space);
  * Adds a space ("world", or a node name; "parent" is always there) and returns its index; one already there returns
  * its index. With maintainOffset the new space's frame equals the parent's at the current pose, so switching there
  * changes nothing until the target moves; without it the frame is the target's world matrix itself (the world origin
- * for "world"). Undoable. Throws std::invalid_argument for a target that would make a cycle, or past kMaxSpaces.
+ * for "world"). Undoable. Throws std::invalid_argument for a target that would make a cycle, .
  */
 LILA_SCENE_API int addSpace(Graph& g, NodeId node, const std::string& space, bool maintainOffset = true);
 

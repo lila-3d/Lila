@@ -288,12 +288,12 @@ void SwitchNode::compute(const EvalContext&)
 {
     auto f = std::make_shared<Frames>();
     const std::vector<std::string> kinds = words(as<std::string>(kKinds));
-    for (int i = 0; i < int(std::min<size_t>(kinds.size(), kMaxSpaces)); ++i)
+    for (int i = 0; i < int(kinds.size()); ++i)
     {
         const Kind k = kindOf(kinds[size_t(i)]);
-        const glm::dmat4& offset = as<glm::dmat4>(kOffset0 + i);
+        const glm::dmat4& offset = elementOr<glm::dmat4>(kOffset, i);
         f->parent.push_back(k == Kind::Parent);
-        f->frames.push_back(k == Kind::Node ? as<glm::dmat4>(kTarget0 + i) * offset : k == Kind::World ? offset : glm::dmat4(1.0));
+        f->frames.push_back(k == Kind::Node ? elementOr<glm::dmat4>(kTarget, i) * offset : k == Kind::World ? offset : glm::dmat4(1.0));
     }
     setOutput(kFrames, DataPtr(std::move(f)));
 }
@@ -330,12 +330,12 @@ std::vector<Space> list(const Graph& g, NodeId node)
     if (!sw)
         return out;
     const std::vector<std::string> kinds = kindsOf(g, sw);
-    for (int i = 1; i < int(std::min<size_t>(kinds.size(), kMaxSpaces)); ++i)
+    for (int i = 1; i < int(kinds.size()); ++i)
     {
         Space s{i, kinds[size_t(i)], kindOf(kinds[size_t(i)]), kNoNode};
         if (s.kind == Kind::Node)
         {
-            auto src = g.source({sw, SwitchNode::kTarget0 + i, -1});
+            auto src = g.source({sw, SwitchNode::kTarget, -1, i});
             s.target = src ? src->node : kNoNode;
             s.name = s.target ? g.node(s.target)->name() : std::string();
         }
@@ -407,16 +407,14 @@ int addSpace(Graph& g, NodeId id, const std::string& space, bool maintainOffset)
         sw = createSwitch(g, id);
     std::vector<std::string> kinds = kindsOf(g, sw);
     const int slot = int(kinds.size());
-    if (slot >= kMaxSpaces)
-        throw std::invalid_argument(n->path() + " already has " + std::to_string(kMaxSpaces) + " spaces");
 
     const glm::dmat4 parentWorld = parentWorldOf(g, id);
     glm::dmat4 offset(1.0);
     if (maintainOffset)
         offset = target ? glm::inverse(worldOf(g, target)) * parentWorld : parentWorld;
-    g.setValue({sw, SwitchNode::kOffset0 + slot, -1}, offset);
+    g.setValue({sw, SwitchNode::kOffset, -1, slot}, offset);
     if (target)
-        g.connect({target, Transform::kWorldMatrix, -1}, {sw, SwitchNode::kTarget0 + slot, -1});
+        g.connect({target, Transform::kWorldMatrix, -1}, {sw, SwitchNode::kTarget, -1, slot});
     kinds.push_back(target ? "node" : "world");
     g.setValue({sw, SwitchNode::kKinds, -1}, joined(kinds));
     return slot;
@@ -467,19 +465,19 @@ void removeSpace(Graph& g, NodeId id, int index)
     std::vector<glm::dmat4> offsets;
     for (int i = 0; i < count; ++i)
     {
-        targets.push_back(g.source({sw, SwitchNode::kTarget0 + i, -1}));
-        offsets.push_back(g.node(sw)->as<glm::dmat4>(SwitchNode::kOffset0 + i));
+        targets.push_back(g.source({sw, SwitchNode::kTarget, -1, i}));
+        offsets.push_back(g.node(sw)->elementOr<glm::dmat4>(SwitchNode::kOffset, i));
     }
     for (int i = index; i < count; ++i)
         if (targets[size_t(i)])
-            g.disconnect({sw, SwitchNode::kTarget0 + i, -1});
+            g.disconnect({sw, SwitchNode::kTarget, -1, i});
     for (int i = index; i + 1 < count; ++i)
     {
-        g.setValue({sw, SwitchNode::kOffset0 + i, -1}, offsets[size_t(i + 1)]);
+        g.setValue({sw, SwitchNode::kOffset, -1, i}, offsets[size_t(i + 1)]);
         if (targets[size_t(i + 1)])
-            g.connect(*targets[size_t(i + 1)], {sw, SwitchNode::kTarget0 + i, -1});
+            g.connect(*targets[size_t(i + 1)], {sw, SwitchNode::kTarget, -1, i});
     }
-    g.setValue({sw, SwitchNode::kOffset0 + count - 1, -1}, glm::dmat4(1.0));
+    g.removeElement({sw, SwitchNode::kOffset, -1, count - 1});
     kinds.erase(kinds.begin() + index);
     g.setValue({sw, SwitchNode::kKinds, -1}, joined(kinds));
 
@@ -588,16 +586,15 @@ void registerTypes()
     t.doc = "A transform's spaces (addSpace): one world frame per space for the transform's space channel to pick from.";
     t.ownAttrs = {
         {.name = "kinds", .type = PlugType::String, .defaultValue = std::string("parent"), .flags = AttrInput | AttrStorable | AttrHidden,
-         .doc = "One word per space: parent, world or node (the target connected to the slot's target)."},
+         .doc = "One word per space: parent, world or node (the target connected to spaces[i].target)."},
         {.name = "frames", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrOutput, .doc = "Each space's world frame."},
     };
-    for (int i = 0; i < kMaxSpaces; ++i)
-        t.ownAttrs.push_back({.name = "target" + std::to_string(i), .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0),
-                              .flags = AttrInput | AttrHidden | AttrResetOnDisconnect, .doc = "World matrix of the slot's target node."});
-    for (int i = 0; i < kMaxSpaces; ++i)
-        t.ownAttrs.push_back({.name = "offset" + std::to_string(i), .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0),
-                              .flags = AttrInput | AttrStorable | AttrHidden,
-                              .doc = "The slot's frame relative to its target (to the world for a world space)."});
+    // One element per space, matched by index; older scenes' target0 ... and offset0 ... load into them.
+    t.ownAttrs.push_back({.name = "spaces.target", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0),
+                          .flags = AttrInput | AttrHidden | AttrArray, .doc = "World matrix of the space's target node.", .fileAlias = "target#"});
+    t.ownAttrs.push_back({.name = "spaces.offset", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0),
+                          .flags = AttrInput | AttrStorable | AttrHidden | AttrArray,
+                          .doc = "The space's frame relative to its target (to the world for a world space).", .fileAlias = "offset#"});
     t.create = [] { return std::make_unique<SwitchNode>(); };
     types::registerType(std::move(t));
 }

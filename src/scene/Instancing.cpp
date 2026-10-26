@@ -63,8 +63,7 @@ void copyNode(Graph& g, const Node& from, Node& to)
         if (!(defs[i].flags & AttrInput))
             continue;
         if (defs[i].flags & AttrArray)
-            for (const PlugRef& e : g.elements({from.id(), i}))
-                g.connect(*g.source(e), {to.id(), i, -1, e.element});
+            g.copyElements(from.id(), to.id(), i, true);
         else if (auto src = g.source({from.id(), i, -1}))
             g.connect(*src, {to.id(), i, -1});
         else
@@ -266,8 +265,7 @@ void connectReference(Graph& g, NodeId src, NodeId target)
             if ((defs[i].flags & AttrInput) && i != mc->inAttr)
             {
                 if (defs[i].flags & AttrArray)
-                    for (const PlugRef& e : g.elements({mod->id(), i}))
-                        g.connect(*g.source(e), {copy->id(), i, -1, e.element});
+                    g.copyElements(mod->id(), copy->id(), i, true);
                 else if (auto s = g.source({mod->id(), i, -1}))
                     g.connect(*s, {copy->id(), i, -1});
                 else

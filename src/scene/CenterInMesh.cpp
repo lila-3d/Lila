@@ -233,7 +233,7 @@ glm::dvec3 boneDirection(Graph& g, NodeId joint)
         return glm::dvec3(0.0);
     glm::dvec3 here = positionOf(*n);
     // Joints chain with joints; other centring nodes (rig template markers) chain with their own type.
-    auto link = [&](const Node& o) { return isJoint(*n) ? isJoint(o) : &o.type() == &n->type(); };
+    auto link = [&](const Node& o) { return isJoint(*n) ? isJoint(o) : &o.type().registered() == &n->type().registered(); };
     if (NodeId p = g.parent(joint); p != kNoNode && link(*g.node(p)))
         if (glm::dvec3 d = here - positionOf(*g.node(p)); glm::length(d) > 1e-9)
             return glm::normalize(d);

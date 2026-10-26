@@ -177,6 +177,23 @@ class Node:
         name = _camel(attr)
         return any(a["array"] and name in (a["name"], a["short"]) for a in _lila.node_attrs(self._id))
 
+    def add_attr(self, name, type="float", **flags):
+        """Add an attribute to this node only (addAttr), saved with the scene. type is an attributeType (bool, long,
+        float, double3, enum, matrix) or a dataType (string, stringArray, doubleArray, Int32Array, vectorArray); other
+        flags are addAttr's (default_value, min_value, keyable, multi, enum_name ...). Returns its plug name."""
+        data = type in ("string", "stringArray", "doubleArray", "floatArray", "Int32Array", "intArray", "vectorArray", "pointArray")
+        flags = {_camel(k): v for k, v in flags.items()}
+        flags["dataType" if data else "attributeType"] = type
+        return ops.addAttr(self.path, longName=name, **flags)[0]
+
+    def delete_attr(self, name):
+        """Remove an attribute added with add_attr, with its connections."""
+        ops.deleteAttr(f"{self.path}.{_camel(name)}")
+
+    def user_attrs(self):
+        """Names of the attributes added to this node with add_attr."""
+        return [a["name"] for a in _lila.node_attrs(self._id) if a.get("user")]
+
     def has_attr(self, attr):
         try:
             ops.getAttr(f"{self.path}.{_camel(attr)}")

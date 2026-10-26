@@ -26,6 +26,7 @@
 #include "core/Log.h"
 
 #include <algorithm>
+#include <charconv>
 #include <map>
 #include <stdexcept>
 
@@ -41,6 +42,14 @@ const std::vector<std::pair<int, PlugValue>>& Node::elements(int attr) const
     return size_t(attr) < mElements.size() ? mElements[size_t(attr)] : none;
 }
 
+const PlugValue* Node::element(int attr, int index) const
+{
+    for (const auto& [i, v] : elements(attr))
+        if (i == index)
+            return &v;
+    return nullptr;
+}
+
 int NodeType::attrIndex(std::string_view n) const
 {
     for (int i = 0; i < int(attrs.size()); ++i)
@@ -49,14 +58,50 @@ int NodeType::attrIndex(std::string_view n) const
     return -1;
 }
 
-int NodeType::fileAttrIndex(std::string_view n) const
+int NodeType::fileAttrIndex(std::string_view n, int* element) const
 {
+    if (element)
+        *element = -1;
     if (int i = attrIndex(n); i >= 0)
         return i;
     for (int i = 0; i < int(attrs.size()); ++i)
         if (!attrs[i].fileAlias.empty() && attrs[i].fileAlias == n)
             return i;
+    if (element)
+        for (int i = 0; i < int(attrs.size()); ++i)
+            if (const AttrDef& a = attrs[i]; (a.flags & AttrArray) && !a.fileAlias.empty())
+            {
+                size_t hash = a.fileAlias.find('#');
+                std::string_view alias = a.fileAlias, prefix = alias.substr(0, hash);
+                std::string_view suffix = hash == std::string::npos ? std::string_view() : alias.substr(hash + 1);
+                if (n.size() <= prefix.size() + suffix.size() || !n.starts_with(prefix) || !n.ends_with(suffix))
+                    continue;
+                std::string_view digits = n.substr(prefix.size(), n.size() - prefix.size() - suffix.size());
+                int k = 0;
+                if (std::from_chars(digits.data(), digits.data() + digits.size(), k).ptr == digits.data() + digits.size() && k >= 0)
+                {
+                    *element = k;
+                    return i;
+                }
+            }
     return -1;
+}
+
+bool NodeType::isRetired(std::string_view name) const
+{
+    for (const NodeType* t = this; t; t = t->base)
+        if (std::ranges::find(t->retiredAttrs, name) != t->retiredAttrs.end())
+            return true;
+    return false;
+}
+
+std::vector<int> NodeType::groupChildren(std::string_view group) const
+{
+    std::vector<int> out;
+    for (int i = 0; i < int(attrs.size()); ++i)
+        if (const std::string& name = attrs[i].name; name.size() > group.size() && name.starts_with(group) && name[group.size()] == '.')
+            out.push_back(i);
+    return out;
 }
 
 bool NodeType::isA(std::string_view typeName) const

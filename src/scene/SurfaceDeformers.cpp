@@ -34,8 +34,6 @@ using namespace rigutil;
 
 namespace
 {
-constexpr int kWrapSlots = 8;
-constexpr int kColliderSlots = 4;
 
 // ------------------------------------------------------------------------------------------------ data kinds
 
@@ -341,7 +339,6 @@ AttrDef output(std::string name, PlugType type, PlugValue def, std::string doc)
     return a;
 }
 
-std::string slotName(const char* base, int slot) { return slot == 0 && std::string_view(base).starts_with("driver") ? base : base + std::to_string(slot); }
 
 glm::dmat4 safeInverse(const glm::dmat4& m, const char* what)
 {
@@ -611,8 +608,7 @@ private:
         const auto* b = dynamic_cast<const ProximityData*>(as<DataPtr>(attr("binding")).get());
         if (!b)
             throw Unbound();
-        const size_t slots = b->bind.driverPoints.size();
-        if (slots == 0 || slots > size_t(kWrapSlots))
+        if (b->bind.driverPoints.empty())
             throw Unbound();
         return *b;
     }
@@ -624,12 +620,12 @@ private:
         std::vector<std::vector<glm::dvec3>> drv(slots);
         for (size_t s = 0; s < slots; ++s)
         {
-            const MeshPtr& m = as<MeshPtr>(attr(slotName("driver", int(s)).c_str()));
+            const MeshPtr& m = elementOr<MeshPtr>(attr("drivers.mesh"), int(s));
             if (!m)
                 throw std::runtime_error(s == 0 ? std::string("no driver connected") : std::format("driver {} is not connected", s));
             if (m->pointCapacity() != b.bind.driverPoints[s])
                 throw std::runtime_error("a driver's points changed since binding: run rebindDeformer");
-            drv[s] = toWorld(matrix(slotName("driverMatrix", int(s)).c_str()), m->positions());
+            drv[s] = toWorld(elementOr<glm::dmat4>(attr("drivers.matrix"), int(s)), m->positions());
         }
         return drv;
     }
@@ -676,17 +672,15 @@ public:
         const glm::dmat4 geomInv = safeInverse(geom, "the mesh");
         std::vector<const deform::SurfaceTarget*> meshes;
         std::vector<deform::Capsule> capsules;
-        for (int s = 0; s < kColliderSlots; ++s)
+        for (const auto& [s, v] : elements(attr("colliders.mesh")))
+            if (const MeshPtr& m = std::get<MeshPtr>(v))
+                meshes.push_back(&mTargets[s].get(m, elementOr<glm::dmat4>(attr("colliders.matrix"), s)));
+        for (const auto& [s, v] : elements(attr("capsules.matrix")))
         {
-            if (const MeshPtr& m = as<MeshPtr>(attr(slotName("collider", s).c_str())))
-                meshes.push_back(&mTargets[size_t(s)].get(m, matrix(slotName("colliderMatrix", s).c_str())));
-            if (num(slotName("capsuleOn", s).c_str()) != 0.0)
-            {
-                glm::dmat4 cm = matrix(slotName("capsuleMatrix", s).c_str());
-                double half = num(slotName("capsuleLength", s).c_str()) * 0.5;
-                double scale = (glm::length(glm::dvec3(cm[0])) + glm::length(glm::dvec3(cm[2]))) * 0.5;
-                capsules.push_back({xform(cm, {0, -half, 0}), xform(cm, {0, half, 0}), num(slotName("capsuleRadius", s).c_str()) * scale});
-            }
+            const glm::dmat4& cm = std::get<glm::dmat4>(v);
+            double half = elementOr<double>(attr("capsules.length"), s) * 0.5;
+            double scale = (glm::length(glm::dvec3(cm[0])) + glm::length(glm::dvec3(cm[2]))) * 0.5;
+            capsules.push_back({xform(cm, {0, -half, 0}), xform(cm, {0, half, 0}), elementOr<double>(attr("capsules.radius"), s) * scale});
         }
         if (meshes.empty() && capsules.empty())
             throw std::runtime_error("no colliders connected");
@@ -701,7 +695,7 @@ public:
     }
 
 private:
-    mutable TargetCache mTargets[kColliderSlots];
+    mutable std::map<int, TargetCache> mTargets; // by colliders element
 };
 
 const RestShape& restOf(const DeformerNode& d, size_t points)
@@ -999,13 +993,22 @@ void bindSurface(Graph& graph, DeformerNode& d)
     graph.setValue({d.id(), d.attr("binding"), -1}, std::move(data));
 }
 
-/** Connected wrap driver slots, in order; binding stops at the first empty one. */
+/** Connected wrap drivers, from element 0; binding stops at the first empty one. */
 int wrapSlotsUsed(Graph& graph, const DeformerNode& d)
 {
     int n = 0;
-    while (n < kWrapSlots && graph.source({d.id(), d.attr(slotName("driver", n).c_str()), -1}))
+    while (graph.source({d.id(), d.attr("drivers.mesh"), -1, n}))
         ++n;
     return n;
+}
+
+/** Connects src's srcAttr into element `element` of dst's array dstAttr, replacing what was there. */
+void connectElement(Graph& graph, NodeId src, const std::string& srcAttr, NodeId dst, const std::string& dstAttr, int element)
+{
+    guarded([&] {
+        graph.connect({src, graph.node(src)->type().attrIndex(srcAttr), -1}, {dst, graph.node(dst)->type().attrIndex(dstAttr), -1, element}, true);
+        return 0;
+    });
 }
 
 void bindWrapImpl(Graph& graph, DeformerNode& d)
@@ -1016,8 +1019,9 @@ void bindWrapImpl(Graph& graph, DeformerNode& d)
     std::vector<geo::Mesh> worlds;
     for (int s = 0; s < slots; ++s)
     {
-        std::optional<geo::Mesh> m = connectedWorld(graph, d, slotName("driver", s), slotName("driverMatrix", s));
-        worlds.push_back(m ? std::move(*m) : geo::Mesh());
+        graph.evaluate();
+        const MeshPtr& m = d.elementOr<MeshPtr>(d.attr("drivers.mesh"), s);
+        worlds.push_back(m ? worldMesh(*m, d.elementOr<glm::dmat4>(d.attr("drivers.matrix"), s)) : geo::Mesh());
     }
     std::vector<const geo::Mesh*> ptrs;
     for (const geo::Mesh& m : worlds)
@@ -1060,25 +1064,20 @@ void addColliderTo(Graph& graph, DeformerNode& d, Node& collider, double radius,
     bool mesh = collider.type().isA("mesh");
     if (!mesh && !collider.type().isA("transform"))
         throw CommandError(std::string(cmd) + ": " + collider.name() + " is neither a mesh nor a transform");
-    for (int s = 0; s < kColliderSlots; ++s)
+    std::vector<int> used = graph.groupIndices(d.id(), mesh ? "colliders" : "capsules");
+    const int s = used.empty() ? 0 : used.back() + 1;
+    if (mesh)
     {
-        if (mesh)
-        {
-            if (graph.source({d.id(), d.attr(slotName("collider", s).c_str()), -1}))
-                continue;
-            connectPlug(graph, collider.id(), "outMesh", d.id(), slotName("collider", s));
-            connectPlug(graph, collider.id(), "worldMatrix", d.id(), slotName("colliderMatrix", s));
-            return;
-        }
-        if (d.num(slotName("capsuleOn", s).c_str()) != 0.0)
-            continue;
-        connectPlug(graph, collider.id(), "worldMatrix", d.id(), slotName("capsuleMatrix", s));
-        setPlug(graph, d.id(), slotName("capsuleOn", s), true);
-        setPlug(graph, d.id(), slotName("capsuleRadius", s), radius);
-        setPlug(graph, d.id(), slotName("capsuleLength", s), length);
+        connectElement(graph, collider.id(), "outMesh", d.id(), "colliders.mesh", s);
+        connectElement(graph, collider.id(), "worldMatrix", d.id(), "colliders.matrix", s);
         return;
     }
-    throw CommandError(std::format("{}: {} already has {} {} colliders", cmd, d.name(), kColliderSlots, mesh ? "mesh" : "capsule"));
+    connectElement(graph, collider.id(), "worldMatrix", d.id(), "capsules.matrix", s);
+    guarded([&] {
+        graph.setValue({d.id(), d.attr("capsules.radius"), -1, s}, radius);
+        graph.setValue({d.id(), d.attr("capsules.length"), -1, s}, length);
+        return 0;
+    });
 }
 
 /** The meshes before the last positional object, the last one apart (driver, target or collider). */
@@ -1364,9 +1363,17 @@ void registerSurfaceTypes()
                        hiddenStored("binding", PlugType::Data, DataPtr(), "Each point's driver polygons or capture points.")},
                       [] { return std::make_unique<SurfaceDeformNode>(); }});
 
+    auto element = [](std::string name, PlugType type, PlugValue def, bool keyed, std::string doc, std::string alias) {
+        AttrDef a = keyed ? keyable(std::move(name), type, std::move(def), std::move(doc)) : connected(std::move(name), type, std::move(def), std::move(doc));
+        a.flags |= AttrArray;
+        a.fileAlias = std::move(alias);
+        return a;
+    };
+    // Drivers are a grouped array: drivers[n].mesh with drivers[n].matrix. Older scenes' driver, driver1 ... load into it.
     std::vector<AttrDef> wrap = {
-        connected("driver", PlugType::Mesh, MeshPtr(), "The first driver's outMesh."),
-        connected("driverMatrix", PlugType::Matrix, glm::dmat4(1.0), "The first driver's worldMatrix."), geomMatrixAttr(),
+        element("drivers.mesh", PlugType::Mesh, MeshPtr(), false, "Each driver's outMesh, from element 0.", "driver#"),
+        element("drivers.matrix", PlugType::Matrix, glm::dmat4(1.0), false, "Each driver's worldMatrix.", "driverMatrix#"),
+        geomMatrixAttr(),
         stored("maxDrivers", PlugType::Int, int64_t(4), "Driver triangles each point follows, 1 to 32, across all drivers. Used when binding."),
         stored("falloff", PlugType::Float, 2.0, "Triangles within this many times the nearest distance count; higher is smoother. Used when binding."),
         stored("smoothInfluences", PlugType::Int, int64_t(0), "Passes spreading each point's influences to its neighbours, for smoother results from coarse drivers. Used when binding."),
@@ -1377,11 +1384,6 @@ void registerSurfaceTypes()
         keyable("scaleCompensation", PlugType::Float, 0.0, "0 to 1: offsets grow and shrink with the driver's local scale."),
         hiddenStored("binding", PlugType::Data, DataPtr(), "Each point's driver triangles and offsets."),
     };
-    for (int s = 1; s < kWrapSlots; ++s)
-    {
-        wrap.push_back(connected(slotName("driver", s), PlugType::Mesh, MeshPtr(), std::format("Driver {}'s outMesh.", s + 1)));
-        wrap.push_back(connected(slotName("driverMatrix", s), PlugType::Matrix, glm::dmat4(1.0), std::format("Driver {}'s worldMatrix.", s + 1)));
-    }
     registerDeformer({"wrap", "layers-intersect",
                       "Makes the mesh follow one or more driver meshes (proximity wrap), each point riding its nearest driver triangles. "
                       "Use it to drive a detailed mesh from simple proxies.",
@@ -1395,19 +1397,16 @@ void registerSurfaceTypes()
         keyable("bulgeRadius", PlugType::Float, 0.0, "How far the bulge spreads, cm; 0 is four times the deepest push."),
         enumAttr("side", 0, {"outside", "inside"}, "Push points out of the colliders, or hold them inside."),
     };
-    for (int s = 0; s < kColliderSlots; ++s)
-    {
-        collision.push_back(connected(slotName("collider", s), PlugType::Mesh, MeshPtr(), "A collider mesh's outMesh."));
-        collision.push_back(connected(slotName("colliderMatrix", s), PlugType::Matrix, glm::dmat4(1.0), "That collider's worldMatrix."));
-        collision.push_back(hiddenStored(slotName("capsuleOn", s), PlugType::Bool, false, "This capsule slot is in use."));
-        collision.push_back(connected(slotName("capsuleMatrix", s), PlugType::Matrix, glm::dmat4(1.0), "A capsule's transform: its axis is local Y."));
-        collision.push_back(keyable(slotName("capsuleRadius", s), PlugType::Float, 5.0, "Capsule radius, in its transform's units."));
-        collision.push_back(keyable(slotName("capsuleLength", s), PlugType::Float, 10.0, "Capsule length between the sphere centres, along its Y."));
-    }
+    // Grouped arrays, one element per collider; older scenes' collider0, capsuleMatrix0 ... load into them.
+    collision.push_back(element("colliders.mesh", PlugType::Mesh, MeshPtr(), false, "A collider mesh's outMesh.", "collider#"));
+    collision.push_back(element("colliders.matrix", PlugType::Matrix, glm::dmat4(1.0), false, "That collider's worldMatrix.", "colliderMatrix#"));
+    collision.push_back(element("capsules.matrix", PlugType::Matrix, glm::dmat4(1.0), false, "A capsule's transform: its axis is local Y.", "capsuleMatrix#"));
+    collision.push_back(element("capsules.radius", PlugType::Float, 5.0, true, "Capsule radius, in its transform's units.", "capsuleRadius#"));
+    collision.push_back(element("capsules.length", PlugType::Float, 10.0, true, "Capsule length between the sphere centres, along its Y.", "capsuleLength#"));
     registerDeformer({"collision", "shield",
                       "Pushes the mesh out of collider meshes and capsules (or holds it inside them) with an offset, a soft falloff and "
                       "optional volume keeping. The fix for layered clothing passing through the body.",
-                      std::move(collision), [] { return std::make_unique<CollisionNode>(); }});
+                      std::move(collision), [] { return std::make_unique<CollisionNode>(); }, {"capsuleOn0", "capsuleOn1", "capsuleOn2", "capsuleOn3"}});
 
     registerDeformer({"rigidify", "box-multiple",
                       "Keeps regions rigid on a deforming mesh: each moves by the best rigid fit to its deformation, eased into the "
@@ -1531,8 +1530,6 @@ void registerSurfaceCommands()
             if (a.has("drivers"))
                 for (const json& j : a.flags["drivers"])
                     drivers.push_back(&nodeNamed(j.get<std::string>(), "wrap"));
-            if (drivers.size() > size_t(kWrapSlots))
-                throw CommandError(std::format("wrap: at most {} drivers", kWrapSlots));
             for (Node* dn : drivers)
                 if (!dn->type().isA("mesh") || std::find(meshes.begin(), meshes.end(), dn->id()) != meshes.end())
                     throw CommandError("wrap: " + dn->name() + " can't drive: it is not a mesh, or it is one of the deformed meshes");
@@ -1542,8 +1539,8 @@ void registerSurfaceCommands()
                 DeformerNode& d = addOne(graph, "wrap", mesh, a, "Wrap");
                 for (size_t s = 0; s < drivers.size(); ++s)
                 {
-                    connectPlug(graph, drivers[s]->id(), "outMesh", d.id(), slotName("driver", int(s)));
-                    connectPlug(graph, drivers[s]->id(), "worldMatrix", d.id(), slotName("driverMatrix", int(s)));
+                    connectElement(graph, drivers[s]->id(), "outMesh", d.id(), "drivers.mesh", int(s));
+                    connectElement(graph, drivers[s]->id(), "worldMatrix", d.id(), "drivers.matrix", int(s));
                 }
                 setPlug(graph, d.id(), "maxDrivers", int64_t(a.get<int>("maxDrivers")));
                 setPlug(graph, d.id(), "falloff", a.get<double>("falloff"));
@@ -1574,10 +1571,8 @@ void registerSurfaceCommands()
                 if (drv.id() == mesh)
                     throw CommandError("addWrapDriver: a mesh can't drive itself");
                 int slot = wrapSlotsUsed(graph, d);
-                if (slot >= kWrapSlots)
-                    throw CommandError(std::format("addWrapDriver: {} already has {} drivers", d.name(), kWrapSlots));
-                connectPlug(graph, drv.id(), "outMesh", d.id(), slotName("driver", slot));
-                connectPlug(graph, drv.id(), "worldMatrix", d.id(), slotName("driverMatrix", slot));
+                connectElement(graph, drv.id(), "outMesh", d.id(), "drivers.mesh", slot);
+                connectElement(graph, drv.id(), "worldMatrix", d.id(), "drivers.matrix", slot);
             }
             bindWrapImpl(graph, d);
             return d.name();

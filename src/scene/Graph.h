@@ -26,6 +26,8 @@ enum class Change : uint8_t
     Cleared,
     /** Many changes at once (a Graph::Batch ended): anything may have changed. Sent only to batched listeners. */
     Reset,
+    /** A node gained or lost a user attr. */
+    Attrs,
 };
 
 enum class SelectMode : uint8_t
@@ -158,8 +160,30 @@ public:
     void disconnect(const PlugRef& dst);
     std::optional<PlugRef> source(const PlugRef& dst) const;
     std::vector<PlugRef> destinations(const PlugRef& src) const;
-    /** An array input's connected elements, by ascending index. */
+
+    // Arrays
+    /** An array's elements, connected or holding a value, by ascending index. */
     std::vector<PlugRef> elements(const PlugRef& array) const;
+    /** The element indices any child of a grouped array uses, ascending. */
+    std::vector<int> groupIndices(NodeId node, std::string_view group) const;
+    /** Makes a storable array's elements values[0..n-1], dropping its other ones. Throws when one of them is connected. */
+    void setElements(const PlugRef& array, const std::vector<PlugValue>& values);
+    /** Removes an element: its connection and its value. */
+    void removeElement(const PlugRef& element);
+    /**
+     * Gives node `to` the elements node `from` has on the array attr (both of one type): the values the unconnected ones
+     * hold, and with shareSources the connected ones' sources too.
+     */
+    void copyElements(NodeId from, NodeId to, int attr, bool shareSources);
+
+    // User attrs
+    /**
+     * Adds an attr to one node, after its type's, flagged AttrUser (plus AttrInput and AttrStorable). A Vec3 without child
+     * names gets <name>X/Y/Z. Throws std::invalid_argument when the name or short name is taken. Returns its index.
+     */
+    int addAttr(NodeId node, AttrDef def);
+    /** Removes a user attr with its connections and value. Later user attrs move down one index. */
+    void deleteAttr(const PlugRef& attr);
 
     // Evaluation
     void evaluate();
@@ -237,6 +261,21 @@ private:
     void setRaw(const PlugRef& p, const PlugValue& v);
     void setLockRaw(NodeId id, int attr, uint8_t mask);
     void connectRaw(const PlugRef& src, const PlugRef& dst);
+    /** The element's stored slot, made (holding the attr's default) when missing. */
+    PlugValue& elementRaw(const PlugRef& p);
+    void eraseElementRaw(const PlugRef& p);
+    void setElementsRaw(const PlugRef& array, const std::vector<std::pair<int, PlugValue>>& elements);
+    struct AttrState
+    {
+        AttrDef def;
+        PlugValue value;
+        std::vector<std::pair<int, PlugValue>> elements;
+        uint8_t lock = 0;
+    };
+    void insertAttrRaw(NodeId id, int index, const AttrState& state);
+    AttrState removeAttrRaw(NodeId id, int index);
+    /** Moves every connection and held plug on id's attrs from `from` up by delta. */
+    void shiftAttrRefs(NodeId id, int from, int delta);
     void disconnectRaw(const PlugRef& dst);
     void selectRaw(std::vector<NodeId> ids);
     void holdRaw(const PlugRef& dst, const PlugValue& v);

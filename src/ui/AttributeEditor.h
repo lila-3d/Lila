@@ -57,6 +57,10 @@ private:
     void rebuild();
     void updateValues();
     void set(const std::string& attr, const scene::json& value);
+    /** Gives each of the attrs (an array, or a grouped array's children) element `element`, holding its default. */
+    void addElement(const std::vector<int>& attrs, int element);
+    /** Removes the element attr names (attr[3], or group[3].child for the whole group[3]). */
+    void removeElement(const std::string& attr);
     QWidget* colorSwatch(const scene::AttrDef& def, scene::NodeId id, int index, bool readOnly);
 
     QLineEdit* mName = nullptr;

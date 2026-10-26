@@ -154,7 +154,11 @@ void copyValues(Graph& g, const Node& from, Node& to)
 {
     const auto& defs = from.type().attrs;
     for (int i = 0; i < int(defs.size()); ++i)
-        if ((defs[i].flags & AttrInput) && !(defs[i].flags & (AttrUnique | AttrArray)) && !g.source({from.id(), i, -1}))
+        if (!(defs[i].flags & AttrInput) || (defs[i].flags & AttrUnique))
+            continue;
+        else if (defs[i].flags & AttrArray)
+            g.copyElements(from.id(), to.id(), i, false);
+        else if (!g.source({from.id(), i, -1}))
             g.setValue({to.id(), i, -1}, from.value(i));
     for (int i = 0; i < int(defs.size()); ++i)
     {
