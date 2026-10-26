@@ -55,6 +55,7 @@ add_subdirectory(extensions/GroundTiles)
 add_subdirectory(extensions/Meadowlight)
 add_subdirectory(extensions/Brushwork)
 add_subdirectory(extensions/OpenUSD)
+add_subdirectory(extensions/Lights)
 include(LilaSdkInstall)
 include(LilaDocs)
 

@@ -8,6 +8,7 @@
 #include "io/References.h"
 #include "scene/Graph.h"
 #include "scene/Instancing.h"
+#include "scene/Light.h"
 #include "scene/ObjectSets.h"
 #include "ui/Actions.h"
 #include "ui/Deletion.h"
@@ -65,11 +66,14 @@ Outliner* activeOutliner()
     return nullptr;
 }
 
-/** A type icon, dimmed for hidden rows, with a chain-link badge in the corner for referenced ones. */
-QIcon rowIcon(const QString& name, bool referenced, bool dim)
+/**
+ * A type icon, dimmed for hidden rows, with a chain-link badge in the corner for referenced ones. Slashed rows get a
+ * diagonal line through the glyph, as Tabler's "-off" icons have.
+ */
+QIcon rowIcon(const QString& name, bool referenced, bool dim, bool slashed = false)
 {
     static QHash<QString, QIcon> cache;
-    QString key = name + (referenced ? "/r" : "") + (dim ? "/d" : "");
+    QString key = name + (referenced ? "/r" : "") + (dim ? "/d" : "") + (slashed ? "/s" : "");
     if (auto it = cache.find(key); it != cache.end())
         return *it;
     QIcon base = icon(name);
@@ -80,6 +84,20 @@ QIcon rowIcon(const QString& name, bool referenced, bool dim)
     for (int size : {16, 32})
     {
         QPixmap pm = base.pixmap(QSize(size, size), mode);
+        if (slashed)
+        {
+            QPainter p(&pm);
+            p.setRenderHint(QPainter::Antialiasing);
+            const double stroke = size / 12.0;
+            const QLineF line(size * 0.125, size * 0.125, size * 0.875, size * 0.875);
+            // A gap cut either side keeps the line readable where it crosses the glyph.
+            p.setCompositionMode(QPainter::CompositionMode_Clear);
+            p.setPen(QPen(Qt::transparent, stroke * 3.0, Qt::SolidLine, Qt::RoundCap));
+            p.drawLine(line);
+            p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+            p.setPen(QPen(themeColor(dim ? "iconDisabled" : "iconNormal"), stroke, Qt::SolidLine, Qt::RoundCap));
+            p.drawLine(line);
+        }
         if (referenced)
         {
             QPainter p(&pm);
@@ -140,6 +158,19 @@ bool showSets()
     return PrefStore::get().value<bool>("general", kShowSetsPref, true);
 }
 
+constexpr const char* kFlagLightsPref = "/outliner/flagPlaceholderLights";
+
+bool flagPlaceholderLights()
+{
+    return PrefStore::get().value<bool>("general", kFlagLightsPref, true);
+}
+
+void restyleOutliners()
+{
+    for (Outliner* o : gOutliners)
+        o->scheduleRestyle();
+}
+
 void copyToClipboard(bool fullPath)
 {
     scene::Graph& g = scene::Graph::current();
@@ -179,6 +210,17 @@ void registerOutlinerActions()
                   .doc = "Lists object sets after the hierarchy, each with its members under it.",
                   .python = "lila.prefs.set(\"general\", \"/outliner/showSets\", False)",
                   .checked = [] { return showSets(); }});
+    actions::add({.id = "outliner.toggleFlagPlaceholderLights", .label = "Flag Placeholder Lights", .category = "Outliner",
+                  .run = [] { PrefStore::get().set("general", kFlagLightsPref, !flagPlaceholderLights()); },
+                  .doc = "Strikes through the icon of lights no light extension renders.",
+                  .python = "lila.prefs.set(\"general\", \"/outliner/flagPlaceholderLights\", False)",
+                  .checked = [] { return flagPlaceholderLights(); }});
+    // Rows are keyed on the flag, so a restyle only touches what changed.
+    PrefStore::get().onChanged([](const std::string& file) {
+        if (file == "general")
+            QTimer::singleShot(0, qApp, restyleOutliners);
+    });
+    scene::lights::providers().addListener([](RegistryChange, const std::string&, const std::string&) { restyleOutliners(); });
     actions::add({"outliner.copyName", "Copy Name", "Outliner", [] { copyToClipboard(false); }, nullptr,
                   "Puts the selected objects' names on the clipboard, one per line."});
     actions::add({"outliner.copyPath", "Copy Path", "Outliner", [] { copyToClipboard(true); }, nullptr,
@@ -205,7 +247,7 @@ void registerOutlinerActions()
     iconBars::add({.id = "outliner/expand", .bar = bar, .action = "outliner.expandAll", .icon = "fold-down"});
     iconBars::add({.id = "outliner/collapse", .bar = bar, .action = "outliner.collapseAll", .icon = "fold-up"});
     iconBars::add({.id = "outliner/show", .bar = bar, .kind = Kind::Menu, .icon = "eye", .label = "Show",
-                   .menuActions = {"outliner.toggleSets"}});
+                   .menuActions = {"outliner.toggleSets", "outliner.toggleFlagPlaceholderLights"}});
     iconBars::add({.id = "outliner/-copy", .bar = bar, .kind = Kind::Separator});
     iconBars::add({.id = "outliner/copy", .bar = bar, .kind = Kind::Menu, .icon = "copy", .label = "Copy",
                    .menuActions = {"outliner.copyName", "outliner.copyPath"}});
@@ -681,6 +723,7 @@ void Outliner::restyle()
 
     scene::Graph& g = scene::Graph::current();
     const QColor normal = palette().color(QPalette::Text);
+    const bool flagLights = flagPlaceholderLights();
     for (auto& [id, item] : mItems)
     {
         scene::Node* n = g.node(id);
@@ -693,11 +736,13 @@ void Outliner::restyle()
         // Instances and references show the shared-data glyph and an italic name; their source stays as it is.
         const bool instanced = shares == scene::instancing::Kind::Instance || shares == scene::instancing::Kind::Reference;
         QString iconName = instanced ? QString("components") : QString::fromStdString(outliner::iconName(*n));
-        QString style = iconName + (referenced ? "/r" : "") + (hidden ? "/h" : "") + (kept ? "/k" : "") + (instanced ? "/i" : "");
+        const bool flagged = flagLights && scene::lights::isPlaceholder(*n);
+        QString style = iconName + (referenced ? "/r" : "") + (hidden ? "/h" : "") + (kept ? "/k" : "") + (instanced ? "/i" : "") +
+                        (flagged ? "/f" : "");
         if (item->data(0, kStyleRole).toString() == style)
             continue;
         item->setData(0, kStyleRole, style);
-        item->setIcon(0, rowIcon(iconName, referenced, hidden));
+        item->setIcon(0, rowIcon(iconName, referenced, hidden, flagged));
         QFont f = item->font(0);
         f.setItalic(referenced || instanced);
         item->setFont(0, f);
@@ -710,7 +755,8 @@ void Outliner::restyle()
         else
         {
             const std::string& doc = n->type().doc;
-            item->setToolTip(0, QString::fromStdString(g.fullPath(id) + "\n" + n->type().name + (doc.empty() ? "" : "\n" + doc)));
+            item->setToolTip(0, QString::fromStdString(g.fullPath(id) + "\n" + n->type().name + (doc.empty() ? "" : "\n" + doc) +
+                                                       (flagged ? "\nPlaceholder: no light extension renders this light." : "")));
         }
         QColor c = hidden || kept ? themeShade(100) : referenced ? themeShade(150) : normal;
         item->setForeground(0, c);

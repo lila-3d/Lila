@@ -45,6 +45,7 @@ lila_module(lila_scene Scene
     ImagePlane.cpp
     Isolation.cpp
     LastOp.cpp
+    Light.cpp Light.h
     LodGroup.cpp LodGroup.h
     Materials.cpp
     Measure.cpp

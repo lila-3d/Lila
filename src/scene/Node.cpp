@@ -6,6 +6,7 @@
 #include "scene/AnimLayer.h"
 #include "scene/Take.h"
 #include "scene/Camera.h"
+#include "scene/Light.h"
 #include "scene/Deformers.h"
 #include "scene/Drivers.h"
 #include "scene/DisplayLayers.h"
@@ -183,6 +184,7 @@ void registerBuiltins()
     lod::registerTypes();
     arrays::registerTypes();
     registerCameraTypes();
+    registerLightTypes();
     anim::registerTypes();
     drivers::registerTypes();
     anim::registerLayerTypes();

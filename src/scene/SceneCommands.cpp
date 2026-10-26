@@ -9,6 +9,7 @@
 #include "scene/Take.h"
 #include "scene/BatchRename.h"
 #include "scene/Camera.h"
+#include "scene/Light.h"
 #include "scene/Components.h"
 #include "scene/Deformers.h"
 #include "scene/Drivers.h"
@@ -158,6 +159,7 @@ void registerCommands()
     registerImagePlaneCommands();
     lod::registerCommands();
     registerCameraCommands();
+    registerLightCommands();
     spaces::registerCommands();
     anim::registerCommands();
     drivers::registerCommands();

@@ -39,6 +39,8 @@ public:
     void collapseEverything();
     /** Rebuilds the rows once the event loop comes round, however many changes arrive first. */
     void scheduleRebuild();
+    /** Re-reads each row's icon and colour on the next event loop pass, without rebuilding the tree. */
+    void scheduleRestyle();
     /** Shows only the rows the filter matches, with their ancestors dimmed and opened so the hierarchy reads. */
     void setFilter(outliner::Filter filter);
 
@@ -52,7 +54,6 @@ protected:
     void keyPressEvent(QKeyEvent* e) override;
 
 private:
-    void scheduleRestyle();
     void rebuild();
     /** Updates each row's icon, font and color from its node's type, reference and visibility. */
     void restyle();
