@@ -179,6 +179,28 @@ LILA_SCENE_API void onSceneSaved();
 /** What onSceneSaved does, minus the pref check when `force`, then syncTextureSets. Returns how many mappings and sets were queued. */
 LILA_SCENE_API int syncMappings(bool force);
 
-/** Registers unrealConnect, unrealStatus, unrealImport, unrealMap, unrealUnmap, unrealMappings, unrealSync. */
+/** How unrealPlaceInstances sends instance groups to the open level. */
+struct PlacementOptions
+{
+    std::string folder = "/Game/Lila/Instances";
+    std::string mode = "auto"; // actors | ism | hism | auto (actors up to threshold members, then hism)
+    int threshold = 50;
+    /** Give members without a link id (or sharing one with an older node) a new one, undoably. Off, they are keyed by node id. */
+    bool assignIds = false;
+};
+
+/**
+ * The instance groups of the meshes under `roots`, one asset per instance root:
+ * {groups: [{key, source (full path), sourceId, contentPath, objectPath, mode, placements: [...]}]}, each placement
+ * {id, name, location, rotation (quat xyzw), scale} in Unreal space. Groups and placements are keyed by the nodes'
+ * linkId, which survives renames and reopening the scene. A group lists its root and every instance of it, wherever
+ * they sit. Throws CommandError for an unknown mode.
+ */
+LILA_SCENE_API json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, const PlacementOptions& o);
+
+/** unrealPlaceInstances and unrealRemovePlacements. */
+LILA_SCENE_API void registerPlacementCommands();
+
+/** Registers unrealConnect, unrealStatus, unrealImport, unrealMap, unrealUnmap, unrealMappings, unrealSync and the placement commands. */
 LILA_SCENE_API void registerCommands();
 } // namespace lila::link

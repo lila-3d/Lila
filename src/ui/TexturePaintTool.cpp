@@ -1206,10 +1206,8 @@ private:
         filterChannels(header->payload, *set);
         {
             const scene::Node* meshNode = g.node(t.mesh);
-            const int64_t axis = meshNode->as<int64_t>(scene::MeshNode::kSymmetry);
-            const int k = axis >= 1 && axis <= 3 ? int(axis - 1) : 0;
             scene::MeshPtr outMesh = meshNode->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-            mSym = tp::brushSymmetry(settings().stroke, outMesh.get(), k, scene::symmetryOffset(*meshNode, k));
+            mSym = tp::brushSymmetry(settings().stroke, outMesh.get(), scene::paintSymmetrySpec(*meshNode));
             header->symmetry = mSym.toJson();
         }
         if (tool == "clone" || tool == "heal")

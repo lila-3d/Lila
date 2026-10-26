@@ -1,6 +1,7 @@
 #include "scene/LastOp.h"
 
 #include "core/Profile.h"
+#include "ops/CommandOptions.h"
 #include "ops/Undo.h"
 #include "scene/Graph.h"
 
@@ -309,10 +310,12 @@ void endDrag(bool keep)
 std::vector<const FlagDef*> editableFlags(const std::string& command)
 {
     std::vector<const FlagDef*> out;
+    const ops::options::Override* o = ops::options::findOverride(command);
     if (const CommandDef* def = ops::find(command))
         for (const FlagDef& f : def->flags)
             if (f.type == ArgType::Bool || f.type == ArgType::Int || f.type == ArgType::Float ||
-                (f.type == ArgType::String && !f.choices.empty()))
+                (f.type == ArgType::String && !f.choices.empty()) ||
+                (f.type == ArgType::Vec3 && o && std::ranges::find(o->adjust, f.name) != o->adjust.end()))
                 out.push_back(&f);
     return out;
 }

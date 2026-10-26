@@ -14,6 +14,9 @@
 
 #include <glm/gtx/quaternion.hpp>
 
+#include <algorithm>
+#include <format>
+
 namespace lila::scene
 {
 namespace
@@ -210,6 +213,16 @@ void MeshNode::compute(const EvalContext& ctx)
 
 NodeType MeshNode::makeType(const NodeType& base)
 {
+    auto vec3Attr = [](std::string name, std::string shortName, glm::dvec3 def, std::string doc) {
+        AttrDef a{.name = name, .shortName = shortName, .type = PlugType::Vec3, .defaultValue = def, .flags = AttrInput | AttrStorable,
+                  .doc = std::move(doc)};
+        for (int i = 0; i < 3; ++i)
+        {
+            a.childNames[i] = name + char('X' + i);
+            a.childShort[i] = shortName + char('x' + i);
+        }
+        return a;
+    };
     NodeType t;
     t.name = "mesh";
     t.icon = "cube";
@@ -221,7 +234,8 @@ NodeType MeshNode::makeType(const NodeType& base)
         {.name = "outMesh", .shortName = "o", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrOutput | AttrHidden,
          .doc = "Final mesh, as drawn and exported."},
         {.name = "symmetry", .type = PlugType::Enum, .defaultValue = int64_t(0), .flags = AttrInput | AttrStorable,
-         .enumNames = {"off", "x", "y", "z"}, .doc = "Mirror plane (object space) every component edit is applied across."},
+         .enumNames = {"off", "x", "y", "z", "radial"},
+         .doc = "Mirror plane (object space) every component edit is applied across, or radial: every edit repeated round radialAxis."},
         {.name = "smoothPreview", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = AttrInput | AttrStorable,
          .doc = "Display-only Catmull-Clark levels (the 3 key); exports stay unsmoothed."},
         {.name = "retopoDrawReference", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden,
@@ -233,6 +247,16 @@ NodeType MeshNode::makeType(const NodeType& base)
          .enumNames = {"pivot", "custom"}, .doc = "Where the symmetry plane lies: through the pivot, or at symmetryOffset."},
         {.name = "symmetryOffset", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrInput | AttrStorable,
          .doc = "The custom symmetry plane's position along the symmetry axis, object space, cm."},
+        {.name = "radialCount", .type = PlugType::Int, .defaultValue = int64_t(6), .flags = AttrInput | AttrStorable,
+         .doc = "Radial symmetry: how many wedges repeat round the axis.", .minValue = 2.0, .maxValue = double(geo::kMaxRadialCount)},
+        {.name = "radialAxis", .type = PlugType::Enum, .defaultValue = int64_t(1), .flags = AttrInput | AttrStorable,
+         .enumNames = {"x", "y", "z", "custom"}, .doc = "Radial symmetry's axis (object space); custom uses radialDirection."},
+        vec3Attr("radialDirection", "rdd", glm::dvec3(0.0, 1.0, 0.0), "Radial symmetry's axis when radialAxis is custom, object space."),
+        {.name = "radialMirror", .type = PlugType::Bool, .defaultValue = false, .flags = AttrInput | AttrStorable,
+         .doc = "Radial symmetry also mirrors each wedge across a plane through the axis (dihedral symmetry: rims, flowers)."},
+        {.name = "radialPhase", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrInput | AttrStorable,
+         .doc = "Radial symmetry: degrees the wedge boundaries (and mirror planes) turn about the axis.", .softMin = -180.0, .softMax = 180.0},
+        vec3Attr("radialCenter", "rdc", glm::dvec3(0.0), "Where the radial axis passes when symmetryPlane is custom, object space, cm."),
         {.name = "retopoGuides", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrHidden,
          .doc = "Topology guides drawn with the Pencil: JSON, object space."},
         {.name = "retopoConstructs", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrHidden,
@@ -257,6 +281,65 @@ void GeneratorNode::compute(const EvalContext&)
     }
 }
 
+std::optional<geo::SymmetrySpec> symmetrySpec(const Node& mesh)
+{
+    if (!mesh.type().isA("mesh"))
+        return std::nullopt;
+    const int64_t v = mesh.as<int64_t>(MeshNode::kSymmetry);
+    geo::SymmetrySpec spec;
+    if (v >= 1 && v <= 3)
+    {
+        spec.axis = int(v - 1);
+        spec.offset = symmetryOffset(mesh, spec.axis);
+        return spec;
+    }
+    if (v != kSymmetryRadial)
+        return std::nullopt;
+    const int count = int(std::clamp<int64_t>(mesh.as<int64_t>(MeshNode::kRadialCount), 2, geo::kMaxRadialCount));
+    const bool mirror = mesh.as<bool>(MeshNode::kRadialMirror);
+    const double phase = mesh.as<double>(MeshNode::kRadialPhase);
+    const glm::dvec3 origin = mesh.as<int64_t>(MeshNode::kSymmetryPlane) == 1 ? mesh.as<glm::dvec3>(MeshNode::kRadialCenter)
+                                                                             : mesh.as<glm::dvec3>(Transform::kRotatePivot);
+    const int64_t axis = mesh.as<int64_t>(MeshNode::kRadialAxis);
+    if (axis >= 0 && axis <= 2)
+    {
+        spec.axis = int(axis);
+        spec.radial = geo::axisRadial(int(axis), origin, count, mirror, phase);
+    }
+    else
+    {
+        const glm::dvec3 dir = mesh.as<glm::dvec3>(MeshNode::kRadialDirection);
+        spec.axis = -1;
+        spec.radial = geo::RadialSymmetry(origin, dir, count, mirror, geo::radialReference(dir, phase));
+    }
+    return spec;
+}
+
+geo::SymmetrySpec paintSymmetrySpec(const Node& mesh)
+{
+    if (std::optional<geo::SymmetrySpec> spec = symmetrySpec(mesh))
+        return *spec;
+    geo::SymmetrySpec spec;
+    spec.offset = symmetryOffset(mesh, 0);
+    return spec;
+}
+
+std::optional<geo::SymmetryMap> symmetryMapFor(const Node& node, geo::Mesh& mesh, geo::SymmetrySync* sync)
+{
+    const std::optional<geo::SymmetrySpec> spec = symmetrySpec(node);
+    if (!spec)
+        return std::nullopt;
+    const double tolerance = std::max(1e-4, glm::length(mesh.bounds().size()) * 1e-5);
+    return geo::SymmetryMap::persistent(mesh, *spec, tolerance, sync);
+}
+
+std::string symmetryLabel(const geo::SymmetrySpec& spec)
+{
+    if (!spec.radial)
+        return std::string(1, char('x' + std::clamp(spec.axis, 0, 2)));
+    return std::format("radial {}{}", spec.radial->count(), spec.radial->mirror() ? " + mirror" : "");
+}
+
 double symmetryOffset(const Node& mesh, int axis)
 {
     if (axis < 0 || axis > 2 || !mesh.type().isA("transform"))
@@ -269,7 +352,7 @@ double symmetryOffset(const Node& mesh, int axis)
 SymmetryState symmetryState(const Graph& g, const std::vector<NodeId>& nodes)
 {
     SymmetryState s;
-    bool mixed = false;
+    bool mixed = false, mixedRadial = false;
     for (NodeId id : nodes)
     {
         Node* n = g.node(id);
@@ -277,14 +360,22 @@ SymmetryState symmetryState(const Graph& g, const std::vector<NodeId>& nodes)
             continue;
         ++s.meshes;
         int64_t v = n->as<int64_t>(MeshNode::kSymmetry);
-        if (v < 1 || v > 3)
+        if (v < 1 || v > kSymmetryRadial)
             continue;
-        mixed = mixed || (s.on > 0 && s.axis != int(v - 1));
-        s.axis = int(v - 1);
+        const int axis = v == kSymmetryRadial ? SymmetryState::kRadialState : int(v - 1);
+        const int count = v == kSymmetryRadial ? int(n->as<int64_t>(MeshNode::kRadialCount)) : 0;
+        const bool mirror = v == kSymmetryRadial && n->as<bool>(MeshNode::kRadialMirror);
+        mixed = mixed || (s.on > 0 && s.axis != axis);
+        mixedRadial = mixedRadial || (s.on > 0 && (s.radialCount != count || s.radialMirror != mirror));
+        s.axis = axis;
+        s.radialCount = count;
+        s.radialMirror = mirror;
         ++s.on;
     }
     if (mixed)
         s.axis = -1;
+    if (mixed || mixedRadial)
+        s.radialCount = 0, s.radialMirror = false;
     return s;
 }
 

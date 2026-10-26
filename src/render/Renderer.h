@@ -39,6 +39,8 @@ public:
         double aoMs = 0.0; // depth/normal prepass, GTAO and its blur; 0 when ambient occlusion did not run
         double cpuMs = 0.0;   // render thread recording the frame's commands
         double aoCpuMs = 0.0; // the ambient occlusion share of cpuMs
+        uint64_t meshDrawCalls = 0; // shaded mesh draw calls, prepass included; each draws one batch's placements
+        uint64_t meshInstances = 0; // placements those calls drew
     };
 
     bool start();

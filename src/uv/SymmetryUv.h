@@ -52,6 +52,17 @@ struct SymmetryUvResult
 LILA_SCENE_API SymmetryUvResult unwrapSymmetric(geo::Mesh& mesh, std::span<const Index> faces, std::string_view uvSet, const SymmetryUvOptions& opts = {});
 
 /**
+ * Radial symmetry's uvs: each face in wedge drive (of faces, or of the whole mesh when empty) gives its uvs to its
+ * images in every other wedge, corner by matched corner, so the copies stack exactly in uv space (reflected ones as
+ * mirror-image islands wound the other way). A face that is its own image (round the axis) keeps its uvs. Returns the
+ * faces that took uvs.
+ */
+LILA_SCENE_API size_t stackRadialUvs(geo::Mesh& mesh, const geo::SymmetryMap& map, std::string_view uvSet, int drive, std::span<const Index> faces = {});
+
+/** The wedge most of the faces' points are in. */
+LILA_SCENE_API int radialFaceWedge(const geo::Mesh& mesh, const geo::SymmetryMap& map, std::span<const Index> faces);
+
+/**
  * Copies the faces' seams (all faces when empty) across the plane and opens closed islands, re-mirroring the cuts, so
  * the islands pair up. Returns the cuts the opening added.
  */

@@ -23,6 +23,7 @@
 #include "scene/Graph.h"
 #include "scene/ImagePlane.h"
 #include "scene/LodGroup.h"
+#include "scene/Instancing.h"
 #include "scene/Materials.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
@@ -754,6 +755,7 @@ public:
         // Shares of the bar; referenced files are converted or loaded in importReferences, usually the bulk.
         const bool refs = mOpts.references != "none" && !mFile.references.empty();
         progress::Scope scope("", 10.0);
+        collectInstances();
         {
             std::vector<int> roots;
             for (size_t i = 0; i < mFile.nodes.size(); ++i)
@@ -771,6 +773,7 @@ public:
             progress::Scope meshes("Building meshes", 0.0, progress::None, refs ? 2.0 : 7.0);
             finishMeshes();
         }
+        connectInstances();
 
         mG.evaluate();
         if (mOpts.skins)
@@ -800,10 +803,9 @@ public:
         // After the curves and playback, so planes on animated cameras are placed as the scene opens.
         buildImagePlanes();
         buildDisplayLayers();
-        if (!mFile.parents.empty())
-            for (const ParentEdit& p : mFile.parents)
-                if (p.add)
-                    mR.skipped.push_back(std::format("instance of '{}' under '{}' (instances are not converted)", p.child, p.parent));
+        for (const ParentEdit& p : mFile.parents)
+            if (p.add && !mInstanceEdits.contains(&p))
+                mR.skipped.push_back(std::format("instance of '{}' under '{}' (only mesh shapes are converted)", p.child, p.parent));
         report();
         for (const auto& [i, id] : mLila)
             mR.mayaNames[mIx.fullPath(i)] = relName(mG, id, "");
@@ -887,6 +889,39 @@ private:
         return n.shared && oneOf(shortName(n.name), {"persp", "top", "front", "side", "perspShape", "topShape", "frontShape", "sideShape"});
     }
 
+    /**
+     * Maya instances a mesh by parenting its shape under a second transform (`parent -add`). Each such transform becomes
+     * a Lila mesh instancing the shape's mesh, connected once the meshes are built.
+     */
+    void collectInstances()
+    {
+        for (const ParentEdit& p : mFile.parents)
+        {
+            if (!p.add)
+                continue;
+            const int shape = mIx.resolve(p.child);
+            const int xform = mIx.resolve(p.parent);
+            if (shape < 0 || xform < 0 || mIx.node(shape).type != "mesh" || !isDagTransform(xform) || mIx.node(xform).type == "joint")
+                continue;
+            if (mInstanceOf.emplace(xform, shape).second)
+                mInstanceEdits.insert(&p);
+        }
+    }
+
+    void connectInstances()
+    {
+        for (const auto& [id, shape] : mPendingInstances)
+        {
+            auto it = mShapeNode.find(shape);
+            if (it == mShapeNode.end())
+            {
+                mR.warnings.push_back(std::format("{}: instanced shape '{}' was not imported", mG.node(id)->path(), shortName(mIx.node(shape).name)));
+                continue;
+            }
+            scene::instancing::connectInstance(mG, it->second, id);
+        }
+    }
+
     void createDag(int i, NodeId parent)
     {
         const MNode& mn = mIx.node(i);
@@ -921,13 +956,15 @@ private:
         }
 
         const bool joint = mn.type == "joint";
+        // A transform holding only an instanced mesh shape becomes the instance itself.
+        const bool instanceXform = !joint && meshes.empty() && mInstanceOf.contains(i);
         // A camera or image plane shape makes its transform that Lila type, unless the axes differ: then the shape is a
         // child holding the turn between the axes, since both look along fixed local axes.
-        const bool cameraXform = !joint && meshes.empty() && !cameras.empty();
-        const bool planeXform = !joint && meshes.empty() && cameras.empty() && locators.empty() && !planes.empty();
-        const char* type = joint             ? "joint"
-                           : mn.type == "lodGroup" ? "lodGroup"
-                           : !meshes.empty() ? "mesh"
+        const bool cameraXform = !joint && !instanceXform && meshes.empty() && !cameras.empty();
+        const bool planeXform = !joint && !instanceXform && meshes.empty() && cameras.empty() && locators.empty() && !planes.empty();
+        const char* type = joint                               ? "joint"
+                           : mn.type == "lodGroup"             ? "lodGroup"
+                           : !meshes.empty() || instanceXform ? "mesh"
                            : cameraXform     ? (mIdentityAxes ? "camera" : "transform")
                            : planeXform      ? (mIdentityAxes ? "imagePlane" : "transform")
                            : !locators.empty() ? "locator"
@@ -944,6 +981,8 @@ private:
         setTransform(i, id);
         if (std::string_view(type) == "lodGroup")
             lodSizes(mn, id);
+        if (instanceXform)
+            mPendingInstances.emplace_back(id, mInstanceOf.at(i));
         bool visible = num(mn, {"v", "visibility"}, 1.0) != 0.0;
         if (num(mn, {"it", "inheritsTransform"}, 1.0) == 0.0)
             mR.warnings.push_back(std::format("{}: inheritsTransform off is not supported; it inherits", n->path()));
@@ -3568,6 +3607,9 @@ private:
     bool mIdentityAxes = true;
     std::unordered_map<int, NodeId> mLila;      // Maya transform -> Lila node
     std::unordered_map<int, NodeId> mShapeNode; // Maya mesh shape -> Lila mesh node
+    std::unordered_map<int, int> mInstanceOf;   // transform -> the mesh shape `parent -add` instances under it
+    std::set<const ParentEdit*> mInstanceEdits; // the parent edits converted into instances
+    std::vector<std::pair<NodeId, int>> mPendingInstances; // Lila mesh -> instanced shape, connected after the meshes
     std::unordered_map<int, NodeId> mLocatorShape;
     std::unordered_map<int, NodeId> mCameraNode; // Maya camera shape -> Lila camera node
     std::unordered_map<int, NodeId> mPlaneNode;  // Maya imagePlane shape -> Lila image plane

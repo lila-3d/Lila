@@ -275,16 +275,7 @@ void RetopoDrawTool::refresh()
         mRetopoName = n->path();
         mRetopo = scene::modifiers::cage(g, n->id());
         mRetopoWorld = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
-        int64_t axis = n->as<int64_t>(scene::MeshNode::kSymmetry);
-        if (axis > 0 && axis <= 3)
-        {
-            // The object-space plane through the pivot, carried into world space.
-            glm::dvec3 nl(0.0);
-            nl[int(axis - 1)] = 1.0;
-            glm::dvec3 o = glm::dvec3(mRetopoWorld * glm::dvec4(nl * scene::symmetryOffset(*n, int(axis - 1)), 1.0));
-            glm::dvec3 nw = glm::normalize(glm::transpose(glm::inverse(glm::dmat3(mRetopoWorld))) * nl);
-            mSymmetry = geo::SymmetryPlane{nw, glm::dot(nw, o)};
-        }
+        mSymmetry = scene::symmetrySpec(*n);
         const std::string& dots = n->as<std::string>(scene::MeshNode::kRetopoDrawDots);
         if (dots != mDotsText || mRetopoWorld != mDotsWorld)
         {
@@ -530,11 +521,35 @@ void RetopoDrawTool::placeDot(QPointF px, const ViewInfo& view)
     Hover h = pick(px, view);
     if (h.point != kInvalid || h.dot >= 0)
         return;
-    if (mSymmetry && std::abs(mSymmetry->distance(hit)) < view.unitsPerPixel(hit) * kWeldRadius)
-        hit = onSurface(mSymmetry->project(hit));
+    if (auto s = symmetrySnap(hit, view.unitsPerPixel(hit) * kWeldRadius))
+        hit = onSurface(*s);
     std::vector<glm::dvec3> dots = mDots;
     dots.push_back(hit);
     setDots(dots);
+}
+
+std::optional<glm::dvec3> RetopoDrawTool::symmetrySnap(const glm::dvec3& world, double tolerance) const
+{
+    if (!mSymmetry)
+        return std::nullopt;
+    const glm::dvec3 local(glm::inverse(mRetopoWorld) * glm::dvec4(world, 1.0));
+    // World tolerance in object units: the matrix's average scale.
+    const double scale = std::cbrt(std::abs(glm::determinant(glm::dmat3(mRetopoWorld))));
+    const glm::dvec3 snapped = mSymmetry->snap(local, tolerance / std::max(scale, 1e-12));
+    if (snapped == local)
+        return std::nullopt;
+    return glm::dvec3(mRetopoWorld * glm::dvec4(snapped, 1.0));
+}
+
+std::vector<glm::dvec3> RetopoDrawTool::symmetryImages(const glm::dvec3& world) const
+{
+    std::vector<glm::dvec3> out;
+    if (!mSymmetry)
+        return out;
+    const glm::dvec3 local(glm::inverse(mRetopoWorld) * glm::dvec4(world, 1.0));
+    for (int g = 1; g < mSymmetry->order(); ++g)
+        out.push_back(glm::dvec3(mRetopoWorld * glm::dvec4(mSymmetry->apply(g, local), 1.0)));
+    return out;
 }
 
 void RetopoDrawTool::placeSnappedDot(QPointF px, const ViewInfo& view)
@@ -549,8 +564,8 @@ void RetopoDrawTool::placeSnappedDot(QPointF px, const ViewInfo& view)
     if (auto s = view.project(at))
         if (Hover h = pick(*s, view); h.point != kInvalid || h.dot >= 0)
             return;
-    if (mSymmetry && std::abs(mSymmetry->distance(at)) < view.unitsPerPixel(at) * kWeldRadius)
-        at = onSurface(mSymmetry->project(at));
+    if (auto s = symmetrySnap(at, view.unitsPerPixel(at) * kWeldRadius))
+        at = onSurface(*s);
     std::vector<glm::dvec3> dots = mDots;
     dots.push_back(at);
     setDots(dots);
@@ -1027,8 +1042,8 @@ void RetopoDrawTool::commitDrag(const ViewInfo& view)
         if (mDotTo && mDragDot >= 0 && mDragDot < int(mDots.size()))
         {
             glm::dvec3 to = *mDotTo;
-            if (mSymmetry && std::abs(mSymmetry->distance(to)) < view.unitsPerPixel(to) * kWeldRadius)
-                to = onSurface(mSymmetry->project(to));
+            if (auto s = symmetrySnap(to, view.unitsPerPixel(to) * kWeldRadius))
+                to = onSurface(*s);
             std::vector<glm::dvec3> dots = mDots;
             dots[mDragDot] = to;
             setDots(dots);
@@ -1248,8 +1263,8 @@ void RetopoDrawTool::draw(render::FrameState& s, OverlayPainter& p, const ViewIn
     for (size_t i = 0; i < mDots.size(); ++i)
     {
         glm::dvec3 dot = mDrag == Drag::DotMove && int(i) == mDragDot && mDotTo ? *mDotTo : mDots[i];
-        if (mSymmetry)
-            if (auto g = view.project(mSymmetry->reflect(dot)); g && visible(mSymmetry->reflect(dot), view))
+        for (const glm::dvec3& image : symmetryImages(dot))
+            if (auto g = view.project(image); g && visible(image, view))
                 p.disc(*g, 3.5f, kGhostDot, 12);
         if (!visible(dot, view))
             continue;

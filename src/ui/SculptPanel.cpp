@@ -266,7 +266,8 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     mSymmetry->addItem("X", "x");
     mSymmetry->addItem("Y", "y");
     mSymmetry->addItem("Z", "z");
-    mSymmetry->setToolTip("The mesh's symmetry setting: strokes mirror exactly across it.");
+    mSymmetry->addItem("Radial", "radial");
+    mSymmetry->setToolTip("The mesh's symmetry setting: strokes mirror exactly across it, or repeat exactly round its radial axis.");
     bform->addRow("Symmetry", mSymmetry);
     mShowCage = new QCheckBox("Show cage", settingsBox);
     mShowCage->setToolTip("Draw the low-poly cage over the sculpt as Exit will leave it, refitted as you sculpt.");
@@ -414,7 +415,7 @@ void SculptPanel::refreshSession()
                 sym = m;
     QSignalBlocker block(mSymmetry);
     mSymmetry->setEnabled(sym != nullptr);
-    mSymmetry->setCurrentIndex(sym ? int(std::clamp<int64_t>(sym->as<int64_t>(scene::MeshNode::kSymmetry), 0, 3)) : 0);
+    mSymmetry->setCurrentIndex(sym ? int(std::clamp<int64_t>(sym->as<int64_t>(scene::MeshNode::kSymmetry), 0, scene::kSymmetryRadial)) : 0);
 }
 
 void registerSculptUi()

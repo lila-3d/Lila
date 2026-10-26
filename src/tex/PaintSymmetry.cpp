@@ -47,12 +47,31 @@ glm::dmat4 reflection(const geo::SymmetryPlane& p)
 }
 } // namespace
 
-uint32_t PaintSymmetry::count() const { return uint32_t(std::max(radial.count, 1)) * (mirror ? 2u : 1u); }
+uint32_t PaintSymmetry::count() const
+{
+    if (group)
+        return uint32_t(group->order());
+    return uint32_t(std::max(radial.count, 1)) * (mirror ? 2u : 1u);
+}
 
-bool PaintSymmetry::mirrored(uint32_t copy) const { return mirror && copy >= uint32_t(std::max(radial.count, 1)); }
+bool PaintSymmetry::mirrored(uint32_t copy) const
+{
+    if (group)
+        return copy < count() && group->reflects(int(copy));
+    return mirror && copy >= uint32_t(std::max(radial.count, 1));
+}
 
 glm::dmat4 PaintSymmetry::transform(uint32_t copy) const
 {
+    if (group)
+    {
+        if (copy >= count())
+            return glm::dmat4(1.0);
+        const glm::dmat3 l = group->linear(int(copy));
+        glm::dmat4 t(l);
+        t[3] = glm::dvec4(group->origin() - l * group->origin(), 1.0);
+        return t;
+    }
     const uint32_t n = uint32_t(std::max(radial.count, 1));
     const uint32_t r = copy % n;
     glm::dmat4 t = r ? rotation(radial.axis, 2.0 * kPi * double(r) / double(n)) : glm::dmat4(1.0);
@@ -65,6 +84,13 @@ nlohmann::json PaintSymmetry::toJson() const
 {
     if (!any())
         return nullptr;
+    if (group)
+    {
+        auto v = [](const glm::dvec3& p) { return nlohmann::json::array({p.x, p.y, p.z}); };
+        return {{"group",
+                 {{"origin", v(group->origin())}, {"axis", v(group->axis())}, {"reference", v(group->reference())}, {"count", group->count()},
+                  {"mirror", group->mirror()}}}};
+    }
     nlohmann::json j = {{"radial", {{"count", radial.count}, {"axis", radial.axis}}}, {"mirror", nullptr}};
     if (mirror)
         j["mirror"] = {mirror->normal.x, mirror->normal.y, mirror->normal.z, mirror->offset};
@@ -76,6 +102,17 @@ PaintSymmetry PaintSymmetry::fromJson(const nlohmann::json& j)
     PaintSymmetry s;
     if (!j.is_object())
         return s;
+    if (const auto g = j.find("group"); g != j.end() && g->is_object())
+    {
+        auto v = [&](const char* key, glm::dvec3 fallback) {
+            const auto it = g->find(key);
+            return it != g->end() && it->is_array() && it->size() == 3 ? glm::dvec3((*it)[0].get<double>(), (*it)[1].get<double>(), (*it)[2].get<double>())
+                                                                      : fallback;
+        };
+        s.group = geo::RadialSymmetry(v("origin", glm::dvec3(0.0)), v("axis", glm::dvec3(0.0, 1.0, 0.0)), g->value("count", 2),
+                                      g->value("mirror", false), v("reference", glm::dvec3(0.0)));
+        return s;
+    }
     if (const auto it = j.find("mirror"); it != j.end() && it->is_array() && it->size() == 4)
     {
         geo::SymmetryPlane p;
@@ -99,8 +136,9 @@ bool PaintSymmetry::copyPoint(const PaintMesh& mesh, uint32_t tri, float u, floa
 {
     if (tri >= mesh.triangleCount())
         return false;
-    // A plain mirror follows the mesh's point pairs when there are some: exact on a deformed mesh too.
-    if (map && copy == uint32_t(std::max(radial.count, 1)) && mesh.points.size() == mesh.triangleCount() * 3)
+    // A plain mirror (or a radial group's element) follows the mesh's point pairs when there are some: exact on a
+    // deformed mesh too.
+    if (map && (group ? copy < count() : copy == uint32_t(std::max(radial.count, 1))) && mesh.points.size() == mesh.triangleCount() * 3)
     {
         if (mIndexed != &mesh || !mIndex)
         {
@@ -117,7 +155,8 @@ bool PaintSymmetry::copyPoint(const PaintMesh& mesh, uint32_t tri, float u, floa
         bool ok = true;
         for (int i = 0; i < 3; ++i)
         {
-            const geo::Index m = map->mirrorPoint(mesh.points[size_t(tri) * 3 + size_t(i)]);
+            const geo::Index point = mesh.points[size_t(tri) * 3 + size_t(i)];
+            const geo::Index m = group ? map->image(int(copy), point) : map->mirrorPoint(point);
             ok = ok && m != geo::kInvalid;
             q[size_t(i)] = uint32_t(m);
         }
@@ -175,6 +214,22 @@ std::vector<Dab> PaintSymmetry::copies(const PaintMesh& mesh, const Dab& d) cons
         out.push_back(c);
     }
     return out;
+}
+
+PaintSymmetry brushSymmetry(const brush::BrushSettings& b, const geo::Mesh* mesh, const std::optional<geo::SymmetrySpec>& spec)
+{
+    if (!spec || !spec->radial || !b.mirror)
+        return brushSymmetry(b, mesh, spec ? std::clamp(spec->axis, 0, 2) : 0, spec ? spec->offset : 0.0);
+    PaintSymmetry s;
+    s.group = *spec->radial;
+    if (mesh)
+    {
+        geo::Mesh copy = *mesh;
+        auto map = std::make_shared<geo::SymmetryMap>(geo::SymmetryMap::persistent(copy, *spec->radial, 1e-3));
+        if (!map->empty())
+            s.map = map;
+    }
+    return s;
 }
 
 PaintSymmetry brushSymmetry(const brush::BrushSettings& b, const geo::Mesh* mesh, int axis, double offset)

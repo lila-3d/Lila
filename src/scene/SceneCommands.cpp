@@ -12,6 +12,9 @@
 #include "scene/Components.h"
 #include "scene/Deformers.h"
 #include "scene/Drivers.h"
+#include "scene/ArrayGroup.h"
+#include "scene/Duplicate.h"
+#include "scene/Instancing.h"
 #include "scene/DisplayLayers.h"
 #include "scene/Ghosts.h"
 #include "scene/Graph.h"
@@ -142,6 +145,9 @@ void registerCommands()
     registerSmartJoinCommands();
     registerBatchRenameCommands();
     registerObjectCommands();
+    duplicate::registerCommands();
+    instancing::registerCommands();
+    arrays::registerCommands();
     registerBoundingMeshCommands();
     modifiers::registerCommands();
     components::registerCommands();

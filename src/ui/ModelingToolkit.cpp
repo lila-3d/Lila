@@ -187,11 +187,11 @@ ModelingToolkit::ModelingToolkit(QWidget* parent) : QWidget(parent)
     auto* symLabel = new QLabel("Symmetry", optsBox);
     opts->addWidget(symLabel);
     mSymmetry = new QComboBox(optsBox);
-    mSymmetry->addItems({"Off", "X", "Y", "Z"});
-    mSymmetry->setToolTip("Object-space mirror plane for component edits on the selected meshes (setSymmetry)");
+    mSymmetry->addItems({"Off", "X", "Y", "Z", "Radial"});
+    mSymmetry->setToolTip("Object-space mirror plane, or radial symmetry, for component edits on the selected meshes (setSymmetry)");
     connect(mSymmetry, &QComboBox::activated, this, [](int i) {
-        static const char* ids[] = {"mesh.symmetryOff", "mesh.symmetryX", "mesh.symmetryY", "mesh.symmetryZ"};
-        actions::run(json(ids[std::clamp(i, 0, 3)]));
+        static const char* ids[] = {"mesh.symmetryOff", "mesh.symmetryX", "mesh.symmetryY", "mesh.symmetryZ", "mesh.symmetryRadial"};
+        actions::run(json(ids[std::clamp(i, 0, 4)]));
     });
     opts->addWidget(mSymmetry);
     mCameraBased = actionButton("select.toggleCameraBased", "camera", "Camera-Based", optsBox);
@@ -391,7 +391,7 @@ void ModelingToolkit::refreshState()
     if (lead)
     {
         QSignalBlocker block(mSymmetry);
-        mSymmetry->setCurrentIndex(int(std::clamp<int64_t>(lead->as<int64_t>(scene::MeshNode::kSymmetry), 0, 3)));
+        mSymmetry->setCurrentIndex(int(std::clamp<int64_t>(lead->as<int64_t>(scene::MeshNode::kSymmetry), 0, scene::kSymmetryRadial)));
     }
 }
 

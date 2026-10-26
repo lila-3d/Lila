@@ -2,9 +2,11 @@
 
 #include "core/Export.h"
 
+#include "geo/Symmetry.h"
 #include "scene/Transform.h"
 
 #include <functional>
+#include <optional>
 
 namespace lila::scene
 {
@@ -25,6 +27,12 @@ public:
         kRetopoDrawDots,
         kSymmetryPlane,
         kSymmetryOffset,
+        kRadialCount,
+        kRadialAxis,
+        kRadialDirection,
+        kRadialMirror,
+        kRadialPhase,
+        kRadialCenter,
         kRetopoGuides,
         kRetopoConstructs,
         kCount
@@ -46,12 +54,19 @@ public:
     int outAttr = -1;
 };
 
+/** The `symmetry` attribute value for radial symmetry, after off, x, y and z. */
+inline constexpr int64_t kSymmetryRadial = 4;
+
 /** The `symmetry` attribute across a set of nodes, for toggles: how many are meshes, how many have it on, and on which axis. */
 struct SymmetryState
 {
     int meshes = 0;
     int on = 0;
-    int axis = -1; // 0-2 when every mesh that has it on agrees, else -1
+    int axis = -1; // 0-2 (mirror) or kRadialState when every mesh that has it on agrees, else -1
+    int radialCount = 0; // with axis kRadialState: the count when they all agree, else 0
+    bool radialMirror = false;
+
+    static constexpr int kRadialState = 3;
 };
 LILA_SCENE_API SymmetryState symmetryState(const Graph& g, const std::vector<NodeId>& nodes);
 
@@ -60,6 +75,22 @@ LILA_SCENE_API SymmetryState symmetryState(const Graph& g, const std::vector<Nod
  * at symmetryOffset when symmetryPlane is custom (set from an edge selection).
  */
 LILA_SCENE_API double symmetryOffset(const Node& mesh, int axis);
+
+/**
+ * A mesh's symmetry setting in object space, nullopt when off: the mirror plane symmetry x/y/z sets, or the radial group
+ * symmetry radial sets (radialCount turns about radialAxis through the pivot, or through radialCenter when
+ * symmetryPlane is custom, with a mirror plane per wedge when radialMirror is on).
+ */
+LILA_SCENE_API std::optional<geo::SymmetrySpec> symmetrySpec(const Node& mesh);
+
+/** symmetrySpec(), or with symmetry off the x plane through the pivot: where a brush's own mirror reflects. */
+LILA_SCENE_API geo::SymmetrySpec paintSymmetrySpec(const Node& mesh);
+
+/** The mesh's persistent symmetry map, stored onto mesh if it has none yet; nullopt when symmetry is off. */
+LILA_SCENE_API std::optional<geo::SymmetryMap> symmetryMapFor(const Node& node, geo::Mesh& mesh, geo::SymmetrySync* sync = nullptr);
+
+/** "x", "y", "z", or for radial symmetry e.g. "radial 6" / "radial 6 + mirror": for messages. */
+LILA_SCENE_API std::string symmetryLabel(const geo::SymmetrySpec& spec);
 
 /** World up as the scene's up axis pref sets it: +Y, or +Z in a Z-up scene. */
 LILA_SCENE_API glm::dvec3 sceneUp();

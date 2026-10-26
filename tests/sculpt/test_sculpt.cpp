@@ -590,3 +590,47 @@ TEST_CASE("partial refit matches a rebuilt bvh")
             CHECK(std::abs(a.t - c.t) < 1e-9);
     }
 }
+
+TEST_CASE("strokes on a radially symmetric mesh repeat exactly through its orbits")
+{
+    for (bool mirror : {false, true})
+    {
+        CAPTURE(mirror);
+        sculpt::SculptMesh s(sphere(24, 50.0));
+        geo::SymmetrySpec spec;
+        spec.radial = geo::axisRadial(1, glm::dvec3(0.0), 6, mirror);
+        s.setSymmetry(spec, 1e-4);
+        REQUIRE(s.symmetric());
+        const geo::SymmetryMap& map = s.symmetry();
+        REQUIRE(map.isRadial());
+        REQUIRE(map.unmatchedCount() == 0);
+        auto radialAsymmetry = [&] {
+            double worst = 0.0;
+            for (Index p = 0; p < s.mesh().pointCapacity(); ++p)
+                for (int g = 1; g < map.order(); ++g)
+                    if (const Index q = map.image(g, p); q != geo::kInvalid)
+                        worst = std::max(worst, glm::length(s.mesh().position(q) - map.transform(g, s.mesh().position(p))));
+            return worst;
+        };
+        CHECK(radialAsymmetry() < 1e-9);
+        for (sculpt::Brush brush : {sculpt::Brush::Draw, sculpt::Brush::Inflate, sculpt::Brush::Smooth, sculpt::Brush::Pinch, sculpt::Brush::Grab})
+        {
+            sculpt::BrushSettings b;
+            b.brush = brush;
+            b.strength = 0.8;
+            // The brush's own radial copies are ignored on a radially symmetric mesh.
+            b.radial.count = 5;
+            s.beginStroke(b);
+            for (int i = 0; i < 8; ++i)
+            {
+                sculpt::Dab d = dabAt(s, glm::dvec3(30.0 + i * 3.0, 20.0, 200.0), 20.0);
+                d.delta = glm::dvec3(1.0, 0.5, 0.0);
+                d.direction = glm::dvec3(1.0, 0.0, 0.0);
+                s.dab(d);
+            }
+            sculpt::StrokeRecord r = s.endStroke();
+            CHECK_MESSAGE(!r.empty(), sculpt::brushName(brush));
+            CHECK_MESSAGE(radialAsymmetry() < 1e-9, sculpt::brushName(brush));
+        }
+    }
+}

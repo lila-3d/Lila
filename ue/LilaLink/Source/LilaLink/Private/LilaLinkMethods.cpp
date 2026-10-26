@@ -2,6 +2,7 @@
 
 #include "LilaLinkLog.h"
 #include "LilaLinkMLDeformer.h"
+#include "LilaLinkPlacements.h"
 #include "LilaLinkSequence.h"
 #include "LilaLinkSplines.h"
 #include "LilaLinkTextures.h"
@@ -102,7 +103,7 @@ TSharedPtr<FJsonValue> Hello(const TSharedPtr<FJsonObject>&, FString&)
 	// "progress": long methods send progress notifications, so Lila can tell a slow call from a hung editor.
 	Out->SetArrayField(TEXT("features"), {Str(TEXT("progress")), Str(TEXT("materials")), Str(TEXT("meshSequence")), Str(TEXT("geometryCache")),
 		Str(TEXT("vertexAnimation")), Str(TEXT("textures")), Str(TEXT("materialInstances")),
-		Str(TEXT("stylisedInstances")), Str(TEXT("mlDeformer")), Str(TEXT("splines"))});
+		Str(TEXT("stylisedInstances")), Str(TEXT("mlDeformer")), Str(TEXT("splines")), Str(TEXT("placements"))});
 	Out->SetBoolField(TEXT("python"), IPythonScriptPlugin::Get() != nullptr && IPythonScriptPlugin::Get()->IsPythonAvailable());
 	return Obj(Out);
 }
@@ -366,5 +367,6 @@ TMap<FString, FLilaLinkMethod> LilaLink::MakeMethods()
 	LilaLink::AddTextureMethods(Methods);
 	LilaLink::AddMLDeformerMethods(Methods);
 	LilaLink::AddSplineMethods(Methods);
+	LilaLink::AddPlacementMethods(Methods);
 	return Methods;
 }

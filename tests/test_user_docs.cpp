@@ -66,9 +66,9 @@ void writeZip(const fs::path& zip, const std::map<std::string, std::string>& ent
 
 std::map<std::string, std::string> siteEntries(const std::string& home)
 {
-    return {{"lila-dcc.github.io-abc/docs/README.md", home},
-            {"lila-dcc.github.io-abc/docs/essentials.md", "# Essentials\n\n## Selection modes\n\nPress Shift+1 for vertex mode.\n"},
-            {"lila-dcc.github.io-abc/assets/vendor/docsify/docsify.min.js", "//js"}};
+    return {{"lila-3d.github.io-abc/docs/README.md", home},
+            {"lila-3d.github.io-abc/docs/essentials.md", "# Essentials\n\n## Selection modes\n\nPress Shift+1 for vertex mode.\n"},
+            {"lila-3d.github.io-abc/assets/vendor/docsify/docsify.min.js", "//js"}};
 }
 
 size_t leftovers(const fs::path& cacheRoot)
@@ -152,7 +152,7 @@ TEST_CASE("docs: an archive installs atomically and a bad one keeps the last goo
     SUBCASE("a path escaping the folder is refused")
     {
         auto entries = siteEntries("# Evil\n");
-        entries["lila-dcc.github.io-abc/../../evil.txt"] = "x";
+        entries["lila-3d.github.io-abc/../../evil.txt"] = "x";
         writeZip(zip, entries);
         CHECK_FALSE(docs::installArchive(zip, cache, "main", kShaB, &error));
         CHECK_FALSE(fs::exists(t.path / "evil.txt"));
@@ -233,9 +233,9 @@ TEST_CASE("docs: page ids, public URLs and heading ids follow docsify")
     CHECK(docs::normalizePageId("essentials#selection-modes", &anchor) == "essentials");
     CHECK(anchor == "selection-modes");
 
-    CHECK(docs::publicUrl("essentials") == "https://lila-dcc.github.io/docs/#/essentials");
-    CHECK(docs::publicUrl("curves", "pipe") == "https://lila-dcc.github.io/docs/#/curves?id=pipe");
-    CHECK(docs::publicUrl("") == "https://lila-dcc.github.io/docs/#/");
+    CHECK(docs::publicUrl("essentials") == "https://lila-3d.github.io/docs/#/essentials");
+    CHECK(docs::publicUrl("curves", "pipe") == "https://lila-3d.github.io/docs/#/curves?id=pipe");
+    CHECK(docs::publicUrl("") == "https://lila-3d.github.io/docs/#/");
 
     CHECK(docs::slug("Create a primitive in place") == "create-a-primitive-in-place");
     CHECK(docs::slug("Find any menu command") == "find-any-menu-command");
@@ -251,7 +251,7 @@ TEST_CASE("docs: pages resolve, API symbols find their page, the sidebar and sea
     fs::path d = t.path / "docs";
     writeFile(d / "README.md", "# Lila Docs\n");
     writeFile(d / "essentials.md", "# Essentials\n\n## Selection modes\n\nPress **Shift+1** for vertex mode.\n\n## Floating shelf\n\nPress the backtick.\n");
-    writeFile(d / "_sidebar.md", "- [Home](/)\n- [Essentials](essentials.md)\n  - [Modes](essentials.md?id=selection-modes)\n- [Site](https://lila-dcc.github.io/ ':ignore')\n");
+    writeFile(d / "_sidebar.md", "- [Home](/)\n- [Essentials](essentials.md)\n  - [Modes](essentials.md?id=selection-modes)\n- [Site](https://lila-3d.github.io/ ':ignore')\n");
 
     CHECK(docs::resolvePage(d, "essentials").found);
     docs::Page missing = docs::resolvePage(d, "nowhere");
@@ -288,16 +288,16 @@ TEST_CASE("docs: pages resolve, API symbols find their page, the sidebar and sea
 TEST_CASE("docs: pasted URLs in every form open their page")
 {
     using docs::pageSpecFromUrl;
-    CHECK(pageSpecFromUrl("https://lila-dcc.github.io/docs/#/curves?id=pipe") == "curves?id=pipe");
-    CHECK(pageSpecFromUrl("  lila-dcc.github.io/docs/#/curves  ") == "curves");
-    CHECK(pageSpecFromUrl("http://lila-dcc.github.io/docs/#/curves/") == "curves/");
-    CHECK(pageSpecFromUrl("https://lila-dcc.github.io/docs/#/curves?id=pipe/") == "curves?id=pipe");
-    CHECK(pageSpecFromUrl("https://lila-dcc.github.io/docs/#/python/") == "python/");
-    CHECK(pageSpecFromUrl("https://lila-dcc.github.io/docs/") == "");
-    CHECK(pageSpecFromUrl("https://lila-dcc.github.io/docs") == "");
-    CHECK(pageSpecFromUrl("lila-dcc.github.io") == "");
-    CHECK(pageSpecFromUrl("https://LILA-DCC.github.io/docs/index.html#/essentials") == "essentials");
-    CHECK(pageSpecFromUrl("https://lila-dcc.github.io/docs/curves") == "curves");
+    CHECK(pageSpecFromUrl("https://lila-3d.github.io/docs/#/curves?id=pipe") == "curves?id=pipe");
+    CHECK(pageSpecFromUrl("  lila-3d.github.io/docs/#/curves  ") == "curves");
+    CHECK(pageSpecFromUrl("http://lila-3d.github.io/docs/#/curves/") == "curves/");
+    CHECK(pageSpecFromUrl("https://lila-3d.github.io/docs/#/curves?id=pipe/") == "curves?id=pipe");
+    CHECK(pageSpecFromUrl("https://lila-3d.github.io/docs/#/python/") == "python/");
+    CHECK(pageSpecFromUrl("https://lila-3d.github.io/docs/") == "");
+    CHECK(pageSpecFromUrl("https://lila-3d.github.io/docs") == "");
+    CHECK(pageSpecFromUrl("lila-3d.github.io") == "");
+    CHECK(pageSpecFromUrl("https://LILA-3D.github.io/docs/index.html#/essentials") == "essentials");
+    CHECK(pageSpecFromUrl("https://lila-3d.github.io/docs/curves") == "curves");
     CHECK(pageSpecFromUrl("http://127.0.0.1:52011/docs/#/curves?id=pipe") == "curves?id=pipe");
     CHECK(pageSpecFromUrl("localhost:8000/docs/#/essentials") == "essentials");
     CHECK(pageSpecFromUrl("lila://docs/curves?id=pipe") == "curves?id=pipe");
@@ -311,10 +311,10 @@ TEST_CASE("docs: pasted URLs in every form open their page")
 TEST_CASE("docs: links in a page become public site URLs")
 {
     using docs::publicUrlForLink;
-    CHECK(publicUrlForLink("#pipe", "curves") == "https://lila-dcc.github.io/docs/#/curves?id=pipe");
-    CHECK(publicUrlForLink("?id=pipe", "curves") == "https://lila-dcc.github.io/docs/#/curves?id=pipe");
-    CHECK(publicUrlForLink("essentials.md#select", "curves") == "https://lila-dcc.github.io/docs/#/essentials?id=select");
-    CHECK(publicUrlForLink("#/python/", "curves") == "https://lila-dcc.github.io/docs/#/python/");
+    CHECK(publicUrlForLink("#pipe", "curves") == "https://lila-3d.github.io/docs/#/curves?id=pipe");
+    CHECK(publicUrlForLink("?id=pipe", "curves") == "https://lila-3d.github.io/docs/#/curves?id=pipe");
+    CHECK(publicUrlForLink("essentials.md#select", "curves") == "https://lila-3d.github.io/docs/#/essentials?id=select");
+    CHECK(publicUrlForLink("#/python/", "curves") == "https://lila-3d.github.io/docs/#/python/");
     CHECK(publicUrlForLink("https://example.com/x", "curves") == "https://example.com/x");
 }
 

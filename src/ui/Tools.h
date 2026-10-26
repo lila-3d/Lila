@@ -50,6 +50,13 @@ LILA_UI_API unsigned handleResets();
 LILA_UI_API bool pivotEdit();
 LILA_UI_API void setPivotEdit(bool on);
 
+/**
+ * Clone drag: hold Y. A drag on a manipulator handle in object mode duplicates the objects first (in the duplicate
+ * option box's mode) and moves the copies, leaving the originals where they were.
+ */
+LILA_UI_API bool cloneDrag();
+LILA_UI_API void setCloneDrag(bool on);
+
 LILA_UI_API unsigned snaps();
 LILA_UI_API void setSnap(SnapFlags flag, bool on);
 

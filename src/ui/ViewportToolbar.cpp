@@ -767,6 +767,52 @@ void ViewportToolbar::buildSymmetryRow()
                 refreshSymmetry();
             });
         }
+        // Radial: the setting, then its count and mirror; picking either turns radial symmetry on with it.
+        QAction* radial = menu->addAction(labelOf("mesh.symmetryRadial"));
+        radial->setCheckable(true);
+        radial->setChecked(st.on > 0 && st.axis == scene::SymmetryState::kRadialState);
+        group->addAction(radial);
+        connect(radial, &QAction::triggered, this, [this] {
+            PrefStore::get().set("general", "/symmetry/axis", std::string("radial"));
+            activateView();
+            actions::run("mesh.symmetryRadial");
+            refreshSymmetry();
+        });
+        auto setRadial = [this](json flags) {
+            scene::Graph& graph = scene::Graph::current();
+            json names = json::array();
+            for (scene::NodeId id : graph.selection())
+                if (const scene::Node* n = graph.node(id); n && n->type().isA("mesh"))
+                    names.push_back(n->path());
+            if (names.empty())
+                return;
+            flags["args"] = names;
+            flags["axis"] = "radial";
+            PrefStore::get().set("general", "/symmetry/axis", std::string("radial"));
+            activateView();
+            try
+            {
+                ops::execute("setSymmetry", flags, CallSource::UI);
+            }
+            catch (const std::exception& e)
+            {
+                log::warn("{}", e.what());
+            }
+            refreshSymmetry();
+        };
+        QMenu* counts = menu->addMenu("Radial Count");
+        for (int count : {2, 3, 4, 5, 6, 8, 10, 12, 16, 24, 32})
+        {
+            QAction* item = counts->addAction(QString::number(count));
+            item->setCheckable(true);
+            item->setChecked(st.axis == scene::SymmetryState::kRadialState && st.radialCount == count);
+            connect(item, &QAction::triggered, this, [setRadial, count] { setRadial({{"count", count}}); });
+        }
+        QAction* mirrored = menu->addAction("Radial Mirror");
+        mirrored->setCheckable(true);
+        mirrored->setChecked(st.axis == scene::SymmetryState::kRadialState && st.radialCount > 0 && st.radialMirror);
+        mirrored->setToolTip("Also mirror each wedge across a plane through the axis (dihedral symmetry: rims, flowers)");
+        connect(mirrored, &QAction::triggered, this, [setRadial](bool on) { setRadial({{"mirror", on}}); });
         menu->addSeparator();
         bool custom = false;
         for (scene::NodeId id : g.selection())
@@ -969,9 +1015,14 @@ void ViewportToolbar::refreshSymmetry()
         mSymmetryToggle->style()->polish(mSymmetryToggle);
     }
     std::string remembered = PrefStore::get().value<std::string>("general", "/symmetry/axis", "x");
-    QString axis = st.on > 0 && st.axis < 0 ? QString("Mix")
-                   : st.axis >= 0           ? QString(QChar('X' + st.axis))
-                                            : QString::fromStdString(remembered).toUpper();
+    auto radialText = [&st] {
+        return st.radialCount > 0 ? QString("%1%2").arg(st.radialMirror ? "D" : "R").arg(st.radialCount) : QString("R");
+    };
+    QString axis = st.on > 0 && st.axis < 0                      ? QString("Mix")
+                   : st.axis == scene::SymmetryState::kRadialState ? radialText()
+                   : st.axis >= 0                                   ? QString(QChar('X' + st.axis))
+                   : remembered == "radial"                         ? QString("R")
+                                                                    : QString::fromStdString(remembered).toUpper();
     mSymmetryAxis->setText(axis);
 
     QString state = st.meshes == 0 ? QString("No mesh selected")

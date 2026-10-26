@@ -1148,11 +1148,205 @@ SymmetryMap symmetrizeTopology(Mesh& mesh, int axis, int keepSign, double tolera
     o.tolerance = tolerance;
     mirrorMesh(mesh, o);
     // The mirrored half carries copies of the kept half's keys, which pair nothing.
-    for (int k = 0; k < 3; ++k)
-        mesh.pointAttrs().remove(symmetryLayerName(k));
+    removeSymmetryLayers(mesh);
     mesh.compact();
     SymmetryMap map = SymmetryMap::build(mesh, o.plane, tolerance);
     map.store(mesh, axis);
+    return map;
+}
+
+namespace
+{
+struct KeepSets
+{
+    std::vector<Index> parent;
+
+    explicit KeepSets(Index n) : parent(n)
+    {
+        std::iota(parent.begin(), parent.end(), Index(0));
+    }
+    Index find(Index p)
+    {
+        while (parent[p] != p)
+            p = parent[p] = parent[parent[p]];
+        return p;
+    }
+    /** keep's root survives. */
+    void unite(Index keep, Index other)
+    {
+        const Index a = find(keep), b = find(other);
+        if (a != b)
+            parent[b] = a;
+    }
+};
+
+/** wedge carried by element g of radial: positions, corner normals and tangents, and winding when g reflects. */
+Mesh carried(const Mesh& wedge, const RadialSymmetry& radial, int g)
+{
+    Mesh copy = wedge;
+    if (g == 0)
+        return copy;
+    for (glm::dvec3& p : copy.positions())
+        p = radial.apply(g, p);
+    const glm::mat3 linear(radial.linear(g));
+    if (std::span<glm::vec3> cn = copy.cornerAttrs().get<glm::vec3>(attr::kNormal); !cn.empty())
+        for (glm::vec3& c : cn)
+            c = linear * c;
+    if (std::span<glm::vec4> ct = copy.cornerAttrs().get<glm::vec4>(attr::kTangent); !ct.empty())
+        for (glm::vec4& c : ct)
+            c = glm::vec4(linear * glm::vec3(c), radial.reflects(g) ? -c.w : c.w);
+    if (radial.reflects(g))
+        for (Index f = 0; f < copy.faceCapacity(); ++f)
+            copy.flipFace(f);
+    return copy;
+}
+
+/**
+ * Pairs the fundamental wedge's points on its far boundary with those on its near one, turned back by a wedge, nearest
+ * first. Empty when the two seams hold different numbers of points.
+ */
+std::vector<std::pair<Index, Index>> seamPairs(const Mesh& wedge, const RadialSymmetry& radial, double tolerance)
+{
+    const glm::dvec3 a = radial.axis(), u = radial.reference(), v = glm::cross(a, u), o = radial.origin();
+    const double t = radial.wedgeAngle();
+    const glm::dvec3 far = std::cos(t) * u + std::sin(t) * v;
+    std::vector<Index> nearSeam, farSeam;
+    for (Index p = 0; p < wedge.pointCapacity(); ++p)
+    {
+        if (!wedge.pointValid(p))
+            continue;
+        const glm::dvec3 d = wedge.position(p) - o;
+        if (std::abs(glm::dot(d, glm::cross(a, u))) <= tolerance && glm::dot(d, u) >= -tolerance)
+            nearSeam.push_back(p);
+        if (std::abs(glm::dot(d, glm::cross(a, far))) <= tolerance && glm::dot(d, far) >= -tolerance)
+            farSeam.push_back(p);
+    }
+    std::vector<std::pair<Index, Index>> out;
+    if (nearSeam.size() != farSeam.size() || nearSeam.size() > 4096)
+        return out;
+    struct Candidate
+    {
+        double d;
+        size_t i, j;
+    };
+    std::vector<Candidate> all;
+    const int back = radial.inverse(1);
+    for (size_t i = 0; i < farSeam.size(); ++i)
+    {
+        const glm::dvec3 at = radial.apply(back, wedge.position(farSeam[i]));
+        for (size_t j = 0; j < nearSeam.size(); ++j)
+            all.push_back({glm::length(at - wedge.position(nearSeam[j])), i, j});
+    }
+    std::sort(all.begin(), all.end(), [](const Candidate& x, const Candidate& y) { return x.d < y.d; });
+    std::vector<uint8_t> usedFar(farSeam.size(), 0), usedNear(nearSeam.size(), 0);
+    for (const Candidate& c : all)
+        if (!usedFar[c.i] && !usedNear[c.j])
+        {
+            usedFar[c.i] = usedNear[c.j] = 1;
+            out.push_back({farSeam[c.i], nearSeam[c.j]});
+        }
+    return out;
+}
+} // namespace
+
+void cutToWedge(Mesh& mesh, const RadialSymmetry& radial, int keep, double tolerance)
+{
+    LILA_ZONE();
+
+    if (radial.order() < 2)
+        return;
+    // The fundamental wedge runs from the reference direction to wedgeAngle past it: in front of the first plane,
+    // behind the second. keep's wedge is bounded by those planes carried by keep.
+    const glm::dvec3 a = radial.axis(), u = radial.reference(), v = glm::cross(a, u);
+    const double t = radial.wedgeAngle();
+    const glm::dvec3 bounds[2] = {glm::cross(a, u), glm::cross(a, std::cos(t) * u + std::sin(t) * v)};
+    for (int k = 0; k < 2; ++k)
+    {
+        SymmetryPlane plane;
+        plane.normal = glm::normalize(radial.applyVector(std::clamp(keep, 0, radial.order() - 1), bounds[k]));
+        plane.offset = glm::dot(plane.normal, radial.origin());
+        cutAtPlane(mesh, plane, k == 0 ? 1 : -1, tolerance);
+    }
+}
+
+SymmetryMap symmetrizeRadialTopology(Mesh& mesh, const RadialSymmetry& radial, int keep, double tolerance)
+{
+    LILA_ZONE();
+
+    const int n = radial.order();
+    keep = std::clamp(keep, 0, n - 1);
+    removeSymmetryLayers(mesh);
+    cutToWedge(mesh, radial, keep, tolerance);
+
+    std::vector<Index> live;
+    for (Index f = 0; f < mesh.faceCapacity(); ++f)
+        if (mesh.faceValid(f))
+            live.push_back(f);
+    // The kept wedge carried back onto the fundamental one, then into every slot.
+    const Mesh wedge = carried(extractFaces(mesh, live), radial, radial.inverse(keep));
+    mesh = Mesh();
+    std::vector<Index> offsets;
+    for (int g = 0; g < n; ++g)
+        offsets.push_back(mesh.append(carried(wedge, radial, g)));
+
+    KeepSets sets(mesh.pointCapacity());
+    // Turns alone meet a copy's far seam against the next copy's near one, which need not lie at the same spots: pair
+    // them up, the near seam's points surviving. Reflections meet each seam against its own mirror image.
+    if (!radial.mirror() && radial.count() > 1)
+        for (auto [far, nearPoint] : seamPairs(wedge, radial, tolerance))
+            for (int g = 0; g < n; ++g)
+                sets.unite(offsets[size_t(radial.compose(1, g))] + nearPoint, offsets[size_t(g)] + far);
+
+    // Whatever else coincides (the axis, a mirror seam) merges into the first point there.
+    const double cell = std::max(tolerance * 2.0, 1e-9);
+    auto key = [&](const glm::dvec3& p) { return glm::i64vec3(glm::floor(p / cell)); };
+    struct Hash
+    {
+        size_t operator()(const glm::i64vec3& c) const { return size_t(c.x * 73856093ll ^ c.y * 19349663ll ^ c.z * 83492791ll); }
+    };
+    std::unordered_map<glm::i64vec3, std::vector<Index>, Hash> grid;
+    for (Index p = 0; p < mesh.pointCapacity(); ++p)
+    {
+        if (!mesh.pointValid(p))
+            continue;
+        const glm::dvec3 at = mesh.position(p);
+        const glm::i64vec3 k = key(at);
+        Index found = kInvalid;
+        for (int dz = -1; dz <= 1 && found == kInvalid; ++dz)
+            for (int dy = -1; dy <= 1 && found == kInvalid; ++dy)
+                for (int dx = -1; dx <= 1 && found == kInvalid; ++dx)
+                    if (auto it = grid.find(k + glm::i64vec3(dx, dy, dz)); it != grid.end())
+                        for (Index q : it->second)
+                            if (glm::length(mesh.position(q) - at) <= tolerance)
+                            {
+                                found = q;
+                                break;
+                            }
+        if (found != kInvalid)
+            sets.unite(found, p);
+        else
+            grid[k].push_back(p);
+    }
+    std::vector<Index> target(mesh.pointCapacity(), kInvalid);
+    bool any = false;
+    for (Index p = 0; p < mesh.pointCapacity(); ++p)
+        if (mesh.pointValid(p) && sets.find(p) != p)
+        {
+            target[p] = sets.find(p);
+            any = true;
+        }
+    if (any)
+        weldPoints(mesh, target);
+    mesh.removeAllLoose();
+    mesh.compact();
+
+    SymmetryMap map = SymmetryMap::buildRadial(mesh, radial, tolerance);
+    std::vector<Index> points;
+    for (Index p = 0; p < mesh.pointCapacity(); ++p)
+        points.push_back(p);
+    map.snapToPlane(mesh, points);
+    map.symmetrizeWedge(mesh, 0);
+    map.store(mesh);
     return map;
 }
 } // namespace lila::geo

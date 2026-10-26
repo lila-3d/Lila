@@ -7,6 +7,7 @@
 #include "scene/DeformEval.h"
 #include "scene/Deformers.h"
 #include "scene/Graph.h"
+#include "scene/Instancing.h"
 #include "scene/MeshNodes.h"
 
 #include <algorithm>
@@ -179,6 +180,8 @@ MeshPtr exportMesh(Graph& g, NodeId mesh)
     Node* m = g.node(mesh);
     if (!m)
         return nullptr;
+    if (NodeId root = instancing::root(g, mesh); root != mesh)
+        return exportMesh(g, root);
     std::vector<NodeId> mods = stack(g, mesh);
     auto ranInViewport = [](const ModifierNode& mod) { return mod.as<bool>(mod.enabledAttr) && !bypassed(mod.as<MeshPtr>(mod.inAttr)); };
     auto ranOnGpu = [](const ModifierNode& mod) { return (mod.traits() & Node::kDeformer) && static_cast<const DeformerNode&>(mod).ranOnGpu(); };

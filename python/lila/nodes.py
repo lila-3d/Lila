@@ -17,7 +17,7 @@ import _lila
 from . import ops
 
 __all__ = ["Node", "node", "nodes", "selected", "select", "locator", "group", "mesh", "exists", "display_layers", "display_layer", "object_sets",
-           "object_set"]
+           "object_set", "instance", "array"]
 
 # A _lila without path lookups only has scene-unique names, so there the name is the path.
 _node_path = getattr(_lila, "node_path", _lila.node_name)
@@ -247,6 +247,56 @@ class Node:
     def mesh_info(self):
         return ops.meshInfo(self.path)
 
+    # instancing
+
+    def _instance_info(self):
+        return ops.instanceInfo(self.path) if self.is_a("mesh") else {"kind": "none", "source": None, "members": []}
+
+    @property
+    def is_instance(self):
+        """True for an instance or a reference: a mesh sharing another mesh's data."""
+        return self._instance_info()["kind"] in ("instance", "reference")
+
+    @property
+    def instance_kind(self):
+        """"none", "source" (others share its data), "instance" or "reference"."""
+        return self._instance_info()["kind"]
+
+    @property
+    def instance_source(self):
+        """The mesh an instance or reference shares from (a Node), or None."""
+        info = self._instance_info()
+        return Node(info["source"]) if info["kind"] in ("instance", "reference") else None
+
+    def instances(self):
+        """The other meshes sharing this one's data (its source, instances and references), as Nodes."""
+        return [n for n in (Node(m) for m in self._instance_info()["members"]) if n != self]
+
+    def make_unique(self):
+        """Gives this mesh data of its own, so edits to it stop reaching the meshes it shared with."""
+        ops.makeUnique(self.path)
+
+    # arrays
+
+    @property
+    def is_array(self):
+        """True for a live array (see array()): a group showing its children repeated."""
+        return self.is_a("array")
+
+    def array_sources(self):
+        """The objects this live array repeats (its children), as Nodes."""
+        return [Node(p) for p in ops.arrayInfo(self.path)["sources"]]
+
+    def array_copies(self):
+        """The world matrices of the copies this live array generates, originals left out, as {source Node: [matrix, ...]}
+        with each matrix 16 floats column by column, like world_matrix."""
+        return {Node(p["source"]): p["worlds"] for p in ops.arrayInfo(self.path)["placements"]}
+
+    def bake_array(self, mode="instance"):
+        """Turns this live array into a plain group holding its sources and a real object per copy: instances of the
+        sources ("instance"), copies ("copy") or references ("reference"). Returns the group Node."""
+        return Node(ops.bakeArray(self.path, mode=mode)[0])
+
     # vertex colors
 
     @property
@@ -434,3 +484,29 @@ def group(*items, name=None):
     flags = {"name": name} if name else {}
     names = [Node(i).path for i in items]
     return Node(ops.group(*names, **flags))
+
+
+def instance(*items, reference=False, name=None):
+    """Instances of the items (Nodes or names): meshes sharing their mesh, so editing one edits all. reference=True shares
+    only the base mesh and gives each copy a modifier stack of its own. Returns a Node, or a list for several items."""
+    flags = {"reference": reference}
+    if name:
+        flags["name"] = name
+    made = [Node(n) for n in ops.instance(*[Node(i).path for i in items], **flags)]
+    return made[0] if len(made) == 1 else made
+
+
+def array(*items, mode="linear", count=5, offset=None, rotate=None, scale=None, axis=None, angle=None, angle_mode=None, rise=None,
+          count_y=None, count_z=None, spacing=None, center=None, name=None):
+    """A live array of the items (Nodes or names), which become its children: shown repeated in a row (mode "linear", by
+    offset), around a circle ("radial", over angle about axis, climbing rise per copy) or in a grid ("grid", count by count_y
+    by count_z copies, spacing apart), about center (default the items' pivot). count includes the original. The copies are
+    drawn and exported as instances and follow every edit to the items. Returns the array Node; edit it through its
+    attributes (array.count = 8) and bake it with bake_array()."""
+    flags = {"mode": mode, "count": count}
+    for key, value in (("offset", offset), ("rotate", rotate), ("scale", scale), ("axis", axis), ("angle", angle),
+                       ("angleMode", angle_mode), ("rise", rise), ("countY", count_y), ("countZ", count_z), ("spacing", spacing),
+                       ("center", center), ("name", name)):
+        if value is not None:
+            flags[key] = list(value) if key in ("offset", "rotate", "scale", "spacing", "center") else value
+    return Node(ops.array(*[Node(i).path for i in items], edit=False, **flags))

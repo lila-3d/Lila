@@ -227,3 +227,60 @@ TEST_CASE("uv symmetry: picks and pins take the mirror partner")
         CHECK(pin[c] == pin[pc]);
     CHECK(std::count(pin.begin(), pin.end(), true) > 4);
 }
+
+namespace
+{
+/** Every face's uvs equal its images' under the mesh's radial symmetry, corner by matched corner. */
+void checkStacked(const std::string& mesh, std::vector<geo::Index> only = {})
+{
+    geo::Mesh m = *meshOf(mesh);
+    const auto spec = scene::symmetrySpec(*scene::Graph::current().find(mesh));
+    REQUIRE(spec);
+    REQUIRE(spec->radial);
+    geo::SymmetryMap map = geo::SymmetryMap::persistent(m, *spec->radial, 1e-4);
+    std::span<const glm::vec2> uv = m.cornerAttrs().get<glm::vec2>("uv0");
+    REQUIRE(!uv.empty());
+    size_t compared = 0;
+    for (geo::Index f = 0; f < m.faceCapacity(); ++f)
+    {
+        if (!m.faceValid(f) || (!only.empty() && std::ranges::find(only, f) == only.end()))
+            continue;
+        m.forEachFaceCorner(f, [&](geo::Index c) {
+            for (int g = 1; g < map.order(); ++g)
+                if (const geo::Index fi = map.imageFace(m, g, f); fi != geo::kInvalid && fi != f)
+                {
+                    const geo::Index ci = m.findCorner(fi, map.image(g, m.cornerPoint(c)));
+                    REQUIRE(ci != geo::kInvalid);
+                    CHECK(uv[ci] == uv[c]);
+                    ++compared;
+                }
+        });
+    }
+    CHECK(compared > 0);
+}
+} // namespace
+
+TEST_CASE("uvStackRadial stacks one wedge's uvs on every copy")
+{
+    for (bool mirror : {false, true})
+    {
+        CAPTURE(mirror);
+        run("newScene");
+        const std::string mesh = run("polyCylinder", {{"subdivisionsAxis", 24}, {"subdivisionsHeight", 3}, {"caps", false}})[0];
+        run("setSymmetry", {{"args", {mesh}}, {"axis", "radial"}, {"count", 6}, {"mirror", mirror}});
+        run("select", {{"args", {mesh}}});
+        run("selectMode", {{"args", {"object"}}});
+        run("uvStackRadial", {{"wedge", 0}});
+        checkStacked(mesh);
+    }
+}
+
+TEST_CASE("uv edits on a radially symmetric mesh stack the copies")
+{
+    run("newScene");
+    const std::string mesh = run("polyCylinder", {{"subdivisionsAxis", 24}, {"subdivisionsHeight", 3}, {"caps", false}})[0];
+    run("setSymmetry", {{"args", {mesh}}, {"axis", "radial"}, {"count", 8}});
+    run("selectComponents", {{"args", {mesh}}, {"faces", {0, 1, 2}}});
+    run("uvUnwrapSymmetric");
+    checkStacked(mesh, {0, 1, 2});
+}

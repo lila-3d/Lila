@@ -39,6 +39,9 @@ struct PolyStats
     PolyCount scene;      // every visible mesh
     PolyCount objects;    // visible meshes that are selected or under a selected transform
     PolyCount components; // selected components of the current mode; faces also give their triangles
+    /** Triangles of scene and objects with a mesh shared by several objects (instances) counted once. */
+    uint64_t uniqueTris = 0;
+    uint64_t uniqueObjectTris = 0;
     /** Some uv counts were carried over from a mesh's previous snapshot; ask again shortly for exact ones. */
     bool pending = false;
 };

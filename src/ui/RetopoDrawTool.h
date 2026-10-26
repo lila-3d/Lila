@@ -162,7 +162,11 @@ private:
     std::vector<glm::dvec3> mRefFaceNormals; // world space, per face of the mesh mRefBvh was built from
     scene::MeshPtr mRetopo; // base mesh of the retopo node; ids are what the commands take
     glm::dmat4 mRetopoWorld{1.0};
-    std::optional<geo::SymmetryPlane> mSymmetry; // world space
+    std::optional<geo::SymmetrySpec> mSymmetry; // the retopo mesh's, in its object space (mRetopoWorld)
+    /** world snapped onto the symmetry plane (or radial axis or mirror plane) when within tolerance of it, world units. */
+    std::optional<glm::dvec3> symmetrySnap(const glm::dvec3& world, double tolerance) const;
+    /** world's images under every symmetry element but the identity. */
+    std::vector<glm::dvec3> symmetryImages(const glm::dvec3& world) const;
 
     std::vector<glm::dvec3> mDots; // world space, read from the retopo mesh
     std::string mDotsText;

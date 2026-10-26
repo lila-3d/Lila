@@ -395,3 +395,40 @@ TEST_CASE("settings round trip through json and prefs, reading the tools' plain 
     CHECK(again.lazyRadius == 9.0);
     CHECK(p.value<double>("general", "/brushTest/radius", 0.0) == 33.0);
 }
+
+TEST_CASE("symmetry: radial orbits copy dabs and hits to every wedge")
+{
+    geo::Mesh disc = geo::makeDisc({.radius = 10.0, .subdivAxis = 24, .subdivRings = 2});
+    for (bool mirror : {false, true})
+    {
+        CAPTURE(mirror);
+        const geo::RadialSymmetry r = geo::axisRadial(1, glm::dvec3(0.0), 6, mirror);
+        geo::SymmetryMap map = geo::SymmetryMap::buildRadial(disc, r, 1e-6);
+        REQUIRE(map.unmatchedCount() == 0);
+
+        brush::Dab d;
+        d.center = glm::dvec3(3, 0, 2);
+        d.normal = glm::dvec3(0, 1, 0);
+        d.direction = glm::dvec3(1, 0, 0);
+        d.angle = 0.3;
+        auto copies = brush::orbitDabs(d, map);
+        REQUIRE(copies.size() == size_t(r.order()));
+        for (int g = 0; g < r.order(); ++g)
+        {
+            CHECK(copies[size_t(g)].copy == uint32_t(g));
+            CHECK(near(copies[size_t(g)].center, r.apply(g, d.center), 1e-9));
+            CHECK(copies[size_t(g)].angle == (r.reflects(g) ? -0.3 : 0.3));
+        }
+
+        // A point off every plane gets its whole orbit, once each at its strongest weight.
+        geo::Index p = 0;
+        while (p < disc.pointCapacity() && (map.fixed(p) || map.wedge(p) < 0))
+            ++p;
+        REQUIRE(p < disc.pointCapacity());
+        std::vector<std::pair<geo::Index, float>> hits = {{p, 0.5f}, {map.image(1, p), 0.25f}};
+        brush::mirrorHits(hits, map);
+        CHECK(hits.size() == map.expandPoints(std::vector<geo::Index>{p}).size());
+        for (auto [pt, w] : hits)
+            CHECK(w == 0.5f);
+    }
+}

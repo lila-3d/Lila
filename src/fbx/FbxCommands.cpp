@@ -75,7 +75,7 @@ ExportKind autoKind(Graph& g, const std::vector<NodeId>& ids, bool children)
 } // namespace
 
 bool exportForUnreal(const std::vector<scene::NodeId>& nodes, const fs::path& path, const std::string& profile, std::string* error,
-                     const std::string& kind, bool atOrigin, const std::string& take)
+                     const std::string& kind, bool atOrigin, const std::string& take, bool children)
 {
     LILA_ZONE();
 
@@ -93,6 +93,7 @@ bool exportForUnreal(const std::vector<scene::NodeId>& nodes, const fs::path& pa
         return false;
     }
     opts.atOrigin = atOrigin;
+    opts.children = children;
     if (!take.empty())
         opts.takes = {take};
 
@@ -156,6 +157,7 @@ void registerCommands()
                   {"animation", "anim", T::Bool, true, "Bake the take onto translate/rotate/scale, one key per frame."},
                   {"take", "", T::String, "", "AnimStack to import; the file's active one (or first) by default."},
                   {"setPlayback", "", T::Bool, true, "Set the scene fps and playback range from the take."},
+                  {"instances", "", T::Bool, true, "Objects sharing one geometry come in as instances of the first."},
                   {"report", "", T::Bool, false, "Return the import report instead of just the names."},
                   {"select", "", T::Bool, true, "Select the imported roots."}},
         .run = [](const Args& a) -> json {
@@ -175,6 +177,7 @@ void registerCommands()
             opts.animation = a.get<bool>("animation", true);
             opts.take = a.get<std::string>("take", "");
             opts.setPlayback = a.get<bool>("setPlayback", true);
+            opts.instances = a.get<bool>("instances", true);
             ImportResult r = importFbx(g, utf8Path(path), opts);
             if (!r.ok)
                 throw CommandError("importFbx: " + r.error);

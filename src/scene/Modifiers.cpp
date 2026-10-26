@@ -4,6 +4,7 @@
 #include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/Profile.h"
+#include "geo/ArrayMesh.h"
 #include "geo/Mesh.h"
 #include "geo/Normals.h"
 #include "geo/Ops.h"
@@ -13,7 +14,9 @@
 #include "scene/Components.h"
 #include "scene/ExtrudeModifier.h"
 #include "scene/Graph.h"
+#include "scene/Instancing.h"
 #include "scene/MeshNodes.h"
+#include "scene/Transform.h"
 
 #include <map>
 #include <set>
@@ -36,6 +39,59 @@ double f(const Node& n, const char* a) { return n.as<double>(n.type().attrIndex(
 int64_t i(const Node& n, const char* a) { return n.as<int64_t>(n.type().attrIndex(a)); }
 bool b(const Node& n, const char* a) { return n.as<bool>(n.type().attrIndex(a)); }
 glm::dvec3 v(const Node& n, const char* a) { return n.as<glm::dvec3>(n.type().attrIndex(a)); }
+
+AttrDef inCategory(AttrDef def, const char* category)
+{
+    def.category = category;
+    return def;
+}
+
+/** arrayModifier's center enum. */
+enum ArrayCenter : int64_t
+{
+    kCenterOrigin,
+    kCenterPoint,
+    kCenterObject,
+};
+
+/** The array layout and weld settings an arrayModifier's plugs describe. */
+geo::ArrayOptions arrayOptions(const Node& n)
+{
+    geo::ArrayOptions o;
+    geo::ArrayLayout& l = o.layout;
+    l.mode = geo::ArrayMode(std::clamp<int64_t>(i(n, "mode"), 0, 2));
+    l.count = int(std::clamp<int64_t>(i(n, "count"), 1, 1000));
+    l.gridCount = {l.count, int(std::clamp<int64_t>(i(n, "countY"), 1, 1000)), int(std::clamp<int64_t>(i(n, "countZ"), 1, 1000))};
+    // Grids stay under the same total as rows so a stray count cannot hang the evaluation.
+    while (int64_t(l.gridCount.x) * l.gridCount.y * l.gridCount.z > 100000)
+        l.gridCount = glm::max(l.gridCount / 2, glm::ivec3(1));
+    l.offset = l.mode == geo::ArrayMode::Grid ? v(n, "spacing") : l.mode == geo::ArrayMode::Linear ? v(n, "offset") : glm::dvec3(0.0);
+    l.rotate = v(n, "rotate");
+    l.scale = v(n, "scale");
+    l.axis = int(std::clamp<int64_t>(i(n, "axis"), 0, 2));
+    l.angle = f(n, "angle");
+    l.stepAngle = i(n, "angleMode") == 1;
+    l.rise = f(n, "rise");
+    switch (i(n, "center"))
+    {
+    case kCenterPoint: l.frame = glm::translate(glm::dmat4(1.0), v(n, "centerPoint")); break;
+    case kCenterObject:
+    {
+        // The object's frame relative to this mesh; scale is dropped so it orients and places the centre only.
+        glm::dmat4 rel = glm::inverse(n.as<glm::dmat4>(n.type().attrIndex("targetMatrix"))) * n.as<glm::dmat4>(n.type().attrIndex("centerMatrix"));
+        for (int c = 0; c < 3; ++c)
+            if (double len = glm::length(glm::dvec3(rel[c])); len > 1e-12)
+                rel[c] /= len;
+        l.frame = rel;
+        break;
+    }
+    default: break;
+    }
+    o.weld = b(n, "weld");
+    o.mergeEnds = b(n, "mergeEnds");
+    o.tolerance = std::max(f(n, "tolerance"), 0.0);
+    return o;
+}
 
 std::vector<geo::Index> allFaces(const geo::Mesh& m)
 {
@@ -161,24 +217,33 @@ std::vector<ModifierType> modifierTypes()
              return m;
          }},
         {"arrayModifier",
-         "Repeats the mesh in a row, each copy shifted by a fixed step. Use it for railings, stairs, tiles and other evenly "
-         "spaced repeats.",
-         {param("count", PlugType::Int, int64_t(3), "Copies including the original, 1 to 1000."),
-          param("offset", PlugType::Vec3, glm::dvec3(110.0, 0.0, 0.0), "Step from one copy to the next, object space, cm.")},
-         [](const geo::Mesh& in, const Node& n) {
-             geo::Mesh m = in;
-             m.compact();
-             geo::Mesh copy = m;
-             glm::dvec3 step = v(n, "offset");
-             for (int64_t k = 1; k < std::clamp<int64_t>(i(n, "count"), 1, 1000); ++k)
-             {
-                 geo::Mesh shifted = copy;
-                 for (geo::Index p = 0; p < shifted.pointCapacity(); ++p)
-                     shifted.setPosition(p, copy.position(p) + step * double(k));
-                 m.append(shifted);
-             }
-             return m;
-         }},
+         "Repeats the mesh in a row, around a circle or in a grid, each copy stepped from the last. Use it for railings, "
+         "stairs, tiles, gear teeth and bolts round a flange. Radial with weld on turns one modelled wedge into an exact "
+         "N-fold whole.",
+         {param("mode", PlugType::Enum, int64_t(0), "linear steps each copy by offset; radial turns copies about the centre; grid fills rows, columns and layers."),
+          param("count", PlugType::Int, int64_t(3), "Copies including the original, 1 to 1000. In grid mode, copies along x."),
+          param("offset", PlugType::Vec3, glm::dvec3(110.0, 0.0, 0.0), "Linear: step from one copy to the next, in the centre's space, cm."),
+          param("rotate", PlugType::Vec3, glm::dvec3(0.0), "Extra rotation per copy about the centre, degrees. A linear array with a rotation curves."),
+          param("scale", PlugType::Vec3, glm::dvec3(1.0), "Scale per copy about the centre: each copy is this much the size of the last."),
+          inCategory(param("axis", PlugType::Enum, int64_t(1), "The centre's axis radial copies turn about."), "Radial"),
+          inCategory(param("angle", PlugType::Float, 360.0, "Degrees the copies span, or between neighbours when angleMode is step. A whole turn closes the ring."), "Radial"),
+          inCategory(param("angleMode", PlugType::Enum, int64_t(0), "total spreads count copies over angle; step puts angle between neighbours."), "Radial"),
+          inCategory(param("rise", PlugType::Float, 0.0, "Distance each copy climbs along the axis, cm, for spirals and screw threads."), "Radial"),
+          inCategory(param("countY", PlugType::Int, int64_t(3), "Grid copies along y, 1 to 1000."), "Grid"),
+          inCategory(param("countZ", PlugType::Int, int64_t(1), "Grid copies along z, 1 to 1000."), "Grid"),
+          inCategory(param("spacing", PlugType::Vec3, glm::dvec3(110.0), "Distance between grid copies along each axis, in the centre's space, cm."), "Grid"),
+          inCategory(param("center", PlugType::Enum, int64_t(0),
+                           "What copies turn and scale about: the object's origin, centerPoint, or another object's transform (arrayCenter)."), "Center"),
+          inCategory(param("centerPoint", PlugType::Vec3, glm::dvec3(0.0), "Centre when center is point, object space, cm."), "Center"),
+          inCategory({.name = "centerMatrix", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = AttrInput | AttrHidden,
+                      .doc = "The centre object's worldMatrix, connected by arrayCenter."}, "Center"),
+          inCategory({.name = "targetMatrix", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = AttrInput | AttrStorable | AttrHidden,
+                      .doc = "This mesh's world matrix when the centre object was connected."}, "Center"),
+          inCategory(param("weld", PlugType::Bool, false, "Merge points where neighbouring copies meet and drop the walls they share, so the copies join into one surface."), "Weld"),
+          inCategory(param("mergeEnds", PlugType::Bool, false, "Weld the last copy to the first as well. A radial array spanning a whole turn always does."), "Weld"),
+          inCategory(param("tolerance", PlugType::Float, 0.01, "Points of neighbouring copies this close are welded, cm.")
+                     , "Weld")},
+         [](const geo::Mesh& in, const Node& n) { return geo::arrayMesh(in, arrayOptions(n)); }},
         {"triangulateModifier",
          "Splits every face into triangles. Use it to see, or lock in, the triangulation an engine will get.",
          {},
@@ -324,6 +389,9 @@ PlugRef editPlug(Graph& g, NodeId mesh)
     if (Node* n = g.node(mesh); n && !n->type().isA("mesh"))
         if (const components::PointProvider* pp = components::pointProvider(*n); pp && pp->editPlug)
             return pp->editPlug(g, mesh);
+    // An instance has no base of its own: edits land on its root's, which every member shares.
+    if (NodeId root = instancing::root(g, mesh); root != mesh)
+        return editPlug(g, root);
     for (NodeId id : stack(g, mesh))
         if (static_cast<ModifierNode*>(g.node(id))->editingInput())
             throw CommandError(g.node(id)->path() + " is editing its edges: apply or cancel that first");
@@ -337,8 +405,17 @@ PlugRef editPlug(Graph& g, NodeId mesh)
     // A generator (or anything else) feeds the chain: freeze its current result into a stored source.
     g.evaluate();
     MeshPtr frozen = std::get<MeshPtr>(g.value(*src));
+    // Other stacks it feeds (references) move onto the frozen source with this one, so they keep sharing it.
+    std::vector<PlugRef> shared;
+    for (const PlugRef& d : g.destinations(*src))
+    {
+        const Node* to = g.node(d.node);
+        const bool chainInput = to->type().isA("mesh") ? d.attr == MeshNode::kInMesh : asModifier(to) && d.attr == asModifier(to)->inAttr;
+        if (chainInput && !(d.node == base.node && d.attr == base.attr))
+            shared.push_back(d);
+    }
     g.disconnect(base);
-    if (base.node == mesh)
+    if (base.node == mesh && shared.empty())
     {
         g.setValue(base, frozen);
         if (g.destinations(*src).empty() && !up->type().dag)
@@ -348,6 +425,11 @@ PlugRef editPlug(Graph& g, NodeId mesh)
     Node* source = g.createNode(*types::find("meshSource"), {}, kNoNode, true);
     g.setValue({source->id(), MeshSourceNode::kMesh, -1}, frozen);
     g.connect({source->id(), MeshSourceNode::kOutMesh, -1}, base);
+    for (const PlugRef& d : shared)
+    {
+        g.disconnect(d);
+        g.connect({source->id(), MeshSourceNode::kOutMesh, -1}, d);
+    }
     if (g.destinations(*src).empty() && !up->type().dag)
         g.deleteNode(up->id());
     return {source->id(), MeshSourceNode::kMesh, -1};
@@ -358,6 +440,8 @@ MeshPtr cage(Graph& g, NodeId mesh)
     g.evaluate();
     if (Node* n = g.node(mesh); !n || !n->type().isA("mesh"))
         return nullptr;
+    if (NodeId root = instancing::root(g, mesh); root != mesh)
+        return cage(g, root);
     for (NodeId id : stack(g, mesh))
         if (auto* m = static_cast<ModifierNode*>(g.node(id)); m->editingInput())
             return m->as<MeshPtr>(m->inAttr);
@@ -401,6 +485,17 @@ void registerTypes()
                 p.enumNames = {"+ to -", "- to +", "both"};
             if (std::string(m.name) == "decimateModifier" && p.name == "symmetry")
                 p.enumNames = {"off", "x", "y", "z"};
+            if (std::string(m.name) == "arrayModifier")
+            {
+                if (p.name == "mode")
+                    p.enumNames = {"linear", "radial", "grid"};
+                else if (p.name == "axis")
+                    p.enumNames = {"x", "y", "z"};
+                else if (p.name == "angleMode")
+                    p.enumNames = {"total", "step"};
+                else if (p.name == "center")
+                    p.enumNames = {"origin", "point", "object"};
+            }
             if (p.type == PlugType::Vec3)
                 for (int k = 0; k < 3; ++k)
                     p.childNames[k] = p.name + char('X' + k);
@@ -444,7 +539,8 @@ void registerCommands()
             if (objs.empty() || !a.has("kind"))
                 throw CommandError("addModifier: give a mesh and kind=");
             Graph& g = graph();
-            Node& mesh = meshNamed(objs.back(), "addModifier");
+            // On an instance it goes on the root's stack, which every member shares.
+            Node& mesh = *g.node(instancing::root(g, meshNamed(objs.back(), "addModifier").id()));
             const NodeType* t = types::find(a.get<std::string>("kind") + "Modifier");
             if (!t)
                 throw CommandError("addModifier: unknown kind '" + a.get<std::string>("kind") + "'");
@@ -479,6 +575,49 @@ void registerCommands()
                     g.setValue(p, fromJson(def, val));
                 }
             return mod->path();
+        },
+    });
+
+    ops::registerCommand({
+        .name = "arrayCenter",
+        .doc = "Set what an array modifier's copies turn and scale about. Give an object to centre on its transform (its "
+               "position and axes, kept live as it moves; run again after moving the arrayed mesh), pivot=True to copy the "
+               "mesh's pivot into centerPoint, or neither to go back to the object's origin.",
+        .positionalDoc = "modifier, [object]",
+        .flags = {{"pivot", "", T::Bool, nullptr, "Centre on the arrayed mesh's current pivot."}},
+        .run = [](const Args& a) -> json {
+            auto objs = a.objects();
+            Graph& g = graph();
+            Node* mod = objs.empty() ? nullptr : g.find(objs.front());
+            if (!mod || mod->type().name != "arrayModifier")
+                throw CommandError("arrayCenter: give an array modifier first");
+            auto at = [&](const char* name) { return PlugRef{mod->id(), mod->type().attrIndex(name), -1}; };
+            const NodeId mesh = meshOf(g, mod->id());
+            Node* meshNode = g.node(mesh);
+            if (g.source(at("centerMatrix")))
+                g.disconnect(at("centerMatrix"));
+            if (objs.size() > 1)
+            {
+                Node* center = g.find(objs.back());
+                if (!center || !center->type().isA("transform"))
+                    throw CommandError("arrayCenter: " + objs.back() + " is not an object");
+                if (center->id() == mesh)
+                    throw CommandError("arrayCenter: centre on another object; pivot=True uses the mesh's own pivot");
+                g.connect({center->id(), Transform::kWorldMatrix, -1}, at("centerMatrix"), true);
+                if (meshNode)
+                    g.setValue(at("targetMatrix"), meshNode->as<glm::dmat4>(Transform::kWorldMatrix));
+                g.setValue(at("center"), int64_t(kCenterObject));
+            }
+            else if (a.has("pivot") && a.get<bool>("pivot"))
+            {
+                if (!meshNode)
+                    throw CommandError("arrayCenter: the modifier feeds no mesh");
+                g.setValue(at("centerPoint"), meshNode->as<glm::dvec3>(Transform::kRotatePivot));
+                g.setValue(at("center"), int64_t(kCenterPoint));
+            }
+            else
+                g.setValue(at("center"), int64_t(kCenterOrigin));
+            return nullptr;
         },
     });
 

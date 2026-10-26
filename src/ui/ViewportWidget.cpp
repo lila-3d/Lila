@@ -20,6 +20,8 @@
 #include "scene/Graph.h"
 #include "geo/Symmetry.h"
 #include "geo/Topology.h"
+#include "gn/InstanceView.h"
+#include "scene/ArrayGroup.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "scene/NodeBounds.h"
@@ -68,6 +70,8 @@
 
 #include <chrono>
 #include <cmath>
+#include <format>
+#include <limits>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -83,10 +87,72 @@ const glm::vec4 kPreselectColor(0.75f, 0.75f, 0.75f, 1.0f);
 const glm::vec4 kTemplateWireColor(0.22f, 0.22f, 0.22f, 1.0f);
 const glm::vec4 kSnapSurfaceWireColor(0.10f, 0.35f, 0.22f, 1.0f);
 
+/** True when `hot`, the node under the cursor, is an array above `id`: hovering a copy highlights the whole array. */
+bool preselectedArray(const scene::Graph& g, scene::NodeId id, scene::NodeId hot)
+{
+    for (scene::NodeId p = g.parent(id); p != scene::kNoNode; p = g.parent(p))
+        if (p == hot)
+            return scene::arrays::isArray(*g.node(p));
+    return false;
+}
+
 /** Where the viewport draws and picks a node: its world matrix plus any view-only display offset (bake Arrange). */
 glm::dmat4 shownWorld(const scene::Node& n)
 {
     return bake::arrange::displayWorld(scene::Graph::current(), n.id(), n.as<glm::dmat4>(scene::Transform::kWorldMatrix));
+}
+
+/**
+ * A geometry nodes result that ends in instances: d (the node's draw, without a mesh) once per referenced mesh with that
+ * mesh's placements, plus the geometry beside the instances.
+ */
+void pushInstanceDraws(render::FrameState& s, const render::MeshDraw& d, const gn::InstanceView& view, bool textured)
+{
+    auto push = [&](const scene::MeshPtr& mesh, std::shared_ptr<const std::vector<glm::mat4>> placements) {
+        const bool tangents = textured && needsTangents(*mesh);
+        auto rm = renderMeshFor(mesh, tangents);
+        if (!rm)
+            return;
+        render::MeshDraw part = d;
+        part.mesh = std::move(rm);
+        // Array copies of the node repeat every instance placement.
+        if (d.instances && placements)
+        {
+            auto both = std::make_shared<std::vector<glm::mat4>>();
+            both->reserve(d.instances->size() * placements->size());
+            for (const glm::mat4& copy : *d.instances)
+                for (const glm::mat4& p : *placements)
+                    both->push_back(copy * p);
+            part.instances = std::move(both);
+        }
+        else
+            part.instances = placements ? std::move(placements) : d.instances;
+        if (textured)
+            part.materials = drawMaterials(*mesh);
+        s.meshes.push_back(std::move(part));
+    };
+    if (view.base)
+        push(view.base, nullptr);
+    for (const gn::InstancePart& p : view.parts)
+        push(p.mesh, p.transforms);
+}
+
+/**
+ * Where a node's array copies draw relative to its world matrix, the node itself first, for an instanced draw. Null when
+ * no array repeats it.
+ */
+std::shared_ptr<const std::vector<glm::mat4>> arrayPlacements(const scene::Graph& g, scene::NodeId id, const glm::dmat4& world)
+{
+    const std::vector<scene::arrays::Copy> copies = scene::arrays::copiesOf(g, id);
+    if (copies.empty())
+        return nullptr;
+    auto out = std::make_shared<std::vector<glm::mat4>>();
+    out->reserve(copies.size() + 1);
+    out->push_back(glm::mat4(1.0f));
+    const glm::dmat4 inv = glm::inverse(world);
+    for (const scene::arrays::Copy& c : copies)
+        out->push_back(glm::mat4(inv * c.transform * world));
+    return out;
 }
 
 /** An unhighlighted object's line color as its display layer has it: the layer's tint, template grey, else fallback. */
@@ -162,33 +228,49 @@ glm::vec4 srgbToLinear(const glm::vec4& c)
 
 const glm::vec4 kSymmetryRed = srgbToLinear({0.95f, 0.18f, 0.16f, 1.0f});
 
-/** The edges of a mesh with symmetry on that lie in its plane, cached per mesh and plane. */
+/** What a mesh's symmetry setting is, as a cache key: its layer and where its plane or axis lies. */
+std::string symmetryKey(const geo::SymmetrySpec& spec)
+{
+    if (!spec.radial)
+        return std::format("{}:{}", geo::symmetryLayerName(spec.axis), spec.offset);
+    const glm::dvec3 o = spec.radial->origin();
+    return std::format("{}:{},{},{}", geo::radialLayerName(*spec.radial), o.x, o.y, o.z);
+}
+
+/** The edges of a mesh with symmetry on that lie in its plane (radial: on its axis or mirror planes), cached per mesh and setting. */
 const std::vector<uint32_t>& symmetryPlaneEdges(const scene::Node& n, const scene::MeshPtr& mesh)
 {
     struct Cached
     {
         std::weak_ptr<const geo::Mesh> mesh;
-        int axis = -1;
-        double offset = 0.0;
+        std::string key;
         std::vector<uint32_t> edges;
     };
     static std::unordered_map<scene::NodeId, Cached> cache;
     static const std::vector<uint32_t> none;
-    const int64_t sym = n.as<int64_t>(scene::MeshNode::kSymmetry);
-    if (sym < 1 || sym > 3 || !mesh)
+    const std::optional<geo::SymmetrySpec> spec = scene::symmetrySpec(n);
+    if (!spec || !mesh)
         return none;
-    const int axis = int(sym - 1);
-    const double offset = scene::symmetryOffset(n, axis);
+    const std::string key = symmetryKey(*spec);
     Cached& c = cache[n.id()];
-    if (c.mesh.lock() == mesh && c.axis == axis && c.offset == offset)
+    if (c.mesh.lock() == mesh && c.key == key)
         return c.edges;
     const geo::Mesh& m = *mesh;
     const double tol = std::max(1e-4, glm::length(m.bounds().size()) * 1e-5);
-    c = {mesh, axis, offset, {}};
+    c = {mesh, key, {}};
     // The stored pairs mark the on-plane points even after they drift; without them, go by position.
-    std::span<const int32_t> keys = m.pointAttrs().get<int32_t>(geo::symmetryLayerName(axis));
+    std::span<const int32_t> keys = spec->radial ? std::span<const int32_t>() : m.pointAttrs().get<int32_t>(geo::symmetryLayerName(spec->axis));
     auto on = [&](geo::Index p) {
-        return keys.empty() ? std::abs(m.position(p)[axis] - offset) <= tol : keys[p] == geo::kSymmetryOnPlane;
+        if (const std::optional<geo::RadialSymmetry>& r = spec->radial)
+        {
+            if (r->axisDistance(m.position(p)) <= tol)
+                return true;
+            for (int k = 0; r->mirror() && k < r->count(); ++k)
+                if (std::abs(r->mirrorPlane(r->count() + k).distance(m.position(p))) <= tol)
+                    return true;
+            return false;
+        }
+        return keys.empty() ? std::abs(m.position(p)[spec->axis] - spec->offset) <= tol : keys[p] == geo::kSymmetryOnPlane;
     };
     for (geo::Index e = 0; e < m.edgeCapacity(); ++e)
         if (m.edgeValid(e) && on(m.edgePoint(e, 0)) && on(m.edgePoint(e, 1)))
@@ -199,32 +281,68 @@ const std::vector<uint32_t>& symmetryPlaneEdges(const scene::Node& n, const scen
 /** Opacity of the mirror images of hovered and selected components while symmetry is on. */
 constexpr float kMirrorAlpha = 0.22f;
 
-/** The mirror map of a mesh with symmetry on, null when off. Moving points keeps the pairs, so only topology rebuilds it. */
+/** The mirror map (or radial orbits) of a mesh with symmetry on, null when off. Moving points keeps the pairs, so only topology rebuilds it. */
 const geo::SymmetryMap* viewSymmetry(const scene::Node& n, const scene::MeshPtr& mesh)
 {
     struct Cached
     {
         geo::Index points = 0, edges = 0, faces = 0;
-        int axis = -1;
-        double offset = 0.0;
+        std::string key;
         std::optional<geo::SymmetryMap> map;
     };
     static std::unordered_map<scene::NodeId, Cached> cache;
-    const int64_t sym = n.as<int64_t>(scene::MeshNode::kSymmetry);
-    if (sym < 1 || sym > 3 || !mesh)
+    const std::optional<geo::SymmetrySpec> spec = scene::symmetrySpec(n);
+    if (!spec || !mesh)
         return nullptr;
-    const int axis = int(sym - 1);
-    const double offset = scene::symmetryOffset(n, axis);
+    const std::string key = symmetryKey(*spec);
     const geo::Mesh& m = *mesh;
     Cached& c = cache[n.id()];
-    if (!c.map || c.axis != axis || c.offset != offset || c.points != m.pointCapacity() || c.edges != m.edgeCapacity() ||
-        c.faces != m.faceCapacity())
+    if (!c.map || c.key != key || c.points != m.pointCapacity() || c.edges != m.edgeCapacity() || c.faces != m.faceCapacity())
     {
         geo::Mesh copy = m;
-        c = {m.pointCapacity(), m.edgeCapacity(), m.faceCapacity(), axis, offset,
-             geo::SymmetryMap::persistent(copy, axis, std::max(1e-4, glm::length(m.bounds().size()) * 1e-5), nullptr, offset)};
+        c = {m.pointCapacity(), m.edgeCapacity(), m.faceCapacity(), key,
+             geo::SymmetryMap::persistent(copy, *spec, std::max(1e-4, glm::length(m.bounds().size()) * 1e-5))};
     }
     return &*c.map;
+}
+
+const glm::vec4 kWedgePlaneGray = srgbToLinear({0.62f, 0.62f, 0.62f, 0.55f});
+
+/**
+ * A radially symmetric mesh's wedge boundaries (with mirror, its mirror planes) as half-plane outlines from the axis out
+ * past the mesh, spanning its height along the axis. Nothing for other meshes.
+ */
+void radialPlaneLines(const scene::Node& n, const geo::Mesh& m, const glm::dmat4& world, std::vector<render::LineVertex>& out)
+{
+    const std::optional<geo::SymmetrySpec> spec = scene::symmetrySpec(n);
+    if (!spec || !spec->radial || m.numPoints() == 0)
+        return;
+    const geo::RadialSymmetry& r = *spec->radial;
+    double lo = std::numeric_limits<double>::max(), hi = -lo, reach = 0.0;
+    for (geo::Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p))
+        {
+            const double h = glm::dot(m.position(p) - r.origin(), r.axis());
+            lo = std::min(lo, h), hi = std::max(hi, h), reach = std::max(reach, r.axisDistance(m.position(p)));
+        }
+    reach *= 1.15;
+    auto wp = [&](const glm::dvec3& p) { return glm::vec3(world * glm::dvec4(p, 1.0)); };
+    auto line = [&](const glm::dvec3& a, const glm::dvec3& b) {
+        out.push_back({wp(a), kWedgePlaneGray});
+        out.push_back({wp(b), kWedgePlaneGray});
+    };
+    const glm::dvec3 bottom = r.origin() + r.axis() * lo, top = r.origin() + r.axis() * hi;
+    line(bottom, top);
+    const glm::dvec3 v = glm::cross(r.axis(), r.reference());
+    const int planes = r.mirror() ? 2 * r.count() : r.count();
+    for (int k = 0; k < planes; ++k)
+    {
+        const double t = 2.0 * 3.14159265358979323846 * k / planes;
+        const glm::dvec3 out2 = (std::cos(t) * r.reference() + std::sin(t) * v) * reach;
+        line(bottom, bottom + out2);
+        line(top, top + out2);
+        line(bottom + out2, top + out2);
+    }
 }
 
 bool sameHighlight(const std::optional<selectionHandlers::Highlight>& a, const std::optional<selectionHandlers::Highlight>& b)
@@ -600,16 +718,22 @@ void ViewportWidget::submit()
         const bool previewed = shown && viewportHooks::hookedMaterials(id, *shown, hooked);
         bool textured = (showMaterials || previewed) && shown;
         const bool tangents = textured && (previewed || needsTangents(*shown));
-        auto rm = renderMeshFor(shown, tangents);
-        if (!rm)
+        // Geometry nodes instances draw each referenced mesh once, instanced, unless something needs the flat mesh's own draw.
+        auto part = isolate::masked(&mIsolation, id, shown, smooth, tangents);
+        gn::InstanceViewPtr instanced;
+        if (smooth == 0 && !previewed && !hilite.contains(id) && !part)
+            instanced = gn::instanceViewFor(g, id);
+        auto rm = instanced ? nullptr : renderMeshFor(shown, tangents);
+        if (!rm && !instanced)
             continue;
         render::MeshDraw d;
-        d.mesh = std::move(rm);
-        if (auto part = isolate::masked(&mIsolation, id, shown, smooth, tangents))
+        if (part)
             d.mesh = part->mesh;
+        else
+            d.mesh = std::move(rm);
         if (previewed)
             d.materials = std::move(hooked);
-        else if (textured)
+        else if (textured && !instanced)
             d.materials = drawMaterials(*shown);
         d.world = glm::mat4(shownWorld(*n));
         if (aids)
@@ -647,13 +771,20 @@ void ViewportWidget::submit()
         }
         // In component mode the hilited mesh shows a plain wire so the selected components stand out.
         bool componentMode = scene::components::mode() != scene::ComponentMode::Object;
+        const scene::NodeId arrayed = scene::arrays::arrayAbove(g, id);
         if (g.isSelected(id) && !componentMode)
             d.flags |= render::DrawSelected;
-        else if (mPreselect.mode == scene::ComponentMode::Object && mPreselect.node == id && !componentMode)
+        else if (mPreselect.mode == scene::ComponentMode::Object && !componentMode &&
+                 (mPreselect.node == id || (arrayed != scene::kNoNode && preselectedArray(g, id, mPreselect.node))))
             d.flags |= render::DrawPreselect;
         else if (underSelection.contains(id) && !componentMode)
             d.flags |= render::DrawUnderSelected;
-        s.meshes.push_back(std::move(d));
+        if (arrayed != scene::kNoNode)
+            d.instances = arrayPlacements(g, id, n->as<glm::dmat4>(scene::Transform::kWorldMatrix));
+        if (instanced)
+            pushInstanceDraws(s, d, *instanced, textured);
+        else
+            s.meshes.push_back(std::move(d));
     }
 
     drawComponents(s);
@@ -956,6 +1087,8 @@ std::vector<std::string> ViewportWidget::hitTest(QPointF a, QPointF b)
         if (!rm || rm->vertices.empty())
             continue;
         glm::dmat4 world = shownWorld(*n);
+        // Array copies pick as their array, so a click on one selects the generator rather than the source.
+        const std::vector<scene::arrays::Copy> copies = scene::arrays::copiesOf(g, id);
         if (click)
         {
             if (auto t = isolate::raycast(&mIsolation, id, outMesh, world, rayO, rayD); t && t->distance < nearest)
@@ -963,7 +1096,27 @@ std::vector<std::string> ViewportWidget::hitTest(QPointF a, QPointF b)
                 nearest = t->distance;
                 nearestMesh = n->path();
             }
+            for (const scene::arrays::Copy& c : copies)
+                if (auto t = isolate::raycast(&mIsolation, id, outMesh, c.transform * world, rayO, rayD); t && t->distance < nearest)
+                {
+                    nearest = t->distance;
+                    nearestMesh = g.node(c.array)->path();
+                }
             continue;
+        }
+        size_t step = std::max<size_t>(1, rm->vertices.size() / 20000);
+        for (const scene::arrays::Copy& c : copies)
+        {
+            const std::string arrayPath = g.node(c.array)->path();
+            if (std::ranges::any_of(hits, [&](const json& h) { return h.get<std::string>() == arrayPath; }))
+                continue;
+            const glm::dmat4 at = c.transform * world;
+            for (size_t k = 0; k < rm->vertices.size(); k += step)
+                if (auto p = project(glm::dvec3(at * glm::dvec4(glm::dvec3(rm->vertices[k].pos), 1.0))); p && inSelectRegion(box, *p))
+                {
+                    hits.push_back(arrayPath);
+                    break;
+                }
         }
         if (mIsolation.isPartial(id))
         {
@@ -979,7 +1132,6 @@ std::vector<std::string> ViewportWidget::hitTest(QPointF a, QPointF b)
                     }
             continue;
         }
-        size_t step = std::max<size_t>(1, rm->vertices.size() / 20000);
         for (size_t k = 0; k < rm->vertices.size(); k += step)
             if (auto p = project(glm::dvec3(world * glm::dvec4(glm::dvec3(rm->vertices[k].pos), 1.0))); p && inSelectRegion(box, *p))
             {
@@ -1090,6 +1242,7 @@ scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
                                             view.eye, dir);
                 hit && hit->distance < dist * (1.0 - 1e-4) - 1e-3)
                 return false;
+        }
         return true;
     };
 
@@ -1114,7 +1267,7 @@ scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
             {
                 bestRay = hit->distance;
                 best.node = id;
-                best.id = f;
+                best.id = pd->triangleFaces[hit->triangle];
             }
             continue;
         }
@@ -1124,10 +1277,9 @@ scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
             {
                 bestPx = c.px;
                 best.node = id;
-                best.id = cid;
+                best.id = c.id;
                 break;
             }
-        }
     }
     if (mode == ComponentMode::Vertex)
         for (scene::NodeId id : pointNodes(mIsolation))
@@ -1181,6 +1333,7 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
                                                 eye, dir);
                     hit && hit->distance < dist * (1.0 - 1e-4) - 1e-3)
                     return false;
+            }
             return true;
         };
         // Edges and faces count when the region touches them anywhere, or with the pref off only when it holds their centre.
@@ -1233,6 +1386,8 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
                                 else
                                     projected = false;
                             });
+                            in = projected && touchesSelectRegion(box, poly);
+                        }
                         else if (auto s = project(c))
                             in = inSelectRegion(box, *s);
                         if (in && visible(c))
@@ -1398,6 +1553,21 @@ void ViewportWidget::drawComponents(render::FrameState& s)
                 s.meshes.push_back(std::move(cageDraw));
             }
         auto wp = [&](uint32_t p) { return glm::vec3(world * glm::dvec4(m.position(p), 1.0)); };
+        auto edgeLines = [&](uint32_t e, std::vector<render::LineVertex>& out, const glm::vec4& col) {
+            out.push_back({wp(m.edgePoint(e, 0)), col});
+            out.push_back({wp(m.edgePoint(e, 1)), col});
+        };
+        auto faceLines = [&](uint32_t f, const glm::vec4& fill, const glm::vec4& line) {
+            for (uint32_t p : scene::componentPick::fillTriangles(m, f))
+                s.tris3d.push_back({wp(p), fill});
+            std::vector<glm::vec3> poly;
+            m.forEachFaceCorner(f, [&](geo::Index c) { poly.push_back(wp(m.cornerPoint(c))); });
+            for (size_t k = 0; k < poly.size(); ++k)
+            {
+                s.linesOnTop.push_back({poly[k], line});
+                s.linesOnTop.push_back({poly[(k + 1) % poly.size()], line});
+            }
+        };
         const auto vis = isolate::visibility(&mIsolation, id, mesh);
         const auto& selFaces = scene::components::selected(id, ComponentMode::Face);
         const auto& selEdges = scene::components::selected(id, ComponentMode::Edge);
@@ -1416,18 +1586,38 @@ void ViewportWidget::drawComponents(render::FrameState& s)
         {
             const glm::vec4 ghost(glm::vec3(hotLinear), kMirrorAlpha);
             if (mode == ComponentMode::Face)
-                for (uint32_t f : sym->mirrorFaces(m, selFaces))
+                for (uint32_t f : sym->expandFaces(m, selFaces))
                     if (f != geo::kInvalid && m.faceValid(f) && vis->face(f) && !std::ranges::binary_search(selFaces, f))
                         faceLines(f, glm::vec4(glm::vec3(faceFillLinear), faceFillLinear.a * kMirrorAlpha), ghost);
             if (mode == ComponentMode::Edge)
-                for (uint32_t e : sym->mirrorEdges(m, selEdges))
+                for (uint32_t e : sym->expandEdges(m, selEdges))
                     if (e != geo::kInvalid && m.edgeValid(e) && vis->edge(e) && !std::ranges::binary_search(selEdges, e))
                         edgeLines(e, s.selectedEdges, ghost);
         }
         if (showSymmetry)
+        {
             for (uint32_t e : symmetryPlaneEdges(*n, mesh))
                 if (vis->edge(e) && !(mode == ComponentMode::Edge && std::ranges::binary_search(selEdges, e)))
                     edgeLines(e, s.symmetryLines, kSymmetryRed);
+            radialPlaneLines(*n, m, world, s.lines);
+            // Radial symmetry's mismatch: the points without a full orbit, marked where they are.
+            if (const geo::SymmetryMap* sym = viewSymmetry(*n, mesh); sym && sym->isRadial())
+            {
+                const ViewInfo view = viewInfo();
+                const glm::dvec3 right(view.view[0][0], view.view[1][0], view.view[2][0]), up(view.view[0][1], view.view[1][1], view.view[2][1]);
+                for (geo::Index p : sym->unmatchedPoints(m))
+                {
+                    if (!vis->point(p))
+                        continue;
+                    const glm::dvec3 c(wp(p));
+                    const double half = 0.5 * thickness.vertexSelected * view.unitsPerPixel(c);
+                    const glm::dvec3 r = right * half, u = up * half;
+                    const glm::vec3 a(c - r - u), b(c + r - u), cc(c + r + u), d(c - r + u);
+                    for (const glm::vec3& v : {a, b, cc, a, cc, d})
+                        s.tris3d.push_back({v, kSymmetryRed});
+                }
+            }
+        }
         bool soft = PrefStore::get().value<bool>("general", "/softSelect/enabled", false);
         std::vector<float> weights;
         if (soft)
@@ -1442,7 +1632,7 @@ void ViewportWidget::drawComponents(render::FrameState& s)
             if (mode == ComponentMode::Vertex)
             {
                 if (const geo::SymmetryMap* sym = viewSymmetry(*n, mesh))
-                    for (uint32_t p : sym->mirrorPoints(selPoints))
+                    for (uint32_t p : sym->expandPoints(selPoints))
                         if (p < on.size())
                             on[p] = 2;
                 for (uint32_t p : selPoints)
@@ -1720,15 +1910,22 @@ void ViewportWidget::drawPreselect(render::FrameState& s)
     };
     if (const geo::SymmetryMap* sym = viewSymmetry(*n, mesh))
     {
-        const uint32_t mirror = mode == ComponentMode::Vertex ? sym->mirrorPoint(id)
-                                : mode == ComponentMode::Edge  ? sym->mirrorEdge(m, id)
-                                                               : sym->mirrorFace(m, id);
         const auto vis = isolate::visibility(&mIsolation, mPreselect.node, mesh);
-        const bool shown = mode == ComponentMode::Vertex ? m.pointValid(mirror) && vis->point(mirror)
-                           : mode == ComponentMode::Edge ? m.edgeValid(mirror) && vis->edge(mirror)
-                                                         : m.faceValid(mirror) && vis->face(mirror);
-        if (mirror != geo::kInvalid && mirror != id && shown)
-            component(mirror, kMirrorAlpha);
+        std::vector<uint32_t> drawn{id};
+        for (int k = 1; k < sym->order(); ++k)
+        {
+            const uint32_t mirror = mode == ComponentMode::Vertex ? sym->image(k, id)
+                                    : mode == ComponentMode::Edge  ? sym->imageEdge(m, k, id)
+                                                                   : sym->imageFace(m, k, id);
+            if (mirror == geo::kInvalid || std::ranges::count(drawn, mirror))
+                continue;
+            const bool shown = mode == ComponentMode::Vertex ? m.pointValid(mirror) && vis->point(mirror)
+                               : mode == ComponentMode::Edge ? m.edgeValid(mirror) && vis->edge(mirror)
+                                                             : m.faceValid(mirror) && vis->face(mirror);
+            if (shown)
+                component(mirror, kMirrorAlpha);
+            drawn.push_back(mirror);
+        }
     }
     component(id, 1.0f);
     // Edge hover calls out the poles at its ends.
@@ -2354,15 +2551,19 @@ void ViewportWidget::frameSelection(bool all)
         auto rm = renderMeshFor(n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh));
         if (!rm || rm->vertices.empty())
             return false;
-        glm::dmat4 world = shownWorld(*n);
-        for (int c = 0; c < 8; ++c)
-        {
-            glm::dvec3 corner((c & 1) ? rm->boundsMax.x : rm->boundsMin.x, (c & 2) ? rm->boundsMax.y : rm->boundsMin.y,
-                              (c & 4) ? rm->boundsMax.z : rm->boundsMin.z);
-            glm::dvec3 w(world * glm::dvec4(corner, 1.0));
-            lo = glm::min(lo, w);
-            hi = glm::max(hi, w);
-        }
+        const glm::dmat4 world = shownWorld(*n);
+        std::vector<glm::dmat4> placed{world};
+        for (const scene::arrays::Copy& c : scene::arrays::copiesOf(g, n->id()))
+            placed.push_back(c.transform * world);
+        for (const glm::dmat4& at : placed)
+            for (int c = 0; c < 8; ++c)
+            {
+                glm::dvec3 corner((c & 1) ? rm->boundsMax.x : rm->boundsMin.x, (c & 2) ? rm->boundsMax.y : rm->boundsMin.y,
+                                  (c & 4) ? rm->boundsMax.z : rm->boundsMin.z);
+                glm::dvec3 w(at * glm::dvec4(corner, 1.0));
+                lo = glm::min(lo, w);
+                hi = glm::max(hi, w);
+            }
         return true;
     };
     bool group = false;

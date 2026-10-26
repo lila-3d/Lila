@@ -67,48 +67,86 @@ double symmetryTolerance(const geo::Mesh& mesh)
     return std::max(1e-4, glm::length(mesh.bounds().size()) * 1e-5);
 }
 
-void reportSync(const Node& n, int axis, const geo::SymmetrySync& s, bool hadLayer)
+/**
+ * The radial count the mesh's points fit: the largest that leaves none without an orbit, else the one leaving fewest.
+ * 0 when no count fits any point, or the mesh is too dense to try them all.
+ */
+int bestRadialCount(const geo::Mesh& mesh, const geo::RadialSymmetry& radial, double tolerance)
+{
+    LILA_ZONE();
+
+    if (mesh.numPoints() > 20000)
+        return 0;
+    int best = 0;
+    Index fewest = mesh.numPoints();
+    for (int count = geo::kMaxRadialCount; count >= 2; --count)
+    {
+        const geo::RadialSymmetry r(radial.origin(), radial.axis(), count, radial.mirror(), radial.reference());
+        const Index unmatched = geo::SymmetryMap::buildRadial(mesh, r, tolerance).unmatchedCount();
+        if (unmatched == 0)
+            return count;
+        if (unmatched < fewest)
+        {
+            fewest = unmatched;
+            best = count;
+        }
+    }
+    return best;
+}
+
+std::string symmetryLayer(const geo::SymmetrySpec& spec)
+{
+    return spec.radial ? geo::radialLayerName(*spec.radial) : geo::symmetryLayerName(spec.axis);
+}
+
+std::string symmetryName(const geo::SymmetrySpec& spec)
+{
+    return spec.radial ? symmetryLabel(spec) : std::string(1, char('X' + spec.axis));
+}
+
+void reportSync(const Node& n, const geo::SymmetrySpec& spec, const geo::SymmetrySync& s, bool hadLayer)
 {
     const Index rematched = s.topological + s.byPosition;
     if (rematched == 0)
         return;
-    const char axisName = char('X' + axis);
     if (hadLayer)
         log::write(LogLevel::Warning, std::format("{}: symmetry {} re-matched {} points without a stored partner ({} by position), {} unmatched",
-                                                  n.path(), axisName, rematched, s.byPosition, s.unmatched));
+                                                  n.path(), symmetryName(spec), rematched, s.byPosition, s.unmatched));
     else
-        log::write(LogLevel::Info, std::format("{}: symmetry {} paired {} points, {} unmatched", n.path(), axisName, rematched, s.unmatched));
+        log::write(LogLevel::Info, std::format("{}: symmetry {} paired {} points, {} unmatched", n.path(), symmetryName(spec), rematched, s.unmatched));
 }
 
-/** The mesh's persistent symmetry pairs, stored onto it if it has none yet. */
+/** The mesh's persistent symmetry pairs (or radial orbits), stored onto it if it has none yet. */
 std::optional<geo::SymmetryMap> symmetryFor(const Node& n, geo::Mesh& mesh)
 {
-    const int axis = symmetryAxis(n);
-    if (axis < 0)
+    const std::optional<geo::SymmetrySpec> spec = symmetrySpec(n);
+    if (!spec)
         return std::nullopt;
-    const bool hadLayer = mesh.pointAttrs().has(geo::symmetryLayerName(axis));
+    const bool hadLayer = mesh.pointAttrs().has(symmetryLayer(*spec));
     geo::SymmetrySync sync;
-    geo::SymmetryMap map = geo::SymmetryMap::persistent(mesh, axis, symmetryTolerance(mesh), &sync, symmetryOffset(n, axis));
-    reportSync(n, axis, sync, hadLayer);
+    geo::SymmetryMap map = geo::SymmetryMap::persistent(mesh, *spec, symmetryTolerance(mesh), &sync);
+    reportSync(n, *spec, sync, hadLayer);
     return map;
 }
 
 /**
- * After a topology op: pairs the points it created (both halves were made together) and sets every moved or new
- * point's follower to the exact reflection of its driver.
+ * After a topology op: pairs the points it created (every wedge was made together) and sets every moved or new
+ * point's orbit to the exact images of its member in the driving wedge.
  */
-void maintainSymmetry(const Node& n, geo::Mesh& mesh, const std::vector<glm::dvec3>& before, int drive)
+void maintainSymmetry(const Node& n, geo::Mesh& mesh, const std::vector<glm::dvec3>& before, int driveWedge)
 {
     LILA_ZONE();
 
-    const int axis = symmetryAxis(n);
+    const std::optional<geo::SymmetrySpec> spec = symmetrySpec(n);
+    if (!spec)
+        return;
     const Index firstNew = Index(before.size());
-    geo::SymmetryMap map = geo::SymmetryMap::persistent(mesh, axis, symmetryTolerance(mesh), nullptr, symmetryOffset(n, axis));
+    geo::SymmetryMap map = geo::SymmetryMap::persistent(mesh, *spec, symmetryTolerance(mesh));
     Ids touched;
     for (Index p = 0; p < mesh.pointCapacity(); ++p)
         if (mesh.pointValid(p) && (p >= firstNew || std::memcmp(&before[p], &mesh.position(p), sizeof(glm::dvec3)) != 0))
             touched.push_back(p);
-    map.enforce(mesh, touched, drive);
+    map.enforceWedge(mesh, touched, driveWedge);
 }
 
 Ids remapIds(const Ids& ids, const std::vector<Index>& map)
@@ -172,11 +210,11 @@ json editSelected(const char* label, ComponentMode kind, const EditFn& fn, bool 
         geo::Mesh mesh = baseMesh(base);
         auto sym = symmetryFor(n, mesh);
         std::vector<glm::dvec3> before;
-        int drive = 1;
+        int drive = 0;
         if (sym)
         {
             before.assign(mesh.positions().begin(), mesh.positions().end());
-            drive = sym->majoritySide(components::convert(mesh, kind, sel, ComponentMode::Vertex));
+            drive = sym->majorityWedge(components::convert(mesh, kind, sel, ComponentMode::Vertex));
         }
         const Index firstNew = mesh.pointCapacity();
         EditResult r = fn(mesh, sel, sym ? &*sym : nullptr);
@@ -285,6 +323,32 @@ Node& meshFlag(const Args& a, const char* cmd)
         throw CommandError(std::string(cmd) + ": give mesh= or select a mesh");
     }
     return meshArg(name, cmd);
+}
+
+/** How many pieces the points make, joined by the mesh's edges between them. */
+int selectionPieces(const geo::Mesh& m, const Ids& points)
+{
+    std::set<Index> open(points.begin(), points.end());
+    int pieces = 0;
+    while (!open.empty())
+    {
+        ++pieces;
+        std::vector<Index> stack{*open.begin()};
+        open.erase(open.begin());
+        while (!stack.empty())
+        {
+            const Index p = stack.back();
+            stack.pop_back();
+            m.forEachPointEdge(p, [&](Index e) {
+                if (auto it = open.find(m.edgeOtherPoint(e, p)); it != open.end())
+                {
+                    stack.push_back(*it);
+                    open.erase(it);
+                }
+            });
+        }
+    }
+    return pieces;
 }
 
 /** World-space distance along the edges from the nearest selected point, up to limit (infinity beyond it). */
@@ -745,11 +809,11 @@ int deformSelected(const char* label, const PointTargetSetup& setup, const Provi
             continue;
         auto sym = symmetryFor(*n, m);
 
-        // With symmetry, the side the selection is on drives and the other side follows as its exact reflection.
-        int drive = 1;
+        // With symmetry, the wedge (side) the selection is mostly in drives and the others follow as its exact images.
+        int drive = 0;
         if (sym)
         {
-            drive = sym->majoritySide(pts);
+            drive = sym->majorityWedge(pts);
             pts = sym->expandPoints(pts);
         }
         std::vector<float> weight = softWeights(m, world, pts);
@@ -760,12 +824,12 @@ int deformSelected(const char* label, const PointTargetSetup& setup, const Provi
             if (!m.pointValid(p) || weight[p] <= 0.0f)
                 continue;
             moved.push_back(p);
-            if (sym && sym->side(p) == -drive)
+            if (sym && !sym->drives(p, drive))
                 continue;
             m.setPosition(p, glm::mix(before[p], targetOf(p, before[p]), double(weight[p])));
         }
         if (sym)
-            sym->enforce(m, moved, drive);
+            sym->enforceWedge(m, moved, drive);
         g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
         ++edited;
     }
@@ -993,13 +1057,19 @@ void registerMeshEditCommands()
                 geo::EdgeLoopOptions o{a.get<double>("fraction"), std::max(1, a.get<int>("count"))};
                 if (s && o.count == 1)
                     return edges(geo::knifeApply(m, geo::knifeLoopPlan(m, sel.front(), o.fraction, s)));
-                // Evenly spaced loops on a ring that crosses the plane are symmetric already; any other ring gets its mirror's loops too.
-                Index mirror = s ? s->mirrorEdge(m, sel.front()) : geo::kInvalid;
-                if (mirror != geo::kInvalid && std::ranges::count(geo::edgeRing(m, sel.front()), mirror))
-                    mirror = geo::kInvalid;
-                out = geo::insertEdgeLoop(m, sel.front(), o);
-                if (mirror != geo::kInvalid && m.edgeValid(mirror))
-                    std::ranges::copy(geo::insertEdgeLoop(m, mirror, o), std::back_inserter(out));
+                // Evenly spaced loops on a ring that crosses the plane (or goes round the axis) are symmetric already; any
+                // other ring gets each image ring's loops too.
+                std::vector<Index> rings{sel.front()};
+                std::vector<Index> covered = geo::edgeRing(m, sel.front());
+                for (int k = 1; s && k < s->order(); ++k)
+                    if (const Index e = s->imageEdge(m, k, sel.front()); e != geo::kInvalid && !std::ranges::count(covered, e))
+                    {
+                        rings.push_back(e);
+                        std::ranges::copy(geo::edgeRing(m, e), std::back_inserter(covered));
+                    }
+                for (Index e : rings)
+                    if (m.edgeValid(e))
+                        std::ranges::copy(geo::insertEdgeLoop(m, e, o), std::back_inserter(out));
                 return edges(out);
             });
         },
@@ -1067,21 +1137,25 @@ void registerMeshEditCommands()
             bool center = a.get<bool>("center");
             if (sym)
             {
-                const Index ms = edge ? sym->mirrorEdge(mesh, source) : sym->mirrorPoint(source);
-                const Index mt = edge ? sym->mirrorEdge(mesh, target) : sym->mirrorPoint(target);
-                if (ms == target)
-                    center = true;
-                else if (ms != geo::kInvalid && mt != geo::kInvalid && (ms != source || mt != target))
-                    add(ms, mt);
+                std::set<std::pair<Index, Index>> added{{source, target}};
+                for (int k = 1; k < sym->order(); ++k)
+                {
+                    const Index ms = edge ? sym->imageEdge(mesh, k, source) : sym->image(k, source);
+                    const Index mt = edge ? sym->imageEdge(mesh, k, target) : sym->image(k, target);
+                    if (ms == target)
+                        center = true;
+                    else if (ms != geo::kInvalid && mt != geo::kInvalid && added.insert({ms, mt}).second)
+                        add(ms, mt);
+                }
             }
 
             UndoChunk chunk("Target Weld");
             std::vector<glm::dvec3> before;
-            int drive = 1;
+            int drive = 0;
             if (sym)
             {
                 before.assign(mesh.positions().begin(), mesh.positions().end());
-                drive = sym->majoritySide(edge ? components::convert(mesh, ComponentMode::Edge, {source}, ComponentMode::Vertex) : Ids{source});
+                drive = sym->majorityWedge(edge ? components::convert(mesh, ComponentMode::Edge, {source}, ComponentMode::Vertex) : Ids{source});
             }
             Ids welded = geo::targetWeld(mesh, pairs, center);
             if (welded.empty())
@@ -1240,7 +1314,7 @@ void registerMeshEditCommands()
         .name = "polyReduce",
         .doc = "Reduce the polygon count of whole meshes while keeping their shape, silhouette, UVs and normals. The result is "
                "triangles (or quads with quads=True). A mesh with modifiers gets a decimate modifier on top instead. Honours "
-               "the mesh's symmetry: one half is reduced and mirrored.",
+               "the mesh's symmetry: one half (or one radial wedge) is reduced and mirrored (or repeated).",
         .positionalDoc = "objects",
         .flags = {{"ratio", "", T::Float, 0.5, "Fraction of triangles to keep, 0 to 1."},
                   {"targetTriangles", "", T::Int, 0, "Triangles to keep; above 0 it overrides ratio."},
@@ -1288,6 +1362,22 @@ void registerMeshEditCommands()
                 }
                 PlugRef base = basePlug(n);
                 geo::Mesh mesh = baseMesh(base);
+                if (const auto spec = symmetrySpec(n); sym == "auto" && spec && spec->radial)
+                {
+                    // Radial: reduce one wedge with its seams held, then repeat it round the axis.
+                    const double tol = symmetryTolerance(mesh);
+                    geo::cutToWedge(mesh, *spec->radial, 0, tol);
+                    mesh.compact();
+                    geo::ReduceOptions wo = o;
+                    wo.keepBorders = true;
+                    wo.symmetryAxis = -1;
+                    wo.targetTriangles = o.targetTriangles / Index(spec->radial->order());
+                    geo::ReduceResult r = geo::reduceMesh(mesh, wo);
+                    geo::symmetrizeRadialTopology(r.mesh, *spec->radial, 0, tol);
+                    out[n.path()] = r.mesh.numFaces();
+                    g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(r.mesh))));
+                    continue;
+                }
                 o.symmetryAxis = axis;
                 o.symmetryOffset = symmetryOffset(n, axis);
                 o.symmetryTolerance = symmetryTolerance(mesh);
@@ -1296,7 +1386,7 @@ void registerMeshEditCommands()
                     log::warn("polyReduce {}: faces straddle the symmetry plane, so it was reduced without symmetry", n.path());
                 if (axis >= 0 && axis == symmetryAxis(n))
                 {
-                    r.mesh.pointAttrs().remove(geo::symmetryLayerName(axis));
+                    geo::removeSymmetryLayers(r.mesh);
                     geo::SymmetryMap::persistent(r.mesh, axis, symmetryTolerance(r.mesh), nullptr, symmetryOffset(n, axis));
                 }
                 out[n.path()] = r.mesh.numFaces();
@@ -1403,8 +1493,7 @@ void registerMeshEditCommands()
                 o.tolerance = std::max(0.0, a.get<double>("tolerance"));
                 geo::mirrorMesh(m, o);
                 // The result is exactly symmetric, so its pairs are re-found by position on the next edit.
-                for (int k = 0; k < 3; ++k)
-                    m.pointAttrs().remove(geo::symmetryLayerName(k));
+                geo::removeSymmetryLayers(m);
                 m.compact();
                 g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
             }
@@ -1633,10 +1722,13 @@ void registerMeshEditCommands()
             geo::Mesh m = baseMesh(basePlug(*n));
             Ids pts = components::convert(m, kind, ids, K::Vertex);
             auto sym = symmetryFor(*n, m);
-            if (sym && std::none_of(pts.begin(), pts.end(), [&](Index p) { return sym->onPlane(p); }))
+            // Radial: a ring round the axis is one connected selection and turns about its own centre; separate pieces
+            // (a petal in every wedge) each turn in place.
+            if (sym && std::none_of(pts.begin(), pts.end(), [&](Index p) { return sym->onPlane(p); }) &&
+                (!sym->isRadial() || selectionPieces(m, pts) > 1))
             {
-                int drive = sym->majoritySide(pts);
-                std::erase_if(pts, [&](Index p) { return sym->side(p) != drive; });
+                int drive = sym->majorityWedge(pts);
+                std::erase_if(pts, [&](Index p) { return sym->wedge(p) != drive; });
             }
             glm::dmat4 w = n->as<glm::dmat4>(Transform::kWorldMatrix);
             for (Index p : pts)
@@ -1719,41 +1811,105 @@ void registerMeshEditCommands()
         },
     });
 
-    // Warns when a mesh just given symmetry is not symmetric about its plane, so edits will not mirror cleanly.
+    // Warns when a mesh just given symmetry is not symmetric about it, so edits will not mirror cleanly. For radial
+    // symmetry it also names the count the mesh fits best: a count that does not match the topology round the axis is
+    // the usual mistake.
     auto warnIfAsymmetric = [](NodeId id) {
         Graph& g = graph();
         g.evaluate();
         Node* n = g.node(id);
         MeshPtr cage = n ? modifiers::cage(g, id) : nullptr;
-        const int axis = n ? symmetryAxis(*n) : -1;
-        if (!cage || axis < 0)
+        const std::optional<geo::SymmetrySpec> spec = n ? symmetrySpec(*n) : std::nullopt;
+        if (!cage || !spec)
             return;
         geo::Mesh m = *cage;
         const double tolerance = symmetryTolerance(m);
-        geo::SymmetryMap map = geo::SymmetryMap::persistent(m, axis, tolerance, nullptr, symmetryOffset(*n, axis));
+        geo::SymmetryMap map = geo::SymmetryMap::persistent(m, *spec, tolerance);
         geo::SymmetryCheck c = map.check(m);
-        if (c.unmatched > 0 || c.maxAsymmetry > tolerance)
-            log::warn("{} is not symmetric in {}: {} points without a partner, max asymmetry {:g} cm", n->path(), char('X' + axis), c.unmatched,
-                         c.maxAsymmetry);
+        if (c.unmatched == 0 && c.maxAsymmetry <= tolerance)
+            return;
+        if (!spec->radial)
+        {
+            log::warn("{} is not symmetric in {}: {} points without a partner, max asymmetry {:g} cm", n->path(), char('X' + spec->axis), c.unmatched,
+                      c.maxAsymmetry);
+            return;
+        }
+        const int best = bestRadialCount(m, *spec->radial, tolerance);
+        log::warn("{} does not fit {}: {} points without a full orbit (shown in red), max asymmetry {:g} cm{}", n->path(), symmetryLabel(*spec),
+                  c.unmatched, c.maxAsymmetry,
+                  best > 0 && best != spec->radial->count() ? std::format("; a count of {} fits its topology best", best) : std::string());
     };
 
+    // The radial settings flags shared by setSymmetry and symmetrizeRadial, applied to a mesh node; true if any changed.
+    auto applyRadialFlags = [vec](const Args& a, Node& n, const char* cmd) {
+        Graph& g = graph();
+        bool changed = false;
+        auto set = [&](int attr, const PlugValue& v) {
+            if (n.value(attr) != v)
+            {
+                g.setValue({n.id(), attr, -1}, v);
+                changed = true;
+            }
+        };
+        if (a.has("count"))
+        {
+            const int count = a.get<int>("count");
+            if (count < 2 || count > geo::kMaxRadialCount)
+                throw CommandError(std::format("{}: count must be 2 to {}", cmd, geo::kMaxRadialCount));
+            set(MeshNode::kRadialCount, int64_t(count));
+        }
+        if (a.has("radialAxis"))
+        {
+            const std::string axis = a.get<std::string>("radialAxis");
+            const int64_t v = axis == "x" ? 0 : axis == "y" ? 1 : axis == "z" ? 2 : axis == "custom" ? 3 : -1;
+            if (v < 0)
+                throw CommandError(std::string(cmd) + ": radialAxis must be x, y, z or custom");
+            set(MeshNode::kRadialAxis, v);
+        }
+        if (a.has("direction"))
+        {
+            const glm::dvec3 d = vec(a.flags["direction"]);
+            if (glm::length(d) < 1e-12)
+                throw CommandError(std::string(cmd) + ": direction must not be zero");
+            set(MeshNode::kRadialDirection, d);
+            set(MeshNode::kRadialAxis, int64_t(3));
+        }
+        if (a.has("mirror"))
+            set(MeshNode::kRadialMirror, a.get<bool>("mirror"));
+        if (a.has("phase"))
+            set(MeshNode::kRadialPhase, a.get<double>("phase"));
+        return changed;
+    };
+
+    const std::vector<FlagDef> radialFlags = {
+        {"count", "", T::Int, nullptr, "Radial: how many wedges repeat round the axis, 2 to 64; default: the mesh's own."},
+        {"radialAxis", "", T::String, nullptr, "Radial: the axis, x, y, z or custom (direction=); default: the mesh's own.", {"x", "y", "z", "custom"}},
+        {"direction", "", T::Vec3, nullptr, "Radial: a custom axis direction, object space."},
+        {"mirror", "", T::Bool, nullptr, "Radial: also mirror each wedge across a plane through the axis (dihedral symmetry)."},
+        {"phase", "", T::Float, nullptr, "Radial: degrees the wedge boundaries and mirror planes turn about the axis."}};
+
+    std::vector<FlagDef> setSymmetryFlags = {{"axis", "", T::String, "x", "off, x, y, z or radial.", {"off", "x", "y", "z", "radial"}}};
+    setSymmetryFlags.insert(setSymmetryFlags.end(), radialFlags.begin(), radialFlags.end());
     ops::registerCommand({
         .name = "setSymmetry",
-        .doc = "Object-space mirror plane for component edits on meshes: 'off', 'x', 'y' or 'z'.",
+        .doc = "Object-space symmetry for component edits on meshes: 'off', a mirror plane 'x', 'y' or 'z', or 'radial': count "
+               "wedges repeated round radialAxis (with mirror=True also mirrored within each wedge), every edit applied to all of them.",
         .positionalDoc = "objects",
-        .flags = {{"axis", "", T::String, "x", "off, x, y or z."}},
-        .run = [warnIfAsymmetric](const Args& a) -> json {
+        .flags = setSymmetryFlags,
+        .run = [warnIfAsymmetric, applyRadialFlags](const Args& a) -> json {
             std::string axis = a.get<std::string>("axis", "x");
-            int64_t v = axis == "off" ? 0 : axis == "x" ? 1 : axis == "y" ? 2 : axis == "z" ? 3 : -1;
+            int64_t v = axis == "off" ? 0 : axis == "x" ? 1 : axis == "y" ? 2 : axis == "z" ? 3 : axis == "radial" ? kSymmetryRadial : -1;
             if (v < 0)
-                throw CommandError("setSymmetry: axis must be off, x, y or z");
+                throw CommandError("setSymmetry: axis must be off, x, y, z or radial");
             for (const std::string& name : a.objects())
             {
                 Node& n = meshArg(name, "setSymmetry");
-                // A custom plane belongs to the axis it was set on.
+                // A custom plane (or radial centre) belongs to the setting it was set on.
                 if (v > 0 && v != n.as<int64_t>(MeshNode::kSymmetry) && n.as<int64_t>(MeshNode::kSymmetryPlane) == 1)
                     graph().setValue({n.id(), MeshNode::kSymmetryPlane, -1}, int64_t(0));
-                const bool changed = v != n.as<int64_t>(MeshNode::kSymmetry);
+                bool changed = v != n.as<int64_t>(MeshNode::kSymmetry);
+                if (applyRadialFlags(a, n, "setSymmetry") && v == kSymmetryRadial)
+                    changed = true;
                 graph().setValue({n.id(), MeshNode::kSymmetry, -1}, v);
                 if (v > 0 && changed)
                     warnIfAsymmetric(n.id());
@@ -1765,10 +1921,11 @@ void registerMeshEditCommands()
     ops::registerCommand({
         .name = "setSymmetryPlane",
         .doc = "Set where meshes' symmetry plane lies: through the selected edges or vertices (which must lie flat across an "
-               "axis; that axis becomes the symmetry axis), or back through the pivot with pivot=True. Returns the plane "
-               "per mesh as [axis, offset].",
+               "axis; that axis becomes the symmetry axis), or back through the pivot with pivot=True. With radial symmetry the "
+               "radial axis passes through the selection's centre instead. Returns the plane per mesh as [axis, offset], or "
+               "['radial', centre].",
         .positionalDoc = "objects",
-        .flags = {{"pivot", "", T::Bool, false, "Put the plane back through the pivot."}},
+        .flags = {{"pivot", "", T::Bool, false, "Put the plane (or radial axis) back through the pivot."}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             g.evaluate();
@@ -1778,9 +1935,18 @@ void registerMeshEditCommands()
                 // Pairs stored about the old plane pair the wrong points about the new one.
                 PlugRef base = basePlug(n);
                 geo::Mesh m = baseMesh(base);
-                for (int k = 0; k < 3; ++k)
-                    m.pointAttrs().remove(geo::symmetryLayerName(k));
+                geo::removeSymmetryLayers(m);
                 g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
+            };
+            auto planeOf = [](const Node& n) -> json {
+                const std::optional<geo::SymmetrySpec> spec = symmetrySpec(n);
+                if (spec && spec->radial)
+                {
+                    const glm::dvec3 o = spec->radial->origin();
+                    return {"radial", {o.x, o.y, o.z}};
+                }
+                const int axis = std::max(0, symmetryAxis(n));
+                return {std::string(1, char('x' + axis)), symmetryOffset(n, axis)};
             };
             if (a.get<bool>("pivot"))
             {
@@ -1795,8 +1961,7 @@ void registerMeshEditCommands()
                         continue;
                     g.setValue({n->id(), MeshNode::kSymmetryPlane, -1}, int64_t(0));
                     forget(*n);
-                    const int axis = std::max(0, symmetryAxis(*n));
-                    out[n->path()] = {std::string(1, char('x' + axis)), symmetryOffset(*n, axis)};
+                    out[n->path()] = planeOf(*n);
                 }
                 return out;
             }
@@ -1819,6 +1984,15 @@ void registerMeshEditCommands()
                     }
                 if (count == 0)
                     continue;
+                if (n->as<int64_t>(MeshNode::kSymmetry) == kSymmetryRadial)
+                {
+                    // A ring of points round the axis: its centre is where the axis passes.
+                    g.setValue({id, MeshNode::kSymmetryPlane, -1}, int64_t(1));
+                    g.setValue({id, MeshNode::kRadialCenter, -1}, sum / double(count));
+                    forget(*n);
+                    out[n->path()] = planeOf(*n);
+                    continue;
+                }
                 // The mesh's own axis when the selection is flat across it, else whichever axis it is flattest across.
                 const glm::dvec3 spread = hi - lo;
                 int axis = symmetryAxis(*n);
@@ -1843,7 +2017,7 @@ void registerMeshEditCommands()
         .name = "toggleSymmetry",
         .doc = "Symmetry off on the meshes if every one already has it on (on axis=, when given), else on for all of them. Non-meshes are skipped. Returns the axis set, or 'off'.",
         .positionalDoc = "objects",
-        .flags = {{"axis", "", T::String, nullptr, "x, y or z to turn on with; default: the axis already in use, else the last one picked."}},
+        .flags = {{"axis", "", T::String, nullptr, "x, y, z or radial to turn on with; default: the axis already in use, else the last one picked."}},
         .run = [warnIfAsymmetric](const Args& a) -> json {
             std::vector<NodeId> ids;
             for (const std::string& name : a.objects())
@@ -1852,13 +2026,15 @@ void registerMeshEditCommands()
             if (ids.empty())
                 throw CommandError("toggleSymmetry: no meshes given or selected");
             SymmetryState st = symmetryState(graph(), ids);
+            auto stateAxis = [](int axis) { return axis == SymmetryState::kRadialState ? std::string("radial") : std::string(1, char('x' + axis)); };
             std::string axis = a.get<std::string>("axis", "");
             if (axis.empty())
-                axis = st.axis >= 0 ? std::string(1, char('x' + st.axis)) : PrefStore::get().value<std::string>("general", "/symmetry/axis", "x");
-            if (axis != "x" && axis != "y" && axis != "z")
-                throw CommandError("toggleSymmetry: axis must be x, y or z");
-            const bool off = st.on == st.meshes && (!a.has("axis") || st.axis == axis[0] - 'x');
-            const int64_t v = off ? 0 : axis[0] - 'x' + 1;
+                axis = st.axis >= 0 ? stateAxis(st.axis) : PrefStore::get().value<std::string>("general", "/symmetry/axis", "x");
+            if (axis != "x" && axis != "y" && axis != "z" && axis != "radial")
+                throw CommandError("toggleSymmetry: axis must be x, y, z or radial");
+            const int64_t wanted = axis == "radial" ? kSymmetryRadial : axis[0] - 'x' + 1;
+            const bool off = st.on == st.meshes && (!a.has("axis") || (st.axis >= 0 && stateAxis(st.axis) == axis));
+            const int64_t v = off ? 0 : wanted;
             for (NodeId id : ids)
             {
                 const bool changed = graph().node(id)->as<int64_t>(MeshNode::kSymmetry) != v;
@@ -1874,7 +2050,7 @@ void registerMeshEditCommands()
 
     auto symmetricMesh = [](const std::string& name, const char* cmd) -> Node& {
         Node& n = meshArg(name, cmd);
-        if (symmetryAxis(n) < 0)
+        if (!symmetrySpec(n))
             throw CommandError(std::string(cmd) + ": " + name + " has symmetry off");
         return n;
     };
@@ -1890,8 +2066,9 @@ void registerMeshEditCommands()
 
     ops::registerCommand({
         .name = "symmetryCheck",
-        .doc = "Report how symmetric meshes are across their symmetry plane: the largest distance between a point and its partner's "
-               "reflection, and the points without a partner. Changes nothing.",
+        .doc = "Report how symmetric meshes are across their symmetry plane (or round their radial axis): the largest distance "
+               "between a point and its partner's reflection (or its orbit's image), and the points without a partner. For "
+               "radial symmetry also the unmatched point ids and the count the mesh fits best. Changes nothing.",
         .positionalDoc = "objects",
         .run = [symmetricMesh, symmetryTargets](const Args& a) -> json {
             Graph& g = graph();
@@ -1904,32 +2081,60 @@ void registerMeshEditCommands()
                 if (!cage)
                     continue;
                 geo::Mesh m = *cage;
-                const int axis = symmetryAxis(n);
-                const bool stored = m.pointAttrs().has(geo::symmetryLayerName(axis));
+                const geo::SymmetrySpec spec = *symmetrySpec(n);
+                const bool stored = m.pointAttrs().has(symmetryLayer(spec));
                 geo::SymmetrySync sync;
-                geo::SymmetryMap map = geo::SymmetryMap::persistent(m, axis, symmetryTolerance(m), &sync, symmetryOffset(n, axis));
+                geo::SymmetryMap map = geo::SymmetryMap::persistent(m, spec, symmetryTolerance(m), &sync);
                 geo::SymmetryCheck c = map.check(m);
-                out[n.path()] = {{"axis", std::string(1, char('x' + axis))},
-                                 {"maxAsymmetry", c.maxAsymmetry},
-                                 {"worstPoint", c.worstPoint == geo::kInvalid ? json(nullptr) : json(c.worstPoint)},
-                                 {"pairs", c.pairs},
-                                 {"onPlane", c.onPlane},
-                                 {"unmatched", c.unmatched},
-                                 {"stored", stored},
-                                 {"withoutStoredPartner", sync.topological + sync.byPosition + sync.unmatched}};
-                log::write(LogLevel::Info, std::format("{}: symmetry {} max asymmetry {:g} cm, {} pairs, {} on the plane, {} unmatched", n.path(),
-                                                       char('X' + axis), c.maxAsymmetry, c.pairs, c.onPlane, c.unmatched));
+                json r = {{"axis", spec.radial ? std::string("radial") : std::string(1, char('x' + spec.axis))},
+                          {"maxAsymmetry", c.maxAsymmetry},
+                          {"worstPoint", c.worstPoint == geo::kInvalid ? json(nullptr) : json(c.worstPoint)},
+                          {"pairs", c.pairs},
+                          {"onPlane", c.onPlane},
+                          {"unmatched", c.unmatched},
+                          {"stored", stored},
+                          {"withoutStoredPartner", sync.topological + sync.byPosition + sync.unmatched}};
+                if (spec.radial)
+                {
+                    r["count"] = spec.radial->count();
+                    r["mirror"] = spec.radial->mirror();
+                    std::vector<Index> unmatched = map.unmatchedPoints(m);
+                    r["unmatchedPoints"] = unmatched;
+                    r["bestCount"] = unmatched.empty() ? spec.radial->count() : bestRadialCount(m, *spec.radial, symmetryTolerance(m));
+                }
+                out[n.path()] = r;
+                log::write(LogLevel::Info, std::format("{}: symmetry {} max asymmetry {:g} cm, {} {}, {} {}, {} unmatched", n.path(), symmetryName(spec),
+                                                       c.maxAsymmetry, c.pairs, spec.radial ? "orbits" : "pairs", c.onPlane,
+                                                       spec.radial ? "fixed" : "on the plane", c.unmatched));
             }
             return out;
         },
     });
 
+    /** The wedge most of the selected components lie in, else the one holding most of the mesh (a single modeled wedge). */
+    auto keepWedge = [](const Node& n, const geo::Mesh& m, const geo::RadialSymmetry& r, double tol) {
+        std::vector<Index> count(size_t(r.order()), 0);
+        auto tally = [&](Index p) {
+            if (m.pointValid(p) && r.axisDistance(m.position(p)) > tol)
+                ++count[size_t(r.wedgeOf(m.position(p)))];
+        };
+        const ComponentMode from = components::mode();
+        if (from != ComponentMode::Object)
+            for (Index p : components::convert(m, from, components::selected(n.id(), from), ComponentMode::Vertex))
+                tally(p);
+        if (std::ranges::all_of(count, [](Index c) { return c == 0; }))
+            for (Index p = 0; p < m.pointCapacity(); ++p)
+                tally(p);
+        return int(std::max_element(count.begin(), count.end()) - count.begin());
+    };
+
     ops::registerCommand({
         .name = "symmetrize",
         .doc = "Make meshes exactly symmetric: every point on one side of the symmetry plane is copied, reflected, onto its partner, and "
-               "on-plane points are put on the plane.",
+               "on-plane points are put on the plane. With radial symmetry, one wedge's points are copied round the axis onto their orbits.",
         .positionalDoc = "objects",
-        .flags = {{"side", "", T::String, "positive", "The side that is kept.", {"positive", "negative"}}},
+        .flags = {{"side", "", T::String, "positive", "The side that is kept.", {"positive", "negative"}},
+                  {"wedge", "", T::Int, -1, "Radial: the wedge that is kept; -1: the one most of the selected components are in, else 0."}},
         .run = [symmetricMesh, symmetryTargets](const Args& a) -> json {
             Graph& g = graph();
             const int drive = a.get<std::string>("side", "positive") == "negative" ? -1 : 1;
@@ -1940,7 +2145,22 @@ void registerMeshEditCommands()
                 PlugRef base = basePlug(n);
                 geo::Mesh m = baseMesh(base);
                 auto sym = symmetryFor(n, m);
-                sym->symmetrize(m, drive);
+                if (sym->isRadial())
+                {
+                    int wedge = a.get<int>("wedge");
+                    if (wedge < 0)
+                    {
+                        const ComponentMode from = components::mode();
+                        wedge = from == ComponentMode::Object
+                                    ? 0
+                                    : sym->majorityWedge(components::convert(m, from, components::selected(n.id(), from), ComponentMode::Vertex));
+                    }
+                    if (wedge >= sym->order())
+                        throw CommandError(std::format("symmetrize: {} has wedges 0 to {}", n.path(), sym->order() - 1));
+                    sym->symmetrizeWedge(m, wedge);
+                }
+                else
+                    sym->symmetrize(m, drive);
                 g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
             }
             return nullptr;
@@ -1973,18 +2193,20 @@ void registerMeshEditCommands()
     ops::registerCommand({
         .name = "symmetryRebuild",
         .doc = "Rebuild meshes symmetric: the kept side is mirrored across the plane through the object's pivot, replacing the other side, "
-               "welded on the plane, and the symmetry pairs are stored again. With pairsOnly, the geometry is left alone and only "
+               "welded on the plane, and the symmetry pairs are stored again. A mesh with radial symmetry is rebuilt from its kept "
+               "wedge instead (see symmetrizeRadial). With pairsOnly, the geometry is left alone and only "
                "the stored pairs are matched again, by position or, for meshes that are no longer symmetric, by topology outward "
-               "from the selected edge (which must lie on the plane). Returns the points left unmatched per mesh.",
+               "from the selected edge (which must lie on the plane; any edge for radial symmetry). Returns the points left unmatched per mesh.",
         .positionalDoc = "objects",
         .flags = {{"axis", "", T::String, nullptr, "x, y or z; default: the mesh's symmetry axis, else x."},
                   {"side", "", T::String, "auto", "The side that is kept; auto: the side of the selected components, else the side holding nearly all of the "
                    "mesh, else positive.",
                    {"auto", "positive", "negative"}},
+                  {"wedge", "", T::Int, -1, "Radial: the wedge that is kept; -1: the one most of the selected components are in, else the one holding most of the mesh."},
                   {"pairsOnly", "", T::Bool, false, "Only match the stored pairs again, leaving the geometry as it is."},
                   {"topological", "", T::Bool, false, "With pairsOnly: match by topology from the selected edge."},
                   {"tolerance", "", T::Float, 0.0, "Weld or match distance, cm (0: scaled to the mesh)."}},
-        .run = [symmetricMesh, symmetryTargets, keepSide](const Args& a) -> json {
+        .run = [symmetricMesh, symmetryTargets, keepSide, keepWedge](const Args& a) -> json {
             Graph& g = graph();
             g.evaluate();
             const std::string side = a.get<std::string>("side", "auto");
@@ -2000,12 +2222,30 @@ void registerMeshEditCommands()
             for (const std::string& name : symmetryTargets(a))
             {
                 Node& n = pairsOnly && axisFlag.empty() ? symmetricMesh(name, "symmetryRebuild") : meshArg(name, "symmetryRebuild");
+                const std::optional<geo::SymmetrySpec> spec = symmetrySpec(n);
+                const bool radial = axisFlag.empty() && spec && spec->radial;
                 const int axis = !axisFlag.empty() ? axisFlag[0] - 'x' : std::max(0, symmetryAxis(n));
                 PlugRef base = basePlug(n);
                 geo::Mesh m = baseMesh(base);
                 const double tol = a.get<double>("tolerance") > 0.0 ? a.get<double>("tolerance") : symmetryTolerance(m);
                 geo::SymmetryMap map;
-                if (!pairsOnly)
+                ComponentMode from = components::mode();
+                auto selectedEdge = [&]() {
+                    Ids sel = from == ComponentMode::Object ? Ids{} : components::convert(m, from, components::selected(n.id(), from), ComponentMode::Edge);
+                    if (sel.empty())
+                        throw CommandError(radial ? "symmetryRebuild: select an edge of " + n.path()
+                                                  : "symmetryRebuild: select an edge on the symmetry plane of " + n.path());
+                    return sel.front();
+                };
+                if (!pairsOnly && radial)
+                {
+                    const int wedge = a.get<int>("wedge") >= 0 ? a.get<int>("wedge") : keepWedge(n, m, *spec->radial, tol);
+                    map = geo::symmetrizeRadialTopology(m, *spec->radial, wedge, tol);
+                    if (m.numFaces() == 0)
+                        throw CommandError(std::format("symmetryRebuild: {} has nothing in wedge {}", n.path(), wedge));
+                    rebuilt = true;
+                }
+                else if (!pairsOnly)
                 {
                     const double plane = symmetryOffset(n, axis);
                     const int keep = side == "positive" ? 1 : side == "negative" ? -1 : keepSide(n, m, axis, plane, tol);
@@ -2017,18 +2257,15 @@ void registerMeshEditCommands()
                 }
                 else if (a.get<bool>("topological"))
                 {
-                    ComponentMode from = components::mode();
-                    Ids sel = from == ComponentMode::Object ? Ids{} : components::convert(m, from, components::selected(n.id(), from), ComponentMode::Edge);
-                    if (sel.empty())
-                        throw CommandError("symmetryRebuild: select an edge on the symmetry plane of " + n.path());
-                    map = geo::SymmetryMap::buildTopological(m, sel.front(), geo::axisPlane(axis, symmetryOffset(n, axis)));
+                    map = radial ? geo::SymmetryMap::buildRadialTopological(m, selectedEdge(), *spec->radial)
+                                 : geo::SymmetryMap::buildTopological(m, selectedEdge(), geo::axisPlane(axis, symmetryOffset(n, axis)));
                     if (map.empty())
                         throw CommandError("symmetryRebuild: the topology of " + n.path() + " is not symmetric about that edge");
                     map.store(m, axis);
                 }
                 else
                 {
-                    map = geo::SymmetryMap::build(m, geo::axisPlane(axis, symmetryOffset(n, axis)), tol);
+                    map = radial ? geo::SymmetryMap::buildRadial(m, *spec->radial, tol) : geo::SymmetryMap::build(m, geo::axisPlane(axis, symmetryOffset(n, axis)), tol);
                     map.store(m, axis);
                 }
                 out[n.path()] = map.unmatchedCount();
@@ -2036,6 +2273,55 @@ void registerMeshEditCommands()
             }
             if (rebuilt)
                 components::clear();
+            return out;
+        },
+    });
+
+    std::vector<FlagDef> symmetrizeRadialFlags = radialFlags;
+    symmetrizeRadialFlags.push_back({"wedge", "", T::Int, -1,
+                                     "The wedge that is kept; -1: the one most of the selected components are in, else the one holding most of the mesh."});
+    symmetrizeRadialFlags.push_back({"tolerance", "", T::Float, 0.0, "Weld distance along the seams and the axis, cm (0: scaled to the mesh)."});
+    ops::registerCommand({
+        .name = "symmetrizeRadial",
+        .doc = "Rebuild meshes exactly radially symmetric: the kept wedge is repeated round the axis (and mirrored within each wedge with "
+               "mirror=True), replacing the rest, and welded along the seams and the axis; then the mesh's symmetry is set to radial with "
+               "these settings, so every edit after keeps it. Settings default to the mesh's own radial symmetry. Model one wedge and run "
+               "this to get the whole. Returns the faces per mesh.",
+        .positionalDoc = "objects",
+        .flags = symmetrizeRadialFlags,
+        .run = [symmetryTargets, applyRadialFlags, keepWedge](const Args& a) -> json {
+            Graph& g = graph();
+            g.evaluate();
+            std::vector<std::string> names = symmetryTargets(a);
+            if (names.empty())
+                throw CommandError("symmetrizeRadial: select a mesh");
+            json out = json::object();
+            UndoChunk chunk("Symmetrize Radial");
+            for (const std::string& name : names)
+            {
+                Node& n = meshArg(name, "symmetrizeRadial");
+                applyRadialFlags(a, n, "symmetrizeRadial");
+                if (n.as<int64_t>(MeshNode::kSymmetry) != kSymmetryRadial)
+                {
+                    // A custom mirror plane says nothing about where the radial axis goes.
+                    if (n.as<int64_t>(MeshNode::kSymmetryPlane) == 1)
+                        g.setValue({n.id(), MeshNode::kSymmetryPlane, -1}, int64_t(0));
+                    g.setValue({n.id(), MeshNode::kSymmetry, -1}, kSymmetryRadial);
+                }
+                const geo::SymmetrySpec spec = *symmetrySpec(n);
+                PlugRef base = basePlug(n);
+                geo::Mesh m = baseMesh(base);
+                const double tol = a.get<double>("tolerance") > 0.0 ? a.get<double>("tolerance") : symmetryTolerance(m);
+                const int wedge = a.get<int>("wedge") >= 0 ? a.get<int>("wedge") : keepWedge(n, m, *spec.radial, tol);
+                if (wedge >= spec.radial->order())
+                    throw CommandError(std::format("symmetrizeRadial: {} has wedges 0 to {}", n.path(), spec.radial->order() - 1));
+                geo::symmetrizeRadialTopology(m, *spec.radial, wedge, tol);
+                if (m.numFaces() == 0)
+                    throw CommandError(std::format("symmetrizeRadial: {} has nothing in wedge {}", n.path(), wedge));
+                out[n.path()] = m.numFaces();
+                g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
+            }
+            components::clear();
             return out;
         },
     });
@@ -2107,7 +2393,7 @@ void registerMeshEditCommands()
 
             UndoChunk chunk("Knife");
             std::vector<glm::dvec3> before;
-            int drive = 1;
+            int drive = 0;
             if (sym)
             {
                 before.assign(mesh.positions().begin(), mesh.positions().end());
@@ -2116,7 +2402,7 @@ void registerMeshEditCommands()
                     if (!s.mirrored)
                         for (Index p : mesh.facePoints(s.face))
                             touched.push_back(p);
-                drive = sym->majoritySide(touched);
+                drive = sym->majorityWedge(touched);
             }
             const Index firstNew = mesh.pointCapacity();
             Ids cut = geo::knifeApply(mesh, plan);

@@ -3,6 +3,7 @@
 #include "core/MainQueue.h"
 #include "geo/Attribute.h"
 #include "geo/Mesh.h"
+#include "geo/Primitives.h"
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "render/PaintGpu.h"
@@ -247,4 +248,35 @@ TEST_CASE("texture paint symmetry: clones, particles and stamps copy with the st
     float reached = 0.0f;
     CHECK(mirrorDiff(di, 3, -40, -20, -5, 30, false, &reached) < 0.08);
     CHECK(reached > 0.5f);
+}
+
+TEST_CASE("texture paint symmetry: a mesh's radial group copies through its orbits and round-trips its record")
+{
+    geo::Mesh disc = geo::makeDisc({.radius = 50.0, .subdivAxis = 12, .subdivRings = 2});
+    geo::SymmetrySpec spec;
+    spec.radial = geo::axisRadial(1, glm::dvec3(0.0), 6, true);
+    lila::brush::BrushSettings b;
+    b.mirror = true;
+    b.radial.count = 4;
+    tp::PaintSymmetry s = tp::brushSymmetry(b, &disc, spec);
+    REQUIRE(s.group.has_value());
+    CHECK(s.map != nullptr);
+    CHECK(s.count() == 12u);
+    for (uint32_t k = 0; k < s.count(); ++k)
+    {
+        CHECK(s.mirrored(k) == (k >= 6));
+        const glm::dvec3 p(13.0, 2.0, 5.0);
+        CHECK(glm::length(glm::dvec3(s.transform(k) * glm::dvec4(p, 1.0)) - spec.radial->apply(int(k), p)) < 1e-9);
+    }
+    const tp::PaintSymmetry back = tp::PaintSymmetry::fromJson(s.toJson());
+    REQUIRE(back.group.has_value());
+    CHECK(back.group->count() == 6);
+    CHECK(back.group->mirror());
+    CHECK(back.count() == 12u);
+
+    // Without the brush's mirror switch the mesh's group stays off, and the brush's own radial copies remain.
+    b.mirror = false;
+    tp::PaintSymmetry plain = tp::brushSymmetry(b, &disc, spec);
+    CHECK_FALSE(plain.group.has_value());
+    CHECK(plain.count() == 4u);
 }

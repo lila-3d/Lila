@@ -7,6 +7,7 @@
 #include "geo/Mesh.h"
 #include "scene/Anim.h"
 #include "scene/Graph.h"
+#include "scene/Instancing.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "ui/Actions.h"
@@ -833,8 +834,9 @@ NodeId ModifierStackWidget::resolveMesh() const
         scene::Node* n = g.node(*it);
         if (!n)
             continue;
+        // An instance's stack is its root's, which every member shares.
         if (n->type().isA("mesh"))
-            return n->id();
+            return scene::instancing::root(g, n->id());
         if (scene::modifiers::isModifier(*n) || dynamic_cast<scene::GeneratorNode*>(n) || dynamic_cast<scene::MeshSourceNode*>(n))
             if (NodeId m = scene::modifiers::meshOf(g, n->id()))
                 return m;
@@ -1148,6 +1150,46 @@ QWidget* ModifierStackWidget::buildMeshInputRow(const PlugRef& ref, QWidget* par
     return row;
 }
 
+QWidget* ModifierStackWidget::buildArrayCenterRow(NodeId mod, QWidget* parent)
+{
+    auto* row = new QWidget(parent);
+    auto* h = new QHBoxLayout(row);
+    h->setContentsMargins(0, 0, 0, 0);
+    h->setSpacing(3);
+    auto* name = new QLabel(row);
+    h->addWidget(name, 1);
+    auto* pick = toolButton("arrow-big-left-lines", "Centre on the selected object's transform (arrayCenter)", row);
+    auto* pivot = toolButton("focus-centered", "Centre on this mesh's pivot (arrayCenter pivot=True)", row);
+    auto* clear = toolButton("unlink", "Back to the object's origin", row);
+    h->addWidget(pick);
+    h->addWidget(pivot);
+    h->addWidget(clear);
+    connect(pick, &QToolButton::clicked, this, [mod] {
+        Graph& g = Graph::current();
+        NodeId target = scene::modifiers::meshOf(g, mod);
+        for (auto it = g.selection().rbegin(); it != g.selection().rend(); ++it)
+            if (scene::Node* n = g.node(*it); n && n->type().isA("transform") && n->id() != target)
+            {
+                run("arrayCenter", {{"args", {nameOf(mod), n->path()}}});
+                return;
+            }
+        log::error("Array centre: select the object to centre on (not the arrayed mesh), then click again");
+    });
+    connect(pivot, &QToolButton::clicked, this, [mod] { run("arrayCenter", {{"args", {nameOf(mod)}}, {"pivot", true}}); });
+    connect(clear, &QToolButton::clicked, this, [mod] { run("arrayCenter", {{"args", {nameOf(mod)}}}); });
+    mUpdaters.push_back([name, mod] {
+        Graph& g = Graph::current();
+        scene::Node* m = g.node(mod);
+        if (!m)
+            return;
+        auto src = g.source({mod, m->type().attrIndex("centerMatrix"), -1});
+        scene::Node* n = src ? g.node(src->node) : nullptr;
+        name->setText(n ? QString::fromStdString(n->name()) : QString("(none)"));
+        name->setToolTip(n ? QString::fromStdString(n->fullPath()) : QString());
+    });
+    return row;
+}
+
 QWidget* ModifierStackWidget::buildParams(NodeId id, bool isModifier)
 {
     Graph& g = Graph::current();
@@ -1298,6 +1340,13 @@ QWidget* ModifierStackWidget::buildParams(NodeId id, bool isModifier)
             field->setToolTip(doc);
         form->addRow(label, field);
         ++rows;
+        if (n->type().name == "arrayModifier" && def.name == "center")
+        {
+            auto* objectLabel = new QLabel("Center Object");
+            objectLabel->setToolTip("The object whose transform the copies turn about when center is object.");
+            form->addRow(objectLabel, buildArrayCenterRow(id, box));
+            ++rows;
+        }
     }
     if (!rows)
     {

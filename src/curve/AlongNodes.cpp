@@ -7,6 +7,7 @@
 #include "ops/Command.h"
 #include "ops/CommandOptions.h"
 #include "scene/Components.h"
+#include "scene/Duplicate.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
@@ -458,12 +459,12 @@ std::string addModifier(Node& mesh, const char* kind)
 Node* placeInstances(Graph& g, Node& piece, Node* start, Node* end, const std::vector<ArrayPlacement>& places, const std::string& name)
 {
     Node* group = g.createNode(*types::find("transform"), name, kNoNode, true);
+    std::unordered_map<NodeId, NodeId> copies;
     for (const ArrayPlacement& pl : places)
     {
         Node& src = pl.piece == ArrayPiece::Start ? *start : pl.piece == ArrayPiece::End ? *end : piece;
-        Node* inst = g.createNode(*types::find("mesh"), src.name(), group->id(), true);
-        g.connect({src.id(), MeshNode::kOutMesh, -1}, {inst->id(), MeshNode::kInMesh, -1});
-        Transform::setLocalMatrix(g, inst->id(), pl.transform);
+        const NodeId inst = duplicate::copyTree(g, src.id(), group->id(), duplicate::Mode::Instance, src.name(), copies);
+        Transform::setLocalMatrix(g, inst, pl.transform);
     }
     return group;
 }

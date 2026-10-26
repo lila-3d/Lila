@@ -136,9 +136,9 @@ Stroke triplanarStroke(float3 p, float3 nb, float scale, float tilt)
     return s;
 }
 
-float3x3 normalMatrix()
+float3x3 normalMatrix(uint instance)
 {
-    float3x3 m = (float3x3)pc.world;
+    float3x3 m = (float3x3)instanceWorld(instance);
     return float3x3(cross(m[1], m[2]), cross(m[2], m[0]), cross(m[0], m[1]));
 }
 
@@ -167,7 +167,7 @@ Stroke painterlyStroke(VSOut i, float3 ng, bool front)
     {
         float3 on = normalize(i.objNormal) * (front ? 1.0 : -1.0);
         s = triplanarStroke(i.objPos, on, scale, tilt);
-        s.n = normalize(mul(normalMatrix(), s.n));
+        s.n = normalize(mul(normalMatrix(i.instance), s.n));
         return s;
     }
     if (mapping == kMapWorld)

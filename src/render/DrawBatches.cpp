@@ -1,0 +1,176 @@
+#include "render/DrawBatches.h"
+
+#include "core/Profile.h"
+
+#include <algorithm>
+#include <unordered_map>
+
+namespace lila::render
+{
+namespace
+{
+bool sameStyle(const MaterialStyle& a, const MaterialStyle& b)
+{
+    return a.model == b.model && a.painterlyStrength == b.painterlyStrength && a.strokeNormal == b.strokeNormal && a.strokeScale == b.strokeScale &&
+           a.strokeLayerRatio == b.strokeLayerRatio && a.strokeMapping == b.strokeMapping && a.paletteCount == b.paletteCount &&
+           a.paletteShadow == b.paletteShadow && a.paletteLight == b.paletteLight && a.paletteAccent == b.paletteAccent &&
+           a.paletteContrast == b.paletteContrast && a.paletteSpread == b.paletteSpread && a.specularTint == b.specularTint &&
+           a.boilOffset == b.boilOffset && a.toonShadowColor == b.toonShadowColor && a.toonLightTint == b.toonLightTint &&
+           a.toonThreshold == b.toonThreshold && a.toonSoftness == b.toonSoftness && a.toonOuterOffset == b.toonOuterOffset &&
+           a.toonOuterColor == b.toonOuterColor && a.rimColor == b.rimColor && a.rimWidth == b.rimWidth && a.rimStrength == b.rimStrength &&
+           a.foliageBottomColor == b.foliageBottomColor && a.foliageTopColor == b.foliageTopColor && a.foliageGradient == b.foliageGradient &&
+           a.foliageBottomShadow == b.foliageBottomShadow && a.foliageTopHighlight == b.foliageTopHighlight &&
+           a.foliageTranslucency == b.foliageTranslucency && a.foliageWrap == b.foliageWrap && a.strokeMap == b.strokeMap;
+}
+
+bool sameMaterial(const Material& a, const Material& b)
+{
+    return a.baseColor == b.baseColor && a.opacity == b.opacity && a.metallic == b.metallic && a.roughness == b.roughness &&
+           a.specular == b.specular && a.opacityClip == b.opacityClip && a.emissive == b.emissive && a.flags == b.flags &&
+           a.baseColorMap == b.baseColorMap && a.normalMap == b.normalMap && a.ormMap == b.ormMap && a.emissiveMap == b.emissiveMap &&
+           sameStyle(a.style, b.style);
+}
+
+/** Highlighted placements sort last within a wire batch. */
+int wireRank(const MeshDraw& d)
+{
+    return (d.flags & DrawSelected) ? 3 : (d.flags & DrawPreselect) ? 2 : (d.flags & DrawUnderSelected) ? 1 : 0;
+}
+
+/** Shaded draws can share a batch when these match and so do their materials. */
+struct ShadedKey
+{
+    const RenderMesh* mesh;
+    uint32_t display;      // vertex colour mode and channel
+    glm::vec3 baseColor;   // used where a slot has no material
+    float roughness;
+
+    bool operator==(const ShadedKey&) const = default;
+};
+
+struct WireKey
+{
+    const RenderMesh* mesh;
+    bool depthTested;
+    float width;
+
+    bool operator==(const WireKey&) const = default;
+};
+
+struct KeyHash
+{
+    size_t operator()(const ShadedKey& k) const { return std::hash<const void*>()(k.mesh) ^ (size_t(k.display) << 1); }
+    size_t operator()(const WireKey& k) const { return std::hash<const void*>()(k.mesh) ^ size_t(k.depthTested); }
+};
+
+template <class F> void forEachPlacement(const MeshDraw& d, F&& f)
+{
+    if (!d.instances || d.instances->empty())
+    {
+        f(d.world);
+        return;
+    }
+    for (const glm::mat4& m : *d.instances)
+        f(d.world * m);
+}
+
+size_t placements(const MeshDraw& d) { return d.instances && !d.instances->empty() ? d.instances->size() : 1; }
+} // namespace
+
+bool sameMaterials(const std::vector<Material>& a, const std::vector<Material>& b)
+{
+    if (&a == &b)
+        return true;
+    if (a.size() != b.size())
+        return false;
+    for (size_t i = 0; i < a.size(); ++i)
+        if (!sameMaterial(a[i], b[i]))
+            return false;
+    return true;
+}
+
+bool drawsWire(const MeshDraw& d) { return (d.flags & (DrawWire | DrawSelected | DrawUnderSelected | DrawPreselect)) != 0; }
+
+glm::vec4 wireColor(const FrameState& s, const MeshDraw& d)
+{
+    return (d.flags & DrawSelected)        ? s.wireSelected
+           : (d.flags & DrawPreselect)     ? s.wirePreselect
+           : (d.flags & DrawUnderSelected) ? s.wireUnderSelected
+           : d.wireColor.a > 0.0f          ? d.wireColor
+                                           : s.wireDefault;
+}
+
+DrawBatches batchDraws(const FrameState& s)
+{
+    LILA_ZONE();
+
+    DrawBatches out;
+    // Members of each batch in frame order; flattened into instances once grouping is done.
+    std::vector<std::vector<const MeshDraw*>> shadedMembers, wireMembers;
+    std::unordered_map<ShadedKey, std::vector<size_t>, KeyHash> shadedIndex;
+    std::unordered_map<WireKey, size_t, KeyHash> wireIndex;
+    for (const MeshDraw& d : s.meshes)
+    {
+        if (!d.mesh)
+            continue;
+        if ((d.flags & DrawShaded) && !d.mesh->indices.empty())
+        {
+            const ShadedKey key{d.mesh.get(), uint32_t(d.vertexColors) | uint32_t(d.colorChannel) << 8, d.baseColor, d.roughness};
+            std::vector<size_t>& candidates = shadedIndex[key];
+            size_t batch = SIZE_MAX;
+            for (size_t c : candidates)
+                if (sameMaterials(shadedMembers[c].front()->materials, d.materials))
+                {
+                    batch = c;
+                    break;
+                }
+            if (batch == SIZE_MAX)
+            {
+                batch = shadedMembers.size();
+                candidates.push_back(batch);
+                shadedMembers.emplace_back();
+            }
+            shadedMembers[batch].push_back(&d);
+        }
+        if (drawsWire(d) && !d.mesh->edgePoints.empty())
+        {
+            const WireKey key{d.mesh.get(), (d.flags & (DrawShaded | DrawWireDepth)) != 0, d.wireWidth};
+            auto [it, added] = wireIndex.try_emplace(key, wireMembers.size());
+            if (added)
+                wireMembers.emplace_back();
+            wireMembers[it->second].push_back(&d);
+        }
+    }
+
+    size_t total = 0;
+    for (const auto& members : shadedMembers)
+        for (const MeshDraw* d : members)
+            total += placements(*d);
+    for (const auto& members : wireMembers)
+        for (const MeshDraw* d : members)
+            total += placements(*d);
+    out.instances.reserve(total);
+
+    for (const auto& members : shadedMembers)
+    {
+        DrawBatch b{members.front(), uint32_t(out.instances.size()), 0};
+        for (const MeshDraw* d : members)
+            forEachPlacement(*d, [&](const glm::mat4& world) { out.instances.push_back({world, glm::vec4(0.0f)}); });
+        b.count = uint32_t(out.instances.size()) - b.first;
+        out.shaded.push_back(b);
+    }
+    for (auto& members : wireMembers)
+    {
+        std::ranges::stable_sort(members, [](const MeshDraw* a, const MeshDraw* b) { return wireRank(*a) < wireRank(*b); });
+        DrawBatch b{members.front(), uint32_t(out.instances.size()), 0};
+        for (const MeshDraw* d : members)
+        {
+            const glm::vec4 color = wireColor(s, *d);
+            forEachPlacement(*d, [&](const glm::mat4& world) { out.instances.push_back({world, color}); });
+        }
+        b.count = uint32_t(out.instances.size()) - b.first;
+        out.wire.push_back(b);
+    }
+    return out;
+}
+} // namespace lila::render

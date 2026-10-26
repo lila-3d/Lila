@@ -201,11 +201,11 @@ std::string resolveSet(geo::Mesh& mesh, const std::string& requested, bool* crea
 
 geo::SymmetryMap symmetryOf(const Node& n, const geo::Mesh& mesh)
 {
-    int64_t axis = n.as<int64_t>(scene::MeshNode::kSymmetry);
-    if (axis < 1 || axis > 3)
+    const std::optional<geo::SymmetrySpec> spec = scene::symmetrySpec(n);
+    if (!spec)
         return {};
     double tol = std::max(1e-4, glm::length(mesh.bounds().size()) * 1e-4);
-    return geo::SymmetryMap::build(mesh, geo::axisPlane(int(axis - 1), scene::symmetryOffset(n, int(axis - 1))), tol);
+    return geo::SymmetryMap::buildFor(mesh, *spec, tol);
 }
 
 MeshPtr commit(NodeId mesh, std::shared_ptr<geo::Mesh> edited, const std::string& set, ColorDelta delta, bool created, const std::string& label)

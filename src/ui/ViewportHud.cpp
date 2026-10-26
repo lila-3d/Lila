@@ -165,7 +165,12 @@ Block polyCountBlock(const scene::hud::PolyStats& s, const PartOn& on)
     for (auto [part, label, field] : {std::tuple{"verts", "Verts:", &PC::verts}, {"edges", "Edges:", &PC::edges}, {"faces", "Faces:", &PC::faces},
                                       {"tris", "Tris:", &PC::tris}, {"uvs", "UVs:", &PC::uvs}})
         if (on(part))
+        {
             b.push_back({label, {count(s.scene.*field), count(s.objects.*field), count(s.components.*field)}, countWidth(), kCountGap});
+            // Instances draw their mesh again without adding data: what the scene holds next to what it draws.
+            if (field == &PC::tris && s.uniqueTris != s.scene.tris)
+                b.push_back({"Unique Tris:", {count(s.uniqueTris), count(s.uniqueObjectTris)}, countWidth(), kCountGap});
+        }
     return b;
 }
 
@@ -367,15 +372,17 @@ Block objectBlock(scene::Graph& g, const Context& ctx, const PartOn& on)
 
 Block symmetryBlock(scene::Graph& g)
 {
-    std::optional<int64_t> axis;
+    std::optional<QString> label;
     bool mixed = false;
     for (scene::Node* n : selectedMeshes(g))
     {
-        int64_t a = n->as<int64_t>(scene::MeshNode::kSymmetry);
-        mixed = mixed || (axis && *axis != a);
-        axis = a;
+        const std::optional<geo::SymmetrySpec> spec = scene::symmetrySpec(*n);
+        const QString a = !spec ? QString("Off") : spec->radial ? "Radial " + QString::number(spec->radial->count()) + (spec->radial->mirror() ? " + mirror" : "")
+                                                                : "Object " + QString(QChar('X' + spec->axis));
+        mixed = mixed || (label && *label != a);
+        label = a;
     }
-    QString text = !axis ? QString("-") : mixed ? QString("Mixed") : *axis <= 0 ? QString("Off") : "Object " + QString(QChar('X' + int(*axis - 1)));
+    QString text = !label ? QString("-") : mixed ? QString("Mixed") : *label;
     return {{"Symmetry:", {text}}};
 }
 

@@ -7,6 +7,7 @@
 #include "core/PrefStore.h"
 #include "python/Python.h"
 #include "scene/ComponentPick.h"
+#include "scene/Duplicate.h"
 #include "scene/Graph.h"
 #include "scene/Isolation.h"
 #include "scene/Modifiers.h"
@@ -394,6 +395,24 @@ void registerBuiltins()
         "Moves the selection to the object below it in the outliner.");
     cmd("edit.group", "Group", "Edit", "group", json::object(), "Parents the selected objects under a new group transform.");
     cmd("edit.duplicate", "Duplicate", "Edit", "duplicate", json::object(), "Copies the selected objects in place and selects the copies.");
+    cmd("edit.duplicateWithTransform", "Duplicate with Transform", "Edit", "duplicateWithTransform", json::object(),
+        "Duplicates the last copy again, placed the way that copy now sits relative to its source: duplicate, move the copy, "
+        "then repeat this to continue the run.");
+    cmd("edit.instance", "Instance", "Edit", "instance", json::object(),
+        "Makes instances of the selected meshes: copies that share the mesh, so an edit to one changes all.");
+    cmd("edit.instanceReference", "Reference Copy", "Edit", "instance", {{"reference", true}},
+        "Makes references of the selected meshes: copies that share the base mesh but keep a modifier stack of their own.");
+    cmd("edit.makeUnique", "Make Unique", "Edit", "makeUnique", json::object(),
+        "Gives the selected instances and references data of their own, so edits to them stop reaching the others.");
+    cmd("edit.convertToInstance", "Convert to Instances", "Edit", "convertToInstance", json::object(),
+        "Replaces the selected meshes with instances of the last one selected; with only one selected, every identical mesh in the scene.");
+    cmd("select.instances", "Select Instances", "Select", "selectInstances", json::object(),
+        "Selects every mesh sharing data with the selected ones: their source, instances and references.");
+    cmd("select.instanceSource", "Select Instance Source", "Select", "selectInstanceSource", json::object(),
+        "Selects the source of the selected instances and references.");
+    setEnabledWhen("edit.duplicateWithTransform", [] { return !scene::duplicate::lastPairs().empty(); });
+    for (const char* id : {"edit.instance", "edit.instanceReference", "edit.makeUnique", "edit.convertToInstance", "select.instances", "select.instanceSource"})
+        setEnabledWhen(id, hasSelection);
     cmd("modify.centerPivot", "Center Pivot", "Modify", "centerPivot", json::object(), "Moves each selected object's pivot to the center of its bounds.");
     cmd("display.hide", "Hide Selection", "Display", "hide", json::object(), "Hides the selected objects in every viewport.");
     cmd("display.toggleVisibility", "Toggle Visibility", "Display", "toggleVisibility", json::object(),
@@ -516,6 +535,10 @@ void registerBuiltins()
         "Puts the symmetry plane back through the object's pivot.");
     cmd("mesh.symmetryY", "Symmetry Y", "Mesh", "setSymmetry", {{"axis", "y"}}, "Mirrors selections and edits across the object's Y plane.");
     cmd("mesh.symmetryZ", "Symmetry Z", "Mesh", "setSymmetry", {{"axis", "z"}}, "Mirrors selections and edits across the object's Z plane.");
+    cmd("mesh.symmetryRadial", "Symmetry Radial", "Mesh", "setSymmetry", {{"axis", "radial"}},
+        "Repeats selections and edits round the object's radial axis, radialCount wedges (set in the Attribute Editor or the toolbar's symmetry menu).");
+    cmd("mesh.symmetrizeRadial", "Symmetrize Radial", "Mesh", "symmetrizeRadial", json::object(),
+        "Rebuilds the mesh exactly radially symmetric from its kept wedge, welded on the seams, and turns radial symmetry on. Model one wedge, then run this.");
     cmd("mesh.toggleSymmetry", "Toggle Symmetry", "Mesh", "toggleSymmetry", json::object(),
         "Turns symmetry on for the selected meshes (on the axis last used), or off when they all have it on.");
     cmd("mesh.symmetryCheck", "Symmetry Check", "Mesh", "symmetryCheck", json::object(),

@@ -6,6 +6,7 @@
 #include "core/Profile.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
+#include "scene/Instancing.h"
 #include "scene/MeshNodes.h"
 #include "geo/Symmetry.h"
 #include "uv/SymmetryUv.h"
@@ -74,18 +75,23 @@ std::map<NodeId, Ids> targets(ComponentMode kind, bool allowWhole)
     g.evaluate();
     std::map<NodeId, Ids> out;
     ComponentMode from = scene::components::mode();
+    // An instance's uvs are its root's: the edit goes there, so every member shows it.
     if (from != ComponentMode::Object)
         for (auto& [node, ids] : scene::components::selected(from))
             if (Node* n = g.node(node); n && n->type().isA("mesh") && n->as<MeshPtr>(MeshNode::kOutMesh))
             {
                 Ids conv = scene::components::convert(*n->as<MeshPtr>(MeshNode::kOutMesh), from, ids, kind);
-                if (!conv.empty())
-                    out[node] = std::move(conv);
+                if (conv.empty())
+                    continue;
+                Ids& into = out[scene::instancing::root(g, node)];
+                into.insert(into.end(), conv.begin(), conv.end());
+                std::sort(into.begin(), into.end());
+                into.erase(std::unique(into.begin(), into.end()), into.end());
             }
     if (out.empty() && allowWhole)
         for (NodeId id : selectedMeshes(g))
             if (g.node(id)->as<MeshPtr>(MeshNode::kOutMesh))
-                out[id] = {};
+                out[scene::instancing::root(g, id)] = {};
     return out;
 }
 
@@ -433,6 +439,25 @@ std::optional<geo::SymmetryMap> uvSymmetryMap(const Node& n, const geo::Mesh& me
 
 json withUvSymmetry(geo::Mesh& m, const Node& n, std::string_view uvSet, UvSymmetry mode, std::span<const Index> moved, const std::function<json()>& edit)
 {
+    if (const std::optional<geo::SymmetrySpec> spec = scene::symmetrySpec(n); spec && spec->radial)
+    {
+        // Radial copies stack in uv: whatever the edit did to one wedge's faces, their images take the same uvs.
+        geo::SymmetryMap map = geo::SymmetryMap::persistent(m, *spec->radial, symmetryTolerance(m));
+        std::span<const glm::vec2> was = m.cornerAttrs().get<glm::vec2>(uvSet);
+        std::vector<glm::vec2> before(was.begin(), was.end());
+        json r = edit();
+        std::span<const glm::vec2> uv = m.cornerAttrs().get<glm::vec2>(uvSet);
+        before.resize(uv.size(), glm::vec2(0.0f));
+        std::vector<Index> faces;
+        for (Index c = 0; c < uv.size(); ++c)
+            if (m.cornerValid(c) && (uv[c] != before[c] || std::ranges::binary_search(moved, c)))
+                faces.push_back(m.cornerFace(c));
+        std::ranges::sort(faces);
+        faces.erase(std::unique(faces.begin(), faces.end()), faces.end());
+        if (!faces.empty())
+            stackRadialUvs(m, map, uvSet, radialFaceWedge(m, map, faces), faces);
+        return r;
+    }
     const int axis = uvSymmetryAxis(n);
     if (axis < 0)
         return edit();

@@ -8,11 +8,13 @@
 #include "geo/Normals.h"
 #include "geo/Triangulate.h"
 #include "scene/Anim.h"
+#include "scene/ArrayGroup.h"
 #include "scene/Camera.h"
 #include "scene/Deformers.h"
 #include "scene/Drivers.h"
 #include "scene/Graph.h"
 #include "scene/LodGroup.h"
+#include "scene/Instancing.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "scene/Morphs.h"
@@ -1006,6 +1008,17 @@ struct Gather
     /** Joints some skinCluster takes as an influence; they go out whatever their deform flag says. */
     std::set<NodeId> weighted;
     std::vector<std::string> weightedNonDeform;
+    /** Export meshes by instance root, so the members of one instance group carry the same snapshot. */
+    std::unordered_map<NodeId, scene::MeshPtr> exportMeshes;
+
+    scene::MeshPtr exportMeshOf(NodeId id)
+    {
+        const NodeId root = scene::instancing::root(graph, id);
+        auto [it, added] = exportMeshes.emplace(root, nullptr);
+        if (added)
+            it->second = scene::modifiers::exportMesh(graph, root);
+        return it->second;
+    }
 
     glm::dmat4 world(NodeId id) const { return graph.node(id)->as<glm::dmat4>(scene::Transform::kWorldMatrix); }
 
@@ -1066,7 +1079,7 @@ struct Gather
         e.name = n->name();
         e.source = id;
         if (n->type().isA("mesh") && !n->type().isA("lattice") && opts.kind != ExportKind::Sequence)
-            e.mesh = modifiers::exportMesh(graph, id);
+            e.mesh = exportMeshOf(id);
         e.camera = cameraOf(*n);
         if (lod::isGroup(*n) && !flatten)
         {
@@ -1114,6 +1127,62 @@ struct Gather
             return;
         for (NodeId c : graph.children(id))
             walk(c, flatten ? -1 : index, inv, false, true);
+        if (arrays::isArray(*n) && opts.kind == ExportKind::Static)
+            addArrayCopies(id, index, inv, glm::dmat4(1.0), "", flatten, w);
+    }
+
+    /**
+     * The generated copies of an array (static exports): each source's subtree again per copy, named with the copy's
+     * number, sharing the source's export meshes so they write one Geometry. `xf` places the array itself when it is a
+     * copy inside another array, and `arrayWorld` is where it then sits.
+     */
+    void addArrayCopies(NodeId array, int index, const glm::dmat4& inv, const glm::dmat4& xf, const std::string& suffix, bool flatten,
+                        const glm::dmat4& arrayWorld)
+    {
+        const std::vector<glm::dmat4> copies = scene::arrays::copyTransforms(*graph.node(array));
+        for (size_t k = 1; k < copies.size(); ++k)
+            for (NodeId s : scene::arrays::sources(graph, array))
+                walkCopy(s, flatten ? -1 : index, inv, xf * copies[k], suffix + std::format("_{}", k), flatten, arrayWorld);
+    }
+
+    void walkCopy(NodeId id, int parent, const glm::dmat4& inv, const glm::dmat4& xf, const std::string& suffix, bool flatten,
+                  const glm::dmat4& parentWorld)
+    {
+        using namespace scene;
+        Node* n = graph.node(id);
+        if (!n || !n->type().isA("transform"))
+            return;
+        ExportNode e;
+        e.name = n->name() + suffix;
+        e.source = id;
+        if (n->type().isA("mesh") && !n->type().isA("lattice"))
+            e.mesh = exportMeshOf(id);
+        const glm::dmat4 w = xf * world(id);
+        if (flatten)
+        {
+            if (e.mesh)
+                e.bake = inv * w;
+            else
+                e.local = inv * w;
+        }
+        else
+        {
+            e.parent = parent;
+            e.local = parent < 0 ? inv * w : glm::inverse(parentWorld) * w;
+        }
+        e.joint = rig::isJoint(*n);
+        e.pre = static_cast<const Transform*>(n)->preRotation();
+        e.post = static_cast<const Transform*>(n)->rotateAxisMatrix();
+        e.rotateOrder = RotateOrder(std::clamp<int64_t>(n->as<int64_t>(Transform::kRotateOrder), 0, 5));
+        e.rotate = n->as<glm::dvec3>(Transform::kRotate);
+        const int index = int(out.nodes.size());
+        out.nodes.push_back(std::move(e));
+        rootInv.push_back(inv);
+        skinOf.push_back(kNoNode);
+        for (NodeId c : graph.children(id))
+            walkCopy(c, flatten ? -1 : index, inv, xf, suffix, flatten, w);
+        if (arrays::isArray(*n))
+            addArrayCopies(id, index, inv, xf, suffix, flatten, w);
     }
 
     /** Exported node index and its morph, for the meshes that export morph targets. */
@@ -1896,6 +1965,14 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
     std::vector<int64_t> modelIds(scene.nodes.size()), geomIds(scene.nodes.size(), 0), attrIds(scene.nodes.size(), 0);
     std::vector<ModelInfo> info(scene.nodes.size());
     std::map<std::string, int64_t> materialIds;
+    struct SharedGeometry
+    {
+        const geo::Mesh* mesh = nullptr; // null for one a skin or morphs deform, which no other model may share
+        glm::dmat4 bake{1.0};
+        int64_t id = 0;
+        std::vector<std::string> slots;
+    };
+    std::vector<SharedGeometry> sharedGeometry;
     ObjectCounts counts;
     bool anySkin = false;
     for (size_t i = 0; i < scene.nodes.size(); ++i)
@@ -1957,13 +2034,24 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
             connect(attrId, modelIds[i]);
             continue;
         }
-        Geometry g = buildGeometry(*n.mesh, basis * n.bake, opts);
-        int64_t geomId = geomIds[i] = nextId++;
-        writeGeometry(objects, geomId, n.name, g);
+        // Instances (one snapshot under the same bake) share one Geometry, connected to each of their models.
+        size_t geometry = sharedGeometry.size();
+        if (!n.skin && !n.morphs)
+            for (size_t k = 0; k < sharedGeometry.size(); ++k)
+                if (sharedGeometry[k].mesh == n.mesh.get() && nearMat(sharedGeometry[k].bake, n.bake))
+                    geometry = k;
+        if (geometry == sharedGeometry.size())
+        {
+            Geometry g = buildGeometry(*n.mesh, basis * n.bake, opts);
+            int64_t id = nextId++;
+            writeGeometry(objects, id, n.name, g);
+            ++counts.geometries;
+            sharedGeometry.push_back({n.skin || n.morphs ? nullptr : n.mesh.get(), n.bake, id, g.slots});
+        }
+        const int64_t geomId = geomIds[i] = sharedGeometry[geometry].id;
         connect(geomId, modelIds[i]);
-        ++counts.geometries;
         // Material order on the model is what the polygons' slot indices refer to.
-        for (const std::string& slot : g.slots)
+        for (const std::string& slot : sharedGeometry[geometry].slots)
         {
             auto [it, added] = materialIds.emplace(slot, 0);
             if (added)

@@ -214,12 +214,10 @@ void KnifeTool::refresh()
         for (glm::dvec3& p : w.positions())
             p = glm::dvec3(world * glm::dvec4(p, 1.0));
         t.bvh.build(w);
-        const int64_t axis = n->as<int64_t>(scene::MeshNode::kSymmetry);
-        if (axis >= 1 && axis <= 3)
+        if (scene::symmetrySpec(*n))
         {
             geo::Mesh copy = *cage;
-            const double tol = std::max(1e-4, glm::length(copy.bounds().size()) * 1e-5);
-            t.symmetry = geo::SymmetryMap::persistent(copy, int(axis - 1), tol, nullptr, scene::symmetryOffset(*n, int(axis - 1)));
+            t.symmetry = scene::symmetryMapFor(*n, copy);
         }
     }
     if (mNode != scene::kNoNode && (!mTargets.contains(mNode) || !mTargets[mNode].mesh))

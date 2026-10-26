@@ -154,3 +154,35 @@ TEST_CASE("commands: retopoDrawAddFace faces= extrudes a strip in one undo step"
     scene::Graph::current().clear();
     UndoStack::get().clear();
 }
+
+TEST_CASE("commands: retopo draw follows radial symmetry")
+{
+    scene::Graph::current().clear();
+    UndoStack::get().clear();
+    auto P = [](double x, double y, double z) { return json::array({x, y, z}); };
+    ops::execute("retopoDrawAddFace", {{"mesh", "rim"}, {"create", true}, {"points", {P(20, 0, 1), P(30, 0, 1), P(30, 10, 1), P(20, 10, 1)}}});
+    ops::execute("setSymmetry", {{"args", {"rim"}}, {"axis", "radial"}, {"count", 6}, {"radialAxis", "y"}});
+    ops::execute("retopoDrawAddFace", {{"mesh", "rim"}, {"points", {P(20, 0, 5), P(30, 0, 5), P(30, 10, 5), P(20, 10, 5)}}});
+    {
+        // The first face was drawn before symmetry: alone; the second comes with its five turned copies.
+        const geo::Mesh& m = outMesh("rim");
+        CHECK(m.numFaces() == 7);
+        CHECK(geo::test::isValid(m));
+    }
+    json move = {{"mesh", "rim"}, {"points", {4}}, {"positions", {P(21, 1, 5)}}};
+    ops::execute("retopoDrawMove", move);
+    const geo::Mesh m = outMesh("rim");
+    const auto spec = scene::symmetrySpec(*scene::Graph::current().find("rim"));
+    REQUIRE(spec);
+    geo::SymmetryMap map = geo::SymmetryMap::buildFor(m, *spec, 1e-3);
+    Index followers = 0;
+    for (int g = 1; g < map.order(); ++g)
+        if (const Index q = map.image(g, 4); q != geo::kInvalid && q != 4)
+        {
+            CHECK(glm::length(m.position(q) - map.transform(g, m.position(4))) < 1e-9);
+            ++followers;
+        }
+    CHECK(followers == 5);
+    scene::Graph::current().clear();
+    UndoStack::get().clear();
+}

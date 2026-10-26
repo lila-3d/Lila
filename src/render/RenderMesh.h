@@ -244,6 +244,11 @@ struct MeshDraw
 {
     std::shared_ptr<const RenderMesh> mesh;
     glm::mat4 world{1.0f};
+    /**
+     * Placements relative to world: when set and not empty the mesh draws once per entry, at world * entry, as one
+     * instanced draw. Shared so frames can reuse one list.
+     */
+    std::shared_ptr<const std::vector<glm::mat4>> instances;
     /** Used for every section whose slot has no entry in materials. */
     glm::vec3 baseColor{0.5f};
     float roughness = 0.55f;

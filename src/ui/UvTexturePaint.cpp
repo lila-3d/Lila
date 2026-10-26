@@ -289,10 +289,8 @@ bool UvTexturePaint::mousePress(QMouseEvent* e, const ToUv& toUv, double pxPerUv
     {
         // Mirrored and radial copies land on the surface (through the mesh's point pairs), wherever their uvs are.
         const scene::Node* meshNode = g.find(m->meshPath);
-        const int64_t axis = meshNode->as<int64_t>(scene::MeshNode::kSymmetry);
-        const int k = axis >= 1 && axis <= 3 ? int(axis - 1) : 0;
         scene::MeshPtr outMesh = meshNode->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-        m->sym = tp::brushSymmetry(m->brush, outMesh.get(), k, scene::symmetryOffset(*meshNode, k));
+        m->sym = tp::brushSymmetry(m->brush, outMesh.get(), scene::paintSymmetrySpec(*meshNode));
         header->symmetry = m->sym.toJson();
     }
     header->seed = m->brush.seed;

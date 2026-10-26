@@ -4,11 +4,21 @@
 // mesh_bindless.slang compiles this with LILA_BINDLESS: material maps (and UDIM tiles) come from one runtime array.
 // Stylised models (Painterly, Toon, Foliage) read a style block from the frame's table; see render::packStyle.
 
+/** One placement of a draw; matches render::GpuInstance. */
+struct InstanceData
+{
+    float4x4 world;
+    float4 color; // wire colour; unused by shaded draws
+};
+
 struct MeshPush
 {
     float4x4 viewProj; // background: the inverse view-projection
-    float4x4 world;
-    float4 eye;     // xyz camera position, w: -1 when the world matrix mirrors (flips the bitangent)
+    InstanceData* instances; // the frame's instance buffer
+    uint firstInstance;      // this draw's first entry in it
+    uint instancePad;
+    float4 reserved[3];
+    float4 eye;     // xyz camera position
     float4 base;    // rgb base color (linear), a: roughness. Background: x blur lod, y saturation, z exposure
     float4 params;  // x: exposure, y: 1 if Z-up, z: highlight amount, w: 0 studio rig, 1 environment, 2 flat (unlit)
     float4 env;     // xy: cos/sin of the rotation, z: intensity, w: lod of the roughest mip
@@ -322,20 +332,29 @@ struct VSOut
     centroid float4 color : COLOR;
     centroid float3 objPos : TEXCOORD1;
     centroid float3 objNormal : TEXCOORD2;
+    nointerpolation uint instance : TEXCOORD3; // index into pc.instances
 };
 
+float4x4 instanceWorld(uint instance)
+{
+    return pc.instances[instance].world;
+}
+
 [shader("vertex")]
-VSOut meshVS(VSIn v)
+VSOut meshVS(VSIn v, uint instanceId: SV_InstanceID)
 {
     VSOut o;
-    float4 wp = mul(pc.world, float4(v.pos, 1.0));
+    o.instance = pc.firstInstance + instanceId;
+    float4x4 world = instanceWorld(o.instance);
+    float4 wp = mul(world, float4(v.pos, 1.0));
     o.worldPos = wp.xyz;
     o.pos = mul(pc.viewProj, wp);
     // Inverse transpose would be exact under non-uniform scale; cofactor matrix gives it without an inverse.
-    float3x3 m = (float3x3)pc.world;
+    float3x3 m = (float3x3)world;
     float3x3 cof = float3x3(cross(m[1], m[2]), cross(m[2], m[0]), cross(m[0], m[1]));
     o.normal = mul(cof, v.normal);
-    o.tangent = float4(mul(m, v.tangent.xyz), v.tangent.w * pc.eye.w);
+    // A mirroring world matrix flips the bitangent.
+    o.tangent = float4(mul(m, v.tangent.xyz), determinant(m) < 0.0 ? -v.tangent.w : v.tangent.w);
     // Lila UVs are V-up (Maya, FBX) and image rows run top down; Unreal's FBX import flips V the same way.
     float2 uv = (pc.flags & kUv1) != 0 ? v.uv1 : v.uv;
     o.uv = float2(uv.x, 1.0 - uv.y);

@@ -5,6 +5,7 @@
 #include "core/Profile.h"
 #include "render/Backdrop.h"
 #include "render/Compute.h"
+#include "render/DrawBatches.h"
 #include "render/Environment.h"
 #include "render/GpuImage.h"
 #include "render/HdrImage.h"
@@ -54,7 +55,11 @@ struct GridPush
 struct MeshPush
 {
     glm::mat4 viewProj;
-    glm::mat4 world;
+    /** The device address of the frame's instance buffer (GpuInstance entries) and this draw's first entry in it. */
+    uint64_t instances = 0;
+    uint32_t firstInstance = 0;
+    uint32_t instancePad = 0;
+    glm::vec4 reserved[3]{};
     glm::vec4 eye;
     glm::vec4 base;
     glm::vec4 params;
@@ -123,10 +128,12 @@ struct PostPush
 struct WirePush
 {
     glm::mat4 viewProj;
-    glm::mat4 world;
-    glm::vec4 color;
     glm::vec4 depthPull{1.0f, 0.0f, 0.0f, 0.0f};
+    uint64_t instances = 0; // as in MeshPush; each entry's color is its wire colour
+    uint32_t firstInstance = 0;
+    uint32_t instancePad = 0;
 };
+static_assert(sizeof(WirePush) == 96, "matches WirePush in wire.slang");
 
 struct LinesPush
 {
@@ -198,6 +205,7 @@ struct Frame
     size_t linesCapacity = 0;
     std::vector<Buffer> staging; // texture uploads recorded into this frame, freed once its fence signals
     compute::Buffer table;       // bindless texture table, written before the frame is recorded
+    compute::Buffer instances;   // GpuInstance per mesh placement, written before the frame is recorded
     vt::Feedback feedback;       // virtual texture page requests, read once the fence signals
     // GPU timestamps: frame start, before and after ambient occlusion, frame end.
     VkQueryPool timestamps = VK_NULL_HANDLE;
@@ -369,6 +377,11 @@ struct Renderer::Impl
     /** Style block offsets in the frame's table per (draw, material slot), for slots with a stylised shading model. */
     std::map<std::pair<const MeshDraw*, uint32_t>, uint32_t> frameStyles;
     VkDeviceAddress frameTableAddress = 0;
+    /** The frame's mesh draws grouped for instancing, and the address of their instance buffer (0 if it failed). */
+    DrawBatches frameBatches;
+    VkDeviceAddress frameInstanceAddress = 0;
+    /** Mesh draw calls and placements recorded this frame, for FrameStats. */
+    uint64_t frameMeshDraws = 0, frameMeshInstances = 0;
     /** The frame draws a virtual texture map: it writes feedback. */
     bool frameUsesVt = false;
     VkPipeline meshBlendPipeline = VK_NULL_HANDLE;
@@ -611,6 +624,7 @@ struct Renderer::Impl
         {
             freeStaging(f);
             compute::destroy(vk, f.table);
+            compute::destroy(vk, f.instances);
             if (f.lines)
             {
                 vmaUnmapMemory(vk.allocator, f.linesAlloc);
@@ -985,6 +999,30 @@ struct Renderer::Impl
         return b;
     }
 
+    /**
+     * A device-local copy of data, filled by a copy recorded into cmd. The staging buffer is freed once the frame's fence
+     * signals. Falls back to host memory when device memory is full.
+     */
+    Buffer deviceBuffer(VkCommandBuffer cmd, Frame& f, const void* data, size_t size, VkBufferUsageFlags usage)
+    {
+        Buffer b;
+        VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        bci.size = std::max<size_t>(size, 16);
+        bci.usage = usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        VmaAllocationCreateInfo aci{};
+        aci.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+        if (vmaCreateBuffer(vk.allocator, &bci, &aci, &b.buffer, &b.alloc, nullptr) != VK_SUCCESS)
+            return createBuffer(data, size, usage);
+        if (size)
+        {
+            Buffer staging = createBuffer(data, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            f.staging.push_back(staging);
+            const VkBufferCopy region{0, 0, size};
+            vkCmdCopyBuffer(cmd, staging.buffer, b.buffer, 1, &region);
+        }
+        return b;
+    }
+
     void destroyBuffer(Buffer& b)
     {
         if (b.buffer)
@@ -992,14 +1030,21 @@ struct Renderer::Impl
         b = {};
     }
 
-    GpuMesh* gpuMesh(const std::shared_ptr<const RenderMesh>& mesh)
+    /**
+     * The mesh's GPU copy, made on first use. With cmd and f the copy goes to device memory through a copy recorded into
+     * cmd; without them it reads from host memory, which is slow for dense meshes once the BAR heap is full.
+     */
+    GpuMesh* gpuMesh(const std::shared_ptr<const RenderMesh>& mesh, VkCommandBuffer cmd = VK_NULL_HANDLE, Frame* f = nullptr)
     {
         LILA_ZONE();
 
+        auto upload = [&](const void* data, size_t size, VkBufferUsageFlags usage) {
+            return f ? deviceBuffer(cmd, *f, data, size, usage) : createBuffer(data, size, usage);
+        };
         // Looked up first: inserting this entry may rehash the cache under the base's.
         Buffer shared;
         if (mesh->shareVertices)
-            shared = gpuMesh(mesh->shareVertices)->vertices;
+            shared = gpuMesh(mesh->shareVertices, cmd, f)->vertices;
         auto it = meshCache.find(mesh->key);
         if (it == meshCache.end())
         {
@@ -1013,15 +1058,15 @@ struct Renderer::Impl
             {
                 DynamicVertices& dv = *mesh->dynamic;
                 std::scoped_lock lock(dv.mutex);
-                g.vertices = createBuffer(dv.vertices.data(), dv.vertices.size() * sizeof(MeshVertex),
-                                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+                g.vertices = upload(dv.vertices.data(), dv.vertices.size() * sizeof(MeshVertex),
+                                    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
                 dv.dirty.clear();
                 dv.allDirty = false;
             }
             else
-                g.vertices = createBuffer(mesh->vertices.data(), mesh->vertices.size() * sizeof(MeshVertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-            g.indices = createBuffer(mesh->indices.data(), mesh->indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-            g.edges = createBuffer(mesh->edgePoints.data(), mesh->edgePoints.size() * sizeof(glm::vec3), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+                g.vertices = upload(mesh->vertices.data(), mesh->vertices.size() * sizeof(MeshVertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+            g.indices = upload(mesh->indices.data(), mesh->indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+            g.edges = upload(mesh->edgePoints.data(), mesh->edgePoints.size() * sizeof(glm::vec3), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
             g.indexCount = uint32_t(mesh->indices.size());
             g.edgePointCount = uint32_t(mesh->edgePoints.size());
             g.keep = mesh;
@@ -1523,6 +1568,37 @@ struct Renderer::Impl
         frameTableAddress = f.table.address;
     }
 
+    /** Groups the frame's mesh draws for instancing and writes their placements into the frame's instance buffer. */
+    void writeInstances(Frame& f, const FrameState& s)
+    {
+        LILA_ZONE();
+
+        frameBatches = batchDraws(s);
+        frameInstanceAddress = 0;
+        const size_t bytes = std::max<size_t>(frameBatches.instances.size(), 1) * sizeof(GpuInstance);
+        if (f.instances.size < bytes)
+        {
+            // The frame's fence has signalled, so nothing reads the old buffer any more.
+            compute::destroy(vk, f.instances);
+            try
+            {
+                f.instances = compute::makeBuffer(vk, std::max<size_t>(bytes * 2, 64 * sizeof(GpuInstance)), 0, compute::Host::Write);
+            }
+            catch (const std::exception& e)
+            {
+                log::error("render: {}", e.what());
+                frameBatches = {};
+                return;
+            }
+        }
+        if (!frameBatches.instances.empty())
+        {
+            std::memcpy(f.instances.mapped, frameBatches.instances.data(), frameBatches.instances.size() * sizeof(GpuInstance));
+            vmaFlushAllocation(vk.allocator, f.instances.alloc, 0, VK_WHOLE_SIZE);
+        }
+        frameInstanceAddress = f.instances.address;
+    }
+
     /** Appends a style block per shaded draw section whose material uses a stylised shading model. */
     void writeStyles(const FrameState& s)
     {
@@ -1550,6 +1626,21 @@ struct Renderer::Impl
                 frameTable.insert(frameTable.end(), block.begin(), block.end());
             }
         }
+    }
+
+    /** Uploads the meshes this frame draws for the first time into device memory. Runs before rendering begins. */
+    void prepareMeshes(VkCommandBuffer cmd, Frame& f, const FrameState& s)
+    {
+        LILA_ZONE();
+
+        const size_t staged = f.staging.size();
+        for (const MeshDraw& d : s.meshes)
+            if (d.mesh && !meshCache.contains(d.mesh->key))
+                gpuMesh(d.mesh, cmd, &f);
+        if (f.staging.size() != staged)
+            memoryBarrier(cmd, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                          VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT,
+                          VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT);
     }
 
     /** Copies the vertices edited since the last frame into the GPU copies of dynamic meshes. Runs before rendering begins. */
@@ -1893,19 +1984,15 @@ struct Renderer::Impl
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, 0, 1, &envSet, 0, nullptr);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, 2, 1, &whiteAoSet, 0, nullptr);
         VkDescriptorSet boundSet = VK_NULL_HANDLE;
-        for (const MeshDraw& d : s.meshes)
+        for (const DrawBatch& b : frameBatches.shaded)
         {
-            if (!(d.flags & DrawShaded) || !d.mesh || d.mesh->indices.empty())
-                continue;
+            const MeshDraw& d = *b.draw;
             GpuMesh* g = gpuMesh(d.mesh);
-            std::vector<MeshSection> sections = d.mesh->sections;
-            if (sections.empty())
-                sections.push_back({0, 0, g->indexCount});
-            for (const MeshSection& sec : sections)
+            for (const MeshSection& sec : sectionsOf(d, *g))
             {
                 const Material* mat = sec.material < d.materials.size() ? &d.materials[sec.material] : nullptr;
                 if (!mat || !(mat->flags & MatTranslucent))
-                    drawSection(cmd, s, d, *g, sec, viewProj, boundSet);
+                    drawSection(cmd, s, b, *g, sec, viewProj, boundSet);
             }
         }
         vkCmdEndRendering(cmd);
@@ -2375,7 +2462,10 @@ struct Renderer::Impl
         }
         else if (f.feedback.active())
             f.feedback.destroy(vk);
+        prepareMeshes(cmd, f, s);
         prepareDynamicMeshes(cmd, f, s);
+        writeInstances(f, s);
+        frameMeshDraws = frameMeshInstances = 0;
 
         glm::dmat4 viewProj = s.proj * s.view;
         glm::mat4 vpF(viewProj);
@@ -2575,6 +2665,8 @@ struct Renderer::Impl
             f.feedback.end(vk, cmd);
         timestamp(cmd, f, 3);
         v.timing.cpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuStart).count();
+        v.timing.meshDrawCalls = frameMeshDraws;
+        v.timing.meshInstances = frameMeshInstances;
         if (v.offscreen)
             return finishOffscreen(v, f, cmd);
         barrier(cmd, v.images[imageIndex], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, colorStage, colorWrite,
@@ -2778,14 +2870,21 @@ struct Renderer::Impl
             if (!(d.flags & DrawShaded) || !d.mesh || d.mesh->indices.empty())
                 continue;
             glm::vec3 lo(FLT_MAX), hi(-FLT_MAX);
-            for (int c = 0; c < 8; ++c)
-            {
-                glm::vec3 corner((c & 1) ? d.mesh->boundsMax.x : d.mesh->boundsMin.x, (c & 2) ? d.mesh->boundsMax.y : d.mesh->boundsMin.y,
-                                 (c & 4) ? d.mesh->boundsMax.z : d.mesh->boundsMin.z);
-                glm::vec3 w(d.world * glm::vec4(corner, 1.0f));
-                lo = glm::min(lo, w);
-                hi = glm::max(hi, w);
-            }
+            auto extend = [&](const glm::mat4& world) {
+                for (int c = 0; c < 8; ++c)
+                {
+                    glm::vec3 corner((c & 1) ? d.mesh->boundsMax.x : d.mesh->boundsMin.x, (c & 2) ? d.mesh->boundsMax.y : d.mesh->boundsMin.y,
+                                     (c & 4) ? d.mesh->boundsMax.z : d.mesh->boundsMin.z);
+                    glm::vec3 w(world * glm::vec4(corner, 1.0f));
+                    lo = glm::min(lo, w);
+                    hi = glm::max(hi, w);
+                }
+            };
+            if (d.instances && !d.instances->empty())
+                for (const glm::mat4& placement : *d.instances)
+                    extend(d.world * placement);
+            else
+                extend(d.world);
             glm::vec3 half = (hi - lo) * 0.5f;
             float size = std::max(half[a0], half[a1]);
             float gap = lo[up];
@@ -2833,15 +2932,28 @@ struct Renderer::Impl
         return it != frameHandles.end() ? it->second : kNoHandle;
     }
 
-    /** One material section of a shaded mesh with whichever mesh pipeline is bound. */
-    void drawSection(VkCommandBuffer cmd, const FrameState& s, const MeshDraw& d, GpuMesh& g, const MeshSection& sec, const glm::mat4& viewProj,
+    /** A draw's material sections, or one section of slot 0 covering the whole mesh. */
+    static std::vector<MeshSection> sectionsOf(const MeshDraw& d, const GpuMesh& g)
+    {
+        std::vector<MeshSection> sections = d.mesh->sections;
+        if (sections.empty())
+            sections.push_back({0, 0, g.indexCount});
+        return sections;
+    }
+
+    /** One material section of a batch's placements, instanced, with whichever mesh pipeline is bound. */
+    void drawSection(VkCommandBuffer cmd, const FrameState& s, const DrawBatch& b, GpuMesh& g, const MeshSection& sec, const glm::mat4& viewProj,
                      VkDescriptorSet& boundSet)
     {
+        if (!frameInstanceAddress || b.count == 0)
+            return;
+        const MeshDraw& d = *b.draw;
         const Material* mat = sec.material < d.materials.size() ? &d.materials[sec.material] : nullptr;
         MeshPush p;
         p.viewProj = viewProj;
-        p.world = d.world;
-        p.eye = glm::vec4(glm::vec3(s.eye), glm::determinant(glm::mat3(d.world)) < 0.0f ? -1.0f : 1.0f);
+        p.instances = frameInstanceAddress;
+        p.firstInstance = b.first;
+        p.eye = glm::vec4(glm::vec3(s.eye), 1.0f);
         float lighting = s.lighting == FrameState::Lighting::Flat ? 2.0f
                          : s.lighting == FrameState::Lighting::Environment && envLoaded ? 1.0f
                                                                                         : 0.0f;
@@ -2905,7 +3017,9 @@ struct Renderer::Impl
         vkCmdBindVertexBuffers(cmd, 0, 1, &g.vertices.buffer, &offset);
         vkCmdBindIndexBuffer(cmd, g.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
         uint32_t first = std::min(sec.firstIndex, g.indexCount);
-        vkCmdDrawIndexed(cmd, std::min(sec.indexCount, g.indexCount - first), 1, first, 0, 0);
+        vkCmdDrawIndexed(cmd, std::min(sec.indexCount, g.indexCount - first), b.count, first, 0, 0);
+        ++frameMeshDraws;
+        frameMeshInstances += b.count;
     }
 
     void drawMeshes(VkCommandBuffer cmd, const FrameState& s, const glm::mat4& viewProj, VkDescriptorSet aoSet, uint32_t heightPx)
@@ -2920,31 +3034,31 @@ struct Renderer::Impl
 
         struct Pending
         {
-            const MeshDraw* draw;
+            DrawBatch placement; // one instance of a batch: translucent placements sort individually
             MeshSection section;
             float distance;
         };
         std::vector<Pending> translucent;
         VkDescriptorSet boundSet = VK_NULL_HANDLE;
 
-        for (const MeshDraw& d : s.meshes)
+        for (const DrawBatch& b : frameBatches.shaded)
         {
-            if (!(d.flags & DrawShaded) || !d.mesh || d.mesh->indices.empty())
-                continue;
+            const MeshDraw& d = *b.draw;
             GpuMesh* g = gpuMesh(d.mesh);
-            std::vector<MeshSection> sections = d.mesh->sections;
-            if (sections.empty())
-                sections.push_back({0, 0, g->indexCount});
-            for (const MeshSection& sec : sections)
+            for (const MeshSection& sec : sectionsOf(d, *g))
             {
                 const Material* mat = sec.material < d.materials.size() ? &d.materials[sec.material] : nullptr;
                 if (s.xray || (mat && (mat->flags & MatTranslucent)))
                 {
-                    glm::vec3 centre(d.world * glm::vec4((d.mesh->boundsMin + d.mesh->boundsMax) * 0.5f, 1.0f));
-                    translucent.push_back({&d, sec, glm::length(centre - glm::vec3(s.eye))});
+                    const glm::vec4 centre((d.mesh->boundsMin + d.mesh->boundsMax) * 0.5f, 1.0f);
+                    for (uint32_t i = 0; i < b.count; ++i)
+                    {
+                        const glm::vec3 c(frameBatches.instances[b.first + i].world * centre);
+                        translucent.push_back({{b.draw, b.first + i, 1}, sec, glm::length(c - glm::vec3(s.eye))});
+                    }
                     continue;
                 }
-                drawSection(cmd, s, d, *g, sec, viewProj, boundSet);
+                drawSection(cmd, s, b, *g, sec, viewProj, boundSet);
             }
         }
         // Translucency after everything opaque, far to near, testing depth without writing it.
@@ -2953,28 +3067,20 @@ struct Renderer::Impl
             std::ranges::stable_sort(translucent, [](const Pending& a, const Pending& b) { return a.distance > b.distance; });
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshBlendPipeline);
             for (const Pending& t : translucent)
-                drawSection(cmd, s, *t.draw, *gpuMesh(t.draw->mesh), t.section, viewProj, boundSet);
+                drawSection(cmd, s, t.placement, *gpuMesh(t.placement.draw->mesh), t.section, viewProj, boundSet);
         }
         evictTextures();
 
-        if (!wirePipeline)
+        if (!wirePipeline || !frameInstanceAddress)
             return;
-        for (const MeshDraw& d : s.meshes)
+        for (const DrawBatch& b : frameBatches.wire)
         {
-            if (!d.mesh || d.mesh->edgePoints.empty())
-                continue;
-            bool wire = (d.flags & DrawWire) || (d.flags & (DrawSelected | DrawUnderSelected | DrawPreselect));
-            if (!wire)
-                continue;
+            const MeshDraw& d = *b.draw;
             GpuMesh* g = gpuMesh(d.mesh);
             WirePush p;
             p.viewProj = viewProj;
-            p.world = d.world;
-            p.color = (d.flags & DrawSelected)        ? s.wireSelected
-                      : (d.flags & DrawPreselect)     ? s.wirePreselect
-                      : (d.flags & DrawUnderSelected) ? s.wireUnderSelected
-                      : d.wireColor.a > 0.0f          ? d.wireColor
-                                                      : s.wireDefault;
+            p.instances = frameInstanceAddress;
+            p.firstInstance = b.first;
             bool shaded = d.flags & (DrawShaded | DrawWireDepth);
             if (shaded)
                 p.depthPull = depthPull(s.proj, heightPx, kLinePullPixels + 0.5 * lineWidth(d.wireWidth));
@@ -2983,7 +3089,7 @@ struct Renderer::Impl
             vkCmdPushConstants(cmd, wireLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
             VkDeviceSize offset = 0;
             vkCmdBindVertexBuffers(cmd, 0, 1, &g->edges.buffer, &offset);
-            vkCmdDraw(cmd, g->edgePointCount, 1, 0, 0);
+            vkCmdDraw(cmd, g->edgePointCount, b.count, 0, 0);
         }
         evictMeshes();
     }

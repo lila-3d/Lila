@@ -31,6 +31,11 @@ SpMat toEigen(const geo::PointStencil& s)
 
 void symmetrizePositions(std::span<glm::dvec3> positions, const geo::SymmetryMap& map)
 {
+    if (map.isRadial())
+    {
+        map.averageOrbits(positions, true);
+        return;
+    }
     const geo::SymmetryPlane& pl = map.plane();
     for (geo::Index p = 0; p < positions.size(); ++p)
     {

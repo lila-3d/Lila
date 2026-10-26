@@ -259,10 +259,10 @@ LILA_SCENE_API bool writeFbx(const ExportScene& scene, const fs::path& path, con
  * For the Unreal link: the evaluated meshes of `nodes` and their children, triangulated with tangents, roots at the
  * origin unless atOrigin is false (an object set's members, exported as one asset), axes per `profile` ("ue5"/"ue6").
  * `kind` is the mapping's static, skeletal or animation. Safe from any thread: the scene is read on the main thread (waiting for it when called elsewhere) and the file is written on the
- * caller's. A take name writes only that scene take, over its own range.
+ * caller's. A take name writes only that scene take, over its own range. children false writes the given nodes alone.
  */
 LILA_SCENE_API bool exportForUnreal(const std::vector<scene::NodeId>& nodes, const fs::path& path, const std::string& profile, std::string* error,
-                     const std::string& kind = "static", bool atOrigin = true, const std::string& take = {});
+                     const std::string& kind = "static", bool atOrigin = true, const std::string& take = {}, bool children = true);
 
 struct ImportOptions
 {
@@ -276,6 +276,8 @@ struct ImportOptions
     std::string take;
     /** Set the scene fps and playback range from the take. */
     bool setPlayback = true;
+    /** Nodes sharing one geometry become instances of the first; off gives each its own mesh (sharing the snapshot). */
+    bool instances = true;
 };
 
 struct ImportResult

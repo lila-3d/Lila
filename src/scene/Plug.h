@@ -72,6 +72,7 @@ enum AttrFlags : uint32_t
     AttrFile = 1 << 5, // String holding a file path: editors offer a file browser
     AttrResetOnDisconnect = 1 << 6, // only meaningful while driven: losing the connection puts the default back
     AttrColor = 1 << 7,             // Vec3 holding a linear RGB colour: editors show a swatch
+    AttrUnique = 1 << 8,            // an identity: duplicates don't inherit it
 };
 
 struct AttrDef

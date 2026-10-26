@@ -274,7 +274,8 @@ void registerOptimizeCommands()
         .name = "uvUnwrapSymmetric",
         .doc = "Symmetry-aware unwrap of the selected faces using the mesh's symmetry pairs: islands on one side are solved and mirrored onto "
                "their partners (flip lays the mirror image beside, stack shares the same uvs), islands across the plane come out exactly "
-               "mirror symmetric. Seams are mirrored first so islands pair up.",
+               "mirror symmetric. Seams are mirrored first so islands pair up. With radial symmetry, one wedge's faces are unwrapped and "
+               "every other wedge's copies stack on them.",
         .flags = {uvSetFlag(),
                   {"axis", "", T::String, "auto", "x, y, z, or auto: the mesh's symmetry axis, else x.", {"auto", "x", "y", "z"}},
                   {"mode", "", T::String, "flip", "flip or stack.", {"flip", "stack"}},
@@ -292,6 +293,27 @@ void registerOptimizeCommands()
             o.pack = a.get<bool>("pack", false);
             std::string set = uvSetOf(a);
             return editUvMeshes("UV Unwrap Symmetric", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
+                if (const std::optional<geo::SymmetrySpec> spec = scene::symmetrySpec(n); axis == "auto" && spec && spec->radial)
+                {
+                    // Radial: one wedge's faces are unwrapped and every other wedge's copies stack on them.
+                    geo::SymmetryMap map = geo::SymmetryMap::persistent(m, *spec->radial, std::max(1e-4, glm::length(m.bounds().size()) * 1e-5));
+                    std::vector<Index> faces(f.begin(), f.end());
+                    if (faces.empty())
+                        for (Index i = 0; i < m.faceCapacity(); ++i)
+                            if (m.faceValid(i))
+                                faces.push_back(i);
+                    const int drive = radialFaceWedge(m, map, faces);
+                    std::vector<Index> wedge;
+                    for (Index i : faces)
+                        if (m.faceValid(i) && radialFaceWedge(m, map, std::vector<Index>{i}) == drive)
+                            wedge.push_back(i);
+                    UnwrapFacesOptions uo;
+                    uo.unwrap = o.unwrap;
+                    uo.pack = o.pack;
+                    UnwrapFacesResult r = unwrapFaces(m, wedge, set, uo);
+                    const size_t stacked = stackRadialUvs(m, map, set, drive, wedge);
+                    return {{"islands", r.islands}, {"stacked", stacked}, {"seamsAdded", r.seamsAdded}, {"axis", "radial"}};
+                }
                 SymmetryUvOptions oo = o;
                 if (axis == "x" || axis == "y" || axis == "z")
                     oo.axis = axis[0] - 'x';
@@ -308,6 +330,27 @@ void registerOptimizeCommands()
                         {"unpaired", r.asymmetric},
                         {"seamsAdded", r.seamsAdded},
                         {"axis", std::string(1, char('x' + oo.axis))}};
+            });
+        },
+    });
+
+    ops::registerCommand({
+        .name = "uvStackRadial",
+        .doc = "Stack a radially symmetric mesh's uvs: one wedge's faces give their uvs to their copies in every other wedge, so all the "
+               "copies share one patch of texture (mirrored wedges as mirror-image islands). Needs radial symmetry on the mesh.",
+        .flags = {uvSetFlag(), {"wedge", "", T::Int, -1, "The wedge whose uvs are kept; -1: the one most of the selected faces are in, else 0."}},
+        .run = [](const Args& a) -> json {
+            std::string set = uvSetOf(a);
+            const int wedge = a.get<int>("wedge");
+            return editUvMeshes("UV Stack Radial", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
+                const std::optional<geo::SymmetrySpec> spec = scene::symmetrySpec(n);
+                if (!spec || !spec->radial)
+                    throw CommandError("uvStackRadial: " + n.path() + " has no radial symmetry");
+                geo::SymmetryMap map = geo::SymmetryMap::persistent(m, *spec->radial, std::max(1e-4, glm::length(m.bounds().size()) * 1e-5));
+                if (wedge >= map.order())
+                    throw CommandError(std::format("uvStackRadial: {} has wedges 0 to {}", n.path(), map.order() - 1));
+                const int drive = wedge >= 0 ? wedge : f.empty() ? 0 : radialFaceWedge(m, map, f);
+                return stackRadialUvs(m, map, set, drive);
             });
         },
     });

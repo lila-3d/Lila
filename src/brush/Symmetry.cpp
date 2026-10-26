@@ -82,14 +82,36 @@ void mergeHits(std::vector<std::pair<geo::Index, float>>& hits)
     hits.erase(std::unique(hits.begin(), hits.end(), [](const auto& a, const auto& b) { return a.first == b.first; }), hits.end());
 }
 
+std::vector<Dab> orbitDabs(const Dab& d, const geo::SymmetryMap& map)
+{
+    std::vector<Dab> out{d};
+    for (int g = 1; g < map.order(); ++g)
+    {
+        Dab c = d;
+        c.center = map.transform(g, d.center);
+        c.eye = map.transform(g, d.eye);
+        c.normal = map.transformVector(g, d.normal);
+        c.viewDir = map.transformVector(g, d.viewDir);
+        c.delta = map.transformVector(g, d.delta);
+        c.direction = map.transformVector(g, d.direction);
+        c.tangent = map.transformVector(g, d.tangent);
+        if (map.reflects(g))
+            c.angle = -d.angle;
+        c.copy = uint32_t(g);
+        out.push_back(c);
+    }
+    return out;
+}
+
 void mirrorHits(std::vector<std::pair<geo::Index, float>>& hits, const geo::SymmetryMap& map, std::span<const uint8_t> mask)
 {
     if (map.empty())
         return;
     const size_t n = hits.size();
-    for (size_t i = 0; i < n; ++i)
-        if (geo::Index q = map.mirrorPoint(hits[i].first); q != geo::kInvalid && q != hits[i].first && (mask.empty() || (q < mask.size() && mask[q])))
-            hits.emplace_back(q, hits[i].second);
+    for (int g = 1; g < map.order(); ++g)
+        for (size_t i = 0; i < n; ++i)
+            if (geo::Index q = map.image(g, hits[i].first); q != geo::kInvalid && q != hits[i].first && (mask.empty() || (q < mask.size() && mask[q])))
+                hits.emplace_back(q, hits[i].second);
     mergeHits(hits);
 }
 } // namespace lila::brush

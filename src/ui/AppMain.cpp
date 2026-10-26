@@ -26,6 +26,7 @@
 #include "ui/Actions.h"
 #include "ui/AdjustLastOp.h"
 #include "ui/AgentCapture.h"
+#include "ui/ArrayTool.h"
 #include "ui/DocsUi.h"
 #include "ui/MaterialThumbnails.h"
 #include "ui/AgentSetup.h"
@@ -39,6 +40,7 @@
 #include "ui/TexPipelineUi.h"
 #include "ui/Animation.h"
 #include "ui/AutoBevelUi.h"
+#include "ui/InstancingUi.h"
 #include "ui/SmartJoinUi.h"
 #include "ui/DeformUi.h"
 #include "ui/Editors.h"
@@ -125,6 +127,7 @@ void registerUi()
     registerTopologyToolkitActions();
     registerKnifeActions();
     registerTargetWeldActions();
+    registerArrayToolActions();
     registerCurveUi();
     registerConformActions();
     registerSculptUi();
@@ -220,6 +223,7 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
     registerRigViewport();
     registerDeformActions();
     registerAutoBevelUi();
+    registerInstancingUi();
     registerSmartJoinUi();
     registerMeasureUi();
     registerPlacePrimitiveUi();

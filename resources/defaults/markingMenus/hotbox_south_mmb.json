@@ -7,5 +7,5 @@
   "SW": {"label": "Rename", "action": "edit.rename"},
   "W": {"label": "Delete", "action": "edit.delete"},
   "NW": {"label": "Parent", "action": "edit.parent"},
-  "overflow": []
+  "overflow": [{"label": "Array", "action": "edit.array"}]
 }

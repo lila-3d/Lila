@@ -178,6 +178,10 @@ void startCore()
                                                          const std::string& take, std::string* err) {
             return fbx::exportForUnreal(nodes, path, "ue5", err, kind, true, take);
         });
+    // An instance source alone at the origin, without its children: the asset its placements reference.
+    link::registerExporter("fbx:instanceSource", [](const std::vector<scene::NodeId>& nodes, const fs::path& path, std::string* err) {
+        return fbx::exportForUnreal(nodes, path, "ue5", err, "static", true, {}, false);
+    });
     for (std::string kind : {"static", "skeletal", "animation"})
         link::registerExporter("fbx:set:" + kind, [kind](const std::vector<scene::NodeId>& nodes, const fs::path& path, std::string* err) {
             return fbx::exportForUnreal(nodes, path, "ue5", err, kind, false);

@@ -15,6 +15,7 @@
 #include "scene/Graph.h"
 #include "scene/ImagePlane.h"
 #include "scene/LodGroup.h"
+#include "scene/Instancing.h"
 #include "scene/Materials.h"
 #include "scene/MeshNodes.h"
 #include "scene/Rig.h"
@@ -1094,4 +1095,32 @@ TEST_CASE("maya import: lodGroup keeps its level order and screen height percent
     CHECK(tree->type().name == "lodGroup");
     CHECK(tree->as<std::string>(LodGroup::kScreenSizes).empty());
     CHECK(std::ranges::any_of(r.warnings, [](const std::string& w) { return w.find("treeLod") != std::string::npos; }));
+}
+
+TEST_CASE("maya import: a mesh shape parented under a second transform becomes a Lila instance")
+{
+    Graph& g = fresh();
+    std::ifstream in(fixture("cube_hier.ma"), std::ios::binary);
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    text += "createNode transform -n \"box2\";\n"
+            "\tsetAttr \".t\" -type \"double3\" 10 0 0 ;\n"
+            "createNode transform -n \"marker2\";\n"
+            "parent -s -nc -r -add \"|grp|box|boxShape\" \"box2\";\n"
+            "parent -s -nc -r -add \"|marker|markerShape\" \"marker2\";\n";
+    fs::path path = fs::temp_directory_path() / "lila_maya_instances.ma";
+    std::ofstream(path, std::ios::binary) << text;
+
+    maya::ImportResult r = maya::importMaya(g, path, maya::ImportOptions{});
+    REQUIRE(r.ok);
+    scene::Node* box = node(g, "box");
+    scene::Node* box2 = node(g, "box2");
+    CHECK(box2->type().name == "mesh");
+    CHECK(instancing::kind(g, box2->id()) == instancing::Kind::Instance);
+    CHECK(instancing::source(g, box2->id()) == box->id());
+    CHECK(outMesh(g, "box2") == outMesh(g, "box"));
+    checkVec(vec(g, "box2", Transform::kTranslate), {10, 0, 0});
+    // Only mesh shapes convert; a shared locator shape is reported.
+    CHECK(contains(r.skipped, "markerShape"));
+    CHECK_FALSE(contains(r.skipped, "boxShape"));
+    fs::remove(path);
 }

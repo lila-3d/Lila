@@ -1,10 +1,12 @@
 #include "ops/Command.h"
 #include "ops/Undo.h"
+#include "core/Log.h"
 #include "core/Profile.h"
 #include "geo/Mesh.h"
 #include "scene/Components.h"
 #include "scene/DisplayLayers.h"
 #include "scene/Graph.h"
+#include "scene/Instancing.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "scene/NodeBounds.h"
@@ -29,74 +31,6 @@ Node& nodeNamed(const std::string& name, const char* cmd)
     return *n;
 }
 
-/** Copies every storable input value that isn't driven by a connection. */
-void copyValues(Graph& g, const Node& from, Node& to)
-{
-    const auto& defs = from.type().attrs;
-    for (int i = 0; i < int(defs.size()); ++i)
-        if ((defs[i].flags & AttrInput) && !g.source({from.id(), i, -1}))
-            g.setValue({to.id(), i, -1}, from.value(i));
-    // Locks copy over last, as Maya's duplicate keeps them.
-    for (int i = 0; i < int(defs.size()); ++i)
-    {
-        if (defs[i].type != PlugType::Vec3)
-        {
-            if (g.isLocked({from.id(), i, -1}))
-                g.setLocked({to.id(), i, -1}, true);
-            continue;
-        }
-        for (int c = 0; c < 3; ++c)
-            if (g.isLocked({from.id(), i, c}))
-                g.setLocked({to.id(), i, c}, true);
-    }
-}
-
-/**
- * Duplicates the non-DAG history feeding a mesh (generator, modifiers, base source) so the copy keeps a live stack of
- * its own. `copies` maps already duplicated history nodes, so shared upstream nodes are copied once.
- */
-void duplicateHistory(Graph& g, NodeId srcMesh, NodeId dstMesh, std::unordered_map<NodeId, NodeId>& copies)
-{
-    // Walk the chain from the mesh down, copying each history node and reconnecting the copies in the same shape.
-    PlugRef srcPlug{srcMesh, MeshNode::kInMesh, -1};
-    PlugRef dstPlug{dstMesh, MeshNode::kInMesh, -1};
-    while (auto src = g.source(srcPlug))
-    {
-        Node* up = g.node(src->node);
-        if (up->type().dag)
-        {
-            // Fed by another object's mesh (e.g. a deformer source): share the connection.
-            g.connect(*src, dstPlug);
-            break;
-        }
-        NodeId copyId;
-        if (auto it = copies.find(up->id()); it != copies.end())
-            copyId = it->second;
-        else
-        {
-            Node* copy = g.createNode(up->type(), {}, kNoNode, true);
-            copyValues(g, *up, *copy);
-            copyId = copy->id();
-            copies[up->id()] = copyId;
-        }
-        g.connect({copyId, src->attr, -1}, dstPlug);
-        int inAttr = up->type().attrIndex("inMesh");
-        if (inAttr < 0)
-            break;
-        srcPlug = {up->id(), inAttr, -1};
-        dstPlug = {copyId, inAttr, -1};
-    }
-}
-
-/** Driven inputs of a shape without a mesh stack (curves) take their current value, so the copy keeps its shape without the history. */
-void copyEvaluatedInputs(Graph& g, const Node& from, Node& to)
-{
-    const auto& defs = from.type().attrs;
-    for (int i = 0; i < int(defs.size()); ++i)
-        if ((defs[i].flags & AttrInput) && g.source({from.id(), i, -1}))
-            g.setValue({to.id(), i, -1}, g.value({from.id(), i, -1}));
-}
-
 std::vector<NodeId> topLevel(Graph& g, const std::vector<std::string>& names, const char* cmd)
 {
     std::vector<NodeId> ids;
@@ -109,48 +43,6 @@ std::vector<NodeId> topLevel(Graph& g, const std::vector<std::string>& names, co
 void registerObjectCommands()
 {
     using T = ArgType;
-
-    ops::registerCommand({
-        .name = "duplicate",
-        .doc = "Duplicate objects with their children, keeping each mesh's generator and modifier stack live. Returns the "
-               "new top-level names.",
-        .positionalDoc = "objects",
-        .flags = {{"name", "n", T::String, nullptr, "Name for a single duplicate."}},
-        .run = [](const Args& a) -> json {
-            LILA_ZONE();
-
-            Graph& g = graph();
-            std::vector<NodeId> roots = topLevel(g, a.objects(), "duplicate");
-            if (roots.empty())
-                throw CommandError("duplicate: nothing to duplicate");
-            std::unordered_map<NodeId, NodeId> copies;
-            json out = json::array();
-            std::vector<NodeId> made;
-            std::function<NodeId(NodeId, NodeId, bool)> copyTree = [&](NodeId src, NodeId parent, bool top) {
-                Node* n = g.node(src);
-                std::string wanted = top && a.has("name") && roots.size() == 1 ? a.get<std::string>("name") : n->name();
-                Node* c = g.createNode(n->type(), wanted, parent, top && a.has("name"));
-                copyValues(g, *n, *c);
-                if (Node* layer = displayLayers::layerOf(g, src))
-                    displayLayers::addMembers(g, layer->id(), {c->id()});
-                if (n->type().isA("mesh"))
-                    duplicateHistory(g, src, c->id(), copies);
-                else if (components::pointProvider(*n))
-                    copyEvaluatedInputs(g, *n, *c);
-                for (NodeId child : std::vector<NodeId>(g.children(src)))
-                    copyTree(child, c->id(), false);
-                return c->id();
-            };
-            for (NodeId r : roots)
-            {
-                NodeId c = copyTree(r, g.parent(r), true);
-                made.push_back(c);
-                out.push_back(g.node(c)->path());
-            }
-            g.select(made);
-            return out;
-        },
-    });
 
     ops::registerCommand({
         .name = "centerPivot",
@@ -214,6 +106,9 @@ void registerObjectCommands()
 
                 if (n->type().isA("mesh"))
                 {
+                    // The points are shared with other objects that keep their own transforms, so this one stops sharing.
+                    if (instancing::makeUnique(g, id))
+                        log::warn("freezeTransforms: {} shared its mesh; it has a copy of its own now", n->path());
                     PlugRef base = modifiers::editPlug(g, id);
                     if (MeshPtr m = std::get<MeshPtr>(g.storedValue(base)))
                     {

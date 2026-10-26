@@ -91,10 +91,12 @@ lila_module(lila_ui UI
     TopologyTool.cpp TopologyTool.h TopologyModes.cpp TopologyToolkit.cpp TopologyToolkit.h
     KnifeTool.cpp KnifeTool.h
     TargetWeldTool.cpp TargetWeldTool.h
+    ArrayTool.cpp ArrayTool.h
     ConformTool.cpp ConformTool.h
     PythonBridge.cpp PythonBridge.h
     RigViewport.cpp RigViewport.h WeightPaintTool.cpp WeightPaintTool.h
     SpacesUi.cpp SpacesUi.h
+    InstancingUi.cpp InstancingUi.h
     DeformUi.cpp DeformUi.h
     DeformHandles.cpp DeformHandles.h
     Deletion.cpp Deletion.h

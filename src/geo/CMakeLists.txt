@@ -1,6 +1,7 @@
 find_package(meshoptimizer CONFIG REQUIRED)
 
 lila_module(lila_geo Scene
+    ArrayMesh.cpp
     Attribute.cpp
     BoundingShapes.cpp
     Bvh.cpp
@@ -26,6 +27,7 @@ lila_module(lila_geo Scene
     RenderMesh.cpp
     Subdivide.cpp
     Symmetry.cpp
+    SymmetryRadial.cpp
     Topology.cpp
     Triangulate.cpp
     third_party/mikktspace/mikktspace.c)

@@ -72,6 +72,8 @@ private:
     QWidget* buildParams(scene::NodeId id, bool isModifier);
     /** A connected mesh input: the source's name and a button to set it from the selection. Null when not offered. */
     QWidget* buildMeshInputRow(const scene::PlugRef& ref, QWidget* parent);
+    /** An array modifier's centre object: its name, and buttons to use the selected object or the mesh's pivot. */
+    QWidget* buildArrayCenterRow(scene::NodeId modifier, QWidget* parent);
     void setCollapsed(scene::NodeId id, bool collapsed, bool all);
     /** Delete: removes the modifier whose card holds focus, else the one under the cursor. */
     void removeCardModifier();

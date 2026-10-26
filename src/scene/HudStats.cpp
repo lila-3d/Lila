@@ -2,6 +2,7 @@
 
 #include "core/Profile.h"
 #include "geo/Mesh.h"
+#include "scene/ArrayGroup.h"
 #include "scene/Components.h"
 #include "scene/Isolation.h"
 #include "scene/MeshNodes.h"
@@ -232,6 +233,7 @@ PolyStats polyStats(Graph& g, std::string_view uvSet, const std::function<bool(N
     }
     ComponentMode mode = components::mode();
     std::unordered_set<NodeId> seen;
+    std::unordered_set<const geo::Mesh*> counted, countedSelected;
     for (NodeId id : g.nodes())
     {
         Node* n = g.node(id);
@@ -244,9 +246,19 @@ PolyStats polyStats(Graph& g, std::string_view uvSet, const std::function<bool(N
             continue;
         const PartialEntry* part = partial && partial->isPartial(id) ? &cachedPartial(id, mesh, uvSet, *partial) : nullptr;
         const PolyCount& c = part ? part->count : cachedCount(id, mesh, uvSet, out.pending);
-        out.scene += c;
+        // Array copies count as drawn objects; they share the source's mesh, so the unique counts leave them out.
+        const size_t copies = arrays::copiesOf(g, id).size() + 1;
+        for (size_t k = 0; k < copies; ++k)
+            out.scene += c;
+        if (counted.insert(mesh.get()).second)
+            out.uniqueTris += c.tris;
         if (selected.contains(id))
-            out.objects += c;
+        {
+            for (size_t k = 0; k < copies; ++k)
+                out.objects += c;
+            if (countedSelected.insert(mesh.get()).second)
+                out.uniqueObjectTris += c.tris;
+        }
         if (mode == ComponentMode::Object)
             continue;
         if (const components::Ids& ids = components::selected(id, mode); !ids.empty())

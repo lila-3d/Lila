@@ -73,6 +73,65 @@ Index mirrorCorner(const geo::Mesh& mesh, const geo::SymmetryMap& map, Index c)
 }
 } // namespace
 
+namespace
+{
+/** The wedge a face's centre lies in, so a face across no boundary has exactly one. */
+int faceWedge(const geo::Mesh& mesh, const geo::SymmetryMap& map, Index f)
+{
+    glm::dvec3 centre(0.0);
+    Index n = 0;
+    mesh.forEachFaceCorner(f, [&](Index c) {
+        centre += mesh.position(mesh.cornerPoint(c));
+        ++n;
+    });
+    return map.radial().wedgeOf(centre / double(std::max<Index>(n, 1)));
+}
+} // namespace
+
+int radialFaceWedge(const geo::Mesh& mesh, const geo::SymmetryMap& map, std::span<const Index> faces)
+{
+    std::vector<Index> count(size_t(map.order()), 0);
+    for (Index f : faces)
+        if (mesh.faceValid(f))
+            ++count[size_t(faceWedge(mesh, map, f))];
+    return int(std::max_element(count.begin(), count.end()) - count.begin());
+}
+
+size_t stackRadialUvs(geo::Mesh& mesh, const geo::SymmetryMap& map, std::string_view uvSet, int drive, std::span<const Index> faces)
+{
+    LILA_ZONE();
+
+    std::span<glm::vec2> uv = mesh.cornerAttrs().get<glm::vec2>(uvSet);
+    if (uv.empty() || map.empty() || !map.isRadial())
+        return 0;
+    std::vector<Index> all;
+    if (faces.empty())
+        for (Index f = 0; f < mesh.faceCapacity(); ++f)
+            all.push_back(f);
+    else
+        all.assign(faces.begin(), faces.end());
+    std::vector<uint8_t> took(mesh.faceCapacity(), 0);
+    size_t count = 0;
+    for (Index d : all)
+    {
+        if (!mesh.faceValid(d) || took[d] || faceWedge(mesh, map, d) != drive)
+            continue;
+        for (int g = 1; g < map.order(); ++g)
+        {
+            const Index f = map.imageFace(mesh, g, d);
+            if (f == kInvalid || f == d || took[f])
+                continue;
+            mesh.forEachFaceCorner(d, [&](Index c) {
+                if (const Index ic = mesh.findCorner(f, map.image(g, mesh.cornerPoint(c))); ic != kInvalid)
+                    uv[ic] = uv[c];
+            });
+            took[f] = 1;
+            ++count;
+        }
+    }
+    return count;
+}
+
 Index symmetricSeams(geo::Mesh& mesh, const geo::SymmetryMap& map, std::span<const Index> faceIds)
 {
     std::vector<Index> faces = liveFaces(mesh, faceIds);

@@ -66,9 +66,11 @@ std::string symmetryLayerName(int axis)
 
 void clearSymmetryKeys(Mesh& mesh, Index firstPoint)
 {
-    for (int axis = 0; axis < 3; ++axis)
+    for (const std::string& name : mesh.pointAttrs().names())
     {
-        std::span<int32_t> keys = mesh.pointAttrs().get<int32_t>(symmetryLayerName(axis));
+        if (!isSymmetryLayer(name))
+            continue;
+        std::span<int32_t> keys = mesh.pointAttrs().get<int32_t>(name);
         for (Index p = firstPoint; p < keys.size(); ++p)
             keys[p] = 0;
     }
@@ -231,35 +233,12 @@ SymmetryMap SymmetryMap::buildTopological(const Mesh& mesh, Index seedEdge, cons
 
 Index SymmetryMap::mirrorEdge(const Mesh& mesh, Index e) const
 {
-    if (!mesh.edgeValid(e))
-        return kInvalid;
-    const Index a = mirrorPoint(mesh.edgePoint(e, 0));
-    const Index b = mirrorPoint(mesh.edgePoint(e, 1));
-    return a == kInvalid || b == kInvalid ? kInvalid : mesh.findEdge(a, b);
+    return imageEdge(mesh, 1 % order(), e);
 }
 
 Index SymmetryMap::mirrorFace(const Mesh& mesh, Index f) const
 {
-    if (!mesh.faceValid(f))
-        return kInvalid;
-    const Index c = mesh.faceCorner(f);
-    const Index e = mirrorEdge(mesh, mesh.cornerEdge(c));
-    if (e == kInvalid)
-        return kInvalid;
-    Index found = kInvalid;
-    mesh.forEachEdgeCorner(e, [&](Index r) {
-        const Index g = mesh.cornerFace(r);
-        if (found != kInvalid || mesh.faceSize(g) != mesh.faceSize(f))
-            return;
-        bool all = true;
-        mesh.forEachFaceCorner(f, [&](Index fc) {
-            const Index m = mirrorPoint(mesh.cornerPoint(fc));
-            all &= m != kInvalid && mesh.findCorner(g, m) != kInvalid;
-        });
-        if (all)
-            found = g;
-    });
-    return found;
+    return imageFace(mesh, 1 % order(), f);
 }
 
 std::vector<Index> SymmetryMap::mirrorPoints(std::span<const Index> points) const
@@ -300,21 +279,59 @@ std::vector<Index> merged(std::span<const Index> a, const std::vector<Index>& b)
 
 std::vector<Index> SymmetryMap::expandPoints(std::span<const Index> points) const
 {
-    return merged(points, mirrorPoints(points));
+    std::vector<Index> images;
+    for (int g = 1; g < order(); ++g)
+        for (Index p : points)
+            images.push_back(image(g, p));
+    return merged(points, images);
 }
 
 std::vector<Index> SymmetryMap::expandEdges(const Mesh& mesh, std::span<const Index> edges) const
 {
-    return merged(edges, mirrorEdges(mesh, edges));
+    std::vector<Index> images;
+    for (int g = 1; g < order(); ++g)
+        for (Index e : edges)
+            images.push_back(imageEdge(mesh, g, e));
+    return merged(edges, images);
 }
 
 std::vector<Index> SymmetryMap::expandFaces(const Mesh& mesh, std::span<const Index> faces) const
 {
-    return merged(faces, mirrorFaces(mesh, faces));
+    std::vector<Index> images;
+    for (int g = 1; g < order(); ++g)
+        for (Index f : faces)
+            images.push_back(imageFace(mesh, g, f));
+    return merged(faces, images);
 }
+
+namespace
+{
+/** p onto the radial axis or the mirror plane it lies within tolerance of; p itself when it lies near neither. */
+glm::dvec3 snapRadial(const RadialSymmetry& radial, const glm::dvec3& p, double tolerance)
+{
+    if (radial.axisDistance(p) <= tolerance)
+        return radial.projectToAxis(p);
+    if (radial.mirror())
+        for (int k = 0; k < radial.count(); ++k)
+        {
+            const int g = radial.count() + k;
+            if (std::abs(radial.mirrorPlane(g).distance(p)) <= tolerance)
+                return radial.projectFixed(p, std::vector<int>{g});
+        }
+    return p;
+}
+} // namespace
 
 void SymmetryMap::snapToPlane(Mesh& mesh, std::span<const Index> points) const
 {
+    if (mRadial)
+    {
+        // Fixed points stay on their axis or plane however far an op moved them.
+        for (Index p : points)
+            if (mesh.pointValid(p))
+                mesh.setPosition(p, fixed(p) ? constrain(p, mesh.position(p)) : snapRadial(*mRadial, mesh.position(p), mTolerance));
+        return;
+    }
     for (Index p : points)
         if (mesh.pointValid(p) && std::abs(mPlane.distance(mesh.position(p))) <= mTolerance)
             mesh.setPosition(p, mPlane.project(mesh.position(p)));
@@ -322,6 +339,13 @@ void SymmetryMap::snapToPlane(Mesh& mesh, std::span<const Index> points) const
 
 void SymmetryMap::snapNewPoints(Mesh& mesh, Index firstPoint) const
 {
+    if (mRadial)
+    {
+        for (Index p = firstPoint; p < mesh.pointCapacity(); ++p)
+            if (mesh.pointValid(p))
+                mesh.setPosition(p, snapRadial(*mRadial, mesh.position(p), mTolerance));
+        return;
+    }
     for (Index p = firstPoint; p < mesh.pointCapacity(); ++p)
         if (mesh.pointValid(p) && std::abs(mPlane.distance(mesh.position(p))) <= mTolerance)
             mesh.setPosition(p, mPlane.project(mesh.position(p)));
@@ -351,11 +375,15 @@ glm::dvec3 SymmetryMap::reflected(const glm::dvec3& p) const
 
 int SymmetryMap::side(Index p) const
 {
+    if (mRadial)
+        return wedge(p) == 0 ? 1 : wedge(p) > 0 ? -1 : 0;
     return p < mSide.size() ? mSide[p] : 0;
 }
 
 int SymmetryMap::majoritySide(std::span<const Index> points) const
 {
+    if (mRadial)
+        return majorityWedge(points) == 0 ? 1 : -1;
     int64_t sum = 0;
     for (Index p : points)
         sum += side(p);
@@ -604,6 +632,11 @@ SymmetryMap SymmetryMap::persistent(Mesh& mesh, int axis, double tolerance, Symm
 
 void SymmetryMap::store(Mesh& mesh, int axis) const
 {
+    if (mRadial)
+    {
+        store(mesh);
+        return;
+    }
     std::span<int32_t> keys = mesh.pointAttrs().getOrAdd<int32_t>(symmetryLayerName(axis));
     const std::vector<int8_t> sides = mSide.empty() ? sidesFromPositions(mesh, mPlane, mMirror) : mSide;
     int32_t next = 1;
@@ -628,6 +661,11 @@ void SymmetryMap::store(Mesh& mesh, int axis) const
 
 void SymmetryMap::enforce(Mesh& mesh, std::span<const Index> points, int drive) const
 {
+    if (mRadial)
+    {
+        enforceWedge(mesh, points, drive < 0 && order() > 1 ? 1 : 0);
+        return;
+    }
     LILA_ZONE();
 
     drive = drive < 0 ? -1 : 1;
@@ -680,7 +718,20 @@ SymmetryCheck SymmetryMap::check(const Mesh& mesh) const
             continue;
         }
         double err = 0.0;
-        if (q == p)
+        if (mRadial)
+        {
+            // Off by how far the orbit's wedge 0 point, carried to p's slot, lands from p; fixed points also by how far off their axis or plane.
+            const Index rep = orbitPoint(p, 0);
+            err = glm::length(transform(mSlot[p], mesh.position(rep)) - mesh.position(p));
+            if (fixed(p))
+            {
+                ++out.onPlane;
+                err = std::max(err, glm::length(constrain(p, mesh.position(p)) - mesh.position(p)));
+            }
+            else
+                out.pairs += mSlot[p] == 0;
+        }
+        else if (q == p)
         {
             ++out.onPlane;
             err = std::abs(mPlane.distance(mesh.position(p)));
@@ -703,7 +754,7 @@ SymmetryCheck SymmetryMap::check(const Mesh& mesh) const
         for (Index p : unmatched)
         {
             BvhClosest hit;
-            if (bvh.closestPoint(reflected(mesh.position(p)), hit) && hit.distance > out.maxAsymmetry)
+            if (bvh.closestPoint(transform(1 % order(), mesh.position(p)), hit) && hit.distance > out.maxAsymmetry)
             {
                 out.maxAsymmetry = hit.distance;
                 out.worstPoint = p;

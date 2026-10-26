@@ -66,13 +66,6 @@ geo::Mesh meshInSpaceOf(const Node& src, const Node& space)
     return out;
 }
 
-std::optional<geo::SymmetryPlane> symmetryPlane(const Node& n)
-{
-    int64_t axis = n.as<int64_t>(MeshNode::kSymmetry);
-    if (axis <= 0 || axis > 3)
-        return std::nullopt;
-    return geo::axisPlane(int(axis - 1), symmetryOffset(n, int(axis - 1)));
-}
 
 double symmetryTolerance(const geo::Mesh& m) { return std::max(1e-4, glm::length(m.bounds().size()) * 1e-5); }
 
@@ -373,7 +366,9 @@ Node& retopoDrawTarget(const Args& a, const char* cmd, bool create)
         if (auto src = g.source(dst); !src || src->node != ref->id())
             g.connect({ref->id(), MeshNode::kOutMesh, -1}, dst, true);
         if (created)
-            g.setValue({n->id(), MeshNode::kSymmetry, -1}, ref->as<int64_t>(MeshNode::kSymmetry));
+            for (int attr : {int(MeshNode::kSymmetry), int(MeshNode::kRadialCount), int(MeshNode::kRadialAxis), int(MeshNode::kRadialDirection),
+                             int(MeshNode::kRadialMirror), int(MeshNode::kRadialPhase)})
+                g.setValue({n->id(), attr, -1}, ref->value(attr));
     }
     return *n;
 }
@@ -620,9 +615,8 @@ void registerCommands()
                     ro.pinned = featurePoints(m, fo);
                 std::optional<geo::SymmetryMap> map;
                 std::vector<Index> activeIds;
-                if (int64_t axis = n.as<int64_t>(MeshNode::kSymmetry); axis >= 1 && axis <= 3)
+                if (map = scene::symmetryMapFor(n, m); map)
                 {
-                    map = geo::SymmetryMap::persistent(m, int(axis - 1), symmetryTolerance(m), nullptr, symmetryOffset(n, int(axis - 1)));
                     for (Index p = 0; p < ro.active.size(); ++p)
                         if (ro.active[p])
                             activeIds.push_back(p);
@@ -634,7 +628,7 @@ void registerCommands()
                     target.emplace(meshInSpaceOf(meshArg(a.get<std::string>("target"), "relaxMesh"), n));
                 relaxMesh(m, target ? &*target : nullptr, ro);
                 if (map)
-                    map->symmetrize(m, activeIds.empty() ? 1 : map->majoritySide(activeIds));
+                    map->symmetrizeWedge(m, activeIds.empty() ? 0 : map->majorityWedge(activeIds));
                 g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
             }
             return nullptr;
@@ -735,7 +729,7 @@ void registerCommands()
             geo::Mesh m = baseMesh(base);
             glm::dmat4 toLocal = glm::inverse(worldOf(n));
             double weld = std::max(0.0, a.get<double>("weld"));
-            auto sym = symmetryPlane(n);
+            const std::optional<geo::SymmetrySpec> sym = scene::symmetrySpec(n);
             double planeTol = std::max(weld, symmetryTolerance(m));
             auto build = [&](const std::vector<glm::dvec3>& ps) {
                 std::vector<Index> ids;
@@ -751,15 +745,17 @@ void registerCommands()
                     local.push_back(glm::dvec3(toLocal * glm::dvec4(p, 1.0)));
                 if (sym)
                     for (glm::dvec3& p : local)
-                        if (std::abs(sym->distance(p)) < planeTol)
-                            p = sym->project(p);
+                        p = sym->snap(p, planeTol);
                 Index f = build(local);
-                if (sym)
+                // Every image of the face; a reflected one runs the other way round to keep facing out.
+                for (int k = 1; sym && k < sym->order(); ++k)
                 {
-                    std::vector<glm::dvec3> mirrored;
-                    for (auto it = local.rbegin(); it != local.rend(); ++it)
-                        mirrored.push_back(sym->reflect(*it));
-                    build(mirrored);
+                    std::vector<glm::dvec3> image;
+                    for (const glm::dvec3& p : local)
+                        image.push_back(sym->apply(k, p));
+                    if (sym->reflects(k))
+                        std::reverse(image.begin(), image.end());
+                    build(image);
                 }
                 added += f != geo::kInvalid;
             }
@@ -825,8 +821,8 @@ void registerCommands()
             PlugRef base = scene::modifiers::editPlug(g, n.id());
             geo::Mesh m = baseMesh(base);
             std::optional<geo::SymmetryMap> map;
-            if (auto plane = symmetryPlane(n))
-                map = geo::SymmetryMap::build(m, *plane, symmetryTolerance(m));
+            if (auto spec = scene::symmetrySpec(n))
+                map = geo::SymmetryMap::buildFor(m, *spec, symmetryTolerance(m));
             std::vector<Index> faces = a.flags["faces"].get<std::vector<Index>>();
             std::vector<Index> points = a.flags["points"].get<std::vector<Index>>();
             geo::deleteFaces(m, faces, map ? &*map : nullptr);
@@ -855,8 +851,8 @@ void registerCommands()
             PlugRef base = scene::modifiers::editPlug(g, n.id());
             geo::Mesh m = baseMesh(base);
             std::optional<geo::SymmetryMap> map;
-            if (auto plane = symmetryPlane(n))
-                map = geo::SymmetryMap::build(m, *plane, symmetryTolerance(m));
+            if (auto spec = scene::symmetrySpec(n))
+                map = geo::SymmetryMap::buildFor(m, *spec, symmetryTolerance(m));
             glm::dmat4 toLocal = glm::inverse(worldOf(n));
             for (size_t i = 0; i < points.size(); ++i)
             {
@@ -864,12 +860,12 @@ void registerCommands()
                 if (!m.pointValid(p))
                     continue;
                 glm::dvec3 at(toLocal * glm::dvec4(world[i], 1.0));
-                if (map && map->onPlane(p))
-                    at = map->plane().project(at);
-                m.setPosition(p, at);
                 if (map)
-                    if (Index q = map->mirrorPoint(p); q != geo::kInvalid && q != p)
-                        m.setPosition(q, map->plane().reflect(at));
+                    at = map->constrain(p, at);
+                m.setPosition(p, at);
+                for (int k = 1; map && k < map->order(); ++k)
+                    if (Index q = map->image(k, p); q != geo::kInvalid && q != p)
+                        m.setPosition(q, map->transform(k, at));
             }
             if (double weld = a.get<double>("weld"); weld > 0.0)
             {
@@ -915,29 +911,30 @@ void registerCommands()
             Index e = Index(a.get<int>("edge"));
             if (!m.edgeValid(e))
                 throw CommandError("retopoDrawInsertLoop: no such edge");
-            Index mirrorEdge = geo::kInvalid;
-            std::vector<Index> ring = geo::edgeRing(m, e);
-            if (auto plane = symmetryPlane(n))
+            // Each image ring not already crossed, and where its fraction runs from: the image of the start point.
+            std::vector<std::pair<Index, glm::dvec3>> images;
+            std::vector<Index> covered = geo::edgeRing(m, e);
+            if (auto spec = scene::symmetrySpec(n))
             {
-                geo::SymmetryMap map = geo::SymmetryMap::build(m, *plane, symmetryTolerance(m));
-                Index me = map.mirrorEdge(m, e);
-                if (me != geo::kInvalid && std::find(ring.begin(), ring.end(), me) == ring.end())
-                    mirrorEdge = me;
+                geo::SymmetryMap map = geo::SymmetryMap::buildFor(m, *spec, symmetryTolerance(m));
+                for (int k = 1; k < map.order(); ++k)
+                    if (Index me = map.imageEdge(m, k, e); me != geo::kInvalid && std::find(covered.begin(), covered.end(), me) == covered.end())
+                    {
+                        images.push_back({me, map.transform(k, m.position(m.edgePoint(e, 0)))});
+                        std::ranges::copy(geo::edgeRing(m, me), std::back_inserter(covered));
+                    }
             }
             double fraction = std::clamp(a.get<double>("fraction"), 0.01, 0.99);
-            // The mirror ring's fraction runs from the mirrored start point.
-            glm::dvec3 mirrorStart{0.0};
-            if (mirrorEdge != geo::kInvalid)
-                mirrorStart = symmetryPlane(n)->reflect(m.position(m.edgePoint(e, 0)));
             geo::EdgeLoopOptions lo;
             lo.fraction = fraction;
             geo::insertEdgeLoop(m, e, lo);
-            if (mirrorEdge != geo::kInvalid && m.edgeValid(mirrorEdge))
-            {
-                bool same = glm::length(m.position(m.edgePoint(mirrorEdge, 0)) - mirrorStart) < 1e-6 * (1.0 + glm::length(mirrorStart));
-                lo.fraction = same ? fraction : 1.0 - fraction;
-                geo::insertEdgeLoop(m, mirrorEdge, lo);
-            }
+            for (auto& [me, start] : images)
+                if (m.edgeValid(me))
+                {
+                    bool same = glm::length(m.position(m.edgePoint(me, 0)) - start) < 1e-6 * (1.0 + glm::length(start));
+                    lo.fraction = same ? fraction : 1.0 - fraction;
+                    geo::insertEdgeLoop(m, me, lo);
+                }
             m.compact();
             g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
             return nullptr;

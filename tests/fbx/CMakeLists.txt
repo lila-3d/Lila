@@ -1,6 +1,7 @@
 add_executable(lila_fbx_tests
     main.cpp
     test_fbx.cpp
+    test_fbx_instances.cpp
     test_fbx_rotation.cpp
     test_fbx_camera.cpp
     test_fbx_spaces.cpp

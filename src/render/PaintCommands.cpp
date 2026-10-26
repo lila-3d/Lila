@@ -472,11 +472,13 @@ tex::paint::PaintSymmetry symmetryOf(const json& j, const brush::BrushSettings& 
     int axis = attr >= 1 && attr <= 3 ? int(attr - 1) : 0;
     scene::MeshPtr mesh = meshNode.as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
     brush::BrushSettings b = bs;
+    if (!j.contains("symmetry") || !j["symmetry"].is_object())
+        return tex::paint::brushSymmetry(b, mesh.get(), scene::paintSymmetrySpec(meshNode));
     if (j.contains("symmetry") && j["symmetry"].is_object())
     {
         const json& sj = j["symmetry"];
         const json mirror = sj.value("mirror", json());
-        if (mirror.is_array())
+        if (mirror.is_array() || sj.contains("group"))
             return tex::paint::PaintSymmetry::fromJson(sj);
         b.mirror = mirror.is_boolean() ? mirror.get<bool>() : mirror.is_string();
         if (mirror.is_string() && !mirror.get<std::string>().empty())

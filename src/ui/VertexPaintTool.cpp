@@ -1138,7 +1138,7 @@ private:
         }
         QApplication::setOverrideCursor(Qt::WaitCursor);
         mPaint = std::make_unique<vcolor::PaintMesh>(cage, set);
-        mSymmetryFor = -2;
+        mSymmetryFor = "-";
         mLive.reset();
         QApplication::restoreOverrideCursor();
     }
@@ -1259,13 +1259,17 @@ private:
         b.frontFacesOnly = st.frontFacesOnly;
         b.paintThrough = st.paintThrough;
         b.radial = st.stroke.radial;
-        int axis = n ? int(n->as<int64_t>(scene::MeshNode::kSymmetry)) : 0;
-        if (st.stroke.mirror && axis != mSymmetryFor)
+        const std::optional<geo::SymmetrySpec> spec = n ? scene::symmetrySpec(*n) : std::nullopt;
+        const std::string key = !spec ? std::string() : spec->radial ? geo::radialLayerName(*spec->radial) : geo::symmetryLayerName(spec->axis);
+        if (st.stroke.mirror && key != mSymmetryFor)
         {
             mPaint->setSymmetry(n ? vcolor::symmetryOf(*n, mPaint->mesh()) : geo::SymmetryMap());
-            mSymmetryFor = axis;
+            mSymmetryFor = key;
         }
         b.mirror = st.stroke.mirror && !mPaint->symmetry().empty();
+        // A mesh with radial symmetry repeats the stroke through its orbits, so the brush's own radial copies would double it.
+        if (b.mirror && mPaint->symmetry().isRadial())
+            b.radial = {};
         mSymmetryOn = b.mirror;
         std::vector<uint8_t> mask;
         if (st.selectionOnly && scene::components::mode() != scene::ComponentMode::Object)
@@ -1383,7 +1387,7 @@ private:
     NodeId mMesh = kNoNode;
     std::string mSet;
     std::unique_ptr<vcolor::PaintMesh> mPaint;
-    int mSymmetryFor = -2;
+    std::string mSymmetryFor = "-";
     bool mSymmetryOn = false;
     MeshPtr mKnown;
 

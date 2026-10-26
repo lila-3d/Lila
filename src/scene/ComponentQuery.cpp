@@ -491,8 +491,8 @@ json meshStats(Node& n)
     for (NodeId id : modifiers::stack(g, n.id()))
         if (Node* mod = g.node(id))
             mods.push_back(mod->name() + " (" + mod->type().name + ")");
-    static const char* axes[] = {"off", "x", "y", "z"};
-    int64_t sym = std::clamp<int64_t>(n.as<int64_t>(MeshNode::kSymmetry), 0, 3);
+    static const char* axes[] = {"off", "x", "y", "z", "radial"};
+    int64_t sym = std::clamp<int64_t>(n.as<int64_t>(MeshNode::kSymmetry), 0, kSymmetryRadial);
     json out = {{"points", m->numPoints()},
                 {"edges", m->numEdges()},
                 {"faces", m->numFaces()},

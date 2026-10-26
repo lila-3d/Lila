@@ -1,6 +1,7 @@
 #include "ui/Manipulator.h"
 
 #include "ops/Command.h"
+#include "ops/CommandOptions.h"
 #include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
@@ -531,8 +532,28 @@ bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifier
         return true;
     }
 
+    // Clone drag: the copies are made now and dragged; the originals stay put.
+    json cloneCall;
+    const bool clone = tools::cloneDrag() && !mComponents && !tools::pivotEdit() && !surfaceSlide;
+    if (clone)
+    {
+        cloneCall = ops::options::callWith("duplicate", json::object());
+        try
+        {
+            ops::execute("duplicate", cloneCall, CallSource::Script);
+        }
+        catch (const CommandError& e)
+        {
+            log::error("{}", e.what());
+            return true;
+        }
+        refresh();
+    }
+
     Graph& g = Graph::current();
     Drag d;
+    d.clone = clone;
+    d.cloneCall = cloneCall;
     d.handle = h;
     d.pressPx = d.virtualPx = d.lastPx = px;
     d.startPivot = mPivot;
@@ -1096,6 +1117,27 @@ void Manipulator::commit()
     Tool t = pivotTool(d.pivotEdit, d.tool);
     if (d.componentPivot)
         return;
+    std::optional<UndoChunk> cloneChunk;
+    if (d.clone)
+    {
+        // The copies made on press go again, and one undo step makes them already placed.
+        dropCloneCopies();
+        const bool changed = t == Tool::Move     ? glm::length(d.moveDelta) > 1e-9
+                             : t == Tool::Rotate ? std::abs(d.angle) > 1e-9
+                                                 : glm::length(d.scale - glm::dvec3(1.0)) > 1e-9;
+        if (!changed)
+            return;
+        cloneChunk.emplace("Clone");
+        try
+        {
+            names = ops::execute("duplicate", d.cloneCall, CallSource::UI);
+        }
+        catch (const CommandError& e)
+        {
+            log::error("{}", e.what());
+            return;
+        }
+    }
     try
     {
         if (d.components)
@@ -1218,7 +1260,19 @@ void Manipulator::cancel()
     if (!mDrag)
         return;
     restore();
+    const bool clone = mDrag->clone;
     mDrag.reset();
+    if (clone)
+        dropCloneCopies();
+}
+
+void Manipulator::dropCloneCopies()
+{
+    UndoStack& undo = UndoStack::get();
+    if (undo.undoLabel() != "duplicate")
+        return;
+    undo.undo();
+    undo.flushFuture();
 }
 
 bool Manipulator::keyPress(QKeyEvent* e)

@@ -3,10 +3,12 @@
 #include "ops/Command.h"
 #include "gn/Exec.h"
 #include "gn/Gn.h"
+#include "gn/InstanceView.h"
 #include "geo/Mesh.h"
 #include "geo/ObjIO.h"
 #include "scene/Graph.h"
 
+#include <algorithm>
 #include <filesystem>
 
 using namespace lila;
@@ -94,6 +96,73 @@ TEST_CASE("distribute points on a grid and instance cubes")
 
     run("undo");
     CHECK(positions(mesh) == b);
+}
+
+TEST_CASE("instances reach the viewport unrealized while outMesh stays flat")
+{
+    run("newScene");
+    std::string mesh = run("polyPlane", {{"name", "Field"}})[0];
+    run("gnCreateGroup", args({"Rocks"}));
+    std::string grid = add("Rocks", "MeshGrid"), dist = add("Rocks", "DistributePointsOnFaces"), cube = add("Rocks", "MeshCube"),
+                iop = add("Rocks", "InstanceOnPoints");
+    set("Rocks", grid + ".sizeX", 400);
+    set("Rocks", grid + ".sizeY", 400);
+    set("Rocks", dist + ".density", 10);
+    link("Rocks", grid + ".mesh", dist + ".mesh");
+    link("Rocks", dist + ".points", iop + ".points");
+    link("Rocks", cube + ".mesh", iop + ".instance");
+    link("Rocks", iop + ".instances", "GroupOutput.geometry");
+    std::string mod = run("gnApply", args({mesh, "Rocks"}));
+
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    const scene::NodeId id = g.find(mesh)->id();
+    gn::InstanceViewPtr view = gn::instanceViewFor(g, id);
+    REQUIRE(view);
+    REQUIRE(view->parts.size() == 1);
+    const size_t n = view->instanceCount;
+    CHECK(n > 120);
+    CHECK(view->parts[0].transforms->size() == n);
+    CHECK(view->parts[0].mesh->numFaces() == 6);
+    CHECK_FALSE(view->base);
+    // Everything else (picking, export, downstream) still sees the realized mesh.
+    CHECK(faces(mesh) == int(6 * n));
+
+    // Placements match the realized copies: the first instance's corner sits on a realized point.
+    const glm::mat4& first = view->parts[0].transforms->front();
+    const glm::dvec3 corner = view->parts[0].mesh->position(0);
+    const glm::dvec3 placed = glm::dvec3(glm::dmat4(first) * glm::dvec4(corner, 1.0));
+    std::vector<glm::dvec3> flat = positions(mesh);
+    CHECK(std::ranges::any_of(flat, [&](const glm::dvec3& p) { return glm::distance(p, placed) < 1e-3; }));
+
+    // Joining the input in adds geometry beside the instances; realizing drops the view.
+    std::string join = add("Rocks", "JoinGeometry");
+    run("gnDisconnect", args({"Rocks", "GroupOutput.geometry"}));
+    link("Rocks", iop + ".instances", join + ".geometry");
+    link("Rocks", "GroupInput.geometry", join + ".geometry");
+    link("Rocks", join + ".geometry", "GroupOutput.geometry");
+    g.evaluate();
+    view = gn::instanceViewFor(g, id);
+    REQUIRE(view);
+    REQUIRE(view->base);
+    CHECK(view->base->numFaces() > 0);
+
+    std::string real = add("Rocks", "RealizeInstances");
+    run("gnDisconnect", args({"Rocks", "GroupOutput.geometry"}));
+    link("Rocks", join + ".geometry", real + ".geometry");
+    link("Rocks", real + ".geometry", "GroupOutput.geometry");
+    g.evaluate();
+    CHECK_FALSE(gn::instanceViewFor(g, id));
+
+    // A modifier on top changes the mesh, so the view no longer stands for what the node shows.
+    run("gnDisconnect", args({"Rocks", "GroupOutput.geometry"}));
+    link("Rocks", join + ".geometry", "GroupOutput.geometry");
+    g.evaluate();
+    REQUIRE(gn::instanceViewFor(g, id));
+    run("addModifier", {{"args", {mesh}}, {"kind", "triangulate"}});
+    g.evaluate();
+    CHECK_FALSE(gn::instanceViewFor(g, id));
+    CHECK(gn::instanceView(g.find(mod)->id()));
 }
 
 TEST_CASE("set position with a noise field is deterministic")

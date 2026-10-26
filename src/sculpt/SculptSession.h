@@ -49,7 +49,8 @@ struct Session
     SculptMesh sculpt;
     /** The kept proxy node this session resumed from. */
     scene::NodeId proxyNode = scene::kNoNode;
-    int symmetryAxis = -1;
+    /** The symmetry the sculpt mesh was last set up with: its layer name, empty when off. */
+    std::string symmetryKey;
 
     /** A stroke the viewport tool already applied live, adopted by the sculptStroke call carrying this token. */
     uint64_t liveToken = 0;

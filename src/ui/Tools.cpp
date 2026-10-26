@@ -16,6 +16,7 @@ namespace
 {
 Tool gTool = Tool::Move;
 bool gPivotEdit = false;
+bool gCloneDrag = false;
 unsigned gHandleResets = 0;
 unsigned gSnaps = SnapNone;
 std::map<int, std::function<void()>> gListeners;
@@ -60,6 +61,16 @@ void setPivotEdit(bool on)
     if (on == gPivotEdit)
         return;
     gPivotEdit = on;
+    notify();
+}
+
+bool cloneDrag() { return gCloneDrag; }
+
+void setCloneDrag(bool on)
+{
+    if (on == gCloneDrag)
+        return;
+    gCloneDrag = on;
     notify();
 }
 
@@ -140,6 +151,10 @@ void registerActions()
                   .doc = "While held, the manipulator moves the pivot instead of the object."});
     actions::add({.id = "tool.pivotEditOff", .label = "End Pivot Edit", .category = "Tools", .run = [] { setPivotEdit(false); },
                   .doc = "Returns the manipulator to moving the object."});
+    actions::add({.id = "tool.cloneDragOn", .label = "Clone Drag (hold)", .category = "Tools", .run = [] { setCloneDrag(true); },
+                  .doc = "While held, dragging a manipulator handle duplicates the selected objects and moves the copies."});
+    actions::add({.id = "tool.cloneDragOff", .label = "End Clone Drag", .category = "Tools", .run = [] { setCloneDrag(false); },
+                  .doc = "Returns manipulator drags to moving the selected objects themselves."});
     actions::add({.id = "tool.pivotEditToggle", .label = "Toggle Pivot Edit", .category = "Tools", .run = [] { setPivotEdit(!pivotEdit()); },
                   .doc = "Switches the manipulator between moving the object and moving its pivot."});
 

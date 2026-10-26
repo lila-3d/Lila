@@ -189,6 +189,34 @@ void SculptMesh::setSymmetry(const std::optional<geo::SymmetryPlane>& plane, dou
     }
 }
 
+void SculptMesh::setSymmetry(const std::optional<geo::SymmetrySpec>& spec, double tolerance)
+{
+    LILA_ZONE();
+
+    if (!spec || !spec->radial)
+    {
+        setSymmetry(spec ? std::optional<geo::SymmetryPlane>(spec->plane()) : std::nullopt, tolerance);
+        return;
+    }
+    mSymmetry = geo::SymmetryMap::buildRadial(mMesh, *spec->radial, tolerance);
+    // Exact orbits keep repeated strokes exact.
+    std::vector<glm::dvec3> before(mMesh.positions().begin(), mMesh.positions().end());
+    std::vector<glm::dvec3> positions = before;
+    mSymmetry.averageOrbits(positions, true);
+    std::vector<Index> moved;
+    for (Index p = 0; p < mMesh.pointCapacity(); ++p)
+        if (mMesh.pointValid(p) && positions[p] != before[p])
+        {
+            mMesh.setPosition(p, positions[p]);
+            moved.push_back(p);
+        }
+    if (!moved.empty())
+    {
+        refresh(moved);
+        ++mVersion;
+    }
+}
+
 bool SculptMesh::raycast(const glm::dvec3& origin, const glm::dvec3& dir, geo::BvhHit& hit) const
 {
     return !mBvh.empty() && mBvh.raycast(origin, dir, hit);
@@ -423,6 +451,38 @@ void SculptMesh::symmetrizeChanges()
 {
     if (mSymmetry.empty())
         return;
+    if (mSymmetry.isRadial())
+    {
+        const size_t count = mChanged.size();
+        for (int g = 1; g < mSymmetry.order(); ++g)
+            for (size_t i = 0; i < count; ++i)
+                if (Index q = mSymmetry.image(g, mChanged[i]); q != geo::kInvalid)
+                    touch(q);
+        // Every orbit's displacement and mask change become the symmetric average of its members'.
+        const int n = mSymmetry.order();
+        for (Index p : mChanged)
+        {
+            if (mSymmetry.orbitPoint(p, 0) != p)
+                continue;
+            glm::dvec3 disp(0.0);
+            float mask = 0.0f;
+            for (int g = 0; g < n; ++g)
+            {
+                const Index q = mSymmetry.orbitPoint(p, g);
+                disp += mSymmetry.transformVector(mSymmetry.inverse(g), mDisp[q]);
+                mask += mMaskDelta[q];
+            }
+            disp /= double(n);
+            mask /= float(n);
+            for (int g = 0; g < n; ++g)
+            {
+                const Index q = mSymmetry.orbitPoint(p, g);
+                mDisp[q] = mSymmetry.transformVector(g, disp);
+                mMaskDelta[q] = mask;
+            }
+        }
+        return;
+    }
     const size_t count = mChanged.size();
     for (size_t i = 0; i < count; ++i)
         if (Index q = mSymmetry.mirrorPoint(mChanged[i]); q != geo::kInvalid)
@@ -506,8 +566,12 @@ void SculptMesh::dab(const Dab& d)
     first.normal = glm::length(d.normal) > 0.0 ? glm::normalize(d.normal) : glm::dvec3(0.0, 1.0, 0.0);
     // The mirror plane's copies come after the radial ones, so grab keeps each side's gathered points by position in the list.
     std::vector<Side> sides;
-    for (Dab& copy : brush::symmetricDabs(first, mSymmetry.empty() ? nullptr : &mSymmetry.plane(), mSettings.radial))
-        sides.push_back(Side{.dab = std::move(copy)});
+    if (mSymmetry.isRadial())
+        for (Dab& copy : brush::orbitDabs(first, mSymmetry))
+            sides.push_back(Side{.dab = std::move(copy)});
+    else
+        for (Dab& copy : brush::symmetricDabs(first, mSymmetry.empty() ? nullptr : &mSymmetry.plane(), mSettings.radial))
+            sides.push_back(Side{.dab = std::move(copy)});
 
     if (mSettings.brush == Brush::Grab)
     {

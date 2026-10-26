@@ -16,7 +16,8 @@
  * when convenient. Attributes are carried along: corner uvs and colours are copied or interpolated,
  * edge "hard"/"seam"/"crease" follow the edges they came from, face attributes follow the face.
  *
- * Ops taking a SymmetryMap run on the selection plus its mirror and keep on-plane points on the plane.
+ * Ops taking a SymmetryMap run on the selection plus its mirror (every radial image) and keep on-plane points on the
+ * plane (on the radial axis or a mirror plane).
  */
 namespace lila::geo
 {
@@ -273,6 +274,17 @@ LILA_SCENE_API std::vector<Index> mirrorMesh(Mesh& mesh, const MirrorOptions& op
  * in the axis's symmetry layer (other axes' layers are dropped). Returns the map.
  */
 LILA_SCENE_API SymmetryMap symmetrizeTopology(Mesh& mesh, int axis, int keepSign, double tolerance = 1e-3, double offset = 0.0);
+
+/**
+ * Rebuilds the mesh exactly radially symmetric: everything outside the wedge of element keep (the wedge it carries
+ * the fundamental one onto) is cut away, and the kept wedge is copied into every other slot (reflected ones flipped
+ * for dihedral symmetry) and welded along the seams and the axis. Compacts the mesh, drops every other symmetry layer
+ * and stores the orbits. Returns the map.
+ */
+/** Cuts away everything outside the wedge of element keep: the fundamental wedge carried by keep. */
+LILA_SCENE_API void cutToWedge(Mesh& mesh, const RadialSymmetry& radial, int keep, double tolerance = 1e-3);
+
+LILA_SCENE_API SymmetryMap symmetrizeRadialTopology(Mesh& mesh, const RadialSymmetry& radial, int keep, double tolerance = 1e-3);
 
 /** A new mesh holding copies of the given faces with all attributes. */
 LILA_SCENE_API Mesh extractFaces(const Mesh& mesh, std::span<const Index> faces);

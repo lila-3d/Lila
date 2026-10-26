@@ -12,6 +12,7 @@
 #include "scene/ObjectSets.h"
 #include "scene/Graph.h"
 #include "scene/ImagePlane.h"
+#include "scene/ArrayGroup.h"
 #include "scene/LodGroup.h"
 #include "scene/Materials.h"
 #include "scene/Measure.h"
@@ -180,6 +181,7 @@ void registerBuiltins()
     registerMeasureTypes();
     registerImagePlaneTypes();
     lod::registerTypes();
+    arrays::registerTypes();
     registerCameraTypes();
     anim::registerTypes();
     drivers::registerTypes();

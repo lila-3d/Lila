@@ -216,6 +216,9 @@ NodeType Transform::makeType()
                 "stepped; shown in the channel box only on nodes with spaces."},
         {.name = "spaceFrames", .shortName = "spf", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrHidden,
          .doc = "Every space's world frame, from the node's spaceSwitch."},
+        {.name = "linkId", .shortName = "lid", .type = PlugType::String, .defaultValue = std::string(),
+         .flags = AttrInput | AttrStorable | AttrHidden | AttrUnique,
+         .doc = "Identity Unreal placements are matched by, given on the first send. Saved with the scene; duplicates don't inherit it."},
     };
     t.create = [] { return std::make_unique<Transform>(); };
     return t;

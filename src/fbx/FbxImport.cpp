@@ -11,6 +11,7 @@
 #include "scene/Deformers.h"
 #include "scene/Graph.h"
 #include "scene/LodGroup.h"
+#include "scene/Instancing.h"
 #include "scene/Materials.h"
 #include "scene/MeshNodes.h"
 #include "scene/Morphs.h"
@@ -717,6 +718,7 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
     const NodeType* lodType = types::find("lodGroup");
     CameraList cameras;
     std::map<uint32_t, MeshPtr> meshCache;
+    std::map<uint32_t, NodeId> meshOwner; // the first node of each shared geometry, which later ones instance
     std::map<uint32_t, std::vector<Index>> pointCache;
     std::unordered_map<uint32_t, NodeFrame> frames; // by ufbx node element id
     std::vector<std::pair<const ufbx_node*, NodeId>> skinned, blended;
@@ -806,7 +808,17 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
                 if (!fn->has_geometry_transform)
                     meshCache[mesh.element_id] = ptr;
             }
-            graph.setValue({n->id(), MeshNode::kInMesh, -1}, ptr);
+            // Later users of one geometry become instances of the first, unless a skin or blend shapes deform it.
+            auto owner = meshOwner.find(mesh.element_id);
+            if (opts.instances && cached != meshCache.end() && owner != meshOwner.end() && !mesh.skin_deformers.count &&
+                !mesh.blend_deformers.count && ptr == cached->second)
+                instancing::connectInstance(graph, owner->second, n->id());
+            else
+            {
+                graph.setValue({n->id(), MeshNode::kInMesh, -1}, ptr);
+                if (!fn->has_geometry_transform)
+                    meshOwner.emplace(mesh.element_id, n->id());
+            }
             if (mesh.skin_deformers.count)
             {
                 if (opts.skins && types::find("skinCluster"))

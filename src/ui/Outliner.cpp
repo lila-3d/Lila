@@ -7,6 +7,7 @@
 #include "core/Profile.h"
 #include "io/References.h"
 #include "scene/Graph.h"
+#include "scene/Instancing.h"
 #include "scene/ObjectSets.h"
 #include "ui/Actions.h"
 #include "ui/Deletion.h"
@@ -688,15 +689,29 @@ void Outliner::restyle()
         bool referenced = n->referenceId() != 0;
         bool hidden = outliner::hiddenInHierarchy(g, id);
         bool kept = mKept.contains(id);
-        QString iconName = QString::fromStdString(outliner::iconName(*n));
-        QString style = iconName + (referenced ? "/r" : "") + (hidden ? "/h" : "") + (kept ? "/k" : "");
+        const scene::instancing::Kind shares = scene::instancing::kind(g, id);
+        // Instances and references show the shared-data glyph and an italic name; their source stays as it is.
+        const bool instanced = shares == scene::instancing::Kind::Instance || shares == scene::instancing::Kind::Reference;
+        QString iconName = instanced ? QString("components") : QString::fromStdString(outliner::iconName(*n));
+        QString style = iconName + (referenced ? "/r" : "") + (hidden ? "/h" : "") + (kept ? "/k" : "") + (instanced ? "/i" : "");
         if (item->data(0, kStyleRole).toString() == style)
             continue;
         item->setData(0, kStyleRole, style);
         item->setIcon(0, rowIcon(iconName, referenced, hidden));
         QFont f = item->font(0);
-        f.setItalic(referenced);
+        f.setItalic(referenced || instanced);
         item->setFont(0, f);
+        if (instanced)
+        {
+            const scene::NodeId src = scene::instancing::source(g, id);
+            item->setToolTip(0, QString::fromStdString(g.fullPath(id) + "\n" + scene::instancing::kindName(shares) + " of " +
+                                                       (src ? g.fullPath(src) : std::string("?"))));
+        }
+        else
+        {
+            const std::string& doc = n->type().doc;
+            item->setToolTip(0, QString::fromStdString(g.fullPath(id) + "\n" + n->type().name + (doc.empty() ? "" : "\n" + doc)));
+        }
         QColor c = hidden || kept ? themeShade(100) : referenced ? themeShade(150) : normal;
         item->setForeground(0, c);
     }
@@ -885,7 +900,7 @@ void Outliner::showContextMenu(const QPoint& pos)
     };
 
     bool any = !targets.empty();
-    bool anyParented = false, anyGroup = false, anyTransform = false, anyMesh = false, anyChildren = false;
+    bool anyParented = false, anyGroup = false, anyTransform = false, anyMesh = false, anyChildren = false, anyShared = false;
     std::vector<uint32_t> refIds;
     for (scene::NodeId id : targets)
     {
@@ -896,6 +911,7 @@ void Outliner::showContextMenu(const QPoint& pos)
         anyGroup |= n->type().name == "transform" && !g.children(id).empty();
         anyTransform |= n->type().isA("transform");
         anyMesh |= n->type().isA("mesh");
+        anyShared |= scene::instancing::kind(g, id) != scene::instancing::Kind::None;
         anyChildren |= !g.children(id).empty();
         if (n->referenceId() && std::find(refIds.begin(), refIds.end(), n->referenceId()) == refIds.end())
             refIds.push_back(n->referenceId());
@@ -912,6 +928,13 @@ void Outliner::showContextMenu(const QPoint& pos)
     menu.addSeparator();
     item("outliner.rename", targets.size() == 1 && clickedItem && (clickedItem->flags() & Qt::ItemIsEditable));
     item("edit.duplicate", any);
+    item("edit.instance", anyMesh);
+    if (anyShared)
+    {
+        item("edit.makeUnique");
+        item("select.instances");
+        item("select.instanceSource");
+    }
     if (QAction* del = menu.addAction("Delete", [run] { run(json{{"command", "delete"}}); }))
         del->setEnabled(any);
     menu.addSeparator();

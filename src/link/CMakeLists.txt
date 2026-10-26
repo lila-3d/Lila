@@ -2,6 +2,7 @@ lila_module(lila_link Scene
     Exporters.cpp
     LinkCommands.cpp
     MlDeformerExport.cpp
+    Placements.cpp
     RpcClient.cpp
     Socket.cpp
     SplineSend.cpp

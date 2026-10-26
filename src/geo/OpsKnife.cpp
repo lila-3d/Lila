@@ -49,22 +49,23 @@ std::vector<Index> facesAt(const Mesh& m, const KnifePoint& k)
 
 bool contains(const std::vector<Index>& v, Index x) { return std::find(v.begin(), v.end(), x) != v.end(); }
 
-std::optional<KnifePoint> mirrorKnifePoint(const Mesh& m, const SymmetryMap& sym, const KnifePoint& k)
+/** k's image under symmetry element g. */
+std::optional<KnifePoint> imageKnifePoint(const Mesh& m, const SymmetryMap& sym, const KnifePoint& k, int g)
 {
     KnifePoint out = k;
     switch (k.kind)
     {
-    case Kind::Point: out.id = sym.mirrorPoint(k.id); break;
+    case Kind::Point: out.id = sym.image(g, k.id); break;
     case Kind::Edge:
-        out.id = sym.mirrorEdge(m, k.id);
-        if (out.id != kInvalid && m.edgePoint(out.id, 0) != sym.mirrorPoint(m.edgePoint(k.id, 0)))
+        out.id = sym.imageEdge(m, g, k.id);
+        if (out.id != kInvalid && m.edgePoint(out.id, 0) != sym.image(g, m.edgePoint(k.id, 0)))
             out.t = 1.0 - k.t;
         break;
-    case Kind::Face: out.id = sym.mirrorFace(m, k.id); break;
+    case Kind::Face: out.id = sym.imageFace(m, g, k.id); break;
     }
     if (out.id == kInvalid)
         return std::nullopt;
-    out.position = sym.plane().reflect(k.position);
+    out.position = sym.transform(g, k.position);
     return out;
 }
 
@@ -438,18 +439,18 @@ KnifePlan knifePlan(const Mesh& mesh, std::span<const KnifePoint> points, const 
     if (opts.symmetry && !opts.symmetry->empty())
     {
         const SymmetryMap& sym = *opts.symmetry;
-        std::vector<KnifePoint> mirrored;
-        for (const KnifePoint& k : pts)
-            if (std::optional<KnifePoint> mk = mirrorKnifePoint(mesh, sym, k))
-                mirrored.push_back(*mk);
-        if (mirrored.size() == pts.size())
+        for (int g = 1; g < sym.order(); ++g)
         {
-            const glm::dvec3 nrm = sym.plane().normal;
+            std::vector<KnifePoint> mirrored;
+            for (const KnifePoint& k : pts)
+                if (std::optional<KnifePoint> mk = imageKnifePoint(mesh, sym, k, g))
+                    mirrored.push_back(*mk);
+            if (mirrored.size() != pts.size())
+                continue;
             std::optional<glm::dvec3> eye;
             if (opts.eye)
-                eye = sym.plane().reflect(*opts.eye);
-            const glm::dvec3 dir = opts.viewDir - 2.0 * glm::dot(opts.viewDir, nrm) * nrm;
-            planChain(mesh, mirrored, opts, eye, dir, true, plan);
+                eye = sym.transform(g, *opts.eye);
+            planChain(mesh, mirrored, opts, eye, sym.transformVector(g, opts.viewDir), true, plan);
         }
     }
     return plan;
@@ -464,8 +465,18 @@ KnifePlan knifeLoopPlan(const Mesh& mesh, Index edge, double t, const SymmetryMa
         return plan;
     t = std::clamp(t, 0.0, 1.0);
     ringPlan(mesh, edge, t, false, plan);
-    if (symmetry && !symmetry->empty())
-        if (std::optional<KnifePoint> mk = mirrorKnifePoint(mesh, *symmetry, KnifePoint::edge(edge, t)))
+    if (!symmetry || symmetry->empty())
+        return plan;
+    // A ring an element maps onto itself at the same spot (round the axis) is planned once.
+    auto planned = [&](const KnifePoint& k) {
+        for (const KnifeSegment& s : plan.segments)
+            for (const KnifePoint* q : {&s.a, &s.b})
+                if (q->kind == Kind::Edge && q->id == k.id && std::abs(q->t - k.t) < 1e-9)
+                    return true;
+        return false;
+    };
+    for (int g = 1; g < symmetry->order(); ++g)
+        if (std::optional<KnifePoint> mk = imageKnifePoint(mesh, *symmetry, KnifePoint::edge(edge, t), g); mk && !planned(*mk))
             ringPlan(mesh, mk->id, mk->t, true, plan);
     return plan;
 }

@@ -3,6 +3,7 @@ lila_module(lila_render UI
     Baker.cpp
     Compute.cpp
     DeformGpu.cpp
+    DrawBatches.cpp
     Environment.cpp
     GpuImage.cpp
     HdrImage.cpp

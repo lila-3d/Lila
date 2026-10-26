@@ -118,6 +118,7 @@ void registerCommands()
     registerTextureCommands();
     registerTextureSetCommands();
     registerSplineCommands();
+    registerPlacementCommands();
 
     ops::registerCommand({
         .name = "unrealConnect",

@@ -128,6 +128,11 @@ public:
 
     /** Mirror strokes across the plane, matching points within tolerance. nullopt turns symmetry off. */
     void setSymmetry(const std::optional<geo::SymmetryPlane>& plane, double tolerance);
+    /**
+     * Repeat strokes through the mesh's symmetry, mirror or radial, matching points within tolerance. With radial
+     * symmetry the brush's own radial copies are left out: the mesh's orbits repeat every stroke exactly.
+     */
+    void setSymmetry(const std::optional<geo::SymmetrySpec>& spec, double tolerance);
     bool symmetric() const { return !mSymmetry.empty(); }
     const geo::SymmetryMap& symmetry() const { return mSymmetry; }
 

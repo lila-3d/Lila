@@ -31,8 +31,15 @@ LILA_SCENE_API std::vector<Dab> radialDabs(const Dab& d, const Radial& radial);
 LILA_SCENE_API std::vector<Dab> symmetricDabs(const Dab& d, const geo::SymmetryPlane* mirror, const Radial& radial);
 
 /**
- * Adds each hit point's mirror partner (inside mask, when one is given) at the same weight, then keeps one entry per
- * point at its strongest weight, sorted by point, so a point reached from both sides gets one symmetric application.
+ * The dab carried by every element of the map's symmetry, itself first: the mirror for a mirror map, every radial turn
+ * (and reflection, for dihedral symmetry) for a radial one. Dab::copy is the element.
+ */
+LILA_SCENE_API std::vector<Dab> orbitDabs(const Dab& d, const geo::SymmetryMap& map);
+
+/**
+ * Adds each hit point's mirror partner (every orbit image for radial symmetry; inside mask, when one is given) at the
+ * same weight, then keeps one entry per point at its strongest weight, sorted by point, so a point reached from several
+ * wedges gets one symmetric application.
  */
 LILA_SCENE_API void mirrorHits(std::vector<std::pair<geo::Index, float>>& hits, const geo::SymmetryMap& map,
                                std::span<const uint8_t> mask = {});

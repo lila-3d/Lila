@@ -1263,7 +1263,8 @@ void MainWindow::buildMenus()
     menus::addActions("Edit", {"#History", "edit.undo", "edit.redo", "edit.repeatLast", "adjustLastOp.show", "edit.flushUndo", "edit.flushRedo", "edit.flushAll", "#Selection",
                         "edit.selectAll", "edit.deselect", "edit.invertSelection", "edit.delete"});
     addSubmenu("Edit", "Quick Select Sets", [](QMenu* m) { sets::attachQuickSelectMenu(m); });
-    menus::addActions("Edit", {"#Hierarchy", "edit.duplicate", "edit.group", "edit.lodGroup", "edit.generateLods", "edit.parent", "edit.parentChain", "edit.unparent", "#Naming", "edit.rename", "edit.batchRename", "edit.conformNames", "#Settings",
+    menus::addActions("Edit", {"#Hierarchy", "edit.duplicate", "edit.duplicateWithTransform", "edit.instance", "edit.instanceReference", "edit.array", "edit.bakeArray",
+                        "edit.makeUnique", "edit.convertToInstance", "select.instances", "select.instanceSource", "edit.group", "edit.lodGroup", "edit.generateLods", "edit.parent", "edit.parentChain", "edit.unparent", "#Naming", "edit.rename", "edit.batchRename", "edit.conformNames", "#Settings",
                         "window.preferences", "window.extensionManager"});
 
     menu("Modify", "M&odify");
@@ -1299,8 +1300,8 @@ void MainWindow::buildMenus()
     menus::addActions("Mesh", {"#Combine", "mesh.combine", "mesh.smartJoin", "mesh.separate", "mesh.extract", "mesh.duplicateFaces", "mesh.boundingMesh",
                                "#Mirror", "mesh.mirror"});
     addSubmenu("Mesh", "Symmetry");
-    menus::addActions("Mesh/Symmetry", {"mesh.toggleSymmetry", "mesh.symmetryX", "mesh.symmetryY", "mesh.symmetryZ", "mesh.symmetryOff", "",
-                                 "mesh.symmetryCheck", "mesh.symmetrizePositive", "mesh.symmetrizeNegative", "mesh.symmetryRebuild",
+    menus::addActions("Mesh/Symmetry", {"mesh.toggleSymmetry", "mesh.symmetryX", "mesh.symmetryY", "mesh.symmetryZ", "mesh.symmetryRadial", "mesh.symmetryOff", "",
+                                 "mesh.symmetryCheck", "mesh.symmetrizePositive", "mesh.symmetrizeNegative", "mesh.symmetryRebuild", "mesh.symmetrizeRadial",
                                  "mesh.symmetryRepair", "mesh.symmetryRebuildTopological"});
     menus::addActions("Mesh", {"#Topology", "mesh.triangulate", "mesh.quadrangulate", "mesh.subdivide", "#Attributes",
                                "mesh.transferAttributes"});

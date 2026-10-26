@@ -120,12 +120,6 @@ glm::dmat4 worldOf(const Node& n) { return n.as<glm::dmat4>(Transform::kWorldMat
 
 double symmetryTolerance(const geo::Mesh& m) { return std::max(1e-4, glm::length(m.bounds().size()) * 1e-5); }
 
-int symmetryAxis(const Node& n)
-{
-    int64_t axis = n.as<int64_t>(MeshNode::kSymmetry);
-    return axis >= 1 && axis <= 3 ? int(axis - 1) : -1;
-}
-
 geo::Mesh storedMesh(const PlugRef& p)
 {
     const MeshPtr& m = std::get<MeshPtr>(graph().storedValue(p));
@@ -340,21 +334,20 @@ void notify()
 void syncSymmetry(Session& s)
 {
     Node* n = graph().node(s.node);
-    int axis = n ? symmetryAxis(*n) : -1;
-    if (axis == s.symmetryAxis)
+    const std::optional<geo::SymmetrySpec> spec = n ? scene::symmetrySpec(*n) : std::nullopt;
+    const std::string key = !spec ? std::string() : spec->radial ? geo::radialLayerName(*spec->radial) : geo::symmetryLayerName(spec->axis);
+    if (key == s.symmetryKey)
         return;
-    s.symmetryAxis = axis;
-    if (axis < 0)
-        s.sculpt.setSymmetry(std::nullopt, 0.0);
-    else
-        s.sculpt.setSymmetry(geo::axisPlane(axis, symmetryOffset(*n, axis)), symmetryTolerance(s.sculpt.mesh()));
+    s.symmetryKey = key;
+    s.sculpt.setSymmetry(spec, symmetryTolerance(s.sculpt.mesh()));
 }
 
 uint64_t nextLiveToken() { return gLiveToken.fetch_add(1); }
 
 struct ExitSolver
 {
-    int axis = -1;
+    /** The symmetry layer the map keyed (empty without symmetry) and its plane offset. */
+    std::string symmetryKey;
     double offset = 0.0;
     /** The cage the symmetry map keyed, kept apart from the session's. */
     geo::Mesh keyed;
@@ -372,18 +365,19 @@ std::vector<glm::dvec3> exitPositions(Session& s, const std::string& method, int
     if (s.mode == ProxyMode::Direct)
         return {proxy.positions().begin(), proxy.positions().end()};
     const Node* n = graph().node(s.node);
-    const int axis = n ? symmetryAxis(*n) : -1;
-    const double offset = axis >= 0 ? scene::symmetryOffset(*n, axis) : 0.0;
+    const std::optional<geo::SymmetrySpec> spec = n ? scene::symmetrySpec(*n) : std::nullopt;
+    const std::string key = !spec ? std::string() : spec->radial ? geo::radialLayerName(*spec->radial) : geo::symmetryLayerName(spec->axis);
+    const double offset = spec && !spec->radial ? scene::symmetryOffset(*n, spec->axis) : 0.0;
     std::shared_ptr<ExitSolver>& x = s.exitSolver;
-    if (!x || x->axis != axis || x->offset != offset)
+    if (!x || x->symmetryKey != key || x->offset != offset)
     {
         x = std::make_shared<ExitSolver>();
-        x->axis = axis;
+        x->symmetryKey = key;
         x->offset = offset;
-        if (axis >= 0)
+        if (spec)
         {
             x->keyed = s.cage;
-            x->map = geo::SymmetryMap::persistent(x->keyed, axis, symmetryTolerance(x->keyed), nullptr, offset);
+            x->map = scene::symmetryMapFor(*n, x->keyed);
         }
     }
     FitOptions fo;
@@ -661,11 +655,8 @@ void registerCommands()
                 if (a.get<bool>("pinBoundary"))
                     fo.pinned = retopo::featurePoints(cage, {});
                 std::optional<geo::SymmetryMap> map;
-                if (int axis = symmetryAxis(n); axis >= 0)
-                {
-                    map = geo::SymmetryMap::persistent(cage, axis, symmetryTolerance(cage), nullptr, symmetryOffset(n, axis));
+                if (map = scene::symmetryMapFor(n, cage); map)
                     fo.symmetry = &*map;
-                }
                 geo::Mesh fitted = fitCageToSurface(cage, surface, bvh, fo);
                 double maxMove = 0.0;
                 for (Index p = 0; p < cage.pointCapacity(); ++p)

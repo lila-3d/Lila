@@ -68,6 +68,7 @@ public:
         kRotationInterpolation,
         kSpace,
         kSpaceFrames,
+        kLinkId,
         kCount
     };
 

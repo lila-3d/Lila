@@ -4,6 +4,7 @@
 #include "geo/Mesh.h"
 #include "ops/Command.h"
 #include "scene/Graph.h"
+#include "scene/Instancing.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "scene/Transform.h"
@@ -121,7 +122,8 @@ TEST_CASE("arrayAlongCurve: merged and instances")
     run("undo");
     CHECK(meshOf(post)->numFaces() == 6);
 
-    // Instances: shared meshes under a group, placed along the curve.
+    // Instances: shared meshes under a group, placed along the curve, keeping the piece's settings.
+    run("setAttr", {{"args", {post + ".visibility", false}}});
     json groups = run("arrayAlongCurve", {{"args", {post}}, {"curve", path}, {"count", 3}, {"output", "instances"}});
     REQUIRE(groups.size() == 1);
     scene::Graph& g = scene::Graph::current();
@@ -137,7 +139,10 @@ TEST_CASE("arrayAlongCurve: merged and instances")
         CHECK(src->node == g.find(post)->id());
         glm::dmat4 w = g.node(kids[k])->as<glm::dmat4>(scene::Transform::kWorldMatrix);
         CHECK(w[3].x == doctest::Approx(100.0 * double(k)));
+        CHECK(scene::instancing::kind(g, kids[k]) == scene::instancing::Kind::Instance);
+        CHECK_FALSE(g.node(kids[k])->as<bool>(scene::Transform::kVisibility));
     }
+    CHECK(scene::instancing::members(g, g.find(post)->id()).size() == 4);
     CHECK(scene::modifiers::stack(g, g.find(post)->id()).empty());
     CHECK_THROWS_AS(run("arrayAlongCurve", {{"args", {post}}, {"curve", path}, {"deform", true}, {"output", "instances"}}), CommandError);
 }

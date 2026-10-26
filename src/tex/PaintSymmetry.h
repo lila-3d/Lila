@@ -27,10 +27,12 @@ struct LILA_SCENE_API PaintSymmetry
 {
     std::optional<geo::SymmetryPlane> mirror;
     brush::Radial radial;
+    /** The mesh's radial symmetry: when set, its elements are the copies, in place of mirror and radial. */
+    std::optional<geo::RadialSymmetry> group;
     /** Point pairs for topological mirror copies; not part of the record. */
     std::shared_ptr<const geo::SymmetryMap> map;
 
-    bool any() const { return mirror.has_value() || radial.any(); }
+    bool any() const { return group.has_value() || mirror.has_value() || radial.any(); }
     /** Copies including the original. */
     uint32_t count() const;
     /** Whether copy k is a reflection (its tip turns the other way). */
@@ -38,7 +40,10 @@ struct LILA_SCENE_API PaintSymmetry
     /** Object space to object space: where copy k puts a point of the original. Copy 0 is the identity. */
     glm::dmat4 transform(uint32_t copy) const;
 
-    /** {"mirror": [nx, ny, nz, offset] or null, "radial": {count, axis}}; null when there is no symmetry. */
+    /**
+     * {"mirror": [nx, ny, nz, offset] or null, "radial": {count, axis}}, or {"group": {origin, axis, reference, count,
+     * mirror}} for a mesh's radial symmetry; null when there is no symmetry.
+     */
     nlohmann::json toJson() const;
     static PaintSymmetry fromJson(const nlohmann::json& j);
 
@@ -58,4 +63,10 @@ private:
  * stored point pairs when it has them) and radial copies.
  */
 LILA_SCENE_API PaintSymmetry brushSymmetry(const brush::BrushSettings& b, const geo::Mesh* mesh, int axis, double offset);
+
+/**
+ * The same for a mesh's symmetry setting (nullopt when off). With radial symmetry the brush's mirror switch turns on
+ * the mesh's radial group, copied through its orbits, in place of the brush's own radial copies.
+ */
+LILA_SCENE_API PaintSymmetry brushSymmetry(const brush::BrushSettings& b, const geo::Mesh* mesh, const std::optional<geo::SymmetrySpec>& spec);
 } // namespace lila::tex::paint
