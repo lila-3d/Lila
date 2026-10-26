@@ -181,7 +181,7 @@ std::vector<uint8_t> singularVertices(const ParamMesh& m)
 } // namespace
 
 std::vector<glm::dvec3> solveSeamlessPositions(const Surface& s, const std::vector<glm::dvec3>& q, const std::vector<double>& scale,
-                                               std::string* error)
+                                               std::string* error, std::vector<std::array<int, 2>>* edgeSteps)
 {
     LILA_ZONE();
 
@@ -559,6 +559,30 @@ std::vector<glm::dvec3> solveSeamlessPositions(const Surface& s, const std::vect
     for (Index v = 0; v < s.vertexCount(); ++v)
         if (!have[v])
             o[v] = s.pos[v];
+    if (edgeSteps)
+    {
+        // Within one triangle all three corners share a chart, so rounding there gives the step exactly.
+        edgeSteps->assign(s.edges.size(), {0, 0});
+        for (Index t = 0; t < nt; ++t)
+            for (int k = 0; k < 3; ++k)
+            {
+                const Index a = m.tris[t][k], b = m.tris[t][(k + 1) % 3];
+                if (a >= m.surfaceVertices || b >= m.surfaceVertices)
+                    continue;
+                Index se = kInvalid;
+                for (Index i = s.adjStart[a]; i < s.adjStart[a + 1] && se == kInvalid; ++i)
+                    if (s.adj[i] == b)
+                        se = s.adjEdge[i];
+                if (se == kInvalid)
+                    continue;
+                const Index wa = wedgeOf[t * 3 + k], wb = wedgeOf[t * 3 + (k + 1) % 3];
+                std::array<int, 2> step = {int(std::lround(x[2 * wb]) - std::lround(x[2 * wa])),
+                                           int(std::lround(x[2 * wb + 1]) - std::lround(x[2 * wa + 1]))};
+                if (s.edges[se][0] != a)
+                    step = {-step[0], -step[1]};
+                (*edgeSteps)[se] = step;
+            }
+    }
     return o;
 }
 } // namespace lila::retopo::detail

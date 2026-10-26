@@ -187,6 +187,55 @@ void Surface::detectFeatures(double sharpAngleDeg, double cornerDeficitDeg, doub
                 if (length[r] / double(1 + branches[r]) < minCreaseLength)
                     edgeFeature[e] = 0;
             }
+        // A crease has to bend more than the surface around it does over a cell, or it is just one more bump of noise.
+        const double cell = 0.5 * minCreaseLength;
+        double edgeSum = 0.0;
+        for (size_t e = 0; e < edges.size(); ++e)
+            edgeSum += glm::length(pos[edges[e][1]] - pos[edges[e][0]]);
+        const int rings = int(std::clamp(std::round(cell * double(edges.size()) / std::max(edgeSum, 1e-300)), 1.0, 8.0));
+        std::vector<double> bend(pos.size(), 0.0), ar = area;
+        for (size_t e = 0; e < edges.size(); ++e)
+            if (edgeTriCount[e] == 2 && !edgeFeature[e])
+            {
+                const double b = std::acos(std::clamp(glm::dot(triNormal[edgeTris[e][0]], triNormal[edgeTris[e][1]]), -1.0, 1.0)) *
+                                 glm::length(pos[edges[e][1]] - pos[edges[e][0]]);
+                bend[edges[e][0]] += 0.5 * b;
+                bend[edges[e][1]] += 0.5 * b;
+            }
+        for (int it = 0; it < rings; ++it)
+        {
+            std::vector<double> nb(pos.size()), na(pos.size());
+            for (Index v = 0; v < Index(pos.size()); ++v)
+            {
+                double sb = bend[v], sa = ar[v];
+                for (Index k = adjStart[v]; k < adjStart[v + 1]; ++k)
+                {
+                    sb += bend[adj[k]];
+                    sa += ar[adj[k]];
+                }
+                nb[v] = sb;
+                na[v] = sa;
+            }
+            bend.swap(nb);
+            ar.swap(na);
+        }
+        std::vector<double> runBend(pos.size(), 0.0), runRough(pos.size(), 0.0);
+        for (size_t e = 0; e < edges.size(); ++e)
+            if (byAngle[e] && edgeFeature[e])
+            {
+                const Index r = find(edges[e][0]);
+                const double len = glm::length(pos[edges[e][1]] - pos[edges[e][0]]);
+                runBend[r] += len * std::acos(std::clamp(glm::dot(filtered[edgeTris[e][0]], filtered[edgeTris[e][1]]), -1.0, 1.0));
+                for (Index v : edges[e])
+                    runRough[r] += 0.5 * len * cell * (ar[v] > 0.0 ? bend[v] / ar[v] : 0.0);
+            }
+        for (size_t e = 0; e < edges.size(); ++e)
+            if (byAngle[e] && edgeFeature[e])
+            {
+                const Index r = find(edges[e][0]);
+                if (runBend[r] < 1.5 * runRough[r])
+                    edgeFeature[e] = 0;
+            }
     }
 
     const Index n = vertexCount();

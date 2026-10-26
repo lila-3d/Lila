@@ -42,7 +42,7 @@ std::array<int, 2> latticeShift(const Surface& s, const std::vector<glm::dvec3>&
 } // namespace
 
 Extracted extractMesh(const Surface& s, const std::vector<glm::dvec3>& q, const std::vector<glm::dvec3>& o,
-                      const std::vector<double>& scale)
+                      const std::vector<double>& scale, const std::vector<std::array<int, 2>>* edgeSteps)
 {
     LILA_ZONE();
 
@@ -57,13 +57,14 @@ Extracted extractMesh(const Surface& s, const std::vector<glm::dvec3>& q, const 
 
     // Vertices whose edge stays on one lattice point join one cluster, closest pairs first. A field that isn't quite
     // consistent can chain neighbouring lattice points together through a run of such edges, so two clusters only
-    // join while their centres are well within a lattice step; otherwise the edge links them like a step would.
+    // join while their centres are well within a lattice step; otherwise the edge links them like a step would. Exact
+    // steps from a seamless layout need no such guard.
     std::vector<std::array<Index, 2>> links;
     std::vector<std::pair<double, Index>> same;
     for (size_t e = 0; e < s.edges.size(); ++e)
     {
         Index i = s.edges[e][0], j = s.edges[e][1];
-        auto d = latticeShift(s, q, o, scale, i, j);
+        auto d = edgeSteps ? (*edgeSteps)[e] : latticeShift(s, q, o, scale, i, j);
         int l1 = std::abs(d[0]) + std::abs(d[1]);
         if (l1 == 0)
             same.push_back({glm::length(o[i] - o[j]), Index(e)});
@@ -79,7 +80,7 @@ Extracted extractMesh(const Surface& s, const std::vector<glm::dvec3>& q, const 
         Index a = find(i), b = find(j);
         if (a == b)
             continue;
-        if (glm::length(centre[a] / mass[a] - centre[b] / mass[b]) > 0.7 * 0.5 * (scale[i] + scale[j]))
+        if (!edgeSteps && glm::length(centre[a] / mass[a] - centre[b] / mass[b]) > 0.7 * 0.5 * (scale[i] + scale[j]))
         {
             links.push_back({i, j});
             continue;

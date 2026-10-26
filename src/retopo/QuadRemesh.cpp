@@ -837,9 +837,9 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
     clock.lap("cross field");
 
     // Extraction and cleanup for one lattice layout.
-    auto build = [&](const std::vector<glm::dvec3>& o) {
+    auto build = [&](const std::vector<glm::dvec3>& o, const std::vector<std::array<int, 2>>* steps = nullptr) {
         QuadRemeshResult out;
-        Extracted ex = extractMesh(s, q, o, scale);
+        Extracted ex = extractMesh(s, q, o, scale, steps);
         if (ex.mesh.numFaces() == 0)
         {
             out.error = "extraction produced no faces";
@@ -916,10 +916,11 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
 
     // The seamless layout only turns at the poles, but rounding can tangle it near tight features; keep whichever of it
     // and the local position field comes out with fewer irregular points.
-    std::vector<glm::dvec3> o = opts.seamless ? solveSeamlessPositions(s, q, scale) : std::vector<glm::dvec3>{};
+    std::vector<std::array<int, 2>> steps;
+    std::vector<glm::dvec3> o = opts.seamless ? solveSeamlessPositions(s, q, scale, nullptr, &steps) : std::vector<glm::dvec3>{};
     std::optional<QuadRemeshResult> seamless;
     if (!o.empty())
-        seamless = build(o);
+        seamless = build(o, &steps);
     clock.lap("seamless");
     QuadRemeshResult best = build(solvePositionField(s, q, scale));
     clock.lap("local");

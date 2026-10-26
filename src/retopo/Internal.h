@@ -201,8 +201,9 @@ struct Curvature
     std::vector<glm::dvec3> maxDir; // unit, tangent
     std::vector<double> anisotropy; // |k1 - k2|
     std::vector<double> magnitude;  // sqrt(k1^2 + k2^2)
+    std::vector<double> coherence;  // 0 to 1: the share of the anisotropy left after averaging over coherenceRadius
 };
-LILA_SCENE_API Curvature estimateCurvature(const Surface& s);
+LILA_SCENE_API Curvature estimateCurvature(const Surface& s, double coherenceRadius = 0.0);
 
 /**
  * Lattice origin per vertex, the lattice point nearest the vertex. shift starts the lattice that fraction of a cell
@@ -215,10 +216,12 @@ LILA_SCENE_API std::vector<glm::dvec3> solvePositionField(const Surface& s, cons
  * The same, from one global seamless parametrization (mixed-integer quadrangulation, Bommes et al. 2009): the surface is
  * cut to a disk through the field's singularities, the parameter jumps across the cuts by quarter turns and whole
  * lattice steps, and singularities land on lattice points. So the lattice only turns at the singularities. Empty, with
- * error set, when it can't be solved.
+ * error set, when it can't be solved. edgeSteps gets, per surface edge, the whole lattice step from its first vertex's
+ * lattice point to its second's, for extractMesh.
  */
 LILA_SCENE_API std::vector<glm::dvec3> solveSeamlessPositions(const Surface& s, const std::vector<glm::dvec3>& q,
-                                                              const std::vector<double>& scale, std::string* error = nullptr);
+                                                              const std::vector<double>& scale, std::string* error = nullptr,
+                                                              std::vector<std::array<int, 2>>* edgeSteps = nullptr);
 
 /** Lattice points of i and j (returned and outJ) that coincide best near the two vertices. */
 LILA_SCENE_API glm::dvec3 compatLatticePair(const glm::dvec3& vi, const glm::dvec3& ni, const glm::dvec3& qi, const glm::dvec3& oi, double si,
@@ -235,7 +238,7 @@ struct Extracted
     std::vector<uint8_t> boundary;    // per point: came from a surface boundary
 };
 LILA_SCENE_API Extracted extractMesh(const Surface& s, const std::vector<glm::dvec3>& q, const std::vector<glm::dvec3>& o,
-                      const std::vector<double>& scale);
+                      const std::vector<double>& scale, const std::vector<std::array<int, 2>>* edgeSteps = nullptr);
 
 /** Nearest-point queries against the surface's feature edges, for keeping vertices on creases. */
 class LILA_SCENE_API FeatureLines

@@ -100,9 +100,10 @@ TEST_CASE("zz remesh obj" * doctest::skip())
     }
     retopo::QuadRemeshOptions o;
     o.targetFaces = std::getenv("LILA_AB_FACES") ? std::atoi(std::getenv("LILA_AB_FACES")) : 500;
-    o.symmetryAxis = std::getenv("LILA_AB_SYM") ? std::atoi(std::getenv("LILA_AB_SYM")) : 0;
+    o.symmetryAxis = std::getenv("LILA_AB_SYM") ? std::atoi(std::getenv("LILA_AB_SYM")) : -1;
     o.resolveGaps = !std::getenv("LILA_NO_GAPS");
     o.seamless = std::getenv("LILA_SEAMLESS") != nullptr;
+    o.useHardEdges = !std::getenv("LILA_NO_HARD");
     if (const char* a = std::getenv("LILA_AB_ADAPT"))
         o.adaptivity = std::atof(a);
     retopo::QuadRemeshResult r = retopo::quadRemesh(m, o);

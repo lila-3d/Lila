@@ -100,9 +100,81 @@ double distToSegment(const glm::dvec3& p, const glm::dvec3& a, const glm::dvec3&
     dir = len2 > 0.0 ? ab / std::sqrt(len2) : glm::dvec3(0.0);
     return glm::length(p - (a + ab * t));
 }
+
+/** Anisotropy of a curvature tensor in the tangent plane of normal n. */
+double tangentAnisotropy(const glm::dmat3& t, const glm::dvec3& n)
+{
+    const glm::dvec3 e1 = anyTangent(n), e2 = glm::cross(n, e1);
+    const double xx = glm::dot(e1, t * e1), xy = glm::dot(e1, t * e2), yy = glm::dot(e2, t * e2);
+    return 2.0 * std::sqrt(0.25 * (xx - yy) * (xx - yy) + xy * xy);
+}
+
+/**
+ * How much of the bending away from creases keeps one direction over about radius: near 1 where the surface bends one
+ * way throughout or hardly bends, near 0 where the directions are noise and cancel. Creases are left out, as their own
+ * bend would read as coherent next to them and as noise where two meet.
+ */
+std::vector<double> coherence(const Surface& s, double radius)
+{
+    const Index n = s.vertexCount();
+    std::vector<glm::dmat3> t(n, glm::dmat3(0.0));
+    double edgeSum = 0.0;
+    for (size_t e = 0; e < s.edges.size(); ++e)
+    {
+        const Index a = s.edges[e][0], b = s.edges[e][1];
+        glm::dvec3 d = s.pos[b] - s.pos[a];
+        const double len = glm::length(d);
+        edgeSum += len;
+        if (s.edgeTriCount[e] != 2 || s.edgeFeature[e] || len <= 0.0)
+            continue;
+        d /= len;
+        const Index t0 = s.edgeTris[e][0];
+        const auto& f = s.tris[t0];
+        const bool forward = (f[0] == a && f[1] == b) || (f[1] == a && f[2] == b) || (f[2] == a && f[0] == b);
+        const glm::dvec3 &n0 = s.triNormal[t0], &n1 = s.triNormal[s.edgeTris[e][1]];
+        const double beta = std::atan2(glm::dot(glm::cross(n0, n1), forward ? d : -d), glm::dot(n0, n1));
+        const glm::dmat3 m = glm::outerProduct(d, d) * (0.5 * beta * len);
+        t[a] += m;
+        t[b] += m;
+    }
+    std::vector<double> a(n), ar = s.area;
+    for (Index v = 0; v < n; ++v)
+        a[v] = tangentAnisotropy(t[v], s.normal[v]);
+    const int rings = int(std::clamp(std::round(radius * double(s.edges.size()) / std::max(edgeSum, 1e-300)), 1.0, 12.0));
+    for (int it = 0; it < rings; ++it)
+    {
+        std::vector<glm::dmat3> nt(n);
+        std::vector<double> na(n), nar(n);
+        tbb::parallel_for(Index(0), n, [&](Index v) {
+            glm::dmat3 st = t[v];
+            double sa = a[v], sr = ar[v];
+            for (Index k = s.adjStart[v]; k < s.adjStart[v + 1]; ++k)
+            {
+                st += t[s.adj[k]];
+                sa += a[s.adj[k]];
+                sr += ar[s.adj[k]];
+            }
+            nt[v] = st;
+            na[v] = sa;
+            nar[v] = sr;
+        });
+        t.swap(nt);
+        a.swap(na);
+        ar.swap(nar);
+    }
+    // Bending well under what alignment responds to counts as coherent, so near-flat parts keep their weight.
+    const double floor = 0.25 / std::max(radius, 1e-300);
+    std::vector<double> out(n);
+    tbb::parallel_for(Index(0), n, [&](Index v) {
+        const double slack = floor * ar[v];
+        out[v] = std::clamp((tangentAnisotropy(t[v], s.normal[v]) + slack) / (a[v] + slack), 0.0, 1.0);
+    });
+    return out;
+}
+
 } // namespace
 
-Curvature estimateCurvature(const Surface& s)
+Curvature estimateCurvature(const Surface& s, double coherenceRadius)
 {
     LILA_ZONE();
 
@@ -159,6 +231,8 @@ Curvature estimateCurvature(const Surface& s)
         c.anisotropy[v] = 2.0 * r;
         c.magnitude[v] = std::sqrt(l1 * l1 + l2 * l2);
     });
+    if (coherenceRadius > 0.0)
+        c.coherence = coherence(s, coherenceRadius);
     return c;
 }
 
@@ -206,13 +280,13 @@ std::vector<glm::dvec3> solveCrossField(const Surface& s, const FieldOptions& op
                 constrain(v, bestDir);
         }
 
-    // Curvature alignment, weighted by how clearly the surface bends one way.
-    Curvature curv = estimateCurvature(s);
+    // Curvature alignment, weighted by how clearly the surface bends one way and keeps doing so over a cell.
+    Curvature curv = estimateCurvature(s, scale);
     std::vector<double> align(n, 0.0);
     std::vector<std::complex<double>> alignValue(n);
     for (Index v = 0; v < n; ++v)
     {
-        double g = std::clamp(curv.anisotropy[v] * scale * 2.0, 0.0, 1.0) * opts.curvatureWeight;
+        double g = std::clamp(curv.anisotropy[v] * scale * 2.0, 0.0, 1.0) * opts.curvatureWeight * curv.coherence[v];
         align[v] = g * s.area[v] * 10.0 / (scale * scale);
         alignValue[v] = std::polar(1.0, 4.0 * angleIn(fr[v], curv.maxDir[v]));
     }
