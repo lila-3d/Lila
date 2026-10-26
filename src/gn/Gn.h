@@ -2,6 +2,7 @@
 
 #include "core/Export.h"
 
+#include "geo/Heightfield.h"
 #include "gn/Group.h"
 #include "scene/Graph.h"
 
@@ -37,6 +38,8 @@ LILA_SCENE_API std::string typeNameFor(const Group& g);
 /** Modifiers using a group. */
 LILA_SCENE_API std::vector<scene::NodeId> instancesOf(scene::Graph& g, scene::NodeId groupNode);
 LILA_SCENE_API bool isGnModifier(const scene::Node& n);
+/** The heightfield a gn modifier's group produced on its last evaluation; null when it made none or failed. */
+LILA_SCENE_API std::shared_ptr<const geo::Heightfield> modifierHeightfield(scene::NodeId modifier);
 /** The group node feeding a gn modifier, or null. */
 LILA_SCENE_API scene::Node* groupOfModifier(scene::Graph& g, const scene::Node& modifier);
 

@@ -1,9 +1,16 @@
 #include "gn/NodesCommon.h"
 #include "gn/Texture.h"
 
+#include "core/ImageIO.h"
+#include "core/Workspace.h"
+
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cfloat>
+#include <filesystem>
+#include <map>
+#include <mutex>
 
 namespace lila::gn
 {
@@ -707,8 +714,122 @@ void voronoiNode()
             },
     });
 }
+using ImagePtr = std::shared_ptr<const image::Image>;
+
+/** Images read once per path and modification time, shared by every node sampling them. Throws ExecError when unreadable. */
+ImagePtr cachedImage(const std::filesystem::path& path)
+{
+    static std::mutex mutex;
+    static std::map<std::string, std::pair<std::filesystem::file_time_type, ImagePtr>> cache;
+    std::error_code ec;
+    const auto stamp = std::filesystem::last_write_time(path, ec);
+    if (ec)
+        throw ExecError("Image Texture: can't find " + path.string());
+    std::lock_guard lock(mutex);
+    auto it = cache.find(path.string());
+    if (it != cache.end() && it->second.first == stamp)
+        return it->second.second;
+    std::string ext = path.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
+    std::string err;
+    image::Image img;
+    if (ext == ".png")
+        img = image::readPng(path, &err);
+    else if (ext == ".exr")
+        img = image::readExr(path, &err);
+    else if (ext == ".tif" || ext == ".tiff")
+        img = image::readTiff(path, &err);
+    else if (ext == ".psd")
+        img = image::readPsd(path, &err);
+    else if (ext == ".tga")
+        img = image::readTga(path, &err);
+    else
+        throw ExecError("Image Texture: " + path.string() + " isn't png, exr, tif, psd or tga");
+    if (img.width < 1 || img.height < 1)
+        throw ExecError("Image Texture: " + path.string() + ": " + (err.empty() ? std::string("unreadable") : err));
+    auto ptr = std::make_shared<const image::Image>(std::move(img));
+    cache[path.string()] = {stamp, ptr};
+    return ptr;
+}
+
+enum class Wrap : uint8_t
+{
+    Repeat,
+    Extend,
+    Clip,
+};
+
+/** RGBA at uv (0, 0 bottom left), or transparent black outside when clipping. */
+glm::dvec4 sampleImage(const image::Image& img, D3 uv, bool linear, Wrap wrap)
+{
+    if (wrap == Wrap::Clip && (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0))
+        return glm::dvec4(0.0);
+    const double fx = uv.x * img.width - 0.5, fy = (1.0 - uv.y) * img.height - 0.5;
+    auto texel = [&](long long x, long long y) {
+        if (wrap == Wrap::Repeat)
+        {
+            x = ((x % img.width) + img.width) % img.width;
+            y = ((y % img.height) + img.height) % img.height;
+        }
+        else
+        {
+            x = std::clamp<long long>(x, 0, img.width - 1);
+            y = std::clamp<long long>(y, 0, img.height - 1);
+        }
+        const float* p = &img.rgba[(size_t(y) * size_t(img.width) + size_t(x)) * 4];
+        return glm::dvec4(p[0], p[1], p[2], p[3]);
+    };
+    if (!linear)
+        return texel((long long)std::floor(fx + 0.5), (long long)std::floor(fy + 0.5));
+    const double x0 = std::floor(fx), y0 = std::floor(fy), tx = fx - x0, ty = fy - y0;
+    const long long ix = (long long)x0, iy = (long long)y0;
+    return (texel(ix, iy) * (1.0 - tx) + texel(ix + 1, iy) * tx) * (1.0 - ty) + (texel(ix, iy + 1) * (1.0 - tx) + texel(ix + 1, iy + 1) * tx) * ty;
+}
+
+void imageNode()
+{
+    registerDecl({
+        .type = "ImageTexture",
+        .label = "Image Texture",
+        .category = "Texture",
+        .doc = "Reads an image file (png, exr, tif, psd, tga) at the vector's X and Y, 0 to 1 across the image with Y up, as a uv "
+               "would. Relative paths are under the workspace. The file is read again when it changes on disk, so an image being "
+               "painted elsewhere updates on save. Value is the red channel, for greyscale images such as heightmaps.",
+        .props = {prop("interpolation", {"linear", "closest"}, "linear"),
+                  prop("extension", {"repeat", "extend", "clip"}, "repeat", "Outside 0 to 1: tile, carry the edge on, or transparent black.")},
+        .sockets = {.inputs = {fin("vector", T::Vector, vec(0, 0, 0), Implicit::None, "Where to read: X and Y, 0 to 1."),
+                               in("file", T::String, "", "Image path.")},
+                    .outputs = {fout("color", T::Color), fout("alpha", T::Float), fout("value", T::Float)}},
+        .exec =
+            [](ExecContext& c) {
+                std::filesystem::path file = c.s("file");
+                if (file.empty())
+                {
+                    c.out("color", constantColor(glm::dvec4(0.0, 0.0, 0.0, 1.0)));
+                    c.out("alpha", constantFloat(1.0));
+                    c.out("value", constantFloat(0.0));
+                    return;
+                }
+                if (file.is_relative())
+                    if (const auto& root = Workspace::get().root(); !root.empty())
+                        file = root / file;
+                ImagePtr img = cachedImage(file);
+                const bool linear = c.prop("interpolation") != "closest";
+                const std::string ext = c.prop("extension");
+                const Wrap wrap = ext == "clip" ? Wrap::Clip : ext == "extend" ? Wrap::Extend : Wrap::Repeat;
+                FieldPtr v = c.field("vector");
+                c.out("color", map<glm::dvec4, D3>(T::Color, [img, linear, wrap](D3 uv) { return sampleImage(*img, uv, linear, wrap); }, {v}));
+                c.out("alpha", map<double, D3>(T::Float, [img, linear, wrap](D3 uv) { return sampleImage(*img, uv, linear, wrap).a; }, {v}));
+                c.out("value", map<double, D3>(T::Float, [img, linear, wrap](D3 uv) { return sampleImage(*img, uv, linear, wrap).r; }, {v}));
+            },
+    });
+}
 } // namespace
 
-void registerTextureNodes() { voronoiNode(); }
+void registerTextureNodes()
+{
+    voronoiNode();
+    imageNode();
+}
 } // namespace nodes
 } // namespace lila::gn

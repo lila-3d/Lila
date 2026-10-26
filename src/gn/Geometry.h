@@ -4,6 +4,7 @@
 
 #include "curve/Spline.h"
 #include "curve/Tessellate.h"
+#include "geo/Heightfield.h"
 #include "geo/Mesh.h"
 
 #include <glm/glm.hpp>
@@ -108,6 +109,8 @@ struct LILA_SCENE_API Geometry
     std::shared_ptr<const geo::Mesh> points; // point cloud: a mesh with only loose points
     std::shared_ptr<const CurveSet> curves;
     std::shared_ptr<const Instances> instances;
+    /** Terrain heights on a grid. It reaches the modifier stack, and anything that only takes meshes, as a mesh. */
+    std::shared_ptr<const geo::Heightfield> heightfield;
 
     bool empty() const;
 };
@@ -116,19 +119,23 @@ LILA_SCENE_API GeometryPtr makeGeometry(Geometry g);
 LILA_SCENE_API GeometryPtr meshGeometry(geo::Mesh m);
 LILA_SCENE_API GeometryPtr pointGeometry(geo::Mesh m);
 LILA_SCENE_API GeometryPtr curveGeometry(CurveSet c);
+LILA_SCENE_API GeometryPtr heightfieldGeometry(geo::Heightfield h);
 
-/** Every component transformed. Instances transform their own matrices only. */
+/**
+ * Every component transformed. Instances transform their own matrices only. A heightfield stays one under translation
+ * and scale with equal X and Z; any other transform turns it into a mesh.
+ */
 LILA_SCENE_API Geometry transformed(const Geometry& g, const glm::dmat4& xf);
 LILA_SCENE_API void transformMesh(geo::Mesh& m, const glm::dmat4& xf);
 LILA_SCENE_API void transformCurves(CurveSet& c, const glm::dmat4& xf);
 
-/** Component-wise union. Meshes are appended, instances concatenated. */
+/** Component-wise union. Meshes are appended, instances concatenated. The first heightfield stays one; later ones become meshes. */
 LILA_SCENE_API Geometry join(std::span<const GeometryPtr> parts);
 
 /** Instances replaced by the geometry they point at, recursively. */
 LILA_SCENE_API Geometry realize(const Geometry& g);
 
-/** The result handed back to the modifier stack: realized, and only the mesh. Anonymous attributes are dropped. */
+/** The result handed back to the modifier stack: realized, and only the mesh, with any heightfield added as one. Anonymous attributes are dropped. */
 LILA_SCENE_API geo::Mesh toOutputMesh(const Geometry& g);
 
 /** A point cloud has positions and point attributes; this keeps those and drops everything else. */

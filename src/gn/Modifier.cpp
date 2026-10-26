@@ -50,6 +50,18 @@ struct TypeLayout
     std::vector<Object> objects;
 };
 
+std::mutex gHeightfieldMutex;
+std::map<NodeId, std::shared_ptr<const geo::Heightfield>> gHeightfields;
+
+void setHeightfield(NodeId modifier, std::shared_ptr<const geo::Heightfield> h)
+{
+    std::lock_guard lock(gHeightfieldMutex);
+    if (h)
+        gHeightfields[modifier] = std::move(h);
+    else
+        gHeightfields.erase(modifier);
+}
+
 std::string objectMeshAttr(const std::string& node) { return "obj_" + node + "_mesh"; }
 std::string objectMatrixAttr(const std::string& node) { return "obj_" + node + "_matrix"; }
 
@@ -68,6 +80,7 @@ public:
         {
             noteSimulationModifier(id(), false, false);
             clearInstanceView(id());
+            setHeightfield(id(), nullptr);
             setOutput(outAttr, in);
             return;
         }
@@ -91,6 +104,7 @@ public:
         if (!mPlan)
         {
             clearInstanceView(id());
+            setHeightfield(id(), nullptr);
             setOutput(outAttr, in);
             return;
         }
@@ -131,6 +145,7 @@ public:
             if (mPlan->viewerStep >= 0)
                 env.viewer = &sink;
             GeometryPtr result = execute(*mPlan, env);
+            setHeightfield(id(), result->heightfield);
             scene::MeshPtr out = std::make_shared<geo::Mesh>(toOutputMesh(*result));
             if (InstanceViewPtr view = makeInstanceView(*result, out))
                 setInstanceView(id(), std::move(view));
@@ -148,6 +163,7 @@ public:
             setOutput(outAttr, in);
             clearViewerData(id());
             clearInstanceView(id());
+            setHeightfield(id(), nullptr);
         }
     }
 
@@ -156,6 +172,7 @@ public:
         clearViewerData(id());
         forgetSimulationModifier(id());
         clearInstanceView(id());
+        setHeightfield(id(), nullptr);
     }
 
 private:
@@ -595,7 +612,7 @@ void syncInstances(Graph& g, Node& groupNode, const Group& grp, const Renames& r
         Node* mod = g.node(id);
         if (!mod)
             continue;
-        if (&mod->type() != &type)
+        if (&mod->type().registered() != &type)
             mod = migrate(g, *mod, type, renames);
         connectObjects(g, *mod, grp);
     }
@@ -712,6 +729,13 @@ std::vector<NodeId> instancesOf(Graph& g, NodeId groupNode)
 }
 
 bool isGnModifier(const Node& n) { return dynamic_cast<const GnModifierNode*>(&n) != nullptr; }
+
+std::shared_ptr<const geo::Heightfield> modifierHeightfield(NodeId modifier)
+{
+    std::lock_guard lock(gHeightfieldMutex);
+    auto it = gHeightfields.find(modifier);
+    return it == gHeightfields.end() ? nullptr : it->second;
+}
 
 Node* groupOfModifier(Graph& g, const Node& modifier)
 {

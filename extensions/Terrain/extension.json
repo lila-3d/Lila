@@ -1,0 +1,14 @@
+{
+    "id": "Terrain",
+    "name": "Terrain",
+    "version": "0.1.0",
+    "vendor": "Lila",
+    "description": "Terrain as heightfields: build it from noise, images or meshes in geometry nodes, sample it, and bake it, for any engine.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "Terrain.dll",
+        "linux": "Terrain.so",
+        "macos": "Terrain.dylib"
+    },
+    "enabledByDefault": true
+}

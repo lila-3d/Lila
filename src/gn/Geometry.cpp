@@ -6,6 +6,7 @@
 #include <tbb/parallel_for.h>
 
 #include <array>
+#include <cmath>
 #include <mutex>
 
 namespace lila::gn
@@ -78,11 +79,11 @@ std::shared_ptr<const JoinedTopology> joinedTopology(const Instances& inst)
 /** Instances of compact meshes only, none mirrored: what joinedTopology can place by moving points alone. */
 bool joinable(const Geometry& g)
 {
-    if (g.mesh || g.points || g.curves || !g.instances || g.instances->size() < 2)
+    if (g.mesh || g.points || g.curves || g.heightfield || !g.instances || g.instances->size() < 2)
         return false;
     const Instances& inst = *g.instances;
     for (const GeometryPtr& r : inst.references)
-        if (!r || !r->mesh || r->points || r->curves || r->instances || r->mesh->hasDeleted())
+        if (!r || !r->mesh || r->points || r->curves || r->instances || r->heightfield || r->mesh->hasDeleted())
             return false;
     for (size_t k = 0; k < inst.size(); ++k)
         if (inst.reference[k] < 0 || size_t(inst.reference[k]) >= inst.references.size() || glm::determinant(glm::dmat3(inst.transforms[k])) <= 0.0)
@@ -336,7 +337,7 @@ void Instances::add(const glm::dmat4& xf, int ref)
 bool Geometry::empty() const
 {
     return (!mesh || mesh->numPoints() == 0) && (!points || points->numPoints() == 0) && (!curves || curves->numPoints() == 0) &&
-           (!instances || instances->size() == 0);
+           (!instances || instances->size() == 0) && (!heightfield || heightfield->empty());
 }
 
 GeometryPtr makeGeometry(Geometry g) { return std::make_shared<const Geometry>(std::move(g)); }
@@ -362,6 +363,40 @@ GeometryPtr curveGeometry(CurveSet c)
     g.curves = std::make_shared<const CurveSet>(std::move(c));
     return makeGeometry(std::move(g));
 }
+
+GeometryPtr heightfieldGeometry(geo::Heightfield h)
+{
+    Geometry g;
+    g.heightfield = std::make_shared<const geo::Heightfield>(std::move(h));
+    return makeGeometry(std::move(g));
+}
+
+namespace
+{
+/** A heightfield moved by a translation and a scale with equal X and Z stays a grid; anything else does not. */
+bool keepsGrid(const glm::dmat4& xf)
+{
+    const glm::dmat3 m(xf);
+    const double eps = 1e-12;
+    for (int c = 0; c < 3; ++c)
+        for (int r = 0; r < 3; ++r)
+            if (c != r && std::abs(m[c][r]) > eps)
+                return false;
+    return m[0][0] > eps && m[1][1] > eps && std::abs(m[0][0] - m[2][2]) <= 1e-9 * m[0][0];
+}
+
+geo::Heightfield transformedGrid(const geo::Heightfield& h, const glm::dmat4& xf)
+{
+    geo::Heightfield out = h;
+    const double s = xf[0][0], sy = xf[1][1], ty = xf[3][1];
+    glm::dvec4 o = xf * glm::dvec4(h.origin.x, 0.0, h.origin.y, 1.0);
+    out.origin = {o.x, o.z};
+    out.cell = h.cell * s;
+    for (float& v : out.heights)
+        v = float(v * sy + ty);
+    return out;
+}
+} // namespace
 
 void transformMesh(geo::Mesh& m, const glm::dmat4& xf)
 {
@@ -417,6 +452,23 @@ Geometry transformed(const Geometry& g, const glm::dmat4& xf)
             m = xf * m;
         out.instances = std::make_shared<const Instances>(std::move(i));
     }
+    if (g.heightfield)
+    {
+        if (keepsGrid(xf))
+            out.heightfield = std::make_shared<const geo::Heightfield>(transformedGrid(*g.heightfield, xf));
+        else
+        {
+            geo::Mesh m = geo::heightfieldToMesh(*g.heightfield);
+            transformMesh(m, xf);
+            if (out.mesh)
+            {
+                geo::Mesh joined = *out.mesh;
+                joined.append(m);
+                m = std::move(joined);
+            }
+            out.mesh = std::make_shared<const geo::Mesh>(std::move(m));
+        }
+    }
     return out;
 }
 
@@ -457,6 +509,21 @@ Geometry join(std::span<const GeometryPtr> parts)
         {
             curves.append(*g->curves);
             hasCurves = true;
+        }
+        if (g->heightfield)
+        {
+            if (!out.heightfield)
+                out.heightfield = g->heightfield;
+            else
+            {
+                if (!hasMesh)
+                {
+                    if (out.mesh)
+                        mesh = *out.mesh;
+                    hasMesh = true;
+                }
+                mesh.append(geo::heightfieldToMesh(*g->heightfield));
+            }
         }
         if (g->instances)
         {
@@ -550,6 +617,8 @@ geo::Mesh toOutputMesh(const Geometry& g)
 
     Geometry r = realize(g);
     geo::Mesh m = r.mesh ? *r.mesh : geo::Mesh();
+    if (r.heightfield && !r.heightfield->empty())
+        m.append(geo::heightfieldToMesh(*r.heightfield));
     stripAnonymous(m);
     m.compact();
     return m;

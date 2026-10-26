@@ -10,6 +10,7 @@ lila_module(lila_geo Scene
     Conform.cpp
     CrossSection.cpp
     FoldEdges.cpp
+    Heightfield.cpp
     Mesh.cpp
     Normals.cpp
     ObjIO.cpp
