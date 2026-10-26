@@ -3624,4 +3624,13 @@ bool run(std::string_view name, const Args& a, json& result)
         return false;
     return true;
 }
+
+UsdStagePtr liveStage(const std::string& node)
+{
+    Graph& g = graph();
+    Args a;
+    if (!node.empty())
+        a.positional.push_back(node);
+    return ensure(g, stageArg(g, a, "lila.usd.stage", 0)).stage;
+}
 } // namespace lila::usd::stage

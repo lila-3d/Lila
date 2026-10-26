@@ -130,4 +130,7 @@ private:
  * Safe to call more than once. False, with why, when the core plugins can't be found.
  */
 bool registerPlugins(const fs::path& packageRoot, std::string* error);
+
+/** Readies the package's pxr bindings for Lila's Python, when it runs (UsdPython.cpp, built with them). */
+void preparePython(const fs::path& packageRoot);
 } // namespace lila::usd
