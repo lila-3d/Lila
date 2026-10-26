@@ -2436,12 +2436,38 @@ scene::NodeId ViewportWidget::droppedCamera(const QMimeData* mime) const
     return scene::kNoNode;
 }
 
+viewportHooks::DropTarget ViewportWidget::dropTarget(QPointF px)
+{
+    const selectionHandlers::Hit hit = selectionHit(px);
+    viewportHooks::DropTarget t;
+    t.node = hit.node;
+    t.face = hit.face;
+    t.position = hit.position;
+    t.view = viewInfo();
+    t.px = px;
+    return t;
+}
+
+void ViewportWidget::dragLeaveEvent(QDragLeaveEvent* e)
+{
+    // Only handlers that drew a preview care; there is no mime data to offer by now.
+    viewportHooks::DropTarget t;
+    t.view = viewInfo();
+    t.left = true;
+    static const QMimeData kEmpty;
+    viewportHooks::handleDrop(kEmpty, t, false);
+    e->accept();
+}
+
 void ViewportWidget::dragEnterEvent(QDragEnterEvent* e)
 {
     if (droppedCamera(e->mimeData()) == scene::kNoNode)
     {
         // Hooks get the move events too: entering only asks whether any of them wants this kind of drag.
-        if (!e->mimeData() || !viewportHooks::handleDrop(*e->mimeData(), {}, false))
+        viewportHooks::DropTarget none;
+        none.view = viewInfo();
+        none.px = e->position();
+        if (!e->mimeData() || !viewportHooks::handleDrop(*e->mimeData(), none, false))
             return e->ignore();
         e->setDropAction(Qt::CopyAction);
         return e->accept();
@@ -2454,8 +2480,7 @@ void ViewportWidget::dragMoveEvent(QDragMoveEvent* e)
 {
     if (droppedCamera(e->mimeData()) == scene::kNoNode)
     {
-        selectionHandlers::Hit hit = selectionHit(e->position());
-        if (!e->mimeData() || !viewportHooks::handleDrop(*e->mimeData(), {hit.node, hit.face}, false))
+        if (!e->mimeData() || !viewportHooks::handleDrop(*e->mimeData(), dropTarget(e->position()), false))
             return e->ignore();
         e->setDropAction(Qt::CopyAction);
         return e->accept();
@@ -2469,8 +2494,7 @@ void ViewportWidget::dropEvent(QDropEvent* e)
     scene::NodeId cam = droppedCamera(e->mimeData());
     if (cam == scene::kNoNode)
     {
-        selectionHandlers::Hit hit = selectionHit(e->position());
-        if (!e->mimeData() || !viewportHooks::handleDrop(*e->mimeData(), {hit.node, hit.face}, true))
+        if (!e->mimeData() || !viewportHooks::handleDrop(*e->mimeData(), dropTarget(e->position()), true))
             return e->ignore();
         e->setDropAction(Qt::CopyAction);
         e->accept();

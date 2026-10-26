@@ -3400,8 +3400,9 @@ struct Renderer::Impl
                     return true;
                 if (!tasks.empty())
                     return true;
+                // A viewport with no frame state yet can't draw, and waking for it would spin with the mutex held.
                 for (auto& [id, v] : viewports)
-                    if (v->pending)
+                    if (v->pending && v->hasState)
                         return true;
                 return false;
             });

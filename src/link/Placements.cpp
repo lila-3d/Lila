@@ -14,6 +14,7 @@
 #include "scene/Graph.h"
 #include "scene/Instancing.h"
 #include "scene/MeshNodes.h"
+#include "scene/Transform.h"
 
 #include <algorithm>
 #include <cctype>
@@ -92,9 +93,20 @@ private:
     std::unordered_map<std::string, scene::NodeId> mOwner;
 };
 
+/** 0 to 1, the same for a key every send: per-instance variation (colour, wear) a material reads as custom primitive data 0. */
+double stableRandom(const std::string& key)
+{
+    uint64_t h = 1469598103934665603ull;
+    for (char c : key)
+        h = (h ^ uint8_t(c)) * 1099511628211ull;
+    return double(h >> 11) / double(1ull << 53);
+}
+
 json placement(scene::Graph& g, scene::NodeId id, const std::string& key)
 {
-    return placementAt(std::get<glm::dmat4>(g.value({id, scene::Transform::kWorldMatrix, -1})), key, g.node(id)->path());
+    json p = placementAt(std::get<glm::dmat4>(g.value({id, scene::Transform::kWorldMatrix, -1})), key, g.node(id)->path());
+    p["customData"] = json::array({stableRandom(key)});
+    return p;
 }
 
 /** The node's array copies, keyed "<node key>:<copy>" so Unreal tracks each one. */
@@ -147,6 +159,9 @@ json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, con
         json list = json::array();
         for (scene::NodeId id : placed)
         {
+            // Hidden members stay out of the level: a library asset's master only supplies the mesh.
+            if (!scene::effectivelyVisible(g, id))
+                continue;
             const std::string key = keys(id);
             list.push_back(placement(g, id, key));
             for (json& copy : arrayPlacements(g, id, key))

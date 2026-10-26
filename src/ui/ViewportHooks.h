@@ -82,11 +82,18 @@ LILA_UI_API void setHideHook(std::string id, HideHook fn);
 LILA_UI_API bool removeHideHook(std::string_view id);
 LILA_UI_API bool hiddenInView(scene::NodeId id);
 
-/** What a drag over a viewport is over: the object and, on a mesh, the face under the cursor. */
+/** What a drag over a viewport is over: the object and, on a mesh, the face under the cursor and where it was hit. */
 struct DropTarget
 {
     scene::NodeId node = scene::kNoNode;
     uint32_t face = UINT32_MAX;
+    /** World point on the surface under the cursor; valid when face is. */
+    glm::dvec3 position{0.0};
+    /** The view and cursor, so a handler can cast its own ray or place on a ground plane where nothing was hit. */
+    ViewInfo view;
+    QPointF px;
+    /** The drag left the view without dropping: handlers drop any preview they drew. */
+    bool left = false;
 };
 /** Return true to take the drag (commit false: hovering, commit true: dropped). */
 using DropHandler = std::function<bool(const QMimeData& mime, const DropTarget& target, bool commit)>;

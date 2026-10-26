@@ -13,10 +13,12 @@
 #include "ui/PaintSelect.h"
 #include "ui/SelectionHandlers.h"
 #include "ui/Tools.h"
+#include "ui/ViewportHooks.h"
 #include "ui/ViewportState.h"
 
 #include <QWidget>
 
+class QDragLeaveEvent;
 class QMimeData;
 class QTimer;
 
@@ -107,6 +109,9 @@ protected:
     void dragEnterEvent(QDragEnterEvent* e) override;
     void dragMoveEvent(QDragMoveEvent* e) override;
     void dropEvent(QDropEvent* e) override;
+    void dragLeaveEvent(QDragLeaveEvent* e) override;
+    /** What a drag at px is over, for the drop handlers. */
+    viewportHooks::DropTarget dropTarget(QPointF px);
 
 private:
     enum class Nav

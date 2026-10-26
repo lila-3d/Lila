@@ -142,6 +142,9 @@ constexpr Doc kDocs[] = {
     {"lila://guide/geometry-nodes", "guide-geometry-nodes.md", "Geometry nodes guide",
      "Authoring geometry-node groups from code: the one-call gnBuildGroup spec, group interfaces, nested groups, colours and "
      "normals for export, sharing as .lilanodes, and the full node catalogue with sockets and options."},
+    {"lila://guide/set-dressing", "guide-set-dressing.md", "Set dressing guide",
+     "Dressing scenes with props: library search and placement, physics settle/push/drop, shelf fills, scatters and piles, "
+     "modular kit snapping, and dressCheck to verify. Read before placing or arranging props."},
     {"lila://examples/low-poly-dog", "examples/low_poly_dog.py", "Example: low-poly dog",
      "A complete script: a very low-poly dog as one closed symmetric mesh (legs, head, snout, nose, eyes, floppy ears, tail "
      "all extruded), checked with meshCheck and captures."},
@@ -183,10 +186,10 @@ void registerAgentResources()
     s.addTool({
         .name = "read_guide",
         .description = "Lila's agent guides, for clients that cannot read MCP resources. topic: modeling (read before modeling), api, "
-                       "geometryNodes (read before building node groups: spec format and node catalogue), or example (a complete "
-                       "low-poly dog script).",
+                       "geometryNodes (read before building node groups: spec format and node catalogue), setDressing (read before "
+                       "placing or arranging props), or example (a complete low-poly dog script).",
         .inputSchema = {{"type", "object"},
-                        {"properties", {{"topic", {{"type", "string"}, {"enum", {"modeling", "api", "geometryNodes", "example"}}}}}},
+                        {"properties", {{"topic", {{"type", "string"}, {"enum", {"modeling", "api", "geometryNodes", "setDressing", "example"}}}}}},
                         {"required", {"topic"}}},
         .run = [](const json& args) {
             std::string topic = args.value("topic", "modeling");
@@ -194,9 +197,24 @@ void registerAgentResources()
                 return readFile(agentsDir() / "guide-api.md") + commandIndex();
             if (topic == "geometryNodes")
                 return readFile(agentsDir() / "guide-geometry-nodes.md") + nodeCatalogue();
+            if (topic == "setDressing")
+                return readFile(agentsDir() / "guide-set-dressing.md");
             if (topic == "example")
                 return readFile(agentsDir() / "examples" / "low_poly_dog.py");
             return readFile(agentsDir() / "guide-modeling.md");
+        },
+    });
+
+    s.addPrompt({
+        .name = "dress_scene",
+        .description = "Dress a space with props: pick from the library, place and arrange them, settle with physics, and check "
+                       "until nothing floats, overlaps or would fall.",
+        .arguments = json::array({
+            {{"name", "brief"}, {"description", "What to dress and how, e.g. \"a cluttered study: full bookshelf, papers on the desk\""}, {"required", true}},
+            {{"name", "area"}, {"description", "Where: mesh names or a bounding box in cm"}, {"required", false}},
+        }),
+        .get = [](const json& args) {
+            return fill(readFile(agentsDir() / "prompts" / "dress_scene.md"), args, {{"brief", "the requested set"}, {"area", "the selection"}});
         },
     });
 

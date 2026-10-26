@@ -73,6 +73,21 @@ FVector VectorField(const TSharedPtr<FJsonObject>& P, const TCHAR* Field, const 
 	return FVector((*Values)[0]->AsNumber(), (*Values)[1]->AsNumber(), (*Values)[2]->AsNumber());
 }
 
+/** The placement's custom primitive data: floats a material reads per actor or instance (index 0 is a stable random). */
+TArray<float> CustomDataOf(const TSharedPtr<FJsonObject>& P)
+{
+	TArray<float> Out;
+	const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
+	if (P->TryGetArrayField(TEXT("customData"), Values))
+	{
+		for (const TSharedPtr<FJsonValue>& V : *Values)
+		{
+			Out.Add(static_cast<float>(V->AsNumber()));
+		}
+	}
+	return Out;
+}
+
 /** location (cm), rotation (quat x y z w) and scale, already in Unreal's axes. */
 FTransform TransformOf(const TSharedPtr<FJsonObject>& P)
 {
@@ -186,6 +201,11 @@ void PlaceActors(UWorld* World, const FString& Group, const FString& Label, USta
 		}
 		Actor->GetStaticMeshComponent()->Modify();
 		Actor->GetStaticMeshComponent()->SetStaticMesh(Mesh);
+		const TArray<float> Custom = CustomDataOf(*P);
+		for (int32 K = 0; K < Custom.Num(); ++K)
+		{
+			Actor->GetStaticMeshComponent()->SetCustomPrimitiveDataFloat(K, Custom[K]);
+		}
 	}
 	for (const TPair<FString, AStaticMeshActor*>& Pair : ByNode)
 	{
@@ -254,13 +274,29 @@ void PlaceInstanced(UWorld* World, const FString& Group, const FString& Label, U
 	Component->Modify();
 	Component->SetStaticMesh(Mesh);
 	Component->ClearInstances();
+	// Every instance gets as many custom data floats as the placement with the most.
+	int32 CustomFloats = 0;
+	for (const TSharedPtr<FJsonValue>& V : Placements)
+	{
+		const TSharedPtr<FJsonObject>* P = nullptr;
+		if (V.IsValid() && V->TryGetObject(P))
+		{
+			CustomFloats = FMath::Max(CustomFloats, CustomDataOf(*P).Num());
+		}
+	}
+	Component->SetNumCustomDataFloats(CustomFloats);
 	int32 Count = 0;
 	for (const TSharedPtr<FJsonValue>& V : Placements)
 	{
 		const TSharedPtr<FJsonObject>* P = nullptr;
 		if (V.IsValid() && V->TryGetObject(P))
 		{
-			Component->AddInstance(TransformOf(*P), true);
+			const int32 Index = Component->AddInstance(TransformOf(*P), true);
+			const TArray<float> Custom = CustomDataOf(*P);
+			for (int32 K = 0; K < Custom.Num(); ++K)
+			{
+				Component->SetCustomDataValue(Index, K, Custom[K]);
+			}
 			++Count;
 		}
 	}

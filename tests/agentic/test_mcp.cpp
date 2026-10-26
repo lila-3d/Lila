@@ -126,8 +126,12 @@ TEST_CASE("mcp: guides as resources, model_asset as a prompt")
     CHECK(call("resources/read", {{"uri", "lila://nope"}}).contains("error"));
 
     json prompts = call("prompts/list")["result"]["prompts"];
-    REQUIRE(prompts.size() >= 1);
-    CHECK(prompts[0]["name"] == "model_asset");
+    REQUIRE(prompts.size() >= 2);
+    std::set<std::string> names;
+    for (const json& pr : prompts)
+        names.insert(pr["name"].get<std::string>());
+    CHECK(names.count("model_asset") == 1);
+    CHECK(names.count("dress_scene") == 1);
     json p = call("prompts/get", {{"name", "model_asset"}, {"arguments", {{"subject", "a small cute dog"}}}});
     std::string msg = p["result"]["messages"][0]["content"]["text"];
     CHECK(msg.find("a small cute dog") != std::string::npos);

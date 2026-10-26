@@ -192,7 +192,8 @@ struct PlacementOptions
 /**
  * The instance groups of the meshes under `roots`, one asset per instance root:
  * {groups: [{key, source (full path), sourceId, contentPath, objectPath, mode, placements: [...]}]}, each placement
- * {id, name, location, rotation (quat xyzw), scale} in Unreal space. Groups and placements are keyed by the nodes'
+ * {id, name, location, rotation (quat xyzw), scale, customData: [stable random 0..1]} in Unreal space; hidden members
+ * are left out. Groups and placements are keyed by the nodes'
  * linkId, which survives renames and reopening the scene. A group lists its root and every instance of it, wherever
  * they sit. Throws CommandError for an unknown mode.
  */

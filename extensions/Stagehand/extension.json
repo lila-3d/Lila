@@ -1,0 +1,14 @@
+{
+    "id": "Stagehand",
+    "name": "Stagehand",
+    "version": "0.1.0",
+    "vendor": "Lila",
+    "description": "Set dressing with physics: settle, push, wiggle, drop and shake things into place, by hand with the Push tool or in one command, with physics bodies on any mesh and checks that report anything floating, overlapping or about to fall.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "Stagehand.dll",
+        "linux": "Stagehand.so",
+        "macos": "Stagehand.dylib"
+    },
+    "enabledByDefault": true
+}
