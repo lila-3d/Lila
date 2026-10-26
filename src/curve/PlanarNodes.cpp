@@ -959,5 +959,6 @@ void registerPlanarCommands()
     registerSkeletonCommands();
     registerInsetRegionCommand();
     registerSvgCommands();
+    registerDxfCommands();
 }
 } // namespace lila::curve

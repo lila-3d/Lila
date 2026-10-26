@@ -7,6 +7,7 @@ add_executable(lila_curve_tests
     test_curve_objects.cpp
     test_curve_math.cpp
     test_curve_scene.cpp
+    test_dxf.cpp
     test_edge_to_curve.cpp
     test_bevel.cpp
     test_environment.cpp

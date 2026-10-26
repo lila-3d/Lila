@@ -17,6 +17,8 @@ lila_module(lila_curve Scene
     CurveBoolean.h
     CurveDeform.cpp
     CurveDeform.h
+    Dxf.cpp
+    Dxf.h
     EdgeCurve.cpp
     EdgeCurve.h
     Fair.cpp
@@ -69,7 +71,7 @@ if(MSVC)
                                 third_party/clipper2/clipper.rectclip.cpp PROPERTIES COMPILE_OPTIONS "/W0")
 endif()
 
-lila_module(lila_curve_scene Scene AlongNodes.cpp AlongNodes.h CurveCommands.cpp CurveDeformCommands.cpp CurveNodes.cpp CurveNodes.h EdgeToCurve.cpp EdgeToCurve.h PipeNode.cpp PipeNode.h
+lila_module(lila_curve_scene Scene AlongNodes.cpp AlongNodes.h CurveCommands.cpp CurveDeformCommands.cpp CurveNodes.cpp CurveNodes.h DxfCommands.cpp EdgeToCurve.cpp EdgeToCurve.h PipeNode.cpp PipeNode.h
     CableNode.cpp ContourNode.cpp EnvAttrs.h EnvironmentNodes.h LiveSurface.cpp
     VehicleCommands.cpp VehicleNodes.cpp VehicleNodes.h
     SketchCommands.cpp SketchNode.h GroomCommands.cpp GroomNode.h
