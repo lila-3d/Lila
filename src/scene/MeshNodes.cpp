@@ -1,6 +1,7 @@
 #include "scene/MeshNodes.h"
 
 #include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "core/Progress.h"
@@ -529,8 +530,19 @@ void registerMeshCommands()
         .doc = "Display meshes subdivided without changing them (the 1/2/3 keys). level 0 is off.",
         .positionalDoc = "objects",
         .flags = {{"level", "", T::Int, 2, "Subdivision levels to display (0 to 3)."}},
+        .undoable = false,
         .run = [](const Args& a) -> json {
             int64_t level = std::clamp<int64_t>(a.get<int>("level", 2), 0, 3);
+            // A display toggle, like Maya's: undo steps over it.
+            UndoStack& undo = UndoStack::get();
+            const bool was = undo.enabled();
+            undo.setEnabled(false);
+            struct Restore
+            {
+                UndoStack& undo;
+                bool was;
+                ~Restore() { undo.setEnabled(was); }
+            } restore{undo, was};
             for (const std::string& name : a.objects())
                 if (Node& n = nodeNamed(name); n.type().isA("mesh"))
                     graph().setValue({n.id(), MeshNode::kSmoothPreview, -1}, level);

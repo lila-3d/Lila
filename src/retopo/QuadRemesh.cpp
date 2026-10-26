@@ -6,6 +6,7 @@
 #include "geo/Ops.h"
 #include "geo/Topology.h"
 #include "retopo/Internal.h"
+#include "retopo/Patch.h"
 
 #include <tbb/parallel_for.h>
 
@@ -298,7 +299,40 @@ void removeValence2(geo::Mesh& m, std::vector<FeatureKind>& feature)
  * against their faces, and a walk that comes back through a point it already passed is cut there, so a hole that
  * touches itself or another hole still comes out as simple loops. Loops on the source's own border stay open.
  */
-void fillHoles(geo::Mesh& m, const std::vector<uint8_t>& sourceBoundary)
+/** A quad patch across a hole loop wider than a face, or false when no pattern fits its sides. */
+bool patchHole(geo::Mesh& m, const std::vector<Index>& loop, const geo::MeshBvh* surface)
+{
+    if (loop.size() < 6 || loop.size() % 2 != 0)
+        return false;
+    PatchBoundary b;
+    for (Index p : loop)
+        b.points.push_back(m.position(p));
+    for (int sides : {4, 6, 5, 3})
+    {
+        b.corners = patchCorners(b.points, sides);
+        if (b.corners.size() != size_t(sides) || !patchSidesFillable(patchSideCounts(b)))
+            continue;
+        const PatchResult r = fillPatch(b, {}, surface);
+        if (!r.ok())
+            continue;
+        std::vector<Index> id(r.positions.size());
+        for (size_t i = 0; i < loop.size(); ++i)
+            id[i] = loop[i];
+        for (size_t i = loop.size(); i < r.positions.size(); ++i)
+            id[i] = m.addPoint(r.positions[i]);
+        for (const auto& f : r.faces)
+        {
+            std::vector<Index> pts;
+            for (Index k : f)
+                pts.push_back(id[k]);
+            m.addFace(pts);
+        }
+        return true;
+    }
+    return false;
+}
+
+void fillHoles(geo::Mesh& m, const std::vector<uint8_t>& sourceBoundary, const geo::MeshBvh* surface = nullptr)
 {
     LILA_ZONE();
 
@@ -351,7 +385,8 @@ void fillHoles(geo::Mesh& m, const std::vector<uint8_t>& sourceBoundary)
                 border.push_back(k);
         if (border.size() < 2)
         {
-            m.addFace(loop);
+            if (!(surface && patchHole(m, loop, surface)))
+                m.addFace(loop);
             continue;
         }
         // A hole that reaches the source's border is a bay in it: fill each run of inner points between two border
@@ -806,6 +841,7 @@ std::vector<glm::dvec3> crossField(Work& w, const QuadRemeshOptions& opts, std::
 }
 
 Index defects(const geo::Mesh& m, const geo::Mesh& src, const geo::MeshBvh& bvh, bool sourceClosed);
+Index largeFaces(const geo::Mesh& m);
 bool better(const QuadRemeshResult& a, int defectsA, const QuadRemeshResult& b, int defectsB);
 
 QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions& opts)
@@ -837,9 +873,8 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
     clock.lap("cross field");
 
     // Extraction and cleanup for one lattice layout.
-    auto build = [&](const std::vector<glm::dvec3>& o, const std::vector<std::array<int, 2>>* steps = nullptr) {
+    auto buildFrom = [&](Extracted ex) {
         QuadRemeshResult out;
-        Extracted ex = extractMesh(s, q, o, scale, steps);
         if (ex.mesh.numFaces() == 0)
         {
             out.error = "extraction produced no faces";
@@ -854,7 +889,7 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         std::vector<uint8_t>& boundary = ex.boundary;
         removeValence2(m, feature);
         geo::conformNormals(m);
-        fillHoles(m, boundary);
+        fillHoles(m, boundary, &bvh);
         {
             std::vector<Index> tris;
             for (Index f = 0; f < m.faceCapacity(); ++f)
@@ -916,11 +951,42 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
 
     // The seamless layout only turns at the poles, but rounding can tangle it near tight features; keep whichever of it
     // and the local position field comes out with fewer irregular points.
-    std::vector<std::array<int, 2>> steps;
-    std::vector<glm::dvec3> o = opts.seamless ? solveSeamlessPositions(s, q, scale, nullptr, &steps) : std::vector<glm::dvec3>{};
+    auto build = [&](const std::vector<glm::dvec3>& o, const std::vector<std::array<int, 2>>* steps = nullptr) {
+        return buildFrom(extractMesh(s, q, o, scale, steps));
+    };
+    const bool closed = isClosed(src);
+    auto flawsOf = [&](const QuadRemeshResult& r) { return r.ok() ? int(defects(r.mesh, src, bvh, closed) + largeFaces(r.mesh)) : 0; };
+    // Fewer flaws first, then fewer irregular points.
+    auto seamlessBetter = [&](const QuadRemeshResult& a, int flawsA, const std::optional<QuadRemeshResult>& b, int flawsB) {
+        return a.ok() && (!b || !b->ok() || flawsA < flawsB || (flawsA == flawsB && a.metrics.irregular < b->metrics.irregular));
+    };
     std::optional<QuadRemeshResult> seamless;
-    if (!o.empty())
-        seamless = build(o, &steps);
+    int seamlessFlaws = 0;
+    auto trySeamless = [&](int foldRetries) {
+        std::vector<std::array<int, 2>> steps;
+        Extracted grid;
+        Index folds = 0;
+        std::vector<glm::dvec3> o = solveSeamlessPositions(s, q, scale, nullptr, &steps, &grid, foldRetries, &folds);
+        if (o.empty())
+            return folds;
+        auto consider = [&](QuadRemeshResult r) {
+            const bool ok = r.ok();
+            const int flaws = flawsOf(r);
+            if (seamlessBetter(r, flaws, seamless, seamlessFlaws))
+            {
+                seamless = std::move(r);
+                seamlessFlaws = flaws;
+            }
+            return ok ? flaws : 1;
+        };
+        // The grid traces folds left in the layout as holes; rounding to the nearest lattice point covers them.
+        if (grid.mesh.numFaces() == 0 || consider(buildFrom(std::move(grid))) > 0)
+            consider(build(o, &steps));
+        return folds;
+    };
+    // Steering the rounding away from folds untangles some layouts and costs others poles, so a folded one tries both.
+    if (opts.seamless && trySeamless(0) > 0)
+        trySeamless(48);
     clock.lap("seamless");
     QuadRemeshResult best = build(solvePositionField(s, q, scale));
     clock.lap("local");
@@ -930,7 +996,6 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         best = std::move(*seamless);
     // Where lattice points land against a tight spot is down to where the lattice happens to sit; a lattice shifted by
     // half a cell often fits where the first didn't, at the same density.
-    const bool closed = isClosed(src);
     int bestDefects = best.ok() ? int(defects(best.mesh, src, bvh, closed)) : 0;
     if (!preferSeamless && !(best.ok() && bestDefects == 0))
         for (glm::dvec2 shift : {glm::dvec2(0.5, 0.0), glm::dvec2(0.0, 0.5), glm::dvec2(0.5, 0.5)})
@@ -973,6 +1038,15 @@ Index defects(const geo::Mesh& m, const geo::Mesh& src, const geo::MeshBvh& bvh,
             count += m.edgeValid(e) && m.isBoundaryEdge(e);
     for (Index p = 0; p < m.pointCapacity(); ++p)
         count += m.pointValid(p) && m.pointValence(p) > 8;
+    return count;
+}
+
+/** Faces of more than five sides, which only hole filling leaves. */
+Index largeFaces(const geo::Mesh& m)
+{
+    Index count = 0;
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+        count += m.faceValid(f) && m.faceSize(f) > 5;
     return count;
 }
 

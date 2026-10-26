@@ -212,16 +212,22 @@ LILA_SCENE_API Curvature estimateCurvature(const Surface& s, double coherenceRad
 LILA_SCENE_API std::vector<glm::dvec3> solvePositionField(const Surface& s, const std::vector<glm::dvec3>& q, const std::vector<double>& scale,
                                                           glm::dvec2 shift = glm::dvec2(0.0));
 
+struct Extracted;
+
 /**
  * The same, from one global seamless parametrization (mixed-integer quadrangulation, Bommes et al. 2009): the surface is
  * cut to a disk through the field's singularities, the parameter jumps across the cuts by quarter turns and whole
  * lattice steps, and singularities land on lattice points. So the lattice only turns at the singularities. Empty, with
  * error set, when it can't be solved. edgeSteps gets, per surface edge, the whole lattice step from its first vertex's
- * lattice point to its second's, for extractMesh.
+ * lattice point to its second's, for extractMesh. grid gets the quad mesh traced straight from the parametrization's
+ * integer grid. foldRetries caps how often a rounding that folds the layout is undone and tried another way; folds gets
+ * how many triangles stay folded.
  */
 LILA_SCENE_API std::vector<glm::dvec3> solveSeamlessPositions(const Surface& s, const std::vector<glm::dvec3>& q,
                                                               const std::vector<double>& scale, std::string* error = nullptr,
-                                                              std::vector<std::array<int, 2>>* edgeSteps = nullptr);
+                                                              std::vector<std::array<int, 2>>* edgeSteps = nullptr,
+                                                              Extracted* grid = nullptr, int foldRetries = 0,
+                                                              Index* folds = nullptr);
 
 /** Lattice points of i and j (returned and outJ) that coincide best near the two vertices. */
 LILA_SCENE_API glm::dvec3 compatLatticePair(const glm::dvec3& vi, const glm::dvec3& ni, const glm::dvec3& qi, const glm::dvec3& oi, double si,

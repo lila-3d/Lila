@@ -9,6 +9,29 @@ def addAnimLayerMembers(*objects: Any, layer: str | None = None, l: str | None =
         layer: Animation layer. Default: the active one. Short form l.
     """
 
+def addAttr(*objects: Any, longName: str | None = None, shortName: str | None = None, niceName: str | None = None, attributeType: str | None = None, dataType: str | None = None, multi: bool | None = None, defaultValue: Any | None = None, minValue: float | None = None, maxValue: float | None = None, softMinValue: float | None = None, softMaxValue: float | None = None, enumName: str | None = None, keyable: bool | None = None, hidden: bool | None = None, usedAsColor: bool | None = None, doc: str | None = None, ln: str | None = None, sn: str | None = None, nn: str | None = None, at: str | None = None, dt: str | None = None, m: bool | None = None, dv: Any | None = None, min: float | None = None, max: float | None = None, smn: float | None = None, smx: float | None = None, en: str | None = None, k: bool | None = None, h: bool | None = None, uac: bool | None = None) -> Any:
+    """Add an attribute to objects (Maya's addAttr): attributeType for a single value or, with multi, an array of them; dataType for strings and arrays (stringArray, doubleArray, Int32Array, vectorArray). Saved with the scene. Returns the new plugs.
+
+    Args:
+        objects: objects.
+        longName: The attribute's name. Short form ln.
+        shortName: A short name. Short form sn.
+        niceName: The label editors show. Short form nn.
+        attributeType: bool, long, float, double, double3, enum or matrix (Lila's int, vec3 too). Short form at.
+        dataType: string, stringArray, doubleArray, floatArray, Int32Array, vectorArray or matrix. Short form dt.
+        multi: An array of attributeType: any number of elements, attr[0], attr[1] ... Short form m. Default False.
+        defaultValue: Default value (each element's, for an array). Short form dv.
+        minValue: Lowest value editors allow. Short form min.
+        maxValue: Highest value editors allow. Short form max.
+        softMinValue: Slider minimum. Short form smn.
+        softMaxValue: Slider maximum. Short form smx.
+        enumName: Enum labels, 'low:medium:high'. Short form en.
+        keyable: Show it in the channel box, where it can be keyed. Short form k. Default False.
+        hidden: Hide it from editors. Short form h. Default False.
+        usedAsColor: A double3 holding a colour: editors show a swatch. Short form uac. Default False.
+        doc: What it is for: editors show it as a tooltip.
+    """
+
 def addCollider(*objects: Any, capsuleRadius: float | None = None, capsuleLength: float | None = None) -> Any:
     """Add colliders to a collision deformer: meshes, or transforms as capsules along their Y.
 
@@ -1198,7 +1221,7 @@ def conformCurve(*objects: Any, mesh: str | None = None, offset: float | None = 
     """
 
 def connectAttr(*objects: Any, force: bool | None = None, f: bool | None = None) -> Any:
-    """connectAttr('src.attr', 'dst.attr').
+    """connectAttr('src.attr', 'dst.attr'). A whole array input ('loft1.sections') gets a new last element. Returns the destination plug.
 
     Args:
         objects: src dst.
@@ -1705,6 +1728,14 @@ def deleteAnimLayer(*objects: Any) -> Any:
         objects: layers.
     """
 
+def deleteAttr(*objects: Any, attribute: str | None = None, at: str | None = None) -> Any:
+    """Delete attributes added with addAttr: deleteAttr('node.attr'), or deleteAttr(objects, attribute=name).
+
+    Args:
+        objects: plugs or objects.
+        attribute: The attribute to delete from each object. Short form at.
+    """
+
 def deleteBakeTarget(*objects: Any, scope: str | None = None, sc: str | None = None) -> Any:
     """Delete a saved bake preset (a user or workspace target profile file). Built-in targets can't be deleted. Returns the deleted file.
 
@@ -1799,7 +1830,7 @@ def detachCurve(*objects: Any, parameter: float | None = None, p: float | None =
     """
 
 def disconnectAttr(*objects: Any) -> Any:
-    """disconnectAttr('dst.attr'), or (src, dst).
+    """disconnectAttr('dst.attr'), or (src, dst). A whole array input loses every element, or with src only the ones src drives.
 
     Args:
         objects: [src] dst.
@@ -2101,6 +2132,18 @@ def exportDriverData(*objects: Any) -> Any:
 
     Args:
         objects: path.
+    """
+
+def exportDxf(*objects: Any, unit: str | None = None, upAxis: str | None = None, version: str | None = None, splines: bool | None = None, tolerance: float | None = None, tol: float | None = None) -> Any:
+    """Write curves and meshes to a DXF file, one layer per object. R2000 writes curves as splines and polylines and meshes as polyface meshes; R12 writes everything as polylines, for older laser and CNC software. Defaults to the selection and everything under it.
+
+    Args:
+        objects: path nodes...
+        unit: The file's length unit, recorded in the file. One of 'mm', 'cm', 'm', 'in', 'ft'. Default 'mm'.
+        upAxis: The file's up axis; converted from the scene's. One of 'y', 'z'. Default 'z'.
+        version: DXF version: 2000 or r12. One of '2000', 'r12'. Default '2000'.
+        splines: R2000: curves as SPLINE entities. Off writes them as polylines within tolerance. Default True.
+        tolerance: cm, for curves written as polylines. Short form tol. Default 0.01.
     """
 
 def exportFbx(*objects: Any, profile: str | None = None, kind: str | None = None, maxInfluences: int | None = None, animation: bool | None = None, bakeAnimation: bool | None = None, deformOnly: bool | None = None, start: float | None = None, end: float | None = None, take: str | None = None, takes: Any | None = None, triangulate: bool | None = None, tangents: bool | None = None, worldSpace: bool | None = None, atOrigin: bool | None = None, children: bool | None = None, smoothingGroups: bool | None = None, compress: bool | None = None, units: str | None = None, selectionOnly: bool | None = None, k: str | None = None, mi: int | None = None, anim: bool | None = None, bake: bool | None = None, do: bool | None = None, st: float | None = None, et: float | None = None, ws: bool | None = None, sg: bool | None = None, u: str | None = None, sl: bool | None = None) -> Any:
@@ -2625,12 +2668,13 @@ def gameExportSavePreset(*objects: Any, path: str | None = None, filename: str |
         scene: Keep it in the scene (a gameExportPreset node) instead of the prefs. Default False.
     """
 
-def getAttr(*objects: Any, lock: bool | None = None, l: bool | None = None) -> Any:
-    """Value of 'node.attr'. lock=True returns whether it is locked instead.
+def getAttr(*objects: Any, lock: bool | None = None, multiIndices: bool | None = None, l: bool | None = None, mi: bool | None = None) -> Any:
+    """Value of 'node.attr'; a whole array gives its elements' values in index order. lock=True returns whether it is locked instead; multiIndices=True an array's element indices.
 
     Args:
         objects: plug.
         lock: Return the lock state instead of the value. Short form l. Default False.
+        multiIndices: Return an array's element indices, ascending. Short form mi. Default False.
     """
 
 def getVertexColorData(*objects: Any, colorSet: str | None = None, base: bool | None = None) -> Any:
@@ -3096,6 +3140,19 @@ def importDeformerWeights(*objects: Any, file: str | None = None, byId: bool | N
         mesh: For a field's painted layer: the mesh it is painted on.
     """
 
+def importDxf(*objects: Any, unit: str | None = None, upAxis: str | None = None, merge: bool | None = None, polylines: bool | None = None, tolerance: float | None = None, name: str | None = None, tol: float | None = None, n: str | None = None) -> Any:
+    """Import a DXF file (ASCII or binary): lines, polylines with their arcs, arcs, circles, ellipses and splines as exact curves, and 3D faces, polyface meshes and MESH entities as meshes, with blocks expanded where they are inserted. One curve and one mesh per layer, under a group named after the file. Returns the curve and mesh names.
+
+    Args:
+        objects: path.
+        unit: The file's length unit; auto reads it from the file, and takes mm when it has none. One of 'auto', 'mm', 'cm', 'm', 'in', 'ft'. Default 'auto'.
+        upAxis: The file's up axis; converted to the scene's. One of 'y', 'z'. Default 'z'.
+        merge: One curve and one mesh for the whole file instead of one per layer. Default False.
+        polylines: Turn every curve into straight segments, within tolerance. Default False.
+        tolerance: cm the segments may stray from the curve, with polylines on. Short form tol. Default 0.01.
+        name: Name of the group; the file name by default. Short form n.
+    """
+
 def importFbx(*objects: Any, parent: str | None = None, skins: bool | None = None, animation: bool | None = None, take: str | None = None, setPlayback: bool | None = None, instances: bool | None = None, report: bool | None = None, select: bool | None = None, p: str | None = None, anim: bool | None = None) -> Any:
     """Import an FBX file: its node hierarchy as transforms, joints and meshes, converted to the scene's axes and cm. LimbNodes become joints (PreRotation into jointOrient), skins become skinClusters with the file's weights and bind matrices, morph channels become a morph with a target per channel (in-betweens kept), and one take is baked onto the channels. Cameras become camera nodes with their lens, film back and clipping (focal length, film back and clipping curves keyed per frame); lights are reported, not imported. Returns the new node names, or with report=True a dict of nodes, roots, joints, skinClusters, take, fps, skipped and warnings.
 
@@ -3125,9 +3182,9 @@ def importGltf(*objects: Any, parent: str | None = None, skins: bool | None = No
 
     Each mesh becomes one Lila mesh, its primitives becoming material slots, with normals (hard edges where they split), tangents, every UV set (flipped to Lila's V-up) and every vertex color set; vertices split for seams weld back into points. Skins become skinClusters on joints with every JOINTS_n/WEIGHTS_n influence and the inverse bind matrices; a joint's rest rotation goes into its jointOrient. Morph targets become a morph with their names and default weights. Animation channels become curves: LINEAR and STEP keys exactly, CUBICSPLINE with its tangents (rotations sampled every frame); with several animations each becomes a take, the first active. Cameras keep their field of view and clipping.
 
-    Materials become material nodes: base color and alpha mode, metallic and roughness (packed into an ORM map, written as a new image when the file's layout differs), occlusion, emissive with KHR_materials_emissive_strength, normal map (kept OpenGL style), double sided, KHR_materials_ior/specular as specular, KHR_texture_transform baked into the UVs, and KHR_materials_unlit approximated as emissive. Embedded and converted images are written to textureDir. KHR_mesh_quantization, sparse accessors, EXT_meshopt_compression and KHR_draco_mesh_compression are decoded (a Draco primitive that fails to decode falls back to its uncompressed data when the file has it). Lights are reported, not imported (Lila has no lights).
+    Materials become material nodes: base color and alpha mode, metallic and roughness (packed into an ORM map, written as a new image when the file's layout differs), occlusion, emissive with KHR_materials_emissive_strength, normal map (kept OpenGL style), double sided, KHR_materials_ior/specular as specular, KHR_texture_transform baked into the UVs, and KHR_materials_unlit approximated as emissive. Embedded and converted images are written to textureDir. KHR_mesh_quantization, sparse accessors, EXT_meshopt_compression and KHR_draco_mesh_compression are decoded (a Draco primitive that fails to decode falls back to its uncompressed data when the file has it). KHR_lights_punctual lights come in as lights, intensity in candela or lux.
 
-    Returns the new node names, or with report=True a dict of nodes, roots, joints, skinClusters, cameras, morphs, materials, images, takes, take, fps, start, end, curves, skipped, warnings and errors.
+    Returns the new node names, or with report=True a dict of nodes, roots, joints, skinClusters, cameras, lights, morphs, materials, images, takes, take, fps, start, end, curves, skipped, warnings and errors.
 
     Args:
         objects: path.
@@ -3378,16 +3435,39 @@ def lattice(*objects: Any, divisions: Sequence[float] | None = None, interpolati
         name: Name for the lattice.
     """
 
+def light(type: str | None = None, name: str | None = None, parent: str | None = None, position: Sequence[float] | None = None, color: Sequence[float] | None = None, intensity: float | None = None, units: str | None = None, temperature: float | None = None, range: float | None = None, innerConeAngle: float | None = None, outerConeAngle: float | None = None, width: float | None = None, height: float | None = None, castShadows: bool | None = None, provider: str | None = None, skipSelect: bool | None = None, *, t: str | None = None, n: str | None = None, p: str | None = None, pos: Sequence[float] | None = None, c: Sequence[float] | None = None, i: float | None = None, u: str | None = None, tmp: float | None = None, r: float | None = None, ica: float | None = None, oca: float | None = None, w: float | None = None, h: float | None = None, cs: bool | None = None, prv: str | None = None, ss: bool | None = None) -> Any:
+    """Create a light. Returns its path. Flags left out keep the light's defaults.
+
+    Args:
+        type: point, spot, directional, area, disc or dome. Short form t. Default 'point'.
+        name: Name; made unique among its siblings. Defaults to <type>Light. Short form n.
+        parent: Parent transform. Short form p.
+        position: World position, cm. Short form pos.
+        color: Linear colour. Short form c.
+        intensity: Brightness, in units. Short form i.
+        units: unitless, candela, lumens, lux, nits or watts. Short form u.
+        temperature: Colour temperature in kelvin; turns useTemperature on. Short form tmp.
+        range: Cutoff distance, cm. 0 has none. Short form r.
+        innerConeAngle: Spot: half angle of full brightness, degrees. Short form ica.
+        outerConeAngle: Spot: half angle where the light ends, degrees. Short form oca.
+        width: Area width or disc diameter, cm. Short form w.
+        height: Area height, cm. Short form h.
+        castShadows: Casts shadows. Short form cs.
+        provider: Light provider asked first for this light. Short form prv.
+        skipSelect: Don't select the new light. Short form ss. Default False.
+    """
+
 def listAnimLayers() -> Any:
     """The layer stack from the bottom: BaseAnimation first, then each layer's settings and members."""
 
-def listAttr(*objects: Any, keyable: bool | None = None, locked: bool | None = None, k: bool | None = None, l: bool | None = None) -> Any:
+def listAttr(*objects: Any, keyable: bool | None = None, locked: bool | None = None, userDefined: bool | None = None, k: bool | None = None, l: bool | None = None, ud: bool | None = None) -> Any:
     """Attribute names of a node.
 
     Args:
         objects: object.
         keyable: Only keyable attributes. Short form k. Default False.
         locked: Only locked plugs; a Vec3 lists each locked component (translateX). Short form l. Default False.
+        userDefined: Only attributes added with addAttr. Short form ud. Default False.
     """
 
 def listDisplayLayers() -> Any:
@@ -5004,6 +5084,13 @@ def removeMorphTarget(*objects: Any) -> Any:
 
     Args:
         objects: targets.
+    """
+
+def removeMultiInstance(*objects: Any) -> Any:
+    """Remove array elements with their connections and values: 'node.attr[3]', or 'node.group[3]' for every child of a grouped array.
+
+    Args:
+        objects: plugs.
     """
 
 def removeReference(*objects: Any) -> Any:

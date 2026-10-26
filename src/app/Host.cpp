@@ -13,6 +13,7 @@
 #include "core/Workspace.h"
 #include "extensions/ExtensionManager.h"
 #include "fbx/Fbx.h"
+#include "gltf/Gltf.h"
 #include "gn/Gn.h"
 #include "io/FileTranslators.h"
 #include "io/Recovery.h"
@@ -160,6 +161,7 @@ void startCore()
     link::registerCommands();
     stream::registerCommands();
     fbx::registerCommands();
+    gltf::registerCommands();
     maya::registerCommands();
     batch::registerCommands();
     io::translators::registerBuiltins();

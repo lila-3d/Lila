@@ -4,6 +4,7 @@
 #include "core/Log.h"
 #include "core/Paths.h"
 #include "core/Profile.h"
+#include "ops/Undo.h"
 
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
@@ -24,6 +25,20 @@ std::wstring widen(const std::filesystem::path& p)
 {
     return p.wstring();
 }
+
+/** Closes undo chunks a script opened and never closed, so later edits don't keep landing in its step. */
+struct ChunkGuard
+{
+    int depth = UndoStack::get().chunkDepth();
+    ~ChunkGuard()
+    {
+        UndoStack& undo = UndoStack::get();
+        if (undo.chunkDepth() > depth)
+            log::warn("python: closed {} undo chunk(s) the script left open", undo.chunkDepth() - depth);
+        while (undo.chunkDepth() > depth)
+            undo.closeChunk();
+    }
+};
 } // namespace
 
 UiHooks& uiHooks()
@@ -126,6 +141,7 @@ Result run(std::string_view code, std::string_view filename)
 
     if (!gInitialized)
         return {false, "python not initialized"};
+    ChunkGuard chunks;
     nb::gil_scoped_acquire gil;
     try
     {
@@ -144,6 +160,7 @@ Result runFile(const std::filesystem::path& path)
 {
     if (!gInitialized)
         return {false, "python not initialized"};
+    ChunkGuard chunks;
     nb::gil_scoped_acquire gil;
     try
     {

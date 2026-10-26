@@ -12,6 +12,7 @@ lila_add_extension(lila_test_scene_points_extension ID scenePoints
 add_executable(lila_extensions_tests
     main.cpp
     test_extensions.cpp
+    test_python_nodes.cpp
     test_scene_points.cpp
     test_sdk.cpp)
 target_link_libraries(lila_extensions_tests PRIVATE LilaScene doctest::doctest)
@@ -47,6 +48,7 @@ if(WIN32)
 endif()
 add_test(NAME lila_viewport_extension_tests COMMAND lila_viewport_extension_tests)
 add_test(NAME lila_viewport_extension_python COMMAND lila_viewport_extension_tests --no-skip "--test-case=viewport extension points from Python*")
+add_test(NAME lila_extensions_python_nodes COMMAND lila_extensions_tests --no-skip "--test-case=python nodes API*")
 add_test(NAME lila_extensions_python_registries COMMAND lila_extensions_tests --no-skip "--test-case=scene extension points from Python*")
 
 # The SDK package end to end: install it, build the samples as an outside project against the install alone, then

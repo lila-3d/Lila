@@ -1314,7 +1314,7 @@ void MainWindow::buildMenus()
                                    "#Constructs", "topo.freezeAll", "#Display", "topo.qualityOverlay"});
 
     menu("Model", "Model");
-    menus::addActions("Model", {"#Components", "mesh.extrude", "mesh.inset", "mesh.bevel", "mesh.insertLoop", "mesh.knife", "mesh.bridge",
+    menus::addActions("Model", {"#Components", "mesh.extrude", "mesh.inset", "mesh.insetRegion", "mesh.bevel", "mesh.insertLoop", "mesh.knife", "mesh.bridge",
                                 "mesh.fillHole", "mesh.poke", "#Merge", "mesh.merge", "mesh.mergeCenter", "mesh.targetWeld", "mesh.collapse", "#Edges", "mesh.dissolve",
                                 "mesh.spin", "#Shape", "mesh.straighten", "mesh.circularize", "mesh.spherize", "mesh.flatten", "mesh.conformShape",
                                 "mesh.conformToObject"});
