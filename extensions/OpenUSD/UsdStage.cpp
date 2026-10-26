@@ -148,6 +148,8 @@ struct Stage : TfWeakBase
         std::optional<SdfPath> copy;
         std::optional<std::pair<SdfPath, size_t>> instance;
         std::optional<TfToken> joint;
+        /** Where the joint stood in its skeleton's joints. */
+        std::optional<size_t> jointAt;
     };
     /** Parts deleted this session (joints, point instances, copies), so an undo that brings one back makes it a part again. */
     std::unordered_map<NodeId, Part> deletedParts;
@@ -954,6 +956,9 @@ Plan planFor(Stage& s, Graph& g, const std::set<NodeId>& linked, const std::set<
     }
     for (NodeId n : added)
     {
+        // Joints and skinned meshes are written with their whole skeleton.
+        if (const Node* node = g.node(n); node && (node->type().isA("joint") || (node->type().isA("mesh") && (scene::skin::find(g, n) || scene::morphs::find(g, n)))))
+            return {};
         NodeId top = n;
         for (NodeId p = g.parent(top); p != s.node && p != kNoNode && !s.primOf.count(p); p = g.parent(top))
         {
@@ -1355,6 +1360,8 @@ struct Author
     std::map<SdfPath, VtTokenArray> skelOrder;
     /** Meshes whose skin is written whatever their baseline says: their skeleton lost joints they may index. */
     std::set<SdfPath> forceSkin;
+    /** Joints whose delete was undone this comparison, with where they stood in their skeleton's joints. */
+    std::map<NodeId, size_t> restoredAt;
 
     SdfPrimSpecHandle over(const SdfPath& p)
     {
@@ -1916,16 +1923,24 @@ void writeSkeletons(Stage& s, Graph& g, Author& au)
         std::set<TfToken> used = present;
         VtTokenArray mapped(written.size());
         std::vector<size_t> added;
+        // Joints whose delete was undone, by where they stood: they go back there.
+        std::map<size_t, size_t> restored;
         const UsdSkelTopology topo(written);
         std::map<TfToken, size_t> indexOf;
         for (size_t k = 0; k < written.size(); ++k)
         {
             const NodeId n = k < nodes.size() ? nodes[k] : kNoNode;
             const auto j = s.jointOf.find(n);
+            const auto back = au.restoredAt.find(n);
             if (nodes.empty())
                 mapped[k] = k < had.size() ? had[k] : written[k];
             else if (j != s.jointOf.end() && present.count(j->second) && !indexOf.count(j->second))
                 mapped[k] = j->second;
+            else if (j != s.jointOf.end() && back != au.restoredAt.end() && !used.count(j->second))
+            {
+                mapped[k] = j->second;
+                restored[back->second] = k;
+            }
             else
             {
                 const int parent = topo.GetParent(k);
@@ -1963,7 +1978,7 @@ void writeSkeletons(Stage& s, Graph& g, Author& au)
             for (const TfToken& t : had)
                 if (!indexOf.count(t))
                     removed.push_back(t);
-            const bool reshaped = !added.empty() || !removed.empty();
+            const bool reshaped = !added.empty() || !removed.empty() || !restored.empty();
             VtTokenArray order;
             std::vector<size_t> from;
             for (const TfToken& t : had)
@@ -1972,6 +1987,12 @@ void writeSkeletons(Stage& s, Graph& g, Author& au)
                     order.push_back(t);
                     from.push_back(it->second);
                 }
+            for (const auto& [at, k] : restored)
+            {
+                const size_t i = std::min(at, order.size());
+                order.insert(order.begin() + std::ptrdiff_t(i), mapped[k]);
+                from.insert(from.begin() + std::ptrdiff_t(i), k);
+            }
             for (size_t k : added)
             {
                 order.push_back(mapped[k]);
@@ -2001,8 +2022,8 @@ void writeSkeletons(Stage& s, Graph& g, Author& au)
                         s.jointOf[nodes[k]] = mapped[k];
                         s.deletedParts.erase(nodes[k]);
                     }
-                // Meshes indexing the stage's order would point at the wrong joints once some are gone.
-                if (!removed.empty())
+                // Meshes indexing the stage's order would point at the wrong joints once some are gone or put back.
+                if (!removed.empty() || !restored.empty())
                     for (const auto& [n, p] : s.primOf)
                         if (auto m = au.now.prim.find(n); m != au.now.prim.end())
                             if (const SdfPathVector t = targetsOf(au.now.layer, m->second.AppendProperty(UsdSkelTokens->skelSkeleton)); !t.empty() && t.front() == e)
@@ -2292,12 +2313,115 @@ SdfPath newParentPrim(Stage& s, Graph& g, NodeId parent, std::vector<std::string
 }
 
 /** A new object's written prim copied in under parentPrim with everything below it, and linked. */
-void addPrim(Stage& s, Author& au, NodeId n, const SdfPath& e, const SdfPath& parentPrim, Graph& g)
+/** A Skeleton prim written into the stage at st for the written one at e: its joints become its parts, named as written. */
+void adoptSkeleton(Stage& s, Author& au, const SdfPath& e, const SdfPath& st)
+{
+    const VtTokenArray tokens = defaultOf<VtTokenArray>(au.now.layer, e.AppendProperty(UsdSkelTokens->joints));
+    const std::vector<NodeId>& nodes = au.now.skelJoints[e];
+    for (size_t k = 0; k < nodes.size() && k < tokens.size(); ++k)
+    {
+        s.partOf[nodes[k]] = st;
+        s.jointOf[nodes[k]] = tokens[k];
+        s.deletedParts.erase(nodes[k]);
+    }
+    au.skelPaths[e] = st;
+    au.skelTokens[e] = tokens;
+    au.skelOrder[st] = tokens;
+    s.baseline["$skel:" + st.GetString()] = skelGroups(s, au.now, e);
+}
+
+/** Skinning needs a SkelRoot above a skeleton and the meshes bound to it: their closest common Xform becomes one, unless one is there. */
+void ensureSkelRoot(Stage& s, Author& au, const SdfPath& e, const SdfPath& st)
+{
+    SdfPath common = st.GetParentPath();
+    for (const auto& [n, em] : au.now.prim)
+    {
+        const SdfPathVector t = targetsOf(au.now.layer, em.AppendProperty(UsdSkelTokens->skelSkeleton));
+        if (auto p = s.primOf.find(n); p != s.primOf.end() && !t.empty() && t.front() == e && !p->second.ContainsPrimVariantSelection())
+            common = common.GetCommonPrefix(p->second.GetParentPath());
+    }
+    for (SdfPath q = common; !q.IsEmpty() && !q.IsAbsoluteRootPath(); q = q.GetParentPath())
+        if (const UsdPrim p = s.stage->GetPrimAtPath(q); p && p.GetTypeName() == "SkelRoot")
+            return;
+    for (SdfPath q = common; !q.IsEmpty() && !q.IsAbsoluteRootPath(); q = q.GetParentPath())
+    {
+        const UsdPrim p = s.stage->GetPrimAtPath(q);
+        const SdfPrimSpecHandle ours = au.L->GetPrimAtPath(q);
+        const TfToken type = p ? p.GetTypeName() : ours ? ours->GetTypeName() : TfToken();
+        if (type == "Xform" || type.IsEmpty())
+        {
+            au.over(q)->SetTypeName("SkelRoot");
+            return;
+        }
+    }
+}
+
+/**
+ * Skeletons Lila made whose joints hang off an object the stage already has: each written as a Skeleton prim (with
+ * its SkelAnimation) under that object's prim, under a SkelRoot. Ones under new objects are written with them.
+ */
+void writeNewSkeletons(Stage& s, Author& au)
+{
+    for (const auto& [e, joints] : au.now.skelJoints)
+    {
+        if (joints.empty() || au.skelPaths.count(e) || au.now.skelStage.count(e))
+            continue;
+        const SdfPath anchor = e.GetParentPath();
+        SdfPath parent;
+        if (auto n = au.now.nodeAt.find(anchor); n != au.now.nodeAt.end())
+        {
+            const auto p = s.primOf.find(n->second);
+            if (p == s.primOf.end() || p->second.ContainsPrimVariantSelection())
+                continue;
+            parent = p->second;
+        }
+        else if (const UsdPrim dp = s.stage->GetDefaultPrim(); anchor == au.now.root && dp)
+            parent = dp.GetPath();
+        else
+            continue;
+        const SdfPath dst = au.uniqueChild(parent, e.GetName());
+        au.over(parent);
+        SdfCopySpec(au.now.layer, e, au.L, dst);
+        au.skelPaths[e] = dst;
+        au.retarget(dst);
+        adoptSkeleton(s, au, e, dst);
+        ensureSkelRoot(s, au, e, dst);
+    }
+}
+
+/**
+ * A new object's written prim copied in under parentPrim and linked. Everything below it comes too, unless alone:
+ * then only what no object below it owns (its subsets, blend shapes), and the objects below are added on their own.
+ */
+void addPrim(Stage& s, Author& au, NodeId n, const SdfPath& e, const SdfPath& parentPrim, Graph& g, bool alone = false)
 {
     const SdfPath dst = au.uniqueChild(parentPrim, identifier(g.node(n)->name(), "node"));
     if (!parentPrim.IsAbsoluteRootPath())
         au.over(parentPrim);
     SdfCopySpec(au.now.layer, e, au.L, dst);
+    if (alone)
+    {
+        if (const SdfPrimSpecHandle spec = au.L->GetPrimAtPath(dst))
+            for (const SdfPrimSpecHandle& c : std::vector<SdfPrimSpecHandle>(spec->GetNameChildren().begin(), spec->GetNameChildren().end()))
+            {
+                const SdfPath ec = e.AppendChild(c->GetNameToken());
+                const bool owned = std::any_of(au.now.prim.begin(), au.now.prim.end(), [&](const auto& m) { return m.second.HasPrefix(ec); }) ||
+                                   std::any_of(au.now.skelJoints.begin(), au.now.skelJoints.end(), [&](const auto& k) { return k.first.HasPrefix(ec); });
+                if (owned)
+                    spec->RemoveNameChild(c);
+            }
+        au.retarget(dst);
+        s.link(n, dst);
+        s.baseline[dst.GetString()] = au.now.hashes[n];
+        return;
+    }
+    std::vector<SdfPath> skeletons;
+    for (const auto& [sk, joints] : au.now.skelJoints)
+        if (sk.HasPrefix(e) && !au.skelPaths.count(sk))
+        {
+            au.skelPaths[sk] = sk.ReplacePrefix(e, dst);
+            skeletons.push_back(sk);
+        }
     au.retarget(dst);
     for (const auto& [m, em] : au.now.prim)
         if (em.HasPrefix(e))
@@ -2305,10 +2429,41 @@ void addPrim(Stage& s, Author& au, NodeId n, const SdfPath& e, const SdfPath& pa
             const SdfPath pm = em.ReplacePrefix(e, dst);
             s.link(m, pm);
             s.baseline[pm.GetString()] = au.now.hashes[m];
+            // Bound to a skeleton the stage orders differently: its indices name the written skeleton's joints.
+            const SdfPathVector t = targetsOf(au.now.layer, em.AppendProperty(UsdSkelTokens->skelSkeleton));
+            if (auto tokens = t.empty() ? au.skelTokens.end() : au.skelTokens.find(t.front()); tokens != au.skelTokens.end())
+                if (tokens->second != au.skelOrder[au.skelPaths[t.front()]])
+                    au.uniformTokens(pm, UsdSkelTokens->skelJoints.GetString(), tokens->second);
         }
     for (NodeId d : g.descendants(n))
         if (!s.primOf.count(d))
             s.partOf[d] = dst;
+    for (const SdfPath& sk : skeletons)
+        adoptSkeleton(s, au, sk, au.skelPaths[sk]);
+}
+
+/**
+ * The prim an object below the stage holds its children in: its own, or for a new object one written now, alone
+ * (after any new objects above it), so an object moved under it can follow. Empty when it can't have one.
+ */
+SdfPath ensurePrim(Stage& s, Graph& g, Author& au, NodeId x)
+{
+    if (x == s.node)
+        return SdfPath::AbsoluteRootPath();
+    if (auto it = s.primOf.find(x); it != s.primOf.end())
+        return it->second;
+    const Node* node = g.node(x);
+    if (!node || !node->type().isA("transform") || node->type().isA("joint") || isStage(node) || s.partOf.count(x) || s.deleted.count(x) ||
+        !under(g, x, s.node))
+        return {};
+    const SdfPath parent = ensurePrim(s, g, au, g.parent(x));
+    const auto e = au.now.prim.find(x);
+    if (parent.IsEmpty() || parent.ContainsPrimVariantSelection() || e == au.now.prim.end())
+        return {};
+    if (!parent.IsAbsoluteRootPath())
+        au.openInstances(parent, true);
+    addPrim(s, au, x, e->second, parent, g, true);
+    return s.primOf[x];
 }
 
 /**
@@ -2553,6 +2708,8 @@ SdfPath reparent(Stage& s, Graph& g, Author& au, NodeId n, const SdfPath& q)
         to = it->second;
     else if (auto j = s.partOf.find(parent); j != s.partOf.end() && s.jointOf.count(parent))
         to = s.nodeOf.count(j->second) ? j->second : j->second.GetParentPath();
+    else
+        to = ensurePrim(s, g, au, parent);
     const UsdPrim cp = s.stage->GetPrimAtPath(q);
     if (to.IsEmpty() || to.ContainsPrimVariantSelection() || q.ContainsPrimVariantSelection() || to.HasPrefix(q) || !cp)
         return {};
@@ -2835,6 +2992,11 @@ std::vector<std::string> sync(Stage& s, Graph& g)
                 else if (auto j = s.jointOf.find(it->first); j != s.jointOf.end())
                 {
                     part.joint = j->second;
+                    VtTokenArray had;
+                    if (const UsdSkelSkeleton sk{s.stage->GetPrimAtPath(it->second)})
+                        sk.GetJointsAttr().Get(&had);
+                    if (const auto at = std::find(had.begin(), had.end(), j->second); at != had.end())
+                        part.jointAt = size_t(at - had.begin());
                     s.jointOf.erase(j);
                 }
                 else if (!covered)
@@ -2888,6 +3050,8 @@ std::vector<std::string> sync(Stage& s, Graph& g)
             s.partOf[n] = d->second.owner;
             if (d->second.joint)
                 s.jointOf[n] = *d->second.joint;
+            if (d->second.jointAt)
+                au.restoredAt[n] = *d->second.jointAt;
             if (d->second.copy)
             {
                 s.copyOf[n] = *d->second.copy;
@@ -2913,6 +3077,7 @@ std::vector<std::string> sync(Stage& s, Graph& g)
 
         merged = mergeBack(s, g, au, show);
         writeSkeletons(s, g, au);
+        writeNewSkeletons(s, au);
 
         // Objects moved to another parent, parents first: their prims follow in the edit layer.
         std::vector<std::pair<SdfPath, NodeId>> reparented;
@@ -2922,7 +3087,10 @@ std::vector<std::string> sync(Stage& s, Graph& g)
         for (const auto& [was, n] : reparented)
         {
             const SdfPath p = s.primOf[n];
-            if (linkedParentPrim(s, g, n) == linkedAbove(s, p))
+            const NodeId parent = g.parent(n);
+            const Node* pn = g.node(parent);
+            const bool newParent = parent != s.node && pn && pn->type().isA("transform") && !s.primOf.count(parent) && !s.partOf.count(parent);
+            if (!newParent && linkedParentPrim(s, g, n) == linkedAbove(s, p))
                 continue;
             if (reparent(s, g, au, n, p).IsEmpty())
             {

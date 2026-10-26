@@ -714,6 +714,100 @@ TEST_CASE("usd stage: blend shape edits and their weights are written, new targe
     CHECK(targets().size() == 1);
 }
 
+TEST_CASE("usd stage: a skeleton made in Lila is written with its SkelRoot, and meshes skinned to it bind to it")
+{
+    UpAxisScope axis(math::UpAxis::Z);
+    fresh();
+    const fs::path dir = workDir("newSkeleton");
+    const fs::path src = copyFixture(dir, "live.usda");
+    const std::string stage = openStage(src)["stage"];
+    run("select", {{"args", json::array()}});
+    run("joint", {{"position", json::array({10, 0, -1})}, {"name", "hip"}});
+    run("joint", {{"position", json::array({10, 0, 1})}, {"name", "knee"}});
+    run("parent", {{"args", {"hip", "World"}}});
+    run("skinCluster", {{"args", {"hip", "Geo"}}});
+    saveAs(dir / "scene.lila");
+    json i = info(stage);
+    std::string text = i["edits"];
+    INFO(text);
+    CHECK(has(text, "def Skeleton \"Skeleton\""));
+    CHECK(has(text, "SkelRoot"));
+    CHECK(has(text, "primvars:skel:jointWeights"));
+    CHECK(!warned(i["warnings"], "aren't written"));
+    CHECK(!warned(i["warnings"], "isn't written"));
+
+    // A joint added to it later joins it, as for any skeleton in the stage.
+    run("select", {{"args", {"knee"}}});
+    run("joint", {{"position", json::array({10, 0, 3})}, {"name", "ankle"}});
+    saveAs(dir / "scene.lila");
+    CHECK(has(edits(stage), "\"hip/knee/ankle\""));
+
+    openShot(stage, dir);
+    REQUIRE(graph().find("World|hip|knee|ankle"));
+    const NodeId sk = skin::find(graph(), node("Geo").id());
+    REQUIRE(sk);
+    CHECK(skin::influences(graph(), sk).size() == 2);
+}
+
+TEST_CASE("usd stage: an object moved under a new object gets that object written first")
+{
+    UpAxisScope axis(math::UpAxis::Z);
+    fresh();
+    const fs::path dir = workDir("newParent");
+    const fs::path src = copyFixture(dir, "live.usda");
+    const std::string stage = openStage(src)["stage"];
+    const glm::dmat4 chair = world("Chair");
+    Node* rack = graph().createNode(*types::find("transform"), "Rack", node("World").id(), false);
+    graph().setValue({rack->id(), Transform::kTranslate, -1}, glm::dvec3(0, 5, 0));
+    run("parent", {{"args", {"Chair", "Rack"}}});
+    saveAs(dir / "scene.lila");
+    json i = info(stage);
+    std::string text = i["edits"];
+    INFO(text);
+    CHECK(has(text, "def Xform \"Rack\""));
+    CHECK(run("usdStagePrim", {{"args", {"Chair"}}})["prim"] == "/World/Rack/Chair");
+    CHECK(run("usdStagePrim", {{"args", {"Rack"}}})["prim"] == "/World/Rack");
+    CHECK(!warned(i["warnings"], "isn't written"));
+    openShot(stage, dir);
+    REQUIRE(graph().find("World|Rack|Chair"));
+    CHECK(near(world("Chair"), chair, 1e-9));
+}
+
+TEST_CASE("usd stage: a deleted joint leaves its skeleton, and undone it goes back where it stood")
+{
+    UpAxisScope axis(math::UpAxis::Z);
+    fresh();
+    const fs::path dir = workDir("jointDelete");
+    const fs::path src = writeRig(dir);
+    fresh();
+    const std::string stage = openStage(src)["stage"];
+    auto weightOf = [](uint32_t point, const std::string& joint) {
+        const json r = run("skinPercent", {{"args", {"Tube"}}, {"vertices", json::array({point})}});
+        for (const auto& [name, w] : r[0]["weights"].items())
+            if (name.ends_with(joint))
+                return w.get<double>();
+        return 0.0;
+    };
+    const double was = weightOf(0, "bone_b");
+    run("delete", {{"args", {"bone_b"}}});
+    saveAs(dir / "scene.lila");
+    json i = info(stage);
+    std::string text = i["edits"];
+    INFO(text);
+    CHECK(has(text, "uniform token[] joints = [\"bone_a\"]"));
+    CHECK(!warned(i["warnings"], "isn't written"));
+
+    run("undo");
+    REQUIRE(graph().find("bone_a|bone_b"));
+    saveAs(dir / "scene.lila");
+    text = edits(stage);
+    CHECK(has(text, "uniform token[] joints = [\"bone_a\", \"bone_a/bone_b\"]"));
+    openShot(stage, dir);
+    REQUIRE(graph().find("bone_a|bone_b"));
+    CHECK(skin::influences(graph(), skin::find(graph(), node("Tube").id())).size() == 2);
+    CHECK(weightOf(0, "bone_b") == doctest::Approx(was).epsilon(1e-4));
+}
+
 TEST_CASE("usd stage: a point instance taken out of its instancer goes back once it holds only its prototype again")
 {
     UpAxisScope axis(math::UpAxis::Z);
@@ -959,9 +1053,10 @@ TEST_CASE("usd stage: a rebuild keeps a skinned mesh's skin and leaves no skin n
 
     // The skeleton built again from a change in the file: new joints, the same skin, bound to them.
     std::string text = readAll(src);
-    const size_t at = text.find('{', text.find("def Skeleton"));
+    // Into the Skeleton's body, past the braces of its metadata.
+    const size_t at = text.find("\n    {\n", text.find("def Skeleton"));
     REQUIRE(at != std::string::npos);
-    text.insert(at + 1, "\n        custom int studio:revision = 2\n");
+    text.insert(at + 6, "\n        custom int studio:revision = 2\n");
     writeFile(src, text);
     run("usdStageUpdate");
     REQUIRE(graph().find("bone_b"));
