@@ -179,8 +179,8 @@ class Node:
 
     def add_attr(self, name, type="float", **flags):
         """Add an attribute to this node only (addAttr), saved with the scene. type is an attributeType (bool, long,
-        float, double3, enum, matrix) or a dataType (string, stringArray, doubleArray, Int32Array, vectorArray); other
-        flags are addAttr's (default_value, min_value, keyable, multi, enum_name ...). Returns its plug name."""
+        float, double3, enum, matrix, compound) or a dataType (string, stringArray, doubleArray, Int32Array, vectorArray);
+        other flags are addAttr's (default_value, min_value, keyable, multi, enum_name, parent ...). Returns its plug name."""
         data = type in ("string", "stringArray", "doubleArray", "floatArray", "Int32Array", "intArray", "vectorArray", "pointArray")
         flags = {_camel(k): v for k, v in flags.items()}
         flags["dataType" if data else "attributeType"] = type

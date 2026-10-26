@@ -1338,12 +1338,17 @@ int Graph::addAttr(NodeId id, AttrDef def)
     Node* n = node(id);
     if (!n)
         throw std::invalid_argument("no such node");
-    if (!validName(def.name))
+    // group.child: one level of grouping.
+    const size_t dot = def.name.find('.');
+    if (!validName(def.name.substr(0, dot)) || (dot != std::string::npos && !validName(def.name.substr(dot + 1))))
         throw std::invalid_argument("invalid attribute name '" + def.name + "'");
     const NodeType& t = n->type();
     for (const std::string& want : {def.name, def.shortName})
         if (!want.empty() && t.attrIndex(want) >= 0)
             throw std::invalid_argument("'" + n->name() + "' already has an attribute '" + want + "'");
+    const std::string group = dot == std::string::npos ? def.name : def.name.substr(0, dot);
+    if (dot == std::string::npos ? !t.groupChildren(group).empty() : t.attrIndex(group) >= 0)
+        throw std::invalid_argument("'" + n->name() + "' already has an attribute '" + group + "'");
     def.flags |= AttrUser | AttrInput | AttrStorable;
     if (def.type == PlugType::Vec3)
         for (int c = 0; c < 3; ++c)

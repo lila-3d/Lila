@@ -104,6 +104,31 @@ NodeId parentArg(const Args& a)
     return nodeNamed(a.get<std::string>("parent")).id();
 }
 
+/** A compound declared with addAttr(at='compound') that has no children yet; it exists once its first child is added. */
+struct PendingCompound
+{
+    bool multi = false;
+};
+
+std::map<std::pair<NodeId, std::string>, PendingCompound>& pendingCompounds()
+{
+    static std::map<std::pair<NodeId, std::string>, PendingCompound> pending;
+    return pending;
+}
+
+/** Whether a child of compound 'group' on n is an array: from its declaration, or from the children it already has. */
+bool compoundIsMulti(const Node& n, const std::string& group)
+{
+    if (group.find('.') != std::string::npos || group.find('[') != std::string::npos)
+        throw CommandError("addAttr: compounds nest one level; '" + group + "' is already a child");
+    if (auto it = pendingCompounds().find({n.id(), group}); it != pendingCompounds().end())
+        return it->second.multi;
+    std::vector<int> children = n.type().groupChildren(group);
+    if (children.empty())
+        throw CommandError("addAttr: '" + n.name() + "' has no compound '" + group + "'; add it with attributeType='compound' first");
+    return n.type().attrs[size_t(children[0])].flags & AttrArray;
+}
+
 json create(const std::string& type, const Args& a)
 {
     const NodeType* t = types::find(type);
@@ -533,14 +558,17 @@ void registerCommands()
     ops::registerCommand({
         .name = "addAttr",
         .doc = "Add an attribute to objects (Maya's addAttr): attributeType for a single value or, with multi, an array of them; "
-               "dataType for strings and arrays (stringArray, doubleArray, Int32Array, vectorArray). Saved with the scene. "
-               "Returns the new plugs.",
+               "dataType for strings and arrays (stringArray, doubleArray, Int32Array, vectorArray). attributeType='compound' "
+               "groups the attributes then added with parent=; a multi compound gives each element every child, "
+               "node.targets[2].weight. Compounds nest one level. Saved with the scene. Returns the new plugs.",
         .positionalDoc = "objects",
         .flags = {
             {"longName", "ln", T::String, nullptr, "The attribute's name."},
             {"shortName", "sn", T::String, nullptr, "A short name."},
             {"niceName", "nn", T::String, nullptr, "The label editors show."},
-            {"attributeType", "at", T::String, nullptr, "bool, long, float, double, double3, enum or matrix (Lila's int, vec3 too)."},
+            {"attributeType", "at", T::String, nullptr, "bool, long, float, double, double3, enum, matrix or compound (Lila's int, vec3 too)."},
+            {"parent", "p", T::String, nullptr, "The compound this attribute is a child of."},
+            {"numberOfChildren", "nc", T::Int, nullptr, "Accepted for Maya scripts: a compound takes any number of children."},
             {"dataType", "dt", T::String, nullptr, "string, stringArray, doubleArray, floatArray, Int32Array, vectorArray or matrix."},
             {"multi", "m", T::Bool, false, "An array of attributeType: any number of elements, attr[0], attr[1] ..."},
             {"defaultValue", "dv", T::Any, nullptr, "Default value (each element's, for an array)."},
@@ -560,6 +588,24 @@ void registerCommands()
                 throw CommandError("addAttr: no object");
             if (!a.has("longName"))
                 throw CommandError("addAttr: give longName");
+            if (a.get<std::string>("attributeType", "") == "compound")
+            {
+                const std::string name = a.get<std::string>("longName");
+                if (a.has("parent"))
+                    throw CommandError("addAttr: compounds nest one level; '" + name + "' can't have a parent");
+                if (!Graph::validName(name))
+                    throw CommandError("addAttr: invalid attribute name '" + name + "'");
+                json out = json::array();
+                for (const std::string& o : objs)
+                {
+                    Node& n = nodeNamed(o);
+                    if (n.type().attrIndex(name) >= 0 || !n.type().groupChildren(name).empty() || pendingCompounds().contains({n.id(), name}))
+                        throw CommandError("addAttr: '" + n.name() + "' already has an attribute '" + name + "'");
+                    pendingCompounds()[{n.id(), name}] = {a.get<bool>("multi")};
+                    out.push_back(n.path() + "." + name);
+                }
+                return out;
+            }
             AttrDef def;
             def.name = a.get<std::string>("longName");
             def.shortName = a.get<std::string>("shortName", "");
@@ -610,11 +656,25 @@ void registerCommands()
                 def.flags |= AttrHidden;
             if (a.get<bool>("usedAsColor"))
                 def.flags |= AttrColor;
+            const std::string group = a.get<std::string>("parent", "");
             json out = json::array();
             for (const std::string& o : objs)
             {
                 Node& n = nodeNamed(o);
-                int index = guarded([&] { return graph().addAttr(n.id(), def); });
+                AttrDef child = def;
+                if (!group.empty())
+                {
+                    const bool multi = compoundIsMulti(n, group);
+                    if (multi && (child.flags & AttrArray))
+                        throw CommandError("addAttr: '" + group + "' is a multi compound: its children hold one value per element, not arrays");
+                    child.name = group + "." + def.name;
+                    if (!def.shortName.empty())
+                        child.shortName = group + "." + def.shortName;
+                    if (multi)
+                        child.flags |= AttrArray;
+                }
+                int index = guarded([&] { return graph().addAttr(n.id(), child); });
+                pendingCompounds().erase({n.id(), group});
                 out.push_back(graph().plugName({n.id(), index}));
             }
             return out;
@@ -627,17 +687,33 @@ void registerCommands()
         .positionalDoc = "plugs or objects",
         .flags = {{"attribute", "at", T::String, nullptr, "The attribute to delete from each object."}},
         .run = [](const Args& a) -> json {
-            std::vector<PlugRef> plugs;
+            std::vector<std::string> paths;
             if (a.has("attribute"))
                 for (const std::string& o : a.objects())
-                    plugs.push_back(plugArg(nodeNamed(o).path() + "." + a.get<std::string>("attribute")));
+                    paths.push_back(nodeNamed(o).path() + "." + a.get<std::string>("attribute"));
             else
                 for (const json& v : a.positional)
-                    plugs.push_back(plugArg(v.get<std::string>()));
-            if (plugs.empty())
+                    paths.push_back(v.get<std::string>());
+            if (paths.empty())
                 throw CommandError("deleteAttr: expected 'node.attr'");
-            for (const PlugRef& p : plugs)
+            for (const std::string& path : paths)
+            {
+                // A compound goes with all its children.
+                if (size_t dot = path.find('.'); dot != std::string::npos)
+                {
+                    Node& n = nodeNamed(path.substr(0, dot));
+                    std::string group = path.substr(dot + 1);
+                    std::vector<int> children = n.type().groupChildren(group);
+                    if (pendingCompounds().erase({n.id(), group}) || (!children.empty() && n.type().attrIndex(group) < 0))
+                    {
+                        for (auto c = children.rbegin(); c != children.rend(); ++c)
+                            guarded([&] { graph().deleteAttr({n.id(), *c}); return 0; });
+                        continue;
+                    }
+                }
+                PlugRef p = plugArg(path);
                 guarded([&] { graph().deleteAttr({p.node, p.attr}); return 0; });
+            }
             return nullptr;
         },
     });

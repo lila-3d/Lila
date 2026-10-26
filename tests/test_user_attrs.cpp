@@ -68,6 +68,53 @@ TEST_CASE("addAttr: values and arrays on one node, undoable, saved with the scen
     CHECK(getAttr(copy + ".mass").get<double>() == doctest::Approx(2.5));
 }
 
+TEST_CASE("addAttr compounds: a multi compound groups children per element, a plain one groups single values")
+{
+    run("newScene");
+    run("spaceLocator", {{"name", "Rig"}});
+    CHECK(run("addAttr", {{"args", {"Rig"}}, {"longName", "targets"}, {"attributeType", "compound"}, {"numberOfChildren", 3}, {"multi", true}}) ==
+          json::array({"Rig.targets"}));
+    run("addAttr", {{"args", {"Rig"}}, {"longName", "weight"}, {"defaultValue", 1.0}, {"parent", "targets"}});
+    run("addAttr", {{"args", {"Rig"}}, {"longName", "label"}, {"dataType", "string"}, {"parent", "targets"}});
+    run("addAttr", {{"args", {"Rig"}}, {"longName", "offset"}, {"attributeType", "double3"}, {"parent", "targets"}});
+    run("setAttr", {{"args", {"Rig.targets[2].weight", 0.25}}});
+    run("setAttr", {{"args", {"Rig.targets[2].label", "hip"}}});
+    run("setAttr", {{"args", {"Rig.targets[5].offset", 1.0, 2.0, 3.0}}});
+    CHECK(getAttr("Rig.targets[2].weight").get<double>() == doctest::Approx(0.25));
+    CHECK(getAttr("Rig.targets[2].label") == "hip");
+    CHECK(getAttr("Rig.targets[5].offset") == json::array({1.0, 2.0, 3.0}));
+
+    run("addAttr", {{"args", {"Rig"}}, {"longName", "settings"}, {"attributeType", "compound"}});
+    run("addAttr", {{"args", {"Rig"}}, {"longName", "speed"}, {"defaultValue", 3.0}, {"parent", "settings"}});
+    run("addAttr", {{"args", {"Rig"}}, {"longName", "samples"}, {"dataType", "doubleArray"}, {"parent", "settings"}});
+    run("setAttr", {{"args", {"Rig.settings.samples[1]", 0.5}}});
+    CHECK(getAttr("Rig.settings.speed").get<double>() == doctest::Approx(3.0));
+    CHECK(getAttr("Rig.settings.samples") == json::array({0.5}));
+
+    // One level only, and arrays can't sit inside a multi compound's elements.
+    CHECK_THROWS(run("addAttr", {{"args", {"Rig"}}, {"longName", "inner"}, {"attributeType", "compound"}, {"parent", "targets"}}));
+    CHECK_THROWS(run("addAttr", {{"args", {"Rig"}}, {"longName", "deep"}, {"parent", "targets.weight"}}));
+    CHECK_THROWS(run("addAttr", {{"args", {"Rig"}}, {"longName", "list"}, {"dataType", "doubleArray"}, {"parent", "targets"}}));
+    CHECK_THROWS(run("addAttr", {{"args", {"Rig"}}, {"longName", "x"}, {"parent", "missing"}}));
+    CHECK_THROWS(run("addAttr", {{"args", {"Rig"}}, {"longName", "targets"}}));
+
+    json doc = io::serialize();
+    run("newScene");
+    io::deserialize(doc);
+    CHECK(getAttr("Rig.targets[2].label") == "hip");
+    CHECK(getAttr("Rig.settings.samples") == json::array({0.5}));
+    run("addAttr", {{"args", {"Rig"}}, {"longName", "enabled"}, {"attributeType", "bool"}, {"parent", "targets"}});
+    run("setAttr", {{"args", {"Rig.targets[2].enabled", true}}});
+
+    run("removeMultiInstance", {{"args", {"Rig.targets[2]"}}});
+    CHECK(run("getAttr", {{"args", {"Rig.targets.weight"}}, {"multiIndices", true}}) == json::array());
+    run("deleteAttr", {{"args", {"Rig.targets"}}});
+    CHECK_THROWS(getAttr("Rig.targets[5].offset"));
+    CHECK(run("listAttr", {{"args", {"Rig"}}, {"userDefined", true}}) == json::array({"settings.speed", "settings.samples"}));
+    run("undo");
+    CHECK(getAttr("Rig.targets[5].offset") == json::array({1.0, 2.0, 3.0}));
+}
+
 TEST_CASE("constraints take any number of targets, and read the numbered slots of older scenes")
 {
     run("newScene");
