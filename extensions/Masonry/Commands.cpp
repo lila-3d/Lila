@@ -1,21 +1,32 @@
 // masonryWall builds a wall as a geometry-nodes group anyone can open (a Masonry Wall node fed by the mesh's footprint
-// edges), with the settings that matter exposed; masonryInfo reports what a wall is made of and checks it.
+// edges), with the settings that matter exposed; masonryInfo reports what a wall is made of and checks it; masonryShip
+// sends it to Unreal.
 
 #include "Masonry.h"
 #include "MasonryCore.h"
+#include "MasonryShip.h"
 
 #include <lila/Command.h>
 #include <lila/Deformer.h>
 #include <lila/Extension.h>
 #include <lila/GeometryNodes.h>
 #include <lila/Graph.h>
+#include <lila/Log.h>
 #include <lila/Mesh.h>
 #include <lila/Node.h>
 #include <lila/Profile.h>
+#include <lila/Tasks.h>
+#include <lila/Transform.h>
+#include <lila/Undo.h>
+#include <lila/UnrealLink.h>
 
 #include <algorithm>
 #include <cctype>
+#include <format>
+#include <fstream>
 #include <memory>
+#include <random>
+#include <set>
 
 using namespace lila;
 
@@ -207,6 +218,113 @@ json modifierValues(const Node& mod)
         values[e.name] = ops::execute("getAttr", {{"args", {mod.path() + "." + e.name}}});
     return values;
 }
+
+/** A wall named on the command line: its modifier, the mesh holding it, and its footprints. */
+struct WallRef
+{
+    Node* mod = nullptr;
+    Node* mesh = nullptr;
+    std::vector<Footprint> footprints;
+};
+
+WallRef wallRef(Graph& g, const Args& a, const char* cmd)
+{
+    std::vector<std::string> names = a.objects();
+    if (names.size() != 1)
+        throw CommandError(std::string(cmd) + ": give one mesh");
+    WallRef w;
+    w.mod = wallModifier(g, names[0], cmd);
+    const scene::NodeId meshId = scene::modifiers::meshOf(g, w.mod->id());
+    w.mesh = meshId != scene::kNoNode ? g.node(meshId) : g.find(names[0]);
+    if (auto m = w.mesh ? baseMesh(g, *w.mesh) : nullptr)
+        w.footprints = footprintsFromEdges(*m);
+    return w;
+}
+
+/** The mesh's link id, given one (undoably) if it has none, so Unreal knows the wall again after a rename. */
+std::string wallKey(Graph& g, Node& mesh)
+{
+    if (const std::string* s = std::get_if<std::string>(&mesh.value(scene::Transform::kLinkId)); s && !s->empty())
+        return *s;
+    static std::mt19937_64 rng{std::random_device{}()};
+    const std::string fresh = std::format("{:016x}", rng());
+    UndoChunk chunk("Unreal Link Id");
+    g.setValue({mesh.id(), scene::Transform::kLinkId, -1}, fresh);
+    return fresh;
+}
+
+/** Group keys a wall sent last time, so the ones it no longer has can be taken out of the level. */
+std::filesystem::path sentFile(const std::string& key) { return link::cacheDir() / "masonry" / (key + ".json"); }
+
+std::set<std::string> readSent(const std::string& key)
+{
+    std::set<std::string> out;
+    std::ifstream in(sentFile(key));
+    if (!in)
+        return out;
+    const json j = json::parse(in, nullptr, false);
+    if (j.is_array())
+        for (const json& k : j)
+            if (k.is_string())
+                out.insert(k.get<std::string>());
+    return out;
+}
+
+void writeSent(const std::string& key, const json& groups)
+{
+    json keys = json::array();
+    for (const json& g : groups)
+        keys.push_back(g["key"]);
+    std::error_code ec;
+    std::filesystem::create_directories(sentFile(key).parent_path(), ec);
+    std::ofstream(sentFile(key)) << keys.dump();
+}
+
+/** Imports the plan's assets and places its groups, then removes the stale groups. Runs on the link worker. */
+json sendPlan(const json& plan, const std::vector<std::filesystem::path>& files, const json& stale)
+{
+    LILA_ZONE_N("Masonry to Unreal");
+    std::shared_ptr<link::RpcClient> client = link::Link::get().client();
+    if (!client)
+        throw std::runtime_error("not connected to Unreal");
+    json errors = json::array();
+    std::vector<std::string> meshes;
+    for (size_t k = 0; k < files.size(); ++k)
+    {
+        const json& as = plan["assets"][k];
+        const json mapping = {{"contentPath", as["contentPath"]}, {"kind", "static"}};
+        link::RpcResult r = client->call("importAsset", link::importParams(files[k], mapping), link::importCallOptions());
+        std::string mesh = as["objectPath"].get<std::string>();
+        if (!r.ok)
+            errors.push_back(as["name"].get<std::string>() + ": " + r.error);
+        else if (json made = r.result.value("assets", json::array()); made.is_array() && !made.empty() && made[0].is_string())
+            mesh = made[0].get<std::string>();
+        meshes.push_back(mesh);
+    }
+    int64_t placed = 0;
+    for (const json& grp : plan["groups"])
+    {
+        link::RpcResult r = client->call("placeInstances", {{"group", grp["key"]},
+                                                            {"label", grp["label"]},
+                                                            {"mesh", meshes[grp["asset"].get<size_t>()]},
+                                                            {"mode", grp["mode"]},
+                                                            {"placements", grp["placements"]}});
+        if (r.ok)
+            placed += int64_t(grp["placements"].size());
+        else
+            errors.push_back(grp["label"].get<std::string>() + ": " + r.error);
+    }
+    json removed = json::object();
+    if (!stale.empty())
+    {
+        link::RpcResult r = client->call("removePlacements", {{"groups", stale}});
+        if (r.ok)
+            removed = r.result;
+        else
+            errors.push_back("removing old chunks: " + r.error);
+    }
+    return {{"imported", int64_t(files.size())}, {"placed", placed}, {"removed", removed}, {"errors", errors}};
+}
 } // namespace
 
 void registerCommands(ext::Context& ctx)
@@ -286,6 +404,10 @@ void registerCommands(ext::Context& ctx)
                          {"links", links}};
             ops::execute("gnBuildGroup", {{"args", {spec}}, {"replace", false}});
             json mod = ops::execute("gnApply", {{"args", {host, group}}});
+            // Set on the modifier itself: a modifier type kept from an earlier scene's group of this name has its defaults.
+            const std::string modName = mod.is_string() ? mod.get<std::string>() : mod.at(0).get<std::string>();
+            for (const Exposed& e : kInputs)
+                ops::execute("setAttr", {{"args", {modName + "." + e.name, values[e.name]}}});
 
             json out = statsOf(buildWalls(fps, o), fps);
             out["mesh"] = host;
@@ -312,15 +434,10 @@ void registerCommands(ext::Context& ctx)
             LILA_ZONE();
 
             Graph& g = Graph::current();
-            std::vector<std::string> names = a.objects();
-            if (names.size() != 1)
-                throw CommandError("masonryInfo: give one mesh");
-            Node* mod = wallModifier(g, names[0], "masonryInfo");
-            const scene::NodeId meshId = scene::modifiers::meshOf(g, mod->id());
-            Node* mesh = meshId != scene::kNoNode ? g.node(meshId) : g.find(names[0]);
-            std::vector<Footprint> fps;
-            if (auto m = mesh ? baseMesh(g, *mesh) : nullptr)
-                fps = footprintsFromEdges(*m);
+            const WallRef w = wallRef(g, a, "masonryInfo");
+            Node* mod = w.mod;
+            Node* mesh = w.mesh;
+            const std::vector<Footprint>& fps = w.footprints;
             const json values = modifierValues(*mod);
             const Built b = buildWalls(fps, optionsFromJson(values));
             json out = statsOf(b, fps);
@@ -332,6 +449,128 @@ void registerCommands(ext::Context& ctx)
             return out;
         },
         .examples = {"masonryInfo('MasonryWall')['checks']"},
+    });
+
+    ctx.registerCommand({
+        .name = "masonryShip",
+        .doc = "Send a masonry wall to Unreal's open level, instanced: each stone mesh is imported once as a static mesh with "
+               "three LODs (worn, clean chamfer, plain box), and the stones are placed as one instanced component (HISM by "
+               "default) per stone mesh per ground chunk, so streaming and culling work per chunk. The core goes as its own "
+               "mesh. Instances carry custom primitive data 0 a stable random and 1 height up the wall (0 bottom course, 1 "
+               "top). Sending again replaces the wall's chunks in place and removes the ones it no longer has.\n\n"
+               "Returns stats (stones, assets, groups, chunks, average triangles per stone mesh at each LOD, removedGroups) "
+               "plus, with wait=True, what Unreal imported and placed. dryRun=True returns the plan without writing files or "
+               "connecting.",
+        .positionalDoc = "mesh or its masonry modifier (default the selection)",
+        .flags = {{"folder", "f", T::String, "/Game/Lila/Masonry", "Content folder; the wall's assets go in <folder>/<mesh name>."},
+                  {"chunkSize", "cs", T::Float, 400.0, "Ground cell per instanced component, cm."},
+                  {"mode", "m", T::String, "hism", "Instanced component type.", {"hism", "ism"}},
+                  {"dryRun", "", T::Bool, false, "Return the plan, placements included, without writing files or contacting Unreal."},
+                  {"wait", "w", T::Bool, false, "Block until Unreal has imported and placed everything."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            Graph& g = Graph::current();
+            const WallRef w = wallRef(g, a, "masonryShip");
+            if (!w.mesh)
+                throw CommandError("masonryShip: the masonry modifier is on no mesh");
+            BuildOptions o = optionsFromJson(modifierValues(*w.mod));
+            o.lods = true;
+            const Built b = buildWalls(w.footprints, o);
+            if (b.stones.empty())
+                throw CommandError("masonryShip: " + w.mesh->path() + " has no stones");
+
+            ShipOptions so;
+            so.folder = a.get<std::string>("folder", so.folder);
+            so.chunkSize = std::max(10.0, a.get<double>("chunkSize", so.chunkSize));
+            so.mode = a.get<std::string>("mode", so.mode);
+            if (so.mode != "hism" && so.mode != "ism")
+                throw CommandError("masonryShip: mode is hism or ism, not '" + so.mode + "'");
+            g.evaluate();
+            const glm::dmat4 world = std::get<glm::dmat4>(g.value({w.mesh->id(), scene::Transform::kWorldMatrix, -1}));
+            const bool dry = a.get<bool>("dryRun", false);
+            const std::string key = dry ? std::string("dryRun") : wallKey(g, *w.mesh);
+            const std::string name = identifier(w.mesh->name());
+            json plan = shipPlan(b, world, key, name, so);
+
+            std::array<size_t, 3> lodTris{};
+            for (const auto& chain : b.lods)
+                for (size_t l = 0; l < chain.size(); ++l)
+                    lodTris[l] += triangles(chain[l]);
+            json stats = {{"stones", int64_t(b.stones.size())},
+                          {"assets", int64_t(plan["assets"].size())},
+                          {"groups", int64_t(plan["groups"].size())},
+                          {"chunks", int64_t(plan["chunks"].size())},
+                          {"lodTriangles", json::array()},
+                          {"folder", plan["folder"]},
+                          {"mesh", w.mesh->path()}};
+            for (size_t t : lodTris)
+                stats["lodTriangles"].push_back(double(t) / double(std::max<size_t>(1, b.lods.size())));
+            if (dry)
+            {
+                stats["plan"] = std::move(plan);
+                return stats;
+            }
+
+            const std::filesystem::path dir = link::cacheDir() / "masonry" / name;
+            std::vector<std::filesystem::path> files;
+            for (const json& as : plan["assets"])
+            {
+                const int mesh = as["mesh"].get<int>();
+                const std::string assetName = as["name"].get<std::string>();
+                const std::filesystem::path file = dir / (assetName + ".fbx");
+                std::string err;
+                const bool ok = mesh >= 0 ? writeLodFbx(b.lods[size_t(mesh)], assetName, file, &err)
+                                          : writeLodFbx(std::span<const geo::Mesh>(&b.core, 1), assetName, file, &err);
+                if (!ok)
+                    throw CommandError("masonryShip: writing " + file.string() + " failed: " + err);
+                files.push_back(file);
+            }
+            std::set<std::string> now;
+            for (const json& grp : plan["groups"])
+                now.insert(grp["key"].get<std::string>());
+            json stale = json::array();
+            for (const std::string& old : readSent(key))
+                if (!now.count(old))
+                    stale.push_back(old);
+            stats["removedGroups"] = int64_t(stale.size());
+
+            try
+            {
+                link::Link::get().ensureConnected();
+            }
+            catch (const std::runtime_error& e)
+            {
+                throw CommandError(std::string("masonryShip: not connected to Unreal: ") + e.what());
+            }
+            writeSent(key, plan["groups"]);
+            if (a.get<bool>("wait", false))
+            {
+                stats["unreal"] = sendPlan(plan, files, stale);
+                return stats;
+            }
+            link::Link::get().post([plan = std::move(plan), files, stale, name] {
+                json done;
+                try
+                {
+                    done = sendPlan(plan, files, stale);
+                }
+                catch (const std::exception& e)
+                {
+                    done = {{"errors", json::array({e.what()})}};
+                }
+                mainq::post([done, name] {
+                    for (const json& e : done.value("errors", json::array()))
+                        log::error("masonryShip {}: {}", name, e.get<std::string>());
+                    if (done.contains("placed"))
+                        log::info("masonryShip: placed {} stones of {} in Unreal", done["placed"].get<int64_t>(), name);
+                });
+            });
+            stats["queued"] = true;
+            return stats;
+        },
+        .examples = {"masonryShip('MasonryWall', dryRun=True)['chunks']", "masonryShip('MasonryWall', wait=True)['unreal']"},
     });
 }
 } // namespace masonry

@@ -4,6 +4,7 @@
 
 #include <glm/glm.hpp>
 
+#include <array>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -135,6 +136,9 @@ struct StoneShape
 /** A closed stone mesh centred on the origin, in the stone's frame, with uv0 and hard edges. */
 geo::Mesh stoneMesh(const StoneShape& s);
 
+/** The stone at every detail, LOD0 first: worn, clean chamfer, plain box. All fit the same box. */
+std::array<geo::Mesh, 3> stoneLods(StoneShape s);
+
 /** Footprints from a mesh's loose edges (edges with no face), chained into lines and loops. */
 std::vector<Footprint> footprintsFromEdges(const geo::Mesh& m);
 
@@ -147,6 +151,7 @@ struct Built
     std::vector<Stone> stones;
     std::vector<int> reference;           // per stone, into meshes
     std::vector<geo::Mesh> meshes;        // one per distinct size and variant
+    std::vector<std::array<geo::Mesh, 3>> lods; // per mesh, when BuildOptions::lods
     std::vector<int> variant;             // per stone
     geo::Mesh core;
     int courses = 0;
@@ -162,10 +167,19 @@ struct BuildOptions
     int variants = 6;
     Detail detail = Detail::Worn;
     double tile = 100.0;
+    bool lods = false; // also make every mesh's LOD chain
 };
 
 /** Every footprint laid and its stone meshes made, the same work the Masonry Wall node does. */
 Built buildWalls(std::span<const Footprint> footprints, const BuildOptions& o);
+
+/** Stones grouped by the square ground cell (size cm) their centre is in, for streaming and culling. */
+struct Chunks
+{
+    std::vector<int> of;            // per stone, into cells
+    std::vector<glm::ivec2> cells;  // x and z cell index, sorted
+};
+Chunks chunkStones(std::span<const Stone> stones, double size);
 
 /** splitmix64 hash: stable random numbers keyed by seed and indices. */
 uint64_t hash64(uint64_t x);

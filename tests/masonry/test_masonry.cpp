@@ -1,4 +1,5 @@
 #include "MasonryCore.h"
+#include "MasonryShip.h"
 
 #include "extensions/ExtensionManager.h"
 #include "geo/Mesh.h"
@@ -7,9 +8,13 @@
 #include "scene/Graph.h"
 
 #include <doctest/doctest.h>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <chrono>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <set>
 
 using namespace lila;
@@ -316,4 +321,123 @@ TEST_CASE("masonry: masonryWall builds an editable wall and masonryInfo checks i
     CHECK(info["checks"]["overlaps"].get<int64_t>() == 0);
 
     CHECK_THROWS(run("masonryWall", {{"points", json::array({json::array({0, 0, 0}), json::array({100, 0, 0})})}, {"bond", "nonsense"}}));
+}
+
+TEST_CASE("masonry: every stone has a three level LOD chain that fills the same box, cheaper each level")
+{
+    StoneShape s;
+    s.seed = 5;
+    const std::array<geo::Mesh, 3> lods = stoneLods(s);
+    size_t previous = SIZE_MAX;
+    for (const geo::Mesh& m : lods)
+    {
+        CHECK(closedManifold(m));
+        // Worn corners sit inside the box by at most the bevel, so levels swap without a visible jump.
+        CHECK(m.bounds().max.x <= s.size.x * 0.5 + 1e-9);
+        CHECK(m.bounds().max.x >= s.size.x * 0.5 - s.bevel);
+        CHECK(m.bounds().max.y >= s.size.y * 0.5 - s.bevel);
+        CHECK(m.numFaces() <= previous);
+        previous = m.numFaces();
+    }
+    CHECK(lods[2].numFaces() == 6);
+
+    BuildOptions o;
+    o.lods = true;
+    const Footprint f = line({{0, 0, 0}, {300, 0, 0}});
+    const Built b = buildWalls(std::span<const Footprint>(&f, 1), o);
+    REQUIRE(b.lods.size() == b.meshes.size());
+    for (size_t r = 0; r < b.meshes.size(); ++r)
+        CHECK(b.lods[r][0].numFaces() == b.meshes[r].numFaces());
+}
+
+TEST_CASE("masonry: stones chunk by ground cell")
+{
+    BuildOptions o;
+    const Footprint f = line({{0, 0, 0}, {1000, 0, 0}, {1000, 0, 600}});
+    const Built b = buildWalls(std::span<const Footprint>(&f, 1), o);
+    const Chunks c = chunkStones(b.stones, 400.0);
+    REQUIRE(c.of.size() == b.stones.size());
+    CHECK(c.cells.size() >= 5);
+    for (size_t k = 1; k < c.cells.size(); ++k)
+        CHECK((c.cells[k - 1].x < c.cells[k].x || (c.cells[k - 1].x == c.cells[k].x && c.cells[k - 1].y < c.cells[k].y)));
+    for (size_t k = 0; k < b.stones.size(); ++k)
+    {
+        const glm::ivec2 cell = c.cells[size_t(c.of[k])];
+        CHECK(int(std::floor(b.stones[k].center.x / 400.0)) == cell.x);
+        CHECK(int(std::floor(b.stones[k].center.z / 400.0)) == cell.y);
+    }
+}
+
+TEST_CASE("masonry: the ship plan places every stone once, chunk by chunk, in Unreal space")
+{
+    BuildOptions o;
+    o.lods = true;
+    const Footprint f = line({{0, 0, 0}, {900, 0, 0}, {900, 0, 500}});
+    const Built b = buildWalls(std::span<const Footprint>(&f, 1), o);
+    const glm::dmat4 world = glm::translate(glm::dmat4(1.0), glm::dvec3(100.0, 0.0, 0.0));
+    ShipOptions so;
+    const json plan = shipPlan(b, world, "abc", "Wall", so);
+    CHECK(plan["assets"].size() == b.meshes.size() + 1);
+    CHECK(plan["assets"].back()["mesh"] == -1);
+    CHECK(plan["folder"] == "/Game/Lila/Masonry/Wall");
+
+    std::set<std::string> keys, stones;
+    size_t placed = 0;
+    for (const json& g : plan["groups"])
+    {
+        CHECK(keys.insert(g["key"].get<std::string>()).second);
+        if (g["key"] == "abc:core")
+        {
+            CHECK(g["mode"] == "actors");
+            continue;
+        }
+        CHECK(g["mode"] == "hism");
+        CHECK(g["key"].get<std::string>().rfind("abc:", 0) == 0);
+        const int asset = g["asset"].get<int>();
+        for (const json& p : g["placements"])
+        {
+            const size_t k = std::stoul(p["id"].get<std::string>());
+            CHECK(stones.insert(p["id"].get<std::string>()).second);
+            CHECK(b.reference[k] == asset);
+            for (const json& v : p["customData"])
+            {
+                CHECK(v.get<double>() >= 0.0);
+                CHECK(v.get<double>() <= 1.0);
+            }
+            // Unreal is Z up: Lila's height goes to location z.
+            CHECK(p["location"][2].get<double>() == doctest::Approx(b.stones[k].center.y));
+            ++placed;
+        }
+    }
+    CHECK(placed == b.stones.size());
+    CHECK(keys.count("abc:core") == 1);
+    CHECK(plan == shipPlan(b, world, "abc", "Wall", so));
+}
+
+TEST_CASE("masonry: a stone's LOD chain writes as an FBX LOD group")
+{
+    StoneShape s;
+    const std::array<geo::Mesh, 3> lods = stoneLods(s);
+    const std::filesystem::path file = std::filesystem::temp_directory_path() / "lila_masonry_test" / "SM_Stone.fbx";
+    std::string err;
+    REQUIRE(writeLodFbx(lods, "SM_Stone", file, &err));
+    std::ifstream in(file, std::ios::binary);
+    const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    CHECK(bytes.find("LodGroup") != std::string::npos);
+    CHECK(bytes.find("SM_Stone_LOD2") != std::string::npos);
+}
+
+TEST_CASE("masonry: masonryShip plans a wall without Unreal on dryRun")
+{
+    loadMasonry();
+    run("newScene");
+    const json w = run("masonryWall", {{"points", json::array({json::array({0, 0, 100}), json::array({600, 0, 100})})}, {"height", 100.0}});
+    const json r = run("masonryShip", {{"args", {w["mesh"]}}, {"dryRun", true}, {"chunkSize", 200.0}});
+    CHECK(r["stones"] == w["stones"]);
+    CHECK(r["chunks"].get<int64_t>() == 3);
+    CHECK(r["lodTriangles"].size() == 3);
+    CHECK(r["lodTriangles"][0].get<double>() > r["lodTriangles"][2].get<double>());
+    CHECK(r["lodTriangles"][2].get<double>() == doctest::Approx(12.0));
+    CHECK(r["plan"]["groups"].size() == size_t(r["groups"].get<int64_t>()));
+    CHECK_THROWS(run("masonryShip", {{"args", {w["mesh"]}}, {"mode", "nanite"}, {"dryRun", true}}));
 }

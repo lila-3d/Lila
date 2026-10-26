@@ -896,6 +896,35 @@ geo::Mesh stoneMesh(const StoneShape& s)
     return m;
 }
 
+std::array<geo::Mesh, 3> stoneLods(StoneShape s)
+{
+    std::array<geo::Mesh, 3> out;
+    const Detail levels[] = {Detail::Worn, Detail::Clean, Detail::Box};
+    for (size_t k = 0; k < out.size(); ++k)
+    {
+        s.detail = levels[k];
+        out[k] = stoneMesh(s);
+    }
+    return out;
+}
+
+Chunks chunkStones(std::span<const Stone> stones, double size)
+{
+    Chunks c;
+    const double cell = std::max(size, 1.0);
+    std::vector<glm::ivec2> at(stones.size());
+    for (size_t k = 0; k < stones.size(); ++k)
+        at[k] = glm::ivec2(int(std::floor(stones[k].center.x / cell)), int(std::floor(stones[k].center.z / cell)));
+    auto less = [](const glm::ivec2& a, const glm::ivec2& b) { return a.x != b.x ? a.x < b.x : a.y < b.y; };
+    c.cells = at;
+    std::sort(c.cells.begin(), c.cells.end(), less);
+    c.cells.erase(std::unique(c.cells.begin(), c.cells.end()), c.cells.end());
+    c.of.resize(stones.size());
+    for (size_t k = 0; k < stones.size(); ++k)
+        c.of[k] = int(std::lower_bound(c.cells.begin(), c.cells.end(), at[k], less) - c.cells.begin());
+    return c;
+}
+
 std::vector<Footprint> footprintsFromEdges(const geo::Mesh& m)
 {
     std::vector<Footprint> out;
@@ -994,6 +1023,8 @@ Built buildWalls(std::span<const Footprint> footprints, const BuildOptions& o)
         b.variant[k] = v;
     }
     b.meshes.resize(shapes.size());
+    if (o.lods)
+        b.lods.resize(shapes.size());
     tbb::parallel_for(size_t(0), shapes.size(), [&](size_t r) {
         StoneShape shape;
         shape.size = shapes[r].first;
@@ -1003,6 +1034,8 @@ Built buildWalls(std::span<const Footprint> footprints, const BuildOptions& o)
         shape.detail = o.detail;
         shape.tile = o.tile;
         b.meshes[r] = stoneMesh(shape);
+        if (o.lods)
+            b.lods[r] = stoneLods(shape);
     });
     return b;
 }

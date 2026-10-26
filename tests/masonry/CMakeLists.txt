@@ -1,5 +1,6 @@
 # The Masonry extension: its layout and stone meshes compiled in directly, and the package driven through its commands.
-add_executable(lila_masonry_tests main.cpp test_masonry.cpp ${CMAKE_SOURCE_DIR}/extensions/Masonry/MasonryCore.cpp)
+add_executable(lila_masonry_tests main.cpp test_masonry.cpp ${CMAKE_SOURCE_DIR}/extensions/Masonry/MasonryCore.cpp
+    ${CMAKE_SOURCE_DIR}/extensions/Masonry/MasonryShip.cpp)
 target_include_directories(lila_masonry_tests PRIVATE ${CMAKE_SOURCE_DIR}/extensions/Masonry)
 target_link_libraries(lila_masonry_tests PRIVATE LilaUI doctest::doctest)
 add_dependencies(lila_masonry_tests lila_masonry_extension)
