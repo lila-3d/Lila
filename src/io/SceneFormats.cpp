@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <atomic>
 #include <array>
+#include <cctype>
 #include <charconv>
 #include <cstring>
 #include <memory>
@@ -232,16 +233,19 @@ void extractBlobs(json& j, std::vector<Blob>& blobs)
     });
 }
 
-void findPlaceholders(json& j, std::vector<json*>& found)
+/** Each placeholder, and whether it sits inside a mesh (which meshFromJson reads packed, so it stays packed). */
+void findPlaceholders(json& j, std::vector<std::pair<json*, bool>>& found, bool inMesh = false)
 {
     if (j.is_object() && j.contains("$blob"))
     {
-        found.push_back(&j);
+        found.emplace_back(&j, inMesh);
         return;
     }
+    if (j.is_object() && j.contains("faceSizes") && j.contains("points"))
+        inMesh = true;
     if (j.is_array() || j.is_object())
         for (auto& child : j)
-            findPlaceholders(child, found);
+            findPlaceholders(child, found, inMesh);
 }
 
 void restoreBlobs(json& j, const std::vector<std::string>& blobs, std::vector<std::string>* warnings)
@@ -252,14 +256,16 @@ void restoreBlobs(json& j, const std::vector<std::string>& blobs, std::vector<st
         const std::string* bytes; // null when missing, damaged or the wrong size
         packed::DType dtype = packed::DType::F64;
         int width = 1;
+        bool keepPacked = false;
     };
-    std::vector<json*> found;
+    std::vector<std::pair<json*, bool>> found;
     findPlaceholders(j, found);
     std::vector<Use> uses;
     uses.reserve(found.size());
-    for (json* p : found)
+    for (auto [p, inMesh] : found)
     {
         Use& u = uses.emplace_back(Use{p, nullptr});
+        u.keepPacked = inMesh;
         const size_t index = (*p)["$blob"].get<size_t>();
         const std::vector<size_t> shape = p->value("shape", std::vector<size_t>{});
         bool known = true;
@@ -277,9 +283,14 @@ void restoreBlobs(json& j, const std::vector<std::string>& blobs, std::vector<st
     }
     tbb::parallel_for(size_t(0), uses.size(), [&](size_t i) {
         const Use& u = uses[i];
-        *u.at = u.bytes ? packed::toArray(u.dtype, reinterpret_cast<const uint8_t*>(u.bytes->data()),
-                                          u.bytes->size() / packed::dtypeSize(u.dtype), u.width)
-                        : json::array();
+        if (!u.bytes)
+            *u.at = json::array();
+        else if (u.keepPacked)
+            *u.at = json::binary(json::binary_t::container_type(u.bytes->begin(), u.bytes->end()),
+                                 uint64_t(u.dtype) | uint64_t(u.width) << 8);
+        else
+            *u.at = packed::toArray(u.dtype, reinterpret_cast<const uint8_t*>(u.bytes->data()),
+                                    u.bytes->size() / packed::dtypeSize(u.dtype), u.width);
     });
 }
 
@@ -330,6 +341,31 @@ void compress(Chunk& c)
 
 // ------------------------------------------------------------------- ASCII helpers
 
+/** Text to append to. MSVC's std::ostringstream stops at 2 GB, which a dense mesh's text runs past. */
+struct Text
+{
+    std::string s;
+
+    Text& operator<<(std::string_view v)
+    {
+        s.append(v);
+        return *this;
+    }
+    Text& operator<<(const std::string& v) { return *this << std::string_view(v); }
+    Text& operator<<(const char* v) { return *this << std::string_view(v); }
+    Text& operator<<(char c)
+    {
+        s.push_back(c);
+        return *this;
+    }
+    Text& operator<<(uint32_t v)
+    {
+        char buf[16];
+        s.append(buf, std::to_chars(buf, buf + sizeof(buf), v).ptr);
+        return *this;
+    }
+};
+
 std::string number(double v)
 {
     if (v == 0.0)
@@ -338,6 +374,7 @@ std::string number(double v)
     auto r = std::to_chars(buf, buf + sizeof(buf), v); // shortest form that round-trips exactly
     return std::string(buf, r.ptr);
 }
+
 
 std::string scalar(const json& v)
 {
@@ -353,6 +390,26 @@ std::string scalar(const json& v)
     }
 }
 
+/** scalar() appended in place, without a string per number: the bulk of a mesh's text. */
+void appendScalar(Text& out, const json& v)
+{
+    char buf[32];
+    if (v.is_number_float())
+    {
+        const double d = v.get<double>();
+        if (d == 0.0)
+            out.s.push_back('0');
+        else
+            out.s.append(buf, std::to_chars(buf, buf + sizeof(buf), d).ptr);
+    }
+    else if (v.is_number_unsigned())
+        out.s.append(buf, std::to_chars(buf, buf + sizeof(buf), v.get<uint64_t>()).ptr);
+    else if (v.is_number_integer())
+        out.s.append(buf, std::to_chars(buf, buf + sizeof(buf), v.get<int64_t>()).ptr);
+    else
+        out << scalar(v);
+}
+
 bool isFlatNumbers(const json& v)
 {
     if (!v.is_array())
@@ -363,13 +420,184 @@ bool isFlatNumbers(const json& v)
     return true;
 }
 
-void writeValue(std::ostringstream& out, const std::string& indent, const std::string& key, const json& v)
+/** One value of a packed array, formatted as its plain json value would be by appendScalar. */
+void appendPacked(std::string& s, packed::DType t, const uint8_t* data, size_t i)
 {
+    char buf[32];
+    switch (t)
+    {
+    case packed::DType::Bool: s.append(data[i] ? "true" : "false"); return;
+    case packed::DType::I32: { int32_t v; std::memcpy(&v, data + i * 4, 4); s.append(buf, std::to_chars(buf, buf + sizeof(buf), v).ptr); return; }
+    case packed::DType::U32: { uint32_t v; std::memcpy(&v, data + i * 4, 4); s.append(buf, std::to_chars(buf, buf + sizeof(buf), v).ptr); return; }
+    case packed::DType::F32:
+    case packed::DType::F64:
+    {
+        double d;
+        if (t == packed::DType::F32)
+        {
+            float f;
+            std::memcpy(&f, data + i * 4, 4);
+            d = f;
+        }
+        else
+            std::memcpy(&d, data + i * 8, 8);
+        if (d == 0.0)
+            s.push_back('0');
+        else
+            s.append(buf, std::to_chars(buf, buf + sizeof(buf), d).ptr);
+        return;
+    }
+    }
+}
+
+/**
+ * A packed array written exactly as writeValue writes the plain array it stands for, without building that array:
+ * rows of `width` for nested ones, rows of 3 for long flat numbers, one per line for booleans. Big ones format in
+ * parallel blocks.
+ */
+void writePacked(Text& out, const std::string& indent, const std::string& key, const json& v)
+{
+    const packed::DType t = packed::dtype(v);
+    const uint8_t* data = v.get_binary().data();
+    const size_t n = packed::count(v);
+    const size_t width = size_t(packed::width(v));
+    const bool bools = t == packed::DType::Bool;
+    if (width == 1 && n <= 16 && !bools)
+    {
+        out << indent << key;
+        for (size_t i = 0; i < n; ++i)
+        {
+            out << ' ';
+            appendPacked(out.s, t, data, i);
+        }
+        out << '\n';
+        return;
+    }
+    const size_t perRow = bools ? 1 : width > 1 ? width : 3;
+    out << indent << key << (width == 1 && !bools ? " [/3\n" : " [\n");
+    const size_t rows = (n + perRow - 1) / perRow;
+    constexpr size_t kBlock = 65536;
+    std::vector<std::string> blocks((rows + kBlock - 1) / kBlock);
+    tbb::parallel_for(size_t(0), blocks.size(), [&](size_t b) {
+        std::string& s = blocks[b];
+        for (size_t r = b * kBlock; r < std::min(rows, (b + 1) * kBlock); ++r)
+        {
+            s.append(indent).append("  ");
+            for (size_t i = r * perRow; i < std::min(n, (r + 1) * perRow); ++i)
+            {
+                if (i > r * perRow)
+                    s.push_back(' ');
+                appendPacked(s, t, data, i);
+            }
+            s.push_back('\n');
+        }
+    });
+    for (std::string& s : blocks)
+        out << s;
+    out << indent << "]\n";
+}
+
+bool hasPacked(const json& v)
+{
+    if (packed::is(v))
+        return true;
+    if (v.is_array() || v.is_object())
+        for (const json& x : v)
+            if (hasPacked(x))
+                return true;
+    return false;
+}
+
+/**
+ * v.dump(), except packed arrays come out as the plain arrays they stand for (rows of their width), formatted in
+ * parallel blocks: a mesh is one such line, millions of numbers long.
+ */
+void appendJson(std::string& s, const json& v)
+{
+    if (packed::is(v))
+    {
+        const packed::DType t = packed::dtype(v);
+        const uint8_t* data = v.get_binary().data();
+        const size_t n = packed::count(v), width = size_t(packed::width(v));
+        const size_t rows = width > 1 ? (n + width - 1) / width : n;
+        constexpr size_t kBlock = 65536;
+        std::vector<std::string> blocks((rows + kBlock - 1) / kBlock);
+        tbb::parallel_for(size_t(0), blocks.size(), [&](size_t b) {
+            std::string& out = blocks[b];
+            for (size_t r = b * kBlock; r < std::min(rows, (b + 1) * kBlock); ++r)
+            {
+                if (r)
+                    out.push_back(',');
+                if (width == 1)
+                {
+                    appendPacked(out, t, data, r);
+                    continue;
+                }
+                out.push_back('[');
+                for (size_t i = r * width; i < std::min(n, (r + 1) * width); ++i)
+                {
+                    if (i > r * width)
+                        out.push_back(',');
+                    appendPacked(out, t, data, i);
+                }
+                out.push_back(']');
+            }
+        });
+        s.push_back('[');
+        for (const std::string& b : blocks)
+            s.append(b);
+        s.push_back(']');
+        return;
+    }
+    if (!hasPacked(v))
+    {
+        s.append(v.dump());
+        return;
+    }
+    if (v.is_array())
+    {
+        s.push_back('[');
+        for (size_t i = 0; i < v.size(); ++i)
+        {
+            if (i)
+                s.push_back(',');
+            appendJson(s, v[i]);
+        }
+        s.push_back(']');
+        return;
+    }
+    s.push_back('{');
+    bool first = true;
+    for (auto& [k, x] : v.items())
+    {
+        if (!first)
+            s.push_back(',');
+        first = false;
+        s.append(json(k).dump()).push_back(':');
+        appendJson(s, x);
+    }
+    s.push_back('}');
+}
+
+void writeValue(Text& out, const std::string& indent, const std::string& key, const json& v)
+{
+    if (packed::is(v))
+        return writePacked(out, indent, key, v);
+    if (v.is_object() && hasPacked(v))
+    {
+        out << indent << key << " json ";
+        appendJson(out.s, v);
+        out << '\n';
+        return;
+    }
     if (isFlatNumbers(v) && v.size() <= 16 && !v.empty())
     {
         out << indent << key;
         for (const json& x : v)
-            out << ' ' << scalar(x);
+        {
+            out << ' ';
+            appendScalar(out, x);
+        }
         out << '\n';
         return;
     }
@@ -381,7 +609,11 @@ void writeValue(std::ostringstream& out, const std::string& indent, const std::s
         {
             out << indent << "  ";
             for (size_t k = i; k < std::min(v.size(), i + 3); ++k)
-                out << (k > i ? " " : "") << scalar(v[k]);
+            {
+                if (k > i)
+                    out << ' ';
+                appendScalar(out, v[k]);
+            }
             out << '\n';
         }
         out << indent << "]\n";
@@ -400,9 +632,13 @@ void writeValue(std::ostringstream& out, const std::string& indent, const std::s
                 out << indent << "  ";
                 if (x.is_array())
                     for (size_t k = 0; k < x.size(); ++k)
-                        out << (k ? " " : "") << scalar(x[k]);
+                    {
+                        if (k)
+                            out << ' ';
+                        appendScalar(out, x[k]);
+                    }
                 else
-                    out << scalar(x);
+                    appendScalar(out, x);
                 out << '\n';
             }
             out << indent << "]\n";
@@ -465,13 +701,351 @@ json parseScalar(const std::string& t)
 }
 
 /** Value from the tokens after a key on one line. */
+/**
+ * Parses a "json" line the way json::parse does, except long arrays of numbers (flat, or rows of equal width) become
+ * packed arrays straight away instead of a json node per number. Meshes are such lines, millions of numbers long;
+ * packed arrays anywhere but inside a mesh are unpacked again afterwards, since only meshFromJson reads them.
+ */
+class FastJson
+{
+public:
+    explicit FastJson(std::string_view text) : s(text) {}
+
+    json parse()
+    {
+        json v = value();
+        skip();
+        if (i != s.size())
+            throw std::runtime_error("unexpected text after the json value");
+        unpackOutsideMeshes(v, false);
+        return v;
+    }
+
+private:
+    static constexpr size_t kPackFrom = 64;
+    std::string_view s;
+    size_t i = 0;
+
+    void skip()
+    {
+        while (i < s.size() && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n'))
+            ++i;
+    }
+
+    char peek()
+    {
+        skip();
+        return i < s.size() ? s[i] : '\0';
+    }
+
+    void expect(char c)
+    {
+        if (peek() != c)
+            throw std::runtime_error(std::string("expected '") + c + "' in json");
+        ++i;
+    }
+
+    json value()
+    {
+        switch (peek())
+        {
+        case '{': return object();
+        case '[': return array();
+        case '"': return string();
+        case 't': return literal("true", true);
+        case 'f': return literal("false", false);
+        case 'n': return literal("null", nullptr);
+        default:
+        {
+            double d = 0.0;
+            int64_t n = 0;
+            bool integral = false;
+            if (!number(d, n, integral))
+                throw std::runtime_error("bad value in json");
+            return integral ? json(n) : json(d);
+        }
+        }
+    }
+
+    json literal(std::string_view word, json result)
+    {
+        if (s.substr(i, word.size()) != word)
+            throw std::runtime_error("bad literal in json");
+        i += word.size();
+        return result;
+    }
+
+    json string()
+    {
+        const size_t start = i++;
+        while (i < s.size() && s[i] != '"')
+            i += s[i] == '\\' ? 2 : 1;
+        ++i;
+        return json::parse(s.substr(start, i - start));
+    }
+
+    /** A number at i, as an integer when it is one. */
+    bool number(double& d, int64_t& n, bool& integral)
+    {
+        skip();
+        size_t end = i;
+        while (end < s.size() && numeric(s[end]))
+            ++end;
+        if (end == i)
+            return false;
+        const std::string_view t = s.substr(i, end - i);
+        integral = t.find_first_of(".eE") == std::string_view::npos;
+        if (integral && std::from_chars(t.data(), t.data() + t.size(), n).ec == std::errc())
+        {
+            d = double(n);
+            i = end;
+            return true;
+        }
+        integral = false;
+        if (std::from_chars(t.data(), t.data() + t.size(), d).ec != std::errc())
+            return false;
+        i = end;
+        return true;
+    }
+
+    json object()
+    {
+        expect('{');
+        json obj = json::object();
+        if (peek() == '}')
+        {
+            ++i;
+            return obj;
+        }
+        for (;;)
+        {
+            if (peek() != '"')
+                throw std::runtime_error("expected a key in json");
+            std::string key = string().get<std::string>();
+            expect(':');
+            obj[key] = value();
+            if (peek() == ',')
+            {
+                ++i;
+                continue;
+            }
+            expect('}');
+            return obj;
+        }
+    }
+
+    json array()
+    {
+        const size_t start = i;
+        if (json packedArray; numbers(packedArray))
+            return packedArray;
+        i = start;
+        expect('[');
+        json arr = json::array();
+        if (peek() == ']')
+        {
+            ++i;
+            return arr;
+        }
+        for (;;)
+        {
+            arr.push_back(value());
+            if (peek() == ',')
+            {
+                ++i;
+                continue;
+            }
+            expect(']');
+            return arr;
+        }
+    }
+
+    static bool numeric(char c) { return (c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.' || c == 'e' || c == 'E'; }
+
+    /** Numbers of one chunk of an array's text, separated by commas, with rows bracketed when nested. */
+    struct Piece
+    {
+        std::vector<double> values;
+        bool allIntegral = true, nonNegative = true, ok = true;
+    };
+
+    static void parsePiece(std::string_view text, bool nested, int width, Piece& out)
+    {
+        size_t k = 0, inRow = 0;
+        while (k < text.size())
+        {
+            const char c = text[k];
+            if (c == ',' || c == ' ' || c == '\t' || c == '\r' || c == '\n')
+            {
+                ++k;
+                continue;
+            }
+            if (c == '[' || c == ']')
+            {
+                if (!nested || (c == ']' && int(inRow) != width))
+                {
+                    out.ok = false;
+                    return;
+                }
+                inRow = 0;
+                ++k;
+                continue;
+            }
+            size_t e = k;
+            while (e < text.size() && numeric(text[e]))
+                ++e;
+            const std::string_view tok = text.substr(k, e - k);
+            if (tok.empty())
+            {
+                out.ok = false;
+                return;
+            }
+            double d;
+            if (tok.find_first_of(".eE") == std::string_view::npos)
+            {
+                int64_t n;
+                if (std::from_chars(tok.data(), tok.data() + tok.size(), n).ec != std::errc())
+                {
+                    out.ok = false;
+                    return;
+                }
+                d = double(n);
+                out.allIntegral = out.allIntegral && n <= int64_t(UINT32_MAX);
+            }
+            else
+            {
+                if (std::from_chars(tok.data(), tok.data() + tok.size(), d).ec != std::errc())
+                {
+                    out.ok = false;
+                    return;
+                }
+                out.allIntegral = false;
+            }
+            out.nonNegative = out.nonNegative && d >= 0.0;
+            out.values.push_back(d);
+            ++inRow;
+            k = e;
+        }
+    }
+
+    /**
+     * A long array of numbers, flat or rows of one width, as a packed array; false (i unspecified) otherwise. The
+     * array's text is found first, then parsed in chunks split at commas between values (or rows) in parallel.
+     */
+    bool numbers(json& out)
+    {
+        expect('[');
+        const size_t open = i;
+        const bool nested = peek() == '[';
+        // The extent: only numbers, commas, spaces and (when nested) one level of brackets may appear.
+        size_t end = open;
+        int depth = 0, width = 0, inRow = 0;
+        for (; end < s.size(); ++end)
+        {
+            const char c = s[end];
+            if (c == '[')
+            {
+                if (!nested || depth != 0)
+                    return false;
+                depth = 1;
+                inRow = 0;
+            }
+            else if (c == ']')
+            {
+                if (depth == 0)
+                    break;
+                depth = 0;
+                if (width == 0)
+                    width = inRow + 1;
+            }
+            else if (c == ',')
+            {
+                if (depth == 1 && width == 0)
+                    ++inRow;
+            }
+            else if (!numeric(c) && c != ' ' && c != '\t' && c != '\r' && c != '\n')
+                return false;
+        }
+        if (end >= s.size())
+            return false;
+        if (nested && width < 2)
+            return false;
+        const std::string_view body = s.substr(open, end - open);
+        // Split points: a comma at depth 0, after a value (flat) or after a row (nested).
+        constexpr size_t kChunk = size_t(1) << 22;
+        std::vector<size_t> cuts{0};
+        for (size_t at = kChunk; at < body.size();)
+        {
+            size_t c = body.find(nested ? "]," : ",", at);
+            if (c == std::string_view::npos)
+                break;
+            c += nested ? 2 : 1;
+            cuts.push_back(c);
+            at = c + kChunk;
+        }
+        cuts.push_back(body.size());
+        std::vector<Piece> pieces(cuts.size() - 1);
+        tbb::parallel_for(size_t(0), pieces.size(), [&](size_t k) { parsePiece(body.substr(cuts[k], cuts[k + 1] - cuts[k]), nested, width, pieces[k]); });
+        size_t count = 0;
+        bool allIntegral = true, nonNegative = true;
+        for (const Piece& pc : pieces)
+        {
+            if (!pc.ok)
+                return false;
+            count += pc.values.size();
+            allIntegral = allIntegral && pc.allIntegral;
+            nonNegative = nonNegative && pc.nonNegative;
+        }
+        if (count < kPackFrom || (nested && count % size_t(width) != 0))
+            return false;
+        i = end + 1;
+        const int w = nested ? width : 1;
+        if (allIntegral && nonNegative)
+        {
+            uint32_t* dst = nullptr;
+            out = packed::alloc(count, dst, w);
+            size_t at = 0;
+            for (const Piece& pc : pieces)
+                for (double d : pc.values)
+                    dst[at++] = uint32_t(d);
+        }
+        else
+        {
+            double* dst = nullptr;
+            out = packed::alloc(count, dst, w);
+            size_t at = 0;
+            for (const Piece& pc : pieces)
+            {
+                std::memcpy(dst + at, pc.values.data(), pc.values.size() * sizeof(double));
+                at += pc.values.size();
+            }
+        }
+        return true;
+    }
+
+    static void unpackOutsideMeshes(json& v, bool inMesh)
+    {
+        if (packed::is(v))
+        {
+            if (!inMesh)
+                v = packed::unpack(v);
+            return;
+        }
+        if (v.is_object() && v.contains("faceSizes") && v.contains("points"))
+            inMesh = true;
+        if (v.is_array() || v.is_object())
+            for (json& x : v)
+                unpackOutsideMeshes(x, inMesh);
+    }
+};
+
 json parseInline(std::string_view rest)
 {
     std::string_view trimmed = rest;
     while (!trimmed.empty() && trimmed.front() == ' ')
         trimmed.remove_prefix(1);
     if (trimmed.rfind("json ", 0) == 0)
-        return json::parse(trimmed.substr(5));
+        return FastJson(trimmed.substr(5)).parse();
     auto tokens = tokenize(trimmed);
     if (tokens.empty())
         return nullptr;
@@ -713,7 +1287,7 @@ std::string encodeAscii(const json& doc)
 {
     LILA_ZONE();
 
-    std::ostringstream out;
+    Text out;
     out << "lila " << kAsciiVersion << " ascii\n";
     for (const char* key : {"upAxis", "units"})
         if (doc.contains(key))
@@ -773,7 +1347,7 @@ std::string encodeAscii(const json& doc)
             start = end + 1;
         }
     }
-    return out.str();
+    return std::move(out.s);
 }
 
 json decodeAscii(std::string_view text, std::vector<std::string>* warnings)

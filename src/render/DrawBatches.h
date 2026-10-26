@@ -14,7 +14,7 @@ namespace lila::render
 struct GpuInstance
 {
     glm::mat4 world{1.0f};
-    glm::vec4 color{0.0f}; // resolved wire colour for wire batches
+    glm::vec4 color{0.0f}; // resolved wire colour; in shaded batches the wire the mesh shader draws, alpha 0 for none
 };
 static_assert(sizeof(GpuInstance) == 80, "matches InstanceData in mesh.slang");
 
@@ -24,6 +24,7 @@ struct DrawBatch
     const MeshDraw* draw = nullptr; // the first member, which supplies the mesh, materials and per-draw state
     uint32_t first = 0;             // its first entry in DrawBatches::instances
     uint32_t count = 0;
+    bool wire = false; // shaded batch whose placements draw their wire in the mesh shader
 };
 
 /** A frame's mesh draws grouped for instancing. */
@@ -41,6 +42,9 @@ LILA_UI_API bool sameMaterials(const std::vector<Material>& a, const std::vector
 /** True when a draw shows a wire overlay. */
 LILA_UI_API bool drawsWire(const MeshDraw& d);
 
+/** True when a shaded draw's wire can be drawn by the mesh shader instead of as lines. */
+LILA_UI_API bool wireInShader(const MeshDraw& d);
+
 /** The wire colour a draw shows with, from its highlight state, its own colour or the frame's default. */
 LILA_UI_API glm::vec4 wireColor(const FrameState& s, const MeshDraw& d);
 
@@ -49,5 +53,5 @@ LILA_UI_API glm::vec4 wireColor(const FrameState& s, const MeshDraw& d);
  * batch, and so do wire overlays sharing a mesh, width and depth mode. A draw with instances contributes one placement per
  * entry. Draws with no mesh or no triangles are left out of the shaded batches.
  */
-LILA_UI_API DrawBatches batchDraws(const FrameState& s);
+LILA_UI_API DrawBatches batchDraws(const FrameState& s, bool shaderWire = false);
 } // namespace lila::render

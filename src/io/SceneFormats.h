@@ -31,6 +31,10 @@ LILA_SCENE_API SceneFormat detectFormat(std::string_view bytes);
 LILA_SCENE_API std::string encodeBinary(nlohmann::json doc);
 /** encodeBinary, handing the file to write() piece by piece as chunks finish compressing. */
 LILA_SCENE_API void encodeBinary(nlohmann::json doc, const std::function<void(std::string_view)>& write);
+/**
+ * The document back as json. Large arrays inside meshes stay packed (see core/PackedArray.h), which meshFromJson reads
+ * directly; packed::unpackAll gives plain json.
+ */
 LILA_SCENE_API nlohmann::json decodeBinary(std::string_view bytes, std::vector<std::string>* warnings);
 /** Only the document chunk: large arrays stay {"$blob": n} placeholders. For reading metadata cheaply. */
 LILA_SCENE_API nlohmann::json decodeBinaryHeader(std::string_view bytes);

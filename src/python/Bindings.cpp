@@ -1,5 +1,6 @@
 #include "ops/Command.h"
 #include "core/Log.h"
+#include "core/MainQueue.h"
 #include "core/PrefStore.h"
 #include "core/Progress.h"
 #include "core/Workspace.h"
@@ -19,6 +20,7 @@ namespace lila::python
 {
 void bindMath(nb::module_& m);
 void bindScene(nb::module_& m);
+void bindMeshArrays(nb::module_& m);
 void bindExtensions(nb::module_& m);
 void bindRegistries(nb::module_& m);
 }
@@ -108,12 +110,16 @@ NB_MODULE(_lila, m)
     nb::module_ math = m.def_submodule("math", "UE-flavoured vector math.");
     lila::python::bindMath(math);
     lila::python::bindScene(m);
+    lila::python::bindMeshArrays(m);
     lila::python::bindExtensions(m);
     lila::python::bindRegistries(m);
 
     static nb::exception<lila::CommandError> commandError(m, "CommandError", PyExc_RuntimeError);
 
     m.def("execute", [](const std::string& name, nb::dict call, bool echo) {
+        if (!lila::mainq::isMainThread())
+            throw lila::CommandError("lila.ops." + name + " was called from a worker thread; commands run on the main thread only "
+                                                         "(lila.tasks.call_on_main runs code there)");
         json c = toJson(call);
         json result = lila::ops::execute(name, c, echo ? lila::CallSource::UI : lila::CallSource::Script);
         return toPy(result);
@@ -151,26 +157,64 @@ NB_MODULE(_lila, m)
 
     m.def("write", [](int level, const std::string& text) { lila::log::write(lila::LogLevel(level), text); });
 
+    m.def("is_main_thread", [] { return lila::mainq::isMainThread(); });
+    m.def(
+        "post_to_main",
+        [](nb::callable fn) {
+            // A raw reference: the queue copies and destroys its functions without the GIL.
+            PyObject* f = fn.release().ptr();
+            lila::mainq::post([f] {
+                if (!Py_IsInitialized())
+                    return;
+                nb::gil_scoped_acquire gil;
+                nb::object call = nb::steal(f);
+                try
+                {
+                    call();
+                }
+                catch (nb::python_error& e)
+                {
+                    e.restore();
+                    PyErr_Print();
+                }
+                catch (const std::exception& e)
+                {
+                    lila::log::error("{}", e.what());
+                }
+            });
+        },
+        nb::arg("fn"), "Calls fn() on the main thread the next time it is idle. Safe from any thread.");
+    m.def(
+        "drain_main",
+        [] {
+            if (lila::mainq::isMainThread())
+                lila::mainq::drain();
+        },
+        "Runs what post_to_main queued, now. Main thread only; does nothing elsewhere.");
+
     // A scope only while the with-block runs, so Python's garbage collection can't unbalance the nesting.
     struct PyProgress
     {
         std::string title;
         double total = 0.0;
         bool cancellable = false;
+        bool background = false;
         std::unique_ptr<lila::progress::Scope> scope;
     };
     nb::class_<PyProgress>(m, "Progress",
-                           "Progress of a long script, shown like a scene load: with lila.Progress(\"Baking\", total=n) as p: p.step()")
+                           "Progress of a long script, shown like a scene load: with lila.Progress(\"Baking\", total=n) as p: p.step(). "
+                           "background=True shows it as a small indicator instead, for work on a worker thread (lila.tasks).")
         .def(
             "__init__",
-            [](PyProgress* p, std::string title, double total, bool cancellable) {
-                new (p) PyProgress{std::move(title), total, cancellable, nullptr};
+            [](PyProgress* p, std::string title, double total, bool cancellable, bool background) {
+                new (p) PyProgress{std::move(title), total, cancellable, background, nullptr};
             },
-            nb::arg("title"), nb::arg("total") = 0.0, nb::arg("cancellable") = false)
+            nb::arg("title"), nb::arg("total") = 0.0, nb::arg("cancellable") = false, nb::arg("background") = false)
         .def(
             "__enter__",
             [](PyProgress& p) -> PyProgress& {
-                p.scope = std::make_unique<lila::progress::Scope>(p.title, p.total, p.cancellable ? lila::progress::Cancellable : lila::progress::None);
+                uint32_t flags = (p.cancellable ? lila::progress::Cancellable : lila::progress::None) | (p.background ? lila::progress::Silent : lila::progress::None);
+                p.scope = std::make_unique<lila::progress::Scope>(p.title, p.total, flags);
                 return p;
             },
             nb::rv_policy::reference)

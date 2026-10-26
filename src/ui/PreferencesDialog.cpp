@@ -547,6 +547,8 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         toggle(viewport, "Shadows", vd::kShadows, true);
         number(viewport, "Ground shadow", "/viewport/groundShadow", 0.5, 0.0, 1.0, 0.05);
         toggle(viewport, "Ambient occlusion", "/viewport/ao/enabled", true);
+        choice(viewport, "AO method", "/viewport/ao/mode",
+               {{"Accurate: darkens ambient light only", "accurate"}, {"Fast: darkens the whole surface, no extra geometry pass", "fast"}}, "accurate");
         number(viewport, "AO radius (cm)", "/viewport/ao/radius", 30.0, 0.1, 10000.0, 1.0, 1);
         number(viewport, "AO intensity", "/viewport/ao/intensity", 1.0, 0.0, 4.0, 0.1);
         section(viewport, "Color");
@@ -573,6 +575,8 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         section(viewport, "Display");
         toggle(viewport, "Poly count", "/viewport/polyCount", true);
         toggle(viewport, "Panel toolbar", vd::kToolbar, true);
+        toggle(viewport, "Smooth preview shows the subdivided edges", vd::kSmoothSubdivisions, false);
+        toggle(viewport, "Smooth preview keeps hard edges", vd::kSmoothHardEdges, false);
         toggle(viewport, "Hiding a parent hides its children", scene::kInheritVisibilityPref, true);
         section(viewport, "Deformers");
         toggle(viewport, "Evaluate deformers on the GPU (exports always use the CPU)", "/deformers/gpu", true);

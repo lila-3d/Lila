@@ -13,6 +13,10 @@
 #include "scene/Modifiers.h"
 
 #include <glm/gtx/quaternion.hpp>
+#include <tbb/blocked_range.h>
+#include <tbb/parallel_for.h>
+
+#include <format>
 
 #include <algorithm>
 #include <format>
@@ -203,7 +207,16 @@ Node& nodeNamed(const std::string& name)
 }
 
 json vecToJson(const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); }
+
+uint64_t gNextPointsToken = 1;
+std::pair<uint64_t, std::vector<glm::dvec3>> gStashedPoints;
 } // namespace
+
+uint64_t stashPoints(std::vector<glm::dvec3> points)
+{
+    gStashedPoints = {gNextPointsToken++, std::move(points)};
+    return gStashedPoints.first;
+}
 
 void MeshNode::compute(const EvalContext& ctx)
 {
@@ -580,6 +593,54 @@ void registerMeshCommands()
                     faces.push_back(std::move(face));
                 }
             return {{"points", std::move(points)}, {"faces", std::move(faces)}};
+        },
+    });
+
+    ops::registerCommand({
+        .name = "setMeshPoints",
+        .doc = "Move every point of a mesh's base (under its modifiers) at once, in meshData's point order, in object space. "
+               "Topology stays. One undo step. Python's Node.set_points takes a numpy array, faster.",
+        .positionalDoc = "mesh",
+        .flags = {{"points", "", T::List, json::array(), "[[x, y, z], ...], one per point, in cm."},
+                  {"buffer", "", T::Int, 0, "Internal: points handed over from Python (Node.set_points)."}},
+        .run = [](const Args& a) -> json {
+            auto objs = a.objects();
+            if (objs.empty())
+                throw CommandError("setMeshPoints: no mesh");
+            std::vector<glm::dvec3> pts;
+            if (uint64_t token = uint64_t(a.get<int64_t>("buffer")); token != 0)
+            {
+                if (token != gStashedPoints.first)
+                    throw CommandError("setMeshPoints: the buffer is gone; pass points= instead");
+                pts = std::move(gStashedPoints.second);
+                gStashedPoints = {};
+            }
+            else
+                for (const json& p : a.flags.value("points", json::array()))
+                    pts.emplace_back(p.at(0).get<double>(), p.at(1).get<double>(), p.at(2).get<double>());
+            Node& n = nodeNamed(objs.back());
+            if (!n.type().isA("mesh"))
+                throw CommandError("setMeshPoints: " + objs.back() + " is not a mesh");
+            Graph& g = graph();
+            PlugRef base = modifiers::editPlug(g, n.id());
+            g.evaluate();
+            const MeshPtr& cur = std::get<MeshPtr>(g.storedValue(base));
+            if (!cur)
+                throw CommandError("setMeshPoints: " + objs.back() + " has no mesh");
+            if (pts.size() != cur->numPoints())
+                throw CommandError(std::format("setMeshPoints: {} has {} points, got {}", objs.back(), cur->numPoints(), pts.size()));
+            auto edited = std::make_shared<geo::Mesh>(*cur);
+            std::span<glm::dvec3> dst = edited->positions();
+            if (edited->numPoints() == edited->pointCapacity())
+                tbb::parallel_for(tbb::blocked_range<size_t>(0, pts.size(), 1 << 16), [&](const tbb::blocked_range<size_t>& r) {
+                    std::copy(pts.begin() + r.begin(), pts.begin() + r.end(), dst.begin() + r.begin());
+                });
+            else
+                for (geo::Index p = 0, k = 0; p < edited->pointCapacity(); ++p)
+                    if (edited->pointValid(p))
+                        dst[p] = pts[k++];
+            g.setValue(base, MeshPtr(std::move(edited)));
+            return int64_t(pts.size());
         },
     });
 

@@ -22,6 +22,7 @@ target_link_libraries(lila_render PUBLIC lila_core volk::volk Vulkan::Headers GP
 
 lila_add_shaders(lila_render FILES
     shaders/ao.slang
+    shaders/ao_apply.slang
     shaders/bake_dilate.slang
     shaders/bake_hw.slang
     shaders/bake_image.slang
@@ -39,8 +40,11 @@ lila_add_shaders(lila_render FILES
     shaders/paint_gather.slang
     shaders/paint_screen.slang
     shaders/post.slang
+    shaders/points.slang
     shaders/mesh.slang
     shaders/mesh_bindless.slang
+    shaders/mesh_wire.slang
+    shaders/mesh_bindless_wire.slang
     shaders/tex_blur.slang
     shaders/tex_decode.slang
     shaders/tex_page.slang

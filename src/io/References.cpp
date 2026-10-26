@@ -10,6 +10,7 @@
 #include "io/SceneFormats.h"
 #include "scene/Graph.h"
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
@@ -207,8 +208,11 @@ std::string readBytes(const fs::path& path)
         throw std::runtime_error("can't open " + path.string());
     std::string bytes(size_t(in.tellg()), char(0));
     in.seekg(0);
-    if (!in.read(bytes.data(), std::streamsize(bytes.size())))
-        throw std::runtime_error("can't read " + path.string());
+    // In slices: MSVC's streams stop a single read at 2 GB.
+    constexpr size_t kSlice = size_t(64) << 20;
+    for (size_t at = 0; at < bytes.size(); at += kSlice)
+        if (!in.read(bytes.data() + at, std::streamsize(std::min(kSlice, bytes.size() - at))))
+            throw std::runtime_error("can't read " + path.string());
     return bytes;
 }
 } // namespace

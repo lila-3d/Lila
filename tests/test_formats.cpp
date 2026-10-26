@@ -211,7 +211,10 @@ TEST_CASE("packed meshes write the same document as plain ones")
     std::vector<std::string> warnings;
     json back = io::decodeBinary(io::encodeBinary(doc), &warnings);
     CHECK(warnings.empty());
-    CHECK(back["mesh"] == plain);
+    CHECK(packed::is(back["mesh"]["points"]));
+    json backPlain = back["mesh"];
+    packed::unpackAll(backPlain);
+    CHECK(backPlain == plain);
     CHECK(scene::meshToJson(*scene::meshFromJson(back["mesh"])) == scene::meshToJson(*scene::meshFromJson(plain)));
 
     json unpacked = doc;

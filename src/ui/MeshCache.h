@@ -2,11 +2,13 @@
 
 #include "core/Export.h"
 
+#include "geo/Ops.h"
 #include "render/RenderMesh.h"
 #include "scene/Plug.h"
 
 #include <functional>
 #include <optional>
+#include <span>
 
 namespace lila::geo
 {
@@ -23,6 +25,34 @@ LILA_UI_API std::shared_ptr<const render::RenderMesh> renderMeshFor(const scene:
 
 /** The mesh subdivided for smooth preview, cached per snapshot and level. Level 0 returns the mesh itself. */
 LILA_UI_API scene::MeshPtr smoothedFor(const scene::MeshPtr& mesh, int level);
+
+/** A smooth preview and where its cage's components lie on it, so they can be drawn and picked on the smooth surface. */
+struct SmoothCage
+{
+    scene::MeshPtr mesh;
+    geo::SubdivideMap map;
+    /** Per smoothed point: the cage point it is, kInvalid for a new one. */
+    std::vector<geo::Index> cagePoints;
+    std::vector<geo::Index> edgeOffsets, edgeSegments;
+    std::vector<geo::Index> faceOffsets, faceParts;
+
+    /** The smoothed edges that run along cage edge e. */
+    std::span<const geo::Index> segments(geo::Index e) const
+    {
+        return e + 1 < edgeOffsets.size() ? std::span(edgeSegments).subspan(edgeOffsets[e], edgeOffsets[e + 1] - edgeOffsets[e]) : std::span<const geo::Index>();
+    }
+    /** The smoothed faces that make up cage face f. */
+    std::span<const geo::Index> parts(geo::Index f) const
+    {
+        return f + 1 < faceOffsets.size() ? std::span(faceParts).subspan(faceOffsets[f], faceOffsets[f + 1] - faceOffsets[f]) : std::span<const geo::Index>();
+    }
+};
+
+/** smoothedFor(mesh, level) with its maps back to mesh; null for level 0. */
+LILA_UI_API std::shared_ptr<const SmoothCage> smoothCageFor(const scene::MeshPtr& mesh, int level);
+
+/** renderMeshFor(smooth.mesh) with its wire cut down to the edges that run along the cage's. */
+LILA_UI_API std::shared_ptr<const render::RenderMesh> cageWireMeshFor(const SmoothCage& smooth, bool tangents = false);
 
 /** Triangle-to-face, vertex-to-point and line-to-edge maps for the same render copy, used to pick components. */
 LILA_UI_API std::shared_ptr<const geo::RenderMesh> pickDataFor(const scene::MeshPtr& mesh);
@@ -42,11 +72,12 @@ struct MaskedMesh
 };
 
 /**
- * The faces shownFaces() marks (1 per face of mesh; called only on a cache miss) as a triangle and wire subset of
- * renderMeshFor(mesh), cached per mesh snapshot and maskKey so the mask is only applied once per change.
+ * The faces shownFaces() marks (1 per face of mesh; called only on a cache miss, empty shows all) as a triangle and wire
+ * subset of renderMeshFor(mesh), cached per mesh snapshot and maskKey so the mask is only applied once per change.
+ * cageWire, when mesh is its smoothed mesh, keeps only the wire along the cage's edges.
  */
 LILA_UI_API std::shared_ptr<const MaskedMesh> maskedRenderMeshFor(const scene::MeshPtr& mesh, uint64_t maskKey, const std::function<std::vector<uint8_t>()>& shownFaces,
-                                                                  bool tangents = false);
+                                                                  bool tangents = false, const SmoothCage* cageWire = nullptr);
 
 struct RayHit
 {

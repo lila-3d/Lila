@@ -211,13 +211,28 @@ struct SubdivideOptions
     int levels = 1;
     /** Boundary edges stay sharp (Maya's default). */
     bool sharpBoundary = true;
+    /** Normals stay split along hard edges; off, the result is smooth-shaded everywhere, like Maya's smooth preview. */
+    bool keepHardEdges = false;
+};
+
+/** Where the cage's components went in subdivide's result. */
+struct SubdivideMap
+{
+    /** Per cage point: the point it became, kInvalid for a dead one. */
+    std::vector<Index> points;
+    /** Per cage face: the point at its centre, kInvalid for a dead one. */
+    std::vector<Index> facePoints;
+    /** Per result edge: the cage edge it runs along, kInvalid for one inside a cage face. */
+    std::vector<Index> edges;
+    /** Per result face: the cage face it is part of. */
+    std::vector<Index> faces;
 };
 
 /**
  * Catmull-Clark subdivision. Edge "crease" of 1 or more is sharp (and drops by one per level),
  * fractions blend between smooth and sharp. Corner uvs and colours are interpolated linearly per face.
  */
-LILA_SCENE_API Mesh subdivide(const Mesh& mesh, const SubdivideOptions& opts = {});
+LILA_SCENE_API Mesh subdivide(const Mesh& mesh, const SubdivideOptions& opts = {}, SubdivideMap* map = nullptr);
 
 /** Sparse linear map between point sets: out row i = sum of weights[k] * in point cols[k], k in [offsets[i], offsets[i+1]). */
 struct LILA_SCENE_API PointStencil

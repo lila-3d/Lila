@@ -66,6 +66,14 @@ public:
 
     std::string deviceName() const;
 
+    struct GpuInfo
+    {
+        std::string name; // empty while the renderer is not running
+        bool discrete = false;
+        uint64_t vramBytes = 0; // device-local heaps
+    };
+    GpuInfo gpuInfo() const;
+
     /**
      * Queues a task on the render thread. Slices of queued tasks interleave round robin with frames drawn in between.
      * The future holds what the task threw, or a std::runtime_error when the renderer stops first.

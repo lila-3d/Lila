@@ -280,15 +280,14 @@ void hardEdgesFromSmoothingGroups(Mesh& mesh, std::span<const int32_t> groups)
     LILA_ZONE();
 
     std::span<bool> hard = mesh.edgeAttrs().getOrAdd<bool>(attr::kHard);
-    for (Index e = 0; e < mesh.edgeCapacity(); ++e)
-    {
+    tbb::parallel_for(Index(0), mesh.edgeCapacity(), [&](Index e) {
         if (!mesh.edgeValid(e) || !mesh.isManifoldEdge(e))
-            continue;
+            return;
         const Index c = mesh.edgeCorner(e);
         const int32_t a = groups[mesh.cornerFace(c)];
         const int32_t b = groups[mesh.cornerFace(mesh.cornerRadial(c))];
         hard[e] = a == 0 || b == 0 || a != b;
-    }
+    });
 }
 
 ObjReadResult readObj(std::string_view text, const ObjReadOptions& opts)
@@ -425,12 +424,13 @@ ObjReadResult readObj(std::string_view text, const ObjReadOptions& opts)
             continue;
         Mesh& m = b.obj.mesh;
 
-        // Points keep the file's vertex order.
+        // Points keep the file's vertex order: flag the referenced ones, then walk the flags in order.
+        std::vector<uint8_t> referenced(v.size(), 0);
+        tbb::parallel_for(size_t(0), b.refs.size() / 3, [&](size_t i) { referenced[size_t(b.refs[i * 3])] = 1; });
         used.clear();
-        for (size_t i = 0; i < b.refs.size(); i += 3)
-            used.push_back(b.refs[i]);
-        std::sort(used.begin(), used.end());
-        used.erase(std::unique(used.begin(), used.end()), used.end());
+        for (size_t g = 0; g < referenced.size(); ++g)
+            if (referenced[g])
+                used.push_back(int64_t(g));
         m.reserve(used.size(), b.refs.size() / 3, b.faceSize.size(), b.refs.size() / 3);
         for (int64_t g : used)
             pointOf[size_t(g)] = m.addPoint(v[size_t(g)]);
@@ -445,6 +445,11 @@ ObjReadResult readObj(std::string_view text, const ObjReadOptions& opts)
         std::vector<glm::vec3> normal;
         std::vector<int32_t> faceMat, faceGroup, faceSmooth;
         bool anyUv = false, anyNormal = false;
+        uv.reserve(b.refs.size() / 3);
+        normal.reserve(b.refs.size() / 3);
+        faceMat.reserve(b.faceSize.size());
+        faceGroup.reserve(b.faceSize.size());
+        faceSmooth.reserve(b.faceSize.size());
         std::vector<Index> pts;
         size_t at = 0;
         for (size_t f = 0; f < b.faceSize.size(); ++f)

@@ -18,18 +18,22 @@
 #include "scene/Anim.h"
 #include "scene/Camera.h"
 #include "scene/Graph.h"
+#include "scene/MeshData.h"
 #include "scene/Picker.h"
 #include "scene/Poses.h"
 #include "scene/RenderSettings.h"
 #include "scene/SceneData.h"
 #include "scene/SceneScripts.h"
 
+#include <algorithm>
 #include <format>
 #include <future>
 #include <map>
 #include <fstream>
 #include <optional>
 #include <random>
+
+#include <tbb/parallel_for.h>
 #include <sstream>
 #include <thread>
 
@@ -48,7 +52,7 @@ void encodeFor(const fs::path& path, json doc, const std::function<void(std::str
 {
     if (path.extension() != ".lilaa")
         return encodeBinary(std::move(doc), sink);
-    packed::unpackAll(doc);
+    // Attr values stay packed: the text writer formats them directly, the rest of the document has none.
     sink(encodeAscii(doc));
 }
 
@@ -206,8 +210,11 @@ void writeAtomic(const fs::path& path, const std::function<void(const Sink&)>& f
         if (!out)
             throw std::runtime_error("can't write " + tmp.string());
         fill([&](std::string_view piece) {
-            if (!out.write(piece.data(), std::streamsize(piece.size())))
-                throw std::runtime_error("can't write " + tmp.string());
+            // In slices: MSVC's streams stop a single write at 2 GB.
+            constexpr size_t kSlice = size_t(64) << 20;
+            for (size_t at = 0; at < piece.size(); at += kSlice)
+                if (!out.write(piece.data() + at, std::streamsize(std::min(kSlice, piece.size() - at))))
+                    throw std::runtime_error("can't write " + tmp.string());
         });
         if (!out.flush())
             throw std::runtime_error("can't write " + tmp.string());
@@ -233,7 +240,9 @@ void collectDag(Graph& g, NodeId id, std::vector<NodeId>& out)
 }
 } // namespace
 
-nlohmann::json serialize(const fs::path& sceneDir, bool packed)
+namespace
+{
+nlohmann::json serializeScene(const fs::path& sceneDir, bool packed, std::vector<DeferredMesh>* deferred)
 {
     LILA_ZONE();
 
@@ -267,7 +276,22 @@ nlohmann::json serialize(const fs::path& sceneDir, bool packed)
             }
         }
     }
-    std::vector<json> converted = scene::toJsonAll(values, packed);
+    // Deferred meshes stay out of the conversion; the caller's fillMeshes writes them.
+    std::vector<scene::MeshPtr> later(values.size());
+    std::vector<const scene::PlugValue*> now;
+    for (size_t v = 0; v < values.size(); ++v)
+    {
+        const scene::MeshPtr* mesh = deferred ? std::get_if<scene::MeshPtr>(values[v]) : nullptr;
+        if (mesh && *mesh)
+            later[v] = *mesh;
+        else
+            now.push_back(values[v]);
+    }
+    std::vector<json> convertedNow = scene::toJsonAll(now, packed);
+    std::vector<json> converted(values.size());
+    for (size_t v = 0, c = 0; v < values.size(); ++v)
+        if (!later[v])
+            converted[v] = std::move(convertedNow[c++]);
 
     const fs::path dir = sceneDir.empty() ? paths::currentSceneDir() : sceneDir;
     json nodes = json::array();
@@ -280,6 +304,8 @@ nlohmann::json serialize(const fs::path& sceneDir, bool packed)
         for (int i : stored[k])
         {
             const scene::AttrDef& a = n->type().attrs[i];
+            if (scene::MeshPtr& mesh = later[next]; mesh)
+                deferred->push_back({nodes.size(), a.name, std::move(mesh)});
             json& v = attrs[a.name] = std::move(converted[next++]);
             if ((a.flags & scene::AttrFile) && v.is_string())
                 v = paths::storedPath(paths::fromUtf8(v.get<std::string>()), dir);
@@ -344,6 +370,29 @@ nlohmann::json serialize(const fs::path& sceneDir, bool packed)
     if (!ui.empty())
         doc["ui"] = std::move(ui);
     return doc;
+}
+
+} // namespace
+
+nlohmann::json serialize(const fs::path& sceneDir, bool packed)
+{
+    return serializeScene(sceneDir, packed, nullptr);
+}
+
+nlohmann::json serializeDeferred(std::vector<DeferredMesh>& meshes)
+{
+    return serializeScene({}, true, &meshes);
+}
+
+void fillMeshes(nlohmann::json& doc, std::vector<DeferredMesh>& meshes)
+{
+    LILA_ZONE();
+
+    std::vector<json> converted(meshes.size());
+    tbb::parallel_for(size_t(0), meshes.size(), [&](size_t k) { converted[k] = scene::meshToJsonPacked(*meshes[k].mesh); });
+    for (size_t k = 0; k < meshes.size(); ++k)
+        doc["nodes"][meshes[k].node]["attrs"][meshes[k].attr] = std::move(converted[k]);
+    meshes.clear();
 }
 
 void deserialize(const nlohmann::json& doc, const fs::path& sceneDir, double ownBytes)
@@ -468,7 +517,7 @@ void save(const fs::path& path)
     json doc;
     {
         progress::Scope s("Gathering the scene");
-        doc = serialize(path.parent_path(), path.extension() != ".lilaa");
+        doc = serialize(path.parent_path(), true);
     }
     progress::Scope s("Writing " + path.filename().string(), 0.0, progress::None, 2.0);
     progress::runOnWorker([&] {
@@ -594,13 +643,15 @@ void autosave()
     fs::path folder = history::autosaveFolder(s.path);
     std::string stem = history::stemFor(s.path);
     int keep = std::max(1, PrefStore::get().value<int>("general", "/autosave/keep", 8));
-    json doc = serialize({}, true);
+    std::vector<DeferredMesh> meshes;
+    json doc = serializeDeferred(meshes);
     doc["recovery"] = {{"kind", "autosave"}, {"scene", s.path.generic_string()}};
-    // Encoding and the disk write happen off the main thread.
-    std::thread([folder, stem, keep, doc = std::move(doc)]() mutable {
+    // Mesh conversion, encoding and the disk write happen off the main thread.
+    std::thread([folder, stem, keep, doc = std::move(doc), meshes = std::move(meshes)]() mutable {
         progress::Scope scope("Autosaving", 0.0, progress::Silent);
         try
         {
+            fillMeshes(doc, meshes);
             std::string text = encodeBinary(std::move(doc));
             std::error_code ec;
             fs::create_directories(folder, ec);

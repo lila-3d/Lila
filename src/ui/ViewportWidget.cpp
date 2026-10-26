@@ -68,6 +68,12 @@
 #include <QTimer>
 #include <QWheelEvent>
 
+// Qt's emit macro collides with a TBB member of the same name.
+#pragma push_macro("emit")
+#undef emit
+#include <tbb/parallel_for.h>
+#pragma pop_macro("emit")
+
 #include <chrono>
 #include <cmath>
 #include <format>
@@ -681,6 +687,7 @@ void ViewportWidget::submit()
         s.ambientOcclusion = p.value<bool>("general", "/viewport/ao/enabled", true);
         s.aoRadius = p.value<float>("general", "/viewport/ao/radius", 30.0f);
         s.aoIntensity = p.value<float>("general", "/viewport/ao/intensity", 1.0f);
+        s.aoFast = p.value<std::string>("general", "/viewport/ao/mode", "accurate") == "fast";
         viewportDisplay::apply(s);
         viewportDisplay::applyCurveWidths(s, devicePixelRatioF());
         displayAids::apply(s, mHudPanel);
@@ -704,6 +711,7 @@ void ViewportWidget::submit()
         for (scene::NodeId id : hilited(mIsolation))
             hilite.insert(id);
     const bool aids = displayAids::anyDrawn(mHudPanel);
+    const bool smoothSubdivisions = PrefStore::get().value<bool>("general", viewportDisplay::kSmoothSubdivisions, false);
     std::vector<displayAids::MeshEntry> aidMeshes;
     const std::unordered_set<scene::NodeId> lodHidden = scene::lod::hidden(g, lodDisplay::view(mHudPanel, viewInfo()));
     for (scene::NodeId id : g.nodes())
@@ -713,15 +721,17 @@ void ViewportWidget::submit()
             !scene::selectionMask::shown(*n) || viewportHooks::hiddenInView(id) || lodHidden.contains(id))
             continue;
         int smooth = int(n->as<int64_t>(scene::MeshNode::kSmoothPreview));
-        scene::MeshPtr shown = smoothedFor(n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh), smooth);
+        const scene::MeshPtr& outMesh = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+        scene::MeshPtr shown = smoothedFor(outMesh, smooth);
         std::vector<render::Material> hooked;
         const bool previewed = shown && viewportHooks::hookedMaterials(id, *shown, hooked);
         bool textured = (showMaterials || previewed) && shown;
         const bool tangents = textured && (previewed || needsTangents(*shown));
         // Geometry nodes instances draw each referenced mesh once, instanced, unless something needs the flat mesh's own draw.
-        auto part = isolate::masked(&mIsolation, id, shown, smooth, tangents);
+        const auto cageWire = smoothSubdivisions ? nullptr : smoothCageFor(outMesh, smooth);
+        auto part = isolate::masked(&mIsolation, id, shown, smooth, tangents, cageWire.get());
         gn::InstanceViewPtr instanced;
-        if (smooth == 0 && !previewed && !hilite.contains(id) && !part)
+        if (smooth == 0 && !previewed && !hilite.contains(id) && !part && !cageWire)
             instanced = gn::instanceViewFor(g, id);
         auto rm = instanced ? nullptr : renderMeshFor(shown, tangents);
         if (!rm && !instanced)
@@ -729,6 +739,8 @@ void ViewportWidget::submit()
         render::MeshDraw d;
         if (part)
             d.mesh = part->mesh;
+        else if (cageWire)
+            d.mesh = cageWireMeshFor(*cageWire, tangents);
         else
             d.mesh = std::move(rm);
         if (previewed)
@@ -1198,6 +1210,105 @@ std::vector<scene::NodeId> pointNodes(const scene::isolation::Set& iso)
     return out;
 }
 
+/**
+ * Where a mesh's components draw and pick, world space: on its cage, or along the surface of its smooth preview when it
+ * has one and is edited directly (modifiers put the cage somewhere else).
+ */
+struct ComponentShape
+{
+    const geo::Mesh& cage;
+    glm::dmat4 world;
+    std::shared_ptr<const SmoothCage> smooth;
+    int level = 0;
+
+    ComponentShape(const scene::Node& n, const geo::Mesh& cageMesh, const scene::MeshPtr& cagePtr, const glm::dmat4& w) : cage(cageMesh), world(w)
+    {
+        if (n.type().isA("mesh") && cagePtr == n.as<scene::MeshPtr>(scene::MeshNode::kOutMesh))
+            level = int(n.as<int64_t>(scene::MeshNode::kSmoothPreview));
+        smooth = smoothCageFor(cagePtr, level);
+        if (!smooth)
+            level = 0;
+    }
+
+    /** The mesh components are picked on: the smooth one, whose ids map back with cageOf. */
+    const geo::Mesh& picked() const { return smooth ? *smooth->mesh : cage; }
+    /** A component of picked() as the cage's, kInvalid for one that is not on the cage. */
+    uint32_t cageOf(scene::ComponentMode mode, uint32_t id) const
+    {
+        if (!smooth)
+            return id;
+        const std::vector<geo::Index>& map = mode == scene::ComponentMode::Vertex ? smooth->cagePoints
+                                             : mode == scene::ComponentMode::Edge ? smooth->map.edges
+                                                                                  : smooth->map.faces;
+        return id < map.size() ? map[id] : geo::kInvalid;
+    }
+
+    glm::dvec3 at(const geo::Mesh& m, geo::Index p) const { return glm::dvec3(world * glm::dvec4(m.position(p), 1.0)); }
+    glm::dvec3 point(uint32_t p) const { return smooth ? at(*smooth->mesh, smooth->map.points[p]) : at(cage, p); }
+    /** A point on the surface along the edge, for occlusion tests. */
+    glm::dvec3 edgeAnchor(uint32_t e) const
+    {
+        if (!smooth || smooth->segments(e).empty())
+            return (point(cage.edgePoint(e, 0)) + point(cage.edgePoint(e, 1))) * 0.5;
+        std::span<const geo::Index> segs = smooth->segments(e);
+        return at(*smooth->mesh, smooth->mesh->edgePoint(segs[segs.size() / 2], 0));
+    }
+    glm::dvec3 faceCentre(uint32_t f) const
+    {
+        return smooth ? at(*smooth->mesh, smooth->map.facePoints[f]) : glm::dvec3(world * glm::dvec4(cage.faceCentroid(f), 1.0));
+    }
+    /** fn(a, b) for each straight piece of edge e. */
+    template <class Fn> void forEachSegment(uint32_t e, Fn&& fn) const
+    {
+        if (!smooth)
+            return fn(point(cage.edgePoint(e, 0)), point(cage.edgePoint(e, 1)));
+        const geo::Mesh& sm = *smooth->mesh;
+        for (geo::Index s : smooth->segments(e))
+            fn(at(sm, sm.edgePoint(s, 0)), at(sm, sm.edgePoint(s, 1)));
+    }
+    /** fn(a, b) for each straight piece of face f's border. */
+    template <class Fn> void forEachOutline(uint32_t f, Fn&& fn) const
+    {
+        cage.forEachFaceCorner(f, [&](geo::Index c) { forEachSegment(cage.cornerEdge(c), fn); });
+    }
+    /** fn(p) for each corner of the triangles filling face f, three per triangle. */
+    template <class Fn> void forEachFillVertex(uint32_t f, Fn&& fn) const
+    {
+        if (!smooth)
+        {
+            for (uint32_t p : scene::componentPick::fillTriangles(cage, f))
+                fn(at(cage, p));
+            return;
+        }
+        for (geo::Index part : smooth->parts(f))
+            for (uint32_t p : scene::componentPick::fillTriangles(*smooth->mesh, part))
+                fn(at(*smooth->mesh, p));
+    }
+    /** Screen-space polygons covering face f: the face itself, or each smoothed piece of it. */
+    template <class Fn> void forEachPolygon(uint32_t f, Fn&& fn) const
+    {
+        auto corners = [&](const geo::Mesh& m, geo::Index face) {
+            std::vector<glm::dvec3> poly;
+            m.forEachFaceCorner(face, [&](geo::Index c) { poly.push_back(at(m, m.cornerPoint(c))); });
+            fn(poly);
+        };
+        if (!smooth)
+            return corners(cage, f);
+        for (geo::Index part : smooth->parts(f))
+            corners(*smooth->mesh, part);
+    }
+};
+
+/** Whether the node's surface as drawn, smooth preview included, is hit along the ray nearer than dist. */
+bool occludes(const isolate::Set* set, scene::NodeId id, const glm::dvec3& eye, const glm::dvec3& dir, double dist)
+{
+    scene::Node* n = scene::Graph::current().node(id);
+    const int level = n->type().isA("mesh") ? int(n->as<int64_t>(scene::MeshNode::kSmoothPreview)) : 0;
+    scene::MeshPtr shown = smoothedFor(n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh), level);
+    auto hit = isolate::raycast(set, id, shown, shownWorld(*n), eye, dir, level);
+    return hit && hit->distance < dist * (1.0 - 1e-4) - 1e-3;
+}
+
 /** Provider points of the node, world space, with their component ids. */
 std::vector<std::pair<uint32_t, glm::dvec3>> worldPoints(scene::Graph& g, scene::NodeId id)
 {
@@ -1236,13 +1347,8 @@ scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
         double dist = glm::length(dir);
         dir /= dist;
         for (scene::NodeId id : live)
-        {
-            scene::Node* n = g.node(id);
-            if (auto hit = isolate::raycast(&mIsolation, id, n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh), shownWorld(*n),
-                                            view.eye, dir);
-                hit && hit->distance < dist * (1.0 - 1e-4) - 1e-3)
+            if (occludes(&mIsolation, id, view.eye, dir, dist))
                 return false;
-        }
         return true;
     };
 
@@ -1257,29 +1363,38 @@ scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
         if (!mesh)
             continue;
         glm::dmat4 world = shownWorld(*n);
+        const ComponentShape shape(*n, *mesh, mesh, world);
         if (mode == ComponentMode::Face)
         {
-            auto pd = pickDataFor(mesh);
+            const scene::MeshPtr& target = shape.smooth ? shape.smooth->mesh : mesh;
+            auto pd = pickDataFor(target);
             if (!pd)
                 continue;
-            if (auto hit = isolate::raycast(&mIsolation, id, mesh, world, rayO, rayD); hit && hit->distance < bestRay && hit->triangle < pd->triangleFaces.size() &&
-                                                              (!cull || paintSelect::frontFacing(*mesh, world, mode, pd->triangleFaces[hit->triangle], view)))
+            auto hit = isolate::raycast(&mIsolation, id, target, world, rayO, rayD, shape.level);
+            if (!hit || hit->distance >= bestRay || hit->triangle >= pd->triangleFaces.size())
+                continue;
+            const uint32_t f = shape.cageOf(mode, pd->triangleFaces[hit->triangle]);
+            if (f != geo::kInvalid && (!cull || paintSelect::frontFacing(*mesh, world, mode, f, view)))
             {
                 bestRay = hit->distance;
                 best.node = id;
-                best.id = pd->triangleFaces[hit->triangle];
+                best.id = f;
             }
             continue;
         }
         auto vis = isolate::visibility(&mIsolation, id, mesh);
-        for (const cp::Candidate& c : cp::nearby(*mesh, world, mode, screen, {a.x(), a.y()}, bestPx))
-            if (vis->shows(mode, c.id) && (!cull || paintSelect::frontFacing(*mesh, world, mode, c.id, view)) && visible(cp::anchor(*mesh, world, mode, c.id)))
+        for (const cp::Candidate& c : cp::nearby(shape.picked(), world, mode, screen, {a.x(), a.y()}, bestPx))
+        {
+            const uint32_t cid = shape.cageOf(mode, c.id);
+            if (cid != geo::kInvalid && vis->shows(mode, cid) && (!cull || paintSelect::frontFacing(*mesh, world, mode, cid, view)) &&
+                visible(mode == ComponentMode::Vertex ? shape.point(cid) : shape.edgeAnchor(cid)))
             {
                 bestPx = c.px;
                 best.node = id;
-                best.id = c.id;
+                best.id = cid;
                 break;
             }
+        }
     }
     if (mode == ComponentMode::Vertex)
         for (scene::NodeId id : pointNodes(mIsolation))
@@ -1327,13 +1442,8 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
             double dist = glm::length(dir);
             dir /= dist;
             for (scene::NodeId id : hilited(mIsolation))
-            {
-                scene::Node* n = g.node(id);
-                if (auto hit = isolate::raycast(&mIsolation, id, n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh), shownWorld(*n),
-                                                eye, dir);
-                    hit && hit->distance < dist * (1.0 - 1e-4) - 1e-3)
+                if (occludes(&mIsolation, id, eye, dir, dist))
                     return false;
-            }
             return true;
         };
         // Edges and faces count when the region touches them anywhere, or with the pref off only when it holds their centre.
@@ -1345,14 +1455,13 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
             if (!mesh)
                 continue;
             const geo::Mesh& m = *mesh;
-            glm::dmat4 world = shownWorld(*n);
-            auto worldOf = [&](uint32_t p) { return glm::dvec3(world * glm::dvec4(m.position(p), 1.0)); };
+            const ComponentShape shape(*n, m, mesh, shownWorld(*n));
             auto toPx = [](QPointF p) { return glm::dvec2(p.x(), p.y()); };
             if (mode == ComponentMode::Vertex)
             {
                 for (uint32_t p = 0; p < m.pointCapacity(); ++p)
                     if (m.pointValid(p))
-                        if (auto s = project(worldOf(p)); s && inSelectRegion(box, *s) && visible(worldOf(p)))
+                        if (auto s = project(shape.point(p)); s && inSelectRegion(box, *s) && visible(shape.point(p)))
                             hits[id].push_back(p);
             }
             else if (mode == ComponentMode::Edge)
@@ -1361,11 +1470,15 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
                 {
                     if (!m.edgeValid(e))
                         continue;
-                    auto s0 = project(worldOf(m.edgePoint(e, 0))), s1 = project(worldOf(m.edgePoint(e, 1)));
-                    if (!s0 || !s1)
-                        continue;
-                    const bool in = touch ? touchesSelectRegion(box, {toPx(*s0), toPx(*s1)}) : inSelectRegion(box, (*s0 + *s1) * 0.5);
-                    if (in && visible((worldOf(m.edgePoint(e, 0)) + worldOf(m.edgePoint(e, 1))) * 0.5))
+                    bool in = false;
+                    if (touch)
+                        shape.forEachSegment(e, [&](const glm::dvec3& a, const glm::dvec3& b) {
+                            auto s0 = project(a), s1 = project(b);
+                            in = in || (s0 && s1 && touchesSelectRegion(box, {toPx(*s0), toPx(*s1)}));
+                        });
+                    else if (auto s = project(shape.edgeAnchor(e)))
+                        in = inSelectRegion(box, *s);
+                    if (in && visible(shape.edgeAnchor(e)))
                         hits[id].push_back(e);
                 }
             }
@@ -1374,20 +1487,18 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
                 for (uint32_t f = 0; f < m.faceCapacity(); ++f)
                     if (m.faceValid(f))
                     {
-                        glm::dvec3 c = glm::dvec3(world * glm::dvec4(m.faceCentroid(f), 1.0));
+                        glm::dvec3 c = shape.faceCentre(f);
                         bool in = false;
                         if (touch)
-                        {
-                            std::vector<glm::dvec2> poly;
-                            bool projected = true;
-                            m.forEachFaceCorner(f, [&](geo::Index k) {
-                                if (auto s = project(worldOf(m.cornerPoint(k))))
-                                    poly.push_back(toPx(*s));
-                                else
-                                    projected = false;
+                            shape.forEachPolygon(f, [&](const std::vector<glm::dvec3>& corners) {
+                                if (in)
+                                    return;
+                                std::vector<glm::dvec2> poly;
+                                for (const glm::dvec3& w : corners)
+                                    if (auto s = project(w))
+                                        poly.push_back(toPx(*s));
+                                in = poly.size() == corners.size() && touchesSelectRegion(box, poly);
                             });
-                            in = projected && touchesSelectRegion(box, poly);
-                        }
                         else if (auto s = project(c))
                             in = inSelectRegion(box, *s);
                         if (in && visible(c))
@@ -1500,14 +1611,66 @@ void ViewportWidget::drawObjectSymmetryEdges(render::FrameState& s)
         scene::MeshPtr mesh = scene::modifiers::cage(g, id);
         if (!mesh)
             continue;
-        const geo::Mesh& m = *mesh;
-        const glm::dmat4 world = shownWorld(*n);
+        const ComponentShape shape(*n, *mesh, mesh, shownWorld(*n));
         const auto vis = isolate::visibility(&mIsolation, id, mesh);
         for (uint32_t e : symmetryPlaneEdges(*n, mesh))
             if (vis->edge(e))
-                for (int k = 0; k < 2; ++k)
-                    s.symmetryLines.push_back({glm::vec3(world * glm::dvec4(m.position(m.edgePoint(e, k)), 1.0)), kSymmetryRed});
+                shape.forEachSegment(e, [&](const glm::dvec3& a, const glm::dvec3& b) {
+                    s.symmetryLines.push_back({glm::vec3(a), kSymmetryRed});
+                    s.symmetryLines.push_back({glm::vec3(b), kSymmetryRed});
+                });
+        radialPlaneLines(*n, *mesh, shownWorld(*n), s.lines);
     }
+}
+
+/**
+ * A mesh's vertex dots in world space, kept until the mesh, its placement, smoothing, isolation, symmetry or the
+ * component selection changes, so a dense mesh's dots are built once instead of every frame.
+ */
+static std::shared_ptr<const render::PointCloud> vertexDots(scene::NodeId id, const ComponentShape& shape, const scene::MeshPtr& mesh,
+                                                            const std::shared_ptr<const scene::isolation::Visibility>& vis,
+                                                            const geo::SymmetryMap* sym, const scene::components::Ids& selected)
+{
+    struct Entry
+    {
+        scene::MeshPtr mesh;
+        std::shared_ptr<const SmoothCage> smooth;
+        std::shared_ptr<const scene::isolation::Visibility> vis;
+        glm::dmat4 world;
+        const geo::SymmetryMap* sym = nullptr;
+        uint64_t serial = 0;
+        std::shared_ptr<const render::PointCloud> cloud;
+    };
+    static std::unordered_map<scene::NodeId, Entry> cache;
+    Entry& e = cache[id];
+    const uint64_t serial = scene::components::serial();
+    if (e.cloud && e.mesh == mesh && e.smooth == shape.smooth && e.vis == vis && e.world == shape.world && e.sym == sym && e.serial == serial)
+        return e.cloud;
+    LILA_ZONE_N("vertexDots");
+
+    const geo::Mesh& m = *mesh;
+    std::vector<uint8_t> on(m.pointCapacity(), render::PointDraw::Normal);
+    if (sym)
+        for (uint32_t p : sym->expandPoints(selected))
+            if (p < on.size())
+                on[p] = render::PointDraw::Mirror;
+    for (uint32_t p : selected)
+        if (p < on.size())
+            on[p] = render::PointDraw::Selected;
+    auto cloud = std::make_shared<render::PointCloud>();
+    cloud->points.resize(m.pointCapacity());
+    tbb::parallel_for(tbb::blocked_range<geo::Index>(0, m.pointCapacity(), 16384), [&](const tbb::blocked_range<geo::Index>& r) {
+        for (geo::Index p = r.begin(); p != r.end(); ++p)
+        {
+            const bool shown = m.pointValid(p) && vis->point(p);
+            cloud->points[p] = {shown ? glm::vec3(shape.point(p)) : glm::vec3(0.0f), shown ? uint32_t(on[p]) : uint32_t(render::PointDraw::Hidden)};
+        }
+    });
+    if (cache.size() > 64)
+        std::erase_if(cache, [&](const auto& kv) { return kv.first != id; });
+    Entry& slot = cache[id];
+    slot = {mesh, shape.smooth, vis, shape.world, sym, serial, std::move(cloud)};
+    return slot.cloud;
 }
 
 void ViewportWidget::drawComponents(render::FrameState& s)
@@ -1552,21 +1715,20 @@ void ViewportWidget::drawComponents(render::FrameState& s)
                 cageDraw.wireWidth = wireWidth;
                 s.meshes.push_back(std::move(cageDraw));
             }
-        auto wp = [&](uint32_t p) { return glm::vec3(world * glm::dvec4(m.position(p), 1.0)); };
+        const ComponentShape shape(*n, m, mesh, world);
+        auto wp = [&](uint32_t p) { return glm::vec3(shape.point(p)); };
         auto edgeLines = [&](uint32_t e, std::vector<render::LineVertex>& out, const glm::vec4& col) {
-            out.push_back({wp(m.edgePoint(e, 0)), col});
-            out.push_back({wp(m.edgePoint(e, 1)), col});
+            shape.forEachSegment(e, [&](const glm::dvec3& a, const glm::dvec3& b) {
+                out.push_back({glm::vec3(a), col});
+                out.push_back({glm::vec3(b), col});
+            });
         };
         auto faceLines = [&](uint32_t f, const glm::vec4& fill, const glm::vec4& line) {
-            for (uint32_t p : scene::componentPick::fillTriangles(m, f))
-                s.tris3d.push_back({wp(p), fill});
-            std::vector<glm::vec3> poly;
-            m.forEachFaceCorner(f, [&](geo::Index c) { poly.push_back(wp(m.cornerPoint(c))); });
-            for (size_t k = 0; k < poly.size(); ++k)
-            {
-                s.linesOnTop.push_back({poly[k], line});
-                s.linesOnTop.push_back({poly[(k + 1) % poly.size()], line});
-            }
+            shape.forEachFillVertex(f, [&](const glm::dvec3& p) { s.tris3d.push_back({glm::vec3(p), fill}); });
+            shape.forEachOutline(f, [&](const glm::dvec3& a, const glm::dvec3& b) {
+                s.linesOnTop.push_back({glm::vec3(a), line});
+                s.linesOnTop.push_back({glm::vec3(b), line});
+            });
         };
         const auto vis = isolate::visibility(&mIsolation, id, mesh);
         const auto& selFaces = scene::components::selected(id, ComponentMode::Face);
@@ -1619,6 +1781,18 @@ void ViewportWidget::drawComponents(render::FrameState& s)
             }
         }
         bool soft = PrefStore::get().value<bool>("general", "/softSelect/enabled", false);
+        if (mode == ComponentMode::Vertex && !soft)
+        {
+            render::PointDraw dots;
+            dots.cloud = vertexDots(id, shape, mesh, vis, viewSymmetry(*n, mesh), selPoints);
+            dots.colors[render::PointDraw::Normal] = dotLinear;
+            dots.colors[render::PointDraw::Selected] = hotLinear;
+            dots.colors[render::PointDraw::Mirror] = glm::mix(dotLinear, hotLinear, kMirrorAlpha);
+            dots.size = float(thickness.vertex * devicePixelRatioF());
+            dots.selectedSize = float(thickness.vertexSelected * devicePixelRatioF());
+            s.points.push_back(std::move(dots));
+            continue;
+        }
         std::vector<float> weights;
         if (soft)
         {
@@ -1858,8 +2032,8 @@ void ViewportWidget::drawPreselect(render::FrameState& s)
     if ((mode == ComponentMode::Vertex && !m.pointValid(id)) || (mode == ComponentMode::Edge && !m.edgeValid(id)) ||
         (mode == ComponentMode::Face && !m.faceValid(id)))
         return;
-    glm::dmat4 world = shownWorld(*n);
-    auto wp = [&](uint32_t p) { return glm::dvec3(world * glm::dvec4(m.position(p), 1.0)); };
+    const ComponentShape shape(*n, m, mesh, shownWorld(*n));
+    auto wp = [&](uint32_t p) { return shape.point(p); };
     ViewInfo view = viewInfo();
     glm::dvec3 right(view.view[0][0], view.view[1][0], view.view[2][0]), up(view.view[0][1], view.view[1][1], view.view[2][1]);
     glm::dvec3 fwd = -glm::dvec3(view.view[0][2], view.view[1][2], view.view[2][2]);
@@ -1897,15 +2071,11 @@ void ViewportWidget::drawPreselect(render::FrameState& s)
         if (mode == ComponentMode::Vertex)
             square(wp(id), 0.5 * thickness.vertexHover, col);
         else if (mode == ComponentMode::Edge)
-            ribbon(wp(m.edgePoint(id, 0)), wp(m.edgePoint(id, 1)), 0.5 * thickness.edgeHover, col);
+            shape.forEachSegment(id, [&](const glm::dvec3& a, const glm::dvec3& b) { ribbon(a, b, 0.5 * thickness.edgeHover, col); });
         else
         {
-            std::vector<glm::dvec3> poly;
-            m.forEachFaceCorner(id, [&](geo::Index c) { poly.push_back(wp(m.cornerPoint(c))); });
-            for (uint32_t p : cp::fillTriangles(m, id))
-                s.tris3d.push_back({glm::vec3(wp(p)), fill});
-            for (size_t k = 0; k < poly.size(); ++k)
-                ribbon(poly[k], poly[(k + 1) % poly.size()], 1.0, col);
+            shape.forEachFillVertex(id, [&](const glm::dvec3& p) { s.tris3d.push_back({glm::vec3(p), fill}); });
+            shape.forEachOutline(id, [&](const glm::dvec3& a, const glm::dvec3& b) { ribbon(a, b, 1.0, col); });
         }
     };
     if (const geo::SymmetryMap* sym = viewSymmetry(*n, mesh))
@@ -2399,6 +2569,11 @@ void ViewportWidget::setIsolation(scene::isolation::Set set)
     clearPreselect();
     requestFrame();
     emit viewStateChanged();
+}
+
+render::Renderer::FrameStats ViewportWidget::frameStats() const
+{
+    return mId ? render::Renderer::get().stats(mId) : render::Renderer::FrameStats{};
 }
 
 void ViewportWidget::drawHud(OverlayPainter& p)

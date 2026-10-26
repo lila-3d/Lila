@@ -1,0 +1,22 @@
+{
+  "apps": ["Maya 2026.3", "Lila"],
+  "tables": [
+    {
+      "title": "Mesh operations",
+      "unit": "s",
+      "rows": [
+        {"task": "Import OBJ", "values": [60.1, 9.2]},
+        {"task": "Weld", "values": [1.665, 1.877]},
+        {"task": "Subdivide", "values": [35.4, 21.1], "notes": "Maya crashed after"}
+      ]
+    },
+    {
+      "title": "Viewport frame time",
+      "unit": "ms",
+      "rows": [
+        {"task": "Viewport shaded", "values": [4.67, 5.64]},
+        {"task": "Vertex mode", "values": [6.68, 6.84]}
+      ]
+    }
+  ]
+}

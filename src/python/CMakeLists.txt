@@ -4,6 +4,7 @@ lila_module(lila_python Scene
     Bindings.cpp
     MathBindings.cpp
     SceneBindings.cpp
+    MeshBindings.cpp
     ExtensionBindings.cpp
     RegistryBindings.cpp
     Python.cpp)

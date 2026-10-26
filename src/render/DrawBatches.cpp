@@ -44,6 +44,7 @@ struct ShadedKey
     uint32_t display;      // vertex colour mode and channel
     glm::vec3 baseColor;   // used where a slot has no material
     float roughness;
+    float wireWidth;       // 0 unless the mesh shader draws the wire
 
     bool operator==(const ShadedKey&) const = default;
 };
@@ -91,6 +92,8 @@ bool sameMaterials(const std::vector<Material>& a, const std::vector<Material>& 
 
 bool drawsWire(const MeshDraw& d) { return (d.flags & (DrawWire | DrawSelected | DrawUnderSelected | DrawPreselect)) != 0; }
 
+bool wireInShader(const MeshDraw& d) { return (d.flags & DrawShaded) && drawsWire(d) && d.mesh && !d.mesh->edgeMask.empty(); }
+
 glm::vec4 wireColor(const FrameState& s, const MeshDraw& d)
 {
     return (d.flags & DrawSelected)        ? s.wireSelected
@@ -100,7 +103,7 @@ glm::vec4 wireColor(const FrameState& s, const MeshDraw& d)
                                            : s.wireDefault;
 }
 
-DrawBatches batchDraws(const FrameState& s)
+DrawBatches batchDraws(const FrameState& s, bool shaderWire)
 {
     LILA_ZONE();
 
@@ -115,7 +118,8 @@ DrawBatches batchDraws(const FrameState& s)
             continue;
         if ((d.flags & DrawShaded) && !d.mesh->indices.empty())
         {
-            const ShadedKey key{d.mesh.get(), uint32_t(d.vertexColors) | uint32_t(d.colorChannel) << 8, d.baseColor, d.roughness};
+            const ShadedKey key{d.mesh.get(), uint32_t(d.vertexColors) | uint32_t(d.colorChannel) << 8, d.baseColor, d.roughness,
+                                shaderWire && wireInShader(d) ? std::max(d.wireWidth, 1.0f) : 0.0f};
             std::vector<size_t>& candidates = shadedIndex[key];
             size_t batch = SIZE_MAX;
             for (size_t c : candidates)
@@ -132,7 +136,7 @@ DrawBatches batchDraws(const FrameState& s)
             }
             shadedMembers[batch].push_back(&d);
         }
-        if (drawsWire(d) && !d.mesh->edgePoints.empty())
+        if (drawsWire(d) && !d.mesh->edgePoints.empty() && !(shaderWire && wireInShader(d)))
         {
             const WireKey key{d.mesh.get(), (d.flags & (DrawShaded | DrawWireDepth)) != 0, d.wireWidth};
             auto [it, added] = wireIndex.try_emplace(key, wireMembers.size());
@@ -155,7 +159,12 @@ DrawBatches batchDraws(const FrameState& s)
     {
         DrawBatch b{members.front(), uint32_t(out.instances.size()), 0};
         for (const MeshDraw* d : members)
-            forEachPlacement(*d, [&](const glm::mat4& world) { out.instances.push_back({world, glm::vec4(0.0f)}); });
+        {
+            const bool wire = shaderWire && wireInShader(*d);
+            b.wire = b.wire || wire;
+            const glm::vec4 color = wire ? wireColor(s, *d) : glm::vec4(0.0f);
+            forEachPlacement(*d, [&](const glm::mat4& world) { out.instances.push_back({world, color}); });
+        }
         b.count = uint32_t(out.instances.size()) - b.first;
         out.shaded.push_back(b);
     }

@@ -653,6 +653,8 @@ void registerBuiltins()
     togglePref("viewport.toggleOutline", "Outlines", vd::kOutline, false,
                "Draws dark lines where depth or surface direction jumps, like inked edges. Viewport preview only.");
     togglePref("viewport.toggleShadows", "Shadows", vd::kShadows, true, "The soft ground shadow under meshes.");
+    togglePref("viewport.smoothSubdivisions", "Show Smooth Subdivisions", vd::kSmoothSubdivisions, false,
+               "Smooth preview draws the edges of every subdivided face, not just the edges of the mesh.");
     togglePref("viewport.defaultMaterial", "Use Default Material", vd::kDefaultMaterial, false, "Shades every mesh with the plain default material.");
     togglePref("viewport.toggleEnvBackground", "Environment Background", "/viewport/env/background", true, "Shows the HDRI behind the scene.");
     togglePref("viewport.toggleToolbar", "Show Toolbar", vd::kToolbar, true, "The icon row at the top of each viewport panel.");

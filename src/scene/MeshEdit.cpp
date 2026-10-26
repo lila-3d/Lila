@@ -30,6 +30,7 @@
 #include <map>
 #include <queue>
 #include <set>
+#include <unordered_map>
 #include <tbb/parallel_for.h>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -414,14 +415,31 @@ glm::dvec3 selectionCenter()
         MeshPtr cage = n && n->type().isA("mesh") ? modifiers::cage(g, node) : nullptr;
         if (!cage)
             continue;
-        const geo::Mesh& m = *cage;
-        glm::dmat4 w = n->as<glm::dmat4>(Transform::kWorldMatrix);
-        for (Index p : components::convert(m, kind, ids, ComponentMode::Vertex))
-            if (m.pointValid(p))
-            {
-                sum += glm::dvec3(w * glm::dvec4(m.position(p), 1.0));
-                ++count;
-            }
+        // The object-space sum only changes with the mesh or the selection; the manipulator asks every frame.
+        struct Cached
+        {
+            MeshPtr cage;
+            uint64_t serial = 0;
+            ComponentMode kind = ComponentMode::Object;
+            glm::dvec3 sum{0.0};
+            size_t count = 0;
+        };
+        static std::unordered_map<NodeId, Cached> cache;
+        Cached& c = cache[node];
+        if (c.cage != cage || c.serial != components::serial() || c.kind != kind)
+        {
+            const geo::Mesh& m = *cage;
+            c = {cage, components::serial(), kind};
+            for (Index p : components::convert(m, kind, ids, ComponentMode::Vertex))
+                if (m.pointValid(p))
+                {
+                    c.sum += m.position(p);
+                    ++c.count;
+                }
+        }
+        const glm::dmat4 w = n->as<glm::dmat4>(Transform::kWorldMatrix);
+        sum += glm::dvec3(w * glm::dvec4(c.sum, double(c.count)));
+        count += c.count;
     }
     return count ? sum / double(count) : sum;
 }
@@ -1414,7 +1432,8 @@ void registerMeshEditCommands()
         .name = "polySubdivide",
         .doc = "Catmull-Clark subdivide whole meshes (crease-aware).",
         .positionalDoc = "objects",
-        .flags = {{"levels", "", T::Int, 1, "Subdivision levels."}},
+        .flags = {{"levels", "", T::Int, 1, "Subdivision levels."},
+                  {"keepHardEdges", "", T::Bool, false, "Keep normals split along hard edges; off smooths the shading across them."}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             UndoChunk chunk("Subdivide");
@@ -1424,6 +1443,7 @@ void registerMeshEditCommands()
                 PlugRef base = basePlug(n);
                 geo::SubdivideOptions o;
                 o.levels = std::clamp(a.get<int>("levels"), 1, 5);
+                o.keepHardEdges = a.get<bool>("keepHardEdges", false);
                 g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(geo::subdivide(baseMesh(base), o))));
             }
             components::clear();

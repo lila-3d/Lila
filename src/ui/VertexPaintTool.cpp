@@ -1185,6 +1185,8 @@ private:
         live->indices = built->indices;
         live->sections = built->sections;
         live->edgePoints = built->edgePoints;
+        live->edgeIndices = built->edgeIndices;
+        live->edgeMask = built->edgeMask;
         live->boundsMin = built->boundsMin;
         live->boundsMax = built->boundsMax;
         mLive = std::move(live);

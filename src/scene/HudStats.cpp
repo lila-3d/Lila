@@ -8,6 +8,9 @@
 #include "scene/MeshNodes.h"
 #include "scene/Transform.h"
 
+#include <tbb/blocked_range.h>
+#include <tbb/parallel_reduce.h>
+
 #include <algorithm>
 #include <chrono>
 #include <memory>
@@ -195,20 +198,24 @@ uint64_t countUvs(const geo::Mesh& mesh, std::string_view uvSet)
     std::span<const glm::vec2> uv = mesh.cornerAttrs().get<glm::vec2>(uvSet);
     if (uv.empty())
         return 0;
-    uint64_t total = 0;
-    std::vector<glm::vec2> seen;
-    for (geo::Index p = 0; p < mesh.pointCapacity(); ++p)
-    {
-        if (!mesh.pointValid(p))
-            continue;
-        seen.clear();
-        mesh.forEachPointCorner(p, [&](geo::Index c) {
-            if (std::find(seen.begin(), seen.end(), uv[c]) == seen.end())
-                seen.push_back(uv[c]);
-        });
-        total += seen.size();
-    }
-    return total;
+    return tbb::parallel_reduce(
+        tbb::blocked_range<geo::Index>(0, mesh.pointCapacity(), 16384), uint64_t(0),
+        [&](const tbb::blocked_range<geo::Index>& r, uint64_t total) {
+            std::vector<glm::vec2> seen;
+            for (geo::Index p = r.begin(); p != r.end(); ++p)
+            {
+                if (!mesh.pointValid(p))
+                    continue;
+                seen.clear();
+                mesh.forEachPointCorner(p, [&](geo::Index c) {
+                    if (std::find(seen.begin(), seen.end(), uv[c]) == seen.end())
+                        seen.push_back(uv[c]);
+                });
+                total += seen.size();
+            }
+            return total;
+        },
+        std::plus<>());
 }
 
 PolyCount countMesh(const geo::Mesh& mesh, std::string_view uvSet)

@@ -2,10 +2,12 @@
 
 #include "core/Paths.h"
 #include "core/PrefStore.h"
+#include "render/Renderer.h"
 #include "ui/ThemeModel.h"
 #include "ui/ViewportDisplay.h"
 
 #include <QApplication>
+#include <QButtonGroup>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFontDatabase>
@@ -21,6 +23,7 @@
 #include <QPixmap>
 #include <QPointer>
 #include <QProxyStyle>
+#include <QRadioButton>
 #include <QRegularExpression>
 #include <QStyleFactory>
 #include <QStyleOption>
@@ -581,6 +584,48 @@ QWidget* makeThemeChooser(QWidget* parent)
     }
     row->addStretch(1);
     layout->addLayout(row);
+
+    namespace vd = viewportDisplay;
+    layout->addSpacing(12);
+    auto* qualityTitle = new QLabel("Viewport quality", box);
+    qualityTitle->setFont(f);
+    layout->addWidget(qualityTitle);
+    auto* qualityHint = new QLabel("Only the starting point: each of these toggles from the viewport toolbar any time.", box);
+    qualityHint->setForegroundRole(QPalette::PlaceholderText);
+    layout->addWidget(qualityHint);
+    const vd::Quality recommended = vd::recommendedQuality();
+    const std::string gpu = render::Renderer::get().gpuInfo().name;
+    vd::applyQuality(recommended);
+    struct Option
+    {
+        vd::Quality quality;
+        const char* name;
+        const char* detail;
+    };
+    const Option options[] = {
+        {vd::Quality::Best, "Best quality", "Accurate ambient occlusion, 8x antialiasing and shadows."},
+        {vd::Quality::Balanced, "Balanced", "Faster ambient occlusion that also darkens reflections, 4x antialiasing and shadows."},
+        {vd::Quality::Fastest, "Fastest", "No ambient occlusion, antialiasing or shadows. For laptops and integrated graphics."},
+    };
+    auto* group = new QButtonGroup(box);
+    for (const Option& o : options)
+    {
+        QString label = o.name;
+        if (o.quality == recommended)
+            label += gpu.empty() ? QString(" (recommended)") : QString(" (recommended for %1)").arg(QString::fromStdString(gpu));
+        auto* radio = new QRadioButton(label, box);
+        radio->setChecked(o.quality == recommended);
+        group->addButton(radio);
+        QObject::connect(radio, &QRadioButton::toggled, radio, [q = o.quality](bool on) {
+            if (on)
+                vd::applyQuality(q);
+        });
+        auto* detail = new QLabel(o.detail, box);
+        detail->setForegroundRole(QPalette::PlaceholderText);
+        detail->setContentsMargins(22, 0, 0, 4);
+        layout->addWidget(radio);
+        layout->addWidget(detail);
+    }
     return box;
 }
 

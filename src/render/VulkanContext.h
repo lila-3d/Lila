@@ -41,6 +41,8 @@ public:
     bool int64Atomics = false;
     /** Fragment shaders writing storage buffers (virtual texture feedback). */
     bool fragmentStores = false;
+    /** VK_KHR_fragment_shader_barycentric: the mesh shader draws wireframes over shaded meshes itself. */
+    bool fragmentBarycentric = false;
     /** VK_EXT_memory_budget: the allocator tracks per-heap budgets (vmaGetHeapBudgets). */
     bool memoryBudget = false;
     uint32_t asScratchAlignment = 256;

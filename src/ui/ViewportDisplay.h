@@ -23,6 +23,10 @@ inline constexpr const char* kDefaultMaterial = "/viewport/defaultMaterial";
 inline constexpr const char* kExposure = "/viewport/exposure"; // stops
 inline constexpr const char* kGamma = "/viewport/gamma";
 inline constexpr const char* kToolbar = "/viewport/toolbar";
+/** Smooth preview draws the subdivided mesh's own edges; off, only the cage edges, following the smooth surface. */
+inline constexpr const char* kSmoothSubdivisions = "/viewport/smoothPreview/subdivisions";
+/** Smooth preview keeps normals split along hard edges; off, it shades smooth across them, like Maya. */
+inline constexpr const char* kSmoothHardEdges = "/viewport/smoothPreview/hardEdges";
 inline constexpr const char* kVertexColors = "/viewport/vertexColors"; // "off", "shaded" (multiplied in) or "unlit"
 inline constexpr const char* kColorChannel = "/viewport/colorChannel"; // "rgb", "r", "g", "b" or "a" (grayscale)
 /** Weight displays (skin weights, soft select falloff) as a grayscale ramp instead of the colour ramp. */
@@ -112,4 +116,15 @@ LILA_UI_API bool grayscaleWeights();
 LILA_UI_API glm::vec4 weightColor(float w, bool grayscale);
 /** Soft select falloff: dark red at the rim through orange to yellow at full weight (Maya's), or gray. Linear. */
 LILA_UI_API glm::vec4 falloffColor(float w, bool grayscale);
+
+/** Viewport defaults offered on first run; each is only a starting point for the AO, antialiasing and shadow prefs. */
+enum class Quality
+{
+    Best,     // accurate AO, 8x antialiasing, shadows
+    Balanced, // fast AO, 4x antialiasing, shadows
+    Fastest,  // no AO, antialiasing or shadows
+};
+LILA_UI_API void applyQuality(Quality q);
+/** The preset this machine's GPU suits: Fastest for integrated or under 4 GB, Balanced under 8 GB, otherwise Best. */
+LILA_UI_API Quality recommendedQuality();
 } // namespace lila::ui::viewportDisplay

@@ -28,6 +28,7 @@ struct State
     bool commandRunning = false;
     std::set<NodeId> created; // by the top-level command now running
     std::vector<NodeId> selectedBefore; // objects selected when a UI select began
+    uint64_t serial = 0;
 };
 
 State& st()
@@ -49,6 +50,7 @@ int slot(ComponentMode kind)
 
 void notify()
 {
+    ++st().serial;
     auto copy = st().listeners;
     for (auto& [id, fn] : copy)
         fn();
@@ -230,6 +232,8 @@ ComponentMode modeFromName(const std::string& name)
 }
 
 const std::map<NodeId, Ids>& selected(ComponentMode kind) { return st().sets[slot(kind)]; }
+
+uint64_t serial() { return st().serial; }
 
 const Ids& selected(NodeId node, ComponentMode kind)
 {

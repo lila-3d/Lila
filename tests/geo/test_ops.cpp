@@ -10,6 +10,8 @@
 
 #include <chrono>
 #include <cmath>
+#include <map>
+#include <set>
 
 using namespace lila::geo;
 using namespace lila::geo::test;
@@ -398,6 +400,68 @@ TEST_CASE("ops: subdivide")
     Mesh sp = subdivide(plane);
     CHECK(isValid(sp));
     CHECK(sp.bounds().size().x == doctest::Approx(100.0));
+}
+
+TEST_CASE("ops: subdivide map")
+{
+    Mesh cube = makeCube();
+    SubdivideMap map;
+    Mesh s = subdivide(cube, {2}, &map);
+    REQUIRE(map.points.size() == cube.pointCapacity());
+    REQUIRE(map.edges.size() == s.edgeCapacity());
+    REQUIRE(map.faces.size() == s.faceCapacity());
+    // Each cage edge becomes a chain of 4 pieces from one end's image to the other's.
+    std::vector<std::map<Index, int>> ends(cube.edgeCapacity());
+    for (Index e = 0; e < s.edgeCapacity(); ++e)
+        if (s.edgeValid(e) && map.edges[e] != kInvalid)
+            for (int k = 0; k < 2; ++k)
+                ++ends[map.edges[e]][s.edgePoint(e, k)];
+    for (Index e = 0; e < cube.edgeCapacity(); ++e)
+        if (cube.edgeValid(e))
+        {
+            // 4 pieces through 5 points; the two used once are the images of the edge's ends.
+            REQUIRE(ends[e].size() == 5);
+            std::set<Index> tips;
+            for (auto [p, uses] : ends[e])
+                if (uses == 1)
+                    tips.insert(p);
+            CHECK(tips == std::set<Index>{map.points[cube.edgePoint(e, 0)], map.points[cube.edgePoint(e, 1)]});
+        }
+    std::vector<int> parts(cube.faceCapacity(), 0);
+    for (Index f = 0; f < s.faceCapacity(); ++f)
+        if (s.faceValid(f))
+        {
+            REQUIRE(map.faces[f] < cube.faceCapacity());
+            ++parts[map.faces[f]];
+            // Every piece lies on its cage face's side of the cube.
+            CHECK(glm::dot(s.faceCentroid(f), cube.faceNormal(map.faces[f])) > 0.0);
+        }
+    for (Index f = 0; f < cube.faceCapacity(); ++f)
+        if (cube.faceValid(f))
+        {
+            CHECK(parts[f] == 16);
+            CHECK(glm::dot(s.position(map.facePoints[f]), cube.faceNormal(f)) > 0.0);
+        }
+    // Cage points land on the limit-ish corners, pulled in from the cage's.
+    for (Index p = 0; p < cube.pointCapacity(); ++p)
+        if (cube.pointValid(p))
+            CHECK(glm::length(s.position(map.points[p])) < glm::length(cube.position(p)));
+
+    Mesh plain = subdivide(cube, {2});
+    CHECK(plain.numFaces() == s.numFaces());
+}
+
+TEST_CASE("ops: subdivide hard edges")
+{
+    Mesh cube = makeCube();
+    setHardEdgesByAngle(cube, 30.0);
+    updateCornerNormals(cube);
+    REQUIRE(cube.edgeAttrs().has(attr::kHard));
+    Mesh soft = subdivide(cube);
+    CHECK(!soft.edgeAttrs().has(attr::kHard));
+    CHECK(!soft.cornerAttrs().has(attr::kNormal));
+    Mesh hard = subdivide(cube, {.levels = 1, .keepHardEdges = true});
+    CHECK(hard.edgeAttrs().has(attr::kHard));
 }
 
 TEST_CASE("ops: mirror, separate, combine")

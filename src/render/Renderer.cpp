@@ -59,7 +59,11 @@ struct MeshPush
     uint64_t instances = 0;
     uint32_t firstInstance = 0;
     uint32_t instancePad = 0;
-    glm::vec4 reserved[3]{};
+    /** meshWirePS: the device address of the mesh's edge mask (RenderMesh::edgeMask), the section's first triangle and the wire width in pixels. */
+    uint64_t edgeMask = 0;
+    uint32_t firstTriangle = 0;
+    float wireWidth = 1.0f;
+    glm::vec4 reserved[2]{};
     glm::vec4 eye;
     glm::vec4 base;
     glm::vec4 params;
@@ -112,6 +116,7 @@ struct AoPush
     glm::mat4 view;
     glm::vec4 params; // radius, intensity, pixels per world unit at depth 1, orthographic
     glm::vec4 size;   // extent, 1 / extent
+    glm::vec4 options{0.0f}; // x: 1 to take normals from the depth instead of the prepass
 };
 
 constexpr VkFormat kAoNormalFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
@@ -140,6 +145,15 @@ struct LinesPush
     glm::mat4 viewProj;
     glm::vec4 depthPull{1.0f, 0.0f, 0.0f, 0.0f};
 };
+
+struct PointsPush
+{
+    glm::mat4 viewProj;
+    glm::vec4 depthPull{1.0f, 0.0f, 0.0f, 0.0f};
+    glm::vec4 colors[3]{};
+    glm::vec4 sizes{4.0f, 6.0f, 0.0f, 0.0f}; // device pixels: normal, selected
+};
+static_assert(sizeof(PointsPush) == 144, "matches PointsPush in points.slang");
 
 /** Pixels' worth of world distance that lines over meshes are pulled toward the camera, plus half their width. */
 constexpr double kLinePullPixels = 2.0;
@@ -178,11 +192,21 @@ struct Buffer
 
 struct GpuMesh
 {
-    Buffer vertices, indices, edges;
+    Buffer vertices, indices, edges, edgeIndices;
     uint32_t indexCount = 0;
     uint32_t edgePointCount = 0;
+    uint32_t edgeIndexCount = 0; // 0 draws edges as a plain line list
+    compute::Buffer edgeMask;    // RenderMesh::edgeMask, read by meshWirePS through its address
     bool sharedVertices = false; // the vertex buffer belongs to the shareVertices mesh's entry
     std::shared_ptr<const RenderMesh> keep;
+    uint64_t lastUsed = 0;
+};
+
+struct GpuPoints
+{
+    Buffer buffer;
+    uint32_t count = 0;
+    std::shared_ptr<const PointCloud> keep;
     uint64_t lastUsed = 0;
 };
 
@@ -307,6 +331,9 @@ struct Renderer::Impl
     VkPipelineLayout meshLayout = VK_NULL_HANDLE, wireLayout = VK_NULL_HANDLE;
     VkPipeline meshPipeline = VK_NULL_HANDLE, wirePipeline = VK_NULL_HANDLE, wireXrayPipeline = VK_NULL_HANDLE;
     std::unordered_map<uint64_t, GpuMesh> meshCache; // render thread only
+    std::unordered_map<uint64_t, GpuPoints> pointCache; // render thread only
+    VkPipelineLayout pointsLayout = VK_NULL_HANDLE;
+    VkPipeline pointsPipeline = VK_NULL_HANDLE;
     uint64_t frameCounter = 0;
     VkDescriptorSetLayout atlasSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
@@ -385,6 +412,8 @@ struct Renderer::Impl
     /** The frame draws a virtual texture map: it writes feedback. */
     bool frameUsesVt = false;
     VkPipeline meshBlendPipeline = VK_NULL_HANDLE;
+    /** meshPS with the wire drawn over it (meshWirePS); null without fragment shader barycentrics, and wires draw as lines. */
+    VkPipeline meshWirePipeline = VK_NULL_HANDLE, meshWireBlendPipeline = VK_NULL_HANDLE;
     // Image planes sample through set 0 of their layout, a material set holding the image as its base color.
     VkPipelineLayout imagePlaneLayout = VK_NULL_HANDLE;
     VkPipeline imageOverPipeline = VK_NULL_HANDLE, imageDepthPipeline = VK_NULL_HANDLE, imageBlendPipeline = VK_NULL_HANDLE;
@@ -397,6 +426,8 @@ struct Renderer::Impl
     VkDescriptorSet whiteAoSet = VK_NULL_HANDLE;
     VkPipelineLayout aoLayout = VK_NULL_HANDLE;
     VkPipeline gtaoPipeline = VK_NULL_HANDLE, denoisePipeline = VK_NULL_HANDLE, prepassPipeline = VK_NULL_HANDLE;
+    VkPipelineLayout aoApplyLayout = VK_NULL_HANDLE;
+    VkPipeline aoApplyPipeline = VK_NULL_HANDLE; // fast AO: multiplies the frame by aoFinal
 
     // ---------------------------------------------------------------- resources
 
@@ -486,10 +517,10 @@ struct Renderer::Impl
         v.readbackMapped = info.pMappedData;
 
         if (vk.msaa != VK_SAMPLE_COUNT_1_BIT)
-            v.color = createImage(v.format, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT, extent, vk.msaa,
+            v.color = createImage(v.format, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, extent, vk.msaa,
                                   VK_IMAGE_ASPECT_COLOR_BIT);
         v.msaaGeneration = msaaGeneration;
-        v.depth = createImage(kDepthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT, extent,
+        v.depth = createImage(kDepthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, extent,
                               vk.msaa, VK_IMAGE_ASPECT_DEPTH_BIT);
         createAoImages(v, extent);
         if (pipelineFormat != v.format)
@@ -572,10 +603,10 @@ struct Renderer::Impl
         }
 
         if (vk.msaa != VK_SAMPLE_COUNT_1_BIT)
-            v.color = createImage(v.format, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT, extent, vk.msaa,
+            v.color = createImage(v.format, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, extent, vk.msaa,
                                   VK_IMAGE_ASPECT_COLOR_BIT);
         v.msaaGeneration = msaaGeneration;
-        v.depth = createImage(kDepthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT, extent,
+        v.depth = createImage(kDepthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, extent,
                               vk.msaa, VK_IMAGE_ASPECT_DEPTH_BIT);
         createAoImages(v, extent);
 
@@ -1069,6 +1100,13 @@ struct Renderer::Impl
             g.edges = upload(mesh->edgePoints.data(), mesh->edgePoints.size() * sizeof(glm::vec3), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
             g.indexCount = uint32_t(mesh->indices.size());
             g.edgePointCount = uint32_t(mesh->edgePoints.size());
+            if (!mesh->edgeMask.empty() && meshWirePipeline)
+                g.edgeMask = maskBuffer(cmd, f, mesh->edgeMask);
+            if (!mesh->edgeIndices.empty())
+            {
+                g.edgeIndices = upload(mesh->edgeIndices.data(), mesh->edgeIndices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+                g.edgeIndexCount = uint32_t(mesh->edgeIndices.size());
+            }
             g.keep = mesh;
             it = meshCache.emplace(mesh->key, std::move(g)).first;
         }
@@ -1076,6 +1114,28 @@ struct Renderer::Impl
             it->second.vertices = shared;
         it->second.lastUsed = frameCounter;
         return &it->second;
+    }
+
+    /** A storage buffer with a device address holding words, copied through a staging buffer when cmd and f are given. */
+    compute::Buffer maskBuffer(VkCommandBuffer cmd, Frame* f, const std::vector<uint32_t>& words)
+    {
+        const size_t bytes = words.size() * sizeof(uint32_t);
+        try
+        {
+            if (!f)
+                return compute::hostBuffer(vk, words.data(), bytes);
+            compute::Buffer b = compute::makeBuffer(vk, bytes, 0, compute::Host::None);
+            Buffer staging = createBuffer(words.data(), bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            f->staging.push_back(staging);
+            const VkBufferCopy region{0, 0, bytes};
+            vkCmdCopyBuffer(cmd, staging.buffer, b.buffer, 1, &region);
+            return b;
+        }
+        catch (const std::exception& e)
+        {
+            log::warn("render: {}; the wire draws as lines", e.what());
+            return {};
+        }
     }
 
     /** Drops GPU copies no frame has drawn for a while. */
@@ -1097,18 +1157,44 @@ struct Renderer::Impl
                 destroyBuffer(g.vertices);
             destroyBuffer(g.indices);
             destroyBuffer(g.edges);
+            destroyBuffer(g.edgeIndices);
+            compute::destroy(vk, g.edgeMask);
             meshCache.erase(key);
+        }
+    }
+
+    /** Drops component dots no frame has drawn for a while: each selection change makes a new cloud. */
+    void evictPoints()
+    {
+        if (frameCounter % 30 != 0)
+            return;
+        std::vector<uint64_t> stale;
+        for (auto& [key, g] : pointCache)
+            if (g.lastUsed + 8 < frameCounter)
+                stale.push_back(key);
+        if (stale.empty())
+            return;
+        vkDeviceWaitIdle(vk.device);
+        for (uint64_t key : stale)
+        {
+            destroyBuffer(pointCache[key].buffer);
+            pointCache.erase(key);
         }
     }
 
     void destroyMeshes()
     {
+        for (auto& [key, g] : pointCache)
+            destroyBuffer(g.buffer);
+        pointCache.clear();
         for (auto& [key, g] : meshCache)
         {
             if (!g.sharedVertices)
                 destroyBuffer(g.vertices);
             destroyBuffer(g.indices);
             destroyBuffer(g.edges);
+            destroyBuffer(g.edgeIndices);
+            compute::destroy(vk, g.edgeMask);
         }
         meshCache.clear();
     }
@@ -1573,7 +1659,7 @@ struct Renderer::Impl
     {
         LILA_ZONE();
 
-        frameBatches = batchDraws(s);
+        frameBatches = batchDraws(s, meshWirePipeline != VK_NULL_HANDLE);
         frameInstanceAddress = 0;
         const size_t bytes = std::max<size_t>(frameBatches.instances.size(), 1) * sizeof(GpuInstance);
         if (f.instances.size < bytes)
@@ -1637,10 +1723,19 @@ struct Renderer::Impl
         for (const MeshDraw& d : s.meshes)
             if (d.mesh && !meshCache.contains(d.mesh->key))
                 gpuMesh(d.mesh, cmd, &f);
+        for (const PointDraw& p : s.points)
+            if (p.cloud && !p.cloud->points.empty() && !pointCache.contains(p.cloud->key))
+            {
+                GpuPoints g;
+                g.buffer = deviceBuffer(cmd, f, p.cloud->points.data(), p.cloud->points.size() * sizeof(PointVertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+                g.count = uint32_t(p.cloud->points.size());
+                g.keep = p.cloud;
+                pointCache.emplace(p.cloud->key, std::move(g));
+            }
         if (f.staging.size() != staged)
             memoryBarrier(cmd, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                          VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT,
-                          VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT);
+                          VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                          VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
     }
 
     /** Copies the vertices edited since the last frame into the GPU copies of dynamic meshes. Runs before rendering begins. */
@@ -2001,8 +2096,47 @@ struct Renderer::Impl
                 depthWrite, compute | fragment, read, VK_IMAGE_ASPECT_DEPTH_BIT);
         barrier(cmd, v.aoNormal.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, colorStage,
                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, compute | fragment, read, color);
-        if (!gtao)
-            return;
+        if (gtao)
+            recordGtao(cmd, v, s, false);
+    }
+
+    /** Fast AO: GTAO from the main pass's depth (resolved into aoDepth) with normals taken from it, ready for applyAo. */
+    void recordFastAo(VkCommandBuffer cmd, Viewport& v, const FrameState& s)
+    {
+        LILA_ZONE();
+
+        constexpr auto compute = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        constexpr auto depthStage = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        // A depth resolve writes in the colour attachment output stage.
+        barrier(cmd, v.aoDepth.image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+                depthStage | VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, compute, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                VK_IMAGE_ASPECT_DEPTH_BIT);
+        barrier(cmd, v.aoNormal.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, compute | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                0, compute, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+        recordGtao(cmd, v, s, true);
+    }
+
+    /** Multiplies the frame's meshes by the fast AO, in a rendering pass that continues the main one. */
+    void applyAo(VkCommandBuffer cmd, Viewport& v)
+    {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, aoApplyPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, aoApplyLayout, 0, 1, &v.aoSampleSet, 0, nullptr);
+        // Applied to the display-encoded colour as is, which darkens about as much as the accurate mode does.
+        const glm::vec4 push(1.0f, 0.0f, 0.0f, 0.0f);
+        vkCmdPushConstants(cmd, aoApplyLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+    }
+
+    /** GTAO and its blur from aoDepth (and aoNormal unless depthNormals), leaving aoFinal ready for fragment shaders. */
+    void recordGtao(VkCommandBuffer cmd, Viewport& v, const FrameState& s, bool depthNormals)
+    {
+        constexpr auto compute = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        constexpr auto fragment = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        constexpr auto read = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
+        constexpr auto storageWrite = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+        constexpr auto general = VK_IMAGE_LAYOUT_GENERAL;
+        constexpr auto color = VK_IMAGE_ASPECT_COLOR_BIT;
         barrier(cmd, v.aoRaw.image, VK_IMAGE_LAYOUT_UNDEFINED, general, compute, 0, compute, storageWrite, color);
 
         glm::dmat4 proj = s.proj;
@@ -2013,6 +2147,7 @@ struct Renderer::Impl
         p.params = glm::vec4(std::max(s.aoRadius, 0.01f), std::max(s.aoIntensity, 0.0f), float(proj[0][0] * 0.5 * v.extent.width),
                              ortho ? 1.0f : 0.0f);
         p.size = glm::vec4(float(v.extent.width), float(v.extent.height), 1.0f / float(v.extent.width), 1.0f / float(v.extent.height));
+        p.options.x = depthNormals ? 1.0f : 0.0f;
         uint32_t gx = (v.extent.width + 7) / 8, gy = (v.extent.height + 7) / 8;
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, gtaoPipeline);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, aoLayout, 0, 1, &v.gtaoSet, 0, nullptr);
@@ -2042,7 +2177,7 @@ struct Renderer::Impl
     VkPipeline buildPipeline(VkPipelineLayout layout, VkShaderModule mod, const char* vs, const char* ps, VkFormat format,
                              VkPrimitiveTopology topology, const VkPipelineVertexInputStateCreateInfo& vertexInput, bool depthWrite,
                              bool blend, bool depthTest = true, float depthBias = 0.0f, bool dynamicCull = false, bool singleSample = false,
-                             bool dynamicLineWidth = false)
+                             bool dynamicLineWidth = false, const VkPipelineColorBlendAttachmentState* blendState = nullptr)
     {
         VkPipelineShaderStageCreateInfo stages[2]{};
         stages[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, mod, vs};
@@ -2079,6 +2214,8 @@ struct Renderer::Impl
             att.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
             att.alphaBlendOp = VK_BLEND_OP_ADD;
         }
+        if (blendState)
+            att = *blendState;
         VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
         cb.attachmentCount = 1;
         cb.pAttachments = &att;
@@ -2135,6 +2272,7 @@ struct Renderer::Impl
         };
         gridLayout = layoutFor(sizeof(GridPush), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
         linesLayout = layoutFor(sizeof(LinesPush), VK_SHADER_STAGE_VERTEX_BIT);
+        pointsLayout = layoutFor(sizeof(PointsPush), VK_SHADER_STAGE_VERTEX_BIT);
         overlayTrisLayout = layoutFor(sizeof(glm::vec2), VK_SHADER_STAGE_VERTEX_BIT, atlasSetLayout);
 
         VkShaderModule grid = module(loadSpirv("grid.spv"));
@@ -2163,6 +2301,20 @@ struct Renderer::Impl
                                                true, true, 0.0f, false, false, true);
             tris3dPipeline =
                 buildPipeline(linesLayout, lines, "linesVS", "linesPS", format, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, vin, false, true, true, 2.0f);
+            if (VkShaderModule points = module(loadSpirv("points.spv")))
+            {
+                VkVertexInputBindingDescription pb{0, sizeof(PointVertex), VK_VERTEX_INPUT_RATE_VERTEX};
+                VkVertexInputAttributeDescription pa[2] = {{0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(PointVertex, pos)},
+                                                           {1, 0, VK_FORMAT_R32_UINT, offsetof(PointVertex, state)}};
+                VkPipelineVertexInputStateCreateInfo pvin{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+                pvin.vertexBindingDescriptionCount = 1;
+                pvin.pVertexBindingDescriptions = &pb;
+                pvin.vertexAttributeDescriptionCount = 2;
+                pvin.pVertexAttributeDescriptions = pa;
+                pointsPipeline =
+                    buildPipeline(pointsLayout, points, "pointsVS", "pointsPS", format, VK_PRIMITIVE_TOPOLOGY_POINT_LIST, pvin, false, false, true);
+                vkDestroyShaderModule(vk.device, points, nullptr);
+            }
         }
 
         {
@@ -2192,6 +2344,15 @@ struct Renderer::Impl
                 buildPipeline(meshLayout, mesh, "meshVS", "meshPS", format, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, mvin, false, true, true, 0.0f, true);
             prepassPipeline = buildPipeline(meshLayout, mesh, "meshVS", "prepassPS", kAoNormalFormat, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, mvin, true,
                                             false, true, 0.0f, true, true);
+            if (vk.fragmentBarycentric)
+                if (VkShaderModule wired = module(loadSpirv(bindless ? "mesh_bindless_wire.spv" : "mesh_wire.spv")))
+                {
+                    meshWirePipeline = buildPipeline(meshLayout, wired, "meshVS", "meshWirePS", format, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, mvin, true,
+                                                     false, true, 0.0f, true);
+                    meshWireBlendPipeline = buildPipeline(meshLayout, wired, "meshVS", "meshWirePS", format, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, mvin,
+                                                          false, true, true, 0.0f, true);
+                    vkDestroyShaderModule(vk.device, wired, nullptr);
+                }
             backgroundPipeline = buildPipeline(meshLayout, mesh, "backgroundVS", "backgroundPS", format, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
                                                none, false, false, false);
             vkDestroyShaderModule(vk.device, mesh, nullptr);
@@ -2202,6 +2363,22 @@ struct Renderer::Impl
             gtaoPipeline = buildCompute(aoLayout, ao, "gtaoCS");
             denoisePipeline = buildCompute(aoLayout, ao, "denoiseCS");
             vkDestroyShaderModule(vk.device, ao, nullptr);
+        }
+        aoApplyLayout = layoutFor(sizeof(glm::vec4), VK_SHADER_STAGE_FRAGMENT_BIT, aoSampleLayout);
+        if (VkShaderModule apply = module(loadSpirv("ao_apply.spv")))
+        {
+            VkPipelineColorBlendAttachmentState multiply{};
+            multiply.blendEnable = VK_TRUE;
+            multiply.srcColorBlendFactor = VK_BLEND_FACTOR_DST_COLOR;
+            multiply.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+            multiply.colorBlendOp = VK_BLEND_OP_ADD;
+            multiply.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+            multiply.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            multiply.alphaBlendOp = VK_BLEND_OP_ADD;
+            multiply.colorWriteMask = 0xF;
+            aoApplyPipeline = buildPipeline(aoApplyLayout, apply, "applyVS", "applyPS", format, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, none, false,
+                                            false, false, 0.0f, false, false, false, &multiply);
+            vkDestroyShaderModule(vk.device, apply, nullptr);
         }
         postLayout = layoutFor(sizeof(PostPush), VK_SHADER_STAGE_FRAGMENT_BIT, aoSampleLayout);
         if (VkShaderModule post = module(loadSpirv("post.spv")))
@@ -2271,7 +2448,8 @@ struct Renderer::Impl
 
     void destroyPipelines()
     {
-        for (VkPipeline* p : {&gridPipeline, &linesPipeline, &overlayPipeline, &overlayTrisPipeline, &meshPipeline, &meshBlendPipeline, &wirePipeline,
+        for (VkPipeline* p : {&gridPipeline, &linesPipeline, &overlayPipeline, &overlayTrisPipeline, &meshPipeline, &meshBlendPipeline, &meshWirePipeline,
+                              &meshWireBlendPipeline, &aoApplyPipeline, &pointsPipeline, &wirePipeline,
                               &wireXrayPipeline, &backgroundPipeline, &linesOnTopPipeline, &tris3dPipeline, &contactPipeline, &prepassPipeline, &gtaoPipeline,
                               &denoisePipeline, &imageOverPipeline, &imageDepthPipeline, &imageBlendPipeline, &postPipeline})
             if (*p)
@@ -2279,7 +2457,7 @@ struct Renderer::Impl
                 vkDestroyPipeline(vk.device, *p, nullptr);
                 *p = VK_NULL_HANDLE;
             }
-        for (VkPipelineLayout* l : {&gridLayout, &linesLayout, &overlayTrisLayout, &meshLayout, &wireLayout, &contactLayout, &aoLayout,
+        for (VkPipelineLayout* l : {&gridLayout, &linesLayout, &overlayTrisLayout, &meshLayout, &wireLayout, &contactLayout, &aoLayout, &aoApplyLayout, &pointsLayout,
                                     &imagePlaneLayout, &postLayout})
             if (*l)
             {
@@ -2471,13 +2649,15 @@ struct Renderer::Impl
         glm::mat4 vpF(viewProj);
         bool ao = s.ambientOcclusion && s.aoIntensity > 0.0f && prepassPipeline && gtaoPipeline && denoisePipeline && v.gtaoSet && v.denoiseSet &&
                   v.aoSampleSet && anyShaded(s) && !s.xray;
-        f.aoTimed = ao;
         const bool post = (s.kuwahara || s.outline) && postPipeline && v.postSet && v.postColor.view;
-        const bool prepass = ao || (post && s.outline && prepassPipeline && anyShaded(s) && !s.xray);
+        // Fast AO comes from the main pass's own depth after the meshes; the post pass reads the prepass, so it keeps it.
+        const bool aoFast = ao && s.aoFast && !post && aoApplyPipeline;
+        f.aoTimed = ao && !aoFast;
+        const bool prepass = (ao && !aoFast) || (post && s.outline && prepassPipeline && anyShaded(s) && !s.xray);
         timestamp(cmd, f, 1);
         const auto aoStart = std::chrono::steady_clock::now();
         if (prepass)
-            recordAo(cmd, v, s, vpF, ao);
+            recordAo(cmd, v, s, vpF, ao && !aoFast);
         else if (post)
         {
             // Nothing wrote them this frame; the post set still needs them in their sampled layouts.
@@ -2537,6 +2717,28 @@ struct Renderer::Impl
         depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         depth.storeOp = post ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
         depth.clearValue.depthStencil = {0.0f, 0}; // reversed-Z
+        // Fast AO ends the pass after the meshes and picks it up again with these once the AO is applied.
+        VkRenderingAttachmentInfo resumeColor = color, resumeDepth = depth;
+        if (aoFast)
+        {
+            resumeColor.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            resumeDepth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            color.resolveMode = VK_RESOLVE_MODE_NONE;
+            color.resolveImageView = VK_NULL_HANDLE;
+            depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            barrier(cmd, v.aoDepth.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                    VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0, depthStage | colorStage, depthAccess | colorWrite,
+                    VK_IMAGE_ASPECT_DEPTH_BIT);
+            if (v.color.image)
+            {
+                depth.resolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
+                depth.resolveImageView = v.aoDepth.view;
+                depth.resolveImageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+            }
+            else
+                depth.imageView = resumeDepth.imageView = v.aoDepth.view;
+        }
 
         VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
         ri.renderArea = {{0, 0}, v.extent};
@@ -2586,9 +2788,23 @@ struct Renderer::Impl
         drawContactShadows(cmd, s, vpF);
         // Opaque planes in the scene write depth before the meshes; see-through ones blend over them afterwards.
         drawImagePlanes(cmd, s, vpF, ImagePlaneDraw::Depth::Scene, false);
-        drawMeshes(cmd, s, vpF, ao ? v.aoSampleSet : whiteAoSet, v.extent.height);
+        drawMeshes(cmd, s, vpF, ao && !aoFast ? v.aoSampleSet : whiteAoSet, v.extent.height);
         drawImagePlanes(cmd, s, vpF, ImagePlaneDraw::Depth::Scene, true);
         drawImagePlanes(cmd, s, vpF, ImagePlaneDraw::Depth::Front, false);
+        if (aoFast)
+        {
+            vkCmdEndRendering(cmd);
+            recordFastAo(cmd, v, s);
+            if (!v.color.image)
+                barrier(cmd, v.aoDepth.image, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, 0, depthStage, depthAccess, VK_IMAGE_ASPECT_DEPTH_BIT);
+            ri.pColorAttachments = &resumeColor;
+            ri.pDepthAttachment = &resumeDepth;
+            vkCmdBeginRendering(cmd, &ri);
+            vkCmdSetViewport(cmd, 0, 1, &viewport);
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+            applyAo(cmd, v);
+        }
         if (post)
             recordPost(cmd, v, s, ri, frameColor, depth);
 
@@ -2614,6 +2830,7 @@ struct Renderer::Impl
                                  {linesOnTopPipeline, 1, 1.0f}, {linesOnTopPipeline, 8, s.highlightEdgeWidth}, {linesOnTopPipeline, 6, s.seamLineWidth},
                                  {linesOnTopPipeline, 7, s.symmetryLineWidth}, {linesOnTopPipeline, 5, s.selectedEdgeWidth},
                                  {tris3dPipeline, 2, 0.0f}};
+        drawPoints(cmd, s, vpF, v.extent.height);
         for (const Biased& b : biased)
         {
             const std::vector<LineVertex>& verts = *lineSets[b.set];
@@ -3017,6 +3234,13 @@ struct Renderer::Impl
         vkCmdBindVertexBuffers(cmd, 0, 1, &g.vertices.buffer, &offset);
         vkCmdBindIndexBuffer(cmd, g.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
         uint32_t first = std::min(sec.firstIndex, g.indexCount);
+        if (b.wire)
+        {
+            p.edgeMask = g.edgeMask.address;
+            p.firstTriangle = first / 3;
+            p.wireWidth = std::max(d.wireWidth, 1.0f);
+            vkCmdPushConstants(cmd, meshLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
+        }
         vkCmdDrawIndexed(cmd, std::min(sec.indexCount, g.indexCount - first), b.count, first, 0, 0);
         ++frameMeshDraws;
         frameMeshInstances += b.count;
@@ -3040,11 +3264,17 @@ struct Renderer::Impl
         };
         std::vector<Pending> translucent;
         VkDescriptorSet boundSet = VK_NULL_HANDLE;
+        VkPipeline bound = meshPipeline;
+        auto use = [&](VkPipeline p) {
+            if (p && p != bound)
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = p);
+        };
 
         for (const DrawBatch& b : frameBatches.shaded)
         {
             const MeshDraw& d = *b.draw;
             GpuMesh* g = gpuMesh(d.mesh);
+            use(b.wire && g->edgeMask.address && meshWirePipeline ? meshWirePipeline : meshPipeline);
             for (const MeshSection& sec : sectionsOf(d, *g))
             {
                 const Material* mat = sec.material < d.materials.size() ? &d.materials[sec.material] : nullptr;
@@ -3054,7 +3284,7 @@ struct Renderer::Impl
                     for (uint32_t i = 0; i < b.count; ++i)
                     {
                         const glm::vec3 c(frameBatches.instances[b.first + i].world * centre);
-                        translucent.push_back({{b.draw, b.first + i, 1}, sec, glm::length(c - glm::vec3(s.eye))});
+                        translucent.push_back({{b.draw, b.first + i, 1, b.wire}, sec, glm::length(c - glm::vec3(s.eye))});
                     }
                     continue;
                 }
@@ -3065,9 +3295,12 @@ struct Renderer::Impl
         if (!translucent.empty() && meshBlendPipeline)
         {
             std::ranges::stable_sort(translucent, [](const Pending& a, const Pending& b) { return a.distance > b.distance; });
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshBlendPipeline);
             for (const Pending& t : translucent)
-                drawSection(cmd, s, t.placement, *gpuMesh(t.placement.draw->mesh), t.section, viewProj, boundSet);
+            {
+                GpuMesh* g = gpuMesh(t.placement.draw->mesh);
+                use(t.placement.wire && g->edgeMask.address && meshWireBlendPipeline ? meshWireBlendPipeline : meshBlendPipeline);
+                drawSection(cmd, s, t.placement, *g, t.section, viewProj, boundSet);
+            }
         }
         evictTextures();
 
@@ -3089,9 +3322,41 @@ struct Renderer::Impl
             vkCmdPushConstants(cmd, wireLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
             VkDeviceSize offset = 0;
             vkCmdBindVertexBuffers(cmd, 0, 1, &g->edges.buffer, &offset);
-            vkCmdDraw(cmd, g->edgePointCount, b.count, 0, 0);
+            if (g->edgeIndexCount)
+            {
+                vkCmdBindIndexBuffer(cmd, g->edgeIndices.buffer, 0, VK_INDEX_TYPE_UINT32);
+                vkCmdDrawIndexed(cmd, g->edgeIndexCount, b.count, 0, 0, 0);
+            }
+            else
+                vkCmdDraw(cmd, g->edgePointCount, b.count, 0, 0);
         }
         evictMeshes();
+    }
+
+    void drawPoints(VkCommandBuffer cmd, const FrameState& s, const glm::mat4& viewProj, uint32_t heightPx)
+    {
+        if (!pointsPipeline || s.points.empty())
+            return;
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pointsPipeline);
+        for (const PointDraw& d : s.points)
+        {
+            auto it = d.cloud ? pointCache.find(d.cloud->key) : pointCache.end();
+            if (it == pointCache.end())
+                continue;
+            it->second.lastUsed = frameCounter;
+            PointsPush p;
+            p.viewProj = viewProj;
+            p.depthPull = depthPull(s.proj, heightPx, kLinePullPixels + 0.5 * std::max(d.size, d.selectedSize));
+            for (int i = 0; i < 3; ++i)
+                p.colors[i] = d.colors[i];
+            const float* range = vk.properties.limits.pointSizeRange;
+            p.sizes = glm::vec4(std::clamp(d.size, range[0], range[1]), std::clamp(d.selectedSize, range[0], range[1]), 0.0f, 0.0f);
+            vkCmdPushConstants(cmd, pointsLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(p), &p);
+            VkDeviceSize offset = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &it->second.buffer.buffer, &offset);
+            vkCmdDraw(cmd, it->second.count, 1, 0, 0);
+        }
+        evictPoints();
     }
 
     /** One slice of a task; resets task when it finished or threw. */
@@ -3383,6 +3648,21 @@ bool Renderer::renderOffscreen(FrameState state, int width, int height, std::vec
 std::string Renderer::deviceName() const
 {
     return m->vk.deviceName;
+}
+
+Renderer::GpuInfo Renderer::gpuInfo() const
+{
+    GpuInfo info;
+    if (!running())
+        return info;
+    info.name = m->vk.deviceName;
+    info.discrete = m->vk.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+    VkPhysicalDeviceMemoryProperties mem;
+    vkGetPhysicalDeviceMemoryProperties(m->vk.physical, &mem);
+    for (uint32_t i = 0; i < mem.memoryHeapCount; ++i)
+        if (mem.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+            info.vramBytes += mem.memoryHeaps[i].size;
+    return info;
 }
 
 std::future<void> Renderer::runTask(GpuTask task)

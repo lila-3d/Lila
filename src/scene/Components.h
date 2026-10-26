@@ -41,6 +41,8 @@ LILA_SCENE_API ComponentMode modeFromName(const std::string& name); // throws st
 
 LILA_SCENE_API const std::map<NodeId, Ids>& selected(ComponentMode kind);
 LILA_SCENE_API const Ids& selected(NodeId node, ComponentMode kind);
+/** Changes whenever a component selection or the mode does, so drawings of it can be cached. */
+LILA_SCENE_API uint64_t serial();
 
 enum class Op
 {

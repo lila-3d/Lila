@@ -194,10 +194,12 @@ std::vector<ModifierType> modifierTypes()
          }},
         {"subdivisionModifier",
          "Smooths the mesh with Catmull-Clark subdivision. Use it to turn a low-poly cage into a smooth high-poly surface.",
-         {param("levels", PlugType::Int, int64_t(1), "Subdivision levels, 0 to 4. Each level about quadruples the face count; 0 passes the mesh through.")},
+         {param("levels", PlugType::Int, int64_t(1), "Subdivision levels, 0 to 4. Each level about quadruples the face count; 0 passes the mesh through."),
+          param("keepHardEdges", PlugType::Bool, false, "Keep normals split along hard edges; off smooths the shading across them.")},
          [](const geo::Mesh& in, const Node& n) {
              geo::SubdivideOptions o;
              o.levels = int(std::clamp<int64_t>(i(n, "levels"), 0, 4));
+             o.keepHardEdges = b(n, "keepHardEdges");
              return o.levels == 0 ? in : geo::subdivide(in, o);
          }},
         {"bevelModifier",

@@ -288,7 +288,7 @@ StartupDialog::StartupDialog(Hooks hooks, QWidget* parent) : QDialog(parent), mH
         if (open)
             open({});
     });
-    resize(680, themeChooserPending() ? 640 : 380);
+    resize(680, themeChooserPending() ? 820 : 380);
     qApp->installEventFilter(this);
 }
 

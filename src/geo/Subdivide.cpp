@@ -13,7 +13,7 @@ namespace
 {
 constexpr Index kGrain = 2048;
 
-Mesh subdivideOnce(const Mesh& src, const SubdivideOptions& opts)
+Mesh subdivideOnce(const Mesh& src, const SubdivideOptions& opts, SubdivideMap* map = nullptr)
 {
     LILA_ZONE();
 
@@ -138,6 +138,13 @@ Mesh subdivideOnce(const Mesh& src, const SubdivideOptions& opts)
 
     std::span<const float> srcCrease = crease;
     const bool hasCornerAttrs = out.cornerAttrs().layerCount() > 0;
+    if (map)
+    {
+        map->points = pId;
+        map->facePoints = fId;
+        map->edges.clear();
+        map->faces.clear();
+    }
     std::vector<Index> corners;
     std::vector<float> avg;
     for (Index f = 0; f < fc; ++f)
@@ -162,6 +169,14 @@ Mesh subdivideOnce(const Mesh& src, const SubdivideOptions& opts)
             // Outer sub-edges come from the original edges; the two inner ones are new and plain.
             const Index e0 = out.cornerEdge(oc);
             const Index e3 = out.cornerEdge(out.cornerPrev(oc));
+            if (map)
+            {
+                map->edges.resize(out.edgeCapacity(), kInvalid);
+                map->edges[e0] = src.cornerEdge(c);
+                map->edges[e3] = src.cornerEdge(cp);
+                map->faces.resize(out.faceCapacity(), kInvalid);
+                map->faces[nf] = f;
+            }
             if (e0 >= edgeCap)
                 out.edgeAttrs().copyFrom(src.edgeAttrs(), e0, src.cornerEdge(c));
             if (e3 >= edgeCap)
@@ -188,13 +203,51 @@ Mesh subdivideOnce(const Mesh& src, const SubdivideOptions& opts)
 }
 } // namespace
 
-Mesh subdivide(const Mesh& mesh, const SubdivideOptions& opts)
+Mesh subdivide(const Mesh& mesh, const SubdivideOptions& opts, SubdivideMap* map)
 {
     LILA_ZONE();
 
     Mesh cur = mesh;
     for (int i = 0; i < opts.levels; ++i)
-        cur = subdivideOnce(cur, opts);
+    {
+        if (!map)
+        {
+            cur = subdivideOnce(cur, opts);
+            continue;
+        }
+        SubdivideMap once;
+        cur = subdivideOnce(cur, opts, &once);
+        if (i == 0)
+        {
+            *map = std::move(once);
+            continue;
+        }
+        // Compose: the cage's points and face centres stay put, and each new piece keeps its parent's cage edge or face.
+        for (Index& p : map->points)
+            if (p != kInvalid)
+                p = once.points[p];
+        for (Index& p : map->facePoints)
+            if (p != kInvalid)
+                p = once.points[p];
+        for (Index& e : once.edges)
+            if (e != kInvalid)
+                e = map->edges[e];
+        for (Index& f : once.faces)
+            if (f != kInvalid)
+                f = map->faces[f];
+        map->edges = std::move(once.edges);
+        map->faces = std::move(once.faces);
+    }
+    if (!opts.keepHardEdges && opts.levels > 0)
+    {
+        cur.edgeAttrs().remove(attr::kHard);
+        cur.cornerAttrs().remove(attr::kNormal);
+    }
+    if (map)
+    {
+        map->edges.resize(cur.edgeCapacity(), kInvalid);
+        map->faces.resize(cur.faceCapacity(), kInvalid);
+    }
     return cur;
 }
 

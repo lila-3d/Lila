@@ -21,6 +21,36 @@ struct LineVertex
  * Everything a viewport needs for one frame, copied out of the scene on the main thread. The render thread only
  * ever sees these snapshots, never the live graph. An offline renderer would consume the same data.
  */
+/** One component dot: a world-space point and how it shows. */
+struct PointVertex
+{
+    glm::vec3 pos;
+    uint32_t state = 0; // PointDraw::Normal, Selected, Mirror or Hidden
+};
+
+/** Component dots built once per mesh, selection and view state, so the renderer can keep them on the GPU. */
+struct PointCloud
+{
+    std::vector<PointVertex> points;
+    uint64_t key = nextResourceKey();
+};
+
+/** Dots drawn as squares of a constant pixel size, depth tested and pulled toward the camera like lines. */
+struct PointDraw
+{
+    enum State : uint32_t
+    {
+        Normal,
+        Selected,
+        Mirror, // the mirror image of a selected point
+        Hidden,
+    };
+    std::shared_ptr<const PointCloud> cloud;
+    glm::vec4 colors[3]{}; // linear, by state
+    float size = 4.0f;     // device pixels
+    float selectedSize = 6.0f;
+};
+
 /** Pixel-space triangle vertex for the 2D overlay (gizmos, HUD, text). */
 struct OverlayVertex
 {
@@ -108,6 +138,8 @@ struct FrameState
     float envBackgroundExposure = 0.6f; // dims the backdrop only, so assets stand out
     float groundShadow = 0.5f;          // soft contact blob under meshes resting on the ground; 0 is off
     bool ambientOcclusion = true;       // screen-space, on indirect light only
+    /** AO from the main pass's depth, darkening the whole finished mesh (Maya's way): cheaper, as it skips the prepass. */
+    bool aoFast = false;
     float aoRadius = 30.0f;             // world units (cm)
     float aoIntensity = 1.0f;
     // Preview-only post over the shaded scene (not lines or overlays): a painterly anisotropic Kuwahara filter and outlines.
@@ -138,6 +170,7 @@ struct FrameState
     std::vector<LineVertex> curveHalo, curveLines, curveHaloBold, curveLinesBold;
     float curveWidth = 2.0f, curveBoldWidth = 3.0f, curveHaloWidth = 4.0f, curveHaloBoldWidth = 5.0f;
     std::vector<LineVertex> tris3d;     // world-space triangle list, blended and biased toward the camera, no depth write
+    std::vector<PointDraw> points;      // component dots, drawn after tris3d
     std::vector<LineVertex> linesXray;  // world-space lines with no depth test, over every surface (x-ray joints)
     std::vector<LineVertex> overlay; // NDC positions, drawn last with no depth test (marquee, HUD)
     std::vector<OverlayVertex> overlayTris; // drawn after everything else

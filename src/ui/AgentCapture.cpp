@@ -184,6 +184,7 @@ void applyDisplayPrefs(render::FrameState& s, bool ortho)
     s.ambientOcclusion = p.value<bool>("general", "/viewport/ao/enabled", true);
     s.aoRadius = p.value<float>("general", "/viewport/ao/radius", 30.0f);
     s.aoIntensity = p.value<float>("general", "/viewport/ao/intensity", 1.0f);
+    s.aoFast = p.value<std::string>("general", "/viewport/ao/mode", "accurate") == "fast";
     viewportDisplay::apply(s);
 }
 
@@ -574,6 +575,21 @@ void registerCommands()
                 throw CommandError(std::string("measureView: ") + e.what());
             }
             return json{{"gpuMs", t.gpuMs}, {"aoMs", t.aoMs}, {"cpuMs", t.cpuMs}, {"aoCpuMs", t.aoCpuMs}, {"frames", frames}};
+        },
+    });
+
+    ops::registerCommand({
+        .name = "viewportStats",
+        .doc = "The active viewport's last finished frame as the GPU measured it: {frames, gpuMs, aoMs, cpuMs, meshDrawCalls}. "
+               "frames counts frames drawn so far, so two calls apart give the frame rate. Unlike measureView it times what the "
+               "view really draws, components and highlights included.",
+        .undoable = false,
+        .run = [](const Args&) -> json {
+            ViewportWidget* vp = activeViewport();
+            if (!vp)
+                throw CommandError("viewportStats: no viewport");
+            const render::Renderer::FrameStats st = vp->frameStats();
+            return json{{"frames", st.frames}, {"gpuMs", st.gpuMs}, {"aoMs", st.aoMs}, {"cpuMs", st.cpuMs}, {"meshDrawCalls", st.meshDrawCalls}};
         },
     });
 

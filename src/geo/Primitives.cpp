@@ -3,6 +3,8 @@
 #include "core/Profile.h"
 
 #include <glm/gtc/constants.hpp>
+#include <tbb/blocked_range.h>
+#include <tbb/parallel_for.h>
 
 #include <algorithm>
 #include <array>
@@ -444,34 +446,35 @@ Index markUvSeams(Mesh& mesh, std::string_view uvSet)
     if (uv.empty())
         return 0;
     std::vector<uint8_t> seam(mesh.edgeCapacity(), 0);
+    tbb::parallel_for(tbb::blocked_range<Index>(0, mesh.edgeCapacity(), 16384), [&](const tbb::blocked_range<Index>& range) {
+        for (Index e = range.begin(); e != range.end(); ++e)
+        {
+            if (!mesh.edgeValid(e) || mesh.edgeCorner(e) == kInvalid)
+                continue;
+            const Index c = mesh.edgeCorner(e);
+            const Index p = mesh.cornerPoint(c);
+            bool differs = false;
+            mesh.forEachEdgeCorner(e, [&](Index r) {
+                if (r == c)
+                    return;
+                // Corner r runs along e either way; find its uvs at c's two points.
+                const bool same = mesh.cornerPoint(r) == p;
+                const glm::vec2 a = same ? uv[r] : uv[mesh.cornerNext(r)];
+                const glm::vec2 b = same ? uv[mesh.cornerNext(r)] : uv[r];
+                if (glm::any(glm::greaterThan(glm::abs(a - uv[c]), glm::vec2(1e-6f)))
+                    || glm::any(glm::greaterThan(glm::abs(b - uv[mesh.cornerNext(c)]), glm::vec2(1e-6f))))
+                    differs = true;
+            });
+            seam[e] = differs;
+        }
+    });
+    std::span<bool> out = mesh.edgeAttrs().getOrAdd<bool>(attr::kSeam);
     Index count = 0;
     for (Index e = 0; e < mesh.edgeCapacity(); ++e)
     {
-        if (!mesh.edgeValid(e) || mesh.edgeCorner(e) == kInvalid)
-            continue;
-        const Index c = mesh.edgeCorner(e);
-        const Index p = mesh.cornerPoint(c);
-        bool differs = false;
-        mesh.forEachEdgeCorner(e, [&](Index r) {
-            if (r == c)
-                return;
-            // Corner r runs along e either way; find its uvs at c's two points.
-            const bool same = mesh.cornerPoint(r) == p;
-            const glm::vec2 a = same ? uv[r] : uv[mesh.cornerNext(r)];
-            const glm::vec2 b = same ? uv[mesh.cornerNext(r)] : uv[r];
-            if (glm::any(glm::greaterThan(glm::abs(a - uv[c]), glm::vec2(1e-6f)))
-                || glm::any(glm::greaterThan(glm::abs(b - uv[mesh.cornerNext(c)]), glm::vec2(1e-6f))))
-                differs = true;
-        });
-        if (differs)
-        {
-            seam[e] = 1;
-            ++count;
-        }
-    }
-    std::span<bool> out = mesh.edgeAttrs().getOrAdd<bool>(attr::kSeam);
-    for (Index e = 0; e < mesh.edgeCapacity(); ++e)
         out[e] = seam[e] != 0;
+        count += seam[e];
+    }
     return count;
 }
 

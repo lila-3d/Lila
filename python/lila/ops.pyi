@@ -6036,6 +6036,15 @@ def setMembers(*objects: Any, nodes: bool | None = None) -> Any:
         nodes: Return the objects the set touches instead of its members. Default False.
     """
 
+def setMeshPoints(*objects: Any, points: Sequence[Any] | None = None, buffer: int | None = None) -> Any:
+    """Move every point of a mesh's base (under its modifiers) at once, in meshData's point order, in object space. Topology stays. One undo step. Python's Node.set_points takes a numpy array, faster.
+
+    Args:
+        objects: mesh.
+        points: [[x, y, z], ...], one per point, in cm.
+        buffer: Internal: points handed over from Python (Node.set_points). Default 0.
+    """
+
 def setMorphTarget(*objects: Any, inBetween: float | None = None) -> Any:
     """Replace a target's shape with a mesh's (same point count as the base): the full shape, or the in-between at inBetween= (added if missing). A live target becomes stored offsets.
 
@@ -7803,6 +7812,9 @@ def viewPlace(*objects: Any, eye: Sequence[float] | None = None, lookAt: Sequenc
         up: World up direction.
         orthographicWidth: Width of an orthographic view, cm. Short form ow.
     """
+
+def viewportStats() -> Any:
+    """The active viewport's last finished frame as the GPU measured it: {frames, gpuMs, aoMs, cpuMs, meshDrawCalls}. frames counts frames drawn so far, so two calls apart give the frame rate. Unlike measureView it times what the view really draws, components and highlights included."""
 
 def voxelRemesh(*objects: Any, resolution: int | None = None, project: bool | None = None) -> Any:
     """Rebuild meshes as one closed, manifold quad surface from a voxel grid, whatever state they are in: closes holes, fuses intersecting and inner shells. For dirty scans and kitbashed blockouts; UVs are not kept.

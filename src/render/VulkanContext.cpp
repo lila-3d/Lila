@@ -190,6 +190,7 @@ bool VulkanContext::init(bool validation)
     VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
     f2.pNext = &f12;
     f2.features.wideLines = VK_TRUE;
+    f2.features.largePoints = VK_TRUE;
     f2.features.fillModeNonSolid = VK_TRUE;
     VkPhysicalDeviceFeatures supported;
     vkGetPhysicalDeviceFeatures(physical, &supported);
@@ -197,7 +198,8 @@ bool VulkanContext::init(bool validation)
     f2.features.samplerAnisotropy = supported.samplerAnisotropy;
 
     // Optional features the baker uses: ask what the device has, enable only that.
-    VkPhysicalDeviceRayQueryFeaturesKHR rqHave{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+    VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR baryHave{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR};
+    VkPhysicalDeviceRayQueryFeaturesKHR rqHave{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR, &baryHave};
     VkPhysicalDeviceAccelerationStructureFeaturesKHR asHave{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR, &rqHave};
     VkPhysicalDeviceVulkan12Features f12Have{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &asHave};
     VkPhysicalDeviceFeatures2 f2Have{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &f12Have};
@@ -223,6 +225,16 @@ bool VulkanContext::init(bool validation)
         VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &asProps};
         vkGetPhysicalDeviceProperties2(physical, &p2);
         asScratchAlignment = std::max(1u, asProps.minAccelerationStructureScratchOffsetAlignment);
+    }
+    VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR bary{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR};
+    if (hasDeviceExtension(physical, VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME) && baryHave.fragmentShaderBarycentric &&
+        std::getenv("LILA_VK_NO_BARYCENTRIC") == nullptr)
+    {
+        devExts.push_back(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME);
+        bary.fragmentShaderBarycentric = VK_TRUE;
+        bary.pNext = f13.pNext;
+        f13.pNext = &bary;
+        fragmentBarycentric = true;
     }
     if (hasDeviceExtension(physical, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME))
     {

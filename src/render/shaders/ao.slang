@@ -8,6 +8,7 @@ struct AoPush
     float4x4 view;  // world to view, for the prepass normals
     float4 params;  // x radius (world units), y intensity, z pixels per world unit at view depth 1, w 1 if orthographic
     float4 size;    // xy extent, zw 1 / extent
+    float4 options; // x: 1 to take normals from the depth instead of the prepass
 };
 
 [[vk::push_constant]] AoPush ap;
@@ -30,6 +31,37 @@ float3 viewPos(int2 px, float depth)
     return h.xyz / h.w;
 }
 
+/** World-space normal: the prepass's, or from the depth around px, using the nearer neighbour on each axis so edges stay sharp. */
+float3 worldNormal(int2 px, float depth)
+{
+    if (ap.options.x < 0.5)
+        return normalTex.Load(int3(px, 0)).xyz;
+    const int2 last = int2(ap.size.xy) - 1;
+    float3 P = viewPos(px, depth);
+    float3 dx = float3(0, 0, 0), dy = float3(0, 0, 0);
+    for (int axis = 0; axis < 2; ++axis)
+    {
+        int2 step = axis == 0 ? int2(1, 0) : int2(0, 1);
+        int2 a = clamp(px - step, int2(0), last), b = clamp(px + step, int2(0), last);
+        float da = depthTex.Load(int3(a, 0)).r, db = depthTex.Load(int3(b, 0)).r;
+        float3 Pa = da > 0.0 ? viewPos(a, da) : P, Pb = db > 0.0 ? viewPos(b, db) : P;
+        float3 d = (db > 0.0 && (da <= 0.0 || abs(Pb.z - P.z) < abs(P.z - Pa.z))) ? Pb - P : P - Pa;
+        if (axis == 0)
+            dx = d;
+        else
+            dy = d;
+    }
+    float3 n = cross(dy, dx);
+    if (dot(n, n) < 1e-20)
+        return float3(0, 0, 0);
+    n = normalize(n);
+    bool ortho = ap.params.w > 0.5;
+    if (dot(n, ortho ? float3(0, 0, 1) : -P) < 0.0)
+        n = -n;
+    // Back to world space: the view matrix's rotation is orthonormal.
+    return mul(n, (float3x3)ap.view);
+}
+
 float bayer4(int2 p)
 {
     const uint m[16] = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
@@ -44,7 +76,7 @@ void gtaoCS(uint3 id: SV_DispatchThreadID)
     if (any(px >= int2(ap.size.xy)))
         return;
     float depth = depthTex.Load(int3(px, 0)).r;
-    float3 nw = normalTex.Load(int3(px, 0)).xyz;
+    float3 nw = depth > 0.0 ? worldNormal(px, depth) : float3(0, 0, 0);
     if (depth <= 0.0 || dot(nw, nw) < 0.01)
     {
         aoOut[px] = 1.0;
@@ -134,7 +166,7 @@ void denoiseCS(uint3 id: SV_DispatchThreadID)
     if (any(px >= int2(ap.size.xy)))
         return;
     float depth = depthTex.Load(int3(px, 0)).r;
-    float3 nc = normalTex.Load(int3(px, 0)).xyz;
+    float3 nc = depth > 0.0 ? worldNormal(px, depth) : float3(0, 0, 0);
     if (depth <= 0.0 || dot(nc, nc) < 0.01)
     {
         aoOut[px] = 1.0;
@@ -155,7 +187,7 @@ void denoiseCS(uint3 id: SV_DispatchThreadID)
             float dq = depthTex.Load(int3(q, 0)).r;
             if (dq <= 0.0)
                 continue;
-            float3 nq = normalTex.Load(int3(q, 0)).xyz;
+            float3 nq = worldNormal(q, dq);
             float w = saturate(1.0 - abs(dot(viewPos(q, dq) - pc, ncv)) / tolerance);
             float nd = saturate(dot(nq, nc));
             w *= nd * nd * nd * nd;

@@ -8,7 +8,7 @@
 struct InstanceData
 {
     float4x4 world;
-    float4 color; // wire colour; unused by shaded draws
+    float4 color; // wire colour; for shaded draws the wire meshWirePS draws over them, alpha 0 for none
 };
 
 struct MeshPush
@@ -17,7 +17,10 @@ struct MeshPush
     InstanceData* instances; // the frame's instance buffer
     uint firstInstance;      // this draw's first entry in it
     uint instancePad;
-    float4 reserved[3];
+    uint* edgeMask;     // meshWirePS: polygon sides per triangle, 4 bits each (RenderMesh::edgeMask)
+    uint firstTriangle; // meshWirePS: the section's first triangle, which SV_PrimitiveID counts from
+    float wireWidth;    // meshWirePS: pixels
+    float4 reserved[2];
     float4 eye;     // xyz camera position
     float4 base;    // rgb base color (linear), a: roughness. Background: x blur lod, y saturation, z exposure
     float4 params;  // x: exposure, y: 1 if Z-up, z: highlight amount, w: 0 studio rig, 1 environment, 2 flat (unlit)
@@ -529,8 +532,7 @@ float3 tintBack(float3 c, bool front)
     return lerp(c, t.rgb, t.a);
 }
 
-[shader("fragment")]
-float4 meshPS(VSOut i, bool front : SV_IsFrontFace) : SV_Target
+float4 shadeMesh(VSOut i, bool front)
 {
     gVtPixel = uint2(i.pos.xy);
     uint flags = pc.flags;
@@ -622,6 +624,41 @@ float4 meshPS(VSOut i, bool front : SV_IsFrontFace) : SV_Target
     float alpha = (flags & kTranslucent) != 0 ? saturate(opacity) : 1.0;
     return float4(dither(c, i.pos.xy), alpha);
 }
+
+[shader("fragment")]
+float4 meshPS(VSOut i, bool front : SV_IsFrontFace) : SV_Target
+{
+    return shadeMesh(i, front);
+}
+
+#ifdef LILA_WIRE
+/**
+ * meshPS with the wire drawn over it from each pixel's distance to the triangle's polygon sides, so a dense mesh's
+ * wireframe costs no line geometry. Each side's two triangles draw half the width each.
+ */
+[shader("fragment")]
+float4 meshWirePS(VSOut i, bool front : SV_IsFrontFace, float3 bary : SV_Barycentrics, uint prim : SV_PrimitiveID) : SV_Target
+{
+    float4 c = shadeMesh(i, front);
+    const float4 wire = pc.instances[i.instance].color;
+    if (wire.a <= 0.0)
+        return c;
+    const uint tri = pc.firstTriangle + prim;
+    const uint sides = (pc.edgeMask[tri >> 3] >> ((tri & 7) * 4)) & 7;
+    // Barycentric k is zero along the side opposite vertex k.
+    const float3 px = bary / max(fwidth(bary), 1e-6);
+    float d = 1e9;
+    if ((sides & 1) != 0)
+        d = min(d, px.z);
+    if ((sides & 2) != 0)
+        d = min(d, px.x);
+    if ((sides & 4) != 0)
+        d = min(d, px.y);
+    const float cover = saturate(0.5 * pc.wireWidth + 0.5 - d);
+    c.rgb = lerp(c.rgb, wire.rgb, cover * wire.a);
+    return c;
+}
+#endif
 
 // Single-sample depth and world normal for the ambient occlusion pass. Masked materials cut out as in meshPS.
 [shader("fragment")]

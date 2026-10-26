@@ -236,7 +236,7 @@ class Node:
 
     @property
     def points(self):
-        """Final (modified) mesh points in object space, as lila.math.Vector."""
+        """Final (modified) mesh points in object space, as lila.math.Vector. Slow past a few thousand points: use points_array."""
         return [_vector(p) for p in ops.meshData(self.path)["points"]]
 
     @property
@@ -296,6 +296,39 @@ class Node:
         """Turns this live array into a plain group holding its sources and a real object per copy: instances of the
         sources ("instance"), copies ("copy") or references ("reference"). Returns the group Node."""
         return Node(ops.bakeArray(self.path, mode=mode)[0])
+
+    # mesh arrays (numpy, fast enough for meshes of millions of points)
+
+    def points_array(self, base=False, world=False):
+        """(N, 3) float64 numpy array of the points in points' order, read-only. A view of the mesh itself when it can be
+        (object space, no deleted points), else a copy. base=True reads the base mesh under modifiers; world=True
+        world space. Safe to read from any thread: it is a snapshot that later edits don't change."""
+        return _lila.mesh_points_array(self.path, base, world)
+
+    def face_arrays(self, base=False):
+        """(counts, points): uint32 numpy arrays of corners per face and every face's point indices in a row, so face i is
+        points[offsets[i]:offsets[i] + counts[i]] with offsets = numpy.cumsum(counts) - counts."""
+        return _lila.mesh_face_arrays(self.path, base)
+
+    def normals_array(self, base=False):
+        """(C, 3) float32 numpy array of normals per face-vertex (faces in order, corners around each face), as drawn."""
+        return _lila.mesh_normals_array(self.path, base)
+
+    def uvs_array(self, uv_set="uv0", base=False):
+        """(C, 2) float32 numpy array of a uv set per face-vertex, in normals_array's order."""
+        return _lila.mesh_uv_array(self.path, uv_set, base)
+
+    @property
+    def uv_sets(self):
+        """The mesh's uv set names: uv0, uv1, ..."""
+        return _lila.mesh_uv_sets(self.path, False)
+
+    def set_points(self, points):
+        """Moves every point of the base mesh (under modifiers) from an (N, 3) array-like in points_array(base=True)'s
+        order, in object space; one undo step. Main thread only."""
+        import numpy as np
+        arr = np.ascontiguousarray(points, dtype=np.float64).reshape(-1, 3)
+        _lila.set_mesh_points(self.path, arr)
 
     # vertex colors
 

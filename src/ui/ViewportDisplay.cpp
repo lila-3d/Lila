@@ -2,6 +2,7 @@
 
 #include "core/PrefStore.h"
 #include "render/DisplayOptions.h"
+#include "render/Renderer.h"
 #include "ui/Theme.h"
 
 #include <algorithm>
@@ -124,5 +125,26 @@ glm::vec4 falloffColor(float w, bool grayscale)
         return {v, v, v, 1.0f};
     }
     return ramp({{0.25f, 0.0f, 0.0f}, {0.8f, 0.1f, 0.0f}, {1.0f, 0.5f, 0.0f}, {1.0f, 1.0f, 0.0f}}, w);
+}
+
+void applyQuality(Quality q)
+{
+    PrefStore& p = PrefStore::get();
+    p.set("general", "/viewport/ao/enabled", q != Quality::Fastest);
+    p.set("general", "/viewport/ao/mode", q == Quality::Best ? "accurate" : "fast");
+    p.set("general", kAaEnabled, q != Quality::Fastest);
+    p.set("general", kAaSamples, q == Quality::Best ? 8 : 4);
+    p.set("general", kShadows, q != Quality::Fastest);
+}
+
+Quality recommendedQuality()
+{
+    const render::Renderer::GpuInfo gpu = render::Renderer::get().gpuInfo();
+    constexpr uint64_t kGiB = 1ull << 30;
+    if (gpu.name.empty())
+        return Quality::Best;
+    if (!gpu.discrete || gpu.vramBytes < 4 * kGiB)
+        return Quality::Fastest;
+    return gpu.vramBytes < 8 * kGiB ? Quality::Balanced : Quality::Best;
 }
 } // namespace lila::ui::viewportDisplay

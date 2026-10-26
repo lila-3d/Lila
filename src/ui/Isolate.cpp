@@ -20,7 +20,7 @@ uint64_t maskKey(const Set& set, scene::NodeId id) { return set.version * 0x9E37
 
 bool shows(const Set* set, scene::NodeId id) { return !live(set) || set->shows(id); }
 
-std::shared_ptr<const MaskedMesh> masked(const Set* set, scene::NodeId id, const scene::MeshPtr& drawn, int smooth, bool tangents)
+std::shared_ptr<const MaskedMesh> masked(const Set* set, scene::NodeId id, const scene::MeshPtr& drawn, int smooth, bool tangents, const SmoothCage* cageWire)
 {
     if (!live(set) || !set->isPartial(id) || !drawn)
         return nullptr;
@@ -41,7 +41,7 @@ std::shared_ptr<const MaskedMesh> masked(const Set* set, scene::NodeId id, const
         if (faces.empty())
             faces.assign(drawn->faceCapacity(), 1);
         return faces;
-    }, tangents);
+    }, tangents, cageWire);
 }
 
 std::shared_ptr<const scene::isolation::Visibility> visibility(const Set* set, scene::NodeId id, const scene::MeshPtr& cage)
@@ -67,14 +67,14 @@ std::shared_ptr<const scene::isolation::Visibility> visibility(const Set* set, s
 }
 
 std::optional<RayHit> raycast(const Set* set, scene::NodeId id, const scene::MeshPtr& mesh, const glm::dmat4& world, const glm::dvec3& origin,
-                              const glm::dvec3& dir)
+                              const glm::dvec3& dir, int smooth)
 {
     if (!shows(set, id))
         return std::nullopt;
     auto rm = renderMeshFor(mesh);
     if (!rm)
         return std::nullopt;
-    auto m = masked(set, id, mesh);
+    auto m = masked(set, id, mesh, smooth);
     return ui::raycast(*rm, world, origin, dir, m ? &m->hiddenTriangles : nullptr);
 }
 } // namespace lila::ui::isolate

@@ -64,6 +64,22 @@ TEST_CASE("meshes save and load in both formats")
     }
 }
 
+TEST_CASE("setMeshPoints moves every point in one undo step")
+{
+    run("newScene");
+    std::string mesh = run("polyCube", {{"width", 2}, {"height", 2}, {"depth", 2}})[0];
+    json before = run("meshData", {{"args", {mesh}}})["points"];
+    json moved = json::array();
+    for (const json& p : before)
+        moved.push_back({p[0].get<double>() * 2.0, p[1].get<double>() + 5.0, p[2]});
+    CHECK(run("setMeshPoints", {{"args", {mesh}}, {"points", moved}}) == int64_t(before.size()));
+    CHECK(run("meshData", {{"args", {mesh}}})["points"] == moved);
+    CHECK(run("meshInfo", {{"args", {mesh}}})["faces"] == 6);
+    run("undo");
+    CHECK(run("meshData", {{"args", {mesh}}})["points"] == before);
+    CHECK_THROWS(run("setMeshPoints", {{"args", {mesh}}, {"points", json::array({{0, 0, 0}})}}));
+}
+
 TEST_CASE("obj export and import")
 {
     run("newScene");

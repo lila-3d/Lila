@@ -388,7 +388,7 @@ public:
         // The mesh itself is hidden while its proxy stands in for it. Its draw is found by its cached render copy.
         int smooth = int(n->as<int64_t>(scene::MeshNode::kSmoothPreview));
         auto shown = renderMeshFor(smoothedFor(n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh), smooth));
-        std::erase_if(s.meshes, [&](const render::MeshDraw& d) { return shown && d.mesh == shown; });
+        std::erase_if(s.meshes, [&](const render::MeshDraw& d) { return shown && d.mesh && (d.mesh == shown || d.mesh->shareVertices == shown); });
 
         render::MeshDraw d;
         d.mesh = session->sculpt.renderMesh();

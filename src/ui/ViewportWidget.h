@@ -39,6 +39,9 @@ public:
     explicit ViewportWidget(QWidget* parent = nullptr);
     ~ViewportWidget() override;
 
+    /** What the GPU spent on this view's last finished frame. */
+    render::Renderer::FrameStats frameStats() const;
+
     QPaintEngine* paintEngine() const override { return nullptr; }
 
     Camera& camera() { return mCamera; }

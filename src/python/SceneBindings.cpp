@@ -10,6 +10,9 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include <tbb/blocked_range.h>
+#include <tbb/parallel_for.h>
+
 namespace nb = nanobind;
 
 namespace lila::python
@@ -36,12 +39,20 @@ void bindScene(nb::module_& m)
             if (!m || !geo::colors::has(*m, name))
                 throw nb::value_error((mesh + " has no color set " + (name.empty() ? std::string("(none)") : name)).c_str());
             std::span<const glm::vec4> v = geo::colors::values(*m, name);
-            std::vector<geo::Index> order = vcolor::cornerOrder(*m);
-            auto* data = new float[order.size() * 4];
-            for (size_t i = 0; i < order.size(); ++i)
-                std::memcpy(data + i * 4, &v[order[i]], sizeof(glm::vec4));
+            float* data = nullptr;
+            size_t rows = 0;
+            {
+                nb::gil_scoped_release nogil;
+                std::vector<geo::Index> order = vcolor::cornerOrder(*m);
+                rows = order.size();
+                data = new float[rows * 4];
+                tbb::parallel_for(tbb::blocked_range<size_t>(0, rows, 1 << 14), [&](const tbb::blocked_range<size_t>& r) {
+                    for (size_t i = r.begin(); i < r.end(); ++i)
+                        std::memcpy(data + i * 4, &v[order[i]], sizeof(glm::vec4));
+                });
+            }
             nb::capsule owner(data, [](void* p) noexcept { delete[] static_cast<float*>(p); });
-            return nb::ndarray<nb::numpy, float, nb::ndim<2>>(data, {order.size(), size_t(4)}, owner);
+            return nb::ndarray<nb::numpy, float, nb::ndim<2>>(data, {rows, size_t(4)}, owner);
         },
         nb::arg("mesh"), nb::arg("color_set") = "", nb::arg("base") = true);
     m.def(
@@ -49,8 +60,12 @@ void bindScene(nb::module_& m)
         [](const std::string& mesh, nb::ndarray<const float, nb::ndim<2>, nb::c_contig, nb::device::cpu> values, const std::string& set) {
             if (values.shape(1) != 4)
                 throw nb::value_error("expected an (N, 4) float32 array");
-            std::vector<glm::vec4> flat(values.shape(0));
-            std::memcpy(flat.data(), values.data(), flat.size() * sizeof(glm::vec4));
+            std::vector<glm::vec4> flat;
+            {
+                nb::gil_scoped_release nogil;
+                flat.resize(values.shape(0));
+                std::memcpy(flat.data(), values.data(), flat.size() * sizeof(glm::vec4));
+            }
             uint64_t token = vcolor::stashValues(std::move(flat));
             ops::execute("setVertexColorData", {{"args", {mesh}}, {"colorSet", set}, {"buffer", int64_t(token)}});
         },

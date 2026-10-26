@@ -20,12 +20,13 @@ LILA_UI_API bool shows(const Set* set, scene::NodeId id);
 /**
  * The subset of renderMeshFor(drawn) to draw and raycast, or null when every face of the node shows. drawn is the node's
  * cage, its outMesh, or its outMesh after smooth levels of smooth preview; meshes whose faces no longer match the
- * cage's ids (topology-changing modifiers) show whole.
+ * cage's ids (topology-changing modifiers) show whole. cageWire keeps only the smoothed wire along the cage's edges.
  */
-LILA_UI_API std::shared_ptr<const MaskedMesh> masked(const Set* set, scene::NodeId id, const scene::MeshPtr& drawn, int smooth = 0, bool tangents = false);
+LILA_UI_API std::shared_ptr<const MaskedMesh> masked(const Set* set, scene::NodeId id, const scene::MeshPtr& drawn, int smooth = 0, bool tangents = false,
+                                                     const SmoothCage* cageWire = nullptr);
 /** Which components of the node's cage show, cached per isolation change. */
 LILA_UI_API std::shared_ptr<const scene::isolation::Visibility> visibility(const Set* set, scene::NodeId id, const scene::MeshPtr& cage);
-/** raycast against what shows of the node's mesh; nullopt for a node the set hides. */
+/** raycast against what shows of the node's mesh (smoothed by smooth levels of its outMesh); nullopt for a node the set hides. */
 LILA_UI_API std::optional<RayHit> raycast(const Set* set, scene::NodeId id, const scene::MeshPtr& mesh, const glm::dmat4& world, const glm::dvec3& origin,
-                                          const glm::dvec3& dir);
+                                          const glm::dvec3& dir, int smooth = 0);
 } // namespace lila::ui::isolate

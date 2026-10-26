@@ -2,6 +2,7 @@
 
 // Before Qt: Qt's emit macro breaks TBB's headers.
 #include "uv/LiveSession.h"
+#include <tbb/parallel_for.h>
 
 #include "ops/Command.h"
 #include "core/Log.h"
@@ -166,6 +167,8 @@ struct Seams
 {
     std::vector<glm::vec3> lines;
     std::vector<geo::Index> edges;
+    /** The same lines kept on the GPU, drawn as a wire. */
+    std::shared_ptr<const render::RenderMesh> wire;
 };
 
 /** Edges marked as seams or where the uv set splits. Cached per mesh. */
@@ -188,25 +191,33 @@ const Seams& seamLines(const MeshPtr& mesh, const std::string& set)
     std::span<const glm::vec2> uv = m.cornerAttrs().get<glm::vec2>(set);
     std::span<const bool> seam = m.edgeAttrs().get<bool>(geo::attr::kSeam);
     auto same = [](glm::vec2 a, glm::vec2 b) { return glm::all(glm::lessThanEqual(glm::abs(a - b), glm::vec2(1e-6f))); };
-    for (geo::Index ed = 0; ed < m.edgeCapacity(); ++ed)
-    {
-        if (!m.edgeValid(ed) || m.isBoundaryEdge(ed))
-            continue;
-        bool split = !seam.empty() && seam[ed];
-        if (!split && !uv.empty() && m.isManifoldEdge(ed))
+    std::vector<uint8_t> split(m.edgeCapacity(), 0);
+    tbb::parallel_for(tbb::blocked_range<geo::Index>(0, m.edgeCapacity(), 16384), [&](const tbb::blocked_range<geo::Index>& range) {
+        for (geo::Index ed = range.begin(); ed != range.end(); ++ed)
         {
-            geo::Index c = m.edgeCorner(ed), r = m.cornerRadial(c);
-            bool sameDir = m.cornerPoint(r) == m.cornerPoint(c);
-            glm::vec2 ra = sameDir ? uv[r] : uv[m.cornerNext(r)], rb = sameDir ? uv[m.cornerNext(r)] : uv[r];
-            split = !same(ra, uv[c]) || !same(rb, uv[m.cornerNext(c)]);
+            if (!m.edgeValid(ed) || m.isBoundaryEdge(ed))
+                continue;
+            bool s = !seam.empty() && seam[ed];
+            if (!s && !uv.empty() && m.isManifoldEdge(ed))
+            {
+                geo::Index c = m.edgeCorner(ed), r = m.cornerRadial(c);
+                bool sameDir = m.cornerPoint(r) == m.cornerPoint(c);
+                glm::vec2 ra = sameDir ? uv[r] : uv[m.cornerNext(r)], rb = sameDir ? uv[m.cornerNext(r)] : uv[r];
+                s = !same(ra, uv[c]) || !same(rb, uv[m.cornerNext(c)]);
+            }
+            split[ed] = s;
         }
-        if (split)
+    });
+    for (geo::Index ed = 0; ed < m.edgeCapacity(); ++ed)
+        if (split[ed])
         {
             e.seams.lines.push_back(glm::vec3(m.position(m.edgePoint(ed, 0))));
             e.seams.lines.push_back(glm::vec3(m.position(m.edgePoint(ed, 1))));
             e.seams.edges.push_back(ed);
         }
-    }
+    auto wire = std::make_shared<render::RenderMesh>();
+    wire->edgePoints = e.seams.lines;
+    e.seams.wire = std::move(wire);
     cache.push_back(std::move(e));
     return cache.back().seams;
 }
@@ -216,8 +227,10 @@ void draw3d(render::FrameState& s, OverlayPainter&, const ViewInfo& view)
     LILA_ZONE();
 
     const Settings& st = settings();
+    // Both only show while a UV editor does.
     const bool checker = st.checker && !shownEditors().empty();
-    if (!checker && !st.seams)
+    const bool seams = st.seams && !shownEditors().empty();
+    if (!checker && !seams)
         return;
     scene::Graph& g = scene::Graph::current();
     const std::string set = uv::currentUvSet();
@@ -234,7 +247,7 @@ void draw3d(render::FrameState& s, OverlayPainter&, const ViewInfo& view)
             int smooth = int(n->as<int64_t>(scene::MeshNode::kSmoothPreview));
             auto rm = renderMeshFor(smoothedFor(out, smooth), false);
             for (render::MeshDraw& d : s.meshes)
-                if (d.mesh == rm)
+                if (d.mesh && (d.mesh == rm || d.mesh->shareVertices == rm))
                 {
                     uint32_t slotCount = 1;
                     for (const render::MeshSection& sec : rm->sections)
@@ -242,7 +255,7 @@ void draw3d(render::FrameState& s, OverlayPainter&, const ViewInfo& view)
                     d.materials.assign(slotCount, checkerMaterial(st.checkerTiling));
                 }
         }
-        if (st.seams)
+        if (seams)
         {
             glm::mat4 w = glm::mat4(n->as<glm::dmat4>(scene::Transform::kWorldMatrix));
             const glm::vec4 color(1.0f, 1.0f, 1.0f, 1.0f);
@@ -252,8 +265,19 @@ void draw3d(render::FrameState& s, OverlayPainter&, const ViewInfo& view)
             // Visibility indexes the cage, so it only applies while the output keeps the cage's edges.
             const auto vis = isolate::visibility(view.isolation, id, cage);
             const bool clip = !vis->all() && cage && cage->edgeCapacity() == out->edgeCapacity();
+            if (!clip)
+            {
+                render::MeshDraw d;
+                d.mesh = seams.wire;
+                d.world = w;
+                d.flags = render::DrawWire | render::DrawWireDepth;
+                d.wireColor = color;
+                d.wireWidth = s.seamLineWidth;
+                s.meshes.push_back(std::move(d));
+                continue;
+            }
             for (size_t i = 0; i < seams.edges.size(); ++i)
-                if (!clip || vis->edge(seams.edges[i]))
+                if (vis->edge(seams.edges[i]))
                 {
                     s.seamLines.push_back({glm::vec3(w * glm::vec4(seams.lines[2 * i], 1.0f)), color});
                     s.seamLines.push_back({glm::vec3(w * glm::vec4(seams.lines[2 * i + 1], 1.0f)), color});

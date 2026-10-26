@@ -69,7 +69,18 @@ struct RenderMesh
     std::vector<MeshVertex> vertices;
     std::vector<uint32_t> indices;     // triangle list, grouped by section
     std::vector<MeshSection> sections; // empty means one section of slot 0
-    std::vector<glm::vec3> edgePoints; // line list for wireframe, original polygon edges only
+    std::vector<glm::vec3> edgePoints; // line list for wireframe, original polygon edges only; with edgeIndices, the points they index
+    /** Line list into edgePoints: each point stored once, so dense meshes draw their wire with far fewer vertices. */
+    std::vector<uint32_t> edgeIndices;
+    /**
+     * Which sides of each triangle are polygon edges, 4 bits per triangle and 8 triangles per word: bit 0 is the side
+     * from its first vertex to its second, bit 1 second to third, bit 2 third to first. Lets the mesh shader draw the
+     * wire itself; empty draws it as lines.
+     */
+    std::vector<uint32_t> edgeMask;
+
+    size_t edgeVertexCount() const { return edgeIndices.empty() ? edgePoints.size() : edgeIndices.size(); }
+    const glm::vec3& edgePoint(size_t k) const { return edgeIndices.empty() ? edgePoints[k] : edgePoints[edgeIndices[k]]; }
     glm::vec3 boundsMin{0.0f};
     glm::vec3 boundsMax{0.0f};
     uint64_t key = nextKey();

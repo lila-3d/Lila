@@ -50,6 +50,7 @@ struct RenderMesh
     std::vector<Index> cornerVertex;            // vertex per source corner, kInvalid for dead corners
     std::vector<Index> indices;                 // 3 per triangle, ordered by section
     std::vector<Index> triangleFaces;           // source face per triangle
+    std::vector<uint8_t> triangleSides;         // per triangle, bit k set when side k (vertex k to k + 1) is a polygon edge
     std::vector<RenderSection> sections;
     std::vector<Index> lineIndices;             // 2 per edge, into the vertex buffers
     std::vector<Index> lineEdges;               // source edge per line

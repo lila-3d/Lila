@@ -45,39 +45,84 @@ json layerData(const geo::Attribute& a, std::span<const Index> order)
     return data;
 }
 
+/** A flat numeric array from a mesh document: plain json, or packed as a binary scene file loads it. */
+struct Numbers
+{
+    const json& j;
+    const uint8_t* data = nullptr;
+    packed::DType dtype = packed::DType::F64;
+    size_t n = 0;
+
+    explicit Numbers(const json& v) : j(v)
+    {
+        if (packed::is(v))
+        {
+            data = v.get_binary().data();
+            dtype = packed::dtype(v);
+            n = packed::count(v);
+        }
+        else
+            n = v.is_array() ? v.size() : 0;
+    }
+    size_t size() const { return n; }
+    double number(size_t i) const
+    {
+        if (!data)
+            return j[i].is_boolean() ? double(j[i].get<bool>()) : j[i].get<double>();
+        switch (dtype)
+        {
+        case packed::DType::F64: { double v; std::memcpy(&v, data + i * 8, 8); return v; }
+        case packed::DType::F32: { float v; std::memcpy(&v, data + i * 4, 4); return v; }
+        case packed::DType::I32: { int32_t v; std::memcpy(&v, data + i * 4, 4); return v; }
+        case packed::DType::U32: { uint32_t v; std::memcpy(&v, data + i * 4, 4); return v; }
+        case packed::DType::Bool: return data[i];
+        }
+        return 0.0;
+    }
+    std::vector<Index> indices() const
+    {
+        std::vector<Index> out(n);
+        if (data && (dtype == packed::DType::U32 || dtype == packed::DType::I32))
+            std::memcpy(out.data(), data, n * sizeof(Index));
+        else
+            for (size_t i = 0; i < n; ++i)
+                out[i] = Index(number(i));
+        return out;
+    }
+};
+
 void setLayerData(geo::Attribute& a, const json& data, std::span<const Index> order)
 {
-    int n = geo::attrTypeComponents(a.type());
-    size_t at = 0;
-    for (Index i : order)
-    {
-        if (i == geo::kInvalid)
+    const Numbers values(data);
+    const int n = geo::attrTypeComponents(a.type());
+    // Every entry, dropped or not, takes the same number of values, so each one's offset is known up front.
+    const size_t stride = a.type() == geo::AttrType::Int || a.type() == geo::AttrType::Bool ? 1 : size_t(n);
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, order.size(), 16384), [&](const tbb::blocked_range<size_t>& r) {
+        for (size_t k = r.begin(); k != r.end(); ++k)
         {
-            at += a.type() == geo::AttrType::Int || a.type() == geo::AttrType::Bool ? 1 : n;
-            continue;
-        }
-        std::byte* p = a.raw(i);
-        switch (a.type())
-        {
-        case geo::AttrType::Int:
-        {
-            int32_t v = at < data.size() ? data[at].get<int32_t>() : 0;
-            std::memcpy(p, &v, 4);
-            ++at;
-            break;
-        }
-        case geo::AttrType::Bool:
-            *reinterpret_cast<bool*>(p) = at < data.size() && data[at].get<bool>();
-            ++at;
-            break;
-        default:
-            for (int k = 0; k < n; ++k, ++at)
+            const Index i = order[k];
+            if (i == geo::kInvalid)
+                continue;
+            const size_t at = k * stride;
+            std::byte* p = a.raw(i);
+            switch (a.type())
             {
-                float v = at < data.size() ? data[at].get<float>() : 0.0f;
-                std::memcpy(p + k * 4, &v, 4);
+            case geo::AttrType::Int:
+            {
+                int32_t v = at < values.size() ? int32_t(values.number(at)) : 0;
+                std::memcpy(p, &v, 4);
+                break;
+            }
+            case geo::AttrType::Bool: *reinterpret_cast<bool*>(p) = at < values.size() && values.number(at) != 0.0; break;
+            default:
+                for (int c = 0; c < n; ++c)
+                {
+                    float v = at + c < values.size() ? float(values.number(at + c)) : 0.0f;
+                    std::memcpy(p + c * 4, &v, 4);
+                }
             }
         }
-    }
+    });
 }
 
 geo::AttrType typeFromName(const std::string& s)
@@ -312,10 +357,19 @@ MeshPtr meshFromJson(const json& j)
         return it == j.end() ? kNone : *it;
     };
     std::vector<glm::dvec3> points;
-    for (const json& p : member("points"))
-        points.emplace_back(p[0].get<double>(), p[1].get<double>(), p[2].get<double>());
-    std::vector<Index> sizes = j.value("faceSizes", std::vector<Index>{});
-    std::vector<Index> indices = j.value("faceIndices", std::vector<Index>{});
+    if (const json& pj = member("points"); packed::is(pj))
+    {
+        const Numbers flat(pj);
+        points.resize(flat.size() / 3);
+        tbb::parallel_for(size_t(0), points.size(), [&](size_t i) {
+            points[i] = {flat.number(i * 3), flat.number(i * 3 + 1), flat.number(i * 3 + 2)};
+        });
+    }
+    else
+        for (const json& p : pj)
+            points.emplace_back(p[0].get<double>(), p[1].get<double>(), p[2].get<double>());
+    std::vector<Index> sizes = Numbers(member("faceSizes")).indices();
+    std::vector<Index> indices = Numbers(member("faceIndices")).indices();
     auto mesh = std::make_shared<geo::Mesh>(geo::Mesh::fromPolygons(points, sizes, indices));
 
     std::vector<Index> pointOrder(mesh->pointCapacity());
@@ -341,10 +395,9 @@ MeshPtr meshFromJson(const json& j)
         }
     }
 
-    std::vector<Index> edgeOrder;
-    const json& edges = member("edges");
-    for (size_t i = 0; i + 1 < edges.size(); i += 2)
-        edgeOrder.push_back(mesh->findEdge(edges[i].get<Index>(), edges[i + 1].get<Index>()));
+    const std::vector<Index> edges = Numbers(member("edges")).indices();
+    std::vector<Index> edgeOrder(edges.size() / 2);
+    tbb::parallel_for(size_t(0), edgeOrder.size(), [&](size_t i) { edgeOrder[i] = mesh->findEdge(edges[i * 2], edges[i * 2 + 1]); });
 
     for (const json& layer : member("layers"))
     {

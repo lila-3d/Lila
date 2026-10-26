@@ -1,8 +1,10 @@
 #include "ui/MeshCache.h"
 
+#include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "geo/Ops.h"
 #include "geo/RenderMesh.h"
+#include "ui/ViewportDisplay.h"
 
 #include <tbb/parallel_for.h>
 #include <tbb/parallel_reduce.h>
@@ -59,8 +61,19 @@ Entry build(const scene::MeshPtr& source, bool tangents)
     out->indices.assign(rm.indices.begin(), rm.indices.end());
     for (const geo::RenderSection& sec : rm.sections)
         out->sections.push_back({uint32_t(std::max(0, sec.material)), sec.firstIndex, sec.indexCount});
-    out->edgePoints.resize(rm.lineIndices.size());
-    tbb::parallel_for(size_t(0), rm.lineIndices.size(), [&](size_t i) { out->edgePoints[i] = rm.positions[rm.lineIndices[i]]; });
+    out->edgePoints.resize(source->pointCapacity());
+    tbb::parallel_for(geo::Index(0), source->pointCapacity(), [&](geo::Index p) {
+        out->edgePoints[p] = source->pointValid(p) ? glm::vec3(source->position(p)) : glm::vec3(0.0f);
+    });
+    out->edgeMask.assign((rm.triangleSides.size() + 7) / 8, 0u);
+    tbb::parallel_for(size_t(0), out->edgeMask.size(), [&](size_t w) {
+        uint32_t word = 0;
+        for (size_t t = w * 8; t < std::min(w * 8 + 8, rm.triangleSides.size()); ++t)
+            word |= uint32_t(rm.triangleSides[t]) << ((t & 7) * 4);
+        out->edgeMask[w] = word;
+    });
+    out->edgeIndices.resize(rm.lineIndices.size());
+    tbb::parallel_for(size_t(0), rm.lineIndices.size(), [&](size_t i) { out->edgeIndices[i] = rm.vertexPoint[rm.lineIndices[i]]; });
     if (n)
     {
         out->boundsMin = out->boundsMax = rm.positions[0];
@@ -113,7 +126,7 @@ bool reuseRenderMesh(const scene::MeshPtr& from, const scene::MeshPtr& to, const
 }
 
 std::shared_ptr<const MaskedMesh> maskedRenderMeshFor(const scene::MeshPtr& mesh, uint64_t maskKey, const std::function<std::vector<uint8_t>()>& shownFaces,
-                                                      bool tangents)
+                                                      bool tangents, const SmoothCage* cageWire)
 {
     LILA_ZONE();
 
@@ -126,8 +139,8 @@ std::shared_ptr<const MaskedMesh> maskedRenderMeshFor(const scene::MeshPtr& mesh
         std::shared_ptr<const render::RenderMesh> base;
         std::shared_ptr<const MaskedMesh> result;
     };
-    static std::map<std::pair<const geo::Mesh*, uint64_t>, Masked> cache;
-    auto key = std::make_pair(mesh.get(), maskKey);
+    static std::map<std::tuple<const geo::Mesh*, uint64_t, bool>, Masked> cache;
+    auto key = std::make_tuple(mesh.get(), maskKey, cageWire != nullptr);
     if (auto it = cache.find(key); it != cache.end() && it->second.source.lock() == mesh && it->second.base == full->built)
         return it->second.result;
     if (cache.size() > 64)
@@ -135,8 +148,8 @@ std::shared_ptr<const MaskedMesh> maskedRenderMeshFor(const scene::MeshPtr& mesh
 
     const geo::RenderMesh& pd = *full->pick;
     const render::RenderMesh& rm = *full->built;
-    const std::vector<uint8_t> faces = shownFaces();
-    auto shown = [&](geo::Index f) { return f < faces.size() && faces[f]; };
+    const std::vector<uint8_t> faces = shownFaces ? shownFaces() : std::vector<uint8_t>();
+    auto shown = [&](geo::Index f) { return !shownFaces || (f < faces.size() && faces[f]); };
     auto out = std::make_shared<MaskedMesh>();
     auto sub = std::make_shared<render::RenderMesh>();
     sub->shareVertices = full->built;
@@ -168,11 +181,12 @@ std::shared_ptr<const MaskedMesh> maskedRenderMeshFor(const scene::MeshPtr& mesh
             if (shown(f) && mesh->faceValid(f))
                 mesh->forEachFaceCorner(f, [&](geo::Index c) { edgeShown[mesh->cornerEdge(c)] = 1; });
     }
-    for (size_t l = 0; l < pd.lineEdges.size() && 2 * l + 1 < rm.edgePoints.size(); ++l)
-        if (pd.lineEdges[l] < edgeShown.size() && edgeShown[pd.lineEdges[l]])
+    for (size_t l = 0; l < pd.lineEdges.size() && 2 * l + 1 < rm.edgeVertexCount(); ++l)
+        if (pd.lineEdges[l] < edgeShown.size() && edgeShown[pd.lineEdges[l]] &&
+            (!cageWire || (pd.lineEdges[l] < cageWire->map.edges.size() && cageWire->map.edges[pd.lineEdges[l]] != geo::kInvalid)))
         {
-            sub->edgePoints.push_back(rm.edgePoints[2 * l]);
-            sub->edgePoints.push_back(rm.edgePoints[2 * l + 1]);
+            sub->edgePoints.push_back(rm.edgePoint(2 * l));
+            sub->edgePoints.push_back(rm.edgePoint(2 * l + 1));
         }
     out->mesh = std::move(sub);
     cache[key] = {mesh, full->built, out};
@@ -183,23 +197,68 @@ scene::MeshPtr smoothedFor(const scene::MeshPtr& mesh, int level)
 {
     if (!mesh || level <= 0)
         return mesh;
+    auto smooth = smoothCageFor(mesh, level);
+    return smooth ? smooth->mesh : mesh;
+}
+
+namespace
+{
+/** Groups items by key (one per item, kInvalid skipped) into offsets and ids, keys in [0, keys). */
+void invert(std::span<const geo::Index> keyOf, size_t keys, std::vector<geo::Index>& offsets, std::vector<geo::Index>& ids)
+{
+    offsets.assign(keys + 1, 0);
+    for (geo::Index k : keyOf)
+        if (k < keys)
+            ++offsets[k + 1];
+    for (size_t k = 0; k < keys; ++k)
+        offsets[k + 1] += offsets[k];
+    ids.resize(offsets[keys]);
+    std::vector<geo::Index> fill(offsets.begin(), offsets.end() - 1);
+    for (geo::Index i = 0; i < keyOf.size(); ++i)
+        if (keyOf[i] < keys)
+            ids[fill[keyOf[i]]++] = i;
+}
+} // namespace
+
+std::shared_ptr<const SmoothCage> smoothCageFor(const scene::MeshPtr& mesh, int level)
+{
+    if (!mesh || level <= 0)
+        return nullptr;
     struct Smoothed
     {
         std::weak_ptr<const geo::Mesh> source;
         int level = 0;
-        scene::MeshPtr result;
+        bool keepHardEdges = false;
+        std::shared_ptr<const SmoothCage> result;
     };
     static std::unordered_map<const geo::Mesh*, Smoothed> cache;
+    const bool keepHardEdges = PrefStore::get().value<bool>("general", viewportDisplay::kSmoothHardEdges, false);
     auto it = cache.find(mesh.get());
-    if (it != cache.end() && it->second.level == level && it->second.source.lock() == mesh)
+    if (it != cache.end() && it->second.level == level && it->second.keepHardEdges == keepHardEdges && it->second.source.lock() == mesh)
         return it->second.result;
+    LILA_ZONE();
     if (cache.size() > 64)
         std::erase_if(cache, [](const auto& kv) { return kv.second.source.expired(); });
     geo::SubdivideOptions o;
     o.levels = level;
-    auto result = std::make_shared<const geo::Mesh>(geo::subdivide(*mesh, o));
-    cache[mesh.get()] = {mesh, level, result};
-    return result;
+    o.keepHardEdges = keepHardEdges;
+    auto out = std::make_shared<SmoothCage>();
+    auto smoothed = std::make_shared<const geo::Mesh>(geo::subdivide(*mesh, o, &out->map));
+    out->cagePoints.assign(smoothed->pointCapacity(), geo::kInvalid);
+    for (geo::Index p = 0; p < out->map.points.size(); ++p)
+        if (out->map.points[p] < out->cagePoints.size())
+            out->cagePoints[out->map.points[p]] = p;
+    invert(out->map.edges, mesh->edgeCapacity(), out->edgeOffsets, out->edgeSegments);
+    invert(out->map.faces, mesh->faceCapacity(), out->faceOffsets, out->faceParts);
+    out->mesh = std::move(smoothed);
+    cache[mesh.get()] = {mesh, level, keepHardEdges, out};
+    return out;
+}
+
+std::shared_ptr<const render::RenderMesh> cageWireMeshFor(const SmoothCage& smooth, bool tangents)
+{
+    auto masked = maskedRenderMeshFor(smooth.mesh, 0, {}, tangents, &smooth);
+    return masked ? masked->mesh : renderMeshFor(smooth.mesh, tangents);
 }
 
 std::shared_ptr<const geo::RenderMesh> pickDataFor(const scene::MeshPtr& mesh)

@@ -7,6 +7,7 @@
 
 #include <functional>
 #include <optional>
+#include <vector>
 
 namespace lila::scene
 {
@@ -100,6 +101,9 @@ LILA_SCENE_API glm::dvec3 sceneUp();
  * zero) and its origin on position, or, for a sphere primitive cut short by its fraction, its open base on position.
  */
 LILA_SCENE_API void placePrimitive(Graph& g, NodeId mesh, const glm::dvec3& position, const glm::dvec3& normal);
+
+/** Hands a point buffer (Python's numpy array) to the setMeshPoints call that passes the returned token. */
+LILA_SCENE_API uint64_t stashPoints(std::vector<glm::dvec3> points);
 
 LILA_SCENE_API void registerMeshTypes();
 LILA_SCENE_API void registerMeshCommands();

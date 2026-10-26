@@ -193,13 +193,22 @@ RenderMesh buildRenderMesh(const Mesh& mesh, const RenderMeshOptions& opts)
 
     out.indices.resize(size_t(triCount) * 3);
     out.triangleFaces.resize(triCount);
+    out.triangleSides.resize(triCount);
     tbb::parallel_for(tbb::blocked_range<Index>(0, triCount, kGrain * 4), [&](const tbb::blocked_range<Index>& r) {
         for (Index i = r.begin(); i < r.end(); ++i)
         {
             const Index t = order[i];
+            uint8_t sides = 0;
             for (int k = 0; k < 3; ++k)
-                out.indices[size_t(i) * 3 + k] = out.cornerVertex[tris.corners[size_t(t) * 3 + k]];
+            {
+                const Index a = tris.corners[size_t(t) * 3 + k], b = tris.corners[size_t(t) * 3 + (k + 1) % 3];
+                out.indices[size_t(i) * 3 + k] = out.cornerVertex[a];
+                // A side between neighbouring corners of the polygon is one of its edges; the rest split it.
+                if (mesh.cornerNext(a) == b || mesh.cornerNext(b) == a)
+                    sides |= uint8_t(1u << k);
+            }
             out.triangleFaces[i] = tris.faces[t];
+            out.triangleSides[i] = sides;
         }
     });
 

@@ -6,7 +6,14 @@
 
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <string>
+#include <vector>
+
+namespace lila::geo
+{
+class Mesh;
+}
 
 namespace lila::ext
 {
@@ -31,6 +38,21 @@ namespace lila::io
  * arrays as packed:: binary values, which only encodeBinary takes; packed::unpackAll turns them back into plain json.
  */
 LILA_SCENE_API nlohmann::json serialize(const std::filesystem::path& sceneDir = {}, bool packed = false);
+
+/** A mesh attr serialize left as null for fillMeshes to write later, off the main thread. */
+struct DeferredMesh
+{
+    size_t node = 0; // index into the document's "nodes"
+    std::string attr;
+    std::shared_ptr<const geo::Mesh> mesh;
+};
+/**
+ * serialize with packed meshes left for later: the scene is read on the main thread, but its meshes (immutable
+ * snapshots) are converted by fillMeshes on any thread, so a dense scene's autosave doesn't stall the UI.
+ */
+LILA_SCENE_API nlohmann::json serializeDeferred(std::vector<DeferredMesh>& meshes);
+/** Converts the meshes serializeDeferred left out, in parallel, and writes them into doc. */
+LILA_SCENE_API void fillMeshes(nlohmann::json& doc, std::vector<DeferredMesh>& meshes);
 /**
  * Replaces the current scene. Throws std::runtime_error with a readable message. ownBytes weighs the document's own
  * nodes against its references' file sizes on the progress bar (the scene file's size, typically).
