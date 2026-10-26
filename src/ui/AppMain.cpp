@@ -32,6 +32,7 @@
 #include "ui/AgentSetup.h"
 #include "ui/BakePaintTool.h"
 #include "ui/SurfaceSnap.h"
+#include "ui/ViewportRenderers.h"
 #include "ui/TargetWeldTool.h"
 #include "ui/CurveUi.h"
 #include "ui/ConformTool.h"
@@ -112,6 +113,7 @@ void registerUi()
     actions::registerBuiltins();
     tools::registerActions();
     surfaceSnap::registerCommands();
+    viewportRenderers::registerCommands();
     registerShelfActions();
     registerEditorActions();
     registerPanelActions();
