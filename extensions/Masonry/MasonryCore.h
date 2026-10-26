@@ -173,6 +173,16 @@ struct BuildOptions
 /** Every footprint laid and its stone meshes made, the same work the Masonry Wall node does. */
 Built buildWalls(std::span<const Footprint> footprints, const BuildOptions& o);
 
+/** Material slots: every stone mesh is on the first, the core on the second. Unreal finds or makes materials by these names. */
+inline constexpr const char* kStoneSlot = "MasonryStone";
+inline constexpr const char* kMortarSlot = "MasonryMortar";
+
+/** Convex pieces covering the wall's full volume, one per footprint segment per height band: its UCX collision. */
+std::vector<geo::Mesh> collisionHulls(const Footprint& footprint, const WallParams& p, int bands = 1);
+
+/** The given stones at one LOD (0 to 2) merged into one mesh, positioned relative to origin. */
+geo::Mesh mergeStones(const Built& b, std::span<const int> stones, int lod, const glm::dvec3& origin);
+
 /** Stones grouped by the square ground cell (size cm) their centre is in, for streaming and culling. */
 struct Chunks
 {

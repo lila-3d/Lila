@@ -281,7 +281,7 @@ void writeSent(const std::string& key, const json& groups)
 }
 
 /** Imports the plan's assets and places its groups, then removes the stale groups. Runs on the link worker. */
-json sendPlan(const json& plan, const std::vector<std::filesystem::path>& files, const json& stale)
+json sendPlan(const json& plan, const std::vector<std::filesystem::path>& files, const json& stale, const json& materials)
 {
     LILA_ZONE_N("Masonry to Unreal");
     std::shared_ptr<link::RpcClient> client = link::Link::get().client();
@@ -293,7 +293,7 @@ json sendPlan(const json& plan, const std::vector<std::filesystem::path>& files,
     {
         const json& as = plan["assets"][k];
         const json mapping = {{"contentPath", as["contentPath"]}, {"kind", "static"}};
-        link::RpcResult r = client->call("importAsset", link::importParams(files[k], mapping), link::importCallOptions());
+        link::RpcResult r = client->call("importAsset", link::importParams(files[k], mapping, materials), link::importCallOptions());
         std::string mesh = as["objectPath"].get<std::string>();
         if (!r.ok)
             errors.push_back(as["name"].get<std::string>() + ": " + r.error);
@@ -455,16 +455,22 @@ void registerCommands(ext::Context& ctx)
         .name = "masonryShip",
         .doc = "Send a masonry wall to Unreal's open level, instanced: each stone mesh is imported once as a static mesh with "
                "three LODs (worn, clean chamfer, plain box), and the stones are placed as one instanced component (HISM by "
-               "default) per stone mesh per ground chunk, so streaming and culling work per chunk. The core goes as its own "
-               "mesh. Instances carry custom primitive data 0 a stable random and 1 height up the wall (0 bottom course, 1 "
-               "top). Sending again replaces the wall's chunks in place and removes the ones it no longer has.\n\n"
-               "Returns stats (stones, assets, groups, chunks, average triangles per stone mesh at each LOD, removedGroups) "
+               "default) per stone mesh per ground chunk, so streaming and culling work per chunk. mode='merged' instead makes "
+               "each chunk's stones one static mesh with the same three LODs. The core goes as its own mesh carrying the "
+               "wall's collision as convex UCX pieces; stones have none. Instances carry custom primitive data 0 a stable "
+               "random and 1 height up the wall (0 bottom course, 1 top). Materials are matched by slot name, MasonryStone "
+               "and MasonryMortar, taking a Lila material's values when the scene has one of that name. Sending again "
+               "replaces the wall's chunks in place and removes the ones it no longer has.\n\n"
+               "Returns stats (stones, assets, groups, chunks, average triangles per stone mesh at each LOD, collisionHulls, removedGroups) "
                "plus, with wait=True, what Unreal imported and placed. dryRun=True returns the plan without writing files or "
                "connecting.",
         .positionalDoc = "mesh or its masonry modifier (default the selection)",
         .flags = {{"folder", "f", T::String, "/Game/Lila/Masonry", "Content folder; the wall's assets go in <folder>/<mesh name>."},
                   {"chunkSize", "cs", T::Float, 400.0, "Ground cell per instanced component, cm."},
-                  {"mode", "m", T::String, "hism", "Instanced component type.", {"hism", "ism"}},
+                  {"mode", "m", T::String, "hism",
+                   "hism or ism: stones instanced per stone mesh per chunk. merged: each chunk's stones as one static mesh with three LODs.",
+                   {"hism", "ism", "merged"}},
+                  {"collisionBands", "cb", T::Int, int64_t(1), "Height bands the core's convex collision is split into (UCX), 1 to 16."},
                   {"dryRun", "", T::Bool, false, "Return the plan, placements included, without writing files or contacting Unreal."},
                   {"wait", "w", T::Bool, false, "Block until Unreal has imported and placed everything."}},
         .undoable = false,
@@ -485,10 +491,14 @@ void registerCommands(ext::Context& ctx)
             so.folder = a.get<std::string>("folder", so.folder);
             so.chunkSize = std::max(10.0, a.get<double>("chunkSize", so.chunkSize));
             so.mode = a.get<std::string>("mode", so.mode);
-            if (so.mode != "hism" && so.mode != "ism")
-                throw CommandError("masonryShip: mode is hism or ism, not '" + so.mode + "'");
+            if (so.mode != "hism" && so.mode != "ism" && so.mode != "merged")
+                throw CommandError("masonryShip: mode is hism, ism or merged, not '" + so.mode + "'");
             g.evaluate();
             const glm::dmat4 world = std::get<glm::dmat4>(g.value({w.mesh->id(), scene::Transform::kWorldMatrix, -1}));
+            const int collisionBands = int(std::clamp<int64_t>(a.get<int64_t>("collisionBands", 1), 1, 16));
+            int64_t collisionCount = 0;
+            for (const Footprint& f : w.footprints)
+                collisionCount += int64_t(collisionHulls(f, o.wall, collisionBands).size());
             const bool dry = a.get<bool>("dryRun", false);
             const std::string key = dry ? std::string("dryRun") : wallKey(g, *w.mesh);
             const std::string name = identifier(w.mesh->name());
@@ -503,6 +513,7 @@ void registerCommands(ext::Context& ctx)
                           {"groups", int64_t(plan["groups"].size())},
                           {"chunks", int64_t(plan["chunks"].size())},
                           {"lodTriangles", json::array()},
+                          {"collisionHulls", collisionCount},
                           {"folder", plan["folder"]},
                           {"mesh", w.mesh->path()}};
             for (size_t t : lodTris)
@@ -514,15 +525,32 @@ void registerCommands(ext::Context& ctx)
             }
 
             const std::filesystem::path dir = link::cacheDir() / "masonry" / name;
+            std::vector<geo::Mesh> hulls;
+            for (const Footprint& f : w.footprints)
+                for (geo::Mesh& h : collisionHulls(f, o.wall, collisionBands))
+                    hulls.push_back(std::move(h));
             std::vector<std::filesystem::path> files;
             for (const json& as : plan["assets"])
             {
-                const int mesh = as["mesh"].get<int>();
-                const std::string assetName = as["name"].get<std::string>();
+                const std::string kind = as["kind"].get<std::string>(), assetName = as["name"].get<std::string>();
+                const size_t index = as["index"].get<size_t>();
                 const std::filesystem::path file = dir / (assetName + ".fbx");
                 std::string err;
-                const bool ok = mesh >= 0 ? writeLodFbx(b.lods[size_t(mesh)], assetName, file, &err)
-                                          : writeLodFbx(std::span<const geo::Mesh>(&b.core, 1), assetName, file, &err);
+                bool ok = false;
+                if (kind == "stone")
+                    ok = writeLodFbx(b.lods[index], assetName, file, &err);
+                else if (kind == "chunk")
+                {
+                    const std::vector<int> members = plan["members"][index].get<std::vector<int>>();
+                    const json& at = plan["origins"][index];
+                    const glm::dvec3 origin(at[0].get<double>(), at[1].get<double>(), at[2].get<double>());
+                    std::array<geo::Mesh, 3> levels;
+                    for (int l = 0; l < 3; ++l)
+                        levels[size_t(l)] = mergeStones(b, members, l, origin);
+                    ok = writeLodFbx(levels, assetName, file, &err);
+                }
+                else
+                    ok = writeLodFbx(std::span<const geo::Mesh>(&b.core, 1), assetName, file, &err, hulls);
                 if (!ok)
                     throw CommandError("masonryShip: writing " + file.string() + " failed: " + err);
                 files.push_back(file);
@@ -545,16 +573,17 @@ void registerCommands(ext::Context& ctx)
                 throw CommandError(std::string("masonryShip: not connected to Unreal: ") + e.what());
             }
             writeSent(key, plan["groups"]);
+            const json materials = json::array({link::materialInputs(g, kStoneSlot), link::materialInputs(g, kMortarSlot)});
             if (a.get<bool>("wait", false))
             {
-                stats["unreal"] = sendPlan(plan, files, stale);
+                stats["unreal"] = sendPlan(plan, files, stale, materials);
                 return stats;
             }
-            link::Link::get().post([plan = std::move(plan), files, stale, name] {
+            link::Link::get().post([plan = std::move(plan), files, stale, materials, name] {
                 json done;
                 try
                 {
-                    done = sendPlan(plan, files, stale);
+                    done = sendPlan(plan, files, stale, materials);
                 }
                 catch (const std::exception& e)
                 {

@@ -786,7 +786,9 @@ geo::Mesh coreMesh(const Footprint& footprint, const WallParams& p)
         quad({lb(0), lt(0), rt(0), rb(0)}, -dir(0));
         quad({lb(n - 1), lt(n - 1), rt(n - 1), rb(n - 1)}, dir(n - 2));
     }
-    return geo::Mesh::fromPolygons(pts, sizes, idx);
+    geo::Mesh core = geo::Mesh::fromPolygons(pts, sizes, idx);
+    lila::scene::materials::assign(core, kMortarSlot, {});
+    return core;
 }
 
 geo::Mesh stoneMesh(const StoneShape& s)
@@ -893,6 +895,7 @@ geo::Mesh stoneMesh(const StoneShape& s)
     }
     std::span<bool> hard = m.edgeAttrs().getOrAdd<bool>(geo::attr::kHard);
     std::fill(hard.begin(), hard.end(), true);
+    lila::scene::materials::assign(m, kStoneSlot, {});
     return m;
 }
 
@@ -904,6 +907,80 @@ std::array<geo::Mesh, 3> stoneLods(StoneShape s)
     {
         s.detail = levels[k];
         out[k] = stoneMesh(s);
+    }
+    return out;
+}
+
+std::vector<geo::Mesh> collisionHulls(const Footprint& footprint, const WallParams& p, int bands)
+{
+    std::vector<geo::Mesh> out;
+    const Clean c = clean(footprint);
+    const size_t n = c.pts.size();
+    if (n < 2 || p.height <= 0.0)
+        return out;
+    const double half = std::max(p.thickness, 1.0) * 0.5;
+    const int count = std::clamp(bands, 1, 16);
+    auto dir = [&](size_t i) { return flatDir(c.pts[i % n], c.pts[(i + 1) % n]); };
+    auto offsetAt = [&](size_t i) {
+        if (c.closed)
+            return miterOffset(dir((i + n - 1) % n), dir(i), half);
+        const glm::dvec3 dOut = i + 1 < n ? dir(i) : dir(n - 2);
+        return miterOffset(i > 0 ? dir(i - 1) : dOut, dOut, half);
+    };
+    const size_t segs = c.closed ? n : n - 1;
+    for (size_t s = 0; s < segs; ++s)
+    {
+        const size_t a = s, b = (s + 1) % n;
+        const glm::dvec3 oa = offsetAt(a), ob = offsetAt(b);
+        const std::array<glm::dvec3, 4> ground = {c.pts[a] + oa, c.pts[b] + ob, c.pts[b] - ob, c.pts[a] - oa};
+        for (int band = 0; band < count; ++band)
+        {
+            const double y0 = c.base + p.height * band / count, y1 = c.base + p.height * (band + 1) / count;
+            std::vector<glm::dvec3> pts;
+            for (const glm::dvec3& g : ground)
+                pts.push_back({g.x, y0, g.z});
+            for (const glm::dvec3& g : ground)
+                pts.push_back({g.x, y1, g.z});
+            glm::dvec3 mid(0.0);
+            for (const glm::dvec3& q : pts)
+                mid += q / 8.0;
+            std::vector<geo::Index> sizes, idx;
+            auto quad = [&](std::array<geo::Index, 4> q) {
+                glm::dvec3 nrm(0.0), centre(0.0);
+                for (size_t k = 0; k < 4; ++k)
+                {
+                    nrm += glm::cross(pts[q[k]], pts[q[(k + 1) % 4]]);
+                    centre += pts[q[k]] / 4.0;
+                }
+                if (glm::dot(nrm, centre - mid) < 0.0)
+                    std::reverse(q.begin(), q.end());
+                sizes.push_back(4);
+                idx.insert(idx.end(), q.begin(), q.end());
+            };
+            quad({0, 1, 2, 3});
+            quad({4, 5, 6, 7});
+            for (geo::Index k = 0; k < 4; ++k)
+                quad({k, geo::Index((k + 1) % 4), geo::Index((k + 1) % 4 + 4), geo::Index(k + 4)});
+            out.push_back(geo::Mesh::fromPolygons(pts, sizes, idx));
+        }
+    }
+    return out;
+}
+
+geo::Mesh mergeStones(const Built& b, std::span<const int> stones, int lod, const glm::dvec3& origin)
+{
+    geo::Mesh out;
+    const int level = std::clamp(lod, 0, 2);
+    for (int k : stones)
+    {
+        const size_t r = size_t(b.reference[size_t(k)]);
+        geo::Mesh m = b.lods.empty() ? b.meshes[r] : b.lods[r][size_t(level)];
+        Stone s = b.stones[size_t(k)];
+        s.center -= origin;
+        const glm::dmat4 xf = stoneMatrix(s);
+        for (glm::dvec3& q : m.positions())
+            q = glm::dvec3(xf * glm::dvec4(q, 1.0));
+        out.append(m);
     }
     return out;
 }

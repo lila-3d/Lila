@@ -378,7 +378,7 @@ TEST_CASE("masonry: the ship plan places every stone once, chunk by chunk, in Un
     ShipOptions so;
     const json plan = shipPlan(b, world, "abc", "Wall", so);
     CHECK(plan["assets"].size() == b.meshes.size() + 1);
-    CHECK(plan["assets"].back()["mesh"] == -1);
+    CHECK(plan["assets"].back()["kind"] == "core");
     CHECK(plan["folder"] == "/Game/Lila/Masonry/Wall");
 
     std::set<std::string> keys, stones;
@@ -438,6 +438,71 @@ TEST_CASE("masonry: masonryShip plans a wall without Unreal on dryRun")
     CHECK(r["lodTriangles"].size() == 3);
     CHECK(r["lodTriangles"][0].get<double>() > r["lodTriangles"][2].get<double>());
     CHECK(r["lodTriangles"][2].get<double>() == doctest::Approx(12.0));
+    CHECK(r["collisionHulls"].get<int64_t>() == 1);
+    const json m = run("masonryShip", {{"args", {w["mesh"]}}, {"dryRun", true}, {"chunkSize", 200.0}, {"mode", "merged"}});
+    CHECK(m["groups"].get<int64_t>() == 4);
     CHECK(r["plan"]["groups"].size() == size_t(r["groups"].get<int64_t>()));
     CHECK_THROWS(run("masonryShip", {{"args", {w["mesh"]}}, {"mode", "nanite"}, {"dryRun", true}}));
+}
+
+TEST_CASE("masonry: collision hulls cover the wall, one convex piece per segment and band")
+{
+    WallParams p;
+    const std::vector<geo::Mesh> straight = collisionHulls(line({{0, 0, 0}, {400, 0, 0}}), p);
+    REQUIRE(straight.size() == 1);
+    CHECK(closedManifold(straight[0]));
+    CHECK(signedVolume(straight[0]) == doctest::Approx(400.0 * p.thickness * p.height));
+    CHECK(collisionHulls(line({{0, 0, 0}, {400, 0, 0}, {400, 0, 300}}), p, 3).size() == 6);
+    const std::vector<geo::Mesh> square = collisionHulls(line({{0, 0, 0}, {300, 0, 0}, {300, 0, 300}, {0, 0, 300}}, true), p);
+    CHECK(square.size() == 4);
+    for (const geo::Mesh& h : square)
+        CHECK(signedVolume(h) > 0.0);
+}
+
+TEST_CASE("masonry: stones and core carry their material slots, and merge per chunk")
+{
+    StoneShape s;
+    const auto slots = lila::scene::materials::slotUsage(stoneMesh(s));
+    REQUIRE(slots.size() == 1);
+    CHECK(slots[0].first == kStoneSlot);
+    CHECK(lila::scene::materials::slotUsage(coreMesh(line({{0, 0, 0}, {100, 0, 0}}), WallParams{}))[0].first == kMortarSlot);
+
+    BuildOptions o;
+    o.lods = true;
+    const Footprint f = line({{0, 0, 100}, {900, 0, 100}});
+    const Built b = buildWalls(std::span<const Footprint>(&f, 1), o);
+    ShipOptions so;
+    so.mode = "merged";
+    const json plan = shipPlan(b, glm::dmat4(1.0), "k", "Wall", so);
+    CHECK(plan["groups"].size() == plan["chunks"].size() + 1);
+    size_t covered = 0;
+    for (const json& m : plan["members"])
+        covered += m.size();
+    CHECK(covered == b.stones.size());
+    for (const json& as : plan["assets"])
+        CHECK((as["kind"] == "chunk" || as["kind"] == "core"));
+
+    const std::vector<int> first = plan["members"][0].get<std::vector<int>>();
+    const json& at = plan["origins"][0];
+    const glm::dvec3 origin(at[0].get<double>(), at[1].get<double>(), at[2].get<double>());
+    const geo::Mesh boxes = mergeStones(b, first, 2, origin);
+    CHECK(boxes.numFaces() == 6 * first.size());
+    CHECK(boxes.bounds().min.y > -1.0);
+    CHECK(mergeStones(b, first, 0, origin).numFaces() > boxes.numFaces());
+}
+
+TEST_CASE("masonry: the core writes with UCX collision")
+{
+    WallParams p;
+    const Footprint f = line({{0, 0, 0}, {300, 0, 0}, {300, 0, 200}});
+    const geo::Mesh core = coreMesh(f, p);
+    const std::vector<geo::Mesh> hulls = collisionHulls(f, p);
+    const std::filesystem::path file = std::filesystem::temp_directory_path() / "lila_masonry_test" / "SM_Core.fbx";
+    std::string err;
+    REQUIRE(writeLodFbx(std::span<const geo::Mesh>(&core, 1), "SM_Core", file, &err, hulls));
+    std::ifstream in(file, std::ios::binary);
+    const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    CHECK(bytes.find("UCX_SM_Core_00") != std::string::npos);
+    CHECK(bytes.find("UCX_SM_Core_01") != std::string::npos);
+    CHECK(bytes.find("LodGroup") == std::string::npos);
 }
