@@ -863,6 +863,17 @@ UMaterialInterface* LilaLink::StylisedParent(const FString& Model, TArray<FStrin
 	return StylisedMaster(bToon, nullptr, OutCreated, OutWarnings);
 }
 
+const TCHAR* LilaLink::MastersFolderPath() { return MastersFolder; }
+
+UTexture* LilaLink::ImportTextureFile(const FString& File, const FString& Folder, bool bColor, bool bNormal, bool bFlipGreen,
+	TArray<FString>& OutCreated, TArray<FString>& OutWarnings)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMaterials::ImportTextureFile);
+
+	const ETextureUse Use = bNormal ? ETextureUse::Normal : bColor ? ETextureUse::Color : ETextureUse::Linear;
+	return ImportTexture(File, Folder, Use, bFlipGreen, OutCreated, OutWarnings);
+}
+
 void LilaLink::ApplyStylised(UMaterialInstanceConstant* Instance, const TSharedPtr<FJsonObject>& In, TArray<FString>& OutCreated,
 	TArray<FString>& OutWarnings)
 {

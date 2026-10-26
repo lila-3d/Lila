@@ -281,8 +281,47 @@ void writeSent(const std::string& key, const json& groups)
     std::ofstream(sentFile(key)) << keys.dump();
 }
 
+/** The Unreal texture asset each baked map of a group (or of every group when group is empty) became, by map. */
+json bakedTextures(const json& baked, const std::string& folder, const std::string& group)
+{
+    json out = json::object();
+    for (const json& o : baked.value("outputs", json::array()))
+    {
+        const json groups = o.value("groups", json::array());
+        if (!group.empty() && std::ranges::find(groups, json(group)) == groups.end())
+            continue;
+        const std::string asset = link::textureAssetName(o.value("file", std::string()), o.value("udim", 1001));
+        out[o.value("map", std::string())] = folder + "/" + asset + "." + asset;
+    }
+    return out;
+}
+
+/** One masonryMaterials instance: the slot's Lila material (when the scene has one) as tint, roughness and tiling maps. */
+json materialInstance(const std::string& name, const std::string& slot, const json& lila, json scalars, const json& maps)
+{
+    json in = {{"name", name}, {"slot", slot}, {"scalars", std::move(scalars)}, {"vectors", json::object()}, {"textures", json::object()}, {"files", json::object()}};
+    if (lila.contains("baseColor"))
+        in["vectors"]["Tint"] = lila["baseColor"];
+    if (lila.contains("roughness"))
+        in["scalars"]["BaseRoughness"] = lila["roughness"];
+    const std::string colour = lila.value("baseColorMap", std::string()), normal = lila.value("normalMap", std::string());
+    in["scalars"]["HasBaseColorMap"] = colour.empty() ? 0.0 : 1.0;
+    in["scalars"]["HasDetailNormal"] = normal.empty() ? 0.0 : 1.0;
+    if (!colour.empty())
+        in["files"]["BaseColorMap"] = {{"file", colour}};
+    if (!normal.empty())
+        in["files"]["DetailNormalMap"] = {{"file", normal}, {"normal", true}, {"flipGreen", lila.value("normalFormat", std::string()) == "opengl"}};
+    in["scalars"]["HasBakedMaps"] = maps.empty() ? 0.0 : 1.0;
+    const std::pair<const char*, const char*> params[] = {{"normal", "BakedNormalMap"}, {"ao", "BakedAOMap"}, {"curvature", "BakedCurvatureMap"}};
+    for (const auto& [map, param] : params)
+        if (maps.contains(map))
+            in["textures"][param] = maps[map];
+    return in;
+}
+
 /** Imports the plan's assets and places its groups, then removes the stale groups. Runs on the link worker. */
-json sendPlan(const json& plan, const std::vector<std::filesystem::path>& files, const json& stale, const json& materials, const json& baked)
+json sendPlan(const json& plan, const std::vector<std::filesystem::path>& files, const json& stale, const json& materials, const json& baked,
+              json materialRequest)
 {
     LILA_ZONE_N("Masonry to Unreal");
     std::shared_ptr<link::RpcClient> client = link::Link::get().client();
@@ -293,7 +332,10 @@ json sendPlan(const json& plan, const std::vector<std::filesystem::path>& files,
     for (size_t k = 0; k < files.size(); ++k)
     {
         const json& as = plan["assets"][k];
-        const json mapping = {{"contentPath", as["contentPath"]}, {"kind", "static"}};
+        json mapping = {{"contentPath", as["contentPath"]}, {"kind", "static"}};
+        // Generated instances take the slots afterwards, so the import makes no plain materials of its own.
+        if (materialRequest.is_object())
+            mapping["importMaterials"] = false;
         link::RpcResult r = client->call("importAsset", link::importParams(files[k], mapping, materials), link::importCallOptions());
         std::string mesh = as["objectPath"].get<std::string>();
         if (!r.ok)
@@ -326,6 +368,25 @@ json sendPlan(const json& plan, const std::vector<std::filesystem::path>& files,
         else
             errors.push_back("textures: " + r.error);
     }
+    json made = json::object();
+    if (materialRequest.is_object())
+    {
+        materialRequest["meshes"] = meshes;
+        for (json& in : materialRequest["instances"])
+            if (in.contains("assets"))
+            {
+                json only = json::array();
+                for (const json& k : in["assets"])
+                    only.push_back(meshes[k.get<size_t>()]);
+                in["meshes"] = only;
+                in.erase("assets");
+            }
+        link::RpcResult r = client->call("masonryMaterials", materialRequest, link::importCallOptions());
+        if (r.ok)
+            made = r.result;
+        else
+            errors.push_back("materials: " + r.error);
+    }
     json removed = json::object();
     if (!stale.empty())
     {
@@ -335,7 +396,7 @@ json sendPlan(const json& plan, const std::vector<std::filesystem::path>& files,
         else
             errors.push_back("removing old chunks: " + r.error);
     }
-    return {{"imported", int64_t(files.size())}, {"placed", placed}, {"textures", textures}, {"removed", removed}, {"errors", errors}};
+    return {{"imported", int64_t(files.size())}, {"placed", placed}, {"textures", textures}, {"materials", made}, {"removed", removed}, {"errors", errors}};
 }
 } // namespace
 
@@ -494,6 +555,10 @@ void registerCommands(ext::Context& ctx)
                    "Bake and send textures: the stone atlas (instanced and merged) or each shell's maps (lowPoly, which always bakes)."},
                   {"textureSize", "ts", T::Int, int64_t(2048), "Atlas or shell texture size, texels."},
                   {"backend", "", T::String, "auto", "Bake backend: auto (gpu when there is one), gpu or cpu.", {"auto", "gpu", "cpu"}},
+                  {"material", "mt", T::String, "generate",
+                   "generate: instances of Lila's masonry master (M_LilaMasonry, built once, then yours to edit) per slot. none: materials "
+                   "matched or made by slot name. Or a material path to parent the instances to, which must have the master's parameters."},
+                  {"regenerateMaster", "", T::Bool, false, "Rebuild M_LilaMasonry's graph from this version of Lila, discarding edits to it."},
                   {"dryRun", "", T::Bool, false, "Return the plan, placements included, without writing files or contacting Unreal."},
                   {"wait", "w", T::Bool, false, "Block until Unreal has imported and placed everything."}},
         .undoable = false,
@@ -655,16 +720,62 @@ void registerCommands(ext::Context& ctx)
             json materials = json::array();
             for (const char* slot : {kStoneSlot, kStoneFarSlot, kMortarSlot, kShellSlot})
                 materials.push_back(link::materialInputs(g, slot));
+
+            json materialRequest;
+            if (const std::string material = a.get<std::string>("material", "generate"); material != "none")
+            {
+                const json features = link::Link::get().status().value("features", json::array());
+                if (!features.is_array() || std::ranges::find(features, json("masonryMaterials")) == features.end())
+                    throw CommandError("masonryShip: the LilaLink plugin in this editor is too old for masonry materials; rebuild it from "
+                                       "Lila's ue/LilaLink, or send with material='none'");
+                const std::string texFolder = plan["folder"].get<std::string>() + "/Textures";
+                const json stone = link::materialInputs(g, kStoneSlot), mortar = link::materialInputs(g, kMortarSlot);
+                const double height = o.wall.height;
+                json instances = json::array();
+                if (lowPoly)
+                {
+                    for (size_t k = 0; k < plan["assets"].size(); ++k)
+                    {
+                        const json& as = plan["assets"][k];
+                        if (as["kind"] != "shell")
+                            continue;
+                        const Shell& sh = shells[as["index"].get<size_t>()];
+                        const std::string group = std::format("{}_{}_{}", name, sh.cell.x, sh.cell.y);
+                        json in = materialInstance("MI_" + group, kShellSlot, stone,
+                                                   {{"StoneData", 0.0}, {"WorldAligned", 1.0}, {"UseBakedNormal", 1.0}, {"WallHeight", height}},
+                                                   bakedTextures(baked, texFolder, group));
+                        in["assets"] = json::array({k});
+                        instances.push_back(std::move(in));
+                    }
+                }
+                else
+                {
+                    const json atlas = textures ? bakedTextures(baked, texFolder, std::string()) : json::object();
+                    const double data = so.mode == "merged" ? 2.0 : 1.0;
+                    instances.push_back(materialInstance("MI_" + name + "_Stone", kStoneSlot, stone,
+                                                         {{"StoneData", data}, {"WorldAligned", 0.0}, {"UseBakedNormal", 0.0}, {"WallHeight", height}}, atlas));
+                    instances.push_back(materialInstance("MI_" + name + "_StoneFar", kStoneFarSlot, stone,
+                                                         {{"StoneData", data}, {"WorldAligned", 0.0}, {"UseBakedNormal", 1.0}, {"WallHeight", height}}, atlas));
+                }
+                instances.push_back(materialInstance("MI_" + name + "_Mortar", kMortarSlot, mortar,
+                                                     {{"StoneData", 0.0}, {"WorldAligned", 1.0}, {"UseBakedNormal", 0.0}, {"WallHeight", height}}, json::object()));
+                materialRequest = {{"folder", plan["folder"].get<std::string>() + "/Materials"},
+                                   {"regenerate", a.get<bool>("regenerateMaster", false)},
+                                   {"instances", std::move(instances)}};
+                if (material != "generate")
+                    materialRequest["parent"] = material;
+            }
+
             if (a.get<bool>("wait", false))
             {
-                stats["unreal"] = sendPlan(plan, files, stale, materials, baked);
+                stats["unreal"] = sendPlan(plan, files, stale, materials, baked, materialRequest);
                 return stats;
             }
-            link::Link::get().post([plan = std::move(plan), files, stale, materials, baked, name] {
+            link::Link::get().post([plan = std::move(plan), files, stale, materials, baked, materialRequest, name] {
                 json done;
                 try
                 {
-                    done = sendPlan(plan, files, stale, materials, baked);
+                    done = sendPlan(plan, files, stale, materials, baked, materialRequest);
                 }
                 catch (const std::exception& e)
                 {

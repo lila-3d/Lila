@@ -6,6 +6,7 @@
 
 class UMaterialInstanceConstant;
 class UMaterialInterface;
+class UTexture;
 
 namespace LilaLink
 {
@@ -60,5 +61,15 @@ UMaterialInterface* StylisedParent(const FString& Model, TArray<FString>& OutCre
  * strokeMap). Leaves the base colour map to the caller.
  */
 void ApplyStylised(UMaterialInstanceConstant* Instance, const TSharedPtr<FJsonObject>& In, TArray<FString>& OutCreated,
+	TArray<FString>& OutWarnings);
+
+/** Where the generated master materials live. */
+const TCHAR* MastersFolderPath();
+
+/**
+ * Imports a texture file into Folder as colour (sRGB) or linear data, or as a normal map, or finds the one already
+ * imported from it. Null with a warning when it can't.
+ */
+UTexture* ImportTextureFile(const FString& File, const FString& Folder, bool bColor, bool bNormal, bool bFlipGreen, TArray<FString>& OutCreated,
 	TArray<FString>& OutWarnings);
 } // namespace LilaLink

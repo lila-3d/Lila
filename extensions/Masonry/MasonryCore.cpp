@@ -986,6 +986,7 @@ geo::Mesh mergeStones(const Built& b, std::span<const int> stones, int lod, cons
         const glm::dmat4 xf = stoneMatrix(s);
         for (glm::dvec3& q : m.positions())
             q = glm::dvec3(xf * glm::dvec4(q, 1.0));
+        lila::geo::colors::add(m, kStoneColorSet, glm::vec4(s.random, float(s.course) / float(std::max(1, b.courses - 1)), 0.0f, 1.0f));
         out.append(m);
     }
     return out;

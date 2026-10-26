@@ -3,6 +3,7 @@
 #include "MasonryShip.h"
 
 #include "extensions/ExtensionManager.h"
+#include "geo/ColorSets.h"
 #include "geo/Mesh.h"
 #include "gn/NodeLib.h"
 #include "ops/Command.h"
@@ -642,4 +643,27 @@ TEST_CASE("masonry: the atlas and the shells bake on the cpu")
     const json baked = bakeShells(b, shells, o.wall, "Test", s);
     CHECK(baked["outputs"].size() == 3 * shells.size());
     CHECK(baked["stats"]["hits"].get<int64_t>() > baked["stats"]["misses"].get<int64_t>());
+}
+
+TEST_CASE("masonry: merged stones carry their random and height as vertex colour")
+{
+    BuildOptions o;
+    o.lods = true;
+    const Footprint f = line({{0, 0, 0}, {200, 0, 0}});
+    const Built b = buildWalls(std::span<const Footprint>(&f, 1), o);
+    std::vector<int> all(b.stones.size());
+    for (size_t k = 0; k < all.size(); ++k)
+        all[k] = int(k);
+    const geo::Mesh m = mergeStones(b, all, 1, glm::dvec3(0.0));
+    REQUIRE(geo::colors::has(m, kStoneColorSet));
+    float lowest = 1.0f, highest = 0.0f;
+    for (const glm::vec4& c : geo::colors::values(m, kStoneColorSet))
+    {
+        CHECK(c.r >= 0.0f);
+        CHECK(c.r <= 1.0f);
+        lowest = std::min(lowest, c.g);
+        highest = std::max(highest, c.g);
+    }
+    CHECK(lowest == doctest::Approx(0.0f));
+    CHECK(highest == doctest::Approx(1.0f));
 }
