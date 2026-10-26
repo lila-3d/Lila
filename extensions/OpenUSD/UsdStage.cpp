@@ -85,6 +85,16 @@ constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 /** The composed stage's path for a link path, which names the LOD variant of a prim inside a level (/Chair{LOD=LOD1}Mesh). */
 SdfPath stagePath(const SdfPath& p) { return p.ContainsPrimVariantSelection() ? p.StripAllVariantSelections() : p; }
 
+/** True when the link path is below the composed prim q, not q itself. */
+bool insideOf(const SdfPath& link, const SdfPath& q)
+{
+    const SdfPath p = stagePath(link);
+    return p != q && p.HasPrefix(q);
+}
+
+/** Baseline keys of an instance opened for edits, and of each linked prim's baseline from before it was. */
+const std::string kOpen = "$open:", kOrigin = "$origin:";
+
 /** Above zero while Lila changes the scene for a stage itself; the graph listener ignores those changes. */
 int& quietDepth()
 {
@@ -120,6 +130,14 @@ struct Stage : TfWeakBase
     std::unordered_map<NodeId, std::pair<SdfPath, size_t>> instanceOf;
     /** Linked nodes deleted this session, so an undo that brings one back links it again. */
     std::unordered_map<NodeId, SdfPath> deleted;
+    struct Part
+    {
+        SdfPath owner;
+        std::optional<SdfPath> copy;
+        std::optional<std::pair<SdfPath, size_t>> instance;
+    };
+    /** Parts deleted this session (joints, point instances, copies), so an undo that brings one back makes it a part again. */
+    std::unordered_map<NodeId, Part> deletedParts;
     Baseline baseline;
     /** The material prim each Lila material came from, or was written to. */
     std::map<std::string, SdfPath> materialOrigin;
@@ -158,6 +176,7 @@ struct Stage : TfWeakBase
         copyOf.erase(n);
         instanceOf.erase(n);
         deleted.erase(n);
+        deletedParts.erase(n);
     }
     void unlink(NodeId n)
     {
@@ -303,6 +322,79 @@ SdfPath variantPrefix(const SdfPath& link)
         if (q.IsPrimVariantSelectionPath())
             out = q;
     return out;
+}
+
+/** The outermost LOD group a link path inside a level runs through, which builds every level below it; empty outside levels. */
+SdfPath lodGroupOf(const SdfPath& link)
+{
+    for (const SdfPath& q : link.GetPrefixes())
+        if (q.IsPrimVariantSelectionPath())
+            return stagePath(q);
+    return {};
+}
+
+/** The link path of a composed prim while level (a variant selection path, or empty for none) is selected. */
+SdfPath levelLink(const SdfPath& level, const SdfPath& composed)
+{
+    if (level.IsEmpty())
+        return composed;
+    SdfPath out = level;
+    for (const SdfPath& p : composed.MakeRelativePath(stagePath(level)).GetPrefixes())
+        out = out.AppendChild(p.GetNameToken());
+    return out;
+}
+
+/**
+ * Calls f(prim, link) on every present prim. Prims inside LOD levels are visited once per level with that level
+ * selected, their link paths naming it; prims are only valid during the call.
+ */
+template <class F> void eachPrim(Stage& s, F&& f)
+{
+    std::vector<SdfPath> levels{SdfPath()};
+    for (size_t i = 0; i < levels.size(); ++i)
+    {
+        const SdfPath level = levels[i];
+        VariantScope scope(s, level);
+        const SdfPath top = level.IsEmpty() ? SdfPath::AbsoluteRootPath() : stagePath(level);
+        const UsdPrim root = s.stage->GetPrimAtPath(top);
+        if (!root)
+            continue;
+        UsdPrimRange range(root, kPresent);
+        for (auto it = range.begin(); it != range.end(); ++it)
+        {
+            const UsdPrim& p = *it;
+            if (p.GetPath() == top)
+                continue;
+            const SdfPath link = levelLink(level, p.GetPath());
+            f(p, link);
+            const std::vector<std::string> lods = usd::lodLevels(p);
+            if (lods.empty())
+                continue;
+            for (const std::string& v : lods)
+                levels.push_back(link.AppendVariantSelection("LOD", v));
+            it.PruneChildren();
+        }
+    }
+}
+
+/** Selects a variant on the prim at link; inside an LOD level, with the level selected and the selection written into it. */
+void selectVariant(Stage& s, const SdfPath& link, const std::string& set, const std::string& variant)
+{
+    const SdfPath level = variantPrefix(link);
+    if (level.IsEmpty())
+    {
+        if (const UsdPrim p = s.stage->GetPrimAtPath(link))
+            p.GetVariantSets().GetVariantSet(set).SetVariantSelection(variant);
+        return;
+    }
+    {
+        VariantScope scope(s, link);
+        UsdEditContext target(s.stage, UsdEditTarget::ForLocalDirectVariant(s.edit, level));
+        if (const UsdPrim p = s.stage->GetPrimAtPath(stagePath(link)))
+            p.GetVariantSets().GetVariantSet(set).SetVariantSelection(variant);
+    }
+    // Notices go unheard while a level is selected: its LOD group is built again instead.
+    s.changed.insert(lodGroupOf(link));
 }
 
 struct Busy
@@ -934,9 +1026,10 @@ void readAttrs(Stage& s, const Graph& g)
             }
             if (!groups.is_object())
                 continue;
+            Groups& into = s.baseline[key];
             for (auto& [group, h] : groups.items())
                 if (h.is_string())
-                    s.baseline[key][group] = std::stoull(h.get<std::string>(), nullptr, 16);
+                    into[group] = std::stoull(h.get<std::string>(), nullptr, 16);
         }
     if (json mats = parseJson(text(n, stageAttr::kMaterials)); mats.is_object())
         for (auto& [slot, p] : mats.items())
@@ -1388,8 +1481,27 @@ struct Author
         for (UsdPrim q = self ? cp : cp.GetParent(); q && !q.IsPseudoRoot(); q = q.GetParent())
             if (q.IsInstance() && opened.insert(q.GetPath()).second)
             {
+                const SdfPrimSpecHandle had = L->GetPrimAtPath(q.GetPath());
+                // Opinions the edit layer already held inside it would be lost by instancing it again.
+                if (!had || had->GetNameChildren().empty())
+                    rememberOpening(q.GetPath(), had);
                 over(q.GetPath())->SetInstanceable(false);
                 warn.push_back(std::format("{}: made non-instanceable in the edit layer, so the edits inside it could be written", q.GetPath().GetString()));
+            }
+    }
+
+    /** The instance's instanceable opinion and the baseline of every linked prim inside it, for closeInstances. */
+    void rememberOpening(const SdfPath& q, const SdfPrimSpecHandle& had)
+    {
+        Groups mark{{"open", 1}};
+        if (had && had->HasInstanceable())
+            mark["was"] = had->GetInstanceable() ? 1 : 0;
+        s.baseline[kOpen + q.GetString()] = mark;
+        for (const auto& [lp, n] : s.nodeOf)
+            if (insideOf(lp, q))
+            {
+                auto b = s.baseline.find(lp.GetString());
+                s.baseline.try_emplace(kOrigin + lp.GetString(), b == s.baseline.end() ? Groups() : b->second);
             }
     }
 
@@ -1497,21 +1609,24 @@ void writeInstances(Author& au, const SdfPath& instancer, const std::vector<std:
         put(UsdGeomTokens->scales, SdfValueTypeNames->Float3Array, VtValue(scales));
 }
 
-/** Point instances deleted in Lila, hidden on their instancer by id (or index, when it has no ids). */
-void hideInstances(Author& au, const SdfPath& instancer, const std::set<size_t>& gone)
+/** Point instances hidden on their instancer by id (or index, when it has no ids): deleted or taken out in Lila, or shown again by an undo. */
+void setHidden(Author& au, const SdfPath& instancer, const std::set<size_t>& hide, const std::set<size_t>& show)
 {
     const UsdGeomPointInstancer pi(au.s.stage->GetPrimAtPath(instancer));
-    if (!pi || gone.empty())
+    if (!pi || (hide.empty() && show.empty()))
         return;
     VtInt64Array ids, hidden;
     pi.GetIdsAttr().Get(&ids, UsdTimeCode::EarliestTime());
     pi.GetInvisibleIdsAttr().Get(&hidden, UsdTimeCode::EarliestTime());
-    for (size_t i : gone)
-    {
-        const int64_t id = i < ids.size() ? ids[i] : int64_t(i);
-        if (std::find(hidden.begin(), hidden.end(), id) == hidden.end())
-            hidden.push_back(id);
-    }
+    auto idOf = [&](size_t i) { return i < ids.size() ? ids[i] : int64_t(i); };
+    VtInt64Array kept;
+    for (int64_t id : hidden)
+        if (std::none_of(show.begin(), show.end(), [&](size_t i) { return idOf(i) == id; }))
+            kept.push_back(id);
+    hidden = kept;
+    for (size_t i : hide)
+        if (std::find(hidden.begin(), hidden.end(), idOf(i)) == hidden.end())
+            hidden.push_back(idOf(i));
     SdfAttributeSpecHandle a = au.attrSpec(instancer, UsdGeomTokens->invisibleIds.GetString(), SdfValueTypeNames->Int64Array, SdfVariabilityVarying);
     a->SetDefaultValue(VtValue(hidden));
     au.L->EraseField(a->GetPath(), SdfFieldKeys->TimeSamples);
@@ -1636,6 +1751,138 @@ void addPrim(Stage& s, Author& au, NodeId n, const SdfPath& e, const SdfPath& pa
             s.partOf[d] = dst;
 }
 
+/**
+ * Takes a point instance out of its instancer so an object added under it can be written: hidden there, and in its
+ * place an Xform beside the instancer referencing its prototype. In Lila its holder moves to the instancer's parent,
+ * linked to the Xform, and its copies link to the prims under the reference. Returns the Xform's path, or empty.
+ */
+SdfPath extract(Stage& s, Graph& g, Author& au, NodeId holder, std::map<SdfPath, std::set<size_t>>& hide)
+{
+    const auto inst = s.instanceOf.find(holder);
+    if (inst == s.instanceOf.end())
+        return {};
+    const auto [instancer, index] = inst->second;
+    const UsdGeomPointInstancer pi(s.stage->GetPrimAtPath(instancer));
+    const auto insNode = s.nodeOf.find(instancer);
+    if (!pi || pi.GetPrim().IsInstanceProxy() || instancer.ContainsPrimVariantSelection() || insNode == s.nodeOf.end())
+        return {};
+    SdfPathVector protos;
+    pi.GetPrototypesRel().GetTargets(&protos);
+    const UsdTimeCode rest = s.stage->HasAuthoredTimeCodeRange() ? UsdTimeCode(s.stage->GetStartTimeCode()) : UsdTimeCode::EarliestTime();
+    VtIntArray indices;
+    pi.GetProtoIndicesAttr().Get(&indices, rest);
+    if (index >= indices.size() || indices[index] < 0 || size_t(indices[index]) >= protos.size())
+        return {};
+    const SdfPath proto = protos[size_t(indices[index])];
+
+    // Baseline keys go by the instance, so they are read before the holder leaves it.
+    std::vector<std::tuple<NodeId, SdfPath, std::string>> copies;
+    for (NodeId d : g.descendants(holder))
+        if (auto c = s.copyOf.find(d); c != s.copyOf.end() && c->second.HasPrefix(proto))
+            copies.push_back({d, c->second, copyKey(s, g, d)});
+    s.baseline.erase(instanceKey(inst->second));
+    hide[instancer].insert(index);
+
+    g.setParent(holder, g.parent(insNode->second), true);
+    const SdfPath dst = au.uniqueChild(instancer.GetParentPath(), identifier(g.node(holder)->name(), "instance"));
+    s.link(holder, dst);
+    const size_t exported = s.lastExported, partial = s.partialDiffs;
+    Snapshot alone = snapshot(s, g, au.warn, Plan{false, {holder}, {}});
+    s.lastExported = exported;
+    s.partialDiffs = partial;
+    if (!alone.ok || !alone.prim.count(holder))
+        return {};
+    if (!dst.GetParentPath().IsAbsoluteRootPath())
+        au.over(dst.GetParentPath());
+    SdfCopySpec(alone.layer, alone.prim[holder], au.L, dst);
+    s.baseline[dst.GetString()] = alone.hashes[holder];
+    const SdfPrimSpecHandle ref = SdfPrimSpec::New(au.L->GetPrimAtPath(dst), proto.GetName(), SdfSpecifierDef);
+    ref->GetReferenceList().Prepend(SdfReference(std::string(), proto));
+
+    const SdfPath root = dst.AppendChild(proto.GetNameToken());
+    for (const auto& [d, path, key] : copies)
+    {
+        const SdfPath p = path.ReplacePrefix(proto, root);
+        Groups b = key.empty() ? Groups() : s.baseline[key];
+        s.baseline.erase(key);
+        s.link(d, p);
+        s.baseline[p.GetString()] = std::move(b);
+    }
+    au.warn.push_back(std::format("{}: taken out of {} as an Xform referencing its prototype, so what was added under it could be written",
+                                  g.node(holder)->name(), instancer.GetString()));
+    return dst;
+}
+
+/** Removes an over that holds nothing any more, and the empty overs above it. */
+void pruneEmpty(const SdfLayerHandle& L, SdfPath p)
+{
+    static const std::set<TfToken> kStructure{SdfFieldKeys->Specifier, SdfChildrenKeys->PrimChildren, SdfChildrenKeys->PropertyChildren};
+    while (!p.IsEmpty() && !p.IsAbsoluteRootPath())
+    {
+        const SdfPrimSpecHandle spec = L->GetPrimAtPath(p);
+        if (!spec || spec->GetSpecifier() != SdfSpecifierOver || !spec->GetNameChildren().empty() || !spec->GetProperties().empty())
+            return;
+        for (const TfToken& f : L->ListFields(p))
+            if (!kStructure.count(f))
+                return;
+        const SdfPrimSpecHandle parent = p.GetParentPath().IsAbsoluteRootPath() ? L->GetPseudoRoot() : L->GetPrimAtPath(p.GetParentPath());
+        if (!parent)
+            return;
+        parent->RemoveNameChild(spec);
+        p = p.GetParentPath();
+    }
+}
+
+/**
+ * Instances opened for edits whose edits have all been undone since: every prim inside back at its baseline from before
+ * the opening, none added or deleted. Their opinions come out of the edit layer and they are instanced again.
+ */
+void closeInstances(Stage& s, const SdfLayerHandle& L)
+{
+    std::vector<SdfPath> opened;
+    for (auto it = s.baseline.lower_bound(kOpen); it != s.baseline.end() && it->first.starts_with(kOpen); ++it)
+        opened.push_back(SdfPath(it->first.substr(kOpen.size())));
+    for (const SdfPath& q : opened)
+    {
+        std::vector<std::string> origins;
+        const std::string from = kOrigin + q.GetString();
+        for (auto it = s.baseline.lower_bound(from); it != s.baseline.end() && it->first.starts_with(from); ++it)
+            if (insideOf(SdfPath(it->first.substr(kOrigin.size())), q))
+                origins.push_back(it->first);
+        size_t linked = 0;
+        bool same = true;
+        for (const auto& [lp, n] : s.nodeOf)
+        {
+            if (!insideOf(lp, q))
+                continue;
+            ++linked;
+            const auto o = s.baseline.find(kOrigin + lp.GetString());
+            const auto b = s.baseline.find(lp.GetString());
+            same = same && o != s.baseline.end() && o->second == (b == s.baseline.end() ? Groups() : b->second);
+        }
+        const SdfPrimSpecHandle spec = L->GetPrimAtPath(q);
+        if (spec && (!same || linked != origins.size()))
+            continue;
+        if (spec)
+        {
+            std::vector<SdfPrimSpecHandle> inside;
+            for (const SdfPrimSpecHandle& c : spec->GetNameChildren())
+                inside.push_back(c);
+            for (const SdfPrimSpecHandle& c : inside)
+                spec->RemoveNameChild(c);
+            const Groups& mark = s.baseline[kOpen + q.GetString()];
+            if (auto was = mark.find("was"); was != mark.end())
+                spec->SetInstanceable(was->second != 0);
+            else
+                spec->ClearInstanceable();
+            pruneEmpty(L, q);
+        }
+        s.baseline.erase(kOpen + q.GetString());
+        for (const std::string& k : origins)
+            s.baseline.erase(k);
+    }
+}
+
 /** Changed property groups of one linked object written over its prim at p (a prototype prim, for a copy). */
 void authorChanges(Stage& s, Graph& g, Author& au, NodeId n, const SdfPath& e, const SdfPath& p, Groups& base)
 {
@@ -1701,6 +1948,23 @@ std::vector<std::string> sync(Stage& s, Graph& g)
         SdfPath p;
     };
     std::map<SdfPath, std::vector<LevelItem>> inLevels;
+    // Point instances to hide and show on each instancer, written once all are known.
+    std::map<SdfPath, std::set<size_t>> hide, show;
+    // Point instances getting new objects come out of their instancer first: the holder's own export needs a stage that
+    // composes as it goes, which it doesn't inside a change block. Their snapshot prims are from before the move.
+    for (NodeId n : g.descendants(s.node))
+    {
+        const Node* node = g.node(n);
+        const NodeId holder = g.parent(n);
+        if (!node || !node->type().isA("transform") || node->type().isA("joint") || s.primOf.count(n) || s.partOf.count(n) || s.deleted.count(n) ||
+            s.deletedParts.count(n) || !s.instanceOf.count(holder) || !now.prim.count(n))
+            continue;
+        if (!extract(s, g, au, holder, hide).IsEmpty())
+        {
+            now.prim.erase(holder);
+            now.hashes.erase(holder);
+        }
+    }
     {
         SdfChangeBlock block;
 
@@ -1733,21 +1997,30 @@ std::vector<std::string> sync(Stage& s, Graph& g)
             s.unlink(n);
             s.deleted[n] = p;
         }
-        std::set<SdfPath> partsGone, copiesGone;
-        std::map<SdfPath, std::set<size_t>> instancesGone;
+        std::set<SdfPath> partsGone;
+        std::map<SdfPath, std::set<SdfPath>> copiesGone;
         for (auto it = s.partOf.begin(); it != s.partOf.end();)
         {
             if (!g.node(it->first))
             {
                 const bool covered = std::any_of(doneGone.begin(), doneGone.end(), [&](const SdfPath& d) { return it->second.HasPrefix(d); });
+                Stage::Part& part = s.deletedParts[it->first];
+                part.owner = it->second;
                 if (auto inst = s.instanceOf.find(it->first); inst != s.instanceOf.end())
                 {
                     if (!covered)
-                        instancesGone[inst->second.first].insert(inst->second.second);
+                        hide[inst->second.first].insert(inst->second.second);
+                    part.instance = inst->second;
                     s.instanceOf.erase(inst);
                 }
+                else if (auto c = s.copyOf.find(it->first); c != s.copyOf.end())
+                {
+                    if (!covered)
+                        copiesGone[it->second].insert(c->second);
+                    part.copy = c->second;
+                }
                 else if (!covered)
-                    (s.copyOf.count(it->first) ? copiesGone : partsGone).insert(it->second);
+                    partsGone.insert(it->second);
                 s.copyOf.erase(it->first);
                 it = s.partOf.erase(it);
             }
@@ -1756,12 +2029,37 @@ std::vector<std::string> sync(Stage& s, Graph& g)
         }
         for (const SdfPath& p : partsGone)
             warn.push_back(std::format("{}: deleting its joints isn't written", p.GetString()));
-        // A copy goes with its instance; one deleted on its own would change every instance of its prototype.
-        for (const SdfPath& p : copiesGone)
-            if (!instancesGone.count(p))
-                warn.push_back(std::format("{}: deleting part of a point instance isn't written; delete the instance instead", p.GetString()));
-        for (const auto& [instancer, ids] : instancesGone)
-            hideInstances(au, instancer, ids);
+        // A copy deleted from an instance that is left removes it from the prototype, as editing one edits it there; an
+        // instance left with no copies at all is hidden instead.
+        for (const auto& [instancer, protos] : copiesGone)
+        {
+            std::set<SdfPath> lost;
+            for (const auto& [h, inst] : s.instanceOf)
+            {
+                if (inst.first != instancer || !g.node(h))
+                    continue;
+                std::set<SdfPath> has;
+                for (NodeId d : g.descendants(h))
+                    if (auto c = s.copyOf.find(d); c != s.copyOf.end())
+                        has.insert(c->second);
+                if (has.empty())
+                    hide[instancer].insert(inst.second);
+                for (const SdfPath& q : protos)
+                    if (!has.count(q) && std::any_of(has.begin(), has.end(), [&](const SdfPath& c) { return q.HasPrefix(c); }))
+                        lost.insert(q);
+            }
+            std::vector<SdfPath> removed;
+            for (const SdfPath& q : lost)
+            {
+                if (std::any_of(removed.begin(), removed.end(), [&](const SdfPath& r) { return q.HasPrefix(r); }))
+                    continue;
+                au.deactivate(q);
+                removed.push_back(q);
+                warn.push_back(std::format("{}: removed from its prototype, so every instance of it loses it", q.GetString()));
+            }
+            if (!removed.empty())
+                s.changed.insert(instancer);
+        }
 
         // Changed property groups on linked objects.
         std::vector<std::pair<NodeId, SdfPath>> linked(s.primOf.begin(), s.primOf.end());
@@ -1852,6 +2150,32 @@ std::vector<std::string> sync(Stage& s, Graph& g)
                 }
                 s.deleted.erase(d);
             }
+            if (auto d = s.deletedParts.find(n); d != s.deletedParts.end())
+            {
+                s.partOf[n] = d->second.owner;
+                if (d->second.copy)
+                {
+                    s.copyOf[n] = *d->second.copy;
+                    for (NodeId h = g.parent(n); h != kNoNode; h = g.parent(h))
+                        if (auto inst = s.instanceOf.find(h); inst != s.instanceOf.end())
+                        {
+                            show[inst->second.first].insert(inst->second.second);
+                            break;
+                        }
+                    if (const SdfPrimSpecHandle spec = au.L->GetPrimAtPath(*d->second.copy); spec && spec->HasActive())
+                    {
+                        au.reactivate(*d->second.copy);
+                        s.changed.insert(d->second.owner);
+                    }
+                }
+                if (d->second.instance)
+                {
+                    s.instanceOf[n] = *d->second.instance;
+                    show[d->second.instance->first].insert(d->second.instance->second);
+                }
+                s.deletedParts.erase(d);
+                continue;
+            }
             handled.insert(n);
             if (node->type().isA("joint"))
             {
@@ -1878,6 +2202,13 @@ std::vector<std::string> sync(Stage& s, Graph& g)
             addPrim(s, au, n, e->second, parentPrim, g);
         }
 
+        std::set<SdfPath> instancers;
+        for (const auto* m : {&hide, &show})
+            for (const auto& [instancer, ids] : *m)
+                instancers.insert(instancer);
+        for (const SdfPath& instancer : instancers)
+            setHidden(au, instancer, hide[instancer], show[instancer]);
+
         // Material edits go over the material prims they came from.
         for (const auto& [slot, h] : now.materialHashes)
         {
@@ -1899,6 +2230,8 @@ std::vector<std::string> sync(Stage& s, Graph& g)
             else if (base["joints"] != h)
                 warn.push_back(std::format("joint edits on {} aren't written", path));
         }
+
+        closeInstances(s, au.L);
     }
 
     // Each LOD level selected in turn, its prims written into its variant.
@@ -2686,11 +3019,10 @@ json cmdOpen(const Args& a)
         {
             std::vector<std::pair<SdfPath, std::map<std::string, std::string>>> todo;
             if (value.is_string())
-            {
-                for (const UsdPrim& p : UsdPrimRange(s.stage->GetPseudoRoot(), kPresent))
+                eachPrim(s, [&](const UsdPrim& p, const SdfPath& link) {
                     if (p.GetVariantSets().HasVariantSet(key))
-                        todo.push_back({p.GetPath(), {{key, value.get<std::string>()}}});
-            }
+                        todo.push_back({link, {{key, value.get<std::string>()}}});
+                });
             else if (value.is_object() && SdfPath::IsValidPathString(key))
             {
                 std::map<std::string, std::string> sets;
@@ -2702,13 +3034,20 @@ json cmdOpen(const Args& a)
             for (const auto& [path, sets] : todo)
                 for (const auto& [set, sel] : sets)
                 {
-                    const UsdPrim p = s.stage->GetPrimAtPath(path);
-                    if (!p || !p.GetVariantSets().HasVariantSet(set) || !p.GetVariantSets().GetVariantSet(set).HasAuthoredVariant(sel))
-                        warnings.push_back(std::format("{}: no variant {} in set {}", path.GetString(), sel, set));
+                    bool ok = false;
+                    {
+                        VariantScope scope(s, path);
+                        const UsdPrim p = s.stage->GetPrimAtPath(stagePath(path));
+                        ok = p && p.GetVariantSets().HasVariantSet(set) && p.GetVariantSets().GetVariantSet(set).HasAuthoredVariant(sel);
+                    }
+                    if (ok)
+                        selectVariant(s, path, set, sel);
                     else
-                        p.GetVariantSets().GetVariantSet(set).SetVariantSelection(sel);
+                        warnings.push_back(std::format("{}: no variant {} in set {}", path.GetString(), sel, set));
                 }
         }
+        // Nothing is built yet, so nothing needs building again.
+        s.changed.clear();
     }
 
     ImportOptions o;
@@ -2829,35 +3168,39 @@ json cmdVariant(const Args& a)
     if (set.empty() || !a.has("variant"))
         throw CommandError("usdStageVariant: set and variant required");
     const std::string variant = a.get<std::string>("variant");
-    std::vector<UsdPrim> prims;
-    if (const std::string prim = a.get<std::string>("prim", ""); !prim.empty())
-    {
-        const UsdPrim p = SdfPath::IsValidPathString(prim) ? s.stage->GetPrimAtPath(SdfPath(prim)) : UsdPrim();
-        if (!p)
-            throw CommandError("usdStageVariant: no prim at " + prim);
-        prims.push_back(p);
-    }
-    else
-        for (const UsdPrim& p : UsdPrimRange(s.stage->GetPseudoRoot(), kPresent))
-            if (p.GetVariantSets().HasVariantSet(set))
-                prims.push_back(p);
-    if (prims.empty())
-        throw CommandError("usdStageVariant: no prim has a variant set named " + set);
-    for (const UsdPrim& p : prims)
-        if (!p.GetVariantSets().HasVariantSet(set) || !p.GetVariantSets().GetVariantSet(set).HasAuthoredVariant(variant))
-            throw CommandError(std::format("usdStageVariant: {} has no variant {} in set {}", p.GetPath().GetString(), variant, set));
+    // prim is a link path, which can name an LOD level, or a composed path, which takes that prim in every level.
+    const std::string prim = a.get<std::string>("prim", "");
+    if (!prim.empty() && !SdfPath::IsValidPathString(prim))
+        throw CommandError("usdStageVariant: no prim at " + prim);
+    const SdfPath want = prim.empty() ? SdfPath() : SdfPath(prim);
+    std::vector<SdfPath> targets;
+    std::string missing;
+    bool found = false;
+    eachPrim(s, [&](const UsdPrim& p, const SdfPath& link) {
+        if (!want.IsEmpty() && link != want && p.GetPath() != want)
+            return;
+        found = true;
+        if (!p.GetVariantSets().HasVariantSet(set))
+            return;
+        if (!p.GetVariantSets().GetVariantSet(set).HasAuthoredVariant(variant) && missing.empty())
+            missing = link.GetString();
+        targets.push_back(link);
+    });
+    if (!want.IsEmpty() && !found)
+        throw CommandError("usdStageVariant: no prim at " + prim);
+    if (targets.empty())
+        throw CommandError(want.IsEmpty() ? "usdStageVariant: no prim has a variant set named " + set
+                                          : std::format("usdStageVariant: {} has no variant {} in set {}", prim, variant, set));
+    if (!missing.empty())
+        throw CommandError(std::format("usdStageVariant: {} has no variant {} in set {}", missing, variant, set));
     StageStep step(s);
     logWarnings(s, g, sync(s, g));
     json out = json::object();
-    std::vector<SdfPath> paths;
-    for (const UsdPrim& p : prims)
-        paths.push_back(p.GetPath());
-    for (const SdfPath& p : paths)
-        if (const UsdPrim prim = s.stage->GetPrimAtPath(p))
-        {
-            prim.GetVariantSets().GetVariantSet(set).SetVariantSelection(variant);
-            out[p.GetString()] = variant;
-        }
+    for (const SdfPath& t : targets)
+    {
+        selectVariant(s, t, set, variant);
+        out[t.GetString()] = variant;
+    }
     flush(s, g, false);
     writeAttrs(s, g);
     step.done();
@@ -2986,19 +3329,20 @@ json cmdInfo(const Args& a)
         if (l && !l->IsAnonymous())
             layers.push_back(fileOf(l));
     json variants = json::array(), payloads = json::array();
-    for (const UsdPrim& p : UsdPrimRange(s.stage->GetPseudoRoot(), kPresent))
-    {
-        if (p.IsPseudoRoot())
-            continue;
+    eachPrim(s, [&](const UsdPrim& p, const SdfPath& link) {
+        const SdfPath level = variantPrefix(link);
         if (p.HasVariantSets())
             for (const std::string& set : p.GetVariantSets().GetNames())
             {
                 UsdVariantSet vs = p.GetVariantSets().GetVariantSet(set);
-                variants.push_back({{"prim", p.GetPath().GetString()}, {"set", set}, {"selection", vs.GetVariantSelection()}, {"variants", vs.GetVariantNames()}});
+                json e{{"prim", link.GetString()}, {"set", set}, {"selection", vs.GetVariantSelection()}, {"variants", vs.GetVariantNames()}};
+                if (!level.IsEmpty())
+                    e["level"] = level.GetVariantSelection().second;
+                variants.push_back(std::move(e));
             }
-        if (p.HasAuthoredPayloads())
+        if (level.IsEmpty() && p.HasAuthoredPayloads())
             payloads.push_back({{"prim", p.GetPath().GetString()}, {"loaded", p.IsLoaded()}});
-    }
+    });
     json out = {{"file", s.source},
                 {"editLayer", {{"mode", modeName(s.mode)}, {"path", s.mode == Stage::Mode::Embedded ? std::string() : fileOf(s.edit)}}},
                 {"layers", layers},
@@ -3155,6 +3499,8 @@ json cmdSetProperty(const Args& a)
     }
     target.reset();
     scope.reset();
+    if (link.ContainsPrimVariantSelection())
+        s.changed.insert(lodGroupOf(link));
     flush(s, g, false);
     writeAttrs(s, g);
     step.done();

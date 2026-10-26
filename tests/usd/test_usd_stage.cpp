@@ -822,3 +822,179 @@ TEST_CASE("usd stage: edits inside LOD levels are written into their variants, a
     CHECK(graph().find("Referenced|Box"));
     CHECK_FALSE(graph().find("Payloaded|Box"));
 }
+
+namespace
+{
+double farX(NodeId mesh)
+{
+    const scene::MeshPtr m = outMesh(graph().path(mesh));
+    double far = 0.0;
+    for (geo::Index p = 0; p < m->pointCapacity(); ++p)
+        if (m->pointValid(p))
+            far = std::max(far, m->position(p).x);
+    return far;
+}
+} // namespace
+
+TEST_CASE("usd stage: variant sets inside LOD levels switch per level")
+{
+    UpAxisScope axis(math::UpAxis::Z);
+    fresh();
+    const fs::path dir = workDir("lodVariants");
+    const std::string mesh = "                def Mesh \"Mesh\" (\n                    variants = {\n                        string look = \"a\"\n                    }\n"
+                             "                    prepend variantSets = \"look\"\n                )\n                {\n"
+                             "                    int[] faceVertexCounts = [3]\n                    int[] faceVertexIndices = [0, 1, 2]\n"
+                             "                    variantSet \"look\" = {\n"
+                             "                        \"a\" {\n                            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]\n                        }\n"
+                             "                        \"b\" {\n                            point3f[] points = [(0, 0, 0), (5, 0, 0), (0, 1, 0)]\n                        }\n"
+                             "                    }\n                }\n";
+    const std::string text = "#usda 1.0\n(\n    defaultPrim = \"World\"\n    metersPerUnit = 0.01\n    upAxis = \"Z\"\n)\ndef Xform \"World\"\n{\n"
+                             "    def Xform \"Chair\" (\n        variants = {\n            string LOD = \"LOD0\"\n        }\n        prepend variantSets = \"LOD\"\n    )\n"
+                             "    {\n        variantSet \"LOD\" = {\n            \"LOD0\" {\n" +
+                             mesh + "            }\n            \"LOD1\" {\n" + mesh + "            }\n        }\n    }\n}\n";
+    writeFile(dir / "lods.usda", text);
+    const std::string stage = openStage(dir / "lods.usda")["stage"];
+    std::vector<NodeId> levels = graph().children(node("Chair").id());
+    REQUIRE(levels.size() == 2);
+    CHECK(farX(levels[0]) == doctest::Approx(1.0));
+    CHECK(farX(levels[1]) == doctest::Approx(1.0));
+
+    bool listed = false;
+    const json variants = info(stage)["variants"];
+    INFO(variants.dump());
+    for (const json& v : variants)
+        listed = listed || (v["prim"] == "/World/Chair{LOD=LOD1}Mesh" && v["set"] == "look" && v.value("level", "") == "LOD1");
+    CHECK(listed);
+
+    // One level's mesh switched: written inside that level, built again in Lila.
+    run("usdStageVariant", {{"args", {stage}}, {"prim", "/World/Chair{LOD=LOD1}Mesh"}, {"set", "look"}, {"variant", "b"}});
+    const std::string e = edits(stage);
+    INFO(e);
+    CHECK(has(e, "\"LOD1\" {"));
+    CHECK(has(e, "string look = \"b\""));
+    CHECK(!has(e, "\"LOD0\" {"));
+    levels = graph().children(node("Chair").id());
+    REQUIRE(levels.size() == 2);
+    CHECK(farX(levels[0]) == doctest::Approx(1.0));
+    CHECK(farX(levels[1]) == doctest::Approx(5.0));
+    CHECK(has(prop(graph().path(levels[1]), "points"), "(5, 0, 0)"));
+
+    // By set name alone, every level.
+    run("usdStageVariant", {{"args", {stage}}, {"set", "look"}, {"variant", "b"}});
+    levels = graph().children(node("Chair").id());
+    REQUIRE(levels.size() == 2);
+    CHECK(farX(levels[0]) == doctest::Approx(5.0));
+    CHECK(farX(levels[1]) == doctest::Approx(5.0));
+
+    saveAs(dir / "scene.lila");
+    reopen(dir / "scene.lila");
+    run("usdStageReload", {{"args", {stage}}});
+    levels = graph().children(node("Chair").id());
+    REQUIRE(levels.size() == 2);
+    CHECK(farX(levels[0]) == doctest::Approx(5.0));
+    CHECK(farX(levels[1]) == doctest::Approx(5.0));
+}
+
+TEST_CASE("usd stage: an object added under a point instance takes the instance out of its instancer")
+{
+    UpAxisScope axis(math::UpAxis::Z);
+    fresh();
+    const fs::path dir = workDir("extract");
+    const fs::path src = copyFixture(dir, "instancing.usda");
+    const std::string stage = openStage(src)["stage"];
+    REQUIRE(graph().find("Rock_1|Rock|Body"));
+    const glm::dmat4 before = world("Rock_1");
+    addMesh("Moss", geo::makeCube({}), node("Rock_1").id());
+    saveAs(dir / "scene.lila");
+    const json i = info(stage);
+    const std::string text = i["edits"];
+    INFO(text);
+    CHECK(has(text, "def Xform \"Rock_1\""));
+    CHECK(has(text, "prepend references = </World/Scatter/Prototypes/Rock>"));
+    CHECK(has(text, "def Mesh \"Moss\""));
+    CHECK(has(text, "int64[] invisibleIds = [3, 1]"));
+    CHECK(warned(i["warnings"], "taken out of"));
+    CHECK(!warned(i["warnings"], "aren't written"));
+    CHECK(near(world("Rock_1"), before, 1e-6));
+    CHECK(!prop("Moss", "points").empty());
+    CHECK(has(prop("Rock_1|Rock|Body", "points"), "(1, 1, 0)"));
+
+    run("usdStageReload", {{"args", {stage}}});
+    REQUIRE(graph().find("Rock_1|Rock|Body"));
+    REQUIRE(graph().find("Rock_1|Moss"));
+    CHECK(near(world("Rock_1"), before, 1e-6));
+    CHECK(graph().find("Pebble_2|Pebble"));
+}
+
+TEST_CASE("usd stage: part of a point instance deleted leaves its prototype, an emptied one hides, and undo brings both back")
+{
+    UpAxisScope axis(math::UpAxis::Z);
+    fresh();
+    const fs::path dir = workDir("copyDelete");
+    const fs::path src = copyFixture(dir, "instancing.usda");
+    const std::string stage = openStage(src)["stage"];
+    run("delete", {{"args", {"Rock_1|Rock|Body"}}});
+    run("delete", {{"args", {"Pebble_2|Pebble"}}});
+    saveAs(dir / "scene.lila");
+    const json i = info(stage);
+    std::string text = i["edits"];
+    INFO(text);
+    CHECK(has(text, "over \"Body\" (\n                    active = false"));
+    CHECK(has(text, "int64[] invisibleIds = [3, 2]"));
+    CHECK(warned(i["warnings"], "removed from its prototype"));
+    CHECK(!warned(i["warnings"], "isn't written"));
+
+    run("undo");
+    run("undo");
+    REQUIRE(graph().find("Rock_1|Rock|Body"));
+    REQUIRE(graph().find("Pebble_2|Pebble"));
+    saveAs(dir / "scene.lila");
+    text = edits(stage);
+    CHECK(!has(text, "active = false"));
+    CHECK(!has(text, "[3, 2]"));
+    run("usdStageUpdate");
+    CHECK(graph().find("Rock_1|Rock|Body"));
+}
+
+TEST_CASE("usd stage: an instance whose edits are all undone is instanced again")
+{
+    UpAxisScope axis(math::UpAxis::Z);
+    fresh();
+    const fs::path dir = workDir("reinstance");
+    const fs::path src = copyFixture(dir, "instancing.usda");
+    const std::string stage = openStage(src)["stage"];
+    run("setAttr", {{"args", {"InstA|Tri.translate", 1, 2, 3}}});
+    saveAs(dir / "scene.lila");
+    CHECK(has(edits(stage), "instanceable = false"));
+    run("undo");
+    saveAs(dir / "scene.lila");
+    std::string text = edits(stage);
+    INFO(text);
+    CHECK(!has(text, "InstA"));
+    CHECK(prop("InstA|Tri", "xformOp:translate").empty());
+
+    // A deleted object inside one, brought back.
+    run("delete", {{"args", {"InstB|Tri"}}});
+    saveAs(dir / "scene.lila");
+    CHECK(has(edits(stage), "instanceable = false"));
+    run("undo");
+    saveAs(dir / "scene.lila");
+    CHECK(!has(edits(stage), "InstB"));
+
+    // Across a reopen, set back by hand.
+    run("setAttr", {{"args", {"InstA|Tri.translate", 4, 0, 0}}});
+    saveAs(dir / "scene.lila");
+    reopen(dir / "scene.lila");
+    CHECK(has(edits(stage), "instanceable = false"));
+    run("setAttr", {{"args", {"InstA|Tri.translate", 0, 0, 0}}});
+    saveAs(dir / "scene.lila");
+    CHECK(!has(edits(stage), "InstA"));
+
+    // Still open while anything inside differs.
+    run("setAttr", {{"args", {"InstA|Tri.translate", 1, 0, 0}}});
+    addMesh("Extra", geo::makeCube({}), node("InstA").id());
+    saveAs(dir / "scene.lila");
+    run("setAttr", {{"args", {"InstA|Tri.translate", 0, 0, 0}}});
+    saveAs(dir / "scene.lila");
+    CHECK(has(edits(stage), "instanceable = false"));
+}

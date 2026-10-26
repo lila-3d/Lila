@@ -106,8 +106,9 @@ QWidget* stagePanel(NodeId id)
         QObject::connect(box, &QComboBox::textActivated, w, [stage, prim, set](const QString& variant) {
             runCommand("usdStageVariant", {{"args", {stage}}, {"prim", prim}, {"set", set}, {"variant", variant.toStdString()}});
         });
-        const std::string leaf = prim.substr(prim.find_last_of('/') + 1);
-        form->addRow(qs(leaf + " " + set), box);
+        const std::string leaf = prim.substr(prim.find_last_of("/}") + 1);
+        const std::string level = vs.value("level", std::string());
+        form->addRow(qs(leaf + (level.empty() ? "" : " (" + level + ")") + " " + set), box);
     }
     for (const json& p : info["payloads"])
     {

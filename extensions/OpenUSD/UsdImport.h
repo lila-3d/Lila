@@ -107,6 +107,9 @@ ImportResult importUsd(scene::Graph& graph, const fs::path& path, const ImportOp
  */
 void importStage(scene::Graph& graph, const pxr::UsdStageRefPtr& stage, const fs::path& file, const ImportOptions& opts, ImportResult& r);
 
+/** Unreal's LOD convention, built as an LOD group: a variant set named LOD whose variants LOD0, LOD1, ... each hold a level. In level order; empty for any other prim. */
+std::vector<std::string> lodLevels(const pxr::UsdPrim& prim);
+
 /** Deletes the node and the nodes upstream of it that feed nothing else (its curves, skin and modifiers), undoably. */
 void deleteWithInputs(scene::Graph& graph, scene::NodeId id);
 /** Takes a modifier, deformer or skin out of its mesh's stack, joining what fed it to what it fed, and deletes it. */

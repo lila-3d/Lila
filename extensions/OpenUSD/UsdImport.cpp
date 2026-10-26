@@ -1072,22 +1072,6 @@ struct Builder
                 build(c, node);
     }
 
-    /** Unreal's LOD convention: a variant set named LOD whose variants LOD0, LOD1, ... each hold a level. */
-    std::vector<std::string> lodVariants(const UsdPrim& prim) const
-    {
-        std::vector<std::pair<int, std::string>> found;
-        if (!lodType || prim.IsInstanceProxy() || !prim.GetVariantSets().HasVariantSet("LOD"))
-            return {};
-        for (const std::string& v : prim.GetVariantSets().GetVariantSet("LOD").GetVariantNames())
-            if (v.size() > 3 && v.starts_with("LOD") && std::all_of(v.begin() + 3, v.end(), [](char c) { return c >= '0' && c <= '9'; }))
-                found.push_back({std::stoi(v.substr(3)), v});
-        std::sort(found.begin(), found.end());
-        std::vector<std::string> out;
-        for (auto& [k, v] : found)
-            out.push_back(v);
-        return out;
-    }
-
     void lodGroup(const UsdPrim& prim, NodeId parent, const std::vector<std::string>& variants)
     {
         const SdfPath path = prim.GetPath();
@@ -1128,7 +1112,8 @@ struct Builder
     {
         NodeId id = makeNode(prim, *meshType, parent, "Mesh");
         place(prim, id, parent);
-        const SdfPath key = prim.IsInstanceProxy() ? prim.GetPrimInPrototype().GetPath() : prim.GetPath();
+        // By link path: LOD levels hold different meshes at the same composed path.
+        const SdfPath key = prim.IsInstanceProxy() ? prim.GetPrimInPrototype().GetPath() : im.linkPath(prim.GetPath());
         scene::MeshPtr ptr;
         if (auto it = im.meshCache.find(key); it != im.meshCache.end())
         {
@@ -1263,7 +1248,7 @@ struct Builder
             }
         }
 
-        if (const std::vector<std::string> lods = lodVariants(prim); !lods.empty() && !prim.IsA<UsdGeomGprim>())
+        if (const std::vector<std::string> lods = lodLevels(prim); !lods.empty())
         {
             lodGroup(prim, parent, lods);
             return;
@@ -1395,6 +1380,21 @@ void applyVariants(const UsdStageRefPtr& stage, const ImportOptions& opts, Impor
     }
 }
 } // namespace
+
+std::vector<std::string> lodLevels(const UsdPrim& prim)
+{
+    if (!scene::types::find("lodGroup") || prim.IsInstanceProxy() || prim.IsA<UsdGeomGprim>() || !prim.GetVariantSets().HasVariantSet("LOD"))
+        return {};
+    std::vector<std::pair<int, std::string>> found;
+    for (const std::string& v : prim.GetVariantSets().GetVariantSet("LOD").GetVariantNames())
+        if (v.size() > 3 && v.starts_with("LOD") && std::all_of(v.begin() + 3, v.end(), [](char c) { return c >= '0' && c <= '9'; }))
+            found.push_back({std::stoi(v.substr(3)), v});
+    std::sort(found.begin(), found.end());
+    std::vector<std::string> out;
+    for (auto& [k, v] : found)
+        out.push_back(v);
+    return out;
+}
 
 SdfPath Importer::linkPath(const SdfPath& composed) const
 {
