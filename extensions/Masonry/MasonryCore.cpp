@@ -34,8 +34,7 @@ glm::dvec3 leftOf(const glm::dvec3& d) { return {-d.z, 0.0, d.x}; }
 
 double crossY(const glm::dvec3& a, const glm::dvec3& b) { return a.z * b.x - a.x * b.z; }
 
-/** Offset of the vertex between two directions, so lines offset by dist along each meet there. */
-glm::dvec3 miterOffset(const glm::dvec3& dIn, const glm::dvec3& dOut, double dist)
+glm::dvec3 miterOffsetImpl(const glm::dvec3& dIn, const glm::dvec3& dOut, double dist)
 {
     const glm::dvec3 nIn = leftOf(dIn), nOut = leftOf(dOut);
     glm::dvec3 m = nIn + nOut;
@@ -205,7 +204,7 @@ Line offsetLine(const Run& r, double dist)
             dOut = i + 1 < n ? flatDir(r.pts[i], r.pts[i + 1]) : (r.endCorner >= 0 ? r.after : flatDir(r.pts[i - 1], r.pts[i]));
             dIn = i > 0 ? flatDir(r.pts[i - 1], r.pts[i]) : (r.startCorner >= 0 ? r.before : dOut);
         }
-        l.pts.push_back(r.pts[i] + miterOffset(dIn, dOut, dist));
+        l.pts.push_back(r.pts[i] + miterOffsetImpl(dIn, dOut, dist));
     }
     l.build();
     return l;
@@ -449,6 +448,8 @@ glm::dmat3 rotationXyz(double ax, double ay, double az)
 
 int faceRank(Face f) { return f == Face::Through ? 0 : (f == Face::Outer ? 1 : 2); }
 } // namespace
+
+glm::dvec3 miterOffset(const glm::dvec3& dIn, const glm::dvec3& dOut, double dist) { return miterOffsetImpl(dIn, dOut, dist); }
 
 uint64_t hash64(uint64_t x)
 {
@@ -911,6 +912,36 @@ std::array<geo::Mesh, 3> stoneLods(StoneShape s)
     return out;
 }
 
+geo::Mesh prismMesh(const std::array<glm::dvec3, 4>& ground, double y0, double y1)
+{
+    std::vector<glm::dvec3> pts;
+    for (const glm::dvec3& g : ground)
+        pts.push_back({g.x, y0, g.z});
+    for (const glm::dvec3& g : ground)
+        pts.push_back({g.x, y1, g.z});
+    glm::dvec3 mid(0.0);
+    for (const glm::dvec3& q : pts)
+        mid += q / 8.0;
+    std::vector<geo::Index> sizes, idx;
+    auto quad = [&](std::array<geo::Index, 4> q) {
+        glm::dvec3 nrm(0.0), centre(0.0);
+        for (size_t k = 0; k < 4; ++k)
+        {
+            nrm += glm::cross(pts[q[k]], pts[q[(k + 1) % 4]]);
+            centre += pts[q[k]] / 4.0;
+        }
+        if (glm::dot(nrm, centre - mid) < 0.0)
+            std::reverse(q.begin(), q.end());
+        sizes.push_back(4);
+        idx.insert(idx.end(), q.begin(), q.end());
+    };
+    quad({0, 1, 2, 3});
+    quad({4, 5, 6, 7});
+    for (geo::Index k = 0; k < 4; ++k)
+        quad({k, geo::Index((k + 1) % 4), geo::Index((k + 1) % 4 + 4), geo::Index(k + 4)});
+    return geo::Mesh::fromPolygons(pts, sizes, idx);
+}
+
 std::vector<geo::Mesh> collisionHulls(const Footprint& footprint, const WallParams& p, int bands)
 {
     std::vector<geo::Mesh> out;
@@ -936,32 +967,7 @@ std::vector<geo::Mesh> collisionHulls(const Footprint& footprint, const WallPara
         for (int band = 0; band < count; ++band)
         {
             const double y0 = c.base + p.height * band / count, y1 = c.base + p.height * (band + 1) / count;
-            std::vector<glm::dvec3> pts;
-            for (const glm::dvec3& g : ground)
-                pts.push_back({g.x, y0, g.z});
-            for (const glm::dvec3& g : ground)
-                pts.push_back({g.x, y1, g.z});
-            glm::dvec3 mid(0.0);
-            for (const glm::dvec3& q : pts)
-                mid += q / 8.0;
-            std::vector<geo::Index> sizes, idx;
-            auto quad = [&](std::array<geo::Index, 4> q) {
-                glm::dvec3 nrm(0.0), centre(0.0);
-                for (size_t k = 0; k < 4; ++k)
-                {
-                    nrm += glm::cross(pts[q[k]], pts[q[(k + 1) % 4]]);
-                    centre += pts[q[k]] / 4.0;
-                }
-                if (glm::dot(nrm, centre - mid) < 0.0)
-                    std::reverse(q.begin(), q.end());
-                sizes.push_back(4);
-                idx.insert(idx.end(), q.begin(), q.end());
-            };
-            quad({0, 1, 2, 3});
-            quad({4, 5, 6, 7});
-            for (geo::Index k = 0; k < 4; ++k)
-                quad({k, geo::Index((k + 1) % 4), geo::Index((k + 1) % 4 + 4), geo::Index(k + 4)});
-            out.push_back(geo::Mesh::fromPolygons(pts, sizes, idx));
+            out.push_back(prismMesh(ground, y0, y1));
         }
     }
     return out;

@@ -3,6 +3,7 @@
 // sends it to Unreal.
 
 #include "Masonry.h"
+#include "MasonryBake.h"
 #include "MasonryCore.h"
 #include "MasonryShip.h"
 
@@ -281,7 +282,7 @@ void writeSent(const std::string& key, const json& groups)
 }
 
 /** Imports the plan's assets and places its groups, then removes the stale groups. Runs on the link worker. */
-json sendPlan(const json& plan, const std::vector<std::filesystem::path>& files, const json& stale, const json& materials)
+json sendPlan(const json& plan, const std::vector<std::filesystem::path>& files, const json& stale, const json& materials, const json& baked)
 {
     LILA_ZONE_N("Masonry to Unreal");
     std::shared_ptr<link::RpcClient> client = link::Link::get().client();
@@ -314,6 +315,17 @@ json sendPlan(const json& plan, const std::vector<std::filesystem::path>& files,
         else
             errors.push_back(grp["label"].get<std::string>() + ": " + r.error);
     }
+    json textures = json::object();
+    if (baked.is_object() && !baked.value("outputs", json::array()).empty())
+    {
+        json warnings = json::array();
+        const json params = link::textureImportParams(baked, {{"folder", plan["folder"].get<std::string>() + "/Textures"}, {"materialMode", "none"}}, &warnings);
+        link::RpcResult r = client->call("importTextures", params, link::importCallOptions());
+        if (r.ok)
+            textures = r.result;
+        else
+            errors.push_back("textures: " + r.error);
+    }
     json removed = json::object();
     if (!stale.empty())
     {
@@ -323,7 +335,7 @@ json sendPlan(const json& plan, const std::vector<std::filesystem::path>& files,
         else
             errors.push_back("removing old chunks: " + r.error);
     }
-    return {{"imported", int64_t(files.size())}, {"placed", placed}, {"removed", removed}, {"errors", errors}};
+    return {{"imported", int64_t(files.size())}, {"placed", placed}, {"textures", textures}, {"removed", removed}, {"errors", errors}};
 }
 } // namespace
 
@@ -457,20 +469,31 @@ void registerCommands(ext::Context& ctx)
                "three LODs (worn, clean chamfer, plain box), and the stones are placed as one instanced component (HISM by "
                "default) per stone mesh per ground chunk, so streaming and culling work per chunk. mode='merged' instead makes "
                "each chunk's stones one static mesh with the same three LODs. The core goes as its own mesh carrying the "
-               "wall's collision as convex UCX pieces; stones have none. Instances carry custom primitive data 0 a stable "
-               "random and 1 height up the wall (0 bottom course, 1 top). Materials are matched by slot name, MasonryStone "
-               "and MasonryMortar, taking a Lila material's values when the scene has one of that name. Sending again "
-               "replaces the wall's chunks in place and removes the ones it no longer has.\n\n"
-               "Returns stats (stones, assets, groups, chunks, average triangles per stone mesh at each LOD, collisionHulls, removedGroups) "
-               "plus, with wait=True, what Unreal imported and placed. dryRun=True returns the plan without writing files or "
-               "connecting.",
+               "wall's collision as convex UCX pieces; stones have none. mode='lowPoly' sends each chunk as a box shell "
+               "with the stones and core baked onto it (normal, AO, curvature) and its own UCX collision, for background "
+               "walls and HLOD.\n\n"
+               "With textures=True (the default) the stones also get a shared atlas: every stone mesh's worn LOD0 is baked "
+               "onto its box into one normal, AO and curvature set, in uv0 of all three LODs (the tiling projection moves to "
+               "uv1), and the textures go to <folder>/<mesh>/Textures. Slots: MasonryStone (LOD0), MasonryStoneFar (LOD1 and "
+               "2, which want the atlas normal), MasonryMortar (core), MasonryShell (low poly); Unreal finds or makes "
+               "materials by these names, taking a Lila material's values when the scene has one. Instances carry custom "
+               "primitive data 0 a stable random and 1 height up the wall (0 bottom course, 1 top). Sending again replaces "
+               "the wall's chunks in place and removes the ones it no longer has.\n\n"
+               "Returns stats (stones, assets, groups, chunks, average triangles per stone mesh at each LOD, collisionHulls, "
+               "atlasTexelsPerCm, shellTriangles, textures, bakeSeconds, removedGroups) plus, with wait=True, what Unreal "
+               "imported and placed. dryRun=True returns the plan without baking, writing files or connecting.",
         .positionalDoc = "mesh or its masonry modifier (default the selection)",
         .flags = {{"folder", "f", T::String, "/Game/Lila/Masonry", "Content folder; the wall's assets go in <folder>/<mesh name>."},
                   {"chunkSize", "cs", T::Float, 400.0, "Ground cell per instanced component, cm."},
                   {"mode", "m", T::String, "hism",
-                   "hism or ism: stones instanced per stone mesh per chunk. merged: each chunk's stones as one static mesh with three LODs.",
-                   {"hism", "ism", "merged"}},
+                   "hism or ism: stones instanced per stone mesh per chunk. merged: each chunk's stones as one static mesh with three LODs. "
+                   "lowPoly: each chunk as a box shell with the stones baked onto it.",
+                   {"hism", "ism", "merged", "lowPoly"}},
                   {"collisionBands", "cb", T::Int, int64_t(1), "Height bands the core's convex collision is split into (UCX), 1 to 16."},
+                  {"textures", "tx", T::Bool, true,
+                   "Bake and send textures: the stone atlas (instanced and merged) or each shell's maps (lowPoly, which always bakes)."},
+                  {"textureSize", "ts", T::Int, int64_t(2048), "Atlas or shell texture size, texels."},
+                  {"backend", "", T::String, "auto", "Bake backend: auto (gpu when there is one), gpu or cpu.", {"auto", "gpu", "cpu"}},
                   {"dryRun", "", T::Bool, false, "Return the plan, placements included, without writing files or contacting Unreal."},
                   {"wait", "w", T::Bool, false, "Block until Unreal has imported and placed everything."}},
         .undoable = false,
@@ -483,7 +506,7 @@ void registerCommands(ext::Context& ctx)
                 throw CommandError("masonryShip: the masonry modifier is on no mesh");
             BuildOptions o = optionsFromJson(modifierValues(*w.mod));
             o.lods = true;
-            const Built b = buildWalls(w.footprints, o);
+            Built b = buildWalls(w.footprints, o);
             if (b.stones.empty())
                 throw CommandError("masonryShip: " + w.mesh->path() + " has no stones");
 
@@ -491,8 +514,8 @@ void registerCommands(ext::Context& ctx)
             so.folder = a.get<std::string>("folder", so.folder);
             so.chunkSize = std::max(10.0, a.get<double>("chunkSize", so.chunkSize));
             so.mode = a.get<std::string>("mode", so.mode);
-            if (so.mode != "hism" && so.mode != "ism" && so.mode != "merged")
-                throw CommandError("masonryShip: mode is hism, ism or merged, not '" + so.mode + "'");
+            if (so.mode != "hism" && so.mode != "ism" && so.mode != "merged" && so.mode != "lowPoly")
+                throw CommandError("masonryShip: mode is hism, ism, merged or lowPoly, not '" + so.mode + "'");
             g.evaluate();
             const glm::dmat4 world = std::get<glm::dmat4>(g.value({w.mesh->id(), scene::Transform::kWorldMatrix, -1}));
             const int collisionBands = int(std::clamp<int64_t>(a.get<int64_t>("collisionBands", 1), 1, 16));
@@ -502,7 +525,13 @@ void registerCommands(ext::Context& ctx)
             const bool dry = a.get<bool>("dryRun", false);
             const std::string key = dry ? std::string("dryRun") : wallKey(g, *w.mesh);
             const std::string name = identifier(w.mesh->name());
-            json plan = shipPlan(b, world, key, name, so);
+            const bool lowPoly = so.mode == "lowPoly";
+            const bool textures = lowPoly || a.get<bool>("textures", true);
+            const int textureSize = int(std::clamp<int64_t>(a.get<int64_t>("textureSize", 2048), 64, 8192));
+            constexpr int kPadding = 8;
+            const double texelsPerCm = textures && !lowPoly ? atlasStones(b, textureSize, kPadding) : 0.0;
+            const std::vector<Shell> shells = lowPoly ? lowPolyShells(w.footprints, o.wall, so.chunkSize, textureSize, kPadding) : std::vector<Shell>();
+            json plan = shipPlan(b, world, key, name, so, shells);
 
             std::array<size_t, 3> lodTris{};
             for (const auto& chain : b.lods)
@@ -514,14 +543,50 @@ void registerCommands(ext::Context& ctx)
                           {"chunks", int64_t(plan["chunks"].size())},
                           {"lodTriangles", json::array()},
                           {"collisionHulls", collisionCount},
+                          {"atlasTexelsPerCm", texelsPerCm},
                           {"folder", plan["folder"]},
                           {"mesh", w.mesh->path()}};
             for (size_t t : lodTris)
                 stats["lodTriangles"].push_back(double(t) / double(std::max<size_t>(1, b.lods.size())));
+            if (lowPoly)
+            {
+                size_t shellTris = 0, hullCount = 0;
+                for (const Shell& sh : shells)
+                {
+                    shellTris += triangles(sh.mesh);
+                    hullCount += sh.hulls.size();
+                }
+                stats["shellTriangles"] = int64_t(shellTris);
+                stats["collisionHulls"] = int64_t(hullCount);
+            }
             if (dry)
             {
                 stats["plan"] = std::move(plan);
                 return stats;
+            }
+
+            json baked;
+            if (textures)
+            {
+                BakeSettings bs;
+                bs.folder = link::cacheDir() / "masonry" / name / "textures";
+                bs.size = textureSize;
+                bs.padding = kPadding;
+                bs.backend = a.get<std::string>("backend", "auto");
+                try
+                {
+                    baked = lowPoly ? bakeShells(b, shells, o.wall, name, bs) : bakeAtlas(b, o.bevel, name + "_Atlas", bs);
+                }
+                catch (const std::exception& e)
+                {
+                    throw CommandError(std::string("masonryShip: baking failed: ") + e.what());
+                }
+                json files = json::array();
+                for (const json& out : baked.value("outputs", json::array()))
+                    files.push_back(out.value("file", std::string()));
+                stats["textures"] = files;
+                stats["bakeSeconds"] = baked.value("seconds", 0.0);
+                stats["bakeBackend"] = baked.value("backend", std::string());
             }
 
             const std::filesystem::path dir = link::cacheDir() / "masonry" / name;
@@ -539,6 +604,20 @@ void registerCommands(ext::Context& ctx)
                 bool ok = false;
                 if (kind == "stone")
                     ok = writeLodFbx(b.lods[index], assetName, file, &err);
+                else if (kind == "shell")
+                {
+                    const Shell& sh = shells[index];
+                    auto local = [&](geo::Mesh m) {
+                        for (glm::dvec3& q : m.positions())
+                            q -= sh.origin;
+                        return m;
+                    };
+                    const geo::Mesh mesh = local(sh.mesh);
+                    std::vector<geo::Mesh> pieces;
+                    for (const geo::Mesh& h : sh.hulls)
+                        pieces.push_back(local(h));
+                    ok = writeLodFbx(std::span<const geo::Mesh>(&mesh, 1), assetName, file, &err, pieces);
+                }
                 else if (kind == "chunk")
                 {
                     const std::vector<int> members = plan["members"][index].get<std::vector<int>>();
@@ -573,17 +652,19 @@ void registerCommands(ext::Context& ctx)
                 throw CommandError(std::string("masonryShip: not connected to Unreal: ") + e.what());
             }
             writeSent(key, plan["groups"]);
-            const json materials = json::array({link::materialInputs(g, kStoneSlot), link::materialInputs(g, kMortarSlot)});
+            json materials = json::array();
+            for (const char* slot : {kStoneSlot, kStoneFarSlot, kMortarSlot, kShellSlot})
+                materials.push_back(link::materialInputs(g, slot));
             if (a.get<bool>("wait", false))
             {
-                stats["unreal"] = sendPlan(plan, files, stale, materials);
+                stats["unreal"] = sendPlan(plan, files, stale, materials, baked);
                 return stats;
             }
-            link::Link::get().post([plan = std::move(plan), files, stale, materials, name] {
+            link::Link::get().post([plan = std::move(plan), files, stale, materials, baked, name] {
                 json done;
                 try
                 {
-                    done = sendPlan(plan, files, stale, materials);
+                    done = sendPlan(plan, files, stale, materials, baked);
                 }
                 catch (const std::exception& e)
                 {

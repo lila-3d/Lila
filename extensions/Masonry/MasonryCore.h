@@ -177,6 +177,12 @@ Built buildWalls(std::span<const Footprint> footprints, const BuildOptions& o);
 inline constexpr const char* kStoneSlot = "MasonryStone";
 inline constexpr const char* kMortarSlot = "MasonryMortar";
 
+/** A closed prism between heights y0 and y1 over a convex ground quad (any winding), faces outward. */
+geo::Mesh prismMesh(const std::array<glm::dvec3, 4>& ground, double y0, double y1);
+
+/** Offset of the vertex between two directions in the ground plane, so lines offset sideways by dist meet there. */
+glm::dvec3 miterOffset(const glm::dvec3& dIn, const glm::dvec3& dOut, double dist);
+
 /** Convex pieces covering the wall's full volume, one per footprint segment per height band: its UCX collision. */
 std::vector<geo::Mesh> collisionHulls(const Footprint& footprint, const WallParams& p, int bands = 1);
 

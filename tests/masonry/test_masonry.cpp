@@ -1,3 +1,4 @@
+#include "MasonryBake.h"
 #include "MasonryCore.h"
 #include "MasonryShip.h"
 
@@ -442,6 +443,10 @@ TEST_CASE("masonry: masonryShip plans a wall without Unreal on dryRun")
     const json m = run("masonryShip", {{"args", {w["mesh"]}}, {"dryRun", true}, {"chunkSize", 200.0}, {"mode", "merged"}});
     CHECK(m["groups"].get<int64_t>() == 4);
     CHECK(r["plan"]["groups"].size() == size_t(r["groups"].get<int64_t>()));
+    const json lp = run("masonryShip", {{"args", {w["mesh"]}}, {"dryRun", true}, {"chunkSize", 200.0}, {"mode", "lowPoly"}});
+    CHECK(lp["groups"].get<int64_t>() == 3);
+    CHECK(lp["shellTriangles"].get<int64_t>() > 0);
+    CHECK(lp["collisionHulls"].get<int64_t>() == 3);
     CHECK_THROWS(run("masonryShip", {{"args", {w["mesh"]}}, {"mode", "nanite"}, {"dryRun", true}}));
 }
 
@@ -505,4 +510,136 @@ TEST_CASE("masonry: the core writes with UCX collision")
     CHECK(bytes.find("UCX_SM_Core_00") != std::string::npos);
     CHECK(bytes.find("UCX_SM_Core_01") != std::string::npos);
     CHECK(bytes.find("LodGroup") == std::string::npos);
+}
+
+namespace
+{
+/** uv0 bounds of a mesh's corners. */
+std::pair<glm::dvec2, glm::dvec2> uvBounds(const geo::Mesh& m)
+{
+    glm::dvec2 lo(1e300), hi(-1e300);
+    std::span<const glm::vec2> uv = m.cornerAttrs().get<glm::vec2>(geo::attr::uvName(0));
+    for (geo::Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f))
+            for (geo::Index c : m.faceCorners(f))
+            {
+                lo = glm::min(lo, glm::dvec2(uv[c]));
+                hi = glm::max(hi, glm::dvec2(uv[c]));
+            }
+    return {lo, hi};
+}
+
+std::filesystem::path scratch(const char* name)
+{
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "lila_masonry_test" / name;
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    return dir;
+}
+} // namespace
+
+TEST_CASE("masonry: shelf packing keeps rectangles apart and inside the square")
+{
+    std::vector<glm::dvec2> sizes;
+    for (int k = 0; k < 60; ++k)
+        sizes.push_back({5.0 + (k * 7) % 23, 2.0 + (k * 3) % 11});
+    const double pad = 4.0 / 1024.0;
+    const Packed p = shelfPack(sizes, pad);
+    REQUIRE(p.scale > 0.0);
+    for (size_t a = 0; a < sizes.size(); ++a)
+    {
+        const glm::dvec2 lo = p.origin[a], hi = lo + sizes[a] * p.scale;
+        CHECK(lo.x >= pad - 1e-12);
+        CHECK(lo.y >= pad - 1e-12);
+        CHECK(hi.x <= 1.0 - pad + 1e-12);
+        CHECK(hi.y <= 1.0 - pad + 1e-12);
+        for (size_t b = a + 1; b < sizes.size(); ++b)
+        {
+            const glm::dvec2 lo2 = p.origin[b], hi2 = lo2 + sizes[b] * p.scale;
+            const bool apart = hi.x + pad <= lo2.x + 1e-12 || hi2.x + pad <= lo.x + 1e-12 || hi.y + pad <= lo2.y + 1e-12 || hi2.y + pad <= lo.y + 1e-12;
+            CHECK(apart);
+        }
+    }
+    // Most of the square is used.
+    double area = 0.0;
+    for (const glm::dvec2& s : sizes)
+        area += s.x * s.y * p.scale * p.scale;
+    CHECK(area > 0.4);
+}
+
+TEST_CASE("masonry: the stone atlas gives every LOD of a mesh the same island, apart from other meshes")
+{
+    BuildOptions o;
+    o.lods = true;
+    const Footprint f = line({{0, 0, 0}, {400, 0, 0}, {400, 0, 200}});
+    Built b = buildWalls(std::span<const Footprint>(&f, 1), o);
+    const double density = atlasStones(b, 2048, 8);
+    CHECK(density > 0.5);
+    std::vector<std::pair<glm::dvec2, glm::dvec2>> boxes;
+    for (const auto& chain : b.lods)
+    {
+        const auto box = uvBounds(chain[2]);
+        CHECK(box.first.x >= 0.0);
+        CHECK(box.second.y <= 1.0);
+        for (size_t l = 0; l < 3; ++l)
+        {
+            const auto lb = uvBounds(chain[l]);
+            CHECK(lb.first.x >= box.first.x - 1e-4);
+            CHECK(lb.second.x <= box.second.x + 1e-4);
+            CHECK(lb.first.y >= box.first.y - 1e-4);
+            CHECK(lb.second.y <= box.second.y + 1e-4);
+            CHECK(chain[l].cornerAttrs().has(geo::attr::uvName(1)));
+            CHECK(lila::scene::materials::slotUsage(chain[l])[0].first == (l == 0 ? kStoneSlot : kStoneFarSlot));
+        }
+        boxes.push_back(box);
+    }
+    CHECK(boxes.size() == b.meshes.size());
+}
+
+TEST_CASE("masonry: low poly shells cover the wall chunk by chunk")
+{
+    WallParams p;
+    const Footprint f = line({{0, 0, 0}, {1000, 0, 0}, {1000, 0, 600}});
+    const std::vector<Shell> shells = lowPolyShells(std::span<const Footprint>(&f, 1), p, 400.0, 1024, 8);
+    CHECK(shells.size() == 4);
+    double volume = 0.0;
+    for (const Shell& sh : shells)
+    {
+        CHECK(closedManifold(sh.mesh));
+        CHECK(!sh.hulls.empty());
+        volume += signedVolume(sh.mesh);
+        const auto uv = uvBounds(sh.mesh);
+        CHECK(uv.first.x >= 0.0);
+        CHECK(uv.second.x <= 1.0);
+        CHECK(uv.second.y <= 1.0);
+        CHECK(lila::scene::materials::slotUsage(sh.mesh)[0].first == kShellSlot);
+    }
+    // 16 m of wall at full thickness and height; the corner's mitre adds and takes back the same.
+    CHECK(volume == doctest::Approx(1600.0 * p.thickness * p.height).epsilon(0.01));
+}
+
+TEST_CASE("masonry: the atlas and the shells bake on the cpu")
+{
+    BuildOptions o;
+    o.lods = true;
+    o.wall.height = 40.0;
+    const Footprint f = line({{0, 0, 0}, {120, 0, 0}});
+    Built b = buildWalls(std::span<const Footprint>(&f, 1), o);
+    atlasStones(b, 256, 4);
+    BakeSettings s;
+    s.folder = scratch("atlas");
+    s.size = 256;
+    s.padding = 4;
+    s.backend = "cpu";
+    const json atlas = bakeAtlas(b, o.bevel, "Test_Atlas", s);
+    REQUIRE(atlas["outputs"].size() == 3);
+    for (const json& out : atlas["outputs"])
+        CHECK(std::filesystem::exists(out["file"].get<std::string>()));
+    CHECK(atlas["stats"]["hits"].get<int64_t>() > 0);
+
+    const std::vector<Shell> shells = lowPolyShells(std::span<const Footprint>(&f, 1), o.wall, 100.0, 256, 4);
+    s.folder = scratch("shells");
+    const json baked = bakeShells(b, shells, o.wall, "Test", s);
+    CHECK(baked["outputs"].size() == 3 * shells.size());
+    CHECK(baked["stats"]["hits"].get<int64_t>() > baked["stats"]["misses"].get<int64_t>());
 }

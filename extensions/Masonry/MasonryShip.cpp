@@ -37,7 +37,8 @@ json asset(const std::string& folder, const std::string& name, const char* kind,
 }
 } // namespace
 
-json shipPlan(const Built& b, const glm::dmat4& world, const std::string& wallKey, const std::string& name, const ShipOptions& o)
+json shipPlan(const Built& b, const glm::dmat4& world, const std::string& wallKey, const std::string& name, const ShipOptions& o,
+              std::span<const Shell> shells)
 {
     LILA_ZONE();
 
@@ -64,6 +65,23 @@ json shipPlan(const Built& b, const glm::dmat4& world, const std::string& wallKe
         origins.push_back(json::array({origin[c].x, origin[c].y, origin[c].z}));
     }
 
+    if (o.mode == "lowPoly")
+    {
+        for (size_t k = 0; k < shells.size(); ++k)
+        {
+            const Shell& sh = shells[k];
+            list.push_back({{"key", std::format("{}:{}_{}", wallKey, sh.cell.x, sh.cell.y)},
+                            {"label", std::format("{}_{}_{}", name, sh.cell.x, sh.cell.y)},
+                            {"asset", int(assets.size())},
+                            {"mode", "actors"},
+                            {"placements", json::array({placementAt(world * glm::translate(glm::dmat4(1.0), sh.origin), "shell", json::array({0.0, 0.0}))})}});
+            assets.push_back(asset(folder, std::format("SM_{}_{}_{}", name, sh.cell.x, sh.cell.y), "shell", int(k)));
+        }
+        json cells = json::array();
+        for (const Shell& sh : shells)
+            cells.push_back(json::array({sh.cell.x, sh.cell.y}));
+        return {{"assets", std::move(assets)}, {"groups", std::move(list)}, {"chunks", std::move(cells)}, {"folder", folder}};
+    }
     if (o.mode == "merged")
         for (size_t c = 0; c < chunks.cells.size(); ++c)
         {
