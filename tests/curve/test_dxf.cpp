@@ -116,12 +116,11 @@ TEST_CASE("dxf: curves come in exact")
 TEST_CASE("dxf: splines keep their knots and weights and rasterize within tolerance")
 {
     // A quarter circle as a rational quadratic: the weight is what makes it round.
-    const double w = std::sqrt(0.5);
     curve::DxfDocument d = curve::readDxf(ascii({
         {0, "SPLINE"}, {8, "0"}, {70, "4"}, {71, "2"}, {72, "6"}, {73, "3"},
         {40, "0"}, {40, "0"}, {40, "0"}, {40, "1"}, {40, "1"}, {40, "1"},
         {10, "10"}, {20, "0"}, {30, "0"}, {41, "1"},
-        {10, "10"}, {20, "10"}, {30, "0"}, {41, std::to_string(w)},
+        {10, "10"}, {20, "10"}, {30, "0"}, {41, "0.70710678118654757"},
         {10, "0"}, {20, "10"}, {30, "0"}, {41, "1"},
         // Fit points only: the curve passes through every one.
         {0, "SPLINE"}, {8, "0"}, {70, "0"}, {71, "3"}, {72, "0"}, {73, "0"}, {74, "4"},

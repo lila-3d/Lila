@@ -798,10 +798,10 @@ private:
         if (k == e.g.size())
             return;
         size_t nv = size_t(std::max<int64_t>(0, e.g[k++].i()));
-        for (; k < e.g.size() && pts.size() < nv; ++k)
+        for (; k < e.g.size() && e.g[k].code != 93; ++k)
         {
             const Group& g = e.g[k];
-            if (g.code == 10)
+            if (g.code == 10 && pts.size() < nv)
                 pts.push_back(D3(g.d(), 0, 0));
             else if (g.code == 20 && !pts.empty())
                 pts.back().y = g.d();
