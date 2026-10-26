@@ -101,7 +101,7 @@ void forwardFileEvents(const ExecuteEvent& e)
     static const std::map<std::string_view, events::Event> kinds = {
         {"importFbx", events::Event::SceneImported},  {"importObj", events::Event::SceneImported},
         {"importGltf", events::Event::SceneImported},  {"importStl", events::Event::SceneImported},
-        {"importPly", events::Event::SceneImported},
+        {"importPly", events::Event::SceneImported},  {"importAlembic", events::Event::SceneImported},
         {"mayaImport", events::Event::SceneImported}, {"importReference", events::Event::SceneImported},
         {"exportFbx", events::Event::SceneExported},  {"exportObj", events::Event::SceneExported},
         {"exportGltf", events::Event::SceneExported},  {"exportStl", events::Event::SceneExported},

@@ -112,6 +112,7 @@ json importCommand(const Args& a)
             {"cameras", names(g, r.cameras)},
             {"lights", names(g, r.lights)},
             {"curves", names(g, r.curves)},
+            {"meshCaches", names(g, r.meshCaches)},
             {"materials", r.materials},
             {"take", r.take},
             {"takes", r.takes},

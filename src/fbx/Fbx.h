@@ -13,6 +13,7 @@
 #include <array>
 #include <filesystem>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -138,6 +139,26 @@ struct ExportOptions
     bool normals = true;
     /** Deflate the larger arrays (zlib, as the FBX SDK writes them); off writes every array raw. */
     bool compress = true;
+    /**
+     * Write the materials' colors and base color, normal and emissive maps as FBX file textures (with their wrap
+     * modes). Off writes plain named materials, which Unreal binds to its own assets by name.
+     */
+    bool textures = false;
+};
+
+/** A material texture as an FBX file texture: its file and wrap modes (FBX has only repeat and clamp). */
+struct ExportTexture
+{
+    std::string path; // absolute
+    bool clampU = false, clampV = false;
+};
+
+/** What ExportOptions::textures writes of a material slot. */
+struct ExportMaterial
+{
+    glm::dvec3 baseColor{0.5};
+    glm::dvec3 emissive{0.0};
+    std::optional<ExportTexture> baseColorMap, normalMap, emissiveMap;
 };
 
 /** A skin on an exported mesh, already pruned to the influence limit. Matrices are export space, Lila axes. */
@@ -233,6 +254,11 @@ struct ExportTake
     std::vector<std::vector<std::vector<double>>> morphWeights;
     /** [curve][frame] values of ExportScene::curveNames. */
     std::vector<std::vector<double>> namedCurves;
+    /**
+     * [node][frame] points of a mesh a meshCache drives, laid out like its ExportNode::mesh; empty for other nodes. FBX
+     * leaves them out; USD writes them as the points' time samples.
+     */
+    std::vector<std::vector<std::vector<glm::dvec3>>> meshPoints;
 };
 
 /** What an export needs from the scene, taken on the main thread so the file can be written anywhere. */
@@ -250,6 +276,8 @@ struct ExportScene
      */
     std::vector<std::string> curveNames;
     int curveHolder = -1;
+    /** ExportOptions::textures: the material of every slot the meshes use that has a material node, by slot. */
+    std::map<std::string, ExportMaterial> materials;
     std::vector<std::string> warnings;
 };
 

@@ -77,7 +77,8 @@ struct MeshPush
     uint32_t style = 0xffffffffu;
     /** Back-face tint: display-encoded rgb and mix, 8 bits each; 0 is off. */
     uint32_t backTint = 0;
-    float displayPad = 0.0f;
+    /** Material::sampling. */
+    uint32_t sampling = 0;
     /** The device address of the frame's table: bindless texture handles, then style blocks. Maps hold 16-bit handles into it. */
     uint64_t textureTable = 0;
     uint32_t maps[2] = {0xffffffffu, 0xffffffffu}; // base color | normal << 16, ORM | emissive << 16
@@ -3281,6 +3282,7 @@ struct Renderer::Impl
             p.surface = glm::vec4(mat->metallic, mat->specular, mat->opacity, mat->opacityClip);
             p.emissive = mat->emissive;
             p.flags = mat->flags;
+            p.sampling = mat->sampling;
             // Maps whose upload failed fall back to the constants.
             const uint32_t base = mapHandle(mat->baseColorMap, kWhiteSrgbKey), normal = mapHandle(mat->normalMap, kFlatNormalKey);
             const uint32_t orm = mapHandle(mat->ormMap, kWhiteLinearKey), emissive = mapHandle(mat->emissiveMap, kWhiteSrgbKey);

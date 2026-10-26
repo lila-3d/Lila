@@ -5,6 +5,7 @@
 #include "io/FileTranslators.h"
 #include "io/SceneFile.h"
 #include "scene/Anim.h"
+#include "scene/MeshCache.h"
 #include "scene/Modifiers.h"
 #include "scene/Skin.h"
 #include "ops/Undo.h"
@@ -127,6 +128,35 @@ TEST_CASE("usd stage: opens live under a usdStage node, and saving without edits
     for (NodeId id : graph().nodes())
         found = found || graph().node(id)->type().name == "usdStage";
     CHECK(found);
+}
+
+TEST_CASE("usd stage: time-sampled points play through a mesh cache, and saving without edits writes nothing")
+{
+    UpAxisScope axis(math::UpAxis::Z);
+    fresh();
+    const fs::path dir = workDir("pointcache");
+    const fs::path src = copyFixture(dir, "pointcache.usda");
+    const std::string before = readAll(src);
+    json r = openStage(src);
+    INFO(r.dump());
+    const std::string stage = r["stage"];
+    const NodeId cache = meshCache::find(graph(), node("Flag").id());
+    REQUIRE(cache != kNoNode);
+    graph().setTime(0.5);
+    MeshPtr m = outMesh("Flag");
+    REQUIRE(m);
+    double top = 0.0;
+    for (const glm::dvec3& p : m->positions())
+        top = std::max(top, p.z);
+    CHECK(top == doctest::Approx(4.0));
+    graph().setTime(0.0);
+
+    saveAs(dir / "scene.lila");
+    CHECK(!has(edits(stage), "over"));
+    CHECK(readAll(src) == before);
+    reopen(dir / "scene.lila");
+    CHECK(meshCache::find(graph(), node("Flag").id()) != kNoNode);
+    CHECK(meshCache::samples(graph(), meshCache::find(graph(), node("Flag").id()))->sampleCount() == 3);
 }
 
 TEST_CASE("usd stage: transforms and their animation are written as overs, survive a reopen and go out in a shot")

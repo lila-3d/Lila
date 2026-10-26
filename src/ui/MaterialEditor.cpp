@@ -603,6 +603,39 @@ void MaterialEditor::rebuild()
         });
         connect(clear, &QToolButton::clicked, this, [apply] { apply(""); });
         onMiddleClickReset(l, [apply] { apply(""); }, "none", path);
+        if (const int first = scene::materials::samplingAttr(attr); first >= 0)
+        {
+            // Wrap U, wrap V and filter on a row of their own, shown while the map is set.
+            auto* opts = new QWidget(mBody);
+            auto* oh = new QHBoxLayout(opts);
+            oh->setContentsMargins(kThumb + 6, 0, 0, 0);
+            const char* tips[3] = {"What the map shows past its edges along U.", "What the map shows past its edges along V.",
+                                   "Linear: smooth, mipmapped. Nearest: hard texels, for pixel art."};
+            for (int k = 0; k < 3; ++k)
+            {
+                auto* c = new QComboBox(opts);
+                c->setToolTip(tips[k]);
+                c->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+                c->setMinimumContentsLength(5);
+                const QStringList labels = k < 2 ? QStringList{"Repeat", "Clamp", "Mirror", "Black"} : QStringList{"Linear", "Nearest"};
+                for (const QString& s : labels)
+                    c->addItem(k == 0 ? "U: " + s : k == 1 ? "V: " + s : s);
+                oh->addWidget(c, 1);
+                connect(c, &QComboBox::activated, this, [this, a = first + k](int i) { setAttr(a, i); });
+                mUpdaters.push_back([this, c, a = first + k] {
+                    if (scene::Node* m = current())
+                    {
+                        QSignalBlocker block(c);
+                        c->setCurrentIndex(int(m->as<int64_t>(a)));
+                    }
+                });
+            }
+            grid->addWidget(opts, row++, 1, 1, 2);
+            mUpdaters.push_back([this, opts, attr] {
+                if (scene::Node* m = current())
+                    opts->setVisible(!m->as<std::string>(attr).empty());
+            });
+        }
         mUpdaters.push_back([this, thumb, path, attr] {
             scene::Node* m = current();
             if (!m)
@@ -650,9 +683,10 @@ void MaterialEditor::rebuild()
     };
 
     section("Shading");
-    combo("Shading Model", kShadingModel, {"Default Lit", "Painterly", "Toon", "Foliage"},
+    combo("Shading Model", kShadingModel, {"Default Lit", "Painterly", "Toon", "Foliage", "Unlit"},
           "Default Lit: Unreal's default lit.\nPainterly: brush strokes bend the normal and a palette recolours light and shadow.\n"
-          "Toon: stepped light and shadow with a rim.\nFoliage: soft gradient shading lit through from behind.");
+          "Toon: stepped light and shadow with a rim.\nFoliage: soft gradient shading lit through from behind.\n"
+          "Unlit: the base colour as it is, plus emissive, with no lighting.");
     mShownModel = int(n->as<int64_t>(kShadingModel));
     // Each model shows only its own inputs, so switching the model rebuilds the panel.
     mUpdaters.push_back([this] {

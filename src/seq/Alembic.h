@@ -86,4 +86,20 @@ struct MeshSample
  * keeps all). Empty with `error` set when the file cannot be read.
  */
 LILA_SCENE_API std::vector<MeshSample> readMeshes(const fs::path& path, double time, const std::string& filter = {}, std::string* error = nullptr);
+
+/** A PolyMesh as a point cache: its first sample as a mesh, then every sample's points, all through its transforms. */
+struct MeshCache
+{
+    std::string path; // full object path
+    std::string name; // its parent transform's name, or its own
+    geo::Mesh rest;
+    /** Seconds, one per sample. */
+    std::vector<double> times;
+    /** Per sample, laid out like rest's points; empty when the topology changes between samples. */
+    std::vector<std::vector<glm::dvec3>> points;
+    bool topologyChanges = false;
+};
+
+/** Every PolyMesh in the file as a cache. Empty with `error` set when the file cannot be read. */
+LILA_SCENE_API std::vector<MeshCache> readCaches(const fs::path& path, std::string* error = nullptr);
 } // namespace lila::seq::abc

@@ -68,9 +68,10 @@ class TextureSink
 public:
     virtual ~TextureSink() = default;
     /** A texture showing a source file; PNG and JPEG go as they are, other formats are converted to PNG. */
-    virtual int file(const std::string& path) = 0;
+    virtual int file(const std::string& path, const scene::material::TextureSampling& sampling) = 0;
     /** A texture of a PNG made by `make` (called once per key), named after `name`. */
-    virtual int made(const std::string& key, const std::string& name, const std::function<bool(Pixels&)>& make) = 0;
+    virtual int made(const std::string& key, const std::string& name, const std::function<bool(Pixels&)>& make,
+                     const scene::material::TextureSampling& sampling) = 0;
 };
 
 /** The glTF material object for a snapshot. Records the extensions it uses. */

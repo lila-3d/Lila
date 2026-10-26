@@ -151,6 +151,7 @@ enum class ShadingModel : uint32_t
     Painterly,
     Toon,
     Foliage,
+    Unlit,
 };
 
 /** The stylised models' inputs (colours linear). Each model reads only its own group; see scene::material for meanings. */
@@ -221,6 +222,11 @@ struct Material
     TexturePtr normalMap;    // linear
     TexturePtr ormMap;       // linear: R occlusion, G roughness, B metallic
     TexturePtr emissiveMap;  // sRGB
+    /**
+     * How each map samples, 8 bits per map (base color, normal, ORM, emissive from the low byte): wrap U in bits 0-1 and
+     * wrap V in bits 2-3 (0 repeat, 1 clamp, 2 mirror, 3 black), bit 4 nearest filtering. 0 repeats and filters linearly.
+     */
+    uint32_t sampling = 0;
     MaterialStyle style;
 };
 
