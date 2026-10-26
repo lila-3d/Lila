@@ -12,8 +12,18 @@ else()
 endif()
 set(_usd_core_sources UsdBackend.cpp UsdCommon.cpp UsdImport.cpp UsdImportSkel.cpp UsdExport.cpp UsdMaterials.cpp UsdStage.cpp
     UsdBackend.h UsdCommon.h UsdImport.h UsdExport.h UsdMaterials.h UsdStage.h)
+# pxr's Python bindings (the pxr_boost python target), when the USD build has them: lila.usd hands scripts the live
+# stages through them.
+if(TARGET python)
+    list(APPEND _usd_core_sources UsdPython.cpp)
+    set_property(GLOBAL PROPERTY LILA_USD_PYTHON ON)
+endif()
 add_library(lila_openusd_core SHARED ${_usd_core_sources})
 target_link_libraries(lila_openusd_core PRIVATE LilaScene usd usdGeom usdShade usdSkel usdLux usdUtils)
+if(TARGET python)
+    target_link_libraries(lila_openusd_core PRIVATE python)
+    target_compile_definitions(lila_openusd_core PRIVATE LILA_USD_PYTHON)
+endif()
 set_target_properties(lila_openusd_core PROPERTIES
     OUTPUT_NAME OpenUSDCore
     PREFIX ""
@@ -34,9 +44,10 @@ cmake_path(GET _pxr_share PARENT_PATH _pxr_root)
 set(_pkg ${_usd_pkg})
 set(_pxr_cfg $<$<CONFIG:Debug>:/debug>)
 # Every USD library, not just the linked ones: plugInfo names them all, and a stage using one of their schemas loads it.
-# They depend on nothing outside the system but TBB, which lila and lilabatch already carry.
-file(GLOB _pxr_dlls_release ${_pxr_root}/bin/usd_*.dll)
-file(GLOB _pxr_dlls_debug ${_pxr_root}/debug/bin/usd_*.dll)
+# Beyond the system they need TBB and Python, which lila and lilabatch already carry, MaterialX (Storm and the
+# MaterialX schemas) and the Vulkan loader, which comes with the driver.
+file(GLOB _pxr_dlls_release ${_pxr_root}/bin/usd_*.dll ${_pxr_root}/bin/MaterialX*.dll)
+file(GLOB _pxr_dlls_debug ${_pxr_root}/debug/bin/usd_*.dll ${_pxr_root}/debug/bin/MaterialX*.dll)
 add_custom_command(TARGET lila_openusd_core POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<IF:$<CONFIG:Debug>,${_pxr_dlls_debug},${_pxr_dlls_release}>" ${_pkg}
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${_pxr_root}${_pxr_cfg}/bin/usd ${_pkg}/usd
@@ -45,6 +56,12 @@ add_custom_command(TARGET lila_openusd_core POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_pxr_root}/share/usd/copyright ${_pkg}/OpenUSD-LICENSE.txt
     COMMENT "Deploying OpenUSD into OpenUSD.lilaext"
     COMMAND_EXPAND_LISTS)
+if(TARGET python)
+    # <pkg>/python/pxr: the bindings, which load the libraries above from beside OpenUSDCore.
+    add_custom_command(TARGET lila_openusd_core POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${_pxr_root}${_pxr_cfg}/lib/python ${_pkg}/python
+        COMMENT "Deploying OpenUSD's Python bindings into OpenUSD.lilaext")
+endif()
 
 foreach(_host lila lilabatch)
     if(TARGET ${_host})

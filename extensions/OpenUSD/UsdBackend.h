@@ -55,4 +55,17 @@ inline constexpr const char* kStamps = "sourceStamps";
 using BackendInit = int (*)(const char* packageRoot, std::string* error);
 /** Runs a USD command by name (importUsd, exportUsd, the usdStage commands and events). 0 on success, with its return value in result. */
 using BackendRun = int (*)(const char* command, const Args* args, nlohmann::json* result, std::string* error);
+/**
+ * lilaUsdStage: the pxr::UsdStage* a usdStage node composes (see stage::liveStage), owned by the node; null with the
+ * error on failure.
+ */
+using BackendStage = void* (*)(const char* node, std::string* error);
+/**
+ * lilaUsdStagePython, for lila.usd through ctypes: the same stage as a pxr.Usd.Stage, a new reference to a weak handle
+ * that expires with the node. Null with a Python exception set on failure. Called with the GIL held, after pxr.Usd is
+ * imported. Built only when the pxr libraries have Python bindings.
+ */
+using BackendStagePython = void* (*)(const char* node);
+/** lilaUsdLoad, exported by OpenUSD.dll for lila.usd: loads OpenUSDCore and registers the plugins. Null, or the error. */
+using FrontLoad = const char* (*)();
 } // namespace lila::usd

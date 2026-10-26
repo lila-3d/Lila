@@ -3,7 +3,9 @@
 #include <lila/Command.h>
 
 #include <nlohmann/json.hpp>
+#include <pxr/usd/usd/common.h>
 
+#include <string>
 #include <string_view>
 
 /**
@@ -21,4 +23,11 @@ namespace lila::usd::stage
 {
 /** Runs a usdStage command or one of the events the front forwards. False when name is none of them. */
 bool run(std::string_view name, const Args& a, nlohmann::json& result);
+
+/**
+ * The composed stage of a usdStage node, or of the stage an object belongs to; empty picks the selected stage, or the
+ * only one. Its edit target is the edit layer, and what is authored through it reaches the nodes like any outside
+ * change. Throws CommandError.
+ */
+pxr::UsdStagePtr liveStage(const std::string& node);
 } // namespace lila::usd::stage

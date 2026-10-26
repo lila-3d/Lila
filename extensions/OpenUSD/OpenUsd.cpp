@@ -199,6 +199,12 @@ NodeId stageAbove(NodeId node)
 }
 } // namespace lila::usd
 
+USD_BACKEND_EXPORT const char* lilaUsdLoad()
+{
+    const Backend& b = backend();
+    return b.run ? nullptr : b.error.c_str();
+}
+
 LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
 {
     gPackageRoot = ctx.root();

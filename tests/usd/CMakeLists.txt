@@ -20,3 +20,10 @@ if(WIN32)
         COMMENT "Deploying Python, Qt and the offscreen platform for lila_usd_tests")
 endif()
 add_test(NAME lila_usd_tests COMMAND lila_usd_tests)
+
+# lila.usd in lilabatch: pxr imported in Lila's Python, and live stages edited through it.
+get_property(_usd_python GLOBAL PROPERTY LILA_USD_PYTHON)
+if(TARGET lilabatch AND _usd_python)
+    add_test(NAME lila_usd_python COMMAND lilabatch --batch ${CMAKE_SOURCE_DIR}/python/tests/test_usd.py)
+    set_tests_properties(lila_usd_python PROPERTIES ENVIRONMENT "LILA_CONFIG_DIR=${CMAKE_CURRENT_BINARY_DIR}/usd_python_cfg")
+endif()

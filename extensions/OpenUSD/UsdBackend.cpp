@@ -210,12 +210,28 @@ USD_BACKEND_EXPORT int lilaUsdInit(const char* packageRoot, std::string* error)
 {
     try
     {
+#ifdef LILA_USD_PYTHON
+        usd::preparePython(usd::utf8Path(packageRoot));
+#endif
         return usd::registerPlugins(usd::utf8Path(packageRoot), error) ? 0 : 1;
     }
     catch (const std::exception& e)
     {
         *error = e.what();
         return 1;
+    }
+}
+
+USD_BACKEND_EXPORT void* lilaUsdStage(const char* node, std::string* error)
+{
+    try
+    {
+        return get_pointer(usd::stage::liveStage(node ? node : ""));
+    }
+    catch (const std::exception& e)
+    {
+        *error = e.what();
+        return nullptr;
     }
 }
 
