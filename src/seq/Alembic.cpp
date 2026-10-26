@@ -9,6 +9,7 @@
 #include <Alembic/AbcCoreOgawa/All.h>
 #include <Alembic/AbcGeom/All.h>
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <functional>
@@ -515,6 +516,113 @@ std::vector<MeshSample> readMeshes(const fs::path& path, double time, const std:
             }
         };
         walk(archive.getTop(), glm::dmat4(1.0));
+    }
+    catch (const std::exception& e)
+    {
+        if (error)
+            *error = e.what();
+        out.clear();
+    }
+    return out;
+}
+
+std::vector<MeshCache> readCaches(const fs::path& path, std::string* error)
+{
+    LILA_ZONE();
+
+    std::vector<MeshCache> out;
+    try
+    {
+        Alembic::AbcCoreFactory::IFactory factory;
+        AbcG::IArchive archive = factory.getArchive(path.string());
+        if (!archive.valid())
+        {
+            if (error)
+                *error = "not an Alembic file: " + path.string();
+            return out;
+        }
+        struct Found
+        {
+            AbcG::IPolyMesh mesh;
+            std::vector<AbcG::IXform> xforms; // root first
+        };
+        std::vector<Found> found;
+        std::function<void(const AbcG::IObject&, const std::vector<AbcG::IXform>&)> walk = [&](const AbcG::IObject& obj,
+                                                                                            const std::vector<AbcG::IXform>& chain) {
+            for (size_t i = 0; i < obj.getNumChildren(); ++i)
+            {
+                AbcG::IObject child = obj.getChild(i);
+                std::vector<AbcG::IXform> next = chain;
+                if (AbcG::IXform::matches(child.getHeader()))
+                    next.push_back(AbcG::IXform(child, Alembic::Abc::kWrapExisting));
+                else if (AbcG::IPolyMesh::matches(child.getHeader()))
+                    found.push_back({AbcG::IPolyMesh(child, Alembic::Abc::kWrapExisting), chain});
+                walk(child, next);
+            }
+        };
+        walk(archive.getTop(), {});
+
+        for (Found& f : found)
+        {
+            AbcG::IPolyMeshSchema& s = f.mesh.getSchema();
+            const size_t n = s.getNumSamples();
+            if (n == 0)
+                continue;
+            auto world = [&](double t) {
+                const Alembic::Abc::ISampleSelector sel(t, Alembic::Abc::ISampleSelector::kNearIndex);
+                glm::dmat4 w(1.0);
+                for (AbcG::IXform& x : f.xforms)
+                {
+                    AbcG::XformSample xs;
+                    x.getSchema().get(xs, sel);
+                    w = (xs.getInheritsXforms() ? w : glm::dmat4(1.0)) * toGlm(xs.getMatrix());
+                }
+                return w;
+            };
+            MeshCache c;
+            c.path = f.mesh.getFullName();
+            c.name = f.xforms.empty() ? f.mesh.getName() : f.xforms.back().getName();
+            AbcG::TimeSamplingPtr ts = s.getTimeSampling();
+            std::string err;
+            for (MeshSample& ms : readMeshes(path, ts->getSampleTime(0), c.path, &err))
+                if (ms.path == c.path)
+                    c.rest = std::move(ms.mesh);
+            if (!err.empty())
+                throw std::runtime_error(err);
+
+            AbcG::IPolyMeshSchema::Sample first;
+            s.get(first, Alembic::Abc::ISampleSelector(Alembic::Abc::index_t(0)));
+            for (size_t k = 0; k < n && !c.topologyChanges; ++k)
+            {
+                AbcG::IPolyMeshSchema::Sample sample;
+                s.get(sample, Alembic::Abc::ISampleSelector(Alembic::Abc::index_t(k)));
+                const double t = ts->getSampleTime(Alembic::Abc::index_t(k));
+                const auto& pos = sample.getPositions();
+                const auto& counts = sample.getFaceCounts();
+                const auto& idx = sample.getFaceIndices();
+                // Same counts and indices as the first sample, so its points line up with the rest mesh's.
+                auto same = [](const auto& a, const auto& b) {
+                    return a && b && a->size() == b->size() && std::equal(a->get(), a->get() + a->size(), b->get());
+                };
+                if (!pos || pos->size() != c.rest.pointCapacity() || !same(counts, first.getFaceCounts()) || !same(idx, first.getFaceIndices()))
+                {
+                    c.topologyChanges = true;
+                    break;
+                }
+                const glm::dmat4 w = world(t);
+                std::vector<glm::dvec3> pts(pos->size());
+                for (size_t p = 0; p < pos->size(); ++p)
+                    pts[p] = glm::dvec3(w * glm::dvec4((*pos)[p].x, (*pos)[p].y, (*pos)[p].z, 1.0));
+                c.times.push_back(t);
+                c.points.push_back(std::move(pts));
+            }
+            if (c.topologyChanges)
+            {
+                c.times.assign(1, ts->getSampleTime(0));
+                c.points.clear();
+            }
+            out.push_back(std::move(c));
+        }
     }
     catch (const std::exception& e)
     {

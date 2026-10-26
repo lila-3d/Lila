@@ -224,6 +224,9 @@ void registerCommands()
                   {"children", "", T::Bool, true, "Include the descendants of the given objects."},
                   {"smoothingGroups", "sg", T::Bool, true, "Write edge smoothing (hard and soft edges)."},
                   {"compress", "", T::Bool, true, "Deflate the larger arrays as the FBX SDK does; False writes them raw."},
+                  {"textures", "", T::Bool, false,
+                   "Write the materials' colors and base color, normal and emissive maps as file textures with their wrap modes "
+                   "(repeat or clamp). Off writes plain named materials."},
                   {"units", "u", T::String, "cm", "File units: cm, m, mm, in or ft. Lengths are scaled to them.", {"cm", "m", "mm", "in", "ft"}},
                   {"selectionOnly", "sl", T::Bool, true, "Without objects: the selection, or every root when False."}},
         .undoable = false,
@@ -248,6 +251,7 @@ void registerCommands()
             if (opts.unitScale <= 0.0)
                 throw CommandError("exportFbx: units must be cm, m, mm, in or ft");
             opts.maxInfluences = a.get<int>("maxInfluences", 8);
+            opts.textures = a.get<bool>("textures", false);
             opts.animation = a.get<bool>("animation", true);
             opts.bakeAnimation = a.get<bool>("bakeAnimation", true);
             opts.deformOnly = a.get<bool>("deformOnly", true);

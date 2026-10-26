@@ -79,6 +79,12 @@ glm::dmat3 yUpBasis(const std::string& profile)
     return glm::dmat3(1.0);
 }
 
+} // namespace
+
+glm::dmat3 fileBasis(const std::string& profile) { return yUpBasis(profile); }
+
+namespace
+{
 void stripLayers(geo::Mesh& m, const SequenceOptions& o)
 {
     if (!o.uvs)
