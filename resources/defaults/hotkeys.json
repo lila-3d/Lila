@@ -92,6 +92,7 @@
       "1": "display.smoothOff",
       "2": "display.smoothCage",
       "3": "display.smoothOn",
+      "Alt+1": "viewport.show.curve",
       "Alt+2": "viewport.show.mesh",
       "Alt+3": "viewport.show.joint",
       "4": "viewport.wireframe",

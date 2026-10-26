@@ -496,8 +496,10 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
     menuButton("world", "Environment", [](QMenu* m) { fillEnvironmentMenu(m); });
     separator();
     actionButton("viewport.isolate", "focus-2");
+    actionButton("viewport.show.curve", "vector-spline");
     actionButton("viewport.show.mesh", "box");
     actionButton("viewport.show.joint", "bone");
+    separator();
     actionButton("viewport.hud.originAxis", "axis-y");
     actionButton("viewport.toggleXray", "ghost");
     actionButton("rig.xrayJoints", "skull");
@@ -871,7 +873,7 @@ void ViewportToolbar::buildMaskRow()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(kSpacing);
     std::vector<std::pair<std::string, const char*>> buttons = {{"viewport.togglePreselectObjects", "pointer"}};
-    for (auto [kind, iconName] : {std::pair{sm::Kind::Mesh, "box"}, {sm::Kind::Joint, "bone"}, {sm::Kind::Locator, "crosshair"}, {sm::Kind::Other, "dots"}})
+    for (auto [kind, iconName] : {std::pair{sm::Kind::Curve, "vector-spline"}, {sm::Kind::Mesh, "box"}, {sm::Kind::Joint, "bone"}, {sm::Kind::Locator, "crosshair"}, {sm::Kind::Other, "dots"}})
         buttons.emplace_back(std::string("select.mask.") + sm::name(kind), iconName);
     for (const auto& [action, iconName] : buttons)
     {

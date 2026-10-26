@@ -73,6 +73,7 @@ enum AttrFlags : uint32_t
     AttrResetOnDisconnect = 1 << 6, // only meaningful while driven: losing the connection puts the default back
     AttrColor = 1 << 7,             // Vec3 holding a linear RGB colour: editors show a swatch
     AttrUnique = 1 << 8,            // an identity: duplicates don't inherit it
+    AttrArray = 1 << 9,             // an input taking any number of connections, one per element (node.attr[3])
 };
 
 struct AttrDef
@@ -91,7 +92,10 @@ struct AttrDef
      * to the default, so a default that changes keeps its old value here and older files load unchanged.
      */
     std::optional<PlugValue> fileDefault;
-    /** An older name scene files may store this attr under. Only loading reads it. */
+    /**
+     * An older name scene files may store this attr under. Only loading reads it. On an array, the prefix of numbered
+     * attrs it replaces: "section" reads section0, section1 ... as elements 0, 1 ...
+     */
     std::string fileAlias;
     /** Editor hints. niceName replaces the label made from the name; the limits bound sliders and typed values. */
     std::string niceName;
@@ -107,12 +111,13 @@ struct AttrDef
     const PlugValue& storedDefault() const { return fileDefault ? *fileDefault : defaultValue; }
 };
 
-/** node.attr, optionally one component of a Vec3 (node.tx). */
+/** node.attr, optionally one component of a Vec3 (node.tx) or one element of an array input (node.attr[3]). */
 struct PlugRef
 {
     NodeId node = kNoNode;
     int attr = -1;
     int component = -1;
+    int element = -1;
 
     bool valid() const { return node != kNoNode && attr >= 0; }
     bool operator==(const PlugRef&) const = default;

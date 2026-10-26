@@ -151,12 +151,15 @@ public:
 
     /**
      * Either end may be one component of a Vec3 (node.tx), which carries a float. A component destination and its
-     * whole Vec3 can't both be driven; force replaces whichever is there.
+     * whole Vec3 can't both be driven; force replaces whichever is there. A destination that is a whole array input
+     * gets a new element after its last one. Returns the destination connected.
      */
-    void connect(const PlugRef& src, const PlugRef& dst, bool force = false);
+    PlugRef connect(const PlugRef& src, const PlugRef& dst, bool force = false);
     void disconnect(const PlugRef& dst);
     std::optional<PlugRef> source(const PlugRef& dst) const;
     std::vector<PlugRef> destinations(const PlugRef& src) const;
+    /** An array input's connected elements, by ascending index. */
+    std::vector<PlugRef> elements(const PlugRef& array) const;
 
     // Evaluation
     void evaluate();

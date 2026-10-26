@@ -452,7 +452,7 @@ struct Pending
     std::string undo;
     std::string redo;
     std::vector<Entry> entries;
-    std::map<std::tuple<Kind, NodeId, int, int>, size_t> plugs; // coalesces repeated changes to one plug
+    std::map<std::tuple<Kind, NodeId, int, int, int>, size_t> plugs; // coalesces repeated changes to one plug
     long selection = -1;
     long time = -1;
     std::string resync;
@@ -1044,11 +1044,12 @@ void onChange(scene::Change c, NodeId id)
         const int attr = plug ? plug->attr : -1;
         // A value is reported per attr whatever component changed; a connection per plug it lands on.
         const int component = kind == Kind::Connection && plug ? plug->component : -1;
-        auto key = std::make_tuple(kind, id, attr, component);
+        const int element = kind == Kind::Connection && plug ? plug->element : -1;
+        auto key = std::make_tuple(kind, id, attr, component, element);
         if (p.resync.empty() && !p.plugs.contains(key))
         {
             p.plugs[key] = p.entries.size();
-            add({.kind = kind, .id = id, .attr = attr, .component = component});
+            add({.kind = kind, .id = id, .attr = attr, .component = component, .element = element});
         }
         break;
     }
@@ -1118,12 +1119,14 @@ void fill(Message& m, std::vector<Entry>& entries)
             e.node = infoOf(g, e.id);
             const scene::AttrDef& a = n->type().attrs[size_t(e.attr)];
             e.attrName = e.component >= 0 ? a.childNames[size_t(e.component)] : a.name;
+            if (e.element >= 0)
+                e.attrName += "[" + std::to_string(e.element) + "]";
             if (e.kind == Kind::Value)
             {
                 e.value = n->value(e.attr);
                 e.locked = g.anyLocked({e.id, e.attr, -1});
             }
-            else if (std::optional<scene::PlugRef> src = g.source({e.id, e.attr, e.component}))
+            else if (std::optional<scene::PlugRef> src = g.source({e.id, e.attr, e.component, e.element}))
                 e.text = g.fullPlugName(*src);
             break;
         }

@@ -718,7 +718,8 @@ void registerBuiltins()
                "Off, each follows its own colour preference.");
     {
         namespace sm = scene::selectionMask;
-        for (auto [kind, label, doc] : {std::tuple{sm::Kind::Mesh, "Select Polygon Objects", "Meshes can be picked in object mode."},
+        for (auto [kind, label, doc] : {std::tuple{sm::Kind::Curve, "Select Curves", "Curves can be picked in object mode."},
+                                        {sm::Kind::Mesh, "Select Polygon Objects", "Meshes can be picked in object mode."},
                                         {sm::Kind::Joint, "Select Joints", "Joints can be picked in object mode."},
                                         {sm::Kind::Locator, "Select Locators", "Locators can be picked in object mode."},
                                         {sm::Kind::Other, "Select Other Objects", "Cameras, image planes and measurements can be picked in object mode."}})
@@ -733,7 +734,8 @@ void registerBuiltins()
     }
     {
         namespace sm = scene::selectionMask;
-        for (auto [kind, label, doc] : {std::tuple{sm::Kind::Mesh, "Show Geometry", "Meshes draw in the viewport."},
+        for (auto [kind, label, doc] : {std::tuple{sm::Kind::Curve, "Show Curves", "Curves draw in the viewport."},
+                                        {sm::Kind::Mesh, "Show Geometry", "Meshes draw in the viewport."},
                                         {sm::Kind::Joint, "Show Joints", "Joints draw in the viewport."},
                                         {sm::Kind::Locator, "Show Locators", "Locators draw in the viewport."}})
         {

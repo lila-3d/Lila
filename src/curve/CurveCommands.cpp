@@ -515,16 +515,14 @@ void registerCommands()
             std::vector<Node*> cs = curvesOf(a, "loft");
             if (cs.size() < 2)
                 throw CommandError("loft: give at least two section curves");
-            if (cs.size() > 12)
-                throw CommandError("loft: at most 12 section curves");
             std::vector<Node*> rails;
             for (const json& r : a.flags.value("rails", json::array()))
                 rails.push_back(&curveNamed(r.get<std::string>(), "loft"));
             if (rails.size() > 2)
                 throw CommandError("loft: at most two rails");
             return meshOp("curveLoft", a, [&](Graph& g, Node& op) {
-                for (size_t k = 0; k < cs.size(); ++k)
-                    g.connect(worldSpace(*cs[k]), {op.id(), op.type().attrIndex("section" + std::to_string(k)), -1});
+                for (Node* c : cs)
+                    g.connect(worldSpace(*c), {op.id(), op.type().attrIndex("sections")});
                 for (size_t k = 0; k < rails.size(); ++k)
                     g.connect(worldSpace(*rails[k]), {op.id(), op.type().attrIndex("rail" + std::to_string(k)), -1});
             }, "Loft");

@@ -149,8 +149,10 @@ class Node:
         return [a["name"] for a in _lila.node_attrs(self._id) if keyable is None or a["keyable"] == keyable]
 
     def get(self, attr):
-        value = ops.getAttr(f"{self.path}.{_camel(attr)}")
-        return _vector(value) if isinstance(value, list) and len(value) == 3 else value
+        """The attribute's value; a whole array input gives a list of its elements' values."""
+        name = _camel(attr)
+        value = ops.getAttr(f"{self.path}.{name}")
+        return _vector(value) if isinstance(value, list) and len(value) == 3 and not self.is_array_attr(name) else value
 
     def set(self, attr, value):
         if hasattr(value, "x") and hasattr(value, "y") and hasattr(value, "z"):
@@ -169,6 +171,11 @@ class Node:
 
     def is_locked(self, attr):
         return ops.getAttr(f"{self.path}.{_camel(attr)}", lock=True)
+
+    def is_array_attr(self, attr):
+        """True for an array input: one that takes any number of connections, addressed as attr[0], attr[1] ..."""
+        name = _camel(attr)
+        return any(a["array"] and name in (a["name"], a["short"]) for a in _lila.node_attrs(self._id))
 
     def has_attr(self, attr):
         try:

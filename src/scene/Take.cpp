@@ -216,7 +216,7 @@ NodeId copyAnim(Graph& g, NodeId id, std::map<NodeId, NodeId>& memo, const std::
         PlugRef s = src;
         if (Node* sn = g.node(src.node); sn && isAnim(*sn))
             s.node = copyAnim(g, src.node, memo, suffix);
-        g.connect(s, {cid, dst.attr, dst.component});
+        g.connect(s, {cid, dst.attr, dst.component, dst.element});
     }
     return cid;
 }

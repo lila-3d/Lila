@@ -657,8 +657,6 @@ json runNetwork(const Args& a)
             cs.push_back(n);
     if (cs.size() < 3)
         throw CommandError("curveNetwork: give at least three crossing curves");
-    if (cs.size() > size_t(kNetworkSlots))
-        throw CommandError("curveNetwork: at most " + std::to_string(kNetworkSlots) + " curves");
     Node* op = g.createNode(*types::find("curveNetwork"), {}, kNoNode, true);
     auto set = [&](const char* attr, PlugValue v) { g.setValue({op->id(), op->type().attrIndex(attr), -1}, std::move(v)); };
     set("tolerance", std::max(1e-5, a.get<double>("tolerance", 0.1)));
@@ -668,7 +666,7 @@ json runNetwork(const Args& a)
     std::string uSlots, vSlots;
     for (size_t k = 0; k < cs.size(); ++k)
     {
-        g.connect({cs[k]->id(), CurveShape::kWorldSpace, -1}, {op->id(), op->type().attrIndex("curve" + std::to_string(k)), -1});
+        g.connect({cs[k]->id(), CurveShape::kWorldSpace, -1}, {op->id(), op->type().attrIndex("curves"), -1, int(k)});
         if (std::ranges::find(us, cs[k]) != us.end())
             uSlots += std::to_string(k) + " ";
         if (std::ranges::find(vs, cs[k]) != vs.end())
@@ -754,8 +752,6 @@ json runBorderBlend(const Args& a)
     if (picked.size() != 2)
         throw CommandError("borderBlend: select two edge chains (border loops or edge runs), on one mesh or two; found " + std::to_string(picked.size()));
     std::vector<Node*> profiles = namedCurves(a, "profiles", cmd);
-    if (profiles.size() > size_t(kBorderProfiles))
-        throw CommandError("borderBlend: at most " + std::to_string(kBorderProfiles) + " profile curves");
     Node* op = g.createNode(*types::find("meshBorderBlend"), {}, kNoNode, true);
     auto attr = [&](const char* name) { return PlugRef{op->id(), op->type().attrIndex(name), -1}; };
     g.setValue(attr("segments"), int64_t(std::max(1, a.get<int>("segments", 6))));
@@ -770,8 +766,8 @@ json runBorderBlend(const Args& a)
         g.connect({picked[size_t(k)].mesh->id(), Transform::kWorldMatrix, -1}, attr(x));
         g.setValue(attr(k == 0 ? "edgesA" : "edgesB"), edgeListToJson(picked[size_t(k)].edges));
     }
-    for (size_t k = 0; k < profiles.size(); ++k)
-        g.connect({profiles[k]->id(), CurveShape::kWorldSpace, -1}, attr(("profile" + std::to_string(k)).c_str()));
+    for (Node* p : profiles)
+        g.connect({p->id(), CurveShape::kWorldSpace, -1}, attr("profiles"));
     g.evaluate();
     MeshPtr strip = op->as<MeshPtr>(op->type().attrIndex("outMesh"));
     if (!strip || strip->numFaces() == 0)

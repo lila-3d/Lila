@@ -20,11 +20,6 @@ class Node;
  */
 namespace lila::curve
 {
-/** Curve inputs a curveNetwork node has (curve0 ...). */
-inline constexpr int kNetworkSlots = 32;
-/** Profile curve inputs a meshBorderBlend node has (profile0 ...). */
-inline constexpr int kBorderProfiles = 8;
-
 /** Edge ids as the nodes store them: a JSON list. */
 LILA_SCENE_API std::string edgeListToJson(std::span<const geo::Index> edges);
 LILA_SCENE_API std::vector<geo::Index> edgeListFromJson(const std::string& text);

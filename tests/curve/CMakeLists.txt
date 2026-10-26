@@ -2,6 +2,7 @@ add_executable(lila_curve_tests
     main.cpp
     test_along.cpp
     test_along_scene.cpp
+    test_array_inputs.cpp
     test_curve_deform.cpp
     test_curve_frames.cpp
     test_curve_objects.cpp

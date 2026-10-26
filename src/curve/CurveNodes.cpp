@@ -436,6 +436,13 @@ AttrDef dataIn(std::string name, std::string doc, bool stored = true)
             .doc = std::move(doc)};
 }
 
+/** Curves in any number, one per element; fileAlias reads the numbered attrs it replaced. */
+AttrDef dataArray(std::string name, std::string doc, std::string fileAlias)
+{
+    return {.name = std::move(name), .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrHidden | AttrArray,
+            .doc = std::move(doc), .fileAlias = std::move(fileAlias)};
+}
+
 AttrDef dataOut(std::string name, std::string doc)
 {
     return {.name = std::move(name), .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrOutput | AttrHidden, .doc = std::move(doc)};
@@ -619,13 +626,11 @@ PlugValue revolveRun(const Node& n)
     return meshValue(std::move(out));
 }
 
-constexpr int kLoftSections = 12;
-
 PlugValue loftRun(const Node& n)
 {
     std::vector<Spline> secs, rails;
-    for (int k = 0; k < kLoftSections; ++k)
-        for (const Spline& s : in(n, ("section" + std::to_string(k)).c_str()))
+    for (const auto& [k, v] : n.elements(n.type().attrIndex("sections")))
+        for (const Spline& s : splinesOf(v))
             secs.push_back(s);
     for (int k = 0; k < 2; ++k)
         for (const Spline& s : in(n, ("rail" + std::to_string(k)).c_str()))
@@ -796,8 +801,7 @@ void registerHistoryTypes()
     });
 
     std::vector<AttrDef> lo;
-    for (int k = 0; k < kLoftSections; ++k)
-        lo.push_back(dataIn("section" + std::to_string(k), "A section curve, world space, in loft order.", false));
+    lo.push_back(dataArray("sections", "Section curves, world space, lofted in element order.", "section"));
     lo.push_back(dataIn("rail0", "First rail: in-between sections follow it.", false));
     lo.push_back(dataIn("rail1", "Second rail: sections also scale and turn to meet it.", false));
     for (AttrDef a : {iAttr("samples", 0, "Points across each section; 0 matches the sections, corners lined up."),

@@ -7,6 +7,8 @@
 #include "ops/CommandOptions.h"
 #include "scene/MeshNodes.h"
 
+#include <algorithm>
+
 namespace lila::curve
 {
 using namespace scene;
@@ -17,9 +19,6 @@ using T = ArgType;
 
 namespace
 {
-constexpr int kMeshSlots = 8;
-
-std::string slot(const char* base, int k) { return base + std::to_string(k); }
 
 /** Slices the connected meshes: contours along an axis, or one section through a plane. */
 class ContourNode final : public Node
@@ -33,9 +32,14 @@ public:
         try
         {
             std::vector<geo::SectionMesh> meshes;
-            for (int k = 0; k < kMeshSlots; ++k)
-                if (const MeshPtr& m = as<MeshPtr>(idx(*this, slot("inMesh", k).c_str())); m && m->numFaces() > 0)
-                    meshes.push_back({m.get(), as<glm::dmat4>(idx(*this, slot("meshMatrix", k).c_str()))});
+            const auto& matrices = elements(idx(*this, "meshMatrices"));
+            for (const auto& [k, v] : elements(idx(*this, "inMeshes")))
+            {
+                const MeshPtr& m = std::get<MeshPtr>(v);
+                auto mx = std::ranges::find(matrices, k, [](const auto& e) { return e.first; });
+                if (m && m->numFaces() > 0)
+                    meshes.push_back({m.get(), mx != matrices.end() ? std::get<glm::dmat4>(mx->second) : glm::dmat4(1.0)});
+            }
             SliceOptions so;
             so.tolerance = std::max(0.0, f(*this, "tolerance"));
             so.smooth = b(*this, "smooth");
@@ -95,8 +99,6 @@ std::vector<Node*> meshesOf(Graph& g, const Args& a, const char* cmd)
                 out.push_back(n);
     if (out.empty())
         throw CommandError(std::string(cmd) + ": select one or more meshes");
-    if (out.size() > size_t(kMeshSlots))
-        throw CommandError(std::string(cmd) + ": at most " + std::to_string(kMeshSlots) + " meshes at once; combine them first");
     return out;
 }
 
@@ -110,8 +112,8 @@ json build(const Args& a, const char* cmd, int64_t mode, const std::function<voi
     configure(g, *op);
     for (size_t k = 0; k < meshes.size(); ++k)
     {
-        g.connect({meshes[k]->id(), MeshNode::kOutMesh, -1}, {op->id(), idx(*op, slot("inMesh", int(k)).c_str()), -1});
-        g.connect({meshes[k]->id(), Transform::kWorldMatrix, -1}, {op->id(), idx(*op, slot("meshMatrix", int(k)).c_str()), -1});
+        g.connect({meshes[k]->id(), MeshNode::kOutMesh, -1}, {op->id(), idx(*op, "inMeshes"), -1, int(k)});
+        g.connect({meshes[k]->id(), Transform::kWorldMatrix, -1}, {op->id(), idx(*op, "meshMatrices"), -1, int(k)});
     }
     Node* curve = g.createNode(*types::find("curve"), a.get<std::string>("name", mode == 1 ? "Section" : "Contour"), kNoNode, true);
     g.connect({op->id(), idx(*op, "outCurve"), -1}, {curve->id(), CurveShape::kCreate, -1});
@@ -151,11 +153,12 @@ void registerContourType()
     t.icon = "stack-2";
     t.doc = "Slices meshes into curves: contours at evenly spaced planes along an axis, or one section through a plane. Loops "
             "wind counter-clockwise about the axis; open cuts stay open unless bridged.";
-    for (int k = 0; k < kMeshSlots; ++k)
-    {
-        t.ownAttrs.push_back(meshIn(slot("inMesh", k), "A mesh to slice."));
-        t.ownAttrs.push_back(matrixIn(slot("meshMatrix", k), "That mesh's world matrix."));
-    }
+    // Paired by element: meshMatrices[k] places inMeshes[k].
+    t.ownAttrs.push_back({.name = "inMeshes", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden | AttrArray,
+                          .doc = "The meshes to slice.", .fileAlias = "inMesh"});
+    t.ownAttrs.push_back({.name = "meshMatrices", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0),
+                          .flags = AttrInput | AttrHidden | AttrArray, .doc = "Each mesh's world matrix, by the same element.",
+                          .fileAlias = "meshMatrix"});
     for (AttrDef a : {eAttr("mode", {"contour", "section"}, 0, "Contours along the axis, or a single section through origin."),
                       vAttr("axis", D3(0, 1, 0), "The planes' normal: contours step along it; a section's plane faces it."),
                       vAttr("origin", D3(0.0), "A point every contour plane is a whole number of spacings from; the section plane passes through it."),

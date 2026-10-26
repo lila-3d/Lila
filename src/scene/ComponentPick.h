@@ -93,13 +93,14 @@ namespace lila::scene::selectionMask
 /** Maya's object selection masks: which kinds of object clicks and marquees may pick. Each persists as a "general" pref, on by default. */
 enum class Kind : uint8_t
 {
+    Curve,
     Mesh,
     Joint,
     Locator,
     Other,
 };
 
-inline constexpr Kind kAll[] = {Kind::Mesh, Kind::Joint, Kind::Locator, Kind::Other};
+inline constexpr Kind kAll[] = {Kind::Curve, Kind::Mesh, Kind::Joint, Kind::Locator, Kind::Other};
 
 /** "mesh", "joint", ...: the leaf of the pref key and of the "select.mask.<name>" action. */
 LILA_SCENE_API const char* name(Kind k);

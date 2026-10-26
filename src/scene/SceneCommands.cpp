@@ -455,41 +455,59 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "getAttr",
-        .doc = "Value of 'node.attr'. lock=True returns whether it is locked instead.",
+        .doc = "Value of 'node.attr'; a whole array input gives its elements' values in order. lock=True returns whether it is locked instead.",
         .positionalDoc = "plug",
         .flags = {{"lock", "l", T::Bool, false, "Return the lock state instead of the value."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             if (a.positional.empty() || !a.positional[0].is_string())
                 throw CommandError("getAttr: expected a plug");
+            PlugRef p = plugArg(a.positional[0].get<std::string>());
             if (a.get<bool>("lock"))
-                return graph().isLocked(plugArg(a.positional[0].get<std::string>()));
-            return toJson(guarded([&] { return graph().value(plugArg(a.positional[0].get<std::string>())); }));
+                return graph().isLocked(p);
+            if ((graph().attr(p).flags & AttrArray) && p.element < 0)
+            {
+                json out = json::array();
+                for (const PlugRef& e : graph().elements(p))
+                    out.push_back(toJson(guarded([&] { return graph().value(e); })));
+                return out;
+            }
+            return toJson(guarded([&] { return graph().value(p); }));
         },
     });
 
     ops::registerCommand({
         .name = "connectAttr",
-        .doc = "connectAttr('src.attr', 'dst.attr').",
+        .doc = "connectAttr('src.attr', 'dst.attr'). A whole array input ('loft1.sections') gets a new last element. Returns the destination plug.",
         .positionalDoc = "src dst",
         .flags = {{"force", "f", T::Bool, false, "Replace an existing input connection."}},
         .run = [](const Args& a) -> json {
             if (a.positional.size() != 2)
                 throw CommandError("connectAttr: expected (src, dst)");
             PlugRef s = plugArg(a.positional[0]), d = plugArg(a.positional[1]);
-            guarded([&] { graph().connect(s, d, a.get<bool>("force")); return 0; });
-            return nullptr;
+            return graph().plugName(guarded([&] { return graph().connect(s, d, a.get<bool>("force")); }));
         },
     });
 
     ops::registerCommand({
         .name = "disconnectAttr",
-        .doc = "disconnectAttr('dst.attr'), or (src, dst).",
+        .doc = "disconnectAttr('dst.attr'), or (src, dst). A whole array input loses every element, or with src only the ones src drives.",
         .positionalDoc = "[src] dst",
         .run = [](const Args& a) -> json {
             if (a.positional.empty())
                 throw CommandError("disconnectAttr: expected a plug");
-            graph().disconnect(plugArg(a.positional.back()));
+            PlugRef d = plugArg(a.positional.back());
+            if (!(graph().attr(d).flags & AttrArray) || d.element >= 0)
+            {
+                graph().disconnect(d);
+                return nullptr;
+            }
+            std::optional<PlugRef> from;
+            if (a.positional.size() > 1)
+                from = plugArg(a.positional.front());
+            for (const PlugRef& e : graph().elements(d))
+                if (!from || graph().source(e) == from)
+                    graph().disconnect(e);
             return nullptr;
         },
     });

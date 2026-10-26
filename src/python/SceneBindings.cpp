@@ -121,6 +121,7 @@ void bindScene(nb::module_& m)
                 d["keyable"] = bool(a.flags & scene::AttrKeyable);
                 d["output"] = !(a.flags & scene::AttrInput);
                 d["hidden"] = bool(a.flags & scene::AttrHidden);
+                d["array"] = bool(a.flags & scene::AttrArray);
                 d["doc"] = a.doc;
                 nb::list children;
                 if (a.type == scene::PlugType::Vec3)

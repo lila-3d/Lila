@@ -33,6 +33,13 @@ AttrDef dataIn(std::string name, std::string doc, bool stored = true)
             .doc = std::move(doc)};
 }
 
+/** Curves in any number, one per element; fileAlias reads the numbered attrs it replaced. */
+AttrDef dataArray(std::string name, std::string doc, std::string fileAlias)
+{
+    return {.name = std::move(name), .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrHidden | AttrArray,
+            .doc = std::move(doc), .fileAlias = std::move(fileAlias)};
+}
+
 AttrDef meshIn(std::string name, std::string doc)
 {
     return {.name = std::move(name), .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden, .doc = std::move(doc)};
@@ -199,8 +206,8 @@ PlugValue networkRun(const Node& n, std::vector<std::string>& warnings)
 {
     Splines curves;
     std::vector<int> slotOf;
-    for (int k = 0; k < kNetworkSlots; ++k)
-        for (const Spline& sp : in(n, ("curve" + std::to_string(k)).c_str()))
+    for (const auto& [k, v] : n.elements(idx(n, "curves")))
+        for (const Spline& sp : splinesOf(v))
         {
             curves.push_back(sp);
             slotOf.push_back(k);
@@ -230,7 +237,7 @@ PlugValue networkRun(const Node& n, std::vector<std::string>& warnings)
         {
             for (size_t c = curves.size(); c-- > 0;)
             {
-                std::string from = "curve " + std::to_string(c), to = "curve" + std::to_string(slotOf[c]) + " input";
+                std::string from = "curve " + std::to_string(c), to = "curves[" + std::to_string(slotOf[c]) + "] input";
                 if (size_t at = w.find(from); at != std::string::npos && (at + from.size() == w.size() || !std::isdigit(w[at + from.size()])))
                     w.replace(at, from.size(), to);
             }
@@ -240,7 +247,7 @@ PlugValue networkRun(const Node& n, std::vector<std::string>& warnings)
     }
     catch (const std::invalid_argument& e)
     {
-        throw std::invalid_argument(std::string(e.what()) + " (curve numbers count the connected inputs from curve0)");
+        throw std::invalid_argument(std::string(e.what()) + " (curve numbers count the connected curves from the first element)");
     }
 }
 
@@ -268,8 +275,8 @@ PlugValue borderRun(const Node& n, std::vector<std::string>& warnings)
     };
     BorderSide sa = borderSide(*ma, ca, centre(*mb, cb)), sb = borderSide(*mb, cb, centre(*ma, ca));
     Splines profiles;
-    for (int k = 0; k < kBorderProfiles; ++k)
-        for (const Spline& sp : in(n, ("profile" + std::to_string(k)).c_str()))
+    for (const auto& [k, v] : n.elements(idx(n, "profiles")))
+        for (const Spline& sp : splinesOf(v))
             profiles.push_back(sp);
     BorderBlendOptions o;
     o.segments = int(std::max<int64_t>(1, i(n, "segments")));
@@ -369,13 +376,12 @@ void registerVehicleTypes()
                  blend, [](const Node& n, std::vector<std::string>& w) { return blendRun(n, w); });
 
     std::vector<AttrDef> net;
-    for (int k = 0; k < kNetworkSlots; ++k)
-        net.push_back(dataIn("curve" + std::to_string(k), "A network curve, world space.", false));
+    net.push_back(dataArray("curves", "The network's curves, world space.", "curve"));
     for (AttrDef a : {fAttr("tolerance", 0.1, "Curves closer than this meet, cm.", 1e-5), iAttr("spansU", 4, "Quads along the U curves between neighbouring V curves.", 1),
                       iAttr("spansV", 4, "Quads along the V curves between neighbouring U curves.", 1), bAttr("flip", false, "Flip the faces.")})
         net.push_back(a);
-    net.push_back(sAttr("uSlots", "Input slots forced into the U family, e.g. \"0 3\"; the rest sort themselves."));
-    net.push_back(sAttr("vSlots", "Input slots forced into the V family."));
+    net.push_back(sAttr("uSlots", "Elements of curves forced into the U family, e.g. \"0 3\"; the rest sort themselves."));
+    net.push_back(sAttr("vSlots", "Elements of curves forced into the V family."));
     net.push_back({.name = "outMesh", .shortName = "o", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrOutput | AttrHidden,
                    .doc = "The network surface."});
     net.push_back(warningOut());
@@ -390,8 +396,7 @@ void registerVehicleTypes()
                                meshIn("inMeshB", "Mesh holding side B."),
                                matrixIn("matrixB", "Its world matrix."),
                                sAttr("edgesB", "Edges of side B, as a JSON list.", AttrHidden)};
-    for (int k = 0; k < kBorderProfiles; ++k)
-        bb.push_back(dataIn("profile" + std::to_string(k), "A profile curve drawn across the gap, world space.", false));
+    bb.push_back(dataArray("profiles", "Profile curves drawn across the gap, world space.", "profile"));
     for (AttrDef a : {iAttr("segments", 6, "Quads across the strip.", 1), fAttr("tensionA", 1.0, "How far the strip runs on from side A before turning.", 0.0, 10.0),
                       fAttr("tensionB", 1.0, "How far the strip runs on from side B before turning.", 0.0, 10.0), bAttr("flip", false, "Flip the faces.")})
         bb.push_back(a);

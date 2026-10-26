@@ -34,7 +34,6 @@ namespace
 {
 constexpr uint32_t kIn = AttrInput | AttrStorable;
 constexpr uint32_t kKey = AttrInput | AttrStorable | AttrKeyable;
-constexpr int kInputs = 16;
 
 AttrDef fAttr(std::string name, double def, std::string doc, std::string cat = {}, std::optional<double> lo = std::nullopt,
               std::optional<double> hi = std::nullopt)
@@ -93,12 +92,11 @@ AttrDef curveOut() { return {.name = "outCurve", .type = PlugType::Data, .defaul
 
 AttrDef meshOut() { return {.name = "outMesh", .shortName = "o", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrOutput | AttrHidden, .doc = "The mesh it makes."}; }
 
-std::vector<AttrDef> curveInputs(const std::string& firstDoc)
+/** The node's curves, one element per input curve; fileAlias reads the numbered inCurve0 ... attrs it replaced. */
+std::vector<AttrDef> curveInputs(const std::string& doc)
 {
-    std::vector<AttrDef> out;
-    for (int k = 0; k < kInputs; ++k)
-        out.push_back(dataIn("inCurve" + std::to_string(k), k == 0 ? firstDoc : "More curves, world space."));
-    return out;
+    return {{.name = "inCurves", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrHidden | AttrArray, .doc = doc,
+             .fileAlias = "inCurve"}};
 }
 
 int idx(const Node& n, const char* a) { return n.type().attrIndex(a); }
@@ -112,15 +110,9 @@ const std::string& s(const Node& n, const char* a) { return n.as<std::string>(id
 std::vector<Splines> operandsOf(const Node& n)
 {
     std::vector<Splines> out;
-    for (int k = 0; k < kInputs; ++k)
-    {
-        int a = n.type().attrIndex("inCurve" + std::to_string(k));
-        if (a < 0)
-            break;
-        const Splines& sp = splinesOf(n.value(a));
-        if (!sp.empty())
+    for (const auto& [k, v] : n.elements(idx(n, "inCurves")))
+        if (const Splines& sp = splinesOf(v); !sp.empty())
             out.push_back(sp);
-    }
     return out;
 }
 
@@ -486,8 +478,6 @@ std::vector<Node*> curvesArg(Graph& g, const Args& a, const char* cmd)
                 out.push_back(n);
     if (out.empty())
         throw CommandError(std::string(cmd) + ": select closed curves");
-    if (out.size() > size_t(kInputs))
-        throw CommandError(std::string(cmd) + ": at most " + std::to_string(kInputs) + " curves (a curve may hold many loops)");
     return out;
 }
 
@@ -563,8 +553,8 @@ void bake(Graph& g, Node& op, const PlugRef& dst)
 
 void connectInputs(Graph& g, Node& op, const std::vector<Node*>& curves)
 {
-    for (size_t k = 0; k < curves.size(); ++k)
-        g.connect({curves[k]->id(), CurveShape::kWorldSpace, -1}, {op.id(), op.type().attrIndex("inCurve" + std::to_string(k)), -1});
+    for (Node* c : curves)
+        g.connect({c->id(), CurveShape::kWorldSpace, -1}, {op.id(), op.type().attrIndex("inCurves")});
 }
 
 /** A node of type on the curves, feeding a new curve. Returns [curve, node]. */

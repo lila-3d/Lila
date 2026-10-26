@@ -1216,7 +1216,7 @@ QWidget* ModifierStackWidget::buildParams(NodeId id, bool isModifier)
     for (int i : order)
     {
         const scene::AttrDef& def = attrs[i];
-        if ((def.flags & scene::AttrHidden) || !(def.flags & scene::AttrInput))
+        if ((def.flags & (scene::AttrHidden | scene::AttrArray)) || !(def.flags & scene::AttrInput))
             continue;
         if (def.category != heading)
         {

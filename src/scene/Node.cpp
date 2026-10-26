@@ -35,6 +35,12 @@ std::string Node::path() const { return mGraph ? mGraph->path(mId) : mName; }
 
 std::string Node::fullPath() const { return mGraph ? mGraph->fullPath(mId) : "|" + mName; }
 
+const std::vector<std::pair<int, PlugValue>>& Node::elements(int attr) const
+{
+    static const std::vector<std::pair<int, PlugValue>> none;
+    return size_t(attr) < mElements.size() ? mElements[size_t(attr)] : none;
+}
+
 int NodeType::attrIndex(std::string_view n) const
 {
     for (int i = 0; i < int(attrs.size()); ++i)

@@ -8,6 +8,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace lila::ext
@@ -92,6 +93,8 @@ public:
     uint32_t referenceId() const { return mReference; }
 
     const PlugValue& value(int attr) const { return mValues[attr]; }
+    /** An array input's values, one per connected element, by ascending element index. Empty for other attrs. */
+    LILA_SCENE_API const std::vector<std::pair<int, PlugValue>>& elements(int attr) const;
     /** Locked parts of an attr: bit 0 for a scalar, bits 0-2 for a Vec3's components. See Graph::setLocked. */
     uint8_t lockMask(int attr) const { return size_t(attr) < mLocks.size() ? mLocks[size_t(attr)] : uint8_t(0); }
     template <class T> const T& as(int attr) const { return std::get<T>(mValues[attr]); }
@@ -121,6 +124,7 @@ private:
     std::string mNamespace;
     uint32_t mReference = 0;
     std::vector<PlugValue> mValues;
+    std::vector<std::vector<std::pair<int, PlugValue>>> mElements; // per attr, empty until an array input is connected
     std::vector<uint8_t> mLocks; // per attr, empty until something is locked
     bool mDirty = true;
     uint64_t mEvaluatedPass = 0;

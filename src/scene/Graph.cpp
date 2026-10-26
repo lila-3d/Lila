@@ -23,6 +23,29 @@ namespace
 {
 const std::vector<NodeId> kNoChildren;
 
+bool isArray(const AttrDef& a) { return (a.flags & AttrArray) != 0; }
+
+std::string elementSuffix(const PlugRef& p) { return p.element >= 0 ? "[" + std::to_string(p.element) + "]" : ""; }
+
+/** A whole non-negative number, or -1. */
+int parseIndex(std::string_view digits)
+{
+    int v = -1;
+    if (digits.empty() || std::from_chars(digits.data(), digits.data() + digits.size(), v).ptr != digits.data() + digits.size())
+        return -1;
+    return v;
+}
+
+PlugValue* elementSlot(std::vector<std::vector<std::pair<int, PlugValue>>>& all, const PlugRef& p)
+{
+    if (size_t(p.attr) >= all.size())
+        return nullptr;
+    for (auto& [i, v] : all[size_t(p.attr)])
+        if (i == p.element)
+            return &v;
+    return nullptr;
+}
+
 bool scalarOf(const PlugValue& v, double& out)
 {
     return std::visit(
@@ -648,17 +671,35 @@ PlugRef Graph::plug(std::string_view path) const
     if (!n)
         throw std::invalid_argument("no node named '" + std::string(path.substr(0, dot)) + "'");
     std::string_view attrName = path.substr(dot + 1);
+    int element = -1;
+    if (attrName.ends_with(']'))
+    {
+        size_t open = attrName.rfind('[');
+        element = open == std::string_view::npos ? -1 : parseIndex(attrName.substr(open + 1, attrName.size() - open - 2));
+        if (element < 0)
+            throw std::invalid_argument("bad element index in '" + std::string(path) + "'");
+        attrName = attrName.substr(0, open);
+    }
     const auto& attrs = n->type().attrs;
     for (int i = 0; i < int(attrs.size()); ++i)
     {
         const AttrDef& a = attrs[i];
         if (a.name == attrName || a.shortName == attrName)
-            return {n->id(), i, -1};
-        if (a.type == PlugType::Vec3)
+        {
+            if (element >= 0 && !isArray(a))
+                throw std::invalid_argument("'" + n->name() + "." + a.name + "' is not an array");
+            return {n->id(), i, -1, element};
+        }
+        if (a.type == PlugType::Vec3 && element < 0)
             for (int c = 0; c < 3; ++c)
                 if (a.childNames[c] == attrName || a.childShort[c] == attrName)
                     return {n->id(), i, c};
     }
+    // Numbered inputs an array replaced, as older scene files name them.
+    for (int i = 0; i < int(attrs.size()) && element < 0; ++i)
+        if (const AttrDef& a = attrs[i]; isArray(a) && !a.fileAlias.empty() && attrName.starts_with(a.fileAlias))
+            if (int k = parseIndex(attrName.substr(a.fileAlias.size())); k >= 0)
+                return {n->id(), i, -1, k};
     throw std::invalid_argument("'" + n->name() + "' has no attribute '" + std::string(attrName) + "'");
 }
 
@@ -668,7 +709,7 @@ std::string Graph::plugName(const PlugRef& p) const
     if (!n)
         return "?";
     const AttrDef& a = n->type().attrs[p.attr];
-    return path(p.node) + "." + (p.component >= 0 ? a.childNames[p.component] : a.name);
+    return path(p.node) + "." + (p.component >= 0 ? a.childNames[p.component] : a.name) + elementSuffix(p);
 }
 
 std::string Graph::fullPlugName(const PlugRef& p) const
@@ -677,7 +718,7 @@ std::string Graph::fullPlugName(const PlugRef& p) const
     if (!n)
         return "?";
     const AttrDef& a = n->type().attrs[p.attr];
-    return fullPath(p.node) + "." + (p.component >= 0 ? a.childNames[p.component] : a.name);
+    return fullPath(p.node) + "." + (p.component >= 0 ? a.childNames[p.component] : a.name) + elementSuffix(p);
 }
 
 const AttrDef& Graph::attr(const PlugRef& p) const
@@ -688,6 +729,14 @@ const AttrDef& Graph::attr(const PlugRef& p) const
 void Graph::setRaw(const PlugRef& p, const PlugValue& v)
 {
     Node* n = node(p.node);
+    if (p.element >= 0)
+    {
+        if (PlugValue* e = elementSlot(n->mElements, p))
+            *e = v;
+        markDirty(p.node);
+        changed(Change::Value, p.node, &p);
+        return;
+    }
     PlugValue& slot = n->mValues[p.attr];
     if (p.component >= 0)
         std::get<glm::dvec3>(slot)[p.component] = std::get<double>(v);
@@ -774,6 +823,8 @@ void Graph::setValue(const PlugRef& p, PlugValue v)
     const AttrDef& a = n->type().attrs[p.attr];
     if (!(a.flags & AttrInput))
         throw std::invalid_argument(plugName(p) + " is an output and can't be set");
+    if (isArray(a))
+        throw std::invalid_argument(plugName(p) + " is an array input and takes connections, not values");
     if (uint8_t mask = n->lockMask(p.attr))
     {
         const glm::dvec3* x = std::get_if<glm::dvec3>(&v);
@@ -897,6 +948,13 @@ PlugValue Graph::value(const PlugRef& p)
         throw std::invalid_argument("no such node");
     if (mAnyDirty)
         evaluate();
+    if (p.element >= 0)
+    {
+        for (const auto& [i, v] : n->elements(p.attr))
+            if (i == p.element)
+                return v;
+        return n->type().attrs[p.attr].defaultValue;
+    }
     const PlugValue& v = n->mValues[p.attr];
     if (p.component >= 0)
         return std::get<glm::dvec3>(v)[p.component];
@@ -926,6 +984,15 @@ bool Graph::dependsOn(NodeId n, NodeId upstream) const
 
 void Graph::connectRaw(const PlugRef& src, const PlugRef& dst)
 {
+    if (Node* n = node(dst.node); n && dst.element >= 0)
+    {
+        if (n->mElements.size() <= size_t(dst.attr))
+            n->mElements.resize(n->type().attrs.size());
+        auto& els = n->mElements[size_t(dst.attr)];
+        auto at = std::lower_bound(els.begin(), els.end(), dst.element, [](const auto& e, int i) { return e.first < i; });
+        if (at == els.end() || at->first != dst.element)
+            els.insert(at, {dst.element, n->type().attrs[size_t(dst.attr)].defaultValue});
+    }
     mHeld.erase(dst);
     mInputs[dst] = src;
     mOutgoingDst[src.node].push_back(dst);
@@ -942,18 +1009,34 @@ void Graph::disconnectRaw(const PlugRef& dst)
     mInputs.erase(it);
     mHeld.erase(dst);
     if (Node* n = node(dst.node))
-        if (const AttrDef& a = n->type().attrs[size_t(dst.attr)]; a.flags & AttrResetOnDisconnect)
+    {
+        if (dst.element >= 0 && size_t(dst.attr) < n->mElements.size())
+            std::erase_if(n->mElements[size_t(dst.attr)], [&](const auto& e) { return e.first == dst.element; });
+        else if (const AttrDef& a = n->type().attrs[size_t(dst.attr)]; a.flags & AttrResetOnDisconnect)
             n->mValues[size_t(dst.attr)] = a.defaultValue;
+    }
     markDirty(dst.node);
     changed(Change::Connection, dst.node, &dst);
 }
 
-void Graph::connect(const PlugRef& src, const PlugRef& dst, bool force)
+PlugRef Graph::connect(const PlugRef& src, const PlugRef& to, bool force)
 {
     const AttrDef& sa = attr(src);
-    const AttrDef& da = attr(dst);
+    const AttrDef& da = attr(to);
     if (!(da.flags & AttrInput))
-        throw std::invalid_argument(plugName(dst) + " is not an input");
+        throw std::invalid_argument(plugName(to) + " is not an input");
+    if (src.element >= 0)
+        throw std::invalid_argument("array elements are inputs and can't drive " + plugName(to));
+    if (to.element >= 0 && !isArray(da))
+        throw std::invalid_argument(plugName({to.node, to.attr}) + " is not an array");
+    if (isArray(da) && to.component >= 0)
+        throw std::invalid_argument("array inputs have no components");
+    PlugRef dst = to;
+    if (isArray(da) && dst.element < 0)
+    {
+        std::vector<PlugRef> used = elements(dst);
+        dst.element = used.empty() ? 0 : used.back().element + 1;
+    }
     if ((src.component >= 0 && sa.type != PlugType::Vec3) || (dst.component >= 0 && da.type != PlugType::Vec3))
         throw std::invalid_argument("only vec3 plugs have components");
     PlugType st = src.component >= 0 ? PlugType::Float : sa.type;
@@ -985,14 +1068,14 @@ void Graph::connect(const PlugRef& src, const PlugRef& dst, bool force)
     if (auto existing = source(dst))
     {
         if (*existing == src)
-            return;
+            return dst;
         if (!force)
             throw std::invalid_argument(plugName(dst) + " is already connected; use force");
         disconnect(dst);
     }
     // Undo puts back the value the plug held before it was driven, not the last one pulled through the connection.
     std::optional<PlugValue> before;
-    if (da.type != PlugType::Mesh && da.type != PlugType::Data)
+    if (da.type != PlugType::Mesh && da.type != PlugType::Data && dst.element < 0)
     {
         const PlugValue& v = node(dst.node)->value(dst.attr);
         before = dst.component >= 0 ? PlugValue(std::get<glm::dvec3>(v)[dst.component]) : v;
@@ -1005,6 +1088,7 @@ void Graph::connect(const PlugRef& src, const PlugRef& dst, bool force)
                 setRaw(dst, *before);
         },
         [this, src, dst] { connectRaw(src, dst); });
+    return dst;
 }
 
 void Graph::disconnect(const PlugRef& dst)
@@ -1021,6 +1105,15 @@ std::optional<PlugRef> Graph::source(const PlugRef& dst) const
 {
     auto it = mInputs.find(dst);
     return it == mInputs.end() ? std::nullopt : std::optional(it->second);
+}
+
+std::vector<PlugRef> Graph::elements(const PlugRef& array) const
+{
+    std::vector<PlugRef> out;
+    for (auto it = mInputs.lower_bound({array.node, array.attr, -1, 0});
+         it != mInputs.end() && it->first.node == array.node && it->first.attr == array.attr && it->first.component == -1; ++it)
+        out.push_back(it->first);
+    return out;
 }
 
 std::vector<PlugRef> Graph::destinations(const PlugRef& src) const
@@ -1181,7 +1274,10 @@ void Graph::evaluateDirty()
                 if (!mHeld.empty() && mHeld.contains(dp))
                     continue;
                 const PlugValue& sv = node(sp.node)->mValues[sp.attr];
-                PlugValue& dv = n->mValues[dp.attr];
+                PlugValue* slot = dp.element >= 0 ? elementSlot(n->mElements, dp) : &n->mValues[dp.attr];
+                if (!slot)
+                    continue;
+                PlugValue& dv = *slot;
                 if (sp.component >= 0 || dp.component >= 0)
                 {
                     double s = 0.0;
