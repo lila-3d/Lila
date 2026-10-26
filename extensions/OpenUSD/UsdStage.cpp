@@ -46,7 +46,12 @@
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
 #include <pxr/usd/usdSkel/animation.h>
+#include <pxr/usd/usdSkel/bindingAPI.h>
+#include <pxr/usd/usdSkel/blendShape.h>
 #include <pxr/usd/usdSkel/skeleton.h>
+#include <pxr/usd/usdSkel/tokens.h>
+#include <pxr/usd/usdSkel/topology.h>
+#include <pxr/usd/usdSkel/utils.h>
 #include <pxr/usd/usdUtils/stitch.h>
 
 #include <glm/gtx/matrix_decompose.hpp>
@@ -94,6 +99,11 @@ bool insideOf(const SdfPath& link, const SdfPath& q)
 
 /** Baseline keys of an instance opened for edits, and of each linked prim's baseline from before it was. */
 const std::string kOpen = "$open:", kOrigin = "$origin:";
+/**
+ * Baseline keys of a point instance taken out of its instancer ("$extract:<xform>|<instancer>", its index), and of the
+ * holder's and copies' baselines as they were taken out, by their link paths.
+ */
+const std::string kExtract = "$extract:", kFrom = "$from:";
 
 /** Above zero while Lila changes the scene for a stage itself; the graph listener ignores those changes. */
 int& quietDepth()
@@ -128,6 +138,8 @@ struct Stage : TfWeakBase
     std::unordered_map<NodeId, SdfPath> copyOf;
     /** The transform of each point instance (in partOf too): its instancer and index. */
     std::unordered_map<NodeId, std::pair<SdfPath, size_t>> instanceOf;
+    /** The joints of Skeleton prims (in partOf too): each one's token in its skeleton's joints. */
+    std::unordered_map<NodeId, TfToken> jointOf;
     /** Linked nodes deleted this session, so an undo that brings one back links it again. */
     std::unordered_map<NodeId, SdfPath> deleted;
     struct Part
@@ -135,6 +147,9 @@ struct Stage : TfWeakBase
         SdfPath owner;
         std::optional<SdfPath> copy;
         std::optional<std::pair<SdfPath, size_t>> instance;
+        std::optional<TfToken> joint;
+        /** Where the joint stood in its skeleton's joints. */
+        std::optional<size_t> jointAt;
     };
     /** Parts deleted this session (joints, point instances, copies), so an undo that brings one back makes it a part again. */
     std::unordered_map<NodeId, Part> deletedParts;
@@ -175,6 +190,7 @@ struct Stage : TfWeakBase
         partOf.erase(n);
         copyOf.erase(n);
         instanceOf.erase(n);
+        jointOf.erase(n);
         deleted.erase(n);
         deletedParts.erase(n);
     }
@@ -188,6 +204,7 @@ struct Stage : TfWeakBase
         partOf.erase(n);
         copyOf.erase(n);
         instanceOf.erase(n);
+        jointOf.erase(n);
     }
 
     void onChanged(const UsdNotice::ObjectsChanged& notice, const UsdStagePtr&)
@@ -723,6 +740,25 @@ uint64_t groupHash(const Groups& g, const std::string& group)
 
 // Snapshots: the stage's nodes written by the USD exporter into a stage in memory.
 
+SdfPathVector targetsOf(const SdfLayerHandle& layer, const SdfPath& rel)
+{
+    const VtValue v = layer->GetField(rel, SdfFieldKeys->TargetPaths);
+    return v.IsHolding<SdfPathListOp>() ? v.UncheckedGet<SdfPathListOp>().GetAppliedItems() : SdfPathVector();
+}
+
+template <class T> T defaultOf(const SdfLayerHandle& layer, const SdfPath& attr)
+{
+    const VtValue v = layer->GetField(attr, SdfFieldKeys->Default);
+    return v.IsHolding<T>() ? v.UncheckedGet<T>() : T();
+}
+
+/** The SkelAnimation a written Skeleton prim is bound to, or empty. */
+SdfPath animationOf(const SdfLayerHandle& layer, const SdfPath& skel)
+{
+    const SdfPathVector t = targetsOf(layer, skel.AppendProperty(UsdSkelTokens->skelAnimationSource));
+    return t.empty() ? SdfPath() : t.front();
+}
+
 struct Snapshot
 {
     UsdStageRefPtr stage;
@@ -734,10 +770,90 @@ struct Snapshot
     std::map<std::string, SdfPath> materials;
     std::map<SdfPath, std::string> slotOf;
     std::map<std::string, uint64_t> materialHashes;
-    std::map<std::string, uint64_t> skeletons;
+    /** Each Skeleton prim written: its joints' nodes, in the order of its joints attr (none when synthetic). */
+    std::map<SdfPath, std::vector<NodeId>> skelJoints;
+    /** The stage's Skeleton prim each written one stands for. */
+    std::map<SdfPath, SdfPath> skelStage;
+    /** By the stage's Skeleton prim: hashes of its joints (named as the stage names them), rest, bind, anim and weights. */
+    std::map<SdfPath, Groups> skeletons;
     /** False when the export failed, so nothing could be compared. */
     bool ok = true;
 };
+
+/** The stage's token for each joint of a written Skeleton prim; "+<token>" for a joint the stage doesn't have yet. */
+std::vector<std::string> stageTokens(const Stage& s, const Snapshot& out, const SdfPath& e)
+{
+    const VtTokenArray tokens = defaultOf<VtTokenArray>(out.layer, e.AppendProperty(UsdSkelTokens->joints));
+    const auto nodes = out.skelJoints.find(e);
+    std::vector<std::string> names;
+    for (size_t k = 0; k < tokens.size(); ++k)
+    {
+        const NodeId n = nodes != out.skelJoints.end() && k < nodes->second.size() ? nodes->second[k] : kNoNode;
+        const auto j = s.jointOf.find(n);
+        names.push_back(j != s.jointOf.end() ? j->second.GetString() : "+" + tokens[k].GetString());
+    }
+    return names;
+}
+
+Groups skelGroups(const Stage& s, const Snapshot& out, const SdfPath& e)
+{
+    Groups gr;
+    Hasher topo;
+    for (const std::string& t : stageTokens(s, out, e))
+        topo.str(t);
+    gr["joints"] = topo.h;
+    for (const char* name : {"restTransforms", "bindTransforms"})
+        if (const SdfPath a = e.AppendProperty(TfToken(name)); out.layer->GetAttributeAtPath(a))
+            gr[name == std::string("restTransforms") ? "rest" : "bind"] = hashSpec(out.layer, a, false);
+    if (const SdfPath anim = animationOf(out.layer, e); !anim.IsEmpty())
+    {
+        Hasher joints, weights;
+        bool anyJoints = false, anyWeights = false;
+        for (const char* name : {"joints", "translations", "rotations", "scales"})
+            if (const SdfPath a = anim.AppendProperty(TfToken(name)); out.layer->GetAttributeAtPath(a))
+            {
+                joints.num(hashSpec(out.layer, a, false));
+                anyJoints = true;
+            }
+        for (const char* name : {"blendShapes", "blendShapeWeights"})
+            if (const SdfPath a = anim.AppendProperty(TfToken(name)); out.layer->GetAttributeAtPath(a))
+            {
+                weights.num(hashSpec(out.layer, a, false));
+                anyWeights = true;
+            }
+        if (anyJoints)
+            gr["anim"] = joints.h;
+        if (anyWeights)
+            gr["weights"] = weights.h;
+    }
+    return gr;
+}
+
+/** The written Skeleton prims matched to the stage's: through the links of their joints, or the meshes bound to them. */
+void mapSkeletons(const Stage& s, Snapshot& out)
+{
+    for (const auto& [e, joints] : out.skelJoints)
+        for (NodeId j : joints)
+            if (auto it = s.partOf.find(j); it != s.partOf.end() && s.jointOf.count(j))
+            {
+                out.skelStage[e] = it->second;
+                break;
+            }
+    for (const auto& [n, e] : out.prim)
+    {
+        const auto p = s.primOf.find(n);
+        if (p == s.primOf.end() || p->second.ContainsPrimVariantSelection())
+            continue;
+        const SdfPathVector t = targetsOf(out.layer, e.AppendProperty(UsdSkelTokens->skelSkeleton));
+        if (t.empty() || out.skelStage.count(t.front()))
+            continue;
+        if (const UsdPrim cp = s.stage->GetPrimAtPath(p->second))
+            if (const UsdSkelSkeleton sk = UsdSkelBindingAPI(cp).GetInheritedSkeleton())
+                out.skelStage[t.front()] = sk.GetPath();
+    }
+    for (const auto& [e, st] : out.skelStage)
+        out.skeletons[st] = skelGroups(s, out, e);
+}
 
 /** What a comparison exports: the whole stage, or linked nodes alone and new nodes with everything below them. */
 struct Plan
@@ -804,9 +920,9 @@ Snapshot snapshot(Stage& s, Graph& g, std::vector<std::string>& warnings, const 
         out.slotOf[p] = slot;
         out.materialHashes[slot] = hashTree(out.layer, p, true);
     }
-    for (const UsdPrim& p : r.stage->Traverse())
-        if (p.IsA<UsdSkelSkeleton>() || p.IsA<UsdSkelAnimation>())
-            out.skeletons[p.GetPath().MakeRelativePath(out.root).GetString()] = hashTree(out.layer, p.GetPath(), false);
+    for (const auto& [p, joints] : r.skeletons)
+        out.skelJoints[p] = joints;
+    mapSkeletons(s, out);
     return out;
 }
 
@@ -840,6 +956,9 @@ Plan planFor(Stage& s, Graph& g, const std::set<NodeId>& linked, const std::set<
     }
     for (NodeId n : added)
     {
+        // Joints and skinned meshes are written with their whole skeleton.
+        if (const Node* node = g.node(n); node && (node->type().isA("joint") || (node->type().isA("mesh") && (scene::skin::find(g, n) || scene::morphs::find(g, n)))))
+            return {};
         NodeId top = n;
         for (NodeId p = g.parent(top); p != s.node && p != kNoNode && !s.primOf.count(p); p = g.parent(top))
         {
@@ -890,6 +1009,9 @@ Plan planSync(Stage& s, Graph& g)
         const NodeId id = todo.back();
         todo.pop_back();
         const Node* n = g.node(id);
+        // A deleted joint changes its whole skeleton.
+        if (!n && s.jointOf.count(id))
+            return {};
         if (!n || !seen.insert(id).second)
             continue;
         if (n->type().isA("material"))
@@ -959,6 +1081,8 @@ void writeAttrs(Stage& s, Graph& g)
                 links.push_back({rel, p.GetString(), 2, c->second.GetString()});
             else if (auto i = s.instanceOf.find(n); i != s.instanceOf.end())
                 links.push_back({rel, p.GetString(), 3, i->second.second});
+            else if (auto j = s.jointOf.find(n); j != s.jointOf.end())
+                links.push_back({rel, p.GetString(), 4, j->second.GetString()});
             else
                 links.push_back({rel, p.GetString(), 1});
         }
@@ -1014,6 +1138,8 @@ void readAttrs(Stage& s, const Graph& g)
                 s.copyOf[id] = SdfPath(e[3].get<std::string>());
             else if (kind == 3 && e.size() > 3 && e[3].is_number_unsigned())
                 s.instanceOf[id] = {path, e[3].get<size_t>()};
+            else if (kind == 4 && e.size() > 3 && e[3].is_string())
+                s.jointOf[id] = TfToken(e[3].get<std::string>());
         }
     if (json base = parseJson(text(n, stageAttr::kBaseline)); base.is_object())
         for (auto& [key, groups] : base.items())
@@ -1227,6 +1353,15 @@ struct Author
     std::set<SdfPath> shapes;
     /** Instances made non-instanceable. */
     std::set<SdfPath> opened;
+    /** By written Skeleton prim: the stage's Skeleton prim it is written over, and the stage's token of each of its joints. */
+    std::map<SdfPath, SdfPath> skelPaths;
+    std::map<SdfPath, VtTokenArray> skelTokens;
+    /** By the stage's Skeleton prim: its joints once this comparison is written. */
+    std::map<SdfPath, VtTokenArray> skelOrder;
+    /** Meshes whose skin is written whatever their baseline says: their skeleton lost joints they may index. */
+    std::set<SdfPath> forceSkin;
+    /** Joints whose delete was undone this comparison, with where they stood in their skeleton's joints. */
+    std::map<NodeId, size_t> restoredAt;
 
     SdfPrimSpecHandle over(const SdfPath& p)
     {
@@ -1360,11 +1495,19 @@ struct Author
     {
         if (const UsdPrim cp = s.stage->GetPrimAtPath(stagePath(p)); cp && cp.HasAPI<UsdShadeMaterialBindingAPI>())
             return;
+        applyApi(p, TfToken("MaterialBindingAPI"));
+    }
+
+    void applyApi(const SdfPath& p, const TfToken& api)
+    {
+        if (const UsdPrim cp = s.stage->GetPrimAtPath(stagePath(p)))
+            for (const TfToken& t : cp.GetAppliedSchemas())
+                if (t == api)
+                    return;
         over(p);
         SdfTokenListOp op;
         if (VtValue v = L->GetField(p, UsdTokens->apiSchemas); v.IsHolding<SdfTokenListOp>())
             op = v.UncheckedGet<SdfTokenListOp>();
-        const TfToken api("MaterialBindingAPI");
         for (const TfToken& t : op.GetAppliedItems())
             if (t == api)
                 return;
@@ -1388,6 +1531,9 @@ struct Author
     {
         if (auto it = now.slotOf.find(t); it != now.slotOf.end())
             return materialFor(it->second);
+        for (const auto& [e, st] : skelPaths)
+            if (t.HasPrefix(e))
+                return t.ReplacePrefix(e, st);
         if (auto it = now.nodeAt.find(t.GetPrimPath()); it != now.nodeAt.end())
             if (auto p = s.primOf.find(it->second); p != s.primOf.end())
                 return t.ReplacePrefix(t.GetPrimPath(), p->second);
@@ -1555,8 +1701,421 @@ struct Author
             bind(e, p);
             subsets(e, p);
         }
+        else if (group == "skin")
+            skin(e, p);
+        else if (group == "blendShapes")
+            blendShapes(e, p);
+    }
+
+    void uniformTokens(const SdfPath& p, const std::string& name, const VtTokenArray& v)
+    {
+        SdfAttributeSpecHandle a = attrSpec(p, name, SdfValueTypeNames->TokenArray, SdfVariabilityUniform);
+        a->SetDefaultValue(VtValue(v));
+        written.insert(a->GetPath());
+    }
+
+    /** A property of a written prim copied over the same property of a stage prim, time samples and all. */
+    void copyProperty(const SdfPath& from, const SdfPath& to, const TfToken& name)
+    {
+        if (!now.layer->GetPropertyAtPath(from.AppendProperty(name)))
+            return;
+        over(to);
+        SdfCopySpec(now.layer, from.AppendProperty(name), L, to.AppendProperty(name));
+        written.insert(to.AppendProperty(name));
+    }
+
+    /** Skin and blend shapes are per point: a mesh whose point count Lila changed gets its shape written with them. */
+    void matchPoints(const SdfPath& e, const SdfPath& p)
+    {
+        if (shapes.count(p))
+            return;
+        const UsdGeomPointBased cp(s.stage->GetPrimAtPath(stagePath(p)));
+        VtVec3fArray points;
+        if (cp)
+            cp.GetPointsAttr().Get(&points, UsdTimeCode::EarliestTime());
+        if (defaultOf<VtVec3fArray>(now.layer, e.AppendProperty(UsdGeomTokens->points)).size() != points.size())
+            author(e, p, "shape");
+    }
+
+    /**
+     * The stage's Skeleton prim a written one stands for. A synthetic one the stage lacks (a mesh Lila gave blend shapes)
+     * is written beside the mesh at p, under a SkelRoot.
+     */
+    SdfPath skeletonFor(const SdfPath& e, const SdfPath& p)
+    {
+        if (auto it = skelPaths.find(e); it != skelPaths.end())
+            return it->second;
+        const auto joints = now.skelJoints.find(e);
+        if (joints == now.skelJoints.end() || !joints->second.empty() || p.ContainsPrimVariantSelection())
+            return {};
+        const SdfPath parent = p.GetParentPath();
+        const SdfPath dst = uniqueChild(parent, e.GetName());
+        if (!parent.IsAbsoluteRootPath())
+            over(parent);
+        SdfCopySpec(now.layer, e, L, dst);
+        skelPaths[e] = dst;
+        skelTokens[e] = defaultOf<VtTokenArray>(now.layer, e.AppendProperty(UsdSkelTokens->joints));
+        skelOrder[dst] = skelTokens[e];
+        retarget(dst);
+        bool rooted = false;
+        for (UsdPrim q = s.stage->GetPrimAtPath(stagePath(parent)); q && !q.IsPseudoRoot() && !rooted; q = q.GetParent())
+            rooted = q.GetTypeName() == "SkelRoot";
+        if (!rooted && !parent.IsAbsoluteRootPath())
+            over(parent)->SetTypeName("SkelRoot");
+        s.baseline["$skel:" + dst.GetString()] = skelGroups(s, now, e);
+        return dst;
+    }
+
+    /** Joint indices and weights, the bind transform and skinning method, bound to the skeleton's prim in the stage. */
+    void skin(const SdfPath& e, const SdfPath& p)
+    {
+        const SdfPathVector t = targetsOf(now.layer, e.AppendProperty(UsdSkelTokens->skelSkeleton));
+        if (t.empty())
+        {
+            // Unskinned in Lila: the stage's weights are blocked, and its skeleton unbound.
+            if (const UsdPrim cp = s.stage->GetPrimAtPath(stagePath(p)))
+                for (const UsdAttribute& a : cp.GetAuthoredAttributes())
+                    if (a.GetName().GetString().starts_with("primvars:skel:"))
+                    {
+                        SdfAttributeSpecHandle spec = attrSpec(p, a.GetName().GetString(), a.GetTypeName(), a.GetVariability());
+                        spec->SetDefaultValue(VtValue(SdfValueBlock()));
+                        L->EraseField(spec->GetPath(), SdfFieldKeys->TimeSamples);
+                    }
+            writeTargets(p, UsdSkelTokens->skelSkeleton, {});
+            return;
+        }
+        const SdfPath sk = skeletonFor(t.front(), p);
+        if (sk.IsEmpty())
+        {
+            warn.push_back(std::format("{}: its skeleton has no prim in the stage, so its skin isn't written", p.GetString()));
+            return;
+        }
+        matchPoints(e, p);
+        copyGroup(e, p, "skin");
+        writeTargets(p, UsdSkelTokens->skelSkeleton, {sk});
+        written.insert(p.AppendProperty(UsdSkelTokens->skelSkeleton));
+        // Lila's indices count the written skeleton's joints; skel:joints names them as the stage does.
+        const VtTokenArray& mapped = skelTokens[t.front()];
+        const UsdPrim cp = s.stage->GetPrimAtPath(stagePath(p));
+        const bool own = cp && UsdSkelBindingAPI(cp).GetJointsAttr().HasAuthoredValue();
+        if (own || mapped != skelOrder[sk])
+            uniformTokens(p, UsdSkelTokens->skelJoints.GetString(), mapped);
+        applyApi(p, TfToken("SkelBindingAPI"));
+    }
+
+    /** Lila's blend shapes over the targets of the same names in the stage; new ones written under the mesh. */
+    void blendShapes(const SdfPath& e, const SdfPath& p)
+    {
+        const UsdPrim cp = s.stage->GetPrimAtPath(stagePath(p));
+        if (!cp)
+            return;
+        matchPoints(e, p);
+        const VtTokenArray names = defaultOf<VtTokenArray>(now.layer, e.AppendProperty(UsdSkelTokens->skelBlendShapes));
+        const SdfPathVector targets = targetsOf(now.layer, e.AppendProperty(UsdSkelTokens->skelBlendShapeTargets));
+        VtTokenArray had;
+        SdfPathVector hadTargets;
+        const UsdSkelBindingAPI binding(cp);
+        binding.GetBlendShapesAttr().Get(&had);
+        binding.GetBlendShapeTargetsRel().GetTargets(&hadTargets);
+        SdfPathVector out;
+        for (size_t i = 0; i < names.size() && i < targets.size(); ++i)
+        {
+            SdfPath dst;
+            for (size_t j = 0; j < had.size() && j < hadTargets.size() && dst.IsEmpty(); ++j)
+                if (had[j] == names[i])
+                    if (const UsdPrim t = s.stage->GetPrimAtPath(hadTargets[j]); t && t.IsA<UsdSkelBlendShape>() && !t.IsInstanceProxy())
+                        dst = hadTargets[j];
+            if (dst.IsEmpty())
+            {
+                dst = uniqueChild(p, targets[i].GetName());
+                over(p);
+                SdfCopySpec(now.layer, targets[i], L, dst);
+            }
+            else
+                writeShape(targets[i], dst);
+            out.push_back(dst);
+        }
+        uniformTokens(p, UsdSkelTokens->skelBlendShapes.GetString(), names);
+        writeTargets(p, UsdSkelTokens->skelBlendShapeTargets, out);
+        written.insert(p.AppendProperty(UsdSkelTokens->skelBlendShapeTargets));
+        applyApi(p, TfToken("SkelBindingAPI"));
+    }
+
+    /** A written BlendShape over one of the stage's: its offsets, indices and in-betweens, the stage's others blocked. */
+    void writeShape(const SdfPath& from, const SdfPath& to)
+    {
+        const SdfPrimSpecHandle es = now.layer->GetPrimAtPath(from);
+        if (!es)
+            return;
+        std::set<TfToken> mine;
+        for (const SdfPropertySpecHandle& prop : es->GetProperties())
+        {
+            copyProperty(from, to, prop->GetNameToken());
+            mine.insert(prop->GetNameToken());
+        }
+        if (const UsdPrim cp = s.stage->GetPrimAtPath(to))
+            for (const UsdAttribute& a : cp.GetAuthoredAttributes())
+            {
+                if (mine.count(a.GetName()))
+                    continue;
+                SdfAttributeSpecHandle spec = attrSpec(to, a.GetName().GetString(), a.GetTypeName(), a.GetVariability());
+                spec->SetDefaultValue(VtValue(SdfValueBlock()));
+                L->EraseField(spec->GetPath(), SdfFieldKeys->TimeSamples);
+            }
     }
 };
+
+/** The new token of a joint the stage's skeleton doesn't have: under its parent's, unique among used. */
+TfToken newJointToken(const TfToken& parent, const TfToken& written, const std::set<TfToken>& used)
+{
+    const std::string& w = written.GetString();
+    const std::string leaf = w.substr(w.rfind('/') == std::string::npos ? 0 : w.rfind('/') + 1);
+    const std::string base = parent.IsEmpty() ? leaf : parent.GetString() + "/" + leaf;
+    std::string name = base;
+    for (int k = 1; used.count(TfToken(name)); ++k)
+        name = base + std::to_string(k);
+    return TfToken(name);
+}
+
+/** True when an attribute's time samples hold more than one value. */
+bool varies(const SdfLayerHandle& layer, const SdfPath& attr)
+{
+    VtValue first;
+    bool any = false;
+    for (double t : layer->ListTimeSamplesForPath(attr))
+    {
+        VtValue v;
+        layer->QueryTimeSample(attr, t, &v);
+        if (any && v != first)
+            return true;
+        first = v;
+        any = true;
+    }
+    return false;
+}
+
+SdfPath newAnimation(Author& au, const SdfPath& skel)
+{
+    const SdfPath a = au.uniqueChild(skel, "Animation");
+    SdfPrimSpec::New(au.over(skel), a.GetName(), SdfSpecifierDef, "SkelAnimation");
+    au.writeTargets(skel, UsdSkelTokens->skelAnimationSource, {a});
+    au.applyApi(skel, TfToken("SkelBindingAPI"));
+    return a;
+}
+
+/**
+ * Joint edits written over the stage's Skeleton prims: rest and bind transforms in the stage's joint order, new joints
+ * added at the end of it and deleted ones taken out, and the pose on the skeleton's animation, keyed or still. Blend
+ * shape weights go on that animation too. Fills the Author's maps from written skeletons to the stage's.
+ */
+void writeSkeletons(Stage& s, Graph& g, Author& au)
+{
+    for (const auto& [e, st] : au.now.skelStage)
+    {
+        const UsdSkelSkeleton sk(s.stage->GetPrimAtPath(st));
+        if (!sk || sk.GetPrim().IsInstanceProxy())
+            continue;
+        const std::vector<NodeId>& nodes = au.now.skelJoints[e];
+        const VtTokenArray written = defaultOf<VtTokenArray>(au.now.layer, e.AppendProperty(UsdSkelTokens->joints));
+        VtTokenArray had;
+        sk.GetJointsAttr().Get(&had);
+        const std::set<TfToken> present(had.begin(), had.end());
+        std::set<TfToken> used = present;
+        VtTokenArray mapped(written.size());
+        std::vector<size_t> added;
+        // Joints whose delete was undone, by where they stood: they go back there.
+        std::map<size_t, size_t> restored;
+        const UsdSkelTopology topo(written);
+        std::map<TfToken, size_t> indexOf;
+        for (size_t k = 0; k < written.size(); ++k)
+        {
+            const NodeId n = k < nodes.size() ? nodes[k] : kNoNode;
+            const auto j = s.jointOf.find(n);
+            const auto back = au.restoredAt.find(n);
+            if (nodes.empty())
+                mapped[k] = k < had.size() ? had[k] : written[k];
+            else if (j != s.jointOf.end() && present.count(j->second) && !indexOf.count(j->second))
+                mapped[k] = j->second;
+            else if (j != s.jointOf.end() && back != au.restoredAt.end() && !used.count(j->second))
+            {
+                mapped[k] = j->second;
+                restored[back->second] = k;
+            }
+            else
+            {
+                const int parent = topo.GetParent(k);
+                mapped[k] = newJointToken(parent >= 0 ? mapped[size_t(parent)] : TfToken(), written[k], used);
+                added.push_back(k);
+            }
+            used.insert(mapped[k]);
+            indexOf[mapped[k]] = k;
+        }
+        au.skelPaths[e] = st;
+        au.skelTokens[e] = mapped;
+        au.skelOrder[st] = had;
+
+        Groups& base = s.baseline["$skel:" + st.GetString()];
+        const Groups& cur = au.now.skeletons[st];
+        if (base.empty())
+        {
+            base = cur;
+            continue;
+        }
+        if (base == cur)
+            continue;
+        auto changed = [&](const char* group) { return groupHash(cur, group) != groupHash(base, group); };
+        const SdfPath anim = animationOf(au.now.layer, e);
+        const UsdPrim stageAnim = UsdSkelBindingAPI(sk.GetPrim()).GetInheritedAnimationSource();
+        SdfPath animAt = stageAnim ? stageAnim.GetPath() : SdfPath();
+        auto animation = [&] {
+            if (animAt.IsEmpty())
+                animAt = newAnimation(au, st);
+            return animAt;
+        };
+        if (!nodes.empty())
+        {
+            std::vector<TfToken> removed;
+            for (const TfToken& t : had)
+                if (!indexOf.count(t))
+                    removed.push_back(t);
+            const bool reshaped = !added.empty() || !removed.empty() || !restored.empty();
+            VtTokenArray order;
+            std::vector<size_t> from;
+            for (const TfToken& t : had)
+                if (auto it = indexOf.find(t); it != indexOf.end())
+                {
+                    order.push_back(t);
+                    from.push_back(it->second);
+                }
+            for (const auto& [at, k] : restored)
+            {
+                const size_t i = std::min(at, order.size());
+                order.insert(order.begin() + std::ptrdiff_t(i), mapped[k]);
+                from.insert(from.begin() + std::ptrdiff_t(i), k);
+            }
+            for (size_t k : added)
+            {
+                order.push_back(mapped[k]);
+                from.push_back(k);
+            }
+            if (reshaped)
+            {
+                au.uniformTokens(st, UsdSkelTokens->joints.GetString(), order);
+                au.skelOrder[st] = order;
+                if (sk.GetJointNamesAttr().HasAuthoredValue())
+                {
+                    VtTokenArray oldNames, names;
+                    sk.GetJointNamesAttr().Get(&oldNames);
+                    for (size_t i = 0; i < order.size(); ++i)
+                    {
+                        const auto at = std::find(had.begin(), had.end(), order[i]);
+                        const size_t was = size_t(at - had.begin());
+                        const NodeId n = from[i] < nodes.size() ? nodes[from[i]] : kNoNode;
+                        names.push_back(at != had.end() && was < oldNames.size() ? oldNames[was] : TfToken(g.node(n) ? g.node(n)->name() : ""));
+                    }
+                    au.uniformTokens(st, UsdSkelTokens->jointNames.GetString(), names);
+                }
+                for (size_t k : added)
+                    if (k < nodes.size())
+                    {
+                        s.partOf[nodes[k]] = st;
+                        s.jointOf[nodes[k]] = mapped[k];
+                        s.deletedParts.erase(nodes[k]);
+                    }
+                // Meshes indexing the stage's order would point at the wrong joints once some are gone or put back.
+                if (!removed.empty() || !restored.empty())
+                    for (const auto& [n, p] : s.primOf)
+                        if (auto m = au.now.prim.find(n); m != au.now.prim.end())
+                            if (const SdfPathVector t = targetsOf(au.now.layer, m->second.AppendProperty(UsdSkelTokens->skelSkeleton)); !t.empty() && t.front() == e)
+                                au.forceSkin.insert(p);
+            }
+            auto reordered = [&](const char* name, const char* group) {
+                if (!reshaped && !changed(group))
+                    return;
+                const VtMatrix4dArray src = defaultOf<VtMatrix4dArray>(au.now.layer, e.AppendProperty(TfToken(name)));
+                if (src.size() != written.size())
+                    return;
+                VtMatrix4dArray out;
+                for (size_t k : from)
+                    out.push_back(src[k]);
+                SdfAttributeSpecHandle a = au.attrSpec(st, name, SdfValueTypeNames->Matrix4dArray, SdfVariabilityUniform);
+                a->SetDefaultValue(VtValue(out));
+                au.written.insert(a->GetPath());
+            };
+            reordered("restTransforms", "rest");
+            reordered("bindTransforms", "bind");
+
+            // The pose: Lila's keys on the animation, or its still pose there when the stage's animation drives the joints.
+            bool keyed = false;
+            if (!anim.IsEmpty() && au.now.layer->GetAttributeAtPath(anim.AppendProperty(UsdSkelTokens->joints)))
+                for (const TfToken& name : {UsdSkelTokens->translations, UsdSkelTokens->rotations, UsdSkelTokens->scales})
+                    keyed = keyed || varies(au.now.layer, anim.AppendProperty(name));
+            VtTokenArray animJoints;
+            if (stageAnim)
+                UsdSkelAnimation(stageAnim).GetJointsAttr().Get(&animJoints);
+            // Lila writes a posed skeleton's pose on its animation, its rest pose staying the bind pose.
+            const bool posed = !anim.IsEmpty() && au.now.layer->GetAttributeAtPath(anim.AppendProperty(UsdSkelTokens->joints));
+            if ((reshaped || changed("anim") || changed("rest")) && (posed || !animJoints.empty()))
+            {
+                const SdfPath a = animation();
+                auto still = [&](const TfToken& name, const SdfValueTypeName& type, const VtValue& v) {
+                    SdfAttributeSpecHandle at = au.attrSpec(a, name.GetString(), type, SdfVariabilityVarying);
+                    at->SetDefaultValue(v);
+                    au.L->EraseField(at->GetPath(), SdfFieldKeys->TimeSamples);
+                    au.written.insert(at->GetPath());
+                };
+                if (posed)
+                {
+                    VtTokenArray names;
+                    for (const TfToken& t : defaultOf<VtTokenArray>(au.now.layer, anim.AppendProperty(UsdSkelTokens->joints)))
+                    {
+                        const auto at = std::find(written.begin(), written.end(), t);
+                        names.push_back(at != written.end() ? mapped[size_t(at - written.begin())] : t);
+                    }
+                    au.uniformTokens(a, UsdSkelTokens->joints.GetString(), names);
+                    for (const TfToken& name : {UsdSkelTokens->translations, UsdSkelTokens->rotations, UsdSkelTokens->scales})
+                    {
+                        const SdfPath attr = anim.AppendProperty(name);
+                        const SdfAttributeSpecHandle spec = au.now.layer->GetAttributeAtPath(attr);
+                        if (!spec)
+                            continue;
+                        if (keyed)
+                        {
+                            au.copyProperty(anim, a, name);
+                            continue;
+                        }
+                        // Sampled but still: its one pose, with no samples to outweigh the stage's.
+                        VtValue v = spec->GetDefaultValue();
+                        if (const std::set<double> times = au.now.layer->ListTimeSamplesForPath(attr); !times.empty())
+                            au.now.layer->QueryTimeSample(attr, *times.begin(), &v);
+                        still(name, spec->GetTypeName(), v);
+                    }
+                }
+                else
+                {
+                    VtVec3fArray translations;
+                    VtQuatfArray rotations;
+                    VtVec3hArray scales;
+                    const VtMatrix4dArray rest = defaultOf<VtMatrix4dArray>(au.now.layer, e.AppendProperty(UsdSkelTokens->restTransforms));
+                    if (rest.size() == written.size() && UsdSkelDecomposeTransforms(rest, &translations, &rotations, &scales))
+                    {
+                        au.uniformTokens(a, UsdSkelTokens->joints.GetString(), mapped);
+                        still(UsdSkelTokens->translations, SdfValueTypeNames->Float3Array, VtValue(translations));
+                        still(UsdSkelTokens->rotations, SdfValueTypeNames->QuatfArray, VtValue(rotations));
+                        still(UsdSkelTokens->scales, SdfValueTypeNames->Half3Array, VtValue(scales));
+                    }
+                }
+            }
+        }
+        if (changed("weights") && !anim.IsEmpty() && au.now.layer->GetAttributeAtPath(anim.AppendProperty(UsdSkelTokens->blendShapes)))
+        {
+            const SdfPath a = animation();
+            au.copyProperty(anim, a, UsdSkelTokens->blendShapes);
+            au.copyProperty(anim, a, UsdSkelTokens->blendShapeWeights);
+        }
+        base = cur;
+    }
+}
 
 /** Point instances moved in Lila: their instancer's positions, orientations and scales written for the ones that moved. */
 void writeInstances(Author& au, const SdfPath& instancer, const std::vector<std::pair<size_t, glm::dmat4>>& moved, const Axes& axes)
@@ -1609,6 +2168,8 @@ void writeInstances(Author& au, const SdfPath& instancer, const std::vector<std:
         put(UsdGeomTokens->scales, SdfValueTypeNames->Float3Array, VtValue(scales));
 }
 
+void pruneEmpty(const SdfLayerHandle& L, SdfPath p);
+
 /** Point instances hidden on their instancer by id (or index, when it has no ids): deleted or taken out in Lila, or shown again by an undo. */
 void setHidden(Author& au, const SdfPath& instancer, const std::set<size_t>& hide, const std::set<size_t>& show)
 {
@@ -1627,6 +2188,25 @@ void setHidden(Author& au, const SdfPath& instancer, const std::set<size_t>& hid
     for (size_t i : hide)
         if (std::find(hidden.begin(), hidden.end(), idOf(i)) == hidden.end())
             hidden.push_back(idOf(i));
+    // Hiding what the weaker layers hide anyway takes the edit layer's opinion out.
+    std::optional<std::set<int64_t>> weaker;
+    for (const SdfPropertySpecHandle& spec : pi.GetInvisibleIdsAttr().GetPropertyStack(UsdTimeCode::EarliestTime()))
+        if (spec->GetLayer() != au.L && spec->HasDefaultValue())
+        {
+            const VtValue v = spec->GetDefaultValue();
+            weaker = v.IsHolding<VtInt64Array>() ? std::set<int64_t>(v.UncheckedGet<VtInt64Array>().begin(), v.UncheckedGet<VtInt64Array>().end())
+                                                 : std::set<int64_t>();
+            break;
+        }
+    if (std::set<int64_t>(hidden.begin(), hidden.end()) == weaker.value_or(std::set<int64_t>()))
+    {
+        const SdfPath attr = instancer.AppendProperty(UsdGeomTokens->invisibleIds);
+        if (const SdfPrimSpecHandle ps = au.L->GetPrimAtPath(instancer))
+            if (const SdfAttributeSpecHandle a = au.L->GetAttributeAtPath(attr))
+                ps->RemoveProperty(a);
+        pruneEmpty(au.L, instancer);
+        return;
+    }
     SdfAttributeSpecHandle a = au.attrSpec(instancer, UsdGeomTokens->invisibleIds.GetString(), SdfValueTypeNames->Int64Array, SdfVariabilityVarying);
     a->SetDefaultValue(VtValue(hidden));
     au.L->EraseField(a->GetPath(), SdfFieldKeys->TimeSamples);
@@ -1679,8 +2259,9 @@ SdfPath linkedParentPrim(const Stage& s, const Graph& g, NodeId n)
     {
         if (auto it = s.primOf.find(p); it != s.primOf.end())
             return it->second;
+        // What hangs off a joint is written beside the skeleton, as newParentPrim places it.
         if (auto it = s.partOf.find(p); it != s.partOf.end())
-            return it->second;
+            return s.jointOf.count(p) && !s.nodeOf.count(it->second) ? it->second.GetParentPath() : it->second;
     }
     return SdfPath::AbsoluteRootPath();
 }
@@ -1732,12 +2313,115 @@ SdfPath newParentPrim(Stage& s, Graph& g, NodeId parent, std::vector<std::string
 }
 
 /** A new object's written prim copied in under parentPrim with everything below it, and linked. */
-void addPrim(Stage& s, Author& au, NodeId n, const SdfPath& e, const SdfPath& parentPrim, Graph& g)
+/** A Skeleton prim written into the stage at st for the written one at e: its joints become its parts, named as written. */
+void adoptSkeleton(Stage& s, Author& au, const SdfPath& e, const SdfPath& st)
+{
+    const VtTokenArray tokens = defaultOf<VtTokenArray>(au.now.layer, e.AppendProperty(UsdSkelTokens->joints));
+    const std::vector<NodeId>& nodes = au.now.skelJoints[e];
+    for (size_t k = 0; k < nodes.size() && k < tokens.size(); ++k)
+    {
+        s.partOf[nodes[k]] = st;
+        s.jointOf[nodes[k]] = tokens[k];
+        s.deletedParts.erase(nodes[k]);
+    }
+    au.skelPaths[e] = st;
+    au.skelTokens[e] = tokens;
+    au.skelOrder[st] = tokens;
+    s.baseline["$skel:" + st.GetString()] = skelGroups(s, au.now, e);
+}
+
+/** Skinning needs a SkelRoot above a skeleton and the meshes bound to it: their closest common Xform becomes one, unless one is there. */
+void ensureSkelRoot(Stage& s, Author& au, const SdfPath& e, const SdfPath& st)
+{
+    SdfPath common = st.GetParentPath();
+    for (const auto& [n, em] : au.now.prim)
+    {
+        const SdfPathVector t = targetsOf(au.now.layer, em.AppendProperty(UsdSkelTokens->skelSkeleton));
+        if (auto p = s.primOf.find(n); p != s.primOf.end() && !t.empty() && t.front() == e && !p->second.ContainsPrimVariantSelection())
+            common = common.GetCommonPrefix(p->second.GetParentPath());
+    }
+    for (SdfPath q = common; !q.IsEmpty() && !q.IsAbsoluteRootPath(); q = q.GetParentPath())
+        if (const UsdPrim p = s.stage->GetPrimAtPath(q); p && p.GetTypeName() == "SkelRoot")
+            return;
+    for (SdfPath q = common; !q.IsEmpty() && !q.IsAbsoluteRootPath(); q = q.GetParentPath())
+    {
+        const UsdPrim p = s.stage->GetPrimAtPath(q);
+        const SdfPrimSpecHandle ours = au.L->GetPrimAtPath(q);
+        const TfToken type = p ? p.GetTypeName() : ours ? ours->GetTypeName() : TfToken();
+        if (type == "Xform" || type.IsEmpty())
+        {
+            au.over(q)->SetTypeName("SkelRoot");
+            return;
+        }
+    }
+}
+
+/**
+ * Skeletons Lila made whose joints hang off an object the stage already has: each written as a Skeleton prim (with
+ * its SkelAnimation) under that object's prim, under a SkelRoot. Ones under new objects are written with them.
+ */
+void writeNewSkeletons(Stage& s, Author& au)
+{
+    for (const auto& [e, joints] : au.now.skelJoints)
+    {
+        if (joints.empty() || au.skelPaths.count(e) || au.now.skelStage.count(e))
+            continue;
+        const SdfPath anchor = e.GetParentPath();
+        SdfPath parent;
+        if (auto n = au.now.nodeAt.find(anchor); n != au.now.nodeAt.end())
+        {
+            const auto p = s.primOf.find(n->second);
+            if (p == s.primOf.end() || p->second.ContainsPrimVariantSelection())
+                continue;
+            parent = p->second;
+        }
+        else if (const UsdPrim dp = s.stage->GetDefaultPrim(); anchor == au.now.root && dp)
+            parent = dp.GetPath();
+        else
+            continue;
+        const SdfPath dst = au.uniqueChild(parent, e.GetName());
+        au.over(parent);
+        SdfCopySpec(au.now.layer, e, au.L, dst);
+        au.skelPaths[e] = dst;
+        au.retarget(dst);
+        adoptSkeleton(s, au, e, dst);
+        ensureSkelRoot(s, au, e, dst);
+    }
+}
+
+/**
+ * A new object's written prim copied in under parentPrim and linked. Everything below it comes too, unless alone:
+ * then only what no object below it owns (its subsets, blend shapes), and the objects below are added on their own.
+ */
+void addPrim(Stage& s, Author& au, NodeId n, const SdfPath& e, const SdfPath& parentPrim, Graph& g, bool alone = false)
 {
     const SdfPath dst = au.uniqueChild(parentPrim, identifier(g.node(n)->name(), "node"));
     if (!parentPrim.IsAbsoluteRootPath())
         au.over(parentPrim);
     SdfCopySpec(au.now.layer, e, au.L, dst);
+    if (alone)
+    {
+        if (const SdfPrimSpecHandle spec = au.L->GetPrimAtPath(dst))
+            for (const SdfPrimSpecHandle& c : std::vector<SdfPrimSpecHandle>(spec->GetNameChildren().begin(), spec->GetNameChildren().end()))
+            {
+                const SdfPath ec = e.AppendChild(c->GetNameToken());
+                const bool owned = std::any_of(au.now.prim.begin(), au.now.prim.end(), [&](const auto& m) { return m.second.HasPrefix(ec); }) ||
+                                   std::any_of(au.now.skelJoints.begin(), au.now.skelJoints.end(), [&](const auto& k) { return k.first.HasPrefix(ec); });
+                if (owned)
+                    spec->RemoveNameChild(c);
+            }
+        au.retarget(dst);
+        s.link(n, dst);
+        s.baseline[dst.GetString()] = au.now.hashes[n];
+        return;
+    }
+    std::vector<SdfPath> skeletons;
+    for (const auto& [sk, joints] : au.now.skelJoints)
+        if (sk.HasPrefix(e) && !au.skelPaths.count(sk))
+        {
+            au.skelPaths[sk] = sk.ReplacePrefix(e, dst);
+            skeletons.push_back(sk);
+        }
     au.retarget(dst);
     for (const auto& [m, em] : au.now.prim)
         if (em.HasPrefix(e))
@@ -1745,10 +2429,41 @@ void addPrim(Stage& s, Author& au, NodeId n, const SdfPath& e, const SdfPath& pa
             const SdfPath pm = em.ReplacePrefix(e, dst);
             s.link(m, pm);
             s.baseline[pm.GetString()] = au.now.hashes[m];
+            // Bound to a skeleton the stage orders differently: its indices name the written skeleton's joints.
+            const SdfPathVector t = targetsOf(au.now.layer, em.AppendProperty(UsdSkelTokens->skelSkeleton));
+            if (auto tokens = t.empty() ? au.skelTokens.end() : au.skelTokens.find(t.front()); tokens != au.skelTokens.end())
+                if (tokens->second != au.skelOrder[au.skelPaths[t.front()]])
+                    au.uniformTokens(pm, UsdSkelTokens->skelJoints.GetString(), tokens->second);
         }
     for (NodeId d : g.descendants(n))
         if (!s.primOf.count(d))
             s.partOf[d] = dst;
+    for (const SdfPath& sk : skeletons)
+        adoptSkeleton(s, au, sk, au.skelPaths[sk]);
+}
+
+/**
+ * The prim an object below the stage holds its children in: its own, or for a new object one written now, alone
+ * (after any new objects above it), so an object moved under it can follow. Empty when it can't have one.
+ */
+SdfPath ensurePrim(Stage& s, Graph& g, Author& au, NodeId x)
+{
+    if (x == s.node)
+        return SdfPath::AbsoluteRootPath();
+    if (auto it = s.primOf.find(x); it != s.primOf.end())
+        return it->second;
+    const Node* node = g.node(x);
+    if (!node || !node->type().isA("transform") || node->type().isA("joint") || isStage(node) || s.partOf.count(x) || s.deleted.count(x) ||
+        !under(g, x, s.node))
+        return {};
+    const SdfPath parent = ensurePrim(s, g, au, g.parent(x));
+    const auto e = au.now.prim.find(x);
+    if (parent.IsEmpty() || parent.ContainsPrimVariantSelection() || e == au.now.prim.end())
+        return {};
+    if (!parent.IsAbsoluteRootPath())
+        au.openInstances(parent, true);
+    addPrim(s, au, x, e->second, parent, g, true);
+    return s.primOf[x];
 }
 
 /**
@@ -1806,8 +2521,11 @@ SdfPath extract(Stage& s, Graph& g, Author& au, NodeId holder, std::map<SdfPath,
         Groups b = key.empty() ? Groups() : s.baseline[key];
         s.baseline.erase(key);
         s.link(d, p);
+        s.baseline[kFrom + p.GetString()] = b;
         s.baseline[p.GetString()] = std::move(b);
     }
+    s.baseline[kExtract + dst.GetString() + "|" + instancer.GetString()] = {{"index", index}};
+    s.baseline[kFrom + dst.GetString()] = s.baseline[dst.GetString()];
     au.warn.push_back(std::format("{}: taken out of {} as an Xform referencing its prototype, so what was added under it could be written",
                                   g.node(holder)->name(), instancer.GetString()));
     return dst;
@@ -1883,11 +2601,279 @@ void closeInstances(Stage& s, const SdfLayerHandle& L)
     }
 }
 
+void removeSpec(const SdfLayerHandle& L, const SdfPath& p)
+{
+    const SdfPrimSpecHandle spec = L->GetPrimAtPath(p);
+    const SdfPrimSpecHandle parent = p.GetParentPath().IsAbsoluteRootPath() ? L->GetPseudoRoot() : L->GetPrimAtPath(p.GetParentPath());
+    if (!spec || !parent)
+        return;
+    parent->RemoveNameChild(spec);
+    pruneEmpty(L, p.GetParentPath());
+}
+
+/** Every opinion of the spec at from laid over the spec at to, children too; from's own specifier, activation and arcs stay behind. */
+void mergeSpec(const SdfLayerHandle& L, const SdfPath& from, const SdfPath& to)
+{
+    static const std::set<TfToken> kSkip{SdfFieldKeys->Specifier,   SdfFieldKeys->Active,          SdfFieldKeys->References,
+                                         SdfFieldKeys->CustomData,  SdfFieldKeys->TypeName,        SdfChildrenKeys->PrimChildren,
+                                         SdfChildrenKeys->PropertyChildren, SdfChildrenKeys->VariantSetChildren};
+    const SdfPrimSpecHandle src = L->GetPrimAtPath(from);
+    if (!src)
+        return;
+    if (!L->GetPrimAtPath(to))
+        SdfCreatePrimInLayer(L, to);
+    for (const TfToken& f : L->ListFields(from))
+        if (!kSkip.count(f))
+            L->SetField(to, f, L->GetField(from, f));
+    for (const SdfPropertySpecHandle& p : src->GetProperties())
+        SdfCopySpec(L, p->GetPath(), L, to.AppendProperty(p->GetNameToken()));
+    for (const SdfPrimSpecHandle& c : src->GetNameChildren())
+    {
+        const SdfPath dst = to.AppendChild(c->GetNameToken());
+        if (L->GetPrimAtPath(dst))
+            mergeSpec(L, c->GetPath(), dst);
+        else
+            SdfCopySpec(L, c->GetPath(), L, dst);
+    }
+}
+
+/** Rewrites every link, part and baseline key under from to lie under to, once its prim has moved there. */
+void movePaths(Stage& s, const SdfPath& from, const SdfPath& to)
+{
+    auto mv = [&](const SdfPath& p) { return p.HasPrefix(from) ? p.ReplacePrefix(from, to) : p; };
+    std::vector<std::pair<NodeId, SdfPath>> links;
+    for (const auto& [n, p] : s.primOf)
+        if (p.HasPrefix(from))
+            links.push_back({n, p});
+    for (const auto& [n, p] : links)
+        s.nodeOf.erase(p);
+    for (const auto& [n, p] : links)
+    {
+        s.primOf[n] = mv(p);
+        s.nodeOf[mv(p)] = n;
+    }
+    for (auto& [n, p] : s.partOf)
+        p = mv(p);
+    for (auto& [n, p] : s.copyOf)
+        p = mv(p);
+    for (auto& [n, inst] : s.instanceOf)
+        inst.first = mv(inst.first);
+    for (auto& [n, p] : s.deleted)
+        p = mv(p);
+    for (auto& [n, part] : s.deletedParts)
+    {
+        part.owner = mv(part.owner);
+        if (part.copy)
+            part.copy = mv(*part.copy);
+        if (part.instance)
+            part.instance->first = mv(part.instance->first);
+    }
+    for (auto& [slot, p] : s.materialOrigin)
+        p = mv(p);
+    // Keys hold paths after their kind ("$copy:"), and after the separators of the paths before them.
+    const std::string f = from.GetString(), t = to.GetString();
+    Baseline moved;
+    for (auto& [key, groups] : s.baseline)
+    {
+        std::string k = key;
+        for (size_t at = k.find(f); at != std::string::npos; at = k.find(f, at + 1))
+        {
+            const bool starts = at == 0 || std::string_view(":|]").find(k[at - 1]) != std::string_view::npos;
+            const bool ends = at + f.size() == k.size() || std::string_view("/{[|.").find(k[at + f.size()]) != std::string_view::npos;
+            if (starts && ends)
+            {
+                k.replace(at, f.size(), t);
+                at += t.size() - 1;
+            }
+        }
+        moved[k] = std::move(groups);
+    }
+    s.baseline = std::move(moved);
+}
+
+const char* const kMovedFrom = "lilaMovedFrom";
+
+/**
+ * An object moved to another parent in Lila: its prim moves there in the edit layer. A prim only the edit layer makes
+ * moves as it is; any other gets a new prim referencing it, with itself deactivated, and moving that back puts the
+ * edits made since onto the original. Returns the prim's new path, or empty when its new parent has no prim to hold it.
+ */
+SdfPath reparent(Stage& s, Graph& g, Author& au, NodeId n, const SdfPath& q)
+{
+    const NodeId parent = g.parent(n);
+    SdfPath to;
+    if (parent == s.node)
+        to = SdfPath::AbsoluteRootPath();
+    else if (auto it = s.primOf.find(parent); it != s.primOf.end())
+        to = it->second;
+    else if (auto j = s.partOf.find(parent); j != s.partOf.end() && s.jointOf.count(parent))
+        to = s.nodeOf.count(j->second) ? j->second : j->second.GetParentPath();
+    else
+        to = ensurePrim(s, g, au, parent);
+    const UsdPrim cp = s.stage->GetPrimAtPath(q);
+    if (to.IsEmpty() || to.ContainsPrimVariantSelection() || q.ContainsPrimVariantSelection() || to.HasPrefix(q) || !cp)
+        return {};
+    const SdfLayerHandle& L = au.L;
+    SdfPath origin;
+    if (const SdfPrimSpecHandle spec = L->GetPrimAtPath(q); spec && spec->GetSpecifier() == SdfSpecifierDef)
+    {
+        const VtDictionary data = spec->GetCustomData();
+        if (auto it = data.find(kMovedFrom); it != data.end() && it->second.IsHolding<std::string>())
+            origin = SdfPath(it->second.UncheckedGet<std::string>());
+    }
+    if (!to.IsAbsoluteRootPath())
+        au.openInstances(to, true);
+    if (cp.IsInstanceProxy())
+        au.openInstances(q, false);
+    bool own = L->GetPrimAtPath(q) && L->GetPrimAtPath(q)->GetSpecifier() == SdfSpecifierDef;
+    for (const SdfPrimSpecHandle& spec : cp.GetPrimStack())
+        own = own && ((spec->GetLayer() == L && spec->GetPath() == q) || (!origin.IsEmpty() && spec->GetPath() == origin));
+
+    SdfPath dst;
+    if (!origin.IsEmpty() && origin.GetParentPath() == to)
+    {
+        mergeSpec(L, q, origin);
+        if (const SdfPrimSpecHandle o = L->GetPrimAtPath(origin); o && o->HasActive())
+            o->ClearActive();
+        removeSpec(L, q);
+        pruneEmpty(L, origin);
+        dst = origin;
+    }
+    else if (own)
+    {
+        dst = au.uniqueChild(to, q.GetName());
+        if (!to.IsAbsoluteRootPath())
+            au.over(to);
+        SdfCopySpec(L, q, L, dst);
+        removeSpec(L, q);
+    }
+    else
+    {
+        dst = au.uniqueChild(to, q.GetName());
+        const SdfPrimSpecHandle under = to.IsAbsoluteRootPath() ? L->GetPseudoRoot() : au.over(to);
+        const SdfPrimSpecHandle moved = SdfPrimSpec::New(under, dst.GetName(), SdfSpecifierDef);
+        // Stronger than the inactive original it references.
+        moved->SetActive(true);
+        moved->GetReferenceList().Prepend(SdfReference(std::string(), q));
+        moved->SetCustomData(kMovedFrom, VtValue(q.GetString()));
+        au.over(q)->SetActive(false);
+    }
+    movePaths(s, q, dst);
+    return dst;
+}
+
+/**
+ * Point instances taken out of their instancer that again hold only their prototype, unchanged since: the Xform beside
+ * the instancer goes from the edit layer, the instance shows on its instancer again, and its holder goes back under
+ * the instancer node as a point instance. Returns the holders put back.
+ */
+std::vector<NodeId> mergeBack(Stage& s, Graph& g, Author& au, std::map<SdfPath, std::set<size_t>>& show)
+{
+    std::vector<NodeId> back;
+    std::vector<std::string> keys;
+    for (auto it = s.baseline.lower_bound(kExtract); it != s.baseline.end() && it->first.starts_with(kExtract); ++it)
+        keys.push_back(it->first);
+    auto current = [&](NodeId n, const SdfPath& p) {
+        if (auto c = au.now.hashes.find(n); c != au.now.hashes.end())
+            return c->second;
+        auto b = s.baseline.find(p.GetString());
+        return b == s.baseline.end() ? Groups() : b->second;
+    };
+    auto unchanged = [&](NodeId n, const SdfPath& p) {
+        auto o = s.baseline.find(kFrom + p.GetString());
+        return o != s.baseline.end() && o->second == current(n, p);
+    };
+    for (const std::string& key : keys)
+    {
+        const std::string rest = key.substr(kExtract.size());
+        const size_t bar = rest.find('|');
+        if (bar == std::string::npos || !SdfPath::IsValidPathString(rest.substr(0, bar)) || !SdfPath::IsValidPathString(rest.substr(bar + 1)))
+            continue;
+        const SdfPath dst(rest.substr(0, bar)), instancer(rest.substr(bar + 1));
+        const size_t index = size_t(groupHash(s.baseline[key], "index"));
+        const auto h = s.nodeOf.find(dst);
+        const auto ins = s.nodeOf.find(instancer);
+        if (h == s.nodeOf.end() || ins == s.nodeOf.end() || !g.node(h->second) || !g.node(ins->second) || !unchanged(h->second, dst))
+            continue;
+        const NodeId holder = h->second;
+        std::vector<std::pair<NodeId, SdfPath>> copies;
+        bool same = true;
+        for (NodeId d : g.descendants(holder))
+        {
+            const Node* dn = g.node(d);
+            if (!dn || !dn->type().isA("transform"))
+                continue;
+            const auto p = s.primOf.find(d);
+            same = p != s.primOf.end() && insideOf(p->second, dst) && unchanged(d, p->second);
+            if (!same)
+                break;
+            copies.push_back({d, p->second});
+        }
+        const UsdGeomPointInstancer pi(s.stage->GetPrimAtPath(instancer));
+        if (!same || !pi)
+            continue;
+        SdfPathVector protos;
+        pi.GetPrototypesRel().GetTargets(&protos);
+        VtIntArray indices;
+        pi.GetProtoIndicesAttr().Get(&indices, s.stage->HasAuthoredTimeCodeRange() ? UsdTimeCode(s.stage->GetStartTimeCode()) : UsdTimeCode::EarliestTime());
+        if (index >= indices.size() || indices[index] < 0 || size_t(indices[index]) >= protos.size())
+            continue;
+        const SdfPath proto = protos[size_t(indices[index])];
+        const SdfPath root = dst.AppendChild(proto.GetNameToken());
+
+        removeSpec(au.L, dst);
+        show[instancer].insert(index);
+        g.setParent(holder, ins->second, true);
+        s.unlink(holder);
+        s.partOf[holder] = instancer;
+        s.instanceOf[holder] = {instancer, index};
+        s.baseline.erase(dst.GetString());
+        s.baseline.erase(kFrom + dst.GetString());
+        au.now.prim.erase(holder);
+        for (const auto& [d, p] : copies)
+        {
+            s.unlink(d);
+            s.partOf[d] = instancer;
+            s.copyOf[d] = p.ReplacePrefix(root, proto);
+            s.baseline.erase(p.GetString());
+            s.baseline.erase(kFrom + p.GetString());
+            au.now.prim.erase(d);
+        }
+        s.baseline.erase(key);
+        for (auto it = s.deleted.begin(); it != s.deleted.end();)
+            it = it->second.HasPrefix(dst) ? s.deleted.erase(it) : std::next(it);
+        back.push_back(holder);
+    }
+    return back;
+}
+
+/** Baselines of point instances put back on their instancer, from their nodes as they now sit under it. */
+void rebaselineInstances(Stage& s, Graph& g, const std::vector<NodeId>& holders, std::vector<std::string>& warn)
+{
+    const size_t exported = s.lastExported, partial = s.partialDiffs;
+    const Snapshot again = snapshot(s, g, warn, Plan{false, {}, holders});
+    s.lastExported = exported;
+    s.partialDiffs = partial;
+    for (NodeId h : holders)
+    {
+        const auto inst = s.instanceOf.find(h);
+        if (inst == s.instanceOf.end())
+            continue;
+        if (auto hh = again.hashes.find(h); hh != again.hashes.end())
+            s.baseline[instanceKey(inst->second)]["xform"] = groupHash(hh->second, "xform");
+        for (NodeId d : g.descendants(h))
+            if (auto c = again.hashes.find(d); c != again.hashes.end())
+                if (const std::string key = copyKey(s, g, d); !key.empty())
+                    s.baseline[key] = c->second;
+    }
+}
+
 /** Changed property groups of one linked object written over its prim at p (a prototype prim, for a copy). */
 void authorChanges(Stage& s, Graph& g, Author& au, NodeId n, const SdfPath& e, const SdfPath& p, Groups& base)
 {
+    // A prim moved this comparison has only its spec in the edit layer until the change block ends.
     const UsdPrim cp = s.stage->GetPrimAtPath(stagePath(p));
-    if (!cp)
+    if (!cp && !au.L->GetPrimAtPath(p))
         return;
     const Groups& cur = au.now.hashes[n];
     std::set<std::string> groups;
@@ -1898,19 +2884,9 @@ void authorChanges(Stage& s, Graph& g, Author& au, NodeId n, const SdfPath& e, c
     for (const std::string& group : groups)
     {
         const uint64_t h = groupHash(cur, group);
-        if (h == groupHash(base, group))
+        if (h == groupHash(base, group) && !(group == "skin" && au.forceSkin.count(p)))
             continue;
-        if (group == "skin")
-        {
-            au.warn.push_back(std::format("{}: skin weight edits aren't written", g.node(n)->name()));
-            continue;
-        }
-        if (group == "blendShapes")
-        {
-            au.warn.push_back(std::format("{}: blend shape edits aren't written", g.node(n)->name()));
-            continue;
-        }
-        if (cp.IsInstanceProxy())
+        if (cp && cp.IsInstanceProxy())
             au.openInstances(p, false);
         au.author(e, p, group);
         if (h)
@@ -1965,22 +2941,16 @@ std::vector<std::string> sync(Stage& s, Graph& g)
             now.hashes.erase(holder);
         }
     }
+    std::vector<NodeId> merged;
     {
         SdfChangeBlock block;
 
-        // Deleted objects deactivate their prims; one moved out of the stage counts as reparented.
+        // Deleted objects deactivate their prims, and so do objects moved out of the stage.
         std::set<NodeId> skip;
         std::vector<std::pair<SdfPath, NodeId>> gone;
         for (const auto& [n, p] : s.primOf)
-        {
-            if (!g.node(n))
+            if (!g.node(n) || !under(g, n, s.node))
                 gone.push_back({p, n});
-            else if (!under(g, n, s.node))
-            {
-                warn.push_back(std::format("{}: moved out of the stage; moving objects to another parent isn't written", g.node(n)->name()));
-                skip.insert(n);
-            }
-        }
         std::sort(gone.begin(), gone.end());
         std::vector<SdfPath> doneGone;
         for (const auto& [p, n] : gone)
@@ -2019,6 +2989,16 @@ std::vector<std::string> sync(Stage& s, Graph& g)
                         copiesGone[it->second].insert(c->second);
                     part.copy = c->second;
                 }
+                else if (auto j = s.jointOf.find(it->first); j != s.jointOf.end())
+                {
+                    part.joint = j->second;
+                    VtTokenArray had;
+                    if (const UsdSkelSkeleton sk{s.stage->GetPrimAtPath(it->second)})
+                        sk.GetJointsAttr().Get(&had);
+                    if (const auto at = std::find(had.begin(), had.end(), j->second); at != had.end())
+                        part.jointAt = size_t(at - had.begin());
+                    s.jointOf.erase(j);
+                }
                 else if (!covered)
                     partsGone.insert(it->second);
                 s.copyOf.erase(it->first);
@@ -2028,7 +3008,7 @@ std::vector<std::string> sync(Stage& s, Graph& g)
                 ++it;
         }
         for (const SdfPath& p : partsGone)
-            warn.push_back(std::format("{}: deleting its joints isn't written", p.GetString()));
+            warn.push_back(std::format("{}: deleting what it built isn't written", p.GetString()));
         // A copy deleted from an instance that is left removes it from the prototype, as editing one edits it there; an
         // instance left with no copies at all is hidden instead.
         for (const auto& [instancer, protos] : copiesGone)
@@ -2061,6 +3041,65 @@ std::vector<std::string> sync(Stage& s, Graph& g)
                 s.changed.insert(instancer);
         }
 
+        // Parts back from an undo: joints, point instances and copies again, their instances shown and prototype parts back.
+        for (NodeId n : g.descendants(s.node))
+        {
+            auto d = s.deletedParts.find(n);
+            if (d == s.deletedParts.end() || s.partOf.count(n) || s.primOf.count(n))
+                continue;
+            s.partOf[n] = d->second.owner;
+            if (d->second.joint)
+                s.jointOf[n] = *d->second.joint;
+            if (d->second.jointAt)
+                au.restoredAt[n] = *d->second.jointAt;
+            if (d->second.copy)
+            {
+                s.copyOf[n] = *d->second.copy;
+                for (NodeId h = g.parent(n); h != kNoNode; h = g.parent(h))
+                    if (auto inst = s.instanceOf.find(h); inst != s.instanceOf.end())
+                    {
+                        show[inst->second.first].insert(inst->second.second);
+                        break;
+                    }
+                if (const SdfPrimSpecHandle spec = au.L->GetPrimAtPath(*d->second.copy); spec && spec->HasActive())
+                {
+                    au.reactivate(*d->second.copy);
+                    s.changed.insert(d->second.owner);
+                }
+            }
+            if (d->second.instance)
+            {
+                s.instanceOf[n] = *d->second.instance;
+                show[d->second.instance->first].insert(d->second.instance->second);
+            }
+            s.deletedParts.erase(d);
+        }
+
+        merged = mergeBack(s, g, au, show);
+        writeSkeletons(s, g, au);
+        writeNewSkeletons(s, au);
+
+        // Objects moved to another parent, parents first: their prims follow in the edit layer.
+        std::vector<std::pair<SdfPath, NodeId>> reparented;
+        for (const auto& [n, p] : s.primOf)
+            reparented.push_back({p, n});
+        std::sort(reparented.begin(), reparented.end());
+        for (const auto& [was, n] : reparented)
+        {
+            const SdfPath p = s.primOf[n];
+            const NodeId parent = g.parent(n);
+            const Node* pn = g.node(parent);
+            const bool newParent = parent != s.node && pn && pn->type().isA("transform") && !s.primOf.count(parent) && !s.partOf.count(parent);
+            if (!newParent && linkedParentPrim(s, g, n) == linkedAbove(s, p))
+                continue;
+            if (reparent(s, g, au, n, p).IsEmpty())
+            {
+                warn.push_back(std::format("{}: moved under {}, which has no prim to hold it, so the move isn't written", g.node(n)->name(),
+                                           g.node(g.parent(n))->name()));
+                skip.insert(n);
+            }
+        }
+
         // Changed property groups on linked objects.
         std::vector<std::pair<NodeId, SdfPath>> linked(s.primOf.begin(), s.primOf.end());
         std::sort(linked.begin(), linked.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
@@ -2068,12 +3107,6 @@ std::vector<std::string> sync(Stage& s, Graph& g)
         {
             if (skip.count(n))
                 continue;
-            if (linkedParentPrim(s, g, n) != linkedAbove(s, p))
-            {
-                warn.push_back(std::format("{}: moving objects to another parent isn't written", g.node(n)->name()));
-                skip.insert(n);
-                continue;
-            }
             auto e = now.prim.find(n);
             if (e == now.prim.end())
                 continue;
@@ -2139,42 +3172,20 @@ std::vector<std::string> sync(Stage& s, Graph& g)
                 handled.insert(n);
                 continue;
             }
-            // Back from an undo: the deactivated prim comes back; one the edit layer had defined is written anew.
+            // Back from an undo (or into the stage again): the deactivated prim comes back; one the edit layer had defined
+            // is written anew.
             if (auto d = s.deleted.find(n); d != s.deleted.end())
             {
-                if (s.stage->GetPrimAtPath(stagePath(d->second)))
+                const SdfPath p = d->second;
+                if (s.stage->GetPrimAtPath(stagePath(p)))
                 {
-                    au.reactivate(d->second);
-                    s.link(n, d->second);
+                    au.reactivate(p);
+                    s.link(n, p);
+                    if (auto e = now.prim.find(n); e != now.prim.end() && !p.ContainsPrimVariantSelection())
+                        authorChanges(s, g, au, n, e->second, p, s.baseline[p.GetString()]);
                     continue;
                 }
                 s.deleted.erase(d);
-            }
-            if (auto d = s.deletedParts.find(n); d != s.deletedParts.end())
-            {
-                s.partOf[n] = d->second.owner;
-                if (d->second.copy)
-                {
-                    s.copyOf[n] = *d->second.copy;
-                    for (NodeId h = g.parent(n); h != kNoNode; h = g.parent(h))
-                        if (auto inst = s.instanceOf.find(h); inst != s.instanceOf.end())
-                        {
-                            show[inst->second.first].insert(inst->second.second);
-                            break;
-                        }
-                    if (const SdfPrimSpecHandle spec = au.L->GetPrimAtPath(*d->second.copy); spec && spec->HasActive())
-                    {
-                        au.reactivate(*d->second.copy);
-                        s.changed.insert(d->second.owner);
-                    }
-                }
-                if (d->second.instance)
-                {
-                    s.instanceOf[n] = *d->second.instance;
-                    show[d->second.instance->first].insert(d->second.instance->second);
-                }
-                s.deletedParts.erase(d);
-                continue;
             }
             handled.insert(n);
             if (node->type().isA("joint"))
@@ -2221,18 +3232,10 @@ std::vector<std::string> sync(Stage& s, Graph& g)
             base["material"] = h;
         }
 
-        // Joints live in Skeleton prims, which Lila doesn't write: their edits stay warnings.
-        for (const auto& [path, h] : now.skeletons)
-        {
-            Groups& base = s.baseline["$skel:" + path];
-            if (!base.count("joints"))
-                base["joints"] = h;
-            else if (base["joints"] != h)
-                warn.push_back(std::format("joint edits on {} aren't written", path));
-        }
-
         closeInstances(s, au.L);
     }
+    if (!merged.empty())
+        rebaselineInstances(s, g, merged, warn);
 
     // Each LOD level selected in turn, its prims written into its variant.
     for (const auto& [level, items] : inLevels)
@@ -2292,9 +3295,20 @@ void adopt(Stage& s, Graph& g, const ImportResult& r)
                 }
             s.partOf[n] = owner;
         }
+    std::map<SdfPath, size_t> nextJoint;
     for (const auto& [n, skel] : r.jointSkeletons)
-        if (s.partOf.count(n))
-            s.partOf[n] = skel;
+    {
+        // The importer builds a skeleton's joints in the order of its joints attr.
+        const size_t k = nextJoint[skel]++;
+        if (!s.partOf.count(n))
+            continue;
+        s.partOf[n] = skel;
+        VtTokenArray tokens;
+        if (const UsdSkelSkeleton sk{s.stage->GetPrimAtPath(skel)})
+            sk.GetJointsAttr().Get(&tokens);
+        if (k < tokens.size())
+            s.jointOf[n] = tokens[k];
+    }
     for (const auto& [n, proto] : r.copies)
         if (s.partOf.count(n))
             s.copyOf[n] = proto;
@@ -2326,6 +3340,7 @@ void purge(Stage& s, const Graph& g)
         }
         s.copyOf.erase(it->first);
         s.instanceOf.erase(it->first);
+        s.jointOf.erase(it->first);
         it = s.partOf.erase(it);
     }
 }
@@ -2363,6 +3378,7 @@ void rebuild(Stage& s, Graph& g, const SdfPath& path, bool recursive, std::vecto
                 parts.insert(it->first);
                 s.copyOf.erase(it->first);
                 s.instanceOf.erase(it->first);
+                s.jointOf.erase(it->first);
                 it = s.partOf.erase(it);
             }
             else
@@ -2501,9 +3517,9 @@ void rebaseline(Stage& s, Graph& g, const std::vector<SdfPath>& paths, const std
     for (const auto& [slot, h] : now.materialHashes)
         if (all || slots.count(slot) || !s.baseline.count("$mat:" + slot))
             s.baseline["$mat:" + slot]["material"] = h;
-    for (const auto& [path, h] : now.skeletons)
-        if (all || !s.baseline.count("$skel:" + path))
-            s.baseline["$skel:" + path]["joints"] = h;
+    for (const auto& [path, groups] : now.skeletons)
+        if (all || inside(path) || !s.baseline.count("$skel:" + path.GetString()))
+            s.baseline["$skel:" + path.GetString()] = groups;
     if (plan.full)
     {
         s.pending.clear();
@@ -2695,6 +3711,7 @@ struct Saved
     std::vector<std::tuple<NodeId, SdfPath, bool>> links;
     std::unordered_map<NodeId, SdfPath> copies;
     std::unordered_map<NodeId, std::pair<SdfPath, size_t>> instances;
+    std::unordered_map<NodeId, TfToken> joints;
     Baseline baseline;
     std::map<std::string, SdfPath> materials;
     UsdStageLoadRules rules;
@@ -2710,6 +3727,7 @@ Saved save(const Stage& s)
         v.links.push_back({n, p, true});
     v.copies = s.copyOf;
     v.instances = s.instanceOf;
+    v.joints = s.jointOf;
     v.baseline = s.baseline;
     v.materials = s.materialOrigin;
     v.rules = s.stage->GetLoadRules();
@@ -2732,6 +3750,7 @@ void restore(Stage& s, Graph& g, const Saved& v)
             s.link(n, p);
     s.copyOf = v.copies;
     s.instanceOf = v.instances;
+    s.jointOf = v.joints;
     s.baseline = v.baseline;
     s.materialOrigin = v.materials;
     s.resynced.clear();
@@ -3422,11 +4441,14 @@ json cmdPrim(const Args& a)
     json schemas = json::array();
     for (const TfToken& api : prim.GetAppliedSchemas())
         schemas.push_back(api.GetString());
-    return {{"prim", path.GetString()},
-            {"type", prim.GetTypeName().GetString()},
-            {"schemas", schemas},
-            {"instanceProxy", prim.IsInstanceProxy()},
-            {"properties", props}};
+    json out = {{"prim", path.GetString()},
+                {"type", prim.GetTypeName().GetString()},
+                {"schemas", schemas},
+                {"instanceProxy", prim.IsInstanceProxy()},
+                {"properties", props}};
+    if (const SdfPath level = variantPrefix(link); !level.IsEmpty())
+        out["level"] = level.GetVariantSelection().second;
+    return out;
 }
 
 json cmdSetProperty(const Args& a)

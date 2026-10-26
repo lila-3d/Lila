@@ -131,6 +131,13 @@ struct PostPush
     glm::vec4 outline; // colour, depth sensitivity
 };
 
+struct ExternalPush
+{
+    glm::vec4 size;   // image extent, then its inverse
+    glm::vec4 projZ;  // proj[2][2], proj[3][2], proj[2][3], proj[3][3]: view-space z to clip z and w
+    glm::vec4 params; // x: 1 when there is depth
+};
+
 struct WirePush
 {
     glm::mat4 viewProj;
@@ -418,6 +425,8 @@ struct Renderer::Impl
     // Image planes sample through set 0 of their layout, a material set holding the image as its base color.
     VkPipelineLayout imagePlaneLayout = VK_NULL_HANDLE;
     VkPipeline imageOverPipeline = VK_NULL_HANDLE, imageDepthPipeline = VK_NULL_HANDLE, imageBlendPipeline = VK_NULL_HANDLE;
+    VkPipelineLayout externalLayout = VK_NULL_HANDLE;
+    VkPipeline externalPipeline = VK_NULL_HANDLE;
 
     // Ambient occlusion. Set 2 of the mesh layout holds the AO texture; whiteAoSet stands in while AO is off.
     VkDescriptorSetLayout aoSampleLayout = VK_NULL_HANDLE, aoComputeLayout = VK_NULL_HANDLE;
@@ -1557,6 +1566,8 @@ struct Renderer::Impl
         }
         for (const ImagePlaneDraw& p : s.imagePlanes)
             prepareTexture(cmd, f, p.image, "image plane");
+        prepareTexture(cmd, f, s.externalColor, "viewport renderer image");
+        prepareTexture(cmd, f, s.externalDepth, "viewport renderer depth");
         writeTextureTable(f, s);
     }
 
@@ -2464,6 +2475,13 @@ struct Renderer::Impl
             imageBlendPipeline = build(false, true);
             vkDestroyShaderModule(vk.device, plane, nullptr);
         }
+        externalLayout = layoutFor(sizeof(ExternalPush), VK_SHADER_STAGE_FRAGMENT_BIT, materialSetLayout);
+        if (VkShaderModule external = module(loadSpirv("external.spv")))
+        {
+            externalPipeline = buildPipeline(externalLayout, external, "externalVS", "externalPS", format, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, none,
+                                             true, true, true);
+            vkDestroyShaderModule(vk.device, external, nullptr);
+        }
 
         if (grid)
             vkDestroyShaderModule(vk.device, grid, nullptr);
@@ -2476,14 +2494,14 @@ struct Renderer::Impl
         for (VkPipeline* p : {&gridPipeline, &linesPipeline, &overlayPipeline, &overlayTrisPipeline, &meshPipeline, &meshBlendPipeline, &meshWirePipeline,
                               &meshWireBlendPipeline, &aoApplyPipeline, &pointsPipeline, &wirePipeline,
                               &wireXrayPipeline, &backgroundPipeline, &linesOnTopPipeline, &tris3dPipeline, &contactPipeline, &prepassPipeline, &gtaoPipeline,
-                              &denoisePipeline, &imageOverPipeline, &imageDepthPipeline, &imageBlendPipeline, &postPipeline})
+                              &denoisePipeline, &imageOverPipeline, &imageDepthPipeline, &imageBlendPipeline, &postPipeline, &externalPipeline})
             if (*p)
             {
                 vkDestroyPipeline(vk.device, *p, nullptr);
                 *p = VK_NULL_HANDLE;
             }
         for (VkPipelineLayout* l : {&gridLayout, &linesLayout, &overlayTrisLayout, &meshLayout, &wireLayout, &contactLayout, &aoLayout, &aoApplyLayout, &pointsLayout,
-                                    &imagePlaneLayout, &postLayout})
+                                    &imagePlaneLayout, &postLayout, &externalLayout})
             if (*l)
             {
                 vkDestroyPipelineLayout(vk.device, *l, nullptr);
@@ -2618,6 +2636,8 @@ struct Renderer::Impl
         // Waiting above can take a whole vblank; draw what the user is doing now, not what they did before it.
         if (latch)
             latch(s);
+        if (s.externalScene)
+            handOverScene(s);
 
         if (s.atlas && s.atlas.get() != uploadedAtlas)
             uploadAtlas(s.atlas);
@@ -2793,8 +2813,15 @@ struct Renderer::Impl
             vkCmdDraw(cmd, 3, 1, 0, 0);
         }
 
-        // Grid next: it writes no depth, so anything on the ground plane draws over it.
-        if (gridPipeline && s.grid)
+        // An external image is the scene, so planes behind the scene go under it.
+        if (s.externalScene)
+        {
+            drawImagePlanes(cmd, s, vpF, ImagePlaneDraw::Depth::Behind, false);
+            drawExternal(cmd, s);
+        }
+        // Grid next: it writes no depth, so anything on the ground plane draws over it. Over an external image it needs
+        // that image's depth to hide behind its surfaces.
+        if (gridPipeline && s.grid && (!s.externalScene || s.externalDepth))
         {
             GridPush gp;
             gp.viewProj = vpF;
@@ -2809,7 +2836,8 @@ struct Renderer::Impl
             vkCmdDraw(cmd, 3, 1, 0, 0);
         }
 
-        drawImagePlanes(cmd, s, vpF, ImagePlaneDraw::Depth::Behind, false);
+        if (!s.externalScene)
+            drawImagePlanes(cmd, s, vpF, ImagePlaneDraw::Depth::Behind, false);
         drawContactShadows(cmd, s, vpF);
         // Opaque planes in the scene write depth before the meshes; see-through ones blend over them afterwards.
         drawImagePlanes(cmd, s, vpF, ImagePlaneDraw::Depth::Scene, false);
@@ -3056,6 +3084,51 @@ struct Renderer::Impl
     {
         float r = glm::radians(s.envRotation);
         return {std::cos(r), std::sin(r), s.envIntensity, envMaxLod};
+    }
+
+    /**
+     * Makes s an external renderer's frame: no shaded meshes, AO, post, contact shadows or backdrop, and the wires and
+     * highlights that remain hide behind the external depth.
+     */
+    static void handOverScene(FrameState& s)
+    {
+        for (MeshDraw& d : s.meshes)
+        {
+            d.flags &= ~uint32_t(DrawShaded);
+            if (drawsWire(d))
+                d.flags |= DrawWireDepth;
+        }
+        std::erase_if(s.meshes, [](const MeshDraw& d) { return !drawsWire(d); });
+        s.envBackground = false;
+        s.ambientOcclusion = false;
+        s.kuwahara = s.outline = false;
+        s.groundShadow = 0.0f;
+    }
+
+    /** The external renderer's image over the cleared background, writing its depth where it has some. */
+    void drawExternal(VkCommandBuffer cmd, const FrameState& s)
+    {
+        if (!externalPipeline || !s.externalColor || textureKey(s.externalColor, 0) == 0)
+            return;
+        LILA_ZONE();
+
+        Material m;
+        m.baseColorMap = s.externalColor;
+        const bool depth = s.externalDepth && textureKey(s.externalDepth, 0) != 0;
+        if (depth)
+            m.normalMap = s.externalDepth;
+        VkDescriptorSet set = materialSet(&m);
+        if (!set)
+            return;
+        ExternalPush p;
+        const float w = float(std::max(s.externalColor->width, 1)), h = float(std::max(s.externalColor->height, 1));
+        p.size = glm::vec4(w, h, 1.0f / w, 1.0f / h);
+        p.projZ = glm::vec4(float(s.proj[2][2]), float(s.proj[3][2]), float(s.proj[2][3]), float(s.proj[3][3]));
+        p.params = glm::vec4(depth ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, externalPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, externalLayout, 0, 1, &set, 0, nullptr);
+        vkCmdPushConstants(cmd, externalLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
     }
 
     /** One depth group of image planes, in frame order. In the scene group, blended picks the see-through ones. */

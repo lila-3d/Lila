@@ -1640,6 +1640,13 @@ bool Writer::run(const std::vector<scene::NodeId>& roots)
         if (mats)
             for (const auto& [slot, m] : mats->written())
                 res.materials[slot] = m.GetPath();
+        for (const Skel& sk : skels)
+        {
+            std::vector<scene::NodeId> joints;
+            for (int j : sk.joints)
+                joints.push_back(snap.nodes[size_t(j)].source);
+            res.skeletons.push_back({sk.path, std::move(joints)});
+        }
         return true;
     }
     const bool ok = save();

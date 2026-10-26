@@ -138,6 +138,7 @@ lila_module(lila_ui UI
     DockDragCancel.cpp DockDragCancel.h
     DominantInfluenceUi.cpp DominantInfluenceUi.h
     ViewportHooks.cpp ViewportHooks.h
+    ViewportRenderers.cpp ViewportRenderers.h
     ViewportDisplay.cpp ViewportDisplay.h
     ViewportHud.cpp ViewportHud.h
     LodDisplay.cpp LodDisplay.h

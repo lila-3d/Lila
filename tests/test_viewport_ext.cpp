@@ -13,7 +13,10 @@
 #include "ui/RenderPasses.h"
 #include "ui/SelectionHandlers.h"
 #include "ui/ViewportHooks.h"
+#include "ui/ViewportRenderers.h"
 #include "ui/ViewportTool.h"
+
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
 
@@ -386,4 +389,142 @@ TEST_CASE("viewport tools: activate by id, removal ends the active tool")
     CHECK(alive == 1);
     viewportTools::set(nullptr);
     CHECK(alive == 0);
+}
+
+namespace
+{
+struct RendererProbe
+{
+    int opened = 0, closed = 0, renders = 0, changes = 0;
+    viewportRenderers::Request last;
+};
+
+class ProbeSession final : public viewportRenderers::Session
+{
+public:
+    explicit ProbeSession(RendererProbe& p) : mProbe(p) { ++mProbe.opened; }
+    ~ProbeSession() override { ++mProbe.closed; }
+    void render(const viewportRenderers::Request& r) override
+    {
+        ++mProbe.renders;
+        mProbe.last = r;
+    }
+    void sceneChanged(scene::Change, scene::NodeId) override { ++mProbe.changes; }
+
+private:
+    RendererProbe& mProbe;
+};
+
+viewportRenderers::Request requestOf(const ViewInfo& v)
+{
+    viewportRenderers::Request r;
+    r.view = v;
+    r.width = int(v.width);
+    r.height = int(v.height);
+    return r;
+}
+} // namespace
+
+TEST_CASE("viewport renderers: registry, per-view selection, commands and unloading")
+{
+    viewportRenderers::registerCommands();
+    RendererProbe probe;
+    ext::Context ctx("vrExt");
+    auto open = [&probe](int) { return std::make_unique<ProbeSession>(probe); };
+    REQUIRE(viewportRenderers::add(ctx, {.id = "vr.probe", .name = "Probe", .doc = "A test renderer.", .open = open}));
+    CHECK_FALSE(viewportRenderers::add(ctx, {.id = "vr.probe", .open = open}));
+    CHECK_FALSE(viewportRenderers::add(ctx, {.id = viewportRenderers::kLila, .open = open}));
+    REQUIRE(viewportRenderers::add(ctx, {.id = "vr.refuses", .name = "Refuses", .open = [](int) { return std::unique_ptr<viewportRenderers::Session>(); }}));
+
+    const auto choices = viewportRenderers::choices();
+    REQUIRE(choices.size() >= 3);
+    CHECK(choices[0].first == viewportRenderers::kLila);
+    CHECK(std::find(choices.begin(), choices.end(), std::pair<std::string, std::string>{"vr.probe", "Probe"}) != choices.end());
+
+    constexpr int kPanelA = 40, kPanelB = 41;
+    CHECK(viewportRenderers::selected(kPanelA) == viewportRenderers::kLila);
+    CHECK_FALSE(viewportRenderers::select(kPanelA, "vr.missing"));
+    CHECK_FALSE(viewportRenderers::select(kPanelA, "vr.refuses"));
+    CHECK(viewportRenderers::selected(kPanelA) == viewportRenderers::kLila);
+
+    // The command picks per viewport; the other one keeps Lila's.
+    CHECK(run("viewportRenderer", {{"args", {"vr.probe"}}, {"panel", kPanelA}}) == "vr.probe");
+    CHECK(probe.opened == 1);
+    CHECK(run("viewportRenderer", {{"panel", kPanelA}}) == "vr.probe");
+    CHECK(run("viewportRenderer", {{"panel", kPanelB}}) == viewportRenderers::kLila);
+    CHECK_THROWS_AS(run("viewportRenderer", {{"args", {"vr.missing"}}, {"panel", kPanelA}}), CommandError);
+    const json listed = run("viewportRenderers");
+    REQUIRE(listed.is_array());
+    CHECK(listed[0]["id"] == viewportRenderers::kLila);
+    CHECK(std::any_of(listed.begin(), listed.end(), [](const json& r) { return r["id"] == "vr.probe" && r["doc"] == "A test renderer."; }));
+
+    // Only a view drawing with a renderer is handed over.
+    render::FrameState s;
+    CHECK(viewportRenderers::apply(kPanelA, requestOf(frontView()), s));
+    CHECK(s.externalScene);
+    render::FrameState own;
+    CHECK_FALSE(viewportRenderers::apply(kPanelB, requestOf(frontView()), own));
+    CHECK_FALSE(own.externalScene);
+
+    // Back to Lila closes the session; unloading the extension sends its views back too.
+    CHECK(run("viewportRenderer", {{"args", {"lila"}}, {"panel", kPanelA}}) == viewportRenderers::kLila);
+    CHECK(probe.closed == 1);
+    REQUIRE(viewportRenderers::select(kPanelB, "vr.probe"));
+    ctx.unloadAll();
+    CHECK(probe.closed == 2);
+    CHECK(viewportRenderers::selected(kPanelB) == viewportRenderers::kLila);
+    CHECK_FALSE(viewportRenderers::registry().contains("vr.probe"));
+    viewportRenderers::release(kPanelA);
+    viewportRenderers::release(kPanelB);
+}
+
+TEST_CASE("viewport renderers: asked again when the view, time or scene changes, with the scene's changes fed in")
+{
+    run("newScene");
+    RendererProbe probe;
+    viewportRenderers::add({.id = "vr.feed", .open = [&probe](int) { return std::make_unique<ProbeSession>(probe); }});
+    constexpr int kPanel = 42;
+    REQUIRE(viewportRenderers::select(kPanel, "vr.feed"));
+    const ViewInfo view = frontView();
+
+    render::FrameState s;
+    viewportRenderers::apply(kPanel, requestOf(view), s);
+    CHECK(probe.renders == 1);
+    CHECK(probe.last.serial == 1);
+    CHECK(probe.last.graph == &scene::Graph::current());
+    CHECK(probe.last.width == 400);
+    viewportRenderers::apply(kPanel, requestOf(view), s);
+    CHECK(probe.renders == 1);
+
+    ViewInfo moved = view;
+    moved.view = glm::translate(moved.view, glm::dvec3(1.0, 0.0, 0.0));
+    viewportRenderers::apply(kPanel, requestOf(moved), s);
+    CHECK(probe.renders == 2);
+    viewportRenderers::Request later = requestOf(moved);
+    later.time = 1.0;
+    viewportRenderers::apply(kPanel, later, s);
+    CHECK(probe.renders == 3);
+    CHECK(probe.last.time == 1.0);
+
+    // A scene edit reaches the session and asks for a frame; selecting does only the first.
+    const uint64_t revision = probe.last.sceneRevision;
+    json made = run("createNode", {{"args", {"transform"}}});
+    CHECK(probe.changes > 0);
+    viewportRenderers::apply(kPanel, later, s);
+    CHECK(probe.renders == 4);
+    CHECK(probe.last.sceneRevision > revision);
+    run("select", {{"args", {made}}});
+    viewportRenderers::apply(kPanel, later, s);
+    CHECK(probe.renders == 4);
+
+    // A ray through the centre pixel runs down the view axis, and depthOf measures along it.
+    glm::dvec3 o, d;
+    probe.last.ray(200.0, 200.0, o, d);
+    const glm::dmat4& v = probe.last.view.view;
+    CHECK(glm::dot(d, -glm::dvec3(v[0][2], v[1][2], v[2][2])) == doctest::Approx(1.0).epsilon(1e-6));
+    CHECK(probe.last.depthOf(o + d * 100.0) == doctest::Approx(probe.last.depthOf(o) + 100.0).epsilon(1e-6));
+
+    viewportRenderers::remove("vr.feed");
+    CHECK(probe.closed == 1);
+    viewportRenderers::release(kPanel);
 }
