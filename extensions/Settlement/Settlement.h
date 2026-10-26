@@ -30,7 +30,7 @@ Options optionsFrom(const std::function<double(const char*)>& number, const std:
 
 struct Parts
 {
-    lila::gn::GeometryPtr streets, lots, buildings;
+    lila::gn::GeometryPtr streets, lots, buildings, water;
 };
 
 /** Streets (ribbons and centrelines), lots (outlines) and buildings (envelope volumes and footprint curves). */

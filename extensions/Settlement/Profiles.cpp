@@ -259,7 +259,8 @@ double streetWidth(const Profile& p, StreetClass c)
     case StreetClass::Collector: return p.widthCollector;
     case StreetClass::Local: return p.widthLocal;
     case StreetClass::Alley: return p.widthAlley;
-    case StreetClass::Boundary: return 0.0;
+    case StreetClass::Boundary:
+    case StreetClass::Water: return 0.0;
     }
     return p.widthLocal;
 }

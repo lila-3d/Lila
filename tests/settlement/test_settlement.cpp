@@ -214,6 +214,23 @@ TEST_CASE("settlement: every built-in profile lays out streets, lots and buildin
     }
 }
 
+TEST_CASE("settlement: organic and mixed layouts never leave streets crossing without a junction")
+{
+    const std::pair<const char*, double> cases[] = {{"medievalTown", 50000}, {"europeanCity", 150000}, {"hamlet", 30000}};
+    for (const auto& [name, size] : cases)
+        for (uint32_t seed = 1; seed <= 6; ++seed)
+        {
+            const std::string label = std::string(name) + " seed " + std::to_string(seed);
+            CAPTURE(label);
+            const Options o = withProfile(name, seed);
+            const Layout l = build(squareSite(size), Ground::plane(), o);
+            const json c = checks(l, Ground::plane(), o);
+            CAPTURE(c.dump());
+            CHECK(c["crossings"].get<int>() == 0);
+            CHECK(c["components"].get<int>() == 1);
+        }
+}
+
 TEST_CASE("settlement: on a slope streets keep to the grade and buildings get foundations")
 {
     const geo::Mesh hill = slope(60000.0, 0.15);
@@ -235,6 +252,86 @@ TEST_CASE("settlement: on a slope streets keep to the grade and buildings get fo
     CHECK(c["crossings"].get<int>() == 0);
     // Grown streets turn across a slope steeper than the profile allows; few, if any, stay steep.
     CHECK(c["steepStreets"].get<int>() <= int(l.graph.edges.size() / 10));
+}
+
+TEST_CASE("settlement: a river bounds blocks, only main roads bridge it, and no lot lies in it")
+{
+    Site site;
+    site.size = 50000.0;
+    site.water.push_back({{{-30000, 4000}, {-5000, 6000}, {30000, 3000}}, 1500.0});
+    const Options o = withProfile("medievalTown", 2);
+    const Layout l = build(site, Ground::plane(), o);
+    const json c = checks(l, Ground::plane(), o);
+    CHECK(c["crossings"].get<int>() == 0);
+    CHECK(!l.bridges.empty());
+    for (const Lot& lot : l.lots)
+        CHECK(bankDistance(centroid(lot.outline), l.water) > 0.0);
+    // Every street touching the river at a node is an arterial: the bridges.
+    const StreetGraph& g = l.graph;
+    for (size_t n = 0; n < g.nodes.size(); ++n)
+    {
+        bool wet = false;
+        for (int e : g.incident(int(n)))
+            wet = wet || g.edges[size_t(e)].cls == StreetClass::Water;
+        if (!wet)
+            continue;
+        for (int e : g.incident(int(n)))
+            if (g.isStreet(e))
+                CHECK(g.edges[size_t(e)].cls == StreetClass::Arterial);
+    }
+    const json j = toJson(l);
+    CHECK(j["water"].size() == 1);
+    CHECK(j["bridges"].size() == l.bridges.size());
+}
+
+TEST_CASE("settlement: sites sit by the river, out of its flood, on flat ground")
+{
+    const Polygon outline = makePolygon({{-200000, -200000}, {200000, -200000}, {200000, 200000}, {-200000, 200000}});
+    const std::vector<WaterLine> water = {{{{-200000, 0}, {200000, 0}}, 3000.0}};
+    SiteOptions so;
+    so.count = 3;
+    so.spacing = 100000.0;
+    const std::vector<SiteScore> sites = suggestSites(outline, Ground::plane(), water, so);
+    REQUIRE(sites.size() == 3);
+    for (const SiteScore& s : sites)
+    {
+        const double bank = bankDistance(s.p, water);
+        CHECK(bank >= so.floodMargin);
+        CHECK(bank < so.waterReach);
+        CHECK_FALSE(s.reasons["floodplain"].get<bool>());
+    }
+    CHECK(sites[0].score >= sites[1].score);
+}
+
+TEST_CASE("settlement: a region places cities, towns and villages apart and joins them by road")
+{
+    const Polygon outline = makePolygon({{-200000, -200000}, {200000, -200000}, {200000, 200000}, {-200000, 200000}});
+    const std::vector<WaterLine> water = {{{{-200000, -30000}, {0, 10000}, {200000, 40000}}, 3000.0}};
+    RegionOptions ro;
+    ro.cities = 1;
+    ro.towns = 2;
+    ro.villages = 4;
+    const RegionPlan plan = planRegion(outline, Ground::plane(), water, ro);
+    int tiers[3] = {};
+    for (const RegionSettlement& s : plan.settlements)
+        ++tiers[int(s.tier)];
+    CHECK(tiers[0] == 1);
+    CHECK(tiers[1] == 2);
+    CHECK(tiers[2] >= 2);
+    CHECK(plan.roads.size() >= plan.settlements.size() - 1);
+    for (size_t i = 0; i < plan.settlements.size(); ++i)
+        for (size_t j = i + 1; j < plan.settlements.size(); ++j)
+            CHECK(glm::length(plan.settlements[i].score.p - plan.settlements[j].score.p) >
+                  plan.settlements[i].radius + plan.settlements[j].radius);
+    // Every settlement lays out on its site, its main roads continuing the region's.
+    for (const RegionSettlement& s : plan.settlements)
+    {
+        Options o;
+        REQUIRE(builtinProfile(s.profile, &o.profile));
+        const Layout l = build(s.site, Ground::plane(), o);
+        CHECK(!l.lots.empty());
+        CHECK(checks(l, Ground::plane(), o)["crossings"].get<int>() == 0);
+    }
 }
 
 TEST_CASE("settlement: profiles round trip as JSON and refuse unknown fields")
@@ -277,5 +374,14 @@ TEST_CASE("settlement: commands build, measure and export a settlement")
     std::filesystem::remove(path, ec);
 
     CHECK(run("settlementProfiles").contains("scifiMegacity"));
+
+    const json sites = run("settlementSuggest", {{"size", 200000.0}, {"water", json::array({json::array({json::array({-100000, 0}), json::array({100000, 0})})})}, {"count", 2}});
+    CHECK(sites.size() == 2);
+
+    const json region = run("settlementRegion", {{"size", 200000.0}, {"cities", 0}, {"towns", 1}, {"villages", 2},
+                                                 {"water", json::array({json::array({json::array({-100000, -20000}), json::array({100000, 30000})})})}});
+    CHECK(region["settlements"].size() == 3);
+    for (const json& s : region["settlements"])
+        CHECK(s["checks"]["crossings"].get<int>() == 0);
     CHECK_THROWS(run("settlementCreate", {{"profile", "atlantis"}}));
 }

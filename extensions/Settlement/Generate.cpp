@@ -8,11 +8,26 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <map>
 #include <queue>
 #include <stdexcept>
 
 namespace settlement
 {
+double bankDistance(Vec2 q, std::span<const WaterLine> water)
+{
+    double best = std::numeric_limits<double>::max();
+    for (const WaterLine& w : water)
+        for (size_t k = 0; k + 1 < w.pts.size(); ++k)
+        {
+            const Vec2 a = w.pts[k], d = w.pts[k + 1] - a;
+            const double len2 = glm::dot(d, d);
+            const double t = len2 > 1e-12 ? std::clamp(glm::dot(q - a, d) / len2, 0.0, 1.0) : 0.0;
+            best = std::min(best, glm::length(a + d * t - q) - 0.5 * w.width);
+        }
+    return best;
+}
+
 namespace
 {
 constexpr double kPi = 3.14159265358979323846;
@@ -48,7 +63,7 @@ Vec2 exitPoint(const Polygon& poly, Vec2 o, Vec2 d)
         const Vec2 a = poly.pts[k], b = poly.pts[(k + 1) % n];
         const Vec2 e = b - a;
         const double den = cross(d, e);
-        if (std::abs(den) < 1e-12)
+        if (std::abs(den) <= 1e-9 * glm::length(d) * glm::length(e))
             continue;
         const double t = cross(a - o, e) / den, u = cross(a - o, d) / den;
         if (t > 1e-6 && u >= 0.0 && u <= 1.0)
@@ -91,7 +106,7 @@ std::vector<std::vector<Vec2>> clipPolyline(std::span<const Vec2> pts, const Pol
         {
             const Vec2 p = outline.pts[j], q = outline.pts[(j + 1) % n];
             const double den = cross(b - a, q - p);
-            if (std::abs(den) < 1e-12)
+            if (std::abs(den) <= 1e-9 * glm::length(b - a) * glm::length(q - p))
                 continue;
             const double t = cross(p - a, q - p) / den, u = cross(p - a, b - a) / den;
             if (t > 0.0 && t < 1.0 && u >= 0.0 && u <= 1.0)
@@ -164,6 +179,76 @@ double polylineLength(std::span<const Vec2> pts)
     return len;
 }
 
+/** The run with a gap at every water crossing: only arterials bridge rivers. */
+std::vector<std::vector<Vec2>> cutAtWater(const std::vector<Vec2>& run, std::span<const WaterLine> water)
+{
+    if (water.empty() || run.size() < 2)
+        return {run};
+    // Crossings as arc length along the run, each with the half gap it needs.
+    std::vector<std::pair<double, double>> gaps;
+    double at = 0.0;
+    for (size_t k = 0; k + 1 < run.size(); ++k)
+    {
+        const Vec2 a = run[k], b = run[k + 1];
+        const double len = glm::length(b - a);
+        for (const WaterLine& w : water)
+            for (size_t j = 0; j + 1 < w.pts.size(); ++j)
+            {
+                const Vec2 c = w.pts[j], d = w.pts[j + 1];
+                const double den = cross(b - a, d - c);
+                if (std::abs(den) <= 1e-9 * len * glm::length(d - c))
+                    continue;
+                const double t = cross(c - a, d - c) / den, u = cross(c - a, b - a) / den;
+                if (t >= 0.0 && t <= 1.0 && u >= 0.0 && u <= 1.0)
+                    gaps.push_back({at + t * len, 0.5 * w.width + 300.0});
+            }
+        at += len;
+    }
+    if (gaps.empty())
+        return {run};
+    std::vector<std::pair<double, double>> keep = {{0.0, at}};
+    for (const auto& [c, half] : gaps)
+    {
+        std::vector<std::pair<double, double>> next;
+        for (const auto& [lo, hi] : keep)
+        {
+            if (c - half > lo)
+                next.push_back({lo, std::min(hi, c - half)});
+            if (c + half < hi)
+                next.push_back({std::max(lo, c + half), hi});
+        }
+        keep = std::move(next);
+    }
+    auto pointAt = [&](double d) {
+        double acc = 0.0;
+        for (size_t k = 0; k + 1 < run.size(); ++k)
+        {
+            const double len = glm::length(run[k + 1] - run[k]);
+            if (acc + len >= d || k + 2 == run.size())
+                return run[k] + (run[k + 1] - run[k]) * (len > 1e-12 ? std::clamp((d - acc) / len, 0.0, 1.0) : 0.0);
+            acc += len;
+        }
+        return run.back();
+    };
+    std::vector<std::vector<Vec2>> out;
+    for (const auto& [lo, hi] : keep)
+    {
+        if (hi - lo < 100.0)
+            continue;
+        std::vector<Vec2> piece = {pointAt(lo)};
+        double acc = 0.0;
+        for (size_t k = 0; k + 1 < run.size(); ++k)
+        {
+            acc += glm::length(run[k + 1] - run[k]);
+            if (acc > lo && acc < hi)
+                piece.push_back(run[k + 1]);
+        }
+        piece.push_back(pointAt(hi));
+        out.push_back(std::move(piece));
+    }
+    return out;
+}
+
 /** Ramer-Douglas-Peucker. */
 void simplify(std::span<const Vec2> pts, size_t lo, size_t hi, double tol, std::vector<char>& keep)
 {
@@ -227,7 +312,8 @@ double classWeight(StreetClass c)
     case StreetClass::Collector: return 2.0;
     case StreetClass::Local: return 1.0;
     case StreetClass::Alley: return 0.3;
-    case StreetClass::Boundary: return 0.0;
+    case StreetClass::Boundary:
+    case StreetClass::Water: return 0.0;
     }
     return 1.0;
 }
@@ -279,7 +365,142 @@ std::vector<Vec2> addPlaza(Layout& l, const Profile& p, double angle)
     l.graph.addPolyline(sq, StreetClass::Collector, 0, true);
     return sq;
 }
+bool onWater(const StreetGraph& g, int node)
+{
+    for (int e : g.incident(node))
+        if (g.edges[size_t(e)].cls == StreetClass::Water)
+            return true;
+    return false;
+}
+
+/**
+ * Street networks cut off from the one at the centre (pieces of a passing road, streets stopped by a river) are linked
+ * to it by the shortest lane, or dropped when they are scraps.
+ */
+void joinComponents(Layout& l, const Ground& g)
+{
+    StreetGraph& graph = l.graph;
+    const Profile& p = l.profile;
+    std::vector<int> parent(graph.nodes.size());
+    for (size_t k = 0; k < parent.size(); ++k)
+        parent[k] = int(k);
+    auto root = [&](int x) {
+        while (parent[size_t(x)] != x)
+            x = parent[size_t(x)] = parent[size_t(parent[size_t(x)])];
+        return x;
+    };
+    for (size_t e = 0; e < graph.edges.size(); ++e)
+        if (graph.isStreet(int(e)))
+            parent[size_t(root(graph.edges[e].a))] = root(graph.edges[e].b);
+    int centre = -1;
+    double best = std::numeric_limits<double>::max();
+    std::map<int, std::vector<int>> members;
+    for (size_t n = 0; n < graph.nodes.size(); ++n)
+    {
+        if (graph.degree(int(n)) == 0)
+            continue;
+        members[root(int(n))].push_back(int(n));
+        const double d = glm::length(graph.nodes[n].p - l.center);
+        if (d < best)
+        {
+            best = d;
+            centre = int(n);
+        }
+    }
+    if (centre < 0)
+        return;
+    const int main = root(centre);
+    const std::vector<int> mainNodes = members[main];
+    for (const auto& [r, nodes] : members)
+    {
+        if (r == main)
+            continue;
+        double gap = std::numeric_limits<double>::max();
+        int from = -1, to = -1;
+        for (int a : nodes)
+            for (int b : mainNodes)
+            {
+                const double d = glm::length(graph.nodes[size_t(a)].p - graph.nodes[size_t(b)].p);
+                if (d < gap)
+                {
+                    gap = d;
+                    from = a;
+                    to = b;
+                }
+            }
+        double length = 0.0;
+        for (int a : nodes)
+            for (int e : graph.incident(a))
+                if (graph.isStreet(e))
+                    length += 0.5 * graph.length(e);
+        const Vec2 pa = graph.nodes[size_t(from)].p, pb = graph.nodes[size_t(to)].p;
+        const Vec2 ends[] = {pa, pb};
+        const bool dry = l.water.empty() || cutAtWater(std::vector<Vec2>(ends, ends + 2), l.water).size() == 1;
+        if (gap < 3.0 * p.segment && dry && g.gradeAlong(pa, pb) <= p.maxGrade * 1.5)
+            graph.addStreet(pa, pb, StreetClass::Local);
+        else if (length < p.segment)
+            for (int a : nodes)
+            {
+                const std::vector<int> inc = graph.incident(a);
+                for (int e : inc)
+                    if (graph.isStreet(e))
+                        graph.removeEdge(e);
+            }
+    }
+}
+
+/**
+ * Streets other than arterials that reach a node on a river (snapped onto a bridge mid-span) are pulled back to dry
+ * ground and end there.
+ */
+void pullBackFromWater(Layout& l)
+{
+    StreetGraph& g = l.graph;
+    const size_t nodes = g.nodes.size();
+    for (size_t n = 0; n < nodes; ++n)
+    {
+        double half = 0.0;
+        for (int e : g.incident(int(n)))
+            if (g.edges[size_t(e)].cls == StreetClass::Water)
+                half = std::max(half, 0.5 * g.edges[size_t(e)].width);
+        if (half <= 0.0)
+            continue;
+        std::vector<int> wet;
+        for (int e : g.incident(int(n)))
+            if (g.isStreet(e) && g.edges[size_t(e)].cls != StreetClass::Arterial)
+                wet.push_back(e);
+        for (int e : wet)
+        {
+            const StreetEdge x = g.edges[size_t(e)];
+            const Vec2 at = g.nodes[n].p, far = g.nodes[size_t(x.a == int(n) ? x.b : x.a)].p;
+            const double len = glm::length(far - at), pull = half + 300.0;
+            g.removeEdge(e);
+            if (len > pull + 2.0 * g.snap())
+                g.addStreet(far, at + (far - at) / len * pull, x.cls, x.era);
+        }
+    }
+}
+
+/** A planned line laid as streets: clipped to the outline and radii, split where too steep, gapped at water unless arterial. */
+void layLine(Layout& l, const Ground& g, const Profile& p, std::span<const Vec2> pts, StreetClass cls, int era, double inner, double step)
+{
+    for (const std::vector<Vec2>& run : clipPolyline(pts, l.outline, l.center, inner, 0.0))
+        for (const std::vector<Vec2>& part : climbable(run, g, p.maxGrade * 1.5, step))
+        {
+            if (cls == StreetClass::Arterial)
+                l.graph.addPolyline(part, cls, era);
+            else
+                for (const std::vector<Vec2>& dry : cutAtWater(part, l.water))
+                    l.graph.addPolyline(dry, cls, era);
+        }
+}
 } // namespace
+
+double edgeWidth(const Layout& l, int edge)
+{
+    const StreetEdge& e = l.graph.edges[size_t(edge)];
+    return e.width > 0.0 ? e.width : streetWidth(l.profile, e.cls);
+}
 
 std::vector<Vec2> route(const Layout& l, const Ground& g, const Profile& p, Vec2 a, Vec2 b)
 {
@@ -308,13 +529,14 @@ std::vector<Vec2> route(const Layout& l, const Ground& g, const Profile& p, Vec2
     const auto [sx, sy] = cellOf(a);
     const auto [tx, ty] = cellOf(b);
     std::vector<double> height(size_t(w) * h);
-    std::vector<char> open(size_t(w) * h);
+    std::vector<char> open(size_t(w) * h), wet(size_t(w) * h);
     for (int y = 0; y < h; ++y)
         for (int x = 0; x < w; ++x)
         {
             const Vec2 q = at(x, y);
             height[size_t(y) * w + x] = g.height(q);
             open[size_t(y) * w + x] = contains(l.outline.pts, q) && g.solid(q);
+            wet[size_t(y) * w + x] = !l.water.empty() && bankDistance(q, l.water) < 0.0;
         }
     open[size_t(sy) * w + sx] = open[size_t(ty) * w + tx] = 1;
 
@@ -352,7 +574,8 @@ std::vector<Vec2> route(const Layout& l, const Ground& g, const Profile& p, Vec2
                 if (grade > 2.5 * p.maxGrade)
                     continue;
                 const double r = grade / std::max(p.maxGrade, 1e-3);
-                const double nd = dist[size_t(i)] + run * (1.0 + 8.0 * r * r);
+                // Water costs a bridge: roads cross rivers rarely, and straight across.
+                const double nd = dist[size_t(i)] + run * (1.0 + 8.0 * r * r) * (wet[size_t(j)] ? 25.0 : 1.0);
                 if (nd < dist[size_t(j)])
                 {
                     dist[size_t(j)] = nd;
@@ -481,22 +704,29 @@ void growOrganic(Layout& l, const Ground& g, const Options& o, double limit)
                 crossed = l.graph.firstCrossing(pos + dir * (snap * 0.2), next, &hit, &sAt);
             if (crossed >= 0)
             {
+                // Rivers stop every street but the main roads; the street ends on its own bank.
+                if (l.graph.edges[size_t(crossed)].cls == StreetClass::Water && cls != StreetClass::Arterial)
+                    break;
                 pts.push_back(hit);
                 break;
             }
+            if (!l.water.empty() && bankDistance(next, l.water) < 0.5 * p.widthLocal)
+                break;
             if (limit > 0.0 && glm::length(next - l.center) > limit)
                 break;
             if (!g.solid(next) || !contains(l.outline.pts, next) || (!plaza.empty() && contains(plaza, next)))
                 break;
             if (int n = l.graph.nearestNode(next, reach); n >= 0)
             {
-                pts.push_back(l.graph.nodes[size_t(n)].p);
+                if (l.graph.degree(n) > 0 && !onWater(l.graph, n))
+                    pts.push_back(l.graph.nodes[size_t(n)].p);
                 break;
             }
             Vec2 near{0.0};
-            if (l.graph.nearestEdge(next, reach, &near) >= 0)
+            if (const int ne = l.graph.nearestEdge(next, reach, &near); ne >= 0)
             {
-                pts.push_back(near);
+                if (l.graph.edges[size_t(ne)].cls != StreetClass::Water)
+                    pts.push_back(near);
                 break;
             }
             // Refuse streets that would run alongside another one too closely.
@@ -550,10 +780,7 @@ void layGrid(Layout& l, const Ground& g, const Options& o, double inner)
         {
             const Vec2 base = l.center + across * (i * pitch);
             const Vec2 line[] = {base + along * (t0 - pitch), base + along * (t1 + pitch)};
-            const StreetClass cls = i % every == 0 ? StreetClass::Arterial : StreetClass::Local;
-            for (const std::vector<Vec2>& run : clipPolyline(line, l.outline, l.center, inner, 0.0))
-                for (const std::vector<Vec2>& part : climbable(run, g, p.maxGrade * 1.5, step))
-                    l.graph.addPolyline(part, cls, era);
+            layLine(l, g, p, line, i % every == 0 ? StreetClass::Arterial : StreetClass::Local, era, inner, step);
         }
     };
     lay(v, u, u0, u1, v0, v1, pu);
@@ -577,10 +804,7 @@ void layRadial(Layout& l, const Ground& g, const Options& o)
             const double t = 2.0 * kPi * s / segs;
             ring.push_back(l.center + Vec2(std::cos(t), std::sin(t)) * r);
         }
-        const StreetClass cls = (k == 1 || k == rings) ? StreetClass::Arterial : StreetClass::Collector;
-        for (const std::vector<Vec2>& run : clipPolyline(ring, l.outline, l.center, 0.0, 0.0))
-            for (const std::vector<Vec2>& part : climbable(run, g, p.maxGrade * 1.5, step))
-                l.graph.addPolyline(part, cls);
+        layLine(l, g, p, ring, (k == 1 || k == rings) ? StreetClass::Arterial : StreetClass::Collector, 0, 0.0, step);
     }
     const double hub = l.radius / (rings + 0.5);
     for (int s = 0; s < spokes; ++s)
@@ -588,9 +812,7 @@ void layRadial(Layout& l, const Ground& g, const Options& o)
         const double t = 2.0 * kPi * s / spokes + p.gridAngle * kPi / 180.0;
         const Vec2 d(std::cos(t), std::sin(t));
         const Vec2 line[] = {l.center + d * hub, l.center + d * (l.radius * 1.5)};
-        for (const std::vector<Vec2>& run : clipPolyline(line, l.outline, l.center, 0.0, 0.0))
-            for (const std::vector<Vec2>& part : climbable(run, g, p.maxGrade * 1.5, step))
-                l.graph.addPolyline(part, StreetClass::Arterial);
+        layLine(l, g, p, line, StreetClass::Arterial, 0, 0.0, step);
     }
 }
 
@@ -640,8 +862,12 @@ void cutLargeBlocks(Layout& l, const Ground& g, const Options& o)
             {
                 if (run.size() < 2 || g.gradeAlong(run.front(), run.back()) > p.maxGrade * 1.5)
                     continue;
-                l.graph.addStreet(run.front(), run.back(), cls);
-                cut = true;
+                // A block on the river: the lane stops short of the bank.
+                for (const std::vector<Vec2>& dry : cutAtWater(run, l.water))
+                {
+                    l.graph.addStreet(dry.front(), dry.back(), cls);
+                    cut = true;
+                }
                 break;
             }
         }
@@ -841,6 +1067,15 @@ Layout build(const Site& site, const Ground& g, const Options& in)
         l.radius = std::max(l.radius, glm::length(q - l.center));
 
     l.graph.addPolyline(l.outline.pts, StreetClass::Boundary, 0, true);
+    for (const WaterLine& w : site.water)
+        for (std::vector<Vec2>& run : clipPolyline(w.pts, l.outline, l.center, 0.0, 0.0))
+        {
+            l.graph.addPolyline(run, StreetClass::Water, 0, false, w.width);
+            l.water.push_back({std::move(run), w.width});
+        }
+    for (const std::vector<Vec2>& r : site.roads)
+        for (const std::vector<Vec2>& run : clipPolyline(r, l.outline, l.center, 0.0, 0.0))
+            l.graph.addPolyline(run, StreetClass::Arterial);
     for (const std::vector<Vec2>& s : site.streets)
         if (s.size() >= 2)
             l.graph.addPolyline(s, StreetClass::Collector);
@@ -878,6 +1113,13 @@ Layout build(const Site& site, const Ground& g, const Options& in)
     }
     }
     cutLargeBlocks(l, g, o);
+    pullBackFromWater(l);
+    joinComponents(l, g);
+    for (size_t n = 0; n < l.graph.nodes.size(); ++n)
+    {
+        if (onWater(l.graph, int(n)) && l.graph.degree(int(n)) > 0)
+            l.bridges.push_back(l.graph.nodes[n].p);
+    }
 
     // Blocks: faces of the street graph, pulled in by half of each street's width.
     int blockId = 0;
@@ -888,8 +1130,8 @@ Layout build(const Site& site, const Ground& g, const Options& in)
         for (size_t k = 0; k < src.size(); ++k)
         {
             const StreetClass c = l.graph.edges[size_t(src.tag[k])].cls;
-            d[k] = 0.5 * streetWidth(p, c);
-            src.tag[k] = c == StreetClass::Boundary ? -1 : int(c);
+            d[k] = 0.5 * edgeWidth(l, src.tag[k]);
+            src.tag[k] = c >= StreetClass::Boundary ? -1 : int(c);
         }
         Polygon inner = inset(src, d);
         if (inner.pts.empty() || area(inner) < p.minLot * kM2)

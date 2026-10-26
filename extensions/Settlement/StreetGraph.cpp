@@ -32,13 +32,15 @@ const char* className(StreetClass c)
     case StreetClass::Local: return "local";
     case StreetClass::Alley: return "alley";
     case StreetClass::Boundary: return "boundary";
+    case StreetClass::Water: return "water";
     }
     return "local";
 }
 
 bool parseClass(std::string_view name, StreetClass* out)
 {
-    for (StreetClass c : {StreetClass::Arterial, StreetClass::Collector, StreetClass::Local, StreetClass::Alley, StreetClass::Boundary})
+    for (StreetClass c : {StreetClass::Arterial, StreetClass::Collector, StreetClass::Local, StreetClass::Alley, StreetClass::Boundary,
+                          StreetClass::Water})
         if (name == className(c))
         {
             *out = c;
@@ -67,7 +69,7 @@ int StreetGraph::addNode(Vec2 p)
     return id;
 }
 
-int StreetGraph::addEdge(int a, int b, StreetClass cls, int era)
+int StreetGraph::addEdge(int a, int b, StreetClass cls, int era, double width)
 {
     if (a == b || a < 0 || b < 0)
         return -1;
@@ -81,7 +83,7 @@ int StreetGraph::addEdge(int a, int b, StreetClass cls, int era)
             return e;
         }
     const int id = int(edges.size());
-    edges.push_back({a, b, cls, era, true});
+    edges.push_back({a, b, cls, era, true, width});
     mIncident[size_t(a)].push_back(id);
     mIncident[size_t(b)].push_back(id);
     const Vec2 pa = nodes[size_t(a)].p, pb = nodes[size_t(b)].p;
@@ -112,7 +114,7 @@ int StreetGraph::degree(int node, bool streetsOnly) const
 {
     int d = 0;
     for (int e : mIncident[size_t(node)])
-        if (!streetsOnly || edges[size_t(e)].cls != StreetClass::Boundary)
+        if (!streetsOnly || edges[size_t(e)].cls < StreetClass::Boundary)
             ++d;
     return d;
 }
@@ -128,8 +130,8 @@ int StreetGraph::splitEdge(int e, double t)
         return x.b;
     const int m = addNode(p);
     removeEdge(e);
-    addEdge(x.a, m, x.cls, x.era);
-    addEdge(m, x.b, x.cls, x.era);
+    addEdge(x.a, m, x.cls, x.era, x.width);
+    addEdge(m, x.b, x.cls, x.era, x.width);
     return m;
 }
 
@@ -209,10 +211,15 @@ int StreetGraph::firstCrossing(Vec2 p, Vec2 q, Vec2* at, double* sOut, int skipA
             const Vec2 c = nodes[size_t(x.a)].p, d = nodes[size_t(x.b)].p;
             const Vec2 sv = d - c;
             const double den = cross(r, sv);
-            if (std::abs(den) < 1e-12)
+            // Parallel within a relative tolerance: near-collinear streets meet at nodes, never at a computed crossing.
+            if (std::abs(den) <= 1e-9 * glm::length(r) * glm::length(sv))
                 continue;
             const double s = cross(c - p, sv) / den, t = cross(c - p, r) / den;
             if (s <= 1e-9 || s >= 1.0 - 1e-9 || t < 0.0 || t > 1.0)
+                continue;
+            // At grazing angles s and t are ill-conditioned: the point must really lie on the other street.
+            const Vec2 x0 = p + r * s;
+            if (glm::length(c + sv * project(c, d, x0) - x0) > 0.5)
                 continue;
             if (s < bestS || (s == bestS && e < best))
             {
@@ -241,7 +248,7 @@ int StreetGraph::nodeAt(Vec2 p)
     return addNode(p);
 }
 
-std::vector<int> StreetGraph::addStreet(Vec2 p, Vec2 q, StreetClass cls, int era)
+std::vector<int> StreetGraph::addStreet(Vec2 p, Vec2 q, StreetClass cls, int era, double width)
 {
     std::vector<int> made;
     const int a = nodeAt(p);
@@ -302,20 +309,20 @@ std::vector<int> StreetGraph::addStreet(Vec2 p, Vec2 q, StreetClass cls, int era
                 break;
             next = m;
         }
-        if (int e = addEdge(cur, next, cls, era); e >= 0)
+        if (int e = addEdge(cur, next, cls, era, width); e >= 0)
             made.push_back(e);
         cur = next;
     }
     return made;
 }
 
-std::vector<int> StreetGraph::addPolyline(std::span<const Vec2> pts, StreetClass cls, int era, bool closed)
+std::vector<int> StreetGraph::addPolyline(std::span<const Vec2> pts, StreetClass cls, int era, bool closed, double width)
 {
     std::vector<int> made;
     const size_t n = pts.size();
     for (size_t k = 0; k + 1 < n + (closed ? 1 : 0); ++k)
     {
-        std::vector<int> e = addStreet(pts[k], pts[(k + 1) % n], cls, era);
+        std::vector<int> e = addStreet(pts[k], pts[(k + 1) % n], cls, era, width);
         made.insert(made.end(), e.begin(), e.end());
     }
     return made;

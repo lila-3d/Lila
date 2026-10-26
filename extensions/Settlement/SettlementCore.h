@@ -90,6 +90,7 @@ enum class StreetClass : uint8_t
     Local,
     Alley,
     Boundary, // the settlement's outline: closes blocks, is not a street
+    Water,    // a river or canal: closes blocks, only arterials bridge it
 };
 
 const char* className(StreetClass c);
@@ -107,6 +108,7 @@ struct StreetEdge
     StreetClass cls = StreetClass::Local;
     int era = 0;
     bool alive = true;
+    double width = 0.0; // overrides the class's width when above 0 (rivers)
 };
 
 /** Planar street network: inserting a street splits every street it crosses and snaps its ends to what is near. */
@@ -120,8 +122,8 @@ public:
 
     double snap() const { return mSnap; }
     /** Adds the segment p-q, split where it crosses or touches existing edges. Returns the edges made, in order p to q. */
-    std::vector<int> addStreet(Vec2 p, Vec2 q, StreetClass cls, int era = 0);
-    std::vector<int> addPolyline(std::span<const Vec2> pts, StreetClass cls, int era = 0, bool closed = false);
+    std::vector<int> addStreet(Vec2 p, Vec2 q, StreetClass cls, int era = 0, double width = 0.0);
+    std::vector<int> addPolyline(std::span<const Vec2> pts, StreetClass cls, int era = 0, bool closed = false, double width = 0.0);
 
     /** Nearest node within r, or -1. */
     int nearestNode(Vec2 p, double r) const;
@@ -134,7 +136,7 @@ public:
     /** Edges at a node (alive), any class. */
     const std::vector<int>& incident(int node) const { return mIncident[size_t(node)]; }
     double length(int edge) const;
-    bool isStreet(int edge) const { return edges[size_t(edge)].alive && edges[size_t(edge)].cls != StreetClass::Boundary; }
+    bool isStreet(int edge) const { return edges[size_t(edge)].alive && edges[size_t(edge)].cls < StreetClass::Boundary; }
     /** Splits the edge at parameter t, returning the new node. */
     int splitEdge(int edge, double t);
     void removeEdge(int edge);
@@ -148,7 +150,7 @@ private:
 
     int addNode(Vec2 p);
     int nodeAt(Vec2 p);
-    int addEdge(int a, int b, StreetClass cls, int era);
+    int addEdge(int a, int b, StreetClass cls, int era, double width = 0.0);
     int64_t key(int x, int y) const { return (int64_t(x) << 32) ^ int64_t(uint32_t(y)); }
     template <class F> void forCells(Vec2 lo, Vec2 hi, F&& f) const;
 };
@@ -223,12 +225,21 @@ double streetWidth(const Profile& p, StreetClass c);
 // ---------------------------------------------------------------------------------------------------------------------
 // Layout
 
-/** What the user gives: an outline, fixed streets, a centre and attractors. */
+/** A river, stream or canal as a centreline. */
+struct WaterLine
+{
+    std::vector<Vec2> pts;
+    double width = 2000.0;
+};
+
+/** What the user gives: an outline, fixed streets and roads, water, a centre and attractors. */
 struct Site
 {
     std::vector<Vec2> outline;                 // closed; empty for a square of size
     double size = 40000.0;                     // cm, the square's side when there is no outline
     std::vector<std::vector<Vec2>> streets;    // kept as they are; generators fill around them
+    std::vector<std::vector<Vec2>> roads;      // main roads arriving from outside, kept as arterials
+    std::vector<WaterLine> water;              // streets other than arterials stop at its banks
     std::vector<Vec2> attractors;              // the first is the centre when hasCenter
     bool hasCenter = false;
 };
@@ -302,7 +313,12 @@ struct Layout
     Vec2 center{0.0};
     double radius = 0.0;
     int refused = 0; // grown streets turned down by the local rules
+    std::vector<WaterLine> water;
+    std::vector<Vec2> bridges; // where streets cross water
 };
+
+/** An edge's width: its own (rivers), else its class's. */
+double edgeWidth(const Layout& l, int edge);
 
 /** Streets, blocks, lots and envelopes for a site. Same inputs give the same layout. */
 Layout build(const Site& site, const Ground& ground, const Options& o);
@@ -334,6 +350,7 @@ struct MeshParts
     geo::Mesh streets;   // ribbons on the ground, face attrs street, class
     geo::Mesh lots;      // lot outlines as loose edges, edge attr lot
     geo::Mesh envelopes; // closed volumes, face attrs lot, use, floors
+    geo::Mesh water;     // river ribbons, face attr water
 };
 
 struct OutputOptions
@@ -351,6 +368,69 @@ struct StreetLine
     StreetClass cls = StreetClass::Local;
 };
 std::vector<StreetLine> streetLines(const Layout& l, const Ground& ground);
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Siting and regions: where settlements go, and many of them on one map
+
+/** A candidate site and why it scored: flat ground, water close but out of the flood, confluences. */
+struct SiteScore
+{
+    Vec2 p{0.0};
+    double score = 0.0;
+    json reasons;
+};
+
+struct SiteOptions
+{
+    int count = 5;
+    double spacing = 0.0;  // cm between chosen sites; 0 picks one from the area and count
+    double floodMargin = 3000.0; // no centre closer than this beyond a river's bank
+    double waterReach = 40000.0; // water further than this adds nothing
+    double maxGrade = 0.12;
+    uint32_t seed = 1;
+};
+
+/** How far q is from the nearest river bank: negative inside the water, very large when there is none. */
+double bankDistance(Vec2 q, std::span<const WaterLine> water);
+
+/** Best sites inside the outline, best first, no two closer than the spacing. */
+std::vector<SiteScore> suggestSites(const Polygon& outline, const Ground& ground, std::span<const WaterLine> water, const SiteOptions& o);
+
+enum class Tier : uint8_t
+{
+    City,
+    Town,
+    Village,
+};
+
+const char* tierName(Tier t);
+
+struct RegionOptions
+{
+    int cities = 1, towns = 3, villages = 8;
+    double cityRadius = 120000.0, townRadius = 45000.0, villageRadius = 15000.0;
+    std::string cityProfile = "europeanCity", townProfile = "medievalTown", villageProfile = "hamlet";
+    uint32_t seed = 1;
+};
+
+struct RegionSettlement
+{
+    Tier tier = Tier::Village;
+    std::string profile;
+    Site site;
+    double radius = 0.0;
+    SiteScore score;
+};
+
+/** Settlements placed by tier (central place spacing: the city on the best site, villages between), joined by routed roads. */
+struct RegionPlan
+{
+    std::vector<RegionSettlement> settlements;
+    std::vector<std::vector<Vec2>> roads;
+    std::vector<Vec2> bridges;
+};
+
+RegionPlan planRegion(const Polygon& outline, const Ground& ground, std::span<const WaterLine> water, const RegionOptions& o);
 
 uint64_t hash64(uint64_t x);
 double unitRandom(uint64_t key); // [0, 1)

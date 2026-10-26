@@ -135,6 +135,7 @@ json checks(const Layout& l, const Ground& ground, const Options&)
     std::vector<int> parent(g.nodes.size());
     std::iota(parent.begin(), parent.end(), 0);
     int steep = 0, crossings = 0;
+    json crossingAt = json::array();
     for (size_t e = 0; e < g.edges.size(); ++e)
     {
         if (!g.isStreet(int(e)))
@@ -144,8 +145,12 @@ json checks(const Layout& l, const Ground& ground, const Options&)
         const Vec2 a = g.nodes[size_t(x.a)].p, b = g.nodes[size_t(x.b)].p;
         if (ground.gradeAlong(a, b) > p.maxGrade * 1.5 + 1e-9)
             ++steep;
-        if (g.firstCrossing(a, b, nullptr, nullptr, x.a, x.b) >= 0)
-            ++crossings;
+        Vec2 hit{0.0};
+        if (g.firstCrossing(a, b, &hit, nullptr, x.a, x.b) >= 0)
+        {
+            if (++crossings <= 8)
+                crossingAt.push_back(xz(hit));
+        }
     }
     std::map<int, int> roots;
     for (size_t n = 0; n < g.nodes.size(); ++n)
@@ -187,6 +192,7 @@ json checks(const Layout& l, const Ground& ground, const Options&)
     const int components = int(roots.size());
     return {{"components", components},
             {"crossings", crossings},
+            {"crossingAt", crossingAt},
             {"steepStreets", steep},
             {"sharpJunctions", sharp},
             {"landlockedLots", landlocked},
@@ -229,7 +235,8 @@ json stats(const Layout& l)
             {"lotUses", uses},
             {"buildings", int64_t(l.envelopes.size())},
             {"floors", {{"min", minF}, {"max", maxF}, {"mean", l.envelopes.empty() ? 0.0 : sumF / double(l.envelopes.size())}}},
-            {"refusedStreets", l.refused}};
+            {"refusedStreets", l.refused},
+            {"bridges", int64_t(l.bridges.size())}};
 }
 
 const char* useName(Use u)
@@ -268,7 +275,7 @@ json toJson(const Layout& l)
         streets.push_back({{"a", remap[size_t(x.a)]},
                            {"b", remap[size_t(x.b)]},
                            {"class", className(x.cls)},
-                           {"width", streetWidth(l.profile, x.cls)},
+                           {"width", edgeWidth(l, int(e))},
                            {"era", x.era}});
     }
     json blocks = json::array();
@@ -311,6 +318,17 @@ json toJson(const Layout& l)
                              {"front", xz(env.front)},
                              {"random", env.random}});
     }
+    json water = json::array();
+    for (const WaterLine& w : l.water)
+    {
+        json pts = json::array();
+        for (const Vec2& q : w.pts)
+            pts.push_back(xz(q));
+        water.push_back({{"width", w.width}, {"points", pts}});
+    }
+    json bridges = json::array();
+    for (const Vec2& b : l.bridges)
+        bridges.push_back(xz(b));
     return {{"format", "lila.settlement"},
             {"version", 1},
             {"units", "cm"},
@@ -323,7 +341,9 @@ json toJson(const Layout& l)
             {"streets", streets},
             {"blocks", blocks},
             {"lots", lots},
-            {"envelopes", envelopes}};
+            {"envelopes", envelopes},
+            {"water", water},
+            {"bridges", bridges}};
 }
 
 MeshParts toMeshes(const Layout& l, const Ground& ground, const OutputOptions& o)
@@ -335,37 +355,46 @@ MeshParts toMeshes(const Layout& l, const Ground& ground, const OutputOptions& o
     const double seg = std::max(o.segment, 10.0);
     auto at = [&](Vec2 p, double lift) { return glm::dvec3(p.x, ground.height(p) + lift, p.y); };
 
-    // Streets: a ribbon per edge, wound so its normal faces up (clockwise in XZ seen as x, z).
-    std::vector<int32_t> streetId, streetClass;
+    // A ribbon per edge, wound so its normal faces up (clockwise in XZ seen as x, z).
+    std::vector<int32_t> streetId, streetClass, waterId;
     for (size_t e = 0; e < g.edges.size(); ++e)
     {
-        if (!g.isStreet(int(e)))
-            continue;
         const StreetEdge& x = g.edges[e];
+        const bool water = x.alive && x.cls == StreetClass::Water;
+        if (!g.isStreet(int(e)) && !water)
+            continue;
+        geo::Mesh& m = water ? out.water : out.streets;
         const Vec2 a = g.nodes[size_t(x.a)].p, b = g.nodes[size_t(x.b)].p;
         const double len = glm::length(b - a);
         if (len < 1e-6)
             continue;
         const Vec2 d = (b - a) / len, n(-d.y, d.x);
-        const double half = 0.5 * streetWidth(l.profile, x.cls);
+        const double half = 0.5 * edgeWidth(l, int(e));
+        const double lift = water ? o.lift * 0.5 : o.lift;
         const int steps = std::max(1, int(std::ceil(len / seg)));
         geo::Index prevL = 0, prevR = 0;
         for (int s = 0; s <= steps; ++s)
         {
             const Vec2 c = a + (b - a) * (double(s) / steps);
-            const geo::Index L = out.streets.addPoint(at(c + n * half, o.lift));
-            const geo::Index R = out.streets.addPoint(at(c - n * half, o.lift));
+            const geo::Index L = m.addPoint(at(c + n * half, lift));
+            const geo::Index R = m.addPoint(at(c - n * half, lift));
             if (s > 0)
             {
-                out.streets.addFace({prevL, L, R, prevR});
-                streetId.push_back(int32_t(e));
-                streetClass.push_back(int32_t(x.cls));
+                m.addFace({prevL, L, R, prevR});
+                if (water)
+                    waterId.push_back(int32_t(e));
+                else
+                {
+                    streetId.push_back(int32_t(e));
+                    streetClass.push_back(int32_t(x.cls));
+                }
             }
             prevL = L;
             prevR = R;
         }
     }
     setFaceInts(out.streets, {{"street", streetId}, {"class", streetClass}});
+    setFaceInts(out.water, {{"water", waterId}});
 
     // Lots: outlines as loose edges draped on the ground.
     std::vector<int32_t> edgeLot;

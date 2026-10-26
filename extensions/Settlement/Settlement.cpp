@@ -33,9 +33,11 @@ struct Chain
 {
     std::vector<glm::dvec3> pts;
     bool closed = false;
+    int kind = 0;       // 0 street or outline, 1 road, 2 water: the int edge attributes road and water
+    double width = 0.0; // the float edge attribute width, for water
 };
 
-/** Loose edges chained into lines and loops. */
+/** Loose edges chained into lines and loops; a chain takes its kind from its first edge. */
 std::vector<Chain> chains(const geo::Mesh& m)
 {
     std::vector<Chain> out;
@@ -49,8 +51,17 @@ std::vector<Chain> chains(const geo::Mesh& m)
                 at[m.edgePoint(e, k)].push_back(e);
         }
     std::vector<char> used(m.edgeCapacity(), 0);
+    const std::span<const int32_t> road = m.edgeAttrs().get<int32_t>("road");
+    const std::span<const int32_t> water = m.edgeAttrs().get<int32_t>("water");
+    const std::span<const float> width = m.edgeAttrs().get<float>("width");
     auto walk = [&](geo::Index start, geo::Index e) {
         Chain c;
+        if (e < water.size() && water[e])
+            c.kind = 2;
+        else if (e < road.size() && road[e])
+            c.kind = 1;
+        if (e < width.size())
+            c.width = width[e];
         c.pts.push_back(m.position(start));
         geo::Index p = start;
         while (e != geo::kInvalid && !used[e])
@@ -122,9 +133,13 @@ void settlementExec(ExecContext& c)
     c.out("streets", parts.streets);
     c.out("lots", parts.lots);
     c.out("buildings", parts.buildings);
+    c.out("water", parts.water);
     std::vector<GeometryPtr> shown;
     if (c.b("showStreets"))
+    {
         shown.push_back(parts.streets);
+        shown.push_back(parts.water);
+    }
     if (c.b("showLots"))
         shown.push_back(parts.lots);
     if (c.b("showBuildings"))
@@ -150,7 +165,9 @@ gn::NodeDecl settlementDecl()
                "1 commercial, 2 civic), floors and part (0 wall, 1 roof, 2 floor). Curves carry the centrelines, lot outlines "
                "and footprints. Lengths are cm, Y up.",
         .sockets = {.inputs = {geoSocket("site", "Outline (the largest closed curve or loose-edge loop), fixed streets (open lines) "
-                                                 "and points (the first is the centre, the rest attractors main roads run to)."),
+                                                 "and points (the first is the centre, the rest attractors main roads run to). Loose "
+                                                 "edges with int attribute road are main roads arriving from outside; with int "
+                                                 "attribute water they are rivers, float attribute width their width."),
                                geoSocket("ground", "Mesh the settlement stands on. Empty for flat ground at the site's height."),
                                in("profile", T::String, "medievalTown", "Style: " + profiles + "."),
                                in("pattern", T::String, "", "Override the profile's pattern: organic, grid, radial, linear, organicGrid."),
@@ -167,7 +184,8 @@ gn::NodeDecl settlementDecl()
                     .outputs = {geoSocket("geometry", "What the show inputs select, joined."),
                                 geoSocket("streets", "Street ribbons and centreline curves."),
                                 geoSocket("lots", "Lot outlines as loose edges and closed curves."),
-                                geoSocket("buildings", "Building envelopes as closed meshes, footprints as closed curves.")}},
+                                geoSocket("buildings", "Building envelopes as closed meshes, footprints as closed curves."),
+                                geoSocket("water", "River ribbons.")}},
         .exec = settlementExec,
     };
 }
@@ -233,7 +251,7 @@ Site siteFrom(const gn::Geometry& g, double* planeY)
             ySum += p.y;
             ++yCount;
         }
-        if (all[k].closed && all[k].pts.size() >= 3)
+        if (all[k].kind == 0 && all[k].closed && all[k].pts.size() >= 3)
         {
             const double a = std::abs(signedArea(flat(all[k].pts)));
             if (a > bestArea)
@@ -247,6 +265,10 @@ Site siteFrom(const gn::Geometry& g, double* planeY)
     {
         if (int(k) == outline)
             site.outline = flat(all[k].pts);
+        else if (all[k].kind == 2)
+            site.water.push_back({flat(all[k].pts), all[k].width > 0.0 ? all[k].width : 2000.0});
+        else if (all[k].kind == 1)
+            site.roads.push_back(flat(all[k].pts));
         else
         {
             std::vector<Vec2> s = flat(all[k].pts);
@@ -346,7 +368,7 @@ Parts toGeometry(const Layout& l, const Ground& ground)
         return gn::makeGeometry(std::move(g));
     };
     return {pack(std::move(meshes.streets), std::move(centre)), pack(std::move(meshes.lots), std::move(lotCurves)),
-            pack(std::move(meshes.envelopes), std::move(footprints))};
+            pack(std::move(meshes.envelopes), std::move(footprints)), pack(std::move(meshes.water), gn::CurveSet())};
 }
 
 bool registerNodes(ext::Context& ctx) { return gn::registerDecl(ctx, settlementDecl()) != nullptr; }
