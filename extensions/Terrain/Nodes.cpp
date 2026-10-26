@@ -1,17 +1,21 @@
 // The Terrain geometry nodes: heightfield sources, edits that read fields per sample, sampling, and conversion to and
 // from meshes. Every terrain command builds a group out of these.
 
+#include "Erosion.h"
+#include "Inputs.h"
 #include "Terrain.h"
 
 #include <lila/Extension.h>
 #include <lila/GeometryNodes.h>
 #include <lila/Profile.h>
+#include <lila/TextureGraph.h>
 #include <lila/Workspace.h>
 
 #include <tbb/parallel_for.h>
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 
 using namespace lila;
 
@@ -432,6 +436,15 @@ gn::NodeDecl infoDecl()
     };
 }
 
+/** A file path as given, else under the workspace. */
+std::filesystem::path resolved(std::filesystem::path file)
+{
+    if (!file.empty() && file.is_relative())
+        if (const auto& root = Workspace::get().root(); !root.empty())
+            file = root / file;
+    return file;
+}
+
 gn::NodeDecl readDecl()
 {
     return {
@@ -451,16 +464,300 @@ gn::NodeDecl readDecl()
             [](ExecContext& c) {
                 LILA_ZONE();
 
-                std::filesystem::path file = c.s("file");
+                const std::filesystem::path file = resolved(c.s("file"));
                 if (file.empty())
                     throw gn::ExecError(c.node.name + ": no file");
-                if (file.is_relative())
-                    if (const auto& root = Workspace::get().root(); !root.empty())
-                        file = root / file;
                 const D3 center = c.v("center");
                 try
                 {
                     c.out("heightfield", gn::heightfieldGeometry(loadHeightfield(file, {center.x, center.z}, c.f("width"), c.f("low"), c.f("high"), c.b("raw"))));
+                }
+                catch (const std::exception& e)
+                {
+                    throw gn::ExecError(c.node.name + ": " + e.what());
+                }
+            },
+    };
+}
+
+
+gn::NodeDecl textureGraphDecl()
+{
+    return {
+        .type = "TerrainTextureGraph",
+        .label = "Evaluate Texture Graph",
+        .category = kCategory,
+        .doc = "Runs a texture graph (a .lilamat from texExportGraph) over the heightfield, one texel per sample, and writes one "
+               "of its channels into the height or a mask: 0 to 1 maps to low..high. The texture's uv covers the whole grid, its "
+               "top row on the -Z edge, so every texture node is a terrain node. Runs on the GPU when there is one unless backend "
+               "says cpu.",
+        .props = {blendProp("replace"), prop("backend", {"auto", "cpu", "gpu"}, "auto", "Where the graph runs.")},
+        .sockets = {.inputs = {geoIn("heightfield"), in("file", T::String, "", "The .lilamat; relative paths are under the workspace."),
+                               in("channel", T::String, "height", "Channel to read: height, roughness, ao, baseColor (its red) ..."),
+                               in("target", T::String, "", "Mask to write; empty writes the height."),
+                               in("low", T::Float, 0.0, "What 0 becomes."), in("high", T::Float, 10000.0, "What 1 becomes."),
+                               fin("factor", T::Float, 1.0, Implicit::None, "0 to 1 per sample: how much of the change is applied.")},
+                    .outputs = {geoOut("heightfield")}},
+        .exec =
+            [](ExecContext& c) {
+                LILA_ZONE();
+
+                GeometryPtr g = c.geometry("heightfield");
+                Heightfield h = requireHeightfield(c, g);
+                const std::filesystem::path file = resolved(c.s("file"));
+                if (file.empty())
+                    throw gn::ExecError(c.node.name + ": no texture graph file");
+                if (h.nx > 16384 || h.nz > 16384)
+                    throw gn::ExecError(c.node.name + ": the grid is over 16384 samples a side");
+                tex::Graph graph;
+                try
+                {
+                    std::ifstream in(file);
+                    if (!in)
+                        throw std::runtime_error("can't open " + file.string());
+                    nlohmann::json j = nlohmann::json::parse(in);
+                    graph = tex::Graph::fromJson(j.contains("graph") ? j["graph"] : j);
+                }
+                catch (const std::exception& e)
+                {
+                    throw gn::ExecError(c.node.name + ": " + e.what());
+                }
+                const std::string channel = c.s("channel");
+                tex::PlanRequest req;
+                req.width = h.nx;
+                req.height = h.nz;
+                req.bufferFormat = "rgba32f";
+                for (tex::OutputRequest& r : tex::materialRequests(graph, tex::standardChannels()))
+                    if (r.name == channel)
+                        req.outputs.push_back(std::move(r));
+                if (req.outputs.empty())
+                    throw gn::ExecError(c.node.name + ": the graph has no channel '" + channel + "' (it needs a Material Output)");
+                const tex::Plan plan = tex::buildPlan(graph, req);
+                if (!plan.error.empty())
+                    throw gn::ExecError(c.node.name + ": " + plan.error);
+                tex::EvalOptions opts;
+                opts.imageRoot = file.parent_path();
+                const std::string backend = c.prop("backend");
+                tex::EvalResult res;
+                try
+                {
+                    res = tex::evaluate(plan, opts, backend == "auto" ? std::string() : backend);
+                }
+                catch (const std::exception& e)
+                {
+                    throw gn::ExecError(c.node.name + ": " + e.what());
+                }
+                auto it = res.outputs.find(channel);
+                if (it == res.outputs.end() || it->second.width != h.nx || it->second.height != h.nz)
+                    throw gn::ExecError(c.node.name + ": the graph gave no " + channel + " image");
+                const image::Image& img = it->second;
+                const Blend mode = blendOf(c, "blend");
+                const double low = c.f("low"), high = c.f("high");
+                const std::string target = c.s("target");
+                const std::vector<double> f = evaluateOnGrid(h, c.field("factor"));
+                std::vector<float>& dst = target.empty() ? h.heights : h.mask(target);
+                tbb::parallel_for(0, h.nz, [&](int z) {
+                    for (int x = 0; x < h.nx; ++x)
+                    {
+                        const size_t k = h.index(x, z);
+                        const double v = low + (high - low) * double(img.rgba[k * 4]);
+                        dst[k] = blend(mode, dst[k], float(v), float(f[k]));
+                    }
+                });
+                c.out("heightfield", withHeightfield(g, std::move(h)));
+            },
+    };
+}
+
+gn::NodeDecl erodeDecl()
+{
+    const ErosionParams p;
+    return {
+        .type = "ErodeTerrain",
+        .label = "Erode Terrain",
+        .category = kCategory,
+        .doc = "Rivers cut valleys: stream-power erosion on the drainage network, with optional uplift building the land as it "
+               "wears, and slopes over the talus angle shedding downhill. Every valley drains to the edge, which stays put. "
+               "Writes masks flow (drainage), wear (removed), deposit (laid down) and lakes. Iterations is age: more is older and "
+               "more carved. Lengths are cm.",
+        .sockets = {.inputs = {geoIn("heightfield"), in("iterations", T::Int, p.iterations, "Steps; more is an older landscape."),
+                               in("strength", T::Float, p.strength, "How fast rivers cut."),
+                               in("areaExponent", T::Float, p.areaExponent, "How much bigger rivers cut faster (0.3 to 0.7)."),
+                               in("uplift", T::Float, p.uplift, "Rise per step, cm."),
+                               in("upliftMask", T::String, "", "Mask scaling uplift; empty is uniform."),
+                               in("hardnessMask", T::String, "", "Mask of hard rock (1) that erodes slower."),
+                               in("talusAngle", T::Float, p.talusAngle, "Slopes steeper than this shed material, degrees."),
+                               in("thermalIterations", T::Int, p.thermalIterations, "Thermal steps per erosion step.")},
+                    .outputs = {geoOut("heightfield")}},
+        .exec =
+            [](ExecContext& c) {
+                LILA_ZONE();
+
+                GeometryPtr g = c.geometry("heightfield");
+                Heightfield h = requireHeightfield(c, g);
+                ErosionParams p;
+                p.iterations = int(std::clamp<int64_t>(c.i("iterations"), 0, 10000));
+                p.strength = std::max(0.0, c.f("strength"));
+                p.areaExponent = std::clamp(c.f("areaExponent"), 0.1, 1.0);
+                p.uplift = c.f("uplift");
+                p.upliftMask = c.s("upliftMask");
+                p.hardnessMask = c.s("hardnessMask");
+                p.talusAngle = c.f("talusAngle");
+                p.thermalIterations = int(std::clamp<int64_t>(c.i("thermalIterations"), 0, 100));
+                if (p.iterations > 0)
+                    erode(h, p);
+                c.out("heightfield", withHeightfield(g, std::move(h)));
+            },
+    };
+}
+
+gn::NodeDecl flowDecl()
+{
+    return {
+        .type = "HeightfieldFlow",
+        .label = "Heightfield Flow",
+        .category = kCategory,
+        .doc = "Where water would go, without changing the ground: writes masks flow (0 to 1, how much drains through each "
+               "sample, on a log scale: rivers are near 1) and lakes (how deep the pits are that water would fill). Fill Pits "
+               "also raises the heights to those lake levels, so everything drains.",
+        .sockets = {.inputs = {geoIn("heightfield"), in("fillPits", T::Bool, false, "Raise pits to their spill level.")}, .outputs = {geoOut("heightfield")}},
+        .exec =
+            [](ExecContext& c) {
+                LILA_ZONE();
+
+                GeometryPtr g = c.geometry("heightfield");
+                Heightfield h = requireHeightfield(c, g);
+                const Drainage d = drain(h);
+                writeFlowMasks(h, d);
+                if (c.b("fillPits"))
+                    h.heights = d.filled;
+                c.out("heightfield", withHeightfield(g, std::move(h)));
+            },
+    };
+}
+
+gn::NodeDecl thermalDecl()
+{
+    return {
+        .type = "ThermalErosion",
+        .label = "Thermal Erosion",
+        .category = kCategory,
+        .doc = "Slopes steeper than the talus angle shed material downhill until they settle: scree below cliffs, softened "
+               "crests.",
+        .sockets = {.inputs = {geoIn("heightfield"), in("talusAngle", T::Float, 38.0, "Steepest stable slope, degrees."),
+                               in("iterations", T::Int, 20, "Steps.")},
+                    .outputs = {geoOut("heightfield")}},
+        .exec =
+            [](ExecContext& c) {
+                LILA_ZONE();
+
+                GeometryPtr g = c.geometry("heightfield");
+                Heightfield h = requireHeightfield(c, g);
+                thermal(h, c.f("talusAngle"), int(std::clamp<int64_t>(c.i("iterations"), 0, 10000)));
+                c.out("heightfield", withHeightfield(g, std::move(h)));
+            },
+    };
+}
+
+gn::NodeDecl elevationDecl()
+{
+    const DemOptions o;
+    return {
+        .type = "ReadElevationData",
+        .label = "Read Elevation Data",
+        .category = kCategory,
+        .doc = "Loads real-world elevation: GeoTIFF (DEM tiles such as Copernicus GLO-30, national lidar), SRTM .hgt, ESRI ASCII "
+               "grid (.asc), XYZ points, or Terrarium and Terrain-RGB PNG map tiles. Heights become cm, centred on center with "
+               "north toward -Z; data in degrees is flattened around its middle. Voids are filled from the data around them and "
+               "marked in the mask voids. Data without spacing (PNG tiles, bare XYZ) uses spacing.",
+        .props = {prop("format", demFormatNames(), "auto", "File type; auto goes by extension, and .png is Terrarium.")},
+        .sockets = {.inputs = {in("file", T::String, "", "Path; relative paths are under the workspace."),
+                               in("center", T::Vector, vec(0, 0, 0), "Centre of the area."),
+                               in("cellSize", T::Float, o.cell, "Grid spacing, cm; 0 keeps the data's own."),
+                               in("spacing", T::Float, o.spacing, "Sample spacing, metres, for files that don't carry one."),
+                               in("exaggeration", T::Float, o.exaggeration, "Multiplies heights."),
+                               in("fromLowest", T::Bool, o.fromLowest, "Lowest point at 0 instead of sea level."),
+                               in("fillVoids", T::Bool, true, "Fill voids; off leaves them at 0.")},
+                    .outputs = {geoOut("heightfield")}},
+        .exec =
+            [](ExecContext& c) {
+                LILA_ZONE();
+
+                const std::filesystem::path file = resolved(c.s("file"));
+                if (file.empty())
+                    throw gn::ExecError(c.node.name + ": no file");
+                DemFormat format = DemFormat::Auto;
+                if (!parseDemFormat(c.prop("format"), &format))
+                    throw gn::ExecError(c.node.name + ": unknown format '" + c.prop("format") + "'");
+                const D3 center = c.v("center");
+                DemOptions o;
+                o.center = {center.x, center.z};
+                o.cell = std::max(0.0, c.f("cellSize"));
+                o.spacing = c.f("spacing");
+                o.exaggeration = c.f("exaggeration");
+                o.fromLowest = c.b("fromLowest");
+                try
+                {
+                    Dem d = readDem(file, format);
+                    if (c.b("fillVoids"))
+                        fillVoids(d);
+                    c.out("heightfield", gn::heightfieldGeometry(demToHeightfield(d, o)));
+                }
+                catch (const std::exception& e)
+                {
+                    throw gn::ExecError(c.node.name + ": " + e.what());
+                }
+            },
+    };
+}
+
+gn::NodeDecl imageDecl()
+{
+    const ImageOptions o;
+    return {
+        .type = "ImportTerrainImage",
+        .label = "Import Terrain Image",
+        .category = kCategory,
+        .doc = "Turns a painted height image (png, psd, tif, exr, tga from Photoshop, Krita or GIMP) into terrain. Mode guide keeps "
+               "the painting's big shapes and lets erosion add natural detail; height takes it literally; uplift reads brightness "
+               "as how fast the land rises, so ranges grow where it is bright and rivers carve them; mask leaves flat ground and "
+               "puts the image in a mask. The image is width wide along X, its top row on the -Z edge. Erosion is slow on big "
+               "grids: seconds at 1K.",
+        .props = {prop("mode", imageModeNames(), "guide", "How brightness is read.")},
+        .sockets = {.inputs = {in("file", T::String, "", "Path; relative paths are under the workspace."),
+                               in("width", T::Float, 100000.0, "Width along X, cm."), in("low", T::Float, o.low, "Height of black, cm."),
+                               in("high", T::Float, o.high, "Height of white, cm."), in("center", T::Vector, vec(0, 0, 0), "Centre."),
+                               in("smooth", T::Float, o.smooth, "Blur radius, samples: removes 8-bit steps and brush noise."),
+                               in("shape", T::Float, o.shape, "Exponent on brightness: above 1 widens valleys and sharpens peaks."),
+                               in("erosion", T::Float, o.erosion, "0 to 1: how far erosion may move the painting."),
+                               in("detail", T::Float, o.detail, "Noise added before erosion, a fraction of the height range."),
+                               in("seed", T::Int, int64_t(o.seed), "Seed for that noise."),
+                               in("mask", T::String, o.mask, "Mask mode: the mask written.")},
+                    .outputs = {geoOut("heightfield")}},
+        .exec =
+            [](ExecContext& c) {
+                LILA_ZONE();
+
+                const std::filesystem::path file = resolved(c.s("file"));
+                if (file.empty())
+                    throw gn::ExecError(c.node.name + ": no file");
+                ImageOptions o;
+                if (!parseImageMode(c.prop("mode"), &o.mode))
+                    throw gn::ExecError(c.node.name + ": unknown mode '" + c.prop("mode") + "'");
+                o.low = c.f("low");
+                o.high = c.f("high");
+                o.smooth = std::clamp(c.f("smooth"), 0.0, 64.0);
+                o.shape = c.f("shape");
+                o.erosion = c.f("erosion");
+                o.detail = std::max(0.0, c.f("detail"));
+                o.seed = uint32_t(c.i("seed"));
+                o.mask = c.s("mask");
+                const D3 center = c.v("center");
+                try
+                {
+                    Heightfield h = loadHeightfield(file, {center.x, center.z}, c.f("width"), 0.0, 1.0, false);
+                    interpretImage(h, o);
+                    c.out("heightfield", gn::heightfieldGeometry(std::move(h)));
                 }
                 catch (const std::exception& e)
                 {
@@ -474,7 +771,7 @@ gn::NodeDecl readDecl()
 bool registerNodes(ext::Context& ctx)
 {
     for (gn::NodeDecl d : {gridDecl(), noiseDecl(), setHeightDecl(), setMaskDecl(), sampleDecl(), toMeshDecl(), fromMeshDecl(), blendDecl(),
-                           resampleDecl(), infoDecl(), readDecl()})
+                           resampleDecl(), infoDecl(), readDecl(), textureGraphDecl(), erodeDecl(), flowDecl(), thermalDecl(), elevationDecl(), imageDecl()})
         if (!gn::registerDecl(ctx, std::move(d)))
             return false;
     return true;

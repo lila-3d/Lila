@@ -1,6 +1,9 @@
 // Terrain commands. A terrain is a mesh whose geometry-nodes modifier makes a heightfield; the commands build that group,
 // read what it made (in world space) and bake it to a file.
 
+#include "Erosion.h"
+#include "Export.h"
+#include "Inputs.h"
 #include "Terrain.h"
 
 #include <lila/Command.h>
@@ -13,6 +16,7 @@
 #include <lila/Profile.h>
 #include <lila/SceneFile.h>
 #include <lila/Transform.h>
+#include <lila/UnrealLink.h>
 #include <lila/Workspace.h>
 
 #include <algorithm>
@@ -190,6 +194,10 @@ constexpr Exposed kInputs[] = {
     {"ridged", "float", "Shape", 0, 1, "Noise", "ridged", "0 rolling hills, 1 sharp ridges."},
     {"warp", "float", "Shape", 0, 2, "Noise", "warp", "Bends shapes so they don't line up."},
     {"seed", "int", "Shape", 0, 0, "Noise", "seed", "Another seed gives other shapes."},
+    {"erosion", "int", "Erosion", 0, 300, "Erode", "iterations", "Erosion steps: rivers carve valleys; 0 is off, more is older."},
+    {"erosionStrength", "float", "Erosion", 0, 0.005, "Erode", "strength", "How fast rivers cut."},
+    {"uplift", "float", "Erosion", 0, 100, "Erode", "uplift", "Rise per step, cm, building ranges as they wear."},
+    {"talusAngle", "float", "Erosion", 5, 60, "Erode", "talusAngle", "Slopes steeper than this shed scree, degrees."},
 };
 } // namespace
 
@@ -214,6 +222,10 @@ void registerCommands(ext::Context& ctx)
                   {"ridged", "ri", T::Float, np.ridged, "0 rolling hills, 1 sharp ridges."},
                   {"warp", "w", T::Float, np.warp, "Domain warp, a fraction of featureSize."},
                   {"seed", "s", T::Int, int64_t(0), "Random seed."},
+                  {"erosion", "e", T::Int, int64_t(0), "Erosion steps: rivers carve valleys; 0 is off, 50 to 150 looks natural."},
+                  {"erosionStrength", "es", T::Float, ErosionParams().strength, "How fast rivers cut."},
+                  {"uplift", "u", T::Float, 0.0, "Rise per erosion step, cm."},
+                  {"talusAngle", "ta", T::Float, ErosionParams().talusAngle, "Slopes steeper than this shed scree, degrees."},
                   {"name", "n", T::String, "Terrain", "Name of the mesh."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -231,7 +243,11 @@ void registerCommands(ext::Context& ctx)
                            {"roughness", a.flags["roughness"]},
                            {"ridged", a.flags["ridged"]},
                            {"warp", a.flags["warp"]},
-                           {"seed", a.flags["seed"]}};
+                           {"seed", a.flags["seed"]},
+                           {"erosion", a.flags["erosion"]},
+                           {"erosionStrength", a.flags["erosionStrength"]},
+                           {"uplift", a.flags["uplift"]},
+                           {"talusAngle", a.flags["talusAngle"]}};
             const bool flat = a.get<bool>("flat", false);
             if (flat)
                 values["amplitude"] = 0.0;
@@ -241,7 +257,8 @@ void registerCommands(ext::Context& ctx)
             const std::string group = uniqueGroupName(identifier(g.find(host)->name()) + "_Terrain");
 
             json inputs = json::array();
-            json links = json::array({"Grid.heightfield -> Noise.heightfield", "Noise.heightfield -> GroupOutput.geometry"});
+            json links = json::array({"Grid.heightfield -> Noise.heightfield", "Noise.heightfield -> Erode.heightfield",
+                                      "Erode.heightfield -> GroupOutput.geometry"});
             for (const Exposed& e : kInputs)
             {
                 json in = {{"name", e.name}, {"type", e.type}, {"default", values[e.name]}, {"panel", e.panel}, {"description", e.description}, {"min", e.min}};
@@ -254,7 +271,8 @@ void registerCommands(ext::Context& ctx)
                          {"description", "A terrain: a heightfield grid shaped by fractal noise. Add Terrain nodes between Noise and the output."},
                          {"inputs", inputs},
                          {"nodes", json::array({{{"name", "Grid"}, {"type", "HeightfieldGrid"}, {"values", {{"center", a.flags["center"]}}}},
-                                                {{"name", "Noise"}, {"type", "TerrainNoise"}}})},
+                                                {{"name", "Noise"}, {"type", "TerrainNoise"}},
+                                                {{"name", "Erode"}, {"type", "ErodeTerrain"}}})},
                          {"links", links}};
             ops::execute("gnBuildGroup", {{"args", {spec}}, {"replace", false}});
             json mod = ops::execute("gnApply", {{"args", {host, group}}});
@@ -427,6 +445,245 @@ void registerCommands(ext::Context& ctx)
             return out;
         },
         .examples = {"terrainBake('Terrain')['file']"},
+    });
+    ctx.registerCommand({
+        .name = "terrainExport",
+        .doc = "Write a terrain to files for an engine or another tool.\n\n"
+               "target='unreal' resamples to a landscape size Unreal accepts and writes <name>.r16 (16-bit heights laid out for "
+               "Landscape import), <name>.png, one 8-bit <name>_<mask>.raw weightmap per mask and <name>.json with the section "
+               "size, sections per component, component counts, actor location and scale (Unreal axes, cm) to import it with. "
+               "target='files' writes <name>.exr (heights in cm), <name>.png and <name>.r16 (16-bit over the height range), a "
+               "PNG per mask and <name>.json. Returns the settings and files.",
+        .positionalDoc = "terrain mesh or its modifier",
+        .flags = {{"target", "t", T::String, "unreal", "unreal or files.", {"unreal", "files"}},
+                  {"folder", "f", T::String, "", "Output folder; defaults to the bake folder's export/."},
+                  {"name", "n", T::String, "", "File name stem; defaults to the terrain's name."},
+                  {"pad", "p", T::Bool, false, "unreal: keep the cell size and grow the landscape past the terrain, instead of resampling."},
+                  {"minScaleZ", "sz", T::Float, 1.0, "unreal: smallest Z scale (100 is Unreal's default)."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            std::vector<std::string> names = a.objects();
+            if (names.size() != 1)
+                throw CommandError("terrainExport: give one terrain");
+            const Found f = findTerrain(Graph::current(), names[0], "terrainExport");
+            std::string name = a.get<std::string>("name", "");
+            if (name.empty())
+                name = identifier(f.mesh ? f.mesh->name() : std::string("Terrain"));
+            fs::path folder = a.get<std::string>("folder", "");
+            if (folder.empty())
+                folder = bakeDir() / "export";
+            try
+            {
+                if (a.get<std::string>("target", "unreal") == "files")
+                    return exportFiles(f.world, folder, name);
+                UnrealOptions o;
+                o.pad = a.get<bool>("pad", false);
+                o.minScaleZ = std::max(0.01, a.get<double>("minScaleZ", 1.0));
+                return exportUnreal(f.world, folder, name, o);
+            }
+            catch (const std::exception& e)
+            {
+                throw CommandError(std::string("terrainExport: ") + e.what());
+            }
+        },
+        .examples = {"s = terrainExport('Terrain', target='unreal')\ns['resolution'], s['scale'], s['files']['height']"},
+    });
+
+    ctx.registerCommand({
+        .name = "terrainSendToUnreal",
+        .doc = "Send a terrain to the connected Unreal editor as a Landscape, or update the one it sent before.\n\n"
+               "Writes the terrain as terrainExport(target='unreal') does, into the link's cache, then has LilaLink build a landscape "
+               "of that size and layout at the matching place and scale. Lila's heights go to an edit layer named Lila, so sculpting "
+               "and splines on other layers in Unreal survive later sends; a terrain whose size or layout changed is rebuilt. "
+               "gridSize sets the World Partition grid in a partitioned level. Returns the landscape and the export settings.",
+        .positionalDoc = "terrain mesh or its modifier",
+        .flags = {{"material", "m", T::String, "", "Landscape material asset path, such as /Game/Terrain/M_Landscape."},
+                  {"gridSize", "g", T::Int, int64_t(0), "World Partition grid size in components; 0 leaves it."},
+                  {"pad", "p", T::Bool, false, "Keep the cell size and grow the landscape past the terrain, instead of resampling."},
+                  {"timeout", "to", T::Float, 300.0, "Seconds to wait for Unreal."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            std::vector<std::string> names = a.objects();
+            if (names.size() != 1)
+                throw CommandError("terrainSendToUnreal: give one terrain");
+            const Found f = findTerrain(Graph::current(), names[0], "terrainSendToUnreal");
+            try
+            {
+                link::Link::get().ensureConnected();
+            }
+            catch (const std::exception& e)
+            {
+                throw CommandError(std::string("terrainSendToUnreal: not connected to Unreal: ") + e.what());
+            }
+            std::shared_ptr<link::RpcClient> client = link::Link::get().client();
+            const json features = link::Link::get().status().value("features", json::array());
+            if (!client || !features.is_array() || std::find(features.begin(), features.end(), json("landscape")) == features.end())
+                throw CommandError("terrainSendToUnreal: the LilaLink plugin in Unreal predates landscapes; rebuild it from Lila's ue/LilaLink");
+
+            const std::string name = identifier(f.mesh ? f.mesh->name() : std::string("Terrain"));
+            UnrealOptions o;
+            o.pad = a.get<bool>("pad", false);
+            json settings;
+            try
+            {
+                settings = exportUnreal(f.world, link::cacheDir() / "terrain", name, o);
+            }
+            catch (const std::exception& e)
+            {
+                throw CommandError(std::string("terrainSendToUnreal: ") + e.what());
+            }
+            json params = {{"id", f.mesh ? f.mesh->path() : names[0]},
+                           {"label", name},
+                           {"heightmap", settings["files"]["height"]},
+                           {"resolution", settings["resolution"]},
+                           {"quadsPerSection", settings["quadsPerSection"]},
+                           {"sectionsPerComponent", settings["sectionsPerComponent"]},
+                           {"location", settings["location"]},
+                           {"scale", settings["scale"]},
+                           {"gridSize", a.get<int64_t>("gridSize", 0)}};
+            if (const std::string m = a.get<std::string>("material", ""); !m.empty())
+                params["material"] = m;
+            const int timeoutMs = int(std::clamp(a.get<double>("timeout", 300.0), 1.0, 3600.0) * 1000.0);
+            link::RpcResult r = client->call("setLandscape", params, timeoutMs);
+            if (!r.ok)
+                throw CommandError("terrainSendToUnreal: " + r.error);
+            json out = r.result;
+            out["settings"] = settings;
+            return out;
+        },
+        .examples = {"terrainSendToUnreal('Terrain', material='/Game/Terrain/M_Landscape')"},
+    });
+    ctx.registerCommand({
+        .name = "terrainErode",
+        .doc = "Erode a terrain made by terrainCreate: rivers carve drainage-consistent valleys, slopes over the talus angle shed "
+               "scree, and the masks flow, wear, deposit and lakes appear for materials and scatter. Sets the terrain's erosion "
+               "inputs (iterations is age: 50 to 150 looks natural) and returns terrainInfo's stats.",
+        .positionalDoc = "terrain mesh or its modifier",
+        .flags = {{"iterations", "i", T::Int, int64_t(80), "Erosion steps; 0 turns it off."},
+                  {"strength", "s", T::Float, nullptr, "How fast rivers cut."},
+                  {"uplift", "u", T::Float, nullptr, "Rise per step, cm."},
+                  {"talusAngle", "ta", T::Float, nullptr, "Slopes steeper than this shed scree, degrees."}},
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            std::vector<std::string> names = a.objects();
+            if (names.size() != 1)
+                throw CommandError("terrainErode: give one terrain");
+            Graph& g = Graph::current();
+            const Found f = findTerrain(g, names[0], "terrainErode");
+            if (f.modifier->type().attrIndex("erosion") < 0)
+                throw CommandError("terrainErode: " + f.modifier->path() + " has no erosion inputs; add an Erode Terrain node to its group");
+            const std::string mod = f.modifier->path();
+            ops::execute("setAttr", {{"args", {mod + ".erosion", a.get<int64_t>("iterations", 80)}}});
+            if (a.has("strength"))
+                ops::execute("setAttr", {{"args", {mod + ".erosionStrength", a.get<double>("strength", 0.0)}}});
+            if (a.has("uplift"))
+                ops::execute("setAttr", {{"args", {mod + ".uplift", a.get<double>("uplift", 0.0)}}});
+            if (a.has("talusAngle"))
+                ops::execute("setAttr", {{"args", {mod + ".talusAngle", a.get<double>("talusAngle", 0.0)}}});
+            return describe(findTerrain(g, names[0], "terrainErode"));
+        },
+        .examples = {"terrainErode('Terrain', iterations=120)['masks']['flow']"},
+    });
+
+    ctx.registerCommand({
+        .name = "terrainImport",
+        .doc = "Make a terrain from a file. Elevation data (GeoTIFF DEM tiles, SRTM .hgt, .asc, .xyz, Terrarium .png with "
+               "mode='elevation') is read at its real size, heights in cm from sea level, north toward -Z. A painted image is "
+               "read by mode: guide (default) keeps its big shapes and erodes in natural detail, height is literal, uplift grows "
+               "ranges where it is bright, mask puts it in a mask on flat ground; it spans size along X.\n\n"
+               "The file and erosion settings become inputs on the modifier, like terrainCreate's, so terrainErode and setAttr "
+               "work on it. Returns the mesh, modifier, group and terrainInfo's stats.",
+        .positionalDoc = "file; relative paths are under the workspace",
+        .flags = {{"mode", "m", T::String, "", "elevation, guide, height, uplift or mask; empty picks elevation for DEM files, else guide."},
+                  {"size", "sz", T::Float, 100000.0, "Images: width along X, cm."},
+                  {"low", "lo", T::Float, 0.0, "Images: height of black, cm."},
+                  {"high", "hi", T::Float, 50000.0, "Images: height of white, cm."},
+                  {"center", "c", T::Vec3, json::array({0.0, 0.0, 0.0}), "Centre."},
+                  {"cellSize", "cs", T::Float, 0.0, "Elevation: grid spacing, cm; 0 keeps the data's own."},
+                  {"exaggeration", "ex", T::Float, 1.0, "Elevation: multiplies heights."},
+                  {"fromLowest", "fl", T::Bool, false, "Elevation: lowest point at 0 instead of sea level."},
+                  {"format", "f", T::String, "auto", "Elevation: file type (auto, geotiff, hgt, asc, xyz, terrarium, terrainrgb)."},
+                  {"erosion", "e", T::Float, 0.5, "Guide and uplift: 0 to 1, how far erosion may move the painting."},
+                  {"name", "n", T::String, "Terrain", "Name of the mesh."}},
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            const std::vector<std::string> pos = a.objects();
+            if (pos.size() != 1)
+                throw CommandError("terrainImport: give one file");
+            fs::path file = pos[0];
+            if (file.is_relative())
+                if (const fs::path& root = Workspace::get().root(); !root.empty())
+                    file = root / file;
+            if (!fs::exists(file))
+                throw CommandError("terrainImport: no file " + file.string());
+            std::string mode = a.get<std::string>("mode", "");
+            if (mode.empty())
+                mode = looksLikeElevation(file) ? "elevation" : "guide";
+            const bool elevation = mode == "elevation";
+            ImageMode imageMode = ImageMode::Guide;
+            if (!elevation && !parseImageMode(mode, &imageMode))
+                throw CommandError("terrainImport: unknown mode '" + mode + "' (elevation, guide, height, uplift, mask)");
+
+            Graph& g = Graph::current();
+            json made = ops::execute("createMesh", {{"points", json::array()}, {"faces", json::array()}, {"name", a.get<std::string>("name", "Terrain")}});
+            const std::string host = made.is_string() ? made.get<std::string>() : made.at(0).get<std::string>();
+            const std::string group = uniqueGroupName(identifier(g.find(host)->name()) + "_Terrain");
+
+            json source;
+            if (elevation)
+                source = {{"name", "Source"},
+                          {"type", "ReadElevationData"},
+                          {"props", {{"format", a.get<std::string>("format", "auto")}}},
+                          {"values",
+                           {{"center", a.flags["center"]},
+                            {"cellSize", a.flags["cellSize"]},
+                            {"exaggeration", a.flags["exaggeration"]},
+                            {"fromLowest", a.flags["fromLowest"]}}}};
+            else
+                source = {{"name", "Source"},
+                          {"type", "ImportTerrainImage"},
+                          {"props", {{"mode", mode}}},
+                          {"values",
+                           {{"center", a.flags["center"]},
+                            {"width", a.flags["size"]},
+                            {"low", a.flags["low"]},
+                            {"high", a.flags["high"]},
+                            {"erosion", a.flags["erosion"]}}}};
+            json inputs = json::array({{{"name", "file"}, {"type", "string"}, {"default", file.generic_string()}, {"panel", "Source"},
+                                        {"description", elevation ? "Elevation file." : "Painted height image."}}});
+            json links = json::array({"GroupInput.file -> Source.file", "Source.heightfield -> Erode.heightfield", "Erode.heightfield -> GroupOutput.geometry"});
+            const json defaults = {{"erosion", 0}, {"erosionStrength", ErosionParams().strength}, {"uplift", 0.0}, {"talusAngle", ErosionParams().talusAngle}};
+            for (const Exposed& e : kInputs)
+            {
+                if (std::string_view(e.node) != "Erode")
+                    continue;
+                json in = {{"name", e.name}, {"type", e.type}, {"default", defaults[e.name]}, {"panel", e.panel}, {"description", e.description}, {"min", e.min}};
+                if (e.softMax > e.min)
+                    in["softMax"] = e.softMax;
+                inputs.push_back(in);
+                links.push_back(std::string("GroupInput.") + e.name + " -> " + e.node + "." + e.socket);
+            }
+            json spec = {{"name", group},
+                         {"description", elevation ? "A terrain from elevation data." : "A terrain from a painted image."},
+                         {"inputs", inputs},
+                         {"nodes", json::array({source, {{"name", "Erode"}, {"type", "ErodeTerrain"}}})},
+                         {"links", links}};
+            ops::execute("gnBuildGroup", {{"args", {spec}}, {"replace", false}});
+            ops::execute("gnApply", {{"args", {host, group}}});
+
+            json out = describe(findTerrain(g, host, "terrainImport"));
+            out["group"] = group;
+            out["mode"] = mode;
+            return out;
+        },
+        .examples = {"terrainImport('dem/N46E007.hgt', cellSize=3000)", "terrainImport('paint/island.png', size=400000, high=60000)",
+                     "terrainImport('paint/ranges.psd', mode='uplift', erosion=0.8)"},
     });
 }
 } // namespace terrain

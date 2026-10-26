@@ -618,7 +618,15 @@ geo::Mesh toOutputMesh(const Geometry& g)
     Geometry r = realize(g);
     geo::Mesh m = r.mesh ? *r.mesh : geo::Mesh();
     if (r.heightfield && !r.heightfield->empty())
-        m.append(geo::heightfieldToMesh(*r.heightfield));
+    {
+        // Past this a terrain is drawn, not edited, as a mesh: Heightfield to Mesh gives the full grid when that's wanted.
+        constexpr size_t kMaxPoints = size_t(4) << 20;
+        const geo::Heightfield& h = *r.heightfield;
+        geo::HeightfieldMeshOptions o;
+        while (size_t((h.nx + o.step - 1) / o.step) * size_t((h.nz + o.step - 1) / o.step) > kMaxPoints)
+            ++o.step;
+        m.append(geo::heightfieldToMesh(h, o));
+    }
     stripAnonymous(m);
     m.compact();
     return m;

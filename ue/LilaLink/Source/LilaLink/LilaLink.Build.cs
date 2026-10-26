@@ -31,6 +31,7 @@ public class LilaLink : ModuleRules
 			"AlembicLibrary",
 			"GeometryCache",
 			"Landscape",
+			"Foliage",
 			"ImageCore",
 			"Slate",
 			"SlateCore",

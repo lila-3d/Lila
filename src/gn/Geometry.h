@@ -135,7 +135,7 @@ LILA_SCENE_API Geometry join(std::span<const GeometryPtr> parts);
 /** Instances replaced by the geometry they point at, recursively. */
 LILA_SCENE_API Geometry realize(const Geometry& g);
 
-/** The result handed back to the modifier stack: realized, and only the mesh, with any heightfield added as one. Anonymous attributes are dropped. */
+/** The result handed back to the modifier stack: realized, and only the mesh, with any heightfield added as one (every few samples past about 4 million). Anonymous attributes are dropped. */
 LILA_SCENE_API geo::Mesh toOutputMesh(const Geometry& g);
 
 /** A point cloud has positions and point attributes; this keeps those and drops everything else. */
