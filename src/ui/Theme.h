@@ -40,6 +40,12 @@ LILA_UI_API bool themeChooserPending();
 LILA_UI_API void setThemeChooserDone();
 /** The first-run picker: Monotone, Colour and Light as cards with a preview; picking one switches live. */
 LILA_UI_API QWidget* makeThemeChooser(QWidget* parent);
-/** The picker on its own, for a first start that skips the recent scenes dialog. */
-LILA_UI_API void showThemeChooser(QWidget* parent);
+/** Telemetry opt-ins, both off until chosen. */
+inline constexpr const char* kTelemetryUsagePref = "/telemetry/usage";
+inline constexpr const char* kTelemetryCrashPref = "/telemetry/crashReports";
+/**
+ * The first-run setup: theme, viewport quality and telemetry, application modal until Continue, which is the only
+ * way out.
+ */
+LILA_UI_API void runFirstRunSetup(QWidget* parent);
 } // namespace lila::ui

@@ -6,6 +6,7 @@
 #include "core/Paths.h"
 #include "core/PrefStore.h"
 #include "core/Workspace.h"
+#include "io/Examples.h"
 #include "io/SceneFile.h"
 #include "io/SceneHistory.h"
 #include "ui/Theme.h"
@@ -19,6 +20,7 @@
 #include <QDateTime>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QIcon>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLocale>
@@ -217,26 +219,53 @@ void RecoveryDialog::finish(Choice c)
     accept();
 }
 
-StartupDialog::StartupDialog(Hooks hooks, QWidget* parent) : QDialog(parent), mHooks(std::move(hooks))
+StartupDialog::StartupDialog(Hooks hooks, bool welcome, QWidget* parent) : QDialog(parent), mHooks(std::move(hooks))
 {
     setObjectName("startupDialog");
     // A tool window rather than a popup: popups close whenever the app loses focus.
     setWindowFlags(Qt::Tool | Qt::FramelessWindowHint);
     setAttribute(Qt::WA_DeleteOnClose);
     setStyleSheet("QDialog#startupDialog { background: #2e2e2e; border: 1px solid #5a5a5a; }"
-                  "QLabel#startupTitle { color: #e0e0e0; font-size: 13pt; }");
+                  "QLabel#startupTitle { color: #e0e0e0; font-size: 13pt; }"
+                  "QLabel#startupHeading { color: #e0e0e0; font-size: 11pt; }");
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(16, 14, 16, 12);
-    auto* title = new QLabel("Recent Scenes", this);
-    title->setObjectName("startupTitle");
-    if (themeChooserPending())
+    auto heading = [&](const QString& text, const char* name) {
+        auto* label = new QLabel(text, this);
+        label->setObjectName(name);
+        layout->addWidget(label);
+    };
+
+    if (welcome)
     {
-        layout->addWidget(makeThemeChooser(this));
-        layout->addSpacing(10);
-        connect(this, &QDialog::finished, this, [] { setThemeChooserDone(); });
+        heading("Welcome to Lila", "startupTitle");
+        layout->addSpacing(6);
+        heading("Examples", "startupHeading");
+        mExamples = makeList(this, {"Example", "About"});
+        mExamples->setIconSize(QSize(64, 36));
+        for (const io::examples::Example& x : io::examples::list())
+        {
+            auto* item = new QTreeWidgetItem(mExamples);
+            item->setText(0, QString::fromStdString(x.name));
+            item->setText(1, QString::fromStdString(x.description));
+            item->setToolTip(1, "<p>" + QString::fromStdString(x.description).toHtmlEscaped() + "</p>");
+            item->setToolTip(0, qpath(x.scene));
+            item->setData(0, kPathRole, qpath(x.scene));
+            item->setData(0, kKindRole, int(mExampleList.size()));
+            if (!x.thumbnail.empty())
+                item->setIcon(0, QIcon(qpath(x.thumbnail)));
+            mExampleList.push_back(x);
+        }
+        if (mExamples->topLevelItemCount() == 0)
+            (new QTreeWidgetItem(mExamples, {"No examples installed"}))->setFlags(Qt::NoItemFlags);
+        mExamples->resizeColumnToContents(0);
+        layout->addWidget(mExamples, 1);
+        layout->addSpacing(6);
+        heading("Recent Scenes", "startupHeading");
     }
-    layout->addWidget(title);
+    else
+        heading("Recent Scenes", "startupTitle");
 
     mList = makeList(this, {"Name", "Folder", "Modified"});
     json recent = PrefStore::get().value("general", "/recentFiles", json::array());
@@ -267,9 +296,10 @@ StartupDialog::StartupDialog(Hooks hooks, QWidget* parent) : QDialog(parent), mH
     layout->addWidget(mList, 1);
 
     auto* row = new QHBoxLayout();
-    auto* show = new QCheckBox("Show on startup", this);
-    show->setChecked(PrefStore::get().value<bool>("general", "/startup/showDialog", true));
-    connect(show, &QCheckBox::toggled, this, [](bool on) { PrefStore::get().set("general", "/startup/showDialog", on); });
+    const char* showPref = welcome ? kShowWelcomePref : kShowRecentPref;
+    auto* show = new QCheckBox(welcome ? "Show welcome at startup" : "Show on startup", this);
+    show->setChecked(PrefStore::get().value<bool>("general", showPref, true));
+    connect(show, &QCheckBox::toggled, this, [showPref](bool on) { PrefStore::get().set("general", showPref, on); });
     auto* newScene = new QPushButton("New Scene", this);
     auto* browse = new QPushButton("Open...", this);
     row->addWidget(show);
@@ -279,16 +309,27 @@ StartupDialog::StartupDialog(Hooks hooks, QWidget* parent) : QDialog(parent), mH
     layout->addLayout(row);
 
     // Queued: opening a scene tears this dialog down, and Qt's double-click handler still uses the list after emitting.
-    connect(mList, &QTreeWidget::itemActivated, this, [this] { openSelected(); }, Qt::QueuedConnection);
-    // The scene at startup is already a new, empty one.
-    connect(newScene, &QPushButton::clicked, this, &QDialog::reject);
+    connect(mList, &QTreeWidget::itemActivated, this, [this] { openSelected(mList); }, Qt::QueuedConnection);
+    if (mExamples)
+    {
+        connect(mExamples, &QTreeWidget::itemActivated, this, [this] { openSelected(mExamples); }, Qt::QueuedConnection);
+        // One selection across the two lists, so Enter opens what is highlighted.
+        connect(mExamples, &QTreeWidget::itemPressed, mList, [this] { mList->setCurrentItem(nullptr); });
+        connect(mList, &QTreeWidget::itemPressed, mExamples, [this] { mExamples->setCurrentItem(nullptr); });
+    }
+    connect(newScene, &QPushButton::clicked, this, [this] {
+        auto create = mHooks.newScene;
+        reject();
+        if (create)
+            create();
+    });
     connect(browse, &QPushButton::clicked, this, [this] {
         auto open = mHooks.open;
         reject();
         if (open)
             open({});
     });
-    resize(680, themeChooserPending() ? 820 : 380);
+    resize(welcome ? 820 : 680, welcome ? 620 : 380);
     qApp->installEventFilter(this);
 }
 
@@ -302,12 +343,32 @@ void StartupDialog::present()
     raise();
     activateWindow();
     mList->setFocus();
+    mReclaimFocus.start();
 }
 
 bool StartupDialog::eventFilter(QObject* obj, QEvent* e)
 {
-    // The main window finishes activating after the dialog is shown at startup and would take the keyboard.
-    if (e->type() == QEvent::WindowActivate && obj == parentWidget() && isVisible())
+    if (e->type() == QEvent::KeyPress && isVisible() && qobject_cast<QWidget*>(obj) && static_cast<QWidget*>(obj)->window() == this)
+    {
+        auto* ke = static_cast<QKeyEvent*>(e);
+        // The main window's shortcuts don't reach a tool window, and these two replace what the dialog is for.
+        if (ke->matches(QKeySequence::Open) || ke->matches(QKeySequence::New))
+        {
+            auto run = ke->matches(QKeySequence::Open) ? std::function<void()>([open = mHooks.open] {
+                if (open)
+                    open({});
+            })
+                                                       : mHooks.newScene;
+            reject();
+            if (run)
+                run();
+            return true;
+        }
+    }
+    // The main window finishes activating after the dialog is shown at startup and would take the keyboard. Only then:
+    // later activations are the user going back to the window.
+    if (e->type() == QEvent::WindowActivate && obj == parentWidget() && isVisible() && mReclaimFocus.isValid() &&
+        mReclaimFocus.elapsed() < 2000)
         QTimer::singleShot(0, this, [this] {
             activateWindow();
             mList->setFocus();
@@ -322,11 +383,20 @@ bool StartupDialog::eventFilter(QObject* obj, QEvent* e)
     return QDialog::eventFilter(obj, e);
 }
 
-void StartupDialog::openSelected()
+void StartupDialog::openSelected(QTreeWidget* list)
 {
-    QTreeWidgetItem* item = mList->currentItem();
+    QTreeWidgetItem* item = list->currentItem();
     if (!item || item->data(0, kPathRole).toString().isEmpty())
         return;
+    if (list == mExamples)
+    {
+        io::examples::Example x = mExampleList[size_t(item->data(0, kKindRole).toInt())];
+        auto open = mHooks.openExample;
+        accept();
+        if (open)
+            open(x);
+        return;
+    }
     fs::path p = item->data(0, kPathRole).toString().toStdWString();
     auto open = mHooks.open;
     accept();

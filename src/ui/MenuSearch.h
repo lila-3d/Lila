@@ -16,6 +16,9 @@ class QWidget;
  */
 namespace lila::ui::menuSearch
 {
+/** A QMenu property: when true, the menu search leaves the menu and its submenus out. */
+inline constexpr const char* kNoSearchProperty = "lilaNoSearch";
+
 /** Type-to-filter for every QMenu in the app. */
 LILA_UI_API void install();
 

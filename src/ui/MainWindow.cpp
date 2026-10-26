@@ -646,6 +646,8 @@ bool MainWindow::saveScene(bool saveAs, const std::filesystem::path& target)
 
 void MainWindow::openScene(const std::filesystem::path& given)
 {
+    if (mStartupDialog)
+        mStartupDialog->close();
     if (!confirmDiscard())
         return;
     std::filesystem::path path = given;
@@ -728,6 +730,8 @@ std::filesystem::path pendingCrashReport(const std::vector<io::recovery::Session
 
 void MainWindow::startup(const std::vector<io::recovery::Session>& stale, bool showStartup)
 {
+    if (themeChooserPending())
+        runFirstRunSetup(this);
     std::vector<io::recovery::Candidate> candidates = io::recovery::findRecoverable(stale);
     io::recovery::keep(candidates);
     io::recovery::forget(stale);
@@ -767,14 +771,40 @@ void MainWindow::startup(const std::vector<io::recovery::Session>& stale, bool s
             QMessageBox::warning(this, "Recovery failed", e.what());
         }
     }
-    if (!showStartup || !PrefStore::get().value<bool>("general", "/startup/showDialog", true))
-    {
-        if (themeChooserPending())
-            showThemeChooser(this);
+    if (!showStartup)
         return;
-    }
-    auto* dialog = new StartupDialog({[this](const std::filesystem::path& p) { openScene(p); }}, this);
+    const bool welcome = PrefStore::get().value<bool>("general", kShowWelcomePref, true);
+    if (welcome || PrefStore::get().value<bool>("general", kShowRecentPref, true))
+        showStartupDialog(welcome);
+}
+
+void MainWindow::showStartupDialog(bool welcome)
+{
+    if (mStartupDialog)
+        mStartupDialog->close();
+    StartupDialog::Hooks hooks{
+        .open = [this](const std::filesystem::path& p) { openScene(p); },
+        .openExample = [this](const io::examples::Example& x) { openExample(x); },
+        .newScene = [] { actions::run("file.new"); },
+    };
+    auto* dialog = new StartupDialog(std::move(hooks), welcome, this);
+    mStartupDialog = dialog;
     dialog->present();
+}
+
+void MainWindow::openExample(const io::examples::Example& example)
+{
+    if (!confirmDiscard())
+        return;
+    try
+    {
+        ops::execute("openExample", {{"args", {example.name}}, {"force", true}}, CallSource::UI);
+        mViewports->frameUnlessRestored();
+    }
+    catch (const CommandError& e)
+    {
+        QMessageBox::warning(this, "Open failed", e.what());
+    }
 }
 
 namespace
@@ -923,6 +953,8 @@ void MainWindow::registerActions()
     actions::add({"file.saveAs", "Save Scene As...", "File", [this] { saveScene(true); }, nullptr, "Saves the scene under a new name and keeps working in that file."});
     actions::add({"file.incrementAndSave", "Increment and Save", "File", [this] { incrementAndSave(); }, nullptr,
                   "Save as the next free scene_v###, then keep working in it", "incrementAndSave()"});
+    actions::add({"file.welcome", "Welcome...", "File", [this] { showStartupDialog(true); }, nullptr,
+                  "The welcome dialog: example scenes and recent scenes."});
     actions::add({"file.versions", "Versions...", "File", [this] { showVersions(); }, nullptr,
                   "Backups, autosaves, emergency saves, increments and source control revisions of this scene",
                   "sceneVersions()"});
@@ -1214,6 +1246,7 @@ void MainWindow::buildMenus()
     menu("File", "File");
     menus::addActions("File", {"#Scene", "file.new", "file.open"});
     addSubmenu("File", "Recent Scenes", [this](QMenu* recent) {
+        recent->setProperty(menuSearch::kNoSearchProperty, true);
         connect(recent, &QMenu::aboutToShow, this, [this, recent] {
             recent->clear();
             json files = PrefStore::get().value("general", "/recentFiles", json::array());
@@ -1228,6 +1261,7 @@ void MainWindow::buildMenus()
         });
     });
     addSubmenu("File", "Recovered Scenes", [this](QMenu* menu) {
+        menu->setProperty(menuSearch::kNoSearchProperty, true);
         menu->setToolTipsVisible(true);
         connect(menu, &QMenu::aboutToShow, this, [this, menu] {
             menu->clear();
@@ -1254,10 +1288,11 @@ void MainWindow::buildMenus()
                         "file.exportSelection", "file.gameExporter", "file.exportMeshSequence", "window.batchRun", "file.createReference", "#Unreal", "unreal.send", "animated.sendOptions", "unreal.sync", "unreal.sendBake",
                         "deform.exportMLDeformer", "unreal.connect", "unreal.collision", "#Workspace", "file.openFolder"});
     addSubmenu("File", "Recent Folders", [this](QMenu* recent) {
+        recent->setProperty(menuSearch::kNoSearchProperty, true);
         mRecentMenu = recent;
         refreshRecentFolders();
     });
-    menus::addActions("File", {"file.closeFolder", "", "file.exit"});
+    menus::addActions("File", {"file.closeFolder", "", "file.welcome", "", "file.exit"});
 
     menu("Edit", "Edit");
     menus::addActions("Edit", {"#History", "edit.undo", "edit.redo", "edit.repeatLast", "adjustLastOp.show", "edit.flushUndo", "edit.flushRedo", "edit.flushAll", "#Selection",
@@ -1477,17 +1512,18 @@ void MainWindow::buildMenus()
     menus::addActions("Animation", {"window.poseLibrary", "pose.mirror", "window.controlPicker", "picker.editMode"});
     menus::addActions("Animation", {"#Offsets", "anim.createOffset", "anim.bakeOffset", "anim.deleteOffset", "window.offsets"});
 
-    menu("Windows", "Windows", Area::MenuBar, syncChecks);
-    addItem({.id = "Windows/panels", .menu = "Windows", .kind = Kind::Custom, .setup = [this](QMenu* m) {
-                 for (QDockWidget* dock : findChildren<QDockWidget*>())
-                     m->addAction(dock->toggleViewAction());
+    menu("Editors", "Editors", Area::MenuBar, syncChecks);
+    addItem({.id = "Editors/panels", .menu = "Editors", .kind = Kind::Custom, .setup = [this](QMenu* m) {
+                 // Filled on open: extensions add and remove panels at any time.
+                 connect(m, &QMenu::aboutToShow, m, [this, m] { fillEditorsMenu(m); });
+                 fillEditorsMenu(m);
              }});
-    menus::addActions("Windows", {"", "window.toggleToolBox", "window.toggleMaximizePanel", "window.toggleChannelBox", "window.toggleUvEditor", "viewport.frameAll",
-                           "window.resetLayout"});
+
+    menu("Windows", "Windows", Area::MenuBar, syncChecks);
     addItem({.id = "Windows/layouts", .menu = "Windows", .kind = Kind::Custom, .setup = [this](QMenu* m) { m->addMenu(mLayouts->menu()); }});
-    menus::addActions("Windows", {"window.expandPanels", "", "window.materialEditor", "window.scriptEditor", "window.commandLine", "window.apiReference", "window.terminal",
-                           "window.displayLayers", "window.animLayers", "window.undoHistory", "window.hotkeyEditor", "window.markingMenuEditor",
-                           "window.extensionManager"});
+    menus::addActions("Windows", {"window.resetLayout", "window.expandPanels", "window.toggleMaximizePanel", "#Show", "window.toggleToolBox",
+                           "window.toggleChannelBox", "window.toggleUvEditor", "window.commandLine", "#Customize", "window.hotkeyEditor",
+                           "window.markingMenuEditor", "window.extensionManager"});
 
     menu("Help", "Help");
     menus::addActions("Help", {"help.docs", "help.updateDocs", "", "window.searchMenus", "window.searchScene", "", "help.agentSetup", "help.prefsFolder", "help.crashReports", "help.copyLastCrash", "help.hotkeyCheatSheet", "help.about"});
@@ -1512,6 +1548,50 @@ void MainWindow::buildMenus()
             Hotbox::install(this, std::move(panels));
     });
     mMenus->rebuild();
+}
+
+void MainWindow::fillEditorsMenu(QMenu* menu)
+{
+    // Panels by what they are for; a panel not named here (most extension panels) goes under Other.
+    static const std::vector<std::pair<const char*, std::vector<const char*>>> kGroups = {
+        {"Scene", {"Outliner", "Attribute Editor", "Channel Box", "Display Layers", "Quick Select Sets", "Rename", "Reference Editor",
+                   "Source Control", "Undo History", "Shelf", "Docs"}},
+        {"Modeling", {"Modeling Toolkit", "Topology Toolkit", "Modifier Stack", "Node Editor", "Morph Targets", "Driven Channels",
+                      "Foliage Blades", "Tree Generator", "Ground Tiles", "Effects"}},
+        {"UVs and Texturing", {"UV Editor", "Material Editor", "Material Browser", "Texture Set", "Texture Graph", "Texture", "2D View", "Baker"}},
+        {"Animation and Rigging", {"Graph Editor", "Time Slider", "Anim Layers", "Pose Library", "Control Picker", "Offsets", "Rig Templates",
+                                   "Puppeteer", "Anim Bank", "Stacker", "Mixer", "Cycle Maker", "Overlap", "Physics Animation"}},
+        {"Set Dressing", {"Dress", "Prop Library"}},
+        {"Scripting", {"Script Editor", "Script Output", "API Reference", "Terminal", "Batch Script Execution"}},
+    };
+    menu->clear();
+    const QList<QDockWidget*> found = findChildren<QDockWidget*>();
+    std::vector<QDockWidget*> docks(found.begin(), found.end());
+    std::sort(docks.begin(), docks.end(), [](QDockWidget* a, QDockWidget* b) {
+        return QString::localeAwareCompare(a->windowTitle(), b->windowTitle()) < 0;
+    });
+    std::vector<QDockWidget*> placed;
+    auto section = [&](const QString& title, const std::vector<QDockWidget*>& members) {
+        if (members.empty())
+            return;
+        menu->addSection(title);
+        for (QDockWidget* d : members)
+            menu->addAction(d->toggleViewAction());
+    };
+    for (const auto& [group, titles] : kGroups)
+    {
+        std::vector<QDockWidget*> members;
+        for (QDockWidget* d : docks)
+            if (std::find(titles.begin(), titles.end(), d->windowTitle().trimmed().toStdString()) != titles.end())
+                members.push_back(d);
+        placed.insert(placed.end(), members.begin(), members.end());
+        section(group, members);
+    }
+    std::vector<QDockWidget*> rest;
+    for (QDockWidget* d : docks)
+        if (std::find(placed.begin(), placed.end(), d) == placed.end() && !d->windowTitle().trimmed().isEmpty())
+            rest.push_back(d);
+    section("Other", rest);
 }
 
 void MainWindow::buildPanelMenus()

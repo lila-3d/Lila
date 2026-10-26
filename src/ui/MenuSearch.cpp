@@ -190,9 +190,10 @@ struct Item
 
 void collect(QMenu* menu, const QString& path, std::vector<Item>& out, int depth)
 {
-    if (depth > 8)
+    // Lists of files (recent scenes, recovered scenes) are history, not commands.
+    if (depth > 8 || menu->property(kNoSearchProperty).toBool())
         return;
-    // Menus that fill themselves when opened (recent files, cameras) are filled now so their rows can be found.
+    // Menus that fill themselves when opened (cameras, layouts) are filled now so their rows can be found.
     emit menu->aboutToShow();
     for (QAction* a : menu->actions())
     {

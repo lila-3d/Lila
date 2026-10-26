@@ -8,10 +8,13 @@
 
 #include <QApplication>
 #include <QButtonGroup>
+#include <QCheckBox>
+#include <QCloseEvent>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFontDatabase>
 #include <QFrame>
+#include <QGridLayout>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -23,6 +26,7 @@
 #include <QPixmap>
 #include <QPointer>
 #include <QProxyStyle>
+#include <QPushButton>
 #include <QRadioButton>
 #include <QRegularExpression>
 #include <QStyleFactory>
@@ -562,10 +566,10 @@ QWidget* makeThemeChooser(QWidget* parent)
     auto* hint = new QLabel("You can change it any time in Preferences > Interface > Theme.", box);
     hint->setForegroundRole(QPalette::PlaceholderText);
     layout->addWidget(hint);
-    auto* row = new QHBoxLayout();
-    row->setSpacing(10);
+    auto* grid = new QGridLayout();
+    grid->setSpacing(10);
     auto cards = std::make_shared<std::vector<ThemeCard*>>();
-    for (const char* name : {"Monotone", "Colour", "Light"})
+    for (const char* name : {"Monotone", "Colour", "Light", "Midnight", "Ember", "Paper"})
     {
         const themes::Theme* t = themes::builtIn(name);
         auto* card = new ThemeCard(*t, box);
@@ -579,11 +583,11 @@ QWidget* makeThemeChooser(QWidget* parent)
             themes::setCurrent(n);
             setThemeChooserDone();
         };
+        grid->addWidget(card, int(cards->size()) / 3, int(cards->size()) % 3);
         cards->push_back(card);
-        row->addWidget(card);
     }
-    row->addStretch(1);
-    layout->addLayout(row);
+    grid->setColumnStretch(3, 1);
+    layout->addLayout(grid);
 
     namespace vd = viewportDisplay;
     layout->addSpacing(12);
@@ -629,18 +633,65 @@ QWidget* makeThemeChooser(QWidget* parent)
     return box;
 }
 
-void showThemeChooser(QWidget* parent)
+namespace
 {
-    auto* dlg = new QDialog(parent);
-    dlg->setWindowTitle("Welcome to Lila");
-    dlg->setAttribute(Qt::WA_DeleteOnClose);
-    auto* layout = new QVBoxLayout(dlg);
-    layout->addWidget(makeThemeChooser(dlg));
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok, dlg);
-    QObject::connect(buttons, &QDialogButtonBox::accepted, dlg, &QDialog::accept);
+/** Stays until Continue: Esc and the close button do nothing. */
+class SetupDialog : public QDialog
+{
+public:
+    using QDialog::QDialog;
+
+    void reject() override {}
+
+protected:
+    void closeEvent(QCloseEvent* e) override { e->ignore(); }
+};
+
+QWidget* makeTelemetryChoice(QWidget* parent)
+{
+    auto* box = new QWidget(parent);
+    auto* layout = new QVBoxLayout(box);
+    layout->setContentsMargins(0, 0, 0, 0);
+    auto* title = new QLabel("Help improve Lila", box);
+    QFont f = title->font();
+    f.setPointSizeF(f.pointSizeF() * 1.25);
+    title->setFont(f);
+    layout->addWidget(title);
+    auto* hint = new QLabel("Anonymous, and never your files, file names or scene content. Change it any time in Preferences > General > Telemetry.", box);
+    hint->setForegroundRole(QPalette::PlaceholderText);
+    hint->setWordWrap(true);
+    layout->addWidget(hint);
+    for (auto [label, key] : {std::pair{"Send usage statistics (version, GPU, session length, which commands are used)", kTelemetryUsagePref},
+                              std::pair{"Send crash reports", kTelemetryCrashPref}})
+    {
+        auto* check = new QCheckBox(label, box);
+        check->setChecked(PrefStore::get().value<bool>("general", key, false));
+        QObject::connect(check, &QCheckBox::toggled, check, [key](bool on) { PrefStore::get().set("general", key, on); });
+        layout->addWidget(check);
+    }
+    return box;
+}
+} // namespace
+
+void runFirstRunSetup(QWidget* parent)
+{
+    SetupDialog dlg(parent);
+    dlg.setWindowTitle("Welcome to Lila");
+    dlg.setWindowFlags(Qt::Dialog | Qt::CustomizeWindowHint | Qt::WindowTitleHint);
+    dlg.setWindowModality(Qt::ApplicationModal);
+    auto* layout = new QVBoxLayout(&dlg);
+    layout->setContentsMargins(20, 16, 20, 14);
+    layout->addWidget(makeThemeChooser(&dlg));
+    layout->addSpacing(12);
+    layout->addWidget(makeTelemetryChoice(&dlg));
+    layout->addSpacing(8);
+    auto* buttons = new QDialogButtonBox(&dlg);
+    QPushButton* go = buttons->addButton("Continue", QDialogButtonBox::AcceptRole);
+    go->setDefault(true);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     layout->addWidget(buttons);
-    QObject::connect(dlg, &QDialog::finished, [] { setThemeChooserDone(); });
-    dlg->show();
+    dlg.exec();
+    setThemeChooserDone();
 }
 
 void applyTheme(QApplication& app)

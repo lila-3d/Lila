@@ -16,6 +16,7 @@
 #include "gltf/Gltf.h"
 #include "gn/Gn.h"
 #include "io/FileTranslators.h"
+#include "io/Examples.h"
 #include "io/Recovery.h"
 #include "io/SceneFile.h"
 #include "link/Exporters.h"
@@ -145,6 +146,7 @@ void startCore()
     scene::registerCommands();
     io::registerCommands();
     io::recovery::registerCommands();
+    io::examples::registerCommands();
     gn::registerCommands();
     seq::registerCommands();
     bake::registerCommands();

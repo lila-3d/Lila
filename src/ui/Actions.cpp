@@ -582,14 +582,15 @@ void registerBuiltins()
                       bool on = PrefStore::get().value<bool>("general", "/select/cameraBased", false);
                       PrefStore::get().set("general", "/select/cameraBased", !on);
                   },
-                  .doc = "Marquee selection only picks components the camera can see.",
-                  .python = "lila.prefs.set(\"general\", \"/select/cameraBased\", True)"});
+                  .doc = "Component marquee and lasso selection skip vertices, edges and faces hidden behind other surfaces. Off, they "
+                         "select through the mesh. Clicks always pick the nearest component.",
+                  .python = "lila.prefs.set(\"general\", \"/select/cameraBased\", not lila.prefs.get(\"general\", \"/select/cameraBased\", False))"});
     actions::add({.id = "select.toggleBackfaceCulling", .label = "Backface Culling Selection", .category = "Select", .run = [] {
                       bool on = PrefStore::get().value<bool>("general", "/select/backfaceCulling", false);
                       PrefStore::get().set("general", "/select/backfaceCulling", !on);
                   },
                   .doc = "Clicks and marquees skip components on faces turned away from the camera.",
-                  .python = "lila.prefs.set(\"general\", \"/select/backfaceCulling\", True)"});
+                  .python = "lila.prefs.set(\"general\", \"/select/backfaceCulling\", not lila.prefs.get(\"general\", \"/select/backfaceCulling\", False))"});
     cmd("select.containedFaces", "To Contained Faces", "Select", "selectContainedFaces", json::object(),
         "Selects the faces enclosed by the selected edges, flood filled up to them and the mesh borders.");
 

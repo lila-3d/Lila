@@ -151,6 +151,50 @@ const Pairs kLight = {
     {"socketColor", "#a39a1f"},    {"statusWarning", "#a36b00"},    {"statusError", "#c8261c"},
 };
 
+// Deep navy with a cyan accent, for long sessions in a dark room.
+const Pairs kMidnight = {
+    {"darkest", "#05070c"},       {"shadow", "#0b0f18"},        {"tooltip", "#111725"},          {"base", "#141a28"},
+    {"altBase", "#181f2f"},       {"window", "#1b2233"},        {"button", "#252e44"},           {"border", "#3a4766"},
+    {"disabled", "#5a6680"},      {"dimText", "#8a96b0"},       {"text", "#d3dbea"},             {"brightText", "#ffffff"},
+    {"panel", "#222b40"},         {"input", "#121827"},         {"menu", "#141a28"},             {"scrollbar", "#2a3450"},
+    {"separator", "#1a2132"},     {"hover", "#33507a"},         {"statusBar", "#161c2b"},        {"checked", "#2b4870"},
+    {"highlight", "#2f6fb0"},     {"highlightText", "#ffffff"}, {"accent", "#4fc3f7"},           {"tooltipText", "#d3dbea"},
+    {"statusWarning", "#ffcc66"}, {"statusError", "#ff6b6b"},
+    {"iconNormal", "#b8c4dc"},    {"iconActive", "#ffffff"},    {"iconDisabled", "#556078"},     {"viewportBackground", "#3a3f4a"},
+    {"grid", "#7d8698"},          {"wireframe", "#10141f"},     {"wireSelected", "#6fe3ff"},     {"wirePreselect", "#ffd27a"},
+    {"wireUnderSelected", "#3fa8c8"}, {"curve", "#9fb0d0"},     {"manipNeutral", "#a8b4cc"},     {"manipActive", "#ffd84a"},
+    {"nodeBody", "#222b40"},      {"nodeHeader", "#2c3854"},    {"nodeSelected", "#4fc3f7"},
+};
+
+// Warm charcoal and amber: no blue in the chrome, easy on the eyes at night.
+const Pairs kEmber = {
+    {"darkest", "#0a0806"},       {"shadow", "#15110d"},        {"tooltip", "#1f1914"},          {"base", "#241d17"},
+    {"altBase", "#2a221b"},       {"window", "#2f271f"},        {"button", "#3b3128"},           {"border", "#5a4b3d"},
+    {"disabled", "#6f6255"},      {"dimText", "#9c8e7e"},       {"text", "#e3d8c8"},             {"brightText", "#fff6e8"},
+    {"panel", "#3b3128"},         {"input", "#241d17"},         {"menu", "#241d17"},             {"scrollbar", "#3b3128"},
+    {"separator", "#2a221b"},     {"hover", "#7a5a32"},         {"statusBar", "#2a221b"},        {"checked", "#6a4a22"},
+    {"highlight", "#965d18"},     {"highlightText", "#ffffff"}, {"accent", "#f0a33a"},           {"tooltipText", "#e3d8c8"},
+    {"statusWarning", "#f2c14e"}, {"statusError", "#e5604b"},
+    {"iconNormal", "#d6c8b4"},    {"iconActive", "#ffd08a"},    {"iconDisabled", "#6f6255"},     {"viewportBackground", "#4b4845"},
+    {"grid", "#a39c94"},          {"wireframe", "#221c16"},     {"wireSelected", "#ffd08a"},     {"wirePreselect", "#fff0c8"},
+    {"wireUnderSelected", "#c79a5a"}, {"curve", "#b0a594"},     {"manipNeutral", "#b8ab9a"},     {"manipActive", "#ffd84a"},
+    {"nodeBody", "#3b3128"},      {"nodeHeader", "#4a3e32"},    {"nodeSelected", "#f0a33a"},
+};
+
+// Warm off-white with dark ink and a terracotta accent, for bright rooms.
+const Pairs kPaper = {
+    {"darkest", "#b5ab9c"},       {"shadow", "#c8bfb1"},        {"tooltip", "#fffdf8"},          {"base", "#fffdf8"},
+    {"altBase", "#f7f2e9"},       {"window", "#efe8dc"},        {"button", "#e2d9ca"},           {"border", "#b9ad9b"},
+    {"disabled", "#a0968a"},      {"dimText", "#6b6257"},       {"text", "#2b2620"},             {"brightText", "#14110d"},
+    {"panel", "#e6ddcf"},         {"input", "#fffdf8"},         {"menu", "#fffdf8"},             {"scrollbar", "#d8cebe"},
+    {"separator", "#ddd3c4"},     {"hover", "#e8b48f"},         {"statusBar", "#e8e0d3"},        {"checked", "#f0cdb2"},
+    {"highlight", "#c0562f"},     {"highlightText", "#ffffff"}, {"accent", "#c0562f"},           {"tooltipText", "#2b2620"},
+    {"statusWarning", "#9a6400"}, {"statusError", "#b3261e"},
+    {"iconNormal", "#4a4238"},    {"iconActive", "#14110d"},    {"iconDisabled", "#b0a698"},     {"viewportBackground", "#74706a"},
+    {"grid", "#c9c3ba"},          {"wireframe", "#1f1c18"},     {"curve", "#efe8dc"},            {"manipNeutral", "#d2cabe"},
+    {"nodeBody", "#efe8dc"},      {"nodeHeader", "#ddd1bf"},    {"nodeSelected", "#c0562f"},
+};
+
 const Pairs kHighContrast = {
     {"darkest", "#000000"},      {"shadow", "#000000"},        {"tooltip", "#000000"},       {"base", "#000000"},
     {"altBase", "#141414"},      {"window", "#0a0a0a"},        {"button", "#262626"},        {"border", "#c0c0c0"},
@@ -173,6 +217,19 @@ Theme make(const char* name, const char* base, const char* description, Pairs co
     t.description = description;
     for (auto& [id, hex] : colors)
         t.colors[id] = *parseColor(hex);
+    return t;
+}
+
+/** Colour's hues for axes, node categories and sockets, under a theme that sets only its own chrome. */
+Theme withCategoryHues(Theme t)
+{
+    for (auto& [id, hex] : kColour)
+    {
+        std::string_view key = id;
+        if ((key.starts_with("node") || key.starts_with("socket") || key.starts_with("axis") || key.starts_with("gridAxis")) &&
+            !t.colors.contains(key))
+            t.colors[std::string(key)] = *parseColor(hex);
+    }
     return t;
 }
 
@@ -328,6 +385,10 @@ const std::vector<Theme>& builtIns()
                            kColour));
         out.push_back(make("Light", "light", "Light blues and navy from the Lila icon.", kLight));
         out.push_back(make("High Contrast", "dark", "Black and white with yellow selection, for maximum legibility.", kHighContrast));
+        out.push_back(withCategoryHues(make("Midnight", "dark", "Deep navy with a cyan accent, for long sessions in a dark room.", kMidnight)));
+        out.push_back(withCategoryHues(
+            make("Ember", "dark", "Warm charcoal and amber, with no blue in the interface. Easy on the eyes late at night.", kEmber)));
+        out.push_back(make("Paper", "light", "Warm off-white with dark ink and a terracotta accent, for bright rooms.", kPaper));
         return out;
     }();
     return themes;

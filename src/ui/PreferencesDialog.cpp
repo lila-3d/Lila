@@ -12,6 +12,8 @@
 #include "scene/Transform.h"
 #include "stream/ChangeStream.h"
 #include "ui/Icons.h"
+#include "ui/SceneDialogs.h"
+#include "ui/Theme.h"
 #include "ui/LodDisplay.h"
 #include "ui/SoftSelectPanel.h"
 #include "ui/SpinScrub.h"
@@ -461,6 +463,9 @@ void addBuiltIns(Registry<prefPages::Page>& r)
 {
     namespace vd = viewportDisplay;
     builtIn(r, "general", "General", "general", [](Page& general) {
+        section(general, "Startup");
+        toggle(general, "Show the welcome dialog (examples and recent scenes)", kShowWelcomePref, true);
+        toggle(general, "Show recent scenes when the welcome dialog is off", kShowRecentPref, true);
         section(general, "Scene");
         choice(general, "Up axis", "/scene/upAxis", {{"Y up", "y"}, {"Z up", "z"}}, "y");
         choice(general, "Save format", "/scene/defaultFormat", {{"Binary (.lila)", "binary"}, {"Text (.lilaa)", "ascii"}}, "binary");
@@ -489,6 +494,9 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         toggle(general, "Offer agent setup per workspace", "/agents/promptOnTerminal", true);
         section(general, "Docs");
         toggle(general, "Download docs updates at startup", "/docs/autoUpdate", true);
+        section(general, "Telemetry");
+        toggle(general, "Send anonymous usage statistics", kTelemetryUsagePref, false);
+        toggle(general, "Send crash reports", kTelemetryCrashPref, false);
         section(general, "Change Stream");
         toggle(general, "Stream scene changes to other processes", "/changeStream/enabled", false);
         number(general, "Port", "/changeStream/port", double(stream::kDefaultPort), 1.0, 65535.0, 1.0, 0);
@@ -587,6 +595,8 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         number(viewport, "Fixed level", lodDisplay::kLevel, 0.0, 0.0, double(scene::lod::kMaxLevels - 1), 1.0, 0);
         section(viewport, "Selection");
         toggle(viewport, "Marquee selects edges and faces it touches (off: only those whose centre it covers)", "/select/marqueeTouch", true);
+        toggle(viewport, "Camera-based selection (component marquees skip what is hidden behind surfaces)", "/select/cameraBased", false);
+        toggle(viewport, "Backface culling selection (skip components on faces turned away)", "/select/backfaceCulling", false);
         section(viewport, "Highlight Under Cursor");
         toggle(viewport, "Components", "/viewport/preselect/components", true);
         toggle(viewport, "Objects", "/viewport/preselect/objects", false);

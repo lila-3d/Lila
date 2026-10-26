@@ -1,4 +1,5 @@
 lila_module(lila_io Scene
+    Examples.cpp
     References.cpp
     Recovery.cpp
     SceneFile.cpp

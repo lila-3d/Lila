@@ -10,9 +10,12 @@
 #include <filesystem>
 #include <vector>
 
+#include "io/Examples.h"
 #include "io/Recovery.h"
 
+class QDialog;
 class QDockWidget;
+class QMenu;
 class QLabel;
 class QTimer;
 class QToolButton;
@@ -92,6 +95,11 @@ private:
     void showVersions();
     void openScene(const std::filesystem::path& path);
     void openRecoveredScene(const std::filesystem::path& file);
+    void openExample(const io::examples::Example& example);
+    /** welcome: examples and recent scenes; otherwise recent scenes alone. */
+    void showStartupDialog(bool welcome);
+    /** Every panel's show toggle, grouped by what it is for. */
+    void fillEditorsMenu(QMenu* menu);
     void addRecentFile(const std::filesystem::path& path);
     void refreshTitle();
     void refreshSourceStatus();
@@ -102,6 +110,7 @@ private:
 
     ViewportLayout* mViewports = nullptr;
     QPointer<QMenu> mRecentMenu;
+    QPointer<QDialog> mStartupDialog;
     menus::MenuBuilder* mMenus = nullptr;
     int mPanelListener = 0;
     QTimer* mAutosaveTimer = nullptr;

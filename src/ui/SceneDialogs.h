@@ -2,9 +2,11 @@
 
 #include "core/Export.h"
 
+#include "io/Examples.h"
 #include "io/Recovery.h"
 
 #include <QDialog>
+#include <QElapsedTimer>
 
 #include <nlohmann/json.hpp>
 
@@ -54,9 +56,13 @@ private:
     Choice mChoice = Choice::Discard;
 };
 
+inline constexpr const char* kShowWelcomePref = "/startup/showWelcome";
+/** The recent scenes on their own at startup, when the welcome dialog is off. */
+inline constexpr const char* kShowRecentPref = "/startup/showDialog";
+
 /**
- * The frameless recent-scenes picker shown when Lila starts without a scene. Enter or double-click opens, Esc or a
- * click outside dismisses.
+ * The frameless startup picker. welcome: the example scenes above the recent ones; otherwise the recent scenes alone.
+ * Enter or double-click opens, Esc or a click outside dismisses.
  */
 class LILA_UI_API StartupDialog : public QDialog
 {
@@ -66,9 +72,11 @@ public:
     struct Hooks
     {
         std::function<void(const std::filesystem::path&)> open; // empty path = browse
+        std::function<void(const io::examples::Example&)> openExample;
+        std::function<void()> newScene;
     };
 
-    StartupDialog(Hooks hooks, QWidget* parent);
+    StartupDialog(Hooks hooks, bool welcome, QWidget* parent);
 
     /** Centered on the screen parent is on. */
     void present();
@@ -77,10 +85,13 @@ protected:
     bool eventFilter(QObject* obj, QEvent* e) override;
 
 private:
-    void openSelected();
+    void openSelected(QTreeWidget* list);
 
     Hooks mHooks;
     QTreeWidget* mList = nullptr;
+    QTreeWidget* mExamples = nullptr;
+    std::vector<io::examples::Example> mExampleList;
+    QElapsedTimer mReclaimFocus;
 };
 
 /** File > Versions: everything Lila and source control kept of the current scene. */
