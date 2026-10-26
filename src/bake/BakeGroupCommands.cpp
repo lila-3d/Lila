@@ -210,13 +210,13 @@ std::vector<std::string> importLows(Graph& g, const std::string& file, const cha
     return out;
 }
 
-/** One-call bake project from a TerrainGenerator group or a TreeGenerator tree, through their hand-off commands. */
+/** One-call bake project from a Ground Tiles group or a Foliage tree, through their hand-off commands. */
 json fromGenerator(const Args& a)
 {
     Graph& g = Graph::current();
     std::vector<std::string> objs = a.objects();
     if (objs.empty())
-        throw CommandError("createBakeFromGenerator: name or select a generated terrain group or tree");
+        throw CommandError("createBakeFromGenerator: name or select a generated ground tile group or tree");
     const std::string source = objs.front();
     std::string kind = a.get<std::string>("kind", "auto");
     json h;
@@ -235,13 +235,13 @@ json fromGenerator(const Args& a)
             return false;
         }
     };
-    if ((kind == "auto" || kind == "terrain") && tryRun("terrainBakeData"))
-        kind = "terrain";
+    if ((kind == "auto" || kind == "groundTile") && tryRun("groundTileBakeData"))
+        kind = "groundTile";
     else if ((kind == "auto" || kind == "tree") && tryRun("treeBakeHandoff"))
         kind = "tree";
     else
         throw CommandError("createBakeFromGenerator: " + source +
-                           " is not a generated terrain group or tree (the TerrainGenerator or TreeGenerator extension must be loaded)");
+                           " is not a generated ground tile group or tree (the GroundTiles or Foliage extension must be loaded)");
 
     const std::string targetName = a.get<std::string>("target", "substancePainter");
     const auto target = findTarget(targetName);
@@ -262,7 +262,7 @@ json fromGenerator(const Args& a)
     gs.highs.push_back(HighEntry{.file = high});
     json palette = json::object();
     std::string idSource = "material";
-    if (kind == "terrain")
+    if (kind == "groundTile")
     {
         const std::string plane = h.value("bakePlane", std::string());
         if (plane.empty())
@@ -669,13 +669,13 @@ void registerGroupCommands()
 
     ops::registerCommand({
         .name = "createBakeFromGenerator",
-        .doc = "Make a bake project from a TerrainGenerator group or a TreeGenerator tree in one call, from their exported files: "
-               "the high streams from its FBX at bake time (never loaded into the scene), the low is the terrain's bake plane or "
+        .doc = "Make a bake project from a Ground Tiles group or a Foliage tree in one call, from their exported files: "
+               "the high streams from its FBX at bake time (never loaded into the scene), the low is the ground tile's bake plane or "
                "the tree's exported low, frontal and rear come from the generator's measurements, the ID map uses its palette and "
                "the height map its measured range, with the Substance Painter target's maps and names. Returns {project, group, "
                "kind, target, handoff}.",
-        .positionalDoc = "terrain group or tree (default the selection)",
-        .flags = {{"kind", "k", T::String, "auto", "terrain, tree or auto.", {"auto", "terrain", "tree"}},
+        .positionalDoc = "ground tile group or tree (default the selection)",
+        .flags = {{"kind", "k", T::String, "auto", "groundTile, tree or auto.", {"auto", "groundTile", "tree"}},
                   {"target", "t", T::String, "substancePainter", "Target profile (bakeTargets)."},
                   {"name", "n", T::String, nullptr, "Project name; <source>_bakeProject by default (reused when it exists)."},
                   {"lows", "lo", T::List, nullptr, "Tree: scene meshes to bake onto instead of importing the exported low."}},

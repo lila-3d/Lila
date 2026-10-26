@@ -1,0 +1,14 @@
+{
+    "id": "Foliage",
+    "name": "Foliage",
+    "version": "1.0.0",
+    "vendor": "Lila",
+    "description": "Plant modelling. Tree Generator grows trunks with recursive branches, canopy blobs and scattered leaves, then exports the high and low poly pair and the json a texturing stack is built from. Blades grows blades from faces of a modelled shrub and varies each blade's extrude and deformers, so one shrub gives blades of different thickness and lean.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "Foliage.dll",
+        "linux": "Foliage.so",
+        "macos": "Foliage.dylib"
+    },
+    "enabledByDefault": true
+}

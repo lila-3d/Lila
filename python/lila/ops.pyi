@@ -1313,11 +1313,11 @@ def createAnimLayer(*objects: Any, name: str | None = None, mode: str | None = N
     """
 
 def createBakeFromGenerator(*objects: Any, kind: str | None = None, target: str | None = None, name: str | None = None, lows: Sequence[Any] | None = None, k: str | None = None, t: str | None = None, n: str | None = None, lo: Sequence[Any] | None = None) -> Any:
-    """Make a bake project from a TerrainGenerator group or a TreeGenerator tree in one call, from their exported files: the high streams from its FBX at bake time (never loaded into the scene), the low is the terrain's bake plane or the tree's exported low, frontal and rear come from the generator's measurements, the ID map uses its palette and the height map its measured range, with the Substance Painter target's maps and names. Returns {project, group, kind, target, handoff}.
+    """Make a bake project from a Ground Tiles group or a Foliage tree in one call, from their exported files: the high streams from its FBX at bake time (never loaded into the scene), the low is the ground tile's bake plane or the tree's exported low, frontal and rear come from the generator's measurements, the ID map uses its palette and the height map its measured range, with the Substance Painter target's maps and names. Returns {project, group, kind, target, handoff}.
 
     Args:
-        objects: terrain group or tree (default the selection).
-        kind: terrain, tree or auto. Short form k. One of 'auto', 'terrain', 'tree'. Default 'auto'.
+        objects: ground tile group or tree (default the selection).
+        kind: groundTile, tree or auto. Short form k. One of 'auto', 'groundTile', 'tree'. Default 'auto'.
         target: Target profile (bakeTargets). Short form t. Default 'substancePainter'.
         name: Project name; <source>_bakeProject by default (reused when it exists). Short form n.
         lows: Tree: scene meshes to bake onto instead of importing the exported low. Short form lo.

@@ -584,16 +584,16 @@ TEST_CASE("one group per mesh and Arrange")
     CHECK_FALSE(bake::arrange::active(graph(), pid));
 }
 
-TEST_CASE("createBakeFromGenerator wires a terrain hand-off into a Painter bake project")
+TEST_CASE("createBakeFromGenerator wires a ground tile hand-off into a Painter bake project")
 {
     newScene();
     const fs::path dir = tempDir("generator");
     const fs::path high = dir / "tile_Hi.obj";
     REQUIRE(geo::writeObjFile(high.string(), lifted(plane(6), 4.0)));
     const std::string bakePlane = addMesh("tile_bakePlane", plane(2));
-    const bool had = ops::find("terrainBakeData") != nullptr;
+    const bool had = ops::find("groundTileBakeData") != nullptr;
     if (!had)
-        ops::registerCommand({.name = "terrainBakeData",
+        ops::registerCommand({.name = "groundTileBakeData",
                               .doc = "test stand-in",
                               .positionalDoc = "group",
                               .undoable = false,
@@ -610,10 +610,10 @@ TEST_CASE("createBakeFromGenerator wires a terrain hand-off into a Painter bake 
                                           {"heightP99", 4.5},
                                           {"legend", {{"1", {{"colour", {255, 0, 0}}, {"sources", {"pebble"}}}}}}};
                               }});
-    const json r = ops::execute("createBakeFromGenerator", {{"args", {"tile"}}, {"kind", "terrain"}});
+    const json r = ops::execute("createBakeFromGenerator", {{"args", {"tile"}}, {"kind", "groundTile"}});
     if (!had)
-        ops::unregisterCommand("terrainBakeData");
-    CHECK(r["kind"] == "terrain");
+        ops::unregisterCommand("groundTileBakeData");
+    CHECK(r["kind"] == "groundTile");
     CHECK(r["target"] == "substancePainter");
     const json& grp = r["group"];
     CHECK(grp["lows"][0] == bakePlane);
