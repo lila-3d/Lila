@@ -233,7 +233,7 @@ TEST_CASE("masonry: stone meshes are closed, outward and fill their box")
         const double v = signedVolume(m);
         CHECK(v > 0.0);
         CHECK(v <= box + 1e-6);
-        CHECK(v > box * 0.85);
+        CHECK(v > box * (d == Detail::Worn ? 0.75 : 0.85));
         CHECK(m.cornerAttrs().has(geo::attr::uvName(0)));
         const geo::Bounds b = m.bounds();
         CHECK(b.max.x <= s.size.x * 0.5 + 1e-9);

@@ -574,17 +574,18 @@ Layout layoutWall(const Footprint& footprint, const WallParams& p, int wall)
             const double total = line.length();
             // At a corner, the side that goes round the outside of the turn either runs to the corner (this run
             // passes through the corner on this course) or stops short of the other run's stones.
-            auto cornerTrim = [&](int corner, const glm::dvec3& dIn, const glm::dvec3& dOut, bool atEnd, int course) {
+            auto cornerTrim = [&](int corner, const glm::dvec3& dIn, const glm::dvec3& dOut, bool atEnd, int course, double ownerDepth) {
                 const double s = std::max(std::abs(crossY(dIn, dOut)), 0.35);
                 const bool owner = ((course + corner) % 2 == 0) == atEnd;
                 const glm::dvec3 vertex = atEnd ? r.pts.back() : r.pts.front();
                 const glm::dvec3 miter = vertex + miterOffset(dIn, dOut, side * T * 0.5);
                 const bool convex = glm::dot(flat(miter - vertex), atEnd ? dIn : -dOut) > 1e-9 || single;
+                // Inside a turn the faces meet at the mitre, and stones pushed out of one face move into the other.
                 if (!convex)
-                    return 0.0;
+                    return owner ? 0.0 : j + std::max(0.0, p.protrude);
                 if (single)
                     return owner ? -(T * 0.5) / s : (T * 0.5) / s + j;
-                return owner ? 0.0 : (stretcherDepth + j) / s;
+                return owner ? 0.0 : (ownerDepth + j) / s;
             };
             const Face face = single ? Face::Through : ((side > 0.0) == leftIsOuter ? Face::Outer : Face::Inner);
             for (int course = 0; course < out.courses; ++course)
@@ -603,9 +604,9 @@ Layout layoutWall(const Footprint& footprint, const WallParams& p, int wall)
                 else
                 {
                     if (r.startCorner >= 0)
-                        t0 += cornerTrim(r.startCorner, r.before, flatDir(r.pts[0], r.pts[1]), false, course);
+                        t0 += cornerTrim(r.startCorner, r.before, flatDir(r.pts[0], r.pts[1]), false, course, pat[0].depth);
                     if (r.endCorner >= 0)
-                        t1 -= cornerTrim(r.endCorner, flatDir(r.pts[r.pts.size() - 2], r.pts.back()), r.after, true, course);
+                        t1 -= cornerTrim(r.endCorner, flatDir(r.pts[r.pts.size() - 2], r.pts.back()), r.after, true, course, pat[0].depth);
                 }
                 const double drift = (unitRandom(key(p.seed, uint64_t(wall), ri, uint64_t(course), 17)) - 0.5) * u.length * 0.8;
                 double mid = (t0 + t1) * 0.5 + drift;
@@ -651,6 +652,8 @@ Layout layoutWall(const Footprint& footprint, const WallParams& p, int wall)
     });
     Grid grid{std::max(u.length, 20.0), {}};
     const double minDepth = std::max(1.0, stretcherDepth * 0.3);
+    // Most of a joint between any two stones, so the wander below can't close it.
+    const double clearance = -0.75 * j;
     for (size_t k : order)
     {
         Stone s = laid[k];
@@ -659,7 +662,7 @@ Layout layoutWall(const Footprint& footprint, const WallParams& p, int wall)
         {
             const Stone* hit = nullptr;
             for (int other : grid.around(s, j))
-                if (overlaps(s, out.stones[size_t(other)]))
+                if (overlaps(s, out.stones[size_t(other)], clearance))
                 {
                     hit = &out.stones[size_t(other)];
                     break;
@@ -670,7 +673,7 @@ Layout layoutWall(const Footprint& footprint, const WallParams& p, int wall)
             trimmed = true;
             if (pass == 5 && alive)
                 for (int other : grid.around(s, j))
-                    if (overlaps(s, out.stones[size_t(other)]))
+                    if (overlaps(s, out.stones[size_t(other)], clearance))
                         alive = false;
         }
         if (!alive)
