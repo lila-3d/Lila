@@ -1,0 +1,14 @@
+{
+    "id": "Settlement",
+    "name": "Settlement",
+    "version": "0.1.0",
+    "vendor": "Lila",
+    "description": "Villages, towns and cities laid out on flat ground or any mesh: roads routed over the ground, streets grown, gridded or ringed by style, blocks, lots and building envelopes, measured and checked for agents.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "Settlement.dll",
+        "linux": "Settlement.so",
+        "macos": "Settlement.dylib"
+    },
+    "enabledByDefault": true
+}
