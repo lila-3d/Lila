@@ -126,8 +126,8 @@ private:
 };
 
 /**
- * Registers the USD plugins deployed in the package (its usd and plugin/usd folders) before any stage is opened.
- * Safe to call more than once. False, with why, when the core plugins can't be found.
+ * Registers the USD plugins deployed in the package (its usd and plugin/usd folders) before any stage is opened, and on
+ * Windows appends the package to PATH so their libraries' dependencies resolve. Safe to call more than once. False, with why, when the core plugins can't be found.
  */
 bool registerPlugins(const fs::path& packageRoot, std::string* error);
 
