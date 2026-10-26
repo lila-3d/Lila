@@ -23,4 +23,7 @@ get_property(_usd_python GLOBAL PROPERTY LILA_USD_PYTHON)
 if(TARGET lilabatch AND _usd_python)
     add_test(NAME lila_usd_python COMMAND lilabatch --batch ${CMAKE_SOURCE_DIR}/python/tests/test_usd.py)
     set_tests_properties(lila_usd_python PROPERTIES ENVIRONMENT "LILA_CONFIG_DIR=${CMAKE_CURRENT_BINARY_DIR}/usd_python_cfg")
+    # Its own process, so the stage it opens is the first to load USD's plugins; a deadlock shows as the timeout.
+    add_test(NAME lila_usd_python_threads COMMAND lilabatch --batch ${CMAKE_SOURCE_DIR}/python/tests/test_usd_threads.py)
+    set_tests_properties(lila_usd_python_threads PROPERTIES TIMEOUT 300 ENVIRONMENT "LILA_CONFIG_DIR=${CMAKE_CURRENT_BINARY_DIR}/usd_python_cfg")
 endif()

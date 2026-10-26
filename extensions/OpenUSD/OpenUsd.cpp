@@ -40,6 +40,8 @@ using json = nlohmann::json;
 
 fs::path gPackageRoot;
 std::atomic<bool> gLoaded{false};
+/** True on the thread loading OpenUSDCore, whose start-up imports pxr and so reaches lilaUsdLoad again through lila.usd. */
+thread_local bool tLoading = false;
 
 std::string utf8(const fs::path& p)
 {
@@ -59,6 +61,11 @@ const Backend& backend()
     static Backend b;
     static std::once_flag once;
     std::call_once(once, [] {
+        tLoading = true;
+        struct Done
+        {
+            ~Done() { tLoading = false; }
+        } done;
         const fs::path file = gPackageRoot / usd::kBackendFile;
         void* init = nullptr;
         void* run = nullptr;
@@ -201,6 +208,8 @@ NodeId stageAbove(NodeId node)
 
 USD_BACKEND_EXPORT const char* lilaUsdLoad()
 {
+    if (tLoading)
+        return nullptr;
     const Backend& b = backend();
     return b.run ? nullptr : b.error.c_str();
 }
