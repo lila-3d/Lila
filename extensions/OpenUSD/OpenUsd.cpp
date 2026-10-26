@@ -328,9 +328,10 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
                    "payload switch); the source files are never changed. File > Open and Import of a USD file run this; "
                    "importUsd flattens instead.\n\n"
                    "Written: moving objects (with animation), hiding them, deleting them (the prim is deactivated), mesh edits, "
-                   "material assignments and edits, new objects under the stage, variant selections and payload loading. Joint, "
-                   "skin weight and blend shape edits and reparenting are not written; saving lists them as warnings. Returns "
-                   "the stage node, or with report=True a dict of stage, prims, nodes, materials, skipped and warnings.",
+                   "material assignments and edits, new objects under the stage, objects moved to another parent, joint poses "
+                   "and keys, new joints, skin weights, blend shapes and their weights, variant selections and payload "
+                   "loading. What can't be written is listed as a warning when saving. Returns the stage node, or with "
+                   "report=True a dict of stage, prims, nodes, materials, skipped and warnings.",
             .positionalDoc = "path",
             .flags = {{"parent", "p", T::String, nullptr, "Parent the stage node under this node."},
                       {"name", "n", T::String, nullptr, "The stage node's name; the file's name by default."},
@@ -411,7 +412,8 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
             .name = "usdStagePrim",
             .doc = "Every composed property of a stage object's prim, custom schemas included: {prim, type, schemas, "
                    "instanceProxy, properties: [{name, type, value, custom, timeSamples, authored}]}. Values are usda text "
-                   "at the current time; long arrays are summarized unless full=True; relationships list their targets.",
+                   "at the current time; long arrays are summarized unless full=True; relationships list their targets. An "
+                   "object inside an LOD level adds level, the level's variant.",
             .positionalDoc = "object",
             .flags = {{"full", "", T::Bool, false, "Every value in full, however long."}},
             .undoable = false,
