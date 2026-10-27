@@ -1563,6 +1563,7 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
             else if (!first)
                 call["add"] = true;
             first = false;
+            call["symmetric"] = PrefStore::get().value<bool>("general", "/select/symmetric", true);
             ops::execute("selectComponents", call, CallSource::UI);
         }
     }
@@ -3229,6 +3230,7 @@ bool ViewportWidget::selectLoopAt(QPointF at, Qt::KeyboardModifiers mods)
     scene::MeshPtr mesh = n ? scene::modifiers::cage(g, h.node) : nullptr;
     if (!mesh)
         return false;
+    const bool symmetric = PrefStore::get().value<bool>("general", "/select/symmetric", true);
     try
     {
         if (mods & Qt::ShiftModifier)
@@ -3252,18 +3254,19 @@ bool ViewportWidget::selectLoopAt(QPointF at, Qt::KeyboardModifiers mods)
             // Like Maya, a second edge adds its own loop unless it shares one with the first, then only the run between them.
             if (mode == ComponentMode::Edge && std::ranges::count(geo::edgeLoop(*mesh, h.id), *from) == 0)
             {
-                ops::execute("selectLoopThrough", {{"args", {n->path()}}, {"edge", h.id}, {"add", true}}, CallSource::UI);
+                ops::execute("selectLoopThrough", {{"args", {n->path()}}, {"edge", h.id}, {"add", true}, {"symmetric", symmetric}}, CallSource::UI);
                 return true;
             }
             ops::execute("selectPathBetween",
-                         {{"args", {n->path()}}, {"kind", scene::components::modeName(mode)}, {"from", *from}, {"to", h.id}}, CallSource::UI);
+                         {{"args", {n->path()}}, {"kind", scene::components::modeName(mode)}, {"from", *from}, {"to", h.id}, {"symmetric", symmetric}}, CallSource::UI);
             return true;
         }
         // Edges select their loop; vertices and faces the whole connected piece.
         if (mode == ComponentMode::Edge)
-            ops::execute("selectLoopThrough", {{"args", {n->path()}}, {"edge", h.id}}, CallSource::UI);
+            ops::execute("selectLoopThrough", {{"args", {n->path()}}, {"edge", h.id}, {"symmetric", symmetric}}, CallSource::UI);
         else
-            ops::execute("selectConnected", {{"args", {n->path()}}, {"kind", scene::components::modeName(mode)}, {"id", h.id}}, CallSource::UI);
+            ops::execute("selectConnected", {{"args", {n->path()}}, {"kind", scene::components::modeName(mode)}, {"id", h.id}, {"symmetric", symmetric}},
+                         CallSource::UI);
     }
     catch (const CommandError& e)
     {

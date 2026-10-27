@@ -1,12 +1,14 @@
 #include "geo/Ops.h"
 #include "geo/OpsCommon.h"
 
+#include "geo/Knife.h"
 #include "geo/Topology.h"
 
 #include "core/Profile.h"
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <limits>
 #include <tuple>
 
@@ -300,6 +302,101 @@ std::vector<Index> insertEdgeLoop(Mesh& mesh, Index ringEdge, const EdgeLoopOpti
             if (mesh.splitFace(f, mesh.findCorner(f, a[k]), mesh.findCorner(f, b[k])) != kInvalid)
                 out.push_back(mesh.lastSplitEdge());
         }
+    }
+    return out;
+}
+
+std::vector<Index> splitRings(Mesh& mesh, std::span<const Index> ringEdges, int count, const SymmetryMap* symmetry)
+{
+    LILA_ZONE();
+
+    const SymmetryMap* sym = symmetry && !symmetry->empty() ? symmetry : nullptr;
+    std::vector<uint8_t> covered(mesh.edgeCapacity(), 0);
+    auto cover = [&](Index e) {
+        for (Index x : edgeRing(mesh, e))
+            covered[x] = 1;
+        covered[e] = 1;
+    };
+    std::vector<Index> reps;
+    for (Index e : ringEdges)
+    {
+        if (!mesh.edgeValid(e) || covered[e])
+            continue;
+        reps.push_back(e);
+        cover(e);
+        if (sym)
+            for (int k = 1; k < sym->order(); ++k)
+                if (const Index me = sym->imageEdge(mesh, k, e); me != kInvalid && !covered[me])
+                    cover(me);
+    }
+
+    // Splitting keeps every existing edge id, so the later rings' edges stay valid while earlier ones are cut.
+    const EdgeLoopOptions opts{.fraction = 0.5, .count = std::max(1, count)};
+    std::vector<Index> out;
+    for (Index e : reps)
+    {
+        if (!mesh.edgeValid(e))
+            continue;
+        if (!sym)
+        {
+            std::ranges::copy(insertEdgeLoop(mesh, e, opts), std::back_inserter(out));
+            continue;
+        }
+        KnifePlan plan;
+        for (double t : edgeLoopFractions(opts))
+            std::ranges::copy(knifeLoopPlan(mesh, e, t, sym).segments, std::back_inserter(plan.segments));
+        std::ranges::copy(knifeApply(mesh, plan), std::back_inserter(out));
+    }
+    std::erase_if(out, [&](Index e) { return !mesh.edgeValid(e); });
+    return out;
+}
+
+std::vector<Index> regionRingEdges(const Mesh& mesh, std::span<const Index> faces, bool across)
+{
+    LILA_ZONE();
+
+    const std::vector<uint8_t> in = makeMask(mesh.faceCapacity(), faces);
+    auto opposite = [&](Index f, Index e) {
+        Index out = kInvalid;
+        mesh.forEachFaceCorner(f, [&](Index c) {
+            if (mesh.cornerEdge(c) == e)
+                out = mesh.cornerEdge(mesh.cornerNext(mesh.cornerNext(c)));
+        });
+        return out;
+    };
+    // Edges of e's ring inside the region; a closed ring counts each of its edges twice, alike for all of them.
+    auto inRegion = [&](Index e) {
+        size_t n = 1;
+        mesh.forEachEdgeCorner(e, [&](Index c) {
+            Index edge = e, f = mesh.cornerFace(c);
+            for (size_t guard = 0; guard < mesh.edgeCapacity() && f != kInvalid && in[f] && mesh.faceSize(f) == 4; ++guard)
+            {
+                edge = opposite(f, edge);
+                if (edge == kInvalid || edge == e)
+                    break;
+                ++n;
+                f = mesh.oppositeFace(edge, f);
+            }
+        });
+        return n;
+    };
+
+    std::vector<Index> out;
+    for (Index f : faces)
+    {
+        if (!mesh.faceValid(f) || mesh.faceSize(f) != 4)
+            continue;
+        const Index c = mesh.faceCorner(f);
+        const Index e0 = mesh.cornerEdge(c), e1 = mesh.cornerEdge(mesh.cornerNext(c));
+        const size_t n0 = inRegion(e0), n1 = inRegion(e1);
+        bool pick0 = across ? n0 < n1 : n0 > n1;
+        if (n0 == n1)
+        {
+            // A strip's short way crosses its long edges.
+            const double l0 = mesh.edgeLength(e0), l1 = mesh.edgeLength(e1);
+            pick0 = across ? l0 >= l1 : l0 < l1;
+        }
+        out.push_back(pick0 ? e0 : e1);
     }
     return out;
 }

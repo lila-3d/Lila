@@ -1360,7 +1360,7 @@ void MainWindow::buildMenus()
     };
     menu("Select", "Select", Area::MenuBar, syncChecks);
     menus::addActions("Select", {"#Mode", "select.objectMode", "select.vertexMode", "select.edgeMode", "select.faceMode", "#Components", "select.allComponents",
-                          "select.grow", "select.loop", "select.ring", "#Hierarchy", "select.hierarchy", "select.pickWalkUp", "select.pickWalkDown",
+                          "select.grow", "select.loop", "select.ring", "select.symmetrize", "select.toggleSymmetric", "#Hierarchy", "select.hierarchy", "select.pickWalkUp", "select.pickWalkDown",
                           "select.pickWalkLeft", "select.pickWalkRight", "#Convert", "select.toVertices", "select.toEdges", "select.toFaces",
                           "select.containedFaces", "#Tools", "select.paintTool", "select.toggleLasso", "select.toggleCameraBased", "select.toggleBackfaceCulling"});
 
@@ -1382,7 +1382,7 @@ void MainWindow::buildMenus()
                                    "#Constructs", "topo.freezeAll", "#Display", "topo.qualityOverlay"});
 
     menu("Model", "Model");
-    menus::addActions("Model", {"#Components", "mesh.extrude", "mesh.inset", "mesh.insetRegion", "mesh.bevel", "mesh.insertLoop", "mesh.offsetLoop", "mesh.knife", "mesh.bridge",
+    menus::addActions("Model", {"#Components", "mesh.extrude", "mesh.inset", "mesh.insetRegion", "mesh.bevel", "mesh.insertLoop", "mesh.splitRings", "mesh.offsetLoop", "mesh.knife", "mesh.bridge",
                                 "mesh.fillHole", "mesh.poke", "#Merge", "mesh.merge", "mesh.mergeCenter", "mesh.targetWeld", "mesh.collapse", "#Edges", "mesh.dissolve",
                                 "mesh.spin", "#Shape", "mesh.editEdgeFlow", "mesh.straighten", "mesh.circularize", "mesh.spherize", "mesh.flatten", "mesh.conformShape",
                                 "mesh.conformToObject"});

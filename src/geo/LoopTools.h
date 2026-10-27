@@ -53,21 +53,22 @@ struct EdgeFlowOptions
 {
     /** 0 flat between the neighbours across the loop, 1 on the curve through them, above 1 exaggerated, negative inverted. */
     double amount = 1.0;
-    /** The curve's tangents from the next points out across the loop (Maya's edge flow); off, from the surface normals there. */
+    /** The curve from the next points out across the loop (Maya's edge flow); off, from the surface normals there. */
     bool edgeFlow = true;
-    /** Scales the tangents down (toward 1, flatter) or up (negative, fuller). */
+    /** Scales the bend down (toward 1, flatter) or up (negative, fuller). */
     double tension = 0.0;
     /** Also eases each loop along its own length toward a smooth curve, 0 to 1, keeping its spacing. */
     double loopSmooth = 0.0;
-    /** Passes, for neighbouring selected loops that shape each other. */
+    /** Passes of loopSmooth. */
     int iterations = 1;
 };
 
 /**
- * Edit Edge Flow: each point of the edges' chains moves square to its loop onto a cubic through its two neighbours
- * across the loop, its tangents from the points beyond them (centripetal Catmull-Rom), so the loop follows the
- * surrounding curvature. Points given loose (on no chain) fit both directions across them and take the average. Points
- * with nothing across on one side stay. Returns a move for every point considered, unmoved ones included.
+ * Edit Edge Flow: each point of the edges' chains moves onto a curve through the nearest unselected points across its
+ * loop: the blend of the two circular arcs through them and each point beyond, which gives back any circle exactly, so
+ * the loop follows the surrounding curvature. Selected points between two anchors spread evenly by edge count, as
+ * subdividing would place them. Points given loose (on no chain) are placed by both directions across them. Points with
+ * nothing across on one side stay. Returns a move for every point considered, unmoved ones included.
  */
 LILA_SCENE_API PointMoves editEdgeFlow(const Mesh& mesh, std::span<const Index> edges, std::span<const Index> points,
                                        const EdgeFlowOptions& opts = {});

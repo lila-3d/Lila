@@ -68,7 +68,7 @@ std::map<std::string, QString>& iconTable()
     static std::map<std::string, QString> t = {
         {"mirror", "flip-vertical"},   {"subdivision", "cube-3d-sphere"}, {"bevel", "border-corners"},
         {"array", "box-multiple"},     {"triangulate", "triangles"},      {"weightedNormals", "arrows-diagonal"},
-        {"solidify", "stack-2"},       {"decimate", "chart-dots-3"},      {"autoBevel", "sparkles"},
+        {"solidify", "stack-2"},       {"splitRings", "columns-3"},       {"decimate", "chart-dots-3"},      {"autoBevel", "sparkles"},
         {"skinCluster", "bone"},       {"meshSource", "box"},             {"morph", "mood-smile"},
         {"ffd", "grid-dots"},          {"deltaMush", "droplet"},          {"wrap", "layers-intersect"},
         {"cage", "box"},               {"softMod", "focus-2"},            {"bendDeformer", "rainbow"},

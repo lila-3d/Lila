@@ -1771,7 +1771,7 @@ void registerBuiltins()
              // Mesh sources and object-space modifiers and deformers.
              "meshSource", "polyCapsule", "polyCone", "polyCube", "polyCylinder", "polyDisc", "polyIcoSphere", "polyPipe", "polyPlane",
              "polyQuadSphere", "polySphere", "polyTorus", "bevelModifier", "decimateModifier", "mirrorModifier", "solidifyModifier",
-             "subdivisionModifier", "triangulateModifier", "weightedNormalsModifier", "extrudeModifier", "autoBevelModifier", "morph",
+             "subdivisionModifier", "triangulateModifier", "weightedNormalsModifier", "extrudeModifier", "splitRingsModifier", "autoBevelModifier", "morph",
              "morphTarget", "correction", "deltaMush", "smoothDeformer", "tension", "textureDeformer", "noiseDeformer"})
         registerNeutral(t);
 

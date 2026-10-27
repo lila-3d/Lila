@@ -411,14 +411,15 @@ void registerConformCommands()
 
     ops::registerCommand({
         .name = "polyEditEdgeFlow",
-        .doc = "Move the selected edge loops' vertices square to the loops so they follow the curvature of the surface around them "
-               "(Maya's Edit Edge Flow). Each vertex lands on a curve through its neighbours across the loop, shaped by the vertices "
-               "beyond them. Selected vertices off any chain, and face selections, fit both directions across each vertex.",
+        .doc = "Move the selected edge loops onto the curvature of the surface around them (Maya's Edit Edge Flow). Each vertex lands "
+               "on a curve through the nearest unselected vertices across the loop, shaped by the vertices beyond them, and neighbouring "
+               "selected loops spread evenly between those, as subdividing would place them. Selected vertices off any chain, and "
+               "face selections, fit both directions across each vertex.",
         .flags = {{"adjustEdgeFlow", "", T::Float, 1.0, "0 flat between the neighbours, 1 on the curve, above 1 exaggerated, negative inverted."},
                   {"edgeFlow", "", T::Bool, true, "Shape the curve from the vertices beyond the neighbours; off, from the surface normals at the neighbours."},
                   {"tension", "", T::Float, 0.0, "Toward 1 flattens the curve, negative makes it fuller."},
                   {"loopSmooth", "", T::Float, 0.0, "Also smooth each loop along its length, 0 to 1, keeping its spacing."},
-                  {"iterations", "", T::Int, 1, "Passes, for neighbouring selected loops that shape each other."}},
+                  {"iterations", "", T::Int, 1, "Passes of Smooth Along Loop."}},
         .run = [](const Args& a) -> json {
             geo::EdgeFlowOptions o{a.get<double>("adjustEdgeFlow"), a.get<bool>("edgeFlow"), a.get<double>("tension"), a.get<double>("loopSmooth"),
                                    std::clamp(a.get<int>("iterations"), 1, 100)};

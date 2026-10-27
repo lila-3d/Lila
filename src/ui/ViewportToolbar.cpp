@@ -1098,6 +1098,17 @@ void ViewportBottomBar::buildSymmetryRow()
             refreshSymmetry();
         });
         menu->addSeparator();
+        QAction* symSelect = menu->addAction(labelOf("select.toggleSymmetric"));
+        symSelect->setCheckable(true);
+        symSelect->setChecked(PrefStore::get().value<bool>("general", "/select/symmetric", true));
+        connect(symSelect, &QAction::triggered, this, [] { actions::run("select.toggleSymmetric"); });
+        QAction* symmetrize = menu->addAction(labelOf("select.symmetrize"));
+        symmetrize->setEnabled(scene::components::mode() != scene::ComponentMode::Object);
+        connect(symmetrize, &QAction::triggered, this, [this] {
+            activateView();
+            actions::run("select.symmetrize");
+        });
+        menu->addSeparator();
         QAction* off = menu->addAction(labelOf("mesh.symmetryOff"));
         off->setEnabled(st.on > 0);
         connect(off, &QAction::triggered, this, [this] {

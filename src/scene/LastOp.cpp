@@ -495,7 +495,7 @@ std::string modifierEquivalent(const std::string& command)
 {
     static const std::map<std::string, std::string> kinds = {
         {"polyBevel", "bevel"},           {"polyExtrude", "extrude"},         {"polyMirror", "mirror"},
-        {"polySubdivide", "subdivision"}, {"polyTriangulate", "triangulate"}};
+        {"polySubdivide", "subdivision"}, {"polyTriangulate", "triangulate"}, {"polySplitRings", "splitRings"}};
     auto it = kinds.find(command);
     return it == kinds.end() ? std::string() : it->second;
 }
@@ -529,6 +529,8 @@ void makeNonDestructive()
     }
     else if (kind == "subdivision")
         params = {{"levels", value("levels")}};
+    else if (kind == "splitRings")
+        params = {{"count", value("count")}, {"direction", value("direction") == "across" ? 1 : 0}, {"edgeFlow", value("edgeFlow")}};
     // The modifier takes the selected faces or edges as addModifier creates it, once undo has put the selection back.
     else if (kind == "extrude")
     {

@@ -133,6 +133,19 @@ LILA_SCENE_API std::vector<double> edgeLoopFractions(const EdgeLoopOptions& opts
 LILA_SCENE_API std::vector<Index> insertEdgeLoop(Mesh& mesh, Index ringEdge, const EdgeLoopOptions& opts = {});
 
 /**
+ * Subdivides one way: count evenly spaced loops across each distinct ring through the edges (a ring given twice, or
+ * through its mirror image under symmetry, is cut once). Returns the new loop edges.
+ */
+LILA_SCENE_API std::vector<Index> splitRings(Mesh& mesh, std::span<const Index> ringEdges, int count = 1,
+                                             const SymmetryMap* symmetry = nullptr);
+
+/**
+ * One edge per quad of the faces, choosing its ring direction: across picks the ring that runs the region's short way
+ * (cutting it adds lines across a strip), along the long way. Ties go by the quad's own edge lengths.
+ */
+LILA_SCENE_API std::vector<Index> regionRingEdges(const Mesh& mesh, std::span<const Index> faces, bool across);
+
+/**
  * Splits faces between selected points that are consecutive (among the selected) around a face but not already
  * joined by an edge, Maya's Connect. Returns the new edges.
  */

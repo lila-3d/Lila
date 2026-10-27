@@ -16,6 +16,7 @@
 #include "scene/Graph.h"
 #include "scene/Instancing.h"
 #include "scene/MeshNodes.h"
+#include "scene/SplitRingsModifier.h"
 #include "scene/Transform.h"
 
 #include <map>
@@ -351,6 +352,7 @@ void baseRemapped(Graph& g, NodeId mesh, const geo::MeshRemap& remap, const geo:
 {
     autoBevel::baseRemapped(g, mesh, remap, base);
     extrudeModifier::baseRemapped(g, mesh, remap, base);
+    splitRingsModifier::baseRemapped(g, mesh, remap, base);
 }
 
 std::vector<NodeId> stack(Graph& g, NodeId mesh)
@@ -516,6 +518,7 @@ void registerTypes()
     }
     autoBevel::registerTypes();
     extrudeModifier::registerTypes();
+    splitRingsModifier::registerTypes();
     registerTransferModifier();
     registerBooleanModifier();
 }

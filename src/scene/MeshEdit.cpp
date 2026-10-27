@@ -1209,6 +1209,37 @@ void registerMeshEditCommands()
     });
 
     ops::registerCommand({
+        .name = "polySplitRings",
+        .doc = "Subdivide one way: insert loops across every ring through the selected edges, or across the selected faces in one "
+               "direction, without the perpendicular cuts a full subdivide adds. Returns the new edges.",
+        .flags = {{"count", "", T::Int, 1, "Loops per ring, evenly spaced."},
+                  {"direction", "", T::String, "along", "Faces: across adds lines across the selection's short way, along the long way.",
+                   {"across", "along"}},
+                  {"edgeFlow", "", T::Bool, true, "Curve the new loops to follow the surrounding surface rather than lie flat."}},
+        .run = [](const Args& a) -> json {
+            // Object mode splits whole meshes, read as every face so direction still picks the way.
+            const K mode = components::mode();
+            const K kind = mode == K::Face || mode == K::Object ? K::Face : K::Edge;
+            const int count = std::max(1, a.get<int>("count"));
+            const bool across = a.get<std::string>("direction") == "across";
+            const bool flow = a.get<bool>("edgeFlow");
+            return editSelected("Split Rings", kind, [&](geo::Mesh& m, const Ids& picked, const geo::SymmetryMap* s) {
+                Ids sel = picked;
+                if (sel.empty())
+                    for (Index f = 0; f < m.faceCapacity(); ++f)
+                        if (m.faceValid(f))
+                            sel.push_back(f);
+                const Ids ringEdges = kind == K::Face ? geo::regionRingEdges(m, sel, across) : sel;
+                const Ids made = geo::splitRings(m, ringEdges, count, s);
+                if (flow && !made.empty())
+                    for (const geo::PointMove& mv : geo::editEdgeFlow(m, made, {}))
+                        m.setPosition(mv.point, mv.position);
+                return edges(made);
+            }, true);
+        },
+    });
+
+    ops::registerCommand({
         .name = "polyOffsetLoop",
         .doc = "Insert an edge loop either side of the selected edges, parallel to them (Maya's Offset Edge Loop). Partial loops end on "
                "a border, or inside the mesh by meeting at the end vertex or wrapping round it. Returns the new edges.",
@@ -2588,7 +2619,7 @@ void registerMeshEditCommands()
         },
     });
 
-    for (const char* name : {"polyExtrude", "polyInset", "polyBevel", "polyInsertLoop", "polyOffsetLoop", "polyMerge", "polyBridge", "polyQuadrangulate",
+    for (const char* name : {"polyExtrude", "polyInset", "polyBevel", "polyInsertLoop", "polySplitRings", "polyOffsetLoop", "polyMerge", "polyBridge", "polyQuadrangulate",
                              "polySubdivide", "polyMirror", "polyTriangulate", "polyReduce", "polySoftEdge"})
         ops::setAdjustable(name);
     {
@@ -2596,6 +2627,10 @@ void registerMeshEditCommands()
         opt::Override loop;
         loop.ranges = {{"fraction", {0.0, 1.0, 0.01, ""}}, {"count", {1.0, 32.0, 1.0, ""}}, {"spacing", {0.0, 2.0, 0.05, ""}}};
         opt::setOverride("polyInsertLoop", std::move(loop));
+        opt::Override rings;
+        rings.ranges = {{"count", {1.0, 32.0, 1.0, ""}}};
+        rings.labels = {{"edgeFlow", "Adjust Edge Flow"}};
+        opt::setOverride("polySplitRings", std::move(rings));
         opt::Override offset;
         offset.ranges = {{"distance", {0.0, 1e6, 0.01, ""}}};
         offset.labels = {{"absolute", "Distance in cm"}, {"deleteEdge", "Delete Selected Edges"}};

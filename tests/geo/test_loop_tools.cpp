@@ -5,7 +5,9 @@
 #include "geo/Primitives.h"
 #include "geo/Symmetry.h"
 
+#include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <vector>
 
 using namespace lila::geo;
@@ -202,4 +204,132 @@ TEST_CASE("edit edge flow selections of points")
             patch.push_back(pointAt(m, {x, 0, z}));
     flowSelectionOfPoints(m, patch, edges, loose);
     CHECK(loose.size() == 9);
+}
+
+TEST_CASE("edit edge flow moves neighbouring loops together")
+{
+    // Three flat columns side by side in a parabola across x: each curves from the unselected columns past them.
+    Mesh m = makePlane({200, 200, 8, 8});
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+    {
+        glm::dvec3 q = m.position(p);
+        q.y = std::abs(q.x) < 30.0 ? 0.0 : 10.0 - q.x * q.x / 250.0;
+        m.setPosition(p, q);
+    }
+    std::vector<Index> loops;
+    for (double x : {-25.0, 0.0, 25.0})
+        std::ranges::copy(columnEdges(m, x, -100.0, 100.0), std::back_inserter(loops));
+    PointMoves moves = editEdgeFlow(m, loops, {}, {});
+    auto heightAt = [&](double x) {
+        for (const PointMove& mv : moves)
+            if (std::abs(m.position(mv.point).x - x) < 1e-9 && std::abs(m.position(mv.point).z) < 1e-9)
+                return mv.position.y;
+        return -1e9;
+    };
+    CHECK(heightAt(0.0) > 8.0);
+    CHECK(heightAt(25.0) > 5.0);
+    CHECK(heightAt(25.0) < heightAt(0.0));
+    CHECK(heightAt(-25.0) == doctest::Approx(heightAt(25.0)));
+}
+
+TEST_CASE("split rings subdivides one way")
+{
+    Mesh m = makePlane({100, 100, 4, 4});
+    const std::vector<Index> column = columnEdges(m, 0.0, -50.0, 50.0);
+    std::vector<Index> made = splitRings(m, column);
+    CHECK(isValid(m));
+    CHECK(m.numFaces() == 32);
+    CHECK(made.size() == 16);
+    CHECK(pointAt(m, {0, 0, -37.5}) != kInvalid);
+    CHECK(pointAt(m, {-37.5, 0, 0}) == kInvalid);
+
+    // Two edges of one ring cut it once.
+    Mesh once = makePlane({100, 100, 4, 4});
+    splitRings(once, std::vector<Index>{columnEdges(once, 0.0, -50.0, -25.0)[0], columnEdges(once, 25.0, -50.0, -25.0)[0]}, 2);
+    CHECK(isValid(once));
+    CHECK(once.numFaces() == 24);
+
+    // Faces: a strip along x gets lines across it, through whole rings.
+    Mesh strip = makePlane({100, 100, 4, 4});
+    std::vector<Index> row;
+    for (Index f = 0; f < strip.faceCapacity(); ++f)
+        if (strip.faceValid(f) && std::abs(strip.faceCentroid(f).z - 12.5) < 1e-6)
+            row.push_back(f);
+    REQUIRE(row.size() == 4);
+    splitRings(strip, regionRingEdges(strip, row, true));
+    CHECK(isValid(strip));
+    CHECK(strip.numFaces() == 32);
+    CHECK(pointsAtX(strip, 12.5) == 5);
+    Mesh along = makePlane({100, 100, 4, 4});
+    splitRings(along, regionRingEdges(along, row, false));
+    CHECK(along.numFaces() == 20);
+    CHECK(pointAt(along, {0, 0, 12.5}) != kInvalid);
+}
+
+TEST_CASE("split rings follows symmetry")
+{
+    Mesh m = makePlane({100, 100, 4, 4});
+    const SymmetryMap sym = SymmetryMap::build(m);
+    const Index left = m.findEdge(pointAt(m, {-50, 0, 0}), pointAt(m, {-25, 0, 0}));
+    const Index right = m.findEdge(pointAt(m, {25, 0, 0}), pointAt(m, {50, 0, 0}));
+    splitRings(m, std::vector<Index>{left, right}, 1, &sym);
+    CHECK(isValid(m));
+    CHECK(m.numFaces() == 24);
+    CHECK(pointsAtX(m, -37.5) == 5);
+    CHECK(pointsAtX(m, 37.5) == 5);
+    CHECK(mirrored(m));
+}
+
+TEST_CASE("edit edge flow centres a loop on a band curving in its own plane")
+{
+    // A flat 4 x 4 plane bent into an annulus sector: x is the radius from 200, z the angle at 15 degrees per 25 cm.
+    auto annulus = [](double x, double z) {
+        const double r = 200.0 + x, a = glm::radians(z / 25.0 * 15.0);
+        return glm::dvec3(r * std::cos(a), 0.0, r * std::sin(a));
+    };
+    Mesh m = makePlane({100, 100, 4, 4});
+    const std::vector<Index> loop = columnEdges(m, 0.0, -50.0, 50.0);
+    std::vector<glm::dvec3> uv(m.pointCapacity());
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        uv[p] = m.position(p);
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        m.setPosition(p, annulus(uv[p].x, uv[p].z));
+    // The z = 0 row pressed onto the chords toward one neighbour: off the arc and off centre.
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        if (std::abs(uv[p].z) < 1e-9)
+            m.setPosition(p, glm::mix(annulus(uv[p].x, -25.0), annulus(uv[p].x, 25.0), 0.3));
+    std::vector<Index> row;
+    for (Index e = 0; e < m.edgeCapacity(); ++e)
+        if (m.edgeValid(e) && std::abs(uv[m.edgePoint(e, 0)].z) < 1e-9 && std::abs(uv[m.edgePoint(e, 1)].z) < 1e-9)
+            row.push_back(e);
+    REQUIRE(row.size() == 4);
+    for (const PointMove& mv : editEdgeFlow(m, row, {}, {}))
+    {
+        CHECK(std::abs(std::atan2(mv.position.z, mv.position.x)) < 1e-9);
+        CHECK(glm::length(mv.position) == doctest::Approx(200.0 + uv[mv.point].x).epsilon(1e-9));
+    }
+}
+
+TEST_CASE("edit edge flow spreads split rings as subdivision would")
+{
+    // An open 12-sided cylinder, every column split twice: the new points land evenly on the circle.
+    Mesh m = makeCylinder({.radius = 100.0, .height = 100.0, .subdivAxis = 12, .caps = false});
+    std::vector<Index> bottom;
+    for (Index e = 0; e < m.edgeCapacity(); ++e)
+        if (m.edgeValid(e) && m.position(m.edgePoint(e, 0)).y < -49.0 && m.position(m.edgePoint(e, 1)).y < -49.0)
+            bottom.push_back(e);
+    REQUIRE(bottom.size() == 12);
+    const std::vector<Index> made = splitRings(m, bottom, 2);
+    CHECK(isValid(m));
+    const PointMoves moves = editEdgeFlow(m, made, {}, {});
+    CHECK(moves.size() == 2 * 2 * 12);
+    for (const PointMove& mv : moves)
+    {
+        CHECK(std::hypot(mv.position.x, mv.position.z) == doctest::Approx(100.0).epsilon(1e-9));
+        m.setPosition(mv.point, mv.position);
+    }
+    // Every edge round the circle is the same length.
+    for (Index e = 0; e < m.edgeCapacity(); ++e)
+        if (m.edgeValid(e) && std::abs(m.position(m.edgePoint(e, 0)).y - m.position(m.edgePoint(e, 1)).y) < 1e-9)
+            CHECK(m.edgeLength(e) == doctest::Approx(2.0 * 100.0 * std::sin(glm::radians(5.0))).epsilon(1e-9));
 }

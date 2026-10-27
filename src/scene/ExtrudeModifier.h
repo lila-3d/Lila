@@ -62,6 +62,15 @@ struct Resolved
 /** Evaluates the graph. Empty when the modifier has no input. */
 LILA_SCENE_API std::optional<Resolved> resolve(Graph& g, NodeId modifier);
 
+/** Finds stored components on m; none stored means every face. */
+LILA_SCENE_API Resolved resolveComponents(const geo::Mesh& m, const ExtrudeComponents* c);
+
+/** The mesh's selected faces, or edges in edge mode, with their mirror images under symmetry; null in object mode or with none. */
+LILA_SCENE_API DataPtr selectedComponents(Graph& g, NodeId mesh);
+
+/** c moved to base's ids after a compaction, or null when c was taken on other topology. */
+LILA_SCENE_API DataPtr remapComponents(const ExtrudeComponents* c, const geo::MeshRemap& remap, const geo::Mesh& base);
+
 /** A direct edit compacted the base mesh: the components of an extrudeModifier first in the stack follow to the new ids. */
 LILA_SCENE_API void baseRemapped(Graph& g, NodeId mesh, const geo::MeshRemap& remap, const geo::Mesh& base);
 

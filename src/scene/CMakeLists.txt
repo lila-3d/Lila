@@ -32,6 +32,7 @@ lila_module(lila_scene Scene
     DisplayLayers.cpp
     EditSkeleton.cpp
     ExtrudeModifier.cpp ExtrudeModifier.h
+    SplitRingsModifier.cpp SplitRingsModifier.h
     AutoPose.cpp AutoPose.h
     FullBodyIk.cpp FullBodyIk.h
     Fracture.cpp Fracture.h

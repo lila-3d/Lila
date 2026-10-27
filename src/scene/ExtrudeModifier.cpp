@@ -95,10 +95,15 @@ bool sameTopology(const geo::Mesh& m, const ExtrudeComponents& c)
 
 extrudeModifier::Resolved resolveOn(const geo::Mesh& m, const Node& n)
 {
+    return extrudeModifier::resolveComponents(m, dynamic_cast<const ExtrudeComponents*>(n.as<DataPtr>(kComponents).get()));
+}
+} // namespace
+
+extrudeModifier::Resolved extrudeModifier::resolveComponents(const geo::Mesh& m, const ExtrudeComponents* c)
+{
     LILA_ZONE();
 
     extrudeModifier::Resolved r;
-    auto* c = dynamic_cast<const ExtrudeComponents*>(n.as<DataPtr>(kComponents).get());
     if (!c)
     {
         for (Index f = 0; f < m.faceCapacity(); ++f)
@@ -140,6 +145,8 @@ extrudeModifier::Resolved resolveOn(const geo::Mesh& m, const Node& n)
     return r;
 }
 
+namespace
+{
 void ExtrudeModifierNode::compute(const EvalContext&)
 {
     LILA_ZONE();
@@ -193,13 +200,26 @@ geo::EdgeRef edgeRefFromJson(const json& j)
 /** addModifier's hook: the new modifier takes the mesh's selected faces, or edges in edge mode, with their mirror images under symmetry. */
 void takeSelection(Graph& g, Node& mod, NodeId mesh)
 {
+    if (DataPtr c = extrudeModifier::selectedComponents(g, mesh))
+        g.setValue({mod.id(), kComponents, -1}, c);
+}
+
+AttrDef param(std::string name, PlugType type, PlugValue def, std::string doc)
+{
+    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable | AttrKeyable,
+            .doc = std::move(doc)};
+}
+} // namespace
+
+DataPtr extrudeModifier::selectedComponents(Graph& g, NodeId mesh)
+{
     const ComponentMode mode = components::mode();
     if (mode == ComponentMode::Object)
-        return;
+        return nullptr;
     const components::Ids& sel = components::selected(mesh, mode);
     MeshPtr cage = sel.empty() ? nullptr : modifiers::cage(g, mesh);
     if (!cage)
-        return;
+        return nullptr;
     const bool edges = mode == ComponentMode::Edge;
     std::vector<Index> ids = components::convert(*cage, mode, sel, edges ? ComponentMode::Edge : ComponentMode::Face);
     Node& n = *g.node(mesh);
@@ -210,15 +230,8 @@ void takeSelection(Graph& g, Node& mod, NodeId mesh)
         geo::SymmetryMap map = geo::SymmetryMap::persistent(copy, int(axis - 1), tolerance, nullptr, symmetryOffset(n, int(axis - 1)));
         ids = edges ? map.expandEdges(copy, ids) : map.expandFaces(copy, ids);
     }
-    g.setValue({mod.id(), kComponents, -1}, DataPtr(ExtrudeComponents::take(*cage, edges, ids)));
+    return ExtrudeComponents::take(*cage, edges, ids);
 }
-
-AttrDef param(std::string name, PlugType type, PlugValue def, std::string doc)
-{
-    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable | AttrKeyable,
-            .doc = std::move(doc)};
-}
-} // namespace
 
 json ExtrudeComponents::toJson() const
 {
@@ -285,10 +298,15 @@ void baseRemapped(Graph& g, NodeId mesh, const geo::MeshRemap& remap, const geo:
     if (s.empty() || !isExtrude(*g.node(s.front())))
         return;
     Node& mod = *g.node(s.front());
-    auto* c = dynamic_cast<const ExtrudeComponents*>(mod.as<DataPtr>(kComponents).get());
+    if (DataPtr next = remapComponents(dynamic_cast<const ExtrudeComponents*>(mod.as<DataPtr>(kComponents).get()), remap, base))
+        g.setValue({mod.id(), kComponents, -1}, next);
+}
+
+DataPtr remapComponents(const ExtrudeComponents* c, const geo::MeshRemap& remap, const geo::Mesh& base)
+{
     // Ids taken on some other topology were already matched by position; the remap can't say where they went.
     if (!c || c->faceCount > remap.faces.size() || c->edgeCount > remap.edges.size())
-        return;
+        return nullptr;
     auto next = std::make_shared<ExtrudeComponents>(*c);
     next->pointCount = base.pointCapacity();
     next->edgeCount = base.edgeCapacity();
@@ -310,7 +328,7 @@ void baseRemapped(Graph& g, NodeId mesh, const geo::MeshRemap& remap, const geo:
         else
             r = geo::edgeRef(base, e);
     }
-    g.setValue({mod.id(), kComponents, -1}, DataPtr(next));
+    return next;
 }
 
 void registerTypes()

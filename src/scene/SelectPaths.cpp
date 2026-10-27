@@ -50,9 +50,9 @@ Op opArg(const Args& a, Op fallback)
     return fallback;
 }
 
-void selectAndShow(NodeId node, ComponentMode kind, const Ids& ids, Op op)
+void selectAndShow(NodeId node, ComponentMode kind, const Ids& ids, Op op, const Args& a)
 {
-    select(node, kind, ids, op);
+    select(node, kind, a.get<bool>("symmetric") ? withSymmetry(node, kind, ids) : ids, op);
     setMode(kind);
 }
 
@@ -103,6 +103,7 @@ void registerPathCommands()
         {"add", "", T::Bool, false, "Add to the selection."},
         {"deselect", "", T::Bool, false, "Remove from the selection."},
         {"toggle", "", T::Bool, false, "Toggle."},
+        {"symmetric", "", T::Bool, false, "Also the mirror images, when the mesh's symmetry is on."},
     };
 
     std::vector<FlagDef> loopFlags = {
@@ -129,7 +130,7 @@ void registerPathCommands()
             Ids ids = faces ? geo::faceLoop(*t.mesh, e) : ring ? geo::edgeRing(*t.mesh, e) : geo::edgeLoop(*t.mesh, e);
             ids = isolation::clipLoop(*t.mesh, isolation::activeVisibility(t.node, *t.mesh), ids, e, faces ? ComponentMode::Face : ComponentMode::Edge, ring);
             UndoChunk chunk("Select Loop");
-            selectAndShow(t.node, faces ? ComponentMode::Face : ComponentMode::Edge, ids, opArg(a, Op::Replace));
+            selectAndShow(t.node, faces ? ComponentMode::Face : ComponentMode::Edge, ids, opArg(a, Op::Replace), a);
             return ids;
         },
     });
@@ -187,7 +188,7 @@ void registerPathCommands()
             Ids ids = faces.empty() ? Ids{id} : convert(m, ComponentMode::Face, faces, kind);
             ids = isolation::visibleOnly(isolation::activeVisibility(t.node, m), kind, std::move(ids));
             UndoChunk chunk("Select Connected");
-            selectAndShow(t.node, kind, ids, opArg(a, Op::Replace));
+            selectAndShow(t.node, kind, ids, opArg(a, Op::Replace), a);
             return ids;
         },
     });
@@ -204,6 +205,7 @@ void registerPathCommands()
             {"to", "", T::Int, nullptr, "Id the path ends at."},
             {"replace", "", T::Bool, false, "Replace the selection of that kind."},
             {"deselect", "", T::Bool, false, "Remove the path from the selection."},
+            {"symmetric", "", T::Bool, false, "Also the mirror images, when the mesh's symmetry is on."},
         },
         .run = [](const Args& a) -> json {
             Target t = meshArg(a, "selectPathBetween");
@@ -230,7 +232,7 @@ void registerPathCommands()
                 throw CommandError("selectPathBetween: no path between " + std::to_string(from) + " and " + std::to_string(to));
             Op op = a.get<bool>("deselect") ? Op::Remove : a.get<bool>("replace") ? Op::Replace : Op::Add;
             UndoChunk chunk("Select Path");
-            selectAndShow(t.node, kind, path, op);
+            selectAndShow(t.node, kind, path, op, a);
             return path;
         },
     });

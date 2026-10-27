@@ -111,6 +111,7 @@ def addModifier(*objects: Any, kind: str | None = None, params: Any | None = Non
     - extrude: Extrudes faces, or grows strips off edges, kept live: the faces or edges selected when it was added follow later edits under it, and its thickness and offset stay adjustable. Without a selection it extrudes every face.
     - mirror: Adds a mirrored copy across a plane through the object's origin and welds the seam. Model one half of a symmetrical object and let this build the other.
     - solidify: Gives a surface thickness: an inner shell offset along the normals, joined to the outer one at open borders. Use it to turn planes and open shells into solid panels.
+    - splitRings: Subdivides one way, kept live: loops across the rings of the edges or faces selected when it was added, curved to the surface. Without a selection it splits the whole mesh.
     - subdivision: Smooths the mesh with Catmull-Clark subdivision. Use it to turn a low-poly cage into a smooth high-poly surface.
     - surfaceFlow: Flows the mesh onto a surface (FlowAlongSrf): its XZ footprint maps onto the surface's UV rectangle, or a rectangular patch of quads, and its height follows the surface normal. Editing or moving the surface updates it.
     - transferAttributes: Transfer Attributes kept live: copies UVs, normals, color sets, positions or named layers from a source mesh, so editing or moving the source updates this mesh without baking. Apply bakes the result.
@@ -4760,14 +4761,14 @@ def polyEdgeToCurve(*objects: Any, type: str | None = None, degree: int | None =
     """
 
 def polyEditEdgeFlow(adjustEdgeFlow: float | None = None, edgeFlow: bool | None = None, tension: float | None = None, loopSmooth: float | None = None, iterations: int | None = None) -> Any:
-    """Move the selected edge loops' vertices square to the loops so they follow the curvature of the surface around them (Maya's Edit Edge Flow). Each vertex lands on a curve through its neighbours across the loop, shaped by the vertices beyond them. Selected vertices off any chain, and face selections, fit both directions across each vertex.
+    """Move the selected edge loops onto the curvature of the surface around them (Maya's Edit Edge Flow). Each vertex lands on a curve through the nearest unselected vertices across the loop, shaped by the vertices beyond them, and neighbouring selected loops spread evenly between those, as subdividing would place them. Selected vertices off any chain, and face selections, fit both directions across each vertex.
 
     Args:
         adjustEdgeFlow: 0 flat between the neighbours, 1 on the curve, above 1 exaggerated, negative inverted. Default 1.0.
         edgeFlow: Shape the curve from the vertices beyond the neighbours; off, from the surface normals at the neighbours. Default True.
         tension: Toward 1 flattens the curve, negative makes it fuller. Default 0.0.
         loopSmooth: Also smooth each loop along its length, 0 to 1, keeping its spacing. Default 0.0.
-        iterations: Passes, for neighbouring selected loops that shape each other. Default 1.
+        iterations: Passes of Smooth Along Loop. Default 1.
     """
 
 def polyExtract() -> Any:
@@ -5005,6 +5006,15 @@ def polySpherize(amount: float | None = None, fit: str | None = None, radiusMode
 
 def polySpinEdge() -> Any:
     """Turn each selected edge one step within its two faces."""
+
+def polySplitRings(count: int | None = None, direction: str | None = None, edgeFlow: bool | None = None) -> Any:
+    """Subdivide one way: insert loops across every ring through the selected edges, or across the selected faces in one direction, without the perpendicular cuts a full subdivide adds. Returns the new edges.
+
+    Args:
+        count: Loops per ring, evenly spaced. Default 1.
+        direction: Faces: across adds lines across the selection's short way, along the long way. One of 'across', 'along'. Default 'along'.
+        edgeFlow: Curve the new loops to follow the surrounding surface rather than lie flat. Default True.
+    """
 
 def polyStraighten(spacing: str | None = None, fitLine: bool | None = None, strength: float | None = None) -> Any:
     """Straighten the selected edge chains (or chains of selected vertices) into lines between their ends. Several separate chains straighten separately; closed loops are left alone. Vertices with no edges between them line up on their best-fit line.
@@ -6066,7 +6076,7 @@ def selectByMaterial(*objects: Any, faces: bool | None = None, f: bool | None = 
         faces: Select the assigned faces instead of whole objects. Short form f. Default False.
     """
 
-def selectComponents(*objects: Any, vertices: Sequence[Any] | None = None, edges: Sequence[Any] | None = None, faces: Sequence[Any] | None = None, add: bool | None = None, deselect: bool | None = None, toggle: bool | None = None) -> Any:
+def selectComponents(*objects: Any, vertices: Sequence[Any] | None = None, edges: Sequence[Any] | None = None, faces: Sequence[Any] | None = None, add: bool | None = None, deselect: bool | None = None, toggle: bool | None = None, symmetric: bool | None = None) -> Any:
     """Select vertices, edges or faces of a mesh by id. Ids may be [first, last] ranges. Without add/deselect/toggle it replaces the selection of that kind.
 
     Args:
@@ -6077,6 +6087,7 @@ def selectComponents(*objects: Any, vertices: Sequence[Any] | None = None, edges
         add: Add to the selection. Default False.
         deselect: Remove from the selection. Default False.
         toggle: Toggle. Default False.
+        symmetric: Also the mirror images, when the mesh's symmetry is on. Default False.
     """
 
 def selectComponentsWhere(*objects: Any, kind: str | None = None, normal: Sequence[float] | None = None, angle: float | None = None, side: str | None = None, box: Sequence[Any] | None = None, direction: Sequence[float] | None = None, near: Sequence[float] | None = None, radius: float | None = None, extreme: str | None = None, count: int | None = None, border: bool | None = None, shell: int | None = None, fromSelection: bool | None = None, tolerance: float | None = None, add: bool | None = None, deselect: bool | None = None, k: str | None = None, n: Sequence[float] | None = None, s: str | None = None, b: Sequence[Any] | None = None, dir: Sequence[float] | None = None, r: float | None = None, x: str | None = None, c: int | None = None, fs: bool | None = None, t: float | None = None) -> Any:
@@ -6102,7 +6113,7 @@ def selectComponentsWhere(*objects: Any, kind: str | None = None, normal: Sequen
         deselect: Remove the matches from the selection. Default False.
     """
 
-def selectConnected(*objects: Any, kind: str | None = None, id: int | None = None, add: bool | None = None, deselect: bool | None = None, toggle: bool | None = None) -> Any:
+def selectConnected(*objects: Any, kind: str | None = None, id: int | None = None, add: bool | None = None, deselect: bool | None = None, toggle: bool | None = None, symmetric: bool | None = None) -> Any:
     """Select every component of a kind on the connected piece (faces joined through shared edges) that one component belongs to. Without add/deselect/toggle it replaces the selection of that kind. Returns the ids.
 
     Args:
@@ -6112,6 +6123,7 @@ def selectConnected(*objects: Any, kind: str | None = None, id: int | None = Non
         add: Add to the selection. Default False.
         deselect: Remove from the selection. Default False.
         toggle: Toggle. Default False.
+        symmetric: Also the mirror images, when the mesh's symmetry is on. Default False.
     """
 
 def selectContainedFaces(larger: bool | None = None) -> Any:
@@ -6168,7 +6180,7 @@ def selectLoop(ring: bool | None = None) -> Any:
         ring: Select rings instead of loops. Faces have no ring and take their loops. Default False.
     """
 
-def selectLoopThrough(*objects: Any, edge: int | None = None, ring: bool | None = None, faces: bool | None = None, add: bool | None = None, deselect: bool | None = None, toggle: bool | None = None) -> Any:
+def selectLoopThrough(*objects: Any, edge: int | None = None, ring: bool | None = None, faces: bool | None = None, add: bool | None = None, deselect: bool | None = None, toggle: bool | None = None, symmetric: bool | None = None) -> Any:
     """Select the edge loop (or ring) through one edge of a mesh, or with faces=True the face loop crossing it. Without add/deselect/toggle it replaces the selection of that kind. Returns the ids.
 
     Args:
@@ -6179,6 +6191,7 @@ def selectLoopThrough(*objects: Any, edge: int | None = None, ring: bool | None 
         add: Add to the selection. Default False.
         deselect: Remove from the selection. Default False.
         toggle: Toggle. Default False.
+        symmetric: Also the mirror images, when the mesh's symmetry is on. Default False.
     """
 
 def selectMode(*objects: Any) -> Any:
@@ -6188,7 +6201,7 @@ def selectMode(*objects: Any) -> Any:
         objects: [mode].
     """
 
-def selectPathBetween(*objects: Any, kind: str | None = None, to: int | None = None, replace: bool | None = None, deselect: bool | None = None, **flags: Any) -> Any:
+def selectPathBetween(*objects: Any, kind: str | None = None, to: int | None = None, replace: bool | None = None, deselect: bool | None = None, symmetric: bool | None = None, **flags: Any) -> Any:
     """Select the components between two of a mesh's vertices, edges or faces: the shorter way along a loop or ring they share, else the shortest path across the surface. Neighbours (vertices on one edge, edges along a loop or across a quad, faces sharing an edge) select the whole loop or ring through both instead. Adds to the selection unless replace or deselect. Returns the ids in order.
 
     Args:
@@ -6198,6 +6211,7 @@ def selectPathBetween(*objects: Any, kind: str | None = None, to: int | None = N
         to: Id the path ends at.
         replace: Replace the selection of that kind. Default False.
         deselect: Remove the path from the selection. Default False.
+        symmetric: Also the mirror images, when the mesh's symmetry is on. Default False.
     """
 
 def selectSetMembers(*objects: Any, add: bool | None = None) -> Any:
@@ -6995,6 +7009,9 @@ def symmetrizeRadial(*objects: Any, count: int | None = None, radialAxis: str | 
         wedge: The wedge that is kept; -1: the one most of the selected components are in, else the one holding most of the mesh. Default -1.
         tolerance: Weld distance along the seams and the axis, cm (0: scaled to the mesh). Default 0.0.
     """
+
+def symmetrizeSelection() -> Any:
+    """Add the mirror images of the component selection, on each mesh whose symmetry is on."""
 
 def symmetryCheck(*objects: Any) -> Any:
     """Report how symmetric meshes are across their symmetry plane (or round their radial axis): the largest distance between a point and its partner's reflection (or its orbit's image), and the points without a partner. For radial symmetry also the unmatched point ids and the count the mesh fits best. Changes nothing.

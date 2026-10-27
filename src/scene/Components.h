@@ -58,6 +58,8 @@ enum class Op
 /** Changes one node's selection of one kind. Replace clears that kind on every other node first. */
 LILA_SCENE_API void select(NodeId node, ComponentMode kind, const Ids& ids, Op op = Op::Replace);
 LILA_SCENE_API void clear();
+/** ids with their mirror images added when the mesh node's symmetry is on; ids unchanged otherwise. */
+LILA_SCENE_API Ids withSymmetry(NodeId node, ComponentMode kind, const Ids& ids);
 /** Replaces everything at once, as one undo step. */
 LILA_SCENE_API void setAll(std::map<NodeId, Ids> points, std::map<NodeId, Ids> edges, std::map<NodeId, Ids> faces);
 

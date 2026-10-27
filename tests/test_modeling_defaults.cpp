@@ -177,3 +177,59 @@ TEST_CASE("merging exactly two vertices ignores the distance")
     run("polyMerge");
     CHECK(run("meshInfo", {{"args", {plane}}})["points"].get<int>() == 4);
 }
+
+TEST_CASE("symmetric selection picks the mirror images")
+{
+    run("newScene");
+    std::string plane = run("polyPlane", {{"width", 100.0}, {"depth", 100.0}, {"subdivisionsX", 4}, {"subdivisionsZ", 1}})[0];
+    auto selectedFaces = [&] {
+        const json sel = run("componentSelection");
+        return sel.empty() ? size_t(0) : sel.begin()->value("faces", json::array()).size();
+    };
+    run("selectComponents", {{"args", {plane}}, {"faces", {0}}, {"symmetric", true}});
+    CHECK(selectedFaces() == 1);
+    run("setSymmetry", {{"args", {plane}}, {"axis", "x"}});
+    run("selectComponents", {{"args", {plane}}, {"faces", {0}}, {"symmetric", true}});
+    CHECK(selectedFaces() == 2);
+    run("selectComponents", {{"args", {plane}}, {"faces", {1}}});
+    run("symmetrizeSelection");
+    CHECK(selectedFaces() == 2);
+    run("polySplitRings", {{"count", 1}});
+    CHECK(run("symmetryCheck", {{"args", {plane}}})[plane]["unmatched"].get<int>() == 0);
+}
+
+TEST_CASE("polySplitRings in object mode splits the whole mesh")
+{
+    run("newScene");
+    std::string plane = run("polyPlane", {{"width", 400.0}, {"depth", 100.0}, {"subdivisionsX", 4}, {"subdivisionsZ", 1}})[0];
+    run("select", {{"args", {plane}}});
+    run("selectMode", {{"args", {"object"}}});
+    auto points = [&] { return run("meshInfo", {{"args", {plane}}})["points"].get<int>(); };
+    // Along the strip: one loop down its length. Across: one per column.
+    run("polySplitRings");
+    CHECK(faces(plane) == 8);
+    CHECK(points() == 15);
+    run("undo");
+    run("select", {{"args", {plane}}});
+    run("selectMode", {{"args", {"object"}}});
+    run("polySplitRings", {{"direction", "across"}});
+    CHECK(points() == 18);
+}
+
+TEST_CASE("splitRings modifier splits live, on the selection or the whole mesh")
+{
+    run("newScene");
+    std::string plane = run("polyPlane", {{"width", 400.0}, {"depth", 100.0}, {"subdivisionsX", 4}, {"subdivisionsZ", 1}})[0];
+    run("select", {{"args", {plane}}});
+    run("selectMode", {{"args", {"object"}}});
+    std::string whole = run("addModifier", {{"args", {plane}}, {"kind", "splitRings"}}).get<std::string>();
+    CHECK(faces(plane) == 8);
+    run("setAttr", {{"args", {whole + ".count", 3}}});
+    CHECK(faces(plane) == 16);
+    run("undo");
+    run("undo");
+
+    run("selectComponents", {{"args", {plane}}, {"edges", {0}}});
+    run("addModifier", {{"args", {plane}}, {"kind", "splitRings"}});
+    CHECK(faces(plane) == 5);
+}

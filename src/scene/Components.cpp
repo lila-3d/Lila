@@ -551,6 +551,25 @@ Ids allIds(const geo::Mesh& m, ComponentMode k)
 }
 } // namespace
 
+Ids withSymmetry(NodeId node, ComponentMode kind, const Ids& ids)
+{
+    Graph& g = Graph::current();
+    const Node* n = g.node(node);
+    if (!n || ids.empty() || kind == ComponentMode::Object || !n->type().isA("mesh"))
+        return ids;
+    const MeshPtr cage = modifiers::cage(g, node);
+    if (!cage)
+        return ids;
+    geo::Mesh m = *cage;
+    const std::optional<geo::SymmetryMap> map = symmetryMapFor(*n, m);
+    if (!map || map->empty())
+        return ids;
+    Ids out = kind == ComponentMode::Vertex ? map->expandPoints(ids) : kind == ComponentMode::Edge ? map->expandEdges(m, ids) : map->expandFaces(m, ids);
+    std::ranges::sort(out);
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
 void registerCommands()
 {
     using T = ArgType;
@@ -592,6 +611,7 @@ void registerCommands()
             {"add", "", T::Bool, false, "Add to the selection."},
             {"deselect", "", T::Bool, false, "Remove from the selection."},
             {"toggle", "", T::Bool, false, "Toggle."},
+            {"symmetric", "", T::Bool, false, "Also the mirror images, when the mesh's symmetry is on."},
         },
         .run = [](const Args& a) -> json {
             auto objs = a.objects();
@@ -607,13 +627,29 @@ void registerCommands()
             for (auto [flag, kind] : {std::pair{"vertices", ComponentMode::Vertex}, {"edges", ComponentMode::Edge}, {"faces", ComponentMode::Face}})
                 if (a.has(flag))
                 {
-                    select(n.id(), kind, idsArg(a.flags[flag]), op);
+                    const Ids ids = idsArg(a.flags[flag]);
+                    select(n.id(), kind, a.get<bool>("symmetric") ? withSymmetry(n.id(), kind, ids) : ids, op);
                     if (mode() == ComponentMode::Object || !any)
                         setMode(kind);
                     any = true;
                 }
             if (!any)
                 throw CommandError("selectComponents: give vertices=, edges= or faces=");
+            return nullptr;
+        },
+    });
+
+    ops::registerCommand({
+        .name = "symmetrizeSelection",
+        .doc = "Add the mirror images of the component selection, on each mesh whose symmetry is on.",
+        .run = [](const Args&) -> json {
+            const ComponentMode kind = mode();
+            if (kind == ComponentMode::Object)
+                throw CommandError("symmetrizeSelection: select components");
+            UndoChunk chunk("Symmetrize Selection");
+            const std::map<NodeId, Ids> current = selected(kind);
+            for (const auto& [node, ids] : current)
+                select(node, kind, withSymmetry(node, kind, ids), Op::Add);
             return nullptr;
         },
     });

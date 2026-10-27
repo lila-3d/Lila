@@ -5,6 +5,8 @@
 
 #include "core/Profile.h"
 
+#include <glm/gtc/constants.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -360,22 +362,69 @@ std::vector<Index> offsetEdgeLoops(Mesh& mesh, std::span<const Index> edges, con
 
 namespace looptools
 {
-/** A line across a loop point: its neighbours a and b either side, and the points beyond them (kInvalid when none). */
+/**
+ * A line across a loop point: the anchors a and b either side, the points beyond them (kInvalid when none), and where
+ * the point goes between the anchors, by its count of edges to each so moving points spread evenly.
+ */
 struct Across
 {
     Index a = kInvalid, b = kInvalid, a2 = kInvalid, b2 = kInvalid;
-    /** Directions the point must not slide along: the loop's own, or the other line's for a loose point. */
-    glm::dvec3 keep{0.0};
+    double t = 0.5;
 };
 
-/** The point beyond q along the line from p through q. */
-Index beyond(const Mesh& m, Index rung, Index q, Index p)
+struct Anchor
 {
-    const Index next = edgeLoopNext(m, rung, q);
-    if (next == kInvalid)
-        return kInvalid;
-    const Index r = m.edgeOtherPoint(next, q);
-    return r == p ? kInvalid : r;
+    Index point = kInvalid, beyond = kInvalid;
+    int steps = 0;
+};
+
+/** The first point past q, on the line from p through q, that is not in sel: moving points shape no tangent. */
+Index beyondSelected(const Mesh& m, Index rung, Index q, Index p, const std::vector<uint8_t>& sel)
+{
+    Index from = q, e = edgeLoopNext(m, rung, q);
+    for (int guard = 0; e != kInvalid && guard < 1024; ++guard)
+    {
+        const Index r = m.edgeOtherPoint(e, from);
+        if (r == p || r == q)
+            return kInvalid;
+        if (!sel[r])
+            return r;
+        e = edgeLoopNext(m, e, r);
+        from = r;
+    }
+    return kInvalid;
+}
+
+/**
+ * Out from p along rung to the first point not in sel, and the point beyond that: the curve is anchored on points that
+ * stay, running straight on through moving ones. Stops on a moving point at a border, or {kInvalid, kInvalid} round a ring.
+ */
+Anchor anchorAcross(const Mesh& m, Index rung, Index p, const std::vector<uint8_t>& sel)
+{
+    Index from = p, e = rung;
+    for (int steps = 1; steps < 1024; ++steps)
+    {
+        const Index q = m.edgeOtherPoint(e, from);
+        if (q == p)
+            break;
+        if (!sel[q])
+            return {q, beyondSelected(m, e, q, from, sel), steps};
+        const Index next = edgeLoopNext(m, e, q);
+        if (next == kInvalid)
+            return {q, kInvalid, steps};
+        from = q;
+        e = next;
+    }
+    return {};
+}
+
+/** The line between the anchors out along rungs ra and rb, or nullopt when either side has none. */
+std::optional<Across> acrossLine(const Mesh& m, Index p, Index ra, Index rb, const std::vector<uint8_t>& sel)
+{
+    const Anchor a = anchorAcross(m, ra, p, sel), b = anchorAcross(m, rb, p, sel);
+    if (a.point == kInvalid || b.point == kInvalid)
+        return std::nullopt;
+    return Across{a.point, b.point, a.beyond, b.beyond, double(a.steps) / double(a.steps + b.steps)};
 }
 
 /** Of the rungs, the one most square to the tangent. */
@@ -423,7 +472,7 @@ std::vector<Index> sideRungs(const Mesh& m, Index p, Index a, Index fa, Index b,
     return out;
 }
 
-void chainLines(const Mesh& m, const EdgePath& path, std::map<Index, std::vector<Across>>& lines)
+void chainLines(const Mesh& m, const EdgePath& path, const std::vector<uint8_t>& sel, std::map<Index, std::vector<Across>>& lines)
 {
     const size_t np = path.points.size(), ne = path.edges.size();
     for (size_t i = 0; i < np; ++i)
@@ -440,19 +489,13 @@ void chainLines(const Mesh& m, const EdgePath& path, std::map<Index, std::vector
             rung[s] = squarest(m, p, sideRungs(m, p, a, sa[size_t(s)], b, sb[size_t(s)]), tangent);
         if (rung[0] == kInvalid || rung[1] == kInvalid)
             continue;
-        Across l;
-        l.a = m.edgeOtherPoint(rung[0], p);
-        l.b = m.edgeOtherPoint(rung[1], p);
-        l.a2 = beyond(m, rung[0], l.a, p);
-        l.b2 = beyond(m, rung[1], l.b, p);
-        l.keep = tangent;
-        lines[p].push_back(l);
+        if (const std::optional<Across> l = acrossLine(m, p, rung[0], rung[1], sel))
+            lines[p].push_back(*l);
     }
 }
 
-void looseLines(const Mesh& m, Index p, std::map<Index, std::vector<Across>>& lines)
+void looseLines(const Mesh& m, Index p, const std::vector<uint8_t>& sel, std::map<Index, std::vector<Across>>& lines)
 {
-    std::vector<Across> mine;
     std::vector<Index> used;
     m.forEachPointEdge(p, [&](Index e) {
         const Index partner = edgeLoopNext(m, e, p);
@@ -460,32 +503,30 @@ void looseLines(const Mesh& m, Index p, std::map<Index, std::vector<Across>>& li
             return;
         used.push_back(e);
         used.push_back(partner);
-        Across l;
-        l.a = m.edgeOtherPoint(e, p);
-        l.b = m.edgeOtherPoint(partner, p);
-        l.a2 = beyond(m, e, l.a, p);
-        l.b2 = beyond(m, partner, l.b, p);
-        mine.push_back(l);
+        if (const std::optional<Across> l = acrossLine(m, p, e, partner, sel))
+            lines[p].push_back(*l);
     });
-    // Each direction keeps the point from sliding along the other.
-    if (mine.size() == 2)
-        for (int k = 0; k < 2; ++k)
-        {
-            const Across& o = mine[size_t(1 - k)];
-            const glm::dvec3 d = m.position(o.b) - m.position(o.a);
-            if (const double len = glm::length(d); len > 1e-12)
-                mine[size_t(k)].keep = d / len;
-        }
-    std::ranges::copy(mine, std::back_inserter(lines[p]));
 }
 
-/** Centripetal Catmull-Rom tangent at p1 of the span p1 to p2, in that span's unit parameter; from the point before p1. */
-glm::dvec3 catmullTangent(const glm::dvec3& p0, const glm::dvec3& p1, const glm::dvec3& p2)
+/**
+ * On the circle through p0, p1 and p2, the point t of the way from p1 to p2 along the arc between them that does not
+ * pass p0. Straight between p1 and p2 when the three are in line.
+ */
+glm::dvec3 arcPoint(const glm::dvec3& p0, const glm::dvec3& p1, const glm::dvec3& p2, double t)
 {
-    const double t01 = std::sqrt(glm::distance(p0, p1)), t12 = std::sqrt(glm::distance(p1, p2));
-    if (t01 < 1e-9 || t12 < 1e-9)
-        return p2 - p1;
-    return t12 * ((p1 - p0) / t01 - (p2 - p0) / (t01 + t12) + (p2 - p1) / t12);
+    const glm::dvec3 u = p0 - p1, v = p2 - p1, w = glm::cross(u, v);
+    const double ww = glm::dot(w, w);
+    if (ww < 1e-12 * glm::dot(u, u) * glm::dot(v, v))
+        return glm::mix(p1, p2, t);
+    const glm::dvec3 c = p1 + (glm::dot(u, u) * glm::cross(v, w) + glm::dot(v, v) * glm::cross(w, u)) / (2.0 * ww);
+    const glm::dvec3 n = w / std::sqrt(ww), r1 = p1 - c, r2 = p2 - c, r0 = p0 - c;
+    auto angle = [&](const glm::dvec3& a, const glm::dvec3& b) { return std::atan2(glm::dot(glm::cross(a, b), n), glm::dot(a, b)); };
+    double phi = angle(r1, r2);
+    const double psi = angle(r1, r0);
+    if (psi * phi > 0.0 && std::abs(psi) < std::abs(phi))
+        phi -= std::copysign(2.0 * glm::pi<double>(), phi);
+    const double a = t * phi;
+    return c + r1 * std::cos(a) + glm::cross(n, r1) * std::sin(a) + n * glm::dot(n, r1) * (1.0 - std::cos(a));
 }
 
 /** The chord turned into the surface's tangent plane at a point, chord long. */
@@ -506,6 +547,27 @@ glm::dvec3 hermite(const glm::dvec3& a, const glm::dvec3& ma, const glm::dvec3& 
     return (2 * u3 - 3 * u2 + 1) * a + (u3 - 2 * u2 + u) * ma + (-2 * u3 + 3 * u2) * b + (u3 - u2) * mb;
 }
 
+/** The point t of the way along the Hermite span by arc length, so points at even t sit evenly along it. */
+glm::dvec3 atLength(const glm::dvec3& a, const glm::dvec3& ma, const glm::dvec3& b, const glm::dvec3& mb, double t)
+{
+    constexpr int n = 64;
+    std::array<double, n + 1> len{};
+    glm::dvec3 prev = a;
+    for (int k = 1; k <= n; ++k)
+    {
+        const glm::dvec3 q = hermite(a, ma, b, mb, double(k) / n);
+        len[size_t(k)] = len[size_t(k - 1)] + glm::distance(prev, q);
+        prev = q;
+    }
+    if (len[n] < 1e-12)
+        return glm::mix(a, b, t);
+    const double want = t * len[n];
+    const size_t k = size_t(std::clamp(long(std::lower_bound(len.begin(), len.end(), want) - len.begin()), 1L, long(n)));
+    const double span = len[k] - len[k - 1];
+    const double u = (double(k - 1) + (span > 1e-15 ? (want - len[k - 1]) / span : 0.0)) / n;
+    return hermite(a, ma, b, mb, u);
+}
+
 struct Flow
 {
     const Mesh& m;
@@ -514,51 +576,47 @@ struct Flow
 
     glm::dvec3 normal(Index p) const { return normals[p]; }
 
-    /** The move that puts v on the curve across line l, square to the line and to what it keeps. */
-    glm::dvec3 displacement(const std::vector<glm::dvec3>& pos, const Across& l, const glm::dvec3& v) const
+    /** Where line l puts its point: t of the way from a to b, on the curve through the points beyond, eased by amount. */
+    glm::dvec3 target(const std::vector<glm::dvec3>& pos, const Across& l) const
     {
         const glm::dvec3 A = pos[l.a], B = pos[l.b], chord = B - A;
-        const double len = glm::length(chord);
-        if (len < 1e-12)
-            return glm::dvec3(0.0);
-        const glm::dvec3 dir = chord / len;
-        const double s = std::clamp(glm::dot(v - A, dir) / len, 0.02, 0.98);
+        const glm::dvec3 flat = A + chord * l.t;
+        const double ease = o.amount * (1.0 - o.tension);
+        // Arcs through the points beyond, blended toward the nearer end: a circle comes back exactly, evenly spaced.
+        const std::optional<glm::dvec3> fromA = o.edgeFlow && l.a2 != kInvalid ? std::optional(arcPoint(pos[l.a2], A, B, l.t)) : std::nullopt;
+        const std::optional<glm::dvec3> fromB = o.edgeFlow && l.b2 != kInvalid ? std::optional(arcPoint(pos[l.b2], B, A, 1.0 - l.t)) : std::nullopt;
+        if (fromA && fromB)
+            return flat + ease * ((1.0 - l.t) * *fromA + l.t * *fromB - flat);
+        if (fromA || fromB)
+            return flat + ease * ((fromA ? *fromA : *fromB) - flat);
 
-        std::optional<glm::dvec3> ma, mb;
-        if (o.edgeFlow && l.a2 != kInvalid)
-            ma = catmullTangent(pos[l.a2], A, B);
-        if (o.edgeFlow && l.b2 != kInvalid)
-            mb = -catmullTangent(pos[l.b2], B, A);
-        if (!ma)
-            ma = normalTangent(normal(l.a), chord);
-        if (!mb)
-            mb = normalTangent(normal(l.b), chord);
-        // A natural end where one side has nothing to go on: no bend at that end.
+        std::optional<glm::dvec3> ma = normalTangent(normal(l.a), chord), mb = normalTangent(normal(l.b), chord);
         if (!ma && mb)
             ma = (3.0 * chord - *mb) * 0.5;
         if (!mb && ma)
             mb = (3.0 * chord - *ma) * 0.5;
-        const double scale = 1.0 - o.tension;
-        const glm::dvec3 ta = ma.value_or(chord) * scale, tb = mb.value_or(chord) * scale;
+        const glm::dvec3 onCurve = atLength(A, ma.value_or(chord), B, mb.value_or(chord), l.t);
+        return flat + ease * (onCurve - flat);
+    }
 
-        // The curve point whose shadow on the chord is v's, so the point keeps its place along the line.
-        double lo = 0.0, hi = 1.0;
-        for (int k = 0; k < 30; ++k)
+    /**
+     * The move for a point on these lines. A loose point's lines each place it along themselves; what they say off
+     * their own direction is averaged, so a bend both see is not taken twice.
+     */
+    glm::dvec3 displacement(const std::vector<glm::dvec3>& pos, const std::vector<Across>& ls, const glm::dvec3& v) const
+    {
+        if (ls.size() == 1)
+            return target(pos, ls[0]) - v;
+        glm::dvec3 along(0.0), off(0.0);
+        for (const Across& l : ls)
         {
-            const double mid = 0.5 * (lo + hi);
-            (glm::dot(hermite(A, ta, B, tb, mid) - A, dir) / len < s ? lo : hi) = mid;
+            const glm::dvec3 d = target(pos, l) - v, chord = pos[l.b] - pos[l.a];
+            const double len = glm::length(chord);
+            const glm::dvec3 a = len > 1e-12 ? chord / len * glm::dot(d, chord / len) : glm::dvec3(0.0);
+            along += a;
+            off += d - a;
         }
-        const glm::dvec3 onCurve = hermite(A, ta, B, tb, 0.5 * (lo + hi));
-        const glm::dvec3 flat = A + chord * s;
-        glm::dvec3 d = flat + o.amount * (onCurve - flat) - v;
-
-        glm::dvec3 keep = l.keep - dir * glm::dot(l.keep, dir);
-        if (const double kl = glm::length(keep); kl > 1e-6)
-        {
-            const glm::dvec3 n = glm::normalize(glm::cross(dir, keep / kl));
-            return n * glm::dot(d, n);
-        }
-        return d - dir * glm::dot(d, dir);
+        return along + off / double(ls.size());
     }
 };
 
@@ -597,20 +655,21 @@ PointMoves editEdgeFlow(const Mesh& mesh, std::span<const Index> edges, std::spa
         if (mesh.edgeValid(e))
             valid.push_back(e);
     const std::vector<EdgePath> chains = chainEdges(mesh, valid);
-    std::map<Index, std::vector<Across>> lines;
     std::vector<Index> considered;
     for (const EdgePath& path : chains)
-    {
-        chainLines(mesh, path, lines);
         considered.insert(considered.end(), path.points.begin(), path.points.end());
-    }
     for (Index p : points)
         if (mesh.pointValid(p))
-        {
-            looseLines(mesh, p, lines);
             considered.push_back(p);
-        }
     considered = uniqueSorted(considered);
+    const std::vector<uint8_t> sel = makeMask(mesh.pointCapacity(), considered);
+
+    std::map<Index, std::vector<Across>> lines;
+    for (const EdgePath& path : chains)
+        chainLines(mesh, path, sel, lines);
+    for (Index p : points)
+        if (mesh.pointValid(p))
+            looseLines(mesh, p, sel, lines);
 
     Flow flow{mesh, opts, std::vector<glm::dvec3>(mesh.pointCapacity(), glm::dvec3(0.0))};
     for (Index f = 0; f < mesh.faceCapacity(); ++f)
@@ -634,10 +693,7 @@ PointMoves editEdgeFlow(const Mesh& mesh, std::span<const Index> edges, std::spa
         {
             if (ls.empty())
                 continue;
-            glm::dvec3 sum(0.0);
-            for (const Across& l : ls)
-                sum += flow.displacement(pos, l, pos[p]);
-            next.push_back({p, pos[p] + sum / double(ls.size())});
+            next.push_back({p, pos[p] + flow.displacement(pos, ls, pos[p])});
         }
         for (auto& [p, q] : next)
             pos[p] = q;

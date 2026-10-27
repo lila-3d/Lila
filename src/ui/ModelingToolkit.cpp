@@ -255,7 +255,7 @@ ModelingToolkit::ModelingToolkit(QWidget* parent) : QWidget(parent)
 
     FlowLayout* tools = nullptr;
     QWidget* toolsBox = flowBox(body, &tools);
-    row(toolsBox, {{"mesh.insertLoop", "separator-vertical", "Insert Loop"}, {"mesh.offsetLoop", "columns-2", "Offset Loop"}, {"mesh.knife", "slice", "Knife"}, {"mesh.targetWeld", "target-arrow", "Target Weld"},
+    row(toolsBox, {{"mesh.insertLoop", "separator-vertical", "Insert Loop"}, {"mesh.splitRings", "columns-3", "Split Rings"}, {"mesh.offsetLoop", "columns-2", "Offset Loop"}, {"mesh.knife", "slice", "Knife"}, {"mesh.targetWeld", "target-arrow", "Target Weld"},
                    {"retopo.draw", "pencil", "Retopo Draw"}}, tools);
     root->addWidget(section("Tools", toolsBox, body));
 

@@ -582,6 +582,8 @@ void registerBuiltins()
     cmd("mesh.bevel", "Bevel", "Mesh", "polyBevel", json::object(), "Cuts the selected edges into chamfers or rounded strips, once. The Bevel modifier stays live.");
     cmd("mesh.insertLoop", "Insert Edge Loop", "Mesh", "polyInsertLoop", json::object(),
         "Adds edge loops across the ring of the selected edge. With several, Fraction slides the group and Spacing sets the gap.");
+    cmd("mesh.splitRings", "Split Rings", "Mesh", "polySplitRings", json::object(),
+        "Subdivides one way: loops across the rings of the selected edges, or across selected faces, curved to the surface.");
     cmd("mesh.offsetLoop", "Offset Edge Loop", "Mesh", "polyOffsetLoop", json::object(),
         "Adds an edge loop either side of the selected edges, parallel to them. Partial loops end on a border or meet at their ends.");
     cmd("mesh.merge", "Merge", "Mesh", "polyMerge", json::object(), "Welds selected vertices that lie within the merge distance.");
@@ -763,6 +765,10 @@ void registerBuiltins()
                "The row along the bottom of each viewport panel: highlight under the cursor, selection masks, symmetry and snapping.");
     togglePref("viewport.togglePreselectObjects", "Highlight Objects Under Cursor", "/viewport/preselect/objects", false,
                "In object mode, the object under the cursor highlights before it is clicked.");
+    togglePref("select.toggleSymmetric", "Symmetric Selection", "/select/symmetric", true,
+               "With symmetry on, clicking, dragging and loop picks select the mirror images too.");
+    cmd("select.symmetrize", "Symmetrize Selection", "Select", "symmetrizeSelection", json::object(),
+        "Adds the mirror image of the component selection under the mesh's symmetry.");
     togglePref("viewport.togglePreselectComponents", "Highlight Components Under Cursor", "/viewport/preselect/components", true,
                "In component modes, the vertex, edge or face under the cursor highlights before it is clicked.");
     for (int n : {2, 4, 8})

@@ -400,6 +400,7 @@ void Stroke::end()
             if (mOp == Op::Replace && !first)
                 call["add"] = true;
             first = false;
+            call["symmetric"] = PrefStore::get().value<bool>("general", "/select/symmetric", true);
             ops::execute("selectComponents", call, CallSource::UI);
         }
     }
