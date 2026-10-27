@@ -439,6 +439,41 @@ PlugRef editPlug(Graph& g, NodeId mesh)
     return {source->id(), MeshSourceNode::kMesh, -1};
 }
 
+json selectionSnapshot(Graph& g, NodeId mesh)
+{
+    json j;
+    j["mode"] = components::modeName(components::mode());
+    j["vertices"] = components::selected(mesh, ComponentMode::Vertex);
+    j["edges"] = components::selected(mesh, ComponentMode::Edge);
+    j["faces"] = components::selected(mesh, ComponentMode::Face);
+    json names = json::array();
+    for (NodeId id : g.selection())
+        if (Node* n = g.node(id))
+            names.push_back(n->path());
+    j["selection"] = names;
+    return j;
+}
+
+void restoreSelection(Graph& g, NodeId mesh, const json& j)
+{
+    if (!j.is_object())
+        return;
+    std::vector<NodeId> ids;
+    for (const json& name : j.value("selection", json::array()))
+        if (Node* n = g.find(name.get<std::string>()))
+            ids.push_back(n->id());
+    g.select(ids);
+    for (auto [key, kind] : {std::pair{"vertices", ComponentMode::Vertex}, {"edges", ComponentMode::Edge}, {"faces", ComponentMode::Face}})
+        components::select(mesh, kind, j.value(key, json::array()).get<components::Ids>());
+    try
+    {
+        components::setMode(components::modeFromName(j.value("mode", "object")));
+    }
+    catch (const std::invalid_argument&)
+    {
+    }
+}
+
 MeshPtr cage(Graph& g, NodeId mesh)
 {
     g.evaluate();
@@ -526,6 +561,7 @@ void registerTypes()
 void registerCommands()
 {
     autoBevel::registerCommands();
+    splitRingsModifier::registerCommands();
     registerStackCommands();
     using T = ArgType;
     std::string kindList;

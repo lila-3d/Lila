@@ -481,3 +481,20 @@ TEST_CASE("spherize command: overrides, ellipsoid, result and undo")
         CHECK(meshOf(cube).position(p) == before.position(p));
     CHECK_NOTHROW(run("polySpherize", {{"alongNormals", true}, {"radiusMode", "max"}}));
 }
+
+TEST_CASE("spherize in object mode moves the whole mesh")
+{
+    run("newScene");
+    std::string cube = run("polyCube", {{"subdivisionsX", 2}, {"subdivisionsY", 2}, {"subdivisionsZ", 2}})[0];
+    run("select", {{"args", {cube}}});
+    run("selectMode", {{"args", {"object"}}});
+    const geo::Mesh before = meshOf(cube);
+    run("polySpherize", {{"center", {0, 0, 0}}, {"radius", 30.0}});
+    for (Index p : allPoints(meshOf(cube)))
+        CHECK(glm::length(meshOf(cube).position(p)) == doctest::Approx(30.0).epsilon(1e-9));
+    run("undo");
+    for (Index p : allPoints(before))
+        CHECK(meshOf(cube).position(p) == before.position(p));
+    run("redo");
+    CHECK(glm::length(meshOf(cube).position(allPoints(before).front())) == doctest::Approx(30.0).epsilon(1e-9));
+}

@@ -41,6 +41,7 @@
 #include "ui/TexPipelineUi.h"
 #include "ui/Animation.h"
 #include "ui/AutoBevelUi.h"
+#include "ui/SplitRingsUi.h"
 #include "ui/InstancingUi.h"
 #include "ui/SmartJoinUi.h"
 #include "ui/DebugDrawUi.h"
@@ -230,6 +231,7 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
     registerRigViewport();
     registerDeformActions();
     registerAutoBevelUi();
+    registerSplitRingsUi();
     registerInstancingUi();
     registerSmartJoinUi();
     registerMeasureUi();

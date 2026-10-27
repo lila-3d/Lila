@@ -161,7 +161,8 @@ using PointTarget = std::function<glm::dvec3(uint32_t point, const glm::dvec3& r
 using PointTargetSetup = std::function<PointTarget(const geo::Mesh&, const glm::dmat4& world, ComponentMode kind, const components::Ids& ids)>;
 /**
  * Moves the selected components' points toward their targets, blended by soft selection, with the selection's side of the
- * symmetry driving the other, as one undo step. Throws in object mode; returns how many meshes it changed.
+ * symmetry driving the other, as one undo step. In object mode it throws, or with allowWhole moves every point of the
+ * selected meshes. Returns how many meshes it changed.
  */
-LILA_SCENE_API int deformSelectedComponents(const char* label, const PointTargetSetup& setup);
+LILA_SCENE_API int deformSelectedComponents(const char* label, const PointTargetSetup& setup, bool allowWhole = false);
 } // namespace lila::scene

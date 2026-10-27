@@ -11,7 +11,9 @@
 #include "scene/SphereState.h"
 #include "scene/Transform.h"
 #include "ui/Actions.h"
+#include "ui/GizmoMath.h"
 #include "ui/SurfaceSnap.h"
+#include "ui/ViewportDisplay.h"
 #include "ui/ViewportTool.h"
 
 #include <QTimer>
@@ -21,6 +23,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 
 namespace lila::ui
 {
@@ -158,15 +161,28 @@ bool spherizeLive()
 double distanceToPoint(QPointF a, QPointF b) { return std::hypot(a.x() - b.x(), a.y() - b.y()); }
 
 /**
- * After Spherize ran, shows its sphere in the viewport: wire circles on the ellipsoid's three planes, a disc at the centre,
- * a ring around it for the radius and a square on each axis for the ellipsoid's scale. Dragging a handle re-runs the op
- * through scene::lastOp, so the whole drag is one undo step and the adjust-last-op popup follows. Enter accepts, Esc undoes
- * the spherize.
+ * After Spherize ran, shows its sphere in the viewport: wire circles on the ellipsoid's three planes, move arrows and a disc
+ * (view plane) at the centre, a ring around it for the radius and a square on each axis for the ellipsoid's scale. Dragging
+ * a handle re-runs the op through scene::lastOp, so the whole drag is one undo step and the adjust-last-op popup follows.
+ * Enter accepts, Esc undoes the spherize.
  */
 class SpherizeTool final : public ViewportTool
 {
 public:
-    explicit SpherizeTool(size_t undoStart) : mUndoStart(undoStart), mSphere(scene::lastSphere()) {}
+    explicit SpherizeTool(size_t undoStart) : mUndoStart(undoStart), mSphere(scene::lastSphere())
+    {
+        remember();
+        // Undo and redo between adjustments put back an earlier call, whose sphere was remembered when it ran.
+        mListener = lo::addListener([this](lo::Change c) {
+            if (c == lo::Change::Recorded || c == lo::Change::Rerun)
+                remember();
+            if (mDrag == Handle::None)
+                mSphere = current();
+            viewportTools::requestRedraw();
+        });
+    }
+
+    ~SpherizeTool() override { lo::removeListener(mListener); }
 
     const char* name() const override { return "Spherize"; }
 
@@ -187,12 +203,11 @@ public:
             return false;
         if (!spherizeLive())
             return true;
-        mSphere = scene::lastSphere();
+        mSphere = current();
         mDrag = pick(e->position(), view);
         if (mDrag == Handle::None)
             return true;
         mStart = mSphere;
-        mStartPx = e->position();
         glm::dvec3 origin, dir;
         view.ray(e->position(), origin, dir);
         if (mDrag == Handle::Center)
@@ -205,6 +220,8 @@ public:
             const auto c = view.project(mStart.center);
             mStartRing = c ? distanceToPoint(*c, e->position()) : 0.0;
         }
+        else if (isMove(mDrag))
+            mStartAxis = gizmo::lineParam(mStart.center, worldAxis(mDrag), origin, dir);
         else
             mStartAxis = alongAxis(origin, dir, int(mDrag) - int(Handle::AxisX));
         return true;
@@ -227,6 +244,11 @@ public:
         scene::SphereState next = mStart;
         if (mDrag == Handle::Center)
             next.center = onViewPlane(origin, dir, mStart.center, view) + mGrab;
+        else if (isMove(mDrag))
+        {
+            const glm::dvec3 a = worldAxis(mDrag);
+            next.center = mStart.center + a * (gizmo::lineParam(mStart.center, a, origin, dir) - mStartAxis);
+        }
         else if (mDrag == Handle::Ring)
         {
             const auto c = view.project(mStart.center);
@@ -252,7 +274,7 @@ public:
             return false;
         mDrag = Handle::None;
         lo::endDrag();
-        mSphere = scene::lastSphere();
+        mSphere = current();
         viewportTools::requestRedraw();
         return true;
     }
@@ -280,7 +302,7 @@ public:
             return;
         }
         if (mDrag == Handle::None)
-            mSphere = scene::lastSphere();
+            mSphere = current();
         if (mSphere.radius <= 0.0)
             return;
         const glm::vec4 wire(0.35f, 0.85f, 1.0f, 0.9f), hot(1.0f, 1.0f, 1.0f, 1.0f);
@@ -303,21 +325,29 @@ public:
             if (run.size() > 1)
                 p.polyline(run, 1.5f, wire, !broken);
         }
+        const auto lit = [&](Handle h) { return mHover == h || mDrag == h; };
         if (const auto c = view.project(mSphere.center))
         {
-            p.polyline(ringPoints(*c, view), mHover == Handle::Ring || mDrag == Handle::Ring ? 3.0f : 2.0f,
-                       mHover == Handle::Ring || mDrag == Handle::Ring ? hot : wire, true);
-            p.disc(*c, mHover == Handle::Center || mDrag == Handle::Center ? 7.0f : 5.5f, mHover == Handle::Center || mDrag == Handle::Center ? hot : wire);
+            p.polyline(ringPoints(*c, view), lit(Handle::Ring) ? 3.0f : 2.0f, lit(Handle::Ring) ? hot : wire, true);
+            for (int i = 0; i < 3; ++i)
+            {
+                const Handle h = Handle(int(Handle::MoveX) + i);
+                const auto tip = moveTip(i, view);
+                if (!tip || distanceToPoint(*c, *tip) < 4.0)
+                    continue;
+                const glm::vec4 col = lit(h) ? hot : glm::vec4(viewportDisplay::axisColor(i), 1.0f);
+                const QPointF d = (*tip - *c) / distanceToPoint(*c, *tip), side(-d.y(), d.x());
+                p.line(*c, *tip - d * 10.0, lit(h) ? 3.0f : 2.0f, col);
+                p.triangle(*tip, *tip - d * 12.0 + side * 5.0, *tip - d * 12.0 - side * 5.0, col);
+            }
+            p.disc(*c, lit(Handle::Center) ? 7.0f : 5.5f, lit(Handle::Center) ? hot : wire);
             p.label(*c + QPointF(10, -10), QString("R %1 cm").arg(mSphere.radius, 0, 'f', 2));
         }
         for (int i = 0; i < 3; ++i)
             if (const auto t = view.project(axisTip(i)))
-            {
-                const bool lit = mHover == Handle(int(Handle::AxisX) + i) || mDrag == Handle(int(Handle::AxisX) + i);
-                const glm::vec4 base = i == 0 ? glm::vec4(1.0f, 0.35f, 0.35f, 1.0f) : i == 1 ? glm::vec4(0.4f, 0.9f, 0.4f, 1.0f) : glm::vec4(0.4f, 0.55f, 1.0f, 1.0f);
-                p.rect(QRectF(t->x() - 5, t->y() - 5, 10, 10), lit ? hot : base);
-            }
-        drawToolMessage(p, view, "Spherize: drag the centre, the ring (radius) or an axis square (ellipsoid). Enter: accept, Esc: undo");
+                p.rect(QRectF(t->x() - 5, t->y() - 5, 10, 10), lit(Handle(int(Handle::AxisX) + i)) ? hot : glm::vec4(viewportDisplay::axisColor(i), 1.0f));
+        drawToolMessage(p, view,
+                        "Spherize: drag an arrow or the centre to move, the ring for the radius, an axis square to stretch. Enter: accept, Esc: undo");
     }
 
 private:
@@ -329,7 +359,35 @@ private:
         AxisX,
         AxisY,
         AxisZ,
+        MoveX,
+        MoveY,
+        MoveZ,
     };
+
+    static constexpr double kArrowPx = 80.0;
+
+    static bool isMove(Handle h) { return h == Handle::MoveX || h == Handle::MoveY || h == Handle::MoveZ; }
+
+    static glm::dvec3 worldAxis(Handle h)
+    {
+        const int i = int(h) - int(Handle::MoveX);
+        return {i == 0, i == 1, i == 2};
+    }
+
+    /** The sphere the op's current call ran with, else the latest run's. */
+    scene::SphereState current() const
+    {
+        if (const lo::Op* op = lo::current())
+            if (auto it = mByCall.find(op->call.dump()); it != mByCall.end())
+                return it->second;
+        return scene::lastSphere();
+    }
+
+    void remember()
+    {
+        if (const lo::Op* op = lo::current(); op && op->command == kSpherizeCommand)
+            mByCall[op->call.dump()] = scene::lastSphere();
+    }
 
     glm::dmat3 frame() const
     {
@@ -342,6 +400,26 @@ private:
     glm::dvec3 axisTip(int i) const { return mSphere.center + frame()[i] * (mSphere.scale[i] * mSphere.radius); }
 
     static glm::dvec3 camRight(const ViewInfo& v) { return {v.view[0][0], v.view[1][0], v.view[2][0]}; }
+
+    /** Screen end of a move arrow: a fixed pixel length along the world axis at any zoom. */
+    std::optional<QPointF> moveTip(int i, const ViewInfo& view) const
+    {
+        const auto c = view.project(mSphere.center), unit = view.project(mSphere.center + camRight(view));
+        if (!c || !unit)
+            return std::nullopt;
+        const double perCm = distanceToPoint(*c, *unit);
+        if (perCm < 1e-9)
+            return std::nullopt;
+        return view.project(mSphere.center + glm::dvec3(i == 0, i == 1, i == 2) * (kArrowPx / perCm));
+    }
+
+    static double distanceToSegment(QPointF px, QPointF a, QPointF b)
+    {
+        const QPointF d = b - a;
+        const double len2 = QPointF::dotProduct(d, d);
+        const double t = len2 > 0 ? std::clamp(QPointF::dotProduct(px - a, d) / len2, 0.0, 1.0) : 0.0;
+        return distanceToPoint(a + d * t, px);
+    }
 
     /** Screen radius of the silhouette ring, which tracks the sphere's mean size. */
     double ringRadius(QPointF centerPx, const ViewInfo& view) const
@@ -367,14 +445,17 @@ private:
     {
         if (!spherizeLive() || mSphere.radius <= 0.0)
             return Handle::None;
+        const auto c = view.project(mSphere.center);
+        if (c && distanceToPoint(*c, px) < 9.0)
+            return Handle::Center;
         for (int i = 0; i < 3; ++i)
             if (const auto t = view.project(axisTip(i)); t && distanceToPoint(*t, px) < 9.0)
                 return Handle(int(Handle::AxisX) + i);
-        const auto c = view.project(mSphere.center);
         if (!c)
             return Handle::None;
-        if (distanceToPoint(*c, px) < 9.0)
-            return Handle::Center;
+        for (int i = 0; i < 3; ++i)
+            if (const auto t = moveTip(i, view); t && distanceToSegment(px, *c, *t) < 7.0)
+                return Handle(int(Handle::MoveX) + i);
         if (std::abs(distanceToPoint(*c, px) - ringRadius(*c, view)) < 6.0)
             return Handle::Ring;
         return Handle::None;
@@ -437,8 +518,9 @@ private:
 
     size_t mUndoStart;
     scene::SphereState mSphere, mStart;
+    std::map<std::string, scene::SphereState> mByCall;
+    int mListener = 0;
     Handle mHover = Handle::None, mDrag = Handle::None;
-    QPointF mStartPx;
     glm::dvec3 mGrab{0.0};
     double mStartRing = 0.0, mStartAxis = 0.0;
 };
@@ -472,8 +554,8 @@ void registerConformActions()
         .label = "Spherize",
         .category = "Mesh",
         .run = startSpherize,
-        .doc = "Pushes the selected components onto a sphere fitted to them. Drag the centre, the radius ring or the axis squares "
-               "(an ellipsoid) in the viewport; Enter accepts, Esc undoes.",
+        .doc = "Pushes the selected components (whole meshes in object mode) onto a sphere fitted to them. Drag the move arrows or "
+               "centre, the radius ring or the axis squares (an ellipsoid) in the viewport; Enter accepts, Esc undoes.",
         .python = "lila.ui.run_action(\"mesh.spherize\")",
         .command = kSpherizeCommand,
         .call = json::object(),

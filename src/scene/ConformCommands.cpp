@@ -85,8 +85,8 @@ PointTarget targetOfMoves(const geo::Mesh& m, const geo::PointMoves& moves, doub
     };
 }
 
-/** Runs fn on each mesh's selection seen as chains; the selection's face interiors follow its borders. */
-void conformSelected(const char* command, const char* what, double strength, const MovesFn& fn)
+/** Runs fn on each mesh's selection seen as chains; the selection's face interiors follow its borders. allowWhole takes whole selected meshes in object mode. */
+void conformSelected(const char* command, const char* what, double strength, const MovesFn& fn, bool allowWhole = false)
 {
     LILA_ZONE();
 
@@ -97,7 +97,7 @@ void conformSelected(const char* command, const char* what, double strength, con
             return nullptr;
         geo::followInterior(m, sel.interior, moves);
         return targetOfMoves(m, moves, strength);
-    });
+    }, allowWhole);
     if (edited == 0)
         throw CommandError(std::format("{}: {}", command, what));
 }
@@ -271,7 +271,7 @@ void registerConformCommands()
 
     ops::registerCommand({
         .name = "polySpherize",
-        .doc = "Push the selected components onto a sphere fitted to them, or onto an ellipsoid with scale. center and radius override "
+        .doc = "Push the selected components (whole meshes in object mode) onto a sphere fitted to them, or onto an ellipsoid with scale. center and radius override "
                "the fit (world space, cm); radiusMode picks the radius from the points otherwise. With alongNormals each point slides along "
                "its own normal to the sphere. Returns the sphere used: {center, radius, scale, rotation}, world space.",
         .flags = {{"amount", "", T::Float, 1.0, "How far toward the sphere, 0 to 1; soft selection fades it further."},
@@ -323,7 +323,8 @@ void registerConformCommands()
                                     any = true;
                                 }
                                 return moves;
-                            });
+                            },
+                            true);
             if (any)
             {
                 state.scale = scale;

@@ -250,41 +250,6 @@ std::shared_ptr<const geo::Mesh> inputOf(Graph& g, Node& mod)
     return mod.as<MeshPtr>(kInMesh);
 }
 
-json selectionSnapshot(Graph& g, NodeId mesh)
-{
-    json j;
-    j["mode"] = components::modeName(components::mode());
-    j["vertices"] = components::selected(mesh, ComponentMode::Vertex);
-    j["edges"] = components::selected(mesh, ComponentMode::Edge);
-    j["faces"] = components::selected(mesh, ComponentMode::Face);
-    json names = json::array();
-    for (NodeId id : g.selection())
-        if (Node* n = g.node(id))
-            names.push_back(n->path());
-    j["selection"] = names;
-    return j;
-}
-
-void restoreSelection(Graph& g, NodeId mesh, const json& j)
-{
-    if (!j.is_object())
-        return;
-    std::vector<NodeId> ids;
-    for (const json& name : j.value("selection", json::array()))
-        if (Node* n = g.find(name.get<std::string>()))
-            ids.push_back(n->id());
-    g.select(ids);
-    for (auto [key, kind] : {std::pair{"vertices", ComponentMode::Vertex}, {"edges", ComponentMode::Edge}, {"faces", ComponentMode::Face}})
-        components::select(mesh, kind, j.value(key, json::array()).get<components::Ids>());
-    try
-    {
-        components::setMode(components::modeFromName(j.value("mode", "object")));
-    }
-    catch (const std::invalid_argument&)
-    {
-    }
-}
-
 void endEdit(Graph& g, Node& mod)
 {
     NodeId mesh = autoBevel::meshOf(g, mod.id());
@@ -294,7 +259,7 @@ void endEdit(Graph& g, Node& mod)
     g.setValue({mod.id(), kEditing, -1}, false);
     g.setValue({mod.id(), kEditBackup, -1}, DataPtr());
     if (mesh != kNoNode)
-        restoreSelection(g, mesh, backup);
+        modifiers::restoreSelection(g, mesh, backup);
 }
 
 void selectChosen(Graph& g, Node& mod, NodeId mesh)
@@ -547,7 +512,7 @@ void registerCommands()
             {
                 g.evaluate();
                 auto backup = std::make_shared<JsonData>();
-                backup->value = selectionSnapshot(g, mesh);
+                backup->value = modifiers::selectionSnapshot(g, mesh);
                 g.setValue({mod.id(), kEditBackup, -1}, DataPtr(backup));
                 g.setValue({mod.id(), kEditing, -1}, true);
             }

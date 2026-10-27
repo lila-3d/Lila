@@ -19,6 +19,7 @@ lila_module(lila_ui UI
     DocsUi.cpp DocsUi.h
     AttributeEditor.cpp AttributeEditor.h
     AutoBevelUi.cpp AutoBevelUi.h
+    SplitRingsUi.cpp SplitRingsUi.h
     SmartJoinUi.cpp SmartJoinUi.h
     Camera.cpp
     ChannelBox.cpp ChannelBox.h

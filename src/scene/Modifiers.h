@@ -76,6 +76,10 @@ LILA_SCENE_API PlugRef editPlug(Graph& g, NodeId mesh);
 /** The base mesh without modifiers (the cage), as components are picked and edited on it. Doesn't change the graph. */
 LILA_SCENE_API MeshPtr cage(Graph& g, NodeId mesh);
 
+/** The mesh's component selection, mode and object selection, for an edit mode to put back when it ends. */
+LILA_SCENE_API json selectionSnapshot(Graph& g, NodeId mesh);
+LILA_SCENE_API void restoreSelection(Graph& g, NodeId mesh, const json& snapshot);
+
 /** Kinds addModifier can create ("bevel" for bevelModifier), from the type registry, so extension modifiers appear too. Sorted. */
 LILA_SCENE_API std::vector<std::string> kinds();
 

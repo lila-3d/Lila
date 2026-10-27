@@ -858,16 +858,26 @@ bool deformProvidedPoints(Graph& g, Node& n, const components::PointProvider& pp
     return true;
 }
 
-int deformSelected(const char* label, const PointTargetSetup& setup, const ProvidedSetup& provided)
+int deformSelected(const char* label, const PointTargetSetup& setup, const ProvidedSetup& provided, bool allowWhole = false)
 {
     LILA_ZONE();
 
     ComponentMode kind = components::mode();
-    if (kind == ComponentMode::Object)
-        throw CommandError(std::string(label) + ": no components selected");
     Graph& g = graph();
+    std::map<NodeId, Ids> selection;
+    const bool whole = kind == ComponentMode::Object && allowWhole;
+    if (whole)
+    {
+        kind = ComponentMode::Vertex;
+        for (NodeId id : g.selection())
+            if (Node* n = g.node(id); n && n->type().isA("mesh"))
+                selection[id] = {};
+    }
+    else if (kind == ComponentMode::Object)
+        throw CommandError(std::string(label) + ": no components selected");
+    else
+        selection = components::selected(kind);
     UndoChunk chunk(label);
-    auto selection = components::selected(kind);
     int edited = 0;
     for (auto& [node, ids] : selection)
     {
@@ -881,6 +891,10 @@ int deformSelected(const char* label, const PointTargetSetup& setup, const Provi
             continue;
         PlugRef base = basePlug(*n);
         geo::Mesh m = baseMesh(base);
+        if (whole)
+            for (Index p = 0; p < m.pointCapacity(); ++p)
+                if (m.pointValid(p))
+                    ids.push_back(p);
         Ids pts = components::convert(m, kind, ids, ComponentMode::Vertex);
         glm::dmat4 world = n->as<glm::dmat4>(Transform::kWorldMatrix);
         PointTarget targetOf = setup(m, world, kind, ids);
@@ -934,7 +948,10 @@ ProvidedSetup alongProvidedFrames(const glm::dvec3& uvn)
 }
 } // namespace
 
-int deformSelectedComponents(const char* label, const PointTargetSetup& setup) { return deformSelected(label, setup, nullptr); }
+int deformSelectedComponents(const char* label, const PointTargetSetup& setup, bool allowWhole)
+{
+    return deformSelected(label, setup, nullptr, allowWhole);
+}
 
 void transformSelectedComponents(const char* label, const glm::dmat4& worldXform)
 {

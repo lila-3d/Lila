@@ -233,3 +233,34 @@ TEST_CASE("splitRings modifier splits live, on the selection or the whole mesh")
     run("addModifier", {{"args", {plane}}, {"kind", "splitRings"}});
     CHECK(faces(plane) == 5);
 }
+
+TEST_CASE("splitRings modifier selection can be edited, applied and cancelled")
+{
+    run("newScene");
+    std::string plane = run("polyPlane", {{"width", 400.0}, {"depth", 100.0}, {"subdivisionsX", 4}, {"subdivisionsZ", 1}})[0];
+    run("select", {{"args", {plane}}});
+    run("selectMode", {{"args", {"object"}}});
+    std::string mod = run("addModifier", {{"args", {plane}}, {"kind", "splitRings"}}).get<std::string>();
+    CHECK(faces(plane) == 8);
+
+    run("splitRingsEditSelection", {{"args", {mod}}});
+    CHECK(faces(plane) == 4);
+    CHECK(run("selectMode") == "face");
+    CHECK(run("componentSelection")[plane]["faces"].size() == 4);
+    run("selectComponents", {{"args", {plane}}, {"edges", {0}}});
+    run("splitRingsApplySelection", {{"args", {plane}}});
+    CHECK(faces(plane) == 5);
+    CHECK(run("selectMode") == "object");
+
+    run("splitRingsEditSelection", {{"args", {plane}}});
+    CHECK(run("componentSelection")[plane]["edges"] == json::array({0}));
+    run("selectComponents", {{"args", {plane}}, {"edges", {1, 2}}});
+    run("splitRingsCancelSelection", {{"args", {plane}}});
+    CHECK(faces(plane) == 5);
+
+    run("splitRingsEditSelection", {{"args", {plane}}});
+    run("selectMode", {{"args", {"object"}}});
+    CHECK_THROWS(run("splitRingsApplySelection", {{"args", {plane}}}));
+    run("splitRingsCancelSelection", {{"args", {plane}}});
+    CHECK(faces(plane) == 5);
+}

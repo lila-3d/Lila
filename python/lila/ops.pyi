@@ -4991,7 +4991,7 @@ def polySphere(name: str | None = None, position: Sequence[float] | None = None,
     """
 
 def polySpherize(amount: float | None = None, fit: str | None = None, radiusMode: str | None = None, radius: float | None = None, center: Sequence[float] | None = None, scale: Sequence[float] | None = None, rotation: Sequence[float] | None = None, alongNormals: bool | None = None) -> Any:
-    """Push the selected components onto a sphere fitted to them, or onto an ellipsoid with scale. center and radius override the fit (world space, cm); radiusMode picks the radius from the points otherwise. With alongNormals each point slides along its own normal to the sphere. Returns the sphere used: {center, radius, scale, rotation}, world space.
+    """Push the selected components (whole meshes in object mode) onto a sphere fitted to them, or onto an ellipsoid with scale. center and radius override the fit (world space, cm); radiusMode picks the radius from the points otherwise. With alongNormals each point slides along its own normal to the sphere. Returns the sphere used: {center, radius, scale, rotation}, world space.
 
     Args:
         amount: How far toward the sphere, 0 to 1; soft selection fades it further. Default 1.0.
@@ -6934,6 +6934,27 @@ def splitMesh(*objects: Any, planes: Any | None = None, suggest: bool | None = N
         splitMesh("Body", planes=[{"origin": [0, 140, 0], "normal": [0, 1, 0]}])
 
         splitMesh("Body", suggest=True, remesh="voxelRemesh", pieceSettings={"0": {"remesh": "none"}})
+    """
+
+def splitRingsApplySelection(*objects: Any) -> Any:
+    """Store the selected edges or faces (with their mirror images under symmetry) as what a splitRings modifier splits, and end Edit Selection. Returns how many it stored.
+
+    Args:
+        objects: modifier or mesh.
+    """
+
+def splitRingsCancelSelection(*objects: Any) -> Any:
+    """End a splitRings modifier's Edit Selection without changing what it splits.
+
+    Args:
+        objects: modifier or mesh.
+    """
+
+def splitRingsEditSelection(*objects: Any) -> Any:
+    """Show a splitRings modifier's input mesh (it and later modifiers pass through) with the edges or faces it splits selected, so they can be changed with the normal selection tools. Finish with splitRingsApplySelection or splitRingsCancelSelection.
+
+    Args:
+        objects: modifier or mesh.
     """
 
 def stop() -> Any:
