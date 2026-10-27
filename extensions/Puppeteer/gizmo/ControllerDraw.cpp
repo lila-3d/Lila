@@ -23,12 +23,44 @@ const glm::vec4 kPlain{0.62f, 0.62f, 0.62f, 1.0f};
 
 glm::dvec3 v3(Graph& g, const Node& n, const char* name) { return std::get<glm::dvec3>(g.value(plugOf(n, name))); }
 
-void drawLoop(drawOverrides::DrawContext& c, const std::vector<glm::dvec3>& pts, const glm::vec4& color)
+double numberOr(const Node& n, const char* name, double fallback)
 {
-    for (size_t i = 0; i < pts.size(); ++i)
+    const int a = n.type().attrIndex(name);
+    return a >= 0 ? n.as<double>(a) : fallback;
+}
+
+/** The node whose drawThickness and drawRadius a chain's controller takes: its reverse foot when it has one. */
+const Node* drawSettingsOf(Graph& g, NodeId chain)
+{
+    const NodeId f = footForChain(g, chain);
+    return g.node(f ? f : chain);
+}
+
+double thicknessOf(Graph& g, NodeId chain)
+{
+    const Node* n = drawSettingsOf(g, chain);
+    return n ? std::max(numberOr(*n, "drawThickness", 4.0), 1.0) : 4.0;
+}
+
+/** A closed loop as a camera-facing ribbon, widthPx wide on screen, mitred so the segments meet without gaps. */
+void drawLoop(drawOverrides::DrawContext& c, const std::vector<glm::dvec3>& pts, const glm::vec4& color, double widthPx)
+{
+    const size_t n = pts.size();
+    if (n < 2)
+        return;
+    const glm::dmat4& v = c.view.view;
+    const glm::dvec3 fwd = -glm::dvec3(v[0][2], v[1][2], v[2][2]);
+    std::vector<glm::dvec3> side(n);
+    for (size_t i = 0; i < n; ++i)
     {
-        c.frame.linesOnTop.push_back({glm::vec3(pts[i]), color});
-        c.frame.linesOnTop.push_back({glm::vec3(pts[(i + 1) % pts.size()]), color});
+        const glm::dvec3 s = glm::cross(pts[(i + 1) % n] - pts[(i + n - 1) % n], fwd);
+        side[i] = glm::length(s) > 1e-12 ? glm::normalize(s) * (0.5 * widthPx * c.view.unitsPerPixel(pts[i])) : glm::dvec3(0.0);
+    }
+    for (size_t i = 0; i < n; ++i)
+    {
+        const size_t j = (i + 1) % n;
+        for (const glm::dvec3& p : {pts[i] - side[i], pts[j] - side[j], pts[j] + side[j], pts[i] - side[i], pts[j] + side[j], pts[i] + side[i]})
+            c.frame.tris3d.push_back({glm::vec3(p), color});
     }
 }
 
@@ -64,21 +96,25 @@ std::optional<double> loopDistance(const ViewInfo& view, const std::vector<glm::
     return best;
 }
 
+/** Pixels from px to the drawn edge of the controller's line, 0 on it. */
+std::optional<double> controllerDistance(Graph& g, const ViewInfo& view, NodeId chain, QPointF px)
+{
+    const auto d = loopDistance(view, controllerOutline(g, chain), px);
+    return d ? std::optional(std::max(*d - 0.5 * thicknessOf(g, chain), 0.0)) : std::nullopt;
+}
+
 std::optional<double> pickChain(const drawOverrides::PickContext& c, NodeId chain)
 {
     Graph& g = Graph::current();
-    const std::vector<glm::dvec3> pts = controllerOutline(g, chain);
-    if (pts.empty())
-        return std::nullopt;
     if (!c.click)
     {
         const QRectF box = QRectF(c.a, c.b).normalized();
-        for (const glm::dvec3& p : pts)
+        for (const glm::dvec3& p : controllerOutline(g, chain))
             if (auto s = c.view.project(p); s && box.contains(*s))
                 return 0.0;
         return std::nullopt;
     }
-    return loopDistance(c.view, pts, c.a);
+    return controllerDistance(g, c.view, chain, c.a);
 }
 
 /** Rig mode shows where the foot pivots, so they can be checked against the sole. */
@@ -130,14 +166,16 @@ std::vector<glm::dvec3> controllerOutline(Graph& g, NodeId chain)
     if (!cn)
         return out;
     g.evaluate();
+    const Node* settings = drawSettingsOf(g, chain);
+    const double scale = std::max(settings ? numberOr(*settings, "drawRadius", 1.0) : 1.0, 0.01);
     if (NodeId f = footForChain(g, chain))
     {
         const Node& foot = *g.node(f);
         const glm::dvec3 heel = v3(g, foot, "heelPivot"), toe = v3(g, foot, "toePivot");
         const glm::dvec3 inner = v3(g, foot, "innerPivot"), outer = v3(g, foot, "outerPivot");
         const double cz = (heel.z + toe.z) * 0.5, cx = (inner.x + outer.x) * 0.5;
-        const double hz = std::max(std::abs(toe.z - heel.z) * 0.5 * 1.08, 1.0);
-        const double hx = std::max(std::abs(outer.x - inner.x) * 0.5 * 1.15, 1.0);
+        const double hz = std::max(std::abs(toe.z - heel.z) * 0.5 * 1.08, 1.0) * scale;
+        const double hx = std::max(std::abs(outer.x - inner.x) * 0.5 * 1.15, 1.0) * scale;
         // Drawn where grabbing it would put it: on the foot as posed, unless the solver holds it.
         const glm::dmat4 control = lila::scene::rigel::controllerWorld(g, chain);
         for (int i = 0; i < kSegments; ++i)
@@ -158,7 +196,7 @@ std::vector<glm::dvec3> controllerOutline(Graph& g, NodeId chain)
     if (glm::length(axis) < 1e-9)
         axis = glm::dvec3(0, 1, 0);
     axis = glm::normalize(axis);
-    const double r = std::max(glm::length(at - start) * 0.12, 1.0);
+    const double r = std::max(glm::length(at - start) * 0.12, 1.0) * scale;
     glm::dvec3 u = glm::cross(axis, std::abs(axis.y) < 0.9 ? glm::dvec3(0, 1, 0) : glm::dvec3(1, 0, 0));
     u = glm::normalize(u);
     const glm::dvec3 v = glm::cross(axis, u);
@@ -176,7 +214,7 @@ NodeId controllerAt(Graph& g, const ViewInfo& view, QPointF px, double tolerance
     double bestD = tolerance;
     for (NodeId id : g.nodes())
         if (Node* n = g.node(id); n && n->type().isA(kIkChainType))
-            if (auto d = loopDistance(view, controllerOutline(g, id), px); d && *d <= bestD)
+            if (auto d = controllerDistance(g, view, id, px); d && *d <= bestD)
             {
                 best = id;
                 bestD = *d;
@@ -195,7 +233,7 @@ void registerControllerDrawing(ext::Context& ctx)
                                      const NodeId chain = chainFrom(g, c.node.id());
                                      if (!chain)
                                          return;
-                                     drawLoop(c, controllerOutline(g, chain), colorFor(g, chain, c));
+                                     drawLoop(c, controllerOutline(g, chain), colorFor(g, chain, c), thicknessOf(g, chain));
                                      drawPivots(c, g, c.node);
                                  },
                              .pick = [](const drawOverrides::PickContext& c) -> std::optional<double> {
@@ -208,7 +246,7 @@ void registerControllerDrawing(ext::Context& ctx)
                                  [](drawOverrides::DrawContext& c) {
                                      Graph& g = Graph::current();
                                      if (!footForChain(g, c.node.id()))
-                                         drawLoop(c, controllerOutline(g, c.node.id()), colorFor(g, c.node.id(), c));
+                                         drawLoop(c, controllerOutline(g, c.node.id()), colorFor(g, c.node.id(), c), thicknessOf(g, c.node.id()));
                                  },
                              .pick = [](const drawOverrides::PickContext& c) -> std::optional<double> {
                                  Graph& g = Graph::current();

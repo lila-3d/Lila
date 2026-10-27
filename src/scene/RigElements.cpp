@@ -328,6 +328,8 @@ void registerTypesImpl()
         text("align", "The node turning the end effector with the controller.", hidden),
         {.name = "grab", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrInput | AttrHidden, .doc = "1 while the controller is being posed."},
         outFloat("ikBlend", "1 while the solver holds the chain (locked or grabbed), driving the handle's ikBlend."),
+        number("drawThickness", 4.0, "Width of the controller's line in the viewport, pixels."),
+        number("drawRadius", 1.0, "Size of the controller's ring in the viewport, as a multiple of its default."),
     };
 
     NodeType foot{.name = kReverseFootType,
@@ -369,6 +371,8 @@ void registerTypesImpl()
         number("bankMax", 45.0, "Furthest it tips onto either edge, degrees."),
         number("twistMax", 90.0, "Furthest it swivels either way, degrees."),
         number("zeroSnap", 0.5, "Roll, twist and bank nearer zero than this count as zero, degrees."),
+        number("drawThickness", 4.0, "Width of the sole loop in the viewport, pixels."),
+        number("drawRadius", 1.0, "Size of the sole loop in the viewport, as a multiple of the sole."),
     };
 
     NodeType align{.name = kAlignType,
