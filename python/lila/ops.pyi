@@ -1430,12 +1430,13 @@ def createMaterial(*objects: Any, baseColor: Sequence[float] | None = None, meta
         foliageWrap: Foliage: wraps the light around the form, 0 to 1, for soft clumps.
     """
 
-def createMesh(points: Sequence[Any] | None = None, faces: Sequence[Any] | None = None, name: str | None = None, *, n: str | None = None) -> Any:
+def createMesh(points: Sequence[Any] | None = None, faces: Sequence[Any] | None = None, uvs: Sequence[Any] | None = None, name: str | None = None, *, n: str | None = None) -> Any:
     """Make a mesh from points and faces (lists of point indices, any size). Returns its name.
 
     Args:
         points: [[x, y, z], ...] in cm.
         faces: [[i, j, k, ...], ...].
+        uvs: [[u, v], ...]: one per face corner, face by face in faces' order. Fills uv0.
         name: Name; made unique. Short form n.
     """
 

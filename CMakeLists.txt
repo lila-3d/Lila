@@ -47,6 +47,7 @@ include(LilaBuildSpeed)
 
 add_subdirectory(src)
 add_subdirectory(extensions/examples/hello)
+add_subdirectory(extensions/examples/blend_scene)
 add_subdirectory(extensions/examples/scene_points)
 add_subdirectory(extensions/examples/ui_mode)
 add_subdirectory(extensions/examples/viewport_points)

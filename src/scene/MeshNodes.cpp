@@ -685,6 +685,7 @@ void registerMeshCommands()
         .doc = "Make a mesh from points and faces (lists of point indices, any size). Returns its name.",
         .flags = {{"points", "", T::List, nullptr, "[[x, y, z], ...] in cm."},
                   {"faces", "", T::List, nullptr, "[[i, j, k, ...], ...]."},
+                  {"uvs", "", T::List, nullptr, "[[u, v], ...]: one per face corner, face by face in faces' order. Fills uv0."},
                   {"name", "n", T::String, nullptr, "Name; made unique."}},
         .run = [](const Args& a) -> json {
             if (!a.has("points") || !a.has("faces"))
@@ -704,8 +705,25 @@ void registerMeshCommands()
                     idx.push_back(v);
                 }
             }
+            auto mesh = std::make_shared<geo::Mesh>(geo::Mesh::fromPolygons(pts, sizes, idx));
+            if (a.has("uvs"))
+            {
+                const json& uvs = a.flags["uvs"];
+                if (uvs.size() != idx.size())
+                    throw CommandError(std::format("createMesh: {} uvs for {} face corners", uvs.size(), idx.size()));
+                if (mesh->numFaces() != sizes.size())
+                    throw CommandError("createMesh: uvs need every face to be valid");
+                std::span<glm::vec2> uv = mesh->cornerAttrs().getOrAdd<glm::vec2>(geo::attr::uvName(0));
+                size_t at = 0;
+                for (geo::Index f = 0; f < mesh->numFaces(); ++f)
+                {
+                    geo::Index c = mesh->faceCorner(f);
+                    for (geo::Index k = 0; k < sizes[f]; ++k, ++at, c = mesh->cornerNext(c))
+                        uv[c] = glm::vec2(uvs[at].at(0).get<float>(), uvs[at].at(1).get<float>());
+                }
+            }
             Node* n = graph().createNode(*types::find("mesh"), a.get<std::string>("name", "Mesh"), kNoNode, true);
-            graph().setValue({n->id(), MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(geo::Mesh::fromPolygons(pts, sizes, idx))));
+            graph().setValue({n->id(), MeshNode::kInMesh, -1}, MeshPtr(std::move(mesh)));
             graph().select({n->id()});
             return n->path();
         },

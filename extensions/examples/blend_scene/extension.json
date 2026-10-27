@@ -1,0 +1,14 @@
+{
+    "id": "blendScene",
+    "name": "Blend Scene",
+    "version": "1.0.0",
+    "vendor": "Lila",
+    "description": "Sample C++ file translator that reads Blender 5.0's default scene: meshes, cameras and point lights, by collection.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "blendScene.dll",
+        "linux": "blendScene.so",
+        "macos": "blendScene.dylib"
+    },
+    "enabledByDefault": false
+}

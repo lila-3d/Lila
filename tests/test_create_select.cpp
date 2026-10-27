@@ -1,6 +1,8 @@
 #include <doctest/doctest.h>
 
 #include "ops/Command.h"
+#include "scene/Graph.h"
+#include "scene/MeshNodes.h"
 
 using namespace lila;
 using json = nlohmann::json;
@@ -115,4 +117,32 @@ TEST_CASE("picking another object from the UI leaves component mode")
     run("select", {{"args", {b}}});
     CHECK(run("selectMode") == "face");
     run("selectMode", {{"args", {"object"}}});
+}
+
+TEST_CASE("createMesh puts each face corner's uv on that corner")
+{
+    json made = run("createMesh", {{"points", {{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}, {2, 0, 0}}},
+                                   {"faces", {{0, 1, 2, 3}, {1, 4, 2}}},
+                                   {"uvs", {{0, 0}, {1, 0}, {1, 1}, {0, 1}, {0.5, 0}, {1, 0.5}, {0.5, 0.5}}},
+                                   {"name", "UvQuad"}});
+    scene::Graph& g = scene::Graph::current();
+    scene::MeshPtr m = std::get<scene::MeshPtr>(g.storedValue(g.plug(made.get<std::string>() + ".inMesh")));
+    REQUIRE(m);
+    std::span<const glm::vec2> uv = m->cornerAttrs().get<glm::vec2>(geo::attr::uvName(0));
+    REQUIRE(uv.size() >= 7);
+    const std::vector<std::vector<int>> faces{{0, 1, 2, 3}, {1, 4, 2}};
+    const std::vector<glm::vec2> want{{0, 0}, {1, 0}, {1, 1}, {0, 1}, {0.5f, 0}, {1, 0.5f}, {0.5f, 0.5f}};
+    size_t at = 0;
+    for (geo::Index f = 0; f < m->numFaces(); ++f)
+    {
+        geo::Index c = m->faceCorner(f);
+        for (int point : faces[f])
+        {
+            CHECK(m->cornerPoint(c) == geo::Index(point));
+            CHECK(uv[c] == want[at++]);
+            c = m->cornerNext(c);
+        }
+    }
+
+    CHECK_THROWS(run("createMesh", {{"points", {{0, 0, 0}, {1, 0, 0}, {1, 1, 0}}}, {"faces", {{0, 1, 2}}}, {"uvs", {{0, 0}}}}));
 }
