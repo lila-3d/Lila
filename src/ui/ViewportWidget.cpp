@@ -1819,9 +1819,8 @@ void ViewportWidget::drawComponents(render::FrameState& s)
             ViewInfo view = viewInfo();
             glm::dvec3 right(view.view[0][0], view.view[1][0], view.view[2][0]), up(view.view[0][1], view.view[1][1], view.view[2][1]);
             glm::dvec3 fwd = -glm::dvec3(view.view[0][2], view.view[1][2], view.view[2][2]);
-            glm::dvec3 centre = glm::dvec3(world * glm::dvec4(m.bounds().center(), 1.0));
-            double depth0 = std::max(1e-6, glm::dot(centre - view.eye, fwd));
-            double perUnitDepth = view.unitsPerPixel(centre) / depth0;
+            // Measured one unit ahead of the eye: the mesh centre can sit behind the camera up close.
+            const double atUnit = view.unitsPerPixel(view.eye + fwd);
             const bool grayWeights = viewportDisplay::grayscaleWeights();
             for (uint32_t p = 0; p < m.pointCapacity(); ++p)
             {
@@ -1835,7 +1834,7 @@ void ViewportWidget::drawComponents(render::FrameState& s)
                 // Outside vertex mode only the falloff shows, as dots shaded by weight, and the selection's own vertices by pref.
                 if (mode != ComponentMode::Vertex && (wgt >= 1.0f ? !edgeFaceVertices : (wgt <= 0.0f && on[p] != 1)))
                     continue;
-                double half = 0.5 * (on[p] == 1 || wgt >= 1.0f ? thickness.vertexSelected : thickness.vertex) * perUnitDepth * depth;
+                double half = 0.5 * (on[p] == 1 || wgt >= 1.0f ? thickness.vertexSelected : thickness.vertex) * atUnit * (view.ortho ? 1.0 : depth);
                 glm::dvec3 r = right * half, u = up * half;
                 glm::vec4 col = on[p] == 1 ? hotLinear
                                 : wgt > 0.0f ? viewportDisplay::falloffColor(wgt, grayWeights)
