@@ -415,6 +415,14 @@ const PointProvider* pointProvider(const Node& n)
     return nullptr;
 }
 
+bool selectionHasPointNodes(const Graph& g)
+{
+    return std::ranges::any_of(g.selection(), [&](NodeId id) {
+        const Node* n = g.node(id);
+        return n && pointProvider(*n);
+    });
+}
+
 namespace
 {
 Node& meshNode(const std::string& name, const char* cmd)

@@ -107,6 +107,7 @@ set(LILA_UNITY_SKIP
     src/ui/AnimLayersPanel.cpp
     src/ui/ArrayTool.cpp
     src/ui/BakerPanel.cpp
+    src/ui/BatchRunPanel.cpp
     src/ui/CableTool.cpp
     src/ui/ControlPicker.cpp
     src/ui/DeformHandles.cpp

@@ -292,9 +292,10 @@ public:
         {
         case StepKey::Undo: stepBack(); return true;
         case StepKey::Redo: stepForward(); return true;
-        case StepKey::None: return false;
+        case StepKey::None: break;
         }
-        return false;
+        // The tool's letters (S, L, T, F, A) are app hotkeys too; it takes them while active.
+        return plainKey(e) && keyPress(const_cast<QKeyEvent*>(&e), ViewInfo{});
     }
 
     void draw(render::FrameState& f, OverlayPainter& p, const ViewInfo& view) override

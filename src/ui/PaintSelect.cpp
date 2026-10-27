@@ -57,7 +57,7 @@ std::vector<NodeId> hilited()
         if ((std::ranges::find(g.selection(), id) != g.selection().end() || pickableMesh(g, id, inherit)) &&
             isolate::shows(scene::isolation::active(), id))
             out.push_back(id);
-    if (out.empty())
+    if (out.empty() && !scene::components::selectionHasPointNodes(g))
     {
         for (NodeId id : g.nodes())
             if (pickableMesh(g, id, inherit))

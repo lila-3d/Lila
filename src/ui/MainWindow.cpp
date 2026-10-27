@@ -54,6 +54,7 @@
 #include "ui/Modes.h"
 #include "ui/ModelingToolkit.h"
 #include "ui/TopologyToolkit.h"
+#include "ui/CurveToolkit.h"
 #include "ui/ModifierStack.h"
 #include "ui/OptionBox.h"
 #include "ui/NodeEditor.h"
@@ -407,6 +408,11 @@ void MainWindow::registerPanels()
                  .area = Qt::RightDockWidgetArea, .place = [this, dock](QDockWidget* d) { tabifyDockWidget(dock(kChannelBoxDock), d); }});
     auto tabWithAttributes = [this, dock](QDockWidget* d) { tabifyDockWidget(dock("attributeEditor"), d); };
     panels::add({.id = kModelingToolkitDock, .title = "Modeling Toolkit", .create = make([](QWidget* p) { return new ModelingToolkit(p); }),
+                 .area = Qt::RightDockWidgetArea, .open = false, .place = [tabWithAttributes](QDockWidget* toolkit) {
+                     tabWithAttributes(toolkit);
+                     toolkit->setProperty(kDefaultTabExtent, kDefaultSidePanelWidth * 5 / 4);
+                 }});
+    panels::add({.id = kCurveToolkitDock, .title = "Curve Toolkit", .create = make([](QWidget* p) { return new CurveToolkit(p); }),
                  .area = Qt::RightDockWidgetArea, .open = false, .place = [tabWithAttributes](QDockWidget* toolkit) {
                      tabWithAttributes(toolkit);
                      toolkit->setProperty(kDefaultTabExtent, kDefaultSidePanelWidth * 5 / 4);
@@ -1365,7 +1371,7 @@ void MainWindow::buildMenus()
                                 "mesh.conformToObject"});
 
     menu("Curves", "Curves", Area::MenuBar, {}, "curves");
-    menus::addActions("Curves", {"#Create", "curve.bezierPen", "curve.cvTool", "curve.epTool", "curve.pencil", "curve.catmullRom", "curve.kappa",
+    menus::addActions("Curves", {"window.curveToolkit", "#Create", "curve.ezCurve", "curve.bezierPen", "curve.cvTool", "curve.epTool", "curve.pencil", "curve.catmullRom", "curve.kappa",
                                  "curve.circle", "curve.fromEdges", "curve.sketchTool", "#Surfaces", "curve.extrude", "curve.revolve", "curve.loft",
                                  "curve.patchFill", "curve.network", "curve.borderBlend", "#Pipes and Cables", "curve.pipeTool", "curve.pipe",
                                  "curve.pipePresetPipe", "curve.pipePresetHose", "curve.pipePresetCable", "curve.pipePresetConduit", "curve.cableTool",

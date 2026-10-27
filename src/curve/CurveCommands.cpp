@@ -890,6 +890,7 @@ void registerCommands()
     registerContourCommands();
     registerCableCommands();
     registerLiveSurfaceCommands();
+    registerEzCurveCommand();
     registerVehicleCommands();
     registerSketchCommands();
     registerGroomCommands();

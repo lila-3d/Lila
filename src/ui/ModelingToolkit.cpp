@@ -261,7 +261,7 @@ ModelingToolkit::ModelingToolkit(QWidget* parent) : QWidget(parent)
 
     FlowLayout* curves = nullptr;
     QWidget* curvesBox = flowBox(body, &curves);
-    row(curvesBox, {{"curve.bezierPen", "vector-bezier", "Pen"}, {"curve.epTool", "vector-spline", "EP"}, {"curve.cvTool", "vector-bezier-2", "CV"},
+    row(curvesBox, {{"window.curveToolkit", "tools", "Toolkit"}, {"curve.ezCurve", "line", "EZ"}, {"curve.bezierPen", "vector-bezier", "Pen"}, {"curve.epTool", "vector-spline", "EP"}, {"curve.cvTool", "vector-bezier-2", "CV"},
                     {"curve.pencil", "scribble", "Pencil"}, {"curve.fromEdges", "polygon", "Edges"}, {"curve.extrude", "route", "Sweep"},
                     {"curve.revolve", "rotate-360", "Revolve"}, {"curve.loft", "stack-3", "Loft"}, {"curve.pipeTool", "route-2", "Pipe"},
                     {"curve.fillet", "vector-bezier-arc", "Fillet"}, {"curve.offset", "ripple", "Offset"}, {"curve.text", "typography", "Text"},

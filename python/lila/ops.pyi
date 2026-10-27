@@ -2436,6 +2436,28 @@ def extrude(*objects: Any, profileShape: str | None = None, radius: float | None
         name: Mesh name; made unique. Short form n.
     """
 
+def ezCurve(start: Sequence[float] | None = None, end: Sequence[float] | None = None, startNormal: Sequence[float] | None = None, endNormal: Sequence[float] | None = None, mesh: Sequence[Any] | None = None, bend: float | None = None, twist: float | None = None, sag: float | None = None, lift: float | None = None, follow: bool | None = None, clearance: bool | None = None, points: int | None = None, name: str | None = None, *, s: Sequence[float] | None = None, e: Sequence[float] | None = None, sn: Sequence[float] | None = None, en: Sequence[float] | None = None, m: Sequence[Any] | None = None, b: float | None = None, tw: float | None = None, sg: float | None = None, l: float | None = None, f: bool | None = None, c: bool | None = None, p: int | None = None, n: str | None = None) -> Any:
+    """Create a curve between two points that adapts to the meshes it runs over: it follows their surface (follow) and is kept out of them (clearance), lifted off by lift. bend bows it out and sag droops it, as fractions of the distance between the points; twist turns the bow about that line. Returns the curve.
+
+    Args:
+        start: [x, y, z] start, world space, cm. Short form s.
+        end: [x, y, z] end, world space, cm. Short form e.
+        startNormal: Surface normal at the start, which way the bow faces. Short form sn.
+        endNormal: Surface normal at the end. Short form en.
+        mesh: Meshes to adapt to (names). Short form m.
+        bend: Bow out from the straight line, fraction of its length. Short form b. Default 0.0.
+        twist: Turns the bow about the line, degrees. Short form tw. Default 0.0.
+        sag: Droop down under gravity, fraction of the length. Short form sg. Default 0.0.
+        lift: Height off the surface, cm. Short form l. Default 0.0.
+        follow: Follow the surface between the points. Short form f. Default True.
+        clearance: Push the curve out of the meshes wherever it dips into them. Short form c. Default True.
+        points: Points the curve passes through. Short form p. Default 12.
+        name: Name; made unique. Short form n.
+
+    Examples:
+        lila.ops.ezCurve(start=[0, 0, 0], end=[100, 0, 0], bend=0.25, twist=30)
+    """
+
 def fairCurve(*objects: Any, tolerance: float | None = None, keepTangents: bool | None = None, keepCorners: bool | None = None, iterations: int | None = None, tol: float | None = None, kt: bool | None = None, kc: bool | None = None, it: int | None = None) -> Any:
     """Fair curves: even out their curvature (a smoother comb) without moving any part further than tolerance. Ends stay; end tangents and corners are kept unless turned off. Returns each curve's largest move.
 

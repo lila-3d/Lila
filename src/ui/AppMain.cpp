@@ -64,6 +64,7 @@
 #include "ui/RetopoDrawTool.h"
 #include "ui/TopologyTool.h"
 #include "ui/TopologyToolkit.h"
+#include "ui/CurveToolkit.h"
 #include "ui/RigViewport.h"
 #include "ui/SculptPanel.h"
 #include "ui/Shelf.h"
@@ -128,6 +129,7 @@ void registerUi()
     registerRetopoActions();
     registerTopologyActions();
     registerTopologyToolkitActions();
+    registerCurveToolkitActions();
     registerKnifeActions();
     registerTargetWeldActions();
     registerArrayToolActions();

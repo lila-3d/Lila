@@ -1168,7 +1168,7 @@ std::vector<std::string> ViewportWidget::hitTest(QPointF a, QPointF b)
 
 namespace
 {
-/** Meshes components can be picked on: the selected ones (Maya's hilite) and those under selected groups, or every visible mesh if none. */
+/** Meshes components can be picked on: the selected ones (Maya's hilite) and those under selected groups, or every visible mesh if nothing selected has components. */
 std::vector<scene::NodeId> hilited(const scene::isolation::Set& iso)
 {
     scene::Graph& g = scene::Graph::current();
@@ -1178,7 +1178,7 @@ std::vector<scene::NodeId> hilited(const scene::isolation::Set& iso)
     for (scene::NodeId id : uv::meshesUnder(g, g.selection()))
         if ((std::ranges::find(g.selection(), id) != g.selection().end() || viewportPickable(g, id, inherit)) && iso.shows(id))
             out.push_back(id);
-    if (out.empty())
+    if (out.empty() && !scene::components::selectionHasPointNodes(g))
         for (scene::NodeId id : g.nodes())
             if (scene::Node* n = g.node(id); n->type().isA("mesh") && viewportPickable(g, id, inherit) && iso.shows(id))
                 out.push_back(id);

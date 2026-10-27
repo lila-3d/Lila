@@ -188,12 +188,8 @@ public:
 
     bool keyPress(QKeyEvent* e, const ViewInfo&) override
     {
-        if (mSurface.key(e->key()))
-        {
-            mSurface.apply(mPlacer);
-            viewportTools::requestRedraw();
+        if (toolKey(e->key()))
             return true;
-        }
         switch (e->key())
         {
         case Qt::Key_Return:
@@ -201,11 +197,6 @@ public:
         case Qt::Key_Backspace:
             mHistory.undo(mPts);
             relock();
-            viewportTools::requestRedraw();
-            return true;
-        case Qt::Key_L:
-            mPlacer.toggleLock(!mPlacer.lockEnabled());
-            log::info("{}: planar lock {}", mName, mPlacer.lockEnabled() ? "on" : "off");
             viewportTools::requestRedraw();
             return true;
         case Qt::Key_Escape:
@@ -223,6 +214,8 @@ public:
 
     bool hotkey(const QKeyEvent& e, std::string_view action) override
     {
+        if (plainKey(e) && toolKey(e.key()))
+            return true;
         switch (mHistory.route(e.key(), action))
         {
         case StepKey::Undo: mHistory.undo(mPts); break;
@@ -254,6 +247,22 @@ public:
     }
 
 private:
+    /** S, K and L, which the app also binds (set key, lasso), so they come here before its hotkeys take them. */
+    bool toolKey(int key)
+    {
+        if (mSurface.key(key))
+            mSurface.apply(mPlacer);
+        else if (key == Qt::Key_L)
+        {
+            mPlacer.toggleLock(!mPlacer.lockEnabled());
+            log::info("{}: planar lock {}", mName, mPlacer.lockEnabled() ? "on" : "off");
+        }
+        else
+            return false;
+        viewportTools::requestRedraw();
+        return true;
+    }
+
     void finish(bool closed)
     {
         if (mPts.size() >= 2)
@@ -409,22 +418,14 @@ public:
 
     bool keyPress(QKeyEvent* e, const ViewInfo&) override
     {
-        if (mSurface.key(e->key()))
-        {
-            mSurface.apply(mPlacer);
-            viewportTools::requestRedraw();
+        if (toolKey(e->key()))
             return true;
-        }
         switch (e->key())
         {
         case Qt::Key_Return:
         case Qt::Key_Enter: finish(); return true;
         case Qt::Key_Backspace:
             stepBack();
-            viewportTools::requestRedraw();
-            return true;
-        case Qt::Key_L:
-            mPlacer.toggleLock(!mPlacer.lockEnabled());
             viewportTools::requestRedraw();
             return true;
         case Qt::Key_Escape:
@@ -442,6 +443,8 @@ public:
 
     bool hotkey(const QKeyEvent& e, std::string_view action) override
     {
+        if (plainKey(e) && toolKey(e.key()))
+            return true;
         switch (mHistory.route(e.key(), action))
         {
         case StepKey::Undo: stepBack(); return true;
@@ -484,6 +487,19 @@ public:
     }
 
 private:
+    /** S, K and L, ahead of the app's hotkeys on them. */
+    bool toolKey(int key)
+    {
+        if (mSurface.key(key))
+            mSurface.apply(mPlacer);
+        else if (key == Qt::Key_L)
+            mPlacer.toggleLock(!mPlacer.lockEnabled());
+        else
+            return false;
+        viewportTools::requestRedraw();
+        return true;
+    }
+
     void finish()
     {
         if (mSpline.size() >= 2)
@@ -626,17 +642,15 @@ public:
 
     bool keyPress(QKeyEvent* e, const ViewInfo&) override
     {
-        if (mSurface.key(e->key()))
-        {
-            mSurface.apply(mPlacer);
-            viewportTools::requestRedraw();
+        if (toolKey(e->key()))
             return true;
-        }
         if (e->key() != Qt::Key_Escape)
             return false;
         exitTool();
         return true;
     }
+
+    bool hotkey(const QKeyEvent& e, std::string_view) override { return plainKey(e) && toolKey(e.key()); }
 
     void draw(render::FrameState& f, OverlayPainter& p, const ViewInfo& view) override
     {
@@ -649,6 +663,16 @@ public:
     }
 
 private:
+    /** S and K, ahead of the app's hotkeys on them. */
+    bool toolKey(int key)
+    {
+        if (!mSurface.key(key))
+            return false;
+        mSurface.apply(mPlacer);
+        viewportTools::requestRedraw();
+        return true;
+    }
+
     std::vector<D3> mStroke;
     std::vector<QPointF> mPx;
     double mUpp = 0.1;

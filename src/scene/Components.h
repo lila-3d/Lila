@@ -97,6 +97,8 @@ struct PointProvider
 LILA_SCENE_API void registerPointProvider(PointProvider p);
 /** The provider for the node's type or a base type; null for meshes and anything else. */
 LILA_SCENE_API const PointProvider* pointProvider(const Node& n);
+/** True when a selected node has points of its own (a curve), so component modes edit it rather than every mesh. */
+LILA_SCENE_API bool selectionHasPointNodes(const Graph& g);
 
 LILA_SCENE_API void registerCommands();
 /** selectLoopThrough, selectPathBetween and selectContainedFaces (scene/SelectPaths.cpp); called by registerCommands. */

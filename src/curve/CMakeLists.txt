@@ -72,7 +72,7 @@ if(MSVC)
 endif()
 
 lila_module(lila_curve_scene Scene AlongNodes.cpp AlongNodes.h CurveCommands.cpp CurveDeformCommands.cpp CurveNodes.cpp CurveNodes.h DxfCommands.cpp EdgeToCurve.cpp EdgeToCurve.h PipeNode.cpp PipeNode.h
-    CableNode.cpp ContourNode.cpp EnvAttrs.h EnvironmentNodes.h LiveSurface.cpp
+    CableNode.cpp ContourNode.cpp EnvAttrs.h EnvironmentNodes.h EzCurve.cpp LiveSurface.cpp
     VehicleCommands.cpp VehicleNodes.cpp VehicleNodes.h
     SketchCommands.cpp SketchNode.h GroomCommands.cpp GroomNode.h
     PlanarNodes.cpp PlanarNodes.h)

@@ -344,6 +344,7 @@ void registerCurveUi()
         drawOverrides::add({.id = "lila.curve", .nodeType = "curve", .draw = drawCurve, .pick = pickCurve});
     registerActions();
     registerCurveTools();
+    registerEzCurveTool();
     registerPipeTool();
     registerCableTool();
     registerSectionTool();

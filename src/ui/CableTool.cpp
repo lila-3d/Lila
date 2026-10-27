@@ -190,7 +190,9 @@ public:
             mHistory.redo(mAnchors);
             relock();
             break;
-        case StepKey::None: return false;
+        case StepKey::None:
+            // The tool's letters (S, L, D, P) are app hotkeys too; it takes them while active.
+            return plainKey(e) && keyPress(const_cast<QKeyEvent*>(&e), ViewInfo{});
         }
         viewportTools::requestRedraw();
         return true;

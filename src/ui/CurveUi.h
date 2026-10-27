@@ -12,6 +12,8 @@ namespace lila::ui
 LILA_UI_API void registerCurveUi();
 /** The draw tools (CurveTools.cpp); called by registerCurveUi. */
 void registerCurveTools();
+/** The EZ Curve tool (EzCurveTool.cpp); called by registerCurveUi. */
+void registerEzCurveTool();
 /** The pipe tool and pipe actions (PipeTool.cpp); called by registerCurveUi. */
 void registerPipeTool();
 /** The cable tool and cable action (CableTool.cpp); called by registerCurveUi. */
