@@ -15,12 +15,12 @@ using O = Override;
 void registerBuiltinOverrides(std::map<std::string, Override, std::less<>>& m)
 {
     O transfer;
-    transfer.order = {"uvs", "normals", "colors", "positions", "skinWeights", "attributes", "sampleSpace", "keepShape", "searchMethod", "maxDistance",
+    transfer.order = {"uvs", "normals", "colors", "positions", "skinWeights", "attributes", "sampleSpace", "keepShape", "separateUnmatched", "searchMethod", "maxDistance",
                       "flip", "sourceUvSet", "targetUvSet", "sourceColorSet", "targetColorSet", "live"};
     transfer.shown = {"attributes"};
     for (const char* f : {"uvs", "normals", "colors", "positions", "skinWeights", "attributes"})
         transfer.sections[f] = "Attributes to Transfer";
-    for (const char* f : {"sampleSpace", "keepShape", "searchMethod", "maxDistance", "flip"})
+    for (const char* f : {"sampleSpace", "keepShape", "separateUnmatched", "searchMethod", "maxDistance", "flip"})
         transfer.sections[f] = "Attribute Settings";
     for (const char* f : {"sourceUvSet", "targetUvSet"})
         transfer.sections[f] = "UV Set Mapping";
@@ -29,7 +29,8 @@ void registerBuiltinOverrides(std::map<std::string, Override, std::less<>>& m)
     transfer.sections["live"] = "Result";
     transfer.labels = {{"uvs", "UVs"}, {"colors", "Vertex Colors"}, {"positions", "Vertex Positions"}, {"normals", "Vertex Normals"},
                        {"attributes", "Other Layers"}, {"searchMethod", "Search Method"}, {"maxDistance", "Search Distance"},
-                       {"flip", "Flip Across Symmetry"}, {"keepShape", "Keep Island Shape (Guided)"}, {"live", "Live (Modifier, No Bake)"}};
+                       {"flip", "Flip Across Symmetry"}, {"keepShape", "Keep Island Shape (Guided)"},
+                       {"separateUnmatched", "Separate Unmatched Faces (Guided)"}, {"live", "Live (Modifier, No Bake)"}};
     transfer.choices["sampleSpace"] = {{"world", "World"}, {"object", "Local (Object)"}, {"component", "Component (Same Topology)"}, {"uv", "UV (Closest UV)"},
                                          {"guided", "Guided (Similar Shapes)"}};
     transfer.choices["searchMethod"] = {{"closest", "Closest Point on Surface"}, {"normal", "Closest Along Normal (Raycast)"}};

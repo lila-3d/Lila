@@ -54,6 +54,8 @@
     { "separator": true },
     { "label": "Symmetry X", "action": "mesh.symmetryX" },
     { "label": "Symmetry Off", "action": "mesh.symmetryOff" },
-    { "label": "Rebuild Symmetry", "action": "mesh.symmetryRebuild" }
+    { "label": "Rebuild Symmetry", "action": "mesh.symmetryRebuild" },
+    { "separator": true },
+    { "label": "Transfer Attributes", "action": "mesh.transferAttributes" }
   ]
 }

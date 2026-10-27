@@ -100,3 +100,49 @@ TEST_CASE("guided transfer fits a similar piece and rebuilds its uv islands")
     CHECK(kept[0]["relaxed"].get<int>() == 0);
     CHECK(kept[0]["islands"].get<int>() > 0);
 }
+
+TEST_CASE("guided transfer follows a mirrored and stretched copy")
+{
+    run("newScene");
+    std::string src = run("polyCube", {{"name", "Bar"}, {"generator", false}, {"width", 100}, {"height", 8}, {"depth", 12},
+                                       {"subdivisionsX", 6}, {"subdivisionsY", 1}, {"subdivisionsZ", 2}})[0];
+    run("move", {{"args", {src}}, {"by", {60, 0, 0}}});
+    run("freezeTransforms", {{"args", {src}}});
+    std::string dst = run("duplicate", {{"args", {src}}})[0];
+    run("scale", {{"args", {dst}}, {"by", {-1.1, 1, 0.95}}});
+    run("freezeTransforms", {{"args", {dst}}});
+    run("move", {{"args", {dst}}, {"by", {0, 0, 200}}});
+    for (bool keep : {false, true})
+    {
+        json r = run("transferAttributes", {{"args", {src, dst}}, {"uvs", true}, {"sampleSpace", "guided"}, {"keepShape", keep}});
+        REQUIRE(r.is_array());
+        CHECK(r[0]["fitError"].get<double>() < 0.02);
+        CHECK(r[0]["unwrapped"].get<int>() == 0);
+        run("undo");
+    }
+}
+
+TEST_CASE("guided transfer gives faces the source lacks islands of their own")
+{
+    run("newScene");
+    std::string src = run("polyCube", {{"name", "Open"}, {"generator", false}, {"width", 100}, {"height", 10}, {"depth", 10},
+                                       {"subdivisionsX", 6}})[0];
+    json cap = json::array();
+    const geo::Mesh& m = meshOf(src);
+    for (geo::Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f) && m.faceNormal(f).x > 0.9)
+            cap.push_back(f);
+    REQUIRE(!cap.empty());
+    run("selectComponents", {{"args", {src}}, {"faces", cap}});
+    run("deleteComponents");
+    std::string dst = run("polyCube", {{"name", "Closed"}, {"generator", false}, {"width", 100}, {"height", 10}, {"depth", 10},
+                                       {"subdivisionsX", 6}})[0];
+    run("move", {{"args", {dst}}, {"by", {0, 0, 100}}});
+    for (bool separate : {true, false})
+    {
+        json r = run("transferAttributes", {{"args", {src, dst}}, {"uvs", true}, {"sampleSpace", "guided"}, {"separateUnmatched", separate}});
+        REQUIRE(r.is_array());
+        CHECK(r[0]["unmatched"].get<int>() == (separate ? 1 : 0));
+        run("undo");
+    }
+}

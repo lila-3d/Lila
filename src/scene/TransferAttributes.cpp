@@ -56,6 +56,7 @@ struct Options
     std::string sourceColorSet; // empty: every set onto the same name
     std::string targetColorSet; // empty: the source set's own name
     bool keepShape = false; // guided: keep each island's transferred shape instead of relaxing it
+    bool separateUnmatched = true; // guided: faces with no source counterpart get islands of their own
 };
 
 /** Where a target sample lands on the source: triangle + barycentrics, or nothing within range. */
@@ -301,6 +302,7 @@ void transfer(const geo::Mesh& src, const glm::dmat4& srcWorld, geo::Mesh& dst, 
         g.sourceSet = geo::attr::uvName(from);
         g.targetSet = geo::attr::uvName(o.targetUvSet >= 0 ? o.targetUvSet : from);
         g.relax = !o.keepShape;
+        g.separateUnmatched = o.separateUnmatched;
         glm::dmat4 mirror(1.0);
         if (o.flipAxis >= 0)
             mirror[o.flipAxis][o.flipAxis] = -1.0;
@@ -463,6 +465,7 @@ private:
         o.sourceColorSet = as<std::string>(attr("sourceColorSet"));
         o.targetColorSet = as<std::string>(attr("targetColorSet"));
         o.keepShape = as<bool>(attr("keepShape"));
+        o.separateUnmatched = as<bool>(attr("separateUnmatched"));
         return o;
     }
 
@@ -597,6 +600,9 @@ void registerTransferModifier()
         param("keepShape", PlugType::Bool, false,
               "Guided: keep each island's shape as transferred (trim sheets, hand-laid strips) instead of relaxing it; islands that "
               "fold are still unwrapped."),
+        param("separateUnmatched", PlugType::Bool, true,
+              "Guided: faces with nothing like them on the source (a cap where the source is open) become islands of their own "
+              "beside the layout; off, they join the island next to them."),
         param("maxDistance", PlugType::Float, -1.0, "Ignore matches farther than this, cm; negative is unlimited."),
         param("flip", PlugType::Enum, int64_t(0), "Mirror the lookup across the source's x, y or z axis (symmetry).", kFlipNames),
         param("sourceUvSet", PlugType::Int, int64_t(-1), "Transfer only this UV set, 0 to 7; -1 transfers every set."),
@@ -641,6 +647,9 @@ void registerTransferCommands()
             {"searchMethod", "", T::String, "closest", "closest or normal.", {"closest", "normal"}},
             {"keepShape", "", T::Bool, false,
              "Guided: keep each island's shape as transferred instead of relaxing it (trim sheets); islands that fold are still unwrapped."},
+            {"separateUnmatched", "", T::Bool, true,
+             "Guided: faces with nothing like them on the source become islands of their own beside the layout; off, they join the "
+             "island next to them."},
             {"maxDistance", "", T::Float, -1.0, "Ignore matches farther than this (cm); negative is unlimited."},
             {"flip", "", T::String, "none", "Mirror the lookup across the source's x, y or z axis.", {"none", "x", "y", "z"}},
             {"sourceUvSet", "", T::Int, -1, "Transfer only this UV set (0-7); -1 transfers every set."},
@@ -673,6 +682,7 @@ void registerTransferCommands()
             o.sourceColorSet = a.get<std::string>("sourceColorSet", "");
             o.targetColorSet = a.get<std::string>("targetColorSet", "");
             o.keepShape = a.get<bool>("keepShape");
+            o.separateUnmatched = a.get<bool>("separateUnmatched", true);
             bool skinWeights = a.get<bool>("skinWeights");
 
             Node& src = meshNode(g, objs.front(), "transferAttributes");
@@ -694,7 +704,8 @@ void registerTransferCommands()
                                {"targetUvSet", o.targetUvSet},
                                {"sourceColorSet", o.sourceColorSet},
                                {"targetColorSet", o.targetColorSet},
-                               {"keepShape", o.keepShape}};
+                               {"keepShape", o.keepShape},
+                               {"separateUnmatched", o.separateUnmatched}};
                 UndoChunk chunk("Transfer Attributes (Live)");
                 json out = json::array();
                 for (size_t i = 1; i < objs.size(); ++i)
@@ -731,9 +742,12 @@ void registerTransferCommands()
                     report.push_back({{"target", dstNode.path()},
                                       {"fitError", stats.align.residual},
                                       {"reoriented", stats.align.searched},
+                                      {"mirrored", stats.align.mirrored},
                                       {"islands", stats.uvs.islands},
                                       {"relaxed", stats.uvs.relaxed},
+                                      {"repaired", stats.uvs.repaired},
                                       {"unwrapped", stats.uvs.unfolded},
+                                      {"unmatched", stats.uvs.unmatched},
                                       {"seams", stats.uvs.seams}});
                 g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(target))));
                 if (skinWeights)

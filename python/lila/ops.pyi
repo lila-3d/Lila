@@ -7276,7 +7276,7 @@ def toggleVisibility(*objects: Any) -> Any:
         objects: objects.
     """
 
-def transferAttributes(*objects: Any, uvs: bool | None = None, normals: bool | None = None, colors: bool | None = None, positions: bool | None = None, attributes: Sequence[Any] | None = None, skinWeights: bool | None = None, sampleSpace: str | None = None, searchMethod: str | None = None, keepShape: bool | None = None, maxDistance: float | None = None, flip: str | None = None, sourceUvSet: int | None = None, targetUvSet: int | None = None, sourceColorSet: str | None = None, targetColorSet: str | None = None, live: bool | None = None) -> Any:
+def transferAttributes(*objects: Any, uvs: bool | None = None, normals: bool | None = None, colors: bool | None = None, positions: bool | None = None, attributes: Sequence[Any] | None = None, skinWeights: bool | None = None, sampleSpace: str | None = None, searchMethod: str | None = None, keepShape: bool | None = None, separateUnmatched: bool | None = None, maxDistance: float | None = None, flip: str | None = None, sourceUvSet: int | None = None, targetUvSet: int | None = None, sourceColorSet: str | None = None, targetColorSet: str | None = None, live: bool | None = None) -> Any:
     """Copy UVs, normals, color sets, positions or named attributes from the first object to the others, sampling in world, object, component (same topology) or uv space, by closest point or along normals. guided is for similar but different pieces anywhere in the scene: each target is fitted onto the source and its UVs are rebuilt from the source's islands (seams carried over, each island unwrapped and fitted onto its source island). live=True adds a transferAttributes modifier to each target instead of baking, so the targets follow the source.
 
     Args:
@@ -7290,6 +7290,7 @@ def transferAttributes(*objects: Any, uvs: bool | None = None, normals: bool | N
         sampleSpace: world, object, component, uv or guided. One of 'world', 'object', 'component', 'uv', 'guided'. Default 'world'.
         searchMethod: closest or normal. One of 'closest', 'normal'. Default 'closest'.
         keepShape: Guided: keep each island's shape as transferred instead of relaxing it (trim sheets); islands that fold are still unwrapped. Default False.
+        separateUnmatched: Guided: faces with nothing like them on the source become islands of their own beside the layout; off, they join the island next to them. Default True.
         maxDistance: Ignore matches farther than this (cm); negative is unlimited. Default -1.0.
         flip: Mirror the lookup across the source's x, y or z axis. One of 'none', 'x', 'y', 'z'. Default 'none'.
         sourceUvSet: Transfer only this UV set (0-7); -1 transfers every set. Default -1.
