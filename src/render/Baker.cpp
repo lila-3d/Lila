@@ -518,6 +518,11 @@ public:
     {
         return cpu().occluded(group, scope, high, origin, dir, tMax);
     }
+    bool closestHit(size_t group, bake::OccluderScope scope, uint32_t high, const glm::vec3& origin, const glm::vec3& dir, float tMax,
+                    bake::TraceHit& hit) const override
+    {
+        return cpu().closestHit(group, scope, high, origin, dir, tMax, hit);
+    }
 
 private:
     friend class GpuResident;
@@ -1389,7 +1394,9 @@ void GpuBackend::shade(const bake::MapDef& def, const bake::MapContext& ctx, std
 
     const KernelChoice k = kernelFor(def, ctx.settings);
     BandSlot* slot = heldSlot();
-    if ((k.map < 0 && !k.ao && !k.thickness) || mFailed || !slot || !slot->resident || slot->key != samples.data() || slot->count != samples.size() ||
+    // The band kernels don't read the high's normal maps; prepared is non-null when there are some to apply.
+    const bool highNormalMaps = (k.map == kMapNormal || k.map == kMapObjectNormal) && ctx.prepared;
+    if ((k.map < 0 && !k.ao && !k.thickness) || highNormalMaps || mFailed || !slot || !slot->resident || slot->key != samples.data() || slot->count != samples.size() ||
         slot->group != ctx.groupIndex)
     {
         Backend::shade(def, ctx, samples, hits, out, valid);

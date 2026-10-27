@@ -206,9 +206,9 @@ TEST_CASE("zz boolean dump" * doctest::skip())
     save("block_corner", cut(block, ball, glm::translate(glm::dmat4(1.0), glm::dvec3(50, 50, 0))));
     geo::Mesh dense = geo::makeCube({.width = 100, .height = 100, .depth = 100, .subdivX = 10, .subdivY = 10, .subdivZ = 10});
     geo::Mesh rod = geo::makeCylinder({.radius = 22, .height = 300, .subdivAxis = 24});
-    save("dense_band", cut(dense, rod, glm::translate(glm::dmat4(1.0), glm::dvec3(4, 0, 2)), {.quadBand = true}));
+    save("dense_band", cut(dense, rod, glm::translate(glm::dmat4(1.0), glm::dvec3(4, 0, 2)), {.quadBand = true, .bandTimeout = 0.0}));
     save("dense_split", cut(dense, rod, glm::translate(glm::dmat4(1.0), glm::dvec3(4, 0, 2))));
-    save("dense_band_fillet", cut(dense, rod, glm::translate(glm::dmat4(1.0), glm::dvec3(4, 0, 2)), {.quadBand = true, .filletWidth = 2.0}));
+    save("dense_band_fillet", cut(dense, rod, glm::translate(glm::dmat4(1.0), glm::dvec3(4, 0, 2)), {.quadBand = true, .bandTimeout = 0.0, .filletWidth = 2.0}));
 }
 
 TEST_CASE("boolean quad band remeshes the seam into quads that weld back")
@@ -216,7 +216,8 @@ TEST_CASE("boolean quad band remeshes the seam into quads that weld back")
     geo::Mesh dense = geo::makeCube({.width = 100, .height = 100, .depth = 100, .subdivX = 10, .subdivY = 10, .subdivZ = 10});
     geo::Mesh rod = geo::makeCylinder({.radius = 22, .height = 300, .subdivAxis = 24});
     glm::dmat4 xf = glm::translate(glm::dmat4(1.0), glm::dvec3(4, 0, 2));
-    scene::BooleanResult r = cut(dense, rod, xf, {.quadBand = true});
+    // No timeout: a loaded machine can take longer than the default, and the fallback is not what this tests.
+    scene::BooleanResult r = cut(dense, rod, xf, {.quadBand = true, .bandTimeout = 0.0});
     REQUIRE(r.ok());
     MESSAGE("quad band ", r.quadBand ? "used " : "fell back ", describe(sideCounts(r.mesh)));
     CHECK(r.quadBand);
@@ -231,7 +232,7 @@ TEST_CASE("boolean quad band keeps the uvs under it")
     geo::Mesh dense = geo::makeCube({.width = 100, .height = 100, .depth = 100, .subdivX = 10, .subdivY = 10, .subdivZ = 10});
     geo::Mesh rod = geo::makeCylinder({.radius = 22, .height = 300, .subdivAxis = 24});
     glm::dmat4 xf = glm::translate(glm::dmat4(1.0), glm::dvec3(4, 0, 2));
-    scene::BooleanResult band = cut(dense, rod, xf, {.quadBand = true});
+    scene::BooleanResult band = cut(dense, rod, xf, {.quadBand = true, .bandTimeout = 0.0});
     scene::BooleanResult split = cut(dense, rod, xf);
     REQUIRE(band.quadBand);
     auto uvBand = band.mesh.cornerAttrs().get<glm::vec2>("uv0");

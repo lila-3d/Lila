@@ -984,16 +984,29 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
             consider(build(o, &steps));
         return folds;
     };
-    // Steering the rounding away from folds untangles some layouts and costs others poles, so a folded one tries both.
-    if (opts.seamless && trySeamless(0) > 0)
-        trySeamless(48);
+    // Steering the rounding away from folds untangles some layouts and costs others poles, so a folded one tries both,
+    // when the budget leaves room for the retry and the extraction after it.
+    if (opts.seamless)
+    {
+        const auto started = std::chrono::steady_clock::now();
+        const Index folds = trySeamless(0);
+        const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        if (folds > 0 && Budget::remaining() > 3.0 * took)
+            trySeamless(48);
+    }
     clock.lap("seamless");
-    QuadRemeshResult best = build(solvePositionField(s, q, scale));
-    clock.lap("local");
-    // Pins only hold exactly in the seamless layout.
+    // Pins only hold exactly in the seamless layout, so with pins the local field is only a fallback.
     const bool preferSeamless = !opts.pinnedPoints.empty();
-    if (seamless && seamless->ok() && (!best.ok() || preferSeamless || seamless->metrics.irregular <= best.metrics.irregular))
+    QuadRemeshResult best;
+    if (seamless && seamless->ok() && preferSeamless)
         best = std::move(*seamless);
+    else
+    {
+        best = build(solvePositionField(s, q, scale));
+        clock.lap("local");
+        if (seamless && seamless->ok() && (!best.ok() || seamless->metrics.irregular <= best.metrics.irregular))
+            best = std::move(*seamless);
+    }
     // Where lattice points land against a tight spot is down to where the lattice happens to sit; a lattice shifted by
     // half a cell often fits where the first didn't, at the same density.
     int bestDefects = best.ok() ? int(defects(best.mesh, src, bvh, closed)) : 0;

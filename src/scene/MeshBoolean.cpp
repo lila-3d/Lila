@@ -523,6 +523,12 @@ bool requadBand(geo::Mesh& m, std::span<const Index> band, double hardAngle, dou
         }
     geo::weldPoints(q, qTarget);
     q.compact();
+    // A border face that took two of the band's points has six sides or more.
+    std::vector<Index> large;
+    for (Index f = 0; f < q.faceCapacity(); ++f)
+        if (q.faceValid(f) && q.faceSize(f) > 5)
+            large.push_back(f);
+    geo::splitNgons(q, large);
 
     // Uvs from the band under each corner, probed a little toward its face's middle so a corner on a uv seam reads its
     // own side.

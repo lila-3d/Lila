@@ -18,6 +18,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <thread>
 
@@ -30,6 +31,9 @@ namespace
 bool haveGpu()
 {
     static const bool ok = [] {
+        // Live maps run on the resident path only, which this switch turns off.
+        if (const char* e = std::getenv("LILA_BAKE_GPU_RESIDENT"); e && std::string_view(e) == "0")
+            return false;
         try
         {
             render::createGpuBakeBackend(render::GpuTrace::Auto);
