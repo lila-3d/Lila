@@ -1,0 +1,325 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 0.01
+    upAxis = "Z"
+)
+
+def Xform "World"
+{
+    def Mesh "Card" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        rel material:binding = </World/Looks/Painted>
+    }
+
+    def Mesh "Bumper" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        rel material:binding = </World/Looks/Chrome>
+    }
+
+    def Mesh "Fern" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        rel material:binding = </World/Looks/GltfLeaf>
+    }
+
+    def Mesh "Static" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        rel material:binding = </World/Looks/Noisy>
+    }
+
+    def Mesh "Odd" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        rel material:binding = </World/Looks/Principled>
+    }
+
+    def Mesh "Pipe" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        rel material:binding = </World/Library/Materials/Copper>
+    }
+
+    def Mesh "Cushion" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        rel material:binding = </World/Library/Materials/Velvet>
+    }
+
+    # The materials of a .mtlx document, composed through the usdMtlx file format.
+    def Scope "Library" (
+        references = @./mtlx_library.mtlx@</MaterialX>
+    )
+    {
+    }
+
+    def Scope "Looks"
+    {
+        # OpenPBR: an sRGB base color on UV set 1 with clamped U, an ORM map split by separate3, an OpenGL normal map,
+        # emission, and a clear coat Lila can't keep.
+        def Material "Painted"
+        {
+            token outputs:mtlx:surface.connect = </World/Looks/Painted/Surface.outputs:out>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color.connect = </World/Looks/Painted/Albedo.outputs:out>
+                float inputs:base_metalness.connect = </World/Looks/Painted/Split.outputs:outz>
+                float inputs:specular_roughness.connect = </World/Looks/Painted/Split.outputs:outy>
+                float inputs:specular_ior = 1.5
+                float3 inputs:geometry_normal.connect = </World/Looks/Painted/NormalMap.outputs:out>
+                float inputs:emission_luminance = 2
+                color3f inputs:emission_color = (1, 0.5, 0)
+                float inputs:coat_weight = 0.3
+                color3f inputs:specular_color.connect = </World/Looks/Painted/Tint.outputs:out>
+                token outputs:out
+            }
+
+            def Shader "Uv"
+            {
+                uniform token info:id = "ND_geompropvalue_vector2"
+                string inputs:geomprop = "st1"
+                float2 outputs:out
+            }
+
+            def Shader "Albedo"
+            {
+                uniform token info:id = "ND_image_color3"
+                asset inputs:file = @./tex/leaf_albedo.png@ (
+                    colorSpace = "srgb_texture"
+                )
+                float2 inputs:texcoord.connect = </World/Looks/Painted/Uv.outputs:out>
+                string inputs:uaddressmode = "clamp"
+                color3f outputs:out
+            }
+
+            def Shader "Orm"
+            {
+                uniform token info:id = "ND_image_vector3"
+                asset inputs:file = @./tex/leaf_orm.png@
+                float2 inputs:texcoord.connect = </World/Looks/Painted/Uv.outputs:out>
+                float3 outputs:out
+            }
+
+            def Shader "Split"
+            {
+                uniform token info:id = "ND_separate3_vector3"
+                float3 inputs:in.connect = </World/Looks/Painted/Orm.outputs:out>
+                float outputs:outx
+                float outputs:outy
+                float outputs:outz
+            }
+
+            def Shader "NormalTex"
+            {
+                uniform token info:id = "ND_image_vector3"
+                asset inputs:file = @./tex/leaf_normal.png@
+                float2 inputs:texcoord.connect = </World/Looks/Painted/Uv.outputs:out>
+                float3 outputs:out
+            }
+
+            def Shader "NormalMap"
+            {
+                uniform token info:id = "ND_normalmap_float"
+                float3 inputs:in.connect = </World/Looks/Painted/NormalTex.outputs:out>
+                float3 outputs:out
+            }
+
+            def Shader "Tint"
+            {
+                uniform token info:id = "ND_noise2d_color3"
+                color3f outputs:out
+            }
+        }
+
+        # Standard Surface: base color from a mix folded to a constant, roughness from a multiply of constants,
+        # opacity 0.5 and transmission Lila can't keep.
+        def Material "Chrome"
+        {
+            token outputs:mtlx:surface.connect = </World/Looks/Chrome/Surface.outputs:out>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "ND_standard_surface_surfaceshader"
+                float inputs:base = 0.5
+                color3f inputs:base_color.connect = </World/Looks/Chrome/Mix.outputs:out>
+                float inputs:metalness = 1
+                float inputs:specular_roughness.connect = </World/Looks/Chrome/Rough.outputs:out>
+                color3f inputs:opacity = (0.5, 0.5, 0.5)
+                float inputs:transmission = 0.8
+                token outputs:out
+            }
+
+            def Shader "Mix"
+            {
+                uniform token info:id = "ND_mix_color3"
+                color3f inputs:fg = (1, 0, 0)
+                color3f inputs:bg = (0, 0, 1)
+                float inputs:mix = 0.25
+                color3f outputs:out
+            }
+
+            def Shader "Rough"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1 = 0.5
+                float inputs:in2 = 0.4
+                float outputs:out
+            }
+        }
+
+        # glTF PBR: a tiled base color with alpha (mask mode), packed ORM, a DirectX normal map flipped on the way in.
+        def Material "GltfLeaf"
+        {
+            token outputs:mtlx:surface.connect = </World/Looks/GltfLeaf/Surface.outputs:out>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "ND_gltf_pbr_surfaceshader"
+                color3f inputs:base_color.connect = </World/Looks/GltfLeaf/BaseRgb.outputs:out>
+                float inputs:alpha.connect = </World/Looks/GltfLeaf/Alpha.outputs:out>
+                int inputs:alpha_mode = 1
+                float inputs:alpha_cutoff = 0.3
+                float inputs:occlusion.connect = </World/Looks/GltfLeaf/Orm.outputs:outr>
+                float inputs:roughness.connect = </World/Looks/GltfLeaf/Orm.outputs:outg>
+                float inputs:metallic.connect = </World/Looks/GltfLeaf/Orm.outputs:outb>
+                float3 inputs:normal.connect = </World/Looks/GltfLeaf/NormalMap.outputs:out>
+                token outputs:out
+            }
+
+            def Shader "Base"
+            {
+                uniform token info:id = "ND_tiledimage_color4"
+                asset inputs:file = @./tex/leaf_albedo.png@
+                float2 inputs:uvtiling = (2, 2)
+                color4f outputs:out
+            }
+
+            def Shader "BaseRgb"
+            {
+                uniform token info:id = "ND_convert_color4_color3"
+                color4f inputs:in.connect = </World/Looks/GltfLeaf/Base.outputs:out>
+                color3f outputs:out
+            }
+
+            def Shader "Alpha"
+            {
+                uniform token info:id = "ND_extract_color4"
+                color4f inputs:in.connect = </World/Looks/GltfLeaf/Base.outputs:out>
+                int inputs:index = 3
+                float outputs:out
+            }
+
+            def Shader "OrmTex"
+            {
+                uniform token info:id = "ND_image_color3"
+                asset inputs:file = @./tex/leaf_orm.png@
+                color3f outputs:out
+            }
+
+            def Shader "Orm"
+            {
+                uniform token info:id = "ND_separate3_color3"
+                color3f inputs:in.connect = </World/Looks/GltfLeaf/OrmTex.outputs:out>
+                float outputs:outr
+                float outputs:outg
+                float outputs:outb
+            }
+
+            def Shader "NormalTex"
+            {
+                uniform token info:id = "ND_image_vector3"
+                asset inputs:file = @./tex/leaf_normal.png@
+                string inputs:vaddressmode = "mirror"
+                float3 outputs:out
+            }
+
+            def Shader "Flip"
+            {
+                uniform token info:id = "ND_multiply_vector3"
+                float3 inputs:in1.connect = </World/Looks/GltfLeaf/NormalTex.outputs:out>
+                float3 inputs:in2 = (1, -1, 1)
+                float3 outputs:out
+            }
+
+            def Shader "Green"
+            {
+                uniform token info:id = "ND_add_vector3"
+                float3 inputs:in1.connect = </World/Looks/GltfLeaf/Flip.outputs:out>
+                float3 inputs:in2 = (0, 1, 0)
+                float3 outputs:out
+            }
+
+            def Shader "NormalMap"
+            {
+                uniform token info:id = "ND_normalmap_float"
+                float3 inputs:in.connect = </World/Looks/GltfLeaf/Green.outputs:out>
+                float3 outputs:out
+            }
+        }
+
+        # A base color from procedural noise: nothing to map it to.
+        def Material "Noisy"
+        {
+            token outputs:mtlx:surface.connect = </World/Looks/Noisy/Surface.outputs:out>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color.connect = </World/Looks/Noisy/Noise.outputs:out>
+                float inputs:specular_roughness = 0.6
+                token outputs:out
+            }
+
+            def Shader "Noise"
+            {
+                uniform token info:id = "ND_noise3d_color3"
+                color3f outputs:out
+            }
+        }
+
+        # A surface Lila has no mapping for.
+        def Material "Principled"
+        {
+            token outputs:mtlx:surface.connect = </World/Looks/Principled/Surface.outputs:out>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "ND_disney_principled"
+                token outputs:out
+            }
+        }
+    }
+}

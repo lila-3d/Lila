@@ -169,6 +169,9 @@ bool registerStageType(ext::Context& ctx)
         stringAttr(kMaterials, "", hidden, "The material prim each material came from."),
         stringAttr(kLoadRules, "", hidden, "Which payloads are loaded."),
         stringAttr(kStamps, "", hidden, "The source files' times and sizes at the last save, to reload when they change."),
+        stringAttr(kMaterialX, "MaterialX", 0,
+                   "The MaterialX surface new and edited materials get beside their UsdPreviewSurface: openPBR, standardSurface "
+                   "or none. Empty follows the stage: OpenPBR when any of its materials uses MaterialX."),
     };
     return scene::types::registerType(ctx, std::move(t)) != nullptr;
 }
@@ -235,8 +238,13 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
                    "UsdPreviewSurface materials become Lila materials (Unreal's default lit) with their textures: packed "
                    "occlusion/roughness/metallic textures as an ORM or MRO map, normal maps' green convention read from the texture's "
                    "scale, emissive intensity from its scale, opacity from the base color texture's alpha as masked or translucent, and "
-                   "each texture's wrapS, wrapT and magFilter as its map's wrap and filter. Unlit materials Lila wrote and MaterialX "
-                   "ND_surface_unlit surfaces become unlit materials. Direct and collection bindings both resolve. Textures inside a "
+                   "each texture's wrapS, wrapT and magFilter as its map's wrap and filter. Unlit materials Lila wrote become unlit "
+                   "materials. MaterialX networks (outputs:mtlx:surface: OpenPBR, Standard Surface, glTF PBR, UsdPreviewSurface and "
+                   "unlit surfaces, also from referenced .mtlx files) map the same way, preferred over a UsdPreviewSurface beside "
+                   "them: image and tiledimage nodes with their UV set, address modes and filter, normalmap, and constant, multiply, "
+                   "add, mix, extract, separate and convert nodes that fold to a constant or one texture's channels. What has no "
+                   "Lila equivalent (coat, transmission, subsurface, other node kinds) is listed in the report's skipped entries. "
+                   "Direct and collection bindings both resolve. Textures inside a "
                    ".usdz are unpacked beside it. Meshes with time-sampled points get a meshCache deformer playing every sample "
                    "(interpolated between them); a mesh whose topology changes over time keeps its rest frame.\n\n"
                    "UsdSkel skeletons become joints, SkelBindingAPI skins skinClusters with their weights and bind pose, BlendShapes "
@@ -289,6 +297,8 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
                    "the texture's scale and bias, emissive intensity as the texture's scale, masked and translucent opacity from the "
                    "base color's alpha, each map's wrap as wrapS and wrapT (nearest filtering as magFilter and minFilter), unlit "
                    "materials as their base color emitted over a black surface, and twoSided as doubleSided on the meshes using it. "
+                   "materialX='openPBR' (or 'standardSurface') adds the same material as a MaterialX network under "
+                   "outputs:mtlx:surface, which previewSurface=False writes alone. "
                    "Meshes a meshCache drives write their points as time samples.\n\n"
                    "Joints become a Skeleton (bind and rest transforms) under a SkelRoot shared with the meshes skinned to it; skins "
                    "write jointIndices and jointWeights (pruned to maxInfluences) and the mesh's geomBindTransform, in the bind pose. "
@@ -308,6 +318,11 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
                       {"upAxis", "up", T::String, "z", "File up axis: z (Unreal) or y. Assets land the same way through either, as with FBX.", {"z", "y"}},
                       {"metersPerUnit", "mpu", T::Float, 0.01, "Scene unit of the file in metres: 0.01 is centimetres (Unreal), 1 metres. Lengths are scaled to it."},
                       {"materials", "mat", T::Bool, true, "Write UsdPreviewSurface materials and bind them."},
+                      {"materialX", "mx", T::String, "none",
+                       "Also write each material as a MaterialX network under outputs:mtlx:surface: openPBR (OpenPBR Surface, the "
+                       "successor to Standard Surface that renderers are converging on) or standardSurface.",
+                       {"none", "openPBR", "standardSurface"}},
+                      {"previewSurface", "", T::Bool, true, "Write the UsdPreviewSurface network; False writes only the MaterialX one."},
                       {"textures", "tex", T::String, "relative",
                        "How texture files are referenced: relative to the file, absolute, or copy (copied into <name>_textures beside "
                        "the file). A .usdz packages them whatever this says.",
@@ -335,6 +350,45 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
         }))
         return 3;
 
+    if (!ctx.registerCommand({
+            .name = "importMaterialX",
+            .doc = "Import the materials of a MaterialX document (.mtlx) as Lila materials, mapped as importUsd maps MaterialX "
+                   "networks: OpenPBR, Standard Surface, glTF PBR, UsdPreviewSurface and unlit surfaces with their image "
+                   "textures, UV sets, address modes and filters, normal maps and the constant and arithmetic nodes that fold "
+                   "to a value or one texture's channels. Documents Lila wrote come back with every setting. A material whose "
+                   "name the scene already has is left as it is. Returns the new material names, or with report=True a dict of "
+                   "materials, created, skipped and warnings.",
+            .positionalDoc = "path",
+            .flags = {{"report", "", T::Bool, false, "Return the import report instead of just the names."}},
+            .run = [](const Args& a) { return runBackend("importMaterialX", a); },
+            .examples = {"importMaterialX(\"C:/library/metals.mtlx\")"},
+        }))
+        return 7;
+    if (!ctx.registerCommand({
+            .name = "exportMaterialX",
+            .doc = "Write Lila materials to a MaterialX document (.mtlx): each a surfacematerial with its shader and a nodegraph "
+                   "of image nodes (UV set as texcoord index, wrap as address modes, nearest filtering as closest), packed "
+                   "ORM/MRO maps split by a separate3 node, normal maps through normalmap (DirectX maps flipped to MaterialX's "
+                   "OpenGL convention), emissive and opacity from the base color's alpha. Unlit materials use surface_unlit. "
+                   "Settings MaterialX has no input for are kept on the material node for importMaterialX. Objects stand for "
+                   "the materials their meshes use; without any, the selection's, or every material. Returns the path, or "
+                   "with report=True {path, materials, warnings}.",
+            .positionalDoc = "path materialsOrObjects...",
+            .flags = {{"surface", "", T::String, "openPBR",
+                       "The lit surface: openPBR (OpenPBR Surface, where the industry is converging) or standardSurface.",
+                       {"openPBR", "standardSurface"}},
+                      {"textures", "tex", T::String, "relative",
+                       "How texture files are referenced: relative to the file, absolute, or copy (into <name>_textures beside it).",
+                       {"relative", "absolute", "copy"}},
+                      {"selectionOnly", "sl", T::Bool, true, "Without names: the selection's materials; False writes every material."},
+                      {"report", "", T::Bool, false, "Return {path, materials, warnings} instead of the path."}},
+            .undoable = false,
+            .run = [](const Args& a) { return runBackend("exportMaterialX", a); },
+            .examples = {"exportMaterialX(\"C:/out/props.mtlx\", \"Brick\", \"Glass\")",
+                         "exportMaterialX(\"C:/out/all.mtlx\", selectionOnly=False, surface=\"standardSurface\")"},
+        }))
+        return 8;
+
     const auto stageCommand = [&](CommandDef def) {
         def.run = [command = def.name](const Args& a) { return runBackend(command.c_str(), a); };
         return ctx.registerCommand(std::move(def)) != 0;
@@ -359,6 +413,9 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
                        "Where edits go: empty keeps them inside the .lila, a .usda path writes them to that file, one of the "
                        "stage's sublayers edits it directly."},
                       {"loadPayloads", "", T::Bool, true, "Load payloads; False leaves them unloaded (usdStageLoad loads them)."},
+                      {"materialX", "mx", T::String, "",
+                       "The MaterialX surface new and edited materials get beside their UsdPreviewSurface: openPBR, "
+                       "standardSurface or none. Empty follows the stage: OpenPBR when it already uses MaterialX."},
                       {"variants", "", T::Any, nullptr,
                        "Variant selections, written to the edit layer: {'set': 'variant'} for every prim with that set, or "
                        "{'/prim/path': {'set': 'variant'}} for one prim.",
@@ -482,6 +539,13 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
                                     .import = {.command = "usdStageOpen"},
                                     .exportSelection = {.command = "exportUsd"}}))
         return 4;
+    if (!io::translators::add(ctx, {.id = "mtlx",
+                                    .label = "MaterialX",
+                                    .doc = "MaterialX documents: Import brings in their materials, Export writes the selection's materials.",
+                                    .extensions = {".mtlx"},
+                                    .import = {.command = "importMaterialX"},
+                                    .exportSelection = {.command = "exportMaterialX"}}))
+        return 9;
     usd::registerUi(ctx);
     return 0;
 }

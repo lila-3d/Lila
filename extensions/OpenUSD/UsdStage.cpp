@@ -23,6 +23,7 @@
 #include <pxr/usd/sdf/attributeSpec.h>
 #include <pxr/usd/sdf/changeBlock.h>
 #include <pxr/usd/sdf/copyUtils.h>
+#include <pxr/usd/sdf/fileFormat.h>
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/sdf/listOp.h>
 #include <pxr/usd/sdf/primSpec.h>
@@ -128,6 +129,9 @@ struct Stage : TfWeakBase
     SdfLayerRefPtr sourceLayer, root, edit;
     UsdStageRefPtr stage;
     TfNotice::Key key;
+    /** Whether stage has a material with a MaterialX surface, worked out once per composed stage. */
+    const UsdStage* mtlxScanned = nullptr;
+    bool usesMtlx = false;
 
     /** By link path (stagePath). */
     std::unordered_map<NodeId, SdfPath> primOf;
@@ -863,6 +867,27 @@ struct Plan
     bool empty() const { return !full && alone.empty() && trees.empty(); }
 };
 
+/** The MaterialX surface the stage's materials are written with (stageAttr::kMaterialX). */
+mtlx::Surface stageMaterialX(Stage& s, const Graph& g)
+{
+    const Node* n = g.node(s.node);
+    const std::string chosen = n ? text(*n, stageAttr::kMaterialX) : std::string();
+    if (mtlx::Surface out; !chosen.empty() && mtlx::parseSurface(chosen, &out))
+        return out;
+    if (s.stage && s.mtlxScanned != get_pointer(s.stage))
+    {
+        s.mtlxScanned = get_pointer(s.stage);
+        s.usesMtlx = false;
+        for (const UsdPrim& p : s.stage->Traverse())
+            if (const UsdShadeMaterial m(p); m && m.GetSurfaceOutput(TfToken("mtlx")))
+            {
+                s.usesMtlx = true;
+                break;
+            }
+    }
+    return s.usesMtlx ? mtlx::Surface::OpenPbr : mtlx::Surface::None;
+}
+
 Snapshot snapshot(Stage& s, Graph& g, std::vector<std::string>& warnings, const Plan& plan = {})
 {
     LILA_ZONE();
@@ -890,6 +915,7 @@ Snapshot snapshot(Stage& s, Graph& g, std::vector<std::string>& warnings, const 
     o.zUp = UsdGeomGetStageUpAxis(s.stage) != UsdGeomTokens->y;
     o.metersPerUnit = UsdGeomGetStageMetersPerUnit(s.stage);
     o.textures = ExportOptions::Textures::Absolute;
+    o.materialX = stageMaterialX(s, g);
     o.lods = false;
     o.inMemory = true;
     o.relativeTo = s.node;
@@ -1473,6 +1499,15 @@ struct Author
         SdfCopySpec(now.layer, m->second, L, origin);
         if (!co)
             return;
+        // Surface outputs Lila's network doesn't write (a MaterialX one, when it writes none) would still reach the
+        // shaders switched off below.
+        for (const UsdShadeOutput& o : UsdShadeMaterial(co).GetOutputs())
+        {
+            if (now.layer->GetAttributeAtPath(m->second.AppendProperty(o.GetAttr().GetName())) || !o.HasConnectedSource())
+                continue;
+            SdfAttributeSpecHandle spec = attrSpec(origin, o.GetAttr().GetName().GetString(), o.GetTypeName(), SdfVariabilityVarying);
+            L->SetField(spec->GetPath(), SdfFieldKeys->ConnectionPaths, VtValue(SdfPathListOp::CreateExplicit({})));
+        }
         for (const UsdPrim& c : co.GetChildren())
         {
             if (!now.layer->GetPrimAtPath(m->second.AppendChild(c.GetName())))
@@ -4011,6 +4046,12 @@ json cmdOpen(const Args& a)
         setText(g, id, stageAttr::kFile, utf8(file));
         if (const std::string edit = a.get<std::string>("editLayer", ""); !edit.empty())
             setText(g, id, stageAttr::kEditLayer, utf8(resolveFile(edit)));
+        if (const std::string surface = a.get<std::string>("materialX", ""); !surface.empty())
+        {
+            if (mtlx::Surface parsed; !mtlx::parseSurface(surface, &parsed))
+                throw CommandError("usdStageOpen: materialX is openPBR, standardSurface or none");
+            setText(g, id, stageAttr::kMaterialX, surface);
+        }
         if (!a.get<bool>("loadPayloads", true))
             setText(g, id, stageAttr::kLoadRules, json::array({json::array({"/", int(UsdStageLoadRules::NoneRule)})}).dump());
         else if (const json recorded = recordedLoadRules(file); !recorded.empty())
@@ -4122,10 +4163,14 @@ json reloadOne(Stage& s, Graph& g, bool all)
     NoUndo quiet;
     std::vector<std::string> warnings = sync(s, g);
     json files = json::array();
-    std::vector<SdfLayerHandle> layers = all ? std::vector<SdfLayerHandle>(s.stage->GetUsedLayers()) : changedLayers(s);
+    const std::vector<SdfLayerHandle> changed = changedLayers(s);
+    std::vector<SdfLayerHandle> layers = all ? std::vector<SdfLayerHandle>(s.stage->GetUsedLayers()) : changed;
     for (const SdfLayerHandle& l : layers)
     {
         if (!l || l->IsAnonymous())
+            continue;
+        // usdMtlx can't read a .mtlx again into the layer it made, so one is read again only when it changed.
+        if (l->GetFileFormat()->GetFormatId() == TfToken("mtlx") && std::find(changed.begin(), changed.end(), l) == changed.end())
             continue;
         if (l == s.edit && l->IsDirty())
         {

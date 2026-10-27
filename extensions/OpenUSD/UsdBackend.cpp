@@ -4,6 +4,7 @@
 #include "UsdBackend.h"
 #include "UsdCommon.h"
 #include "UsdImport.h"
+#include "UsdMaterialX.h"
 #include "UsdStage.h"
 
 #include <lila/Anim.h>
@@ -156,6 +157,11 @@ json exportCommand(const Args& a)
     if ((format == "usda" && ext == ".usdc") || (format == "usdc" && ext == ".usda"))
         throw CommandError("exportUsd: format " + format + " doesn't match the " + ext + " extension");
     opts.materials = a.get<bool>("materials", true);
+    if (!usd::mtlx::parseSurface(a.get<std::string>("materialX", "none"), &opts.materialX))
+        throw CommandError("exportUsd: materialX is none, openPBR or standardSurface");
+    opts.previewSurface = a.get<bool>("previewSurface", true);
+    if (!opts.previewSurface && opts.materialX == usd::mtlx::Surface::None)
+        throw CommandError("exportUsd: previewSurface=False needs a materialX surface to write instead");
     const std::string textures = a.get<std::string>("textures", "relative");
     if (textures == "absolute")
         opts.textures = usd::ExportOptions::Textures::Absolute;
@@ -244,6 +250,10 @@ USD_BACKEND_EXPORT int lilaUsdRun(const char* command, const Args* args, json* r
             *result = importCommand(*args);
         else if (name == "exportUsd")
             *result = exportCommand(*args);
+        else if (name == "importMaterialX")
+            *result = usd::importMaterialX(*args);
+        else if (name == "exportMaterialX")
+            *result = usd::exportMaterialX(*args);
         else if (!usd::stage::run(name, *args, *result))
             throw CommandError("OpenUSD: no command " + std::string(name));
         return 0;

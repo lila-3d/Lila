@@ -49,6 +49,9 @@ inline constexpr const char* kMaterials = "materialMap";
 inline constexpr const char* kLoadRules = "loadRules";
 /** {file: [modified time, size]} of every file the stage read, at the last save. */
 inline constexpr const char* kStamps = "sourceStamps";
+/** The MaterialX surface new and edited materials are written with beside their UsdPreviewSurface: openPBR,
+ * standardSurface or none; empty follows the stage, OpenPBR when any of its materials uses MaterialX. */
+inline constexpr const char* kMaterialX = "materialX";
 } // namespace stageAttr
 
 /** Registers the package's plugInfo files. 0 on success. */

@@ -1973,6 +1973,7 @@ void importStage(scene::Graph& graph, const UsdStageRefPtr& stage, const fs::pat
         r.materialSlots = im.materials->slots();
         r.materials = im.materials->created;
         r.warnings.insert(r.warnings.end(), im.materials->warnings.begin(), im.materials->warnings.end());
+        r.skipped.insert(r.skipped.end(), im.materials->skipped.begin(), im.materials->skipped.end());
     }
 
     // The take's own range from Lila's exporter, else the stage's, else the keys'.

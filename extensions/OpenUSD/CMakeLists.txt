@@ -10,8 +10,8 @@ if(CMAKE_RUNTIME_OUTPUT_DIRECTORY)
 else()
     set(_usd_pkg ${CMAKE_BINARY_DIR}/$<CONFIG>/extensions/OpenUSD.lilaext)
 endif()
-set(_usd_core_sources UsdBackend.cpp UsdCommon.cpp UsdImport.cpp UsdImportSkel.cpp UsdExport.cpp UsdMaterials.cpp UsdStage.cpp
-    UsdBackend.h UsdCommon.h UsdImport.h UsdExport.h UsdMaterials.h UsdStage.h)
+set(_usd_core_sources UsdBackend.cpp UsdCommon.cpp UsdImport.cpp UsdImportSkel.cpp UsdExport.cpp UsdMaterials.cpp UsdMaterialX.cpp
+    UsdMaterialXDoc.cpp UsdStage.cpp UsdBackend.h UsdCommon.h UsdImport.h UsdExport.h UsdMaterials.h UsdMaterialX.h UsdStage.h)
 # pxr's Python bindings (the pxr_boost python target), when the USD build has them: lila.usd hands scripts the live
 # stages through them.
 if(TARGET python)
@@ -19,7 +19,8 @@ if(TARGET python)
     set_property(GLOBAL PROPERTY LILA_USD_PYTHON ON)
 endif()
 add_library(lila_openusd_core SHARED ${_usd_core_sources})
-target_link_libraries(lila_openusd_core PRIVATE LilaScene usd usdGeom usdShade usdSkel usdLux usdUtils)
+# MaterialX (found by pxr) for standalone .mtlx documents; .mtlx layers in stages come through the usdMtlx plugin.
+target_link_libraries(lila_openusd_core PRIVATE LilaScene usd usdGeom usdShade usdSkel usdLux usdUtils MaterialXCore MaterialXFormat)
 if(TARGET python)
     target_link_libraries(lila_openusd_core PRIVATE python)
     target_compile_definitions(lila_openusd_core PRIVATE LILA_USD_PYTHON)
