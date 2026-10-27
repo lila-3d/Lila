@@ -4,6 +4,7 @@ lila_module(lila_uv Scene
     Align.cpp
     Bff.cpp
     Chart.cpp
+    Guided.cpp
     Layout.cpp
     LiveSolver.cpp
     Metrics.cpp

@@ -1209,8 +1209,12 @@ def componentInfo(*objects: Any, kind: str | None = None, ids: Sequence[Any] | N
         fields: Keys to keep per component, e.g. ['id', 'center', 'normal'] (default all).
     """
 
-def componentSelection() -> Any:
-    """Selected components: {mesh: {"vertices": [...], "edges": [...], "faces": [...]}}."""
+def componentSelection(ordered: bool | None = None) -> Any:
+    """Selected components: {mesh: {"vertices": [...], "edges": [...], "faces": [...]}}. ordered=True gives a flat list [[mesh, kind, id], ...] in pick order instead (kind is vertex, edge or face).
+
+    Args:
+        ordered: True: a flat list [[mesh, kind, id], ...] in the order the components were picked. False: grouped per mesh and kind, ids sorted ascending, pick order lost. Default False.
+    """
 
 def conformCurve(*objects: Any, mesh: str | None = None, offset: float | None = None, release: bool | None = None, m: str | None = None, o: float | None = None, r: bool | None = None) -> Any:
     """Keep curves on a mesh surface: their points are placed on it, lifted by offset, whenever the curve or the mesh changes, so moving points slides them along it (Maya's Make Live for curves). release=True lets them go again, back to where they were last moved. Returns the curves.
@@ -4201,6 +4205,25 @@ def orientJoint(*objects: Any, primaryAxis: Any | None = None, secondaryAxis: An
         children: Orient the whole hierarchy below too. Short form ch. Default True.
     """
 
+def orientPivot(aim: str | None = None, up: str | None = None, upReference: str | None = None, worldUp: Sequence[float] | None = None, position: str | None = None, mode: str | None = None) -> Any:
+    """Aim the pivot from the first picked component to the second, or along a single one.
+
+    The component selection splits into connected pieces (two edge loops are two pieces); with exactly two components picked, each is its own piece. With several pieces the aim runs from the first picked piece's centre to the last's. One piece aims along itself: a face or face region along its normal (up from the first face's longest edge), an edge from its first point to its second (up from its faces' normal), a closed loop through its plane (up toward its first picked point), an open chain from the end nearer the first pick to the other, a vertex along its normal (up along its longest edge).
+
+    Args:
+        aim: Pivot axis that points along the aim. One of 'x', '-x', 'y', '-y', 'z', '-z'. Default 'x'.
+        up: Pivot axis that points toward the up reference. One of 'x', '-x', 'y', '-y', 'z', '-z'. Default 'y'.
+        upReference: What the up axis leans toward: the selection's own up (component), worldUp (world), or the object's own matching axis (object). Falls back to the others where it lines up with the aim. One of 'component', 'world', 'object'. Default 'component'.
+        worldUp: Up direction for upReference='world'; the scene up when left out.
+        position: Where the pivot goes: the first picked piece's centre (first), the centre of everything selected (center), or where it is (keep). One of 'first', 'center', 'keep'. Default 'first'.
+        mode: transform: turn and move the object itself onto the aim, the mesh moved back so it stays put (undoes a freeze's lost rotation), so Object space then works along it. pivot: orient the object's pivot, leaving object and mesh alone. manipulator: pin only the component manipulator's axes, through selection changes, until resetComponentPivot. One of 'pivot', 'transform', 'manipulator'. Default 'transform'.
+
+    Examples:
+        orientPivot()  # two verts picked: the object turns so its X aims from the first to the second
+
+        orientPivot(mode='manipulator')  # pin the component manipulator's axes instead
+    """
+
 def parent(*objects: Any, world: bool | None = None, relative: bool | None = None, chain: bool | None = None, index: int | None = None, w: bool | None = None, r: bool | None = None, ch: bool | None = None, i: int | None = None) -> Any:
     """parent(child..., parent), or parent(child..., world=True). Keeps world transforms unless relative=True. chain=True parents each object under the next one, in order: (a, b, c) puts a under b and b under c. index=N places the objects, in order, at position N among the parent's children (0 is first), which also reorders objects already under that parent.
 
@@ -4409,7 +4432,7 @@ def polyBoolean(*objects: Any, operation: str | None = None, keepCutters: bool |
     """
 
 def polyBridge(divisions: int | None = None) -> Any:
-    """Join two selected boundary loops with faces.
+    """Join selected boundary loops with faces. Several pairs bridge at once; a single border round a slot bridges its two long sides.
 
     Args:
         divisions: Extra rows between the loops. Default 0.
@@ -4424,8 +4447,8 @@ def polyCapsule(name: str | None = None, position: Sequence[float] | None = None
         rotation: Rotation in degrees.
         normal: Turn the up axis to this direction, as for placing on a surface; a dome cut by fraction then sits on position by its open base.
         generator: Keep the generator node so its parameters stay editable. Default True.
-        radius: cm. Default 50.0.
-        height: End to end, caps included, cm. Default 200.0.
+        radius: cm. Default 2.5.
+        height: End to end, caps included, cm. Default 10.0.
         subdivisionsAxis: Segments around. Default 20.
         subdivisionsHeight: Segments along the straight part. Default 1.
         subdivisionsCaps: Rings on each rounded end. Default 6.
@@ -4474,7 +4497,7 @@ def polyCombine(*objects: Any, name: str | None = None) -> Any:
         name: Name of the combined mesh.
     """
 
-def polyCone(name: str | None = None, position: Sequence[float] | None = None, rotation: Sequence[float] | None = None, normal: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, height: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, subdivisionsCap: int | None = None, capType: str | None = None, baseAtOrigin: bool | None = None, fraction: float | None = None, cutCaps: bool | None = None, upAxis: str | None = None, *, n: str | None = None) -> Any:
+def polyCone(name: str | None = None, position: Sequence[float] | None = None, rotation: Sequence[float] | None = None, normal: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, height: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, subdivisionsCap: int | None = None, capType: str | None = None, baseAtOrigin: bool | None = None, fraction: float | None = None, cutCaps: bool | None = None, capTip: bool | None = None, tipRadius: float | None = None, upAxis: str | None = None, *, n: str | None = None) -> Any:
     """Create a Cone mesh. Returns [mesh, generator] (generator is None with generator=False).
 
     Args:
@@ -4483,8 +4506,8 @@ def polyCone(name: str | None = None, position: Sequence[float] | None = None, r
         rotation: Rotation in degrees.
         normal: Turn the up axis to this direction, as for placing on a surface; a dome cut by fraction then sits on position by its open base.
         generator: Keep the generator node so its parameters stay editable. Default True.
-        radius: cm. Default 50.0.
-        height: cm. Default 100.0.
+        radius: cm. Default 5.0.
+        height: cm. Default 10.0.
         subdivisionsAxis: Segments around. Default 20.
         subdivisionsHeight: Segments up. Default 1.
         subdivisionsCap: Rings of quads around the base's fill; 0 and 1 both leave just the fill. Default 0.
@@ -4492,6 +4515,8 @@ def polyCone(name: str | None = None, position: Sequence[float] | None = None, r
         baseAtOrigin: Sit on the ground. Default False.
         fraction: Portion of a full turn swept around the up axis: 1 is whole, 0.5 half. Default 1.0.
         cutCaps: Close the flat ends a partial sweep leaves. Default True.
+        capTip: Cut the point off at tipRadius and fill it as capType, so quads leave no triangles at the tip. Default False.
+        tipRadius: Radius of the capped tip, cm; small keeps it looking pointed. Default 0.05.
         upAxis: Direction the primitive's up points: x, y, z, -x, -y or -z; the scene up axis when left out. One of 'x', 'y', 'z', '-x', '-y', '-z'.
     """
 
@@ -4533,9 +4558,9 @@ def polyCube(name: str | None = None, position: Sequence[float] | None = None, r
         rotation: Rotation in degrees.
         normal: Turn the up axis to this direction, as for placing on a surface; a dome cut by fraction then sits on position by its open base.
         generator: Keep the generator node so its parameters stay editable. Default True.
-        width: Size along X, cm. Default 100.0.
-        height: Size along the up axis, cm. Default 100.0.
-        depth: Size along Z, cm. Default 100.0.
+        width: Size along X, cm. Default 10.0.
+        height: Size along the up axis, cm. Default 10.0.
+        depth: Size along Z, cm. Default 10.0.
         subdivisionsX: Segments across. Default 1.
         subdivisionsY: Segments up. Default 1.
         subdivisionsZ: Segments deep. Default 1.
@@ -4552,8 +4577,8 @@ def polyCylinder(name: str | None = None, position: Sequence[float] | None = Non
         rotation: Rotation in degrees.
         normal: Turn the up axis to this direction, as for placing on a surface; a dome cut by fraction then sits on position by its open base.
         generator: Keep the generator node so its parameters stay editable. Default True.
-        radius: cm. Default 50.0.
-        height: cm. Default 100.0.
+        radius: cm. Default 5.0.
+        height: cm. Default 10.0.
         subdivisionsAxis: Segments around. Default 20.
         subdivisionsHeight: Segments up. Default 1.
         subdivisionsCaps: Rings of quads around each cap's fill; 0 and 1 both leave just the fill. Default 0.
@@ -4565,7 +4590,7 @@ def polyCylinder(name: str | None = None, position: Sequence[float] | None = Non
         upAxis: Direction the primitive's up points: x, y, z, -x, -y or -z; the scene up axis when left out. One of 'x', 'y', 'z', '-x', '-y', '-z'.
     """
 
-def polyDisc(name: str | None = None, position: Sequence[float] | None = None, rotation: Sequence[float] | None = None, normal: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, subdivisionsAxis: int | None = None, subdivisionsRings: int | None = None, fraction: float | None = None, upAxis: str | None = None, *, n: str | None = None) -> Any:
+def polyDisc(name: str | None = None, position: Sequence[float] | None = None, rotation: Sequence[float] | None = None, normal: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, subdivisionsAxis: int | None = None, subdivisionsRings: int | None = None, fraction: float | None = None, capType: str | None = None, upAxis: str | None = None, *, n: str | None = None) -> Any:
     """Create a Disc mesh. Returns [mesh, generator] (generator is None with generator=False).
 
     Args:
@@ -4574,10 +4599,11 @@ def polyDisc(name: str | None = None, position: Sequence[float] | None = None, r
         rotation: Rotation in degrees.
         normal: Turn the up axis to this direction, as for placing on a surface; a dome cut by fraction then sits on position by its open base.
         generator: Keep the generator node so its parameters stay editable. Default True.
-        radius: cm. Default 50.0.
+        radius: cm. Default 5.0.
         subdivisionsAxis: Segments around. Default 20.
         subdivisionsRings: Rings; 0 is one n-gon. Default 1.
         fraction: Portion of a full turn swept around the up axis: 1 is whole, 0.5 half. Default 1.0.
+        capType: How the innermost ring is filled: quads (a grid joined to it by a ring, one triangle when subdivisionsAxis is odd), fan (triangles to the centre) or ngon (one polygon). subdivisionsRings 0 is always one n-gon. One of 'quads', 'fan', 'ngon'. Default 'quads'.
         upAxis: Direction the primitive's up points: x, y, z, -x, -y or -z; the scene up axis when left out. One of 'x', 'y', 'z', '-x', '-y', '-z'.
     """
 
@@ -4603,16 +4629,29 @@ def polyEdgeToCurve(*objects: Any, type: str | None = None, degree: int | None =
         name: Curve name; made unique. Short form n.
     """
 
+def polyEditEdgeFlow(adjustEdgeFlow: float | None = None, edgeFlow: bool | None = None, tension: float | None = None, loopSmooth: float | None = None, iterations: int | None = None) -> Any:
+    """Move the selected edge loops' vertices square to the loops so they follow the curvature of the surface around them (Maya's Edit Edge Flow). Each vertex lands on a curve through its neighbours across the loop, shaped by the vertices beyond them. Selected vertices off any chain, and face selections, fit both directions across each vertex.
+
+    Args:
+        adjustEdgeFlow: 0 flat between the neighbours, 1 on the curve, above 1 exaggerated, negative inverted. Default 1.0.
+        edgeFlow: Shape the curve from the vertices beyond the neighbours; off, from the surface normals at the neighbours. Default True.
+        tension: Toward 1 flattens the curve, negative makes it fuller. Default 0.0.
+        loopSmooth: Also smooth each loop along its length, 0 to 1, keeping its spacing. Default 0.0.
+        iterations: Passes, for neighbouring selected loops that shape each other. Default 1.
+    """
+
 def polyExtract() -> Any:
     """Move the selected faces out into new mesh objects (one per source mesh). Returns their names."""
 
-def polyExtrude(thickness: float | None = None, offset: float | None = None, individual: bool | None = None) -> Any:
+def polyExtrude(thickness: float | None = None, offset: float | None = None, individual: bool | None = None, duplicate: bool | None = None, keepSides: bool | None = None) -> Any:
     """Extrude the selected faces along their normals, or in edge mode grow a strip of faces off the selected edges. Connected faces extrude as regions unless individual=True.
 
     Args:
         thickness: Distance along the normals, cm. Default 0.0.
         offset: Faces: inward distance of the extruded border, cm; negative grows them. Edges: outward distance from their faces, cm. Default 0.0.
         individual: Each face separately. Default False.
+        duplicate: Faces: leave the mesh as it is and put the extruded faces in a new mesh. Default False.
+        keepSides: With duplicate, the new mesh also keeps the side faces. Default False.
     """
 
 def polyFillHole() -> Any:
@@ -4630,19 +4669,20 @@ def polyIcoSphere(name: str | None = None, position: Sequence[float] | None = No
         rotation: Rotation in degrees.
         normal: Turn the up axis to this direction, as for placing on a surface; a dome cut by fraction then sits on position by its open base.
         generator: Keep the generator node so its parameters stay editable. Default True.
-        radius: cm. Default 50.0.
+        radius: cm. Default 5.0.
         subdivisions: 1 is an icosahedron; each level splits every triangle in four. Default 3.
         baseAtOrigin: Sit on the ground. Default False.
         fraction: Portion of the height kept, from the top: 1 is whole, 0.5 a dome open at the bottom. Default 1.0.
         upAxis: Direction the primitive's up points: x, y, z, -x, -y or -z; the scene up axis when left out. One of 'x', 'y', 'z', '-x', '-y', '-z'.
     """
 
-def polyInsertLoop(fraction: float | None = None, count: int | None = None) -> Any:
-    """Insert edge loops across the ring of the first selected edge.
+def polyInsertLoop(fraction: float | None = None, count: int | None = None, spacing: float | None = None) -> Any:
+    """Insert edge loops across the ring of the first selected edge. Several loops are centred on fraction, spacing apart.
 
     Args:
-        fraction: Where along the ring, 0 to 1. Default 0.5.
-        count: Evenly spaced loops. Default 1.
+        fraction: Where along the ring, 0 to 1; with several loops, where their middle goes. Default 0.5.
+        count: Number of loops. Default 1.
+        spacing: Several loops: gap between neighbours, 1 even spacing across the edge, smaller packs them together. Default 1.0.
     """
 
 def polyInset(thickness: float | None = None, depth: float | None = None, individual: bool | None = None, clamp: bool | None = None) -> Any:
@@ -4703,6 +4743,17 @@ def polyMirror(*objects: Any, axis: str | None = None, direction: str | None = N
         flip: Reflect the mesh across the plane rather than adding a mirrored copy: the original is not kept. Default False.
     """
 
+def polyOffsetLoop(distance: float | None = None, absolute: bool | None = None, side: str | None = None, ends: str | None = None, deleteEdge: bool | None = None) -> Any:
+    """Insert an edge loop either side of the selected edges, parallel to them (Maya's Offset Edge Loop). Partial loops end on a border, or inside the mesh by meeting at the end vertex or wrapping round it. Returns the new edges.
+
+    Args:
+        distance: How far out: a fraction of each crossing edge's length, or cm with absolute. Default 0.25.
+        absolute: distance is in cm, square to the selected edges. Default False.
+        side: both, left or right of the edges' direction. One of 'both', 'left', 'right'. Default 'both'.
+        ends: Open ends inside the mesh: converge (meet at the end vertex) or wrap (round it). One of 'converge', 'wrap'. Default 'converge'.
+        deleteEdge: Dissolve the selected edges afterward, leaving the two new loops. Default False.
+    """
+
 def polyPipe(name: str | None = None, position: Sequence[float] | None = None, rotation: Sequence[float] | None = None, normal: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, thickness: float | None = None, height: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, baseAtOrigin: bool | None = None, fraction: float | None = None, cutCaps: bool | None = None, upAxis: str | None = None, *, n: str | None = None) -> Any:
     """Create a Pipe mesh. Returns [mesh, generator] (generator is None with generator=False).
 
@@ -4712,9 +4763,9 @@ def polyPipe(name: str | None = None, position: Sequence[float] | None = None, r
         rotation: Rotation in degrees.
         normal: Turn the up axis to this direction, as for placing on a surface; a dome cut by fraction then sits on position by its open base.
         generator: Keep the generator node so its parameters stay editable. Default True.
-        radius: Outer radius, cm. Default 50.0.
-        thickness: Wall thickness, cm. Default 10.0.
-        height: cm. Default 100.0.
+        radius: Outer radius, cm. Default 5.0.
+        thickness: Wall thickness, cm. Default 1.0.
+        height: cm. Default 20.0.
         subdivisionsAxis: Segments around. Default 20.
         subdivisionsHeight: Segments up. Default 1.
         baseAtOrigin: Sit on the ground. Default False.
@@ -4732,8 +4783,8 @@ def polyPlane(name: str | None = None, position: Sequence[float] | None = None, 
         rotation: Rotation in degrees.
         normal: Turn the up axis to this direction, as for placing on a surface; a dome cut by fraction then sits on position by its open base.
         generator: Keep the generator node so its parameters stay editable. Default True.
-        width: Size along X, cm. Default 100.0.
-        depth: Size along Z, cm. Default 100.0.
+        width: Size along X, cm. Default 10.0.
+        depth: Size along Z, cm. Default 10.0.
         subdivisionsX: Segments across. Default 1.
         subdivisionsZ: Segments deep. Default 1.
         upAxis: Direction the primitive's up points: x, y, z, -x, -y or -z; the scene up axis when left out. One of 'x', 'y', 'z', '-x', '-y', '-z'.
@@ -4751,7 +4802,7 @@ def polyQuadSphere(name: str | None = None, position: Sequence[float] | None = N
         rotation: Rotation in degrees.
         normal: Turn the up axis to this direction, as for placing on a surface; a dome cut by fraction then sits on position by its open base.
         generator: Keep the generator node so its parameters stay editable. Default True.
-        radius: cm. Default 50.0.
+        radius: cm. Default 5.0.
         subdivisions: Segments per cube face edge. Default 3.
         fraction: Portion of the height kept, from the top: 1 is whole, 0.5 a dome open at the bottom. Default 1.0.
         upAxis: Direction the primitive's up points: x, y, z, -x, -y or -z; the scene up axis when left out. One of 'x', 'y', 'z', '-x', '-y', '-z'.
@@ -4800,7 +4851,7 @@ def polySphere(name: str | None = None, position: Sequence[float] | None = None,
         rotation: Rotation in degrees.
         normal: Turn the up axis to this direction, as for placing on a surface; a dome cut by fraction then sits on position by its open base.
         generator: Keep the generator node so its parameters stay editable. Default True.
-        radius: cm. Default 50.0.
+        radius: cm. Default 5.0.
         subdivisionsAxis: Segments around. Default 20.
         subdivisionsHeight: Segments pole to pole. Default 20.
         baseAtOrigin: Sit on the ground. Default False.
@@ -4858,8 +4909,8 @@ def polyTorus(name: str | None = None, position: Sequence[float] | None = None, 
         rotation: Rotation in degrees.
         normal: Turn the up axis to this direction, as for placing on a surface; a dome cut by fraction then sits on position by its open base.
         generator: Keep the generator node so its parameters stay editable. Default True.
-        radius: Ring radius, cm. Default 50.0.
-        sectionRadius: Tube radius, cm. Default 20.0.
+        radius: Ring radius, cm. Default 3.5.
+        sectionRadius: Tube radius, cm. Default 1.5.
         subdivisionsAxis: Segments around the ring. Default 20.
         subdivisionsHeight: Segments around the tube. Default 20.
         fraction: Portion of a full turn swept around the up axis: 1 is whole, 0.5 half. Default 1.0.
@@ -7225,8 +7276,8 @@ def toggleVisibility(*objects: Any) -> Any:
         objects: objects.
     """
 
-def transferAttributes(*objects: Any, uvs: bool | None = None, normals: bool | None = None, colors: bool | None = None, positions: bool | None = None, attributes: Sequence[Any] | None = None, skinWeights: bool | None = None, sampleSpace: str | None = None, searchMethod: str | None = None, maxDistance: float | None = None, flip: str | None = None, sourceUvSet: int | None = None, targetUvSet: int | None = None, sourceColorSet: str | None = None, targetColorSet: str | None = None, live: bool | None = None) -> Any:
-    """Copy UVs, normals, color sets, positions or named attributes from the first object to the others, sampling in world, object, component (same topology) or uv space, by closest point or along normals. live=True adds a transferAttributes modifier to each target instead of baking, so the targets follow the source.
+def transferAttributes(*objects: Any, uvs: bool | None = None, normals: bool | None = None, colors: bool | None = None, positions: bool | None = None, attributes: Sequence[Any] | None = None, skinWeights: bool | None = None, sampleSpace: str | None = None, searchMethod: str | None = None, keepShape: bool | None = None, maxDistance: float | None = None, flip: str | None = None, sourceUvSet: int | None = None, targetUvSet: int | None = None, sourceColorSet: str | None = None, targetColorSet: str | None = None, live: bool | None = None) -> Any:
+    """Copy UVs, normals, color sets, positions or named attributes from the first object to the others, sampling in world, object, component (same topology) or uv space, by closest point or along normals. guided is for similar but different pieces anywhere in the scene: each target is fitted onto the source and its UVs are rebuilt from the source's islands (seams carried over, each island unwrapped and fitted onto its source island). live=True adds a transferAttributes modifier to each target instead of baking, so the targets follow the source.
 
     Args:
         objects: source targets...
@@ -7236,8 +7287,9 @@ def transferAttributes(*objects: Any, uvs: bool | None = None, normals: bool | N
         positions: Point positions (shrink-wrap the target onto the source). Default False.
         attributes: Other corner layers by name.
         skinWeights: Skin weights, by closest point (point index in component space). Both meshes must be skinned. Default False.
-        sampleSpace: world, object, component or uv. One of 'world', 'object', 'component', 'uv'. Default 'world'.
+        sampleSpace: world, object, component, uv or guided. One of 'world', 'object', 'component', 'uv', 'guided'. Default 'world'.
         searchMethod: closest or normal. One of 'closest', 'normal'. Default 'closest'.
+        keepShape: Guided: keep each island's shape as transferred instead of relaxing it (trim sheets); islands that fold are still unwrapped. Default False.
         maxDistance: Ignore matches farther than this (cm); negative is unlimited. Default -1.0.
         flip: Mirror the lookup across the source's x, y or z axis. One of 'none', 'x', 'y', 'z'. Default 'none'.
         sourceUvSet: Transfer only this UV set (0-7); -1 transfers every set. Default -1.
@@ -8035,6 +8087,13 @@ def xform(*objects: Any, query: bool | None = None, worldSpace: bool | None = No
         xform("cube1", translation=(0, 1, 0), rotation=(0, 90, 0))
 
         pos = xform("cube1", query=True, worldSpace=True, translation=True)
+    """
+
+def zeroPivot(*objects: Any) -> Any:
+    """Move the pivots to the world origin, keeping the object where it is.
+
+    Args:
+        objects: objects.
     """
 
 def refresh() -> None: ...

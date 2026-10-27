@@ -58,8 +58,6 @@ inline constexpr const char* kEdgeThicknessSelected = "/viewport/components/edge
 inline constexpr const char* kVertexThickness = "/viewport/components/vertexThickness";
 inline constexpr const char* kVertexThicknessHover = "/viewport/components/vertexThicknessHover";
 inline constexpr const char* kVertexThicknessSelected = "/viewport/components/vertexThicknessSelected";
-/** The objects in component mode show their whole wire even with wireframe on shaded off, as Maya's do. */
-inline constexpr const char* kComponentModeWire = "/viewport/components/wire";
 /** Vertex dots in edge and face modes: the selection's own vertices, which soft select otherwise leaves out. */
 inline constexpr const char* kVerticesInEdgeFaceModes = "/viewport/components/verticesInEdgeFaceModes";
 /** UV seams drawn over meshes while the UV editor shows them. */

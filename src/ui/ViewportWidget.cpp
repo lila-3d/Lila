@@ -712,7 +712,6 @@ void ViewportWidget::submit()
             hilite.insert(id);
     const bool aids = displayAids::anyDrawn(mHudPanel);
     const bool smoothSubdivisions = PrefStore::get().value<bool>("general", viewportDisplay::kSmoothSubdivisions, false);
-    const bool componentWireShown = PrefStore::get().value<bool>("general", viewportDisplay::kComponentModeWire, false);
     std::vector<displayAids::MeshEntry> aidMeshes;
     const std::unordered_set<scene::NodeId> lodHidden = scene::lod::hidden(g, lodDisplay::view(mHudPanel, viewInfo()));
     for (scene::NodeId id : g.nodes())
@@ -763,7 +762,7 @@ void ViewportWidget::submit()
         const bool templated = layer.type == scene::displayLayers::DisplayType::Template;
         if (mode != "wireframe" && !wireOnly && !templated)
             d.flags |= render::DrawShaded;
-        if (mode == "wireframe" || wireOnShaded || wireOnly || templated || (componentWireShown && hilite.contains(id)))
+        if (mode == "wireframe" || wireOnShaded || wireOnly || templated || hilite.contains(id))
             d.flags |= render::DrawWire;
         if (templated && mode != "wireframe")
             d.flags |= render::DrawWireDepth;

@@ -61,3 +61,42 @@ TEST_CASE("boolean difference cuts a closed hole")
     run("undo");
     CHECK(run("objExists", {{"args", {cutter}}}).get<bool>());
 }
+
+TEST_CASE("guided transfer fits a similar piece and rebuilds its uv islands")
+{
+    run("newScene");
+    std::string src = run("polyCube", {{"name", "Plank"}, {"generator", false}, {"width", 100}, {"height", 10}, {"depth", 20}})[0];
+    std::string dst = run("polyCube", {{"name", "Plank2"}, {"generator", false}, {"width", 120}, {"height", 9}, {"depth", 22},
+                                       {"subdivisionsX", 6}, {"subdivisionsY", 2}, {"subdivisionsZ", 3}})[0];
+    run("rotate", {{"args", {dst}}, {"by", {0, 90, 0}}});
+    run("move", {{"args", {dst}}, {"by", {400, 50, 0}}});
+    json r = run("transferAttributes", {{"args", {src, dst}}, {"uvs", true}, {"sampleSpace", "guided"}});
+    REQUIRE(r.is_array());
+    CHECK(r[0]["fitError"].get<double>() < 0.02);
+    CHECK(r[0]["islands"].get<int>() > 0);
+
+    const geo::Mesh& s = meshOf(src);
+    const geo::Mesh& d = meshOf(dst);
+    auto su = s.cornerAttrs().get<glm::vec2>("uv0");
+    auto du = d.cornerAttrs().get<glm::vec2>("uv0");
+    REQUIRE(!du.empty());
+    glm::vec2 lo(1e9f), hi(-1e9f);
+    for (geo::Index c = 0; c < s.cornerCapacity(); ++c)
+        if (s.cornerValid(c))
+        {
+            lo = glm::min(lo, su[c]);
+            hi = glm::max(hi, su[c]);
+        }
+    const glm::vec2 pad = (hi - lo) * 0.1f;
+    size_t outside = 0;
+    for (geo::Index c = 0; c < d.cornerCapacity(); ++c)
+        if (d.cornerValid(c))
+            outside += glm::any(glm::lessThan(du[c], lo - pad)) || glm::any(glm::greaterThan(du[c], hi + pad));
+    CHECK(outside == 0);
+
+    run("undo");
+    json kept = run("transferAttributes", {{"args", {src, dst}}, {"uvs", true}, {"sampleSpace", "guided"}, {"keepShape", true}});
+    REQUIRE(kept.is_array());
+    CHECK(kept[0]["relaxed"].get<int>() == 0);
+    CHECK(kept[0]["islands"].get<int>() > 0);
+}

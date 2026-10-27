@@ -132,7 +132,7 @@ TEST_CASE("transfer attributes has a full option box")
                           "sourceUvSet", "targetUvSet"})
         CHECK_MESSAGE(field(fs, f), f);
     CHECK(fs.front().flag == "uvs");
-    CHECK(field(fs, "sampleSpace")->choices == std::vector<std::string>{"world", "object", "component", "uv"});
+    CHECK(field(fs, "sampleSpace")->choices == std::vector<std::string>{"world", "object", "component", "uv", "guided"});
     CHECK(field(fs, "uvs")->section == "Attributes to Transfer");
     CHECK(field(fs, "attributes")->kind == opt::FieldKind::List);
 }

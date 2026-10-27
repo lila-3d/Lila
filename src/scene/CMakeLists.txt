@@ -96,4 +96,4 @@ lila_module(lila_scene Scene
 find_package(Eigen3 CONFIG REQUIRED)
 find_package(meshoptimizer CONFIG REQUIRED)
 find_package(manifold CONFIG REQUIRED)
-target_link_libraries(lila_scene PUBLIC lila_ops lila_geo PRIVATE lila_deform lila_retopo meshoptimizer::meshoptimizer manifold::manifold Eigen3::Eigen)
+target_link_libraries(lila_scene PUBLIC lila_ops lila_geo PRIVATE lila_deform lila_retopo lila_uv meshoptimizer::meshoptimizer manifold::manifold Eigen3::Eigen)

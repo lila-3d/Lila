@@ -9,6 +9,7 @@
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
+#include "uv/Guided.h"
 
 #include <tbb/parallel_for.h>
 
@@ -26,6 +27,7 @@ enum class Space
     Object,
     Component,
     Uv,
+    Guided,
 };
 
 enum class Search
@@ -34,7 +36,7 @@ enum class Search
     AlongNormal,
 };
 
-const std::vector<std::string> kSpaceNames = {"world", "object", "component", "uv"};
+const std::vector<std::string> kSpaceNames = {"world", "object", "component", "uv", "guided"};
 const std::vector<std::string> kSearchNames = {"closest", "normal"};
 const std::vector<std::string> kFlipNames = {"none", "x", "y", "z"};
 
@@ -53,6 +55,7 @@ struct Options
     int targetUvSet = -1; // -1: the source set's own index
     std::string sourceColorSet; // empty: every set onto the same name
     std::string targetColorSet; // empty: the source set's own name
+    bool keepShape = false; // guided: keep each island's transferred shape instead of relaxing it
 };
 
 /** Where a target sample lands on the source: triangle + barycentrics, or nothing within range. */
@@ -190,13 +193,27 @@ void prepareColorSets(const geo::Mesh& src, geo::Mesh& dst, const std::vector<st
                 geo::colors::setCurrent(dst, to);
 }
 
+/** What a guided transfer found, for the command's result. */
+struct GuidedStats
+{
+    uv::AlignResult align;
+    uv::GuidedUvResult uvs;
+};
+
 void transfer(const geo::Mesh& src, const glm::dmat4& srcWorld, geo::Mesh& dst, const glm::dmat4& dstWorld, const Options& o,
-              const Sampler* cached = nullptr)
+              const Sampler* cached = nullptr, GuidedStats* stats = nullptr)
 {
     LILA_ZONE();
 
     // Target positions expressed in the source's object space.
-    glm::dmat4 toSource = o.space == Space::World ? glm::inverse(srcWorld) * dstWorld : glm::dmat4(1.0);
+    glm::dmat4 toSource = o.space == Space::World || o.space == Space::Guided ? glm::inverse(srcWorld) * dstWorld : glm::dmat4(1.0);
+    GuidedStats guided;
+    if (o.space == Space::Guided)
+    {
+        // Similar shapes anywhere in the scene: fit the target onto the source, then sample as in world space.
+        guided.align = uv::alignShapes(dst, src, toSource);
+        toSource = guided.align.transform;
+    }
     glm::dmat3 normalToSource = glm::transpose(glm::inverse(glm::dmat3(toSource)));
     glm::dmat3 normalToTarget = glm::inverse(normalToSource);
     auto flip = [&](glm::dvec3 p) {
@@ -276,7 +293,23 @@ void transfer(const geo::Mesh& src, const glm::dmat4& srcWorld, geo::Mesh& dst, 
         });
     });
 
-    if (o.uvs && o.sourceUvSet >= 0)
+    if (o.uvs && o.space == Space::Guided)
+    {
+        // The guide set (the one chosen, or the first) is rebuilt island by island; any other sets are sampled.
+        const int from = std::max(o.sourceUvSet, 0);
+        uv::GuidedUvOptions g;
+        g.sourceSet = geo::attr::uvName(from);
+        g.targetSet = geo::attr::uvName(o.targetUvSet >= 0 ? o.targetUvSet : from);
+        g.relax = !o.keepShape;
+        glm::dmat4 mirror(1.0);
+        if (o.flipAxis >= 0)
+            mirror[o.flipAxis][o.flipAxis] = -1.0;
+        guided.uvs = uv::guidedUvs(src, dst, mirror * toSource, g);
+        if (o.sourceUvSet < 0)
+            for (int set = 1; set < 8; ++set)
+                transferCornerLayer<glm::vec2>(src, dst, geo::attr::uvName(set), cornerSamples, sampler);
+    }
+    else if (o.uvs && o.sourceUvSet >= 0)
         transferCornerLayer<glm::vec2>(src, dst, geo::attr::uvName(o.sourceUvSet), cornerSamples, sampler,
                                        geo::attr::uvName(o.targetUvSet >= 0 ? o.targetUvSet : o.sourceUvSet));
     else if (o.uvs)
@@ -335,11 +368,13 @@ void transfer(const geo::Mesh& src, const glm::dmat4& srcWorld, geo::Mesh& dst, 
             if (dst.pointValid(p))
                 dst.setPosition(p, moved[p]);
     }
+    if (stats)
+        *stats = guided;
 }
 
 Space spaceFrom(const std::string& s)
 {
-    return s == "object" ? Space::Object : s == "component" ? Space::Component : s == "uv" ? Space::Uv : Space::World;
+    return s == "object" ? Space::Object : s == "component" ? Space::Component : s == "uv" ? Space::Uv : s == "guided" ? Space::Guided : Space::World;
 }
 
 int flipFrom(const std::string& s) { return s == "x" ? 0 : s == "y" ? 1 : s == "z" ? 2 : -1; }
@@ -419,7 +454,7 @@ private:
         o.colors = as<bool>(attr("colors"));
         o.positions = as<bool>(attr("positions"));
         o.attributes = splitNames(as<std::string>(attr("attributes")));
-        o.space = Space(std::clamp<int64_t>(as<int64_t>(attr("sampleSpace")), 0, 3));
+        o.space = Space(std::clamp<int64_t>(as<int64_t>(attr("sampleSpace")), 0, 4));
         o.search = as<int64_t>(attr("searchMethod")) == 1 ? Search::AlongNormal : Search::Closest;
         o.maxDistance = as<double>(attr("maxDistance"));
         o.flipAxis = int(std::clamp<int64_t>(as<int64_t>(attr("flip")), 0, 3)) - 1;
@@ -427,6 +462,7 @@ private:
         o.targetUvSet = int(std::clamp<int64_t>(as<int64_t>(attr("targetUvSet")), -1, 7));
         o.sourceColorSet = as<std::string>(attr("sourceColorSet"));
         o.targetColorSet = as<std::string>(attr("targetColorSet"));
+        o.keepShape = as<bool>(attr("keepShape"));
         return o;
     }
 
@@ -553,8 +589,14 @@ void registerTransferModifier()
         param("positions", PlugType::Bool, false, "Point positions: shrink-wrap this mesh onto the source."),
         {.name = "attributes", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable,
          .doc = "Other corner layers by name, comma separated."},
-        param("sampleSpace", PlugType::Enum, int64_t(0), "world, object, component (same topology, by id) or uv.", kSpaceNames),
+        param("sampleSpace", PlugType::Enum, int64_t(0),
+              "world, object, component (same topology, by id), uv, or guided (a similar shape anywhere: fitted onto the source, "
+              "its UV islands rebuilt on this mesh).",
+              kSpaceNames),
         param("searchMethod", PlugType::Enum, int64_t(0), "closest point, or along the normal (falling back to closest).", kSearchNames),
+        param("keepShape", PlugType::Bool, false,
+              "Guided: keep each island's shape as transferred (trim sheets, hand-laid strips) instead of relaxing it; islands that "
+              "fold are still unwrapped."),
         param("maxDistance", PlugType::Float, -1.0, "Ignore matches farther than this, cm; negative is unlimited."),
         param("flip", PlugType::Enum, int64_t(0), "Mirror the lookup across the source's x, y or z axis (symmetry).", kFlipNames),
         param("sourceUvSet", PlugType::Int, int64_t(-1), "Transfer only this UV set, 0 to 7; -1 transfers every set."),
@@ -584,6 +626,8 @@ void registerTransferCommands()
         .name = "transferAttributes",
         .doc = "Copy UVs, normals, color sets, positions or named attributes from the first object to "
                "the others, sampling in world, object, component (same topology) or uv space, by closest point or along normals. "
+               "guided is for similar but different pieces anywhere in the scene: each target is fitted onto the source and its UVs are "
+               "rebuilt from the source's islands (seams carried over, each island unwrapped and fitted onto its source island). "
                "live=True adds a transferAttributes modifier to each target instead of baking, so the targets follow the source.",
         .positionalDoc = "source targets...",
         .flags = {
@@ -593,8 +637,10 @@ void registerTransferCommands()
             {"positions", "", T::Bool, false, "Point positions (shrink-wrap the target onto the source)."},
             {"attributes", "", T::List, nullptr, "Other corner layers by name."},
             {"skinWeights", "", T::Bool, false, "Skin weights, by closest point (point index in component space). Both meshes must be skinned."},
-            {"sampleSpace", "", T::String, "world", "world, object, component or uv.", {"world", "object", "component", "uv"}},
+            {"sampleSpace", "", T::String, "world", "world, object, component, uv or guided.", {"world", "object", "component", "uv", "guided"}},
             {"searchMethod", "", T::String, "closest", "closest or normal.", {"closest", "normal"}},
+            {"keepShape", "", T::Bool, false,
+             "Guided: keep each island's shape as transferred instead of relaxing it (trim sheets); islands that fold are still unwrapped."},
             {"maxDistance", "", T::Float, -1.0, "Ignore matches farther than this (cm); negative is unlimited."},
             {"flip", "", T::String, "none", "Mirror the lookup across the source's x, y or z axis.", {"none", "x", "y", "z"}},
             {"sourceUvSet", "", T::Int, -1, "Transfer only this UV set (0-7); -1 transfers every set."},
@@ -626,6 +672,7 @@ void registerTransferCommands()
             o.targetUvSet = std::clamp(a.get<int>("targetUvSet", -1), -1, 7);
             o.sourceColorSet = a.get<std::string>("sourceColorSet", "");
             o.targetColorSet = a.get<std::string>("targetColorSet", "");
+            o.keepShape = a.get<bool>("keepShape");
             bool skinWeights = a.get<bool>("skinWeights");
 
             Node& src = meshNode(g, objs.front(), "transferAttributes");
@@ -646,7 +693,8 @@ void registerTransferCommands()
                                {"sourceUvSet", o.sourceUvSet},
                                {"targetUvSet", o.targetUvSet},
                                {"sourceColorSet", o.sourceColorSet},
-                               {"targetColorSet", o.targetColorSet}};
+                               {"targetColorSet", o.targetColorSet},
+                               {"keepShape", o.keepShape}};
                 UndoChunk chunk("Transfer Attributes (Live)");
                 json out = json::array();
                 for (size_t i = 1; i < objs.size(); ++i)
@@ -667,6 +715,7 @@ void registerTransferCommands()
             glm::dmat4 srcWorld = src.as<glm::dmat4>(Transform::kWorldMatrix);
 
             UndoChunk chunk("Transfer Attributes");
+            json report = json::array();
             for (size_t i = 1; i < objs.size(); ++i)
             {
                 Node& dstNode = meshNode(g, objs[i], "transferAttributes");
@@ -676,13 +725,22 @@ void registerTransferCommands()
                 if (!current)
                     continue;
                 geo::Mesh target = *current;
-                transfer(source, srcWorld, target, dstNode.as<glm::dmat4>(Transform::kWorldMatrix), o);
+                GuidedStats stats;
+                transfer(source, srcWorld, target, dstNode.as<glm::dmat4>(Transform::kWorldMatrix), o, nullptr, &stats);
+                if (o.space == Space::Guided)
+                    report.push_back({{"target", dstNode.path()},
+                                      {"fitError", stats.align.residual},
+                                      {"reoriented", stats.align.searched},
+                                      {"islands", stats.uvs.islands},
+                                      {"relaxed", stats.uvs.relaxed},
+                                      {"unwrapped", stats.uvs.unfolded},
+                                      {"seams", stats.uvs.seams}});
                 g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(target))));
                 if (skinWeights)
                     ops::execute("copySkinWeights", {{"args", {objs.front(), objs[i]}},
                                                       {"surfaceAssociation", o.space == Space::Component ? "pointIndex" : "closestPoint"}});
             }
-            return nullptr;
+            return report.empty() ? json(nullptr) : report;
         },
     });
 
