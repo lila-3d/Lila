@@ -9,18 +9,6 @@
 using namespace lila::geo;
 using namespace lila::geo::test;
 
-namespace
-{
-Index hardCount(const Mesh& m)
-{
-    std::span<const bool> hard = m.edgeAttrs().get<bool>(attr::kHard);
-    Index n = 0;
-    for (Index e = 0; e < m.edgeCapacity(); ++e)
-        n += m.edgeValid(e) && !hard.empty() && hard[e];
-    return n;
-}
-} // namespace
-
 TEST_CASE("obj: parse basics")
 {
     const char* text = R"(# test

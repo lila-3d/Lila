@@ -28,6 +28,16 @@ inline Index boundaryEdgeCount(const Mesh& m)
     return n;
 }
 
+/** Valid edges marked hard. */
+inline Index hardCount(const Mesh& m)
+{
+    std::span<const bool> hard = m.edgeAttrs().get<bool>(attr::kHard);
+    Index n = 0;
+    for (Index e = 0; e < m.edgeCapacity(); ++e)
+        n += m.edgeValid(e) && !hard.empty() && hard[e];
+    return n;
+}
+
 inline int euler(const Mesh& m)
 {
     return int(m.numPoints()) - int(m.numEdges()) + int(m.numFaces());

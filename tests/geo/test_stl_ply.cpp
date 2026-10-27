@@ -23,15 +23,6 @@ std::vector<StlSolid> cube()
     s[0].mesh = makeCube({.width = 10.0, .height = 20.0, .depth = 30.0});
     return s;
 }
-
-Index hardCount(const Mesh& m)
-{
-    std::span<const bool> hard = m.edgeAttrs().get<bool>(attr::kHard);
-    Index n = 0;
-    for (Index e = 0; e < m.edgeCapacity(); ++e)
-        n += m.edgeValid(e) && !hard.empty() && hard[e];
-    return n;
-}
 } // namespace
 
 TEST_CASE("stl: binary round trip welds a closed mesh")
