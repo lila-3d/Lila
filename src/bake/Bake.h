@@ -20,7 +20,9 @@ class Graph;
  * low and UDIM tile, bands of texel rows go raster -> projection (traced once) -> every map's kernel -> accumulate into
  * the texture each map's file name resolves to; then each texture is resolved, finalized, dilated and written, files
  * encoding in parallel. Maps the backend keeps resident (a GPU backend) do all of that on the device; the rest run
- * bands in parallel on the CPU side. Groups only ever trace their own highs. Progress goes through a cancellable
+ * bands in parallel on the CPU side. Textures bake in batches whose accumulators fit the device (or host memory) at
+ * once, a low's texture set kept together, so memory stays bounded however many textures a bake writes. Groups only
+ * ever trace their own highs. Progress goes through a cancellable
  * progress::Scope, and BakeResult::timings says where the time went.
  *
  * Commands (registerCommands): createBakeProject, bakeGroup, autoGroupBake, setBakeMap, setBakeOutput, bake, bakeStatus,

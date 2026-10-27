@@ -4,12 +4,14 @@
 
 #include <QWidget>
 
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
 #include <vector>
 
 class QDoubleSpinBox;
+class QFrame;
 class QMenu;
 class QTimer;
 class QToolButton;
@@ -36,9 +38,10 @@ LILA_UI_API void fillCameraMenu(QMenu* menu, ViewportWidget* view, std::function
 LILA_UI_API void fillEnvironmentMenu(QMenu* menu);
 
 /**
- * Maya's panel icon row: camera, gates, shading, lighting, AO, AA, environment, isolate, x-ray, framing, exposure and
- * gamma for one viewport. Buttons run registered actions on that viewport and track their state from prefs, render
- * settings and the view itself. Whatever does not fit the width goes into a chevron menu at the end.
+ * Maya's panel icon row: camera, gates, shading, lighting, AO, AA, environment, isolate, show filters, x-ray, framing,
+ * exposure and gamma for one viewport. Buttons run registered actions on that viewport and track their state from prefs,
+ * render settings and the view itself. Feature options the scene cannot use hide until it can (see viewportContext).
+ * Whatever does not fit the width goes into a chevron menu at the end.
  */
 class LILA_UI_API ViewportToolbar : public QWidget
 {
@@ -60,28 +63,20 @@ private:
     {
         QWidget* widget;
         std::function<void(QMenu*)> overflow; // adds the item to the chevron menu; null for separators
+        uint32_t needs = 0;                   // viewportContext features any of which makes it useful; 0 for always
+        std::string stateId;                  // a toggle that stays visible while on, so it can be turned off
+        bool relevant = true;
     };
 
-    QToolButton* actionButton(const char* id, const char* iconName);
+    QToolButton* actionButton(const char* id, const char* iconName, uint32_t needs = 0);
     QToolButton* menuButton(const char* iconName, const QString& tip, std::function<void(QMenu*)> fill);
     QDoubleSpinBox* field(const char* key, double fallback, double lo, double hi, double step, const QString& tip);
     void separator();
-    /** UE's snap pair at the right end: a toggle for t's increment snap and a dropdown of its steps. */
-    void snapGroup(Tool t, const char* iconName, std::vector<double> steps, const QString& unit);
-    /** The far-right symmetry pair: a toggle for the selected meshes' symmetry and a dropdown of its axis. */
-    void buildSymmetryRow();
-    void refreshSymmetry();
-    /**
-     * The object highlight under the cursor and Maya's object selection masks, centered in the gap between the left
-     * row and the right-hand groups.
-     */
-    void buildMaskRow();
-    /** Retopo Draw's line snap angle and space and its surface, in the mask row's place while the tool runs. */
-    void buildRetopoRow();
-    void refreshRetopo();
     /** Makes this panel's view the active one, so actions that target "the viewport" act on it. */
     void activateView();
     void refresh();
+    /** Re-decides which items the scene can use; true when any changed. */
+    bool refreshRelevance();
     void refreshTooltips();
     void layoutItems();
 
@@ -92,6 +87,66 @@ private:
     QToolButton* mCameraButton = nullptr;
     QToolButton* mSamplesButton = nullptr;
     QToolButton* mChevron = nullptr;
+    int mPrefListener = 0;
+    int mRenderSettingsListener = 0;
+    int mToolsListener = 0;
+    int mContextListener = 0;
+};
+
+/**
+ * The row along the bottom of a viewport panel, in groups: the highlight under the cursor, the object selection masks,
+ * Retopo Draw's line snapping while that tool runs, symmetry, and the increment snaps. Groups that do not fit the
+ * width go into a chevron menu, the highlight first and the snaps last.
+ */
+class LILA_UI_API ViewportBottomBar : public QWidget
+{
+    Q_OBJECT
+
+public:
+    explicit ViewportBottomBar(ViewportWidget* view, QWidget* parent = nullptr);
+    ~ViewportBottomBar() override;
+
+    QSize sizeHint() const override;
+    QSize minimumSizeHint() const override;
+
+protected:
+    void resizeEvent(QResizeEvent* e) override;
+    bool event(QEvent* e) override;
+
+private:
+    struct Group
+    {
+        QWidget* row;
+        QFrame* line;                         // between it and its neighbour on the same side
+        bool right;                           // laid out from the right edge inward
+        int keep;                             // higher keeps its place longer as the bar narrows
+        std::function<bool()> active;         // null for always
+        std::function<void(QMenu*)> overflow; // its actions in the chevron menu
+    };
+
+    QWidget* group(bool right, int keep, std::function<void(QMenu*)> overflow, std::function<bool()> active = {});
+    QToolButton* toggleButton(QWidget* row, const std::string& action, const char* iconName);
+    /** UE's snap pair: a toggle for t's increment snap and a dropdown of its steps. */
+    void snapGroup(QWidget* row, Tool t, const char* iconName, std::vector<double> steps, const QString& unit);
+    /** A toggle for the selected meshes' symmetry and a dropdown of its axis. */
+    void buildSymmetryRow();
+    void refreshSymmetry();
+    /** The objects and components highlighted under the cursor before a click. */
+    void buildHighlightRow();
+    /** Maya's object selection masks. */
+    void buildMaskRow();
+    /** Retopo Draw's line snap angle and space and its surface, while the tool runs. */
+    void buildRetopoRow();
+    void refreshRetopo();
+    void activateView();
+    void refresh();
+    void refreshTooltips();
+    void layoutItems();
+
+    ViewportWidget* mView;
+    std::vector<Group> mGroups;
+    std::vector<std::pair<QToolButton*, std::string>> mActionButtons;
+    QToolButton* mChevron = nullptr;
     struct SnapGroup
     {
         Tool tool;
@@ -100,25 +155,22 @@ private:
         QString unit;
     };
     std::vector<SnapGroup> mSnapGroups;
-    QWidget* mSnapRow = nullptr; // right-aligned, outside the overflowing left row
-    QWidget* mSymmetryRow = nullptr; // right of the snap row
-    QWidget* mMaskRow = nullptr;
+    QWidget* mSnapRow = nullptr;
+    QWidget* mSymmetryRow = nullptr;
     QWidget* mRetopoRow = nullptr;
     QToolButton* mRetopoSpace = nullptr;
     QToolButton* mRetopoAngle = nullptr;
     QToolButton* mRetopoSurface = nullptr;
-    std::vector<QAction*> mMaskActions;
     QToolButton* mSymmetryToggle = nullptr;
     QToolButton* mSymmetryAxis = nullptr;
     QTimer* mSymmetryRefresh = nullptr;
     int mGraphListener = 0;
     int mPrefListener = 0;
-    int mRenderSettingsListener = 0;
     int mToolsListener = 0;
     int mViewportToolListener = 0;
 };
 
-/** One viewport with its toolbar above it, as a cell of the viewport layout. */
+/** One viewport with its toolbar above it and its bottom bar below, as a cell of the viewport layout. */
 class LILA_UI_API ViewportPanel : public QWidget
 {
     Q_OBJECT
@@ -132,6 +184,7 @@ public:
 private:
     ViewportWidget* mView;
     ViewportToolbar* mToolbar;
+    ViewportBottomBar* mBottomBar;
     int mPrefListener = 0;
 };
 } // namespace lila::ui

@@ -149,6 +149,74 @@ TEST_CASE("ops: inset")
     CHECK(signedVolume(c2) == doctest::Approx(1e6 - 10.0 / 3.0 * (10000.0 + 6400.0 + 8000.0)));
 }
 
+TEST_CASE("ops: inset clamps on faces narrower than twice the thickness")
+{
+    // The +x side is 2.5 wide in z; split in two along y for the region case.
+    for (bool individual : {true, false})
+    {
+        CAPTURE(individual);
+        Mesh m = makeCube({.width = 100.0, .height = 100.0, .depth = 2.5, .subdivY = 2});
+        std::vector<Index> sel;
+        for (Index f = 0; f < m.faceCapacity(); ++f)
+            if (m.faceValid(f) && m.faceNormal(f).x > 0.5)
+                sel.push_back(f);
+        REQUIRE(sel.size() == 2);
+        const double area = m.faceArea(sel[0]) + m.faceArea(sel[1]);
+        const ExtrudeResult r = insetFaces(m, sel, {.thickness = 7.0, .individual = individual});
+        checkClosed(m);
+        // The inner border closes on the medial line, so no inner face is left.
+        CHECK(r.faces.empty());
+        CHECK(r.sides.size() == (individual ? 8 : 6));
+        double worstFold = 1.0, rimArea = 0.0;
+        for (Index e = 0; e < m.edgeCapacity(); ++e)
+            if (m.edgeValid(e) && m.isManifoldEdge(e))
+            {
+                const Index c = m.edgeCorner(e);
+                worstFold = std::min(worstFold, glm::dot(m.faceNormal(m.cornerFace(c)), m.faceNormal(m.cornerFace(m.cornerRadial(c)))));
+            }
+        CHECK(worstFold > -0.1);
+        for (Index f = 0; f < m.faceCapacity(); ++f)
+            if (m.faceValid(f))
+            {
+                double longest = 0.0;
+                m.forEachFaceCorner(f, [&](Index c) { longest = std::max(longest, m.edgeLength(m.cornerEdge(c))); });
+                CHECK(m.faceArea(f) > 0.01 * longest);
+            }
+        for (Index f : r.sides)
+        {
+            CHECK(m.faceNormal(f).x == doctest::Approx(1.0));
+            rimArea += m.faceArea(f);
+        }
+        for (Index f : r.faces)
+        {
+            CHECK(m.faceNormal(f).x == doctest::Approx(1.0));
+            rimArea += m.faceArea(f);
+        }
+        // Inner faces and rim tile the original side exactly, with no overlap.
+        CHECK(rimArea == doctest::Approx(area));
+        CHECK(signedVolume(m) == doctest::Approx(100.0 * 100.0 * 2.5));
+    }
+}
+
+TEST_CASE("ops: inset clamp leaves insets with room unchanged")
+{
+    for (bool individual : {true, false})
+    {
+        CAPTURE(individual);
+        Mesh a = makeCube({100, 100, 100, 3, 1, 3}), b = a;
+        std::vector<Index> sel;
+        for (Index f = 0; f < a.faceCapacity(); ++f)
+            if (a.faceValid(f) && a.faceNormal(f).y > 0.5)
+                sel.push_back(f);
+        insetFaces(a, sel, {.thickness = 10.0, .depth = -5.0, .individual = individual});
+        insetFaces(b, sel, {.thickness = 10.0, .depth = -5.0, .individual = individual, .clamp = false});
+        REQUIRE(a.pointCapacity() == b.pointCapacity());
+        for (Index p = 0; p < a.pointCapacity(); ++p)
+            if (a.pointValid(p))
+                CHECK(glm::distance(a.position(p), b.position(p)) < 1e-12);
+    }
+}
+
 TEST_CASE("ops: bevel")
 {
     Mesh cube = makeCube();

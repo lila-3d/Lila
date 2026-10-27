@@ -107,7 +107,11 @@ Options parse(int argc, char** argv)
         {
             o.batch = true;
             if (i + 1 < argc && argv[i + 1][0] != '-')
+            {
                 o.batchScript = argv[++i];
+                o.scriptArgs.assign(argv + i + 1, argv + argc);
+                break;
+            }
         }
         else if ((a == "-c" || a == "--command") && i + 1 < argc)
             o.command = argv[++i];
@@ -235,6 +239,7 @@ fs::path openStartupWorkspace(const Options& o)
 bool startPython(const Options& o)
 {
     std::vector<std::string> pyArgs{o.batchScript.empty() ? "lila" : o.batchScript};
+    pyArgs.insert(pyArgs.end(), o.scriptArgs.begin(), o.scriptArgs.end());
     bool ok = python::init(pyArgs);
     if (ok)
         extensions::autoload();

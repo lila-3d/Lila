@@ -13,6 +13,8 @@
 namespace lila::tex
 {
 using gn::GLink;
+using gn::GFrame;
+using gn::GTie;
 using gn::GNode;
 
 /**
@@ -49,7 +51,7 @@ struct GraphOutput
  *   { "name", "typeVersion", "description", "inputs": [{name, kind: port|param, type, default, label, description, panel,
  *     min, max, softMin, softMax, step, options, targets}], "outputs": [{name, type, description}],
  *     "nodes": [{name, type, position, values}], "links": [[fromNode, fromSocket, toNode, toSocket]],
- *     "subgroups": {name: graph} }
+ *     "ties": [see gn::tiesToJson], "subgroups": {name: graph} }
  * Node values hold parameter values and unlinked input values by id; missing ones take the definition's default.
  */
 struct LILA_SCENE_API Graph
@@ -61,6 +63,12 @@ struct LILA_SCENE_API Graph
     std::vector<GraphOutput> outputs;
     std::vector<GNode> nodes;
     std::vector<GLink> links;
+    /** Zip ties, display only (see gn::GTie). */
+    std::vector<GTie> ties;
+    /** Frames, display only (see gn::GFrame). */
+    std::vector<GFrame> frames;
+    /** Saved canvas views (see gn::Group::bookmarks). */
+    json bookmarks = json::object();
     /** Graphs its Group nodes use (values.group names one), by name, each self-contained. */
     std::map<std::string, json> subgroups;
 

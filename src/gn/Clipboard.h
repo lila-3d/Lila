@@ -13,7 +13,8 @@
  *   { "format": "lila.geometryNodes", "version": 1,
  *     "nodes": [{name, type, position, values}], "links": [[fromNode, fromSocket, toNode, toSocket]],
  *     "inputs": [{name, type, default}] }
- * Positions are relative to the copied nodes' centre. Links are only those between copied nodes. "inputs" holds the
+ * Positions are relative to the copied nodes' centre. Links are only those between copied nodes, and "ties" (when any)
+ * only the zip ties among them. "inputs" holds the
  * group parameters a copied Group Input feeds, so pasting into another group can add them.
  */
 namespace lila::gn

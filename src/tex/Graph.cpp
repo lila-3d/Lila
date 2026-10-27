@@ -94,12 +94,19 @@ json Graph::toJson() const
         json o = {{"name", n.name}, {"type", n.type}, {"position", {n.position.x, n.position.y}}};
         if (!n.values.empty())
             o["values"] = n.values;
+        gn::putNodeFlags(n, o);
         jn.push_back(std::move(o));
     }
     json jl = json::array();
     for (const GLink& l : links)
         jl.push_back({l.fromNode, l.fromSocket, l.toNode, l.toSocket});
     json out = {{"name", name}, {"typeVersion", typeVersion}, {"inputs", jin}, {"nodes", jn}, {"links", jl}};
+    if (!ties.empty())
+        out["ties"] = gn::tiesToJson(ties);
+    if (!frames.empty())
+        out["frames"] = gn::framesToJson(frames);
+    if (!bookmarks.empty())
+        out["bookmarks"] = bookmarks;
     if (!outputs.empty())
     {
         json jo = json::array();
@@ -150,10 +157,14 @@ Graph Graph::fromJson(const json& j)
             gn.values = n.value("values", json::object());
             if (!gn.values.is_object())
                 throw std::invalid_argument("node " + gn.name + ": values must be an object");
+            gn::getNodeFlags(gn, n);
             g.nodes.push_back(std::move(gn));
         }
         for (const json& l : j.value("links", json::array()))
             g.links.push_back({l.at(0).get<std::string>(), l.at(1).get<std::string>(), l.at(2).get<std::string>(), l.at(3).get<std::string>()});
+        g.ties = gn::tiesFromJson(j.value("ties", json::array()));
+        g.frames = gn::framesFromJson(j.value("frames", json::array()));
+        g.bookmarks = gn::cleanBookmarks(j.value("bookmarks", json::object()));
         if (auto it = j.find("subgroups"); it != j.end() && it->is_object())
             for (auto& [k, v] : it->items())
                 g.subgroups[k] = v;

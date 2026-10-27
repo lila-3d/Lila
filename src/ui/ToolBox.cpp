@@ -121,7 +121,7 @@ void registerItems(std::function<ViewportWidget*()> active)
     add({.id = "toolBox/-options", .kind = Kind::Separator});
     add({.id = "toolBox/soft", .action = "softSelect.toggle", .icon = "ripple"});
     add({.id = "toolBox/masks", .kind = Kind::Menu, .icon = "filter", .label = "Selection Masks",
-         .menuActions = {"select.mask.curve", "select.mask.mesh", "select.mask.joint", "select.mask.locator", "select.mask.other"}});
+         .menuActions = {"select.mask.curve", "select.mask.mesh", "select.mask.joint", "select.mask.light", "select.mask.locator", "select.mask.other"}});
     add({.id = "toolBox/-display", .kind = Kind::Separator});
     add({.id = "toolBox/backfaceTint", .action = "viewport.aid.backfaceTint", .icon = "arrows-exchange"});
     add({.id = "toolBox/display", .kind = Kind::Menu, .icon = "eye", .label = "Mesh Display (active view)",

@@ -756,6 +756,11 @@ void commitGroup(Graph& g, Node& groupNode, Group next, const std::map<std::stri
     next.name = prev.name;
     embedSubgroups(g, next);
     pruneLinks(next);
+    pruneTies(next.ties, next.links);
+    std::vector<std::string> names;
+    for (const GNode& n : next.nodes)
+        names.push_back(n.name);
+    pruneFrames(next.frames, names);
     if (interfaceOf(next).signature() != interfaceOf(prev).signature())
         next.typeVersion = std::max(registry().maxVersion[prev.name], prev.typeVersion) + 1;
     else

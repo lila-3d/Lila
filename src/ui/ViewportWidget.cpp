@@ -733,7 +733,7 @@ void ViewportWidget::submit()
         gn::InstanceViewPtr instanced;
         if (smooth == 0 && !previewed && !hilite.contains(id) && !part && !cageWire)
             instanced = gn::instanceViewFor(g, id);
-        auto rm = instanced ? nullptr : renderMeshFor(shown, tangents);
+        auto rm = instanced ? nullptr : renderMeshFor(shown, tangents, id);
         if (!rm && !instanced)
             continue;
         render::MeshDraw d;
@@ -2986,7 +2986,8 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
             mGizmoDrag = nullptr;
         if (gz->wrapsCursor())
             wrapCursor(e);
-        submit();
+        // One frame for however many moves arrived since the last: drawing on every event backs the queue up and lags.
+        requestFrame();
         return;
     }
     if (e->buttons() == Qt::NoButton && mTabHeld && !viewportTools::active())
@@ -3034,7 +3035,7 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
     }
     if (mLookThrough != scene::kNoNode)
         previewCameraEdit();
-    submit();
+    requestFrame();
 }
 
 void ViewportWidget::mouseReleaseEvent(QMouseEvent* e)

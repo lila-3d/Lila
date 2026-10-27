@@ -36,6 +36,9 @@ struct LILA_SCENE_API NodePorts
 /** extra adds Material Output inputs beyond the standard channels. */
 LILA_SCENE_API NodePorts portsOf(const Graph& g, const GNode& n, const ChannelList* extra = nullptr);
 
+/** The graph as planning sees it: reroutes and portals spliced out (gn::resolveRouting). */
+LILA_SCENE_API void resolveRouting(Graph& g);
+
 /** The param value a node uses: its own value, else the declaration's default. */
 LILA_SCENE_API json paramValue(const GNode& n, const ParamDecl& p);
 } // namespace lila::tex

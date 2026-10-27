@@ -6,7 +6,9 @@
 #include "scene/Node.h"
 #include "scene/SceneCommands.h"
 #include "ui/NodeEditor.h"
+#include "core/PrefStore.h"
 #include "ui/Theme.h"
+#include "ui/ThemeModel.h"
 
 #include <QApplication>
 #include <QTimer>
@@ -31,6 +33,10 @@ int main(int argc, char** argv)
     gn::registerCommands();
 
     QApplication app(argc, argv);
+    // Optional second argument: a theme to draw in, such as Colour.
+    if (argc > 2)
+        ui::themes::setCurrent(argv[2]);
+    PrefStore::get().set("general", "/nodeEditor/minimap", true);
     ui::applyTheme(app);
 
     auto run = [](const char* n, json c) { return ops::execute(n, c); };
@@ -54,6 +60,26 @@ int main(int argc, char** argv)
     run("gnConnect", a({"Scatter", join + ".geometry", "GroupOutput.geometry"}));
     run("gnExposeInput", a({"Scatter", dist + ".density", "density"}));
     run("gnApply", a({mesh, "Scatter"}));
+    json into = json::array({json::array({dist, "points", iop, "points"}), json::array({cube, "mesh", iop, "instance"}),
+                             json::array({dist, "rotation", iop, "rotation"}), json::array({rnd, "value", iop, "scale"})});
+    run("gnSetTies", a({"Scatter", json::array({{{"links", into}, {"position", {-65, 130}}, {"angle", 0}, {"color", "teal"}}})}));
+    run("gnSetFrames", a({"Scatter", json::array({{{"label", "Scatter points"}, {"position", {-320, -40}}, {"size", {520, 560}}, {"color", "blue"},
+                                                  {"nodes", {dist, cube, rnd, iop}}}})}));
+    // A reroute on the realize wire, and a portal carrying the input geometry to the join.
+    std::string reroute = add("Reroute", 330, 260);
+    run("gnConnect", a({"Scatter", real + ".geometry", reroute + ".input"}));
+    run("gnConnect", a({"Scatter", reroute + ".output", join + ".geometry"}));
+    run("gnDisconnect", {{"args", {"Scatter", join + ".geometry"}}, {"source", real + ".geometry"}});
+    std::string send = add("PortalSend", -300, 560), receive = add("PortalReceive", 200, 400), lost = add("PortalReceive", 200, 520);
+    run("gnSetValue", a({"Scatter", send + ".name", "ground"}));
+    run("gnSetValue", a({"Scatter", receive + ".name", "ground"}));
+    run("gnSetValue", a({"Scatter", lost + ".name", "missing"}));
+    run("gnConnect", a({"Scatter", "GroupInput.geometry", send + ".value"}));
+    run("gnConnect", a({"Scatter", receive + ".value", join + ".geometry"}));
+    run("gnDisconnect", {{"args", {"Scatter", join + ".geometry"}}, {"source", "GroupInput.geometry"}});
+    run("gnSetNodeFlags", {{"args", {"Scatter", cube}}, {"collapsed", true}});
+    run("gnSetNodeFlags", {{"args", {"Scatter", dist}}, {"hideUnused", true}});
+    run("gnSetNodeFlags", {{"args", {"Scatter", real}}, {"muted", true}});
 
     ui::NodeEditor editor;
     editor.resize(1400, 640);

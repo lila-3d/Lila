@@ -193,7 +193,18 @@ SetSettings readSettings(const Node& set)
 
 void writeGraph(scene::Graph& g, Node& set, const Graph& graph)
 {
-    g.setValue({set.id(), attr(set, "graph"), -1}, graph.toJson().dump());
+    if (graph.ties.empty() && graph.frames.empty())
+    {
+        g.setValue({set.id(), attr(set, "graph"), -1}, graph.toJson().dump());
+        return;
+    }
+    Graph pruned = graph;
+    gn::pruneTies(pruned.ties, pruned.links);
+    std::vector<std::string> names;
+    for (const GNode& n : pruned.nodes)
+        names.push_back(n.name);
+    gn::pruneFrames(pruned.frames, names);
+    g.setValue({set.id(), attr(set, "graph"), -1}, pruned.toJson().dump());
 }
 
 void writeSettings(scene::Graph& g, Node& set, const SetSettings& settings)

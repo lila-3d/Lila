@@ -3,6 +3,7 @@
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
+#include "geo/Normals.h"
 #include "geo/Ops.h"
 #include "geo/RenderMesh.h"
 #include "ui/ViewportDisplay.h"
@@ -10,6 +11,7 @@
 #include <tbb/parallel_for.h>
 #include <tbb/parallel_reduce.h>
 
+#include <cstring>
 #include <map>
 #include <unordered_map>
 
@@ -23,12 +25,267 @@ struct Entry
     std::shared_ptr<const render::RenderMesh> built;
     std::shared_ptr<const geo::RenderMesh> pick;
     bool tangents = false;
+    /** A deformed copy's layout, its pick data made from it when picking first asks (pick is null until then). */
+    std::shared_ptr<const geo::RenderMesh> pickLayout;
 };
 
 std::unordered_map<const geo::Mesh*, Entry>& cache()
 {
     static std::unordered_map<const geo::Mesh*, Entry> c;
     return c;
+}
+
+uint64_t mix(uint64_t h, uint64_t v)
+{
+    h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+    return h * 0x100000001b3ull;
+}
+
+/** Hash of bytes, chunked in parallel; the same for the same bytes whatever the thread count. */
+uint64_t hashBytes(const std::byte* data, size_t size)
+{
+    constexpr size_t kChunk = 1 << 16;
+    std::vector<uint64_t> parts((size + kChunk - 1) / kChunk);
+    tbb::parallel_for(size_t(0), parts.size(), [&](size_t i) {
+        uint64_t h = 1469598103934665603ull;
+        const size_t end = std::min(size, (i + 1) * kChunk);
+        size_t b = i * kChunk;
+        for (; b + 8 <= end; b += 8)
+        {
+            uint64_t v;
+            std::memcpy(&v, data + b, 8);
+            h = mix(h, v);
+        }
+        for (; b < end; ++b)
+            h = mix(h, uint64_t(data[b]));
+        parts[i] = h;
+    });
+    uint64_t h = mix(0, size);
+    for (uint64_t p : parts)
+        h = mix(h, p);
+    return h;
+}
+
+/**
+ * Everything a render copy depends on except where the points are and the normals: topology and every attribute
+ * layer but the corner normals. Two meshes with the same key differ only by deformation.
+ */
+uint64_t layoutKey(const geo::Mesh& m)
+{
+    LILA_ZONE();
+
+    // Chunk hashes in parallel, combined in order.
+    auto hashRange = [](geo::Index count, auto&& element) {
+        constexpr geo::Index kChunk = 1 << 14;
+        std::vector<uint64_t> parts((count + kChunk - 1) / kChunk);
+        tbb::parallel_for(size_t(0), parts.size(), [&](size_t i) {
+            uint64_t h = 1469598103934665603ull;
+            for (geo::Index k = geo::Index(i) * kChunk; k < std::min(count, geo::Index(i + 1) * kChunk); ++k)
+                h = element(h, k);
+            parts[i] = h;
+        });
+        uint64_t h = mix(0, count);
+        for (uint64_t p : parts)
+            h = mix(h, p);
+        return h;
+    };
+    uint64_t h = hashRange(m.cornerCapacity(), [&](uint64_t h, geo::Index c) {
+        return m.cornerValid(c) ? mix(mix(mix(h, m.cornerPoint(c)), m.cornerNext(c)), m.cornerEdge(c)) : mix(h, geo::kInvalid);
+    });
+    h = mix(h, hashRange(m.faceCapacity(), [&](uint64_t h, geo::Index f) { return m.faceValid(f) ? mix(mix(h, m.faceCorner(f)), m.faceSize(f)) : mix(h, geo::kInvalid); }));
+    h = mix(h, hashRange(m.pointCapacity(), [&](uint64_t h, geo::Index p) { return m.pointValid(p) ? h : mix(h, p); }));
+    h = mix(h, m.edgeCapacity());
+    const geo::AttributeSet* sets[] = {&m.pointAttrs(), &m.edgeAttrs(), &m.faceAttrs(), &m.cornerAttrs()};
+    for (int s = 0; s < 4; ++s)
+        for (size_t i = 0; i < sets[s]->layerCount(); ++i)
+        {
+            const geo::Attribute& a = sets[s]->layer(i);
+            if (s == 3 && a.name() == geo::attr::kNormal)
+                continue;
+            h = mix(h, std::hash<std::string>()(a.name()));
+            if (a.size())
+                h = mix(h, hashBytes(a.raw(0), a.size() * a.stride()));
+        }
+    for (const std::string& n : m.materialNames())
+        h = mix(h, std::hash<std::string>()(n));
+    return h;
+}
+
+/** The last few copies built in full, by layoutKey, so a deformed mesh can reuse one's vertex layout. */
+struct Layout
+{
+    uint64_t key = 0;
+    Entry entry;
+};
+
+std::vector<Layout>& layouts()
+{
+    static std::vector<Layout> l;
+    return l;
+}
+
+void rememberLayout(uint64_t key, const Entry& e)
+{
+    // Bounded by count and vertices, since each one keeps a full copy alive after its mesh is gone.
+    constexpr size_t kKept = 8, kVertices = 8'000'000;
+    auto& l = layouts();
+    std::erase_if(l, [&](const Layout& x) { return x.key == key; });
+    if (!e.pick || e.pick->positions.size() > kVertices)
+        return;
+    l.insert(l.begin(), {key, e});
+    size_t vertices = 0, kept = 0;
+    while (kept < l.size() && kept < kKept && (vertices += l[kept].entry.pick->positions.size()) <= kVertices)
+        ++kept;
+    l.resize(kept);
+}
+
+/**
+ * Tangents from the triangles' uv gradients, accumulated per render vertex and made orthogonal to its normal, the
+ * bitangent sign kept from the full build. Close to MikkTSpace on a deforming surface at a fraction of its cost.
+ */
+void fastTangents(const geo::RenderMesh& layout, const std::vector<glm::vec3>& pos, const std::vector<glm::vec3>& nrm, std::vector<glm::vec4>& out)
+{
+    LILA_ZONE();
+
+    const size_t n = pos.size();
+    std::vector<glm::vec3> acc(n, glm::vec3(0.0f));
+    const auto& uv = layout.uvs[0];
+    const size_t tris = layout.indices.size() / 3;
+    for (size_t t = 0; t < tris; ++t)
+    {
+        const geo::Index a = layout.indices[t * 3], b = layout.indices[t * 3 + 1], c = layout.indices[t * 3 + 2];
+        const glm::vec3 e1 = pos[b] - pos[a], e2 = pos[c] - pos[a];
+        const glm::vec2 d1 = uv[b] - uv[a], d2 = uv[c] - uv[a];
+        const float det = d1.x * d2.y - d2.x * d1.y;
+        if (std::abs(det) < 1e-20f)
+            continue;
+        const glm::vec3 tangent = (e1 * d2.y - e2 * d1.y) / det;
+        acc[a] += tangent;
+        acc[b] += tangent;
+        acc[c] += tangent;
+    }
+    out.resize(n);
+    tbb::parallel_for(size_t(0), n, [&](size_t v) {
+        const glm::vec4 was = v < layout.tangents.size() ? layout.tangents[v] : glm::vec4(1, 0, 0, 1);
+        glm::vec3 t = acc[v] - nrm[v] * glm::dot(nrm[v], acc[v]);
+        if (glm::dot(t, t) < 1e-20f)
+            t = glm::vec3(was) - nrm[v] * glm::dot(nrm[v], glm::vec3(was));
+        const float len = glm::length(t);
+        out[v] = glm::vec4(len > 1e-12f ? t / len : glm::vec3(1, 0, 0), was.w);
+    });
+}
+
+/**
+ * Vertices a node's deforming mesh draws from, kept on the GPU and rewritten in place each frame (one per node and
+ * layout), so a skinned character doesn't upload its whole mesh again every frame.
+ */
+struct Live
+{
+    std::shared_ptr<render::DynamicVertices> vertices;
+    uint64_t key = 0;
+};
+
+std::map<std::pair<scene::NodeId, uint64_t>, Live>& lives()
+{
+    static std::map<std::pair<scene::NodeId, uint64_t>, Live> l;
+    return l;
+}
+
+/** Normals of each render vertex of layout on mesh m. */
+std::vector<glm::vec3> vertexNormals(const geo::Mesh& m, const geo::RenderMesh& layout)
+{
+    std::vector<glm::vec3> computed;
+    std::span<const glm::vec3> cornerN = m.cornerAttrs().get<glm::vec3>(geo::attr::kNormal);
+    if (cornerN.size() != m.cornerCapacity())
+    {
+        computed = geo::cornerNormals(m);
+        cornerN = computed;
+    }
+    std::vector<glm::vec3> nrm(layout.positions.size());
+    tbb::parallel_for(size_t(0), nrm.size(), [&](size_t v) { nrm[v] = cornerN[layout.vertexCorner[v]]; });
+    return nrm;
+}
+
+/** Pick data for mesh m from a deformed copy's layout: its positions and normals. */
+std::shared_ptr<const geo::RenderMesh> pickFrom(const geo::Mesh& m, const geo::RenderMesh& layout)
+{
+    LILA_ZONE();
+
+    auto pick = std::make_shared<geo::RenderMesh>(layout);
+    const std::vector<glm::vec3> nrm = vertexNormals(m, layout);
+    tbb::parallel_for(size_t(0), nrm.size(), [&](size_t v) {
+        pick->positions[v] = glm::vec3(m.position(layout.vertexPoint[v]));
+        pick->normals[v] = nrm[v];
+    });
+    return pick;
+}
+
+/**
+ * A copy of `from`'s render data for a mesh with the same layout key: new positions, normals and tangents only. With
+ * an owner node, the vertices go to that node's GPU copy in place instead of a new upload.
+ */
+Entry rebuildPositions(const scene::MeshPtr& source, const Entry& from, uint64_t layoutKey, scene::NodeId owner)
+{
+    LILA_ZONE();
+
+    const geo::Mesh& m = *source;
+    const geo::RenderMesh& layout = *from.pick;
+    const size_t n = layout.positions.size();
+    std::vector<glm::vec3> pos(n);
+    tbb::parallel_for(size_t(0), n, [&](size_t v) { pos[v] = glm::vec3(m.position(layout.vertexPoint[v])); });
+    const std::vector<glm::vec3> nrm = vertexNormals(m, layout);
+    std::vector<glm::vec4> tangents;
+    if (from.tangents && !layout.tangents.empty() && !layout.uvs.empty())
+        fastTangents(layout, pos, nrm, tangents);
+
+    auto out = std::make_shared<render::RenderMesh>(*from.built);
+    tbb::parallel_for(size_t(0), n, [&](size_t v) {
+        render::MeshVertex& mv = out->vertices[v];
+        mv.pos = pos[v];
+        mv.normal = nrm[v];
+        if (!tangents.empty())
+            mv.tangent = tangents[v];
+    });
+    tbb::parallel_for(geo::Index(0), m.pointCapacity(), [&](geo::Index p) {
+        out->edgePoints[p] = m.pointValid(p) ? glm::vec3(m.position(p)) : glm::vec3(0.0f);
+    });
+    if (n)
+    {
+        using Bounds = std::pair<glm::vec3, glm::vec3>;
+        std::tie(out->boundsMin, out->boundsMax) = tbb::parallel_reduce(
+            tbb::blocked_range<size_t>(0, n, 1 << 16), Bounds(pos[0], pos[0]),
+            [&](const tbb::blocked_range<size_t>& r, Bounds b) {
+                for (size_t i = r.begin(); i < r.end(); ++i)
+                    b = {glm::min(b.first, pos[i]), glm::max(b.second, pos[i])};
+                return b;
+            },
+            [](const Bounds& a, const Bounds& b) { return Bounds(glm::min(a.first, b.first), glm::max(a.second, b.second)); });
+    }
+    if (owner != scene::kNoNode)
+    {
+        auto& l = lives();
+        if (l.size() > 256)
+            l.clear();
+        Live& live = l[{owner, layoutKey}];
+        if (!live.vertices)
+        {
+            live.vertices = std::make_shared<render::DynamicVertices>();
+            live.key = render::RenderMesh::nextKey();
+        }
+        {
+            std::scoped_lock lock(live.vertices->mutex);
+            live.vertices->vertices.assign(out->vertices.begin(), out->vertices.end());
+            live.vertices->allDirty = true;
+            live.vertices->dirty.clear();
+        }
+        out->dynamic = live.vertices;
+        out->key = live.key;
+    }
+    else
+        out->key = render::RenderMesh::nextKey();
+    Entry e{source, out, nullptr, from.tangents};
+    e.pickLayout = from.pick;
+    return e;
 }
 
 Entry build(const scene::MeshPtr& source, bool tangents)
@@ -89,7 +346,7 @@ Entry build(const scene::MeshPtr& source, bool tangents)
     return {source, out, pick, tangents};
 }
 
-const Entry* entryFor(const scene::MeshPtr& mesh, bool tangents = false)
+const Entry* entryFor(const scene::MeshPtr& mesh, bool tangents = false, scene::NodeId owner = scene::kNoNode)
 {
     if (!mesh)
         return nullptr;
@@ -105,7 +362,15 @@ const Entry* entryFor(const scene::MeshPtr& mesh, bool tangents = false)
         return nullptr;
     try
     {
+        // A deformed mesh (skinning, blend shapes) differs from the last copy only in its points: reuse that copy's
+        // layout and skip triangulating and MikkTSpace, which on a dense character cost a frame many times over.
+        const uint64_t key = layoutKey(*mesh);
+        for (const Layout& l : layouts())
+            if (l.key == key && (l.entry.tangents || !tangents) && l.entry.pick && l.entry.built &&
+                l.entry.pick->positions.size() == l.entry.built->vertices.size())
+                return &(c[mesh.get()] = rebuildPositions(mesh, l.entry, key, owner));
         Entry e = build(mesh, tangents);
+        rememberLayout(key, e);
         return &(c[mesh.get()] = std::move(e));
     }
     catch (const std::bad_alloc&)
@@ -117,9 +382,9 @@ const Entry* entryFor(const scene::MeshPtr& mesh, bool tangents = false)
 }
 } // namespace
 
-std::shared_ptr<const render::RenderMesh> renderMeshFor(const scene::MeshPtr& mesh, bool tangents)
+std::shared_ptr<const render::RenderMesh> renderMeshFor(const scene::MeshPtr& mesh, bool tangents, scene::NodeId owner)
 {
-    const Entry* e = entryFor(mesh, tangents);
+    const Entry* e = entryFor(mesh, tangents, owner);
     return e ? e->built : nullptr;
 }
 
@@ -147,7 +412,7 @@ std::shared_ptr<const MaskedMesh> maskedRenderMeshFor(const scene::MeshPtr& mesh
     LILA_ZONE();
 
     const Entry* full = entryFor(mesh, tangents);
-    if (!full || !full->pick)
+    if (!full || !(full->pick || full->pickLayout))
         return nullptr;
     struct Masked
     {
@@ -162,7 +427,8 @@ std::shared_ptr<const MaskedMesh> maskedRenderMeshFor(const scene::MeshPtr& mesh
     // Entries of deleted meshes hold gigabytes on dense meshes, so they go as soon as anything new is cached.
     std::erase_if(cache, [](const auto& kv) { return kv.second.source.expired(); });
 
-    const geo::RenderMesh& pd = *full->pick;
+    // Only the layout is read: which face each triangle and edge each line came from.
+    const geo::RenderMesh& pd = full->pick ? *full->pick : *full->pickLayout;
     const render::RenderMesh& rm = *full->built;
     const std::vector<uint8_t> faces = shownFaces ? shownFaces() : std::vector<uint8_t>();
     auto shown = [&](geo::Index f) { return !shownFaces || (f < faces.size() && faces[f]); };
@@ -280,7 +546,11 @@ std::shared_ptr<const render::RenderMesh> cageWireMeshFor(const SmoothCage& smoo
 std::shared_ptr<const geo::RenderMesh> pickDataFor(const scene::MeshPtr& mesh)
 {
     const Entry* e = entryFor(mesh);
-    return e ? e->pick : nullptr;
+    if (!e)
+        return nullptr;
+    if (!e->pick && e->pickLayout)
+        const_cast<Entry*>(e)->pick = pickFrom(*mesh, *e->pickLayout);
+    return e->pick;
 }
 
 std::optional<RayHit> raycast(const render::RenderMesh& mesh, const glm::dmat4& world, const glm::dvec3& origin, const glm::dvec3& dir,

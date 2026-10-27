@@ -2,6 +2,8 @@
 #include "core/CrashHandler.h"
 #include "core/Paths.h"
 
+#include <cstdio>
+
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -20,7 +22,11 @@ void loadUiCommands()
     const std::filesystem::path dll = paths::executableDir() / "LilaUI.dll";
     HMODULE ui = LoadLibraryW(dll.c_str());
     if (!ui)
+    {
+        std::fprintf(stderr, "lilabatch: %s did not load (error %lu): captureView, captureTurntable and the other UI commands are "
+                             "unavailable\n", dll.string().c_str(), GetLastError());
         return;
+    }
     using RegisterFn = void (*)();
     if (auto fn = reinterpret_cast<RegisterFn>(GetProcAddress(ui, "lilaUiRegisterBatchCommands")))
         fn();

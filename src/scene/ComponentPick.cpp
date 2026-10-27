@@ -153,6 +153,7 @@ const char* name(Kind k)
     case Kind::Joint: return "joint";
     case Kind::Locator: return "locator";
     case Kind::Other: return "other";
+    case Kind::Light: return "light";
     }
     return "other";
 }
@@ -195,8 +196,9 @@ bool shown(const Node& node)
 Kind kindOf(const Node& node)
 {
     const NodeType& t = node.type();
-    // Cameras derive from locator but are not what the locator mask means.
-    return t.isA("mesh") ? Kind::Mesh : t.isA("curve") ? Kind::Curve : t.isA("joint") ? Kind::Joint : t.isA("camera") ? Kind::Other : t.isA("locator") ? Kind::Locator : Kind::Other;
+    // Cameras and lights derive from locator but are not what the locator mask means.
+    return t.isA("mesh") ? Kind::Mesh : t.isA("curve") ? Kind::Curve : t.isA("joint") ? Kind::Joint : t.isA("light") ? Kind::Light : t.isA("camera") ? Kind::Other
+         : t.isA("locator") ? Kind::Locator : Kind::Other;
 }
 
 bool pickable(const Node& node)

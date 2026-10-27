@@ -1,9 +1,14 @@
 #include "ui/NodeEditor.h"
 
+#include "ui/NodeCanvas.h"
+#include "ui/Hotkeys.h"
+#include "ui/PreferencesDialog.h"
+
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/Profile.h"
+#include "gn/Group.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "ui/Actions.h"
@@ -58,6 +63,7 @@
 #include <QToolTip>
 #include <QVBoxLayout>
 #include <QWheelEvent>
+#include <QtMath>
 
 #include <array>
 #include <cctype>
@@ -74,13 +80,6 @@ using json = nlohmann::json;
 
 namespace
 {
-QColor gray(int v, int alpha = 255) { return themeShade(v, alpha); }
-
-constexpr double kNodeWidth = 170.0;
-constexpr double kHeader = 24.0;
-constexpr double kRow = 20.0;
-constexpr double kSocketR = 5.0;
-
 std::function<void()>& showHook()
 {
     static std::function<void()> hook;
@@ -97,966 +96,6 @@ NodeEditor*& lastFocused()
 {
     static NodeEditor* e = nullptr;
     return e;
-}
-
-QString qs(const std::string& s) { return QString::fromStdString(s); }
-
-/** "sizeX" -> "Size X". */
-QString pretty(const std::string& id)
-{
-    QString out;
-    for (size_t i = 0; i < id.size(); ++i)
-    {
-        char c = id[i];
-        bool upper = c >= 'A' && c <= 'Z';
-        bool digit = c >= '0' && c <= '9';
-        bool prevDigit = i > 0 && id[i - 1] >= '0' && id[i - 1] <= '9';
-        if (i == 0)
-            out += QChar(c).toUpper();
-        else if (upper || (digit && !prevDigit))
-            out += QString(' ') + QChar(c);
-        else
-            out += QChar(c);
-    }
-    return out;
-}
-
-/** "Spike Length" -> "spikeLength": the parameter name for a typed display name, empty when nothing usable is left. */
-std::string identifierFrom(const QString& text)
-{
-    std::string out;
-    bool up = false;
-    for (QChar ch : text)
-    {
-        char c = ch.toLatin1();
-        bool alnum = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
-        if (!alnum)
-        {
-            up = !out.empty();
-            continue;
-        }
-        if (out.empty() && c >= '0' && c <= '9')
-            out += '_';
-        out += out.empty() ? char(std::tolower(c)) : up ? char(std::toupper(c)) : c;
-        up = false;
-    }
-    return out;
-}
-
-/** Runs a command from the UI; failures go to the log rather than a dialog. Queries run quietly, edits echo like any UI action. */
-json runCmd(const std::string& name, const json& call, bool query = false)
-{
-    try
-    {
-        return ops::execute(name, call, query ? CallSource::Script : CallSource::UI);
-    }
-    catch (const std::exception& e)
-    {
-        log::warn("{}", e.what());
-        return nullptr;
-    }
-}
-
-json args(std::initializer_list<json> a) { return {{"args", json(a)}}; }
-
-json runVerb(const GraphBackend& b, std::string_view verb, const json& call)
-{
-    json adapted = call;
-    b.adaptCall(verb, adapted);
-    return runCmd(b.command(verb), adapted, b.isQuery(verb));
-}
-
-bool hasPlug(const std::string& path)
-{
-    try
-    {
-        return scene::Graph::current().plug(path).attr >= 0;
-    }
-    catch (const std::invalid_argument&)
-    {
-        return false;
-    }
-}
-
-/** Nonzero while a side-panel field sets a value, which then doesn't rebuild the panel under the field. */
-int gFieldEdits = 0;
-
-void setFromField(const GraphBackend& b, const json& call)
-{
-    ++gFieldEdits;
-    runVerb(b, "SetValue", call);
-    --gFieldEdits;
-}
-
-/** Fields are diamonds (like Blender); otherwise the backend's shape and mark. */
-void drawSocket(QPainter& p, QPointF c, const GraphBackend::SocketStyle& style, bool field)
-{
-    double r = style.radius;
-    p.setPen(QPen(gray(18), 1.2));
-    p.setBrush(style.color);
-    if (field)
-    {
-        QPolygonF d;
-        d << c + QPointF(0, -r - 1) << c + QPointF(r + 1, 0) << c + QPointF(0, r + 1) << c + QPointF(-r - 1, 0);
-        p.drawPolygon(d);
-    }
-    else if (style.shape == GraphBackend::SocketShape::Square)
-        p.drawRect(QRectF(c.x() - r + 0.5, c.y() - r + 0.5, 2 * r - 1, 2 * r - 1));
-    else if (style.shape == GraphBackend::SocketShape::Pill)
-        p.drawRoundedRect(QRectF(c.x() - r - 2, c.y() - r + 1.5, 2 * r + 4, 2 * r - 3), 3, 3);
-    else
-        p.drawEllipse(c, r, r);
-    if (style.mark == GraphBackend::SocketMark::Dot)
-    {
-        p.setPen(Qt::NoPen);
-        p.setBrush(gray(30));
-        p.drawEllipse(c, 1.8, 1.8);
-    }
-    else if (style.mark == GraphBackend::SocketMark::Hole)
-    {
-        p.setPen(Qt::NoPen);
-        p.setBrush(gray(45));
-        p.drawEllipse(c, r * 0.5, r * 0.5);
-    }
-    else if (style.mark == GraphBackend::SocketMark::Ring)
-    {
-        p.setPen(QPen(gray(45), 1.0));
-        p.setBrush(Qt::NoBrush);
-        p.drawEllipse(c, r * 0.55, r * 0.55);
-    }
-}
-
-QString valueText(const json& v, const std::string& type)
-{
-    auto num = [](double d) {
-        QString s = QString::number(d, 'f', 3);
-        while (s.contains('.') && (s.endsWith('0') || s.endsWith('.')))
-            s.chop(1);
-        return s;
-    };
-    if (v.is_null())
-        return {};
-    if (type == "bool")
-        return v.is_boolean() ? (v.get<bool>() ? "on" : "off") : (v.is_number() && v.get<double>() != 0.0 ? "on" : "off");
-    if (v.is_array() && (v.size() == 3 || v.size() == 4) && v[0].is_number())
-    {
-        QString t = num(v[0].get<double>()) + ", " + num(v[1].get<double>()) + ", " + num(v[2].get<double>());
-        return v.size() == 4 ? t + ", " + num(v[3].get<double>()) : t;
-    }
-    if (v.is_number())
-        return num(v.get<double>());
-    if (v.is_string())
-        return qs(v.get<std::string>());
-    return {};
-}
-
-struct SocketInfo
-{
-    std::string id;
-    std::string type;
-    bool field = false;
-    bool multi = false;
-    bool linked = false;
-    json value;
-    std::string implicit;
-    std::string doc;
-};
-
-class NodeItem final : public QGraphicsItem
-{
-public:
-    NodeItem(NodeCanvas* canvas, const json& info);
-
-    std::string name;
-    std::string type;
-    std::string category;
-    QString label;
-    std::vector<SocketInfo> inputs, outputs;
-    std::vector<std::pair<std::string, std::string>> props;
-    bool viewer = false;
-    bool viewerActive = false;
-    std::string groupRef; // the group a Group node runs
-    int thumbSize = 0;
-    QImage thumb;
-
-    bool isViewer() const { return viewer; }
-    /** The Viewer's eye toggle, in item coordinates. */
-    QRectF eyeRect() const { return QRectF(kNodeWidth - kHeader, 2, kHeader - 4, kHeader - 4); }
-    /** Socket under a scene point as a tooltip: id, type, field, doc. Empty when none. */
-    QString socketTip(QPointF scenePos) const
-    {
-        bool input = false;
-        int i = socketAt(scenePos, input);
-        if (i < 0)
-            return {};
-        const SocketInfo& s = input ? inputs[i] : outputs[i];
-        QString t = qs(s.id) + ": " + qs(s.type) + (s.field ? " (field)" : "") + (s.multi ? ", takes several links" : "");
-        if (!s.implicit.empty())
-            t += "\nUnlinked, it reads the " + qs(s.implicit) + ".";
-        if (!s.doc.empty())
-            t += "\n" + qs(s.doc);
-        return t;
-    }
-
-    QRectF boundingRect() const override { return QRectF(-2, -2, kNodeWidth + 4, height() + 4); }
-    void paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*) override;
-
-    /** Where the socket rows start: under the header and the thumbnail. */
-    double top() const { return kHeader + (thumbSize > 0 ? thumbSize + 8.0 : 0.0); }
-    double height() const { return top() + kRow * double(outputs.size() + props.size() + inputs.size()) + 6.0; }
-    /** Socket centre in scene coordinates. */
-    QPointF socketPos(bool input, int index) const
-    {
-        double row = input ? double(outputs.size() + props.size() + index) : double(index);
-        return mapToScene(QPointF(input ? 0.0 : kNodeWidth, top() + kRow * row + kRow * 0.5));
-    }
-    /** Socket under a scene point, -1 for none. */
-    int socketAt(QPointF scenePos, bool& input) const
-    {
-        for (int pass = 0; pass < 2; ++pass)
-        {
-            bool in = pass == 1;
-            const auto& list = in ? inputs : outputs;
-            for (int i = 0; i < int(list.size()); ++i)
-                if (QLineF(socketPos(in, i), scenePos).length() <= kSocketR + 4.0)
-                {
-                    input = in;
-                    return i;
-                }
-        }
-        return -1;
-    }
-
-protected:
-    QVariant itemChange(GraphicsItemChange change, const QVariant& value) override;
-
-private:
-    NodeCanvas* mCanvas;
-};
-
-class LinkItem final : public QGraphicsPathItem
-{
-public:
-    LinkItem(NodeItem* from, int out, NodeItem* to, int in) : from(from), out(out), to(to), in(in)
-    {
-        setZValue(-1);
-        bool field = from->outputs[out].field;
-        QPen pen(gray(165), 2.0);
-        if (field)
-            pen.setStyle(Qt::DashLine);
-        setPen(pen);
-        update();
-    }
-
-    void update()
-    {
-        QPointF a = from->socketPos(false, out), b = to->socketPos(true, in);
-        double dx = std::max(40.0, std::abs(b.x() - a.x()) * 0.5);
-        QPainterPath path(a);
-        path.cubicTo(a + QPointF(dx, 0), b - QPointF(dx, 0), b);
-        setPath(path);
-    }
-
-    NodeItem* from;
-    int out;
-    NodeItem* to;
-    int in;
-};
-
-} // namespace
-
-/** A wire being dragged from a socket, handed to the add-node popup so the new node connects to it. */
-struct WireDrag
-{
-    std::string node;
-    std::string socket;
-    std::string type;
-    bool input = false; // the loose end hangs off an input
-    std::optional<std::pair<std::string, std::string>> detached; // (source, input) of a link picked up
-};
-
-/** The graph view. Builds items from the backend's GroupInfo and turns gestures into its commands. */
-class NodeCanvas final : public QGraphicsView
-{
-public:
-    /** Set by the editor before anything is built; never null after. */
-    const GraphBackend* backend = nullptr;
-
-    explicit NodeCanvas(QWidget* parent) : QGraphicsView(parent)
-    {
-        setScene(&mScene);
-        mScene.setSceneRect(-20000, -20000, 40000, 40000);
-        setRenderHint(QPainter::Antialiasing);
-        setDragMode(QGraphicsView::RubberBandDrag);
-        setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
-        setViewportUpdateMode(QGraphicsView::FullViewportUpdate);
-        setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        setFocusPolicy(Qt::StrongFocus);
-        setBackgroundBrush(gray(34));
-        setAcceptDrops(true);
-        connect(&mScene, &QGraphicsScene::selectionChanged, this, [this] {
-            if (mBuilding || !onSelect)
-                return;
-            auto sel = mScene.selectedItems();
-            onSelect(sel.size() == 1 ? static_cast<NodeItem*>(sel[0])->name : std::string());
-        });
-    }
-
-    std::function<void(const std::string&)> onSelect;
-    std::function<void(QPointF)> onAddMenu;
-    /** A fresh wire let go over empty canvas: offer the nodes it can connect to. */
-    std::function<void(QPointF, const WireDrag&)> onWireDropped;
-    std::function<void()> onFocused;
-    /** Double-click on a Group node: the group it runs. */
-    std::function<void(const std::string&)> onOpenGroup;
-    /** Ctrl+Shift+click on a node: preview it in a Viewer. */
-    std::function<void(const std::string&)> onViewNode;
-    /** Group files (the backend's suffixes) dropped on the canvas. */
-    std::function<void(const QStringList&)> onFilesDropped;
-
-    const std::string& group() const { return mGroup; }
-
-    /** Output sockets of a node as (id, type), for wiring helpers. */
-    std::vector<std::pair<std::string, std::string>> outputsOf(const std::string& node) const
-    {
-        std::vector<std::pair<std::string, std::string>> out;
-        if (auto it = mNodes.find(node); it != mNodes.end())
-            for (const SocketInfo& si : it->second->outputs)
-                out.push_back({si.id, si.type});
-        return out;
-    }
-
-    std::string typeOf(const std::string& node) const
-    {
-        auto it = mNodes.find(node);
-        return it == mNodes.end() ? std::string() : it->second->type;
-    }
-
-    QPointF positionOf(const std::string& node) const
-    {
-        auto it = mNodes.find(node);
-        return it == mNodes.end() ? QPointF() : it->second->pos();
-    }
-
-    void build(const std::string& group, const json& info, const std::set<std::string>& selected)
-    {
-        mBuilding = true;
-        bool newGroup = group != mGroup;
-        mGroup = group;
-        mLinks.clear();
-        mNodes.clear();
-        mScene.clear();
-        mTemp = nullptr;
-        if (info.is_object())
-        {
-            std::map<std::string, bool> active;
-            std::string viewerType = backend->viewerType();
-            for (const json& d : info["definition"].value("nodes", json::array()))
-                if (!viewerType.empty() && d.value("type", "") == viewerType)
-                    active[d.value("name", "")] = d.contains("values") && d["values"].value("active", false);
-            for (const json& n : info.value("nodes", json::array()))
-            {
-                auto* item = new NodeItem(this, n);
-                item->viewerActive = active[item->name];
-                mScene.addItem(item);
-                mNodes[item->name] = item;
-                item->setSelected(selected.contains(item->name));
-            }
-            for (const json& l : info["definition"].value("links", json::array()))
-            {
-                auto f = mNodes.find(l[0].get<std::string>()), t = mNodes.find(l[2].get<std::string>());
-                if (f == mNodes.end() || t == mNodes.end())
-                    continue;
-                int out = outputIndex(f->second, l[1].get<std::string>()), in = inputIndex(t->second, l[3].get<std::string>());
-                if (out < 0 || in < 0)
-                    continue;
-                auto* link = new LinkItem(f->second, out, t->second, in);
-                mScene.addItem(link);
-                mLinks.push_back(link);
-            }
-        }
-        mInfo = info;
-        refreshThumbs();
-        mBuilding = false;
-        if (newGroup)
-            QTimer::singleShot(0, this, [this] { frame(false); });
-    }
-
-    /** Asks the backend for every node's thumbnail again; it calls back as newer ones come in. */
-    void refreshThumbs()
-    {
-        QPointer<NodeCanvas> self(this);
-        for (auto& [name, item] : mNodes)
-        {
-            if (item->thumbSize <= 0)
-                continue;
-            item->thumb = backend->thumbnail(mGroup, mInfo, name, [self, group = mGroup] {
-                if (self && self->mGroup == group && !self->mThumbsQueued)
-                {
-                    self->mThumbsQueued = true;
-                    QTimer::singleShot(30, self, [self] {
-                        self->mThumbsQueued = false;
-                        self->refreshThumbs();
-                    });
-                }
-            });
-            item->update();
-        }
-    }
-
-    bool wireActive() const { return mWireFrom != nullptr; }
-
-    /** Ends a wire drag without linking and returns it. A picked-up link stays hidden until the next rebuild. */
-    WireDrag takeWire()
-    {
-        WireDrag w = wireOf(mWireFrom, mWireSocket, mWireInput);
-        w.detached = mDetached;
-        mDetached.reset();
-        mWireFrom = nullptr;
-        removeTemp();
-        return w;
-    }
-
-    /** The cursor in scene coordinates, or the view centre when the cursor is elsewhere. */
-    QPointF cursorScenePos() const
-    {
-        QPoint p = viewport()->mapFromGlobal(QCursor::pos());
-        return mapToScene(viewport()->rect().contains(p) ? p : viewport()->rect().center());
-    }
-
-    std::vector<std::string> selectedNames() const
-    {
-        std::vector<std::string> out;
-        for (QGraphicsItem* i : mScene.selectedItems())
-            if (auto* n = dynamic_cast<NodeItem*>(i))
-                out.push_back(n->name);
-        return out;
-    }
-
-    void selectAll()
-    {
-        for (auto& [n, item] : mNodes)
-            item->setSelected(true);
-    }
-
-    void nodeMoved(NodeItem* n)
-    {
-        for (LinkItem* l : mLinks)
-            if (l->from == n || l->to == n)
-                l->update();
-    }
-
-    void frame(bool selectedOnly)
-    {
-        QRectF r;
-        for (auto& [name, item] : mNodes)
-            if (!selectedOnly || item->isSelected())
-                r = r.united(item->sceneBoundingRect());
-        if (r.isEmpty())
-        {
-            if (selectedOnly)
-                frame(false);
-            return;
-        }
-        r.adjust(-60, -60, 60, 60);
-        fitInView(r, Qt::KeepAspectRatio);
-        // Don't zoom in past 1:1 for a small graph.
-        if (transform().m11() > 1.0)
-        {
-            QPointF c = r.center();
-            resetTransform();
-            centerOn(c);
-        }
-    }
-
-protected:
-    void drawBackground(QPainter* p, const QRectF& rect) override
-    {
-        p->fillRect(rect, gray(34));
-        double step = 25.0;
-        p->setPen(QPen(gray(48), 0));
-        for (double x = std::floor(rect.left() / step) * step; x < rect.right(); x += step)
-            for (double y = std::floor(rect.top() / step) * step; y < rect.bottom(); y += step)
-                p->drawPoint(QPointF(x, y));
-    }
-
-    void wheelEvent(QWheelEvent* e) override
-    {
-        double f = std::pow(1.0015, e->angleDelta().y());
-        double s = transform().m11() * f;
-        if (s < 0.1 || s > 4.0)
-            return;
-        scale(f, f);
-    }
-
-    void focusInEvent(QFocusEvent* e) override
-    {
-        QGraphicsView::focusInEvent(e);
-        if (onFocused)
-            onFocused();
-    }
-
-    void mousePressEvent(QMouseEvent* e) override
-    {
-        setFocus(Qt::MouseFocusReason);
-        QPointF sp = mapToScene(e->pos());
-        if (e->button() == Qt::MiddleButton)
-        {
-            mPanning = true;
-            mLast = e->pos();
-            setCursor(Qt::ClosedHandCursor);
-            return;
-        }
-        if (e->button() == Qt::LeftButton && (e->modifiers() & Qt::ControlModifier) && (e->modifiers() & Qt::ShiftModifier))
-            if (NodeItem* n = nodeAt(sp); n && onViewNode)
-            {
-                onViewNode(n->name);
-                return;
-            }
-        if (e->button() == Qt::LeftButton && !(e->modifiers() & Qt::ControlModifier))
-            if (NodeItem* n = nodeAt(sp); n && n->isViewer() && n->eyeRect().contains(n->mapFromScene(sp)))
-            {
-                if (n->viewerActive)
-                    runVerb(*backend, "SetActiveViewer", args({mGroup}));
-                else
-                    runVerb(*backend, "SetActiveViewer", args({mGroup, n->name}));
-                return;
-            }
-        if (e->button() == Qt::LeftButton && (e->modifiers() & Qt::ControlModifier))
-        {
-            mCutting = true;
-            mCut = {sp};
-            mTemp = mScene.addPath(QPainterPath(), QPen(gray(220), 1.5, Qt::DashLine));
-            return;
-        }
-        if (e->button() == Qt::LeftButton)
-            if (NodeItem* n = nodeAt(sp))
-            {
-                bool input = false;
-                int s = n->socketAt(sp, input);
-                if (s >= 0)
-                {
-                    startWire(n, s, input);
-                    return;
-                }
-            }
-        mPressPositions.clear();
-        QGraphicsView::mousePressEvent(e);
-        for (auto& [name, item] : mNodes)
-            mPressPositions[name] = item->pos();
-    }
-
-    void mouseMoveEvent(QMouseEvent* e) override
-    {
-        QPointF sp = mapToScene(e->pos());
-        if (mPanning)
-        {
-            QPoint d = e->pos() - mLast;
-            mLast = e->pos();
-            horizontalScrollBar()->setValue(horizontalScrollBar()->value() - d.x());
-            verticalScrollBar()->setValue(verticalScrollBar()->value() - d.y());
-            return;
-        }
-        if (mCutting)
-        {
-            mCut.push_back(sp);
-            QPainterPath path(mCut.front());
-            for (const QPointF& p : mCut)
-                path.lineTo(p);
-            mTemp->setPath(path);
-            return;
-        }
-        if (mWireFrom)
-        {
-            QPointF a = mWireFrom->socketPos(mWireInput, mWireSocket);
-            QPointF from = mWireInput ? sp : a, to = mWireInput ? a : sp;
-            double dx = std::max(40.0, std::abs(to.x() - from.x()) * 0.5);
-            QPainterPath path(from);
-            path.cubicTo(from + QPointF(dx, 0), to - QPointF(dx, 0), to);
-            mTemp->setPath(path);
-            return;
-        }
-        QGraphicsView::mouseMoveEvent(e);
-    }
-
-    void mouseReleaseEvent(QMouseEvent* e) override
-    {
-        QPointF sp = mapToScene(e->pos());
-        if (mPanning)
-        {
-            mPanning = false;
-            unsetCursor();
-            return;
-        }
-        if (mCutting)
-        {
-            mCutting = false;
-            finishCut();
-            return;
-        }
-        if (mWireFrom)
-        {
-            finishWire(sp);
-            return;
-        }
-        QGraphicsView::mouseReleaseEvent(e);
-        commitMoves();
-    }
-
-    void mouseDoubleClickEvent(QMouseEvent* e) override
-    {
-        NodeItem* n = nodeAt(mapToScene(e->pos()));
-        if (!n && onAddMenu)
-            onAddMenu(mapToScene(e->pos()));
-        else if (n && !n->groupRef.empty() && onOpenGroup)
-            onOpenGroup(n->groupRef);
-        else
-            QGraphicsView::mouseDoubleClickEvent(e);
-    }
-
-    bool viewportEvent(QEvent* e) override
-    {
-        if (e->type() == QEvent::ToolTip)
-        {
-            auto* he = static_cast<QHelpEvent*>(e);
-            QPointF sp = mapToScene(he->pos());
-            if (NodeItem* n = nodeAt(sp))
-                if (QString tip = n->socketTip(sp); !tip.isEmpty())
-                {
-                    QToolTip::showText(he->globalPos(), tip, viewport());
-                    return true;
-                }
-        }
-        return QGraphicsView::viewportEvent(e);
-    }
-
-    QStringList nodeFiles(const QMimeData* m) const
-    {
-        QStringList out;
-        if (!m || !backend->supports("ImportGroup"))
-            return out;
-        std::vector<std::string> suffixes = backend->fileSuffixes();
-        for (const QUrl& u : m->urls())
-            if (u.isLocalFile())
-                for (const std::string& suffix : suffixes)
-                    if (u.toLocalFile().endsWith("." + qs(suffix), Qt::CaseInsensitive))
-                    {
-                        out << u.toLocalFile();
-                        break;
-                    }
-        return out;
-    }
-
-    void dragEnterEvent(QDragEnterEvent* e) override
-    {
-        if (!nodeFiles(e->mimeData()).isEmpty())
-            e->acceptProposedAction();
-        else
-            QGraphicsView::dragEnterEvent(e);
-    }
-
-    void dragMoveEvent(QDragMoveEvent* e) override
-    {
-        if (!nodeFiles(e->mimeData()).isEmpty())
-            e->acceptProposedAction();
-        else
-            QGraphicsView::dragMoveEvent(e);
-    }
-
-    void dropEvent(QDropEvent* e) override
-    {
-        QStringList files = nodeFiles(e->mimeData());
-        if (files.isEmpty() || !onFilesDropped)
-        {
-            QGraphicsView::dropEvent(e);
-            return;
-        }
-        e->acceptProposedAction();
-        onFilesDropped(files);
-    }
-
-private:
-    static WireDrag wireOf(NodeItem* n, int socket, bool input)
-    {
-        const SocketInfo& s = input ? n->inputs[socket] : n->outputs[socket];
-        return WireDrag{n->name, s.id, s.type, input, std::nullopt};
-    }
-
-    void removeTemp()
-    {
-        if (!mTemp)
-            return;
-        mScene.removeItem(mTemp);
-        delete mTemp;
-        mTemp = nullptr;
-    }
-
-    static int outputIndex(NodeItem* n, const std::string& id)
-    {
-        for (int i = 0; i < int(n->outputs.size()); ++i)
-            if (n->outputs[i].id == id)
-                return i;
-        return -1;
-    }
-    static int inputIndex(NodeItem* n, const std::string& id)
-    {
-        for (int i = 0; i < int(n->inputs.size()); ++i)
-            if (n->inputs[i].id == id)
-                return i;
-        return -1;
-    }
-
-    NodeItem* nodeAt(QPointF sp) const
-    {
-        // Sockets stick out of the node rect, so test with a margin.
-        for (auto& [name, item] : mNodes)
-            if (item->sceneBoundingRect().adjusted(-kSocketR - 4, 0, kSocketR + 4, 0).contains(sp))
-                return item;
-        return nullptr;
-    }
-
-    void startWire(NodeItem* n, int socket, bool input)
-    {
-        mDetached.reset();
-        if (input && n->inputs[socket].linked)
-        {
-            // Grabbing a linked input picks the link up from its source, like Blender.
-            for (LinkItem* l : mLinks)
-                if (l->to == n && l->in == socket)
-                {
-                    mDetached = std::make_pair(l->from->name + "." + l->from->outputs[l->out].id, n->name + "." + n->inputs[socket].id);
-                    n = l->from;
-                    socket = l->out;
-                    input = false;
-                    l->hide();
-                }
-        }
-        mWireFrom = n;
-        mWireSocket = socket;
-        mWireInput = input;
-        mTemp = mScene.addPath(QPainterPath(), QPen(gray(220), 2.0));
-    }
-
-    void finishWire(QPointF sp)
-    {
-        NodeItem* from = mWireFrom;
-        int fs = mWireSocket;
-        bool fromInput = mWireInput;
-        mWireFrom = nullptr;
-        removeTemp();
-        NodeItem* target = nodeAt(sp);
-        bool tin = false;
-        int ts = target ? target->socketAt(sp, tin) : -1;
-        if (!target && !mDetached && onWireDropped)
-        {
-            onWireDropped(sp, wireOf(from, fs, fromInput));
-            return;
-        }
-        UndoChunk chunk("Link");
-        if (mDetached)
-            runVerb(*backend, "Disconnect", {{"args", {mGroup, mDetached->second}}, {"source", mDetached->first}});
-        mDetached.reset();
-        if (!target || ts < 0 || target == from || tin == fromInput)
-        {
-            if (!target)
-                QTimer::singleShot(0, this, [this] { viewport()->update(); });
-            return;
-        }
-        std::string out = fromInput ? target->name + "." + target->outputs[ts].id : from->name + "." + from->outputs[fs].id;
-        std::string in = fromInput ? from->name + "." + from->inputs[fs].id : target->name + "." + target->inputs[ts].id;
-        runVerb(*backend, "Connect", args({mGroup, out, in}));
-    }
-
-    void finishCut()
-    {
-        if (mTemp)
-        {
-            mScene.removeItem(mTemp);
-            delete mTemp;
-            mTemp = nullptr;
-        }
-        QPainterPath cut(mCut.front());
-        for (const QPointF& p : mCut)
-            cut.lineTo(p);
-        std::vector<std::pair<std::string, std::string>> hits;
-        for (LinkItem* l : mLinks)
-        {
-            // Sample the curve against the stroke's segments.
-            const QPainterPath& path = l->path();
-            bool hit = false;
-            for (int k = 0; k < 24 && !hit; ++k)
-            {
-                QLineF seg(path.pointAtPercent(k / 24.0), path.pointAtPercent((k + 1) / 24.0));
-                for (size_t i = 1; i < mCut.size() && !hit; ++i)
-                    hit = seg.intersects(QLineF(mCut[i - 1], mCut[i])) == QLineF::BoundedIntersection;
-            }
-            if (hit)
-                hits.push_back({l->from->name + "." + l->from->outputs[l->out].id, l->to->name + "." + l->to->inputs[l->in].id});
-        }
-        mCut.clear();
-        if (hits.empty())
-            return;
-        UndoChunk chunk("Cut Links");
-        for (auto& [src, dst] : hits)
-            runVerb(*backend, "Disconnect", {{"args", {mGroup, dst}}, {"source", src}});
-    }
-
-    void commitMoves()
-    {
-        json positions = json::object();
-        for (auto& [name, item] : mNodes)
-        {
-            auto it = mPressPositions.find(name);
-            if (it != mPressPositions.end() && QLineF(it->second, item->pos()).length() > 0.5)
-                positions[name] = {item->pos().x(), item->pos().y()};
-        }
-        mPressPositions.clear();
-        if (!positions.empty())
-            runVerb(*backend, "MoveNodes", {{"args", {mGroup}}, {"positions", positions}});
-    }
-
-    QGraphicsScene mScene;
-    std::string mGroup;
-    json mInfo;
-    bool mThumbsQueued = false;
-    std::map<std::string, NodeItem*> mNodes;
-    std::vector<LinkItem*> mLinks;
-    std::map<std::string, QPointF> mPressPositions;
-    QGraphicsPathItem* mTemp = nullptr;
-    NodeItem* mWireFrom = nullptr;
-    int mWireSocket = -1;
-    bool mWireInput = false;
-    std::optional<std::pair<std::string, std::string>> mDetached; // (source, input) of a link picked up
-    std::vector<QPointF> mCut;
-    bool mCutting = false;
-    bool mPanning = false;
-    bool mBuilding = false;
-    QPoint mLast;
-};
-
-namespace
-{
-NodeItem::NodeItem(NodeCanvas* canvas, const json& info) : mCanvas(canvas)
-{
-    name = info.value("name", "");
-    type = info.value("type", "");
-    category = info.value("category", "");
-    label = qs(info.value("label", type));
-    for (const json& s : info.value("inputs", json::array()))
-        inputs.push_back({s.value("id", ""), s.value("type", ""), s.value("field", false), s.value("multi", false), s.value("linked", false),
-                          s.value("value", json()), s.value("implicit", ""), s.value("doc", "")});
-    for (const json& s : info.value("outputs", json::array()))
-        outputs.push_back({s.value("id", ""), s.value("type", ""), s.value("field", false), false, false, json(), "", s.value("doc", "")});
-    for (const json& p : info.value("props", json::array()))
-        props.push_back({p.value("id", ""), p.value("value", "")});
-    viewer = !canvas->backend->viewerType().empty() && type == canvas->backend->viewerType();
-    thumbSize = canvas->backend->thumbnailSize(type);
-    if (std::string sub = canvas->backend->subgroupNodeType(); !sub.empty() && type == sub)
-        for (auto& [id, v] : props)
-            if (id == "group")
-                groupRef = v;
-    if (!groupRef.empty())
-        label = qs(groupRef);
-    setFlags(ItemIsMovable | ItemIsSelectable | ItemSendsGeometryChanges);
-    const json& pos = info["position"];
-    setPos(pos[0].get<double>(), pos[1].get<double>());
-    QString tip = label;
-    if (!groupRef.empty())
-        tip += "\nGroup node: double-click to open " + qs(groupRef) + ".";
-    if (isViewer())
-        tip += "\nClick the eye to preview in the viewport.";
-    setToolTip(tip);
-}
-
-QVariant NodeItem::itemChange(GraphicsItemChange change, const QVariant& value)
-{
-    if (change == ItemPositionHasChanged)
-        mCanvas->nodeMoved(this);
-    return QGraphicsItem::itemChange(change, value);
-}
-
-void NodeItem::paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*)
-{
-    QRectF body(0, 0, kNodeWidth, height());
-    p->setPen(isSelected() ? QPen(themeColor("nodeSelected"), 1.6) : QPen(gray(20), 1.0));
-    p->setBrush(themeColor("nodeBody"));
-    p->drawRoundedRect(body, 6, 6);
-    QPainterPath head;
-    head.addRoundedRect(QRectF(0, 0, kNodeWidth, kHeader), 6, 6);
-    head.addRect(QRectF(0, kHeader - 6, kNodeWidth, 6));
-    p->setPen(Qt::NoPen);
-    const GraphBackend& backend = *mCanvas->backend;
-    p->setBrush(backend.headerColor(type, category));
-    p->drawPath(head.simplified());
-    p->setPen(gray(232));
-    QFont f = p->font();
-    f.setBold(true);
-    p->setFont(f);
-    p->drawText(QRectF(8, 0, kNodeWidth - 16 - (isViewer() ? kHeader : 0.0), kHeader), Qt::AlignVCenter | Qt::AlignLeft, label);
-    f.setBold(false);
-    p->setFont(f);
-    if (isViewer())
-    {
-        QRectF eye = eyeRect();
-        if (viewerActive)
-        {
-            p->setPen(Qt::NoPen);
-            p->setBrush(gray(150));
-            p->drawRoundedRect(eye, 3, 3);
-        }
-        QIcon ic = icon(viewerActive ? "eye" : "eye-off");
-        p->drawPixmap(eye.adjusted(2, 2, -2, -2).toRect(), ic.pixmap(QSize(32, 32), viewerActive ? QIcon::Active : QIcon::Normal));
-    }
-
-    if (thumbSize > 0)
-    {
-        QRectF r((kNodeWidth - thumbSize) * 0.5, kHeader + 4.0, thumbSize, thumbSize);
-        p->setPen(QPen(gray(20), 1.0));
-        p->setBrush(gray(28));
-        p->drawRect(r);
-        if (!thumb.isNull())
-            p->drawImage(r, thumb);
-    }
-
-    double y = top();
-    for (size_t i = 0; i < outputs.size(); ++i, y += kRow)
-    {
-        p->setPen(gray(205));
-        p->drawText(QRectF(8, y, kNodeWidth - 18, kRow), Qt::AlignVCenter | Qt::AlignRight, pretty(outputs[i].id));
-        drawSocket(*p, QPointF(kNodeWidth, y + kRow * 0.5), backend.socketStyle(outputs[i].type), outputs[i].field);
-    }
-    for (size_t i = 0; i < props.size(); ++i, y += kRow)
-    {
-        QRectF r(8, y + 2, kNodeWidth - 16, kRow - 4);
-        p->setPen(QPen(gray(40), 1));
-        p->setBrush(gray(44));
-        p->drawRoundedRect(r, 3, 3);
-        p->setPen(gray(200));
-        QString text = props[i].second.empty() ? pretty(props[i].first) : pretty(props[i].second);
-        p->drawText(r.adjusted(6, 0, -6, 0), Qt::AlignVCenter | Qt::AlignLeft, text);
-    }
-    for (size_t i = 0; i < inputs.size(); ++i, y += kRow)
-    {
-        const SocketInfo& s = inputs[i];
-        QString text = pretty(s.id);
-        bool valueless = backend.valueless(s.type);
-        if (!s.linked && !valueless)
-        {
-            QString v = !s.implicit.empty() && s.value.is_null() ? pretty(s.implicit) : valueText(s.value, s.type);
-            if (!v.isEmpty())
-                text += "  " + v;
-        }
-        p->setPen(s.linked || valueless ? gray(205) : gray(170));
-        p->drawText(QRectF(12, y, kNodeWidth - 18, kRow), Qt::AlignVCenter | Qt::AlignLeft,
-                    p->fontMetrics().elidedText(text, Qt::ElideRight, int(kNodeWidth - 20)));
-        drawSocket(*p, QPointF(0, y + kRow * 0.5), backend.socketStyle(s.type), s.field);
-        if (s.multi)
-        {
-            p->setPen(QPen(gray(18), 1));
-            p->drawLine(QPointF(-2, y + kRow * 0.5), QPointF(2, y + kRow * 0.5));
-        }
-    }
 }
 
 /** Search-as-you-type node picker. Enter or a click adds the node. */
@@ -1377,6 +416,7 @@ NodeEditor::NodeEditor(QWidget* parent, const std::string& backend) : QWidget(pa
             showError("The group " + qs(g) + " isn't in this scene (only its embedded copy is).");
     };
     mCanvas->onViewNode = [this](const std::string& n) { viewNode(n); };
+    mCanvas->onContextMenu = [this](QPoint global) { showCanvasMenu(global); };
     mCanvas->onFilesDropped = [this](const QStringList& files) { importGroups(files); };
     mCanvas->onSelect = [this](const std::string& n) {
         mSelectedNode = qs(n);
@@ -1430,6 +470,10 @@ NodeEditor::NodeEditor(QWidget* parent, const std::string& backend) : QWidget(pa
             return;
         }
         buildToolbar();
+    });
+    mPrefsListener = PrefStore::get().onChanged([this](const std::string& file) {
+        if (file == "general")
+            mCanvas->reloadPrefs();
     });
     editors().push_back(this);
     followSelection();
@@ -1567,6 +611,7 @@ NodeEditor::~NodeEditor()
     mCanvas->onFocused = nullptr;
     scene::Graph::current().removeListener(mListener);
     graphBackends::registry().removeListener(mBackendListener);
+    PrefStore::get().removeOnChanged(mPrefsListener);
     ops::removeExecuteListener(mExecuteListener);
     std::erase(editors(), this);
     if (lastFocused() == this)
@@ -1737,6 +782,16 @@ void NodeEditor::duplicateSelected()
 }
 
 void NodeEditor::selectAll() { mCanvas->selectAll(); }
+
+void NodeEditor::setZipTieKey(bool down) { mCanvas->setZipKey(down); }
+
+std::vector<std::vector<std::array<std::string, 4>>> NodeEditor::shownTies() const
+{
+    std::vector<std::vector<std::array<std::string, 4>>> out;
+    for (const TieView& t : mCanvas->ties())
+        out.push_back(t.links);
+    return out;
+}
 
 void NodeEditor::groupSelected()
 {
@@ -1956,6 +1011,10 @@ void NodeEditor::refresh(bool panel)
     refreshSendButton();
     std::set<std::string> selected = std::move(mSelectNext);
     mSelectNext.clear();
+    // Edits rebuild the canvas; what was selected stays selected.
+    if (selected.empty() && qs(mCanvas->group()) == mGroup)
+        for (const std::string& n : mCanvas->selectedNames())
+            selected.insert(n);
     if (selected.empty() && !mSelectedNode.isEmpty())
         selected.insert(mSelectedNode.toStdString());
     json info = mGroup.isEmpty() ? json() : run("GroupInfo", args({mGroup.toStdString()}));
@@ -2181,6 +1240,157 @@ void NodeEditor::editInputInfo(const std::string& input, const json& current)
     run("SetInputInfo", call);
 }
 
+QWidget* NodeEditor::portalNameEditor(QWidget* parent, const json& info, const std::string& node, bool receive)
+{
+    std::string group = mGroup.toStdString(), current;
+    std::vector<std::string> sends;
+    for (const json& d : info["definition"].value("nodes", json::array()))
+    {
+        std::string name = d.contains("values") ? d["values"].value("name", "") : std::string();
+        if (d.value("name", "") == node)
+            current = name;
+        if (d.value("type", "") == gn::kSendType && !name.empty() && std::find(sends.begin(), sends.end(), name) == sends.end())
+            sends.push_back(name);
+    }
+    auto set = [backend = mBackend, group, node, this](const std::string& name) {
+        try
+        {
+            json call = args({group, node + ".name", name});
+            backend->adaptCall("SetValue", call);
+            ops::execute(backend->command("SetValue"), call, CallSource::UI);
+        }
+        catch (const std::exception& e)
+        {
+            showError(qs(e.what()));
+        }
+    };
+    if (!receive)
+    {
+        auto* e = new QLineEdit(qs(current), parent);
+        e->setPlaceholderText("name Receives read");
+        QObject::connect(e, &QLineEdit::editingFinished, e, [e, set, current] {
+            if (e->text().trimmed().toStdString() != current)
+                set(e->text().trimmed().toStdString());
+        });
+        return e;
+    }
+    auto* combo = new QComboBox(parent);
+    for (const std::string& s : sends)
+        combo->addItem(qs(s));
+    if (!current.empty() && combo->findText(qs(current)) < 0)
+        combo->addItem(qs(current) + " (missing)", qs(current));
+    combo->setCurrentIndex(current.empty() ? -1 : std::max(combo->findText(qs(current)), combo->findData(qs(current))));
+    combo->setToolTip("The Send node this reads. Double-click the node to jump to it.");
+    QObject::connect(combo, &QComboBox::activated, combo, [combo, set](int i) {
+        QString v = combo->itemData(i).isValid() ? combo->itemData(i).toString() : combo->itemText(i);
+        set(v.toStdString());
+    });
+    return combo;
+}
+
+void NodeEditor::jumpToPortalSource() { mCanvas->jumpToPortal(true); }
+
+void NodeEditor::frameSelection() { mCanvas->frameSelection(); }
+
+void NodeEditor::swapInputs()
+{
+    if (!mCanvas->swapInputs())
+        showError("Select one node with two inputs of the same type to swap.");
+}
+
+void NodeEditor::toggleNodeFlag(const char* flag) { mCanvas->toggleFlag(flag); }
+
+void NodeEditor::alignSelected(int how) { mCanvas->align(NodeCanvas::Align(how)); }
+
+void NodeEditor::distributeSelected(bool horizontal) { mCanvas->distribute(horizontal); }
+
+void NodeEditor::straightenSelected() { mCanvas->straighten(); }
+
+void NodeEditor::autoLayout() { mCanvas->autoLayout(); }
+
+void NodeEditor::setMinimap(bool on) { mCanvas->setMinimap(on); }
+
+void NodeEditor::mergeSelected(const std::string& op)
+{
+    if (QString error = mCanvas->mergeSelected(op); !error.isEmpty())
+        showError(error);
+}
+
+void NodeEditor::setSelectedWiresOnly(bool on) { mCanvas->setSelectedWiresOnly(on); }
+
+bool NodeEditor::selectedWiresOnly() const { return mCanvas->selectedWiresOnly(); }
+
+bool NodeEditor::minimap() const { return mCanvas->minimap(); }
+
+void NodeEditor::storeBookmark(int slot) { mCanvas->storeBookmark(slot); }
+
+void NodeEditor::recallBookmark(int slot)
+{
+    if (!mCanvas->recallBookmark(slot))
+        showError(QString("No view saved under %1 yet: Ctrl+%1 saves one.").arg(slot));
+}
+
+void NodeEditor::focusNode(const std::string& name) { mCanvas->focusNode(name); }
+
+void NodeEditor::findNode()
+{
+    if (mGroup.isEmpty() || QApplication::activePopupWidget())
+        return;
+    json entries = json::array();
+    for (auto& [name, title] : mCanvas->nodeList())
+        entries.push_back({{"type", name}, {"category", title.toStdString()}, {"label", name}});
+    auto* pop = new AddNodePopup(this, entries, [this](const std::string& name, const std::string&) { focusNode(name); });
+    pop->popup(QCursor::pos());
+}
+
+void NodeEditor::showCanvasMenu(QPoint global)
+{
+    QMenu menu(this);
+    auto item = [&menu](QMenu* into, const char* id) {
+        const Action* a = actions::find(id);
+        if (!a)
+            return;
+        QString key = Hotkeys::get().keyFor(id);
+        QAction* q = into->addAction(qs(a->label) + (key.isEmpty() ? QString() : "\t" + key));
+        q->setToolTip(qs(a->doc));
+        if (a->checked)
+        {
+            q->setCheckable(true);
+            q->setChecked(a->checked());
+        }
+        QObject::connect(q, &QAction::triggered, q, [id] { actions::run(json(id)); });
+    };
+    for (const char* id : {"nodeEditor.addNode", "nodeEditor.duplicate", "nodeEditor.copy", "nodeEditor.paste", "nodeEditor.delete"})
+        item(&menu, id);
+    menu.addSeparator();
+    QMenu* arrange = menu.addMenu("Arrange");
+    for (const char* id : {"nodeEditor.alignLeft", "nodeEditor.alignCenter", "nodeEditor.alignRight", "nodeEditor.alignTop", "nodeEditor.alignMiddle",
+                           "nodeEditor.alignBottom", "nodeEditor.distributeHorizontal", "nodeEditor.distributeVertical", "nodeEditor.straighten", "nodeEditor.autoLayout"})
+        item(arrange, id);
+    QMenu* merge = menu.addMenu("Merge");
+    for (const char* id : {"nodeEditor.mergeAdd", "nodeEditor.mergeSubtract", "nodeEditor.mergeMultiply", "nodeEditor.mergeDivide"})
+        item(merge, id);
+    item(&menu, "nodeEditor.frameNodes");
+    item(&menu, "nodeEditor.swapInputs");
+    item(&menu, "nodeEditor.toggleMute");
+    item(&menu, "nodeEditor.toggleCollapse");
+    item(&menu, "nodeEditor.toggleUnusedSockets");
+    menu.addSeparator();
+    item(&menu, "nodeEditor.toggleFlow");
+    item(&menu, "nodeEditor.toggleSelectedWires");
+    item(&menu, "nodeEditor.toggleMinimap");
+    item(&menu, "nodeEditor.find");
+    item(&menu, "nodeEditor.portalSource");
+    item(&menu, "nodeEditor.portalReaders");
+    menu.exec(global);
+}
+
+void NodeEditor::setFlowHighlight(bool on, bool hold) { mCanvas->setFlowHighlight(on, hold); }
+
+bool NodeEditor::flowHighlight() const { return mCanvas->flowHighlight(); }
+
+void NodeEditor::jumpToPortalReaders() { mCanvas->jumpToPortal(false); }
+
 void NodeEditor::rebuildSidePanel()
 {
     auto* panel = new QWidget();
@@ -2224,7 +1434,8 @@ void NodeEditor::rebuildSidePanel()
     for (const json& n : info["nodes"])
         if (qs(n.value("name", "")) == mSelectedNode)
             node = &n;
-    QWidget* custom = node ? mBackend->nodePanel(panel, *this, *node) : nullptr;
+    bool routing = node && gn::isRoutingType(node->value("type", ""));
+    QWidget* custom = node && !routing ? mBackend->nodePanel(panel, *this, *node) : nullptr;
     if (custom)
         lay->addWidget(custom);
     else if (node)
@@ -2233,11 +1444,15 @@ void NodeEditor::rebuildSidePanel()
         lay->addWidget(heading(panel, qs(node->value("label", "")) + "  (" + qs(nodeName) + ")"));
         auto* form = new QFormLayout();
         form->setContentsMargins(0, 0, 0, 0);
+        if (std::string type = node->value("type", ""); type == gn::kSendType || type == gn::kReceiveType)
+            form->addRow("Name", portalNameEditor(panel, info, nodeName, type == gn::kReceiveType));
         for (const json& p : node->value("props", json::array()))
         {
             std::string id = p.value("id", "");
             std::string cur = p.value("value", "");
             json opts = p.value("options", json::array());
+            if (routing && id == "name")
+                continue;
             if (std::string sub = mBackend->subgroupNodeType(); !sub.empty() && node->value("type", "") == sub && id == "group")
             {
                 auto* combo = new QComboBox(panel);
@@ -2351,12 +1566,162 @@ void registerEditActions()
     add("nodeEditor.openGroup", "Open Group", &NodeEditor::openSelectedGroup, "Open the group the selected Group node runs.");
     add("nodeEditor.exportGroup", "Export Node Group...", &NodeEditor::exportGroup,
         "Write the group and the groups nested in it to a .lilanodes file to share.");
+    struct AlignAction
+    {
+        const char* id;
+        const char* label;
+        int how;
+        const char* doc;
+    };
+    for (const AlignAction& a : {AlignAction{"nodeEditor.alignLeft", "Align Left", 0, "Line the selected nodes' left edges up."},
+                                 AlignAction{"nodeEditor.alignCenter", "Align Centre", 1, "Line the selected nodes' centres up on their average."},
+                                 AlignAction{"nodeEditor.alignRight", "Align Right", 2, "Line the selected nodes' right edges up."},
+                                 AlignAction{"nodeEditor.alignTop", "Align Top", 3, "Line the selected nodes' tops up."},
+                                 AlignAction{"nodeEditor.alignMiddle", "Align Middle", 4, "Line the selected nodes' middles up on their average."},
+                                 AlignAction{"nodeEditor.alignBottom", "Align Bottom", 5, "Line the selected nodes' bottoms up."}})
+        actions::add({.id = a.id, .label = a.label, .category = "Node Editor",
+                      .run =
+                          [how = a.how] {
+                              if (NodeEditor* e = NodeEditor::active())
+                                  e->alignSelected(how);
+                          },
+                      .doc = a.doc});
+    actions::add({.id = "nodeEditor.distributeHorizontal", .label = "Distribute Horizontally", .category = "Node Editor",
+                  .run =
+                      [] {
+                          if (NodeEditor* e = NodeEditor::active())
+                              e->distributeSelected(true);
+                      },
+                  .doc = "Space three or more selected nodes evenly from left to right."});
+    actions::add({.id = "nodeEditor.distributeVertical", .label = "Distribute Vertically", .category = "Node Editor",
+                  .run =
+                      [] {
+                          if (NodeEditor* e = NodeEditor::active())
+                              e->distributeSelected(false);
+                      },
+                  .doc = "Space three or more selected nodes evenly from top to bottom."});
+    add("nodeEditor.find", "Find Node...", &NodeEditor::findNode, "Search the group's nodes by name or type, and jump to the one picked.");
+    for (const char* op : {"add", "subtract", "multiply", "divide"})
+    {
+        std::string name = op;
+        name[0] = char(std::toupper(name[0]));
+        actions::add({.id = "nodeEditor.merge" + name, .label = "Merge Nodes (" + name + ")", .category = "Node Editor",
+                      .run =
+                          [op] {
+                              if (NodeEditor* e = NodeEditor::active())
+                                  e->mergeSelected(op);
+                          },
+                      .doc = "Add the node that merges the selected nodes' outputs, already wired: Join Geometry for geometry, Math for "
+                             "numbers, Blend in texture graphs. The operation is " + std::string(op) + "."});
+    }
+    actions::add({.id = "nodeEditor.toggleSelectedWires", .label = "Only Selected Nodes' Wires", .category = "Node Editor",
+                  .run =
+                      [] {
+                          if (NodeEditor* e = NodeEditor::active())
+                              e->setSelectedWiresOnly(!e->selectedWiresOnly());
+                      },
+                  .doc = "Hide every wire except those on the selected nodes, to read one part of a busy graph.",
+                  .checked = [] { return NodeEditor::active() && NodeEditor::active()->selectedWiresOnly(); }});
+    actions::add({.id = "nodeEditor.toggleMinimap", .label = "Minimap", .category = "Node Editor",
+                  .run =
+                      [] {
+                          if (NodeEditor* e = NodeEditor::active())
+                              e->setMinimap(!e->minimap());
+                      },
+                  .doc = "Show an overview of the whole graph in the corner; click or drag in it to move the view.",
+                  .checked = [] { return NodeEditor::active() && NodeEditor::active()->minimap(); }});
+    for (int slot = 1; slot <= 5; ++slot)
+    {
+        actions::add({.id = "nodeEditor.bookmarkSet" + std::to_string(slot), .label = "Save View " + std::to_string(slot), .category = "Node Editor",
+                      .run =
+                          [slot] {
+                              if (NodeEditor* e = NodeEditor::active())
+                                  e->storeBookmark(slot);
+                          },
+                      .doc = "Save where the view is and its zoom under " + std::to_string(slot) + ", with the group."});
+        actions::add({.id = "nodeEditor.bookmarkGo" + std::to_string(slot), .label = "Go to View " + std::to_string(slot), .category = "Node Editor",
+                      .run =
+                          [slot] {
+                              if (NodeEditor* e = NodeEditor::active())
+                                  e->recallBookmark(slot);
+                          },
+                      .doc = "Bring back the view saved under " + std::to_string(slot) + "."});
+    }
+    add("nodeEditor.autoLayout", "Auto Layout", &NodeEditor::autoLayout,
+        "Arrange the selected nodes, or the whole graph when fewer than two are selected, in columns from left to right by data flow.");
+    add("nodeEditor.straighten", "Straighten Links", &NodeEditor::straightenSelected,
+        "Nudge the selected nodes up or down so the wires between them run level; a lone node lines up with what feeds it.");
+    struct FlagAction
+    {
+        const char* id;
+        const char* label;
+        const char* flag;
+        const char* doc;
+    };
+    for (const FlagAction& f : {FlagAction{"nodeEditor.toggleMute", "Mute Nodes", "muted",
+                                           "Bypass the selected nodes: each passes its first input of a matching type straight to its outputs."},
+                                FlagAction{"nodeEditor.toggleCollapse", "Collapse Nodes", "collapsed", "Draw the selected nodes as their headers only, or open them again."},
+                                FlagAction{"nodeEditor.toggleUnusedSockets", "Hide Unused Sockets", "hideUnused",
+                                           "Draw only the linked sockets of the selected nodes, or all of them again."}})
+        actions::add({.id = f.id, .label = f.label, .category = "Node Editor",
+                      .run =
+                          [flag = f.flag] {
+                              if (NodeEditor* e = NodeEditor::active())
+                                  e->toggleNodeFlag(flag);
+                          },
+                      .doc = f.doc});
+    add("nodeEditor.swapInputs", "Swap Inputs", &NodeEditor::swapInputs,
+        "Trade the links and values of the selected node's first two inputs of one type, such as a Math node's operands.");
+    add("nodeEditor.frameNodes", "Frame Selected Nodes", &NodeEditor::frameSelection,
+        "Put a labelled frame around the selected nodes, or an empty one at the cursor. Drag its title to move it with what it holds.");
+    add("nodeEditor.portalSource", "Jump to Send", &NodeEditor::jumpToPortalSource,
+        "From a selected Send or Receive, select and centre the Send of its name.");
+    add("nodeEditor.portalReaders", "Jump to Receives", &NodeEditor::jumpToPortalReaders,
+        "From a selected Send or Receive, select and centre every Receive reading its name.");
+    actions::add({.id = "nodeEditor.toggleFlow", .label = "Highlight Upstream and Downstream", .category = "Node Editor",
+                  .run =
+                      [] {
+                          if (NodeEditor* e = NodeEditor::active())
+                              e->setFlowHighlight(!e->flowHighlight(), false);
+                      },
+                  .doc = "Light up what feeds the selected nodes and what they feed, and dim the rest.",
+                  .checked = [] { return NodeEditor::active() && NodeEditor::active()->flowHighlight(); }});
+    actions::add({.id = "nodeEditor.flowHoldOn", .label = "Highlight Flow Key Down", .category = "Node Editor",
+                  .run =
+                      [] {
+                          if (NodeEditor* e = NodeEditor::active())
+                              e->setFlowHighlight(true, true);
+                      },
+                  .doc = "While held, light up what feeds the selected nodes and what they feed."});
+    actions::add({.id = "nodeEditor.flowHoldOff", .label = "Highlight Flow Key Up", .category = "Node Editor",
+                  .run =
+                      [] {
+                          if (NodeEditor* e = NodeEditor::active())
+                              e->setFlowHighlight(false, true);
+                      },
+                  .doc = "Ends the flow highlight hold."});
+    auto zipKey = [](bool down) {
+        if (NodeEditor* e = NodeEditor::active())
+            e->setZipTieKey(down);
+    };
+    actions::add({.id = "nodeEditor.zipTieOn", .label = "Zip Tie Key Down", .category = "Node Editor", .run = [zipKey] { zipKey(true); },
+                  .doc = "While held, dragging across wires gathers them into a zip tie; start the drag on a tie to add the wires to it."});
+    actions::add({.id = "nodeEditor.zipTieOff", .label = "Zip Tie Key Up", .category = "Node Editor", .run = [zipKey] { zipKey(false); },
+                  .doc = "Ends the zip tie key hold."});
 }
 } // namespace
 
 void registerNodeEditorActions()
 {
     registerEditActions();
+    prefPages::add({.id = "nodeEditor", .title = "Node Editor", .build = [](prefPages::PageBuilder& b) {
+                        b.section("Editing");
+                        b.toggle("Slide downstream nodes aside when a node drops into a wire", kPrefAutoOffset, true);
+                        b.section("Wires");
+                        b.choice("Wire style", kPrefWireStyle, {{"Curved", "curved"}, {"Straight", "straight"}, {"Right angle", "rightAngle"}}, "curved");
+                        b.toggle("Dim wires away from the hovered and selected nodes", kPrefDimUnrelated, false);
+                        b.toggle("One grey for every wire in a grey theme", kPrefGreyWires, false);
+                    }});
     registerGnGraphBackend();
     actions::add({.id = "window.nodeEditor", .label = "Node Editor", .category = "Windows",
                   .run = [] {

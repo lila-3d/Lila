@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "app/Host.h"
 #include "batch/BatchCommands.h"
 #include "batch/BatchJob.h"
 #include "batch/BatchRunner.h"
@@ -464,4 +465,18 @@ TEST_CASE("batchRun end to end through lilabatch workers")
     json retried = ops::execute("batchRunRetry", {{"wait", true}});
     CHECK(retried["total"] == 1);
     CHECK(retried["counts"]["failed"] == 1);
+}
+
+TEST_CASE("lilabatch passes the arguments after its script to the script")
+{
+    const char* argv[] = {"lilabatch", "--batch", "build.py", "out_dir", "--fast"};
+    host::Options o = host::parse(5, const_cast<char**>(argv));
+    CHECK(o.batchScript == "build.py");
+    CHECK(o.scriptArgs == std::vector<std::string>{"out_dir", "--fast"});
+    CHECK(o.path.empty());
+
+    const char* scene[] = {"lilabatch", "scene.lila", "--batch", "build.py"};
+    host::Options s = host::parse(4, const_cast<char**>(scene));
+    CHECK(s.path == "scene.lila");
+    CHECK(s.scriptArgs.empty());
 }

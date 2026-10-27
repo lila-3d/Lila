@@ -118,7 +118,7 @@ struct BodyDef
     NodeId joint = kNoNode;
     int parent = -1; // the nearest ancestor joint's body
     Behaviour behaviour = Behaviour::PoseMatch;
-    PoseSpace space = PoseSpace::Local;
+    PoseSpace space = PoseSpace::Both;
     ShapeDesc shape;
     double mass = 0.0; // kg; 0 derives it from density
     double density = 1000.0;

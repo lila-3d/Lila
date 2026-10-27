@@ -7,6 +7,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <array>
 #include <functional>
 #include <set>
 #include <string>
@@ -68,6 +69,46 @@ public:
     void paste();
     void duplicateSelected();
     void selectAll();
+    /** The zip-tie hold key: while down, a drag across wires ties them together. */
+    void setZipTieKey(bool down);
+    /** Lines the selection up: 0 left, 1 centre, 2 right, 3 top, 4 middle, 5 bottom. */
+    void alignSelected(int how);
+    void distributeSelected(bool horizontal);
+    /** Nudges the selection so the wires between them run level. */
+    void straightenSelected();
+    /** Arranges the selection, or the whole graph, in columns by data flow. */
+    void autoLayout();
+    /** Adds the backend's merge node for the selected nodes' outputs ("add", "subtract", "multiply", "divide"), wired up. */
+    void mergeSelected(const std::string& op);
+    /** Hides every wire except those on the selected nodes. */
+    void setSelectedWiresOnly(bool on);
+    bool selectedWiresOnly() const;
+    /** The corner overview of the whole graph; remembered as a pref. */
+    void setMinimap(bool on);
+    bool minimap() const;
+    /** Saves the view under slot 1..5 in the group, or brings it back. */
+    void storeBookmark(int slot);
+    void recallBookmark(int slot);
+    /** Search the nodes by name or type and jump to the pick. */
+    void findNode();
+    /** Selects a node and centres the view on it. */
+    void focusNode(const std::string& name);
+    /** The canvas's right-click menu of node actions. */
+    void showCanvasMenu(QPoint global);
+    /** Trades the links and values of the selected node's first two inputs of one type. */
+    void swapInputs();
+    /** Flips "muted", "collapsed" or "hideUnused" on the selected nodes. */
+    void toggleNodeFlag(const char* flag);
+    /** A frame around the selected nodes, or an empty one at the cursor. */
+    void frameSelection();
+    /** Lights the selection's upstream and downstream and dims the rest: hold true for the held key, else the toggle. */
+    void setFlowHighlight(bool on, bool hold);
+    bool flowHighlight() const;
+    /** From a selected portal node, select and centre its Send, or every Receive of its name. */
+    void jumpToPortalSource();
+    void jumpToPortalReaders();
+    /** The links of each zip tie on the canvas, as (fromNode, fromSocket, toNode, toSocket). */
+    std::vector<std::vector<std::array<std::string, 4>>> shownTies() const;
     /** Collapses the selected nodes into a new group run by a Group node in their place (GroupNodes). */
     void groupSelected();
     /** Inlines the selected Group node's nodes (Ungroup). */
@@ -106,6 +147,8 @@ private:
     nlohmann::json run(std::string_view verb, const nlohmann::json& call) const;
     QWidget* buildInterface(QWidget* panel, const nlohmann::json& info);
     void editInputInfo(const std::string& input, const nlohmann::json& current);
+    /** A Send's name field, or a Receive's pick of the Sends in the group. */
+    QWidget* portalNameEditor(QWidget* parent, const nlohmann::json& info, const std::string& node, bool receive);
 
     GraphBackendPtr mBackend;
     QString mGroup;
@@ -124,6 +167,7 @@ private:
     int mListener = 0;
     int mExecuteListener = 0;
     int mBackendListener = 0;
+    int mPrefsListener = 0;
     bool mRefreshing = false;
     bool mPanelDirty = false;
 };

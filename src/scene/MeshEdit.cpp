@@ -1005,11 +1005,13 @@ void registerMeshEditCommands()
         .doc = "Inset the selected faces.",
         .flags = {{"thickness", "", T::Float, 5.0, "Inward distance, cm."},
                   {"depth", "", T::Float, 0.0, "Push along the normals afterwards, cm."},
-                  {"individual", "", T::Bool, false, "Each face separately."}},
+                  {"individual", "", T::Bool, false, "Each face separately."},
+                  {"clamp", "", T::Bool, true, "Shrink the thickness where the inset would cross itself, as on narrow faces."}},
         .run = [](const Args& a) -> json {
             selectWholeInObjectMode(K::Face);
             return editSelected("Inset", K::Face, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
-                geo::InsetOptions o{a.get<double>("thickness"), a.get<double>("depth"), a.get<bool>("individual"), s};
+                geo::InsetOptions o{a.get<double>("thickness"), a.get<double>("depth"), a.get<bool>("individual"), s,
+                                    a.get<bool>("clamp")};
                 return faces(geo::insetFaces(m, sel, o).faces);
             });
         },

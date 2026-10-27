@@ -122,6 +122,12 @@ public:
 
     /** Bind data of the centres of rotation and direct delta mush methods, rebuilt when the weights or topology change. */
     mutable std::shared_ptr<SkinMethodCache> methodCache;
+    /**
+     * The last two outputs and the input they copy. Once nothing else holds the older one, the next compute takes its
+     * buffers instead of copying and freeing the whole mesh again, which on a dense character costs more than skinning.
+     */
+    std::shared_ptr<geo::Mesh> lastOut, olderOut;
+    std::weak_ptr<const geo::Mesh> outSource;
 };
 
 namespace skin

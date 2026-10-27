@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -151,8 +152,30 @@ public:
         SocketMark mark = SocketMark::None;
         double radius = 5.0;
     };
+    /**
+     * The node that merges values of a socket type with an operation ("add", "subtract", "multiply", "divide"): Join
+     * Geometry for geometry, Math for numbers. multi: every source goes into inA; otherwise nodes chain two at a time.
+     */
+    struct MergeNode
+    {
+        std::string type;
+        nlohmann::json values = nlohmann::json::object();
+        std::string inA, inB;
+        std::string out;
+        bool multi = false;
+    };
+    virtual std::optional<MergeNode> mergeNode(const std::string& /*socketType*/, const std::string& /*op*/) const { return std::nullopt; }
+    /** Wire thickness for a socket type; the backend's main data (geometry, materials) draws thicker. */
+    virtual double wireWidth(const std::string& /*type*/) const { return 2.0; }
     /** Fields draw as diamonds in the style's colour whatever the shape. */
     virtual SocketStyle socketStyle(const std::string& type) const;
+    /** Whether an output of one socket type may feed an input of another; the canvas uses it to pick sockets to wire. */
+    virtual bool canLink(const std::string& from, const std::string& to) const { return from == to; }
+    /**
+     * A line about the value on a wire out of node.socket, for its tooltip, when it is cheap to tell (info is the
+     * group's GroupInfo). By default: the values of a node with nothing linked into it.
+     */
+    virtual QString wireSummary(const nlohmann::json& info, const std::string& node, const std::string& socket) const;
     /** Sockets that carry data but no editable value (geometry): no value text, no side-panel field. */
     virtual bool valueless(const std::string&) const { return false; }
     virtual QColor headerColor(const std::string& type, const std::string& category) const;

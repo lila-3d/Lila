@@ -1,5 +1,7 @@
 #include "tex/Ports.h"
 
+#include "gn/Routing.h"
+
 namespace lila::tex
 {
 namespace
@@ -102,6 +104,25 @@ NodePorts portsOf(const Graph& g, const GNode& n, const ChannelList* extra)
         }
         return out;
     }
+    case NodeKind::Route:
+    {
+        // Routing nodes carry the type of what feeds them; unfed, a colour links to nearly anything.
+        PortType type = PortType::Color;
+        if (auto src = gn::routedSource(g.nodes, g.links, n))
+            if (const GNode* from = g.node(src->first); from && !gn::isRoutingType(from->type))
+                if (const PortDecl* o = portsOf(g, *from, extra).output(src->second))
+                    type = o->type;
+        if (n.type == gn::kRerouteType)
+        {
+            out.inputs.push_back({gn::kRerouteIn, type, json(), {}, {}, 1});
+            out.outputs.push_back({gn::kRerouteOut, type, json(), {}, {}, 1});
+        }
+        else if (n.type == gn::kSendType)
+            out.inputs.push_back({gn::kPortalSocket, type, json(), {}, {}, 1});
+        else if (n.type == gn::kReceiveType)
+            out.outputs.push_back({gn::kPortalSocket, type, json(), {}, {}, 1});
+        return out;
+    }
     default: break;
     }
     out.inputs = d.inputs;
@@ -112,6 +133,25 @@ NodePorts portsOf(const Graph& g, const GNode& n, const ChannelList* extra)
             if (!out.input(name))
                 out.inputs.push_back({name, type, json(), {}, {}, 1});
     return out;
+}
+
+void resolveRouting(Graph& g)
+{
+    gn::RoutingHooks hooks;
+    hooks.ports = [&g](const GNode& n) {
+        gn::PortTypes t;
+        NodePorts p = portsOf(g, n);
+        for (const PortDecl& i : p.inputs)
+            t.inputs.push_back({i.id, portTypeName(i.type)});
+        for (const PortDecl& o : p.outputs)
+            t.outputs.push_back({o.id, portTypeName(o.type)});
+        return t;
+    };
+    hooks.linkable = [](const std::string& from, const std::string& to) {
+        PortType a, b;
+        return parsePortType(from, &a) && parsePortType(to, &b) && linkable(a, b);
+    };
+    gn::resolveRouting(g.nodes, g.links, hooks);
 }
 
 json paramValue(const GNode& n, const ParamDecl& p)

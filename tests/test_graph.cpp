@@ -283,3 +283,26 @@ TEST_CASE("closest euler avoids flips")
             CHECK(glm::length(back[c] - r[c]) < 1e-9);
     }
 }
+
+TEST_CASE("evaluateUpstream computes only what the given nodes depend on")
+{
+    run("newScene");
+    Graph& g = Graph::current();
+    run("spaceLocator", {{"name", "parent"}});
+    run("spaceLocator", {{"name", "child"}});
+    run("parent", {{"args", {"child", "parent"}}});
+    run("spaceLocator", {{"name", "other"}});
+    g.evaluate();
+
+    run("setAttr", {{"args", {"parent.translate", json::array({0, 5, 0})}}});
+    run("setAttr", {{"args", {"other.translate", json::array({0, 7, 0})}}});
+    const uint64_t before = g.find("other")->evaluatedPass();
+    g.evaluateUpstream({g.find("child")->id()});
+    CHECK(glm::dvec3(g.find("child")->as<glm::dmat4>(Transform::kWorldMatrix)[3]).y == doctest::Approx(5.0));
+    CHECK(g.find("other")->evaluatedPass() == before);
+
+    // The rest computes on the next full evaluation.
+    g.evaluate();
+    CHECK(g.find("other")->evaluatedPass() > before);
+    CHECK(glm::dvec3(g.find("other")->as<glm::dmat4>(Transform::kWorldMatrix)[3]).y == doctest::Approx(7.0));
+}

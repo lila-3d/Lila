@@ -13,6 +13,8 @@ namespace lila::host
 struct Options
 {
     std::string batchScript;
+    /** Arguments after the batch script: its sys.argv[1:]. */
+    std::vector<std::string> scriptArgs;
     std::string command;
     std::string path;
     bool batch = false;

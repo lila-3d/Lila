@@ -73,9 +73,14 @@ struct InsetOptions
     double depth = 0.0;
     bool individual = false;
     const SymmetryMap* symmetry = nullptr;
+    /**
+     * Shrink the thickness where it would carry the inner border across itself. On a face narrower than twice the
+     * thickness the inner border closes on the medial line: its points weld and the inner face goes.
+     */
+    bool clamp = true;
 };
 
-/** Returns the inner faces (same ids as the input) and the new rim faces as sides. */
+/** Returns the inner faces (the input ids, less any a clamp closed) and the new rim faces as sides. */
 LILA_SCENE_API ExtrudeResult insetFaces(Mesh& mesh, std::span<const Index> faces, const InsetOptions& opts = {});
 
 struct BevelOptions

@@ -3,13 +3,14 @@ nanobind_build_library(nanobind-static)
 lila_module(lila_python Scene
     Bindings.cpp
     MathBindings.cpp
+    DebugDrawBindings.cpp
     SceneBindings.cpp
     MeshBindings.cpp
     ExtensionBindings.cpp
     RegistryBindings.cpp
     Python.cpp)
 
-target_link_libraries(lila_python PUBLIC lila_scene lila_math lila_vcolor lila_stream PRIVATE nanobind-static Python::Python)
+target_link_libraries(lila_python PUBLIC lila_scene lila_math lila_debug lila_vcolor lila_stream PRIVATE nanobind-static Python::Python)
 nanobind_compile_options(lila_python)
 nanobind_link_options(lila_python)
 

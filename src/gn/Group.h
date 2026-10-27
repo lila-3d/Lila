@@ -9,6 +9,7 @@
 
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -23,7 +24,26 @@ struct GNode
     std::string type;
     glm::dvec2 position{0.0};
     json values = json::object();
+    /** Bypassed: evaluation passes its first input of a matching type through to each output (gn/Routing.h). */
+    bool muted = false;
+    /** Drawn as its header only. */
+    bool collapsed = false;
+    /** Drawn with only its linked sockets. */
+    bool hideUnused = false;
 };
+
+/** Writes a node's flags into its JSON object ("muted", "collapsed", "hideUnused"), leaving out the ones that are off. */
+LILA_SCENE_API void putNodeFlags(const GNode& n, json& o);
+LILA_SCENE_API void getNodeFlags(GNode& n, const json& o);
+template <class Json> void putNodeFlagsTo(const GNode& n, Json& o)
+{
+    if (n.muted)
+        o["muted"] = true;
+    if (n.collapsed)
+        o["collapsed"] = true;
+    if (n.hideUnused)
+        o["hideUnused"] = true;
+}
 
 struct GLink
 {
@@ -33,7 +53,65 @@ struct GLink
     std::string toSocket;
 
     bool operator==(const GLink&) const = default;
+    auto operator<=>(const GLink&) const = default;
 };
+
+/**
+ * A zip tie: links gathered into a short parallel ribbon through a band on the canvas. Display only; evaluation never
+ * reads it. angle is the ribbon's direction in degrees, 0 running left to right. color is a palette name, empty for the
+ * theme's default.
+ */
+struct GTie
+{
+    std::vector<GLink> links;
+    glm::dvec2 position{0.0};
+    double angle = 0.0;
+    std::string color;
+
+    bool operator==(const GTie&) const = default;
+};
+
+/**
+ * A frame: a labelled, coloured box on the canvas holding nodes, which move with it. Display only. position is its
+ * top-left corner; color is a palette name, empty for the theme's default.
+ */
+struct GFrame
+{
+    std::string label;
+    glm::dvec2 position{0.0};
+    glm::dvec2 size{300.0, 200.0};
+    std::string color;
+    bool collapsed = false;
+    std::vector<std::string> nodes;
+
+    bool operator==(const GFrame&) const = default;
+};
+
+/** [{label, position: [x, y], size: [w, h], color, collapsed, nodes: [names]}]; color and collapsed left out at their defaults. */
+LILA_SCENE_API json framesToJson(const std::vector<GFrame>& frames);
+/** Skips malformed entries. */
+LILA_SCENE_API std::vector<GFrame> framesFromJson(const json& j);
+/** Drops member names that aren't in nodes, and repeats. */
+LILA_SCENE_API void pruneFrames(std::vector<GFrame>& frames, const std::vector<std::string>& nodes);
+/** Frames holding any of nodes, with only those members, renamed through renamed and shifted by offset. */
+LILA_SCENE_API std::vector<GFrame> framesAmong(const std::vector<GFrame>& frames, const std::set<std::string>& nodes,
+                                               const std::map<std::string, std::string>& renamed = {}, glm::dvec2 offset = glm::dvec2(0.0));
+
+/** Bookmarks with only well-formed [x, y, zoom] entries; anything else reads as none. */
+LILA_SCENE_API json cleanBookmarks(const json& j);
+
+/** [{links: [[fromNode, fromSocket, toNode, toSocket]], position: [x, y], angle, color}]; color left out when empty. */
+LILA_SCENE_API json tiesToJson(const std::vector<GTie>& ties);
+/** Skips malformed entries rather than failing, since ties never affect what a graph computes. */
+LILA_SCENE_API std::vector<GTie> tiesFromJson(const json& j);
+/** Drops tied links missing from links (and repeats), then ties left with fewer than two. */
+LILA_SCENE_API void pruneTies(std::vector<GTie>& ties, const std::vector<GLink>& links);
+/**
+ * The ties among a set of nodes, for copy, paste and duplicate: only links with both ends in nodes, renamed through
+ * renamed when it is given, positions shifted by offset; ties left with fewer than two links are dropped.
+ */
+LILA_SCENE_API std::vector<GTie> tiesAmong(const std::vector<GTie>& ties, const std::set<std::string>& nodes,
+                                           const std::map<std::string, std::string>& renamed = {}, glm::dvec2 offset = glm::dvec2(0.0));
 
 /**
  * An exposed parameter: an output of the Group Input node, a socket on Group nodes using the group, and a keyable attr
@@ -67,8 +145,9 @@ struct GOutput
 /**
  * A node-group definition. Saved as JSON in the scene (on a gnGroup node) and in library folders:
  *   { "name", "typeVersion", "inputs": [{name, type, default, label, description, subtype, min, max, softMin, softMax,
- *     step, panel}], "outputs": [{name, type, description}], "nodes": [{name, type, position, values}],
- *     "links": [[fromNode, fromSocket, toNode, toSocket]], "subgroups": {name: definition} }
+ *     step, panel}], "outputs": [{name, type, description}], "nodes": [{name, type, position, values, muted, collapsed, hideUnused}],
+ *     "links": [[fromNode, fromSocket, toNode, toSocket]], "ties": [see tiesToJson], "frames": [see framesToJson],
+ *     "bookmarks": {slot: [x, y, zoom]}, "subgroups": {name: definition} }
  */
 struct LILA_SCENE_API Group
 {
@@ -78,6 +157,10 @@ struct LILA_SCENE_API Group
     std::vector<GOutput> outputs;
     std::vector<GNode> nodes;
     std::vector<GLink> links;
+    std::vector<GTie> ties;
+    std::vector<GFrame> frames;
+    /** Saved canvas views by slot ("1".."5"): [centre x, centre y, zoom]. */
+    json bookmarks = json::object();
     std::string description;
     /** Definitions of the groups its Group nodes use, by name, each self-contained (with its own subgroups). */
     std::map<std::string, json> subgroups;

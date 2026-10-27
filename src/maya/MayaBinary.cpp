@@ -656,6 +656,20 @@ private:
                 v.nums.push_back(c.f64());
             break;
         }
+        case tag("PNT#"):
+            v.type = "pointArray";
+            // x, y, z, w per point, with no count ahead of them.
+            while (c.left() >= 8)
+                v.nums.push_back(c.f64());
+            break;
+        case tag("ATAL"):
+        {
+            v.type = "attributeAlias";
+            uint32_t cnt = c.count(1);
+            for (uint32_t i = 0; i < cnt && c.ok(); ++i)
+                v.strs.push_back(c.str());
+            break;
+        }
         case tag("MATR"):
             if (c.left() == 128)
             {

@@ -43,4 +43,10 @@ LILA_UI_API std::string error(const std::string& path);
 /** Called on the main thread whenever an image finishes loading. */
 LILA_UI_API int addListener(std::function<void()> fn);
 LILA_UI_API void removeListener(int id);
+
+/**
+ * Blocks until every file being read has arrived (or failed), running the main queue meanwhile; false on timeout.
+ * Main thread only. Offscreen captures call it so a texture asked for this frame is in the picture.
+ */
+LILA_UI_API bool waitForLoads(double timeoutSeconds);
 } // namespace lila::ui::textures

@@ -5,6 +5,7 @@
 #include "geo/Mesh.h"
 
 #include <span>
+#include <unordered_map>
 #include <vector>
 
 namespace lila::geo::detail
@@ -43,4 +44,10 @@ struct FaceCopy
     std::vector<Index> edges;
 };
 LILA_SCENE_API FaceCopy copyFace(const Mesh& mesh, Index f);
+
+/** weldPoints, also giving each face it rebuilt its new id, or kInvalid when the face collapsed or doubled another. */
+LILA_SCENE_API void weldPoints(Mesh& mesh, std::span<const Index> target, std::unordered_map<Index, Index>* rebuilt);
+
+/** No two edges of the closed polygon cross or touch, apart from neighbours sharing their corner. */
+LILA_SCENE_API bool polygonIsSimple(std::span<const glm::dvec2> p);
 } // namespace lila::geo::detail

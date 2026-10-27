@@ -250,7 +250,8 @@ bool repeatable(const json& target)
             "select.", "viewport.", "hotbox.", "window.", "tool.", "snap.", "softSelect.", "shelf.", "help.", "file.", "edit.flush",
             "anim.nextFrame", "anim.prevFrame", "anim.nextKey", "anim.prevKey", "anim.play", "anim.stop", "anim.firstFrame",
             "anim.lastFrame", "anim.ghost", "anim.toggleGhosts", "anim.autoKeyToggle", "adjustLastOp.", "outliner.revealSelected",
-            "graphEditor.", "nodeEditor.frame", "nodeEditor.selectAll", "mode.", "picker.frame", "measure.toggleShow"};
+            "graphEditor.", "nodeEditor.frame", "nodeEditor.selectAll", "nodeEditor.zipTie", "nodeEditor.flowHold", "nodeEditor.toggleFlow", "nodeEditor.toggleMinimap", "nodeEditor.bookmarkGo", "nodeEditor.toggleSelectedWires",
+            "nodeEditor.find", "mode.", "picker.frame", "measure.toggleShow"};
         static const std::vector<std::string_view> ids = {"edit.undo", "edit.redo", "edit.repeatLast", "edit.selectAll", "edit.deselect", "edit.invertSelection"};
         if (std::ranges::any_of(prefixes, [&](std::string_view p) { return startsWith(id, p); }) || std::ranges::find(ids, id) != ids.end())
             return false;
@@ -659,8 +660,12 @@ void registerBuiltins()
     togglePref("viewport.defaultMaterial", "Use Default Material", vd::kDefaultMaterial, false, "Shades every mesh with the plain default material.");
     togglePref("viewport.toggleEnvBackground", "Environment Background", "/viewport/env/background", true, "Shows the HDRI behind the scene.");
     togglePref("viewport.toggleToolbar", "Show Toolbar", vd::kToolbar, true, "The icon row at the top of each viewport panel.");
+    togglePref("viewport.toggleBottomBar", "Show Bottom Bar", vd::kBottomBar, true,
+               "The row along the bottom of each viewport panel: highlight under the cursor, selection masks, symmetry and snapping.");
     togglePref("viewport.togglePreselectObjects", "Highlight Objects Under Cursor", "/viewport/preselect/objects", false,
                "In object mode, the object under the cursor highlights before it is clicked.");
+    togglePref("viewport.togglePreselectComponents", "Highlight Components Under Cursor", "/viewport/preselect/components", true,
+               "In component modes, the vertex, edge or face under the cursor highlights before it is clicked.");
     for (int n : {2, 4, 8})
     {
         std::string label = "Antialiasing " + std::to_string(n) + "x";
@@ -722,6 +727,7 @@ void registerBuiltins()
         for (auto [kind, label, doc] : {std::tuple{sm::Kind::Curve, "Select Curves", "Curves can be picked in object mode."},
                                         {sm::Kind::Mesh, "Select Polygon Objects", "Meshes can be picked in object mode."},
                                         {sm::Kind::Joint, "Select Joints", "Joints can be picked in object mode."},
+                                        {sm::Kind::Light, "Select Lights", "Lights can be picked in object mode."},
                                         {sm::Kind::Locator, "Select Locators", "Locators can be picked in object mode."},
                                         {sm::Kind::Other, "Select Other Objects", "Cameras, image planes and measurements can be picked in object mode."}})
         {
@@ -738,6 +744,7 @@ void registerBuiltins()
         for (auto [kind, label, doc] : {std::tuple{sm::Kind::Curve, "Show Curves", "Curves draw in the viewport."},
                                         {sm::Kind::Mesh, "Show Geometry", "Meshes draw in the viewport."},
                                         {sm::Kind::Joint, "Show Joints", "Joints draw in the viewport."},
+                                        {sm::Kind::Light, "Show Lights", "Light icons draw in the viewport."},
                                         {sm::Kind::Locator, "Show Locators", "Locators draw in the viewport."}})
         {
             sm::Kind k = kind;

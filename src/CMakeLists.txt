@@ -1,5 +1,5 @@
 # Lila is three shared libraries plus thin hosts. Each module below is an OBJECT library compiled into one of them:
-#   LilaFoundation  core, math, ops (prefs, log, registries, events, the extension context)
+#   LilaFoundation  core, math, debug drawing, ops (prefs, log, registries, events, the extension context)
 #   LilaScene       scene, geometry, deformers, io, fbx, uv, geometry nodes, link, python, mcp, extensions, ...
 #   LilaUI          render, ui, script editor, terminal
 # Only symbols marked LILA_<LIB>_API (src/core/Export.h) cross a library boundary.
@@ -15,6 +15,7 @@ endfunction()
 
 add_subdirectory(core)
 add_subdirectory(math)
+add_subdirectory(debug)
 add_subdirectory(ops)
 add_subdirectory(deform)
 add_subdirectory(scene)

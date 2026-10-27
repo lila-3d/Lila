@@ -15,11 +15,11 @@ try:
 except ImportError:  # an older lila binary running against newer python files
     Progress = None
 
-from . import ops, docs, events, math, nodes, prefs, scene_data, tasks, ui
+from . import ops, debug_draw, docs, events, math, nodes, prefs, scene_data, tasks, ui
 from .nodes import Node, exists, group, locator, node, selected
 from .tasks import run_in_background
 
-__all__ = ["ops", "docs", "events", "math", "nodes", "prefs", "scene_data", "tasks", "ui", "CommandError", "Progress", "workspace", "undo_chunk",
+__all__ = ["ops", "debug_draw", "docs", "events", "math", "nodes", "prefs", "scene_data", "tasks", "ui", "CommandError", "Progress", "workspace", "undo_chunk",
            "Node", "node", "selected", "exists", "locator", "group", "run_in_background"]
 
 

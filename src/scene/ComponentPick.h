@@ -98,9 +98,10 @@ enum class Kind : uint8_t
     Joint,
     Locator,
     Other,
+    Light,
 };
 
-inline constexpr Kind kAll[] = {Kind::Curve, Kind::Mesh, Kind::Joint, Kind::Locator, Kind::Other};
+inline constexpr Kind kAll[] = {Kind::Curve, Kind::Mesh, Kind::Joint, Kind::Light, Kind::Locator, Kind::Other};
 
 /** "mesh", "joint", ...: the leaf of the pref key and of the "select.mask.<name>" action. */
 LILA_SCENE_API const char* name(Kind k);

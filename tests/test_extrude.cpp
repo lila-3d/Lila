@@ -246,11 +246,12 @@ TEST_CASE("polyBevel offset adjusts through adjust-last-op and keeps edge mode")
     REQUIRE(scene::lastOp::live());
     scene::lastOp::rerun({{"offset", 10}});
     CHECK(spread() == doctest::Approx(40.0));
-    // Past what the cube allows, the recorded offset stops at the clamp.
+    // Past what the cube allows, the recorded offset stops at the clamp: the faces beside the edge close entirely.
     scene::lastOp::rerun({{"offset", 500}});
     const double limit = scene::lastOp::current()->call["offset"].get<double>();
-    CHECK(limit < 100.0);
-    CHECK(limit > 10.0);
+    CHECK(limit == doctest::Approx(100.0));
+    CHECK(meshOf(cube).validate(geo::kValidateDefault | geo::kValidateDegenerate).empty());
+    CHECK(meshOf(cube).numFaces() == 5);
     run("undo");
     CHECK(spread() == doctest::Approx(40.0));
     run("undo");

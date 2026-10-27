@@ -276,6 +276,8 @@ template <class Fn> std::string quietly(Fn&& fn)
     UndoStack& u = UndoStack::get();
     const bool was = u.enabled();
     u.setEnabled(false);
+    // Previews read joints over and over; the skinned meshes update once, when the viewport draws.
+    const Graph::DeferMeshes defer;
     std::string error;
     try
     {

@@ -2,6 +2,7 @@
 
 #include "ops/Command.h"
 #include "geo/Mesh.h"
+#include "scene/Deformers.h"
 #include "scene/Drivers.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
@@ -165,6 +166,30 @@ TEST_CASE("morph in-betweens: the shape passes through the in-between and export
         run("setAttr", {{"args", {t + ".weight", 0.5}}});
         CHECK(near(points(base)[0] - rest[0], {4, 0, 0}));
     }
+}
+
+TEST_CASE("morph target point weights scale every shape of the target, in evaluation and in exports")
+{
+    run("newScene");
+    std::string base = run("polyCube", {{"name", "Base"}})[0];
+    std::string full = run("polyCube", {{"name", "Lift"}})[0];
+    editPoints(full, [](geo::Index p, const glm::dvec3&) { return p <= 1 ? glm::dvec3(0, 10, 0) : glm::dvec3(0.0); });
+    std::vector<glm::dvec3> rest = points(base);
+    std::string m = run("morph", {{"args", {full, base}}});
+    std::string t = run("morphTargets", {{"args", {base}}})[0]["node"];
+    run("setAttr", {{"args", {t + ".weight", 0.5}}});
+    auto w = std::make_shared<PointWeights>();
+    w->values = {1.0f, 0.25f};
+    morphs::setPointWeights(graph(), graph().find(t)->id(), w);
+    std::vector<glm::dvec3> now = points(base);
+    CHECK(near(now[0] - rest[0], {0, 5, 0}));
+    CHECK(near(now[1] - rest[1], {0, 1.25, 0}));
+
+    std::vector<morphs::Target> ex = morphs::targets(graph(), graph().find(m)->id());
+    REQUIRE(ex.size() == 1);
+    REQUIRE(ex[0].indices.size() == 2);
+    CHECK(near(ex[0].deltas[0], {0, 10, 0}));
+    CHECK(near(ex[0].deltas[1], {0, 2.5, 0}));
 }
 
 TEST_CASE("morph targets rename, flip through the symmetry map and edit in edit mode")

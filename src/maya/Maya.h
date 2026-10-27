@@ -23,7 +23,8 @@ class Graph;
  * creators (polyCube, polySphere, ... as live Lila generators when nothing else follows them), a few history nodes
  * evaluated (polyTweak, polyTweakUV, transformGeometry, polySmoothFace, polyTriangulate, polySoftEdge), joints
  * (jointOrient, radius, segment scale compensate, inverse scale), skinClusters (weights, bind pre-matrices, geometry
- * matrix), locators, cameras (lens, film back, clipping, orthographic, Lock Camera, animated focal length and clipping),
+ * matrix), blendShapes (as morphs: inline and live targets, in-betweens, target and base weights, animated and
+ * set-driven-key weights), locators, cameras (lens, film back, clipping, orthographic, Lock Camera, animated focal length and clipping),
  * image planes (free ones, ones on the default cameras as Lila's attached planes, ones on other cameras placed against
  * their lens), lambert / blinn / phong / standardSurface / aiStandardSurface / openPBRSurface materials with file
  * textures and per-face shading group assignments, time animation curves on transform and camera channels,
@@ -47,6 +48,8 @@ struct ImportOptions
     /** "auto" (from the default cameras), "y" or "z". */
     std::string upAxis = "auto";
     bool skins = true;
+    /** blendShapes as morphs, their weight curves and set driven keys as anim curves and driven channels. */
+    bool morphs = true;
     bool animation = true;
     bool materials = true;
     /**
@@ -69,6 +72,7 @@ struct ImportResult
     std::vector<scene::NodeId> nodes; // every DAG node created, parents first
     std::vector<scene::NodeId> joints;
     std::vector<scene::NodeId> skins;
+    std::vector<scene::NodeId> morphs;
     std::vector<scene::NodeId> cameras;
     std::vector<scene::NodeId> lights;
     std::vector<scene::NodeId> imagePlanes;

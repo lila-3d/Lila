@@ -597,6 +597,16 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         toggle(viewport, "Marquee selects edges and faces it touches (off: only those whose centre it covers)", "/select/marqueeTouch", true);
         toggle(viewport, "Camera-based selection (component marquees skip what is hidden behind surfaces)", "/select/cameraBased", false);
         toggle(viewport, "Backface culling selection (skip components on faces turned away)", "/select/backfaceCulling", false);
+        section(viewport, "Panel Bars");
+        toggle(viewport, "Show the bottom bar (highlight, selection masks, symmetry, snapping)", vd::kBottomBar, true);
+        toggle(viewport, "Hide toolbar items the scene has no use for (X-Ray Joints with no joints)", vd::kHideUnusedItems, true);
+        section(viewport, "Debug Drawing");
+        toggle(viewport, "Show debug drawing", "/debugDraw/show", true);
+        number(viewport, "Default duration (s)", "/debugDraw/defaultDuration", 5.0, 0.0, 3600.0, 1.0, 1);
+        number(viewport, "Longest duration without persistent (s)", "/debugDraw/maxDuration", 3600.0, 1.0, 86400.0, 60.0, 0);
+        number(viewport, "Most lines and triangles", "/debugDraw/maxPrimitives", 1000000.0, 1000.0, 50000000.0, 100000.0, 0);
+        number(viewport, "Most points", "/debugDraw/maxPoints", 100000.0, 10.0, 10000000.0, 10000.0, 0);
+        number(viewport, "Most text labels", "/debugDraw/maxTexts", 10000.0, 10.0, 1000000.0, 1000.0, 0);
         section(viewport, "Highlight Under Cursor");
         toggle(viewport, "Components", "/viewport/preselect/components", true);
         toggle(viewport, "Objects", "/viewport/preselect/objects", false);

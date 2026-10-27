@@ -3,9 +3,14 @@
 #include "core/ExtensionContext.h"
 #include "core/PrefStore.h"
 #include "core/Registry.h"
+#include "ops/Command.h"
+#include "scene/ComponentPick.h"
+#include "scene/Graph.h"
+#include "scene/Materials.h"
 #include "ui/Actions.h"
 #include "ui/IconBars.h"
 #include "ui/Tools.h"
+#include "ui/ViewportContext.h"
 #include "ui/ViewportToolbar.h"
 
 using namespace lila;
@@ -82,4 +87,45 @@ TEST_CASE("toggle actions and tools report their state to bars and menus")
     CHECK(viewportActionState("select.lassoTool", nullptr) == false);
     PrefStore::get().set("general", "/select/lasso", false);
     tools::setCurrent(was);
+}
+
+TEST_CASE("viewport context: feature options follow what the scene holds")
+{
+    namespace vc = viewportContext;
+    using namespace lila::scene;
+    ops::execute("newScene", json::object());
+    Graph& g = Graph::current();
+    CHECK(vc::scan(g) == 0);
+    g.createNode(*types::find("mesh"), "ctxMesh");
+    g.createNode(*types::find("light"), "ctxLight");
+    CHECK(vc::scan(g) == 0);
+    g.createNode(*types::find("joint"), "ctxJoint");
+    CHECK(vc::scan(g) == vc::Joints);
+    Node* m = g.createNode(*types::find("material"), "ctxMaterial");
+    CHECK(vc::scan(g) == (vc::Joints | vc::Materials));
+    g.setValue({m->id(), material::kShadingModel, -1}, int64_t(material::ShadingModel::Painterly));
+    CHECK(vc::scan(g) == (vc::Joints | vc::Materials | vc::StylisedMaterials));
+    CHECK(vc::present() == vc::scan(g));
+    ops::execute("newScene", json::object());
+    CHECK(vc::present() == 0);
+}
+
+TEST_CASE("lights have their own show filter and selection mask")
+{
+    namespace sm = lila::scene::selectionMask;
+    using namespace lila::scene;
+    Graph& g = Graph::current();
+    Node* light = g.createNode(*types::find("light"), "maskLight");
+    Node* loc = g.createNode(*types::find("locator"), "maskLocator");
+    CHECK(sm::kindOf(*light) == sm::Kind::Light);
+    CHECK(sm::kindOf(*loc) == sm::Kind::Locator);
+    sm::setShown(sm::Kind::Light, false);
+    CHECK_FALSE(sm::shown(*light));
+    CHECK_FALSE(sm::pickable(*light));
+    CHECK(sm::shown(*loc));
+    CHECK(viewportActionState("viewport.show.light", nullptr) == false);
+    sm::setShown(sm::Kind::Light, true);
+    CHECK(viewportActionState("viewport.show.light", nullptr) == true);
+    g.deleteNode(light->id());
+    g.deleteNode(loc->id());
 }

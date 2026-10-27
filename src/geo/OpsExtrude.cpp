@@ -18,7 +18,128 @@ struct RegionMove
 {
     double offset = 0.0;    // along normals, every region point
     double thickness = 0.0; // inward, boundary points only
+    bool clamp = false;     // shrink the thickness so no face's border crosses itself
 };
+
+/** Clamped thickness leaves this share of the room where points of a face would cross inside it. */
+constexpr double kClampMargin = 0.02;
+/** Border points a clamped inset brings closer than this share of the thickness are welded. */
+constexpr double kWeldShare = 1e-7;
+
+struct Clamp
+{
+    double share = 1.0;     // of the thickness
+    bool collapses = false; // some border edge shrinks to nothing at that share
+};
+
+/**
+ * The share of the thickness, at most 1, at which the border points moving by dirs (per unit thickness) leave every
+ * face simple. An edge whose ends would pass each other stops where they meet, as the sides of a face narrower than
+ * twice the thickness meeting on its medial line; points that would cross inside a face stop short of it.
+ */
+Clamp clampThickness(const Mesh& mesh, std::span<const Index> faces, const std::unordered_map<Index, glm::dvec3>& dirs,
+                     double thickness)
+{
+    LILA_ZONE();
+
+    auto dirOf = [&](Index p) {
+        auto it = dirs.find(p);
+        return it == dirs.end() ? glm::dvec3(0.0) : it->second * thickness;
+    };
+    Clamp out;
+    for (Index f : faces)
+        mesh.forEachFaceCorner(f, [&](Index c) {
+            const glm::dvec3 a = mesh.position(mesh.cornerPoint(c)), b = mesh.position(mesh.cornerNextPoint(c));
+            const double len = glm::distance(a, b);
+            if (len <= 0.0)
+                return;
+            const double k = glm::dot(dirOf(mesh.cornerPoint(c)) - dirOf(mesh.cornerNextPoint(c)), (b - a) / len);
+            if (k > 1e-12 && len / k < out.share)
+            {
+                out.share = len / k;
+                out.collapses = true;
+            }
+        });
+    const double tol = kWeldShare * std::abs(thickness);
+    // Collapsed edges count once, and a face that collapses to a line or a point is simple.
+    auto simpleAt = [&](Index f, double at) {
+        const glm::dvec3 n = mesh.faceNormal(f);
+        const glm::dvec3 ax = glm::normalize(glm::cross(n, std::abs(n.x) < 0.9 ? glm::dvec3(1, 0, 0) : glm::dvec3(0, 1, 0)));
+        const glm::dvec3 ay = glm::cross(n, ax);
+        std::vector<glm::dvec2> poly;
+        mesh.forEachFaceCorner(f, [&](Index c) {
+            const glm::dvec3 q = mesh.position(mesh.cornerPoint(c)) + dirOf(mesh.cornerPoint(c)) * at;
+            const glm::dvec2 uv{glm::dot(q, ax), glm::dot(q, ay)};
+            if (poly.empty() || glm::distance(poly.back(), uv) > tol)
+                poly.push_back(uv);
+        });
+        while (poly.size() > 1 && glm::distance(poly.back(), poly.front()) <= tol)
+            poly.pop_back();
+        return poly.size() < 3 || polygonIsSimple(poly);
+    };
+    std::vector<Index> crossing;
+    for (Index f : faces)
+        if (glm::length(mesh.faceNormal(f)) > 0.5 && !simpleAt(f, out.share) && simpleAt(f, out.share * 1e-6))
+            crossing.push_back(f);
+    if (crossing.empty())
+        return out;
+    double lo = 0.0, hi = out.share;
+    for (int it = 0; it < 40; ++it)
+    {
+        const double mid = 0.5 * (lo + hi);
+        const bool ok = std::all_of(crossing.begin(), crossing.end(), [&](Index f) { return simpleAt(f, mid); });
+        (ok ? lo : hi) = mid;
+    }
+    return {lo * (1.0 - kClampMargin), false};
+}
+
+/**
+ * Welds the border points a clamped inset brought together along the edges of the region's faces. Faces left with
+ * under three points go, and result follows the faces that were rebuilt.
+ */
+void weldCollapsed(Mesh& mesh, ExtrudeResult& result, std::unordered_map<Index, glm::dvec3>& normalSum, double tol)
+{
+    LILA_ZONE();
+
+    std::vector<Index> target(mesh.pointCapacity(), kInvalid);
+    auto find = [&](Index p) {
+        while (target[p] != kInvalid)
+            p = target[p];
+        return p;
+    };
+    bool any = false;
+    for (Index f : result.faces)
+        mesh.forEachFaceCorner(f, [&](Index c) {
+            const Index a = find(mesh.cornerPoint(c)), b = find(mesh.cornerNextPoint(c));
+            if (a != b && glm::distance(mesh.position(a), mesh.position(b)) <= tol)
+            {
+                target[std::max(a, b)] = std::min(a, b);
+                any = true;
+            }
+        });
+    if (!any)
+        return;
+    for (Index p = 0; p < Index(target.size()); ++p)
+        if (target[p] != kInvalid)
+        {
+            target[p] = find(p);
+            if (auto it = normalSum.find(p); it != normalSum.end())
+            {
+                normalSum[target[p]] += it->second;
+                normalSum.erase(p);
+            }
+        }
+    std::unordered_map<Index, Index> rebuilt;
+    weldPoints(mesh, target, &rebuilt);
+    auto remap = [&](std::vector<Index>& ids) {
+        for (Index& f : ids)
+            if (auto it = rebuilt.find(f); it != rebuilt.end())
+                f = it->second;
+        std::erase(ids, kInvalid);
+    };
+    remap(result.faces);
+    remap(result.sides);
+}
 
 /** A cap corner on the region border, with its face's corner triangle before the thickness moved it. */
 struct CapCorner
@@ -178,9 +299,11 @@ ExtrudeResult extrudeRegion(Mesh& mesh, const std::vector<Index>& faces, const R
                 capCorners.push_back({c, pc, nc, o, mesh.position(mesh.cornerPoint(pc)) - o, mesh.position(mesh.cornerPoint(nc)) - o});
             });
 
+    Clamp clamp;
     if (move.thickness != 0.0)
     {
         std::unordered_map<Index, std::pair<glm::dvec3, int>> perp;
+        std::unordered_map<Index, glm::dvec3> dirs;
         for (const BoundaryCorner& bc : boundary)
         {
             const glm::dvec3 d = mesh.position(bc.b) - mesh.position(bc.a);
@@ -201,11 +324,17 @@ ExtrudeResult extrudeRegion(Mesh& mesh, const std::vector<Index>& faces, const R
             const glm::dvec3 m = sum / len;
             // Miter: for two edges the offset along m is thickness over the cosine to each edge normal.
             const double cosHalf = s.second == 2 ? std::max(len * 0.5, 0.1) : 1.0;
-            mesh.setPosition(p, mesh.position(p) + m * (move.thickness / cosHalf));
+            dirs[p] = m / cosHalf;
         }
+        clamp = move.clamp ? clampThickness(mesh, faces, dirs, move.thickness) : Clamp{};
+        for (const auto& [p, d] : dirs)
+            mesh.setPosition(p, mesh.position(p) + d * (move.thickness * clamp.share));
     }
     if (!capCorners.empty())
         insetCapUvs(mesh, capCorners, result.sides, firstDup);
+    result.faces = faces;
+    if (clamp.collapses)
+        weldCollapsed(mesh, result, normalSum, kWeldShare * std::abs(move.thickness));
     if (move.offset != 0.0)
         for (const auto& [p, sum] : normalSum)
         {
@@ -215,7 +344,6 @@ ExtrudeResult extrudeRegion(Mesh& mesh, const std::vector<Index>& faces, const R
         }
 
     mesh.removeLoose(oldEdge, {});
-    result.faces = faces;
     return result;
 }
 
@@ -231,7 +359,7 @@ ExtrudeResult runRegions(Mesh& mesh, std::span<const Index> faces, bool individu
         for (Index f : sel)
         {
             ExtrudeResult r = extrudeRegion(mesh, {f}, move);
-            out.faces.push_back(f);
+            out.faces.insert(out.faces.end(), r.faces.begin(), r.faces.end());
             out.sides.insert(out.sides.end(), r.sides.begin(), r.sides.end());
         }
     }
@@ -330,6 +458,6 @@ ExtrudeResult insetFaces(Mesh& mesh, std::span<const Index> faces, const InsetOp
 {
     LILA_ZONE();
 
-    return runRegions(mesh, faces, opts.individual, opts.symmetry, {opts.depth, opts.thickness});
+    return runRegions(mesh, faces, opts.individual, opts.symmetry, {opts.depth, opts.thickness, opts.clamp});
 }
 } // namespace lila::geo

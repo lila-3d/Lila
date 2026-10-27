@@ -42,6 +42,7 @@
 #include "ui/AutoBevelUi.h"
 #include "ui/InstancingUi.h"
 #include "ui/SmartJoinUi.h"
+#include "ui/DebugDrawUi.h"
 #include "ui/DeformUi.h"
 #include "ui/Editors.h"
 #include "ui/ExtensionUi.h"
@@ -226,6 +227,7 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
     registerInstancingUi();
     registerSmartJoinUi();
     registerMeasureUi();
+    registerDebugDrawUi();
     registerPlacePrimitiveUi();
     mcp::startFromPrefs();
     stream::startFromPrefs();

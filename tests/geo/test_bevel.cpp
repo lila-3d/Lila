@@ -573,6 +573,85 @@ TEST_CASE("bevel: clamp keeps neighbours from crossing")
     }
 }
 
+TEST_CASE("bevel: edges between faces folded flat onto each other")
+{
+    // An unclamped inset of a 4 wide face by 7 crosses its rim over itself: the short rim faces become bowties lying
+    // back to back with the long ones.
+    Mesh m = makeCube({.width = 100.0, .height = 100.0, .depth = 4.0});
+    Index side = kInvalid;
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f) && m.faceNormal(f).x > 0.5)
+            side = f;
+    REQUIRE(side != kInvalid);
+    const ExtrudeResult inset = insetFaces(m, std::span(&side, 1), {.thickness = 7.0, .individual = true, .clamp = false});
+    extrudeFaces(m, inset.faces, {.offset = -2.5});
+    REQUIRE(maxFold(m) > 179.9);
+
+    BevelOptions bo;
+    bo.offset = 1.2;
+    bevelEdges(m, allEdges(m), bo);
+    CHECK(isValid(m));
+    CHECK(boundaryEdgeCount(m) == 0);
+    // Heights under 0.01 over the longest edge, as meshCheck reports zero-area faces.
+    Index slivers = 0;
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f))
+        {
+            double longest = 0.0;
+            m.forEachFaceCorner(f, [&](Index c) { longest = std::max(longest, m.edgeLength(m.cornerEdge(c))); });
+            if (m.faceArea(f) <= 0.01 * longest)
+            {
+                MESSAGE("face " << f << " of " << m.faceSize(f) << " corners has area " << m.faceArea(f));
+                ++slivers;
+            }
+        }
+    CHECK(slivers == 0);
+}
+
+TEST_CASE("bevel: clamp closes faces that run out of room")
+{
+    // Shortest edge over the mesh size, so slivers show however small they are.
+    auto shortest = [](const Mesh& m) {
+        double s = 1e300;
+        for (Index e = 0; e < m.edgeCapacity(); ++e)
+            if (m.edgeValid(e))
+                s = std::min(s, m.edgeLength(e));
+        return s / glm::length(m.bounds().size());
+    };
+    for (int seg : {1, 3})
+    {
+        CAPTURE(seg);
+        // The 20 high sides close to a line where the top and bottom bevels meet.
+        Mesh m = makeCube({.width = 100.0, .height = 20.0, .depth = 100.0});
+        double applied = 0.0;
+        bevelEdges(m, allEdges(m), {.offset = 40.0, .segments = seg, .appliedOffset = &applied});
+        CHECK(applied == doctest::Approx(10.0));
+        checkClosedSound(m, 10.0);
+        CHECK(shortest(m) > 1e-3);
+        CHECK(convexOutward(m, 1e-6));
+
+        // A narrow side inset to its medial line leaves triangles too small for the offset: they close to points.
+        Mesh w = makeCube({.width = 100.0, .height = 100.0, .depth = 2.5});
+        std::vector<Index> sel;
+        for (Index f = 0; f < w.faceCapacity(); ++f)
+            if (w.faceValid(f) && std::abs(w.faceNormal(f).x) > 0.5)
+                sel.push_back(f);
+        insetFaces(w, sel, {.thickness = 7.0, .individual = true});
+        bevelEdges(w, allEdges(w), {.offset = 1.2, .segments = seg});
+        checkClosedSound(w, 0.1);
+        CHECK(shortest(w) > 1e-4);
+    }
+
+    // With room to spare the clamp changes nothing.
+    Mesh a = makeCube(), b = makeCube();
+    bevelEdges(a, allEdges(a), {.offset = 10.0, .segments = 2});
+    bevelEdges(b, allEdges(b), {.offset = 10.0, .segments = 2, .clamp = false});
+    REQUIRE(a.pointCapacity() == b.pointCapacity());
+    for (Index p = 0; p < a.pointCapacity(); ++p)
+        if (a.pointValid(p))
+            CHECK(glm::distance(a.position(p), b.position(p)) < 1e-12);
+}
+
 TEST_CASE("bevel: symmetry")
 {
     for (int seg = 1; seg <= 3; ++seg)

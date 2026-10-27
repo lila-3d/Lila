@@ -214,9 +214,20 @@ void SkinClusterNode::compute(const EvalContext&)
             dqs.push_back(toDualQuat(m));
     bool normalize = as<bool>(kNormalizeWeights);
 
-    auto out = std::make_shared<geo::Mesh>(*in);
+    // Reuse the output from two computes ago when nothing holds it: only points and normals differ from the input.
+    std::shared_ptr<geo::Mesh> out;
+    if (olderOut && olderOut.use_count() == 1 && outSource.lock() == in)
+        out = std::make_shared<geo::Mesh>(std::move(*olderOut));
+    else
+        out = std::make_shared<geo::Mesh>(*in);
+    if (outSource.lock() != in)
+        lastOut.reset();
+    olderOut = std::move(lastOut);
+    lastOut = out;
+    outSource = in;
     size_t n = std::min<size_t>(in->pointCapacity(), w->pointCount());
     auto normals = out->cornerAttrs().get<glm::vec3>(geo::attr::kNormal);
+    const auto restNormals = in->cornerAttrs().get<glm::vec3>(geo::attr::kNormal);
     std::vector<glm::dmat3> pointRot(normals.empty() ? 0 : n, glm::dmat3(1.0));
 
     tbb::parallel_for(tbb::blocked_range<size_t>(0, n, 512), [&](const tbb::blocked_range<size_t>& r) {
@@ -225,6 +236,7 @@ void SkinClusterNode::compute(const EvalContext&)
             if (!in->pointValid(geo::Index(p)))
                 continue;
             glm::dvec3 rest = in->position(geo::Index(p));
+            out->setPosition(geo::Index(p), rest);
             double total = 0.0;
             glm::dvec3 moved;
             glm::dmat3 rot(1.0);
@@ -296,10 +308,11 @@ void SkinClusterNode::compute(const EvalContext&)
             {
                 if (!out->cornerValid(geo::Index(c)))
                     continue;
+                normals[c] = restNormals[c];
                 geo::Index p = out->cornerPoint(geo::Index(c));
                 if (p >= pointRot.size())
                     continue;
-                glm::dvec3 nn = glm::transpose(glm::inverse(pointRot[p])) * glm::dvec3(normals[c]);
+                glm::dvec3 nn = glm::transpose(glm::inverse(pointRot[p])) * glm::dvec3(restNormals[c]);
                 if (glm::length(nn) > 1e-12)
                     normals[c] = glm::vec3(glm::normalize(nn));
             }

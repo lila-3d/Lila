@@ -152,3 +152,13 @@ TEST_CASE("transfer attributes maps one uv set onto another")
     REQUIRE(uv0.size() == uv1.size());
     CHECK(std::equal(uv0.begin(), uv0.end(), uv1.begin()));
 }
+
+TEST_CASE("a string flag with choices rejects a value outside them")
+{
+    if (!ops::find("optionsProbe"))
+        registerProbe();
+    CHECK_NOTHROW(ops::execute("optionsProbe", {{"axis", "y"}}));
+    CHECK_THROWS_AS(ops::execute("optionsProbe", {{"axis", "w"}}), CommandError);
+    // Free-text and doc-listed flags take anything.
+    CHECK_NOTHROW(ops::execute("optionsProbe", {{"mode", "other"}, {"label", "anything"}}));
+}

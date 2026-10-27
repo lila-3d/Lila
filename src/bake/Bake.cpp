@@ -165,6 +165,72 @@ std::vector<PlannedMap> withPacks(std::vector<PlannedMap> maps, const ProjectSet
     return maps;
 }
 
+/** Host accumulators of a texture baked band by band (TextureBuffer::allocate, average maps): sum, weight and sample count. */
+constexpr size_t kHostBytesPerTexel = sizeof(glm::vec4) + sizeof(float) + sizeof(uint16_t);
+/** Host accumulators one batch may hold at once. */
+constexpr size_t kHostBatchBytes = 4ull << 30;
+/** Images being encoded and written at once; finishing waits for the writes when there is no room. */
+constexpr size_t kWriteBytes = 3ull << 30;
+
+template <class T> void release(std::vector<T>& v) { std::vector<T>().swap(v); }
+
+/**
+ * Groups textures (indices) into batches that bake and write one after another, so only one batch's accumulators exist
+ * at a time. A unit (a texture set, packs last) stays in one batch when it fits; one too big on its own is split.
+ * fits(device texels, host bytes) tells whether a batch's textures fit; a lone texture always forms a batch.
+ */
+std::vector<std::vector<size_t>> planBatches(const std::vector<std::vector<size_t>>& units, const std::function<std::pair<size_t, size_t>(size_t)>& cost,
+                                             const std::function<bool(size_t, size_t)>& fits)
+{
+    std::vector<std::vector<size_t>> batches;
+    size_t texels = 0, bytes = 0;
+    auto sum = [&](std::span<const size_t> items) {
+        std::pair<size_t, size_t> c{0, 0};
+        for (size_t i : items)
+        {
+            const auto [t, b] = cost(i);
+            c.first += t;
+            c.second += b;
+        }
+        return c;
+    };
+    auto fitsHere = [&](std::span<const size_t> items) {
+        const auto [t, b] = sum(items);
+        return !batches.empty() && fits(texels + t, bytes + b);
+    };
+    auto place = [&](std::span<const size_t> items) {
+        const auto [t, b] = sum(items);
+        batches.back().insert(batches.back().end(), items.begin(), items.end());
+        texels += t;
+        bytes += b;
+    };
+    auto next = [&] {
+        batches.emplace_back();
+        texels = bytes = 0;
+    };
+    for (const std::vector<size_t>& unit : units)
+    {
+        if (fitsHere(unit))
+        {
+            place(unit);
+            continue;
+        }
+        if (const auto [t, b] = sum(unit); fits(t, b))
+        {
+            next();
+            place(unit);
+            continue;
+        }
+        for (const size_t& i : unit)
+        {
+            if (batches.empty() || (!batches.back().empty() && !fitsHere({&i, 1})))
+                next();
+            place({&i, 1});
+        }
+    }
+    return batches;
+}
+
 /** Collects a band's exact-map votes: per texel, the most frequent colour per texture, ties to the lowest sub-sample. */
 void voteExact(std::span<const TexelSample> samples, std::span<const uint32_t> order, std::span<const glm::vec4> out,
                std::span<const uint8_t> valid, const std::vector<TextureBuffer*>& texOf)
@@ -350,6 +416,8 @@ BakeResult runBake(const BakeInputs& in, const ProjectSettings& ps, const BakeOp
     std::set<std::string> hiddenKeys;
     // Per pack texture, the texture each channel copies (null: a constant).
     std::map<TextureBuffer*, std::vector<const TextureBuffer*>> packSources;
+    // The planned map each texture was made for.
+    std::map<const TextureBuffer*, size_t> mapOf;
     auto textureFor = [&](const LowJob& j, int udim, const PlannedMap& m, const std::string& material) -> TextureBuffer* {
         const GroupInputs& gi = in.groups[j.group];
         const LowInput& low = gi.lows[j.low];
@@ -387,8 +455,7 @@ BakeResult runBake(const BakeInputs& in, const ProjectSettings& ps, const BakeOp
             if (t.ext == "psd")
                 layered[key] = opt.folder / paths::fromUtf8(layeredName(os.name, t, j.forceUdim));
             tex->samplesPerTexel = j.raster->samplesPerTexel();
-            if (!opt.dryRun && !onDevice[size_t(&m - maps.data())])
-                tex->allocate();
+            mapOf.emplace(tex.get(), size_t(&m - maps.data()));
             it = textures.emplace(key, std::move(tex)).first;
             textureOrder.push_back(key);
         }
@@ -403,7 +470,6 @@ BakeResult runBake(const BakeInputs& in, const ProjectSettings& ps, const BakeOp
 
     // texOf[job][udim index][map][material] for the band loop.
     std::vector<std::vector<std::vector<std::vector<TextureBuffer*>>>> lookup(lowJobs.size());
-    double totalBands = 0.0;
     for (size_t k = 0; k < lowJobs.size(); ++k)
     {
         const LowJob& j = lowJobs[k];
@@ -432,34 +498,111 @@ BakeResult runBake(const BakeInputs& in, const ProjectSettings& ps, const BakeOp
                         for (int c : maps[m].packSource)
                             src.push_back(c >= 0 ? lookup[k][u][size_t(c)][mat] : nullptr);
                     }
-            totalBands += double(j.raster->bandCount()) * double(int(bandMaps) + int(resident != nullptr));
         }
     }
 
-    // Too many textures to keep on the device at once: the whole bake goes band by band instead.
-    if (resident)
+    std::vector<TextureBuffer*> texAt;
+    std::map<const TextureBuffer*, size_t> indexOf;
+    for (const std::string& key : textureOrder)
     {
-        size_t texels = 0;
-        for (const auto& [key, tex] : textures)
-            if (tex->def->pack.is_null() && tex->sum.empty() && tex->exact.empty())
-                texels += tex->texelCount();
-        if (!resident->fits(texels))
+        indexOf.emplace(textures[key].get(), texAt.size());
+        texAt.push_back(textures[key].get());
+    }
+    auto isPack = [&](size_t i) { return !texAt[i]->def->pack.is_null(); };
+    auto deviceTexels = [&](size_t i) -> size_t { return resident && !isPack(i) && onDevice[mapOf.at(texAt[i])] ? texAt[i]->texelCount() : 0; };
+    auto hostBytes = [&](size_t i) -> size_t {
+        return !isPack(i) && !(resident && onDevice[mapOf.at(texAt[i])]) ? texAt[i]->texelCount() * kHostBytesPerTexel : 0;
+    };
+
+    // A texture too large for the device on its own: the whole bake goes band by band instead.
+    if (resident && !opt.dryRun)
+    {
+        bool fits = true;
+        for (size_t i = 0; i < texAt.size() && fits; ++i)
+            fits = !deviceTexels(i) || resident->fits(deviceTexels(i));
+        if (!fits)
         {
-            result.warnings.push_back("the textures don't fit in GPU memory at once; baking band by band");
+            result.warnings.push_back("a texture doesn't fit in GPU memory; baking band by band");
             resident.reset();
             std::ranges::fill(onDevice, uint8_t(0));
             bandMaps = std::ranges::any_of(maps, [](const PlannedMap& m) { return m.def->pack.is_null(); });
             rs.bandRows = std::max(1, backend.bandRows(os.width, os.supersampling));
-            totalBands = 0.0;
             for (LowJob& j : lowJobs)
-            {
                 j.raster = std::make_unique<TexelRaster>(in.groups[j.group].lows[j.low], rs);
-                totalBands += double(j.raster->bandCount()) * double(j.raster->udims().size());
-            }
-            for (const auto& [key, tex] : textures)
-                if (tex->def->pack.is_null() && tex->sum.empty() && tex->exact.empty())
-                    tex->allocate();
         }
+    }
+
+    // Texture sets: the maps of one low material slot, unioned over every slot that writes them.
+    std::vector<size_t> parent(texAt.size());
+    std::iota(parent.begin(), parent.end(), size_t(0));
+    auto root = [&](size_t i) {
+        while (parent[i] != i)
+            i = parent[i] = parent[parent[i]];
+        return i;
+    };
+    for (const auto& perJob : lookup)
+        for (const auto& perUdim : perJob)
+            for (size_t mat = 0; !perUdim.empty() && mat < perUdim[0].size(); ++mat)
+            {
+                size_t first = SIZE_MAX;
+                for (const auto& perMap : perUdim)
+                    if (perMap[mat])
+                    {
+                        const size_t r = root(indexOf.at(perMap[mat]));
+                        if (first == SIZE_MAX)
+                            first = r;
+                        else if (r != first)
+                            parent[r] = first;
+                    }
+            }
+    std::vector<std::vector<size_t>> units;
+    {
+        std::map<size_t, size_t> unitOf;
+        for (size_t i = 0; i < texAt.size(); ++i)
+        {
+            auto [it, fresh] = unitOf.try_emplace(root(i), units.size());
+            if (fresh)
+                units.emplace_back();
+            units[it->second].push_back(i);
+        }
+        // Packs after their sources, which they copy once finished.
+        for (std::vector<size_t>& unit : units)
+            std::ranges::stable_partition(unit, [&](size_t i) { return !isPack(i); });
+    }
+    const std::vector<std::vector<size_t>> batches = planBatches(
+        units, [&](size_t i) { return std::pair(deviceTexels(i), hostBytes(i)); },
+        [&](size_t texels, size_t bytes) { return (!texels || !resident || resident->fits(texels)) && bytes <= kHostBatchBytes; });
+    if (batches.size() > 1)
+        log::info("bake: {} textures in {} batches", texAt.size(), batches.size());
+
+    // Per batch, the textures each job's tiles write (null outside the batch), and whether a tile has work on the device
+    // or in bands.
+    auto batchLookup = [&](const std::vector<uint8_t>& inBatch, size_t k, size_t u) {
+        std::vector<std::vector<TextureBuffer*>> t = lookup[k][u];
+        for (std::vector<TextureBuffer*>& perMap : t)
+            for (TextureBuffer*& tex : perMap)
+                if (tex && !inBatch[indexOf.at(tex)])
+                    tex = nullptr;
+        return t;
+    };
+    auto tileWork = [&](const std::vector<std::vector<TextureBuffer*>>& t, bool device) {
+        for (size_t m = 0; m < maps.size(); ++m)
+            if (maps[m].def->pack.is_null() && bool(onDevice[m]) == device && std::ranges::any_of(t[m], [](const TextureBuffer* x) { return x != nullptr; }))
+                return true;
+        return false;
+    };
+    double totalBands = 0.0;
+    for (const std::vector<size_t>& batch : batches)
+    {
+        std::vector<uint8_t> inBatch(texAt.size(), 0);
+        for (size_t i : batch)
+            inBatch[i] = 1;
+        for (size_t k = 0; k < lowJobs.size(); ++k)
+            for (size_t u = 0; u < lookup[k].size(); ++u)
+            {
+                const auto t = batchLookup(inBatch, k, u);
+                totalBands += double(lowJobs[k].raster->bandCount()) * double(int(resident && tileWork(t, true)) + int(bandMaps && tileWork(t, false)));
+            }
     }
 
     // A texture as the bake result lists it.
@@ -516,155 +659,6 @@ BakeResult runBake(const BakeInputs& in, const ProjectSettings& ps, const BakeOp
             }
         ThreadTime tRaster, tTrace, tAccum;
         std::vector<ThreadTime> tMap(maps.size());
-        const auto bandsStarted = Clock::now();
-        if (resident)
-        {
-            scope.setStatus("Baking on the GPU");
-            for (size_t k = 0; k < lowJobs.size(); ++k)
-            {
-                const LowJob& j = lowJobs[k];
-                const GroupInputs& gi = in.groups[j.group];
-                for (size_t u = 0; u < j.raster->udims().size(); ++u)
-                {
-                    ResidentTile tile;
-                    tile.group = j.group;
-                    tile.low = j.low;
-                    tile.udim = j.raster->udims()[u];
-                    tile.raster = j.raster.get();
-                    tile.cage = {gi.frontal, gi.rear, float(gi.settings.cageOffset), float(gi.settings.skew)};
-                    for (size_t m = 0; m < maps.size(); ++m)
-                        if (onDevice[m])
-                        {
-                            tile.targets.resize(std::max(tile.targets.size(), residentOf[m] + 1));
-                            tile.targets[residentOf[m]] = lookup[k][u][m];
-                        }
-                    tile.onBand = [&](int rows) {
-                        scope.checkCancel();
-                        scope.step(double(rows) / double(rs.bandRows));
-                    };
-                    tile.cancelled = [&scope] { return scope.cancelled(); };
-                    const ResidentStats r = resident->bakeTile(tile);
-                    stats[j.group].samples += r.samples;
-                    stats[j.group].hits += r.hits;
-                    stats[j.group].misses += r.samples - r.hits;
-                    stats[j.group].backfaces += r.backfaces;
-                }
-            }
-            addTiming(timings, "gpu", since(bandsStarted));
-        }
-        for (size_t k = 0; k < lowJobs.size() && bandMaps; ++k)
-        {
-            const LowJob& j = lowJobs[k];
-            const GroupInputs& gi = in.groups[j.group];
-            const LowInput& low = gi.lows[j.low];
-            const CageParams cage{gi.frontal, gi.rear, float(gi.settings.cageOffset), float(gi.settings.skew)};
-            std::atomic<uint64_t> nSamples{0}, nHits{0}, nMisses{0}, nBack{0};
-            const std::shared_ptr<progress::Node> parent = progress::current();
-            for (size_t u = 0; u < j.raster->udims().size(); ++u)
-            {
-                const int udim = j.raster->udims()[u];
-                const auto& texOf = lookup[k][u];
-                tbb::parallel_for(size_t(0), j.raster->bandCount(), [&](size_t band) {
-                    progress::Adopt adopt(parent);
-                    scope.checkCancel();
-                    std::vector<TexelSample> samples;
-                    auto t0 = Clock::now();
-                    j.raster->band(udim, band, cage, samples);
-                    tRaster.add(t0);
-                    if (samples.empty())
-                    {
-                        scope.step();
-                        return;
-                    }
-                    for (TexelSample& s : samples)
-                        s.low = uint32_t(j.low);
-                    std::vector<HitRecord> hits(samples.size());
-                    t0 = Clock::now();
-                    backend.traceProjection(j.group, samples, hits);
-                    tTrace.add(t0);
-                    uint64_t h = 0, b = 0;
-                    for (const HitRecord& r : hits)
-                    {
-                        h += (r.flags & kHitValid) ? 1 : 0;
-                        b += (r.flags & kHitBackface) ? 1 : 0;
-                    }
-                    nSamples += samples.size();
-                    nHits += h;
-                    nMisses += samples.size() - h;
-                    nBack += b;
-
-                    std::vector<uint32_t> order;
-                    std::vector<glm::vec4> out(samples.size());
-                    std::vector<uint8_t> valid(samples.size());
-                    std::vector<TextureBuffer*> sampleTex(samples.size());
-                    for (size_t m = 0; m < maps.size(); ++m)
-                    {
-                        if (!maps[m].def->pack.is_null() || onDevice[m])
-                            continue;
-                        const MapContext ctx{maps[m].settings, in, gi, j.group, backend.tracer(), os.width, os.height, prepared[m].get()};
-                        std::fill(valid.begin(), valid.end(), uint8_t(0));
-                        t0 = Clock::now();
-                        backend.shade(*maps[m].def, ctx, samples, hits, out, valid);
-                        tMap[m].add(t0);
-                        t0 = Clock::now();
-                        for (size_t i = 0; i < samples.size(); ++i)
-                        {
-                            const uint32_t mat = low.soup.materials[samples[i].lowTriangle];
-                            sampleTex[i] = mat < texOf[m].size() ? texOf[m][mat] : nullptr;
-                        }
-                        if (maps[m].def->resolve == Resolve::Exact)
-                        {
-                            if (order.empty())
-                            {
-                                order.resize(samples.size());
-                                std::iota(order.begin(), order.end(), 0u);
-                                std::ranges::stable_sort(order, [&](uint32_t a, uint32_t c) {
-                                    return samples[a].texel != samples[c].texel ? samples[a].texel < samples[c].texel : samples[a].sub < samples[c].sub;
-                                });
-                            }
-                            voteExact(samples, order, out, valid, sampleTex);
-                            tAccum.add(t0);
-                            continue;
-                        }
-                        for (size_t i = 0; i < samples.size(); ++i)
-                        {
-                            TextureBuffer* tex = sampleTex[i];
-                            if (!tex)
-                                continue;
-                            const uint32_t texel = samples[i].texel;
-                            ++tex->samples[texel];
-                            if (valid[i])
-                            {
-                                tex->sum[texel] += out[i];
-                                tex->weight[texel] += 1.0f;
-                            }
-                        }
-                        tAccum.add(t0);
-                    }
-                    backend.endBand(samples);
-                    scope.step();
-                });
-            }
-            if (!resident)
-            {
-                stats[j.group].samples += nSamples;
-                stats[j.group].hits += nHits;
-                stats[j.group].misses += nMisses;
-                stats[j.group].backfaces += nBack;
-            }
-        }
-
-        if (bandMaps)
-        {
-            addTiming(timings, "bands", since(bandsStarted));
-            addTiming(timings, "raster", tRaster.seconds());
-            addTiming(timings, "trace", tTrace.seconds());
-            addTiming(timings, "accumulate", tAccum.seconds());
-        }
-        for (size_t m = 0; m < maps.size() && bandMaps; ++m)
-            if (!onDevice[m] && maps[m].def->pack.is_null())
-                addTiming(timings, "map:" + maps[m].def->id, tMap[m].seconds());
-        scope.setStatus("Writing textures");
         if (opt.prepareWrite && !opt.keepTexture)
         {
             std::vector<fs::path> files;
@@ -674,35 +668,224 @@ BakeResult runBake(const BakeInputs& in, const ProjectSettings& ps, const BakeOp
             opt.prepareWrite(files);
         }
         TextureWriter writer(os, opt.inputHash);
-        // Packs go last: they copy other textures once those are finalized and dilated.
-        std::vector<std::string> writeOrder;
-        for (int pass = 0; pass < 2; ++pass)
-            for (const std::string& key : textureOrder)
-                if (textures[key]->def->pack.is_null() == (pass == 0))
-                    writeOrder.push_back(key);
         // Textures finish one at a time (the GPU's work is serial anyway) while finished ones encode and write on workers.
         tbb::task_group writes;
         std::mutex writeMutex;
+        std::atomic<size_t> writeBytes{0};
         std::exception_ptr writeError;
         ThreadTime tWrite;
-        auto finishAll = [&] {
-            for (const std::string& key : writeOrder)
+        double gpuSeconds = 0.0, bandSeconds = 0.0;
+        // A texture's values are dropped once written, except a pack's sources: those wait for every pack reading them.
+        std::vector<int> packReaders(texAt.size(), 0);
+        for (const auto& [pack, sources] : packSources)
+            for (const TextureBuffer* src : sources)
+                if (src)
+                    ++packReaders[indexOf.at(src)];
+        const std::vector<int> readsForPacks = packReaders;
+        std::vector<size_t> unreadSources;
+        // A tile's samples count toward the stats in the first batch that bakes it.
+        std::vector<std::vector<uint8_t>> counted(lowJobs.size());
+        for (size_t k = 0; k < lowJobs.size(); ++k)
+            counted[k].assign(lookup[k].size(), 0);
+        auto countTile = [&](size_t k, size_t u, uint64_t samples, uint64_t hits, uint64_t backfaces) {
+            if (counted[k][u])
+                return;
+            counted[k][u] = 1;
+            GroupStats& s = stats[lowJobs[k].group];
+            s.samples += samples;
+            s.hits += hits;
+            s.misses += samples - hits;
+            s.backfaces += backfaces;
+        };
+
+        auto bakeBatch = [&](const std::vector<uint8_t>& inBatch) {
+            if (resident)
+            {
+                const auto t0 = Clock::now();
+                scope.setStatus("Baking on the GPU");
+                for (size_t k = 0; k < lowJobs.size(); ++k)
+                {
+                    const LowJob& j = lowJobs[k];
+                    const GroupInputs& gi = in.groups[j.group];
+                    for (size_t u = 0; u < j.raster->udims().size(); ++u)
+                    {
+                        const auto texOf = batchLookup(inBatch, k, u);
+                        if (!tileWork(texOf, true))
+                            continue;
+                        ResidentTile tile;
+                        tile.group = j.group;
+                        tile.low = j.low;
+                        tile.udim = j.raster->udims()[u];
+                        tile.raster = j.raster.get();
+                        tile.cage = {gi.frontal, gi.rear, float(gi.settings.cageOffset), float(gi.settings.skew)};
+                        for (size_t m = 0; m < maps.size(); ++m)
+                            if (onDevice[m])
+                            {
+                                tile.targets.resize(std::max(tile.targets.size(), residentOf[m] + 1));
+                                tile.targets[residentOf[m]] = texOf[m];
+                            }
+                        tile.onBand = [&](int rows) {
+                            scope.checkCancel();
+                            scope.step(double(rows) / double(rs.bandRows));
+                        };
+                        tile.cancelled = [&scope] { return scope.cancelled(); };
+                        const ResidentStats r = resident->bakeTile(tile);
+                        countTile(k, u, r.samples, r.hits, r.backfaces);
+                    }
+                }
+                gpuSeconds += since(t0);
+            }
+            const auto bandsStarted = Clock::now();
+            for (size_t k = 0; k < lowJobs.size() && bandMaps; ++k)
+            {
+                const LowJob& j = lowJobs[k];
+                const GroupInputs& gi = in.groups[j.group];
+                const LowInput& low = gi.lows[j.low];
+                const CageParams cage{gi.frontal, gi.rear, float(gi.settings.cageOffset), float(gi.settings.skew)};
+                const std::shared_ptr<progress::Node> parent = progress::current();
+                for (size_t u = 0; u < j.raster->udims().size(); ++u)
+                {
+                    const int udim = j.raster->udims()[u];
+                    const auto texOf = batchLookup(inBatch, k, u);
+                    if (!tileWork(texOf, false))
+                        continue;
+                    std::atomic<uint64_t> nSamples{0}, nHits{0}, nBack{0};
+                    tbb::parallel_for(size_t(0), j.raster->bandCount(), [&](size_t band) {
+                        progress::Adopt adopt(parent);
+                        scope.checkCancel();
+                        std::vector<TexelSample> samples;
+                        auto t0 = Clock::now();
+                        j.raster->band(udim, band, cage, samples);
+                        tRaster.add(t0);
+                        if (samples.empty())
+                        {
+                            scope.step();
+                            return;
+                        }
+                        for (TexelSample& s : samples)
+                            s.low = uint32_t(j.low);
+                        std::vector<HitRecord> hits(samples.size());
+                        t0 = Clock::now();
+                        backend.traceProjection(j.group, samples, hits);
+                        tTrace.add(t0);
+                        uint64_t h = 0, b = 0;
+                        for (const HitRecord& r : hits)
+                        {
+                            h += (r.flags & kHitValid) ? 1 : 0;
+                            b += (r.flags & kHitBackface) ? 1 : 0;
+                        }
+                        nSamples += samples.size();
+                        nHits += h;
+                        nBack += b;
+
+                        std::vector<uint32_t> order;
+                        std::vector<glm::vec4> out(samples.size());
+                        std::vector<uint8_t> valid(samples.size());
+                        std::vector<TextureBuffer*> sampleTex(samples.size());
+                        for (size_t m = 0; m < maps.size(); ++m)
+                        {
+                            if (!maps[m].def->pack.is_null() || onDevice[m] || std::ranges::none_of(texOf[m], [](const TextureBuffer* x) { return x != nullptr; }))
+                                continue;
+                            const MapContext ctx{maps[m].settings, in, gi, j.group, backend.tracer(), os.width, os.height, prepared[m].get()};
+                            std::fill(valid.begin(), valid.end(), uint8_t(0));
+                            t0 = Clock::now();
+                            backend.shade(*maps[m].def, ctx, samples, hits, out, valid);
+                            tMap[m].add(t0);
+                            t0 = Clock::now();
+                            for (size_t i = 0; i < samples.size(); ++i)
+                            {
+                                const uint32_t mat = low.soup.materials[samples[i].lowTriangle];
+                                sampleTex[i] = mat < texOf[m].size() ? texOf[m][mat] : nullptr;
+                            }
+                            if (maps[m].def->resolve == Resolve::Exact)
+                            {
+                                if (order.empty())
+                                {
+                                    order.resize(samples.size());
+                                    std::iota(order.begin(), order.end(), 0u);
+                                    std::ranges::stable_sort(order, [&](uint32_t a, uint32_t c) {
+                                        return samples[a].texel != samples[c].texel ? samples[a].texel < samples[c].texel : samples[a].sub < samples[c].sub;
+                                    });
+                                }
+                                voteExact(samples, order, out, valid, sampleTex);
+                                tAccum.add(t0);
+                                continue;
+                            }
+                            for (size_t i = 0; i < samples.size(); ++i)
+                            {
+                                TextureBuffer* tex = sampleTex[i];
+                                if (!tex)
+                                    continue;
+                                const uint32_t texel = samples[i].texel;
+                                ++tex->samples[texel];
+                                if (valid[i])
+                                {
+                                    tex->sum[texel] += out[i];
+                                    tex->weight[texel] += 1.0f;
+                                }
+                            }
+                            tAccum.add(t0);
+                        }
+                        backend.endBand(samples);
+                        scope.step();
+                    });
+                    if (!resident)
+                        countTile(k, u, nSamples, nHits, nBack);
+                }
+            }
+            if (bandMaps)
+                bandSeconds += since(bandsStarted);
+        };
+
+        // Written textures hand their value storage on to the next one: fresh pages cost more to fault in than to fill.
+        std::vector<std::vector<glm::vec4>> spareValues;
+        auto dropValues = [&](TextureBuffer& tex) {
+            {
+                std::scoped_lock lock(writeMutex);
+                if (spareValues.size() < 2 && tex.value.size() == size_t(os.width) * size_t(os.height))
+                    spareValues.push_back(std::move(tex.value));
+            }
+            release(tex.value);
+            release(tex.covered);
+        };
+        auto reuseValues = [&](TextureBuffer& tex) {
+            std::scoped_lock lock(writeMutex);
+            if (!spareValues.empty() && tex.value.empty())
+            {
+                tex.value = std::move(spareValues.back());
+                spareValues.pop_back();
+            }
+        };
+        auto finishBatch = [&](const std::vector<size_t>& batch) {
+            scope.setStatus("Writing textures");
+            for (size_t i : batch)
             {
                 scope.checkCancel();
-                TextureBuffer& tex = *textures[key];
+                TextureBuffer& tex = *texAt[i];
+                const std::string& key = textureOrder[i];
                 if (!tex.def->pack.is_null())
                 {
                     auto pm = std::ranges::find_if(maps, [&](const PlannedMap& m) { return m.def == tex.def && m.settings.options == tex.settings.options; });
                     composePack(tex, pm != maps.end() ? pm->pack : std::vector<PackChannel>(4), packSources[&tex], tex.meta);
+                    for (const TextureBuffer* src : packSources[&tex])
+                        if (src && --packReaders[indexOf.at(src)] == 0)
+                            unreadSources.push_back(indexOf.at(src));
                 }
                 else
                 {
-                    auto pm = std::ranges::find_if(maps, [&](const PlannedMap& m) { return m.def == tex.def && m.settings.options == tex.settings.options; });
-                    const bool device = resident && pm != maps.end() && onDevice[size_t(pm - maps.begin())];
+                    const bool device = resident && onDevice[mapOf.at(&tex)];
                     auto t0 = Clock::now();
+                    reuseValues(tex);
                     const bool done = device ? resident->finish(tex, os.padding) : false;
                     if (!device)
+                    {
                         tex.resolve();
+                        release(tex.sum);
+                        release(tex.weight);
+                        release(tex.samples);
+                        release(tex.exact);
+                        release(tex.votes);
+                    }
                     addTiming(timings, device ? "finish" : "resolve", since(t0));
                     if (!done)
                     {
@@ -716,10 +899,13 @@ BakeResult runBake(const BakeInputs& in, const ProjectSettings& ps, const BakeOp
                         addTiming(timings, "dilate", since(t0));
                     }
                 }
+                const bool keep = readsForPacks[i] > 0;
                 if (hiddenKeys.contains(key) || opt.keepTexture)
                 {
                     if (opt.keepTexture && !hiddenKeys.contains(key))
                         opt.keepTexture(tex);
+                    if (!keep)
+                        dropValues(tex);
                     scope.step();
                     continue;
                 }
@@ -729,19 +915,28 @@ BakeResult runBake(const BakeInputs& in, const ProjectSettings& ps, const BakeOp
                 {
                     image::Image img{tex.width, tex.height, std::vector<float>(tex.texelCount() * 4)};
                     std::memcpy(img.rgba.data(), tex.value.data(), tex.texelCount() * sizeof(glm::vec4));
+                    if (!keep)
+                        dropValues(tex);
                     writer.add(tex, std::move(img), into);
                     scope.step();
                     continue;
                 }
-                writes.run([&, texPtr = &tex, into, key] {
+                // Waiting helps run the writes, so this cannot stall even with a single worker.
+                const size_t bytes = tex.texelCount() * sizeof(glm::vec4);
+                if (writeBytes + bytes > kWriteBytes)
+                    writes.wait();
+                writeBytes += bytes;
+                auto write = [&, texPtr = &tex, into, key, keep, bytes] {
                     const auto tw = Clock::now();
                     try
                     {
-                        const TextureBuffer& t = *texPtr;
+                        TextureBuffer& t = *texPtr;
                         std::error_code ec;
                         fs::create_directories(t.file.parent_path(), ec);
                         image::Image img{t.width, t.height, std::vector<float>(t.texelCount() * 4)};
                         std::memcpy(img.rgba.data(), t.value.data(), t.texelCount() * sizeof(glm::vec4));
+                        if (!keep)
+                            dropValues(t);
                         writer.add(t, std::move(img), into);
                         if (opt.onWritten)
                             opt.onWritten(outputOf(key));
@@ -753,19 +948,53 @@ BakeResult runBake(const BakeInputs& in, const ProjectSettings& ps, const BakeOp
                             writeError = std::current_exception();
                     }
                     tWrite.add(tw);
+                    writeBytes -= bytes;
                     scope.step();
-                });
+                };
+                writes.run(std::move(write));
+            }
+            // Sources every pack has read; their own writes may still be copying them.
+            if (!unreadSources.empty())
+            {
+                writes.wait();
+                for (size_t i : unreadSources)
+                    dropValues(*texAt[i]);
+                unreadSources.clear();
             }
         };
+
         try
         {
-            finishAll();
+            for (const std::vector<size_t>& batch : batches)
+            {
+                std::vector<uint8_t> inBatch(texAt.size(), 0);
+                for (size_t i : batch)
+                {
+                    inBatch[i] = 1;
+                    if (hostBytes(i))
+                        texAt[i]->allocate();
+                }
+                bakeBatch(inBatch);
+                finishBatch(batch);
+            }
         }
         catch (...)
         {
             writes.wait();
             throw;
         }
+        if (resident)
+            addTiming(timings, "gpu", gpuSeconds);
+        if (bandMaps)
+        {
+            addTiming(timings, "bands", bandSeconds);
+            addTiming(timings, "raster", tRaster.seconds());
+            addTiming(timings, "trace", tTrace.seconds());
+            addTiming(timings, "accumulate", tAccum.seconds());
+        }
+        for (size_t m = 0; m < maps.size() && bandMaps; ++m)
+            if (!onDevice[m] && maps[m].def->pack.is_null())
+                addTiming(timings, "map:" + maps[m].def->id, tMap[m].seconds());
         const auto tf = Clock::now();
         writes.wait();
         addTiming(timings, "writeWait", since(tf));

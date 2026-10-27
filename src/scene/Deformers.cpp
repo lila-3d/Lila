@@ -1305,7 +1305,7 @@ void registerCommands()
         .doc = "Deform meshes by a closed cage mesh around them (mean value coordinates). Give the meshes first and the cage last; "
                "then edit the cage's points. Returns the deformers.",
         .positionalDoc = "meshes..., cage",
-        .flags = {{"coordinates", "", T::String, nullptr, "meanValue (default) | green | somigliana", {"meanValue", "green", "somigliana"}},
+        .flags = {{"coordinates", "", T::String, nullptr, "meanValue (default) | green | somigliana | harmonic", {"meanValue", "green", "somigliana", "harmonic"}},
                   {"name", "", T::String, nullptr, "Name for the deformer."}},
         .run = driverCommand("cage", "cage", "Cage"),
     });

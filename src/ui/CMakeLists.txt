@@ -73,6 +73,7 @@ lila_module(lila_ui UI
     MaterialDraw.cpp MaterialDraw.h
     MaterialEditor.cpp MaterialEditor.h
     MeasureTool.cpp MeasureTool.h
+    DebugDrawUi.cpp DebugDrawUi.h
     PlacePrimitive.cpp PlacePrimitive.h
     MeshCache.cpp MeshCache.h
     SurfaceSnap.cpp SurfaceSnap.h
@@ -81,7 +82,7 @@ lila_module(lila_ui UI
     ModelingToolkit.cpp ModelingToolkit.h
     SoftSelectPanel.cpp SoftSelectPanel.h
     ModifierStack.cpp ModifierStack.h
-    NodeEditor.cpp NodeEditor.h GraphBackend.cpp GraphBackend.h GnGraphBackend.cpp
+    NodeEditor.cpp NodeEditor.h NodeCanvas.cpp NodeCanvas.h NodeCanvasLayout.cpp GraphBackend.cpp GraphBackend.h GnGraphBackend.cpp
     TexGraphBackend.cpp TexParams.cpp TexParams.h TexPreview.cpp TexPreview.h Texture2DView.cpp TextureGraphUi.h TextureSetPanel.cpp TextureSetPanel.h
     Overlay.cpp Overlay.h
     CursorBadges.cpp CursorBadges.h
@@ -141,6 +142,7 @@ lila_module(lila_ui UI
     ViewportDisplay.cpp ViewportDisplay.h
     ViewportHud.cpp ViewportHud.h
     LodDisplay.cpp LodDisplay.h
+    ViewportContext.cpp ViewportContext.h
     ViewportLayout.cpp ViewportLayout.h
     ViewportToolbar.cpp ViewportToolbar.h
     DisplayAids.cpp DisplayAids.h
@@ -148,7 +150,7 @@ lila_module(lila_ui UI
     ToolBox.cpp ToolBox.h
     VertexPaintTool.cpp VertexPaintTool.h
     PaintSelect.cpp PaintSelect.h
-    ViewportTool.cpp ViewportTool.h StepHistory.h
+    ViewportTool.cpp ViewportTool.h StepHistory.h SimPreview.cpp SimPreview.h
     ViewportWidget.cpp ViewportWidget.h)
 
 set_target_properties(lila_ui PROPERTIES AUTOMOC ON)

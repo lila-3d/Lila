@@ -5,7 +5,9 @@ add_executable(lila_gn_tests
     test_gn_groups.cpp
     test_gn_sim.cpp
     test_gn_voronoi.cpp
-    test_nodes.cpp)
+    test_nodes.cpp
+    test_routing.cpp
+    test_ties.cpp)
 target_link_libraries(lila_gn_tests PRIVATE LilaScene doctest::doctest)
 add_test(NAME lila_gn_tests COMMAND lila_gn_tests)
 

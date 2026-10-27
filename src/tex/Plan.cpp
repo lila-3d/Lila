@@ -199,6 +199,7 @@ private:
             throw std::invalid_argument(s.prefix + n.name + ": groups nest too deep (a group using itself?)");
         auto child = std::make_unique<Scope>();
         child->owned = std::make_unique<Graph>(Graph::fromJson(ports.graph));
+        resolveRouting(*child->owned);
         child->g = child->owned.get();
         child->prefix = s.prefix + n.name + "/";
         child->depth = s.depth + 1;
@@ -1114,8 +1115,10 @@ std::vector<OutputRequest> materialRequests(const Graph& g, const std::vector<st
 
 Plan buildPlan(const Graph& g, const PlanRequest& request)
 {
+    Graph resolved = g;
+    resolveRouting(resolved);
     Builder b(request);
-    return b.run(g);
+    return b.run(resolved);
 }
 
 json Plan::summary() const

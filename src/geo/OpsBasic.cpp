@@ -126,6 +126,38 @@ FaceCopy copyFace(const Mesh& mesh, Index f)
     });
     return fc;
 }
+
+bool polygonIsSimple(std::span<const glm::dvec2> p)
+{
+    const size_t n = p.size();
+    auto cross = [](const glm::dvec2& a, const glm::dvec2& b) { return a.x * b.y - a.y * b.x; };
+    for (size_t i = 0; i < n; ++i)
+    {
+        const glm::dvec2 a = p[i], b = p[(i + 1) % n];
+        if (glm::distance(a, b) <= 0.0)
+            return false;
+        for (size_t j = i + 2; j < n; ++j)
+        {
+            if (i == 0 && j == n - 1)
+                continue;
+            const glm::dvec2 c = p[j], d = p[(j + 1) % n];
+            const double d1 = cross(b - a, c - a), d2 = cross(b - a, d - a);
+            const double d3 = cross(d - c, a - c), d4 = cross(d - c, b - c);
+            if (d1 == 0 && d2 == 0)
+            {
+                // Collinear: only overlap counts.
+                const glm::dvec2 dir = b - a;
+                const double t0 = glm::dot(c - a, dir), t1 = glm::dot(d - a, dir), len = glm::dot(dir, dir);
+                if (std::max(t0, t1) > 0.0 && std::min(t0, t1) < len)
+                    return false;
+                continue;
+            }
+            if (((d1 > 0) != (d2 > 0) || d1 == 0 || d2 == 0) && ((d3 > 0) != (d4 > 0) || d3 == 0 || d4 == 0))
+                return false;
+        }
+    }
+    return true;
+}
 } // namespace detail
 
 using namespace detail;
@@ -477,6 +509,11 @@ std::vector<Index> fillHoles(Mesh& mesh, std::span<const Index> edges)
 
 void weldPoints(Mesh& mesh, std::span<const Index> target)
 {
+    detail::weldPoints(mesh, target, nullptr);
+}
+
+void detail::weldPoints(Mesh& mesh, std::span<const Index> target, std::unordered_map<Index, Index>* rebuilt)
+{
     LILA_ZONE();
 
     auto mapped = [&](Index p) { return p < target.size() && target[p] != kInvalid ? target[p] : p; };
@@ -523,9 +560,10 @@ void weldPoints(Mesh& mesh, std::span<const Index> target)
             corners.pop_back();
             srcEdges.pop_back();
         }
-        if (pts.size() < 3 || findFaceWithPoints(mesh, pts) != kInvalid)
-            continue;
-        addFaceFrom(mesh, pts, fc.face, corners, srcEdges);
+        const Index nf = pts.size() < 3 || findFaceWithPoints(mesh, pts) != kInvalid ? kInvalid
+                                                                                    : addFaceFrom(mesh, pts, fc.face, corners, srcEdges);
+        if (rebuilt)
+            (*rebuilt)[fc.face] = nf;
     }
     std::vector<Index> survivors;
     for (Index p : moving)

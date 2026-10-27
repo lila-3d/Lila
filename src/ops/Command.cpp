@@ -5,6 +5,7 @@
 #include "core/MainQueue.h"
 #include "core/Profile.h"
 
+#include <algorithm>
 #include <cassert>
 #include <format>
 #include <map>
@@ -80,6 +81,13 @@ Args normalize(const CommandDef& def, const json& call)
             throw CommandError(def.name + ": unknown flag '" + key + "'");
         if (!v.is_null() && !matches(flag->type, v))
             throw CommandError(def.name + ": bad value for '" + flag->name + "': " + v.dump());
+        if (v.is_string() && !flag->choices.empty() && std::ranges::find(flag->choices, v.get<std::string>()) == flag->choices.end())
+        {
+            std::string allowed;
+            for (const std::string& c : flag->choices)
+                allowed += (allowed.empty() ? "" : ", ") + c;
+            throw CommandError(def.name + ": bad value for '" + flag->name + "': " + v.dump() + " (one of " + allowed + ")");
+        }
         a.flags[flag->name] = coerce(flag->type, v);
     }
 

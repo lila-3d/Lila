@@ -143,8 +143,9 @@ struct GpuRasterPush
     float rear = 0.0f;
     float offset = 1.0f;
     float skew = 0.0f;
+    uint64_t blocks = 0;
 };
-static_assert(sizeof(GpuRasterPush) == 96, "matches RasterPush in bake_raster.slang");
+static_assert(sizeof(GpuRasterPush) == 104, "matches RasterPush in bake_raster.slang");
 
 /** Mirrors ImagePush in shaders/bake_image.slang. */
 struct GpuImagePush
@@ -178,8 +179,9 @@ struct GpuImagePush
     int32_t padding = 0;
     uint32_t prefix = 0;
     uint32_t shift = 0;
+    uint64_t blocks = 0;
 };
-static_assert(offsetof(GpuImagePush, background) == 112 && sizeof(GpuImagePush) == 208, "matches ImagePush in bake_image.slang");
+static_assert(offsetof(GpuImagePush, background) == 112 && sizeof(GpuImagePush) == 216, "matches ImagePush in bake_image.slang");
 
 /** Mirrors LowInfo in shaders/bake_common.slang. */
 struct GpuLowInfo
@@ -1850,8 +1852,10 @@ public:
         for (uint32_t h = 0; h < props->memoryHeapCount; ++h)
             if (props->memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
                 free = std::max(free, budgets[h].budget > budgets[h].usage ? budgets[h].budget - budgets[h].usage : 0);
-        // Accumulators and votes per texel, plus room for a band and one texture's dilation and read back.
-        const uint64_t need = uint64_t(texels) * 32 + (256ull << 20);
+        // Accumulators and votes per texel, the band buffers (bandRows' share until they exist), and room for one
+        // texture's dilation and read back.
+        const uint64_t band = mSlotCap ? mSlotCap * kSlotBytes : std::clamp<uint64_t>(free / 4, 64ull << 20, 1536ull << 20);
+        const uint64_t need = uint64_t(texels) * 32 + band + (256ull << 20);
         return need < free * 8 / 10;
     }
 
@@ -1915,7 +1919,7 @@ private:
     GpuTextureRef loadTexture(const std::string& path);
     /** Uploads the highs' positions and uvs (normal and material maps read them) and rewrites the high table. */
     void needHighSurfaces(size_t group, ResidentUploads& up);
-    void reserveBand(size_t slots, size_t items);
+    void reserveBand(size_t slots, size_t items, size_t blocks);
     /** Keeps a host-visible table alive for the bake and returns its address. */
     uint64_t table(const void* data, size_t bytes);
     /** Frees everything made for the inputs; keepTextures keeps the textures' accumulators. */
@@ -1937,6 +1941,11 @@ private:
     std::vector<GpuBuffer> mLowTables;
     std::map<std::pair<size_t, size_t>, Kernel> mKernels;
     std::map<const bake::TextureBuffer*, DevTex> mTex;
+    /**
+     * Accumulators of finished textures, kept for the next ones of the same size: allocating and freeing them costs more
+     * than clearing. A texture that matches none frees one instead, so the spares never add to what a batch planned.
+     */
+    std::vector<DevTex> mSpareTex;
     uint32_t mNextTexId = 1;
     std::map<std::string, GpuTextureRef> mTextures;
     std::map<size_t, uint64_t> mNormalMapTables, mCurvatureTables;
@@ -1945,8 +1954,8 @@ private:
     std::vector<GpuBuffer> mOwned;
 
     // Band buffers, grown as needed.
-    GpuBuffer mClaim, mSamples, mHits, mOutBuf, mValid, mItems, mStats, mStatsRead;
-    size_t mSlotCap = 0, mItemCap = 0;
+    GpuBuffer mClaim, mSamples, mHits, mOutBuf, mValid, mItems, mBlocks, mStats, mStatsRead;
+    size_t mSlotCap = 0, mItemCap = 0, mBlockCap = 0;
     // Finish buffers.
     GpuBuffer mSeeds[2], mScratch, mReduce, mReduceRead, mReadback;
     size_t mTexelCap = 0;
@@ -2122,7 +2131,11 @@ void GpuResident::release(bool keepTextures)
         for (GpuBuffer* b : {&t.value, &t.weight, &t.count, &t.exact, &t.votes})
             destroy(mVk, *b);
     mTex.clear();
-    for (GpuBuffer* b : {&mClaim, &mSamples, &mHits, &mOutBuf, &mValid, &mItems, &mStats, &mStatsRead, &mSeeds[0], &mSeeds[1], &mScratch, &mReduce,
+    for (DevTex& t : mSpareTex)
+        for (GpuBuffer* b : {&t.value, &t.weight, &t.count, &t.exact, &t.votes})
+            destroy(mVk, *b);
+    mSpareTex.clear();
+    for (GpuBuffer* b : {&mClaim, &mSamples, &mHits, &mOutBuf, &mValid, &mItems, &mBlocks, &mStats, &mStatsRead, &mSeeds[0], &mSeeds[1], &mScratch, &mReduce,
                          &mReduceRead, &mReadback, &mWorkValue, &mWorkCount, &mPack, &mTileList})
         destroy(mVk, *b);
     for (GpuBuffer& b : mStaging)
@@ -2191,17 +2204,32 @@ GpuResident::DevTex& GpuResident::texture(const bake::TextureBuffer& tex)
     LILA_ZONE();
 
     const size_t n = tex.texelCount();
-    DevTex d;
-    d.id = mNextTexId++;
-    d.value = makeBuffer(mVk, n * sizeof(glm::vec4), 0, Host::None);
-    d.weight = makeBuffer(mVk, n * sizeof(float), 0, Host::None);
-    d.count = makeBuffer(mVk, n * sizeof(uint32_t), 0, Host::None);
     const bool exact = tex.def && tex.def->resolve == bake::Resolve::Exact;
-    if (exact)
+    DevTex d;
+    auto spare = std::ranges::find_if(mSpareTex, [&](const DevTex& t) { return t.value.size == std::max<VkDeviceSize>(n * sizeof(glm::vec4), 16) && (t.exact.buffer != VK_NULL_HANDLE) == exact; });
+    if (spare != mSpareTex.end())
     {
-        d.exact = makeBuffer(mVk, n * sizeof(uint32_t), 0, Host::None);
-        d.votes = makeBuffer(mVk, n * sizeof(uint32_t), 0, Host::None);
+        d = *spare;
+        mSpareTex.erase(spare);
     }
+    else
+    {
+        if (!mSpareTex.empty())
+        {
+            for (GpuBuffer* b : {&mSpareTex.back().value, &mSpareTex.back().weight, &mSpareTex.back().count, &mSpareTex.back().exact, &mSpareTex.back().votes})
+                destroy(mVk, *b);
+            mSpareTex.pop_back();
+        }
+        d.value = makeBuffer(mVk, n * sizeof(glm::vec4), 0, Host::None);
+        d.weight = makeBuffer(mVk, n * sizeof(float), 0, Host::None);
+        d.count = makeBuffer(mVk, n * sizeof(uint32_t), 0, Host::None);
+        if (exact)
+        {
+            d.exact = makeBuffer(mVk, n * sizeof(uint32_t), 0, Host::None);
+            d.votes = makeBuffer(mVk, n * sizeof(uint32_t), 0, Host::None);
+        }
+    }
+    d.id = mNextTexId++;
     mB.runTask([&](VulkanContext& vk) {
         mB.initDevice(vk);
         mB.mSub.run(vk, [&](VkCommandBuffer cmd) {
@@ -2641,7 +2669,7 @@ GpuResident::Kernel GpuResident::makeKernel(size_t m, size_t g)
     return k;
 }
 
-void GpuResident::reserveBand(size_t slots, size_t items)
+void GpuResident::reserveBand(size_t slots, size_t items, size_t blocks)
 {
     if (slots > mSlotCap)
     {
@@ -2658,7 +2686,13 @@ void GpuResident::reserveBand(size_t slots, size_t items)
     {
         destroy(mVk, mItems);
         mItemCap = std::max<size_t>(items, 4096);
-        mItems = makeBuffer(mVk, mItemCap * 3 * sizeof(uint32_t), 0, Host::Write);
+        mItems = makeBuffer(mVk, mItemCap * 4 * sizeof(uint32_t), 0, Host::Write);
+    }
+    if (blocks > mBlockCap || !mBlocks.buffer)
+    {
+        destroy(mVk, mBlocks);
+        mBlockCap = std::max<size_t>(blocks, 4096);
+        mBlocks = makeBuffer(mVk, mBlockCap * sizeof(uint32_t), 0, Host::Write);
     }
     if (!mStats.buffer)
     {
@@ -2715,7 +2749,8 @@ bake::ResidentStats GpuResident::bakeTile(const bake::ResidentTile& tile)
     const bool cullBack = mIn->groups[g].settings.ignoreBackfaces;
     const bool traceable = b.mGroupHighs[g] > 0 && (!b.mHardware || b.mGroupTlas[g].as);
     bake::ResidentStats stats;
-    std::vector<uint32_t> items;
+    std::vector<uint32_t> items, blocks, blockIndex;
+    const int blockCols = (W + 7) / 8;
     // Texel tiles: which the mask lets through, and which had work.
     const int maskTile = std::max(8, tile.maskTile / 8 * 8);
     const int tileCols = (W + maskTile - 1) / maskTile, tileRows = (H + maskTile - 1) / maskTile;
@@ -2731,8 +2766,12 @@ bake::ResidentStats GpuResident::bakeTile(const bake::ResidentTile& tile)
                 tile.onBand(y1 - y0);
             continue;
         }
-        // 8 x 8 texel blocks of each triangle's bounds in the band, as TexelRaster::band walks them.
+        // 8 x 8 texel blocks of each triangle's bounds in the band, as TexelRaster::band walks them. Only blocks some
+        // triangle touches get slots, so a low covering little of the texture costs little.
         items.clear();
+        blocks.clear();
+        const int blockRow0 = y0 / 8;
+        blockIndex.assign(size_t(blockCols) * size_t((y1 - 1) / 8 - blockRow0 + 1), UINT32_MAX);
         for (uint32_t t : tris)
         {
             const glm::vec2* uv = &lowIn.soup.uvs[size_t(t) * 3];
@@ -2755,7 +2794,13 @@ bake::ResidentStats GpuResident::bakeTile(const bake::ResidentTile& tile)
                     if (mask && !(*mask)[mt])
                         continue;
                     worked[mt] = 1;
-                    items.insert(items.end(), {t, uint32_t(bx), uint32_t(by)});
+                    uint32_t& block = blockIndex[size_t(by - blockRow0) * size_t(blockCols) + size_t(bx)];
+                    if (block == UINT32_MAX)
+                    {
+                        block = uint32_t(blocks.size());
+                        blocks.push_back(uint32_t(bx) | (uint32_t(by) << 16));
+                    }
+                    items.insert(items.end(), {t, uint32_t(bx), uint32_t(by), block});
                 }
         }
         if (items.empty())
@@ -2764,12 +2809,14 @@ bake::ResidentStats GpuResident::bakeTile(const bake::ResidentTile& tile)
                 tile.onBand(y1 - y0);
             continue;
         }
-        const size_t texels = size_t(W) * size_t(y1 - y0);
+        const size_t texels = blocks.size() * 64;
         const size_t slots = texels * S;
-        const size_t itemCount = items.size() / 3;
-        reserveBand(slots, itemCount);
+        const size_t itemCount = items.size() / 4;
+        reserveBand(slots, itemCount, blocks.size());
         std::memcpy(mItems.mapped, items.data(), items.size() * sizeof(uint32_t));
         vmaFlushAllocation(mVk.allocator, mItems.alloc, 0, VK_WHOLE_SIZE);
+        std::memcpy(mBlocks.mapped, blocks.data(), blocks.size() * sizeof(uint32_t));
+        vmaFlushAllocation(mVk.allocator, mBlocks.alloc, 0, VK_WHOLE_SIZE);
 
         GpuRasterPush rp;
         rp.low = lowInfo;
@@ -2790,6 +2837,7 @@ bake::ResidentStats GpuResident::bakeTile(const bake::ResidentTile& tile)
         rp.rear = tile.cage.rear;
         rp.offset = tile.cage.offset;
         rp.skew = tile.cage.skew;
+        rp.blocks = mBlocks.address;
 
         std::vector<GpuStep> steps;
         steps.push_back({1, 0.0, nullptr, [&](VkCommandBuffer cmd, uint32_t, uint32_t) {
@@ -2847,6 +2895,7 @@ bake::ResidentStats GpuResident::bakeTile(const bake::ResidentTile& tile)
         ap.grid = grid;
         ap.y0 = uint32_t(y0);
         ap.rows = uint32_t(y1 - y0);
+        ap.blocks = mBlocks.address;
         std::vector<GpuBakePush> kernelPush(jobs.size());
         std::vector<GpuImagePush> accPush(jobs.size(), ap);
         for (size_t j = 0; j < jobs.size(); ++j)
@@ -3168,8 +3217,7 @@ bool GpuResident::finishImpl(bake::TextureBuffer& tex, int padding, const GpuIma
         for (size_t i = r.begin(); i < r.end(); ++i)
             tex.covered[i] = covered[i] ? 1 : 0;
     });
-    for (GpuBuffer* buf : {&d.value, &d.weight, &d.count, &d.exact, &d.votes})
-        destroy(mVk, *buf);
+    mSpareTex.push_back(d);
     mTex.erase(&tex);
     if (kind == Finish::None && def.finalize)
         def.finalize(ms, *mIn, tex, tex.meta);

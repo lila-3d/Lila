@@ -6,6 +6,7 @@
 #include "core/PrefStore.h"
 #include "core/Workspace.h"
 #include "gn/Group.h"
+#include "gn/Routing.h"
 
 #include <algorithm>
 #include <fstream>
@@ -19,7 +20,7 @@ namespace fs = std::filesystem;
 
 namespace
 {
-constexpr const char* kKindNames[] = {"slang", "graph", "native", "buffer", "output", "groupInput", "groupOutput", "group"};
+constexpr const char* kKindNames[] = {"slang", "graph", "native", "buffer", "output", "groupInput", "groupOutput", "group", "route"};
 
 std::optional<double> getOpt(const json& o, const char* key)
 {
@@ -170,6 +171,24 @@ std::vector<NodeDef> coreDefs()
     g.kind = NodeKind::Group;
     g.cost = 0;
     out.push_back(g);
+    NodeDef r;
+    r.type = gn::kRerouteType;
+    r.label = "Reroute";
+    r.category = "Layout";
+    r.doc = "A point a wire passes through, to steer it. Takes the type of whatever feeds it and can feed several inputs.";
+    r.kind = NodeKind::Route;
+    r.cost = 0;
+    out.push_back(r);
+    NodeDef send = r;
+    send.type = gn::kSendType;
+    send.label = "Send";
+    send.doc = "Names the value wired into it, so Receive nodes anywhere in the graph can read it without a wire.";
+    out.push_back(send);
+    NodeDef receive = r;
+    receive.type = gn::kReceiveType;
+    receive.label = "Receive";
+    receive.doc = "Reads the value of the Send node with its name, without a wire. Takes that value's type.";
+    out.push_back(receive);
     for (NodeDef& d : out)
         d.tier = "core";
     return out;

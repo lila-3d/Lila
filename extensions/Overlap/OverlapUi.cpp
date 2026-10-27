@@ -8,6 +8,7 @@
 #include <lila/Graph.h>
 #include <lila/Log.h>
 #include <lila/Node.h>
+#include <lila/SimPreview.h>
 #include <lila/Simulation.h>
 #include <lila/UI.h>
 #include <lila/Viewport.h>
@@ -70,13 +71,14 @@ void drawSimulation(drawOverrides::DrawContext& c)
     std::shared_ptr<const sim::Frame> f;
     try
     {
-        // Live preview: frames come from the cache, simulated on demand as the time moves.
-        f = sim::simulate(g, c.node.id(), sim::frameOf(g.time()));
+        f = simPreviewFrame(g, c.node.id());
     }
     catch (const std::exception&)
     {
         return;
     }
+    if (!f)
+        return;
     const sim::Info info = sim::info(g, c.node.id());
     std::map<NodeId, size_t> index;
     for (size_t i = 0; i < info.outputs.size(); ++i)

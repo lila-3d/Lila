@@ -1501,7 +1501,7 @@ void MainWindow::buildMenus()
                                  "viewport.view.back", "viewport.view.bottom"});
     menus::addActions("Display", {"viewport.frameSelected", "viewport.frameAll", "viewport.cameraUndo", "viewport.cameraRedo", "#Overlays",
                            "viewport.toggleGrid", "viewport.toggleResolutionGate", "viewport.toggleFilmGate", "viewport.cameraSettings",
-                           "window.renderSettings", "#View", "viewport.toggleToolbar", "window.toggleToolBox", "viewport.resetExposure"});
+                           "window.renderSettings", "#View", "viewport.toggleToolbar", "viewport.toggleBottomBar", "window.toggleToolBox", "viewport.resetExposure"});
 
     menu("Animation", "Animation");
     menus::addActions("Animation", {"#Keys", "anim.setKey", "anim.setKeyTranslate", "anim.setKeyRotate", "anim.setKeyScale", "anim.autoKeyToggle", "#Playback",
@@ -1608,9 +1608,9 @@ void MainWindow::buildPanelMenus()
                                  "viewport.aid.twoSidedLighting", "viewport.aid.backfaceTint",
                                  "", "display.smoothOff", "display.smoothCage", "display.smoothOn", "viewport.smoothSubdivisions"});
     menus::addActions("panel.Show", {"display.hide", "display.show", "display.showLastHidden", "display.showAll", "", "viewport.isolate", "viewport.isolateAdd",
-                              "viewport.isolateRemove", "viewport.show.curve", "viewport.show.mesh", "viewport.show.joint",
+                              "viewport.isolateRemove", "viewport.show.curve", "viewport.show.mesh", "viewport.show.joint", "viewport.show.light",
                               "viewport.show.locator", "rig.xrayJoints", "measure.toggleShow",
-                              "viewport.toggleImagePlanes"});
+                              "viewport.toggleImagePlanes", "", "viewport.toggleDebugDraw", "viewport.clearDebugDraw"});
     menus::addActions("panel.Renderer", {"window.renderSettings"});
     menus::addActions("panel.Panels", {"viewport.lookThroughSelected"});
     // Maya's Panels > Perspective / Orthographic: the views plus every camera node, rebuilt as the menu opens.

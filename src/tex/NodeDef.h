@@ -57,6 +57,8 @@ enum class NodeKind : uint8_t
     GroupInput,
     GroupOutput,
     Group,
+    /** Reroutes and portals (gn/Routing.h): spliced out before planning. */
+    Route,
 };
 
 LILA_SCENE_API const char* nodeKindName(NodeKind k);

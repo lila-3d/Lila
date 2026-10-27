@@ -20,6 +20,10 @@
 #include <QDateTime>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QListWidget>
+#include <QPainter>
+#include <QStyle>
+#include <QStyledItemDelegate>
 #include <QIcon>
 #include <QKeyEvent>
 #include <QLabel>
@@ -44,6 +48,72 @@ namespace
 constexpr int kPathRole = Qt::UserRole;
 constexpr int kKindRole = Qt::UserRole + 1;
 constexpr int kRevisionRole = Qt::UserRole + 2;
+constexpr int kDescriptionRole = Qt::UserRole + 3;
+
+/** An example as a card: thumbnail, title and the start of its description. */
+class ExampleCard : public QStyledItemDelegate
+{
+public:
+    static constexpr QSize kSize{240, 210};
+    static constexpr int kThumbHeight = 135;
+
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+    QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override { return kSize; }
+
+    void paint(QPainter* p, const QStyleOptionViewItem& opt, const QModelIndex& index) const override
+    {
+        p->save();
+        p->setRenderHint(QPainter::Antialiasing);
+        const QRectF card = QRectF(opt.rect).adjusted(0.5, 0.5, -0.5, -0.5);
+        const bool selected = opt.state & QStyle::State_Selected, hover = opt.state & QStyle::State_MouseOver;
+        p->setPen(QPen(themeColor(selected ? "highlight" : hover ? "hover" : "border"), selected ? 2.0 : 1.0));
+        p->setBrush(themeColor("base"));
+        p->drawRoundedRect(card, 4, 4);
+
+        const QRect thumb(opt.rect.left() + 1, opt.rect.top() + 1, opt.rect.width() - 2, kThumbHeight);
+        const QPixmap pix = index.data(Qt::DecorationRole).value<QPixmap>();
+        if (pix.isNull())
+            p->fillRect(thumb, themeColor("altBase"));
+        else
+        {
+            const QPixmap scaled = pix.scaled(thumb.size(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+            p->drawPixmap(thumb, scaled, QRect((scaled.width() - thumb.width()) / 2, (scaled.height() - thumb.height()) / 2, thumb.width(), thumb.height()));
+        }
+
+        QRect text = opt.rect.adjusted(8, kThumbHeight + 6, -8, -6);
+        QFont title = opt.font;
+        title.setBold(true);
+        p->setFont(title);
+        p->setPen(themeColor("text"));
+        const int titleHeight = QFontMetrics(title).height();
+        p->drawText(text.left(), text.top(), text.width(), titleHeight, Qt::AlignLeft | Qt::AlignVCenter,
+                    QFontMetrics(title).elidedText(index.data(Qt::DisplayRole).toString(), Qt::ElideRight, text.width()));
+        text.setTop(text.top() + titleHeight + 2);
+        p->setFont(opt.font);
+        p->setPen(themeColor("dimText"));
+        // Whole lines only, with the last one elided, so the text never runs past the card.
+        const QFontMetrics fm(opt.font);
+        const int lines = std::max(1, text.height() / fm.lineSpacing());
+        QString rest = index.data(kDescriptionRole).toString();
+        for (int i = 0; i < lines && !rest.isEmpty(); ++i)
+        {
+            QString line;
+            if (i == lines - 1)
+                line = fm.elidedText(rest, Qt::ElideRight, text.width());
+            else
+            {
+                int n = rest.size();
+                while (n > 0 && fm.horizontalAdvance(rest.left(n)) > text.width())
+                    n = rest.lastIndexOf(' ', n - 1) > 0 ? rest.lastIndexOf(' ', n - 1) : n - 1;
+                line = rest.left(std::max(n, 1));
+            }
+            p->drawText(text.left(), text.top() + i * fm.lineSpacing(), text.width(), fm.lineSpacing(), Qt::AlignLeft | Qt::AlignVCenter, line);
+            rest = rest.mid(line.size()).trimmed();
+        }
+        p->restore();
+    }
+};
 
 QString qpath(const fs::path& p)
 {
@@ -242,24 +312,31 @@ StartupDialog::StartupDialog(Hooks hooks, bool welcome, QWidget* parent) : QDial
         heading("Welcome to Lila", "startupTitle");
         layout->addSpacing(6);
         heading("Examples", "startupHeading");
-        mExamples = makeList(this, {"Example", "About"});
-        mExamples->setIconSize(QSize(64, 36));
+        mExamples = new QListWidget(this);
+        mExamples->setViewMode(QListView::IconMode);
+        mExamples->setResizeMode(QListView::Adjust);
+        mExamples->setMovement(QListView::Static);
+        mExamples->setWrapping(true);
+        mExamples->setUniformItemSizes(true);
+        mExamples->setSpacing(6);
+        mExamples->setGridSize(ExampleCard::kSize + QSize(12, 12));
+        mExamples->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+        mExamples->setItemDelegate(new ExampleCard(mExamples));
         for (const io::examples::Example& x : io::examples::list())
         {
-            auto* item = new QTreeWidgetItem(mExamples);
-            item->setText(0, QString::fromStdString(x.name));
-            item->setText(1, QString::fromStdString(x.description));
-            item->setToolTip(1, "<p>" + QString::fromStdString(x.description).toHtmlEscaped() + "</p>");
-            item->setToolTip(0, qpath(x.scene));
-            item->setData(0, kPathRole, qpath(x.scene));
-            item->setData(0, kKindRole, int(mExampleList.size()));
+            auto* item = new QListWidgetItem(mExamples);
+            item->setText(QString::fromStdString(x.name));
+            item->setData(kDescriptionRole, QString::fromStdString(x.description));
+            item->setToolTip("<p>" + QString::fromStdString(x.description).toHtmlEscaped() + "</p>");
+            item->setData(kKindRole, int(mExampleList.size()));
             if (!x.thumbnail.empty())
-                item->setIcon(0, QIcon(qpath(x.thumbnail)));
+                item->setData(Qt::DecorationRole, QPixmap(qpath(x.thumbnail)));
             mExampleList.push_back(x);
         }
-        if (mExamples->topLevelItemCount() == 0)
-            (new QTreeWidgetItem(mExamples, {"No examples installed"}))->setFlags(Qt::NoItemFlags);
-        mExamples->resizeColumnToContents(0);
+        mExamples->setMinimumHeight(ExampleCard::kSize.height() + 30);
+        // Three cards across beside the scroll bar.
+        mExamples->setMinimumWidth(3 * mExamples->gridSize().width() + mExamples->style()->pixelMetric(QStyle::PM_ScrollBarExtent) +
+                                   2 * mExamples->frameWidth() + 4);
         layout->addWidget(mExamples, 1);
         layout->addSpacing(6);
         heading("Recent Scenes", "startupHeading");
@@ -312,9 +389,9 @@ StartupDialog::StartupDialog(Hooks hooks, bool welcome, QWidget* parent) : QDial
     connect(mList, &QTreeWidget::itemActivated, this, [this] { openSelected(mList); }, Qt::QueuedConnection);
     if (mExamples)
     {
-        connect(mExamples, &QTreeWidget::itemActivated, this, [this] { openSelected(mExamples); }, Qt::QueuedConnection);
+        connect(mExamples, &QListWidget::itemActivated, this, [this] { openExampleSelected(); }, Qt::QueuedConnection);
         // One selection across the two lists, so Enter opens what is highlighted.
-        connect(mExamples, &QTreeWidget::itemPressed, mList, [this] { mList->setCurrentItem(nullptr); });
+        connect(mExamples, &QListWidget::itemPressed, mList, [this] { mList->setCurrentItem(nullptr); });
         connect(mList, &QTreeWidget::itemPressed, mExamples, [this] { mExamples->setCurrentItem(nullptr); });
     }
     connect(newScene, &QPushButton::clicked, this, [this] {
@@ -329,7 +406,7 @@ StartupDialog::StartupDialog(Hooks hooks, bool welcome, QWidget* parent) : QDial
         if (open)
             open({});
     });
-    resize(welcome ? 820 : 680, welcome ? 620 : 380);
+    resize(welcome ? std::max(800, minimumSizeHint().width()) : 680, welcome ? 720 : 380);
     qApp->installEventFilter(this);
 }
 
@@ -383,20 +460,23 @@ bool StartupDialog::eventFilter(QObject* obj, QEvent* e)
     return QDialog::eventFilter(obj, e);
 }
 
+void StartupDialog::openExampleSelected()
+{
+    QListWidgetItem* item = mExamples->currentItem();
+    if (!item)
+        return;
+    io::examples::Example x = mExampleList[size_t(item->data(kKindRole).toInt())];
+    auto open = mHooks.openExample;
+    accept();
+    if (open)
+        open(x);
+}
+
 void StartupDialog::openSelected(QTreeWidget* list)
 {
     QTreeWidgetItem* item = list->currentItem();
     if (!item || item->data(0, kPathRole).toString().isEmpty())
         return;
-    if (list == mExamples)
-    {
-        io::examples::Example x = mExampleList[size_t(item->data(0, kKindRole).toInt())];
-        auto open = mHooks.openExample;
-        accept();
-        if (open)
-            open(x);
-        return;
-    }
     fs::path p = item->data(0, kPathRole).toString().toStdWString();
     auto open = mHooks.open;
     accept();

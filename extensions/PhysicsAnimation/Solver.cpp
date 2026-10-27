@@ -211,6 +211,8 @@ public:
             su.sources.push_back(c.mesh);
         for (const FieldDef& f : mRig.fields)
             su.sources.push_back(f.node);
+        su.reads = su.outputs;
+        su.reads.insert(su.reads.end(), su.sources.begin(), su.sources.end());
         uint64_t h = mRig.hash;
         h = sim::hashBytes(&mEnabled, sizeof mEnabled, h);
         const uint64_t words = constraintWords();
@@ -638,7 +640,8 @@ NodeId makeMarker(Graph& g, NodeId solver, NodeId joint, Behaviour behaviour, Sh
         setAttr(g, m, "limitSwing2", defaults->swing2);
         setAttr(g, m, "poseSpace", int64_t(root ? PoseSpace::Both : defaults->space));
     }
-    else if (root)
+    // Local motors alone fold under gravity; the world pull is what keeps a body standing in its pose.
+    else
         setAttr(g, m, "poseSpace", int64_t(PoseSpace::Both));
     setAttr(g, m, "behaviour", int64_t(behaviour));
     ShapeDesc s = fitShapeToMesh ? fitShape(g, joint, shape) : shapeOf(*g.node(m));

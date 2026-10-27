@@ -14,6 +14,7 @@
 #include <format>
 #include <fstream>
 #include <map>
+#include <thread>
 #include <unordered_map>
 
 namespace lila::ui::textures
@@ -618,5 +619,28 @@ int addListener(std::function<void()> fn)
 void removeListener(int id)
 {
     cache().listeners.erase(id);
+}
+
+bool waitForLoads(double timeoutSeconds)
+{
+    LILA_ZONE();
+
+    const auto deadline = Clock::now() + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(timeoutSeconds));
+    auto loading = [] {
+        for (const auto& [key, slot] : cache().entries)
+            if (slot.loading)
+                return true;
+        return false;
+    };
+    while (true)
+    {
+        // Finished loads land through the main queue, so drain it ourselves: batch runs have no event loop to do it.
+        mainq::drain();
+        if (!loading())
+            return true;
+        if (Clock::now() > deadline)
+            return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
 }
 } // namespace lila::ui::textures

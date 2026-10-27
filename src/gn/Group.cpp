@@ -1,6 +1,7 @@
 #include "gn/Group.h"
 
 #include <algorithm>
+#include <map>
 #include <set>
 #include <stdexcept>
 
@@ -43,6 +44,174 @@ std::optional<double> getOpt(const json& o, const char* key)
     return it->get<double>();
 }
 } // namespace
+
+void putNodeFlags(const GNode& n, json& o) { putNodeFlagsTo(n, o); }
+
+void getNodeFlags(GNode& n, const json& o)
+{
+    n.muted = o.value("muted", false);
+    n.collapsed = o.value("collapsed", false);
+    n.hideUnused = o.value("hideUnused", false);
+}
+
+json tiesToJson(const std::vector<GTie>& ties)
+{
+    json out = json::array();
+    for (const GTie& t : ties)
+    {
+        json links = json::array();
+        for (const GLink& l : t.links)
+            links.push_back({l.fromNode, l.fromSocket, l.toNode, l.toSocket});
+        json o = {{"links", links}, {"position", {t.position.x, t.position.y}}, {"angle", t.angle}};
+        if (!t.color.empty())
+            o["color"] = t.color;
+        out.push_back(std::move(o));
+    }
+    return out;
+}
+
+std::vector<GTie> tiesFromJson(const json& j)
+{
+    std::vector<GTie> out;
+    if (!j.is_array())
+        return out;
+    for (const json& t : j)
+    {
+        if (!t.is_object())
+            continue;
+        GTie tie;
+        for (const json& l : t.value("links", json::array()))
+            if (l.is_array() && l.size() == 4 && l[0].is_string() && l[1].is_string() && l[2].is_string() && l[3].is_string())
+                tie.links.push_back({l[0].get<std::string>(), l[1].get<std::string>(), l[2].get<std::string>(), l[3].get<std::string>()});
+        if (const json& p = t.value("position", json()); p.is_array() && p.size() == 2 && p[0].is_number() && p[1].is_number())
+            tie.position = {p[0].get<double>(), p[1].get<double>()};
+        if (t.contains("angle") && t["angle"].is_number())
+            tie.angle = t["angle"].get<double>();
+        if (t.contains("color") && t["color"].is_string())
+            tie.color = t["color"].get<std::string>();
+        out.push_back(std::move(tie));
+    }
+    return out;
+}
+
+void pruneTies(std::vector<GTie>& ties, const std::vector<GLink>& links)
+{
+    std::set<GLink> live(links.begin(), links.end());
+    for (GTie& t : ties)
+    {
+        std::set<GLink> seen;
+        std::erase_if(t.links, [&](const GLink& l) { return !live.contains(l) || !seen.insert(l).second; });
+    }
+    std::erase_if(ties, [](const GTie& t) { return t.links.size() < 2; });
+}
+
+std::vector<GTie> tiesAmong(const std::vector<GTie>& ties, const std::set<std::string>& nodes, const std::map<std::string, std::string>& renamed,
+                            glm::dvec2 offset)
+{
+    auto name = [&](const std::string& n) {
+        auto it = renamed.find(n);
+        return it == renamed.end() ? n : it->second;
+    };
+    std::vector<GTie> out;
+    for (const GTie& t : ties)
+    {
+        GTie copy = t;
+        copy.links.clear();
+        copy.position += offset;
+        for (const GLink& l : t.links)
+            if (nodes.contains(l.fromNode) && nodes.contains(l.toNode))
+                copy.links.push_back({name(l.fromNode), l.fromSocket, name(l.toNode), l.toSocket});
+        if (copy.links.size() >= 2)
+            out.push_back(std::move(copy));
+    }
+    return out;
+}
+
+json cleanBookmarks(const json& j)
+{
+    json out = json::object();
+    if (!j.is_object())
+        return out;
+    for (auto& [slot, v] : j.items())
+        if (v.is_array() && v.size() == 3 && v[0].is_number() && v[1].is_number() && v[2].is_number() && v[2].get<double>() > 0.0)
+            out[slot] = v;
+    return out;
+}
+
+json framesToJson(const std::vector<GFrame>& frames)
+{
+    json out = json::array();
+    for (const GFrame& f : frames)
+    {
+        json o = {{"label", f.label}, {"position", {f.position.x, f.position.y}}, {"size", {f.size.x, f.size.y}}, {"nodes", f.nodes}};
+        if (!f.color.empty())
+            o["color"] = f.color;
+        if (f.collapsed)
+            o["collapsed"] = true;
+        out.push_back(std::move(o));
+    }
+    return out;
+}
+
+std::vector<GFrame> framesFromJson(const json& j)
+{
+    std::vector<GFrame> out;
+    if (!j.is_array())
+        return out;
+    auto vec2 = [](const json& v, glm::dvec2& to) {
+        if (v.is_array() && v.size() == 2 && v[0].is_number() && v[1].is_number())
+            to = {v[0].get<double>(), v[1].get<double>()};
+    };
+    for (const json& f : j)
+    {
+        if (!f.is_object())
+            continue;
+        GFrame frame;
+        if (f.contains("label") && f["label"].is_string())
+            frame.label = f["label"].get<std::string>();
+        vec2(f.value("position", json()), frame.position);
+        vec2(f.value("size", json()), frame.size);
+        if (f.contains("color") && f["color"].is_string())
+            frame.color = f["color"].get<std::string>();
+        frame.collapsed = f.value("collapsed", false);
+        for (const json& n : f.value("nodes", json::array()))
+            if (n.is_string())
+                frame.nodes.push_back(n.get<std::string>());
+        out.push_back(std::move(frame));
+    }
+    return out;
+}
+
+void pruneFrames(std::vector<GFrame>& frames, const std::vector<std::string>& nodes)
+{
+    std::set<std::string> live(nodes.begin(), nodes.end());
+    for (GFrame& f : frames)
+    {
+        std::set<std::string> seen;
+        std::erase_if(f.nodes, [&](const std::string& n) { return !live.contains(n) || !seen.insert(n).second; });
+    }
+}
+
+std::vector<GFrame> framesAmong(const std::vector<GFrame>& frames, const std::set<std::string>& nodes, const std::map<std::string, std::string>& renamed,
+                                glm::dvec2 offset)
+{
+    std::vector<GFrame> out;
+    for (const GFrame& f : frames)
+    {
+        GFrame copy = f;
+        copy.nodes.clear();
+        copy.position += offset;
+        for (const std::string& n : f.nodes)
+            if (nodes.contains(n))
+            {
+                auto it = renamed.find(n);
+                copy.nodes.push_back(it == renamed.end() ? n : it->second);
+            }
+        if (!copy.nodes.empty())
+            out.push_back(std::move(copy));
+    }
+    return out;
+}
 
 std::string GInput::displayName() const
 {
@@ -87,12 +256,19 @@ json Group::toJson() const
         json o = {{"name", n.name}, {"type", n.type}, {"position", {n.position.x, n.position.y}}};
         if (!n.values.empty())
             o["values"] = n.values;
+        putNodeFlags(n, o);
         jn.push_back(std::move(o));
     }
     json jl = json::array();
     for (const GLink& l : links)
         jl.push_back({l.fromNode, l.fromSocket, l.toNode, l.toSocket});
     json out = {{"name", name}, {"typeVersion", typeVersion}, {"inputs", jin}, {"nodes", jn}, {"links", jl}};
+    if (!ties.empty())
+        out["ties"] = tiesToJson(ties);
+    if (!frames.empty())
+        out["frames"] = framesToJson(frames);
+    if (!bookmarks.empty())
+        out["bookmarks"] = bookmarks;
     if (!outputs.empty())
     {
         json jo = json::array();
@@ -157,10 +333,14 @@ Group Group::fromJson(const json& j)
             if (n.contains("position") && n["position"].is_array() && n["position"].size() == 2)
                 gn.position = {n["position"][0].get<double>(), n["position"][1].get<double>()};
             gn.values = n.value("values", json::object());
+            getNodeFlags(gn, n);
             g.nodes.push_back(std::move(gn));
         }
         for (const json& l : j.value("links", json::array()))
             g.links.push_back({l.at(0).get<std::string>(), l.at(1).get<std::string>(), l.at(2).get<std::string>(), l.at(3).get<std::string>()});
+        g.ties = tiesFromJson(j.value("ties", json::array()));
+        g.frames = framesFromJson(j.value("frames", json::array()));
+        g.bookmarks = cleanBookmarks(j.value("bookmarks", json::object()));
         if (auto it = j.find("subgroups"); it != j.end() && it->is_object())
             for (auto& [k, v] : it->items())
                 g.subgroups[k] = v;

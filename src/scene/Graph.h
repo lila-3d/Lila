@@ -187,6 +187,24 @@ public:
 
     // Evaluation
     void evaluate();
+    /**
+     * While one is alive on this thread, evaluate() leaves meshes dirty, with whatever only they need (skins, deformers),
+     * computing the transforms around them. For interactive edits that read joints many times per mouse move; the next
+     * evaluate() outside it (the viewport's, once per frame) brings the meshes up to date.
+     */
+    struct LILA_SCENE_API DeferMeshes
+    {
+        DeferMeshes();
+        ~DeferMeshes();
+        DeferMeshes(const DeferMeshes&) = delete;
+        DeferMeshes& operator=(const DeferMeshes&) = delete;
+    };
+    /**
+     * Computes only what the given nodes depend on (themselves, their parents and their inputs, transitively), leaving
+     * the rest dirty for the next evaluate(), without the evaluate hooks. For reading a few values at another time, as
+     * simulations sample their inputs, without recomputing meshes nothing reads.
+     */
+    void evaluateUpstream(const std::vector<NodeId>& nodes);
     /** Marks a node for recompute on the next evaluate(), like an input change would. */
     void touch(NodeId id) { markDirty(id); }
     /**
@@ -198,7 +216,8 @@ public:
     /** Further hooks, called after the one set above in the order added. */
     static void addEvaluateHook(EvaluateHook hook);
     double time() const { return mCtx.time; }
-    void setTime(double seconds);
+    /** notify false skips the TimeChanged event, for moving time briefly and back again (sampling at other frames). */
+    void setTime(double seconds, bool notify = true);
     /** Counts evaluations that computed something; each node records the pass it last computed in (Node::evaluatedPass). */
     uint64_t evaluationPass() const { return mEvaluationPass; }
     /** Bumped on every change; the renderer uses it to skip unchanged frames. */
@@ -284,7 +303,9 @@ private:
     /** Routes a set on a driven scalar through the hook. Returns false when it is rejected. */
     bool setDriven(const PlugRef& dst, const PlugRef& src, double v);
     void markDirty(NodeId id);
-    void evaluateDirty();
+    /** evaluate(), computing only what `only` depends on when given. */
+    void evaluateWith(const std::vector<NodeId>* only);
+    void evaluateDirty(const std::vector<NodeId>* only = nullptr);
     bool dependsOn(NodeId node, NodeId upstream) const;
     void changed(Change c, NodeId id, const PlugRef* plug = nullptr);
     /** Node and selection changes of the current graph, to the event bus. */

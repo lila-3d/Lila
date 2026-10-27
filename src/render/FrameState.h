@@ -17,6 +17,14 @@ struct LineVertex
     glm::vec4 color;
 };
 
+/** World-space lines at one width in device pixels: depth tested like linesOnTop, or over every surface. */
+struct LineBatch
+{
+    std::vector<LineVertex> vertices; // pairs
+    float width = 1.0f;
+    bool onTop = false;
+};
+
 /**
  * Everything a viewport needs for one frame, copied out of the scene on the main thread. The render thread only
  * ever sees these snapshots, never the live graph. An offline renderer would consume the same data.
@@ -172,6 +180,9 @@ struct FrameState
     std::vector<LineVertex> tris3d;     // world-space triangle list, blended and biased toward the camera, no depth write
     std::vector<PointDraw> points;      // component dots, drawn after tris3d
     std::vector<LineVertex> linesXray;  // world-space lines with no depth test, over every surface (x-ray joints)
+    /** Debug drawing (debug/DebugDraw.h), shared between frames while it doesn't change. Triangles are blended and depth tested. */
+    std::shared_ptr<const std::vector<LineBatch>> debugLines;
+    std::shared_ptr<const std::vector<LineVertex>> debugTris;
     std::vector<LineVertex> overlay; // NDC positions, drawn last with no depth test (marquee, HUD)
     std::vector<OverlayVertex> overlayTris; // drawn after everything else
     std::shared_ptr<const OverlayAtlas> atlas;

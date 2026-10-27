@@ -87,6 +87,11 @@ struct Setup
      * covers only its leading values, which are all the loop test compares.
      */
     bool variableState = false;
+    /**
+     * Every node sample() reads. When given, sampling at other times computes only what these depend on, so a dense
+     * skinned mesh the solver never reads isn't recomputed at every sampled step. Empty evaluates the whole scene.
+     */
+    std::vector<NodeId> reads;
 };
 
 /** Where a step sits in time; seconds = (startFrame * substeps + index) / (substeps * fps), from integers. */
@@ -190,6 +195,11 @@ struct Frame
 LILA_SCENE_API std::shared_ptr<const Frame> simulate(Graph& g, NodeId node, int64_t frame, LoopMode loop = LoopMode::Auto);
 /** The cached frame without simulating, or null when it isn't cached and valid as far as the cache knows. Drawing uses it. */
 LILA_SCENE_API std::shared_ptr<const Frame> cached(Graph& g, NodeId node, int64_t frame);
+/**
+ * Whether simulate() could reach frame from the valid cache within `within` more frames: cheap enough to run while
+ * drawing (playback stepping on). Drawing simulates longer runs, such as everything after an edit, later.
+ */
+LILA_SCENE_API bool extendable(Graph& g, NodeId node, int64_t frame, int64_t within);
 /** Empties one simulation's cache, or every one when node is kNoNode. */
 LILA_SCENE_API void clearCache(Graph& g, NodeId node = kNoNode);
 LILA_SCENE_API Info info(Graph& g, NodeId node);

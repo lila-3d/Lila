@@ -6,6 +6,7 @@ lila_module(lila_gn Scene
     Geometry.cpp
     Group.cpp
     Modifier.cpp
+    Routing.cpp
     NodeLib.cpp
     NodeLibrary.cpp
     NodesBoolean.cpp
@@ -16,6 +17,7 @@ lila_module(lila_gn Scene
     NodesGeometry.cpp
     NodesInput.cpp
     NodesMesh.cpp
+    NodesRouting.cpp
     NodesSample.cpp
     NodesShading.cpp
     NodesTexture.cpp

@@ -995,8 +995,12 @@ PlugValue Graph::value(const PlugRef& p)
     Node* n = node(p.node);
     if (!n)
         throw std::invalid_argument("no such node");
-    if (mAnyDirty)
-        evaluate();
+    // Only what this plug depends on: reading a joint mid-drag must not recompute the skinned meshes downstream of it.
+    if (mAnyDirty && n->mDirty)
+    {
+        const std::vector<NodeId> one{p.node};
+        evaluateWith(&one);
+    }
     if (p.element >= 0)
     {
         for (const auto& [i, v] : n->elements(p.attr))
@@ -1419,7 +1423,7 @@ void Graph::markDirty(NodeId id)
     mVersion.fetch_add(1, std::memory_order_relaxed);
 }
 
-void Graph::setTime(double seconds)
+void Graph::setTime(double seconds, bool notify)
 {
     if (mCtx.time == seconds)
         return;
@@ -1429,7 +1433,7 @@ void Graph::setTime(double seconds)
         if (n->type().timeDependent)
             markDirty(id);
     mVersion.fetch_add(1, std::memory_order_relaxed);
-    if (this == &current())
+    if (notify && this == &current())
         events::send({.type = events::Event::TimeChanged, .time = seconds});
 }
 
@@ -1458,12 +1462,34 @@ void Graph::setEvaluateHook(EvaluateHook hook) { evaluateHook() = std::move(hook
 
 void Graph::addEvaluateHook(EvaluateHook hook) { extraHooks().push_back(std::move(hook)); }
 
+namespace
+{
+thread_local int gDeferMeshes = 0;
+} // namespace
+
+Graph::DeferMeshes::DeferMeshes() { ++gDeferMeshes; }
+Graph::DeferMeshes::~DeferMeshes() { --gDeferMeshes; }
+
 void Graph::evaluate()
+{
+    if (gDeferMeshes > 0 && mAnyDirty)
+    {
+        std::vector<NodeId> roots;
+        for (auto& [id, n] : mNodes)
+            if (n->mDirty && n->type().dag && !n->type().isA("mesh"))
+                roots.push_back(id);
+        evaluateWith(&roots);
+        return;
+    }
+    evaluateWith(nullptr);
+}
+
+void Graph::evaluateWith(const std::vector<NodeId>* only)
 {
     const EvaluateHook& hook = evaluateHook();
     if ((!hook && extraHooks().empty()) || gInEvaluateHook)
     {
-        evaluateDirty();
+        evaluateDirty(only);
         return;
     }
     auto call = [&](bool after) {
@@ -1477,17 +1503,39 @@ void Graph::evaluate()
         HookGuard guard;
         call(false);
     }
-    evaluateDirty();
+    evaluateDirty(only);
     HookGuard guard;
     call(true);
 }
 
-void Graph::evaluateDirty()
+void Graph::evaluateUpstream(const std::vector<NodeId>& nodes) { evaluateDirty(&nodes); }
+
+void Graph::evaluateDirty(const std::vector<NodeId>* only)
 {
     LILA_ZONE();
 
     if (!mAnyDirty)
         return;
+    // Just the dirty nodes `only` depends on. Upstream of a clean node is clean, so the walk stops at clean nodes.
+    std::unordered_set<NodeId> needed;
+    if (only)
+    {
+        std::vector<NodeId> stack(only->begin(), only->end());
+        while (!stack.empty())
+        {
+            const NodeId id = stack.back();
+            stack.pop_back();
+            Node* n = node(id);
+            if (!n || !n->mDirty || !needed.insert(id).second)
+                continue;
+            if (NodeId p = parent(id); p != kNoNode)
+                stack.push_back(p);
+            for (auto it = mInputs.lower_bound({id, 0, -1}); it != mInputs.end() && it->first.node == id; ++it)
+                stack.push_back(it->second.node);
+        }
+        if (needed.empty())
+            return;
+    }
     mAnyDirty = false;
     const uint64_t pass = ++mEvaluationPass;
 
@@ -1495,7 +1543,12 @@ void Graph::evaluateDirty()
     std::vector<Node*> dirty;
     for (auto& [id, n] : mNodes)
         if (n->mDirty)
-            dirty.push_back(n.get());
+        {
+            if (only && !needed.contains(id))
+                mAnyDirty = true;
+            else
+                dirty.push_back(n.get());
+        }
 
     std::unordered_map<NodeId, int> pending;
     std::unordered_map<NodeId, std::vector<NodeId>> downstream;

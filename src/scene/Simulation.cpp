@@ -149,7 +149,7 @@ std::vector<std::string> recordings(Graph& g, NodeId node)
 class SampleScope
 {
 public:
-    SampleScope(Graph& g, NodeId node) : mGraph(g), mTime(g.time())
+    SampleScope(Graph& g, NodeId node, const Setup& setup) : mGraph(g), mTime(g.time()), mReads(setup.reads)
     {
         for (const auto& [dst, src] : g.connections())
             if (g.isHeld(dst))
@@ -170,7 +170,7 @@ public:
         for (NodeId l : mMuted)
             if (mGraph.node(l))
                 mGraph.setValue({l, anim::LayerNode::kMute}, false);
-        mGraph.setTime(mTime);
+        mGraph.setTime(mTime, false);
         mGraph.evaluate();
         UndoStack::get().setEnabled(mUndo);
         gSampling = false;
@@ -178,8 +178,11 @@ public:
 
     void at(Solver& solver, double seconds, std::vector<double>& inputs)
     {
-        mGraph.setTime(seconds);
-        mGraph.evaluate();
+        mGraph.setTime(seconds, false);
+        if (mReads.empty())
+            mGraph.evaluate();
+        else
+            mGraph.evaluateUpstream(mReads);
         inputs.clear();
         solver.sample(mGraph, inputs);
     }
@@ -187,6 +190,7 @@ public:
 private:
     Graph& mGraph;
     double mTime;
+    std::vector<NodeId> mReads;
     bool mUndo = true;
     std::vector<NodeId> mMuted;
 };
@@ -332,7 +336,7 @@ void simulateLoop(Graph& g, NodeId node, Sim& s)
     std::vector<std::vector<double>> inputs(static_cast<size_t>(steps));
     uint64_t h = s.params;
     {
-        SampleScope scope(g, node);
+        SampleScope scope(g, node, s.setup);
         for (int64_t i = 0; i < steps; ++i)
         {
             scope.at(*s.solver, stepSeconds(s.loopStart, sub, i), inputs[size_t(i)]);
@@ -434,7 +438,7 @@ void simulateLinear(Graph& g, NodeId node, Sim& s, int64_t upTo)
     if (!validate && int64_t(s.frames.size()) > upTo)
         return;
 
-    SampleScope scope(g, node);
+    SampleScope scope(g, node, s.setup);
     s.info.lastInvalidated = -1;
     if (validate)
     {
@@ -651,6 +655,15 @@ std::shared_ptr<const Frame> cached(Graph& g, NodeId node, int64_t frame)
     return k < int64_t(it->second.frames.size()) ? it->second.frames[size_t(k)] : nullptr;
 }
 
+bool extendable(Graph& g, NodeId node, int64_t frame, int64_t within)
+{
+    watch(g);
+    auto it = sims().find(node);
+    if (it == sims().end() || it->second.frames.empty() || it->second.validGeneration != gGeneration)
+        return false;
+    return indexFor(it->second, frame) < int64_t(it->second.frames.size()) + within;
+}
+
 void clearCache(Graph& g, NodeId node)
 {
     watch(g);
@@ -839,7 +852,7 @@ NodeId record(Graph& g, NodeId node, const RecordOptions& o)
     std::vector<std::array<bool, 3>> moves(chosen.size(), {false, false, false});
     const double savedTime = g.time();
     {
-        SampleScope scope(g, node);
+        SampleScope scope(g, node, s.setup);
         for (size_t f = 0; f < frames.size(); ++f)
         {
             g.setTime(double(start + int64_t(f)) / fps());

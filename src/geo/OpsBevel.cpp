@@ -30,8 +30,12 @@ using namespace detail;
 
 /** An unbevelled edge closer than this (sine of the angle) to the bevelled one cannot be slid along. */
 constexpr double kMinSlide = 0.2;
-/** Clamped offsets leave this share of every edge they shrink. */
+/** Offsets clamped short of a crossing, or of a closing that would leave a flat patch, stop this share short. */
 constexpr double kClampMargin = 0.02;
+/** New points a clamped bevel brings closer than this share of the offset are welded. */
+constexpr double kWeldShare = 1e-7;
+/** Faces closer than this (1 - cosine of the angle between them) to lying flat on each other have no room for a strip. */
+constexpr double kFlatFold = 1e-6;
 
 /** Corner attribute recipe from corners of the original faces. */
 struct Mix
@@ -278,39 +282,6 @@ struct CornerTri
     }
 };
 
-/** No two edges of the closed polygon cross or touch, apart from neighbours sharing their corner. */
-bool polygonIsSimple(std::span<const glm::dvec2> p)
-{
-    const size_t n = p.size();
-    auto cross = [](const glm::dvec2& a, const glm::dvec2& b) { return a.x * b.y - a.y * b.x; };
-    for (size_t i = 0; i < n; ++i)
-    {
-        const glm::dvec2 a = p[i], b = p[(i + 1) % n];
-        if (glm::distance(a, b) <= 0.0)
-            return false;
-        for (size_t j = i + 2; j < n; ++j)
-        {
-            if (i == 0 && j == n - 1)
-                continue;
-            const glm::dvec2 c = p[j], d = p[(j + 1) % n];
-            const double d1 = cross(b - a, c - a), d2 = cross(b - a, d - a);
-            const double d3 = cross(d - c, a - c), d4 = cross(d - c, b - c);
-            if (d1 == 0 && d2 == 0)
-            {
-                // Collinear: only overlap counts.
-                const glm::dvec2 dir = b - a;
-                const double t0 = glm::dot(c - a, dir), t1 = glm::dot(d - a, dir), len = glm::dot(dir, dir);
-                if (std::max(t0, t1) > 0.0 && std::min(t0, t1) < len)
-                    return false;
-                continue;
-            }
-            if (((d1 > 0) != (d2 > 0) || d1 == 0 || d2 == 0) && ((d3 > 0) != (d4 > 0) || d3 == 0 || d4 == 0))
-                return false;
-        }
-    }
-    return true;
-}
-
 /** Side of a vertex mesh between two of its boundary points. */
 struct Side
 {
@@ -348,6 +319,44 @@ struct VertMesh
     Fill fill = Fill::None;
     std::vector<std::vector<Index>> sideIds; // Grid: the n + 1 points of each side, node to node
 };
+/**
+ * Welds the ends of the new edges (from firstEdge on) a clamp closed, so faces that ran out of room close fully.
+ * Faces left with under three points go, and faces follows the ones that were rebuilt.
+ */
+void weldClosedEdges(Mesh& mesh, Index firstEdge, double tol, std::vector<Index>& faces)
+{
+    LILA_ZONE();
+
+    std::vector<Index> target(mesh.pointCapacity(), kInvalid);
+    auto find = [&](Index p) {
+        while (target[p] != kInvalid)
+            p = target[p];
+        return p;
+    };
+    bool any = false;
+    for (Index e = firstEdge; e < mesh.edgeCapacity(); ++e)
+        if (mesh.edgeValid(e) && mesh.edgeLength(e) <= tol)
+        {
+            const Index a = find(mesh.edgePoint(e, 0)), b = find(mesh.edgePoint(e, 1));
+            if (a != b)
+            {
+                target[std::max(a, b)] = std::min(a, b);
+                any = true;
+            }
+        }
+    if (!any)
+        return;
+    for (Index p = 0; p < Index(target.size()); ++p)
+        if (target[p] != kInvalid)
+            target[p] = find(p);
+    std::unordered_map<Index, Index> rebuilt;
+    weldPoints(mesh, target, &rebuilt);
+    for (Index& f : faces)
+        if (auto it = rebuilt.find(f); it != rebuilt.end())
+            f = it->second;
+    std::erase(faces, kInvalid);
+}
+
 /** Sets "seam" on the edges of the faces where the corners on the two sides carry different wedge labels. */
 void markWedgeSeams(Mesh& mesh, std::span<const Index> faces, const std::unordered_map<Index, int>& label)
 {
@@ -377,9 +386,24 @@ void markWedgeSeams(Mesh& mesh, std::span<const Index> faces, const std::unorder
     for (const auto& [e, on] : set)
         seam[e] = on;
 }
-} // namespace
 
-std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const BevelOptions& opts)
+/** Faces with no more area than a square of side tol. */
+size_t flatFaces(const Mesh& mesh, double tol)
+{
+    size_t n = 0;
+    for (Index f = 0; f < mesh.faceCapacity(); ++f)
+        n += mesh.faceValid(f) && mesh.faceArea(f) <= tol * tol;
+    return n;
+}
+
+/** What a clamp does with edges whose ends would meet. */
+enum class Close : uint8_t
+{
+    Try,   // close them on a copy, keeping it unless that leaves flat faces, otherwise stop short
+    Force, // close them
+};
+
+std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const BevelOptions& opts, Close close)
 {
     LILA_ZONE();
 
@@ -387,7 +411,7 @@ std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const 
     const double r = superR(opts.profile);
     std::vector<Index> sel = opts.symmetry ? opts.symmetry->expandEdges(mesh, edgesIn) : uniqueSorted(edgesIn);
 
-    // Only manifold, consistently wound edges between manifold points.
+    // Only manifold, consistently wound edges between manifold points, whose faces do not fold flat onto each other.
     std::vector<uint8_t> bev(mesh.edgeCapacity(), 0);
     {
         std::vector<Index> fan, keep;
@@ -397,6 +421,8 @@ std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const 
                 continue;
             const Index c = mesh.edgeCorner(e);
             if (mesh.cornerPoint(c) == mesh.cornerPoint(mesh.cornerRadial(c)))
+                continue;
+            if (glm::dot(mesh.faceNormal(mesh.cornerFace(c)), mesh.faceNormal(mesh.cornerFace(mesh.cornerRadial(c)))) < kFlatFold - 1.0)
                 continue;
             bool ok = true;
             for (int s = 0; s < 2 && ok; ++s)
@@ -627,8 +653,10 @@ std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const 
         }
     touchedFaces = uniqueSorted(touchedFaces);
 
-    // Clamp: along every edge of a rebuilt face, the points replacing its two ends must not pass each other.
+    // Clamp: along every edge of a rebuilt face, the points replacing its two ends must not pass each other. Where
+    // they meet the edge closes, and its points are welded at the end.
     double offset = std::max(0.0, opts.offset);
+    bool collapses = false;
     if (opts.clamp)
         for (Index f : touchedFaces)
             mesh.forEachFaceCorner(f, [&](Index c) {
@@ -643,30 +671,39 @@ std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const 
                 if (auto it = fanSlot.find(cn); it != fanSlot.end())
                     db = verts[it->second.first].chain[it->second.second].front().dir;
                 const double k = glm::dot(da - db, (b - a) / len);
-                if (k > 1e-12)
-                    offset = std::min(offset, (1.0 - kClampMargin) * len / k);
+                if (k > 1e-12 && len / k < offset)
+                {
+                    offset = len / k;
+                    collapses = true;
+                }
             });
     // Points from different corners of one face can still cross inside it, as across a thin leg: shrink until none do.
     if (opts.clamp && offset > 0.0)
     {
+        // Closed edges count once, and a face that closes to a line or a point is simple.
         auto simpleAt = [&](Index f, double off) {
             const glm::dvec3 n = mesh.faceNormal(f);
             const glm::dvec3 ax = safeNormalize(glm::cross(n, std::abs(n.x) < 0.9 ? glm::dvec3(1, 0, 0) : glm::dvec3(0, 1, 0)));
             const glm::dvec3 ay = glm::cross(n, ax);
+            const double tol = kWeldShare * off;
             std::vector<glm::dvec2> poly;
+            auto add = [&](const glm::dvec3& q) {
+                const glm::dvec2 uv{glm::dot(q, ax), glm::dot(q, ay)};
+                if (poly.empty() || glm::distance(poly.back(), uv) > tol)
+                    poly.push_back(uv);
+            };
             mesh.forEachFaceCorner(f, [&](Index c) {
                 const glm::dvec3 p = mesh.position(mesh.cornerPoint(c));
                 auto it = fanSlot.find(c);
                 if (it == fanSlot.end())
-                    poly.push_back({glm::dot(p, ax), glm::dot(p, ay)});
+                    add(p);
                 else
                     for (const ChainPoint& cp : verts[it->second.first].chain[it->second.second])
-                    {
-                        const glm::dvec3 q = p + cp.dir * off;
-                        poly.push_back({glm::dot(q, ax), glm::dot(q, ay)});
-                    }
+                        add(p + cp.dir * off);
             });
-            return polygonIsSimple(poly);
+            while (poly.size() > 1 && glm::distance(poly.back(), poly.front()) <= tol)
+                poly.pop_back();
+            return poly.size() < 3 || polygonIsSimple(poly);
         };
         std::vector<Index> crossing;
         for (Index f : touchedFaces)
@@ -682,7 +719,23 @@ std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const 
                 (ok ? lo : hi) = mid;
             }
             offset = lo * (1.0 - kClampMargin);
+            collapses = false;
         }
+    }
+    // Closing is clean where the meeting points weld; where a point lands on a vertex mesh's side instead, the patch
+    // goes flat, and the bevel stops short of it.
+    if (collapses && close == Close::Try)
+    {
+        Mesh closed = mesh;
+        std::vector<Index> made = bevel(closed, edgesIn, opts, Close::Force);
+        const double tol = 1e-3 * offset;
+        if (flatFaces(closed, tol) <= flatFaces(mesh, tol))
+        {
+            mesh = std::move(closed);
+            return made;
+        }
+        offset *= 1.0 - kClampMargin;
+        collapses = false;
     }
     if (opts.appliedOffset)
         *opts.appliedOffset = offset;
@@ -1640,7 +1693,15 @@ std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const 
                 newEdges.push_back(e);
         setHardEdgesByAngle(mesh, opts.smoothingAngle, newEdges);
     }
+    if (collapses)
+        weldClosedEdges(mesh, edgeCap0, kWeldShare * offset, out);
     applySymmetrySnap(mesh, opts.symmetry, firstNewPoint);
     return out;
+}
+} // namespace
+
+std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> edgesIn, const BevelOptions& opts)
+{
+    return bevel(mesh, edgesIn, opts, Close::Try);
 }
 } // namespace lila::geo

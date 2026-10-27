@@ -216,6 +216,7 @@ LILA_SCENE_API void registerBooleanNode();
 LILA_SCENE_API void registerTextureNodes();
 LILA_SCENE_API void registerShadingNodes();
 LILA_SCENE_API void registerGroupNodes();
+LILA_SCENE_API void registerRoutingNodes();
 LILA_SCENE_API void registerDestructionNodes();
 void registerFractureNode();
 

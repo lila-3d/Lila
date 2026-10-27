@@ -4,6 +4,11 @@
 #include "ops/Undo.h"
 #include "core/Log.h"
 #include "gn/Gn.h"
+// TBB, under NodeLib.h, has members named like Qt's emit macro.
+#pragma push_macro("emit")
+#undef emit
+#include "gn/NodeLib.h"
+#pragma pop_macro("emit")
 #include "scene/Graph.h"
 #include "scene/Modifiers.h"
 #include "ui/GnViewerDraw.h"
@@ -170,6 +175,25 @@ public:
     }
 
     bool valueless(const std::string& type) const override { return type == "geometry"; }
+
+    double wireWidth(const std::string& type) const override { return type == "geometry" ? 3.5 : 2.0; }
+
+    std::optional<MergeNode> mergeNode(const std::string& type, const std::string& op) const override
+    {
+        if (type == "geometry")
+            return MergeNode{"JoinGeometry", json::object(), "geometry", {}, "geometry", true};
+        if (type == "float" || type == "int" || type == "bool")
+            return MergeNode{"Math", {{"operation", op}}, "a", "b", "value"};
+        if (type == "vector" || type == "color" || type == "rotation")
+            return MergeNode{"VectorMath", {{"operation", op}}, "a", "b", "vector"};
+        return std::nullopt;
+    }
+
+    bool canLink(const std::string& from, const std::string& to) const override
+    {
+        gn::SocketType a, b;
+        return gn::parseSocketType(from, &a) && gn::parseSocketType(to, &b) && gn::linkable(a, b);
+    }
 
     QColor headerColor(const std::string& type, const std::string& category) const override
     {

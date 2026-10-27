@@ -19,6 +19,7 @@
 #include "ui/TexturePicker.h"
 #include "ui/ValueReset.h"
 
+#include <QGuiApplication>
 #include <QApplication>
 #include <QCheckBox>
 #include <QDoubleValidator>
@@ -342,7 +343,8 @@ void MaterialEditor::scheduleRefresh()
     if (mQueued)
         return;
     mQueued = true;
-    QTimer::singleShot(0, this, [this] {
+    // While a drag edits the scene every frame, the fields catch up ten times a second instead of every frame.
+    QTimer::singleShot(QGuiApplication::mouseButtons() != Qt::NoButton ? 100 : 0, this, [this] {
         mQueued = false;
         refreshList();
         if (!current() && mNode != scene::kNoNode)

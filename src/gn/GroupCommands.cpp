@@ -916,6 +916,10 @@ void registerGroupCommands()
                     for (GLink& l : grp.links)
                         if (grp.node(l.toNode) && grp.node(l.toNode)->type == "GroupOutput" && l.toSocket == from)
                             l.toSocket = to;
+                    for (GTie& t : grp.ties)
+                        for (GLink& l : t.links)
+                            if (grp.node(l.toNode) && grp.node(l.toNode)->type == "GroupOutput" && l.toSocket == from)
+                                l.toSocket = to;
                     return to;
                 }
                 GInput* in = grp.input(from);
@@ -927,6 +931,10 @@ void registerGroupCommands()
                 for (GLink& l : grp.links)
                     if (grp.node(l.fromNode) && grp.node(l.fromNode)->type == "GroupInput" && l.fromSocket == from)
                         l.fromSocket = to;
+                for (GTie& t : grp.ties)
+                    for (GLink& l : t.links)
+                        if (grp.node(l.fromNode) && grp.node(l.fromNode)->type == "GroupInput" && l.fromSocket == from)
+                            l.fromSocket = to;
                 renames[from] = to;
                 return to;
             });

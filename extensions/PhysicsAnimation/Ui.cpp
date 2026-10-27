@@ -10,6 +10,7 @@
 #include <lila/Log.h>
 #include <lila/Node.h>
 #include <lila/Prefs.h>
+#include <lila/SimPreview.h>
 #include <lila/Simulation.h>
 #include <lila/Transform.h>
 #include <lila/UI.h>
@@ -144,12 +145,14 @@ void drawSolver(drawOverrides::DrawContext& c)
     std::shared_ptr<const sim::Frame> f;
     try
     {
-        f = sim::simulate(g, c.node.id(), sim::frameOf(g.time()));
+        f = simPreviewFrame(g, c.node.id());
     }
     catch (const std::exception&)
     {
         return;
     }
+    if (!f)
+        return;
     const sim::Info info = sim::info(g, c.node.id());
     for (size_t i = 0; i < info.outputs.size() && i < f->world.size(); ++i)
         if (NodeId m = markerFor(g, info.outputs[i]))

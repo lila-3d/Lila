@@ -14,6 +14,7 @@
 #include "ui/Theme.h"
 #include "ui/ValueReset.h"
 
+#include <QGuiApplication>
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
@@ -224,7 +225,8 @@ void AttributeEditor::scheduleRefresh()
     if (mQueued)
         return;
     mQueued = true;
-    QTimer::singleShot(0, this, [this] {
+    // While a drag edits the scene every frame, the fields catch up ten times a second instead of every frame.
+    QTimer::singleShot(QGuiApplication::mouseButtons() != Qt::NoButton ? 100 : 0, this, [this] {
         mQueued = false;
         Graph& g = Graph::current();
         scene::NodeId lead = g.selection().empty() ? scene::kNoNode : g.selection().back();

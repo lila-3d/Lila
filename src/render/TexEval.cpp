@@ -15,7 +15,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <mutex>
+#include <numeric>
 #include <set>
 #include <stdexcept>
 
@@ -449,6 +451,58 @@ struct Rect
         return {lo(x0, w), lo(y0, h), hi(x1, w), hi(y1, h)};
     }
 };
+
+/**
+ * Places buffers so that those never live at once share memory: each lives from the pass that writes it (loaded ones
+ * from the start) to the last pass that reads it, outputs to the end. spans are in texels; returns the texels used.
+ */
+VkDeviceSize packBuffers(const Plan& plan, const std::vector<VkDeviceSize>& spans, std::vector<VkDeviceSize>& offset)
+{
+    LILA_ZONE();
+    const size_t n = plan.buffers.size();
+    std::vector<int> first(n, -1), last(n, -1);
+    for (size_t p = 0; p < plan.passes.size(); ++p)
+    {
+        const Pass& pass = plan.passes[p];
+        first[size_t(pass.output)] = int(p);
+        last[size_t(pass.output)] = std::max(last[size_t(pass.output)], int(p));
+        for (int r : pass.reads)
+            last[size_t(r)] = std::max(last[size_t(r)], int(p));
+        for (const auto& [id, r] : pass.inputBuffers)
+            last[size_t(r)] = std::max(last[size_t(r)], int(p));
+    }
+    for (const BufferDesc& b : plan.buffers)
+        if (b.kind == BufferKind::Output)
+            last[size_t(b.id)] = std::numeric_limits<int>::max();
+    for (const auto& [name, id] : plan.outputs)
+        last[size_t(id)] = std::numeric_limits<int>::max();
+
+    std::vector<size_t> order(n);
+    std::iota(order.begin(), order.end(), size_t(0));
+    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return spans[a] > spans[b]; });
+    std::vector<size_t> placed;
+    std::vector<std::pair<VkDeviceSize, VkDeviceSize>> taken;
+    VkDeviceSize total = 0;
+    for (size_t b : order)
+    {
+        taken.clear();
+        for (size_t o : placed)
+            if (first[o] <= last[b] && first[b] <= last[o])
+                taken.emplace_back(offset[o], offset[o] + spans[o]);
+        std::sort(taken.begin(), taken.end());
+        VkDeviceSize at = 0;
+        for (const auto& [lo, hi] : taken)
+        {
+            if (lo >= at + spans[b])
+                break;
+            at = std::max(at, hi);
+        }
+        offset[b] = at;
+        placed.push_back(b);
+        total = std::max(total, at + spans[b]);
+    }
+    return total;
+}
 } // namespace
 
 // -------------------------------------------------------------------------------------------------------- State
@@ -476,6 +530,8 @@ struct Prepared
     VkDeviceSize scratchTexels = 0;
     /** Image buffers by id. */
     std::map<int, std::shared_ptr<const image::Image>> images;
+    /** Per buffer: nothing reads or writes it. */
+    std::vector<uint8_t> unused;
     /** Every buffer's size, Image and External ones from their sources. */
     std::vector<std::pair<int, int>> sizes;
     /** Per store, the output buffer each channel reads (-1 for a constant). */
@@ -511,6 +567,10 @@ struct Evaluator::State
     std::vector<std::pair<uint64_t, uint64_t>> loadedImage; // per buffer: that image's key and version, for partial reloads
     /** The arena was made this step: nothing in it can be kept. */
     bool arenaFresh = true;
+    /** Buffers share memory over their lifetimes (Inputs::compact): nothing outlives a run, so any change reruns it all. */
+    bool packed = false;
+    /** The most bytes the arena may take: one storage buffer binding, or Inputs::maxArenaBytes. */
+    VkDeviceSize arenaLimit = 0;
     VkDeviceSize arenaTexels = 0;
     bool reallocate = true;
     VkDeviceSize scratchBase = 0;
@@ -552,19 +612,25 @@ struct Evaluator::State
         // Whatever ran is gone with the arena: the next step runs everything again.
         if (cur)
         {
-            std::fill(dirty.begin(), dirty.end(), uint8_t(1));
-            std::fill(load.begin(), load.end(), uint8_t(1));
-            std::fill(storeDirty.begin(), storeDirty.end(), uint8_t(1));
-            std::fill(passRect.begin(), passRect.end(), Rect::full());
-            std::fill(loadRect.begin(), loadRect.end(), Rect::full());
-            std::fill(storeRect.begin(), storeRect.end(), Rect::full());
-            std::fill(loadTarget.begin(), loadTarget.end(), uint64_t(0));
-            uniformsDirty = true;
-            passIndex = 0;
-            passRow = 0;
-            passStarted = false;
+            dirtyAll();
             done = false;
         }
+    }
+
+    /** Marks every load, pass and store to be redone in full, from the first pass. */
+    void dirtyAll()
+    {
+        std::fill(dirty.begin(), dirty.end(), uint8_t(1));
+        std::fill(load.begin(), load.end(), uint8_t(1));
+        std::fill(storeDirty.begin(), storeDirty.end(), uint8_t(1));
+        std::fill(passRect.begin(), passRect.end(), Rect::full());
+        std::fill(loadRect.begin(), loadRect.end(), Rect::full());
+        std::fill(storeRect.begin(), storeRect.end(), Rect::full());
+        std::fill(loadTarget.begin(), loadTarget.end(), uint64_t(0));
+        uniformsDirty = true;
+        passIndex = 0;
+        passRow = 0;
+        passStarted = false;
     }
 
     /** Pages plans: page passes never run in step, and externals that come in per page never load whole. */
@@ -581,7 +647,8 @@ struct Evaluator::State
     }
     /** Bytes per texel of a buffer in the arena. */
     VkDeviceSize elemBytes(size_t b) const { return cur->half[b] ? 8 : kTexel; }
-    void adopt();
+    /** Takes a pending plan and places its buffers, packing them when asked or when they'd pass maxBytes side by side. */
+    void adopt(VkDeviceSize maxBytes);
     /** Loads the GPU externals whose version moved and dirties what reads them (render thread). */
     void markExternals();
     /**
@@ -661,7 +728,7 @@ bool sameStores(const std::vector<StoreTarget>& a, const std::vector<StoreTarget
 uint64_t versionOf(const GpuImageRef& img) { return img ? img->key() * 1000003ull ^ img->version() : 0; }
 } // namespace
 
-void Evaluator::State::adopt()
+void Evaluator::State::adopt(VkDeviceSize maxBytes)
 {
     std::unique_ptr<Prepared> next;
     {
@@ -673,8 +740,8 @@ void Evaluator::State::adopt()
     const Plan& np = next->plan;
     const size_t nPasses = np.passes.size(), nBuffers = np.buffers.size();
     const bool keep = cur && arena.buffer && cur->plan.structureHash == np.structureHash && cur->plan.width == np.width &&
-                      cur->plan.height == np.height && cur->sizes == next->sizes && cur->half == next->half && cur->pagePass == next->pagePass &&
-                      cur->regionExternal == next->regionExternal && cur->plan.passes.size() == nPasses &&
+                      cur->plan.height == np.height && cur->sizes == next->sizes && cur->unused == next->unused && cur->half == next->half &&
+                      cur->pagePass == next->pagePass && cur->regionExternal == next->regionExternal && cur->plan.passes.size() == nPasses &&
                       next->scratchTexels <= scratchCapacity;
     std::set<int> changed;
     bool moved = false, storesChanged = false;
@@ -761,13 +828,28 @@ void Evaluator::State::adopt()
 
     // Place the buffers: each starts 256-byte aligned, so row bands of a pass bind at aligned offsets.
     offset.assign(nBuffers, 0);
+    std::vector<VkDeviceSize> spans(nBuffers);
     VkDeviceSize total = 0;
     for (size_t b = 0; b < nBuffers; ++b)
     {
         offset[b] = total;
         const auto [w, h] = cur->sizes[b];
         const VkDeviceSize texels = VkDeviceSize(w) * VkDeviceSize(h);
-        total += ((cur->half[b] ? (texels + 1) / 2 : texels) + 15) & ~VkDeviceSize(15);
+        spans[b] = ((cur->half[b] ? (texels + 1) / 2 : texels) + 15) & ~VkDeviceSize(15);
+        total += spans[b];
+    }
+    const bool wasPacked = packed;
+    arenaLimit = cur->inputs.maxArenaBytes ? std::min<VkDeviceSize>(maxBytes, cur->inputs.maxArenaBytes) : maxBytes;
+    packed = !cur->inputs.pages && (cur->inputs.compact || (total + cur->scratchTexels) * kTexel > arenaLimit);
+    if (packed)
+        total = packBuffers(cur->plan, spans, offset);
+    if (keep && packed != wasPacked)
+        reallocate = true;
+    if (keep && (packed || wasPacked))
+    {
+        dirtyAll();
+        std::scoped_lock lock(mutex);
+        stats.passesDirty = nPasses;
     }
     // Pages plans: room for a batch of pages after the buffers, each page its region externals (with a margin for
     // bilinear reads) and its page passes' outputs.
@@ -796,6 +878,10 @@ void Evaluator::State::adopt()
         scratchCapacity = cur->scratchTexels;
     scratchBase = total;
     arenaTexels = std::max<VkDeviceSize>(total + scratchCapacity, 16);
+    {
+        std::scoped_lock lock(mutex);
+        stats.arenaBytes = arenaTexels * kTexel;
+    }
     uniformValues = cur->plan.uniforms;
     if (uniformValues.empty())
         uniformValues.assign(4, 0.0f);
@@ -844,7 +930,10 @@ void Evaluator::State::markExternals()
                 any = markExternal(size_t(b.id), g->second) || any;
     if (!any)
         return;
-    propagate({}, false);
+    if (packed)
+        dirtyAll();
+    else
+        propagate({}, false);
     maskPages();
     passIndex = 0;
     passRow = 0;
@@ -947,10 +1036,9 @@ void Evaluator::State::allocate(VulkanContext& vk)
     if (reallocate || !arena.buffer)
     {
         const VkDeviceSize bytes = arenaTexels * kTexel;
-        if (bytes > vk.properties.limits.maxStorageBufferRange)
-            throw std::runtime_error("texture graph GPU: the graph's buffers need " + std::to_string(bytes >> 20) +
-                                     " MB, more than one GPU buffer can hold (" + std::to_string(vk.properties.limits.maxStorageBufferRange >> 20) +
-                                     " MB)");
+        if (bytes > arenaLimit)
+            throw ArenaTooLarge("texture graph GPU: the graph's buffers need " + std::to_string(bytes >> 20) + " MB, more than one GPU buffer can hold (" +
+                                std::to_string(arenaLimit >> 20) + " MB)");
         compute::destroy(vk, arena);
         arena = compute::makeBuffer(vk, bytes, 0, compute::Host::None);
         reallocate = false;
@@ -1034,6 +1122,8 @@ void Evaluator::State::recordLoads(VulkanContext& vk, VkCommandBuffer cmd, std::
         if (!load[b])
             continue;
         load[b] = 0;
+        if (cur->unused[b])
+            continue;
         any = true;
         if (d.kind == BufferKind::Image)
         {
@@ -1854,10 +1944,28 @@ std::string Evaluator::setPlan(Plan plan, Inputs inputs, std::vector<StoreTarget
         ++(compiled ? prep->compiled : prep->cached);
     }
 
+    // Buffers no pass touches and no output names (those of outputs another evaluation makes) take no room and load nothing.
+    prep->unused.assign(plan.buffers.size(), 1);
+    for (const Pass& p : plan.passes)
+    {
+        prep->unused[size_t(p.output)] = 0;
+        for (int r : p.reads)
+            prep->unused[size_t(r)] = 0;
+        for (const auto& [id, r] : p.inputBuffers)
+            prep->unused[size_t(r)] = 0;
+    }
+    for (const auto& [name, id] : plan.outputs)
+        prep->unused[size_t(id)] = 0;
+
     std::vector<std::string> warnings;
     prep->sizes.resize(plan.buffers.size());
     for (const BufferDesc& b : plan.buffers)
     {
+        if (prep->unused[size_t(b.id)])
+        {
+            prep->sizes[size_t(b.id)] = {1, 1};
+            continue;
+        }
         std::pair<int, int> size{b.width, b.height};
         if (b.kind == BufferKind::Image)
         {
@@ -1896,10 +2004,13 @@ std::string Evaluator::setPlan(Plan plan, Inputs inputs, std::vector<StoreTarget
         else if (b.kind == BufferKind::External)
         {
             size = {plan.width, plan.height};
-            // A GPU image larger than the plan (a preview of a big tile) loads at the plan's size.
+            // A GPU image larger than the plan (a preview of a big tile) loads at the plan's size. CPU texels upload
+            // as they are, so they keep their own size, as on the CPU.
             if (auto g = inputs.gpuExternals.find(b.name); g != inputs.gpuExternals.end() && g->second)
+            {
                 if (g->second->width() < plan.width || g->second->height() < plan.height)
                     size = {g->second->width(), g->second->height()};
+            }
             else if (auto c = inputs.cpuExternals.find(b.name); c != inputs.cpuExternals.end() && c->second.width > 0)
                 size = {c->second.width, c->second.height};
         }
@@ -2009,7 +2120,7 @@ bool Evaluator::step(VulkanContext& vk, double budgetMs)
 {
     LILA_ZONE();
     State& st = *m;
-    st.adopt();
+    st.adopt(vk.properties.limits.maxStorageBufferRange);
     if (st.cur && st.refresh.exchange(false))
         st.markExternals();
     auto pendingNow = [&] {
@@ -2217,7 +2328,95 @@ void removeMeshMapListener(int id)
     s.listeners.erase(id);
 }
 
-tex::EvalResult evaluate(const Plan& plan, const tex::EvalOptions& options)
+namespace
+{
+/** The plan cut down to the passes the named outputs need. Outputs it drops that a kept pass reads become intermediates. */
+Plan outputsOnly(const Plan& plan, std::span<const std::string> names)
+{
+    Plan p = plan;
+    p.outputs.clear();
+    std::vector<uint8_t> need(plan.buffers.size(), 0);
+    for (const std::string& n : names)
+    {
+        const int id = plan.outputs.at(n);
+        p.outputs[n] = id;
+        need[size_t(id)] = 1;
+    }
+    std::vector<size_t> kept;
+    for (size_t i = plan.passes.size(); i-- > 0;)
+    {
+        const Pass& pass = plan.passes[i];
+        if (!need[size_t(pass.output)])
+            continue;
+        kept.push_back(i);
+        for (int r : pass.reads)
+            need[size_t(r)] = 1;
+        for (const auto& [id, r] : pass.inputBuffers)
+            need[size_t(r)] = 1;
+    }
+    p.passes.clear();
+    for (auto i = kept.rbegin(); i != kept.rend(); ++i)
+        p.passes.push_back(plan.passes[*i]);
+    std::set<int> outs;
+    for (const auto& [n, id] : p.outputs)
+        outs.insert(id);
+    for (BufferDesc& b : p.buffers)
+        if (b.kind == BufferKind::Output && !outs.contains(b.id))
+            b.kind = BufferKind::Intermediate;
+    return p;
+}
+
+/** Runs the plan for the named outputs into result, halving the group while its buffers don't fit one GPU buffer. */
+void evaluateGroup(const Plan& plan, const tex::EvalOptions& options, std::span<const std::string> names, uint64_t maxArenaBytes, tex::EvalResult& result)
+{
+    LILA_ZONE();
+    const Plan part = names.size() == plan.outputs.size() ? plan : outputsOnly(plan, names);
+    Inputs in;
+    auto external = [&](int b) {
+        const BufferDesc& d = part.buffers[size_t(b)];
+        if (d.kind == BufferKind::External && !in.cpuExternals.contains(d.name))
+            if (auto it = options.externals.find(d.name); it != options.externals.end())
+                in.cpuExternals.emplace(d.name, it->second);
+    };
+    for (const Pass& p : part.passes)
+    {
+        for (int b : p.reads)
+            external(b);
+        for (const auto& [id, b] : p.inputBuffers)
+            external(b);
+    }
+    in.compact = true;
+    in.maxArenaBytes = maxArenaBytes;
+    in.imageRoot = options.imageRoot;
+    in.uvOffset[0] = options.uvOffset[0];
+    in.uvOffset[1] = options.uvOffset[1];
+    Evaluator ev;
+    if (std::string err = ev.setPlan(part, std::move(in)); !err.empty())
+        throw std::runtime_error(err);
+    try
+    {
+        Renderer::get().runTask([&ev](VulkanContext& vk) { return ev.step(vk); }).get();
+    }
+    catch (const ArenaTooLarge&)
+    {
+        if (names.size() < 2)
+            throw;
+        const size_t half = names.size() / 2;
+        evaluateGroup(plan, options, names.first(half), maxArenaBytes, result);
+        evaluateGroup(plan, options, names.subspan(half), maxArenaBytes, result);
+        return;
+    }
+    result.outputs.merge(ev.readOutputs());
+    const Stats s = ev.stats();
+    result.compiled += s.compiled;
+    result.cached += s.cached;
+    for (const std::string& w : s.warnings)
+        if (std::find(result.warnings.begin(), result.warnings.end(), w) == result.warnings.end())
+            result.warnings.push_back(w);
+}
+} // namespace
+
+tex::EvalResult evaluate(const Plan& plan, const tex::EvalOptions& options, uint64_t maxArenaBytes)
 {
     LILA_ZONE();
     if (!plan.error.empty())
@@ -2226,21 +2425,11 @@ tex::EvalResult evaluate(const Plan& plan, const tex::EvalOptions& options)
     if (!r.running() && !r.start())
         throw std::runtime_error("no GPU: the renderer could not start");
     const auto t0 = std::chrono::steady_clock::now();
-    Evaluator ev;
-    Inputs in;
-    in.cpuExternals = options.externals;
-    in.imageRoot = options.imageRoot;
-    in.uvOffset[0] = options.uvOffset[0];
-    in.uvOffset[1] = options.uvOffset[1];
-    if (std::string err = ev.setPlan(plan, std::move(in)); !err.empty())
-        throw std::runtime_error(err);
-    r.runTask([&ev](VulkanContext& vk) { return ev.step(vk); }).get();
+    std::vector<std::string> names;
+    for (const auto& [name, id] : plan.outputs)
+        names.push_back(name);
     tex::EvalResult result;
-    result.outputs = ev.readOutputs();
-    const Stats s = ev.stats();
-    result.compiled = s.compiled;
-    result.cached = s.cached;
-    result.warnings = s.warnings;
+    evaluateGroup(plan, options, names, maxArenaBytes, result);
     result.milliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     return result;
 }

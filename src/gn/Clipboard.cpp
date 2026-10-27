@@ -109,6 +109,7 @@ std::string copyNodesText(const Group& g, const std::vector<std::string>& names)
         ojson o = {{"name", n->name}, {"type", n->type}, {"position", {std::round(p.x), std::round(p.y)}}};
         if (!n->values.empty())
             o["values"] = ordered(n->values);
+        putNodeFlagsTo(*n, o);
         nodes.push_back(std::move(o));
     }
     std::set<std::string> fed;
@@ -126,6 +127,18 @@ std::string copyNodesText(const Group& g, const std::vector<std::string>& names)
     ojson out = {{"format", kClipboardFormat}, {"version", kClipboardVersion}, {"nodes", nodes}, {"links", links}};
     if (!inputs.empty())
         out["inputs"] = inputs;
+    if (std::vector<GTie> ties = tiesAmong(g.ties, set, {}, -centre); !ties.empty())
+    {
+        for (GTie& t : ties)
+            t.position = glm::round(t.position);
+        out["ties"] = ordered(tiesToJson(ties));
+    }
+    if (std::vector<GFrame> frames = framesAmong(g.frames, set, {}, -centre); !frames.empty())
+    {
+        for (GFrame& f : frames)
+            f.position = glm::round(f.position);
+        out["frames"] = ordered(framesToJson(frames));
+    }
     return out.dump(2);
 }
 
@@ -185,6 +198,7 @@ std::vector<std::string> pasteNodesText(Group& g, std::string_view text, glm::dv
             continue;
         }
         GNode gn{n["name"].get<std::string>(), n["type"].get<std::string>(), {0.0, 0.0}, json::object()};
+        getNodeFlags(gn, n);
         if (!validIdentifier(gn.name))
             errors.push_back(std::format("'{}' isn't a valid node name", gn.name));
         else if (!names.insert(gn.name).second)
@@ -312,6 +326,14 @@ std::vector<std::string> pasteNodesText(Group& g, std::string_view text, glm::dv
     }
     for (const GLink& l : links)
         next.links.push_back({renamed[l.fromNode], l.fromSocket, renamed[l.toNode], l.toSocket});
+    std::set<std::string> kept;
+    for (const GNode& n : pasted)
+        kept.insert(n.name);
+    for (GTie& t : tiesAmong(tiesFromJson(j.value("ties", json::array())), kept, renamed, at - centre))
+        next.ties.push_back(std::move(t));
+    pruneTies(next.ties, next.links);
+    for (GFrame& f : framesAmong(framesFromJson(j.value("frames", json::array())), kept, renamed, at - centre))
+        next.frames.push_back(std::move(f));
     g = std::move(next);
     return out;
 }

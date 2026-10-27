@@ -1,6 +1,7 @@
 #include "tex/TextureSet.h"
 
 #include "core/Profile.h"
+#include "gn/Routing.h"
 #include "ops/Command.h"
 #include "scene/Node.h"
 #include "tex/Evaluate.h"
@@ -84,6 +85,7 @@ NodePorts portsChecked(const Graph& g, const GNode& n, const SetSettings& s, con
 
 bool reaches(const Graph& g, const std::string& from, const std::string& to)
 {
+    std::vector<GLink> links = gn::withPortalLinks(g.nodes, g.links);
     std::vector<std::string> stack{from};
     std::set<std::string> seen;
     while (!stack.empty())
@@ -94,7 +96,7 @@ bool reaches(const Graph& g, const std::string& from, const std::string& to)
             return true;
         if (!seen.insert(cur).second)
             continue;
-        for (const GLink& l : g.links)
+        for (const GLink& l : links)
             if (l.toNode == cur)
                 stack.push_back(l.fromNode);
     }
@@ -336,7 +338,8 @@ void registerCommands()
                     throw CommandError("texConnect: " + fn + " has no output '" + fsock + "'");
                 if (!i)
                     throw CommandError("texConnect: " + tn + " has no input '" + tsock + "'");
-                if (!linkable(o->type, i->type))
+                // A routing node takes the type of whatever feeds it.
+                if (!gn::isRoutingType(nodeIn(g, tn, "texConnect").type) && !linkable(o->type, i->type))
                     throw CommandError(std::string("texConnect: can't link ") + portTypeName(o->type) + " to " + portTypeName(i->type));
                 if (fn == tn || reaches(g, fn, tn))
                     throw CommandError("texConnect: that link would make a cycle");
@@ -410,6 +413,15 @@ void registerCommands()
                     n.values[id] = value;
                     return nullptr;
                 }
+                if (gn::isRoutingType(n.type) && id == "name")
+                {
+                    if (!value.is_string())
+                        throw CommandError("texSetValue: a portal's name is a string");
+                    n.values[id] = value;
+                    if (gn::hasCycle(gn::withPortalLinks(g.nodes, g.links)))
+                        throw CommandError("texSetValue: " + nn + " reading " + value.get<std::string>() + " would feed its own Send, a loop");
+                    return nullptr;
+                }
                 throw CommandError("texSetValue: " + nn + " has no parameter or input '" + id + "'");
             });
         },
@@ -459,7 +471,93 @@ void registerCommands()
                     if (renamed.contains(l.fromNode) && renamed.contains(l.toNode))
                         extra.push_back({renamed[l.fromNode], l.fromSocket, renamed[l.toNode], l.toSocket});
                 g.links.insert(g.links.end(), extra.begin(), extra.end());
+                std::set<std::string> copied;
+                for (auto& [old, fresh] : renamed)
+                    copied.insert(old);
+                for (GTie& t : gn::tiesAmong(g.ties, copied, renamed, off))
+                    g.ties.push_back(std::move(t));
+                for (GFrame& f : g.frames)
+                    for (size_t k = 0, n = f.nodes.size(); k < n; ++k)
+                        if (auto it = renamed.find(f.nodes[k]); it != renamed.end())
+                            f.nodes.push_back(it->second);
                 return names;
+            });
+        },
+    });
+
+    ops::registerCommand({
+        .name = "texSetTies",
+        .doc = "Replace a texture set's zip ties, shaped as gnSetTies takes them. Display only; links not in the graph are dropped, "
+               "and so is a tie left with fewer than two. Returns how many ties the graph has.",
+        .positionalDoc = "set ties",
+        .run = [](const Args& a) -> json {
+            if (a.positional.size() < 2 || !a.positional[1].is_array())
+                throw CommandError("texSetTies: ties must be a list");
+            std::vector<GTie> ties = gn::tiesFromJson(a.positional[1]);
+            return editGraph(a, "texSetTies", [&](Graph& g, const SetSettings&) -> json {
+                g.ties = ties;
+                gn::pruneTies(g.ties, g.links);
+                return int(g.ties.size());
+            });
+        },
+    });
+
+    ops::registerCommand({
+        .name = "texSetNodeFlags",
+        .doc = "Set how nodes draw and run, as gnSetNodeFlags does: muted, collapsed, hideUnused. Flags left out stay as they are.",
+        .positionalDoc = "set nodes...",
+        .flags = {{"muted", "", T::Bool, nullptr, "Bypass the nodes."},
+                  {"collapsed", "", T::Bool, nullptr, "Draw only their headers."},
+                  {"hideUnused", "", T::Bool, nullptr, "Draw only their linked sockets."}},
+        .run = [](const Args& a) -> json {
+            return editGraph(a, "texSetNodeFlags", [&](Graph& g, const SetSettings&) -> json {
+                for (size_t i = 1; i < a.positional.size(); ++i)
+                {
+                    GNode& n = nodeIn(g, a.positional[i].get<std::string>(), "texSetNodeFlags");
+                    if (a.has("muted"))
+                    {
+                        bool m = a.get<bool>("muted", false);
+                        if (m && (n.type == kGroupInputType || n.type == kGroupOutputType || n.type == kMaterialOutputType || gn::isRoutingType(n.type)))
+                            throw CommandError("texSetNodeFlags: " + n.name + " can't be muted");
+                        n.muted = m;
+                    }
+                    if (a.has("collapsed"))
+                        n.collapsed = a.get<bool>("collapsed", false);
+                    if (a.has("hideUnused"))
+                        n.hideUnused = a.get<bool>("hideUnused", false);
+                }
+                return nullptr;
+            });
+        },
+    });
+
+    ops::registerCommand({
+        .name = "texSetBookmarks",
+        .doc = "Replace a texture set's saved canvas views, shaped as gnSetBookmarks takes them.",
+        .positionalDoc = "set bookmarks",
+        .run = [](const Args& a) -> json {
+            if (a.positional.size() < 2 || !a.positional[1].is_object())
+                throw CommandError("texSetBookmarks: bookmarks must be an object of slot: [x, y, zoom]");
+            json marks = gn::cleanBookmarks(a.positional[1]);
+            return editGraph(a, "texSetBookmarks", [&](Graph& g, const SetSettings&) -> json {
+                g.bookmarks = marks;
+                return int(marks.size());
+            });
+        },
+    });
+
+    ops::registerCommand({
+        .name = "texSetFrames",
+        .doc = "Replace a texture set's frames, shaped as gnSetFrames takes them. Display only; names not in the graph are dropped. "
+               "Returns how many frames there are.",
+        .positionalDoc = "set frames",
+        .run = [](const Args& a) -> json {
+            if (a.positional.size() < 2 || !a.positional[1].is_array())
+                throw CommandError("texSetFrames: frames must be a list");
+            std::vector<GFrame> frames = gn::framesFromJson(a.positional[1]);
+            return editGraph(a, "texSetFrames", [&](Graph& g, const SetSettings&) -> json {
+                g.frames = frames;
+                return int(g.frames.size());
             });
         },
     });
@@ -488,11 +586,24 @@ void registerCommands()
                 centre /= double(count);
             for (const GNode& gn : g.nodes)
                 if (names.contains(gn.name) && gn.type != kMaterialOutputType)
-                    nodes.push_back({{"name", gn.name}, {"type", gn.type}, {"position", {gn.position.x - centre.x, gn.position.y - centre.y}}, {"values", gn.values}});
+                {
+                    json o = {{"name", gn.name}, {"type", gn.type}, {"position", {gn.position.x - centre.x, gn.position.y - centre.y}}, {"values", gn.values}};
+                    gn::putNodeFlags(gn, o);
+                    nodes.push_back(std::move(o));
+                }
             for (const GLink& l : g.links)
                 if (names.contains(l.fromNode) && names.contains(l.toNode))
                     links.push_back({l.fromNode, l.fromSocket, l.toNode, l.toSocket});
-            return json{{"format", kClipFormat}, {"version", 1}, {"nodes", nodes}, {"links", links}}.dump(2);
+            json out = {{"format", kClipFormat}, {"version", 1}, {"nodes", nodes}, {"links", links}};
+            std::set<std::string> copied;
+            for (const GNode& gn : g.nodes)
+                if (names.contains(gn.name) && gn.type != kMaterialOutputType)
+                    copied.insert(gn.name);
+            if (std::vector<GTie> ties = gn::tiesAmong(g.ties, copied, {}, -centre); !ties.empty())
+                out["ties"] = gn::tiesToJson(ties);
+            if (std::vector<GFrame> frames = gn::framesAmong(g.frames, copied, {}, -centre); !frames.empty())
+                out["frames"] = gn::framesToJson(frames);
+            return out.dump(2);
         },
     });
 
@@ -525,6 +636,7 @@ void registerCommands()
                     if (!findNode(type))
                         throw CommandError("texPasteNodes: unknown node type '" + type + "'");
                     GNode n{g.uniqueNodeName(nj.value("name", type)), type, at, nj.value("values", json::object())};
+                    gn::getNodeFlags(n, nj);
                     if (nj.contains("position") && nj["position"].is_array() && nj["position"].size() == 2)
                         n.position = at + glm::dvec2(nj["position"][0].get<double>(), nj["position"][1].get<double>());
                     renamed[nj.value("name", type)] = n.name;
@@ -534,6 +646,13 @@ void registerCommands()
                 for (const json& l : clip.value("links", json::array()))
                     if (renamed.contains(l[0].get<std::string>()) && renamed.contains(l[2].get<std::string>()))
                         g.links.push_back({renamed[l[0].get<std::string>()], l[1].get<std::string>(), renamed[l[2].get<std::string>()], l[3].get<std::string>()});
+                std::set<std::string> pasted;
+                for (auto& [old, fresh] : renamed)
+                    pasted.insert(old);
+                for (GTie& t : gn::tiesAmong(gn::tiesFromJson(clip.value("ties", json::array())), pasted, renamed, at))
+                    g.ties.push_back(std::move(t));
+                for (GFrame& f : gn::framesAmong(gn::framesFromJson(clip.value("frames", json::array())), pasted, renamed, at))
+                    g.frames.push_back(std::move(f));
                 return names;
             });
         },
@@ -575,8 +694,13 @@ void registerCommands()
             Graph g = readGraph(n);
             SetSettings s = readSettings(n);
             json nodes = json::array();
-            for (const GNode& gn : g.nodes)
-                nodes.push_back(nodeJson(gn, g, s));
+            std::map<std::string, std::string> problems = gn::portalProblems(g.nodes, g.links);
+            for (const GNode& node : g.nodes)
+            {
+                nodes.push_back(nodeJson(node, g, s));
+                if (auto it = problems.find(node.name); it != problems.end())
+                    nodes.back()["problem"] = it->second;
+            }
             Plan plan = buildPlan(g, requestFor(g, s, 0, 0));
             json summary = plan.summary();
             if (a.get<bool>("source", false))

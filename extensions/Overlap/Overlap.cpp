@@ -397,6 +397,17 @@ public:
         su.substeps = substeps;
         su.stepped = int(std::clamp<int64_t>(integer(*o, "stepped"), 1, 12));
         su.paramsHash = h;
+        su.reads = {mNode};
+        if (mRoot)
+            su.reads.push_back(mRoot);
+        for (const ColliderNode& c : mColliders)
+            su.reads.push_back(c.node);
+        for (const Entry& e : mEntries)
+        {
+            su.reads.insert(su.reads.end(), {e.joint, e.parent});
+            if (e.override)
+                su.reads.push_back(e.override);
+        }
         if (!mEnabled)
         {
             // Disabled: nothing simulates, every output follows the animation.

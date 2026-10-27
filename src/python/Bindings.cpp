@@ -19,6 +19,7 @@ using lila::json;
 namespace lila::python
 {
 void bindMath(nb::module_& m);
+void bindDebugDraw(nb::module_& m);
 void bindScene(nb::module_& m);
 void bindMeshArrays(nb::module_& m);
 void bindExtensions(nb::module_& m);
@@ -109,6 +110,7 @@ NB_MODULE(_lila, m)
     nb::set_leak_warnings(false);
     nb::module_ math = m.def_submodule("math", "UE-flavoured vector math.");
     lila::python::bindMath(math);
+    lila::python::bindDebugDraw(m);
     lila::python::bindScene(m);
     lila::python::bindMeshArrays(m);
     lila::python::bindExtensions(m);

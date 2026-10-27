@@ -9,15 +9,17 @@ def addAnimLayerMembers(*objects: Any, layer: str | None = None, l: str | None =
         layer: Animation layer. Default: the active one. Short form l.
     """
 
-def addAttr(*objects: Any, longName: str | None = None, shortName: str | None = None, niceName: str | None = None, attributeType: str | None = None, dataType: str | None = None, multi: bool | None = None, defaultValue: Any | None = None, minValue: float | None = None, maxValue: float | None = None, softMinValue: float | None = None, softMaxValue: float | None = None, enumName: str | None = None, keyable: bool | None = None, hidden: bool | None = None, usedAsColor: bool | None = None, doc: str | None = None, ln: str | None = None, sn: str | None = None, nn: str | None = None, at: str | None = None, dt: str | None = None, m: bool | None = None, dv: Any | None = None, min: float | None = None, max: float | None = None, smn: float | None = None, smx: float | None = None, en: str | None = None, k: bool | None = None, h: bool | None = None, uac: bool | None = None) -> Any:
-    """Add an attribute to objects (Maya's addAttr): attributeType for a single value or, with multi, an array of them; dataType for strings and arrays (stringArray, doubleArray, Int32Array, vectorArray). Saved with the scene. Returns the new plugs.
+def addAttr(*objects: Any, longName: str | None = None, shortName: str | None = None, niceName: str | None = None, attributeType: str | None = None, parent: str | None = None, numberOfChildren: int | None = None, dataType: str | None = None, multi: bool | None = None, defaultValue: Any | None = None, minValue: float | None = None, maxValue: float | None = None, softMinValue: float | None = None, softMaxValue: float | None = None, enumName: str | None = None, keyable: bool | None = None, hidden: bool | None = None, usedAsColor: bool | None = None, doc: str | None = None, ln: str | None = None, sn: str | None = None, nn: str | None = None, at: str | None = None, p: str | None = None, nc: int | None = None, dt: str | None = None, m: bool | None = None, dv: Any | None = None, min: float | None = None, max: float | None = None, smn: float | None = None, smx: float | None = None, en: str | None = None, k: bool | None = None, h: bool | None = None, uac: bool | None = None) -> Any:
+    """Add an attribute to objects (Maya's addAttr): attributeType for a single value or, with multi, an array of them; dataType for strings and arrays (stringArray, doubleArray, Int32Array, vectorArray). attributeType='compound' groups the attributes then added with parent=; a multi compound gives each element every child, node.targets[2].weight. Compounds nest one level. Saved with the scene. Returns the new plugs.
 
     Args:
         objects: objects.
         longName: The attribute's name. Short form ln.
         shortName: A short name. Short form sn.
         niceName: The label editors show. Short form nn.
-        attributeType: bool, long, float, double, double3, enum or matrix (Lila's int, vec3 too). Short form at.
+        attributeType: bool, long, float, double, double3, enum, matrix or compound (Lila's int, vec3 too). Short form at.
+        parent: The compound this attribute is a child of. Short form p.
+        numberOfChildren: Accepted for Maya scripts: a compound takes any number of children. Short form nc.
         dataType: string, stringArray, doubleArray, floatArray, Int32Array, vectorArray or matrix. Short form dt.
         multi: An array of attributeType: any number of elements, attr[0], attr[1] ... Short form m. Default False.
         defaultValue: Default value (each element's, for an array). Short form dv.
@@ -1031,7 +1033,7 @@ def cage(*objects: Any, coordinates: str | None = None, name: str | None = None)
 
     Args:
         objects: meshes..., cage.
-        coordinates: meanValue (default) | green | somigliana. One of 'meanValue', 'green', 'somigliana'.
+        coordinates: meanValue (default) | green | somigliana | harmonic. One of 'meanValue', 'green', 'somigliana', 'harmonic'.
         name: Name for the deformer.
     """
 
@@ -2093,6 +2095,9 @@ def eulerFilter(*objects: Any) -> Any:
         objects: objects.
     """
 
+def examples() -> Any:
+    """The example scenes shipped with Lila: {name, description, path}."""
+
 def exportAlembic(*objects: Any, start: float | None = None, end: float | None = None, step: float | None = None, playbackRange: bool | None = None, fps: float | None = None, scale: float | None = None, profile: str | None = None, applyModifiers: bool | None = None, worldSpace: bool | None = None, recenter: str | None = None, normals: bool | None = None, uvs: bool | None = None, colors: bool | None = None, triangulate: bool | None = None, dryRun: bool | None = None, path: str | None = None, rigidPieces: bool | None = None, st: float | None = None, e: float | None = None, s: float | None = None, pr: bool | None = None, sc: float | None = None, ax: str | None = None, am: bool | None = None, ws: bool | None = None, rc: str | None = None, n: bool | None = None, uv: bool | None = None, vc: bool | None = None, tri: bool | None = None, dr: bool | None = None, p: str | None = None, rp: bool | None = None) -> Any:
     """Write animated meshes to one Alembic (.abc, Ogawa) file: a sample per frame with points, faces (topology may change), normals, UVs and vertex colors, ready for an Unreal Geometry Cache or another DCC. Returns the file.
 
@@ -2915,11 +2920,25 @@ def gnSetActiveViewer(*objects: Any) -> Any:
         objects: group [node].
     """
 
+def gnSetBookmarks(*objects: Any) -> Any:
+    """Replace a group's saved canvas views: gnSetBookmarks(group, {'1': [x, y, zoom]}), centre and zoom by slot. Malformed entries are dropped.
+
+    Args:
+        objects: group bookmarks.
+    """
+
 def gnSetDefinition(*objects: Any) -> Any:
     """Replace a group's whole definition (JSON as gnGroupInfo returns under 'definition'). The name is kept.
 
     Args:
         objects: group definition.
+    """
+
+def gnSetFrames(*objects: Any) -> Any:
+    """Replace a group's frames: gnSetFrames(group, [{label: 'Inputs', position: [x, y], size: [w, h], color: '', collapsed: false, nodes: [names]}]). Frames only change the canvas; names not in the group are dropped. Returns how many frames there are.
+
+    Args:
+        objects: group frames.
     """
 
 def gnSetInputInfo(*objects: Any, label: str | None = None, description: str | None = None, tooltip: str | None = None, subtype: str | None = None, min: Any | None = None, max: Any | None = None, softMin: Any | None = None, softMax: Any | None = None, step: Any | None = None, default: Any | None = None, panel: str | None = None) -> Any:
@@ -2938,6 +2957,23 @@ def gnSetInputInfo(*objects: Any, label: str | None = None, description: str | N
         step: Drag and spin step; empty string clears.
         default: Default value.
         panel: Panel (category) the input shows under; empty for none.
+    """
+
+def gnSetNodeFlags(*objects: Any, muted: bool | None = None, collapsed: bool | None = None, hideUnused: bool | None = None) -> Any:
+    """Set how nodes draw and run: gnSetNodeFlags(group, 'Math', 'Noise', muted=True). muted bypasses a node (its first input of a matching type passes through to each output); collapsed draws only its header; hideUnused draws only its linked sockets. Flags left out stay as they are.
+
+    Args:
+        objects: group nodes...
+        muted: Bypass the nodes.
+        collapsed: Draw only their headers.
+        hideUnused: Draw only their linked sockets.
+    """
+
+def gnSetTies(*objects: Any) -> Any:
+    """Replace a group's zip ties: gnSetTies(group, [{links: [[fromNode, fromSocket, toNode, toSocket], ...], position: [x, y], angle: 0, color: ''}]). Ties only change how the canvas draws links; links not in the group are dropped, and so is a tie left with fewer than two. Returns how many ties the group has.
+
+    Args:
+        objects: group ties.
     """
 
 def gnSetValue(*objects: Any) -> Any:
@@ -3707,7 +3743,7 @@ def materialPresets(*objects: Any, save: str | None = None, values: Any | None =
         delete: Preset name to delete.
     """
 
-def mayaConvert(*objects: Any, source: str | None = None, destination: str | None = None, format: str | None = None, recursive: bool | None = None, overwrite: bool | None = None, force: bool | None = None, namespace: str | None = None, upAxis: str | None = None, skins: bool | None = None, animation: bool | None = None, materials: bool | None = None, references: Any | None = None, history: bool | None = None, setPlayback: bool | None = None, src: str | None = None, dst: str | None = None, r: bool | None = None, f: bool | None = None, ns: str | None = None, anim: bool | None = None) -> Any:
+def mayaConvert(*objects: Any, source: str | None = None, destination: str | None = None, format: str | None = None, recursive: bool | None = None, overwrite: bool | None = None, force: bool | None = None, namespace: str | None = None, upAxis: str | None = None, skins: bool | None = None, morphs: bool | None = None, animation: bool | None = None, materials: bool | None = None, references: Any | None = None, history: bool | None = None, setPlayback: bool | None = None, src: str | None = None, dst: str | None = None, r: bool | None = None, f: bool | None = None, ns: str | None = None, anim: bool | None = None) -> Any:
     """Convert Maya files to Lila scenes: a file to a .lila / .lilaa, or every .ma / .mb in a folder. Each file is opened as its own scene and saved; the scene is left empty afterwards. Returns one entry per file with its destination (or error), skipped features and warnings.
 
     Args:
@@ -3721,6 +3757,7 @@ def mayaConvert(*objects: Any, source: str | None = None, destination: str | Non
         namespace: Put every imported name in this namespace. Short form ns.
         upAxis: auto (from Maya's default cameras), y or z: the file's up axis. Default 'auto'.
         skins: Rebuild skinClusters with their weights and bind matrices. Default True.
+        morphs: Rebuild blendShapes as morphs, with their weight curves and set driven keys. Default True.
         animation: Import animation curves on translate, rotate and scale. Short form anim. Default True.
         materials: Create materials from shading groups and assign them per face. Default True.
         references: reference: referenced Maya / FBX / OBJ files become Lila references (Maya and FBX ones converted to a .lila beside them) with the scene's reference edits as overrides; import: their nodes as ordinary scene nodes; none: skip them. One of 'reference', 'import', 'none'. Default 'reference'.
@@ -3728,7 +3765,7 @@ def mayaConvert(*objects: Any, source: str | None = None, destination: str | Non
         setPlayback: Set the scene fps and playback range from the file. Default True.
     """
 
-def mayaImport(*objects: Any, path: str | None = None, parent: str | None = None, namespace: str | None = None, upAxis: str | None = None, skins: bool | None = None, animation: bool | None = None, materials: bool | None = None, references: Any | None = None, history: bool | None = None, setPlayback: bool | None = None, report: bool | None = None, select: bool | None = None, p: str | None = None, ns: str | None = None, anim: bool | None = None) -> Any:
+def mayaImport(*objects: Any, path: str | None = None, parent: str | None = None, namespace: str | None = None, upAxis: str | None = None, skins: bool | None = None, morphs: bool | None = None, animation: bool | None = None, materials: bool | None = None, references: Any | None = None, history: bool | None = None, setPlayback: bool | None = None, report: bool | None = None, select: bool | None = None, p: str | None = None, ns: str | None = None, anim: bool | None = None) -> Any:
     """Import a Maya .ma or .mb file into the scene, without Maya: transforms, groups, meshes (uvs, colors, normals, hard edges, creases), primitive history, joints, skinClusters, locators, materials with file textures, animation curves, display layers, namespaces and references. Anything it can't convert is reported (report=True returns the lists) and never fails the import.
 
     Args:
@@ -3738,6 +3775,7 @@ def mayaImport(*objects: Any, path: str | None = None, parent: str | None = None
         namespace: Put every imported name in this namespace. Short form ns.
         upAxis: auto (from Maya's default cameras), y or z: the file's up axis. Default 'auto'.
         skins: Rebuild skinClusters with their weights and bind matrices. Default True.
+        morphs: Rebuild blendShapes as morphs, with their weight curves and set driven keys. Default True.
         animation: Import animation curves on translate, rotate and scale. Short form anim. Default True.
         materials: Create materials from shading groups and assign them per face. Default True.
         references: reference: referenced Maya / FBX / OBJ files become Lila references (Maya and FBX ones converted to a .lila beside them) with the scene's reference edits as overrides; import: their nodes as ordinary scene nodes; none: skip them. One of 'reference', 'import', 'none'. Default 'reference'.
@@ -3755,7 +3793,7 @@ def mayaInfo(*objects: Any, path: str | None = None) -> Any:
         path: The .ma or .mb file (or pass it first).
     """
 
-def mayaOpen(*objects: Any, path: str | None = None, force: bool | None = None, namespace: str | None = None, upAxis: str | None = None, skins: bool | None = None, animation: bool | None = None, materials: bool | None = None, references: Any | None = None, history: bool | None = None, setPlayback: bool | None = None, f: bool | None = None, ns: str | None = None, anim: bool | None = None) -> Any:
+def mayaOpen(*objects: Any, path: str | None = None, force: bool | None = None, namespace: str | None = None, upAxis: str | None = None, skins: bool | None = None, morphs: bool | None = None, animation: bool | None = None, materials: bool | None = None, references: Any | None = None, history: bool | None = None, setPlayback: bool | None = None, f: bool | None = None, ns: str | None = None, anim: bool | None = None) -> Any:
     """Open a Maya .ma or .mb file as a new, untitled scene (save it to keep it as .lila). Not undoable. Returns the import report.
 
     Args:
@@ -3765,6 +3803,7 @@ def mayaOpen(*objects: Any, path: str | None = None, force: bool | None = None, 
         namespace: Put every imported name in this namespace. Short form ns.
         upAxis: auto (from Maya's default cameras), y or z: the file's up axis. Default 'auto'.
         skins: Rebuild skinClusters with their weights and bind matrices. Default True.
+        morphs: Rebuild blendShapes as morphs, with their weight curves and set driven keys. Default True.
         animation: Import animation curves on translate, rotate and scale. Short form anim. Default True.
         materials: Create materials from shading groups and assign them per face. Default True.
         references: reference: referenced Maya / FBX / OBJ files become Lila references (Maya and FBX ones converted to a .lila beside them) with the scene's reference edits as overrides; import: their nodes as ordinary scene nodes; none: skip them. One of 'reference', 'import', 'none'. Default 'reference'.
@@ -4104,6 +4143,14 @@ def openCurve(*objects: Any, parameter: float | None = None, p: float | None = N
     Args:
         objects: curves.
         parameter: Where to open, in spans from the start. Short form p. Default 0.0.
+    """
+
+def openExample(*objects: Any, force: bool | None = None, f: bool | None = None) -> Any:
+    """Open an example scene by name (from examples) as an untitled scene. Saving asks for a file, so the shipped example is never overwritten. Not undoable.
+
+    Args:
+        objects: name.
+        force: Discard unsaved changes in the current scene. Short form f. Default False.
     """
 
 def openFile(*objects: Any, translator: str | None = None, options: Any | None = None) -> Any:
@@ -4598,13 +4645,14 @@ def polyInsertLoop(fraction: float | None = None, count: int | None = None) -> A
         count: Evenly spaced loops. Default 1.
     """
 
-def polyInset(thickness: float | None = None, depth: float | None = None, individual: bool | None = None) -> Any:
+def polyInset(thickness: float | None = None, depth: float | None = None, individual: bool | None = None, clamp: bool | None = None) -> Any:
     """Inset the selected faces.
 
     Args:
         thickness: Inward distance, cm. Default 5.0.
         depth: Push along the normals afterwards, cm. Default 0.0.
         individual: Each face separately. Default False.
+        clamp: Shrink the thickness where the inset would cross itself, as on narrow faces. Default True.
     """
 
 def polyInsetRegion(distance: float | None = None, depth: float | None = None, planarAngle: float | None = None, *, d: float | None = None) -> Any:
@@ -7048,11 +7096,25 @@ def texSaveSmartMaterial(*objects: Any, name: str | None = None, description: st
         mask: Save the layer's mask stack as a smart mask. Default False.
     """
 
+def texSetBookmarks(*objects: Any) -> Any:
+    """Replace a texture set's saved canvas views, shaped as gnSetBookmarks takes them.
+
+    Args:
+        objects: set bookmarks.
+    """
+
 def texSetDefinition(*objects: Any) -> Any:
     """Replace a set's whole graph (JSON as texGraphInfo returns under 'definition'). The name is kept.
 
     Args:
         objects: set definition.
+    """
+
+def texSetFrames(*objects: Any) -> Any:
+    """Replace a texture set's frames, shaped as gnSetFrames takes them. Display only; names not in the graph are dropped. Returns how many frames there are.
+
+    Args:
+        objects: set frames.
     """
 
 def texSetLayer(*objects: Any) -> Any:
@@ -7069,11 +7131,28 @@ def texSetMask(*objects: Any) -> Any:
         objects: set layer mask props.
     """
 
+def texSetNodeFlags(*objects: Any, muted: bool | None = None, collapsed: bool | None = None, hideUnused: bool | None = None) -> Any:
+    """Set how nodes draw and run, as gnSetNodeFlags does: muted, collapsed, hideUnused. Flags left out stay as they are.
+
+    Args:
+        objects: set nodes...
+        muted: Bypass the nodes.
+        collapsed: Draw only their headers.
+        hideUnused: Draw only their linked sockets.
+    """
+
 def texSetSettings(*objects: Any) -> Any:
     """Change a texture set's settings: the keys given replace the set's (channels, width, height, tiles, normalConvention, bakeProject, exportPreset, material). Returns the full settings.
 
     Args:
         objects: set settings.
+    """
+
+def texSetTies(*objects: Any) -> Any:
+    """Replace a texture set's zip ties, shaped as gnSetTies takes them. Display only; links not in the graph are dropped, and so is a tie left with fewer than two. Returns how many ties the graph has.
+
+    Args:
+        objects: set ties.
     """
 
 def texSetValue(*objects: Any) -> Any:

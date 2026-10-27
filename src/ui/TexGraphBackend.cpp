@@ -85,7 +85,7 @@ public:
     {
         static const std::set<std::string_view> kVerbs = {"GroupInfo", "NodeTypes",  "AddNode",    "DeleteNode",     "Connect",
                                                           "Disconnect", "MoveNodes", "SetValue",   "CopyNodes",      "PasteNodes",
-                                                          "DuplicateNodes", "ExportGroup", "ImportGroup"};
+                                                          "DuplicateNodes", "ExportGroup", "ImportGroup", "SetTies", "SetFrames", "SetNodeFlags", "SetBookmarks"};
         return kVerbs.contains(verb);
     }
 
@@ -159,6 +159,24 @@ public:
     }
 
     bool valueless(const std::string& type) const override { return type == "material"; }
+
+    double wireWidth(const std::string& type) const override { return type == "material" ? 3.5 : 2.0; }
+
+    std::optional<MergeNode> mergeNode(const std::string& type, const std::string& op) const override
+    {
+        if (type == "material")
+            return MergeNode{"materialBlend", json::object(), "a", "b", "material"};
+        // Blend has no divide; the rest map onto its modes.
+        if (op == "divide")
+            return std::nullopt;
+        return MergeNode{"blend", {{"mode", op}}, "background", "foreground", "out"};
+    }
+
+    bool canLink(const std::string& from, const std::string& to) const override
+    {
+        tex::PortType a, b;
+        return tex::parsePortType(from, &a) && tex::parsePortType(to, &b) && tex::linkable(a, b);
+    }
 
     QColor headerColor(const std::string& type, const std::string& category) const override
     {

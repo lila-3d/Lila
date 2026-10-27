@@ -19,9 +19,11 @@ namespace lila::ui
 {
 /**
  * GPU-ready copy of a scene mesh, built once per mesh snapshot and shared by every viewport, triangles grouped by
- * material slot. tangents adds MikkTSpace tangents (for normal maps); a copy that has them serves both.
+ * material slot. tangents adds MikkTSpace tangents (for normal maps); a copy that has them serves both. owner, the node
+ * drawing it, lets a deforming mesh rewrite that node's GPU vertices in place each frame instead of uploading anew.
  */
-LILA_UI_API std::shared_ptr<const render::RenderMesh> renderMeshFor(const scene::MeshPtr& mesh, bool tangents = false);
+LILA_UI_API std::shared_ptr<const render::RenderMesh> renderMeshFor(const scene::MeshPtr& mesh, bool tangents = false,
+                                                                    scene::NodeId owner = scene::kNoNode);
 
 /** The mesh subdivided for smooth preview, cached per snapshot and level. Level 0 returns the mesh itself. */
 LILA_UI_API scene::MeshPtr smoothedFor(const scene::MeshPtr& mesh, int level);

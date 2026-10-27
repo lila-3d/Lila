@@ -18,6 +18,7 @@ void registerNodeLibrary()
     nodes::registerTextureNodes();
     nodes::registerShadingNodes();
     nodes::registerGroupNodes();
+    nodes::registerRoutingNodes();
     nodes::registerDestructionNodes();
 }
 } // namespace lila::gn

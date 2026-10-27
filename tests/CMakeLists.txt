@@ -27,6 +27,7 @@ add_executable(lila_tests
     test_gate.cpp
     test_autobevel.cpp
     test_measure.cpp
+    test_debug_draw.cpp
     test_surface_snap.cpp
     test_geometry_snap.cpp
     test_imageplane.cpp

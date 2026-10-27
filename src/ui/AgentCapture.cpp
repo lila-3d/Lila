@@ -1,6 +1,7 @@
 #include "ui/AgentCapture.h"
 
 #include "ops/Command.h"
+#include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "geo/Mesh.h"
@@ -12,10 +13,12 @@
 #include "scene/Modifiers.h"
 #include "scene/Transform.h"
 #include "ui/Camera.h"
+#include "ui/DebugDrawUi.h"
 #include "ui/Environments.h"
 #include "ui/MaterialDraw.h"
 #include "ui/MeshCache.h"
 #include "ui/Overlay.h"
+#include "ui/TextureCache.h"
 #include "ui/ViewportDisplay.h"
 #include "ui/ViewportWidget.h"
 
@@ -261,6 +264,18 @@ Camera cameraFor(const Options& o, double aspect, const Box& subject)
     return cam;
 }
 
+/** Asks for every material map the meshes use and waits for the reads, so the picture has its textures on the first call. */
+void waitForMaterialMaps(scene::Graph& g, const std::vector<scene::NodeId>& nodes)
+{
+    LILA_ZONE();
+
+    for (scene::NodeId id : nodes)
+        if (scene::MeshPtr m = g.node(id)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh))
+            drawMaterials(*m);
+    if (!textures::waitForLoads(30.0))
+        log::warn("capture: material maps still loading after 30 s; captured without them");
+}
+
 std::string viewLabel(const Options& o)
 {
     if (o.yaw || o.pitch)
@@ -298,6 +313,8 @@ QImage render(const Options& o, Timing* timing, int repeat)
         s.ambientOcclusion = *o.ambientOcclusion;
 
     bool showMaterials = materialsShown() && !viewportDisplay::defaultMaterial();
+    if (showMaterials)
+        waitForMaterialMaps(g, nodes);
     for (scene::NodeId id : nodes)
     {
         scene::Node* n = g.node(id);
@@ -335,6 +352,7 @@ QImage render(const Options& o, Timing* timing, int repeat)
         if (o.showSelection)
             addSelection(s, id);
     }
+    addDebugDraw(s);
     if (o.label && qobject_cast<QGuiApplication*>(QCoreApplication::instance()))
     {
         OverlayPainter painter(s.overlayTris, 1.0);

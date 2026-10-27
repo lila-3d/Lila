@@ -52,13 +52,15 @@ struct ImagePush
     int padding;
     uint prefix;
     uint shift;
+    uint* blocks; // accumulateCS: the band's 8 x 8 texel blocks, x | y << 16, 64 slots of texels each
 };
 
 [[vk::push_constant]] ImagePush ip;
 
 static const uint kNone = 0xffffffffu;
 
-// A band's samples into their textures, texel by texel in sub-sample order, as runBake's band loop accumulates them.
+// A band's samples into their textures, texel by texel in sub-sample order, as runBake's band loop accumulates them. One
+// thread per texel of the band's blocks.
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void accumulateCS(uint3 id: SV_DispatchThreadID)
@@ -66,8 +68,11 @@ void accumulateCS(uint3 id: SV_DispatchThreadID)
     uint i = ip.first + id.x;
     if (i >= ip.total)
         return;
-    uint x = i % ip.width;
-    uint texel = (ip.y0 + i / ip.width) * ip.width + x;
+    uint packed = ip.blocks[i / 64], local = i % 64;
+    uint x = (packed & 0xffffu) * 8 + local % 8, y = (packed >> 16) * 8 + local / 8;
+    if (x >= ip.width || y < ip.y0 || y >= ip.y0 + ip.rows)
+        return;
+    uint texel = y * ip.width + x;
     uint S = ip.grid * ip.grid;
     uint base = i * S;
     // Exact votes: texture, colour and count per distinct pair, in order of first appearance; voteTarget is a material

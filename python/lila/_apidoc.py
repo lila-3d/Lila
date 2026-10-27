@@ -10,7 +10,7 @@ import inspect
 import json
 import re
 
-MODULES = ("lila", "lila.nodes", "lila.math", "lila.ui", "lila.prefs", "lila.extension", "lila.events", "lila.stream", "lila.tasks")
+MODULES = ("lila", "lila.nodes", "lila.math", "lila.debug_draw", "lila.ui", "lila.prefs", "lila.extension", "lila.events", "lila.stream", "lila.tasks")
 
 _NB_DEFAULT = re.compile(r"\\(\d+)")
 _SELF = re.compile(r"\((self|cls)(, |\))")

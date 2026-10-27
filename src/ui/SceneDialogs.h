@@ -15,6 +15,7 @@
 #include <vector>
 
 class QCheckBox;
+class QListWidget;
 class QPushButton;
 class QTreeWidget;
 
@@ -86,10 +87,11 @@ protected:
 
 private:
     void openSelected(QTreeWidget* list);
+    void openExampleSelected();
 
     Hooks mHooks;
     QTreeWidget* mList = nullptr;
-    QTreeWidget* mExamples = nullptr;
+    QListWidget* mExamples = nullptr;
     std::vector<io::examples::Example> mExampleList;
     QElapsedTimer mReclaimFocus;
 };

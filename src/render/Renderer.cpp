@@ -346,6 +346,8 @@ struct Renderer::Impl
     VkFormat pipelineFormat = VK_FORMAT_UNDEFINED;
     int msaaGeneration = 0; // bumped whenever vk.msaa changes; viewports rebuild their targets to match
     VkPipeline backgroundPipeline = VK_NULL_HANDLE, linesOnTopPipeline = VK_NULL_HANDLE, tris3dPipeline = VK_NULL_HANDLE;
+    /** Lines at a set width over every surface (debug drawing's on-top lines). */
+    VkPipeline linesOverPipeline = VK_NULL_HANDLE;
     VkPipelineLayout contactLayout = VK_NULL_HANDLE;
     VkPipeline contactPipeline = VK_NULL_HANDLE;
     VkPipelineLayout postLayout = VK_NULL_HANDLE;
@@ -2326,6 +2328,8 @@ struct Renderer::Impl
                                                true, true, 0.0f, false, false, true);
             tris3dPipeline =
                 buildPipeline(linesLayout, lines, "linesVS", "linesPS", format, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, vin, false, true, true, 2.0f);
+            linesOverPipeline = buildPipeline(linesLayout, lines, "linesVS", "linesPS", format, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, vin, false,
+                                              true, false, 0.0f, false, false, true);
             if (VkShaderModule points = module(loadSpirv("points.spv")))
             {
                 VkVertexInputBindingDescription pb{0, sizeof(PointVertex), VK_VERTEX_INPUT_RATE_VERTEX};
@@ -2475,7 +2479,7 @@ struct Renderer::Impl
     {
         for (VkPipeline* p : {&gridPipeline, &linesPipeline, &overlayPipeline, &overlayTrisPipeline, &meshPipeline, &meshBlendPipeline, &meshWirePipeline,
                               &meshWireBlendPipeline, &aoApplyPipeline, &pointsPipeline, &wirePipeline,
-                              &wireXrayPipeline, &backgroundPipeline, &linesOnTopPipeline, &tris3dPipeline, &contactPipeline, &prepassPipeline, &gtaoPipeline,
+                              &wireXrayPipeline, &backgroundPipeline, &linesOnTopPipeline, &tris3dPipeline, &linesOverPipeline, &contactPipeline, &prepassPipeline, &gtaoPipeline,
                               &denoisePipeline, &imageOverPipeline, &imageDepthPipeline, &imageBlendPipeline, &postPipeline})
             if (*p)
             {
@@ -2633,6 +2637,15 @@ struct Renderer::Impl
             lineFirst[i] = uint32_t(lineBytes / sizeof(LineVertex));
             lineBytes += lineSets[i]->size() * sizeof(LineVertex);
         }
+        // Debug drawing follows the fixed sets: each line batch, then its triangles.
+        const size_t debugBatches = s.debugLines ? s.debugLines->size() : 0;
+        std::vector<uint32_t> debugFirst(debugBatches + 1);
+        for (size_t i = 0; i <= debugBatches; ++i)
+        {
+            debugFirst[i] = uint32_t(lineBytes / sizeof(LineVertex));
+            const std::vector<LineVertex>* verts = i < debugBatches ? &(*s.debugLines)[i].vertices : s.debugTris.get();
+            lineBytes += verts ? verts->size() * sizeof(LineVertex) : 0;
+        }
         size_t trisBytes = s.overlayTris.size() * sizeof(OverlayVertex);
         if (lineBytes + trisBytes)
         {
@@ -2640,6 +2653,10 @@ struct Renderer::Impl
             for (int i = 0; i < kLineSets; ++i)
                 std::memcpy(static_cast<char*>(f.linesMapped) + size_t(lineFirst[i]) * sizeof(LineVertex), lineSets[i]->data(),
                             lineSets[i]->size() * sizeof(LineVertex));
+            for (size_t i = 0; i <= debugBatches; ++i)
+                if (const std::vector<LineVertex>* verts = i < debugBatches ? &(*s.debugLines)[i].vertices : s.debugTris.get())
+                    std::memcpy(static_cast<char*>(f.linesMapped) + size_t(debugFirst[i]) * sizeof(LineVertex), verts->data(),
+                                verts->size() * sizeof(LineVertex));
             std::memcpy(static_cast<char*>(f.linesMapped) + lineBytes, s.overlayTris.data(), trisBytes);
         }
 
@@ -2871,6 +2888,35 @@ struct Renderer::Impl
             vkCmdDraw(cmd, uint32_t(verts.size()), 1, lineFirst[b.set], 0);
         }
 
+        // Debug drawing: depth-tested lines and triangles here, the on-top lines over the x-ray joints.
+        auto drawDebugLines = [&](bool onTop) {
+            for (size_t i = 0; i < debugBatches; ++i)
+            {
+                const LineBatch& batch = (*s.debugLines)[i];
+                VkPipeline pipeline = onTop ? linesOverPipeline : linesOnTopPipeline;
+                if (batch.onTop != onTop || batch.vertices.empty() || !pipeline)
+                    continue;
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+                vkCmdSetLineWidth(cmd, lineWidth(batch.width));
+                const LinesPush lp{vpF, onTop ? glm::vec4(1.0f, 0.0f, 0.0f, 0.0f)
+                                              : depthPull(s.proj, v.extent.height, kLinePullPixels + 0.5 * lineWidth(batch.width))};
+                vkCmdPushConstants(cmd, linesLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(lp), &lp);
+                VkDeviceSize offset = 0;
+                vkCmdBindVertexBuffers(cmd, 0, 1, &f.lines, &offset);
+                vkCmdDraw(cmd, uint32_t(batch.vertices.size()), 1, debugFirst[i], 0);
+            }
+        };
+        if (s.debugTris && !s.debugTris->empty() && tris3dPipeline)
+        {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, tris3dPipeline);
+            const LinesPush lp{vpF, depthPull(s.proj, v.extent.height, kLinePullPixels)};
+            vkCmdPushConstants(cmd, linesLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(lp), &lp);
+            VkDeviceSize offset = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &f.lines, &offset);
+            vkCmdDraw(cmd, uint32_t(s.debugTris->size()), 1, debugFirst[debugBatches], 0);
+        }
+        drawDebugLines(false);
+
         if (overlayPipeline && !s.linesXray.empty())
         {
             const LinesPush lp{vpF};
@@ -2880,6 +2926,7 @@ struct Renderer::Impl
             vkCmdBindVertexBuffers(cmd, 0, 1, &f.lines, &offset);
             vkCmdDraw(cmd, uint32_t(s.linesXray.size()), 1, lineFirst[4], 0);
         }
+        drawDebugLines(true);
 
         if (overlayPipeline && !s.overlay.empty())
         {

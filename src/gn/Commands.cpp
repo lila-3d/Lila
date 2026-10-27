@@ -1,6 +1,7 @@
 #include "gn/Clipboard.h"
 #include "gn/Exec.h"
 #include "gn/Gn.h"
+#include "gn/Routing.h"
 
 #include "ops/Command.h"
 #include "ops/Undo.h"
@@ -100,9 +101,10 @@ GNode& nodeIn(Group& grp, const std::string& name, const char* cmd)
     return *n;
 }
 
-/** True if `to` already feeds `from` (so from -> to would close a loop). */
+/** True if `to` already feeds `from` (so from -> to would close a loop), portals included. */
 bool reaches(const Group& grp, const std::string& from, const std::string& to)
 {
+    std::vector<GLink> links = withPortalLinks(grp.nodes, grp.links);
     std::vector<std::string> stack{from};
     std::set<std::string> seen;
     while (!stack.empty())
@@ -113,7 +115,7 @@ bool reaches(const Group& grp, const std::string& from, const std::string& to)
             return true;
         if (!seen.insert(cur).second)
             continue;
-        for (const GLink& l : grp.links)
+        for (const GLink& l : links)
             if (l.toNode == cur)
                 stack.push_back(l.fromNode);
     }
@@ -295,7 +297,8 @@ void registerCommands()
                     throw CommandError("gnConnect: " + fn + " has no output '" + fs + "'");
                 if (ii < 0)
                     throw CommandError("gnConnect: " + tn + " has no input '" + ts + "'");
-                if (!linkable(fsock.outputs[oi].type, tsock.inputs[ii].type))
+                // A routing node takes the type of whatever feeds it.
+                if (!isRoutingType(to.type) && !linkable(fsock.outputs[oi].type, tsock.inputs[ii].type))
                     throw CommandError(std::string("gnConnect: can't link ") + socketTypeName(fsock.outputs[oi].type) + " to " +
                                        socketTypeName(tsock.inputs[ii].type));
                 if (fn == tn || reaches(grp, fn, tn))
@@ -363,6 +366,8 @@ void registerCommands()
                         throw CommandError("gnSetValue: " + sid + " must be one of " + opts);
                     }
                     n.values[sid] = v;
+                    if (isRoutingType(n.type) && hasCycle(withPortalLinks(grp.nodes, grp.links)))
+                        throw CommandError("gnSetValue: " + nn + " reading " + v + " would feed its own Send, a loop");
                     return nullptr;
                 }
                 Sockets s = d.socketsFor(grp, n);
@@ -479,7 +484,98 @@ void registerCommands()
                     if (renamed.contains(l.fromNode) && renamed.contains(l.toNode))
                         extra.push_back({renamed[l.fromNode], l.fromSocket, renamed[l.toNode], l.toSocket});
                 grp.links.insert(grp.links.end(), extra.begin(), extra.end());
+                std::set<std::string> copied;
+                for (auto& [old, fresh] : renamed)
+                    copied.insert(old);
+                for (GTie& t : tiesAmong(grp.ties, copied, renamed, off))
+                    grp.ties.push_back(std::move(t));
+                // Copies join the frames of their originals.
+                for (GFrame& f : grp.frames)
+                    for (size_t k = 0, n = f.nodes.size(); k < n; ++k)
+                        if (auto it = renamed.find(f.nodes[k]); it != renamed.end())
+                            f.nodes.push_back(it->second);
                 return names;
+            });
+        },
+    });
+
+    ops::registerCommand({
+        .name = "gnSetTies",
+        .doc = "Replace a group's zip ties: gnSetTies(group, [{links: [[fromNode, fromSocket, toNode, toSocket], ...], position: [x, y], "
+               "angle: 0, color: ''}]). Ties only change how the canvas draws links; links not in the group are dropped, and so is a "
+               "tie left with fewer than two. Returns how many ties the group has.",
+        .positionalDoc = "group ties",
+        .run = [](const Args& a) -> json {
+            if (a.positional.size() < 2 || !a.positional[1].is_array())
+                throw CommandError("gnSetTies: ties must be a list");
+            std::vector<GTie> ties = tiesFromJson(a.positional[1]);
+            return editGroup(a, "gnSetTies", [&](Group& grp) -> json {
+                grp.ties = ties;
+                pruneTies(grp.ties, grp.links);
+                return int(grp.ties.size());
+            });
+        },
+    });
+
+    ops::registerCommand({
+        .name = "gnSetNodeFlags",
+        .doc = "Set how nodes draw and run: gnSetNodeFlags(group, 'Math', 'Noise', muted=True). muted bypasses a node (its first input of a "
+               "matching type passes through to each output); collapsed draws only its header; hideUnused draws only its linked sockets. "
+               "Flags left out stay as they are.",
+        .positionalDoc = "group nodes...",
+        .flags = {{"muted", "", T::Bool, nullptr, "Bypass the nodes."},
+                  {"collapsed", "", T::Bool, nullptr, "Draw only their headers."},
+                  {"hideUnused", "", T::Bool, nullptr, "Draw only their linked sockets."}},
+        .run = [](const Args& a) -> json {
+            return editGroup(a, "gnSetNodeFlags", [&](Group& grp) -> json {
+                for (size_t i = 1; i < a.positional.size(); ++i)
+                {
+                    GNode& n = nodeIn(grp, a.positional[i].get<std::string>(), "gnSetNodeFlags");
+                    if (a.has("muted"))
+                    {
+                        bool m = a.get<bool>("muted", false);
+                        if (m && (n.type == "GroupInput" || n.type == "GroupOutput" || isRoutingType(n.type)))
+                            throw CommandError("gnSetNodeFlags: " + n.name + " can't be muted");
+                        n.muted = m;
+                    }
+                    if (a.has("collapsed"))
+                        n.collapsed = a.get<bool>("collapsed", false);
+                    if (a.has("hideUnused"))
+                        n.hideUnused = a.get<bool>("hideUnused", false);
+                }
+                return nullptr;
+            });
+        },
+    });
+
+    ops::registerCommand({
+        .name = "gnSetBookmarks",
+        .doc = "Replace a group's saved canvas views: gnSetBookmarks(group, {'1': [x, y, zoom]}), centre and zoom by slot. Malformed "
+               "entries are dropped.",
+        .positionalDoc = "group bookmarks",
+        .run = [](const Args& a) -> json {
+            if (a.positional.size() < 2 || !a.positional[1].is_object())
+                throw CommandError("gnSetBookmarks: bookmarks must be an object of slot: [x, y, zoom]");
+            json marks = cleanBookmarks(a.positional[1]);
+            return editGroup(a, "gnSetBookmarks", [&](Group& grp) -> json {
+                grp.bookmarks = marks;
+                return int(marks.size());
+            });
+        },
+    });
+
+    ops::registerCommand({
+        .name = "gnSetFrames",
+        .doc = "Replace a group's frames: gnSetFrames(group, [{label: 'Inputs', position: [x, y], size: [w, h], color: '', collapsed: false, "
+               "nodes: [names]}]). Frames only change the canvas; names not in the group are dropped. Returns how many frames there are.",
+        .positionalDoc = "group frames",
+        .run = [](const Args& a) -> json {
+            if (a.positional.size() < 2 || !a.positional[1].is_array())
+                throw CommandError("gnSetFrames: frames must be a list");
+            std::vector<GFrame> frames = framesFromJson(a.positional[1]);
+            return editGroup(a, "gnSetFrames", [&](Group& grp) -> json {
+                grp.frames = frames;
+                return int(grp.frames.size());
             });
         },
     });
@@ -577,8 +673,13 @@ void registerCommands()
             Node& n = groupNode(positionalString(a, 0, "gnGroupInfo", "group"), "gnGroupInfo");
             Group grp = readGroup(n);
             json nodes = json::array();
+            std::map<std::string, std::string> problems = portalProblems(grp.nodes, grp.links);
             for (const GNode& gn : grp.nodes)
+            {
                 nodes.push_back(nodeJson(gn, grp));
+                if (auto it = problems.find(gn.name); it != problems.end())
+                    nodes.back()["problem"] = it->second;
+            }
             json inst = json::array();
             for (scene::NodeId id : instancesOf(graph(), n.id()))
                 inst.push_back(graph().node(id)->path());

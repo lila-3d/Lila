@@ -41,6 +41,32 @@ GraphBackend::SocketStyle GraphBackend::socketStyle(const std::string& type) con
     return {themeColor("socketVector"), SocketShape::Circle, type == "vector" ? SocketMark::Dot : SocketMark::None};
 }
 
+QString GraphBackend::wireSummary(const nlohmann::json& info, const std::string& node, const std::string&) const
+{
+    if (!info.is_object())
+        return {};
+    for (const nlohmann::json& n : info.value("nodes", nlohmann::json::array()))
+    {
+        if (n.value("name", "") != node)
+            continue;
+        QStringList parts;
+        for (const nlohmann::json& in : n.value("inputs", nlohmann::json::array()))
+        {
+            if (in.value("linked", false))
+                return {};
+            const nlohmann::json& v = in.value("value", nlohmann::json());
+            if (v.is_number() || v.is_boolean() || v.is_string())
+                parts << QString::fromStdString(in.value("id", "")) + " " + QString::fromStdString(v.is_string() ? v.get<std::string>() : v.dump());
+            else if (v.is_array() && v.size() <= 4)
+                parts << QString::fromStdString(in.value("id", "")) + " " + QString::fromStdString(v.dump());
+        }
+        if (parts.isEmpty() || parts.size() > 4)
+            return {};
+        return "From constants: " + parts.join(", ");
+    }
+    return {};
+}
+
 QColor GraphBackend::headerColor(const std::string& type, const std::string&) const
 {
     if (type == "GroupInput" || type == "GroupOutput")
@@ -52,7 +78,9 @@ QString GraphBackend::canvasHint() const
 {
     return "Select a node to edit its values.\n\nTab / Shift+A add a node under the cursor; while dragging a wire, or letting one go "
            "on empty canvas, it lists only nodes that connect. Ctrl+drag cuts links, Delete / X deletes, Ctrl+C / Ctrl+V copy "
-           "and paste as text, Ctrl+D duplicates, F frames the selection, Home frames all.";
+           "and paste as text, Ctrl+D duplicates, F frames the selection, Home frames all. Hold Z and drag across wires to zip-tie "
+           "them; drag a tie to move it, Shift+drag to turn it, right-click it for colour and removal. Alt+right-drag from one node to "
+           "another connects them; Ctrl+drag a linked input moves its link, Shift+drag copies it.";
 }
 
 Registry<GraphBackendPtr>& graphBackends::registry()

@@ -1,6 +1,7 @@
 """Writes ops.pyi from the live command registry so editors and basedpyright see typed commands.
 
-Also writes _namespace/__builtins__.pyi, which the script editor's language server reads as extra builtins: the
+Also writes _namespace/_lila/*.pyi, stubs of the compiled module the lila package wraps (lila.math, lila.debug_draw
+and others re-export from it), and _namespace/__builtins__.pyi, which the script editor's language server reads as extra builtins: the
 bare names _startup puts in the interactive namespace (xform(), Node, ...), so calls to them get signatures and
 keyword completions. _namespace/ruff_builtins.toml declares the same names to ruff, so it does not flag them as
 undefined (F821).
@@ -144,11 +145,29 @@ def namespace_dir():
     return os.path.join(os.path.dirname(__file__), "_namespace")
 
 
+def _write_native_stubs(force):
+    """One .pyi per submodule of _lila, plus _lila/__init__.pyi, by nanobind's stub generator."""
+    import types
+
+    from . import _nbstubgen
+
+    root = os.path.join(namespace_dir(), "_lila")
+    subs = sorted((n, m) for n, m in vars(_lila).items() if isinstance(m, types.ModuleType) and m.__name__.startswith("_lila."))
+    for name, module in [("__init__", _lila)] + subs:
+        try:
+            sg = _nbstubgen.StubGen(module)
+            sg.put(module)
+            _write_if_changed(os.path.join(root, name + ".pyi"), sg.get(), force)
+        except Exception:
+            pass
+
+
 def write(force=False):
     """Rewrites the stubs only when the registry changed. Silently skips read-only installs, and test runs that set
     LILA_NO_STUB_WRITE (their registry is partial)."""
     if os.environ.get("LILA_NO_STUB_WRITE"):
         return None
     _write_if_changed(os.path.join(namespace_dir(), "__builtins__.pyi"), _render_builtins(), force)
+    _write_native_stubs(force)
     _write_if_changed(os.path.join(namespace_dir(), "ruff_builtins.toml"), _render_ruff_builtins(), force)
     return _write_if_changed(os.path.join(os.path.dirname(__file__), "ops.pyi"), _render(), force)

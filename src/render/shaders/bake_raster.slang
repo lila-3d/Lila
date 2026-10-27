@@ -1,5 +1,6 @@
-// The UV raster of a band on the device, matching TexelRaster (src/bake/TexelRaster.cpp) sample for sample: a dense slot
-// per (texel, sub-sample) of the band, claimed by the lowest-numbered triangle covering it, then filled in as a
+// The UV raster of a band on the device, matching TexelRaster (src/bake/TexelRaster.cpp) sample for sample: a slot per
+// (texel, sub-sample) of the 8 x 8 texel blocks the band's triangles touch, 64 texels a block in row order, claimed by
+// the lowest-numbered triangle covering it, then filled in as a
 // TexelSample (lowTriangle kNoHit where nothing claimed it). Coverage tests run in double precision, as on the CPU, so
 // both claim the same samples; bake_raster32 falls back to float on devices without shaderFloat64. Included by
 // bake_raster64.slang and bake_raster32.slang, which set RASTER_F64.
@@ -18,7 +19,7 @@ typedef float2 real2;
 struct RasterPush
 {
     LowInfo* low;
-    uint* items; // per item: triangle, then block x and y (8 x 8 texels) in the low's texture
+    uint* items; // per item: triangle, block x and y (8 x 8 texels) in the low's texture, and the block's index in blocks
     uint* claim;
     TexelSample* out;
     uint width;
@@ -37,6 +38,7 @@ struct RasterPush
     float rear;
     float offset;
     float skew;
+    uint* blocks; // the band's blocks, x | y << 16
 };
 
 [[vk::push_constant]] RasterPush rp;
@@ -79,9 +81,10 @@ void claimCS(uint3 gid: SV_GroupID, uint3 lid: SV_GroupThreadID)
     uint item = rp.first + gid.x;
     if (item >= rp.count)
         return;
-    uint t = rp.items[item * 3];
-    uint x = rp.items[item * 3 + 1] * 8 + lid.x;
-    uint y = rp.items[item * 3 + 2] * 8 + lid.y;
+    uint t = rp.items[item * 4];
+    uint x = rp.items[item * 4 + 1] * 8 + lid.x;
+    uint y = rp.items[item * 4 + 2] * 8 + lid.y;
+    uint block = rp.items[item * 4 + 3];
     real2 p[3];
     cornersOf(t, p);
     real area = edgeFn(p[0], p[1], p[2]);
@@ -100,7 +103,7 @@ void claimCS(uint3 gid: SV_GroupID, uint3 lid: SV_GroupThreadID)
         real w0 = edgeFn(p[1], p[2], sp) / area, w1 = edgeFn(p[2], p[0], sp) / area, w2 = edgeFn(p[0], p[1], sp) / area;
         if (w0 < real(0) || w1 < real(0) || w2 < real(0))
             continue;
-        uint slot = ((y - rp.y0) * rp.width + x) * S + sub;
+        uint slot = (block * 64 + lid.y * 8 + lid.x) * S + sub;
         InterlockedMin(rp.claim[slot], t);
     }
 }
@@ -119,8 +122,9 @@ void samplesCS(uint3 id: SV_DispatchThreadID)
     if (slot >= rp.count)
         return;
     uint S = rp.grid * rp.grid;
-    uint sub = slot % S, texel = slot / S;
-    uint x = texel % rp.width, y = rp.y0 + texel / rp.width;
+    uint sub = slot % S, local = slot / S % 64;
+    uint packed = rp.blocks[slot / S / 64];
+    uint x = (packed & 0xffffu) * 8 + local % 8, y = (packed >> 16) * 8 + local / 8;
     TexelSample smp;
     smp.position = float3(0.0);
     smp.normal = float3(0.0);
@@ -129,7 +133,7 @@ void samplesCS(uint3 id: SV_DispatchThreadID)
     smp.direction = float3(0.0);
     smp.rayLength = 0.0;
     smp.uv = float2(0.0);
-    smp.texel = y * rp.width + x;
+    smp.texel = x < rp.width && y < rp.height ? y * rp.width + x : 0;
     smp.sub = sub;
     smp.tile = rp.udim;
     smp.low = rp.lowIndex;

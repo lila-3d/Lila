@@ -1,6 +1,7 @@
 #include "gn/Exec.h"
 
 #include "core/Profile.h"
+#include "gn/Routing.h"
 #include "gn/Stateful.h"
 
 #include <functional>
@@ -43,6 +44,29 @@ void markDependencies(Plan& plan)
 }
 } // namespace
 
+/** The group's socket types for muted nodes, read from the definition as it is before routing changes it. */
+static RoutingHooks routingHooks(const Group& g)
+{
+    RoutingHooks h;
+    h.ports = [&g](const GNode& n) {
+        PortTypes t;
+        if (const NodeDecl* d = findDecl(n.type))
+        {
+            Sockets s = d->socketsFor(g, n);
+            for (const SocketDecl& i : s.inputs)
+                t.inputs.push_back({i.id, socketTypeName(i.type)});
+            for (const SocketDecl& o : s.outputs)
+                t.outputs.push_back({o.id, socketTypeName(o.type)});
+        }
+        return t;
+    };
+    h.linkable = [](const std::string& from, const std::string& to) {
+        SocketType a, b;
+        return parseSocketType(from, &a) && parseSocketType(to, &b) && linkable(a, b);
+    };
+    return h;
+}
+
 PlanPtr compile(const Group& g)
 {
     LILA_ZONE();
@@ -50,6 +74,7 @@ PlanPtr compile(const Group& g)
     registerNodeLibrary();
     auto plan = std::make_shared<Plan>();
     plan->group = g;
+    resolveRouting(plan->group.nodes, plan->group.links, routingHooks(g));
     const Group& grp = plan->group;
 
     std::map<std::string, size_t, std::less<>> byName;

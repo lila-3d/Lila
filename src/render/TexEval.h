@@ -13,6 +13,7 @@
 #include <memory>
 #include <set>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -93,6 +94,14 @@ struct Inputs
      */
     bool halfBuffers = false;
     /**
+     * Let buffers share memory once no later pass reads them, so the arena holds only what is live at once. Every later
+     * setPlan then reruns the whole plan, so it suits evaluations that run once (evaluate sets it). Plans whose buffers
+     * don't fit one GPU buffer side by side are packed like this anyway. Not for pages plans.
+     */
+    bool compact = false;
+    /** The most bytes the buffers may take, when less than one GPU buffer holds (0: what it holds). */
+    uint64_t maxArenaBytes = 0;
+    /**
      * Evaluate for virtual texture pages (Evaluator::recordPages): the fused passes that make outputs nothing else reads
      * run only per page, over each page's region, and the External buffers only they read at their own uv come in per
      * page through a RegionLoader instead of whole. The rest (intermediate buffers, images, other externals) still runs
@@ -163,6 +172,8 @@ struct Stats
     double gpuMs = 0.0;
     /** Texels brought in from external images, computed by passes and written to store images since the plan was set. */
     uint64_t texelsLoaded = 0, texelsComputed = 0, texelsStored = 0;
+    /** Bytes the plan's buffers take on the GPU (less than their sum when they share memory, Inputs::compact). */
+    uint64_t arenaBytes = 0;
     /** Image parameters that could not be read (they evaluate as black). */
     std::vector<std::string> warnings;
 };
@@ -176,6 +187,12 @@ struct Stats
  * setPlan from any thread but the render thread; step on the render thread only. Device memory goes back once the
  * evaluator is gone (or the renderer stops).
  */
+/** Evaluator::step's error when the plan's buffers need more than one GPU buffer holds even packed (Inputs::compact). */
+struct ArenaTooLarge : std::runtime_error
+{
+    using std::runtime_error::runtime_error;
+};
+
 class LILA_UI_API Evaluator
 {
 public:
@@ -239,8 +256,12 @@ LILA_UI_API std::set<std::string> wholeExternals(const tex::Plan& plan);
 LILA_UI_API bool recordImageRegion(VulkanContext& vk, VkCommandBuffer cmd, const GpuImageRef& image, int levelWidth, int levelHeight,
                                    const std::array<int, 4>& rect, VkDeviceAddress dst, uint32_t dstStride, std::vector<compute::Buffer>& temps);
 
-/** evaluateCpu's twin on the GPU: runs the plan to completion and reads the outputs back. Starts the renderer when needed. Throws. */
-LILA_UI_API tex::EvalResult evaluate(const tex::Plan& plan, const tex::EvalOptions& options = {});
+/**
+ * evaluateCpu's twin on the GPU: runs the plan to completion and reads the outputs back. Starts the renderer when needed.
+ * A plan whose buffers don't fit one GPU buffer runs for a share of its outputs at a time. maxArenaBytes caps that
+ * buffer below the device's limit (0: no cap). Throws.
+ */
+LILA_UI_API tex::EvalResult evaluate(const tex::Plan& plan, const tex::EvalOptions& options = {}, uint64_t maxArenaBytes = 0);
 
 /** Fused passes compiled to SPIR-V and cache hits, process-wide. */
 LILA_UI_API std::pair<size_t, size_t> spirvCacheStats();

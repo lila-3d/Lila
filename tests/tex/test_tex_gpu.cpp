@@ -503,3 +503,144 @@ TEST_CASE("tex gpu: a texture set drives its material in the viewport, live")
     CHECK(rough->format() == TextureFormat::R8);
     ui::texLive::shutdown();
 }
+
+namespace
+{
+/** Mesh maps that vary across the tile in a different way each, so texels read from the wrong place show. */
+std::map<std::string, image::Image> wavyMaps(const Plan& p, int res)
+{
+    std::map<std::string, image::Image> out;
+    int seed = 1;
+    for (const BufferDesc& b : p.buffers)
+    {
+        if (b.kind != BufferKind::External || out.contains(b.name))
+            continue;
+        image::Image img{res, res, std::vector<float>(size_t(res) * size_t(res) * 4)};
+        const float k = float(seed++);
+        for (int y = 0; y < res; ++y)
+            for (int x = 0; x < res; ++x)
+            {
+                const float u = (float(x) + 0.5f) / float(res), v = (float(y) + 0.5f) / float(res);
+                float* t = &img.rgba[(size_t(y) * size_t(res) + size_t(x)) * 4];
+                t[0] = 0.5f + 0.4f * std::sin(6.2831853f * (2.0f * u + 0.1f * k));
+                t[1] = 0.5f + 0.4f * std::cos(6.2831853f * (3.0f * v + 0.2f * k));
+                t[2] = 0.5f + 0.4f * std::sin(6.2831853f * (u + v) * k);
+                t[3] = 1.0f;
+            }
+        out.emplace(b.name, std::move(img));
+    }
+    return out;
+}
+
+Plan setPlan(const std::string& set, int res)
+{
+    scene::Node* n = findSet(scene::Graph::current(), set);
+    REQUIRE(n);
+    const Graph g = readGraph(*n);
+    PlanRequest r;
+    r.width = r.height = res;
+    r.outputs = channelRequests(g, readSettings(*n));
+    Plan p = buildPlan(g, r);
+    REQUIRE_MESSAGE(p.error.empty(), p.error);
+    return p;
+}
+
+void layeredSet(const std::string& name, int res)
+{
+    run("newScene");
+    run("texCreateSet", {{"args", {name}}, {"resolution", res}});
+    for (const char* smart : {"wornPaintedMetal", "rustyIron", "dustyWood"})
+        run("texApplySmartMaterial", {{"args", {name, smart}}});
+}
+} // namespace
+
+TEST_CASE("tex gpu: mesh maps at another resolution than the set read as on the CPU")
+{
+    if (!gpu())
+        return;
+    run("newScene");
+    run("texCreateSet", {{"args", {"Mixed"}}, {"resolution", 64}});
+    run("texApplySmartMaterial", {{"args", {"Mixed", "wornPaintedMetal"}}});
+    const Plan p = setPlan("Mixed", 64);
+    for (int mapRes : {128, 32})
+    {
+        CAPTURE(mapRes);
+        EvalOptions o;
+        o.externals = wavyMaps(p, mapRes);
+        REQUIRE_FALSE(o.externals.empty());
+        EvalResult cpu = evaluateCpu(p, o);
+        EvalResult gpuRes = texgpu::evaluate(p, o);
+        for (const auto& [name, img] : cpu.outputs)
+        {
+            CAPTURE(name);
+            REQUIRE(gpuRes.outputs.contains(name));
+            CHECK(maxDiff(img, gpuRes.outputs.at(name)) < 5e-3);
+        }
+    }
+}
+
+TEST_CASE("tex gpu: compact buffers share memory and match the CPU")
+{
+    if (!gpu())
+        return;
+    layeredSet("Packed", 64);
+    const Plan p = setPlan("Packed", 64);
+    EvalOptions o;
+    o.externals = wavyMaps(p, 64);
+    EvalResult cpu = evaluateCpu(p, o);
+
+    auto evalWith = [&](bool compact, texgpu::Stats& stats) {
+        texgpu::Evaluator ev;
+        texgpu::Inputs in;
+        in.cpuExternals = o.externals;
+        in.compact = compact;
+        REQUIRE(ev.setPlan(p, in).empty());
+        runAll(ev, 0.5);
+        stats = ev.stats();
+        return ev.readOutputs();
+    };
+    texgpu::Stats side, packed;
+    auto a = evalWith(false, side);
+    auto b = evalWith(true, packed);
+    CHECK(packed.arenaBytes * 2 <= side.arenaBytes);
+
+    // Capped below even the packed arena, evaluate runs a share of the outputs at a time.
+    EvalResult split = texgpu::evaluate(p, o, packed.arenaBytes * 3 / 4);
+    CHECK(split.outputs.size() == cpu.outputs.size());
+    for (const auto& [name, img] : cpu.outputs)
+    {
+        CAPTURE(name);
+        CHECK(maxDiff(img, a.at(name)) < 5e-3);
+        CHECK(maxDiff(img, b.at(name)) < 5e-3);
+        CHECK(maxDiff(img, split.outputs.at(name)) < 5e-3);
+    }
+    CHECK_THROWS_AS(texgpu::evaluate(p, o, 4096), texgpu::ArenaTooLarge);
+}
+
+TEST_CASE("tex gpu: a 4K set with many generator layers and 4K mesh maps evaluates")
+{
+    if (!gpu())
+        return;
+    layeredSet("Big", 4096);
+    const Plan p = setPlan("Big", 4096);
+    EvalOptions o;
+    o.externals = wavyMaps(p, 4096);
+    EvalResult gpuRes = texgpu::evaluate(p, o);
+    o.externals.clear();
+    REQUIRE(gpuRes.outputs.size() >= 7);
+
+    // The same plan at 64 on the CPU matches the 4K result averaged down to 64.
+    const Plan small = setPlan("Big", 64);
+    EvalOptions so;
+    so.externals = wavyMaps(small, 64);
+    EvalResult cpu = evaluateCpu(small, so);
+    for (const auto& [name, img] : gpuRes.outputs)
+    {
+        CAPTURE(name);
+        REQUIRE(img.width == 4096);
+        REQUIRE(cpu.outputs.contains(name));
+        const double m = meanDiff(downsample(img, 64), cpu.outputs.at(name));
+        // Normals come from height slopes, which sharpen with resolution.
+        CHECK(m < (name == "normal" ? 0.15 : 0.05));
+    }
+}
