@@ -34,6 +34,7 @@ using morphs::kEditWeight;
 using morphs::kInBetweens;
 using morphs::kLink;
 using morphs::kMorphName;
+using morphs::kPointWeights;
 using morphs::kPrevious;
 using morphs::kTargetMesh;
 using morphs::kWeight;
@@ -85,6 +86,7 @@ struct MorphLink final : Data
     DataPtr inBetweens;
     MeshPtr edit;
     double editWeight = 1.0;
+    DataPtr pointWeights;
     const char* kind() const override { return "morphLink"; }
     json toJson() const override { return {{"kind", kind()}}; }
 };
@@ -155,6 +157,8 @@ public:
             std::vector<ShapeRef> shapes = shapesOf(link->deltas, link->live, link->inBetweens, link->edit, link->editWeight);
             const auto* ib = dynamic_cast<const MorphInBetweens*>(link->inBetweens.get());
             std::vector<double> c = coefficients(knotsOf(shapes), link->weight);
+            const auto* pw = dynamic_cast<const PointWeights*>(link->pointWeights.get());
+            auto mask = [pw](size_t p) { return pw && p < pw->values.size() ? double(pw->values[p]) : 1.0; };
             for (size_t s = 0; s < shapes.size(); ++s)
             {
                 const double w = c[s];
@@ -164,7 +168,8 @@ public:
                 {
                     if (m->pointCapacity() != in.pointCapacity())
                         throw std::runtime_error("a live or edited target's point count differs from the mesh");
-                    parallelPoints(points.size(), [&](size_t p) { points[p] += (m->position(geo::Index(p)) - in.position(geo::Index(p))) * w; });
+                    parallelPoints(points.size(),
+                                   [&](size_t p) { points[p] += (m->position(geo::Index(p)) - in.position(geo::Index(p))) * (w * mask(p)); });
                     continue;
                 }
                 const std::vector<uint32_t>* idx = nullptr;
@@ -185,7 +190,7 @@ public:
                 parallelPoints(n, [&](size_t k) {
                     uint32_t p = (*idx)[k];
                     if (p < points.size())
-                        points[p] += (*del)[k] * w;
+                        points[p] += (*del)[k] * (w * mask(p));
                 });
             }
         }
@@ -205,6 +210,7 @@ public:
         link->inBetweens = as<DataPtr>(kInBetweens);
         link->edit = as<MeshPtr>(kEditMesh);
         link->editWeight = as<double>(kEditWeight);
+        link->pointWeights = as<DataPtr>(kPointWeights);
         setOutput(kLink, DataPtr(std::move(link)));
     }
 };
@@ -718,6 +724,7 @@ std::vector<Target> targets(Graph& graph, NodeId morph)
             name = n->name();
         std::vector<double> ws = shapeWeights(*n);
         std::vector<double> c = coefficients(ws, n->as<double>(kWeight));
+        const auto* pw = dynamic_cast<const PointWeights*>(n->as<DataPtr>(kPointWeights).get());
         for (size_t s = 0; s < ws.size(); ++s)
         {
             Target e;
@@ -726,7 +733,11 @@ std::vector<Target> targets(Graph& graph, NodeId morph)
             e.weight = c[s] * envelope;
             if (base)
             {
-                std::shared_ptr<MorphDeltas> d = sparse(shapeOffsets(graph, t, ws[s], *base));
+                std::vector<glm::dvec3> offsets = shapeOffsets(graph, t, ws[s], *base);
+                if (pw)
+                    for (size_t p = 0; p < offsets.size() && p < pw->values.size(); ++p)
+                        offsets[p] *= double(pw->values[p]);
+                std::shared_ptr<MorphDeltas> d = sparse(offsets);
                 e.indices = std::move(d->indices);
                 e.deltas = std::move(d->deltas);
             }
@@ -787,6 +798,8 @@ void setInBetween(Graph& graph, NodeId target, double weight, std::shared_ptr<co
     std::sort(next->shapes.begin(), next->shapes.end(), [](auto& a, auto& b) { return a.weight < b.weight; });
     graph.setValue({target, kInBetweens, -1}, DataPtr(std::move(next)));
 }
+
+void setPointWeights(Graph& graph, NodeId target, DataPtr weights) { graph.setValue({target, kPointWeights, -1}, std::move(weights)); }
 
 std::shared_ptr<MorphDeltas> invertSculpt(Graph& graph, NodeId target, const std::vector<glm::dvec3>& sculpt, double* residual)
 {
@@ -930,6 +943,7 @@ void registerTypes()
         hiddenStored("inBetweens", PlugType::Data, DataPtr(), "In-between shapes, each with the weight it is reached at."),
         connected("editMesh", PlugType::Mesh, MeshPtr(), "The mesh being sculpted in edit mode; stands in for the shape it edits."),
         hiddenStored("editWeight", PlugType::Float, 1.0, "Which shape the edit mesh edits: 1 the full shape, else an in-between's weight."),
+        hiddenStored("pointWeights", PlugType::Data, DataPtr(), "Per-point weights scaling every shape of this target; points past the end weigh 1."),
     };
     target.create = [] { return std::make_unique<MorphTargetNode>(); };
     types::registerType(std::move(target));

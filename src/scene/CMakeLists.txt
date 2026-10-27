@@ -48,6 +48,7 @@ lila_module(lila_scene Scene
     Light.cpp Light.h
     LodGroup.cpp LodGroup.h
     Materials.cpp
+    MathNodes.cpp MathNodes.h
     MeshCache.cpp MeshCache.h
     Measure.cpp
     MeasureMath.cpp

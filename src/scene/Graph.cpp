@@ -1567,8 +1567,13 @@ void Graph::evaluateDirty()
                     dv);
             }
             if (n->type().dag)
+            {
                 if (const glm::dmat4* frame = spaces::activeFrame(*n))
                     n->mValues[Transform::kParentMatrix] = *frame;
+                else if (const auto* opm = n->mValues.size() > Transform::kOffsetParentMatrix ? std::get_if<glm::dmat4>(&n->mValues[Transform::kOffsetParentMatrix]) : nullptr;
+                         opm && *opm != glm::dmat4(1.0))
+                    n->mValues[Transform::kParentMatrix] = std::get<glm::dmat4>(n->mValues[Transform::kParentMatrix]) * *opm;
+            }
             n->compute(mCtx);
             n->mDirty = false;
             n->mEvaluatedPass = pass;

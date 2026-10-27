@@ -60,6 +60,7 @@ enum TargetAttr
     kInBetweens,
     kEditMesh,
     kEditWeight,
+    kPointWeights,
 };
 
 /** The morph deformer in a mesh's stack, or kNoNode. */
@@ -83,7 +84,7 @@ struct Target
     std::string name;
     double weight = 0.0; // coefficient times the morph's envelope
     std::vector<uint32_t> indices;
-    std::vector<glm::dvec3> deltas;
+    std::vector<glm::dvec3> deltas; // the target's own point weights applied
 };
 
 /** The morph's targets in order, in-betweens expanded, live targets resolved against its current input. Evaluates the graph. */
@@ -97,6 +98,8 @@ LILA_SCENE_API NodeId create(Graph& g, NodeId mesh, const std::string& name);
 LILA_SCENE_API NodeId addTarget(Graph& g, NodeId morph, const std::string& morphName, std::shared_ptr<const MorphDeltas> deltas, double weight);
 /** Adds or replaces the in-between at weight. Undoable. */
 LILA_SCENE_API void setInBetween(Graph& g, NodeId target, double weight, std::shared_ptr<const MorphDeltas> deltas);
+/** The target's own per-point weight map (a PointWeights, scene/Deformers.h) over all its shapes; null for none. Undoable. */
+LILA_SCENE_API void setPointWeights(Graph& g, NodeId target, DataPtr weights);
 
 /**
  * Pose-space inversion: the full-shape offsets for `target` that make its mesh's evaluated points (object space,
