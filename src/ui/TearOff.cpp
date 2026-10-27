@@ -223,7 +223,7 @@ QMenu* findMenu(QMainWindow* window, const std::vector<std::string>& path)
         if (!found)
             return nullptr;
         // Some menus only fill in their rows, submenus included, as they open.
-        emit found->aboutToShow();
+        Q_EMIT found->aboutToShow();
         rows = found->actions();
     }
     return found;
@@ -338,7 +338,7 @@ QSize TearOffPanel::preferredSize() const
 void TearOffPanel::refresh()
 {
     if (mMenu)
-        emit mMenu->aboutToShow();
+        Q_EMIT mMenu->aboutToShow();
 }
 
 void TearOffPanel::enterEvent(QEnterEvent* e)

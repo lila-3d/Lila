@@ -41,7 +41,7 @@ public:
     bool hasLangserver() const;
     bool hasRuff() const;
 
-signals:
+Q_SIGNALS:
     void stateChanged(lila::ui::Tools::State state, const QString& message);
 
 private:

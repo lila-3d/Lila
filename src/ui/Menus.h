@@ -113,7 +113,7 @@ public:
     /** Rebuilds once the event loop comes round, however many changes arrive first. */
     void scheduleRebuild();
 
-signals:
+Q_SIGNALS:
     void rebuilt();
 
 private:

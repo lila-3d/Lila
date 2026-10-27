@@ -882,7 +882,7 @@ void ModifierStackWidget::refresh()
     mSignature = std::move(sig);
     rebuild();
     if (changedMesh)
-        emit meshChanged(mMesh);
+        Q_EMIT meshChanged(mMesh);
 }
 
 void ModifierStackWidget::rebuild()

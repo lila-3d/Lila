@@ -271,7 +271,7 @@ void MenuBuilder::rebuild()
         it->second->deleteLater();
         it = mMenus.erase(it);
     }
-    emit rebuilt();
+    Q_EMIT rebuilt();
 }
 
 void MenuBuilder::fill(QMenu* menu, const std::string& path, std::vector<std::string>& live)

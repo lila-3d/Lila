@@ -64,7 +64,7 @@ public:
     QSize minimumSizeHint() const override;
     void setDocsPage(const std::string& page);
 
-signals:
+Q_SIGNALS:
     void collapseRequested();
 
 protected:
@@ -114,7 +114,7 @@ public:
     std::map<QString, int> tabSizes() const { return mTabSizes; }
     void setTabSizes(std::map<QString, int> sizes) { mTabSizes = std::move(sizes); }
 
-signals:
+Q_SIGNALS:
     void changed();
 
 protected:

@@ -1124,7 +1124,7 @@ void MainWindow::registerActions()
                                                  },
                                                  .showDocs = [editor](const QString& key) {
                                                      if (editor)
-                                                         emit editor->showDocs(key);
+                                                         Q_EMIT editor->showDocs(key);
                                                  }});
                   }, nullptr,
                   "Finds a command, flag or lila Python class or function by name or description and inserts the call into the script editor."});

@@ -502,7 +502,7 @@ void ViewportWidget::applyCameraView(const CameraView& v)
         mCamera.orthoWidth = v.orthoWidth;
     }
     requestFrame();
-    emit viewStateChanged();
+    Q_EMIT viewStateChanged();
 }
 
 void ViewportWidget::recordCamera(const CameraView& before, uint64_t gesture)
@@ -2250,7 +2250,7 @@ void ViewportWidget::setView(const std::string& name)
     mViewName = name;
     syncCameraSettings();
     requestFrame();
-    emit viewStateChanged();
+    Q_EMIT viewStateChanged();
 }
 
 nlohmann::json ViewportWidget::cameraState() const
@@ -2290,7 +2290,7 @@ void ViewportWidget::restoreCameraState(const nlohmann::json& state)
     mViewName = view;
     syncCameraSettings();
     requestFrame();
-    emit viewStateChanged();
+    Q_EMIT viewStateChanged();
 }
 
 void ViewportWidget::lookThrough(scene::NodeId camera)
@@ -2310,7 +2310,7 @@ void ViewportWidget::lookThrough(scene::NodeId camera)
     syncLookThrough();
     syncCameraSettings();
     requestFrame();
-    emit viewStateChanged();
+    Q_EMIT viewStateChanged();
 }
 
 void ViewportWidget::syncLookThrough()
@@ -2332,7 +2332,7 @@ void ViewportWidget::syncLookThrough()
     // The gate settings are the node's attributes, which can change under any edit.
     syncCameraSettings();
     if (renamed)
-        emit viewStateChanged();
+        Q_EMIT viewStateChanged();
 }
 
 bool ViewportWidget::beginCameraEdit()
@@ -2594,7 +2594,7 @@ void ViewportWidget::setIsolation(scene::isolation::Set set)
     mIsolation = std::move(set);
     clearPreselect();
     requestFrame();
-    emit viewStateChanged();
+    Q_EMIT viewStateChanged();
 }
 
 render::Renderer::FrameStats ViewportWidget::frameStats() const

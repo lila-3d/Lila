@@ -116,10 +116,10 @@ int main(int argc, char** argv)
 
     // Heat map click on W filters to it.
     if (auto* map = editor.findChild<ui::KeyboardHeatMap*>())
-        emit map->keyClicked(Qt::Key_W);
+        Q_EMIT map->keyClicked(Qt::Key_W);
     save(&editor, "hk_keyfilter.png");
     if (auto* map = editor.findChild<ui::KeyboardHeatMap*>())
-        emit map->keyClicked(Qt::Key_W);
+        Q_EMIT map->keyClicked(Qt::Key_W);
 
     editor.findChild<QLineEdit*>()->setText("undo");
     save(&editor, "hk_search.png");

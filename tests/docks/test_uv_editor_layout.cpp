@@ -32,12 +32,12 @@ TEST_CASE("a right-click default runs its menu item without opening the menu")
     setRightClickAction(&button, first);
     CHECK(rightClickAction(&button) == first);
     CHECK(button.toolTip() == "Project\nRight-click: Planar (fit)");
-    emit button.customContextMenuRequested({});
+    Q_EMIT button.customContextMenuRequested({});
     CHECK(ran == 1);
 
     setRightClickAction(&button, nullptr);
     CHECK(button.toolTip() == "Project");
-    emit button.customContextMenuRequested({});
+    Q_EMIT button.customContextMenuRequested({});
     CHECK(ran == 1);
 }
 

@@ -225,7 +225,7 @@ void Checker::check(const QString& ruffExe, const QString& source, const QString
         if (p != mProcess)
             return;
         // ruff exits 1 when it found something, which is the normal case here.
-        emit finished(parseCheck(p->readAllStandardOutput(), lines));
+        Q_EMIT finished(parseCheck(p->readAllStandardOutput(), lines));
         mProcess = nullptr;
         p->deleteLater();
     });

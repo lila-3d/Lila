@@ -97,7 +97,7 @@ TEST_CASE("outliner lists object sets after the hierarchy, members under them, c
     CHECK(set->childCount() == 2);
 
     run("select", {{"clear", true}});
-    emit o.itemClicked(set, 0);
+    Q_EMIT o.itemClicked(set, 0);
     QApplication::processEvents();
     CHECK(run("ls", {{"selection", true}}) == json({"a", "b"}));
     CHECK_FALSE(set->isSelected());

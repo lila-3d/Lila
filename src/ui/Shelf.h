@@ -88,7 +88,7 @@ public:
     /** The ways to add a button: new Python or command button, paste, and every registered action. */
     void fillAddMenu(QMenu* menu);
 
-signals:
+Q_SIGNALS:
     void triggered();
 
 protected:

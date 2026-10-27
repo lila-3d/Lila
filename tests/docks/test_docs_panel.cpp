@@ -72,7 +72,7 @@ TEST_CASE("docs panel reads a local checkout, follows links, goes back and searc
     REQUIRE(browser);
     CHECK(browser->toPlainText().contains("Lila Docs"));
 
-    emit browser->anchorClicked(QUrl("essentials.md"));
+    Q_EMIT browser->anchorClicked(QUrl("essentials.md"));
     CHECK(browser->toPlainText().contains("Selection modes"));
     // Headings keep their level through the HTML, which anchors and bookmarks find them by.
     bool heading = false;
@@ -101,7 +101,7 @@ TEST_CASE("docs panel reads a local checkout, follows links, goes back and searc
     auto* search = panel->findChild<QLineEdit*>();
     REQUIRE(search);
     search->setText("vertex");
-    emit search->returnPressed();
+    Q_EMIT search->returnPressed();
     CHECK(browser->toPlainText().contains("Shift+1"));
 
     panel.reset();
@@ -130,7 +130,7 @@ TEST_CASE("docs panel renders a page to an image")
     auto* search = panel->findChild<QLineEdit*>();
     REQUIRE(search);
     search->setText(QString("#/") + (page ? page : "essentials"));
-    emit search->returnPressed();
+    Q_EMIT search->returnPressed();
     QApplication::processEvents();
 
     auto* browser = panel->findChild<QTextBrowser*>();

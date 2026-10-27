@@ -243,7 +243,7 @@ void DockSidebars::restoreSize(QDockWidget* dock)
         return;
     bool sideways = area == Qt::LeftDockWidgetArea || area == Qt::RightDockWidgetArea;
     mWindow->resizeDocks({dock}, {want}, sideways ? Qt::Horizontal : Qt::Vertical);
-    emit changed();
+    Q_EMIT changed();
 }
 
 bool DockSidebars::eventFilter(QObject* obj, QEvent* e)
@@ -320,7 +320,7 @@ void DockSidebars::close(QDockWidget* dock)
     }
     rememberSize(dock);
     dock->close();
-    emit changed();
+    Q_EMIT changed();
 }
 
 void DockSidebars::manage(QDockWidget* dock)
@@ -392,7 +392,7 @@ void DockSidebars::ensureUsableSize(QDockWidget* dock)
     if (auto it = mTabSizes.find(dock->objectName()); it != mTabSizes.end() && it->second >= kSqueezed)
         want = it->second;
     mWindow->resizeDocks({dock}, {want}, sideways ? Qt::Horizontal : Qt::Vertical);
-    emit changed();
+    Q_EMIT changed();
 }
 
 void revealDock(QDockWidget* dock)
@@ -503,7 +503,7 @@ void DockSidebars::collapse(QDockWidget* dock)
     if (!neighbours.isEmpty())
         mWindow->resizeDocks(neighbours, sizes, orientation == Qt::Vertical ? Qt::Horizontal : Qt::Vertical);
     refreshStrips();
-    emit changed();
+    Q_EMIT changed();
 }
 
 void DockSidebars::expand(QDockWidget* dock)
@@ -524,7 +524,7 @@ void DockSidebars::expand(QDockWidget* dock)
         mSizes.erase(size);
     }
     refreshStrips();
-    emit changed();
+    Q_EMIT changed();
 }
 
 bool DockSidebars::isCollapsed(const QDockWidget* dock) const

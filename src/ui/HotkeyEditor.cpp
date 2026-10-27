@@ -142,7 +142,7 @@ bool ChordGrabber::eventFilter(QObject*, QEvent* e)
         if (auto chord = hotkeys::chordFromEvent(k))
         {
             disarm();
-            emit captured(*chord);
+            Q_EMIT captured(*chord);
         }
         return true;
     }
@@ -464,7 +464,7 @@ void KeyboardHeatMap::mouseMoveEvent(QMouseEvent* e)
 void KeyboardHeatMap::mousePressEvent(QMouseEvent* e)
 {
     if (const Cap* c = capAt(e->position()))
-        emit keyClicked(c->key);
+        Q_EMIT keyClicked(c->key);
 }
 
 void KeyboardHeatMap::leaveEvent(QEvent*)

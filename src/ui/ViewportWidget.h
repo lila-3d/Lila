@@ -91,7 +91,7 @@ public:
     /** Which viewport panel this is, in creation order; keys its heads-up display prefs. */
     int hudPanel() const { return mHudPanel; }
 
-signals:
+Q_SIGNALS:
     /** The view (camera) or isolate state changed. */
     void viewStateChanged();
 

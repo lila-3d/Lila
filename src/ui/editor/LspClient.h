@@ -71,7 +71,7 @@ public:
     void closeDocument(const QString& uri);
     bool isOpen(const QString& uri) const { return mVersions.contains(uri); }
 
-signals:
+Q_SIGNALS:
     void ready();
     void stopped(const QString& reason);
     void diagnosticsPublished(const QString& uri, const QList<lila::ui::Diagnostic>& diagnostics);

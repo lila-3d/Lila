@@ -63,7 +63,7 @@ TEST_CASE("a torn-off menu is a dock of buttons bound to the menu's actions")
     CHECK(mesh->isTearOffEnabled());
     CHECK_FALSE(symmetry->isTearOffEnabled());
     // Submenus get the row as their parent opens, so ones added later are covered too.
-    emit mesh->aboutToShow();
+    Q_EMIT mesh->aboutToShow();
     CHECK(symmetry->isTearOffEnabled());
     REQUIRE(tearoff::pathOf(symmetry));
     CHECK(*tearoff::pathOf(symmetry) == std::vector<std::string>{"Mesh", "Symmetry"});

@@ -50,7 +50,7 @@ ScriptPanel::ScriptPanel(QWidget* parent) : QWidget(parent)
     connect(this, &ScriptPanel::appendRequested, this, &ScriptPanel::append, Qt::QueuedConnection);
     for (const LogEntry& e : log::since(0))
         append(int(e.level), QString::fromStdString(e.text));
-    mSink = log::addSink([this](const LogEntry& e) { emit appendRequested(int(e.level), QString::fromStdString(e.text)); });
+    mSink = log::addSink([this](const LogEntry& e) { Q_EMIT appendRequested(int(e.level), QString::fromStdString(e.text)); });
 }
 
 ScriptPanel::~ScriptPanel()

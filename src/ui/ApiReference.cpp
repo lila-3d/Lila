@@ -225,7 +225,7 @@ ApiReference::ApiReference(QWidget* parent) : QWidget(parent)
     });
     connect(mInsert, &QPushButton::clicked, this, [this] {
         if (mCurrent >= 0 && !mEntries[mCurrent].example.isEmpty())
-            emit insertCode(mEntries[mCurrent].example + "\n");
+            Q_EMIT insertCode(mEntries[mCurrent].example + "\n");
     });
     connect(refresh, &QPushButton::clicked, this, &ApiReference::rebuild);
     display(-1);

@@ -36,7 +36,7 @@ public:
 
     static constexpr int kOverflow = 100;
 
-signals:
+Q_SIGNALS:
     void picked(int slot);
 
 protected:

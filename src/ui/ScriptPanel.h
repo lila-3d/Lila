@@ -18,7 +18,7 @@ public:
     explicit ScriptPanel(QWidget* parent = nullptr);
     ~ScriptPanel() override;
 
-signals:
+Q_SIGNALS:
     void appendRequested(int level, const QString& text);
 
 private:

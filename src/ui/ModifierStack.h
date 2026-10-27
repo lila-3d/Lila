@@ -50,7 +50,7 @@ public:
     /** Shows or hides the top row (mesh name, Add Modifier, Apply All / Collapse menu). */
     void setHeaderVisible(bool on);
 
-signals:
+Q_SIGNALS:
     /** The shown mesh changed (selection moved, or setMesh). */
     void meshChanged(scene::NodeId mesh);
 

@@ -150,7 +150,7 @@ ScriptEditor::ScriptEditor(QWidget* parent) : QWidget(parent)
     add("Run Line", "arrow-bar-to-right", "Run the caret's line, or the selection (Shift+Enter)", [this] { runLine(); });
     add("Run Cell", "player-track-next", "Run the cell at the caret: the lines between two # %% marker comments (Ctrl+Shift+Enter)", [this] { runCurrent(true); });
     add("Batch Run", "file-stack", "Batch Script Execution: run a script over many scene files in background workers",
-        [this] { emit batchRunRequested(); });
+        [this] { Q_EMIT batchRunRequested(); });
     bar->addSeparator();
     addMenuButton("Format", "align-left", "Format the selection or the tab with ruff (Ctrl+Alt+L); the arrow has imports and fixes",
                   [this] {
@@ -167,10 +167,10 @@ ScriptEditor::ScriptEditor(QWidget* parent) : QWidget(parent)
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     bar->addWidget(spacer);
     add("API Reference", "list-search", "The API Reference panel: every command, flag and lila module, searchable, from the running Lila",
-        [this] { emit apiReferenceRequested(); });
+        [this] { Q_EMIT apiReferenceRequested(); });
     add("API Docs", "book", "The Python API pages of the docs in the Docs panel; Shift+click opens them in the web browser. F1 or Ctrl+click on a "
         "lila name opens its page",
-        [this] { emit apiDocsRequested(); });
+        [this] { Q_EMIT apiDocsRequested(); });
     layout->addWidget(bar);
 
     mSplitter = new QSplitter(Qt::Vertical, this);

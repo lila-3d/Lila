@@ -102,8 +102,8 @@ public:
         combo->addItems(choices);
         connect(combo, &QComboBox::activated, combo, [this, combo] {
             auto* self = const_cast<EnumDelegate*>(this);
-            emit self->commitData(combo);
-            emit self->closeEditor(combo);
+            Q_EMIT self->commitData(combo);
+            Q_EMIT self->closeEditor(combo);
         });
         QTimer::singleShot(0, combo, [combo] { combo->showPopup(); });
         return combo;

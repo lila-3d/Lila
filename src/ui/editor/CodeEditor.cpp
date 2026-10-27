@@ -902,17 +902,17 @@ bool CodeEditor::handleEditingKey(QKeyEvent* e)
         // The numeric keypad's Enter runs too.
         if (ctrl || (key == Qt::Key_Enter && (e->modifiers() & Qt::KeypadModifier) && mods == Qt::NoModifier))
         {
-            emit runRequested();
+            Q_EMIT runRequested();
             return true;
         }
         if (mods == Qt::ShiftModifier)
         {
-            emit runLineRequested();
+            Q_EMIT runLineRequested();
             return true;
         }
         if (mods == (Qt::ControlModifier | Qt::ShiftModifier))
         {
-            emit runCellRequested();
+            Q_EMIT runCellRequested();
             return true;
         }
     }
@@ -972,7 +972,7 @@ bool CodeEditor::handleEditingKey(QKeyEvent* e)
     }
     if (ctrl && (key == Qt::Key_F || key == Qt::Key_H || key == Qt::Key_R))
     {
-        emit findRequested(key != Qt::Key_F);
+        Q_EMIT findRequested(key != Qt::Key_F);
         return true;
     }
     if (ctrl && key == Qt::Key_G)
@@ -1434,7 +1434,7 @@ void CodeEditor::runFormatter(const QStringList& args, const QString& source, st
     if (mRuffExe.isEmpty() || isReadOnly())
     {
         if (!quiet && !isReadOnly())
-            emit statusMessage("Formatting needs ruff, which is not installed yet");
+            Q_EMIT statusMessage("Formatting needs ruff, which is not installed yet");
         return;
     }
     const int revision = document()->revision();
@@ -1445,13 +1445,13 @@ void CodeEditor::runFormatter(const QStringList& args, const QString& source, st
         if (!r.ok)
         {
             if (!quiet)
-                emit statusMessage("ruff: " + r.error.section('\n', 0, 0));
+                Q_EMIT statusMessage("ruff: " + r.error.section('\n', 0, 0));
             return;
         }
         const bool changed = applyFormatted(finish ? finish(r.text) : r.text);
         mFormattedRevision = document()->revision();
         if (changed && !done.isEmpty())
-            emit statusMessage(done);
+            Q_EMIT statusMessage(done);
     });
 }
 
@@ -2343,9 +2343,9 @@ void CodeEditor::goToDefinition(const QTextCursor& at)
     if (!mLsp || !mLsp->isReady() || mOpenUri.isEmpty())
     {
         if (symbol.startsWith("lila"))
-            emit showDocs(symbol);
+            Q_EMIT showDocs(symbol);
         else
-            emit statusMessage("Go to definition needs the language server");
+            Q_EMIT statusMessage("Go to definition needs the language server");
         return;
     }
     syncDocument();
@@ -2354,18 +2354,18 @@ void CodeEditor::goToDefinition(const QTextCursor& at)
         // Lila's API opens its docs; the stubs say less than the docs do.
         if ((d && isLilaApiPath(text::uriToPath(d->uri))) || (!d && symbol.startsWith("lila")))
         {
-            emit showDocs(symbol);
+            Q_EMIT showDocs(symbol);
             return;
         }
         if (!d)
         {
-            emit statusMessage("No definition found");
+            Q_EMIT statusMessage("No definition found");
             return;
         }
         if (text::sameUri(d->uri, mOpenUri))
             selectRange(d->line, d->col, d->endLine, d->endCol);
         else
-            emit openDefinition(text::uriToPath(d->uri), d->line, d->col, d->endLine, d->endCol);
+            Q_EMIT openDefinition(text::uriToPath(d->uri), d->line, d->col, d->endLine, d->endCol);
     });
 }
 
@@ -2373,7 +2373,7 @@ void CodeEditor::renameSymbol()
 {
     if (!mLsp || !mLsp->isReady() || mOpenUri.isEmpty())
     {
-        emit statusMessage("Rename needs the language server");
+        Q_EMIT statusMessage("Rename needs the language server");
         return;
     }
     QTextCursor c = textCursor();
@@ -2396,7 +2396,7 @@ void CodeEditor::renameSymbol()
     mLsp->request("textDocument/rename", params, [this](const json& r, const json& err) {
         if (!err.is_null())
         {
-            emit statusMessage("Rename failed: " + QString::fromStdString(err.value("message", std::string())));
+            Q_EMIT statusMessage("Rename failed: " + QString::fromStdString(err.value("message", std::string())));
             return;
         }
         if (!r.is_object())
@@ -2454,7 +2454,7 @@ void CodeEditor::emitShowDocs(const QTextCursor& at)
 {
     QString symbol = docsSymbolAt(at);
     if (!symbol.isEmpty())
-        emit showDocs(symbol);
+        Q_EMIT showDocs(symbol);
 }
 
 void CodeEditor::selectRange(int line, int col, int endLine, int endCol)

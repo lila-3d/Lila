@@ -194,7 +194,7 @@ void collect(QMenu* menu, const QString& path, std::vector<Item>& out, int depth
     if (depth > 8 || menu->property(kNoSearchProperty).toBool())
         return;
     // Menus that fill themselves when opened (cameras, layouts) are filled now so their rows can be found.
-    emit menu->aboutToShow();
+    Q_EMIT menu->aboutToShow();
     for (QAction* a : menu->actions())
     {
         if (a->isSeparator() || !a->isVisible() || qobject_cast<QWidgetAction*>(a))

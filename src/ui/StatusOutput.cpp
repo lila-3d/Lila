@@ -49,7 +49,7 @@ StatusOutput::StatusOutput(std::function<void()> openOutput, std::function<bool(
     for (const LogEntry& e : log::since(0))
         mTail.add(e.level, e.text);
     mTail.commit();
-    mSink = log::addSink([this](const LogEntry& e) { emit appendRequested(int(e.level), QString::fromStdString(e.text)); });
+    mSink = log::addSink([this](const LogEntry& e) { Q_EMIT appendRequested(int(e.level), QString::fromStdString(e.text)); });
     refresh();
 }
 

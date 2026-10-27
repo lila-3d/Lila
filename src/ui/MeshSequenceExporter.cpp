@@ -249,7 +249,7 @@ MeshSequenceExporter::MeshSequenceExporter(QWidget* parent) : QDialog(parent)
             scheduleRefresh();
     });
     ranged();
-    emit mFormat->currentIndexChanged(mFormat->currentIndex());
+    Q_EMIT mFormat->currentIndexChanged(mFormat->currentIndex());
     updatePreview();
 }
 

@@ -143,15 +143,15 @@ void LspClient::start(const QString& program, const QStringList& args, const jso
     mProcess->setProcessChannelMode(QProcess::SeparateChannels);
     connect(mProcess, &QProcess::readyReadStandardOutput, this, &LspClient::onReadyRead);
     connect(mProcess, &QProcess::readyReadStandardError, this,
-            [this] { emit logMessage(QString::fromUtf8(mProcess->readAllStandardError()).trimmed()); });
+            [this] { Q_EMIT logMessage(QString::fromUtf8(mProcess->readAllStandardError()).trimmed()); });
     connect(mProcess, &QProcess::errorOccurred, this, [this](QProcess::ProcessError) {
         if (!mStopping)
-            emit stopped(mProcess->errorString());
+            Q_EMIT stopped(mProcess->errorString());
     });
     connect(mProcess, &QProcess::finished, this, [this](int code, QProcess::ExitStatus) {
         mReady = false;
         if (!mStopping)
-            emit stopped(QString("language server exited (%1)").arg(code));
+            Q_EMIT stopped(QString("language server exited (%1)").arg(code));
     });
     mProcess->start(program, args);
 
@@ -197,14 +197,14 @@ void LspClient::start(const QString& program, const QStringList& args, const jso
     mPending.insert(id, [this](const json& result, const json& error) {
         if (!error.is_null())
         {
-            emit stopped("initialize failed: " + QString::fromStdString(error.dump()));
+            Q_EMIT stopped("initialize failed: " + QString::fromStdString(error.dump()));
             return;
         }
         mCapabilities = result.value("capabilities", json::object());
         mReady = true;
         notify("initialized", json::object());
         notify("workspace/didChangeConfiguration", {{"settings", mSettings}});
-        emit ready();
+        Q_EMIT ready();
     });
     send({{"jsonrpc", "2.0"}, {"id", id}, {"method", "initialize"}, {"params", params}});
 }
@@ -324,10 +324,10 @@ void LspClient::handle(const json& msg)
             QList<Diagnostic> list;
             for (const json& d : params.value("diagnostics", json::array()))
                 list.append(diagnosticFromLsp(d));
-            emit diagnosticsPublished(QString::fromStdString(params.value("uri", std::string())), list);
+            Q_EMIT diagnosticsPublished(QString::fromStdString(params.value("uri", std::string())), list);
         }
         else if (method == "window/logMessage" || method == "window/showMessage")
-            emit logMessage(QString::fromStdString(params.value("message", std::string())));
+            Q_EMIT logMessage(QString::fromStdString(params.value("message", std::string())));
         return;
     }
     if (!hasId || !msg["id"].is_number_integer())

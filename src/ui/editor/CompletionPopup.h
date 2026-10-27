@@ -37,7 +37,7 @@ public:
     void showBelow(const QRect& cursorRectGlobal);
     void refreshDocumentation();
 
-signals:
+Q_SIGNALS:
     void activated();
     void currentEntryChanged(int entryIndex);
 

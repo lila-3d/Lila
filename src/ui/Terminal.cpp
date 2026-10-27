@@ -261,7 +261,7 @@ bool PtyProcess::start(const QString& commandLine, const QString& workingDir, co
         while (ReadFile(h, buf, sizeof(buf), &n, nullptr) && n > 0)
         {
             QByteArray data(buf, int(n));
-            QMetaObject::invokeMethod(q, [q, data] { emit q->output(data); }, Qt::QueuedConnection);
+            QMetaObject::invokeMethod(q, [q, data] { Q_EMIT q->output(data); }, Qt::QueuedConnection);
         }
     });
 
@@ -273,7 +273,7 @@ bool PtyProcess::start(const QString& commandLine, const QString& workingDir, co
         m->notifier->setEnabled(false);
         // Lets the console flush its last frame and end the reader with EOF.
         m->closeConsole();
-        emit finished(int(code));
+        Q_EMIT finished(int(code));
     });
     return true;
 }
@@ -365,7 +365,7 @@ bool PtyProcess::start(const QString& commandLine, const QString& workingDir, co
             if (n <= 0)
                 break;
             QByteArray data(buf, int(n));
-            QMetaObject::invokeMethod(q, [q, data] { emit q->output(data); }, Qt::QueuedConnection);
+            QMetaObject::invokeMethod(q, [q, data] { Q_EMIT q->output(data); }, Qt::QueuedConnection);
         }
     });
     m->waiter = std::thread([q = this, pid] {
@@ -374,7 +374,7 @@ bool PtyProcess::start(const QString& commandLine, const QString& workingDir, co
         int code = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
         QMetaObject::invokeMethod(q, [q, code] {
             q->m->running = false;
-            emit q->finished(code);
+            Q_EMIT q->finished(code);
         }, Qt::QueuedConnection);
     });
     return true;
@@ -572,7 +572,7 @@ void TerminalView::onFinished(int exitCode)
         updateScrollBar();
         viewport()->update();
     });
-    emit exited(exitCode);
+    Q_EMIT exited(exitCode);
 }
 
 void TerminalView::send(const QByteArray& bytes)

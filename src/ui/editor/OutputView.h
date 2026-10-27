@@ -25,7 +25,7 @@ public:
 
     void setEditorFont(const QFont& font);
 
-signals:
+Q_SIGNALS:
     void appendRequested(int level, const QString& text);
     void traceClicked(const QString& file, int line);
 

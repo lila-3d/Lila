@@ -158,9 +158,9 @@ CompletionPopup::CompletionPopup(QWidget* owner) : QFrame(owner, Qt::ToolTip | Q
 
     connect(mList, &QListWidget::currentRowChanged, this, [this](int) {
         refreshDocumentation();
-        emit currentEntryChanged(currentEntry());
+        Q_EMIT currentEntryChanged(currentEntry());
     });
-    connect(mList, &QListWidget::itemDoubleClicked, this, [this] { emit activated(); });
+    connect(mList, &QListWidget::itemDoubleClicked, this, [this] { Q_EMIT activated(); });
 }
 
 void CompletionPopup::setEditorFont(const QFont& font)

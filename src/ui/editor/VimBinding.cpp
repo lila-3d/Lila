@@ -134,7 +134,7 @@ void VimBinding::refresh()
     mEditor->setCursorWidth(block ? std::max(2, mEditor->fontMetrics().horizontalAdvance(' ')) : 2);
     mEditor->ensureCursorVisible();
     mEditor->viewport()->update();
-    emit statusChanged(mEngine.status());
+    Q_EMIT statusChanged(mEngine.status());
 }
 
 QString VimBinding::text() const

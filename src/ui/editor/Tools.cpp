@@ -69,7 +69,7 @@ void Tools::setState(State s, const QString& message)
 {
     mState = s;
     mMessage = message;
-    emit stateChanged(s, message);
+    Q_EMIT stateChanged(s, message);
 }
 
 void Tools::ensure()

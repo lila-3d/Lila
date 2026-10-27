@@ -663,7 +663,7 @@ void ShelfPage::rebuild()
         b->installEventFilter(this);
         json target = item.value("target", json());
         connect(b, &QToolButton::clicked, this, [this, target] {
-            emit triggered();
+            Q_EMIT triggered();
             if (!actions::run(target))
                 log::warn("shelf: '{}' failed", actions::labelFor(target));
         });

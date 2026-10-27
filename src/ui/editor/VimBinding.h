@@ -33,7 +33,7 @@ public:
     /** The vim token for a key press, or empty for keys vim leaves to the editor (F-keys, Alt, Ctrl+Enter). */
     static QString token(const QKeyEvent* e);
 
-signals:
+Q_SIGNALS:
     void statusChanged(const QString& status);
     void writeRequested();
     void closeRequested();
@@ -59,9 +59,9 @@ private:
     void showSelection(int from, int to) override;
     QString clipboard() const override;
     void setClipboard(const QString& text) override;
-    void write() override { emit writeRequested(); }
-    void close() override { emit closeRequested(); }
-    void message(const QString& text) override { emit messageShown(text); }
+    void write() override { Q_EMIT writeRequested(); }
+    void close() override { Q_EMIT closeRequested(); }
+    void message(const QString& text) override { Q_EMIT messageShown(text); }
     int halfPage() const override;
 
     QPointer<CodeEditor> mEditor;

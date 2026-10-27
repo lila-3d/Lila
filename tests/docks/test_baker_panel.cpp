@@ -223,7 +223,7 @@ TEST_CASE("baker panel: groups from names, drops, stacks, output preview, bake a
         auto* preset = child<QComboBox>(&panel, "bakerPreset");
         const int i = preset->findData("Smooth x2");
         REQUIRE(i > 0);
-        emit preset->activated(i);
+        Q_EMIT preset->activated(i);
         pump();
         grp = onlyGroup(panel.project());
         CHECK(bake::groupSettings(*grp).highs[0].modifiers == bake::modifierPreset("Smooth x2"));
@@ -259,9 +259,9 @@ TEST_CASE("baker panel: groups from names, drops, stacks, output preview, bake a
 
         auto* name = child<QLineEdit>(&panel, "bakerName");
         name->setText("T_{mesh}_{map}");
-        emit name->textEdited(name->text());
+        Q_EMIT name->textEdited(name->text());
         CHECK(child<QLabel>(&panel, "bakerPreview")->text().contains("T_crate_low_normal.png"));
-        emit name->editingFinished();
+        Q_EMIT name->editingFinished();
         pump();
         CHECK(bake::projectSettings(*scene::Graph::current().find(panel.project())).output.name == "T_{mesh}_{map}");
 
@@ -378,7 +378,7 @@ TEST_CASE("baker panel: presets stick on group and High rows, typed params edit 
     auto pick = [&](const char* name) {
         const int i = preset->findData(name);
         REQUIRE(i > 0);
-        emit preset->activated(i);
+        Q_EMIT preset->activated(i);
         pump();
     };
     auto select = [&](const QString& text) {

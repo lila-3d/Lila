@@ -84,7 +84,7 @@ public:
     /** Writes the session now rather than on the next debounce. */
     void saveSession();
 
-signals:
+Q_SIGNALS:
     /** F1 / Ctrl+Q on a symbol, fully qualified when the interpreter can resolve it. */
     void showDocs(const QString& symbol);
     /** The toolbar's API Docs button: the scripting section of the docs. */

@@ -45,6 +45,6 @@ TEST_CASE("viewport bottom bar keeps the snaps and folds the rest into the chevr
     CHECK(chevron->isVisible());
     CHECK(visibleRows(bar) >= 1);
     CHECK(visibleRows(bar) < 6);
-    emit chevron->menu()->aboutToShow();
+    Q_EMIT chevron->menu()->aboutToShow();
     CHECK_FALSE(chevron->menu()->actions().isEmpty());
 }

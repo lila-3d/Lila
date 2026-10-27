@@ -81,7 +81,7 @@ OutputView::OutputView(QWidget* parent) : QPlainTextEdit(parent)
     connect(this, &OutputView::appendRequested, this, &OutputView::append, Qt::QueuedConnection);
     for (const LogEntry& e : log::since(0))
         append(int(e.level), QString::fromStdString(e.text));
-    mSink = log::addSink([this](const LogEntry& e) { emit appendRequested(int(e.level), QString::fromStdString(e.text)); });
+    mSink = log::addSink([this](const LogEntry& e) { Q_EMIT appendRequested(int(e.level), QString::fromStdString(e.text)); });
 }
 
 OutputView::~OutputView()
@@ -171,7 +171,7 @@ void OutputView::mouseReleaseEvent(QMouseEvent* e)
         return;
     int line = parts[1].toInt();
     QString file = QUrl::fromPercentEncoding(parts.mid(2).join(':').toUtf8());
-    emit traceClicked(file, line);
+    Q_EMIT traceClicked(file, line);
 }
 
 void OutputView::contextMenuEvent(QContextMenuEvent* e)

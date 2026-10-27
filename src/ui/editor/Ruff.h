@@ -71,7 +71,7 @@ public:
 
     void check(const QString& ruffExe, const QString& source, const QString& filename);
 
-signals:
+Q_SIGNALS:
     void finished(const QList<lila::ui::Diagnostic>& diagnostics);
 
 private:

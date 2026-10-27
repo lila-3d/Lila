@@ -410,7 +410,7 @@ protected:
         if (e->button() == Qt::MiddleButton)
         {
             if (const QString href = anchorAt(e->position().toPoint()); !href.isEmpty())
-                emit anchorClicked(QUrl(href));
+                Q_EMIT anchorClicked(QUrl(href));
             else
                 startAutoScroll(e->position().toPoint());
             return;
@@ -664,7 +664,7 @@ public:
             }
             runSearch();
             if (mResults->count() > 0)
-                emit mResults->itemClicked(mResults->item(0));
+                Q_EMIT mResults->itemClicked(mResults->item(0));
         });
         mFitTimer.setSingleShot(true);
         mFitTimer.setInterval(100);
@@ -1212,7 +1212,7 @@ private:
             return;
         const int row = mBookmarks->row(item);
         QMenu menu;
-        menu.addAction("Open", this, [this, item] { emit mBookmarks->itemClicked(item); });
+        menu.addAction("Open", this, [this, item] { Q_EMIT mBookmarks->itemClicked(item); });
         menu.addAction("Rename", this, [this, item] { mBookmarks->editItem(item); });
         menu.addAction("Move Up", this, [this, row] { moveBookmarkRow(row, -1); })->setEnabled(row > 0);
         menu.addAction("Move Down", this, [this, row] { moveBookmarkRow(row, 1); })->setEnabled(row + 1 < mBookmarks->count());

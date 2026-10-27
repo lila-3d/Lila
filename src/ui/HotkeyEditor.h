@@ -35,7 +35,7 @@ public:
     void disarm();
     bool armed() const { return mArmed; }
 
-signals:
+Q_SIGNALS:
     void captured(QKeyCombination chord);
 
 protected:
@@ -82,7 +82,7 @@ public:
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
 
-signals:
+Q_SIGNALS:
     void keyClicked(int qtKey);
 
 protected:

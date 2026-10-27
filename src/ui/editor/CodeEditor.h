@@ -128,7 +128,7 @@ public:
     /** Key presses arrive here directly, ahead of the app's global hotkeys, while the editor has focus. */
     void routeKeyPress(QKeyEvent* e) { keyPressEvent(e); }
 
-signals:
+Q_SIGNALS:
     void runRequested();
     void runCellRequested();
     void runLineRequested();

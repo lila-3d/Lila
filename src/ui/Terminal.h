@@ -35,7 +35,7 @@ public:
     void resize(int cols, int rows);
     bool running() const;
 
-signals:
+Q_SIGNALS:
     void output(const QByteArray& data);
     void finished(int exitCode);
 
@@ -73,7 +73,7 @@ public:
      */
     static QProcessEnvironment shellEnvironment();
 
-signals:
+Q_SIGNALS:
     void exited(int exitCode);
 
 protected:

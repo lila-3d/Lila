@@ -42,11 +42,11 @@ public:
     /** Rebuilds the index from the registry and the interpreter. */
     void rebuild();
 
-public slots:
+public Q_SLOTS:
     /** Finds and shows a symbol: "parent", "lila.ops.parent", "lila.math.Vector.get_safe_normal", "Node.translate". */
     bool showSymbol(const QString& symbol);
 
-signals:
+Q_SIGNALS:
     /** "Insert Example" on an entry with an example, for the script editor. */
     void insertCode(const QString& code);
 

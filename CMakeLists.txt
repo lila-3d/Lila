@@ -3,6 +3,8 @@ project(Lila VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# No C++20 modules: scanning costs a preprocessor pass per source and keeps sources out of unity builds.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -21,6 +23,9 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 
 find_package(Python 3.14 EXACT REQUIRED COMPONENTS Interpreter Development.Module Development.Embed)
 find_package(Qt6 6.11 REQUIRED COMPONENTS Core Gui Widgets Svg Network)
+# Q_SIGNALS, Q_SLOTS and Q_EMIT only: the precompiled header puts Qt in every source, where signals, slots and emit are
+# ordinary names.
+add_compile_definitions(QT_NO_KEYWORDS)
 find_package(TBB CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
@@ -38,6 +43,7 @@ find_package(doctest CONFIG REQUIRED)
 include(LilaDeps)
 include(LilaShaders)
 include(LilaExtension)
+include(LilaBuildSpeed)
 
 add_subdirectory(src)
 add_subdirectory(extensions/examples/hello)
@@ -67,3 +73,5 @@ if(LILA_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
+
+lila_build_speed()

@@ -252,7 +252,7 @@ void RadialPreview::mousePressEvent(QMouseEvent* e)
     for (const Box& b : layoutBoxes())
         if (b.rect.adjusted(-3, -3, 3, 3).contains(e->position()))
         {
-            emit picked(b.slot);
+            Q_EMIT picked(b.slot);
             return;
         }
 }
