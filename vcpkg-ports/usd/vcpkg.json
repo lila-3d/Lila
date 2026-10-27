@@ -1,7 +1,7 @@
 {
   "name": "usd",
   "version": "26.8",
-  "port-version": 102,
+  "port-version": 103,
   "description": "Universal Scene Description (USD) is an efficient, scalable system for authoring, reading, and streaming time-sampled scene description for interchange between graphics applications.",
   "homepage": "https://github.com/PixarAnimationStudios/OpenUSD",
   "license": null,
@@ -19,6 +19,19 @@
     "zlib"
   ],
   "features": {
+    "embree": {
+      "description": "Build hdEmbree, Hydra's CPU path tracing render delegate",
+      "dependencies": [
+        "embree",
+        {
+          "name": "usd",
+          "default-features": false,
+          "features": [
+            "imaging"
+          ]
+        }
+      ]
+    },
     "imaging": {
       "description": "Enable the imaging components",
       "dependencies": [

@@ -126,7 +126,7 @@ struct StageChain
     UsdStageRefPtr stage;
     UsdImagingSceneIndexRefPtr usd;
     TfRefPtr<StageOverrides> overrides;
-    TfRefPtr<StageToWorld> world;
+    TfRefPtr<StagePlacement> world;
 };
 
 class HydraSession final : public vr::Session
@@ -196,6 +196,8 @@ public:
         mTasks->SetEnableSelection(false);
         mTasks->SetEnablePresentation(false);
         mTasks->SetRenderTags({HdRenderTagTokens->geometry, HdRenderTagTokens->render});
+        // Refined: smooth preview meshes subdivide at their refine level, the rest draw as their faces.
+        mTasks->SetCollection(HdRprimCollection(HdTokens->geometry, HdReprSelector(HdReprTokens->refined)));
         HdxColorCorrectionTaskParams cc;
         cc.colorCorrectionMode = HdxColorCorrectionTokens->disabled;
         mTasks->SetColorCorrectionParams(cc);
@@ -227,6 +229,8 @@ public:
         }
 
         mLila = LilaSceneIndex::New();
+        // Storm's refined subdivision needs geometry shaders its Vulkan backend fails to compile.
+        mLila->setRefineHere(mStorm);
         mIndex->InsertSceneIndex(mLila, SdfPath::AbsoluteRootPath(), false);
         mMaterialIndex = UsdImagingSceneIndex::New(HdRetainedContainerDataSource::New(), [](const HdSceneIndexBaseRefPtr& in) { return in; });
         mMaterialIndex->SetStage(mMaterials.stage());
@@ -259,10 +263,17 @@ public:
         mLast = r;
         Graph& g = *r.graph;
         g.evaluate();
-        mLila->sync(g, [this](const std::string& slot) { return mMaterials.bind(slot); });
+        ViewContext view;
+        view.isolation = r.view.isolation;
+        // Request::view measures logical pixels, the frame device ones.
+        const double device = r.view.width > 0.0 ? r.width / r.view.width : 1.0;
+        view.unitsPerPixel = [&r, device](const glm::dvec3& at) { return r.view.unitsPerPixel(at) / device; };
+        view.curvePixels = float(2.0 * device);
+        view.curveColor = ui::themeLinear("curve", view.curveColor);
+        mLila->sync(g, view, [this](const std::string& slot) { return mMaterials.bind(slot); });
         mMaterials.sync(g, mLila->usedSlots());
         mMaterialIndex->ApplyPendingUpdates();
-        syncStages(g, r.time);
+        syncStages(g, view, r.time);
         draw();
     }
 
@@ -272,7 +283,7 @@ public:
     LilaSceneIndex::Counts lastSync() const { return mLila->lastSync(); }
 
 private:
-    void syncStages(Graph& g, double time)
+    void syncStages(Graph& g, const ViewContext& view, double time)
     {
         std::set<NodeId> live;
         for (const usd::stage::HydraView& v : usd::stage::hydraViews(g))
@@ -293,22 +304,26 @@ private:
                 });
                 c.overrides = overrides;
                 c.usd->SetStage(v.stage);
-                c.world = StageToWorld::New(c.usd);
+                c.world = StagePlacement::New(c.usd);
                 mIndex->InsertSceneIndex(c.world, stageRoot(v.node));
             }
             c.usd->SetTime(UsdTimeCode(time * v.timeCodesPerSecond));
             c.usd->ApplyPendingUpdates();
 
             const glm::dmat4 fromWorld = glm::inverse(v.toWorld);
-            std::map<SdfPath, StageOverrides::Override> owned;
+            std::map<SdfPath, StagePlacement::Placed> placed;
+            std::set<SdfPath> blank;
             for (const usd::stage::HydraView::Link& l : v.links)
                 if (const scene::Node* n = g.node(l.node))
-                    owned[l.prim] = {.matrix = fromWorld * n->as<glm::dmat4>(scene::Transform::kWorldMatrix) * (l.turned ? v.turnedToLila : v.toLila),
-                                     .visible = scene::effectivelyVisible(g, l.node),
-                                     .blank = drawnByLila(*n)};
+                {
+                    placed[l.prim] = {.matrix = fromWorld * n->as<glm::dmat4>(scene::Transform::kWorldMatrix) * (l.turned ? v.turnedToLila : v.toLila),
+                                      .visible = scene::effectivelyVisible(g, l.node) && (!view.isolation || view.isolation->shows(l.node))};
+                    if (drawnByLila(*n))
+                        blank.insert(l.prim);
+                }
             if (c.overrides)
-                c.overrides->update(std::move(owned), std::set<SdfPath>(v.realized.begin(), v.realized.end()));
-            c.world->setToWorld(v.toWorld);
+                c.overrides->update(std::move(blank), std::set<SdfPath>(v.realized.begin(), v.realized.end()));
+            c.world->update(v.toWorld, std::move(placed));
         }
         for (auto it = mStages.begin(); it != mStages.end();)
         {

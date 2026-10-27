@@ -42,6 +42,7 @@ int main(int argc, char** argv)
     lila::ops::registerBuiltins();
     lila::scene::types::registerBuiltins();
     lila::curve::registerTypes();
+    lila::curve::registerCommands();
     lila::scene::registerCommands();
     lila::io::registerCommands();
     lila::extensions::registerCommands();

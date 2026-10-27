@@ -50,7 +50,12 @@ vcpkg_check_features(OUT_FEATURE_OPTIONS FEATURE_OPTIONS
         openimageio    PXR_BUILD_OPENIMAGEIO_PLUGIN
         vulkan         PXR_ENABLE_VULKAN_SUPPORT
         python         PXR_ENABLE_PYTHON_SUPPORT
+        embree         PXR_BUILD_EMBREE_PLUGIN
 )
+
+if("embree" IN_LIST FEATURES)
+    list(APPEND FEATURE_OPTIONS "-DEMBREE_LOCATION=${CURRENT_INSTALLED_DIR}")
+endif()
 
 if("python" IN_LIST FEATURES)
     # Not a vcpkg dependency: the bindings must match the interpreter Lila embeds, not vcpkg's python3. vcpkg passes
@@ -86,7 +91,6 @@ vcpkg_cmake_configure(
 
         -DPXR_BUILD_ALEMBIC_PLUGIN:BOOL=OFF
         -DPXR_BUILD_DRACO_PLUGIN:BOOL=OFF
-        -DPXR_BUILD_EMBREE_PLUGIN:BOOL=OFF
         -DPXR_BUILD_PRMAN_PLUGIN:BOOL=OFF
 
         -DPXR_ENABLE_OPENVDB_SUPPORT:BOOL=OFF

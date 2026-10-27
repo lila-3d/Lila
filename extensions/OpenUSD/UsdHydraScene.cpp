@@ -14,9 +14,12 @@
 #include <pxr/base/gf/range3d.h>
 #include <pxr/base/gf/vec2f.h>
 #include <pxr/base/gf/vec3f.h>
+#include <pxr/imaging/hd/basisCurvesSchema.h>
+#include <pxr/imaging/hd/basisCurvesTopologySchema.h>
 #include <pxr/imaging/hd/cameraSchema.h>
 #include <pxr/imaging/hd/extentSchema.h>
 #include <pxr/imaging/hd/geomSubsetSchema.h>
+#include <pxr/imaging/hd/legacyDisplayStyleSchema.h>
 #include <pxr/imaging/hd/light.h>
 #include <pxr/imaging/hd/lightSchema.h>
 #include <pxr/imaging/hd/materialBindingSchema.h>
@@ -34,8 +37,10 @@
 #include <pxr/imaging/pxOsd/tokens.h>
 #include <pxr/usd/sdf/assetPath.h>
 
+#include <algorithm>
 #include <format>
 #include <functional>
+#include <iterator>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -78,7 +83,7 @@ HdContainerDataSourceHandle bindingSource(const SdfPath& material)
     return HdMaterialBindingsSchema::BuildRetained(3, purposes, bindings);
 }
 
-HdDataSourceBaseHandle primvar(const VtValue& value, const TfToken& interpolation, const TfToken& role)
+HdContainerDataSourceHandle primvar(const VtValue& value, const TfToken& interpolation, const TfToken& role)
 {
     return HdPrimvarSchema::Builder()
         .SetPrimvarValue(HdRetainedSampledDataSource::New(value))
@@ -169,93 +174,287 @@ void addEntry(HdSceneIndexObserver::AddedPrimEntries& out, const SdfPath& p, con
 
 SdfPath stageRoot(NodeId stageNode) { return SdfPath(std::format("/Stages/S{}", stageNode)); }
 
-bool drawnByLila(const scene::Node& n) { return n.type().isA("mesh") || n.type().isA("camera") || n.type().isA("light"); }
+bool drawnByLila(const scene::Node& n)
+{
+    if (n.type().isA("mesh"))
+    {
+        const scene::MeshPtr& m = n.as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+        return m && !m->empty();
+    }
+    if (n.type().isA("curve"))
+        return !curve::splinesOf(n.value(curve::CurveShape::kLocal)).empty();
+    return n.type().isA("camera") || n.type().isA("light");
+}
 
 // ---------------------------------------------------------------- LilaSceneIndex
 
 struct LilaSceneIndex::MeshData
 {
-    HdContainerDataSourceHandle mesh, primvars, extent;
-    VtIntArray indices;
-    /** Triangles per section, when there are several; each section's material slot. */
+    struct FaceVarying
+    {
+        TfToken name, role;
+        VtValue value;
+    };
+    VtVec3fArray points;
+    std::vector<FaceVarying> faceVarying;
+    HdContainerDataSourceHandle extent;
+    VtIntArray counts, indices;
+    /** Faces per section, when there are several; each section's material slot. */
     std::vector<VtIntArray> subsets;
     std::vector<std::string> slots;
-    bool sameTopology(const MeshData& o) const { return indices == o.indices && subsets == o.subsets && slots == o.slots; }
+    /** Smooth preview level: Catmull-Clark refined this many times, 0 for the cage as it is. */
+    int level = 0;
+    /** Hydra refines it (catmullClark at level); false when it was subdivided here and goes as plain faces. */
+    bool hydraRefines = false;
+    /** The cage face of each face Hydra gets, for isolate select's face masks. */
+    std::vector<geo::Index> cageFace;
+    glm::dvec3 centre{0.0};
+
+    bool sameTopology(const MeshData& o) const
+    {
+        return level == o.level && hydraRefines == o.hydraRefines && counts == o.counts && indices == o.indices && subsets == o.subsets && slots == o.slots;
+    }
+
+    /** What a node's prim gets: the mesh less the faces isolate select hides (left out, since Storm ignores holes). */
+    struct Shape
+    {
+        HdContainerDataSourceHandle mesh, primvars;
+        std::vector<VtIntArray> subsets;
+    };
+    Shape shape(const VtIntArray& hidden) const
+    {
+        Shape out;
+        VtIntArray c = counts, i = indices;
+        std::vector<FaceVarying> fv = faceVarying;
+        out.subsets = subsets;
+        if (!hidden.empty())
+        {
+            std::vector<char> drop(counts.size(), 0);
+            for (int f : hidden)
+                drop[size_t(f)] = 1;
+            std::vector<int> newIndex(counts.size(), -1);
+            std::vector<size_t> keptCorners;
+            c.clear();
+            i.clear();
+            size_t corner = 0;
+            for (size_t f = 0; f < counts.size(); ++f)
+            {
+                const size_t n = size_t(counts[f]);
+                if (!drop[f])
+                {
+                    newIndex[f] = int(c.size());
+                    c.push_back(int(n));
+                    for (size_t k = 0; k < n; ++k)
+                    {
+                        i.push_back(indices[corner + k]);
+                        keptCorners.push_back(corner + k);
+                    }
+                }
+                corner += n;
+            }
+            auto keep = [&](const auto& in) {
+                std::decay_t<decltype(in)> o(keptCorners.size());
+                for (size_t k = 0; k < keptCorners.size(); ++k)
+                    o[k] = in[keptCorners[k]];
+                return o;
+            };
+            for (FaceVarying& v : fv)
+            {
+                if (v.value.IsHolding<VtVec3fArray>())
+                    v.value = VtValue(keep(v.value.UncheckedGet<VtVec3fArray>()));
+                else if (v.value.IsHolding<VtVec2fArray>())
+                    v.value = VtValue(keep(v.value.UncheckedGet<VtVec2fArray>()));
+                else if (v.value.IsHolding<VtFloatArray>())
+                    v.value = VtValue(keep(v.value.UncheckedGet<VtFloatArray>()));
+            }
+            for (VtIntArray& sub : out.subsets)
+            {
+                VtIntArray kept;
+                for (int f : sub)
+                    if (newIndex[size_t(f)] >= 0)
+                        kept.push_back(newIndex[size_t(f)]);
+                sub = kept;
+            }
+        }
+        out.mesh = HdMeshSchema::Builder()
+                       .SetTopology(HdMeshTopologySchema::Builder()
+                                        .SetFaceVertexCounts(retained(c))
+                                        .SetFaceVertexIndices(retained(i))
+                                        .SetOrientation(HdMeshTopologySchema::BuildOrientationDataSource(HdMeshTopologySchemaTokens->rightHanded))
+                                        .Build())
+                       .SetSubdivisionScheme(retained(hydraRefines ? PxOsdOpenSubdivTokens->catmullClark : PxOsdOpenSubdivTokens->none))
+                       .SetDoubleSided(retained(true))
+                       .Build();
+        std::vector<std::pair<TfToken, HdDataSourceBaseHandle>> pv = {
+            {HdTokens->points, primvar(VtValue(points), HdPrimvarSchemaTokens->vertex, HdPrimvarSchemaTokens->point)}};
+        for (const FaceVarying& v : fv)
+            pv.push_back({v.name, primvar(v.value, HdPrimvarSchemaTokens->faceVarying, v.role)});
+        out.primvars = container(pv);
+        return out;
+    }
 };
 
-std::shared_ptr<const LilaSceneIndex::MeshData> LilaSceneIndex::meshData(const scene::MeshPtr& mesh)
+struct LilaSceneIndex::CurveData
 {
-    if (auto it = mMeshes.find(mesh.get()); it != mMeshes.end())
+    const void* source = nullptr;
+    int64_t mode = -1, segments = -1;
+    VtIntArray counts;
+    VtVec3fArray points;
+    HdContainerDataSourceHandle curves, extent;
+    glm::dvec3 centre{0.0};
+};
+
+std::shared_ptr<const LilaSceneIndex::MeshData> LilaSceneIndex::meshData(const scene::MeshPtr& mesh, int level)
+{
+    if (auto it = mMeshes.find({mesh.get(), level}); it != mMeshes.end())
         return it->second.second;
     LILA_ZONE();
+    auto d = std::make_shared<MeshData>();
+    d->level = level;
+    d->hydraRefines = level > 0 && !mRefineHere;
+    // Subdivided here as Lila's smooth preview does it, smooth shaded, for delegates that can't refine.
+    geo::Mesh refined;
+    geo::SubdivideMap map;
+    if (level > 0 && mRefineHere)
+    {
+        geo::SubdivideOptions so;
+        so.levels = level;
+        refined = geo::subdivide(*mesh, so, &map);
+    }
+    const geo::Mesh& m = level > 0 && mRefineHere ? refined : *mesh;
     geo::RenderMeshOptions o;
     o.wireframe = false;
-    const geo::RenderMesh rm = geo::buildRenderMesh(*mesh, o);
-    auto d = std::make_shared<MeshData>();
-    const size_t nv = rm.positions.size();
-    VtVec3fArray points(nv), normals(nv);
-    GfRange3d bounds;
-    for (size_t i = 0; i < nv; ++i)
-    {
-        points[i] = GfVec3f(rm.positions[i].x, rm.positions[i].y, rm.positions[i].z);
-        normals[i] = GfVec3f(rm.normals[i].x, rm.normals[i].y, rm.normals[i].z);
-        bounds.UnionWith(GfVec3d(points[i]));
-    }
-    d->indices.resize(rm.indices.size());
-    for (size_t i = 0; i < rm.indices.size(); ++i)
-        d->indices[i] = int(rm.indices[i]);
-    const VtIntArray counts(rm.indices.size() / 3, 3);
+    const geo::RenderMesh rm = geo::buildRenderMesh(m, o);
 
-    std::vector<std::pair<TfToken, HdDataSourceBaseHandle>> pv = {
-        {HdTokens->points, primvar(VtValue(points), HdPrimvarSchemaTokens->vertex, HdPrimvarSchemaTokens->point)},
-        {HdTokens->normals, primvar(VtValue(normals), HdPrimvarSchemaTokens->vertex, HdPrimvarSchemaTokens->normal)},
-    };
-    for (size_t s = 0; s < rm.uvs.size(); ++s)
-    {
-        VtVec2fArray uv(rm.uvs[s].size());
-        for (size_t i = 0; i < uv.size(); ++i)
-            uv[i] = GfVec2f(rm.uvs[s][i].x, rm.uvs[s][i].y);
-        pv.push_back({TfToken(uvPrimvarName(int(s))), primvar(VtValue(uv), HdPrimvarSchemaTokens->vertex, HdPrimvarSchemaTokens->textureCoordinate)});
-    }
-    if (rm.colors.size() == nv)
-    {
-        VtVec3fArray color(nv);
-        VtFloatArray opacity(nv);
-        for (size_t i = 0; i < nv; ++i)
+    std::vector<int> pointIndex(m.pointCapacity(), -1);
+    VtVec3fArray points;
+    points.reserve(m.numPoints());
+    GfRange3d bounds;
+    for (geo::Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p))
         {
-            color[i] = GfVec3f(rm.colors[i].r, rm.colors[i].g, rm.colors[i].b);
-            opacity[i] = rm.colors[i].a;
+            pointIndex[p] = int(points.size());
+            const glm::dvec3& v = m.position(p);
+            points.push_back(GfVec3f(float(v.x), float(v.y), float(v.z)));
+            bounds.UnionWith(GfVec3d(v.x, v.y, v.z));
         }
-        pv.push_back({HdTokens->displayColor, primvar(VtValue(color), HdPrimvarSchemaTokens->vertex, HdPrimvarSchemaTokens->color)});
-        pv.push_back({HdTokens->displayOpacity, primvar(VtValue(opacity), HdPrimvarSchemaTokens->vertex, TfToken())});
+
+    // Faces in index order; values per corner come from the render mesh's vertex for that corner, which already holds the
+    // split normals, UV seams and colours Lila's viewport draws with.
+    std::vector<int> faceIndex(m.faceCapacity(), -1);
+    std::vector<geo::Index> vertexOfCorner;
+    vertexOfCorner.reserve(m.numCorners());
+    d->counts.reserve(m.numFaces());
+    d->indices.reserve(m.numCorners());
+    for (geo::Index f = 0; f < m.faceCapacity(); ++f)
+    {
+        if (!m.faceValid(f))
+            continue;
+        faceIndex[f] = int(d->counts.size());
+        d->cageFace.push_back(level > 0 && mRefineHere ? (f < map.faces.size() ? map.faces[f] : geo::kInvalid) : f);
+        d->counts.push_back(int(m.faceSize(f)));
+        m.forEachFaceCorner(f, [&](geo::Index c) {
+            d->indices.push_back(pointIndex[m.cornerPoint(c)]);
+            vertexOfCorner.push_back(c < rm.cornerVertex.size() ? rm.cornerVertex[c] : geo::kInvalid);
+        });
     }
-    d->primvars = container(pv);
+    const size_t corners = vertexOfCorner.size();
+    auto perCorner = [&](auto&& value) {
+        using T = std::decay_t<decltype(value(geo::Index(0)))>;
+        VtArray<T> out(corners);
+        for (size_t i = 0; i < corners; ++i)
+            out[i] = vertexOfCorner[i] == geo::kInvalid ? T() : value(vertexOfCorner[i]);
+        return out;
+    };
+
+    d->points = std::move(points);
+    auto& pv = d->faceVarying;
+    // Meshes Hydra refines take its limit-surface normals, as Lila's smooth preview shades them.
+    if (!d->hydraRefines && rm.normals.size() == rm.positions.size())
+        pv.push_back({HdTokens->normals, HdPrimvarSchemaTokens->normal,
+                      VtValue(perCorner([&](geo::Index v) { return GfVec3f(rm.normals[v].x, rm.normals[v].y, rm.normals[v].z); }))});
+    for (size_t s = 0; s < rm.uvs.size(); ++s)
+        pv.push_back({TfToken(uvPrimvarName(int(s))), HdPrimvarSchemaTokens->textureCoordinate,
+                      VtValue(perCorner([&](geo::Index v) { return GfVec2f(rm.uvs[s][v].x, rm.uvs[s][v].y); }))});
+    if (rm.colors.size() == rm.positions.size() && !rm.colors.empty())
+    {
+        pv.push_back({HdTokens->displayColor, HdPrimvarSchemaTokens->color,
+                      VtValue(perCorner([&](geo::Index v) { return GfVec3f(rm.colors[v].r, rm.colors[v].g, rm.colors[v].b); }))});
+        pv.push_back({HdTokens->displayOpacity, TfToken(), VtValue(perCorner([&](geo::Index v) { return rm.colors[v].a; }))});
+    }
 
     for (const geo::RenderSection& s : rm.sections)
-        d->slots.push_back(scene::materials::slotName(*mesh, s.material));
+        d->slots.push_back(scene::materials::slotName(m, s.material));
     if (d->slots.empty())
-        d->slots.push_back(scene::materials::slotName(*mesh, 0));
+        d->slots.push_back(scene::materials::slotName(m, 0));
     if (rm.sections.size() > 1)
         for (const geo::RenderSection& s : rm.sections)
         {
-            VtIntArray tris(s.indexCount / 3);
-            for (size_t t = 0; t < tris.size(); ++t)
-                tris[t] = int(s.firstIndex / 3 + t);
-            d->subsets.push_back(std::move(tris));
+            std::set<int> faces;
+            for (geo::Index t = s.firstIndex / 3; t < (s.firstIndex + s.indexCount) / 3; ++t)
+                if (const geo::Index f = rm.triangleFaces[t]; f < faceIndex.size() && faceIndex[f] >= 0)
+                    faces.insert(faceIndex[f]);
+            d->subsets.emplace_back(faces.begin(), faces.end());
         }
 
-    d->mesh = HdMeshSchema::Builder()
-                  .SetTopology(HdMeshTopologySchema::Builder()
-                                   .SetFaceVertexCounts(retained(counts))
-                                   .SetFaceVertexIndices(retained(d->indices))
-                                   .SetOrientation(HdMeshTopologySchema::BuildOrientationDataSource(HdMeshTopologySchemaTokens->rightHanded))
-                                   .Build())
-                  .SetSubdivisionScheme(retained(PxOsdOpenSubdivTokens->none))
-                  .SetDoubleSided(retained(true))
-                  .Build();
     if (!bounds.IsEmpty())
+    {
         d->extent = HdExtentSchema::Builder().SetMin(retained(bounds.GetMin())).SetMax(retained(bounds.GetMax())).Build();
-    mMeshes[mesh.get()] = {mesh, d};
+        const GfVec3d c = bounds.GetMidpoint();
+        d->centre = {c[0], c[1], c[2]};
+    }
+    mMeshes[{mesh.get(), level}] = {mesh, d};
+    return d;
+}
+
+std::shared_ptr<const LilaSceneIndex::CurveData> LilaSceneIndex::curveData(const scene::Node& n)
+{
+    using curve::CurveShape;
+    const scene::PlugValue& v = n.value(CurveShape::kLocal);
+    const scene::DataPtr* data = std::get_if<scene::DataPtr>(&v);
+    const void* source = data ? data->get() : nullptr;
+    const int64_t mode = n.as<int64_t>(CurveShape::kTessMode), segments = n.as<int64_t>(CurveShape::kTessSegments);
+    if (auto it = mNodes.find(n.id()); it != mNodes.end() && it->second.curve && it->second.curve->source == source &&
+                                       it->second.curve->mode == mode && it->second.curve->segments == segments)
+        return it->second.curve;
+    // Tessellated as the viewport's curve drawer does; a closed line repeats its first point.
+    curve::TessOptions o;
+    o.mode = curve::TessMode(std::clamp<int64_t>(mode, 0, 2));
+    o.perSpan = int(std::max<int64_t>(1, segments));
+    o.chordError = 0.01;
+    o.maxAngle = 0.07;
+    auto d = std::make_shared<CurveData>();
+    d->source = source;
+    d->mode = mode;
+    d->segments = segments;
+    GfRange3d bounds;
+    for (const curve::Spline& s : curve::splinesOf(v))
+    {
+        const curve::Polyline pl = curve::tessellate(s, o);
+        if (pl.size() < 2)
+            continue;
+        const size_t count = pl.size() + (pl.closed ? 1 : 0);
+        d->counts.push_back(int(count));
+        for (size_t i = 0; i < count; ++i)
+        {
+            const glm::dvec3& p = pl.points[i % pl.size()];
+            d->points.push_back(GfVec3f(float(p.x), float(p.y), float(p.z)));
+            bounds.UnionWith(GfVec3d(p.x, p.y, p.z));
+        }
+    }
+    if (d->counts.empty())
+        return nullptr;
+    d->curves = HdBasisCurvesSchema::Builder()
+                    .SetTopology(HdBasisCurvesTopologySchema::Builder()
+                                     .SetCurveVertexCounts(retained(d->counts))
+                                     .SetBasis(retained(HdTokens->bezier))
+                                     .SetType(retained(HdTokens->linear))
+                                     .SetWrap(retained(HdTokens->nonperiodic))
+                                     .Build())
+                    .Build();
+    d->extent = HdExtentSchema::Builder().SetMin(retained(bounds.GetMin())).SetMax(retained(bounds.GetMax())).Build();
+    const GfVec3d c = bounds.GetMidpoint();
+    d->centre = {c[0], c[1], c[2]};
     return d;
 }
 
@@ -267,11 +466,22 @@ HdContainerDataSourceHandle LilaSceneIndex::nodeSource(const Node& n) const
     };
     if (n.mesh)
     {
-        e.push_back({HdMeshSchema::GetSchemaToken(), n.mesh->mesh});
-        e.push_back({HdPrimvarsSchema::GetSchemaToken(), n.mesh->primvars});
+        e.push_back({HdMeshSchema::GetSchemaToken(), n.shape.mesh});
+        e.push_back({HdPrimvarsSchema::GetSchemaToken(), n.shape.primvars});
         e.push_back({HdExtentSchema::GetSchemaToken(), n.mesh->extent});
+        if (n.mesh->hydraRefines)
+            e.push_back({HdLegacyDisplayStyleSchema::GetSchemaToken(), HdLegacyDisplayStyleSchema::Builder().SetRefineLevel(retained(n.mesh->level)).Build()});
         if (n.bindings.size() == 1)
             e.push_back({HdMaterialBindingsSchema::GetSchemaToken(), bindingSource(n.bindings[0])});
+    }
+    else if (n.curve)
+    {
+        e.push_back({HdBasisCurvesSchema::GetSchemaToken(), n.curve->curves});
+        e.push_back({HdExtentSchema::GetSchemaToken(), n.curve->extent});
+        e.push_back({HdPrimvarsSchema::GetSchemaToken(),
+                     container({{HdTokens->points, primvar(VtValue(n.curve->points), HdPrimvarSchemaTokens->vertex, HdPrimvarSchemaTokens->point)},
+                                {HdTokens->widths, primvar(VtValue(VtFloatArray(1, n.width)), HdPrimvarSchemaTokens->constant, TfToken())},
+                                {HdTokens->displayColor, n.own}})});
     }
     else if (n.type == HdPrimTypeTokens->camera)
         e.push_back({HdCameraSchema::GetSchemaToken(), n.own});
@@ -312,7 +522,7 @@ SdfPathVector LilaSceneIndex::GetChildPrimPaths(const SdfPath& path) const
     return {};
 }
 
-void LilaSceneIndex::sync(Graph& g, const std::function<SdfPath(const std::string&)>& bind)
+void LilaSceneIndex::sync(Graph& g, const ViewContext& view, const std::function<SdfPath(const std::string&)>& bind)
 {
     LILA_ZONE();
     mCounts = {};
@@ -320,15 +530,17 @@ void LilaSceneIndex::sync(Graph& g, const std::function<SdfPath(const std::strin
     HdSceneIndexObserver::RemovedPrimEntries removed;
     HdSceneIndexObserver::DirtiedPrimEntries dirtied;
     std::unordered_map<NodeId, Node> next;
-    std::set<const void*> usedMeshes;
+    std::set<std::pair<const void*, int>> usedMeshes;
     mSlots.clear();
-    mLights = 0;
 
     if (!mPrims.count(nodesRoot()))
     {
         put(nodesRoot(), {TfToken(), nullptr});
         addEntry(added, nodesRoot(), TfToken());
     }
+    const HdContainerDataSourceHandle curveColor =
+        primvar(VtValue(VtVec3fArray(1, GfVec3f(view.curveColor.r, view.curveColor.g, view.curveColor.b))), HdPrimvarSchemaTokens->constant,
+                HdPrimvarSchemaTokens->color);
 
     for (NodeId id : g.nodes())
     {
@@ -338,20 +550,49 @@ void LilaSceneIndex::sync(Graph& g, const std::function<SdfPath(const std::strin
         Node n;
         n.path = nodesRoot().AppendChild(TfToken(std::format("N{}", id)));
         n.world = sn->as<glm::dmat4>(scene::Transform::kWorldMatrix);
-        n.visible = scene::effectivelyVisible(g, id);
+        n.visible = scene::effectivelyVisible(g, id) && (!view.isolation || view.isolation->shows(id));
+        auto was = mNodes.find(id);
         if (sn->type().isA("mesh"))
         {
             const scene::MeshPtr& m = sn->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-            if (!m || m->empty())
-                continue;
             n.type = HdPrimTypeTokens->mesh;
-            n.mesh = meshData(m);
-            usedMeshes.insert(m.get());
+            n.mesh = meshData(m, int(std::clamp<int64_t>(sn->as<int64_t>(scene::MeshNode::kSmoothPreview), 0, 4)));
+            usedMeshes.insert({m.get(), n.mesh->level});
             for (const std::string& slot : n.mesh->slots)
             {
                 mSlots.insert(slot);
                 n.bindings.push_back(bind(slot));
             }
+            if (view.isolation && view.isolation->isPartial(id))
+            {
+                const std::vector<uint8_t> shown = view.isolation->shownFaces(id, *m);
+                for (size_t i = 0; i < n.mesh->cageFace.size(); ++i)
+                    if (const geo::Index f = n.mesh->cageFace[i]; f < shown.size() && !shown[f])
+                        n.holes.push_back(int(i));
+            }
+            if (was != mNodes.end() && was->second.mesh == n.mesh && was->second.holes == n.holes)
+                n.shape = was->second.shape;
+            else
+            {
+                MeshData::Shape sh = n.mesh->shape(n.holes);
+                n.shape.mesh = sh.mesh;
+                n.shape.primvars = sh.primvars;
+                n.shape.subsets = std::move(sh.subsets);
+            }
+        }
+        else if (sn->type().isA("curve"))
+        {
+            n.type = HdPrimTypeTokens->basisCurves;
+            n.curve = curveData(*sn);
+            if (!n.curve)
+                continue;
+            n.own = curveColor;
+            // Lila draws curves a few pixels wide whatever their distance; Hydra's widths are in scene units, so the width
+            // is set for the curve's middle from this view and only refreshed when it drifts.
+            const double perPixel = view.unitsPerPixel ? view.unitsPerPixel(glm::dvec3(n.world * glm::dvec4(n.curve->centre, 1.0))) : 0.1;
+            n.width = float(std::max(perPixel, 1e-4) * view.curvePixels);
+            if (was != mNodes.end() && was->second.width > 0.0f && std::abs(n.width / was->second.width - 1.0f) < 0.15f)
+                n.width = was->second.width;
         }
         else if (sn->type().isA("camera"))
         {
@@ -359,15 +600,12 @@ void LilaSceneIndex::sync(Graph& g, const std::function<SdfPath(const std::strin
             n.own = cameraSource(*sn, n.settings);
         }
         else
-        {
             std::tie(n.type, n.own) = lightSource(*sn, n.settings);
-            ++mLights;
-        }
 
-        auto was = mNodes.find(id);
         const bool fresh = was == mNodes.end() || was->second.type != n.type ||
-                           (n.mesh && (was->second.mesh != n.mesh && !was->second.mesh->sameTopology(*n.mesh))) ||
-                           was->second.bindings != n.bindings;
+                           (n.mesh && was->second.mesh != n.mesh && !was->second.mesh->sameTopology(*n.mesh)) ||
+                           (n.curve && was->second.curve != n.curve && was->second.curve->counts != n.curve->counts) ||
+                           was->second.bindings != n.bindings || was->second.holes != n.holes;
         HdDataSourceLocatorSet locators;
         if (!fresh)
         {
@@ -376,7 +614,7 @@ void LilaSceneIndex::sync(Graph& g, const std::function<SdfPath(const std::strin
                 locators.insert(HdXformSchema::GetDefaultLocator());
             if (o.visible != n.visible)
                 locators.insert(HdVisibilitySchema::GetDefaultLocator());
-            if (o.mesh != n.mesh)
+            if (o.mesh != n.mesh || o.curve != n.curve || o.width != n.width)
             {
                 locators.insert(HdPrimvarsSchema::GetDefaultLocator());
                 locators.insert(HdExtentSchema::GetDefaultLocator());
@@ -402,15 +640,15 @@ void LilaSceneIndex::sync(Graph& g, const std::function<SdfPath(const std::strin
         {
             addEntry(added, n.path, n.type);
             ++mCounts.added;
-            if (n.mesh && n.mesh->subsets.size() > 1)
-                for (size_t s = 0; s < n.mesh->subsets.size(); ++s)
+            if (n.mesh && n.shape.subsets.size() > 1)
+                for (size_t s = 0; s < n.shape.subsets.size(); ++s)
                 {
                     const SdfPath sub = n.path.AppendChild(TfToken(std::format("S{}", s)));
                     put(sub, {HdPrimTypeTokens->geomSubset,
                               container({{HdGeomSubsetSchema::GetSchemaToken(),
                                           HdGeomSubsetSchema::Builder()
                                               .SetType(HdGeomSubsetSchema::BuildTypeDataSource(HdGeomSubsetSchemaTokens->typeFaceSet))
-                                              .SetIndices(retained(n.mesh->subsets[s]))
+                                              .SetIndices(retained(n.shape.subsets[s]))
                                               .Build()},
                                          {HdMaterialBindingsSchema::GetSchemaToken(), bindingSource(n.bindings[s])}})});
                     addEntry(added, sub, HdPrimTypeTokens->geomSubset);
@@ -507,22 +745,12 @@ HdSceneIndexPrim StageOverrides::GetPrim(const SdfPath& path) const
     if (insidePruned(path))
         return {TfToken(), nullptr};
     HdSceneIndexPrim prim = _GetInputSceneIndex()->GetPrim(path);
-    const auto own = mOwned.find(path);
-    const bool pruned = mPruned.count(path) > 0;
-    if (own == mOwned.end() && !pruned)
+    if (!mBlank.count(path) && !mPruned.count(path))
         return prim;
-    HdContainerDataSourceHandle placed;
-    if (own != mOwned.end())
-        placed = container({{HdXformSchema::GetSchemaToken(), xformSource(own->second.matrix)},
-                            {HdVisibilitySchema::GetSchemaToken(), HdVisibilitySchema::BuildRetained(retained(own->second.visible))}});
-    if (pruned || own->second.blank)
-    {
-        // Left as a transform: no geometry, instancing or anything else the stage gave it.
-        HdDataSourceBaseHandle xf = placed ? HdDataSourceBaseHandle() : (prim.dataSource ? prim.dataSource->Get(HdXformSchema::GetSchemaToken()) : nullptr);
-        return {TfToken(), placed ? placed : container({{HdXformSchema::GetSchemaToken(), xf}})};
-    }
-    prim.dataSource = HdOverlayContainerDataSource::New(placed, prim.dataSource);
-    return prim;
+    // Left as a transform: no geometry, instancing or anything else the stage gave it.
+    const HdContainerDataSourceHandle& in = prim.dataSource;
+    return {TfToken(), container({{HdXformSchema::GetSchemaToken(), in ? in->Get(HdXformSchema::GetSchemaToken()) : nullptr},
+                                  {HdVisibilitySchema::GetSchemaToken(), in ? in->Get(HdVisibilitySchema::GetSchemaToken()) : nullptr}})};
 }
 
 SdfPathVector StageOverrides::GetChildPrimPaths(const SdfPath& path) const
@@ -537,13 +765,8 @@ void StageOverrides::_PrimsAdded(const HdSceneIndexBase&, const HdSceneIndexObse
     HdSceneIndexObserver::AddedPrimEntries out;
     out.reserve(entries.size());
     for (const auto& e : entries)
-    {
-        if (insidePruned(e.primPath))
-            continue;
-        const auto own = mOwned.find(e.primPath);
-        const bool blank = mPruned.count(e.primPath) || (own != mOwned.end() && own->second.blank);
-        out.emplace_back(e.primPath, blank ? TfToken() : e.primType);
-    }
+        if (!insidePruned(e.primPath))
+            out.emplace_back(e.primPath, mBlank.count(e.primPath) || mPruned.count(e.primPath) ? TfToken() : e.primType);
     if (!out.empty())
         _SendPrimsAdded(out);
 }
@@ -565,39 +788,32 @@ void StageOverrides::_PrimsDirtied(const HdSceneIndexBase&, const HdSceneIndexOb
         _SendPrimsDirtied(out);
 }
 
-void StageOverrides::update(std::map<SdfPath, Override> owned, std::set<SdfPath> pruned)
+void StageOverrides::update(std::set<SdfPath> blank, std::set<SdfPath> pruned)
 {
-    if (owned == mOwned && pruned == mPruned)
+    if (blank == mBlank && pruned == mPruned)
         return;
     HdSceneIndexObserver::RemovedPrimEntries removed;
-    // Prims whose placement or type changed, re-added with everything below them: UsdImaging's flattening keeps the
-    // descendants' world transforms until they are re-added, whatever was dirtied.
-    std::set<SdfPath> subtrees;
+    std::set<SdfPath> readd, subtrees;
     for (const SdfPath& p : pruned)
         if (!mPruned.count(p))
         {
             for (const SdfPath& c : GetChildPrimPaths(p))
                 removed.emplace_back(c);
-            subtrees.insert(p);
+            readd.insert(p);
         }
     for (const SdfPath& p : mPruned)
         if (!pruned.count(p))
             subtrees.insert(p);
-    for (const auto& [p, o] : owned)
-        if (const auto was = mOwned.find(p); was == mOwned.end() || !(was->second == o))
-            subtrees.insert(p);
-    for (const auto& [p, o] : mOwned)
-        if (!owned.count(p))
-            subtrees.insert(p);
+    std::set_symmetric_difference(blank.begin(), blank.end(), mBlank.begin(), mBlank.end(), std::inserter(readd, readd.end()));
 
-    mOwned = std::move(owned);
+    mBlank = std::move(blank);
     mPruned = std::move(pruned);
 
     HdSceneIndexObserver::AddedPrimEntries added;
-    std::set<SdfPath> done;
+    for (const SdfPath& p : readd)
+        if (!insidePruned(p))
+            added.emplace_back(p, GetPrim(p).primType);
     std::function<void(const SdfPath&)> subtree = [&](const SdfPath& p) {
-        if (!done.insert(p).second)
-            return;
         added.emplace_back(p, GetPrim(p).primType);
         for (const SdfPath& c : GetChildPrimPaths(p))
             subtree(c);
@@ -611,35 +827,84 @@ void StageOverrides::update(std::map<SdfPath, Override> owned, std::set<SdfPath>
         _SendPrimsAdded(added);
 }
 
-// ---------------------------------------------------------------- StageToWorld
+// ---------------------------------------------------------------- StagePlacement
 
-HdSceneIndexPrim StageToWorld::GetPrim(const SdfPath& path) const
+glm::dmat4 StagePlacement::flattened(const SdfPath& path) const
+{
+    const HdSceneIndexPrim prim = _GetInputSceneIndex()->GetPrim(path);
+    if (prim.dataSource)
+        if (HdXformSchema xf = HdXformSchema::GetFromParent(prim.dataSource))
+            if (HdMatrixDataSourceHandle ds = xf.GetMatrix())
+                return toGlm(ds->GetTypedValue(0.0f));
+    return glm::dmat4(1.0);
+}
+
+HdSceneIndexPrim StagePlacement::GetPrim(const SdfPath& path) const
 {
     HdSceneIndexPrim prim = _GetInputSceneIndex()->GetPrim(path);
     if (!prim.dataSource)
         return prim;
-    glm::dmat4 m(1.0);
-    if (HdXformSchema xf = HdXformSchema::GetFromParent(prim.dataSource))
-        if (HdMatrixDataSourceHandle ds = xf.GetMatrix())
-            m = toGlm(ds->GetTypedValue(0.0f));
-    prim.dataSource = HdOverlayContainerDataSource::New(container({{HdXformSchema::GetSchemaToken(), xformSource(mToWorld * m)}}), prim.dataSource);
+    // The nearest prim at or above this one that a Lila node places carries it: kept where it sits relative to that prim.
+    const Placed* by = nullptr;
+    SdfPath at;
+    for (SdfPath p = path; !p.IsEmpty() && !p.IsAbsoluteRootPath(); p = p.GetParentPath())
+        if (auto it = mPlaced.find(p); it != mPlaced.end())
+        {
+            by = &it->second;
+            at = p;
+            break;
+        }
+    glm::dmat4 m = flattened(path);
+    std::vector<std::pair<TfToken, HdDataSourceBaseHandle>> e;
+    if (by)
+    {
+        m = at == path ? by->matrix : by->matrix * glm::inverse(flattened(at)) * m;
+        if (!by->visible || at == path)
+            e.push_back({HdVisibilitySchema::GetSchemaToken(), HdVisibilitySchema::BuildRetained(retained(by->visible))});
+    }
+    e.push_back({HdXformSchema::GetSchemaToken(), xformSource(mToWorld * m)});
+    prim.dataSource = HdOverlayContainerDataSource::New(container(e), prim.dataSource);
     return prim;
 }
 
-SdfPathVector StageToWorld::GetChildPrimPaths(const SdfPath& path) const { return _GetInputSceneIndex()->GetChildPrimPaths(path); }
+SdfPathVector StagePlacement::GetChildPrimPaths(const SdfPath& path) const { return _GetInputSceneIndex()->GetChildPrimPaths(path); }
 
-void StageToWorld::_PrimsAdded(const HdSceneIndexBase&, const HdSceneIndexObserver::AddedPrimEntries& entries) { _SendPrimsAdded(entries); }
-void StageToWorld::_PrimsRemoved(const HdSceneIndexBase&, const HdSceneIndexObserver::RemovedPrimEntries& entries) { _SendPrimsRemoved(entries); }
-void StageToWorld::_PrimsDirtied(const HdSceneIndexBase&, const HdSceneIndexObserver::DirtiedPrimEntries& entries) { _SendPrimsDirtied(entries); }
+void StagePlacement::_PrimsAdded(const HdSceneIndexBase&, const HdSceneIndexObserver::AddedPrimEntries& entries) { _SendPrimsAdded(entries); }
+void StagePlacement::_PrimsRemoved(const HdSceneIndexBase&, const HdSceneIndexObserver::RemovedPrimEntries& entries) { _SendPrimsRemoved(entries); }
+void StagePlacement::_PrimsDirtied(const HdSceneIndexBase&, const HdSceneIndexObserver::DirtiedPrimEntries& entries) { _SendPrimsDirtied(entries); }
 
-void StageToWorld::setToWorld(const glm::dmat4& m)
+void StagePlacement::update(const glm::dmat4& toWorld, std::map<SdfPath, Placed> placed)
 {
-    if (m == mToWorld)
+    const bool all = toWorld != mToWorld;
+    std::set<SdfPath> moved;
+    if (!all)
+    {
+        for (const auto& [p, o] : placed)
+            if (auto was = mPlaced.find(p); was == mPlaced.end() || !(was->second == o))
+                moved.insert(p);
+        for (const auto& [p, o] : mPlaced)
+            if (!placed.count(p))
+                moved.insert(p);
+    }
+    mToWorld = toWorld;
+    mPlaced = std::move(placed);
+    if (!all && moved.empty())
         return;
-    mToWorld = m;
+    static const HdDataSourceLocatorSet placement{HdXformSchema::GetDefaultLocator(), HdVisibilitySchema::GetDefaultLocator()};
     HdSceneIndexObserver::DirtiedPrimEntries dirtied;
-    for (const SdfPath& p : HdSceneIndexPrimView(_GetInputSceneIndex()))
-        dirtied.emplace_back(p, HdDataSourceLocatorSet{HdXformSchema::GetDefaultLocator()});
+    std::set<SdfPath> done;
+    std::function<void(const SdfPath&)> subtree = [&](const SdfPath& p) {
+        if (!done.insert(p).second)
+            return;
+        dirtied.emplace_back(p, placement);
+        for (const SdfPath& c : _GetInputSceneIndex()->GetChildPrimPaths(p))
+            subtree(c);
+    };
+    if (all)
+        subtree(SdfPath::AbsoluteRootPath());
+    else
+        for (const SdfPath& p : moved)
+            subtree(p);
     if (!dirtied.empty())
         _SendPrimsDirtied(dirtied);
 }

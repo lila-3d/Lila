@@ -8,14 +8,17 @@
 #include "core/MainQueue.h"
 #include "render/FrameState.h"
 #include "render/Renderer.h"
+#include "scene/Isolation.h"
 #include "scene/Light.h"
 #include "ui/Camera.h"
 #include "ui/ViewportRenderers.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <chrono>
 #include <cmath>
 #include <optional>
+#include <thread>
 
 using namespace lila;
 using namespace lila::usdtest;
@@ -60,10 +63,12 @@ struct Storm
     }
 
     /** Renders and returns the frame, written to <temp>/lila_usd_tests/hydra_<name>.png to look at. */
-    const vr::Frame& draw(const char* name, const glm::dvec3& eye = kEye)
+    const vr::Frame& draw(const char* name, const glm::dvec3& eye = kEye, const scene::isolation::Set* isolation = nullptr)
     {
         frame.reset();
-        session->render(request(eye));
+        vr::Request r = request(eye);
+        r.view.isolation = isolation;
+        session->render(r);
         for (int i = 0; i < 100 && !frame; ++i)
             mainq::drain();
         REQUIRE(frame);
@@ -97,6 +102,16 @@ int coveredIn(const vr::Frame& f, int x0, int x1)
     for (int y = 0; y < f.height; ++y)
         for (int x = x0; x < x1; ++x)
             n += px(f, x, y).a > 0.5f;
+    return n;
+}
+
+/** Pixels in the row band [y0, y1) anything covers, even partly: curves are a pixel or two wide. */
+int coveredRows(const vr::Frame& f, int y0, int y1)
+{
+    int n = 0;
+    for (int y = y0; y < y1; ++y)
+        for (int x = 0; x < f.width; ++x)
+            n += px(f, x, y).a > 0.2f;
     return n;
 }
 
@@ -192,6 +207,125 @@ TEST_CASE("hydra: moving a Lila node moves its Hydra prim, and a new node appear
     CHECK(coveredIn(storm.draw("move_deleted"), 88, 128) == 0);
 }
 
+TEST_CASE("hydra: Lila's curves draw as basis curves a few pixels wide")
+{
+    fresh();
+    run("circle", {{"radius", 100.0}, {"normal", {0, 0, 1}}, {"name", "Ring"}});
+    Storm storm;
+    if (!storm.session)
+        return;
+    const vr::Frame& f = storm.draw("curve_ring");
+    CHECK(px(f, 64, 64).a == 0.0f);
+    const int ring = coveredIn(f, 0, kSize);
+    CHECK(ring > 60);
+    // A line about two pixels wide around the circle, not a filled disc.
+    CHECK(ring < 1000);
+    CHECK(depthAt(f, 64, 64) <= 0.0f);
+
+    moveTo("Ring", {-300.0, 0.0, 0.0});
+    CHECK(coveredIn(storm.draw("curve_moved"), 64, kSize) < ring / 4);
+}
+
+TEST_CASE("hydra: smooth preview subdivides the cage, and isolate select hides objects and faces per view")
+{
+    fresh();
+    cube("Smooth", 100.0);
+    Storm storm;
+    if (!storm.session)
+        return;
+    const int cage = coveredIn(storm.draw("smooth_cage"), 0, kSize);
+    graph().setValue({node("Smooth").id(), scene::MeshNode::kSmoothPreview, -1}, int64_t(2));
+    const int smooth = coveredIn(storm.draw("smooth_level2"), 0, kSize);
+    // The subdivided cube is rounder and smaller than its cage.
+    CHECK(smooth < cage * 0.9);
+    CHECK(smooth > cage * 0.4);
+    graph().setValue({node("Smooth").id(), scene::MeshNode::kSmoothPreview, -1}, int64_t(0));
+
+    cube("Other", 50.0);
+    moveTo("Other", {150.0, 0.0, 0.0});
+    scene::isolation::Set iso;
+    iso.nodes = {node("Other").id()};
+    iso.version = 1;
+    const vr::Frame& isolated = storm.draw("isolate_other", kEye, &iso);
+    CHECK(px(isolated, 64, 64).a == 0.0f);
+    CHECK(coveredIn(isolated, 88, kSize) > 50);
+    // Another view without the set still shows both.
+    CHECK(px(storm.draw("isolate_none"), 64, 64).a == 1.0f);
+
+    // Only the box's faces but the one facing the camera: its inside shows through, 100 cm further away.
+    graph().evaluate();
+    const scene::MeshPtr box = node("Smooth").as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+    scene::isolation::Set faces;
+    faces.nodes = {node("Smooth").id()};
+    faces.version = 2;
+    faces.partial[node("Smooth").id()].capacity = box->faceCapacity();
+    for (geo::Index f = 0; f < box->faceCapacity(); ++f)
+        if (box->faceValid(f) && box->faceNormal(f).z < 0.9)
+            faces.partial[node("Smooth").id()].ids.push_back(f);
+    const vr::Frame& holed = storm.draw("isolate_faces", kEye, &faces);
+    CHECK(px(holed, 64, 64).a == 1.0f);
+    CHECK(depthAt(holed, 64, 64) == doctest::Approx(650.0f).epsilon(0.01));
+}
+
+TEST_CASE("hydra: a stage's curves are Lila's, with their unsaved edits, and an emptied mesh leaves its prim to the stage")
+{
+    fresh();
+    const fs::path dir = fs::temp_directory_path() / "lila_usd_tests" / "hydra";
+    fs::create_directories(dir);
+    const fs::path file = dir / "lines.usda";
+    {
+        std::ofstream out(file, std::ios::binary | std::ios::trunc);
+        out << R"(#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 0.01
+    upAxis = "Y"
+)
+
+def Xform "World"
+{
+    def BasisCurves "Line"
+    {
+        uniform token type = "linear"
+        int[] curveVertexCounts = [2]
+        point3f[] points = [(-100, 0, 0), (100, 0, 0)]
+        float[] widths = [4] (interpolation = "constant")
+    }
+    def Mesh "Card"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-30, 40, 0), (30, 40, 0), (30, 100, 0), (-30, 100, 0)]
+    }
+}
+)";
+    }
+    run("usdStageOpen", {{"args", {file.generic_string()}}});
+    Storm storm;
+    if (!storm.session)
+        return;
+    const vr::Frame& f = storm.draw("stage_line");
+    CHECK(coveredRows(f, 60, 68) > 40);
+    const int withCard = coveredRows(f, 40, 57);
+    CHECK(withCard > 20);
+
+    // The line is a Lila curve: moving it moves what Hydra draws, without saving.
+    scene::Node* lineNode = graph().find("Line");
+    REQUIRE(lineNode);
+    REQUIRE(lineNode->type().isA("curve"));
+    graph().setValue({lineNode->id(), scene::Transform::kTranslate, -1}, glm::dvec3(0.0, -200.0, 0.0));
+    const vr::Frame& moved = storm.draw("stage_line_moved");
+    CHECK(coveredRows(moved, 60, 68) == 0);
+    CHECK(coveredRows(moved, 90, kSize) > 40);
+
+    // Emptying the card's mesh leaves the stage to draw the card.
+    scene::Node* card = graph().find("Card");
+    REQUIRE(card);
+    REQUIRE(card->type().isA("mesh"));
+    graph().setValue({card->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>()));
+    CHECK(coveredRows(storm.draw("stage_card_emptied"), 40, 57) >= withCard - 5);
+}
+
 TEST_CASE("hydra: a live stage draws prims Lila has no objects for, placed by the objects it has")
 {
     fresh();
@@ -243,6 +377,69 @@ def Xform "World"
     // Hiding the stage hides its prims.
     graph().setValue({node("dots").id(), scene::Transform::kVisibility, -1}, false);
     CHECK(coveredIn(storm.draw("stage_hidden"), 0, kSize) == 0);
+}
+
+TEST_CASE("hydra: a progressive delegate (Embree) delivers frames as it converges, then stops")
+{
+    fresh();
+    cube("Traced", 100.0);
+    const vr::Renderer* embree = vr::registry().find("hydraEmbree");
+    REQUIRE_MESSAGE(embree, "hdEmbree is not on the plugin path");
+    CHECK(embree->name == "Hydra: Embree");
+    std::unique_ptr<vr::Session> session = embree->open(kPanel);
+    REQUIRE(session);
+
+    Storm requests; // only for its request helper; its own session stays idle
+    std::vector<vr::Frame> frames;
+    vr::Request r = requests.request();
+    r.deliver = [&frames](vr::Frame f) { frames.push_back(std::move(f)); };
+    session->render(r);
+    // Refinements come back through the main queue: pump it until a second passes without one.
+    auto quietSince = std::chrono::steady_clock::now();
+    size_t seen = 0;
+    const auto start = std::chrono::steady_clock::now();
+    while (std::chrono::steady_clock::now() - quietSince < std::chrono::seconds(1) && std::chrono::steady_clock::now() - start < std::chrono::seconds(60))
+    {
+        mainq::drain();
+        if (frames.size() != seen)
+        {
+            seen = frames.size();
+            quietSince = std::chrono::steady_clock::now();
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    MESSAGE("Embree delivered " << frames.size() << " frames");
+    REQUIRE(frames.size() >= 3);
+    for (const vr::Frame& f : frames)
+        CHECK(f.serial == r.serial);
+    const vr::Frame& last = frames.back();
+    REQUIRE(last.width == kSize);
+    CHECK(px(last, 64, 64).a == doctest::Approx(1.0f));
+    CHECK(px(last, 2, 2).a == 0.0f);
+    CHECK(depthAt(last, 64, 64) == doctest::Approx(550.0f).epsilon(0.02));
+
+    // Converging: consecutive frames differ less and less.
+    auto change = [&](const vr::Frame& a, const vr::Frame& b) {
+        double d = 0.0;
+        for (size_t i = 0; i < a.rgba32f.size() && i < b.rgba32f.size(); ++i)
+            d += std::abs(a.rgba32f[i] - b.rgba32f[i]);
+        return d;
+    };
+    CHECK(change(frames[frames.size() - 2], frames.back()) < change(frames[0], frames[1]));
+
+    // A newer request stops the old one's refinement.
+    const size_t before = frames.size();
+    vr::Request moved = requests.request({50.0, 0.0, 600.0});
+    std::vector<vr::Frame> newer;
+    moved.deliver = [&newer](vr::Frame f) { newer.push_back(std::move(f)); };
+    session->render(moved);
+    for (int i = 0; i < 50; ++i)
+    {
+        mainq::drain();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    CHECK(frames.size() == before);
+    CHECK(!newer.empty());
 }
 
 TEST_CASE("hydra: the frame composites under Lila's overlays, depth tested against them")

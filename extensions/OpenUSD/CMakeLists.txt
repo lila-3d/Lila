@@ -22,6 +22,8 @@ add_library(lila_openusd_core SHARED ${_usd_core_sources})
 # Hydra (UsdHydra*): the viewport renderers, which hand LilaUI their sessions.
 target_link_libraries(lila_openusd_core PRIVATE LilaScene LilaUI usd usdGeom usdShade usdSkel usdLux usdUtils
     hd hdx hgi glf cameraUtil usdImaging)
+# LilaUI's headers bring Qt's, whose slots and signals macros clash with ordinary names here.
+target_compile_definitions(lila_openusd_core PRIVATE QT_NO_KEYWORDS)
 if(TARGET python)
     target_link_libraries(lila_openusd_core PRIVATE python)
     target_compile_definitions(lila_openusd_core PRIVATE LILA_USD_PYTHON)
@@ -47,9 +49,9 @@ set(_pkg ${_usd_pkg})
 set(_pxr_cfg $<$<CONFIG:Debug>:/debug>)
 # Every USD library, not just the linked ones: plugInfo names them all, and a stage using one of their schemas loads it.
 # Beyond the system they need TBB and Python, which lila and lilabatch already carry, MaterialX (Storm and the
-# MaterialX schemas) and the Vulkan loader, which comes with the driver.
-file(GLOB _pxr_dlls_release ${_pxr_root}/bin/usd_*.dll ${_pxr_root}/bin/MaterialX*.dll)
-file(GLOB _pxr_dlls_debug ${_pxr_root}/debug/bin/usd_*.dll ${_pxr_root}/debug/bin/MaterialX*.dll)
+# MaterialX schemas), Embree (hdEmbree, when the USD build has it) and the Vulkan loader, which comes with the driver.
+file(GLOB _pxr_dlls_release ${_pxr_root}/bin/usd_*.dll ${_pxr_root}/bin/MaterialX*.dll ${_pxr_root}/bin/embree4.dll)
+file(GLOB _pxr_dlls_debug ${_pxr_root}/debug/bin/usd_*.dll ${_pxr_root}/debug/bin/MaterialX*.dll ${_pxr_root}/debug/bin/embree4.dll)
 add_custom_command(TARGET lila_openusd_core POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<IF:$<CONFIG:Debug>,${_pxr_dlls_debug},${_pxr_dlls_release}>" ${_pkg}
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${_pxr_root}${_pxr_cfg}/bin/usd ${_pkg}/usd

@@ -7,6 +7,7 @@
  */
 #include "core/Profile.h"
 #include "curve/CurveNodes.h"
+#include "curve/Tessellate.h"
 #include "fbx/Fbx.h"
 #include "fbx/FbxAxes.h"
 #include "geo/Primitives.h"

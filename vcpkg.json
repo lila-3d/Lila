@@ -23,6 +23,7 @@
       "name": "usd",
       "features": [
         "imaging",
+        "embree",
         "materialx",
         "python",
         "vulkan"

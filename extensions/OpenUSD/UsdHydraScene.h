@@ -3,6 +3,8 @@
 #include "UsdStage.h"
 
 #include <lila/Graph.h>
+#include <lila/Interchange.h>
+#include <lila/ViewportRenderers.h>
 
 #include <pxr/imaging/hd/filteringSceneIndex.h>
 #include <pxr/imaging/hd/sceneIndex.h>
@@ -11,6 +13,7 @@
 
 #include <glm/glm.hpp>
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <set>
@@ -19,12 +22,13 @@
 #include <vector>
 
 /**
- * The scene as Hydra scene indices. Lila's own nodes (meshes, cameras, lights) are prims of a scene index kept up to
- * date by diffing the graph on each render: a moved node dirties its transform, a new mesh snapshot its primvars (or its
- * topology when that changed), so a drag or a deformation never rebuilds the rest. Lila's materials are written as
- * UsdPreviewSurface networks into a stage in memory and read through UsdImaging. Live USD stages go in through
- * UsdImaging too, each prim Lila has a node for blanked out of the stage (the node draws it, with its edits) and placed
- * by that node, so the stage's other prims follow it.
+ * The scene as Hydra scene indices. Lila's own nodes (meshes, curves, cameras, lights) are prims of a scene index kept
+ * up to date by diffing the graph on each render: a moved node dirties its transform, a new mesh snapshot its primvars
+ * (or its topology when that changed), so a drag or a deformation never rebuilds the rest. Meshes go in as their own
+ * polygons with face-varying normals, UVs and colours, subdivided by Hydra at their smooth preview level. Lila's
+ * materials are written as UsdPreviewSurface networks into a stage in memory and read through UsdImaging. Live USD
+ * stages go in through UsdImaging too: each prim Lila draws itself (with its edits) is blanked out of the stage, and
+ * every prim Lila has a node for is placed and shown as that node is, so the stage's other prims follow it.
  */
 namespace lila::usd::hydra
 {
@@ -42,7 +46,18 @@ inline const pxr::SdfPath& materialsRoot()
 /** The prefix a live stage's prims get. */
 pxr::SdfPath stageRoot(scene::NodeId stageNode);
 
-/** Lila's meshes, cameras and lights as Hydra prims, flat under nodesRoot() with world transforms. */
+/** What one viewport shows differently from another. */
+struct ViewContext
+{
+    /** The view's isolate select set; null shows everything. */
+    const scene::isolation::Set* isolation = nullptr;
+    /** World units per device pixel at a point, to give curves the width Lila draws them with. */
+    std::function<double(const glm::dvec3&)> unitsPerPixel;
+    float curvePixels = 2.0f;
+    glm::vec4 curveColor{0.392f, 0.392f, 0.392f, 1.0f};
+};
+
+/** Lila's meshes, curves, cameras and lights as Hydra prims, flat under nodesRoot() with world transforms. */
 class LilaSceneIndex final : public pxr::HdSceneIndexBase
 {
 public:
@@ -52,14 +67,15 @@ public:
     pxr::SdfPathVector GetChildPrimPaths(const pxr::SdfPath& path) const override;
 
     /** Main thread, g evaluated. bind(slot) is the material path a material slot binds to. */
-    void sync(scene::Graph& g, const std::function<pxr::SdfPath(const std::string& slot)>& bind);
-    /** The prims added, re-added, changed and removed by the last sync, for tests. */
+    void sync(scene::Graph& g, const ViewContext& view, const std::function<pxr::SdfPath(const std::string& slot)>& bind);
+    /** The prims added, changed and removed by the last sync, for tests. */
     struct Counts
     {
         size_t added = 0, dirtied = 0, removed = 0;
     };
     Counts lastSync() const { return mCounts; }
-    size_t lightCount() const { return mLights; }
+    /** Subdivide smooth preview meshes here instead of asking Hydra to (Storm on Vulkan can't refine them). */
+    void setRefineHere(bool here) { mRefineHere = here; }
     /** The material slots the meshes use. */
     const std::set<std::string>& usedSlots() const { return mSlots; }
 
@@ -67,15 +83,26 @@ private:
     LilaSceneIndex() = default;
 
     struct MeshData;
+    struct CurveData;
     struct Node
     {
         pxr::SdfPath path;
         pxr::TfToken type;
         std::shared_ptr<const MeshData> mesh;
+        /** The mesh as this prim shows it: isolate select's hidden faces left out. */
+        struct
+        {
+            pxr::HdContainerDataSourceHandle mesh, primvars;
+            std::vector<pxr::VtIntArray> subsets;
+        } shape;
+        std::shared_ptr<const CurveData> curve;
         glm::dmat4 world{1.0};
         bool visible = true;
         size_t settings = 0;
         std::vector<pxr::SdfPath> bindings;
+        /** Faces isolate select hides, as indices into the mesh's faces. */
+        pxr::VtIntArray holes;
+        float width = 0.0f;
         pxr::HdContainerDataSourceHandle own; // camera or light parameters
     };
     struct Prim
@@ -87,15 +114,16 @@ private:
     void put(const pxr::SdfPath& path, Prim prim);
     void drop(const pxr::SdfPath& path);
     pxr::HdContainerDataSourceHandle nodeSource(const Node& n) const;
-    std::shared_ptr<const MeshData> meshData(const scene::MeshPtr& mesh);
+    std::shared_ptr<const MeshData> meshData(const scene::MeshPtr& mesh, int level);
+    std::shared_ptr<const CurveData> curveData(const scene::Node& n);
 
     std::map<pxr::SdfPath, Prim> mPrims;
     std::map<pxr::SdfPath, std::set<pxr::SdfPath>> mChildren;
     std::unordered_map<scene::NodeId, Node> mNodes;
-    std::map<const void*, std::pair<scene::MeshPtr, std::shared_ptr<const MeshData>>> mMeshes;
+    std::map<std::pair<const void*, int>, std::pair<scene::MeshPtr, std::shared_ptr<const MeshData>>> mMeshes;
     std::set<std::string> mSlots;
-    size_t mLights = 0;
     Counts mCounts;
+    bool mRefineHere = false;
 };
 
 /**
@@ -122,8 +150,8 @@ private:
 };
 
 /**
- * Before UsdImaging flattens a live stage: prims Lila's nodes stand for are placed and shown as those nodes are, and
- * blanked (left as transforms) when Lila's scene index draws the node; PointInstancers Lila realised as nodes are pruned.
+ * Before UsdImaging flattens a live stage: prims Lila draws itself are blanked (left as transforms, so what is below
+ * them still composes), and PointInstancers Lila realised as nodes are pruned with everything under them.
  */
 class StageOverrides final : public pxr::HdSingleInputFilteringSceneIndexBase
 {
@@ -133,14 +161,7 @@ public:
         return pxr::TfCreateRefPtr(new StageOverrides(input));
     }
 
-    struct Override
-    {
-        glm::dmat4 matrix{1.0}; // stage-space world matrix
-        bool visible = true;
-        bool blank = false;
-        bool operator==(const Override&) const = default;
-    };
-    void update(std::map<pxr::SdfPath, Override> owned, std::set<pxr::SdfPath> pruned);
+    void update(std::set<pxr::SdfPath> blank, std::set<pxr::SdfPath> pruned);
 
     pxr::HdSceneIndexPrim GetPrim(const pxr::SdfPath& path) const override;
     pxr::SdfPathVector GetChildPrimPaths(const pxr::SdfPath& path) const override;
@@ -154,17 +175,27 @@ private:
     explicit StageOverrides(const pxr::HdSceneIndexBaseRefPtr& input) : HdSingleInputFilteringSceneIndexBase(input) {}
     bool insidePruned(const pxr::SdfPath& path) const;
 
-    std::map<pxr::SdfPath, Override> mOwned;
+    std::set<pxr::SdfPath> mBlank;
     std::set<pxr::SdfPath> mPruned;
 };
 
-/** After flattening: carries a live stage's world transforms into Lila's world (the stage node's place, axes and units). */
-class StageToWorld final : public pxr::HdSingleInputFilteringSceneIndexBase
+/**
+ * After UsdImaging: places a live stage's prims in Lila's world (the stage node's place, axes and units), each prim Lila
+ * has a node for where that node is now, and everything below it carried along, with the node's visibility. A moved
+ * node dirties only the transforms of its prim and what is below it.
+ */
+class StagePlacement final : public pxr::HdSingleInputFilteringSceneIndexBase
 {
 public:
-    static pxr::TfRefPtr<StageToWorld> New(const pxr::HdSceneIndexBaseRefPtr& input) { return pxr::TfCreateRefPtr(new StageToWorld(input)); }
+    static pxr::TfRefPtr<StagePlacement> New(const pxr::HdSceneIndexBaseRefPtr& input) { return pxr::TfCreateRefPtr(new StagePlacement(input)); }
 
-    void setToWorld(const glm::dmat4& m);
+    struct Placed
+    {
+        glm::dmat4 matrix{1.0}; // stage-space world matrix
+        bool visible = true;
+        bool operator==(const Placed&) const = default;
+    };
+    void update(const glm::dmat4& toWorld, std::map<pxr::SdfPath, Placed> placed);
 
     pxr::HdSceneIndexPrim GetPrim(const pxr::SdfPath& path) const override;
     pxr::SdfPathVector GetChildPrimPaths(const pxr::SdfPath& path) const override;
@@ -175,11 +206,14 @@ protected:
     void _PrimsDirtied(const pxr::HdSceneIndexBase& sender, const pxr::HdSceneIndexObserver::DirtiedPrimEntries& entries) override;
 
 private:
-    explicit StageToWorld(const pxr::HdSceneIndexBaseRefPtr& input) : HdSingleInputFilteringSceneIndexBase(input) {}
+    explicit StagePlacement(const pxr::HdSceneIndexBaseRefPtr& input) : HdSingleInputFilteringSceneIndexBase(input) {}
+    /** The prim's stage-space world matrix as UsdImaging flattened it. */
+    glm::dmat4 flattened(const pxr::SdfPath& path) const;
 
     glm::dmat4 mToWorld{1.0};
+    std::map<pxr::SdfPath, Placed> mPlaced;
 };
 
-/** True when Lila's scene index draws a node of this type, so a stage prim it stands for is blanked. */
+/** True when Lila's scene index draws the node (a mesh or curve with geometry, a camera, a light), so its stage prim is blanked. */
 bool drawnByLila(const scene::Node& n);
 } // namespace lila::usd::hydra
