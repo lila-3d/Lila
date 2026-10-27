@@ -63,6 +63,7 @@ ImportOptions optionsFrom(const Args& a, Graph& g, const char* cmd)
     if (o.upAxis != "auto" && o.upAxis != "y" && o.upAxis != "z")
         throw CommandError(std::string(cmd) + ": upAxis must be auto, y or z");
     o.skins = a.get<bool>("skins", true);
+    o.morphs = a.get<bool>("morphs", true);
     o.animation = a.get<bool>("animation", true);
     o.materials = a.get<bool>("materials", true);
     if (a.flags.contains("references") && a.flags["references"].is_boolean())
@@ -79,7 +80,7 @@ ImportOptions optionsFrom(const Args& a, Graph& g, const char* cmd)
 json reportJson(const Graph& g, const ImportResult& r)
 {
     return {{"nodes", names(g, r.nodes)},   {"roots", names(g, r.roots)},     {"joints", names(g, r.joints)},
-            {"skinClusters", names(g, r.skins)}, {"cameras", names(g, r.cameras)}, {"imagePlanes", names(g, r.imagePlanes)},
+            {"skinClusters", names(g, r.skins)}, {"morphs", names(g, r.morphs)}, {"cameras", names(g, r.cameras)}, {"imagePlanes", names(g, r.imagePlanes)},
             {"materials", r.materials},     {"displayLayers", r.displayLayers}, {"curves", r.curves},
             {"skipped", r.skipped},         {"warnings", r.warnings},          {"format", r.format},
             {"version", r.version},         {"upAxis", r.upAxis},              {"unitCm", r.unitCm},
@@ -156,6 +157,7 @@ const std::vector<FlagDef>& importFlags()
         {"namespace", "ns", T::String, "", "Put every imported name in this namespace."},
         {"upAxis", "", T::String, "auto", "auto (from Maya's default cameras), y or z: the file's up axis."},
         {"skins", "", T::Bool, true, "Rebuild skinClusters with their weights and bind matrices."},
+        {"morphs", "", T::Bool, true, "Rebuild blendShapes as morphs, with their weight curves and set driven keys."},
         {"animation", "anim", T::Bool, true, "Import animation curves on translate, rotate and scale."},
         {"materials", "", T::Bool, true, "Create materials from shading groups and assign them per face."},
         {"references", "", T::Any, "reference",

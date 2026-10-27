@@ -18,8 +18,11 @@
 #include "maya/MayaFile.h"
 #include "math/MathCore.h"
 #include "scene/Anim.h"
+#include "scene/AnimCurve.h"
 #include "scene/Camera.h"
+#include "scene/Deformers.h"
 #include "scene/DisplayLayers.h"
+#include "scene/Drivers.h"
 #include "scene/Graph.h"
 #include "scene/ImagePlane.h"
 #include "scene/Light.h"
@@ -28,6 +31,7 @@
 #include "scene/Materials.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
+#include "scene/Morphs.h"
 #include "scene/Rig.h"
 #include "scene/Skin.h"
 
@@ -688,7 +692,7 @@ struct Nested
 };
 
 /** Bumped when a conversion would come out differently, so cached .lila files of referenced Maya files are redone. */
-constexpr int kConverterVersion = 5;
+constexpr int kConverterVersion = 6;
 
 /**
  * How a referenced file's node is named relative to its namespace: the bare name when no other node has it, else its
@@ -806,6 +810,11 @@ public:
                 buildSkin(i);
                 weights.step();
             }
+        }
+        if (mOpts.morphs)
+        {
+            buildBlendShapes();
+            connectMorphInputs();
         }
         connectInverseScales();
         if (refs)
@@ -1652,7 +1661,7 @@ private:
             if (auto b = outAttr.find('['); b != std::string::npos)
                 k = outAttr.substr(b + 1, outAttr.find(']') - b - 1);
             std::string ig = "ip[" + k + "].ig", ig2 = "input[" + k + "].inputGeometry";
-            if (t != "skinCluster" && t != "tweak")
+            if (t != "skinCluster" && t != "tweak" && !(t == "blendShape" && mOpts.morphs))
                 log.warnings.push_back(std::format("{}: deformer {} '{}' not applied", shape, t, shortName(n.name)));
             return upstream({ig, ig2});
         }
@@ -2244,6 +2253,30 @@ private:
 
     // ---- skins ----------------------------------------------------------------------------------------------
 
+    /** The mesh shape a deformer's output k (any output for -1) ends in, through any deformers after it; -1 for none. */
+    int drivenShape(int deformer, int k) const
+    {
+        std::vector<int> frontier{deformer};
+        for (int guard = 0; !frontier.empty() && guard < 64; ++guard)
+        {
+            int cur = frontier.back();
+            frontier.pop_back();
+            for (const auto& [src, dst] : mIx.outputs(cur))
+            {
+                std::string_view sa = src.attr;
+                if (!(sa.starts_with("og") || sa.starts_with("outputGeometry") || sa.starts_with("out")))
+                    continue;
+                if (cur == deformer && k >= 0)
+                    if (std::vector<AttrSeg> s = splitAttr(sa); s.empty() || std::max(s[0].lo, 0) != k)
+                        continue;
+                if (mIx.node(dst.node).type == "mesh" && oneOf(dst.attr, {"i", "inMesh"}))
+                    return dst.node;
+                frontier.push_back(dst.node);
+            }
+        }
+        return -1;
+    }
+
     void buildSkin(int sc)
     {
         LILA_ZONE();
@@ -2254,26 +2287,7 @@ private:
         if (!types::find("skinCluster"))
             return;
 
-        // The shape the skin drives: follow its output through any deformers after it.
-        int shape = -1;
-        std::vector<int> frontier{sc};
-        for (int guard = 0; shape < 0 && !frontier.empty() && guard < 64; ++guard)
-        {
-            int cur = frontier.back();
-            frontier.pop_back();
-            for (const auto& [src, dst] : mIx.outputs(cur))
-            {
-                std::string_view sa = src.attr;
-                if (!(sa.starts_with("og") || sa.starts_with("outputGeometry") || sa.starts_with("out")))
-                    continue;
-                if (mIx.node(dst.node).type == "mesh" && oneOf(dst.attr, {"i", "inMesh"}))
-                {
-                    shape = dst.node;
-                    break;
-                }
-                frontier.push_back(dst.node);
-            }
-        }
+        const int shape = drivenShape(sc, -1);
         auto meshIt = mShapeNode.find(shape);
         if (shape < 0 || meshIt == mShapeNode.end())
         {
@@ -2379,6 +2393,481 @@ private:
         mG.setValue({skinId, SkinClusterNode::kMaxInfluences}, int64_t(std::max<size_t>({4, used, size_t(std::max(mi, 0))})));
         skin::setWeights(mG, skinId, t);
         mR.skins.push_back(skinId);
+    }
+
+    // ---- blend shapes ---------------------------------------------------------------------------------------
+
+    /** One inputTargetItem: stored sparse offsets, and the live target mesh connected to it. */
+    struct BlendItem
+    {
+        std::vector<double> points; // x, y, z, w per stored point
+        std::vector<std::string> comps;
+        bool stored = false;
+        std::optional<Plug> geom;
+    };
+    struct BlendTarget
+    {
+        std::map<int, BlendItem> items; // by item index: 6000 the full shape, 5000 + 1000 w an in-between at w
+        std::map<int, double> weights;  // targetWeights by Maya vertex
+    };
+    /** inputTarget k of a blendShape: what it does to its k-th geometry. */
+    struct BlendGeom
+    {
+        std::map<int, BlendTarget> targets; // by weight index
+        std::map<int, double> baseWeights;
+    };
+    /** A converted blendShape: its Lila morphs and the targets each of its weights feeds. */
+    struct Blend
+    {
+        std::map<std::string, int> aliases; // alias -> weight index
+        std::map<int, std::vector<NodeId>> targets;
+        std::vector<NodeId> morphs;
+    };
+
+    static std::map<int, BlendGeom> blendData(const MNode& n, const FileIndex& ix, int node)
+    {
+        std::map<int, BlendGeom> out;
+        auto single = [](const AttrSeg& s) { return s.lo >= 0 && s.lo == s.hi; };
+        for (const AttrValue& a : n.attrs)
+        {
+            std::vector<AttrSeg> s = splitAttr(a.attr);
+            if (s.size() < 2 || !oneOf(s[0].name, {"it", "inputTarget"}) || !single(s[0]))
+                continue;
+            BlendGeom& g = out[s[0].lo];
+            if (s.size() == 2 && oneOf(s[1].name, {"bw", "baseWeights"}) && s[1].lo >= 0)
+            {
+                for (size_t k = 0; k < a.nums.size(); ++k)
+                    g.baseWeights[s[1].lo + int(k)] = a.nums[k];
+                continue;
+            }
+            if (!oneOf(s[1].name, {"itg", "inputTargetGroup"}) || !single(s[1]))
+                continue;
+            BlendTarget& t = g.targets[s[1].lo];
+            if (s.size() == 3 && oneOf(s[2].name, {"tw", "targetWeights"}) && s[2].lo >= 0)
+                for (size_t k = 0; k < a.nums.size(); ++k)
+                    t.weights[s[2].lo + int(k)] = a.nums[k];
+            else if (s.size() == 4 && oneOf(s[2].name, {"iti", "inputTargetItem"}) && single(s[2]))
+            {
+                BlendItem& item = t.items[s[2].lo];
+                if (oneOf(s[3].name, {"ipt", "inputPointsTarget"}))
+                {
+                    item.points = a.nums;
+                    item.stored = true;
+                }
+                else if (oneOf(s[3].name, {"ict", "inputComponentsTarget"}))
+                    item.comps = a.strs;
+            }
+        }
+        for (const auto& [src, dst] : ix.inputs(node))
+        {
+            std::vector<AttrSeg> s = splitAttr(dst.attr);
+            if (s.size() == 4 && oneOf(s[0].name, {"it", "inputTarget"}) && single(s[0]) && oneOf(s[1].name, {"itg", "inputTargetGroup"}) &&
+                single(s[1]) && oneOf(s[2].name, {"iti", "inputTargetItem"}) && single(s[2]) && oneOf(s[3].name, {"igt", "inputGeomTarget"}))
+                out[s[0].lo].targets[s[1].lo].items[s[2].lo].geom = src;
+        }
+        return out;
+    }
+
+    /** Whether a skinCluster deforms the geometry before this deformer's input k. */
+    bool skinBefore(int deformer, int k) const
+    {
+        const std::string ig = std::format("ip[{}].ig", k), ig2 = std::format("input[{}].inputGeometry", k);
+        auto src = mIx.input(deformer, {ig, ig2});
+        for (int guard = 0; src && guard < 64; ++guard)
+        {
+            const std::string& t = mIx.node(src->node).type;
+            if (t == "skinCluster")
+                return true;
+            if (!deformerTypes().contains(t) && t != "groupParts")
+                return false;
+            src = mIx.input(src->node, {"ip[0].ig", "ig", "input[0].inputGeometry", "inputGeometry"});
+        }
+        return false;
+    }
+
+    /** Lila-space offsets, sparse over Lila points, from a stored item. */
+    std::shared_ptr<scene::MorphDeltas> storedDeltas(const BlendItem& item, const std::vector<Index>& pointOf, const std::string& what)
+    {
+        auto d = std::make_shared<scene::MorphDeltas>();
+        std::vector<int> verts;
+        for (const std::string& c : item.comps)
+        {
+            std::string kind;
+            int lo = 0, hi = 0;
+            if (!parseComponent(c, &kind, &lo, &hi) || (kind != "vtx" && kind != "pt"))
+                continue;
+            if (hi < 0)
+                hi = int(pointOf.size()) - 1;
+            for (int v = lo; v <= hi; ++v)
+                verts.push_back(v);
+        }
+        const size_t count = item.points.size() / 4;
+        if (item.comps.empty())
+            for (size_t v = 0; v < count; ++v)
+                verts.push_back(int(v));
+        if (verts.size() != count)
+            mR.warnings.push_back(std::format("{}: {} stored offsets for {} vertices; the extra ones were dropped", what, count, verts.size()));
+        for (size_t k = 0; k < count && k < verts.size(); ++k)
+        {
+            const int v = verts[k];
+            if (v < 0 || size_t(v) >= pointOf.size() || pointOf[size_t(v)] == kInvalid)
+                continue;
+            glm::dvec3 off = point(glm::dvec3(item.points[k * 4], item.points[k * 4 + 1], item.points[k * 4 + 2]) * mU.lin);
+            if (glm::dot(off, off) == 0.0)
+                continue;
+            d->indices.push_back(uint32_t(pointOf[size_t(v)]));
+            d->deltas.push_back(off);
+        }
+        return d;
+    }
+
+    /**
+     * Offsets from a target mesh in the file, evaluated through its history: its points against the morph's input,
+     * through both world matrices for a world-origin blendShape. Null when its points don't match the base's.
+     */
+    std::shared_ptr<scene::MorphDeltas> meshDeltas(const Plug& src, const std::vector<Index>& pointOf, const geo::Mesh& base, NodeId baseNode,
+                                                    bool world, const std::string& what)
+    {
+        EvalLog log;
+        std::optional<Geom> g = evalNode(src.node, src.attr, what, 0, log);
+        mHandled.insert(log.handled.begin(), log.handled.end());
+        mR.warnings.insert(mR.warnings.end(), log.warnings.begin(), log.warnings.end());
+        if (!g || !g->mayaPoints || g->mesh.pointCapacity() != pointOf.size())
+            return nullptr;
+        glm::dmat4 toBase(1.0);
+        if (world)
+        {
+            const int xf = mIx.parent[size_t(src.node)];
+            auto it = xf >= 0 ? mLila.find(xf) : mLila.end();
+            const glm::dmat4 targetWorld = it != mLila.end() ? mG.node(it->second)->as<glm::dmat4>(scene::Transform::kWorldMatrix) : glm::dmat4(1.0);
+            toBase = glm::inverse(mG.node(baseNode)->as<glm::dmat4>(scene::Transform::kWorldMatrix)) * targetWorld;
+        }
+        auto d = std::make_shared<scene::MorphDeltas>();
+        for (size_t v = 0; v < pointOf.size(); ++v)
+        {
+            const Index p = pointOf[v];
+            if (p == kInvalid || p >= base.pointCapacity())
+                continue;
+            glm::dvec3 off = glm::dvec3(toBase * glm::dvec4(point(g->mesh.position(Index(v))), 1.0)) - base.position(p);
+            if (glm::length(off) > 1e-7)
+            {
+                d->indices.push_back(uint32_t(p));
+                d->deltas.push_back(off);
+            }
+        }
+        return d;
+    }
+
+    /** A Maya per-vertex weight list as a Lila per-point map; null when every weight is 1. */
+    static scene::DataPtr pointWeightsOf(const std::map<int, double>& weights, const std::vector<Index>& pointOf, size_t points)
+    {
+        bool any = false;
+        auto w = std::make_shared<scene::PointWeights>();
+        w->values.assign(points, 1.0f);
+        for (const auto& [v, value] : weights)
+            if (v >= 0 && size_t(v) < pointOf.size() && pointOf[size_t(v)] < points && value != 1.0)
+            {
+                w->values[pointOf[size_t(v)]] = float(value);
+                any = true;
+            }
+        return any ? scene::DataPtr(std::move(w)) : scene::DataPtr();
+    }
+
+    void buildBlendShapes()
+    {
+        LILA_ZONE();
+
+        using namespace scene;
+        if (!types::find("morph"))
+            return;
+        for (size_t i = 0; i < mFile.nodes.size(); ++i)
+            if (mFile.nodes[i].type == "blendShape")
+                buildBlendShape(int(i));
+    }
+
+    void buildBlendShape(int bs)
+    {
+        using namespace scene;
+        mHandled.insert(bs);
+        const MNode& n = mIx.node(bs);
+        const std::string bsName = shortName(n.name);
+        Blend blend;
+        if (const AttrValue* aal = lastAttr(n, {"aal", "attributeAliasList"}))
+        {
+            std::vector<std::string> list;
+            for (const std::string& s : aal->strs)
+                if (s != "{" && s != "}" && s != ",")
+                    list.push_back(s);
+            for (size_t k = 0; k + 1 < list.size(); k += 2)
+                if (std::vector<AttrSeg> s = splitAttr(list[k + 1]); s.size() == 1 && oneOf(s[0].name, {"w", "weight"}) && s[0].lo >= 0)
+                    blend.aliases[list[k]] = s[0].lo;
+        }
+        std::map<int, std::string> nameOf;
+        for (const auto& [alias, w] : blend.aliases)
+            nameOf[w] = alias;
+        const std::map<int, double> weights = elements(n, {"w", "weight"});
+        const double envelope = num(n, {"en", "envelope"}, 1.0);
+        const bool world = num(n, {"or", "origin"}, 0.0) == 1.0;
+
+        for (auto& [k, geom] : blendData(n, mIx, bs))
+        {
+            const int shape = drivenShape(bs, k);
+            auto meshIt = mShapeNode.find(shape);
+            if (shape < 0 || meshIt == mShapeNode.end())
+            {
+                mR.skipped.push_back(std::format("blendShape '{}' geometry {} (its mesh was not imported)", bsName, k));
+                continue;
+            }
+            auto pts = mPointOf.find(shape);
+            if (pts == mPointOf.end())
+            {
+                mR.warnings.push_back(std::format("blendShape '{}': the mesh's points no longer match Maya's, targets not imported", bsName));
+                continue;
+            }
+            const NodeId mesh = meshIt->second;
+            const std::vector<Index>& pointOf = pts->second;
+            if (skinBefore(bs, k))
+                mR.warnings.push_back(std::format("blendShape '{}' deforms after its skinCluster in Maya; Lila applies morphs before skinning, so "
+                                                  "posed shapes differ",
+                                                  bsName));
+
+            NodeId morph = morphs::find(mG, mesh);
+            const bool merged = morph != kNoNode;
+            if (!merged)
+            {
+                morph = morphs::create(mG, mesh, lilaName(n.name, mOpts.nameSpace, "blendShape"));
+                mR.morphs.push_back(morph);
+                if (envelope != 1.0)
+                    mG.setValue({morph, DeformerNode::kEnvelope, -1}, envelope);
+            }
+            else if (envelope != 1.0)
+                mR.warnings.push_back(std::format("blendShape '{}' shares {}'s morph; its envelope {} was dropped", bsName, mG.node(mesh)->path(), envelope));
+            blend.morphs.push_back(morph);
+            mG.evaluate();
+            const MeshPtr base = std::get<MeshPtr>(mG.value({morph, DeformerNode::kInMesh, -1}));
+            if (!base)
+                continue;
+            const size_t points = base->pointCapacity();
+            DataPtr baseWeights = pointWeightsOf(geom.baseWeights, pointOf, points);
+            if (baseWeights && !merged)
+                mG.setValue({morph, DeformerNode::kWeights, -1}, baseWeights);
+
+            for (auto& [w, target] : geom.targets)
+            {
+                const std::string name = nameOf.contains(w) ? nameOf[w] : std::format("{}_{}", bsName, w);
+                const std::string what = std::format("blendShape '{}' target '{}'", bsName, name);
+                auto deltasOf = [&](const BlendItem& item) -> std::shared_ptr<MorphDeltas> {
+                    if (item.geom && mIx.node(item.geom->node).type == "mesh")
+                        if (auto d = meshDeltas(*item.geom, pointOf, *base, mesh, world, what))
+                            return d;
+                    if (item.stored)
+                        return storedDeltas(item, pointOf, what);
+                    if (item.geom)
+                        mR.warnings.push_back(std::format("{}: its target geometry could not be matched to the base's points; left empty", what));
+                    return std::make_shared<MorphDeltas>();
+                };
+
+                // A live target: an imported mesh with the base's point order, read in its own space as morphTarget does.
+                NodeId live = kNoNode;
+                if (auto full = target.items.find(6000); full != target.items.end() && full->second.geom && !world)
+                    if (auto it = mShapeNode.find(full->second.geom->node); it != mShapeNode.end())
+                        if (auto tp = mPointOf.find(full->second.geom->node); tp != mPointOf.end() && tp->second == pointOf)
+                            if (MeshPtr m = std::get<MeshPtr>(mG.value({it->second, MeshNode::kOutMesh, -1})); m && m->pointCapacity() == points)
+                                live = it->second;
+
+                std::shared_ptr<MorphDeltas> full;
+                if (auto it = target.items.find(6000); it != target.items.end() && live == kNoNode)
+                    full = deltasOf(it->second);
+                else
+                    full = std::make_shared<MorphDeltas>();
+                if (!target.items.contains(6000))
+                    mR.warnings.push_back(std::format("{}: no full shape (only in-betweens); its full shape is left empty", what));
+                const double weight = weights.contains(w) ? weights.at(w) : 0.0;
+                const NodeId t = morphs::addTarget(mG, morph, name, full, weight);
+                if (live != kNoNode)
+                    mG.connect({live, MeshNode::kOutMesh, -1}, {t, morphs::kTargetMesh, -1});
+                for (const auto& [index, item] : target.items)
+                {
+                    const double at = double(index - 5000) / 1000.0;
+                    if (index == 6000)
+                        continue;
+                    if (std::abs(at) < 1e-9)
+                    {
+                        mR.warnings.push_back(std::format("{}: an in-between at weight 0 was dropped", what));
+                        continue;
+                    }
+                    morphs::setInBetween(mG, t, at, deltasOf(item));
+                }
+                std::map<int, double> tw = target.weights;
+                if (merged)
+                    for (const auto& [v, b] : geom.baseWeights)
+                        tw[v] = (tw.contains(v) ? tw[v] : 1.0) * b;
+                if (DataPtr pw = pointWeightsOf(tw, pointOf, points))
+                    morphs::setPointWeights(mG, t, pw);
+                blend.targets[w].push_back(t);
+            }
+        }
+        if (!blend.morphs.empty())
+            mBlends[bs] = std::move(blend);
+    }
+
+    /** The Lila plugs a plug of a converted blendShape lands on: a weight's targets, or its morphs' envelopes. */
+    std::vector<PlugRef> blendPlugs(int bs, const std::string& attr) const
+    {
+        std::vector<PlugRef> out;
+        auto it = mBlends.find(bs);
+        if (it == mBlends.end())
+            return out;
+        const Blend& b = it->second;
+        if (oneOf(attr, {"en", "envelope"}))
+        {
+            for (NodeId m : b.morphs)
+                out.push_back({m, scene::DeformerNode::kEnvelope, -1});
+            return out;
+        }
+        int w = -1;
+        if (std::vector<AttrSeg> s = splitAttr(attr); s.size() == 1 && oneOf(s[0].name, {"w", "weight"}) && s[0].lo >= 0 && s[0].lo == s[0].hi)
+            w = s[0].lo;
+        else if (auto a = b.aliases.find(attr); a != b.aliases.end())
+            w = a->second;
+        if (auto t = b.targets.find(w); t != b.targets.end())
+            for (NodeId id : t->second)
+                out.push_back({id, scene::morphs::kWeight, -1});
+        return out;
+    }
+
+    /**
+     * A Maya plug as the Lila plug carrying the same value, and the factor from the Lila value to the value Maya's plug
+     * hands on: transform channels (in the file's units, or internal ones behind a unitConversion) and converted
+     * blendShape weights.
+     */
+    std::optional<std::pair<PlugRef, double>> lilaDriver(const Plug& src, bool internal = false, int depth = 0) const
+    {
+        if (src.node < 0 || depth > 8)
+            return std::nullopt;
+        const MNode& n = mIx.node(src.node);
+        if (n.type == "unitConversion")
+        {
+            auto in = mIx.input(src.node, {"i", "input"});
+            auto r = in ? lilaDriver(*in, true, depth + 1) : std::nullopt;
+            if (r)
+                r->second *= num(n, {"cf", "conversionFactor"}, 1.0);
+            return r;
+        }
+        if (std::vector<PlugRef> b = blendPlugs(src.node, src.attr); !b.empty())
+            return std::pair{b.front(), 1.0};
+        auto target = channelTarget(src);
+        if (!target)
+            return std::nullopt;
+        static constexpr std::string_view kNames[3][3][2] = {
+            {{"tx", "translateX"}, {"ty", "translateY"}, {"tz", "translateZ"}},
+            {{"rx", "rotateX"}, {"ry", "rotateY"}, {"rz", "rotateZ"}},
+            {{"sx", "scaleX"}, {"sy", "scaleY"}, {"sz", "scaleZ"}},
+        };
+        static const int kAttr[3] = {scene::Transform::kTranslate, scene::Transform::kRotate, scene::Transform::kScale};
+        for (int g = 0; g < 3; ++g)
+            for (int a = 0; a < 3; ++a)
+                if (target->second == kNames[g][a][0] || target->second == kNames[g][a][1])
+                {
+                    // Lila holds translate in cm and rotate in degrees, mirrored where the axis change flips a channel.
+                    const double sign = g == 0 ? mAxes.sign[a] : g == 1 ? mAxes.sign[a] * mAxes.det : 1.0;
+                    const double unit = g == 0 ? (internal ? 1.0 : 1.0 / mU.lin) : g == 1 ? (internal ? math::kPi / 180.0 : 1.0 / mU.ang) : 1.0;
+                    return std::pair{PlugRef{target->first, kAttr[g], mAxes.to[a]}, sign * unit};
+                }
+        return std::nullopt;
+    }
+
+    /** A Maya driven-key curve (keys over its input's value) as keys over the Lila driver's value. */
+    static scene::anim::Curve overDriver(scene::anim::Curve c, double fps, double factor)
+    {
+        for (scene::anim::Key& k : c.keys)
+        {
+            k.time = k.time * fps / factor;
+            for (double* a : {&k.inAngle, &k.outAngle})
+                *a = std::atan(std::tan(*a * math::kPi / 180.0) * factor) * 180.0 / math::kPi;
+            if (factor < 0.0)
+            {
+                std::swap(k.in, k.out);
+                std::swap(k.inAngle, k.outAngle);
+            }
+        }
+        if (factor < 0.0)
+            std::swap(c.pre, c.post);
+        c.sort();
+        return c;
+    }
+
+    /** Animation curves, set driven keys and direct connections into converted blendShape weights and envelopes. */
+    void connectMorphInputs()
+    {
+        using namespace scene;
+        bool approx = false;
+        std::map<std::string, int> skipped;
+        for (const auto& entry : mBlends)
+            for (const int bs = entry.first; const auto& [src, dst] : mIx.inputs(bs))
+            {
+                std::vector<PlugRef> plugs = blendPlugs(bs, dst.attr);
+                if (plugs.empty())
+                    continue;
+                const MNode& sn = mIx.node(src.node);
+                const std::string where = std::format("{}.{}", shortName(mIx.node(bs).name), dst.attr);
+                const bool timeCurve = sn.type.starts_with("animCurveT");
+                if (timeCurve || sn.type.starts_with("animCurveU"))
+                {
+                    mHandled.insert(src.node);
+                    if (timeCurve && !mOpts.animation)
+                        continue;
+                    std::optional<anim::Curve> curve = readCurve(sn, 1.0, 1.0, 1.0, &approx);
+                    if (!curve)
+                        continue;
+                    if (timeCurve)
+                    {
+                        NodeId id = mG.createNode(*types::find("animCurveTU"), lilaName(sn.name, mOpts.nameSpace, "animCurveTU"), kNoNode, false)->id();
+                        anim::setCurve(mG, id, *curve);
+                        for (const PlugRef& p : plugs)
+                            mG.connect({id, anim::CurveNode::kOutput, -1}, p);
+                        ++mR.curves;
+                        continue;
+                    }
+                    auto in = mIx.input(src.node, {"i", "input"});
+                    auto driver = in ? lilaDriver(*in) : std::nullopt;
+                    if (!driver || !types::find("drivenChannel"))
+                    {
+                        ++skipped[std::format("set driven key on {} (its driver {} is not converted)", where,
+                                              in ? std::format("{}.{}", shortName(mIx.node(in->node).name), in->attr) : std::string("is missing"))];
+                        continue;
+                    }
+                    if (std::abs(driver->second) < 1e-12)
+                        continue;
+                    NodeId ch = drivers::createChannel(mG, driver->first, plugs.front(), overDriver(*curve, mU.fps, driver->second), "",
+                                                       lilaName(sn.name, mOpts.nameSpace, "drivenChannel"));
+                    for (size_t k = 1; k < plugs.size(); ++k)
+                        mG.connect({ch, drivers::kChannelOutput, -1}, plugs[k]);
+                    continue;
+                }
+                if (auto driver = lilaDriver(src); driver && types::find("drivenChannel"))
+                {
+                    if (sn.type == "unitConversion")
+                        mHandled.insert(src.node);
+                    // A plain connection: a linear channel scaling the driver into Maya's value.
+                    anim::Curve line;
+                    line.keys = {{.time = 0.0, .value = 0.0, .in = anim::Tangent::Linear, .out = anim::Tangent::Linear},
+                                 {.time = 1.0, .value = driver->second, .in = anim::Tangent::Linear, .out = anim::Tangent::Linear}};
+                    line.pre = line.post = anim::Infinity::Linear;
+                    NodeId ch = drivers::createChannel(mG, driver->first, plugs.front(), line, "", "");
+                    for (size_t k = 1; k < plugs.size(); ++k)
+                        mG.connect({ch, drivers::kChannelOutput, -1}, plugs[k]);
+                    continue;
+                }
+                const std::string why = sn.type == "expression"      ? "an expression"
+                                        : sn.type == "blendWeighted" ? "several set driven keys (blendWeighted)"
+                                                                     : sn.type + " '" + shortName(sn.name) + "'";
+                ++skipped[std::format("{} driving {}", why, where)];
+            }
+        if (approx)
+            mR.warnings.push_back("blendShape weight curves: slow, fast, plateau, step next and smooth tangents were approximated");
+        for (const auto& [what, count] : skipped)
+            mR.skipped.push_back(count > 1 ? std::format("{} ({} connections)", what, count) : what);
     }
 
     void connectInverseScales()
@@ -2539,7 +3028,7 @@ private:
             if (!cn.type.starts_with("animCurve"))
                 continue;
             mHandled.insert(c.src.node);
-            if (!oneOf(c.src.attr, {"o", "output"}))
+            if (!oneOf(c.src.attr, {"o", "output"}) || mBlends.contains(c.dst.node))
                 continue;
             const char kind = cn.type.size() == 11 ? cn.type[10] : '?';
             if (cn.type.size() != 11 || cn.type[9] != 'T' || (kind != 'L' && kind != 'A' && kind != 'U'))
@@ -3093,6 +3582,7 @@ private:
         mR.roots.insert(mR.roots.end(), sub.roots.begin(), sub.roots.end());
         mR.joints.insert(mR.joints.end(), sub.joints.begin(), sub.joints.end());
         mR.skins.insert(mR.skins.end(), sub.skins.begin(), sub.skins.end());
+        mR.morphs.insert(mR.morphs.end(), sub.morphs.begin(), sub.morphs.end());
         mR.materials.insert(mR.materials.end(), sub.materials.begin(), sub.materials.end());
         mR.displayLayers.insert(mR.displayLayers.end(), sub.displayLayers.begin(), sub.displayLayers.end());
         mR.references.insert(mR.references.end(), sub.references.begin(), sub.references.end());
@@ -3695,8 +4185,8 @@ private:
             const MNode& n = mFile.nodes[i];
             for (const AddedAttr& a : n.added)
             {
-                // lockInfluenceWeights is Maya's own bookkeeping on every skinned joint.
-                if (a.longName == "lockInfluenceWeights" || n.existing)
+                // Maya's own bookkeeping: lockInfluenceWeights on every skinned joint, a converted blendShape's aliases.
+                if (a.longName == "lockInfluenceWeights" || (a.longName == "attributeAliasList" && mBlends.contains(int(i))) || n.existing)
                     continue;
                 ++custom;
                 if (customNames.size() < 20)
@@ -3746,6 +4236,7 @@ private:
     std::unordered_map<int, std::string> mMaterial;
     std::set<int> mHandled;
     std::set<int> mRotateAxisFolded;
+    std::map<int, Blend> mBlends; // converted blendShapes by Maya node
     std::vector<PendingMesh> mPending;
     Nested* mNested = nullptr;
     std::vector<RefInfo> mRefs;
