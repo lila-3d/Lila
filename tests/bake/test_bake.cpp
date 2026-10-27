@@ -2,6 +2,7 @@
 
 #include "bake/Backend.h"
 #include "bake/Bake.h"
+#include "bake/CpuBackend.h"
 #include "bake/BakeInputs.h"
 #include "bake/BakeNodes.h"
 #include "bake/Maps.h"
@@ -23,6 +24,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <set>
 
 using namespace lila;
@@ -617,4 +619,100 @@ TEST_CASE("Auto frontal and rear are measured against the highs")
     for (const json& o : r["outputs"])
         files.insert(fs::path(o["file"].get<std::string>()).filename().string());
     CHECK(files.contains("crate_low_normal.png"));
+}
+
+namespace
+{
+/**
+ * Projection as the CPU backend, but secondary rays from a tracer built on first use under a lock, as the GPU backend
+ * builds its CPU fallback. The build is parallel, so a band waiting on it must not pick up another band that then takes
+ * the same lock.
+ */
+class LazyCpuBackend final : public bake::Backend, public bake::Tracer
+{
+public:
+    std::string name() const override { return "lazyCpu"; }
+    int bandRows(int, int) const override { return 1; }
+    void prepare(const bake::BakeInputs& inputs) override
+    {
+        mInputs = &inputs;
+        mProjection.prepare(inputs);
+        std::scoped_lock lock(mMutex);
+        mCpu.reset();
+    }
+    void traceProjection(size_t group, std::span<const bake::TexelSample> samples, std::span<bake::HitRecord> hits) const override
+    {
+        mProjection.traceProjection(group, samples, hits);
+    }
+    const bake::Tracer* tracer() const override { return this; }
+    bool occluded(size_t group, bake::OccluderScope scope, uint32_t high, const glm::vec3& origin, const glm::vec3& dir, float tMax) const override
+    {
+        return cpu().occluded(group, scope, high, origin, dir, tMax);
+    }
+    bool closestHit(size_t group, bake::OccluderScope scope, uint32_t high, const glm::vec3& origin, const glm::vec3& dir, float tMax,
+                    bake::TraceHit& hit) const override
+    {
+        return cpu().closestHit(group, scope, high, origin, dir, tMax, hit);
+    }
+
+private:
+    const bake::CpuBackend& cpu() const
+    {
+        std::scoped_lock lock(mMutex);
+        if (!mCpu)
+        {
+            auto c = std::make_unique<bake::CpuBackend>();
+            c->prepare(*mInputs);
+            mCpu = std::move(c);
+        }
+        return *mCpu;
+    }
+
+    const bake::BakeInputs* mInputs = nullptr;
+    bake::CpuBackend mProjection;
+    mutable std::mutex mMutex;
+    mutable std::unique_ptr<bake::CpuBackend> mCpu;
+};
+} // namespace
+
+TEST_CASE("band by band: a lazily built tracer never runs a band inside another band's wait")
+{
+    bake::registerBackend("lazyCpu", [] { return std::make_unique<LazyCpuBackend>(); });
+    newScene();
+    const fs::path dir = tempDir("lazy");
+    // One-row bands, most of them empty: idle workers steal the tracer build's tasks, so the band building it waits and
+    // could pick up other bands.
+    std::vector<std::string> lows;
+    for (int i = 0; i < 4; ++i)
+    {
+        geo::Mesh m = displaced(24, [i](double x, double z) { return 4.0 * std::sin(0.1 * x + i) * std::cos(0.13 * z); });
+        for (glm::vec2& uv : m.cornerAttrs().get<glm::vec2>("uv0"))
+            uv = {0.25f * float(i) + 0.05f * uv.x, 0.2f * uv.y};
+        lows.push_back(addMesh("strip" + std::to_string(i), std::move(m), glm::dvec3(120.0 * i, 0.0, 0.0)));
+    }
+    std::vector<std::string> highs;
+    for (int i = 0; i < 32; ++i)
+        highs.push_back(addMesh("rock" + std::to_string(i), displaced(140, [i](double x, double z) { return std::sin(0.2 * x * (i + 1)) + std::cos(0.3 * z); }),
+                                glm::dvec3(120.0 * (i % 4), -30.0 - 5.0 * (i / 4), 0.0)));
+    const std::string p = project(dir, 512, 1, "exr", "{mesh}_{map}");
+    ops::execute("bakeGroup", {{"args", {"strips"}}, {"project", p}, {"lows", lows}, {"highs", highs}, {"self", true}, {"frontal", 2.0}, {"rear", 2.0}});
+    for (const char* map : {"thickness", "ao"})
+        ops::execute("setBakeMap", {{"args", {map}}, {"project", p}, {"options", {{"rays", 2}}}});
+    const std::vector<std::string> maps = {"height", "thickness", "ao"};
+    json lazy;
+    for (int run = 0; run < 4; ++run)
+    {
+        INFO("run " << run);
+        lazy = ops::execute("bake", {{"project", p}, {"maps", maps}, {"backend", "lazyCpu"}});
+        REQUIRE(lazy["outputs"].size() == lows.size() * maps.size());
+    }
+    std::vector<image::Image> lazyImages;
+    for (const json& o : lazy["outputs"])
+        lazyImages.push_back(readImage(o));
+    const json cpu = ops::execute("bake", {{"project", p}, {"maps", maps}, {"backend", "cpu"}});
+    REQUIRE(cpu["outputs"].size() == lazy["outputs"].size());
+    CHECK(lazy["stats"]["samples"] == cpu["stats"]["samples"]);
+    for (size_t i = 0; i < lazyImages.size(); ++i)
+        CHECK(lazyImages[i].rgba == readImage(cpu["outputs"][i]).rgba);
+    bake::unregisterBackend("lazyCpu");
 }

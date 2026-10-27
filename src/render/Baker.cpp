@@ -18,6 +18,7 @@
 
 #include <glm/gtc/packing.hpp>
 #include <tbb/parallel_for.h>
+#include <tbb/task_arena.h>
 
 #include <algorithm>
 #include <atomic>
@@ -314,6 +315,7 @@ struct KernelChoice
     bool ao = false;
     /** RGBA16F output: exact for values on an 8-bit grid (IDs, masks) and ray counts; positions and normals get 32F. */
     bool half = false;
+    bool thickness = false;
 };
 
 KernelChoice kernelFor(const bake::MapDef& def, const bake::MapSettings& s)
@@ -340,6 +342,8 @@ KernelChoice kernelFor(const bake::MapDef& def, const bake::MapSettings& s)
     }
     if (def.id == "ao" && onlyOptions(o, {"rays", "distance", "scope"}))
         return {-1, true, true};
+    if (def.id == "thickness" && onlyOptions(o, {"rays", "spread", "distance", "invert", "scope"}))
+        return {.thickness = true};
     return {};
 }
 
@@ -689,7 +693,8 @@ const bake::CpuBackend& GpuBackend::cpu() const
         if (!mCpuReady.load(std::memory_order_relaxed))
         {
             auto c = std::make_unique<bake::CpuBackend>();
-            c->prepare(*mInputs);
+            // The build is parallel; isolated, this thread never runs another band that would wait on this lock.
+            tbb::this_task_arena::isolate([&] { c->prepare(*mInputs); });
             mCpu = std::move(c);
             mCpuReady.store(true, std::memory_order_release);
         }
@@ -1384,7 +1389,7 @@ void GpuBackend::shade(const bake::MapDef& def, const bake::MapContext& ctx, std
 
     const KernelChoice k = kernelFor(def, ctx.settings);
     BandSlot* slot = heldSlot();
-    if ((k.map < 0 && !k.ao) || mFailed || !slot || !slot->resident || slot->key != samples.data() || slot->count != samples.size() ||
+    if ((k.map < 0 && !k.ao && !k.thickness) || mFailed || !slot || !slot->resident || slot->key != samples.data() || slot->count != samples.size() ||
         slot->group != ctx.groupIndex)
     {
         Backend::shade(def, ctx, samples, hits, out, valid);
@@ -1410,21 +1415,31 @@ void GpuBackend::shade(const bake::MapDef& def, const bake::MapContext& ctx, std
         const VkDescriptorSet* set = nullptr;
         double cost = 1.0;
         std::atomic<double>* rate = &mShadeRate;
-        if (k.ao)
+        if (k.ao || k.thickness)
         {
             const bake::GroupInputs& gi = ctx.group;
             const int rays = std::clamp(ctx.settings.options.value("rays", 64), 1, 4096);
             const float diag = glm::length(gi.highMax - gi.highMin);
             const double distOpt = ctx.settings.options.value("distance", 0.0);
+            const float dist = distOpt > 0.0 ? float(distOpt) : std::max(diag, 1e-3f);
+            const float eps = std::max(1e-4f * diag, 1e-4f);
             const bake::OccluderScope scope = bake::occluderScope(ctx.settings.options.value("scope", gi.settings.aoScope));
             p.rays = uint32_t(rays);
-            p.boundsMin.w = distOpt > 0.0 ? float(distOpt) : std::max(diag, 1e-3f);
-            p.boundsExt.w = std::max(1e-4f * diag, 1e-4f);
+            if (k.thickness)
+            {
+                const float half = glm::radians(std::clamp(ctx.settings.options.value("spread", 180.0f), 0.0f, 180.0f)) * 0.5f;
+                p.params = glm::vec4(dist, eps, half, 0.0f);
+            }
+            else
+            {
+                p.boundsMin.w = dist;
+                p.boundsExt.w = eps;
+            }
             if (scope == bake::OccluderScope::Self)
                 p.flags |= kFlagScopeSelf;
-            cost = double(rays);
+            cost = double(rays) * (k.thickness ? 1.5 : 1.0);
             rate = &mRayRate;
-            pipe = mHardware ? mAoHw : mAoSw;
+            pipe = k.thickness ? (mHardware ? mThicknessHw : mThicknessSw) : (mHardware ? mAoHw : mAoSw);
             layout = mHardware ? mLayoutHw : mLayoutSw;
             if (scope == bake::OccluderScope::All)
             {
@@ -1458,7 +1473,7 @@ void GpuBackend::shade(const bake::MapDef& def, const bake::MapContext& ctx, std
                 p.table = mIslands[g].address + ctx.group.lows.size() * sizeof(uint32_t);
             }
         }
-        if (k.ao && mHardware && !set)
+        if ((k.ao || k.thickness) && mHardware && !set)
         {
             runTask([this](VulkanContext& vk) {
                 initDevice(vk);

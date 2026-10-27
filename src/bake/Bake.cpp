@@ -23,6 +23,7 @@
 #include "scene/Materials.h"
 
 #include <tbb/parallel_for.h>
+#include <tbb/task_arena.h>
 #include <tbb/task_group.h>
 
 #include <algorithm>
@@ -750,7 +751,7 @@ BakeResult runBake(const BakeInputs& in, const ProjectSettings& ps, const BakeOp
                     if (!tileWork(texOf, false))
                         continue;
                     std::atomic<uint64_t> nSamples{0}, nHits{0}, nBack{0};
-                    tbb::parallel_for(size_t(0), j.raster->bandCount(), [&](size_t band) {
+                    auto bakeBand = [&](size_t band) {
                         progress::Adopt adopt(parent);
                         scope.checkCancel();
                         std::vector<TexelSample> samples;
@@ -828,7 +829,10 @@ BakeResult runBake(const BakeInputs& in, const ProjectSettings& ps, const BakeOp
                         }
                         backend.endBand(samples);
                         scope.step();
-                    });
+                    };
+                    // A band waiting inside a kernel (on a lock around a backend's lazy setup, or on nested parallel work) must
+                    // not pick up another band: that one could take the same lock on the same thread, or the same band slot.
+                    tbb::parallel_for(size_t(0), j.raster->bandCount(), [&](size_t band) { tbb::this_task_arena::isolate([&] { bakeBand(band); }); });
                     if (!resident)
                         countTile(k, u, nSamples, nHits, nBack);
                 }
