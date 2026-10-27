@@ -334,7 +334,7 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* e)
 void ViewportWidget::mouseDoubleClickEvent(QMouseEvent* e)
 {
     // The gizmo is ignored: the first click moved it under the cursor onto the component it selected.
-    if (e->button() == Qt::LeftButton && !(e->modifiers() & (Qt::AltModifier | Qt::ControlModifier)) && !viewportTools::active() &&
+    if (e->button() == Qt::LeftButton && !(e->modifiers() & Qt::AltModifier) && !viewportTools::active() &&
         !mTabHeld && scene::components::mode() != scene::ComponentMode::Object &&
         selectLoopAt(e->position(), e->modifiers()))
     {
@@ -357,9 +357,30 @@ bool ViewportWidget::selectLoopAt(QPointF at, Qt::KeyboardModifiers mods)
     if (!mesh)
         return false;
     const bool symmetric = PrefStore::get().value<bool>("general", "/select/symmetric", true);
+    const bool shift = mods & Qt::ShiftModifier, ctrl = mods & Qt::ControlModifier;
+    // Matches single clicks: Ctrl removes, Shift+Ctrl adds, and Shift toggles, so a Shift click that deselected the edge removes its loop.
+    const char* op = ctrl && shift ? "add" : ctrl ? "deselect" : nullptr;
+    if (shift && !ctrl && !std::ranges::binary_search(scene::components::selected(h.node, mode), h.id))
+        op = "deselect";
     try
     {
-        if (mods & Qt::ShiftModifier)
+        if (op)
+        {
+            json call = {{"args", {n->path()}}, {op, true}, {"symmetric", symmetric}};
+            if (mode == ComponentMode::Edge)
+            {
+                call["edge"] = h.id;
+                ops::execute("selectLoopThrough", call, CallSource::UI);
+            }
+            else
+            {
+                call["kind"] = scene::components::modeName(mode);
+                call["id"] = h.id;
+                ops::execute("selectConnected", call, CallSource::UI);
+            }
+            return true;
+        }
+        if (shift)
         {
             // The double-click's own first click is mClicked[0]; the one before it anchors the path.
             const scene::componentPick::Hover& prev = mClicked[0] == h ? mClicked[1] : mClicked[0];

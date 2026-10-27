@@ -265,6 +265,51 @@ TEST_CASE("pivot edits keep the object in place")
             CHECK(reset[c][r] == doctest::Approx(undone[c][r]).epsilon(1e-9));
 }
 
+TEST_CASE("matchPivot copies position, orientation or both")
+{
+    using namespace lila::scene;
+    run("newScene");
+    run("spaceLocator", {{"name", "A"}});
+    run("spaceLocator", {{"name", "S"}});
+    run("xform", {{"args", {"A"}}, {"translation", {1, 2, 3}}, {"rotation", {10, 0, 0}}, {"scale", {1, 2, 1}}});
+    run("xform", {{"args", {"S"}}, {"translation", {-4, 0, 6}}, {"rotation", {0, 50, 20}}});
+    run("setPivot", {{"args", {"S"}}, {"position", {9, 9, 9}}, {"orient", {0, 0, 30}}});
+    Graph& g = Graph::current();
+    g.evaluate();
+    const glm::dmat4 before = g.find("A")->as<glm::dmat4>(Transform::kWorldMatrix);
+    const glm::dvec3 aPivot = xformops::worldPivot(g, g.find("A")->id());
+    const glm::dmat3 aAxes = xformops::pivotFrame(g, g.find("A")->id());
+    const glm::dmat3 sAxes = xformops::pivotFrame(g, g.find("S")->id());
+    auto near = [](const glm::dmat3& x, const glm::dmat3& y) {
+        for (int c = 0; c < 3; ++c)
+            for (int r = 0; r < 3; ++r)
+                if (std::abs(x[c][r] - y[c][r]) > 1e-6)
+                    return false;
+        return true;
+    };
+
+    run("matchPivot", {{"args", {"S", "A"}}, {"orient", false}});
+    g.evaluate();
+    CHECK(glm::length(xformops::worldPivot(g, g.find("A")->id()) - glm::dvec3(9)) < 1e-6);
+    CHECK(near(xformops::pivotFrame(g, g.find("A")->id()), aAxes));
+
+    run("undo");
+    run("matchPivot", {{"args", {"S", "A"}}, {"position", false}});
+    g.evaluate();
+    CHECK(glm::length(xformops::worldPivot(g, g.find("A")->id()) - aPivot) < 1e-6);
+    CHECK(near(xformops::pivotFrame(g, g.find("A")->id()), sAxes));
+
+    run("undo");
+    run("matchPivot", {{"args", {"S", "A"}}});
+    g.evaluate();
+    CHECK(glm::length(xformops::worldPivot(g, g.find("A")->id()) - glm::dvec3(9)) < 1e-6);
+    CHECK(near(xformops::pivotFrame(g, g.find("A")->id()), sAxes));
+    const glm::dmat4 after = g.find("A")->as<glm::dmat4>(Transform::kWorldMatrix);
+    for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 4; ++r)
+            CHECK(after[c][r] == doctest::Approx(before[c][r]).epsilon(1e-9));
+}
+
 TEST_CASE("closest euler avoids flips")
 {
     using namespace lila::scene;

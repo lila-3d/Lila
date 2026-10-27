@@ -511,6 +511,14 @@ void registerBuiltins()
         "Puts translate, rotate and scale back to their defaults, moving the object.");
     cmd("modify.resetPivot", "Reset Pivot", "Modify", "resetPivot", json::object(), "Moves the pivot back to the object's origin.");
     cmd("modify.zeroPivot", "Zero Pivot", "Modify", "zeroPivot", json::object(), "Moves the pivot to the world origin.");
+    cmd("modify.matchPivot", "Match Pivot", "Modify", "matchPivot", json::object(),
+        "Copies the first selected object's pivot position and orientation onto the other selected objects, without moving them.");
+    cmd("modify.matchPivotPosition", "Match Pivot Position", "Modify", "matchPivot", {{"orient", false}},
+        "Moves the other selected objects' pivots to the first selected object's pivot, keeping their orientation.");
+    cmd("modify.matchPivotOrient", "Match Pivot Orientation", "Modify", "matchPivot", {{"position", false}},
+        "Turns the other selected objects' pivots to the first selected object's pivot axes, keeping their position.");
+    for (const char* id : {"modify.matchPivot", "modify.matchPivotPosition", "modify.matchPivotOrient"})
+        setEnabledWhen(id, [] { return scene::Graph::current().selection().size() >= 2; });
     cmd("modify.orientPivot", "Orient Pivot", "Modify", "orientPivot", json::object(),
         "Turns the object so its X aims from the first picked component to the second, or along a single face, edge or loop, "
         "leaving the mesh where it is. Adjust the axes, up and mode in the popup after.");

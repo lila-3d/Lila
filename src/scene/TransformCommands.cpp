@@ -290,6 +290,39 @@ void registerTransformCommands()
     });
 
     ops::registerCommand({
+        .name = "matchPivot",
+        .doc = "Copy the first object's pivot onto the others, keeping them where they are. position=False keeps their pivot "
+               "positions and orient=False their pivot orientations.",
+        .positionalDoc = "objects (the first is the source)",
+        .flags = {
+            {"position", "p", T::Bool, true, "Copy the pivot's world position."},
+            {"orient", "o", T::Bool, true, "Copy the pivot's world axes."},
+        },
+        .run = [](const Args& a) -> json {
+            const bool position = a.get<bool>("position"), orient = a.get<bool>("orient");
+            if (!position && !orient)
+                throw CommandError("matchPivot: position and orient are both off");
+            auto ids = transformsOf(a, "matchPivot");
+            if (ids.size() < 2)
+                throw CommandError("matchPivot: select the object to copy from, then the ones to change");
+            Graph& g = Graph::current();
+            const NodeId source = ids.front();
+            ids.erase(ids.begin());
+            g.evaluate();
+            const glm::dvec3 at = xformops::worldPivot(g, source);
+            const glm::dmat3 axes = xformops::pivotFrame(g, source);
+            for (NodeId id : ids)
+            {
+                if (orient)
+                    xformops::setWorldPivotFrame(g, id, axes);
+                if (position)
+                    xformops::setWorldPivot(g, id, at);
+            }
+            return nullptr;
+        },
+    });
+
+    ops::registerCommand({
         .name = "pivot",
         .doc = "World position of an object's rotate pivot.",
         .positionalDoc = "object",
