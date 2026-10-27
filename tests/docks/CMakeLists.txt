@@ -1,6 +1,6 @@
 # Dock behaviour on an offscreen QMainWindow, no GPU or display needed.
 add_executable(lila_dock_tests main.cpp test_docks.cpp test_action_docs.cpp test_channel_text.cpp test_outliner_widget.cpp test_progress_overlay.cpp test_hotkey_text.cpp test_option_box.cpp test_spin_scrub.cpp test_node_editor.cpp test_vim_binding.cpp test_tearoff_widget.cpp test_prefs_sections.cpp test_overlay_contrast.cpp test_extension_manager.cpp test_modes.cpp test_theme_widgets.cpp test_baker_panel.cpp test_texture_graph.cpp test_material_browser.cpp test_texture_sets.cpp test_docs_panel.cpp test_delete_routing.cpp test_topology_tool.cpp test_viewport_bars.cpp test_uv_editor_layout.cpp)
-target_sources(lila_dock_tests PRIVATE test_welcome_panels.cpp)
+target_sources(lila_dock_tests PRIVATE test_welcome_panels.cpp test_notes_panel.cpp)
 target_link_libraries(lila_dock_tests PRIVATE LilaUI doctest::doctest)
 add_dependencies(lila_dock_tests lila_slang_runtime)
 if(WIN32)

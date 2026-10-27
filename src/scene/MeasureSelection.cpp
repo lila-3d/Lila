@@ -524,7 +524,6 @@ json measureObjects(const std::vector<NodeId>& ids)
     r.fields["center"] = toJson3(b.center());
     std::string dims = formatLength(size.x, false) + " x " + formatLength(size.y, false) + " x " + formatLength(size.z, false);
     r.lines.push_back("Size " + dims + " " + measure::displayUnit());
-    r.lines.push_back("W " + formatLength(size.x) + "   H " + formatLength(size.y) + "   D " + formatLength(size.z));
     r.fields["kind"] = "bounds";
     r.fields["main"] = "size";
     r.fields["text"] = dims + " " + measure::displayUnit();

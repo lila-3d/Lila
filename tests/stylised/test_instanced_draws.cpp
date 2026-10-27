@@ -175,6 +175,39 @@ TEST_CASE("Instanced draws: placements read their own world matrix")
     CHECK(left < kSize * 0.4);
 }
 
+TEST_CASE("Instanced draws: a live mesh's wire follows each new snapshot of its points")
+{
+    if (!gpu())
+        return;
+    auto first = box(3.0f);
+    first->key = RenderMesh::nextKey();
+    first->dynamic = std::make_shared<DynamicVertices>();
+    first->dynamic->vertices.assign(first->vertices.begin(), first->vertices.end());
+    FrameState s = frameAt(30.0);
+    MeshDraw d;
+    d.mesh = first;
+    d.flags = DrawWire;
+    s.meshes.push_back(d);
+    const double before = litCentroidX(renderFrame(s));
+
+    // A later snapshot of the same live mesh: same key and vertex buffer, points moved.
+    auto moved = std::make_shared<RenderMesh>(*first);
+    for (MeshVertex& v : moved->vertices)
+        v.pos.x += 20.0f;
+    for (glm::vec3& p : moved->edgePoints)
+        p.x += 20.0f;
+    {
+        std::scoped_lock lock(moved->dynamic->mutex);
+        moved->dynamic->vertices.assign(moved->vertices.begin(), moved->vertices.end());
+        moved->dynamic->allDirty = true;
+    }
+    s.meshes[0].mesh = moved;
+    const double after = litCentroidX(renderFrame(s));
+    REQUIRE(before >= 0.0);
+    REQUIRE(after >= 0.0);
+    CHECK(after > before + kSize * 0.2);
+}
+
 TEST_CASE("Instanced draws: wire, selection and translucency per placement")
 {
     if (!gpu())

@@ -75,6 +75,17 @@ LILA_UI_API bool removeMaterialHook(std::string_view id);
 /** The first hook (by id) that takes the node over, true then. */
 LILA_UI_API bool hookedMaterials(scene::NodeId id, const geo::Mesh& mesh, std::vector<render::Material>& materials);
 
+/**
+ * A left click on something a drawer put in the view (a button on a HUD). Return true to take the click, so the viewport
+ * neither selects nor starts a drag.
+ */
+using ClickHook = std::function<bool(QPointF px, const ViewInfo& view)>;
+/** Adding an id again replaces it. */
+LILA_UI_API void setClickHook(std::string id, ClickHook fn);
+LILA_UI_API bool removeClickHook(std::string_view id);
+/** The first hook (by id) that takes the click; true then. */
+LILA_UI_API bool handleClick(QPointF px, const ViewInfo& view);
+
 /** View-only hiding (a bake group's highs while its cage is painted): the node is neither drawn nor picked, and the scene is untouched. */
 using HideHook = std::function<bool(scene::NodeId id)>;
 /** Adding an id again replaces it. */

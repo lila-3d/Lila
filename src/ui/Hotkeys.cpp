@@ -288,18 +288,22 @@ QString Hotkeys::keyFor(const std::string& actionId) const
     return {};
 }
 
+bool Hotkeys::chordMatches(const Chord& chord, QKeyEvent* e)
+{
+    const int held = int(e->modifiers()) & kModMask;
+    // By position the modifiers are the ones held: Windows reports Ctrl+` as '@', which normalizing would read as Shift+2.
+    if (uint32_t scan = eventScancode(e); chord.scan && scan)
+        return chord.scan == scan && chord.mods == held;
+    auto [mods, key] = hotkeys::normalizeShifted(held, e->key());
+    return chord.mods == mods && chord.qtKey == key;
+}
+
 bool Hotkeys::isKeyFor(QKeyEvent* e, const std::string& actionId) const
 {
-    auto [mods, key] = hotkeys::normalizeShifted(int(e->modifiers()) & kModMask, e->key());
-    uint32_t scan = eventScancode(e);
     for (auto& [ctx, list] : mContexts)
         for (auto& [chord, b] : list)
-        {
-            if (chord.mods != mods || !b.targets.press.is_string() || b.targets.press.get<std::string>() != actionId)
-                continue;
-            if (chord.scan && scan ? chord.scan == scan : chord.qtKey == key)
+            if (b.targets.press.is_string() && b.targets.press.get<std::string>() == actionId && chordMatches(chord, e))
                 return true;
-        }
     return false;
 }
 
@@ -316,9 +320,6 @@ bool Hotkeys::textInputFocused(QWidget* w)
 
 std::optional<Hotkeys::Binding> Hotkeys::lookup(QKeyEvent* e, QWidget* focus) const
 {
-    auto [mods, key] = hotkeys::normalizeShifted(int(e->modifiers()) & kModMask, e->key());
-    uint32_t scan = eventScancode(e);
-
     std::vector<std::string> chain;
     QWidget* hovered = QApplication::widgetAt(QCursor::pos());
     for (QWidget* w = hovered; w; w = w->parentWidget())
@@ -338,7 +339,7 @@ std::optional<Hotkeys::Binding> Hotkeys::lookup(QKeyEvent* e, QWidget* focus) co
             chain.push_back(ctx.toStdString());
     chain.push_back("global");
 
-    auto matches = [&](const Chord& chord) { return chord.mods == mods && (chord.scan && scan ? chord.scan == scan : chord.qtKey == key); };
+    auto matches = [&](const Chord& chord) { return chordMatches(chord, e); };
     for (const std::string& ctx : chain)
     {
         const Binding* own = nullptr;

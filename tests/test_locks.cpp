@@ -233,3 +233,30 @@ TEST_CASE("autosave skips a scene that matches its file or the last autosave")
     io::autosave();
     CHECK(settle(2) == 2);
 }
+
+TEST_CASE("move, rotate and scale take one axis with x=, y=, z=")
+{
+    run("newScene");
+    std::string cube = run("polyCube", {{"width", 10}, {"height", 10}, {"depth", 10}})[0];
+    run("move", {{"args", {cube}}, {"to", {5, 6, 7}}});
+    run("move", {{"args", {cube}}, {"x", 0}});
+    CHECK(vec(run("getAttr", {{"args", {cube + ".translate"}}})) == glm::dvec3(0, 6, 7));
+    run("rotate", {{"args", {cube}}, {"to", {10, 20, 30}}});
+    run("rotate", {{"args", {cube}}, {"y", 90}});
+    CHECK(vec(run("getAttr", {{"args", {cube + ".rotate"}}})) == glm::dvec3(10, 90, 30));
+    run("scale", {{"args", {cube}}, {"z", 2}});
+    CHECK(vec(run("getAttr", {{"args", {cube + ".scale"}}})) == glm::dvec3(1, 1, 2));
+    run("rotate", {{"args", {cube}}, {"to", {0, 0, 0}}});
+    run("scale", {{"args", {cube}}, {"to", {1, 1, 1}}});
+
+    // Components: every selected point lands on the plane.
+    run("selectComponents", {{"args", {cube}}, {"vertices", {0, 1, 2, 3, 4, 5, 6, 7}}});
+    run("move", {{"x", 3}});
+    json pts = run("meshData", {{"args", {cube}}, {"worldSpace", true}})["points"];
+    for (const json& p : pts)
+        CHECK(p[0].get<double>() == doctest::Approx(3.0));
+    run("scale", {{"y", 0}});
+    pts = run("meshData", {{"args", {cube}}, {"worldSpace", true}})["points"];
+    for (const json& p : pts)
+        CHECK(p[1].get<double>() == doctest::Approx(6.0));
+}

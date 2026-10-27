@@ -2809,6 +2809,8 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
     clearPreselect();
     mLastPos = e->position();
     setFocus();
+    if (e->button() == Qt::LeftButton && !(e->modifiers() & Qt::AltModifier) && viewportHooks::handleClick(e->position(), viewInfo()))
+        return;
     if (mTabHeld && !viewportTools::active() && e->button() == Qt::LeftButton && !(e->modifiers() & Qt::AltModifier))
     {
         tabSelect::Mode m = tabSelect::modeAtPress(selectedUnder(e->position()), e->modifiers() & Qt::ShiftModifier,

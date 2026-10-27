@@ -3999,13 +3999,18 @@ def morphTargets(*objects: Any) -> Any:
         objects: morph, mesh or target.
     """
 
-def move(*objects: Any, by: Sequence[float] | None = None, to: Sequence[float] | None = None, space: str | None = None) -> Any:
+def move(*objects: Any, by: Sequence[float] | None = None, to: Sequence[float] | None = None, x: float | None = None, y: float | None = None, z: float | None = None, space: str | None = None) -> Any:
     """Move objects. move(by=(x, y, z)) moves relative in `space`; move(to=(x, y, z)) puts each pivot at a world position. A selected parent and child move once.
+
+    move(x=0) sets one world axis and leaves the others: each selected object's pivot, or with components selected every selected point, so move(x=0) puts an edge loop on the centre line.
 
     Args:
         objects: objects.
         by: Relative offset, cm.
         to: Absolute world position of the pivot, cm.
+        x: World X for the pivot, or for every selected point, cm.
+        y: World Y, cm.
+        z: World Z, cm.
         space: 'world', 'object' or 'parent' for `by`. Default 'world'.
     """
 
@@ -5522,13 +5527,18 @@ def roof(*objects: Any, pitch: float | None = None, height: float | None = None,
         name: Mesh name; made unique. Short form n.
     """
 
-def rotate(*objects: Any, by: Sequence[float] | None = None, to: Sequence[float] | None = None, space: str | None = None) -> Any:
+def rotate(*objects: Any, by: Sequence[float] | None = None, to: Sequence[float] | None = None, x: float | None = None, y: float | None = None, z: float | None = None, space: str | None = None) -> Any:
     """Rotate objects about their pivots. rotate(by=(x, y, z)) adds a rotation (degrees, XYZ order) in `space`; rotate(to=(x, y, z)) sets the local Euler angles.
+
+    rotate(x=90) sets one local angle and leaves the others. With components selected it turns them that far about the world axis through their centre instead.
 
     Args:
         objects: objects.
         by: Relative rotation, degrees.
         to: Absolute local rotation, degrees.
+        x: Local X rotation, degrees; on components, a turn about world X.
+        y: Local Y rotation, degrees.
+        z: Local Z rotation, degrees.
         space: 'world', 'object' or 'parent' for `by`. Default 'world'.
     """
 
@@ -5707,13 +5717,18 @@ def scSync(*objects: Any, path: str | None = None) -> Any:
         path: Directory that picks the provider when no files are given. Default: the workspace root.
     """
 
-def scale(*objects: Any, by: Sequence[float] | None = None, to: Sequence[float] | None = None) -> Any:
+def scale(*objects: Any, by: Sequence[float] | None = None, to: Sequence[float] | None = None, x: float | None = None, y: float | None = None, z: float | None = None) -> Any:
     """Scale objects along their own axes. scale(by=(x, y, z)) multiplies; scale(to=(x, y, z)) sets.
+
+    scale(x=2) sets one local scale and leaves the others. With components selected it scales them by that factor along the world axis about their centre instead, so scale(y=0) flattens them.
 
     Args:
         objects: objects.
         by: Factor per axis.
         to: Absolute scale.
+        x: Local X scale; on components, a factor along world X.
+        y: Local Y scale.
+        z: Local Z scale.
     """
 
 def scaleComponents(by: Sequence[float] | None = None, pivot: Sequence[float] | None = None, orient: Sequence[float] | None = None) -> Any:

@@ -9,7 +9,7 @@ lila_module(lila_ui UI
     FlagFields.cpp FlagFields.h
     OptionBox.cpp OptionBox.h
     MenuSearch.cpp MenuSearch.h
-    QuickCommand.cpp QuickCommand.h CommandHistory.h
+    CommandPalette.cpp CommandPalette.h CommandHistory.h
     TexturePicker.cpp TexturePicker.h
     AgentCapture.cpp AgentCapture.h
     AgentSetup.cpp AgentSetup.h
@@ -110,6 +110,7 @@ lila_module(lila_ui UI
     TokenCompleter.cpp TokenCompleter.h
     WheelGuard.cpp WheelGuard.h
     SetsUi.cpp SetsUi.h
+    NotesPanel.cpp NotesPanel.h
     PreferencesDialog.cpp PreferencesDialog.h
     ProgressOverlay.cpp ProgressOverlay.h
     ReferenceEditor.cpp ReferenceEditor.h

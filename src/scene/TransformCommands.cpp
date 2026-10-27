@@ -1,4 +1,5 @@
 #include "ops/Command.h"
+#include "scene/Components.h"
 #include "scene/Graph.h"
 #include "scene/OrientPivot.h"
 #include "scene/RigElements.h"
@@ -29,6 +30,43 @@ glm::dvec3 vec3(const json& j)
     return {j.at(0).get<double>(), j.at(1).get<double>(), j.at(2).get<double>()};
 }
 
+constexpr const char* kAxisFlags[] = {"x", "y", "z"};
+
+/** x=, y=, z=: the axes named, with NaN for the others; nullopt when none is. */
+std::optional<glm::dvec3> axisArgs(const Args& a)
+{
+    glm::dvec3 v(std::numeric_limits<double>::quiet_NaN());
+    bool any = false;
+    for (int i = 0; i < 3; ++i)
+        if (const char* f = kAxisFlags[i]; a.has(f))
+        {
+            v[i] = a.get<double>(f);
+            any = true;
+        }
+    return any ? std::optional(v) : std::nullopt;
+}
+
+/** The axes named in v replace those of current. */
+glm::dvec3 withAxes(glm::dvec3 current, const glm::dvec3& v)
+{
+    for (int i = 0; i < 3; ++i)
+        if (!std::isnan(v[i]))
+            current[i] = v[i];
+    return current;
+}
+
+/** Per-axis flags act on the component selection when there is one and no objects were named. */
+bool onComponents(const Args& a)
+{
+    const ComponentMode m = components::mode();
+    return a.positional.empty() && m != ComponentMode::Object && !components::selected(m).empty();
+}
+
+json vecJson(const glm::dvec3& v)
+{
+    return json::array({v.x, v.y, v.z});
+}
+
 Space spaceArg(const Args& a)
 {
     std::string s = a.get<std::string>("space", "world");
@@ -54,18 +92,48 @@ void registerTransformCommands()
     ops::registerCommand({
         .name = "move",
         .doc = "Move objects. move(by=(x, y, z)) moves relative in `space`; move(to=(x, y, z)) puts each pivot at a world "
-               "position. A selected parent and child move once.",
+               "position. A selected parent and child move once.\n\n"
+               "move(x=0) sets one world axis and leaves the others: each selected object's pivot, or with components selected "
+               "every selected point, so move(x=0) puts an edge loop on the centre line.",
         .positionalDoc = "objects",
         .flags = {
             {"by", "", T::Vec3, nullptr, "Relative offset, cm."},
             {"to", "", T::Vec3, nullptr, "Absolute world position of the pivot, cm."},
+            {"x", "", T::Float, nullptr, "World X for the pivot, or for every selected point, cm."},
+            {"y", "", T::Float, nullptr, "World Y, cm."},
+            {"z", "", T::Float, nullptr, "World Z, cm."},
             {"space", "", T::String, "world", "'world', 'object' or 'parent' for `by`."},
         },
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
+            if (std::optional<glm::dvec3> axes = axisArgs(a))
+            {
+                if (onComponents(a))
+                {
+                    // Squashing the named axes to nothing about a pivot on the target plane lands every point on it.
+                    glm::dvec3 factor(1.0), pivot(0.0);
+                    for (int i = 0; i < 3; ++i)
+                        if (!std::isnan((*axes)[i]))
+                        {
+                            factor[i] = 0.0;
+                            pivot[i] = (*axes)[i];
+                        }
+                    ops::execute("scaleComponents", {{"by", vecJson(factor)}, {"pivot", vecJson(pivot)}});
+                    return nullptr;
+                }
+                auto ids = transformsOf(a, "move");
+                rigel::poseControllers(g, ids, [&] {
+                    for (NodeId id : xformops::topLevel(g, ids))
+                    {
+                        const glm::dvec3 pivot = xformops::worldPivot(g, id);
+                        xformops::moveBy(g, {id}, withAxes(pivot, *axes) - pivot);
+                    }
+                });
+                return nullptr;
+            }
             auto ids = transformsOf(a, "move");
             if (!a.has("to") && !a.has("by"))
-                throw CommandError("move: give by= or to=");
+                throw CommandError("move: give by=, to= or x=, y=, z=");
             // An IK controller poses its chain's joints.
             rigel::poseControllers(g, ids, [&] {
                 if (a.has("to"))
@@ -84,18 +152,40 @@ void registerTransformCommands()
     ops::registerCommand({
         .name = "rotate",
         .doc = "Rotate objects about their pivots. rotate(by=(x, y, z)) adds a rotation (degrees, XYZ order) in `space`; "
-               "rotate(to=(x, y, z)) sets the local Euler angles.",
+               "rotate(to=(x, y, z)) sets the local Euler angles.\n\n"
+               "rotate(x=90) sets one local angle and leaves the others. With components selected it turns them that far about "
+               "the world axis through their centre instead.",
         .positionalDoc = "objects",
         .flags = {
             {"by", "", T::Vec3, nullptr, "Relative rotation, degrees."},
             {"to", "", T::Vec3, nullptr, "Absolute local rotation, degrees."},
+            {"x", "", T::Float, nullptr, "Local X rotation, degrees; on components, a turn about world X."},
+            {"y", "", T::Float, nullptr, "Local Y rotation, degrees."},
+            {"z", "", T::Float, nullptr, "Local Z rotation, degrees."},
             {"space", "", T::String, "world", "'world', 'object' or 'parent' for `by`."},
         },
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
+            if (std::optional<glm::dvec3> axes = axisArgs(a))
+            {
+                if (onComponents(a))
+                {
+                    ops::execute("rotateComponents", {{"by", vecJson(withAxes(glm::dvec3(0.0), *axes))}});
+                    return nullptr;
+                }
+                auto ids = transformsOf(a, "rotate");
+                rigel::poseControllers(g, ids, [&] {
+                    for (NodeId id : ids)
+                    {
+                        const PlugRef plug{id, Transform::kRotate};
+                        g.setValue(plug, g.keepLocked(plug, withAxes(g.node(id)->as<glm::dvec3>(Transform::kRotate), *axes)));
+                    }
+                });
+                return nullptr;
+            }
             auto ids = transformsOf(a, "rotate");
             if (!a.has("to") && !a.has("by"))
-                throw CommandError("rotate: give by= or to=");
+                throw CommandError("rotate: give by=, to= or x=, y=, z=");
             rigel::poseControllers(g, ids, [&] {
                 if (a.has("to"))
                 {
@@ -111,14 +201,33 @@ void registerTransformCommands()
 
     ops::registerCommand({
         .name = "scale",
-        .doc = "Scale objects along their own axes. scale(by=(x, y, z)) multiplies; scale(to=(x, y, z)) sets.",
+        .doc = "Scale objects along their own axes. scale(by=(x, y, z)) multiplies; scale(to=(x, y, z)) sets.\n\n"
+               "scale(x=2) sets one local scale and leaves the others. With components selected it scales them by that factor "
+               "along the world axis about their centre instead, so scale(y=0) flattens them.",
         .positionalDoc = "objects",
         .flags = {
             {"by", "", T::Vec3, nullptr, "Factor per axis."},
             {"to", "", T::Vec3, nullptr, "Absolute scale."},
+            {"x", "", T::Float, nullptr, "Local X scale; on components, a factor along world X."},
+            {"y", "", T::Float, nullptr, "Local Y scale."},
+            {"z", "", T::Float, nullptr, "Local Z scale."},
         },
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
+            if (std::optional<glm::dvec3> axes = axisArgs(a))
+            {
+                if (onComponents(a))
+                {
+                    ops::execute("scaleComponents", {{"by", vecJson(withAxes(glm::dvec3(1.0), *axes))}});
+                    return nullptr;
+                }
+                for (NodeId id : transformsOf(a, "scale"))
+                {
+                    const PlugRef plug{id, Transform::kScale};
+                    g.setValue(plug, g.keepLocked(plug, withAxes(g.node(id)->as<glm::dvec3>(Transform::kScale), *axes)));
+                }
+                return nullptr;
+            }
             auto ids = transformsOf(a, "scale");
             if (a.has("to"))
             {
@@ -128,7 +237,7 @@ void registerTransformCommands()
             else if (a.has("by"))
                 xformops::scaleBy(g, ids, vec3(a.flags["by"]));
             else
-                throw CommandError("scale: give by= or to=");
+                throw CommandError("scale: give by=, to= or x=, y=, z=");
             return nullptr;
         },
     });

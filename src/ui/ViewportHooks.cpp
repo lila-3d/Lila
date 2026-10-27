@@ -166,6 +166,34 @@ bool hiddenInView(scene::NodeId id)
 }
 namespace
 {
+std::map<std::string, ClickHook, std::less<>>& clickHooks()
+{
+    static std::map<std::string, ClickHook, std::less<>> h;
+    return h;
+}
+} // namespace
+
+void setClickHook(std::string id, ClickHook fn) { clickHooks()[std::move(id)] = std::move(fn); }
+
+bool removeClickHook(std::string_view id)
+{
+    auto it = clickHooks().find(id);
+    if (it == clickHooks().end())
+        return false;
+    clickHooks().erase(it);
+    return true;
+}
+
+bool handleClick(QPointF px, const ViewInfo& view)
+{
+    for (const auto& [name, fn] : clickHooks())
+        if (fn && fn(px, view))
+            return true;
+    return false;
+}
+
+namespace
+{
 std::map<std::string, DropHandler, std::less<>>& dropHandlers()
 {
     static std::map<std::string, DropHandler, std::less<>> h;

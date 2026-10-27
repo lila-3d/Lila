@@ -266,10 +266,41 @@ void showHud(const json& result)
     QTimer::singleShot(int(seconds * 1000) + 50, [] { viewportTools::requestRedraw(); });
 }
 
+constexpr const char* kCopyIcon = "copy";
+
+struct HudLayout
+{
+    QStringList lines;
+    QPointF at;
+    double lineH = 18.0;
+    QRectF copy; // the copy button, right of the headline
+};
+
+/** Centred above the view's bottom edge, the headline on top. */
+HudLayout hudLayout(const json& r, const ViewInfo& view)
+{
+    HudLayout l;
+    l.lines = QString::fromStdString(r.value("report", std::string())).split('\n', Qt::SkipEmptyParts);
+    while (l.lines.size() > 10)
+        l.lines.removeLast();
+    float w = 0.0f;
+    for (const QString& line : l.lines)
+        w = std::max(w, OverlayPainter::textWidth(line));
+    l.at = QPointF(std::round(view.width / 2.0 - w / 2.0), std::round(view.height - 28.0 - l.lineH * (l.lines.size() - 1)));
+    const float head = l.lines.isEmpty() ? 0.0f : OverlayPainter::textWidth(l.lines.front());
+    l.copy = QRectF(l.at.x() + head + 10.0, l.at.y() - 13.0, 16.0, 16.0);
+    return l;
+}
+
+bool hudShowing()
+{
+    return !hud().result.is_null() && std::chrono::steady_clock::now() <= hud().until;
+}
+
 void drawHud(OverlayPainter& p, const ViewInfo& view)
 {
     Hud& h = hud();
-    if (h.result.is_null() || std::chrono::steady_clock::now() > h.until)
+    if (!hudShowing())
         return;
     const json& r = h.result;
     for (const json& seg : r.value("segments", json::array()))
@@ -288,16 +319,10 @@ void drawHud(OverlayPainter& p, const ViewInfo& view)
         s.draw(p, view, kHudColor);
     }
 
-    QStringList lines = QString::fromStdString(r.value("report", std::string())).split('\n', Qt::SkipEmptyParts);
-    while (lines.size() > 10)
-        lines.removeLast();
-    float w = 0.0f;
-    for (const QString& l : lines)
-        w = std::max(w, OverlayPainter::textWidth(l));
-    double lineH = 18.0;
-    QPointF at(std::round(view.width / 2.0 - w / 2.0), std::round(view.height - 28.0 - lineH * (lines.size() - 1)));
-    for (int i = 0; i < lines.size(); ++i)
-        p.label(at + QPointF(0, lineH * i), lines[i], i == 0 ? kHudColor : kDimColor);
+    HudLayout l = hudLayout(r, view);
+    for (int i = 0; i < l.lines.size(); ++i)
+        p.label(l.at + QPointF(0, l.lineH * i), l.lines[i], i == 0 ? kHudColor : kDimColor);
+    p.icon(l.copy, kCopyIcon, kHudColor);
 }
 
 void drawMeasures(render::FrameState&, OverlayPainter& p, const ViewInfo& view)
@@ -694,6 +719,16 @@ void copy(const std::string& text, const json& r)
     status(line + "   (copied " + QString::fromStdString(text) + ")");
 }
 
+/** The main number, as the clipboard prefs format it. */
+std::string headline(const json& r)
+{
+    if (std::string main = r.value("main", std::string()); !main.empty() && r.contains(main) && r[main].is_number())
+        return formatField(main, r[main].get<double>(), clipboardUnits());
+    if (r.contains("value") && r["value"].is_string())
+        return r["value"].get<std::string>();
+    return r.value("text", std::string());
+}
+
 /** measureSelection with its HUD; copies the headline, the full report or nothing per /measure/clipboard. */
 void measureSelectionUi()
 {
@@ -707,16 +742,18 @@ void measureSelectionUi()
         status(QString::fromStdString(r->value("report", std::string())).replace('\n', "   |   "));
         return;
     }
-    std::string text;
-    if (mode == "report")
-        text = r->value("report", std::string());
-    else if (std::string main = r->value("main", std::string()); !main.empty() && (*r)[main].is_number())
-        text = formatField(main, (*r)[main].get<double>(), clipboardUnits());
-    else if (r->contains("value") && (*r)["value"].is_string())
-        text = (*r)["value"].get<std::string>();
-    else
-        text = r->value("text", std::string());
-    copy(text, *r);
+    copy(mode == "report" ? r->value("report", std::string()) : headline(*r), *r);
+}
+
+/** The HUD's copy button: copies the headline, or the full report with Shift, and keeps the HUD up a while longer. */
+bool clickHud(QPointF px, const ViewInfo& view)
+{
+    if (!hudShowing() || !hudLayout(hud().result, view).copy.adjusted(-3, -3, 3, 3).contains(px))
+        return false;
+    const json r = hud().result;
+    copy(QApplication::keyboardModifiers() & Qt::ShiftModifier ? r.value("report", std::string()) : headline(r), r);
+    showHud(r);
+    return true;
 }
 
 /** Copies one named number from measureSelection, trying fields in order (Copy Diameter falls back to 2 * radius...). */
@@ -778,6 +815,8 @@ void registerMeasureUi()
     done = true;
     viewportHooks::addDrawer(drawMeasures);
     viewportHooks::addPicker(pickMeasures);
+    overlayIcons::add(kCopyIcon, {.tabler = kCopyIcon});
+    viewportHooks::setClickHook("lila.measureHud", clickHud);
     registerActions();
 }
 } // namespace lila::ui

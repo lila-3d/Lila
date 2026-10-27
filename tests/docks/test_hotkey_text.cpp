@@ -79,6 +79,30 @@ TEST_CASE("Shift+backtick and Shift+1 pick selection modes without the floating 
     qApp->removeEventFilter(&Hotkeys::get());
 }
 
+TEST_CASE("Ctrl+backtick opens the command palette")
+{
+    actions::add({.id = "window.commandPalette", .label = "Command Palette", .category = "Test",
+                  .run = [] { ranActions().push_back("window.commandPalette"); }, .doc = "Test stand-in."});
+    for (const char* id : {"shelf.floatingOpen", "shelf.floatingRelease"})
+        actions::add({.id = id, .label = id, .category = "Test", .run = [id] { ranActions().push_back(id); }, .doc = "Test stand-in."});
+    QWidget w;
+    w.show();
+    w.grabKeyboard();
+    Hotkeys::get().install();
+    for (quint32 scan : {0x29u, 0u})
+    {
+        ranActions().clear();
+        pressAndRelease(&w, Qt::Key_QuoteLeft, Qt::ControlModifier, scan);
+        CHECK(ranActions() == std::vector<std::string>{"window.commandPalette"});
+    }
+    // What Windows actually reports for Ctrl+` on a US layout.
+    ranActions().clear();
+    pressAndRelease(&w, Qt::Key_At, Qt::ControlModifier, 0x29);
+    CHECK(ranActions() == std::vector<std::string>{"window.commandPalette"});
+    w.releaseKeyboard();
+    qApp->removeEventFilter(&Hotkeys::get());
+}
+
 TEST_CASE("held undo repeats on the pref cadence, ignoring key autorepeat, and a tap undoes once")
 {
     int undos = 0;

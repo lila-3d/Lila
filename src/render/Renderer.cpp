@@ -1146,7 +1146,8 @@ struct Renderer::Impl
             else
                 g.vertices = upload(mesh->vertices.data(), mesh->vertices.size() * sizeof(MeshVertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
             g.indices = upload(mesh->indices.data(), mesh->indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-            g.edges = upload(mesh->edgePoints.data(), mesh->edgePoints.size() * sizeof(glm::vec3), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+            g.edges = upload(mesh->edgePoints.data(), mesh->edgePoints.size() * sizeof(glm::vec3),
+                             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | (mesh->dynamic ? VK_BUFFER_USAGE_TRANSFER_DST_BIT : 0));
             g.indexCount = uint32_t(mesh->indices.size());
             g.edgePointCount = uint32_t(mesh->edgePoints.size());
             if (!mesh->edgeMask.empty() && meshWirePipeline)
@@ -1839,7 +1840,12 @@ struct Renderer::Impl
                 dv.dirty.clear();
                 dv.allDirty = false;
             }
-            if (regions.empty())
+            // Every snapshot of a live mesh shares one key, so the wire's points come from whichever copy was uploaded first.
+            GpuMesh& g = it->second;
+            const bool edgesStale = g.keep != d.mesh && !d.mesh->edgePoints.empty() && d.mesh->edgePoints.size() == g.edgePointCount;
+            if (g.keep != d.mesh)
+                g.keep = d.mesh;
+            if (regions.empty() && !edgesStale)
                 continue;
             if (first)
             {
@@ -1848,9 +1854,20 @@ struct Renderer::Impl
                               VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
                 first = false;
             }
-            Buffer staging = createBuffer(data.data(), data.size() * sizeof(MeshVertex), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-            f.staging.push_back(staging);
-            vkCmdCopyBuffer(cmd, staging.buffer, it->second.vertices.buffer, uint32_t(regions.size()), regions.data());
+            if (!regions.empty())
+            {
+                Buffer staging = createBuffer(data.data(), data.size() * sizeof(MeshVertex), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+                f.staging.push_back(staging);
+                vkCmdCopyBuffer(cmd, staging.buffer, g.vertices.buffer, uint32_t(regions.size()), regions.data());
+            }
+            if (edgesStale)
+            {
+                const size_t bytes = d.mesh->edgePoints.size() * sizeof(glm::vec3);
+                Buffer staging = createBuffer(d.mesh->edgePoints.data(), bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+                f.staging.push_back(staging);
+                const VkBufferCopy region{0, 0, bytes};
+                vkCmdCopyBuffer(cmd, staging.buffer, g.edges.buffer, 1, &region);
+            }
         }
         if (!first)
             memoryBarrier(cmd, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT,

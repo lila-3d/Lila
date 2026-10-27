@@ -58,12 +58,13 @@
 #include "ui/OptionBox.h"
 #include "ui/NodeEditor.h"
 #include "ui/Panels.h"
-#include "ui/QuickCommand.h"
+#include "ui/CommandPalette.h"
 #include "ui/UvEditor.h"
 #include "ui/PreferencesDialog.h"
 #include "ui/ProgressOverlay.h"
 #include "ui/ReferenceEditor.h"
 #include "ui/RenderSettingsDialog.h"
+#include "ui/NotesPanel.h"
 #include "ui/SetsUi.h"
 #include "ui/Shelf.h"
 #include "ui/StatusOutput.h"
@@ -330,6 +331,7 @@ void MainWindow::registerPanels()
                  .area = Qt::RightDockWidgetArea, .icon = "stack-2"});
     registerAnimLayersPanel();
     registerOffsetsPanel();
+    registerNotesPanel();
     registerRenamePanel();
     registerBatchRunPanel();
     registerBakerPanel();
@@ -1090,7 +1092,7 @@ void MainWindow::registerActions()
                   "Opens every panel collapsed to a sidebar tab."});
     actions::add({"window.searchMenus", "Search Menus...", "Windows", [this] { menuSearch::openBox(menuBar(), this); }, nullptr,
                   "Finds any item in the main menus by typing part of its name or menu, and runs it or opens its options."});
-    quickCommand::registerActions(this);
+    commandPalette::registerActions(this);
     actions::add({"window.searchScene", "Search Scene...", "Windows", [this] { menuSearch::openSceneFinder(menuBar(), this); }, nullptr,
                   "Finds any object in the scene by name, wildcard, type: or path, selects it and reveals it in the outliner."});
     auto scriptEditor = [this]() -> ScriptEditor* {
@@ -1528,7 +1530,7 @@ void MainWindow::buildMenus()
     menu("Windows", "Windows", Area::MenuBar, syncChecks);
     addItem({.id = "Windows/layouts", .menu = "Windows", .kind = Kind::Custom, .setup = [this](QMenu* m) { m->addMenu(mLayouts->menu()); }});
     menus::addActions("Windows", {"window.resetLayout", "window.expandPanels", "window.toggleMaximizePanel", "#Show", "window.toggleToolBox",
-                           "window.toggleChannelBox", "window.toggleUvEditor", "window.commandLine", "#Customize", "window.hotkeyEditor",
+                           "window.toggleChannelBox", "window.toggleUvEditor", "window.commandPalette", "#Customize", "window.hotkeyEditor",
                            "window.markingMenuEditor", "window.extensionManager"});
 
     menu("Help", "Help");
@@ -1563,7 +1565,7 @@ void MainWindow::fillEditorsMenu(QMenu* menu)
     // Panels by what they are for; a panel not named here (most extension panels) goes under Other.
     static const std::vector<std::pair<const char*, std::vector<const char*>>> kGroups = {
         {"Scene", {"Outliner", "Attribute Editor", "Channel Box", "Display Layers", "Quick Select Sets", "Rename", "Reference Editor",
-                   "Source Control", "Undo History", "Shelf", "Docs"}},
+                   "Source Control", "Undo History", "Notes", "Shelf", "Docs"}},
         {"Modeling", {"Modeling Toolkit", "Topology Toolkit", "Modifier Stack", "Node Editor", "Morph Targets", "Driven Channels",
                       "Foliage Blades", "Tree Generator", "Ground Tiles", "Effects"}},
         {"UVs and Texturing", {"UV Editor", "Material Editor", "Material Browser", "Texture Set", "Texture Graph", "Texture", "2D View", "Baker"}},

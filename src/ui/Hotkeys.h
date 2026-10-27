@@ -105,6 +105,8 @@ private:
     Hotkeys();
     void reload();
     std::optional<Binding> lookup(QKeyEvent* e, QWidget* focus) const;
+    /** By physical key when both sides know it, else by Qt key with shifted symbols normalized. */
+    static bool chordMatches(const Chord& chord, QKeyEvent* e);
     static bool textInputFocused(QWidget* w);
     void onHoldTimeout();
     bool onMousePress(QObject* obj, QMouseEvent* e);
