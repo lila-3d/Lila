@@ -174,6 +174,17 @@ std::vector<const Item*> itemsIn(const std::string& path)
     return {ordered.begin(), ordered.end()};
 }
 
+/** "Edit Mesh > Bevel": the titles of the menus the row sits in, then its label. */
+std::string menuPath(QMenu* menu, const std::string& id)
+{
+    QStringList parts;
+    for (QWidget* w = menu; w; w = w->parentWidget())
+        if (auto* m = qobject_cast<QMenu*>(w); m && !m->title().isEmpty())
+            parts.prepend(QString(m->title()).remove('&'));
+    parts << QString::fromStdString(actions::displayLabel(id));
+    return parts.join(" > ").toStdString();
+}
+
 QAction* addActionRow(QMenu* menu, const std::string& id)
 {
     const Action* a = actions::find(id);
@@ -182,11 +193,14 @@ QAction* addActionRow(QMenu* menu, const std::string& id)
     qa->setToolTip(QString::fromStdString(actions::tooltip(id)));
     if (a)
         qa->setStatusTip(QString::fromStdString(a->doc));
-    QObject::connect(qa, &QAction::triggered, menu, [id] {
+    QObject::connect(qa, &QAction::triggered, menu, [id, menu = QPointer<QMenu>(menu)] {
         if (shelves::addModifierHeld())
             shelves::addToCurrent(id);
         else
+        {
+            actions::ViaScope via(actions::Via::Menu, menuPath(menu, id));
             actions::run(id);
+        }
     });
     return qa;
 }

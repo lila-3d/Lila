@@ -126,6 +126,20 @@ LILA_FOUNDATION_API bool setAdjustable(std::string_view name, bool on = true);
 LILA_FOUNDATION_API int addExecuteListener(std::function<void(const ExecuteEvent&)> fn);
 LILA_FOUNDATION_API void removeExecuteListener(int id);
 
+/** Whether an agent's MCP request is being handled; commands run meanwhile are the agent's. */
+LILA_FOUNDATION_API bool agentCalling();
+LILA_FOUNDATION_API void setAgentCalling(bool on);
+
+/** Marks an agent's request for its lifetime. */
+struct AgentScope
+{
+    AgentScope() : outer(agentCalling()) { setAgentCalling(true); }
+    ~AgentScope() { setAgentCalling(outer); }
+    AgentScope(const AgentScope&) = delete;
+    AgentScope& operator=(const AgentScope&) = delete;
+    bool outer;
+};
+
 /** Python source equivalent of a call, for echo. */
 LILA_FOUNDATION_API std::string toPython(std::string_view name, const json& call);
 

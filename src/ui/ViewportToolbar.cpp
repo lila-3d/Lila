@@ -769,6 +769,7 @@ ViewportBottomBar::ViewportBottomBar(ViewportWidget* view, QWidget* parent) : QW
     snapGroup(mSnapRow, Tool::Rotate, "angle", {}, QString(QChar(0x00B0)));
     snapGroup(mSnapRow, Tool::Scale, "resize", {0.0625, 0.1, 0.125, 0.25, 0.5, 1}, "");
     buildExposureRow();
+    buildPresenterRow();
 
     mChevron = makeChevron(this, "More viewport options");
     QMenu* overflow = mChevron->menu();
@@ -979,6 +980,13 @@ void ViewportBottomBar::buildExposureRow()
     toggleButton(row, "viewport.resetExposure", "exposure")->defaultAction()->setCheckable(false);
     field(row, vd::kExposure, 0.0, -10.0, 10.0, 0.1, "Exposure (stops)");
     field(row, vd::kGamma, 1.0, 0.1, 4.0, 0.05, "Gamma");
+}
+
+void ViewportBottomBar::buildPresenterRow()
+{
+    QWidget* row = group(true, 2, nullptr);
+    toggleButton(row, "view.presenter", "presentation");
+    mPresenterLayout = toggleButton(row, "view.presenterLayout", "layout-board-split");
 }
 
 void ViewportBottomBar::buildSymmetryRow()
@@ -1281,6 +1289,8 @@ void ViewportBottomBar::refresh()
         g.value->setText(stepText(tools::incrementSnap(g.tool).step) + g.unit.trimmed());
     }
     mSnapRow->adjustSize();
+    if (mPresenterLayout)
+        mPresenterLayout->setEnabled(actions::isEnabled(nlohmann::json("view.presenterLayout")));
     refreshRetopo();
     refreshSymmetry();
     layoutItems();

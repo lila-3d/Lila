@@ -65,6 +65,7 @@
 #include "ui/ReferenceEditor.h"
 #include "ui/RenderSettingsDialog.h"
 #include "ui/NotesPanel.h"
+#include "ui/Presenter.h"
 #include "ui/SetsUi.h"
 #include "ui/Shelf.h"
 #include "ui/StatusOutput.h"
@@ -1093,6 +1094,7 @@ void MainWindow::registerActions()
     actions::add({"window.searchMenus", "Search Menus...", "Windows", [this] { menuSearch::openBox(menuBar(), this); }, nullptr,
                   "Finds any item in the main menus by typing part of its name or menu, and runs it or opens its options."});
     commandPalette::registerActions(this);
+    presenter::install(this);
     actions::add({"window.searchScene", "Search Scene...", "Windows", [this] { menuSearch::openSceneFinder(menuBar(), this); }, nullptr,
                   "Finds any object in the scene by name, wildcard, type: or path, selects it and reveals it in the outliner."});
     auto scriptEditor = [this]() -> ScriptEditor* {
@@ -1530,7 +1532,7 @@ void MainWindow::buildMenus()
     menu("Windows", "Windows", Area::MenuBar, syncChecks);
     addItem({.id = "Windows/layouts", .menu = "Windows", .kind = Kind::Custom, .setup = [this](QMenu* m) { m->addMenu(mLayouts->menu()); }});
     menus::addActions("Windows", {"window.resetLayout", "window.expandPanels", "window.toggleMaximizePanel", "#Show", "window.toggleToolBox",
-                           "window.toggleChannelBox", "window.toggleUvEditor", "window.commandPalette", "#Customize", "window.hotkeyEditor",
+                           "window.toggleChannelBox", "window.toggleUvEditor", "window.commandPalette", "view.presenter", "#Customize", "window.hotkeyEditor",
                            "window.markingMenuEditor", "window.extensionManager"});
 
     menu("Help", "Help");

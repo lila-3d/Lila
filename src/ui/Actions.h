@@ -103,6 +103,63 @@ LILA_UI_API std::string displayLabel(const std::string& id);
 /** Targets run recently through run(), newest first and without repeats (the hotbox's Recent Commands). */
 LILA_UI_API std::vector<nlohmann::json> recent();
 
+/** Where a run came from, for the presenter. */
+enum class Via : uint8_t
+{
+    Button, // toolbars, panels and anything else not listed
+    Key,
+    Menu,
+    MarkingMenu,
+    Palette,
+    Shelf,
+};
+
+struct Trigger
+{
+    Via via = Via::Button;
+    std::string path; // the menu path, "Edit Mesh > Bevel", when known
+};
+
+/** Runs started in its lifetime count as coming from `via`. */
+class LILA_UI_API ViaScope
+{
+public:
+    explicit ViaScope(Via via, std::string path = {});
+    ~ViaScope();
+    ViaScope(const ViaScope&) = delete;
+    ViaScope& operator=(const ViaScope&) = delete;
+
+private:
+    Trigger mOuter;
+};
+
+/** One top-level run, reported before the target runs and again once it has. */
+struct RunEvent
+{
+    const nlohmann::json& target;
+    const Trigger& trigger;
+    bool done = false;
+    bool ok = false;
+};
+
+LILA_UI_API int addRunListener(std::function<void(const RunEvent&)> fn);
+LILA_UI_API void removeRunListener(int id);
+
+/** Reports `target` to the run listeners for its lifetime, for work that runs one without run(), such as palette Python. */
+class LILA_UI_API RunReport
+{
+public:
+    explicit RunReport(nlohmann::json target);
+    ~RunReport();
+    RunReport(const RunReport&) = delete;
+    RunReport& operator=(const RunReport&) = delete;
+    bool ok = false;
+
+private:
+    nlohmann::json mTarget;
+    bool mTop = false;
+};
+
 /** Human-readable label for a target (menus, cheat sheet). */
 LILA_UI_API std::string labelFor(const nlohmann::json& target);
 

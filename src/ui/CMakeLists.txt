@@ -111,6 +111,7 @@ lila_module(lila_ui UI
     WheelGuard.cpp WheelGuard.h
     SetsUi.cpp SetsUi.h
     NotesPanel.cpp NotesPanel.h
+    Presenter.cpp Presenter.h
     PreferencesDialog.cpp PreferencesDialog.h
     ProgressOverlay.cpp ProgressOverlay.h
     ReferenceEditor.cpp ReferenceEditor.h

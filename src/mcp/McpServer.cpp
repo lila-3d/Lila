@@ -1,3 +1,4 @@
+#include "ops/Command.h"
 #include "mcp/McpServer.h"
 
 #include "core/ExtensionContext.h"
@@ -121,7 +122,10 @@ struct Server::Impl
                     return rpcError(id, -32602, "unknown tool " + name);
                 tool = it->second;
             }
-            auto [content, isError] = onMain([tool, args] { return tool.runContent ? tool.runContent(args) : textContent(tool.run(args)); });
+            auto [content, isError] = onMain([tool, args] {
+                ops::AgentScope agent;
+                return tool.runContent ? tool.runContent(args) : textContent(tool.run(args));
+            });
             return rpcResult(id, {{"content", content}, {"isError", isError}});
         }
         if (method == "resources/list")

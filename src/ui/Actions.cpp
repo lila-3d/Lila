@@ -186,7 +186,84 @@ std::vector<const Action*> all()
     return out;
 }
 
+namespace
+{
+Trigger& currentTrigger()
+{
+    static Trigger t;
+    return t;
+}
+
+std::map<int, std::function<void(const RunEvent&)>>& runListeners()
+{
+    static std::map<int, std::function<void(const RunEvent&)>> l;
+    return l;
+}
+
+int& runDepth()
+{
+    static int depth = 0;
+    return depth;
+}
+
+void notifyRun(const json& target, bool done, bool ok)
+{
+    Trigger t = currentTrigger();
+    if (t.via == Via::Button && Hotkeys::fromKey())
+        t.via = Via::Key;
+    const RunEvent e{target, t, done, ok};
+    auto listeners = runListeners();
+    for (auto& [id, fn] : listeners)
+        fn(e);
+}
+
+bool runTarget(const json& target);
+} // namespace
+
+ViaScope::ViaScope(Via via, std::string path) : mOuter(std::exchange(currentTrigger(), Trigger{via, std::move(path)}))
+{
+}
+
+ViaScope::~ViaScope()
+{
+    currentTrigger() = std::move(mOuter);
+}
+
+int addRunListener(std::function<void(const RunEvent&)> fn)
+{
+    static int next = 1;
+    runListeners()[next] = std::move(fn);
+    return next++;
+}
+
+void removeRunListener(int id)
+{
+    runListeners().erase(id);
+}
+
+RunReport::RunReport(json target) : mTarget(std::move(target)), mTop(runDepth()++ == 0)
+{
+    if (mTop)
+        notifyRun(mTarget, false, false);
+}
+
+RunReport::~RunReport()
+{
+    --runDepth();
+    if (mTop)
+        notifyRun(mTarget, true, ok);
+}
+
 bool run(const json& target)
+{
+    RunReport report(target);
+    report.ok = runTarget(target);
+    return report.ok;
+}
+
+namespace
+{
+bool runTarget(const json& target)
 {
     if (target.is_string())
     {
@@ -235,6 +312,7 @@ bool run(const json& target)
     }
     return false;
 }
+} // namespace
 
 bool repeatable(const json& target)
 {

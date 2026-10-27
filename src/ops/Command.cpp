@@ -235,6 +235,21 @@ bool setAdjustable(std::string_view name, bool on)
     return true;
 }
 
+namespace
+{
+bool sAgentCalling = false;
+} // namespace
+
+bool agentCalling()
+{
+    return sAgentCalling;
+}
+
+void setAgentCalling(bool on)
+{
+    sAgentCalling = on;
+}
+
 int addExecuteListener(std::function<void(const ExecuteEvent&)> fn)
 {
     static int next = 1;

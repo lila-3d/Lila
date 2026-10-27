@@ -68,6 +68,9 @@ void runLine(const QString& code)
     }
     history().add(code);
     saveHistory();
+    actions::ViaScope via(actions::Via::Palette);
+    actions::RunReport report(nlohmann::json{{"python", code.toStdString()}});
+    report.ok = true;
     log::write(LogLevel::Echo, code.toStdString() + "\n");
     // A bare command name runs it rather than printing the function.
     static const QRegularExpression bareName(R"(^\s*([A-Za-z_][\w.]*)\s*$)");
@@ -263,6 +266,7 @@ private:
             return;
         const PaletteResult r = mFound[mFound.size() - 1 - size_t(row)];
         close();
+        actions::ViaScope via(actions::Via::Palette);
         if (!r.action.empty())
             actions::run(nlohmann::json(r.action));
         else

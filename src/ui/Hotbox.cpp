@@ -264,7 +264,10 @@ QMenu* Hotbox::recentMenu()
     mRecent->clear();
     for (const nlohmann::json& target : actions::recent())
     {
-        QAction* a = mRecent->addAction(QString::fromStdString(actions::labelFor(target)), [target] { actions::run(target); });
+        QAction* a = mRecent->addAction(QString::fromStdString(actions::labelFor(target)), [target] {
+            actions::ViaScope via(actions::Via::Menu, "Recent Commands");
+            actions::run(target);
+        });
         a->setToolTip(QString::fromStdString(target.is_string() ? actions::tooltip(target.get<std::string>()) : actions::pythonFor(target)));
     }
     if (mRecent->isEmpty())

@@ -664,6 +664,7 @@ void ShelfPage::rebuild()
         json target = item.value("target", json());
         connect(b, &QToolButton::clicked, this, [this, target] {
             Q_EMIT triggered();
+            actions::ViaScope via(actions::Via::Shelf);
             if (!actions::run(target))
                 log::warn("shelf: '{}' failed", actions::labelFor(target));
         });

@@ -139,6 +139,8 @@ private:
     void buildDisplayRow();
     /** Reset, exposure and gamma. */
     void buildExposureRow();
+    /** Presenter mode and, while it is on, editing its layout. */
+    void buildPresenterRow();
     /** Retopo Draw's line snap angle and space and its surface, while the tool runs. */
     void buildRetopoRow();
     void refreshRetopo();
@@ -177,6 +179,7 @@ private:
     QToolButton* mRetopoAngle = nullptr;
     QToolButton* mRetopoSurface = nullptr;
     QToolButton* mSymmetryToggle = nullptr;
+    QToolButton* mPresenterLayout = nullptr;
     QToolButton* mSymmetryAxis = nullptr;
     QTimer* mSymmetryRefresh = nullptr;
     int mGraphListener = 0;

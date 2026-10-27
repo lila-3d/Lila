@@ -612,13 +612,19 @@ bool MarkingMenu::release()
     if (options && shelves::addModifierHeld())
         shelves::addToCurrent(boxAction.is_null() ? json{{"optionBox", action.get<std::string>()}} : boxAction);
     else if (options && !boxAction.is_null())
-        QTimer::singleShot(0, [boxAction] { actions::run(boxAction); });
+        QTimer::singleShot(0, [boxAction] {
+            actions::ViaScope via(actions::Via::MarkingMenu);
+            actions::run(boxAction);
+        });
     else if (options)
         QTimer::singleShot(0, [id = action.get<std::string>()] { optionBox::open(id); });
     else if (shelves::addModifierHeld())
         shelves::addToCurrent(action);
     else
-        QTimer::singleShot(0, [action] { actions::run(action); });
+        QTimer::singleShot(0, [action] {
+            actions::ViaScope via(actions::Via::MarkingMenu);
+            actions::run(action);
+        });
     return true;
 }
 
