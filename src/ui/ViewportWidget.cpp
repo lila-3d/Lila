@@ -632,6 +632,12 @@ void ViewportWidget::requestFrame()
 
 void ViewportWidget::updateCursor()
 {
+    if (mFramePickArmed)
+    {
+        if (cursor().shape() != Qt::CrossCursor)
+            setCursor(Qt::CrossCursor);
+        return;
+    }
     if (ViewportTool* tool = viewportTools::active())
     {
         QCursor want = tool->cursor().value_or(QCursor(Qt::ArrowCursor));
@@ -2804,11 +2810,89 @@ void ViewportWidget::frameSelection(bool all)
     requestFrame();
 }
 
+std::optional<glm::dvec3> ViewportWidget::surfaceAt(QPointF px)
+{
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    const ViewInfo view = viewInfo();
+    glm::dvec3 o, d;
+    view.ray(px, o, d);
+    const bool inherit = scene::inheritVisibility();
+    const std::unordered_set<scene::NodeId> lodHidden = scene::lod::hidden(g, lodDisplay::view(mHudPanel, view));
+    double nearest = 1e300;
+    for (scene::NodeId id : g.nodes())
+    {
+        scene::Node* n = g.node(id);
+        if (!n->type().isA("mesh") || overridden(*n) || !scene::effectivelyVisible(g, id, inherit) || !mIsolation.shows(id) ||
+            !scene::selectionMask::shown(*n) || viewportHooks::hiddenInView(id) || lodHidden.contains(id))
+            continue;
+        const int smooth = int(n->as<int64_t>(scene::MeshNode::kSmoothPreview));
+        const scene::MeshPtr& mesh = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+        const glm::dmat4 world = shownWorld(*n);
+        std::vector<glm::dmat4> placed{world};
+        for (const scene::arrays::Copy& c : scene::arrays::copiesOf(g, id))
+            placed.push_back(c.transform * world);
+        for (const glm::dmat4& at : placed)
+            if (auto hit = isolate::raycast(&mIsolation, id, mesh, at, o, d, smooth); hit && hit->distance < nearest)
+                nearest = hit->distance;
+    }
+    if (nearest == 1e300)
+        return std::nullopt;
+    return o + d * nearest;
+}
+
+bool ViewportWidget::frameAt(QPointF px)
+{
+    std::optional<glm::dvec3> hit = surfaceAt(px);
+    if (!hit)
+        return false;
+    if (mLookThrough != scene::kNoNode)
+    {
+        syncLookThrough();
+        if (!beginCameraEdit())
+            return true;
+    }
+    CameraView before = cameraView();
+    const glm::dvec3 eye = mCamera.eye();
+    mCamera.target = *hit;
+    if (!mCamera.ortho)
+        mCamera.distance = std::max(glm::length(*hit - eye), 0.5);
+    if (mLookThrough != scene::kNoNode)
+        previewCameraEdit();
+    recordCamera(before);
+    commitCameraEdit();
+    requestFrame();
+    return true;
+}
+
+void ViewportWidget::frameUnderCursor()
+{
+    const QPointF cursor = mapFromGlobal(QCursor::pos().toPointF());
+    if (rect().contains(cursor.toPoint()))
+    {
+        frameAt(cursor);
+        return;
+    }
+    mFramePickArmed = true;
+    updateCursor();
+}
+
 void ViewportWidget::mousePressEvent(QMouseEvent* e)
 {
     clearPreselect();
     mLastPos = e->position();
     setFocus();
+    if (mFramePickArmed && !(e->modifiers() & Qt::AltModifier))
+    {
+        mFramePickArmed = false;
+        if (e->button() == Qt::LeftButton)
+        {
+            frameAt(e->position());
+            mSwallowRelease = true;
+        }
+        updateCursor();
+        return;
+    }
     if (e->button() == Qt::LeftButton && !(e->modifiers() & Qt::AltModifier) && viewportHooks::handleClick(e->position(), viewInfo()))
         return;
     if (mTabHeld && !viewportTools::active() && e->button() == Qt::LeftButton && !(e->modifiers() & Qt::AltModifier))
@@ -3231,6 +3315,12 @@ void ViewportWidget::keyPressEvent(QKeyEvent* e)
 
 void ViewportWidget::escape()
 {
+    if (mFramePickArmed)
+    {
+        mFramePickArmed = false;
+        updateCursor();
+        return;
+    }
     QKeyEvent e(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
     if (ViewportTool* tool = viewportTools::active(); tool && tool->keyPress(&e, viewInfo()))
     {

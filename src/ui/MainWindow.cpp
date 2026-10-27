@@ -1009,6 +1009,17 @@ void MainWindow::registerActions()
                   "Moves the active view's camera to fit the selection."});
     actions::add({"viewport.frameAll", "Frame All", "View", [this] { mViewports->active()->frameSelection(true); }, nullptr,
                   "Moves the active view's camera to fit everything in the scene."});
+    actions::add({"viewport.frameUnderCursor", "Frame Under Cursor", "View",
+                  [this] {
+                      ViewportWidget* view = mViewports->active();
+                      for (ViewportWidget* v : mViewports->views())
+                          if (v->isVisible() && v->rect().contains(v->mapFromGlobal(QCursor::pos())))
+                              view = v;
+                      view->frameUnderCursor();
+                  },
+                  nullptr,
+                  "Centres the view on the surface under the cursor, keeping its distance. From a button, click the surface "
+                  "afterwards."});
     actions::add({"viewport.cameraUndo", "Undo View Change", "View", [this] { mViewports->active()->cameraUndo(); }, nullptr,
                   "Puts the active view's camera back where it was before its last move. Separate from scene undo."});
     actions::add({"viewport.cameraRedo", "Redo View Change", "View", [this] { mViewports->active()->cameraRedo(); }, nullptr,
@@ -1527,7 +1538,7 @@ void MainWindow::buildMenus()
     addSubmenu("Display", "Views", syncChecks);
     menus::addActions("Display/Views", {"viewport.view.persp", "viewport.view.top", "viewport.view.front", "viewport.view.right", "viewport.view.left",
                                  "viewport.view.back", "viewport.view.bottom"});
-    menus::addActions("Display", {"viewport.frameSelected", "viewport.frameAll", "viewport.cameraUndo", "viewport.cameraRedo", "#Overlays",
+    menus::addActions("Display", {"viewport.frameSelected", "viewport.frameAll", "viewport.frameUnderCursor", "viewport.cameraUndo", "viewport.cameraRedo", "#Overlays",
                            "viewport.toggleGrid", "viewport.toggleResolutionGate", "viewport.toggleFilmGate", "viewport.cameraSettings",
                            "window.renderSettings", "#View", "viewport.toggleToolbar", "viewport.toggleBottomBar", "window.toggleToolBox", "viewport.resetExposure"});
 

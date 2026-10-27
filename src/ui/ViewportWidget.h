@@ -52,6 +52,11 @@ public:
     void requestFrame();
     void frameSelection(bool all);
     /**
+     * Centres the view on the surface under the cursor, keeping its distance. With the cursor elsewhere (a toolbar
+     * button) the next click in the view picks the point instead.
+     */
+    void frameUnderCursor();
+    /**
      * "persp", "top", "bottom", "front", "back", "left" or "right", or a camera node's name to look through it. The
      * perspective camera is kept while away. Unknown names are ignored.
      */
@@ -163,6 +168,9 @@ private:
     void updateTabHover(QPointF at);
     /** The skinned mesh under the cursor, or empty. */
     std::string skinnedMeshAt(QPointF at);
+    /** The nearest drawn surface point under the pixel, or nullopt over empty space. */
+    std::optional<glm::dvec3> surfaceAt(QPointF px);
+    bool frameAt(QPointF px);
     void pick(QPointF a, QPointF b, Qt::KeyboardModifiers mods);
     /** Component-mode picking on the hilited meshes. */
     void pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers mods);
@@ -239,6 +247,7 @@ private:
     /** The last two components clicked, newest first: Shift+double-click selects the path between them. */
     scene::componentPick::Hover mClicked[2];
     bool mFrameQueued = false;
+    bool mFramePickArmed = false; // the next click frames the surface under it
     int mGraphListener = 0;
     int mPrefListener = 0;
     int mToolListener = 0;

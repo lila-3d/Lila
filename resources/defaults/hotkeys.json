@@ -79,6 +79,7 @@
     },
     "viewport": {
       "F": "viewport.frameSelected",
+      "Alt+F": "viewport.frameUnderCursor",
       "Ctrl+1": "viewport.isolate",
       "A": "viewport.frameAll",
       "F8": "select.objectMode",
