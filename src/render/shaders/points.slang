@@ -21,7 +21,7 @@ struct VSOut
 {
     float4 pos : SV_Position;
     nointerpolation float4 color : COLOR;
-    [[vk::builtin("PointSize")]] float size : PSIZE;
+    float size : SV_PointSize;
 };
 
 [shader("vertex")]
@@ -40,7 +40,7 @@ VSOut pointsVS(VSIn v)
 }
 
 [shader("fragment")]
-float4 pointsPS(VSOut i) : SV_Target
+float4 pointsPS(nointerpolation float4 color : COLOR) : SV_Target
 {
-    return i.color;
+    return color;
 }
