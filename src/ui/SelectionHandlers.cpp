@@ -133,8 +133,8 @@ std::vector<std::string> redirect(const std::vector<Hit>& hits)
             for (const std::string& name : *to)
                 if (std::string as = applySelectAs(name); !maskedOut(as))
                     picked.push_back(as);
-        // A redirect onto a masked kind (a joint with the joint mask off) selects what was clicked instead.
-        if (picked.empty())
+        // A redirect onto a masked kind (a joint with the joint mask off) selects what was clicked instead; an empty one drops the hit.
+        if (!to || (!to->empty() && picked.empty()))
             push(hit.name);
         for (const std::string& name : picked)
             push(name);
