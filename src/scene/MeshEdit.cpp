@@ -1652,7 +1652,9 @@ void registerMeshEditCommands()
             for (const geo::Mesh& m : worldMeshes)
                 ptrs.push_back(&m);
             geo::Mesh combined = geo::combine(ptrs);
-            Node* out = g.createNode(*types::find("mesh"), a.get<std::string>("name", names.back()), kNoNode, true);
+            std::string last = names.back();
+            last = last.substr(last.rfind('|') + 1);
+            Node* out = g.createNode(*types::find("mesh"), a.get<std::string>("name", last), kNoNode, true);
             g.setValue({out->id(), MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(std::move(combined))));
             std::vector<NodeId> sources;
             for (const std::string& name : names)

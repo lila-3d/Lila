@@ -242,7 +242,7 @@ TEST_CASE("orientPivot command: pick order, pivot mode, undo")
 
     const std::vector<glm::dvec3> before = worldPoints(plane);
     const glm::dmat4 worldBefore = worldOf(plane);
-    json r = run("orientPivot", {{"upReference", "world"}});
+    json r = run("orientPivot", {{"upReference", "world"}, {"mode", "pivot"}});
     scene::Graph& g = scene::Graph::current();
     scene::NodeId id = node(plane).id();
     glm::dmat3 pf = scene::xformops::pivotFrame(g, id);
@@ -256,7 +256,7 @@ TEST_CASE("orientPivot command: pick order, pivot mode, undo")
         CHECK(near(glm::dvec3(worldAfter[c]), glm::dvec3(worldBefore[c])));
     CHECK(worldPoints(plane) == before);
 
-    run("orientPivot", {{"aim", "z"}, {"up", "y"}, {"position", "center"}, {"upReference", "world"}});
+    run("orientPivot", {{"aim", "z"}, {"up", "y"}, {"position", "center"}, {"upReference", "world"}, {"mode", "pivot"}});
     pf = scene::xformops::pivotFrame(g, id);
     CHECK(near(pf[2], glm::normalize(glm::dvec3(1, 0, 1))));
     CHECK(near(scene::xformops::worldPivot(g, id), {10, 0, 0}));

@@ -47,7 +47,7 @@ void runCommand(const char* name, const json& call = json::object())
     {
         ops::execute(name, call, CallSource::UI);
     }
-    catch (const CommandError& e)
+    catch (const std::exception& e)
     {
         log::error("{}", e.what());
     }
@@ -138,7 +138,7 @@ void runWithOptions(const std::string& command, const json& call)
     {
         ops::execute(command, ops::options::callWith(command, call), CallSource::UI);
     }
-    catch (const CommandError& e)
+    catch (const std::exception& e)
     {
         log::error("{}", e.what());
     }
@@ -215,7 +215,7 @@ bool run(const json& target)
             remember(target);
             return true;
         }
-        catch (const CommandError& e)
+        catch (const std::exception& e)
         {
             log::error("{}", e.what());
             return false;
@@ -434,8 +434,13 @@ void registerBuiltins()
         "Puts translate, rotate and scale back to their defaults, moving the object.");
     cmd("modify.resetPivot", "Reset Pivot", "Modify", "resetPivot", json::object(), "Moves the pivot back to the object's origin.");
     cmd("modify.orientPivot", "Orient Pivot", "Modify", "orientPivot", json::object(),
-        "Aims the pivot's X from the first picked component to the second, or along a single face, edge or loop. Adjust the axes, "
-        "up and mode in the popup after.");
+        "Turns the object so its X aims from the first picked component to the second, or along a single face, edge or loop, "
+        "leaving the mesh where it is. Adjust the axes, up and mode in the popup after.");
+    cmd("modify.pinComponentPivot", "Pin Component Pivot", "Modify", "pinComponentPivot", json::object(),
+        "Keeps the component manipulator's axes, and its position once moved with Edit Pivot, through selection changes until "
+        "reset. Click its label in the viewport to reset.");
+    cmd("modify.resetComponentPivot", "Reset Component Pivot", "Modify", "resetComponentPivot", json::object(),
+        "Puts the component manipulator back on the selection's centre and the tool's own axes.");
     cmd("edit.parent", "Parent", "Edit", "parent", json::object(), "Parents the selected objects under the one selected last.");
     cmd("edit.unparent", "Unparent", "Edit", "parent", {{"world", true}}, "Moves the selected objects to the top of the hierarchy, keeping where they are.");
     cmd("edit.ungroup", "Ungroup", "Edit", "ungroup", json::object(), "Moves the selected groups' children up a level and deletes the groups.");
@@ -456,7 +461,7 @@ void registerBuiltins()
                   }
                   ops::execute("select", {{"args", all}}, CallSource::UI);
               }
-              catch (const CommandError& e)
+              catch (const std::exception& e)
               {
                   log::error("{}", e.what());
               }

@@ -48,6 +48,13 @@ public:
 
     /** Lets orientPivot place the component manipulator (scene::orientpivot::setManipulatorSink). */
     static void installOrientPivotSink();
+    /**
+     * Pins the component manipulator's current axes (and its position, once moved with Edit Pivot) so they survive
+     * selection and component mode changes until resetComponentPivot. Undoable.
+     */
+    static void pinComponentPivot();
+    static void resetComponentPivot();
+    static bool componentPivotPinned();
 
     void setView(const ViewInfo& v) override { mView = v; }
     bool supports(std::string_view mode) const override;
@@ -67,7 +74,7 @@ public:
     void release() override;
     void cancel() override;
     bool dragging() const override { return mDrag.has_value() || mExtrude.dragging(); }
-    bool hovering() const override { return mHover != Handle::None || mExtrudeHover != ExtrudeHandles::Handle::None; }
+    bool hovering() const override { return mHover != Handle::None || mExtrudeHover != ExtrudeHandles::Handle::None || mBadgeHover; }
     /** The hovered handle only drives locked channels, so pressing it does nothing. */
     bool hoveringLocked() const override { return mHover != Handle::None && handleLocked(mHover); }
     /** Shift is slowing the current drag down. */
@@ -172,6 +179,8 @@ private:
     void syncHandleResets();
     bool handlesCurrent() const;
     std::vector<QPointF> ringPoints(int axisIndex, bool frontOnly) const;
+    /** The pinned component pivot's Reset label beside the manipulator, when it shows. */
+    std::optional<QRectF> badgeRect() const;
 
     ViewInfo mView;
     std::vector<scene::NodeId> mTargets;
@@ -189,5 +198,6 @@ private:
     std::optional<Drag> mDrag;
     ExtrudeHandles mExtrude;
     ExtrudeHandles::Handle mExtrudeHover = ExtrudeHandles::Handle::None;
+    bool mBadgeHover = false;
 };
 } // namespace lila::ui

@@ -5,6 +5,7 @@
   "NE": { "label": "Normal", "action": "manip.move.normal" },
   "S": { "label": "Edit Pivot", "action": "tool.pivotEditToggle" },
   "SW": { "label": "Orient Pivot", "action": "modify.orientPivot" },
+  "NW": { "label": "Pin Pivot", "action": "modify.pinComponentPivot" },
   "SE": { "label": "Soft Select", "action": "softSelect.toggle" },
   "overflow": []
 }

@@ -66,15 +66,24 @@ bool rotateComponentSpace() { return PrefStore::get().value<std::string>("genera
 /** "world", "object" or "component" (the selection's average normal and tangent). Objects always scale on their own axes. */
 std::string scaleSpace() { return PrefStore::get().value<std::string>("general", "/manipulator/scaleSpace", "world"); }
 
-/** A pivot placed with Edit Pivot on a component selection, shared by every viewport; it lasts until that selection changes. */
+/**
+ * A pivot placed with Edit Pivot on a component selection, shared by every viewport. It lasts until that selection
+ * changes, or while pinned until it is reset.
+ */
 struct ComponentPivot
 {
     scene::ComponentMode mode = scene::ComponentMode::Object;
     std::map<NodeId, scene::components::Ids> selection;
     glm::dvec3 position{0.0};
     std::optional<glm::dmat3> frame;
+    bool pinned = false;
+    /** Pinned with a position of its own; otherwise a pinned pivot sits at the selection's centre. */
+    bool placed = false;
 };
 std::optional<ComponentPivot> gComponentPivot;
+/** Where the component manipulator last sat and how it was turned, which Pin Component Pivot keeps. */
+std::optional<std::pair<glm::dvec3, glm::dmat3>> gLastComponentManip;
+const QString kBadgeText = QString::fromUtf8("Pinned pivot  ×");
 
 struct ComponentPivotAction final : UndoAction
 {
@@ -222,11 +231,58 @@ void Manipulator::installOrientPivotSink()
             return;
         auto a = std::make_unique<ComponentPivotAction>();
         a->before = gComponentPivot;
-        gComponentPivot = ComponentPivot{mode, scene::components::selected(mode), position, frame};
+        gComponentPivot = ComponentPivot{mode, scene::components::selected(mode), position, frame, true, false};
         a->after = gComponentPivot;
         UndoStack::get().record(std::move(a));
     });
+    ops::registerCommand({
+        .name = "pinComponentPivot",
+        .doc = "Pin the component manipulator where it is and how it is turned, so it stays through selection and component "
+               "mode changes until resetComponentPivot. It follows the selection's centre unless moved with Edit Pivot.",
+        .run = [](const Args&) -> json {
+            if (scene::components::mode() == scene::ComponentMode::Object)
+                throw CommandError("pinComponentPivot: select vertices, edges or faces");
+            pinComponentPivot();
+            return nullptr;
+        },
+    });
+    ops::registerCommand({
+        .name = "resetComponentPivot",
+        .doc = "Put the component manipulator back on the selection's centre and the tool's own axes, ending a pinned pivot.",
+        .run = [](const Args&) -> json {
+            resetComponentPivot();
+            return nullptr;
+        },
+    });
 }
+
+void Manipulator::pinComponentPivot()
+{
+    const scene::ComponentMode mode = scene::components::mode();
+    if (mode == scene::ComponentMode::Object || !gLastComponentManip)
+        return;
+    auto a = std::make_unique<ComponentPivotAction>();
+    a->before = gComponentPivot;
+    const bool placed = gComponentPivot && (gComponentPivot->placed || !gComponentPivot->pinned);
+    gComponentPivot = ComponentPivot{mode, scene::components::selected(mode), gLastComponentManip->first, gLastComponentManip->second, true,
+                                     placed};
+    a->after = gComponentPivot;
+    UndoStack::get().record(std::move(a));
+    tools::changed();
+}
+
+void Manipulator::resetComponentPivot()
+{
+    if (!gComponentPivot)
+        return;
+    auto a = std::make_unique<ComponentPivotAction>();
+    a->before = gComponentPivot;
+    gComponentPivot.reset();
+    UndoStack::get().record(std::move(a));
+    tools::changed();
+}
+
+bool Manipulator::componentPivotPinned() { return gComponentPivot && gComponentPivot->pinned; }
 
 void Manipulator::refresh()
 {
@@ -268,14 +324,20 @@ void Manipulator::refresh()
             mNormal = true;
             mFrame = scene::selectionNormalFrame();
         }
-        if (gComponentPivot && (gComponentPivot->mode != mode || gComponentPivot->selection != scene::components::selected(mode)))
+        if (gComponentPivot && !gComponentPivot->pinned &&
+            (gComponentPivot->mode != mode || gComponentPivot->selection != scene::components::selected(mode)))
             gComponentPivot.reset();
         if (gComponentPivot)
         {
-            mPivot = gComponentPivot->position;
+            if (!gComponentPivot->pinned || gComponentPivot->placed)
+                mPivot = gComponentPivot->position;
+            // A pinned frame wins over every tool's space, Normal included.
+            if (gComponentPivot->pinned && gComponentPivot->frame)
+                mNormal = false;
             if (gComponentPivot->frame && !mNormal)
                 mFrame = *gComponentPivot->frame;
         }
+        gLastComponentManip.emplace(mPivot, mFrame);
         return;
     }
     mTargets = scene::xformops::topLevel(g, g.selection());
@@ -468,11 +530,14 @@ bool Manipulator::hover(QPointF px)
     if (dragging())
         return false;
     ExtrudeHandles::Handle e = mExtrude.pick(px, mView);
-    H h = e == ExtrudeHandles::Handle::None && visible() ? pick(px) : H::None;
-    if (h == mHover && e == mExtrudeHover)
+    const auto badge = badgeRect();
+    const bool onBadge = badge && badge->contains(px);
+    H h = e == ExtrudeHandles::Handle::None && !onBadge && visible() ? pick(px) : H::None;
+    if (h == mHover && e == mExtrudeHover && onBadge == mBadgeHover)
         return false;
     mHover = h;
     mExtrudeHover = e;
+    mBadgeHover = onBadge;
     return true;
 }
 
@@ -495,6 +560,13 @@ bool Manipulator::handlesCurrent() const
 bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifiers mods)
 {
     syncHandleResets();
+    if (button == Qt::LeftButton)
+        if (auto badge = badgeRect(); badge && badge->contains(px))
+        {
+            ops::execute("resetComponentPivot", json::object(), CallSource::UI);
+            mBadgeHover = false;
+            return true;
+        }
     if (button == Qt::LeftButton)
         if (ExtrudeHandles::Handle e = mExtrude.pick(px, mView); e != ExtrudeHandles::Handle::None)
         {
@@ -1067,7 +1139,10 @@ void Manipulator::apply()
             if (t == Tool::Rotate)
                 gComponentPivot->frame = glm::mat3_cast(d.rotation) * d.frame;
             else
+            {
                 gComponentPivot->position = d.startPivot + d.moveDelta;
+                gComponentPivot->placed = gComponentPivot->pinned;
+            }
         }
         else if (d.alongNormal)
             scene::offsetSelectedComponents("Drag Components", glm::transpose(d.frame) * d.moveDelta);
@@ -1399,7 +1474,24 @@ void Manipulator::draw(OverlayPainter& p)
                                 : handlesCurrent()                             ? mLastExtrude
                                                                                : ExtrudeHandles::Handle::None);
     p.setShadow(false);
+    if (auto badge = badgeRect())
+    {
+        p.rect(*badge, {0.08f, 0.08f, 0.08f, mBadgeHover ? 0.92f : 0.7f});
+        const float shade = mBadgeHover ? 1.0f : 0.75f;
+        p.text(QPointF(badge->left() + 6, badge->bottom() - 6), kBadgeText, {shade, shade, shade, 1.0f});
+    }
     drawReadout(p);
+}
+
+std::optional<QRectF> Manipulator::badgeRect() const
+{
+    if (!mComponents || mDrag || !componentPivotPinned())
+        return std::nullopt;
+    auto c = mView.project(mPivot);
+    if (!c)
+        return std::nullopt;
+    const double w = OverlayPainter::textWidth(kBadgeText) + 12;
+    return QRectF(c->x() - w * 0.5, c->y() + 22, w, 20);
 }
 
 void Manipulator::drawMove(OverlayPainter& p)

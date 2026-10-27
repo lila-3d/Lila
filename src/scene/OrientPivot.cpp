@@ -420,10 +420,11 @@ void registerCommand()
              "Where the pivot goes: the first picked piece's centre (first), the centre of everything selected (center), or "
              "where it is (keep).",
              {"first", "center", "keep"}},
-            {"mode", "", T::String, "pivot",
-             "pivot: orient the object's pivot, leaving object and mesh alone. transform: turn and move the object itself "
-             "onto the aim, the mesh moved back so it stays put (undoes a freeze's lost rotation). manipulator: only the "
-             "component manipulator, until the selection changes.",
+            {"mode", "", T::String, "transform",
+             "transform: turn and move the object itself onto the aim, the mesh moved back so it stays put (undoes a freeze's "
+             "lost rotation), so Object space then works along it. pivot: orient the object's pivot, leaving object and mesh "
+             "alone. manipulator: pin only the component manipulator's axes, through selection changes, until "
+             "resetComponentPivot.",
              {"pivot", "transform", "manipulator"}},
         },
         .run = [](const Args& a) -> json {
@@ -432,7 +433,7 @@ void registerCommand()
             const ComponentMode kind = components::mode();
             if (kind == ComponentMode::Object)
                 throw CommandError("orientPivot: select vertices, edges or faces");
-            const std::string mode = a.get<std::string>("mode", "pivot");
+            const std::string mode = a.get<std::string>("mode", "transform");
             const std::string position = a.get<std::string>("position", "first");
             const std::string upRef = a.get<std::string>("upReference", "component");
             Axis aimAxis, upAxis;
@@ -542,8 +543,8 @@ void registerCommand()
             return {{"position", vecJson(at)}, {"x", vecJson(lead[0])}, {"y", vecJson(lead[1])}, {"z", vecJson(lead[2])}};
         },
         .adjustable = true,
-        .examples = {"orientPivot()  # two verts picked: the pivot's X aims from the first to the second",
-                     "orientPivot(aim='y', up='x', mode='transform')  # put back the rotation a freeze removed"},
+        .examples = {"orientPivot()  # two verts picked: the object turns so its X aims from the first to the second",
+                     "orientPivot(mode='manipulator')  # pin the component manipulator's axes instead"},
     });
 }
 } // namespace lila::scene::orientpivot

@@ -4,6 +4,7 @@
   "E": { "label": "Parent", "action": "manip.rotate.parent" },
   "S": { "label": "Edit Pivot", "action": "tool.pivotEditToggle" },
   "SW": { "label": "Orient Pivot", "action": "modify.orientPivot" },
+  "NW": { "label": "Pin Pivot", "action": "modify.pinComponentPivot" },
   "SE": { "label": "Component", "action": "manip.rotate.component" },
   "overflow": []
 }

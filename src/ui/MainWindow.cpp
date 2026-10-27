@@ -1309,7 +1309,7 @@ void MainWindow::buildMenus()
                         "window.preferences", "window.extensionManager"});
 
     menu("Modify", "M&odify");
-    menus::addActions("Modify", {"#Transforms", "modify.freezeTransforms", "modify.resetTransforms", "modify.centerPivot", "modify.resetPivot", "modify.orientPivot",
+    menus::addActions("Modify", {"#Transforms", "modify.freezeTransforms", "modify.resetTransforms", "modify.centerPivot", "modify.resetPivot", "modify.orientPivot", "modify.pinComponentPivot", "modify.resetComponentPivot",
                                  "#Snapping", "snapSurface.set", "snapSurface.clear", "snapSurface.toggle", "snapSurface.alignToNormal"});
 
     menu("Create", "Create");

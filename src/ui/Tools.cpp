@@ -124,6 +124,8 @@ int addListener(std::function<void()> fn)
 
 void removeListener(int id) { gListeners.erase(id); }
 
+void changed() { notify(); }
+
 static bool gSoftAdjust = false;
 static bool gSoftKeyUsed = false;
 

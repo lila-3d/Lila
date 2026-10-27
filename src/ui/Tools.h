@@ -68,6 +68,8 @@ LILA_UI_API const char* snapKey(Tool t);
 /** Called after any change; returns an id for removeListener. */
 LILA_UI_API int addListener(std::function<void()> fn);
 LILA_UI_API void removeListener(int id);
+/** Tells the listeners about a change made outside this module, such as the component pivot. */
+LILA_UI_API void changed();
 
 /** True while B is held: LMB drag in the viewport sets the soft-selection radius. */
 LILA_UI_API bool softSelectAdjusting();

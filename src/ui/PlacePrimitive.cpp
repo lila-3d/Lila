@@ -13,7 +13,10 @@
 #include "ui/Tools.h"
 #include "ui/ViewportTool.h"
 
+#include <QApplication>
+#include <QCursor>
 #include <QTimer>
+#include <QWidget>
 
 #include <algorithm>
 #include <cmath>
@@ -459,8 +462,17 @@ bool hasComponentSelection()
     return false;
 }
 
+/** Focuses the view under the cursor: B and the other viewport keys only reach a focused viewport, and the selection may have come from the outliner. */
+void focusViewportUnderCursor()
+{
+    for (QWidget* w = QApplication::widgetAt(QCursor::pos()); w; w = w->parentWidget())
+        if (w->property("hotkeyContext").toString() == "viewport")
+            return w->setFocus();
+}
+
 void createAt(const std::string& command, const QString& label)
 {
+    focusViewportUnderCursor();
     if (hasComponentSelection())
     {
         actions::runWithOptions(command, {{"position", vec(scene::selectionCenter())}, {"normal", vec(scene::selectionNormal())}});
