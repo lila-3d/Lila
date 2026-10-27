@@ -1,1 +1,29 @@
+#include <winver.h>
+#include "LilaBuildInfo.h"
+
 IDI_ICON1 ICON "../../resources/icons/lila.ico"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION LILA_VERSION_MAJOR, LILA_VERSION_MINOR, LILA_VERSION_PATCH, 0
+PRODUCTVERSION LILA_VERSION_MAJOR, LILA_VERSION_MINOR, LILA_VERSION_PATCH, 0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "ProductName", "Lila"
+            VALUE "FileDescription", "Lila"
+            VALUE "CompanyName", "Jared Taylor"
+            VALUE "LegalCopyright", "Copyright (C) 2026 Jared Taylor"
+            VALUE "FileVersion", LILA_VERSION
+            VALUE "ProductVersion", LILA_VERSION "+" LILA_GIT_SHA
+            VALUE "Comments", "Build " LILA_BUILD_ID
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

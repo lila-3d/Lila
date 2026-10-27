@@ -5,6 +5,7 @@
 #include "bake/Maps.h"
 #include "core/ImageIO.h"
 #include "core/Paths.h"
+#include "core/Version.h"
 
 #include "core/CrashHandler.h"
 #include "core/Events.h"
@@ -204,6 +205,7 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
     QApplication::setAttribute(Qt::AA_DontCreateNativeWidgetSiblings);
     QApplication app(argc, argv);
     QApplication::setApplicationName("Lila");
+    QApplication::setApplicationVersion(version::number());
     QApplication::setOrganizationName("Lila");
     applyTheme(app);
 

@@ -5,6 +5,7 @@
 #include "core/CrashHandler.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
+#include "core/Version.h"
 #include "core/Workspace.h"
 #include "io/FileTranslators.h"
 #include "io/SceneFile.h"
@@ -95,10 +96,13 @@
 #include "ui/ViewportWidget.h"
 
 #include <QApplication>
+#include <QClipboard>
 #include <QCloseEvent>
 #include <QCursor>
 #include <QDateTime>
 #include <QDesktopServices>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QInputDialog>
@@ -189,7 +193,7 @@ private:
 
 MainWindow::MainWindow()
 {
-    setWindowTitle("Lila");
+    setWindowTitle(QString("Lila ") + version::number());
     resize(1600, 960);
 #ifdef _WIN32
     BOOL dark = TRUE;
@@ -954,7 +958,7 @@ void MainWindow::refreshTitle()
         else
             title += " - " + QString::fromStdWString(root.filename().wstring());
     }
-    setWindowTitle(title + " - Lila");
+    setWindowTitle(title + " - Lila " + version::number());
 }
 
 void MainWindow::registerActions()
@@ -1780,11 +1784,49 @@ void MainWindow::openFolder()
 
 void MainWindow::showAbout()
 {
-    QMessageBox::about(this, "About Lila",
-                       "<h2>Lila</h2>"
-                       "<p><i>Lila (&#2354;&#2368;&#2354;&#2366;, LEE-laah): Sanskrit for divine play, or creation.</i></p>"
-                       "<p>Version 0.1.0</p>"
-                       "<p>Copyright &copy; 2026 Jared Taylor. All rights reserved.</p>");
+    QDialog dlg(this);
+    dlg.setWindowTitle("About Lila");
+
+    auto* logo = new QLabel;
+    logo->setPixmap(windowIcon().pixmap(64));
+    logo->setAlignment(Qt::AlignTop);
+
+    auto* name = new QLabel(QString("<h2>Lila %1</h2>").arg(version::number()));
+    auto* copy = new QToolButton;
+    copy->setIcon(icon("copy"));
+    copy->setAutoRaise(true);
+    copy->setToolTip("Copy version and build");
+    connect(copy, &QToolButton::clicked, &dlg, [copy] {
+        QApplication::clipboard()->setText(QString::fromStdString("Lila " + version::full()));
+        copy->setIcon(icon("check"));
+        QTimer::singleShot(1500, copy, [copy] { copy->setIcon(icon("copy")); });
+    });
+    auto* heading = new QHBoxLayout;
+    heading->addWidget(name);
+    heading->addWidget(copy);
+    heading->addStretch();
+
+    auto* body = new QLabel(QString("<p>Build %1</p>"
+                                    "<p><i>Lila (&#2354;&#2368;&#2354;&#2366;, LEE-laah): Sanskrit for divine play, or creation.</i></p>"
+                                    "<p>Copyright &copy; 2026 Jared Taylor. All rights reserved.</p>")
+                                .arg(version::buildId()));
+    body->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+    auto* text = new QVBoxLayout;
+    text->addLayout(heading);
+    text->addWidget(body);
+    text->addStretch();
+    auto* row = new QHBoxLayout;
+    row->setSpacing(16);
+    row->addWidget(logo);
+    row->addLayout(text, 1);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    auto* layout = new QVBoxLayout(&dlg);
+    layout->addLayout(row);
+    layout->addWidget(buttons);
+    dlg.exec();
 }
 
 void MainWindow::restoreLayout()

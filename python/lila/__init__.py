@@ -19,8 +19,22 @@ from . import ops, debug_draw, docs, events, math, nodes, prefs, scene_data, tas
 from .nodes import Node, exists, group, locator, node, selected
 from .tasks import run_in_background
 
-__all__ = ["ops", "debug_draw", "docs", "events", "math", "nodes", "prefs", "scene_data", "tasks", "ui", "CommandError", "Progress", "workspace", "undo_chunk",
+__all__ = ["ops", "debug_draw", "docs", "events", "math", "nodes", "prefs", "scene_data", "tasks", "ui", "CommandError", "Progress", "version", "build_id", "workspace", "undo_chunk",
            "Node", "node", "selected", "exists", "locator", "group", "run_in_background"]
+
+
+def version():
+    """Lila's version, major.minor.patch: "0.1.0"."""
+    import _lila
+
+    return _lila.version()
+
+
+def build_id():
+    """The exact build: commit time (UTC) and sha, "-dirty" with uncommitted changes: "202610281430-9641744ab1"."""
+    import _lila
+
+    return _lila.build_id()
 
 
 def workspace():

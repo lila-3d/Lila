@@ -1,6 +1,7 @@
 #include "app/Host.h"
 #include "core/CrashHandler.h"
 #include "core/Paths.h"
+#include "core/Version.h"
 
 #include <cstdio>
 
@@ -39,6 +40,11 @@ int main(int argc, char** argv)
     crash::install();
     host::Options opts = host::parse(argc, argv);
     opts.batch = true;
+    if (opts.printVersion)
+    {
+        std::printf("Lila %s\n", version::full().c_str());
+        return 0;
+    }
 
     host::startCore();
     loadUiCommands();

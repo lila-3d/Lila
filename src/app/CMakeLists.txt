@@ -12,6 +12,10 @@ target_link_libraries(lilabatch PRIVATE LilaScene)
 # Loaded at run time for the capture commands when it is there; lilabatch runs without it.
 add_dependencies(lilabatch LilaUI)
 add_dependencies(lila lilabatch)
+foreach(exe lila lilabatch)
+    target_include_directories(${exe} PRIVATE ${LILA_BUILD_INFO_DIR})
+    add_dependencies(${exe} lila_version)
+endforeach()
 if(WIN32)
     # The crash watchdog and the WER helper it relies on for fail-fast crashes; see src/core/CrashWatch.h.
     add_executable(lilacrash WIN32 lilacrash.cpp)

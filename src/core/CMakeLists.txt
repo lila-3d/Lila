@@ -27,13 +27,16 @@ lila_module(lila_core Foundation
     Registry.cpp
     ResourceKey.cpp
     TextMatch.cpp
+    Version.cpp
     Workspace.cpp)
 
 find_package(miniz CONFIG REQUIRED)
 target_link_libraries(lila_core PRIVATE miniz::miniz)
 target_include_directories(lila_core PUBLIC ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/sdk/include)
 target_link_libraries(lila_core PUBLIC nlohmann_json::nlohmann_json TBB::tbb glm::glm ${LILA_CRASHKIT_LIBS})
-set_source_files_properties(CrashHandler.cpp PROPERTIES COMPILE_DEFINITIONS LILA_VERSION="${PROJECT_VERSION}")
+# Out of the unity batch: the stamp changes with every commit and should recompile only this file.
+set_source_files_properties(Version.cpp PROPERTIES INCLUDE_DIRECTORIES ${LILA_BUILD_INFO_DIR} SKIP_UNITY_BUILD_INCLUSION ON SKIP_PRECOMPILE_HEADERS ON)
+add_dependencies(lila_core lila_version)
 if(LILA_TRACY)
     target_link_libraries(lila_core PUBLIC Tracy::TracyClient)
     target_compile_definitions(lila_core PUBLIC LILA_TRACY)

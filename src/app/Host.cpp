@@ -9,6 +9,7 @@
 #include "core/Log.h"
 #include "core/MainQueue.h"
 #include "core/PrefStore.h"
+#include "core/Version.h"
 #include "core/Progress.h"
 #include "core/Workspace.h"
 #include "extensions/ExtensionManager.h"
@@ -113,6 +114,8 @@ Options parse(int argc, char** argv)
                 break;
             }
         }
+        else if (a == "--version")
+            o.printVersion = true;
         else if ((a == "-c" || a == "--command") && i + 1 < argc)
             o.command = argv[++i];
         else if (a == "--change-stream")
@@ -131,6 +134,7 @@ Options parse(int argc, char** argv)
 
 void startCore()
 {
+    log::info("Lila {}", version::full());
     mainq::init();
     PrefStore::get().start();
     auto syncUpAxis = [] {

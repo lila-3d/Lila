@@ -1,5 +1,6 @@
 #include "app/Host.h"
 #include "core/CrashHandler.h"
+#include "core/Version.h"
 #include "ui/AppMain.h"
 
 #include <cstdio>
@@ -15,12 +16,17 @@ int main(int argc, char** argv)
     host::Options opts = host::parse(argc, argv);
 #if defined(_WIN32) && defined(LILA_GUI_SUBSYSTEM)
     // The GUI build has no console of its own; batch output goes to the shell that launched it, if any.
-    if (opts.batch && AttachConsole(ATTACH_PARENT_PROCESS))
+    if ((opts.batch || opts.printVersion) && AttachConsole(ATTACH_PARENT_PROCESS))
     {
         std::freopen("CONOUT$", "w", stdout);
         std::freopen("CONOUT$", "w", stderr);
     }
 #endif
+    if (opts.printVersion)
+    {
+        std::printf("Lila %s\n", version::full().c_str());
+        return 0;
+    }
 
     host::startCore();
     ui::registerBatchCommands();

@@ -39,11 +39,13 @@ if(LILA_TRACY)
     find_package(Tracy CONFIG REQUIRED)
 endif()
 find_package(doctest CONFIG REQUIRED)
+find_package(Git QUIET)
 
 include(LilaDeps)
 include(LilaShaders)
 include(LilaExtension)
 include(LilaBuildSpeed)
+include(LilaVersion)
 
 add_subdirectory(src)
 add_subdirectory(extensions/examples/hello)

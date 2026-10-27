@@ -2,6 +2,7 @@
 
 #include "core/Paths.h"
 #include "core/Profile.h"
+#include "core/Version.h"
 
 #include <miniz.h>
 #include <nlohmann/json.hpp>
@@ -14,10 +15,6 @@
 #include <fstream>
 #include <random>
 #include <sstream>
-
-#ifndef LILA_VERSION
-#define LILA_VERSION "dev"
-#endif
 
 namespace lila::ui::docs
 {
@@ -187,7 +184,7 @@ Sources defaultSources()
     std::error_code ec;
     // Installs carry resources/ next to the exe; dev builds read the source tree's.
     bool dev = !fs::is_directory(paths::executableDir() / "resources", ec);
-    s.refs = refsToTry(LILA_VERSION, dev);
+    s.refs = refsToTry(version::number(), dev);
     return s;
 }
 

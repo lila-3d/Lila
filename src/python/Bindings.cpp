@@ -3,6 +3,7 @@
 #include "core/MainQueue.h"
 #include "core/PrefStore.h"
 #include "core/Progress.h"
+#include "core/Version.h"
 #include "core/Workspace.h"
 #include "scene/SceneData.h"
 #include "python/Python.h"
@@ -117,6 +118,9 @@ NB_MODULE(_lila, m)
     lila::python::bindRegistries(m);
 
     static nb::exception<lila::CommandError> commandError(m, "CommandError", PyExc_RuntimeError);
+
+    m.def("version", [] { return std::string(lila::version::number()); });
+    m.def("build_id", [] { return std::string(lila::version::buildId()); });
 
     m.def("execute", [](const std::string& name, nb::dict call, bool echo) {
         if (!lila::mainq::isMainThread())

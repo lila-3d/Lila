@@ -10,6 +10,7 @@
 #include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "core/Progress.h"
+#include "core/Version.h"
 #include "core/Workspace.h"
 #include "io/FileTranslators.h"
 #include "io/References.h"
@@ -360,6 +361,7 @@ nlohmann::json serializeScene(const fs::path& sceneDir, bool packed, std::vector
 
     json doc = {
         {"lila", kVersion},
+        {"writer", {{"version", version::number()}, {"build", version::buildId()}}},
         {"upAxis", PrefStore::get().value<std::string>("general", "/scene/upAxis", "y")},
         {"units", "cm"},
         {"time", g.time()},

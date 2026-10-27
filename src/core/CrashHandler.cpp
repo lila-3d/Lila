@@ -3,6 +3,7 @@
 #include "core/CrashReport.h"
 #include "core/Log.h"
 #include "core/Paths.h"
+#include "core/Version.h"
 
 #include <algorithm>
 #include <atomic>
@@ -27,10 +28,6 @@
 #pragma comment(lib, "wer.lib")
 #else
 #include <unistd.h>
-#endif
-
-#ifndef LILA_VERSION
-#define LILA_VERSION "dev"
 #endif
 
 namespace lila::crash
@@ -514,7 +511,8 @@ void install()
     fs::create_directories(s.sessionsDir, ec);
     s.flushFile = s.sessionsDir / (std::to_string(pid()) + ".crash.txt");
 
-    setContext("app", "version", LILA_VERSION);
+    setContext("app", "version", version::number());
+    setContext("app", "build", version::buildId());
     setContext("app", "pid", std::to_string(pid()));
 #ifdef _WIN32
     wchar_t exePath[MAX_PATH * 4];
