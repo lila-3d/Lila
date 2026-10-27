@@ -433,6 +433,9 @@ void registerBuiltins()
     cmd("modify.resetTransforms", "Reset Transformations", "Modify", "resetTransforms", json::object(),
         "Puts translate, rotate and scale back to their defaults, moving the object.");
     cmd("modify.resetPivot", "Reset Pivot", "Modify", "resetPivot", json::object(), "Moves the pivot back to the object's origin.");
+    cmd("modify.orientPivot", "Orient Pivot", "Modify", "orientPivot", json::object(),
+        "Aims the pivot's X from the first picked component to the second, or along a single face, edge or loop. Adjust the axes, "
+        "up and mode in the popup after.");
     cmd("edit.parent", "Parent", "Edit", "parent", json::object(), "Parents the selected objects under the one selected last.");
     cmd("edit.unparent", "Unparent", "Edit", "parent", {{"world", true}}, "Moves the selected objects to the top of the hierarchy, keeping where they are.");
     cmd("edit.ungroup", "Ungroup", "Edit", "ungroup", json::object(), "Moves the selected groups' children up a level and deletes the groups.");

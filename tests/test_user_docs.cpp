@@ -444,3 +444,23 @@ TEST_CASE("inline code hyphens never wrap and read back as hyphens")
     CHECK(html.find("[a\xE2\x80\x91" "c]") != std::string::npos);
     CHECK(html.find("[a-c]") == std::string::npos);
 }
+
+TEST_CASE("docs: page titles come from the sidebar, else the page id; each page has one action id")
+{
+    TempDir t;
+    fs::path d = t.path / "docs";
+    writeFile(d / "_sidebar.md", "- [Python API](python/)\n- [Node editor](node-editor.md)\n  - [Keys](node-editor.md?id=keys)\n- [Ext](https://x.y/ ':ignore')\n");
+    CHECK(docs::pageTitle(d, "node-editor") == "Node editor");
+    CHECK(docs::pageTitle(d, "node-editor?id=keys") == "Node editor");
+    CHECK(docs::pageTitle(d, "python/") == "Python API");
+    CHECK(docs::pageTitle(d, "stagehand") == "Stagehand");
+    CHECK(docs::pageTitle({}, "node-editor") == "Node Editor");
+    CHECK(docs::pageTitle({}, "python/lila.ops") == "Python Lila Ops");
+    CHECK(docs::pageTitle({}, "") == "Lila");
+
+    CHECK(docs::pageActionId("curves") == "help.docs.curves");
+    CHECK(docs::pageActionId("curves.md") == "help.docs.curves");
+    CHECK(docs::pageActionId("essentials?id=filter-the-outliner") == "help.docs.essentials.filter-the-outliner");
+    CHECK(docs::pageActionId("python/") == "help.docs.python");
+    CHECK(docs::pageActionId("") == "help.docs.home");
+}

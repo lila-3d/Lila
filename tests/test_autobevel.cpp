@@ -226,7 +226,7 @@ bool sameEdge(std::pair<glm::dvec3, glm::dvec3> e, glm::dvec3 a, glm::dvec3 b)
 TEST_CASE("autoBevel modifier bevels folds and stays live")
 {
     run("newScene");
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     std::string mod = run("autoBevel", {{"args", {cube}}, {"segments", 1}, {"offset", 5.0}})[0];
     CHECK(run("bevelEdgeInfo", {{"args", {mod}}})["count"] == 12);
     // A one-segment bevel of every cube edge: 6 faces, 12 strips, 8 corners.
@@ -243,7 +243,7 @@ TEST_CASE("autoBevel modifier bevels folds and stays live")
 TEST_CASE("Edit Edges stores overrides that survive upstream changes")
 {
     run("newScene");
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     const glm::dvec3 a0(-50, 50, 50), a1(50, 50, 50), b0(-50, -50, -50), b1(50, -50, -50);
     std::string first = run("autoBevel", {{"args", {cube}}, {"mode", "manual"}, {"segments", 1}, {"offset", 5.0}})[0];
     std::string second = run("autoBevel", {{"args", {cube}}, {"mode", "manual"}, {"segments", 2}, {"offset", 5.0}})[0];
@@ -275,7 +275,7 @@ TEST_CASE("Edit Edges stores overrides that survive upstream changes")
 TEST_CASE("Edit Edges shows the input, cancels, undoes and saves")
 {
     run("newScene");
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     std::string mod = run("autoBevel", {{"args", {cube}}, {"segments", 1}})[0];
     run("addModifier", {{"args", {cube}}, {"kind", "subdivision"}});
     int full = faces(cube);
@@ -316,7 +316,7 @@ TEST_CASE("Edit Edges shows the input, cancels, undoes and saves")
 TEST_CASE("selectFoldEdges and measure")
 {
     run("newScene");
-    std::string cube = run("polyCube", {{"subdivisionsX", 2}})[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"subdivisionsX", 2}})[0];
     // The four edges along x are split in two; the loop around the middle is flat.
     CHECK(run("selectFoldEdges", {{"args", {cube}}}) == 16);
     std::string mod = run("autoBevel", {{"args", {cube}}})[0];

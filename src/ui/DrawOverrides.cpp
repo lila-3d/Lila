@@ -24,9 +24,14 @@ std::vector<std::pair<glm::dvec3, glm::dvec3>> locatorLines(const glm::dmat4& wo
     return out;
 }
 
+glm::dvec3 locatorSize(const scene::Node& n)
+{
+    return n.as<glm::dvec3>(scene::Locator::kLocalScale) * n.as<double>(scene::Locator::kDrawSize);
+}
+
 void drawLocator(DrawContext& c)
 {
-    for (auto& [a, b] : locatorLines(c.world, c.node.as<glm::dvec3>(scene::Locator::kLocalScale)))
+    for (auto& [a, b] : locatorLines(c.world, locatorSize(c.node)))
     {
         c.frame.lines.push_back({glm::vec3(a), c.color});
         c.frame.lines.push_back({glm::vec3(b), c.color});
@@ -37,7 +42,7 @@ std::optional<double> pickLocator(const PickContext& c)
 {
     QRectF box = QRectF(c.a, c.b).normalized();
     std::optional<double> best;
-    for (auto& [a, b] : locatorLines(c.world, c.node.as<glm::dvec3>(scene::Locator::kLocalScale)))
+    for (auto& [a, b] : locatorLines(c.world, locatorSize(c.node)))
     {
         auto p0 = c.view.project(a), p1 = c.view.project(b);
         if (!p0 || !p1)

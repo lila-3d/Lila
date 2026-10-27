@@ -377,6 +377,26 @@ ExtrudeResult extrudeFaces(Mesh& mesh, std::span<const Index> faces, const Extru
     return runRegions(mesh, faces, opts.individual, opts.symmetry, {opts.offset, opts.inset});
 }
 
+ExtrudeCopy extrudeCopy(const Mesh& mesh, std::span<const Index> faces, const ExtrudeOptions& opts, bool keepSides)
+{
+    LILA_ZONE();
+
+    Mesh work = mesh;
+    ExtrudeResult r = extrudeFaces(work, faces, opts);
+    std::vector<Index> keep = r.faces;
+    if (keepSides)
+        keep.insert(keep.end(), r.sides.begin(), r.sides.end());
+    keep = uniqueSorted(keep);
+    std::erase_if(keep, [&](Index f) { return !work.faceValid(f); });
+    ExtrudeCopy out{extractFaces(work, keep), {}};
+    // extractFaces adds the faces in ascending order, so a face's new id is its rank in keep.
+    const std::vector<Index> cap = uniqueSorted(r.faces);
+    for (Index i = 0; i < Index(keep.size()); ++i)
+        if (std::binary_search(cap.begin(), cap.end(), keep[i]))
+            out.cap.push_back(i);
+    return out;
+}
+
 EdgeExtrudeResult extrudeEdges(Mesh& mesh, std::span<const Index> edges, const EdgeExtrudeOptions& opts)
 {
     LILA_ZONE();

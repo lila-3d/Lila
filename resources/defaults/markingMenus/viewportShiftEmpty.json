@@ -16,6 +16,7 @@
     { "label": "Bezier Pen", "action": "curve.bezierPen" },
     { "label": "EP Curve", "action": "curve.epTool" },
     { "label": "Pencil Curve", "action": "curve.pencil" },
+    { "label": "Kappa Curve", "action": "curve.kappa" },
     { "label": "Pipe Tool", "action": "curve.pipeTool" },
     { "label": "Circle", "action": "curve.circle" }
   ]

@@ -123,6 +123,11 @@ bool isArrowKey(int key)
 }
 
 /** Lists, trees, combo boxes and sliders keep their own arrow keys, unless they opt into pickwalking. */
+bool startsNumber(const QString& text)
+{
+    return text.size() == 1 && (text[0].isDigit() || text[0] == '.' || text[0] == '-');
+}
+
 bool listNavigationFocused(QWidget* w)
 {
     for (QWidget* p = w; p; p = p->parentWidget())
@@ -467,6 +472,8 @@ bool Hotkeys::eventFilter(QObject* obj, QEvent* e)
     if ((qobject_cast<QPlainTextEdit*>(focus) || qobject_cast<QTextEdit*>(focus)) && mods == Qt::ControlModifier && k->key() == Qt::Key_F)
         return false;
     if (listNavigationFocused(focus) && mods == 0 && isArrowKey(k->key()))
+        return false;
+    if (mods == 0 && startsNumber(k->text()) && focus && focus->property("numericEntry").toBool())
         return false;
 
     std::optional<Binding> found = lookup(k, focus);

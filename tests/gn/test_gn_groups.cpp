@@ -33,7 +33,7 @@ scene::MeshPtr outMesh(const std::string& mesh)
 
 std::string plane(const char* name, int subdivisions = 10)
 {
-    return run("polyPlane", {{"name", name}, {"subdivisionsX", subdivisions}, {"subdivisionsZ", subdivisions}})[0].get<std::string>();
+    return run("polyPlane", {{"width", 100.0}, {"depth", 100.0}, {"name", name}, {"subdivisionsX", subdivisions}, {"subdivisionsZ", subdivisions}})[0].get<std::string>();
 }
 
 json boxSelectionSpec()

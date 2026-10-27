@@ -17,8 +17,8 @@ DIR = os.path.join(tempfile.gettempdir(), "lila_py_bake")
 
 def setup(fmt, bits=8):
     ops.newScene()
-    low = ops.polyPlane(name="tile_low")[0]
-    high = ops.polyPlane(name="tile_high")[0]
+    low = ops.polyPlane(width=100.0, depth=100.0, name="tile_low")[0]
+    high = ops.polyPlane(width=100.0, depth=100.0, name="tile_high")[0]
     ops.move(high, by=[0, 1, 0])
     shutil.rmtree(DIR, ignore_errors=True)
     p = bake.project("P", folder=DIR)

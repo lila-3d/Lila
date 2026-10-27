@@ -7,6 +7,7 @@ add_executable(lila_tests
     test_meshes.cpp
     test_modeling.cpp
     test_normal_frames.cpp
+    test_orient_pivot.cpp
     test_knife.cpp
     test_step_history.cpp
     test_command_history.cpp

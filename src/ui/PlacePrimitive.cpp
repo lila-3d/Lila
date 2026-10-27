@@ -6,6 +6,7 @@
 #include "ops/Undo.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
+#include "scene/LastOp.h"
 #include "scene/MeshNodes.h"
 #include "ui/Actions.h"
 #include "ui/SurfaceSnap.h"
@@ -14,6 +15,7 @@
 
 #include <QTimer>
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 #include <optional>
@@ -55,15 +57,27 @@ scene::Node* generatorOf(NodeId mesh)
     return src ? g.node(src->node) : nullptr;
 }
 
+constexpr const char* kSizeAttrs[] = {"width", "height", "depth", "radius", "sectionRadius", "thickness", "tipRadius"};
+
 /** The generator's size settings, in cm, by name: what the resize gesture scales. */
 std::map<std::string, double> sizesOf(NodeId mesh)
 {
     std::map<std::string, double> out;
     if (scene::Node* gen = generatorOf(mesh))
-        for (const char* attr : {"width", "height", "depth", "radius", "sectionRadius", "thickness"})
+        for (const char* attr : kSizeAttrs)
             if (int idx = gen->type().attrIndex(attr); idx >= 0)
                 out[attr] = gen->as<double>(idx);
     return out;
+}
+
+/** The brush-size keys: [ shrinks, ] grows, by the step brushes use. */
+std::optional<double> bracketStep(const QKeyEvent* e)
+{
+    if (e->key() == Qt::Key_BracketLeft)
+        return 0.8;
+    if (e->key() == Qt::Key_BracketRight)
+        return 1.25;
+    return std::nullopt;
 }
 
 /**
@@ -145,8 +159,22 @@ public:
         return true;
     }
 
+    bool hotkey(const QKeyEvent& e, std::string_view) override
+    {
+        std::optional<double> step = bracketStep(&e);
+        if (!step || mSizes.empty())
+            return false;
+        resize(mScale * *step);
+        return true;
+    }
+
     bool keyPress(QKeyEvent* e, const ViewInfo& view) override
     {
+        if (std::optional<double> step = bracketStep(e); step && !mSizes.empty())
+        {
+            resize(mScale * *step);
+            return true;
+        }
         if (e->key() == Qt::Key_Shift && mLastPx && !mResizeFrom)
         {
             follow(*mLastPx, view, Qt::ShiftModifier);
@@ -161,8 +189,8 @@ public:
     void draw(render::FrameState&, OverlayPainter& p, const ViewInfo& view) override
     {
         drawToolMessage(p, view,
-                        QString("Click to drop the %1 on the surface. Shift keeps it upright, B-drag or Ctrl+scroll resizes. Esc or "
-                                "right-click cancels.")
+                        QString("Click to drop the %1 on the surface. Shift keeps it upright, B-drag, Ctrl+scroll or [ ] resizes. Esc "
+                                "or right-click cancels.")
                             .arg(mLabel));
     }
 
@@ -291,6 +319,135 @@ private:
     bool mEnded = false;
 };
 
+/**
+ * After a primitive is made on the selected components, the brush-size gestures (B-drag, Ctrl+scroll, [ ]) resize it in
+ * place by adjusting the create, as its settings popup would. Any other click, or another edit, ends it.
+ */
+class ResizeCreatedTool : public ViewportTool
+{
+public:
+    ResizeCreatedTool(std::string command, QString label) : mCommand(std::move(command)), mLabel(std::move(label))
+    {
+        if (const scene::lastOp::Op* op = scene::lastOp::current())
+            for (const FlagDef* f : scene::lastOp::editableFlags(mCommand))
+                if (std::ranges::find_if(kSizeAttrs, [&](const char* a) { return f->name == a; }) != std::end(kSizeAttrs))
+                    if (json v = scene::lastOp::flagValue(*op, *f); v.is_number())
+                        mSizes[f->name] = v.get<double>();
+    }
+
+    const char* name() const override { return "resizeCreated"; }
+    bool ownsBrushRadius() const override { return true; }
+
+    void deactivate() override
+    {
+        if (mResizeFrom)
+            scene::lastOp::endDrag();
+    }
+
+    bool mousePress(QMouseEvent* e, const ViewInfo&) override
+    {
+        if (adjustable() && tools::brushRadiusDrag(e, false))
+        {
+            mResizeFrom = e->position();
+            mResizeStart = mScale;
+            return true;
+        }
+        end();
+        return false;
+    }
+
+    bool mouseMove(QMouseEvent* e, const ViewInfo&) override
+    {
+        if (!mResizeFrom)
+            return false;
+        resize(mResizeStart * std::exp((e->position().x() - mResizeFrom->x()) * 0.01), true);
+        return true;
+    }
+
+    bool mouseRelease(QMouseEvent* e, const ViewInfo&) override
+    {
+        if (!mResizeFrom || (e->button() != Qt::LeftButton && e->button() != Qt::MiddleButton))
+            return false;
+        mResizeFrom.reset();
+        scene::lastOp::endDrag();
+        return true;
+    }
+
+    bool wheel(QWheelEvent* e, const ViewInfo&) override
+    {
+        if (!(e->modifiers() & Qt::ControlModifier) || !adjustable())
+            return false;
+        resize(mScale * std::pow(1.1, e->angleDelta().y() / 120.0), false);
+        return true;
+    }
+
+    bool hotkey(const QKeyEvent& e, std::string_view) override { return stepSize(e); }
+    bool keyPress(QKeyEvent* e, const ViewInfo&) override
+    {
+        if (e->key() == Qt::Key_Escape)
+            end();
+        return stepSize(*e);
+    }
+
+    void draw(render::FrameState&, OverlayPainter& p, const ViewInfo& view) override
+    {
+        if (!adjustable())
+            return end();
+        drawToolMessage(p, view, QString("B-drag, Ctrl+scroll or [ ] resizes the %1. Click anywhere to carry on.").arg(mLabel));
+    }
+
+private:
+    /** Still the newest create of its command, so resizing re-runs it. */
+    bool adjustable() const
+    {
+        const scene::lastOp::Op* op = scene::lastOp::current();
+        return !mSizes.empty() && op && op->command == mCommand && scene::lastOp::reachable();
+    }
+
+    bool stepSize(const QKeyEvent& e)
+    {
+        std::optional<double> step = bracketStep(&e);
+        if (!step || !adjustable())
+            return false;
+        resize(mScale * *step, false);
+        return true;
+    }
+
+    void resize(double scale, bool drag)
+    {
+        mScale = std::clamp(scale, 0.01, 100.0);
+        json flags = json::object();
+        for (const auto& [attr, size] : mSizes)
+            flags[attr] = size * mScale;
+        try
+        {
+            scene::lastOp::rerun(flags, CallSource::UI, drag);
+        }
+        catch (const CommandError& e)
+        {
+            log::error("{}", e.what());
+            end();
+        }
+        viewportTools::requestRedraw();
+    }
+
+    static void end()
+    {
+        QTimer::singleShot(0, [] {
+            if (viewportTools::active() && std::string_view(viewportTools::active()->name()) == "resizeCreated")
+                viewportTools::set(nullptr);
+        });
+        viewportTools::requestRedraw();
+    }
+
+    std::string mCommand;
+    QString mLabel;
+    std::map<std::string, double> mSizes;
+    double mScale = 1.0;
+    double mResizeStart = 1.0;
+    std::optional<QPointF> mResizeFrom;
+};
+
 bool hasComponentSelection()
 {
     using namespace scene;
@@ -307,6 +464,8 @@ void createAt(const std::string& command, const QString& label)
     if (hasComponentSelection())
     {
         actions::runWithOptions(command, {{"position", vec(scene::selectionCenter())}, {"normal", vec(scene::selectionNormal())}});
+        if (const scene::lastOp::Op* op = scene::lastOp::current(); op && op->command == command && scene::lastOp::live())
+            viewportTools::set(std::make_unique<ResizeCreatedTool>(command, label));
         return;
     }
     json result;
@@ -353,8 +512,8 @@ void registerPlacePrimitiveUi()
                       .run = [cmd, text] { createAt(cmd, text); },
                       .doc = std::string("Creates a ") + QString(label).toLower().toStdString() +
                              " standing on the selected components, centred on them and facing along their normal. With no components "
-                             "selected it follows the cursor over the surfaces until you click to drop it: Shift keeps it upright, B-drag "
-                             "or Ctrl+scroll resizes it. Uses the option box settings.",
+                             "selected it follows the cursor over the surfaces until you click to drop it: Shift keeps it upright. Either "
+                             "way B-drag, Ctrl+scroll or [ ] resizes it. Uses the option box settings.",
                       .python = std::string(command) + "(position=[0, 0, 0], normal=[0, 1, 0])"});
     }
 }

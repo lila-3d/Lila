@@ -238,8 +238,20 @@ NodeType Locator::makeType(const NodeType& base)
         ls.childNames[i] = std::string("localScale") + char('X' + i);
         ls.childShort[i] = std::string("lsc") + char('x' + i);
     }
-    t.ownAttrs = {ls};
+    AttrDef drawSize{.name = "drawSize", .shortName = "dsz", .type = PlugType::Float, .defaultValue = 5.0,
+                     .flags = AttrInput | AttrStorable | AttrChannelBox,
+                     .doc = "Half-length of the drawn cross, cm, times localScale and the object's scale. Picking follows it.",
+                     .minValue = 0.0, .softMax = 50.0};
+    drawSize.fileDefault = 1.0;
+    t.ownAttrs = {ls, drawSize};
     t.create = [] { return std::make_unique<Locator>(); };
     return t;
+}
+
+AttrDef Locator::hiddenDrawSize()
+{
+    AttrDef a{.name = "drawSize", .shortName = "dsz", .type = PlugType::Float, .defaultValue = 1.0,
+              .flags = AttrInput | AttrStorable | AttrHidden, .doc = "Unused: this node draws its own glyph."};
+    return a;
 }
 } // namespace lila::scene

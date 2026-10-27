@@ -63,7 +63,7 @@ inline constexpr const char* kShowRecentPref = "/startup/showDialog";
 
 /**
  * The frameless startup picker. welcome: the example scenes above the recent ones; otherwise the recent scenes alone.
- * Enter or double-click opens, Esc or a click outside dismisses.
+ * Enter or double-click opens, Esc dismisses; a click outside also dismisses the recent scenes alone, not the welcome.
  */
 class LILA_UI_API StartupDialog : public QDialog
 {
@@ -94,6 +94,7 @@ private:
     QListWidget* mExamples = nullptr;
     std::vector<io::examples::Example> mExampleList;
     QElapsedTimer mReclaimFocus;
+    bool mWelcome = false;
 };
 
 /** File > Versions: everything Lila and source control kept of the current scene. */

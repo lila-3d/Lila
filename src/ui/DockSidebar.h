@@ -7,8 +7,10 @@
 #include <QWidget>
 
 #include <map>
+#include <string>
 
 class QDockWidget;
+class QHBoxLayout;
 class QMainWindow;
 class QTabBar;
 class QToolBar;
@@ -30,6 +32,9 @@ LILA_UI_API void revealDock(QDockWidget* dock);
 /** Dynamic property on a dock: its width (or height) as a tab when it has no size of its own remembered yet. */
 inline constexpr const char* kDefaultTabExtent = "lilaDefaultTabExtent";
 
+/** Gives the dock's title bar a help button opening a docs page ("topology", "curves?id=pipe"); empty removes it. */
+LILA_UI_API void setDockDocs(QDockWidget* dock, const std::string& page);
+
 /** Shown, not collapsed and not behind another tab of its group. */
 LILA_UI_API bool dockShowing(const QDockWidget* dock);
 
@@ -48,7 +53,7 @@ template <class T> bool closeShownWindow()
 /** A window toggle: tucks the panel into its sidebar (or hides it) when it is showing, otherwise reveals it. */
 LILA_UI_API void toggleDock(QDockWidget* dock);
 
-/** Dock title bar: title, then collapse, float and close buttons. Double-click floats or re-docks. */
+/** Dock title bar: title, then a docs button when it has a page, collapse, float and close. Double-click floats or re-docks. */
 class LILA_UI_API DockTitleBar : public QWidget
 {
     Q_OBJECT
@@ -57,6 +62,7 @@ public:
     explicit DockTitleBar(QDockWidget* dock);
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
+    void setDocsPage(const std::string& page);
 
 signals:
     void collapseRequested();
@@ -66,7 +72,12 @@ protected:
     void mouseDoubleClickEvent(QMouseEvent* e) override;
 
 private:
+    /** Where the title text has to stop: the left edge of the first shown button. */
+    int buttonsLeft() const;
+
     QDockWidget* mDock;
+    QHBoxLayout* mButtons = nullptr;
+    QWidget* mHelp = nullptr;
 };
 
 /**

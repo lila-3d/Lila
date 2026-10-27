@@ -23,8 +23,8 @@ const geo::Mesh& meshOf(const std::string& name)
 TEST_CASE("transfer attributes copies uvs and positions")
 {
     run("newScene");
-    std::string src = run("polySphere", {{"name", "Src"}, {"generator", false}})[0];
-    std::string dst = run("polySphere", {{"name", "Dst"}, {"generator", false}, {"subdivisionsAxis", 40}, {"subdivisionsHeight", 30}})[0];
+    std::string src = run("polySphere", {{"radius", 50.0}, {"name", "Src"}, {"generator", false}})[0];
+    std::string dst = run("polySphere", {{"radius", 50.0}, {"name", "Dst"}, {"generator", false}, {"subdivisionsAxis", 40}, {"subdivisionsHeight", 30}})[0];
     run("transferAttributes", {{"args", {src, dst}}, {"uvs", true}});
     const geo::Mesh& d = meshOf(dst);
     auto uv = d.cornerAttrs().get<glm::vec2>("uv0");
@@ -49,7 +49,7 @@ TEST_CASE("transfer attributes copies uvs and positions")
 TEST_CASE("boolean difference cuts a closed hole")
 {
     run("newScene");
-    std::string box = run("polyCube", {{"name", "Block"}, {"generator", false}})[0];
+    std::string box = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"name", "Block"}, {"generator", false}})[0];
     std::string cutter = run("polyCylinder", {{"name", "Drill"}, {"generator", false}, {"radius", 20}, {"height", 300}})[0];
     run("polyBoolean", {{"args", {box, cutter}}, {"operation", "difference"}});
     CHECK(!run("objExists", {{"args", {cutter}}}).get<bool>());

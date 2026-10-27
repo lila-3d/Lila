@@ -6,6 +6,10 @@
 #include <optional>
 #include <string>
 
+class QMenu;
+class QToolButton;
+class QWidget;
+
 namespace lila::ui::docs
 {
 inline constexpr const char* kDocsDock = "docs";
@@ -50,4 +54,16 @@ LILA_UI_API void open(const std::string& page = {}, Route route = Route::Auto);
 LILA_UI_API bool openApi(const std::string& symbol, Route route = Route::Auto);
 /** Opens a page in the web browser: the public site, or the local copy served on 127.0.0.1 when that can't be reached. */
 LILA_UI_API void openInBrowser(const std::string& page);
+
+/** The page's name in the docs being read, for labels and tooltips (see pageTitle in Docs.h). */
+LILA_UI_API std::string pageTitle(const std::string& page);
+/**
+ * Registers, once per page, the action "Open <Page> Docs" (pageActionId) that opens the page, and returns its id, for
+ * menus, shelves and hotkeys. A menu's or panel's `docs` field adds one for you.
+ */
+LILA_UI_API std::string pageAction(const std::string& page);
+/** A small themed "?" button that opens the page, tooltipped "Open <Page> docs", for panel headers and dialogs. */
+LILA_UI_API QToolButton* helpButton(const std::string& page, QWidget* parent);
+/** Fills the menu, each time it opens, with a row per top-level page of the docs' sidebar. */
+LILA_UI_API void attachTopicsMenu(QMenu* menu);
 } // namespace lila::ui::docs

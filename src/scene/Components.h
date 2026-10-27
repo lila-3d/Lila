@@ -36,11 +36,15 @@ LILA_SCENE_API ComponentMode mode();
 LILA_SCENE_API void setMode(ComponentMode m);
 /** setMode recorded on the undo stack, for commands that switch mode as part of an edit. */
 LILA_SCENE_API void setModeUndoable(ComponentMode m);
+/** The running command's new nodes keep the component mode instead of landing in object mode. */
+LILA_SCENE_API void keepModeAfterCreate();
 LILA_SCENE_API const char* modeName(ComponentMode m);
 LILA_SCENE_API ComponentMode modeFromName(const std::string& name); // throws std::invalid_argument
 
 LILA_SCENE_API const std::map<NodeId, Ids>& selected(ComponentMode kind);
 LILA_SCENE_API const Ids& selected(NodeId node, ComponentMode kind);
+/** The selection of a kind in pick order, each component where it was last added; ones with no known pick follow in id order. */
+LILA_SCENE_API std::vector<std::pair<NodeId, uint32_t>> ordered(ComponentMode kind);
 /** Changes whenever a component selection or the mode does, so drawings of it can be cached. */
 LILA_SCENE_API uint64_t serial();
 

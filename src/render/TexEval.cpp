@@ -1528,11 +1528,25 @@ double Evaluator::State::runCpuNative(VulkanContext& vk)
 
 namespace
 {
+/** Tells the user, once per node type, that a GPU evaluation runs this native on the CPU, which stalls the viewport. */
+void warnCpuRoute(const std::string& type, const std::string& why)
+{
+    static std::mutex mutex;
+    static std::set<std::string> warned;
+    {
+        std::scoped_lock lock(mutex);
+        if (!warned.insert(type).second)
+            return;
+    }
+    log::warn("texture graph: {} runs on the CPU, not the GPU, so texture sets using it are slow and stall the viewport ({})", type, why);
+}
+
 /** Picks a native pass's route and, for kernels, compiles its steps. Empty or why it can't run. */
 std::string prepareNative(Prepared& prep, const Plan& plan, size_t i)
 {
     const Pass& p = plan.passes[i];
     Route route = nativeRoute(p.nativeType);
+    std::string cpuWhy = "it has no GPU form";
     if (route == Route::Kernels)
     {
         const BufferDesc& out = plan.buffers.at(size_t(p.output));
@@ -1548,6 +1562,7 @@ std::string prepareNative(Prepared& prep, const Plan& plan, size_t i)
             const std::string source = tex::nativeKernelSource(sched.file, st.entry, &err);
             if (source.empty())
             {
+                cpuWhy = err;
                 steps.clear();
                 break;
             }
@@ -1573,6 +1588,8 @@ std::string prepareNative(Prepared& prep, const Plan& plan, size_t i)
     }
     if (route == Route::None)
         return "no implementation of native node " + p.nativeType;
+    if (route == Route::Cpu)
+        warnCpuRoute(p.nativeType, cpuWhy);
     prep.routes[i] = route;
     return {};
 }

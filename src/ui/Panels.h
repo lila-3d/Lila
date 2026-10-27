@@ -55,6 +55,8 @@ struct Panel
      * user docks it themselves; from then on it opens wherever they put it.
      */
     bool floatFirst = false;
+    /** A docs page ("topology", "essentials?id=filter-the-outliner") for a help button in the dock's title bar; empty for none. */
+    std::string docs;
 };
 
 LILA_UI_API Registry<Panel>& registry();

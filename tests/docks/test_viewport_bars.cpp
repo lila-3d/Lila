@@ -2,6 +2,7 @@
 
 #include "ui/ViewportToolbar.h"
 
+#include <QDoubleSpinBox>
 #include <QMenu>
 #include <QToolButton>
 
@@ -35,14 +36,15 @@ TEST_CASE("viewport bottom bar keeps the snaps and folds the rest into the chevr
     bar.show();
     QToolButton* chevron = chevronOf(bar);
     REQUIRE(chevron);
-    // Highlight, masks, symmetry and snaps; Retopo Draw's row only shows while that tool runs.
-    CHECK(visibleRows(bar) == 4);
+    // Highlight, masks, display, symmetry, snaps and exposure; Retopo Draw's row only shows while that tool runs.
+    CHECK(visibleRows(bar) == 6);
     CHECK_FALSE(chevron->isVisible());
+    CHECK(bar.findChildren<QDoubleSpinBox*>().size() == 2);
 
     bar.resize(360, bar.height());
     CHECK(chevron->isVisible());
     CHECK(visibleRows(bar) >= 1);
-    CHECK(visibleRows(bar) < 4);
+    CHECK(visibleRows(bar) < 6);
     emit chevron->menu()->aboutToShow();
     CHECK_FALSE(chevron->menu()->actions().isEmpty());
 }

@@ -429,7 +429,7 @@ void registerUi(ext::Context& ctx)
 {
     viewportTools::add(ctx, {.id = kTool, .label = "Push Tool", .icon = "hand-finger", .create = [] { return std::make_unique<PushTool>(); }});
 
-    menus::addMenu(ctx, {.id = "Dress", .title = "Dress", .before = "Effects"});
+    menus::addMenu(ctx, {.id = "Dress", .title = "Dress", .before = "Effects", .docs = "stagehand"});
     struct ToolAction
     {
         const char* id;

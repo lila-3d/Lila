@@ -218,6 +218,7 @@ void registerCameraTypes()
     t.dag = true;
     t.doc = "A scene camera: lens, film back and clipping, looking down its local -Z.";
     t.ownAttrs = cameraAttrs();
+    t.ownAttrs.insert(t.ownAttrs.begin(), Locator::hiddenDrawSize());
     t.create = [] { return std::make_unique<Camera>(); };
     types::registerType(std::move(t));
 }

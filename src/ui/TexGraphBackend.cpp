@@ -370,7 +370,8 @@ void registerTextureGraphUi()
                  .area = Qt::BottomDockWidgetArea,
                  .icon = "texture",
                  .open = false,
-                 .toggleAction = "window.textureGraph"});
+                 .toggleAction = "window.textureGraph",
+                 .docs = "node-editor"});
     panels::add({.id = kTexture2dDock,
                  .title = "2D View",
                  .create = [](QWidget* p) -> QWidget* { return new Texture2DView(p); },

@@ -147,6 +147,14 @@ struct SidebarEntry
 };
 LILA_UI_API std::vector<SidebarEntry> readSidebar(const fs::path& docsDir);
 
+/**
+ * A page's name for labels such as "Open Curves Docs": its first sidebar entry's title, else the page id in title case
+ * ("node-editor" reads "Node Editor"). docsDir may be empty.
+ */
+LILA_UI_API std::string pageTitle(const fs::path& docsDir, std::string_view page);
+/** The id of the action that opens a page: "help.docs.curves", "help.docs.essentials.filter-the-outliner", "help.docs.python". */
+LILA_UI_API std::string pageActionId(std::string_view page);
+
 struct Hit
 {
     std::string pageId;

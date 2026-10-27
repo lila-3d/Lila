@@ -1040,6 +1040,7 @@ private:
             {
                 glm::dvec3 ls = vec3(mIx.node(l), {"los", "localScale"}, {Names{"lsx"}, Names{"lsy"}, Names{"lsz"}}, glm::dvec3(1.0));
                 mG.setValue({id, scene::Locator::kLocalScale, -1}, mAxes.scale(ls));
+                mG.setValue({id, scene::Locator::kDrawSize, -1}, 1.0);
                 glm::dvec3 lp = vec3(mIx.node(l), {"lp", "localPosition"}, {Names{"lpx"}, Names{"lpy"}, Names{"lpz"}}, glm::dvec3(0.0));
                 if (glm::dot(lp, lp) > 0.0)
                     mR.warnings.push_back(std::format("{}: locator localPosition dropped", n->path()));

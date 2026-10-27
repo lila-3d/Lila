@@ -64,6 +64,7 @@ lila_module(lila_scene Scene
     ObjectOps.cpp
     ObjectSets.cpp
     Offsets.cpp
+    OrientPivot.cpp OrientPivot.h
     Node.cpp
     Plug.cpp
     Picker.cpp

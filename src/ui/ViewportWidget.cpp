@@ -953,24 +953,16 @@ ViewInfo ViewportWidget::viewInfo() const
     return v;
 }
 
-void ViewportWidget::wrapCursor(QMouseEvent* e)
+void ViewportWidget::wrapCursor(QPointF p)
 {
-    QPointF p = e->position();
-    const double m = 2.0;
-    QPointF to = p;
-    if (p.x() <= m)
-        to.setX(width() - m - 2);
-    else if (p.x() >= width() - m)
-        to.setX(m + 2);
-    if (p.y() <= m)
-        to.setY(height() - m - 2);
-    else if (p.y() >= height() - m)
-        to.setY(m + 2);
-    if (to == p)
+    const glm::dvec2 target = gizmo::CursorWrap::target({p.x(), p.y()}, width(), height());
+    if (target == glm::dvec2(p.x(), p.y()))
         return;
-    QCursor::setPos(mapToGlobal(to.toPoint()));
+    const QPoint to = QPointF(target.x, target.y).toPoint();
+    QCursor::setPos(mapToGlobal(to));
+    mCursorWrap.warped({p.x(), p.y()}, {double(to.x()), double(to.y())});
     if (mGizmoDrag)
-        mGizmoDrag->warped(QPointF(to.toPoint()) - p);
+        mGizmoDrag->warped(QPointF(to) - p);
 }
 
 void ViewportWidget::syncGizmos()
@@ -2845,6 +2837,7 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
             if (gz->wantsRightButton(e->position()) && gz->press(e->position(), e->button(), e->modifiers()))
             {
                 mGizmoDrag = gz;
+                mCursorWrap.reset();
                 submit();
                 return;
             }
@@ -2912,6 +2905,7 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
             if (gz->press(e->position(), e->button(), e->modifiers()))
             {
                 mGizmoDrag = gz;
+                mCursorWrap.reset();
                 submit();
                 return;
             }
@@ -2980,12 +2974,14 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
     }
     if (Gizmo* gz = mGizmoDrag)
     {
+        const glm::dvec2 at = mCursorWrap.map({e->position().x(), e->position().y()});
+        const QPointF p(at.x, at.y);
         gz->setView(viewInfo());
-        gz->drag(e->position(), e->modifiers());
+        gz->drag(p, e->modifiers());
         if (!gz->dragging())
             mGizmoDrag = nullptr;
         if (gz->wrapsCursor())
-            wrapCursor(e);
+            wrapCursor(p);
         // One frame for however many moves arrived since the last: drawing on every event backs the queue up and lags.
         requestFrame();
         return;

@@ -160,8 +160,8 @@ TEST_CASE("utility nodes")
 TEST_CASE("object info follows another object and refuses cycles")
 {
     run("newScene");
-    std::string target = run("polySphere", {{"name", "Source"}})[0];
-    std::string mesh = run("polyCube", {{"name", "User"}})[0];
+    std::string target = run("polySphere", {{"radius", 50.0}, {"name", "Source"}})[0];
+    std::string mesh = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"name", "User"}})[0];
     run("gnCreateGroup", args({"Copy"}));
     std::string oi = run("gnAddNode", args({"Copy", "ObjectInfo"}));
     std::string join = run("gnAddNode", args({"Copy", "JoinGeometry"}));

@@ -40,6 +40,35 @@ std::vector<NodeId> topLevel(Graph& g, const std::vector<std::string>& names, co
 }
 } // namespace
 
+void xformops::bakeIntoGeometry(Graph& g, NodeId id, const glm::dmat4& bake)
+{
+    LILA_ZONE();
+
+    Node* n = g.node(id);
+    if (n->type().isA("mesh"))
+    {
+        // The points are shared with other objects that keep their own transforms, so this one stops sharing.
+        if (instancing::makeUnique(g, id))
+            log::warn("{} shared its mesh; it has a copy of its own now", n->path());
+        PlugRef base = modifiers::editPlug(g, id);
+        if (MeshPtr m = std::get<MeshPtr>(g.storedValue(base)))
+        {
+            geo::Mesh copy = *m;
+            for (geo::Index p = 0; p < copy.pointCapacity(); ++p)
+                if (copy.pointValid(p))
+                    copy.setPosition(p, glm::dvec3(bake * glm::dvec4(copy.position(p), 1.0)));
+            // A mirroring bake turns faces inside out; flip them back.
+            if (glm::determinant(glm::dmat3(bake)) < 0.0)
+                for (geo::Index f = 0; f < copy.faceCapacity(); ++f)
+                    if (copy.faceValid(f))
+                        copy.flipFace(f);
+            g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(copy))));
+        }
+    }
+    else if (const components::PointProvider* pp = components::pointProvider(*n); pp && pp->bake)
+        pp->bake(g, id, bake);
+}
+
 void registerObjectCommands()
 {
     using T = ArgType;
@@ -102,30 +131,7 @@ void registerObjectCommands()
                     g.setValue({id, attr, -1}, glm::dvec3(0.0));
                 g.evaluate();
                 glm::dmat4 after = n->as<glm::dmat4>(Transform::kMatrix);
-                glm::dmat4 bake = glm::inverse(after) * before;
-
-                if (n->type().isA("mesh"))
-                {
-                    // The points are shared with other objects that keep their own transforms, so this one stops sharing.
-                    if (instancing::makeUnique(g, id))
-                        log::warn("freezeTransforms: {} shared its mesh; it has a copy of its own now", n->path());
-                    PlugRef base = modifiers::editPlug(g, id);
-                    if (MeshPtr m = std::get<MeshPtr>(g.storedValue(base)))
-                    {
-                        geo::Mesh copy = *m;
-                        for (geo::Index p = 0; p < copy.pointCapacity(); ++p)
-                            if (copy.pointValid(p))
-                                copy.setPosition(p, glm::dvec3(bake * glm::dvec4(copy.position(p), 1.0)));
-                        // A mirroring freeze turns faces inside out; flip them back.
-                        if (glm::determinant(glm::dmat3(bake)) < 0.0)
-                            for (geo::Index f = 0; f < copy.faceCapacity(); ++f)
-                                if (copy.faceValid(f))
-                                    copy.flipFace(f);
-                        g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(copy))));
-                    }
-                }
-                else if (const components::PointProvider* pp = components::pointProvider(*n); pp && pp->bake)
-                    pp->bake(g, id, bake);
+                xformops::bakeIntoGeometry(g, id, glm::inverse(after) * before);
                 // The pivot stays where it was in the world, like Maya.
                 xformops::setWorldPivot(g, id, pivot);
                 g.evaluate();

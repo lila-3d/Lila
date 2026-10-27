@@ -47,6 +47,18 @@ struct ExtrudeResult
 
 LILA_SCENE_API ExtrudeResult extrudeFaces(Mesh& mesh, std::span<const Index> faces, const ExtrudeOptions& opts = {});
 
+struct ExtrudeCopy
+{
+    Mesh mesh;
+    std::vector<Index> cap; // the extruded faces in mesh
+};
+
+/**
+ * The faces extruded as a separate mesh, leaving the source untouched. With keepSides it also holds the side walls,
+ * open where they would have met the source.
+ */
+LILA_SCENE_API ExtrudeCopy extrudeCopy(const Mesh& mesh, std::span<const Index> faces, const ExtrudeOptions& opts = {}, bool keepSides = false);
+
 struct EdgeExtrudeOptions
 {
     /** Distance along the normals of the faces each edge borders. */
@@ -172,6 +184,16 @@ struct BridgeOptions
 
 /** Joins two boundary loops (or open boundary chains) of equal length with quads. Returns the new faces. */
 LILA_SCENE_API std::vector<Index> bridgeEdgeLoops(Mesh& mesh, std::span<const Index> edges, const BridgeOptions& opts = {});
+
+/**
+ * Splits a selection of edges into the pairs of border chains to bridge. Edges off the border are ignored. Whole chains
+ * pair with their nearest partner of the same length; a chain left over (one loop round a slot, or a U) is cut at its
+ * corners and its two longest matching opposite sides pair, leaving the short ends that join them.
+ */
+LILA_SCENE_API std::vector<std::vector<Index>> planBridges(const Mesh& mesh, std::span<const Index> edges);
+
+/** Bridges every pair planBridges finds. Returns the new faces. */
+LILA_SCENE_API std::vector<Index> bridgeEdges(Mesh& mesh, std::span<const Index> edges, const BridgeOptions& opts = {});
 
 /** Splits each face into a fan of triangles around a new centre point. Returns the new faces. */
 LILA_SCENE_API std::vector<Index> pokeFaces(Mesh& mesh, std::span<const Index> faces);

@@ -5,6 +5,7 @@
 
 #include <lila/Actions.h>
 #include <lila/Command.h>
+#include <lila/Docs.h>
 #include <lila/Extension.h>
 #include <lila/Log.h>
 #include <lila/Menus.h>
@@ -78,6 +79,8 @@ void addUi(ext::Context& ctx)
                                             .python = "light(type='" + type + "')"}));
         handles.push_back(ui::menus::addItem(ctx, {.id = "lights.menu." + type, .menu = "Create/Light", .action = id}));
     }
+    handles.push_back(ui::menus::addItem(ctx, {.id = "lights.menu.docsSeparator", .menu = "Create/Light", .kind = ui::menus::Kind::Separator}));
+    handles.push_back(ui::menus::addItem(ctx, {.id = "lights.menu.docs", .menu = "Create/Light", .action = ui::docs::pageAction("lights")}));
 }
 
 void removeUi(ext::Context& ctx)

@@ -31,7 +31,7 @@ size_t hardEdges(const std::string& m)
 TEST_CASE("polyInsertLoop follows symmetry")
 {
     run("newScene");
-    std::string plane = run("polyPlane", {{"subdivisionsX", 4}, {"subdivisionsZ", 1}})[0];
+    std::string plane = run("polyPlane", {{"width", 100.0}, {"depth", 100.0}, {"subdivisionsX", 4}, {"subdivisionsZ", 1}})[0];
     run("setSymmetry", {{"args", {plane}}, {"axis", "x"}});
     run("selectComponents", {{"args", {plane}}, {"edges", {0}}});
     run("polyInsertLoop");
@@ -46,7 +46,7 @@ TEST_CASE("polyInsertLoop follows symmetry")
 TEST_CASE("polyDuplicateFaces copies faces into the same mesh")
 {
     run("newScene");
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
     run("polyDuplicateFaces");
     CHECK(faces(cube) == 7);
@@ -58,7 +58,7 @@ TEST_CASE("polyDuplicateFaces copies faces into the same mesh")
 TEST_CASE("component edits in object mode take the whole mesh")
 {
     run("newScene");
-    std::string plane = run("polyPlane")[0];
+    std::string plane = run("polyPlane", {{"width", 100.0}, {"depth", 100.0}})[0];
     const int before = faces(plane);
     run("select", {{"args", {plane}}});
     run("selectMode", {{"args", {"object"}}});
@@ -69,7 +69,7 @@ TEST_CASE("component edits in object mode take the whole mesh")
     CHECK(faces(plane) == before);
     CHECK(run("selectMode") == "object");
 
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("select", {{"args", {cube}}});
 
     run("polySoftEdge", {{"angle", 0.0}});
@@ -84,7 +84,7 @@ TEST_CASE("component edits in object mode take the whole mesh")
 TEST_CASE("polyMirror flip keeps nothing of the original")
 {
     run("newScene");
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("setAttr", {{"args", {cube + ".translate", {20.0, 0.0, 0.0}}}});
     run("polyMirror", {{"args", {cube}}, {"space", "world"}, {"flip", true}});
     CHECK(faces(cube) == 6);
@@ -102,8 +102,8 @@ TEST_CASE("polyMirror flip keeps nothing of the original")
 TEST_CASE("showLastHidden shows what the last hide hid")
 {
     run("newScene");
-    std::string a = run("polyCube")[0];
-    std::string b = run("polyCube")[0];
+    std::string a = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
+    std::string b = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("hide", {{"args", {a}}});
     run("hide", {{"args", {b}}});
     json shown = run("showLastHidden");
@@ -127,7 +127,7 @@ TEST_CASE("isolation sets take in objects made from isolated ones")
 TEST_CASE("merging exactly two vertices ignores the distance")
 {
     run("newScene");
-    std::string plane = run("polyPlane", {{"subdivisionsX", 1}, {"subdivisionsZ", 1}})[0];
+    std::string plane = run("polyPlane", {{"width", 100.0}, {"depth", 100.0}, {"subdivisionsX", 1}, {"subdivisionsZ", 1}})[0];
     run("selectComponents", {{"args", {plane}}, {"vertices", {0, 1}}});
     run("polyMerge");
     CHECK(run("meshInfo", {{"args", {plane}}})["points"].get<int>() == 3);

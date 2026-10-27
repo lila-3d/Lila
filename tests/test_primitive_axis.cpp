@@ -69,7 +69,7 @@ TEST_CASE("primitive upAxis turns the geometry to each axis")
         CHECK(glm::dot(centre, c.dir) == doctest::Approx(50.0));
 
         // A plane faces along its up, so the turn keeps the winding.
-        json plane = run("polyPlane", {{"upAxis", c.axis}});
+        json plane = run("polyPlane", {{"width", 100.0}, {"depth", 100.0}, {"upAxis", c.axis}});
         CHECK(glm::dot(faceNormal(meshOf(plane[0])), c.dir) == doctest::Approx(1.0));
     }
 }
@@ -88,10 +88,10 @@ TEST_CASE("every primitive has upAxis, defaulting to the scene up axis")
         const geo::Bounds a = meshOf(r[0]).bounds(), b = meshOf(z[0]).bounds();
         CHECK(a.size().y == doctest::Approx(b.size().z));
     }
-    CHECK_THROWS_AS(run("polyCube", {{"upAxis", "w"}}), CommandError);
+    CHECK_THROWS_AS(run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"upAxis", "w"}}), CommandError);
 
     math::setUpAxis(math::UpAxis::Z);
-    json r = run("polyCone");
+    json r = run("polyCone", {{"radius", 50.0}, {"height", 100.0}});
     math::setUpAxis(math::UpAxis::Y);
     CHECK(upAxisOf(r[1]) == 2);
 }
@@ -105,7 +105,7 @@ TEST_CASE("primitive upAxis survives saving, and files without it load as y")
     {
         CAPTURE(ext);
         run("newScene");
-        json r = run("polyTorus", {{"upAxis", "-x"}});
+        json r = run("polyTorus", {{"radius", 50.0}, {"sectionRadius", 20.0}, {"upAxis", "-x"}});
         const glm::dvec3 before = meshOf(r[0]).bounds().size();
         const std::string path = (dir / (std::string("prim_axis") + ext)).string();
         run("saveScene", {{"args", {path}}});
@@ -131,11 +131,48 @@ TEST_CASE("primitive upAxis survives saving, and files without it load as y")
     CHECK(meshOf("Torus").bounds().size().y == doctest::Approx(40.0));
 }
 
+TEST_CASE("new primitives fit a 10 cm cube, and files leaving sizes out load at 1 m")
+{
+    namespace fs = std::filesystem;
+    run("newScene");
+    for (const char* type : {"polyCube", "polySphere", "polyCylinder", "polyCapsule", "polyCone", "polyTorus", "polyDisc", "polyQuadSphere",
+                             "polyIcoSphere", "polyPlane"})
+    {
+        CAPTURE(std::string(type));
+        const glm::dvec3 size = meshOf(run(type)[0]).bounds().size();
+        // Faceted spheres fall a little short of the cube.
+        CHECK(std::max({size.x, size.y, size.z}) <= 10.0 + 1e-9);
+        CHECK(std::max({size.x, size.y, size.z}) > 9.0);
+    }
+    CHECK(meshOf(run("polyPipe")[0]).bounds().size().y == doctest::Approx(20.0));
+    run("spaceLocator", {{"name", "Loc"}});
+    CHECK(run("getAttr", {{"args", {"Loc.drawSize"}}}).get<double>() == doctest::Approx(5.0));
+
+    // A file leaving the sizes out means the 1 m defaults, and a locator's drawSize 1.
+    const fs::path dir = fs::temp_directory_path() / "lila_tests";
+    fs::create_directories(dir);
+    run("newScene");
+    run("polyCube");
+    run("spaceLocator", {{"name", "Loc"}});
+    const std::string path = (dir / "prim_sizes.lilaa").string();
+    run("saveScene", {{"args", {path}}});
+    std::stringstream text;
+    text << std::ifstream(path).rdbuf();
+    const std::string stripped = std::regex_replace(text.str(), std::regex("\n[ \t]+(width|height|depth|drawSize) [^\n]*"), "");
+    REQUIRE(stripped != text.str());
+    const std::string old = (dir / "prim_sizes_old.lilaa").string();
+    std::ofstream(old) << stripped;
+    run("newScene");
+    run("openScene", {{"args", {old}}});
+    CHECK(meshOf("Cube").bounds().size().x == doctest::Approx(100.0));
+    CHECK(run("getAttr", {{"args", {"Loc.drawSize"}}}).get<double>() == doctest::Approx(1.0));
+}
+
 TEST_CASE("a primitive created from the UI is adjustable, upAxis included")
 {
     scene::lastOp::install();
     run("newScene");
-    json r = ui("polyTorus", {{"position", {10, 0, 0}}});
+    json r = ui("polyTorus", {{"radius", 50.0}, {"sectionRadius", 20.0}, {"position", {10, 0, 0}}});
     REQUIRE(scene::lastOp::live());
     REQUIRE(scene::lastOp::current()->command == "polyTorus");
     CHECK(scene::lastOp::current()->call["upAxis"] == "y");
@@ -158,6 +195,37 @@ TEST_CASE("a primitive created from the UI is adjustable, upAxis included")
     CHECK(upAxisOf(gens[0]) == 1);
     run("undo");
     CHECK(run("ls", {{"type", "polyTorus"}}).empty());
+}
+
+TEST_CASE("moving a created primitive keeps it adjustable and the move survives adjusting")
+{
+    scene::lastOp::install();
+    run("newScene");
+    json r = ui("polyQuadSphere", {{"radius", 50.0}});
+    const std::string name = r[0];
+    REQUIRE(scene::lastOp::live());
+    ui("move", {{"args", {name}}, {"by", {0, 30, 0}}});
+    CHECK(scene::lastOp::reachable());
+    ui("setAttr", {{"args", {name + ".translateX", 5.0}}});
+    CHECK(scene::lastOp::reachable());
+
+    scene::lastOp::rerun({{"subdivisions", 5}});
+    auto tx = [&](const char* attr) { return run("getAttr", {{"args", {name + "." + attr}}}).get<double>(); };
+    CHECK(tx("translateY") == doctest::Approx(30.0));
+    CHECK(tx("translateX") == doctest::Approx(5.0));
+    // A second adjustment keeps the move too.
+    scene::lastOp::rerun({{"subdivisions", 4}});
+    CHECK(tx("translateY") == doctest::Approx(30.0));
+    json gens = run("ls", {{"type", "polyQuadSphere"}});
+    REQUIRE(gens.size() == 1);
+    CHECK(run("getAttr", {{"args", {std::string(gens[0]) + ".subdivisions"}}}).get<int64_t>() == 4);
+
+    // Moving another object ends it.
+    json other = ui("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}});
+    ui("move", {{"args", {name}}, {"by", {0, 1, 0}}});
+    CHECK(scene::lastOp::current()->command == "polyCube");
+    CHECK_FALSE(scene::lastOp::reachable());
+    (void)other;
 }
 
 TEST_CASE("placing a primitive turns the scene up to the surface normal")

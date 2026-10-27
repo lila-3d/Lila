@@ -52,7 +52,7 @@ std::pair<double, double> extent(const std::string& m, int axis)
 TEST_CASE("modifier stack is live and edits go under it")
 {
     run("newScene");
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     std::string sub = run("addModifier", {{"args", {cube}}, {"kind", "subdivision"}});
     CHECK(faces(cube) == 24);
     std::string mirror = run("addModifier", {{"args", {cube}}, {"kind", "array"}, {"params", {{"count", 2}}}});
@@ -90,7 +90,7 @@ TEST_CASE("every modifier kind evaluates")
     run("newScene");
     for (const char* kind : {"mirror", "subdivision", "bevel", "array", "triangulate", "weightedNormals", "solidify", "decimate"})
     {
-        std::string m = run("polyCube", {{"name", std::string("M") + kind}})[0];
+        std::string m = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"name", std::string("M") + kind}})[0];
         run("addModifier", {{"args", {m}}, {"kind", kind}});
         CHECK_MESSAGE(faces(m) > 0, kind);
     }
@@ -99,7 +99,7 @@ TEST_CASE("every modifier kind evaluates")
 TEST_CASE("extrude modifier extrudes the faces selected when added, live and undoable")
 {
     run("newScene");
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     const int top = faceFacing(cube, 1, 1.0);
     REQUIRE(top >= 0);
     run("selectComponents", {{"args", {cube}}, {"faces", {top}}});
@@ -124,7 +124,7 @@ TEST_CASE("extrude modifier extrudes the faces selected when added, live and und
 
     // Two neighbouring faces extrude as one region unless individual.
     run("newScene");
-    cube = run("polyCube")[0];
+    cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("selectComponents", {{"args", {cube}}, {"faces", {faceFacing(cube, 1, 1.0), faceFacing(cube, 0, 1.0)}}});
     mod = run("addModifier", {{"args", {cube}}, {"kind", "extrude"}});
     CHECK(faces(cube) == 6 + 6);
@@ -133,7 +133,7 @@ TEST_CASE("extrude modifier extrudes the faces selected when added, live and und
 
     // No selection extrudes every face.
     run("newScene");
-    cube = run("polyCube")[0];
+    cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("addModifier", {{"args", {cube}}, {"kind", "extrude"}});
     CHECK(extent(cube, 0).second > 55.0);
 }
@@ -141,7 +141,7 @@ TEST_CASE("extrude modifier extrudes the faces selected when added, live and und
 TEST_CASE("extrude modifier keeps its faces through edits under it")
 {
     run("newScene");
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     // The highest id, so deleting face 0 shifts it when the cage compacts.
     int axis = -1;
     double sign = 0.0;
@@ -166,7 +166,7 @@ TEST_CASE("extrude modifier keeps its faces through edits under it")
 
     // A modifier below that changes the topology: the faces are found again where they were.
     run("newScene");
-    cube = run("polyCube")[0];
+    cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("addModifier", {{"args", {cube}}, {"kind", "array"}, {"params", {{"count", 2}}}});
     run("selectComponents", {{"args", {cube}}, {"faces", {faceFacing(cube, 1, 1.0)}}});
     mod = run("addModifier", {{"args", {cube}}, {"kind", "extrude"}});
@@ -180,7 +180,7 @@ TEST_CASE("extrude modifier keeps its faces through edits under it")
 TEST_CASE("extrude modifier grows edges and follows symmetry")
 {
     run("newScene");
-    std::string plane = run("polyPlane")[0];
+    std::string plane = run("polyPlane", {{"width", 100.0}, {"depth", 100.0}})[0];
     run("selectComponents", {{"args", {plane}}, {"edges", {0}}});
     run("addModifier", {{"args", {plane}}, {"kind", "extrude"}, {"params", {{"thickness", 0.0}, {"offset", 25.0}}}});
     CHECK(faces(plane) == 2);
@@ -189,7 +189,7 @@ TEST_CASE("extrude modifier grows edges and follows symmetry")
     CHECK((hi - lo) + (zhi - zlo) == doctest::Approx(225.0));
 
     run("newScene");
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("toggleSymmetry", {{"args", {cube}}, {"axis", "x"}});
     run("selectComponents", {{"args", {cube}}, {"faces", {faceFacing(cube, 0, 1.0)}}});
     run("addModifier", {{"args", {cube}}, {"kind", "extrude"}});
@@ -201,7 +201,7 @@ TEST_CASE("polyExtrude made non-destructive becomes an extrude modifier")
 {
     namespace lo = scene::lastOp;
     run("newScene");
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     const int front = faceFacing(cube, 2, 1.0);
     run("selectComponents", {{"args", {cube}}, {"faces", {front}}});
     ops::execute("polyExtrude", {{"thickness", 15.0}, {"offset", 5.0}}, CallSource::UI);
@@ -225,7 +225,7 @@ TEST_CASE("polyExtrude made non-destructive becomes an extrude modifier")
 
     // In object mode the op extruded every face, and so does the modifier.
     run("newScene");
-    cube = run("polyCube")[0];
+    cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("select", {{"args", {cube}}});
     ops::execute("polyExtrude", {{"thickness", 10.0}}, CallSource::UI);
     const json destructive = run("meshData", {{"args", {cube}}});
@@ -237,11 +237,11 @@ TEST_CASE("polyExtrude made non-destructive becomes an extrude modifier")
 TEST_CASE("extrude modifier saves and loads")
 {
     run("newScene");
-    std::string cube = run("polyCube", {{"name", "Extruded"}})[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"name", "Extruded"}})[0];
     run("addModifier", {{"args", {cube}}, {"kind", "array"}, {"params", {{"count", 2}}}});
     run("selectComponents", {{"args", {cube}}, {"faces", {faceFacing(cube, 1, 1.0)}}});
     std::string faceMod = run("addModifier", {{"args", {cube}}, {"kind", "extrude"}, {"params", {{"thickness", 12.5}}}});
-    std::string plane = run("polyPlane", {{"name", "Strip"}})[0];
+    std::string plane = run("polyPlane", {{"width", 100.0}, {"depth", 100.0}, {"name", "Strip"}})[0];
     run("selectComponents", {{"args", {plane}}, {"edges", {0}}});
     run("addModifier", {{"args", {plane}}, {"kind", "extrude"}, {"params", {{"thickness", 0.0}, {"offset", 10.0}}}});
     const json cubeData = run("meshData", {{"args", {cube}}});
@@ -269,7 +269,7 @@ TEST_CASE("extrude modifier saves and loads")
 TEST_CASE("modifier stacks save and load")
 {
     run("newScene");
-    std::string cube = run("polyCube", {{"name", "Stacked"}})[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"name", "Stacked"}})[0];
     run("addModifier", {{"args", {cube}}, {"kind", "bevel"}, {"params", {{"segments", 3}}}});
     run("addModifier", {{"args", {cube}}, {"kind", "mirror"}});
     int before = faces(cube);
@@ -288,7 +288,7 @@ TEST_CASE("modifier stacks save and load")
 TEST_CASE("triangulating a mesh with modifiers triangulates the result")
 {
     run("newScene");
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("addModifier", {{"args", {cube}}, {"kind", "bevel"}, {"params", {{"segments", 2}}}});
     const json before = run("meshInfo", {{"args", {cube}}});
     run("select", {{"args", {cube}}});

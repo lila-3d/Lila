@@ -508,10 +508,19 @@ void MarkingMenu::updateHighlight(QPointF pos)
     mCursor = pos;
     mCopied = false;
     Level& l = mLevels.back();
+    const int wasOverflow = mOverflow;
     mOverflow = -1;
     for (int i = 0; i < int(l.overflow.size()); ++i)
         if (l.overflow[i].enabled && l.overflow[i].rect.adjusted(-4, -1, 4, 1).contains(pos))
             mOverflow = i;
+    if (mOverflow >= 0 && mOverflow != wasOverflow && l.overflow[mOverflow].children.is_object())
+    {
+        mRowSince.start();
+        QTimer::singleShot(kBoxDwellMs, this, [this] {
+            if (gActive == this)
+                updateHighlight(mapFromGlobal(QCursor::pos()).toPointF());
+        });
+    }
 
     const bool wasOnBox = mOnBox;
     const int wasSlot = mSlot;
@@ -548,8 +557,9 @@ void MarkingMenu::updateHighlight(QPointF pos)
         mSlot = -1;
         mOverflow = -1;
     }
-    // An overflow row with children cascades once the cursor reaches its arrow.
-    else if (it && mOverflow >= 0 && it->children.is_object() && pos.x() > it->rect.right() - 16)
+    // An overflow row with children cascades once the cursor reaches its arrow or rests on the row.
+    else if (it && mOverflow >= 0 && it->children.is_object() &&
+             (pos.x() > it->rect.right() - 16 || (mRowSince.isValid() && mRowSince.elapsed() >= kBoxDwellMs)))
     {
         QPointF origin(it->rect.right() + 2, it->rect.top());
         mLevels.push_back(buildLevel(it->children, QPointF(it->rect.right(), it->rect.center().y()), origin));
@@ -576,6 +586,17 @@ bool MarkingMenu::release()
         action = it->action;
         boxAction = it->boxAction;
         options = mOnBox && !it->box.isEmpty() && (mOverflow >= 0 || (mOnBoxSince.isValid() && mOnBoxSince.elapsed() >= kBoxDwellMs));
+        // Released on a submenu row: open it and stay up so the next click picks from it.
+        if (action.is_null() && !options && it->children.is_object())
+        {
+            const QPointF origin(it->rect.right() + 2, it->rect.top());
+            mLevels.push_back(buildLevel(it->children, QPointF(it->rect.right(), it->rect.center().y()), origin));
+            mSlot = -1;
+            mOverflow = -1;
+            mSticky = true;
+            update();
+            return true;
+        }
     }
     gActive = nullptr;
     if (!mStatus.isEmpty())
@@ -612,7 +633,7 @@ void MarkingMenu::mouseMoveEvent(QMouseEvent* e)
 
 void MarkingMenu::mouseReleaseEvent(QMouseEvent* e)
 {
-    if (mTrigger == Trigger::MouseButton && e->button() == mButton)
+    if (mSticky || (mTrigger == Trigger::MouseButton && e->button() == mButton))
         release();
 }
 

@@ -685,6 +685,45 @@ std::vector<SidebarEntry> readSidebar(const fs::path& docsDir)
     return out;
 }
 
+std::string pageTitle(const fs::path& docsDir, std::string_view page)
+{
+    std::string id = normalizePageId(page);
+    if (!docsDir.empty())
+        for (const SidebarEntry& e : readSidebar(docsDir))
+            if (!e.external && e.target == id && !e.title.empty())
+                return e.title;
+    std::string out;
+    bool start = true;
+    for (char c : id)
+    {
+        if (c == '-' || c == '_' || c == '/' || c == '.')
+        {
+            if (!out.empty() && out.back() != ' ')
+                out += ' ';
+            start = true;
+            continue;
+        }
+        out += start ? char(std::toupper(static_cast<unsigned char>(c))) : c;
+        start = false;
+    }
+    while (!out.empty() && out.back() == ' ')
+        out.pop_back();
+    return out.empty() ? "Lila" : out;
+}
+
+std::string pageActionId(std::string_view page)
+{
+    std::string anchor;
+    std::string id = normalizePageId(page, &anchor);
+    while (endsWith(id, "/"))
+        id.pop_back();
+    std::ranges::replace(id, '/', '.');
+    std::string out = "help.docs." + (id.empty() ? std::string("home") : id);
+    if (!anchor.empty())
+        out += "." + anchor;
+    return out;
+}
+
 std::vector<Hit> search(const fs::path& docsDir, std::string_view query, size_t limit)
 {
     LILA_ZONE();

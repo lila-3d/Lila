@@ -1372,6 +1372,59 @@ void openInBrowser(const std::string& page)
     });
 }
 
+std::string pageTitle(const std::string& page)
+{
+    std::optional<Root> root = currentRoot();
+    return docs::pageTitle(root ? root->dir / "docs" : fs::path(), page);
+}
+
+std::string pageAction(const std::string& page)
+{
+    std::string id = pageActionId(page);
+    if (!actions::find(id))
+    {
+        std::string title = pageTitle(page);
+        actions::add({.id = id,
+                      .label = "Open " + title + " Docs",
+                      .category = "Help",
+                      .run = [page] { open(page); },
+                      .doc = "Opens the " + title + " page of the docs. Shift+click opens it in the web browser.",
+                      .python = "lila.docs.open(\"" + page + "\")"});
+    }
+    return id;
+}
+
+QToolButton* helpButton(const std::string& page, QWidget* parent)
+{
+    auto* b = new QToolButton(parent);
+    b->setIcon(icon("help"));
+    b->setIconSize(QSize(14, 14));
+    b->setToolTip(qs("Open " + pageTitle(page) + " docs"));
+    b->setAutoRaise(true);
+    b->setFixedSize(18, 18);
+    b->setFocusPolicy(Qt::NoFocus);
+    QObject::connect(b, &QToolButton::clicked, b, [page] { open(page); });
+    return b;
+}
+
+void attachTopicsMenu(QMenu* menu)
+{
+    menu->setToolTipsVisible(true);
+    QObject::connect(menu, &QMenu::aboutToShow, menu, [menu] {
+        menu->clear();
+        std::optional<Root> root = currentRoot();
+        if (root)
+            for (const SidebarEntry& e : readSidebar(root->dir / "docs"))
+                if (!e.external && e.depth == 0 && !e.target.empty())
+                {
+                    std::string page = e.target;
+                    menu->addAction(qs(e.title), [page] { open(page); })->setToolTip("Shift+click opens it in the web browser");
+                }
+        if (menu->isEmpty())
+            menu->addAction("(no docs yet: Help > Update Docs)")->setEnabled(false);
+    });
+}
+
 void registerDocsUi()
 {
     if (std::exchange(state().registered, true))

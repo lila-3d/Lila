@@ -204,6 +204,7 @@ void registerLightTypes()
     t.doc = "A light: kind, colour, intensity, falloff, cone and area. Lit and drawn by a light provider extension; a light "
             "only a placeholder provider handles is flagged in the outliner.";
     t.ownAttrs = lightAttrs();
+    t.ownAttrs.insert(t.ownAttrs.begin(), Locator::hiddenDrawSize());
     t.create = [] { return std::make_unique<Light>(); };
     types::registerType(std::move(t));
 }

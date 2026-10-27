@@ -108,6 +108,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPointer>
+#include <QPushButton>
 #include <QScreen>
 #include <QStatusBar>
 #include <QWidgetAction>
@@ -320,7 +321,7 @@ void MainWindow::registerPanels()
                      shelf->setTitleBarWidget(grip);
                  }});
     panels::add({.id = "outliner", .title = "Outliner", .create = make([](QWidget* p) { return new OutlinerPanel(p); }),
-                 .area = Qt::LeftDockWidgetArea});
+                 .area = Qt::LeftDockWidgetArea, .docs = "essentials?id=filter-the-outliner"});
     panels::add({.id = "sourceControl", .title = "Source Control", .create = make([](QWidget* p) { return new SourceControlPanel(p); }),
                  .area = Qt::LeftDockWidgetArea});
     panels::add({.id = kReferenceEditorDock, .title = "Reference Editor", .create = make([](QWidget* p) { return new ReferenceEditor(p); }),
@@ -357,7 +358,7 @@ void MainWindow::registerPanels()
                      });
                      return scriptEditor;
                  }),
-                 .area = Qt::BottomDockWidgetArea});
+                 .area = Qt::BottomDockWidgetArea, .docs = "python/"});
     panels::add({.id = kApiReferenceDock, .title = "API Reference", .create = make([](QWidget* p) { return new ApiReference(p); }),
                  .area = Qt::RightDockWidgetArea, .open = false, .place = [this, dock](QDockWidget* apiDock) {
                      QDockWidget* editorDock = dock(kScriptEditorDock);
@@ -385,7 +386,7 @@ void MainWindow::registerPanels()
                          ed->setFocus();
                      });
                  },
-                 .floatFirst = true});
+                 .floatFirst = true, .docs = "python/"});
     panels::add({.id = kTerminalDock, .title = "Terminal", .create = make([](QWidget* p) { return new TerminalPanel(p); }),
                  .area = Qt::BottomDockWidgetArea});
     // The UV editor opens as its own column left of the channel box.
@@ -405,13 +406,13 @@ void MainWindow::registerPanels()
     panels::add({.id = kModelingToolkitDock, .title = "Modeling Toolkit", .create = make([](QWidget* p) { return new ModelingToolkit(p); }),
                  .area = Qt::RightDockWidgetArea, .open = false, .place = [tabWithAttributes](QDockWidget* toolkit) {
                      tabWithAttributes(toolkit);
-                     toolkit->setProperty(kDefaultTabExtent, kDefaultSidePanelWidth * 5 / 2);
+                     toolkit->setProperty(kDefaultTabExtent, kDefaultSidePanelWidth * 5 / 4);
                  }});
     panels::add({.id = kTopologyToolkitDock, .title = "Topology Toolkit", .create = make([](QWidget* p) { return new TopologyToolkit(p); }),
                  .area = Qt::RightDockWidgetArea, .open = false, .place = [tabWithAttributes](QDockWidget* toolkit) {
                      tabWithAttributes(toolkit);
                      toolkit->setProperty(kDefaultTabExtent, kDefaultSidePanelWidth * 2);
-                 }});
+                 }, .docs = "topology"});
     panels::add({.id = kModifierStackDock, .title = "Modifier Stack", .create = make([](QWidget* p) { return new ModifierStackWidget(p); }),
                  .area = Qt::RightDockWidgetArea, .place = tabWithAttributes});
     panels::add({.id = kMaterialEditorDock, .title = "Material Editor", .create = make([](QWidget* p) { return new MaterialEditor(p); }),
@@ -433,7 +434,7 @@ void MainWindow::registerPanels()
                  .area = Qt::BottomDockWidgetArea, .open = false, .place = [this, dock](QDockWidget* nodeDock) {
                      arrangeBottomDocks(this, {dock("scriptOutput"), dock(kScriptEditorDock), dock(kTerminalDock), dock(kGraphEditorDock), nodeDock},
                                         dock(kScriptEditorDock), dock(kTimeSliderDock));
-                 }});
+                 }, .docs = "node-editor"});
 }
 
 void MainWindow::createPanelDock(const panels::Panel& p)
@@ -455,6 +456,8 @@ void MainWindow::createPanelDock(const panels::Panel& p)
     QDockWidget* d = addDock(QString::fromStdString(p.title), name, content, p.area);
     if (!p.icon.empty())
         d->setWindowIcon(icon(QString::fromStdString(p.icon)));
+    if (!p.docs.empty())
+        setDockDocs(d, p.docs);
     if (p.place)
         p.place(d);
     if (!p.open)
@@ -587,6 +590,9 @@ bool MainWindow::confirmDiscard()
     QMessageBox box(QMessageBox::Question, "Unsaved changes", "Save changes to " + name + "?",
                     QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, this);
     box.setDefaultButton(QMessageBox::Save);
+    box.button(QMessageBox::Save)->setText("&Save");
+    box.button(QMessageBox::Discard)->setText("&Discard");
+    box.button(QMessageBox::Cancel)->setText("&Cancel");
     QTimer::singleShot(0, &box, [&box] { bringToFront(&box); });
     auto choice = QMessageBox::StandardButton(box.exec());
     if (choice == QMessageBox::Cancel)
@@ -1239,8 +1245,8 @@ QMenu* MainWindow::refreshKeysOnShow(QMenu* menu)
 void MainWindow::buildMenus()
 {
     using namespace menus;
-    auto menu = [](const char* id, const char* title, Area area = Area::MenuBar, std::function<void(QMenu*)> setup = {}) {
-        addMenu({.id = id, .title = title, .area = area, .setup = std::move(setup)});
+    auto menu = [](const char* id, const char* title, Area area = Area::MenuBar, std::function<void(QMenu*)> setup = {}, const char* docs = "") {
+        addMenu({.id = id, .title = title, .area = area, .setup = std::move(setup), .docs = docs});
     };
 
     menu("File", "File");
@@ -1294,7 +1300,7 @@ void MainWindow::buildMenus()
     });
     menus::addActions("File", {"file.closeFolder", "", "file.welcome", "", "file.exit"});
 
-    menu("Edit", "Edit");
+    menu("Edit", "Edit", Area::MenuBar, {}, "duplicate");
     menus::addActions("Edit", {"#History", "edit.undo", "edit.redo", "edit.repeatLast", "adjustLastOp.show", "edit.flushUndo", "edit.flushRedo", "edit.flushAll", "#Selection",
                         "edit.selectAll", "edit.deselect", "edit.invertSelection", "edit.delete"});
     addSubmenu("Edit", "Quick Select Sets", [](QMenu* m) { sets::attachQuickSelectMenu(m); });
@@ -1303,7 +1309,7 @@ void MainWindow::buildMenus()
                         "window.preferences", "window.extensionManager"});
 
     menu("Modify", "M&odify");
-    menus::addActions("Modify", {"#Transforms", "modify.freezeTransforms", "modify.resetTransforms", "modify.centerPivot", "modify.resetPivot",
+    menus::addActions("Modify", {"#Transforms", "modify.freezeTransforms", "modify.resetTransforms", "modify.centerPivot", "modify.resetPivot", "modify.orientPivot",
                                  "#Snapping", "snapSurface.set", "snapSurface.clear", "snapSurface.toggle", "snapSurface.alignToNormal"});
 
     menu("Create", "Create");
@@ -1342,7 +1348,7 @@ void MainWindow::buildMenus()
                                "mesh.transferAttributes"});
     menus::addActions("Mesh", {"#Cleanup", "mesh.repair", "mesh.selectIssues", "#Nodes", "window.nodeEditor"});
 
-    menu("Topology", "Topology", Area::MenuBar, syncChecks);
+    menu("Topology", "Topology", Area::MenuBar, syncChecks, "topology");
     menus::addActions("Topology", {"#Session", "retopo.setReference", "window.topologyToolkit", "#Draw", "retopo.draw", "topo.pencil", "topo.patch",
                                    "topo.strip", "topo.stroke", "topo.cylinder", "#Shape", "topo.handles", "topo.relax", "topo.settle", "mesh.relax",
                                    "#Auto Retopo", "topo.region", "topo.runRegion", "mesh.quadRemesh", "retopo.poles", "mesh.voxelRemesh",
@@ -1354,7 +1360,7 @@ void MainWindow::buildMenus()
                                 "mesh.spin", "#Shape", "mesh.straighten", "mesh.circularize", "mesh.spherize", "mesh.flatten", "mesh.conformShape",
                                 "mesh.conformToObject"});
 
-    menu("Curves", "Curves");
+    menu("Curves", "Curves", Area::MenuBar, {}, "curves");
     menus::addActions("Curves", {"#Create", "curve.bezierPen", "curve.cvTool", "curve.epTool", "curve.pencil", "curve.catmullRom", "curve.kappa",
                                  "curve.circle", "curve.fromEdges", "curve.sketchTool", "#Surfaces", "curve.extrude", "curve.revolve", "curve.loft",
                                  "curve.patchFill", "curve.network", "curve.borderBlend", "#Pipes and Cables", "curve.pipeTool", "curve.pipe",
@@ -1526,7 +1532,9 @@ void MainWindow::buildMenus()
                            "window.markingMenuEditor", "window.extensionManager"});
 
     menu("Help", "Help");
-    menus::addActions("Help", {"help.docs", "help.updateDocs", "", "window.searchMenus", "window.searchScene", "", "help.agentSetup", "help.prefsFolder", "help.crashReports", "help.copyLastCrash", "help.hotkeyCheatSheet", "help.about"});
+    menus::addActions("Help", {"help.docs"});
+    addSubmenu("Help", "Docs Topics", [](QMenu* m) { docs::attachTopicsMenu(m); });
+    menus::addActions("Help", {"help.updateDocs", "", "window.searchMenus", "window.searchScene", "", "help.agentSetup", "help.prefsFolder", "help.crashReports", "help.copyLastCrash", "help.hotkeyCheatSheet", "help.about"});
 
     buildPanelMenus();
 

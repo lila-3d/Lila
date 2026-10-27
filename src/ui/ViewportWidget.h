@@ -9,6 +9,7 @@
 #include "ui/Camera.h"
 #include "ui/CameraHistory.h"
 #include "ui/Gizmo.h"
+#include "ui/GizmoMath.h"
 #include "ui/Overlay.h"
 #include "ui/PaintSelect.h"
 #include "ui/SelectionHandlers.h"
@@ -141,8 +142,8 @@ private:
     void drawHandlerHover(render::FrameState& s);
     /** This view for callbacks that shouldn't see the widget, with the cursor at cursor. */
     ViewportState state(QPointF cursor);
-    /** Wraps the cursor to the opposite edge during manipulator drags, so a drag never runs out of screen. */
-    void wrapCursor(QMouseEvent* e);
+    /** Wraps the cursor at p to the opposite edge during manipulator drags, so a drag never runs out of screen. */
+    void wrapCursor(QPointF p);
     void updateCursor();
     /** Widget-space pixel of a world point; nullopt behind the camera. */
     std::optional<QPointF> project(const glm::dvec3& world) const;
@@ -254,6 +255,7 @@ private:
     GizmoSlot mGizmo;        // the active provider's
     GizmoSlot mDefaultGizmo; // gizmos::kDefault's, when it isn't the active one
     Gizmo* mGizmoDrag = nullptr; // took the press; null when no gizmo drag is under way
+    gizmo::CursorWrap mCursorWrap;
     int mGizmoListener = 0;
     int mHandlerListener = 0;
     int mArrangeListener = 0;

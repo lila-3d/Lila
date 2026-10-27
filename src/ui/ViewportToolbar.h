@@ -38,8 +38,8 @@ LILA_UI_API void fillCameraMenu(QMenu* menu, ViewportWidget* view, std::function
 LILA_UI_API void fillEnvironmentMenu(QMenu* menu);
 
 /**
- * Maya's panel icon row: camera, gates, shading, lighting, AO, AA, environment, isolate, show filters, x-ray, framing,
- * exposure and gamma for one viewport. Buttons run registered actions on that viewport and track their state from prefs,
+ * Maya's panel icon row: camera, gates, shading, lighting, AO, AA, environment, isolate, show filters, culling, outline,
+ * level of detail and framing for one viewport. Buttons run registered actions on that viewport and track their state from prefs,
  * render settings and the view itself. Feature options the scene cannot use hide until it can (see viewportContext).
  * Whatever does not fit the width goes into a chevron menu at the end.
  */
@@ -70,7 +70,6 @@ private:
 
     QToolButton* actionButton(const char* id, const char* iconName, uint32_t needs = 0);
     QToolButton* menuButton(const char* iconName, const QString& tip, std::function<void(QMenu*)> fill);
-    QDoubleSpinBox* field(const char* key, double fallback, double lo, double hi, double step, const QString& tip);
     void separator();
     /** Makes this panel's view the active one, so actions that target "the viewport" act on it. */
     void activateView();
@@ -83,7 +82,6 @@ private:
     ViewportWidget* mView;
     std::vector<Item> mItems;
     std::vector<std::pair<QToolButton*, std::string>> mActionButtons;
-    std::vector<std::pair<QDoubleSpinBox*, std::pair<std::string, double>>> mFields;
     QToolButton* mCameraButton = nullptr;
     QToolButton* mSamplesButton = nullptr;
     QToolButton* mChevron = nullptr;
@@ -95,8 +93,9 @@ private:
 
 /**
  * The row along the bottom of a viewport panel, in groups: the highlight under the cursor, the object selection masks,
- * Retopo Draw's line snapping while that tool runs, symmetry, and the increment snaps. Groups that do not fit the
- * width go into a chevron menu, the highlight first and the snaps last.
+ * the display overlays and filters, Retopo Draw's line snapping while that tool runs, symmetry, the increment snaps, and
+ * exposure and gamma. Groups that do not fit the width go into a chevron menu, the highlight first and the snaps last.
+ * Buttons for features the scene cannot use hide until it can (see viewportContext).
  */
 class LILA_UI_API ViewportBottomBar : public QWidget
 {
@@ -125,7 +124,8 @@ private:
     };
 
     QWidget* group(bool right, int keep, std::function<void(QMenu*)> overflow, std::function<bool()> active = {});
-    QToolButton* toggleButton(QWidget* row, const std::string& action, const char* iconName);
+    QToolButton* toggleButton(QWidget* row, const std::string& action, const char* iconName, uint32_t needs = 0);
+    QDoubleSpinBox* field(QWidget* row, const char* key, double fallback, double lo, double hi, double step, const QString& tip);
     /** UE's snap pair: a toggle for t's increment snap and a dropdown of its steps. */
     void snapGroup(QWidget* row, Tool t, const char* iconName, std::vector<double> steps, const QString& unit);
     /** A toggle for the selected meshes' symmetry and a dropdown of its axis. */
@@ -135,17 +135,32 @@ private:
     void buildHighlightRow();
     /** Maya's object selection masks. */
     void buildMaskRow();
+    /** Origin axis, x-ray, x-ray joints, the painterly filter and the mesh display aids. */
+    void buildDisplayRow();
+    /** Reset, exposure and gamma. */
+    void buildExposureRow();
     /** Retopo Draw's line snap angle and space and its surface, while the tool runs. */
     void buildRetopoRow();
     void refreshRetopo();
     void activateView();
     void refresh();
+    /** Shows only the buttons the scene can use; true when any changed. */
+    bool refreshRelevance();
     void refreshTooltips();
     void layoutItems();
+
+    struct Relevant
+    {
+        QToolButton* button;
+        uint32_t needs;     // viewportContext features any of which makes it useful
+        std::string action; // stays visible while on, so it can be turned off
+    };
 
     ViewportWidget* mView;
     std::vector<Group> mGroups;
     std::vector<std::pair<QToolButton*, std::string>> mActionButtons;
+    std::vector<Relevant> mRelevant;
+    std::vector<std::pair<QDoubleSpinBox*, std::pair<std::string, double>>> mFields;
     QToolButton* mChevron = nullptr;
     struct SnapGroup
     {
@@ -168,6 +183,7 @@ private:
     int mPrefListener = 0;
     int mToolsListener = 0;
     int mViewportToolListener = 0;
+    int mContextListener = 0;
 };
 
 /** One viewport with its toolbar above it and its bottom bar below, as a cell of the viewport layout. */

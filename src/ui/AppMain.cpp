@@ -50,6 +50,7 @@
 #include "ui/Hotkeys.h"
 #include "ui/KnifeTool.h"
 #include "ui/MainWindow.h"
+#include "ui/Manipulator.h"
 #include "ui/MaterialEditor.h"
 #include "ui/MeasureTool.h"
 #include "ui/PlacePrimitive.h"
@@ -123,6 +124,7 @@ void registerUi()
     registerModelingToolkitActions();
     registerModifierStackActions();
     adjustLastOp::install();
+    Manipulator::installOrientPivotSink();
     registerRetopoActions();
     registerTopologyActions();
     registerTopologyToolkitActions();

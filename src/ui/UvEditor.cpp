@@ -17,6 +17,7 @@
 #include "ui/FlowLayout.h"
 #include "ui/Icons.h"
 #include "ui/MarkingMenu.h"
+#include "ui/MenuButtons.h"
 #include "ui/UvLive.h"
 #include "ui/UvTexturePaint.h"
 #include "ui/UvTools.h"
@@ -2355,7 +2356,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
             const QString label = QString::fromStdString(set + " / " + channel);
             textureMenu->addAction(label, this, [this, texture, set, channel, label] {
                 mView->texturePaint().setChannel(set, channel);
-                texture->setText(label);
+                texture->setText(texture->fontMetrics().elidedText(label, Qt::ElideMiddle, 160));
             });
         }
     });
@@ -2393,6 +2394,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     }
     projectBtn->setMenu(projectMenu);
     projectBtn->setPopupMode(QToolButton::InstantPopup);
+    setRightClickAction(projectBtn, projectMenu->actions().front());
     // Cut and sew re-solve the islands they touch straight away in live mode.
     auto cutOrSew = [this](const char* command, json call) {
         json r = uvLive::cutOrSew(command, std::move(call));
@@ -2420,6 +2422,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
         }
         b->setMenu(menu);
         b->setPopupMode(QToolButton::InstantPopup);
+        setRightClickAction(b, menu->actions().front());
     };
     addMenuOp("circle-dashed", "BFF", "Boundary First Flattening: conformal unwrap with the boundary chosen first (uvBff)",
               {{"Free boundary (least area stretch)", "uvBff", json::object()},
@@ -2607,14 +2610,35 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     row4->addWidget(mRotate);
     QToolButton* rotBtn = button("Rotate", "Rotate the selected uvs, degrees counter-clockwise", this, "rotate");
     row4->addWidget(rotBtn);
+    std::vector<QToolButton*> iconOnly;
+    for (auto [ic, text, tip, call] : {std::tuple{"rotate-2", "Rotate 90 Left", "Rotate 90 left: each selected island a quarter turn counter-clockwise",
+                                                  json{{"rotate", 90.0}, {"perIsland", true}}},
+                                       {"rotate-clockwise-2", "Rotate 90 Right", "Rotate 90 right: each selected island a quarter turn clockwise",
+                                        json{{"rotate", -90.0}, {"perIsland", true}}},
+                                       {"flip-horizontal", "Flip Horizontal", "Flip horizontal: mirror each selected island left to right",
+                                        json{{"scale", {-1.0, 1.0}}, {"perIsland", true}}},
+                                       {"flip-vertical", "Flip Vertical", "Flip vertical: mirror each selected island top to bottom",
+                                        json{{"scale", {1.0, -1.0}}, {"perIsland", true}}}})
+    {
+        QToolButton* b = button(text, tip, this, ic);
+        connect(b, &QToolButton::clicked, this, [this, call] { runCommand("uvTransform", call); });
+        row4->addWidget(b);
+        iconOnly.push_back(b);
+    }
     row4->addWidget(mScaleU);
     row4->addWidget(mScaleV);
     QToolButton* scaleBtn = button("Scale", "Scale the selected uvs about their centre", this, "resize");
     row4->addWidget(scaleBtn);
+    iconOnly.insert(iconOnly.end(), {moveBtn, rotBtn, scaleBtn});
+    for (QToolButton* b : iconOnly)
+        b->setToolButtonStyle(Qt::ToolButtonIconOnly);
     root->addLayout(row4);
 
     mStatus = new QLabel(this);
     mStatus->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    // Command results can be one long line; without this the dock could not be narrower than the last one.
+    mStatus->setWordWrap(true);
+    mStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     root->addWidget(mStatus);
 
     mView->onToolChanged = [toolButtons](UvView::Tool t) { toolButtons[size_t(t)]->setChecked(true); };

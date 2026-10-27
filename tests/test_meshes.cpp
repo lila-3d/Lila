@@ -19,7 +19,7 @@ json run(const char* name, json call = json::object()) { return ops::execute(nam
 TEST_CASE("primitives are procedural until history is deleted")
 {
     run("newScene");
-    json r = run("polyCube", {{"width", 200}, {"subdivisionsX", 2}});
+    json r = run("polyCube", {{"height", 100.0}, {"depth", 100.0}, {"width", 200}, {"subdivisionsX", 2}});
     std::string mesh = r[0], gen = r[1];
     CHECK(mesh == "Cube");
     json info = run("meshInfo", {{"args", {mesh}}});
@@ -32,7 +32,7 @@ TEST_CASE("primitives are procedural until history is deleted")
     run("bakeModifierStack", {{"args", {mesh}}});
     CHECK(!run("objExists", {{"args", {gen}}}).get<bool>());
     CHECK(run("meshInfo", {{"args", {mesh}}})["faces"] == 10);
-    json baked = run("polySphere", {{"generator", false}});
+    json baked = run("polySphere", {{"radius", 50.0}, {"generator", false}});
     CHECK(baked[1].is_null());
 }
 
@@ -49,8 +49,8 @@ TEST_CASE("mesh json round trip keeps attributes")
 TEST_CASE("meshes save and load in both formats")
 {
     run("newScene");
-    run("polyTorus", {{"name", "Ring"}});
-    run("polyCube", {{"name", "Box"}, {"generator", false}});
+    run("polyTorus", {{"radius", 50.0}, {"sectionRadius", 20.0}, {"name", "Ring"}});
+    run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"name", "Box"}, {"generator", false}});
     auto dir = std::filesystem::temp_directory_path() / "lila_tests";
     for (const char* ext : {".lila", ".lilaa"})
     {
@@ -83,7 +83,7 @@ TEST_CASE("setMeshPoints moves every point in one undo step")
 TEST_CASE("obj export and import")
 {
     run("newScene");
-    run("polyCylinder", {{"name", "Can"}, {"position", {0, 50, 0}}});
+    run("polyCylinder", {{"radius", 50.0}, {"height", 100.0}, {"name", "Can"}, {"position", {0, 50, 0}}});
     auto path = (std::filesystem::temp_directory_path() / "lila_tests" / "can.obj").string();
     run("exportObj", {{"args", {path, "Can"}}});
     run("newScene");
@@ -103,7 +103,7 @@ TEST_CASE("stl and ply export and import through the translators")
     {
         CAPTURE(ext);
         run("newScene");
-        run("polyCylinder", {{"name", "Can"}, {"position", {0, 50, 0}}});
+        run("polyCylinder", {{"radius", 50.0}, {"height", 100.0}, {"name", "Can"}, {"position", {0, 50, 0}}});
         const std::string path = (dir / (std::string("can") + ext)).string();
         CHECK(tr::forPath(tr::Op::Import, path)->id == std::string(ext + 1));
         tr::run(tr::Op::Export, path);

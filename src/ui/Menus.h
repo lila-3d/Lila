@@ -38,6 +38,8 @@ struct Menu
     std::string before; // a menu id to sit in front of; empty goes last
     /** Run once on the QMenu when it is created: show-time fills, check marks. */
     std::function<void(QMenu*)> setup;
+    /** A docs page ("curves") whose "Open <Page> Docs" row ends the menu; empty for none. */
+    std::string docs;
 };
 
 enum class Kind

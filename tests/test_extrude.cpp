@@ -9,6 +9,7 @@
 #include "scene/Components.h"
 #include "scene/LastOp.h"
 #include "scene/MeshNodes.h"
+#include "scene/Transform.h"
 
 #include <algorithm>
 #include <cmath>
@@ -119,7 +120,7 @@ TEST_CASE("polyInset and polyExtrude through the command and adjust-last-op path
 {
     scene::lastOp::install();
     run("newScene");
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
     ui("polyInset", {{"thickness", 5}});
     CHECK(meshOf(cube).numFaces() == 10);
@@ -131,7 +132,7 @@ TEST_CASE("polyInset and polyExtrude through the command and adjust-last-op path
     CHECK(coincidentFaces(meshOf(cube)) == 0);
 
     run("newScene");
-    cube = run("polyCube")[0];
+    cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
     ui("polyExtrude", {{"thickness", 20}, {"offset", 10}});
     const geo::Mesh& m = meshOf(cube);
@@ -149,11 +150,46 @@ TEST_CASE("polyInset and polyExtrude through the command and adjust-last-op path
     CHECK(meshOf(cube).numFaces() == 6);
 }
 
+TEST_CASE("polyExtrude duplicate puts the extruded faces in a new mesh")
+{
+    scene::lastOp::install();
+    run("newScene");
+    const std::string cube = run("polyCube")[0];
+    run("move", {{"args", {cube}}, {"to", {0, 0, 300}}});
+    run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
+    json made = ui("polyExtrude", {{"thickness", 20}, {"duplicate", true}});
+    REQUIRE(made.size() == 1);
+    const std::string copy = made[0];
+    CHECK(meshOf(cube).numFaces() == 6);
+    CHECK(meshOf(copy).numFaces() == 1);
+    scene::Graph& g = scene::Graph::current();
+    CHECK(g.find(copy)->as<glm::dvec3>(scene::Transform::kTranslate).z == doctest::Approx(300.0));
+    // The cap stays selected, so the handles and the last-op panel work on the copy.
+    CHECK(scene::components::mode() == scene::ComponentMode::Face);
+    REQUIRE(scene::components::selected(scene::ComponentMode::Face).size() == 1);
+    CHECK(scene::components::selected(scene::ComponentMode::Face).begin()->first == g.find(copy)->id());
+
+    REQUIRE(scene::lastOp::live());
+    scene::lastOp::rerun({{"thickness", 30}, {"keepSides", true}});
+    const auto& sel = scene::components::selected(scene::ComponentMode::Face);
+    REQUIRE(sel.size() == 1);
+    scene::Node* again = g.node(sel.begin()->first);
+    REQUIRE(again);
+    const std::string againPath = again->path();
+    CHECK(meshOf(againPath).numFaces() == 5);
+    CHECK(meshOf(cube).numFaces() == 6);
+    // Back to the first setting, then past the extrude.
+    run("undo");
+    run("undo");
+    CHECK(g.find(againPath) == nullptr);
+    CHECK(meshOf(cube).numFaces() == 6);
+}
+
 TEST_CASE("adjust-last-op stays reachable through selection changes")
 {
     scene::lastOp::install();
     run("newScene");
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
     ui("polyInset", {{"thickness", 5}});
     std::vector<scene::lastOp::Change> changes;
@@ -190,7 +226,7 @@ TEST_CASE("adjust-last-op stays reachable through selection changes")
     CHECK(scene::lastOp::live());
     CHECK(changes.back() == scene::lastOp::Change::Restored);
     ui("selectComponents", {{"args", {cube}}, {"faces", {3}}});
-    run("polyCube");
+    run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}});
     CHECK_FALSE(scene::lastOp::reachable());
     CHECK(changes.back() == scene::lastOp::Change::Other);
     run("undo");
@@ -205,7 +241,7 @@ TEST_CASE("polyInset on every face of a symmetric cube adds rims without duplica
         for (bool individual : {false, true})
         {
             run("newScene");
-            std::string cube = run("polyCube", {{"subdivisionsX", 2}, {"subdivisionsY", 2}, {"subdivisionsZ", 2}})[0];
+            std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"subdivisionsX", 2}, {"subdivisionsY", 2}, {"subdivisionsZ", 2}})[0];
             if (symmetric)
                 run("setSymmetry", {{"args", {cube}}, {"axis", "x"}});
             const int count = int(meshOf(cube).numFaces());
@@ -227,7 +263,7 @@ TEST_CASE("polyBevel offset adjusts through adjust-last-op and keeps edge mode")
 {
     scene::lastOp::install();
     run("newScene");
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("selectMode", {{"args", {"edge"}}});
     run("selectComponents", {{"args", {cube}}, {"edges", {0}}});
     ui("polyBevel", {{"offset", 2}});
@@ -263,7 +299,7 @@ TEST_CASE("polyBevel offset adjusts through adjust-last-op and keeps edge mode")
 TEST_CASE("edits run in a component mode stay in it")
 {
     run("newScene");
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("selectMode", {{"args", {"face"}}});
     run("selectComponentsWhere", {{"args", {cube}}, {"kind", "face"}, {"extreme", "+z"}});
     run("selectComponentsWhere", {{"args", {cube}}, {"kind", "face"}, {"extreme", "-z"}, {"add", true}});
@@ -287,7 +323,7 @@ TEST_CASE("polyTargetWeld: vertex into target, halfway, edges, and across symmet
         return false;
     };
     run("newScene");
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     const geo::Mesh before = meshOf(cube);
     const Index a = before.edgePoint(0, 0), b = before.edgePoint(0, 1);
     run("polyTargetWeld", {{"mesh", cube}, {"source", a}, {"target", b}});

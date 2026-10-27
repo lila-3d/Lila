@@ -4,6 +4,7 @@
 #include "core/Log.h"
 #include "ui/Actions.h"
 #include "ui/Arrange.h"
+#include "ui/DocsUi.h"
 #include "ui/Shelf.h"
 
 #include <QAction>
@@ -62,6 +63,8 @@ void addMenu(Menu m, std::string owner)
         m.title = m.id;
     if (m.before.empty() && owner != kLilaOwner && m.area == Area::MenuBar)
         m.before = "Help";
+    if (!m.docs.empty())
+        docs::pageAction(m.docs);
     std::string id = m.id;
     menuRegistry().put(std::move(id), std::move(m), std::move(owner));
 }
@@ -251,6 +254,11 @@ void MenuBuilder::rebuild()
         q->setTitle(QString::fromStdString(m->title));
         live.push_back(m->id);
         fill(q, m->id, live);
+        if (!m->docs.empty())
+        {
+            q->addSeparator()->setProperty(kBuilt, true);
+            addActionRow(q, docs::pageAction(m->docs))->setProperty(kBuilt, true);
+        }
     }
     std::set<std::string> keep(live.begin(), live.end());
     for (auto it = mMenus.begin(); it != mMenus.end();)

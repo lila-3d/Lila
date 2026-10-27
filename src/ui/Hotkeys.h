@@ -51,7 +51,8 @@ LILA_UI_API bool remove(const std::string& id);
  * Keys match by physical position (US layout names), so other layouts keep the same hand positions. A widget
  * opts into a context with the dynamic property "hotkeyContext"; lookup walks from the focus widget outwards, then
  * falls back to "global". A focused list or tree with the property "hotkeyPassThrough" set to a context name (see
- * passThrough) also gets that context's keys, Maya style, and swallows typed letters instead of keyboard-searching. Tap vs hold: with a hold target, releasing before holdDelayMs runs press. LMB/MMB/RMB run
+ * passThrough) also gets that context's keys, Maya style, and swallows typed letters instead of keyboard-searching. A focused widget with the property "numericEntry" gets digits,
+ * "." and "-" typed without modifiers, so a value can be typed straight in. Tap vs hold: with a hold target, releasing before holdDelayMs runs press. LMB/MMB/RMB run
  * when that button goes down while the key is held, and then the key's own targets don't run (see HeldKey).
  * Undo and redo repeat while held, on the /undo/repeatDelayMs and /undo/repeatIntervalMs "general" prefs.
  */

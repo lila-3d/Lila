@@ -109,7 +109,7 @@ void keyStep(const std::string& plug, int frame, double value)
 TEST_CASE("a simulation node steps once per frame from its start and scrubs back from the cache")
 {
     run("newScene");
-    const std::string mesh = run("polyCube", {{"name", "Box"}})[0];
+    const std::string mesh = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"name", "Box"}})[0];
     const std::string mod = counterScene(mesh);
     run("currentTime", args({frameTime(1)}));
     CHECK(topY(mesh) == doctest::Approx(50.0));
@@ -125,7 +125,7 @@ TEST_CASE("a simulation node steps once per frame from its start and scrubs back
 TEST_CASE("upstream steps that don't depend on time run once across the frames sampled")
 {
     run("newScene");
-    const std::string mesh = run("polyCube", {{"name", "Box"}})[0];
+    const std::string mesh = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"name", "Box"}})[0];
     const std::string mod = counterScene(mesh);
     run("currentTime", args({frameTime(1)}));
     gUpstreamRuns = 0;
@@ -137,12 +137,12 @@ TEST_CASE("upstream steps that don't depend on time run once across the frames s
 TEST_CASE("changing a simulation's input re-simulates; scene edits elsewhere keep the cache")
 {
     run("newScene");
-    const std::string mesh = run("polyCube", {{"name", "Box"}})[0];
+    const std::string mesh = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"name", "Box"}})[0];
     const std::string mod = counterScene(mesh);
     run("currentTime", args({frameTime(11)}));
     CHECK(topY(mesh) == doctest::Approx(60.0));
     gResets = 0;
-    run("polySphere", {{"name", "Other"}});
+    run("polySphere", {{"radius", 50.0}, {"name", "Other"}});
     run("currentTime", args({frameTime(12)}));
     CHECK(topY(mesh) == doctest::Approx(61.0));
     CHECK(gResets.load() == 0);
@@ -154,7 +154,7 @@ TEST_CASE("changing a simulation's input re-simulates; scene edits elsewhere kee
 TEST_CASE("a keyed simulation input is sampled every frame")
 {
     run("newScene");
-    const std::string mesh = run("polyCube", {{"name", "Box"}})[0];
+    const std::string mesh = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"name", "Box"}})[0];
     const std::string mod = counterScene(mesh);
     keyStep(mod + ".rate", 1, 1);
     keyStep(mod + ".rate", 5, 1);
@@ -168,7 +168,7 @@ TEST_CASE("destruction nodes: mesh to pieces, connect and anchor")
 {
     run("newScene");
     registerTestNodes();
-    const std::string a = run("polyCube", {{"name", "A"}})[0];
+    const std::string a = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"name", "A"}})[0];
     run("gnCreateGroup", args({"Split"}));
     const std::string grid = add("Split", "MeshGrid"), toPieces = add("Split", "MeshToPieces"), connect = add("Split", "ConnectPieces"),
                       anchor = add("Split", "AnchorPieces");

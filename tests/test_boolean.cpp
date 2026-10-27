@@ -172,7 +172,7 @@ TEST_CASE("boolean fillet rounds the seam into a closed strip")
 TEST_CASE("polyBoolean command cleans up and adds weighted normals")
 {
     run("newScene");
-    std::string box = run("polyCube", {{"name", "Block"}, {"generator", false}})[0];
+    std::string box = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"name", "Block"}, {"generator", false}})[0];
     std::string drill = run("polyCylinder", {{"name", "Drill"}, {"generator", false}, {"radius", 20}, {"height", 300}})[0];
     run("polyBoolean", {{"args", {box, drill}}});
     const geo::Mesh& m = meshOf(box);
@@ -263,7 +263,7 @@ TEST_CASE("boolean quad band keeps the uvs under it")
 TEST_CASE("live boolean follows the cutter")
 {
     run("newScene");
-    std::string box = run("polyCube", {{"name", "Block"}, {"generator", false}, {"subdivisionsX", 6}, {"subdivisionsY", 6}, {"subdivisionsZ", 6}})[0];
+    std::string box = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"name", "Block"}, {"generator", false}, {"subdivisionsX", 6}, {"subdivisionsY", 6}, {"subdivisionsZ", 6}})[0];
     std::string drill = run("polyCylinder", {{"name", "Drill"}, {"generator", false}, {"radius", 15}, {"height", 300}})[0];
     run("polyBoolean", {{"args", {box, drill}}, {"live", true}});
     CHECK(run("objExists", {{"args", {drill}}}).get<bool>());

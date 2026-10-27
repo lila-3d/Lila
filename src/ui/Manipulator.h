@@ -46,6 +46,9 @@ public:
         Free,     // trackball rotate
     };
 
+    /** Lets orientPivot place the component manipulator (scene::orientpivot::setManipulatorSink). */
+    static void installOrientPivotSink();
+
     void setView(const ViewInfo& v) override { mView = v; }
     bool supports(std::string_view mode) const override;
 

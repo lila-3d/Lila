@@ -147,7 +147,7 @@ TEST_CASE("mesh storage round-trips doubles bit-exactly")
 TEST_CASE("scene save, load and undo keep positions bit-exact")
 {
     run("newScene");
-    std::string cube = run("polyCube", {{"subdivisionsX", 3}})[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"subdivisionsX", 3}})[0];
     std::mt19937_64 rng(11);
     std::uniform_real_distribution<double> d(-1.0, 1.0);
     for (int v = 0; v < 16; ++v)
@@ -176,7 +176,7 @@ TEST_CASE("scene save, load and undo keep positions bit-exact")
 TEST_CASE("1000 random symmetric edits stay exactly symmetric")
 {
     run("newScene");
-    std::string cube = run("polyCube", {{"subdivisionsX", 4}, {"subdivisionsY", 2}})[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"subdivisionsX", 4}, {"subdivisionsY", 2}})[0];
     run("setSymmetry", {{"args", {cube}}, {"axis", "x"}});
     std::mt19937 rng(1234);
     auto pick = [&](int n) { return std::uniform_int_distribution<int>(0, n - 1)(rng); };
@@ -219,7 +219,7 @@ TEST_CASE("1000 random symmetric edits stay exactly symmetric")
 TEST_CASE("drift with symmetry off keeps the pairs; symmetrize repairs it")
 {
     run("newScene");
-    std::string cube = run("polyCube", {{"subdivisionsX", 2}})[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"subdivisionsX", 2}})[0];
     run("setSymmetry", {{"args", {cube}}, {"axis", "x"}});
     run("selectComponents", {{"args", {cube}}, {"vertices", {0}}});
     run("moveComponents", {{"by", {0, 1, 0}}}); // stores the pairs
@@ -253,7 +253,7 @@ TEST_CASE("polyBevel with symmetry on keeps the pairs at corners")
     {
         CAPTURE(segments);
         run("newScene");
-        std::string cube = run("polyCube", {{"subdivisionsX", 2}})[0];
+        std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"subdivisionsX", 2}})[0];
         run("setSymmetry", {{"args", {cube}}, {"axis", "x"}});
         const int before = run("meshInfo", {{"args", {cube}}})["faces"].get<int>();
         // Every face's border in turn: corners of three bevelled edges, terminal edges and edges across the plane.
@@ -273,7 +273,7 @@ TEST_CASE("polyBevel with symmetry on keeps the pairs at corners")
 TEST_CASE("toggleSymmetry turns a mixed selection on, then all off, undoably")
 {
     run("newScene");
-    std::string a = run("polyCube")[0], b = run("polyCube")[0];
+    std::string a = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0], b = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     std::string group = run("createNode", {{"args", {"transform"}}});
     scene::Graph& g = scene::Graph::current();
     auto axisOf = [&](const std::string& n) { return g.find(n)->as<int64_t>(scene::MeshNode::kSymmetry); };
@@ -343,7 +343,7 @@ bool exactlyMirrored(const geo::Mesh& m)
 TEST_CASE("symmetryCheck counts unmatched points as asymmetry")
 {
     run("newScene");
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("setSymmetry", {{"args", {cube}}, {"axis", "x"}});
     run("symmetryCheck", {{"args", {cube}}}); // stores the cube's pairs
     run("setSymmetry", {{"args", {cube}}, {"axis", "off"}});
@@ -372,7 +372,7 @@ TEST_CASE("symmetryRebuild mirrors the kept side of an asymmetric mesh")
         CAPTURE(k.subdivisionsX);
         CAPTURE(k.side);
         run("newScene");
-        std::string cube = run("polyCube", {{"subdivisionsX", k.subdivisionsX}})[0];
+        std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"subdivisionsX", k.subdivisionsX}})[0];
         const geo::Mesh before = outMesh(cube);
         const int face = k.subdivisionsX == 1 ? findFace(before, [](glm::dvec3 c) { return c.x > 40.0; })
                                                : findFace(before, [](glm::dvec3 c) { return c.x > 0.0 && c.y > 40.0; });
@@ -404,7 +404,7 @@ TEST_CASE("symmetryRebuild mirrors the kept side of an asymmetric mesh")
 TEST_CASE("symmetryRebuild and symmetryCheck use the plane through the pivot")
 {
     run("newScene");
-    std::string cube = run("polyCube", {{"subdivisionsX", 2}})[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"subdivisionsX", 2}})[0];
     // The geometry sits 30 cm along +X of the origin with the pivot at its centre, as on a part modelled in place.
     run("selectComponents", {{"args", {cube}}, {"faces", {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}}});
     run("moveComponents", {{"by", {30.0, 0.0, 0.0}}});

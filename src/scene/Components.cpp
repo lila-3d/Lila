@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <set>
 #include <stdexcept>
+#include <utility>
 
 namespace lila::scene::components
 {
@@ -22,11 +23,14 @@ struct State
 {
     ComponentMode mode = ComponentMode::Object;
     std::map<NodeId, Ids> sets[3]; // vertex, edge, face
+    /** Picks per kind, newest last; entries may since be deselected or repeated, ordered() sorts that out. */
+    std::vector<std::pair<NodeId, uint32_t>> picks[3];
     std::map<int, std::function<void()>> listeners;
     int nextListener = 1;
     int graphListener = 0;
     bool commandRunning = false;
     std::set<NodeId> created; // by the top-level command now running
+    bool keepMode = false;    // the running command's new nodes stay in component mode
     std::vector<NodeId> selectedBefore; // objects selected when a UI select began
     uint64_t serial = 0;
 };
@@ -122,6 +126,8 @@ void ensureGraphListener()
         {
             for (auto& s : st().sets)
                 s.clear();
+            for (auto& p : st().picks)
+                p.clear();
             notify();
         }
         else if (c == Change::Created && st().commandRunning)
@@ -154,12 +160,13 @@ void watchCreations()
         {
             ensureGraphListener();
             s.created.clear();
+            s.keepMode = false;
             s.commandRunning = true;
             s.selectedBefore = Graph::current().selection();
             return;
         }
         s.commandRunning = false;
-        if (e.ok && s.mode != ComponentMode::Object)
+        if (e.ok && s.mode != ComponentMode::Object && !std::exchange(s.keepMode, false))
         {
             bool created = std::ranges::any_of(Graph::current().selection(), [&](NodeId id) { return s.created.contains(id); });
             if (created || pickedAnotherObject(e, s.selectedBefore))
@@ -198,6 +205,8 @@ void setMode(ComponentMode m)
     st().mode = m;
     notify();
 }
+
+void keepModeAfterCreate() { st().keepMode = true; }
 
 void setModeUndoable(ComponentMode m)
 {
@@ -280,8 +289,37 @@ void select(NodeId node, ComponentMode kind, const Ids& ids, Op op)
     }
     if (auto it = sets.find(node); it != sets.end() && it->second.empty())
         sets.erase(it);
+    auto& picks = st().picks[slot(kind)];
+    if (op == Op::Replace)
+        picks.clear();
+    if (op != Op::Remove)
+        for (uint32_t id : ids)
+            picks.emplace_back(node, id);
+    if (picks.size() > 4096 && picks.size() > 4 * ordered(kind).size())
+        picks = ordered(kind);
     record(std::move(before));
     notify();
+}
+
+std::vector<std::pair<NodeId, uint32_t>> ordered(ComponentMode kind)
+{
+    const auto& sets = st().sets[slot(kind)];
+    const auto& picks = st().picks[slot(kind)];
+    auto isSelected = [&](NodeId node, uint32_t id) {
+        auto it = sets.find(node);
+        return it != sets.end() && std::binary_search(it->second.begin(), it->second.end(), id);
+    };
+    std::set<std::pair<NodeId, uint32_t>> seen;
+    std::vector<std::pair<NodeId, uint32_t>> out;
+    for (auto it = picks.rbegin(); it != picks.rend(); ++it)
+        if (isSelected(it->first, it->second) && seen.insert(*it).second)
+            out.push_back(*it);
+    std::reverse(out.begin(), out.end());
+    for (const auto& [node, ids] : sets)
+        for (uint32_t id : ids)
+            if (!seen.contains({node, id}))
+                out.emplace_back(node, id);
+    return out;
 }
 
 void clear()
@@ -289,6 +327,8 @@ void clear()
     Snapshot before = snapshot();
     for (auto& s : st().sets)
         s.clear();
+    for (auto& p : st().picks)
+        p.clear();
     record(std::move(before));
     notify();
 }
@@ -300,6 +340,8 @@ void setAll(std::map<NodeId, Ids> points, std::map<NodeId, Ids> edges, std::map<
     st().sets[0] = std::move(points);
     st().sets[1] = std::move(edges);
     st().sets[2] = std::move(faces);
+    for (auto& p : st().picks)
+        p.clear();
     record(std::move(before));
     notify();
 }
@@ -570,11 +612,23 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "componentSelection",
-        .doc = "Selected components: {mesh: {\"vertices\": [...], \"edges\": [...], \"faces\": [...]}}.",
+        .doc = "Selected components: {mesh: {\"vertices\": [...], \"edges\": [...], \"faces\": [...]}}. ordered=True gives a flat list "
+               "[[mesh, kind, id], ...] in pick order instead (kind is vertex, edge or face).",
+        .flags = {{"ordered", "", T::Bool, false, "True: a flat list [[mesh, kind, id], ...] in the order the components were picked. False: grouped per mesh and kind, ids sorted "
+                                                    "ascending, pick order lost."}},
         .undoable = false,
-        .run = [](const Args&) -> json {
-            json out = json::object();
+        .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
+            if (a.get<bool>("ordered"))
+            {
+                json out = json::array();
+                for (auto [name, kind] : {std::pair{"vertex", ComponentMode::Vertex}, {"edge", ComponentMode::Edge}, {"face", ComponentMode::Face}})
+                    for (auto [node, id] : ordered(kind))
+                        if (Node* n = g.node(node))
+                            out.push_back({n->path(), name, id});
+                return out;
+            }
+            json out = json::object();
             for (auto [key, kind] : {std::pair{"vertices", ComponentMode::Vertex}, {"edges", ComponentMode::Edge}, {"faces", ComponentMode::Face}})
                 for (auto& [node, ids] : selected(kind))
                     if (Node* n = g.node(node))

@@ -53,7 +53,7 @@ std::string heightGroup(const char* name)
 TEST_CASE("distribute points on a grid and instance cubes")
 {
     run("newScene");
-    std::string mesh = run("polyPlane", {{"name", "Ground"}})[0];
+    std::string mesh = run("polyPlane", {{"width", 100.0}, {"depth", 100.0}, {"name", "Ground"}})[0];
     run("gnCreateGroup", args({"Scatter"}));
     std::string grid = add("Scatter", "MeshGrid"), dist = add("Scatter", "DistributePointsOnFaces"), cube = add("Scatter", "MeshCube"),
                 iop = add("Scatter", "InstanceOnPoints"), real = add("Scatter", "RealizeInstances");
@@ -101,7 +101,7 @@ TEST_CASE("distribute points on a grid and instance cubes")
 TEST_CASE("instances reach the viewport unrealized while outMesh stays flat")
 {
     run("newScene");
-    std::string mesh = run("polyPlane", {{"name", "Field"}})[0];
+    std::string mesh = run("polyPlane", {{"width", 100.0}, {"depth", 100.0}, {"name", "Field"}})[0];
     run("gnCreateGroup", args({"Rocks"}));
     std::string grid = add("Rocks", "MeshGrid"), dist = add("Rocks", "DistributePointsOnFaces"), cube = add("Rocks", "MeshCube"),
                 iop = add("Rocks", "InstanceOnPoints");
@@ -168,7 +168,7 @@ TEST_CASE("instances reach the viewport unrealized while outMesh stays flat")
 TEST_CASE("set position with a noise field is deterministic")
 {
     run("newScene");
-    std::string mesh = run("polyPlane", {{"name", "Terrain"}, {"subdivisionsX", 20}, {"subdivisionsZ", 20}})[0];
+    std::string mesh = run("polyPlane", {{"width", 100.0}, {"depth", 100.0}, {"name", "Terrain"}, {"subdivisionsX", 20}, {"subdivisionsZ", 20}})[0];
     run("gnCreateGroup", args({"Bumps"}));
     std::string sp = add("Bumps", "SetPosition"), noise = add("Bumps", "NoiseTexture"), vm = add("Bumps", "VectorMath");
     set("Bumps", vm + ".operation", "scale");
@@ -210,7 +210,7 @@ TEST_CASE("set position with a noise field is deterministic")
 TEST_CASE("exposed inputs are keyable and re-evaluate")
 {
     run("newScene");
-    std::string mesh = run("polyCube", {{"name", "Box"}})[0];
+    std::string mesh = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"name", "Box"}})[0];
     heightGroup("Lift");
     std::string mod = run("gnApply", args({mesh, "Lift"}));
     CHECK(bounds(mesh)["boundsMax"][1].get<double>() == doctest::Approx(50.0));
@@ -250,7 +250,7 @@ TEST_CASE("groups and their modifiers survive save and load")
     for (const char* ext : {".lila", ".lilaa"})
     {
         run("newScene");
-        std::string mesh = run("polyCube", {{"name", "Crate"}})[0];
+        std::string mesh = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"name", "Crate"}})[0];
         heightGroup("Raise");
         std::string mod = run("gnApply", args({mesh, "Raise"}));
         run("gnExposeInput", args({"Raise", run("gnGroupInfo", args({"Raise"}))["nodes"][3]["name"].get<std::string>() + ".z", "push"}));
@@ -342,7 +342,7 @@ TEST_CASE("node library evaluates")
 TEST_CASE("primitive commands take a fraction and stand on a surface point")
 {
     run("newScene");
-    std::string dome = run("polyQuadSphere", {{"fraction", 0.5}, {"position", {10.0, 20.0, 30.0}}, {"normal", {1.0, 0.0, 0.0}}})[0];
+    std::string dome = run("polyQuadSphere", {{"radius", 50.0}, {"fraction", 0.5}, {"position", {10.0, 20.0, 30.0}}, {"normal", {1.0, 0.0, 0.0}}})[0];
     CHECK(faces(dome) == 9 + 4 * 3 * 2);
     json b = bounds(dome);
     CHECK(b["worldBoundsMin"][0].get<double>() == doctest::Approx(10.0).epsilon(1e-3));
@@ -353,9 +353,9 @@ TEST_CASE("primitive commands take a fraction and stand on a surface point")
     CHECK(b["worldBoundsMin"][2].get<double>() + b["worldBoundsMax"][2].get<double>() == doctest::Approx(60.0).epsilon(1e-3));
 
     // Whole spheres and swept shapes keep their centre on the point.
-    std::string ball = run("polySphere", {{"position", {0.0, 0.0, 0.0}}, {"normal", {0.0, -1.0, 0.0}}})[0];
+    std::string ball = run("polySphere", {{"radius", 50.0}, {"position", {0.0, 0.0, 0.0}}, {"normal", {0.0, -1.0, 0.0}}})[0];
     CHECK(bounds(ball)["worldBoundsMax"][1].get<double>() == doctest::Approx(50.0).epsilon(1e-3));
-    std::string half = run("polyCylinder", {{"fraction", 0.5}})[0];
+    std::string half = run("polyCylinder", {{"radius", 50.0}, {"height", 100.0}, {"fraction", 0.5}})[0];
     CHECK(bounds(half)["worldBoundsMax"][2].get<double>() == doctest::Approx(0.0).scale(100.0));
     CHECK(run("meshInfo", args({half}))["closed"].get<bool>());
 }

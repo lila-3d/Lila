@@ -106,7 +106,10 @@ public:
     enum Attr
     {
         kLocalScale = Transform::kCount,
+        kDrawSize,
     };
     static NodeType makeType(const NodeType& base);
+    /** drawSize hidden, for types built on locator that draw themselves (cameras, lights). */
+    static AttrDef hiddenDrawSize();
 };
 } // namespace lila::scene

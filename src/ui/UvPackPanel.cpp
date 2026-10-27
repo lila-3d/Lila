@@ -4,6 +4,7 @@
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "ui/Actions.h"
+#include "ui/FlowLayout.h"
 #include "ui/Icons.h"
 
 #include <QCheckBox>
@@ -47,6 +48,8 @@ QComboBox* choice(QWidget* parent, std::initializer_list<std::pair<const char*, 
     for (auto [label, value] : items)
         c->addItem(label, QString(value));
     c->setToolTip(tip);
+    c->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    c->setMinimumContentsLength(12);
     return c;
 }
 
@@ -106,14 +109,13 @@ UvPackPanel::UvPackPanel(QWidget* parent) : QWidget(parent)
     form->setVerticalSpacing(3);
     form->setFieldGrowthPolicy(QFormLayout::FieldsStayAtSizeHint);
 
+    // Rows wrap, so the options never hold the UV editor wider than one control.
     auto row = [&](std::initializer_list<QWidget*> widgets) {
         auto* w = new QWidget(this);
-        auto* h = new QHBoxLayout(w);
-        h->setContentsMargins(0, 0, 0, 0);
-        h->setSpacing(4);
+        auto* h = new FlowLayout(4);
+        w->setLayout(h);
         for (QWidget* x : widgets)
             h->addWidget(x);
-        h->addStretch(1);
         return w;
     };
 
@@ -185,6 +187,8 @@ UvPackPanel::UvPackPanel(QWidget* parent) : QWidget(parent)
     pack->setToolTip("Pack the selected islands (or whole meshes) with these options (uvPack)");
     mResult = new QLabel(this);
     mResult->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    mResult->setWordWrap(true);
+    mResult->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     buttons->addWidget(pack);
     buttons->addWidget(mResult, 1);
     root->addLayout(buttons);

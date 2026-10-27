@@ -19,7 +19,7 @@ int faces(const std::string& m) { return run("meshInfo", {{"args", {m}}})["faces
 TEST_CASE("component selection and modeling ops")
 {
     run("newScene");
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
     CHECK(run("selectMode") == "face");
     CHECK(run("componentSelection")[cube]["faces"] == json::array({0}));
@@ -48,7 +48,7 @@ TEST_CASE("component selection and modeling ops")
     run("polyFillHole");
 
     run("newScene");
-    std::string plane = run("polyPlane", {{"subdivisionsX", 4}, {"subdivisionsZ", 1}})[0];
+    std::string plane = run("polyPlane", {{"width", 100.0}, {"depth", 100.0}, {"subdivisionsX", 4}, {"subdivisionsZ", 1}})[0];
     run("setSymmetry", {{"args", {plane}}, {"axis", "x"}});
     run("selectComponents", {{"args", {plane}}, {"vertices", {0}}});
     json before = run("meshInfo", {{"args", {plane}}});
@@ -59,8 +59,8 @@ TEST_CASE("component selection and modeling ops")
     CHECK(after["boundsMax"][1].get<double>() == doctest::Approx(10));
 
     run("newScene");
-    std::string a = run("polyCube", {{"position", {-100, 0, 0}}})[0];
-    std::string b = run("polyCube", {{"position", {100, 0, 0}}})[0];
+    std::string a = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"position", {-100, 0, 0}}})[0];
+    std::string b = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"position", {100, 0, 0}}})[0];
     std::string c = run("polyCombine", {{"args", {a, b}}, {"name", "Both"}});
     CHECK(faces(c) == 12);
     json parts = run("polySeparate", {{"args", {c}}});
@@ -70,7 +70,7 @@ TEST_CASE("component selection and modeling ops")
 TEST_CASE("duplicate, freeze, center pivot")
 {
     run("newScene");
-    std::string cube = run("polyCube", {{"name", "Box"}, {"position", {10, 20, 30}}})[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"name", "Box"}, {"position", {10, 20, 30}}})[0];
     run("addModifier", {{"args", {cube}}, {"kind", "subdivision"}});
     json dup = run("duplicate", {{"args", {cube}}});
     REQUIRE(dup.size() == 1);
@@ -170,7 +170,7 @@ TEST_CASE("component normals are area weighted and selection aware")
 TEST_CASE("moveComponents normal= offsets each point along its own normal")
 {
     run("newScene");
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("selectComponents", {{"args", {cube}}, {"faces", {0, 1, 2, 3, 4, 5}}});
     run("moveComponents", {{"normal", 10}});
     json info = run("meshInfo", {{"args", {cube}}});
@@ -204,7 +204,7 @@ TEST_CASE("moveComponents normal= offsets each point along its own normal")
 TEST_CASE("moveComponents normal= keeps symmetry")
 {
     run("newScene");
-    std::string cube = run("polyCube", {{"subdivisionsX", 4}, {"subdivisionsY", 2}})[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"subdivisionsX", 4}, {"subdivisionsY", 2}})[0];
     run("setSymmetry", {{"args", {cube}}, {"axis", "x"}});
     geo::Mesh m = meshOf(cube);
     // The +X half of the top, so the mirror side follows from symmetry alone.

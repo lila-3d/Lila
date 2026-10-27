@@ -754,14 +754,21 @@ Mesh makeCone(const ConeOptions& o)
     const bool cap = o.capFill != CapFill::None;
     const int rings = cap ? std::max(1, o.subdivCap) : 0;
     const double y0 = o.baseAtOrigin ? 0.0 : -0.5 * o.height;
+    const double tip = o.capTip ? std::clamp(o.tipRadius, 0.0, o.radius) : 0.0;
+    const bool tipCap = cap && tip > 0.0;
     std::vector<ProfilePoint> profile;
     for (int r = 0; r < rings; ++r)
         profile.push_back({o.radius * r / rings, y0});
     for (int j = 0; j <= hs; ++j)
-        profile.push_back({o.radius * (1.0 - double(j) / hs), y0 + o.height * j / hs, cap && j == 0});
+        profile.push_back({glm::mix(o.radius, tip, double(j) / hs), y0 + o.height * j / hs, (cap && j == 0) || (tipCap && j == hs)});
     std::vector<Band> bands = {{rings, rings + hs, Band::Cylindrical, {0.5f, 1.0f}}};
     if (cap)
         bands.insert(bands.begin(), Band{0, rings, Band::Planar, {}, kCapLeft, kCapScale / float(o.radius), o.capFill});
+    if (tipCap)
+    {
+        profile.push_back({0.0, y0 + o.height});
+        bands.push_back({rings + hs, rings + hs + 1, Band::Planar, {}, kCapRight, kCapScale / float(tip), o.capFill});
+    }
     return lathe(profile, bands, std::max(3, o.subdivAxis), false, o.fraction, cap && o.cutCaps);
 }
 
@@ -789,7 +796,8 @@ Mesh makeDisc(const DiscOptions& o)
     std::vector<ProfilePoint> profile;
     for (int r = rings; r >= 0; --r)
         profile.push_back({o.radius * r / rings, 0.0});
-    return lathe(profile, {{0, rings, Band::Planar, {}, {0.5f, 0.5f}, 0.5f / float(o.radius), rs == 0 ? CapFill::Ngon : CapFill::Fan}},
+    const CapFill fill = rs == 0 ? CapFill::Ngon : o.capFill == CapFill::None ? CapFill::Fan : o.capFill;
+    return lathe(profile, {{0, rings, Band::Planar, {}, {0.5f, 0.5f}, 0.5f / float(o.radius), fill}},
                  std::max(3, o.subdivAxis), false, o.fraction);
 }
 

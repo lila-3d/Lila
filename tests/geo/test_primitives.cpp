@@ -273,6 +273,39 @@ TEST_CASE("primitives: cap fills")
     CHECK(sides(wedge, 3) == 2);
 }
 
+TEST_CASE("primitives: disc cap types and a capped cone tip")
+{
+    auto sides = [](const Mesh& m, int n) {
+        int count = 0;
+        for (Index f = 0; f < m.faceCapacity(); ++f)
+            count += m.faceValid(f) && int(m.faceSize(f)) == n;
+        return count;
+    };
+    for (int axis : {8, 9, 20})
+    {
+        CAPTURE(axis);
+        Mesh quads = makeDisc({.subdivAxis = axis, .capFill = CapFill::Quads});
+        CHECK(isValid(quads));
+        CHECK(uvsDontOverlap(quads));
+        CHECK(sides(quads, 3) == axis % 2);
+        CHECK(boundaryEdgeCount(quads) == axis);
+        Mesh fan = makeDisc({.subdivAxis = axis, .capFill = CapFill::Fan});
+        CHECK(sides(fan, 3) == axis);
+        Mesh ngon = makeDisc({.subdivAxis = axis, .capFill = CapFill::Ngon});
+        CHECK(ngon.numFaces() == 1);
+        for (const Mesh* d : {&quads, &fan, &ngon})
+            for (Index f = 0; f < d->faceCapacity(); ++f)
+                if (d->faceValid(f))
+                    CHECK(d->faceNormal(f).y == doctest::Approx(1.0));
+
+        // The capped tip leaves no triangles with an even side count, and stays a thin point.
+        Mesh tip = makeCone({.subdivAxis = axis, .capTip = true, .tipRadius = 0.5});
+        checkClosedPrimitive(tip);
+        CHECK(sides(tip, 3) == 2 * (axis % 2));
+        CHECK(tip.bounds().max.y == doctest::Approx(50.0));
+    }
+}
+
 TEST_CASE("primitives: partial sweeps")
 {
     for (double f : {0.25, 0.5, 0.8})

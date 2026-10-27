@@ -9,6 +9,7 @@
 #include "io/Examples.h"
 #include "io/SceneFile.h"
 #include "io/SceneHistory.h"
+#include "ui/DocsUi.h"
 #include "ui/Theme.h"
 #include "vcs/SourceControl.h"
 
@@ -289,7 +290,7 @@ void RecoveryDialog::finish(Choice c)
     accept();
 }
 
-StartupDialog::StartupDialog(Hooks hooks, bool welcome, QWidget* parent) : QDialog(parent), mHooks(std::move(hooks))
+StartupDialog::StartupDialog(Hooks hooks, bool welcome, QWidget* parent) : QDialog(parent), mHooks(std::move(hooks)), mWelcome(welcome)
 {
     setObjectName("startupDialog");
     // A tool window rather than a popup: popups close whenever the app loses focus.
@@ -310,6 +311,19 @@ StartupDialog::StartupDialog(Hooks hooks, bool welcome, QWidget* parent) : QDial
     if (welcome)
     {
         heading("Welcome to Lila", "startupTitle");
+        auto* titleRow = new QHBoxLayout();
+        titleRow->addWidget(layout->takeAt(layout->count() - 1)->widget(), 1);
+        auto* essentials = new QLabel(QString("<a href=\"essentials\" style=\"color: %1;\">New to Lila? Read the essentials</a>")
+                                          .arg(themeColor("highlight").name()),
+                                      this);
+        essentials->setObjectName("startupEssentials");
+        essentials->setCursor(Qt::PointingHandCursor);
+        connect(essentials, &QLabel::linkActivated, this, [this] {
+            reject();
+            docs::open("essentials");
+        });
+        titleRow->addWidget(essentials, 0, Qt::AlignRight | Qt::AlignVCenter);
+        layout->addLayout(titleRow);
         layout->addSpacing(6);
         heading("Examples", "startupHeading");
         mExamples = new QListWidget(this);
@@ -333,11 +347,11 @@ StartupDialog::StartupDialog(Hooks hooks, bool welcome, QWidget* parent) : QDial
                 item->setData(Qt::DecorationRole, QPixmap(qpath(x.thumbnail)));
             mExampleList.push_back(x);
         }
-        mExamples->setMinimumHeight(ExampleCard::kSize.height() + 30);
-        // Three cards across beside the scroll bar.
-        mExamples->setMinimumWidth(3 * mExamples->gridSize().width() + mExamples->style()->pixelMetric(QStyle::PM_ScrollBarExtent) +
-                                   2 * mExamples->frameWidth() + 4);
-        layout->addWidget(mExamples, 1);
+        // Three cards across beside the scroll bar and two rows down, so six fit without scrolling.
+        const int pad = 2 * mExamples->frameWidth() + 2 * mExamples->spacing();
+        mExamples->setMinimumWidth(3 * mExamples->gridSize().width() + mExamples->style()->pixelMetric(QStyle::PM_ScrollBarExtent) + pad);
+        mExamples->setFixedHeight(2 * mExamples->gridSize().height() + pad);
+        layout->addWidget(mExamples);
         layout->addSpacing(6);
         heading("Recent Scenes", "startupHeading");
     }
@@ -450,7 +464,7 @@ bool StartupDialog::eventFilter(QObject* obj, QEvent* e)
             activateWindow();
             mList->setFocus();
         });
-    if (e->type() == QEvent::MouseButtonPress && isVisible())
+    if (e->type() == QEvent::MouseButtonPress && isVisible() && !mWelcome)
     {
         auto* me = static_cast<QMouseEvent*>(e);
         auto* w = qobject_cast<QWidget*>(obj);

@@ -29,7 +29,7 @@ class Light : public Locator
 public:
     enum Attr
     {
-        kLightType = Locator::kLocalScale + 1,
+        kLightType = Locator::kDrawSize + 1,
         kColor,
         kIntensity,
         kIntensityUnits,

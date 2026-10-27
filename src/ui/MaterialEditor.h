@@ -9,6 +9,7 @@
 #include <functional>
 #include <vector>
 
+class QLineEdit;
 class QListWidget;
 class QLabel;
 class QPushButton;
@@ -46,11 +47,14 @@ private:
     void followSelection();
     void scheduleRefresh();
     void refreshList();
+    /** Hides the materials whose names don't contain the filter text, ignoring case. */
+    void applyFilter();
     void rebuild();
     void updateValues();
     void setAttr(int attr, const scene::json& value);
     scene::Node* current() const;
 
+    QLineEdit* mFilter = nullptr;
     QListWidget* mList = nullptr;
     QLabel* mPreview = nullptr;
     QWidget* mBody = nullptr;

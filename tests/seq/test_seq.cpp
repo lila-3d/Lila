@@ -432,7 +432,7 @@ TEST_CASE("exportVertexAnimation bakes changing topology as a padded triangle so
     setup();
     ops::execute("newScene", json::object());
     ops::execute("playbackOptions", {{"fps", 30.0}, {"minTime", 1.0 / 30.0}, {"maxTime", 3.0 / 30.0}});
-    json made = ops::execute("polyPlane", {{"name", "Grow"}});
+    json made = ops::execute("polyPlane", {{"width", 100.0}, {"depth", 100.0}, {"name", "Grow"}});
     const std::string plane = made.is_array() ? made[0].get<std::string>() : made.get<std::string>();
     scene::Graph& g = scene::Graph::current();
     std::string gen = plane;

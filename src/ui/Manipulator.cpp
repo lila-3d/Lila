@@ -11,6 +11,7 @@
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
+#include "scene/OrientPivot.h"
 #include "geo/Mesh.h"
 #include "ui/GeometrySnap.h"
 #include "ui/GizmoMath.h"
@@ -74,6 +75,13 @@ struct ComponentPivot
     std::optional<glm::dmat3> frame;
 };
 std::optional<ComponentPivot> gComponentPivot;
+
+struct ComponentPivotAction final : UndoAction
+{
+    std::optional<ComponentPivot> before, after;
+    void undo() override { gComponentPivot = before; }
+    void redo() override { gComponentPivot = after; }
+};
 
 int axisOf(H h)
 {
@@ -204,6 +212,20 @@ Tool Manipulator::effectiveTool() const
     if (mDrag)
         return pivotTool(mDrag->pivotEdit, mDrag->tool);
     return pivotTool(tools::pivotEdit(), tools::current());
+}
+
+void Manipulator::installOrientPivotSink()
+{
+    scene::orientpivot::setManipulatorSink([](const glm::dvec3& position, const glm::dmat3& frame) {
+        const scene::ComponentMode mode = scene::components::mode();
+        if (mode == scene::ComponentMode::Object)
+            return;
+        auto a = std::make_unique<ComponentPivotAction>();
+        a->before = gComponentPivot;
+        gComponentPivot = ComponentPivot{mode, scene::components::selected(mode), position, frame};
+        a->after = gComponentPivot;
+        UndoStack::get().record(std::move(a));
+    });
 }
 
 void Manipulator::refresh()
@@ -1099,7 +1121,9 @@ void Manipulator::drag(QPointF px, Qt::KeyboardModifiers mods)
 
 void Manipulator::warped(QPointF offset)
 {
-    if (mDrag)
+    if (mExtrude.dragging())
+        mExtrude.warped(offset);
+    else if (mDrag)
         mDrag->lastPx += offset;
 }
 

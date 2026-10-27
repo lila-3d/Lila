@@ -360,7 +360,7 @@ void ExtrudeHandles::drag(QPointF px, const ViewInfo& view)
         return;
     mDrag.lastPx = px;
     glm::dvec3 o, dir;
-    view.ray(px, o, dir);
+    view.ray(px - mDrag.warp, o, dir);
     bool thickness = mDrag.handle == H::Thickness;
     const Frame& f = mDrag.frame;
     double moved = (gizmo::lineParam(f.center, thickness ? f.normal : f.side, o, dir) - mDrag.startParam) / f.worldPerLocal;

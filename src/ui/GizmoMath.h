@@ -133,4 +133,54 @@ inline bool rayPlane(const glm::dvec3& o, const glm::dvec3& d, const glm::dvec3&
     hit = o + d * (glm::dot(p - o, n) / denom);
     return true;
 }
+
+/**
+ * Wraps the cursor at a view's edges during a drag. Moves queued before a warp still carry positions from the side the
+ * cursor left; map() shifts those across the warp, so the drag sees one continuous motion instead of a jump back.
+ */
+class CursorWrap
+{
+public:
+    /** Where the cursor goes from p to wrap at the edges of a width x height view; p itself when it is not at one. */
+    static glm::dvec2 target(const glm::dvec2& p, double width, double height, double margin = 2.0)
+    {
+        glm::dvec2 to = p;
+        if (p.x <= margin)
+            to.x = width - margin - 2.0;
+        else if (p.x >= width - margin)
+            to.x = margin + 2.0;
+        if (p.y <= margin)
+            to.y = height - margin - 2.0;
+        else if (p.y >= height - margin)
+            to.y = margin + 2.0;
+        return to;
+    }
+
+    void warped(const glm::dvec2& from, const glm::dvec2& to)
+    {
+        mFrom = from;
+        mTo = to;
+        mPending = true;
+    }
+
+    /** p as if it arrived after the last warp. A move nearer where the cursor left than where it went predates it. */
+    glm::dvec2 map(const glm::dvec2& p)
+    {
+        if (!mPending)
+            return p;
+        if (glm::length(p - mTo) <= glm::length(p - mFrom))
+        {
+            mPending = false;
+            return p;
+        }
+        return p + (mTo - mFrom);
+    }
+
+    void reset() { mPending = false; }
+
+private:
+    glm::dvec2 mFrom{0.0};
+    glm::dvec2 mTo{0.0};
+    bool mPending = false;
+};
 } // namespace lila::ui::gizmo

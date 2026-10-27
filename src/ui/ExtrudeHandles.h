@@ -35,6 +35,8 @@ public:
 
     void begin(Handle h, QPointF px, const ViewInfo& view);
     void drag(QPointF px, const ViewInfo& view);
+    /** The viewport wrapped the cursor by offset; later drag() positions are taken back by it. */
+    void warped(QPointF offset) { mDrag.warp += offset; }
     void end();
     void cancel();
     bool dragging() const { return mDrag.handle != Handle::None; }
@@ -61,6 +63,7 @@ private:
         double startParam = 0.0;
         double value = 0.0;
         QPointF lastPx;
+        QPointF warp; // total cursor wrap offset during this drag
         /** The extrudeModifier being dragged, 0 for the last op. */
         uint64_t modifier = 0;
     } mDrag;

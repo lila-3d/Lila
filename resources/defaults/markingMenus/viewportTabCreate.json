@@ -1,17 +1,16 @@
 {
-  "N": { "label": "Ico Sphere", "action": "createAt.icoSphere" },
   "NE": { "label": "Cylinder", "action": "createAt.cylinder" },
   "E": { "label": "Plane", "action": "createAt.plane" },
   "SE": { "label": "Torus", "action": "createAt.torus" },
   "S": { "label": "Cube", "action": "createAt.cube" },
-  "SW": { "label": "Disc", "action": "createAt.disc" },
   "W": { "label": "Quad Sphere", "action": "createAt.quadSphere" },
   "NW": { "label": "Cone", "action": "createAt.cone" },
   "outer": {
     "SE": [{ "label": "Pipe", "action": "createAt.pipe" }],
-    "W": [{ "label": "Sphere", "action": "createAt.sphere" }]
+    "W": [{ "label": "Sphere", "action": "createAt.sphere" }, { "label": "Ico Sphere", "action": "createAt.icoSphere" }]
   },
   "overflow": [
+    { "label": "Disc", "action": "createAt.disc" },
     { "label": "Capsule", "action": "createAt.capsule" }
   ]
 }

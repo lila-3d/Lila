@@ -172,7 +172,7 @@ json dispatch(const std::string& op, const json& a, const std::vector<PyCall>& f
     if (op == "menu.add")
     {
         menus::addMenu({.id = str(a, "id"), .title = str(a, "title"), .area = str(a, "area") == "hotbox" ? menus::Area::Hotbox : menus::Area::MenuBar,
-                        .before = str(a, "before")},
+                        .before = str(a, "before"), .docs = str(a, "docs")},
                        owner);
         return true;
     }
@@ -226,7 +226,7 @@ json dispatch(const std::string& op, const json& a, const std::vector<PyCall>& f
         std::string id = str(a, "id");
         panels::add({.id = id, .title = str(a, "title", id), .create = [fill](QWidget* parent) { return container(fill, parent); },
                      .area = area(str(a, "area", "right")), .icon = str(a, "icon"), .open = a.value("open", true),
-                     .toggleAction = str(a, "action", "window." + id)},
+                     .toggleAction = str(a, "action", "window." + id), .docs = str(a, "docs")},
                     owner);
         return true;
     }

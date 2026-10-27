@@ -5,6 +5,7 @@
 #include "ui/GizmoMath.h"
 
 #include "core/PrefStore.h"
+#include "scene/Components.h"
 
 #include <QMouseEvent>
 #include <map>
@@ -27,6 +28,16 @@ void notify()
     auto copy = gListeners;
     for (auto& [id, fn] : copy)
         fn();
+}
+
+bool bridgeOnTap()
+{
+    if (scene::components::mode() != scene::ComponentMode::Edge)
+        return false;
+    size_t count = 0;
+    for (const auto& [node, ids] : scene::components::selected(scene::ComponentMode::Edge))
+        count += ids.size();
+    return count >= 2;
 }
 } // namespace
 
@@ -212,6 +223,7 @@ void registerActions()
                   },
                   .doc = "Ends the radius drag started by Adjust Soft Select Radius."});
     // Maya's B: a tap toggles soft select, holding it while dragging with LMB (or MMB, from zero) sets the radius.
+    // A tap with two or more edges selected in edge mode bridges them instead.
     actions::add({.id = "softSelect.keyDown", .label = "Soft Select Key Down", .category = "Tools", .run = [] {
                       gSoftAdjust = true;
                       gSoftKeyUsed = false;
@@ -220,11 +232,14 @@ void registerActions()
                   .doc = "Press half of the soft select key: hold and drag to set the radius."});
     actions::add({.id = "softSelect.keyUp", .label = "Soft Select Key Up", .category = "Tools", .run = [] {
                       gSoftAdjust = false;
-                      if (!gSoftKeyUsed)
+                      if (!gSoftKeyUsed && bridgeOnTap())
+                          actions::run("mesh.bridge");
+                      else if (!gSoftKeyUsed)
                           PrefStore::get().set("general", "/softSelect/enabled", !PrefStore::get().value<bool>("general", "/softSelect/enabled", false));
                       notify();
                   },
-                  .doc = "Release half of the soft select key: a tap without a drag toggles soft select."});
+                  .doc = "Release half of the soft select key: a tap without a drag bridges two or more selected edges in edge mode, "
+                         "otherwise toggles soft select."});
     snap("edge", "Snap to Edge (hold)", SnapEdge, "While held, moves snap onto the nearest edge under the cursor.");
     snap("vertex", "Snap to Vertex (hold)", SnapVertex, "While held, moves snap to the nearest vertex under the cursor.");
     snap("surface", "Snap to Surface (hold)", SnapSurface, "While held, moves slide along the mesh surface under the cursor.");

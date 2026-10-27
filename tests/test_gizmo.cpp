@@ -186,3 +186,32 @@ TEST_CASE("orienting the pivot turns the manipulator's axes, not the object")
     CHECK(near(g.node(id)->as<glm::dvec3>(scene::Transform::kPivotOrient), glm::dvec3(0.0)));
     CHECK(g.node(id)->as<glm::dmat4>(scene::Transform::kWorldMatrix) == before);
 }
+
+TEST_CASE("cursor wrap: moves queued before a warp carry on from the far side instead of jumping back")
+{
+    using gizmo::CursorWrap;
+    CHECK(CursorWrap::target({400.0, 300.0}, 800.0, 600.0) == glm::dvec2(400.0, 300.0));
+    CHECK(CursorWrap::target({1.0, 300.0}, 800.0, 600.0) == glm::dvec2(796.0, 300.0));
+    CHECK(CursorWrap::target({799.0, 599.0}, 800.0, 600.0) == glm::dvec2(4.0, 4.0));
+
+    // A drag running off the right edge: the cursor warps from x 799 to x 4.
+    CursorWrap wrap;
+    double virtualX = 799.0, lastX = 799.0;
+    auto move = [&](double x) {
+        glm::dvec2 p = wrap.map({x, 300.0});
+        virtualX += p.x - lastX;
+        lastX = p.x;
+    };
+    wrap.warped({799.0, 300.0}, {4.0, 300.0});
+    lastX += 4.0 - 799.0;
+    move(801.0); // queued before the warp, still on the old side
+    move(803.0);
+    CHECK(virtualX == Approx(803.0));
+    move(9.0); // the first move after it
+    CHECK(virtualX == Approx(804.0));
+    move(12.0);
+    CHECK(virtualX == Approx(807.0));
+    // Once the cursor is past the warp, positions near the old side are real again.
+    wrap.reset();
+    CHECK(wrap.map({790.0, 300.0}) == glm::dvec2(790.0, 300.0));
+}

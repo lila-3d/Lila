@@ -19,7 +19,7 @@ class Camera : public Locator
 public:
     enum Attr
     {
-        kFocalLength = Locator::kLocalScale + 1,
+        kFocalLength = Locator::kDrawSize + 1,
         kHorizontalFilmAperture,
         kVerticalFilmAperture,
         kFilmFit,

@@ -93,6 +93,9 @@ struct ConeOptions
     /** Close the two flat ends a partial sweep leaves. */
     bool cutCaps = true;
     CapFill capFill = CapFill::Quads;
+    /** Cut the point off at tipRadius and fill it like the base, so a quads fill leaves no triangles at the tip. */
+    bool capTip = false;
+    double tipRadius = 0.05;
 };
 
 struct TorusOptions
@@ -115,6 +118,8 @@ struct DiscOptions
     int subdivRings = 1;
     /** Portion of a full turn swept around Y from +X: 1 is whole, 0.5 half. */
     double fraction = 1.0;
+    /** How the innermost ring is filled; None counts as Fan, since a disc is all fill. */
+    CapFill capFill = CapFill::Fan;
 };
 
 struct PipeOptions

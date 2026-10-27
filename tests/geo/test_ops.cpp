@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cmath>
 #include <map>
+#include <optional>
 #include <set>
 
 using namespace lila::geo;
@@ -127,6 +128,29 @@ TEST_CASE("ops: extrude")
     r = extrudeFaces(ind, both, eo);
     checkClosed(ind);
     CHECK(r.sides.size() == 8);
+}
+
+TEST_CASE("ops: extrude copy")
+{
+    const Mesh cube = makeCube();
+    const Index top = faceFacing(cube, {0, 1, 0});
+    ExtrudeOptions eo;
+    eo.offset = 50.0;
+    ExtrudeCopy cap = extrudeCopy(cube, std::vector<Index>{top}, eo);
+    CHECK(cube.numFaces() == 6);
+    CHECK(cap.mesh.numFaces() == 1);
+    REQUIRE(cap.cap.size() == 1);
+    CHECK(cap.mesh.faceCentroid(cap.cap[0]).y == doctest::Approx(100.0));
+    CHECK(cap.mesh.faceNormal(cap.cap[0]).y == doctest::Approx(1.0));
+
+    ExtrudeCopy walls = extrudeCopy(cube, std::vector<Index>{top}, eo, true);
+    CHECK(walls.mesh.numFaces() == 5);
+    CHECK(walls.cap.size() == 1);
+    CHECK(isValid(walls.mesh));
+    // Open where the walls met the cube's top.
+    CHECK(boundaryEdgeCount(walls.mesh) == 4);
+    CHECK(walls.mesh.bounds().min.y == doctest::Approx(50.0));
+    CHECK(walls.mesh.bounds().max.y == doctest::Approx(100.0));
 }
 
 TEST_CASE("ops: inset")
@@ -392,6 +416,83 @@ TEST_CASE("ops: bridge")
     bo.divisions = 1;
     std::vector<Index> made = bridgeEdgeLoops(tube, inner, bo);
     CHECK(made.size() == 24);
+    CHECK(isValid(tube));
+    CHECK(boundaryEdgeCount(tube) == 24);
+}
+
+namespace
+{
+/** A 6 x 5 sheet of 100 cm quads with a 4 x 1 slot cut at each z in slotRows. */
+Mesh slottedSheet(std::initializer_list<double> slotRows)
+{
+    Mesh sheet = makePlane({600, 500, 6, 5});
+    std::vector<Index> cut;
+    for (Index f = 0; f < sheet.faceCapacity(); ++f)
+        for (double z : slotRows)
+            if (sheet.faceValid(f) && std::abs(sheet.faceCentroid(f).x) < 200 && std::abs(sheet.faceCentroid(f).z - z) < 1)
+                cut.push_back(f);
+    deleteFaces(sheet, cut);
+    return sheet;
+}
+
+/** Border edges inside the sheet's outer rim, without those passing through skip. */
+std::vector<Index> slotEdges(const Mesh& m, std::optional<glm::dvec3> skip = std::nullopt)
+{
+    std::vector<Index> out;
+    for (Index e = 0; e < m.edgeCapacity(); ++e)
+        if (m.edgeValid(e) && m.isBoundaryEdge(e))
+        {
+            const glm::dvec3 mid = (m.position(m.edgePoint(e, 0)) + m.position(m.edgePoint(e, 1))) * 0.5;
+            if (std::abs(mid.x) < 299 && std::abs(mid.z) < 249 && !(skip && glm::distance(mid, *skip) < 1))
+                out.push_back(e);
+        }
+    return out;
+}
+} // namespace
+
+TEST_CASE("ops: bridge works out the sides of a slot")
+{
+    // The whole border round the slot: its long sides bridge, the ends that join them are left.
+    Mesh sheet = slottedSheet({-100});
+    REQUIRE(slotEdges(sheet).size() == 10);
+    CHECK(planBridges(sheet, slotEdges(sheet)).size() == 1);
+    CHECK(bridgeEdges(sheet, slotEdges(sheet)).size() == 4);
+    CHECK(isValid(sheet));
+    CHECK(boundaryEdgeCount(sheet) == 22);
+
+    // A U: one end left unselected.
+    Mesh u = slottedSheet({-100});
+    const std::vector<Index> three = slotEdges(u, glm::dvec3(200, 0, -100));
+    REQUIRE(three.size() == 9);
+    CHECK(bridgeEdges(u, three).size() == 4);
+    CHECK(isValid(u));
+    CHECK(boundaryEdgeCount(u) == 22);
+}
+
+TEST_CASE("ops: bridge pairs separate selections")
+{
+    // Two slots in one sheet each bridge across, not into each other.
+    Mesh sheet = slottedSheet({-100, 100});
+    REQUIRE(slotEdges(sheet).size() == 20);
+    CHECK(bridgeEdges(sheet, slotEdges(sheet)).size() == 8);
+    CHECK(isValid(sheet));
+    CHECK(boundaryEdgeCount(sheet) == 22);
+
+    // Two gaps in a tube: each pair of facing loops bridges with its nearest partner.
+    Mesh tube = makeCylinder({50.0, 500.0, 12, 5, 0, false});
+    std::vector<Index> gaps;
+    for (Index f = 0; f < tube.faceCapacity(); ++f)
+        if (std::abs(std::abs(tube.faceCentroid(f).y) - 100.0) < 1.0)
+            gaps.push_back(f);
+    REQUIRE(gaps.size() == 24);
+    deleteFaces(tube, gaps);
+    std::vector<Index> loops;
+    for (Index e = 0; e < tube.edgeCapacity(); ++e)
+        if (tube.edgeValid(e) && tube.isBoundaryEdge(e) && std::abs(tube.position(tube.edgePoint(e, 0)).y) < 240.0)
+            loops.push_back(e);
+    REQUIRE(loops.size() == 48);
+    CHECK(planBridges(tube, loops).size() == 2);
+    CHECK(bridgeEdges(tube, loops).size() == 24);
     CHECK(isValid(tube));
     CHECK(boundaryEdgeCount(tube) == 24);
 }

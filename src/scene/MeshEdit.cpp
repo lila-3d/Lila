@@ -971,6 +971,59 @@ void offsetSelectedComponents(const char* label, const glm::dvec3& uvn)
     }, alongProvidedFrames(uvn));
 }
 
+namespace
+{
+/** polyExtrude duplicate=True: each mesh's selected faces extruded into a new mesh beside it, which ends up selected with its cap. */
+json extrudeDuplicate(geo::ExtrudeOptions opts, bool keepSides)
+{
+    LILA_ZONE();
+
+    Graph& g = graph();
+    g.evaluate();
+    std::map<NodeId, Ids> targets;
+    for (auto& [node, ids] : components::selected(components::mode()))
+        if (Node* n = g.node(node); n && n->type().isA("mesh"))
+            if (MeshPtr cage = modifiers::cage(g, node))
+                if (Ids f = components::convert(*cage, components::mode(), ids, ComponentMode::Face); !f.empty())
+                    targets[node] = std::move(f);
+    if (targets.empty())
+        throw CommandError("polyExtrude: select some faces first");
+
+    UndoChunk chunk("Extrude");
+    json out = json::array();
+    std::vector<NodeId> made, sources;
+    std::map<NodeId, Ids> caps;
+    for (auto& [node, sel] : targets)
+    {
+        Node& n = *g.node(node);
+        geo::Mesh m = baseMesh(basePlug(n));
+        auto sym = symmetryFor(n, m);
+        opts.symmetry = sym ? &*sym : nullptr;
+        geo::ExtrudeCopy copy = geo::extrudeCopy(m, sel, opts, keepSides);
+        if (copy.cap.empty())
+            continue;
+        copy.mesh.compact();
+        Node* piece = g.createNode(n.type(), n.name(), g.parent(n.id()), false);
+        for (int attr : {Transform::kTranslate, Transform::kRotate, Transform::kScale, Transform::kRotatePivot, Transform::kScalePivot,
+                         Transform::kRotatePivotTranslate, Transform::kScalePivotTranslate, Transform::kRotateOrder})
+            g.setValue({piece->id(), attr, -1}, g.storedValue({n.id(), attr, -1}));
+        g.setValue({piece->id(), MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(std::move(copy.mesh))));
+        out.push_back(piece->path());
+        made.push_back(piece->id());
+        sources.push_back(node);
+        caps[piece->id()] = std::move(copy.cap);
+    }
+    isolation::inherit(made, sources);
+    g.select(made);
+    // The cap stays selected in face mode, so the extrude handles and the last-op panel keep working on the copy.
+    components::keepModeAfterCreate();
+    components::setAll({}, {}, caps);
+    if (components::mode() != ComponentMode::Face)
+        components::setModeUndoable(ComponentMode::Face);
+    return out;
+}
+} // namespace
+
 void registerMeshEditCommands()
 {
     using T = ArgType;
@@ -985,9 +1038,16 @@ void registerMeshEditCommands()
         .flags = {{"thickness", "", T::Float, 0.0, "Distance along the normals, cm."},
                   {"offset", "", T::Float, 0.0,
                    "Faces: inward distance of the extruded border, cm; negative grows them. Edges: outward distance from their faces, cm."},
-                  {"individual", "", T::Bool, false, "Each face separately."}},
+                  {"individual", "", T::Bool, false, "Each face separately."},
+                  {"duplicate", "", T::Bool, false, "Faces: leave the mesh as it is and put the extruded faces in a new mesh."},
+                  {"keepSides", "", T::Bool, false, "With duplicate, the new mesh also keeps the side faces."}},
         .run = [](const Args& a) -> json {
             selectWholeInObjectMode(K::Face);
+            if (a.get<bool>("duplicate") && components::mode() != K::Edge)
+            {
+                geo::ExtrudeOptions o{a.get<double>("thickness"), a.get<bool>("individual"), nullptr, a.get<double>("offset")};
+                return extrudeDuplicate(o, a.get<bool>("keepSides"));
+            }
             if (components::mode() == K::Edge)
                 return editSelected("Extrude", K::Edge, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
                     geo::EdgeExtrudeOptions o{a.get<double>("thickness"), a.get<double>("offset"), s};
@@ -1227,11 +1287,11 @@ void registerMeshEditCommands()
 
     ops::registerCommand({
         .name = "polyBridge",
-        .doc = "Join two selected boundary loops with faces.",
+        .doc = "Join selected boundary loops with faces. Several pairs bridge at once; a single border round a slot bridges its two long sides.",
         .flags = {{"divisions", "", T::Int, 0, "Extra rows between the loops."}},
         .run = [](const Args& a) -> json {
             return editSelected("Bridge", K::Edge, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap*) {
-                return faces(geo::bridgeEdgeLoops(m, sel, {std::max(0, a.get<int>("divisions"))}));
+                return faces(geo::bridgeEdges(m, sel, {std::max(0, a.get<int>("divisions"))}));
             });
         },
     });

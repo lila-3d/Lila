@@ -335,7 +335,8 @@ void registerLibraryUi(ext::Context& ctx)
                       .area = Qt::RightDockWidgetArea,
                       .icon = "books",
                       .open = false,
-                      .toggleAction = "window.propLibrary"});
+                      .toggleAction = "window.propLibrary",
+                      .docs = "stagehand"});
     viewportHooks::setDropHandler("stagehand.library", onDrop);
     ctx.track("drop:stagehand.library", [] { viewportHooks::removeDropHandler("stagehand.library"); });
     viewportHooks::addDrawer(ctx, "stagehand.libraryGhost", drawGhost);

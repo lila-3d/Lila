@@ -502,18 +502,6 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
     });
     actionButton("viewport.monotone", "palette");
     separator();
-    menuButton("sun", "Lighting", [this](QMenu* m) {
-        auto* group = new QActionGroup(m);
-        for (const char* mode : {"environment", "studio", "flat"})
-        {
-            std::string id = std::string("viewport.lighting.") + mode;
-            QAction* a = m->addAction(labelOf(id));
-            a->setCheckable(true);
-            a->setChecked(viewportActionState(id, mView).value_or(false));
-            group->addAction(a);
-            connect(a, &QAction::triggered, this, [id] { actions::run(id); });
-        }
-    });
     actionButton("viewport.toggleShadows", "shadow");
     actionButton("viewport.toggleAO", "blur");
     actionButton("viewport.toggleAA", "wave-saw-tool");
@@ -532,6 +520,18 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
     mSamplesButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
     separator();
     actionButton("viewport.toggleEnvBackground", "background");
+    menuButton("sun", "Lighting", [this](QMenu* m) {
+        auto* group = new QActionGroup(m);
+        for (const char* mode : {"environment", "studio", "flat"})
+        {
+            std::string id = std::string("viewport.lighting.") + mode;
+            QAction* a = m->addAction(labelOf(id));
+            a->setCheckable(true);
+            a->setChecked(viewportActionState(id, mView).value_or(false));
+            group->addAction(a);
+            connect(a, &QAction::triggered, this, [id] { actions::run(id); });
+        }
+    });
     menuButton("world", "Environment", [](QMenu* m) { fillEnvironmentMenu(m); });
     separator();
     actionButton("viewport.isolate", "focus-2");
@@ -540,21 +540,12 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
     actionButton("viewport.show.joint", "bone");
     actionButton("viewport.show.light", "bulb");
     separator();
-    actionButton("viewport.hud.originAxis", "axis-y");
-    actionButton("viewport.toggleXray", "ghost");
-    actionButton("rig.xrayJoints", "skull", vc::Joints);
     actionButton("viewport.toggleBackfaceCulling", "square-toggle");
-    actionButton("viewport.toggleKuwahara", "brush");
     actionButton("viewport.toggleOutline", "border-outer");
-    menuButton("eye", "Mesh Display", [this](QMenu* m) { displayAids::fillMenu(m, mView); });
     menuButton("stack-2", "Level of Detail", [this](QMenu* m) { lodDisplay::fillMenu(m, mView); });
     separator();
     actionButton("viewport.frameSelected", "focus-centered");
     actionButton("viewport.frameAll", "arrows-maximize");
-    separator();
-    actionButton("viewport.resetExposure", "exposure");
-    field(vd::kExposure, 0.0, -10.0, 10.0, 0.1, "Exposure (stops)");
-    field(vd::kGamma, 1.0, 0.1, 4.0, 0.05, "Gamma");
 
     mChevron = makeChevron(this, "More viewport options");
     QMenu* overflow = mChevron->menu();
@@ -633,26 +624,6 @@ QToolButton* ViewportToolbar::menuButton(const char* iconName, const QString& ti
     return b;
 }
 
-QDoubleSpinBox* ViewportToolbar::field(const char* key, double fallback, double lo, double hi, double step, const QString& tip)
-{
-    auto* s = new QDoubleSpinBox(this);
-    s->setRange(lo, hi);
-    s->setSingleStep(step);
-    s->setDecimals(2);
-    s->setKeyboardTracking(false);
-    s->setButtonSymbols(QAbstractSpinBox::NoButtons);
-    s->setAlignment(Qt::AlignRight);
-    s->setFixedSize(42, kHeight - 6);
-    s->setToolTip(tip);
-    setSpinDefault(s, fallback);
-    std::string k = key;
-    connect(s, &QDoubleSpinBox::valueChanged, this, [k](double v) { PrefStore::get().set("general", k, v); });
-    connect(s, &QDoubleSpinBox::editingFinished, this, [this] { mView->setFocus(); });
-    mFields.push_back({s, {k, fallback}});
-    mItems.push_back({s, nullptr});
-    return s;
-}
-
 void ViewportToolbar::separator()
 {
     mItems.push_back({separatorLine(this), nullptr});
@@ -673,15 +644,6 @@ void ViewportToolbar::refresh()
             if (id == "viewport.monotone")
                 b->defaultAction()->setIcon(icon(*on ? "palette-off" : "palette"));
         }
-    for (auto& [s, kf] : mFields)
-    {
-        double v = PrefStore::get().value<double>("general", kf.first, kf.second);
-        if (std::abs(s->value() - v) > 1e-6 && !s->hasFocus())
-        {
-            QSignalBlocker block(s);
-            s->setValue(v);
-        }
-    }
     mCameraButton->setToolTip("Camera: " + QString::fromStdString(mView->viewName()) + "\nRight-click to select it");
     int samples = PrefStore::get().value<int>("general", vd::kAaSamples, vd::kDefaultSamples);
     mSamplesButton->setText(QString::number(samples) + "x");
@@ -799,12 +761,14 @@ ViewportBottomBar::ViewportBottomBar(ViewportWidget* view, QWidget* parent) : QW
 
     buildHighlightRow();
     buildMaskRow();
+    buildDisplayRow();
     buildRetopoRow();
     buildSymmetryRow();
     mSnapRow = group(true, 4, nullptr);
     snapGroup(mSnapRow, Tool::Move, "grid-dots", {0.1, 0.5, 1, 5, 10, 50, 100, 500, 1000}, " cm");
     snapGroup(mSnapRow, Tool::Rotate, "angle", {}, QString(QChar(0x00B0)));
     snapGroup(mSnapRow, Tool::Scale, "resize", {0.0625, 0.1, 0.125, 0.25, 0.5, 1}, "");
+    buildExposureRow();
 
     mChevron = makeChevron(this, "More viewport options");
     QMenu* overflow = mChevron->menu();
@@ -825,6 +789,12 @@ ViewportBottomBar::ViewportBottomBar(ViewportWidget* view, QWidget* parent) : QW
     });
     mToolsListener = tools::addListener([this] { refresh(); });
     mViewportToolListener = viewportTools::addListener([this] { refreshRetopo(); });
+    mContextListener = viewportContext::addListener([this] {
+        if (refreshRelevance())
+            layoutItems();
+    });
+    if (mView)
+        connect(mView, &ViewportWidget::viewStateChanged, this, &ViewportBottomBar::refresh);
     refresh();
     refreshTooltips();
 }
@@ -834,6 +804,7 @@ ViewportBottomBar::~ViewportBottomBar()
     PrefStore::get().removeOnChanged(mPrefListener);
     tools::removeListener(mToolsListener);
     viewportTools::removeListener(mViewportToolListener);
+    viewportContext::removeListener(mContextListener);
     scene::Graph::current().removeListener(mGraphListener);
 }
 
@@ -846,14 +817,14 @@ QWidget* ViewportBottomBar::group(bool right, int keep, std::function<void(QMenu
     if (!overflow)
         overflow = [row](QMenu* m) {
             for (QToolButton* b : row->findChildren<QToolButton*>(Qt::FindDirectChildrenOnly))
-                if (QAction* a = b->defaultAction())
+                if (QAction* a = b->defaultAction(); a && !b->isHidden())
                     m->addAction(a);
         };
     mGroups.push_back({row, separatorLine(this, kGroupGap), right, keep, std::move(active), std::move(overflow)});
     return row;
 }
 
-QToolButton* ViewportBottomBar::toggleButton(QWidget* row, const std::string& action, const char* iconName)
+QToolButton* ViewportBottomBar::toggleButton(QWidget* row, const std::string& action, const char* iconName, uint32_t needs)
 {
     auto* b = new QToolButton(row);
     auto* a = new QAction(icon(iconName), labelOf(action), b);
@@ -861,12 +832,35 @@ QToolButton* ViewportBottomBar::toggleButton(QWidget* row, const std::string& ac
     b->setDefaultAction(a);
     b->setIconSize(QSize(kIcon, kIcon));
     connect(a, &QAction::triggered, this, [this, action] {
+        activateView();
         actions::run(action);
         refresh();
     });
     mActionButtons.emplace_back(b, action);
+    if (needs)
+        mRelevant.push_back({b, needs, action});
     row->layout()->addWidget(b);
     return b;
+}
+
+QDoubleSpinBox* ViewportBottomBar::field(QWidget* row, const char* key, double fallback, double lo, double hi, double step, const QString& tip)
+{
+    auto* s = new QDoubleSpinBox(row);
+    s->setRange(lo, hi);
+    s->setSingleStep(step);
+    s->setDecimals(2);
+    s->setKeyboardTracking(false);
+    s->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    s->setAlignment(Qt::AlignRight);
+    s->setFixedSize(42, kHeight - 6);
+    s->setToolTip(tip);
+    setSpinDefault(s, fallback);
+    std::string k = key;
+    connect(s, &QDoubleSpinBox::valueChanged, this, [k](double v) { PrefStore::get().set("general", k, v); });
+    connect(s, &QDoubleSpinBox::editingFinished, this, [this] { activateView(); });
+    mFields.push_back({s, {k, fallback}});
+    row->layout()->addWidget(s);
+    return s;
 }
 
 void ViewportBottomBar::snapGroup(QWidget* row, Tool t, const char* iconName, std::vector<double> steps, const QString& unit)
@@ -945,6 +939,46 @@ void ViewportBottomBar::buildMaskRow()
     for (auto [kind, iconName] : {std::pair{sm::Kind::Curve, "vector-spline"}, {sm::Kind::Mesh, "box"}, {sm::Kind::Joint, "bone"}, {sm::Kind::Light, "bulb"},
                                   {sm::Kind::Locator, "crosshair"}, {sm::Kind::Other, "dots"}})
         toggleButton(row, std::string("select.mask.") + sm::name(kind), iconName);
+}
+
+void ViewportBottomBar::buildDisplayRow()
+{
+    QWidget* row = group(false, 1, nullptr);
+    toggleButton(row, "viewport.hud.originAxis", "axis-tripod");
+    toggleButton(row, "viewport.toggleXray", "ghost");
+    toggleButton(row, "rig.xrayJoints", "skull", viewportContext::Joints);
+    toggleButton(row, "viewport.toggleKuwahara", "brush");
+    auto* aids = new QToolButton(row);
+    aids->setIcon(icon("eye"));
+    aids->setIconSize(QSize(kIcon, kIcon));
+    aids->setToolTip("Mesh Display");
+    aids->setPopupMode(QToolButton::InstantPopup);
+    auto* menu = new QMenu(aids);
+    aids->setMenu(menu);
+    connect(menu, &QMenu::aboutToShow, this, [this, menu] {
+        activateView();
+        menu->clear();
+        displayAids::fillMenu(menu, mView);
+    });
+    row->layout()->addWidget(aids);
+    mGroups.back().overflow = [this, row](QMenu* m) {
+        for (QToolButton* b : row->findChildren<QToolButton*>(Qt::FindDirectChildrenOnly))
+            if (QAction* a = b->defaultAction(); a && !b->isHidden())
+                m->addAction(a);
+        QMenu* sub = m->addMenu(icon("eye"), "Mesh Display");
+        connect(sub, &QMenu::aboutToShow, this, [this, sub] {
+            sub->clear();
+            displayAids::fillMenu(sub, mView);
+        });
+    };
+}
+
+void ViewportBottomBar::buildExposureRow()
+{
+    QWidget* row = group(true, 0, nullptr);
+    toggleButton(row, "viewport.resetExposure", "exposure")->defaultAction()->setCheckable(false);
+    field(row, vd::kExposure, 0.0, -10.0, 10.0, 0.1, "Exposure (stops)");
+    field(row, vd::kGamma, 1.0, 0.1, 4.0, 0.05, "Gamma");
 }
 
 void ViewportBottomBar::buildSymmetryRow()
@@ -1214,7 +1248,8 @@ void ViewportBottomBar::refreshSymmetry()
 
 void ViewportBottomBar::activateView()
 {
-    mView->setFocus(Qt::OtherFocusReason);
+    if (mView)
+        mView->setFocus(Qt::OtherFocusReason);
 }
 
 void ViewportBottomBar::refresh()
@@ -1225,6 +1260,16 @@ void ViewportBottomBar::refresh()
             QSignalBlocker block(b->defaultAction());
             b->defaultAction()->setChecked(*on);
         }
+    for (auto& [s, kf] : mFields)
+    {
+        double v = PrefStore::get().value<double>("general", kf.first, kf.second);
+        if (std::abs(s->value() - v) > 1e-6 && !s->hasFocus())
+        {
+            QSignalBlocker block(s);
+            s->setValue(v);
+        }
+    }
+    refreshRelevance();
     for (const SnapGroup& g : mSnapGroups)
     {
         QSignalBlocker block(g.toggle->defaultAction());
@@ -1239,6 +1284,23 @@ void ViewportBottomBar::refresh()
     refreshRetopo();
     refreshSymmetry();
     layoutItems();
+}
+
+bool ViewportBottomBar::refreshRelevance()
+{
+    const uint32_t present = pref(vd::kHideUnusedItems, true) ? viewportContext::present() : ~0u;
+    bool changed = false;
+    for (const Relevant& r : mRelevant)
+    {
+        const bool relevant = (present & r.needs) || viewportActionState(r.action, mView).value_or(false);
+        if (r.button->isHidden() == relevant)
+        {
+            r.button->setVisible(relevant);
+            r.button->parentWidget()->adjustSize();
+            changed = true;
+        }
+    }
+    return changed;
 }
 
 void ViewportBottomBar::refreshTooltips()

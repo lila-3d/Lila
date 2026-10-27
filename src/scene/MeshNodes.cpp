@@ -32,6 +32,14 @@ AttrDef floatAttr(std::string name, double def, std::string doc)
             .doc = std::move(doc)};
 }
 
+/** A size whose default for new primitives (sized to fit a 10 cm cube) differs from what scene files leaving it out mean. */
+AttrDef sizeAttr(std::string name, double def, double fileDefault, std::string doc)
+{
+    AttrDef a = floatAttr(std::move(name), def, std::move(doc));
+    a.fileDefault = fileDefault;
+    return a;
+}
+
 AttrDef intAttr(std::string name, int64_t def, std::string doc)
 {
     return {.name = std::move(name), .type = PlugType::Int, .defaultValue = def, .flags = AttrInput | AttrStorable | AttrKeyable,
@@ -68,6 +76,16 @@ AttrDef capTypeAttr()
                      "subdivisionsAxis is odd), fan (triangles to the centre), ngon (one polygon) or none (left open)."};
     // Scene files saved before capType had n-gon caps.
     a.fileDefault = int64_t(geo::CapFill::Ngon);
+    return a;
+}
+
+AttrDef discCapTypeAttr()
+{
+    AttrDef a{.name = "capType", .type = PlugType::Enum, .defaultValue = int64_t(geo::CapFill::Quads),
+              .flags = AttrInput | AttrStorable | AttrKeyable, .enumNames = {"quads", "fan", "ngon"},
+              .doc = "How the innermost ring is filled: quads (a grid joined to it by a ring, one triangle when subdivisionsAxis is "
+                     "odd), fan (triangles to the centre) or ngon (one polygon). subdivisionsRings 0 is always one n-gon."};
+    a.fileDefault = int64_t(geo::CapFill::Fan);
     return a;
 }
 
@@ -117,8 +135,8 @@ std::vector<Primitive> primitives()
 {
     return {
         {"polyCube", "Cube",
-         {floatAttr("width", 100, "Size along X, cm."), floatAttr("height", 100, "Size along the up axis, cm."),
-          floatAttr("depth", 100, "Size along Z, cm."), intAttr("subdivisionsX", 1, "Segments across."),
+         {sizeAttr("width", 10, 100, "Size along X, cm."), sizeAttr("height", 10, 100, "Size along the up axis, cm."),
+          sizeAttr("depth", 10, 100, "Size along Z, cm."), intAttr("subdivisionsX", 1, "Segments across."),
           intAttr("subdivisionsY", 1, "Segments up."), intAttr("subdivisionsZ", 1, "Segments deep."),
           boolAttr("baseAtOrigin", false, "Sit on the ground instead of centring.")},
          [](const Node& n) {
@@ -126,7 +144,7 @@ std::vector<Primitive> primitives()
                                    i(n, "subdivisionsZ"), b(n, "baseAtOrigin")});
          }},
         {"polySphere", "Sphere",
-         {floatAttr("radius", 50, "cm."), intAttr("subdivisionsAxis", 20, "Segments around."),
+         {sizeAttr("radius", 5, 50, "cm."), intAttr("subdivisionsAxis", 20, "Segments around."),
           intAttr("subdivisionsHeight", 20, "Segments pole to pole."), boolAttr("baseAtOrigin", false, "Sit on the ground."),
           heightFraction()},
          [](const Node& n) {
@@ -135,7 +153,7 @@ std::vector<Primitive> primitives()
          },
          true},
         {"polyCylinder", "Cylinder",
-         {floatAttr("radius", 50, "cm."), floatAttr("height", 100, "cm."), intAttr("subdivisionsAxis", 20, "Segments around."),
+         {sizeAttr("radius", 5, 50, "cm."), sizeAttr("height", 10, 100, "cm."), intAttr("subdivisionsAxis", 20, "Segments around."),
           intAttr("subdivisionsHeight", 1, "Segments up."),
           intAttr("subdivisionsCaps", 0, "Rings of quads around each cap's fill; 0 and 1 both leave just the fill."), capTypeAttr(),
           boolAttr("caps", true, "Close the ends; off leaves them open whatever capType says."), boolAttr("baseAtOrigin", false, "Sit on the ground."),
@@ -145,7 +163,7 @@ std::vector<Primitive> primitives()
                                        i(n, "subdivisionsCaps", 0), b(n, "caps"), b(n, "baseAtOrigin"), frac(n), b(n, "cutCaps"), capFill(n)});
          }},
         {"polyCapsule", "Capsule",
-         {floatAttr("radius", 50, "cm."), floatAttr("height", 200, "End to end, caps included, cm."),
+         {sizeAttr("radius", 2.5, 50, "cm."), sizeAttr("height", 10, 200, "End to end, caps included, cm."),
           intAttr("subdivisionsAxis", 20, "Segments around."), intAttr("subdivisionsHeight", 1, "Segments along the straight part."),
           intAttr("subdivisionsCaps", 6, "Rings on each rounded end."), boolAttr("baseAtOrigin", false, "Sit on the ground.")},
          [](const Node& n) {
@@ -153,20 +171,23 @@ std::vector<Primitive> primitives()
                                       i(n, "subdivisionsCaps"), b(n, "baseAtOrigin")});
          }},
         {"polyCone", "Cone",
-         {floatAttr("radius", 50, "cm."), floatAttr("height", 100, "cm."), intAttr("subdivisionsAxis", 20, "Segments around."),
+         {sizeAttr("radius", 5, 50, "cm."), sizeAttr("height", 10, 100, "cm."), intAttr("subdivisionsAxis", 20, "Segments around."),
           intAttr("subdivisionsHeight", 1, "Segments up."),
           intAttr("subdivisionsCap", 0, "Rings of quads around the base's fill; 0 and 1 both leave just the fill."), capTypeAttr(),
-          boolAttr("baseAtOrigin", false, "Sit on the ground."), sweepFraction(), cutCaps()},
+          boolAttr("baseAtOrigin", false, "Sit on the ground."), sweepFraction(), cutCaps(),
+          boolAttr("capTip", false, "Cut the point off at tipRadius and fill it as capType, so quads leave no triangles at the tip."),
+          floatAttr("tipRadius", 0.05, "Radius of the capped tip, cm; small keeps it looking pointed.")},
          [](const Node& n) {
              return geo::makeCone({f(n, "radius"), f(n, "height"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsHeight"),
-                                   i(n, "subdivisionsCap", 0), b(n, "baseAtOrigin"), frac(n), b(n, "cutCaps"), capFill(n)});
+                                   i(n, "subdivisionsCap", 0), b(n, "baseAtOrigin"), frac(n), b(n, "cutCaps"), capFill(n), b(n, "capTip"),
+                                   f(n, "tipRadius")});
          }},
         {"polyPlane", "Plane",
-         {floatAttr("width", 100, "Size along X, cm."), floatAttr("depth", 100, "Size along Z, cm."),
+         {sizeAttr("width", 10, 100, "Size along X, cm."), sizeAttr("depth", 10, 100, "Size along Z, cm."),
           intAttr("subdivisionsX", 1, "Segments across."), intAttr("subdivisionsZ", 1, "Segments deep.")},
          [](const Node& n) { return geo::makePlane({f(n, "width"), f(n, "depth"), i(n, "subdivisionsX"), i(n, "subdivisionsZ")}); }},
         {"polyTorus", "Torus",
-         {floatAttr("radius", 50, "Ring radius, cm."), floatAttr("sectionRadius", 20, "Tube radius, cm."),
+         {sizeAttr("radius", 3.5, 50, "Ring radius, cm."), sizeAttr("sectionRadius", 1.5, 20, "Tube radius, cm."),
           intAttr("subdivisionsAxis", 20, "Segments around the ring."), intAttr("subdivisionsHeight", 20, "Segments around the tube."),
           sweepFraction(), cutCaps()},
          [](const Node& n) {
@@ -174,11 +195,14 @@ std::vector<Primitive> primitives()
                                     b(n, "cutCaps")});
          }},
         {"polyDisc", "Disc",
-         {floatAttr("radius", 50, "cm."), intAttr("subdivisionsAxis", 20, "Segments around."),
-          intAttr("subdivisionsRings", 1, "Rings; 0 is one n-gon."), sweepFraction()},
-         [](const Node& n) { return geo::makeDisc({f(n, "radius"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsRings", 0), frac(n)}); }},
+         {sizeAttr("radius", 5, 50, "cm."), intAttr("subdivisionsAxis", 20, "Segments around."),
+          intAttr("subdivisionsRings", 1, "Rings; 0 is one n-gon."), sweepFraction(), discCapTypeAttr()},
+         [](const Node& n) {
+             return geo::makeDisc({f(n, "radius"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsRings", 0), frac(n), capFill(n)});
+         }},
         {"polyPipe", "Pipe",
-         {floatAttr("radius", 50, "Outer radius, cm."), floatAttr("thickness", 10, "Wall thickness, cm."), floatAttr("height", 100, "cm."),
+         {sizeAttr("radius", 5, 50, "Outer radius, cm."), sizeAttr("thickness", 1, 10, "Wall thickness, cm."),
+          sizeAttr("height", 20, 100, "cm."),
           intAttr("subdivisionsAxis", 20, "Segments around."), intAttr("subdivisionsHeight", 1, "Segments up."),
           boolAttr("baseAtOrigin", false, "Sit on the ground."), sweepFraction(), cutCaps()},
          [](const Node& n) {
@@ -186,11 +210,11 @@ std::vector<Primitive> primitives()
                                    i(n, "subdivisionsHeight"), b(n, "baseAtOrigin"), frac(n), b(n, "cutCaps")});
          }},
         {"polyQuadSphere", "QuadSphere",
-         {floatAttr("radius", 50, "cm."), intAttr("subdivisions", 3, "Segments per cube face edge."), heightFraction()},
+         {sizeAttr("radius", 5, 50, "cm."), intAttr("subdivisions", 3, "Segments per cube face edge."), heightFraction()},
          [](const Node& n) { return geo::makeQuadSphere({f(n, "radius"), i(n, "subdivisions"), frac(n)}); },
          true},
         {"polyIcoSphere", "IcoSphere",
-         {floatAttr("radius", 50, "cm."), intAttr("subdivisions", 3, "1 is an icosahedron; each level splits every triangle in four."),
+         {sizeAttr("radius", 5, 50, "cm."), intAttr("subdivisions", 3, "1 is an icosahedron; each level splits every triangle in four."),
           boolAttr("baseAtOrigin", false, "Sit on the ground."), heightFraction()},
          [](const Node& n) { return geo::makeIcoSphere({f(n, "radius"), i(n, "subdivisions", 1), b(n, "baseAtOrigin"), frac(n)}); },
          true},

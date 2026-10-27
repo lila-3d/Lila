@@ -55,8 +55,17 @@ geo::Mesh paintedCube()
     return m;
 }
 
+/** A baked primitive at 1 m (radius 50), the size these expectations are written for. */
 std::string mesh(const char* kind, const char* name, json extra = json::object())
 {
+    const std::string_view k = kind;
+    const json sizes = k == "polyCube"       ? json{{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}}
+                       : k == "polyPlane"    ? json{{"width", 100.0}, {"depth", 100.0}}
+                       : k == "polyCylinder" ? json{{"radius", 50.0}, {"height", 100.0}}
+                                             : json{{"radius", 50.0}};
+    for (auto& [size, value] : sizes.items())
+        if (!extra.contains(size))
+            extra[size] = value;
     extra["name"] = name;
     extra["generator"] = false;
     return run(kind, extra)[0].get<std::string>();

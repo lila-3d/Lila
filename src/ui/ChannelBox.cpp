@@ -325,6 +325,7 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
     mTable->setShowGrid(false);
     mTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     mTable->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed | QAbstractItemView::AnyKeyPressed);
+    mTable->setProperty("numericEntry", true);
     mTable->viewport()->installEventFilter(this);
     mTable->installEventFilter(this);
     layout->addWidget(mTable, 1);
@@ -493,7 +494,7 @@ std::vector<ChannelBox::Row> ChannelBox::buildRows(scene::NodeId lead) const
         {
             const scene::AttrDef& a = attrs[i];
             const bool space = i == scene::Transform::kSpace && scene::spaces::hasSpaces(g, n->id());
-            if (!(a.flags & scene::AttrKeyable) || ((a.flags & scene::AttrHidden) && !space))
+            if (!(a.flags & (scene::AttrKeyable | scene::AttrChannelBox)) || ((a.flags & scene::AttrHidden) && !space))
                 continue;
             if (a.flags & scene::AttrArray)
             {

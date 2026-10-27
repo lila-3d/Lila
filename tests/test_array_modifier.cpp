@@ -209,7 +209,7 @@ TEST_CASE("linear array welds open strips at the seams, within tolerance only")
 TEST_CASE("arrayModifier keeps linear behaviour and adds radial, grid and weld")
 {
     run("newScene");
-    std::string cube = run("polyCube", {{"name", "Arrayed"}})[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"name", "Arrayed"}})[0];
     std::string mod = run("addModifier", {{"args", {cube}}, {"kind", "array"}, {"params", {{"count", 3}, {"offset", {200, 0, 0}}}}});
     CHECK(faces(cube) == 18);
     scene::MeshPtr m = outMesh(cube);
@@ -251,7 +251,7 @@ TEST_CASE("arrayModifier keeps linear behaviour and adds radial, grid and weld")
 TEST_CASE("arrayCenter centres on another object or the mesh pivot")
 {
     run("newScene");
-    std::string cube = run("polyCube", {{"name", "Spoke"}})[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"name", "Spoke"}})[0];
     std::string hub = run("spaceLocator", {{"name", "Hub"}}).get<std::string>();
     run("setAttr", args({hub + ".translate", {0, 0, -500}}));
     std::string mod = run("addModifier", {{"args", {cube}}, {"kind", "array"}, {"params", {{"mode", 1}, {"count", 4}}}});
@@ -284,7 +284,7 @@ TEST_CASE("arrayCenter centres on another object or the mesh pivot")
 TEST_CASE("radial array settings save and load")
 {
     run("newScene");
-    std::string cube = run("polyCube", {{"name", "Saved"}})[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"name", "Saved"}})[0];
     run("addModifier", {{"args", {cube}}, {"kind", "array"}, {"params", {{"mode", 1}, {"count", 5}, {"rise", 12.5}, {"axis", 2}}}});
     const int before = faces(cube);
     auto dir = std::filesystem::temp_directory_path() / "lila_tests";

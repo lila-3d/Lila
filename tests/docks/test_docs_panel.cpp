@@ -1,10 +1,17 @@
 #include <doctest/doctest.h>
 
 #include "core/Paths.h"
+#include "ui/Actions.h"
+#include "ui/DockSidebar.h"
 #include "ui/DocsUi.h"
+#include "ui/Menus.h"
 #include "ui/Panels.h"
 
 #include <QApplication>
+#include <QDockWidget>
+#include <QLabel>
+#include <QMenu>
+#include <QToolButton>
 #include <QFontDatabase>
 #include <QImage>
 #include <QKeyEvent>
@@ -142,4 +149,64 @@ TEST_CASE("docs panel renders a page to an image")
     browser->verticalScrollBar()->setValue(browser->verticalScrollBar()->maximum() / 3);
     QApplication::processEvents();
     CHECK(panel->grab().save(QString::fromStdWString(fs::path(out).replace_extension().wstring()) + "_panel.png"));
+}
+
+TEST_CASE("a panel's docs page gives its title bar a help button and a menu's ends it with an Open Docs row")
+{
+    using namespace lila::ui;
+    fs::path site = fs::temp_directory_path() / "lila_docs_links_test";
+    fs::remove_all(site);
+    writeFile(site / "docs" / "README.md", "# Lila Docs\n");
+    writeFile(site / "docs" / "topology.md", "# Topology\n");
+    writeFile(site / "docs" / "_sidebar.md", "- [Home](/)\n- [Topology](topology.md)\n");
+    setDocsDir(site);
+
+    auto helpButtons = [](QWidget* w) {
+        int n = 0;
+        for (QToolButton* b : w->findChildren<QToolButton*>())
+            n += b->toolTip() == "Open Topology docs";
+        return n;
+    };
+    QDockWidget dock("Topology Toolkit");
+    dock.setWidget(new QLabel("content"));
+    auto* bar = new DockTitleBar(&dock);
+    dock.setTitleBarWidget(bar);
+    CHECK(helpButtons(bar) == 0);
+    setDockDocs(&dock, "topology");
+    CHECK(helpButtons(bar) == 1);
+    setDockDocs(&dock, "topology");
+    CHECK(helpButtons(bar) == 1);
+    setDockDocs(&dock, "");
+    CHECK(helpButtons(bar) == 0);
+    // A page set before the title bar is made is picked up by it.
+    setDockDocs(&dock, "topology");
+    auto* later = new DockTitleBar(&dock);
+    dock.setTitleBarWidget(later);
+    CHECK(helpButtons(later) == 1);
+
+    actions::add({.id = "test.docsMenuRow", .label = "Row", .category = "Test", .run = [] {}, .doc = "A row."});
+    menus::addMenu({.id = "TestDocsMenu", .title = "Test", .docs = "topology"});
+    menus::addActions("TestDocsMenu", {"test.docsMenuRow"});
+    {
+        QWidget parent;
+        menus::MenuBuilder builder(&parent, {});
+        builder.rebuild();
+        QMenu* m = builder.menu("TestDocsMenu");
+        REQUIRE(m);
+        QList<QAction*> rows = m->actions();
+        REQUIRE(rows.size() == 3);
+        CHECK(rows[0]->data().toString() == "test.docsMenuRow");
+        CHECK(rows[1]->isSeparator());
+        CHECK(rows[2]->data().toString() == "help.docs.topology");
+        CHECK(rows[2]->text() == "Open Topology Docs");
+        // Rebuilding keeps one docs row at the end.
+        menus::addActions("TestDocsMenu", {"test.docsMenuRow"});
+        builder.rebuild();
+        CHECK(m->actions().size() == 4);
+        CHECK(m->actions().back()->data().toString() == "help.docs.topology");
+    }
+    menus::removeMenu("TestDocsMenu");
+    actions::remove("test.docsMenuRow");
+    setDocsDir({});
+    fs::remove_all(site);
 }

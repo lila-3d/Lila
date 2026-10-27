@@ -1,5 +1,6 @@
 #include "ui/DockSidebar.h"
 
+#include "ui/DocsUi.h"
 #include "ui/Icons.h"
 #include "ui/Panels.h"
 #include "ui/Theme.h"
@@ -106,9 +107,18 @@ void arrangeBottomDocks(QMainWindow* window, const QList<QDockWidget*>& tabs, QD
     current->raise();
 }
 
+constexpr const char* kDocsPage = "lilaDocsPage";
+
+void setDockDocs(QDockWidget* dock, const std::string& page)
+{
+    dock->setProperty(kDocsPage, QString::fromStdString(page));
+    if (auto* bar = qobject_cast<DockTitleBar*>(dock->titleBarWidget()))
+        bar->setDocsPage(page);
+}
+
 DockTitleBar::DockTitleBar(QDockWidget* dock) : QWidget(dock), mDock(dock)
 {
-    auto* h = new QHBoxLayout(this);
+    auto* h = mButtons = new QHBoxLayout(this);
     h->setContentsMargins(6, 2, 2, 2);
     h->setSpacing(0);
     h->addStretch(1);
@@ -123,6 +133,28 @@ DockTitleBar::DockTitleBar(QDockWidget* dock) : QWidget(dock), mDock(dock)
     connect(close, &QToolButton::clicked, dock, &QDockWidget::close);
     connect(dock, &QDockWidget::topLevelChanged, collapse, [collapse](bool floating) { collapse->setVisible(!floating); });
     connect(dock, &QDockWidget::windowTitleChanged, this, [this] { update(); });
+    setDocsPage(dock->property(kDocsPage).toString().toStdString());
+}
+
+void DockTitleBar::setDocsPage(const std::string& page)
+{
+    delete mHelp;
+    mHelp = nullptr;
+    if (!page.empty())
+    {
+        mHelp = docs::helpButton(page, this);
+        mButtons->insertWidget(1, mHelp);
+    }
+    update();
+}
+
+int DockTitleBar::buttonsLeft() const
+{
+    int left = width();
+    for (int i = 0; i < mButtons->count(); ++i)
+        if (QWidget* w = mButtons->itemAt(i)->widget(); w && !w->isHidden())
+            left = std::min(left, w->x());
+    return left;
 }
 
 QSize DockTitleBar::sizeHint() const
@@ -140,8 +172,9 @@ void DockTitleBar::paintEvent(QPaintEvent*)
     QPainter p(this);
     p.fillRect(rect(), themeShade(58));
     p.setPen(palette().color(QPalette::WindowText));
-    p.drawText(rect().adjusted(6, 0, -60, 0), Qt::AlignVCenter | Qt::AlignLeft,
-               fontMetrics().elidedText(mDock->windowTitle(), Qt::ElideRight, width() - 66));
+    QRect text = rect().adjusted(6, 0, 0, 0);
+    text.setRight(buttonsLeft() - 4);
+    p.drawText(text, Qt::AlignVCenter | Qt::AlignLeft, fontMetrics().elidedText(mDock->windowTitle(), Qt::ElideRight, text.width()));
 }
 
 void DockTitleBar::mouseDoubleClickEvent(QMouseEvent* e)

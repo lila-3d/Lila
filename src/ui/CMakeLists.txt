@@ -135,6 +135,7 @@ lila_module(lila_ui UI
     UvPackPanel.cpp UvPackPanel.h
     UvProjectTool.cpp UvProjectTool.h
     FlowLayout.cpp FlowLayout.h
+    MenuButtons.cpp MenuButtons.h
     DockSidebar.cpp DockSidebar.h
     DockDragCancel.cpp DockDragCancel.h
     DominantInfluenceUi.cpp DominantInfluenceUi.h

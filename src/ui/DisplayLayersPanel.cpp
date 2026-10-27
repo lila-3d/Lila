@@ -1,6 +1,7 @@
 #include "ui/DisplayLayersPanel.h"
 
 #include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/Log.h"
 #include "scene/DisplayLayers.h"
 #include "scene/Graph.h"
@@ -37,6 +38,8 @@ enum Column
     kType,
     kSwatch,
     kName,
+    kEmpty,
+    kColumnCount,
 };
 
 constexpr int kLayerRole = Qt::UserRole;
@@ -177,7 +180,7 @@ DisplayLayersPanel::DisplayLayersPanel(QWidget* parent) : QWidget(parent)
     v->addLayout(bar);
 
     mTree = new QTreeWidget(this);
-    mTree->setColumnCount(5);
+    mTree->setColumnCount(kColumnCount);
     mTree->setHeaderHidden(true);
     mTree->setRootIsDecorated(false);
     mTree->setIndentation(0);
@@ -192,13 +195,14 @@ DisplayLayersPanel::DisplayLayersPanel(QWidget* parent) : QWidget(parent)
             run("deleteDisplayLayer", {{"args", {layer}}});
     });
     QHeaderView* header = mTree->header();
-    header->setStretchLastSection(true);
+    header->setStretchLastSection(false);
     header->setMinimumSectionSize(20);
-    for (int c : {kV, kP, kType, kSwatch})
+    for (int c : {kV, kP, kType, kSwatch, kEmpty})
     {
         header->setSectionResizeMode(c, QHeaderView::Fixed);
         header->resizeSection(c, 22);
     }
+    header->setSectionResizeMode(kName, QHeaderView::Stretch);
     v->addWidget(mTree, 1);
 
     connect(mTree, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* item, int column) { clicked(item, column); });
@@ -287,17 +291,21 @@ void DisplayLayersPanel::refresh()
         item->setToolTip(kV, "V: visibility");
 
         const bool p = info["hideOnPlayback"].get<bool>();
-        item->setText(kP, p ? "" : "P");
-        item->setTextAlignment(kP, Qt::AlignCenter);
+        item->setIcon(kP, p ? QIcon() : icon("run"));
         item->setToolTip(kP, p ? "P: hidden while the animation plays" : "P: shown while the animation plays");
 
         const std::string type = info["displayType"].get<std::string>();
-        item->setText(kType, type == "template" ? "T" : type == "reference" ? "R" : "");
-        item->setTextAlignment(kType, Qt::AlignCenter);
-        item->setToolTip(kType, "Display type: blank normal, T template (grey wire, not pickable), R reference (not pickable). Click to cycle.");
+        item->setIcon(kType, type == "template" ? icon("cube") : type == "reference" ? icon("lock") : QIcon());
+        item->setToolTip(kType, "Display type: blank normal, cube template (grey wire, not pickable), lock reference (not pickable). Click to cycle.");
 
         item->setIcon(kSwatch, swatch(info["color"], frame));
         item->setToolTip(kSwatch, info["color"].is_null() ? "No color: click to pick one" : "Wireframe color: click to change");
+
+        if (info["members"].empty())
+        {
+            item->setIcon(kEmpty, icon("circle-dashed"));
+            item->setToolTip(kEmpty, "Empty: nothing is in this layer");
+        }
 
         if (!visible)
             item->setForeground(kName, dim);
@@ -349,11 +357,30 @@ void DisplayLayersPanel::pickColor(const std::string& layer)
     scene::Node* n = findNode(layer);
     if (!n)
         return;
+    const scene::NodeId id = n->id();
     const glm::dvec3 start = n->as<glm::dvec3>(scene::DisplayLayer::kColor);
+    const bool startUsed = n->as<bool>(scene::DisplayLayer::kUseColor);
+    auto linear = [](const QColor& c) { return glm::dvec3(toLinear(c.redF()), toLinear(c.greenF()), toLinear(c.blueF())); };
+    // Preview without undo while the picker moves; OK commits once, as one undo step, Cancel puts the start back.
+    auto preview = [id](const glm::dvec3& color, bool used) {
+        scene::Graph& g = scene::Graph::current();
+        if (!g.node(id))
+            return;
+        UndoStack::get().setEnabled(false);
+        g.setValue({id, scene::DisplayLayer::kColor, -1}, color);
+        g.setValue({id, scene::DisplayLayer::kUseColor, -1}, used);
+        UndoStack::get().setEnabled(true);
+    };
     QColorDialog dlg(QColor::fromRgbF(toSrgb(start.x), toSrgb(start.y), toSrgb(start.z)), this);
     dlg.setWindowTitle("Layer Color");
     dlg.setOption(QColorDialog::DontUseNativeDialog);
-    if (dlg.exec() != QDialog::Accepted || !dlg.selectedColor().isValid())
+    connect(&dlg, &QColorDialog::currentColorChanged, this, [preview, linear](const QColor& c) {
+        if (c.isValid())
+            preview(linear(c), true);
+    });
+    const bool ok = dlg.exec() == QDialog::Accepted;
+    preview(start, startUsed);
+    if (!ok || !dlg.selectedColor().isValid())
         return;
     const QColor c = dlg.selectedColor();
     run("displayLayer", {{"args", {layer}}, {"color", {toLinear(c.redF()), toLinear(c.greenF()), toLinear(c.blueF())}}});

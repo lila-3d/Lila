@@ -406,9 +406,10 @@ def remove_action(id):
     return _call("action.remove", id=id)
 
 
-def add_menu(id, title=None, area="menuBar", before="", owner=None):
-    """A menu bar menu (area "menuBar") or a hotbox panel menu ("hotbox"). Items go in with add_menu_item."""
-    return _call("menu.add", id=id, title=title or id, area=area, before=before, owner=_owner(owner))
+def add_menu(id, title=None, area="menuBar", before="", docs="", owner=None):
+    """A menu bar menu (area "menuBar") or a hotbox panel menu ("hotbox"). Items go in with add_menu_item. docs names a
+    docs page ("curves", "essentials?id=snapping") whose "Open <Page> Docs" row ends the menu."""
+    return _call("menu.add", id=id, title=title or id, area=area, before=before, docs=docs, owner=_owner(owner))
 
 
 def add_menu_item(menu, action=None, label=None, kind=None, id="", after="", before="", owner=None):
@@ -446,9 +447,10 @@ def remove_menu_item(id):
     return _call("menu.removeItem", id=id)
 
 
-def add_panel(id, build, title=None, area="right", icon="", open=True, owner=None):
+def add_panel(id, build, title=None, area="right", icon="", open=True, docs="", owner=None):
     """A dockable panel. build() returns a QWidget or a Column/Row; it is called when the dock is made. A
-    window.<id> action toggles it."""
+    window.<id> action toggles it. docs names a docs page ("topology", "curves?id=pipes-and-hoses") that a help button
+    in the panel's title bar opens."""
     QtCore, QtWidgets = _qt()
     from shiboken6 import wrapInstance
 
@@ -457,7 +459,7 @@ def add_panel(id, build, title=None, area="right", icon="", open=True, owner=Non
         content = build()
         holder.layout().addWidget(content.build() if isinstance(content, _Node) else content)
 
-    return _call("panel.add", [fill], id=id, title=title or id, area=area, icon=icon, open=open, owner=_owner(owner))
+    return _call("panel.add", [fill], id=id, title=title or id, area=area, icon=icon, open=open, docs=docs, owner=_owner(owner))
 
 
 def remove_panel(id, owner=None):

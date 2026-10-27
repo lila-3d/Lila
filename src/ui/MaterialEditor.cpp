@@ -13,6 +13,7 @@
 #include "ui/Actions.h"
 #include "ui/Deletion.h"
 #include "ui/DockSidebar.h"
+#include "ui/Icons.h"
 #include "ui/MaterialDraw.h"
 #include "ui/SpinScrub.h"
 #include "ui/TextureCache.h"
@@ -223,18 +224,29 @@ MaterialEditor::MaterialEditor(QWidget* parent) : QWidget(parent)
     root->setContentsMargins(4, 4, 4, 4);
 
     auto* top = new QHBoxLayout;
+    auto* listColumn = new QVBoxLayout;
+    mFilter = new QLineEdit(this);
+    mFilter->setPlaceholderText("Filter");
+    mFilter->setClearButtonEnabled(true);
+    listColumn->addWidget(mFilter);
     mList = new QListWidget(this);
     mList->setMaximumHeight(140);
     mList->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
-    top->addWidget(mList, 1);
+    listColumn->addWidget(mList, 1);
+    top->addLayout(listColumn, 1);
+    connect(mFilter, &QLineEdit::textChanged, this, [this] { applyFilter(); });
     auto* buttons = new QVBoxLayout;
-    auto* add = new QPushButton("New", this);
-    auto* del = new QPushButton("Delete", this);
-    mAssign = new QPushButton("Assign", this);
-    mAssign->setToolTip("Assign to the selected objects, or the selected faces in face mode.");
-    auto* selectUsers = new QPushButton("Select", this);
-    selectUsers->setToolTip("Select the objects this material is assigned to. Shift+click selects the assigned faces.");
-    for (QPushButton* b : {add, del, mAssign, selectUsers})
+    auto iconButton = [this](const char* iconName, const QString& tip) {
+        auto* b = new QPushButton(icon(iconName), QString(), this);
+        b->setToolTip(tip);
+        return b;
+    };
+    mAssign = iconButton("brush", "Assign: to the selected objects, or the selected faces in face mode.");
+    auto* add = iconButton("plus", "New: create a material; with objects or faces selected, also assign it to them.");
+    auto* del = iconButton("trash", "Delete the material.");
+    auto* selectUsers =
+        iconButton("pointer", "Select the objects this material is assigned to. Shift+click selects the assigned faces.");
+    for (QPushButton* b : {mAssign, add, del, selectUsers})
         buttons->addWidget(b);
     buttons->addStretch();
     top->addLayout(buttons);
@@ -252,7 +264,6 @@ MaterialEditor::MaterialEditor(QWidget* parent) : QWidget(parent)
     scroll->setWidget(mBody);
     root->addWidget(scroll, 1);
 
-    add->setToolTip("Create a material; with objects or faces selected, also assign it to them.");
     connect(add, &QPushButton::clicked, this, [this] {
         json name = createAndAssign(false);
         if (name.is_string())
@@ -384,6 +395,14 @@ void MaterialEditor::refreshList()
         mNode = n ? n->id() : scene::kNoNode;
         rebuild();
     }
+    applyFilter();
+}
+
+void MaterialEditor::applyFilter()
+{
+    const QString text = mFilter->text().trimmed();
+    for (int i = 0; i < mList->count(); ++i)
+        mList->item(i)->setHidden(!text.isEmpty() && !mList->item(i)->text().contains(text, Qt::CaseInsensitive));
 }
 
 void MaterialEditor::setAttr(int attr, const json& value)

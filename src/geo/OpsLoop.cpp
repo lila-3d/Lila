@@ -6,7 +6,9 @@
 #include "core/Profile.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
+#include <tuple>
 
 namespace lila::geo
 {
@@ -140,6 +142,114 @@ Index sharedFace(const Mesh& mesh, Index a, Index b)
             found = f;
     });
     return found;
+}
+
+glm::dvec3 pathCentre(const Mesh& mesh, const EdgePath& p)
+{
+    glm::dvec3 sum(0.0);
+    for (Index pt : p.points)
+        sum += mesh.position(pt);
+    return p.points.empty() ? sum : sum / double(p.points.size());
+}
+
+/** Which way the border opens: away from the faces along it. */
+glm::dvec3 openSide(const Mesh& mesh, const EdgePath& p)
+{
+    glm::dvec3 sum(0.0);
+    for (Index e : p.edges)
+    {
+        const glm::dvec3 mid = (mesh.position(mesh.edgePoint(e, 0)) + mesh.position(mesh.edgePoint(e, 1))) * 0.5;
+        const glm::dvec3 d = mid - mesh.faceCentroid(mesh.cornerFace(mesh.edgeCorner(e)));
+        if (const double len = glm::length(d); len > 1e-12)
+            sum += d / len;
+    }
+    return sum;
+}
+
+/** A hole's border opens every way, so any direction suits it. */
+bool opensToward(const glm::dvec3& open, const EdgePath& p, const glm::dvec3& d)
+{
+    return glm::length(open) < 0.25 * double(p.edges.size()) || glm::dot(open, d) > 0.0;
+}
+
+/** A closed loop faces a partner lying off its plane (a gap in a tube), not one beside it in the plane (two holes in a sheet). */
+bool loopsFace(const Mesh& mesh, const EdgePath& loop, const glm::dvec3& centre, const glm::dvec3& other)
+{
+    glm::dvec3 normal(0.0);
+    const size_t n = loop.points.size();
+    for (size_t i = 0; i < n; ++i)
+        normal += glm::cross(mesh.position(loop.points[i]) - centre, mesh.position(loop.points[(i + 1) % n]) - centre);
+    const glm::dvec3 d = other - centre;
+    if (glm::length(normal) < 1e-12 || glm::length(d) < 1e-12)
+        return true;
+    return std::abs(glm::dot(glm::normalize(normal), glm::normalize(d))) > 0.5;
+}
+
+/** The path cut at its corners into open runs; a closed path with fewer than two corners stays whole. */
+std::vector<EdgePath> splitAtCorners(const Mesh& mesh, const EdgePath& p)
+{
+    // Sharper than an octagon's turn, so rounded borders stay whole.
+    const double cosCorner = std::cos(glm::radians(50.0));
+    const size_t np = p.points.size(), ne = p.edges.size();
+    auto dir = [&](size_t e) {
+        const glm::dvec3 d = mesh.position(p.points[(e + 1) % np]) - mesh.position(p.points[e]);
+        const double len = glm::length(d);
+        return len > 1e-12 ? d / len : d;
+    };
+    std::vector<size_t> corners;
+    for (size_t i = p.closed ? 0 : 1; i < (p.closed ? np : np - 1); ++i)
+        if (glm::dot(dir((i + ne - 1) % ne), dir(i)) < cosCorner)
+            corners.push_back(i);
+    if (p.closed && corners.size() < 2)
+        return {p};
+    if (!p.closed)
+    {
+        corners.insert(corners.begin(), 0);
+        corners.push_back(np - 1);
+    }
+    std::vector<EdgePath> runs;
+    const size_t count = p.closed ? corners.size() : corners.size() - 1;
+    for (size_t k = 0; k < count; ++k)
+    {
+        const size_t a = corners[k];
+        const size_t b = p.closed && k + 1 == corners.size() ? corners[0] + ne : corners[k + 1];
+        EdgePath run;
+        for (size_t i = a; i < b; ++i)
+        {
+            run.points.push_back(p.points[i % np]);
+            run.edges.push_back(p.edges[i % ne]);
+        }
+        run.points.push_back(p.points[b % np]);
+        runs.push_back(std::move(run));
+    }
+    return runs;
+}
+
+/** The two longest opposite runs of one border of equal length, nearest first; empty when none match. */
+std::vector<Index> sidesToBridge(const Mesh& mesh, const EdgePath& p)
+{
+    const std::vector<EdgePath> runs = splitAtCorners(mesh, p);
+    const size_t n = runs.size();
+    auto adjacent = [&](size_t i, size_t j) { return j == i + 1 || (p.closed && i == 0 && j == n - 1); };
+    size_t bestI = 0, bestJ = 0, bestLen = 0;
+    double bestDist = std::numeric_limits<double>::max();
+    for (size_t i = 0; i < n; ++i)
+        for (size_t j = i + 1; j < n; ++j)
+        {
+            const size_t len = runs[i].edges.size();
+            if (adjacent(i, j) || runs[j].edges.size() != len || len < bestLen)
+                continue;
+            const double d = glm::distance(pathCentre(mesh, runs[i]), pathCentre(mesh, runs[j]));
+            if (len > bestLen || d < bestDist)
+            {
+                bestI = i, bestJ = j, bestLen = len, bestDist = d;
+            }
+        }
+    if (bestLen == 0)
+        return {};
+    std::vector<Index> out = runs[bestI].edges;
+    out.insert(out.end(), runs[bestJ].edges.begin(), runs[bestJ].edges.end());
+    return out;
 }
 } // namespace
 
@@ -291,6 +401,74 @@ std::vector<Index> bridgeEdgeLoops(Mesh& mesh, std::span<const Index> edges, con
                 mesh.cornerAttrs().mix(c, s, w);
             }
         }
+    return out;
+}
+
+std::vector<std::vector<Index>> planBridges(const Mesh& mesh, std::span<const Index> edges)
+{
+    LILA_ZONE();
+
+    std::vector<Index> border;
+    for (Index e : edges)
+        if (e < mesh.edgeCapacity() && mesh.edgeValid(e) && mesh.isBoundaryEdge(e))
+            border.push_back(e);
+    const std::vector<EdgePath> paths = chainEdges(mesh, border);
+    const size_t n = paths.size();
+    std::vector<glm::dvec3> centres;
+    std::vector<glm::dvec3> open;
+    for (const EdgePath& p : paths)
+    {
+        centres.push_back(pathCentre(mesh, p));
+        open.push_back(openSide(mesh, p));
+    }
+
+    // Borders that open toward each other pair first, so a tube with two gaps bridges the gaps, not the band between them.
+    struct Candidate
+    {
+        bool across;
+        double distance;
+        size_t a, b;
+    };
+    std::vector<Candidate> candidates;
+    for (size_t i = 0; i < n; ++i)
+        for (size_t j = i + 1; j < n; ++j)
+            if (!paths[i].edges.empty() && paths[i].edges.size() == paths[j].edges.size() && paths[i].closed == paths[j].closed
+                && (!paths[i].closed || loopsFace(mesh, paths[i], centres[i], centres[j])))
+            {
+                const bool facing = opensToward(open[i], paths[i], centres[j] - centres[i]) && opensToward(open[j], paths[j], centres[i] - centres[j]);
+                candidates.push_back({!facing, glm::distance(centres[i], centres[j]), i, j});
+            }
+    std::sort(candidates.begin(), candidates.end(),
+              [](const Candidate& x, const Candidate& y) { return std::tie(x.across, x.distance) < std::tie(y.across, y.distance); });
+
+    std::vector<std::vector<Index>> out;
+    std::vector<uint8_t> paired(n, 0);
+    for (const Candidate& c : candidates)
+        if (!paired[c.a] && !paired[c.b])
+        {
+            paired[c.a] = paired[c.b] = 1;
+            std::vector<Index> pair = paths[c.a].edges;
+            pair.insert(pair.end(), paths[c.b].edges.begin(), paths[c.b].edges.end());
+            out.push_back(std::move(pair));
+        }
+    for (size_t i = 0; i < n; ++i)
+        if (!paired[i])
+            if (std::vector<Index> sides = sidesToBridge(mesh, paths[i]); !sides.empty())
+                out.push_back(std::move(sides));
+    return out;
+}
+
+std::vector<Index> bridgeEdges(Mesh& mesh, std::span<const Index> edges, const BridgeOptions& opts)
+{
+    LILA_ZONE();
+
+    std::vector<Index> out;
+    // Bridging only appends, so the later pairs' edge ids stay valid.
+    for (const std::vector<Index>& pair : planBridges(mesh, edges))
+    {
+        std::vector<Index> made = bridgeEdgeLoops(mesh, pair, opts);
+        out.insert(out.end(), made.begin(), made.end());
+    }
     return out;
 }
 } // namespace lila::geo

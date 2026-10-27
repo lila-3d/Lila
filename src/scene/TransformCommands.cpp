@@ -1,5 +1,6 @@
 #include "ops/Command.h"
 #include "scene/Graph.h"
+#include "scene/OrientPivot.h"
 #include "scene/RigElements.h"
 #include "scene/TransformOps.h"
 
@@ -178,5 +179,7 @@ void registerTransformCommands()
             return json::array({p.x, p.y, p.z});
         },
     });
+
+    orientpivot::registerCommand();
 }
 } // namespace lila::scene

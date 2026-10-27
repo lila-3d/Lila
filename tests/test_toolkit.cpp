@@ -46,7 +46,7 @@ TEST_CASE("polyMirror directions and world space")
         return std::pair{least, most};
     };
     run("newScene");
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("polyMirror", {{"args", {cube}}});
     CHECK(faces(cube) == 10);
     run("undo");
@@ -85,7 +85,7 @@ TEST_CASE("polyMirror adjusts through every direction and space, undoing and red
     namespace lo = scene::lastOp;
     auto points = [](const std::string& m) { return run("meshData", {{"args", {m}}, {"base", true}}); };
     run("newScene");
-    std::string cube = run("polyCube", {{"subdivisionsX", 3}})[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"subdivisionsX", 3}})[0];
     run("setAttr", {{"args", {cube + ".translate", {30.0, 10.0, -5.0}}}});
     run("setAttr", {{"args", {cube + ".rotate", {0.0, 35.0, 20.0}}}});
     run("setAttr", {{"args", {cube + ".scale", {1.0, 2.0, 0.5}}}});
@@ -126,7 +126,7 @@ TEST_CASE("polyMirror adjusts through every direction and space, undoing and red
 TEST_CASE("extract, connect and selection helpers")
 {
     run("newScene");
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("selectComponents", {{"args", {cube}}, {"faces", {0, 1}}});
     json made = run("polyExtract");
     REQUIRE(made.size() == 1);
@@ -142,7 +142,7 @@ TEST_CASE("extract, connect and selection helpers")
     CHECK(faces(cube) > 6);
 
     run("newScene");
-    std::string plane = run("polyPlane", {{"subdivisionsX", 4}, {"subdivisionsZ", 4}})[0];
+    std::string plane = run("polyPlane", {{"width", 100.0}, {"depth", 100.0}, {"subdivisionsX", 4}, {"subdivisionsZ", 4}})[0];
     run("selectComponents", {{"args", {plane}}, {"faces", {json::array({0, 15})}}});
     run("shrinkSelection");
     CHECK(selectedCount(plane, "faces") == 4);
@@ -152,7 +152,7 @@ TEST_CASE("extract, connect and selection helpers")
     CHECK(selectedCount(plane, "edges") == 16);
 
     run("newScene");
-    cube = run("polyCube")[0];
+    cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
     run("selectByAngle", {{"angle", 30}});
     CHECK(selectedCount(cube, "faces") == 1);
@@ -165,7 +165,7 @@ TEST_CASE("execute listeners see top-level commands only")
     run("newScene");
     int before = 0, after = 0;
     int id = ops::addExecuteListener([&](const ExecuteEvent& e) { (e.done ? after : before)++; });
-    run("polyCube");
+    run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}});
     CHECK(before == 1);
     CHECK(after == 1);
     run("select", {{"clear", true}});
@@ -173,7 +173,7 @@ TEST_CASE("execute listeners see top-level commands only")
     CHECK(after == 3);
     ops::removeExecuteListener(id);
     uint64_t serial = UndoStack::get().serial();
-    run("polyCube");
+    run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}});
     CHECK(UndoStack::get().serial() != serial);
 }
 
@@ -182,7 +182,7 @@ TEST_CASE("adjusting the last operation re-runs it as one undo step")
     namespace lo = scene::lastOp;
     lo::install();
     run("newScene");
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
     ui("selectByAngle", {{"angle", 100}});
     REQUIRE(lo::current());
@@ -221,7 +221,7 @@ TEST_CASE("adjusting the last operation re-runs it as one undo step")
     CHECK(faces(cube) == 6);
 
     run("newScene");
-    cube = run("polyCube")[0];
+    cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("select", {{"args", {cube}}});
     ui("polyMirror", {{"axis", "x"}});
     int mirrored = faces(cube);
@@ -230,7 +230,7 @@ TEST_CASE("adjusting the last operation re-runs it as one undo step")
     CHECK(lo::live());
 
     run("newScene");
-    cube = run("polyCube")[0];
+    cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("select", {{"args", {cube}}});
     ui("polySubdivide");
     CHECK(faces(cube) == 24);
@@ -249,7 +249,7 @@ TEST_CASE("adjust-last-op edits are undo steps of their own")
     lo::install();
     UndoStack& undo = UndoStack::get();
     run("newScene");
-    std::string cube = run("polyCube")[0];
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
     auto points = [&] { return run("meshData", {{"args", {cube}}})["points"]; };
     auto thickness = [] { return lo::current()->call["thickness"].get<double>(); };

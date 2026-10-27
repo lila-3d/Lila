@@ -51,6 +51,12 @@ LILA_SCENE_API glm::dmat3 pivotFrame(Graph& g, NodeId id);
 /** Sets pivotOrient so the pivot's world axes become `world` (orthonormal columns), without moving the object. */
 LILA_SCENE_API void setWorldPivotFrame(Graph& g, NodeId id, const glm::dmat3& world);
 
+/**
+ * Applies an object-space matrix to the node's mesh points (its edit plug, unshared first) or provided points, so the
+ * geometry can stay put in the world while the transform changes.
+ */
+LILA_SCENE_API void bakeIntoGeometry(Graph& g, NodeId id, const glm::dmat4& bake);
+
 /** Zeroes pivots, their compensation and the pivot orientation, keeping the object where it is. */
 LILA_SCENE_API void resetPivot(Graph& g, NodeId id);
 
