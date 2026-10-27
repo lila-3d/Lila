@@ -34,6 +34,9 @@ public:
         kJointCount,
         kChainParentMatrix,
         kEndEffector,
+        kInCurve,
+        kRoll,
+        kStretch,
         kSlots, // kMaxJoints * {local, orient, axis, rotateOrder, restRotate, solvedRotate}
         kCount = kSlots + kMaxJoints * 6,
     };
@@ -58,7 +61,7 @@ LILA_SCENE_API std::vector<NodeId> handlesOf(Graph& g, NodeId joint);
 LILA_SCENE_API void refresh(Graph& g, NodeId handle);
 } // namespace ik
 
-/** ikHandle type and the built-in solvers (ik2BoneSolver, ikFabrikSolver). Idempotent. */
+/** ikHandle type and the built-in solvers (ik2BoneSolver, ikFabrikSolver, ikSplineSolver). Idempotent. */
 LILA_SCENE_API void registerIkTypes();
 /** ikHandle. Idempotent. */
 LILA_SCENE_API void registerIkCommands();

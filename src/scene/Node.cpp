@@ -17,6 +17,7 @@
 #include "scene/LodGroup.h"
 #include "scene/Materials.h"
 #include "scene/MathNodes.h"
+#include "scene/Expression.h"
 #include "scene/Measure.h"
 #include "scene/MeshNodes.h"
 #include "scene/Rig.h"
@@ -240,6 +241,7 @@ void registerBuiltins()
     anim::registerTypes();
     drivers::registerTypes();
     mathnodes::registerTypes();
+    expression::registerTypes();
     anim::registerLayerTypes();
     anim::registerTakeTypes();
     spaces::registerTypes();
