@@ -35,7 +35,8 @@ LILA_SCENE_API Spline splineFromJson(const nlohmann::json& j);
  * A curve in the hierarchy. `create` holds its splines in object space (or is fed by a curve history node); `local`
  * repeats them and `worldSpace` carries them through the world matrix, which is what history nodes read. With a mesh
  * connected to liveSurface, `local` holds the points conformed to that surface (see conformToSurface), so editing them
- * keeps the curve on it.
+ * keeps the curve on it. With symmetry on, `worldSpace` also carries a mirrored copy of every spline after its own, so
+ * history nodes build both sides; `local`, which points are edited on, holds only the curve's own splines.
  */
 class LILA_SCENE_API CurveShape : public scene::Transform
 {
@@ -71,6 +72,16 @@ enum class PointRole : uint32_t
 };
 LILA_SCENE_API uint32_t componentId(size_t spline, size_t point, PointRole role);
 LILA_SCENE_API void decodeComponent(uint32_t id, size_t* spline, size_t* point, PointRole* role);
+
+/** The curve's symmetry: the axis its mirror plane faces (0 x, 1 y, 2 z), or -1 when off. */
+LILA_SCENE_API int symmetryAxis(const scene::Node& curve);
+/**
+ * The local splines mirrored, in world space: across the world plane through the origin facing axis, or across the curve's
+ * own plane through its pivot when objectSpace.
+ */
+LILA_SCENE_API Splines mirroredSplines(const Splines& local, const glm::dmat4& world, int axis, bool objectSpace);
+/** How many of the curve's world-space splines are its own; the rest are symmetry copies, which can't be edited. */
+LILA_SCENE_API size_t ownSplineCount(const scene::Node& curve);
 
 /** The splines a curve node shows, object space (its local output). */
 LILA_SCENE_API const Splines& shapeSplines(scene::Graph& g, scene::NodeId node);

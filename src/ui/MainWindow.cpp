@@ -1325,12 +1325,12 @@ void MainWindow::buildMenus()
     menu("Modify", "M&odify");
     menus::addActions("Modify", {"#Transforms", "modify.freezeTransforms", "modify.resetTransforms", "modify.centerPivot", "modify.resetPivot", "modify.zeroPivot", "modify.orientPivot", "modify.pinComponentPivot", "modify.resetComponentPivot",
                                  "#Snapping", "snapSurface.set", "snapSurface.clear", "snapSurface.toggle", "snapSurface.alignToNormal"});
+    addSubmenu("Modify", "Scene Origin");
+    menus::addActions("Modify/Scene Origin", {"modify.relocateScene", "modify.setDisplayOrigin", "modify.clearDisplayOrigin"});
 
     menu("Create", "Create");
     addSubmenu("Create", "Polygon Primitives");
     menus::addActions("Create/Polygon Primitives", {"create.cube", "create.sphere", "create.cylinder", "create.capsule", "create.cone", "create.plane", "create.torus",
-    addSubmenu("Modify", "Scene Origin");
-    menus::addActions("Modify/Scene Origin", {"modify.relocateScene", "modify.setDisplayOrigin", "modify.clearDisplayOrigin"});
                                              "create.disc", "create.pipe", "create.quadSphere", "create.icoSphere"});
     menus::addActions("Create", {"create.locator", "create.camera", "create.cameraFromView", "create.emptyGroup", "create.imagePlane"});
     addSubmenu("Create", "Sets");
@@ -1391,6 +1391,9 @@ void MainWindow::buildMenus()
     menus::addActions("Curves/Deform Curves", {"curve.bend", "curve.curl", "curve.scaleCurvature", "curve.smooth"});
     addSubmenu("Curves", "Along Curve");
     menus::addActions("Curves/Along Curve", {"curve.deformAlongCurve", "curve.arrayAlongCurve", "curve.instanceAlongCurve", "", "curve.flowAlongSurface"});
+    addSubmenu("Curves", "Symmetry");
+    menus::addActions("Curves/Symmetry", {"curve.symmetryX", "curve.symmetryY", "curve.symmetryZ", "curve.symmetryOff", "", "curve.bakeSymmetry", "",
+                                          "curve.drawSymmetryX", "curve.drawSymmetryY", "curve.drawSymmetryZ", "curve.drawSymmetryOff"});
     addSubmenu("Curves", "On Surface");
     menus::addActions("Curves/On Surface", {"curve.drawOnSurfaces", "curve.keepDrawnOnSurface", "", "curve.keepOnSurface", "curve.releaseFromSurface"});
     addSubmenu("Curves", "Sections");
@@ -1447,6 +1450,9 @@ void MainWindow::buildMenus()
     setupSpacesMenu();
     addSubmenu("Rig", "Skinning Method");
     menus::addActions("Rig/Skinning Method", {"rig.skinLinear", "rig.skinDualQuaternion", "rig.skinCentresOfRotation", "rig.skinDirectDeltaMush"});
+    addSubmenu("Rig", "Anim Proxy");
+    menus::addActions("Rig/Anim Proxy", {"rig.animProxyTool", "rig.createAnimProxy", "mesh.splitMeshTool", "", "rig.createProxySet", "rig.addToProxySet",
+                                        "rig.removeFromProxySet", "", "rig.toggleAnimProxy", "rig.toggleProxyPiece"});
 
     menu("Deform", "Deform");
     menus::addActions("Deform", {"#Morph Targets", "deform.morph", "deform.addMorphTarget", "window.morphTargets"});
@@ -1454,9 +1460,6 @@ void MainWindow::buildMenus()
     menus::addActions("Deform/Morph Tools", {"deform.editMorphTarget", "deform.extractMorphTarget", "deform.setMorphTarget", "deform.addInBetween",
                                              "", "deform.flipMorphTarget", "deform.symmetrizeMorphTarget", "", "deform.removeMorphTarget"});
     addSubmenu("Deform", "Correctives");
-    addSubmenu("Rig", "Anim Proxy");
-    menus::addActions("Rig/Anim Proxy", {"rig.animProxyTool", "rig.createAnimProxy", "mesh.splitMeshTool", "", "rig.createProxySet", "rig.addToProxySet",
-                                        "rig.removeFromProxySet", "", "rig.toggleAnimProxy", "rig.toggleProxyPiece"});
     menus::addActions("Deform/Correctives", {"deform.sculptCorrective", "deform.addCorrective", "", "deform.poseDriver", "deform.setPoseDriverTarget"});
     menus::addActions("Deform", {"deform.driveChannel", "window.drivenChannels", "#Deformers", "deform.lattice"});
     addSubmenu("Deform", "Nonlinear");

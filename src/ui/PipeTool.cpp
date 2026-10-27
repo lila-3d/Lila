@@ -269,6 +269,7 @@ public:
             mAttach = !mAttach;
             setPref("attach", mAttach);
             break;
+        case Qt::Key_Y: prefs().set("general", "/curveTools/symmetry", (symmetryPref() + 1) % 4); break;
         case Qt::Key_S:
             mSurface = !mSurface;
             setPref("surface", mSurface);
@@ -316,7 +317,7 @@ public:
         if (preview.size() >= 2)
         {
             shapeStart(preview);
-            drawSpline(f, preview, kGhost);
+            drawSymmetric(f, preview, kGhost);
             curve::PipeOptions o;
             o.radius = toScales(preview);
             o.sides = mSides;
@@ -362,7 +363,7 @@ public:
         const char* preset = kPresets[size_t(mPreset)];
         drawToolMessage(p, view,
                         QString("Pipe  next radius %1 cm, %2 sides, %3%4  B-drag/Ctrl+scroll: radius, +/-: sides, P: preset (%5), T: wall, "
-                                "S: on surfaces %6, F: from loop %7, A: attach %8  Z/Backspace: undo point, Shift+Z: redo point, "
+                                "S: on surfaces %6, F: from loop %7, A: attach %8, Y: symmetry %9  Z/Backspace: undo point, Shift+Z: redo point, "
                                 "Enter: build (or pipe the selected curves), Esc: exit")
                             .arg(mRadius, 0, 'f', 2)
                             .arg(mSides)
@@ -371,7 +372,8 @@ public:
                             .arg(*preset ? preset : "none")
                             .arg(mSurface ? "on" : "off")
                             .arg(mFromLoop ? "on" : "off")
-                            .arg(mAttach ? "on" : "off"));
+                            .arg(mAttach ? "on" : "off")
+                            .arg(symmetryName(symmetryPref())));
     }
 
 private:
@@ -502,6 +504,7 @@ private:
         shapeStart(s);
         call["radius"] = toScales(s);
         call["splines"] = json::array({curve::splineToJson(s)});
+        call["symmetry"] = symmetryName(symmetryPref());
         if (mStart && mFromLoop)
         {
             call["fromLoop"] = true;

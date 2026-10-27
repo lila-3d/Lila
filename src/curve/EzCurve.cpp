@@ -215,6 +215,7 @@ void registerEzCurveCommand()
                   {"follow", "f", T::Bool, true, "Follow the surface between the points."},
                   {"clearance", "c", T::Bool, true, "Push the curve out of the meshes wherever it dips into them."},
                   {"points", "p", T::Int, 12, "Points the curve passes through."},
+                  {"symmetry", "sym", T::String, "off", "Mirror the curve live across the world plane facing this axis.", {"off", "x", "y", "z"}},
                   {"name", "n", T::String, nullptr, "Name; made unique."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -226,6 +227,8 @@ void registerEzCurveCommand()
             Graph& g = Graph::current();
             Node* n = g.createNode(*types::find("curve"), a.get<std::string>("name", "EzCurve"), kNoNode, true);
             g.setValue({n->id(), CurveShape::kCreate, -1}, makeCurveData({interpolate(pts, 3, false)}));
+            if (const std::string axis = a.get<std::string>("symmetry", "off"); axis != "off")
+                g.setValue({n->id(), n->type().attrIndex("symmetry"), -1}, int64_t(axis == "x" ? 1 : axis == "y" ? 2 : 3));
             g.select({n->id()});
             return n->path();
         },

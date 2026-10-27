@@ -55,11 +55,11 @@ struct SmoothCurveOptions
 LILA_SCENE_API Spline smoothCurve(const Spline& s, const SmoothCurveOptions& o, std::span<const uint8_t> mask = {});
 
 /**
- * The same kind and point count, the points spread evenly by arc length. With keepCorners, tangent breaks stay where they
+ * The same kind and point count (or count points, when given), the points spread evenly by arc length. With keepCorners, tangent breaks stay where they
  * are and the points in between spread along each run. Poly and Bezier shapes stay within a small fraction of a span;
  * NURBS are refitted and lose their corners and weights.
  */
-LILA_SCENE_API Spline evenSpacing(const Spline& s, bool keepCorners = true);
+LILA_SCENE_API Spline evenSpacing(const Spline& s, bool keepCorners = true, size_t count = 0);
 
 /** Largest distance from samples of a to the curve b, cm: how far an edit moved the shape. */
 LILA_SCENE_API double shapeDeviation(const Spline& a, const Spline& b, int samplesPerSpan = 16);

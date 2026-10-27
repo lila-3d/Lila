@@ -16,6 +16,12 @@
     "NW": [{ "label": "Fill Hole", "action": "mesh.fillHole" }],
     "W": [{ "label": "Circularize", "action": "mesh.circularize" }, { "label": "Straighten", "action": "mesh.straighten" }]
   },
+  "curveSelected": {
+    "overflow": [
+      { "label": "Insert Point", "action": "curve.insertAtCurvePoints" },
+      { "separator": true }
+    ]
+  },
   "objectMode": {
     "NW": { "label": "Sculpt", "action": "sculpt.tool" }
   },

@@ -44,7 +44,8 @@ std::vector<SceneCurve> visibleCurves()
         if (!n || !n->type().isA("curve") || !shown(g, id))
             continue;
         const curve::Splines& ss = curve::splinesOf(n->value(curve::CurveShape::kWorldSpace));
-        for (size_t k = 0; k < ss.size(); ++k)
+        // Symmetry copies follow the curve's own splines and can't be edited, so only its own are picked.
+        for (size_t k = 0; k < std::min(ss.size(), curve::ownSplineCount(*n)); ++k)
         {
             if (!curve::isValid(ss[k]) || curve::spanCount(ss[k]) == 0)
                 continue;

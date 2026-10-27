@@ -371,6 +371,8 @@ Node* createPathCurve(Graph& g, const Args& a)
         return nullptr;
     Node* c = g.createNode(*types::find("curve"), "PipePath", kNoNode, true);
     g.setValue({c->id(), CurveShape::kCreate, -1}, makeCurveData(std::move(given)));
+    if (const std::string axis = a.get<std::string>("symmetry", "off"); axis != "off")
+        g.setValue({c->id(), c->type().attrIndex("symmetry"), -1}, int64_t(axis == "x" ? 1 : axis == "y" ? 2 : 3));
     return c;
 }
 
@@ -557,6 +559,8 @@ void registerPipeCommands()
              {"preset", "", T::String, nullptr, "Starting settings: pipe, hose, cable or conduit (flags given as well win).", kPresets},
              {"points", "p", T::List, nullptr, "[[x, y, z], ...] world points of a new poly path curve, instead of path curves."},
              {"splines", "", T::List, nullptr, "Whole path splines (curveData format), instead of path curves."},
+             {"symmetry", "", T::String, "off", "Mirror the new path curve (points or splines) live across the world plane facing this axis.",
+              {"off", "x", "y", "z"}},
              {"fromLoop", "", T::Bool, false, "Start on the selected face (its border) or closed edge loop: it becomes the first ring."},
              {"loopMesh", "", T::String, nullptr, "Mesh holding the start loop (instead of the selection)."},
              {"loopFaces", "", T::List, nullptr, "Faces whose border is the start loop."},

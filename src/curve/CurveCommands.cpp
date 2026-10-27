@@ -12,6 +12,7 @@
 #include "curve/SketchNode.h"
 #include "curve/PlanarNodes.h"
 #include "ops/Command.h"
+#include "ops/CommandOptions.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
@@ -134,6 +135,33 @@ std::vector<FlagDef> attrFlags(const std::string& type)
         out.push_back(std::move(f));
     }
     return out;
+}
+
+/**
+ * Rebuild's Match Curve button: kind, spans and degree from the last selected curve's first spline, so they can be
+ * edited down from what it has now, and the point count with Point Percent at 100.
+ */
+void registerRebuildFill()
+{
+    namespace opt = ops::options;
+    opt::Override o = opt::findOverride("rebuildCurve") ? *opt::findOverride("rebuildCurve") : opt::Override{};
+    o.labels["pointPercent"] = "Point Count %";
+    o.fills.push_back({"Match Curve", "Fill in the selected curve's own kind, spans and degree.", [] {
+                           Graph& g = graph();
+                           for (auto it = g.selection().rbegin(); it != g.selection().rend(); ++it)
+                               if (Node* n = g.node(*it); n && n->type().isA("curve"))
+                                   if (const Splines& s = shapeSplines(g, n->id()); !s.empty())
+                                   {
+                                       static const char* kKinds[] = {"poly", "bezier", "nurbs"};
+                                       const Spline& sp = s.front();
+                                       return json{{"kind", kKinds[std::clamp(int(sp.kind), 0, 2)]},
+                                                   {"spans", std::max(1, spanCount(sp))},
+                                                   {"degree", sp.kind == Kind::Nurbs ? sp.degree : 3},
+                                                   {"pointPercent", 100.0}};
+                                   }
+                           throw CommandError("rebuildCurve: select a curve to match");
+                       }});
+    opt::setOverride("rebuildCurve", std::move(o));
 }
 
 void applyAttrFlags(Graph& g, Node& n, const Args& a)
@@ -570,7 +598,9 @@ void registerCommands()
         .positionalDoc = "curves",
         .flags = opFlags("rebuildCurve", true),
         .run = [](const Args& a) -> json { return curveOp("rebuildCurve", a, true); },
+        .adjustable = true,
     });
+    registerRebuildFill();
     ops::registerCommand({
         .name = "fitCurve",
         .doc = "Refit curves as Beziers with as few points as tolerance allows, corners kept. Returns the curves.",
@@ -880,6 +910,62 @@ void registerCommands()
             Node* n = createCurve(g, {s}, a.get<std::string>("name", "Curve"));
             g.select({n->id()});
             return n->path();
+        },
+    });
+
+    ops::registerCommand({
+        .name = "curveSymmetry",
+        .doc = "Mirror curves live across a plane: the copy follows every edit of the curve and history built from it (pipes, "
+               "sweeps) gets both sides. axis=off turns it off. Returns the curves.",
+        .positionalDoc = "curves (default: the selected curves)",
+        .flags = {{"axis", "a", T::String, "x", "The axis the mirror plane faces.", {"off", "x", "y", "z"}},
+                  {"space", "s", T::String, nullptr, "Mirror across the world plane through the origin, or the curve's own through its pivot.",
+                   {"world", "object"}}},
+        .run = [](const Args& a) -> json {
+            Graph& g = graph();
+            static const std::vector<std::string> kAxes = {"off", "x", "y", "z"};
+            const int64_t axis = std::ranges::find(kAxes, a.get<std::string>("axis", "x")) - kAxes.begin();
+            json names = json::array();
+            for (Node* c : curvesOf(a, "curveSymmetry"))
+            {
+                g.setValue({c->id(), c->type().attrIndex("symmetry"), -1}, axis);
+                if (a.has("space"))
+                    g.setValue({c->id(), c->type().attrIndex("symmetrySpace"), -1}, int64_t(a.get<std::string>("space") == "object" ? 1 : 0));
+                names.push_back(c->path());
+            }
+            return names;
+        },
+        .adjustable = true,
+        .examples = {"lila.ops.curveSymmetry(\"Cable\", axis=\"x\")"},
+    });
+
+    ops::registerCommand({
+        .name = "bakeCurveSymmetry",
+        .doc = "Turn curves' symmetry copies into curves of their own and switch symmetry off, so each side can be edited apart. "
+               "Returns the new curves.",
+        .positionalDoc = "curves (default: the selected curves)",
+        .run = [](const Args& a) -> json {
+            Graph& g = graph();
+            g.evaluate();
+            json made = json::array();
+            std::vector<NodeId> keep;
+            for (Node* c : curvesOf(a, "bakeCurveSymmetry"))
+            {
+                const int axis = symmetryAxis(*c);
+                keep.push_back(c->id());
+                if (axis < 0)
+                    continue;
+                const bool object = c->as<int64_t>(c->type().attrIndex("symmetrySpace")) == 1;
+                Splines mirrored = mirroredSplines(storedSplines(g, *c), c->as<glm::dmat4>(Transform::kWorldMatrix), axis, object);
+                Node* n = createCurve(g, std::move(mirrored), c->name() + "Mirror");
+                g.setValue({c->id(), c->type().attrIndex("symmetry"), -1}, int64_t(0));
+                made.push_back(n->path());
+                keep.push_back(n->id());
+            }
+            if (made.empty())
+                throw CommandError("bakeCurveSymmetry: none of the curves has symmetry on");
+            g.select(keep);
+            return made;
         },
     });
 

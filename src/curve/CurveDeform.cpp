@@ -363,7 +363,7 @@ Spline smoothCurve(const Spline& s, const SmoothCurveOptions& o, std::span<const
     return out;
 }
 
-Spline evenSpacing(const Spline& s, bool keepCorners)
+Spline evenSpacing(const Spline& s, bool keepCorners, size_t count)
 {
     LILA_ZONE();
 
@@ -372,7 +372,8 @@ Spline evenSpacing(const Spline& s, bool keepCorners)
     Polyline pl = tessellate(s, fineTess());
     if (pl.size() < 2 || pl.length < 1e-9)
         return s;
-    const size_t n = s.size();
+    const size_t least = s.kind == Kind::Nurbs ? size_t(s.degree) + (s.closed ? 0 : 1) : s.closed ? 3 : 2;
+    const size_t n = std::max(count ? count : s.size(), least);
     const double L = pl.length;
 
     if (s.kind == Kind::Nurbs)
@@ -407,7 +408,7 @@ Spline evenSpacing(const Spline& s, bool keepCorners)
     if (!s.closed)
         fixed.push_back({L, -1});
     if (fixed.size() > n)
-        return s;
+        return count ? evenSpacing(s, keepCorners, fixed.size()) : s;
     std::vector<Station> stations;
     if (fixed.empty())
         for (size_t i = 0; i < n; ++i)

@@ -630,7 +630,7 @@ Spline rebuild(const Spline& s, const RebuildOptions& o)
     LILA_ZONE();
 
     if (o.keepPointCount)
-        return evenSpacing(s, o.keepCorners);
+        return evenSpacing(s, o.keepCorners, size_t(std::max(1L, std::lround(double(s.size()) * o.pointPercent / 100.0))));
 
     TessOptions to;
     to.chordError = 1e-3;

@@ -155,10 +155,10 @@ public:
         QString text = mStart ? QString("EZ Curve: click the end point, Esc: cancel")
                      : adjusting()
                          ? QString("EZ Curve: drag up/down: bend, sideways: twist, Shift: sag, Ctrl: lift, Shift+scroll: points %1, F: follow surface %2, "
-                                   "O: keep out of meshes %3, R: reset, Enter: done, click: next curve")
+                                   "O: keep out of meshes %3, Y: symmetry %4, R: reset, Enter: done, click: next curve")
                                .arg(value("points").get<int>())
-                               .arg(value("follow").get<bool>() ? "on" : "off", value("clearance").get<bool>() ? "on" : "off")
-                         : QString("EZ Curve: click the start point, Esc: exit");
+                               .arg(value("follow").get<bool>() ? "on" : "off", value("clearance").get<bool>() ? "on" : "off", symmetryName(symmetryPref()))
+                         : QString("EZ Curve: click the start point, Y: symmetry %1, Esc: exit").arg(symmetryName(symmetryPref()));
         drawToolMessage(p, view, text);
     }
 
@@ -220,7 +220,7 @@ private:
             if (const scene::Node* n = g.node(id))
                 names.push_back(n->path());
         json call = {{"start", ezVec(a.point)}, {"end", ezVec(b.point)}, {"follow", a.on != scene::kNoNode && b.on != scene::kNoNode},
-                     {"lift", mSurface.offset()}};
+                     {"lift", mSurface.offset()}, {"symmetry", symmetryName(symmetryPref())}};
         if (a.on != scene::kNoNode)
             call["startNormal"] = ezVec(a.normal);
         if (b.on != scene::kNoNode)
@@ -298,6 +298,14 @@ private:
     /** F, O and R, which the app also binds, taken ahead of its hotkeys while there is a curve to reshape. */
     bool toolKey(int key)
     {
+        if (key == Qt::Key_Y && !mDragging)
+        {
+            prefs().set("general", "/curveTools/symmetry", (symmetryPref() + 1) % 4);
+            if (adjusting())
+                adjust({{"symmetry", symmetryName(symmetryPref())}});
+            viewportTools::requestRedraw();
+            return true;
+        }
         if (!adjusting() || mDragging)
             return false;
         switch (key)

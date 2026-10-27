@@ -5,6 +5,20 @@
   "NE": { "label": "Object Mode", "action": "select.objectMode" },
   "SE": { "label": "Delete", "action": "edit.delete" },
   "SW": { "label": "Grow", "action": "select.grow" },
+  "curveSelected": {
+    "E": { "label": "Curve Point", "action": "curve.curvePointMode" },
+    "overflow": [
+      { "label": "Symmetry", "children": { "overflow": [
+        { "label": "X", "action": "curve.symmetryX" },
+        { "label": "Y", "action": "curve.symmetryY" },
+        { "label": "Z", "action": "curve.symmetryZ" },
+        { "label": "Off", "action": "curve.symmetryOff" },
+        { "separator": true },
+        { "label": "Bake Symmetry", "action": "curve.bakeSymmetry" }
+      ] } },
+      { "separator": true }
+    ]
+  },
   "overflow": [
     { "label": "Group", "action": "edit.group" },
     { "label": "Parent", "action": "edit.parent" },

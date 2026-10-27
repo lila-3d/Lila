@@ -82,6 +82,19 @@ void drawSpline(render::FrameState& f, const curve::Spline& s, const glm::vec4& 
     }
 }
 
+void drawSymmetric(render::FrameState& f, const curve::Spline& s, const glm::vec4& color)
+{
+    drawSpline(f, s, color);
+    if (int axis = symmetryPref())
+    {
+        glm::dmat4 flip(1.0);
+        flip[axis - 1][axis - 1] = -1.0;
+        curve::Spline m = s;
+        curve::transform(m, flip);
+        drawSpline(f, m, color);
+    }
+}
+
 void dot(OverlayPainter& p, const ViewInfo& view, const D3& w, float r, const glm::vec4& fill)
 {
     if (auto q = view.project(w))
@@ -122,6 +135,8 @@ void createCurve(const Spline& s, const SurfaceDraw* surface = nullptr)
         json made = ops::execute("curve", {{"splines", json::array({curve::splineToJson(s)})}}, CallSource::UI);
         if (mesh && made.is_string())
             ops::execute("conformCurve", {{"args", {made}}, {"mesh", mesh->path()}, {"offset", surface->offset()}}, CallSource::UI);
+        if (int axis = symmetryPref(); axis && made.is_string())
+            ops::execute("curveSymmetry", {{"args", {made}}, {"axis", symmetryName(axis)}}, CallSource::UI);
     }
     catch (const CommandError& e)
     {
@@ -232,7 +247,7 @@ public:
         if (mHover && view.camera == mHoverView)
             pts.push_back(*mHover);
         if (pts.size() >= 2)
-            drawSpline(f, mBuild(pts, false), kPreview);
+            drawSymmetric(f, mBuild(pts, false), kPreview);
         for (size_t i = 1; i < mPts.size(); ++i)
         {
             f.linesOnTop.push_back({glm::vec3(mPts[i - 1]), kGhost});
@@ -467,7 +482,7 @@ public:
             curve::updateHandles(preview);
         }
         if (preview.size() >= 2)
-            drawSpline(f, preview, kPreview);
+            drawSymmetric(f, preview, kPreview);
         for (size_t i = 0; i < mSpline.size(); ++i)
         {
             for (const D3* h : {&mSpline.handleL[i], &mSpline.handleR[i]})
@@ -658,6 +673,11 @@ public:
         {
             f.linesOnTop.push_back({glm::vec3(mStroke[i - 1]), kPreview});
             f.linesOnTop.push_back({glm::vec3(mStroke[i]), kPreview});
+            if (symmetryPref())
+            {
+                f.linesOnTop.push_back({glm::vec3(mirrored(mStroke[i - 1])), kPreview});
+                f.linesOnTop.push_back({glm::vec3(mirrored(mStroke[i])), kPreview});
+            }
         }
         drawToolMessage(p, view, QString("Pencil Curve: draw a stroke (end on its start to close), %1, Esc: exit").arg(mSurface.status()));
     }

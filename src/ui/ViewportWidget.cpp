@@ -64,6 +64,7 @@
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QMimeData>
+#include <QApplication>
 #include <QMouseEvent>
 #include <QTimer>
 #include <QWheelEvent>
@@ -2882,21 +2883,29 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
         bool componentMode = scene::components::mode() != scene::ComponentMode::Object;
         std::string name = markingMenus::viewportMenuName(base, overObject || !scene::Graph::current().selection().empty(), componentMode);
         json def = markingMenus::resolve(name);
-        // Slots under the current mode's key replace the regular ones; its overflow rows go in front of the regular ones.
+        // Slots under the current mode's key, then under curveSelected while a curve is selected, replace the regular ones;
+        // their overflow rows go in front of the regular ones.
         static const char* kModeKeys[] = {"objectMode", "vertexMode", "edgeMode", "faceMode"};
-        if (const json& over = def.value(kModeKeys[int(scene::components::mode())], json()); over.is_object())
-            for (auto& [slot, item] : over.items())
-                if (slot != "overflow")
-                    def[slot] = item;
-                else if (item.is_array())
-                {
-                    json rows = item;
-                    for (const json& row : def.value("overflow", json::array()))
-                        rows.push_back(row);
-                    def["overflow"] = rows;
-                }
+        auto overlay = [&def](const char* key) {
+            if (const json& over = def.value(key, json()); over.is_object())
+                for (auto& [slot, item] : over.items())
+                    if (slot != "overflow")
+                        def[slot] = item;
+                    else if (item.is_array())
+                    {
+                        json rows = item;
+                        for (const json& row : def.value("overflow", json::array()))
+                            rows.push_back(row);
+                        def["overflow"] = rows;
+                    }
+        };
+        overlay(kModeKeys[int(scene::components::mode())]);
+        scene::Graph& graph = scene::Graph::current();
+        if (std::ranges::any_of(graph.selection(), [&](scene::NodeId id) { return graph.node(id) && graph.node(id)->type().isA("curve"); }))
+            overlay("curveSelected");
         for (const char* key : kModeKeys)
             def.erase(key);
+        def.erase("curveSelected");
         if (!MarkingMenu::popupDefinition(def, MarkingMenu::Trigger::MouseButton, Qt::RightButton, at))
             MarkingMenu::popup(base, MarkingMenu::Trigger::MouseButton, Qt::RightButton, at);
         return;
@@ -3018,7 +3027,8 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
     if (mSelecting)
     {
         QPointF drag = e->position() - mPressPos;
-        mMarquee = mMarquee || std::abs(drag.x()) + std::abs(drag.y()) > 4;
+        // A click that wanders a few pixels stays a click: a box that small around a point also takes any point sitting on it.
+        mMarquee = mMarquee || std::abs(drag.x()) + std::abs(drag.y()) > QApplication::startDragDistance();
         if (mLassoDrag)
             geo::lasso::extend(mLasso, {e->position().x(), e->position().y()});
         if (mMarquee)

@@ -72,19 +72,6 @@ std::string modifierLabel(const std::string& kind)
     }
     return out;
 }
-
-/** Queries don't echo. */
-json runCommandResult(const char* name, const json& call)
-{
-    try
-    {
-        return ops::execute(name, call, CallSource::Script);
-    }
-    catch (const CommandError&)
-    {
-        return nullptr;
-    }
-}
 } // namespace
 
 Registry<Action>& registry()
@@ -453,9 +440,18 @@ void registerBuiltins()
     // Delete removes components in component mode, objects otherwise.
     add({"edit.delete", "Delete", "Edit", [] {
              auto scene = [] {
-                 bool components = runCommandResult("selectMode", json::object()) != "object" &&
-                                   !runCommandResult("componentSelection", json::object()).empty();
-                 runCommand(components ? "deleteComponents" : "delete", json::object());
+                 // Curve points sit in the vertex selection beside mesh vertices but have their own command.
+                 bool curvePoints = false, meshComponents = false;
+                 if (const scene::ComponentMode mode = scene::components::mode(); mode != scene::ComponentMode::Object)
+                     for (const auto& entry : scene::components::selected(mode))
+                         if (const scene::Node* n = scene::Graph::current().node(entry.first); n && !entry.second.empty())
+                             (n->type().isA("curve") ? curvePoints : meshComponents) = true;
+                 if (curvePoints)
+                     runCommand("deleteCurvePoints", json::object());
+                 if (meshComponents)
+                     runCommand("deleteComponents", json::object());
+                 if (!curvePoints && !meshComponents)
+                     runCommand("delete", json::object());
              };
              if (Hotkeys::fromKey())
                  deletion::run(QApplication::focusWidget(), QApplication::widgetAt(QCursor::pos()), scene);
@@ -517,6 +513,10 @@ void registerBuiltins()
         "Turns the object so its X aims from the first picked component to the second, or along a single face, edge or loop, "
         "leaving the mesh where it is. Adjust the axes, up and mode in the popup after.");
     cmd("modify.pinComponentPivot", "Pin Component Pivot", "Modify", "pinComponentPivot", json::object(),
+        "Keeps the component manipulator's axes, and its position once moved with Edit Pivot, through selection changes until "
+        "reset. Click its label in the viewport to reset.");
+    cmd("modify.resetComponentPivot", "Reset Component Pivot", "Modify", "resetComponentPivot", json::object(),
+        "Puts the component manipulator back on the selection's centre and the tool's own axes.");
     cmd("modify.relocateScene", "Relocate Scene to Selection", "Modify", "relocateScene", json::object(),
         "Moves the whole scene so the selection's bottom centre becomes the world origin, rigs, deformers and animation included. "
         "Every transform and deformed point is checked after the move; if anything is off, nothing changes. One undo step.");
@@ -527,10 +527,6 @@ void registerBuiltins()
     setEnabledWhen("modify.relocateScene", hasSelection);
     setEnabledWhen("modify.setDisplayOrigin", hasSelection);
     setEnabledWhen("modify.clearDisplayOrigin", [] { return scene::relocate::hasDisplayOrigin(); });
-        "Keeps the component manipulator's axes, and its position once moved with Edit Pivot, through selection changes until "
-        "reset. Click its label in the viewport to reset.");
-    cmd("modify.resetComponentPivot", "Reset Component Pivot", "Modify", "resetComponentPivot", json::object(),
-        "Puts the component manipulator back on the selection's centre and the tool's own axes.");
     cmd("edit.parent", "Parent", "Edit", "parent", json::object(), "Parents the selected objects under the one selected last.");
     cmd("edit.unparent", "Unparent", "Edit", "parent", {{"world", true}}, "Moves the selected objects to the top of the hierarchy, keeping where they are.");
     cmd("edit.ungroup", "Ungroup", "Edit", "ungroup", json::object(), "Moves the selected groups' children up a level and deletes the groups.");
@@ -653,12 +649,12 @@ void registerBuiltins()
         "Replaces the other side with a mirror of the kept one (the side of the selection, else the side holding most of the mesh), welded on the plane.");
     cmd("mesh.symmetryRepair", "Re-pair Symmetry", "Mesh", "symmetryRebuild", {{"pairsOnly", true}},
         "Pairs mirror vertices again from their positions, leaving the geometry as it is.");
-    cmd("mesh.multiBoxBounds", "Multi-Box Bounds", "Mesh", "multiBoxBounds", json::object(),
-        "Splits the selected meshes into chunks that conform to boxes and creates one box (or hull) per chunk, named and parented as Unreal collision.");
     cmd("mesh.symmetryRebuildTopological", "Re-pair Symmetry from Edge", "Mesh", "symmetryRebuild", {{"topological", true}},
         "Pairs mirror vertices by topology, outward from the selected center edge. Works on posed or uneven meshes.");
     cmd("mesh.boundingMesh", "Bounding Mesh", "Mesh", "boundingMesh", json::object(),
         "Wraps the selection in a fitted box, sphere, capsule, cylinder or hull, named and parented as its Unreal collision.");
+    cmd("mesh.multiBoxBounds", "Multi-Box Bounds", "Mesh", "multiBoxBounds", json::object(),
+        "Splits the selected meshes into chunks that conform to boxes and creates one box (or hull) per chunk, named and parented as Unreal collision.");
     cmd("unreal.collision", "Add Collision", "Unreal", "boundingMesh", json::object(),
         "Wraps the selection in a fitted collision shape named for Unreal (UBX_, USP_, UCP_, UCX_) and parents it under the mesh.");
     cmd("unreal.sendBake", "Send Bake to Unreal", "Unreal", "unrealSendTextures", json::object(),

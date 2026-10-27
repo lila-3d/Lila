@@ -15,6 +15,7 @@
 
 #include <QApplication>
 #include <QButtonGroup>
+#include <QComboBox>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QLabel>
@@ -89,10 +90,13 @@ const std::vector<std::pair<const char*, std::vector<Item>>>& curveSections()
           {"curve.kappa", "ease-in-out", "Kappa"}, {"curve.circle", "circle", "Circle"}, {"curve.fromEdges", "polygon", "Edges"},
           {"curve.sketchTool", "ruler-2", "Sketch"}}},
         {"Edit",
-         {{"curve.fillet", "vector-bezier-arc", "Fillet"}, {"curve.offset", "ripple", "Offset"}, {"curve.rebuild", "refresh", "Rebuild"},
+         {{"curve.curvePointMode", "point", "Curve Point"}, {"curve.insertAtCurvePoints", "plus", "Insert Point"}, {"curve.fillet", "vector-bezier-arc", "Fillet"}, {"curve.offset", "ripple", "Offset"}, {"curve.rebuild", "refresh", "Rebuild"},
           {"curve.evenSpacing", "dots", "Even"}, {"curve.fit", "wave-sine", "Fit"}, {"curve.project", "arrow-bar-to-down", "Project"},
           {"curve.attach", "link", "Attach"}, {"curve.detach", "unlink", "Detach"}, {"curve.reverse", "arrows-exchange", "Reverse"},
           {"curve.close", "circle-dashed", "Close"}, {"curve.open", "circle-half", "Open"}, {"curve.deletePoints", "trash", "Delete"}}},
+        {"Symmetry",
+         {{"curve.symmetryX", "flip-horizontal", "X"}, {"curve.symmetryY", "flip-vertical", "Y"}, {"curve.symmetryZ", "flip-horizontal", "Z"},
+          {"curve.symmetryOff", "x", "Off"}, {"curve.bakeSymmetry", "copy", "Bake"}}},
         {"Deform",
          {{"curve.bend", "chart-arcs-3", "Bend"}, {"curve.curl", "spiral", "Curl"}, {"curve.scaleCurvature", "chart-arcs", "Curvature"},
           {"curve.smooth", "wave-sine", "Smooth"}}},
@@ -183,6 +187,11 @@ CurveToolkit::CurveToolkit(QWidget* parent) : QWidget(parent)
     mDegree->setToolTip("Degree of curves the CV and EP tools draw");
     connect(mDegree, &QSpinBox::valueChanged, this, [](int v) { PrefStore::get().set("general", "/curveTools/degree", v); });
     head->addWidget(mDegree);
+    mDrawSymmetry = new QComboBox(headBox);
+    mDrawSymmetry->addItems({"Draw Symmetry Off", "Draw Symmetry X", "Draw Symmetry Y", "Draw Symmetry Z"});
+    mDrawSymmetry->setToolTip("Curves the draw tools make are mirrored across this world plane (Y in a draw tool cycles it)");
+    connect(mDrawSymmetry, &QComboBox::activated, this, [](int i) { PrefStore::get().set("general", "/curveTools/symmetry", i); });
+    head->addWidget(mDrawSymmetry);
     root->addWidget(headBox);
 
     mInfo = new QLabel(body);
@@ -276,6 +285,10 @@ void CurveToolkit::refreshState()
     {
         QSignalBlocker block(mOffset);
         mOffset->setValue(p.value<double>("general", "/curveTools/surfaceOffset", 0.0));
+    }
+    {
+        QSignalBlocker block(mDrawSymmetry);
+        mDrawSymmetry->setCurrentIndex(std::clamp(p.value<int>("general", "/curveTools/symmetry", 0), 0, 3));
     }
     if (!mDegree->hasFocus())
     {

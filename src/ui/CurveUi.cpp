@@ -1,6 +1,7 @@
 #include "ui/CurveUi.h"
 
 #include "core/Log.h"
+#include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "curve/CurveNodes.h"
 #include "curve/Tessellate.h"
@@ -8,10 +9,13 @@
 #include "scene/Components.h"
 #include "scene/Graph.h"
 #include "ui/Actions.h"
+#include "ui/CurveToolsCommon.h"
 #include "ui/DrawOverrides.h"
 #include "ui/SketchUi.h"
 #include "ui/Theme.h"
+#include "ui/ViewportDisplay.h"
 
+#include <cctype>
 #include <cmath>
 #include <map>
 #include <set>
@@ -70,6 +74,42 @@ const std::vector<curve::Polyline>& linesOf(const scene::Node& n)
     return c.lines;
 }
 
+/** The curve's symmetry copies, tessellated in world space; empty with symmetry off. */
+const std::vector<curve::Polyline>& mirrorLinesOf(const scene::Node& n)
+{
+    static std::map<scene::NodeId, Cached> mirrors;
+    const scene::PlugValue& v = n.value(CurveShape::kWorldSpace);
+    const scene::DataPtr* d = std::get_if<scene::DataPtr>(&v);
+    Cached& c = mirrors[n.id()];
+    int64_t mode = n.as<int64_t>(CurveShape::kTessMode), seg = n.as<int64_t>(CurveShape::kTessSegments);
+    const void* key = d ? d->get() : nullptr;
+    if (c.data == key && c.mode == mode && c.segments == seg)
+        return c.lines;
+    c.data = key;
+    c.mode = mode;
+    c.segments = seg;
+    c.lines.clear();
+    if (curve::symmetryAxis(n) < 0)
+        return c.lines;
+    curve::TessOptions o;
+    o.mode = curve::TessMode(std::clamp<int64_t>(mode, 0, 2));
+    o.perSpan = int(std::max<int64_t>(1, seg));
+    o.chordError = 0.01;
+    o.maxAngle = 0.07;
+    const curve::Splines& all = curve::splinesOf(v);
+    for (size_t k = curve::ownSplineCount(n); k < all.size(); ++k)
+        c.lines.push_back(curve::tessellate(all[k], o));
+    return c.lines;
+}
+
+/** The soft select falloff colour for the overlay painter, which takes sRGB. */
+glm::vec4 softFill(float weight, bool grayscale)
+{
+    const glm::vec4 c = viewportDisplay::falloffColor(weight, grayscale);
+    auto enc = [](float v) { return v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1.0f / 2.4f) - 0.055f; };
+    return {enc(c.r), enc(c.g), enc(c.b), c.a};
+}
+
 /** The node is being edited: vertex mode with it selected or holding selected points. */
 bool editing(const scene::Node& n)
 {
@@ -126,6 +166,18 @@ void drawCurve(drawOverrides::DrawContext& c)
             body.push_back({b, col});
         }
     }
+    for (const curve::Polyline& pl : mirrorLinesOf(n))
+    {
+        size_t segs = pl.closed ? pl.size() : (pl.size() ? pl.size() - 1 : 0);
+        for (size_t i = 0; i < segs; ++i)
+        {
+            glm::vec3 a(pl.points[i]), b(pl.points[(i + 1) % pl.size()]);
+            halo.push_back({a, kHalo});
+            halo.push_back({b, kHalo});
+            body.push_back({a, color});
+            body.push_back({b, color});
+        }
+    }
     if (n.as<bool>(CurveShape::kDisplayComb))
     {
         double scale = n.as<double>(CurveShape::kCombScale);
@@ -163,7 +215,28 @@ void drawCurve(drawOverrides::DrawContext& c)
     }
     if (!points)
         return;
-    for (auto& [id, p] : curve::componentPositions(splines))
+    const std::vector<std::pair<uint32_t, D3>> positions = curve::componentPositions(splines);
+    // Soft selection shades the points it will pull, as it does mesh vertices.
+    std::map<uint32_t, float> softWeight;
+    if (!picked.empty() && PrefStore::get().value<bool>("general", "/softSelect/enabled", false))
+    {
+        std::vector<D3> worldPts;
+        std::vector<char> on;
+        std::vector<uint32_t> ids;
+        for (auto& [id, p] : positions)
+            if (curve::PointRole(id & 3) != curve::PointRole::Edit || picked.contains(id))
+            {
+                ids.push_back(id);
+                worldPts.push_back(xf(c.world, p));
+                on.push_back(picked.contains(id) ? 1 : 0);
+            }
+        const std::vector<float> w = scene::softWeights(worldPts, on);
+        for (size_t k = 0; k < ids.size(); ++k)
+            if (!on[k] && w[k] > 0.0f)
+                softWeight[ids[k]] = w[k];
+    }
+    const bool grayWeights = viewportDisplay::grayscaleWeights();
+    for (auto& [id, p] : positions)
     {
         size_t si, pi;
         curve::PointRole role;
@@ -176,7 +249,8 @@ void drawCurve(drawOverrides::DrawContext& c)
         if (!q)
             continue;
         bool on = picked.contains(id);
-        const glm::vec4& fill = on ? kPointSelected : kPoint;
+        const auto soft = softWeight.find(id);
+        const glm::vec4 fill = on ? kPointSelected : soft != softWeight.end() ? softFill(soft->second, grayWeights) : kPoint;
         switch (role)
         {
         case curve::PointRole::Point:
@@ -247,8 +321,55 @@ void cmd(std::string id, std::string label, const char* command, json call, std:
                   .call = std::move(call)});
 }
 
+/** The symmetry of the last selected curve, as the curveSymmetry axis names it, or empty with none selected. */
+std::string selectedCurveSymmetry()
+{
+    scene::Graph& g = scene::Graph::current();
+    for (auto it = g.selection().rbegin(); it != g.selection().rend(); ++it)
+        if (scene::Node* n = g.node(*it); n && n->type().isA("curve"))
+        {
+            const int axis = curve::symmetryAxis(*n);
+            return axis < 0 ? "off" : axis == 0 ? "x" : axis == 1 ? "y" : "z";
+        }
+    return {};
+}
+
+void registerSymmetryActions()
+{
+    for (const char* axis : {"off", "x", "y", "z"})
+    {
+        const std::string id = std::string("curve.symmetry") + char(std::toupper(axis[0])) + (axis + 1);
+        actions::add({.id = id,
+                      .label = std::string(axis) == "off" ? "Symmetry Off" : std::string("Symmetry ") + char(std::toupper(axis[0])),
+                      .category = "Curves",
+                      .doc = std::string(axis) == "off" ? "Stops mirroring the selected curves."
+                                                        : std::string("Mirrors the selected curves live across the world plane facing ") + axis +
+                                                              ": the copy follows every edit, and pipes and sweeps built from them get both sides.",
+                      .python = ops::toPython("curveSymmetry", {{"axis", axis}}),
+                      .command = "curveSymmetry",
+                      .call = {{"axis", axis}},
+                      .checked = [a = std::string(axis)] { return selectedCurveSymmetry() == a; }});
+        actions::setEnabledWhen(id, [] { return !selectedCurveSymmetry().empty(); });
+        const int pref = std::string(axis) == "off" ? 0 : axis[0] - 'x' + 1;
+        actions::add({.id = std::string("curve.drawSymmetry") + char(std::toupper(axis[0])) + (axis + 1),
+                      .label = std::string(axis) == "off" ? "Draw Without Symmetry" : std::string("Draw with Symmetry ") + char(std::toupper(axis[0])),
+                      .category = "Curves",
+                      .run = [pref] { curveTools::prefs().set("general", "/curveTools/symmetry", pref); },
+                      .doc = "Curves the draw tools make (EZ, pen, CV, EP, pencil, Catmull-Rom, kappa, pipe) are mirrored this way; Y in a draw tool cycles it.",
+                      .python = "lila.prefs.set(\"general\", \"/curveTools/symmetry\", " + std::to_string(pref) + ")",
+                      .checked = [pref] { return curveTools::symmetryPref() == pref; }});
+    }
+    cmd("curve.bakeSymmetry", "Bake Symmetry", "bakeCurveSymmetry", json::object(),
+        "Turns the selected curves' symmetry copies into curves of their own, so each side can be edited apart.");
+    actions::setEnabledWhen("curve.bakeSymmetry", [] {
+        const std::string s = selectedCurveSymmetry();
+        return !s.empty() && s != "off";
+    });
+}
+
 void registerActions()
 {
+    registerSymmetryActions();
     cmd("curve.circle", "Circle", "circle", json::object(), "Creates an exact circle (a rational NURBS).");
     cmd("curve.fromEdges", "Edges to Curve", "polyEdgeToCurve", json::object(),
         "Makes a curve from each chain of the selected mesh edges, or the borders of the selected faces.");
@@ -345,6 +466,7 @@ void registerCurveUi()
     registerActions();
     registerCurveTools();
     registerEzCurveTool();
+    registerCurvePointTool();
     registerPipeTool();
     registerCableTool();
     registerSectionTool();

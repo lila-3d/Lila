@@ -106,10 +106,12 @@ set(LILA_UNITY_SKIP
     src/tex/Natives.cpp
     src/ui/AnimLayersPanel.cpp
     src/ui/ArrayTool.cpp
+    src/ui/BakePaintTool.cpp
     src/ui/BakerPanel.cpp
     src/ui/BatchRunPanel.cpp
     src/ui/CableTool.cpp
     src/ui/ControlPicker.cpp
+    src/ui/GameExporter.cpp
     src/ui/DeformHandles.cpp
     src/ui/Editors.cpp
     src/ui/ExtensionManagerDialog.cpp

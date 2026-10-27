@@ -141,6 +141,20 @@ def addSpace(*objects: Any, space: Any | None = None, maintainOffset: bool | Non
         maintainOffset: Start each space where the parent is now, so adding and switching there change nothing; off uses the target's own frame (the origin for world). Short form mo. Default True.
     """
 
+def addToProxySet(*objects: Any, joint: str | None = None, kind: str | None = None, bind: bool | None = None, parent: bool | None = None, j: str | None = None, k: str | None = None, b: bool | None = None, p: bool | None = None) -> Any:
+    """Make meshes pieces of a proxy set: each bound to a joint (the nearest bone by default) and moved under the set. A proxy piece is parent constrained to its joint; a true piece is skinned with the real mesh's weights.
+
+    Args:
+        objects: set, meshes...
+        joint: The joint the pieces follow; the nearest bone when not given. Short form j.
+        kind: proxy (rigid stand-in) or true (the real surface, skinned). Short form k. One of 'proxy', 'true'. Default 'proxy'.
+        bind: Bind the pieces to their joint; off leaves them as they are. Short form b. Default True.
+        parent: Move the pieces under the set. Short form p. Default True.
+
+    Examples:
+        addToProxySet("Body_animProxy", "MyHeadProxy", joint="head")
+    """
+
 def addToSet(*objects: Any) -> Any:
     """Add members (the selection by default) to a set. Returns the set's members.
 
@@ -182,6 +196,37 @@ def angleMeasure(*objects: Any, points: Sequence[Any] | None = None, parents: Se
         attach: From selected vertices: parent the locators to their meshes. Short form at. Default True.
         name: Name for the measure node. Short form n.
         skipSelect: Don't select the new node. Short form ss. Default False.
+    """
+
+def animProxyFromMesh(*objects: Any, planes: Any | None = None, suggest: bool | None = None, cap: bool | None = None, remesh: str | None = None, targetFaces: int | None = None, resolution: int | None = None, ratio: float | None = None, pieceSettings: Any | None = None, pieceFaces: str | None = None, exactPieces: str | None = None, replace: bool | None = None, trueJoints: Sequence[Any] | None = None, name: str | None = None, set: str | None = None, lodLevel: int | None = None, pl: Any | None = None, sg: bool | None = None, c: bool | None = None, rm: str | None = None, tf: int | None = None, res: int | None = None, r: float | None = None, ps: Any | None = None, pf: str | None = None, ep: str | None = None, rp: bool | None = None, tj: Sequence[Any] | None = None, n: str | None = None, s: str | None = None, lod: int | None = None) -> Any:
+    """Make an anim proxy of a skinned mesh in one go: split it along planes (at its joint boundaries when none are given), remesh each piece, bind each to the joint that dominates it and register them in a new proxy set. Returns the set.
+
+    Pieces with remesh none, and those of trueJoints, become true pieces: the real surface, skinned like the mesh, for facial animation on the real head while the body stays proxy (setProxyDisplay piece=).
+
+    Args:
+        objects: mesh.
+        planes: World planes as splitMesh takes them; the joint boundaries when not given. Short form pl.
+        suggest: Add the joint-boundary planes to the given ones. Short form sg. Default False.
+        cap: Close the holes the cuts leave. Short form c. Default True.
+        remesh: How each proxy piece is rebuilt. Short form rm. One of 'none', 'quadRemesh', 'voxelRemesh', 'decimate'. Default 'voxelRemesh'.
+        targetFaces: Quad remesh: faces per piece. Short form tf. Default 300.
+        resolution: Voxel remesh: voxels along a piece's longest side. Short form res. Default 32.
+        ratio: Decimate: share of triangles kept. Short form r. Default 0.25.
+        pieceSettings: Per piece index: {remesh, targetFaces, resolution, ratio}. Short form ps.
+        pieceFaces: Face count per piece, as index:count pairs (0:150 3:80). Short form pf.
+        exactPieces: Pieces kept exact (true pieces, skinned like the mesh), by index (1 4). Short form ep.
+        replace: Replace the mesh's set at the same LOD level instead of adding another. Short form rp. Default True.
+        trueJoints: Joints whose pieces also get a true piece, shown by setProxyDisplay piece=. Short form tj.
+        name: Name of the new set; <mesh>_animProxy by default. Short form n.
+        set: Add the pieces to this set instead of making one. Short form s.
+        lodLevel: The new set's LOD level; -1 for any. Short form lod. Default -1.
+
+    Examples:
+        animProxyFromMesh("Body")
+
+        animProxyFromMesh("Body", remesh="decimate", ratio=0.1, trueJoints=["head"])
+
+        animProxyFromMesh("Body", lodLevel=1, resolution=16)
     """
 
 def applyAllModifiers(*objects: Any) -> Any:
@@ -500,6 +545,13 @@ def bakeCorrectiveMorphs(*objects: Any, angle: float | None = None, axes: str | 
         axes: Local axes to turn about. Default 'xyz'.
         falloff: How each corrective's weight fades toward rest: linear | smooth | smoother. One of 'linear', 'smooth', 'smoother'. Default 'smooth'.
         tolerance: Point offsets smaller than this (cm) are left out; a pose with none gets no corrective. Default 0.0001.
+    """
+
+def bakeCurveSymmetry(*objects: Any) -> Any:
+    """Turn curves' symmetry copies into curves of their own and switch symmetry off, so each side can be edited apart. Returns the new curves.
+
+    Args:
+        objects: curves (default: the selected curves).
     """
 
 def bakeEstimateCage(*objects: Any, resolution: int | None = None, iterations: int | None = None, margin: float | None = None, apply: bool | None = None, res: int | None = None, it: int | None = None, mg: float | None = None, ap: bool | None = None) -> Any:
@@ -1476,6 +1528,18 @@ def createPicker(*objects: Any, layout: Any | None = None, fromTemplate: str | N
         replace: Replace a scene picker of the same name. Short form r. Default False.
     """
 
+def createProxySet(*objects: Any, name: str | None = None, lodLevel: int | None = None, n: str | None = None, lod: int | None = None) -> Any:
+    """Make an empty proxy set standing in for the given meshes (or groups), to add pieces to with addToProxySet. Returns the set.
+
+    Args:
+        objects: real meshes.
+        name: Name; <mesh>_animProxy by default. Short form n.
+        lodLevel: The LOD level the set stands in at; -1 for any. Short form lod. Default -1.
+
+    Examples:
+        createProxySet("Body", lodLevel=0)
+    """
+
 def createReference(*objects: Any, namespace: str | None = None) -> Any:
     """Reference a scene file (.lila, .lilaa) into this one under a namespace. Returns the namespace. Clears undo.
 
@@ -1639,6 +1703,18 @@ def curveSculptStroke(*objects: Any, brush: str | None = None, dabs: Sequence[An
         seed: Random seed for add, delete and density. Default 0.
         surface: Mesh the roots grow from; default the curve's groomSurface.
         selectedOnly: With points of the curve selected, only the curves holding them change. Default True.
+    """
+
+def curveSymmetry(*objects: Any, axis: str | None = None, space: str | None = None, a: str | None = None, s: str | None = None) -> Any:
+    """Mirror curves live across a plane: the copy follows every edit of the curve and history built from it (pipes, sweeps) gets both sides. axis=off turns it off. Returns the curves.
+
+    Args:
+        objects: curves (default: the selected curves).
+        axis: The axis the mirror plane faces. Short form a. One of 'off', 'x', 'y', 'z'. Default 'x'.
+        space: Mirror across the world plane through the origin, or the curve's own through its pivot. Short form s. One of 'world', 'object'.
+
+    Examples:
+        lila.ops.curveSymmetry("Cable", axis="x")
     """
 
 def cutKey(*objects: Any, attribute: Any | None = None, time: Any | None = None, clear: bool | None = None, at: Any | None = None, t: Any | None = None, cl: bool | None = None) -> Any:
@@ -1862,6 +1938,9 @@ def displayLayer(*objects: Any, visibility: bool | None = None, hideOnPlayback: 
         useColor: Turn the wireframe tint on or off. Short form uc.
         name: Rename the layer; made unique. Short form n.
     """
+
+def displayOrigin() -> Any:
+    """The display origin setDisplayOrigin set, world cm; None when the grid sits at the world origin."""
 
 def distanceMeasure(*objects: Any, start: Any | None = None, end: Any | None = None, startParent: str | None = None, endParent: str | None = None, attach: bool | None = None, name: str | None = None, skipSelect: bool | None = None, sp: Any | None = None, ep: Any | None = None, spp: str | None = None, epp: str | None = None, at: bool | None = None, n: str | None = None, ss: bool | None = None) -> Any:
     """Live distance between two points. Each point is an object name or [x, y, z] (a locator is made there); with neither given, measures between two selected objects or vertices (vertex locators are parented to their mesh). Returns the measure node.
@@ -2437,7 +2516,7 @@ def extrude(*objects: Any, profileShape: str | None = None, radius: float | None
         name: Mesh name; made unique. Short form n.
     """
 
-def ezCurve(start: Sequence[float] | None = None, end: Sequence[float] | None = None, startNormal: Sequence[float] | None = None, endNormal: Sequence[float] | None = None, mesh: Sequence[Any] | None = None, bend: float | None = None, twist: float | None = None, sag: float | None = None, lift: float | None = None, follow: bool | None = None, clearance: bool | None = None, points: int | None = None, name: str | None = None, *, s: Sequence[float] | None = None, e: Sequence[float] | None = None, sn: Sequence[float] | None = None, en: Sequence[float] | None = None, m: Sequence[Any] | None = None, b: float | None = None, tw: float | None = None, sg: float | None = None, l: float | None = None, f: bool | None = None, c: bool | None = None, p: int | None = None, n: str | None = None) -> Any:
+def ezCurve(start: Sequence[float] | None = None, end: Sequence[float] | None = None, startNormal: Sequence[float] | None = None, endNormal: Sequence[float] | None = None, mesh: Sequence[Any] | None = None, bend: float | None = None, twist: float | None = None, sag: float | None = None, lift: float | None = None, follow: bool | None = None, clearance: bool | None = None, points: int | None = None, symmetry: str | None = None, name: str | None = None, *, s: Sequence[float] | None = None, e: Sequence[float] | None = None, sn: Sequence[float] | None = None, en: Sequence[float] | None = None, m: Sequence[Any] | None = None, b: float | None = None, tw: float | None = None, sg: float | None = None, l: float | None = None, f: bool | None = None, c: bool | None = None, p: int | None = None, sym: str | None = None, n: str | None = None) -> Any:
     """Create a curve between two points that adapts to the meshes it runs over: it follows their surface (follow) and is kept out of them (clearance), lifted off by lift. bend bows it out and sag droops it, as fractions of the distance between the points; twist turns the bow about that line. Returns the curve.
 
     Args:
@@ -2453,6 +2532,7 @@ def ezCurve(start: Sequence[float] | None = None, end: Sequence[float] | None = 
         follow: Follow the surface between the points. Short form f. Default True.
         clearance: Push the curve out of the meshes wherever it dips into them. Short form c. Default True.
         points: Points the curve passes through. Short form p. Default 12.
+        symmetry: Mirror the curve live across the world plane facing this axis. Short form sym. One of 'off', 'x', 'y', 'z'. Default 'off'.
         name: Name; made unique. Short form n.
 
     Examples:
@@ -4078,6 +4158,27 @@ def moveSkinnedJoints(*objects: Any, translate: Sequence[float] | None = None, p
         preserve: What to keep: worldPose or channels. Short form pr. One of 'worldPose', 'channels'. Default 'worldPose'.
     """
 
+def multiBoxBounds(*objects: Any, maxBoxes: int | None = None, minFill: float | None = None, minBoxSize: float | None = None, resolution: int | None = None, oriented: bool | None = None, padding: float | None = None, shape: str | None = None, maxHullPoints: int | None = None, preview: bool | None = None, nameFromSelection: bool | None = None, name: str | None = None, prefix: str | None = None, parent: bool | None = None, generator: bool | None = None, mb: int | None = None, mf: float | None = None, ms: float | None = None, res: int | None = None, pd: float | None = None, s: str | None = None, mh: int | None = None, pv: bool | None = None, ns: bool | None = None, n: str | None = None, p: str | None = None, pa: bool | None = None, g: bool | None = None) -> Any:
+    """Split each mesh at or under the selection into chunks that largely conform to boxes and create one collision shape per chunk, named UCX_<mesh>_01, _02 and so on and parented under the mesh. The mesh is voxelized (open and overlapping shells work), merged into regions, refit with minimum-volume boxes and split or merged until each chunk is full enough, never exceeding maxBoxes. Every point of the mesh lies inside some shape. With preview, nothing is created and the boxes come back as JSON. Returns the new meshes with the box count, average fill and coverage.
+
+    Args:
+        objects: objects.
+        maxBoxes: Most shapes per mesh. Short form mb. Default 8.
+        minFill: Occupied volume over box volume a chunk should reach before it stops being split and may be merged. Short form mf. Default 0.85.
+        minBoxSize: Smallest extent a split may leave, cm; 0 is two voxels. Short form ms. Default 0.0.
+        resolution: Voxels along the longest side of the mesh. Short form res. Default 48.
+        oriented: Fit each chunk with its own minimum-volume frame; off keeps every box on the world axes. Short form or. Default True.
+        padding: Pushed out on every side of each shape, cm. Short form pd. Default 0.0.
+        shape: box, hull, or auto (a box unless the chunk's convex hull is clearly smaller). Short form s. One of 'box', 'hull', 'auto'. Default 'auto'.
+        maxHullPoints: Most points a hull keeps. Short form mh. Default 32.
+        preview: Create nothing and return the boxes as JSON. Short form pv. Default False.
+        nameFromSelection: Name after the mesh it wraps, so Unreal pairs the shapes as that mesh's collision. Short form ns. Default True.
+        name: Base name when not named from the selection. Short form n. Default 'Collision'.
+        prefix: Put before the name. Short form p. Default 'UCX_'.
+        parent: Parent under the mesh it wraps, keeping it in place. Short form pa. Default True.
+        generator: Keep each box's polyCube generator so its size stays editable. Short form g. Default False.
+    """
+
 def namingConvention(*objects: Any, enable: bool | None = None, mode: str | None = None, uniqueNames: bool | None = None, check: bool | None = None, fix: bool | None = None, e: bool | None = None, m: str | None = None, un: bool | None = None, c: bool | None = None, f: bool | None = None) -> Any:
     """Naming rules for this workspace (.lila/naming.json). Query with no flags; check lists violations; fix renames them, whether or not enforcement is on. check and fix cover the given objects and everything under them, or the whole scene; referenced nodes keep their names.
 
@@ -4322,7 +4423,7 @@ def pickerSelect(*objects: Any, items: Sequence[Any] | None = None, page: str | 
         mode: replace, add, remove or toggle. Short form m. One of 'replace', 'add', 'remove', 'toggle'. Default 'replace'.
     """
 
-def pipe(*objects: Any, radius: float | None = None, radiusRamp: str | None = None, sides: int | None = None, wallThickness: float | None = None, startCap: str | None = None, endCap: str | None = None, roundSegments: int | None = None, autoFillet: bool | None = None, bendRadius: float | None = None, minBendRadius: float | None = None, tessellation: str | None = None, segments: int | None = None, maxAngle: float | None = None, texelDensity: float | None = None, flip: bool | None = None, splitEvery: float | None = None, splitAtBends: bool | None = None, splitAt: str | None = None, partsAtEnds: bool | None = None, segmentMaterials: bool | None = None, coupling: str | None = None, couplingScale: float | None = None, couplingLength: float | None = None, couplingSides: int | None = None, scaleToRadius: bool | None = None, meshAxis: str | None = None, meshScale: float | None = None, fasteners: str | None = None, boltCount: int | None = None, boltCircle: float | None = None, boltPhase: float | None = None, boltSize: float | None = None, corrugationDepth: float | None = None, corrugationPeriod: float | None = None, corrugationRings: int | None = None, preset: str | None = None, points: Sequence[Any] | None = None, splines: Sequence[Any] | None = None, fromLoop: bool | None = None, loopMesh: str | None = None, loopFaces: Sequence[Any] | None = None, loopEdges: Sequence[Any] | None = None, attach: bool | None = None, couplingMeshNode: str | None = None, boltMeshNode: str | None = None, constructionHistory: bool | None = None, name: str | None = None, p: Sequence[Any] | None = None, ch: bool | None = None, n: str | None = None) -> Any:
+def pipe(*objects: Any, radius: float | None = None, radiusRamp: str | None = None, sides: int | None = None, wallThickness: float | None = None, startCap: str | None = None, endCap: str | None = None, roundSegments: int | None = None, autoFillet: bool | None = None, bendRadius: float | None = None, minBendRadius: float | None = None, tessellation: str | None = None, segments: int | None = None, maxAngle: float | None = None, texelDensity: float | None = None, flip: bool | None = None, splitEvery: float | None = None, splitAtBends: bool | None = None, splitAt: str | None = None, partsAtEnds: bool | None = None, segmentMaterials: bool | None = None, coupling: str | None = None, couplingScale: float | None = None, couplingLength: float | None = None, couplingSides: int | None = None, scaleToRadius: bool | None = None, meshAxis: str | None = None, meshScale: float | None = None, fasteners: str | None = None, boltCount: int | None = None, boltCircle: float | None = None, boltPhase: float | None = None, boltSize: float | None = None, corrugationDepth: float | None = None, corrugationPeriod: float | None = None, corrugationRings: int | None = None, preset: str | None = None, points: Sequence[Any] | None = None, splines: Sequence[Any] | None = None, symmetry: str | None = None, fromLoop: bool | None = None, loopMesh: str | None = None, loopFaces: Sequence[Any] | None = None, loopEdges: Sequence[Any] | None = None, attach: bool | None = None, couplingMeshNode: str | None = None, boltMeshNode: str | None = None, constructionHistory: bool | None = None, name: str | None = None, p: Sequence[Any] | None = None, ch: bool | None = None, n: str | None = None) -> Any:
     """Build a pipe or hose mesh along path curves with live history: radius (and a ramp), sides, wall thickness, rounded bends, caps, segments with couplings (flange, collar, clamp, elbow collar or any mesh), bolt rings and hose corrugation. fromLoop starts it on a selected face's border; attach builds it into that mesh. Returns [mesh, curvePipe].
 
     Args:
@@ -4365,6 +4466,7 @@ def pipe(*objects: Any, radius: float | None = None, radiusRamp: str | None = No
         preset: Starting settings: pipe, hose, cable or conduit (flags given as well win). One of 'pipe', 'hose', 'cable', 'conduit'.
         points: [[x, y, z], ...] world points of a new poly path curve, instead of path curves. Short form p.
         splines: Whole path splines (curveData format), instead of path curves.
+        symmetry: Mirror the new path curve (points or splines) live across the world plane facing this axis. One of 'off', 'x', 'y', 'z'. Default 'off'.
         fromLoop: Start on the selected face (its border) or closed edge loop: it becomes the first ring. Default False.
         loopMesh: Mesh holding the start loop (instead of the selection).
         loopFaces: Faces whose border is the start loop.
@@ -4887,13 +4989,18 @@ def polySphere(name: str | None = None, position: Sequence[float] | None = None,
         upAxis: Direction the primitive's up points: x, y, z, -x, -y or -z; the scene up axis when left out. One of 'x', 'y', 'z', '-x', '-y', '-z'.
     """
 
-def polySpherize(fit: str | None = None, radius: float | None = None, strength: float | None = None) -> Any:
-    """Push the selected components out (or in) onto a sphere fitted to them.
+def polySpherize(amount: float | None = None, fit: str | None = None, radiusMode: str | None = None, radius: float | None = None, center: Sequence[float] | None = None, scale: Sequence[float] | None = None, rotation: Sequence[float] | None = None, alongNormals: bool | None = None) -> Any:
+    """Push the selected components onto a sphere fitted to them, or onto an ellipsoid with scale. center and radius override the fit (world space, cm); radiusMode picks the radius from the points otherwise. With alongNormals each point slides along its own normal to the sphere. Returns the sphere used: {center, radius, scale, rotation}, world space.
 
     Args:
+        amount: How far toward the sphere, 0 to 1; soft selection fades it further. Default 1.0.
         fit: best (least-squares sphere) or center (around the points' centroid). One of 'best', 'center'. Default 'best'.
-        radius: Radius, cm; 0 keeps the points' average distance from the centre. Default 0.0.
-        strength: How far toward the shape, 0 to 1; soft selection fades it further. Default 1.0.
+        radiusMode: Radius when radius is 0: average distance, fit (the fitted radius), min, max or explicit. One of 'average', 'fit', 'min', 'max', 'explicit'. Default 'average'.
+        radius: Radius, cm; above 0 it replaces radiusMode. Default 0.0.
+        center: Sphere centre, world space cm; default: the fitted centre.
+        scale: Ellipsoid semi-axis factors along its X, Y and Z. Default [1.0, 1.0, 1.0].
+        rotation: Turn of the ellipsoid's axes in world space, degrees (XYZ). Default [0.0, 0.0, 0.0].
+        alongNormals: Move each point along its own normal onto the sphere. Default False.
     """
 
 def polySpinEdge() -> Any:
@@ -4994,6 +5101,13 @@ def projectTextures(all: bool | None = None, match: str | None = None, absolute:
         refresh: Rescan the folder first. Short form r. Default False.
     """
 
+def proxySetInfo(*objects: Any) -> Any:
+    """The proxy sets of the targets (every set when none): [{name, display, lodLevel, real, pieces: [{mesh, joint, kind, display}]}].
+
+    Args:
+        objects: targets.
+    """
+
 def pruneWeights(*objects: Any, threshold: float | None = None, vertices: Sequence[Any] | None = None, t: float | None = None, v: Sequence[Any] | None = None) -> Any:
     """Drop weights below a threshold and beyond the skin's maxInfluences, then renormalize.
 
@@ -5061,7 +5175,7 @@ def rebindDeformer(*objects: Any) -> Any:
         objects: deformers.
     """
 
-def rebuildCurve(*objects: Any, kind: str | None = None, spans: int | None = None, degree: int | None = None, keepCorners: bool | None = None, keepPointCount: bool | None = None, constructionHistory: bool | None = None, replaceOriginal: bool | None = None, name: str | None = None, ch: bool | None = None, rpo: bool | None = None, n: str | None = None) -> Any:
+def rebuildCurve(*objects: Any, kind: str | None = None, spans: int | None = None, degree: int | None = None, keepCorners: bool | None = None, keepPointCount: bool | None = None, pointPercent: float | None = None, constructionHistory: bool | None = None, replaceOriginal: bool | None = None, name: str | None = None, ch: bool | None = None, rpo: bool | None = None, n: str | None = None) -> Any:
     """Rebuild curves with even spans (poly, Bezier or NURBS), corners kept. Returns the curves.
 
     Args:
@@ -5071,6 +5185,7 @@ def rebuildCurve(*objects: Any, kind: str | None = None, spans: int | None = Non
         degree: NURBS degree.
         keepCorners: Keep tangent breaks sharp.
         keepPointCount: Even spacing: keep the kind and point count and spread the points evenly along the curve (kind, spans and degree are ignored).
+        pointPercent: With keepPointCount: the point count as a percentage of the curve's own, so 50 halves it.
         constructionHistory: Keep the history node so its settings stay live. Short form ch. Default True.
         replaceOriginal: Change the curve itself rather than making a new one. Short form rpo. Default True.
         name: Name of a new curve. Short form n.
@@ -5132,6 +5247,28 @@ def reloadReference(*objects: Any) -> Any:
         objects: namespace.
     """
 
+def relocateScene(*objects: Any, to: Sequence[float] | None = None, offset: Sequence[float] | None = None, axes: str | None = None, rotation: str | None = None, nodes: Sequence[Any] | None = None, selectedOnly: bool | None = None, dryRun: bool | None = None, **flags: Any) -> Any:
+    """Move the whole scene (or chosen hierarchies) so a point becomes the world origin, keeping every rig, deformer and animation working.
+
+    One rigid move M is applied: the roots take it through their channels and keys, and nodes that store world-space data (skin bind matrices, deformer bind matrices, world spaces, world up vectors, measures) are rewritten to match. Every transform and deformed mesh point is then checked at several frames (and in every take) against M times where it was; if anything is off by more than 1e-6 cm, or the scene holds a node type relocateScene doesn't know, nothing changes and the error says why. One undo step.
+
+    Args:
+        objects: objects the from= point is taken from (default: the selection).
+        from: The point that moves to `to`: bottom (the bottom centre of the objects' bounds), center (their bounds centre), pivot (the first object's pivot), components (the centre of the selected components), or an object's name (its pivot). Default 'bottom'. Example: `relocateScene(from="Hero")`
+        to: Where the from= point lands, cm. Default the world origin.
+        offset: Move by this world offset instead of from= and to=, cm. Example: `relocateScene(offset=(-12000, 0, 3500))`
+        axes: Only move along these world axes; 'xz' keeps every height. Default 'xyz'.
+        rotation: none; yaw: turn about the up axis so the from object faces along the world axes; full: turn so its whole orientation lines up with the world. Turns about the from= point. One of 'none', 'yaw', 'full'. Default 'none'.
+        nodes: Move only these hierarchies (their tops) instead of the whole scene. Example: `relocateScene("Hero", nodes=["Hero"])`
+        selectedOnly: Move only the hierarchies of the objects given (the selection by default), as nodes= does. Default False.
+        dryRun: Plan and check, but change nothing; returns what would happen. Default False.
+
+    Examples:
+        relocateScene("Ground", from="bottom")
+
+        relocateScene("Hero", from="Hero", rotation="yaw", nodes=["Hero"])
+    """
+
 def removeAnimLayerMembers(*objects: Any, layer: str | None = None, l: str | None = None) -> Any:
     """Take objects or plugs off a layer, deleting what the layer keyed on them. Returns how many went.
 
@@ -5175,6 +5312,13 @@ def removeFromDisplayLayer(*objects: Any) -> Any:
 
     Args:
         objects: objects.
+    """
+
+def removeFromProxySet(*objects: Any) -> Any:
+    """Stop meshes being pieces of their proxy set. They keep their binding and stay where they are.
+
+    Args:
+        objects: meshes...
     """
 
 def removeFromSet(*objects: Any) -> Any:
@@ -6192,6 +6336,16 @@ def setDeformerWeights(*objects: Any, weights: Sequence[Any] | None = None, poin
         value: Weight for points=. Default 1.0.
     """
 
+def setDisplayOrigin(*objects: Any, position: Sequence[float] | None = None, clear: bool | None = None, **flags: Any) -> Any:
+    """Draw the grid and world axes, and read world positions, relative to a point, without moving anything in the scene. Saved with the scene; clear=True goes back to the world origin.
+
+    Args:
+        objects: objects the from= point is taken from (default: the selection).
+        position: The display origin, world cm.
+        from: Take it from the objects instead: bottom, center, pivot, components or an object's name, as relocateScene's from=.
+        clear: Back to the world origin. Default False.
+    """
+
 def setDrivenKey(*objects: Any, input: float | None = None, value: float | None = None, interpolation: str | None = None, v: float | None = None, i: str | None = None) -> Any:
     """Add or replace a key on a driven channel: at the driver's value now (or input=), the driven value value=.
 
@@ -6293,6 +6447,23 @@ def setPoseDriverTarget(*objects: Any, rest: bool | None = None) -> Any:
     Args:
         objects: driver.
         rest: Capture the rest instead of the target. Default False.
+    """
+
+def setProxyDisplay(*objects: Any, display: str | None = None, piece: str | None = None, pieceDisplay: str | None = None, d: str | None = None, pc: str | None = None, pd: str | None = None) -> Any:
+    """Show anim proxies or the real meshes. Targets are proxy sets, or anything they stand in for: a real mesh, a piece, or a joint of the character (every set of its skeleton); every set when none are given or selected. Returns the display set.
+
+    With piece, only that piece's joint changes: pieceDisplay real shows its true piece (the real head for facial animation, say) while the rest stays proxy.
+
+    Args:
+        objects: targets.
+        display: proxy, real or toggle. Short form d. One of 'proxy', 'real', 'toggle'. Default 'toggle'.
+        piece: A piece, or a joint whose pieces to override. Short form pc.
+        pieceDisplay: follow, proxy or real. Short form pd. One of 'follow', 'proxy', 'real'. Default 'real'.
+
+    Examples:
+        setProxyDisplay("Body_animProxy", display="real")
+
+        setProxyDisplay(piece="head", pieceDisplay="real")
     """
 
 def setRenderResolution(width: int | None = None, height: int | None = None, preset: str | None = None, pixelAspect: float | None = None, deviceAspect: float | None = None, query: bool | None = None, *, w: int | None = None, h: int | None = None, p: str | None = None, pa: float | None = None, da: float | None = None, q: bool | None = None) -> Any:
@@ -6724,8 +6895,43 @@ def splitCurves(*objects: Any, cutters: Sequence[Any] | None = None, tolerance: 
         direction: Intersect as seen along this direction (the view), for curves that only cross on screen. Short form dir.
     """
 
+def splitMesh(*objects: Any, planes: Any | None = None, suggest: bool | None = None, duplicate: bool | None = None, cap: bool | None = None, mergeLoose: bool | None = None, remesh: str | None = None, targetFaces: int | None = None, resolution: int | None = None, ratio: float | None = None, pieceSettings: Any | None = None, pieceFaces: str | None = None, exactPieces: str | None = None, name: str | None = None, pl: Any | None = None, sg: bool | None = None, dup: bool | None = None, c: bool | None = None, ml: bool | None = None, rm: str | None = None, tf: int | None = None, res: int | None = None, r: float | None = None, ps: Any | None = None, pf: str | None = None, ep: str | None = None, n: str | None = None) -> Any:
+    """Cut a mesh into pieces along planes, each cutting only within its disc, and optionally remesh each piece. Returns the pieces.
+
+    planes are world space: [{origin, normal, radius}], or {joint} for a plane at a joint facing along its bone. A radius of 0 fits the plane to the mesh's cross-section around its origin. With suggest, planes go where the joints a click selects meet on a skinned mesh. pieceSettings overrides the remesh per piece: {"2": {"remesh": "none"}}.
+
+    Args:
+        objects: mesh.
+        planes: World planes: [{"origin": [x, y, z], "normal": [x, y, z], "radius": r}] or [{"joint": name}]. Short form pl.
+        suggest: Add planes at the joint boundaries of a skinned mesh. Short form sg. Default False.
+        duplicate: Leave the mesh and make the pieces from a copy; off replaces it. Short form dup. Default True.
+        cap: Close the holes the cuts leave. Short form c. Default True.
+        mergeLoose: Shells no plane cuts join the nearest piece. Short form ml. Default True.
+        remesh: How each piece is rebuilt. Short form rm. One of 'none', 'quadRemesh', 'voxelRemesh', 'decimate'. Default 'none'.
+        targetFaces: Quad remesh: faces per piece. Short form tf. Default 300.
+        resolution: Voxel remesh: voxels along a piece's longest side. Short form res. Default 32.
+        ratio: Decimate: share of triangles kept. Short form r. Default 0.25.
+        pieceSettings: Per piece index: {remesh, targetFaces, resolution, ratio}. Short form ps.
+        pieceFaces: Face count per piece, as index:count pairs (0:150 3:80). Short form pf.
+        exactPieces: Pieces kept exact, by index (1 4). Short form ep.
+        name: Base name of the pieces; the mesh's name by default. Short form n.
+
+    Examples:
+        splitMesh("Body", planes=[{"origin": [0, 140, 0], "normal": [0, 1, 0]}])
+
+        splitMesh("Body", suggest=True, remesh="voxelRemesh", pieceSettings={"0": {"remesh": "none"}})
+    """
+
 def stop() -> Any:
     """Stop playback."""
+
+def suggestSplitPlanes(*objects: Any, minFaces: int | None = None, mf: int | None = None) -> Any:
+    """Planes where the joints a click selects meet on a skinned mesh, fitted to each boundary and facing the child joint. Returns [{origin, normal, radius}] for splitMesh.
+
+    Args:
+        objects: mesh.
+        minFaces: Regions with fewer faces get no plane. Short form mf. Default 8.
+    """
 
 def surfaceDeform(*objects: Any, mode: str | None = None, maxFaces: int | None = None, falloff: float | None = None, maxPoints: int | None = None, radius: float | None = None, rebind: str | None = None, name: str | None = None) -> Any:
     """Make meshes follow a driver of any topology: each point binds to the driver's nearby polygons, or to its points in points mode. Give the meshes first and the driver last. Returns the deformers.

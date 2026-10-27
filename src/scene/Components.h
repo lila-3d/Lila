@@ -93,6 +93,8 @@ struct PointProvider
     std::function<std::vector<glm::dmat3>(Graph&, NodeId, const Ids&)> frames;
     /** Applies an object-space matrix to all of the node's geometry, as an undoable edit (Freeze Transformations). */
     std::function<void(Graph&, NodeId, const glm::dmat4&)> bake;
+    /** Optional: whether soft selection may pull this component along; without it every component may be. */
+    std::function<bool(uint32_t)> soft;
 };
 LILA_SCENE_API void registerPointProvider(PointProvider p);
 /** The provider for the node's type or a base type; null for meshes and anything else. */
@@ -111,6 +113,8 @@ LILA_SCENE_API void registerPathCommands();
  * scene/SoftSelect.h). All zero but the selection when it's off.
  */
 LILA_SCENE_API std::vector<float> softWeights(const geo::Mesh& mesh, const glm::dmat4& world, const components::Ids& selectedPoints);
+/** softWeights for loose world-space points with no surface between them (a curve's points), by straight distance. */
+LILA_SCENE_API std::vector<float> softWeights(const std::vector<glm::dvec3>& worldPoints, const std::vector<char>& selected);
 
 /** World-space centre of the selected components' points. */
 LILA_SCENE_API glm::dvec3 selectionCenter();

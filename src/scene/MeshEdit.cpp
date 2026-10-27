@@ -492,6 +492,33 @@ std::vector<float> falloffWeights(const geo::Mesh& m, const glm::dmat4& world, c
 }
 } // namespace
 
+std::vector<float> softWeights(const std::vector<glm::dvec3>& points, const std::vector<char>& selected)
+{
+    std::vector<float> w(points.size(), 0.0f);
+    std::vector<glm::dvec3> seeds;
+    for (size_t i = 0; i < points.size() && i < selected.size(); ++i)
+        if (selected[i])
+        {
+            w[i] = 1.0f;
+            seeds.push_back(points[i]);
+        }
+    const double radius = PrefStore::get().value<double>("general", "/softSelect/radius", 25.0);
+    if (!PrefStore::get().value<bool>("general", "/softSelect/enabled", false) || seeds.empty() || radius <= 0.0)
+        return w;
+    const softSelect::Curve curve = softSelect::currentCurve();
+    for (size_t i = 0; i < points.size(); ++i)
+    {
+        if (w[i] >= 1.0f)
+            continue;
+        double best = radius * radius;
+        for (const glm::dvec3& s : seeds)
+            best = std::min(best, glm::dot(points[i] - s, points[i] - s));
+        if (best < radius * radius)
+            w[i] = float(curve.evaluate(std::sqrt(best) / radius));
+    }
+    return w;
+}
+
 std::vector<float> softWeights(const geo::Mesh& m, const glm::dmat4& world, const Ids& selected)
 {
     std::vector<float> w = falloffWeights(m, world, selected);
@@ -789,12 +816,44 @@ bool deformProvidedPoints(Graph& g, Node& n, const components::PointProvider& pp
     if (source.empty())
         return false;
     glm::dmat4 world = n.as<glm::dmat4>(Transform::kWorldMatrix);
+    // Soft selection pulls unselected points part of the way. They join the point mesh before setup sees it, but not the
+    // selection; provided edits key their targets by id and only know the selection, so they stay hard.
+    struct SoftPoint
+    {
+        uint32_t id;
+        Index local;
+        float weight;
+    };
+    std::vector<SoftPoint> soft;
+    if (!provided && PrefStore::get().value<bool>("general", "/softSelect/enabled", false))
+    {
+        std::vector<uint32_t> order;
+        std::vector<glm::dvec3> worldPts;
+        std::vector<char> picked;
+        const std::set<uint32_t> chosen(source.begin(), source.end());
+        for (auto& [id, p] : all)
+            if (chosen.contains(id) || !pp.soft || pp.soft(id))
+            {
+                order.push_back(id);
+                worldPts.push_back(glm::dvec3(world * glm::dvec4(p, 1.0)));
+                picked.push_back(chosen.contains(id) ? 1 : 0);
+            }
+        const std::vector<float> w = softWeights(worldPts, picked);
+        for (size_t k = 0; k < order.size(); ++k)
+            if (!picked[k] && w[k] > 0.0f)
+                soft.push_back({order[k], m.addPoint(all[order[k]]), w[k]});
+    }
     PointTarget targetOf = provided ? provided(g, n, pp, source) : setup(m, world, ComponentMode::Vertex, local);
     if (!targetOf)
         return false;
     std::vector<std::pair<uint32_t, glm::dvec3>> moves;
     for (size_t i = 0; i < source.size(); ++i)
         moves.push_back({source[i], targetOf(provided ? source[i] : local[i], m.position(local[i]))});
+    for (const SoftPoint& sp : soft)
+    {
+        const glm::dvec3 at = m.position(sp.local);
+        moves.push_back({sp.id, glm::mix(at, targetOf(sp.local, at), double(sp.weight))});
+    }
     pp.setPoints(g, n.id(), moves);
     return true;
 }

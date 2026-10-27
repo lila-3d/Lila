@@ -232,7 +232,8 @@ void CurveShape::compute(const EvalContext& ctx)
     setOutput(kLocal, in);
     const glm::dmat4& w = as<glm::dmat4>(kWorldMatrix);
     const Splines& s = splinesOf(in);
-    if (s.empty() || w == glm::dmat4(1.0))
+    const int axis = symmetryAxis(*this);
+    if (s.empty() || (w == glm::dmat4(1.0) && axis < 0))
     {
         setOutput(kWorldSpace, in);
         return;
@@ -240,7 +241,32 @@ void CurveShape::compute(const EvalContext& ctx)
     Splines ws = s;
     for (Spline& sp : ws)
         transform(sp, w);
+    if (axis >= 0)
+        for (Spline& sp : mirroredSplines(s, w, axis, as<int64_t>(type().attrIndex("symmetrySpace")) == 1))
+            ws.push_back(std::move(sp));
     setOutput(kWorldSpace, makeCurveData(std::move(ws)));
+}
+
+int symmetryAxis(const Node& curve)
+{
+    const int a = curve.type().attrIndex("symmetry");
+    return a < 0 ? -1 : int(std::clamp<int64_t>(curve.as<int64_t>(a), 0, 3)) - 1;
+}
+
+Splines mirroredSplines(const Splines& local, const glm::dmat4& world, int axis, bool objectSpace)
+{
+    glm::dmat4 flip(1.0);
+    flip[axis][axis] = -1.0;
+    const glm::dmat4 m = objectSpace ? world * flip : flip * world;
+    Splines out = local;
+    for (Spline& sp : out)
+        transform(sp, m);
+    return out;
+}
+
+size_t ownSplineCount(const Node& curve)
+{
+    return splinesOf(curve.value(CurveShape::kLocal)).size();
 }
 
 uint32_t componentId(size_t spline, size_t point, PointRole role) { return uint32_t(spline << 22) | uint32_t(point << 2) | uint32_t(role); }
@@ -722,6 +748,7 @@ PlugValue rebuildRun(const Node& n)
     o.degree = int(std::clamp<int64_t>(i(n, "degree"), 1, 7));
     o.keepCorners = b(n, "keepCorners");
     o.keepPointCount = b(n, "keepPointCount");
+    o.pointPercent = std::max(1.0, f(n, "pointPercent"));
     Splines out;
     for (const Spline& s : in(n, "inCurve"))
         out.push_back(rebuild(s, o));
@@ -838,6 +865,7 @@ void registerHistoryTypes()
                 iAttr("degree", 3, "NURBS degree.", 1), bAttr("keepCorners", true, "Keep tangent breaks sharp."),
                 bAttr("keepPointCount", false,
                       "Even spacing: keep the kind and point count and spread the points evenly along the curve (kind, spans and degree are ignored)."),
+                fAttr("pointPercent", 100.0, "With keepPointCount: the point count as a percentage of the curve's own, so 50 halves it.", 1.0),
                 curveOut()},
                rebuildRun);
     registerOp("fitCurve", "scribble", "Refits curves as Beziers with as few points as the tolerance allows, corners kept.",
@@ -889,6 +917,8 @@ void registerProvider()
                     transform(sp, m);
                 g.setValue(plug, makeCurveData(std::move(s)));
             },
+        // Edit points are refitted through, so moving them along with the control points would fight it.
+        .soft = [](uint32_t id) { return PointRole(id & 3) != PointRole::Edit; },
     });
     conformTargets::add("curve", [](Graph& g, Node& n) -> std::optional<geo::Mesh> {
         g.evaluate();
@@ -951,6 +981,10 @@ void registerTypes()
                           .doc = "Sketch constraints and dimensions between its points, lines and circles, as JSON (see sketchInfo)."});
     t.ownAttrs.push_back({.name = "groomSurface", .type = PlugType::String, .defaultValue = std::string(), .flags = kIn,
                           .doc = "Mesh the curves' roots grow from: curve sculpting keeps them on it and plants new ones there."});
+    t.ownAttrs.push_back(eAttr("symmetry", {"off", "x", "y", "z"}, 0,
+                               "Mirror the curve across the plane facing this axis: the copy follows every edit, and history built from the "
+                               "curve (pipes, sweeps) gets both sides."));
+    t.ownAttrs.push_back(eAttr("symmetrySpace", {"world", "object"}, 0, "Mirror across the world plane through the origin, or the curve's own through its pivot."));
     t.create = [] { return std::make_unique<CurveShape>(); };
     types::registerType(std::move(t));
     registerHistoryTypes();

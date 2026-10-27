@@ -8,6 +8,7 @@
 #include <vector>
 
 class QButtonGroup;
+class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
 class QSpinBox;
@@ -44,6 +45,7 @@ private:
     QToolButton* mKeepOnSurface = nullptr;
     QDoubleSpinBox* mOffset = nullptr;
     QSpinBox* mDegree = nullptr;
+    QComboBox* mDrawSymmetry = nullptr;
     QLabel* mInfo = nullptr;
     QTimer* mRefresh = nullptr;
     std::vector<QToolButton*> mButtons;

@@ -2,6 +2,7 @@
 
 #include "ops/CommandOptions.h"
 #include "core/ExtensionContext.h"
+#include "core/Log.h"
 #include "ui/Actions.h"
 #include "ui/FlagFields.h"
 #include "ui/Icons.h"
@@ -106,6 +107,21 @@ public:
         scroll->setWidget(body);
         root->addWidget(scroll, 1);
 
+        if (const opt::Override* o = opt::findOverride(mCommand); o && !o->fills.empty())
+        {
+            auto* fillRow = new QHBoxLayout();
+            fillRow->setContentsMargins(10, 4, 10, 0);
+            for (const opt::Override::Fill& fill : o->fills)
+            {
+                auto* b = new QPushButton(QString::fromStdString(fill.label), this);
+                b->setToolTip(QString::fromStdString(fill.tip));
+                connect(b, &QPushButton::clicked, this, [this, values = fill.values] { fillFrom(values); });
+                fillRow->addWidget(b);
+            }
+            fillRow->addStretch(1);
+            root->addLayout(fillRow);
+        }
+
         mValues = opt::values(mCommand, mCall);
         const json& values = mValues;
         std::vector<opt::Field> fields = opt::fields(mCommand, mCall);
@@ -193,6 +209,29 @@ private:
             f->clearFocus();
         for (auto& [flag, v] : mValues.items())
             opt::setValue(mCommand, flag, v);
+    }
+
+    /** Sets the fields a fill button gives values for; the rest keep theirs. */
+    void fillFrom(const std::function<json()>& values)
+    {
+        json given;
+        try
+        {
+            given = values();
+        }
+        catch (const std::exception& e)
+        {
+            log::warn("{}", e.what());
+            return;
+        }
+        if (!given.is_object())
+            return;
+        for (auto& [flag, v] : given.items())
+        {
+            mValues[flag] = v;
+            if (auto it = mSetters.find(flag); it != mSetters.end() && it->second)
+                it->second(v);
+        }
     }
 
     void resetSettings()

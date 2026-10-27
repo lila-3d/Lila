@@ -30,6 +30,8 @@ struct RebuildOptions
     double tolerance = 0.01; // Bezier fitting, cm
     /** Keep the curve's kind and point count and only spread the points evenly by arc length (kind and spans are ignored). */
     bool keepPointCount = false;
+    /** With keepPointCount, the point count as a percentage of the curve's own, so 50 halves it. */
+    double pointPercent = 100.0;
 };
 /** Even, clean parameterisation: samples the curve and refits it with the given span count. */
 LILA_SCENE_API Spline rebuild(const Spline& s, const RebuildOptions& o);

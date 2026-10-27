@@ -41,6 +41,19 @@ inline D3 upAxis() { return math::upAxis() == math::UpAxis::Z ? D3(0, 0, 1) : D3
 std::optional<D3> snapToGeometry(QPointF px, const ViewInfo& view, unsigned snaps);
 /** The spline, tessellated, as lines drawn over everything. */
 void drawSpline(render::FrameState& f, const curve::Spline& s, const glm::vec4& color);
+
+/** /curveTools/symmetry: the axis new curves are mirrored across (1 x, 2 y, 3 z), 0 for none. Y in the draw tools cycles it. */
+inline int symmetryPref() { return std::clamp(prefs().value<int>("general", "/curveTools/symmetry", 0), 0, 3); }
+inline const char* symmetryName(int pref) { return pref == 1 ? "x" : pref == 2 ? "y" : pref == 3 ? "z" : "off"; }
+/** drawSpline, plus its mirror across the world plane while drawing with symmetry. */
+void drawSymmetric(render::FrameState& f, const curve::Spline& s, const glm::vec4& color);
+/** A world point mirrored the way new curves are, or itself with symmetry off. */
+inline D3 mirrored(D3 p)
+{
+    if (int axis = symmetryPref())
+        p[axis - 1] = -p[axis - 1];
+    return p;
+}
 void dot(OverlayPainter& p, const ViewInfo& view, const D3& w, float r = 4.0f, const glm::vec4& fill = kDot);
 /** Ends the active tool, deferred so a tool can call it from its own handlers. */
 void exitTool();
@@ -150,13 +163,15 @@ public:
         mHits.clear();
     }
     void apply(Placer& p) const { p.onSurface(mOn, mOffset); }
-    /** S and K toggles; true when the key was one of them. */
+    /** S and K toggles and Y, which cycles symmetry; true when the key was one of them. */
     bool key(int key)
     {
         if (key == Qt::Key_S)
             prefs().set("general", "/curveTools/onSurface", mOn = !mOn);
         else if (key == Qt::Key_K)
             prefs().set("general", "/curveTools/conform", mConform = !mConform);
+        else if (key == Qt::Key_Y)
+            prefs().set("general", "/curveTools/symmetry", (symmetryPref() + 1) % 4);
         else
             return false;
         return true;
@@ -188,8 +203,9 @@ public:
     double offset() const { return mOffset; }
     QString status() const
     {
-        return QString("S: on surfaces %1, K: keep on surface %2%3")
-            .arg(mOn ? "on" : "off", mConform ? "on" : "off", mOn ? QString(", Ctrl+scroll: offset %1 cm").arg(mOffset, 0, 'f', 2) : QString());
+        return QString("S: on surfaces %1, K: keep on surface %2%3, Y: symmetry %4")
+            .arg(mOn ? "on" : "off", mConform ? "on" : "off", mOn ? QString(", Ctrl+scroll: offset %1 cm").arg(mOffset, 0, 'f', 2) : QString(),
+                 symmetryName(symmetryPref()));
     }
 
 private:
