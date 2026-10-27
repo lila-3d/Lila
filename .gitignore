@@ -7,6 +7,9 @@
 *.pdb
 *.ilk
 
+# Internal local bugs
+/bugs/
+
 # IDE and local state
 .vs/
 .idea/
