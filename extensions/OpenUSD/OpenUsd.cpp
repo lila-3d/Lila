@@ -15,6 +15,7 @@
 #include <lila/Transform.h>
 
 #include <atomic>
+#include <cstdlib>
 #include <chrono>
 #include <filesystem>
 #include <mutex>
@@ -52,6 +53,7 @@ std::string utf8(const fs::path& p)
 struct Backend
 {
     usd::BackendRun run = nullptr;
+    void* lib = nullptr;
     std::string error;
 };
 
@@ -70,6 +72,9 @@ const Backend& backend()
         void* init = nullptr;
         void* run = nullptr;
 #if defined(_WIN32)
+        // Hydra's default graphics device is Vulkan, not OpenGL, which would need a window; read once, before Pixar's libraries load.
+        if (!std::getenv("HGI_ENABLE_VULKAN"))
+            _putenv_s("HGI_ENABLE_VULKAN", "1");
         // Search the package folder first, so Pixar's DLLs and TBB resolve from beside it.
         HMODULE lib = LoadLibraryExW(file.wstring().c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
         if (!lib)
@@ -101,6 +106,7 @@ const Backend& backend()
             return;
         }
         b.run = reinterpret_cast<usd::BackendRun>(run);
+        b.lib = reinterpret_cast<void*>(lib);
         gLoaded = true;
     });
     return b;
@@ -189,6 +195,18 @@ json runBackend(const char* command, const Args& a)
 }
 
 bool backendLoaded() { return gLoaded; }
+
+void* backendSymbol(const char* name)
+{
+    const Backend& b = backend();
+    if (!b.run)
+        throw CommandError("OpenUSD failed to load: " + b.error);
+#if defined(_WIN32)
+    return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(b.lib), name));
+#else
+    return dlsym(b.lib, name);
+#endif
+}
 
 bool isStageNode(NodeId node)
 {
@@ -483,5 +501,6 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
                                     .exportSelection = {.command = "exportUsd"}}))
         return 4;
     usd::registerUi(ctx);
+    usd::registerHydra(ctx);
     return 0;
 }

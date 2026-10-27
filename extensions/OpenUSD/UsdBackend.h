@@ -66,6 +66,11 @@ using BackendStage = void* (*)(const char* node, std::string* error);
  * imported. Built only when the pxr libraries have Python bindings.
  */
 using BackendStagePython = void* (*)(const char* node);
+/**
+ * lilaHydraOpen: a viewport renderer session (ui::viewportRenderers::Session*, owned by the caller) drawing the scene
+ * through the Hydra render delegate plugin (HdStormRendererPlugin, ...); null with the error when it can't run here.
+ */
+using BackendHydraOpen = void* (*)(const char* plugin, int panel, std::string* error);
 /** lilaUsdLoad, exported by OpenUSD.dll for lila.usd: loads OpenUSDCore and registers the plugins. Null, or the error. */
 using FrontLoad = const char* (*)();
 } // namespace lila::usd

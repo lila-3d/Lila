@@ -3,15 +3,15 @@
 # first USD command, so startup never loads them. Their DLLs and plugInfo trees are deployed inside the package, so
 # neither the core exe nor the environment needs anything.
 find_package(pxr CONFIG REQUIRED)
-lila_add_extension(lila_openusd_extension ID OpenUSD MANIFEST extension.json UI SOURCES OpenUsd.cpp OpenUsdUi.cpp OpenUsd.h UsdBackend.h)
+lila_add_extension(lila_openusd_extension ID OpenUSD MANIFEST extension.json UI SOURCES OpenUsd.cpp OpenUsdHydra.cpp OpenUsdUi.cpp OpenUsd.h UsdBackend.h)
 
 if(CMAKE_RUNTIME_OUTPUT_DIRECTORY)
     set(_usd_pkg ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/extensions/OpenUSD.lilaext)
 else()
     set(_usd_pkg ${CMAKE_BINARY_DIR}/$<CONFIG>/extensions/OpenUSD.lilaext)
 endif()
-set(_usd_core_sources UsdBackend.cpp UsdCommon.cpp UsdImport.cpp UsdImportSkel.cpp UsdExport.cpp UsdMaterials.cpp UsdStage.cpp
-    UsdBackend.h UsdCommon.h UsdImport.h UsdExport.h UsdMaterials.h UsdStage.h)
+set(_usd_core_sources UsdBackend.cpp UsdCommon.cpp UsdHydra.cpp UsdHydraScene.cpp UsdImport.cpp UsdImportSkel.cpp UsdExport.cpp
+    UsdMaterials.cpp UsdStage.cpp UsdBackend.h UsdCommon.h UsdHydraScene.h UsdImport.h UsdExport.h UsdMaterials.h UsdStage.h)
 # pxr's Python bindings (the pxr_boost python target), when the USD build has them: lila.usd hands scripts the live
 # stages through them.
 if(TARGET python)
@@ -19,7 +19,9 @@ if(TARGET python)
     set_property(GLOBAL PROPERTY LILA_USD_PYTHON ON)
 endif()
 add_library(lila_openusd_core SHARED ${_usd_core_sources})
-target_link_libraries(lila_openusd_core PRIVATE LilaScene usd usdGeom usdShade usdSkel usdLux usdUtils)
+# Hydra (UsdHydra*): the viewport renderers, which hand LilaUI their sessions.
+target_link_libraries(lila_openusd_core PRIVATE LilaScene LilaUI usd usdGeom usdShade usdSkel usdLux usdUtils
+    hd hdx hgi glf cameraUtil usdImaging)
 if(TARGET python)
     target_link_libraries(lila_openusd_core PRIVATE python)
     target_compile_definitions(lila_openusd_core PRIVATE LILA_USD_PYTHON)

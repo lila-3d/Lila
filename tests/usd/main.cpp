@@ -7,6 +7,7 @@
 #include "curve/CurveNodes.h"
 #include "extensions/ExtensionManager.h"
 #include "io/SceneFile.h"
+#include "render/Renderer.h"
 #include "scene/Node.h"
 #include "scene/SceneCommands.h"
 
@@ -55,5 +56,8 @@ int main(int argc, char** argv)
 #endif
 
     doctest::Context ctx(argc, argv);
-    return ctx.run();
+    const int rc = ctx.run();
+    // The Hydra cases may start Lila's renderer to composite.
+    lila::render::Renderer::get().stop();
+    return rc;
 }

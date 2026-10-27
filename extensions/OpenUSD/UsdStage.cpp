@@ -4655,4 +4655,31 @@ UsdStagePtr liveStage(const std::string& node)
         a.positional.push_back(node);
     return ensure(g, stageArg(g, a, "lila.usd.stage", 0)).stage;
 }
+std::vector<HydraView> hydraViews(Graph& g)
+{
+    std::vector<HydraView> out;
+    for (auto& [id, s] : stages())
+    {
+        const Node* n = g.node(id);
+        if (!n || !s->stage)
+            continue;
+        HydraView v;
+        v.node = id;
+        v.stage = s->stage;
+        const Axes axes = makeAxes(UsdGeomGetStageUpAxis(s->stage) != UsdGeomTokens->y, UsdGeomGetStageMetersPerUnit(s->stage));
+        v.toWorld = n->as<glm::dmat4>(scene::Transform::kWorldMatrix) * axes.toLila;
+        v.toLila = axes.toLila;
+        v.turnedToLila = glm::dmat4(axes.basis) * axes.toLila;
+        v.timeCodesPerSecond = s->stage->GetTimeCodesPerSecond() > 0.0 ? s->stage->GetTimeCodesPerSecond() : 24.0;
+        for (const auto& [node, link] : s->primOf)
+            if (const Node* ln = g.node(node))
+                v.links.push_back({stagePath(link), node, ln->type().isA("camera") || ln->type().isA("light")});
+        std::set<SdfPath> realized;
+        for (const auto& [node, inst] : s->instanceOf)
+            realized.insert(stagePath(inst.first));
+        v.realized.assign(realized.begin(), realized.end());
+        out.push_back(std::move(v));
+    }
+    return out;
+}
 } // namespace lila::usd::stage
