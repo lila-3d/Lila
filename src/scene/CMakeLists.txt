@@ -69,6 +69,8 @@ lila_module(lila_scene Scene
     Plug.cpp
     Picker.cpp
     Poses.cpp
+    Relocate.cpp Relocate.h
+    ProxySet.cpp ProxySet.h
     RenderSettings.cpp
     Rig.cpp
     RigElements.cpp
@@ -83,6 +85,7 @@ lila_module(lila_scene Scene
     SkinMethods.cpp SkinMethods.h
     Jiggle.cpp Jiggle.h
     SmartJoin.cpp
+    SplitMesh.cpp SplitMesh.h
     BatchRename.cpp
     SoftSelect.cpp
     Spaces.cpp

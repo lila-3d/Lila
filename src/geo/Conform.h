@@ -7,6 +7,8 @@
 
 #include <glm/glm.hpp>
 
+#include <optional>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -89,8 +91,48 @@ enum class SphereFit : uint8_t
     Best,   // least-squares sphere through the points
     Center, // centred on their centroid
 };
-/** Points pushed radially onto a sphere; radius 0 is the fitted (or mean) one. */
-LILA_SCENE_API PointMoves spherize(const Mesh& mesh, std::span<const Index> points, SphereFit fit = SphereFit::Best, double radius = 0.0);
+
+enum class SphereRadius : uint8_t
+{
+    Fit,      // the least-squares sphere's radius (the mean distance when centred on the centroid)
+    Average,  // the points' mean distance from the centre
+    Min,      // the nearest point's distance
+    Max,      // the farthest point's distance
+    Explicit, // SpherizeOptions::radius
+};
+
+struct SpherizeOptions
+{
+    SphereFit fit = SphereFit::Best;
+    SphereRadius radiusMode = SphereRadius::Average;
+    /** How far each point goes toward the sphere, 0 to 1. */
+    double amount = 1.0;
+    /** Above 0 this radius is used whatever radiusMode says. */
+    double radius = 0.0;
+    /** Object space; unset takes the fitted centre. */
+    std::optional<glm::dvec3> center;
+    /** Ellipsoid semi-axes relative to the radius, along the columns of frame. */
+    glm::dvec3 scale{1.0};
+    /** Orthonormal ellipsoid axes in object space, one per column. */
+    glm::dmat3 frame{1.0};
+    /** Each point slides along its own normal to the sphere instead of straight toward the centre. */
+    bool alongNormals = false;
+    /** Per-point normals (object space, indexed by point) for alongNormals; unset takes the area-weighted ones. */
+    const std::vector<glm::dvec3>* normals = nullptr;
+};
+
+/** The sphere (or ellipsoid, with SpherizeOptions::scale) the points were fitted to. */
+struct SpherizeResult
+{
+    glm::dvec3 center{0.0};
+    /** In the ellipsoid's unit space; the semi-axes are radius * scale. */
+    double radius = 0.0;
+};
+/**
+ * Points moved onto a sphere or ellipsoid. A point at the centre stays put. With alongNormals a point whose normal line
+ * misses the sphere is pushed radially instead. `fitted`, when given, receives the sphere used.
+ */
+LILA_SCENE_API PointMoves spherize(const Mesh& mesh, std::span<const Index> points, const SpherizeOptions& opts = {}, SpherizeResult* fitted = nullptr);
 
 /** Points pushed radially onto a cylinder. axis -1 fits the axis; 0..2 runs it along object X, Y or Z. */
 LILA_SCENE_API PointMoves cylinderize(const Mesh& mesh, std::span<const Index> points, int axis = -1, double radius = 0.0);

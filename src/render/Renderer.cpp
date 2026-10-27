@@ -51,6 +51,7 @@ struct GridPush
     glm::vec4 color;
     glm::vec4 axisX;
     glm::vec4 axisZ;
+    glm::vec4 origin;
 };
 
 struct MeshPush
@@ -2888,6 +2889,7 @@ struct Renderer::Impl
             gp.color = glm::vec4(s.gridColor, 1.0f);
             gp.axisX = glm::vec4(s.gridAxisX, 1.0f);
             gp.axisZ = glm::vec4(s.gridAxisZ, 1.0f);
+            gp.origin = glm::vec4(glm::vec3(s.gridOrigin), 0.0f);
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gridPipeline);
             vkCmdPushConstants(cmd, gridLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(GridPush), &gp);
             vkCmdDraw(cmd, 3, 1, 0, 0);

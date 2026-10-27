@@ -9,6 +9,7 @@
 #include <lila/Graph.h>
 #include <lila/Log.h>
 #include <lila/Node.h>
+#include <lila/Relocate.h>
 #include <lila/Rig.h>
 #include <lila/Simulation.h>
 #include <lila/Transform.h>
@@ -464,6 +465,10 @@ bool registerTypes(ext::Context& ctx)
         whole("seed", 1, "Turbulence seed: the same seed gives the same noise on every machine."),
     };
 
+    lila::scene::relocate::registerWorldAttrs(solver.name, {.directions = {"gravity"}});
+    lila::scene::relocate::registerWorldAttrs(field.name, {.directions = {"direction"}});
+    for (const NodeType* t : {&marker, &pin, &collider})
+        lila::scene::relocate::registerNeutral(t->name);
     for (NodeType* t : {&solver, &marker, &pin, &collider, &field})
         if (!types::registerType(ctx, std::move(*t)))
             return false;

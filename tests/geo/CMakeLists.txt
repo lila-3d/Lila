@@ -7,6 +7,7 @@ add_executable(lila_geo_tests
     test_knife.cpp
     test_loop_tools.cpp
     test_mesh.cpp
+    test_multibox.cpp
     test_normals.cpp
     test_obj.cpp
     test_ops.cpp

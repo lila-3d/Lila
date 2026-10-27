@@ -9,6 +9,7 @@
 #include <lila/Graph.h>
 #include <lila/Log.h>
 #include <lila/Node.h>
+#include <lila/Relocate.h>
 #include <lila/Simulation.h>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -768,6 +769,9 @@ bool registerTypes(ext::Context& ctx)
         boolean("enabled", true, "Collide with this."),
     };
 
+    lila::scene::relocate::registerWorldAttrs(o.name, {.directions = {"gravity", "windDirection"}});
+    for (const NodeType* t : {&chain, &joint, &collider})
+        lila::scene::relocate::registerNeutral(t->name);
     for (NodeType* t : {&o, &chain, &joint, &collider})
         if (!types::registerType(ctx, std::move(*t)))
             return false;

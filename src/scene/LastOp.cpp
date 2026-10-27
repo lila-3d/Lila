@@ -459,8 +459,10 @@ std::vector<const FlagDef*> editableFlags(const std::string& command)
     const ops::options::Override* o = ops::options::findOverride(command);
     if (const CommandDef* def = ops::find(command))
         for (const FlagDef& f : def->flags)
-            if (f.type == ArgType::Bool || f.type == ArgType::Int || f.type == ArgType::Float ||
-                (f.type == ArgType::String && !f.choices.empty()) ||
+            if (o && std::ranges::find(o->popupHidden, f.name) != o->popupHidden.end())
+                continue;
+            else if (f.type == ArgType::Bool || f.type == ArgType::Int || f.type == ArgType::Float ||
+                (f.type == ArgType::String && (!f.choices.empty() || (o && std::ranges::find(o->adjust, f.name) != o->adjust.end()))) ||
                 (f.type == ArgType::Vec3 && o && std::ranges::find(o->adjust, f.name) != o->adjust.end()))
                 out.push_back(&f);
     return out;

@@ -110,6 +110,8 @@ struct FrameState
     glm::vec3 gridColor{0.42f};
     glm::vec3 gridAxisX{0.0f};
     glm::vec3 gridAxisZ{0.0f};
+    /** Where the grid and its axes put zero: the scene's display origin, world cm. */
+    glm::dvec3 gridOrigin{0.0};
     /** Linear object wire colours: selected, preselected, under a selected parent, and the default. */
     glm::vec4 wireSelected{0.92f, 0.92f, 0.92f, 1.0f};
     glm::vec4 wirePreselect{0.75f, 0.75f, 0.75f, 1.0f};

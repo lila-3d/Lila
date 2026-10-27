@@ -11,6 +11,7 @@
 #include <lila/Mesh.h>
 #include <lila/Node.h>
 #include <lila/Prefs.h>
+#include <lila/Relocate.h>
 #include <lila/Transform.h>
 #include <lila/Undo.h>
 
@@ -995,6 +996,7 @@ bool registerTypes(ext::Context& ctx)
         {.name = kAttrMeasured, .type = PlugType::Bool, .defaultValue = false, .flags = AttrInput | AttrStorable | AttrHidden,
          .doc = "Whether Measure Height Range has stamped the p50, p99 and over-tile heights."},
     };
+    lila::scene::relocate::registerNeutral(t.name);
     return types::registerType(ctx, std::move(t)) != nullptr;
 }
 

@@ -178,14 +178,17 @@ void objectInfo()
         .props = {prop("object", {}, "", "Name of the mesh object."),
                   prop("transformSpace", {"original", "world", "instance"}, "original",
                        "original keeps the mesh in its own space; world applies its world matrix; instance passes one instance "
-                       "of the mesh placed by its world matrix, which simulation nodes follow as a moving object.")},
+                       "of the mesh placed by its world matrix, which simulation nodes follow as a moving object."),
+                  prop("relativeTo", {"world", "owner"}, "world",
+                       "world reads the object's transform as it is in the scene; owner reads it relative to the mesh this group "
+                       "runs on (where it stood when the object was connected), so moving both together changes nothing.")},
         .sockets = {.outputs = {out("location", T::Vector), out("rotation", T::Rotation), out("scale", T::Vector), geoOut("geometry")}},
         .exec =
             [](ExecContext& c) {
                 auto it = c.env.objects.find(c.node.name);
                 if (it == c.env.objects.end())
                     return;
-                const glm::dmat4& m = it->second.matrix;
+                const glm::dmat4 m = c.prop("relativeTo") == "owner" ? glm::inverse(c.env.ownerMatrix) * it->second.matrix : it->second.matrix;
                 glm::dvec3 s(glm::length(glm::dvec3(m[0])), glm::length(glm::dvec3(m[1])), glm::length(glm::dvec3(m[2])));
                 glm::dmat3 r(glm::dvec3(m[0]) / std::max(s.x, 1e-12), glm::dvec3(m[1]) / std::max(s.y, 1e-12),
                              glm::dvec3(m[2]) / std::max(s.z, 1e-12));

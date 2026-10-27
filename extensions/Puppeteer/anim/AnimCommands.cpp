@@ -8,6 +8,7 @@
 #include <lila/Extension.h>
 #include <lila/Log.h>
 #include <lila/Node.h>
+#include <lila/Relocate.h>
 
 #include <cmath>
 #include <fstream>
@@ -814,6 +815,7 @@ bool registerMarksType(ext::Context& ctx)
         {.name = "marks", .type = PlugType::String, .defaultValue = std::string("[]"), .flags = stored | AttrHidden,
          .doc = "[[seconds, \"breakdown\" | \"extreme\"], ...]"},
     };
+    lila::scene::relocate::registerNeutral(t.name);
     return types::registerType(ctx, std::move(t)) != nullptr;
 }
 } // namespace

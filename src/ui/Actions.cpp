@@ -11,6 +11,7 @@
 #include "scene/Graph.h"
 #include "scene/Isolation.h"
 #include "scene/Modifiers.h"
+#include "scene/Relocate.h"
 #include "ui/Deletion.h"
 #include "ui/Hotkeys.h"
 #include "ui/MaterialDraw.h"
@@ -516,6 +517,16 @@ void registerBuiltins()
         "Turns the object so its X aims from the first picked component to the second, or along a single face, edge or loop, "
         "leaving the mesh where it is. Adjust the axes, up and mode in the popup after.");
     cmd("modify.pinComponentPivot", "Pin Component Pivot", "Modify", "pinComponentPivot", json::object(),
+    cmd("modify.relocateScene", "Relocate Scene to Selection", "Modify", "relocateScene", json::object(),
+        "Moves the whole scene so the selection's bottom centre becomes the world origin, rigs, deformers and animation included. "
+        "Every transform and deformed point is checked after the move; if anything is off, nothing changes. One undo step.");
+    cmd("modify.setDisplayOrigin", "Set Display Origin", "Modify", "setDisplayOrigin", {{"from", "bottom"}},
+        "Draws the grid and world axes about the selection's bottom centre, and snaps to that grid, without moving anything.");
+    cmd("modify.clearDisplayOrigin", "Clear Display Origin", "Modify", "setDisplayOrigin", {{"clear", true}},
+        "Puts the grid and world axes back on the world origin.");
+    setEnabledWhen("modify.relocateScene", hasSelection);
+    setEnabledWhen("modify.setDisplayOrigin", hasSelection);
+    setEnabledWhen("modify.clearDisplayOrigin", [] { return scene::relocate::hasDisplayOrigin(); });
         "Keeps the component manipulator's axes, and its position once moved with Edit Pivot, through selection changes until "
         "reset. Click its label in the viewport to reset.");
     cmd("modify.resetComponentPivot", "Reset Component Pivot", "Modify", "resetComponentPivot", json::object(),
@@ -642,6 +653,8 @@ void registerBuiltins()
         "Replaces the other side with a mirror of the kept one (the side of the selection, else the side holding most of the mesh), welded on the plane.");
     cmd("mesh.symmetryRepair", "Re-pair Symmetry", "Mesh", "symmetryRebuild", {{"pairsOnly", true}},
         "Pairs mirror vertices again from their positions, leaving the geometry as it is.");
+    cmd("mesh.multiBoxBounds", "Multi-Box Bounds", "Mesh", "multiBoxBounds", json::object(),
+        "Splits the selected meshes into chunks that conform to boxes and creates one box (or hull) per chunk, named and parented as Unreal collision.");
     cmd("mesh.symmetryRebuildTopological", "Re-pair Symmetry from Edge", "Mesh", "symmetryRebuild", {{"topological", true}},
         "Pairs mirror vertices by topology, outward from the selected center edge. Works on posed or uneven meshes.");
     cmd("mesh.boundingMesh", "Bounding Mesh", "Mesh", "boundingMesh", json::object(),

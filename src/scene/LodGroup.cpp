@@ -7,6 +7,7 @@
 #include "geo/Mesh.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
+#include "scene/ProxySet.h"
 
 #include <algorithm>
 #include <cctype>
@@ -281,6 +282,7 @@ std::unordered_set<NodeId> hidden(Graph& g, const View& view)
                 out.insert(d);
         }
     }
+    out.merge(proxy::hidden(g, view));
     return out;
 }
 

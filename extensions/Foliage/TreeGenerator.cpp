@@ -15,6 +15,7 @@
 #include <lila/MeshOps.h>
 #include <lila/Node.h>
 #include <lila/Prefs.h>
+#include <lila/Relocate.h>
 #include <lila/Transform.h>
 #include <lila/Undo.h>
 
@@ -1238,6 +1239,8 @@ bool registerTypes(ext::Context& ctx)
                       .icon = "plant",
                       .create = mesh->create};
     treeMesh.ownAttrs = attrs;
+    for (NodeType* t : {&tree, &treeMesh})
+        lila::scene::relocate::registerNeutral(t->name);
     for (NodeType* t : {&tree, &treeMesh})
         if (!types::registerType(ctx, std::move(*t)))
             return false;

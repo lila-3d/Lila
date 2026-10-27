@@ -98,6 +98,26 @@ TEST_CASE("duplicate, freeze, center pivot")
     run("undo");
 }
 
+TEST_CASE("multi-box bounds: one box per chunk, named, parented, undoable")
+{
+    run("newScene");
+    std::string slab = run("polyCube", {{"name", "Slab"}, {"width", 200}, {"height", 20}, {"depth", 40}})[0];
+    json preview = run("multiBoxBounds", {{"args", {slab}}, {"preview", true}});
+    CHECK(preview["boxCount"] == 1);
+    CHECK(preview["boxes"].size() == 1);
+    CHECK(run("ls", {{"type", "mesh"}}).size() == 1);
+
+    json made = run("multiBoxBounds", {{"args", {slab}}, {"padding", 1}});
+    REQUIRE(made["meshes"].size() == 1);
+    CHECK(made["meshes"][0] == "UCX_Slab_01");
+    CHECK(made["averageFill"].get<double>() > 0.9);
+    CHECK(made["coverage"].get<double>() > 0.9);
+    CHECK(run("listRelatives", {{"args", {"UCX_Slab_01"}}, {"parent", true}}) == json::array({slab}));
+
+    run("undo");
+    CHECK(run("ls", {{"type", "mesh"}}).size() == 1);
+}
+
 TEST_CASE("bounding mesh: fitted collision named and parented for Unreal")
 {
     run("newScene");

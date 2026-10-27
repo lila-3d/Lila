@@ -1,6 +1,7 @@
 #include <lila/Command.h>
 #include <lila/Extension.h>
 #include <lila/Node.h>
+#include <lila/Relocate.h>
 
 #include <cctype>
 #include <memory>
@@ -56,6 +57,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
         {.name = "output", .shortName = "o", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrOutput, .doc = "input times factor."},
     };
     type.create = [] { return std::make_unique<HelloMultiply>(); };
+    lila::scene::relocate::registerNeutral(type.name);
     if (!types::registerType(ctx, std::move(type)))
         return 3;
 

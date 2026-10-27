@@ -14,6 +14,7 @@
 #include "core/Progress.h"
 #include "ops/Command.h"
 #include "scene/Graph.h"
+#include "scene/ProxySet.h"
 
 #include <algorithm>
 #include <set>
@@ -135,12 +136,12 @@ void addUnique(std::vector<std::string>& list, const std::string& v)
         list.push_back(v);
 }
 
-/** Every mesh in the scene, by path. */
+/** Every mesh in the scene but anim proxy pieces, by path. */
 std::vector<std::string> allMeshes(Graph& g)
 {
     std::vector<std::string> out;
     for (NodeId id : g.nodes())
-        if (Node* n = g.node(id); n && n->type().isA("mesh"))
+        if (Node* n = g.node(id); n && n->type().isA("mesh") && !scene::proxy::excludedFromExport(g, id))
             out.push_back(n->path());
     return out;
 }

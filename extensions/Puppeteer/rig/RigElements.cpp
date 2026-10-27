@@ -8,6 +8,7 @@
 #include <lila/AnimCurve.h>
 #include <lila/Events.h>
 #include <lila/Prefs.h>
+#include <lila/Relocate.h>
 #include <lila/Spaces.h>
 #include <lila/Undo.h>
 
@@ -302,6 +303,10 @@ bool registerLegacyTypes(ext::Context& ctx)
         space.ownAttrs.push_back({.name = "weight" + std::to_string(i), .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrOutput | AttrHidden,
                                   .doc = "Weight of the constraint's target slot."});
 
+    for (const NodeType* t : {&chain, &foot, &align})
+        lila::scene::relocate::registerNeutral(t->name);
+    lila::scene::relocate::registerWorldAttrs(looker.name, {.directions = {"upVector"}, .channelCopies = {"joint"}});
+    lila::scene::relocate::registerWorldAttrs(space.name, {.channelCopies = {"joint"}});
     for (NodeType* t : {&chain, &foot, &align, &looker, &space})
         if (!types::registerType(ctx, std::move(*t)))
             return false;

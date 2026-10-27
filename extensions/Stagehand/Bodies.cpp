@@ -5,6 +5,7 @@
 #include <lila/Extension.h>
 #include <lila/Mesh.h>
 #include <lila/Profile.h>
+#include <lila/Relocate.h>
 #include <lila/Transform.h>
 
 #include <algorithm>
@@ -249,6 +250,7 @@ bool registerNodes(ext::Context& ctx)
          .softMax = 2.0},
     };
     t.create = base->create;
+    lila::scene::relocate::registerNeutral(t.name);
     return scene::types::registerType(ctx, std::move(t)) != nullptr;
 }
 } // namespace stagehand

@@ -1,6 +1,7 @@
 #include "ops/Command.h"
 #include "core/Profile.h"
 #include "geo/BoundingShapes.h"
+#include "geo/MultiBox.h"
 #include "geo/Primitives.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
@@ -234,6 +235,85 @@ Node* build(Graph& g, Placed& p, const std::string& name, bool history)
     g.setValue({mesh->id(), Transform::kRotate, -1}, xformops::closestEuler(p.axes, RotateOrder::XYZ, glm::dvec3(0.0)));
     return mesh;
 }
+/** World-space copy of the mesh node's output. */
+geo::Mesh worldMesh(const Node& n, const geo::Mesh& mesh)
+{
+    geo::Mesh out = mesh;
+    glm::dmat4 w = n.as<glm::dmat4>(Transform::kWorldMatrix);
+    for (geo::Index p = 0; p < out.pointCapacity(); ++p)
+        if (out.pointValid(p))
+            out.setPosition(p, glm::dvec3(w * glm::dvec4(out.position(p), 1.0)));
+    return out;
+}
+
+/** Meshes at or under the named nodes, collision shapes excluded. */
+std::vector<NodeId> meshesUnder(Graph& g, const std::vector<std::string>& names)
+{
+    std::vector<NodeId> out;
+    std::set<NodeId> seen;
+    for (const std::string& name : names)
+    {
+        Node* top = g.find(name);
+        if (!top)
+            throw CommandError("multiBoxBounds: no node named '" + name + "'");
+        std::vector<NodeId> ids{top->id()};
+        for (NodeId d : g.descendants(top->id()))
+            ids.push_back(d);
+        for (NodeId id : ids)
+            if (Node* n = g.node(id); n->type().isA("mesh") && !isCollisionName(n->name()) && seen.insert(id).second)
+                out.push_back(id);
+    }
+    return out;
+}
+
+Placed placeChunk(const geo::BoxChunk& c)
+{
+    if (c.hull)
+    {
+        Placed p;
+        p.mesh = c.hullMesh;
+        glm::dvec3 lo(std::numeric_limits<double>::max()), hi(-lo);
+        for (geo::Index i = 0; i < p.mesh.pointCapacity(); ++i)
+            if (p.mesh.pointValid(i))
+                lo = glm::min(lo, p.mesh.position(i)), hi = glm::max(hi, p.mesh.position(i));
+        p.center = (lo + hi) * 0.5;
+        for (geo::Index i = 0; i < p.mesh.pointCapacity(); ++i)
+            if (p.mesh.pointValid(i))
+                p.mesh.setPosition(i, p.mesh.position(i) - p.center);
+        return p;
+    }
+    glm::dvec3 size = glm::max(c.box.size, glm::dvec3(1e-4));
+    return {geo::makeCube({size.x, size.y, size.z}), c.box.axes, c.box.center, "polyCube",
+            {{"width", size.x}, {"height", size.y}, {"depth", size.z}}};
+}
+
+json chunkJson(const geo::BoxChunk& c)
+{
+    json axes = json::array();
+    for (int i = 0; i < 3; ++i)
+        axes.push_back({c.box.axes[i].x, c.box.axes[i].y, c.box.axes[i].z});
+    return {{"center", {c.box.center.x, c.box.center.y, c.box.center.z}},
+            {"size", {c.box.size.x, c.box.size.y, c.box.size.z}},
+            {"axes", axes},
+            {"hull", c.hull},
+            {"fill", c.fill}};
+}
+
+geo::MultiBoxOptions multiBoxOptions(const Args& a)
+{
+    geo::MultiBoxOptions o;
+    o.maxBoxes = std::max(1, a.get<int>("maxBoxes", 8));
+    o.minFill = std::clamp(a.get<double>("minFill", 0.85), 0.05, 1.0);
+    o.minBoxSize = std::max(0.0, a.get<double>("minBoxSize", 0.0));
+    o.resolution = std::clamp(a.get<int>("resolution", 48), 8, 256);
+    o.oriented = a.get<bool>("oriented", true);
+    o.padding = a.get<double>("padding", 0.0);
+    o.shape = a.get<std::string>("shape", "auto");
+    if (o.shape != "box" && o.shape != "hull" && o.shape != "auto")
+        throw CommandError("multiBoxBounds: shape must be box, hull or auto, got '" + o.shape + "'");
+    o.maxHullPoints = a.get<int>("maxHullPoints", 32);
+    return o;
+}
 } // namespace
 
 void registerBoundingMeshCommands()
@@ -307,5 +387,101 @@ void registerBoundingMeshCommands()
         },
     });
     ops::setAdjustable("boundingMesh");
+
+    ops::registerCommand({
+        .name = "multiBoxBounds",
+        .doc = "Split each mesh at or under the selection into chunks that largely conform to boxes and create one collision shape per "
+               "chunk, named UCX_<mesh>_01, _02 and so on and parented under the mesh. The mesh is voxelized (open and overlapping shells "
+               "work), merged into regions, refit with minimum-volume boxes and split or merged until each chunk is full enough, never "
+               "exceeding maxBoxes. Every point of the mesh lies inside some shape. With preview, nothing is created and the boxes come "
+               "back as JSON. Returns the new meshes with the box count, average fill and coverage.",
+        .positionalDoc = "objects",
+        .flags = {
+            {"maxBoxes", "mb", T::Int, 8, "Most shapes per mesh."},
+            {"minFill", "mf", T::Float, 0.85, "Occupied volume over box volume a chunk should reach before it stops being split and may be merged."},
+            {"minBoxSize", "ms", T::Float, 0.0, "Smallest extent a split may leave, cm; 0 is two voxels."},
+            {"resolution", "res", T::Int, 48, "Voxels along the longest side of the mesh."},
+            {"oriented", "or", T::Bool, true, "Fit each chunk with its own minimum-volume frame; off keeps every box on the world axes."},
+            {"padding", "pd", T::Float, 0.0, "Pushed out on every side of each shape, cm."},
+            {"shape", "s", T::String, "auto", "box, hull, or auto (a box unless the chunk's convex hull is clearly smaller).", {"box", "hull", "auto"}},
+            {"maxHullPoints", "mh", T::Int, 32, "Most points a hull keeps."},
+            {"preview", "pv", T::Bool, false, "Create nothing and return the boxes as JSON."},
+            {"nameFromSelection", "ns", T::Bool, true, "Name after the mesh it wraps, so Unreal pairs the shapes as that mesh's collision."},
+            {"name", "n", T::String, "Collision", "Base name when not named from the selection."},
+            {"prefix", "p", T::String, "UCX_", "Put before the name."},
+            {"parent", "pa", T::Bool, true, "Parent under the mesh it wraps, keeping it in place."},
+            {"generator", "g", T::Bool, false, "Keep each box's polyCube generator so its size stays editable."},
+        },
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            Graph& g = Graph::current();
+            std::vector<std::string> names = a.objects();
+            if (names.empty())
+                throw CommandError("multiBoxBounds: select some objects");
+            g.evaluate();
+            std::vector<NodeId> owners = meshesUnder(g, names);
+            geo::MultiBoxOptions opts = multiBoxOptions(a);
+            const bool preview = a.get<bool>("preview", false);
+            const std::string prefix = a.get<std::string>("prefix", "UCX_");
+
+            json meshes = json::array(), boxes = json::array();
+            std::vector<NodeId> made;
+            size_t count = 0;
+            double fillSum = 0.0, coverageSum = 0.0;
+            int solved = 0;
+            for (NodeId owner : owners)
+            {
+                Node* n = g.node(owner);
+                MeshPtr mesh = n->as<MeshPtr>(MeshNode::kOutMesh);
+                if (!mesh || mesh->numFaces() == 0)
+                    continue;
+                geo::MultiBoxResult r = geo::multiBoxDecompose(worldMesh(*n, *mesh), opts);
+                if (r.chunks.empty())
+                    continue;
+                ++solved;
+                count += r.chunks.size();
+                fillSum += r.averageFill;
+                coverageSum += r.coverage;
+                std::string base = a.get<bool>("nameFromSelection", true) ? n->name() : a.get<std::string>("name", "Collision");
+                if (auto colon = base.rfind(':'); colon != std::string::npos)
+                    base = base.substr(colon + 1);
+                int serial = 0;
+                for (const geo::BoxChunk& c : r.chunks)
+                {
+                    if (preview)
+                    {
+                        boxes.push_back(chunkJson(c));
+                        continue;
+                    }
+                    std::string name;
+                    do
+                    {
+                        char suffix[8];
+                        std::snprintf(suffix, sizeof suffix, "_%02d", ++serial);
+                        name = prefix + base + suffix;
+                    } while (!g.findAll(name).empty());
+                    Placed placed = placeChunk(c);
+                    Node* shape = build(g, placed, name, a.get<bool>("generator", false));
+                    if (a.get<bool>("parent", true))
+                        g.setParent(shape->id(), owner, true);
+                    meshes.push_back(shape->path());
+                    made.push_back(shape->id());
+                }
+            }
+            if (solved == 0)
+                throw CommandError("multiBoxBounds: no mesh faces in the selection");
+            json out = {{"boxCount", count}, {"averageFill", fillSum / solved}, {"coverage", coverageSum / solved}};
+            if (preview)
+                out["boxes"] = boxes;
+            else
+            {
+                out["meshes"] = meshes;
+                g.select(made);
+            }
+            return out;
+        },
+    });
+    ops::setAdjustable("multiBoxBounds");
 }
 } // namespace lila::scene

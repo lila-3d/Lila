@@ -779,25 +779,82 @@ PointMoves rectangularize(const Mesh& mesh, const ShapeSelection& sel, const Rec
     return moves;
 }
 
-PointMoves spherize(const Mesh& mesh, std::span<const Index> points, SphereFit fit, double radius)
+PointMoves spherize(const Mesh& mesh, std::span<const Index> points, const SpherizeOptions& opts, SpherizeResult* fitted)
 {
     LILA_ZONE();
 
     Points pts = positionsOf(mesh, points);
     if (pts.size() < 2)
         return {};
-    glm::dvec3 c;
-    double r = 0.0;
-    if (fit != SphereFit::Best || !fitSphere(pts, c, r) || r > 100.0 * extentOf(pts))
-        c = centroidOf(pts);
-    double mean = 0.0;
-    for (const glm::dvec3& p : pts)
-        mean += glm::length(p - c);
-    r = radius > 0.0 ? radius : mean / double(pts.size());
-    PointMoves moves;
+    const glm::dvec3 s = glm::max(glm::abs(opts.scale), glm::dvec3(1e-6));
+    const glm::dmat3 toUnit = glm::dmat3(glm::dvec3(1.0 / s.x, 0, 0), glm::dvec3(0, 1.0 / s.y, 0), glm::dvec3(0, 0, 1.0 / s.z)) * glm::transpose(opts.frame);
+    const glm::dmat3 fromUnit = opts.frame * glm::dmat3(glm::dvec3(s.x, 0, 0), glm::dvec3(0, s.y, 0), glm::dvec3(0, 0, s.z));
+    Points unit(pts.size());
     for (size_t i = 0; i < pts.size(); ++i)
-        if (glm::dvec3 d = pts[i] - c; glm::length(d) > 1e-12)
-            moves.push_back({points[i], c + glm::normalize(d) * r});
+        unit[i] = toUnit * pts[i];
+
+    glm::dvec3 c = centroidOf(unit);
+    double fitRadius = 0.0;
+    bool fittedBest = false;
+    if (opts.fit == SphereFit::Best && fitSphere(unit, c, fitRadius) && fitRadius <= 100.0 * extentOf(unit))
+        fittedBest = true;
+    else
+        c = centroidOf(unit);
+    if (opts.center)
+        c = toUnit * *opts.center;
+
+    double mean = 0.0, nearest = std::numeric_limits<double>::max(), farthest = 0.0;
+    for (const glm::dvec3& p : unit)
+    {
+        const double d = glm::length(p - c);
+        mean += d;
+        nearest = std::min(nearest, d);
+        farthest = std::max(farthest, d);
+    }
+    mean /= double(unit.size());
+    double r = mean;
+    if (opts.radius > 0.0)
+        r = opts.radius;
+    else if (opts.radiusMode == SphereRadius::Fit && fittedBest && !opts.center)
+        r = fitRadius;
+    else if (opts.radiusMode == SphereRadius::Min)
+        r = nearest;
+    else if (opts.radiusMode == SphereRadius::Max)
+        r = farthest;
+    if (fitted)
+        *fitted = {fromUnit * c, r};
+
+    const double amount = std::clamp(opts.amount, 0.0, 1.0);
+    PointMoves moves;
+    for (size_t i = 0; i < unit.size(); ++i)
+    {
+        const glm::dvec3 d = unit[i] - c;
+        std::optional<glm::dvec3> target;
+        if (opts.alongNormals)
+        {
+            glm::dvec3 n(0.0);
+            if (opts.normals)
+            {
+                if (points[i] < opts.normals->size())
+                    n = (*opts.normals)[points[i]];
+            }
+            else
+                for (Index f : mesh.pointFaces(points[i]))
+                    n += mesh.faceAreaVector(f);
+            n = toUnit * n;
+            const double a = glm::dot(n, n), b = 2.0 * glm::dot(d, n), k = glm::dot(d, d) - r * r;
+            const double disc = b * b - 4.0 * a * k;
+            if (a > 1e-18 && disc >= 0.0)
+            {
+                const double root = std::sqrt(disc), t1 = (-b - root) / (2.0 * a), t2 = (-b + root) / (2.0 * a);
+                target = unit[i] + n * (std::abs(t1) < std::abs(t2) ? t1 : t2);
+            }
+        }
+        if (!target && glm::length(d) > 1e-12)
+            target = c + glm::normalize(d) * r;
+        if (target)
+            moves.push_back({points[i], glm::mix(pts[i], fromUnit * *target, amount)});
+    }
     return moves;
 }
 

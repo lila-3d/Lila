@@ -12,6 +12,7 @@
 #include <lila/Graph.h>
 #include <lila/Log.h>
 #include <lila/Node.h>
+#include <lila/Relocate.h>
 #include <lila/Transform.h>
 
 #include <atomic>
@@ -163,6 +164,7 @@ bool registerStageType(ext::Context& ctx)
         stringAttr(kLoadRules, "", hidden, "Which payloads are loaded."),
         stringAttr(kStamps, "", hidden, "The source files' times and sizes at the last save, to reload when they change."),
     };
+    lila::scene::relocate::registerNeutral(t.name);
     return scene::types::registerType(ctx, std::move(t)) != nullptr;
 }
 } // namespace

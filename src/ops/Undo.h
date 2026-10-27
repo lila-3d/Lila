@@ -53,6 +53,10 @@ public:
     void closeChunk();
     /** Closes the outermost chunk, reverting and dropping everything recorded in it. */
     void cancelChunk();
+    /** Edits recorded so far in the open chunk; 0 when none is open. A mark for rollbackTo. */
+    size_t openEdits() const { return mDepth > 0 ? mOpen.actions.size() : 0; }
+    /** Reverts and drops the open chunk's edits after the first `mark`, leaving the chunk and the edits before it open. */
+    void rollbackTo(size_t mark);
 
     /**
      * Opens a chunk that amends the newest step: that step's own edits are reverted now, again whenever the new

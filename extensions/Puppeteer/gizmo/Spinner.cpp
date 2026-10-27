@@ -7,6 +7,7 @@
 #include "gizmo/Spinner.h"
 #include "Puppeteer.h"
 #include "gizmo/ControllerDraw.h"
+#include "rig/AnimProxy.h"
 #include "rig/Rig.h"
 
 #include <lila/Gizmo.h>
@@ -204,6 +205,7 @@ enum class Handle
     KeepDirection,
     Settings,
     Help,
+    Proxy,
     Breakdown,
 };
 
@@ -244,6 +246,7 @@ constexpr Button kButtons[] = {
     {Handle::Move, -120.0},      {Handle::Rotate, -90.0},       {Handle::Scale, -60.0},     {Handle::Space, 0.0},
     {Handle::Discrete, 30.0},    {Handle::Pivot, 180.0},        {Handle::Context, 150.0},   {Handle::Sticky2nd, 120.0},
     {Handle::KeepDirection, 96.0}, {Handle::Settings, -40.0, kTabRadius}, {Handle::Help, -26.0, kTabRadius},
+    {Handle::Proxy, -12.0, kTabRadius},
 };
 
 glm::vec4 gray(float v, float a = 1.0f) { return {v, v, v, a}; }
@@ -403,6 +406,9 @@ QString tipFor(Handle h, const Target& t)
     case Handle::KeepDirection: return s.keepDirection ? "Keep Direction on: the secondary axis keeps its sense" : "Keep Direction off";
     case Handle::Settings: return "Spinner settings";
     case Handle::Help: return "Show what each part of the Spinner does";
+    case Handle::Proxy:
+        return selectionShowsProxy() ? "Anim proxy shown: click for the real meshes. Right-click: the selected joint's real piece"
+                                     : "Real meshes shown: click for the anim proxy. Right-click: the selected joint's real piece";
     case Handle::Breakdown:
         return "Breakdown: drag left toward the previous key's pose, right toward the next (Shift: the whole character)";
     case Handle::Plate: return "Drag the rim to move the Spinner (reset in its settings)";
@@ -488,8 +494,9 @@ public:
             p.disc(c, float(u(kFreeDot)), disabled ? gray(0.32f) : hot == Handle::Center ? gray(0.98f) : gray(0.8f), 24);
         }
 
-        // Settings and help sit on a tab outside the rim.
-        p.disc(at(c, u(kTabRadius), -33.0), float(u(30.0)), gray(0.14f, 0.92f), 24);
+        // Settings and help sit on a tab outside the rim, which grows to hold the anim proxy toggle.
+        const bool proxyTab = shown(Handle::Proxy, t);
+        p.disc(at(c, u(kTabRadius), proxyTab ? -26.0 : -33.0), float(u(proxyTab ? 44.0 : 30.0)), gray(0.14f, 0.92f), 24);
         for (const Button& b : kButtons)
             if (shown(b.handle, t))
                 drawButton(p, b, t);
@@ -593,6 +600,12 @@ public:
             changed();
             return true;
         case Handle::Settings: openSettings(); return true;
+        case Handle::Proxy:
+            if (right)
+                toggleSelectedRealPiece();
+            else
+                toggleSelectedProxy();
+            return true;
         case Handle::Help:
             s.help = !s.help;
             changed();
@@ -772,6 +785,7 @@ private:
         case Handle::Context: return t.foot || t.rig;
         case Handle::Sticky2nd:
         case Handle::KeepDirection: return t.rig && s.stickyAim;
+        case Handle::Proxy: return animProxyEnabled() && !selectedProxySets().empty();
         default: return true;
         }
     }
@@ -790,12 +804,16 @@ private:
         case Handle::Sticky2nd: return s.sticky2nd;
         case Handle::KeepDirection: return s.keepDirection;
         case Handle::Help: return s.help;
+        case Handle::Proxy: return selectionShowsProxy();
         default: return false;
         }
     }
 
     /** The buttons with an alternative on the right button carry a small corner box. */
-    static bool hasAlternative(Handle h) { return h == Handle::Rotate || h == Handle::Scale || h == Handle::Context || h == Handle::Space; }
+    static bool hasAlternative(Handle h)
+    {
+        return h == Handle::Rotate || h == Handle::Scale || h == Handle::Context || h == Handle::Space || h == Handle::Proxy;
+    }
 
     const char* iconFor(Handle h, const Target& t) const
     {
@@ -813,6 +831,7 @@ private:
         case Handle::KeepDirection: return "puppeteer.keepDirection";
         case Handle::Settings: return "puppeteer.settings";
         case Handle::Help: return "puppeteer.help";
+        case Handle::Proxy: return "puppeteer.proxy";
         default: return "";
         }
     }
@@ -1335,6 +1354,7 @@ void registerIcons(ext::Context& ctx)
         {"puppeteer.screen", "device-desktop"},    {"puppeteer.pivot", "focus-centered"},    {"puppeteer.discrete", "grid-dots"},
         {"puppeteer.sticky", "target-arrow"},      {"puppeteer.sticky2nd", "vector-bezier"}, {"puppeteer.keepDirection", "direction"},
         {"puppeteer.foot", "shoe"},                {"puppeteer.footAlign", "line"},          {"puppeteer.pole", "target"},
+        {"puppeteer.proxy", "puzzle"},
     };
     for (const auto& [id, tabler] : icons)
         overlayIcons::add(ctx, id, {.tabler = tabler});

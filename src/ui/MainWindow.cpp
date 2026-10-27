@@ -1325,6 +1325,8 @@ void MainWindow::buildMenus()
     menu("Create", "Create");
     addSubmenu("Create", "Polygon Primitives");
     menus::addActions("Create/Polygon Primitives", {"create.cube", "create.sphere", "create.cylinder", "create.capsule", "create.cone", "create.plane", "create.torus",
+    addSubmenu("Modify", "Scene Origin");
+    menus::addActions("Modify/Scene Origin", {"modify.relocateScene", "modify.setDisplayOrigin", "modify.clearDisplayOrigin"});
                                              "create.disc", "create.pipe", "create.quadSphere", "create.icoSphere"});
     menus::addActions("Create", {"create.locator", "create.camera", "create.cameraFromView", "create.emptyGroup", "create.imagePlane"});
     addSubmenu("Create", "Sets");
@@ -1348,7 +1350,7 @@ void MainWindow::buildMenus()
                           "select.containedFaces", "#Tools", "select.paintTool", "select.toggleLasso", "select.toggleCameraBased", "select.toggleBackfaceCulling"});
 
     menu("Mesh", "Mesh");
-    menus::addActions("Mesh", {"#Combine", "mesh.combine", "mesh.smartJoin", "mesh.separate", "mesh.extract", "mesh.duplicateFaces", "mesh.boundingMesh",
+    menus::addActions("Mesh", {"#Combine", "mesh.combine", "mesh.smartJoin", "mesh.separate", "mesh.splitMeshTool", "mesh.extract", "mesh.duplicateFaces", "mesh.boundingMesh", "mesh.multiBoxBounds",
                                "#Mirror", "mesh.mirror"});
     addSubmenu("Mesh", "Symmetry");
     menus::addActions("Mesh/Symmetry", {"mesh.toggleSymmetry", "mesh.symmetryX", "mesh.symmetryY", "mesh.symmetryZ", "mesh.symmetryRadial", "mesh.symmetryOff", "",
@@ -1448,6 +1450,9 @@ void MainWindow::buildMenus()
     menus::addActions("Deform/Morph Tools", {"deform.editMorphTarget", "deform.extractMorphTarget", "deform.setMorphTarget", "deform.addInBetween",
                                              "", "deform.flipMorphTarget", "deform.symmetrizeMorphTarget", "", "deform.removeMorphTarget"});
     addSubmenu("Deform", "Correctives");
+    addSubmenu("Rig", "Anim Proxy");
+    menus::addActions("Rig/Anim Proxy", {"rig.animProxyTool", "rig.createAnimProxy", "mesh.splitMeshTool", "", "rig.createProxySet", "rig.addToProxySet",
+                                        "rig.removeFromProxySet", "", "rig.toggleAnimProxy", "rig.toggleProxyPiece"});
     menus::addActions("Deform/Correctives", {"deform.sculptCorrective", "deform.addCorrective", "", "deform.poseDriver", "deform.setPoseDriverTarget"});
     menus::addActions("Deform", {"deform.driveChannel", "window.drivenChannels", "#Deformers", "deform.lattice"});
     addSubmenu("Deform", "Nonlinear");

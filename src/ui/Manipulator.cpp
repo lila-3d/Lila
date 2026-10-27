@@ -12,6 +12,7 @@
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "scene/OrientPivot.h"
+#include "scene/Relocate.h"
 #include "geo/Mesh.h"
 #include "ui/GeometrySnap.h"
 #include "ui/GizmoMath.h"
@@ -860,7 +861,11 @@ void Manipulator::update(QPointF px, Qt::KeyboardModifiers mods)
         if (gridSnap)
         {
             if (worldFrame)
-                delta = snapGrid(d.startPivot + delta, moveMask(h)) - d.startPivot;
+            {
+                // The grid is drawn about the display origin, so it snaps about it too.
+                const glm::dvec3 shown = scene::relocate::displayOrigin();
+                delta = snapGrid(d.startPivot + delta - shown, moveMask(h)) + shown - d.startPivot;
+            }
             else
             {
                 glm::dvec3 local = glm::transpose(d.frame) * delta;

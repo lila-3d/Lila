@@ -10,6 +10,7 @@
 #include <lila/IkSolver.h>
 #include <lila/LinkExporter.h>
 #include <lila/Mcp.h>
+#include <lila/Relocate.h>
 #include <lila/SceneFile.h>
 
 #include <glm/gtx/quaternion.hpp>
@@ -188,6 +189,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
         return 10;
     scene::scripts::addListener(ctx, [] { ++gScriptChanges; });
 
+    lila::scene::relocate::registerNeutral("liftDeformer");
     if (!scene::deformers::registerDeformer(ctx, {.name = "liftDeformer",
                                                   .icon = "arrow-bar-up",
                                                   .doc = "Moves the whole mesh by an offset, scaled by amount.",

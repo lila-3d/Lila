@@ -141,6 +141,7 @@ lila_module(lila_ui UI
     DockSidebar.cpp DockSidebar.h
     DockDragCancel.cpp DockDragCancel.h
     DominantInfluenceUi.cpp DominantInfluenceUi.h
+    AnimProxyUi.cpp AnimProxyUi.h
     ViewportHooks.cpp ViewportHooks.h
     ViewportDisplay.cpp ViewportDisplay.h
     ViewportHud.cpp ViewportHud.h

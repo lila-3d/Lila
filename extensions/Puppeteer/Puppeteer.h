@@ -47,6 +47,8 @@ void registerSpinnerOps(lila::ext::Context& ctx);
 void registerSpinner(lila::ext::Context& ctx);
 /** Rig and Animate modes: layouts, hotkey layers, selection handlers, menus, the graph editor swap. */
 void registerModes(lila::ext::Context& ctx);
+/** Anim proxies: the prefs page, actions, and showing proxies with the modes (rig/AnimProxy.cpp). */
+void registerAnimProxy(lila::ext::Context& ctx);
 /** Animate-mode panels (anim/). */
 void registerAnimPanels(lila::ext::Context& ctx);
 } // namespace puppeteer

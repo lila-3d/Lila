@@ -48,6 +48,7 @@ struct TypeLayout
     int defAttr = 2;
     std::vector<Param> params;
     std::vector<Object> objects;
+    int ownerAttr = -1;
 };
 
 std::mutex gHeightfieldMutex;
@@ -133,6 +134,8 @@ public:
             }
             for (const TypeLayout::Object& o : mLayout->objects)
                 env.objects[o.node] = {as<scene::MeshPtr>(o.meshAttr), as<glm::dmat4>(o.matrixAttr)};
+            if (mLayout->ownerAttr >= 0)
+                env.ownerMatrix = as<glm::dmat4>(mLayout->ownerAttr);
             prepareCache(env.input);
             env.cache = &mCache;
             if (env.sampleOnly)
@@ -455,6 +458,14 @@ const scene::NodeType& ensureType(const Group& g)
                               .flags = scene::AttrInput | scene::AttrHidden, .doc = "Object Info world matrix."});
         layout->objects.push_back({obj, meshAttr, meshAttr + 1});
     }
+    if (!iface.objects.empty())
+    {
+        layout->ownerAttr = int(t.ownAttrs.size());
+        t.ownAttrs.push_back({.name = "ownerMatrix", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0),
+                              .flags = scene::AttrInput | scene::AttrStorable | scene::AttrHidden,
+                              .doc = "The mesh's world matrix when the Object Info inputs were connected: Object Info nodes set "
+                                     "Relative To owner read the other object against it."});
+    }
     t.ownAttrs.push_back({.name = "outMesh", .type = PlugType::Mesh, .defaultValue = scene::MeshPtr(), .flags = scene::AttrOutput | scene::AttrHidden});
     int out = int(t.ownAttrs.size()) - 1;
     std::shared_ptr<const TypeLayout> frozen = layout;
@@ -505,9 +516,19 @@ void pruneLinks(Group& grp)
     });
 }
 
-/** Points each Object Info input of a modifier at the object its node names. Throws on cycles or non-meshes. */
+/**
+ * Points each Object Info input of a modifier at the object its node names, and takes the owner mesh's world matrix for
+ * the ones relative to it. Throws on cycles or non-meshes.
+ */
 void connectObjects(Graph& g, Node& mod, const Group& grp)
 {
+    if (int owner = mod.type().attrIndex("ownerMatrix"); owner >= 0)
+        if (NodeId mesh = scene::modifiers::meshOf(g, mod.id()))
+        {
+            const glm::dmat4 world = std::get<glm::dmat4>(g.value({mesh, scene::Transform::kWorldMatrix, -1}));
+            if (mod.as<glm::dmat4>(owner) != world)
+                g.setValue({mod.id(), owner, -1}, world);
+        }
     for (const GNode& n : grp.nodes)
     {
         if (n.type != "ObjectInfo")

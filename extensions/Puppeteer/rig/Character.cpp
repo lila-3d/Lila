@@ -5,6 +5,7 @@
 #include "rig/Rig.h"
 
 #include <lila/Poses.h>
+#include <lila/Relocate.h>
 
 #include <algorithm>
 #include <set>
@@ -185,6 +186,7 @@ bool registerTypes(ext::Context& ctx)
         text("poseLibrary", "Pose library group. Empty: the template id, else the root joint's name."),
         text("pins", "Joints full-body moves hold where they are, space separated."),
     };
+    lila::scene::relocate::registerNeutral(t.name);
     return types::registerType(ctx, std::move(t)) != nullptr;
 }
 

@@ -53,6 +53,7 @@ struct Override
     std::vector<std::string> shown;  // shown although the generator would skip them (List flags)
     std::vector<std::string> adjust; // Vec3 flags the adjust-last-op popup edits too (it shows scalars only otherwise)
     std::map<std::string, std::string> labels;
+    std::vector<std::string> popupHidden; // flags the adjust-last-op popup leaves out though it could edit them
     std::map<std::string, std::string> sections;
     std::map<std::string, std::vector<std::pair<std::string, std::string>>> choices; // flag -> (value, label)
     struct Range

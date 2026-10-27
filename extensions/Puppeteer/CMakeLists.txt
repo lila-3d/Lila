@@ -1,7 +1,7 @@
 # Puppeteer, built as <bin>/<config>/extensions/Puppeteer.lilaext next to lila.exe, which loads it by default.
 set(PUPPETEER_RIG_SOURCES
     Puppeteer.cpp Puppeteer.h Common.h
-    rig/RigMath.h rig/Rig.h rig/Character.cpp rig/RigElements.cpp rig/JointTools.cpp rig/Modes.cpp rig/Controllers.cpp rig/FullBody.cpp
+    rig/RigMath.h rig/Rig.h rig/Character.cpp rig/RigElements.cpp rig/JointTools.cpp rig/Modes.cpp rig/Controllers.cpp rig/FullBody.cpp rig/AnimProxy.cpp rig/AnimProxy.h
     gizmo/Spinner.h gizmo/Spinner.cpp gizmo/SpinnerOps.cpp gizmo/ControllerDraw.h gizmo/ControllerDraw.cpp)
 # Animate-mode panels (Stacker, Mixer, Anim Bank, Cycle Maker, Poses): list their sources here.
 set(PUPPETEER_ANIM_SOURCES

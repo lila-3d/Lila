@@ -7,6 +7,7 @@
 #include <lila/Extension.h>
 #include <lila/Mesh.h>
 #include <lila/Profile.h>
+#include <lila/Relocate.h>
 #include <lila/Transform.h>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -228,6 +229,7 @@ bool registerKitNodes(ext::Context& ctx)
          .flags = scene::AttrInput | scene::AttrStorable | scene::AttrArray, .doc = "Types it joins to; empty joins only its own type."},
     };
     t.create = locator->create;
+    lila::scene::relocate::registerNeutral(t.name);
     return scene::types::registerType(ctx, std::move(t)) != nullptr;
 }
 

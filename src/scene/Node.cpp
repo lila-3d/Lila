@@ -15,6 +15,7 @@
 #include "scene/ImagePlane.h"
 #include "scene/ArrayGroup.h"
 #include "scene/LodGroup.h"
+#include "scene/ProxySet.h"
 #include "scene/Materials.h"
 #include "scene/Measure.h"
 #include "scene/MeshNodes.h"
@@ -233,6 +234,7 @@ void registerBuiltins()
     registerMeasureTypes();
     registerImagePlaneTypes();
     lod::registerTypes();
+    proxy::registerTypes();
     arrays::registerTypes();
     registerCameraTypes();
     registerLightTypes();

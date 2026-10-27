@@ -67,7 +67,7 @@ LILA_SCENE_API void endDrag(bool keep = true);
  */
 LILA_SCENE_API void limitFlag(const std::string& name, const json& value);
 
-/** Flags of the op's command the UI can edit: Bool, Int, Float, String with choices, and the Vec3 flags its option override lists under adjust. */
+/** Flags of the op's command the UI can edit: Bool, Int, Float, String with choices, and the Vec3 and free-text String flags its option override lists under adjust. */
 LILA_SCENE_API std::vector<const FlagDef*> editableFlags(const std::string& command);
 /** The value the op ran with for a flag: its call's value, else the flag default. */
 LILA_SCENE_API json flagValue(const Op& op, const FlagDef& flag);

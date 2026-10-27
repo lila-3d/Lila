@@ -85,7 +85,10 @@ LILA_SCENE_API int levelForScreenSize(const std::vector<double>& sizes, double s
 
 /** The level the view shows of the group, or -1 for all of them. */
 LILA_SCENE_API int shownLevel(Graph& g, NodeId group, const View& view);
-/** Every node the view hides: the levels each group does not show, with their descendants. Reads evaluated values. */
+/**
+ * Every node the view hides: the levels each group does not show, with their descendants, and what proxy sets hide
+ * (scene/ProxySet.h). Reads evaluated values.
+ */
 LILA_SCENE_API std::unordered_set<NodeId> hidden(Graph& g, const View& view);
 
 /** For Send to Unreal: the screen sizes of the first group at or under roots that sets any, one per level; empty for none. */

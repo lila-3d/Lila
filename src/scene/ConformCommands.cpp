@@ -9,11 +9,13 @@
 #include "scene/ConformTargets.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
+#include "scene/SphereState.h"
 #include "scene/Transform.h"
 
 #include <algorithm>
 #include <cmath>
 #include <format>
+#include <glm/gtc/quaternion.hpp>
 #include <limits>
 #include <map>
 #include <memory>
@@ -100,6 +102,12 @@ void conformSelected(const char* command, const char* what, double strength, con
         throw CommandError(std::format("{}: {}", command, what));
 }
 
+SphereState& sphereState()
+{
+    static SphereState state;
+    return state;
+}
+
 std::map<std::string, conformTargets::Provider>& providers()
 {
     static std::map<std::string, conformTargets::Provider> p;
@@ -139,7 +147,7 @@ geo::PointMoves shapeMoves(const std::string& shape, const Args& a, const geo::M
     if (shape == "square" || shape == "rectangle")
         return geo::rectangularize(m, sel, {spacing, shape == "square", a.get<double>("rotation", 0.0), true});
     if (shape == "sphere")
-        return geo::spherize(m, all, geo::SphereFit::Best, radius);
+        return geo::spherize(m, all, {.radius = radius});
     if (shape == "cylinder")
     {
         const std::string axis = a.get<std::string>("axis", "auto");
@@ -172,9 +180,13 @@ void registerOptionLayouts()
     opt::setOverride("polyCircularize", std::move(circle));
 
     O sphere;
+    sphere.order = {"amount", "fit", "radiusMode", "radius", "scale", "rotation", "alongNormals"};
+    sphere.hidden = {"center"};
+    sphere.adjust = {"scale", "rotation"};
     sphere.choices["fit"] = {{"best", "Best-Fit Sphere"}, {"center", "Around the Centroid"}};
-    sphere.ranges = {{"strength", strength}, {"radius", radius}};
-    sphere.labels = {{"radius", "Radius (0 = Fit)"}};
+    sphere.choices["radiusMode"] = {{"average", "Average Distance"}, {"fit", "Fitted Radius"}, {"min", "Nearest Point"}, {"max", "Farthest Point"}, {"explicit", "Radius Below"}};
+    sphere.ranges = {{"amount", strength}, {"radius", radius}};
+    sphere.labels = {{"radius", "Radius (0 = From Mode)"}, {"alongNormals", "Move Along Normals"}, {"scale", "Ellipsoid Scale"}, {"rotation", "Ellipsoid Rotation"}};
     opt::setOverride("polySpherize", std::move(sphere));
 
     O shape;
@@ -200,6 +212,8 @@ void registerOptionLayouts()
     opt::setOverride("polyEditEdgeFlow", std::move(flow));
 }
 } // namespace
+
+const SphereState& lastSphere() { return sphereState(); }
 
 namespace conformTargets
 {
@@ -257,17 +271,68 @@ void registerConformCommands()
 
     ops::registerCommand({
         .name = "polySpherize",
-        .doc = "Push the selected components out (or in) onto a sphere fitted to them.",
-        .flags = {{"fit", "", T::String, "best", "best (least-squares sphere) or center (around the points' centroid).", {"best", "center"}},
-                  {"radius", "", T::Float, 0.0, "Radius, cm; 0 keeps the points' average distance from the centre."},
-                  strength},
+        .doc = "Push the selected components onto a sphere fitted to them, or onto an ellipsoid with scale. center and radius override "
+               "the fit (world space, cm); radiusMode picks the radius from the points otherwise. With alongNormals each point slides along "
+               "its own normal to the sphere. Returns the sphere used: {center, radius, scale, rotation}, world space.",
+        .flags = {{"amount", "", T::Float, 1.0, "How far toward the sphere, 0 to 1; soft selection fades it further."},
+                  {"fit", "", T::String, "best", "best (least-squares sphere) or center (around the points' centroid).", {"best", "center"}},
+                  {"radiusMode", "", T::String, "average", "Radius when radius is 0: average distance, fit (the fitted radius), min, max or explicit.",
+                   {"average", "fit", "min", "max", "explicit"}},
+                  {"radius", "", T::Float, 0.0, "Radius, cm; above 0 it replaces radiusMode."},
+                  {"center", "", T::Vec3, nullptr, "Sphere centre, world space cm; default: the fitted centre."},
+                  {"scale", "", T::Vec3, json::array({1.0, 1.0, 1.0}), "Ellipsoid semi-axis factors along its X, Y and Z."},
+                  {"rotation", "", T::Vec3, json::array({0.0, 0.0, 0.0}), "Turn of the ellipsoid's axes in world space, degrees (XYZ)."},
+                  {"alongNormals", "", T::Bool, false, "Move each point along its own normal onto the sphere."}},
         .run = [](const Args& a) -> json {
-            const geo::SphereFit fit = a.get<std::string>("fit", "best") == "center" ? geo::SphereFit::Center : geo::SphereFit::Best;
-            conformSelected("polySpherize", "select some components to spherize", a.get<double>("strength", 1.0),
+            const auto vec = [&](const char* flag, const glm::dvec3& fallback) {
+                const json j = a.flags.contains(flag) ? a.flags.at(flag) : json();
+                return j.is_array() && j.size() == 3 ? glm::dvec3(j[0].get<double>(), j[1].get<double>(), j[2].get<double>()) : fallback;
+            };
+            const glm::dvec3 scale = vec("scale", glm::dvec3(1.0)), rotation = vec("rotation", glm::dvec3(0.0));
+            const glm::dquat turn = glm::angleAxis(glm::radians(rotation.z), glm::dvec3(0, 0, 1)) * glm::angleAxis(glm::radians(rotation.y), glm::dvec3(0, 1, 0)) *
+                                    glm::angleAxis(glm::radians(rotation.x), glm::dvec3(1, 0, 0));
+            const std::string mode = a.get<std::string>("radiusMode", "average");
+            SphereState state;
+            bool any = false;
+            conformSelected("polySpherize", "select some components to spherize", 1.0,
                             [&](const geo::Mesh& m, const glm::dmat4& world, const geo::ShapeSelection& sel) {
-                                return geo::spherize(m, geo::shapePoints(sel), fit, toLocalLength(world, std::max(0.0, a.get<double>("radius"))));
+                                geo::SpherizeOptions o;
+                                o.fit = a.get<std::string>("fit", "best") == "center" ? geo::SphereFit::Center : geo::SphereFit::Best;
+                                o.radiusMode = mode == "fit"        ? geo::SphereRadius::Fit
+                                               : mode == "min"      ? geo::SphereRadius::Min
+                                               : mode == "max"      ? geo::SphereRadius::Max
+                                               : mode == "explicit" ? geo::SphereRadius::Explicit
+                                                                    : geo::SphereRadius::Average;
+                                o.amount = std::clamp(a.get<double>("amount", 1.0), 0.0, 1.0);
+                                o.radius = toLocalLength(world, std::max(0.0, a.get<double>("radius", 0.0)));
+                                if (a.has("center"))
+                                    o.center = glm::dvec3(glm::inverse(world) * glm::dvec4(vec("center", glm::dvec3(0.0)), 1.0));
+                                o.scale = scale;
+                                glm::dmat3 linear(world);
+                                for (int i = 0; i < 3; ++i)
+                                    linear[i] = glm::length(linear[i]) > 1e-12 ? glm::normalize(linear[i]) : glm::dvec3(i == 0, i == 1, i == 2);
+                                o.frame = glm::transpose(linear) * glm::mat3_cast(turn);
+                                o.alongNormals = a.get<bool>("alongNormals", false);
+                                geo::SpherizeResult fitted;
+                                geo::PointMoves moves = geo::spherize(m, geo::shapePoints(sel), o, &fitted);
+                                if (!moves.empty())
+                                {
+                                    const double local = toLocalLength(world, 1.0);
+                                    state.center = glm::dvec3(world * glm::dvec4(fitted.center, 1.0));
+                                    state.radius = local > 1e-12 ? fitted.radius / local : fitted.radius;
+                                    any = true;
+                                }
+                                return moves;
                             });
-            return nullptr;
+            if (any)
+            {
+                state.scale = scale;
+                state.rotation = rotation;
+                state.serial = sphereState().serial + 1;
+                sphereState() = state;
+            }
+            return json{{"center", {state.center.x, state.center.y, state.center.z}}, {"radius", state.radius}, {"scale", {scale.x, scale.y, scale.z}},
+                        {"rotation", {rotation.x, rotation.y, rotation.z}}};
         },
     });
 

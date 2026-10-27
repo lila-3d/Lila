@@ -8,6 +8,7 @@
 #include "scene/Ik.h"
 #include "scene/Rig.h"
 #include "ui/Actions.h"
+#include "ui/AnimProxyUi.h"
 #include "ui/DominantInfluenceUi.h"
 #include "ui/SpacesUi.h"
 #include "ui/ViewportHooks.h"
@@ -389,6 +390,7 @@ void registerRigViewport()
     viewportHooks::addPicker(pickIkHandles);
     registerRigActions();
     registerDominantInfluenceUi();
+    registerAnimProxyUi();
     registerSpacesUi();
 }
 } // namespace lila::ui

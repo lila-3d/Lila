@@ -6,6 +6,7 @@ add_executable(lila_curve_tests
     test_curve_deform.cpp
     test_curve_frames.cpp
     test_curve_objects.cpp
+    test_curve_relocate.cpp
     test_curve_math.cpp
     test_curve_scene.cpp
     test_dxf.cpp

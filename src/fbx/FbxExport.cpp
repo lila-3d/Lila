@@ -18,6 +18,7 @@
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "scene/Morphs.h"
+#include "scene/ProxySet.h"
 #include "scene/Rig.h"
 #include "scene/RigElements.h"
 #include "scene/RotationCurve.h"
@@ -1102,7 +1103,7 @@ struct Gather
     {
         using namespace scene;
         Node* n = graph.node(id);
-        if (!n || !n->type().isA("transform") || indexOf.count(id))
+        if (!n || !n->type().isA("transform") || indexOf.count(id) || proxy::excludedFromExport(graph, id))
             return;
         if (opts.deformOnly && (opts.kind == ExportKind::Skeletal || opts.kind == ExportKind::Animation) && !rigel::isDeform(*n))
         {

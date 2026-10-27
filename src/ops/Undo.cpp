@@ -85,6 +85,17 @@ void UndoStack::cancelChunk()
     notify();
 }
 
+void UndoStack::rollbackTo(size_t mark)
+{
+    if (mDepth == 0 || mark >= mOpen.actions.size())
+        return;
+    mReplaying = true;
+    for (size_t i = mOpen.actions.size(); i-- > mark;)
+        mOpen.actions[i]->undo();
+    mReplaying = false;
+    mOpen.actions.resize(mark);
+}
+
 bool UndoStack::openAmend(std::string label)
 {
     LILA_ZONE();

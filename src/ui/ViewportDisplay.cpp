@@ -3,6 +3,7 @@
 #include "core/PrefStore.h"
 #include "render/DisplayOptions.h"
 #include "render/Renderer.h"
+#include "scene/Relocate.h"
 #include "ui/Theme.h"
 
 #include <algorithm>
@@ -29,6 +30,7 @@ void apply(render::FrameState& s)
     s.gridColor = glm::vec3(themeLinear("grid", glm::vec4(s.gridColor, 1.0f)));
     s.gridAxisX = glm::vec3(themeLinear("gridAxisX", glm::vec4(s.gridAxisX, 1.0f)));
     s.gridAxisZ = glm::vec3(themeLinear("gridAxisZ", glm::vec4(s.gridAxisZ, 1.0f)));
+    s.gridOrigin = scene::relocate::displayOrigin();
     s.wireSelected = themeLinear("wireSelected", s.wireSelected);
     s.wirePreselect = themeLinear("wirePreselect", s.wirePreselect);
     s.wireUnderSelected = themeLinear("wireUnderSelected", s.wireUnderSelected);

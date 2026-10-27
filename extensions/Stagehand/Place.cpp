@@ -12,6 +12,7 @@
 #include <lila/Mesh.h>
 #include <lila/Prefs.h>
 #include <lila/Profile.h>
+#include <lila/Relocate.h>
 #include <lila/Transform.h>
 #include <lila/Workspace.h>
 
@@ -424,6 +425,7 @@ bool registerLibraryNodes(ext::Context& ctx)
          .doc = "The model's modification time when loaded."},
     };
     t.create = base->create;
+    lila::scene::relocate::registerNeutral(t.name);
     return scene::types::registerType(ctx, std::move(t)) != nullptr;
 }
 

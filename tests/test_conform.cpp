@@ -7,6 +7,7 @@
 #include "scene/Graph.h"
 #include "scene/LastOp.h"
 #include "scene/MeshNodes.h"
+#include "scene/SphereState.h"
 
 #include <algorithm>
 #include <cmath>
@@ -326,4 +327,157 @@ TEST_CASE("conform commands follow symmetry")
                 best = std::min(best, glm::length(m.position(q) - glm::dvec3(-a.x, a.y, a.z)));
         CHECK(best < 1e-6);
     }
+}
+
+namespace
+{
+std::vector<Index> allPoints(const geo::Mesh& m)
+{
+    std::vector<Index> pts;
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p))
+            pts.push_back(p);
+    return pts;
+}
+
+void spherizeIntoMesh(geo::Mesh& m, const std::vector<Index>& pts, const geo::SpherizeOptions& o, geo::SpherizeResult* fitted = nullptr)
+{
+    applyMoves(m, geo::spherize(m, pts, o, fitted));
+}
+} // namespace
+
+TEST_CASE("spherize: points land on the sphere at amount 1 and stay put at amount 0")
+{
+    geo::Mesh cube = geo::makeCube({100, 100, 100, 3, 3, 3, false});
+    const std::vector<Index> pts = allPoints(cube);
+    const geo::Mesh original = cube;
+
+    geo::SpherizeResult fitted;
+    spherizeIntoMesh(cube, pts, {.radius = 37.0, .center = glm::dvec3(0.0)}, &fitted);
+    CHECK(fitted.radius == doctest::Approx(37.0));
+    for (Index p : pts)
+        CHECK(glm::length(cube.position(p)) == doctest::Approx(37.0).epsilon(1e-9));
+
+    cube = original;
+    spherizeIntoMesh(cube, pts, {.amount = 0.0});
+    for (Index p : pts)
+        CHECK(cube.position(p) == original.position(p));
+
+    cube = original;
+    spherizeIntoMesh(cube, pts, {.amount = 1.0});
+    std::vector<double> radii;
+    for (Index p : pts)
+        radii.push_back(glm::length(cube.position(p)));
+    CHECK(spreadOf(radii) < 1e-9);
+
+    cube = original;
+    spherizeIntoMesh(cube, pts, {.amount = 0.5, .radius = 100.0, .center = glm::dvec3(0.0)});
+    const Index corner = pts.front();
+    const glm::dvec3 a = original.position(corner);
+    CHECK(glm::length(cube.position(corner) - (a + glm::normalize(a) * 100.0) * 0.5) < 1e-9 * 100.0);
+}
+
+TEST_CASE("spherize: the fit recovers a known sphere and each radius mode picks its distance")
+{
+    const glm::dvec3 centre(3.0, -2.0, 5.0);
+    const double radius = 7.0;
+    geo::Mesh m;
+    std::vector<Index> pts;
+    for (int i = 0; i < 40; ++i)
+    {
+        const double z = -0.95 + 1.9 * i / 39.0, phi = i * 2.399963;
+        const double ring = std::sqrt(1.0 - z * z);
+        pts.push_back(m.addPoint(centre + radius * glm::dvec3(ring * std::cos(phi), z, ring * std::sin(phi))));
+    }
+    geo::SpherizeResult fitted;
+    geo::spherize(m, pts, {.radiusMode = geo::SphereRadius::Fit}, &fitted);
+    CHECK(glm::length(fitted.center - centre) < 1e-9);
+    CHECK(fitted.radius == doctest::Approx(radius).epsilon(1e-9));
+
+    geo::spherize(m, pts, {.fit = geo::SphereFit::Center, .radiusMode = geo::SphereRadius::Max}, &fitted);
+    const geo::SpherizeResult max = fitted;
+    geo::spherize(m, pts, {.fit = geo::SphereFit::Center, .radiusMode = geo::SphereRadius::Min}, &fitted);
+    CHECK(fitted.radius <= max.radius);
+
+    geo::spherize(m, pts, {.radiusMode = geo::SphereRadius::Explicit, .radius = 12.5}, &fitted);
+    CHECK(fitted.radius == doctest::Approx(12.5));
+
+    // Four coplanar points have no sphere to fit, so they take the centroid.
+    geo::Mesh flat;
+    std::vector<Index> quad;
+    for (glm::dvec3 q : {glm::dvec3(1, 0, 1), glm::dvec3(-1, 0, 1), glm::dvec3(-1, 0, -1), glm::dvec3(1, 0, -1)})
+        quad.push_back(flat.addPoint(q));
+    geo::spherize(flat, quad, {}, &fitted);
+    CHECK(glm::length(fitted.center) < 1e-9);
+    CHECK(fitted.radius == doctest::Approx(std::sqrt(2.0)));
+}
+
+TEST_CASE("spherize: an ellipsoid scale stretches the target and normals slide the points")
+{
+    geo::Mesh cube = geo::makeCube({100, 100, 100, 3, 3, 3, false});
+    const std::vector<Index> pts = allPoints(cube);
+    const geo::Mesh original = cube;
+
+    const glm::dvec3 scale(2.0, 1.0, 0.5);
+    spherizeIntoMesh(cube, pts, {.radius = 20.0, .center = glm::dvec3(0.0), .scale = scale});
+    for (Index p : pts)
+    {
+        const glm::dvec3 q = cube.position(p) / scale;
+        CHECK(glm::length(q) == doctest::Approx(20.0).epsilon(1e-9));
+    }
+
+    // A turned frame: the long axis follows it.
+    cube = original;
+    const glm::dmat3 turned(glm::dvec3(0, 1, 0), glm::dvec3(-1, 0, 0), glm::dvec3(0, 0, 1));
+    spherizeIntoMesh(cube, pts, {.radius = 20.0, .center = glm::dvec3(0.0), .scale = scale, .frame = turned});
+    for (Index p : pts)
+    {
+        const glm::dvec3 q = cube.position(p);
+        CHECK(std::pow(q.y / 2.0, 2) + std::pow(q.x, 2) + std::pow(q.z / 0.5, 2) == doctest::Approx(400.0).epsilon(1e-9));
+    }
+
+    cube = original;
+    spherizeIntoMesh(cube, pts, {.radius = 80.0, .center = glm::dvec3(0.0), .alongNormals = true});
+    for (Index p : pts)
+    {
+        CHECK(glm::length(cube.position(p)) == doctest::Approx(80.0).epsilon(1e-9));
+        glm::dvec3 n(0.0);
+        for (Index f : original.pointFaces(p))
+            n += original.faceAreaVector(f);
+        const glm::dvec3 moved = cube.position(p) - original.position(p);
+        CHECK(glm::length(glm::cross(moved, glm::normalize(n))) < 1e-9);
+    }
+}
+
+TEST_CASE("spherize command: overrides, ellipsoid, result and undo")
+{
+    run("newScene");
+    std::string cube = run("polyCube", {{"subdivisionsX", 2}, {"subdivisionsY", 2}, {"subdivisionsZ", 2}})[0];
+    run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
+    run("convertSelection", {{"args", {"vertex"}}});
+    run("selectAllComponents");
+    const std::vector<Index> pts = allPoints(meshOf(cube));
+    const geo::Mesh before = meshOf(cube);
+
+    json result = run("polySpherize", {{"center", {0, 0, 0}}, {"radius", 30.0}});
+    CHECK(result["radius"].get<double>() == doctest::Approx(30.0));
+    for (Index p : pts)
+        CHECK(glm::length(meshOf(cube).position(p)) == doctest::Approx(30.0).epsilon(1e-9));
+    CHECK(scene::lastSphere().radius == doctest::Approx(30.0));
+    run("undo");
+    for (Index p : pts)
+        CHECK(meshOf(cube).position(p) == before.position(p));
+
+    result = run("polySpherize", {{"center", {0, 0, 0}}, {"radius", 30.0}, {"scale", {2, 1, 1}}});
+    for (Index p : pts)
+    {
+        const glm::dvec3 q = meshOf(cube).position(p);
+        CHECK(std::pow(q.x / 2.0, 2) + q.y * q.y + q.z * q.z == doctest::Approx(900.0).epsilon(1e-9));
+    }
+    run("undo");
+
+    run("polySpherize", {{"center", {0, 0, 0}}, {"radius", 30.0}, {"amount", 0.0}});
+    for (Index p : pts)
+        CHECK(meshOf(cube).position(p) == before.position(p));
+    CHECK_NOTHROW(run("polySpherize", {{"alongNormals", true}, {"radiusMode", "max"}}));
 }

@@ -3,6 +3,7 @@ add_executable(lila_gn_tests
     test_clipboard.cpp
     test_gn.cpp
     test_gn_groups.cpp
+    test_gn_relocate.cpp
     test_gn_sim.cpp
     test_gn_voronoi.cpp
     test_nodes.cpp

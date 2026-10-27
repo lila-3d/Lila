@@ -8,6 +8,7 @@
 #include <lila/Node.h>
 #include <lila/Picker.h>
 #include <lila/Poses.h>
+#include <lila/Relocate.h>
 #include <lila/Rig.h>
 #include <lila/RigElements.h>
 #include <lila/Spaces.h>
@@ -852,6 +853,7 @@ bool registerTypes(ext::Context& ctx)
                        .doc = "Meshes the instance is bound to."},
                   },
                   .create = transform->create};
+    lila::scene::relocate::registerNeutral(root.name);
     if (!types::registerType(ctx, std::move(root)))
         return false;
 
@@ -878,6 +880,7 @@ bool registerTypes(ext::Context& ctx)
                          .doc = "Meshes it centres in."},
                     },
                     .create = transform->create};
+    lila::scene::relocate::registerWorldAttrs(marker.name, {.directions = {"upVector"}});
     return types::registerType(ctx, std::move(marker)) != nullptr;
 }
 

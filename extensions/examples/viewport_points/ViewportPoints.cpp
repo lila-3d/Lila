@@ -8,6 +8,7 @@
 #include <lila/Gizmo.h>
 #include <lila/Graph.h>
 #include <lila/Node.h>
+#include <lila/Relocate.h>
 #include <lila/Undo.h>
 #include <lila/Viewport.h>
 #include <lila/ViewportTool.h>
@@ -202,6 +203,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
                                           .create = locator->create}))
         return 1;
 
+    lila::scene::relocate::registerNeutral(kMarker);
     drawOverrides::add(ctx, {.id = "viewportPoints.marker", .nodeType = kMarker, .draw = drawMarker, .pick = pickMarker});
 
     gizmos::add(ctx, {.id = "viewportPoints.ground", .label = "Ground Move", .create = [] { return std::make_unique<GroundGizmo>(); }});

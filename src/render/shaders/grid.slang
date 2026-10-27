@@ -9,6 +9,7 @@ struct GridPush
     float4 color;  // grid lines
     float4 axisX;
     float4 axisZ;  // the other ground axis: Z, or Y when Z-up
+    float4 origin; // the display origin the grid is drawn around
 };
 
 [[vk::push_constant]] GridPush pc;
@@ -65,7 +66,8 @@ PSOut gridPS(VSOut i)
     float3 rd = normalize(farH.xyz / farH.w - ro);
 
     bool zUp = pc.params.z > 0.5;
-    float roUp = zUp ? ro.z : ro.y;
+    float3 origin = pc.origin.xyz;
+    float roUp = zUp ? ro.z - origin.z : ro.y - origin.y;
     float rdUp = zUp ? rd.z : rd.y;
     // No discard until the end: derivatives below need the whole quad alive.
     float t = -roUp / (abs(rdUp) < 1e-7 ? 1e-7 : rdUp);
@@ -73,7 +75,7 @@ PSOut gridPS(VSOut i)
     t = abs(t);
 
     float3 p = ro + rd * t;
-    float2 coord = zUp ? p.xy : p.xz;
+    float2 coord = zUp ? p.xy - origin.xy : p.xz - origin.xz;
 
     float minor = pc.params.x;
     float major = minor * pc.params.y;
@@ -92,7 +94,7 @@ PSOut gridPS(VSOut i)
     float3 color = lerp(pc.color.rgb, axisColor, axis);
     float alpha = max(lines, axis);
 
-    float height = abs(zUp ? pc.eye.z : pc.eye.y);
+    float height = abs(zUp ? pc.eye.z - origin.z : pc.eye.y - origin.y);
     float dist = length(p - pc.eye.xyz);
     float fadeEnd = max(3000.0, height * 60.0);
     alpha *= 1.0 - smoothstep(fadeEnd * 0.25, fadeEnd, dist);

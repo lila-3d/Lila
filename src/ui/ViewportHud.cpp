@@ -8,6 +8,7 @@
 #include "scene/HudStats.h"
 #include "scene/Isolation.h"
 #include "scene/MeshNodes.h"
+#include "scene/Relocate.h"
 #include "scene/SoftSelect.h"
 #include "scene/Transform.h"
 #include "ui/Actions.h"
@@ -663,6 +664,12 @@ bool draw(OverlayPainter& p, const Context& ctx)
         rightBlocks.push_back(symmetryBlock(g));
     if (on("softSelect"))
         rightBlocks.push_back(softSelectBlock(parts("softSelect")));
+    // Shown whenever it is set, so nobody reads display-relative numbers as world ones.
+    if (scene::relocate::hasDisplayOrigin())
+    {
+        const glm::dvec3 o = scene::relocate::displayOrigin();
+        rightBlocks.push_back({{"Display Origin:", {fixed(o.x, 1) + ", " + fixed(o.y, 1) + ", " + fixed(o.z, 1)}}});
+    }
     Stack topRight{.right = true, .edge = kTop, .width = ctx.view.width};
     double widest = 0.0;
     for (const Block& b : rightBlocks)
@@ -728,7 +735,7 @@ bool draw(OverlayPainter& p, const Context& ctx)
 
 void drawOriginAxis(render::FrameState& s, OverlayPainter& p, const ViewInfo& view)
 {
-    const glm::dvec3 origin(0.0);
+    const glm::dvec3 origin = scene::relocate::displayOrigin();
     if (!view.project(origin))
         return;
     double length = view.unitsPerPixel(origin) * 48.0;
@@ -736,11 +743,11 @@ void drawOriginAxis(render::FrameState& s, OverlayPainter& p, const ViewInfo& vi
     p.setShadow(true);
     for (int axis = 0; axis < 3; ++axis)
     {
-        glm::dvec3 tip(0.0);
-        tip[axis] = length;
+        glm::dvec3 tip = origin;
+        tip[axis] += length;
         s.lines.push_back({glm::vec3(origin), line});
         s.lines.push_back({glm::vec3(tip), line});
-        if (auto at = view.project(tip * 1.15))
+        if (auto at = view.project(origin + (tip - origin) * 1.15))
             p.text(*at + QPointF(0, 4), QString(QChar('X' + axis)), p.ink(kText, kAlpha, QRectF(*at - QPointF(6, 8), QSizeF(12, 16))),
                    OverlayPainter::Center);
     }

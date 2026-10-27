@@ -20,6 +20,7 @@
 #include "scene/Ghosts.h"
 #include "scene/Graph.h"
 #include "scene/LodGroup.h"
+#include "scene/ProxySet.h"
 #include "scene/ImagePlane.h"
 #include "scene/Materials.h"
 #include "scene/Measure.h"
@@ -28,6 +29,7 @@
 #include "scene/ObjectSets.h"
 #include "scene/Picker.h"
 #include "scene/Poses.h"
+#include "scene/Relocate.h"
 #include "scene/RenderSettings.h"
 #include "scene/Rig.h"
 #include "scene/SceneData.h"
@@ -183,6 +185,7 @@ void registerCommands()
     registerMeasureCommands();
     registerImagePlaneCommands();
     lod::registerCommands();
+    proxy::registerCommands();
     registerCameraCommands();
     registerLightCommands();
     spaces::registerCommands();
@@ -201,6 +204,7 @@ void registerCommands()
     textureFolders::registerCommands();
     displayLayers::registerCommands();
     objectSets::registerCommands();
+    relocate::registerCommands();
 
     loadNamingPolicy();
     PrefStore::get().onChanged([](const std::string& file) {

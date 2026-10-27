@@ -138,6 +138,8 @@ struct ExecEnv
     GeometryPtr input;
     std::map<std::string, Value> params;        // group inputs by name
     std::map<std::string, ObjectInput> objects; // by Object Info node name
+    /** The owner mesh's world matrix when the Object Info inputs were connected; Relative To owner reads objects against it. */
+    glm::dmat4 ownerMatrix{1.0};
     /** Set by the modifier while a Viewer is active; nested groups run without one. */
     ViewerSink* viewer = nullptr;
     /** The modifier node (scene::NodeId) running the group, which simulation nodes publish under; 0 elsewhere. */

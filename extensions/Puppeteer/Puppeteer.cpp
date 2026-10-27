@@ -15,6 +15,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
     puppeteer::registerControllerDrawing(ctx);
     puppeteer::registerSpinner(ctx);
     puppeteer::registerModes(ctx);
+    puppeteer::registerAnimProxy(ctx);
 
     // Animate-mode panels (anim/): add further anim registration calls here.
     puppeteer::registerAnimPanels(ctx);
