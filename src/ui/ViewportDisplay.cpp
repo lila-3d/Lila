@@ -42,6 +42,11 @@ bool defaultMaterial()
     return PrefStore::get().value<bool>("general", kDefaultMaterial, false);
 }
 
+bool highlightSelection()
+{
+    return PrefStore::get().value<bool>("general", kHighlightSelection, true);
+}
+
 ComponentThickness componentThickness()
 {
     const PrefStore& p = PrefStore::get();

@@ -200,6 +200,7 @@ std::optional<bool> viewportActionState(const std::string& id, const ViewportWid
         {"viewport.toggleBottomBar", vd::kBottomBar, true},
         {"viewport.grayscaleWeights", vd::kGrayscaleWeights, false},
         {"viewport.monotone", vd::kMonotone, false},
+        {"viewport.toggleHighlightSelection", vd::kHighlightSelection, true},
         {"viewport.togglePreselectObjects", "/viewport/preselect/objects", false},
         {"viewport.togglePreselectComponents", "/viewport/preselect/components", true},
         {"window.toggleToolBox", "/ui/showToolBox", true},
@@ -930,6 +931,7 @@ void ViewportBottomBar::snapGroup(QWidget* row, Tool t, const char* iconName, st
 void ViewportBottomBar::buildHighlightRow()
 {
     QWidget* row = group(false, 0, nullptr);
+    toggleButton(row, "viewport.toggleHighlightSelection", "highlight");
     toggleButton(row, "viewport.togglePreselectObjects", "pointer");
     toggleButton(row, "viewport.togglePreselectComponents", "vector-triangle");
 }

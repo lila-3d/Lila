@@ -34,6 +34,8 @@ inline constexpr const char* kVertexColors = "/viewport/vertexColors"; // "off",
 inline constexpr const char* kColorChannel = "/viewport/colorChannel"; // "rgb", "r", "g", "b" or "a" (grayscale)
 /** Weight displays (skin weights, soft select falloff) as a grayscale ramp instead of the colour ramp. */
 inline constexpr const char* kGrayscaleWeights = "/viewport/grayscaleWeights";
+/** Selected objects and components draw highlighted, with the symmetry line; off, they draw as if unselected (manipulators still show). */
+inline constexpr const char* kHighlightSelection = "/viewport/highlightSelection";
 inline constexpr int kDefaultSamples = 8;
 /** Preview-only post over the shaded scene: an anisotropic Kuwahara (painted look) and depth/normal outlines. */
 inline constexpr const char* kKuwahara = "/viewport/post/kuwahara";
@@ -109,6 +111,7 @@ LILA_UI_API void apply(render::FrameState& s);
 
 /** Shaded meshes ignore their materials and draw the plain default one. */
 LILA_UI_API bool defaultMaterial();
+LILA_UI_API bool highlightSelection();
 
 LILA_UI_API render::VertexColorMode vertexColorMode();
 LILA_UI_API render::ColorChannel colorChannel();

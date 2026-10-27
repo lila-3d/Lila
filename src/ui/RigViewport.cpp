@@ -11,6 +11,7 @@
 #include "ui/AnimProxyUi.h"
 #include "ui/DominantInfluenceUi.h"
 #include "ui/SpacesUi.h"
+#include "ui/ViewportDisplay.h"
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportTool.h"
 #include "ui/WeightPaintTool.h"
@@ -115,9 +116,11 @@ void drawJoints(render::FrameState& s, OverlayPainter&, const ViewInfo&)
     scene::Graph& g = scene::Graph::current();
     g.evaluate();
     std::unordered_set<NodeId> under;
-    for (NodeId id : g.selection())
-        for (NodeId d : g.descendants(id))
-            under.insert(d);
+    const bool highlight = viewportDisplay::highlightSelection();
+    if (highlight)
+        for (NodeId id : g.selection())
+            for (NodeId d : g.descendants(id))
+                under.insert(d);
     bool xray = PrefStore::get().value<bool>("general", "/rig/xrayJoints", false);
     auto& out = xray ? s.linesXray : s.lines;
     double scale = displayScale();
@@ -129,7 +132,7 @@ void drawJoints(render::FrameState& s, OverlayPainter&, const ViewInfo&)
             scene::Node* n = g.node(id);
             if (!drawn(*n))
                 continue;
-            int rank = g.isSelected(id) ? 2 : under.contains(id) ? 1 : 0;
+            int rank = highlight && g.isSelected(id) ? 2 : under.contains(id) ? 1 : 0;
             if (rank != pass)
                 continue;
             const glm::vec4& color = rank == 2 ? kSelectedColor : rank == 1 ? kChildOfSelectedColor : kJointColor;
@@ -169,7 +172,7 @@ void drawIkHandles(render::FrameState& s, OverlayPainter&, const ViewInfo&)
         scene::Node* n = g.node(id);
         if (!isIkHandle(*n))
             continue;
-        const glm::vec4& color = g.isSelected(id) ? kSelectedColor : kChildOfSelectedColor;
+        const glm::vec4& color = viewportDisplay::highlightSelection() && g.isSelected(id) ? kSelectedColor : kChildOfSelectedColor;
         glm::dvec3 p(n->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]);
         std::vector<NodeId> chain = scene::ik::chainOf(g, id);
         double r = 2.0 * scale;

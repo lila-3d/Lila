@@ -702,9 +702,11 @@ void ViewportWidget::submit()
 
     // Like Maya, everything under a selected transform highlights too, a step dimmer.
     std::unordered_set<scene::NodeId> underSelection;
-    for (scene::NodeId id : g.selection())
-        for (scene::NodeId d : g.descendants(id))
-            underSelection.insert(d);
+    const bool highlight = viewportDisplay::highlightSelection();
+    if (highlight)
+        for (scene::NodeId id : g.selection())
+            for (scene::NodeId d : g.descendants(id))
+                underSelection.insert(d);
 
     std::string mode = PrefStore::get().value<std::string>("general", "/viewport/displayMode", "shaded");
     bool wireOnShaded = PrefStore::get().value<bool>("general", "/viewport/wireOnShaded", false);
@@ -714,7 +716,7 @@ void ViewportWidget::submit()
     const glm::vec4 componentWire = componentPalette().wire;
     const float componentWireWidth = viewportDisplay::hairlineWidth(viewportDisplay::componentThickness().edge, devicePixelRatioF());
     std::unordered_set<scene::NodeId> hilite;
-    if (scene::components::mode() != scene::ComponentMode::Object)
+    if (highlight && scene::components::mode() != scene::ComponentMode::Object)
         for (scene::NodeId id : hilited(mIsolation))
             hilite.insert(id);
     const bool aids = displayAids::anyDrawn(mHudPanel);
@@ -791,7 +793,7 @@ void ViewportWidget::submit()
         // In component mode the hilited mesh shows a plain wire so the selected components stand out.
         bool componentMode = scene::components::mode() != scene::ComponentMode::Object;
         const scene::NodeId arrayed = scene::arrays::arrayAbove(g, id);
-        if (g.isSelected(id) && !componentMode)
+        if (highlight && g.isSelected(id) && !componentMode)
             d.flags |= render::DrawSelected;
         else if (mPreselect.mode == scene::ComponentMode::Object && !componentMode &&
                  (mPreselect.node == id || (arrayed != scene::kNoNode && preselectedArray(g, id, mPreselect.node))))
@@ -837,7 +839,7 @@ void ViewportWidget::submit()
                 !mIsolation.shows(id))
                 continue;
             bool hot = mPreselect.mode == scene::ComponentMode::Object && mPreselect.node == id;
-            int rank = g.isSelected(id) ? 2 : hot || underSelection.contains(id) ? 1 : 0;
+            int rank = highlight && g.isSelected(id) ? 2 : hot || underSelection.contains(id) ? 1 : 0;
             if (rank != pass)
                 continue;
             using HL = drawOverrides::Highlight;
@@ -1598,7 +1600,7 @@ void ViewportWidget::drawObjectSymmetryEdges(render::FrameState& s)
     LILA_ZONE();
 
     const PrefStore& prefs = PrefStore::get();
-    if (!prefs.value<bool>("general", viewportDisplay::kSymmetryEdges, true) ||
+    if (!viewportDisplay::highlightSelection() || !prefs.value<bool>("general", viewportDisplay::kSymmetryEdges, true) ||
         !prefs.value<bool>("general", viewportDisplay::kSymmetryEdgesObjectMode, true))
         return;
     scene::Graph& g = scene::Graph::current();
@@ -1686,6 +1688,8 @@ void ViewportWidget::drawComponents(render::FrameState& s)
         drawObjectSymmetryEdges(s);
         return;
     }
+    if (!viewportDisplay::highlightSelection())
+        return;
     scene::Graph& g = scene::Graph::current();
     std::vector<scene::NodeId> live = hilited(mIsolation);
     const ComponentPalette palette = componentPalette();

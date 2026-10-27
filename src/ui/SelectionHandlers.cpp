@@ -2,6 +2,7 @@
 
 #include "core/Log.h"
 #include "core/PrefStore.h"
+#include "scene/ComponentPick.h"
 #include "scene/Graph.h"
 #include "scene/Rig.h"
 #include "scene/SelectAs.h"
@@ -106,6 +107,10 @@ std::vector<std::string> redirect(const std::vector<Hit>& hits)
         if (!name.empty() && std::find(out.begin(), out.end(), name) == out.end())
             out.push_back(name);
     };
+    auto maskedOut = [](const std::string& name) {
+        const scene::Node* n = findNode(name);
+        return n && !scene::selectionMask::pickable(*n);
+    };
     for (const Hit& hit : hits)
     {
         std::optional<std::vector<std::string>> to;
@@ -123,11 +128,16 @@ std::vector<std::string> redirect(const std::vector<Hit>& hits)
             if (to)
                 break;
         }
-        if (!to)
-            push(hit.name);
-        else
+        std::vector<std::string> picked;
+        if (to)
             for (const std::string& name : *to)
-                push(applySelectAs(name));
+                if (std::string as = applySelectAs(name); !maskedOut(as))
+                    picked.push_back(as);
+        // A redirect onto a masked kind (a joint with the joint mask off) selects what was clicked instead.
+        if (picked.empty())
+            push(hit.name);
+        for (const std::string& name : picked)
+            push(name);
     }
     return out;
 }
