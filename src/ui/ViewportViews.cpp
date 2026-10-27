@@ -1,0 +1,665 @@
+#include "ui/ViewportWidgetDetail.h"
+
+namespace lila::ui
+{
+using namespace viewportDetail;
+
+void ViewportWidget::setView(const std::string& name)
+{
+    if (name == mViewName)
+        return;
+    if (!builtInView(name))
+    {
+        if (scene::Node* n = findNode(name); n && n->type().isA("camera"))
+            lookThrough(n->id());
+        return;
+    }
+    commitCameraEdit();
+    if (mViewName == "persp" && mLookThrough == scene::kNoNode)
+        mPerspCamera = mCamera;
+    if (mLookThrough != scene::kNoNode)
+    {
+        mLookThrough = scene::kNoNode;
+        mCamera.leaveLookThrough();
+    }
+    if (name == "persp")
+    {
+        bool zUp = mCamera.zUp;
+        mCamera = mPerspCamera;
+        mCamera.zUp = zUp;
+        mCamera.ortho = false;
+    }
+    else
+    {
+        glm::dvec3 target = mCamera.target;
+        double width = mCamera.ortho ? mCamera.orthoWidth : 2.0 * mCamera.distance * (mCamera.horizontalAperture * 0.5) / mCamera.focalLength;
+        mCamera.setView(name);
+        mCamera.target = target;
+        mCamera.orthoWidth = std::max(width, 1.0);
+    }
+    mViewName = name;
+    syncCameraSettings();
+    requestFrame();
+    Q_EMIT viewStateChanged();
+}
+
+nlohmann::json ViewportWidget::cameraState() const
+{
+    const bool through = mLookThrough != scene::kNoNode;
+    const std::string& view = through ? mReturnView : mViewName;
+    const bool persp = view == "persp";
+    nlohmann::json j{{"view", view}, {"persp", (persp && !through ? mCamera : mPerspCamera).poseJson()}};
+    if (!persp && !through)
+        j["camera"] = mCamera.poseJson();
+    return j;
+}
+
+void ViewportWidget::restoreCameraState(const nlohmann::json& state)
+{
+    if (!state.is_object())
+        return;
+    std::string view = state.value("view", std::string("persp"));
+    if (!builtInView(view))
+        return;
+    if (mLookThrough != scene::kNoNode)
+        stopLookingThrough();
+    commitCameraEdit();
+    mPerspCamera.setPose(state.value("persp", nlohmann::json()));
+    if (view == "persp")
+    {
+        bool zUp = mCamera.zUp;
+        mCamera = mPerspCamera;
+        mCamera.zUp = zUp;
+        mCamera.ortho = false;
+    }
+    else
+    {
+        mCamera.setView(view);
+        mCamera.setPose(state.value("camera", nlohmann::json()));
+    }
+    mViewName = view;
+    syncCameraSettings();
+    requestFrame();
+    Q_EMIT viewStateChanged();
+}
+
+void ViewportWidget::lookThrough(scene::NodeId camera)
+{
+    scene::Node* n = scene::Graph::current().node(camera);
+    if (!n || !n->type().isA("camera") || camera == mLookThrough)
+        return;
+    commitCameraEdit();
+    if (mLookThrough == scene::kNoNode)
+    {
+        mReturnView = mViewName;
+        if (mViewName == "persp")
+            mPerspCamera = mCamera;
+    }
+    mLookThrough = camera;
+    mViewName = n->path();
+    syncLookThrough();
+    syncCameraSettings();
+    requestFrame();
+    Q_EMIT viewStateChanged();
+}
+
+void ViewportWidget::syncLookThrough()
+{
+    if (mLookThrough == scene::kNoNode)
+        return;
+    scene::Graph& g = scene::Graph::current();
+    scene::Node* n = g.node(mLookThrough);
+    if (!n || !n->type().isA("camera"))
+    {
+        mCameraEdit.reset();
+        setView(mReturnView);
+        return;
+    }
+    g.evaluate();
+    mCamera.lookThrough(*n, n->as<glm::dmat4>(scene::Transform::kWorldMatrix));
+    bool renamed = n->path() != mViewName;
+    mViewName = n->path();
+    // The gate settings are the node's attributes, which can change under any edit.
+    syncCameraSettings();
+    if (renamed)
+        Q_EMIT viewStateChanged();
+}
+
+bool ViewportWidget::beginCameraEdit()
+{
+    scene::Node* n = scene::Graph::current().node(mLookThrough);
+    if (!n)
+        return false;
+    if (n->as<bool>(scene::Camera::kLocked))
+    {
+        // One message per gesture, not one per wheel click.
+        if (double now = nowMs(); now - mLockedWarnMs > 1500.0)
+        {
+            mLockedWarnMs = now;
+            log::warn("Camera '{}' is locked; unlock it (locked attribute) to move it through the view.", n->path());
+        }
+        return false;
+    }
+    if (mCameraEdit && mCameraEdit->id == mLookThrough)
+        return true;
+    commitCameraEdit();
+    CameraEdit edit{mLookThrough, {}};
+    for (int attr : kEditedAttrs)
+        edit.saved.emplace_back(attr, n->value(attr));
+    mCameraEdit = std::move(edit);
+    return true;
+}
+
+void ViewportWidget::previewCameraEdit()
+{
+    scene::Graph& g = scene::Graph::current();
+    scene::Node* n = mCameraEdit ? g.node(mCameraEdit->id) : nullptr;
+    if (!n)
+        return;
+    UndoStack& u = UndoStack::get();
+    bool was = u.enabled();
+    u.setEnabled(false);
+    try
+    {
+        g.evaluate();
+        glm::dmat4 placed = scene::camera::placedWorld(n->as<glm::dmat4>(scene::Transform::kWorldMatrix), mCamera.eye(), mCamera.target,
+                                                       mCamera.viewUp());
+        scene::Transform::setLocalMatrix(g, n->id(), glm::inverse(n->as<glm::dmat4>(scene::Transform::kParentMatrix)) * placed);
+        if (mCamera.ortho)
+            g.setValue({n->id(), scene::Camera::kOrthographicWidth, -1}, mCamera.orthoWidth);
+    }
+    catch (const std::exception& e)
+    {
+        log::error("{}", e.what());
+    }
+    u.setEnabled(was);
+}
+
+void ViewportWidget::commitCameraEdit()
+{
+    mWheelCommit->stop();
+    if (!mCameraEdit)
+        return;
+    CameraEdit edit = std::move(*mCameraEdit);
+    mCameraEdit.reset();
+    scene::Graph& g = scene::Graph::current();
+    scene::Node* n = g.node(edit.id);
+    if (!n)
+        return;
+    std::vector<int> changed;
+    for (auto& [attr, value] : edit.saved)
+        if (n->value(attr) != value)
+            changed.push_back(attr);
+    if (changed.empty())
+        return;
+    io::markModified();
+    if (!scene::anim::autoKey())
+        return;
+    // As Maya's Auto Key: only channels that already have keys get one.
+    try
+    {
+        UndoChunk chunk("Auto Key Camera");
+        for (const scene::anim::AnimatedPlug& a : scene::anim::animatedPlugs(g, edit.id))
+        {
+            if (std::ranges::find(changed, a.plug.attr) == changed.end())
+                continue;
+            const scene::PlugValue& v = n->value(a.plug.attr);
+            double value = a.plug.component >= 0 && std::holds_alternative<glm::dvec3>(v) ? std::get<glm::dvec3>(v)[a.plug.component]
+                           : std::holds_alternative<double>(v)                         ? std::get<double>(v)
+                                                                                        : 0.0;
+            ops::execute("setKeyframe", {{"args", {g.plugName(a.plug)}}, {"value", value}}, CallSource::UI);
+        }
+    }
+    catch (const CommandError& e)
+    {
+        log::error("{}", e.what());
+    }
+}
+
+scene::NodeId ViewportWidget::droppedCamera(const QMimeData* mime) const
+{
+    if (!mime || !mime->hasFormat(kNodeNamesMime))
+        return scene::kNoNode;
+    for (const QString& name : QString::fromUtf8(mime->data(kNodeNamesMime)).split(QChar('\n'), Qt::SkipEmptyParts))
+        if (scene::Node* n = findNode(name.toStdString()); n && n->type().isA("camera"))
+            return n->id();
+    return scene::kNoNode;
+}
+
+viewportHooks::DropTarget ViewportWidget::dropTarget(QPointF px)
+{
+    const selectionHandlers::Hit hit = selectionHit(px);
+    viewportHooks::DropTarget t;
+    t.node = hit.node;
+    t.face = hit.face;
+    t.position = hit.position;
+    t.view = viewInfo();
+    t.px = px;
+    return t;
+}
+
+void ViewportWidget::dragLeaveEvent(QDragLeaveEvent* e)
+{
+    // Only handlers that drew a preview care; there is no mime data to offer by now.
+    viewportHooks::DropTarget t;
+    t.view = viewInfo();
+    t.left = true;
+    static const QMimeData kEmpty;
+    viewportHooks::handleDrop(kEmpty, t, false);
+    e->accept();
+}
+
+void ViewportWidget::dragEnterEvent(QDragEnterEvent* e)
+{
+    if (droppedCamera(e->mimeData()) == scene::kNoNode)
+    {
+        // Hooks get the move events too: entering only asks whether any of them wants this kind of drag.
+        viewportHooks::DropTarget none;
+        none.view = viewInfo();
+        none.px = e->position();
+        if (!e->mimeData() || !viewportHooks::handleDrop(*e->mimeData(), none, false))
+            return e->ignore();
+        e->setDropAction(Qt::CopyAction);
+        return e->accept();
+    }
+    e->setDropAction(Qt::LinkAction);
+    e->accept();
+}
+
+void ViewportWidget::dragMoveEvent(QDragMoveEvent* e)
+{
+    if (droppedCamera(e->mimeData()) == scene::kNoNode)
+    {
+        if (!e->mimeData() || !viewportHooks::handleDrop(*e->mimeData(), dropTarget(e->position()), false))
+            return e->ignore();
+        e->setDropAction(Qt::CopyAction);
+        return e->accept();
+    }
+    e->setDropAction(Qt::LinkAction);
+    e->accept();
+}
+
+void ViewportWidget::dropEvent(QDropEvent* e)
+{
+    scene::NodeId cam = droppedCamera(e->mimeData());
+    if (cam == scene::kNoNode)
+    {
+        if (!e->mimeData() || !viewportHooks::handleDrop(*e->mimeData(), dropTarget(e->position()), true))
+            return e->ignore();
+        e->setDropAction(Qt::CopyAction);
+        e->accept();
+        setFocus();
+        return;
+    }
+    e->setDropAction(Qt::LinkAction);
+    e->accept();
+    // Focus makes this the active view, as a click would.
+    setFocus();
+    lookThrough(cam);
+}
+
+void ViewportWidget::syncCameraSettings()
+{
+    const scene::RenderSettings& r = scene::renderSettings();
+    scene::CameraSettings c = r.camera(mViewName);
+    mCamera.filmFit = c.filmFit;
+    mCamera.overscan = c.overscan;
+    mCamera.gateAspect = c.resolutionGate ? std::optional<double>(r.deviceAspect()) : std::nullopt;
+}
+
+void ViewportWidget::drawGate(OverlayPainter& p)
+{
+    const scene::RenderSettings& r = scene::renderSettings();
+    scene::CameraSettings c = r.camera(mViewName);
+    if (!c.resolutionGate && !c.filmGate)
+        return;
+    glm::dvec2 view = mCamera.viewExtents(aspect());
+    auto toRect = [&](glm::dvec2 half) {
+        double w = half.x / view.x * width(), h = half.y / view.y * height();
+        return QRectF((width() - w) * 0.5, (height() - h) * 0.5, w, h);
+    };
+    const glm::vec4 border = p.ink(0.75f, 0.9f);
+    auto outline = [&](QRectF g, bool dashed) {
+        QPointF pts[4] = {g.topLeft(), g.topRight(), g.bottomRight(), g.bottomLeft()};
+        for (int i = 0; i < 4; ++i)
+            dashed ? p.dashedLine(pts[i], pts[(i + 1) % 4], 1.0f, 6.0f, border) : p.line(pts[i], pts[(i + 1) % 4], 1.0f, border);
+    };
+    if (auto gate = mCamera.gateExtents(); gate && c.resolutionGate)
+    {
+        QRectF g = toRect(*gate);
+        if (c.gateMask && c.gateMaskOpacity > 0.0)
+        {
+            const glm::vec4 mask(0.1f, 0.1f, 0.1f, float(c.gateMaskOpacity));
+            QRectF all(0, 0, width(), height());
+            QRectF in = g.intersected(all);
+            p.rect(QRectF(0, 0, all.width(), in.top()), mask);
+            p.rect(QRectF(0, in.bottom(), all.width(), all.bottom() - in.bottom()), mask);
+            p.rect(QRectF(0, in.top(), in.left(), in.height()), mask);
+            p.rect(QRectF(in.right(), in.top(), all.right() - in.right(), in.height()), mask);
+        }
+        outline(g, false);
+        p.setShadow(true);
+        QString res = QString("%1 x %2").arg(r.width).arg(r.height);
+        double right = std::max(std::min(g.right(), width() - 4.0), 4.0 + OverlayPainter::textWidth(res));
+        p.text(QPointF(right, std::max(g.top() - 5.0, 14.0)), res, border, OverlayPainter::Right);
+        p.setShadow(false);
+    }
+    if (c.filmGate)
+        outline(toRect(mCamera.filmExtents()), true);
+}
+
+void ViewportWidget::toggleIsolate()
+{
+    if (mIsolation.active())
+        mIsolation.clear();
+    else
+    {
+        scene::Graph& g = scene::Graph::current();
+        g.evaluate();
+        mIsolation = scene::isolation::fromSelection(g);
+    }
+    setIsolation(std::move(mIsolation));
+}
+
+void ViewportWidget::addToIsolation()
+{
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    scene::isolation::addSelection(mIsolation, g);
+    setIsolation(std::move(mIsolation));
+}
+
+void ViewportWidget::removeFromIsolation()
+{
+    if (!mIsolation.active())
+        return;
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    scene::isolation::removeSelection(mIsolation, g);
+    setIsolation(std::move(mIsolation));
+}
+
+void ViewportWidget::setIsolation(scene::isolation::Set set)
+{
+    mIsolation = std::move(set);
+    clearPreselect();
+    requestFrame();
+    Q_EMIT viewStateChanged();
+}
+
+render::Renderer::FrameStats ViewportWidget::frameStats() const
+{
+    return mId ? render::Renderer::get().stats(mId) : render::Renderer::FrameStats{};
+}
+
+void ViewportWidget::drawHud(OverlayPainter& p)
+{
+    double now = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    render::Renderer::FrameStats stats = render::Renderer::get().stats(mId);
+    mFrameSamples.emplace_back(now, stats.frames);
+    while (now - mFrameSamples.front().first > 1000.0)
+        mFrameSamples.pop_front();
+    hud::Context ctx;
+    ctx.panel = mHudPanel;
+    ctx.view = viewInfo();
+    if (mIsolation.active())
+        ctx.isolation = &mIsolation;
+    // Counts cover what this view draws, so they skip the same nodes the mesh pass does.
+    ctx.shownNode = [this, lodHidden = scene::lod::hidden(scene::Graph::current(), lodDisplay::view(mHudPanel, ctx.view))](scene::NodeId id) {
+        const scene::Node* n = scene::Graph::current().node(id);
+        return n && mIsolation.shows(id) && !lodHidden.contains(id) && scene::selectionMask::shown(*n) && !viewportHooks::hiddenInView(id);
+    };
+    // Frames the renderer drew, not states submitted: mouse moves submit far more often than the display can show.
+    double span = mFrameSamples.back().first - mFrameSamples.front().first;
+    ctx.framesPerSecond = span > 100.0 ? double(mFrameSamples.back().second - mFrameSamples.front().second) * 1000.0 / span : 0.0;
+    ctx.gpuMs = stats.gpuMs;
+    ctx.aoMs = stats.aoMs;
+    std::vector<QRectF> drawn;
+    ctx.drawn = &drawn;
+    // A provisional uv count settles on the next frame once the mesh stops changing, which needs a frame to happen.
+    if (hud::draw(p, ctx) && !mHudRefreshQueued)
+    {
+        mHudRefreshQueued = true;
+        QTimer::singleShot(200, this, [this] {
+            mHudRefreshQueued = false;
+            requestFrame();
+        });
+    }
+    flushToolMessages(p, ctx.view, drawn);
+}
+
+void ViewportWidget::drawViewIndicator(OverlayPainter& p)
+{
+    // Axis triad in the bottom-left corner plus the view's name, Maya style. Letters tell the axes apart in monotone.
+    glm::dmat3 v(mCamera.view());
+    QPointF origin(36, height() - 36);
+    const QRectF corner(0, height() - 72, 72, 72);
+    bool axes = hud::shown(mHudPanel, "viewAxis");
+    bool colored = viewportDisplay::accentColors(viewportDisplay::kViewAxisColors);
+    p.setShadow(true);
+    for (int axis = 0; axes && axis < 3; ++axis)
+    {
+        glm::dvec3 d = v * glm::dvec3(axis == 0, axis == 1, axis == 2);
+        QPointF tip = origin + QPointF(d.x, -d.y) * 22.0;
+        // Pointing away from the viewer (view -Z) reads dimmer.
+        glm::vec4 c = colored ? glm::vec4(viewportDisplay::axisColor(axis) * (d.z < 0.0 ? 0.6f : 1.0f), 1.0f)
+                              : p.ink(d.z < 0.0 ? 0.45f : 0.9f, 1.0f, corner);
+        p.line(origin, tip, 1.5f, c);
+        p.text(tip + QPointF(d.x, -d.y) * 8.0 + QPointF(0, 4), QString(QChar('X' + axis)), c, OverlayPainter::Center);
+    }
+    if (hud::shown(mHudPanel, "cameraNames"))
+    {
+        QString name = QString::fromStdString(mViewName);
+        double w = OverlayPainter::textWidth(name);
+        QRectF under((width() - w) / 2.0, height() - 24, w, 16);
+        p.text(QPointF(width() / 2.0, height() - 12), name, p.ink(0.75f, 0.9f, under), OverlayPainter::Center);
+    }
+    p.setShadow(false);
+}
+
+std::string ViewportWidget::skinnedMeshAt(QPointF at)
+{
+    scene::Graph& g = scene::Graph::current();
+    for (const std::string& name : hitTest(at, at))
+        if (scene::Node* n = findNode(name); n && n->type().isA("mesh") && scene::skin::find(g, n->id()) != scene::kNoNode)
+            return name;
+    return {};
+}
+
+void ViewportWidget::frameSelection(bool all)
+{
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    if (mLookThrough != scene::kNoNode)
+    {
+        syncLookThrough();
+        if (!beginCameraEdit())
+            return;
+    }
+    CameraView before = cameraView();
+    std::vector<scene::NodeId> ids = all ? g.nodes() : g.selection();
+    const bool inherit = scene::inheritVisibility();
+    glm::dvec3 lo(1e30), hi(-1e30);
+    int count = 0;
+    if (!all && scene::components::mode() != scene::ComponentMode::Object)
+    {
+        for (const auto& [id, picked] : scene::components::selected(scene::components::mode()))
+        {
+            scene::Node* n = g.node(id);
+            if (!n || picked.empty())
+                continue;
+            if (scene::components::pointProvider(*n))
+            {
+                std::unordered_set<uint32_t> want(picked.begin(), picked.end());
+                for (auto& [cid, w] : worldPoints(g, id))
+                    if (want.contains(cid))
+                    {
+                        lo = glm::min(lo, w);
+                        hi = glm::max(hi, w);
+                        ++count;
+                    }
+                continue;
+            }
+            const scene::MeshPtr& mesh = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+            if (!mesh)
+                continue;
+            glm::dmat4 world = shownWorld(*n);
+            for (uint32_t p : scene::components::pointsOf(id))
+                if (mesh->pointValid(p))
+                {
+                    glm::dvec3 w(world * glm::dvec4(mesh->position(p), 1.0));
+                    lo = glm::min(lo, w);
+                    hi = glm::max(hi, w);
+                    ++count;
+                }
+        }
+        if (count > 0)
+        {
+            // A lone vertex has no extent; keep some context around it like Maya does.
+            double radius = std::max(glm::length(hi - lo) * 0.5, 5.0);
+            mCamera.frame((lo + hi) * 0.5, radius, aspect());
+            if (mLookThrough != scene::kNoNode)
+                previewCameraEdit();
+            recordCamera(before);
+            commitCameraEdit();
+            requestFrame();
+            return;
+        }
+    }
+    auto addGeometry = [&](scene::Node* n) {
+        if (scene::components::pointProvider(*n))
+        {
+            auto pts = worldPoints(g, n->id());
+            for (auto& [cid, w] : pts)
+            {
+                lo = glm::min(lo, w);
+                hi = glm::max(hi, w);
+            }
+            return !pts.empty();
+        }
+        if (!n->type().isA("mesh"))
+            return false;
+        auto rm = renderMeshFor(n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh));
+        if (!rm || rm->vertices.empty())
+            return false;
+        const glm::dmat4 world = shownWorld(*n);
+        std::vector<glm::dmat4> placed{world};
+        for (const scene::arrays::Copy& c : scene::arrays::copiesOf(g, n->id()))
+            placed.push_back(c.transform * world);
+        for (const glm::dmat4& at : placed)
+            for (int c = 0; c < 8; ++c)
+            {
+                glm::dvec3 corner((c & 1) ? rm->boundsMax.x : rm->boundsMin.x, (c & 2) ? rm->boundsMax.y : rm->boundsMin.y,
+                                  (c & 4) ? rm->boundsMax.z : rm->boundsMin.z);
+                glm::dvec3 w(at * glm::dvec4(corner, 1.0));
+                lo = glm::min(lo, w);
+                hi = glm::max(hi, w);
+            }
+        return true;
+    };
+    bool group = false;
+    for (scene::NodeId id : ids)
+    {
+        scene::Node* n = g.node(id);
+        if (!n || !n->type().dag || id == mLookThrough || (all && !scene::effectivelyVisible(g, id, inherit)))
+            continue;
+        bool geometry = addGeometry(n);
+        if (!all)
+            for (scene::NodeId d : g.descendants(id))
+                if (scene::Node* dn = g.node(d); dn && dn->type().dag && scene::effectivelyVisible(g, d, inherit) && addGeometry(dn))
+                {
+                    group = group || !n->type().isA("mesh");
+                    geometry = true;
+                }
+        // Only geometry decides the framing; a bare pivot counts when nothing under it has any.
+        if (!geometry)
+        {
+            glm::dvec3 p(n->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]);
+            lo = glm::min(lo, p - 1.0);
+            hi = glm::max(hi, p + 1.0);
+        }
+        ++count;
+    }
+    if (count == 0)
+    {
+        lo = glm::dvec3(-50.0);
+        hi = glm::dvec3(50.0);
+    }
+    // Maya frames a group from further out than a single mesh.
+    double radius = glm::length(hi - lo) * 0.5 * (group ? 2.0 : 1.0);
+    mCamera.frame((lo + hi) * 0.5, radius, aspect());
+    if (mLookThrough != scene::kNoNode)
+        previewCameraEdit();
+    recordCamera(before);
+    commitCameraEdit();
+    requestFrame();
+}
+
+std::optional<glm::dvec3> ViewportWidget::surfaceAt(QPointF px)
+{
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    const ViewInfo view = viewInfo();
+    glm::dvec3 o, d;
+    view.ray(px, o, d);
+    const bool inherit = scene::inheritVisibility();
+    const std::unordered_set<scene::NodeId> lodHidden = scene::lod::hidden(g, lodDisplay::view(mHudPanel, view));
+    double nearest = 1e300;
+    for (scene::NodeId id : g.nodes())
+    {
+        scene::Node* n = g.node(id);
+        if (!n->type().isA("mesh") || overridden(*n) || !scene::effectivelyVisible(g, id, inherit) || !mIsolation.shows(id) ||
+            !scene::selectionMask::shown(*n) || viewportHooks::hiddenInView(id) || lodHidden.contains(id))
+            continue;
+        const int smooth = int(n->as<int64_t>(scene::MeshNode::kSmoothPreview));
+        const scene::MeshPtr& mesh = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+        const glm::dmat4 world = shownWorld(*n);
+        std::vector<glm::dmat4> placed{world};
+        for (const scene::arrays::Copy& c : scene::arrays::copiesOf(g, id))
+            placed.push_back(c.transform * world);
+        for (const glm::dmat4& at : placed)
+            if (auto hit = isolate::raycast(&mIsolation, id, mesh, at, o, d, smooth); hit && hit->distance < nearest)
+                nearest = hit->distance;
+    }
+    if (nearest == 1e300)
+        return std::nullopt;
+    return o + d * nearest;
+}
+
+bool ViewportWidget::frameAt(QPointF px)
+{
+    std::optional<glm::dvec3> hit = surfaceAt(px);
+    if (!hit)
+        return false;
+    if (mLookThrough != scene::kNoNode)
+    {
+        syncLookThrough();
+        if (!beginCameraEdit())
+            return true;
+    }
+    CameraView before = cameraView();
+    const glm::dvec3 eye = mCamera.eye();
+    mCamera.target = *hit;
+    if (!mCamera.ortho)
+        mCamera.distance = std::max(glm::length(*hit - eye), 0.5);
+    if (mLookThrough != scene::kNoNode)
+        previewCameraEdit();
+    recordCamera(before);
+    commitCameraEdit();
+    requestFrame();
+    return true;
+}
+
+void ViewportWidget::frameUnderCursor()
+{
+    const QPointF cursor = mapFromGlobal(QCursor::pos().toPointF());
+    if (rect().contains(cursor.toPoint()))
+    {
+        frameAt(cursor);
+        return;
+    }
+    mFramePickArmed = true;
+    updateCursor();
+}
+
+} // namespace lila::ui
