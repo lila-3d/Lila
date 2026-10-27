@@ -123,3 +123,111 @@ TEST_CASE("text: textCurves is live and drives a bevel")
     CHECK(run("curveData", {{"args", {curve}}}).size() == before);
     CHECK(!run("fontList").empty());
 }
+
+TEST_CASE("text: wrapping, justify, anchor, case and styling")
+{
+    using curve::TextOptions;
+    D3 lo, hi;
+    auto box = [&](const TextOptions& o) {
+        curve::TextResult r = curve::textCurves(o);
+        CHECK(r.warnings.empty());
+        bounds(r.curves, lo, hi);
+        return r;
+    };
+    TextOptions o;
+    o.size = 10.0;
+
+    // Wrapping breaks between words; a long word breaks inside itself.
+    o.text = "HH HH HH";
+    box(o);
+    double oneLine = hi.x - lo.x, top = hi.y;
+    o.wrapWidth = oneLine * 0.5;
+    box(o);
+    CHECK(hi.x - lo.x <= o.wrapWidth + 1e-6);
+    CHECK(lo.y < -10.0);
+    o.text = "HHHHHHHH";
+    box(o);
+    CHECK(hi.x - lo.x <= o.wrapWidth + 1e-6);
+    CHECK(lo.y < -5.0);
+
+    // Justify stretches every wrapped line but the last to the wrap width.
+    o.text = "H HH H HH H";
+    o.wrapWidth = oneLine * 0.8;
+    o.align = curve::TextAlign::Justify;
+    curve::TextResult j = box(o);
+    double firstLineRight = -1e300;
+    for (size_t c = 0; c < j.curves.size(); ++c)
+    {
+        D3 a, b;
+        curve::bounds(j.curves[c], a, b);
+        if (a.y > -1.0)
+            firstLineRight = std::max(firstLineRight, b.x);
+    }
+    CHECK(firstLineRight > o.wrapWidth * 0.97);
+    o.align = curve::TextAlign::Left;
+    o.wrapWidth = 0.0;
+
+    // Anchors move the block onto y = 0.
+    o.text = "H\nH";
+    o.anchor = curve::TextAnchor::Top;
+    box(o);
+    CHECK(hi.y < 1e-6);
+    CHECK(hi.y > -3.0);
+    o.anchor = curve::TextAnchor::Bottom;
+    box(o);
+    CHECK(lo.y > -1e-6);
+    o.anchor = curve::TextAnchor::Middle;
+    box(o);
+    CHECK(lo.y < 0.0);
+    CHECK(hi.y > 0.0);
+    o.anchor = curve::TextAnchor::Baseline;
+
+    // Case changes the glyphs drawn, not the text.
+    o.text = "x";
+    box(o);
+    double lowerTop = hi.y;
+    o.textCase = curve::TextCase::Upper;
+    box(o);
+    CHECK(hi.y > lowerTop + 1.0);
+    o.textCase = curve::TextCase::AsTyped;
+
+    // Width scales, slant leans, weight grows the outline.
+    o.text = "H";
+    box(o);
+    double w = hi.x - lo.x, left = lo.x;
+    CHECK(top > 0.0);
+    o.width = 2.0;
+    box(o);
+    CHECK(hi.x - lo.x == doctest::Approx(w * 2.0).epsilon(0.02));
+    o.width = 1.0;
+    o.slant = 15.0;
+    box(o);
+    CHECK(hi.x - lo.x > w + 1.0);
+    o.slant = 0.0;
+    o.weight = 0.3;
+    box(o);
+    CHECK(hi.x - lo.x == doctest::Approx(w + 0.6).epsilon(0.02));
+    CHECK(lo.x == doctest::Approx(left - 0.3).epsilon(0.05));
+    o.weight = 0.0;
+
+    // Underline and strike join the letters into one outline per line.
+    o.text = "HH";
+    size_t plain = curve::textCurves(o).curves.size();
+    o.underline = true;
+    curve::TextResult u = box(o);
+    CHECK(lo.y < -0.2);
+    CHECK(u.curves.size() == plain + 1);
+    o.underline = false;
+    o.strikethrough = true;
+    curve::TextResult st = box(o);
+    curve::PlaneFrame xy = curve::planeFrame(D3(0.0), D3(0, 0, 1));
+    CHECK(curve::nestLoops(curve::loopsOf(st.curves, xy, {})).size() == 1);
+    CHECK(lo.y > -1e-6);
+
+    // Families and styles for the pickers.
+    std::vector<curve::FontFamily> fams = curve::fontFamilies();
+    auto inter = std::find_if(fams.begin(), fams.end(), [](const curve::FontFamily& f) { return f.family == "Inter"; });
+    REQUIRE(inter != fams.end());
+    CHECK(inter->styles.front() == "Regular");
+    CHECK(std::find(inter->styles.begin(), inter->styles.end(), "Italic") != inter->styles.end());
+}

@@ -8,7 +8,9 @@
 #include "core/Workspace.h"
 #include "scene/Graph.h"
 #include "ui/Deletion.h"
+#include "ui/FontPicker.h"
 #include "ui/Icons.h"
+#include "ui/MultilineEdit.h"
 #include "ui/NumberExpr.h"
 #include "ui/SpinScrub.h"
 #include "ui/Theme.h"
@@ -462,6 +464,23 @@ void AttributeEditor::rebuild()
         }
         case PlugType::String:
         {
+            if ((def.flags & scene::AttrFont) && !readOnly)
+            {
+                auto* picker = new FontPicker;
+                connect(picker, &FontPicker::chosen, this, [this, attr](const QString& font) { set(attr, font.toStdString()); });
+                mUpdaters.push_back([picker, ref] { picker->setValue(std::get<std::string>(Graph::current().value(ref))); });
+                field = picker;
+                break;
+            }
+            if (def.flags & scene::AttrMultiline)
+            {
+                auto* box = new MultilineEdit;
+                box->setReadOnly(readOnly);
+                connect(box, &MultilineEdit::committed, this, [this, attr](const QString& text) { set(attr, text.toStdString()); });
+                mUpdaters.push_back([box, ref] { box->showText(std::get<std::string>(Graph::current().value(ref))); });
+                field = box;
+                break;
+            }
             auto* e = new QLineEdit;
             e->setReadOnly(readOnly);
             connect(e, &QLineEdit::editingFinished, this, [this, e, attr] {

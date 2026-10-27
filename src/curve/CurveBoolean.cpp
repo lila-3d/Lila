@@ -479,6 +479,45 @@ CurveBooleanResult curveBoolean(const std::vector<Splines>& operands, const Curv
     return res;
 }
 
+namespace
+{
+/** A closed outline as Beziers: where it turns sharply it keeps a corner, a run between two corners is a line, the rest is fit. */
+Spline fitOutline(const std::vector<D3>& pts, double tolerance)
+{
+    const size_t n = pts.size();
+    std::vector<size_t> corners;
+    for (size_t i = 0; i < n; ++i)
+    {
+        D3 u = pts[i] - pts[(i + n - 1) % n], v = pts[(i + 1) % n] - pts[i];
+        double lu = glm::length(u), lv = glm::length(v);
+        if (lu > 0.0 && lv > 0.0 && std::acos(std::clamp(glm::dot(u, v) / (lu * lv), -1.0, 1.0)) > 0.35)
+            corners.push_back(i);
+    }
+    if (corners.empty())
+        return fitBezier(pts, true, tolerance, 0.3);
+    std::vector<Piece> ps;
+    for (size_t k = 0; k < corners.size(); ++k)
+    {
+        size_t a = corners[k], b = corners[(k + 1) % corners.size()];
+        std::vector<D3> run;
+        for (size_t i = a;; i = (i + 1) % n)
+        {
+            run.push_back(pts[i]);
+            if (i == b && run.size() > 1)
+                break;
+        }
+        if (run.size() == 2)
+        {
+            ps.push_back(linePiece(run[0], run[1]));
+            continue;
+        }
+        for (Piece& p : pieces(fitBezier(run, false, tolerance, 0.3)))
+            ps.push_back(std::move(p));
+    }
+    return fromPieces(ps, true, Kind::Bezier);
+}
+} // namespace
+
 CurveBooleanResult regionOffset(const Splines& curves, const RegionOffsetOptions& o)
 {
     LILA_ZONE();
@@ -532,7 +571,7 @@ CurveBooleanResult regionOffset(const Splines& curves, const RegionOffsetOptions
         }
         else
         {
-            s = fitBezier(pts, true, o.tolerance, 0.3);
+            s = fitOutline(pts, o.tolerance);
             vectorHandlesOnLines(s);
         }
         if (s.size() >= 2 && isValid(s))

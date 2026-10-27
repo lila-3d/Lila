@@ -76,6 +76,8 @@ enum AttrFlags : uint32_t
     AttrArray = 1 << 9,             // any number of elements (node.attr[3]); with AttrStorable they hold values, else only connections
     AttrUser = 1 << 10,             // added to one node by addAttr rather than declared by its type
     AttrChannelBox = 1 << 11,       // shown in the channel box although not keyable
+    AttrMultiline = 1 << 12,        // String of several lines: editors offer a text box
+    AttrFont = 1 << 13,             // String naming a font (family and style, or a file): editors offer font pickers
 };
 
 struct AttrDef

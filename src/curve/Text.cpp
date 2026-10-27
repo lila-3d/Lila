@@ -400,6 +400,105 @@ std::vector<std::string> fontNames()
     return out;
 }
 
+std::vector<FontFamily> fontFamilies()
+{
+    std::map<std::string, std::vector<std::string>> byFamily;
+    for (const auto* list : {&bundledFonts(), &systemFonts()})
+        for (const FontEntry& e : *list)
+        {
+            std::vector<std::string>& styles = byFamily[e.family];
+            std::string style = e.style.empty() ? "Regular" : e.style;
+            if (std::find(styles.begin(), styles.end(), style) == styles.end())
+                styles.push_back(style);
+        }
+    std::vector<FontFamily> out;
+    for (auto& [family, styles] : byFamily)
+    {
+        // Regular first, then by name.
+        std::sort(styles.begin(), styles.end(), [](const std::string& a, const std::string& b) {
+            bool ra = norm(a) == "regular", rb = norm(b) == "regular";
+            return ra != rb ? ra : a < b;
+        });
+        out.push_back({family, std::move(styles)});
+    }
+    return out;
+}
+
+namespace
+{
+/** Upper or lower case for the Latin, Greek and Cyrillic letters that have one; anything else comes back as is. */
+uint32_t changeCase(uint32_t c, bool upper)
+{
+    if (upper)
+    {
+        if ((c >= 'a' && c <= 'z') || (c >= 0xE0 && c <= 0xFE && c != 0xF7) || (c >= 0x3B1 && c <= 0x3C9 && c != 0x3C2) || (c >= 0x430 && c <= 0x44F))
+            return c - 0x20;
+        if (c == 0x3C2)
+            return 0x3A3;
+        if (c == 0xFF)
+            return 0x178;
+        if (c >= 0x450 && c <= 0x45F)
+            return c - 0x50;
+        if (((c >= 0x100 && c <= 0x137) || (c >= 0x14A && c <= 0x177)) && (c & 1))
+            return c - 1;
+        if (((c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E)) && !(c & 1))
+            return c - 1;
+        return c;
+    }
+    if ((c >= 'A' && c <= 'Z') || (c >= 0xC0 && c <= 0xDE && c != 0xD7) || (c >= 0x391 && c <= 0x3A9) || (c >= 0x410 && c <= 0x42F))
+        return c + 0x20;
+    if (c == 0x178)
+        return 0xFF;
+    if (c >= 0x400 && c <= 0x40F)
+        return c + 0x50;
+    if (((c >= 0x100 && c <= 0x137) || (c >= 0x14A && c <= 0x177)) && !(c & 1))
+        return c + 1;
+    if (((c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E)) && (c & 1))
+        return c + 1;
+    return c;
+}
+
+bool isSpace(uint32_t c) { return c == ' ' || c == '\t' || c == '\r' || c == 0xA0; }
+
+void applyCase(std::vector<uint32_t>& cps, TextCase mode)
+{
+    if (mode == TextCase::AsTyped)
+        return;
+    bool wordStart = true;
+    for (uint32_t& c : cps)
+    {
+        bool letter = changeCase(c, true) != c || changeCase(c, false) != c;
+        c = changeCase(c, mode == TextCase::Upper || (mode == TextCase::Title && wordStart));
+        if (letter)
+            wordStart = false;
+        else if (isSpace(c) || c == '\n' || c == '-')
+            wordStart = true;
+    }
+}
+
+int16_t fontShort(const Font& f, const char* table, int offset, int16_t fallback)
+{
+    uint32_t at = stbtt__find_table(f.info.data, uint32_t(f.info.fontstart), table);
+    if (!at || size_t(at) + size_t(offset) + 2 > f.data.size())
+        return fallback;
+    return int16_t(be16(f.info.data + at + offset));
+}
+
+Spline rectangle(double x0, double y0, double x1, double y1)
+{
+    D4 a(x0, y0, 0.0, 1.0), b(x1, y0, 0.0, 1.0), c(x1, y1, 0.0, 1.0), d(x0, y1, 0.0, 1.0);
+    Spline s = fromPieces({{{a, b}}, {{b, c}}, {{c, d}}, {{d, a}}}, true, Kind::Bezier);
+    vectorHandlesOnLines(s);
+    return s;
+}
+
+struct Line
+{
+    size_t begin = 0, end = 0;
+    bool paragraphEnd = true;
+};
+} // namespace
+
 TextResult textCurves(const TextOptions& o)
 {
     LILA_ZONE();
@@ -419,53 +518,174 @@ TextResult textCurves(const TextOptions& o)
         return res;
     }
     res.fontPath = spec;
-    double size = std::max(o.size, 1e-6);
-    double scale = stbtt_ScaleForMappingEmToPixels(&font->info, float(size));
+    const double size = std::max(o.size, 1e-6);
+    const double scale = stbtt_ScaleForMappingEmToPixels(&font->info, float(size));
+    const double xScale = scale * std::max(o.width, 1e-3);
     int ascent = 0, descent = 0, gap = 0;
     stbtt_GetFontVMetrics(&font->info, &ascent, &descent, &gap);
-    double lineHeight = (ascent - descent + gap) * scale * o.lineSpacing;
+    const double lineHeight = (ascent - descent + gap) * scale * o.lineSpacing;
+    const int unitsPerEm = int(std::lround(size / scale));
 
     std::vector<uint32_t> cps = decodeUtf8(o.text);
+    applyCase(cps, o.textCase);
+    const size_t n = cps.size();
+    std::vector<int> glyph(n, 0);
+    std::vector<double> advance(n, 0.0), kern(n, 0.0);
     std::vector<std::string> missing;
-    double y = 0.0;
-    size_t lineStart = 0;
-    for (size_t at = 0; at <= cps.size(); ++at)
+    for (size_t k = 0; k < n; ++k)
     {
-        if (at < cps.size() && cps[at] != '\n')
+        if (cps[k] == '\n')
             continue;
-        // Lay the line out from x = 0, then shift it for the alignment.
-        double x = 0.0;
-        int prev = 0;
-        size_t firstCurve = res.curves.size();
-        for (size_t k = lineStart; k < at; ++k)
+        uint32_t cp = isSpace(cps[k]) ? ' ' : cps[k];
+        int g = stbtt_FindGlyphIndex(&font->info, int(cp));
+        if (g == 0 && cp != ' ')
         {
-            uint32_t cp = cps[k] == '\t' ? ' ' : cps[k];
-            int g = stbtt_FindGlyphIndex(&font->info, int(cp));
-            if (g == 0 && cp != ' ' && cp != '\r')
-            {
-                std::string ch = encodeUtf8(cp);
-                if (std::find(missing.begin(), missing.end(), ch) == missing.end())
-                    missing.push_back(ch);
-            }
-            if (o.kerning && prev && g)
-                x += stbtt_GetGlyphKernAdvance(&font->info, prev, g) * scale;
-            for (Spline& s : glyphCurves(*font, g, scale, D3(x, y, 0.0)))
-            {
-                res.curves.push_back(std::move(s));
-                res.character.push_back(int(k));
-            }
-            int advance = 0, lsb = 0;
-            stbtt_GetGlyphHMetrics(&font->info, g, &advance, &lsb);
-            x += advance * scale + o.letterSpacing;
-            prev = g;
+            std::string ch = encodeUtf8(cp);
+            if (std::find(missing.begin(), missing.end(), ch) == missing.end())
+                missing.push_back(ch);
         }
-        double width = std::max(0.0, x - (at > lineStart ? o.letterSpacing : 0.0));
-        double shift = o.align == TextAlign::Center ? -width * 0.5 : o.align == TextAlign::Right ? -width : 0.0;
-        if (shift != 0.0)
-            for (size_t c = firstCurve; c < res.curves.size(); ++c)
-                transform(res.curves[c], glm::translate(glm::dmat4(1.0), D3(shift, 0.0, 0.0)));
-        y -= lineHeight;
-        lineStart = at + 1;
+        glyph[k] = g;
+        int adv = 0, lsb = 0;
+        stbtt_GetGlyphHMetrics(&font->info, g, &adv, &lsb);
+        advance[k] = adv * xScale + o.letterSpacing + (cp == ' ' ? o.wordSpacing : 0.0);
+        if (o.kerning && k > 0 && glyph[k - 1] && g)
+            kern[k] = stbtt_GetGlyphKernAdvance(&font->info, glyph[k - 1], g) * xScale;
+    }
+
+    // From the first character's origin to the end of the last visible one, without its letter spacing.
+    auto measure = [&](size_t b, size_t e, int* spaces) {
+        double x = 0.0, ink = 0.0;
+        int gaps = 0, pending = 0;
+        bool seen = false;
+        for (size_t k = b; k < e; ++k)
+        {
+            if (k > b)
+                x += kern[k];
+            x += advance[k];
+            if (isSpace(cps[k]))
+                ++pending;
+            else
+            {
+                ink = x - o.letterSpacing;
+                if (seen)
+                    gaps += pending;
+                pending = 0;
+                seen = true;
+            }
+        }
+        if (spaces)
+            *spaces = gaps;
+        return ink;
+    };
+
+    std::vector<Line> lines;
+    const double wrap = std::max(0.0, o.wrapWidth);
+    for (size_t ps = 0; ps <= n;)
+    {
+        size_t pe = ps;
+        while (pe < n && cps[pe] != '\n')
+            ++pe;
+        if (ps == pe)
+            lines.push_back({ps, pe, true});
+        for (size_t ls = ps; ls < pe;)
+        {
+            size_t k = ls, breakAt = std::string::npos;
+            bool ink = false;
+            for (; k < pe; ++k)
+            {
+                if (isSpace(cps[k]))
+                {
+                    if (ink && !isSpace(cps[k - 1]))
+                        breakAt = k;
+                    continue;
+                }
+                if (wrap > 0.0 && ink && measure(ls, k + 1, nullptr) > wrap * (1.0 + 1e-9))
+                    break;
+                ink = true;
+            }
+            if (k == pe)
+            {
+                lines.push_back({ls, pe, true});
+                break;
+            }
+            size_t end = breakAt != std::string::npos ? breakAt : k;
+            lines.push_back({ls, end, false});
+            ls = end;
+            while (ls < pe && isSpace(cps[ls]))
+                ++ls;
+            if (ls == pe)
+                lines.back().paragraphEnd = true;
+        }
+        ps = pe + 1;
+    }
+
+    double blockWidth = wrap;
+    if (blockWidth <= 0.0)
+        for (const Line& l : lines)
+            blockWidth = std::max(blockWidth, measure(l.begin, l.end, nullptr));
+
+    glm::dmat4 shape(1.0);
+    shape[0][0] = xScale / scale;
+    shape[1][0] = std::tan(glm::radians(std::clamp(o.slant, -60.0, 60.0)));
+    const double underPos = fontShort(*font, "post", 8, int16_t(-unitsPerEm / 10)) * scale;
+    const double underSize = std::max<int16_t>(1, fontShort(*font, "post", 10, int16_t(unitsPerEm / 20))) * scale;
+    const double strikePos = fontShort(*font, "OS/2", 28, int16_t(ascent * 3 / 10)) * scale;
+    const double strikeSize = std::max<int16_t>(1, fontShort(*font, "OS/2", 26, int16_t(unitsPerEm / 20))) * scale;
+
+    std::vector<int> lineOf;
+    Splines bars;
+    std::vector<int> barLine;
+    for (size_t li = 0; li < lines.size(); ++li)
+    {
+        const Line& l = lines[li];
+        const double y = -double(li) * lineHeight;
+        int spaces = 0;
+        double width = measure(l.begin, l.end, &spaces);
+        double extra = 0.0, shift = 0.0;
+        if (o.align == TextAlign::Justify && !l.paragraphEnd && spaces > 0 && blockWidth > width)
+        {
+            extra = (blockWidth - width) / spaces;
+            width = blockWidth;
+        }
+        else if (o.align == TextAlign::Center)
+            shift = -width * 0.5;
+        else if (o.align == TextAlign::Right)
+            shift = -width;
+        double x = shift;
+        bool seen = false;
+        for (size_t k = l.begin; k < l.end; ++k)
+        {
+            if (k > l.begin)
+                x += kern[k];
+            if (!isSpace(cps[k]))
+            {
+                glm::dmat4 m = glm::translate(glm::dmat4(1.0), D3(x, y, 0.0)) * shape;
+                for (Spline& s : glyphCurves(*font, glyph[k], scale, D3(0.0)))
+                {
+                    transform(s, m);
+                    res.curves.push_back(std::move(s));
+                    res.character.push_back(int(k));
+                    lineOf.push_back(int(li));
+                }
+                seen = true;
+            }
+            x += advance[k];
+            if (seen && isSpace(cps[k]))
+                x += extra;
+        }
+        if (width > 0.0)
+        {
+            if (o.underline)
+            {
+                bars.push_back(rectangle(shift, y + underPos - underSize, shift + width, y + underPos));
+                barLine.push_back(int(li));
+            }
+            if (o.strikethrough)
+            {
+                bars.push_back(rectangle(shift, y + strikePos - strikeSize, shift + width, y + strikePos));
+                barLine.push_back(int(li));
+            }
+        }
     }
     if (!missing.empty())
     {
@@ -475,39 +695,106 @@ TextResult textCurves(const TextOptions& o)
         res.warnings.push_back("the font has no glyph for '" + list + "'");
     }
 
-    if (o.mergeOverlaps)
+    PlaneFrame plane = planeFrame(D3(0.0), D3(0.0, 0.0, 1.0));
+    TessOptions tess;
+    tess.chordError = size * 1e-4;
+    CurveBooleanOptions bo;
+    bo.normal = D3(0.0, 0.0, 1.0);
+    bo.nonZero = true;
+    bo.tolerance = size * 1e-5;
+    if (o.mergeOverlaps || o.weight != 0.0)
     {
         // A glyph whose contours overlap fills non-zero, as the font means it.
         Splines merged;
-        std::vector<int> mergedChar;
-        PlaneFrame plane = planeFrame(D3(0.0), D3(0.0, 0.0, 1.0));
-        TessOptions tess;
-        tess.chordError = size * 1e-4;
+        std::vector<int> mergedChar, mergedLine;
         for (size_t c = 0; c < res.curves.size();)
         {
             size_t end = c;
             while (end < res.curves.size() && res.character[end] == res.character[c])
                 ++end;
-            Splines glyph(res.curves.begin() + std::ptrdiff_t(c), res.curves.begin() + std::ptrdiff_t(end));
-            if (glyph.size() > 1 && loopsCross(loopsOf(glyph, plane, tess)))
+            Splines one(res.curves.begin() + std::ptrdiff_t(c), res.curves.begin() + std::ptrdiff_t(end));
+            if (one.size() > 1 && loopsCross(loopsOf(one, plane, tess)))
             {
-                CurveBooleanOptions bo;
-                bo.normal = D3(0.0, 0.0, 1.0);
-                bo.nonZero = true;
-                bo.tolerance = size * 1e-5;
-                CurveBooleanResult u = curveBoolean({glyph}, bo);
+                CurveBooleanResult u = curveBoolean({one}, bo);
                 if (!u.curves.empty())
-                    glyph = std::move(u.curves);
+                    one = std::move(u.curves);
             }
-            for (Spline& s : glyph)
+            if (o.weight != 0.0)
+            {
+                RegionOffsetOptions ro;
+                ro.distance = o.weight;
+                ro.join = JoinType::Miter;
+                ro.normal = D3(0.0, 0.0, 1.0);
+                ro.tolerance = size * 2e-4;
+                one = regionOffset(one, ro).curves;
+            }
+            for (Spline& s : one)
             {
                 merged.push_back(std::move(s));
                 mergedChar.push_back(res.character[c]);
+                mergedLine.push_back(lineOf[c]);
             }
             c = end;
         }
         res.curves = std::move(merged);
         res.character = std::move(mergedChar);
+        lineOf = std::move(mergedLine);
+    }
+
+    if (!bars.empty())
+    {
+        // Underlines and strikes join the glyphs they cross, so each line fills once.
+        Splines joined;
+        std::vector<int> joinedChar;
+        for (size_t li = 0; li < lines.size(); ++li)
+        {
+            Splines line;
+            std::vector<int> chars;
+            for (size_t c = 0; c < res.curves.size(); ++c)
+                if (lineOf[c] == int(li))
+                {
+                    line.push_back(res.curves[c]);
+                    chars.push_back(res.character[c]);
+                }
+            size_t glyphCurveCount = line.size();
+            // Bars wind like the letters' outlines, so where they overlap the fill adds up instead of cancelling.
+            double outer = 0.0;
+            for (const Loop2& l : loopsOf(line, plane, tess))
+                if (double area = signedArea(l.points); std::abs(area) > std::abs(outer))
+                    outer = area;
+            for (size_t b = 0; b < bars.size(); ++b)
+                if (barLine[b] == int(li))
+                {
+                    Spline bar = bars[b];
+                    Loops2 barLoop = loopsOf(Splines{bar}, plane, tess);
+                    if (!barLoop.empty() && signedArea(barLoop[0].points) * outer < 0.0)
+                        reverse(bar);
+                    line.push_back(std::move(bar));
+                }
+            if (line.size() > glyphCurveCount)
+            {
+                CurveBooleanResult u = curveBoolean({line}, bo);
+                if (!u.curves.empty())
+                    line = std::move(u.curves);
+                chars.assign(line.size(), int(lines[li].begin));
+            }
+            for (size_t c = 0; c < line.size(); ++c)
+            {
+                joined.push_back(std::move(line[c]));
+                joinedChar.push_back(chars[c]);
+            }
+        }
+        res.curves = std::move(joined);
+        res.character = std::move(joinedChar);
+    }
+
+    if (o.anchor != TextAnchor::Baseline && !lines.empty())
+    {
+        double top = ascent * scale, bottom = -double(lines.size() - 1) * lineHeight + descent * scale;
+        double dy = o.anchor == TextAnchor::Top ? -top : o.anchor == TextAnchor::Bottom ? -bottom : -(top + bottom) * 0.5;
+        glm::dmat4 m = glm::translate(glm::dmat4(1.0), D3(0.0, dy, 0.0));
+        for (Spline& s : res.curves)
+            transform(s, m);
     }
     return res;
 }

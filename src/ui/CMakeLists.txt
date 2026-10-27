@@ -18,6 +18,7 @@ lila_module(lila_ui UI
     Docs.cpp Docs.h
     DocsUi.cpp DocsUi.h
     AttributeEditor.cpp AttributeEditor.h
+    FontPicker.cpp FontPicker.h MultilineEdit.cpp MultilineEdit.h
     AutoBevelUi.cpp AutoBevelUi.h
     SplitRingsUi.cpp SplitRingsUi.h
     SmartJoinUi.cpp SmartJoinUi.h

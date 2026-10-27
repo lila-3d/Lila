@@ -44,6 +44,8 @@ struct Field
     double max = std::numeric_limits<double>::quiet_NaN();
     double step = std::numeric_limits<double>::quiet_NaN();
     std::string suffix; // " cm", " deg"
+    /** A Text field's editor: "multiline" (a box of several lines) or "font" (font pickers); empty is one line. */
+    std::string editor;
 };
 
 /** Per-command layout tweaks on top of the generated fields; every member is optional. */
@@ -63,6 +65,7 @@ struct Override
         std::string suffix;
     };
     std::map<std::string, Range> ranges;
+    std::map<std::string, std::string> editors; // flag -> Field::editor
     /** Buttons above the fields that fill some of them in, such as from the selection; values returns flag -> value. */
     struct Fill
     {

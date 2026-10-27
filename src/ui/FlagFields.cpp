@@ -1,5 +1,7 @@
 #include "ui/FlagFields.h"
 
+#include "ui/FontPicker.h"
+#include "ui/MultilineEdit.h"
 #include "ui/SpinScrub.h"
 #include "ui/ValueReset.h"
 
@@ -207,6 +209,27 @@ FlagFieldWidgets makeFlagField(const opt::Field& f, const json& value, std::func
     case opt::FieldKind::List:
     {
         bool list = f.kind == opt::FieldKind::List;
+        auto str = [](const json& v) { return v.is_string() ? v.get<std::string>() : std::string(); };
+        if (!list && f.editor == "font")
+        {
+            auto* picker = new FontPicker(parent);
+            picker->setValue(str(value));
+            QObject::connect(picker, &FontPicker::chosen, picker, [changed](const QString& font) { changed(json(font.toStdString())); });
+            out.label = new QLabel(label, parent);
+            out.field = picker;
+            out.set = [picker, str](const json& v) { picker->setValue(str(v)); };
+            break;
+        }
+        if (!list && f.editor == "multiline")
+        {
+            auto* box = new MultilineEdit(parent);
+            box->showText(str(value));
+            QObject::connect(box, &MultilineEdit::committed, box, [changed](const QString& t) { changed(json(t.toStdString())); });
+            out.label = new QLabel(label, parent);
+            out.field = box;
+            out.set = [box, str](const json& v) { box->showText(str(v)); };
+            break;
+        }
         auto* line = new QLineEdit(parent);
         auto text = [list](const json& v) { return list ? listText(v) : QString::fromStdString(v.is_string() ? v.get<std::string>() : std::string()); };
         line->setText(text(value));

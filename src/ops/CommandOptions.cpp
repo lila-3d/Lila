@@ -332,6 +332,8 @@ std::vector<Field> fields(std::string_view command, const json& fixed)
                 f.step = it->second.step;
                 f.suffix = it->second.suffix;
             }
+            if (auto it = o->editors.find(flag.name); it != o->editors.end() && f.kind == FieldKind::Text)
+                f.editor = it->second;
         }
         out.push_back(std::move(f));
     }

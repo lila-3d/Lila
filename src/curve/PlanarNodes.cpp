@@ -308,8 +308,17 @@ PlugValue textRun(const Node& n, std::vector<std::string>& warnings)
     o.font = s(n, "font");
     o.size = std::max(1e-4, f(n, "size"));
     o.letterSpacing = f(n, "letterSpacing");
+    o.wordSpacing = f(n, "wordSpacing");
     o.lineSpacing = f(n, "lineSpacing");
-    o.align = TextAlign(std::clamp<int64_t>(i(n, "alignment"), 0, 2));
+    o.align = TextAlign(std::clamp<int64_t>(i(n, "alignment"), 0, 3));
+    o.anchor = TextAnchor(std::clamp<int64_t>(i(n, "anchor"), 0, 3));
+    o.wrapWidth = std::max(0.0, f(n, "wrapWidth"));
+    o.textCase = TextCase(std::clamp<int64_t>(i(n, "textCase"), 0, 3));
+    o.width = std::max(0.01, f(n, "width"));
+    o.slant = std::clamp(f(n, "slant"), -60.0, 60.0);
+    o.weight = f(n, "weight");
+    o.underline = b(n, "underline");
+    o.strikethrough = b(n, "strikethrough");
     o.kerning = b(n, "kerning");
     o.mergeOverlaps = b(n, "mergeOverlaps");
     TextResult r = textCurves(o);
@@ -437,14 +446,25 @@ void registerTypesHere()
         cl.push_back(a);
     registerPlanar("curveCenterLine", "line", "Centre lines of the region closed curves bound: the straight skeleton's inner arcs.", cl, centerRun);
 
-    const std::string txt = "Text", lay = "Layout";
+    const std::string txt = "Text", lay = "Layout", sty = "Style";
     registerPlanar("curveText", "typography", "Text as closed Bezier curves, the glyph outlines of a TrueType or OpenType font, live.",
-                   {sAttr("text", "Lila", "The text; new lines start new lines.", txt),
+                   {sAttr("text", "Lila", "The text; new lines start new lines.", txt, AttrMultiline),
                     sAttr("font", "Inter", "A font file, or a family and style (\"Inter\", \"Inter SemiBold\", \"Arial Bold\") among the bundled and installed fonts.",
-                          txt, AttrFile),
-                    fAttr("size", 10.0, "Em size, cm.", txt, 0.0), fAttr("letterSpacing", 0.0, "Extra space after each character, cm.", lay),
+                          txt, AttrFile | AttrFont),
+                    fAttr("size", 10.0, "Em size, cm.", txt, 0.0),
+                    eAttr("alignment", {"left", "center", "right", "justify"}, 0,
+                          "Where lines sit against x = 0. Justify stretches wrapped lines to the wrap width (or the widest line).", lay),
+                    eAttr("anchor", {"baseline", "top", "middle", "bottom"}, 0, "Which part of the block sits on y = 0: the first baseline, the top, the middle or the bottom.", lay),
+                    fAttr("wrapWidth", 0.0, "Lines break between words to fit this width, cm; 0 breaks only at new lines.", lay, 0.0),
+                    fAttr("letterSpacing", 0.0, "Extra space after each character, cm.", lay),
+                    fAttr("wordSpacing", 0.0, "Extra space after each space, cm.", lay),
                     fAttr("lineSpacing", 1.0, "Baseline to baseline, in the font's line heights.", lay),
-                    eAttr("alignment", {"left", "center", "right"}, 0, "Where lines sit against x = 0.", lay),
+                    eAttr("textCase", {"as typed", "upper", "lower", "title"}, 0, "Changes the letters' case without editing the text.", sty),
+                    fAttr("width", 1.0, "Horizontal scale of the glyphs: below 1 condenses, above 1 widens.", sty, 0.01),
+                    fAttr("slant", 0.0, "Oblique slant, degrees; positive leans right. For fonts without an italic.", sty, -60.0, 60.0),
+                    fAttr("weight", 0.0, "Grows each letter's outline by this much, cm (negative thins it). For fonts without a bolder weight.", sty),
+                    bAttr("underline", false, "A bar under each line, joined to the letters it touches.", sty),
+                    bAttr("strikethrough", false, "A bar through each line, joined to the letters.", sty),
                     bAttr("kerning", true, "Use the font's kerning.", lay),
                     bAttr("mergeOverlaps", true, "Join a glyph's overlapping contours so each area fills once (variable fonts overlap them).", lay),
                     curveOut()},
@@ -852,7 +872,15 @@ void registerCommandsHere()
         },
         .adjustable = true,
     });
-    layout("textCurves", "curveText", {"text", "font", "size", "alignment"}, {{"size", {0.0, 1e5, 0.5, " cm"}}, {"letterSpacing", {-1e4, 1e4, 0.1, " cm"}}});
+    layout("textCurves", "curveText", {"text", "font", "size", "alignment", "anchor", "wrapWidth"},
+           {{"size", {0.0, 1e5, 0.5, " cm"}}, {"letterSpacing", {-1e4, 1e4, 0.1, " cm"}}, {"wordSpacing", {-1e4, 1e4, 0.1, " cm"}},
+            {"wrapWidth", {0.0, 1e5, 1.0, " cm"}}, {"weight", {-1e4, 1e4, 0.01, " cm"}}, {"slant", {-60.0, 60.0, 1.0, " deg"}}});
+    if (const ops::options::Override* ov = ops::options::findOverride("textCurves"))
+    {
+        ops::options::Override o = *ov;
+        o.editors = {{"text", "multiline"}, {"font", "font"}};
+        ops::options::setOverride("textCurves", std::move(o));
+    }
 
     ops::registerCommand({
         .name = "fontList",
