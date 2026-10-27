@@ -907,7 +907,7 @@ void registerCommands()
         .flags = {{"angle", "", T::Float, 30.0, "Largest bend between neighbouring faces, degrees."}},
         .run = [](const Args& a) -> json {
             if (mode() != ComponentMode::Face)
-                throw CommandError("selectByAngle: select some faces first");
+                throw CommandError("selectByAngle: no faces selected");
             double cosLimit = std::cos(a.get<double>("angle") * 3.14159265358979323846 / 180.0);
             UndoChunk chunk("Select by Angle");
             for (auto [node, ids] : selected(ComponentMode::Face))

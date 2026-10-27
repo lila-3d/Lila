@@ -200,7 +200,7 @@ json editSelected(const char* label, ComponentMode kind, const EditFn& fn, bool 
     if (targets.empty() && handled)
         return nullptr;
     if (targets.empty())
-        throw CommandError(std::string(label) + ": select some components first");
+        throw CommandError(std::string(label) + ": no components selected");
 
     UndoChunk chunk(label);
     std::map<NodeId, Ids> newSel[3] = {components::selected(ComponentMode::Vertex), components::selected(ComponentMode::Edge),
@@ -864,7 +864,7 @@ int deformSelected(const char* label, const PointTargetSetup& setup, const Provi
 
     ComponentMode kind = components::mode();
     if (kind == ComponentMode::Object)
-        throw CommandError(std::string(label) + ": select some components first");
+        throw CommandError(std::string(label) + ": no components selected");
     Graph& g = graph();
     UndoChunk chunk(label);
     auto selection = components::selected(kind);
@@ -1048,7 +1048,7 @@ json extrudeDuplicate(geo::ExtrudeOptions opts, bool keepSides)
                 if (Ids f = components::convert(*cage, components::mode(), ids, ComponentMode::Face); !f.empty())
                     targets[node] = std::move(f);
     if (targets.empty())
-        throw CommandError("polyExtrude: select some faces first");
+        throw CommandError("polyExtrude: no faces selected");
 
     UndoChunk chunk("Extrude");
     json out = json::array();
@@ -1785,7 +1785,7 @@ void registerMeshEditCommands()
             g.evaluate();
             ComponentMode from = components::mode();
             if (from == K::Object)
-                throw CommandError("polyExtract: select some faces first");
+                throw CommandError("polyExtract: no faces selected");
             std::map<NodeId, Ids> targets;
             for (auto& [node, ids] : components::selected(from))
                 if (Node* n = g.node(node); n && n->type().isA("mesh"))
@@ -1793,7 +1793,7 @@ void registerMeshEditCommands()
                         if (Ids f = components::convert(*cage, from, ids, K::Face); !f.empty())
                             targets[node] = std::move(f);
             if (targets.empty())
-                throw CommandError("polyExtract: select some faces first");
+                throw CommandError("polyExtract: no faces selected");
             json out = json::array();
             std::vector<NodeId> made, sources;
             components::clear();

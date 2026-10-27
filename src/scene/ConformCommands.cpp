@@ -294,7 +294,7 @@ void registerConformCommands()
             const std::string mode = a.get<std::string>("radiusMode", "average");
             SphereState state;
             bool any = false;
-            conformSelected("polySpherize", "select some components to spherize", 1.0,
+            conformSelected("polySpherize", "no components selected", 1.0,
                             [&](const geo::Mesh& m, const glm::dmat4& world, const geo::ShapeSelection& sel) {
                                 geo::SpherizeOptions o;
                                 o.fit = a.get<std::string>("fit", "best") == "center" ? geo::SphereFit::Center : geo::SphereFit::Best;
