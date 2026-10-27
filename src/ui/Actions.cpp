@@ -433,6 +433,7 @@ void registerBuiltins()
     cmd("modify.resetTransforms", "Reset Transformations", "Modify", "resetTransforms", json::object(),
         "Puts translate, rotate and scale back to their defaults, moving the object.");
     cmd("modify.resetPivot", "Reset Pivot", "Modify", "resetPivot", json::object(), "Moves the pivot back to the object's origin.");
+    cmd("modify.zeroPivot", "Zero Pivot", "Modify", "zeroPivot", json::object(), "Moves the pivot to the world origin.");
     cmd("modify.orientPivot", "Orient Pivot", "Modify", "orientPivot", json::object(),
         "Turns the object so its X aims from the first picked component to the second, or along a single face, edge or loop, "
         "leaving the mesh where it is. Adjust the axes, up and mode in the popup after.");
@@ -494,7 +495,10 @@ void registerBuiltins()
     cmd("mesh.extrude", "Extrude", "Mesh", "polyExtrude", json::object(), "Pulls the selected faces or edges out, adding side faces.");
     cmd("mesh.inset", "Inset", "Mesh", "polyInset", json::object(), "Shrinks a new face inside each selected face, ringed by quads.");
     cmd("mesh.bevel", "Bevel", "Mesh", "polyBevel", json::object(), "Cuts the selected edges into chamfers or rounded strips, once. The Bevel modifier stays live.");
-    cmd("mesh.insertLoop", "Insert Edge Loop", "Mesh", "polyInsertLoop", json::object(), "Adds an edge loop across the ring of the selected edge.");
+    cmd("mesh.insertLoop", "Insert Edge Loop", "Mesh", "polyInsertLoop", json::object(),
+        "Adds edge loops across the ring of the selected edge. With several, Fraction slides the group and Spacing sets the gap.");
+    cmd("mesh.offsetLoop", "Offset Edge Loop", "Mesh", "polyOffsetLoop", json::object(),
+        "Adds an edge loop either side of the selected edges, parallel to them. Partial loops end on a border or meet at their ends.");
     cmd("mesh.merge", "Merge", "Mesh", "polyMerge", json::object(), "Welds selected vertices that lie within the merge distance.");
     cmd("mesh.mergeCenter", "Merge to Center", "Mesh", "polyMergeCenter", json::object(), "Collapses the selection to a single point at its center.");
     cmd("mesh.collapse", "Collapse", "Mesh", "polyCollapse", json::object(), "Collapses each selected edge or face to a point.");

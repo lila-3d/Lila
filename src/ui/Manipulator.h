@@ -167,8 +167,11 @@ private:
     glm::dvec3 snapGrid(const glm::dvec3& p, const glm::dvec3& mask) const;
     /** Nearest mesh vertex/edge point under the cursor for V/C snapping, skipping whatever is being moved. */
     std::optional<glm::dvec3> snapTarget(QPointF px, unsigned snaps) const;
-    /** N held or Ctrl+MMB: the move delta that puts the pivot on the surface under the cursor; sets alignRotations. */
-    std::optional<glm::dvec3> surfaceSlide(QPointF px);
+    /**
+     * N held or Ctrl+MMB: the move delta that puts the pivot on the surface under the cursor; sets alignRotations unless
+     * upright (Shift) keeps the objects' orientation.
+     */
+    std::optional<glm::dvec3> surfaceSlide(QPointF px, bool upright);
 
     void drawMove(OverlayPainter& p);
     void drawRotate(OverlayPainter& p);

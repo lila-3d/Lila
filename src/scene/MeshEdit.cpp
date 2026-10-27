@@ -1,10 +1,12 @@
 #include "ops/Command.h"
+#include "ops/CommandOptions.h"
 #include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "geo/Bvh.h"
 #include "geo/Knife.h"
+#include "geo/LoopTools.h"
 #include "geo/Mesh.h"
 #include "geo/Normals.h"
 #include "geo/Ops.h"
@@ -1127,30 +1129,46 @@ void registerMeshEditCommands()
 
     ops::registerCommand({
         .name = "polyInsertLoop",
-        .doc = "Insert edge loops across the ring of the first selected edge.",
-        .flags = {{"fraction", "", T::Float, 0.5, "Where along the ring, 0 to 1."}, {"count", "", T::Int, 1, "Evenly spaced loops."}},
+        .doc = "Insert edge loops across the ring of the first selected edge. Several loops are centred on fraction, spacing apart.",
+        .flags = {{"fraction", "", T::Float, 0.5, "Where along the ring, 0 to 1; with several loops, where their middle goes."},
+                  {"count", "", T::Int, 1, "Number of loops."},
+                  {"spacing", "", T::Float, 1.0, "Several loops: gap between neighbours, 1 even spacing across the edge, smaller packs them together."}},
         .run = [](const Args& a) -> json {
             return editSelected("Insert Edge Loop", K::Edge, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
-                Ids out;
                 if (sel.empty())
-                    return edges(out);
-                geo::EdgeLoopOptions o{a.get<double>("fraction"), std::max(1, a.get<int>("count"))};
-                if (s && o.count == 1)
-                    return edges(geo::knifeApply(m, geo::knifeLoopPlan(m, sel.front(), o.fraction, s)));
-                // Evenly spaced loops on a ring that crosses the plane (or goes round the axis) are symmetric already; any
-                // other ring gets each image ring's loops too.
-                std::vector<Index> rings{sel.front()};
-                std::vector<Index> covered = geo::edgeRing(m, sel.front());
-                for (int k = 1; s && k < s->order(); ++k)
-                    if (const Index e = s->imageEdge(m, k, sel.front()); e != geo::kInvalid && !std::ranges::count(covered, e))
-                    {
-                        rings.push_back(e);
-                        std::ranges::copy(geo::edgeRing(m, e), std::back_inserter(covered));
-                    }
-                for (Index e : rings)
-                    if (m.edgeValid(e))
-                        std::ranges::copy(geo::insertEdgeLoop(m, e, o), std::back_inserter(out));
-                return edges(out);
+                    return edges({});
+                geo::EdgeLoopOptions o{a.get<double>("fraction"), std::max(1, a.get<int>("count")), a.get<double>("spacing")};
+                if (!s)
+                    return edges(geo::insertEdgeLoop(m, sel.front(), o));
+                // One plan for every loop and its images, so a ring that is its own image gets each mirrored spot once.
+                geo::KnifePlan plan;
+                for (double t : geo::edgeLoopFractions(o))
+                    std::ranges::copy(geo::knifeLoopPlan(m, sel.front(), t, s).segments, std::back_inserter(plan.segments));
+                return edges(geo::knifeApply(m, plan));
+            });
+        },
+    });
+
+    ops::registerCommand({
+        .name = "polyOffsetLoop",
+        .doc = "Insert an edge loop either side of the selected edges, parallel to them (Maya's Offset Edge Loop). Partial loops end on "
+               "a border, or inside the mesh by meeting at the end vertex or wrapping round it. Returns the new edges.",
+        .flags = {{"distance", "", T::Float, 0.25, "How far out: a fraction of each crossing edge's length, or cm with absolute."},
+                  {"absolute", "", T::Bool, false, "distance is in cm, square to the selected edges."},
+                  {"side", "", T::String, "both", "both, left or right of the edges' direction.", {"both", "left", "right"}},
+                  {"ends", "", T::String, "converge", "Open ends inside the mesh: converge (meet at the end vertex) or wrap (round it).",
+                   {"converge", "wrap"}},
+                  {"deleteEdge", "", T::Bool, false, "Dissolve the selected edges afterward, leaving the two new loops."}},
+        .run = [](const Args& a) -> json {
+            return editSelected("Offset Edge Loop", K::Edge, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
+                const std::string side = a.get<std::string>("side");
+                geo::OffsetLoopOptions o;
+                o.distance = std::max(0.0, a.get<double>("distance"));
+                o.absolute = a.get<bool>("absolute");
+                o.side = side == "left" ? geo::OffsetSide::Left : side == "right" ? geo::OffsetSide::Right : geo::OffsetSide::Both;
+                o.ends = a.get<std::string>("ends") == "wrap" ? geo::OffsetEnds::Wrap : geo::OffsetEnds::Converge;
+                o.symmetry = s;
+                return edges(geo::offsetEdgeLoops(m, sel, o, a.get<bool>("deleteEdge")));
             });
         },
     });
@@ -2511,9 +2529,19 @@ void registerMeshEditCommands()
         },
     });
 
-    for (const char* name : {"polyExtrude", "polyInset", "polyBevel", "polyInsertLoop", "polyMerge", "polyBridge", "polyQuadrangulate",
+    for (const char* name : {"polyExtrude", "polyInset", "polyBevel", "polyInsertLoop", "polyOffsetLoop", "polyMerge", "polyBridge", "polyQuadrangulate",
                              "polySubdivide", "polyMirror", "polyTriangulate", "polyReduce", "polySoftEdge"})
         ops::setAdjustable(name);
+    {
+        namespace opt = ops::options;
+        opt::Override loop;
+        loop.ranges = {{"fraction", {0.0, 1.0, 0.01, ""}}, {"count", {1.0, 32.0, 1.0, ""}}, {"spacing", {0.0, 2.0, 0.05, ""}}};
+        opt::setOverride("polyInsertLoop", std::move(loop));
+        opt::Override offset;
+        offset.ranges = {{"distance", {0.0, 1e6, 0.01, ""}}};
+        offset.labels = {{"absolute", "Distance in cm"}, {"deleteEdge", "Delete Selected Edges"}};
+        opt::setOverride("polyOffsetLoop", std::move(offset));
+    }
     // Recording the last op is what makes these adjustable, in any host and not only once the UI installs it.
     lastOp::install();
 }

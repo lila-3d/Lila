@@ -7,6 +7,8 @@
 #include "scene/Isolation.h"
 #include "scene/MeshNodes.h"
 
+#include <cmath>
+
 using namespace lila;
 using json = nlohmann::json;
 
@@ -41,6 +43,45 @@ TEST_CASE("polyInsertLoop follows symmetry")
     run("selectComponents", {{"args", {plane}}, {"edges", {0}}});
     run("polyInsertLoop", {{"count", 2}});
     CHECK(faces(plane) == 8);
+}
+
+TEST_CASE("polyInsertLoop spreads several loops round fraction under symmetry")
+{
+    run("newScene");
+    std::string plane = run("polyPlane", {{"width", 100.0}, {"depth", 100.0}, {"subdivisionsX", 4}, {"subdivisionsZ", 1}})[0];
+    run("setSymmetry", {{"args", {plane}}, {"axis", "x"}});
+    run("selectComponents", {{"args", {plane}}, {"edges", {0}}});
+    run("polyInsertLoop", {{"count", 2}, {"fraction", 0.3}, {"spacing", 0.5}});
+    CHECK(faces(plane) == 8);
+    CHECK(run("symmetryCheck", {{"args", {plane}}})[plane]["unmatched"].get<int>() == 0);
+}
+
+TEST_CASE("polyOffsetLoop and polyEditEdgeFlow are undoable edits")
+{
+    run("newScene");
+    std::string plane = run("polyPlane", {{"width", 100.0}, {"depth", 100.0}, {"subdivisionsX", 4}, {"subdivisionsZ", 4}})[0];
+    run("selectComponents", {{"args", {plane}}, {"edges", {0}}});
+    run("selectLoop");
+    run("polyOffsetLoop");
+    // The border loop has faces on one side only: each of the 12 border faces is cut once.
+    CHECK(faces(plane) == 28);
+    run("undo");
+    CHECK(faces(plane) == 16);
+
+    int centre = -1;
+    const json before = run("meshData", {{"args", {plane}}, {"base", true}});
+    for (size_t i = 0; i < before["points"].size(); ++i)
+        if (std::abs(before["points"][i][0].get<double>()) < 1e-6 && std::abs(before["points"][i][2].get<double>()) < 1e-6)
+            centre = int(i);
+    REQUIRE(centre >= 0);
+    run("selectComponents", {{"args", {plane}}, {"vertices", {centre}}});
+    run("moveComponents", {{"by", {0.0, 10.0, 0.0}}});
+    run("polyEditEdgeFlow", {{"adjustEdgeFlow", 0.0}});
+    const json after = run("meshData", {{"args", {plane}}, {"base", true}});
+    CHECK(after["points"][size_t(centre)][1].get<double>() == doctest::Approx(0.0));
+    run("undo");
+    const json undone = run("meshData", {{"args", {plane}}, {"base", true}});
+    CHECK(undone["points"][size_t(centre)][1].get<double>() == doctest::Approx(10.0));
 }
 
 TEST_CASE("polyDuplicateFaces copies faces into the same mesh")

@@ -481,6 +481,24 @@ KnifePlan knifeLoopPlan(const Mesh& mesh, Index edge, double t, const SymmetryMa
     return plan;
 }
 
+void addSymmetricImages(const Mesh& mesh, KnifePlan& plan, const SymmetryMap& symmetry)
+{
+    LILA_ZONE();
+
+    if (symmetry.empty())
+        return;
+    const size_t own = plan.segments.size();
+    for (int g = 1; g < symmetry.order(); ++g)
+        for (size_t i = 0; i < own; ++i)
+        {
+            const KnifeSegment s = plan.segments[i];
+            const Index f = symmetry.imageFace(mesh, g, s.face);
+            const std::optional<KnifePoint> a = imageKnifePoint(mesh, symmetry, s.a, g), b = imageKnifePoint(mesh, symmetry, s.b, g);
+            if (f != kInvalid && a && b)
+                plan.segments.push_back({f, *a, *b, true});
+        }
+}
+
 std::vector<Index> knifeApply(Mesh& mesh, const KnifePlan& plan)
 {
     LILA_ZONE();

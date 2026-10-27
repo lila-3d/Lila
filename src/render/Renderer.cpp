@@ -175,6 +175,46 @@ glm::vec4 depthPull(const glm::dmat4& proj, uint32_t heightPx, double pixels)
     return {float(scale), float(a * (scale - 1.0)), 0.0f, 0.0f};
 }
 
+/**
+ * Clips a world-space line list to the view volume, with x and y given twice the view's room. The rasterizer
+ * clips only z exactly, so a wide line crossing the near plane otherwise reaches it with an end far outside its guard
+ * band and floods the view. Reads v and writes only the moved ends into out, which already holds a copy (mapped memory
+ * is slow to read). Lines wholly outside move to `behind`, a point behind the camera that every view clips.
+ */
+void clipLineList(const LineVertex* v, LineVertex* out, size_t count, const glm::dmat4& viewProj, const glm::vec3& behind)
+{
+    for (size_t i = 0; i + 1 < count; i += 2)
+    {
+        const glm::dvec3 a(v[i].pos), b(v[i + 1].pos);
+        const glm::dvec4 ca = viewProj * glm::dvec4(a, 1.0), cb = viewProj * glm::dvec4(b, 1.0);
+        // Inside where each is >= 0: the x and y guard planes, the far plane (reversed-Z z >= 0) and the near one (z <= w).
+        auto planes = [](const glm::dvec4& c) {
+            constexpr double kGuard = 2.0;
+            return std::array<double, 6>{kGuard * c.w + c.x, kGuard * c.w - c.x, kGuard * c.w + c.y, kGuard * c.w - c.y, c.z, c.w - c.z};
+        };
+        const std::array<double, 6> da = planes(ca), db = planes(cb);
+        double t0 = 0.0, t1 = 1.0;
+        for (size_t k = 0; k < da.size() && t0 <= t1; ++k)
+        {
+            if (da[k] < 0.0 && db[k] < 0.0)
+                t0 = 2.0;
+            else if (da[k] < 0.0)
+                t0 = std::max(t0, da[k] / (da[k] - db[k]));
+            else if (db[k] < 0.0)
+                t1 = std::min(t1, da[k] / (da[k] - db[k]));
+        }
+        if (t0 > t1)
+        {
+            out[i].pos = out[i + 1].pos = behind;
+            continue;
+        }
+        if (t0 > 0.0)
+            out[i].pos = glm::vec3(glm::mix(a, b, t0));
+        if (t1 < 1.0)
+            out[i + 1].pos = glm::vec3(glm::mix(a, b, t1));
+    }
+}
+
 struct ImagePlanePush
 {
     glm::mat4 viewProj;
@@ -2650,13 +2690,23 @@ struct Renderer::Impl
         if (lineBytes + trisBytes)
         {
             ensureLines(f, lineBytes + trisBytes);
+            LineVertex* mapped = static_cast<LineVertex*>(f.linesMapped);
+            const glm::dmat4 clipViewProj = s.proj * s.view;
+            const glm::vec3 behind(s.eye + glm::dvec3(s.view[0][2], s.view[1][2], s.view[2][2]));
             for (int i = 0; i < kLineSets; ++i)
-                std::memcpy(static_cast<char*>(f.linesMapped) + size_t(lineFirst[i]) * sizeof(LineVertex), lineSets[i]->data(),
-                            lineSets[i]->size() * sizeof(LineVertex));
+            {
+                std::memcpy(mapped + lineFirst[i], lineSets[i]->data(), lineSets[i]->size() * sizeof(LineVertex));
+                // Every set but tris3d (triangles) and overlay (already in NDC) is a world-space line list.
+                if (i != 2 && i != 3)
+                    clipLineList(lineSets[i]->data(), mapped + lineFirst[i], lineSets[i]->size(), clipViewProj, behind);
+            }
             for (size_t i = 0; i <= debugBatches; ++i)
                 if (const std::vector<LineVertex>* verts = i < debugBatches ? &(*s.debugLines)[i].vertices : s.debugTris.get())
-                    std::memcpy(static_cast<char*>(f.linesMapped) + size_t(debugFirst[i]) * sizeof(LineVertex), verts->data(),
-                                verts->size() * sizeof(LineVertex));
+                {
+                    std::memcpy(mapped + debugFirst[i], verts->data(), verts->size() * sizeof(LineVertex));
+                    if (i < debugBatches)
+                        clipLineList(verts->data(), mapped + debugFirst[i], verts->size(), clipViewProj, behind);
+                }
             std::memcpy(static_cast<char*>(f.linesMapped) + lineBytes, s.overlayTris.data(), trisBytes);
         }
 
@@ -3300,7 +3350,8 @@ struct Renderer::Impl
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, 1, 1, &set, 0, nullptr);
             boundSet = set;
         }
-        vkCmdSetCullMode(cmd, (p.flags & MatTwoSided) && !s.backfaceCulling ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT);
+        // The viewport toggle alone decides, as Maya's does: one-sided materials show their back faces with it off.
+        vkCmdSetCullMode(cmd, s.backfaceCulling ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
         vkCmdPushConstants(cmd, meshLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
         VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(cmd, 0, 1, &g.vertices.buffer, &offset);

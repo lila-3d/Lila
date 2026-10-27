@@ -2,13 +2,16 @@
 #include "ops/CommandOptions.h"
 #include "core/Profile.h"
 #include "geo/Conform.h"
+#include "geo/LoopTools.h"
 #include "geo/Mesh.h"
+#include "geo/Topology.h"
 #include "scene/Components.h"
 #include "scene/ConformTargets.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Transform.h"
 
+#include <algorithm>
 #include <cmath>
 #include <format>
 #include <limits>
@@ -190,6 +193,11 @@ void registerOptionLayouts()
     object.choices["spacing"] = spacing;
     object.ranges["strength"] = strength;
     opt::setOverride("polyConformToObject", std::move(object));
+
+    O flow;
+    flow.ranges = {{"adjustEdgeFlow", {-2.0, 3.0, 0.05, ""}}, {"tension", {-1.0, 1.0, 0.05, ""}}, {"loopSmooth", strength}, {"iterations", {1.0, 20.0, 1.0, ""}}};
+    flow.labels = {{"adjustEdgeFlow", "Amount"}, {"edgeFlow", "Curvature from Next Vertices"}, {"loopSmooth", "Smooth Along Loop"}};
+    opt::setOverride("polyEditEdgeFlow", std::move(flow));
 }
 } // namespace
 
@@ -336,7 +344,35 @@ void registerConformCommands()
         },
     });
 
-    for (const char* name : {"polyStraighten", "polyCircularize", "polySpherize", "polyConformShape", "polyConformToObject"})
+    ops::registerCommand({
+        .name = "polyEditEdgeFlow",
+        .doc = "Move the selected edge loops' vertices square to the loops so they follow the curvature of the surface around them "
+               "(Maya's Edit Edge Flow). Each vertex lands on a curve through its neighbours across the loop, shaped by the vertices "
+               "beyond them. Selected vertices off any chain, and face selections, fit both directions across each vertex.",
+        .flags = {{"adjustEdgeFlow", "", T::Float, 1.0, "0 flat between the neighbours, 1 on the curve, above 1 exaggerated, negative inverted."},
+                  {"edgeFlow", "", T::Bool, true, "Shape the curve from the vertices beyond the neighbours; off, from the surface normals at the neighbours."},
+                  {"tension", "", T::Float, 0.0, "Toward 1 flattens the curve, negative makes it fuller."},
+                  {"loopSmooth", "", T::Float, 0.0, "Also smooth each loop along its length, 0 to 1, keeping its spacing."},
+                  {"iterations", "", T::Int, 1, "Passes, for neighbouring selected loops that shape each other."}},
+        .run = [](const Args& a) -> json {
+            geo::EdgeFlowOptions o{a.get<double>("adjustEdgeFlow"), a.get<bool>("edgeFlow"), a.get<double>("tension"), a.get<double>("loopSmooth"),
+                                   std::clamp(a.get<int>("iterations"), 1, 100)};
+            int edited = deformSelectedComponents("polyEditEdgeFlow", [&](const geo::Mesh& m, const glm::dmat4&, ComponentMode kind, const Ids& ids) -> PointTarget {
+                std::vector<Index> edges, loose;
+                if (kind == ComponentMode::Edge)
+                    edges = ids;
+                else
+                    geo::flowSelectionOfPoints(m, kind == ComponentMode::Face ? geo::pointsOfFaces(m, ids) : ids, edges, loose);
+                geo::PointMoves moves = geo::editEdgeFlow(m, edges, loose, o);
+                return moves.empty() ? nullptr : targetOfMoves(m, moves, 1.0);
+            });
+            if (edited == 0)
+                throw CommandError("polyEditEdgeFlow: select edge loops, vertices or faces to adjust");
+            return nullptr;
+        },
+    });
+
+    for (const char* name : {"polyStraighten", "polyCircularize", "polySpherize", "polyConformShape", "polyConformToObject", "polyEditEdgeFlow"})
         ops::setAdjustable(name);
     registerOptionLayouts();
 }

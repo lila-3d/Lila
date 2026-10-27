@@ -530,6 +530,8 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         number(ui, "Hovered vertex thickness", vd::kVertexThicknessHover, thickness.vertexHover, 0.5, 32.0, 0.5, 1);
         number(ui, "Selected vertex thickness", vd::kVertexThicknessSelected, thickness.vertexSelected, 0.5, 32.0, 0.5, 1);
         number(ui, "UV seam thickness", vd::kUvSeamThickness, thickness.uvSeam, 1.0, 16.0, 0.5, 1);
+        toggle(ui, "Wire on objects in component mode even with wireframe on shaded off", vd::kComponentModeWire, false);
+        toggle(ui, "Selected vertices in edge and face modes", vd::kVerticesInEdgeFaceModes, false);
         toggle(ui, "Edges on the symmetry plane in red", vd::kSymmetryEdges, true);
         toggle(ui, "Symmetry plane edges on selected objects in object mode", vd::kSymmetryEdgesObjectMode, true);
         number(ui, "Symmetry plane edge thickness", vd::kSymmetryEdgeThickness, thickness.symmetryEdge, 1.0, 16.0, 0.5, 1);
@@ -640,7 +642,7 @@ void addBuiltIns(Registry<prefPages::Page>& r)
     builtIn(r, "manipulators", "Manipulators", "general", [](Page& manip) {
         section(manip, "Manipulators");
         number(manip, "Size (pixels)", "/manipulator/size", 100.0, 30.0, 400.0, 5.0, 0);
-        choice(manip, "Move space", "/manipulator/moveSpace", {{"World", "world"}, {"Object", "object"}, {"Parent", "parent"}, {"Normal", "normal"}}, "world");
+        choice(manip, "Move space", "/manipulator/moveSpace", {{"World", "world"}, {"Object", "object"}, {"Parent", "parent"}, {"Component", "component"}, {"Normal", "normal"}}, "world");
         choice(manip, "Rotate space", "/manipulator/rotateSpace", {{"World", "world"}, {"Object", "object"}, {"Parent", "parent"}, {"Component", "component"}}, "world");
         choice(manip, "Scale space (components)", "/manipulator/scaleSpace", {{"World", "world"}, {"Object", "object"}, {"Component", "component"}}, "world");
         number(manip, "Rotate snap (degrees)", "/manipulator/rotateStep", 15.0, 0.1, 180.0, 1.0, 1);

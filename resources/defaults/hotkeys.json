@@ -74,11 +74,11 @@
       "Ctrl+F": "window.searchScene",
       "Shift+G": "adjustLastOp.show",
       "G": "edit.repeatLast",
-      "M": "window.materialEditor"
+      "M": "window.materialEditor",
+      "Alt+M": "measure.selection"
     },
     "viewport": {
       "F": "viewport.frameSelected",
-      "Alt+M": "measure.selection",
       "Ctrl+1": "viewport.isolate",
       "A": "viewport.frameAll",
       "F8": "select.objectMode",

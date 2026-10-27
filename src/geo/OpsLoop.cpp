@@ -253,6 +253,23 @@ std::vector<Index> sidesToBridge(const Mesh& mesh, const EdgePath& p)
 }
 } // namespace
 
+std::vector<double> edgeLoopFractions(const EdgeLoopOptions& opts)
+{
+    constexpr double lo = 1e-4, hi = 1.0 - 1e-4;
+    const int count = std::max(1, opts.count);
+    if (count == 1)
+        return {std::clamp(opts.fraction, lo, hi)};
+    // Neighbours stay at least this far apart, so no loop lands on another.
+    constexpr double minGap = 1e-3;
+    const double gap = std::max(minGap, std::max(0.0, opts.spacing) / (count + 1));
+    const double span = std::min(gap * (count - 1), hi - lo);
+    const double first = std::clamp(opts.fraction - span / 2.0, lo, hi - span);
+    std::vector<double> fracs;
+    for (int k = 0; k < count; ++k)
+        fracs.push_back(first + span * k / (count - 1));
+    return fracs;
+}
+
 std::vector<Index> insertEdgeLoop(Mesh& mesh, Index ringEdge, const EdgeLoopOptions& opts)
 {
     LILA_ZONE();
@@ -263,13 +280,7 @@ std::vector<Index> insertEdgeLoop(Mesh& mesh, Index ringEdge, const EdgeLoopOpti
     if (!walkRing(mesh, ringEdge, ring, quads, closed) || quads.empty())
         return {};
 
-    std::vector<double> fracs;
-    const int count = std::max(1, opts.count);
-    if (count == 1)
-        fracs.push_back(std::clamp(opts.fraction, 1e-4, 1.0 - 1e-4));
-    else
-        for (int k = 1; k <= count; ++k)
-            fracs.push_back(double(k) / (count + 1));
+    const std::vector<double> fracs = edgeLoopFractions(opts);
 
     std::vector<std::vector<Index>> cuts;
     for (const RingEdge& r : ring)

@@ -21,6 +21,8 @@
   },
   "edgeMode": {
     "overflow": [
+      { "label": "Offset Edge Loop", "action": "mesh.offsetLoop" },
+      { "label": "Edit Edge Flow", "action": "mesh.editEdgeFlow" },
       { "label": "Edges to Curve", "action": "curve.fromEdges" },
       { "separator": true }
     ]

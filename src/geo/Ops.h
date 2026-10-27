@@ -116,11 +116,18 @@ LILA_SCENE_API std::vector<Index> bevelEdges(Mesh& mesh, std::span<const Index> 
 
 struct EdgeLoopOptions
 {
-    /** Where along each ring edge the first loop goes, 0 to 1, measured from the start edge's first point side. */
+    /** Where along each ring edge the loop goes, 0 to 1 from the start edge's first point; with several, their centre. */
     double fraction = 0.5;
-    /** More than one inserts evenly spaced loops and ignores fraction. */
     int count = 1;
+    /**
+     * With several loops, the gap between neighbours relative to even spacing: 1 spaces them as count+1 equal parts of
+     * the edge, smaller packs them round fraction. The group slides to stay on the edge and shrinks when it cannot.
+     */
+    double spacing = 1.0;
 };
+
+/** The ascending fractions along each ring edge the loops go at. */
+LILA_SCENE_API std::vector<double> edgeLoopFractions(const EdgeLoopOptions& opts);
 
 /** Inserts loops across the edge ring through ringEdge. Returns the new loop edges. */
 LILA_SCENE_API std::vector<Index> insertEdgeLoop(Mesh& mesh, Index ringEdge, const EdgeLoopOptions& opts = {});

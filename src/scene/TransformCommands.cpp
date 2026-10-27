@@ -169,6 +169,18 @@ void registerTransformCommands()
     });
 
     ops::registerCommand({
+        .name = "zeroPivot",
+        .doc = "Move the pivots to the world origin, keeping the object where it is.",
+        .positionalDoc = "objects",
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            for (NodeId id : transformsOf(a, "zeroPivot"))
+                xformops::setWorldPivot(g, id, glm::dvec3(0.0));
+            return nullptr;
+        },
+    });
+
+    ops::registerCommand({
         .name = "pivot",
         .doc = "World position of an object's rotate pivot.",
         .positionalDoc = "object",

@@ -169,8 +169,11 @@ void registerActions()
     actions::add({.id = "tool.cloneDragOff", .label = "End Clone Drag", .category = "Tools", .run = [] { setCloneDrag(false); },
                   .doc = "Returns manipulator drags to moving the selected objects themselves."});
     actions::add({.id = "tool.pivotEditToggle", .label = "Toggle Pivot Edit", .category = "Tools", .run = [] { setPivotEdit(!pivotEdit()); },
-                  .doc = "Switches the manipulator between moving the object and moving its pivot."});
+                  .doc = "Switches the manipulator between moving the object and moving its pivot.", .checked = [] { return pivotEdit(); }});
 
+    auto spaceIs = [](std::string key, std::string space) -> std::function<bool()> {
+        return [key, space] { return PrefStore::get().value<std::string>("general", key, "world") == space; };
+    };
     for (const char* tool : {"move", "rotate"})
         for (auto [space, what] : {std::pair{"world", "the world axes"}, {"object", "the object's own axes"}, {"parent", "the parent's axes"}})
         {
@@ -179,26 +182,36 @@ void registerActions()
             actions::add({.id = std::string("manip.") + tool + "." + space, .label = label, .category = "Tools",
                           .run = [key, space] { PrefStore::get().set("general", key, space); },
                           .doc = std::string("Aligns the ") + tool + " manipulator to " + what + ".",
-                          .python = "lila.prefs.set(\"general\", \"" + key + "\", \"" + space + "\")"});
+                          .python = "lila.prefs.set(\"general\", \"" + key + "\", \"" + space + "\")",
+                          .checked = spaceIs(key, space)});
         }
     for (auto [space, label, what] : {std::tuple{"world", "World", "the world axes"}, {"object", "Object", "the object's own axes"},
                                       {"component", "Component", "the selected components' average normal and tangent"}})
         actions::add({.id = std::string("manip.scale.") + space, .label = label, .category = "Tools",
                       .run = [space] { PrefStore::get().set("general", "/manipulator/scaleSpace", space); },
                       .doc = std::string("Scales components along ") + what + ". Objects always scale on their own axes.",
-                      .python = std::string("lila.prefs.set(\"general\", \"/manipulator/scaleSpace\", \"") + space + "\")"});
+                      .python = std::string("lila.prefs.set(\"general\", \"/manipulator/scaleSpace\", \"") + space + "\")",
+                      .checked = spaceIs("/manipulator/scaleSpace", space)});
     actions::add({.id = "manip.rotate.component", .label = "Component", .category = "Tools",
                   .run = [] { PrefStore::get().set("general", "/manipulator/rotateSpace", "component"); },
                   .doc = "Rotates components on their average normal and tangent (on a curve, its tangent frame). Objects rotate on "
                          "their own axes.",
-                  .python = "lila.prefs.set(\"general\", \"/manipulator/rotateSpace\", \"component\")"});
+                  .python = "lila.prefs.set(\"general\", \"/manipulator/rotateSpace\", \"component\")",
+                  .checked = spaceIs("/manipulator/rotateSpace", "component")});
+    actions::add({.id = "manip.move.component", .label = "Component", .category = "Tools",
+                  .run = [] { PrefStore::get().set("general", "/manipulator/moveSpace", "component"); },
+                  .doc = "Moves components together along their average normal and tangent (on a curve, its tangent frame). Objects move "
+                         "on their own axes.",
+                  .python = "lila.prefs.set(\"general\", \"/manipulator/moveSpace\", \"component\")",
+                  .checked = spaceIs("/manipulator/moveSpace", "component")});
     actions::add({.id = "manip.move.normal", .label = "Normal", .category = "Tools",
                   .run = [] { PrefStore::get().set("general", "/manipulator/moveSpace", "normal"); },
                   .doc = "Moves each component along its own frame: N along its vertex normal (a face selection inflates), U and V along "
                          "its surface tangents (U follows the uvs, or the selected edges in edge mode). Curve points move along the curve: U its "
                          "tangent (a handle slides along itself), N across it within its plane, V out of the plane. Objects move on their "
                          "own axes.",
-                  .python = "lila.prefs.set(\"general\", \"/manipulator/moveSpace\", \"normal\")"});
+                  .python = "lila.prefs.set(\"general\", \"/manipulator/moveSpace\", \"normal\")",
+                  .checked = spaceIs("/manipulator/moveSpace", "normal")});
 
     auto snap = [](const char* key, const char* label, SnapFlags f, const char* doc) {
         actions::add({.id = std::string("snap.") + key + "On", .label = label, .category = "Snapping", .run = [f] { setSnap(f, true); },
@@ -213,7 +226,8 @@ void registerActions()
                       PrefStore::get().set("general", "/softSelect/enabled", !on);
                   },
                   .doc = "Edits fall off smoothly to the components around the selection, within the soft select radius.",
-                  .python = "lila.prefs.set(\"general\", \"/softSelect/enabled\", True)"});
+                  .python = "lila.prefs.set(\"general\", \"/softSelect/enabled\", True)",
+                  .checked = [] { return PrefStore::get().value<bool>("general", "/softSelect/enabled", false); }});
     actions::add({.id = "softSelect.adjustOn", .label = "Adjust Soft Select Radius (hold)", .category = "Tools", .run = [] {
                       gSoftAdjust = true;
                       notify();

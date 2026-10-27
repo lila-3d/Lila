@@ -63,6 +63,8 @@ bool normalSpace() { return PrefStore::get().value<std::string>("general", "/man
 
 bool rotateComponentSpace() { return PrefStore::get().value<std::string>("general", "/manipulator/rotateSpace", "world") == "component"; }
 
+bool moveComponentSpace() { return PrefStore::get().value<std::string>("general", "/manipulator/moveSpace", "world") == "component"; }
+
 /** "world", "object" or "component" (the selection's average normal and tangent). Objects always scale on their own axes. */
 std::string scaleSpace() { return PrefStore::get().value<std::string>("general", "/manipulator/scaleSpace", "world"); }
 
@@ -315,7 +317,7 @@ void Manipulator::refresh()
             mFrame = s == "component" ? scene::selectionNormalFrame()
                                       : scene::xformops::frame(g, mLead, s == "object" ? scene::Space::Object : scene::Space::World);
         }
-        else if (t == Tool::Rotate && rotateComponentSpace())
+        else if ((t == Tool::Rotate && rotateComponentSpace()) || (t == Tool::Move && moveComponentSpace()))
             mFrame = scene::selectionNormalFrame();
         else
             mFrame = scene::xformops::frame(g, mLead, spaceFor(t));
@@ -814,8 +816,10 @@ glm::dvec3 Manipulator::snapGrid(const glm::dvec3& p, const glm::dvec3& mask) co
 void Manipulator::update(QPointF px, Qt::KeyboardModifiers mods)
 {
     Drag& d = *mDrag;
-    // Shift slows the drag down for precision, except on Shift+MMB where it picks the axis.
-    double factor = (mods & Qt::ShiftModifier) && !d.axisFromDrag ? 0.1 : 1.0;
+    // Shift slows the drag down for precision, except on Shift+MMB where it picks the axis and on a surface slide,
+    // which follows the cursor exactly and uses Shift to keep the objects' orientation.
+    const bool sliding = d.surfaceSlide || (tools::snaps() & SnapSurface);
+    double factor = (mods & Qt::ShiftModifier) && !d.axisFromDrag && !sliding ? 0.1 : 1.0;
     d.precise = factor < 1.0;
     d.virtualPx += (px - d.lastPx) * factor;
     d.lastPx = px;
@@ -868,8 +872,8 @@ void Manipulator::update(QPointF px, Qt::KeyboardModifiers mods)
                                  : gizmo::snapRelative(delta, d.frame, moveMask(h), inc.step);
         std::optional<glm::dvec3> snap = snapTarget(cur, tools::snaps());
         d.alignRotations.clear();
-        if (!snap && (d.surfaceSlide || (tools::snaps() & SnapSurface)))
-            snap = surfaceSlide(cur);
+        if (!snap && sliding)
+            snap = surfaceSlide(cur, mods & Qt::ShiftModifier);
         if (snap)
         {
             // Point snaps keep the handle's constraint: an axis drag slides to the snap point's projection.
@@ -1066,7 +1070,7 @@ std::optional<glm::dvec3> Manipulator::snapTarget(QPointF px, unsigned snaps) co
     return nearest.hit();
 }
 
-std::optional<glm::dvec3> Manipulator::surfaceSlide(QPointF px)
+std::optional<glm::dvec3> Manipulator::surfaceSlide(QPointF px, bool upright)
 {
     LILA_ZONE();
 
@@ -1074,7 +1078,7 @@ std::optional<glm::dvec3> Manipulator::surfaceSlide(QPointF px)
     auto hit = surfaceSnap::underCursor(px, mView, d.surfaceExclude);
     if (!hit)
         return std::nullopt;
-    if (!d.components && !d.pivotEdit && surfaceSnap::alignToNormal())
+    if (!d.components && !d.pivotEdit && !upright && surfaceSnap::alignToNormal())
     {
         glm::dvec3 up = PrefStore::get().value<std::string>("general", "/scene/upAxis", "y") == "z" ? glm::dvec3(0, 0, 1) : glm::dvec3(0, 1, 0);
         for (const glm::dmat3& start : d.startFrames)

@@ -300,6 +300,8 @@ MarkingMenu::Level MarkingMenu::buildLevel(const json& def, QPointF center, std:
         it.children = j.value("children", json());
         it.boxAction = j.value("optionAction", json());
         it.enabled = j.value("enabled", true) && actions::isEnabled(it.action);
+        if (const Action* a = it.action.is_string() ? actions::find(it.action.get<std::string>()) : nullptr; a && a->checked)
+            it.checked = a->checked();
         return it;
     };
     for (int i = 0; i < 8; ++i)
@@ -704,6 +706,13 @@ void MarkingMenu::paintEvent(QPaintEvent*)
             p.setPen(!it.enabled ? disabledText : hi && top ? hiText : text);
             QRectF tr = it.rect.adjusted(kPadX, 0, -kPadX - (it.box.isEmpty() ? 0 : it.box.width() - 4), 0);
             p.drawText(tr, Qt::AlignVCenter | Qt::AlignLeft, it.label);
+            if (it.checked)
+            {
+                p.setBrush(p.pen().color());
+                p.setPen(Qt::NoPen);
+                p.drawEllipse(QPointF(it.rect.left() + kPadX / 2 + 0.5, it.rect.center().y()), 2.5, 2.5);
+                p.setPen(!it.enabled ? disabledText : hi && top ? hiText : text);
+            }
             if (it.children.is_object())
                 p.drawText(tr, Qt::AlignVCenter | Qt::AlignRight, QString::fromUtf8("▸"));
             if (!it.box.isEmpty())

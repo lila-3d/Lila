@@ -1417,7 +1417,7 @@ void registerBuiltInShelves()
 {
     shelves::add({"Modeling", shelfItems({
                                   {"Cube", "cube", "Create a cube", "create.cube"},
-                                  {"Sphere", "sphere", "Create a sphere", "create.sphere"},
+                                  {"Quad Sphere", "sphere", "Create an all-quad sphere", "create.quadSphere"},
                                   {"Cylinder", "cylinder", "Create a cylinder", "create.cylinder"},
                                   {"Plane", "plane", "Create a plane", "create.plane"},
                                   {"Cone", "cone", "Create a cone", "create.cone"},
@@ -1429,6 +1429,8 @@ void registerBuiltInShelves()
                                   {"Symmetry", "columns-2", "Toggle modeling symmetry", "mesh.toggleSymmetry"},
                                   {"Freeze", "snowflake", "Freeze transforms", "modify.freezeTransforms"},
                                   {"Center Piv", "square-dot", "Center pivots on each object's bounds", "modify.centerPivot"},
+                                  {"Reset Piv", "focus-centered", "Move the pivot back to each object's origin", "modify.resetPivot"},
+                                  {"Zero Piv", "focus-2", "Move the pivot to the world origin", "modify.zeroPivot"},
                                   {"Stack", "stack-2", "Show or hide the Modifier Stack", "window.modifierStack"},
                                   {"Toolkit", "tools", "Show or hide the Modeling Toolkit", "window.modelingToolkit"},
                               })});

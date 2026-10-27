@@ -121,7 +121,7 @@ struct FrameState
     /** Requested MSAA count (1, 2, 4, 8); the renderer clamps it to the device and rebuilds its targets on change. */
     int msaaSamples = 8;
     bool grid = true;
-    bool backfaceCulling = false; // culls back faces even on two-sided materials
+    bool backfaceCulling = false; // culls back faces of every material; off, every material shows them
     /** Back faces of two-sided materials shade with their normal flipped toward the camera; off, they light from behind. */
     bool twoSidedLighting = true;
     /** Display-encoded rgb mixed over back faces by alpha, to spot reversed normals; alpha 0 is off. */

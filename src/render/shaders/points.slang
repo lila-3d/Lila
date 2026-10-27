@@ -32,8 +32,9 @@ VSOut pointsVS(VSIn v)
     o.pos.z = o.pos.z * pc.depthPull.x + o.pos.w * pc.depthPull.y;
     o.color = pc.colors[min(v.state, 2u)];
     o.size = v.state == 1 ? pc.sizes.y : pc.sizes.x;
-    // Hidden points land outside the clip volume.
-    if (v.state > 2)
+    // Hidden points land outside the clip volume, and so do points far off screen or at the camera, which some
+    // rasterizers draw from past their guard band as a dot covering the view.
+    if (v.state > 2 || o.pos.w <= 1e-6 || any(abs(o.pos.xy) > 2.0 * o.pos.w))
         o.pos = float4(2.0, 2.0, 2.0, 1.0);
     return o;
 }

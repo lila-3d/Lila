@@ -191,6 +191,32 @@ std::map<std::pair<scene::NodeId, uint64_t>, Live>& lives()
     return l;
 }
 
+/** Which copy's vertices each live buffer holds now: every snapshot of a node's deformation shares one buffer. */
+std::unordered_map<const render::DynamicVertices*, const render::RenderMesh*>& liveHolders()
+{
+    static std::unordered_map<const render::DynamicVertices*, const render::RenderMesh*> h;
+    return h;
+}
+
+/**
+ * Puts a cached copy's own vertices back in its live buffer when a later snapshot overwrote them, as undoing a
+ * component drag returns to a snapshot whose copy shares the buffer the drag kept rewriting.
+ */
+void restoreLive(const render::RenderMesh& built)
+{
+    if (!built.dynamic)
+        return;
+    auto it = liveHolders().find(built.dynamic.get());
+    if (it == liveHolders().end() || it->second == &built)
+        return;
+    LILA_ZONE();
+    std::scoped_lock lock(built.dynamic->mutex);
+    built.dynamic->vertices.assign(built.vertices.begin(), built.vertices.end());
+    built.dynamic->allDirty = true;
+    built.dynamic->dirty.clear();
+    it->second = &built;
+}
+
 /** Normals of each render vertex of layout on mesh m. */
 std::vector<glm::vec3> vertexNormals(const geo::Mesh& m, const geo::RenderMesh& layout)
 {
@@ -265,7 +291,10 @@ Entry rebuildPositions(const scene::MeshPtr& source, const Entry& from, uint64_t
     {
         auto& l = lives();
         if (l.size() > 256)
+        {
             l.clear();
+            liveHolders().clear();
+        }
         Live& live = l[{owner, layoutKey}];
         if (!live.vertices)
         {
@@ -280,6 +309,7 @@ Entry rebuildPositions(const scene::MeshPtr& source, const Entry& from, uint64_t
         }
         out->dynamic = live.vertices;
         out->key = live.key;
+        liveHolders()[live.vertices.get()] = out.get();
     }
     else
         out->key = render::RenderMesh::nextKey();
@@ -353,7 +383,10 @@ const Entry* entryFor(const scene::MeshPtr& mesh, bool tangents = false, scene::
     auto& c = cache();
     auto it = c.find(mesh.get());
     if (it != c.end() && it->second.source.lock() == mesh && (it->second.tangents || !tangents))
+    {
+        restoreLive(*it->second.built);
         return &it->second;
+    }
     // Entries of deleted meshes hold gigabytes on dense meshes, so they go as soon as anything new is cached.
     std::erase_if(c, [](const auto& kv) { return kv.second.source.expired(); });
     // A mesh too big for the memory left stays undrawn, reported once, rather than taking the app down.

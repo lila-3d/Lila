@@ -1,0 +1,688 @@
+#include "geo/LoopTools.h"
+
+#include "geo/Ops.h"
+#include "geo/Topology.h"
+
+#include "core/Profile.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <iterator>
+#include <map>
+#include <optional>
+
+namespace lila::geo
+{
+namespace looptools
+{
+/** The edge of face f at point p other than e. */
+Index otherEdgeAt(const Mesh& m, Index f, Index p, Index e)
+{
+    const Index c = m.findCorner(f, p);
+    if (c == kInvalid)
+        return kInvalid;
+    const Index out = m.cornerEdge(c), in = m.cornerEdge(m.cornerPrev(c));
+    return out == e ? in : out;
+}
+
+/** e's faces: [0] the one wound along e from `from` (its left), [1] the other. kInvalid where e has none. */
+std::array<Index, 2> edgeSides(const Mesh& m, Index e, Index from)
+{
+    std::array<Index, 2> s{kInvalid, kInvalid};
+    m.forEachEdgeCorner(e, [&](Index c) {
+        Index& slot = m.cornerPoint(c) == from && s[0] == kInvalid ? s[0] : s[1];
+        if (slot == kInvalid)
+            slot = m.cornerFace(c);
+    });
+    return s;
+}
+
+/** The edges crossed going round point p from edge `from` through face f toward `to`. */
+struct Fan
+{
+    std::vector<Index> rungs;
+    /** faces[k] lies before rungs[k]; with reached, the last face lies before `to`. */
+    std::vector<Index> faces;
+    bool reached = false;
+    /** Stopped at a border: the last rung has no face beyond it. */
+    bool border = false;
+};
+
+Fan walkFan(const Mesh& m, Index p, Index from, Index f, Index to)
+{
+    Fan w;
+    Index cur = from;
+    const Index start = f;
+    for (int guard = 0; f != kInvalid && guard < 256; ++guard)
+    {
+        w.faces.push_back(f);
+        const Index e = otherEdgeAt(m, f, p, cur);
+        if (e == kInvalid || e == from)
+            break;
+        if (e == to)
+        {
+            w.reached = true;
+            break;
+        }
+        w.rungs.push_back(e);
+        f = m.oppositeFace(e, f);
+        if (f == kInvalid)
+            w.border = m.isBoundaryEdge(e);
+        if (f == start)
+            break;
+        cur = e;
+    }
+    return w;
+}
+
+/** The edge carrying e's loop on past p, or the one most nearly opposite e when the loop stops there. */
+Index loopContinuation(const Mesh& m, Index e, Index p)
+{
+    if (const Index x = edgeLoopNext(m, e, p); x != kInvalid)
+        return x;
+    const glm::dvec3 at = m.position(p);
+    const glm::dvec3 d = glm::normalize(m.position(m.edgeOtherPoint(e, p)) - at);
+    Index best = kInvalid;
+    double bestDot = -0.5;
+    m.forEachPointEdge(p, [&](Index x) {
+        if (x == e)
+            return;
+        const glm::dvec3 dx = m.position(m.edgeOtherPoint(x, p)) - at;
+        const double len = glm::length(dx);
+        if (len < 1e-12)
+            return;
+        if (const double c = glm::dot(d, dx / len); c < bestDot)
+        {
+            bestDot = c;
+            best = x;
+        }
+    });
+    return best;
+}
+
+/** The chain's direction at points[i]. */
+glm::dvec3 chainTangent(const Mesh& m, const EdgePath& path, size_t i)
+{
+    const size_t n = path.points.size();
+    const Index prev = path.closed || i > 0 ? path.points[(i + n - 1) % n] : path.points[i];
+    const Index next = path.closed || i + 1 < n ? path.points[(i + 1) % n] : path.points[i];
+    const glm::dvec3 d = m.position(next) - m.position(prev);
+    const double len = glm::length(d);
+    return len > 1e-12 ? d / len : glm::dvec3(0.0);
+}
+
+bool touches(const Mesh& m, Index f, const KnifePoint& k)
+{
+    switch (k.kind)
+    {
+    case KnifePoint::Kind::Point: return m.findCorner(f, k.id) != kInvalid;
+    case KnifePoint::Kind::Face: return k.id == f;
+    case KnifePoint::Kind::Edge:
+    {
+        bool found = false;
+        m.forEachEdgeCorner(k.id, [&](Index c) { found = found || m.cornerFace(c) == f; });
+        return found;
+    }
+    }
+    return false;
+}
+
+/** Where the offset loop crosses an edge or a face near a chain point. */
+struct Spotter
+{
+    const Mesh& m;
+    const OffsetLoopOptions& o;
+
+    /** On rung r out from p. along: r carries the chain on (a wrapped end), so the distance is not squared to it. */
+    KnifePoint onEdge(Index r, Index p, const glm::dvec3& tangent, bool along) const
+    {
+        const Index q = m.edgeOtherPoint(r, p);
+        const glm::dvec3 d = m.position(q) - m.position(p);
+        const double len = glm::length(d);
+        double t = o.distance;
+        if (o.absolute)
+        {
+            double square = 1.0;
+            if (!along && len > 1e-12 && glm::length(tangent) > 0.5)
+            {
+                const double c = glm::dot(d / len, tangent);
+                square = std::max(0.25, std::sqrt(std::max(0.0, 1.0 - c * c)));
+            }
+            t = len > 1e-12 ? o.distance / square / len : 0.5;
+        }
+        t = std::clamp(t, 1e-3, 0.95);
+        KnifePoint k = KnifePoint::edge(r, m.edgePoint(r, 0) == p ? t : 1.0 - t);
+        k.position = glm::mix(m.position(p), m.position(q), t);
+        return k;
+    }
+
+    /** Inside face f, the distance off both of its edges a and b at p. */
+    KnifePoint inFace(Index f, Index p, Index a, Index b) const
+    {
+        const glm::dvec3 at = m.position(p), toCentre = m.faceCentroid(f) - at;
+        auto unit = [&](Index e) {
+            const glm::dvec3 d = m.position(m.edgeOtherPoint(e, p)) - at;
+            const double len = glm::length(d);
+            return len > 1e-12 ? d / len : d;
+        };
+        const glm::dvec3 ua = unit(a), ub = unit(b);
+        glm::dvec3 w = ua + ub;
+        // Straight through p: square off the edges, into the face.
+        if (glm::length(w) < 1e-6)
+            w = glm::cross(m.faceNormal(f), ua);
+        if (glm::length(w) < 1e-12)
+            w = toCentre;
+        w = glm::normalize(w);
+        if (glm::dot(w, toCentre) < 0.0)
+            w = -w;
+        const double sinHalf = std::max(0.2, std::sqrt(std::max(0.0, 0.5 * (1.0 - glm::dot(ua, ub)))));
+        const double depth = glm::dot(toCentre, w);
+        // A fraction measures against the face's depth off the chain, as a rung's length does in a quad.
+        const double h = o.absolute ? o.distance : std::clamp(o.distance, 0.0, 0.95) * 2.0 * depth * sinHalf;
+        const double along = std::min(h / sinHalf, 1.8 * std::max(0.0, depth));
+        return KnifePoint::face(f, at + w * along);
+    }
+};
+
+/** One side's offset loop along one chain, appended to plan as segments. */
+struct SideCutter
+{
+    const Mesh& m;
+    const Spotter& spot;
+    KnifePlan& plan;
+    std::optional<KnifePoint> prev;
+    std::optional<std::pair<KnifePoint, Index>> first;
+
+    /** Adds k, joined to the spot before it through face f when both lie on f. */
+    void add(const KnifePoint& k, Index f)
+    {
+        if (prev && f != kInvalid && touches(m, f, *prev) && touches(m, f, k))
+            plan.segments.push_back({f, *prev, k, false});
+        if (!first)
+            first = std::pair{k, f};
+        prev = k;
+    }
+
+    void cut() { prev.reset(); }
+
+    /**
+     * Spots met walking out from the chain: spots[k] follows faces[k]. Outward runs away from the chain (toward the
+     * next point); inward runs back to it, so the walk is emitted reversed, starting fresh.
+     */
+    void emit(const std::vector<KnifePoint>& spots, const std::vector<Index>& faces, bool outward)
+    {
+        if (outward)
+        {
+            for (size_t k = 0; k < spots.size(); ++k)
+                add(spots[k], faces[k]);
+            return;
+        }
+        cut();
+        for (size_t k = spots.size(); k-- > 0;)
+            add(spots[k], k + 1 < faces.size() ? faces[k + 1] : kInvalid);
+    }
+
+    std::vector<KnifePoint> rungSpots(const Fan& w, Index p, const glm::dvec3& tangent) const
+    {
+        std::vector<KnifePoint> out;
+        for (Index r : w.rungs)
+            out.push_back(spot.onEdge(r, p, tangent, false));
+        return out;
+    }
+};
+
+void planSide(const Mesh& m, const EdgePath& path, int side, const Spotter& spot, OffsetEnds ends, KnifePlan& plan)
+{
+    const size_t np = path.points.size(), ne = path.edges.size();
+    if (ne == 0)
+        return;
+    SideCutter sc{m, spot, plan};
+    auto sideFace = [&](size_t ei) { return edgeSides(m, path.edges[ei], path.points[ei])[size_t(side)]; };
+    for (size_t i = 0; i < np; ++i)
+    {
+        const Index p = path.points[i];
+        const bool hasIn = path.closed || i > 0, hasOut = path.closed || i + 1 < np;
+        const size_t ia = (i + ne - 1) % ne;
+        const Index a = hasIn ? path.edges[ia] : kInvalid, b = hasOut ? path.edges[i] : kInvalid;
+        const Index fa = hasIn ? sideFace(ia) : kInvalid, fb = hasOut ? sideFace(i) : kInvalid;
+        const glm::dvec3 tangent = chainTangent(m, path, i);
+
+        if (hasIn && hasOut)
+        {
+            bool fromB = fa == kInvalid;
+            if (fa != kInvalid)
+            {
+                const Fan w = walkFan(m, p, a, fa, b);
+                if (w.reached && w.rungs.empty())
+                {
+                    sc.add(spot.inFace(fa, p, a, b), fa);
+                    continue;
+                }
+                sc.emit(sc.rungSpots(w, p, tangent), w.faces, true);
+                if (w.reached)
+                    continue;
+                sc.cut();
+                fromB = w.border;
+            }
+            else
+                sc.cut();
+            if (fromB && fb != kInvalid)
+            {
+                const Fan w = walkFan(m, p, b, fb, a);
+                sc.emit(sc.rungSpots(w, p, tangent), w.faces, false);
+            }
+            continue;
+        }
+
+        // An open chain's end: hasIn means it is the last point, so the walk out from it runs on along the path.
+        const Index e = hasIn ? a : b, fe = hasIn ? fa : fb;
+        if (fe == kInvalid)
+        {
+            sc.cut();
+            continue;
+        }
+        if (m.isBoundaryPoint(p))
+        {
+            const Fan w = walkFan(m, p, e, fe, kInvalid);
+            sc.emit(sc.rungSpots(w, p, tangent), w.faces, hasIn);
+            continue;
+        }
+        const Index x = loopContinuation(m, e, p);
+        if (ends == OffsetEnds::Converge || x == kInvalid)
+        {
+            KnifePoint k = KnifePoint::point(p);
+            k.position = m.position(p);
+            if (!hasIn)
+                sc.cut();
+            sc.add(k, fe);
+            continue;
+        }
+        const Fan w = walkFan(m, p, e, fe, x);
+        std::vector<KnifePoint> spots = sc.rungSpots(w, p, tangent);
+        if (w.reached)
+            spots.push_back(spot.onEdge(x, p, tangent, true));
+        sc.emit(spots, w.faces, hasIn);
+    }
+    if (path.closed && sc.first && sc.prev)
+        sc.add(sc.first->first, sc.first->second);
+}
+} // namespace looptools
+
+KnifePlan offsetEdgeLoopPlan(const Mesh& mesh, std::span<const Index> edges, const OffsetLoopOptions& opts)
+{
+    LILA_ZONE();
+
+    using namespace looptools;
+    std::vector<Index> valid;
+    for (Index e : edges)
+        if (mesh.edgeValid(e))
+            valid.push_back(e);
+    const SymmetryMap* sym = opts.symmetry && !opts.symmetry->empty() ? opts.symmetry : nullptr;
+    int drive = 0;
+    if (sym)
+    {
+        drive = sym->majorityWedge(pointsOfEdges(mesh, valid));
+        valid = sym->expandEdges(mesh, valid);
+    }
+    KnifePlan plan;
+    const Spotter spot{mesh, opts};
+    for (const EdgePath& path : chainEdges(mesh, valid))
+    {
+        // A chain off the driving side gets the image of its driving partner instead, so one-sided offsets mirror.
+        if (sym && std::ranges::none_of(path.points, [&](Index p) { return sym->drives(p, drive); }))
+            continue;
+        if (opts.side != OffsetSide::Right)
+            planSide(mesh, path, 0, spot, opts.ends, plan);
+        if (opts.side != OffsetSide::Left)
+            planSide(mesh, path, 1, spot, opts.ends, plan);
+    }
+    if (sym)
+        addSymmetricImages(mesh, plan, *sym);
+    return plan;
+}
+
+std::vector<Index> offsetEdgeLoops(Mesh& mesh, std::span<const Index> edges, const OffsetLoopOptions& opts, bool removeOriginal)
+{
+    LILA_ZONE();
+
+    const KnifePlan plan = offsetEdgeLoopPlan(mesh, edges, opts);
+    std::vector<Index> original(edges.begin(), edges.end());
+    if (opts.symmetry && !opts.symmetry->empty())
+        original = opts.symmetry->expandEdges(mesh, original);
+    std::vector<Index> made = knifeApply(mesh, plan);
+    if (!removeOriginal || made.empty())
+        return made;
+    dissolveEdges(mesh, original, true);
+    std::erase_if(made, [&](Index e) { return !mesh.edgeValid(e); });
+    return made;
+}
+
+namespace looptools
+{
+/** A line across a loop point: its neighbours a and b either side, and the points beyond them (kInvalid when none). */
+struct Across
+{
+    Index a = kInvalid, b = kInvalid, a2 = kInvalid, b2 = kInvalid;
+    /** Directions the point must not slide along: the loop's own, or the other line's for a loose point. */
+    glm::dvec3 keep{0.0};
+};
+
+/** The point beyond q along the line from p through q. */
+Index beyond(const Mesh& m, Index rung, Index q, Index p)
+{
+    const Index next = edgeLoopNext(m, rung, q);
+    if (next == kInvalid)
+        return kInvalid;
+    const Index r = m.edgeOtherPoint(next, q);
+    return r == p ? kInvalid : r;
+}
+
+/** Of the rungs, the one most square to the tangent. */
+Index squarest(const Mesh& m, Index p, const std::vector<Index>& rungs, const glm::dvec3& tangent)
+{
+    Index best = kInvalid;
+    double bestCos = 2.0;
+    for (Index r : rungs)
+    {
+        const glm::dvec3 d = m.position(m.edgeOtherPoint(r, p)) - m.position(p);
+        const double len = glm::length(d);
+        const double c = len > 1e-12 ? std::abs(glm::dot(d / len, tangent)) : 1.0;
+        if (c < bestCos)
+        {
+            bestCos = c;
+            best = r;
+        }
+    }
+    return best;
+}
+
+/** The crossing edges on one side of chain point p between its chain edges a and b (either may be kInvalid at an end). */
+std::vector<Index> sideRungs(const Mesh& m, Index p, Index a, Index fa, Index b, Index fb)
+{
+    std::vector<Index> out;
+    auto take = [&](const Fan& w) { out.insert(out.end(), w.rungs.begin(), w.rungs.end()); };
+    if (a != kInvalid && b != kInvalid)
+    {
+        if (fa != kInvalid)
+        {
+            const Fan w = walkFan(m, p, a, fa, b);
+            take(w);
+            if (w.reached || !w.border)
+                return out;
+        }
+        if (fb != kInvalid)
+            take(walkFan(m, p, b, fb, a));
+        return out;
+    }
+    const Index e = a != kInvalid ? a : b, fe = a != kInvalid ? fa : fb;
+    if (fe == kInvalid)
+        return out;
+    const Index to = m.isBoundaryPoint(p) ? kInvalid : loopContinuation(m, e, p);
+    take(walkFan(m, p, e, fe, to));
+    return out;
+}
+
+void chainLines(const Mesh& m, const EdgePath& path, std::map<Index, std::vector<Across>>& lines)
+{
+    const size_t np = path.points.size(), ne = path.edges.size();
+    for (size_t i = 0; i < np; ++i)
+    {
+        const Index p = path.points[i];
+        const bool hasIn = path.closed || i > 0, hasOut = path.closed || i + 1 < np;
+        const size_t ia = (i + ne - 1) % ne;
+        const Index a = hasIn ? path.edges[ia] : kInvalid, b = hasOut ? path.edges[i] : kInvalid;
+        const std::array<Index, 2> sa = hasIn ? edgeSides(m, a, path.points[ia]) : std::array<Index, 2>{kInvalid, kInvalid};
+        const std::array<Index, 2> sb = hasOut ? edgeSides(m, b, p) : std::array<Index, 2>{kInvalid, kInvalid};
+        const glm::dvec3 tangent = chainTangent(m, path, i);
+        Index rung[2];
+        for (int s = 0; s < 2; ++s)
+            rung[s] = squarest(m, p, sideRungs(m, p, a, sa[size_t(s)], b, sb[size_t(s)]), tangent);
+        if (rung[0] == kInvalid || rung[1] == kInvalid)
+            continue;
+        Across l;
+        l.a = m.edgeOtherPoint(rung[0], p);
+        l.b = m.edgeOtherPoint(rung[1], p);
+        l.a2 = beyond(m, rung[0], l.a, p);
+        l.b2 = beyond(m, rung[1], l.b, p);
+        l.keep = tangent;
+        lines[p].push_back(l);
+    }
+}
+
+void looseLines(const Mesh& m, Index p, std::map<Index, std::vector<Across>>& lines)
+{
+    std::vector<Across> mine;
+    std::vector<Index> used;
+    m.forEachPointEdge(p, [&](Index e) {
+        const Index partner = edgeLoopNext(m, e, p);
+        if (partner == kInvalid || std::ranges::count(used, e) || std::ranges::count(used, partner))
+            return;
+        used.push_back(e);
+        used.push_back(partner);
+        Across l;
+        l.a = m.edgeOtherPoint(e, p);
+        l.b = m.edgeOtherPoint(partner, p);
+        l.a2 = beyond(m, e, l.a, p);
+        l.b2 = beyond(m, partner, l.b, p);
+        mine.push_back(l);
+    });
+    // Each direction keeps the point from sliding along the other.
+    if (mine.size() == 2)
+        for (int k = 0; k < 2; ++k)
+        {
+            const Across& o = mine[size_t(1 - k)];
+            const glm::dvec3 d = m.position(o.b) - m.position(o.a);
+            if (const double len = glm::length(d); len > 1e-12)
+                mine[size_t(k)].keep = d / len;
+        }
+    std::ranges::copy(mine, std::back_inserter(lines[p]));
+}
+
+/** Centripetal Catmull-Rom tangent at p1 of the span p1 to p2, in that span's unit parameter; from the point before p1. */
+glm::dvec3 catmullTangent(const glm::dvec3& p0, const glm::dvec3& p1, const glm::dvec3& p2)
+{
+    const double t01 = std::sqrt(glm::distance(p0, p1)), t12 = std::sqrt(glm::distance(p1, p2));
+    if (t01 < 1e-9 || t12 < 1e-9)
+        return p2 - p1;
+    return t12 * ((p1 - p0) / t01 - (p2 - p0) / (t01 + t12) + (p2 - p1) / t12);
+}
+
+/** The chord turned into the surface's tangent plane at a point, chord long. */
+std::optional<glm::dvec3> normalTangent(const glm::dvec3& normal, const glm::dvec3& chord)
+{
+    if (glm::length(normal) < 0.5)
+        return std::nullopt;
+    const glm::dvec3 t = chord - normal * glm::dot(chord, normal);
+    const double len = glm::length(t);
+    if (len < 1e-9 * std::max(1.0, glm::length(chord)))
+        return std::nullopt;
+    return t / len * glm::length(chord);
+}
+
+glm::dvec3 hermite(const glm::dvec3& a, const glm::dvec3& ma, const glm::dvec3& b, const glm::dvec3& mb, double u)
+{
+    const double u2 = u * u, u3 = u2 * u;
+    return (2 * u3 - 3 * u2 + 1) * a + (u3 - 2 * u2 + u) * ma + (-2 * u3 + 3 * u2) * b + (u3 - u2) * mb;
+}
+
+struct Flow
+{
+    const Mesh& m;
+    const EdgeFlowOptions& o;
+    std::vector<glm::dvec3> normals;
+
+    glm::dvec3 normal(Index p) const { return normals[p]; }
+
+    /** The move that puts v on the curve across line l, square to the line and to what it keeps. */
+    glm::dvec3 displacement(const std::vector<glm::dvec3>& pos, const Across& l, const glm::dvec3& v) const
+    {
+        const glm::dvec3 A = pos[l.a], B = pos[l.b], chord = B - A;
+        const double len = glm::length(chord);
+        if (len < 1e-12)
+            return glm::dvec3(0.0);
+        const glm::dvec3 dir = chord / len;
+        const double s = std::clamp(glm::dot(v - A, dir) / len, 0.02, 0.98);
+
+        std::optional<glm::dvec3> ma, mb;
+        if (o.edgeFlow && l.a2 != kInvalid)
+            ma = catmullTangent(pos[l.a2], A, B);
+        if (o.edgeFlow && l.b2 != kInvalid)
+            mb = -catmullTangent(pos[l.b2], B, A);
+        if (!ma)
+            ma = normalTangent(normal(l.a), chord);
+        if (!mb)
+            mb = normalTangent(normal(l.b), chord);
+        // A natural end where one side has nothing to go on: no bend at that end.
+        if (!ma && mb)
+            ma = (3.0 * chord - *mb) * 0.5;
+        if (!mb && ma)
+            mb = (3.0 * chord - *ma) * 0.5;
+        const double scale = 1.0 - o.tension;
+        const glm::dvec3 ta = ma.value_or(chord) * scale, tb = mb.value_or(chord) * scale;
+
+        // The curve point whose shadow on the chord is v's, so the point keeps its place along the line.
+        double lo = 0.0, hi = 1.0;
+        for (int k = 0; k < 30; ++k)
+        {
+            const double mid = 0.5 * (lo + hi);
+            (glm::dot(hermite(A, ta, B, tb, mid) - A, dir) / len < s ? lo : hi) = mid;
+        }
+        const glm::dvec3 onCurve = hermite(A, ta, B, tb, 0.5 * (lo + hi));
+        const glm::dvec3 flat = A + chord * s;
+        glm::dvec3 d = flat + o.amount * (onCurve - flat) - v;
+
+        glm::dvec3 keep = l.keep - dir * glm::dot(l.keep, dir);
+        if (const double kl = glm::length(keep); kl > 1e-6)
+        {
+            const glm::dvec3 n = glm::normalize(glm::cross(dir, keep / kl));
+            return n * glm::dot(d, n);
+        }
+        return d - dir * glm::dot(d, dir);
+    }
+};
+
+/** Eases the moved points of a chain toward the four-point curve through their loop neighbours, square to the loop. */
+void smoothAlong(const EdgePath& path, const std::vector<uint8_t>& movable, double amount, std::vector<glm::dvec3>& pos)
+{
+    const size_t n = path.points.size();
+    auto at = [&](long i) { return pos[path.points[size_t((i % long(n) + long(n)) % long(n))]]; };
+    std::vector<std::pair<Index, glm::dvec3>> next;
+    for (size_t i = 0; i < n; ++i)
+    {
+        const Index p = path.points[i];
+        if (!movable[p] || (!path.closed && (i == 0 || i + 1 == n)))
+            continue;
+        const long k = long(i);
+        const bool wide = path.closed ? n >= 5 : i >= 2 && i + 2 < n;
+        const glm::dvec3 target = wide ? (9.0 * (at(k - 1) + at(k + 1)) - (at(k - 2) + at(k + 2))) / 16.0 : (at(k - 1) + at(k + 1)) * 0.5;
+        glm::dvec3 d = target - pos[p];
+        const glm::dvec3 t = at(k + 1) - at(k - 1);
+        if (const double len = glm::length(t); len > 1e-12)
+            d -= t / len * glm::dot(d, t / len);
+        next.push_back({p, pos[p] + amount * d});
+    }
+    for (auto& [p, q] : next)
+        pos[p] = q;
+}
+} // namespace looptools
+
+PointMoves editEdgeFlow(const Mesh& mesh, std::span<const Index> edges, std::span<const Index> points, const EdgeFlowOptions& opts)
+{
+    LILA_ZONE();
+
+    using namespace looptools;
+    std::vector<Index> valid;
+    for (Index e : edges)
+        if (mesh.edgeValid(e))
+            valid.push_back(e);
+    const std::vector<EdgePath> chains = chainEdges(mesh, valid);
+    std::map<Index, std::vector<Across>> lines;
+    std::vector<Index> considered;
+    for (const EdgePath& path : chains)
+    {
+        chainLines(mesh, path, lines);
+        considered.insert(considered.end(), path.points.begin(), path.points.end());
+    }
+    for (Index p : points)
+        if (mesh.pointValid(p))
+        {
+            looseLines(mesh, p, lines);
+            considered.push_back(p);
+        }
+    considered = uniqueSorted(considered);
+
+    Flow flow{mesh, opts, std::vector<glm::dvec3>(mesh.pointCapacity(), glm::dvec3(0.0))};
+    for (Index f = 0; f < mesh.faceCapacity(); ++f)
+        if (mesh.faceValid(f))
+        {
+            const glm::dvec3 a = mesh.faceAreaVector(f);
+            mesh.forEachFaceCorner(f, [&](Index c) { flow.normals[mesh.cornerPoint(c)] += a; });
+        }
+    for (glm::dvec3& n : flow.normals)
+        if (const double len = glm::length(n); len > 1e-12)
+            n /= len;
+
+    std::vector<glm::dvec3> pos(mesh.positions().begin(), mesh.positions().end());
+    std::vector<uint8_t> movable(mesh.pointCapacity(), 0);
+    for (auto& [p, ls] : lines)
+        movable[p] = ls.empty() ? 0 : 1;
+    for (int it = 0; it < std::max(1, opts.iterations); ++it)
+    {
+        std::vector<std::pair<Index, glm::dvec3>> next;
+        for (auto& [p, ls] : lines)
+        {
+            if (ls.empty())
+                continue;
+            glm::dvec3 sum(0.0);
+            for (const Across& l : ls)
+                sum += flow.displacement(pos, l, pos[p]);
+            next.push_back({p, pos[p] + sum / double(ls.size())});
+        }
+        for (auto& [p, q] : next)
+            pos[p] = q;
+        if (opts.loopSmooth != 0.0)
+            for (const EdgePath& path : chains)
+                smoothAlong(path, movable, opts.loopSmooth, pos);
+    }
+
+    PointMoves out;
+    for (Index p : considered)
+        out.push_back({p, pos[p]});
+    return out;
+}
+
+void flowSelectionOfPoints(const Mesh& mesh, std::span<const Index> points, std::vector<Index>& edges, std::vector<Index>& loose)
+{
+    LILA_ZONE();
+
+    edges.clear();
+    loose.clear();
+    const std::vector<uint8_t> in = makeMask(mesh.pointCapacity(), points);
+    std::vector<int> degree(mesh.pointCapacity(), 0);
+    std::vector<Index> between;
+    for (Index p : uniqueSorted(points))
+        if (mesh.pointValid(p))
+            mesh.forEachPointEdge(p, [&](Index e) {
+                const Index q = mesh.edgeOtherPoint(e, p);
+                if (!in[q])
+                    return;
+                ++degree[p];
+                if (p < q)
+                    between.push_back(e);
+            });
+    std::vector<uint8_t> onChain(mesh.pointCapacity(), 0);
+    for (Index e : between)
+    {
+        const Index p = mesh.edgePoint(e, 0), q = mesh.edgePoint(e, 1);
+        if (degree[p] <= 2 && degree[q] <= 2)
+        {
+            edges.push_back(e);
+            onChain[p] = onChain[q] = 1;
+        }
+    }
+    for (Index p : uniqueSorted(points))
+        if (mesh.pointValid(p) && !onChain[p])
+            loose.push_back(p);
+}
+} // namespace lila::geo

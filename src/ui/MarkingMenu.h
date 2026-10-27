@@ -128,6 +128,7 @@ private:
         nlohmann::json children; // nested menu definition, or null
         QRectF rect;
         bool enabled = true; // drawn greyed and never highlighted when false
+        bool checked = false; // the action is on now (the active manipulator space...): drawn with a dot
         bool separator = false; // an overflow divider line: no label, never highlighted
         bool column = false; // starts a new overflow column: never drawn or highlighted
         int outerSlot = -1; // the compass slot an outer ring item stacks beyond, -1 for a plain overflow row

@@ -156,6 +156,9 @@ void registerConformActions()
         "Makes the selected edge loops, face borders or vertices round, in their best-fit plane. A rectangle of faces becomes a disc, "
         "ready to extrude into a pipe.");
     add("mesh.spherize", "Spherize", "polySpherize", json::object(), "Pushes the selected components onto a sphere fitted to them.");
+    add("mesh.editEdgeFlow", "Edit Edge Flow", "polyEditEdgeFlow", json::object(),
+        "Moves the selected edge loops so they follow the curvature of the surface around them, rounding a flat loop into a curved "
+        "surface. Vertex and face selections fit both directions.");
     add("mesh.flatten", "Flatten", "polyConformShape", {{"shape", "plane"}}, "Moves the selected components onto their best-fit plane.");
     add("mesh.conformShape", "Conform to Shape", "polyConformShape", json::object(),
         "Fits the selected components to a line, circle, square, rectangle, sphere, cylinder or plane; pick the shape in the option box.");

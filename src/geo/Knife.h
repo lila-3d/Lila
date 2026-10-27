@@ -78,6 +78,9 @@ LILA_SCENE_API KnifePlan knifePlan(const Mesh& mesh, std::span<const KnifePoint>
 /** Plan of an edge loop across the quad ring through edge, at t along it (and its mirror with symmetry). */
 LILA_SCENE_API KnifePlan knifeLoopPlan(const Mesh& mesh, Index edge, double t, const SymmetryMap* symmetry = nullptr);
 
+/** Adds each segment's image under every other symmetry element, skipping segments with no image. */
+LILA_SCENE_API void addSymmetricImages(const Mesh& mesh, KnifePlan& plan, const SymmetryMap& symmetry);
+
 /**
  * Applies a plan made on this mesh. Pieces joined only through face-inside spots that do not reach the face's border
  * at both ends are dropped, as are pieces along existing edges. Returns the new edges.

@@ -712,6 +712,7 @@ void ViewportWidget::submit()
             hilite.insert(id);
     const bool aids = displayAids::anyDrawn(mHudPanel);
     const bool smoothSubdivisions = PrefStore::get().value<bool>("general", viewportDisplay::kSmoothSubdivisions, false);
+    const bool componentWireShown = PrefStore::get().value<bool>("general", viewportDisplay::kComponentModeWire, false);
     std::vector<displayAids::MeshEntry> aidMeshes;
     const std::unordered_set<scene::NodeId> lodHidden = scene::lod::hidden(g, lodDisplay::view(mHudPanel, viewInfo()));
     for (scene::NodeId id : g.nodes())
@@ -762,7 +763,7 @@ void ViewportWidget::submit()
         const bool templated = layer.type == scene::displayLayers::DisplayType::Template;
         if (mode != "wireframe" && !wireOnly && !templated)
             d.flags |= render::DrawShaded;
-        if (mode == "wireframe" || wireOnShaded || wireOnly || templated || scene::components::mode() != scene::ComponentMode::Object)
+        if (mode == "wireframe" || wireOnShaded || wireOnly || templated || (componentWireShown && hilite.contains(id)))
             d.flags |= render::DrawWire;
         if (templated && mode != "wireframe")
             d.flags |= render::DrawWireDepth;
@@ -1704,7 +1705,8 @@ void ViewportWidget::drawComponents(render::FrameState& s)
                 if (auto part = isolate::masked(&mIsolation, id, mesh))
                     cageDraw.mesh = part->mesh;
                 cageDraw.world = glm::mat4(world);
-                cageDraw.flags = render::DrawWire;
+                // Depth tested against the result, as picking is: hidden cage edges stay hidden.
+                cageDraw.flags = render::DrawWire | render::DrawWireDepth;
                 cageDraw.wireColor = palette.wire;
                 cageDraw.wireWidth = wireWidth;
                 s.meshes.push_back(std::move(cageDraw));
@@ -1793,7 +1795,9 @@ void ViewportWidget::drawComponents(render::FrameState& s)
             const auto& sel = scene::components::selected(id, mode);
             weights = scene::softWeights(m, world, scene::components::convert(m, mode, sel, ComponentMode::Vertex));
         }
-        if (mode == ComponentMode::Vertex || soft)
+        const bool edgeFaceVertices =
+            mode != ComponentMode::Vertex && PrefStore::get().value<bool>("general", viewportDisplay::kVerticesInEdgeFaceModes, false);
+        if (mode == ComponentMode::Vertex || soft || edgeFaceVertices)
         {
             // 1 selected, 2 the mirror of a selected point.
             std::vector<char> on(m.pointCapacity(), 0);
@@ -1807,6 +1811,10 @@ void ViewportWidget::drawComponents(render::FrameState& s)
                     if (p < on.size())
                         on[p] = 1;
             }
+            else if (edgeFaceVertices)
+                for (uint32_t p : scene::components::convert(m, mode, scene::components::selected(id, mode), ComponentMode::Vertex))
+                    if (p < on.size())
+                        on[p] = 1;
             // Camera-facing squares a few pixels wide; size scales with depth so they stay constant on screen.
             ViewInfo view = viewInfo();
             glm::dvec3 right(view.view[0][0], view.view[1][0], view.view[2][0]), up(view.view[0][1], view.view[1][1], view.view[2][1]);
@@ -1824,8 +1832,8 @@ void ViewportWidget::drawComponents(render::FrameState& s)
                 if (depth <= 0.0)
                     continue;
                 float wgt = p < weights.size() ? weights[p] : 0.0f;
-                // Outside vertex mode only the falloff shows, as dots shaded by weight.
-                if (mode != ComponentMode::Vertex && wgt <= 0.0f)
+                // Outside vertex mode only the falloff shows, as dots shaded by weight, and the selection's own vertices by pref.
+                if (mode != ComponentMode::Vertex && (wgt >= 1.0f ? !edgeFaceVertices : (wgt <= 0.0f && on[p] != 1)))
                     continue;
                 double half = 0.5 * (on[p] == 1 || wgt >= 1.0f ? thickness.vertexSelected : thickness.vertex) * perUnitDepth * depth;
                 glm::dvec3 r = right * half, u = up * half;

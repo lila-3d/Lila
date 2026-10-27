@@ -1309,7 +1309,7 @@ void MainWindow::buildMenus()
                         "window.preferences", "window.extensionManager"});
 
     menu("Modify", "M&odify");
-    menus::addActions("Modify", {"#Transforms", "modify.freezeTransforms", "modify.resetTransforms", "modify.centerPivot", "modify.resetPivot", "modify.orientPivot", "modify.pinComponentPivot", "modify.resetComponentPivot",
+    menus::addActions("Modify", {"#Transforms", "modify.freezeTransforms", "modify.resetTransforms", "modify.centerPivot", "modify.resetPivot", "modify.zeroPivot", "modify.orientPivot", "modify.pinComponentPivot", "modify.resetComponentPivot",
                                  "#Snapping", "snapSurface.set", "snapSurface.clear", "snapSurface.toggle", "snapSurface.alignToNormal"});
 
     menu("Create", "Create");
@@ -1355,9 +1355,9 @@ void MainWindow::buildMenus()
                                    "#Constructs", "topo.freezeAll", "#Display", "topo.qualityOverlay"});
 
     menu("Model", "Model");
-    menus::addActions("Model", {"#Components", "mesh.extrude", "mesh.inset", "mesh.insetRegion", "mesh.bevel", "mesh.insertLoop", "mesh.knife", "mesh.bridge",
+    menus::addActions("Model", {"#Components", "mesh.extrude", "mesh.inset", "mesh.insetRegion", "mesh.bevel", "mesh.insertLoop", "mesh.offsetLoop", "mesh.knife", "mesh.bridge",
                                 "mesh.fillHole", "mesh.poke", "#Merge", "mesh.merge", "mesh.mergeCenter", "mesh.targetWeld", "mesh.collapse", "#Edges", "mesh.dissolve",
-                                "mesh.spin", "#Shape", "mesh.straighten", "mesh.circularize", "mesh.spherize", "mesh.flatten", "mesh.conformShape",
+                                "mesh.spin", "#Shape", "mesh.editEdgeFlow", "mesh.straighten", "mesh.circularize", "mesh.spherize", "mesh.flatten", "mesh.conformShape",
                                 "mesh.conformToObject"});
 
     menu("Curves", "Curves", Area::MenuBar, {}, "curves");

@@ -6,5 +6,7 @@
   "SE": { "label": "Soft Select", "action": "softSelect.toggle" },
   "SW": { "label": "Reset Pivot", "action": "modify.resetPivot" },
   "NW": { "label": "Center Pivot", "action": "modify.centerPivot" },
-  "overflow": []
+  "overflow": [
+    { "label": "Zero Pivot", "action": "modify.zeroPivot" }
+  ]
 }

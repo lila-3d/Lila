@@ -220,7 +220,7 @@ int addListener(std::function<void()> fn)
 
 void removeListener(int id) { listeners().erase(id); }
 
-bool alignToNormal() { return PrefStore::get().value<bool>("general", "/manipulator/snap/surface/alignToNormal", false); }
+bool alignToNormal() { return PrefStore::get().value<bool>("general", "/manipulator/snap/surface/alignToNormal", true); }
 
 glm::dmat3 alignUp(const glm::dmat3& rotation, const glm::dvec3& up, const glm::dvec3& normal)
 {
@@ -328,7 +328,9 @@ void registerCommands()
                   .run = [] {
                       PrefStore::get().set("general", "/manipulator/snap/surface/alignToNormal", !alignToNormal());
                   },
-                  .doc = "Objects slid along a surface (N held, or Ctrl+middle drag) turn their up axis to the surface normal.",
-                  .python = "lila.prefs.set(\"general\", \"/manipulator/snap/surface/alignToNormal\", True)"});
+                  .doc = "Objects slid along a surface (N held, or Ctrl+middle drag) turn their up axis to the surface normal. Hold "
+                         "Shift during the slide to keep their orientation.",
+                  .python = "lila.prefs.set(\"general\", \"/manipulator/snap/surface/alignToNormal\", True)",
+                  .checked = [] { return alignToNormal(); }});
 }
 } // namespace lila::ui::surfaceSnap
