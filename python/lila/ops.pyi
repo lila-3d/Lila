@@ -497,7 +497,7 @@ def bakeArray(*objects: Any, mode: str | None = None, m: str | None = None) -> A
 
     Args:
         objects: arrays.
-        mode: What each copy's meshes share with the source's. Short form m. One of 'instance', 'copy', 'reference'. Default 'instance'.
+        mode: What each copy's meshes share with the source's: copy shares nothing. instance shares the mesh and its whole modifier stack: every copy looks the same and exports as one mesh. reference shares only the base mesh and keeps a modifier stack of its own (same shape, a different bevel). Component edits on a shared mesh reach every copy. Short form m. One of 'instance', 'copy', 'reference'. Default 'instance'.
 
     Examples:
         bakeArray("Array")
@@ -2003,7 +2003,7 @@ def duplicate(*objects: Any, name: str | None = None, count: int | None = None, 
         pivot: What the step rotates and scales about. One of 'object', 'world', 'point'. Default 'object'.
         pivotPoint: World point rotated and scaled about when pivot is point, cm. Default [0.0, 0.0, 0.0].
         space: Axes the step is measured along: the world's or each object's own. One of 'world', 'object'. Default 'world'.
-        mode: What a duplicated mesh shares with its source. Short form m. One of 'copy', 'instance', 'reference'. Default 'copy'.
+        mode: What a duplicated mesh shares with its source: copy shares nothing. instance shares the mesh and its whole modifier stack: every copy looks the same and exports as one mesh. reference shares only the base mesh and keeps a modifier stack of its own (same shape, a different bevel). Component edits on a shared mesh reach every copy. Short form m. One of 'copy', 'instance', 'reference'. Default 'copy'.
         group: Put the copies under a new group. Short form g. Default False.
 
     Examples:
@@ -3464,7 +3464,7 @@ def instance(*objects: Any, name: str | None = None, reference: bool | None = No
     Args:
         objects: objects.
         name: Name for a single instance. Short form n.
-        reference: Share only the base mesh, with modifiers of its own. Default False.
+        reference: Share only the base mesh and keep a modifier stack of its own (same shape, a different bevel). Off, instances share the modifier stack too, so every copy looks the same and exports as one mesh. Default False.
 
     Examples:
         instance("Bolt")
@@ -3795,6 +3795,15 @@ def matchCurve(*objects: Any, continuity: str | None = None, end: str | None = N
         mesh: Match to this mesh's border instead of a curve. Short form m.
         edge: Border edge of mesh=. Short form e.
         edgeT: Where along the edge, 0 to 1. Default 0.5.
+    """
+
+def matchPivot(*objects: Any, position: bool | None = None, orient: bool | None = None, p: bool | None = None, o: bool | None = None) -> Any:
+    """Copy the first object's pivot onto the others, keeping them where they are. position=False keeps their pivot positions and orient=False their pivot orientations.
+
+    Args:
+        objects: objects (the first is the source).
+        position: Copy the pivot's world position. Short form p. Default True.
+        orient: Copy the pivot's world axes. Short form o. Default True.
     """
 
 def materialFavourite(*objects: Any, on: bool | None = None) -> Any:
@@ -7501,16 +7510,25 @@ def texSets() -> Any:
 def texSmartMaterials() -> Any:
     """The smart materials and masks in the libraries: name, kind, description, tier and file."""
 
-def textCurves(text: str | None = None, font: str | None = None, size: float | None = None, letterSpacing: float | None = None, lineSpacing: float | None = None, alignment: str | None = None, kerning: bool | None = None, mergeOverlaps: bool | None = None, constructionHistory: bool | None = None, name: str | None = None, *, ch: bool | None = None, n: str | None = None) -> Any:
+def textCurves(text: str | None = None, font: str | None = None, size: float | None = None, alignment: str | None = None, anchor: str | None = None, wrapWidth: float | None = None, letterSpacing: float | None = None, wordSpacing: float | None = None, lineSpacing: float | None = None, textCase: str | None = None, width: float | None = None, slant: float | None = None, weight: float | None = None, underline: bool | None = None, strikethrough: bool | None = None, kerning: bool | None = None, mergeOverlaps: bool | None = None, constructionHistory: bool | None = None, name: str | None = None, *, ch: bool | None = None, n: str | None = None) -> Any:
     """Make text as curves (Maya's textCurves): closed Bezier outlines of each glyph, exact, in the XY plane with the first baseline on the origin. The curveText node keeps the text, font and layout live, so editing it updates anything built on the curve (a bevelPlus, say). Returns [curve, curveText].
 
     Args:
         text: The text; new lines start new lines.
         font: A font file, or a family and style ("Inter", "Inter SemiBold", "Arial Bold") among the bundled and installed fonts.
         size: Em size, cm.
+        alignment: Where lines sit against x = 0. Justify stretches wrapped lines to the wrap width (or the widest line). One of 'left', 'center', 'right', 'justify'.
+        anchor: Which part of the block sits on y = 0: the first baseline, the top, the middle or the bottom. One of 'baseline', 'top', 'middle', 'bottom'.
+        wrapWidth: Lines break between words to fit this width, cm; 0 breaks only at new lines.
         letterSpacing: Extra space after each character, cm.
+        wordSpacing: Extra space after each space, cm.
         lineSpacing: Baseline to baseline, in the font's line heights.
-        alignment: Where lines sit against x = 0. One of 'left', 'center', 'right'.
+        textCase: Changes the letters' case without editing the text. One of 'as typed', 'upper', 'lower', 'title'.
+        width: Horizontal scale of the glyphs: below 1 condenses, above 1 widens.
+        slant: Oblique slant, degrees; positive leans right. For fonts without an italic.
+        weight: Grows each letter's outline by this much, cm (negative thins it). For fonts without a bolder weight.
+        underline: A bar under each line, joined to the letters it touches.
+        strikethrough: A bar through each line, joined to the letters.
         kerning: Use the font's kerning.
         mergeOverlaps: Join a glyph's overlapping contours so each area fills once (variable fonts overlap them).
         constructionHistory: Keep the history node so its settings stay live. Short form ch. Default True.
