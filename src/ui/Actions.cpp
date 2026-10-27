@@ -475,9 +475,11 @@ void registerBuiltins()
         "Duplicates the last copy again, placed the way that copy now sits relative to its source: duplicate, move the copy, "
         "then repeat this to continue the run.");
     cmd("edit.instance", "Instance", "Edit", "instance", json::object(),
-        "Makes instances of the selected meshes: copies that share the mesh, so an edit to one changes all.");
+        "Makes instances of the selected meshes: copies that share the mesh and its whole modifier stack, so an edit to one changes all "
+        "and they export as one mesh. For a copy with modifiers of its own, use Reference Copy.");
     cmd("edit.instanceReference", "Reference Copy", "Edit", "instance", {{"reference", true}},
-        "Makes references of the selected meshes: copies that share the base mesh but keep a modifier stack of their own.");
+        "Makes references of the selected meshes: copies that share the base mesh but keep a modifier stack of their own (same shape, "
+        "a different bevel). Component edits still reach every copy.");
     cmd("edit.makeUnique", "Make Unique", "Edit", "makeUnique", json::object(),
         "Gives the selected instances and references data of their own, so edits to them stop reaching the others.");
     cmd("edit.convertToInstance", "Convert to Instances", "Edit", "convertToInstance", json::object(),

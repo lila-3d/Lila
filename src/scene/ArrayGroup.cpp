@@ -359,7 +359,11 @@ void registerCommands()
         .doc = "Turn arrays into plain groups holding their sources and a real object per copy, placed where the copies were. "
                "Returns the groups' paths.",
         .positionalDoc = "arrays",
-        .flags = {{"mode", "m", T::String, "instance", "What each copy's meshes share with the source's.", {"instance", "copy", "reference"}}},
+        .flags = {{"mode", "m", T::String, "instance", "What each copy's meshes share with the source's: copy shares nothing. "
+                   "instance shares the mesh and its whole modifier stack: every copy looks the same and exports as one mesh. "
+                   "reference shares only the base mesh and keeps a modifier stack of its own (same shape, a different bevel). "
+                   "Component edits on a shared mesh reach every copy.",
+                   {"instance", "copy", "reference"}}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             const duplicate::Mode mode = duplicate::parseMode(a.get<std::string>("mode", "instance"));

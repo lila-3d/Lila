@@ -249,7 +249,11 @@ void registerCommands()
                   {"pivot", "", T::String, "object", "What the step rotates and scales about.", {"object", "world", "point"}},
                   {"pivotPoint", "", T::Vec3, json::array({0.0, 0.0, 0.0}), "World point rotated and scaled about when pivot is point, cm."},
                   {"space", "", T::String, "world", "Axes the step is measured along: the world's or each object's own.", {"world", "object"}},
-                  {"mode", "m", T::String, "copy", "What a duplicated mesh shares with its source.", {"copy", "instance", "reference"}},
+                  {"mode", "m", T::String, "copy", "What a duplicated mesh shares with its source: copy shares nothing. "
+                   "instance shares the mesh and its whole modifier stack: every copy looks the same and exports as one mesh. "
+                   "reference shares only the base mesh and keeps a modifier stack of its own (same shape, a different bevel). "
+                   "Component edits on a shared mesh reach every copy.",
+                   {"copy", "instance", "reference"}},
                   {"group", "g", T::Bool, false, "Put the copies under a new group."}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
@@ -332,7 +336,8 @@ void registerCommands()
                "source's modifiers but keep a modifier stack of their own (same base, a different bevel).",
         .positionalDoc = "objects",
         .flags = {{"name", "n", T::String, nullptr, "Name for a single instance."},
-                  {"reference", "", T::Bool, false, "Share only the base mesh, with modifiers of its own."}},
+                  {"reference", "", T::Bool, false, "Share only the base mesh and keep a modifier stack of its own (same shape, a different bevel). Off, instances share the "
+                   "modifier stack too, so every copy looks the same and exports as one mesh."}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             std::vector<NodeId> roots = topLevel(g, a.objects(), "instance");
