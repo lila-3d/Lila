@@ -218,6 +218,11 @@ public:
     bool step(VulkanContext& vk, double budgetMs = 40.0);
     /** Whether every pass of the latest plan has run and its images are written. */
     bool idle() const;
+    /**
+     * Render thread: frees an idle evaluator's device memory, keeping the plan and the images it wrote. The next plan or
+     * refresh then runs in full instead of only what changed. False when busy, a pages plan, or already freed.
+     */
+    bool trim(VulkanContext& vk);
     Stats stats() const;
 
     /** Blocks until the renderer copies the outputs back: RGBA floats by output name, rows top first. Not the render thread. */

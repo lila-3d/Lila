@@ -13,7 +13,10 @@
 #include "tex/TextureSet.h"
 #include "ui/ViewportTool.h"
 
+#include <QTimer>
+
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
@@ -81,6 +84,9 @@ struct Entry
     scene::NodeId node = scene::kNoNode;
     std::shared_ptr<Evaluator> ev;
     bool failed = false;
+    /** A preview's tile at full size, null for the full size itself. */
+    std::shared_ptr<Evaluator> full;
+    std::chrono::steady_clock::time_point ran = std::chrono::steady_clock::now();
 };
 
 // Main thread.
@@ -171,7 +177,7 @@ void requestRedraw()
 
 /**
  * Whether a set shows through a virtual texture: /texture/virtualTexturing "on", or "auto" (the default) for sets with
- * more than /texture/vtThresholdTexels texels over their tiles, or tiles too large for a whole image.
+ * at least /texture/vtThresholdTexels texels over their tiles, or tiles too large for a whole image.
  */
 bool wantsVirtual(const tex::SetSettings& s)
 {
@@ -190,7 +196,7 @@ bool wantsVirtual(const tex::SetSettings& s)
             return true;
         texels += double(w) * double(h);
     }
-    return texels > PrefStore::get().value<double>("general", "/texture/vtThresholdTexels", 4.0 * 4096.0 * 4096.0);
+    return texels >= PrefStore::get().value<double>("general", "/texture/vtThresholdTexels", 4.0 * 4096.0 * 4096.0);
 }
 
 /** A virtual texture's layers for a set's maps (base colour, normal, ORM, emissive, those it has) and how each is composed. */
@@ -475,6 +481,46 @@ std::string runVirtualJob(const Job& job)
 
 // ---------------------------------------------------------------- render task
 
+double keepSeconds() { return PrefStore::get().value<double>("general", "/texture/keepEvaluatorSeconds", 30.0); }
+
+/**
+ * Frees the device memory of idle evaluators: previews once their tile's full size is done, full sizes unused for
+ * /texture/keepEvaluatorSeconds. A freed evaluator reruns in full on the next edit instead of only what changed.
+ */
+void trimIdle(render::VulkanContext& vk)
+{
+    LILA_ZONE();
+    std::vector<Entry> list;
+    {
+        std::scoped_lock lock(gTaskMutex);
+        list = gEntries;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    const std::chrono::duration<double> keep(std::max(keepSeconds() - 0.5, 0.0));
+    for (const Entry& e : list)
+        if (e.ev->idle() && (e.full ? e.full->idle() : now - e.ran >= keep))
+            e.ev->trim(vk);
+}
+
+std::atomic<uint64_t> gTrimGeneration{0};
+
+/** From any thread: trims once the full sizes have gone keepSeconds without running, unless a later call comes first. */
+void scheduleTrim()
+{
+    const uint64_t generation = ++gTrimGeneration;
+    mainq::post([generation] {
+        QTimer::singleShot(int(keepSeconds() * 1000.0), [generation] {
+            render::Renderer& r = render::Renderer::get();
+            if (generation != gTrimGeneration || !gInstalled || !r.running())
+                return;
+            r.runTask([](render::VulkanContext& vk) {
+                trimIdle(vk);
+                return true;
+            });
+        });
+    });
+}
+
 bool runSlice(render::VulkanContext& vk)
 {
     std::vector<Entry> list;
@@ -486,6 +532,12 @@ bool runSlice(render::VulkanContext& vk)
     {
         if (e.failed || e.ev->idle())
             continue;
+        {
+            std::scoped_lock lock(gTaskMutex);
+            for (Entry& g : gEntries)
+                if (g.ev == e.ev)
+                    g.ran = std::chrono::steady_clock::now();
+        }
         try
         {
             // A finished level has written its images: show them.
@@ -511,11 +563,15 @@ bool runSlice(render::VulkanContext& vk)
         }
         return false;
     }
-    std::scoped_lock lock(gTaskMutex);
-    for (const Entry& e : gEntries)
-        if (!e.failed && !e.ev->idle())
-            return false;
-    gTaskQueued = false;
+    {
+        std::scoped_lock lock(gTaskMutex);
+        for (const Entry& e : gEntries)
+            if (!e.failed && !e.ev->idle())
+                return false;
+        gTaskQueued = false;
+    }
+    trimIdle(vk);
+    scheduleTrim();
     return true;
 }
 
@@ -776,10 +832,9 @@ void rebuild(LiveSet& s)
         tile->levelSizes = levelSizes(tile->width, tile->height, previews);
         std::scoped_lock lock(gTaskMutex);
         for (size_t l = 0; l < tile->levelSizes.size(); ++l)
-        {
             tile->levels.push_back(std::make_shared<Evaluator>());
-            gEntries.push_back({int(l), gSeq++, s.node, tile->levels.back(), false});
-        }
+        for (size_t l = 0; l < tile->levels.size(); ++l)
+            gEntries.push_back({int(l), gSeq++, s.node, tile->levels[l], false, l + 1 < tile->levels.size() ? tile->levels.back() : nullptr});
         std::stable_sort(gEntries.begin(), gEntries.end(), [](const Entry& a, const Entry& b) { return a.level < b.level; });
         s.tiles.push_back(std::move(tile));
     }

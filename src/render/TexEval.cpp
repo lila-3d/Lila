@@ -549,6 +549,8 @@ struct Evaluator::State
     std::atomic<bool> done{true};
     /** refreshExternals asked: compare the GPU externals' versions on the next step. */
     std::atomic<bool> refresh{false};
+    /** trim freed the buffers: whatever runs next runs in full. */
+    bool trimmed = false;
 
     // Render thread.
     std::unique_ptr<Prepared> cur;
@@ -598,6 +600,17 @@ struct Evaluator::State
 
     void release(VulkanContext& vk)
     {
+        freeDevice(vk);
+        // Whatever ran is gone with the arena: the next step runs everything again.
+        if (cur)
+        {
+            dirtyAll();
+            done = false;
+        }
+    }
+
+    void freeDevice(VulkanContext& vk)
+    {
         for (compute::Buffer* b : {&arena, &uniforms, &uniformStaging, &headers, &scratch, &words, &frames, &loadRaw})
             compute::destroy(vk, *b);
         if (pool)
@@ -609,12 +622,6 @@ struct Evaluator::State
         compute::destroy(vk, pageHeaders);
         compute::destroy(vk, pageUniforms);
         sub.destroy(vk);
-        // Whatever ran is gone with the arena: the next step runs everything again.
-        if (cur)
-        {
-            dirtyAll();
-            done = false;
-        }
     }
 
     /** Marks every load, pass and store to be redone in full, from the first pass. */
@@ -2149,6 +2156,11 @@ bool Evaluator::step(VulkanContext& vk, double budgetMs)
         st.done = !pendingNow();
         return st.done;
     }
+    if (st.trimmed)
+    {
+        st.dirtyAll();
+        st.trimmed = false;
+    }
     st.allocate(vk);
     vkResetDescriptorPool(vk.device, st.pool, 0);
     st.framesUsed = 0;
@@ -2204,6 +2216,17 @@ bool Evaluator::step(VulkanContext& vk, double budgetMs)
     }
     st.done = !st.anyWork() && !pendingNow();
     return st.done;
+}
+
+bool Evaluator::trim(VulkanContext& vk)
+{
+    State& st = *m;
+    if (!idle() || !st.cur || st.cur->inputs.pages || !st.arena.buffer)
+        return false;
+    st.freeDevice(vk);
+    st.trimmed = true;
+    st.arenaFresh = true;
+    return true;
 }
 
 void Evaluator::refreshExternals()

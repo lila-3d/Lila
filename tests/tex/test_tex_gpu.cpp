@@ -309,6 +309,55 @@ TEST_CASE("tex gpu: value edits upload uniforms, create no pipelines and rerun o
     CHECK(ev.stats().passesRun == 0);
 }
 
+TEST_CASE("tex gpu: a trimmed evaluator stays idle, then reruns in full on the next edit")
+{
+    if (!gpu())
+        return;
+    Graph g = Graph::makeMaterial("S");
+    add(g, "P", "perlin", {{"scale", 4}});
+    add(g, "B", "blur", {{"radius", 0.02}});
+    add(g, "L", "levels");
+    link(g, "P.out", "B.input");
+    link(g, "B.out", "L.input");
+    link(g, "L.out", "Output.baseColor");
+    PlanRequest r;
+    r.width = r.height = 128;
+    r.outputs = materialRequests(g, {{"baseColor", PortType::Color}});
+    Plan first = buildPlan(g, r);
+    REQUIRE_MESSAGE(first.error.empty(), first.error);
+    const size_t total = first.passes.size();
+
+    texgpu::Evaluator ev;
+    bool trimmed = false;
+    auto trim = [&] { Renderer::get().runTask([&](VulkanContext& vk) { return (trimmed = ev.trim(vk), true); }).get(); };
+    trim();
+    CHECK_FALSE(trimmed);
+
+    REQUIRE(ev.setPlan(first).empty());
+    runAll(ev);
+    trim();
+    CHECK(trimmed);
+    CHECK(ev.idle());
+    trim();
+    CHECK_FALSE(trimmed);
+
+    // An edit that would rerun one pass reruns them all, since nothing was kept.
+    g.node("L")->values["gamma"] = 2.5;
+    Plan edit = buildPlan(g, r);
+    REQUIRE(ev.setPlan(edit).empty());
+    runAll(ev);
+    CHECK(ev.stats().passesRun == total);
+    EvalResult cpu = evaluateCpu(edit);
+    CHECK(maxDiff(ev.readOutputs().at("baseColor"), cpu.outputs.at("baseColor")) < 2e-3);
+
+    // A refresh with no changed externals has nothing to run, trimmed or not.
+    trim();
+    REQUIRE(trimmed);
+    ev.refreshExternals();
+    runAll(ev);
+    CHECK(ev.idle());
+}
+
 TEST_CASE("tex gpu: small slices split passes into row bands with the same result")
 {
     if (!gpu())

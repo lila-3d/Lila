@@ -14,7 +14,8 @@
  * Texture sets in the viewport: a set's channels evaluate on the GPU into images its material samples (by the set's
  * material name, else the set's own), so editing the graph updates the viewport live. Evaluation starts when a draw
  * first asks for the material's maps, then reruns after every edit: a small preview first (prefs /texture/previewLevels,
- * 256 and 1024 by default), then the tiles' full size. Turn it off with the general pref /texture/liveViewport.
+ * 256 and 1024 by default), then the tiles' full size. Turn it off with the general pref /texture/liveViewport. Idle
+ * evaluations give their GPU memory back, previews at once and full sizes after /texture/keepEvaluatorSeconds (30).
  */
 namespace lila::ui::texLive
 {
