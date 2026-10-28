@@ -784,6 +784,9 @@ bool ChannelBox::eventFilter(QObject* obj, QEvent* e)
     }
     if (obj != mTable->viewport())
         return QWidget::eventFilter(obj, e);
+    // The menu opens on the press; Windows would otherwise send the context menu event on release.
+    if (e->type() == QEvent::ContextMenu && static_cast<QContextMenuEvent*>(e)->reason() == QContextMenuEvent::Mouse)
+        return true;
     auto* me = static_cast<QMouseEvent*>(e);
     switch (e->type())
     {
@@ -799,6 +802,11 @@ bool ChannelBox::eventFilter(QObject* obj, QEvent* e)
         }
         break;
     case QEvent::MouseButtonPress:
+        if (me->button() == Qt::RightButton && !mScrub)
+        {
+            Q_EMIT mTable->customContextMenuRequested(me->position().toPoint());
+            return true;
+        }
         if (me->button() == Qt::LeftButton && me->modifiers() == Qt::NoModifier)
         {
             QModelIndex idx = mTable->indexAt(me->position().toPoint());
