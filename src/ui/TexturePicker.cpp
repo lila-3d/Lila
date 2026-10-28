@@ -8,6 +8,7 @@
 #include "core/Workspace.h"
 #include "scene/TextureFolders.h"
 #include "ui/Icons.h"
+#include "ui/FileDialog.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -394,7 +395,7 @@ private:
         if (kind == kBrowse)
         {
             QString start = root.empty() ? QString() : QString::fromStdU16String(root.u16string());
-            QString f = QFileDialog::getOpenFileName(anchor ? anchor->window() : nullptr, "Texture", start,
+            QString f = ui::fileDialog::getOpenFileName(anchor ? anchor->window() : nullptr, "Texture", start,
                                                      "Images (*.png *.tga *.jpg *.jpeg *.exr *.tif *.tiff *.psd *.hdr *.bmp *.dds);;All files (*)");
             if (f.isEmpty())
                 return;

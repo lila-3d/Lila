@@ -53,6 +53,7 @@ public:
     OpResult add(const std::vector<fs::path>& files, const std::string& changelist = {}) override;
     OpResult revert(const std::vector<fs::path>& files) override;
     OpResult remove(const std::vector<fs::path>& files, const std::string& changelist = {}) override;
+    OpResult move(const fs::path& from, const fs::path& to, const std::string& changelist = {}) override;
     OpResult submit(const std::string& changelist, const std::string& description,
                     const std::vector<fs::path>& files = {}) override;
     OpResult sync(const std::vector<fs::path>& files, const fs::path& context) override;

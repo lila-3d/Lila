@@ -25,6 +25,7 @@
 #include "ui/TextureSetPanel.h"
 #include "ui/ViewInfo.h"
 #include "ui/ViewportTool.h"
+#include "ui/FileDialog.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -465,7 +466,7 @@ public:
         connect(clear, &QPushButton::clicked, this, [] { actions::run(json("tex.clearLayer")); });
         connect(savePreset, &QPushButton::clicked, this, [this] { savePresetAs(); });
         connect(browseStamp, &QPushButton::clicked, this, [this] {
-            const QString f = QFileDialog::getOpenFileName(this, "Normal Map Stamp", mStamp->text(), "Images (*.png *.exr *.tga *.tif *.tiff *.psd)");
+            const QString f = ui::fileDialog::getOpenFileName(this, "Normal Map Stamp", mStamp->text(), "Images (*.png *.exr *.tga *.tif *.tiff *.psd)");
             if (!f.isEmpty())
                 mStamp->setText(f);
             settings().stampImage = mStamp->text().toStdString();
@@ -1604,7 +1605,7 @@ private:
 
     static std::optional<image::Image> openImage(const char* title)
     {
-        const QString f = QFileDialog::getOpenFileName(mainWindow(), title, {}, "Images (*.png *.jpg *.jpeg *.exr *.tga *.tif *.tiff *.psd)");
+        const QString f = ui::fileDialog::getOpenFileName(mainWindow(), title, {}, "Images (*.png *.jpg *.jpeg *.exr *.tga *.tif *.tiff *.psd)");
         if (f.isEmpty())
             return std::nullopt;
         std::string err;

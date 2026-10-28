@@ -15,6 +15,7 @@
 #include "ui/SpinScrub.h"
 #include "ui/Theme.h"
 #include "ui/ValueReset.h"
+#include "ui/FileDialog.h"
 
 #include <QGuiApplication>
 #include <QCheckBox>
@@ -505,7 +506,7 @@ void AttributeEditor::rebuild()
                 browse->setIcon(icon("folder-open"));
                 browse->setToolTip("Browse...");
                 connect(browse, &QToolButton::clicked, this, [this, e, attr, label = niceName(def.name)] {
-                    QString f = QFileDialog::getOpenFileName(this, label, browseStart(e->text().toStdString()),
+                    QString f = ui::fileDialog::getOpenFileName(this, label, browseStart(e->text().toStdString()),
                                                              "Images (*.png *.jpg *.jpeg *.tga *.hdr *.exr *.bmp *.tif *.tiff *.webp);;All Files (*)");
                     if (!f.isEmpty())
                         set(attr, paths::storedPath(std::filesystem::path(f.toStdU16String())));

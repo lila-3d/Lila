@@ -5,6 +5,7 @@
 #include "extensions/ExtensionManager.h"
 #include "ui/Icons.h"
 #include "ui/LocateFlash.h"
+#include "ui/FileDialog.h"
 
 #include <QCheckBox>
 #include <QDialogButtonBox>
@@ -220,7 +221,7 @@ void ExtensionManagerDialog::setLoaded(const std::string& name, bool on)
 
 void ExtensionManagerDialog::browse()
 {
-    QString dir = QFileDialog::getExistingDirectory(this, "Load Extension Package");
+    QString dir = ui::fileDialog::getExistingDirectory(this, "Load Extension Package");
     if (dir.isEmpty())
         return;
     try

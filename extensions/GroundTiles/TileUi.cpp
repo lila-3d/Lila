@@ -2,6 +2,7 @@
 // generate, bake plane, ID map and export buttons, each also an action for menus, hotkeys and shelves.
 
 #include "GroundTiles.h"
+#include "lila/FileDialog.h"
 
 #include <lila/Command.h>
 #include <lila/Events.h>
@@ -206,7 +207,7 @@ public:
             target = exp["path"].get<std::string>() + "/" + exp["name"].get<std::string>() + kIdMapSuffix + ".png";
         else
         {
-            const QString chosen = QFileDialog::getSaveFileName(this, "Bake ID Map", QString(), "PNG (*.png);;TIFF (*.tif);;Targa (*.tga)");
+            const QString chosen = ui::fileDialog::getSaveFileName(this, "Bake ID Map", QString(), "PNG (*.png);;TIFF (*.tif);;Targa (*.tga)");
             if (chosen.isEmpty())
                 return;
             target = chosen.toStdString();
@@ -695,7 +696,7 @@ private:
                                 "The bake plane's material is renamed to this for the export, since that is what the baker names its outputs after. Renamed back afterwards.");
         s.layout->addLayout(grid);
         connect(browse, &QToolButton::clicked, this, [this] {
-            const QString chosen = QFileDialog::getExistingDirectory(this, "Export Folder", mExportPath->text());
+            const QString chosen = ui::fileDialog::getExistingDirectory(this, "Export Folder", mExportPath->text());
             if (chosen.isEmpty())
                 return;
             mExportPath->setText(chosen);

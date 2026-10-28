@@ -7,6 +7,7 @@
 #include "io/References.h"
 #include "io/SceneFile.h"
 #include "scene/Graph.h"
+#include "ui/FileDialog.h"
 
 #include <QFileDialog>
 #include <QFileSystemWatcher>
@@ -158,7 +159,7 @@ void ReferenceEditor::runOnSelected(const char* command)
 void ReferenceEditor::createReferenceDialog(QWidget* parent)
 {
     QString start = Workspace::get().isOpen() ? QString::fromStdWString(Workspace::get().root().wstring()) : QString();
-    QString file = QFileDialog::getOpenFileName(parent, "Create Reference", start,
+    QString file = ui::fileDialog::getOpenFileName(parent, "Create Reference", start,
                                                 "Scenes (*.lila *.lilaa *.ma *.mb);;Lila scenes (*.lila *.lilaa);;Maya scenes (*.ma *.mb)");
     if (file.isEmpty())
         return;

@@ -9,6 +9,7 @@
 #include "ui/LocateFlash.h"
 #include "ui/DockSidebar.h"
 #include "ui/Icons.h"
+#include "ui/FileDialog.h"
 
 #include <QButtonGroup>
 #include <QCheckBox>
@@ -237,7 +238,7 @@ MeshSequenceExporter::MeshSequenceExporter(QWidget* parent) : QDialog(parent)
     };
     connect(mCustom, &QRadioButton::toggled, this, ranged);
     connect(browse, &QToolButton::clicked, this, [this] {
-        QString dir = QFileDialog::getExistingDirectory(this, "Export Folder", mFolder->text());
+        QString dir = ui::fileDialog::getExistingDirectory(this, "Export Folder", mFolder->text());
         if (!dir.isEmpty())
             mFolder->setText(dir);
     });

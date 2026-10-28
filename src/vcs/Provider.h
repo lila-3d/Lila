@@ -110,6 +110,8 @@ public:
     virtual OpResult add(const std::vector<fs::path>& files, const std::string& changelist = {}) = 0;
     virtual OpResult revert(const std::vector<fs::path>& files) = 0;
     virtual OpResult remove(const std::vector<fs::path>& files, const std::string& changelist = {}) = 0;
+    /** Moves or renames a tracked file (or folder) so its history follows; to must not exist yet. */
+    virtual OpResult move(const fs::path& from, const fs::path& to, const std::string& changelist = {}) = 0;
     /** files empty = the whole changelist (git: the index). Never pushes. */
     virtual OpResult submit(const std::string& changelist, const std::string& description,
                             const std::vector<fs::path>& files = {}) = 0;

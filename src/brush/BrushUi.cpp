@@ -7,6 +7,7 @@
 #include "ui/Tools.h"
 #include "ui/ViewInfo.h"
 #include "ui/ViewportTool.h"
+#include "ui/FileDialog.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -428,7 +429,7 @@ StrokeOptions::StrokeOptions(QWidget* parent, SettingsRef settings, std::functio
     form->addRow("Alpha", alphaRow);
     connect(mAlpha, &QLineEdit::editingFinished, this, [this] { edited(); });
     connect(browse, &QToolButton::clicked, this, [this] {
-        QString f = QFileDialog::getOpenFileName(this, "Brush Alpha", mAlpha->text(), "Images (*.png *.exr *.tga *.tif *.tiff *.psd)");
+        QString f = lila::ui::fileDialog::getOpenFileName(this, "Brush Alpha", mAlpha->text(), "Images (*.png *.exr *.tga *.tif *.tiff *.psd)");
         if (f.isEmpty())
             return;
         mAlpha->setText(f);

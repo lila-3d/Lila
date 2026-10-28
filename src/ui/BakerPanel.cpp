@@ -31,6 +31,7 @@
 #include "ui/NodeLookup.h"
 #include "ui/Outliner.h"
 #include "ui/Panels.h"
+#include "ui/FileDialog.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -58,6 +59,7 @@
 #include <QProcess>
 #include <QProgressBar>
 #include <QScrollArea>
+#include <QSettings>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QSplitter>
@@ -122,11 +124,23 @@ void openFolder(const QString& dir)
         QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
 }
 
-/** Shows the file selected in Explorer on Windows; elsewhere, and for a file not on disk, opens its folder. */
+/** True when a file manager such as File Pilot has taken over opening folders from Explorer. */
+bool customFolderHandler()
+{
+#ifdef Q_OS_WIN
+    const QSettings cmd("HKEY_CLASSES_ROOT\\Directory\\shell\\open\\command", QSettings::NativeFormat);
+    const QString exe = cmd.value("Default").toString();
+    return !exe.isEmpty() && !exe.contains("explorer.exe", Qt::CaseInsensitive);
+#else
+    return false;
+#endif
+}
+
+/** Shows the file selected in Explorer on Windows; elsewhere, for a file not on disk, or when another file manager owns folders, opens its folder. */
 void revealFile(const QString& file)
 {
 #ifdef Q_OS_WIN
-    if (QFileInfo::exists(file))
+    if (QFileInfo::exists(file) && !customFolderHandler())
     {
         QProcess::startDetached("explorer.exe", {"/select," + QDir::toNativeSeparators(file)});
         return;
@@ -1416,7 +1430,7 @@ QWidget* BakerPanel::buildOutput()
     QToolButton* browse = toolButton(w, "folder-open", "Pick the output folder");
     connect(browse, &QToolButton::clicked, this, [this, set] {
         const QString start = qs(bake::resolveFolder(ss(mFolder->text())).generic_string());
-        const QString dir = QFileDialog::getExistingDirectory(this, "Bake Output Folder", start);
+        const QString dir = ui::fileDialog::getExistingDirectory(this, "Bake Output Folder", start);
         if (!dir.isEmpty())
             set("folder", ss(dir));
     });

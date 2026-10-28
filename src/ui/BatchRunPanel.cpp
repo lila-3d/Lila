@@ -16,6 +16,7 @@
 #include "ui/TokenCompleter.h"
 #include "ui/editor/CodeEditor.h"
 #include "ui/editor/ScriptEditor.h"
+#include "ui/FileDialog.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -395,7 +396,7 @@ QWidget* BatchRunPanel::buildScriptTab()
     fv->addStretch(1);
     mSourcePages->addWidget(filePage);
     connect(browse, &QToolButton::clicked, this, [this] {
-        QString f = QFileDialog::getOpenFileName(this, "Batch Script", mScriptFile->text(), "Python (*.py);;All files (*)");
+        QString f = ui::fileDialog::getOpenFileName(this, "Batch Script", mScriptFile->text(), "Python (*.py);;All files (*)");
         if (!f.isEmpty())
             mScriptFile->setText(QDir::fromNativeSeparators(f));
     });
@@ -470,11 +471,11 @@ QWidget* BatchRunPanel::buildFilesTab()
     });
     auto startDir = [] { return Workspace::get().isOpen() ? qs(paths::toUtf8(Workspace::get().root())) : QString(); };
     connect(addFiles, &QToolButton::clicked, this, [this, startDir] {
-        QStringList files = QFileDialog::getOpenFileNames(this, "Add Scenes", startDir(), "Scenes (*.lila *.lilaa *.ma *.mb *.fbx *.obj);;All files (*)");
+        QStringList files = ui::fileDialog::getOpenFileNames(this, "Add Scenes", startDir(), "Scenes (*.lila *.lilaa *.ma *.mb *.fbx *.obj);;All files (*)");
         addInputs(files);
     });
     connect(addFolder, &QToolButton::clicked, this, [this, startDir] {
-        QString dir = QFileDialog::getExistingDirectory(this, "Add Folder", startDir());
+        QString dir = ui::fileDialog::getExistingDirectory(this, "Add Folder", startDir());
         if (!dir.isEmpty())
             addInputs({dir});
     });
@@ -543,7 +544,7 @@ QWidget* BatchRunPanel::buildSaveTab()
     outRow->addWidget(browse);
     form->addRow("Output folder", outRow);
     connect(browse, &QToolButton::clicked, this, [this] {
-        QString dir = QFileDialog::getExistingDirectory(this, "Output Folder", mOutputDir->text());
+        QString dir = ui::fileDialog::getExistingDirectory(this, "Output Folder", mOutputDir->text());
         if (!dir.isEmpty())
             mOutputDir->setText(QDir::fromNativeSeparators(dir));
     });
@@ -853,7 +854,7 @@ void BatchRunPanel::exportCsv()
     if (!mRunShown)
         return;
     QString start = Workspace::get().isOpen() ? qs(paths::toUtf8(Workspace::get().root() / "batch_results.csv")) : QString("batch_results.csv");
-    QString f = QFileDialog::getSaveFileName(this, "Export Results", start, "CSV (*.csv)");
+    QString f = ui::fileDialog::getSaveFileName(this, "Export Results", start, "CSV (*.csv)");
     if (f.isEmpty())
         return;
     std::ofstream out(paths::fromUtf8(ss(f)), std::ios::binary);

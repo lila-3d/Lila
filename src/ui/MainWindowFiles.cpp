@@ -1,4 +1,5 @@
 #include "ui/MainWindowDetail.h"
+#include "ui/FileDialog.h"
 
 namespace lila::ui
 {
@@ -33,7 +34,7 @@ bool MainWindow::saveScene(bool saveAs, const std::filesystem::path& target)
         QString start = Workspace::get().isOpen() ? QString::fromStdWString(Workspace::get().root().wstring()) : QString();
         if (!path.empty())
             start = QString::fromStdWString(path.wstring());
-        QString chosen = QFileDialog::getSaveFileName(this, "Save Scene", start, "Lila binary (*.lila);;Lila text (*.lilaa)");
+        QString chosen = ui::fileDialog::getSaveFileName(this, "Save Scene", start, "Lila binary (*.lila);;Lila text (*.lilaa)");
         if (chosen.isEmpty())
             return false;
         path = chosen.toStdWString();
@@ -83,7 +84,7 @@ void MainWindow::openScene(const std::filesystem::path& given)
     if (path.empty())
     {
         QString start = Workspace::get().isOpen() ? QString::fromStdWString(Workspace::get().root().wstring()) : QString();
-        QString chosen = QFileDialog::getOpenFileName(this, "Open Scene", start,
+        QString chosen = ui::fileDialog::getOpenFileName(this, "Open Scene", start,
                                                       QString::fromStdString(io::translators::dialogFilter(io::translators::Op::Open, "All supported")));
         if (chosen.isEmpty())
             return;
@@ -221,7 +222,7 @@ void MainWindow::openExample(const io::examples::Example& example)
 void MainWindow::importFile()
 {
     QString start = Workspace::get().isOpen() ? QString::fromStdWString(Workspace::get().root().wstring()) : QString();
-    QString file = QFileDialog::getOpenFileName(this, "Import", start,
+    QString file = ui::fileDialog::getOpenFileName(this, "Import", start,
                                                 QString::fromStdString(io::translators::dialogFilter(io::translators::Op::Import, "Scenes and meshes")));
     if (file.isEmpty())
         return;
@@ -231,7 +232,7 @@ void MainWindow::importFile()
 void MainWindow::convertMayaFolder()
 {
     QString start = Workspace::get().isOpen() ? QString::fromStdWString(Workspace::get().root().wstring()) : QString();
-    QString dir = QFileDialog::getExistingDirectory(this, "Convert Maya Files in Folder", start);
+    QString dir = ui::fileDialog::getExistingDirectory(this, "Convert Maya Files in Folder", start);
     if (dir.isEmpty() || !confirmDiscard())
         return;
     try
@@ -263,7 +264,7 @@ void MainWindow::exportSelection()
             for (const QString& entry : filter.split(";;"))
                 if (entry.startsWith(QString::fromStdString(t->label + " (")))
                     selected = entry;
-    QString file = QFileDialog::getSaveFileName(this, "Export Selection", start, filter, &selected);
+    QString file = ui::fileDialog::getSaveFileName(this, "Export Selection", start, filter, &selected);
     if (file.isEmpty())
         return;
     // The chosen filter entry names the format when the typed name has no extension a translator knows.

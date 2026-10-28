@@ -451,6 +451,36 @@ OpResult PerforceProvider::remove(const std::vector<fs::path>& files, const std:
     return fileOp("delete", changeArg(changelist), files);
 }
 
+OpResult PerforceProvider::move(const fs::path& from, const fs::path& to, const std::string& changelist)
+{
+    LILA_ZONE();
+
+    // p4 move only moves files opened for edit; a folder moves as from/... to to/...
+    const bool folder = fs::is_directory(from);
+    const fs::path src = folder ? from / "..." : from;
+    const fs::path dst = folder ? to / "..." : to;
+    const fs::path cwd = cwdFor({from});
+    std::vector<std::string> edit{"edit"};
+    for (const std::string& a : changeArg(changelist))
+        edit.push_back(a);
+    edit.push_back(folder ? src.string() : fileArg(src));
+    run(edit, cwd);
+    std::vector<std::string> args{"move"};
+    for (const std::string& a : changeArg(changelist))
+        args.push_back(a);
+    args.push_back(folder ? src.string() : fileArg(src));
+    args.push_back(folder ? dst.string() : fileArg(dst));
+    Output o = run(args, cwd);
+    OpResult res;
+    for (const json& r : o.records)
+        if (std::string f = str(r, "clientFile"); !f.empty())
+            res.files.push_back(f);
+    for (const Message& m : o.messages)
+        if (m.severity >= 2)
+            res.warnings.push_back(m.text);
+    return res;
+}
+
 OpResult PerforceProvider::lock(const std::vector<fs::path>& files)
 {
     return fileOp("lock", {}, files);

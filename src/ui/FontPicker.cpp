@@ -8,6 +8,7 @@
 #include "scene/Node.h"
 #include "ui/Icons.h"
 #include "ui/MultilineEdit.h"
+#include "ui/FileDialog.h"
 
 #include <QAbstractItemView>
 #include <QApplication>
@@ -369,7 +370,7 @@ FontPicker::FontPicker(QWidget* parent) : QWidget(parent)
     mBrowse->setToolTip("Use a font file (.ttf, .otf, .ttc)...");
     connect(mBrowse, &QToolButton::clicked, this, [this] {
         std::filesystem::path start = paths::fromUtf8(mValue);
-        QString f = QFileDialog::getOpenFileName(this, "Font", QString::fromStdU16String(start.parent_path().u16string()),
+        QString f = ui::fileDialog::getOpenFileName(this, "Font", QString::fromStdU16String(start.parent_path().u16string()),
                                                  "Fonts (*.ttf *.otf *.ttc);;All Files (*)");
         if (f.isEmpty())
             return;

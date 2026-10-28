@@ -21,6 +21,7 @@
 #include "ui/TexPreview.h"
 #include "ui/TextureGraphUi.h"
 #include "ui/Theme.h"
+#include "ui/FileDialog.h"
 
 #include <QApplication>
 #include <QBoxLayout>
@@ -306,7 +307,7 @@ QString fileFilter()
 
 void importFiles()
 {
-    QStringList files = QFileDialog::getOpenFileNames(QApplication::activeWindow(), "Import Texture Graphs", QString(), fileFilter());
+    QStringList files = ui::fileDialog::getOpenFileNames(QApplication::activeWindow(), "Import Texture Graphs", QString(), fileFilter());
     UndoChunk chunk("Import Texture Graphs");
     std::string last;
     for (const QString& f : files)
@@ -324,7 +325,7 @@ void exportFile(const char* suffix)
         log::warn("No texture set to export");
         return;
     }
-    QString path = QFileDialog::getSaveFileName(QApplication::activeWindow(), "Export Texture Graph", qs(set) + "." + suffix,
+    QString path = ui::fileDialog::getSaveFileName(QApplication::activeWindow(), "Export Texture Graph", qs(set) + "." + suffix,
                                                 std::string_view(suffix) == "lilamat" ? "Materials (*.lilamat)" : "Node libraries (*.lilatexnodes)");
     if (path.isEmpty())
         return;

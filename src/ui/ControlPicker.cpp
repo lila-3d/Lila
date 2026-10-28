@@ -13,6 +13,7 @@
 #include "ui/Icons.h"
 #include "ui/Panels.h"
 #include "ui/Theme.h"
+#include "ui/FileDialog.h"
 
 #include <QActionGroup>
 #include <QApplication>
@@ -575,7 +576,7 @@ public:
         std::string image;
         if (s == "image")
         {
-            QString file = QFileDialog::getOpenFileName(this, "Item Image", QString(), "Images (*.png *.jpg *.jpeg *.bmp *.svg)");
+            QString file = ui::fileDialog::getOpenFileName(this, "Item Image", QString(), "Images (*.png *.jpg *.jpeg *.bmp *.svg)");
             if (file.isEmpty())
                 return;
             image = file.toStdString();
@@ -649,7 +650,7 @@ public:
             });
         fromTemplate->setEnabled(!fromTemplate->isEmpty());
         menu->addAction(icon("file-import"), "Import...", this, [this] {
-            QString file = QFileDialog::getOpenFileName(this, "Import Picker", QString(), "Lila picker (*.lilapicker);;All files (*)");
+            QString file = ui::fileDialog::getOpenFileName(this, "Import Picker", QString(), "Lila picker (*.lilapicker);;All files (*)");
             json r;
             if (!file.isEmpty() && runUi("importPicker", {{"args", {file.toStdString()}}, {"replace", true}}, &r))
             {
@@ -658,7 +659,7 @@ public:
             }
         });
         QAction* exportAction = menu->addAction(icon("file-export"), "Export...", this, [this] {
-            QString file = QFileDialog::getSaveFileName(this, "Export Picker", qs(doc->name + ".lilapicker"), "Lila picker (*.lilapicker)");
+            QString file = ui::fileDialog::getSaveFileName(this, "Export Picker", qs(doc->name + ".lilapicker"), "Lila picker (*.lilapicker)");
             if (!file.isEmpty())
                 runUi("exportPicker", call({{"file", file.toStdString()}}));
         });
@@ -705,7 +706,7 @@ public:
                 edit({{"removePage", mPage}});
         });
         QAction* background = menu->addAction(icon("photo"), "Page Background...", this, [this] {
-            QString file = QFileDialog::getOpenFileName(this, "Page Background", QString(), "Images (*.png *.jpg *.jpeg *.bmp *.svg)");
+            QString file = ui::fileDialog::getOpenFileName(this, "Page Background", QString(), "Images (*.png *.jpg *.jpeg *.bmp *.svg)");
             if (file.isEmpty())
                 return;
             QPixmap pm(file);

@@ -19,6 +19,7 @@
 #include "ui/SpinScrub.h"
 #include "ui/Theme.h"
 #include "ui/ValueReset.h"
+#include "ui/FileDialog.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -557,7 +558,7 @@ void NodeEditor::buildToolbar()
             QStringList patterns;
             for (const std::string& suffix : mBackend->fileSuffixes())
                 patterns << "*." + qs(suffix);
-            QStringList files = QFileDialog::getOpenFileNames(this, "Import Node Groups", QString(), "Node groups (" + patterns.join(' ') + ");;All files (*)");
+            QStringList files = ui::fileDialog::getOpenFileNames(this, "Import Node Groups", QString(), "Node groups (" + patterns.join(' ') + ");;All files (*)");
             if (!files.isEmpty())
                 importGroups(files);
         });
@@ -864,7 +865,7 @@ void NodeEditor::exportGroup()
     if (mGroup.isEmpty() || suffixes.empty() || !mBackend->supports("ExportGroup"))
         return;
     QString suffix = qs(suffixes.front());
-    QString path = QFileDialog::getSaveFileName(this, "Export Node Group", mGroup + "." + suffix, "Node groups (*." + suffix + ")");
+    QString path = ui::fileDialog::getSaveFileName(this, "Export Node Group", mGroup + "." + suffix, "Node groups (*." + suffix + ")");
     if (path.isEmpty())
         return;
     json r = run("ExportGroup", args({mGroup.toStdString(), path.toStdString()}));

@@ -79,8 +79,17 @@ std::vector<std::string> names()
     for (const std::string& name : registry().idsInOrder())
         if (std::find(out.begin(), out.end(), name) == out.end() && !(hidden.is_array() && std::find(hidden.begin(), hidden.end(), json(name)) != hidden.end()))
             out.push_back(name);
+    for (const std::string& file : PrefStore::get().studioFiles("shelves/"))
+    {
+        std::string name = file.substr(8);
+        const bool isHidden = hidden.is_array() && std::find(hidden.begin(), hidden.end(), json(name)) != hidden.end();
+        if (std::find(out.begin(), out.end(), name) == out.end() && (!isHidden || isLocked(name)))
+            out.push_back(name);
+    }
     return out;
 }
+
+bool isLocked(const std::string& shelf) { return PrefStore::get().isLocked("shelves/" + shelf, "/items"); }
 
 Registry<Shelf>& registry()
 {
@@ -148,6 +157,8 @@ json items(const std::string& shelf)
 
 void setItems(const std::string& shelf, const json& items)
 {
+    if (isLocked(shelf))
+        return;
     PrefStore::get().set("shelves/" + shelf, "/items", items);
 }
 
@@ -173,6 +184,8 @@ void create(const std::string& shelf)
 
 void remove(const std::string& shelf)
 {
+    if (isLocked(shelf))
+        return;
     auto all = names();
     all.erase(std::remove(all.begin(), all.end(), shelf), all.end());
     PrefStore::get().set("general", "/shelves/order", all);
@@ -189,6 +202,8 @@ void remove(const std::string& shelf)
 
 bool rename(const std::string& shelf, const std::string& to)
 {
+    if (isLocked(shelf))
+        return false;
     auto all = names();
     if (to.empty() || std::find(all.begin(), all.end(), to) != all.end())
         return false;
@@ -764,6 +779,17 @@ void ShelfPage::itemMenu(int index, QPoint global)
     // Changes wait until the menu is gone, so the rebuild they cause never deletes a widget mid-signal.
     std::function<void()> after;
     QMenu menu;
+    if (shelves::isLocked(mShelf))
+    {
+        menu.addAction(icon("copy"), "Copy Python", [this, index] {
+            json all = shelves::items(mShelf);
+            if (index < int(all.size()))
+                QApplication::clipboard()->setText(QString::fromStdString(actions::pythonFor(all[index].value("target", json()))));
+        });
+        menu.addAction(icon("lock"), "Studio shelf, read-only")->setEnabled(false);
+        menu.exec(global);
+        return;
+    }
     menu.addAction(icon("pencil"), "Edit...", [&] {
         after = [this, index] {
             json all = shelves::items(mShelf);
@@ -807,7 +833,10 @@ void ShelfPage::itemMenu(int index, QPoint global)
 void ShelfPage::contextMenuEvent(QContextMenuEvent* e)
 {
     QMenu menu;
-    fillAddMenu(&menu);
+    if (shelves::isLocked(mShelf))
+        menu.addAction(icon("lock"), "Studio shelf, read-only")->setEnabled(false);
+    else
+        fillAddMenu(&menu);
     menu.exec(e->globalPos());
 }
 
@@ -821,7 +850,8 @@ bool ShelfPage::eventFilter(QObject* obj, QEvent* e)
     else if (e->type() == QEvent::MouseMove)
     {
         auto* m = static_cast<QMouseEvent*>(e);
-        if ((m->buttons() & Qt::LeftButton) && (m->position().toPoint() - mPressPos).manhattanLength() >= QApplication::startDragDistance())
+        if ((m->buttons() & Qt::LeftButton) && !shelves::isLocked(mShelf) &&
+            (m->position().toPoint() - mPressPos).manhattanLength() >= QApplication::startDragDistance())
         {
             auto* mime = new QMimeData;
             mime->setData(kItemMime, QByteArray::fromStdString(json{{"shelf", mShelf}, {"index", b->property("shelfIndex").toInt()}}.dump()));
@@ -864,12 +894,16 @@ int ShelfPage::dropIndex(QPoint pos) const
 
 void ShelfPage::dragEnterEvent(QDragEnterEvent* e)
 {
+    if (shelves::isLocked(mShelf))
+        return;
     if (e->mimeData()->hasFormat(kItemMime) || e->mimeData()->hasText())
         e->acceptProposedAction();
 }
 
 void ShelfPage::dragMoveEvent(QDragMoveEvent* e)
 {
+    if (shelves::isLocked(mShelf))
+        return;
     if (e->mimeData()->hasFormat(kItemMime) || e->mimeData()->hasText())
         e->acceptProposedAction();
 }
@@ -919,7 +953,9 @@ ShelfPanel::ShelfPanel(QWidget* parent) : QWidget(parent)
             if (ok && !name.trimmed().isEmpty())
                 shelves::create(name.trimmed().toStdString());
         });
-        if (tab >= 0)
+        if (tab >= 0 && shelves::isLocked(mTabs->tabText(tab).toStdString()))
+            menu.addAction(icon("lock"), "Studio shelf, read-only")->setEnabled(false);
+        else if (tab >= 0)
         {
             std::string name = mTabs->tabText(tab).toStdString();
             menu.addAction(icon("pencil"), "Edit Shelf...", [this, name] { editShelf(this, name); });
@@ -981,7 +1017,12 @@ void ShelfPanel::rebuild()
     mNames = shelves::names();
     for (const std::string& name : mNames)
     {
-        mTabs->addTab(QString::fromStdString(name));
+        const int tab = mTabs->addTab(QString::fromStdString(name));
+        if (shelves::isLocked(name))
+        {
+            mTabs->setTabIcon(tab, icon("lock"));
+            mTabs->setTabToolTip(tab, "Studio shelf, shared from the network and read-only");
+        }
         mPages->addWidget(new ShelfPage(name, false, mPages));
     }
     for (int i = 0; i < mTabs->count(); ++i)

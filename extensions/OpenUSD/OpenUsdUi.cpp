@@ -3,6 +3,7 @@
 
 #include "OpenUsd.h"
 #include "UsdBackend.h"
+#include "lila/FileDialog.h"
 
 #include <lila/Command.h>
 #include <lila/Graph.h>
@@ -131,7 +132,7 @@ QWidget* stagePanel(NodeId id)
     };
     button("Reload", "Read the stage's files again, keeping its edits.", [stage] { runCommand("usdStageReload", {{"args", {stage}}}); });
     button("Write Shot...", "Write the edits as a .usda that sublayers the source, for Houdini or Maya.", [stage, w] {
-        const QString file = QFileDialog::getSaveFileName(w, "Write Shot", QString(), "USD (*.usda *.usd)");
+        const QString file = ui::fileDialog::getSaveFileName(w, "Write Shot", QString(), "USD (*.usda *.usd)");
         if (!file.isEmpty())
             runCommand("usdStageWriteShot", {{"args", {file.toStdString(), stage}}});
     });

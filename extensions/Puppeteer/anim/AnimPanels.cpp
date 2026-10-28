@@ -6,6 +6,7 @@
 #include "Common.h"
 #include "PanelModels.h"
 #include "Puppeteer.h"
+#include "lila/FileDialog.h"
 
 #include <lila/Events.h>
 #include <lila/Ghosts.h>
@@ -597,7 +598,7 @@ QWidget* makeBank(QWidget* parent)
     }));
     row->addSpacing(8);
     row->addWidget(toolButton(w, "file-import", "Import a take from a .lilatake file", [w] {
-        const QString path = QFileDialog::getOpenFileName(w, "Import Take", QString(), "Takes (*.lilatake);;All files (*)");
+        const QString path = ui::fileDialog::getOpenFileName(w, "Import Take", QString(), "Takes (*.lilatake);;All files (*)");
         if (path.isEmpty())
             return;
         json call = {{"args", {path.toStdString()}}};
@@ -608,7 +609,7 @@ QWidget* makeBank(QWidget* parent)
     row->addWidget(toolButton(w, "file-export", "Export the take to a .lilatake file", [w, currentTake] {
         if (currentTake().empty())
             return;
-        const QString path = QFileDialog::getSaveFileName(w, "Export Take", QString::fromStdString(currentTake() + ".lilatake"),
+        const QString path = ui::fileDialog::getSaveFileName(w, "Export Take", QString::fromStdString(currentTake() + ".lilatake"),
                                                           "Takes (*.lilatake)");
         if (!path.isEmpty())
             runCommand("exportTake", {{"args", {currentTake()}}, {"path", path.toStdString()}});

@@ -33,6 +33,8 @@ LILA_UI_API void addItem(const std::string& shelf, const nlohmann::json& item);
 LILA_UI_API void create(const std::string& shelf);
 LILA_UI_API void remove(const std::string& shelf);
 LILA_UI_API bool rename(const std::string& shelf, const std::string& to);
+/** A studio shelf locked from its network folder: shown to everyone, never edited, renamed or deleted here. */
+LILA_UI_API bool isLocked(const std::string& shelf);
 
 /**
  * A shelf contributed in code or from an extension's resources/shelves: its items are defaults under the user's prefs,

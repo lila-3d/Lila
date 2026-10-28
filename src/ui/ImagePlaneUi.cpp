@@ -18,6 +18,7 @@
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportTool.h"
 #include "ui/ViewportWidget.h"
+#include "ui/FileDialog.h"
 
 #include <QApplication>
 #include <QDragEnterEvent>
@@ -357,7 +358,7 @@ std::string resolve(const std::string& stored)
 void importImage(QWidget* parent, const std::string& camera)
 {
     QString start = Workspace::get().isOpen() ? QString::fromStdWString(Workspace::get().root().wstring()) : QString();
-    QString file = QFileDialog::getOpenFileName(parent, camera.empty() ? "Create Image Plane" : "Import Image", start, kImageFilter);
+    QString file = ui::fileDialog::getOpenFileName(parent, camera.empty() ? "Create Image Plane" : "Import Image", start, kImageFilter);
     if (!file.isEmpty())
         create(file.toStdString(), camera);
 }

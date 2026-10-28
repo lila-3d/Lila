@@ -15,6 +15,7 @@
 #include "ui/editor/TextUtil.h"
 #include "ui/editor/Tools.h"
 #include "ui/editor/VimBinding.h"
+#include "ui/FileDialog.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -534,7 +535,7 @@ CodeEditor* ScriptEditor::openFile(const QString& path, int line, int col)
 
 void ScriptEditor::openFileDialog()
 {
-    QStringList files = QFileDialog::getOpenFileNames(this, "Open Script", mLastDir, "Python (*.py *.pyi);;All files (*)");
+    QStringList files = ui::fileDialog::getOpenFileNames(this, "Open Script", mLastDir, "Python (*.py *.pyi);;All files (*)");
     for (const QString& f : files)
         openFile(f);
 }
@@ -659,7 +660,7 @@ bool ScriptEditor::saveTabAs(int index, Location preset)
     default:
     {
         QString start = editor->filePath().isEmpty() ? QDir(mLastDir).filePath(name + ".py") : editor->filePath();
-        QString path = QFileDialog::getSaveFileName(this, "Save Script", start, "Python (*.py);;All files (*)");
+        QString path = ui::fileDialog::getSaveFileName(this, "Save Script", start, "Python (*.py);;All files (*)");
         if (path.isEmpty())
             return false;
         return saveToFile(editor, path);

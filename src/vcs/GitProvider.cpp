@@ -433,6 +433,17 @@ OpResult GitProvider::remove(const std::vector<fs::path>& files, const std::stri
     return res;
 }
 
+OpResult GitProvider::move(const fs::path& from, const fs::path& to, const std::string&)
+{
+    LILA_ZONE();
+
+    std::vector<std::string> paths = rels({from, to});
+    run({"mv", "--", paths[0], paths[1]});
+    OpResult res;
+    res.files = {from.string(), to.string()};
+    return res;
+}
+
 OpResult GitProvider::submit(const std::string&, const std::string& description, const std::vector<fs::path>& files)
 {
     LILA_ZONE();

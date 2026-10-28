@@ -1,4 +1,5 @@
 #include "ui/MainWindowDetail.h"
+#include "ui/FileDialog.h"
 
 namespace lila::ui
 {
@@ -548,7 +549,7 @@ void MainWindow::refreshRecentFolders()
 void MainWindow::openFolder()
 {
     QString start = Workspace::get().isOpen() ? QString::fromStdWString(Workspace::get().root().wstring()) : QString();
-    QString dir = QFileDialog::getExistingDirectory(this, "Open Folder", start);
+    QString dir = ui::fileDialog::getExistingDirectory(this, "Open Folder", start);
     if (!dir.isEmpty())
         Workspace::get().open(dir.toStdWString());
 }

@@ -22,7 +22,12 @@ enum class PrefScope : uint8_t
 };
 
 /**
- * Layered JSON prefs: built-in defaults < user dir < workspace .lila/.
+ * Layered JSON prefs: built-in defaults < studio folders < user dir < workspace .lila/.
+ *
+ * Studio folders (LILA_STUDIO_PREFS, or the "prefs" list in studio.json beside the exe; most specific first) hold the
+ * same files as the user dir, usually on a network share. Their values are defaults the user can override, except
+ * keys listed in a file's "$locked" array (JSON pointers; "/" locks the whole file), which always take the studio
+ * value and ignore set(). A local copy keeps them applying while the share is offline.
  *
  * A "file" is a name like "general" or "markingMenus/modeling"; keys are JSON pointers ("/viewport/fov").
  * Every set() is written to disk shortly after on the IO thread, and edits made to the files outside Lila are
@@ -87,6 +92,14 @@ public:
     void removeOnChanged(int id);
 
     std::filesystem::path userDir() const;
+
+    /** Whether a studio folder locks this key (or a parent of it). */
+    bool isLocked(std::string_view file, std::string_view key) const;
+    /** Replaces the studio folders, most specific first; the environment sets them at startup. */
+    void setStudioDirs(std::vector<std::filesystem::path> dirs);
+    std::vector<std::filesystem::path> studioDirs() const;
+    /** Files the studio folders provide whose name starts with prefix ("shelves/"), sorted, from the local copy when offline. */
+    std::vector<std::string> studioFiles(std::string_view prefix = {}) const;
 
     PrefStore();
     ~PrefStore();

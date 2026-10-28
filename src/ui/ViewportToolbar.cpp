@@ -26,6 +26,7 @@
 #include "ui/ViewportDisplay.h"
 #include "ui/ViewportHud.h"
 #include "ui/ViewportWidget.h"
+#include "ui/FileDialog.h"
 
 #include <QActionGroup>
 #include <QDoubleSpinBox>
@@ -376,7 +377,7 @@ void fillEnvironmentMenu(QMenu* menu)
     item("Procedural Studio", environments::kProcedural, resolved.empty());
     menu->addSeparator();
     QObject::connect(menu->addAction("Browse..."), &QAction::triggered, menu, [menu] {
-        QString f = QFileDialog::getOpenFileName(menu->parentWidget(), "Choose Environment", QString(), "Radiance HDR (*.hdr)");
+        QString f = ui::fileDialog::getOpenFileName(menu->parentWidget(), "Choose Environment", QString(), "Radiance HDR (*.hdr)");
         if (!f.isEmpty())
             PrefStore::get().set("general", "/viewport/env/path", f.toStdString());
     });

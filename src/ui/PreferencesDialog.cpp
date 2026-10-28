@@ -26,6 +26,7 @@
 #include "ui/editor/CodeEditor.h"
 #include "ui/editor/EditorPalette.h"
 #include "ui/editor/Format.h"
+#include "ui/FileDialog.h"
 
 #include <QCheckBox>
 #include <QColorDialog>
@@ -218,10 +219,20 @@ Page page(QTabWidget* tabs, std::vector<PrefRow>* rows, const char* title, const
     return {w, form, file, title, nullptr, rows};
 }
 
+/** Greys out a field whose key a studio folder locks. */
+void applyStudioLock(const Page& p, QWidget* field, const std::string& key)
+{
+    if (key.empty() || !PrefStore::get().isLocked(p.file, key))
+        return;
+    field->setEnabled(false);
+    field->setToolTip("Set by your studio" + (field->toolTip().isEmpty() ? QString() : "\n" + field->toolTip()));
+}
+
 /** Adds a row and records it for the search; `key` is what it edits, matched like the label and tooltips. */
 template <typename Label>
 void addRow(Page& p, Label label, QWidget* field, const std::string& key)
 {
+    applyStudioLock(p, field, key);
     p.form->addRow(label, field);
     int row = p.form->rowCount() - 1;
     QWidget* labelWidget = p.form->itemAt(row, QFormLayout::LabelRole)->widget();
@@ -242,6 +253,7 @@ void addRow(Page& p, Label label, QWidget* field, const std::string& key)
 /** A row spanning the page width, for an editor too big for the field column. */
 void addWideRow(Page& p, const QString& label, QWidget* field, const std::string& key)
 {
+    applyStudioLock(p, field, key);
     p.form->addRow(field);
     int row = p.form->rowCount() - 1;
     auto* labelWidget = new QLabel(label, p.widget);
@@ -378,7 +390,7 @@ void text(Page& p, const char* label, const char* key, const std::string& fallba
         auto* b = new QPushButton("...");
         b->setFixedWidth(28);
         QObject::connect(b, &QPushButton::clicked, e, [e, file, k] {
-            QString f = QFileDialog::getOpenFileName(e, "Choose File", e->text());
+            QString f = ui::fileDialog::getOpenFileName(e, "Choose File", e->text());
             if (f.isEmpty())
                 return;
             e->setText(f);
@@ -522,6 +534,11 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         number(ui, "Flash reach from the edges", kLocateFlashReachPref, 0.05, 0.0, 1.0, 0.05, 2);
         color(ui, "Flash color", kLocateFlashColorPref, kLocateFlashDefaultColor);
         toggle(ui, "Badges at the viewport cursor for held keys", "/viewport/cursorBadges", true);
+        section(ui, "File Dialog");
+        toggle(ui, "Use the system file dialog instead of Lila's", fileDialog::kNativePref, false);
+        toggle(ui, "Allow rename and new folder", fileOps::kAllowEditPref, true);
+        toggle(ui, "Allow cut, copy, paste and drag-and-drop", fileOps::kAllowMovePref, true);
+        toggle(ui, "Allow delete (to the Recycle Bin, or source control)", fileOps::kAllowDeletePref, true);
         section(ui, "Color");
         toggle(ui, "Monotone (overrides the colors below)", vd::kMonotone, false);
         toggle(ui, "View axis indicator in X/Y/Z colors", vd::kViewAxisColors, true);

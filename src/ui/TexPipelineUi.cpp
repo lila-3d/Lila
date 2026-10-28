@@ -12,6 +12,7 @@
 #include "ui/AgentCapture.h"
 #include "ui/Menus.h"
 #include "ui/TextureGraphUi.h"
+#include "ui/FileDialog.h"
 
 #include <QApplication>
 #include <QByteArray>
@@ -81,7 +82,7 @@ void exportImage()
         return;
     std::string stem = set + "_" + source;
     std::replace(stem.begin(), stem.end(), '.', '_');
-    const QString path = QFileDialog::getSaveFileName(QApplication::activeWindow(), "Export Image", qs(stem + ".png"),
+    const QString path = ui::fileDialog::getSaveFileName(QApplication::activeWindow(), "Export Image", qs(stem + ".png"),
                                                       "Images (*.png *.exr *.tga *.tif *.psd)");
     if (path.isEmpty())
         return;
@@ -104,7 +105,7 @@ void importImages()
     const std::string set = needSet("Import Image Layers");
     if (set.empty())
         return;
-    const QStringList files = QFileDialog::getOpenFileNames(QApplication::activeWindow(), "Import Image Layers", {},
+    const QStringList files = ui::fileDialog::getOpenFileNames(QApplication::activeWindow(), "Import Image Layers", {},
                                                             "Images (*.psd *.png *.exr *.tga *.tif *.tiff)");
     if (files.isEmpty())
         return;

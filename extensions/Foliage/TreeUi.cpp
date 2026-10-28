@@ -3,6 +3,7 @@
 
 #include "TreeGenerator.h"
 #include "TreeSchema.h"
+#include "lila/FileDialog.h"
 
 #include <lila/Command.h>
 #include <lila/Graph.h>
@@ -450,7 +451,7 @@ QWidget* editor(const Field& f, std::vector<std::function<void()>>& shows)
         browse->setToolTip("Browse for the export folder.");
         h->addWidget(browse);
         QObject::connect(browse, &QPushButton::clicked, w, [key, line, values] {
-            const QString folder = QFileDialog::getExistingDirectory(nullptr, "Export Folder", line->text());
+            const QString folder = ui::fileDialog::getExistingDirectory(nullptr, "Export Folder", line->text());
             if (folder.isEmpty())
                 return;
             line->setText(folder);

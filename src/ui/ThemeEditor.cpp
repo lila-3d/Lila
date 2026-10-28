@@ -4,6 +4,7 @@
 #include "ops/Command.h"
 #include "ui/Icons.h"
 #include "ui/ThemeModel.h"
+#include "ui/FileDialog.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -281,7 +282,7 @@ private:
 
     void importFile()
     {
-        QString file = QFileDialog::getOpenFileName(this, "Import Theme", QString(), "Lila themes (*.lilatheme *.json);;All files (*)");
+        QString file = ui::fileDialog::getOpenFileName(this, "Import Theme", QString(), "Lila themes (*.lilatheme *.json);;All files (*)");
         if (file.isEmpty())
             return;
         std::ifstream f(std::filesystem::path(file.toStdWString()), std::ios::binary);
@@ -300,7 +301,7 @@ private:
 
     void exportFile()
     {
-        QString file = QFileDialog::getSaveFileName(this, "Export Theme", qs(name()) + ".lilatheme", "Lila themes (*.lilatheme)");
+        QString file = ui::fileDialog::getSaveFileName(this, "Export Theme", qs(name()) + ".lilatheme", "Lila themes (*.lilatheme)");
         if (!file.isEmpty())
             run("exportTheme", {{"args", {name()}}, {"file", file.toStdString()}});
     }
