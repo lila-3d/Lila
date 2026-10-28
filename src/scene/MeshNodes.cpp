@@ -40,11 +40,11 @@ AttrDef sizeAttr(std::string name, double def, double fileDefault, std::string d
     return a;
 }
 
-/** lo matches the least the generator reads it as. */
-AttrDef intAttr(std::string name, int64_t def, std::string doc, double lo = 1.0)
+/** lo matches the least the generator reads it as; hi keeps a typo from building a mesh that never finishes. */
+AttrDef intAttr(std::string name, int64_t def, std::string doc, double lo = 1.0, double hi = 1000.0)
 {
     return {.name = std::move(name), .type = PlugType::Int, .defaultValue = def, .flags = AttrInput | AttrStorable | AttrKeyable,
-            .doc = std::move(doc), .minValue = lo};
+            .doc = std::move(doc), .minValue = lo, .maxValue = hi, .softMax = std::min(hi, 100.0)};
 }
 
 AttrDef boolAttr(std::string name, bool def, std::string doc)
@@ -215,7 +215,7 @@ std::vector<Primitive> primitives()
          [](const Node& n) { return geo::makeQuadSphere({f(n, "radius"), i(n, "subdivisions"), frac(n)}); },
          true},
         {"polyIcoSphere", "IcoSphere",
-         {sizeAttr("radius", 5, 50, "cm."), intAttr("subdivisions", 3, "1 is an icosahedron; each level splits every triangle in four."),
+         {sizeAttr("radius", 5, 50, "cm."), intAttr("subdivisions", 3, "1 is an icosahedron; each level splits every triangle in four.", 1.0, 7.0),
           boolAttr("baseAtOrigin", false, "Sit on the ground."), heightFraction()},
          [](const Node& n) { return geo::makeIcoSphere({f(n, "radius"), i(n, "subdivisions", 1), b(n, "baseAtOrigin"), frac(n)}); },
          true},

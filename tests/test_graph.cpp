@@ -411,3 +411,18 @@ TEST_CASE("command flags are clamped to their bounds")
     CHECK(r["amount"].get<double>() == 0.25);
     ops::unregisterCommand("boundsTestEcho");
 }
+
+TEST_CASE("connected values are held inside the destination's limits")
+{
+    run("newScene");
+    run("spaceLocator", {{"name", "src"}});
+    run("spaceLocator", {{"name", "dst"}});
+    run("addAttr", {{"args", {"dst"}}, {"longName", "count"}, {"attributeType", "long"}, {"minValue", 1}, {"maxValue", 32}});
+    run("connectAttr", {{"args", {"src.tx", "dst.count"}}});
+    run("setAttr", {{"args", {"src.tx", -5.0}}});
+    CHECK(run("getAttr", {{"args", {"dst.count"}}}).get<int64_t>() == 1);
+    run("setAttr", {{"args", {"src.tx", 50.0}}});
+    CHECK(run("getAttr", {{"args", {"dst.count"}}}).get<int64_t>() == 32);
+    run("setAttr", {{"args", {"src.tx", 7.0}}});
+    CHECK(run("getAttr", {{"args", {"dst.count"}}}).get<int64_t>() == 7);
+}

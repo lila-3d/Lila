@@ -1612,6 +1612,7 @@ void Graph::evaluateDirty(const std::vector<NodeId>* only)
                 if (!slot)
                     continue;
                 PlugValue& dv = *slot;
+                const AttrDef& da = n->type().attrs[dp.attr];
                 if (sp.component >= 0 || dp.component >= 0)
                 {
                     double s = 0.0;
@@ -1623,6 +1624,7 @@ void Graph::evaluateDirty(const std::vector<NodeId>* only)
                         std::get<glm::dvec3>(dv)[dp.component] = s;
                     else
                         assignScalar(dv, s);
+                    clampToLimits(da, dv);
                     continue;
                 }
                 // Numeric types convert across connections.
@@ -1640,6 +1642,7 @@ void Graph::evaluateDirty(const std::vector<NodeId>* only)
                             sv);
                     },
                     dv);
+                clampToLimits(da, dv);
             }
             if (n->type().dag)
                 if (const glm::dmat4* frame = spaces::activeFrame(*n))
