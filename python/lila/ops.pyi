@@ -6443,7 +6443,7 @@ def setLoopKey(*objects: Any, attribute: Any | None = None, time: float | None =
     """
 
 def setMaterialTexture(*objects: Any, channel: str | None = None, path: str | None = None, c: str | None = None, p: str | None = None) -> Any:
-    """Set or clear (path='') a texture: channel baseColor, metallic, roughness, normal, ambientOcclusion, orm or emissive. Stored relative to the workspace root (or the scene folder without one).
+    """Set or clear (path='') a texture: channel baseColor, metallic, roughness, normal, ambientOcclusion, orm, mro (the packed map with the MRO layout) or emissive. Stored relative to the workspace root (or the scene folder without one).
 
     Args:
         objects: material.
