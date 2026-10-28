@@ -16,6 +16,7 @@
 #include "ui/NumberExpr.h"
 #include "ui/SpinScrub.h"
 #include "ui/Theme.h"
+#include "ui/Tools.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -346,6 +347,15 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
 
     mListener = Graph::current().addListener([this](scene::Change, scene::NodeId) { scheduleRefresh(); });
     onTimeChanged(this, [this] { scheduleRefresh(); });
+    // Highlighted channels take every middle drag in the viewport, so picking a transform tool (even the current one) drops them.
+    mToolListener = tools::addListener([this, tool = tools::current(), resets = tools::handleResets()]() mutable {
+        if (tools::current() == tool && tools::handleResets() == resets)
+            return;
+        tool = tools::current();
+        resets = tools::handleResets();
+        if (!mScrub)
+            mTable->clearSelection();
+    });
 
     mTable->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(mTable, &QTableWidget::customContextMenuRequested, this, [this](QPoint pos) {
@@ -425,6 +435,20 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
                     ops::execute("setAttr", {{"args", {p}}, {"lock", lock}}, CallSource::UI);
                 });
             });
+        menu.addSeparator();
+        QMenu* freeze = menu.addMenu("Freeze");
+        for (auto [label, t, r, s] : {std::tuple{"Translate", true, false, false}, std::tuple{"Rotate", false, true, false},
+                                      std::tuple{"Scale", false, false, true}, std::tuple{"All", true, true, true}})
+            freeze->addAction(label, [objects = targets(), t, r, s] {
+                try
+                {
+                    ops::execute("freezeTransforms", {{"args", objects}, {"translate", t}, {"rotate", r}, {"scale", s}}, CallSource::UI);
+                }
+                catch (const std::exception& e)
+                {
+                    log::error("{}", e.what());
+                }
+            });
         if (Graph& sg = Graph::current(); sg.node(mNode) && scene::spaces::hasSpaces(sg, mNode))
         {
             menu.addSeparator();
@@ -461,6 +485,7 @@ ChannelBox::~ChannelBox()
         gSliderBox = nullptr;
     std::erase(gBoxes, this);
     Graph::current().removeListener(mListener);
+    tools::removeListener(mToolListener);
 }
 
 void ChannelBox::scheduleRefresh()

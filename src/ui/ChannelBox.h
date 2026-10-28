@@ -100,6 +100,7 @@ private:
     std::vector<Row> mRows;
     scene::NodeId mNode = scene::kNoNode;
     int mListener = 0;
+    int mToolListener = -1;
     bool mQueued = false;
     bool mUpdating = false;
 

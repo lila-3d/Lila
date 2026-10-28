@@ -149,7 +149,10 @@ void registerActions()
                               // Picking a transform tool leaves any viewport tool (retopo draw, sculpt...), as in Maya.
                               viewportTools::set(nullptr);
                               if (t == current())
+                              {
                                   ++gHandleResets;
+                                  notify();
+                              }
                               setCurrent(t);
                           },
                       .doc = doc,
