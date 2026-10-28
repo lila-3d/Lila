@@ -87,6 +87,9 @@ TEST_CASE("create, assign and undo")
     run("setMaterialTexture", {{"args", {red}}, {"channel", "normal"}, {"path", "textures\\T_Brick_N.png"}});
     CHECK(run("materialInfo", {{"args", {red}}})["normalMap"] == "textures/T_Brick_N.png");
     CHECK_THROWS_AS(run("setMaterialTexture", {{"args", {red}}, {"channel", "bogus"}, {"path", "x.png"}}), CommandError);
+    run("setMaterialTexture", {{"args", {red}}, {"channel", "mro"}, {"path", "textures/T_Brick_MRO.png"}});
+    CHECK(run("materialInfo", {{"args", {red}}})["ormMap"] == "textures/T_Brick_MRO.png");
+    CHECK(run("materialInfo", {{"args", {red}}})["packedLayout"] == "mro");
     CHECK_THROWS_AS(run("assignMaterial", {{"args", {"NoSuchMaterial", cube}}}), CommandError);
 
     std::string renamed = run("renameMaterial", {{"args", {red, "M_Brick"}}});
@@ -358,4 +361,19 @@ TEST_CASE("soft foliage normals point a mesh's normals out of a dome, mixed with
     const float mixed = lowestY();
     CHECK(mixed < full);
     CHECK(mixed > -0.99f);
+}
+
+TEST_CASE("texture channel from file name")
+{
+    using lila::scene::materials::guessTextureChannel;
+    CHECK(guessTextureChannel("X:/Titan/Textures/T_Trooper_BF_Body_BaseColor.png") == "baseColor");
+    CHECK(guessTextureChannel("T_Trooper_BF_Helmet_BaseColor_1.png") == "baseColor");
+    CHECK(guessTextureChannel("C:\tex\T_Trooper_BF_Body_CRM.png") == "orm");
+    CHECK(guessTextureChannel("T_Rock_N.tga") == "normal");
+    CHECK(guessTextureChannel("rock_roughness.1001.exr") == "roughness");
+    CHECK(guessTextureChannel("T_Rock_MRO.png") == "mro");
+    CHECK(guessTextureChannel("rock-ao.png") == "ambientOcclusion");
+    CHECK(guessTextureChannel("T_Rock_Emissive.png") == "emissive");
+    CHECK(guessTextureChannel("Normal.png") == "");
+    CHECK(guessTextureChannel("T_Rock_Mask.png") == "");
 }

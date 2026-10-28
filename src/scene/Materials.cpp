@@ -164,6 +164,8 @@ int channelAttr(const std::string& channel)
             return attr;
     if (channel == "ao" || channel == "occlusion")
         return kAmbientOcclusionMap;
+    if (channel == "mro")
+        return kOrmMap;
     return -1;
 }
 
@@ -338,6 +340,38 @@ std::array<int, 3> packedChannels(PackedLayout layout)
     if (layout == PackedLayout::MRO)
         return {2, 1, 0};
     return {0, 1, 2};
+}
+
+std::string guessTextureChannel(std::string_view fileName)
+{
+    static const std::map<std::string, std::string, std::less<>> suffixes = {
+        {"basecolor", "baseColor"}, {"albedo", "baseColor"},  {"diffuse", "baseColor"},  {"diff", "baseColor"},
+        {"color", "baseColor"},     {"col", "baseColor"},     {"bc", "baseColor"},       {"d", "baseColor"},
+        {"normal", "normal"},       {"normalgl", "normal"},   {"normaldx", "normal"},    {"norm", "normal"},
+        {"nrm", "normal"},          {"nor", "normal"},        {"n", "normal"},           {"roughness", "roughness"},
+        {"rough", "roughness"},     {"rgh", "roughness"},     {"r", "roughness"},        {"metallic", "metallic"},
+        {"metalness", "metallic"},  {"metal", "metallic"},    {"m", "metallic"},         {"ao", "ambientOcclusion"},
+        {"occlusion", "ambientOcclusion"}, {"ambientocclusion", "ambientOcclusion"},     {"occ", "ambientOcclusion"},
+        {"orm", "orm"},             {"arm", "orm"},           {"crm", "orm"},            {"mro", "mro"},
+        {"emissive", "emissive"},   {"emission", "emissive"}, {"emit", "emissive"},      {"e", "emissive"},
+    };
+    std::string_view stem = fileName.substr(fileName.find_last_of("/\\") + 1);
+    stem = stem.substr(0, stem.rfind('.'));
+    std::vector<std::string> tokens(1);
+    for (char c : stem)
+    {
+        if (c == '_' || c == '-' || c == '.' || c == ' ')
+            tokens.emplace_back();
+        else
+            tokens.back() += char(std::tolower(static_cast<unsigned char>(c)));
+    }
+    auto numeric = [](const std::string& t) { return t.empty() || std::ranges::all_of(t, [](char c) { return c >= '0' && c <= '9'; }); };
+    while (tokens.size() > 1 && numeric(tokens.back()))
+        tokens.pop_back();
+    if (tokens.size() < 2)
+        return {};
+    auto it = suffixes.find(tokens.back());
+    return it == suffixes.end() ? std::string() : it->second;
 }
 
 const std::vector<std::pair<std::string, int>>& textureChannels()
@@ -649,8 +683,9 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "setMaterialTexture",
-        .doc = "Set or clear (path='') a texture: channel baseColor, metallic, roughness, normal, ambientOcclusion, orm or "
-               "emissive. Stored relative to the workspace root (or the scene folder without one).",
+        .doc = "Set or clear (path='') a texture: channel baseColor, metallic, roughness, normal, ambientOcclusion, orm, mro "
+               "(the packed map with the MRO layout) or emissive. Stored relative to the workspace root (or the scene "
+               "folder without one).",
         .positionalDoc = "material",
         .flags = {{"channel", "c", T::String, nullptr, "Texture channel."}, {"path", "p", T::String, "", "Image file; empty clears."}},
         .run = [](const Args& a) -> json {
@@ -665,6 +700,8 @@ void registerCommands()
             std::string path = a.get<std::string>("path");
             std::replace(path.begin(), path.end(), '\\', '/');
             g.setValue({n.id(), attr, -1}, paths::storedPath(paths::fromUtf8(path)));
+            if (channel == "mro" && !path.empty())
+                g.setValue({n.id(), kPackedLayout, -1}, int64_t(PackedLayout::MRO));
             return nullptr;
         },
     });

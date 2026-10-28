@@ -154,6 +154,13 @@ LILA_SCENE_API std::array<int, 3> packedChannels(material::PackedLayout layout);
 /** Texture channel names for setMaterialTexture ("baseColor", "normal", "orm", ...) and their attrs. */
 LILA_SCENE_API const std::vector<std::pair<std::string, int>>& textureChannels();
 
+/**
+ * The setMaterialTexture channel a texture file's name suggests, from its last name token after dropping numeric
+ * suffixes: T_Rock_BaseColor_1.png and T_Rock_D.png are "baseColor", T_Rock_CRM.png is "orm", T_Rock_MRO.png is "mro".
+ * "" when nothing matches.
+ */
+LILA_SCENE_API std::string guessTextureChannel(std::string_view fileName);
+
 /** The stroke sheets shipped in resources/strokes, by file stem; a material's strokeMap may name one instead of a path. */
 LILA_SCENE_API std::vector<std::string> builtinStrokeSheets();
 /** The stroke sheet file a strokeMap value means: the default sheet when empty, a built-in by stem, else resolvePath. */

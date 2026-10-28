@@ -5,6 +5,7 @@
 #include "core/Log.h"
 #include "core/Paths.h"
 #include "core/PrefStore.h"
+#include "core/ProjectTextures.h"
 #include "core/Profile.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
@@ -25,6 +26,9 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QDoubleValidator>
+#include <QDropEvent>
+#include <QFileInfo>
+#include <QMimeData>
 #include <QColorDialog>
 #include <QComboBox>
 #include <QDockWidget>
@@ -45,6 +49,7 @@
 #include <QVBoxLayout>
 
 #include <cmath>
+#include <set>
 
 namespace lila::ui
 {
@@ -112,6 +117,100 @@ json createAndAssign(bool always)
         run("assignMaterial", {{"args", json::array({name})}});
     return name;
 }
+
+/** Trims whitespace and one pair of surrounding double quotes, as Explorer's Copy as path adds. */
+std::string unquotedPath(QString text)
+{
+    text = text.trimmed();
+    if (text.size() >= 2 && text.front() == '"' && text.back() == '"')
+        text = text.mid(1, text.size() - 2).trimmed();
+    return text.toStdString();
+}
+
+/** The local image files among dropped urls (Explorer, Lila's file dialog). */
+std::vector<std::string> droppedImages(const QMimeData* mime)
+{
+    std::vector<std::string> files;
+    if (!mime || !mime->hasUrls())
+        return files;
+    for (const QUrl& url : mime->urls())
+    {
+        if (!url.isLocalFile())
+            continue;
+        QFileInfo file(url.toLocalFile());
+        if (file.isFile() && projectTextures::isImageExtension(file.suffix().toStdString()))
+            files.push_back(file.absoluteFilePath().toStdString());
+    }
+    return files;
+}
+
+/** Sets each file on the channel its name suggests, as one undo step. Of two files for one channel the shorter name wins. */
+void assignByName(const scene::Node& material, std::vector<std::string> files)
+{
+    std::ranges::sort(files, [](const std::string& a, const std::string& b) {
+        return a.size() != b.size() ? a.size() < b.size() : a < b;
+    });
+    UndoChunk chunk("Assign Textures");
+    std::set<std::string> filled;
+    std::string skipped;
+    for (const std::string& file : files)
+    {
+        std::string channel = scene::materials::guessTextureChannel(file);
+        std::string key = channel == "mro" ? "orm" : channel;
+        if (channel.empty() || !filled.insert(key).second)
+        {
+            if (!skipped.empty())
+                skipped += ", ";
+            skipped += paths::toUtf8(paths::fromUtf8(file).filename());
+            continue;
+        }
+        run("setMaterialTexture", {{"args", json::array({material.path()})}, {"channel", channel}, {"path", file}});
+    }
+    if (!skipped.empty())
+        log::warn("Textures not assigned (no channel in the name, or the channel was already taken): {}", skipped);
+}
+
+/** Accepts image files dropped on a texture slot or the editor and hands their paths to `drop`. */
+class TextureDrop : public QObject
+{
+public:
+    TextureDrop(QObject* parent, std::function<void(const std::vector<std::string>&)> drop)
+        : QObject(parent), mDrop(std::move(drop))
+    {
+    }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        switch (event->type())
+        {
+        case QEvent::DragEnter:
+        case QEvent::DragMove:
+        {
+            auto* e = static_cast<QDropEvent*>(event);
+            if (droppedImages(e->mimeData()).empty())
+                return QObject::eventFilter(watched, event);
+            e->acceptProposedAction();
+            return true;
+        }
+        case QEvent::Drop:
+        {
+            auto* e = static_cast<QDropEvent*>(event);
+            std::vector<std::string> files = droppedImages(e->mimeData());
+            if (files.empty())
+                return QObject::eventFilter(watched, event);
+            e->acceptProposedAction();
+            mDrop(files);
+            return true;
+        }
+        default:
+            return QObject::eventFilter(watched, event);
+        }
+    }
+
+private:
+    std::function<void(const std::vector<std::string>&)> mDrop;
+};
 
 QIcon swatchIcon(const QColor& c)
 {
@@ -265,6 +364,15 @@ MaterialEditor::MaterialEditor(QWidget* parent) : QWidget(parent)
     mBodyLayout->setContentsMargins(0, 0, 0, 0);
     scroll->setWidget(mBody);
     root->addWidget(scroll, 1);
+    auto dropByName = [this](const std::vector<std::string>& files) {
+        if (scene::Node* m = current())
+            assignByName(*m, files);
+    };
+    for (QWidget* w : {static_cast<QWidget*>(mPreview), mBody})
+    {
+        w->setAcceptDrops(true);
+        w->installEventFilter(new TextureDrop(w, dropByName));
+    }
 
     connect(add, &QPushButton::clicked, this, [this] {
         json name = createAndAssign(false);
@@ -616,10 +724,22 @@ void MaterialEditor::rebuild()
                 run("setMaterialTexture", {{"args", json::array({m->path()})}, {"channel", channel}, {"path", p}});
         };
         connect(path, &QLineEdit::editingFinished, this, [path, apply, this, attr] {
+            std::string p = unquotedPath(path->text());
+            path->setText(QString::fromStdString(p));
             scene::Node* m = current();
-            if (m && path->text().toStdString() != m->as<std::string>(attr))
-                apply(path->text().toStdString());
+            if (m && p != m->as<std::string>(attr))
+                apply(p);
         });
+        // One file goes in this slot whatever its name; several are sorted into slots by name.
+        auto drop = [this, apply](const std::vector<std::string>& files) {
+            if (files.size() == 1)
+                apply(files[0]);
+            else if (scene::Node* m = current())
+                assignByName(*m, files);
+        };
+        box->setAcceptDrops(true);
+        for (QWidget* w : {box, static_cast<QWidget*>(path)})
+            w->installEventFilter(new TextureDrop(w, drop));
         connect(browse, &QToolButton::clicked, this, [this, box, apply, attr] {
             scene::Node* m = current();
             texturePicker::open(box, m ? m->as<std::string>(attr) : std::string(), apply);
