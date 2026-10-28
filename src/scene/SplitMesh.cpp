@@ -665,9 +665,9 @@ void registerCommands()
             {"cap", "c", T::Bool, true, "Close the holes the cuts leave."},
             {"mergeLoose", "ml", T::Bool, true, "Shells no plane cuts join the nearest piece."},
             {"remesh", "rm", T::String, "none", "How each piece is rebuilt.", {"none", "quadRemesh", "voxelRemesh", "decimate"}},
-            {"targetFaces", "tf", T::Int, 300, "Quad remesh: faces per piece."},
-            {"resolution", "res", T::Int, 32, "Voxel remesh: voxels along a piece's longest side."},
-            {"ratio", "r", T::Float, 0.25, "Decimate: share of triangles kept."},
+            {"targetFaces", "tf", T::Int, 300, "Quad remesh: faces per piece.", {}, {}, 8.0},
+            {"resolution", "res", T::Int, 32, "Voxel remesh: voxels along a piece's longest side.", {}, {}, 4.0, 512.0},
+            {"ratio", "r", T::Float, 0.25, "Decimate: share of triangles kept.", {}, {}, 0.001, 1.0},
             {"pieceSettings", "ps", T::Any, nullptr, "Per piece index: {remesh, targetFaces, resolution, ratio}."},
             {"pieceFaces", "pf", T::String, "", "Face count per piece, as index:count pairs (0:150 3:80)."},
             {"exactPieces", "ep", T::String, "", "Pieces kept exact, by index (1 4)."},
@@ -771,7 +771,7 @@ void registerCommands()
         .doc = "Planes where the joints a click selects meet on a skinned mesh, fitted to each boundary and facing the child joint. "
                "Returns [{origin, normal, radius}] for splitMesh.",
         .positionalDoc = "mesh",
-        .flags = {{"minFaces", "mf", T::Int, 8, "Regions with fewer faces get no plane."}},
+        .flags = {{"minFaces", "mf", T::Int, 8, "Regions with fewer faces get no plane.", {}, {}, 1.0}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();

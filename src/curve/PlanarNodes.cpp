@@ -516,6 +516,8 @@ std::vector<FlagDef> attrFlags(const std::string& type)
         if (!(d.flags & AttrInput) || (d.flags & AttrHidden))
             continue;
         FlagDef fd{d.name, "", T::Float, nullptr, d.doc};
+        fd.min = d.minValue;
+        fd.max = d.maxValue;
         switch (d.type)
         {
         case PlugType::Bool: fd.type = T::Bool; break;
@@ -752,9 +754,9 @@ void registerInsetRegionCommand()
                "region's outline and holes with mitred corners, closes in a ridge where the inset meets itself, and parts it pinches "
                "off become separate faces. The region's faces are replaced by the band and one inner face per part (quad-filled "
                "around holes), which end up selected. UVs carry on from the region. Returns the meshes changed.",
-        .flags = {{"distance", "d", T::Float, 1.0, "Inward distance, cm."},
+        .flags = {{"distance", "d", T::Float, 1.0, "Inward distance, cm.", {}, {}, 0.0},
                   {"depth", "", T::Float, 0.0, "Push of the inner faces along the normal, cm; the band ramps to it."},
-                  {"planarAngle", "", T::Float, 1.0, "Degrees a region's faces may bend and still count as flat."}},
+                  {"planarAngle", "", T::Float, 1.0, "Degrees a region's faces may bend and still count as flat.", {}, {}, 0.0, 180.0}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             g.evaluate();
@@ -808,7 +810,7 @@ void registerSvgCommands()
                "and the viewBox) on a plane at a scale. One curve per shape under a group named after the file, or all in one "
                "curve. Returns the curve names.",
         .positionalDoc = "path",
-        .flags = {{"scale", "s", T::Float, 0.1, "cm per SVG unit (px)."},
+        .flags = {{"scale", "s", T::Float, 0.1, "cm per SVG unit (px).", {}, {}, 1e-6},
                   {"plane", "", T::String, "xy", "Plane the drawing lies on: xy (front), xz (ground) or yz (side).", {"xy", "xz", "yz"}},
                   {"center", "", T::Bool, true, "Centre the drawing on the origin; off puts its top left corner there."},
                   {"merge", "", T::Bool, false, "One curve for the whole drawing instead of one per shape."},
@@ -866,9 +868,9 @@ void registerSvgCommands()
         .doc = "Write curves to an SVG file, one path per curve, seen on a plane (xy front, xz ground, yz side) at a scale. Beziers "
                "go out exactly, other curves as Beziers within tolerance. Defaults to the selected curves.",
         .positionalDoc = "path curves...",
-        .flags = {{"scale", "s", T::Float, 0.1, "cm per SVG unit."},
+        .flags = {{"scale", "s", T::Float, 0.1, "cm per SVG unit.", {}, {}, 1e-6},
                   {"plane", "", T::String, "xy", "Plane to draw on: xy (front), xz (ground) or yz (side).", {"xy", "xz", "yz"}},
-                  {"tolerance", "", T::Float, 0.01, "cm, for curves that are not Beziers."}},
+                  {"tolerance", "", T::Float, 0.01, "cm, for curves that are not Beziers.", {}, {}, 1e-5}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             if (a.positional.empty())

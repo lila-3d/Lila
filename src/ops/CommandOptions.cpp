@@ -281,6 +281,8 @@ Field fieldFor(const FlagDef& flag)
     }
     for (const std::string& c : f.choices)
         f.choiceLabels.push_back(prettyLabel(c));
+    f.min = flag.min.value_or(f.min);
+    f.max = flag.max.value_or(f.max);
     json def = flag.defaultValue.is_null() ? json(nullptr) : normalize(f, flag.defaultValue);
     f.defaultValue = def.is_null() ? kindZero(f) : def;
     return f;

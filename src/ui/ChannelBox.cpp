@@ -926,6 +926,17 @@ void ChannelBox::scrub(QPoint pos, Qt::KeyboardModifiers mods)
     }
     double step = (mods & Qt::ControlModifier) ? 0.01 : (mods & Qt::ShiftModifier) ? 1.0 : 0.1;
     s.accum += dx * step;
+    // Stops where every channel has hit a limit, so dragging back moves them straight away.
+    double lo = HUGE_VAL, hi = -HUGE_VAL;
+    for (auto& [plug, value] : s.saved)
+    {
+        const scene::AttrDef& def = Graph::current().attr(plug);
+        double base = numericOf(value, -1);
+        lo = std::min(lo, def.minValue.value_or(-HUGE_VAL) - base);
+        hi = std::max(hi, def.maxValue.value_or(HUGE_VAL) - base);
+    }
+    if (lo <= hi)
+        s.accum = std::clamp(s.accum, lo, hi);
     if (mScrubTimer->isActive())
         return;
     qint64 since = mLastScrubApply.isValid() ? mLastScrubApply.elapsed() : 1000;

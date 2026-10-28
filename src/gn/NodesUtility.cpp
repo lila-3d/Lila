@@ -243,7 +243,7 @@ void compare()
                 json def = t == T::Vector ? vec(0, 0, 0) : json(0);
                 s.inputs = {fin("a", t, def), fin("b", t, def)};
                 if (t != T::Int)
-                    s.inputs.push_back(fin("epsilon", T::Float, 0.001, Implicit::None, "Tolerance for equal and notEqual."));
+                    s.inputs.push_back(bounded(fin("epsilon", T::Float, 0.001, Implicit::None, "Tolerance for equal and notEqual."), 0.0));
                 s.outputs = {fout("result", T::Bool)};
                 return s;
             },
@@ -341,7 +341,7 @@ void mapRange()
         .props = {prop("interpolation", {"linear", "stepped", "smoothstep", "smootherstep"}, "linear"),
                   prop("clamp", {"true", "false"}, "true")},
         .sockets = {.inputs = {fin("value", T::Float, 1.0), fin("fromMin", T::Float, 0.0), fin("fromMax", T::Float, 1.0), fin("toMin", T::Float, 0.0),
-                               fin("toMax", T::Float, 1.0), fin("steps", T::Float, 4.0, Implicit::None, "For stepped.")},
+                               fin("toMax", T::Float, 1.0), bounded(fin("steps", T::Float, 4.0, Implicit::None, "For stepped."), 0.0)},
                     .outputs = {fout("result", T::Float)}},
         .exec =
             [](ExecContext& c) {
@@ -678,7 +678,8 @@ Sockets noiseSockets(const Group&, const GNode& n)
         s.inputs.push_back(fin("vector", T::Vector, nullptr, Implicit::Position));
     if (dims == "1D" || dims == "4D")
         s.inputs.push_back(fin("w", T::Float, 0.0, Implicit::None, "The fourth coordinate (the only one in 1D). Animate it to evolve the noise."));
-    for (SocketDecl d : {fin("scale", T::Float, 0.05), fin("detail", T::Float, 2.0), fin("roughness", T::Float, 0.5), fin("lacunarity", T::Float, 2.0),
+    for (SocketDecl d : {fin("scale", T::Float, 0.05), bounded(fin("detail", T::Float, 2.0), 0.0, 15.0), bounded(fin("roughness", T::Float, 0.5), 0.0, 1.0),
+                         bounded(fin("lacunarity", T::Float, 2.0), 0.0),
                          fin("distortion", T::Float, 0.0)})
         s.inputs.push_back(std::move(d));
     s.outputs = {fout("fac", T::Float), fout("color", T::Color)};

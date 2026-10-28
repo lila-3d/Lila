@@ -627,8 +627,8 @@ void registerTypes()
     if (types::find("field"))
         return;
     data::registerKind("fieldLayers", &Layers::fromJson);
-    auto in = [](std::string name, PlugType type, PlugValue def, uint32_t flags, std::string doc) {
-        return AttrDef{.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = flags, .doc = std::move(doc)};
+    auto in = [](std::string name, PlugType type, PlugValue def, uint32_t flags, std::string doc, std::optional<double> lo = {}) {
+        return AttrDef{.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = flags, .doc = std::move(doc), .minValue = lo};
     };
     NodeType t;
     t.name = "field";
@@ -641,7 +641,7 @@ void registerTypes()
     t.ownAttrs = {
         in("layers", PlugType::Data, DataPtr(), AttrInput | AttrStorable | AttrHidden,
            "The layer stack, bottom first. Edit it with addFieldLayer, setFieldLayer, moveFieldLayer and removeFieldLayer."),
-        in("opacity", PlugType::Float, 1.0, AttrInput | AttrStorable | AttrKeyable, "Scales the whole field's value."),
+        in("opacity", PlugType::Float, 1.0, AttrInput | AttrStorable | AttrKeyable, "Scales the whole field's value.", 0.0),
         in("invert", PlugType::Bool, false, AttrInput | AttrStorable | AttrKeyable, "Flips the field's value (1 - value) before opacity."),
         in("proximityMesh", PlugType::Mesh, MeshPtr(), AttrInput | AttrHidden, "The mesh proximity layers measure distance to (its outMesh)."),
         in("proximityMatrix", PlugType::Matrix, glm::dmat4(1.0), AttrInput | AttrHidden, "The proximity mesh's worldMatrix."),
@@ -668,7 +668,7 @@ void registerCommands()
                        return c;
                    }()},
                   {"position", "", T::Vec3, nullptr, "World position. Default: the centre of the meshes."},
-                  {"radius", "", T::Float, nullptr, "Field scale, cm. Default: a quarter of the meshes' size."},
+                  {"radius", "", T::Float, nullptr, "Field scale, cm. Default: a quarter of the meshes' size.", {}, {}, 0.0},
                   {"name", "", T::String, nullptr, "Name for the field."}},
         .run = [](const Args& a) -> json {
             Graph& graph = g();
@@ -721,7 +721,7 @@ void registerCommands()
                   {"points", "", T::List, nullptr, "Components layers: point ids."},
                   {"set", "", T::String, nullptr, "Components layers: take the points of this set's components."},
                   {"mesh", "", T::String, nullptr, "Proximity layers: the mesh to measure to (connected to the field)."},
-                  {"index", "", T::Int, nullptr, "Insert at this position, 0 the bottom."}},
+                  {"index", "", T::Int, nullptr, "Insert at this position, 0 the bottom.", {}, {}, 0.0}},
         .run = [](const Args& a) -> json {
             Graph& graph = g();
             Node& f = fieldArg(a, "addFieldLayer");
@@ -759,7 +759,7 @@ void registerCommands()
         .doc = "Change a field layer's settings: params= {key: value} with any of the keys fieldLayers lists (type, shape, "
                "blend, opacity, invert, inMin, inMax, curve, translate, rotate, scale, softness, points, values, ...).",
         .positionalDoc = "field",
-        .flags = {{"index", "", T::Int, nullptr, "The layer, 0 the bottom. Default: the top."},
+        .flags = {{"index", "", T::Int, nullptr, "The layer, 0 the bottom. Default: the top.", {}, {}, 0.0},
                   {"params", "", T::Any, nullptr, "The settings to change."}},
         .run = [](const Args& a) -> json {
             Graph& graph = g();
@@ -783,7 +783,7 @@ void registerCommands()
         .name = "removeFieldLayer",
         .doc = "Remove a layer from a field.",
         .positionalDoc = "field",
-        .flags = {{"index", "", T::Int, nullptr, "The layer, 0 the bottom. Default: the top."}},
+        .flags = {{"index", "", T::Int, nullptr, "The layer, 0 the bottom. Default: the top.", {}, {}, 0.0}},
         .run = [](const Args& a) -> json {
             Graph& graph = g();
             Node& f = fieldArg(a, "removeFieldLayer");
@@ -798,7 +798,7 @@ void registerCommands()
         .name = "moveFieldLayer",
         .doc = "Move a field layer to another position in the stack (0 the bottom, applied first).",
         .positionalDoc = "field",
-        .flags = {{"index", "", T::Int, nullptr, "The layer to move. Default: the top."}, {"to", "", T::Int, 0, "Its new position."}},
+        .flags = {{"index", "", T::Int, nullptr, "The layer to move. Default: the top.", {}, {}, 0.0}, {"to", "", T::Int, 0, "Its new position.", {}, {}, 0.0}},
         .run = [](const Args& a) -> json {
             Graph& graph = g();
             Node& f = fieldArg(a, "moveFieldLayer");

@@ -197,7 +197,7 @@ void registerContourCommands()
         .positionalDoc = "meshes (default: the selected meshes)",
         .flags = {{"point", "p", T::Vec3, nullptr, "A point on the plane, world cm (default the origin)."},
                   {"normal", "nm", T::Vec3, nullptr, "The plane's normal (default up)."},
-                  {"tolerance", "tol", T::Float, nullptr, "Simplify each curve within this many cm; 0 keeps every crossing."},
+                  {"tolerance", "tol", T::Float, nullptr, "Simplify each curve within this many cm; 0 keeps every crossing.", {}, {}, 0.0},
                   {"smooth", "sm", T::Bool, nullptr, "Fit smooth Beziers instead of poly lines."},
                   {"bridge", "br", T::Bool, nullptr, "Close cuts through open meshes across their gaps."},
                   {"constructionHistory", "ch", T::Bool, true, "Keep the node so the section follows the meshes and the plane."},

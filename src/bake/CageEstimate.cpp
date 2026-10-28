@@ -641,9 +641,9 @@ void registerCageCommands()
                "Checks itself by tracing the lows as a bake would, growing the cage where rays still miss. One undo step. "
                "Returns the miss rates before and after.",
         .positionalDoc = "group (or its low; default the selection)",
-        .flags = {{"resolution", "res", T::Int, 512, "Texels per side of the coverage check."},
-                  {"iterations", "it", T::Int, 4, "Coverage passes that may grow the cage."},
-                  {"margin", "mg", T::Float, 0.004, "Gap kept between cage and high, as a fraction of the lows' bounds diagonal."},
+        .flags = {{"resolution", "res", T::Int, 512, "Texels per side of the coverage check.", {}, {}, 16.0, 8192.0},
+                  {"iterations", "it", T::Int, 4, "Coverage passes that may grow the cage.", {}, {}, 0.0, 32.0},
+                  {"margin", "mg", T::Float, 0.004, "Gap kept between cage and high, as a fraction of the lows' bounds diagonal.", {}, {}, 0.0, 1.0},
                   {"apply", "ap", T::Bool, true, "Write the result; False only reports it."}},
         .run = [groupOf](const Args& a) -> json {
             scene::Node& grp = groupOf(a, "bakeEstimateCage");
@@ -667,7 +667,7 @@ void registerCageCommands()
         .doc = "How many of a bake group's rays miss its highs as it would bake now (one sample per texel): samples, misses, "
                "backfaces and missRate.",
         .positionalDoc = "group (or its low; default the selection)",
-        .flags = {{"resolution", "res", T::Int, 512, "Texels per side."}},
+        .flags = {{"resolution", "res", T::Int, 512, "Texels per side.", {}, {}, 16.0, 8192.0}},
         .run = [groupOf](const Args& a) -> json {
             scene::Node& grp = groupOf(a, "bakeCageCoverage");
             try

@@ -31,10 +31,10 @@ std::vector<FlagDef> sampleFlags()
     return {
         {"start", "st", T::Float, nullptr, "First frame. Without start and end the playback range is used."},
         {"end", "e", T::Float, nullptr, "Last frame, inclusive."},
-        {"step", "s", T::Float, 1.0, "Frame step."},
+        {"step", "s", T::Float, 1.0, "Frame step.", {}, {}, 0.001},
         {"playbackRange", "pr", T::Bool, nullptr, "Sample the scene's playback range (the default without start and end)."},
-        {"fps", "", T::Float, 0.0, "Frames per second; 0 uses the scene's."},
-        {"scale", "sc", T::Float, 1.0, "Global scale applied to every length (0.1 shrinks to a tenth)."},
+        {"fps", "", T::Float, 0.0, "Frames per second; 0 uses the scene's.", {}, {}, 0.0},
+        {"scale", "sc", T::Float, 1.0, "Global scale applied to every length (0.1 shrinks to a tenth).", {}, {}, 0.001},
         {"profile", "ax", T::String, "ue5", "Axis profile: ue5, ue6 or generic (the scene's axes).", {"ue5", "ue6", "generic"}},
         {"applyModifiers", "am", T::Bool, true, "Export the evaluated mesh; off exports the base mesh without its modifiers."},
         {"worldSpace", "ws", T::Bool, true, "Bake each object's world transform; off writes object space."},
@@ -130,7 +130,7 @@ void registerCommands()
     seqFlags.push_back({"folder", "fo", T::String, "sequences", "Output folder; relative paths are under the workspace."});
     seqFlags.push_back({"pattern", "pt", T::String, "{name}_{index}",
                         "File name without extension: {name} is the first mesh, {index} counts from 0, {frame} is the frame number."});
-    seqFlags.push_back({"padding", "pad", T::Int, 3, "Zero padding of {index} and {frame}."});
+    seqFlags.push_back({"padding", "pad", T::Int, 3, "Zero padding of {index} and {frame}.", {}, {}, 0.0, 10.0});
     seqFlags.push_back({"path", "p", T::String, nullptr, "Folder, pattern and extension in one, like out/rock_{frame}.obj (padding 4 unless given)."});
     ops::registerCommand({
         .name = "exportMeshSequence",
@@ -213,10 +213,10 @@ void registerCommands()
                         {"auto", "constant", "soup", "rigid"}});
     vatFlags.push_back({"positions", "po", T::String, "offset", "offset (from the rest mesh, for World Position Offset) or absolute.",
                         {"offset", "absolute"}});
-    vatFlags.push_back({"normalBits", "nb", T::Int, 8, "Normal texture depth, 8 or 16."});
+    vatFlags.push_back({"normalBits", "nb", T::Int, 8, "Normal texture depth, 8 or 16.", {}, {}, 8.0, 16.0});
     vatFlags.push_back({"restFrame", "rf", T::Float, nullptr, "Frame whose shape is the rest mesh (default the first sampled frame)."});
-    vatFlags.push_back({"maxWidth", "mw", T::Int, nullptr, "Widest texture before a frame wraps to more rows (default the vat maxWidth pref, 4096)."});
-    vatFlags.push_back({"exrBits", "eb", T::Int, nullptr, "EXR depth: 16 (half float) or 32 (float). Default 32 for rigid, 16 otherwise."});
+    vatFlags.push_back({"maxWidth", "mw", T::Int, nullptr, "Widest texture before a frame wraps to more rows (default the vat maxWidth pref, 4096).", {}, {}, 1.0, 16384.0});
+    vatFlags.push_back({"exrBits", "eb", T::Int, nullptr, "EXR depth: 16 (half float) or 32 (float). Default 32 for rigid, 16 otherwise.", {}, {}, 16.0, 32.0});
     ops::registerCommand({
         .name = "exportVertexAnimation",
         .doc = "Bake animated meshes (geometry nodes, deformers, skins, anything that changes over time) into Vertex Animation "

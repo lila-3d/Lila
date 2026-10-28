@@ -91,7 +91,7 @@ Sockets randomSockets(const Group&, const GNode& n)
         s.inputs = {fin("min", t, vec(0, 0, 0)), fin("max", t, t == SocketType::Rotation ? vec(360, 360, 360) : vec(1, 1, 1))};
         break;
     case SocketType::Int: s.inputs = {fin("min", t, 0), fin("max", t, 100)}; break;
-    case SocketType::Bool: s.inputs = {fin("probability", SocketType::Float, 0.5)}; break;
+    case SocketType::Bool: s.inputs = {bounded(fin("probability", SocketType::Float, 0.5), 0.0, 1.0)}; break;
     default: s.inputs = {fin("min", t, 0.0), fin("max", t, 1.0)}; break;
     }
     s.inputs.push_back(fin("id", SocketType::Int, nullptr, Implicit::Id, "Stable per-element key; defaults to the ID."));
@@ -157,7 +157,7 @@ void sceneTime()
         .label = "Scene Time",
         .category = "Input",
         .doc = "The current time. A group using this makes its modifier re-evaluate whenever the time changes.",
-        .sockets = {.inputs = {in("fps", T::Float, 30.0, "Frames per second for the frame output.")},
+        .sockets = {.inputs = {bounded(in("fps", T::Float, 30.0, "Frames per second for the frame output."), 0.0)},
                     .outputs = {out("seconds", T::Float), out("frame", T::Float)}},
         .exec =
             [](ExecContext& c) {

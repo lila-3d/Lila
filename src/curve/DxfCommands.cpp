@@ -92,7 +92,7 @@ void registerImport()
                   {"upAxis", "", T::String, "z", "The file's up axis; converted to the scene's.", {"y", "z"}},
                   {"merge", "", T::Bool, false, "One curve and one mesh for the whole file instead of one per layer."},
                   {"polylines", "", T::Bool, false, "Turn every curve into straight segments, within tolerance."},
-                  {"tolerance", "tol", T::Float, 0.01, "cm the segments may stray from the curve, with polylines on."},
+                  {"tolerance", "tol", T::Float, 0.01, "cm the segments may stray from the curve, with polylines on.", {}, {}, 1e-5},
                   {"name", "n", T::String, nullptr, "Name of the group; the file name by default."}},
         .run = [](const Args& a) -> json {
             if (a.positional.empty() || !a.positional[0].is_string())
@@ -223,7 +223,7 @@ void registerExport()
                   {"upAxis", "", T::String, "z", "The file's up axis; converted from the scene's.", {"y", "z"}},
                   {"version", "", T::String, "2000", "DXF version: 2000 or r12.", {"2000", "r12"}},
                   {"splines", "", T::Bool, true, "R2000: curves as SPLINE entities. Off writes them as polylines within tolerance."},
-                  {"tolerance", "tol", T::Float, 0.01, "cm, for curves written as polylines."}},
+                  {"tolerance", "tol", T::Float, 0.01, "cm, for curves written as polylines.", {}, {}, 1e-5}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             if (a.positional.empty() || !a.positional[0].is_string())

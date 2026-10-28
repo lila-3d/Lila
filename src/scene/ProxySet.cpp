@@ -978,7 +978,7 @@ void registerCommands()
                "the set.",
         .positionalDoc = "real meshes",
         .flags = {{"name", "n", T::String, nullptr, "Name; <mesh>_animProxy by default."},
-                  {"lodLevel", "lod", T::Int, -1, "The LOD level the set stands in at; -1 for any."}},
+                  {"lodLevel", "lod", T::Int, -1, "The LOD level the set stands in at; -1 for any.", {}, {}, -1.0, double(lod::kMaxLevels - 1)}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             std::vector<NodeId> real;
@@ -1153,9 +1153,9 @@ void registerCommands()
             {"suggest", "sg", T::Bool, false, "Add the joint-boundary planes to the given ones."},
             {"cap", "c", T::Bool, true, "Close the holes the cuts leave."},
             {"remesh", "rm", T::String, "voxelRemesh", "How each proxy piece is rebuilt.", {"none", "quadRemesh", "voxelRemesh", "decimate"}},
-            {"targetFaces", "tf", T::Int, 300, "Quad remesh: faces per piece."},
-            {"resolution", "res", T::Int, 32, "Voxel remesh: voxels along a piece's longest side."},
-            {"ratio", "r", T::Float, 0.25, "Decimate: share of triangles kept."},
+            {"targetFaces", "tf", T::Int, 300, "Quad remesh: faces per piece.", {}, {}, 8.0},
+            {"resolution", "res", T::Int, 32, "Voxel remesh: voxels along a piece's longest side.", {}, {}, 4.0, 512.0},
+            {"ratio", "r", T::Float, 0.25, "Decimate: share of triangles kept.", {}, {}, 0.001, 1.0},
             {"pieceSettings", "ps", T::Any, nullptr, "Per piece index: {remesh, targetFaces, resolution, ratio}."},
             {"pieceFaces", "pf", T::String, "", "Face count per piece, as index:count pairs (0:150 3:80)."},
             {"exactPieces", "ep", T::String, "", "Pieces kept exact (true pieces, skinned like the mesh), by index (1 4)."},
@@ -1163,7 +1163,7 @@ void registerCommands()
             {"trueJoints", "tj", T::List, nullptr, "Joints whose pieces also get a true piece, shown by setProxyDisplay piece=."},
             {"name", "n", T::String, nullptr, "Name of the new set; <mesh>_animProxy by default."},
             {"set", "s", T::String, nullptr, "Add the pieces to this set instead of making one."},
-            {"lodLevel", "lod", T::Int, -1, "The new set's LOD level; -1 for any."},
+            {"lodLevel", "lod", T::Int, -1, "The new set's LOD level; -1 for any.", {}, {}, -1.0, double(lod::kMaxLevels - 1)},
         },
         .run = animProxyFromMesh,
         .adjustable = true,

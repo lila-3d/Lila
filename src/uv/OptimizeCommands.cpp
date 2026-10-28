@@ -84,8 +84,8 @@ std::vector<FlagDef> modeFlags()
     return {{"mode", "", T::String, "blend",
              "conformal keeps angles, authalic keeps areas, blend mixes them by mix, isometric is SLIM (symmetric Dirichlet).",
              {"conformal", "authalic", "blend", "isometric"}},
-            {"mix", "", T::Float, 0.5, "Blend only: 0 keeps angles, 1 keeps areas."},
-            {"iterations", "", T::Int, 20, "Solver iterations."}};
+            {"mix", "", T::Float, 0.5, "Blend only: 0 keeps angles, 1 keeps areas.", {}, {}, 0.0, 1.0},
+            {"iterations", "", T::Int, 20, "Solver iterations.", {}, {}, 1.0, 500.0}};
 }
 
 OptimizeOptions optimizeArgs(const Args& a)
@@ -127,7 +127,7 @@ void registerOptimizeCommands()
                "open to cut area distortion. Islands keep their place unless pack=True or they had no uvs.",
         .flags = {uvSetFlag(),
                   {"boundary", "", T::String, "free", "free, disk, rectangle or polygon.", {"free", "disk", "rectangle", "polygon"}},
-                  {"cones", "", T::Int, 0, "Cone points placed automatically (free boundary only); each adds a short seam."},
+                  {"cones", "", T::Int, 0, "Cone points placed automatically (free boundary only); each adds a short seam.", {}, {}, 0.0, 64.0},
                   {"exactLengths", "", T::Bool, false, "free boundary: bend rather than stretch to close it, so its lengths are exact."},
                   {"pack", "", T::Bool, false, "Pack the islands into 0-1 afterwards."}},
         .run = [](const Args& a) -> json {
@@ -249,7 +249,7 @@ void registerOptimizeCommands()
                "the optimise mode. Pieces keep the island's scale; the largest stays in place, the rest line up beside it.",
         .flags = [] {
             std::vector<FlagDef> f{uvSetFlag(),
-                                   {"threshold", "", ArgType::Float, 0.08, "Largest stretch (symmetric Dirichlet excess) an island may keep."},
+                                   {"threshold", "", ArgType::Float, 0.08, "Largest stretch (symmetric Dirichlet excess) an island may keep.", {}, {}, 0.0},
                                    {"visibility", "", ArgType::Bool, true, "Hide cuts where they are least visible."}};
             for (FlagDef& d : modeFlags())
                 f.push_back(std::move(d));
@@ -338,7 +338,7 @@ void registerOptimizeCommands()
         .name = "uvStackRadial",
         .doc = "Stack a radially symmetric mesh's uvs: one wedge's faces give their uvs to their copies in every other wedge, so all the "
                "copies share one patch of texture (mirrored wedges as mirror-image islands). Needs radial symmetry on the mesh.",
-        .flags = {uvSetFlag(), {"wedge", "", T::Int, -1, "The wedge whose uvs are kept; -1: the one most of the selected faces are in, else 0."}},
+        .flags = {uvSetFlag(), {"wedge", "", T::Int, -1, "The wedge whose uvs are kept; -1: the one most of the selected faces are in, else 0.", {}, {}, -1.0}},
         .run = [](const Args& a) -> json {
             std::string set = uvSetOf(a);
             const int wedge = a.get<int>("wedge");
@@ -359,7 +359,7 @@ void registerOptimizeCommands()
         .name = "uvStraightenEdges",
         .doc = "Straighten the selected edge chains in uv (edge loops, borders, seam sides): each goes onto its best-fit line with its uv length "
                "kept, and the rest of its island is re-solved around it.",
-        .flags = {uvSetFlag(), {"iterations", "", T::Int, 12, "SLIM iterations for the re-solve."}},
+        .flags = {uvSetFlag(), {"iterations", "", T::Int, 12, "SLIM iterations for the re-solve.", {}, {}, 0.0, 200.0}},
         .run = [](const Args& a) -> json {
             std::string set = uvSetOf(a);
             int iterations = std::clamp(a.get<int>("iterations", 12), 0, 200);

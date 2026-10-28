@@ -111,9 +111,9 @@ void connectPiecesNode()
         .props = {prop("type", linkTypes(), "glue",
                        "glue holds rigidly until it breaks; spring bends first; hard never breaks.")},
         .sockets = {.inputs = {geoIn("pieces", "Pieces, as instances."),
-                               in("distance", T::Float, 0.5, "Gap still counted as touching, cm."),
-                               in("strength", T::Float, 20.0, "N per cm2 of shared area."),
-                               in("maxLinks", T::Int, 12, "Most links per piece; the largest contacts are kept.")},
+                               bounded(in("distance", T::Float, 0.5, "Gap still counted as touching, cm."), 0.0),
+                               bounded(in("strength", T::Float, 20.0, "N per cm2 of shared area."), 0.0),
+                               bounded(in("maxLinks", T::Int, 12, "Most links per piece; the largest contacts are kept."), 1)},
                     .outputs = {geoOut("links")}},
         .exec =
             [](ExecContext& c) {
@@ -204,8 +204,8 @@ void anchorPiecesNode()
         .props = {prop("type", linkTypes(), "glue", "glue breaks free under force; hard never lets go.")},
         .sockets = {.inputs = {geoIn("pieces", "Pieces, as instances."), geoIn("links", "Links to add the anchors to."),
                                in("height", T::Float, 0.0, "The ground, cm: pieces reaching down to it are anchored."),
-                               in("tolerance", T::Float, 1.0, "How close to the ground counts, cm."),
-                               in("strength", T::Float, 20.0, "N per cm2 of the piece's footprint.")},
+                               bounded(in("tolerance", T::Float, 1.0, "How close to the ground counts, cm."), 0.0),
+                               bounded(in("strength", T::Float, 20.0, "N per cm2 of the piece's footprint."), 0.0)},
                     .outputs = {geoOut("links")}},
         .exec =
             [](ExecContext& c) {
@@ -439,7 +439,7 @@ void explosionNode()
                "at the centre. Join several with Join Geometry. Invisible: add your own flash or smoke.",
         .sockets = {.inputs = {in("position", T::Vector, vec(0, 0, 0), "Its centre, cm."), in("frame", T::Int, 1, "Frame it goes off."),
                                in("speed", T::Float, 1500.0, "Speed given to pieces at the centre, cm/s."),
-                               in("radius", T::Float, 300.0, "Pieces this far away or more aren't pushed, cm.")},
+                               bounded(in("radius", T::Float, 300.0, "Pieces this far away or more aren't pushed, cm."), 0.0)},
                     .outputs = {geoOut("blast")}},
         .exec =
             [](ExecContext& c) {
@@ -490,11 +490,11 @@ void collapsePiecesNode()
         .sockets = {.inputs = {geoIn("pieces", "Pieces, as instances."), geoIn("links", "Their links."),
                                in("frame", T::Float, 1.0, "The current frame: connect Scene Time."),
                                in("start", T::Float, 60.0, "Frame the first pieces fall."),
-                               in("duration", T::Float, 60.0, "Frames for the failure to cross to the far side."),
+                               bounded(in("duration", T::Float, 60.0, "Frames for the failure to cross to the far side."), 0.0),
                                in("direction", T::Vector, vec(1, 0, 0), "Which way the failure travels."),
-                               in("rumble", T::Float, 2.0, "How far pieces shake just before they fall, cm."),
-                               in("lead", T::Float, 30.0, "Frames of rumbling before a piece falls."),
-                               in("raggedness", T::Float, 0.25, "0 is a straight front; 1 drops pieces in any order."),
+                               bounded(in("rumble", T::Float, 2.0, "How far pieces shake just before they fall, cm."), 0.0),
+                               bounded(in("lead", T::Float, 30.0, "Frames of rumbling before a piece falls."), 1e-6),
+                               bounded(in("raggedness", T::Float, 0.25, "0 is a straight front; 1 drops pieces in any order."), 0.0, 1.0),
                                in("seed", T::Int, 0, "Another seed gives another ragged front.")},
                     .outputs = {geoOut("pieces"), geoOut("links")}},
         .exec =

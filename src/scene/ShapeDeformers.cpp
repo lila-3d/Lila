@@ -173,14 +173,15 @@ struct CageCoordinates final : Data
 
 // ------------------------------------------------------------------------------------------------ attr helpers
 
-AttrDef keyable(std::string name, PlugType type, PlugValue def, std::string doc)
+AttrDef keyable(std::string name, PlugType type, PlugValue def, std::string doc, std::optional<double> lo = {}, std::optional<double> hi = {})
 {
     return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable | AttrKeyable,
-            .doc = std::move(doc)};
+            .doc = std::move(doc), .minValue = lo, .maxValue = hi};
 }
-AttrDef stored(std::string name, PlugType type, PlugValue def, std::string doc)
+AttrDef stored(std::string name, PlugType type, PlugValue def, std::string doc, std::optional<double> lo = {}, std::optional<double> hi = {})
 {
-    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable, .doc = std::move(doc)};
+    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable, .doc = std::move(doc),
+            .minValue = lo, .maxValue = hi};
 }
 AttrDef hiddenStored(std::string name, PlugType type, PlugValue def, std::string doc)
 {
@@ -1162,8 +1163,8 @@ std::vector<AttrDef> cageParams()
                      "Mean value: smooth, fine for any closed cage. Green: shape preserving (conformal), the detail keeps its "
                      "proportions as the cage stretches. Somigliana: elastic, with poissonRatio and bulge for volume. Harmonic: "
                      "stays local in concave cages (a hand's fingers), for points inside the cage."),
-            stored("resolution", PlugType::Int, int64_t(40), "Harmonic: grid cells across the cage's longest side, 8 to 128."),
-            stored("poissonRatio", PlugType::Float, 0.3, "Somigliana: how incompressible the inside is, 0 to 0.49."),
+            stored("resolution", PlugType::Int, int64_t(40), "Harmonic: grid cells across the cage's longest side, 8 to 128.", 8.0, 128.0),
+            stored("poissonRatio", PlugType::Float, 0.3, "Somigliana: how incompressible the inside is, 0 to 0.49.", 0.0, 0.49),
             keyable("bulge", PlugType::Float, 0.0,
                     "Somigliana: 0 follows the cage's own stretch; toward 1 a cage face that shrinks pushes outward, keeping volume.")};
 }
@@ -1424,8 +1425,8 @@ void registerShapeTypes()
          "Moves the mesh like a block of rubber pushed by a handle (regularized Kelvinlets): move the handle to grab, rotate it "
          "to twist, scale it to grow or shrink, scale it unevenly to pinch. Volume behaves physically, set by poissonRatio.",
          {handleMatrixAttr(), hiddenStored("bindMatrix", PlugType::Matrix, glm::dmat4(1.0), "The handle's world matrix when bound."), geomMatrixAttr(),
-          keyable("radius", PlugType::Float, 10.0, "Size of the brush, cm: the region that moves almost rigidly with the handle."),
-          keyable("poissonRatio", PlugType::Float, 0.4, "0 squashes freely, 0.5 keeps volume (grabbing bulges the sides). Below 0.5."),
+          keyable("radius", PlugType::Float, 10.0, "Size of the brush, cm: the region that moves almost rigidly with the handle.", 0.0),
+          keyable("poissonRatio", PlugType::Float, 0.4, "0 squashes freely, 0.5 keeps volume (grabbing bulges the sides). Below 0.5.", -0.99, 0.5),
           enumAttr("falloff", 0, {"single", "biScale", "triScale"},
                    "Single fades slowly (1/r) like real rubber; bi- and tri-scale fade much faster, for local edits.", true),
           keyable("grab", PlugType::Float, 1.0, "How much of the handle's move applies."),
@@ -1439,7 +1440,7 @@ void registerShapeTypes()
                                   hiddenStored("regions", PlugType::Data, DataPtr(), "Each handle's points, by handle index."),
                                   hiddenStored("anchors", PlugType::Data, DataPtr(), "Points that stay where the input puts them."), restAttr()};
         if (arap)
-            a.push_back(keyable("iterations", PlugType::Int, int64_t(8), "Rigidity passes: more keeps detail stiffer across big bends."));
+            a.push_back(keyable("iterations", PlugType::Int, int64_t(8), "Rigidity passes: more keeps detail stiffer across big bends.", 0.0, 200.0));
         return a;
     };
     registerDeformer({"arap", "hand-move",
@@ -1455,15 +1456,15 @@ void registerShapeTypes()
                       "Point handles blended with bounded biharmonic weights: smooth, local, always between 0 and 1. Move, rotate "
                       "and scale the handles.",
                       {geomMatrixAttr(), handlesAttr(),
-                       stored("handleRadius", PlugType::Float, 0.0, "Points this close to a handle (cm) move fully with it; 0 is just the nearest. Used when binding."),
+                       stored("handleRadius", PlugType::Float, 0.0, "Points this close to a handle (cm) move fully with it; 0 is just the nearest. Used when binding.", 0.0),
                        hiddenStored("binding", PlugType::Data, DataPtr(), "Each point's weight per handle.")},
                       [] { return std::make_unique<BbwNode>(); }});
 
     registerDeformer({"shearDeformer", "slashes",
                       "Shears the mesh along its handle's X and Z as Y rises, rigid past the bounds.",
                       {handleMatrixAttr(), geomMatrixAttr(),
-                       keyable("falloffRadius", PlugType::Float, 0.0, "Spherical falloff around the handle, handle units. 0 turns it off."),
-                       keyable("falloffSoftness", PlugType::Float, 0.5, "How much of the falloff radius eases out, 0 to 1."),
+                       keyable("falloffRadius", PlugType::Float, 0.0, "Spherical falloff around the handle, handle units. 0 turns it off.", 0.0),
+                       keyable("falloffSoftness", PlugType::Float, 0.5, "How much of the falloff radius eases out, 0 to 1.", 0.0, 1.0),
                        keyable("shearX", PlugType::Float, 0.5, "X offset per unit of Y, in handle space."),
                        keyable("shearZ", PlugType::Float, 0.0, "Z offset per unit of Y, in handle space."),
                        keyable("lowBound", PlugType::Float, -1.0, "Where the shear starts along the handle's Y, handle units."),
@@ -1480,15 +1481,15 @@ void registerShapeTypes()
                       {handleMatrixAttr(), geomMatrixAttr(),
                        enumAttr("shape", 0, {"sphere", "cylinder", "box"}, "The shape points are pulled toward."),
                        keyable("factor", PlugType::Float, 1.0, "0 leaves the mesh, 1 puts it on the shape; beyond pushes past."),
-                       keyable("radius", PlugType::Float, 0.0, "Size of the shape, handle units; 0 uses the mesh's mean size.")},
+                       keyable("radius", PlugType::Float, 0.0, "Size of the shape, handle units; 0 uses the mesh's mean size.", 0.0)},
                       [] { return std::make_unique<CastNode>(); }});
 
     registerDeformer({"smoothDeformer", "blur",
                       "Smooths the mesh: plain Laplacian (shrinks), Taubin (keeps size) or corrective (smooths only what changed "
                       "since binding, keeping rest detail).",
                       {enumAttr("mode", 1, {"laplacian", "taubin", "corrective"}, "How to smooth."),
-                       keyable("iterations", PlugType::Int, int64_t(5), "Smoothing passes."),
-                       keyable("smoothStep", PlugType::Float, 0.5, "How far each pass moves a point toward its neighbours, 0 to 1."),
+                       keyable("iterations", PlugType::Int, int64_t(5), "Smoothing passes.", 0.0, 1000.0),
+                       keyable("smoothStep", PlugType::Float, 0.5, "How far each pass moves a point toward its neighbours, 0 to 1.", 0.0, 1.0),
                        stored("pinBorders", PlugType::Bool, true, "Keep open borders where they are."), restAttr()},
                       [] { return std::make_unique<SmoothNode>(); }});
 
@@ -1497,25 +1498,25 @@ void registerShapeTypes()
                       "fading out over the falloff radius.",
                       {connected("fromMatrix", PlugType::Matrix, glm::dmat4(1.0), "The from handle's worldMatrix."),
                        connected("toMatrix", PlugType::Matrix, glm::dmat4(1.0), "The to handle's worldMatrix."), geomMatrixAttr(),
-                       keyable("falloffRadius", PlugType::Float, 10.0, "Distance from the from handle where the effect ends, cm. 0: everywhere."),
-                       keyable("falloffSoftness", PlugType::Float, 1.0, "How much of the radius eases out, 0 a hard edge to 1 all soft."),
+                       keyable("falloffRadius", PlugType::Float, 10.0, "Distance from the from handle where the effect ends, cm. 0: everywhere.", 0.0),
+                       keyable("falloffSoftness", PlugType::Float, 1.0, "How much of the radius eases out, 0 a hard edge to 1 all soft.", 0.0, 1.0),
                        keyable("strength", PlugType::Float, 1.0, "Scales the effect.")},
                       [] { return std::make_unique<WarpNode>(); }});
 
     registerDeformer({"noiseDeformer", "grain",
                       "Displaces points by seeded fractal noise, along the normal or in all directions. Key offset to animate it.",
                       {keyable("amplitude", PlugType::Float, 1.0, "Largest displacement, object units."),
-                       keyable("frequency", PlugType::Float, 0.1, "Noise features per object unit."),
+                       keyable("frequency", PlugType::Float, 0.1, "Noise features per object unit.", 0.0),
                        keyable("offset", PlugType::Vec3, glm::dvec3(0.0), "Moves the noise through the mesh."),
                        stored("seed", PlugType::Int, int64_t(0), "Picks a different noise."),
-                       stored("octaves", PlugType::Int, int64_t(3), "Layers of finer detail, 1 to 12."),
+                       stored("octaves", PlugType::Int, int64_t(3), "Layers of finer detail, 1 to 12.", 1.0, 12.0),
                        enumAttr("direction", 0, {"normal", "vector"}, "Along each point's normal, or a 3D offset.")},
                       [] { return std::make_unique<NoiseNode>(); }});
 
     registerDeformer({"tension", "arrows-diff",
                       "Measures stretch and compression against the shape at binding, without moving points: writes a 'tension' "
                       "point attribute (positive stretched) and a colour set (red stretch, green compression) for wrinkle masks.",
-                      {keyable("scale", PlugType::Float, 4.0, "Colour gain: strain times scale is full colour."),
+                      {keyable("scale", PlugType::Float, 4.0, "Colour gain: strain times scale is full colour.", 0.0),
                        stored("colorSet", PlugType::String, std::string("tension"), "Colour set written; empty writes none."), restAttr(),
                        stored("stretchCurve", PlugType::String, std::string(),
                               "Unreal material curve that carries outStretch in skeletal and animation exports; empty for none."),
@@ -1539,8 +1540,8 @@ void registerShapeCommands()
                "the mesh around it with a physically based falloff. Returns [handle, deformers...].",
         .positionalDoc = "meshes",
         .flags = {{"position", "", T::Vec3, nullptr, "Handle position, world. Default: the meshes' centre."},
-                  {"radius", "", T::Float, nullptr, "Brush radius, cm. Default: a quarter of the meshes' size."},
-                  {"poissonRatio", "", T::Float, 0.4, "0 squashes freely, 0.5 keeps volume."},
+                  {"radius", "", T::Float, nullptr, "Brush radius, cm. Default: a quarter of the meshes' size.", {}, {}, 0.0},
+                  {"poissonRatio", "", T::Float, 0.4, "0 squashes freely, 0.5 keeps volume.", {}, {}, -0.99, 0.5},
                   {"falloff", "", T::String, "single", "single | biScale | triScale", {"single", "biScale", "triScale"}},
                   {"name", "", T::String, nullptr, "Name for the deformer."}},
         .run = [](const Args& a) -> json {
@@ -1613,7 +1614,7 @@ void registerShapeCommands()
         {"anchors", "", T::List, nullptr, "Points that stay put, as handles= takes them."},
         {"name", "", T::String, nullptr, "Name for the deformer."}};
     std::vector<FlagDef> arapFlags = handleFlags;
-    arapFlags.push_back({"iterations", "", T::Int, nullptr, "Rigidity passes (default 8)."});
+    arapFlags.push_back({"iterations", "", T::Int, nullptr, "Rigidity passes (default 8).", {}, {}, 0.0, 200.0});
     ops::registerCommand({
         .name = "arap",
         .doc = "Add an as-rigid-as-possible handle deformer to a mesh: each handle region gets a locator that drags it, "
@@ -1731,7 +1732,7 @@ void registerShapeCommands()
                "(locators, joints) to use as handles, or positions= for new locators. Returns [deformers..., handles...].",
         .positionalDoc = "meshes and handles",
         .flags = {{"positions", "", T::List, nullptr, "New locator handles at these world positions."},
-                  {"radius", "", T::Float, 0.0, "Points this close to a handle (cm) move fully with it; 0: just the nearest point."},
+                  {"radius", "", T::Float, 0.0, "Points this close to a handle (cm) move fully with it; 0: just the nearest point.", {}, {}, 0.0},
                   {"name", "", T::String, nullptr, "Name for the deformer."}},
         .run = [](const Args& a) -> json {
             Graph& graph = g();
@@ -1775,7 +1776,7 @@ void registerShapeCommands()
         .doc = "Compute a skinCluster's weights as bounded biharmonic weights: each joint holds the points around the middle "
                "of its bone, and the weights blend smoothly between, kept to maxInfluences per point.",
         .positionalDoc = "skinCluster or mesh",
-        .flags = {{"maxInfluences", "", T::Int, nullptr, "Influences kept per point. Default: the skinCluster's maxInfluences."}},
+        .flags = {{"maxInfluences", "", T::Int, nullptr, "Influences kept per point. Default: the skinCluster's maxInfluences.", {}, {}, 1.0}},
         .run = [](const Args& a) -> json {
             Graph& graph = g();
             auto objs = a.objects();
@@ -1859,8 +1860,8 @@ void registerShapeCommands()
                "Returns the deformers.",
         .positionalDoc = "meshes",
         .flags = {{"mode", "", T::String, "taubin", "laplacian | taubin | corrective", {"laplacian", "taubin", "corrective"}},
-                  {"iterations", "", T::Int, 5, "Smoothing passes."},
-                  {"smoothStep", "", T::Float, 0.5, "How far each pass moves a point, 0 to 1."},
+                  {"iterations", "", T::Int, 5, "Smoothing passes.", {}, {}, 0.0, 1000.0},
+                  {"smoothStep", "", T::Float, 0.5, "How far each pass moves a point, 0 to 1.", {}, {}, 0.0, 1.0},
                   paramsFlag, nameFlag},
         .run = simple("smoothDeformer", "smoothDeformer", "Smooth",
                       [](Graph& graph, DeformerNode& d, const Args& a) {
@@ -1881,9 +1882,9 @@ void registerShapeCommands()
                "Returns the deformers.",
         .positionalDoc = "meshes",
         .flags = {{"amplitude", "", T::Float, 1.0, "Largest displacement, object units."},
-                  {"frequency", "", T::Float, 0.1, "Noise features per object unit."},
+                  {"frequency", "", T::Float, 0.1, "Noise features per object unit.", {}, {}, 0.0},
                   {"seed", "", T::Int, 0, "Picks a different noise."},
-                  {"octaves", "", T::Int, 3, "Layers of finer detail."},
+                  {"octaves", "", T::Int, 3, "Layers of finer detail.", {}, {}, 1.0, 12.0},
                   {"direction", "", T::String, "normal", "normal | vector", {"normal", "vector"}},
                   paramsFlag, nameFlag},
         .run = simple("noiseDeform", "noiseDeformer", "Noise",
@@ -1904,7 +1905,7 @@ void registerShapeCommands()
         .doc = "Add a tension deformer: measures stretch and compression against the current shape, as a 'tension' point "
                "attribute and a colour set, for wrinkle maps. Returns the deformers.",
         .positionalDoc = "meshes",
-        .flags = {{"scale", "", T::Float, 4.0, "Colour gain: strain times scale is full colour."},
+        .flags = {{"scale", "", T::Float, 4.0, "Colour gain: strain times scale is full colour.", {}, {}, 0.0},
                   {"colorSet", "", T::String, "tension", "Colour set to write; empty for none."},
                   nameFlag},
         .run = simple("tension", "tension", "Tension",
@@ -1946,7 +1947,7 @@ void registerShapeCommands()
         .positionalDoc = "meshes",
         .flags = {{"shape", "", T::String, "sphere", "sphere | cylinder | box", {"sphere", "cylinder", "box"}},
                   {"factor", "", T::Float, 1.0, "0 none, 1 onto the shape."},
-                  {"radius", "", T::Float, 0.0, "Shape size, cm; 0 uses the mesh's mean size."},
+                  {"radius", "", T::Float, 0.0, "Shape size, cm; 0 uses the mesh's mean size.", {}, {}, 0.0},
                   paramsFlag, nameFlag},
         .run = [](const Args& a) -> json {
             Graph& graph = g();
@@ -1979,7 +1980,7 @@ void registerShapeCommands()
                "moves the points near the from handle. Returns [from, to, deformers...].",
         .positionalDoc = "meshes",
         .flags = {{"position", "", T::Vec3, nullptr, "Where both handles start, world. Default: the meshes' centre."},
-                  {"radius", "", T::Float, nullptr, "Falloff radius, cm. Default: a quarter of the meshes' size."},
+                  {"radius", "", T::Float, nullptr, "Falloff radius, cm. Default: a quarter of the meshes' size.", {}, {}, 0.0},
                   paramsFlag, nameFlag},
         .run = [](const Args& a) -> json {
             Graph& graph = g();

@@ -293,10 +293,10 @@ std::vector<FlagDef> romFlags(int randomDefault)
 {
     using T = ArgType;
     return {
-        {"angle", "", T::Float, 45.0, "Degrees each joint turns either way about its local axes."},
+        {"angle", "", T::Float, 45.0, "Degrees each joint turns either way about its local axes.", {}, {}, 0.0, 180.0},
         {"axes", "", T::String, "xyz", "Local axes to turn about."},
         {"sweep", "", T::Bool, true, "Poses turning one joint about one axis at a time, each way."},
-        {"randomPoses", "", T::Int, randomDefault, "Poses turning every joint at once by a random amount within angle."},
+        {"randomPoses", "", T::Int, randomDefault, "Poses turning every joint at once by a random amount within angle.", {}, {}, 0.0},
         {"seed", "", T::Int, 1, "Seed of the random poses."},
     };
 }
@@ -597,10 +597,10 @@ void registerCommands()
         {"source", "", T::String, "rangeOfMotion", "rangeOfMotion poses the joints; animation samples the scene's animation.", {"rangeOfMotion", "animation"}},
         {"start", "", T::Int, nullptr, "animation: first frame (the playback start by default)."},
         {"end", "", T::Int, nullptr, "animation: last frame (the playback end by default)."},
-        {"step", "", T::Int, 1, "animation: frames between samples."},
-        {"helpers", "", T::Int, 0, "animation: extra joints solved with the weights and keyed over the frames (for jiggle and other motion joints can't follow)."},
-        {"maxInfluences", "mi", T::Int, 0, "Influences per point; 0 uses the skin's."},
-        {"iterations", "", T::Int, 3, "Solver passes."},
+        {"step", "", T::Int, 1, "animation: frames between samples.", {}, {}, 1.0},
+        {"helpers", "", T::Int, 0, "animation: extra joints solved with the weights and keyed over the frames (for jiggle and other motion joints can't follow).", {}, {}, 0.0},
+        {"maxInfluences", "mi", T::Int, 0, "Influences per point; 0 uses the skin's.", {}, {}, 0.0},
+        {"iterations", "", T::Int, 3, "Solver passes.", {}, {}, 1.0},
         {"keep", "", T::Bool, false, "Store the weights for export only and leave the scene as it is."},
     });
     ops::registerCommand({
@@ -646,10 +646,10 @@ void registerCommands()
     });
 
     std::vector<FlagDef> morphFlags = {
-        {"angle", "", T::Float, 45.0, "Degrees each joint turns either way about its local axes; each pose gets a corrective."},
+        {"angle", "", T::Float, 45.0, "Degrees each joint turns either way about its local axes; each pose gets a corrective.", {}, {}, 0.0, 180.0},
         {"axes", "", T::String, "xyz", "Local axes to turn about."},
         {"falloff", "", T::String, "smooth", "How each corrective's weight fades toward rest: linear | smooth | smoother", {"linear", "smooth", "smoother"}},
-        {"tolerance", "", T::Float, 1e-4, "Point offsets smaller than this (cm) are left out; a pose with none gets no corrective."},
+        {"tolerance", "", T::Float, 1e-4, "Point offsets smaller than this (cm) are left out; a pose with none gets no corrective.", {}, {}, 0.0},
     };
     ops::registerCommand({
         .name = "bakeCorrectiveMorphs",

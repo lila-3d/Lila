@@ -195,7 +195,7 @@ void registerPlacementCommands()
                   {"mode", "m", T::String, "auto",
                    "How members are placed: actors, ism, hism, or auto (actors up to threshold members, then hism).",
                    {"auto", "actors", "ism", "hism"}},
-                  {"threshold", "t", T::Int, nullptr, "auto switches to hism above this many members (default the unreal pref /instanceThreshold, 50)."},
+                  {"threshold", "t", T::Int, nullptr, "auto switches to hism above this many members (default the unreal pref /instanceThreshold, 50).", {}, {}, 0.0},
                   {"dryRun", "", T::Bool, false, "Return the plan without exporting or contacting Unreal."},
                   {"wait", "w", T::Bool, false, "Block until Unreal has imported and placed everything."}},
         .undoable = false,

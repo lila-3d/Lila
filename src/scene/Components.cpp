@@ -904,7 +904,7 @@ void registerCommands()
     ops::registerCommand({
         .name = "selectByAngle",
         .doc = "Grow the face selection across edges where neighbouring faces bend less than an angle.",
-        .flags = {{"angle", "", T::Float, 30.0, "Largest bend between neighbouring faces, degrees."}},
+        .flags = {{"angle", "", T::Float, 30.0, "Largest bend between neighbouring faces, degrees.", {}, {}, 0.0, 180.0}},
         .run = [](const Args& a) -> json {
             if (mode() != ComponentMode::Face)
                 throw CommandError("selectByAngle: no faces selected");

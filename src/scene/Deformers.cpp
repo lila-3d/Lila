@@ -108,14 +108,15 @@ struct CageData final : Data
 
 // ------------------------------------------------------------------------------------------------ attr helpers
 
-AttrDef keyable(std::string name, PlugType type, PlugValue def, std::string doc)
+AttrDef keyable(std::string name, PlugType type, PlugValue def, std::string doc, std::optional<double> lo = {}, std::optional<double> hi = {})
 {
     return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable | AttrKeyable,
-            .doc = std::move(doc)};
+            .doc = std::move(doc), .minValue = lo, .maxValue = hi};
 }
-AttrDef stored(std::string name, PlugType type, PlugValue def, std::string doc)
+AttrDef stored(std::string name, PlugType type, PlugValue def, std::string doc, std::optional<double> lo = {}, std::optional<double> hi = {})
 {
-    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable, .doc = std::move(doc)};
+    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable, .doc = std::move(doc),
+            .minValue = lo, .maxValue = hi};
 }
 AttrDef hiddenStored(std::string name, PlugType type, PlugValue def, std::string doc)
 {
@@ -140,11 +141,11 @@ AttrDef boundsAttr(const char* name, double def, const char* doc) { return keyab
 AttrDef falloffRadiusAttr()
 {
     return keyable("falloffRadius", PlugType::Float, 0.0,
-                   "Spherical falloff around the handle, in handle units: points beyond it are untouched. 0 turns it off.");
+                   "Spherical falloff around the handle, in handle units: points beyond it are untouched. 0 turns it off.", 0.0);
 }
 AttrDef falloffSoftnessAttr()
 {
-    return keyable("falloffSoftness", PlugType::Float, 0.5, "How much of the falloff radius eases out, 0 a hard edge to 1 all soft.");
+    return keyable("falloffSoftness", PlugType::Float, 0.5, "How much of the falloff radius eases out, 0 a hard edge to 1 all soft.", 0.0, 1.0);
 }
 
 template <class F> void parallelPoints(size_t n, F&& fn)
@@ -565,7 +566,7 @@ NodeType deformerType(deformers::DeformerSpec s)
         {.name = "inMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden},
         keyable("enabled", PlugType::Bool, true, "Turn the deformer off without removing it."),
         stored("exportEnabled", PlugType::Bool, true, "Apply the deformer when exporting."),
-        keyable("envelope", PlugType::Float, 1.0, "How much of the deformation applies: 0 none, 1 all."),
+        keyable("envelope", PlugType::Float, 1.0, "How much of the deformation applies: 0 none, 1 all.", 0.0, 1.0),
         hiddenStored("weights", PlugType::Data, DataPtr(), "Per-point weight map; points past its end weigh 1."),
         {.name = "field", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrHidden | AttrResetOnDisconnect,
          .doc = "A field's outField (connectField): shapes where the deformer acts."},
@@ -1034,39 +1035,39 @@ void registerTypes()
     registerDeformer({"taperDeformer", "triangle-inverted",
                       "Scales the mesh across its handle's Y axis, ramping from the low bound to the high one, with an optional bulge "
                       "(flare) in between.",
-                      nonlinearCommon({keyable("startScale", PlugType::Float, 1.0, "Cross-section scale at the low bound."),
-                                       keyable("endScale", PlugType::Float, 0.5, "Cross-section scale at the high bound."),
+                      nonlinearCommon({keyable("startScale", PlugType::Float, 1.0, "Cross-section scale at the low bound.", 0.0),
+                                       keyable("endScale", PlugType::Float, 0.5, "Cross-section scale at the high bound.", 0.0),
                                        keyable("curve", PlugType::Float, 0.0, "Bulge added midway, in scale units (negative pinches)."),
                                        lowBound(), highBound()}),
                       &makeNonlinear<NonlinearKind::Taper>});
     registerDeformer({"squashDeformer", "arrows-vertical",
                       "Squashes or stretches the mesh along its handle's Y axis while the sides bulge to keep the volume. The cartoon "
                       "squash and stretch.",
-                      nonlinearCommon({keyable("factor", PlugType::Float, -0.5, "Length change along Y: -0.5 halves it, 1 doubles it."),
-                                       keyable("expand", PlugType::Float, 1.0, "How much the sides bulge to keep the volume, 0 not at all."),
-                                       keyable("maxExpandPos", PlugType::Float, 0.5, "Where between the bounds the bulge peaks, 0 to 1."),
+                      nonlinearCommon({keyable("factor", PlugType::Float, -0.5, "Length change along Y: -0.5 halves it, 1 doubles it.", -1.0),
+                                       keyable("expand", PlugType::Float, 1.0, "How much the sides bulge to keep the volume, 0 not at all.", 0.0),
+                                       keyable("maxExpandPos", PlugType::Float, 0.5, "Where between the bounds the bulge peaks, 0 to 1.", 0.0, 1.0),
                                        lowBound(), highBound()}),
                       &makeNonlinear<NonlinearKind::Squash>});
     registerDeformer({"sineDeformer", "wave-sine",
                       "Offsets the mesh along the handle's X axis by a sine wave running along its Y axis. Use it for flags, tails and "
                       "wiggles.",
                       nonlinearCommon({keyable("amplitude", PlugType::Float, 0.2, "Wave height, handle units."),
-                                       keyable("wavelength", PlugType::Float, 1.0, "Length of one wave, handle units."),
+                                       keyable("wavelength", PlugType::Float, 1.0, "Length of one wave, handle units.", 1e-3),
                                        keyable("offset", PlugType::Float, 0.0, "Phase, in waves; key it to animate the wave."),
-                                       keyable("dropoff", PlugType::Float, 0.0, "-1 to 1: fades the amplitude toward the ends (positive) or the middle (negative)."),
+                                       keyable("dropoff", PlugType::Float, 0.0, "-1 to 1: fades the amplitude toward the ends (positive) or the middle (negative).", -1.0, 1.0),
                                        lowBound(), highBound()}),
                       &makeNonlinear<NonlinearKind::Sine>});
     registerDeformer({"waveDeformer", "ripple",
                       "Ripples the mesh along the handle's Y axis in rings spreading from it. Use it for water rings and shock waves.",
                       nonlinearCommon({keyable("amplitude", PlugType::Float, 0.1, "Ripple height, handle units."),
-                                       keyable("wavelength", PlugType::Float, 0.5, "Distance between rings, handle units."),
+                                       keyable("wavelength", PlugType::Float, 0.5, "Distance between rings, handle units.", 1e-3),
                                        keyable("offset", PlugType::Float, 0.0, "Phase, in waves; key it to make the rings travel."),
-                                       keyable("dropoff", PlugType::Float, 0.0, "-1 to 1: fades the rings outward (positive) or inward (negative)."),
-                                       keyable("minRadius", PlugType::Float, 0.0, "Rings start this far from the axis, handle units."),
-                                       keyable("maxRadius", PlugType::Float, 1.0, "Rings stop this far from the axis, handle units.")}),
+                                       keyable("dropoff", PlugType::Float, 0.0, "-1 to 1: fades the rings outward (positive) or inward (negative).", -1.0, 1.0),
+                                       keyable("minRadius", PlugType::Float, 0.0, "Rings start this far from the axis, handle units.", 0.0),
+                                       keyable("maxRadius", PlugType::Float, 1.0, "Rings stop this far from the axis, handle units.", 0.0)}),
                       &makeNonlinear<NonlinearKind::Wave>});
 
-    AttrDef divisions = stored("divisions", PlugType::Vec3, glm::dvec3(4.0), "Lattice points per axis, set when the lattice is made.");
+    AttrDef divisions = stored("divisions", PlugType::Vec3, glm::dvec3(4.0), "Lattice points per axis, set when the lattice is made.", 2.0, 32.0);
     registerDeformer({"ffd", "grid-dots",
                       "Free-form deformation: the mesh follows a lattice whose points are moved with the usual component tools. Use it "
                       "for broad shape changes and squash and stretch.",
@@ -1077,14 +1078,14 @@ void registerTypes()
                        enumAttr("interpolation", 1, {"trilinear", "bernstein", "bspline"},
                                 "Trilinear is exact per cell, Bernstein smooth and global, bspline smooth and local (best for dense lattices)."),
                        keyable("outsideFalloff", PlugType::Float, 0.0,
-                               "Points outside the lattice box are affected up to this far (lattice units), fading out. 0: only points inside.")},
+                               "Points outside the lattice box are affected up to this far (lattice units), fading out. 0: only points inside.", 0.0)},
                       [] { return std::make_unique<FfdNode>(); }});
 
     registerDeformer({"deltaMush", "droplet",
                       "Smooths away deformation artefacts while keeping the surface detail of the rest shape. Put it on top of a "
                       "skinCluster to fix collapsing elbows and candy-wrapped twists.",
-                      {keyable("iterations", PlugType::Int, int64_t(10), "Smoothing passes; more spreads the correction further."),
-                       keyable("smoothStep", PlugType::Float, 0.5, "How far each pass moves a point toward its neighbours, 0 to 1."),
+                      {keyable("iterations", PlugType::Int, int64_t(10), "Smoothing passes; more spreads the correction further.", 0.0, 1000.0),
+                       keyable("smoothStep", PlugType::Float, 0.5, "How far each pass moves a point toward its neighbours, 0 to 1.", 0.0, 1.0),
                        keyable("displacement", PlugType::Float, 1.0, "How much of the rest detail is put back: 0 gives the smoothed mesh."),
                        stored("pinBorders", PlugType::Bool, true, "Keep open borders from shrinking while smoothing."),
                        hiddenStored("rest", PlugType::Data, DataPtr(), "The rest shape captured at bind time.")},
@@ -1106,7 +1107,7 @@ void registerTypes()
                       {connected("handleMatrix", PlugType::Matrix, glm::dmat4(1.0), "The handle's worldMatrix."),
                        hiddenStored("bindMatrix", PlugType::Matrix, glm::dmat4(1.0), "The handle's world matrix when bound."), geomMatrixAttr(),
                        keyable("falloffCenter", PlugType::Vec3, glm::dvec3(0.0), "Centre of the falloff, world space."),
-                       keyable("falloffRadius", PlugType::Float, 10.0, "Falloff radius, cm. 0 affects every point fully."),
+                       keyable("falloffRadius", PlugType::Float, 10.0, "Falloff radius, cm. 0 affects every point fully.", 0.0),
                        stored("falloffCurve", PlugType::String, std::string(),
                               "Falloff shape as soft select curve JSON ([[pos, value, interp], ...]); empty for the default smooth curve.")},
                       [] { return std::make_unique<SoftModNode>(); }});
@@ -1254,8 +1255,8 @@ void registerCommands()
         .doc = "Add a delta mush to the meshes: smooths out deformation artefacts (from skinning or other deformers) while keeping "
                "the rest shape's detail. Above a skinCluster the rest shape is the bind shape. Returns the deformers.",
         .positionalDoc = "meshes",
-        .flags = {{"iterations", "", T::Int, 10, "Smoothing passes."},
-                  {"smoothStep", "", T::Float, 0.5, "How far each pass moves a point, 0 to 1."},
+        .flags = {{"iterations", "", T::Int, 10, "Smoothing passes.", {}, {}, 0.0, 1000.0},
+                  {"smoothStep", "", T::Float, 0.5, "How far each pass moves a point, 0 to 1.", {}, {}, 0.0, 1.0},
                   {"name", "", T::String, nullptr, "Name for the deformer."}},
         .run = [](const Args& a) -> json {
             Graph& graph = g();
@@ -1316,7 +1317,7 @@ void registerCommands()
                "radius with the soft select curve. Returns [handle, deformers...].",
         .positionalDoc = "meshes",
         .flags = {{"position", "", T::Vec3, nullptr, "Handle and falloff centre, world space. Default: the meshes' centre."},
-                  {"radius", "", T::Float, nullptr, "Falloff radius, cm. Default: a quarter of the meshes' size."},
+                  {"radius", "", T::Float, nullptr, "Falloff radius, cm. Default: a quarter of the meshes' size.", {}, {}, 0.0},
                   {"name", "", T::String, nullptr, "Name for the deformer."}},
         .run = [](const Args& a) -> json {
             Graph& graph = g();

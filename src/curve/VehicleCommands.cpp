@@ -175,7 +175,7 @@ FlagDef chFlag() { return {"constructionHistory", "ch", T::Bool, true, "Keep the
 
 std::vector<FlagDef> intersectFlags()
 {
-    return {{"tolerance", "tol", T::Float, 0.01, "Curves closer than this meet, cm."},
+    return {{"tolerance", "tol", T::Float, 0.01, "Curves closer than this meet, cm.", {}, {}, 1e-5},
             {"direction", "dir", T::Vec3, nullptr, "Intersect as seen along this direction (the view), for curves that only cross on screen."}};
 }
 
@@ -912,17 +912,17 @@ void registerVehicleCommands()
         .positionalDoc = "curveA [curveB]",
         .flags = {{"continuityA", "ca", T::String, "g2", "Continuity with the first curve.", kContinuity},
                   {"continuityB", "cb", T::String, "g2", "Continuity with the second curve or mesh.", kContinuity},
-                  {"bulgeA", "ba", T::Float, 1.0, "How far the blend follows the first tangent before turning, in gaps (0.01 to 10)."},
-                  {"bulgeB", "bb", T::Float, 1.0, "How far the blend follows the second tangent, in gaps."},
+                  {"bulgeA", "ba", T::Float, 1.0, "How far the blend follows the first tangent before turning, in gaps (0.01 to 10).", {}, {}, 0.01, 10.0},
+                  {"bulgeB", "bb", T::Float, 1.0, "How far the blend follows the second tangent, in gaps.", {}, {}, 0.01, 10.0},
                   {"endA", "", T::String, "nearest", "Which end of the first curve.", kEnds},
                   {"endB", "", T::String, "nearest", "Which end of the second curve.", kEnds},
-                  {"parameterA", "pa", T::Float, nullptr, "Leave the first curve at this point (spans from its start) instead of an end."},
-                  {"parameterB", "pb", T::Float, nullptr, "Meet the second curve at this point instead of an end."},
+                  {"parameterA", "pa", T::Float, nullptr, "Leave the first curve at this point (spans from its start) instead of an end.", {}, {}, 0.0},
+                  {"parameterB", "pb", T::Float, nullptr, "Meet the second curve at this point instead of an end.", {}, {}, 0.0},
                   {"flipA", "", T::Bool, false, "Leave the first curve the other way (for a point along it)."},
                   {"flipB", "", T::Bool, false, "Meet the second curve or mesh from the other side."},
                   {"mesh", "m", T::String, nullptr, "Blend to this mesh's border instead of a second curve."},
-                  {"edge", "e", T::Int, nullptr, "Border edge of mesh= to blend to."},
-                  {"edgeT", "", T::Float, 0.5, "Where along the edge, 0 to 1."},
+                  {"edge", "e", T::Int, nullptr, "Border edge of mesh= to blend to.", {}, {}, 0.0},
+                  {"edgeT", "", T::Float, 0.5, "Where along the edge, 0 to 1.", {}, {}, 0.0, 1.0},
                   chFlag(),
                   {"name", "n", T::String, nullptr, "Name of the blend curve."}},
         .run = runBlend,
@@ -937,13 +937,13 @@ void registerVehicleCommands()
                   {"end", "", T::String, "nearest", "Which end of the curve moves.", kEnds},
                   {"targetEnd", "te", T::String, "nearest", "Where on the target: its nearest end, its start or end, or the closest point.",
                    {"nearest", "start", "end", "closest"}},
-                  {"targetParameter", "tp", T::Float, nullptr, "Meet the target at this point (spans from its start)."},
+                  {"targetParameter", "tp", T::Float, nullptr, "Meet the target at this point (spans from its start).", {}, {}, 0.0},
                   {"average", "avg", T::Bool, false, "Both curves move to meet halfway (target ends only)."},
                   {"preserveOther", "po", T::Bool, true, "Keep the curve's other end exactly; spans are added if the curve is too short."},
                   {"flip", "f", T::Bool, false, "Run on the other way along the target."},
                   {"mesh", "m", T::String, nullptr, "Match to this mesh's border instead of a curve."},
-                  {"edge", "e", T::Int, nullptr, "Border edge of mesh=."},
-                  {"edgeT", "", T::Float, 0.5, "Where along the edge, 0 to 1."}},
+                  {"edge", "e", T::Int, nullptr, "Border edge of mesh=.", {}, {}, 0.0},
+                  {"edgeT", "", T::Float, 0.5, "Where along the edge, 0 to 1.", {}, {}, 0.0, 1.0}},
         .run = runMatch,
     });
 
@@ -954,8 +954,8 @@ void registerVehicleCommands()
                "what is left.",
         .positionalDoc = "curve",
         .flags = withFlags({{"point", "p", T::Vec3, nullptr, "World point on (or near) the stretch to delete."},
-                            {"parameter", "u", T::Float, nullptr, "The stretch to delete, by span parameter."},
-                            {"spline", "", T::Int, 0, "Which spline of the curve, with parameter."},
+                            {"parameter", "u", T::Float, nullptr, "The stretch to delete, by span parameter.", {}, {}, 0.0},
+                            {"spline", "", T::Int, 0, "Which spline of the curve, with parameter.", {}, {}, 0.0},
                             {"cutters", "", T::List, nullptr, "Curves to trim against; default every other visible curve."}},
                            intersectFlags()),
         .run = runTrim,
@@ -971,8 +971,8 @@ void registerVehicleCommands()
                             {"point", "p", T::Vec3, nullptr, "Extend the end nearest this world point."},
                             {"mode", "m", T::String, "smooth", "How the extension continues.", {"line", "arc", "smooth"}},
                             {"boundaries", "", T::List, nullptr, "Curves to extend to; default every other visible curve."},
-                            {"length", "l", T::Float, 0.0, "Extend by this many cm instead of to a boundary."},
-                            {"maxLength", "", T::Float, 0.0, "Furthest to look for a boundary, cm; 0 is ten times the scene's curves' size."}},
+                            {"length", "l", T::Float, 0.0, "Extend by this many cm instead of to a boundary.", {}, {}, 0.0},
+                            {"maxLength", "", T::Float, 0.0, "Furthest to look for a boundary, cm; 0 is ten times the scene's curves' size.", {}, {}, 0.0}},
                            intersectFlags()),
         .run = runExtend,
     });
@@ -990,10 +990,10 @@ void registerVehicleCommands()
         .doc = "Fair curves: even out their curvature (a smoother comb) without moving any part further than tolerance. Ends stay; "
                "end tangents and corners are kept unless turned off. Returns each curve's largest move.",
         .positionalDoc = "curves",
-        .flags = {{"tolerance", "tol", T::Float, 0.1, "Largest move allowed, cm."},
+        .flags = {{"tolerance", "tol", T::Float, 0.1, "Largest move allowed, cm.", {}, {}, 1e-5},
                   {"keepTangents", "kt", T::Bool, true, "Keep the end tangents' directions."},
                   {"keepCorners", "kc", T::Bool, true, "Leave corners sharp and in place."},
-                  {"iterations", "it", T::Int, 200, "Most smoothing passes."}},
+                  {"iterations", "it", T::Int, 200, "Most smoothing passes.", {}, {}, 1.0, 10000.0}},
         .run = runFair,
     });
 
@@ -1003,9 +1003,9 @@ void registerVehicleCommands()
                "say), become edge loops, and the surface stays smooth across them. Every U curve must cross every V curve; three-sided "
                "patches where one family meets at a point are fine. Returns [mesh, curveNetwork].",
         .positionalDoc = "curves",
-        .flags = {{"tolerance", "tol", T::Float, 0.1, "Curves closer than this meet, cm."},
-                  {"spansU", "su", T::Int, 4, "Quads along the U curves between neighbouring V curves."},
-                  {"spansV", "sv", T::Int, 4, "Quads along the V curves between neighbouring U curves."},
+        .flags = {{"tolerance", "tol", T::Float, 0.1, "Curves closer than this meet, cm.", {}, {}, 1e-5},
+                  {"spansU", "su", T::Int, 4, "Quads along the U curves between neighbouring V curves.", {}, {}, 1.0},
+                  {"spansV", "sv", T::Int, 4, "Quads along the V curves between neighbouring U curves.", {}, {}, 1.0},
                   {"uCurves", "", T::List, nullptr, "Curves forced into the U family."},
                   {"vCurves", "", T::List, nullptr, "Curves forced into the V family."},
                   {"flip", "", T::Bool, false, "Flip the faces."},
@@ -1019,9 +1019,9 @@ void registerVehicleCommands()
         .doc = "Bridge two mesh border loops or edge chains (the selected edges, on one mesh or two) with a strip of quads tangent "
                "to the faces on both sides, live; profiles shape its cross-section. merge builds it into the first mesh, splitting "
                "border edges where the sides' point counts differ. Returns [mesh, meshBorderBlend].",
-        .flags = {{"segments", "s", T::Int, 6, "Quads across the strip."},
-                  {"tensionA", "ta", T::Float, 1.0, "How far the strip runs on from side A before turning."},
-                  {"tensionB", "tb", T::Float, 1.0, "How far the strip runs on from side B before turning."},
+        .flags = {{"segments", "s", T::Int, 6, "Quads across the strip.", {}, {}, 1.0},
+                  {"tensionA", "ta", T::Float, 1.0, "How far the strip runs on from side A before turning.", {}, {}, 0.0, 10.0},
+                  {"tensionB", "tb", T::Float, 1.0, "How far the strip runs on from side B before turning.", {}, {}, 0.0, 10.0},
                   {"flip", "", T::Bool, false, "Flip the faces."},
                   {"profiles", "", T::List, nullptr, "Profile curves drawn across the gap."},
                   {"merge", "", T::Bool, false, "Build the strip into side A's mesh and weld it on (no history)."},

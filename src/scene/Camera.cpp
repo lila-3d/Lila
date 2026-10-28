@@ -12,31 +12,32 @@ namespace
 {
 constexpr uint32_t kStored = AttrInput | AttrStorable;
 
-AttrDef floatAttr(std::string name, std::string shortName, double def, std::string doc)
+AttrDef floatAttr(std::string name, std::string shortName, double def, std::string doc, std::optional<double> lo = {},
+                  std::optional<double> hi = {})
 {
     return {.name = std::move(name), .shortName = std::move(shortName), .type = PlugType::Float, .defaultValue = def,
-            .flags = kStored | AttrKeyable, .doc = std::move(doc)};
+            .flags = kStored | AttrKeyable, .doc = std::move(doc), .minValue = lo, .maxValue = hi};
 }
 
 std::vector<AttrDef> cameraAttrs()
 {
     std::vector<AttrDef> a(Camera::kCount - Camera::kFocalLength);
     auto at = [&](int attr) -> AttrDef& { return a[size_t(attr - Camera::kFocalLength)]; };
-    at(Camera::kFocalLength) = floatAttr("focalLength", "fl", 35.0, "Lens focal length, mm.");
-    at(Camera::kHorizontalFilmAperture) = floatAttr("horizontalFilmAperture", "hfa", 1.41732, "Film back width, inches.");
-    at(Camera::kVerticalFilmAperture) = floatAttr("verticalFilmAperture", "vfa", 0.94488, "Film back height, inches.");
+    at(Camera::kFocalLength) = floatAttr("focalLength", "fl", 35.0, "Lens focal length, mm.", 2.5, 3500.0);
+    at(Camera::kHorizontalFilmAperture) = floatAttr("horizontalFilmAperture", "hfa", 1.41732, "Film back width, inches.", 1e-3);
+    at(Camera::kVerticalFilmAperture) = floatAttr("verticalFilmAperture", "vfa", 0.94488, "Film back height, inches.", 1e-3);
     at(Camera::kFilmFit) = {.name = "filmFit", .shortName = "ff", .type = PlugType::Enum, .defaultValue = int64_t(1), .flags = kStored,
                             .enumNames = {"fill", "horizontal", "vertical", "overscan"},
                             .doc = "How the film gate fits the render resolution."};
-    at(Camera::kNearClipPlane) = floatAttr("nearClipPlane", "ncp", 0.1, "Near clipping distance, cm.");
-    at(Camera::kFarClipPlane) = floatAttr("farClipPlane", "fcp", 10000.0, "Far clipping distance, cm.");
+    at(Camera::kNearClipPlane) = floatAttr("nearClipPlane", "ncp", 0.1, "Near clipping distance, cm.", 1e-3);
+    at(Camera::kFarClipPlane) = floatAttr("farClipPlane", "fcp", 10000.0, "Far clipping distance, cm.", 1e-3);
     at(Camera::kOrthographic) = {.name = "orthographic", .shortName = "o", .type = PlugType::Bool, .defaultValue = false, .flags = kStored,
                                  .doc = "Parallel projection instead of perspective."};
-    at(Camera::kOrthographicWidth) = floatAttr("orthographicWidth", "ow", 30.0, "Width of an orthographic view, cm.");
+    at(Camera::kOrthographicWidth) = floatAttr("orthographicWidth", "ow", 30.0, "Width of an orthographic view, cm.", 1e-3);
     at(Camera::kLocked) = {.name = "locked", .shortName = "lc", .type = PlugType::Bool, .defaultValue = false, .flags = kStored,
                            .doc = "Lock Camera: the camera is not meant to be moved while looking through it."};
     at(Camera::kOverscan) = {.name = "overscan", .shortName = "ovr", .type = PlugType::Float, .defaultValue = 1.0, .flags = kStored,
-                             .doc = "View size relative to the gate; 1.0 fits it exactly."};
+                             .doc = "View size relative to the gate; 1.0 fits it exactly.", .minValue = 0.01};
     auto flag = [](std::string name, std::string shortName, bool def, std::string doc) {
         return AttrDef{.name = std::move(name), .shortName = std::move(shortName), .type = PlugType::Bool, .defaultValue = def,
                        .flags = kStored, .doc = std::move(doc)};
@@ -45,7 +46,8 @@ std::vector<AttrDef> cameraAttrs()
     at(Camera::kDisplayFilmGate) = flag("displayFilmGate", "dfg", false, "Show the film gate when looking through.");
     at(Camera::kDisplayGateMask) = flag("displayGateMask", "dgm", true, "Darken outside the gate.");
     at(Camera::kDisplayGateMaskOpacity) = {.name = "displayGateMaskOpacity", .shortName = "dgo", .type = PlugType::Float,
-                                           .defaultValue = 0.7, .flags = kStored, .doc = "Gate mask opacity, 0 to 1."};
+                                           .defaultValue = 0.7, .flags = kStored, .doc = "Gate mask opacity, 0 to 1.", .minValue = 0.0,
+                                           .maxValue = 1.0};
     return a;
 }
 } // namespace
@@ -238,7 +240,7 @@ void registerCameraCommands()
             {"eye", "eye", T::Vec3, nullptr, "World position, cm."},
             {"lookAt", "la", T::Vec3, nullptr, "World point to aim at, cm."},
             {"up", "up", T::Vec3, nullptr, "World up direction."},
-            {"orthographicWidth", "ow", T::Float, nullptr, "Width of an orthographic view, cm."},
+            {"orthographicWidth", "ow", T::Float, nullptr, "Width of an orthographic view, cm.", {}, {}, 1e-3},
         },
         .run = [](const Args& a) -> json {
             if (a.positional.empty() || !a.positional[0].is_string())

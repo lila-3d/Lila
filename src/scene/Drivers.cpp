@@ -417,9 +417,10 @@ void registerTypes()
 {
     if (types::find("poseDriver"))
         return;
-    auto stored = [](std::string name, PlugType type, PlugValue def, std::string doc, uint32_t extra = 0) {
+    auto stored = [](std::string name, PlugType type, PlugValue def, std::string doc, uint32_t extra = 0, std::optional<double> lo = {},
+                     std::optional<double> hi = {}) {
         return AttrDef{.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable | extra,
-                       .doc = std::move(doc)};
+                       .doc = std::move(doc), .minValue = lo, .maxValue = hi};
     };
 
     NodeType pose;
@@ -437,8 +438,8 @@ void registerTypes()
         stored("restMatrix", PlugType::Matrix, glm::dmat4(1.0), "Local matrix at rest.", AttrHidden),
         stored("targetMatrix", PlugType::Matrix, glm::dmat4(1.0), "Local matrix at the target pose.", AttrHidden),
         axis,
-        stored("radius", PlugType::Float, 90.0, "Degrees away from the pose where the output reaches 0.", AttrKeyable),
-        stored("twistWeight", PlugType::Float, 0.0, "How much twist about the axis counts toward the distance; 0 ignores twist.", AttrKeyable),
+        stored("radius", PlugType::Float, 90.0, "Degrees away from the pose where the output reaches 0.", AttrKeyable, 0.0, 180.0),
+        stored("twistWeight", PlugType::Float, 0.0, "How much twist about the axis counts toward the distance; 0 ignores twist.", AttrKeyable, 0.0),
         fall,
         stored("inWeight", PlugType::Float, 1.0, "Multiplies the output; connect another driver for a combination.", AttrKeyable),
         {.name = "output", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrOutput, .doc = "0 to 1, 1 at the target pose."},
@@ -479,8 +480,8 @@ void registerCommands()
                "falls to 0 over radius degrees. Connect its output with connectAttr or driveChannel. Returns the driver.",
         .positionalDoc = "joint",
         .flags = {{"axis", "", T::String, "x", "Twist axis, the joint's bone axis.", {"x", "y", "z"}},
-                  {"radius", "", T::Float, 0.0, "Degrees from the pose where the output reaches 0; 0 uses the rest-to-pose angle."},
-                  {"twistWeight", "", T::Float, 0.0, "How much twist counts, 0 ignoring it."},
+                  {"radius", "", T::Float, 0.0, "Degrees from the pose where the output reaches 0; 0 uses the rest-to-pose angle.", {}, {}, 0.0, 180.0},
+                  {"twistWeight", "", T::Float, 0.0, "How much twist counts, 0 ignoring it.", {}, {}, 0.0},
                   {"falloff", "", T::String, "smooth", "linear | smooth | smoother", {"linear", "smooth", "smoother"}},
                   {"rest", "", T::Vec3, json::array({0, 0, 0}), "The rest rotate, degrees."},
                   {"name", "n", T::String, nullptr, "Name for the driver."}},
@@ -629,7 +630,7 @@ void registerCommands()
         .name = "removeDrivenKey",
         .doc = "Remove a driven channel's key at the given index (keys sorted by driver value).",
         .positionalDoc = "channel",
-        .flags = {{"index", "", T::Int, 0, "Key index."}},
+        .flags = {{"index", "", T::Int, 0, "Key index.", {}, {}, 0.0}},
         .run = [](const Args& a) -> json {
             Graph& graph = g();
             auto objs = a.objects();

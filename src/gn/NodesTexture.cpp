@@ -608,15 +608,15 @@ Sockets voronoiSockets(const Group&, const GNode& n)
     s.inputs.push_back(fin("scale", T::Float, 5.0, Implicit::None, "Cells per unit of the vector. Positions are in cm."));
     if (fractalOk)
     {
-        s.inputs.push_back(fin("detail", T::Float, 0.0, Implicit::None, "Octaves of finer cells layered on top (0 to 15)."));
-        s.inputs.push_back(fin("roughness", T::Float, 0.5, Implicit::None, "How much each finer octave contributes (0 to 1)."));
-        s.inputs.push_back(fin("lacunarity", T::Float, 2.0, Implicit::None, "Scale step between octaves."));
+        s.inputs.push_back(bounded(fin("detail", T::Float, 0.0, Implicit::None, "Octaves of finer cells layered on top (0 to 15)."), 0.0, 15.0));
+        s.inputs.push_back(bounded(fin("roughness", T::Float, 0.5, Implicit::None, "How much each finer octave contributes (0 to 1)."), 0.0, 1.0));
+        s.inputs.push_back(bounded(fin("lacunarity", T::Float, 2.0, Implicit::None, "Scale step between octaves."), 0.0));
     }
     if (f == tex::VoronoiFeature::SmoothF1)
-        s.inputs.push_back(fin("smoothness", T::Float, 1.0, Implicit::None, "Blend width between cells (0 to 1)."));
+        s.inputs.push_back(bounded(fin("smoothness", T::Float, 1.0, Implicit::None, "Blend width between cells (0 to 1)."), 0.0, 1.0));
     if (d->propValue(n, "distance") == "minkowski" && dims != 1 && f != tex::VoronoiFeature::DistanceToEdge && f != tex::VoronoiFeature::NSphereRadius)
         s.inputs.push_back(fin("exponent", T::Float, 0.5, Implicit::None, "Minkowski exponent: 1 is manhattan, 2 euclidean, large values chebyshev."));
-    s.inputs.push_back(fin("randomness", T::Float, 1.0, Implicit::None, "How far cell points stray from the grid (0 to 1)."));
+    s.inputs.push_back(bounded(fin("randomness", T::Float, 1.0, Implicit::None, "How far cell points stray from the grid (0 to 1)."), 0.0, 1.0));
     if (f == tex::VoronoiFeature::NSphereRadius)
         s.outputs = {fout("radius", T::Float)};
     else if (f == tex::VoronoiFeature::DistanceToEdge)

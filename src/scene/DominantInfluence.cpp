@@ -149,7 +149,7 @@ void registerDominantInfluenceCommands()
                "unweighted); with joint, the faces it owns.",
         .positionalDoc = "mesh",
         .flags = {
-            {"face", "f", T::Int, nullptr, "Face id."},
+            {"face", "f", T::Int, nullptr, "Face id.", {}, {}, 0.0},
             {"joint", "j", T::String, nullptr, "Joint name."},
         },
         .undoable = false,

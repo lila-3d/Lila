@@ -151,6 +151,8 @@ std::vector<FlagDef> attrFlags()
         if (!(d.flags & AttrInput) || (d.flags & AttrHidden))
             continue;
         FlagDef fd{d.name, "", T::Float, nullptr, d.doc};
+        fd.min = d.minValue;
+        fd.max = d.maxValue;
         switch (d.type)
         {
         case PlugType::Bool: fd.type = T::Bool; break;

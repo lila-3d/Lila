@@ -761,9 +761,9 @@ void registerSkinCommandsImpl()
                "Returns the skinCluster.",
         .positionalDoc = "joints..., mesh",
         .flags = {
-            {"maxInfluences", "mi", T::Int, 4, "Influences per point (4 is mobile-safe, Unreal desktop takes 8+)."},
+            {"maxInfluences", "mi", T::Int, 4, "Influences per point (4 is mobile-safe, Unreal desktop takes 8+).", {}, {}, 1.0},
             {"method", "m", T::String, "closest", "closest | heatmap"},
-            {"dropoffRate", "dr", T::Float, 4.0, "How fast a bone's weight falls off with distance."},
+            {"dropoffRate", "dr", T::Float, 4.0, "How fast a bone's weight falls off with distance.", {}, {}, 0.0},
             {"bindTo", "bt", T::String, "hierarchy", "hierarchy | selected"},
             {"skinningMethod", "sm", T::String, "linear", "linear | dualQuaternion | centresOfRotation | directDeltaMush"},
             {"name", "n", T::String, nullptr, "Name for the skinCluster."},
@@ -996,7 +996,7 @@ void registerSkinCommandsImpl()
             {"axis", "ax", T::String, "x", "Plane normal: x mirrors across YZ."},
             {"searchReplace", "sr", T::List, json::array({"_l", "_r"}), "[search, replace] pairing left and right joints."},
             {"positiveToNegative", "ptn", T::Bool, true, "Copy from the + side to the - side."},
-            {"tolerance", "tol", T::Float, 0.1, "How far a mirrored point may be from its partner, cm."},
+            {"tolerance", "tol", T::Float, 0.1, "How far a mirrored point may be from its partner, cm.", {}, {}, 0.0},
         },
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -1082,7 +1082,7 @@ void registerSkinCommandsImpl()
         .doc = "Drop weights below a threshold and beyond the skin's maxInfluences, then renormalize.",
         .positionalDoc = "mesh",
         .flags = {
-            {"threshold", "t", T::Float, 0.01, "Smallest weight kept."},
+            {"threshold", "t", T::Float, 0.01, "Smallest weight kept.", {}, {}, 0.0, 1.0},
             {"vertices", "v", T::List, nullptr, "Point ids; defaults to the selected vertices, else all."},
         },
         .run = [](const Args& a) -> json {
@@ -1300,7 +1300,7 @@ void registerSkinTypes()
         {.name = "bindPreMatrix", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = AttrInput | AttrStorable | AttrHidden,
          .doc = "Inverse of the joint's world matrix at bind time."},
         {.name = "index", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = AttrInput | AttrStorable,
-         .doc = "Influence id the weights refer to."},
+         .doc = "Influence id the weights refer to.", .minValue = 0.0},
         {.name = "lockWeights", .type = PlugType::Bool, .defaultValue = false, .flags = AttrInput | AttrStorable,
          .doc = "Painting and normalizing leave this influence's weights alone."},
         {.name = "previous", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrHidden,
@@ -1321,7 +1321,7 @@ void registerSkinTypes()
         {.name = "enabled", .type = PlugType::Bool, .defaultValue = true, .flags = AttrInput | AttrStorable | AttrKeyable,
          .doc = "Turn skinning off without unbinding."},
         {.name = "envelope", .type = PlugType::Float, .defaultValue = 1.0, .flags = AttrInput | AttrStorable | AttrKeyable,
-         .doc = "Blend between the bind shape (0) and the skinned shape (1)."},
+         .doc = "Blend between the bind shape (0) and the skinned shape (1).", .minValue = 0.0, .maxValue = 1.0},
         {.name = "skinningMethod", .type = PlugType::Enum, .defaultValue = int64_t(0), .flags = AttrInput | AttrStorable,
          .enumNames = {"linear", "dualQuaternion", "centresOfRotation", "directDeltaMush"},
          .doc = "Unreal skins linearly; dual quaternion keeps volume at twists; centres of rotation keeps volume without dual "
@@ -1330,7 +1330,7 @@ void registerSkinTypes()
         {.name = "normalizeWeights", .type = PlugType::Bool, .defaultValue = true, .flags = AttrInput | AttrStorable,
          .doc = "Divide by each point's weight sum when skinning."},
         {.name = "maxInfluences", .type = PlugType::Int, .defaultValue = int64_t(4), .flags = AttrInput | AttrStorable,
-         .doc = "Influences per point kept by binding, painting and pruning."},
+         .doc = "Influences per point kept by binding, painting and pruning.", .minValue = 1.0},
         {.name = "geomMatrix", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = AttrInput | AttrStorable | AttrHidden,
          .doc = "The mesh's world matrix at bind time."},
         {.name = "weights", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrStorable | AttrHidden,
@@ -1339,11 +1339,11 @@ void registerSkinTypes()
          .doc = "The last skinInfluence link."},
         {.name = "outMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrOutput | AttrHidden},
         {.name = "ddmIterations", .type = PlugType::Int, .defaultValue = int64_t(20), .flags = AttrInput | AttrStorable,
-         .doc = "Direct delta mush: smoothing passes; more spreads the smoothing further."},
+         .doc = "Direct delta mush: smoothing passes; more spreads the smoothing further.", .minValue = 0.0},
         {.name = "ddmSmoothStep", .type = PlugType::Float, .defaultValue = 0.5, .flags = AttrInput | AttrStorable,
-         .doc = "Direct delta mush: how far each pass moves toward the neighbours, 0 to 1."},
+         .doc = "Direct delta mush: how far each pass moves toward the neighbours, 0 to 1.", .minValue = 0.0, .maxValue = 1.0},
         {.name = "corSigma", .type = PlugType::Float, .defaultValue = 0.1, .flags = AttrInput | AttrStorable,
-         .doc = "Centres of rotation: how alike two points' weights must be to share a centre."},
+         .doc = "Centres of rotation: how alike two points' weights must be to share a centre.", .minValue = 0.0},
         {.name = "exportWeights", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrStorable | AttrHidden,
          .doc = "Linear weights fitted by bakeSkinWeights keep=true, exported in place of fitting at export time."},
     };

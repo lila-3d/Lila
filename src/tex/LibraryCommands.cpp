@@ -401,7 +401,7 @@ void registerCommands()
                   {"tags", "", T::List, nullptr, "Search tags."},
                   {"physical", "", T::String, nullptr, "metal, dielectric, organic, emissive or stylised.",
                    {"metal", "dielectric", "organic", "emissive", "stylised"}},
-                  {"scaleCm", "", T::Float, nullptr, "Real-world size of one tile, cm."},
+                  {"scaleCm", "", T::Float, nullptr, "Real-world size of one tile, cm.", {}, {}, 0.0},
                   {"tileable", "", T::Bool, nullptr, "Whether the texture tiles."},
                   {"seedParam", "", T::String, nullptr, "Node.param of the seed."},
                   {"variationParams", "", T::List, nullptr, "Node.param values worth varying (wear, age, colour)."},
@@ -468,7 +468,7 @@ void registerCommands()
                   {"preset", "", T::String, nullptr, "A preset of the material's parameters to apply."},
                   {"values", "", T::Any, nullptr, "{\"Node.param\": value} to set after the preset."},
                   {"scale", "", T::Bool, true, "Tile to real-world size; False keeps one tile per uv unit."},
-                  {"tiles", "", T::Float, nullptr, "Tiles per uv unit, overriding the real-world scale."},
+                  {"tiles", "", T::Float, nullptr, "Tiles per uv unit, overriding the real-world scale.", {}, {}, 1e-3},
                   {"layer", "", T::Bool, false, "Add it as a layer on top of the set's layer stack instead of replacing the set's graph."}},
         .run = [](const Args& a) -> json {
             const char* cmd = "applyLibraryMaterial";
@@ -684,7 +684,7 @@ void registerCommands()
                "all=True checks every library material (tier= to narrow). Returns {passed, failures, warnings, checks}.",
         .positionalDoc = "material",
         .flags = {{"fix", "", T::Bool, false, "Clamp what failed with Levels nodes."},
-                  {"size", "", T::Int, 256, "Evaluation size, px."},
+                  {"size", "", T::Int, 256, "Evaluation size, px.", {}, {}, 1.0},
                   {"backend", "", T::String, nullptr, "gpu or cpu (default: the GPU when there is one).", {"gpu", "cpu"}},
                   {"physical", "", T::String, nullptr, "Override the meta's physical category.", {"metal", "dielectric", "organic", "emissive", "stylised"}},
                   {"all", "", T::Bool, false, "Every library material."},

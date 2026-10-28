@@ -45,7 +45,7 @@ struct Field
     json defaultValue;
     std::vector<std::string> options; // Enum
     double sliderMin = 0.0, sliderMax = 1.0; // Slider: the slider's span
-    double fieldMin = 0.0, fieldMax = 1.0;   // Slider: what a typed value is clamped to
+    double fieldMin = -1e7, fieldMax = 1e7;  // what a typed value is clamped to, in metres for lengths
 
     std::string key() const { return section + "." + name; }
 };

@@ -209,7 +209,7 @@ void registerCommands()
         .positionalDoc = "path objects...",
         .flags = {{"profile", "", T::String, "ue5", "Axis profile: ue5 (Z up), ue6 (Y up) or generic (the scene's own axes)."},
                   {"kind", "k", T::String, "auto", "auto | static | skeletal | animation | sequence. auto is skeletal when a skinned mesh is exported, sequence when only cameras are."},
-                  {"maxInfluences", "mi", T::Int, 8, "Skin influences per vertex, heaviest kept and renormalised (4 for mobile)."},
+                  {"maxInfluences", "mi", T::Int, 8, "Skin influences per vertex, heaviest kept and renormalised (4 for mobile).", {}, {}, 0.0},
                   {"animation", "anim", T::Bool, true, "Write the take for skeletal and sequence exports (always for kind=animation)."},
                   {"bakeAnimation", "bake", T::Bool, true, "Sample every frame; False writes plain translate/rotate/scale curves as keys."},
                   {"deformOnly", "do", T::Bool, true, "Skeletal and animation kinds: deform joints only (IK helpers and rig-only joints stay behind)."},

@@ -1081,8 +1081,8 @@ void registerCommands()
         .flags = {
             {"start", "s", T::Int, nullptr, "First frame. Default: the loop period, else the playback range."},
             {"end", "e", T::Int, nullptr, "Last frame."},
-            {"tolerance", "tol", T::Float, 0.0, "0 keys every frame; above it, keys go while the curves stay this close."},
-            {"rotationTolerance", "rtol", T::Float, 0.1, "Degrees, for rotation keys when tolerance is above 0."},
+            {"tolerance", "tol", T::Float, 0.0, "0 keys every frame; above it, keys go while the curves stay this close.", {}, {}, 0.0},
+            {"rotationTolerance", "rtol", T::Float, 0.1, "Degrees, for rotation keys when tolerance is above 0.", {}, {}, 0.0},
             {"joints", "j", T::List, nullptr, "Outputs to key. Default: all."},
             {"layer", "l", T::String, nullptr, "Layer name. Default: <node>_sim."},
             {"translate", "t", T::Bool, true, "Key translation."},

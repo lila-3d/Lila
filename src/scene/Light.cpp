@@ -20,10 +20,11 @@ constexpr uint32_t kStored = AttrInput | AttrStorable;
 constexpr std::array<const char*, 6> kKindNames{"point", "spot", "directional", "area", "disc", "dome"};
 constexpr std::array<const char*, 6> kUnitNames{"unitless", "candela", "lumens", "lux", "nits", "watts"};
 
-AttrDef floatAttr(std::string name, std::string shortName, double def, std::string doc)
+AttrDef floatAttr(std::string name, std::string shortName, double def, std::string doc, std::optional<double> lo = {},
+                  std::optional<double> hi = {})
 {
     return {.name = std::move(name), .shortName = std::move(shortName), .type = PlugType::Float, .defaultValue = def,
-            .flags = kStored | AttrKeyable, .doc = std::move(doc)};
+            .flags = kStored | AttrKeyable, .doc = std::move(doc), .minValue = lo, .maxValue = hi};
 }
 
 AttrDef stringAttr(std::string name, std::string shortName, std::string doc, uint32_t extraFlags = 0)
@@ -40,26 +41,26 @@ std::vector<AttrDef> lightAttrs()
                              .enumNames = {kKindNames.begin(), kKindNames.end()},
                              .doc = "Point, spot, directional, area (a rectangle), disc or dome."};
     AttrDef color{.name = "color", .shortName = "cl", .type = PlugType::Vec3, .defaultValue = glm::dvec3(1.0),
-                  .flags = kStored | AttrKeyable, .doc = "Linear colour."};
+                  .flags = kStored | AttrKeyable, .doc = "Linear colour.", .minValue = 0.0};
     for (int i = 0; i < 3; ++i)
     {
         color.childNames[i] = std::string("color") + "RGB"[i];
         color.childShort[i] = std::string("cl") + "rgb"[i];
     }
     at(Light::kColor) = color;
-    at(Light::kIntensity) = floatAttr("intensity", "in", 1.0, "Brightness, in intensityUnits.");
+    at(Light::kIntensity) = floatAttr("intensity", "in", 1.0, "Brightness, in intensityUnits.", 0.0);
     at(Light::kIntensityUnits) = {.name = "intensityUnits", .shortName = "iu", .type = PlugType::Enum, .defaultValue = int64_t(0),
                                   .flags = kStored, .enumNames = {kUnitNames.begin(), kUnitNames.end()},
                                   .doc = "What intensity is measured in, kept so formats with real units convert exactly."};
     at(Light::kUseTemperature) = {.name = "useTemperature", .shortName = "ut", .type = PlugType::Bool, .defaultValue = false,
                                   .flags = kStored, .doc = "Tint by temperature as well as colour."};
-    at(Light::kTemperature) = floatAttr("temperature", "tmp", 6500.0, "Colour temperature, kelvin.");
-    at(Light::kRange) = floatAttr("range", "rng", 0.0, "Distance the light stops reaching, cm. 0 has no cutoff.");
-    at(Light::kInnerConeAngle) = floatAttr("innerConeAngle", "ica", 0.0, "Spot: half angle of full brightness, degrees.");
-    at(Light::kOuterConeAngle) = floatAttr("outerConeAngle", "oca", 45.0, "Spot: half angle where the light ends, degrees.");
-    at(Light::kWidth) = floatAttr("width", "w", 100.0, "Area: width, cm. Disc: diameter.");
-    at(Light::kHeight) = floatAttr("height", "h", 100.0, "Area: height, cm.");
-    at(Light::kSourceRadius) = floatAttr("sourceRadius", "sr", 0.0, "Point and spot: emitter radius for soft shadows, cm.");
+    at(Light::kTemperature) = floatAttr("temperature", "tmp", 6500.0, "Colour temperature, kelvin.", 1000.0, 40000.0);
+    at(Light::kRange) = floatAttr("range", "rng", 0.0, "Distance the light stops reaching, cm. 0 has no cutoff.", 0.0);
+    at(Light::kInnerConeAngle) = floatAttr("innerConeAngle", "ica", 0.0, "Spot: half angle of full brightness, degrees.", 0.0, 90.0);
+    at(Light::kOuterConeAngle) = floatAttr("outerConeAngle", "oca", 45.0, "Spot: half angle where the light ends, degrees.", 0.0, 90.0);
+    at(Light::kWidth) = floatAttr("width", "w", 100.0, "Area: width, cm. Disc: diameter.", 0.0);
+    at(Light::kHeight) = floatAttr("height", "h", 100.0, "Area: height, cm.", 0.0);
+    at(Light::kSourceRadius) = floatAttr("sourceRadius", "sr", 0.0, "Point and spot: emitter radius for soft shadows, cm.", 0.0);
     at(Light::kCastShadows) = {.name = "castShadows", .shortName = "cs", .type = PlugType::Bool, .defaultValue = true, .flags = kStored,
                                .doc = "Casts shadows."};
     at(Light::kTexture) = stringAttr("texture", "tex", "Dome: environment image. Point and spot: IES profile.");
@@ -223,14 +224,14 @@ void registerLightCommands()
             {"parent", "p", T::String, nullptr, "Parent transform."},
             {"position", "pos", T::Vec3, nullptr, "World position, cm."},
             {"color", "c", T::Vec3, nullptr, "Linear colour."},
-            {"intensity", "i", T::Float, nullptr, "Brightness, in units."},
+            {"intensity", "i", T::Float, nullptr, "Brightness, in units.", {}, {}, 0.0},
             {"units", "u", T::String, nullptr, "unitless, candela, lumens, lux, nits or watts."},
-            {"temperature", "tmp", T::Float, nullptr, "Colour temperature in kelvin; turns useTemperature on."},
-            {"range", "r", T::Float, nullptr, "Cutoff distance, cm. 0 has none."},
-            {"innerConeAngle", "ica", T::Float, nullptr, "Spot: half angle of full brightness, degrees."},
-            {"outerConeAngle", "oca", T::Float, nullptr, "Spot: half angle where the light ends, degrees."},
-            {"width", "w", T::Float, nullptr, "Area width or disc diameter, cm."},
-            {"height", "h", T::Float, nullptr, "Area height, cm."},
+            {"temperature", "tmp", T::Float, nullptr, "Colour temperature in kelvin; turns useTemperature on.", {}, {}, 1000.0, 40000.0},
+            {"range", "r", T::Float, nullptr, "Cutoff distance, cm. 0 has none.", {}, {}, 0.0},
+            {"innerConeAngle", "ica", T::Float, nullptr, "Spot: half angle of full brightness, degrees.", {}, {}, 0.0, 90.0},
+            {"outerConeAngle", "oca", T::Float, nullptr, "Spot: half angle where the light ends, degrees.", {}, {}, 0.0, 90.0},
+            {"width", "w", T::Float, nullptr, "Area width or disc diameter, cm.", {}, {}, 0.0},
+            {"height", "h", T::Float, nullptr, "Area height, cm.", {}, {}, 0.0},
             {"castShadows", "cs", T::Bool, nullptr, "Casts shadows."},
             {"provider", "prv", T::String, nullptr, "Light provider asked first for this light."},
             {"skipSelect", "ss", T::Bool, false, "Don't select the new light."},

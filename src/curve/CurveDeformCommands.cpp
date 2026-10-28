@@ -146,10 +146,10 @@ void registerCurveDeformCommands()
         .doc = "Coil curves around themselves (a helix about the curve). The whole curve is resampled so the coils are there; in "
                "vertex mode only the selected points move. Returns the curves.",
         .positionalDoc = "curves",
-        .flags = {{"amplitude", "amp", T::Float, 2.0, "Curl radius, cm."},
+        .flags = {{"amplitude", "amp", T::Float, 2.0, "Curl radius, cm.", {}, {}, 0.0},
                   {"turns", "t", T::Float, 6.0, "Turns over the curve."},
                   {"keepEnds", "ke", T::Bool, true, "Ease the curl in and out so the ends stay put."},
-                  {"samplesPerTurn", "spt", T::Int, 12, "Points per turn when resampling."}},
+                  {"samplesPerTurn", "spt", T::Int, 12, "Points per turn when resampling.", {}, {}, 3.0, 256.0}},
         .run = [](const Args& a) -> json {
             CurlCurveOptions o;
             o.amplitude = a.get<double>("amplitude", 2.0);
@@ -179,8 +179,8 @@ void registerCurveDeformCommands()
         .doc = "Smooth curves' points toward their neighbours (Bezier handles follow their points). In vertex mode only the selected "
                "points move. Returns the curves.",
         .positionalDoc = "curves",
-        .flags = {{"strength", "s", T::Float, 0.5, "How far each pass moves a point toward its neighbours' average, 0 to 1."},
-                  {"iterations", "i", T::Int, 3, "Passes."},
+        .flags = {{"strength", "s", T::Float, 0.5, "How far each pass moves a point toward its neighbours' average, 0 to 1.", {}, {}, 0.0, 1.0},
+                  {"iterations", "i", T::Int, 3, "Passes.", {}, {}, 1.0, 1000.0},
                   {"keepEnds", "ke", T::Bool, true, "Open curves keep their end points."}},
         .run = [](const Args& a) -> json {
             SmoothCurveOptions o;

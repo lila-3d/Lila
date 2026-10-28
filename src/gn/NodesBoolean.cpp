@@ -16,8 +16,8 @@ void registerBooleanNode()
         .props = {prop("operation", {"difference", "union", "intersect"}, "difference")},
         .sockets = {.inputs = {geoIn("meshA"), multiIn("meshB"), in("cleanup", T::Bool, true, "Weld slivers and stray points along the seam."),
                                in("splitNgons", T::Bool, true, "Cut the n-gons along the seam into quads that carry on the edge loops."),
-                               in("filletWidth", T::Float, 0.0, "Width of a rounded strip along the seam, cm; 0 keeps it sharp."),
-                               in("filletSegments", T::Int, 2, "Rows of faces across the fillet.")},
+                               bounded(in("filletWidth", T::Float, 0.0, "Width of a rounded strip along the seam, cm; 0 keeps it sharp."), 0.0),
+                               bounded(in("filletSegments", T::Int, 2, "Rows of faces across the fillet."), 1, 64)},
                     .outputs = {geoOut("mesh")}},
         .exec =
             [](ExecContext& c) {

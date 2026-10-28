@@ -459,7 +459,7 @@ void registerCommands(ext::Context& ctx)
                   {"thickness", "t", T::Float, 1.0, "How far the blades grow along their face normal, cm."},
                   {"offset", "o", T::Float, 0.0, "How much the blades narrow as they grow: the cap border moves this far inward, cm."},
                   {"localTranslateZ", "ltz", T::Float, 0.0, "Extra growth along the face normal, cm."},
-                  {"divisions", "d", T::Int, 1, "Segments up each blade."},
+                  {"divisions", "d", T::Int, 1, "Segments up each blade.", {}, {}, 1.0, 64.0},
                   {"keepFacesTogether", "kft", T::Bool, false, "Connected faces grow as one blade; off, every face is its own."}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
@@ -509,9 +509,9 @@ void registerCommands(ext::Context& ctx)
                "-1 to the bottom ones, 0 is pure random. seed 0 differs every run. Returns {meshes, blades}.",
         .positionalDoc = "meshes (default the selection)",
         .flags = {{"fields", "", T::Any, nullptr, "{thickness: [low, high], offset: [low, high], localTranslateZ: [low, high]}; leave a field out to keep it."},
-                  {"bias", "b", T::Float, 0.0, "Bias to top, -1 to 1."},
+                  {"bias", "b", T::Float, 0.0, "Bias to top, -1 to 1.", {}, {}, -1.0, 1.0},
                   {"up", "", T::String, "Auto", "Up axis for the bias: Auto follows the scene.", {"Auto", "X", "Y", "Z"}},
-                  {"seed", "s", T::Int, 0, "0 differs every run; any other number repeats."}},
+                  {"seed", "s", T::Int, 0, "0 differs every run; any other number repeats.", {}, {}, 0.0}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             std::vector<NodeId> meshes = targetMeshes(g, a, "randomizeBladeExtrude");
@@ -646,7 +646,7 @@ void registerCommands(ext::Context& ctx)
         .doc = "A range around the extrude values the meshes' blades use now: their mean, give or take spread. Returns "
                "{thickness: [low, high], offset: [...], localTranslateZ: [...]}.",
         .positionalDoc = "meshes (default the selection)",
-        .flags = {{"spread", "", T::Float, 0.3, "Fraction either side of the mean."}},
+        .flags = {{"spread", "", T::Float, 0.3, "Fraction either side of the mean.", {}, {}, 0.0, 1.0}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             Graph& g = graph();
@@ -724,10 +724,10 @@ void registerCommands(ext::Context& ctx)
                   {"fromBase", "fb", T::Bool, true, "Anchor the handle at each blade's root so it deforms root to tip; off centres it."},
                   {"spin", "", T::Bool, true, "Spin each handle around the up axis, so blades lean different ways."},
                   {"up", "", T::String, "Auto", "Up axis: Auto follows the scene.", {"Auto", "X", "Y", "Z"}},
-                  {"seed", "s", T::Int, 0, "0 differs every run; any other number repeats."},
+                  {"seed", "s", T::Int, 0, "0 differs every run; any other number repeats.", {}, {}, 0.0},
                   {"low", "", T::Float, nullptr, "Lowest amount; the kind's default range when not given."},
                   {"high", "", T::Float, nullptr, "Highest amount."},
-                  {"bias", "b", T::Float, 0.0, "Bias to top, -1 to 1, over the amount range."}},
+                  {"bias", "b", T::Float, 0.0, "Bias to top, -1 to 1, over the amount range.", {}, {}, -1.0, 1.0}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             const DeformerSpec& spec = specArg(a, "addBladeDeformer");
@@ -816,9 +816,9 @@ void registerCommands(ext::Context& ctx)
                    {"bend", "flare", "twist", "sine", "squash", "wave"}},
                   {"low", "", T::Float, nullptr, "Lowest amount; the kind's default range when not given."},
                   {"high", "", T::Float, nullptr, "Highest amount."},
-                  {"bias", "b", T::Float, 0.0, "Bias to top, -1 to 1."},
+                  {"bias", "b", T::Float, 0.0, "Bias to top, -1 to 1.", {}, {}, -1.0, 1.0},
                   {"up", "", T::String, "Auto", "Up axis: Auto follows the scene.", {"Auto", "X", "Y", "Z"}},
-                  {"seed", "s", T::Int, 0, "0 differs every run; any other number repeats."},
+                  {"seed", "s", T::Int, 0, "0 differs every run; any other number repeats.", {}, {}, 0.0},
                   {"spin", "", T::Bool, false, "Also spin each handle around the up axis."}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();

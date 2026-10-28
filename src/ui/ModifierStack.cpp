@@ -505,6 +505,10 @@ private:
         double step = (mods & Qt::ControlModifier) ? 0.01 : (mods & Qt::ShiftModifier) ? 1.0 : 0.1;
         mAccum += (pos.x() - mLast.x()) * step;
         mLast = pos;
+        // Held at the limits so dragging back moves the value straight away.
+        const scene::AttrDef& def = Graph::current().attr(mPlug);
+        double base = numericOf(mSaved);
+        mAccum = std::clamp(base + mAccum, def.minValue.value_or(-HUGE_VAL), def.maxValue.value_or(HUGE_VAL)) - base;
         // Live preview without undo; endScrub records the one real setAttr.
         withoutUndo([this](Graph& g) { g.setValue(mPlug, scrubbed()); });
         setText(formatNumber(numericOf(scrubbed()), mInt));

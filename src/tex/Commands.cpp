@@ -237,7 +237,7 @@ void registerCommands()
         .positionalDoc = "name",
         .flags = {{"settings", "", T::Any, nullptr, "Settings dict: channels [{name, type, bits}], width, height, tiles [udim or {udim, width, height}], "
                                                     "normalConvention (opengl/directx), bakeProject, exportPreset, material."},
-                  {"resolution", "", T::Int, nullptr, "Width and height of every tile."}},
+                  {"resolution", "", T::Int, nullptr, "Width and height of every tile.", {}, {}, 1.0}},
         .run = [](const Args& a) -> json {
             std::string name = positionalString(a, 0, "texCreateSet", "name");
             if (!gn::validIdentifier(name))
@@ -767,10 +767,10 @@ void registerCommands()
                "pass count, time, how many kernels compiled or came from the cache, and the backend used.",
         .positionalDoc = "set",
         .flags = {{"channels", "", T::List, nullptr, "Channel names; all when left out."},
-                  {"resolution", "", T::Int, nullptr, "Width and height, overriding the tiles'."},
+                  {"resolution", "", T::Int, nullptr, "Width and height, overriding the tiles'.", {}, {}, 1.0},
                   {"folder", "", T::String, nullptr, "Output folder; relative ones resolve like bake folders. Default textures/<set>."},
                   {"format", "", T::String, "png", "png, exr, tga or tif.", {"png", "exr", "tga", "tif"}},
-                  {"bits", "", T::Int, 0, "8, 16 or 32; 0 uses each channel's."},
+                  {"bits", "", T::Int, 0, "8, 16 or 32; 0 uses each channel's.", {}, {}, 0.0, 32.0},
                   {"backend", "", T::String, nullptr, "gpu or cpu; the GPU when left out and the renderer can run.", {"gpu", "cpu"}}},
         .undoable = false,
         .run = [](const Args& a) -> json {
@@ -801,7 +801,7 @@ void registerCommands()
         .positionalDoc = "set",
         .flags = {{"preset", "", T::String, nullptr, "Bake target name; the set's exportPreset when left out."},
                   {"folder", "", T::String, "textures", "Output folder; relative ones resolve like bake folders."},
-                  {"resolution", "", T::Int, nullptr, "Width and height, overriding the tiles'."},
+                  {"resolution", "", T::Int, nullptr, "Width and height, overriding the tiles'.", {}, {}, 1.0},
                   {"optional", "", T::Bool, true, "Also write the preset's optional maps the set has channels for."},
                   {"incremental", "", T::Bool, false, "Only rewrite files whose inputs or pixels changed since the last export to this folder."},
                   {"backend", "", T::String, nullptr, "gpu or cpu; the GPU when left out and the renderer can run.", {"gpu", "cpu"}}},

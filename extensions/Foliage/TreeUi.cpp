@@ -359,8 +359,8 @@ QWidget* editor(const Field& f, std::vector<std::function<void()>>& shows)
         auto* w = new QWidget;
         auto* h = new QHBoxLayout(w);
         h->setContentsMargins(0, 0, 0, 0);
-        QDoubleSpinBox* a = spin(-1e7, 1e7, 3);
-        QDoubleSpinBox* b = spin(-1e7, 1e7, 3);
+        QDoubleSpinBox* a = spin(f.fieldMin * unit, f.fieldMax * unit, 3);
+        QDoubleSpinBox* b = spin(f.fieldMin * unit, f.fieldMax * unit, 3);
         h->addWidget(a);
         h->addWidget(b);
         auto write = [key, a, b, unit, values] { values()[key] = json::array({a->value() / unit, b->value() / unit}); };
@@ -376,7 +376,7 @@ QWidget* editor(const Field& f, std::vector<std::function<void()>>& shows)
     case Kind::Length:
     case Kind::Float:
     {
-        QDoubleSpinBox* s = spin(-1e7, 1e7, 3);
+        QDoubleSpinBox* s = spin(f.fieldMin * unit, f.fieldMax * unit, 3);
         QObject::connect(s, &QDoubleSpinBox::valueChanged, s, [key, unit, values](double v) { values()[key] = v / unit; });
         shows.push_back([key, s, unit, values] {
             const QSignalBlocker b(s);
@@ -387,7 +387,7 @@ QWidget* editor(const Field& f, std::vector<std::function<void()>>& shows)
     case Kind::Int:
     {
         auto* s = new QSpinBox;
-        s->setRange(-100000000, 100000000);
+        s->setRange(int(f.fieldMin), int(f.fieldMax));
         s->setKeyboardTracking(false);
         QObject::connect(s, &QSpinBox::valueChanged, s, [key, values](int v) { values()[key] = int64_t(v); });
         shows.push_back([key, s, values] {

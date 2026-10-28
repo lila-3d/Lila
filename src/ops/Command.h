@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 
 #include <functional>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -47,6 +48,9 @@ struct FlagDef
     std::vector<std::string> choices;
     /** A short Python call showing the flag in use, e.g. `xform("cube1", worldSpace=True, query=True, translation=True)`. */
     std::string example;
+    /** Bounds of an Int or Float flag: calls are clamped to them and option boxes use them as the field's range. */
+    std::optional<double> min;
+    std::optional<double> max;
 };
 
 /** Normalized call: positional args plus long-name flags, defaults filled in. */

@@ -417,8 +417,8 @@ void registerCommands()
                "sculpts the mesh itself. Resumes from a kept proxy when there is one. Returns {mesh, mode, levels, points, faces}.",
         .positionalDoc = "mesh",
         .flags = {{"mode", "", T::String, "subdivide", "subdivide, remesh or direct.", {"subdivide", "remesh", "direct"}},
-                  {"levels", "", T::Int, 2, "Subdivision levels of the proxy, 1 to 6."},
-                  {"resolution", "", T::Int, 192, "Voxels along the longest side, for mode='remesh'."},
+                  {"levels", "", T::Int, 2, "Subdivision levels of the proxy, 1 to 6.", {}, {}, 1.0, 6.0},
+                  {"resolution", "", T::Int, 192, "Voxels along the longest side, for mode='remesh'.", {}, {}, 16.0, 2048.0},
                   {"resume", "", T::Bool, true, "Continue from the mesh's kept proxy when it has one."}},
         .run = [](const Args& a) -> json {
             auto objs = a.objects();
@@ -463,7 +463,7 @@ void registerCommands()
                "stay. keepProxy stores the proxy as a hidden child mesh to resume from. Returns {mesh, maxMove}.",
         .flags = {{"method", "", T::String, "fit", "fit, closest or normal.", {"fit", "closest", "normal"}},
                   {"keepProxy", "", T::Bool, false, "Keep the sculpt as a hidden child mesh."},
-                  {"iterations", "", T::Int, 3, "Project-and-fit rounds for remeshed proxies."}},
+                  {"iterations", "", T::Int, 3, "Project-and-fit rounds for remeshed proxies.", {}, {}, 1.0, 20.0}},
         .run = [](const Args& a) -> json {
             std::shared_ptr<Session> s = requireSession("sculptExit");
             Graph& g = graph();
@@ -527,10 +527,10 @@ void registerCommands()
                "frozen points and the mesh's symmetry, mirrored exactly. Returns {points} changed.",
         .flags = {{"brush", "", T::String, "draw", "Brush.", {"draw", "clayStrips", "inflate", "grab", "smooth", "flatten", "pinch", "crease", "scrape", "mask", "relax", "freeze"}},
                   {"falloff", "", T::String, "smooth", "Falloff: smooth, sphere, root, sharp, linear, constant, bell, or a soft select preset name."},
-                  {"strength", "", T::Float, 0.5, "0 to 1."},
+                  {"strength", "", T::Float, 0.5, "0 to 1.", {}, {}, 0.0, 1.0},
                   {"invert", "", T::Bool, false, "Dig, unmask, unfreeze or magnify instead."},
                   {"frontFacesOnly", "", T::Bool, false, "Leave points facing away from the view."},
-                  {"radialCount", "", T::Int, 1, "Copies of every dab turned evenly about an object axis; 1 is off."},
+                  {"radialCount", "", T::Int, 1, "Copies of every dab turned evenly about an object axis; 1 is off.", {}, {}, 1.0, 64.0},
                   {"radialAxis", "", T::String, "y", "The object axis radial copies turn about.", {"x", "y", "z"}},
                   {"dabs", "", T::List, json::array(), "The stamps, in order."},
                   {"live", "", T::Int, 0, "Internal: adopts the stroke the viewport tool already applied."}},
@@ -570,7 +570,7 @@ void registerCommands()
                "clear, fill, invert, or blur (mask only).",
         .flags = {{"op", "", T::String, "clear", "clear, fill, invert or blur.", {"clear", "fill", "invert", "blur"}},
                   {"layer", "", T::String, "mask", "mask or freeze.", {"mask", "freeze"}},
-                  {"iterations", "", T::Int, 2, "Blur passes."}},
+                  {"iterations", "", T::Int, 2, "Blur passes.", {}, {}, 1.0, 100.0}},
         .run = [](const Args& a) -> json {
             std::shared_ptr<Session> s = requireSession("sculptMask");
             std::string op = a.get<std::string>("op", "clear");
@@ -623,8 +623,8 @@ void registerCommands()
                "mesh is the high poly, the rest are the cages. Only positions change, so UVs and other attributes stay.",
         .positionalDoc = "source targets...",
         .flags = {{"method", "", T::String, "fit", "fit, closest or normal.", {"fit", "closest", "normal"}},
-                  {"levels", "", T::Int, 2, "Subdivision levels the fit goes through."},
-                  {"iterations", "", T::Int, 3, "Project-and-fit rounds."},
+                  {"levels", "", T::Int, 2, "Subdivision levels the fit goes through.", {}, {}, 1.0, 5.0},
+                  {"iterations", "", T::Int, 3, "Project-and-fit rounds.", {}, {}, 1.0, 20.0},
                   {"pinBoundary", "", T::Bool, false, "Keep border points where they are."}},
         .run = [](const Args& a) -> json {
             auto objs = a.objects();

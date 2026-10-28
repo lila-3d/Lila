@@ -150,10 +150,10 @@ void endEdit(Graph& g, Node& mod, NodeId mesh)
     modifiers::restoreSelection(g, mesh, backup);
 }
 
-AttrDef param(std::string name, PlugType type, PlugValue def, std::string doc)
+AttrDef param(std::string name, PlugType type, PlugValue def, std::string doc, std::optional<double> lo = {}, std::optional<double> hi = {})
 {
     return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable | AttrKeyable,
-            .doc = std::move(doc)};
+            .doc = std::move(doc), .minValue = lo, .maxValue = hi};
 }
 } // namespace splitRingsImpl
 
@@ -213,7 +213,7 @@ void registerTypes()
         splitRingsImpl::param("enabled", PlugType::Bool, true, "Turn the modifier off without removing it."),
         {.name = "exportEnabled", .type = PlugType::Bool, .defaultValue = true, .flags = AttrInput | AttrStorable,
          .doc = "Apply the modifier when exporting."},
-        splitRingsImpl::param("count", PlugType::Int, int64_t(1), "Loops per ring, evenly spaced, 1 to 32."),
+        splitRingsImpl::param("count", PlugType::Int, int64_t(1), "Loops per ring, evenly spaced, 1 to 32.", 1.0, 32.0),
         direction,
         splitRingsImpl::param("edgeFlow", PlugType::Bool, true, "Curve the new loops to follow the surrounding surface rather than lie flat."),
         {.name = "components", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrStorable | AttrHidden,

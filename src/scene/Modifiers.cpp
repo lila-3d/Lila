@@ -30,10 +30,10 @@ void registerBooleanModifier();
 
 namespace
 {
-AttrDef param(std::string name, PlugType type, PlugValue def, std::string doc)
+AttrDef param(std::string name, PlugType type, PlugValue def, std::string doc, std::optional<double> lo = {}, std::optional<double> hi = {})
 {
     return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable | AttrKeyable,
-            .doc = std::move(doc)};
+            .doc = std::move(doc), .minValue = lo, .maxValue = hi};
 }
 
 double f(const Node& n, const char* a) { return n.as<double>(n.type().attrIndex(a)); }
@@ -181,7 +181,7 @@ std::vector<ModifierType> modifierTypes()
                 "Which side builds the other: + to - keeps the positive side and replaces the negative one with its mirror, cutting "
                 "faces that cross the plane; - to + the reverse; both mirrors the whole mesh."),
           param("weld", PlugType::Bool, true, "Merge points on the plane with their mirror images so the halves join."),
-          param("tolerance", PlugType::Float, 0.01, "Points this close to the plane are welded, cm.")},
+          param("tolerance", PlugType::Float, 0.01, "Points this close to the plane are welded, cm.", 0.0)},
          [](const geo::Mesh& in, const Node& n) {
              geo::Mesh m = in;
              geo::MirrorOptions o;
@@ -195,7 +195,7 @@ std::vector<ModifierType> modifierTypes()
          }},
         {"subdivisionModifier",
          "Smooths the mesh with Catmull-Clark subdivision. Use it to turn a low-poly cage into a smooth high-poly surface.",
-         {param("levels", PlugType::Int, int64_t(1), "Subdivision levels, 0 to 4. Each level about quadruples the face count; 0 passes the mesh through."),
+         {param("levels", PlugType::Int, int64_t(1), "Subdivision levels, 0 to 4. Each level about quadruples the face count; 0 passes the mesh through.", 0.0, 4.0),
           param("keepHardEdges", PlugType::Bool, false, "Keep normals split along hard edges; off smooths the shading across them.")},
          [](const geo::Mesh& in, const Node& n) {
              geo::SubdivideOptions o;
@@ -206,10 +206,10 @@ std::vector<ModifierType> modifierTypes()
         {"bevelModifier",
          "Bevels every edge sharper than an angle so hard corners catch the light. A quick live bevel; Auto Bevel has finer "
          "edge rules and hand-picked edges.",
-         {param("offset", PlugType::Float, 1.0, "Bevel width, cm."),
-          param("segments", PlugType::Int, int64_t(2), "Edges across each bevel, 1 to 32. More is rounder."),
-          param("profile", PlugType::Float, 0.5, "Profile shape: 0.5 is a round arc, 0.25 a straight chamfer."),
-          param("angle", PlugType::Float, 30.0, "Bevel edges whose faces meet sharper than this, degrees. Negative bevels hard edges only.")},
+         {param("offset", PlugType::Float, 1.0, "Bevel width, cm.", 0.0),
+          param("segments", PlugType::Int, int64_t(2), "Edges across each bevel, 1 to 32. More is rounder.", 1.0, 32.0),
+          param("profile", PlugType::Float, 0.5, "Profile shape: 0.5 is a round arc, 0.25 a straight chamfer.", 0.0, 1.0),
+          param("angle", PlugType::Float, 30.0, "Bevel edges whose faces meet sharper than this, degrees. Negative bevels hard edges only.", {}, 180.0)},
          [](const geo::Mesh& in, const Node& n) {
              geo::Mesh m = in;
              geo::BevelOptions o;
@@ -224,7 +224,7 @@ std::vector<ModifierType> modifierTypes()
          "stairs, tiles, gear teeth and bolts round a flange. Radial with weld on turns one modelled wedge into an exact "
          "N-fold whole.",
          {param("mode", PlugType::Enum, int64_t(0), "linear steps each copy by offset; radial turns copies about the centre; grid fills rows, columns and layers."),
-          param("count", PlugType::Int, int64_t(3), "Copies including the original, 1 to 1000. In grid mode, copies along x."),
+          param("count", PlugType::Int, int64_t(3), "Copies including the original, 1 to 1000. In grid mode, copies along x.", 1.0, 1000.0),
           param("offset", PlugType::Vec3, glm::dvec3(110.0, 0.0, 0.0), "Linear: step from one copy to the next, in the centre's space, cm."),
           param("rotate", PlugType::Vec3, glm::dvec3(0.0), "Extra rotation per copy about the centre, degrees. A linear array with a rotation curves."),
           param("scale", PlugType::Vec3, glm::dvec3(1.0), "Scale per copy about the centre: each copy is this much the size of the last."),
@@ -232,8 +232,8 @@ std::vector<ModifierType> modifierTypes()
           inCategory(param("angle", PlugType::Float, 360.0, "Degrees the copies span, or between neighbours when angleMode is step. A whole turn closes the ring."), "Radial"),
           inCategory(param("angleMode", PlugType::Enum, int64_t(0), "total spreads count copies over angle; step puts angle between neighbours."), "Radial"),
           inCategory(param("rise", PlugType::Float, 0.0, "Distance each copy climbs along the axis, cm, for spirals and screw threads."), "Radial"),
-          inCategory(param("countY", PlugType::Int, int64_t(3), "Grid copies along y, 1 to 1000."), "Grid"),
-          inCategory(param("countZ", PlugType::Int, int64_t(1), "Grid copies along z, 1 to 1000."), "Grid"),
+          inCategory(param("countY", PlugType::Int, int64_t(3), "Grid copies along y, 1 to 1000.", 1.0, 1000.0), "Grid"),
+          inCategory(param("countZ", PlugType::Int, int64_t(1), "Grid copies along z, 1 to 1000.", 1.0, 1000.0), "Grid"),
           inCategory(param("spacing", PlugType::Vec3, glm::dvec3(110.0), "Distance between grid copies along each axis, in the centre's space, cm."), "Grid"),
           inCategory(param("center", PlugType::Enum, int64_t(0),
                            "What copies turn and scale about: the object's origin, centerPoint, or another object's transform (arrayCenter)."), "Center"),
@@ -244,7 +244,7 @@ std::vector<ModifierType> modifierTypes()
                       .doc = "This mesh's world matrix when the centre object was connected."}, "Center"),
           inCategory(param("weld", PlugType::Bool, false, "Merge points where neighbouring copies meet and drop the walls they share, so the copies join into one surface."), "Weld"),
           inCategory(param("mergeEnds", PlugType::Bool, false, "Weld the last copy to the first as well. A radial array spanning a whole turn always does."), "Weld"),
-          inCategory(param("tolerance", PlugType::Float, 0.01, "Points of neighbouring copies this close are welded, cm.")
+          inCategory(param("tolerance", PlugType::Float, 0.01, "Points of neighbouring copies this close are welded, cm.", 0.0)
                      , "Weld")},
          [](const geo::Mesh& in, const Node& n) { return geo::arrayMesh(in, arrayOptions(n)); }},
         {"triangulateModifier",
@@ -273,8 +273,8 @@ std::vector<ModifierType> modifierTypes()
         {"decimateModifier",
          "Reduces the triangle count while keeping the shape, silhouette, UVs and normals. Use it for LODs or to lighten "
          "scans and sculpts.",
-         {param("ratio", PlugType::Float, 0.5, "Fraction of triangles to keep, 0 to 1."),
-          param("targetTriangles", PlugType::Int, int64_t(0), "Triangles to keep; above 0 it overrides ratio."),
+         {param("ratio", PlugType::Float, 0.5, "Fraction of triangles to keep, 0 to 1.", 0.0, 1.0),
+          param("targetTriangles", PlugType::Int, int64_t(0), "Triangles to keep; above 0 it overrides ratio.", 0.0),
           param("keepBorders", PlugType::Bool, true, "Open borders stay exactly where they are."),
           param("keepHardEdges", PlugType::Bool, true, "Hard edges stay intact, as UV seams and material borders always do; off lets them collapse for a lower count."),
           param("symmetry", PlugType::Enum, int64_t(0), "off, or reduce one half and mirror it so the result stays exactly symmetric across x, y or z."),

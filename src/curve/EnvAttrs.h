@@ -26,10 +26,11 @@ inline AttrDef fAttr(std::string name, double def, std::string doc, std::optiona
     return a;
 }
 
-inline AttrDef iAttr(std::string name, int64_t def, std::string doc, double lo = 0.0)
+inline AttrDef iAttr(std::string name, int64_t def, std::string doc, double lo = 0.0, std::optional<double> hi = std::nullopt)
 {
     AttrDef a{.name = std::move(name), .type = PlugType::Int, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
     a.minValue = lo;
+    a.maxValue = hi;
     return a;
 }
 
@@ -91,6 +92,8 @@ inline std::vector<FlagDef> attrFlags(const std::string& type)
         if (!(d.flags & scene::AttrInput) || (d.flags & scene::AttrHidden))
             continue;
         FlagDef fd{d.name, "", ArgType::Float, nullptr, d.doc};
+        fd.min = d.minValue;
+        fd.max = d.maxValue;
         switch (d.type)
         {
         case PlugType::Bool: fd.type = ArgType::Bool; break;

@@ -70,11 +70,11 @@ void registerBooleanCommands()
                   {"quadBand", "", T::Bool, false,
                    "Remesh a band of faces around the seam into quads that follow it, welded back into the faces around it. "
                    "Falls back to splitting n-gons where the band's border can't be kept."},
-                  {"bandRings", "", T::Int, 1, "Rings of faces past the seam the quad band takes in."},
-                  {"timeout", "", T::Float, 5.0, "Seconds the quad band remesh may take before the n-gon split runs instead; 0 waits forever."},
-                  {"filletWidth", "", T::Float, 0.0, "Width of a rounded strip along the seam, cm; 0 keeps it sharp."},
-                  {"filletSegments", "", T::Int, 2, "Rows of faces across the fillet."},
-                  {"hardAngle", "", T::Float, 30.0, "New edges sharper than this many degrees are marked hard."},
+                  {"bandRings", "", T::Int, 1, "Rings of faces past the seam the quad band takes in.", {}, {}, 0.0, 8.0},
+                  {"timeout", "", T::Float, 5.0, "Seconds the quad band remesh may take before the n-gon split runs instead; 0 waits forever.", {}, {}, 0.0},
+                  {"filletWidth", "", T::Float, 0.0, "Width of a rounded strip along the seam, cm; 0 keeps it sharp.", {}, {}, 0.0},
+                  {"filletSegments", "", T::Int, 2, "Rows of faces across the fillet.", {}, {}, 1.0, 64.0},
+                  {"hardAngle", "", T::Float, 30.0, "New edges sharper than this many degrees are marked hard.", {}, {}, 0.0, 180.0},
                   {"weightedNormals", "", T::Bool, true, "Add a weighted normals modifier, if the mesh has none, so the n-gons shade flat."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();

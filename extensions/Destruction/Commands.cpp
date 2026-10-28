@@ -518,9 +518,9 @@ void registerCommands(ext::Context& ctx)
         .positionalDoc = "meshes (default the selection)",
         .flags = {{"material", "m", T::String, "concrete", "How it cracks.", {"concrete", "glass", "wood"}},
                   {"impact", "i", T::Vec3, nullptr, "Where it's hit, world space cm. Default: the centre of the mesh."},
-                  {"pieces", "p", T::Int, nullptr, "Roughly how many pieces. Default: the material's."},
+                  {"pieces", "p", T::Int, nullptr, "Roughly how many pieces. Default: the material's.", {}, {}, 1.0},
                   {"seed", "", T::Int, 1, "Another seed gives another pattern."},
-                  {"blast", "b", T::Float, nullptr, "How hard the impact hits, cm/s. Default: the material's."},
+                  {"blast", "b", T::Float, nullptr, "How hard the impact hits, cm/s. Default: the material's.", {}, {}, 0.0},
                   {"startFrame", "", T::Int, nullptr, "Frame it breaks on. Default: the start of the playback range."},
                   {"simulate", "", T::Bool, true, "Simulate the pieces; False only fractures."},
                   {"anchor", "", T::Bool, true, "Tie the pieces touching the ground to it."},
@@ -570,8 +570,8 @@ void registerCommands(ext::Context& ctx)
         .positionalDoc = "destruction (default the selection)",
         .flags = {{"position", "p", T::Vec3, nullptr, "Its centre, world space cm."},
                   {"frame", "f", T::Int, nullptr, "Frame it goes off. Default: the current frame."},
-                  {"blast", "b", T::Float, 2000.0, "Speed given to pieces at the centre, cm/s."},
-                  {"radius", "r", T::Float, 300.0, "Pieces this far away or more aren't pushed, cm."}},
+                  {"blast", "b", T::Float, 2000.0, "Speed given to pieces at the centre, cm/s.", {}, {}, 0.0},
+                  {"radius", "r", T::Float, 300.0, "Pieces this far away or more aren't pushed, cm.", {}, {}, 1.0}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             const Setup s = setupOf(g, destructionArg(a, "addExplosion"), "addExplosion");
@@ -633,12 +633,12 @@ void registerCommands(ext::Context& ctx)
         .positionalDoc = "destruction (default the selection)",
         .flags = {{"part", "", T::String, nullptr, "Which of the destruction's meshes gives way. Default: the one breakApart was run on."},
                   {"start", "s", T::Float, nullptr, "Frame the first pieces fall. Default: the current frame."},
-                  {"duration", "d", T::Float, 60.0, "Frames for the failure to cross to the far side."},
+                  {"duration", "d", T::Float, 60.0, "Frames for the failure to cross to the far side.", {}, {}, 0.0},
                   {"direction", "dir", T::Vec3, nullptr, "Which way the failure travels (world space). Default: +X."},
-                  {"rumble", "r", T::Float, 2.0, "How far pieces shake just before they fall, cm."},
-                  {"lead", "", T::Float, 30.0, "Frames of rumbling before a piece falls."},
-                  {"raggedness", "", T::Float, 0.25, "0 is a straight front; 1 drops pieces in any order."},
-                  {"depth", "", T::Float, 3000.0, "How far below it the floor is, cm."}},
+                  {"rumble", "r", T::Float, 2.0, "How far pieces shake just before they fall, cm.", {}, {}, 0.0},
+                  {"lead", "", T::Float, 30.0, "Frames of rumbling before a piece falls.", {}, {}, 0.0},
+                  {"raggedness", "", T::Float, 0.25, "0 is a straight front; 1 drops pieces in any order.", {}, {}, 0.0, 1.0},
+                  {"depth", "", T::Float, 3000.0, "How far below it the floor is, cm.", {}, {}, 0.0}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             const Setup s = setupOf(g, destructionArg(a, "collapse"), "collapse");
@@ -744,7 +744,7 @@ void registerCommands(ext::Context& ctx)
                "Sets the modifier's seed to seed, seed + 1, ... in turn, bakes each to <folder>/<mesh>_seed<n>, and puts the seed "
                "back. Needs a seed input on the modifier (breakApart makes one). Returns the bakes' file lists.",
         .positionalDoc = "mesh (default the selection)",
-        .flags = {{"count", "c", T::Int, 4, "How many variations."},
+        .flags = {{"count", "c", T::Int, 4, "How many variations.", {}, {}, 1.0, 1000.0},
                   {"seed", "s", T::Int, nullptr, "First seed. Default: the one after the modifier's own."},
                   {"folder", "fo", T::String, "destruction", "Output folder; relative paths are under the workspace."},
                   {"start", "st", T::Float, nullptr, "First frame. Default: the playback range."},

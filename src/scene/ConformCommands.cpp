@@ -229,7 +229,7 @@ std::optional<geo::Mesh> worldGeometry(Graph& g, Node& n)
 void registerConformCommands()
 {
     using T = ArgType;
-    const FlagDef strength{"strength", "", T::Float, 1.0, "How far toward the shape, 0 to 1; soft selection fades it further."};
+    const FlagDef strength{"strength", "", T::Float, 1.0, "How far toward the shape, 0 to 1; soft selection fades it further.", {}, {}, 0.0, 1.0};
     const std::vector<std::string> spacings = {"even", "keep", "project"};
 
     ops::registerCommand({
@@ -253,9 +253,9 @@ void registerConformCommands()
                "best-fit plane, turned to move the points least. Points inside a face region follow the border smoothly, so a "
                "rectangular face comes out round, ready to extrude into a pipe. Open chains become an arc between their ends.",
         .flags = {{"spacing", "", T::String, "even", "even (equal angles), keep (relative distances along the loop) or project (straight out to the circle).", spacings},
-                  {"radius", "", T::Float, 0.0, "Radius, cm; 0 keeps the loop's average radius."},
+                  {"radius", "", T::Float, 0.0, "Radius, cm; 0 keeps the loop's average radius.", {}, {}, 0.0},
                   {"rotation", "", T::Float, 0.0, "Extra turn about the circle's axis, degrees."},
-                  {"sides", "", T::Int, 0, "3 or more: conform to a regular polygon with this many sides, its corners on the circle."},
+                  {"sides", "", T::Int, 0, "3 or more: conform to a regular polygon with this many sides, its corners on the circle.", {}, {}, 0.0, 64.0},
                   {"flatten", "", T::Bool, true, "Put the points in the circle's plane; off keeps each one's height off it."},
                   strength},
         .run = [](const Args& a) -> json {
@@ -274,11 +274,11 @@ void registerConformCommands()
         .doc = "Push the selected components (whole meshes in object mode) onto a sphere fitted to them, or onto an ellipsoid with scale. center and radius override "
                "the fit (world space, cm); radiusMode picks the radius from the points otherwise. With alongNormals each point slides along "
                "its own normal to the sphere. Returns the sphere used: {center, radius, scale, rotation}, world space.",
-        .flags = {{"amount", "", T::Float, 1.0, "How far toward the sphere, 0 to 1; soft selection fades it further."},
+        .flags = {{"amount", "", T::Float, 1.0, "How far toward the sphere, 0 to 1; soft selection fades it further.", {}, {}, 0.0, 1.0},
                   {"fit", "", T::String, "best", "best (least-squares sphere) or center (around the points' centroid).", {"best", "center"}},
                   {"radiusMode", "", T::String, "average", "Radius when radius is 0: average distance, fit (the fitted radius), min, max or explicit.",
                    {"average", "fit", "min", "max", "explicit"}},
-                  {"radius", "", T::Float, 0.0, "Radius, cm; above 0 it replaces radiusMode."},
+                  {"radius", "", T::Float, 0.0, "Radius, cm; above 0 it replaces radiusMode.", {}, {}, 0.0},
                   {"center", "", T::Vec3, nullptr, "Sphere centre, world space cm; default: the fitted centre."},
                   {"scale", "", T::Vec3, json::array({1.0, 1.0, 1.0}), "Ellipsoid semi-axis factors along its X, Y and Z."},
                   {"rotation", "", T::Vec3, json::array({0.0, 0.0, 0.0}), "Turn of the ellipsoid's axes in world space, degrees (XYZ)."},
@@ -345,9 +345,9 @@ void registerConformCommands()
         .flags = {{"shape", "", T::String, "circle", "line, circle, square, rectangle, sphere, cylinder or plane.",
                    {"line", "circle", "square", "rectangle", "sphere", "cylinder", "plane"}},
                   {"spacing", "", T::String, "even", "Line, circle, square, rectangle: even, keep or project.", spacings},
-                  {"radius", "", T::Float, 0.0, "Circle, sphere, cylinder: radius, cm; 0 fits it."},
+                  {"radius", "", T::Float, 0.0, "Circle, sphere, cylinder: radius, cm; 0 fits it.", {}, {}, 0.0},
                   {"rotation", "", T::Float, 0.0, "Circle, square, rectangle: extra turn in the plane, degrees."},
-                  {"sides", "", T::Int, 0, "Circle: 3 or more makes it a regular polygon."},
+                  {"sides", "", T::Int, 0, "Circle: 3 or more makes it a regular polygon.", {}, {}, 0.0, 64.0},
                   {"axis", "", T::String, "auto", "Cylinder: auto (fitted), x, y or z (object axes).", {"auto", "x", "y", "z"}},
                   strength},
         .run = [](const Args& a) -> json {
@@ -419,8 +419,8 @@ void registerConformCommands()
         .flags = {{"adjustEdgeFlow", "", T::Float, 1.0, "0 flat between the neighbours, 1 on the curve, above 1 exaggerated, negative inverted."},
                   {"edgeFlow", "", T::Bool, true, "Shape the curve from the vertices beyond the neighbours; off, from the surface normals at the neighbours."},
                   {"tension", "", T::Float, 0.0, "Toward 1 flattens the curve, negative makes it fuller."},
-                  {"loopSmooth", "", T::Float, 0.0, "Also smooth each loop along its length, 0 to 1, keeping its spacing."},
-                  {"iterations", "", T::Int, 1, "Passes of Smooth Along Loop."}},
+                  {"loopSmooth", "", T::Float, 0.0, "Also smooth each loop along its length, 0 to 1, keeping its spacing.", {}, {}, 0.0, 1.0},
+                  {"iterations", "", T::Int, 1, "Passes of Smooth Along Loop.", {}, {}, 1.0, 100.0}},
         .run = [](const Args& a) -> json {
             geo::EdgeFlowOptions o{a.get<double>("adjustEdgeFlow"), a.get<bool>("edgeFlow"), a.get<double>("tension"), a.get<double>("loopSmooth"),
                                    std::clamp(a.get<int>("iterations"), 1, 100)};

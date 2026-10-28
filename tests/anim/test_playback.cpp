@@ -145,9 +145,9 @@ TEST_CASE("playbackOptions sets a custom speed multiplier")
     CHECK(playback().customSpeed == doctest::Approx(1.5));
     ops::execute("playbackOptions", {{"playbackSpeed", "custom"}});
     CHECK(playback().customSpeed == doctest::Approx(1.5));
-    CHECK_THROWS_AS(ops::execute("playbackOptions", {{"speedMultiplier", 0.0}}), CommandError);
-    CHECK_THROWS_AS(ops::execute("playbackOptions", {{"speedMultiplier", -2.0}}), CommandError);
-    CHECK(playback().customSpeed == doctest::Approx(1.5));
+    ops::execute("playbackOptions", {{"speedMultiplier", -2.0}});
+    CHECK(playback().customSpeed == doctest::Approx(0.01));
+    ops::execute("playbackOptions", {{"speedMultiplier", 1.5}});
     playback().fromJson({{"speedMultiplier", 4.0}});
     CHECK(playback().customSpeed == doctest::Approx(1.5));
     ops::execute("playbackOptions", {{"playbackSpeed", std::string(speedName(before.speed))}, {"speedMultiplier", before.customSpeed}});

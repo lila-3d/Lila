@@ -70,7 +70,7 @@ std::vector<FlagDef> sequenceFlags()
          "worldSpace, recenter, applyModifiers, normals, uvs, colors (the playback range without start and end)."},
         {"niagaraSystem", "ns", T::String, nullptr, "meshSequence: Niagara system whose mesh renderer gets the frames, in order, as its meshes."},
         {"niagaraEmitter", "ne", T::String, nullptr, "meshSequence: only this emitter of the system (default every emitter)."},
-        {"niagaraRenderer", "nr", T::Int, nullptr, "meshSequence: only the n-th mesh renderer of each emitter (default all)."},
+        {"niagaraRenderer", "nr", T::Int, nullptr, "meshSequence: only the n-th mesh renderer of each emitter (default all).", {}, {}, 0.0},
         {"vat", "va", T::Any, nullptr,
          "vertexAnimation: the exportVertexAnimation flags as a dict (format exr|png16|png8, mode auto|constant|soup, positions "
          "offset|absolute, normals, normalBits, restFrame, maxWidth) plus materialParent (an Unreal material to instance "
@@ -79,7 +79,7 @@ std::vector<FlagDef> sequenceFlags()
         {"splineMesh", "sm", T::String, nullptr, "spline: spline meshes along it, a Lila mesh mapped to Unreal or an asset path."},
         {"splineMeshAxis", "sma", T::String, nullptr, "spline: the spline mesh's forward axis, x, y or z (default x)."},
         {"landscape", "ls", T::String, nullptr, "spline, landscape: the landscape's label (default the first one)."},
-        {"width", "wd", T::Float, nullptr, "spline, landscape: half-width at radius 1, cm (default 200)."},
+        {"width", "wd", T::Float, nullptr, "spline, landscape: half-width at radius 1, cm (default 200).", {}, {}, 0.0},
         {"deformTerrain", "dt", T::Bool, nullptr, "spline, landscape: raise and lower the terrain along it (default on)."},
     };
 }
@@ -126,9 +126,9 @@ void registerCommands()
                "projects in the unreal prefs or on the default ports. Returns what the editor reported.",
         .flags = {
             {"project", "p", T::String, nullptr, "Project name or directory to pick among running editors."},
-            {"port", "pt", T::Int, nullptr, "Connect to this port directly."},
+            {"port", "pt", T::Int, nullptr, "Connect to this port directly.", {}, {}, 1.0, 65535.0},
             {"host", "h", T::String, "127.0.0.1", "Host; LilaLink only listens on localhost."},
-            {"timeout", "t", T::Int, 2000, "Connect timeout in milliseconds."},
+            {"timeout", "t", T::Int, 2000, "Connect timeout in milliseconds.", {}, {}, 0.0},
             {"disconnect", "d", T::Bool, false, "Drop the current connection instead."},
         },
         .undoable = false,

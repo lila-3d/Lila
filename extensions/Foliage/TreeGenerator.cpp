@@ -1223,7 +1223,7 @@ bool registerTypes(ext::Context& ctx)
         text(kAttrParts, "Parts built a step at a time that belong to this tree, as a json list of paths."),
         text(kAttrOwner, "The tree this part belongs to when it is not parented under it."),
         AttrDef{.name = kAttrLod, .type = PlugType::Int, .defaultValue = int64_t(-1), .flags = AttrInput | AttrStorable,
-                .doc = "Detail level of a leaf output built from several leaf meshes; -1 for none."},
+                .doc = "Detail level of a leaf output built from several leaf meshes; -1 for none.", .minValue = -1.0},
     };
     NodeType tree{.name = kTreeType,
                   .base = transform,

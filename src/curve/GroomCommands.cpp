@@ -145,6 +145,8 @@ std::vector<FlagDef> nodeFlags()
         if (!(d.flags & AttrInput) || (d.flags & AttrHidden))
             continue;
         FlagDef fd{d.name, "", T::Float, nullptr, d.doc};
+        fd.min = d.minValue;
+        fd.max = d.maxValue;
         switch (d.type)
         {
         case PlugType::Bool: fd.type = T::Bool; break;
@@ -373,16 +375,16 @@ void registerGroomCommands()
         .flags = {{"brush", "b", T::String, "comb", "The brush.", brushes},
                   {"dabs", "d", T::List, nullptr, "[{center, normal, radius, strength, delta, view}, ...] world space; radius in cm."},
                   {"falloff", "", T::String, "smooth", "Falloff: smooth, sphere, root, sharp, linear, constant, bell, or a soft select preset name."},
-                  {"strength", "s", T::Float, 0.5, "Brush strength, 0 to 1."},
+                  {"strength", "s", T::Float, 0.5, "Brush strength, 0 to 1.", {}, {}, 0.0, 1.0},
                   {"invert", "i", T::Bool, false, "The opposite: shrink, flatten, spread, thin out."},
                   {"keepLength", "", T::Bool, true, "Comb, smooth, puff and pinch keep segment lengths."},
                   {"frontOnly", "", T::Bool, true, "Leave points behind the surface under the brush alone."},
-                  {"addCount", "", T::Int, 5, "Add and density: curves planted per dab."},
-                  {"addLength", "", T::Float, 5.0, "Add: length of new curves with no neighbours to copy, cm."},
-                  {"addPoints", "", T::Int, 8, "Add: points per new curve."},
+                  {"addCount", "", T::Int, 5, "Add and density: curves planted per dab.", {}, {}, 1.0, 1000.0},
+                  {"addLength", "", T::Float, 5.0, "Add: length of new curves with no neighbours to copy, cm.", {}, {}, 0.0},
+                  {"addPoints", "", T::Int, 8, "Add: points per new curve.", {}, {}, 2.0, 256.0},
                   {"interpolate", "", T::Bool, true, "Add: new curves take the shape of their nearest neighbours."},
-                  {"minDistance", "", T::Float, 0.0, "Add and density: closest roots may be, cm (0: no limit for add, from density for density)."},
-                  {"density", "", T::Float, 1.0, "Density: target curves per square cm, times the density map."},
+                  {"minDistance", "", T::Float, 0.0, "Add and density: closest roots may be, cm (0: no limit for add, from density for density).", {}, {}, 0.0},
+                  {"density", "", T::Float, 1.0, "Density: target curves per square cm, times the density map.", {}, {}, 0.0},
                   {"densitySet", "", T::String, nullptr, "Vertex color set of the surface used as the density map."},
                   {"seed", "", T::Int, 0, "Random seed for add, delete and density."},
                   {"surface", "", T::String, nullptr, "Mesh the roots grow from; default the curve's groomSurface."},
@@ -490,11 +492,11 @@ void registerGroomCommands()
         .doc = "Grow guide curves out of a mesh along its normals, spread evenly by area (and a density map), as a new curve with the "
                "mesh as its groom surface. Returns the curve.",
         .positionalDoc = "mesh",
-        .flags = {{"count", "c", T::Int, 200, "How many curves."},
-                  {"length", "l", T::Float, 10.0, "Length, cm."},
-                  {"lengthJitter", "", T::Float, 0.0, "Lengths vary by up to this fraction (0 to 1)."},
-                  {"points", "p", T::Int, 8, "Points per curve."},
-                  {"minDistance", "", T::Float, 0.0, "Closest two roots may be, cm; 0 picks one from the area and count."},
+        .flags = {{"count", "c", T::Int, 200, "How many curves.", {}, {}, 1.0, 1000000.0},
+                  {"length", "l", T::Float, 10.0, "Length, cm.", {}, {}, 0.0},
+                  {"lengthJitter", "", T::Float, 0.0, "Lengths vary by up to this fraction (0 to 1).", {}, {}, 0.0, 1.0},
+                  {"points", "p", T::Int, 8, "Points per curve.", {}, {}, 2.0, 256.0},
+                  {"minDistance", "", T::Float, 0.0, "Closest two roots may be, cm; 0 picks one from the area and count.", {}, {}, 0.0},
                   {"densitySet", "", T::String, nullptr, "Vertex color set used as the density map (bright: dense, black: none)."},
                   {"seed", "", T::Int, 1, "Random seed."},
                   {"name", "n", T::String, nullptr, "Name of the new curve."}},

@@ -132,6 +132,10 @@ json socketJson(const SocketDecl& s, const GNode& n, const Group& grp, bool inpu
         auto it = n.values.find(s.id);
         j["value"] = it != n.values.end() ? *it : s.defaultValue;
         j["default"] = s.defaultValue;
+        if (s.min)
+            j["min"] = *s.min;
+        if (s.max)
+            j["max"] = *s.max;
         if (s.implicit != Implicit::None)
             j["implicit"] = s.implicit == Implicit::Position ? "position" : s.implicit == Implicit::Normal ? "normal" : s.implicit == Implicit::Index ? "index" : "id";
     }
@@ -183,6 +187,17 @@ void checkValue(const SocketDecl& s, const json& v, const char* cmd)
     }
     if (!ok)
         throw CommandError(std::string(cmd) + ": " + s.id + " takes a " + socketTypeName(s.type) + ", got " + v.dump());
+}
+
+/** v held inside lo and hi when it is a plain number; an Int input stays whole. */
+json clampNumber(json v, std::optional<double> lo, std::optional<double> hi, bool integer)
+{
+    if (!v.is_number() || (!lo && !hi))
+        return v;
+    double l = lo.value_or(-HUGE_VAL), h = hi.value_or(HUGE_VAL);
+    if (integer)
+        return int64_t(std::llround(std::clamp(v.get<double>(), std::ceil(l), std::floor(h))));
+    return std::clamp(v.get<double>(), l, h);
 }
 
 fs::path userLibrary() { return PrefStore::get().userDir() / "geometryNodes"; }
@@ -350,7 +365,7 @@ void registerCommands()
                     if (it == grp.inputs.end())
                         throw CommandError("gnSetValue: no exposed input '" + sid + "'");
                     checkValue({.id = sid, .type = it->type}, value, "gnSetValue");
-                    it->defaultValue = value;
+                    it->defaultValue = clampNumber(value, it->min, it->max, it->type == SocketType::Int);
                     return nullptr;
                 }
                 if (const PropDecl* p = d.prop(sid))
@@ -375,7 +390,7 @@ void registerCommands()
                 if (ii < 0)
                     throw CommandError("gnSetValue: " + nn + " has no input or property '" + sid + "'");
                 checkValue(s.inputs[ii], value, "gnSetValue");
-                n.values[sid] = value;
+                n.values[sid] = clampNumber(value, s.inputs[ii].min, s.inputs[ii].max, s.inputs[ii].type == SocketType::Int);
                 return nullptr;
             });
         },
@@ -407,6 +422,8 @@ void registerCommands()
                 {
                     auto it = n.values.find(sid);
                     grp.inputs.push_back({name, sd.type, it != n.values.end() ? *it : sd.defaultValue});
+                    grp.inputs.back().min = sd.min;
+                    grp.inputs.back().max = sd.max;
                 }
                 const GNode* gi = grp.firstOfType("GroupInput");
                 std::string giName;

@@ -1079,7 +1079,7 @@ void registerCommands()
             {"items", "it", T::List, nullptr, "Item ids for align, distribute and snapGrid."},
             {"align", "al", T::String, nullptr, "left, right, top, bottom, hcenter or vcenter.", {"left", "right", "top", "bottom", "hcenter", "vcenter"}},
             {"distribute", "di", T::String, nullptr, "horizontal or vertical.", {"horizontal", "vertical"}},
-            {"snapGrid", "sg", T::Float, nullptr, "Snap the items' positions and sizes to this grid."},
+            {"snapGrid", "sg", T::Float, nullptr, "Snap the items' positions and sizes to this grid.", {}, {}, 0.0},
         },
         .run = [](const Args& a) -> json {
             const char* cmd = "editPicker";

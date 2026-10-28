@@ -186,13 +186,13 @@ void registerCableType()
                       fAttr("slack", 0.1, "Extra length over the straight span, as a fraction of it (0.1 is 10% longer).", 0.0),
                       fAttr("sag", 20.0, "How far the cable dips below the straight span, cm, along gravity.", 0.0),
                       vAttr("gravity", D3(0, -1, 0), "Which way is down."),
-                      iAttr("count", 1, "Cables per span: above 1 makes a bundle.", 1),
+                      iAttr("count", 1, "Cables per span: above 1 makes a bundle.", 1, 256.0),
                       fAttr("spread", 2.0, "Bundle: how far each cable's ends stray from the anchors, cm.", 0.0),
                       fAttr("sagVariation", 0.15, "Bundle: how much each cable's slack or sag varies, as a fraction of it.", 0.0),
                       iAttr("seed", 1, "Bundle: the random variation's seed."),
                       bAttr("drape", false, "Let the cables settle onto the collider meshes where they would pass into them."),
                       fAttr("clearance", 0.5, "Drape: how far the centreline stays off surfaces (the cable's radius), cm.", 0.0),
-                      iAttr("iterations", 60, "Drape: settling steps.", 1),
+                      iAttr("iterations", 60, "Drape: settling steps.", 1, 1000.0),
                       iAttr("samples", 32, "Points along each span before fitting.", 4),
                       fAttr("tolerance", 0.05, "Fitting tolerance, cm.", 1e-4)})
         t.ownAttrs.push_back(std::move(a));
@@ -210,8 +210,8 @@ void registerCableCommands()
              {"closed", "c", T::Bool, false, "With points: a cable from the last point back to the first too."},
              {"colliders", "col", T::List, nullptr, "Meshes to drape over (default: the selected meshes), at most 4."},
              {"pipe", "", T::Bool, false, "Also build pipe geometry along the cables (the cable pipe preset, live)."},
-             {"pipeRadius", "pr", T::Float, 0.6, "Pipe radius, cm."},
-             {"pipeSides", "ps", T::Int, 6, "Pipe sides."},
+             {"pipeRadius", "pr", T::Float, 0.6, "Pipe radius, cm.", {}, {}, 0.0},
+             {"pipeSides", "ps", T::Int, 6, "Pipe sides.", {}, {}, 3.0},
              {"constructionHistory", "ch", T::Bool, true, "Keep the cable node so moving anchors or editing slack updates the cables."},
              {"name", "n", T::String, nullptr, "Cable curve name; made unique."}})
         flags.push_back(std::move(fd));

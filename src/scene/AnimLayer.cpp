@@ -1198,7 +1198,7 @@ void registerLayerTypes()
     base.doc = "Blends one animation layer (inputB) over everything below it (inputA) for one channel.";
     base.ownAttrs = {
         {.name = "weight", .shortName = "w", .type = PlugType::Float, .defaultValue = 1.0, .flags = stored | AttrKeyable,
-         .doc = "How much of inputB; driven by the layer, or keyable on a constraint blend."},
+         .doc = "How much of inputB; driven by the layer, or keyable on a constraint blend.", .minValue = 0.0, .maxValue = 1.0},
         {.name = "mode", .type = PlugType::Enum, .defaultValue = int64_t(0), .flags = stored, .enumNames = modes,
          .doc = "additive: A + B * weight. override: A blended toward B by weight."},
         {.name = "accumulation", .type = PlugType::Enum, .defaultValue = int64_t(0), .flags = stored, .enumNames = accs,
@@ -1239,7 +1239,7 @@ void registerLayerTypes()
     layer.doc = "An animation layer: keys on its members blend over the layers below, by weight.";
     layer.ownAttrs = {
         {.name = "weight", .shortName = "w", .type = PlugType::Float, .defaultValue = 1.0, .flags = stored | AttrKeyable,
-         .doc = "How much of the layer applies."},
+         .doc = "How much of the layer applies.", .minValue = 0.0, .maxValue = 1.0},
         {.name = "mute", .type = PlugType::Bool, .defaultValue = false, .flags = stored, .doc = "Turn the layer off."},
         {.name = "solo", .type = PlugType::Bool, .defaultValue = false, .flags = stored, .doc = "Mute every layer that isn't soloed."},
         {.name = "lock", .type = PlugType::Bool, .defaultValue = false, .flags = stored, .doc = "Refuse keys and membership changes."},
@@ -1397,7 +1397,7 @@ void registerLayerCommands()
         .name = "reorderAnimLayer",
         .doc = "Move a layer in the stack: index (0 is just above the base animation) or by (+1 up, -1 down). Returns its new index.",
         .positionalDoc = "layer",
-        .flags = {{"index", "i", T::Int, nullptr, "New position."}, {"by", "b", T::Int, nullptr, "Steps up (positive) or down."}},
+        .flags = {{"index", "i", T::Int, nullptr, "New position.", {}, {}, 0.0}, {"by", "b", T::Int, nullptr, "Steps up (positive) or down."}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             if (a.positional.size() != 1)
@@ -1429,7 +1429,7 @@ void registerLayerCommands()
         .doc = "Set a layer's weight, mute, solo, lock, mode or rotation accumulation. Returns its settings.",
         .positionalDoc = "layer",
         .flags = {
-            {"weight", "w", T::Float, nullptr, ""},
+            {"weight", "w", T::Float, nullptr, "", {}, {}, 0.0, 1.0},
             {"mute", "mu", T::Bool, nullptr, ""},
             {"solo", "so", T::Bool, nullptr, "Mutes every other layer that isn't soloed."},
             {"lock", "lk", T::Bool, nullptr, "No keys or membership changes."},

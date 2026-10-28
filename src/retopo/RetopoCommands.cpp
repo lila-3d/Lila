@@ -231,12 +231,12 @@ json polesJson(const std::vector<Pole>& poles, const Node& src)
 std::vector<FlagDef> remeshFlags()
 {
     using T = ArgType;
-    return {{"targetFaces", "", T::Int, 500, "Approximate face count."},
-            {"timeout", "", T::Float, 5.0, "Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits forever."},
-            {"targetEdgeLength", "", T::Float, 0.0, "Edge length, cm; overrides targetFaces when positive."},
-            {"adaptivity", "", T::Float, 0.25, "0 uniform, 1 much denser where curved; painted point 'density' multiplies."},
+    return {{"targetFaces", "", T::Int, 500, "Approximate face count.", {}, {}, 8.0},
+            {"timeout", "", T::Float, 5.0, "Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits forever.", {}, {}, 0.0},
+            {"targetEdgeLength", "", T::Float, 0.0, "Edge length, cm; overrides targetFaces when positive.", {}, {}, 0.0},
+            {"adaptivity", "", T::Float, 0.25, "0 uniform, 1 much denser where curved; painted point 'density' multiplies.", {}, {}, 0.0, 1.0},
             {"useHardEdges", "", T::Bool, true, "Follow edges marked hard."},
-            {"sharpAngle", "", T::Float, 40.0, "Also follow creases sharper than this, degrees; negative disables."},
+            {"sharpAngle", "", T::Float, 40.0, "Also follow creases sharper than this, degrees; negative disables.", {}, {}, {}, 180.0},
             {"symmetry", "", T::String, "off", "off, x, y or z: remesh half and mirror, exactly symmetric."},
             {"guides", "", T::List, nullptr, "Mesh nodes whose edges are guide curves."},
             {"guidePoints", "", T::List, nullptr, "Guide polylines as lists of world [x, y, z]."},
@@ -389,7 +389,7 @@ void registerCommands()
                "is hidden. Runs off the UI thread with a cancellable progress bar, and gives up after timeout= seconds with "
                "an error saying how far it got, changing nothing. Returns {name, metrics}.",
         .positionalDoc = "source",
-        .flags = flagsWith(remeshFlags(), {{"relaxIterations", "", T::Int, 6, "Tangential relax passes on the surface."},
+        .flags = flagsWith(remeshFlags(), {{"relaxIterations", "", T::Int, 6, "Tangential relax passes on the surface.", {}, {}, 0.0, 100.0},
                   {"transferUvs", "", T::Bool, true, "Copy UV sets from the source."},
                   {"transferNormals", "", T::Bool, false, "Copy the source's normals as custom normals."},
                   {"keepSource", "", T::Bool, true, "Keep the source mesh; false deletes it."},
@@ -547,7 +547,7 @@ void registerCommands()
         .doc = "Rebuild meshes as one closed, manifold quad surface from a voxel grid, whatever state they are in: closes holes, "
                "fuses intersecting and inner shells. For dirty scans and kitbashed blockouts; UVs are not kept.",
         .positionalDoc = "objects",
-        .flags = {{"resolution", "", T::Int, 128, "Voxels along the longest side of the bounds, 8 to 1024."},
+        .flags = {{"resolution", "", T::Int, 128, "Voxels along the longest side of the bounds, 8 to 1024.", {}, {}, 8.0, 1024.0},
                   {"project", "", T::Bool, true, "Pull the result onto the input surface where it lies close."}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
@@ -578,12 +578,12 @@ void registerCommands()
                "No face is allowed to fold over. Moves only the selected components when there is a component selection. "
                "Honours the mesh's symmetry.",
         .positionalDoc = "objects",
-        .flags = {{"iterations", "", T::Int, 10, "Smoothing passes, 1 to 1000."},
-                  {"strength", "", T::Float, 0.5, "Step toward the neighbour average per pass, 0 to 1."},
+        .flags = {{"iterations", "", T::Int, 10, "Smoothing passes, 1 to 1000.", {}, {}, 1.0, 1000.0},
+                  {"strength", "", T::Float, 0.5, "Step toward the neighbour average per pass, 0 to 1.", {}, {}, 0.0, 1.0},
                   {"target", "", T::String, nullptr, "Mesh to stay on; default is the mesh itself."},
                   {"project", "", T::Bool, true, "Keep points on the surface. Off is plain smoothing, which shrinks and rounds the shape."},
                   {"pinBoundary", "", T::Bool, true, "Keep border points fixed; off lets them slide along the border, keeping its outline."},
-                  {"sharpAngle", "", T::Float, 12.0, "Edges whose faces meet sharper than this are creases that keep their line, degrees; negative turns it off."},
+                  {"sharpAngle", "", T::Float, 12.0, "Edges whose faces meet sharper than this are creases that keep their line, degrees; negative turns it off.", {}, {}, {}, 180.0},
                   {"keepHardEdges", "", T::Bool, true, "Hard edges keep their line like creases do."},
                   {"pinCreases", "", T::Bool, false, "Keep points on creased edges fixed."},
                   {"pinHard", "", T::Bool, false, "Keep points on hard edges fixed."},
@@ -643,7 +643,7 @@ void registerCommands()
                "components when there is a component selection.",
         .positionalDoc = "objects",
         .flags = {{"target", "", T::String, nullptr, "Mesh to wrap onto."},
-                  {"iterations", "", T::Int, 3, "Relax passes after projecting."},
+                  {"iterations", "", T::Int, 3, "Relax passes after projecting.", {}, {}, 0.0, 1000.0},
                   {"method", "", T::String, "closest", "closest, normal or direction.", {"closest", "normal", "direction"}},
                   {"direction", "", T::Vec3, json::array({0.0, 0.0, -1.0}), "World direction for method='direction'."},
                   {"offset", "", T::Float, 0.0, "Distance kept off the target along its normal, cm; negative goes inside."},
@@ -707,7 +707,7 @@ void registerCommands()
         .flags = {{"mesh", "", T::String, nullptr, "Retopo mesh."},
                   {"points", "", T::List, nullptr, "3 or 4 world [x, y, z], in order around the face."},
                   {"faces", "", T::List, nullptr, "Several faces, each a list of 3 or 4 world [x, y, z]."},
-                  {"weld", "", T::Float, 0.01, "Reuse points closer than this, cm."},
+                  {"weld", "", T::Float, 0.01, "Reuse points closer than this, cm.", {}, {}, 0.0},
                   {"reference", "", T::String, nullptr, "Reference mesh, connected so Retopo Draw resumes on this pair later."},
                   {"create", "", T::Bool, false, "Create the mesh if it doesn't exist (taking the reference's symmetry)."}},
         .run = [](const Args& a) -> json {
@@ -840,7 +840,7 @@ void registerCommands()
         .flags = {{"mesh", "", T::String, nullptr, "Retopo mesh."},
                   {"points", "", T::List, json::array(), "Point ids."},
                   {"positions", "", T::List, json::array(), "World [x, y, z] per point."},
-                  {"weld", "", T::Float, 0.0, "Merge a moved point into another point closer than this, cm."}},
+                  {"weld", "", T::Float, 0.0, "Merge a moved point into another point closer than this, cm.", {}, {}, 0.0}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             Node& n = retopoDrawTarget(a, "retopoDrawMove", false);
@@ -899,8 +899,8 @@ void registerCommands()
         .name = "retopoDrawInsertLoop",
         .doc = "Retopo Draw: insert an edge loop across the ring through an edge (base mesh id), mirrored with symmetry.",
         .flags = {{"mesh", "", T::String, nullptr, "Retopo mesh."},
-                  {"edge", "", T::Int, nullptr, "An edge the loop crosses."},
-                  {"fraction", "", T::Float, 0.5, "Where along the ring edges, 0 to 1."}},
+                  {"edge", "", T::Int, nullptr, "An edge the loop crosses.", {}, {}, 0.0},
+                  {"fraction", "", T::Float, 0.5, "Where along the ring edges, 0 to 1.", {}, {}, 0.01, 0.99}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             Node& n = retopoDrawTarget(a, "retopoDrawInsertLoop", false);

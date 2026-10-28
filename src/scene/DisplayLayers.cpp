@@ -71,9 +71,9 @@ std::vector<AttrDef> layerAttrs()
         {.name = "useColor", .shortName = "uc", .type = PlugType::Bool, .defaultValue = false, .flags = kStored,
          .doc = "Tint the objects' wireframe with color."},
         {.name = "color", .shortName = "c", .type = PlugType::Vec3, .defaultValue = glm::dvec3(0.5), .flags = kStored,
-         .childNames = {"colorR", "colorG", "colorB"}, .childShort = {"cr", "cg", "cb"}, .doc = "Wireframe tint, linear RGB."},
+         .childNames = {"colorR", "colorG", "colorB"}, .childShort = {"cr", "cg", "cb"}, .doc = "Wireframe tint, linear RGB.", .minValue = 0.0, .maxValue = 1.0},
         {.name = "displayOrder", .shortName = "do", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = kStored,
-         .doc = "Row in the Display Layers panel, lowest first."},
+         .doc = "Row in the Display Layers panel, lowest first.", .minValue = 0.0},
         {.name = "drawInfo", .shortName = "di", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = AttrOutput | AttrHidden,
          .doc = "Connected to each member's displayLayer."},
     };
@@ -381,7 +381,7 @@ void registerCommands()
         .name = "reorderDisplayLayer",
         .doc = "Move a display layer to a row of the Display Layers panel (0 is the top).",
         .positionalDoc = "layer",
-        .flags = {{"index", "i", T::Int, 0, "Row it moves to."}},
+        .flags = {{"index", "i", T::Int, 0, "Row it moves to.", {}, {}, 0.0}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             if (a.positional.empty() || !a.positional[0].is_string())

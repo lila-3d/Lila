@@ -342,8 +342,8 @@ void registerCommands()
         .flags = {
             {"name", "n", T::String, nullptr, "Group name, and the base of the levels' names. Defaults to LOD0's name without any _LODn."},
             {"screenSizes", "ss", T::Any, nullptr, "Unreal LOD screen size per level, like [1, 0.5, 0.25]; [] uses Unreal's automatic sizes."},
-            {"generate", "g", T::Int, 0, "Reduced copies of LOD0 to add as further levels."},
-            {"ratio", "r", T::Float, 0.5, "Triangles each generated level keeps of the one before, 0 to 1."},
+            {"generate", "g", T::Int, 0, "Reduced copies of LOD0 to add as further levels.", {}, {}, 0.0, double(kMaxLevels - 1)},
+            {"ratio", "r", T::Float, 0.5, "Triangles each generated level keeps of the one before, 0 to 1.", {}, {}, 0.0, 1.0},
             {"autoName", "an", T::Bool, nullptr, "Rename the levels <name>_LOD0, <name>_LOD1, ... On by default when creating."},
         },
         .run = [](const Args& a) -> json {

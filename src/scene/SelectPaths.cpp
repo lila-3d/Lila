@@ -107,7 +107,7 @@ void registerPathCommands()
     };
 
     std::vector<FlagDef> loopFlags = {
-        {"edge", "", T::Int, nullptr, "The edge the loop runs through."},
+        {"edge", "", T::Int, nullptr, "The edge the loop runs through.", {}, {}, 0.0},
         {"ring", "", T::Bool, false, "The edge ring instead of the loop."},
         {"faces", "", T::Bool, false, "The faces of the edge's ring: the face loop crossing the edge."},
     };
@@ -137,7 +137,7 @@ void registerPathCommands()
 
     std::vector<FlagDef> connectedFlags = {
         {"kind", "", T::String, "face", "vertex | edge | face", {"vertex", "edge", "face"}},
-        {"id", "", T::Int, nullptr, "A component of the piece to select."},
+        {"id", "", T::Int, nullptr, "A component of the piece to select.", {}, {}, 0.0},
     };
     connectedFlags.insert(connectedFlags.end(), std::begin(opFlags), std::end(opFlags));
     ops::registerCommand({
@@ -201,8 +201,8 @@ void registerPathCommands()
         .positionalDoc = "mesh",
         .flags = {
             {"kind", "", T::String, "edge", "vertex | edge | face", {"vertex", "edge", "face"}},
-            {"from", "", T::Int, nullptr, "Id the path starts at."},
-            {"to", "", T::Int, nullptr, "Id the path ends at."},
+            {"from", "", T::Int, nullptr, "Id the path starts at.", {}, {}, 0.0},
+            {"to", "", T::Int, nullptr, "Id the path ends at.", {}, {}, 0.0},
             {"replace", "", T::Bool, false, "Replace the selection of that kind."},
             {"deselect", "", T::Bool, false, "Remove the path from the selection."},
             {"symmetric", "", T::Bool, false, "Also the mirror images, when the mesh's symmetry is on."},

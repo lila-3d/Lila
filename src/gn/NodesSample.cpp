@@ -133,7 +133,7 @@ void raycast()
                 SocketType t = dataTypeOf(findDecl("Raycast")->propValue(n, "dataType"));
                 json def = t == T::Vector ? vec(0, 0, 0) : json(0);
                 return Sockets{{geoIn("targetGeometry"), fin("attribute", t, def), fin("sourcePosition", T::Vector, nullptr, Implicit::Position),
-                                fin("rayDirection", T::Vector, vec(0, -1, 0)), fin("rayLength", T::Float, 100000.0)},
+                                fin("rayDirection", T::Vector, vec(0, -1, 0)), bounded(fin("rayLength", T::Float, 100000.0), 0.0)},
                                {fout("isHit", T::Bool), fout("hitPosition", T::Vector), fout("hitNormal", T::Vector), fout("hitDistance", T::Float),
                                 fout("attribute", t)}};
             },

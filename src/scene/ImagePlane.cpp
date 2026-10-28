@@ -24,9 +24,10 @@ const std::vector<std::string> kDisplayColorNames = {"color", "grayscale"};
 const std::vector<std::string> kPlacementNames = {"behind", "inScene", "inFront"};
 const char* const kViews[] = {"persp", "top", "bottom", "front", "back", "left", "right"};
 
-AttrDef floatAttr(std::string name, double def, std::string doc)
+AttrDef floatAttr(std::string name, double def, std::string doc, std::optional<double> lo = {}, std::optional<double> hi = {})
 {
-    return {.name = std::move(name), .type = PlugType::Float, .defaultValue = def, .flags = kStored | AttrKeyable, .doc = std::move(doc)};
+    return {.name = std::move(name), .type = PlugType::Float, .defaultValue = def, .flags = kStored | AttrKeyable, .doc = std::move(doc),
+            .minValue = lo, .maxValue = hi};
 }
 
 AttrDef boolAttr(std::string name, bool def, std::string doc)
@@ -57,17 +58,17 @@ std::vector<AttrDef> imagePlaneAttrs()
     at(ImagePlane::kFit) = enumAttr("fit", kFitNames, 1,
                                     "How the image fills its frame (the film gate on a perspective camera, else width x height): fill crops, "
                                     "best fits inside, horizontal and vertical match one side, toSize stretches.");
-    at(ImagePlane::kWidth) = floatAttr("width", 100.0, "Frame width, cm.");
-    at(ImagePlane::kHeight) = floatAttr("height", 100.0, "Frame height, cm. Ignored while maintainRatio is on.");
+    at(ImagePlane::kWidth) = floatAttr("width", 100.0, "Frame width, cm.", 0.0);
+    at(ImagePlane::kHeight) = floatAttr("height", 100.0, "Frame height, cm. Ignored while maintainRatio is on.", 0.0);
     at(ImagePlane::kMaintainRatio) = boolAttr("maintainRatio", true, "Height follows the width at the image's aspect.");
     at(ImagePlane::kOffsetX) = floatAttr("offsetX", 0.0, "Moves the image right within its plane, cm.");
     at(ImagePlane::kOffsetY) = floatAttr("offsetY", 0.0, "Moves the image up within its plane, cm.");
     at(ImagePlane::kDepth) = floatAttr("depth", 1000.0,
-                                       "Attached planes: distance in front of a perspective eye, or behind the origin along an orthographic view, cm.");
+                                       "Attached planes: distance in front of a perspective eye, or behind the origin along an orthographic view, cm.", 0.0);
     at(ImagePlane::kRotation) = floatAttr("rotation", 0.0, "Turns the image around the plane's normal, degrees.");
-    at(ImagePlane::kAlphaGain) = floatAttr("alphaGain", 1.0, "Opacity, 0 to 1, times the image's own alpha.");
-    at(ImagePlane::kBrightness) = floatAttr("brightness", 0.0, "Added to the displayed color, -1 to 1.");
-    at(ImagePlane::kContrast) = floatAttr("contrast", 1.0, "Scales the displayed color around mid gray; 1 leaves it alone.");
+    at(ImagePlane::kAlphaGain) = floatAttr("alphaGain", 1.0, "Opacity, 0 to 1, times the image's own alpha.", 0.0, 1.0);
+    at(ImagePlane::kBrightness) = floatAttr("brightness", 0.0, "Added to the displayed color, -1 to 1.", -1.0, 1.0);
+    at(ImagePlane::kContrast) = floatAttr("contrast", 1.0, "Scales the displayed color around mid gray; 1 leaves it alone.", 0.0);
     at(ImagePlane::kDisplayColor) = enumAttr("displayColor", kDisplayColorNames, 0, "Show the image in color or as grayscale.");
     at(ImagePlane::kPlacement) =
         enumAttr("placement", kPlacementNames, 0, "Draw behind all geometry, depth tested in the scene, or in front of everything.");
@@ -310,16 +311,16 @@ void registerImagePlaneCommands()
         {"useFrameExtension", "ufe", T::Bool, nullptr, "Image sequence following the time slider."},
         {"frameOffset", "fo", T::Int, nullptr, "Added to the current frame for the sequence file."},
         {"fit", "fi", T::String, nullptr, "How the image fills its frame.", kFitNames},
-        {"width", "w", T::Float, nullptr, "Frame width, cm."},
-        {"height", "h", T::Float, nullptr, "Frame height, cm (with maintainRatio off)."},
+        {"width", "w", T::Float, nullptr, "Frame width, cm.", {}, {}, 0.0},
+        {"height", "h", T::Float, nullptr, "Frame height, cm (with maintainRatio off).", {}, {}, 0.0},
         {"maintainRatio", "mr", T::Bool, nullptr, "Height follows the image's aspect."},
         {"offsetX", "ox", T::Float, nullptr, "Shift right within the plane, cm."},
         {"offsetY", "oy", T::Float, nullptr, "Shift up within the plane, cm."},
-        {"depth", "d", T::Float, nullptr, "Distance from a perspective eye, or behind the origin along an orthographic view, cm."},
+        {"depth", "d", T::Float, nullptr, "Distance from a perspective eye, or behind the origin along an orthographic view, cm.", {}, {}, 0.0},
         {"rotation", "ro", T::Float, nullptr, "Degrees around the plane's normal."},
-        {"alphaGain", "ag", T::Float, nullptr, "Opacity, 0 to 1."},
-        {"brightness", "br", T::Float, nullptr, "Added to the displayed color."},
-        {"contrast", "ct", T::Float, nullptr, "Scales the displayed color around mid gray."},
+        {"alphaGain", "ag", T::Float, nullptr, "Opacity, 0 to 1.", {}, {}, 0.0, 1.0},
+        {"brightness", "br", T::Float, nullptr, "Added to the displayed color.", {}, {}, -1.0, 1.0},
+        {"contrast", "ct", T::Float, nullptr, "Scales the displayed color around mid gray.", {}, {}, 0.0},
         {"displayColor", "dc", T::String, nullptr, "color or grayscale.", kDisplayColorNames},
         {"displayMode", "dm", T::String, nullptr, "lookingThrough or allViews.", kDisplayModeNames},
         {"placement", "pl", T::String, nullptr, "behind, inScene or inFront of the geometry.", kPlacementNames},

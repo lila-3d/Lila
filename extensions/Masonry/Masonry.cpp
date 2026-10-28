@@ -26,6 +26,14 @@ gn::SocketDecl in(std::string id, T t, gn::json def, std::string doc)
     return {.id = std::move(id), .type = t, .defaultValue = std::move(def), .doc = std::move(doc)};
 }
 
+gn::SocketDecl in(std::string id, T t, gn::json def, std::string doc, std::optional<double> lo, std::optional<double> hi = std::nullopt)
+{
+    gn::SocketDecl s = in(std::move(id), t, std::move(def), std::move(doc));
+    s.min = lo;
+    s.max = hi;
+    return s;
+}
+
 gn::SocketDecl geoSocket(std::string id, std::string doc) { return {.id = std::move(id), .type = T::Geometry, .doc = std::move(doc)}; }
 
 void wallExec(ExecContext& c)
@@ -71,20 +79,20 @@ gn::NodeDecl wallDecl()
                "4 filler), face (0 outer, 1 inner, 2 through), random, variant and size. Lengths are cm.",
         .sockets = {.inputs = {geoSocket("footprint", "Lines the wall stands on: curves, or a mesh's loose edges. Y is up."),
                                in("bond", T::String, "running", "How stones are arranged: " + bonds + "."),
-                               in("height", T::Float, w.height, "Wall height."),
-                               in("thickness", T::Float, w.thickness, "Wall thickness. Under 1.5 stone depths the wall is one stone thick."),
-                               in("stoneLength", T::Float, u.length, "Stone length along the face."),
-                               in("stoneHeight", T::Float, u.height, "Stone height; courses are fitted to the wall height."),
-                               in("stoneDepth", T::Float, u.depth, "Stone depth into the wall, and a header's width on the face."),
-                               in("joint", T::Float, u.joint, "Mortar joint."),
-                               in("recess", T::Float, w.recess, "How far the mortar sits behind the stone faces."),
-                               in("bevel", T::Float, o.bevel, "Stone edge chamfer."),
-                               in("wear", T::Float, o.wear, "0 to 1: how knocked about stone corners are."),
-                               in("jitter", T::Float, w.jitter, "0 to 1: how far stones wander and tilt inside their joints."),
-                               in("protrude", T::Float, w.protrude, "Stones pushed out of the face by up to this."),
-                               in("cornerAngle", T::Float, w.cornerAngle, "Turns sharper than this, degrees, are corners; gentler ones curve."),
-                               in("variants", T::Int, o.variants, "How many differently worn versions of each stone size."),
-                               in("detail", T::Int, 0, "0 worn, 1 clean chamfer, 2 plain boxes (fast preview)."),
+                               in("height", T::Float, w.height, "Wall height.", 0.0),
+                               in("thickness", T::Float, w.thickness, "Wall thickness. Under 1.5 stone depths the wall is one stone thick.", 1.0),
+                               in("stoneLength", T::Float, u.length, "Stone length along the face.", 1.0),
+                               in("stoneHeight", T::Float, u.height, "Stone height; courses are fitted to the wall height.", 0.5),
+                               in("stoneDepth", T::Float, u.depth, "Stone depth into the wall, and a header's width on the face.", 0.5),
+                               in("joint", T::Float, u.joint, "Mortar joint.", 0.0),
+                               in("recess", T::Float, w.recess, "How far the mortar sits behind the stone faces.", 0.0),
+                               in("bevel", T::Float, o.bevel, "Stone edge chamfer.", 0.0),
+                               in("wear", T::Float, o.wear, "0 to 1: how knocked about stone corners are.", 0.0, 1.0),
+                               in("jitter", T::Float, w.jitter, "0 to 1: how far stones wander and tilt inside their joints.", 0.0, 1.0),
+                               in("protrude", T::Float, w.protrude, "Stones pushed out of the face by up to this.", 0.0),
+                               in("cornerAngle", T::Float, w.cornerAngle, "Turns sharper than this, degrees, are corners; gentler ones curve.", 1.0, 179.0),
+                               in("variants", T::Int, o.variants, "How many differently worn versions of each stone size.", 1, 64),
+                               in("detail", T::Int, 0, "0 worn, 1 clean chamfer, 2 plain boxes (fast preview).", 0, 2),
                                in("seed", T::Int, w.seed, "Another seed gives other wander, wear and cut positions.")},
                     .outputs = {geoSocket("geometry", "Stones and core together."), geoSocket("stones", "The stones, as instances."),
                                 geoSocket("core", "The mortar core, a mesh.")}},

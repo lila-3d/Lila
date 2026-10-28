@@ -8,6 +8,7 @@
 
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -39,6 +40,8 @@ struct SocketDecl
     bool multi = false;
     Implicit implicit = Implicit::None;
     std::string doc;
+    /** Bounds of an unlinked Int or Float input's value; editors and gnSetValue hold it inside them. */
+    std::optional<double> min, max;
 };
 
 /** A non-linkable choice on a node, such as the Math operation. Free text when options is empty. */

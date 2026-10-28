@@ -26,24 +26,25 @@ namespace lila::scene
 {
 namespace
 {
-AttrDef floatAttr(std::string name, double def, std::string doc)
+AttrDef floatAttr(std::string name, double def, std::string doc, std::optional<double> lo = {}, std::optional<double> hi = {})
 {
     return {.name = std::move(name), .type = PlugType::Float, .defaultValue = def, .flags = AttrInput | AttrStorable | AttrKeyable,
-            .doc = std::move(doc)};
+            .doc = std::move(doc), .minValue = lo, .maxValue = hi};
 }
 
 /** A size whose default for new primitives (sized to fit a 10 cm cube) differs from what scene files leaving it out mean. */
 AttrDef sizeAttr(std::string name, double def, double fileDefault, std::string doc)
 {
-    AttrDef a = floatAttr(std::move(name), def, std::move(doc));
+    AttrDef a = floatAttr(std::move(name), def, std::move(doc), 0.0);
     a.fileDefault = fileDefault;
     return a;
 }
 
-AttrDef intAttr(std::string name, int64_t def, std::string doc)
+/** lo matches the least the generator reads it as. */
+AttrDef intAttr(std::string name, int64_t def, std::string doc, double lo = 1.0)
 {
     return {.name = std::move(name), .type = PlugType::Int, .defaultValue = def, .flags = AttrInput | AttrStorable | AttrKeyable,
-            .doc = std::move(doc)};
+            .doc = std::move(doc), .minValue = lo};
 }
 
 AttrDef boolAttr(std::string name, bool def, std::string doc)
@@ -58,12 +59,12 @@ bool b(const Node& n, const char* attr) { return n.as<bool>(n.type().attrIndex(a
 
 AttrDef heightFraction()
 {
-    return floatAttr("fraction", 1.0, "Portion of the height kept, from the top: 1 is whole, 0.5 a dome open at the bottom.");
+    return floatAttr("fraction", 1.0, "Portion of the height kept, from the top: 1 is whole, 0.5 a dome open at the bottom.", 0.01, 1.0);
 }
 
 AttrDef sweepFraction()
 {
-    return floatAttr("fraction", 1.0, "Portion of a full turn swept around the up axis: 1 is whole, 0.5 half.");
+    return floatAttr("fraction", 1.0, "Portion of a full turn swept around the up axis: 1 is whole, 0.5 half.", 0.01, 1.0);
 }
 
 AttrDef cutCaps() { return boolAttr("cutCaps", true, "Close the flat ends a partial sweep leaves."); }
@@ -144,8 +145,8 @@ std::vector<Primitive> primitives()
                                    i(n, "subdivisionsZ"), b(n, "baseAtOrigin")});
          }},
         {"polySphere", "Sphere",
-         {sizeAttr("radius", 5, 50, "cm."), intAttr("subdivisionsAxis", 20, "Segments around."),
-          intAttr("subdivisionsHeight", 20, "Segments pole to pole."), boolAttr("baseAtOrigin", false, "Sit on the ground."),
+         {sizeAttr("radius", 5, 50, "cm."), intAttr("subdivisionsAxis", 20, "Segments around.", 3.0),
+          intAttr("subdivisionsHeight", 20, "Segments pole to pole.", 2.0), boolAttr("baseAtOrigin", false, "Sit on the ground."),
           heightFraction()},
          [](const Node& n) {
              return geo::makeSphere(
@@ -153,9 +154,9 @@ std::vector<Primitive> primitives()
          },
          true},
         {"polyCylinder", "Cylinder",
-         {sizeAttr("radius", 5, 50, "cm."), sizeAttr("height", 10, 100, "cm."), intAttr("subdivisionsAxis", 20, "Segments around."),
+         {sizeAttr("radius", 5, 50, "cm."), sizeAttr("height", 10, 100, "cm."), intAttr("subdivisionsAxis", 20, "Segments around.", 3.0),
           intAttr("subdivisionsHeight", 1, "Segments up."),
-          intAttr("subdivisionsCaps", 0, "Rings of quads around each cap's fill; 0 and 1 both leave just the fill."), capTypeAttr(),
+          intAttr("subdivisionsCaps", 0, "Rings of quads around each cap's fill; 0 and 1 both leave just the fill.", 0.0), capTypeAttr(),
           boolAttr("caps", true, "Close the ends; off leaves them open whatever capType says."), boolAttr("baseAtOrigin", false, "Sit on the ground."),
           sweepFraction(), cutCaps()},
          [](const Node& n) {
@@ -164,19 +165,19 @@ std::vector<Primitive> primitives()
          }},
         {"polyCapsule", "Capsule",
          {sizeAttr("radius", 2.5, 50, "cm."), sizeAttr("height", 10, 200, "End to end, caps included, cm."),
-          intAttr("subdivisionsAxis", 20, "Segments around."), intAttr("subdivisionsHeight", 1, "Segments along the straight part."),
+          intAttr("subdivisionsAxis", 20, "Segments around.", 3.0), intAttr("subdivisionsHeight", 1, "Segments along the straight part."),
           intAttr("subdivisionsCaps", 6, "Rings on each rounded end."), boolAttr("baseAtOrigin", false, "Sit on the ground.")},
          [](const Node& n) {
              return geo::makeCapsule({f(n, "radius"), f(n, "height"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsHeight"),
                                       i(n, "subdivisionsCaps"), b(n, "baseAtOrigin")});
          }},
         {"polyCone", "Cone",
-         {sizeAttr("radius", 5, 50, "cm."), sizeAttr("height", 10, 100, "cm."), intAttr("subdivisionsAxis", 20, "Segments around."),
+         {sizeAttr("radius", 5, 50, "cm."), sizeAttr("height", 10, 100, "cm."), intAttr("subdivisionsAxis", 20, "Segments around.", 3.0),
           intAttr("subdivisionsHeight", 1, "Segments up."),
-          intAttr("subdivisionsCap", 0, "Rings of quads around the base's fill; 0 and 1 both leave just the fill."), capTypeAttr(),
+          intAttr("subdivisionsCap", 0, "Rings of quads around the base's fill; 0 and 1 both leave just the fill.", 0.0), capTypeAttr(),
           boolAttr("baseAtOrigin", false, "Sit on the ground."), sweepFraction(), cutCaps(),
           boolAttr("capTip", false, "Cut the point off at tipRadius and fill it as capType, so quads leave no triangles at the tip."),
-          floatAttr("tipRadius", 0.05, "Radius of the capped tip, cm; small keeps it looking pointed.")},
+          floatAttr("tipRadius", 0.05, "Radius of the capped tip, cm; small keeps it looking pointed.", 0.0)},
          [](const Node& n) {
              return geo::makeCone({f(n, "radius"), f(n, "height"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsHeight"),
                                    i(n, "subdivisionsCap", 0), b(n, "baseAtOrigin"), frac(n), b(n, "cutCaps"), capFill(n), b(n, "capTip"),
@@ -188,22 +189,22 @@ std::vector<Primitive> primitives()
          [](const Node& n) { return geo::makePlane({f(n, "width"), f(n, "depth"), i(n, "subdivisionsX"), i(n, "subdivisionsZ")}); }},
         {"polyTorus", "Torus",
          {sizeAttr("radius", 3.5, 50, "Ring radius, cm."), sizeAttr("sectionRadius", 1.5, 20, "Tube radius, cm."),
-          intAttr("subdivisionsAxis", 20, "Segments around the ring."), intAttr("subdivisionsHeight", 20, "Segments around the tube."),
+          intAttr("subdivisionsAxis", 20, "Segments around the ring.", 3.0), intAttr("subdivisionsHeight", 20, "Segments around the tube.", 3.0),
           sweepFraction(), cutCaps()},
          [](const Node& n) {
              return geo::makeTorus({f(n, "radius"), f(n, "sectionRadius"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsHeight", 3), frac(n),
                                     b(n, "cutCaps")});
          }},
         {"polyDisc", "Disc",
-         {sizeAttr("radius", 5, 50, "cm."), intAttr("subdivisionsAxis", 20, "Segments around."),
-          intAttr("subdivisionsRings", 1, "Rings; 0 is one n-gon."), sweepFraction(), discCapTypeAttr()},
+         {sizeAttr("radius", 5, 50, "cm."), intAttr("subdivisionsAxis", 20, "Segments around.", 3.0),
+          intAttr("subdivisionsRings", 1, "Rings; 0 is one n-gon.", 0.0), sweepFraction(), discCapTypeAttr()},
          [](const Node& n) {
              return geo::makeDisc({f(n, "radius"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsRings", 0), frac(n), capFill(n)});
          }},
         {"polyPipe", "Pipe",
          {sizeAttr("radius", 5, 50, "Outer radius, cm."), sizeAttr("thickness", 1, 10, "Wall thickness, cm."),
           sizeAttr("height", 20, 100, "cm."),
-          intAttr("subdivisionsAxis", 20, "Segments around."), intAttr("subdivisionsHeight", 1, "Segments up."),
+          intAttr("subdivisionsAxis", 20, "Segments around.", 3.0), intAttr("subdivisionsHeight", 1, "Segments up."),
           boolAttr("baseAtOrigin", false, "Sit on the ground."), sweepFraction(), cutCaps()},
          [](const Node& n) {
              return geo::makePipe({f(n, "radius"), f(n, "thickness"), f(n, "height"), i(n, "subdivisionsAxis", 3),
@@ -275,7 +276,7 @@ NodeType MeshNode::makeType(const NodeType& base)
          .enumNames = {"off", "x", "y", "z", "radial"},
          .doc = "Mirror plane (object space) every component edit is applied across, or radial: every edit repeated round radialAxis."},
         {.name = "smoothPreview", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = AttrInput | AttrStorable,
-         .doc = "Display-only Catmull-Clark levels (the 3 key); exports stay unsmoothed."},
+         .doc = "Display-only Catmull-Clark levels (the 3 key); exports stay unsmoothed.", .minValue = 0.0, .maxValue = 3.0},
         {.name = "retopoDrawReference", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden,
          .doc = "Retopo Draw's reference surface: connected from its outMesh when this mesh is being drawn over another.",
          .fileAlias = "quadDrawReference"},
@@ -498,7 +499,8 @@ void registerMeshCommands()
             if (a.type == PlugType::Enum)
                 flags.push_back({a.name, "", T::String, a.enumNames[std::get<int64_t>(a.defaultValue)], a.doc, a.enumNames});
             else
-                flags.push_back({a.name, "", a.type == PlugType::Bool ? T::Bool : a.type == PlugType::Int ? T::Int : T::Float, toJson(a.defaultValue), a.doc});
+                flags.push_back({a.name, "", a.type == PlugType::Bool ? T::Bool : a.type == PlugType::Int ? T::Int : T::Float, toJson(a.defaultValue), a.doc,
+                                 {}, {}, a.minValue, a.maxValue});
         flags.push_back({"upAxis", "", T::String, nullptr, "Direction the primitive's up points: x, y, z, -x, -y or -z; the scene up axis when left out.",
                          kUpAxes});
         std::string type = p.type, display = p.display;
@@ -553,7 +555,7 @@ void registerMeshCommands()
         .name = "smoothPreview",
         .doc = "Display meshes subdivided without changing them (the 1/2/3 keys). level 0 is off.",
         .positionalDoc = "objects",
-        .flags = {{"level", "", T::Int, 2, "Subdivision levels to display (0 to 3)."}},
+        .flags = {{"level", "", T::Int, 2, "Subdivision levels to display (0 to 3).", {}, {}, 0.0, 3.0}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             int64_t level = std::clamp<int64_t>(a.get<int>("level", 2), 0, 3);

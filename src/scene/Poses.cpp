@@ -1033,7 +1033,7 @@ void registerCommands()
             {"character", "ch", T::String, nullptr, "The library group; defaults to the selection's character."},
             {"tier", "ti", T::String, nullptr, "Only look in this tier.", tierChoices},
             {"nodes", "n", T::List, nullptr, "Nodes picking the character instead of the selection."},
-            {"weight", "w", T::Float, 1.0, "0 keeps the current pose, 1 applies the stored one."},
+            {"weight", "w", T::Float, 1.0, "0 keeps the current pose, 1 applies the stored one.", {}, {}, 0.0, 1.0},
             {"mirror", "m", T::Bool, false, "Apply to the opposite side (arm_l values onto arm_r)."},
             {"mirrorAxis", "ma", T::String, "x", "Axis the mirror plane faces.", {"x", "y", "z"}},
             {"channels", "c", T::List, nullptr, "Only these channels: translate, rotate, scale or attr names."},

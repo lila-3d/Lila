@@ -21,15 +21,16 @@ namespace
 {
 using namespace material;
 
-AttrDef floatAttr(std::string name, double def, std::string doc)
+AttrDef floatAttr(std::string name, double def, std::string doc, std::optional<double> lo = {}, std::optional<double> hi = {})
 {
     return {.name = std::move(name), .type = PlugType::Float, .defaultValue = def, .flags = AttrInput | AttrStorable | AttrKeyable,
-            .doc = std::move(doc)};
+            .doc = std::move(doc), .minValue = lo, .maxValue = hi};
 }
 
 AttrDef colorAttr(std::string name, glm::dvec3 def, std::string doc)
 {
-    AttrDef a{.name = name, .type = PlugType::Vec3, .defaultValue = def, .flags = AttrInput | AttrStorable | AttrKeyable, .doc = std::move(doc)};
+    AttrDef a{.name = name, .type = PlugType::Vec3, .defaultValue = def, .flags = AttrInput | AttrStorable | AttrKeyable, .doc = std::move(doc),
+              .minValue = 0.0};
     a.childNames = {name + "R", name + "G", name + "B"};
     return a;
 }
@@ -58,42 +59,42 @@ void stylisedAttrs(std::vector<AttrDef>& a)
                                 "Lighting model: defaultLit (Unreal's default lit), painterly (brush strokes and a colour palette), toon "
                                 "(stepped ramp with tinted light and shadow) or foliage (soft gradient shading, lit through).");
 
-    a[kPainterlyStrength] = floatAttr("painterlyStrength", 1.0, "Painterly: scales the whole effect; 0 shades exactly like defaultLit.");
-    a[kStrokeNormal] = floatAttr("strokeNormal", 0.6, "Painterly: how far the stroke sheet bends the shading normal; 0 is the plain surface.");
-    a[kStrokeScale] = floatAttr("strokeScale", 20.0, "Painterly: size of one stroke sheet tile, cm (UV mode: tiles per UV unit is 100 / this).");
-    a[kStrokeLayerRatio] = floatAttr("strokeLayerRatio", 2.7, "Painterly: the second, finer stroke layer is this many times smaller.");
+    a[kPainterlyStrength] = floatAttr("painterlyStrength", 1.0, "Painterly: scales the whole effect; 0 shades exactly like defaultLit.", 0.0);
+    a[kStrokeNormal] = floatAttr("strokeNormal", 0.6, "Painterly: how far the stroke sheet bends the shading normal; 0 is the plain surface.", 0.0, 1.0);
+    a[kStrokeScale] = floatAttr("strokeScale", 20.0, "Painterly: size of one stroke sheet tile, cm (UV mode: tiles per UV unit is 100 / this).", 1e-3);
+    a[kStrokeLayerRatio] = floatAttr("strokeLayerRatio", 2.7, "Painterly: the second, finer stroke layer is this many times smaller.", 1e-3);
     a[kStrokeMapping] = enumAttr("strokeMapping", {"object", "world", "screen", "uv"},
                                  "Painterly: project strokes triplanar in object or world space, at a constant size on screen, or along the UVs.");
     a[kStrokeMap] = pathAttr("strokeMap", "Painterly: tileable stroke sheet (RG normal tilt, B stroke shade, A per-stroke random). Empty uses the "
                                           "built-in sheet; a built-in's name (strokes_soft, strokes_bristle, strokes_dabs) picks another.");
     a[kPaletteCount] = {.name = "paletteCount", .type = PlugType::Int, .defaultValue = int64_t(3), .flags = AttrInput | AttrStorable,
-                        .doc = "Painterly: colours in the palette, 2 to 4: base and shadow, then light, then accent."};
+                        .doc = "Painterly: colours in the palette, 2 to 4: base and shadow, then light, then accent.", .minValue = 2.0, .maxValue = 4.0};
     a[kPaletteShadow] = colorAttr("paletteShadow", glm::dvec3(0.10, 0.12, 0.25), "Painterly: linear colour strokes take on in shadow.");
     a[kPaletteLight] = colorAttr("paletteLight", glm::dvec3(0.95, 0.80, 0.55), "Painterly: linear colour strokes take on in light; tints the specular.");
     a[kPaletteAccent] = colorAttr("paletteAccent", glm::dvec3(0.60, 0.30, 0.35), "Painterly: linear colour a few scattered strokes pick up.");
-    a[kPaletteContrast] = floatAttr("paletteContrast", 0.5, "Painterly: 0 blends the palette smoothly across the light, 1 steps it.");
-    a[kPaletteSpread] = floatAttr("paletteSpread", 0.35, "Painterly: how far individual strokes push the palette boundary around.");
-    a[kSpecularTint] = floatAttr("specularTint", 0.5, "Painterly: tints the specular toward paletteLight.");
+    a[kPaletteContrast] = floatAttr("paletteContrast", 0.5, "Painterly: 0 blends the palette smoothly across the light, 1 steps it.", 0.0, 1.0);
+    a[kPaletteSpread] = floatAttr("paletteSpread", 0.35, "Painterly: how far individual strokes push the palette boundary around.", 0.0);
+    a[kSpecularTint] = floatAttr("specularTint", 0.5, "Painterly: tints the specular toward paletteLight.", 0.0, 1.0);
     a[kBoil] = boolAttr("boil", false, "Painterly: shift the strokes a few times a second, like hand-drawn frames. Follows the time slider.");
-    a[kBoilFps] = floatAttr("boilFps", 10.0, "Painterly: stroke changes per second while boiling.");
+    a[kBoilFps] = floatAttr("boilFps", 10.0, "Painterly: stroke changes per second while boiling.", 0.0);
 
     a[kToonShadowColor] = colorAttr("toonShadowColor", glm::dvec3(0.35, 0.38, 0.55), "Toon: multiplies the base colour in shadow.");
     a[kToonLightTint] = colorAttr("toonLightTint", glm::dvec3(1.0, 0.97, 0.92), "Toon: multiplies the base colour in light.");
-    a[kToonThreshold] = floatAttr("toonThreshold", 0.0, "Toon: where light turns to shadow, as N.L from -1 to 1.");
-    a[kToonSoftness] = floatAttr("toonSoftness", 0.08, "Toon: width of the light to shadow ramp; 0 is a hard line.");
-    a[kToonOuterOffset] = floatAttr("toonOuterOffset", 0.45, "Toon: how much deeper into the shadow the second, harder band starts; 0 hides it.");
+    a[kToonThreshold] = floatAttr("toonThreshold", 0.0, "Toon: where light turns to shadow, as N.L from -1 to 1.", -1.0, 1.0);
+    a[kToonSoftness] = floatAttr("toonSoftness", 0.08, "Toon: width of the light to shadow ramp; 0 is a hard line.", 0.0);
+    a[kToonOuterOffset] = floatAttr("toonOuterOffset", 0.45, "Toon: how much deeper into the shadow the second, harder band starts; 0 hides it.", 0.0);
     a[kToonOuterColor] = colorAttr("toonOuterColor", glm::dvec3(0.20, 0.20, 0.35), "Toon: multiplies the base colour in the outer shadow band.");
     a[kRimColor] = colorAttr("rimColor", glm::dvec3(1.0), "Toon: linear rim light colour.");
-    a[kRimWidth] = floatAttr("rimWidth", 0.3, "Toon: how far the rim reaches in from the silhouette, 0 to 1.");
-    a[kRimStrength] = floatAttr("rimStrength", 0.4, "Toon: rim light brightness; 0 is off.");
+    a[kRimWidth] = floatAttr("rimWidth", 0.3, "Toon: how far the rim reaches in from the silhouette, 0 to 1.", 0.0, 1.0);
+    a[kRimStrength] = floatAttr("rimStrength", 0.4, "Toon: rim light brightness; 0 is off.", 0.0);
 
     a[kFoliageBottomColor] = colorAttr("foliageBottomColor", glm::dvec3(0.05, 0.12, 0.06), "Foliage: linear colour at the bottom of the object.");
     a[kFoliageTopColor] = colorAttr("foliageTopColor", glm::dvec3(0.35, 0.50, 0.15), "Foliage: linear colour at the top of the object.");
-    a[kFoliageGradient] = floatAttr("foliageGradient", 0.6, "Foliage: how much the bottom to top gradient replaces the base colour.");
-    a[kFoliageBottomShadow] = floatAttr("foliageBottomShadow", 0.5, "Foliage: darkens surfaces facing down.");
-    a[kFoliageTopHighlight] = floatAttr("foliageTopHighlight", 0.3, "Foliage: brightens surfaces facing up.");
-    a[kFoliageTranslucency] = floatAttr("foliageTranslucency", 0.4, "Foliage: light passing through toward the camera from behind.");
-    a[kFoliageWrap] = floatAttr("foliageWrap", 0.5, "Foliage: wraps the light around the form, 0 to 1, for soft clumps.");
+    a[kFoliageGradient] = floatAttr("foliageGradient", 0.6, "Foliage: how much the bottom to top gradient replaces the base colour.", 0.0, 1.0);
+    a[kFoliageBottomShadow] = floatAttr("foliageBottomShadow", 0.5, "Foliage: darkens surfaces facing down.", 0.0, 1.0);
+    a[kFoliageTopHighlight] = floatAttr("foliageTopHighlight", 0.3, "Foliage: brightens surfaces facing up.", 0.0);
+    a[kFoliageTranslucency] = floatAttr("foliageTranslucency", 0.4, "Foliage: light passing through toward the camera from behind.", 0.0);
+    a[kFoliageWrap] = floatAttr("foliageWrap", 0.5, "Foliage: wraps the light around the form, 0 to 1, for soft clumps.", 0.0, 1.0);
 }
 
 std::vector<AttrDef> materialAttrs()
@@ -101,10 +102,10 @@ std::vector<AttrDef> materialAttrs()
     std::vector<AttrDef> a(kCount);
     a[kBaseColor] = colorAttr("baseColor", glm::dvec3(0.5), "Linear base color, used when no base color map is set.");
     a[kBaseColorMap] = pathAttr("baseColorMap", "sRGB base color texture; its alpha is the opacity of masked and translucent materials.");
-    a[kMetallic] = floatAttr("metallic", 0.0, "0 dielectric, 1 metal.");
+    a[kMetallic] = floatAttr("metallic", 0.0, "0 dielectric, 1 metal.", 0.0, 1.0);
     a[kMetallicMap] = pathAttr("metallicMap", "Linear metallic texture (red channel).");
-    a[kSpecular] = floatAttr("specular", 0.5, "Dielectric reflectance; 0.5 is 4%, Unreal's default.");
-    a[kRoughness] = floatAttr("roughness", 0.4, "0 mirror, 1 fully rough.");
+    a[kSpecular] = floatAttr("specular", 0.5, "Dielectric reflectance; 0.5 is 4%, Unreal's default.", 0.0, 1.0);
+    a[kRoughness] = floatAttr("roughness", 0.4, "0 mirror, 1 fully rough.", 0.0, 1.0);
     a[kRoughness].fileDefault = 0.5;
     a[kRoughnessMap] = pathAttr("roughnessMap", "Linear roughness texture (red channel).");
     a[kNormalMap] = pathAttr("normalMap", "Tangent-space normal map.");
@@ -117,14 +118,14 @@ std::vector<AttrDef> materialAttrs()
                                 "G roughness, B occlusion).");
     a[kEmissiveColor] = colorAttr("emissiveColor", glm::dvec3(0.0), "Linear emitted light, used when no emissive map is set.");
     a[kEmissiveMap] = pathAttr("emissiveMap", "sRGB emissive texture.");
-    a[kEmissiveIntensity] = floatAttr("emissiveIntensity", 1.0, "Scales the emissive color or map.");
-    a[kOpacity] = floatAttr("opacity", 1.0, "Masked and translucent only; multiplies the base color map's alpha.");
-    a[kOpacityMaskClip] = floatAttr("opacityMaskClipValue", 0.3333, "Masked only: opacity below this is cut away.");
+    a[kEmissiveIntensity] = floatAttr("emissiveIntensity", 1.0, "Scales the emissive color or map.", 0.0);
+    a[kOpacity] = floatAttr("opacity", 1.0, "Masked and translucent only; multiplies the base color map's alpha.", 0.0, 1.0);
+    a[kOpacityMaskClip] = floatAttr("opacityMaskClipValue", 0.3333, "Masked only: opacity below this is cut away.", 0.0, 1.0);
     a[kBlendMode] = enumAttr("blendMode", {"opaque", "masked", "translucent"}, "How opacity is used.");
     a[kTwoSided] = {.name = "twoSided", .type = PlugType::Bool, .defaultValue = false, .flags = AttrInput | AttrStorable,
                     .doc = "Draw back faces too (with flipped normals). One-sided materials cull them, as in Unreal."};
     a[kUvSet] = {.name = "uvSet", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = AttrInput | AttrStorable,
-                 .doc = "UV set the textures use (0 or 1)."};
+                 .doc = "UV set the textures use (0 or 1).", .minValue = 0.0, .maxValue = 1.0};
     stylisedAttrs(a);
     return a;
 }
@@ -487,16 +488,16 @@ void registerCommands()
         .doc = "Create a material (Unreal default lit inputs). Faces use it through a slot of the same name. Returns its name.",
         .positionalDoc = "name",
         .flags = {{"baseColor", "bc", T::Vec3, nullptr, "Linear base color."},
-                  {"metallic", "", T::Float, nullptr, "0 to 1."},
-                  {"roughness", "", T::Float, nullptr, "0 to 1."},
-                  {"specular", "", T::Float, nullptr, "Dielectric reflectance, 0.5 default."},
+                  {"metallic", "", T::Float, nullptr, "0 to 1.", {}, {}, 0.0, 1.0},
+                  {"roughness", "", T::Float, nullptr, "0 to 1.", {}, {}, 0.0, 1.0},
+                  {"specular", "", T::Float, nullptr, "Dielectric reflectance, 0.5 default.", {}, {}, 0.0, 1.0},
                   {"emissive", "", T::Vec3, nullptr, "Linear emissive color."},
-                  {"emissiveIntensity", "", T::Float, nullptr, "Emissive scale."},
-                  {"opacity", "", T::Float, nullptr, "Masked/translucent opacity."},
-                  {"opacityMaskClipValue", "", T::Float, nullptr, "Masked cutoff."},
+                  {"emissiveIntensity", "", T::Float, nullptr, "Emissive scale.", {}, {}, 0.0},
+                  {"opacity", "", T::Float, nullptr, "Masked/translucent opacity.", {}, {}, 0.0, 1.0},
+                  {"opacityMaskClipValue", "", T::Float, nullptr, "Masked cutoff.", {}, {}, 0.0, 1.0},
                   {"blendMode", "", T::Any, nullptr, "opaque, masked or translucent."},
                   {"twoSided", "", T::Bool, nullptr, "Draw back faces."},
-                  {"uvSet", "", T::Int, nullptr, "UV set for textures."},
+                  {"uvSet", "", T::Int, nullptr, "UV set for textures.", {}, {}, 0.0, 1.0},
                   {"normalFormat", "", T::Any, nullptr, "directx (Unreal) or opengl."},
                   {"flipGreen", "", T::Bool, nullptr, "Normal map is OpenGL style (green up); same as normalFormat='opengl'."},
                   {"baseColorMap", "", T::String, nullptr, "Texture path."},
@@ -524,7 +525,7 @@ void registerCommands()
         const AttrDef& d = attrs[i];
         const T type = d.type == PlugType::Float ? T::Float : d.type == PlugType::Vec3 ? T::Vec3 : d.type == PlugType::Bool ? T::Bool
                        : d.type == PlugType::Int ? T::Int : d.type == PlugType::String ? T::String : T::Any;
-        create.flags.push_back({d.name, "", type, nullptr, d.doc});
+        create.flags.push_back({d.name, "", type, nullptr, d.doc, {}, {}, d.minValue, d.maxValue});
     }
     ops::registerCommand(std::move(create));
 

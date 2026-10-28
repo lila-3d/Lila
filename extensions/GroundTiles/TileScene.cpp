@@ -1100,7 +1100,7 @@ void registerCommands(ext::Context& ctx)
                "palette values, one colour per texel, no filtering, black where nothing is over the tile. Returns the path.",
         .positionalDoc = "group (default the selection)",
         .flags = {{"path", "", T::String, nullptr, "Image file; default <export path>/<name>_id.png."},
-                  {"resolution", "r", T::Int, nullptr, "Pixels per side; default the group's Bake Map Size."}},
+                  {"resolution", "r", T::Int, nullptr, "Pixels per side; default the group's Bake Map Size.", {}, {}, 1.0}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             Graph& g = graph();
@@ -1128,7 +1128,7 @@ void registerCommands(ext::Context& ctx)
                "height bake by this) and heightOverTile. Needs a bake plane and a combined mesh. Returns the numbers and the bake "
                "settings they give.",
         .positionalDoc = "group (default the selection)",
-        .flags = {{"grid", "", T::Int, kHeightSampleGrid, "Samples per side."}},
+        .flags = {{"grid", "", T::Int, kHeightSampleGrid, "Samples per side.", {}, {}, 1.0}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             Node* grp = groupArg(g, a, "groundTileMeasureHeight");

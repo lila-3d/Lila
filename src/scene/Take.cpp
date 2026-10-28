@@ -475,7 +475,7 @@ void registerTakeTypes()
          .doc = "Connected from the character root's worldMatrix; unconnected for the whole scene."},
         {.name = "start", .type = PlugType::Float, .defaultValue = 0.0, .flags = stored, .doc = "Range start, seconds."},
         {.name = "end", .type = PlugType::Float, .defaultValue = 4.0, .flags = stored, .doc = "Range end, seconds."},
-        {.name = "fps", .type = PlugType::Float, .defaultValue = 30.0, .flags = stored, .doc = "Frames per second."},
+        {.name = "fps", .type = PlugType::Float, .defaultValue = 30.0, .flags = stored, .doc = "Frames per second.", .minValue = 1.0},
         {.name = "loop", .type = PlugType::Bool, .defaultValue = false, .flags = stored,
          .doc = "The take loops: its curves' last keys mirror their first."},
         {.name = "active", .type = PlugType::Bool, .defaultValue = false, .flags = stored | AttrHidden,
@@ -542,7 +542,7 @@ void registerTakeCommands()
     const std::vector<FlagDef> settings = {
         {"start", "s", T::Float, nullptr, "Range start, seconds. Default: the playback range."},
         {"end", "e", T::Float, nullptr, "Range end, seconds. Default: the playback range."},
-        {"fps", "fps", T::Float, nullptr, "Frames per second. Default: the scene's."},
+        {"fps", "fps", T::Float, nullptr, "Frames per second. Default: the scene's.", {}, {}, 1.0},
         {"loop", "l", T::Bool, nullptr, "Loop the take (loop keys on its curves)."},
         {"folder", "fo", T::String, nullptr, "Folder path the take is filed under, '/' separated; empty for the top level."},
     };

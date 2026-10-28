@@ -80,7 +80,7 @@ std::vector<FlagDef> worldFlags()
         {"ground", "gr", T::Bool, true, "A floor plane at groundHeight, under everything."},
         {"groundHeight", "gh", T::Float, 0.0, "Height of the floor plane, cm."},
         {"gravity", "g", T::List, json::array({0.0, -981.0, 0.0}), "Gravity, cm/s2."},
-        {"time", "ti", T::Float, 10.0, "Longest it simulates, seconds; it stops sooner once everything is at rest."},
+        {"time", "ti", T::Float, 10.0, "Longest it simulates, seconds; it stops sooner once everything is at rest.", {}, {}, 0.0},
     };
 }
 
@@ -291,11 +291,11 @@ void registerCommands(ext::Context& ctx)
         .positionalDoc = "meshes (default the selection)",
         .flags = {{"role", "r", T::String, nullptr, "dynamic, static, kinematic or off.", roles},
                   {"material", "m", T::String, nullptr, "Preset for density, friction and bounce.", mats},
-                  {"density", "d", T::Float, nullptr, "kg/m3."},
-                  {"friction", "f", T::Float, nullptr, "0 to 1."},
-                  {"bounce", "b", T::Float, nullptr, "0 to 1."},
+                  {"density", "d", T::Float, nullptr, "kg/m3.", {}, {}, 1.0},
+                  {"friction", "f", T::Float, nullptr, "0 to 1.", {}, {}, 0.0},
+                  {"bounce", "b", T::Float, nullptr, "0 to 1.", {}, {}, 0.0, 1.0},
                   {"shape", "s", T::String, nullptr, "auto, box, hull, sphere, capsule or mesh.", shapes},
-                  {"rounding", "ro", T::Float, nullptr, "Collision edge rounding, cm."},
+                  {"rounding", "ro", T::Float, nullptr, "Collision edge rounding, cm.", {}, {}, 0.0},
                   {"remove", "rm", T::Bool, false, "Delete the body nodes instead."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
@@ -369,7 +369,7 @@ void registerCommands(ext::Context& ctx)
     std::vector<FlagDef> pushFlags = worldFlags();
     pushFlags.insert(pushFlags.begin(),
                      {{"direction", "dir", T::List, nullptr, "Which way to push, [x, y, z]; its length doesn't matter."},
-                      {"speed", "sp", T::Float, 150.0, "How hard: the speed given at the point pushed, cm/s. 50 nudges, 150 topples a book, 500 knocks it flying."},
+                      {"speed", "sp", T::Float, 150.0, "How hard: the speed given at the point pushed, cm/s. 50 nudges, 150 topples a book, 500 knocks it flying.", {}, {}, 0.0},
                       {"at", "", T::List, nullptr, "World point to push at (default high on the side away from the direction, which topples)."},
                       {"chain", "ch", T::Bool, true, "Without movable=, carry on to the meshes touching it, and those touching them."}});
     ctx.registerCommand({
@@ -409,8 +409,8 @@ void registerCommands(ext::Context& ctx)
     });
 
     std::vector<FlagDef> wiggleFlags = worldFlags();
-    wiggleFlags.insert(wiggleFlags.begin(), {{"strength", "st", T::Float, 40.0, "Speed of each little push, cm/s."},
-                                             {"times", "n", T::Int, int64_t(3), "How many rounds of pushes, each settled before the next."},
+    wiggleFlags.insert(wiggleFlags.begin(), {{"strength", "st", T::Float, 40.0, "Speed of each little push, cm/s.", {}, {}, 0.0},
+                                             {"times", "n", T::Int, int64_t(3), "How many rounds of pushes, each settled before the next.", {}, {}, 1.0},
                                              {"seed", "s", T::Int, int64_t(1), "Another seed gives other pushes."}});
     ctx.registerCommand({
         .name = "wiggle",
@@ -453,7 +453,7 @@ void registerCommands(ext::Context& ctx)
     dropFlags.insert(dropFlags.begin(), {{"height", "h", T::Float, 0.0, "Lift this far first, cm."},
                                          {"onto", "on", T::String, nullptr, "Drop onto this mesh: moved above its top first (at= picks where)."},
                                          {"at", "", T::List, nullptr, "With onto=, the world [x, y, z] to drop over; y is ignored."},
-                                         {"spin", "sn", T::Float, 0.0, "Random turn given before the drop, degrees, so a row of drops lands varied."},
+                                         {"spin", "sn", T::Float, 0.0, "Random turn given before the drop, degrees, so a row of drops lands varied.", {}, {}, 0.0},
                                          {"seed", "s", T::Int, int64_t(1), "Seed for spin."}});
     ctx.registerCommand({
         .name = "drop",
@@ -516,7 +516,7 @@ void registerCommands(ext::Context& ctx)
 
     std::vector<FlagDef> shakeFlags = worldFlags();
     shakeFlags.insert(shakeFlags.begin(), {{"amplitude", "a", T::List, json::array({3.0, 0.0, 0.0}), "How far it swings each way, [x, y, z] cm."},
-                                           {"duration", "du", T::Float, 1.0, "How long the shaking lasts, seconds."}});
+                                           {"duration", "du", T::Float, 1.0, "How long the shaking lasts, seconds.", {}, {}, 0.0}});
     ctx.registerCommand({
         .name = "shake",
         .doc = "Shake a mesh (a shelf, a table) so what rests on it shuffles, slides and falls, then settles; the shaken mesh "
@@ -628,8 +628,8 @@ void registerCommands(ext::Context& ctx)
                "touching anything), overlapping (inside another mesh by more than tolerance). Returns issues, per-mesh results "
                "and ok.",
         .positionalDoc = "meshes to check (default the selection)",
-        .flags = {{"tolerance", "tol", T::Float, 0.5, "How far, cm, counts as a problem."},
-                  {"time", "ti", T::Float, 3.0, "How long to watch, seconds."},
+        .flags = {{"tolerance", "tol", T::Float, 0.5, "How far, cm, counts as a problem.", {}, {}, 0.0},
+                  {"time", "ti", T::Float, 3.0, "How long to watch, seconds.", {}, {}, 0.0},
                   {"ground", "gr", T::Bool, true, "A floor plane at groundHeight."},
                   {"groundHeight", "gh", T::Float, 0.0, "Height of the floor plane, cm."}},
         .undoable = false,

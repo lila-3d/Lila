@@ -24,6 +24,14 @@ inline SocketDecl fin(std::string id, SocketType t, json def = nullptr, Implicit
     return {.id = std::move(id), .type = t, .defaultValue = std::move(def), .field = true, .implicit = imp, .doc = std::move(doc)};
 }
 
+/** s with its value held at lo or above, and at hi or below when given. */
+inline SocketDecl bounded(SocketDecl s, std::optional<double> lo, std::optional<double> hi = std::nullopt)
+{
+    s.min = lo;
+    s.max = hi;
+    return s;
+}
+
 inline SocketDecl geoIn(std::string id = "geometry", std::string doc = {})
 {
     return {.id = std::move(id), .type = SocketType::Geometry, .doc = std::move(doc)};

@@ -299,7 +299,7 @@ void registerCommands()
                   {"colorSet", "", T::String, "", "The set to act on; empty is the current one."},
                   {"newColorSet", "", T::String, "", "rename and copy: the new name."},
                   {"precision", "", T::String, "", "Store colorSet as float or half.", {"", "float", "half"}},
-                  {"moveTo", "", T::Int, -1, "Move colorSet to this position (0 is the primary set exporters write first)."},
+                  {"moveTo", "", T::Int, -1, "Move colorSet to this position (0 is the primary set exporters write first).", {}, {}, -1.0},
                   {"fill", "", T::List, json::array({1.0, 1.0, 1.0, 1.0}), "create: initial linear RGBA."}},
         .run = [](const Args& a) -> json {
             auto objs = a.objects();
@@ -377,14 +377,14 @@ void registerCommands()
         .flags = {setFlag(),
                   {"blend", "", T::String, "replace", "Blend mode.", {"replace", "add", "subtract", "multiply", "lighten", "darken", "blur", "sharpen"}},
                   {"color", "", T::List, json::array({1.0, 1.0, 1.0, 1.0}), "Linear RGBA."},
-                  {"strength", "", T::Float, 1.0, "Most the stroke changes a point, 0 to 1."},
+                  {"strength", "", T::Float, 1.0, "Most the stroke changes a point, 0 to 1.", {}, {}, 0.0, 1.0},
                   channelsFlag(),
                   {"falloff", "", T::Any, "Smooth", "A soft select falloff preset name, \"softSelect\" for the current curve, or keys."},
                   {"frontFacesOnly", "", T::Bool, true, "Leave points facing away from the view."},
                   {"paintThrough", "", T::Bool, false, "Paint points hidden behind other parts too."},
                   {"mirror", "", T::Bool, true, "Mirror across the mesh's symmetry when it is on."},
                   {"selectionOnly", "", T::Bool, true, "With selected components, only they change."},
-                  {"radialCount", "", T::Int, 1, "Copies of every dab turned evenly about an object axis; 1 is off."},
+                  {"radialCount", "", T::Int, 1, "Copies of every dab turned evenly about an object axis; 1 is off.", {}, {}, 1.0, 64.0},
                   {"radialAxis", "", T::String, "y", "The object axis radial copies turn about.", {"x", "y", "z"}},
                   {"dabs", "", T::List, json::array(), "The stamps, in order."},
                   {"live", "", T::Int, 0, "Internal: adopts the stroke the viewport tool already applied."}},
@@ -483,7 +483,7 @@ void registerCommands()
         .flags = {setFlag(),
                   {"color", "", T::List, json::array({1.0, 1.0, 1.0, 1.0}), "Linear RGBA."},
                   {"blend", "", T::String, "replace", "Blend mode.", {"replace", "add", "subtract", "multiply", "lighten", "darken", "blur", "sharpen"}},
-                  {"opacity", "", T::Float, 1.0, "0 to 1."},
+                  {"opacity", "", T::Float, 1.0, "0 to 1.", {}, {}, 0.0, 1.0},
                   channelsFlag(),
                   targetFlag()},
         .run = [](const Args& a) -> json {
@@ -556,7 +556,7 @@ void registerCommands()
                   {"operation", "", T::String, "invert", "invert or levels.", {"invert", "levels"}},
                   {"inBlack", "", T::Float, 0.0, "levels: input black point."},
                   {"inWhite", "", T::Float, 1.0, "levels: input white point."},
-                  {"gamma", "", T::Float, 1.0, "levels: midtone gamma; above 1 brightens."},
+                  {"gamma", "", T::Float, 1.0, "levels: midtone gamma; above 1 brightens.", {}, {}, 0.0},
                   {"outBlack", "", T::Float, 0.0, "levels: output black."},
                   {"outWhite", "", T::Float, 1.0, "levels: output white."},
                   channelsFlag(),
@@ -577,7 +577,7 @@ void registerCommands()
         .name = "vertexColorBlur",
         .doc = "Smooth vertex colors across edges; a negative strength sharpens instead.",
         .positionalDoc = "meshes",
-        .flags = {setFlag(), {"iterations", "", T::Int, 1, "Passes."}, {"strength", "", T::Float, 0.5, "-1 to 1 per pass."}, channelsFlag(), targetFlag()},
+        .flags = {setFlag(), {"iterations", "", T::Int, 1, "Passes.", {}, {}, 1.0, 1000.0}, {"strength", "", T::Float, 0.5, "-1 to 1 per pass.", {}, {}, -1.0, 1.0}, channelsFlag(), targetFlag()},
         .run = [](const Args& a) -> json {
             uint8_t ch = channelsArg(a);
             int it = std::clamp(a.get<int>("iterations", 1), 1, 1000);
@@ -595,11 +595,11 @@ void registerCommands()
         .positionalDoc = "meshes",
         .flags = {setFlag(),
                   {"type", "", T::String, "ao", "ao, cavity, curvature or height.", {"ao", "cavity", "curvature", "height"}},
-                  {"rays", "", T::Int, 64, "ao: rays per vertex."},
-                  {"maxDistance", "", T::Float, 0.0, "ao: occluders farther than this don't count (cm); 0 is a quarter of the mesh's size."},
-                  {"contrast", "", T::Float, 1.0, "cavity and curvature: higher reads gentler shapes."},
+                  {"rays", "", T::Int, 64, "ao: rays per vertex.", {}, {}, 1.0},
+                  {"maxDistance", "", T::Float, 0.0, "ao: occluders farther than this don't count (cm); 0 is a quarter of the mesh's size.", {}, {}, 0.0},
+                  {"contrast", "", T::Float, 1.0, "cavity and curvature: higher reads gentler shapes.", {}, {}, 0.0},
                   {"axis", "", T::String, "y", "height: object-space axis.", {"x", "y", "z"}},
-                  {"blur", "", T::Int, 0, "Smoothing passes over the result."},
+                  {"blur", "", T::Int, 0, "Smoothing passes over the result.", {}, {}, 0.0, 100.0},
                   channelsFlag("rgb"),
                   targetFlag()},
         .run = [](const Args& a) -> json {

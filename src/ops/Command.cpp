@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
+#include <cstdint>
 #include <format>
 #include <map>
 
@@ -51,12 +53,17 @@ bool matches(ArgType type, const json& v)
     return true;
 }
 
-json coerce(ArgType type, const json& v)
+json coerce(const FlagDef& flag, const json& v)
 {
-    if (type == ArgType::Bool && v.is_number_integer())
+    if (flag.type == ArgType::Bool && v.is_number_integer())
         return v.get<int64_t>() != 0;
-    if (type == ArgType::Int && v.is_boolean())
+    if (flag.type == ArgType::Int && v.is_boolean())
         return v.get<bool>() ? 1 : 0;
+    if (flag.type == ArgType::Int && v.is_number_integer() && (flag.min || flag.max))
+        return std::clamp(v.get<int64_t>(), flag.min ? int64_t(std::ceil(*flag.min)) : INT64_MIN,
+                          flag.max ? int64_t(std::floor(*flag.max)) : INT64_MAX);
+    if (flag.type == ArgType::Float && v.is_number() && (flag.min || flag.max))
+        return std::clamp(v.get<double>(), flag.min.value_or(-HUGE_VAL), flag.max.value_or(HUGE_VAL));
     return v;
 }
 
@@ -88,7 +95,7 @@ Args normalize(const CommandDef& def, const json& call)
                 allowed += (allowed.empty() ? "" : ", ") + c;
             throw CommandError(def.name + ": bad value for '" + flag->name + "': " + v.dump() + " (one of " + allowed + ")");
         }
-        a.flags[flag->name] = coerce(flag->type, v);
+        a.flags[flag->name] = coerce(*flag, v);
     }
 
     if (def.positionalDoc.empty() && !a.positional.empty())
@@ -344,7 +351,7 @@ void registerBuiltins()
     registerCommand({
         .name = "undoJump",
         .doc = "Undo or redo in one go until the given number of undo steps remain, as listed by undoInfo(history=True).",
-        .flags = {{"position", "p", ArgType::Int, nullptr, "Undo steps left afterwards: 0 undoes everything."}},
+        .flags = {{"position", "p", ArgType::Int, nullptr, "Undo steps left afterwards: 0 undoes everything.", {}, {}, 0.0}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             UndoStack& u = UndoStack::get();
@@ -362,8 +369,8 @@ void registerBuiltins()
             {"closeChunk", "cck", ArgType::Bool, nullptr, "End a chunk."},
             {"chunkName", "cn", ArgType::String, nullptr, "Label for openChunk."},
             {"state", "st", ArgType::Bool, nullptr, "Turn undo recording on or off."},
-            {"limit", "l", ArgType::Int, nullptr, "Max undo steps, 0 for infinite."},
-            {"memoryBudget", "mb", ArgType::Float, nullptr, "Drop the oldest steps past this many MB, 0 for unlimited."},
+            {"limit", "l", ArgType::Int, nullptr, "Max undo steps, 0 for infinite.", {}, {}, 0.0},
+            {"memoryBudget", "mb", ArgType::Float, nullptr, "Drop the oldest steps past this many MB, 0 for unlimited.", {}, {}, 0.0},
             {"history", "h", ArgType::Bool, nullptr, "Also return every step's label, oldest first, and the current position."},
         },
         .undoable = false,

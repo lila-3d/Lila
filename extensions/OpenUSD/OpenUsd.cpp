@@ -288,7 +288,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
             .positionalDoc = "path objects...",
             .flags = {{"format", "", T::String, "auto", "auto picks by extension; usda or usdc chooses the encoding of a .usd file.", {"auto", "usda", "usdc"}},
                       {"upAxis", "up", T::String, "z", "File up axis: z (Unreal) or y. Assets land the same way through either, as with FBX.", {"z", "y"}},
-                      {"metersPerUnit", "mpu", T::Float, 0.01, "Scene unit of the file in metres: 0.01 is centimetres (Unreal), 1 metres. Lengths are scaled to it."},
+                      {"metersPerUnit", "mpu", T::Float, 0.01, "Scene unit of the file in metres: 0.01 is centimetres (Unreal), 1 metres. Lengths are scaled to it.", {}, {}, 1e-6},
                       {"materials", "mat", T::Bool, true, "Write UsdPreviewSurface materials and bind them."},
                       {"textures", "tex", T::String, "relative",
                        "How texture files are referenced: relative to the file, absolute, or copy (copied into <name>_textures beside "
@@ -301,7 +301,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
                       {"end", "et", T::Float, nullptr, "Last frame; the playback end by default."},
                       {"normals", "", T::Bool, true, "Write the split normals; False leaves them for the importer to compute."},
                       {"triangulate", "", T::Bool, false, "Write triangles exactly as the viewport splits faces instead of the n-gons."},
-                      {"maxInfluences", "mi", T::Int, 8, "Skin influences per point, heaviest kept and renormalised (4 for mobile)."},
+                      {"maxInfluences", "mi", T::Int, 8, "Skin influences per point, heaviest kept and renormalised (4 for mobile).", {}, {}, 0.0},
                       {"deformOnly", "do", T::Bool, true, "Deform joints only (IK helpers and rig-only joints stay behind)."},
                       {"atOrigin", "", T::Bool, false, "Drop the exported roots' own transforms, keeping their children relative."},
                       {"children", "", T::Bool, true, "Include the descendants of the given objects."},

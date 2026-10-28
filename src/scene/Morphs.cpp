@@ -1201,8 +1201,8 @@ void registerCommands()
         .positionalDoc = "target",
         .flags = {{"axis", "", T::String, "x", "Mirror axis, object space.", {"x", "y", "z"}},
                   {"mode", "", T::String, "flip", "flip | symmetrize", {"flip", "symmetrize"}},
-                  {"direction", "", T::Int, 1, "symmetrize: 1 copies the positive side onto the negative, -1 the reverse."},
-                  {"tolerance", "", T::Float, 1e-3, "How far a point may be from its partner's reflection, cm."},
+                  {"direction", "", T::Int, 1, "symmetrize: 1 copies the positive side onto the negative, -1 the reverse.", {}, {}, -1.0, 1.0},
+                  {"tolerance", "", T::Float, 1e-3, "How far a point may be from its partner's reflection, cm.", {}, {}, 0.0},
                   {"name", "", T::String, nullptr, "flip: the new target's name."}},
         .run = [](const Args& a) -> json {
             Graph& graph = g();
@@ -1322,8 +1322,8 @@ void registerCommands()
         .flags = {{"driver", "d", T::Any, nullptr, "Joint name or list of joints. Default: the skin's most rotated influence."},
                   {"name", "n", T::String, nullptr, "The target's name. Default: <driver>_corrective."},
                   {"axis", "", T::String, "x", "Each driver's twist axis (its bone axis).", {"x", "y", "z"}},
-                  {"radius", "", T::Float, 0.0, "Degrees from the pose where the weight reaches 0; 0 uses the rest-to-pose angle."},
-                  {"twistWeight", "", T::Float, 0.0, "How much twist about the axis counts, 0 ignoring it."},
+                  {"radius", "", T::Float, 0.0, "Degrees from the pose where the weight reaches 0; 0 uses the rest-to-pose angle.", {}, {}, 0.0, 180.0},
+                  {"twistWeight", "", T::Float, 0.0, "How much twist about the axis counts, 0 ignoring it.", {}, {}, 0.0},
                   {"falloff", "", T::String, "smooth", "linear | smooth | smoother", {"linear", "smooth", "smoother"}},
                   {"keep", "", T::Bool, false, "Keep the sculpt mesh instead of deleting it."}},
         .run = [](const Args& a) -> json {

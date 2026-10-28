@@ -132,9 +132,9 @@ LiveOptions optionsArgs(const Args& a)
 std::vector<FlagDef> optionFlags()
 {
     using T = ArgType;
-    return {{"balance", "", T::Float, 0.0, "Stretch against compression, -1..1: positive tolerates stretch and fixes compression, negative the reverse."},
-            {"boundarySmooth", "", T::Float, 0.0, "Pull of the borders towards a smooth outline, 0..1."},
-            {"slim", "", T::Int, 0, "SLIM iterations once settled, for a fold-free low-distortion finish."},
+    return {{"balance", "", T::Float, 0.0, "Stretch against compression, -1..1: positive tolerates stretch and fixes compression, negative the reverse.", {}, {}, -1.0, 1.0},
+            {"boundarySmooth", "", T::Float, 0.0, "Pull of the borders towards a smooth outline, 0..1.", {}, {}, 0.0, 1.0},
+            {"slim", "", T::Int, 0, "SLIM iterations once settled, for a fold-free low-distortion finish.", {}, {}, 0.0, 100.0},
             {"keepScale", "", T::Bool, true, "Keep each island's size; off solves at 3D scale."}};
 }
 
@@ -201,7 +201,7 @@ void registerLiveCommands()
     });
 
     std::vector<FlagDef> relaxFlags = {setFlag(),
-                                       {"iterations", "", T::Int, 200, "Most local/global iterations; it stops once settled."},
+                                       {"iterations", "", T::Int, 200, "Most local/global iterations; it stops once settled.", {}, {}, 1.0, 100000.0},
                                        {"flatten", "", T::Bool, false, "Solve from scratch first (LSCM/SLIM), keeping size and placement."},
                                        {"pins", "", T::Bool, true, "Respect pinned uvs (uvPin)."}};
     for (const FlagDef& f : optionFlags())
@@ -258,7 +258,7 @@ void registerLiveCommands()
     ops::registerCommand({
         .name = "uvStiffness",
         .doc = "Set how stiff the selected components' uvs are for the live solver: 1 normal, up to 20 rigid, down to 0.05 floppy.",
-        .flags = {setFlag(), {"value", "", T::Float, 1.0, "Stiffness, 0.05..20."}},
+        .flags = {setFlag(), {"value", "", T::Float, 1.0, "Stiffness, 0.05..20.", {}, {}, 0.05, 20.0}},
         .run = [](const Args& a) -> json {
             std::string set = setArg(a);
             float k = float(std::clamp(a.get<double>("value", 1.0), 0.05, 20.0));
@@ -281,8 +281,8 @@ void registerLiveCommands()
         .flags = {setFlag(),
                   {"edges", "", T::List, nullptr, "Edge ids to cut instead of the selection (with the mesh named)."},
                   {"relax", "", T::Bool, true, "Relax the affected islands afterwards."},
-                  {"iterations", "", T::Int, 40, "Relax iterations."},
-                  {"balance", "", T::Float, 0.0, "Stretch against compression for the relax, -1..1."}},
+                  {"iterations", "", T::Int, 40, "Relax iterations.", {}, {}, 0.0, 100000.0},
+                  {"balance", "", T::Float, 0.0, "Stretch against compression for the relax, -1..1.", {}, {}, -1.0, 1.0}},
         .run = [](const Args& a) -> json {
             std::string set = setArg(a);
             bool relax = a.get<bool>("relax", true);
@@ -323,8 +323,8 @@ void registerLiveCommands()
                   {"edges", "", T::List, nullptr, "Edge ids to sew instead of the selection (with the mesh named)."},
                   {"move", "", T::Bool, true, "Move the smaller island onto the other before welding."},
                   {"relax", "", T::Bool, true, "Relax the joined island afterwards."},
-                  {"iterations", "", T::Int, 40, "Relax iterations."},
-                  {"balance", "", T::Float, 0.0, "Stretch against compression for the relax, -1..1."}},
+                  {"iterations", "", T::Int, 40, "Relax iterations.", {}, {}, 0.0, 100000.0},
+                  {"balance", "", T::Float, 0.0, "Stretch against compression for the relax, -1..1.", {}, {}, -1.0, 1.0}},
         .run = [](const Args& a) -> json {
             std::string set = setArg(a);
             bool move = a.get<bool>("move", true), relax = a.get<bool>("relax", true);

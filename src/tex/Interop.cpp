@@ -362,9 +362,9 @@ void registerInteropCommands()
         .doc = "Write one channel or any node output (node.socket) of a texture set as an image, for one tile. A material socket takes "
                "field= (baseColor by default). Returns {file, width, height, warnings}.",
         .positionalDoc = "set source file",
-        .flags = {{"resolution", "", T::Int, nullptr, "Width and height; the tile's when left out."},
-                  {"udim", "", T::Int, nullptr, "The tile; the first when left out."},
-                  {"bits", "", T::Int, 0, "8, 16 or 32 (exr, tif); 0 uses the channel's, else 8."},
+        .flags = {{"resolution", "", T::Int, nullptr, "Width and height; the tile's when left out.", {}, {}, 1.0},
+                  {"udim", "", T::Int, nullptr, "The tile; the first when left out.", {}, {}, 1001.0},
+                  {"bits", "", T::Int, 0, "8, 16 or 32 (exr, tif); 0 uses the channel's, else 8.", {}, {}, 0.0, 32.0},
                   {"field", "", T::String, nullptr, "Material sockets: the channel taken."},
                   {"backend", "", T::String, nullptr, "gpu or cpu.", {"gpu", "cpu"}}},
         .undoable = false,
@@ -416,7 +416,7 @@ void registerInteropCommands()
         .positionalDoc = "set",
         .flags = {{"channels", "", T::List, nullptr, "Channel names; all when left out."},
                   {"folder", "", T::String, nullptr, "Output folder; relative ones resolve like bake folders. Default textures/<set>."},
-                  {"resolution", "", T::Int, nullptr, "Width and height, overriding the tiles'."},
+                  {"resolution", "", T::Int, nullptr, "Width and height, overriding the tiles'.", {}, {}, 1.0},
                   {"backend", "", T::String, nullptr, "gpu or cpu.", {"gpu", "cpu"}}},
         .undoable = false,
         .run = [](const Args& a) -> json {

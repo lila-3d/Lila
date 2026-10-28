@@ -1158,11 +1158,11 @@ void registerMeshEditCommands()
     ops::registerCommand({
         .name = "polyBevel",
         .doc = "Bevel the selected edges (vertex or face selections convert to their edges).",
-        .flags = {{"offset", "", T::Float, 2.0, "Width, cm."},
-                  {"segments", "", T::Int, 1, "Segments across the bevel."},
-                  {"profile", "", T::Float, 0.5, "0.5 round, 0.25 straight, toward 1 square."},
+        .flags = {{"offset", "", T::Float, 2.0, "Width, cm.", {}, {}, 0.0},
+                  {"segments", "", T::Int, 1, "Segments across the bevel.", {}, {}, 1.0, 64.0},
+                  {"profile", "", T::Float, 0.5, "0.5 round, 0.25 straight, toward 1 square.", {}, {}, 0.0, 1.0},
                   {"clamp", "", T::Bool, true, "Keep widths from overlapping."},
-                  {"smoothingAngle", "", T::Float, 30.0, "New edges sharper than this are hard."}},
+                  {"smoothingAngle", "", T::Float, 30.0, "New edges sharper than this are hard.", {}, {}, 0.0, 180.0}},
         .run = [](const Args& a) -> json {
             selectWholeInObjectMode(K::Edge);
             double used = a.get<double>("offset");
@@ -1206,9 +1206,9 @@ void registerMeshEditCommands()
     ops::registerCommand({
         .name = "polyInsertLoop",
         .doc = "Insert edge loops across the ring of the first selected edge. Several loops are centred on fraction, spacing apart.",
-        .flags = {{"fraction", "", T::Float, 0.5, "Where along the ring, 0 to 1; with several loops, where their middle goes."},
-                  {"count", "", T::Int, 1, "Number of loops."},
-                  {"spacing", "", T::Float, 1.0, "Several loops: gap between neighbours, 1 even spacing across the edge, smaller packs them together."}},
+        .flags = {{"fraction", "", T::Float, 0.5, "Where along the ring, 0 to 1; with several loops, where their middle goes.", {}, {}, 0.0, 1.0},
+                  {"count", "", T::Int, 1, "Number of loops.", {}, {}, 1.0},
+                  {"spacing", "", T::Float, 1.0, "Several loops: gap between neighbours, 1 even spacing across the edge, smaller packs them together.", {}, {}, 0.0}},
         .run = [](const Args& a) -> json {
             return editSelected("Insert Edge Loop", K::Edge, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
                 if (sel.empty())
@@ -1229,7 +1229,7 @@ void registerMeshEditCommands()
         .name = "polySplitRings",
         .doc = "Subdivide one way: insert loops across every ring through the selected edges, or across the selected faces in one "
                "direction, without the perpendicular cuts a full subdivide adds. Returns the new edges.",
-        .flags = {{"count", "", T::Int, 1, "Loops per ring, evenly spaced."},
+        .flags = {{"count", "", T::Int, 1, "Loops per ring, evenly spaced.", {}, {}, 1.0, 32.0},
                   {"direction", "", T::String, "along", "Faces: across adds lines across the selection's short way, along the long way.",
                    {"across", "along"}},
                   {"edgeFlow", "", T::Bool, true, "Curve the new loops to follow the surrounding surface rather than lie flat."}},
@@ -1260,7 +1260,7 @@ void registerMeshEditCommands()
         .name = "polyOffsetLoop",
         .doc = "Insert an edge loop either side of the selected edges, parallel to them (Maya's Offset Edge Loop). Partial loops end on "
                "a border, or inside the mesh by meeting at the end vertex or wrapping round it. Returns the new edges.",
-        .flags = {{"distance", "", T::Float, 0.25, "How far out: a fraction of each crossing edge's length, or cm with absolute."},
+        .flags = {{"distance", "", T::Float, 0.25, "How far out: a fraction of each crossing edge's length, or cm with absolute.", {}, {}, 0.0},
                   {"absolute", "", T::Bool, false, "distance is in cm, square to the selected edges."},
                   {"side", "", T::String, "both", "both, left or right of the edges' direction.", {"both", "left", "right"}},
                   {"ends", "", T::String, "converge", "Open ends inside the mesh: converge (meet at the end vertex) or wrap (round it).",
@@ -1284,7 +1284,7 @@ void registerMeshEditCommands()
         .name = "polyMerge",
         .doc = "Weld selected vertices closer than a distance (all of a mesh's points if it has no component selection). "
                "Exactly two selected vertices weld whatever the distance.",
-        .flags = {{"distance", "", T::Float, 0.01, "Weld distance, cm."}, {"average", "", T::Bool, false, "Move merged points to their average."}},
+        .flags = {{"distance", "", T::Float, 0.01, "Weld distance, cm.", {}, {}, 0.0}, {"average", "", T::Bool, false, "Move merged points to their average."}},
         .run = [](const Args& a) -> json {
             const bool pair = components::mode() == K::Vertex;
             return editSelected("Merge", K::Vertex, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
@@ -1314,8 +1314,8 @@ void registerMeshEditCommands()
                "edge into another, end to nearest end. Follows the mesh's symmetry; a weld across the symmetry plane meets on it. "
                "Returns the welded vertices.",
         .flags = {{"mesh", "", T::String, nullptr, "Mesh to weld; default: the selected or hilited mesh."},
-                  {"source", "", T::Int, -1, "Vertex (or edge) that moves."},
-                  {"target", "", T::Int, -1, "Vertex (or edge) it merges into."},
+                  {"source", "", T::Int, -1, "Vertex (or edge) that moves.", {}, {}, -1.0},
+                  {"target", "", T::Int, -1, "Vertex (or edge) it merges into.", {}, {}, -1.0},
                   {"edge", "", T::Bool, false, "source and target are edges."},
                   {"center", "", T::Bool, false, "Meet halfway instead of at the target."}},
         .run = [](const Args& a) -> json {
@@ -1413,7 +1413,7 @@ void registerMeshEditCommands()
     ops::registerCommand({
         .name = "polyBridge",
         .doc = "Join selected boundary loops with faces. Several pairs bridge at once; a single border round a slot bridges its two long sides.",
-        .flags = {{"divisions", "", T::Int, 0, "Extra rows between the loops."}},
+        .flags = {{"divisions", "", T::Int, 0, "Extra rows between the loops.", {}, {}, 0.0}},
         .run = [](const Args& a) -> json {
             return editSelected("Bridge", K::Edge, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap*) {
                 return faces(geo::bridgeEdges(m, sel, {std::max(0, a.get<int>("divisions"))}));
@@ -1521,8 +1521,8 @@ void registerMeshEditCommands()
                "triangles (or quads with quads=True). A mesh with modifiers gets a decimate modifier on top instead. Honours "
                "the mesh's symmetry: one half (or one radial wedge) is reduced and mirrored (or repeated).",
         .positionalDoc = "objects",
-        .flags = {{"ratio", "", T::Float, 0.5, "Fraction of triangles to keep, 0 to 1."},
-                  {"targetTriangles", "", T::Int, 0, "Triangles to keep; above 0 it overrides ratio."},
+        .flags = {{"ratio", "", T::Float, 0.5, "Fraction of triangles to keep, 0 to 1.", {}, {}, 0.0, 1.0},
+                  {"targetTriangles", "", T::Int, 0, "Triangles to keep; above 0 it overrides ratio.", {}, {}, 0.0},
                   {"keepBorders", "", T::Bool, true, "Open borders stay exactly where they are."},
                   {"keepHardEdges", "", T::Bool, true, "Hard edges stay intact, as UV seams and material borders always do; off lets them collapse for a lower count."},
                   {"symmetry", "", T::String, "auto", "auto (the mesh's symmetry setting), off, x, y or z.", {"auto", "off", "x", "y", "z"}},
@@ -1605,7 +1605,7 @@ void registerMeshEditCommands()
     ops::registerCommand({
         .name = "polyQuadrangulate",
         .doc = "Join neighbouring triangles into quads.",
-        .flags = {{"maxAngle", "", T::Float, 40.0, "Largest angle between the two triangles, degrees."}},
+        .flags = {{"maxAngle", "", T::Float, 40.0, "Largest angle between the two triangles, degrees.", {}, {}, 0.0, 180.0}},
         .run = [](const Args& a) -> json {
             return editSelected("Quadrangulate", K::Face, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap*) {
                 geo::QuadrangulateOptions o;
@@ -1619,7 +1619,7 @@ void registerMeshEditCommands()
         .name = "polySubdivide",
         .doc = "Catmull-Clark subdivide whole meshes (crease-aware).",
         .positionalDoc = "objects",
-        .flags = {{"levels", "", T::Int, 1, "Subdivision levels."},
+        .flags = {{"levels", "", T::Int, 1, "Subdivision levels.", {}, {}, 1.0, 5.0},
                   {"keepHardEdges", "", T::Bool, false, "Keep normals split along hard edges; off smooths the shading across them."}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
@@ -1649,7 +1649,7 @@ void registerMeshEditCommands()
                   {"direction", "", T::String, "positive", "positive (+ to -), negative (- to +) or both.", {"positive", "negative", "both"}},
                   {"space", "", T::String, "object", "object or world: whose origin and axes the plane uses.", {"object", "world"}},
                   {"weld", "", T::Bool, true, "Weld points on the plane."},
-                  {"tolerance", "", T::Float, 0.001, "Points this close to the plane are cut onto it and welded, cm."},
+                  {"tolerance", "", T::Float, 0.001, "Points this close to the plane are cut onto it and welded, cm.", {}, {}, 0.0},
                   {"flip", "", T::Bool, false, "Reflect the mesh across the plane rather than adding a mirrored copy: the original is not kept."}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
@@ -1844,7 +1844,7 @@ void registerMeshEditCommands()
         .name = "polySoftEdge",
         .doc = "Make the selected edges soft or hard by the angle their faces meet at: sharper than angle turns hard, the "
                "rest soft. 180 softens every edge, 0 hardens every edge. In object mode, whole selected meshes.",
-        .flags = {{"angle", "", T::Float, 180.0, "Edges whose faces meet sharper than this turn hard, degrees."}},
+        .flags = {{"angle", "", T::Float, 180.0, "Edges whose faces meet sharper than this turn hard, degrees.", {}, {}, 0.0, 180.0}},
         .run = [](const Args& a) -> json {
             const double angle = a.get<double>("angle");
             return editSelected("Soften/Harden Edges", K::Edge, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
@@ -2091,7 +2091,7 @@ void registerMeshEditCommands()
     };
 
     const std::vector<FlagDef> radialFlags = {
-        {"count", "", T::Int, nullptr, "Radial: how many wedges repeat round the axis, 2 to 64; default: the mesh's own."},
+        {"count", "", T::Int, nullptr, "Radial: how many wedges repeat round the axis, 2 to 64; default: the mesh's own.", {}, {}, 2.0, double(geo::kMaxRadialCount)},
         {"radialAxis", "", T::String, nullptr, "Radial: the axis, x, y, z or custom (direction=); default: the mesh's own.", {"x", "y", "z", "custom"}},
         {"direction", "", T::Vec3, nullptr, "Radial: a custom axis direction, object space."},
         {"mirror", "", T::Bool, nullptr, "Radial: also mirror each wedge across a plane through the axis (dihedral symmetry)."},
@@ -2343,7 +2343,7 @@ void registerMeshEditCommands()
                "on-plane points are put on the plane. With radial symmetry, one wedge's points are copied round the axis onto their orbits.",
         .positionalDoc = "objects",
         .flags = {{"side", "", T::String, "positive", "The side that is kept.", {"positive", "negative"}},
-                  {"wedge", "", T::Int, -1, "Radial: the wedge that is kept; -1: the one most of the selected components are in, else 0."}},
+                  {"wedge", "", T::Int, -1, "Radial: the wedge that is kept; -1: the one most of the selected components are in, else 0.", {}, {}, -1.0}},
         .run = [symmetricMesh, symmetryTargets](const Args& a) -> json {
             Graph& g = graph();
             const int drive = a.get<std::string>("side", "positive") == "negative" ? -1 : 1;
@@ -2411,10 +2411,10 @@ void registerMeshEditCommands()
                   {"side", "", T::String, "auto", "The side that is kept; auto: the side of the selected components, else the side holding nearly all of the "
                    "mesh, else positive.",
                    {"auto", "positive", "negative"}},
-                  {"wedge", "", T::Int, -1, "Radial: the wedge that is kept; -1: the one most of the selected components are in, else the one holding most of the mesh."},
+                  {"wedge", "", T::Int, -1, "Radial: the wedge that is kept; -1: the one most of the selected components are in, else the one holding most of the mesh.", {}, {}, -1.0},
                   {"pairsOnly", "", T::Bool, false, "Only match the stored pairs again, leaving the geometry as it is."},
                   {"topological", "", T::Bool, false, "With pairsOnly: match by topology from the selected edge."},
-                  {"tolerance", "", T::Float, 0.0, "Weld or match distance, cm (0: scaled to the mesh)."}},
+                  {"tolerance", "", T::Float, 0.0, "Weld or match distance, cm (0: scaled to the mesh).", {}, {}, 0.0}},
         .run = [symmetricMesh, symmetryTargets, keepSide, keepWedge](const Args& a) -> json {
             Graph& g = graph();
             g.evaluate();
@@ -2488,8 +2488,8 @@ void registerMeshEditCommands()
 
     std::vector<FlagDef> symmetrizeRadialFlags = radialFlags;
     symmetrizeRadialFlags.push_back({"wedge", "", T::Int, -1,
-                                     "The wedge that is kept; -1: the one most of the selected components are in, else the one holding most of the mesh."});
-    symmetrizeRadialFlags.push_back({"tolerance", "", T::Float, 0.0, "Weld distance along the seams and the axis, cm (0: scaled to the mesh)."});
+                                     "The wedge that is kept; -1: the one most of the selected components are in, else the one holding most of the mesh.", {}, {}, -1.0});
+    symmetrizeRadialFlags.push_back({"tolerance", "", T::Float, 0.0, "Weld distance along the seams and the axis, cm (0: scaled to the mesh).", {}, {}, 0.0});
     ops::registerCommand({
         .name = "symmetrizeRadial",
         .doc = "Rebuild meshes exactly radially symmetric: the kept wedge is repeated round the axis (and mirrored within each wedge with "
@@ -2550,9 +2550,9 @@ void registerMeshEditCommands()
                   {"through", "", T::Bool, false, "Cut every face under the line, hidden faces too."},
                   {"eye", "", T::Vec3, nullptr, "World eye of a perspective view."},
                   {"direction", "", T::Vec3, nullptr, "World view direction of an orthographic view."},
-                  {"loopEdge", "", T::Int, -1, "Insert an edge loop across this edge's ring instead of cutting a path."},
-                  {"fraction", "", T::Float, 0.5, "Where along loopEdge the loop crosses it, from its first point."},
-                  {"deleteEdge", "", T::Int, -1, "Dissolve this edge, joining its two faces, instead of cutting."},
+                  {"loopEdge", "", T::Int, -1, "Insert an edge loop across this edge's ring instead of cutting a path.", {}, {}, -1.0},
+                  {"fraction", "", T::Float, 0.5, "Where along loopEdge the loop crosses it, from its first point.", {}, {}, 0.0, 1.0},
+                  {"deleteEdge", "", T::Int, -1, "Dissolve this edge, joining its two faces, instead of cutting.", {}, {}, -1.0},
                   {"select", "", T::Bool, true, "Select the new edges."}},
         .run = [vec](const Args& a) -> json {
             Graph& g = graph();

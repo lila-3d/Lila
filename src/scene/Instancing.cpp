@@ -547,7 +547,7 @@ void registerCommands()
                "imported kits. The source is the last mesh given (the lead); with only the source, every other mesh in the "
                "scene is checked. Returns the meshes converted.",
         .positionalDoc = "meshes... source",
-        .flags = {{"tolerance", "", T::Float, 0.001, "Points may differ by this much, object space, cm."},
+        .flags = {{"tolerance", "", T::Float, 0.001, "Points may differ by this much, object space, cm.", {}, {}, 0.0},
                   {"force", "", T::Bool, false, "Convert the given meshes even when their geometry differs from the source's."}},
         .run = [meshes, names](const Args& a) -> json {
             LILA_ZONE();

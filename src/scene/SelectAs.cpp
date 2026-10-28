@@ -470,7 +470,7 @@ void registerSelectAsCommands()
                "weighted, parent, child or influence, in that order.",
         .positionalDoc = "mesh",
         .flags = {
-            {"face", "f", T::Int, nullptr, "Face id."},
+            {"face", "f", T::Int, nullptr, "Face id.", {}, {}, 0.0},
             {"position", "p", T::Vec3, nullptr, "World hit point, to pick the child nearest it."},
             {"redirect", "r", T::Bool, true, "Follow selectAs; off treats the dominant joint as the click."},
         },

@@ -37,7 +37,7 @@ void primitives()
         },
         "A straight two-point curve.");
     curvePrimitive(
-        "CurveCircle", "Curve Circle", {in("resolution", T::Int, 32), in("radius", T::Float, 50.0)}, {},
+        "CurveCircle", "Curve Circle", {bounded(in("resolution", T::Int, 32), 3, 100000), bounded(in("radius", T::Float, 50.0), 0.0)}, {},
         [](ExecContext& c) {
             int n = int(std::clamp<int64_t>(c.i("resolution"), 3, 100000));
             double r = c.f("radius");
@@ -54,7 +54,7 @@ void primitives()
         "A closed circle in the ground plane. As a Curve to Mesh profile its X and Z map across the path.");
     curvePrimitive(
         "BezierSegment", "Bezier Segment",
-        {in("resolution", T::Int, 16), in("start", T::Vector, vec(-50, 0, 0)), in("startHandle", T::Vector, vec(-25, 50, 0)),
+        {bounded(in("resolution", T::Int, 16), 1, 100000), in("start", T::Vector, vec(-50, 0, 0)), in("startHandle", T::Vector, vec(-25, 50, 0)),
          in("endHandle", T::Vector, vec(25, 50, 0)), in("end", T::Vector, vec(50, 0, 0))},
         {},
         [](ExecContext& c) {
@@ -73,7 +73,8 @@ void primitives()
         "A cubic Bezier between two points, evaluated to a poly curve.");
     curvePrimitive(
         "CurveSpiral", "Spiral",
-        {in("resolution", T::Int, 32, "Points per turn."), in("rotations", T::Float, 2.0), in("startRadius", T::Float, 50.0), in("endRadius", T::Float, 100.0),
+        {bounded(in("resolution", T::Int, 32, "Points per turn."), 1, 10000), bounded(in("rotations", T::Float, 2.0), 0.0), in("startRadius", T::Float, 50.0),
+         in("endRadius", T::Float, 100.0),
          in("height", T::Float, 100.0), in("reverse", T::Bool, false)},
         {},
         [](ExecContext& c) {
@@ -143,7 +144,7 @@ void curveOps()
         .category = "Curve",
         .doc = "Rebuilds curves with evenly spaced points, by count or by segment length.",
         .props = {prop("mode", {"count", "length"}, "count")},
-        .sockets = {.inputs = {geoIn("curve"), in("count", T::Int, 10), in("length", T::Float, 10.0, "Segment length, cm (length mode).")},
+        .sockets = {.inputs = {geoIn("curve"), bounded(in("count", T::Int, 10), 1, 1000000), bounded(in("length", T::Float, 10.0, "Segment length, cm (length mode)."), 1e-6)},
                     .outputs = {geoOut("curve")}},
         .exec =
             [](ExecContext& c) {
@@ -431,7 +432,7 @@ void splineNodes()
         .category = "Curve",
         .doc = "Rounds (arc), cuts (chamfer) or blends (g2) curve corners by radius; a point's cornerRadius attribute wins where set.",
         .props = {prop("mode", {"arc", "chamfer", "g2"}, "arc")},
-        .sockets = {.inputs = {geoIn("curve"), in("radius", T::Float, 10.0, "cm.")}, .outputs = {geoOut("curve")}},
+        .sockets = {.inputs = {geoIn("curve"), bounded(in("radius", T::Float, 10.0, "cm."), 0.0)}, .outputs = {geoOut("curve")}},
         .exec =
             [](ExecContext& c) {
                 curve::FilletOptions o;
@@ -508,9 +509,9 @@ void alongNodes()
                "length along the forward axis), each turned onto the curve's frame.",
         .props = {prop("fill", {"count", "spacing"}, "count"), prop("forwardAxis", kAlongAxes, "+x"),
                   prop("upMode", {"curveFrames", "autoNormals"}, "curveFrames")},
-        .sockets = {.inputs = {geoIn("curve"), geoIn("instance"), in("count", T::Int, 5), in("spacing", T::Float, 0.0, "Step between copies, cm."),
+        .sockets = {.inputs = {geoIn("curve"), geoIn("instance"), bounded(in("count", T::Int, 5), 1, 100000), bounded(in("spacing", T::Float, 0.0, "Step between copies, cm."), 0.0),
                                in("fitToLength", T::Bool, true, "Spacing: even the step so copies run end to end."),
-                               in("startOffset", T::Float, 0.0, "cm."), in("endOffset", T::Float, 0.0, "cm."), in("align", T::Bool, true)},
+                               bounded(in("startOffset", T::Float, 0.0, "cm."), 0.0), bounded(in("endOffset", T::Float, 0.0, "cm."), 0.0), in("align", T::Bool, true)},
                     .outputs = {geoOut("instances")}},
         .exec =
             [](ExecContext& c) {

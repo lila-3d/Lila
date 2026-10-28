@@ -434,11 +434,11 @@ void registerTextureCommands()
         .positionalDoc = "tension deformer or mesh",
         .flags = {{"start", "", T::Int, nullptr, "First frame; the playback start by default."},
                   {"end", "", T::Int, nullptr, "Last frame; the playback end by default."},
-                  {"step", "", T::Int, 1, "Frames between samples."},
+                  {"step", "", T::Int, 1, "Frames between samples.", {}, {}, 1.0},
                   {"mode", "", T::String, "max", "max keeps each point's peak, mean its average.", {"max", "mean"}},
                   {"colorSet", "", T::String, "tensionMask", "Colour set written on the base mesh; empty for none."},
                   {"file", "f", T::String, nullptr, "Image to write by uv (png, exr, tga, tif)."},
-                  {"resolution", "", T::Int, 1024, "Image width and height."},
+                  {"resolution", "", T::Int, 1024, "Image width and height.", {}, {}, 1.0, 16384.0},
                   {"uvSet", "", T::String, "uv0", "The uv set the image is laid out by."}},
         .run = [](const Args& a) -> json {
             const char* cmd = "bakeTension";

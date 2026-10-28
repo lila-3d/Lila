@@ -218,7 +218,7 @@ void registerSplineCommands()
                   {"mesh", "m", T::String, nullptr, "Spline meshes along it: a Lila mesh mapped to Unreal, or an asset like /Game/Props/SM_Pipe."},
                   {"meshAxis", "ma", T::String, nullptr, "The spline mesh's forward axis (default x).", {"x", "y", "z"}},
                   {"landscape", "ls", T::String, nullptr, "mode=landscape: the landscape's label (default the first one)."},
-                  {"width", "w", T::Float, nullptr, "mode=landscape: half-width of the spline at radius 1, cm (default 200)."},
+                  {"width", "w", T::Float, nullptr, "mode=landscape: half-width of the spline at radius 1, cm (default 200).", {}, {}, 0.0},
                   {"deformTerrain", "dt", T::Bool, nullptr, "mode=landscape: the splines raise and lower the terrain (default on)."},
                   {"remove", "rm", T::Bool, false, "Unmap the curves and delete what they made in Unreal instead."},
                   {"wait", "wt", T::Bool, false, "Block until Unreal answers and return its replies."}},

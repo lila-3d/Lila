@@ -809,7 +809,7 @@ void registerCommands()
                   {"view", "", T::Any, nullptr, "Screen view, when stroke has none."},
                   {"space", "", T::String, nullptr, "surface or screen (default: screen when there are points).", {"surface", "screen"}},
                   {"particles", "", T::Any, nullptr, "Particle brush {kind, count, length, size, spread, rate, seed}, when stroke has none."},
-                  {"id", "", T::Int, nullptr, "The stroke id the paint tool painted live under."}},
+                  {"id", "", T::Int, nullptr, "The stroke id the paint tool painted live under.", {}, {}, 0.0}},
         .run = paintStroke,
     });
 
@@ -818,7 +818,7 @@ void registerCommands()
         .doc = "Re-rasterise a paint layer from its stroke records (and flattened pixels), at resolution= texels per side (0 follows the "
                "set's tiles) or its current size. Deterministic: the same records give the same pixels. Returns the layer's info.",
         .positionalDoc = "set [layer]",
-        .flags = {{"layer", "", T::String, nullptr, "The paint layer."}, {"resolution", "r", T::Int, nullptr, "Texels per side; 0 follows the set."}},
+        .flags = {{"layer", "", T::String, nullptr, "The paint layer."}, {"resolution", "r", T::Int, nullptr, "Texels per side; 0 follows the set.", {}, {}, 0.0, 16384.0}},
         .run = [](const Args& a) -> json {
             Node& set = setArg(a, "texRasterize");
             const std::string layer = requireLayer(a, set, "texRasterize");

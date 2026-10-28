@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <stdexcept>
 #include <unordered_set>
 #include <utility>
@@ -70,6 +71,20 @@ bool scalarOf(const PlugValue& v, double& out)
                 return false;
         },
         v);
+}
+
+/** Holds a value inside the attr's hard limits; each component of a Vec3. */
+void clampToLimits(const AttrDef& a, PlugValue& v)
+{
+    if (!a.minValue && !a.maxValue)
+        return;
+    const double lo = a.minValue.value_or(-HUGE_VAL), hi = a.maxValue.value_or(HUGE_VAL);
+    if (double* d = std::get_if<double>(&v))
+        *d = std::clamp(*d, lo, hi);
+    else if (int64_t* i = std::get_if<int64_t>(&v))
+        *i = int64_t(std::clamp(double(*i), std::ceil(lo), std::floor(hi)));
+    else if (glm::dvec3* x = std::get_if<glm::dvec3>(&v))
+        *x = glm::clamp(*x, glm::dvec3(lo), glm::dvec3(hi));
 }
 
 void assignScalar(PlugValue& slot, double s)
@@ -854,6 +869,8 @@ void Graph::setValue(const PlugRef& p, PlugValue v)
         throw std::invalid_argument(plugName(p) + " is an array input and takes connections, not values");
     if (isArray(a) && (p.element < 0 || p.component >= 0))
         throw std::invalid_argument(plugName(p) + " is an array: set one element (" + plugName(p) + "[0]), or all with setElements");
+    if (a.type == PlugType::Int || a.type == PlugType::Float || a.type == PlugType::Vec3)
+        clampToLimits(a, v);
     if (uint8_t mask = n->lockMask(p.attr))
     {
         const glm::dvec3* x = std::get_if<glm::dvec3>(&v);

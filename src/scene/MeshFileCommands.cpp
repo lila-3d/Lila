@@ -170,7 +170,7 @@ void registerMeshFileCommands()
         .positionalDoc = "path",
         .flags = {unitFlag("mm", "The file's length unit. STL has none; 3D printing assumes mm."), upFlag(),
                   {"weld", "", T::Bool, true, "Merge identical positions into shared points."},
-                  {"hardAngle", "", T::Float, 30.0, "Edges bent more than this many degrees are hard; -1 leaves all soft."}},
+                  {"hardAngle", "", T::Float, 30.0, "Edges bent more than this many degrees are hard; -1 leaves all soft.", {}, {}, -1.0, 180.0}},
         .run = [](const Args& a) -> json {
             const std::string path = readPath(a, "importStl");
             const glm::dmat4 m = fileToScene(a, "importStl");

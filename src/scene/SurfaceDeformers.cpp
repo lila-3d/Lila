@@ -305,14 +305,15 @@ struct PinData final : Data
 
 // ------------------------------------------------------------------------------------------------ attr helpers
 
-AttrDef keyable(std::string name, PlugType type, PlugValue def, std::string doc)
+AttrDef keyable(std::string name, PlugType type, PlugValue def, std::string doc, std::optional<double> lo = {}, std::optional<double> hi = {})
 {
     return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable | AttrKeyable,
-            .doc = std::move(doc)};
+            .doc = std::move(doc), .minValue = lo, .maxValue = hi};
 }
-AttrDef stored(std::string name, PlugType type, PlugValue def, std::string doc)
+AttrDef stored(std::string name, PlugType type, PlugValue def, std::string doc, std::optional<double> lo = {}, std::optional<double> hi = {})
 {
-    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable, .doc = std::move(doc)};
+    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable, .doc = std::move(doc),
+            .minValue = lo, .maxValue = hi};
 }
 AttrDef hiddenStored(std::string name, PlugType type, PlugValue def, std::string doc)
 {
@@ -1338,9 +1339,9 @@ void registerSurfaceTypes()
                        stored("positive", PlugType::Bool, true, "Project mode: cast along the axis."),
                        stored("negative", PlugType::Bool, false, "Project mode: cast against the axis too; the nearer hit wins."),
                        enumAttr("cullFaces", 0, {"off", "front", "back"}, "Project mode: ignore target faces facing the ray (front) or facing away (back)."),
-                       keyable("projectLimit", PlugType::Float, 0.0, "Project mode: farthest a point moves, cm; 0 for no limit."),
-                       keyable("smoothIterations", PlugType::Int, int64_t(0), "Smooth the mesh this many passes before wrapping it."),
-                       keyable("smoothStep", PlugType::Float, 0.5, "How far each smoothing pass moves a point, 0 to 1."),
+                       keyable("projectLimit", PlugType::Float, 0.0, "Project mode: farthest a point moves, cm; 0 for no limit.", 0.0),
+                       keyable("smoothIterations", PlugType::Int, int64_t(0), "Smooth the mesh this many passes before wrapping it.", 0.0, 1000.0),
+                       keyable("smoothStep", PlugType::Float, 0.5, "How far each smoothing pass moves a point, 0 to 1.", 0.0, 1.0),
                        stored("keepDetail", PlugType::Bool, false, "Put the detail smoothing removed back on after wrapping, so it survives.")},
                       [] { return std::make_unique<ShrinkwrapNode>(); }});
 
@@ -1351,11 +1352,11 @@ void registerSurfaceTypes()
                       {connected("driver", PlugType::Mesh, MeshPtr(), "The driver's outMesh."),
                        connected("driverMatrix", PlugType::Matrix, glm::dmat4(1.0), "The driver's worldMatrix."), geomMatrixAttr(),
                        enumAttr("mode", 0, {"polygons", "points"}, "Bind to driver polygons, or capture by driver points (works without faces). Used when binding."),
-                       stored("maxFaces", PlugType::Int, int64_t(4), "Polygons mode: driver polygons each point follows, 1 to 16. Used when binding."),
-                       stored("falloff", PlugType::Float, 4.0, "Polygons mode: how sharply nearer polygons win, as a distance exponent. Used when binding."),
-                       stored("maxPoints", PlugType::Int, int64_t(8), "Points mode: driver points capturing each point. Used when binding."),
-                       stored("radius", PlugType::Float, 0.0, "Points mode: capture radius, cm; 0 sizes it from the nearest points. Used when binding."),
-                       stored("neighbours", PlugType::Int, int64_t(8), "Points mode: neighbours each driver point fits its rotation from. Used when binding."),
+                       stored("maxFaces", PlugType::Int, int64_t(4), "Polygons mode: driver polygons each point follows, 1 to 16. Used when binding.", 1.0, 16.0),
+                       stored("falloff", PlugType::Float, 4.0, "Polygons mode: how sharply nearer polygons win, as a distance exponent. Used when binding.", 0.0, 16.0),
+                       stored("maxPoints", PlugType::Int, int64_t(8), "Points mode: driver points capturing each point. Used when binding.", 1.0, 64.0),
+                       stored("radius", PlugType::Float, 0.0, "Points mode: capture radius, cm; 0 sizes it from the nearest points. Used when binding.", 0.0),
+                       stored("neighbours", PlugType::Int, int64_t(8), "Points mode: neighbours each driver point fits its rotation from. Used when binding.", 2.0, 64.0),
                        enumAttr("rebind", 0, {"none", "restAttribute", "uv"},
                                 "When the driver's topology changes: stop with an error, rebind against its 'rest' point attribute, or "
                                 "carry the binding over by uv (polygons mode)."),
@@ -1374,14 +1375,14 @@ void registerSurfaceTypes()
         element("drivers.mesh", PlugType::Mesh, MeshPtr(), false, "Each driver's outMesh, from element 0.", "driver#"),
         element("drivers.matrix", PlugType::Matrix, glm::dmat4(1.0), false, "Each driver's worldMatrix.", "driverMatrix#"),
         geomMatrixAttr(),
-        stored("maxDrivers", PlugType::Int, int64_t(4), "Driver triangles each point follows, 1 to 32, across all drivers. Used when binding."),
-        stored("falloff", PlugType::Float, 2.0, "Triangles within this many times the nearest distance count; higher is smoother. Used when binding."),
-        stored("smoothInfluences", PlugType::Int, int64_t(0), "Passes spreading each point's influences to its neighbours, for smoother results from coarse drivers. Used when binding."),
-        stored("smoothAmount", PlugType::Float, 0.5, "How much each spreading pass takes from the neighbours, 0 to 1. Used when binding."),
+        stored("maxDrivers", PlugType::Int, int64_t(4), "Driver triangles each point follows, 1 to 32, across all drivers. Used when binding.", 1.0, 32.0),
+        stored("falloff", PlugType::Float, 2.0, "Triangles within this many times the nearest distance count; higher is smoother. Used when binding.", 1.0),
+        stored("smoothInfluences", PlugType::Int, int64_t(0), "Passes spreading each point's influences to its neighbours, for smoother results from coarse drivers. Used when binding.", 0.0, 100.0),
+        stored("smoothAmount", PlugType::Float, 0.5, "How much each spreading pass takes from the neighbours, 0 to 1. Used when binding.", 0.0, 1.0),
         enumAttr("wrapMode", 0, {"offset", "surface", "snap"},
                  "offset: points keep their offset from the driver, turning with it. surface: the driver's movement is added without "
                  "turning the offset. snap: points land on the driver."),
-        keyable("scaleCompensation", PlugType::Float, 0.0, "0 to 1: offsets grow and shrink with the driver's local scale."),
+        keyable("scaleCompensation", PlugType::Float, 0.0, "0 to 1: offsets grow and shrink with the driver's local scale.", 0.0, 1.0),
         hiddenStored("binding", PlugType::Data, DataPtr(), "Each point's driver triangles and offsets."),
     };
     registerDeformer({"wrap", "layers-intersect",
@@ -1391,10 +1392,10 @@ void registerSurfaceTypes()
 
     std::vector<AttrDef> collision = {
         geomMatrixAttr(),
-        keyable("offset", PlugType::Float, 0.0, "Distance points keep from each collider, cm."),
-        keyable("falloff", PlugType::Float, 0.0, "Points within this much more than the offset ease out softly instead of stopping hard, cm."),
-        keyable("volumeKeep", PlugType::Float, 0.0, "0 to 1: the pushed amount bulges out around the contact."),
-        keyable("bulgeRadius", PlugType::Float, 0.0, "How far the bulge spreads, cm; 0 is four times the deepest push."),
+        keyable("offset", PlugType::Float, 0.0, "Distance points keep from each collider, cm.", 0.0),
+        keyable("falloff", PlugType::Float, 0.0, "Points within this much more than the offset ease out softly instead of stopping hard, cm.", 0.0),
+        keyable("volumeKeep", PlugType::Float, 0.0, "0 to 1: the pushed amount bulges out around the contact.", 0.0, 1.0),
+        keyable("bulgeRadius", PlugType::Float, 0.0, "How far the bulge spreads, cm; 0 is four times the deepest push.", 0.0),
         enumAttr("side", 0, {"outside", "inside"}, "Push points out of the colliders, or hold them inside."),
     };
     // Grouped arrays, one element per collider; older scenes' collider0, capsuleMatrix0 ... load into them.
@@ -1403,6 +1404,8 @@ void registerSurfaceTypes()
     collision.push_back(element("capsules.matrix", PlugType::Matrix, glm::dmat4(1.0), false, "A capsule's transform: its axis is local Y.", "capsuleMatrix#"));
     collision.push_back(element("capsules.radius", PlugType::Float, 5.0, true, "Capsule radius, in its transform's units.", "capsuleRadius#"));
     collision.push_back(element("capsules.length", PlugType::Float, 10.0, true, "Capsule length between the sphere centres, along its Y.", "capsuleLength#"));
+    for (AttrDef& capsule : std::span(collision).last(2))
+        capsule.minValue = 0.0;
     registerDeformer({"collision", "shield",
                       "Pushes the mesh out of collider meshes and capsules (or holds it inside them) with an offset, a soft falloff and "
                       "optional volume keeping. The fix for layered clothing passing through the body.",
@@ -1414,7 +1417,7 @@ void registerSurfaceTypes()
                       {geomMatrixAttr(),
                        enumAttr("regionMode", 0, {"islands", "stored", "weights"},
                                 "Regions: each connected piece of the mesh, the stored ones (from a selection or sets), or the pieces painted above 0 in the weight map."),
-                       keyable("blendRings", PlugType::Int, int64_t(2), "Edge rings around each region easing from rigid into the deformation."),
+                       keyable("blendRings", PlugType::Int, int64_t(2), "Edge rings around each region easing from rigid into the deformation.", 0.0, 100.0),
                        hiddenStored("regions", PlugType::Data, DataPtr(), "Region per point, for stored mode."),
                        hiddenStored("rest", PlugType::Data, DataPtr(), "The rest shape captured at bind time.")},
                       [] { return std::make_unique<RigidifyNode>(); }});
@@ -1422,9 +1425,9 @@ void registerSurfaceTypes()
     registerDeformer({"skinSlide", "arrows-move",
                       "Makes skin slide over the rest form instead of stretching: the deformation is moved along the rest surface and "
                       "relaxed on it.",
-                      {geomMatrixAttr(), keyable("relaxIterations", PlugType::Int, int64_t(4), "Relax passes on the rest surface."),
-                       keyable("relaxStep", PlugType::Float, 0.5, "How far each relax pass moves a point, 0 to 1."),
-                       keyable("normalAmount", PlugType::Float, 0.0, "0 to 1: how much of the movement off the rest surface is kept."),
+                      {geomMatrixAttr(), keyable("relaxIterations", PlugType::Int, int64_t(4), "Relax passes on the rest surface.", 0.0, 1000.0),
+                       keyable("relaxStep", PlugType::Float, 0.5, "How far each relax pass moves a point, 0 to 1.", 0.0, 1.0),
+                       keyable("normalAmount", PlugType::Float, 0.0, "0 to 1: how much of the movement off the rest surface is kept.", 0.0, 1.0),
                        hiddenStored("rest", PlugType::Data, DataPtr(), "The rest shape captured at bind time.")},
                       [] { return std::make_unique<SkinSlideNode>(); }});
 
@@ -1447,7 +1450,7 @@ void registerSurfaceCommands()
                   {"offset", "", T::Float, 0.0, "Distance kept from the surface, cm."},
                   {"projectAxis", "", T::String, "normal", "Project mode: normal | x | y | z (the mesh's own axes).", {"normal", "x", "y", "z"}},
                   {"negative", "", T::Bool, false, "Project mode: also cast against the axis."},
-                  {"smoothIterations", "", T::Int, 0, "Smooth the mesh this many passes before wrapping it."},
+                  {"smoothIterations", "", T::Int, 0, "Smooth the mesh this many passes before wrapping it.", {}, {}, 0.0, 1000.0},
                   {"keepDetail", "", T::Bool, false, "Put the smoothed-away detail back after wrapping."},
                   {"params", "", T::Any, nullptr, "{param: value} for any other attribute."},
                   {"name", "", T::String, nullptr, "Name for the deformer."}},
@@ -1481,10 +1484,10 @@ void registerSurfaceCommands()
                "points mode. Give the meshes first and the driver last. Returns the deformers.",
         .positionalDoc = "meshes..., driver",
         .flags = {{"mode", "", T::String, "polygons", "polygons | points", {"polygons", "points"}},
-                  {"maxFaces", "", T::Int, 4, "Polygons mode: driver polygons each point follows."},
-                  {"falloff", "", T::Float, 4.0, "Polygons mode: distance exponent between a point's polygons."},
-                  {"maxPoints", "", T::Int, 8, "Points mode: driver points capturing each point."},
-                  {"radius", "", T::Float, 0.0, "Points mode: capture radius, cm; 0 sizes it from the nearest points."},
+                  {"maxFaces", "", T::Int, 4, "Polygons mode: driver polygons each point follows.", {}, {}, 1.0, 16.0},
+                  {"falloff", "", T::Float, 4.0, "Polygons mode: distance exponent between a point's polygons.", {}, {}, 0.0, 16.0},
+                  {"maxPoints", "", T::Int, 8, "Points mode: driver points capturing each point.", {}, {}, 1.0, 64.0},
+                  {"radius", "", T::Float, 0.0, "Points mode: capture radius, cm; 0 sizes it from the nearest points.", {}, {}, 0.0},
                   {"rebind", "", T::String, "none", "When the driver's topology changes: none | restAttribute | uv", {"none", "restAttribute", "uv"}},
                   {"name", "", T::String, nullptr, "Name for the deformer."}},
         .run = [](const Args& a) -> json {
@@ -1517,11 +1520,11 @@ void registerSurfaceCommands()
                "the meshes to deform first and the driver last; more drivers with drivers=. Returns the deformers.",
         .positionalDoc = "meshes..., driver",
         .flags = {{"drivers", "", T::List, nullptr, "More driver meshes, up to 8 in all."},
-                  {"maxDrivers", "", T::Int, 4, "Driver triangles each point follows, 1 to 32."},
-                  {"falloff", "", T::Float, 2.0, "Triangles within this many times the nearest distance count; higher is smoother."},
-                  {"smoothInfluences", "", T::Int, 0, "Passes spreading influences to neighbouring points."},
+                  {"maxDrivers", "", T::Int, 4, "Driver triangles each point follows, 1 to 32.", {}, {}, 1.0, 32.0},
+                  {"falloff", "", T::Float, 2.0, "Triangles within this many times the nearest distance count; higher is smoother.", {}, {}, 1.0},
+                  {"smoothInfluences", "", T::Int, 0, "Passes spreading influences to neighbouring points.", {}, {}, 0.0, 100.0},
                   {"wrapMode", "", T::String, "offset", "offset | surface | snap", {"offset", "surface", "snap"}},
-                  {"scaleCompensation", "", T::Float, 0.0, "0 to 1: offsets follow the driver's local scale."},
+                  {"scaleCompensation", "", T::Float, 0.0, "0 to 1: offsets follow the driver's local scale.", {}, {}, 0.0, 1.0},
                   {"name", "", T::String, nullptr, "Name for the deformer."}},
         .run = [](const Args& a) -> json {
             Graph& graph = g();
@@ -1585,12 +1588,12 @@ void registerSurfaceCommands()
                "Y). Give the meshes first and a collider last; more with colliders=. Returns the deformers.",
         .positionalDoc = "meshes..., collider",
         .flags = {{"colliders", "", T::List, nullptr, "More colliders, up to 4 meshes and 4 capsules in all."},
-                  {"offset", "", T::Float, 0.0, "Distance kept from each collider, cm."},
-                  {"falloff", "", T::Float, 0.0, "Soft easing width beyond the offset, cm."},
-                  {"volumeKeep", "", T::Float, 0.0, "0 to 1: bulge around the contact."},
+                  {"offset", "", T::Float, 0.0, "Distance kept from each collider, cm.", {}, {}, 0.0},
+                  {"falloff", "", T::Float, 0.0, "Soft easing width beyond the offset, cm.", {}, {}, 0.0},
+                  {"volumeKeep", "", T::Float, 0.0, "0 to 1: bulge around the contact.", {}, {}, 0.0, 1.0},
                   {"side", "", T::String, "outside", "outside | inside", {"outside", "inside"}},
-                  {"capsuleRadius", "", T::Float, 5.0, "Radius for transform colliders, in their units."},
-                  {"capsuleLength", "", T::Float, 10.0, "Length for transform colliders, along their Y."},
+                  {"capsuleRadius", "", T::Float, 5.0, "Radius for transform colliders, in their units.", {}, {}, 0.0},
+                  {"capsuleLength", "", T::Float, 10.0, "Length for transform colliders, along their Y.", {}, {}, 0.0},
                   {"name", "", T::String, nullptr, "Name for the deformer."}},
         .run = [](const Args& a) -> json {
             Graph& graph = g();
@@ -1623,8 +1626,8 @@ void registerSurfaceCommands()
         .name = "addCollider",
         .doc = "Add colliders to a collision deformer: meshes, or transforms as capsules along their Y.",
         .positionalDoc = "collision, colliders...",
-        .flags = {{"capsuleRadius", "", T::Float, 5.0, "Radius for transform colliders."},
-                  {"capsuleLength", "", T::Float, 10.0, "Length for transform colliders, along their Y."}},
+        .flags = {{"capsuleRadius", "", T::Float, 5.0, "Radius for transform colliders.", {}, {}, 0.0},
+                  {"capsuleLength", "", T::Float, 10.0, "Length for transform colliders, along their Y.", {}, {}, 0.0}},
         .run = [](const Args& a) -> json {
             Graph& graph = g();
             std::vector<std::string> objs = a.objects();
@@ -1645,7 +1648,7 @@ void registerSurfaceCommands()
         .positionalDoc = "meshes",
         .flags = {{"regions", "", T::String, "islands", "islands | selection | sets | weights", {"islands", "selection", "sets", "weights"}},
                   {"sets", "", T::List, nullptr, "regions=sets: the sets, each one region."},
-                  {"blendRings", "", T::Int, 2, "Edge rings easing from rigid into the deformation."},
+                  {"blendRings", "", T::Int, 2, "Edge rings easing from rigid into the deformation.", {}, {}, 0.0, 100.0},
                   {"name", "", T::String, nullptr, "Name for the deformer."}},
         .run = [](const Args& a) -> json {
             Graph& graph = g();
@@ -1740,8 +1743,8 @@ void registerSurfaceCommands()
         .doc = "Add a skin slide deformer: the deformation below it slides along the rest surface and is relaxed there, so skin moves "
                "over the form instead of stretching. Returns the deformers.",
         .positionalDoc = "meshes",
-        .flags = {{"relaxIterations", "", T::Int, 4, "Relax passes on the rest surface."},
-                  {"normalAmount", "", T::Float, 0.0, "0 to 1: how much movement off the rest surface is kept."},
+        .flags = {{"relaxIterations", "", T::Int, 4, "Relax passes on the rest surface.", {}, {}, 0.0, 1000.0},
+                  {"normalAmount", "", T::Float, 0.0, "0 to 1: how much movement off the rest surface is kept.", {}, {}, 0.0, 1.0},
                   {"name", "", T::String, nullptr, "Name for the deformer."}},
         .run = [](const Args& a) -> json {
             Graph& graph = g();

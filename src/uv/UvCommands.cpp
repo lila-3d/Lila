@@ -205,11 +205,11 @@ PackOptions packArgs(const Args& a)
 std::vector<FlagDef> packFlags()
 {
     using T = ArgType;
-    return {{"resolution", "", T::Int, 1024, "Target texture size, px. Padding and margin are in its texels."},
-            {"padding", "", T::Float, 4.0, "Texels between islands, held exactly (the search never lets two islands closer)."},
+    return {{"resolution", "", T::Int, 1024, "Target texture size, px. Padding and margin are in its texels.", {}, {}, 4.0},
+            {"padding", "", T::Float, 4.0, "Texels between islands, held exactly (the search never lets two islands closer).", {}, {}, 0.0},
             {"margin", "", T::Float, -1.0, "Texels from the tile (or region) border; negative is half the padding."},
-            {"paddingMips", "", T::Int, 0, "Padding and margin survive this many mip levels: both are multiplied by 2^paddingMips."},
-            {"rotateStep", "", T::Int, 90, "Rotation step to try, degrees: 0 none, 90 quarter turns, smaller for more."},
+            {"paddingMips", "", T::Int, 0, "Padding and margin survive this many mip levels: both are multiplied by 2^paddingMips.", {}, {}, 0.0, 12.0},
+            {"rotateStep", "", T::Int, 90, "Rotation step to try, degrees: 0 none, 90 quarter turns, smaller for more.", {}, {}, 0.0, 180.0},
             {"angles", "", T::List, nullptr, "Exact angles to try, degrees (replaces rotateStep), e.g. [0, 90, 45]."},
             {"freeRotation", "", T::Bool, false, "Any angle: each island also tries its three best-fitting angles (smallest bounding box) and their quarter turns."},
             {"flip", "", T::Bool, false, "Also try islands mirrored (the texture then reads mirrored on them)."},
@@ -221,14 +221,14 @@ std::vector<FlagDef> packFlags()
             {"normalize", "", T::Bool, true, "Same as scaleMode=normalize when on, keep when off."},
             {"stack", "", T::Bool, false, "Islands with the same shape (within stackTolerance) share one spot."},
             {"stackMirrored", "", T::Bool, true, "Mirror-image islands stack too (the mirrored halves of a symmetric model)."},
-            {"stackTolerance", "", T::Float, 0.002, "Largest vertex mismatch for two islands to stack, as a fraction of the island's size."},
-            {"tilesU", "", T::Int, 1, "UDIM tiles across."},
-            {"tilesV", "", T::Int, 1, "UDIM tiles up."},
+            {"stackTolerance", "", T::Float, 0.002, "Largest vertex mismatch for two islands to stack, as a fraction of the island's size.", {}, {}, 0.0},
+            {"tilesU", "", T::Int, 1, "UDIM tiles across.", {}, {}, 1.0},
+            {"tilesV", "", T::Int, 1, "UDIM tiles up.", {}, {}, 1.0},
             {"region", "", T::List, nullptr, "Pack into [uMin, vMin, uMax, vMax] of each tile instead of all of it."},
-            {"texelsPerUnit", "", T::Float, 0.0, "Pack at this density (px/cm) instead of filling the tiles; overflow spills into further tiles."},
-            {"effort", "", T::Int, 1, "Search effort 0-3: island orders tried per scale (1, 3, 6, 12). Higher packs denser, slower."},
-            {"timeLimit", "", T::Float, 0.0, "Stop refining after this many seconds (0 never); results can then vary between runs."},
-            {"workingResolution", "", T::Int, 0, "Search raster cells across a tile; 0 uses the resolution up to 4096."}};
+            {"texelsPerUnit", "", T::Float, 0.0, "Pack at this density (px/cm) instead of filling the tiles; overflow spills into further tiles.", {}, {}, 0.0},
+            {"effort", "", T::Int, 1, "Search effort 0-3: island orders tried per scale (1, 3, 6, 12). Higher packs denser, slower.", {}, {}, 0.0, 3.0},
+            {"timeLimit", "", T::Float, 0.0, "Stop refining after this many seconds (0 never); results can then vary between runs.", {}, {}, 0.0},
+            {"workingResolution", "", T::Int, 0, "Search raster cells across a tile; 0 uses the resolution up to 4096.", {}, {}, 0.0}};
 }
 
 /** Flags only uvPack has: where groups go and what stays fixed. */
@@ -278,17 +278,17 @@ AutoSeamOptions seamArgs(const Args& a)
 std::vector<FlagDef> seamFlags()
 {
     using T = ArgType;
-    return {{"hardAngle", "", T::Float, 60.0, "Edges sharper than this always get a seam, degrees."},
+    return {{"hardAngle", "", T::Float, 60.0, "Edges sharper than this always get a seam, degrees.", {}, {}, 0.0, 180.0},
             {"useHardEdges", "", T::Bool, true, "Edges marked hard always get a seam."},
             {"keepSeams", "", T::Bool, false, "Keep the seams already there."},
-            {"maxDistortion", "", T::Float, 0.08, "Split islands that stretch more than this when flattened."},
+            {"maxDistortion", "", T::Float, 0.08, "Split islands that stretch more than this when flattened.", {}, {}, 0.0},
             {"visibility", "", T::Bool, true, "Hide cuts where they are least visible."},
             {"merge", "", T::Bool, true, "Merge islands back while they still flatten well."},
             {"method", "", T::String, "split",
              "split (hard edges, open to disks, split where stretched) or optcuts (Auto Seams 2: seams and distortion optimised together).",
              {"split", "optcuts"}},
-            {"distortionBound", "", T::Float, 0.05, "optcuts: stretch (symmetric Dirichlet excess, all islands) to get under."},
-            {"seamWeight", "", T::Float, 0.5, "optcuts: price of seam length against stretch; higher keeps seams shorter."}};
+            {"distortionBound", "", T::Float, 0.05, "optcuts: stretch (symmetric Dirichlet excess, all islands) to get under.", {}, {}, 0.0},
+            {"seamWeight", "", T::Float, 0.5, "optcuts: price of seam length against stretch; higher keeps seams shorter.", {}, {}, 0.0}};
 }
 
 FlagDef uvSetFlag()
@@ -603,7 +603,7 @@ void registerCommands()
                "are cut open first. Islands keep their place unless pack=True or they had no uvs.",
         .flags = join({uvSetFlag(),
                        {"method", "", T::String, "slim", "slim (low stretch), conformal (LSCM only) or bff (Boundary First Flattening: conformal, boundary lengths kept)."},
-                       {"iterations", "", T::Int, 12, "SLIM iterations."},
+                       {"iterations", "", T::Int, 12, "SLIM iterations.", {}, {}, 0.0, 200.0},
                        {"pins", "", T::Bool, true, "Respect pinned uvs (corner attribute uvPin)."},
                        {"pack", "", T::Bool, false, "Pack the unwrapped islands into 0-1."}},
                       packFlags()),
@@ -641,10 +641,10 @@ void registerCommands()
                    {"auto", "world", "object"}},
                   {"center", "", T::Vec3, nullptr, "Frame centre, object space."},
                   {"rotation", "", T::Vec3, nullptr, "Frame orientation, XYZ euler degrees in object space; Z is the projection axis."},
-                  {"width", "", T::Float, 0.0, "Planar and box size along the frame's X; 0 fits the faces."},
-                  {"height", "", T::Float, 0.0, "Planar and box size along Y, cylinder length along its axis; 0 fits the faces."},
-                  {"depth", "", T::Float, 0.0, "Box size along Z; 0 fits the faces."},
-                  {"radius", "", T::Float, 0.0, "Cylinder and sphere radius; 0 fits the faces."},
+                  {"width", "", T::Float, 0.0, "Planar and box size along the frame's X; 0 fits the faces.", {}, {}, 0.0},
+                  {"height", "", T::Float, 0.0, "Planar and box size along Y, cylinder length along its axis; 0 fits the faces.", {}, {}, 0.0},
+                  {"depth", "", T::Float, 0.0, "Box size along Z; 0 fits the faces.", {}, {}, 0.0},
+                  {"radius", "", T::Float, 0.0, "Cylinder and sphere radius; 0 fits the faces.", {}, {}, 0.0},
                   {"seamAngle", "", T::Float, nullptr,
                    "Degrees about the axis where U wraps; unset places it where it cuts fewest faces, away from the camera."},
                   {"scaleU", "", T::Float, 1.0, "U scale, applied after the projection."},
@@ -760,7 +760,7 @@ void registerCommands()
     ops::registerCommand({
         .name = "uvAuto",
         .doc = "Automatic uvs: seams, low-stretch unwrap and pack, in one step.",
-        .flags = join({uvSetFlag(), {"iterations", "", T::Int, 12, "SLIM iterations."}}, seamFlags(), packFlags()),
+        .flags = join({uvSetFlag(), {"iterations", "", T::Int, 12, "SLIM iterations.", {}, {}, 0.0, 200.0}}, seamFlags(), packFlags()),
         .run = [](const Args& a) -> json {
             AutoUvOptions o;
             o.seams = seamArgs(a);
@@ -891,7 +891,7 @@ void registerCommands()
         .doc = "Stacked islands of the selected meshes: islands lying on one another with the same shape, as uvPack stack=True "
                "leaves them. Returns per mesh a list of stacks, each a list of islands as face ids. select=True selects their faces.",
         .flags = {uvSetFlag(),
-                  {"tolerance", "", T::Float, 0.002, "Largest vertex mismatch, as a fraction of the island's size."},
+                  {"tolerance", "", T::Float, 0.002, "Largest vertex mismatch, as a fraction of the island's size.", {}, {}, 0.0},
                   {"select", "", T::Bool, false, "Select the faces of every stacked island."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
@@ -977,8 +977,8 @@ void registerCommands()
         .name = "uvTexelDensity",
         .doc = "Texel density of the selection in px/cm for a texture size. With density=, scales each island to it (world space).",
         .flags = {uvSetFlag(),
-                  {"resolution", "", T::Int, 1024, "Texture size, px."},
-                  {"density", "", T::Float, nullptr, "Set to this many px/cm."},
+                  {"resolution", "", T::Int, 1024, "Texture size, px.", {}, {}, 1.0},
+                  {"density", "", T::Float, nullptr, "Set to this many px/cm.", {}, {}, 0.0},
                   {"worldSpace", "", T::Bool, true, "Measure world size, with the mesh's scale."}},
         .run = [](const Args& a) -> json {
             double res = double(std::max(1, a.get<int>("resolution", 1024)));
@@ -1005,10 +1005,10 @@ void registerCommands()
         .doc = "Generate Unreal lightmap uvs: the source set's islands repacked without overlaps, padded for the lightmap resolution.",
         .flags = {{"uvSet", "", T::String, "uv1", "Lightmap set to write."},
                   {"source", "", T::String, "uv0", "Set whose islands to reuse (auto seams when missing)."},
-                  {"resolution", "", T::Int, 64, "Lightmap resolution in Unreal."},
-                  {"padding", "", T::Float, 2.0, "Texels between charts, held exactly at the lightmap resolution."},
-                  {"effort", "", T::Int, 2, "Packing search effort 0-3; higher packs denser, slower."},
-                  {"rotateStep", "", T::Int, 90, "Rotation step for the charts, degrees (0 keeps their orientation)."}},
+                  {"resolution", "", T::Int, 64, "Lightmap resolution in Unreal.", {}, {}, 4.0},
+                  {"padding", "", T::Float, 2.0, "Texels between charts, held exactly at the lightmap resolution.", {}, {}, 0.0},
+                  {"effort", "", T::Int, 2, "Packing search effort 0-3; higher packs denser, slower.", {}, {}, 0.0, 3.0},
+                  {"rotateStep", "", T::Int, 90, "Rotation step for the charts, degrees (0 keeps their orientation).", {}, {}, 0.0, 180.0}},
         .run = [](const Args& a) -> json {
             std::string target = a.get<std::string>("uvSet", "uv1"), source = a.get<std::string>("source", "uv0");
             LightmapOptions o;
@@ -1033,7 +1033,7 @@ void registerCommands()
     ops::registerCommand({
         .name = "uvLayout",
         .doc = "UV report for the selection: islands, overlapping and folded faces, distortion and texel density.",
-        .flags = {uvSetFlag(), {"resolution", "", T::Int, 1024, "Texture size for the density, px."}},
+        .flags = {uvSetFlag(), {"resolution", "", T::Int, 1024, "Texture size for the density, px.", {}, {}, 1.0}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             std::string set = uvSetArg(a);

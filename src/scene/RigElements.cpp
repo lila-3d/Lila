@@ -33,13 +33,15 @@ glm::dvec3 solvedRotateFor(const glm::dmat3& parentWorld, const glm::dvec3& join
     return matrixToEuler(r, RotateOrder(std::clamp<int64_t>(order, 0, 5)));
 }
 
-AttrDef number(const char* name, double def, const char* doc, uint32_t extra = 0)
+AttrDef number(const char* name, double def, const char* doc, uint32_t extra = 0, std::optional<double> lo = {}, std::optional<double> hi = {})
 {
-    return {.name = name, .type = PlugType::Float, .defaultValue = def, .flags = AttrInput | AttrStorable | extra, .doc = doc};
+    return {.name = name, .type = PlugType::Float, .defaultValue = def, .flags = AttrInput | AttrStorable | extra, .doc = doc, .minValue = lo,
+            .maxValue = hi};
 }
-AttrDef whole(const char* name, int64_t def, const char* doc, uint32_t extra = 0)
+AttrDef whole(const char* name, int64_t def, const char* doc, uint32_t extra = 0, std::optional<double> lo = {}, std::optional<double> hi = {})
 {
-    return {.name = name, .type = PlugType::Int, .defaultValue = def, .flags = AttrInput | AttrStorable | extra, .doc = doc};
+    return {.name = name, .type = PlugType::Int, .defaultValue = def, .flags = AttrInput | AttrStorable | extra, .doc = doc, .minValue = lo,
+            .maxValue = hi};
 }
 /** Signed joint axes, as rig::axisVector reads them; stored as their index. */
 const std::vector<std::string> kAxisNames = {"x", "-x", "y", "-y", "z", "-z"};
@@ -324,12 +326,12 @@ void registerTypesImpl()
         text("startJoint", "First joint of the chain."),
         text("endJoint", "The end effector."),
         text("handle", "The ikHandle solving the chain."),
-        number("lock", 0.0, "1 at a key plants the controller: it holds its place until the chain's next key. Keyed stepped.", key),
+        number("lock", 0.0, "1 at a key plants the controller: it holds its place until the chain's next key. Keyed stepped.", key, 0.0, 1.0),
         text("align", "The node turning the end effector with the controller.", hidden),
         {.name = "grab", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrInput | AttrHidden, .doc = "1 while the controller is being posed."},
         outFloat("ikBlend", "1 while the solver holds the chain (locked or grabbed), driving the handle's ikBlend."),
-        number("drawThickness", 4.0, "Width of the controller's line in the viewport, pixels."),
-        number("drawRadius", 1.0, "Size of the controller's ring in the viewport, as a multiple of its default."),
+        number("drawThickness", 4.0, "Width of the controller's line in the viewport, pixels.", 0, 0.0),
+        number("drawRadius", 1.0, "Size of the controller's ring in the viewport, as a multiple of its default.", 0, 0.0),
     };
 
     NodeType foot{.name = kReverseFootType,
@@ -349,8 +351,8 @@ void registerTypesImpl()
         number("twist", 0.0, "Swivel on the ball, degrees.", key),
         number("bank", 0.0, "Tip onto the outer (positive) or inner (negative) edge, degrees.", key),
         number("poleAngle", 0.0, "Roll of the leg's bend plane, degrees.", key),
-        number("ballLimit", 30.0, "Roll the ball takes before handing over to the toe, degrees."),
-        number("toeLimit", 60.0, "Roll at which all of it is on the toe, degrees."),
+        number("ballLimit", 30.0, "Roll the ball takes before handing over to the toe, degrees.", 0, 0.0),
+        number("toeLimit", 60.0, "Roll at which all of it is on the toe, degrees.", 0, 0.0),
         vector3("heelPivot", glm::dvec3(0.0), "Heel pivot, control space."),
         vector3("ballPivot", glm::dvec3(0.0), "Ball pivot, control space."),
         vector3("toePivot", glm::dvec3(0.0), "Toe tip pivot, control space."),
@@ -360,19 +362,19 @@ void registerTypesImpl()
         matrix("restBall", "The ball in control space at setup.", hidden),
         vector3("ballOrient", glm::dvec3(0.0), "The ball joint's jointOrient at setup.", hidden),
         vector3("ballAxis", glm::dvec3(0.0), "The ball joint's rotateAxis at setup.", hidden),
-        whole("ballRotateOrder", 0, "The ball joint's rotate order at setup.", hidden),
-        number("ikWeight", 1.0, "The chain's IK weight; the ball follows the foot as much.", hidden),
+        whole("ballRotateOrder", 0, "The ball joint's rotate order at setup.", hidden, 0.0, 5.0),
+        number("ikWeight", 1.0, "The chain's IK weight; the ball follows the foot as much.", hidden, 0.0, 1.0),
         outVec("ankleTarget", "Where the IK goal goes, world space."),
         outMatrix("ankleMatrix", "The posed ankle, world space."),
         outVec("ballRotate", "The ball joint's solved rotate."),
         outFloat("ballBlend", "The ball joint's IK weight."),
-        number("rollBackMax", 60.0, "Furthest the foot rocks back onto the heel, degrees."),
-        number("rollForwardMax", 90.0, "Furthest the foot rolls forward onto the toe, degrees."),
-        number("bankMax", 45.0, "Furthest it tips onto either edge, degrees."),
-        number("twistMax", 90.0, "Furthest it swivels either way, degrees."),
-        number("zeroSnap", 0.5, "Roll, twist and bank nearer zero than this count as zero, degrees."),
-        number("drawThickness", 4.0, "Width of the sole loop in the viewport, pixels."),
-        number("drawRadius", 1.0, "Size of the sole loop in the viewport, as a multiple of the sole."),
+        number("rollBackMax", 60.0, "Furthest the foot rocks back onto the heel, degrees.", 0, 0.0),
+        number("rollForwardMax", 90.0, "Furthest the foot rolls forward onto the toe, degrees.", 0, 0.0),
+        number("bankMax", 45.0, "Furthest it tips onto either edge, degrees.", 0, 0.0),
+        number("twistMax", 90.0, "Furthest it swivels either way, degrees.", 0, 0.0),
+        number("zeroSnap", 0.5, "Roll, twist and bank nearer zero than this count as zero, degrees.", 0, 0.0),
+        number("drawThickness", 4.0, "Width of the sole loop in the viewport, pixels.", 0, 0.0),
+        number("drawRadius", 1.0, "Size of the sole loop in the viewport, as a multiple of the sole.", 0, 0.0),
     };
 
     NodeType align{.name = kAlignType,
@@ -382,10 +384,10 @@ void registerTypesImpl()
     align.ownAttrs = {
         matrix("target", "World matrix the joint takes the rotation of."),
         matrix("parentMatrix", "The joint's parent world matrix."),
-        number("weight", 1.0, "How much the joint follows."),
+        number("weight", 1.0, "How much the joint follows.", 0, 0.0, 1.0),
         vector3("jointOrient", glm::dvec3(0.0), "The joint's jointOrient.", hidden),
         vector3("rotateAxis", glm::dvec3(0.0), "The joint's rotateAxis.", hidden),
-        whole("rotateOrder", 0, "The joint's rotate order.", hidden),
+        whole("rotateOrder", 0, "The joint's rotate order.", hidden, 0.0, 5.0),
         outVec("solvedRotate", "Rotate values for the joint."),
         outFloat("ikBlend", "The joint's ikBlend."),
         matrix("offset", "The joint's rotation relative to the target's, applied after it.", hidden),
@@ -403,12 +405,12 @@ void registerTypesImpl()
         axisChoice("aimAxis", 0, "Joint axis aimed at the looker."),
         axisChoice("upAxis", 2, "Joint axis leaned toward upVector."),
         vector3("upVector", glm::dvec3(0.0, 1.0, 0.0), "World up for the aim."),
-        number("weight", 1.0, "Blend of the aim over the joint's own rotation.", key),
+        number("weight", 1.0, "Blend of the aim over the joint's own rotation.", key, 0.0, 1.0),
         matrix("jointParentMatrix", "The joint's parent world matrix.", hidden),
         vector3("restTranslate", glm::dvec3(0.0), "The joint's translate at setup.", hidden),
         vector3("jointOrient", glm::dvec3(0.0), "The joint's jointOrient at setup.", hidden),
         vector3("jointRotateAxis", glm::dvec3(0.0), "The joint's rotateAxis at setup.", hidden),
-        whole("jointRotateOrder", 0, "The joint's rotate order at setup.", hidden),
+        whole("jointRotateOrder", 0, "The joint's rotate order at setup.", hidden, 0.0, 5.0),
         outVec("solvedRotate", "Rotate values for the joint."),
         outFloat("ikBlend", "The joint's ikBlend."),
     };
@@ -429,7 +431,7 @@ void registerTypesImpl()
         number("weight", 0.5, "Share of the source's twist; negative counters it.", key),
         vector3("jointOrient", glm::dvec3(0.0), "The twist joint's jointOrient.", hidden),
         vector3("rotateAxis", glm::dvec3(0.0), "The twist joint's rotateAxis.", hidden),
-        whole("rotateOrder", 0, "The twist joint's rotate order.", hidden),
+        whole("rotateOrder", 0, "The twist joint's rotate order.", hidden, 0.0, 5.0),
         outVec("solvedRotate", "Rotate values for the joint."),
         outFloat("ikBlend", "The joint's ikBlend."),
     };

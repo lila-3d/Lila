@@ -66,7 +66,7 @@ void registerCommands()
                "session only.",
         .flags = {
             {"enable", "e", T::Bool, nullptr, "Start (True) or stop (False) the server."},
-            {"port", "p", T::Int, nullptr, "Port to listen on; 0 picks a free one. Default: the /changeStream/port pref, 8742."},
+            {"port", "p", T::Int, nullptr, "Port to listen on; 0 picks a free one. Default: the /changeStream/port pref, 8742.", {}, {}, 0.0, 65535.0},
             {"allowRemote", "ar", T::Bool, nullptr,
              "Listen on every network interface rather than 127.0.0.1 only. Clients must then send the token this "
              "returns (general.json /changeStream/token). Default False."},

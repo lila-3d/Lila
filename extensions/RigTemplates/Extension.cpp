@@ -873,7 +873,7 @@ bool registerTypes(ext::Context& ctx)
                         {.name = "aimAxis", .type = PlugType::String, .defaultValue = std::string("z"), .flags = stored, .doc = "Joint axis aimed at aimAt."},
                         {.name = "upAxis", .type = PlugType::String, .defaultValue = std::string("y"), .flags = stored, .doc = "Joint axis leaned toward the up vector."},
                         {.name = "upVector", .type = PlugType::Vec3, .defaultValue = glm::dvec3(0.0, 1.0, 0.0), .flags = stored | AttrHidden, .doc = "Up reference."},
-                        {.name = "radius", .type = PlugType::Float, .defaultValue = 2.0, .flags = stored, .doc = "Drawn size, cm."},
+                        {.name = "radius", .type = PlugType::Float, .defaultValue = 2.0, .flags = stored, .doc = "Drawn size, cm.", .minValue = 0.0},
                         {.name = "centerInMesh", .shortName = "cim", .type = PlugType::Bool, .defaultValue = false, .flags = stored,
                          .doc = "Centre in the bound meshes' cross-section whenever it is moved."},
                         {.name = "centerMeshes", .shortName = "cms", .type = PlugType::Data, .defaultValue = meshList(), .flags = stored | AttrHidden,

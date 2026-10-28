@@ -488,10 +488,11 @@ AttrDef fAttr(std::string name, double def, std::string doc, std::optional<doubl
     return a;
 }
 
-AttrDef iAttr(std::string name, int64_t def, std::string doc, double lo = 0.0)
+AttrDef iAttr(std::string name, int64_t def, std::string doc, double lo = 0.0, std::optional<double> hi = std::nullopt)
 {
     AttrDef a{.name = std::move(name), .type = PlugType::Int, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
     a.minValue = lo;
+    a.maxValue = hi;
     return a;
 }
 
@@ -798,8 +799,8 @@ void registerHistoryTypes()
                                   fAttr("width", 10.0, "Rectangle width, cm.", 0.0), fAttr("height", 5.0, "Rectangle height, cm.", 0.0),
                                   bAttr("alignProfile", true,
                                         "Turn a profile curve to face along the path and centre it on the path start; off sweeps it from where it lies."),
-                                  fAttr("twist", 0.0, "Twist from start to end, degrees."), fAttr("scaleStart", 1.0, "Profile scale at the start."),
-                                  fAttr("scaleEnd", 1.0, "Profile scale at the end."),
+                                  fAttr("twist", 0.0, "Twist from start to end, degrees."), fAttr("scaleStart", 1.0, "Profile scale at the start.", 0.0),
+                                  fAttr("scaleEnd", 1.0, "Profile scale at the end.", 0.0),
                                   eAttr("startCap", {"none", "ngon", "grid", "round"}, 0, "Close the start: one face, a quad grid, or a rounded dome."),
                                   eAttr("endCap", {"none", "ngon", "grid", "round"}, 0, "Close the end: one face, a quad grid, or a rounded dome."),
                                   iAttr("roundSegments", 4, "Rings in a rounded cap.", 1),
@@ -862,7 +863,7 @@ void registerHistoryTypes()
                offsetRun);
     registerOp("rebuildCurve", "refresh", "Rebuilds curves with an even parameterisation and a given span count, keeping corners.",
                {curveIn(), eAttr("kind", {"poly", "bezier", "nurbs"}, 2, "What it rebuilds them as."), iAttr("spans", 8, "Spans.", 1),
-                iAttr("degree", 3, "NURBS degree.", 1), bAttr("keepCorners", true, "Keep tangent breaks sharp."),
+                iAttr("degree", 3, "NURBS degree.", 1, 7.0), bAttr("keepCorners", true, "Keep tangent breaks sharp."),
                 bAttr("keepPointCount", false,
                       "Even spacing: keep the kind and point count and spread the points evenly along the curve (kind, spans and degree are ignored)."),
                 fAttr("pointPercent", 100.0, "With keepPointCount: the point count as a percentage of the curve's own, so 50 halves it.", 1.0),

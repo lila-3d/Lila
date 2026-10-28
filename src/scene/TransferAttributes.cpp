@@ -481,6 +481,13 @@ AttrDef param(std::string name, PlugType type, PlugValue def, std::string doc, s
             .enumNames = std::move(enums), .doc = std::move(doc)};
 }
 
+AttrDef limitedTransferParam(AttrDef a, std::optional<double> lo, std::optional<double> hi)
+{
+    a.minValue = lo;
+    a.maxValue = hi;
+    return a;
+}
+
 Node& meshNode(Graph& g, const std::string& name, const char* cmd)
 {
     Node* n = g.find(name);
@@ -603,10 +610,10 @@ void registerTransferModifier()
         param("separateUnmatched", PlugType::Bool, true,
               "Guided: faces with nothing like them on the source (a cap where the source is open) become islands of their own "
               "beside the layout; off, they join the island next to them."),
-        param("maxDistance", PlugType::Float, -1.0, "Ignore matches farther than this, cm; negative is unlimited."),
+        limitedTransferParam(param("maxDistance", PlugType::Float, -1.0, "Ignore matches farther than this, cm; negative is unlimited."), -1.0, {}),
         param("flip", PlugType::Enum, int64_t(0), "Mirror the lookup across the source's x, y or z axis (symmetry).", kFlipNames),
-        param("sourceUvSet", PlugType::Int, int64_t(-1), "Transfer only this UV set, 0 to 7; -1 transfers every set."),
-        param("targetUvSet", PlugType::Int, int64_t(-1), "Write the source UV set into this set; -1 keeps its index."),
+        limitedTransferParam(param("sourceUvSet", PlugType::Int, int64_t(-1), "Transfer only this UV set, 0 to 7; -1 transfers every set."), -1.0, 7.0),
+        limitedTransferParam(param("targetUvSet", PlugType::Int, int64_t(-1), "Write the source UV set into this set; -1 keeps its index."), -1.0, 7.0),
         {.name = "sourceColorSet", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable,
          .doc = "Transfer only this color set; empty transfers every set."},
         {.name = "targetColorSet", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable,
@@ -650,10 +657,10 @@ void registerTransferCommands()
             {"separateUnmatched", "", T::Bool, true,
              "Guided: faces with nothing like them on the source become islands of their own beside the layout; off, they join the "
              "island next to them."},
-            {"maxDistance", "", T::Float, -1.0, "Ignore matches farther than this (cm); negative is unlimited."},
+            {"maxDistance", "", T::Float, -1.0, "Ignore matches farther than this (cm); negative is unlimited.", {}, {}, -1.0},
             {"flip", "", T::String, "none", "Mirror the lookup across the source's x, y or z axis.", {"none", "x", "y", "z"}},
-            {"sourceUvSet", "", T::Int, -1, "Transfer only this UV set (0-7); -1 transfers every set."},
-            {"targetUvSet", "", T::Int, -1, "Write the source UV set into this target set; -1 keeps its index."},
+            {"sourceUvSet", "", T::Int, -1, "Transfer only this UV set (0-7); -1 transfers every set.", {}, {}, -1.0, 7.0},
+            {"targetUvSet", "", T::Int, -1, "Write the source UV set into this target set; -1 keeps its index.", {}, {}, -1.0, 7.0},
             {"sourceColorSet", "", T::String, "", "Transfer only this color set; empty transfers every set."},
             {"targetColorSet", "", T::String, "", "Write the source color set into this target set; empty keeps its name."},
             {"live", "", T::Bool, false, "Add a live transfer modifier (follows the source) instead of baking. Returns the modifiers."},
@@ -764,7 +771,7 @@ void registerTransferCommands()
                "mesh's own, so leaf clumps shade as one soft volume instead of many cards.",
         .positionalDoc = "meshes...",
         .flags = {
-            {"mix", "", T::Float, 0.8, "0 keeps the mesh's own normals, 1 takes the proxy's."},
+            {"mix", "", T::Float, 0.8, "0 keeps the mesh's own normals, 1 takes the proxy's.", {}, {}, 0.0, 1.0},
             {"proxy", "", T::String, "dome", "dome (centred on the bottom, normals face up and out) or sphere.", {"dome", "sphere"}},
             {"up", "", T::String, "y", "The meshes' up axis, for the dome.", {"y", "z"}},
         },

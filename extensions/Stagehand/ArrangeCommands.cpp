@@ -313,9 +313,9 @@ std::vector<FlagDef> commonFlags(bool settle, const char* densityFlag = "density
         {"mode", "m", T::String, "instance", "With realize: instance (shared meshes) or copy.", {"instance", "copy"}},
         {"variants", "va", T::String, "pool", "Live only: pool (a few bowed variants, shared), unique (one each) or none.", {"pool", "unique", "none"}},
         {"settle", "st", T::Bool, settle, "Let them come to rest with physics."},
-        {"seconds", "", T::Float, 10.0, "Longest the settle runs; it stops sooner once everything rests."},
-        {densityFlag, "", T::Float, 600.0, "kg/m3 of the items, for the settle."},
-        {"friction", "", T::Float, 0.6, "Friction of the items, for the settle."},
+        {"seconds", "", T::Float, 10.0, "Longest the settle runs; it stops sooner once everything rests.", {}, {}, 0.0},
+        {densityFlag, "", T::Float, 600.0, "kg/m3 of the items, for the settle.", {}, {}, 1.0},
+        {"friction", "", T::Float, 0.6, "Friction of the items, for the settle.", {}, {}, 0.0},
         {"seed", "s", T::Int, int64_t(1), "Another seed gives another arrangement."},
         {"name", "n", T::String, nullptr, "Name of the mesh (live) or group (realize) made."},
     };
@@ -351,16 +351,16 @@ void registerArrangeCommands(ext::Context& ctx)
 {
     std::vector<FlagDef> shelfFlags = commonFlags(true);
     const std::vector<FlagDef> shelfFlagsExtra = {
-             {"gap", "gp", T::Float, 0.3, "Space between items, cm."},
-             {"leanChance", "lc", T::Float, 0.08, "0 to 1: chance an item leans on its neighbour."},
-             {"lyingChance", "yc", T::Float, 0.04, "0 to 1: chance a small stack lies flat."},
-             {"fill", "fl", T::Float, 1.0, "0 to 1: how much of each board is filled, from its start."},
-             {"inset", "in", T::Float, 1.0, "Kept clear at both ends of each board, cm."},
+             {"gap", "gp", T::Float, 0.3, "Space between items, cm.", {}, {}, 0.0},
+             {"leanChance", "lc", T::Float, 0.08, "0 to 1: chance an item leans on its neighbour.", {}, {}, 0.0, 1.0},
+             {"lyingChance", "yc", T::Float, 0.04, "0 to 1: chance a small stack lies flat.", {}, {}, 0.0, 1.0},
+             {"fill", "fl", T::Float, 1.0, "0 to 1: how much of each board is filled, from its start.", {}, {}, 0.0, 1.0},
+             {"inset", "in", T::Float, 1.0, "Kept clear at both ends of each board, cm.", {}, {}, 0.0},
              {"depth", "dp", T::Float, 0.0, "Line offset from the board's middle across its depth, cm."},
-             {"scaleMin", "smn", T::Float, 0.9, "Smallest scale."},
-             {"scaleMax", "smx", T::Float, 1.1, "Largest scale."},
+             {"scaleMin", "smn", T::Float, 0.9, "Smallest scale.", {}, {}, 0.0},
+             {"scaleMax", "smx", T::Float, 1.1, "Largest scale.", {}, {}, 0.0},
              {"sag", "sg", T::Bool, false, "Bend each board under what rests on it (a Sag Under Load modifier on the board)."},
-             {"sagAmount", "sa", T::Float, 0.3, "Sag at a board's middle for 10 kg there, cm."}};
+             {"sagAmount", "sa", T::Float, 0.3, "Sag at a board's middle for 10 kg there, cm.", {}, {}, 0.0}};
     shelfFlags.insert(shelfFlags.end(), shelfFlagsExtra.begin(), shelfFlagsExtra.end());
     ctx.registerCommand({
         .name = "fillShelf",
@@ -500,14 +500,14 @@ void registerArrangeCommands(ext::Context& ctx)
 
     std::vector<FlagDef> scatterFlags = commonFlags(false, "massDensity");
     const std::vector<FlagDef> scatterFlagsExtra = {
-             {"density", "dn", T::Float, 4.0, "Items per square metre."},
-             {"maxCount", "mc", T::Int, int64_t(200), "At most this many."},
-             {"spacing", "spc", T::Float, 1.0, "Footprints kept clear, times each item's own."},
-             {"slopeMax", "sl", T::Float, 35.0, "Steepest surface used, degrees."},
-             {"align", "al", T::Float, 0.0, "0 upright, 1 along the surface."},
-             {"turn", "tu", T::Float, 180.0, "Random turn about up, degrees either way."},
-             {"scaleMin", "smn", T::Float, 0.8, "Smallest scale."},
-             {"scaleMax", "smx", T::Float, 1.2, "Largest scale."},
+             {"density", "dn", T::Float, 4.0, "Items per square metre.", {}, {}, 0.0},
+             {"maxCount", "mc", T::Int, int64_t(200), "At most this many.", {}, {}, 0.0},
+             {"spacing", "spc", T::Float, 1.0, "Footprints kept clear, times each item's own.", {}, {}, 0.0},
+             {"slopeMax", "sl", T::Float, 35.0, "Steepest surface used, degrees.", {}, {}, 0.0, 90.0},
+             {"align", "al", T::Float, 0.0, "0 upright, 1 along the surface.", {}, {}, 0.0, 1.0},
+             {"turn", "tu", T::Float, 180.0, "Random turn about up, degrees either way.", {}, {}, 0.0, 180.0},
+             {"scaleMin", "smn", T::Float, 0.8, "Smallest scale.", {}, {}, 0.0},
+             {"scaleMax", "smx", T::Float, 1.2, "Largest scale.", {}, {}, 0.0},
              {"mask", "mk", T::String, "", "Point attribute (0 to 1) on the surface that thins the scatter."},
              {"avoid", "av", T::Bool, true, "Keep out of and from under every visible mesh standing on the surface."}};
     scatterFlags.insert(scatterFlags.end(), scatterFlagsExtra.begin(), scatterFlagsExtra.end());
@@ -595,8 +595,8 @@ void registerArrangeCommands(ext::Context& ctx)
 
     std::vector<FlagDef> pileFlags = commonFlags(true);
     const std::vector<FlagDef> pileFlagsExtra = {{"at", "", T::List, json::array({0.0, 0.0, 0.0}), "Centre of the pile's footprint, at its floor."},
-                                                    {"count", "c", T::Int, int64_t(30), "How many."},
-                                                    {"radius", "r", T::Float, 40.0, "Footprint radius, cm."},
+                                                    {"count", "c", T::Int, int64_t(30), "How many.", {}, {}, 0.0},
+                                                    {"radius", "r", T::Float, 40.0, "Footprint radius, cm.", {}, {}, 0.0},
                                                     {"onto", "on", T::List, nullptr, "Meshes it lands on (a crate, the floor); default a floor plane at at's height."}};
     pileFlags.insert(pileFlags.end(), pileFlagsExtra.begin(), pileFlagsExtra.end());
     ctx.registerCommand({
@@ -644,9 +644,9 @@ void registerArrangeCommands(ext::Context& ctx)
 
     std::vector<FlagDef> stackFlags = commonFlags(false);
     const std::vector<FlagDef> stackFlagsExtra = {{"at", "", T::List, json::array({0.0, 0.0, 0.0}), "Where the stack stands."},
-                                                    {"count", "c", T::Int, int64_t(6), "How many."},
-                                                    {"offset", "of", T::Float, 1.0, "Sideways wander per level, cm."},
-                                                    {"turn", "tu", T::Float, 6.0, "Turn per level, degrees either way."},
+                                                    {"count", "c", T::Int, int64_t(6), "How many.", {}, {}, 0.0},
+                                                    {"offset", "of", T::Float, 1.0, "Sideways wander per level, cm.", {}, {}, 0.0},
+                                                    {"turn", "tu", T::Float, 6.0, "Turn per level, degrees either way.", {}, {}, 0.0, 180.0},
                                                     {"onto", "on", T::List, nullptr, "Meshes it stands on; default a floor plane at at's height."}};
     stackFlags.insert(stackFlags.end(), stackFlagsExtra.begin(), stackFlagsExtra.end());
     ctx.registerCommand({

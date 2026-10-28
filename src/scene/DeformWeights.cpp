@@ -435,7 +435,7 @@ void registerTypes()
 void registerCommands()
 {
     using T = ArgType;
-    const FlagDef layerFlag{"layer", "", T::Int, nullptr, "Work on this painted layer of the field the deformer reads (or of the field named)."};
+    const FlagDef layerFlag{"layer", "", T::Int, nullptr, "Work on this painted layer of the field the deformer reads (or of the field named).", {}, {}, 0.0};
     const FlagDef meshFlag{"mesh", "", T::String, nullptr, "For a field's painted layer: the mesh it is painted on."};
 
     ops::registerCommand({
@@ -552,9 +552,9 @@ void registerCommands()
         .doc = "Apply a weight to every point of a deformer's weight map (or a field's painted layer), or to points= / the "
                "selected components, as the paint tool's flood does.",
         .positionalDoc = "deformer or field",
-        .flags = {{"value", "", T::Float, 1.0, "The weight, 0 to 1."},
+        .flags = {{"value", "", T::Float, 1.0, "The weight, 0 to 1.", {}, {}, 0.0, 1.0},
                   {"mode", "", T::String, "replace", "add | replace | smooth | scale", {"add", "replace", "smooth", "scale"}},
-                  {"strength", "", T::Float, 1.0, "How much of the change applies, 0 to 1."},
+                  {"strength", "", T::Float, 1.0, "How much of the change applies, 0 to 1.", {}, {}, 0.0, 1.0},
                   {"points", "", T::List, nullptr, "Point ids; default the selected components, else every point."},
                   layerFlag, meshFlag},
         .run = [](const Args& a) -> json {
@@ -588,7 +588,7 @@ void registerCommands()
         .name = "smoothDeformerWeights",
         .doc = "Smooth a deformer's weight map (or a field's painted layer) over the mesh's edges.",
         .positionalDoc = "deformer or field",
-        .flags = {{"iterations", "", T::Int, 1, "Smoothing passes."}, layerFlag, meshFlag},
+        .flags = {{"iterations", "", T::Int, 1, "Smoothing passes.", {}, {}, 0.0, 1000.0}, layerFlag, meshFlag},
         .run = [](const Args& a) -> json {
             Graph& graph = g();
             MapTarget t = targetOf(a, "smoothDeformerWeights");

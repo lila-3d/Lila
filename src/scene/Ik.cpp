@@ -208,7 +208,7 @@ NodeType makeHandleType(const NodeType& base)
         {.name = "poleAngle", .shortName = "pa", .type = PlugType::Float, .defaultValue = 0.0, .flags = keyable,
          .doc = "Roll of the bend plane about the start-to-handle axis, degrees."},
         {.name = "ikBlend", .shortName = "ikb", .type = PlugType::Float, .defaultValue = 1.0, .flags = keyable,
-         .doc = "0 leaves the chain on its FK rotate, 1 is fully solved."},
+         .doc = "0 leaves the chain on its FK rotate, 1 is fully solved.", .minValue = 0.0, .maxValue = 1.0},
         {.name = "jointCount", .shortName = "jc", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = hiddenStored,
          .doc = "Joints in the chain, end effector included."},
         {.name = "chainParentMatrix", .shortName = "cpm", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0),

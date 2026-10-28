@@ -447,8 +447,8 @@ std::vector<FlagDef> optionFlags()
          {"active", "persp", "three-quarter", "front", "back", "left", "right", "side", "top", "bottom"}},
         {"yaw", "", T::Float, nullptr, "Perspective angle around the up axis, degrees (0 front, 90 right)."},
         {"pitch", "", T::Float, nullptr, "Perspective elevation, degrees (negative looks down)."},
-        {"width", "w", T::Int, nullptr, "Pixels (512 for one view, 320 per tile)."},
-        {"height", "h", T::Int, nullptr, "Pixels (512 for one view, 320 per tile)."},
+        {"width", "w", T::Int, nullptr, "Pixels (512 for one view, 320 per tile).", {}, {}, 16.0, 4096.0},
+        {"height", "h", T::Int, nullptr, "Pixels (512 for one view, 320 per tile).", {}, {}, 16.0, 4096.0},
         {"display", "d", T::String, "wireOnShaded", "shaded, wireframe or wireOnShaded.", {"shaded", "wireframe", "wireOnShaded"}},
         {"isolate", "", T::Bool, false, "Only the selected objects."},
         {"frameSelection", "fs", T::Bool, false, "Frame the selected objects or components instead of everything shown."},
@@ -569,7 +569,7 @@ void registerCommands()
     });
 
     std::vector<FlagDef> mflags = optionFlags();
-    mflags.push_back({"frames", "", T::Int, 20, "Frames to draw; the result is their median."});
+    mflags.push_back({"frames", "", T::Int, 20, "Frames to draw; the result is their median.", {}, {}, 1.0, 1000.0});
     mflags.push_back({"ambientOcclusion", "ao", T::Bool, nullptr, "Force ambient occlusion on or off instead of the viewport pref."});
     ops::registerCommand({
         .name = "measureView",
@@ -613,8 +613,8 @@ void registerCommands()
 
     std::vector<FlagDef> tflags = optionFlags();
     tflags.push_back({"path", "p", T::String, nullptr, "PNG file to write."});
-    tflags.push_back({"count", "c", T::Int, 4, "Views around the up axis, starting at the front."});
-    tflags.push_back({"columns", "", T::Int, 0, "Tiles per row; 0 picks."});
+    tflags.push_back({"count", "c", T::Int, 4, "Views around the up axis, starting at the front.", {}, {}, 1.0, 16.0});
+    tflags.push_back({"columns", "", T::Int, 0, "Tiles per row; 0 picks.", {}, {}, 0.0});
     tflags.push_back({"views", "", T::List, nullptr, "Named views to tile instead of a turn, e.g. ['front', 'right', 'top', 'persp']."});
     ops::registerCommand({
         .name = "captureTurntable",

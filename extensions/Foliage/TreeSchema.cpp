@@ -42,6 +42,14 @@ Field slider(const char* section, const char* name, const char* label, double de
     return slider(section, name, label, def, lo, hi, lo, hi);
 }
 
+/** f with typed values clamped to [lo, hi]; a range's ends each. */
+Field bounded(Field f, double lo, double hi)
+{
+    f.fieldMin = lo;
+    f.fieldMax = hi;
+    return f;
+}
+
 json pair(double a, double b) { return json::array({a, b}); }
 
 const std::vector<std::string> kUpAxes{"auto", "Y", "Z"};
@@ -54,68 +62,68 @@ std::vector<Field> buildFields()
     f.push_back(choice("global", "up_axis", "World Up Axis", "auto", kUpAxes));
     f.push_back(slider("global", "style", "Stylization", 0.0, 0.0, 3.0));
 
-    f.push_back(make("trunk", "height", "Height", K::Length, kTrunkHeightMetres));
+    f.push_back(bounded(make("trunk", "height", "Height", K::Length, kTrunkHeightMetres), 0.0, 1e7));
     f.push_back(make("trunk", "lean", "Lean", K::Float, 6.0));
-    f.push_back(make("trunk", "radius", "Base Radius", K::Length, kTrunkRadiusMetres));
-    f.push_back(make("trunk", "taper", "Taper", K::Float, 0.35));
-    f.push_back(make("trunk", "sides", "Sides", K::Int, 8));
-    f.push_back(make("trunk", "sections", "Sections", K::Int, 8));
-    f.push_back(make("trunk", "levels", "Branch Levels", K::Int, 2));
-    f.push_back(make("trunk", "branches", "Branches Per Level", K::Int, 3));
-    f.push_back(make("trunk", "branch_start", "Branch Start", K::Float, 0.45));
-    f.push_back(make("trunk", "branch_angle", "Branch Angle", K::Float, 45.0));
-    f.push_back(make("trunk", "angle_variance", "Angle Variance", K::Float, 12.0));
-    f.push_back(make("trunk", "length_ratio", "Length Ratio", K::Float, 0.62));
-    f.push_back(make("trunk", "length_falloff", "Length Falloff", K::Float, 0.0));
-    f.push_back(make("trunk", "radius_ratio", "Radius Ratio", K::Float, 0.6));
-    f.push_back(make("trunk", "gnarl", "Gnarl", K::Float, 7.0));
-    f.push_back(make("trunk", "up_pull", "Branch Up Pull", K::Float, 0.45));
+    f.push_back(bounded(make("trunk", "radius", "Base Radius", K::Length, kTrunkRadiusMetres), 0.0, 1e7));
+    f.push_back(bounded(make("trunk", "taper", "Taper", K::Float, 0.35), 0.0, 1.0));
+    f.push_back(bounded(make("trunk", "sides", "Sides", K::Int, 8), 3.0, 64.0));
+    f.push_back(bounded(make("trunk", "sections", "Sections", K::Int, 8), 1.0, 1e7));
+    f.push_back(bounded(make("trunk", "levels", "Branch Levels", K::Int, 2), 0.0, 1e7));
+    f.push_back(bounded(make("trunk", "branches", "Branches Per Level", K::Int, 3), 1.0, 1e7));
+    f.push_back(bounded(make("trunk", "branch_start", "Branch Start", K::Float, 0.45), 0.0, 1.0));
+    f.push_back(bounded(make("trunk", "branch_angle", "Branch Angle", K::Float, 45.0), 0.0, 180.0));
+    f.push_back(bounded(make("trunk", "angle_variance", "Angle Variance", K::Float, 12.0), 0.0, 180.0));
+    f.push_back(bounded(make("trunk", "length_ratio", "Length Ratio", K::Float, 0.62), 0.0, 1e7));
+    f.push_back(bounded(make("trunk", "length_falloff", "Length Falloff", K::Float, 0.0), 0.0, 1e7));
+    f.push_back(bounded(make("trunk", "radius_ratio", "Radius Ratio", K::Float, 0.6), 0.0, 1e7));
+    f.push_back(bounded(make("trunk", "gnarl", "Gnarl", K::Float, 7.0), 0.0, 1e7));
+    f.push_back(bounded(make("trunk", "up_pull", "Branch Up Pull", K::Float, 0.45), -0.95, 0.95));
     f.push_back(choice("trunk", "uv_mode", "UV Mode", "packed", {"packed", "tiled"}));
-    f.push_back(make("trunk", "uv_tile", "UV Tile Size (tiled, 0 = auto)", K::Length, 0.0));
-    f.push_back(make("trunk", "texel_density", "Texel Density px/m (packed, 0 = fit)", K::Float, 0.0));
-    f.push_back(make("trunk", "uv_map_size", "Map Size (packed)", K::Int, 2048));
+    f.push_back(bounded(make("trunk", "uv_tile", "UV Tile Size (tiled, 0 = auto)", K::Length, 0.0), 0.0, 1e7));
+    f.push_back(bounded(make("trunk", "texel_density", "Texel Density px/m (packed, 0 = fit)", K::Float, 0.0), 0.0, 1e7));
+    f.push_back(bounded(make("trunk", "uv_map_size", "Map Size (packed)", K::Int, 2048), 64.0, 16384.0));
     f.push_back(make("trunk", "seed", "Seed", K::Int, 0));
 
     f.push_back(choice("blob", "blob_kind", "Blob Type", "icosphere", {"icosphere", "quadsphere", "uvsphere"}));
-    f.push_back(make("blob", "blob_radius", "Blob Radius (0 = auto)", K::Length, 0.0));
-    f.push_back(make("blob", "blob_variation", "Blob Variation", K::Float, 0.25));
-    f.push_back(make("blob", "blob_taper", "Blob Taper", K::Float, 0.0));
+    f.push_back(bounded(make("blob", "blob_radius", "Blob Radius (0 = auto)", K::Length, 0.0), 0.0, 1e7));
+    f.push_back(bounded(make("blob", "blob_variation", "Blob Variation", K::Float, 0.25), 0.0, 1.0));
+    f.push_back(bounded(make("blob", "blob_taper", "Blob Taper", K::Float, 0.0), 0.0, 1.0));
     f.push_back(slider("blob", "blob_clip", "Blob Clip Bottom", 0.0, 0.0, 0.95));
     f.push_back(slider("blob", "blob_offset", "Blob Offset (x radius)", 0.35, -0.5, 0.5, -100.0, 100.0));
     f.push_back(slider("blob", "blob_align", "Blob Align To Branch", 0.0, 0.0, 1.0));
     f.push_back(make("blob", "blob_tilt", "Blob Tilt", K::Float, 0.0));
-    f.push_back(make("blob", "blob_detail", "Blob Detail", K::Int, 2));
+    f.push_back(bounded(make("blob", "blob_detail", "Blob Detail", K::Int, 2), 0.0, 6.0));
     f.push_back(make("blob", "keep_canopy", "Keep Blobs (hidden) In The Full Tree", K::Bool, false));
 
-    f.push_back(make("leaf", "count", "Count", K::Int, 400));
+    f.push_back(bounded(make("leaf", "count", "Count", K::Int, 400), 0.0, 1e7));
     f.push_back(make("leaf", "seed", "Seed", K::Int, 0));
-    f.push_back(make("leaf", "size", "Leaf Length (0 = as modelled)", K::Length, 0.0));
-    f.push_back(make("leaf", "scale", "Scale", K::Range, pair(0.8, 1.3)));
+    f.push_back(bounded(make("leaf", "size", "Leaf Length (0 = as modelled)", K::Length, 0.0), 0.0, 1e7));
+    f.push_back(bounded(make("leaf", "scale", "Scale", K::Range, pair(0.8, 1.3)), 0.0, 1e7));
     f.push_back(make("leaf", "push", "Normal Offset", K::LengthRange, pair(0.0, 0.0)));
     f.push_back(make("leaf", "spin", "Spin", K::Range, pair(0.0, 360.0)));
     f.push_back(make("leaf", "tilt", "Tilt", K::Range, pair(0.0, 25.0)));
     f.push_back(make("leaf", "curl", "Curl", K::Range, pair(-5.0, 20.0)));
-    f.push_back(make("leaf", "wrap", "Wrap", K::Range, pair(0.5, 1.0)));
-    f.push_back(make("leaf", "wrap_radius", "Wrap Radius (0 = auto)", K::Length, 0.0));
-    f.push_back(make("leaf", "gather", "Gather To Branch", K::Range, pair(0.0, 0.0)));
-    f.push_back(make("leaf", "align", "Align Along Branch", K::Range, pair(0.0, 0.0)));
-    f.push_back(make("leaf", "clumps", "Clumps (0 = even)", K::Int, 0));
-    f.push_back(make("leaf", "clump_radius", "Clump Radius (0 = auto)", K::Length, 0.0));
-    f.push_back(make("leaf", "clump_falloff", "Clump Falloff", K::Float, 1.0));
+    f.push_back(bounded(make("leaf", "wrap", "Wrap", K::Range, pair(0.5, 1.0)), 0.0, 1.0));
+    f.push_back(bounded(make("leaf", "wrap_radius", "Wrap Radius (0 = auto)", K::Length, 0.0), 0.0, 1e7));
+    f.push_back(bounded(make("leaf", "gather", "Gather To Branch", K::Range, pair(0.0, 0.0)), 0.0, 1.0));
+    f.push_back(bounded(make("leaf", "align", "Align Along Branch", K::Range, pair(0.0, 0.0)), 0.0, 1.0));
+    f.push_back(bounded(make("leaf", "clumps", "Clumps (0 = even)", K::Int, 0), 0.0, 1e7));
+    f.push_back(bounded(make("leaf", "clump_radius", "Clump Radius (0 = auto)", K::Length, 0.0), 0.0, 1e7));
+    f.push_back(bounded(make("leaf", "clump_falloff", "Clump Falloff", K::Float, 1.0), 0.0, 1e7));
     f.push_back(make("leaf", "color_set", "Vertex Colour Set", K::String, "leafShade"));
     f.push_back(make("leaf", "shade_bias", "Shade Bias", K::Float, 0.0));
-    f.push_back(make("leaf", "min_distance", "Min Distance", K::Length, 0.0));
-    f.push_back(make("leaf", "min_normal_up", "Min Normal Up", K::Float, -1.0));
-    f.push_back(make("leaf", "normal_blend", "Canopy Normals", K::Float, 1.0));
+    f.push_back(bounded(make("leaf", "min_distance", "Min Distance", K::Length, 0.0), 0.0, 1e7));
+    f.push_back(bounded(make("leaf", "min_normal_up", "Min Normal Up", K::Float, -1.0), -1.0, 1.0));
+    f.push_back(bounded(make("leaf", "normal_blend", "Canopy Normals", K::Float, 1.0), 0.0, 1.0));
     f.push_back(choice("leaf", "pivot", "Leaf Pivot", "base", {"base", "center", "object"}));
     f.push_back(choice("leaf", "leaf_up", "Leaf Up Axis", "auto", kAxes));
     f.push_back(choice("leaf", "leaf_forward", "Leaf Forward Axis", "auto", kAxes));
     f.push_back(make("leaf", "combine", "Combine Into One Mesh", K::Bool, true));
 
-    f.push_back(make("plane", "length", "Plane Length", K::Length, 0.12));
-    f.push_back(make("plane", "width", "Plane Width", K::Length, 0.05));
-    f.push_back(make("plane", "segments", "Length Segments", K::Int, 6));
-    f.push_back(make("plane", "cross", "Width Segments", K::Int, 1));
+    f.push_back(bounded(make("plane", "length", "Plane Length", K::Length, 0.12), 0.0, 1e7));
+    f.push_back(bounded(make("plane", "width", "Plane Width", K::Length, 0.05), 0.0, 1e7));
+    f.push_back(bounded(make("plane", "segments", "Length Segments", K::Int, 6), 1.0, 1e7));
+    f.push_back(bounded(make("plane", "cross", "Width Segments", K::Int, 1), 1.0, 1e7));
     f.push_back(slider("plane", "taper", "Tip Taper", 0.6, 0.0, 1.0));
     f.push_back(make("plane", "double", "Double Sided", K::Bool, false));
     f.push_back(make("plane", "name", "Plane Name", K::String, "leafPlane"));
@@ -127,10 +135,10 @@ std::vector<Field> buildFields()
     f.push_back(make("export", "leaf_material", "Leaves Material", K::String, "Leaves"));
     f.push_back(make("export", "canopy_high", "Canopy In High Poly", K::Bool, false));
     f.push_back(make("export", "canopy_low", "Canopy In Low Poly", K::Bool, false));
-    f.push_back(make("export", "trunk_divisions", "High Poly Trunk Divisions", K::Int, 1));
-    f.push_back(make("export", "canopy_divisions", "High Poly Canopy Divisions", K::Int, 1));
-    f.push_back(make("export", "leaf_divisions", "High Poly Leaf Divisions", K::Int, 0));
-    f.push_back(make("export", "opacity_size", "Opacity Map Size", K::Int, 1024));
+    f.push_back(bounded(make("export", "trunk_divisions", "High Poly Trunk Divisions", K::Int, 1), 0.0, 4.0));
+    f.push_back(bounded(make("export", "canopy_divisions", "High Poly Canopy Divisions", K::Int, 1), 0.0, 4.0));
+    f.push_back(bounded(make("export", "leaf_divisions", "High Poly Leaf Divisions", K::Int, 0), 0.0, 4.0));
+    f.push_back(bounded(make("export", "opacity_size", "Opacity Map Size", K::Int, 1024), 16.0, 16384.0));
     return f;
 }
 
@@ -321,6 +329,7 @@ json coerce(const std::string& key, const json& value)
     const Field* f = field(key);
     if (!f)
         return value;
+    auto clamped = [f](const json& v) { return std::clamp(asNumber(v), f->fieldMin, f->fieldMax); };
     try
     {
         switch (f->kind)
@@ -331,16 +340,15 @@ json coerce(const std::string& key, const json& value)
             {
                 if (value.size() != 2)
                     return f->defaultValue;
-                return json::array({asNumber(value[0]), asNumber(value[1])});
+                return json::array({clamped(value[0]), clamped(value[1])});
             }
-            return json::array({asNumber(value), asNumber(value)});
+            return json::array({clamped(value), clamped(value)});
         case Kind::Float:
         case Kind::Length:
-            return asNumber(value);
         case Kind::Slider:
-            return std::clamp(asNumber(value), f->fieldMin, f->fieldMax);
+            return clamped(value);
         case Kind::Int:
-            return int64_t(std::llround(asNumber(value)));
+            return int64_t(std::llround(clamped(value)));
         case Kind::Bool:
             if (value.is_boolean())
                 return value.get<bool>();

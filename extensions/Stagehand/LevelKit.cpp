@@ -277,7 +277,7 @@ void registerKitCommands(ext::Context& ctx)
         .name = "snapPoints",
         .doc = "List snap points: node, piece, type, accepts, world position and normal, and the point it's joined to (or null).",
         .positionalDoc = "pieces (default every snap point in the scene)",
-        .flags = {{"tolerance", "tol", T::Float, 0.5, "How close counts as joined, cm."}},
+        .flags = {{"tolerance", "tol", T::Float, 0.5, "How close counts as joined, cm.", {}, {}, 0.0}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
@@ -344,7 +344,7 @@ void registerKitCommands(ext::Context& ctx)
         .doc = "Join every piece whose compatible snap point is within tolerance of another's, in order: the first piece stays, each "
                "later one moves onto what is already placed. Returns the joins.",
         .positionalDoc = "pieces (default every piece with snap points)",
-        .flags = {{"tolerance", "tol", T::Float, 25.0, "How near two points have to be to join, cm."}},
+        .flags = {{"tolerance", "tol", T::Float, 25.0, "How near two points have to be to join, cm.", {}, {}, 0.0}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
@@ -397,7 +397,7 @@ void registerKitCommands(ext::Context& ctx)
         .name = "openSnapPoints",
         .doc = "Snap points joined to nothing: gaps in a kit layout. Returns them as snapPoints does.",
         .positionalDoc = "pieces (default the whole scene)",
-        .flags = {{"tolerance", "tol", T::Float, 0.5, "How close counts as joined, cm."}},
+        .flags = {{"tolerance", "tol", T::Float, 0.5, "How close counts as joined, cm.", {}, {}, 0.0}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();

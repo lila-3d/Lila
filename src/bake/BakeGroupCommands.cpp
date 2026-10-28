@@ -414,10 +414,10 @@ void registerGroupCommands()
         .flags = {{"attr", "at", T::String, "offset", "offset or skew.", {"offset", "skew"}},
                   {"op", "o", T::String, "set", "add, subtract, smooth or set.", {"add", "subtract", "smooth", "set"}},
                   {"value", "v", T::Float, 1.0, "The amount to add or subtract, or the value to set."},
-                  {"strength", "st", T::Float, 1.0, "0 to 1: how far each dab moves toward its result."},
+                  {"strength", "st", T::Float, 1.0, "0 to 1: how far each dab moves toward its result.", {}, {}, 0.0, 1.0},
                   {"points", "pt", T::List, nullptr, "Point ids to paint at full weight."},
                   {"center", "ce", T::Vec3, nullptr, "World-space brush centre; points within radius get a smooth falloff."},
-                  {"radius", "r", T::Float, nullptr, "World-space brush radius, cm."},
+                  {"radius", "r", T::Float, nullptr, "World-space brush radius, cm.", {}, {}, 0.0},
                   {"flood", "fl", T::Bool, false, "Apply to every point (or the selected components)."},
                   {"symmetry", "sy", T::String, "none", "Mirror across x, y or z (object space).", {"none", "x", "y", "z"}}},
         .run = [](const Args& a) -> json {
@@ -622,7 +622,7 @@ void registerGroupCommands()
                "Returns {arranged, offsets: {group: [x, y, z]}}.",
         .flags = {{"project", "pj", T::String, nullptr, "The bake project; defaults to the scene's only one."},
                   {"on", "on", T::Bool, nullptr, "Arranged (True) or not (False); toggles when left out."},
-                  {"spacing", "sp", T::Float, nullptr, "Gap between groups, cm; 10% of the largest group by default."},
+                  {"spacing", "sp", T::Float, nullptr, "Gap between groups, cm; 10% of the largest group by default.", {}, {}, 0.0},
                   {"reset", "rs", T::Bool, false, "Turn it off: everything back where the meshes are."}},
         .undoable = false,
         .run = [](const Args& a) -> json {

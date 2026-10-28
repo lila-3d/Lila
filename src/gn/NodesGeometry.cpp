@@ -251,7 +251,7 @@ void setRadius()
         .label = "Set Radius",
         .category = "Geometry",
         .doc = "Sets the \"radius\" attribute of points and curve points (curve radius scales the profile in Curve to Mesh).",
-        .sockets = {.inputs = {geoIn(), selectionIn(), fin("radius", T::Float, 1.0)}, .outputs = {geoOut()}},
+        .sockets = {.inputs = {geoIn(), selectionIn(), bounded(fin("radius", T::Float, 1.0), 0.0)}, .outputs = {geoOut()}},
         .exec =
             [](ExecContext& c) {
                 FieldPtr sel = c.field("selection"), rad = c.field("radius");
@@ -277,7 +277,7 @@ void duplicate()
         .category = "Geometry",
         .doc = "Copies each selected element amount times; faces become separate pieces. Duplicate Index counts the copies from 0.",
         .props = {prop("domain", {"point", "face", "curve", "instance"}, "point")},
-        .sockets = {.inputs = {geoIn(), selectionIn(), fin("amount", T::Int, 1)}, .outputs = {geoOut(), fout("duplicateIndex", T::Int)}},
+        .sockets = {.inputs = {geoIn(), selectionIn(), bounded(fin("amount", T::Int, 1), 0, 100000)}, .outputs = {geoOut(), fout("duplicateIndex", T::Int)}},
         .exec =
             [](ExecContext& c) {
                 LILA_ZONE();

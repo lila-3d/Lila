@@ -229,7 +229,7 @@ void registerCommands()
         .name = "scHistory",
         .doc = "Revisions of a file, newest first: [{revision, change, action, user, time, description}].",
         .positionalDoc = "file",
-        .flags = {{"maxCount", "", T::Int, 50, "Most revisions to return."}},
+        .flags = {{"maxCount", "", T::Int, 50, "Most revisions to return.", {}, {}, 1.0}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             std::vector<fs::path> files = filesArg(a, "scHistory", true);

@@ -121,6 +121,8 @@ std::vector<FlagDef> attrFlags(const std::string& type)
         if (!(d.flags & AttrInput) || (d.flags & AttrHidden))
             continue;
         FlagDef f{d.name, "", T::Float, nullptr, d.doc};
+        f.min = d.minValue;
+        f.max = d.maxValue;
         switch (d.type)
         {
         case PlugType::Bool: f.type = T::Bool; break;
@@ -347,7 +349,7 @@ Spline splineFrom(const Args& a, std::vector<D3> pts)
 const std::vector<FlagDef> kCurveFlags = {
     {"points", "p", T::List, nullptr, "[[x, y, z], ...] cm: poly vertices, Bezier anchors, NURBS control points (or edit points with editPoints)."},
     {"type", "t", T::String, "nurbs", "Spline kind.", {"poly", "bezier", "nurbs"}},
-    {"degree", "d", T::Int, 3, "NURBS degree (1 to 7)."},
+    {"degree", "d", T::Int, 3, "NURBS degree (1 to 7).", {}, {}, 1.0, 7.0},
     {"closed", "c", T::Bool, false, "A closed loop (periodic for NURBS)."},
     {"editPoints", "ep", T::Bool, false, "NURBS: the points are edit points the curve passes through."},
     {"knots", "k", T::List, nullptr, "NURBS knots: points + degree + 1 values, or points + 1 breakpoints when closed."},
@@ -394,7 +396,7 @@ void registerCommands()
         .name = "curveEP",
         .doc = "Create a NURBS curve through edit points. Returns its name.",
         .flags = {{"points", "p", T::List, nullptr, "[[x, y, z], ...] edit points, cm."},
-                  {"degree", "d", T::Int, 3, "Degree (1 to 7)."},
+                  {"degree", "d", T::Int, 3, "Degree (1 to 7).", {}, {}, 1.0, 7.0},
                   {"closed", "c", T::Bool, false, "A closed loop through the points."},
                   {"name", "n", T::String, nullptr, "Name; made unique."}},
         .run = [](const Args& a) -> json {
@@ -432,7 +434,7 @@ void registerCommands()
         .doc = "Create an exact circle (a rational NURBS). Returns its name.",
         .flags = {{"center", "c", T::Vec3, json::array({0, 0, 0}), "Centre, cm."},
                   {"normal", "nr", T::Vec3, json::array({0, 1, 0}), "Normal of its plane."},
-                  {"radius", "r", T::Float, 10.0, "cm."},
+                  {"radius", "r", T::Float, 10.0, "cm.", {}, {}, 0.0},
                   {"name", "n", T::String, nullptr, "Name; made unique."}},
         .run = [](const Args& a) -> json {
             auto v = [&](const char* f) { return D3(a.flags[f][0].get<double>(), a.flags[f][1].get<double>(), a.flags[f][2].get<double>()); };
@@ -659,7 +661,7 @@ void registerCommands()
         .doc = "Split curves at parameter (span units) or, in vertex mode, at the selected points. Open curves become two, closed "
                "ones open there. Returns the curves.",
         .positionalDoc = "curves",
-        .flags = {{"parameter", "p", T::Float, nullptr, "Where to split, in spans from the start."}},
+        .flags = {{"parameter", "p", T::Float, nullptr, "Where to split, in spans from the start.", {}, {}, 0.0}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             json names = json::array();
@@ -767,7 +769,7 @@ void registerCommands()
         .name = "openCurve",
         .doc = "Open closed curves at parameter (span units, default their start), keeping the shape.",
         .positionalDoc = "curves",
-        .flags = {{"parameter", "p", T::Float, 0.0, "Where to open, in spans from the start."}},
+        .flags = {{"parameter", "p", T::Float, 0.0, "Where to open, in spans from the start.", {}, {}, 0.0}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             for (Node* c : curvesOf(a, "openCurve"))
@@ -785,7 +787,7 @@ void registerCommands()
         .name = "insertCurvePoint",
         .doc = "Insert a point into a curve at parameter (span units) without changing its shape. Returns the new point's index.",
         .positionalDoc = "curve",
-        .flags = {{"parameter", "p", T::Float, 0.5, "Where, in spans from the start."}, {"spline", "", T::Int, 0, "Which spline of the curve."}},
+        .flags = {{"parameter", "p", T::Float, 0.5, "Where, in spans from the start.", {}, {}, 0.0}, {"spline", "", T::Int, 0, "Which spline of the curve.", {}, {}, 0.0}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             Node* c = curvesOf(a, "insertCurvePoint").back();
@@ -875,7 +877,7 @@ void registerCommands()
         .doc = "Convert curves to another kind: poly, Bezier or NURBS (exact where the shape allows, fitted within tolerance otherwise).",
         .positionalDoc = "curves",
         .flags = {{"type", "t", T::String, "nurbs", "Target kind.", {"poly", "bezier", "nurbs"}},
-                  {"tolerance", "tol", T::Float, 0.01, "Fitting tolerance, cm."}},
+                  {"tolerance", "tol", T::Float, 0.01, "Fitting tolerance, cm.", {}, {}, 1e-5}},
         .run = [](const Args& a) -> json {
             Kind k;
             if (!parseKind(a.get<std::string>("type", "nurbs"), &k))

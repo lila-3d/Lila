@@ -563,7 +563,7 @@ void registerTypes()
     const uint32_t wired = AttrInput | AttrHidden;
     std::vector<AttrDef> own = {
         {.name = "envelope", .type = PlugType::Float, .defaultValue = 1.0, .flags = stored | AttrKeyable,
-         .doc = "Eases the offset in and out over its range; driven by the offset's envelope curve."},
+         .doc = "Eases the offset in and out over its range; driven by the offset's envelope curve.", .minValue = 0.0, .maxValue = 1.0},
         {.name = "offsetSpace", .type = PlugType::Enum, .defaultValue = int64_t(Space::Parent), .flags = stored,
          .enumNames = {std::begin(kSpaceNames), std::end(kSpaceNames)}, .doc = "Axes the control value is in."},
         {.name = "compensate", .type = PlugType::Bool, .defaultValue = false, .flags = stored,
@@ -578,7 +578,7 @@ void registerTypes()
         {.name = "hasRange", .type = PlugType::Bool, .defaultValue = false, .flags = hidden, .doc = "The offset eases over a range."},
         {.name = "rangeStart", .type = PlugType::Float, .defaultValue = 0.0, .flags = hidden, .doc = "Seconds."},
         {.name = "rangeEnd", .type = PlugType::Float, .defaultValue = 0.0, .flags = hidden, .doc = "Seconds."},
-        {.name = "ease", .type = PlugType::Float, .defaultValue = 0.0, .flags = hidden, .doc = "Seconds of ease at each end."},
+        {.name = "ease", .type = PlugType::Float, .defaultValue = 0.0, .flags = hidden, .doc = "Seconds of ease at each end.", .minValue = 0.0},
     };
     for (bool rot : {true, false})
     {
@@ -600,7 +600,7 @@ void registerCommands()
         return;
     using T = ArgType;
     const FlagDef rangeFlag{"range", "r", T::Any, nullptr, "'whole' (constant over the take) or [start, end] in frames, eased in and out."};
-    const FlagDef easeFlag{"ease", "e", T::Float, nullptr, "Frames of ease at each end of the range."};
+    const FlagDef easeFlag{"ease", "e", T::Float, nullptr, "Frames of ease at each end of the range.", {}, {}, 0.0};
 
     ops::registerCommand({
         .name = "createOffset",
@@ -611,7 +611,7 @@ void registerCommands()
         .flags = {
             {"space", "s", T::String, "parent", "local, parent, world, or a node whose axes the offset uses."},
             rangeFlag,
-            {"ease", "e", T::Float, 0.0, "Frames of ease at each end of the range."},
+            {"ease", "e", T::Float, 0.0, "Frames of ease at each end of the range.", {}, {}, 0.0},
             {"keepChildren", "kc", T::Bool, false, "Children keep their world rotation (offset the torso, keep the head's direction)."},
             {"channels", "ch", T::String, "both", "rotate, translate or both.", {"rotate", "translate", "both"}},
             {"name", "n", T::String, nullptr, "Layer name. Default: Offset_<parts>."},

@@ -338,7 +338,7 @@ void registerSpinnerOps(ext::Context& ctx)
                "(weight 1), for the selected joints or (all) every joint of their characters. Returns the channels keyed.",
         .positionalDoc = "transforms (default the selection)",
         .flags = {
-            {"weight", "w", T::Float, 0.0, "-1 previous key, 0 unchanged, 1 next key."},
+            {"weight", "w", T::Float, 0.0, "-1 previous key, 0 unchanged, 1 next key.", {}, {}, -3.0, 3.0},
             {"all", "a", T::Bool, false, "Every joint of the selection's characters (of the scene with no character)."},
             {"time", "t", T::Float, nullptr, "Seconds; default the current time."},
         },

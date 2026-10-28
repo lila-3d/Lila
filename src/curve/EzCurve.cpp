@@ -214,7 +214,7 @@ void registerEzCurveCommand()
                   {"lift", "l", T::Float, 0.0, "Height off the surface, cm."},
                   {"follow", "f", T::Bool, true, "Follow the surface between the points."},
                   {"clearance", "c", T::Bool, true, "Push the curve out of the meshes wherever it dips into them."},
-                  {"points", "p", T::Int, 12, "Points the curve passes through."},
+                  {"points", "p", T::Int, 12, "Points the curve passes through.", {}, {}, 3.0, 128.0},
                   {"symmetry", "sym", T::String, "off", "Mirror the curve live across the world plane facing this axis.", {"off", "x", "y", "z"}},
                   {"name", "n", T::String, nullptr, "Name; made unique."}},
         .run = [](const Args& a) -> json {

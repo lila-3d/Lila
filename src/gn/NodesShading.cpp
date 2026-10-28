@@ -86,7 +86,7 @@ void combineSeparate()
                 Sockets s;
                 for (const std::string& ch : channelNames(findDecl("CombineColor")->propValue(n, "mode")))
                     s.inputs.push_back(fin(ch, T::Float, 0.0));
-                s.inputs.push_back(fin("alpha", T::Float, 1.0));
+                s.inputs.push_back(bounded(fin("alpha", T::Float, 1.0), 0.0, 1.0));
                 s.outputs = {fout("color", T::Color)};
                 return s;
             },
@@ -171,7 +171,7 @@ void setMeshNormal()
                     s.inputs.push_back(fin("faceSharpness", T::Bool, false, Implicit::None, "Faces to shade flat."));
                 }
                 else if (mode == "smoothByAngle")
-                    s.inputs.push_back(fin("angle", T::Float, 30.0, Implicit::None, "Degrees; edges sharper than this stay hard."));
+                    s.inputs.push_back(bounded(fin("angle", T::Float, 30.0, Implicit::None, "Degrees; edges sharper than this stay hard."), 0.0, 180.0));
                 else
                     s.inputs.push_back(fin("customNormal", T::Vector, nullptr, Implicit::Normal, "The normal; normalized. Defaults to the current normal."));
                 return s;

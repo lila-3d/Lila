@@ -211,10 +211,11 @@ void AutoBevelNode::compute(const EvalContext&)
     setOutput(kChosen, DataPtr(set));
 }
 
-AttrDef param(std::string name, PlugType type, PlugValue def, std::string doc, uint32_t extra = AttrKeyable)
+AttrDef param(std::string name, PlugType type, PlugValue def, std::string doc, uint32_t extra = AttrKeyable, std::optional<double> lo = {},
+              std::optional<double> hi = {})
 {
     return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable | extra,
-            .doc = std::move(doc)};
+            .doc = std::move(doc), .minValue = lo, .maxValue = hi};
 }
 
 Graph& graph() { return Graph::current(); }
@@ -404,18 +405,18 @@ void registerTypes()
         {.name = "inMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden},
         param("enabled", PlugType::Bool, true, "Turn the modifier off without removing it."),
         modeAttr,
-        param("minAngle", PlugType::Float, 30.0, "Smallest fold to bevel, degrees between the face normals."),
-        param("maxAngle", PlugType::Float, 180.0, "Largest fold to bevel, degrees."),
+        param("minAngle", PlugType::Float, 30.0, "Smallest fold to bevel, degrees between the face normals.", AttrKeyable, 0.0, 180.0),
+        param("maxAngle", PlugType::Float, 180.0, "Largest fold to bevel, degrees.", AttrKeyable, 0.0, 180.0),
         sideAttr,
-        param("thin", PlugType::Float, 0.0, "Skip thickness edges: shorter than this or beside a face narrower than this, cm. 0 is off."),
-        param("minLength", PlugType::Float, 0.0, "Skip edges shorter than this, cm."),
+        param("thin", PlugType::Float, 0.0, "Skip thickness edges: shorter than this or beside a face narrower than this, cm. 0 is off.", AttrKeyable, 0.0),
+        param("minLength", PlugType::Float, 0.0, "Skip edges shorter than this, cm.", AttrKeyable, 0.0),
         param("completeCorners", PlugType::Bool, true, "Where folds meet at an angle, add the quad loops that join them."),
-        param("weightThreshold", PlugType::Float, 0.0, "weight mode: bevel edges whose bevelWeight is above this."),
-        param("offset", PlugType::Float, 1.0, "Bevel width, cm."),
-        param("segments", PlugType::Int, int64_t(2), "Edges across each bevel, 1 to 32. More is rounder."),
-        param("profile", PlugType::Float, 0.5, "Profile shape: 0.5 is a round arc, 0.25 a straight chamfer."),
+        param("weightThreshold", PlugType::Float, 0.0, "weight mode: bevel edges whose bevelWeight is above this.", AttrKeyable, 0.0, 1.0),
+        param("offset", PlugType::Float, 1.0, "Bevel width, cm.", AttrKeyable, 0.0),
+        param("segments", PlugType::Int, int64_t(2), "Edges across each bevel, 1 to 32. More is rounder.", AttrKeyable, 1.0, 32.0),
+        param("profile", PlugType::Float, 0.5, "Profile shape: 0.5 is a round arc, 0.25 a straight chamfer.", AttrKeyable, 0.0, 1.0),
         param("clamp", PlugType::Bool, true, "Keep the width under half the shortest neighbouring edge."),
-        param("smoothingAngle", PlugType::Float, 30.0, "New edges sharper than this are hard; negative leaves them soft."),
+        param("smoothingAngle", PlugType::Float, 30.0, "New edges sharper than this are hard; negative leaves them soft.", AttrKeyable, {}, 180.0),
         param("showEdges", PlugType::Bool, false, "Highlight the picked edges in the viewport even when the modifier isn't selected.", 0),
         param("editing", PlugType::Bool, false, "Edit Edges is in progress.", AttrHidden),
         {.name = "overrides", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrStorable | AttrHidden,
@@ -436,23 +437,23 @@ void registerCommands()
 {
     using T = ArgType;
     std::vector<FlagDef> ruleFlags = {
-        {"minAngle", "", T::Float, nullptr, "Smallest fold, degrees between the face normals."},
-        {"maxAngle", "", T::Float, nullptr, "Largest fold, degrees."},
+        {"minAngle", "", T::Float, nullptr, "Smallest fold, degrees between the face normals.", {}, {}, 0.0, 180.0},
+        {"maxAngle", "", T::Float, nullptr, "Largest fold, degrees.", {}, {}, 0.0, 180.0},
         {"side", "", T::String, nullptr, "both, outside (convex) or inside (concave)."},
-        {"thin", "", T::Float, nullptr, "Skip thickness edges narrower than this, cm."},
-        {"minLength", "", T::Float, nullptr, "Skip edges shorter than this, cm."},
+        {"thin", "", T::Float, nullptr, "Skip thickness edges narrower than this, cm.", {}, {}, 0.0},
+        {"minLength", "", T::Float, nullptr, "Skip edges shorter than this, cm.", {}, {}, 0.0},
         {"completeCorners", "", T::Bool, nullptr, "Add the quad loops joining folds that meet at an angle."},
     };
 
     std::vector<FlagDef> createFlags = ruleFlags;
     for (FlagDef f : std::vector<FlagDef>{
              {"mode", "", T::String, nullptr, "auto, autoOverrides, manual, angle or weight."},
-             {"weightThreshold", "", T::Float, nullptr, "weight mode threshold."},
-             {"offset", "", T::Float, nullptr, "Width, cm."},
-             {"segments", "", T::Int, nullptr, "Edges across each bevel, 1 to 32."},
-             {"profile", "", T::Float, nullptr, "0.5 round, 0.25 straight."},
+             {"weightThreshold", "", T::Float, nullptr, "weight mode threshold.", {}, {}, 0.0, 1.0},
+             {"offset", "", T::Float, nullptr, "Width, cm.", {}, {}, 0.0},
+             {"segments", "", T::Int, nullptr, "Edges across each bevel, 1 to 32.", {}, {}, 1.0, 32.0},
+             {"profile", "", T::Float, nullptr, "0.5 round, 0.25 straight.", {}, {}, 0.0, 1.0},
              {"clamp", "", T::Bool, nullptr, "Clamp the width."},
-             {"smoothingAngle", "", T::Float, nullptr, "Hard-edge angle for the new edges."},
+             {"smoothingAngle", "", T::Float, nullptr, "Hard-edge angle for the new edges.", {}, {}, {}, 180.0},
          })
         createFlags.push_back(f);
 
@@ -608,11 +609,11 @@ void registerCommands()
 
     std::vector<FlagDef> selectFlags = {
         {"add", "", T::Bool, false, "Add to the edge selection instead of replacing it."},
-        {"minAngle", "", T::Float, 30.0, "Smallest fold, degrees between the face normals."},
-        {"maxAngle", "", T::Float, 180.0, "Largest fold, degrees."},
+        {"minAngle", "", T::Float, 30.0, "Smallest fold, degrees between the face normals.", {}, {}, 0.0, 180.0},
+        {"maxAngle", "", T::Float, 180.0, "Largest fold, degrees.", {}, {}, 0.0, 180.0},
         {"side", "", T::String, "both", "both, outside (convex) or inside (concave)."},
-        {"thin", "", T::Float, 0.0, "Skip thickness edges narrower than this, cm."},
-        {"minLength", "", T::Float, 0.0, "Skip edges shorter than this, cm."},
+        {"thin", "", T::Float, 0.0, "Skip thickness edges narrower than this, cm.", {}, {}, 0.0},
+        {"minLength", "", T::Float, 0.0, "Skip edges shorter than this, cm.", {}, {}, 0.0},
         {"completeCorners", "", T::Bool, true, "Add the quad loops joining folds that meet at an angle."},
     };
     ops::registerCommand({

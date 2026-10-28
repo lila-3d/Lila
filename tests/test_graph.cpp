@@ -376,3 +376,38 @@ TEST_CASE("evaluateUpstream computes only what the given nodes depend on")
     CHECK(g.find("other")->evaluatedPass() > before);
     CHECK(glm::dvec3(g.find("other")->as<glm::dmat4>(Transform::kWorldMatrix)[3]).y == doctest::Approx(7.0));
 }
+
+TEST_CASE("values stay inside an attr's hard limits")
+{
+    run("newScene");
+    run("spaceLocator", {{"name", "loc"}});
+    run("addAttr", {{"args", {"loc"}}, {"longName", "count"}, {"attributeType", "long"}, {"minValue", 1}, {"maxValue", 32}});
+    run("addAttr", {{"args", {"loc"}}, {"longName", "amount"}, {"attributeType", "double"}, {"minValue", 0.0}});
+    run("setAttr", {{"args", {"loc.count", -4}}});
+    CHECK(run("getAttr", {{"args", {"loc.count"}}}).get<int64_t>() == 1);
+    run("setAttr", {{"args", {"loc.count", 99}}});
+    CHECK(run("getAttr", {{"args", {"loc.count"}}}).get<int64_t>() == 32);
+    run("setAttr", {{"args", {"loc.amount", -0.5}}});
+    CHECK(run("getAttr", {{"args", {"loc.amount"}}}).get<double>() == 0.0);
+    run("setAttr", {{"args", {"loc.amount", 7.5}}});
+    CHECK(run("getAttr", {{"args", {"loc.amount"}}}).get<double>() == 7.5);
+}
+
+TEST_CASE("command flags are clamped to their bounds")
+{
+    ops::registerCommand({
+        .name = "boundsTestEcho",
+        .doc = "Returns its flags.",
+        .flags = {{"count", "c", ArgType::Int, 1, "Loops.", {}, {}, 1.0, 32.0},
+                  {"amount", "a", ArgType::Float, 0.5, "Fraction.", {}, {}, 0.0, 1.0}},
+        .undoable = false,
+        .run = [](const Args& a) -> json { return a.flags; },
+    });
+    json r = run("boundsTestEcho", {{"count", -3}, {"amount", 4.0}});
+    CHECK(r["count"].get<int64_t>() == 1);
+    CHECK(r["amount"].get<double>() == 1.0);
+    r = run("boundsTestEcho", {{"count", 40}, {"amount", 0.25}});
+    CHECK(r["count"].get<int64_t>() == 32);
+    CHECK(r["amount"].get<double>() == 0.25);
+    ops::unregisterCommand("boundsTestEcho");
+}

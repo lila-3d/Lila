@@ -93,8 +93,8 @@ void primitive(const char* type, const char* label, std::vector<SocketDecl> inpu
     });
 }
 
-SocketDecl heightFraction() { return in("fraction", T::Float, 1.0, "Portion of the height kept, from the top: 1 is whole, 0.5 a dome open at the bottom."); }
-SocketDecl sweepFraction() { return in("fraction", T::Float, 1.0, "Portion of a full turn swept around the up axis: 1 is whole, 0.5 half."); }
+SocketDecl heightFraction() { return bounded(in("fraction", T::Float, 1.0, "Portion of the height kept, from the top: 1 is whole, 0.5 a dome open at the bottom."), 0.01, 1.0); }
+SocketDecl sweepFraction() { return bounded(in("fraction", T::Float, 1.0, "Portion of a full turn swept around the up axis: 1 is whole, 0.5 half."), 0.01, 1.0); }
 SocketDecl cutCaps() { return in("cutCaps", T::Bool, true, "Close the flat ends a partial sweep leaves."); }
 double fraction(ExecContext& c) { return std::clamp(c.f("fraction"), 0.01, 1.0); }
 
@@ -102,7 +102,7 @@ void primitives()
 {
     primitive(
         "MeshCube", "Cube",
-        {in("size", T::Vector, vec(100, 100, 100)), in("verticesX", T::Int, 2), in("verticesY", T::Int, 2), in("verticesZ", T::Int, 2)}, {},
+        {in("size", T::Vector, vec(100, 100, 100)), bounded(in("verticesX", T::Int, 2), 2, 1001), bounded(in("verticesY", T::Int, 2), 2, 1001), bounded(in("verticesZ", T::Int, 2), 2, 1001)}, {},
         [](ExecContext& c) {
             D3 s = c.v("size");
             return geo::makeCube({s.x, s.y, s.z, clampInt(c.i("verticesX") - 1, 1, 1000), clampInt(c.i("verticesY") - 1, 1, 1000),
@@ -110,19 +110,20 @@ void primitives()
         },
         "A box centred on the origin, with uvs.");
     primitive(
-        "MeshGrid", "Grid", {in("sizeX", T::Float, 100.0), in("sizeY", T::Float, 100.0), in("verticesX", T::Int, 3), in("verticesY", T::Int, 3)}, {},
+        "MeshGrid", "Grid", {bounded(in("sizeX", T::Float, 100.0), 0.0), bounded(in("sizeY", T::Float, 100.0), 0.0), bounded(in("verticesX", T::Int, 3), 2, 10001),
+         bounded(in("verticesY", T::Int, 3), 2, 10001)}, {},
         [](ExecContext& c) {
             return geo::makePlane({c.f("sizeX"), c.f("sizeY"), clampInt(c.i("verticesX") - 1, 1, 10000), clampInt(c.i("verticesY") - 1, 1, 10000)});
         },
         "A flat grid in the ground plane, facing up. sizeY runs along depth.");
     primitive(
-        "MeshUVSphere", "UV Sphere", {in("segments", T::Int, 32), in("rings", T::Int, 16), in("radius", T::Float, 50.0), heightFraction()}, {},
+        "MeshUVSphere", "UV Sphere", {bounded(in("segments", T::Int, 32), 3, 1000), bounded(in("rings", T::Int, 16), 2, 1000), bounded(in("radius", T::Float, 50.0), 0.0), heightFraction()}, {},
         [](ExecContext& c) {
             return geo::makeSphere({c.f("radius"), clampInt(c.i("segments"), 3, 1000), clampInt(c.i("rings"), 2, 1000), false, fraction(c)});
         },
         "Latitude-longitude sphere.");
     primitive(
-        "MeshIcoSphere", "Ico Sphere", {in("radius", T::Float, 50.0), in("subdivisions", T::Int, 2), heightFraction()}, {},
+        "MeshIcoSphere", "Ico Sphere", {bounded(in("radius", T::Float, 50.0), 0.0), bounded(in("subdivisions", T::Int, 2), 1, 7), heightFraction()}, {},
         [](ExecContext& c) {
             const int subdiv = clampInt(c.i("subdivisions"), 1, 7);
             if (fraction(c) < 1.0)
@@ -131,12 +132,13 @@ void primitives()
         },
         "Evenly triangulated sphere.");
     primitive(
-        "MeshQuadSphere", "Quad Sphere", {in("radius", T::Float, 50.0), in("subdivisions", T::Int, 3), heightFraction()}, {},
+        "MeshQuadSphere", "Quad Sphere", {bounded(in("radius", T::Float, 50.0), 0.0), bounded(in("subdivisions", T::Int, 3), 1, 200), heightFraction()}, {},
         [](ExecContext& c) { return geo::makeQuadSphere({c.f("radius"), clampInt(c.i("subdivisions"), 1, 200), fraction(c)}); },
         "All-quad sphere, no poles.");
     primitive(
         "MeshCylinder", "Cylinder",
-        {in("vertices", T::Int, 32), in("sideSegments", T::Int, 1), in("fillSegments", T::Int, 0), in("radius", T::Float, 50.0), in("depth", T::Float, 100.0),
+        {bounded(in("vertices", T::Int, 32), 3, 1000), bounded(in("sideSegments", T::Int, 1), 1, 1000), bounded(in("fillSegments", T::Int, 0), 0, 1000),
+         bounded(in("radius", T::Float, 50.0), 0.0), bounded(in("depth", T::Float, 100.0), 0.0),
          sweepFraction(), cutCaps()},
         {prop("fillType", {"ngon", "none"}, "ngon")},
         [](ExecContext& c) {
@@ -146,7 +148,8 @@ void primitives()
         "Upright cylinder centred on the origin.");
     primitive(
         "MeshCone", "Cone",
-        {in("vertices", T::Int, 32), in("sideSegments", T::Int, 1), in("fillSegments", T::Int, 0), in("radius", T::Float, 50.0), in("depth", T::Float, 100.0),
+        {bounded(in("vertices", T::Int, 32), 3, 1000), bounded(in("sideSegments", T::Int, 1), 1, 1000), bounded(in("fillSegments", T::Int, 0), 0, 1000),
+         bounded(in("radius", T::Float, 50.0), 0.0), bounded(in("depth", T::Float, 100.0), 0.0),
          sweepFraction(), cutCaps()},
         {},
         [](ExecContext& c) {
@@ -156,7 +159,8 @@ void primitives()
         "Upright cone centred on the origin.");
     primitive(
         "MeshTorus", "Torus",
-        {in("radius", T::Float, 50.0), in("sectionRadius", T::Float, 20.0), in("segments", T::Int, 32), in("sectionSegments", T::Int, 16),
+        {bounded(in("radius", T::Float, 50.0), 0.0), bounded(in("sectionRadius", T::Float, 20.0), 0.0), bounded(in("segments", T::Int, 32), 3, 1000),
+         bounded(in("sectionSegments", T::Int, 16), 3, 1000),
          sweepFraction(), cutCaps()},
         {},
         [](ExecContext& c) {
@@ -165,12 +169,12 @@ void primitives()
         },
         "Ring in the ground plane.");
     primitive(
-        "MeshCircle", "Mesh Circle", {in("vertices", T::Int, 32), in("radius", T::Float, 50.0)}, {prop("fillType", {"none", "ngon", "triangleFan"}, "none")},
+        "MeshCircle", "Mesh Circle", {bounded(in("vertices", T::Int, 32), 3, 100000), bounded(in("radius", T::Float, 50.0), 0.0)}, {prop("fillType", {"none", "ngon", "triangleFan"}, "none")},
         [](ExecContext& c) { return circleMesh(clampInt(c.i("vertices"), 3, 100000), c.f("radius"), c.prop("fillType")); },
         "A ring of points in the ground plane, as edges or filled.");
     primitive(
         "MeshLine", "Mesh Line",
-        {in("count", T::Int, 10), in("start", T::Vector, vec(0, 0, 0)), in("offset", T::Vector, vec(0, 10, 0), "Step between points (offset mode) or end point.")},
+        {bounded(in("count", T::Int, 10), 1, 1000000), in("start", T::Vector, vec(0, 0, 0)), in("offset", T::Vector, vec(0, 10, 0), "Step between points (offset mode) or end point.")},
         {prop("mode", {"offset", "endPoints"}, "offset")},
         [](ExecContext& c) {
             int n = clampInt(c.i("count"), 1, 1000000);
@@ -257,7 +261,7 @@ void meshOps()
         .label = "Subdivision Surface",
         .category = "Mesh",
         .doc = "Catmull-Clark subdivision. Edge \"crease\" attributes keep edges sharp.",
-        .sockets = {.inputs = {geoIn("mesh"), in("level", T::Int, 1)}, .outputs = {geoOut("mesh")}},
+        .sockets = {.inputs = {geoIn("mesh"), bounded(in("level", T::Int, 1), 0, 6)}, .outputs = {geoOut("mesh")}},
         .exec =
             [](ExecContext& c) {
                 int level = clampInt(c.i("level"), 0, 6);
@@ -365,7 +369,7 @@ void meshOps()
         .label = "Merge by Distance",
         .category = "Geometry",
         .doc = "Welds selected points closer than the distance.",
-        .sockets = {.inputs = {geoIn(), selectionIn(), in("distance", T::Float, 0.1)}, .outputs = {geoOut()}},
+        .sockets = {.inputs = {geoIn(), selectionIn(), bounded(in("distance", T::Float, 0.1), 0.0)}, .outputs = {geoOut()}},
         .exec =
             [](ExecContext& c) {
                 double dist = std::max(0.0, c.f("distance"));
@@ -397,7 +401,7 @@ void pointConversions()
         .category = "Point",
         .doc = "A point cloud from mesh vertices, edge or face centres, or corners. Vertices keep their point attributes.",
         .props = {prop("mode", {"vertices", "edges", "faces", "corners"}, "vertices")},
-        .sockets = {.inputs = {geoIn("mesh"), selectionIn(), fin("position", T::Vector, nullptr, Implicit::Position), fin("radius", T::Float, 5.0)},
+        .sockets = {.inputs = {geoIn("mesh"), selectionIn(), fin("position", T::Vector, nullptr, Implicit::Position), bounded(fin("radius", T::Float, 5.0), 0.0)},
                     .outputs = {geoOut("points")}},
         .exec =
             [](ExecContext& c) {
@@ -503,12 +507,12 @@ void distribute()
                 s.inputs = {geoIn("mesh"), selectionIn()};
                 if (findDecl("DistributePointsOnFaces")->propValue(n, "distributeMethod") == "poissonDisk")
                 {
-                    s.inputs.push_back(in("distanceMin", T::Float, 10.0, "Minimum spacing, cm."));
-                    s.inputs.push_back(in("densityMax", T::Float, 100.0, "Candidate density before spacing, per m2."));
-                    s.inputs.push_back(fin("densityFactor", T::Float, 1.0));
+                    s.inputs.push_back(bounded(in("distanceMin", T::Float, 10.0, "Minimum spacing, cm."), 0.0));
+                    s.inputs.push_back(bounded(in("densityMax", T::Float, 100.0, "Candidate density before spacing, per m2."), 0.0));
+                    s.inputs.push_back(bounded(fin("densityFactor", T::Float, 1.0), 0.0, 1.0));
                 }
                 else
-                    s.inputs.push_back(fin("density", T::Float, 10.0));
+                    s.inputs.push_back(bounded(fin("density", T::Float, 10.0), 0.0));
                 s.inputs.push_back(in("seed", T::Int, 0));
                 s.outputs = {geoOut("points"), fout("normal", T::Vector), fout("rotation", T::Rotation)};
                 return s;

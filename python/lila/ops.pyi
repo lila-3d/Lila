@@ -23,8 +23,8 @@ def addAttr(*objects: Any, longName: str | None = None, shortName: str | None = 
         dataType: string, stringArray, doubleArray, floatArray, Int32Array, vectorArray or matrix. Short form dt.
         multi: An array of attributeType: any number of elements, attr[0], attr[1] ... Short form m. Default False.
         defaultValue: Default value (each element's, for an array). Short form dv.
-        minValue: Lowest value editors allow. Short form min.
-        maxValue: Highest value editors allow. Short form max.
+        minValue: Lowest value it takes: lower values are clamped. Short form min.
+        maxValue: Highest value it takes: higher values are clamped. Short form max.
         softMinValue: Slider minimum. Short form smn.
         softMaxValue: Slider maximum. Short form smx.
         enumName: Enum labels, 'low:medium:high'. Short form en.

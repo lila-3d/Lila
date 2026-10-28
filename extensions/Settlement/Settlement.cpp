@@ -27,6 +27,14 @@ gn::SocketDecl in(std::string id, T t, gn::json def, std::string doc)
     return {.id = std::move(id), .type = t, .defaultValue = std::move(def), .doc = std::move(doc)};
 }
 
+gn::SocketDecl in(std::string id, T t, gn::json def, std::string doc, std::optional<double> lo, std::optional<double> hi = std::nullopt)
+{
+    gn::SocketDecl s = in(std::move(id), t, std::move(def), std::move(doc));
+    s.min = lo;
+    s.max = hi;
+    return s;
+}
+
 gn::SocketDecl geoSocket(std::string id, std::string doc) { return {.id = std::move(id), .type = T::Geometry, .doc = std::move(doc)}; }
 
 struct Chain
@@ -172,11 +180,11 @@ gn::NodeDecl settlementDecl()
                                in("profile", T::String, "medievalTown", "Style: " + profiles + "."),
                                in("pattern", T::String, "", "Override the profile's pattern: organic, grid, radial, linear, organicGrid."),
                                in("overrides", T::String, "", "JSON object of profile fields to change, such as {\"maxFloors\": 6}."),
-                               in("size", T::Float, 40000.0, "Side of the square used when the site has no outline."),
-                               in("growth", T::Float, o.growth, "0 to 1: how far the settlement has grown."),
-                               in("heightScale", T::Float, o.heightScale, "Multiplies every building's floors."),
-                               in("widthScale", T::Float, o.widthScale, "Multiplies every street width."),
-                               in("lotScale", T::Float, o.lotScale, "Multiplies lot frontage, depth and building depth."),
+                               in("size", T::Float, 40000.0, "Side of the square used when the site has no outline.", 100.0),
+                               in("growth", T::Float, o.growth, "0 to 1: how far the settlement has grown.", 0.0, 1.0),
+                               in("heightScale", T::Float, o.heightScale, "Multiplies every building's floors.", 0.0),
+                               in("widthScale", T::Float, o.widthScale, "Multiplies every street width.", 0.05),
+                               in("lotScale", T::Float, o.lotScale, "Multiplies lot frontage, depth and building depth.", 0.05),
                                in("seed", T::Int, int64_t(o.seed), "Another seed gives another settlement on the same site."),
                                in("showStreets", T::Bool, true, "Include streets in geometry."),
                                in("showLots", T::Bool, true, "Include lot outlines in geometry."),

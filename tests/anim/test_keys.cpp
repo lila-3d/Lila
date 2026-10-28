@@ -261,7 +261,7 @@ TEST_CASE("findKeyframe and playbackOptions")
     CHECK(p["fps"] == 60.0);
     CHECK(p["loop"] == false);
     CHECK(scene::anim::frameOf(0.5) == doctest::Approx(30));
-    CHECK_THROWS_AS(run("playbackOptions", {{"fps", 0.0}}), CommandError);
+    CHECK(run("playbackOptions", {{"fps", 0.0}})["fps"] == 1.0);
     run("playbackOptions", {{"minTime", 0.0}, {"maxTime", 4.0}, {"fps", 30.0}, {"loop", true}});
 
     CHECK(run("play") == true);

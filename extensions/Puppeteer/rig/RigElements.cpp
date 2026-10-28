@@ -694,7 +694,7 @@ bool registerRigElements(ext::Context& ctx)
             {"aimAxis", "aa", T::String, "x", "Joint axis that aims."},
             {"upAxis", "ua", T::String, "y", "Joint axis leaned toward upVector."},
             {"upVector", "uv", T::Vec3, nullptr, "World up; default +Y."},
-            {"distance", "d", T::Float, 50.0, "How far in front of the joint the looker starts, cm."},
+            {"distance", "d", T::Float, 50.0, "How far in front of the joint the looker starts, cm.", {}, {}, 0.0},
             {"name", "n", T::String, nullptr, "Name; default <joint>_looker."},
             parent,
         },

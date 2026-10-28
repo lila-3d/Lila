@@ -1510,9 +1510,12 @@ void NodeEditor::rebuildSidePanel()
                 h->addWidget(l, 1);
             }
             else
-                h->addWidget(valueEditor(row, type, value, [backend = mBackend, group, nodeName, id](json v) { setFromField(*backend, args({group, nodeName + "." + id, v})); },
-                                         s.value("default", json())),
-                             1);
+            {
+                QWidget* ed = valueEditor(row, type, value, [backend = mBackend, group, nodeName, id](json v) { setFromField(*backend, args({group, nodeName + "." + id, v})); },
+                                          s.value("default", json()));
+                applyLimits(ed, s);
+                h->addWidget(ed, 1);
+            }
             auto* expose = new QToolButton(row);
             expose->setText("Expose");
             expose->setToolTip("Make this a group input: a keyable attr on the " + mBackend->ownerNoun());

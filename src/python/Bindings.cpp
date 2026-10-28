@@ -146,6 +146,10 @@ NB_MODULE(_lila, m)
                 fd["doc"] = f.doc;
                 fd["choices"] = toPy(json(f.choices));
                 fd["example"] = f.example;
+                if (f.min)
+                    fd["min"] = *f.min;
+                if (f.max)
+                    fd["max"] = *f.max;
                 flags.append(fd);
             }
             nb::dict cd;

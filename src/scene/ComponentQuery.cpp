@@ -241,7 +241,7 @@ std::vector<FlagDef> queryFlags()
     return {
         {"kind", "k", T::String, "face", "vertex, edge or face.", {"vertex", "edge", "face"}},
         {"normal", "n", T::Vec3, nullptr, "Keep components whose normal is within angle of this direction (world space)."},
-        {"angle", "", T::Float, 30.0, "Tolerance for normal=, degrees."},
+        {"angle", "", T::Float, 30.0, "Tolerance for normal=, degrees.", {}, {}, 0.0, 180.0},
         {"side", "s", T::String, nullptr,
          "'+x', '-x', '+y', ... keeps components whose centre is on that side of the object-space origin plane; 'center' (or "
          "'centerx', 'centery', 'centerz') keeps those on the plane."},
@@ -252,14 +252,14 @@ std::vector<FlagDef> queryFlags()
          "Edges only: keep edges running along this world direction (either way) within angle; (0, 1, 0) finds vertical edges, "
          "whose ring polyInsertLoop cuts with a horizontal loop."},
         {"near", "", T::Vec3, nullptr, "World point; with radius= keeps components within it, else keeps the count nearest."},
-        {"radius", "r", T::Float, nullptr, "Distance for near=, cm."},
+        {"radius", "r", T::Float, nullptr, "Distance for near=, cm.", {}, {}, 0.0},
         {"extreme", "x", T::String, nullptr,
          "'+y', '-z', ...: keep the count components furthest along that world direction (the top face is extreme='+y')."},
-        {"count", "c", T::Int, 1, "How many to keep for extreme= or near= without radius."},
+        {"count", "c", T::Int, 1, "How many to keep for extreme= or near= without radius.", {}, {}, 1.0},
         {"border", "", T::Bool, nullptr, "True keeps only components on an open border, False only interior ones."},
-        {"shell", "", T::Int, nullptr, "Keep components of one connected shell: 0 is the largest, numbered as meshCheck lists them."},
+        {"shell", "", T::Int, nullptr, "Keep components of one connected shell: 0 is the largest, numbered as meshCheck lists them.", {}, {}, 0.0},
         {"fromSelection", "fs", T::Bool, false, "Only consider the currently selected components of that kind."},
-        {"tolerance", "t", T::Float, nullptr, "Distance counted as on a plane for side=, cm (default scales with the mesh)."},
+        {"tolerance", "t", T::Float, nullptr, "Distance counted as on a plane for side=, cm (default scales with the mesh).", {}, {}, 0.0},
     };
 }
 
@@ -639,8 +639,8 @@ void registerComponentQueryCommands()
                "edges, non-manifold edges and vertices, zero-area faces, face/triangle counts, symmetry drift. issues says what is "
                "wrong and how to fix it. Changes nothing.",
         .positionalDoc = "[mesh]",
-        .flags = {{"expectShells", "", T::Int, 1, "Connected parts the model should have (0 skips the check)."},
-                  {"maxTriangles", "", T::Int, nullptr, "Triangle budget; more is an issue."}},
+        .flags = {{"expectShells", "", T::Int, 1, "Connected parts the model should have (0 skips the check).", {}, {}, 0.0},
+                  {"maxTriangles", "", T::Int, nullptr, "Triangle budget; more is an issue.", {}, {}, 0.0}},
         .undoable = false,
         .run = [](const Args& a) -> json { return meshCheck(targetMesh(a, "meshCheck"), a); },
     });

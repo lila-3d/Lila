@@ -43,6 +43,12 @@ AttrDef whole(const char* name, int64_t def, const char* doc)
 {
     return {.name = name, .type = PlugType::Int, .defaultValue = def, .flags = AttrInput | AttrStorable, .doc = doc};
 }
+AttrDef limited(AttrDef a, std::optional<double> lo, std::optional<double> hi = {})
+{
+    a.minValue = lo;
+    a.maxValue = hi;
+    return a;
+}
 AttrDef boolean(const char* name, bool def, const char* doc)
 {
     return {.name = name, .type = PlugType::Bool, .defaultValue = def, .flags = AttrInput | AttrStorable, .doc = doc};
@@ -372,15 +378,15 @@ bool registerTypes(ext::Context& ctx)
     solver.ownAttrs = {
         boolean("enabled", true, "Simulate. Off, every joint follows its animation."),
         whole("startFrame", 0, "Frame the simulation starts from, at rest on the animation."),
-        whole("substeps", 4, "Physics steps per frame. More is stiffer and more accurate; the result never depends on playback."),
+        limited(whole("substeps", 4, "Physics steps per frame. More is stiffer and more accurate; the result never depends on playback."), 1.0, 64.0),
         vector3("gravity", {0.0, -980.0, 0.0}, "Gravity, cm/s^2."),
         boolean("ground", true, "A ground plane to land on."),
         number("groundHeight", 0.0, "Height of the ground plane, cm."),
-        number("groundFriction", 0.8, "Friction of the ground."),
+        limited(number("groundFriction", 0.8, "Friction of the ground."), 0.0),
         boolean("selfCollision", false, "Bodies of this ragdoll collide with each other (never with their parent's)."),
-        whole("velocitySteps", 10, "Solver velocity iterations: more holds the joints tighter."),
-        whole("positionSteps", 2, "Solver position iterations."),
-        whole("stepped", 1, "Hold each simulated pose this many frames: 2 animates on twos."),
+        limited(whole("velocitySteps", 10, "Solver velocity iterations: more holds the joints tighter."), 2.0, 64.0),
+        limited(whole("positionSteps", 2, "Solver position iterations."), 1.0, 32.0),
+        limited(whole("stepped", 1, "Hold each simulated pose this many frames: 2 animates on twos."), 1.0, 12.0),
         boolean("preview", true, "Draw the simulated bodies in the viewport, simulating as the time changes."),
         string(sim::kRecordingsAttr, "Layers recorded from this simulation, muted while it samples its inputs.", AttrHidden),
     };
@@ -400,26 +406,26 @@ bool registerTypes(ext::Context& ctx)
                "selectable stand-in."),
         choice("poseSpace", 0, {"local", "world", "both"},
                "Pose match toward the animated rotation relative to the parent body (local), the animated world pose, or both."),
-        number("poseStiffness", 6.0, "Pose match spring frequency, Hz: higher holds the animation tighter. Keyable.", AttrKeyable),
-        number("poseDamping", 1.0, "Pose match damping ratio: 1 settles without bouncing. Keyable.", AttrKeyable),
+        limited(number("poseStiffness", 6.0, "Pose match spring frequency, Hz: higher holds the animation tighter. Keyable.", AttrKeyable), 0.0),
+        limited(number("poseDamping", 1.0, "Pose match damping ratio: 1 settles without bouncing. Keyable.", AttrKeyable), 0.0),
         choice("shape", 0, {"capsule", "box", "sphere", "convexHull"}, "Collision shape."),
-        number("radius", 5.0, "Capsule and sphere radius, cm."),
-        number("length", 20.0, "Capsule length between the cap centres, cm."),
-        vector3("extents", {10.0, 10.0, 10.0}, "Box size, cm."),
+        limited(number("radius", 5.0, "Capsule and sphere radius, cm."), 0.0),
+        limited(number("length", 20.0, "Capsule length between the cap centres, cm."), 0.0),
+        limited(vector3("extents", {10.0, 10.0, 10.0}, "Box size, cm."), 0.1),
         vector3("shapeOffset", {0.0, 0.0, 0.0}, "Shape centre in the joint's space, cm."),
         vector3("shapeRotate", {0.0, 0.0, 0.0}, "Shape orientation in the joint's space, degrees (a capsule lies along its X)."),
         string("hullPoints", "Convex hull points in the shape's space, JSON [[x, y, z], ...].", AttrHidden),
-        number("mass", 0.0, "Mass, kg. 0 derives it from the density and the shape's volume."),
-        number("density", 1000.0, "Density, kg/m^3, when mass is 0."),
-        number("friction", 0.8, "Friction against other bodies and colliders."),
-        number("restitution", 0.0, "Bounciness: 0 lands dead, 1 bounces back fully."),
-        number("linearDamping", 0.05, "Air resistance on movement."),
-        number("angularDamping", 0.05, "Air resistance on spinning."),
-        whole("collisionGroup", 0, "0 collides with everything; markers sharing a group above 0 pass through each other; -1 collides with nothing."),
+        limited(number("mass", 0.0, "Mass, kg. 0 derives it from the density and the shape's volume."), 0.0),
+        limited(number("density", 1000.0, "Density, kg/m^3, when mass is 0."), 0.001),
+        limited(number("friction", 0.8, "Friction against other bodies and colliders."), 0.0),
+        limited(number("restitution", 0.0, "Bounciness: 0 lands dead, 1 bounces back fully."), 0.0, 1.0),
+        limited(number("linearDamping", 0.05, "Air resistance on movement."), 0.0),
+        limited(number("angularDamping", 0.05, "Air resistance on spinning."), 0.0),
+        limited(whole("collisionGroup", 0, "0 collides with everything; markers sharing a group above 0 pass through each other; -1 collides with nothing."), -1.0),
         boolean("limitEnabled", true, "Hold the joint within its swing cones and twist range."),
-        number("limitTwist", 45.0, "Twist range either side of the limit frame, degrees."),
-        number("limitSwing1", 45.0, "Swing about the joint frame's Y either side, degrees."),
-        number("limitSwing2", 45.0, "Swing about the joint frame's Z either side, degrees."),
+        limited(number("limitTwist", 45.0, "Twist range either side of the limit frame, degrees."), 0.5, 180.0),
+        limited(number("limitSwing1", 45.0, "Swing about the joint frame's Y either side, degrees."), 0.5, 180.0),
+        limited(number("limitSwing2", 45.0, "Swing about the joint frame's Z either side, degrees."), 0.5, 180.0),
         vector3("limitOrient", {0.0, 0.0, 0.0}, "Centre of the limits relative to the rest pose: twist, swing1, swing2 in degrees."),
     };
 
@@ -432,8 +438,8 @@ bool registerTypes(ext::Context& ctx)
     pin.ownAttrs = {
         string("marker", "The marker (or its joint) pulled to the pin."),
         boolean("enabled", true, "Pull."),
-        number("stiffness", 4.0, "Spring frequency, Hz. Keyable: key it to 0 to let go.", AttrKeyable),
-        number("damping", 1.0, "Damping ratio."),
+        limited(number("stiffness", 4.0, "Spring frequency, Hz. Keyable: key it to 0 to let go.", AttrKeyable), 0.0),
+        limited(number("damping", 1.0, "Damping ratio."), 0.0),
         boolean("orient", false, "Match the pin's rotation too."),
     };
 
@@ -446,8 +452,8 @@ bool registerTypes(ext::Context& ctx)
     collider.ownAttrs = {
         string("mesh", "The mesh to collide with."),
         boolean("enabled", true, "Collide."),
-        number("friction", 0.8, "Friction."),
-        number("restitution", 0.0, "Bounciness."),
+        limited(number("friction", 0.8, "Friction."), 0.0),
+        limited(number("restitution", 0.0, "Bounciness."), 0.0, 1.0),
     };
 
     NodeType field{.name = kFieldType,
@@ -461,7 +467,7 @@ bool registerTypes(ext::Context& ctx)
         boolean("enabled", true, "Apply."),
         vector3("direction", {1.0, 0.0, 0.0}, "Direction of gravity or wind, world space."),
         number("magnitude", 200.0, "Gravity cm/s^2, wind speed cm/s, turbulence cm/s^2, or drag per second. Keyable.", AttrKeyable),
-        number("frequency", 0.5, "Turbulence: how fast it changes, per second."),
+        limited(number("frequency", 0.5, "Turbulence: how fast it changes, per second."), 0.0),
         whole("seed", 1, "Turbulence seed: the same seed gives the same noise on every machine."),
     };
 
@@ -847,7 +853,7 @@ void registerCommands(ext::Context& ctx)
             {"shape", "sh", T::String, nullptr, "Change the shape kind too.", {"capsule", "box", "sphere", "convexHull"}},
             {"fitShape", "fs", T::Bool, true, "Refit the shape."},
             {"limits", "l", T::Bool, true, "Refit the limits from the animation."},
-            {"margin", "mg", T::Float, 10.0, "Degrees added around the motion."},
+            {"margin", "mg", T::Float, 10.0, "Degrees added around the motion.", {}, {}, 0.0},
             {"start", "", T::Int, nullptr, "First frame. Default: the playback start."},
             {"end", "", T::Int, nullptr, "Last frame. Default: the playback end."},
         },
@@ -910,7 +916,7 @@ void registerCommands(ext::Context& ctx)
         .doc = "A soft pin pulling a marker's body toward a world-space target, placed at the joint. Animate it to steer "
                "the ragdoll. Returns the pin.",
         .positionalDoc = "marker or joint (default the selection)",
-        .flags = {{"stiffness", "st", T::Float, 4.0, "Spring frequency, Hz."}, {"orient", "o", T::Bool, false, "Match rotation too."}},
+        .flags = {{"stiffness", "st", T::Float, 4.0, "Spring frequency, Hz.", {}, {}, 0.0}, {"orient", "o", T::Bool, false, "Match rotation too."}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             std::vector<NodeId> ids = nodeArgs(g, a, "createPhysicsPin");
@@ -999,7 +1005,7 @@ void registerCommands(ext::Context& ctx)
         .flags = {{"mode", "m", T::String, "additive", "additive | replace", {"additive", "replace"}},
                   {"start", "", T::Int, nullptr, "First frame. Default: the loop or playback range."},
                   {"end", "", T::Int, nullptr, "Last frame."},
-                  {"tolerance", "tol", T::Float, 0.0, "Additive only: reduce keys while within this (cm); 0 keys every frame."}},
+                  {"tolerance", "tol", T::Float, 0.0, "Additive only: reduce keys while within this (cm); 0 keys every frame.", {}, {}, 0.0}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             const NodeId solver = pickSolver(g, a, nodeArgs(g, a, "recordPhysics"), "recordPhysics", false);

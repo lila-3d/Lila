@@ -568,7 +568,7 @@ void registerSketchCommands()
         .doc = "Change a dimension's value or expression and solve the sketch to it. Refused (nothing changes) when the sketch "
                "can't reach it.",
         .positionalDoc = "curve",
-        .flags = {{"id", "", T::Int, nullptr, "The dimension's id."},
+        .flags = {{"id", "", T::Int, nullptr, "The dimension's id.", {}, {}, 0.0},
                   {"dimension", "d", T::String, nullptr, "The dimension's name (instead of id)."},
                   {"value", "v", T::Float, nullptr, "cm, or degrees for angle. Clears an expression."},
                   {"expr", "e", T::String, nullptr, "An expression for the value; empty clears it."},

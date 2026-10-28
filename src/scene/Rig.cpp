@@ -146,7 +146,7 @@ NodeType Joint::makeType(const NodeType& base)
     t.ownAttrs = {
         vec3Attr("jointOrient", "jo", glm::dvec3(0.0), stored, "Rotation between rotate and the parent, degrees (xyz order)."),
         {.name = "radius", .shortName = "radi", .type = PlugType::Float, .defaultValue = 2.0, .flags = stored,
-         .doc = "Display size, cm."},
+         .doc = "Display size, cm.", .minValue = 0.0},
         {.name = "segmentScaleCompensate", .shortName = "ssc", .type = PlugType::Bool, .defaultValue = false, .flags = stored,
          .doc = "Undo the parent's scale (inverseScale). Off by default: Unreal ignores it."},
         vec3Attr("inverseScale", "is", glm::dvec3(1.0), AttrInput | AttrStorable | AttrHidden,
@@ -279,7 +279,7 @@ void registerJointCommands()
             {"name", "n", T::String, nullptr, "Name; made unique (joints follow the snake_case convention)."},
             {"parent", "", T::String, nullptr, "Parent; \"\" for a new root even when a joint is selected."},
             {"orientation", "o", T::Vec3, nullptr, "jointOrient, degrees."},
-            {"radius", "rad", T::Float, nullptr, "Display radius, cm; defaults to the parent joint's."},
+            {"radius", "rad", T::Float, nullptr, "Display radius, cm; defaults to the parent joint's.", {}, {}, 0.0},
             {"segmentScaleCompensate", "ssc", T::Bool, false, "Undo the parent's scale (connects parent.scale)."},
             {"skipSelect", "ss", T::Bool, false, "Don't select the new joint."},
         },
@@ -471,7 +471,7 @@ void registerJointCommands()
         .doc = "Length of a joint's bone (distance to its first child joint). With length= the child slides along the "
                "bone to that length. Returns the length.",
         .positionalDoc = "joint",
-        .flags = {{"length", "l", T::Float, nullptr, "New length, cm."}},
+        .flags = {{"length", "l", T::Float, nullptr, "New length, cm.", {}, {}, 0.0}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             auto objs = a.objects();
@@ -501,7 +501,7 @@ void registerJointCommands()
         .doc = "Split a bone: insert count joints evenly between a joint and its child. Returns the new joints.",
         .positionalDoc = "joint",
         .flags = {
-            {"count", "c", T::Int, 1, "Joints to insert."},
+            {"count", "c", T::Int, 1, "Joints to insert.", {}, {}, 1.0},
             {"child", "ch", T::String, nullptr, "Which child bone to split; defaults to the first child joint."},
         },
         .run = [](const Args& a) -> json {

@@ -242,7 +242,7 @@ void registerCommands()
                "reference shares the base mesh but gives each copy its own modifier stack.",
         .positionalDoc = "objects",
         .flags = {{"name", "n", T::String, nullptr, "Name for a single duplicate."},
-                  {"count", "c", T::Int, 1, "Copies of each object, 1 to 10000."},
+                  {"count", "c", T::Int, 1, "Copies of each object, 1 to 10000.", {}, {}, 1.0, 10000.0},
                   {"translate", "t", T::Vec3, json::array({0.0, 0.0, 0.0}), "Move from one copy to the next, cm."},
                   {"rotate", "r", T::Vec3, json::array({0.0, 0.0, 0.0}), "Rotation from one copy to the next about the pivot, degrees (XYZ)."},
                   {"scale", "s", T::Vec3, json::array({1.0, 1.0, 1.0}), "Scale from one copy to the next about the pivot."},
@@ -296,7 +296,7 @@ void registerCommands()
                "an object, move, rotate or scale the copy, then repeat this to continue the run. Returns the new names.\n\n"
                "The step is measured from the current world matrices of the last source and copy, so it follows any later "
                "edit to the copy and survives selection changes. It is forgotten when either object is deleted.",
-        .flags = {{"count", "c", T::Int, 1, "Copies to add, 1 to 10000."}},
+        .flags = {{"count", "c", T::Int, 1, "Copies to add, 1 to 10000.", {}, {}, 1.0, 10000.0}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             std::vector<Pair> from = lastPairs();

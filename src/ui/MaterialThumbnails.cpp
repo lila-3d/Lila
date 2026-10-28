@@ -464,7 +464,7 @@ void registerCommands()
                "real-world scale) and cache it by graph hash. material is a library id, .lilamat path or texture set; all=True "
                "renders every library material. Returns {file, cached} (a list with all).",
         .positionalDoc = "material",
-        .flags = {{"size", "", T::Int, 256, "Image size, px."},
+        .flags = {{"size", "", T::Int, 256, "Image size, px.", {}, {}, 32.0, 2048.0},
                   {"mesh", "", T::String, nullptr, "Render on this mesh object instead of the ball."},
                   {"path", "", T::String, nullptr, "Also copy the image here."},
                   {"force", "", T::Bool, false, "Render even when cached."},

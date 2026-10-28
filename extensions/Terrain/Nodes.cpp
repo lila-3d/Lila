@@ -42,6 +42,22 @@ SocketDecl fin(std::string id, T t, nlohmann::json def, Implicit imp, std::strin
     return {.id = std::move(id), .type = t, .defaultValue = std::move(def), .field = true, .implicit = imp, .doc = std::move(doc)};
 }
 
+SocketDecl in(std::string id, T t, nlohmann::json def, std::string doc, std::optional<double> lo, std::optional<double> hi = std::nullopt)
+{
+    SocketDecl s = in(std::move(id), t, std::move(def), std::move(doc));
+    s.min = lo;
+    s.max = hi;
+    return s;
+}
+
+SocketDecl fin(std::string id, T t, nlohmann::json def, Implicit imp, std::string doc, std::optional<double> lo, std::optional<double> hi = std::nullopt)
+{
+    SocketDecl s = fin(std::move(id), t, std::move(def), imp, std::move(doc));
+    s.min = lo;
+    s.max = hi;
+    return s;
+}
+
 SocketDecl geoIn(std::string id = "geometry") { return {.id = std::move(id), .type = T::Geometry}; }
 SocketDecl geoOut(std::string id = "geometry") { return {.id = std::move(id), .type = T::Geometry}; }
 SocketDecl out(std::string id, T t) { return {.id = std::move(id), .type = t}; }
@@ -110,8 +126,8 @@ gn::NodeDecl gridDecl()
         .category = kCategory,
         .doc = "A flat heightfield: size along X and Z, centred on center, with resolution samples along the longer side and "
                "square cells. Lengths are cm.",
-        .sockets = {.inputs = {in("sizeX", T::Float, 100000.0, "Width along X."), in("sizeZ", T::Float, 100000.0, "Depth along Z."),
-                               in("resolution", T::Int, 513, "Samples along the longer side (2 to 16385)."),
+        .sockets = {.inputs = {in("sizeX", T::Float, 100000.0, "Width along X.", 0.0), in("sizeZ", T::Float, 100000.0, "Depth along Z.", 0.0),
+                               in("resolution", T::Int, 513, "Samples along the longer side (2 to 16385).", 2, 16385),
                                in("center", T::Vector, vec(0, 0, 0), "Centre; its Y is the starting height.")},
                     .outputs = {geoOut("heightfield")}},
         .exec =
@@ -138,14 +154,14 @@ gn::NodeDecl noiseDecl()
                "space, so neighbouring heightfields with the same settings join without a seam. Lengths are cm.",
         .props = {blendProp("add")},
         .sockets = {.inputs = {geoIn("heightfield"), in("amplitude", T::Float, p.amplitude, "Height of the tallest features."),
-                               in("featureSize", T::Float, p.featureSize, "Size of the largest features."),
-                               in("octaves", T::Int, p.octaves, "Layers of detail, each smaller than the last."),
-                               in("roughness", T::Float, p.roughness, "0 to 1: how strong each smaller layer is."),
-                               in("lacunarity", T::Float, p.lacunarity, "How much smaller each layer is."),
-                               in("ridged", T::Float, p.ridged, "0 rolling, 1 sharp ridges."),
+                               in("featureSize", T::Float, p.featureSize, "Size of the largest features.", 1.0),
+                               in("octaves", T::Int, p.octaves, "Layers of detail, each smaller than the last.", 1, 16),
+                               in("roughness", T::Float, p.roughness, "0 to 1: how strong each smaller layer is.", 0.0, 1.0),
+                               in("lacunarity", T::Float, p.lacunarity, "How much smaller each layer is.", 1.0, 4.0),
+                               in("ridged", T::Float, p.ridged, "0 rolling, 1 sharp ridges.", 0.0, 1.0),
                                in("warp", T::Float, p.warp, "Domain warp, as a fraction of feature size."),
                                in("seed", T::Int, 0, "Another seed gives other shapes."),
-                               fin("factor", T::Float, 1.0, Implicit::None, "0 to 1 per sample: how much of the noise is applied.")},
+                               fin("factor", T::Float, 1.0, Implicit::None, "0 to 1 per sample: how much of the noise is applied.", 0.0, 1.0)},
                     .outputs = {geoOut("heightfield")}},
         .exec =
             [](ExecContext& c) {
@@ -187,7 +203,7 @@ gn::NodeDecl setHeightDecl()
                "with height and every mask as attributes, so Noise Texture, Math and Named Attribute all work per sample.",
         .props = {blendProp("replace")},
         .sockets = {.inputs = {geoIn("heightfield"), fin("height", T::Float, 0.0, Implicit::None, "The value, cm."),
-                               fin("factor", T::Float, 1.0, Implicit::None, "0 to 1 per sample: how much of the change is applied.")},
+                               fin("factor", T::Float, 1.0, Implicit::None, "0 to 1 per sample: how much of the change is applied.", 0.0, 1.0)},
                     .outputs = {geoOut("heightfield")}},
         .exec =
             [](ExecContext& c) {
@@ -214,7 +230,7 @@ gn::NodeDecl setMaskDecl()
         .props = {blendProp("replace")},
         .sockets = {.inputs = {geoIn("heightfield"), in("name", T::String, "mask", "Mask name."),
                                fin("value", T::Float, 1.0, Implicit::None, "The value, usually 0 to 1."),
-                               fin("factor", T::Float, 1.0, Implicit::None, "0 to 1 per sample: how much of the change is applied.")},
+                               fin("factor", T::Float, 1.0, Implicit::None, "0 to 1 per sample: how much of the change is applied.", 0.0, 1.0)},
                     .outputs = {geoOut("heightfield")}},
         .exec =
             [](ExecContext& c) {
@@ -281,7 +297,7 @@ gn::NodeDecl toMeshDecl()
         .category = kCategory,
         .doc = "Turns the heightfield into a grid of quads facing up, keeping every step-th sample (the edges always stay), with "
                "uvs over the whole grid and masks as point attributes. Other components pass through.",
-        .sockets = {.inputs = {geoIn(), in("step", T::Int, 1, "Keep every step-th sample."), in("uvs", T::Bool, true, "Add uv set 0.")},
+        .sockets = {.inputs = {geoIn(), in("step", T::Int, 1, "Keep every step-th sample.", 1, 1024), in("uvs", T::Bool, true, "Add uv set 0.")},
                     .outputs = {geoOut()}},
         .exec =
             [](ExecContext& c) {
@@ -321,8 +337,8 @@ gn::NodeDecl fromMeshDecl()
         .doc = "Bakes the highest surface of a mesh, seen from above, into a heightfield covering its footprint plus padding. Any "
                "mesh works: a blockout, a scan, a sculpt. Samples nothing covers take fill, or the mesh's lowest point when "
                "fillLowest is on.",
-        .sockets = {.inputs = {geoIn("mesh"), in("resolution", T::Int, 513, "Samples along the longer side."),
-                               in("padding", T::Float, 0.0, "Extra border around the footprint, cm."),
+        .sockets = {.inputs = {geoIn("mesh"), in("resolution", T::Int, 513, "Samples along the longer side.", 2, 16385),
+                               in("padding", T::Float, 0.0, "Extra border around the footprint, cm.", 0.0),
                                in("fill", T::Float, 0.0, "Height where the mesh doesn't reach."),
                                in("fillLowest", T::Bool, true, "Fill with the mesh's lowest point instead.")},
                     .outputs = {geoOut("heightfield")}},
@@ -356,7 +372,7 @@ gn::NodeDecl blendDecl()
         .doc = "Combines B into A on A's grid: B is read bilinearly at each of A's samples and combined by blend, its masks "
                "too. Where B doesn't reach, A is left alone.",
         .props = {blendProp("max")},
-        .sockets = {.inputs = {geoIn("a"), geoIn("b"), fin("factor", T::Float, 1.0, Implicit::None, "0 to 1 per sample: how much of B is applied.")},
+        .sockets = {.inputs = {geoIn("a"), geoIn("b"), fin("factor", T::Float, 1.0, Implicit::None, "0 to 1 per sample: how much of B is applied.", 0.0, 1.0)},
                     .outputs = {geoOut("heightfield")}},
         .exec =
             [](ExecContext& c) {
@@ -395,7 +411,7 @@ gn::NodeDecl resampleDecl()
         .label = "Resample Heightfield",
         .category = kCategory,
         .doc = "The same area at another resolution (samples along the longer side), masks included, read bilinearly.",
-        .sockets = {.inputs = {geoIn("heightfield"), in("resolution", T::Int, 1025, "Samples along the longer side.")}, .outputs = {geoOut("heightfield")}},
+        .sockets = {.inputs = {geoIn("heightfield"), in("resolution", T::Int, 1025, "Samples along the longer side.", 2, 16385)}, .outputs = {geoOut("heightfield")}},
         .exec =
             [](ExecContext& c) {
                 LILA_ZONE();
@@ -456,7 +472,7 @@ gn::NodeDecl readDecl()
                "TIFF values are taken as heights when raw is on. Images are width wide along X with square cells, centred on "
                "center; the top row is the -Z edge as seen from above.",
         .sockets = {.inputs = {in("file", T::String, "", "Path; relative paths are under the workspace."),
-                               in("width", T::Float, 100000.0, "Images: width along X, cm."), in("low", T::Float, 0.0, "Images: height of black, cm."),
+                               in("width", T::Float, 100000.0, "Images: width along X, cm.", 0.0), in("low", T::Float, 0.0, "Images: height of black, cm."),
                                in("high", T::Float, 50000.0, "Images: height of white, cm."),
                                in("raw", T::Bool, false, "Float images: values are heights, cm."), in("center", T::Vector, vec(0, 0, 0), "Images: centre.")},
                     .outputs = {geoOut("heightfield")}},
@@ -496,7 +512,7 @@ gn::NodeDecl textureGraphDecl()
                                in("channel", T::String, "height", "Channel to read: height, roughness, ao, baseColor (its red) ..."),
                                in("target", T::String, "", "Mask to write; empty writes the height."),
                                in("low", T::Float, 0.0, "What 0 becomes."), in("high", T::Float, 10000.0, "What 1 becomes."),
-                               fin("factor", T::Float, 1.0, Implicit::None, "0 to 1 per sample: how much of the change is applied.")},
+                               fin("factor", T::Float, 1.0, Implicit::None, "0 to 1 per sample: how much of the change is applied.", 0.0, 1.0)},
                     .outputs = {geoOut("heightfield")}},
         .exec =
             [](ExecContext& c) {
@@ -580,14 +596,14 @@ gn::NodeDecl erodeDecl()
                "wears, and slopes over the talus angle shedding downhill. Every valley drains to the edge, which stays put. "
                "Writes masks flow (drainage), wear (removed), deposit (laid down) and lakes. Iterations is age: more is older and "
                "more carved. Lengths are cm.",
-        .sockets = {.inputs = {geoIn("heightfield"), in("iterations", T::Int, p.iterations, "Steps; more is an older landscape."),
-                               in("strength", T::Float, p.strength, "How fast rivers cut."),
-                               in("areaExponent", T::Float, p.areaExponent, "How much bigger rivers cut faster (0.3 to 0.7)."),
+        .sockets = {.inputs = {geoIn("heightfield"), in("iterations", T::Int, p.iterations, "Steps; more is an older landscape.", 0, 10000),
+                               in("strength", T::Float, p.strength, "How fast rivers cut.", 0.0),
+                               in("areaExponent", T::Float, p.areaExponent, "How much bigger rivers cut faster (0.3 to 0.7).", 0.1, 1.0),
                                in("uplift", T::Float, p.uplift, "Rise per step, cm."),
                                in("upliftMask", T::String, "", "Mask scaling uplift; empty is uniform."),
                                in("hardnessMask", T::String, "", "Mask of hard rock (1) that erodes slower."),
-                               in("talusAngle", T::Float, p.talusAngle, "Slopes steeper than this shed material, degrees."),
-                               in("thermalIterations", T::Int, p.thermalIterations, "Thermal steps per erosion step.")},
+                               in("talusAngle", T::Float, p.talusAngle, "Slopes steeper than this shed material, degrees.", 1.0, 89.0),
+                               in("thermalIterations", T::Int, p.thermalIterations, "Thermal steps per erosion step.", 0, 100)},
                     .outputs = {geoOut("heightfield")}},
         .exec =
             [](ExecContext& c) {
@@ -644,8 +660,8 @@ gn::NodeDecl thermalDecl()
         .category = kCategory,
         .doc = "Slopes steeper than the talus angle shed material downhill until they settle: scree below cliffs, softened "
                "crests.",
-        .sockets = {.inputs = {geoIn("heightfield"), in("talusAngle", T::Float, 38.0, "Steepest stable slope, degrees."),
-                               in("iterations", T::Int, 20, "Steps.")},
+        .sockets = {.inputs = {geoIn("heightfield"), in("talusAngle", T::Float, 38.0, "Steepest stable slope, degrees.", 1.0, 89.0),
+                               in("iterations", T::Int, 20, "Steps.", 0, 10000)},
                     .outputs = {geoOut("heightfield")}},
         .exec =
             [](ExecContext& c) {
@@ -673,9 +689,9 @@ gn::NodeDecl elevationDecl()
         .props = {prop("format", demFormatNames(), "auto", "File type; auto goes by extension, and .png is Terrarium.")},
         .sockets = {.inputs = {in("file", T::String, "", "Path; relative paths are under the workspace."),
                                in("center", T::Vector, vec(0, 0, 0), "Centre of the area."),
-                               in("cellSize", T::Float, o.cell, "Grid spacing, cm; 0 keeps the data's own."),
-                               in("spacing", T::Float, o.spacing, "Sample spacing, metres, for files that don't carry one."),
-                               in("exaggeration", T::Float, o.exaggeration, "Multiplies heights."),
+                               in("cellSize", T::Float, o.cell, "Grid spacing, cm; 0 keeps the data's own.", 0.0),
+                               in("spacing", T::Float, o.spacing, "Sample spacing, metres, for files that don't carry one.", 0.0),
+                               in("exaggeration", T::Float, o.exaggeration, "Multiplies heights.", 0.0),
                                in("fromLowest", T::Bool, o.fromLowest, "Lowest point at 0 instead of sea level."),
                                in("fillVoids", T::Bool, true, "Fill voids; off leaves them at 0.")},
                     .outputs = {geoOut("heightfield")}},
@@ -725,12 +741,12 @@ gn::NodeDecl imageDecl()
                "grids: seconds at 1K.",
         .props = {prop("mode", imageModeNames(), "guide", "How brightness is read.")},
         .sockets = {.inputs = {in("file", T::String, "", "Path; relative paths are under the workspace."),
-                               in("width", T::Float, 100000.0, "Width along X, cm."), in("low", T::Float, o.low, "Height of black, cm."),
+                               in("width", T::Float, 100000.0, "Width along X, cm.", 0.0), in("low", T::Float, o.low, "Height of black, cm."),
                                in("high", T::Float, o.high, "Height of white, cm."), in("center", T::Vector, vec(0, 0, 0), "Centre."),
-                               in("smooth", T::Float, o.smooth, "Blur radius, samples: removes 8-bit steps and brush noise."),
-                               in("shape", T::Float, o.shape, "Exponent on brightness: above 1 widens valleys and sharpens peaks."),
-                               in("erosion", T::Float, o.erosion, "0 to 1: how far erosion may move the painting."),
-                               in("detail", T::Float, o.detail, "Noise added before erosion, a fraction of the height range."),
+                               in("smooth", T::Float, o.smooth, "Blur radius, samples: removes 8-bit steps and brush noise.", 0.0, 64.0),
+                               in("shape", T::Float, o.shape, "Exponent on brightness: above 1 widens valleys and sharpens peaks.", 0.0),
+                               in("erosion", T::Float, o.erosion, "0 to 1: how far erosion may move the painting.", 0.0, 1.0),
+                               in("detail", T::Float, o.detail, "Noise added before erosion, a fraction of the height range.", 0.0),
                                in("seed", T::Int, int64_t(o.seed), "Seed for that noise."),
                                in("mask", T::String, o.mask, "Mask mode: the mask written.")},
                     .outputs = {geoOut("heightfield")}},

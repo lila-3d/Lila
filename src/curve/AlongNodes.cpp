@@ -313,6 +313,8 @@ std::vector<FlagDef> attrFlags(const std::string& type)
         if (!(d.flags & AttrInput) || (d.flags & AttrHidden) || d.name == "enabled" || d.name == "exportEnabled")
             continue;
         FlagDef fd{d.name, "", T::Float, nullptr, d.doc};
+        fd.min = d.minValue;
+        fd.max = d.maxValue;
         switch (d.type)
         {
         case PlugType::Bool: fd.type = T::Bool; break;

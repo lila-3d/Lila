@@ -185,6 +185,10 @@ void bindExtensions(nb::module_& m)
                 if (d.contains("choices") && !d["choices"].is_none())
                     for (nb::handle c : d["choices"])
                         fd.choices.push_back(nb::cast<std::string>(nb::str(c)));
+                if (d.contains("min") && !d["min"].is_none())
+                    fd.min = nb::cast<double>(d["min"]);
+                if (d.contains("max") && !d["max"].is_none())
+                    fd.max = nb::cast<double>(d["max"]);
                 def.flags.push_back(std::move(fd));
             }
             def.run = [fn = hold(fn), name](const Args& a) { return callPython(fn, name, a); };

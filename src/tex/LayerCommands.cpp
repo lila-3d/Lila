@@ -270,12 +270,12 @@ std::vector<FlagDef> maskFlags()
     return {{"name", "", T::String, nullptr, "Display name."},
             {"mode", "", T::String, nullptr, "How it combines with the masks below: normal (the first default), multiply (later ones), add, subtract, screen, "
                                              "overlay, darken, lighten, difference."},
-            {"opacity", "", T::Float, nullptr, "0 to 1."},
+            {"opacity", "", T::Float, nullptr, "0 to 1.", {}, {}, 0.0, 1.0},
             {"invert", "", T::Bool, nullptr, "Invert it before combining."},
             {"values", "", T::Any, nullptr, "Parameter values by id (generator, filter, levels)."},
             {"bindings", "", T::Any, nullptr, "Generator inputs' sources: {input: mesh map role or 'anchor:<name>.<channel>'}. Unlisted inputs use "
                                               "the role of their own name."},
-            {"index", "", T::Int, nullptr, "Position in the mask stack, 0 the bottom; the top when left out."}};
+            {"index", "", T::Int, nullptr, "Position in the mask stack, 0 the bottom; the top when left out.", {}, {}, 0.0}};
 }
 
 json addMask(Session& s, Layer& l, Mask m, const Args& a)
@@ -446,7 +446,7 @@ void registerLayerCommands()
                   {"above", "", T::String, nullptr, "Insert right above this layer (in its folder)."},
                   {"below", "", T::String, nullptr, "Insert right below this layer."},
                   {"parent", "", T::String, nullptr, "Folder to put it in (on top)."},
-                  {"index", "", T::Int, nullptr, "Position in the root or parent, 0 the bottom."},
+                  {"index", "", T::Int, nullptr, "Position in the root or parent, 0 the bottom.", {}, {}, 0.0},
                   {"material", "", T::Any, nullptr, "Fill/paint channel values {channel: value}; replaces the default material."},
                   {"graph", "", T::Any, nullptr, "Procedural: the graph."},
                   {"source", "", T::String, nullptr, "Instance: the source layer."},
@@ -513,7 +513,7 @@ void registerLayerCommands()
         .flags = {{"above", "", T::String, nullptr, "Right above this layer."},
                   {"below", "", T::String, nullptr, "Right below this layer."},
                   {"parent", "", T::String, nullptr, "Into this folder (on top, or at index)."},
-                  {"index", "", T::Int, nullptr, "Position in the root or parent, 0 the bottom."}},
+                  {"index", "", T::Int, nullptr, "Position in the root or parent, 0 the bottom.", {}, {}, 0.0}},
         .run = [](const Args& a) -> json {
             Session s = open(a, "texMoveLayer");
             const std::string id = positional(a, 1, "texMoveLayer", "layer");
@@ -665,7 +665,7 @@ void registerLayerCommands()
                   {"above", "", T::String, nullptr, "Insert right above this layer."},
                   {"below", "", T::String, nullptr, "Insert right below this layer."},
                   {"parent", "", T::String, nullptr, "Folder to put it in."},
-                  {"index", "", T::Int, nullptr, "Position in the root or parent."},
+                  {"index", "", T::Int, nullptr, "Position in the root or parent.", {}, {}, 0.0},
                   {"layer", "", T::String, nullptr, "Smart masks: the layer they go on."},
                   {"addMaps", "", T::Bool, true, "Add mesh maps it needs to the set's bake project (else only report them as missingMaps)."}},
         .run = [](const Args& a) -> json { return applySmart(a); },

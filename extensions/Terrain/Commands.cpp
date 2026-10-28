@@ -212,20 +212,20 @@ void registerCommands(ext::Context& ctx)
                "setAttr on '<modifier>.<flag>' and read it back with terrainInfo or terrainSample. Open the group to add Terrain "
                "nodes. Lengths are cm; Y is up. Returns the mesh, modifier, group and terrainInfo's stats.",
         .flags = {{"size", "sz", T::List, json::array({100000.0, 100000.0}), "[width along X, depth along Z], cm."},
-                  {"resolution", "r", T::Int, int64_t(513), "Samples along the longer side."},
+                  {"resolution", "r", T::Int, int64_t(513), "Samples along the longer side.", {}, {}, 2.0, 16385.0},
                   {"center", "c", T::Vec3, json::array({0.0, 0.0, 0.0}), "Centre; Y is the base height."},
                   {"flat", "f", T::Bool, false, "Level ground, no noise."},
-                  {"amplitude", "a", T::Float, np.amplitude, "Height of the tallest features, cm."},
-                  {"featureSize", "fs", T::Float, np.featureSize, "Size of the largest features, cm."},
-                  {"octaves", "o", T::Int, int64_t(np.octaves), "Layers of detail."},
-                  {"roughness", "ro", T::Float, np.roughness, "0 to 1: how strong each smaller layer is."},
-                  {"ridged", "ri", T::Float, np.ridged, "0 rolling hills, 1 sharp ridges."},
-                  {"warp", "w", T::Float, np.warp, "Domain warp, a fraction of featureSize."},
+                  {"amplitude", "a", T::Float, np.amplitude, "Height of the tallest features, cm.", {}, {}, 0.0},
+                  {"featureSize", "fs", T::Float, np.featureSize, "Size of the largest features, cm.", {}, {}, 0.0},
+                  {"octaves", "o", T::Int, int64_t(np.octaves), "Layers of detail.", {}, {}, 1.0, 16.0},
+                  {"roughness", "ro", T::Float, np.roughness, "0 to 1: how strong each smaller layer is.", {}, {}, 0.0, 1.0},
+                  {"ridged", "ri", T::Float, np.ridged, "0 rolling hills, 1 sharp ridges.", {}, {}, 0.0, 1.0},
+                  {"warp", "w", T::Float, np.warp, "Domain warp, a fraction of featureSize.", {}, {}, 0.0},
                   {"seed", "s", T::Int, int64_t(0), "Random seed."},
-                  {"erosion", "e", T::Int, int64_t(0), "Erosion steps: rivers carve valleys; 0 is off, 50 to 150 looks natural."},
-                  {"erosionStrength", "es", T::Float, ErosionParams().strength, "How fast rivers cut."},
+                  {"erosion", "e", T::Int, int64_t(0), "Erosion steps: rivers carve valleys; 0 is off, 50 to 150 looks natural.", {}, {}, 0.0, 10000.0},
+                  {"erosionStrength", "es", T::Float, ErosionParams().strength, "How fast rivers cut.", {}, {}, 0.0},
                   {"uplift", "u", T::Float, 0.0, "Rise per erosion step, cm."},
-                  {"talusAngle", "ta", T::Float, ErosionParams().talusAngle, "Slopes steeper than this shed scree, degrees."},
+                  {"talusAngle", "ta", T::Float, ErosionParams().talusAngle, "Slopes steeper than this shed scree, degrees.", {}, {}, 1.0, 89.0},
                   {"name", "n", T::String, "Terrain", "Name of the mesh."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -309,7 +309,7 @@ void registerCommands(ext::Context& ctx)
         .positionalDoc = "terrain mesh or its modifier",
         .flags = {{"points", "p", T::List, nullptr, "[[x, z] or [x, y, z], ...]."},
                   {"path", "pa", T::List, nullptr, "Polyline [[x, z] or [x, y, z], ...] to profile."},
-                  {"step", "st", T::Float, 0.0, "Spacing along path, cm; 0 uses the terrain's cell size."},
+                  {"step", "st", T::Float, 0.0, "Spacing along path, cm; 0 uses the terrain's cell size.", {}, {}, 0.0},
                   {"masks", "m", T::List, json::array(), "Mask names to read."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
@@ -375,7 +375,7 @@ void registerCommands(ext::Context& ctx)
         .doc = "A plain mesh copy of the terrain as it is now, in world space: quads facing up, every step-th sample, uv set 0 over "
                "the whole terrain, masks as point attributes. The terrain is left alone. Returns the new mesh, its point and face counts.",
         .positionalDoc = "terrain mesh or its modifier",
-        .flags = {{"step", "st", T::Int, int64_t(1), "Keep every step-th sample."}, {"name", "n", T::String, "", "Name; defaults to <terrain>_mesh."}},
+        .flags = {{"step", "st", T::Int, int64_t(1), "Keep every step-th sample.", {}, {}, 1.0, 1024.0}, {"name", "n", T::String, "", "Name; defaults to <terrain>_mesh."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
@@ -459,7 +459,7 @@ void registerCommands(ext::Context& ctx)
                   {"folder", "f", T::String, "", "Output folder; defaults to the bake folder's export/."},
                   {"name", "n", T::String, "", "File name stem; defaults to the terrain's name."},
                   {"pad", "p", T::Bool, false, "unreal: keep the cell size and grow the landscape past the terrain, instead of resampling."},
-                  {"minScaleZ", "sz", T::Float, 1.0, "unreal: smallest Z scale (100 is Unreal's default)."}},
+                  {"minScaleZ", "sz", T::Float, 1.0, "unreal: smallest Z scale (100 is Unreal's default).", {}, {}, 0.01}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -500,9 +500,9 @@ void registerCommands(ext::Context& ctx)
                "gridSize sets the World Partition grid in a partitioned level. Returns the landscape and the export settings.",
         .positionalDoc = "terrain mesh or its modifier",
         .flags = {{"material", "m", T::String, "", "Landscape material asset path, such as /Game/Terrain/M_Landscape."},
-                  {"gridSize", "g", T::Int, int64_t(0), "World Partition grid size in components; 0 leaves it."},
+                  {"gridSize", "g", T::Int, int64_t(0), "World Partition grid size in components; 0 leaves it.", {}, {}, 0.0},
                   {"pad", "p", T::Bool, false, "Keep the cell size and grow the landscape past the terrain, instead of resampling."},
-                  {"timeout", "to", T::Float, 300.0, "Seconds to wait for Unreal."}},
+                  {"timeout", "to", T::Float, 300.0, "Seconds to wait for Unreal.", {}, {}, 0.0}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -563,10 +563,10 @@ void registerCommands(ext::Context& ctx)
                "scree, and the masks flow, wear, deposit and lakes appear for materials and scatter. Sets the terrain's erosion "
                "inputs (iterations is age: 50 to 150 looks natural) and returns terrainInfo's stats.",
         .positionalDoc = "terrain mesh or its modifier",
-        .flags = {{"iterations", "i", T::Int, int64_t(80), "Erosion steps; 0 turns it off."},
-                  {"strength", "s", T::Float, nullptr, "How fast rivers cut."},
+        .flags = {{"iterations", "i", T::Int, int64_t(80), "Erosion steps; 0 turns it off.", {}, {}, 0.0, 10000.0},
+                  {"strength", "s", T::Float, nullptr, "How fast rivers cut.", {}, {}, 0.0},
                   {"uplift", "u", T::Float, nullptr, "Rise per step, cm."},
-                  {"talusAngle", "ta", T::Float, nullptr, "Slopes steeper than this shed scree, degrees."}},
+                  {"talusAngle", "ta", T::Float, nullptr, "Slopes steeper than this shed scree, degrees.", {}, {}, 1.0, 89.0}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
@@ -600,15 +600,15 @@ void registerCommands(ext::Context& ctx)
                "work on it. Returns the mesh, modifier, group and terrainInfo's stats.",
         .positionalDoc = "file; relative paths are under the workspace",
         .flags = {{"mode", "m", T::String, "", "elevation, guide, height, uplift or mask; empty picks elevation for DEM files, else guide."},
-                  {"size", "sz", T::Float, 100000.0, "Images: width along X, cm."},
+                  {"size", "sz", T::Float, 100000.0, "Images: width along X, cm.", {}, {}, 0.0},
                   {"low", "lo", T::Float, 0.0, "Images: height of black, cm."},
                   {"high", "hi", T::Float, 50000.0, "Images: height of white, cm."},
                   {"center", "c", T::Vec3, json::array({0.0, 0.0, 0.0}), "Centre."},
-                  {"cellSize", "cs", T::Float, 0.0, "Elevation: grid spacing, cm; 0 keeps the data's own."},
-                  {"exaggeration", "ex", T::Float, 1.0, "Elevation: multiplies heights."},
+                  {"cellSize", "cs", T::Float, 0.0, "Elevation: grid spacing, cm; 0 keeps the data's own.", {}, {}, 0.0},
+                  {"exaggeration", "ex", T::Float, 1.0, "Elevation: multiplies heights.", {}, {}, 0.0},
                   {"fromLowest", "fl", T::Bool, false, "Elevation: lowest point at 0 instead of sea level."},
                   {"format", "f", T::String, "auto", "Elevation: file type (auto, geotiff, hgt, asc, xyz, terrarium, terrainrgb)."},
-                  {"erosion", "e", T::Float, 0.5, "Guide and uplift: 0 to 1, how far erosion may move the painting."},
+                  {"erosion", "e", T::Float, 0.5, "Guide and uplift: 0 to 1, how far erosion may move the painting.", {}, {}, 0.0, 1.0},
                   {"name", "n", T::String, "Terrain", "Name of the mesh."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();

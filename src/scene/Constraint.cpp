@@ -334,7 +334,7 @@ void registerConstraintCommandsImpl()
     using T = ArgType;
     std::vector<FlagDef> common = {
         {"maintainOffset", "mo", T::Bool, true, "Keep the object where it is now relative to the targets."},
-        {"weight", "w", T::Float, 1.0, "Weight of the given targets."},
+        {"weight", "w", T::Float, 1.0, "Weight of the given targets.", {}, {}, 0.0},
         {"name", "n", T::String, nullptr, "Name for a new constraint."},
     };
     auto with = [&](std::vector<FlagDef> extra) {
@@ -467,7 +467,7 @@ void registerConstraintTypes()
     base.ownAttrs.push_back({.name = "targets.matrix", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0),
                              .flags = AttrInput | AttrHidden | AttrArray, .doc = "Target world matrix.", .fileAlias = "target#Matrix"});
     base.ownAttrs.push_back({.name = "targets.weight", .type = PlugType::Float, .defaultValue = 1.0, .flags = stored | AttrKeyable | AttrArray,
-                             .doc = "Target weight.", .fileAlias = "target#Weight"});
+                             .doc = "Target weight.", .fileAlias = "target#Weight", .minValue = 0.0});
     base.ownAttrs.push_back({.name = "targets.offset", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0),
                              .flags = stored | AttrHidden | AttrArray, .doc = "Parent constraint: the object relative to the target.",
                              .fileAlias = "target#Offset"});

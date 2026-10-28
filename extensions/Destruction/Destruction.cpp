@@ -359,6 +359,14 @@ gn::SocketDecl in(std::string id, T t, gn::json def, std::string doc)
     return {.id = std::move(id), .type = t, .defaultValue = std::move(def), .doc = std::move(doc)};
 }
 
+gn::SocketDecl in(std::string id, T t, gn::json def, std::string doc, std::optional<double> lo, std::optional<double> hi = std::nullopt)
+{
+    gn::SocketDecl s = in(std::move(id), t, std::move(def), std::move(doc));
+    s.min = lo;
+    s.max = hi;
+    return s;
+}
+
 gn::SocketDecl geo(std::string id, std::string doc) { return {.id = std::move(id), .type = T::Geometry, .doc = std::move(doc)}; }
 
 gn::json vec(double x, double y, double z) { return gn::json::array({x, y, z}); }
@@ -381,20 +389,20 @@ gn::NodeDecl solverDecl()
                                geo("colliders", "Things pieces hit: instances move with their transforms, a mesh stays put."),
                                geo("blasts", "Explosions, as points with frame, speed (cm/s) and radius (cm) attributes: join Explosion nodes here."),
                                in("startFrame", T::Int, 1, "Frame the simulation starts on."),
-                               in("substeps", T::Int, 4, "Physics steps per frame. More is more accurate and slower."),
+                               in("substeps", T::Int, 4, "Physics steps per frame. More is more accurate and slower.", 1, 32),
                                in("gravity", T::Vector, vec(0, -981, 0), "cm/s2."), in("ground", T::Bool, true, "A floor at Ground Height."),
                                in("groundHeight", T::Float, 0.0, "cm."),
-                               in("density", T::Float, 2400.0, "kg/m3 (2400 concrete, 700 wood, 2500 glass). A piece's density attribute overrides it."),
-                               in("friction", T::Float, 0.6, "How much pieces grip as they slide."),
-                               in("bounce", T::Float, 0.1, "0 to 1."), in("damping", T::Float, 0.05, "Air drag on moving pieces."),
+                               in("density", T::Float, 2400.0, "kg/m3 (2400 concrete, 700 wood, 2500 glass). A piece's density attribute overrides it.", 1.0),
+                               in("friction", T::Float, 0.6, "How much pieces grip as they slide.", 0.0),
+                               in("bounce", T::Float, 0.1, "0 to 1.", 0.0, 1.0), in("damping", T::Float, 0.05, "Air drag on moving pieces.", 0.0),
                                in("sleep", T::Bool, true, "Pieces that come to rest stop being simulated."),
-                               in("strength", T::Float, 1.0, "Multiplies every link's strength: lower breaks more."),
+                               in("strength", T::Float, 1.0, "Multiplies every link's strength: lower breaks more.", 0.0),
                                in("blastCenter", T::Vector, vec(0, 0, 0), "Where a blast pushes pieces out from, cm."),
                                in("blastSpeed", T::Float, 0.0, "Speed given to pieces at the blast centre, cm/s; 0 for none."),
-                               in("blastRadius", T::Float, 100.0, "Pieces this far away or more aren't pushed, cm."),
+                               in("blastRadius", T::Float, 100.0, "Pieces this far away or more aren't pushed, cm.", 1e-3),
                                in("blastFrame", T::Int, 1, "Frame the blast happens on."),
                                in("guideStiffness", T::Float, 2.0,
-                                  "How fast pieces with a guide attribute (0 to 1) are pulled toward their own animated transform, Hz.")},
+                                  "How fast pieces with a guide attribute (0 to 1) are pulled toward their own animated transform, Hz.", 0.0)},
                     .outputs = {geo("pieces", "The pieces where the simulation put them; velocity and active attributes."),
                                 geo("links", "The links, moved with their pieces; broken = 1 once broken."),
                                 geo("breaks", "A point where each link broke so far: frame, impulse, pieceA, pieceB.")}},

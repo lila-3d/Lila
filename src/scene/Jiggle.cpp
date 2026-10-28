@@ -236,10 +236,11 @@ void afterEvaluate(Graph& g)
         g.evaluate();
 }
 
-AttrDef param(std::string name, PlugType type, PlugValue def, std::string doc, bool keyable)
+AttrDef param(std::string name, PlugType type, PlugValue def, std::string doc, bool keyable, std::optional<double> lo = {},
+              std::optional<double> hi = {})
 {
     AttrDef a{.name = std::move(name), .type = type, .defaultValue = std::move(def),
-              .flags = uint32_t(AttrInput | AttrStorable | (keyable ? AttrKeyable : 0)), .doc = std::move(doc)};
+              .flags = uint32_t(AttrInput | AttrStorable | (keyable ? AttrKeyable : 0)), .doc = std::move(doc), .minValue = lo, .maxValue = hi};
     return a;
 }
 } // namespace
@@ -252,10 +253,10 @@ void registerTypes()
                                  "Makes points trail their input on springs: flesh, bellies and loose gear that lag, overshoot and settle. "
                                  "Simulated from the start frame and cached, so scrubbing matches playback; loops with looping takes. Paint "
                                  "its weights to choose what jiggles.",
-                                 {param("stiffness", PlugType::Float, 150.0, "Spring rate (per second squared): higher follows the input more tightly.", true),
-                                  param("damping", PlugType::Float, 8.0, "How fast the wobble dies out (per second).", true),
+                                 {param("stiffness", PlugType::Float, 150.0, "Spring rate (per second squared): higher follows the input more tightly.", true, 0.0),
+                                  param("damping", PlugType::Float, 8.0, "How fast the wobble dies out (per second).", true, 0.0),
                                   param("gravity", PlugType::Vec3, glm::dvec3(0.0), "Constant acceleration, world space, cm per second squared.", true),
-                                  param("substeps", PlugType::Int, int64_t(2), "Solver steps per frame.", false),
+                                  param("substeps", PlugType::Int, int64_t(2), "Solver steps per frame.", false, 1.0, 64.0),
                                   param("startFrame", PlugType::Int, int64_t(0), "Frame the simulation starts at rest on its input.", false)},
                                  [] { return std::make_unique<JiggleNode>(); }});
     sim::registerSolverType({.nodeType = kType, .create = [](Graph&, NodeId node) -> std::unique_ptr<sim::Solver> {
@@ -275,10 +276,10 @@ void registerCommands()
         .doc = "Add a jiggle deformer to the top of each mesh's stack: points trail the deformation below on springs and settle. "
                "Starts at the playback start. Returns the deformers.",
         .positionalDoc = "meshes",
-        .flags = {{"stiffness", "", T::Float, 150.0, "Spring rate: higher follows the input more tightly."},
-                  {"damping", "", T::Float, 8.0, "How fast the wobble dies out."},
+        .flags = {{"stiffness", "", T::Float, 150.0, "Spring rate: higher follows the input more tightly.", {}, {}, 0.0},
+                  {"damping", "", T::Float, 8.0, "How fast the wobble dies out.", {}, {}, 0.0},
                   {"gravity", "", T::Vec3, json::array({0, 0, 0}), "Constant acceleration, world space, cm/s^2."},
-                  {"substeps", "", T::Int, 2, "Solver steps per frame."},
+                  {"substeps", "", T::Int, 2, "Solver steps per frame.", {}, {}, 1.0, 64.0},
                   {"name", "", T::String, nullptr, "Name for the deformer."}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();

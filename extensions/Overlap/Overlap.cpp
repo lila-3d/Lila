@@ -66,6 +66,12 @@ AttrDef whole(const char* name, int64_t def, const char* doc)
 {
     return {.name = name, .type = PlugType::Int, .defaultValue = def, .flags = AttrInput | AttrStorable, .doc = doc};
 }
+AttrDef limited(AttrDef a, std::optional<double> lo, std::optional<double> hi = {})
+{
+    a.minValue = lo;
+    a.maxValue = hi;
+    return a;
+}
 AttrDef boolean(const char* name, bool def, const char* doc)
 {
     return {.name = name, .type = PlugType::Bool, .defaultValue = def, .flags = AttrInput | AttrStorable, .doc = doc};
@@ -675,25 +681,25 @@ bool registerTypes(ext::Context& ctx)
         boolean("enabled", true, "Simulate. Off, every joint follows its animation."),
         string("root", "The character's root joint, the frame of the character-root space. Empty: the top joint above the first chain."),
         whole("startFrame", 0, "Frame the simulation starts from, at rest on the animation."),
-        whole("substeps", 2, "Simulation steps per frame. More is more accurate; the result never depends on playback."),
+        limited(whole("substeps", 2, "Simulation steps per frame. More is more accurate; the result never depends on playback."), 1.0, 64.0),
         choice("space", 1, {"world", "characterRoot", "parent"},
                "Frame the deviation lives in: world, the character root (travel doesn't drag the chains) or each joint's parent."),
         vector3("gravity", {0.0, -980.0, 0.0}, "Gravity, cm/s^2, scaled by each chain's gravity scale."),
         vector3("windDirection", {1.0, 0.0, 0.0}, "Wind direction, world space."),
-        number("windStrength", 0.0, "Wind acceleration, cm/s^2, scaled by each chain's wind scale."),
-        number("windTurbulence", 0.5, "Gusts and per-joint swirl, as a share of the wind strength."),
-        number("windFrequency", 0.5, "How fast the gusts change, per second."),
+        limited(number("windStrength", 0.0, "Wind acceleration, cm/s^2, scaled by each chain's wind scale."), 0.0),
+        limited(number("windTurbulence", 0.5, "Gusts and per-joint swirl, as a share of the wind strength."), 0.0),
+        limited(number("windFrequency", 0.5, "How fast the gusts change, per second."), 0.0),
         whole("seed", 1, "Seed of the wind noise: the same seed gives the same wind on every machine."),
-        whole("stepped", 1, "Hold each simulated pose this many frames: 2 animates on twos, 3 on threes."),
-        number("weight", 1.0, "Blend of the whole character's overlap. Keyable.", AttrKeyable),
-        number("stiffnessScale", 1.0, "Multiplies every chain's stiffness."),
-        number("dampingScale", 1.0, "Multiplies every chain's damping."),
-        number("maxOffsetScale", 1.0, "Multiplies every chain's max offset."),
-        number("maxAngleScale", 1.0, "Multiplies every chain's max angle."),
-        number("inertiaScale", 1.0, "Multiplies every chain's inertia."),
+        limited(whole("stepped", 1, "Hold each simulated pose this many frames: 2 animates on twos, 3 on threes."), 1.0, 12.0),
+        limited(number("weight", 1.0, "Blend of the whole character's overlap. Keyable.", AttrKeyable), 0.0, 1.0),
+        limited(number("stiffnessScale", 1.0, "Multiplies every chain's stiffness."), 0.0),
+        limited(number("dampingScale", 1.0, "Multiplies every chain's damping."), 0.0),
+        limited(number("maxOffsetScale", 1.0, "Multiplies every chain's max offset."), 0.0),
+        limited(number("maxAngleScale", 1.0, "Multiplies every chain's max angle."), 0.0),
+        limited(number("inertiaScale", 1.0, "Multiplies every chain's inertia."), 0.0),
         number("gravityMultiplier", 1.0, "Multiplies every chain's gravity scale."),
-        number("exaggerationScale", 1.0, "Multiplies every chain's exaggeration."),
-        number("squashScale", 1.0, "Multiplies every chain's squash and stretch."),
+        limited(number("exaggerationScale", 1.0, "Multiplies every chain's exaggeration."), 0.0),
+        limited(number("squashScale", 1.0, "Multiplies every chain's squash and stretch."), 0.0),
         boolean("preview", true, "Draw the simulated chains in the viewport, simulating as the time changes."),
         string(sim::kRecordingsAttr, "Layers recorded from this simulation, muted while it samples its inputs.", hidden),
     };
@@ -708,37 +714,37 @@ bool registerTypes(ext::Context& ctx)
         string("root", "First joint of the chain."),
         string("end", "Last joint, below root. Empty: follow first children to the end of the branch."),
         boolean("enabled", true, "Simulate this chain."),
-        number("bias", 0.0, "Where the motion concentrates: 0 even, +1 fades out toward the root, -1 toward the tip."),
-        number("falloff", 1.0, "Shape of the bias: 1 linear, above 1 holds the strong end longer."),
-        number("tipStiffness", 1.0, "Stiffness multiplier at the tip; damping follows so the bounce stays the same."),
-        number("tipExaggeration", 1.0, "Exaggeration multiplier at the tip, for a whip that grows to the end."),
+        limited(number("bias", 0.0, "Where the motion concentrates: 0 even, +1 fades out toward the root, -1 toward the tip."), -1.0, 1.0),
+        limited(number("falloff", 1.0, "Shape of the bias: 1 linear, above 1 holds the strong end longer."), 0.01),
+        limited(number("tipStiffness", 1.0, "Stiffness multiplier at the tip; damping follows so the bounce stays the same."), 0.01),
+        limited(number("tipExaggeration", 1.0, "Exaggeration multiplier at the tip, for a whip that grows to the end."), 0.0),
         boolean("distribute", true, "The settings are the whole chain's motion, not every joint's: shares are normalised."),
-        number("translationWeight", 1.0, "How much of the positional deviation is applied."),
-        number("stiffness", 250.0, "Spring pulling each joint back onto its animated position. Higher settles sooner."),
-        number("damping", 12.0, "Resistance to motion: low overshoots and wobbles, high settles without bouncing."),
-        number("maxOffset", 15.0, "Soft limit on the positional deviation, cm."),
-        number("rotationWeight", 1.0, "How much of the rotational deviation is applied."),
-        number("rotationStiffness", 250.0, "Spring pulling each joint back onto its animated orientation."),
-        number("rotationDamping", 12.0, "Resistance to rotation."),
-        number("maxAngle", 30.0, "Soft limit on the rotational deviation, degrees."),
-        number("inertia", 1.0, "Resistance to being dragged by the animation: heavy appendages high, light ones low."),
+        limited(number("translationWeight", 1.0, "How much of the positional deviation is applied."), 0.0, 1.0),
+        limited(number("stiffness", 250.0, "Spring pulling each joint back onto its animated position. Higher settles sooner."), 0.0),
+        limited(number("damping", 12.0, "Resistance to motion: low overshoots and wobbles, high settles without bouncing."), 0.0),
+        limited(number("maxOffset", 15.0, "Soft limit on the positional deviation, cm."), 0.0),
+        limited(number("rotationWeight", 1.0, "How much of the rotational deviation is applied."), 0.0, 1.0),
+        limited(number("rotationStiffness", 250.0, "Spring pulling each joint back onto its animated orientation."), 0.0),
+        limited(number("rotationDamping", 12.0, "Resistance to rotation."), 0.0),
+        limited(number("maxAngle", 30.0, "Soft limit on the rotational deviation, degrees."), 0.0, 180.0),
+        limited(number("inertia", 1.0, "Resistance to being dragged by the animation: heavy appendages high, light ones low."), 0.0),
         number("velocityInfluence", 0.0, "Trail behind the motion in proportion to its speed."),
         number("accelerationInfluence", 0.0, "Snap on acceleration and deceleration."),
         number("gravityScale", 0.0, "Share of the gravity: the joint sags about gravity * scale / stiffness."),
         number("windScale", 1.0, "Share of the wind."),
-        number("exaggeration", 1.0, "Scales the deviation on output: 1 simulated, 1.5 cartoony, 2 strongly exaggerated."),
-        number("blend", 1.0, "Blend between the animation and the simulated pose."),
+        limited(number("exaggeration", 1.0, "Scales the deviation on output: 1 simulated, 1.5 cartoony, 2 strongly exaggerated."), 0.0),
+        limited(number("blend", 1.0, "Blend between the animation and the simulated pose."), 0.0, 1.0),
         number("squash", 0.0, "Squash and stretch from the deviation: 0 off, negative inverts."),
-        number("squashReference", 10.0, "Deviation that reaches the full squash, cm."),
-        number("squashSmoothing", 0.08, "Seconds the stretch takes to follow the deviation."),
-        number("squashRestAdapt", 0.5, "Seconds a deviation holds before it counts as the new neutral. 0 measures from the animation."),
+        limited(number("squashReference", 10.0, "Deviation that reaches the full squash, cm."), 0.0),
+        limited(number("squashSmoothing", 0.08, "Seconds the stretch takes to follow the deviation."), 0.0),
+        limited(number("squashRestAdapt", 0.5, "Seconds a deviation holds before it counts as the new neutral. 0 measures from the animation."), 0.0),
         choice("stretchAxis", 0, {"auto", "x", "y", "z"}, "Axis the joint stretches along; auto points at its first child."),
         boolean("preserveVolume", true, "Thin the other axes as the joint stretches."),
-        number("squashMin", 0.6, "Smallest scale along the axis."),
-        number("squashMax", 1.8, "Largest scale along the axis."),
-        number("delay", 0.0, "Frames each joint's rotation lags its animation, for overlapping action."),
+        limited(number("squashMin", 0.6, "Smallest scale along the axis."), 0.01, 1.0),
+        limited(number("squashMax", 1.8, "Largest scale along the axis."), 1.0),
+        limited(number("delay", 0.0, "Frames each joint's rotation lags its animation, for overlapping action."), 0.0),
         boolean("collide", true, "Keep the joints out of overlap colliders."),
-        number("radius", 1.0, "Joint radius for collisions, cm."),
+        limited(number("radius", 1.0, "Joint radius for collisions, cm."), 0.0),
     };
 
     NodeType joint{.name = kJointType,
@@ -750,10 +756,10 @@ bool registerTypes(ext::Context& ctx)
     joint.ownAttrs = {
         string("joint", "The joint these settings apply to."),
         boolean("enabled", true, "Simulate this joint. Off, it follows its animation."),
-        number("pin", 0.0, "Pin the joint to its animation: 1 holds it exactly, 0 lets it overlap freely. Keyable.", AttrKeyable),
-        number("delay", -1.0, "Frames this joint's rotation lags its animation; negative uses the chain's."),
-        number("stiffnessScale", 1.0, "Multiplies the chain's stiffness here."),
-        number("exaggerationScale", 1.0, "Multiplies the chain's exaggeration here."),
+        limited(number("pin", 0.0, "Pin the joint to its animation: 1 holds it exactly, 0 lets it overlap freely. Keyable.", AttrKeyable), 0.0, 1.0),
+        limited(number("delay", -1.0, "Frames this joint's rotation lags its animation; negative uses the chain's."), -1.0),
+        limited(number("stiffnessScale", 1.0, "Multiplies the chain's stiffness here."), 0.0),
+        limited(number("exaggerationScale", 1.0, "Multiplies the chain's exaggeration here."), 0.0),
     };
 
     NodeType collider{.name = kColliderType,
@@ -764,8 +770,8 @@ bool registerTypes(ext::Context& ctx)
                       .create = transform->create};
     collider.ownAttrs = {
         choice("shape", 0, {"sphere", "capsule"}, "Sphere, or a capsule along the local X axis."),
-        number("radius", 5.0, "Radius, cm."),
-        number("length", 20.0, "Capsule length between the end centres, cm."),
+        limited(number("radius", 5.0, "Radius, cm."), 0.0),
+        limited(number("length", 20.0, "Capsule length between the end centres, cm."), 0.0),
         boolean("enabled", true, "Collide with this."),
     };
 
@@ -876,8 +882,8 @@ void registerCommands(ext::Context& ctx)
         .positionalDoc = "parent (default the first selected node; none for world)",
         .flags = {
             {"shape", "sh", T::String, "sphere", "sphere | capsule", {"sphere", "capsule"}},
-            {"radius", "r", T::Float, 5.0, "Radius, cm."},
-            {"length", "l", T::Float, 20.0, "Capsule length, cm."},
+            {"radius", "r", T::Float, 5.0, "Radius, cm.", {}, {}, 0.0},
+            {"length", "l", T::Float, 20.0, "Capsule length, cm.", {}, {}, 0.0},
             {"name", "n", T::String, "overlapCollider1", "Name."},
         },
         .run = [](const Args& a) -> json {
@@ -907,8 +913,8 @@ void registerCommands(ext::Context& ctx)
                "whose chains hold each joint. Returns the settings nodes.",
         .positionalDoc = "joints (default the selection)",
         .flags = {
-            {"pin", "p", T::Float, nullptr, "Pin weight: 1 holds the joint on its animation."},
-            {"delay", "d", T::Float, nullptr, "Frames its rotation lags."},
+            {"pin", "p", T::Float, nullptr, "Pin weight: 1 holds the joint on its animation.", {}, {}, 0.0, 1.0},
+            {"delay", "d", T::Float, nullptr, "Frames its rotation lags.", {}, {}, -1.0},
         },
         .run = [](const Args& a) -> json {
             Graph& g = graph();
