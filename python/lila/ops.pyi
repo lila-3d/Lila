@@ -4844,8 +4844,8 @@ def polyInsetRegion(distance: float | None = None, depth: float | None = None, p
         planarAngle: Degrees a region's faces may bend and still count as flat. Default 1.0.
     """
 
-def polyKnife(mesh: str | None = None, points: Sequence[Any] | None = None, closed: bool | None = None, through: bool | None = None, eye: Sequence[float] | None = None, direction: Sequence[float] | None = None, loopEdge: int | None = None, fraction: float | None = None, select: bool | None = None) -> Any:
-    """Knife / multi-cut: cut a mesh along a path of points, splitting the faces between them and the edges the path crosses. Between two points the cut follows the surface under the straight screen line joining them (seen from eye= or along direction=; without either, along the points' average normal). With loopEdge= it inserts an edge loop across that edge's quad ring instead. Follows the mesh's symmetry. Returns the new edges.
+def polyKnife(mesh: str | None = None, points: Sequence[Any] | None = None, closed: bool | None = None, through: bool | None = None, eye: Sequence[float] | None = None, direction: Sequence[float] | None = None, loopEdge: int | None = None, fraction: float | None = None, deleteEdge: int | None = None, select: bool | None = None) -> Any:
+    """Knife / multi-cut: cut a mesh along a path of points, splitting the faces between them and the edges the path crosses. Between two points the cut follows the surface under the straight screen line joining them (seen from eye= or along direction=; without either, along the points' average normal). With loopEdge= it inserts an edge loop across that edge's quad ring instead, and with deleteEdge= it dissolves that edge. Follows the mesh's symmetry. Returns the new edges.
 
     Args:
         mesh: Mesh to cut; default: the selected or hilited mesh.
@@ -4856,6 +4856,7 @@ def polyKnife(mesh: str | None = None, points: Sequence[Any] | None = None, clos
         direction: World view direction of an orthographic view.
         loopEdge: Insert an edge loop across this edge's ring instead of cutting a path. Default -1.
         fraction: Where along loopEdge the loop crosses it, from its first point. Default 0.5.
+        deleteEdge: Dissolve this edge, joining its two faces, instead of cutting. Default -1.
         select: Select the new edges. Default True.
     """
 

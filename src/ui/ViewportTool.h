@@ -56,6 +56,9 @@ public:
     virtual bool ownsBrushRadius() const { return false; }
 };
 
+/** An X: the cursor while a modifier click deletes what is under it. */
+LILA_UI_API const QCursor& deleteCursor();
+
 /** A tool's status or hint line, centred along the top of the view. Queued and drawn by flushToolMessages once the HUD is placed. */
 LILA_UI_API void drawToolMessage(OverlayPainter& p, const ViewInfo& view, const QString& text, const glm::vec4& color = {0.95f, 0.95f, 0.95f, 1.0f});
 /** Draws the queued tool messages, moved down past any of the occupied HUD rects they would cover. */

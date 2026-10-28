@@ -25,7 +25,8 @@ namespace lila::ui
  *   click                add a cut point: snaps to vertices and edges near the cursor, else a point inside the face
  *   drag                 the new point follows the cursor (still snapping) until the button comes up
  *   Shift                edge points snap to steps of the snap step (10% by default, so midpoints too)
- *   Ctrl+click an edge   insert an edge loop across its ring there (Shift snaps it)
+ *   Ctrl+click an edge   insert an edge loop across its ring there
+ *   Ctrl+Shift+click an edge   delete it, joining its two faces (highlighted while hovering)
  *   click the first point   close the cut and finish it
  *   Enter or RMB         finish the cut; the tool stays for the next one
  *   Backspace or Z       remove the last point (Ctrl+Z too: whatever undo is bound to); scene undo waits until the tool is left
@@ -74,12 +75,16 @@ private:
 
     void refresh();
     Target* target(scene::NodeId id);
-    std::optional<std::pair<scene::NodeId, Spot>> pick(QPointF px, const ViewInfo& view, bool snapStep);
+    /** edgeOnly: the nearest edge even beside a vertex, never snapped onto its ends. */
+    std::optional<std::pair<scene::NodeId, Spot>> pick(QPointF px, const ViewInfo& view, bool snapStep, bool edgeOnly = false);
     QPointF constrained(QPointF px, const ViewInfo& view, size_t from) const;
     bool visible(const Target& t, const glm::dvec3& world, const ViewInfo& view) const;
     geo::KnifeOptions options(const Target& t, const ViewInfo& view) const;
     void finish(bool closed);
     void insertLoop(const Spot& spot);
+    void deleteEdge(const Spot& spot);
+    /** Ctrl+Shift with no cut under way: a click deletes the hovered edge. */
+    bool deleting() const;
     void cancel();
     void stepBack();
     void stepForward();

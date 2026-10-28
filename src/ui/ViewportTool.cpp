@@ -3,6 +3,10 @@
 #include "core/Events.h"
 #include "core/Log.h"
 
+#include <QGuiApplication>
+#include <QPainter>
+#include <QPixmap>
+
 #include <algorithm>
 #include <map>
 
@@ -17,6 +21,28 @@ struct QueuedMessage
 };
 std::vector<QueuedMessage> gMessages;
 } // namespace
+
+const QCursor& deleteCursor()
+{
+    static const QCursor cursor = [] {
+        const int size = 24;
+        const qreal dpr = qApp->devicePixelRatio();
+        QPixmap pm(int(size * dpr), int(size * dpr));
+        pm.setDevicePixelRatio(dpr);
+        pm.fill(Qt::transparent);
+        QPainter painter(&pm);
+        painter.setRenderHint(QPainter::Antialiasing);
+        for (auto [width, color] : {std::pair{4.5, QColor(20, 20, 20)}, std::pair{2.0, QColor(240, 240, 240)}})
+        {
+            painter.setPen(QPen(color, width, Qt::SolidLine, Qt::RoundCap));
+            painter.drawLine(QPointF(6, 6), QPointF(18, 18));
+            painter.drawLine(QPointF(18, 6), QPointF(6, 18));
+        }
+        painter.end();
+        return QCursor(pm, size / 2, size / 2);
+    }();
+    return cursor;
+}
 
 void drawToolMessage(OverlayPainter&, const ViewInfo&, const QString& text, const glm::vec4& color)
 {

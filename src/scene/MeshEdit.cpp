@@ -2540,7 +2540,8 @@ void registerMeshEditCommands()
         .doc = "Knife / multi-cut: cut a mesh along a path of points, splitting the faces between them and the edges the path "
                "crosses. Between two points the cut follows the surface under the straight screen line joining them (seen from "
                "eye= or along direction=; without either, along the points' average normal). With loopEdge= it inserts an edge "
-               "loop across that edge's quad ring instead. Follows the mesh's symmetry. Returns the new edges.",
+               "loop across that edge's quad ring instead, and with deleteEdge= it dissolves that edge. Follows the mesh's "
+               "symmetry. Returns the new edges.",
         .flags = {{"mesh", "", T::String, nullptr, "Mesh to cut; default: the selected or hilited mesh."},
                   {"points", "", T::List, nullptr,
                    "Path points: {\"vertex\": id}, {\"edge\": id, \"t\": 0..1 from its first point}, or {\"face\": id, \"position\": "
@@ -2551,6 +2552,7 @@ void registerMeshEditCommands()
                   {"direction", "", T::Vec3, nullptr, "World view direction of an orthographic view."},
                   {"loopEdge", "", T::Int, -1, "Insert an edge loop across this edge's ring instead of cutting a path."},
                   {"fraction", "", T::Float, 0.5, "Where along loopEdge the loop crosses it, from its first point."},
+                  {"deleteEdge", "", T::Int, -1, "Dissolve this edge, joining its two faces, instead of cutting."},
                   {"select", "", T::Bool, true, "Select the new edges."}},
         .run = [vec](const Args& a) -> json {
             Graph& g = graph();
@@ -2562,6 +2564,39 @@ void registerMeshEditCommands()
             const glm::dmat4 world = n.as<glm::dmat4>(Transform::kWorldMatrix);
             const glm::dmat4 toLocal = glm::inverse(world);
             auto sym = symmetryFor(n, mesh);
+
+            if (const int deleteEdge = a.get<int>("deleteEdge"); deleteEdge >= 0)
+            {
+                if (!mesh.edgeValid(Index(deleteEdge)))
+                    throw CommandError("polyKnife: " + name + " has no edge " + std::to_string(deleteEdge));
+                UndoChunk chunk("Delete Edge");
+                std::vector<glm::dvec3> before;
+                int drive = 0;
+                if (sym)
+                {
+                    before.assign(mesh.positions().begin(), mesh.positions().end());
+                    drive = sym->majorityWedge(components::convert(mesh, K::Edge, {Index(deleteEdge)}, K::Vertex));
+                }
+                geo::dissolveEdges(mesh, withMirror(mesh, sym ? &*sym : nullptr, {Index(deleteEdge)}, K::Edge), true);
+                if (sym)
+                    maintainSymmetry(n, mesh, before, drive);
+                geo::MeshRemap remap;
+                mesh.compact(&remap);
+                const std::vector<Index>* maps[3] = {&remap.points, &remap.edges, &remap.faces};
+                std::map<NodeId, Ids> sel[3] = {components::selected(K::Vertex), components::selected(K::Edge), components::selected(K::Face)};
+                for (int k = 0; k < 3; ++k)
+                    if (auto it = sel[k].find(n.id()); it != sel[k].end())
+                        if (Ids kept = remapIds(it->second, *maps[k]); kept.empty())
+                            sel[k].erase(it);
+                        else
+                            it->second = std::move(kept);
+                auto edited = std::make_shared<geo::Mesh>(std::move(mesh));
+                g.setValue(base, MeshPtr(edited));
+                modifiers::baseRemapped(g, n.id(), remap, *edited);
+                objectSets::meshRemapped(g, n.id(), remap);
+                components::setAll(sel[0], sel[1], sel[2]);
+                return json::array();
+            }
 
             geo::KnifePlan plan;
             const int loopEdge = a.get<int>("loopEdge");

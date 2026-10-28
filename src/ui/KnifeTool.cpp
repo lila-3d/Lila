@@ -148,8 +148,8 @@ void KnifeTool::activate()
     mFilter = std::make_unique<KeyFilter>(this);
     qApp->installEventFilter(mFilter.get());
     refresh();
-    log::info("Knife: click points to cut, Enter or RMB finishes, Ctrl+click an edge inserts a loop, Shift snaps, A angle, X cut through, "
-              "Backspace or Z removes a point, Shift+Z puts it back, Esc cancels or exits");
+    log::info("Knife: click points to cut, Enter or RMB finishes, Ctrl+click an edge inserts a loop, Ctrl+Shift+click an edge deletes it, "
+              "Shift snaps, A angle, X cut through, Backspace or Z removes a point, Shift+Z puts it back, Esc cancels or exits");
 }
 
 void KnifeTool::deactivate()
@@ -159,7 +159,13 @@ void KnifeTool::deactivate()
     mFilter.reset();
 }
 
-std::optional<QCursor> KnifeTool::cursor() const { return QCursor(Qt::CrossCursor); }
+bool KnifeTool::deleting() const
+{
+    const Qt::KeyboardModifiers m = QGuiApplication::queryKeyboardModifiers();
+    return mPoints.empty() && (m & Qt::ShiftModifier) && (m & Qt::ControlModifier);
+}
+
+std::optional<QCursor> KnifeTool::cursor() const { return deleting() ? deleteCursor() : QCursor(Qt::CrossCursor); }
 
 void KnifeTool::refresh()
 {
@@ -256,7 +262,7 @@ QPointF KnifeTool::constrained(QPointF px, const ViewInfo& view, size_t from) co
     return *last + dir * (v.x() * dir.x() + v.y() * dir.y());
 }
 
-std::optional<std::pair<scene::NodeId, KnifeTool::Spot>> KnifeTool::pick(QPointF px, const ViewInfo& view, bool snapStep)
+std::optional<std::pair<scene::NodeId, KnifeTool::Spot>> KnifeTool::pick(QPointF px, const ViewInfo& view, bool snapStep, bool edgeOnly)
 {
     glm::dvec3 o, d;
     view.ray(px, o, d);
@@ -293,7 +299,7 @@ std::optional<std::pair<scene::NodeId, KnifeTool::Spot>> KnifeTool::pick(QPointF
     Index bestPoint = kInvalid;
     double best = kVertexRadius;
     for (Index p : points)
-        if (std::optional<QPointF> s = view.project(world(p)); s && distPx(*s, px) < best && visible(t, world(p), view))
+        if (std::optional<QPointF> s = view.project(world(p)); !edgeOnly && s && distPx(*s, px) < best && visible(t, world(p), view))
         {
             best = distPx(*s, px);
             bestPoint = p;
@@ -328,9 +334,9 @@ std::optional<std::pair<scene::NodeId, KnifeTool::Spot>> KnifeTool::pick(QPointF
             bestT = std::clamp(std::round(bestT / step) * step, 0.0, 1.0);
         }
         KnifePoint k = KnifePoint::edge(bestEdge, bestT);
-        if (bestT <= 1e-6)
+        if (!edgeOnly && bestT <= 1e-6)
             k = KnifePoint::point(m.edgePoint(bestEdge, 0));
-        else if (bestT >= 1.0 - 1e-6)
+        else if (!edgeOnly && bestT >= 1.0 - 1e-6)
             k = KnifePoint::point(m.edgePoint(bestEdge, 1));
         const glm::dvec3 w = glm::mix(world(m.edgePoint(bestEdge, 0)), world(m.edgePoint(bestEdge, 1)), bestT);
         return std::pair{hitNode, Spot{k, w}};
@@ -393,6 +399,26 @@ void KnifeTool::finish(bool closed)
     refresh();
 }
 
+void KnifeTool::deleteEdge(const Spot& spot)
+{
+    mHistory.clear();
+    if (spot.point.kind != Kind::Edge)
+        return;
+    scene::Node* n = scene::Graph::current().node(mHover->first);
+    if (!n)
+        return;
+    try
+    {
+        ops::execute("polyKnife", {{"mesh", n->path()}, {"deleteEdge", spot.point.id}}, CallSource::UI);
+    }
+    catch (const CommandError& e)
+    {
+        log::error("{}", e.what());
+    }
+    mHover.reset();
+    refresh();
+}
+
 void KnifeTool::insertLoop(const Spot& spot)
 {
     mHistory.clear();
@@ -431,11 +457,12 @@ bool KnifeTool::mousePress(QMouseEvent* e, const ViewInfo& view)
         return false;
     if (mods & Qt::ControlModifier)
     {
+        const bool del = mods & Qt::ShiftModifier;
         if (mPoints.empty())
-            if (auto h = pick(e->position(), view, mods & Qt::ShiftModifier); h && h->second.point.kind == Kind::Edge)
+            if (auto h = pick(e->position(), view, false, del); h && h->second.point.kind == Kind::Edge)
             {
                 mHover = h;
-                insertLoop(h->second);
+                del ? deleteEdge(h->second) : insertLoop(h->second);
             }
         return true;
     }
@@ -478,8 +505,9 @@ bool KnifeTool::mouseMove(QMouseEvent* e, const ViewInfo& view)
     if (mPoints.size() >= 3 && !(mods & Qt::ControlModifier))
         if (std::optional<QPointF> first = view.project(mPoints.front().world); first && distPx(*first, e->position()) < kVertexRadius)
             mHoverFirst = true;
-    const QPointF at = mods & Qt::ControlModifier ? e->position() : constrained(e->position(), view, mPoints.size());
-    mHover = pick(at, view, mods & Qt::ShiftModifier);
+    const bool ctrl = mods & Qt::ControlModifier;
+    const QPointF at = ctrl ? e->position() : constrained(e->position(), view, mPoints.size());
+    mHover = pick(at, view, !ctrl && (mods & Qt::ShiftModifier), deleting());
     viewportTools::requestRedraw();
     return true;
 }
@@ -569,6 +597,10 @@ void KnifeTool::draw(render::FrameState&, OverlayPainter& p, const ViewInfo& vie
     const Qt::KeyboardModifiers mods = QGuiApplication::queryKeyboardModifiers();
     const bool here = view.camera == mCursorView;
     const bool ctrl = mods & Qt::ControlModifier;
+    const bool del = deleting();
+    // The hover depends on Ctrl and Shift, which change without the mouse moving.
+    if (here && mPoints.empty() && ctrl)
+        mHover = pick(mCursor, view, false, del);
     const scene::NodeId node = mNode != scene::kNoNode ? mNode : mHover ? mHover->first : scene::kNoNode;
     const Target* t = target(node);
     auto toWorld = [&](const glm::dvec3& local) { return glm::dvec3(t->world * glm::dvec4(local, 1.0)); };
@@ -578,7 +610,7 @@ void KnifeTool::draw(render::FrameState&, OverlayPainter& p, const ViewInfo& vie
         const geo::Mesh& m = *t->mesh;
         const bool hoverUsable = here && mHover && mHover->first == node && !mHoverFirst;
         geo::KnifePlan plan;
-        if (ctrl && mPoints.empty() && hoverUsable && mHover->second.point.kind == Kind::Edge)
+        if (ctrl && !del && mPoints.empty() && hoverUsable && mHover->second.point.kind == Kind::Edge)
             plan = geo::knifeLoopPlan(m, mHover->second.point.id, mHover->second.point.t, t->symmetry ? &*t->symmetry : nullptr);
         else if (!ctrl)
         {
@@ -619,10 +651,15 @@ void KnifeTool::draw(render::FrameState&, OverlayPainter& p, const ViewInfo& vie
             if (k.kind == Kind::Edge && m.edgeValid(k.id))
             {
                 auto a = view.project(toWorld(m.position(m.edgePoint(k.id, 0)))), b = view.project(toWorld(m.position(m.edgePoint(k.id, 1))));
-                if (a && b)
+                if (a && b && del)
+                {
+                    p.line(*a, *b, 6.0f, kRim);
+                    p.line(*a, *b, 3.5f, kHot);
+                }
+                else if (a && b)
                     p.line(*a, *b, 2.5f, kHot);
             }
-            if (auto s = view.project(mHover->second.world))
+            if (auto s = view.project(mHover->second.world); s && !del)
             {
                 p.disc(*s, k.kind == Kind::Face ? 3.5f : 5.5f, kRim, 16);
                 p.disc(*s, k.kind == Kind::Face ? 2.0f : 3.5f, kHot, 16);
@@ -640,7 +677,7 @@ void KnifeTool::draw(render::FrameState&, OverlayPainter& p, const ViewInfo& vie
             p.disc(*s, hot ? 6.0f : 4.0f, kHot, 16);
         }
 
-    QString help = "Knife: click to cut, Enter/RMB finish, Ctrl+click edge: loop, Shift: snap %1%, Z/Backspace: remove point, Shift+Z: restore it, Esc: cancel";
+    QString help = "Knife: click to cut, Enter/RMB finish, Ctrl+click edge: loop, Ctrl+Shift+click edge: delete, Shift: snap %1%, Z/Backspace: remove point, Shift+Z: restore it, Esc: cancel";
     help = help.arg(snapStepFraction() * 100.0, 0, 'g', 3);
     help += QString("   A angle: %1   X through: %2").arg(mAngle ? "on" : "off", mThrough ? "on" : "off");
     drawToolMessage(p, view, help);
@@ -654,7 +691,7 @@ void registerKnifeActions()
         .category = "Mesh",
         .run = [] { viewportTools::set(std::make_unique<KnifeTool>()); },
         .doc = "Multi-cut knife: click points across a mesh to cut it, snapping to vertices and edges (Shift: snap step), Ctrl+click an "
-               "edge for an edge loop, Enter or RMB finishes, A angle constraint, X cut through, Esc exits.",
+               "edge for an edge loop, Ctrl+Shift+click an edge to delete it, Enter or RMB finishes, A angle constraint, X cut through, Esc exits.",
         .python = "lila.ui.run_action(\"mesh.knife\")",
     });
 }

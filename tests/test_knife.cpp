@@ -40,3 +40,14 @@ TEST_CASE("polyKnife: symmetry cuts both sides")
     CHECK(faces(plane) == 6);
     CHECK(run("symmetryCheck", {{"args", {plane}}})[plane]["unmatched"].get<int>() == 0);
 }
+
+TEST_CASE("polyKnife: deleteEdge joins its two faces in one undo step")
+{
+    run("newScene");
+    std::string cube = run("polyCube")[0];
+    run("polyKnife", {{"mesh", cube}, {"deleteEdge", 0}});
+    CHECK(faces(cube) == 5);
+    run("undo");
+    CHECK(faces(cube) == 6);
+    CHECK_THROWS(run("polyKnife", {{"mesh", cube}, {"deleteEdge", 999}}));
+}
