@@ -9,10 +9,12 @@
 #include "scene/CenterInMesh.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
+#include "scene/Instancing.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "scene/OrientPivot.h"
 #include "scene/Relocate.h"
+#include "scene/Rig.h"
 #include "geo/Mesh.h"
 #include "ui/GeometrySnap.h"
 #include "ui/GizmoMath.h"
@@ -66,7 +68,7 @@ bool rotateComponentSpace() { return PrefStore::get().value<std::string>("genera
 
 bool moveComponentSpace() { return PrefStore::get().value<std::string>("general", "/manipulator/moveSpace", "world") == "component"; }
 
-/** "world", "object" or "component" (the selection's average normal and tangent). Objects always scale on their own axes. */
+/** "world", "object" or "component" (the selection's average normal and tangent). Objects always scale on their pivot's axes. */
 std::string scaleSpace() { return PrefStore::get().value<std::string>("general", "/manipulator/scaleSpace", "world"); }
 
 /**
@@ -209,6 +211,40 @@ std::string nameOf(NodeId id)
 {
     scene::Node* n = Graph::current().node(id);
     return n ? n->path() : std::string();
+}
+
+/** The pivot's axes are off the object's own, and Bake Pivot can make them the object's without touching shared data. */
+bool canBakePivot(Graph& g, NodeId id)
+{
+    const scene::Node* n = g.node(id);
+    if (!n || scene::rig::isJoint(*n) || scene::instancing::kind(g, id) != scene::instancing::Kind::None || n->lockMask(Transform::kRotate) != 0)
+        return false;
+    const glm::dmat3 pivot = scene::xformops::pivotFrame(g, id);
+    const glm::dmat3 object = scene::xformops::frame(g, id, scene::Space::Object);
+    for (int i = 0; i < 3; ++i)
+        if (std::abs(glm::dot(pivot[i], object[i])) < 1.0 - 1e-9)
+            return true;
+    return false;
+}
+
+/** Scale can only stretch along an object's own axes, so the ones scaled along an oriented pivot take it on first. */
+void bakePivotsFor(const std::vector<NodeId>& ids)
+{
+    Graph& g = Graph::current();
+    json names = json::array();
+    for (NodeId id : ids)
+        if (canBakePivot(g, id))
+            names.push_back(nameOf(id));
+    if (names.empty())
+        return;
+    try
+    {
+        ops::execute("bakePivot", {{"args", names}}, CallSource::UI);
+    }
+    catch (const CommandError& e)
+    {
+        log::error("{}", e.what());
+    }
 }
 } // namespace
 
@@ -356,8 +392,8 @@ void Manipulator::refresh()
     mPivot = scene::xformops::worldPivot(g, mLead);
     Tool t = pivotTool(tools::pivotEdit(), tools::current());
     scene::Space space = t == Tool::Scale ? scene::Space::Object : spaceFor(t);
-    // Object space is the pivot's own orientation; scale stays on the object's axes, which is what scaleBy uses.
-    bool pivotAxes = (tools::pivotEdit() && t == Tool::Rotate) || (space == scene::Space::Object && t != Tool::Scale);
+    // Object space is the pivot's own orientation. Scale shows it too: a drag along it bakes the pivot in first.
+    bool pivotAxes = (tools::pivotEdit() && t == Tool::Rotate) || (space == scene::Space::Object && (t != Tool::Scale || canBakePivot(g, mLead)));
     mFrame = pivotAxes ? scene::xformops::pivotFrame(g, mLead) : scene::xformops::frame(g, mLead, space);
     refreshLocks(t);
 }
@@ -644,6 +680,11 @@ bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifier
             log::error("{}", e.what());
             return true;
         }
+        refresh();
+    }
+    if (effectiveTool() == Tool::Scale && h != H::Center && !mComponents && !tools::pivotEdit() && !clone)
+    {
+        bakePivotsFor(mTargets);
         refresh();
     }
 

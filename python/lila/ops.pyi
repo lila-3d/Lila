@@ -708,6 +708,13 @@ def bakePiecesToJoints(*objects: Any, start: float | None = None, end: float | N
         bakePiecesToJoints('Wall', start=1, end=72)
     """
 
+def bakePivot(*objects: Any) -> Any:
+    """Turn the objects onto their pivots' axes, counter-rotating their points, so the pivot orientation becomes the object's own and scale works along it. Nothing moves in the world. Instances are made unique.
+
+    Args:
+        objects: objects.
+    """
+
 def bakeSkinWeights(*objects: Any, angle: float | None = None, axes: str | None = None, sweep: bool | None = None, randomPoses: int | None = None, seed: int | None = None, source: str | None = None, start: int | None = None, end: int | None = None, step: int | None = None, helpers: int | None = None, maxInfluences: int | None = None, iterations: int | None = None, keep: bool | None = None, mi: int | None = None) -> Any:
     """Fit linear skin weights (SSDR, Dem Bones) to everything the mesh's stack does: centres of rotation and direct delta mush skinning, delta mush, wrap and other deformers after the skin. The skin goes linear and the deformers it replaces are turned off, so the viewport shows what Unreal will get; keep=true stores the weights for export instead. Returns {rmse, maxError, linearRmse, frames, helpers, disabled}.
 
@@ -4366,7 +4373,7 @@ def orientPivot(aim: str | None = None, up: str | None = None, upReference: str 
     """
 
 def parent(*objects: Any, world: bool | None = None, relative: bool | None = None, chain: bool | None = None, index: int | None = None, w: bool | None = None, r: bool | None = None, ch: bool | None = None, i: int | None = None) -> Any:
-    """parent(child..., parent), or parent(child..., world=True). Keeps world transforms unless relative=True. chain=True parents each object under the next one, in order: (a, b, c) puts a under b and b under c. index=N places the objects, in order, at position N among the parent's children (0 is first), which also reorders objects already under that parent.
+    """parent(child..., parent), or parent(child..., world=True). Keeps world transforms unless relative=True. chain=True parents each object under the next one, in order: (a, b, c) puts a under b and b under c. index=N places the objects, in order, at position N among the parent's children (0 is first), which also reorders objects already under that parent. Leaves the moved objects selected.
 
     Args:
         objects: objects... parent.

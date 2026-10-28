@@ -248,6 +248,42 @@ void registerObjectCommands()
         .adjustable = true,
     });
 
+    ops::registerCommand({
+        .name = "bakePivot",
+        .doc = "Turn the objects onto their pivots' axes, counter-rotating their points, so the pivot orientation becomes "
+               "the object's own and scale works along it. Nothing moves in the world. Instances are made unique.",
+        .positionalDoc = "objects",
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            Graph& g = graph();
+            UndoChunk chunk("Bake Pivot");
+            for (NodeId id : topLevel(g, a.objects(), "bakePivot"))
+            {
+                g.evaluate();
+                Node* n = g.node(id);
+                const glm::dvec3 orient = n->as<glm::dvec3>(Transform::kPivotOrient);
+                if (!n->type().isA("transform") || rig::isJoint(*n) || orient == glm::dvec3(0.0))
+                    continue;
+                const glm::dmat4 before = n->as<glm::dmat4>(Transform::kMatrix);
+                std::vector<std::pair<NodeId, glm::dmat4>> children;
+                for (NodeId c : g.children(id))
+                    children.push_back({c, g.node(c)->as<glm::dmat4>(Transform::kWorldMatrix)});
+                const glm::dvec3 pivot = xformops::worldPivot(g, id);
+                const glm::dquat turn = glm::quat_cast(glm::dmat3(eulerToMatrix(orient, RotateOrder::XYZ)));
+                g.setValue({id, Transform::kRotate, -1}, xformops::rotatedEuler(g, id, turn, Space::Object));
+                g.setValue({id, Transform::kPivotOrient, -1}, glm::dvec3(0.0));
+                g.evaluate();
+                xformops::bakeIntoGeometry(g, id, glm::inverse(n->as<glm::dmat4>(Transform::kMatrix)) * before);
+                xformops::setWorldPivot(g, id, pivot);
+                g.evaluate();
+                for (auto& [c, world] : children)
+                    keepWorld(g, c, world);
+            }
+            return nullptr;
+        },
+    });
+
     // What the last hide hid, for showLastHidden.
     struct LastHidden
     {

@@ -394,7 +394,7 @@ void registerCommands()
         .doc = "parent(child..., parent), or parent(child..., world=True). Keeps world transforms unless relative=True. "
                "chain=True parents each object under the next one, in order: (a, b, c) puts a under b and b under c. "
                "index=N places the objects, in order, at position N among the parent's children (0 is first), which "
-               "also reorders objects already under that parent.",
+               "also reorders objects already under that parent. Leaves the moved objects selected.",
         .positionalDoc = "objects... parent",
         .flags = {
             {"world", "w", T::Bool, false, "Unparent to the world."},
@@ -426,6 +426,7 @@ void registerCommands()
             {
                 for (NodeId c : ids)
                     guarded([&] { graph().setParent(c, p, !a.get<bool>("relative")); return 0; });
+                graph().select(ids);
                 return objs;
             }
             int index = a.get<int>("index");
@@ -450,6 +451,7 @@ void registerCommands()
                 });
                 before = ids[i];
             }
+            graph().select(ids);
             return objs;
         },
     });

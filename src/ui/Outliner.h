@@ -55,6 +55,8 @@ protected:
 
 private:
     void rebuild();
+    /** Expands the parents of the rows and scrolls the first one into view. */
+    void reveal(const std::vector<scene::NodeId>& ids, QAbstractItemView::ScrollHint hint = QAbstractItemView::EnsureVisible);
     /** Updates each row's icon, font and color from its node's type, reference and visibility. */
     void restyle();
     void syncSelectionFromScene();

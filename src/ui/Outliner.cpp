@@ -33,6 +33,7 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QScrollBar>
 #include <QSplitter>
 #include <QTimer>
 #include <QToolButton>
@@ -605,6 +606,17 @@ void Outliner::rebuild()
     mStale = false;
     mSyncing = true;
     scene::Graph& g = scene::Graph::current();
+    const int scroll = verticalScrollBar()->value();
+    // Selected rows that moved to another parent get revealed once the tree is back.
+    std::vector<scene::NodeId> moved;
+    for (scene::NodeId id : g.selection())
+        if (auto it = mItems.find(id); it != mItems.end())
+        {
+            QTreeWidgetItem* was = it->second->parent();
+            const scene::NodeId oldParent = was ? scene::NodeId(was->data(0, kIdRole).toULongLong()) : scene::kNoNode;
+            if (g.node(id) && g.parent(id) != oldParent)
+                moved.push_back(id);
+        }
     clear();
     mItems.clear();
     std::function<void(scene::NodeId, QTreeWidgetItem*)> add = [&](scene::NodeId id, QTreeWidgetItem* parent) {
@@ -652,6 +664,9 @@ void Outliner::rebuild()
     mSyncing = false;
     restyle();
     syncSelectionFromScene();
+    verticalScrollBar()->setValue(scroll);
+    if (!moved.empty())
+        reveal(moved);
 }
 
 void Outliner::addSetRows()
@@ -865,9 +880,14 @@ void Outliner::pushSelectionToScene()
 
 void Outliner::revealSelected()
 {
+    reveal(scene::Graph::current().selection(), QAbstractItemView::PositionAtCenter);
+}
+
+void Outliner::reveal(const std::vector<scene::NodeId>& ids, QAbstractItemView::ScrollHint hint)
+{
     scene::Graph& g = scene::Graph::current();
     QTreeWidgetItem* first = nullptr;
-    for (scene::NodeId id : g.selection())
+    for (scene::NodeId id : ids)
     {
         auto it = mItems.find(id);
         if (it == mItems.end())
@@ -882,7 +902,7 @@ void Outliner::revealSelected()
             first = it->second;
     }
     if (first)
-        scrollToItem(first, QAbstractItemView::PositionAtCenter);
+        scrollToItem(first, hint);
 }
 
 void Outliner::renameSelected()

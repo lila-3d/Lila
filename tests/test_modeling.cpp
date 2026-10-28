@@ -132,6 +132,31 @@ TEST_CASE("freeze and center pivot on a group reach its children")
     CHECK(run("getAttr", {{"args", {a + ".ty"}}}).get<double>() == doctest::Approx(5));
 }
 
+TEST_CASE("bakePivot turns the object onto its pivot's axes without moving it")
+{
+    using namespace lila::scene;
+    run("newScene");
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
+    run("rotate", {{"args", {cube}}, {"by", {0, 20, 0}}});
+    run("setPivot", {{"args", {cube}}, {"position", {10, 0, 0}}, {"orient", {0, 0, 30}}});
+    Graph& g = Graph::current();
+    const NodeId id = g.find(cube)->id();
+    const glm::dmat3 axes = xformops::pivotFrame(g, id);
+    json before = run("meshData", {{"args", {cube}}, {"worldSpace", true}});
+
+    run("bakePivot", {{"args", {cube}}});
+    const glm::dmat3 object = xformops::frame(g, id, Space::Object);
+    for (int c = 0; c < 3; ++c)
+        CHECK(glm::length(object[c] - axes[c]) < 1e-6);
+    CHECK(glm::length(xformops::worldPivot(g, id) - glm::dvec3(10, 0, 0)) < 1e-6);
+    CHECK(run("getAttr", {{"args", {cube + ".pivotOrient"}}})[2].get<double>() == doctest::Approx(0));
+    json after = run("meshData", {{"args", {cube}}, {"worldSpace", true}});
+    REQUIRE(before["points"].size() == after["points"].size());
+    for (size_t i = 0; i < before["points"].size(); ++i)
+        for (int k = 0; k < 3; ++k)
+            CHECK(after["points"][i][k].get<double>() == doctest::Approx(before["points"][i][k].get<double>()).epsilon(1e-9));
+}
+
 TEST_CASE("freezing joints moves rotation into jointOrient and keeps translate")
 {
     using namespace lila::scene;
