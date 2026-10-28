@@ -278,6 +278,27 @@ void registerTransformCommands()
     });
 
     ops::registerCommand({
+        .name = "zeroPivotRotation",
+        .doc = "Line the pivots' axes up with the world (or with the object's own axes), leaving their positions and the "
+               "objects alone.",
+        .positionalDoc = "objects",
+        .flags = {{"space", "", T::String, "world", "Axes to line up with.", {"world", "object"}}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            const bool world = a.get<std::string>("space", "world") == "world";
+            for (NodeId id : transformsOf(a, "zeroPivotRotation"))
+            {
+                if (world)
+                    xformops::setWorldPivotFrame(g, id, glm::dmat3(1.0));
+                else
+                    g.setValue({id, Transform::kPivotOrient}, glm::dvec3(0.0));
+            }
+            return nullptr;
+        },
+        .adjustable = true,
+    });
+
+    ops::registerCommand({
         .name = "zeroPivot",
         .doc = "Move the pivots to the world origin, keeping the object where it is.",
         .positionalDoc = "objects",
@@ -320,6 +341,7 @@ void registerTransformCommands()
             }
             return nullptr;
         },
+        .adjustable = true,
     });
 
     ops::registerCommand({

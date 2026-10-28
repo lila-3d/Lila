@@ -1,4 +1,5 @@
 #include <doctest/doctest.h>
+#include "scene/TransformOps.h"
 
 #include "ops/Command.h"
 #include "geo/Mesh.h"
@@ -96,6 +97,126 @@ TEST_CASE("duplicate, freeze, center pivot")
 
     run("centerPivot", {{"args", {copy}}});
     run("undo");
+}
+
+TEST_CASE("freeze and center pivot on a group reach its children")
+{
+    run("newScene");
+    std::string a = run("polyCube", {{"name", "A"}, {"position", {10, 0, 0}}})[0];
+    std::string b = run("polyCube", {{"name", "B"}, {"position", {30, 0, 0}}})[0];
+    std::string grp = run("group", {{"args", {a, b}}}).get<std::string>();
+    run("move", {{"args", {grp}}, {"by", {0, 5, 0}}});
+    run("rotate", {{"args", {a}}, {"by", {0, 30, 0}}});
+
+    run("centerPivot", {{"args", {grp}}});
+    json piv = run("pivot", {{"args", {grp}}});
+    CHECK(piv[0].get<double>() == doctest::Approx(20).epsilon(0.05));
+    CHECK(piv[1].get<double>() == doctest::Approx(5));
+
+    json before = run("meshData", {{"args", {a}}, {"worldSpace", true}});
+    run("freezeTransforms", {{"args", {grp}}});
+    for (const std::string& n : {grp, a, b})
+    {
+        CHECK(run("getAttr", {{"args", {n + ".ty"}}}).get<double>() == doctest::Approx(0));
+        CHECK(run("getAttr", {{"args", {n + ".tx"}}}).get<double>() == doctest::Approx(0));
+    }
+    CHECK(run("getAttr", {{"args", {a + ".ry"}}}).get<double>() == doctest::Approx(0));
+    json after = run("meshData", {{"args", {a}}, {"worldSpace", true}});
+    for (size_t i = 0; i < before["points"].size(); ++i)
+        for (int k = 0; k < 3; ++k)
+            CHECK(after["points"][i][k].get<double>() == doctest::Approx(before["points"][i][k].get<double>()).epsilon(1e-9));
+
+    run("undo");
+    run("freezeTransforms", {{"args", {grp}}, {"hierarchy", false}});
+    CHECK(run("getAttr", {{"args", {grp + ".ty"}}}).get<double>() == doctest::Approx(0));
+    CHECK(run("getAttr", {{"args", {a + ".ty"}}}).get<double>() == doctest::Approx(5));
+}
+
+TEST_CASE("freezing joints moves rotation into jointOrient and keeps translate")
+{
+    using namespace lila::scene;
+    run("newScene");
+    std::string root = run("joint", {{"name", "root"}, {"position", {0, 10, 0}}, {"parent", ""}}).get<std::string>();
+    std::string tip = run("joint", {{"name", "tip"}, {"position", {0, 30, 0}}, {"parent", root}}).get<std::string>();
+    run("setAttr", {{"args", {root + ".rotate", json::array({0, 0, 40})}}});
+    run("setAttr", {{"args", {root + ".scale", json::array({2, 2, 2})}}});
+    run("setAttr", {{"args", {tip + ".rotate", json::array({15, 0, 0})}}});
+    Graph& g = Graph::current();
+    g.evaluate();
+    const glm::dmat4 rootBefore = g.find(root)->as<glm::dmat4>(Transform::kWorldMatrix);
+    const glm::dmat4 tipBefore = g.find(tip)->as<glm::dmat4>(Transform::kWorldMatrix);
+
+    run("freezeTransforms", {{"args", {root}}});
+    g.evaluate();
+    CHECK(run("getAttr", {{"args", {root + ".ty"}}}).get<double>() == doctest::Approx(10));
+    CHECK(run("getAttr", {{"args", {root + ".rz"}}}).get<double>() == doctest::Approx(0));
+    CHECK(run("getAttr", {{"args", {root + ".sx"}}}).get<double>() == doctest::Approx(1));
+    CHECK(run("getAttr", {{"args", {root + ".jointOrient"}}})[2].get<double>() == doctest::Approx(40));
+    CHECK(run("getAttr", {{"args", {tip + ".rx"}}}).get<double>() == doctest::Approx(0));
+    const glm::dmat4 rootAfter = g.find(root)->as<glm::dmat4>(Transform::kWorldMatrix);
+    const glm::dmat4 tipAfter = g.find(tip)->as<glm::dmat4>(Transform::kWorldMatrix);
+    // Scale is gone, so compare positions and normalised axes.
+    for (int c = 0; c < 3; ++c)
+    {
+        CHECK(glm::length(glm::normalize(glm::dvec3(rootAfter[c])) - glm::normalize(glm::dvec3(rootBefore[c]))) < 1e-6);
+        CHECK(glm::length(glm::normalize(glm::dvec3(tipAfter[c])) - glm::normalize(glm::dvec3(tipBefore[c]))) < 1e-6);
+    }
+    CHECK(glm::length(glm::dvec3(rootAfter[3]) - glm::dvec3(rootBefore[3])) < 1e-6);
+    CHECK(glm::length(glm::dvec3(tipAfter[3]) - glm::dvec3(tipBefore[3])) < 1e-6);
+}
+
+TEST_CASE("freezing joints keeps mirrors, segment scale compensate, and can zero orientation")
+{
+    using namespace lila::scene;
+    run("newScene");
+    std::string root = run("joint", {{"name", "root"}, {"position", {0, 10, 0}}, {"parent", ""}}).get<std::string>();
+    std::string mid = run("joint", {{"name", "mid"}, {"position", {0, 30, 0}}, {"parent", root}, {"segmentScaleCompensate", true}}).get<std::string>();
+    std::string tip = run("joint", {{"name", "tip"}, {"position", {10, 40, 0}}, {"parent", mid}}).get<std::string>();
+    run("setAttr", {{"args", {root + ".rotate", json::array({0, 0, 40})}}});
+    run("setAttr", {{"args", {root + ".scale", json::array({-1, 2, 1})}}});
+    run("setAttr", {{"args", {mid + ".rotate", json::array({20, 10, 0})}}});
+    Graph& g = Graph::current();
+    auto world = [&](const std::string& n) {
+        g.evaluate();
+        return g.find(n)->as<glm::dmat4>(Transform::kWorldMatrix);
+    };
+    const glm::dmat4 midBefore = world(mid), tipBefore = world(tip);
+
+    run("freezeTransforms", {{"args", {root}}, {"scale", false}});
+    for (int c = 0; c < 4; ++c)
+    {
+        CHECK(glm::length(world(mid)[c] - midBefore[c]) < 1e-6);
+        CHECK(glm::length(world(tip)[c] - tipBefore[c]) < 1e-6);
+    }
+    CHECK(run("getAttr", {{"args", {mid + ".rx"}}}).get<double>() == doctest::Approx(0));
+    CHECK(run("getAttr", {{"args", {root + ".sx"}}}).get<double>() == doctest::Approx(-1));
+
+    run("undo");
+    run("freezeTransforms", {{"args", {root}}});
+    CHECK(run("getAttr", {{"args", {root + ".sx"}}}).get<double>() == doctest::Approx(-1));
+    CHECK(run("getAttr", {{"args", {root + ".sy"}}}).get<double>() == doctest::Approx(1));
+    CHECK(glm::length(glm::dvec3(world(tip)[3]) - glm::dvec3(tipBefore[3])) < 1e-6);
+
+    run("undo");
+    run("freezeTransforms", {{"args", {root}}, {"jointOrient", true}});
+    for (const std::string& n : {root, mid, tip})
+    {
+        const glm::dmat4 w = world(n);
+        CHECK(glm::length(glm::normalize(glm::dvec3(w[1])) - glm::dvec3(0, 1, 0)) < 1e-6);
+        CHECK(glm::length(glm::normalize(glm::dvec3(w[2])) - glm::dvec3(0, 0, 1)) < 1e-6);
+    }
+    CHECK(glm::length(glm::dvec3(world(tip)[3]) - glm::dvec3(tipBefore[3])) < 1e-6);
+}
+
+TEST_CASE("freeze without hierarchy leaves children's values")
+{
+    run("newScene");
+    std::string a = run("polyCube", {{"name", "A"}})[0];
+    std::string grp = run("group", {{"args", {a}}}).get<std::string>();
+    run("move", {{"args", {grp}}, {"by", {0, 5, 0}}});
+    run("freezeTransforms", {{"args", {grp}}, {"hierarchy", false}});
+    CHECK(run("getAttr", {{"args", {grp + ".ty"}}}).get<double>() == doctest::Approx(0));
+    CHECK(run("getAttr", {{"args", {a + ".ty"}}}).get<double>() == doctest::Approx(5));
 }
 
 TEST_CASE("multi-box bounds: one box per chunk, named, parented, undoable")
@@ -246,4 +367,23 @@ TEST_CASE("moveComponents normal= keeps symmetry")
         CHECK(best < 1e-9);
     }
     CHECK(moved == 2 * int(pts.size()));
+}
+
+TEST_CASE("freeze keeps the pivot's world position and oriented axes")
+{
+    using namespace lila::scene;
+    run("newScene");
+    std::string a = run("polyCube", {{"name", "A"}, {"position", {10, 0, 0}}})[0];
+    run("rotate", {{"args", {a}}, {"by", {0, 30, 0}}});
+    run("scale", {{"args", {a}}, {"by", {2, 1, 1}}});
+    run("setPivot", {{"args", {a}}, {"position", {13, 4, 0}}, {"orient", {0, 0, 20}}});
+    Graph& g = Graph::current();
+    const NodeId id = g.find(a)->id();
+    const glm::dvec3 at = xformops::worldPivot(g, id);
+    const glm::dmat3 axes = xformops::pivotFrame(g, id);
+    run("freezeTransforms", {{"args", {a}}});
+    CHECK(glm::length(xformops::worldPivot(g, id) - at) < 1e-6);
+    const glm::dmat3 now = xformops::pivotFrame(g, id);
+    for (int c = 0; c < 3; ++c)
+        CHECK(glm::length(glm::normalize(now[c]) - glm::normalize(axes[c])) < 1e-6);
 }

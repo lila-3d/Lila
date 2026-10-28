@@ -511,6 +511,8 @@ void registerBuiltins()
         "Puts translate, rotate and scale back to their defaults, moving the object.");
     cmd("modify.resetPivot", "Reset Pivot", "Modify", "resetPivot", json::object(), "Moves the pivot back to the object's origin.");
     cmd("modify.zeroPivot", "Zero Pivot", "Modify", "zeroPivot", json::object(), "Moves the pivot to the world origin.");
+    cmd("modify.zeroPivotRotation", "Zero Pivot Rotation", "Modify", "zeroPivotRotation", json::object(),
+        "Lines the selected objects' pivot axes up with the world, leaving the pivot and the objects where they are.");
     cmd("modify.matchPivot", "Match Pivot", "Modify", "matchPivot", json::object(),
         "Copies the first selected object's pivot position and orientation onto the other selected objects, without moving them.");
     cmd("modify.matchPivotPosition", "Match Pivot Position", "Modify", "matchPivot", {{"orient", false}},

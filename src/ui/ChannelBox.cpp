@@ -389,6 +389,20 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
             }
         };
         QMenu menu(this);
+        QMenu* freeze = menu.addMenu("Freeze");
+        for (auto [label, t, r, s] : {std::tuple{"Translate", true, false, false}, std::tuple{"Rotate", false, true, false},
+                                      std::tuple{"Scale", false, false, true}, std::tuple{"All", true, true, true}})
+            freeze->addAction(label, [objects = targets(), t, r, s] {
+                try
+                {
+                    ops::execute("freezeTransforms", {{"args", objects}, {"translate", t}, {"rotate", r}, {"scale", s}}, CallSource::UI);
+                }
+                catch (const std::exception& e)
+                {
+                    log::error("{}", e.what());
+                }
+            });
+        menu.addSeparator();
         menu.addAction("Copy Selected Values", [this] { copyValues(); });
         QAction* paste = menu.addAction("Paste Values", [this] { pasteValues(); });
         paste->setEnabled(!QApplication::clipboard()->text().trimmed().isEmpty());
@@ -434,20 +448,6 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
                 runEach(lock ? "Lock Selected" : "Unlock Selected", [lock](const std::string& p) {
                     ops::execute("setAttr", {{"args", {p}}, {"lock", lock}}, CallSource::UI);
                 });
-            });
-        menu.addSeparator();
-        QMenu* freeze = menu.addMenu("Freeze");
-        for (auto [label, t, r, s] : {std::tuple{"Translate", true, false, false}, std::tuple{"Rotate", false, true, false},
-                                      std::tuple{"Scale", false, false, true}, std::tuple{"All", true, true, true}})
-            freeze->addAction(label, [objects = targets(), t, r, s] {
-                try
-                {
-                    ops::execute("freezeTransforms", {{"args", objects}, {"translate", t}, {"rotate", r}, {"scale", s}}, CallSource::UI);
-                }
-                catch (const std::exception& e)
-                {
-                    log::error("{}", e.what());
-                }
             });
         if (Graph& sg = Graph::current(); sg.node(mNode) && scene::spaces::hasSpaces(sg, mNode))
         {

@@ -1020,7 +1020,8 @@ std::optional<glm::dvec3> Manipulator::snapTarget(QPointF px, unsigned snaps) co
     Graph& g = Graph::current();
     const Drag& d = *mDrag;
     std::unordered_set<NodeId> moving;
-    if (!d.components)
+    // Editing a pivot moves only the pivot, so the object's own points are the usual targets.
+    if (!d.components && !d.pivotEdit)
         for (const Saved& s : d.saved)
         {
             moving.insert(s.id);
@@ -1622,6 +1623,26 @@ void Manipulator::drawRotate(OverlayPainter& p)
         for (int k = 0; k < 64; ++k)
             outer.push_back(*c + QPointF(std::cos(k * kPi / 32), std::sin(k * kPi / 32)) * ringPx * 1.18);
         stroke(outer, mHover == H::ViewRing || active == H::ViewRing ? 3.0f : 1.5f, handleColor(H::ViewRing, -1), true);
+    }
+
+    if (pivotMode)
+        drawPivotAxes(p, *c);
+}
+
+void Manipulator::drawPivotAxes(OverlayPainter& p, QPointF c)
+{
+    const double L = handleLength() * 0.4;
+    for (int i = 0; i < 3; ++i)
+    {
+        auto tip = mView.project(mPivot + axis(i) * L);
+        if (!tip || dist(*tip, c) < 8)
+            continue;
+        glm::vec4 col = handleColor(H(int(H::X) + i), i);
+        col.a *= 0.55f;
+        QPointF dirPx = (*tip - c) / dist(*tip, c);
+        QPointF n(-dirPx.y(), dirPx.x());
+        p.dashedLine(c + dirPx * 6.0, *tip, 1.5f, 4.0f, col);
+        p.triangle(*tip + dirPx * 6.0, *tip - dirPx * 2.0 + n * 3.0, *tip - dirPx * 2.0 - n * 3.0, col);
     }
 }
 

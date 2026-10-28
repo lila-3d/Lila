@@ -175,6 +175,8 @@ private:
 
     void drawMove(OverlayPainter& p);
     void drawRotate(OverlayPainter& p);
+    /** Small faded move axes inside the rotate rings while editing the pivot; drawn only, never picked. */
+    void drawPivotAxes(OverlayPainter& p, QPointF center);
     void drawScale(OverlayPainter& p);
     void drawReadout(OverlayPainter& p);
     glm::vec4 handleColor(Handle h, int axisIndex) const;

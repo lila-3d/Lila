@@ -310,6 +310,31 @@ TEST_CASE("matchPivot copies position, orientation or both")
             CHECK(after[c][r] == doctest::Approx(before[c][r]).epsilon(1e-9));
 }
 
+TEST_CASE("zeroPivotRotation lines pivot axes up with the world or the object")
+{
+    using namespace lila::scene;
+    run("newScene");
+    run("spaceLocator", {{"name", "A"}});
+    run("xform", {{"args", {"A"}}, {"translation", {1, 2, 3}}, {"rotation", {10, 40, 0}}});
+    run("setPivot", {{"args", {"A"}}, {"position", {5, 5, 5}}, {"orient", {0, 0, 30}}});
+    Graph& g = Graph::current();
+    const NodeId id = g.find("A")->id();
+    const glm::dmat4 before = g.find("A")->as<glm::dmat4>(Transform::kWorldMatrix);
+
+    run("zeroPivotRotation", {{"args", {"A"}}});
+    const glm::dmat3 world = xformops::pivotFrame(g, id);
+    for (int c = 0; c < 3; ++c)
+        CHECK(glm::length(world[c] - glm::dmat3(1.0)[c]) < 1e-6);
+    CHECK(glm::length(xformops::worldPivot(g, id) - glm::dvec3(5)) < 1e-6);
+    g.evaluate();
+    const glm::dmat4 after = g.find("A")->as<glm::dmat4>(Transform::kWorldMatrix);
+    for (int c = 0; c < 4; ++c)
+        CHECK(glm::length(after[c] - before[c]) < 1e-9);
+
+    run("zeroPivotRotation", {{"args", {"A"}}, {"space", "object"}});
+    CHECK(run("getAttr", {{"args", {"A.pivotOrient"}}})[2].get<double>() == doctest::Approx(0));
+}
+
 TEST_CASE("closest euler avoids flips")
 {
     using namespace lila::scene;

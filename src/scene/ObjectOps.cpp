@@ -10,6 +10,8 @@
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "scene/NodeBounds.h"
+#include "scene/Rig.h"
+#include "scene/RigUtil.h"
 #include "scene/TransformOps.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -37,6 +39,87 @@ std::vector<NodeId> topLevel(Graph& g, const std::vector<std::string>& names, co
     for (const std::string& n : names)
         ids.push_back(nodeNamed(n, cmd).id());
     return xformops::topLevel(g, ids);
+}
+
+/** Bounds of the node and everything under it, in the node's object space. */
+geo::Bounds hierarchyBounds(Graph& g, NodeId root)
+{
+    geo::Bounds b = objectBounds(g, root);
+    const glm::dmat4 toRoot = glm::inverse(g.node(root)->as<glm::dmat4>(Transform::kWorldMatrix));
+    std::function<void(NodeId)> walk = [&](NodeId id) {
+        for (NodeId c : g.children(id))
+        {
+            Node* n = g.node(c);
+            if (geo::Bounds local = objectBounds(g, c); local.valid() && n->type().isA("transform"))
+            {
+                const glm::dmat4 m = toRoot * n->as<glm::dmat4>(Transform::kWorldMatrix);
+                for (int k = 0; k < 8; ++k)
+                    b.extend(glm::dvec3(m * glm::dvec4(k & 1 ? local.max.x : local.min.x, k & 2 ? local.max.y : local.min.y,
+                                                       k & 4 ? local.max.z : local.min.z, 1.0)));
+            }
+            walk(c);
+        }
+    };
+    walk(root);
+    return b;
+}
+
+/**
+ * A joint's frozen rotation moves into jointOrient, rotate and rotateAxis zeroed; its translate stays, like Maya. Frozen
+ * scale keeps its sign, so a mirrored joint stays mirrored. With orient the joint's axes line up with the world instead.
+ * Returns whether the joint's world matrix changed.
+ */
+bool freezeJoint(Graph& g, NodeId id, bool rotate, bool scale, bool orient)
+{
+    const auto& joint = static_cast<const Joint&>(*g.node(id));
+    const glm::dmat4 before = joint.as<glm::dmat4>(Transform::kWorldMatrix);
+    const glm::dmat3 turn = glm::dmat3(joint.preRotation() * joint.rotation() * joint.rotateAxisMatrix());
+    if (scale)
+    {
+        glm::dvec3 s = joint.as<glm::dvec3>(Transform::kScale);
+        g.setValue({id, Transform::kScale, -1}, glm::dvec3(s.x < 0.0 ? -1.0 : 1.0, s.y < 0.0 ? -1.0 : 1.0, s.z < 0.0 ? -1.0 : 1.0));
+    }
+    if (rotate)
+    {
+        const glm::dmat3 parent = rigutil::orthonormal(glm::dmat3(joint.as<glm::dmat4>(Transform::kParentMatrix)));
+        // Under a mirrored parent the X axis can only line up flipped.
+        const glm::dmat3 mirror = glm::determinant(parent) < 0.0 ? glm::dmat3(glm::dvec3(-1, 0, 0), glm::dvec3(0, 1, 0), glm::dvec3(0, 0, 1)) : glm::dmat3(1.0);
+        const glm::dmat3 jo = orient ? glm::transpose(parent) * mirror : turn;
+        g.setValue({id, Transform::kRotate, -1}, glm::dvec3(0.0));
+        g.setValue({id, Transform::kRotateAxis, -1}, glm::dvec3(0.0));
+        g.setValue({id, Joint::kJointOrient, -1}, rigutil::clean(matrixToEuler(jo, RotateOrder::XYZ)));
+    }
+    g.evaluate();
+    const glm::dmat4 after = joint.as<glm::dmat4>(Transform::kWorldMatrix);
+    for (int c = 0; c < 4; ++c)
+        if (glm::length(after[c] - before[c]) > 1e-9)
+            return true;
+    return false;
+}
+
+/** Sets the node's local values so it stays at world under its parent as the parent is now. */
+void keepWorld(Graph& g, NodeId id, const glm::dmat4& world)
+{
+    g.evaluate();
+    const Node& n = *g.node(id);
+    glm::dmat4 local = glm::inverse(n.as<glm::dmat4>(Transform::kParentMatrix)) * world;
+    // A joint compensating its parent's scale has that scale undone after its translate; ask for it up front.
+    if (rig::isJoint(n) && n.as<bool>(Joint::kSegmentScaleCompensate))
+    {
+        const glm::dvec3 parentScale = n.as<glm::dvec3>(Joint::kInverseScale);
+        for (int c = 0; c < 3; ++c)
+            local[c] = glm::dvec4(parentScale * glm::dvec3(local[c]), 0.0);
+    }
+    Transform::setLocalMatrix(g, id, local);
+}
+
+void appendDescendants(Graph& g, NodeId id, std::vector<NodeId>& out)
+{
+    for (NodeId c : g.children(id))
+    {
+        out.push_back(c);
+        appendDescendants(g, c, out);
+    }
 }
 } // namespace
 
@@ -75,8 +158,8 @@ void registerObjectCommands()
 
     ops::registerCommand({
         .name = "centerPivot",
-        .doc = "Move pivots to the centre of each object's bounding box (mesh points, curve points and handles) without moving the "
-               "object.",
+        .doc = "Move pivots to the centre of each object's bounding box (mesh points, curve points and handles, and everything "
+               "parented under it, so a group centres on its children) without moving the object.",
         .positionalDoc = "objects",
         .run = [](const Args& a) -> json {
             Graph& g = graph();
@@ -86,7 +169,7 @@ void registerObjectCommands()
                 Node& n = nodeNamed(name, "centerPivot");
                 if (!n.type().isA("transform"))
                     continue;
-                geo::Bounds b = objectBounds(g, n.id());
+                geo::Bounds b = hierarchyBounds(g, n.id());
                 glm::dvec3 centre = b.valid() ? b.center() : glm::dvec3(0.0);
                 glm::dvec3 world = glm::dvec3(n.as<glm::dmat4>(Transform::kWorldMatrix) * glm::dvec4(centre, 1.0));
                 xformops::setWorldPivot(g, n.id(), world);
@@ -97,18 +180,27 @@ void registerObjectCommands()
 
     ops::registerCommand({
         .name = "freezeTransforms",
-        .doc = "Bake translate/rotate/scale into mesh or curve points (and children's transforms), leaving identity values. "
-               "World positions don't change.",
+        .doc = "Bake translate/rotate/scale into mesh or curve points, leaving identity values. World positions don't change. "
+               "With hierarchy (the default, like Maya) everything parented under the objects is frozen too; without it the "
+               "children's transforms absorb what their parent gives up. Joints keep their translate and take their rotation "
+               "into jointOrient, or with jointOrient line up with the world.",
         .positionalDoc = "objects",
         .flags = {{"translate", "", T::Bool, true, "Freeze translation."},
                   {"rotate", "", T::Bool, true, "Freeze rotation."},
-                  {"scale", "", T::Bool, true, "Freeze scale."}},
+                  {"scale", "", T::Bool, true, "Freeze scale."},
+                  {"hierarchy", "", T::Bool, true, "Freeze everything parented under the objects too."},
+                  {"jointOrient", "", T::Bool, false, "Also line joints' axes up with the world, zeroing their orientation."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
             Graph& g = graph();
             UndoChunk chunk("Freeze Transformations");
-            for (NodeId id : topLevel(g, a.objects(), "freezeTransforms"))
+            std::vector<NodeId> ids = topLevel(g, a.objects(), "freezeTransforms");
+            // Parents first, so each child is frozen after taking on what its parent gave up.
+            if (a.get<bool>("hierarchy", true))
+                for (size_t i = 0, roots = ids.size(); i < roots; ++i)
+                    appendDescendants(g, ids[i], ids);
+            for (NodeId id : ids)
             {
                 g.evaluate();
                 Node* n = g.node(id);
@@ -120,7 +212,18 @@ void registerObjectCommands()
                 for (NodeId c : g.children(id))
                     children.push_back({c, g.node(c)->as<glm::dmat4>(Transform::kWorldMatrix)});
 
+                if (rig::isJoint(*n))
+                {
+                    // An unchanged world needs no child fix-up, which would also bake a segment scale compensate into them.
+                    if (freezeJoint(g, id, a.get<bool>("rotate", true), a.get<bool>("scale", true), a.get<bool>("jointOrient", false)))
+                        for (auto& [c, world] : children)
+                            keepWorld(g, c, world);
+                    continue;
+                }
+
                 glm::dvec3 pivot = xformops::worldPivot(g, id);
+                const glm::dmat3 pivotAxes = xformops::pivotFrame(g, id);
+                const bool customAxes = n->as<glm::dvec3>(Transform::kPivotOrient) != glm::dvec3(0.0);
                 if (a.get<bool>("translate", true))
                     g.setValue({id, Transform::kTranslate, -1}, glm::dvec3(0.0));
                 if (a.get<bool>("rotate", true))
@@ -132,14 +235,17 @@ void registerObjectCommands()
                 g.evaluate();
                 glm::dmat4 after = n->as<glm::dmat4>(Transform::kMatrix);
                 xformops::bakeIntoGeometry(g, id, glm::inverse(after) * before);
-                // The pivot stays where it was in the world, like Maya.
+                // The pivot stays where it was in the world, like Maya, and so do axes the user oriented.
                 xformops::setWorldPivot(g, id, pivot);
+                if (customAxes)
+                    xformops::setWorldPivotFrame(g, id, pivotAxes);
                 g.evaluate();
                 for (auto& [c, world] : children)
-                    Transform::setLocalMatrix(g, c, glm::inverse(g.node(id)->as<glm::dmat4>(Transform::kWorldMatrix)) * world);
+                    keepWorld(g, c, world);
             }
             return nullptr;
         },
+        .adjustable = true,
     });
 
     // What the last hide hid, for showLastHidden.

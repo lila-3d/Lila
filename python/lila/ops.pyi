@@ -1173,7 +1173,7 @@ def centerMeshes(*objects: Any, meshes: Sequence[Any] | None = None, centerInMes
     """
 
 def centerPivot(*objects: Any) -> Any:
-    """Move pivots to the centre of each object's bounding box (mesh points, curve points and handles) without moving the object.
+    """Move pivots to the centre of each object's bounding box (mesh points, curve points and handles, and everything parented under it, so a group centres on its children) without moving the object.
 
     Args:
         objects: objects.
@@ -2704,14 +2704,16 @@ def footPivot(*objects: Any, pivot: str | None = None, position: Sequence[float]
         position: World position; its height is dropped onto the sole. Short form p.
     """
 
-def freezeTransforms(*objects: Any, translate: bool | None = None, rotate: bool | None = None, scale: bool | None = None) -> Any:
-    """Bake translate/rotate/scale into mesh or curve points (and children's transforms), leaving identity values. World positions don't change.
+def freezeTransforms(*objects: Any, translate: bool | None = None, rotate: bool | None = None, scale: bool | None = None, hierarchy: bool | None = None, jointOrient: bool | None = None) -> Any:
+    """Bake translate/rotate/scale into mesh or curve points, leaving identity values. World positions don't change. With hierarchy (the default, like Maya) everything parented under the objects is frozen too; without it the children's transforms absorb what their parent gives up. Joints keep their translate and take their rotation into jointOrient, or with jointOrient line up with the world.
 
     Args:
         objects: objects.
         translate: Freeze translation. Default True.
         rotate: Freeze rotation. Default True.
         scale: Freeze scale. Default True.
+        hierarchy: Freeze everything parented under the objects too. Default True.
+        jointOrient: Also line joints' axes up with the world, zeroing their orientation. Default False.
     """
 
 def fullBodyIk(pins: Sequence[Any] | None = None, hold: Sequence[Any] | None = None, root: str | None = None, stiffness: Any | None = None, moveRoot: bool | None = None, key: bool | None = None, autoPose: bool | None = None, *, p: Sequence[Any] | None = None, h: Sequence[Any] | None = None, r: str | None = None, st: Any | None = None, mr: bool | None = None, k: bool | None = None, ap: bool | None = None) -> Any:
@@ -8444,6 +8446,14 @@ def zeroPivot(*objects: Any) -> Any:
 
     Args:
         objects: objects.
+    """
+
+def zeroPivotRotation(*objects: Any, space: str | None = None) -> Any:
+    """Line the pivots' axes up with the world (or with the object's own axes), leaving their positions and the objects alone.
+
+    Args:
+        objects: objects.
+        space: Axes to line up with. One of 'world', 'object'. Default 'world'.
     """
 
 def refresh() -> None: ...

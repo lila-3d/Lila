@@ -91,7 +91,7 @@ void MainWindow::buildMenus()
                         "window.preferences", "window.extensionManager"});
 
     menu("Modify", "M&odify");
-    menus::addActions("Modify", {"#Transforms", "modify.freezeTransforms", "modify.resetTransforms", "modify.centerPivot", "modify.resetPivot", "modify.zeroPivot", "modify.matchPivot", "modify.matchPivotPosition", "modify.matchPivotOrient", "modify.orientPivot", "modify.pinComponentPivot", "modify.resetComponentPivot",
+    menus::addActions("Modify", {"#Transforms", "modify.freezeTransforms", "modify.resetTransforms", "modify.centerPivot", "modify.resetPivot", "modify.zeroPivot", "modify.zeroPivotRotation", "modify.matchPivot", "modify.matchPivotPosition", "modify.matchPivotOrient", "modify.orientPivot", "modify.pinComponentPivot", "modify.resetComponentPivot",
                                  "#Snapping", "snapSurface.set", "snapSurface.clear", "snapSurface.toggle", "snapSurface.alignToNormal"});
     addSubmenu("Modify", "Scene Origin");
     menus::addActions("Modify/Scene Origin", {"modify.relocateScene", "modify.setDisplayOrigin", "modify.clearDisplayOrigin"});
