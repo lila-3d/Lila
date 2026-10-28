@@ -1,7 +1,11 @@
 #include "ui/FontPicker.h"
 
 #include "core/Paths.h"
+#include "core/PrefStore.h"
+#include "core/Workspace.h"
 #include "curve/Text.h"
+#include "scene/Graph.h"
+#include "scene/Node.h"
 #include "ui/Icons.h"
 #include "ui/MultilineEdit.h"
 
@@ -13,12 +17,17 @@
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QLineEdit>
+#include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
+#include <QStandardItemModel>
+#include <QStringListModel>
 #include <QStyledItemDelegate>
 #include <QToolButton>
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <functional>
 #include <set>
@@ -108,14 +117,86 @@ std::pair<const curve::FontFamily*, std::string> parse(const std::string& value)
 
 bool isRegular(const std::string& style) { return style.empty() || norm(style) == "regular"; }
 
+constexpr const char* kFontPrefs = "fonts";
+constexpr size_t kMaxRecent = 8;
+/** Marks a dropdown row as a section title rather than a family. */
+constexpr int kHeaderRole = Qt::UserRole + 1;
+
+std::vector<std::string> prefList(const char* key)
+{
+    std::vector<std::string> out;
+    json v = PrefStore::get().value(kFontPrefs, key, json::array());
+    if (v.is_array())
+        for (const json& e : v)
+            if (e.is_string())
+                out.push_back(e.get<std::string>());
+    return out;
+}
+
+void addRecent(const std::string& family)
+{
+    std::vector<std::string> list = prefList("/recent");
+    std::erase(list, family);
+    list.insert(list.begin(), family);
+    if (list.size() > kMaxRecent)
+        list.resize(kMaxRecent);
+    PrefStore::get().set(kFontPrefs, "/recent", list);
+}
+
+bool isFavorite(const std::vector<std::string>& favorites, const QString& family)
+{
+    return std::find(favorites.begin(), favorites.end(), family.toStdString()) != favorites.end();
+}
+
+/** The star at the right end of a dropdown row, where a click toggles the favourite. */
+QRect starRect(const QRect& row)
+{
+    int s = std::min(row.height(), 18);
+    return {row.right() - s - 2, row.center().y() - s / 2, s, s};
+}
+
+void drawStar(QPainter* p, const QRect& r, const QColor& color, bool filled)
+{
+    constexpr double pi = 3.14159265358979323846;
+    QPainterPath path;
+    QPointF c = QRectF(r).center();
+    double outer = r.width() * 0.42, inner = outer * 0.45;
+    for (int i = 0; i < 10; ++i)
+    {
+        double a = -pi / 2 + i * pi / 5;
+        double rad = i % 2 ? inner : outer;
+        QPointF pt(c.x() + rad * std::cos(a), c.y() + rad * std::sin(a));
+        if (i)
+            path.lineTo(pt);
+        else
+            path.moveTo(pt);
+    }
+    path.closeSubpath();
+    p->save();
+    p->setRenderHint(QPainter::Antialiasing);
+    p->setPen(QPen(color, 1.2));
+    p->setBrush(filled ? QBrush(color) : Qt::NoBrush);
+    p->drawPath(path);
+    p->restore();
+}
+
 /** Draws each family as its name in the UI font, then a grey sample of the picker's text in that family. */
 class FamilyDelegate : public QStyledItemDelegate
 {
 public:
-    FamilyDelegate(std::function<QString()> sample, QObject* parent) : QStyledItemDelegate(parent), mSample(std::move(sample)) {}
+    /** With stars, every row shows one to click (outlined until starred, on hover); without, only starred rows do. */
+    FamilyDelegate(std::function<QString()> sample, bool stars, QObject* parent)
+        : QStyledItemDelegate(parent), mSample(std::move(sample)), mStars(stars)
+    {
+    }
 
     void paint(QPainter* p, const QStyleOptionViewItem& option, const QModelIndex& index) const override
     {
+        if (index.data(kHeaderRole).toBool())
+        {
+            paintHeader(p, option, index.data().toString());
+            return;
+        }
         QStyleOptionViewItem opt = option;
         initStyleOption(&opt, index);
         QString name = opt.text;
@@ -125,9 +206,19 @@ public:
         QStyle* style = w ? w->style() : QApplication::style();
         style->drawControl(QStyle::CE_ItemViewItem, &opt, p, w);
 
-        QRect r = opt.rect.adjusted(4, 0, -4, 0);
         bool selected = opt.state & QStyle::State_Selected;
         QPalette::ColorRole role = selected ? QPalette::HighlightedText : QPalette::Text;
+        bool favorite = isFavorite(favoriteFonts(), name);
+        QRect star = starRect(opt.rect);
+        if (favorite || (mStars && (opt.state & QStyle::State_MouseOver)))
+        {
+            QColor c = favorite ? QColor(240, 190, 60) : opt.palette.color(role);
+            if (!favorite)
+                c.setAlphaF(0.45f);
+            drawStar(p, star, c, favorite);
+        }
+
+        QRect r = opt.rect.adjusted(4, 0, -(star.width() + 8), 0);
         p->save();
         p->setFont(option.font);
         p->setPen(opt.palette.color(role));
@@ -152,15 +243,82 @@ public:
     QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override
     {
         QSize s = QStyledItemDelegate::sizeHint(option, index);
+        if (index.data(kHeaderRole).toBool())
+            return {s.width(), QFontMetrics(option.font).height() + 6};
         QFont f = familyFont(index.data().toString());
         f.setPointSizeF(option.font.pointSizeF());
         return {s.width(), std::max(s.height(), QFontMetrics(f).height() + 4)};
     }
 
 private:
+    static void paintHeader(QPainter* p, const QStyleOptionViewItem& option, const QString& title)
+    {
+        QFont f = option.font;
+        f.setBold(true);
+        f.setPointSizeF(option.font.pointSizeF() * 0.85);
+        QColor c = option.palette.color(QPalette::Text);
+        c.setAlphaF(0.55f);
+        p->save();
+        p->setFont(f);
+        p->setPen(c);
+        p->drawText(option.rect.adjusted(4, 2, -4, 0), Qt::AlignBottom | Qt::AlignLeft, title.toUpper());
+        p->restore();
+    }
+
     std::function<QString()> mSample;
+    bool mStars = false;
 };
+
+/** The dropdown's quick sections by title, each family in the first section that has it. */
+std::vector<std::pair<QString, std::vector<std::string>>> quickSections()
+{
+    std::vector<std::pair<QString, std::vector<std::string>>> out;
+    std::set<std::string> seen;
+    auto add = [&](const char* title, std::vector<std::string> list) {
+        std::erase_if(list, [&](const std::string& f) { return !familyNamed(f) || !seen.insert(f).second; });
+        if (!list.empty())
+            out.emplace_back(title, std::move(list));
+    };
+    add("In Scene", sceneFonts());
+    std::vector<std::string> favorites = favoriteFonts();
+    std::sort(favorites.begin(), favorites.end());
+    add("Favorites", favorites);
+    add("Recent", recentFonts());
+    return out;
+}
 } // namespace
+
+std::vector<std::string> favoriteFonts() { return prefList("/favorites"); }
+
+void setFavoriteFont(const std::string& family, bool favorite)
+{
+    std::vector<std::string> list = favoriteFonts();
+    std::erase(list, family);
+    if (favorite)
+        list.push_back(family);
+    PrefStore::get().set(kFontPrefs, "/favorites", list, Workspace::get().isOpen() ? PrefScope::Workspace : PrefScope::User);
+}
+
+std::vector<std::string> recentFonts() { return prefList("/recent"); }
+
+std::vector<std::string> sceneFonts()
+{
+    std::set<std::string> found;
+    scene::Graph& g = scene::Graph::current();
+    for (scene::NodeId id : g.nodes())
+    {
+        const scene::Node* n = g.node(id);
+        if (!n)
+            continue;
+        const std::vector<scene::AttrDef>& attrs = n->type().attrs;
+        for (size_t i = 0; i < attrs.size(); ++i)
+            if (attrs[i].flags & scene::AttrFont)
+                if (const auto* v = std::get_if<std::string>(&n->value(int(i))))
+                    if (const curve::FontFamily* fam = parse(*v).first)
+                        found.insert(fam->family);
+    }
+    return {found.begin(), found.end()};
+}
 
 bool styleIsBold(const std::string& style) { return contains(style, {"bold", "black", "heavy", "extrabold", "ultrabold"}); }
 bool styleIsItalic(const std::string& style) { return contains(style, {"italic", "oblique"}); }
@@ -184,8 +342,10 @@ FontPicker::FontPicker(QWidget* parent) : QWidget(parent)
     mFamily->completer()->setCompletionMode(QCompleter::PopupCompletion);
     mFamily->completer()->setCaseSensitivity(Qt::CaseInsensitive);
     auto sample = [this] { return previewText(); };
-    mFamily->setItemDelegate(new FamilyDelegate(sample, mFamily));
-    mFamily->completer()->popup()->setItemDelegate(new FamilyDelegate(sample, mFamily));
+    mFamily->setItemDelegate(new FamilyDelegate(sample, true, mFamily));
+    mFamily->completer()->popup()->setItemDelegate(new FamilyDelegate(sample, false, mFamily));
+    mFamily->view()->setMouseTracking(true);
+    mFamily->view()->viewport()->installEventFilter(this);
     mFamily->view()->setMinimumWidth(360);
     mFamily->completer()->popup()->setMinimumWidth(360);
     connect(mFamily, &QComboBox::activated, this, [this](int i) { pickFamily(mFamily->itemText(i)); });
@@ -198,6 +358,11 @@ FontPicker::FontPicker(QWidget* parent) : QWidget(parent)
     mStyle->setToolTip("Style: the weights and italics the family comes in.");
     mStyle->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     connect(mStyle, &QComboBox::activated, this, [this](int) { commit(); });
+
+    mStar = new QToolButton;
+    mStar->setIcon(icon("star"));
+    mStar->setCheckable(true);
+    connect(mStar, &QToolButton::clicked, this, [this] { toggleFavorite(QString::fromStdString(family())); });
 
     mBrowse = new QToolButton;
     mBrowse->setIcon(icon("folder-open"));
@@ -215,6 +380,7 @@ FontPicker::FontPicker(QWidget* parent) : QWidget(parent)
 
     h->addWidget(mFamily, 3);
     h->addWidget(mStyle, 2);
+    h->addWidget(mStar);
     h->addWidget(mBrowse);
 }
 
@@ -230,11 +396,13 @@ void FontPicker::setValue(const std::string& font)
         mFamily->setToolTip(QString::fromStdString(font));
         mStyle->clear();
         mStyle->setEnabled(false);
+        updateStar();
         return;
     }
     mFamily->setToolTip("Font family. Type to filter.");
     mFamily->setCurrentIndex(mFamily->findText(QString::fromStdString(fam->family)));
     fillStyles(QString::fromStdString(fam->family), QString::fromStdString(style));
+    updateStar();
 }
 
 std::string FontPicker::family() const
@@ -323,19 +491,81 @@ void FontPicker::fillFamilies()
 {
     QSignalBlocker block(mFamily);
     mFamily->clear();
+    mSections = quickSections();
+    auto* model = qobject_cast<QStandardItemModel*>(mFamily->model());
+    auto addHeader = [&](const QString& title) {
+        mFamily->addItem(title);
+        QStandardItem* item = model->item(mFamily->count() - 1);
+        item->setFlags(Qt::NoItemFlags);
+        item->setData(true, kHeaderRole);
+    };
+    for (const auto& [title, list] : mSections)
+    {
+        addHeader(title);
+        for (const std::string& f : list)
+            mFamily->addItem(QString::fromStdString(f));
+    }
+    if (!mSections.empty())
+        addHeader("All Fonts");
+    QStringList all;
     for (const curve::FontFamily& f : families())
-        mFamily->addItem(QString::fromStdString(f.family));
+    {
+        all << QString::fromStdString(f.family);
+        mFamily->addItem(all.back());
+    }
+    // Typing filters the families alone, each once, without the section titles.
+    auto* completerModel = qobject_cast<QStringListModel*>(mFamily->completer()->model());
+    if (!completerModel)
+    {
+        completerModel = new QStringListModel(mFamily->completer());
+        mFamily->completer()->setModel(completerModel);
+    }
+    completerModel->setStringList(all);
     mFamiliesVersion = familyList().version;
 }
 
 bool FontPicker::eventFilter(QObject* obj, QEvent* e)
 {
-    if (obj == mFamily && (e->type() == QEvent::FocusIn || e->type() == QEvent::MouseButtonPress) && refreshFamilies() != mFamiliesVersion)
+    if (obj == mFamily && (e->type() == QEvent::FocusIn || e->type() == QEvent::MouseButtonPress) &&
+        (refreshFamilies() != mFamiliesVersion || quickSections() != mSections))
     {
         fillFamilies();
         setValue(mValue);
     }
+    // A click on a row's star toggles the favourite and keeps the dropdown open; the sections refill when it next opens.
+    if (obj == mFamily->view()->viewport() && (e->type() == QEvent::MouseButtonPress || e->type() == QEvent::MouseButtonRelease))
+    {
+        QPoint pos = static_cast<QMouseEvent*>(e)->position().toPoint();
+        QModelIndex index = mFamily->view()->indexAt(pos);
+        if (index.isValid() && !index.data(kHeaderRole).toBool() && starRect(mFamily->view()->visualRect(index)).contains(pos))
+        {
+            if (e->type() == QEvent::MouseButtonRelease)
+            {
+                toggleFavorite(index.data().toString());
+                mFamily->view()->viewport()->update();
+            }
+            return true;
+        }
+    }
     return QWidget::eventFilter(obj, e);
+}
+
+void FontPicker::toggleFavorite(const QString& family)
+{
+    if (family.isEmpty())
+        return;
+    setFavoriteFont(family.toStdString(), !isFavorite(favoriteFonts(), family));
+    updateStar();
+}
+
+void FontPicker::updateStar()
+{
+    std::string fam = family();
+    bool on = !fam.empty() && isFavorite(favoriteFonts(), QString::fromStdString(fam));
+    mStar->setEnabled(!fam.empty());
+    mStar->setChecked(on);
+    mStar->setToolTip(on ? "Favourite: listed at the top of the font dropdown. Click to remove."
+                         : "Favourite this font, listing it at the top of the font dropdown. Kept with the workspace when one is open.");
 }
 
 QString FontPicker::previewText() const
@@ -362,6 +592,8 @@ void FontPicker::commit()
     if (v == mValue)
         return;
     mValue = v;
+    addRecent(fam);
+    updateStar();
     Q_EMIT chosen(QString::fromStdString(v));
 }
 } // namespace lila::ui
