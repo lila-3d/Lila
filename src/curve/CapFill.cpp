@@ -69,7 +69,7 @@ public:
             return;
         std::vector<int> cav = {t0};
         std::vector<uint8_t>& in = mMark;
-        in.assign(tris.size(), 0);
+        in.resize(tris.size(), 0);
         in[size_t(t0)] = 1;
         for (size_t k = 0; k < cav.size(); ++k)
         {
@@ -104,7 +104,10 @@ public:
             }
         }
         for (int c : cav)
+        {
             tris[size_t(c)].dead = true;
+            in[size_t(c)] = 0;
+        }
         std::unordered_map<int, int> byStart, byEnd;
         size_t first = tris.size();
         for (const Bnd& e : bnd)
@@ -114,6 +117,7 @@ public:
             t.v = {e.a, e.b, p};
             t.n[2] = e.outside;
             tris.push_back(t);
+            touch(id);
             byStart[e.a] = id;
             byEnd[e.b] = id;
             if (e.outside >= 0)
@@ -137,11 +141,10 @@ public:
 
     bool hasEdge(int a, int b) const
     {
-        for (const Tri& t : tris)
-            if (!t.dead)
-                for (int i = 0; i < 3; ++i)
-                    if ((t.v[size_t(i)] == a && t.v[size_t((i + 1) % 3)] == b) || (t.v[size_t(i)] == b && t.v[size_t((i + 1) % 3)] == a))
-                        return true;
+        for (int t : around(a))
+            for (int v : tris[size_t(t)].v)
+                if (v == b)
+                    return true;
         return false;
     }
 
@@ -164,10 +167,10 @@ public:
         auto onLine = [&](int c) { return std::abs(orient(A, B, pts[size_t(c)])) <= 1e-14 * glm::length(B - A); };
         // The triangle around a the segment leaves through.
         int cur = -1, right = -1, left = -1;
-        for (size_t t = 0; t < tris.size() && cur < 0; ++t)
+        for (int t : around(a))
         {
-            if (tris[t].dead)
-                continue;
+            if (cur >= 0)
+                break;
             for (int i = 0; i < 3; ++i)
             {
                 if (tris[t].v[size_t(i)] != a)
@@ -179,7 +182,7 @@ public:
                     return recover(a, d, depth + 1) && recover(d, b, depth + 1);
                 if (orient(A, B, pts[size_t(c)]) < 0.0 && orient(A, B, pts[size_t(d)]) > 0.0)
                 {
-                    cur = int(t);
+                    cur = t;
                     right = c;
                     left = d;
                 }
@@ -252,12 +255,53 @@ public:
                 auto it = half.find(dk(tris[t].v[size_t((i + 2) % 3)], tris[t].v[size_t((i + 1) % 3)]));
                 tris[t].n[size_t(i)] = it != half.end() ? it->second.first : -1;
             }
+        mVertTri.assign(pts.size(), -1);
+        for (size_t t = 0; t < tris.size(); ++t)
+            touch(int(t));
+        mMark.assign(tris.size(), 0);
         mLast = 0;
     }
 
 private:
     std::vector<uint8_t> mMark;
+    std::vector<int> mVertTri; // per point, a live triangle using it
     int mLast = 0;
+
+    void touch(int t)
+    {
+        if (mVertTri.size() < pts.size())
+            mVertTri.resize(pts.size(), -1);
+        for (int v : tris[size_t(t)].v)
+            mVertTri[size_t(v)] = t;
+    }
+
+    /** The live triangles using point a, walked across their shared edges. */
+    std::vector<int> around(int a) const
+    {
+        std::vector<int> out;
+        int t0 = size_t(a) < mVertTri.size() ? mVertTri[size_t(a)] : -1;
+        if (t0 < 0 || tris[size_t(t0)].dead)
+            for (size_t t = 0; t < tris.size() && t0 < 0; ++t)
+                if (!tris[t].dead && (tris[t].v[0] == a || tris[t].v[1] == a || tris[t].v[2] == a))
+                    t0 = int(t);
+        if (t0 < 0)
+            return out;
+        out.push_back(t0);
+        for (size_t k = 0; k < out.size(); ++k)
+        {
+            const Tri& t = tris[size_t(out[k])];
+            for (int i = 0; i < 3; ++i)
+            {
+                int nb = t.n[size_t(i)];
+                if (t.v[size_t(i)] == a || nb < 0 || tris[size_t(nb)].dead || std::find(out.begin(), out.end(), nb) != out.end())
+                    continue;
+                const auto& v = tris[size_t(nb)].v;
+                if (v[0] == a || v[1] == a || v[2] == a)
+                    out.push_back(nb);
+            }
+        }
+        return out;
+    }
 
     int locate(const D2& p)
     {
@@ -303,6 +347,7 @@ private:
         if (orient(pts[size_t(a)], pts[size_t(b)], pts[size_t(c)]) < 0.0)
             std::swap(b, c);
         tris.push_back({{a, b, c}, {-1, -1, -1}, false});
+        touch(int(tris.size()) - 1);
     }
 
     /** Delaunay triangles over a chain a, p1 .. pk, b lying to one side of a-b (Anglada 1997). */
@@ -361,48 +406,64 @@ double quadSkew(const std::vector<D2>& q)
     return s;
 }
 
-/** Best split of an even polygon into convex quads (worst corner skew, quads), or none. */
-std::pair<double, std::vector<std::vector<int>>> splitIntoQuads(const std::vector<int>& poly, const std::function<D2(int)>& at, double maxSkew)
+using QuadSplit = std::pair<double, std::vector<std::vector<int>>>;
+
+/** The best split of the polygon's corners left in mask: worst skew, the first quad's corners and what is left after it. */
+struct MaskSplit
 {
-    std::pair<double, std::vector<std::vector<int>>> best{1e300, {}};
-    auto pts = [&](const std::vector<int>& p) {
-        std::vector<D2> q;
-        for (int v : p)
-            q.push_back(at(v));
-        return q;
-    };
-    if (poly.size() == 4)
+    double skew = 1e300;
+    std::array<int, 4> quad{};
+    uint64_t rest = 0;
+};
+
+const MaskSplit& splitMasked(const std::vector<D2>& p, uint64_t mask, double maxSkew, std::unordered_map<uint64_t, MaskSplit>& memo)
+{
+    if (auto it = memo.find(mask); it != memo.end())
+        return it->second;
+    std::vector<int> idx;
+    for (int i = 0; i < int(p.size()); ++i)
+        if (mask >> i & 1)
+            idx.push_back(i);
+    MaskSplit best;
+    size_t n = idx.size();
+    for (size_t i = 0; n >= 4 && n % 2 == 0 && i < (n == 4 ? 1 : n); ++i)
     {
-        std::vector<D2> q = pts(poly);
+        std::array<int, 4> quad = {idx[i], idx[(i + 1) % n], idx[(i + 2) % n], idx[(i + 3) % n]};
+        std::vector<D2> q = {p[size_t(quad[0])], p[size_t(quad[1])], p[size_t(quad[2])], p[size_t(quad[3])]};
         double s = quadSkew(q);
-        if (convexCcw(q) && s <= maxSkew)
-            best = {s, {poly}};
-        return best;
+        if (!convexCcw(q) || s > maxSkew || s >= best.skew)
+            continue;
+        uint64_t rest = n == 4 ? 0 : mask & ~(uint64_t(1) << quad[1] | uint64_t(1) << quad[2]);
+        double worst = rest ? std::max(s, splitMasked(p, rest, maxSkew, memo).skew) : s;
+        if (worst < best.skew)
+            best = {worst, quad, rest};
     }
-    size_t n = poly.size();
-    for (size_t i = 0; i < n; ++i)
+    return memo[mask] = best;
+}
+
+/** Best split of an even polygon into convex quads (worst corner skew, quads), or none. */
+QuadSplit splitIntoQuads(const std::vector<int>& poly, const std::function<D2(int)>& at, double maxSkew)
+{
+    QuadSplit out{1e300, {}};
+    if (poly.size() < 4 || poly.size() % 2 || poly.size() > 64)
+        return out;
+    std::vector<D2> p;
+    for (int v : poly)
+        p.push_back(at(v));
+    // Removing quads in different orders leaves the same corners again and again: each remainder is solved once.
+    std::unordered_map<uint64_t, MaskSplit> memo;
+    uint64_t all = poly.size() == 64 ? ~uint64_t(0) : (uint64_t(1) << poly.size()) - 1;
+    const MaskSplit& top = splitMasked(p, all, maxSkew, memo);
+    if (top.skew > maxSkew)
+        return out;
+    out.first = top.skew;
+    for (uint64_t mask = all; mask;)
     {
-        std::vector<int> quad = {poly[i], poly[(i + 1) % n], poly[(i + 2) % n], poly[(i + 3) % n]};
-        std::vector<D2> q = pts(quad);
-        double s = quadSkew(q);
-        if (!convexCcw(q) || s > maxSkew || s >= best.first)
-            continue;
-        std::vector<int> rest;
-        for (size_t k = 3; k <= n; ++k)
-            rest.push_back(poly[(i + k) % n]);
-        auto sub = splitIntoQuads(rest, at, maxSkew);
-        if (sub.second.empty())
-            continue;
-        double worst = std::max(s, sub.first);
-        if (worst < best.first)
-        {
-            best.first = worst;
-            best.second = {quad};
-            for (auto& f : sub.second)
-                best.second.push_back(std::move(f));
-        }
+        const MaskSplit& m = memo.at(mask);
+        out.second.push_back({poly[size_t(m.quad[0])], poly[size_t(m.quad[1])], poly[size_t(m.quad[2])], poly[size_t(m.quad[3])]});
+        mask = m.rest;
     }
-    return best;
+    return out;
 }
 
 /** The boundary loop of a patch of faces, or empty when it is not one simple loop. */

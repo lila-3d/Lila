@@ -16,6 +16,7 @@
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
+#include "scene/Repeat.h"
 
 #include <algorithm>
 #include <fstream>
@@ -257,7 +258,7 @@ std::vector<D2> profileFromCurve(const Splines& sp)
 BevelPlusOptions bevelPlusOptionsOf(const Node& n)
 {
     BevelPlusOptions o;
-    o.extrudeDepth = std::max(0.0, f(n, "extrudeDepth"));
+    o.extrudeDepth = f(n, "extrudeDepth");
     o.extrudeDivisions = int(std::max<int64_t>(1, i(n, "extrudeDivisions")));
     auto side = [&](const char* prefix, bool on) {
         std::string p(prefix);
@@ -293,6 +294,9 @@ PlugValue bevelRun(const Node& n, std::vector<std::string>& warnings)
     Splines in = allCurvesOf(n);
     if (in.empty())
         return meshValue({});
+    glm::dmat4 toMesh = glm::inverse(n.as<glm::dmat4>(idx(n, "meshMatrix")));
+    for (Spline& s : in)
+        transform(s, toMesh);
     BevelPlusOptions o = bevelPlusOptionsOf(n);
     if (o.front.profile == BevelProfile::Custom && o.front.custom.size() < 2)
         warnings.push_back("custom profile: connect a profile curve or set customProfile; straight is used");
@@ -393,15 +397,17 @@ void registerTypesHere()
 
     std::vector<AttrDef> bp = curveInputs("Closed planar curves; loops inside others are holes. World space.");
     bp.push_back(dataIn("profileCurve", "A curve drawn in the front view as the custom bevel profile: x inset, y rise."));
-    for (AttrDef a : {fAttr("extrudeDepth", 2.0, "Length of the straight sides along the normal, cm.", ext, 0.0),
+    bp.push_back({.name = "meshMatrix", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = AttrInput | AttrStorable | AttrHidden,
+                  .doc = "The mesh's world matrix when it was made; the curves are read relative to it, so the mesh sits on their transform."});
+    for (AttrDef a : {fAttr("extrudeDepth", 2.0, "Length of the straight sides along the normal, cm; negative extrudes the other way.", ext),
                       iAttr("extrudeDivisions", 1, "Rows of faces along the sides.", ext, 1),
                       bAttr("frontBevel", true, "Bevel the front.", fb),
-                      fAttr("frontWidth", 0.5, "How far in from the outline the front bevel reaches, cm.", fb, 0.0),
+                      fAttr("frontWidth", 0.3, "How far in from the outline the front bevel reaches, cm.", fb, 0.0),
                       fAttr("frontDepth", 0.5, "How far the front bevel rises past the sides, cm.", fb, 0.0),
                       eAttr("frontProfile", kProfiles, 0, "Shape across the front bevel: straight, convex round, concave cove, steps or custom.", fb),
                       iAttr("frontSegments", 1, "Segments across the front bevel (steps for step).", fb, 1),
                       bAttr("backBevel", true, "Bevel the back.", bb),
-                      fAttr("backWidth", 0.5, "How far in from the outline the back bevel reaches, cm.", bb, 0.0),
+                      fAttr("backWidth", 0.3, "How far in from the outline the back bevel reaches, cm.", bb, 0.0),
                       fAttr("backDepth", 0.5, "How far the back bevel reaches past the sides, cm.", bb, 0.0),
                       eAttr("backProfile", kProfiles, 0, "Shape across the back bevel.", bb),
                       iAttr("backSegments", 1, "Segments across the back bevel.", bb, 1),
@@ -522,6 +528,14 @@ std::vector<FlagDef> attrFlags(const std::string& type)
             break;
         default: break;
         }
+        // The attribute's default, so a field (the adjust popup's too) shows what the node gets when the flag isn't passed.
+        if (d.type == PlugType::Enum)
+        {
+            if (const int64_t* k = std::get_if<int64_t>(&d.defaultValue); k && *k >= 0 && size_t(*k) < d.enumNames.size())
+                fd.defaultValue = d.enumNames[size_t(*k)];
+        }
+        else if (d.type == PlugType::Float || d.type == PlugType::Bool || d.type == PlugType::Int || d.type == PlugType::String || d.type == PlugType::Vec3)
+            fd.defaultValue = toJson(d.defaultValue);
         out.push_back(std::move(fd));
     }
     return out;
@@ -612,8 +626,47 @@ json meshResult(Graph& g, Node& op, const Args& a, const char* defaultName)
     return json::array({mesh->path(), opName});
 }
 
+/** Text reads best as a flat-faced slab: no bevels, no back cap, a shallow depth. */
+std::vector<FlagDef> textMeshDefaults(std::vector<FlagDef> flags)
+{
+    const std::map<std::string, json> defaults = {{"frontBevel", false}, {"backBevel", false}, {"backCap", false}, {"extrudeDepth", 0.5}};
+    for (FlagDef& f : flags)
+        if (auto it = defaults.find(f.name); it != defaults.end())
+            f.defaultValue = it->second;
+    return flags;
+}
+
+/** The curveText node building this curve, if any. */
+Node* textSourceOf(Graph& g, const Node& curve)
+{
+    std::optional<PlugRef> src = g.source({curve.id(), CurveShape::kCreate, -1});
+    Node* n = src ? g.node(src->node) : nullptr;
+    return n && n->type().isA("curveText") ? n : nullptr;
+}
+
+/** A bevelPlus on the curves, its mesh placed on the first curve's transform so its pivot and axes are the curves'. */
+json bevelResult(Graph& g, const std::vector<Node*>& curves, Node* profile, const Args& a, const char* cmd, const char* defaultName)
+{
+    Node* op = g.createNode(*types::find("bevelPlus"), {}, kNoNode, true);
+    applyAttrFlags(g, *op, a, cmd);
+    connectInputs(g, *op, curves);
+    if (profile)
+    {
+        g.connect({profile->id(), CurveShape::kWorldSpace, -1}, {op->id(), op->type().attrIndex("profileCurve"), -1});
+        for (const char* side : {"frontProfile", "backProfile"})
+            if (a.get<std::string>(side, "straight") == "straight")
+                g.setValue({op->id(), op->type().attrIndex(side), -1}, int64_t(BevelProfile::Custom));
+    }
+    g.evaluate();
+    glm::dmat4 frame = curves.front()->as<glm::dmat4>(Transform::kWorldMatrix);
+    g.setValue({op->id(), op->type().attrIndex("meshMatrix"), -1}, frame);
+    json r = meshResult(g, *op, a, defaultName);
+    repeat::setWorldMatrix(g, g.find(r[0].get<std::string>())->id(), frame);
+    return r;
+}
+
 void layout(const std::string& command, const std::string& type, std::vector<std::string> order, std::map<std::string, ops::options::Override::Range> ranges,
-            std::vector<std::string> hidden = {})
+            std::vector<std::string> hidden = {}, std::string docs = {})
 {
     namespace opt = ops::options;
     opt::Override o;
@@ -624,6 +677,7 @@ void layout(const std::string& command, const std::string& type, std::vector<std
         if (!d.category.empty())
             o.sections[d.name] = d.category;
     o.ranges = std::move(ranges);
+    o.docs = std::move(docs);
     opt::setOverride(command, std::move(o));
 }
 
@@ -874,7 +928,8 @@ void registerCommandsHere()
     });
     layout("textCurves", "curveText", {"text", "font", "size", "alignment", "anchor", "wrapWidth"},
            {{"size", {0.0, 1e5, 0.5, " cm"}}, {"letterSpacing", {-1e4, 1e4, 0.1, " cm"}}, {"wordSpacing", {-1e4, 1e4, 0.1, " cm"}},
-            {"wrapWidth", {0.0, 1e5, 1.0, " cm"}}, {"weight", {-1e4, 1e4, 0.01, " cm"}}, {"slant", {-60.0, 60.0, 1.0, " deg"}}});
+            {"wrapWidth", {0.0, 1e5, 1.0, " cm"}}, {"weight", {-1e4, 1e4, 0.01, " cm"}}, {"slant", {-60.0, 60.0, 1.0, " deg"}}},
+           {}, "curves?id=text");
     if (const ops::options::Override* ov = ops::options::findOverride("textCurves"))
     {
         ops::options::Override o = *ov;
@@ -939,25 +994,16 @@ void registerCommandsHere()
             Node* prof = a.has("profileCurve") ? &curveNamed(g, a.get<std::string>("profileCurve"), "bevelPlus") : nullptr;
             if (prof)
                 std::erase(curves, prof);
-            Node* op = g.createNode(*types::find("bevelPlus"), {}, kNoNode, true);
-            applyAttrFlags(g, *op, a, "bevelPlus");
-            connectInputs(g, *op, curves);
-            if (prof)
-            {
-                g.connect({prof->id(), CurveShape::kWorldSpace, -1}, {op->id(), op->type().attrIndex("profileCurve"), -1});
-                if (!a.has("frontProfile"))
-                    g.setValue({op->id(), op->type().attrIndex("frontProfile"), -1}, int64_t(BevelProfile::Custom));
-                if (!a.has("backProfile"))
-                    g.setValue({op->id(), op->type().attrIndex("backProfile"), -1}, int64_t(BevelProfile::Custom));
-            }
-            return meshResult(g, *op, a, "BevelPlus");
+            if (curves.empty())
+                throw CommandError("bevelPlus: select closed curves besides the profile");
+            return bevelResult(g, curves, prof, a, "bevelPlus", "BevelPlus");
         },
         .adjustable = true,
     });
     layout("bevelPlus", "bevelPlus",
            {"extrudeDepth", "extrudeDivisions", "frontBevel", "frontWidth", "frontDepth", "frontProfile", "frontSegments", "customProfile", "backBevel",
             "backWidth", "backDepth", "backProfile", "backSegments"},
-           {{"extrudeDepth", {0.0, 1e5, 0.1, " cm"}},
+           {{"extrudeDepth", {-1e5, 1e5, 0.1, " cm"}},
             {"frontWidth", {0.0, 1e4, 0.05, " cm"}},
             {"frontDepth", {0.0, 1e4, 0.05, " cm"}},
             {"backWidth", {0.0, 1e4, 0.05, " cm"}},
@@ -965,7 +1011,64 @@ void registerCommandsHere()
             {"capSpacing", {0.0, 1e4, 0.1, " cm"}},
             {"smoothingAngle", {0.0, 180.0, 1.0, " deg"}},
             {"maxAngle", {0.5, 45.0, 0.5, " deg"}}},
-           {"profileCurve"});
+           {"profileCurve"}, "curves?id=planar-curves");
+
+    ops::registerCommand({
+        .name = "textMesh",
+        .doc = "Make text as a solid mesh in one step: a curveText node feeding a bevelPlus, both live, so the text, font, layout, "
+               "depth and bevels stay editable. Given or with text curves selected, bevels those instead (the text settings are "
+               "left as they are), the mesh on their transform. Takes every textCurves and bevelPlus setting. "
+               "Returns [mesh, curveText, bevelPlus].",
+        .positionalDoc = "textCurves",
+        .flags = withFlags(textMeshDefaults(withFlags(attrFlags("curveText"), attrFlags("bevelPlus"))),
+                           {chFlag(), {"name", "n", T::String, nullptr, "Mesh name; made unique."}}),
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            std::vector<Node*> curves;
+            for (const json& p : a.positional)
+                curves.push_back(&curveNamed(g, p.get<std::string>(), "textMesh"));
+            if (curves.empty())
+                for (NodeId id : g.selection())
+                    if (Node* n = g.node(id); n && n->type().isA("curve") && textSourceOf(g, *n))
+                        curves.push_back(n);
+            if (!curves.empty())
+            {
+                json r = bevelResult(g, curves, nullptr, a, "textMesh", "Text");
+                Node* text = textSourceOf(g, *curves.front());
+                return json::array({r[0], text ? json(text->path()) : json(), r[1]});
+            }
+            Node* text = g.createNode(*types::find("curveText"), {}, kNoNode, true);
+            applyAttrFlags(g, *text, a, "textMesh");
+            Node* op = g.createNode(*types::find("bevelPlus"), {}, kNoNode, true);
+            applyAttrFlags(g, *op, a, "textMesh");
+            g.connect({text->id(), text->type().attrIndex("outCurve"), -1}, {op->id(), op->type().attrIndex("inCurves")});
+            json r = meshResult(g, *op, a, "Text");
+            if (r[1].is_null())
+            {
+                g.deleteNode(text->id());
+                return json::array({r[0], nullptr, nullptr});
+            }
+            return json::array({r[0], text->path(), r[1]});
+        },
+        .adjustable = true,
+    });
+    {
+        namespace opt = ops::options;
+        opt::Override o;
+        o.order = {"text", "font", "size", "alignment", "anchor", "wrapWidth", "extrudeDepth", "frontBevel", "frontWidth", "frontDepth", "frontProfile",
+                   "frontSegments", "backBevel", "backWidth", "backDepth", "backProfile", "backSegments"};
+        o.hidden = {"name"};
+        for (const char* type : {"curveText", "bevelPlus"})
+            for (const AttrDef& d : types::find(type)->ownAttrs)
+                if (!d.category.empty())
+                    o.sections[d.name] = d.category;
+        for (const char* cmd : {"textCurves", "bevelPlus"})
+            for (const auto& [flag, range] : opt::findOverride(cmd)->ranges)
+                o.ranges.emplace(flag, range);
+        o.editors = {{"text", "multiline"}, {"font", "font"}};
+        o.docs = "curves?id=text";
+        opt::setOverride("textMesh", std::move(o));
+    }
 }
 } // namespace
 

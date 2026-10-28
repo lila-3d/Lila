@@ -3,6 +3,7 @@
 #include "core/Export.h"
 #include "curve/Spline.h"
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -93,4 +94,7 @@ LILA_SCENE_API std::vector<std::string> fontNames();
 
 /** Every bundled and installed family with its styles, sorted by family. */
 LILA_SCENE_API std::vector<FontFamily> fontFamilies();
+
+/** Changes when the installed fonts do (checked on each call), so pickers know to refill. */
+LILA_SCENE_API uint64_t fontListVersion();
 } // namespace lila::curve

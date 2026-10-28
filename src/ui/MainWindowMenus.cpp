@@ -153,7 +153,7 @@ void MainWindow::buildMenus()
                                  "curve.attach", "curve.detach", "curve.reverse", "curve.close", "curve.open", "curve.deletePoints", "#Blend and Trim",
                                  "curve.blendTool", "curve.blend", "curve.match", "curve.trimTool", "curve.extend", "curve.split", "curve.fair"});
     addSubmenu("Curves", "Planar");
-    menus::addActions("Curves/Planar", {"curve.text", "curve.bevelPlus", "", "curve.booleanUnion", "curve.booleanSubtract", "curve.booleanIntersect",
+    menus::addActions("Curves/Planar", {"curve.text", "curve.textMesh", "curve.bevelPlus", "", "curve.booleanUnion", "curve.booleanSubtract", "curve.booleanIntersect",
                                         "curve.booleanXor", "", "curve.offsetRegion", "curve.insetSkeleton", "curve.centerLine", "", "curve.roof"});
     addSubmenu("Curves", "Deform Curves");
     menus::addActions("Curves/Deform Curves", {"curve.bend", "curve.curl", "curve.scaleCurvature", "curve.smooth"});

@@ -206,10 +206,39 @@ const std::vector<FontEntry>& bundledFonts()
     return fonts;
 }
 
-const std::vector<FontEntry>& systemFonts()
+struct SystemFonts
 {
-    static const std::vector<FontEntry> fonts = scan(systemFontDirs());
-    return fonts;
+    std::mutex mutex;
+    std::shared_ptr<const std::vector<FontEntry>> fonts;
+    std::vector<fs::file_time_type> stamps;
+    uint64_t version = 0;
+};
+
+SystemFonts& systemFontState()
+{
+    static SystemFonts s;
+    return s;
+}
+
+/** The installed fonts, rescanned when a font folder changes: installing or removing a font touches its folder. */
+std::shared_ptr<const std::vector<FontEntry>> systemFonts()
+{
+    SystemFonts& s = systemFontState();
+    std::vector<fs::path> dirs = systemFontDirs();
+    std::vector<fs::file_time_type> stamps;
+    for (const fs::path& d : dirs)
+    {
+        std::error_code ec;
+        stamps.push_back(fs::last_write_time(d, ec));
+    }
+    std::lock_guard lock(s.mutex);
+    if (!s.fonts || stamps != s.stamps)
+    {
+        s.fonts = std::make_shared<const std::vector<FontEntry>>(scan(dirs));
+        s.stamps = std::move(stamps);
+        ++s.version;
+    }
+    return s.fonts;
 }
 
 const FontEntry* match(const std::vector<FontEntry>& fonts, const std::string& q)
@@ -384,7 +413,8 @@ std::string findFont(std::string_view nameOrPath)
     std::string q = norm(name);
     if (const FontEntry* e = match(bundledFonts(), q))
         return entryPath(*e);
-    if (const FontEntry* e = match(systemFonts(), q))
+    auto installed = systemFonts();
+    if (const FontEntry* e = match(*installed, q))
         return entryPath(*e);
     return {};
 }
@@ -392,7 +422,8 @@ std::string findFont(std::string_view nameOrPath)
 std::vector<std::string> fontNames()
 {
     std::vector<std::string> out;
-    for (const auto* list : {&bundledFonts(), &systemFonts()})
+    auto installed = systemFonts();
+    for (const auto* list : {&bundledFonts(), installed.get()})
         for (const FontEntry& e : *list)
             out.push_back(e.family + (e.style.empty() ? "" : " " + e.style));
     std::sort(out.begin(), out.end());
@@ -400,10 +431,18 @@ std::vector<std::string> fontNames()
     return out;
 }
 
+uint64_t fontListVersion()
+{
+    systemFonts();
+    std::lock_guard lock(systemFontState().mutex);
+    return systemFontState().version;
+}
+
 std::vector<FontFamily> fontFamilies()
 {
     std::map<std::string, std::vector<std::string>> byFamily;
-    for (const auto* list : {&bundledFonts(), &systemFonts()})
+    auto installed = systemFonts();
+    for (const auto* list : {&bundledFonts(), installed.get()})
         for (const FontEntry& e : *list)
         {
             std::vector<std::string>& styles = byFamily[e.family];

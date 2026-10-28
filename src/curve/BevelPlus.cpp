@@ -94,8 +94,8 @@ void unwrapU(std::vector<glm::vec2>& uv, double loopLen, double scale)
 class Builder
 {
 public:
-    Builder(geo::Mesh& mesh, const PlaneFrame& plane, double uvScale, D2 uvLo, D2 uvHi, std::vector<std::string>& warnings)
-        : m(mesh), mPlane(plane), mUvScale(uvScale), mUvLo(uvLo), mUvHi(uvHi), mWarnings(warnings)
+    Builder(geo::Mesh& mesh, const PlaneFrame& plane, double uvScale, D2 uvLo, D2 uvHi, double capSpacing, std::vector<std::string>& warnings)
+        : m(mesh), mPlane(plane), mUvScale(uvScale), mUvLo(uvLo), mUvHi(uvHi), mCapSpacing(capSpacing), mWarnings(warnings)
     {
     }
 
@@ -111,11 +111,12 @@ public:
 
         bool frontBevel = front.size() > 1 && front.top() > 0.0;
         bool backBevel = back.size() > 1 && back.top() > 0.0;
+        // Sides first: with no depth they hand the back's outline points to the front, so the two bevels share them.
+        sides(loops, o, front, back, zb, zf, sideV0);
         if (frontBevel)
             bevel(front, zf, 1.0, mFrontKeys, FrontBevel);
         if (backBevel)
             bevel(back, zb, -1.0, mBackKeys, BackBevel);
-        sides(loops, o, front, back, zb, zf, sideV0);
         if (o.frontCap)
             cap(front, frontBevel, zf, 1.0, mFrontKeys, o, FrontCap);
         if (o.backCap)
@@ -131,6 +132,7 @@ private:
     PlaneFrame mPlane;
     double mUvScale;
     D2 mUvLo, mUvHi;
+    double mCapSpacing;
     std::vector<std::string>& mWarnings;
     const StraightSkeleton* mSk = nullptr;
     std::map<Key, Index> mFrontKeys, mBackKeys;
@@ -303,16 +305,29 @@ private:
         return {{std::min(a, b), std::max(a, b), L}, sk.nodes[size_t(a)] + (sk.nodes[size_t(b)] - sk.nodes[size_t(a)]) * s, T};
     }
 
-    /** The part of a face between levels k and k + 1 (both included), in boundary order. */
-    std::vector<Pt> slab(const std::vector<int>& face, const Levels& lv, size_t k) const
+    enum : uint8_t
+    {
+        Enters = 1, // the boundary comes back into the band here
+        Leaves = 2,
+    };
+
+    /** The part of face e between levels k and k + 1 (both included), in boundary order; more than one piece where it dips. */
+    std::vector<std::vector<Pt>> slab(size_t e, const Levels& lv, size_t k) const
     {
         const StraightSkeleton& sk = *mSk;
+        const std::vector<int>& face = sk.faces[e];
         double T0 = lv.T[k], T1 = lv.T[k + 1];
         int k0 = int(k), k1 = int(k) + 1;
         std::vector<Pt> out;
-        auto push = [&](const Pt& q) {
+        std::vector<uint8_t> flags;
+        auto push = [&](const Pt& q, uint8_t f) {
             if (out.empty() || out.back().key != q.key)
+            {
                 out.push_back(q);
+                flags.push_back(f);
+            }
+            else
+                flags.back() |= f;
         };
         auto nodePt = [&](int a, int level) { return Pt{{a, a, level}, sk.nodes[size_t(a)], sk.times[size_t(a)]}; };
         for (size_t j = 0; j < face.size(); ++j)
@@ -320,31 +335,107 @@ private:
             int a = face[j], b = face[(j + 1) % face.size()];
             double ta = sk.times[size_t(a)], tb = sk.times[size_t(b)];
             if (ta >= T0 && ta <= T1)
-                push(nodePt(a, ta == T0 ? k0 : ta == T1 ? k1 : -1));
-            std::vector<std::pair<double, Pt>> hits;
+                push(nodePt(a, ta == T0 ? k0 : ta == T1 ? k1 : -1), 0);
+            std::vector<std::tuple<double, Pt, uint8_t>> hits;
             if ((ta >= T0) != (tb >= T0))
             {
                 int in = ta >= T0 ? a : b;
                 double s = (T0 - ta) / (tb - ta);
-                hits.push_back({s, sk.times[size_t(in)] == T0 ? nodePt(in, k0)
-                                                               : Pt{{std::min(a, b), std::max(a, b), k0},
-                                                                    sk.nodes[size_t(a)] + (sk.nodes[size_t(b)] - sk.nodes[size_t(a)]) * s, T0}});
+                hits.push_back({s,
+                                sk.times[size_t(in)] == T0 ? nodePt(in, k0)
+                                                           : Pt{{std::min(a, b), std::max(a, b), k0},
+                                                                sk.nodes[size_t(a)] + (sk.nodes[size_t(b)] - sk.nodes[size_t(a)]) * s, T0},
+                                uint8_t(ta >= T0 ? Leaves : Enters)});
             }
             if ((ta <= T1) != (tb <= T1))
             {
                 int in = ta <= T1 ? a : b;
                 double s = (T1 - ta) / (tb - ta);
-                hits.push_back({s, sk.times[size_t(in)] == T1 ? nodePt(in, k1)
-                                                               : Pt{{std::min(a, b), std::max(a, b), k1},
-                                                                    sk.nodes[size_t(a)] + (sk.nodes[size_t(b)] - sk.nodes[size_t(a)]) * s, T1}});
+                hits.push_back({s,
+                                sk.times[size_t(in)] == T1 ? nodePt(in, k1)
+                                                           : Pt{{std::min(a, b), std::max(a, b), k1},
+                                                                sk.nodes[size_t(a)] + (sk.nodes[size_t(b)] - sk.nodes[size_t(a)]) * s, T1},
+                                uint8_t(ta <= T1 ? Leaves : Enters)});
             }
-            std::sort(hits.begin(), hits.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
-            for (const auto& h : hits)
-                push(h.second);
+            std::sort(hits.begin(), hits.end(), [](const auto& x, const auto& y) { return std::get<0>(x) < std::get<0>(y); });
+            for (const auto& [s, q, f] : hits)
+                push(q, f);
         }
         while (out.size() > 1 && out.front().key == out.back().key)
+        {
+            flags.front() |= flags.back();
             out.pop_back();
-        return out;
+            flags.pop_back();
+        }
+        const auto& edge = sk.edges[e];
+        return splitAtChords(out, flags, sk.nodes[size_t(edge[1])] - sk.nodes[size_t(edge[0])]);
+    }
+
+    /**
+     * Where the boundary leaves the band and comes back along the same level more than once (a face the skeleton's
+     * rounding left not quite monotone), the walk joins the pieces with chords that overlap; pairing the crossings in order
+     * along the level line instead splits it into the pieces themselves.
+     */
+    static std::vector<std::vector<Pt>> splitAtChords(const std::vector<Pt>& out, const std::vector<uint8_t>& flags, D2 along)
+    {
+        size_t n = out.size();
+        std::map<int, std::vector<size_t>> chords; // per level, where each chord leaves
+        for (size_t i = 0; i < n; ++i)
+        {
+            size_t j = (i + 1) % n;
+            int level = std::get<2>(out[i].key);
+            if ((flags[i] & Leaves) && (flags[j] & Enters) && level >= 0 && level == std::get<2>(out[j].key))
+                chords[level].push_back(i);
+        }
+        std::vector<size_t> next(n);
+        for (size_t i = 0; i < n; ++i)
+            next[i] = (i + 1) % n;
+        bool changed = false;
+        for (const auto& [level, leaves] : chords)
+        {
+            if (leaves.size() < 2)
+                continue;
+            std::vector<std::tuple<double, bool, size_t>> ends;
+            for (size_t i : leaves)
+            {
+                ends.push_back({glm::dot(out[i].p, along), true, i});
+                ends.push_back({glm::dot(out[(i + 1) % n].p, along), false, (i + 1) % n});
+            }
+            std::sort(ends.begin(), ends.end());
+            std::vector<std::pair<size_t, size_t>> pairs;
+            for (size_t m = 0; m + 1 < ends.size(); m += 2)
+            {
+                auto [s0, leave0, i0] = ends[m];
+                auto [s1, leave1, i1] = ends[m + 1];
+                if (leave0 == leave1 || i0 == i1)
+                {
+                    pairs.clear();
+                    break;
+                }
+                pairs.push_back(leave0 ? std::pair{i0, i1} : std::pair{i1, i0});
+            }
+            for (auto [from, to] : pairs)
+            {
+                changed = changed || next[from] != to;
+                next[from] = to;
+            }
+        }
+        if (!changed)
+            return {out};
+        std::vector<std::vector<Pt>> pieces;
+        std::vector<uint8_t> seen(n, 0);
+        for (size_t s = 0; s < n; ++s)
+        {
+            if (seen[s])
+                continue;
+            pieces.emplace_back();
+            for (size_t i = s; !seen[i]; i = next[i])
+            {
+                seen[i] = 1;
+                pieces.back().push_back(out[i]);
+            }
+        }
+        return pieces;
     }
 
     /** Loops where the wavefront reached level L, the bevelled region on their left. */
@@ -460,17 +551,19 @@ private:
             {
                 if (lv.T[k + 1] <= lv.T[k])
                     continue;
-                std::vector<Pt> poly = slab(face, lv, k);
-                if (poly.size() < 3)
-                    continue;
-                std::vector<Index> pts;
-                std::vector<glm::vec2> uvs;
-                for (const Pt& q : poly)
+                for (const std::vector<Pt>& poly : slab(e, lv, k))
                 {
-                    pts.push_back(pointFor(keys, q, lv, zBase, sign));
-                    uvs.push_back(bevelUv(q, lv));
+                    if (poly.size() < 3)
+                        continue;
+                    std::vector<Index> pts;
+                    std::vector<glm::vec2> uvs;
+                    for (const Pt& q : poly)
+                    {
+                        pts.push_back(pointFor(keys, q, lv, zBase, sign));
+                        uvs.push_back(bevelUv(q, lv));
+                    }
+                    addFace(pts, uvs, flip, part, L);
                 }
-                addFace(pts, uvs, flip, part, L);
             }
         }
         // Steps straight up (two levels at one inset) are bands around the level's loops.
@@ -567,7 +660,7 @@ private:
             }
         }
         CapFillOptions co;
-        co.spacing = o.capSpacing;
+        co.spacing = mCapSpacing;
         co.quads = o.capQuads;
         CapFillResult fill = capFill(pts2, co);
         if (!fill.ok())
@@ -709,13 +802,17 @@ std::vector<glm::dvec2> bevelProfilePoints(const BevelSide& side)
     return pts;
 }
 
-BevelPlusResult bevelPlus(const Splines& curves, const BevelPlusOptions& o)
+BevelPlusResult bevelPlus(const Splines& curves, const BevelPlusOptions& options)
 {
     LILA_ZONE();
 
     BevelPlusResult res;
+    BevelPlusOptions o = options;
+    o.extrudeDepth = std::abs(options.extrudeDepth);
     double deviation = 0.0;
     PlaneFrame plane = fitPlane(curves, o.normal, &deviation);
+    if (options.extrudeDepth < 0.0)
+        plane = planeFrame(plane.origin, -plane.normal);
     TessOptions tess;
     tess.mode = TessMode::Adaptive;
     tess.chordError = std::max(o.tolerance, 1e-5);
@@ -780,7 +877,7 @@ BevelPlusResult bevelPlus(const Splines& curves, const BevelPlusOptions& o)
     double maxT = std::max(lf.top(), lb.top());
 
     double uvScale = o.uvScale > 0.0 ? o.uvScale : std::max(extent, 1e-6);
-    Builder b(res.mesh, plane, uvScale, lo, hi, res.warnings);
+    Builder b(res.mesh, plane, uvScale, lo, hi, spacing, res.warnings);
     for (const Region2& r : regions)
     {
         std::vector<std::vector<D2>> polys;

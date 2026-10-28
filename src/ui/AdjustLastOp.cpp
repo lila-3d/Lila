@@ -1,12 +1,14 @@
 #include "ui/AdjustLastOp.h"
 
 #include "ops/Command.h"
+#include "ops/CommandOptions.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
 #include "scene/LastOp.h"
 #include "ui/Actions.h"
+#include "ui/DocsUi.h"
 #include "ui/FlagFields.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
@@ -51,7 +53,10 @@ LastOpEditor::LastOpEditor(QWidget* parent) : QWidget(parent)
     QFont tf = mTitle->font();
     tf.setWeight(QFont::DemiBold);
     mTitle->setFont(tf);
-    root->addWidget(mTitle);
+    mTitleRow = new QHBoxLayout();
+    mTitleRow->setContentsMargins(0, 0, 0, 0);
+    mTitleRow->addWidget(mTitle, 1);
+    root->addLayout(mTitleRow);
     mFields = new QWidget(this);
     mFieldsLayout = new QVBoxLayout(mFields);
     mFieldsLayout->setContentsMargins(0, 0, 0, 0);
@@ -159,6 +164,8 @@ void LastOpEditor::rebuild()
     }
     mPending = json::object();
     mShow.clear();
+    delete mDocs;
+    mDocs = nullptr;
     const lo::Op* op = lo::current();
     mCommand = op ? op->command : std::string();
     if (!op)
@@ -170,6 +177,11 @@ void LastOpEditor::rebuild()
         return;
     }
     mTitle->setText(QString::fromStdString(lo::displayName(op->command)));
+    if (const ops::options::Override* o = ops::options::findOverride(op->command); o && !o->docs.empty())
+    {
+        mDocs = docs::helpButton(o->docs, this);
+        mTitleRow->addWidget(mDocs);
+    }
     mStatus->clear();
     mFields->show();
     std::vector<const FlagDef*> flags = lo::editableFlags(op->command);

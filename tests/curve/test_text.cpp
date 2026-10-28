@@ -230,4 +230,9 @@ TEST_CASE("text: wrapping, justify, anchor, case and styling")
     REQUIRE(inter != fams.end());
     CHECK(inter->styles.front() == "Regular");
     CHECK(std::find(inter->styles.begin(), inter->styles.end(), "Italic") != inter->styles.end());
+
+    // Unchanged font folders keep the scan.
+    uint64_t version = curve::fontListVersion();
+    curve::fontFamilies();
+    CHECK(curve::fontListVersion() == version);
 }

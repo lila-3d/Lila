@@ -4,6 +4,7 @@
 
 #include <QWidget>
 
+#include <cstdint>
 #include <string>
 
 class QComboBox;
@@ -35,15 +36,21 @@ public:
 Q_SIGNALS:
     void chosen(const QString& font);
 
+protected:
+    bool eventFilter(QObject* obj, QEvent* e) override;
+
 private:
+    void fillFamilies();
     void pickFamily(const QString& family);
     void fillStyles(const QString& family, const QString& keep);
     void commit();
+    QString previewText() const;
 
     QComboBox* mFamily = nullptr;
     QComboBox* mStyle = nullptr;
     QToolButton* mBrowse = nullptr;
     std::string mValue;
+    uint64_t mFamiliesVersion = 0;
 };
 
 /** Whether a style name reads as bold (or heavier) or as italic. */

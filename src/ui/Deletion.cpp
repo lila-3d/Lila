@@ -2,6 +2,7 @@
 
 #include <QAbstractItemView>
 #include <QAbstractSpinBox>
+#include <QComboBox>
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QTextEdit>
@@ -46,7 +47,7 @@ Route walk(QWidget* from)
 bool textInput(QWidget* w)
 {
     return qobject_cast<QLineEdit*>(w) || qobject_cast<QTextEdit*>(w) || qobject_cast<QPlainTextEdit*>(w) || qobject_cast<QAbstractSpinBox*>(w) ||
-           w->property("hotkeysOff").toBool();
+           (qobject_cast<QComboBox*>(w) && static_cast<QComboBox*>(w)->isEditable()) || w->property("hotkeysOff").toBool();
 }
 } // namespace
 

@@ -74,6 +74,8 @@ struct Override
         std::function<json()> values;
     };
     std::vector<Fill> fills;
+    /** Docs page the option box's help button opens ("curves?id=text"); empty for none. */
+    std::string docs;
 };
 
 LILA_FOUNDATION_API void setOverride(const std::string& command, Override o);

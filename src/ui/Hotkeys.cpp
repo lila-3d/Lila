@@ -315,7 +315,9 @@ void Hotkeys::passThrough(QWidget* view, const char* context)
 bool Hotkeys::textInputFocused(QWidget* w)
 {
     return w && (qobject_cast<QLineEdit*>(w) || qobject_cast<QTextEdit*>(w) || qobject_cast<QPlainTextEdit*>(w) ||
-                 qobject_cast<QAbstractSpinBox*>(w) || w->property("hotkeysOff").toBool());
+                 qobject_cast<QAbstractSpinBox*>(w) || w->property("hotkeysOff").toBool() ||
+                 // An editable combo keeps focus itself and forwards keys to its line edit.
+                 (qobject_cast<QComboBox*>(w) && static_cast<QComboBox*>(w)->isEditable()));
 }
 
 std::optional<Hotkeys::Binding> Hotkeys::lookup(QKeyEvent* e, QWidget* focus) const

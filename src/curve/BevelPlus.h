@@ -23,7 +23,7 @@ LILA_SCENE_API bool parseBevelProfile(std::string_view name, BevelProfile* out);
 struct BevelSide
 {
     /** How far in from the outline the bevel reaches (cm); 0 is no bevel. */
-    double width = 0.5;
+    double width = 0.3;
     /** How far it rises past the side (cm). */
     double depth = 0.5;
     BevelProfile profile = BevelProfile::Straight;
@@ -37,7 +37,7 @@ LILA_SCENE_API std::vector<glm::dvec2> bevelProfilePoints(const BevelSide& side)
 
 struct BevelPlusOptions
 {
-    /** Length of the straight side wall (cm), from the curves' plane along the normal. */
+    /** Length of the straight side wall (cm), from the curves' plane along the normal; negative extrudes the other way. */
     double extrudeDepth = 2.0;
     int extrudeDivisions = 1;
     BevelSide front;

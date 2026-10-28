@@ -954,28 +954,28 @@ def bevelPlus(*objects: Any, extrudeDepth: float | None = None, extrudeDivisions
 
     Args:
         objects: curves.
-        extrudeDepth: Length of the straight sides along the normal, cm.
-        extrudeDivisions: Rows of faces along the sides.
-        frontBevel: Bevel the front.
-        frontWidth: How far in from the outline the front bevel reaches, cm.
-        frontDepth: How far the front bevel rises past the sides, cm.
-        frontProfile: Shape across the front bevel: straight, convex round, concave cove, steps or custom. One of 'straight', 'convex', 'concave', 'step', 'custom'.
-        frontSegments: Segments across the front bevel (steps for step).
-        backBevel: Bevel the back.
-        backWidth: How far in from the outline the back bevel reaches, cm.
-        backDepth: How far the back bevel reaches past the sides, cm.
-        backProfile: Shape across the back bevel. One of 'straight', 'convex', 'concave', 'step', 'custom'.
-        backSegments: Segments across the back bevel.
+        extrudeDepth: Length of the straight sides along the normal, cm; negative extrudes the other way. Default 2.0.
+        extrudeDivisions: Rows of faces along the sides. Default 1.
+        frontBevel: Bevel the front. Default True.
+        frontWidth: How far in from the outline the front bevel reaches, cm. Default 0.3.
+        frontDepth: How far the front bevel rises past the sides, cm. Default 0.5.
+        frontProfile: Shape across the front bevel: straight, convex round, concave cove, steps or custom. One of 'straight', 'convex', 'concave', 'step', 'custom'. Default 'straight'.
+        frontSegments: Segments across the front bevel (steps for step). Default 1.
+        backBevel: Bevel the back. Default True.
+        backWidth: How far in from the outline the back bevel reaches, cm. Default 0.3.
+        backDepth: How far the back bevel reaches past the sides, cm. Default 0.5.
+        backProfile: Shape across the back bevel. One of 'straight', 'convex', 'concave', 'step', 'custom'. Default 'straight'.
+        backSegments: Segments across the back bevel. Default 1.
         customProfile: Custom profile points "inset:rise ..." from the side to the cap, e.g. "0:0 0.2:0.7 1:1".
-        frontCap: Close the front.
-        backCap: Close the back.
-        capSpacing: Quad size on the caps and longest side edge, cm; 0 picks it from the outline.
-        capQuads: Caps as quads where they fit; off leaves triangles.
-        smoothingAngle: Edges where faces meet sharper than this (degrees) are hard.
-        uvScale: cm per UV unit; 0 fits the caps into 0..1 with the sides to match.
-        normal: Extrusion direction; zero fits the plane to the curves (facing up or out).
-        tolerance: Largest gap between the curves and the outline, cm.
-        maxAngle: Largest turn between outline segments, degrees.
+        frontCap: Close the front. Default True.
+        backCap: Close the back. Default True.
+        capSpacing: Quad size on the caps and longest side edge, cm; 0 picks it from the outline. Default 0.0.
+        capQuads: Caps as quads where they fit; off leaves triangles. Default True.
+        smoothingAngle: Edges where faces meet sharper than this (degrees) are hard. Default 30.0.
+        uvScale: cm per UV unit; 0 fits the caps into 0..1 with the sides to match. Default 0.0.
+        normal: Extrusion direction; zero fits the plane to the curves (facing up or out). Default [0.0, 0.0, 0.0].
+        tolerance: Largest gap between the curves and the outline, cm. Default 0.01.
+        maxAngle: Largest turn between outline segments, degrees. Default 8.0.
         profileCurve: Curve to use as the custom profile (sets both profiles to custom). Short form pc.
         constructionHistory: Keep the history node so its settings stay live. Short form ch. Default True.
         name: Mesh name; made unique. Short form n.
@@ -1620,9 +1620,9 @@ def curveBoolean(*objects: Any, operation: str | None = None, normal: Sequence[f
 
     Args:
         objects: target tools...
-        operation: union joins every input, subtract cuts the others out of the first, intersect keeps what all share, xor what an odd number cover. One of 'union', 'subtract', 'intersect', 'xor'.
-        normal: Plane normal; zero fits the plane to the curves.
-        tolerance: Where the cuts fall: chord error of the clip, cm. The pieces are cut from the input curves.
+        operation: union joins every input, subtract cuts the others out of the first, intersect keeps what all share, xor what an odd number cover. One of 'union', 'subtract', 'intersect', 'xor'. Default 'union'.
+        normal: Plane normal; zero fits the plane to the curves. Default [0.0, 0.0, 0.0].
+        tolerance: Where the cuts fall: chord error of the clip, cm. The pieces are cut from the input curves. Default 0.002.
         constructionHistory: Keep the history node so its settings stay live. Short form ch. Default True.
         hideInputs: Hide the input curves (they still drive the result). Default False.
         name: Name of the result curve; made unique. Short form n.
@@ -1633,8 +1633,8 @@ def curveCenterLine(*objects: Any, normal: Sequence[float] | None = None, tolera
 
     Args:
         objects: curves.
-        normal: Plane normal; zero fits the plane to the curves.
-        tolerance: Tessellation of curved input, cm.
+        normal: Plane normal; zero fits the plane to the curves. Default [0.0, 0.0, 0.0].
+        tolerance: Tessellation of curved input, cm. Default 0.01.
         constructionHistory: Keep the history node so its settings stay live. Short form ch. Default True.
         name: Name of the result curve; made unique. Short form n.
     """
@@ -3448,10 +3448,10 @@ def insetCurve(*objects: Any, distance: float | None = None, steps: int | None =
 
     Args:
         objects: curves.
-        distance: How far in, cm.
-        steps: Evenly spaced insets out to the distance.
-        normal: Plane normal; zero fits the plane to the curves.
-        tolerance: Tessellation of curved input, cm.
+        distance: How far in, cm. Default 1.0.
+        steps: Evenly spaced insets out to the distance. Default 1.
+        normal: Plane normal; zero fits the plane to the curves. Default [0.0, 0.0, 0.0].
+        tolerance: Tessellation of curved input, cm. Default 0.01.
         constructionHistory: Keep the history node so its settings stay live. Short form ch. Default True.
         name: Name of the result curve; made unique. Short form n.
     """
@@ -4271,11 +4271,11 @@ def offsetRegion(*objects: Any, distance: float | None = None, join: str | None 
 
     Args:
         objects: curves.
-        distance: cm; positive grows the region, negative insets it.
-        join: Corners on the outside: round, miter or square. One of 'round', 'miter', 'square'.
-        miterLimit: Longest miter, in distances.
-        normal: Plane normal; zero fits the plane to the curves.
-        tolerance: Fitting tolerance for curved results, cm.
+        distance: cm; positive grows the region, negative insets it. Default 1.0.
+        join: Corners on the outside: round, miter or square. One of 'round', 'miter', 'square'. Default 'round'.
+        miterLimit: Longest miter, in distances. Default 4.0.
+        normal: Plane normal; zero fits the plane to the curves. Default [0.0, 0.0, 0.0].
+        tolerance: Fitting tolerance for curved results, cm. Default 0.01.
         constructionHistory: Keep the history node so its settings stay live. Short form ch. Default True.
         name: Name of the result curve; made unique. Short form n.
     """
@@ -5700,15 +5700,15 @@ def roof(*objects: Any, pitch: float | None = None, height: float | None = None,
 
     Args:
         objects: footprints.
-        pitch: Slope of the roof planes, degrees.
-        height: Ridge height above the footprint, cm; 0 uses the pitch.
-        overhang: How far the eaves reach past the footprint, cm.
+        pitch: Slope of the roof planes, degrees. Default 30.0.
+        height: Ridge height above the footprint, cm; 0 uses the pitch. Default 0.0.
+        overhang: How far the eaves reach past the footprint, cm. Default 0.0.
         gableEdges: Footprint edges that end in a gable, e.g. "0 2" (edge i runs from point i to i + 1).
-        gableEnds: Gable every end: each edge between two convex corners shorter than both neighbours.
-        thickness: Roof slab thickness, cm; 0 is a single surface.
-        uvScale: cm per UV unit along the roof planes.
-        normal: Up for the roof; zero fits the plane to the footprint.
-        tolerance: Tessellation of curved footprints, cm.
+        gableEnds: Gable every end: each edge between two convex corners shorter than both neighbours. Default False.
+        thickness: Roof slab thickness, cm; 0 is a single surface. Default 0.0.
+        uvScale: cm per UV unit along the roof planes. Default 100.0.
+        normal: Up for the roof; zero fits the plane to the footprint. Default [0.0, 0.0, 0.0].
+        tolerance: Tessellation of curved footprints, cm. Default 0.01.
         constructionHistory: Keep the history node so its settings stay live. Short form ch. Default True.
         name: Mesh name; made unique. Short form n.
     """
@@ -7514,25 +7514,73 @@ def textCurves(text: str | None = None, font: str | None = None, size: float | N
     """Make text as curves (Maya's textCurves): closed Bezier outlines of each glyph, exact, in the XY plane with the first baseline on the origin. The curveText node keeps the text, font and layout live, so editing it updates anything built on the curve (a bevelPlus, say). Returns [curve, curveText].
 
     Args:
-        text: The text; new lines start new lines.
-        font: A font file, or a family and style ("Inter", "Inter SemiBold", "Arial Bold") among the bundled and installed fonts.
-        size: Em size, cm.
-        alignment: Where lines sit against x = 0. Justify stretches wrapped lines to the wrap width (or the widest line). One of 'left', 'center', 'right', 'justify'.
-        anchor: Which part of the block sits on y = 0: the first baseline, the top, the middle or the bottom. One of 'baseline', 'top', 'middle', 'bottom'.
-        wrapWidth: Lines break between words to fit this width, cm; 0 breaks only at new lines.
-        letterSpacing: Extra space after each character, cm.
-        wordSpacing: Extra space after each space, cm.
-        lineSpacing: Baseline to baseline, in the font's line heights.
-        textCase: Changes the letters' case without editing the text. One of 'as typed', 'upper', 'lower', 'title'.
-        width: Horizontal scale of the glyphs: below 1 condenses, above 1 widens.
-        slant: Oblique slant, degrees; positive leans right. For fonts without an italic.
-        weight: Grows each letter's outline by this much, cm (negative thins it). For fonts without a bolder weight.
-        underline: A bar under each line, joined to the letters it touches.
-        strikethrough: A bar through each line, joined to the letters.
-        kerning: Use the font's kerning.
-        mergeOverlaps: Join a glyph's overlapping contours so each area fills once (variable fonts overlap them).
+        text: The text; new lines start new lines. Default 'Lila'.
+        font: A font file, or a family and style ("Inter", "Inter SemiBold", "Arial Bold") among the bundled and installed fonts. Default 'Inter'.
+        size: Em size, cm. Default 10.0.
+        alignment: Where lines sit against x = 0. Justify stretches wrapped lines to the wrap width (or the widest line). One of 'left', 'center', 'right', 'justify'. Default 'left'.
+        anchor: Which part of the block sits on y = 0: the first baseline, the top, the middle or the bottom. One of 'baseline', 'top', 'middle', 'bottom'. Default 'baseline'.
+        wrapWidth: Lines break between words to fit this width, cm; 0 breaks only at new lines. Default 0.0.
+        letterSpacing: Extra space after each character, cm. Default 0.0.
+        wordSpacing: Extra space after each space, cm. Default 0.0.
+        lineSpacing: Baseline to baseline, in the font's line heights. Default 1.0.
+        textCase: Changes the letters' case without editing the text. One of 'as typed', 'upper', 'lower', 'title'. Default 'as typed'.
+        width: Horizontal scale of the glyphs: below 1 condenses, above 1 widens. Default 1.0.
+        slant: Oblique slant, degrees; positive leans right. For fonts without an italic. Default 0.0.
+        weight: Grows each letter's outline by this much, cm (negative thins it). For fonts without a bolder weight. Default 0.0.
+        underline: A bar under each line, joined to the letters it touches. Default False.
+        strikethrough: A bar through each line, joined to the letters. Default False.
+        kerning: Use the font's kerning. Default True.
+        mergeOverlaps: Join a glyph's overlapping contours so each area fills once (variable fonts overlap them). Default True.
         constructionHistory: Keep the history node so its settings stay live. Short form ch. Default True.
         name: Curve name; made unique. Short form n.
+    """
+
+def textMesh(*objects: Any, text: str | None = None, font: str | None = None, size: float | None = None, alignment: str | None = None, anchor: str | None = None, wrapWidth: float | None = None, letterSpacing: float | None = None, wordSpacing: float | None = None, lineSpacing: float | None = None, textCase: str | None = None, width: float | None = None, slant: float | None = None, weight: float | None = None, underline: bool | None = None, strikethrough: bool | None = None, kerning: bool | None = None, mergeOverlaps: bool | None = None, extrudeDepth: float | None = None, extrudeDivisions: int | None = None, frontBevel: bool | None = None, frontWidth: float | None = None, frontDepth: float | None = None, frontProfile: str | None = None, frontSegments: int | None = None, backBevel: bool | None = None, backWidth: float | None = None, backDepth: float | None = None, backProfile: str | None = None, backSegments: int | None = None, customProfile: str | None = None, frontCap: bool | None = None, backCap: bool | None = None, capSpacing: float | None = None, capQuads: bool | None = None, smoothingAngle: float | None = None, uvScale: float | None = None, normal: Sequence[float] | None = None, tolerance: float | None = None, maxAngle: float | None = None, constructionHistory: bool | None = None, name: str | None = None, ch: bool | None = None, n: str | None = None) -> Any:
+    """Make text as a solid mesh in one step: a curveText node feeding a bevelPlus, both live, so the text, font, layout, depth and bevels stay editable. Given or with text curves selected, bevels those instead (the text settings are left as they are), the mesh on their transform. Takes every textCurves and bevelPlus setting. Returns [mesh, curveText, bevelPlus].
+
+    Args:
+        objects: textCurves.
+        text: The text; new lines start new lines. Default 'Lila'.
+        font: A font file, or a family and style ("Inter", "Inter SemiBold", "Arial Bold") among the bundled and installed fonts. Default 'Inter'.
+        size: Em size, cm. Default 10.0.
+        alignment: Where lines sit against x = 0. Justify stretches wrapped lines to the wrap width (or the widest line). One of 'left', 'center', 'right', 'justify'. Default 'left'.
+        anchor: Which part of the block sits on y = 0: the first baseline, the top, the middle or the bottom. One of 'baseline', 'top', 'middle', 'bottom'. Default 'baseline'.
+        wrapWidth: Lines break between words to fit this width, cm; 0 breaks only at new lines. Default 0.0.
+        letterSpacing: Extra space after each character, cm. Default 0.0.
+        wordSpacing: Extra space after each space, cm. Default 0.0.
+        lineSpacing: Baseline to baseline, in the font's line heights. Default 1.0.
+        textCase: Changes the letters' case without editing the text. One of 'as typed', 'upper', 'lower', 'title'. Default 'as typed'.
+        width: Horizontal scale of the glyphs: below 1 condenses, above 1 widens. Default 1.0.
+        slant: Oblique slant, degrees; positive leans right. For fonts without an italic. Default 0.0.
+        weight: Grows each letter's outline by this much, cm (negative thins it). For fonts without a bolder weight. Default 0.0.
+        underline: A bar under each line, joined to the letters it touches. Default False.
+        strikethrough: A bar through each line, joined to the letters. Default False.
+        kerning: Use the font's kerning. Default True.
+        mergeOverlaps: Join a glyph's overlapping contours so each area fills once (variable fonts overlap them). Default True.
+        extrudeDepth: Length of the straight sides along the normal, cm; negative extrudes the other way. Default 0.5.
+        extrudeDivisions: Rows of faces along the sides. Default 1.
+        frontBevel: Bevel the front. Default False.
+        frontWidth: How far in from the outline the front bevel reaches, cm. Default 0.3.
+        frontDepth: How far the front bevel rises past the sides, cm. Default 0.5.
+        frontProfile: Shape across the front bevel: straight, convex round, concave cove, steps or custom. One of 'straight', 'convex', 'concave', 'step', 'custom'. Default 'straight'.
+        frontSegments: Segments across the front bevel (steps for step). Default 1.
+        backBevel: Bevel the back. Default False.
+        backWidth: How far in from the outline the back bevel reaches, cm. Default 0.3.
+        backDepth: How far the back bevel reaches past the sides, cm. Default 0.5.
+        backProfile: Shape across the back bevel. One of 'straight', 'convex', 'concave', 'step', 'custom'. Default 'straight'.
+        backSegments: Segments across the back bevel. Default 1.
+        customProfile: Custom profile points "inset:rise ..." from the side to the cap, e.g. "0:0 0.2:0.7 1:1".
+        frontCap: Close the front. Default True.
+        backCap: Close the back. Default False.
+        capSpacing: Quad size on the caps and longest side edge, cm; 0 picks it from the outline. Default 0.0.
+        capQuads: Caps as quads where they fit; off leaves triangles. Default True.
+        smoothingAngle: Edges where faces meet sharper than this (degrees) are hard. Default 30.0.
+        uvScale: cm per UV unit; 0 fits the caps into 0..1 with the sides to match. Default 0.0.
+        normal: Extrusion direction; zero fits the plane to the curves (facing up or out). Default [0.0, 0.0, 0.0].
+        tolerance: Largest gap between the curves and the outline, cm. Default 0.01.
+        maxAngle: Largest turn between outline segments, degrees. Default 8.0.
+        constructionHistory: Keep the history node so its settings stay live. Short form ch. Default True.
+        name: Mesh name; made unique. Short form n.
     """
 
 def textureDeformer(*objects: Any, image: str | None = None, textureSet: str | None = None, source: str | None = None, uvSet: str | None = None, strength: float | None = None, midLevel: float | None = None, direction: str | None = None, component: str | None = None, name: str | None = None) -> Any:

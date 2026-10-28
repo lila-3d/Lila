@@ -131,3 +131,72 @@ TEST_CASE("bevelPlus follows its curves and saves")
     CHECK(openEdges(*meshOf(c[0])) == 0);
     CHECK(run("getAttr", {{"args", {std::string(c[1]) + ".warning"}}}).get<std::string>().empty());
 }
+
+TEST_CASE("textMesh makes live text as a mesh in one step")
+{
+    run("newScene");
+    json plain = run("textMesh", {{"text", "Lo"}});
+    REQUIRE(plain.size() == 3);
+    for (const char* attr : {"frontBevel", "backBevel", "backCap"})
+        CHECK(run("getAttr", {{"args", {std::string(plain[2]) + "." + attr}}}) == false);
+    CHECK(run("getAttr", {{"args", {std::string(plain[2]) + ".extrudeDepth"}}}).get<double>() == doctest::Approx(0.5));
+
+    json r = run("textMesh", {{"text", "Lo"}, {"size", 8.0}, {"extrudeDepth", 1.0}, {"frontBevel", true}, {"frontWidth", 0.2}, {"frontDepth", 0.2},
+                              {"backCap", true}});
+    REQUIRE(r.size() == 3);
+    std::string mesh = r[0], text = r[1], bevel = r[2];
+    CHECK(run("getAttr", {{"args", {bevel + ".backBevel"}}}) == false);
+    scene::MeshPtr m = meshOf(mesh);
+    REQUIRE(m);
+    int open = 0;
+    for (geo::Index e = 0; e < m->edgeCapacity(); ++e)
+        open += m->edgeValid(e) && m->isBoundaryEdge(e) ? 1 : 0;
+    CHECK(open == 0);
+    size_t faces = m->numFaces();
+    run("setAttr", {{"args", {text + ".text", "Lola"}}});
+    CHECK(meshOf(mesh)->numFaces() > faces);
+
+    json baked = run("textMesh", {{"text", "A"}, {"constructionHistory", false}});
+    CHECK(baked[1].is_null());
+    CHECK(baked[2].is_null());
+    CHECK(meshOf(baked[0])->numFaces() > 0);
+    CHECK(scene::Graph::current().find(text));
+}
+
+TEST_CASE("bevelPlus sits on the curve's transform and extrudes out of the text's front")
+{
+    run("newScene");
+    scene::Graph& g = scene::Graph::current();
+    json t = run("textCurves", {{"text", "H"}, {"size", 10.0}});
+    std::string curve = t[0];
+    // Text on a wall facing -X: the fitted plane would otherwise point +X, into the wall.
+    run("setAttr", {{"args", {curve + ".translate", {50, 20, 5}}}});
+    run("setAttr", {{"args", {curve + ".rotate", {0, -90, 0}}}});
+    run("select", {{"args", {curve}}});
+    json r = run("textMesh", {{"extrudeDepth", 2.0}, {"frontBevel", false}, {"backBevel", false}});
+    std::string mesh = r[0];
+    CHECK(r[1] == t[1]);
+    CHECK(run("getAttr", {{"args", {r[1].get<std::string>() + ".text"}}}) == "H");
+    g.evaluate();
+    glm::dmat4 cw = g.find(curve)->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+    glm::dmat4 mw = g.find(mesh)->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+    for (int c = 0; c < 4; ++c)
+        for (int k = 0; k < 4; ++k)
+            CHECK(mw[c][k] == doctest::Approx(cw[c][k]).epsilon(1e-9));
+    geo::Bounds b = meshOf(mesh)->bounds();
+    CHECK(b.min.z == doctest::Approx(0.0).epsilon(1e-6));
+    CHECK(b.max.z == doctest::Approx(2.0).epsilon(1e-6));
+    CHECK(b.min.x > -1.0);
+    CHECK(b.max.x < 12.0);
+
+    run("setAttr", {{"args", {r[2].get<std::string>() + ".extrudeDepth", -2.0}}});
+    b = meshOf(mesh)->bounds();
+    CHECK(b.min.z == doctest::Approx(-2.0).epsilon(1e-6));
+    CHECK(b.max.z == doctest::Approx(0.0).epsilon(1e-6));
+
+    // Moving the mesh carries its geometry.
+    run("move", {{"args", {mesh}}, {"by", {-10, 0, 0}}});
+    g.evaluate();
+    CHECK(g.find(mesh)->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3].x == doctest::Approx(40.0));
+    CHECK(meshOf(mesh)->bounds().min.z == doctest::Approx(-2.0).epsilon(1e-6));
+}

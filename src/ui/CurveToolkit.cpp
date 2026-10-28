@@ -117,7 +117,7 @@ const std::vector<std::pair<const char*, std::vector<Item>>>& curveSections()
           {"curve.instanceAlongCurve", "copy", "Instance Along"}, {"curve.flowAlongSurface", "wave-square", "Flow"},
           {"curve.keepOnSurface", "magnet", "Keep On"}, {"curve.releaseFromSurface", "magnet-off", "Release"}}},
         {"Planar",
-         {{"curve.text", "typography", "Text"}, {"curve.bevelPlus", "text-size", "Bevel+"}, {"curve.booleanUnion", "layers-union", "Union"},
+         {{"curve.text", "typography", "Text"}, {"curve.textMesh", "badge-3d", "Text Mesh"}, {"curve.bevelPlus", "text-size", "Bevel+"}, {"curve.booleanUnion", "layers-union", "Union"},
           {"curve.booleanSubtract", "layers-difference", "Subtract"}, {"curve.booleanIntersect", "layers-intersect", "Intersect"},
           {"curve.booleanXor", "layers-subtract", "Xor"}, {"curve.offsetRegion", "ripple", "Offset Region"},
           {"curve.insetSkeleton", "box-model-2", "Skeleton"}, {"curve.centerLine", "line-dashed", "Center Line"}, {"curve.roof", "home", "Roof"}}},

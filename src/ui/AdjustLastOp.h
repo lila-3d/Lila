@@ -11,6 +11,7 @@
 
 #include <QWidget>
 
+class QHBoxLayout;
 class QLabel;
 class QTimer;
 class QToolButton;
@@ -43,6 +44,8 @@ private:
     void applyPending();
 
     QLabel* mTitle = nullptr;
+    QHBoxLayout* mTitleRow = nullptr;
+    QToolButton* mDocs = nullptr; // the op's docs page, when its option box names one
     QWidget* mFields = nullptr;
     QVBoxLayout* mFieldsLayout = nullptr;
     QToolButton* mNonDestructive = nullptr;

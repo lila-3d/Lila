@@ -4,6 +4,7 @@
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
 #include "ui/Actions.h"
+#include "ui/DocsUi.h"
 #include "ui/FlagFields.h"
 #include "ui/Icons.h"
 #include "ui/Shelf.h"
@@ -85,13 +86,19 @@ public:
         });
         root->setMenuBar(bar);
 
-        if (!a.doc.empty())
+        const opt::Override* over = opt::findOverride(mCommand);
+        std::string docsPage = over ? over->docs : std::string();
+        if (!a.doc.empty() || !docsPage.empty())
         {
+            auto* header = new QHBoxLayout();
+            header->setContentsMargins(10, 4, 10, 0);
             auto* doc = new QLabel(QString::fromStdString(a.doc), this);
             doc->setWordWrap(true);
             doc->setStyleSheet("color: #9a9a9a;");
-            doc->setContentsMargins(10, 4, 10, 0);
-            root->addWidget(doc);
+            header->addWidget(doc, 1);
+            if (!docsPage.empty())
+                header->addWidget(docs::helpButton(docsPage, this), 0, Qt::AlignTop);
+            root->addLayout(header);
         }
 
         auto* scroll = new QScrollArea(this);

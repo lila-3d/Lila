@@ -265,7 +265,7 @@ ModelingToolkit::ModelingToolkit(QWidget* parent) : QWidget(parent)
                     {"curve.pencil", "scribble", "Pencil"}, {"curve.fromEdges", "polygon", "Edges"}, {"curve.extrude", "route", "Sweep"},
                     {"curve.revolve", "rotate-360", "Revolve"}, {"curve.loft", "stack-3", "Loft"}, {"curve.pipeTool", "route-2", "Pipe"},
                     {"curve.fillet", "vector-bezier-arc", "Fillet"}, {"curve.offset", "ripple", "Offset"}, {"curve.text", "typography", "Text"},
-                    {"curve.bevelPlus", "text-size", "Bevel+"}},
+                    {"curve.textMesh", "badge-3d", "Text Mesh"}, {"curve.bevelPlus", "text-size", "Bevel+"}},
         curves);
     root->addWidget(section("Curves", curvesBox, body));
 

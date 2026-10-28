@@ -278,3 +278,23 @@ TEST_CASE("bevel plus: text with counters and curves stays closed")
     checkSolid(r.mesh);
     CHECK(countFaces(r.mesh, 4) > countFaces(r.mesh, 3) * 3);
 }
+
+TEST_CASE("bevel plus: many segments and no depth stay closed")
+{
+    curve::TextOptions t;
+    t.text = "Lila Bevel";
+    t.size = 10.0;
+    curve::TextResult text = curve::textCurves(t);
+    REQUIRE(!text.curves.empty());
+    for (double depth : {2.0, 0.0})
+    {
+        curve::BevelPlusOptions o;
+        o.extrudeDepth = depth;
+        o.front.profile = curve::BevelProfile::Convex;
+        o.front.segments = 16;
+        curve::BevelPlusResult r = curve::bevelPlus(text.curves, o);
+        INFO("depth " << depth);
+        CHECK(r.warnings.empty());
+        checkSolid(r.mesh);
+    }
+}

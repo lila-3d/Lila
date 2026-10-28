@@ -1797,7 +1797,8 @@ void registerBuiltins()
     registerNeutral("curveText");
     for (const char* t : {"curveLoft", "curveNetwork", "curvePatch", "meshBorderBlend"})
         registerWorldAttrs(t, {.worldOutput = true});
-    for (const char* t : {"bevelPlus", "curveBoolean", "curveCenterLine", "insetCurve", "offsetRegion", "roof"})
+    registerWorldAttrs("bevelPlus", {.matrices = {"meshMatrix"}});
+    for (const char* t : {"curveBoolean", "curveCenterLine", "insetCurve", "offsetRegion", "roof"})
         registerWorldAttrs(t, {.directions = {"normal"}, .worldOutput = true});
     for (const char* t : {"filletCurve", "fitCurve", "rebuildCurve"})
         registerWorldAttrs(t, {.worldData = {"inCurve"}, .worldOutput = true});

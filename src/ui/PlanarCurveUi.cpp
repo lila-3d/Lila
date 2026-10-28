@@ -5,6 +5,7 @@
 #include "scene/Graph.h"
 #include "ui/Actions.h"
 #include "ui/AttributeEditor.h"
+#include "ui/DocsUi.h"
 #include "ui/FontPicker.h"
 #include "ui/Icons.h"
 #include "ui/MultilineEdit.h"
@@ -167,6 +168,7 @@ QWidget* textPanel(NodeId textNode)
         bar->addWidget(b);
     }
     bar->addStretch(1);
+    bar->addWidget(docs::helpButton("curves?id=text", w));
     v->addLayout(bar);
 
     auto sizeOf = [num] { return std::max(1e-3, num("size")); };
@@ -305,6 +307,8 @@ void registerPlanarCurveUi()
 {
     cmd("curve.text", "Text", "Curves", "textCurves", json::object(),
         "Makes text as closed Bezier curves from a font, kept live: select the curve (or what you built from it) and edit the text, font and formatting in the Attribute Editor's Text section.");
+    cmd("curve.textMesh", "Text Mesh", "Curves", "textMesh", json::object(),
+        "Makes text as a bevelled solid mesh in one step. The text, font, depth and bevels stay live: select the mesh and edit them in the Attribute Editor.");
     attributeEditor::addSection("curve", "Text", textSection);
     attributeEditor::addSection("mesh", "Text", textSection);
     cmd("curve.bevelPlus", "Bevel Plus", "Curves", "bevelPlus", json::object(),

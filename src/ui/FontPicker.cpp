@@ -3,17 +3,25 @@
 #include "core/Paths.h"
 #include "curve/Text.h"
 #include "ui/Icons.h"
+#include "ui/MultilineEdit.h"
 
+#include <QAbstractItemView>
+#include <QApplication>
 #include <QComboBox>
 #include <QCompleter>
 #include <QFileDialog>
+#include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QLineEdit>
+#include <QPainter>
+#include <QStyledItemDelegate>
 #include <QToolButton>
 
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <functional>
+#include <set>
 
 namespace lila::ui
 {
@@ -34,10 +42,39 @@ bool contains(const std::string& s, std::initializer_list<const char*> words)
     return std::any_of(words.begin(), words.end(), [&](const char* w) { return n.find(w) != std::string::npos; });
 }
 
-const std::vector<curve::FontFamily>& families()
+struct FamilyList
 {
-    static const std::vector<curve::FontFamily> f = curve::fontFamilies();
-    return f;
+    std::vector<curve::FontFamily> families = curve::fontFamilies();
+    uint64_t version = curve::fontListVersion();
+};
+
+FamilyList& familyList()
+{
+    static FamilyList list;
+    return list;
+}
+
+const std::vector<curve::FontFamily>& families() { return familyList().families; }
+
+/** Rescans when fonts were installed or removed; returns the list's version. Invalidates FontFamily pointers. */
+uint64_t refreshFamilies()
+{
+    FamilyList& list = familyList();
+    if (uint64_t v = curve::fontListVersion(); v != list.version)
+        list = FamilyList();
+    return list.version;
+}
+
+/** The family as Qt draws it, loading the font file into Qt when Qt doesn't know the family (installed since launch). */
+QFont familyFont(const QString& family)
+{
+    static std::set<QString> loaded;
+    if (!QFontDatabase::hasFamily(family) && loaded.insert(family).second)
+    {
+        QString file = QString::fromStdString(curve::findFont(family.toStdString()));
+        QFontDatabase::addApplicationFont(file.left(file.lastIndexOf('#') > 2 ? file.lastIndexOf('#') : file.size()));
+    }
+    return QFont(family);
 }
 
 const curve::FontFamily* familyNamed(const std::string& name)
@@ -70,6 +107,59 @@ std::pair<const curve::FontFamily*, std::string> parse(const std::string& value)
 }
 
 bool isRegular(const std::string& style) { return style.empty() || norm(style) == "regular"; }
+
+/** Draws each family as its name in the UI font, then a grey sample of the picker's text in that family. */
+class FamilyDelegate : public QStyledItemDelegate
+{
+public:
+    FamilyDelegate(std::function<QString()> sample, QObject* parent) : QStyledItemDelegate(parent), mSample(std::move(sample)) {}
+
+    void paint(QPainter* p, const QStyleOptionViewItem& option, const QModelIndex& index) const override
+    {
+        QStyleOptionViewItem opt = option;
+        initStyleOption(&opt, index);
+        QString name = opt.text;
+        opt.text.clear();
+        opt.font = option.font;
+        const QWidget* w = opt.widget;
+        QStyle* style = w ? w->style() : QApplication::style();
+        style->drawControl(QStyle::CE_ItemViewItem, &opt, p, w);
+
+        QRect r = opt.rect.adjusted(4, 0, -4, 0);
+        bool selected = opt.state & QStyle::State_Selected;
+        QPalette::ColorRole role = selected ? QPalette::HighlightedText : QPalette::Text;
+        p->save();
+        p->setFont(option.font);
+        p->setPen(opt.palette.color(role));
+        QFontMetrics fm(option.font);
+        int nameW = std::min(r.width() * 11 / 20, fm.horizontalAdvance(QString(22, 'n')));
+        p->drawText(QRect(r.left(), r.top(), nameW, r.height()), Qt::AlignVCenter | Qt::AlignLeft, fm.elidedText(name, Qt::ElideRight, nameW));
+
+        QRect sr(r.left() + nameW + 8, r.top(), r.width() - nameW - 8, r.height());
+        if (sr.width() > 8)
+        {
+            QFont f = familyFont(name);
+            f.setPointSizeF(option.font.pointSizeF());
+            QColor grey = opt.palette.color(role);
+            grey.setAlphaF(0.5f);
+            p->setFont(f);
+            p->setPen(grey);
+            p->drawText(sr, Qt::AlignVCenter | Qt::AlignLeft, QFontMetrics(f).elidedText(mSample(), Qt::ElideRight, sr.width()));
+        }
+        p->restore();
+    }
+
+    QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override
+    {
+        QSize s = QStyledItemDelegate::sizeHint(option, index);
+        QFont f = familyFont(index.data().toString());
+        f.setPointSizeF(option.font.pointSizeF());
+        return {s.width(), std::max(s.height(), QFontMetrics(f).height() + 4)};
+    }
+
+private:
+    std::function<QString()> mSample;
+};
 } // namespace
 
 bool styleIsBold(const std::string& style) { return contains(style, {"bold", "black", "heavy", "extrabold", "ultrabold"}); }
@@ -87,15 +177,17 @@ FontPicker::FontPicker(QWidget* parent) : QWidget(parent)
     mFamily->setMaxVisibleItems(20);
     mFamily->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     mFamily->setToolTip("Font family. Type to filter.");
-    for (const curve::FontFamily& f : families())
-    {
-        QString name = QString::fromStdString(f.family);
-        mFamily->addItem(name);
-        mFamily->setItemData(mFamily->count() - 1, QFont(name), Qt::FontRole);
-    }
+    fillFamilies();
+    // Picks up fonts installed since the list was filled, before the user looks at it.
+    mFamily->installEventFilter(this);
     mFamily->completer()->setFilterMode(Qt::MatchContains);
     mFamily->completer()->setCompletionMode(QCompleter::PopupCompletion);
     mFamily->completer()->setCaseSensitivity(Qt::CaseInsensitive);
+    auto sample = [this] { return previewText(); };
+    mFamily->setItemDelegate(new FamilyDelegate(sample, mFamily));
+    mFamily->completer()->popup()->setItemDelegate(new FamilyDelegate(sample, mFamily));
+    mFamily->view()->setMinimumWidth(360);
+    mFamily->completer()->popup()->setMinimumWidth(360);
     connect(mFamily, &QComboBox::activated, this, [this](int i) { pickFamily(mFamily->itemText(i)); });
     connect(mFamily->lineEdit(), &QLineEdit::editingFinished, this, [this] {
         if (familyNamed(mFamily->currentText().toStdString()))
@@ -225,6 +317,39 @@ void FontPicker::fillStyles(const QString& family, const QString& keep)
         }
     }
     mStyle->setCurrentIndex(std::max(0, i));
+}
+
+void FontPicker::fillFamilies()
+{
+    QSignalBlocker block(mFamily);
+    mFamily->clear();
+    for (const curve::FontFamily& f : families())
+        mFamily->addItem(QString::fromStdString(f.family));
+    mFamiliesVersion = familyList().version;
+}
+
+bool FontPicker::eventFilter(QObject* obj, QEvent* e)
+{
+    if (obj == mFamily && (e->type() == QEvent::FocusIn || e->type() == QEvent::MouseButtonPress) && refreshFamilies() != mFamiliesVersion)
+    {
+        fillFamilies();
+        setValue(mValue);
+    }
+    return QWidget::eventFilter(obj, e);
+}
+
+QString FontPicker::previewText() const
+{
+    // The text box the picker sits beside: the Text section, the Attribute Editor or the option box.
+    for (QWidget* w = parentWidget(); w; w = w->parentWidget())
+        if (auto* edit = w->findChild<MultilineEdit*>())
+        {
+            QString line = edit->toPlainText().section('\n', 0, 0).trimmed();
+            if (!line.isEmpty())
+                return line;
+            break;
+        }
+    return "The quick brown fox";
 }
 
 void FontPicker::commit()
