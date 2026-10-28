@@ -154,13 +154,23 @@ public:
         invalidateFilter();
     }
 
+    void setShowHidden(bool on)
+    {
+        mShowHidden = on;
+        invalidateFilter();
+    }
+
 protected:
     bool filterAcceptsRow(int row, const QModelIndex& parent) const override
     {
         // Only the listed folder's children filter; its ancestors must stay for the view's root index.
-        if (mText.isEmpty() || mFs->filePath(parent) != mRoot)
+        if (mFs->filePath(parent) != mRoot)
             return true;
-        return mFs->fileName(mFs->index(row, 0, parent)).contains(mText, Qt::CaseInsensitive);
+        const QString name = mFs->fileName(mFs->index(row, 0, parent));
+        // Windows only marks files hidden by attribute; dot-files are hidden by convention everywhere else.
+        if (!mShowHidden && name.startsWith('.'))
+            return false;
+        return mText.isEmpty() || name.contains(mText, Qt::CaseInsensitive);
     }
 
     bool lessThan(const QModelIndex& a, const QModelIndex& b) const override
@@ -193,6 +203,7 @@ private:
     QCollator mCollator;
     QString mRoot;
     QString mText;
+    bool mShowHidden = false;
 };
 
 /** Renames typed into the list go through fileOps, so tracked files are renamed in source control. */
@@ -281,6 +292,7 @@ struct FileDialog::Impl
     QToolButton* up = nullptr;
     QToolButton* recentButton = nullptr;
     QToolButton* bookmarkButton = nullptr;
+    QToolButton* hiddenButton = nullptr;
     QStackedWidget* pathStack = nullptr;
     QWidget* crumbs = nullptr;
     QLineEdit* pathEdit = nullptr;
@@ -315,6 +327,8 @@ struct FileDialog::Impl
     void bookmarkFolder(const QString& d, bool on);
     void pushRecent(const QString& d);
     void showListMenu(const QPoint& pos);
+    void setShowHidden(bool on);
+    void setWorkspace(const QString& d);
     void newFolder();
     void fail(const QString& message);
     QStringList selectedPaths() const;
@@ -345,6 +359,7 @@ void FileDialog::Impl::build(const QString& caption)
     fs->setFilter(mode == Mode::Directory ? QDir::AllDirs | QDir::Drives | QDir::NoDotAndDotDot
                                           : QDir::AllDirs | QDir::Drives | QDir::Files | QDir::NoDotAndDotDot);
     proxy = new FdProxy(fs);
+    setShowHidden(PrefStore::get().value<bool>(kFdPrefs, fileDialog::kShowHiddenPref, false));
 
     auto* root = new QVBoxLayout(q);
     root->setContentsMargins(8, 8, 8, 8);
@@ -405,6 +420,18 @@ void FileDialog::Impl::build(const QString& caption)
     nav->addWidget(pathStack, 1);
     bookmarkButton = tool("bookmark", "Bookmark this folder");
     bookmarkButton->setCheckable(true);
+    hiddenButton = tool("eye-off", "Show hidden files (Ctrl+H)");
+    hiddenButton->setCheckable(true);
+    {
+        const QSignalBlocker block(hiddenButton);
+        hiddenButton->setChecked(PrefStore::get().value<bool>(kFdPrefs, fileDialog::kShowHiddenPref, false));
+        hiddenButton->setIcon(icon(hiddenButton->isChecked() ? "eye" : "eye-off"));
+    }
+    QObject::connect(hiddenButton, &QToolButton::toggled, q, [this](bool on) {
+        hiddenButton->setIcon(icon(on ? "eye" : "eye-off"));
+        PrefStore::get().set(kFdPrefs, fileDialog::kShowHiddenPref, on);
+        setShowHidden(on);
+    });
     root->addLayout(nav);
 
     QObject::connect(back, &QToolButton::clicked, q, [this] {
@@ -569,6 +596,7 @@ void FileDialog::Impl::build(const QString& caption)
         filter->selectAll();
     });
     shortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N), [this] { newFolder(); });
+    shortcut(QKeySequence(Qt::CTRL | Qt::Key_H), [this] { hiddenButton->toggle(); });
 
     buildSidebar();
     QObject::connect(sidebarFilter, &QLineEdit::textChanged, q, [this](const QString& text) {
@@ -616,6 +644,8 @@ void FileDialog::Impl::build(const QString& caption)
                 fdSetPrefList(kFdRecentPref, recent);
                 buildSidebar();
             });
+        if (kind != FdKind::Project && !path.isEmpty())
+            menu.addAction(icon("folder"), "Set as Workspace", [this, path] { setWorkspace(path); });
         menu.addSeparator();
         menu.addAction("Copy Path", [path] { QApplication::clipboard()->setText(QDir::toNativeSeparators(path)); });
         menu.exec(sidebar->viewport()->mapToGlobal(pos));
@@ -944,6 +974,7 @@ void FileDialog::Impl::showListMenu(const QPoint& pos)
         const bool bookmarked = fdPrefList(kFdBookmarksPref).contains(path);
         menu.addAction(icon(bookmarked ? "bookmark-minus" : "bookmark-plus"), bookmarked ? "Remove Bookmark" : "Bookmark",
                        [this, path, bookmarked] { bookmarkFolder(path, !bookmarked); });
+        menu.addAction(icon("folder"), "Set as Workspace", [this, path] { setWorkspace(path); });
     }
     const bool edit = fileOps::allowed(fileOps::kAllowEditPref), moves = fileOps::allowed(fileOps::kAllowMovePref);
     menu.addSeparator();
@@ -968,6 +999,20 @@ void FileDialog::Impl::showListMenu(const QPoint& pos)
         menu.addAction("Open in File Manager", [this] { QDesktopServices::openUrl(QUrl::fromLocalFile(dir)); });
     }
     menu.exec(view->viewport()->mapToGlobal(pos));
+}
+
+void FileDialog::Impl::setWorkspace(const QString& d)
+{
+    Workspace::get().open(d.toStdWString());
+    buildSidebar();
+}
+
+void FileDialog::Impl::setShowHidden(bool on)
+{
+    QDir::Filters f = fs->filter();
+    fs->setFilter(on ? f | QDir::Hidden | QDir::System : f & ~(QDir::Hidden | QDir::System));
+    proxy->setShowHidden(on);
+    queueCounts();
 }
 
 void FileDialog::Impl::fail(const QString& message)

@@ -58,6 +58,8 @@ namespace fileDialog
 {
 /** On, the functions below show the platform's dialog instead of Lila's. */
 inline constexpr const char* kNativePref = "/fileDialog/native";
+/** Hidden files and dot-files in the list; off by default. */
+inline constexpr const char* kShowHiddenPref = "/fileDialog/showHidden";
 
 LILA_UI_API QString getOpenFileName(QWidget* parent, const QString& caption = {}, const QString& dir = {},
                                     const QString& filter = {}, QString* selectedFilter = nullptr);

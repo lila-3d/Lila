@@ -202,3 +202,19 @@ TEST_CASE("file ops: prefs switch each group off")
     CHECK_FALSE(ui::fileOps::allowed(ui::fileOps::kAllowDeletePref));
     p.remove("general", ui::fileOps::kAllowDeletePref);
 }
+
+TEST_CASE("file dialog: dot-files stay out of the list until hidden files are shown")
+{
+    Fixture fx;
+    touch(fx.root + "/.secret");
+    {
+        FileDialog dlg(nullptr, FileDialog::Mode::OpenFile, "Open", fx.root, {});
+        CHECK(waitForFiles(dlg, 3));
+    }
+    PrefStore::get().set("general", ui::fileDialog::kShowHiddenPref, true);
+    {
+        FileDialog dlg(nullptr, FileDialog::Mode::OpenFile, "Open", fx.root, {});
+        CHECK(waitForFiles(dlg, 4));
+    }
+    PrefStore::get().remove("general", ui::fileDialog::kShowHiddenPref);
+}

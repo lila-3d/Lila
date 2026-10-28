@@ -536,6 +536,7 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         toggle(ui, "Badges at the viewport cursor for held keys", "/viewport/cursorBadges", true);
         section(ui, "File Dialog");
         toggle(ui, "Use the system file dialog instead of Lila's", fileDialog::kNativePref, false);
+        toggle(ui, "Show hidden files", fileDialog::kShowHiddenPref, false);
         toggle(ui, "Allow rename and new folder", fileOps::kAllowEditPref, true);
         toggle(ui, "Allow cut, copy, paste and drag-and-drop", fileOps::kAllowMovePref, true);
         toggle(ui, "Allow delete (to the Recycle Bin, or source control)", fileOps::kAllowDeletePref, true);
