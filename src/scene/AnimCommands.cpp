@@ -4,6 +4,7 @@
 #include "ops/Undo.h"
 #include "core/Events.h"
 #include "core/PrefStore.h"
+#include "core/Progress.h"
 #include "core/Profile.h"
 #include "scene/AnimLayer.h"
 #include "scene/Graph.h"
@@ -1252,6 +1253,59 @@ void registerCommands()
                 return times.back();
             }
             throw CommandError("findKeyframe: which is next, previous, first or last");
+        },
+    });
+
+    ops::registerCommand({
+        .name = "cachedPlayback",
+        .doc = "Keeps every evaluated frame in memory, so playing back over frames already seen restores them instead of "
+               "recomputing. Any change to the scene drops the cache. fill evaluates the whole playback range now. Returns "
+               "{enabled, frames, bytes}.",
+        .flags = {
+            {"state", "st", T::Bool, nullptr, "Turn cached playback on or off; remembered as a preference."},
+            {"fill", "f", T::Bool, false, "Evaluate every frame of the playback range into the cache (turns it on)."},
+            {"clear", "cl", T::Bool, false, "Drop every cached frame."},
+            {"query", "q", T::Bool, false, ""},
+        },
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            if (!a.get<bool>("query"))
+            {
+                if (a.has("state") || a.get<bool>("fill"))
+                {
+                    const bool on = a.get<bool>("fill") || a.get<bool>("state");
+                    g.setCachedPlayback(on);
+                    PrefStore::get().set("general", kCachedPlaybackPref, on);
+                }
+                if (a.get<bool>("clear"))
+                    g.clearPlaybackCache();
+                if (a.get<bool>("fill"))
+                {
+                    const Playback& p = playback();
+                    const int64_t first = int64_t(std::lround(frameOf(p.minTime))), last = int64_t(std::lround(frameOf(p.maxTime)));
+                    const double was = g.time();
+                    try
+                    {
+                        progress::Scope bar("Caching playback", double(last - first + 1), progress::Cancellable);
+                        for (int64_t f = first; f <= last; ++f)
+                        {
+                            bar.checkCancel();
+                            bar.setStatus("Frame " + std::to_string(f));
+                            g.setTime(secondsOf(double(f)), false);
+                            g.evaluate();
+                            bar.step();
+                        }
+                    }
+                    catch (const progress::Cancelled&)
+                    {
+                    }
+                    g.setTime(was, false);
+                    g.evaluate();
+                    events::send({.type = events::Event::TimeChanged, .time = was});
+                }
+            }
+            return {{"enabled", g.cachedPlayback()}, {"frames", g.playbackCacheTimes().size()}, {"bytes", g.playbackCacheBytes()}};
         },
     });
 

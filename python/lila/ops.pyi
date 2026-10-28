@@ -1088,6 +1088,16 @@ def cable(*objects: Any, sagMode: str | None = None, slack: float | None = None,
         name: Cable curve name; made unique. Short form n.
     """
 
+def cachedPlayback(state: bool | None = None, fill: bool | None = None, clear: bool | None = None, query: bool | None = None, *, st: bool | None = None, f: bool | None = None, cl: bool | None = None, q: bool | None = None) -> Any:
+    """Keeps every evaluated frame in memory, so playing back over frames already seen restores them instead of recomputing. Any change to the scene drops the cache. fill evaluates the whole playback range now. Returns {enabled, frames, bytes}.
+
+    Args:
+        state: Turn cached playback on or off; remembered as a preference. Short form st.
+        fill: Evaluate every frame of the playback range into the cache (turns it on). Short form f. Default False.
+        clear: Drop every cached frame. Short form cl. Default False.
+        query: Short form q. Default False.
+    """
+
 def cage(*objects: Any, coordinates: str | None = None, name: str | None = None) -> Any:
     """Deform meshes by a closed cage mesh around them (mean value coordinates). Give the meshes first and the cage last; then edit the cage's points. Returns the deformers.
 

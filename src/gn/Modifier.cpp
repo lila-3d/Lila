@@ -51,16 +51,26 @@ struct TypeLayout
     int ownerAttr = -1;
 };
 
-std::mutex gHeightfieldMutex;
-std::map<NodeId, std::shared_ptr<const geo::Heightfield>> gHeightfields;
+struct Heightfields
+{
+    std::mutex mutex;
+    std::map<NodeId, std::shared_ptr<const geo::Heightfield>> byModifier;
+};
+
+Heightfields& heightfields()
+{
+    // Never destroyed: the scene graph's static nodes clear their entries during exit, after this would be gone.
+    static Heightfields* h = new Heightfields;
+    return *h;
+}
 
 void setHeightfield(NodeId modifier, std::shared_ptr<const geo::Heightfield> h)
 {
-    std::lock_guard lock(gHeightfieldMutex);
+    std::lock_guard lock(heightfields().mutex);
     if (h)
-        gHeightfields[modifier] = std::move(h);
+        heightfields().byModifier[modifier] = std::move(h);
     else
-        gHeightfields.erase(modifier);
+        heightfields().byModifier.erase(modifier);
 }
 
 std::string objectMeshAttr(const std::string& node) { return "obj_" + node + "_mesh"; }
@@ -170,6 +180,35 @@ public:
         }
     }
 
+    PlaybackExtra playbackExtra(const scene::EvalContext& ctx) const override
+    {
+        // Until the simulation reaches this frame the output shows the start; it is recomputed once the state arrives.
+        if (mPlan && mPlan->statefulStep >= 0 && !simulationStateReady(id(), ctx.time))
+            return {.keep = false};
+        auto p = std::make_shared<Published>(
+            Published{instanceView(id()), modifierHeightfield(id()), viewerData(id()), mPlan && mPlan->statefulStep >= 0 ? simulationInputs(id()) : nullptr});
+        size_t bytes = sizeof(Published);
+        if (p->view)
+            bytes += p->view->instanceCount * sizeof(glm::mat4);
+        return {std::move(p), bytes};
+    }
+
+    void restorePlaybackExtra(const std::shared_ptr<const void>& data) override
+    {
+        const auto* p = static_cast<const Published*>(data.get());
+        if (p && p->view)
+            setInstanceView(id(), p->view);
+        else
+            clearInstanceView(id());
+        setHeightfield(id(), p ? p->heightfield : nullptr);
+        if (p && p->viewer)
+            setViewerData(id(), p->viewer);
+        else
+            clearViewerData(id());
+        if (p && p->simInputs)
+            restoreSimulationInputs(id(), p->simInputs);
+    }
+
     ~GnModifierNode() override
     {
         clearViewerData(id());
@@ -179,6 +218,15 @@ public:
     }
 
 private:
+    /** What compute() publishes beside its output mesh. */
+    struct Published
+    {
+        InstanceViewPtr view;
+        std::shared_ptr<const geo::Heightfield> heightfield;
+        ViewerPtr viewer;
+        std::shared_ptr<const SimInputs> simInputs;
+    };
+
     /**
      * Keeps the cached step results only while nothing a time-independent step reads has changed. The input mesh counts
      * by content: upstream nodes can hand over a new copy of the same mesh on every evaluation.
@@ -753,9 +801,9 @@ bool isGnModifier(const Node& n) { return dynamic_cast<const GnModifierNode*>(&n
 
 std::shared_ptr<const geo::Heightfield> modifierHeightfield(NodeId modifier)
 {
-    std::lock_guard lock(gHeightfieldMutex);
-    auto it = gHeightfields.find(modifier);
-    return it == gHeightfields.end() ? nullptr : it->second;
+    std::lock_guard lock(heightfields().mutex);
+    auto it = heightfields().byModifier.find(modifier);
+    return it == heightfields().byModifier.end() ? nullptr : it->second;
 }
 
 Node* groupOfModifier(Graph& g, const Node& modifier)

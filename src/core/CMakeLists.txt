@@ -26,6 +26,7 @@ lila_module(lila_core Foundation
     ProjectTextures.cpp
     Registry.cpp
     ResourceKey.cpp
+    SystemMemory.cpp
     TextMatch.cpp
     Version.cpp
     Workspace.cpp)
@@ -37,6 +38,8 @@ target_link_libraries(lila_core PUBLIC nlohmann_json::nlohmann_json TBB::tbb glm
 # Out of the unity batch: the stamp changes with every commit and should recompile only this file.
 set_source_files_properties(Version.cpp PROPERTIES INCLUDE_DIRECTORIES ${LILA_BUILD_INFO_DIR} SKIP_UNITY_BUILD_INCLUSION ON SKIP_PRECOMPILE_HEADERS ON)
 add_dependencies(lila_core lila_version)
+# windows.h stays out of the unity batch.
+set_source_files_properties(SystemMemory.cpp PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
 if(LILA_TRACY)
     target_link_libraries(lila_core PUBLIC Tracy::TracyClient)
     target_compile_definitions(lila_core PUBLIC LILA_TRACY)

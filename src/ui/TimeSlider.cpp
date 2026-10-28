@@ -215,6 +215,17 @@ protected:
             p.fillRect(QRectF(xOf(fr) - capW, h - 3, capW, 2), tick);
         }
 
+        if (Graph::current().cachedPlayback())
+        {
+            const QColor cached = viewportDisplay::accentColors(viewportDisplay::kTimeKeyColors) ? QColor(70, 130, 200) : gray(110);
+            for (double t : Graph::current().playbackCacheTimes())
+            {
+                double fr = anim::frameOf(t);
+                if (fr >= first - 0.5 && fr <= last + 0.5)
+                    p.fillRect(QRectF(xOf(fr) - ppf / 2, h - 3, ppf, 3), cached);
+            }
+        }
+
         int cur = frameOf(Graph::current().time());
         double cx = xOf(cur);
         double cw = std::max(3.0, ppf);
@@ -517,6 +528,39 @@ TimeSlider::TimeSlider(QWidget* parent) : QWidget(parent)
         });
         connect(ghost, &QObject::destroyed, [listener] { PrefStore::get().removeOnChanged(listener); });
         bottom->addWidget(ghost);
+    }
+    {
+        QToolButton* cache = toolButton(this, "Cached Playback: keep evaluated frames in memory so playback replays them\n"
+                                              "Right-click to fill or clear the cache");
+        cache->setIcon(icon("database"));
+        cache->setCheckable(true);
+        const bool on = PrefStore::get().value<bool>("general", scene::kCachedPlaybackPref, false);
+        Graph::current().setCachedPlayback(on);
+        cache->setChecked(on);
+        cache->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(cache, &QToolButton::toggled, this, [](bool on) { runUi("cachedPlayback", {{"state", on}}); });
+        connect(cache, &QToolButton::customContextMenuRequested, this, [this, cache](const QPoint& at) {
+            QMenu menu;
+            menu.addAction("Fill Cache", [this] {
+                runUi("cachedPlayback", {{"fill", true}});
+                mRuler->update();
+            });
+            menu.addAction("Clear Cache", [this] {
+                runUi("cachedPlayback", {{"clear", true}});
+                mRuler->update();
+            });
+            menu.exec(cache->mapToGlobal(at));
+        });
+        int listener = PrefStore::get().onChanged([cache](const std::string& file) {
+            if (file != "general")
+                return;
+            QMetaObject::invokeMethod(cache, [cache] {
+                QSignalBlocker block(cache);
+                cache->setChecked(Graph::current().cachedPlayback());
+            });
+        });
+        connect(cache, &QObject::destroyed, [listener] { PrefStore::get().removeOnChanged(listener); });
+        bottom->addWidget(cache);
     }
     outer->addLayout(bottom);
 

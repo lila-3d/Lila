@@ -14,6 +14,10 @@
 
 namespace lila::scene
 {
+/** General prefs: cached playback on or off, and the memory it may use in MB (0: half the machine's). */
+inline constexpr const char* kCachedPlaybackPref = "/cachedPlayback";
+inline constexpr const char* kCachedPlaybackMemoryPref = "/cachedPlaybackMemoryMB";
+
 enum class Change : uint8_t
 {
     Created,
@@ -215,6 +219,19 @@ public:
     static void setEvaluateHook(EvaluateHook hook);
     /** Further hooks, called after the one set above in the order added. */
     static void addEvaluateHook(EvaluateHook hook);
+    // Cached playback
+    /**
+     * While on, what every node computes is kept per time, and a full evaluate() at a kept time restores it instead of
+     * computing. Any change to the scene but a selection drops what is kept.
+     */
+    void setCachedPlayback(bool on);
+    bool cachedPlayback() const { return mPlayback != nullptr; }
+    void clearPlaybackCache();
+    /** Every kept time in seconds, ascending. */
+    std::vector<double> playbackCacheTimes() const;
+    /** Roughly what the kept results hold in memory. */
+    size_t playbackCacheBytes() const;
+
     double time() const { return mCtx.time; }
     /** notify false skips the TimeChanged event, for moving time briefly and back again (sampling at other frames). */
     void setTime(double seconds, bool notify = true);
@@ -307,6 +324,12 @@ private:
     void evaluateWith(const std::vector<NodeId>* only);
     void evaluateDirty(const std::vector<NodeId>* only = nullptr);
     bool dependsOn(NodeId node, NodeId upstream) const;
+    /** Puts back what the node computed at the current time, if kept. Thread-safe. */
+    bool restoreCached(Node& n);
+    /** Returns whether it was kept. */
+    bool keepCached(Node& n);
+    /** The most a node's parent and sources computed this pass (Node::mPlayback): any recompute upstream invalidates a restore. */
+    uint8_t upstreamPlayback(const Node& n, uint64_t pass) const;
     void changed(Change c, NodeId id, const PlugRef* plug = nullptr);
     /** Node and selection changes of the current graph, to the event bus. */
     void forwardEvent(Change c, NodeId id);
@@ -340,5 +363,7 @@ private:
     std::atomic<uint64_t> mVersion{1};
     bool mAnyDirty = false;
     uint64_t mEvaluationPass = 0;
+    struct PlaybackCache;
+    std::unique_ptr<PlaybackCache> mPlayback;
 };
 } // namespace lila::scene

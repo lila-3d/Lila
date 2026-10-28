@@ -4,8 +4,11 @@
 #include "ops/Undo.h"
 #include "core/Events.h"
 #include "core/Log.h"
+#include "core/PrefStore.h"
+#include "core/SystemMemory.h"
 #include "core/Profile.h"
 #include "geo/Mesh.h"
+#include "scene/Simulation.h"
 #include "scene/Spaces.h"
 #include "scene/Transform.h"
 
@@ -14,6 +17,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <mutex>
 #include <stdexcept>
 #include <unordered_set>
 #include <utility>
@@ -194,8 +198,145 @@ Graph& Graph::current()
     return g;
 }
 
+struct Graph::PlaybackCache
+{
+    struct Entry
+    {
+        std::vector<std::pair<int, PlugValue>> values;
+        std::vector<std::vector<std::pair<int, PlugValue>>> elements;
+        std::shared_ptr<const void> extra;
+    };
+    std::mutex mutex;
+    std::map<int64_t, std::unordered_map<NodeId, Entry>> times;
+    /** Meshes already counted in bytes; the cache keeps them alive, so their addresses stay unique. */
+    std::unordered_set<const void*> counted;
+    size_t bytes = 0;
+    size_t limit = 0;
+
+    static int64_t keyOf(double seconds) { return std::llround(seconds * 1e6); }
+};
+
 Graph::Graph() = default;
 Graph::~Graph() = default;
+
+void Graph::setCachedPlayback(bool on)
+{
+    if (on == cachedPlayback())
+        return;
+    mPlayback = on ? std::make_unique<PlaybackCache>() : nullptr;
+    clearPlaybackCache();
+}
+
+void Graph::clearPlaybackCache()
+{
+    if (!mPlayback)
+        return;
+    const int64_t mb = PrefStore::get().value<int64_t>("general", kCachedPlaybackMemoryPref, 0);
+    std::lock_guard lock(mPlayback->mutex);
+    mPlayback->times.clear();
+    mPlayback->counted.clear();
+    mPlayback->bytes = 0;
+    mPlayback->limit = mb > 0 ? size_t(mb) << 20 : physicalMemoryBytes() / 2;
+}
+
+std::vector<double> Graph::playbackCacheTimes() const
+{
+    std::vector<double> out;
+    if (!mPlayback)
+        return out;
+    std::lock_guard lock(mPlayback->mutex);
+    for (const auto& [key, nodes] : mPlayback->times)
+        out.push_back(double(key) / 1e6);
+    return out;
+}
+
+size_t Graph::playbackCacheBytes() const
+{
+    if (!mPlayback)
+        return 0;
+    std::lock_guard lock(mPlayback->mutex);
+    return mPlayback->bytes;
+}
+
+bool Graph::restoreCached(Node& n)
+{
+    PlaybackCache& c = *mPlayback;
+    std::shared_ptr<const void> extra;
+    {
+        std::lock_guard lock(c.mutex);
+        auto t = c.times.find(PlaybackCache::keyOf(mCtx.time));
+        if (t == c.times.end())
+            return false;
+        auto e = t->second.find(n.id());
+        if (e == t->second.end())
+            return false;
+        for (const auto& [attr, v] : e->second.values)
+            n.mValues[size_t(attr)] = v;
+        if (!e->second.elements.empty())
+            n.mElements = e->second.elements;
+        extra = e->second.extra;
+    }
+    n.restorePlaybackExtra(extra);
+    return true;
+}
+
+uint8_t Graph::upstreamPlayback(const Node& n, uint64_t pass) const
+{
+    uint8_t most = 0;
+    auto visit = [&](NodeId up) {
+        if (const Node* u = node(up); u && u->mEvaluatedPass == pass)
+            most = std::max(most, u->mPlayback);
+    };
+    if (NodeId p = parent(n.id()); p != kNoNode)
+        visit(p);
+    for (auto it = mInputs.lower_bound({n.id(), 0, -1}); it != mInputs.end() && it->first.node == n.id(); ++it)
+        visit(it->second.node);
+    return most;
+}
+
+bool Graph::keepCached(Node& n)
+{
+    PlaybackCache& c = *mPlayback;
+    // Outputs and whatever arrives by connection; unconnected inputs only change by an edit, which drops the cache.
+    std::vector<bool> keep(n.mValues.size(), false);
+    const std::vector<AttrDef>& attrs = n.type().attrs;
+    for (size_t i = 0; i < keep.size() && i < attrs.size(); ++i)
+        keep[i] = !(attrs[i].flags & AttrInput);
+    bool elements = false;
+    for (auto it = mInputs.lower_bound({n.id(), 0, -1}); it != mInputs.end() && it->first.node == n.id(); ++it)
+    {
+        if (it->first.element >= 0)
+            elements = true;
+        else if (size_t(it->first.attr) < keep.size())
+            keep[size_t(it->first.attr)] = true;
+    }
+    if (n.type().dag)
+        keep[Transform::kParentMatrix] = true;
+
+    PlaybackCache::Entry e;
+    for (size_t i = 0; i < keep.size(); ++i)
+        if (keep[i])
+            e.values.emplace_back(int(i), n.mValues[i]);
+    if (elements)
+        e.elements = n.mElements;
+    Node::PlaybackExtra extra = n.playbackExtra(mCtx);
+    if (!extra.keep)
+        return false;
+    e.extra = std::move(extra.data);
+
+    std::lock_guard lock(c.mutex);
+    const int64_t key = PlaybackCache::keyOf(mCtx.time);
+    auto t = c.times.find(key);
+    if (c.bytes >= c.limit && (t == c.times.end() || !t->second.contains(n.id())))
+        return false;
+    size_t bytes = extra.bytes + e.values.size() * sizeof(PlugValue);
+    for (const auto& [attr, v] : e.values)
+        if (const MeshPtr* m = std::get_if<MeshPtr>(&v); m && *m && c.counted.insert(m->get()).second)
+            bytes += (*m)->memoryBytes();
+    c.bytes += bytes;
+    c.times[key][n.id()] = std::move(e);
+    return true;
+}
 
 void Graph::clear()
 {
@@ -1555,6 +1696,8 @@ void Graph::evaluateDirty(const std::vector<NodeId>* only)
     }
     mAnyDirty = false;
     const uint64_t pass = ++mEvaluationPass;
+    // Partial and simulation-sampling evaluations compute only what a reader needs, not the scene at this time.
+    const bool cache = mPlayback && !only && !sim::sampling();
 
     // Kahn levels over the dirty subgraph; each level computes in parallel.
     std::vector<Node*> dirty;
@@ -1594,6 +1737,14 @@ void Graph::evaluateDirty(const std::vector<NodeId>* only)
     while (!level.empty())
     {
         auto pull = [&](Node* n) {
+            const uint8_t upstream = cache ? upstreamPlayback(*n, pass) : 0;
+            if (cache && upstream == 0 && restoreCached(*n))
+            {
+                n->mPlayback = 0;
+                n->mDirty = false;
+                n->mEvaluatedPass = pass;
+                return;
+            }
             if (n->type().dag)
             {
                 glm::dmat4 pw(1.0);
@@ -1648,6 +1799,9 @@ void Graph::evaluateDirty(const std::vector<NodeId>* only)
                 if (const glm::dmat4* frame = spaces::activeFrame(*n))
                     n->mValues[Transform::kParentMatrix] = *frame;
             n->compute(mCtx);
+            // Computed from a placeholder upstream means a placeholder too.
+            if (cache)
+                n->mPlayback = upstream < 2 && keepCached(*n) ? 1 : 2;
             n->mDirty = false;
             n->mEvaluatedPass = pass;
         };
@@ -1728,6 +1882,8 @@ void Graph::removeListener(int id)
 void Graph::changed(Change c, NodeId id, const PlugRef* plug)
 {
     mVersion.fetch_add(1, std::memory_order_relaxed);
+    if (c != Change::Selection && !sim::sampling())
+        clearPlaybackCache();
     const PlugRef* outer = std::exchange(mChangedPlug, plug);
     for (auto& [lid, l] : mListeners)
         if (mBatchDepth == 0 || l.immediate)

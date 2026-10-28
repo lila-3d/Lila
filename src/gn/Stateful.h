@@ -105,6 +105,10 @@ LILA_SCENE_API std::vector<uint8_t> simulationState(scene::Graph& g, scene::Node
 LILA_SCENE_API std::vector<uint8_t> cachedSimulationState(scene::Graph& g, scene::NodeId modifier, int64_t frame);
 /** What most recently reached the modifier's simulation node; null before it has been evaluated. */
 LILA_SCENE_API std::shared_ptr<const SimInputs> simulationInputs(scene::NodeId modifier);
+/** Whether the modifier's simulation state for the time's frame has been published, so its output shows it. Thread-safe. */
+LILA_SCENE_API bool simulationStateReady(scene::NodeId modifier, double time);
+/** Republishes inputs simulationInputs returned earlier, for a modifier restoring a cached frame instead of evaluating. */
+LILA_SCENE_API void restoreSimulationInputs(scene::NodeId modifier, std::shared_ptr<const SimInputs> inputs);
 
 /** Whether the group has a simulation node at its top level. */
 LILA_SCENE_API bool hasStateful(const Group& g);

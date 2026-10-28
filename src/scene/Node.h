@@ -124,6 +124,23 @@ public:
 
     virtual void compute(const EvalContext& ctx) { (void)ctx; }
 
+    /** Side data compute() publishes outside the node's plugs, kept by cached playback along with its values. */
+    struct PlaybackExtra
+    {
+        std::shared_ptr<const void> data;
+        size_t bytes = 0;
+        /** False when what compute() just produced is a placeholder that will be recomputed, never to be kept. */
+        bool keep = true;
+    };
+    /** Called on a worker thread right after compute(). */
+    virtual PlaybackExtra playbackExtra(const EvalContext& ctx) const
+    {
+        (void)ctx;
+        return {};
+    }
+    /** Republishes what playbackExtra returned, in place of a compute(). Called on a worker thread. */
+    virtual void restorePlaybackExtra(const std::shared_ptr<const void>& data) { (void)data; }
+
     enum Trait : uint32_t
     {
         kModifier = 1, // a ModifierNode
@@ -149,6 +166,8 @@ private:
     std::shared_ptr<NodeType> mOwnType; // the private type copy holding user attrs, once one is added
     std::vector<uint8_t> mLocks; // per attr, empty until something is locked
     bool mDirty = true;
+    /** In the pass it last evaluated in, with cached playback on: 0 restored, 1 computed and kept, 2 computed, not kept. */
+    uint8_t mPlayback = 0;
     uint64_t mEvaluatedPass = 0;
 };
 } // namespace lila::scene

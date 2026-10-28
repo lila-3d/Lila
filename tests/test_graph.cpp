@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include <atomic>
+
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "scene/Graph.h"
@@ -425,4 +427,111 @@ TEST_CASE("connected values are held inside the destination's limits")
     CHECK(run("getAttr", {{"args", {"dst.count"}}}).get<int64_t>() == 32);
     run("setAttr", {{"args", {"src.tx", 7.0}}});
     CHECK(run("getAttr", {{"args", {"dst.count"}}}).get<int64_t>() == 7);
+}
+
+namespace
+{
+/** Outputs the time it computed at and counts its computes. */
+class TimeCounterNode final : public Node
+{
+public:
+    static inline std::atomic<int> computes{0};
+    void compute(const EvalContext& ctx) override
+    {
+        ++computes;
+        setOutput(0, ctx.time);
+    }
+};
+} // namespace
+
+TEST_CASE("cached playback restores kept times and drops them on an edit")
+{
+    if (!types::find("testTimeCounter"))
+        types::registerType({.name = "testTimeCounter",
+                             .timeDependent = true,
+                             .ownAttrs = {AttrDef{.name = "out", .shortName = "o", .flags = AttrOutput}},
+                             .create = [] { return std::make_unique<TimeCounterNode>(); }});
+    run("newScene");
+    Graph& g = Graph::current();
+    run("createNode", {{"args", {"testTimeCounter"}}, {"name", "counter"}});
+    run("spaceLocator", {{"name", "loc"}});
+    run("connectAttr", {{"args", {"counter.out", "loc.tx"}}});
+    const Node& loc = *g.find("loc");
+    auto x = [&] { return glm::dvec3(loc.as<glm::dmat4>(Transform::kWorldMatrix)[3]).x; };
+
+    run("cachedPlayback", {{"state", true}});
+    for (double t : {1.0, 2.0})
+    {
+        g.setTime(t);
+        g.evaluate();
+    }
+    CHECK(g.playbackCacheTimes() == std::vector<double>{1.0, 2.0});
+
+    const int before = TimeCounterNode::computes;
+    g.setTime(1.0);
+    g.evaluate();
+    CHECK(x() == doctest::Approx(1.0));
+    g.setTime(2.0);
+    g.evaluate();
+    CHECK(x() == doctest::Approx(2.0));
+    CHECK(TimeCounterNode::computes == before);
+
+    run("setAttr", {{"args", {"loc.ty", 3}}});
+    CHECK(g.playbackCacheTimes().empty());
+    g.setTime(1.0);
+    g.evaluate();
+    CHECK(TimeCounterNode::computes == before + 1);
+    CHECK(x() == doctest::Approx(1.0));
+    run("cachedPlayback", {{"state", false}});
+}
+
+namespace
+{
+/** Outputs -1 until told its data has arrived, as a simulation's output does before its state reaches the frame. */
+class LateDataNode final : public Node
+{
+public:
+    static inline std::atomic<bool> ready{false};
+    void compute(const EvalContext& ctx) override { setOutput(0, ready ? ctx.time : -1.0); }
+    PlaybackExtra playbackExtra(const EvalContext&) const override { return {.keep = ready.load()}; }
+};
+} // namespace
+
+TEST_CASE("cached playback never keeps a placeholder result")
+{
+    if (!types::find("testLateData"))
+        types::registerType({.name = "testLateData",
+                             .timeDependent = true,
+                             .ownAttrs = {AttrDef{.name = "out", .shortName = "o", .flags = AttrOutput}},
+                             .create = [] { return std::make_unique<LateDataNode>(); }});
+    run("newScene");
+    Graph& g = Graph::current();
+    run("createNode", {{"args", {"testLateData"}}, {"name", "late"}});
+    run("spaceLocator", {{"name", "follower"}});
+    run("connectAttr", {{"args", {"late.out", "follower.tx"}}});
+    Node& late = *g.find("late");
+    const Node& follower = *g.find("follower");
+    auto x = [&] { return glm::dvec3(follower.as<glm::dmat4>(Transform::kWorldMatrix)[3]).x; };
+    run("cachedPlayback", {{"state", true}});
+
+    LateDataNode::ready = false;
+    g.setTime(3.0);
+    g.evaluate();
+    CHECK(late.as<double>(0) == doctest::Approx(-1.0));
+    CHECK(g.playbackCacheTimes().empty());
+
+    LateDataNode::ready = true;
+    g.touch(late.id());
+    g.evaluate();
+    CHECK(late.as<double>(0) == doctest::Approx(3.0));
+    CHECK(x() == doctest::Approx(3.0));
+    CHECK(g.playbackCacheTimes() == std::vector<double>{3.0});
+
+    g.setTime(4.0);
+    g.evaluate();
+    g.setTime(3.0);
+    g.evaluate();
+    CHECK(late.as<double>(0) == doctest::Approx(3.0));
+    CHECK(x() == doctest::Approx(3.0));
+    run("cachedPlayback", {{"state", false}});
 }

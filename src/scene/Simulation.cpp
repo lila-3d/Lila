@@ -45,8 +45,9 @@ struct Sim
 /** Simulations of the graph below, by node. Ordered, so anything iterating it does so the same way every run. */
 std::map<NodeId, Sim>& sims()
 {
-    static std::map<NodeId, Sim> s;
-    return s;
+    // Never destroyed: solvers can come from extension DLLs, which unload before this would.
+    static auto* s = new std::map<NodeId, Sim>;
+    return *s;
 }
 
 Graph* gGraph = nullptr;

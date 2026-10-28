@@ -156,8 +156,9 @@ struct Store
 
 Store& store()
 {
-    static Store s;
-    return s;
+    // Never destroyed: the scene graph's static nodes clear their entries during exit, after this would be gone.
+    static Store* s = new Store;
+    return *s;
 }
 
 std::shared_ptr<const SimInputs> latestInputs(NodeId modifier)
@@ -492,6 +493,20 @@ std::vector<uint8_t> cachedSimulationState(Graph& g, NodeId modifier, int64_t fr
 }
 
 std::shared_ptr<const SimInputs> simulationInputs(NodeId modifier) { return latestInputs(modifier); }
+
+bool simulationStateReady(NodeId modifier, double time)
+{
+    std::lock_guard lock(store().mutex);
+    auto it = store().entries.find(modifier);
+    return it != store().entries.end() && it->second.state && it->second.frame == sim::frameOf(time);
+}
+
+void restoreSimulationInputs(NodeId modifier, std::shared_ptr<const SimInputs> inputs)
+{
+    std::lock_guard lock(store().mutex);
+    if (store().simulating.contains(modifier))
+        store().entries[modifier].inputs = std::move(inputs);
+}
 
 bool hasStateful(const Group& g)
 {
