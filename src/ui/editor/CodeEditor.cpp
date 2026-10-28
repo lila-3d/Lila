@@ -960,6 +960,11 @@ bool CodeEditor::handleEditingKey(QKeyEvent* e)
         duplicate();
         return true;
     }
+    if (mods == (Qt::ControlModifier | Qt::ShiftModifier) && key == Qt::Key_Delete)
+    {
+        deleteLines();
+        return true;
+    }
     if (mods == Qt::AltModifier && (key == Qt::Key_Up || key == Qt::Key_Down))
     {
         moveLines(key == Qt::Key_Up ? -1 : 1);
@@ -1356,6 +1361,32 @@ void CodeEditor::moveLines(int direction)
     s.setPosition(newFirst + anchorOff);
     s.setPosition(newFirst + posOff, QTextCursor::KeepAnchor);
     setTextCursor(s);
+}
+
+void CodeEditor::deleteLines()
+{
+    QTextCursor c = textCursor();
+    auto [first, last] = selectedBlocks(c, document());
+    int col = c.positionInBlock();
+    int start = first.position();
+    int end = last.position() + last.length() - 1;
+    // The last line has no newline after it, so take the one before it instead.
+    if (last.next().isValid())
+        ++end;
+    else if (first.previous().isValid())
+        --start;
+
+    QTextCursor e(document());
+    e.beginEditBlock();
+    e.setPosition(start);
+    e.setPosition(end, QTextCursor::KeepAnchor);
+    e.removeSelectedText();
+    e.endEditBlock();
+
+    QTextBlock b = document()->findBlock(start);
+    QTextCursor n(b);
+    n.setPosition(b.position() + std::min(col, b.length() - 1));
+    setTextCursor(n);
 }
 
 void CodeEditor::goToLine(int line, int col)

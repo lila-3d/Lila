@@ -187,6 +187,7 @@ private:
     void toggleComment();
     void duplicate();
     void moveLines(int direction);
+    void deleteLines();
     void smartHome(bool select);
     bool autoPair(QChar c);
 

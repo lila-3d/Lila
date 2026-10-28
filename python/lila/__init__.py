@@ -20,7 +20,28 @@ from .nodes import Node, exists, group, locator, node, selected
 from .tasks import run_in_background
 
 __all__ = ["ops", "debug_draw", "docs", "events", "math", "nodes", "prefs", "scene_data", "tasks", "ui", "CommandError", "Progress", "version", "build_id", "workspace", "undo_chunk",
-           "Node", "node", "selected", "exists", "locator", "group", "run_in_background"]
+           "Node", "node", "selected", "exists", "locator", "group", "run_in_background", "info", "warning", "error"]
+
+
+def info(message):
+    """Writes an info line to the log and the script editor output."""
+    import _lila
+
+    _lila.write(_lila.LOG_INFO, str(message))
+
+
+def warning(message):
+    """Writes a warning to the log, shown in the script editor output and the status line."""
+    import _lila
+
+    _lila.write(_lila.LOG_WARNING, str(message))
+
+
+def error(message):
+    """Writes an error to the log without raising; raise an exception to stop the script."""
+    import _lila
+
+    _lila.write(_lila.LOG_ERROR, str(message))
 
 
 def version():
