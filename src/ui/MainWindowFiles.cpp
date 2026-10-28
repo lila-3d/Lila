@@ -254,18 +254,28 @@ void MainWindow::convertMayaFolder()
 void MainWindow::exportSelection()
 {
     QString start = Workspace::get().isOpen() ? QString::fromStdWString(Workspace::get().root().wstring()) : QString();
+    const std::string last = PrefStore::get().value<std::string>("general", "/export/lastFormat", "");
+    const QString filter = QString::fromStdString(io::translators::dialogFilter(io::translators::Op::Export, {}));
+    // Qt preselects only an exact entry, so match the remembered format's label to its whole entry.
     QString selected;
-    QString file = QFileDialog::getSaveFileName(this, "Export Selection", start,
-                                                QString::fromStdString(io::translators::dialogFilter(io::translators::Op::Export, {})), &selected);
+    for (const io::translators::FileTranslator* t : io::translators::supporting(io::translators::Op::Export))
+        if (t->id == last)
+            for (const QString& entry : filter.split(";;"))
+                if (entry.startsWith(QString::fromStdString(t->label + " (")))
+                    selected = entry;
+    QString file = QFileDialog::getSaveFileName(this, "Export Selection", start, filter, &selected);
     if (file.isEmpty())
         return;
     // The chosen filter entry names the format when the typed name has no extension a translator knows.
     std::string translator;
-    if (!io::translators::forPath(io::translators::Op::Export, file.toStdWString()))
+    if (const io::translators::FileTranslator* byExt = io::translators::forPath(io::translators::Op::Export, file.toStdWString()))
+        PrefStore::get().set("general", "/export/lastFormat", byExt->id);
+    else
         for (const io::translators::FileTranslator* t : io::translators::supporting(io::translators::Op::Export))
             if (selected.startsWith(QString::fromStdString(t->label + " (")))
             {
                 translator = t->id;
+                PrefStore::get().set("general", "/export/lastFormat", t->id);
                 if (!t->extensions.empty())
                     file += QString::fromStdString(t->extensions.front());
             }
@@ -317,8 +327,9 @@ void MainWindow::addRecentFile(const std::filesystem::path& path)
     std::string s = path.generic_string();
     recent.erase(std::remove(recent.begin(), recent.end(), json(s)), recent.end());
     recent.insert(recent.begin(), s);
-    if (recent.size() > 15)
-        recent.erase(recent.begin() + 15, recent.end());
+    const size_t keep = size_t(std::max(1.0, PrefStore::get().value<double>("general", "/recentFilesMax", 20.0)));
+    if (recent.size() > keep)
+        recent.erase(recent.begin() + ptrdiff_t(keep), recent.end());
     PrefStore::get().set("general", "/recentFiles", recent);
 }
 
