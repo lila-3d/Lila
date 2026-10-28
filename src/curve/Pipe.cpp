@@ -774,11 +774,10 @@ PipeResult makePipe(const Spline& input, const PipeOptions& o)
                 slots.push_back({s + b->half + Lc * 0.5, false, 0.0});
             }
         }
-        if (o.partsAtEnds && !P.closed)
-        {
+        if (o.partAtStart && !P.closed)
             slots.push_back({std::min(Lc * 0.5, L * 0.5), false, 0.0});
+        if (o.partAtEnd && !P.closed)
             slots.push_back({std::max(L - Lc * 0.5, L * 0.5), false, 0.0});
-        }
     }
 
     auto ramp = o.radiusRamp;

@@ -199,7 +199,7 @@ json presetBase()
 {
     json j = json::object();
     const std::vector<std::string> keys = {"radius",      "sides",      "wallThickness", "startCap",      "endCap",         "bendRadius",
-                                           "splitEvery",  "splitAtBends", "partsAtEnds", "coupling",      "couplingScale",  "couplingLength",
+                                           "splitEvery",  "splitAtBends", "partAtStart", "partAtEnd", "coupling",     "couplingScale",  "couplingLength",
                                            "fasteners",   "boltCount",  "corrugationDepth", "corrugationPeriod", "radiusRamp"};
     for (const AttrDef& d : types::find("curvePipe")->ownAttrs)
         if (std::ranges::find(keys, d.name) != keys.end())
@@ -449,7 +449,8 @@ PipeOptions pipeOptionsOf(const Node& n)
     o.splitEvery = std::max(0.0, f(n, "splitEvery"));
     o.splitAtBends = b(n, "splitAtBends");
     o.splitAt = parseNumbers(s(n, "splitAt"));
-    o.partsAtEnds = b(n, "partsAtEnds");
+    o.partAtStart = b(n, "partAtStart");
+    o.partAtEnd = b(n, "partAtEnd");
     o.segmentMaterials = b(n, "segmentMaterials");
     o.coupling = CouplingKind(std::clamp<int64_t>(i(n, "coupling"), 0, 5));
     o.couplingScale = std::max(1.0, f(n, "couplingScale"));
@@ -479,9 +480,9 @@ json pipePreset(std::string_view name)
     json j = presetBase();
     if (name == "pipe")
         j.update({{"radius", 5.0}, {"sides", 12}, {"wallThickness", 0.4}, {"coupling", "flange"}, {"couplingScale", 1.6}, {"couplingLength", 2.0},
-                  {"splitEvery", 200.0}, {"partsAtEnds", true}, {"fasteners", "boltAndNut"}, {"boltCount", 6}});
+                  {"splitEvery", 200.0}, {"partAtStart", true}, {"partAtEnd", true},{"fasteners", "boltAndNut"}, {"boltCount", 6}});
     else if (name == "hose")
-        j.update({{"radius", 2.0}, {"sides", 10}, {"coupling", "collar"}, {"couplingScale", 1.35}, {"couplingLength", 4.0}, {"partsAtEnds", true},
+        j.update({{"radius", 2.0}, {"sides", 10}, {"coupling", "collar"}, {"couplingScale", 1.35}, {"couplingLength", 4.0}, {"partAtStart", true}, {"partAtEnd", true},
                   {"corrugationDepth", 0.15}, {"corrugationPeriod", 1.5}, {"bendRadius", 8.0}, {"startCap", "grid"}, {"endCap", "grid"}});
     else if (name == "cable")
         j.update({{"radius", 0.6}, {"sides", 6}, {"startCap", "grid"}, {"endCap", "grid"}, {"bendRadius", 3.0}});
@@ -527,7 +528,8 @@ void registerPipeType()
         fAttr("splitEvery", 0.0, "Split into segments every this many cm (0: none); couplings go at the splits.", seg, 0.0),
         bAttr("splitAtBends", false, "Also split at each bend.", seg),
         sAttr("splitAt", "Also split at these fractions of the length, e.g. \"0.25 0.5\".", seg),
-        bAttr("partsAtEnds", false, "Couplings at both ends as well.", seg),
+        bAttr("partAtStart", false, "A coupling at the start as well.", seg),
+        bAttr("partAtEnd", false, "A coupling at the end as well.", seg),
         bAttr("segmentMaterials", false, "Segments alternate materials 0 and 1, parts take 2.", seg),
         eAttr("coupling", kCouplings, 0, "Part at each split: flange pair, collar, clamp, a collar following the bend, or the coupling mesh.", cpl),
         fAttr("couplingScale", 1.4, "Coupling outer radius, in pipe radii.", cpl, 1.0),
@@ -548,6 +550,7 @@ void registerPipeType()
         {.name = "partCount", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = AttrOutput, .doc = "Parts placed (couplings and bolts)."},
         {.name = "warning", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrOutput, .doc = "Problems with the last build (tight bends)."},
     };
+    t.retiredAttrs = {"partsAtEnds"};
     t.create = [] { return std::make_unique<PipeNode>(); };
     types::registerType(std::move(t));
 }

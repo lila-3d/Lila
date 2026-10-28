@@ -66,8 +66,9 @@ struct PipeOptions
     double splitEvery = 0.0;
     bool splitAtBends = false;
     std::vector<double> splitAt;
-    /** Couplings at the two ends of an open path as well. */
-    bool partsAtEnds = false;
+    /** Couplings at the start and end of an open path as well. */
+    bool partAtStart = false;
+    bool partAtEnd = false;
     /** Segments alternate between materials 0 and 1, parts take material 2. */
     bool segmentMaterials = false;
 

@@ -182,6 +182,21 @@ TEST_CASE("pipe parts follow the bent path")
     REQUIRE(e.placements.size() == 1);
     CHECK(e.placements[0].bend);
     CHECK(glm::dot(e.placements[0].frame.t, glm::normalize(D3(1, 1, 0))) > 0.99);
+
+    // End parts: each end on its own.
+    o.splitAtBends = false;
+    o.coupling = curve::CouplingKind::Collar;
+    o.partAtStart = true;
+    curve::PipeResult s = curve::makePipe(path, o);
+    REQUIRE(s.placements.size() == 1);
+    CHECK(s.placements[0].origin.y < 1.0);
+    o.partAtStart = false;
+    o.partAtEnd = true;
+    curve::PipeResult t = curve::makePipe(path, o);
+    REQUIRE(t.placements.size() == 1);
+    CHECK(t.placements[0].origin.y > 99.0 - o.couplingLength);
+    o.partAtStart = true;
+    CHECK(curve::makePipe(path, o).placements.size() == 2);
 }
 
 TEST_CASE("pipe bolt rings")
