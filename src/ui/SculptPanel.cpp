@@ -7,6 +7,7 @@
 #include "scene/MeshNodes.h"
 #include "sculpt/SculptSession.h"
 #include "ui/Actions.h"
+#include "ui/LocateFlash.h"
 #include "ui/DockSidebar.h"
 #include "ui/FlowLayout.h"
 #include "ui/Icons.h"
@@ -101,6 +102,7 @@ void showDock()
     {
         d->show();
         d->raise();
+        flashLocate(d);
     }
 }
 

@@ -4,6 +4,7 @@
 #include "core/Log.h"
 #include "extensions/ExtensionManager.h"
 #include "ui/Icons.h"
+#include "ui/LocateFlash.h"
 
 #include <QCheckBox>
 #include <QDialogButtonBox>
@@ -136,6 +137,7 @@ void ExtensionManagerDialog::open(QWidget* parent)
     dialog->show();
     dialog->raise();
     dialog->activateWindow();
+    flashLocate(dialog);
 }
 
 void ExtensionManagerDialog::refresh()

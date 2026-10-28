@@ -12,6 +12,7 @@
 #include "scene/SoftSelect.h"
 #include "scene/Transform.h"
 #include "ui/Actions.h"
+#include "ui/LocateFlash.h"
 #include "ui/MeshCache.h"
 #include "ui/OptionBox.h"
 #include "ui/ViewportWidget.h"
@@ -590,6 +591,7 @@ void openPartsDialog(int panel, const Item& item)
     d->show();
     d->raise();
     d->activateWindow();
+    flashLocate(d);
 }
 } // namespace
 

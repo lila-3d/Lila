@@ -12,6 +12,7 @@
 #include "scene/Transform.h"
 #include "stream/ChangeStream.h"
 #include "ui/Icons.h"
+#include "ui/LocateFlash.h"
 #include "ui/SceneDialogs.h"
 #include "ui/Theme.h"
 #include "ui/LodDisplay.h"
@@ -512,6 +513,12 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         section(ui, "Chrome");
         toggle(ui, "Show menu bar (the hotbox still has the menus)", "/ui/showMenuBar", true);
         toggle(ui, "Show shelf (` still opens the floating shelf)", "/ui/showShelf", true);
+        toggle(ui, "Flash windows as they open", kLocateFlashPref, true);
+        number(ui, "Flash pulses", kLocateFlashPulsesPref, 1.0, 1.0, 10.0, 1.0, 0);
+        number(ui, "Flash pulse length (s)", kLocateFlashPulseSecondsPref, 0.4, 0.1, 5.0, 0.1, 2);
+        number(ui, "Flash strength", kLocateFlashStrengthPref, 0.7, 0.05, 1.0, 0.05, 2);
+        number(ui, "Flash reach from the edges", kLocateFlashReachPref, 0.05, 0.0, 1.0, 0.05, 2);
+        color(ui, "Flash color", kLocateFlashColorPref, kLocateFlashDefaultColor);
         toggle(ui, "Badges at the viewport cursor for held keys", "/viewport/cursorBadges", true);
         section(ui, "Color");
         toggle(ui, "Monotone (overrides the colors below)", vd::kMonotone, false);
@@ -521,6 +528,7 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         toggle(ui, "Graph editor X/Y/Z curves in axis colors", vd::kGraphAxisColors, true);
         toggle(ui, "Animation ghosts tinted before and after", vd::kGhostColors, true);
         toggle(ui, "Classic component colors (blue wire, pink vertices, red hover, yellow selection)", vd::kComponentColors, true);
+        toggle(ui, "Window flash in color", kLocateFlashColorsPref, true);
         section(ui, "Component Thickness (px)");
         const vd::ComponentThickness thickness;
         number(ui, "Edge thickness", vd::kEdgeThickness, thickness.edge, 1.0, 16.0, 0.5, 1);
@@ -988,5 +996,6 @@ void PreferencesDialog::open(QWidget* parent)
     dialog->show();
     dialog->raise();
     dialog->activateWindow();
+    flashLocate(dialog);
 }
 } // namespace lila::ui

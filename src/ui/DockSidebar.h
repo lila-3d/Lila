@@ -38,9 +38,14 @@ LILA_UI_API void setDockDocs(QDockWidget* dock, const std::string& page);
 /** Shown, not collapsed and not behind another tab of its group. */
 LILA_UI_API bool dockShowing(const QDockWidget* dock);
 
+/** Window toggles run from the command palette only open or raise: naming a window there means "show me it". */
+LILA_UI_API bool togglesRevealOnly();
+
 /** A window toggle for top-level windows: closes the shown window of type T, if there is one, and says whether it did. */
 template <class T> bool closeShownWindow()
 {
+    if (togglesRevealOnly())
+        return false;
     for (QWidget* w : QApplication::topLevelWidgets())
         if (auto* t = qobject_cast<T*>(w); t && t->isVisible() && !t->isMinimized())
         {

@@ -141,6 +141,7 @@ lila_module(lila_ui UI
     FlowLayout.cpp FlowLayout.h
     MenuButtons.cpp MenuButtons.h
     DockSidebar.cpp DockSidebar.h
+    LocateFlash.cpp LocateFlash.h
     DockDragCancel.cpp DockDragCancel.h
     DominantInfluenceUi.cpp DominantInfluenceUi.h
     AnimProxyUi.cpp AnimProxyUi.h

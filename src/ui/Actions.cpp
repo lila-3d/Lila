@@ -217,6 +217,11 @@ ViaScope::~ViaScope()
     currentTrigger() = std::move(mOuter);
 }
 
+Via currentVia()
+{
+    return currentTrigger().via;
+}
+
 int addRunListener(std::function<void(const RunEvent&)> fn)
 {
     static int next = 1;

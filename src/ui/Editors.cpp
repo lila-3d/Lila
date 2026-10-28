@@ -1,6 +1,7 @@
 #include "ui/Editors.h"
 
 #include "ui/Actions.h"
+#include "ui/LocateFlash.h"
 #include "ui/DockSidebar.h"
 #include "ui/HotkeyCheatSheet.h"
 #include "ui/HotkeyEditor.h"
@@ -34,6 +35,7 @@ template <class T> void openSingle(QPointer<T>& slot)
     slot->show();
     slot->raise();
     slot->activateWindow();
+    flashLocate(slot);
 }
 
 QPointer<HotkeyEditor> gHotkeyEditor;

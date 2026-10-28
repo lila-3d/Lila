@@ -1,7 +1,9 @@
 #include "ui/DockSidebar.h"
 
+#include "ui/Actions.h"
 #include "ui/DocsUi.h"
 #include "ui/Icons.h"
+#include "ui/LocateFlash.h"
 #include "ui/Panels.h"
 #include "ui/Theme.h"
 
@@ -335,7 +337,10 @@ void DockSidebars::manage(QDockWidget* dock)
     });
     connect(dock->toggleViewAction(), &QAction::triggered, this, [this, dock](bool checked) {
         if (checked)
+        {
             reveal(dock);
+            flashLocate(dock);
+        }
     });
 }
 
@@ -408,6 +413,7 @@ void revealDock(QDockWidget* dock)
     if (sidebars && !dock->isFloating())
     {
         sidebars->reveal(dock);
+        flashLocate(dock);
         return;
     }
     dock->show();
@@ -416,6 +422,7 @@ void revealDock(QDockWidget* dock)
         dock->activateWindow();
     if (QWidget* w = dock->widget())
         w->setFocus(Qt::OtherFocusReason);
+    flashLocate(dock);
 }
 
 bool dockShowing(const QDockWidget* dock)
@@ -433,11 +440,16 @@ bool dockShowing(const QDockWidget* dock)
     return true;
 }
 
+bool togglesRevealOnly()
+{
+    return actions::currentVia() == actions::Via::Palette;
+}
+
 void toggleDock(QDockWidget* dock)
 {
     if (!dock)
         return;
-    if (!dockShowing(dock))
+    if (!dockShowing(dock) || togglesRevealOnly())
     {
         revealDock(dock);
         return;

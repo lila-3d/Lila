@@ -6,6 +6,7 @@
 #include "scene/Graph.h"
 #include "scene/ObjectSets.h"
 #include "ui/Actions.h"
+#include "ui/LocateFlash.h"
 #include "ui/DockSidebar.h"
 #include "ui/Icons.h"
 
@@ -239,6 +240,7 @@ void GameExporter::open(QWidget* parent)
     dialog->show();
     dialog->raise();
     dialog->activateWindow();
+    flashLocate(dialog);
 }
 
 void GameExporter::registerActions(QWidget* parent)

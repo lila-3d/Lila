@@ -4,6 +4,7 @@
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
 #include "ui/Actions.h"
+#include "ui/LocateFlash.h"
 #include "ui/DocsUi.h"
 #include "ui/FlagFields.h"
 #include "ui/Icons.h"
@@ -451,6 +452,7 @@ void open(const std::string& actionId)
     d->show();
     d->raise();
     d->activateWindow();
+    flashLocate(d);
 }
 
 void decorateMenu(QMenu* menu)

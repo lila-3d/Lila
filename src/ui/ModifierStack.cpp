@@ -11,6 +11,7 @@
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "ui/Actions.h"
+#include "ui/LocateFlash.h"
 #include "ui/AttributeEditor.h"
 #include "ui/Deletion.h"
 #include "ui/NodeLookup.h"
@@ -1528,6 +1529,7 @@ void showModifierStack()
         {
             d->show();
             d->raise();
+            flashLocate(d);
             return;
         }
 }

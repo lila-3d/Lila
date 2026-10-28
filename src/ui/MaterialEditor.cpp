@@ -11,6 +11,7 @@
 #include "scene/Materials.h"
 #include "scene/MeshNodes.h"
 #include "ui/Actions.h"
+#include "ui/LocateFlash.h"
 #include "ui/Deletion.h"
 #include "ui/DockSidebar.h"
 #include "ui/Icons.h"
@@ -214,6 +215,7 @@ MaterialEditor* showEditor()
     }
     e->show();
     e->raise();
+    flashLocate(e);
     return e;
 }
 } // namespace

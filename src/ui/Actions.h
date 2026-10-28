@@ -133,6 +133,9 @@ private:
     Trigger mOuter;
 };
 
+/** Where the run in progress came from. */
+LILA_UI_API Via currentVia();
+
 /** One top-level run, reported before the target runs and again once it has. */
 struct RunEvent
 {

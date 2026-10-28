@@ -6,6 +6,7 @@
 #include "scene/Anim.h"
 #include "scene/Graph.h"
 #include "ui/Actions.h"
+#include "ui/LocateFlash.h"
 #include "ui/DockSidebar.h"
 #include "ui/Icons.h"
 
@@ -266,6 +267,7 @@ void MeshSequenceExporter::open(QWidget* parent)
     dialog->show();
     dialog->raise();
     dialog->activateWindow();
+    flashLocate(dialog);
 }
 
 void MeshSequenceExporter::registerActions(QWidget* parent)

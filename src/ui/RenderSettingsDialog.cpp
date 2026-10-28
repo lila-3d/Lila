@@ -4,6 +4,7 @@
 #include "core/Log.h"
 #include "scene/RenderSettings.h"
 #include "ui/SpinScrub.h"
+#include "ui/LocateFlash.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -196,5 +197,6 @@ void RenderSettingsDialog::open(QWidget* parent, const std::string& camera)
     dialog->show();
     dialog->raise();
     dialog->activateWindow();
+    flashLocate(dialog);
 }
 } // namespace lila::ui

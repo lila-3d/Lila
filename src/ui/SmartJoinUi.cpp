@@ -4,6 +4,7 @@
 #include "ops/CommandOptions.h"
 #include "scene/LastOp.h"
 #include "ui/FlagFields.h"
+#include "ui/LocateFlash.h"
 #include "ui/OptionBox.h"
 
 #include <QApplication>
@@ -250,6 +251,7 @@ void openDialog()
     dialog->show();
     dialog->raise();
     dialog->activateWindow();
+    flashLocate(dialog);
 }
 } // namespace
 
