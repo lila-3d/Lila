@@ -319,6 +319,8 @@ bool repeatable(const json& target)
             "graphEditor.", "nodeEditor.frame", "nodeEditor.selectAll", "nodeEditor.zipTie", "nodeEditor.flowHold", "nodeEditor.toggleFlow", "nodeEditor.toggleMinimap", "nodeEditor.bookmarkGo", "nodeEditor.toggleSelectedWires",
             "nodeEditor.find", "mode.", "picker.frame", "measure.toggleShow"};
         static const std::vector<std::string_view> ids = {"edit.undo", "edit.redo", "edit.repeatLast", "edit.selectAll", "edit.deselect", "edit.invertSelection"};
+        if (id == "file.exportSelection")
+            return true;
         if (std::ranges::any_of(prefixes, [&](std::string_view p) { return startsWith(id, p); }) || std::ranges::find(ids, id) != ids.end())
             return false;
         // Selection and mode switches under any category: uv.vertexMode, uv.selectStacks, rig.dominantInfluenceSelect.
