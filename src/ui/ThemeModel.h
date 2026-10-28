@@ -89,6 +89,8 @@ LILA_SCENE_API const Theme& baseTheme(std::string_view base);
 inline constexpr const char* kDefaultTheme = "Monotone";
 /** general pref: the current theme's name. */
 inline constexpr const char* kThemePref = "/ui/theme";
+/** general pref: the app-wide Monotone toggle, which greys the current theme's hued tokens (viewportDisplay::kMonotone). */
+inline constexpr const char* kMonotonePref = "/ui/monotone";
 /** general pref: saved themes by name, each a theme document. A workspace's .lila/general.json may add or override. */
 inline constexpr const char* kThemesPref = "/ui/themes";
 

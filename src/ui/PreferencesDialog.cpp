@@ -16,6 +16,7 @@
 #include "ui/SceneDialogs.h"
 #include "ui/Theme.h"
 #include "ui/LodDisplay.h"
+#include "ui/RigViewport.h"
 #include "ui/SoftSelectPanel.h"
 #include "ui/SpinScrub.h"
 #include "ui/TexturePicker.h"
@@ -645,6 +646,11 @@ void addBuiltIns(Registry<prefPages::Page>& r)
             color(viewport, "Before color", gh::kBeforeColor, gh::kDefaultBeforeColor);
             color(viewport, "After color", gh::kAfterColor, gh::kDefaultAfterColor);
         }
+
+        section(viewport, "Joints");
+        color(viewport, "Selected joint color", kJointSelectedColor, kJointDefaultSelectedColor);
+        number(viewport, "Chain separation (ancestors' step from the selection)", kJointChainSeparation, 1.0, 0.0, 3.0, 0.1);
+        toggle(viewport, "Color ancestors' bones to joints off the chain", kJointChainBranches, false);
     });
 
     builtIn(r, "manipulators", "Manipulators", "general", [](Page& manip) {

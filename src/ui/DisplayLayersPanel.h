@@ -39,6 +39,7 @@ private:
 
     QTreeWidget* mTree = nullptr;
     int mGraphListener = 0;
+    int mPrefListener = 0;
     bool mPending = false;
     bool mFilling = false;
     bool mEditing = false; // a rename is open; a rebuild would end it

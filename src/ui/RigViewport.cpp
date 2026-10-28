@@ -16,10 +16,12 @@
 #include "ui/ViewportTool.h"
 #include "ui/WeightPaintTool.h"
 
+#include <QColor>
 #include <QTimer>
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace lila::ui
@@ -100,6 +102,79 @@ void addBox(std::vector<render::LineVertex>& out, const glm::dvec3& c, const glm
             }
 }
 
+/** HSV (hue in degrees) to sRGB 0..1. */
+glm::vec3 jointHsv(float h, float s, float v)
+{
+    auto f = [&](float n) {
+        float k = std::fmod(n + h / 60.0f, 6.0f);
+        return v - v * s * std::clamp(std::min(k, 4.0f - k), 0.0f, 1.0f);
+    };
+    return {f(5.0f), f(3.0f), f(1.0f)};
+}
+
+float jointLinear(float c) { return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f); }
+
+/** The selected joint's colour as HSV (hue in degrees) and how far each ancestor steps from it, from the prefs. */
+struct ChainStyle
+{
+    float hue = 140.0f, sat = 0.72f, val = 1.0f;
+    float separation = 1.0f;
+    bool monotone = false;
+};
+
+ChainStyle chainStyle()
+{
+    const PrefStore& p = PrefStore::get();
+    ChainStyle st;
+    QColor c(QString::fromStdString(p.value<std::string>("general", kJointSelectedColor, kJointDefaultSelectedColor)));
+    if (!c.isValid())
+        c = QColor(kJointDefaultSelectedColor);
+    float h = 0.0f;
+    c.getHsvF(&h, &st.sat, &st.val);
+    st.hue = std::max(h, 0.0f) * 360.0f;
+    st.separation = float(std::max(0.0, p.value<double>("general", kJointChainSeparation, 1.0)));
+    st.monotone = p.value<bool>("general", viewportDisplay::kMonotone, false);
+    return st;
+}
+
+/**
+ * A selected joint (step 0) and its ancestors, one step per joint up the chain. The first ancestor drops well below the
+ * selected colour; each step after dims, desaturates and drifts the hue towards blue, all scaled by the separation.
+ * Monotone keeps only the dimming.
+ */
+glm::vec4 chainColor(int step, const ChainStyle& st)
+{
+    const float k = float(std::min(step, 6)), sep = st.separation;
+    float v = st.val, s = st.sat;
+    if (step > 0)
+    {
+        v = std::max(st.val * std::pow(0.72f, sep) * std::pow(0.8f, sep * (k - 1.0f)), std::min(0.26f, st.val));
+        s = st.sat * std::pow(0.83f, sep) * std::pow(0.88f, sep * (k - 1.0f));
+    }
+    glm::vec3 c = st.monotone ? glm::vec3(v) : jointHsv(st.hue + 16.0f * sep * k, s, v);
+    return {jointLinear(c.r), jointLinear(c.g), jointLinear(c.b), 1.0f};
+}
+
+/** Joint ancestors of the selection by steps up the chain, the nearest selected descendant deciding. */
+std::unordered_map<NodeId, int> selectedChainSteps(scene::Graph& g)
+{
+    std::unordered_map<NodeId, int> steps;
+    for (NodeId id : g.selection())
+    {
+        int step = 0;
+        for (NodeId p = g.parent(id); p != scene::kNoNode; p = g.parent(p))
+        {
+            const scene::Node* n = g.node(p);
+            if (!n || !scene::rig::isJoint(*n))
+                break;
+            auto [it, added] = steps.try_emplace(p, ++step);
+            if (!added)
+                it->second = std::min(it->second, step);
+        }
+    }
+    return steps;
+}
+
 std::vector<NodeId> childJoints(scene::Graph& g, NodeId id)
 {
     std::vector<NodeId> out;
@@ -116,41 +191,67 @@ void drawJoints(render::FrameState& s, OverlayPainter&, const ViewInfo&)
     scene::Graph& g = scene::Graph::current();
     g.evaluate();
     std::unordered_set<NodeId> under;
+    std::unordered_map<NodeId, int> chain;
     const bool highlight = viewportDisplay::highlightSelection();
     if (highlight)
+    {
         for (NodeId id : g.selection())
             for (NodeId d : g.descendants(id))
                 under.insert(d);
+        chain = selectedChainSteps(g);
+    }
+    const ChainStyle chainLook = chainStyle();
     bool xray = PrefStore::get().value<bool>("general", "/rig/xrayJoints", false);
     auto& out = xray ? s.linesXray : s.lines;
     double scale = displayScale();
 
-    // Highlighted ranks last, so a selected bone wins over an unselected one at equal depth.
-    for (int pass = 0; pass < 3; ++pass)
-        for (NodeId id : g.nodes())
+    // Highlighted joints draw last, nearest the selection latest, so they win over plainer bones at equal depth.
+    struct Styled
+    {
+        NodeId id;
+        int order;
+        glm::vec4 color;
+        bool ancestor = false;
+    };
+    std::vector<Styled> styled;
+    for (NodeId id : g.nodes())
+    {
+        if (!drawn(*g.node(id)))
+            continue;
+        if (highlight && g.isSelected(id))
+            styled.push_back({id, 1000, chainColor(0, chainLook)});
+        else if (auto it = chain.find(id); it != chain.end())
+            styled.push_back({id, 1000 - it->second, chainColor(it->second, chainLook), true});
+        else
+            styled.push_back({id, under.contains(id) ? 1 : 0, under.contains(id) ? kChildOfSelectedColor : kJointColor});
+    }
+    std::stable_sort(styled.begin(), styled.end(), [](const Styled& a, const Styled& b) { return a.order < b.order; });
+    const bool colorBranches = PrefStore::get().value<bool>("general", kJointChainBranches, false);
+    auto boneColor = [&](const Styled& from, NodeId child) {
+        if (!from.ancestor || colorBranches || chain.contains(child) || (highlight && g.isSelected(child)))
+            return from.color;
+        return under.contains(child) ? kChildOfSelectedColor : kJointColor;
+    };
+
+    for (const Styled& st : styled)
+    {
+        scene::Node* n = g.node(st.id);
+        const glm::vec4& color = st.color;
+        glm::dmat4 w = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+        glm::dvec3 p(w[3]);
+        glm::dmat3 axes = axesOf(w);
+        double r = n->as<double>(Joint::kRadius) * scale;
+        if (n->as<int64_t>(Joint::kDrawStyle) == Joint::kBox)
+            addBox(out, p, axes, r, color);
+        else
         {
-            scene::Node* n = g.node(id);
-            if (!drawn(*n))
-                continue;
-            int rank = highlight && g.isSelected(id) ? 2 : under.contains(id) ? 1 : 0;
-            if (rank != pass)
-                continue;
-            const glm::vec4& color = rank == 2 ? kSelectedColor : rank == 1 ? kChildOfSelectedColor : kJointColor;
-            glm::dmat4 w = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
-            glm::dvec3 p(w[3]);
-            glm::dmat3 axes = axesOf(w);
-            double r = n->as<double>(Joint::kRadius) * scale;
-            if (n->as<int64_t>(Joint::kDrawStyle) == Joint::kBox)
-                addBox(out, p, axes, r, color);
-            else
-            {
-                addCircle(out, p, axes[0], axes[1], r, color);
-                addCircle(out, p, axes[1], axes[2], r, color);
-                addCircle(out, p, axes[2], axes[0], r, color);
-            }
-            for (NodeId c : childJoints(g, id))
-                addBone(out, p, glm::dvec3(g.node(c)->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]), r, color);
+            addCircle(out, p, axes[0], axes[1], r, color);
+            addCircle(out, p, axes[1], axes[2], r, color);
+            addCircle(out, p, axes[2], axes[0], r, color);
         }
+        for (NodeId c : childJoints(g, st.id))
+            addBone(out, p, glm::dvec3(g.node(c)->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]), r, boneColor(st, c));
+    }
 }
 
 bool isIkHandle(const scene::Node& n)

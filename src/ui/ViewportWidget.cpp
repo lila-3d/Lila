@@ -420,7 +420,7 @@ void ViewportWidget::submit()
         if (templated && mode != "wireframe")
             d.flags |= render::DrawWireDepth;
         if (layer.color)
-            d.wireColor = glm::vec4(glm::vec3(*layer.color), 1.0f);
+            d.wireColor = glm::vec4(viewportDisplay::layerTint(glm::vec3(*layer.color)), 1.0f);
         else if (templated)
             d.wireColor = kTemplateWireColor;
         if (surfaceSnap::isSurface(id))

@@ -170,7 +170,7 @@ inline glm::vec4 layerLineColor(const scene::Graph& g, scene::NodeId id, const g
 {
     const scene::displayLayers::Display layer = scene::displayLayers::display(g, id);
     if (layer.color)
-        return glm::vec4(glm::vec3(*layer.color), 1.0f);
+        return glm::vec4(viewportDisplay::layerTint(glm::vec3(*layer.color)), 1.0f);
     return layer.type == scene::displayLayers::DisplayType::Template ? kTemplateWireColor : fallback;
 }
 

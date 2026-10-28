@@ -548,6 +548,27 @@ std::string currentName()
     return PrefStore::get().value<std::string>("general", kThemePref, kDefaultTheme);
 }
 
+namespace
+{
+Rgba grayOf(Rgba c)
+{
+    const double l = luminance(c);
+    const double s = l <= 0.0031308 ? l * 12.92 : 1.055 * std::pow(l, 1.0 / 2.4) - 0.055;
+    const auto v = uint8_t(std::lround(std::clamp(s, 0.0, 1.0) * 255.0));
+    return {v, v, v, c.a};
+}
+
+/** Every token Monotone draws grey goes grey at its own lightness; the few Monotone keeps hued (axes, components) stay. */
+Theme monotoneOf(Theme t)
+{
+    const Theme& mono = *builtIn(kDefaultTheme);
+    for (const TokenInfo& info : tokens())
+        if (Rgba m = mono.color(info.id); m.r == m.g && m.g == m.b)
+            t.colors[info.id] = grayOf(t.color(info.id));
+    return t;
+}
+} // namespace
+
 std::shared_ptr<const Theme> current()
 {
     {
@@ -557,6 +578,8 @@ std::shared_ptr<const Theme> current()
             return gCurrent;
     }
     std::optional<Theme> t = find(currentName());
+    if (t && PrefStore::get().value<bool>("general", kMonotonePref, false))
+        t = monotoneOf(std::move(*t));
     auto made = std::make_shared<const Theme>(t ? std::move(*t) : builtIns()[0]);
     std::scoped_lock lock(gMutex);
     if (!gCurrent)

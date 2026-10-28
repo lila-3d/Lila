@@ -139,6 +139,25 @@ TEST_CASE("Monotone shades map greys to themselves")
     CHECK_FALSE(themes::isDefault(*themes::builtIn("Colour"), "highlight"));
 }
 
+TEST_CASE("the Monotone pref greys a hued theme except where Monotone keeps hue")
+{
+    clearSaved();
+    PrefStore::get().set("general", themes::kThemePref, "Colour");
+    PrefStore::get().set("general", themes::kMonotonePref, true);
+    themes::invalidate();
+    std::shared_ptr<const themes::Theme> t = themes::current();
+    themes::Rgba hi = t->color("highlight");
+    CHECK(hi.r == hi.g);
+    CHECK(hi.g == hi.b);
+    CHECK(t->color("axisX") == themes::builtIn("Colour")->color("axisX"));
+
+    PrefStore::get().set("general", themes::kMonotonePref, false);
+    themes::invalidate();
+    CHECK(themes::current()->color("highlight") == themes::builtIn("Colour")->color("highlight"));
+    PrefStore::get().remove("general", themes::kMonotonePref);
+    clearSaved();
+}
+
 TEST_CASE("theme commands save, switch, rename and delete")
 {
     ensureCommands();

@@ -3,6 +3,7 @@
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "core/Log.h"
+#include "core/PrefStore.h"
 #include "scene/DisplayLayers.h"
 #include "scene/Graph.h"
 #include "ui/Actions.h"
@@ -10,6 +11,7 @@
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
 #include "ui/NodeLookup.h"
+#include "ui/ViewportDisplay.h"
 
 #include <QColorDialog>
 #include <QHBoxLayout>
@@ -79,7 +81,10 @@ QIcon swatch(const json& color, const QColor& frame)
     QPainter p(&pm);
     p.setPen(frame);
     if (color.is_array())
-        p.setBrush(QColor::fromRgbF(toSrgb(color[0].get<double>()), toSrgb(color[1].get<double>()), toSrgb(color[2].get<double>())));
+    {
+        glm::vec3 c = viewportDisplay::layerTint({color[0].get<float>(), color[1].get<float>(), color[2].get<float>()});
+        p.setBrush(QColor::fromRgbF(toSrgb(c.r), toSrgb(c.g), toSrgb(c.b)));
+    }
     p.drawRect(1, 1, 11, 11);
     return QIcon(pm);
 }
@@ -238,10 +243,19 @@ DisplayLayersPanel::DisplayLayersPanel(QWidget* parent) : QWidget(parent)
                 return;
         self->scheduleRefresh();
     });
+    // Swatches follow Monotone.
+    mPrefListener = PrefStore::get().onChanged([self](const std::string& file) {
+        if (self && file == "general")
+            QTimer::singleShot(0, self, [self] { self->scheduleRefresh(); });
+    });
     refresh();
 }
 
-DisplayLayersPanel::~DisplayLayersPanel() { scene::Graph::current().removeListener(mGraphListener); }
+DisplayLayersPanel::~DisplayLayersPanel()
+{
+    scene::Graph::current().removeListener(mGraphListener);
+    PrefStore::get().removeOnChanged(mPrefListener);
+}
 
 void DisplayLayersPanel::showEvent(QShowEvent* e)
 {

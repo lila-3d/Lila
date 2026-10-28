@@ -63,6 +63,13 @@ bool accentColors(const char* key)
     return accentColors(p.value<bool>("general", kMonotone, false), p.value<bool>("general", key, true));
 }
 
+glm::vec3 layerTint(const glm::vec3& linear)
+{
+    if (!PrefStore::get().value<bool>("general", kMonotone, false))
+        return linear;
+    return glm::vec3(glm::dot(linear, glm::vec3(0.2126f, 0.7152f, 0.0722f)));
+}
+
 glm::vec3 axisColor(int axis)
 {
     static constexpr glm::vec3 kAxes[3] = {{0.85f, 0.40f, 0.40f}, {0.50f, 0.80f, 0.42f}, {0.42f, 0.56f, 0.90f}};
