@@ -13,11 +13,14 @@
 #include "scene/Isolation.h"
 #include "scene/MeshNodes.h"
 #include "ui/Actions.h"
+#include "ui/CursorBadges.h"
 #include "ui/Deletion.h"
 #include "ui/FlowLayout.h"
 #include "ui/Icons.h"
 #include "ui/MarkingMenu.h"
 #include "ui/MenuButtons.h"
+#include "ui/PaintSelect.h"
+#include "ui/TabSelectLogic.h"
 #include "ui/UvLive.h"
 #include "ui/UvTexturePaint.h"
 #include "ui/UvTools.h"
@@ -34,6 +37,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -53,6 +57,7 @@
 #include <bit>
 #include <cmath>
 #include <map>
+#include <optional>
 #include <set>
 #include <tuple>
 #include <unordered_set>
@@ -161,7 +166,11 @@ public:
 
     UvTexturePaint& texturePaint() { return mTexPaint; }
 
-    ~UvView() override { uvTools::removeRedrawListener(mUvToolListener); }
+    ~UvView() override
+    {
+        uvTools::removeRedrawListener(mUvToolListener);
+        cursorBadges::publish(this, {});
+    }
 
     /** The canvas a borrowed uvTools tool paints on. */
     uvTools::Canvas canvas() const
@@ -255,6 +264,7 @@ protected:
         if (uvTools::UvTool* t = uvTools::active())
             t->draw(p, canvas());
         drawStacks(p);
+        drawTabBadges(p);
         if (mMarquee)
         {
             p.setPen(QPen(gray(230), 1.0, Qt::DashLine));
@@ -301,6 +311,14 @@ protected:
         }
         if (e->button() != Qt::LeftButton)
             return;
+        if (mTabHeld && tabSelectable())
+        {
+            tabSelect::Mode m = tabSelect::modeAtPress(selectedUnder(e->position()), e->modifiers() & Qt::ShiftModifier,
+                                                       e->modifiers() & Qt::ControlModifier);
+            mTabStroke.begin(m == tabSelect::Mode::Select ? paintSelect::Stroke::Op::Add : paintSelect::Stroke::Op::Remove, pickMode());
+            tabPaint(e->position(), e->position());
+            return;
+        }
         if (mTexPaint.mousePress(e, uvOf(), mZoom))
         {
             update();
@@ -335,6 +353,9 @@ protected:
     {
         QPointF d = e->position() - mLastPos;
         mLastPos = mMousePos = e->position();
+        mCursorInside = true;
+        if (mTabHeld)
+            update();
         if (mNav == Nav::Pan)
         {
             mPan += glm::dvec2(d.x(), d.y());
@@ -344,6 +365,11 @@ protected:
         if (mNav == Nav::Zoom)
         {
             zoomAbout(mPressPos, std::pow(1.006, d.x() - d.y()));
+            return;
+        }
+        if (mTabStroke.active())
+        {
+            tabPaint(e->position() - d, e->position());
             return;
         }
         if (mDrag != Handle::None)
@@ -405,6 +431,8 @@ protected:
             update();
         }
         setPreselect({});
+        mCursorInside = false;
+        update();
         QWidget::leaveEvent(e);
     }
 
@@ -413,6 +441,13 @@ protected:
         if (mNav != Nav::None)
         {
             mNav = Nav::None;
+            return;
+        }
+        if (mTabStroke.active())
+        {
+            if (e->button() == Qt::LeftButton)
+                mTabStroke.end();
+            update();
             return;
         }
         if (mTexPaint.mouseRelease(e, uvOf(), mZoom))
@@ -484,6 +519,26 @@ protected:
 
     bool event(QEvent* e) override
     {
+        if (e->type() == QEvent::FocusOut)
+        {
+            mTabHeld = false;
+            update();
+        }
+        if ((e->type() == QEvent::KeyPress || e->type() == QEvent::KeyRelease) && mTabHeld)
+            if (int key = static_cast<QKeyEvent*>(e)->key(); key == Qt::Key_Control || key == Qt::Key_Shift)
+                update();
+        // Tab is held for drag selection, as in the viewport, not focus navigation.
+        if (e->type() == QEvent::ShortcutOverride || e->type() == QEvent::KeyPress || e->type() == QEvent::KeyRelease)
+            if (auto* k = static_cast<QKeyEvent*>(e); k->key() == Qt::Key_Tab || k->key() == Qt::Key_Backtab)
+            {
+                if (!k->isAutoRepeat() && e->type() != QEvent::ShortcutOverride)
+                {
+                    mTabHeld = e->type() == QEvent::KeyPress;
+                    update();
+                }
+                e->accept();
+                return true;
+            }
         // Brush keys are held (B, M and F drag size and strength), so they must reach the view, not the hotkeys.
         if (e->type() == QEvent::ShortcutOverride)
         {
@@ -1553,6 +1608,100 @@ private:
               mods);
     }
 
+    /** Tools that own the left button keep it while Tab is held. */
+    bool tabSelectable() const { return mTool != Tool::Brush && !uvTools::active() && !mTexPaint.painting(); }
+
+    /** Whether the component a click at s would pick is selected; nullopt over nothing. */
+    std::optional<bool> selectedUnder(QPointF s) const
+    {
+        ComponentMode mode = pickMode();
+        Hit hit = hitAt(s, mode);
+        if (hit.id == geo::kInvalid)
+            return std::nullopt;
+        const scene::components::Ids& ids = scene::components::selected(mMeshes[hit.mesh].node, mode);
+        return std::ranges::find(ids, hit.id) != ids.end();
+    }
+
+    /** Components of the pick mode within radiusPx of screen point s; faces count when s is inside or near an edge. */
+    std::map<scene::NodeId, scene::components::Ids> componentsUnder(QPointF s, double radiusPx)
+    {
+        ComponentMode mode = pickMode();
+        std::map<scene::NodeId, scene::components::Ids> out;
+        std::vector<QPointF> poly;
+        for (const MeshUv& mu : mMeshes)
+        {
+            if (mu.corner.empty())
+                continue;
+            const geo::Mesh& m = *mu.mesh;
+            scene::components::Ids ids;
+            if (mode == ComponentMode::Vertex)
+            {
+                for (size_t k = 0; k < mu.uv.size(); ++k)
+                    if (QPointF d = toScreen(mu.uv[k]) - s; std::hypot(d.x(), d.y()) <= radiusPx)
+                        ids.push_back(m.cornerPoint(mu.corner[k]));
+            }
+            else if (mode == ComponentMode::Edge)
+            {
+                for (const Segment& sg : mu.segments)
+                    if (segDistance(s, toScreen(mu.uv[sg.a]), toScreen(mu.uv[sg.b])) <= radiusPx)
+                        ids.push_back(sg.edge);
+            }
+            else
+                for (size_t fi = 0; fi < mu.faces.size(); ++fi)
+                {
+                    poly.clear();
+                    for (uint32_t k = mu.faceStart[fi]; k < mu.faceStart[fi + 1]; ++k)
+                        poly.push_back(toScreen(mu.uv[k]));
+                    bool near = insidePoly(poly, s);
+                    for (size_t i = 0; i < poly.size() && !near; ++i)
+                        near = segDistance(s, poly[i], poly[(i + 1) % poly.size()]) <= radiusPx;
+                    if (near)
+                        ids.push_back(mu.faces[fi]);
+                }
+            if (!ids.empty() && mode == ComponentMode::Face && uvLive::islandSelect())
+                ids = uv::islandsOfFaces(m, ids, islandOptions(mu));
+            std::sort(ids.begin(), ids.end());
+            ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+            if (!ids.empty())
+                out[mu.node] = std::move(ids);
+        }
+        return out;
+    }
+
+    /** The viewport's Tab select or deselect badge beside the cursor, and its help line. */
+    void drawTabBadges(QPainter& p)
+    {
+        ViewportState st;
+        st.cursor = mMousePos;
+        if (mTabStroke.active())
+            st.tabSelects = mTabStroke.op() != paintSelect::Stroke::Op::Remove;
+        else if (mTabHeld && mCursorInside && tabSelectable())
+        {
+            Qt::KeyboardModifiers mods = QGuiApplication::queryKeyboardModifiers();
+            st.tabSelects =
+                tabSelect::modeAtPress(selectedUnder(mMousePos), mods & Qt::ShiftModifier, mods & Qt::ControlModifier) == tabSelect::Mode::Select;
+        }
+        std::vector<const cursorBadges::Badge*> badges;
+        if (st.tabSelects)
+            for (const cursorBadges::Badge* b : cursorBadges::active(st))
+                if (b->id.starts_with("tabSelect."))
+                    badges.push_back(b);
+        cursorBadges::draw(p, mMousePos, badges);
+        cursorBadges::publish(this, badges);
+    }
+
+    /** Brushes the Tab stroke along the segment from a to b (widget pixels). */
+    void tabPaint(QPointF a, QPointF b)
+    {
+        const double r = paintSelect::tabRadius(pickMode());
+        QPointF d = b - a;
+        double len = std::hypot(d.x(), d.y());
+        int steps = std::max(1, int(std::ceil(len / std::max(1.0, r * 0.5))));
+        for (int i = len > 0.0 ? 1 : 0; i <= steps; ++i)
+            mTabStroke.touch(componentsUnder(a + d * (double(i) / steps), r));
+        update();
+    }
+
     /** Same modifiers as the viewport: shift toggles, ctrl removes, both add. */
     void apply(ComponentMode mode, const std::map<scene::NodeId, std::vector<Index>>& hits, Qt::KeyboardModifiers mods)
     {
@@ -2224,6 +2373,9 @@ private:
 
     Nav mNav = Nav::None;
     bool mMarquee = false;
+    bool mTabHeld = false;
+    bool mCursorInside = false;
+    paintSelect::Stroke mTabStroke;
     Qt::KeyboardModifiers mMods;
     QPointF mPressPos, mMousePos, mLastPos;
     Handle mHover = Handle::None;

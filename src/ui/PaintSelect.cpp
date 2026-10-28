@@ -257,11 +257,13 @@ Stroke::Op Stroke::opFor(Qt::KeyboardModifiers mods, Op plain)
     return shift && ctrl ? Op::Add : ctrl ? Op::Remove : shift ? Op::Toggle : plain;
 }
 
-void Stroke::begin(Op op)
+void Stroke::begin(Op op) { begin(op, scene::components::mode()); }
+
+void Stroke::begin(Op op, ComponentMode mode)
 {
     mActive = true;
     mOp = op;
-    mMode = scene::components::mode();
+    mMode = mode;
     mTouched.clear();
     mTouchedObjects.clear();
     for (ComponentMode k : {ComponentMode::Vertex, ComponentMode::Edge, ComponentMode::Face})
@@ -294,6 +296,18 @@ void Stroke::paint(const ViewInfo& view, QPointF a, QPointF b, double radiusPx)
                 for (uint32_t id : ids)
                     changed |= mTouched[node].insert(id).second;
     }
+    if (changed)
+        preview();
+}
+
+void Stroke::touch(const std::map<NodeId, scene::components::Ids>& under)
+{
+    if (!mActive)
+        return;
+    bool changed = false;
+    for (auto& [node, ids] : under)
+        for (uint32_t id : ids)
+            changed |= mTouched[node].insert(id).second;
     if (changed)
         preview();
 }

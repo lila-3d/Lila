@@ -16,6 +16,7 @@ namespace lila::ui
 {
 class OverlayPainter;
 }
+class QPainter;
 
 /**
  * Small icons beside the viewport cursor for states that last only while a key is held (snap keys, pivot edit, soft
@@ -59,6 +60,8 @@ LILA_UI_API std::vector<const Badge*> active(const ViewportState& view);
 
 /** Draws their icons in a row just below and right of the cursor, outlined to read on any background. */
 LILA_UI_API void draw(OverlayPainter& p, QPointF cursor, const std::vector<const Badge*>& badges);
+/** The same for QPainter views (the UV editor); badges whose icon is not a Tabler name are skipped. */
+LILA_UI_API void draw(QPainter& p, QPointF cursor, const std::vector<const Badge*>& badges);
 
 /**
  * Called by a view after it drew, with the badges under the cursor in it, or with none when the cursor is elsewhere.

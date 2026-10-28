@@ -20,7 +20,7 @@
  *   Paint Select tool: LMB drag paints into the selection, Ctrl removes, Shift toggles once per stroke; B + drag or
  *   [ ] sets the radius (general pref /paintSelect/radius, px). Works on objects in object mode. Esc leaves it.
  *   Tab drag: a stroke starting on something selected deselects what the path crosses, any other stroke selects it
- *   (ui/TabSelectLogic.h); Ctrl always removes, Ctrl+Shift always adds. Works on objects in object mode.
+ *   (ui/TabSelectLogic.h); Ctrl always removes, Ctrl+Shift always adds. Works on objects in object mode, and in the UV editor.
  */
 namespace lila::geo
 {
@@ -59,8 +59,12 @@ public:
     static Op opFor(Qt::KeyboardModifiers mods, Op plain);
 
     void begin(Op op);
+    /** Begins a component stroke in `mode` whatever the scene's mode, for views that pick their own (the UV editor). */
+    void begin(Op op, scene::ComponentMode mode);
     /** Brushes the segment from a to b (widget pixels). */
     void paint(const ViewInfo& view, QPointF a, QPointF b, double radiusPx);
+    /** Adds components picked elsewhere to the stroke. */
+    void touch(const std::map<scene::NodeId, scene::components::Ids>& under);
     void end();
     /** Puts the starting selection back without recording anything. */
     void cancel();

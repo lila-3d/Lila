@@ -4,12 +4,14 @@
 #include "core/Log.h"
 #include "core/Registry.h"
 #include "ui/Hotkeys.h"
+#include "ui/Icons.h"
 #include "ui/Manipulator.h"
 #include "ui/Overlay.h"
 #include "ui/PaintSelect.h"
 #include "ui/SurfaceSnap.h"
 #include "ui/Tools.h"
 
+#include <QPainter>
 #include <QStringList>
 
 #include <algorithm>
@@ -149,6 +151,17 @@ void draw(OverlayPainter& p, QPointF cursor, const std::vector<const Badge*>& li
         x += kIcon + kGap;
     }
     p.setShadow(false);
+}
+
+void draw(QPainter& p, QPointF cursor, const std::vector<const Badge*>& list)
+{
+    QPointF at = cursor + kOffset;
+    for (const Badge* b : list)
+        if (QIcon i = icon(QString::fromStdString(b->icon)); !i.isNull())
+        {
+            i.paint(&p, QRectF(at, QSizeF(kIcon, kIcon)).toRect(), Qt::AlignCenter, QIcon::Active);
+            at.rx() += kIcon + kGap;
+        }
 }
 
 void publish(const void* view, const std::vector<const Badge*>& list)
