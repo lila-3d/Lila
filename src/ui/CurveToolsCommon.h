@@ -47,6 +47,8 @@ inline int symmetryPref() { return std::clamp(prefs().value<int>("general", "/cu
 inline const char* symmetryName(int pref) { return pref == 1 ? "x" : pref == 2 ? "y" : pref == 3 ? "z" : "off"; }
 /** drawSpline, plus its mirror across the world plane while drawing with symmetry. */
 void drawSymmetric(render::FrameState& f, const curve::Spline& s, const glm::vec4& color);
+/** A faint red world plane across the symmetry axis, while symmetry is on. */
+void drawSymmetryPlane(render::FrameState& f, const ViewInfo& view);
 /** A world point mirrored the way new curves are, or itself with symmetry off. */
 inline D3 mirrored(D3 p)
 {

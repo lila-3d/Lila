@@ -95,6 +95,27 @@ void drawSymmetric(render::FrameState& f, const curve::Spline& s, const glm::vec
     }
 }
 
+void drawSymmetryPlane(render::FrameState& f, const ViewInfo& view)
+{
+    const int axis = symmetryPref();
+    if (!axis)
+        return;
+    const int u = axis % 3, v = (axis + 1) % 3;
+    // Centred under the eye and sized by its distance, so the plane fills the view from anywhere.
+    D3 c = view.eye;
+    c[axis - 1] = 0.0;
+    const double r = std::max(1000.0, glm::length(view.eye) * 4.0);
+    auto corner = [&](double su, double sv) {
+        D3 p = c;
+        p[u] += su * r;
+        p[v] += sv * r;
+        return glm::vec3(p);
+    };
+    const glm::vec4 red(1.0f, 0.1f, 0.1f, 0.07f);
+    for (const glm::vec3& p : {corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, -1), corner(1, 1), corner(-1, 1)})
+        f.tris3d.push_back({p, red});
+}
+
 void dot(OverlayPainter& p, const ViewInfo& view, const D3& w, float r, const glm::vec4& fill)
 {
     if (auto q = view.project(w))

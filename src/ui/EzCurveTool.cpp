@@ -46,6 +46,7 @@ public:
         mSurface.load();
         mPlacer.onSurface(true, mSurface.offset());
         mPlacer.toggleLock(false);
+        prefs().set("general", "/curveTools/symmetry", 0);
         log::info("EZ Curve: click two points; then drag to bend, twist (sideways), sag (Shift) or lift (Ctrl)");
     }
 
@@ -139,6 +140,7 @@ public:
 
     void draw(render::FrameState& f, OverlayPainter& p, const ViewInfo& view) override
     {
+        drawSymmetryPlane(f, view);
         if (mStart)
         {
             dot(p, view, mStart->point);
