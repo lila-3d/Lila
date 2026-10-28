@@ -1,7 +1,7 @@
 """Writes the Python API pages of the docs site (lila-3d.github.io, docs/python/) from the command registry and the lila
 package, so the reference online and in the Docs panel is the same one the script editor shows.
 
-    lila.exe -b -c "import lila._apipages as p; p.write(r'X:/Lila-DCC/docs')"
+    lila.exe -b -c "import lila._apipages as p; p.write(r'X:/Lila-3D/docs')"
 
 Run it from the GUI's script editor instead to include commands that only register with the UI. Every .md under
 docs/python/ is generated: fix the text in the command or Python definitions, never in the pages.

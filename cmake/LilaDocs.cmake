@@ -3,7 +3,7 @@
 # text changes; review and commit them in the docs repo as usual.
 cmake_path(ABSOLUTE_PATH CMAKE_SOURCE_DIR NORMALIZE OUTPUT_VARIABLE _source)
 cmake_path(GET _source PARENT_PATH _siblings)
-set(LILA_DOCS_REPO "${_siblings}/Lila-DCC" CACHE PATH "Docs site checkout the API pages are written into; empty turns it off")
+set(LILA_DOCS_REPO "${_siblings}/Lila-3D" CACHE PATH "Docs site checkout the API pages are written into; empty turns it off")
 
 if(LILA_DOCS_REPO AND EXISTS "${LILA_DOCS_REPO}/docs")
     get_property(_extensions GLOBAL PROPERTY LILA_EXTENSION_TARGETS)
