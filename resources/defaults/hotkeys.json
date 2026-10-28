@@ -48,6 +48,7 @@
       "Shift+1": "select.vertexMode",
       "Shift+2": "select.edgeMode",
       "Shift+3": "select.faceMode",
+      "Shift+X": "mesh.toggleSymmetry",
       "U": "window.toggleUvEditor",
       "F1": { "press": "help.hotkeyCheatSheet", "release": "help.hotkeyCheatSheetClose" },
       "Shift+F1": "layout.apply.Modeling",
