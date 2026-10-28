@@ -1,4 +1,5 @@
 #include "ui/ViewportWidgetDetail.h"
+#include "scene/SoftSelect.h"
 
 namespace lila::ui
 {
@@ -305,6 +306,51 @@ void ViewportWidget::syncCameraSettings()
     mCamera.filmFit = c.filmFit;
     mCamera.overscan = c.overscan;
     mCamera.gateAspect = c.resolutionGate ? std::optional<double>(r.deviceAspect()) : std::nullopt;
+}
+
+void ViewportWidget::drawSoftSelectRadius(OverlayPainter& p)
+{
+    if (!mSoftDrag)
+        return;
+    const ViewInfo view = viewInfo();
+    const glm::dvec3 centre = scene::selectionCenter();
+    const std::optional<QPointF> at = view.project(centre);
+    if (!at)
+        return;
+    const double radius = PrefStore::get().value<double>("general", scene::softSelect::kRadius, 25.0);
+    const double px = radius / view.unitsPerPixel(centre);
+    const scene::softSelect::Curve curve = scene::softSelect::currentCurve();
+    const bool gray = viewportDisplay::grayscaleWeights();
+    constexpr int kRings = 32, kSegments = 64;
+    auto ring = [&](double r) {
+        std::vector<QPointF> pts(kSegments);
+        for (int k = 0; k < kSegments; ++k)
+        {
+            const double a = k * 6.283185307179586 / kSegments;
+            pts[k] = *at + QPointF(std::cos(a), std::sin(a)) * r;
+        }
+        return pts;
+    };
+    // Bands shaded and faded by the falloff curve at their middle, so the disc reads as the weights the vertices get.
+    std::vector<QPointF> inner = ring(0.0);
+    for (int i = 0; i < kRings; ++i)
+    {
+        std::vector<QPointF> outer = ring(px * (i + 1) / kRings);
+        const float w = float(curve.evaluate((i + 0.5) / kRings));
+        glm::vec4 c = viewportDisplay::falloffColor(w, gray);
+        c.a = 0.45f * w;
+        if (c.a > 0.0f)
+            for (int k = 0; k < kSegments; ++k)
+            {
+                const int n = (k + 1) % kSegments;
+                p.triangle(inner[k], outer[k], outer[n], c);
+                if (i > 0)
+                    p.triangle(inner[k], outer[n], inner[n], c);
+            }
+        inner = std::move(outer);
+    }
+    p.polyline(inner, 1.5f, p.ink(0.9f, 0.9f), true);
+    p.label(*at + QPointF(px + 8.0, 4.0), QString("Radius %1").arg(radius, 0, 'g', 4));
 }
 
 void ViewportWidget::drawGate(OverlayPainter& p)

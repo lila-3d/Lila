@@ -42,6 +42,7 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
         if (e->button() == Qt::MiddleButton)
             PrefStore::get().set("general", "/softSelect/radius", 0.01);
         PrefStore::get().set("general", "/softSelect/enabled", true);
+        requestFrame();
         return;
     }
     if (ViewportTool* tool = viewportTools::active(); tool && !(e->modifiers() & Qt::AltModifier) && tool->mousePress(e, viewInfo()))
@@ -287,6 +288,7 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* e)
     if (mSoftDrag)
     {
         mSoftDrag = false;
+        requestFrame();
         return;
     }
     if (ViewportTool* tool = viewportTools::active(); tool && mToolDrag)

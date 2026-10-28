@@ -508,6 +508,7 @@ void ViewportWidget::submit()
         gz->draw(painter);
     }
     renderPasses::run(renderPasses::Stage::Overlay, passes);
+    drawSoftSelectRadius(painter);
     if (hud::shown(mHudPanel, "originAxis"))
         hud::drawOriginAxis(s, painter, view);
     drawViewIndicator(painter);

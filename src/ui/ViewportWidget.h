@@ -221,6 +221,8 @@ private:
     scene::isolation::Set mIsolation;
     void drawHud(OverlayPainter& p);
     void drawViewIndicator(OverlayPainter& p);
+    /** While B-dragging the soft select radius: a disc at the selection centre shaded by the falloff curve. */
+    void drawSoftSelectRadius(OverlayPainter& p);
     /** Resolution and film gates with the mask outside them, Maya style. */
     void drawGate(OverlayPainter& p);
     /** Copies the scene's settings for this view's camera (film fit, overscan, gate) onto mCamera. */
