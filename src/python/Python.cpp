@@ -65,7 +65,10 @@ bool init(const std::vector<std::string>& argv)
     config.use_environment = 0;
     config.write_bytecode = 1;
 
-    std::filesystem::path home = LILA_PYTHON_HOME;
+    // An installed build carries its own interpreter; dev builds use the one they were configured against.
+    std::filesystem::path home = paths::executableDir() / "python-runtime";
+    if (!std::filesystem::exists(home / "Lib"))
+        home = LILA_PYTHON_HOME;
     if (const char* env = std::getenv("LILA_PYTHON_HOME"); env && *env)
         home = env;
     PyConfig_SetString(&config, &config.home, widen(home).c_str());
