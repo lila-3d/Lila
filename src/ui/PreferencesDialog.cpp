@@ -816,6 +816,8 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         section(unreal, "Sync");
         toggle(unreal, "Sync mapped assets on save", "/autoSync", true);
         text(unreal, "Export cache folder", "/cacheDir", "");
+        section(unreal, "Skeletal meshes");
+        choice(unreal, "Character faces", "/facing", {{"+X (as modelled)", "x"}, {"+Y (Epic mannequin)", "y"}}, "x");
     });
 
     builtIn(r, "scripting", "Scripting", "scriptEditor", [](Page& script) {

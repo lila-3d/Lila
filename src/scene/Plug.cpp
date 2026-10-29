@@ -219,6 +219,8 @@ json attrDefToJson(const AttrDef& d)
         j["hidden"] = true;
     if (d.flags & AttrColor)
         j["color"] = true;
+    if (d.flags & AttrUnique)
+        j["unique"] = true;
     if (d.defaultValue != defaultFor(d.type))
         j["default"] = toJson(d.defaultValue);
     if (!d.enumNames.empty())
@@ -251,6 +253,8 @@ AttrDef attrDefFromJson(const json& j)
         d.flags |= AttrHidden;
     if (j.value("color", false))
         d.flags |= AttrColor;
+    if (j.value("unique", false))
+        d.flags |= AttrUnique;
     d.enumNames = j.value("enum", std::vector<std::string>{});
     if (j.contains("children"))
         d.childNames = j["children"].get<std::array<std::string, 3>>();

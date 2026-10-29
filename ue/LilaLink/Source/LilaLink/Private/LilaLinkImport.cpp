@@ -55,6 +55,8 @@ struct FImportRequest
 	FString AssetName;   // SM_Crate
 	EKind Kind = EKind::Static;
 	FString Skeleton;
+	/** Skeletal and animation: yaw turning the file's +X forward to the requested facing; unset leaves the pipeline's. */
+	TOptional<double> FacingYaw;
 	FString LodGroup;
 	/** Screen size per LOD; empty leaves them automatic. */
 	TArray<float> LodScreenSizes;
@@ -144,6 +146,16 @@ bool ParseRequest(const TSharedPtr<FJsonObject>& Params, FImportRequest& Out, FS
 	TSharedPtr<FJsonObject> Options = Params->TryGetObjectField(TEXT("options"), OptionsPtr) ? *OptionsPtr : MakeShared<FJsonObject>();
 	Options->TryGetStringField(TEXT("skeleton"), Out.Skeleton);
 	Options->TryGetStringField(TEXT("lodGroup"), Out.LodGroup);
+	FString Facing;
+	if (Out.Kind != EKind::Static && Options->TryGetStringField(TEXT("facing"), Facing))
+	{
+		if (Facing != TEXT("x") && Facing != TEXT("y"))
+		{
+			OutError = FString::Printf(TEXT("importAsset: facing must be x or y, not '%s'"), *Facing);
+			return false;
+		}
+		Out.FacingYaw = Facing == TEXT("y") ? 90.0 : 0.0;
+	}
 	const TArray<TSharedPtr<FJsonValue>>* Sizes = nullptr;
 	if (Options->TryGetArrayField(TEXT("lodScreenSizes"), Sizes))
 	{
@@ -229,6 +241,10 @@ UInterchangeGenericAssetsPipeline* MakePipeline(const FImportRequest& R)
 	Pipeline->AssetName = R.AssetName;
 	Pipeline->bSceneNameSubFolder = false;
 	Pipeline->bAssetTypeSubFolders = false;
+	if (R.FacingYaw.IsSet())
+	{
+		Pipeline->ImportOffsetRotation = FRotator(0.0, R.FacingYaw.GetValue(), 0.0);
+	}
 
 	UInterchangeGenericCommonMeshesProperties* Common = Pipeline->CommonMeshesProperties;
 	Common->ForceAllMeshAsType = R.Kind == EKind::Static ? EInterchangeForceMeshType::IFMT_StaticMesh : EInterchangeForceMeshType::IFMT_SkeletalMesh;
@@ -280,13 +296,20 @@ UInterchangeAssetImportData* InterchangeDataOf(UObject* Asset)
 	{
 		return Cast<UInterchangeAssetImportData>(Mesh->GetAssetImportData());
 	}
+	if (UAnimSequence* Anim = Cast<UAnimSequence>(Asset))
+	{
+		return Cast<UInterchangeAssetImportData>(Anim->AssetImportData);
+	}
 	return nullptr;
 }
 
-/** The asset's stored pipelines with material import off, so a reimport keeps its settings but never makes materials. */
-TArray<UObject*> StoredPipelinesWithoutMaterials(UObject* Existing)
+/**
+ * The asset's stored pipelines for a reimport: its settings kept, except material import is off for managed materials
+ * and the requested facing replaces the stored one.
+ */
+TArray<UObject*> StoredPipelinesForReimport(UObject* Existing, const FImportRequest& R)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImport::StoredPipelinesWithoutMaterials);
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImport::StoredPipelinesForReimport);
 
 	TArray<UObject*> Out;
 	UInterchangeAssetImportData* Data = InterchangeDataOf(Existing);
@@ -303,10 +326,17 @@ TArray<UObject*> StoredPipelinesWithoutMaterials(UObject* Existing)
 		UObject* Copy = DuplicateObject<UObject>(Stored, GetTransientPackage());
 		if (UInterchangeGenericAssetsPipeline* Generic = Cast<UInterchangeGenericAssetsPipeline>(Copy))
 		{
-			Generic->MaterialPipeline->bImportMaterials = false;
-			if (Generic->MaterialPipeline->TexturePipeline)
+			if (R.Materials.bManaged)
 			{
-				Generic->MaterialPipeline->TexturePipeline->bImportTextures = false;
+				Generic->MaterialPipeline->bImportMaterials = false;
+				if (Generic->MaterialPipeline->TexturePipeline)
+				{
+					Generic->MaterialPipeline->TexturePipeline->bImportTextures = false;
+				}
+			}
+			if (R.FacingYaw.IsSet())
+			{
+				Generic->ImportOffsetRotation = FRotator(0.0, R.FacingYaw.GetValue(), 0.0);
 			}
 		}
 		Out.Add(Copy);
@@ -389,9 +419,9 @@ bool StartInterchangeImport(const FImportRequest& R, UObject* Existing, const FL
 		Job->Pipeline.Reset(MakePipeline(R));
 		Params.OverridePipelines.Add(FSoftObjectPath(Job->Pipeline.Get()));
 	}
-	else if (R.Materials.bManaged)
+	else if (R.Materials.bManaged || R.FacingYaw.IsSet())
 	{
-		for (UObject* Stored : StoredPipelinesWithoutMaterials(Existing))
+		for (UObject* Stored : StoredPipelinesForReimport(Existing, R))
 		{
 			Job->StoredPipelines.Emplace(Stored);
 			Params.OverridePipelines.Add(FSoftObjectPath(Stored));

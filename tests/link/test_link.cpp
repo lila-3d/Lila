@@ -9,6 +9,7 @@
 #include "link/Exporters.h"
 #include "link/RpcClient.h"
 #include "link/UnrealLink.h"
+#include "ops/Undo.h"
 #include "geo/Mesh.h"
 #include "geo/Primitives.h"
 #include "scene/Graph.h"
@@ -313,7 +314,7 @@ TEST_CASE("unrealImport sends importAsset with the mapped options")
     fs::remove_all(file.parent_path());
 }
 
-TEST_CASE("mappings live in workspace prefs and drive auto-sync on save")
+TEST_CASE("mappings live on their nodes and drive auto-sync on save")
 {
     setup();
     fs::path ws = tempDir("workspace");
@@ -321,7 +322,7 @@ TEST_CASE("mappings live in workspace prefs and drive auto-sync on save")
     PrefStore::get().set("unreal", "/cacheDir", (ws / "cache").generic_string(), PrefScope::Workspace);
 
     scene::Graph& g = scene::Graph::current();
-    scene::Node* crate = g.createNode(*scene::types::find("transform"), "crate");
+    scene::Node* crate = g.createNode(*scene::types::find("mesh"), "crate");
     REQUIRE(crate);
     std::string crateName = crate->name();
 
@@ -390,6 +391,58 @@ TEST_CASE("mappings live in workspace prefs and drive auto-sync on save")
     unregisterExporter("fbx");
     Link::get().disconnect();
     g.deleteNode(crate->id());
+    PrefStore::get().setWorkspaceDir({});
+    fs::remove_all(ws);
+}
+
+TEST_CASE("mappings follow renames and deletes, refuse meshless nodes, and adopt the workspace's old ones")
+{
+    setup();
+    fs::path ws = tempDir("mapping_nodes");
+    PrefStore::get().setWorkspaceDir(ws / ".lila");
+
+    scene::Graph& g = scene::Graph::current();
+    scene::Node* group = g.createNode(*scene::types::find("transform"), "hero");
+    scene::Node* body = g.createNode(*scene::types::find("mesh"), "heroBody", group->id());
+    scene::Node* joint = g.createNode(*scene::types::find("transform"), "heroRoot");
+    REQUIRE((group && body && joint));
+
+    CHECK_THROWS_AS(ops::execute("unrealMap", {{"args", {joint->name()}}, {"contentPath", "/Game/X/SM_Root"}}), CommandError);
+    ops::execute("unrealMap", {{"args", {group->name()}}, {"contentPath", "/Game/Chars/SK_Hero"}, {"kind", "skeletal"}, {"facing", "y"}});
+    CHECK_THROWS_AS(ops::execute("unrealMap", {{"args", {group->name()}}, {"contentPath", "/Game/X"}, {"facing", "z"}}), CommandError);
+
+    g.rename(group->id(), "heroRenamed");
+    json list = mappings();
+    REQUIRE(list.size() == 1);
+    CHECK(list[0]["node"] == g.fullPath(group->id()));
+    CHECK(list[0]["facing"] == "y");
+    CHECK(importParams("x.fbx", list[0])["options"]["facing"] == "y");
+
+    CHECK(ops::execute("unrealUnmap", {{"args", {group->name()}}}) == 1);
+    CHECK(mappings().empty());
+    CHECK(UndoStack::get().undo());
+    CHECK(mappings().size() == 1);
+
+    // Old workspace entries move onto the nodes they name; a meshless one is dropped, an unresolved one waits for its scene.
+    ops::execute("unrealUnmap", {{"args", {group->name()}}});
+    PrefStore::get().set("unreal", "/mappings",
+                         json::array({{{"node", g.fullPath(body->id())}, {"contentPath", "/Game/M/SM_Body"}, {"kind", "static"}},
+                                      {{"node", g.fullPath(joint->id())}, {"contentPath", "/Game/M/SM_Root"}, {"kind", "static"}},
+                                      {{"node", "|elsewhere"}, {"contentPath", "/Game/M/SM_Else"}, {"kind", "static"}}}),
+                         PrefScope::Workspace);
+    adoptWorkspaceMappings();
+    list = mappings();
+    REQUIRE(list.size() == 1);
+    CHECK(list[0]["contentPath"] == "/Game/M/SM_Body");
+    PrefStore::get().set("unreal", "/autoSync", false, PrefScope::Workspace);
+    onSceneSaved();
+    json left = PrefStore::get().value("unreal", "/mappings", json::array());
+    REQUIRE(left.size() == 1);
+    CHECK(left[0]["node"] == "|elsewhere");
+
+    g.deleteNode(group->id());
+    CHECK(mappings().empty());
+    g.deleteNode(joint->id());
     PrefStore::get().setWorkspaceDir({});
     fs::remove_all(ws);
 }
@@ -606,7 +659,7 @@ TEST_CASE("auto-sync against an editor that never answers fails with a clear err
     PrefStore::get().set("unreal", "/importIdleTimeoutMs", 300, PrefScope::Workspace);
 
     scene::Graph& g = scene::Graph::current();
-    scene::Node* cube = g.createNode(*scene::types::find("transform"), "cube");
+    scene::Node* cube = g.createNode(*scene::types::find("mesh"), "cube");
     REQUIRE(cube);
     std::string name = cube->name();
     ops::execute("unrealMap", {{"args", {name}}, {"contentPath", "/Game/Meshes/SM_Cube"}});

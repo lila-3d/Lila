@@ -1,5 +1,6 @@
 #include "ui/MainWindowDetail.h"
 #include "ui/FileDialog.h"
+#include "scene/Skin.h"
 
 namespace lila::ui
 {
@@ -294,21 +295,65 @@ void MainWindow::sendToUnreal()
     }
     json existing = ops::execute("unrealMappings", json::object());
     auto leafName = [](const std::string& path) { return path.substr(path.rfind('|') + 1); };
+    auto meshesUnder = [](const std::string& path) {
+        scene::Graph& g = scene::Graph::current();
+        std::vector<scene::NodeId> out;
+        const scene::Node* n = g.find(path);
+        if (!n)
+            return out;
+        std::vector<scene::NodeId> ids = g.descendants(n->id());
+        ids.push_back(n->id());
+        for (scene::NodeId id : ids)
+            if (const scene::Node* d = g.node(id); d && d->type().isA("mesh") && !d->type().isA("lattice"))
+                out.push_back(id);
+        return out;
+    };
+    json send = json::array();
+    std::vector<std::string> meshless;
     for (const json& name : selection)
     {
+        const std::string node = name.get<std::string>();
+        const std::vector<scene::NodeId> meshes = meshesUnder(node);
+        scene::Graph& g = scene::Graph::current();
+        const bool skinned = std::ranges::any_of(meshes, [&g](scene::NodeId id) { return scene::skin::find(g, id) != scene::kNoNode; });
+        // A static mapping of a skinned mesh is asked again, so it can go to a skeletal mesh asset.
         bool mapped = false;
         for (const json& m : existing)
-            mapped = mapped || m.value("node", "") == name.get<std::string>();
+            mapped = mapped || (m.value("node", "") == node && !(skinned && m.value("kind", "static") == "static"));
         if (mapped)
+        {
+            send.push_back(name);
             continue;
+        }
+        if (meshes.empty())
+        {
+            meshless.push_back(node);
+            continue;
+        }
         bool ok = false;
-        QString path = QInputDialog::getText(this, "Send to Unreal", QString::fromStdString("Content path for " + name.get<std::string>()),
-                                             QLineEdit::Normal, QString::fromStdString("/Game/Meshes/SM_" + leafName(name.get<std::string>())), &ok);
+        QString path = QInputDialog::getText(this, "Send to Unreal", QString::fromStdString("Content path for " + node), QLineEdit::Normal,
+                                             QString::fromStdString((skinned ? "/Game/Characters/SK_" : "/Game/Meshes/SM_") + leafName(node)), &ok);
         if (!ok || path.isEmpty())
             return;
-        run("unrealMap", {{"args", {name}}, {"contentPath", path.toStdString()}, {"kind", "static"}});
+        try
+        {
+            ops::execute("unrealMap", {{"args", {name}}, {"contentPath", path.toStdString()}, {"kind", skinned ? "skeletal" : "static"}}, CallSource::UI);
+            send.push_back(name);
+        }
+        catch (const CommandError& e)
+        {
+            log::error("{}", e.what());
+        }
     }
-    run("unrealSync");
+    for (const std::string& node : meshless)
+        log::warn("Send to Unreal: {} has no mesh under it, skipped (a skeleton goes with the skinned meshes)", node);
+    if (send.empty())
+    {
+        if (!meshless.empty())
+            QMessageBox::information(this, "Send to Unreal", "Nothing to send: select meshes or the group holding them. A skeleton goes with its skinned meshes.");
+        return;
+    }
+    run("unrealSync", {{"args", send}});
 }
 
 void MainWindow::refreshSourceStatus()

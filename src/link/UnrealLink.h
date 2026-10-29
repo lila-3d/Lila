@@ -47,11 +47,22 @@ LILA_SCENE_API std::vector<fs::path> configuredProjects();
 /** Port files of configured projects, then any default port that accepts a connection and wasn't already found. */
 LILA_SCENE_API std::vector<Instance> discover(bool probe = true, const std::string& host = "127.0.0.1");
 
-/** Workspace mappings from the "unreal" pref file: {node, contentPath, kind, skeleton, ...import options}. */
+/**
+ * The scene's mappings, {node (full path), contentPath, kind, skeleton, ...import options}. Each lives on its node, so it
+ * saves with the scene, follows renames and goes with deletes; duplicates don't inherit it.
+ */
 LILA_SCENE_API json mappings();
-/** Adds or replaces the mapping for m["node"]. */
+/** One node's mapping with its shortest path as "node", or null. */
+LILA_SCENE_API json mappingOf(const std::string& node);
+/** Adds or replaces the mapping on node m["node"]. Undoable. Throws std::invalid_argument for a missing node. */
 LILA_SCENE_API void setMapping(const json& m);
 LILA_SCENE_API bool removeMapping(const std::string& node);
+/**
+ * Moves mappings kept in the workspace's "unreal" pref file onto the nodes of the open scene they resolve in (not
+ * undoable, marks the scene modified); saving the scene then drops them from the file. Static and skeletal ones with no
+ * mesh under them are left out.
+ */
+LILA_SCENE_API void adoptWorkspaceMappings();
 
 /**
  * importAsset params for a file and a mapping (or the flags of an unrealImport call shaped the same way). An array
@@ -176,8 +187,11 @@ private:
  */
 LILA_SCENE_API void onSceneSaved();
 
-/** What onSceneSaved does, minus the pref check when `force`, then syncTextureSets. Returns how many mappings and sets were queued. */
-LILA_SCENE_API int syncMappings(bool force);
+/**
+ * What onSceneSaved does, minus the pref check when `force`, then syncTextureSets. Returns how many mappings and sets were
+ * queued. Given nodes, only their mappings go, and no texture sets.
+ */
+LILA_SCENE_API int syncMappings(bool force, const std::vector<std::string>& only = {});
 
 /** How unrealPlaceInstances sends instance groups to the open level. */
 struct PlacementOptions

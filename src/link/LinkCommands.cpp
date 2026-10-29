@@ -7,7 +7,10 @@
 #include "link/TextureSend.h"
 #include "link/TextureSetSend.h"
 #include "link/UnrealLink.h"
+#include "core/Events.h"
 #include "scene/Graph.h"
+#include "scene/ObjectSets.h"
+#include "seq/MeshSequence.h"
 
 #include <stdexcept>
 
@@ -32,6 +35,12 @@ void checkKind(const std::string& kind, bool sequences)
                        "or geometryCache, not '" + kind + "'");
 }
 
+void checkFacing(const Args& a)
+{
+    if (a.has("facing") && a.get<std::string>("facing", "") != "x" && a.get<std::string>("facing", "") != "y")
+        throw CommandError("facing must be x or y");
+}
+
 /** Flags shared by unrealImport and unrealMap; they become importAsset options. */
 std::vector<FlagDef> importFlags()
 {
@@ -43,6 +52,9 @@ std::vector<FlagDef> importFlags()
          "Geometry Cache) | vertexAnimation (a static mesh playing Vertex Animation Textures through a generated material) | spline (a "
          "curve as an actor of spline components or landscape splines; unrealMap only, no contentPath)"},
         {"skeleton", "sk", T::String, nullptr, "Skeleton asset to reuse, like /Game/Chars/SK_Hero_Skeleton."},
+        {"facing", "fc", T::String, nullptr,
+         "skeletal and animation: x keeps the character facing +X as modelled; y turns it to face +Y, Epic's mannequin convention "
+         "(default the unreal pref /facing, x). Mesh and animations of one skeleton need the same value."},
         {"importMaterials", "im", T::Bool, nullptr, "Create the materials Unreal does not have yet (default on)."},
         {"materialFolder", "mf", T::String, nullptr,
          "Where materials are looked up first and created: /Game/... or relative to the asset's folder (default Materials)."},
@@ -119,6 +131,9 @@ void registerCommands()
     registerTextureSetCommands();
     registerSplineCommands();
     registerPlacementCommands();
+    static const events::SubscriptionId adopt =
+        events::subscribe(events::Event::SceneOpened, [](const events::EventData&) { adoptWorkspaceMappings(); });
+    (void)adopt;
 
     ops::registerCommand({
         .name = "unrealConnect",
@@ -199,6 +214,7 @@ void registerCommands()
             if (!a.has("contentPath"))
                 throw CommandError("unrealImport: give contentPath, like /Game/Props/SM_Crate");
             checkKind(a.get<std::string>("kind", "static"), false);
+            checkFacing(a);
 
             json params = importParams(resolve(file), optionFlags(a));
             std::shared_ptr<RpcClient> client = requireClient();
@@ -227,8 +243,9 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "unrealMap",
-        .doc = "Map a node to an Unreal asset so saving the scene re-exports and reimports it. Stored in the "
-               "workspace (.lila/unreal.json). Replaces any existing mapping for the node. An object set maps its "
+        .doc = "Map a node to an Unreal asset so saving the scene re-exports and reimports it. Stored on the "
+               "node in the scene: it follows renames, goes with deletes and duplicates don't inherit it. Static and "
+               "skeletal mappings need a mesh under the node. Replaces any existing mapping for the node. An object set maps its "
                "members as one asset, exported together where they sit. kind meshSequence sends an animated mesh "
                "as a static mesh per frame (<contentPath>_000, ...; reimported in place, frames past the end deleted) and "
                "can point a Niagara mesh renderer at them; geometryCache sends it as one Alembic Geometry Cache; "
@@ -241,7 +258,6 @@ void registerCommands()
                 f.push_back(std::move(d));
             return f;
         }(),
-        .undoable = false,
         .run = [](const Args& a) -> json {
             std::vector<std::string> nodes = a.objects();
             if (nodes.size() != 1)
@@ -253,8 +269,12 @@ void registerCommands()
             if (!a.has("contentPath") && kind != "spline")
                 throw CommandError("unrealMap: give contentPath, like /Game/Props/SM_Crate");
             checkKind(kind, true);
+            checkFacing(a);
             if (kind == "spline" && !target->type().isA("curve"))
                 throw CommandError("unrealMap: kind spline maps curves; " + target->path() + " is not one");
+            if ((kind == "static" || kind == "skeletal") && !scene::objectSets::isSet(*target) &&
+                seq::meshNodes(scene::Graph::current(), {target->id()}).empty())
+                throw CommandError("unrealMap: " + target->path() + " has no mesh under it; map the meshes or the group holding them");
             if (a.has("sequence") && !a.flags["sequence"].is_object())
                 throw CommandError("unrealMap: sequence must be a dict, like {\"start\": 32, \"end\": 58, \"scale\": 0.1}");
             if (a.has("vat") && !a.flags["vat"].is_object())
@@ -300,7 +320,6 @@ void registerCommands()
         .name = "unrealUnmap",
         .doc = "Remove the Unreal mapping of the given nodes (or the selection). Returns how many were removed.",
         .positionalDoc = "nodes",
-        .undoable = false,
         .run = [](const Args& a) -> json {
             int removed = 0;
             for (const std::string& n : a.objects())
@@ -311,10 +330,9 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "unrealMappings",
-        .doc = "Every node -> Unreal asset mapping in this workspace.",
+        .doc = "Every node -> Unreal asset mapping in this scene.",
         .undoable = false,
         .run = [](const Args&) -> json {
-            // Stored by full path; returned as each node's current shortest path, like every other node name.
             json list = mappings();
             for (json& m : list)
                 if (m.is_object())
@@ -332,9 +350,16 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "unrealSync",
-        .doc = "Export and reimport every mapped node now, as saving does. Returns how many were queued.",
+        .doc = "Export and reimport every mapped node now, as saving does, or only the given nodes. Returns how many were queued.",
+        .positionalDoc = "nodes (default every mapping)",
         .undoable = false,
-        .run = [](const Args&) -> json { return syncMappings(true); },
+        .run = [](const Args& a) -> json {
+            std::vector<std::string> only;
+            for (const json& n : a.positional)
+                if (n.is_string())
+                    only.push_back(n.get<std::string>());
+            return syncMappings(true, only);
+        },
     });
 
     registerMlDeformerCommands();

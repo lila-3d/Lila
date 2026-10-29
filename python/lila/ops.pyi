@@ -7771,7 +7771,7 @@ def unrealConnect(project: str | None = None, port: int | None = None, host: str
         disconnect: Drop the current connection instead. Short form d. Default False.
     """
 
-def unrealImport(*objects: Any, contentPath: str | None = None, kind: str | None = None, skeleton: str | None = None, importMaterials: bool | None = None, materialFolder: str | None = None, keepMaterials: bool | None = None, importTextures: bool | None = None, combineMeshes: bool | None = None, autoCollision: bool | None = None, generateLightmapUVs: bool | None = None, normals: str | None = None, lodGroup: str | None = None, nanite: bool | None = None, existing: str | None = None, reapplyOptions: bool | None = None, save: bool | None = None, file: str | None = None, wait: bool | None = None, cp: str | None = None, k: str | None = None, sk: str | None = None, im: bool | None = None, mf: str | None = None, km: bool | None = None, it: bool | None = None, cm: bool | None = None, ac: bool | None = None, glu: bool | None = None, nm: str | None = None, lg: str | None = None, na: bool | None = None, ex: str | None = None, ro: bool | None = None, sv: bool | None = None, f: str | None = None, w: bool | None = None) -> Any:
+def unrealImport(*objects: Any, contentPath: str | None = None, kind: str | None = None, skeleton: str | None = None, facing: str | None = None, importMaterials: bool | None = None, materialFolder: str | None = None, keepMaterials: bool | None = None, importTextures: bool | None = None, combineMeshes: bool | None = None, autoCollision: bool | None = None, generateLightmapUVs: bool | None = None, normals: str | None = None, lodGroup: str | None = None, nanite: bool | None = None, existing: str | None = None, reapplyOptions: bool | None = None, save: bool | None = None, file: str | None = None, wait: bool | None = None, cp: str | None = None, k: str | None = None, sk: str | None = None, fc: str | None = None, im: bool | None = None, mf: str | None = None, km: bool | None = None, it: bool | None = None, cm: bool | None = None, ac: bool | None = None, glu: bool | None = None, nm: str | None = None, lg: str | None = None, na: bool | None = None, ex: str | None = None, ro: bool | None = None, sv: bool | None = None, f: str | None = None, w: bool | None = None) -> Any:
     """Import (or reimport) a file into the connected Unreal project. Connects first if needed. Returns {assets, warnings, errors} with wait=True; otherwise queues it and logs the result.
 
     Args:
@@ -7779,6 +7779,7 @@ def unrealImport(*objects: Any, contentPath: str | None = None, kind: str | None
         contentPath: Destination asset, like /Game/Props/SM_Crate. Short form cp.
         kind: static | skeletal | animation | meshSequence (a static mesh per frame, <contentPath>_000...) | geometryCache (one Alembic Geometry Cache) | vertexAnimation (a static mesh playing Vertex Animation Textures through a generated material) | spline (a curve as an actor of spline components or landscape splines; unrealMap only, no contentPath). Short form k. Default 'static'.
         skeleton: Skeleton asset to reuse, like /Game/Chars/SK_Hero_Skeleton. Short form sk.
+        facing: skeletal and animation: x keeps the character facing +X as modelled; y turns it to face +Y, Epic's mannequin convention (default the unreal pref /facing, x). Mesh and animations of one skeleton need the same value. Short form fc.
         importMaterials: Create the materials Unreal does not have yet (default on). Short form im.
         materialFolder: Where materials are looked up first and created: /Game/... or relative to the asset's folder (default Materials). Short form mf.
         keepMaterials: On reimport, keep materials reassigned in Unreal on slots that still exist (default on). Short form km.
@@ -7796,14 +7797,15 @@ def unrealImport(*objects: Any, contentPath: str | None = None, kind: str | None
         wait: Block until Unreal finishes and return its reply. Short form w. Default False.
     """
 
-def unrealMap(*objects: Any, contentPath: str | None = None, kind: str | None = None, skeleton: str | None = None, importMaterials: bool | None = None, materialFolder: str | None = None, keepMaterials: bool | None = None, importTextures: bool | None = None, combineMeshes: bool | None = None, autoCollision: bool | None = None, generateLightmapUVs: bool | None = None, normals: str | None = None, lodGroup: str | None = None, nanite: bool | None = None, existing: str | None = None, reapplyOptions: bool | None = None, save: bool | None = None, sequence: Any | None = None, niagaraSystem: str | None = None, niagaraEmitter: str | None = None, niagaraRenderer: int | None = None, vat: Any | None = None, splineType: str | None = None, splineMesh: str | None = None, splineMeshAxis: str | None = None, landscape: str | None = None, width: float | None = None, deformTerrain: bool | None = None, cp: str | None = None, k: str | None = None, sk: str | None = None, im: bool | None = None, mf: str | None = None, km: bool | None = None, it: bool | None = None, cm: bool | None = None, ac: bool | None = None, glu: bool | None = None, nm: str | None = None, lg: str | None = None, na: bool | None = None, ex: str | None = None, ro: bool | None = None, sv: bool | None = None, sq: Any | None = None, ns: str | None = None, ne: str | None = None, nr: int | None = None, va: Any | None = None, st: str | None = None, sm: str | None = None, sma: str | None = None, ls: str | None = None, wd: float | None = None, dt: bool | None = None) -> Any:
-    """Map a node to an Unreal asset so saving the scene re-exports and reimports it. Stored in the workspace (.lila/unreal.json). Replaces any existing mapping for the node. An object set maps its members as one asset, exported together where they sit. kind meshSequence sends an animated mesh as a static mesh per frame (<contentPath>_000, ...; reimported in place, frames past the end deleted) and can point a Niagara mesh renderer at them; geometryCache sends it as one Alembic Geometry Cache; vertexAnimation bakes it to Vertex Animation Textures and sends the rest mesh, the textures and a material instance that plays them (sequence for the range, vat for the bake).
+def unrealMap(*objects: Any, contentPath: str | None = None, kind: str | None = None, skeleton: str | None = None, facing: str | None = None, importMaterials: bool | None = None, materialFolder: str | None = None, keepMaterials: bool | None = None, importTextures: bool | None = None, combineMeshes: bool | None = None, autoCollision: bool | None = None, generateLightmapUVs: bool | None = None, normals: str | None = None, lodGroup: str | None = None, nanite: bool | None = None, existing: str | None = None, reapplyOptions: bool | None = None, save: bool | None = None, sequence: Any | None = None, niagaraSystem: str | None = None, niagaraEmitter: str | None = None, niagaraRenderer: int | None = None, vat: Any | None = None, splineType: str | None = None, splineMesh: str | None = None, splineMeshAxis: str | None = None, landscape: str | None = None, width: float | None = None, deformTerrain: bool | None = None, cp: str | None = None, k: str | None = None, sk: str | None = None, fc: str | None = None, im: bool | None = None, mf: str | None = None, km: bool | None = None, it: bool | None = None, cm: bool | None = None, ac: bool | None = None, glu: bool | None = None, nm: str | None = None, lg: str | None = None, na: bool | None = None, ex: str | None = None, ro: bool | None = None, sv: bool | None = None, sq: Any | None = None, ns: str | None = None, ne: str | None = None, nr: int | None = None, va: Any | None = None, st: str | None = None, sm: str | None = None, sma: str | None = None, ls: str | None = None, wd: float | None = None, dt: bool | None = None) -> Any:
+    """Map a node to an Unreal asset so saving the scene re-exports and reimports it. Stored on the node in the scene: it follows renames, goes with deletes and duplicates don't inherit it. Static and skeletal mappings need a mesh under the node. Replaces any existing mapping for the node. An object set maps its members as one asset, exported together where they sit. kind meshSequence sends an animated mesh as a static mesh per frame (<contentPath>_000, ...; reimported in place, frames past the end deleted) and can point a Niagara mesh renderer at them; geometryCache sends it as one Alembic Geometry Cache; vertexAnimation bakes it to Vertex Animation Textures and sends the rest mesh, the textures and a material instance that plays them (sequence for the range, vat for the bake).
 
     Args:
         objects: node.
         contentPath: Destination asset, like /Game/Props/SM_Crate. Short form cp.
         kind: static | skeletal | animation | meshSequence (a static mesh per frame, <contentPath>_000...) | geometryCache (one Alembic Geometry Cache) | vertexAnimation (a static mesh playing Vertex Animation Textures through a generated material) | spline (a curve as an actor of spline components or landscape splines; unrealMap only, no contentPath). Short form k. Default 'static'.
         skeleton: Skeleton asset to reuse, like /Game/Chars/SK_Hero_Skeleton. Short form sk.
+        facing: skeletal and animation: x keeps the character facing +X as modelled; y turns it to face +Y, Epic's mannequin convention (default the unreal pref /facing, x). Mesh and animations of one skeleton need the same value. Short form fc.
         importMaterials: Create the materials Unreal does not have yet (default on). Short form im.
         materialFolder: Where materials are looked up first and created: /Game/... or relative to the asset's folder (default Materials). Short form mf.
         keepMaterials: On reimport, keep materials reassigned in Unreal on slots that still exist (default on). Short form km.
@@ -7831,7 +7833,7 @@ def unrealMap(*objects: Any, contentPath: str | None = None, kind: str | None = 
     """
 
 def unrealMappings() -> Any:
-    """Every node -> Unreal asset mapping in this workspace."""
+    """Every node -> Unreal asset mapping in this scene."""
 
 def unrealPlaceInstances(*objects: Any, folder: str | None = None, mode: str | None = None, threshold: int | None = None, dryRun: bool | None = None, wait: bool | None = None, f: str | None = None, m: str | None = None, t: int | None = None, w: bool | None = None) -> Any:
     """Send meshes to Unreal as one static mesh asset per instance source, placed in the open level: an actor per member referencing that asset, or one instanced static mesh component (ISM or HISM) for a large group. Placements are keyed by each node's linkId, given on the first send and saved with the scene, so sending a group again moves, adds and removes its actors to match, also after a rename or reopening the scene. Returns the plan, with each group's import and placement results when wait=True.
@@ -7912,8 +7914,12 @@ def unrealStatus(scan: bool | None = None, *, s: bool | None = None) -> Any:
         scan: Also list running editors (port files and default ports). Short form s. Default False.
     """
 
-def unrealSync() -> Any:
-    """Export and reimport every mapped node now, as saving does. Returns how many were queued."""
+def unrealSync(*objects: Any) -> Any:
+    """Export and reimport every mapped node now, as saving does, or only the given nodes. Returns how many were queued.
+
+    Args:
+        objects: nodes (default every mapping).
+    """
 
 def unrealUnmap(*objects: Any) -> Any:
     """Remove the Unreal mapping of the given nodes (or the selection). Returns how many were removed.

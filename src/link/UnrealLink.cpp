@@ -7,9 +7,11 @@
 #include "core/Profile.h"
 #include "core/Progress.h"
 #include "core/Workspace.h"
+#include "io/SceneFile.h"
 #include "link/Exporters.h"
 #include "link/SplineSend.h"
 #include "link/TextureSetSend.h"
+#include "ops/Undo.h"
 #include "scene/Deformers.h"
 #include "scene/Graph.h"
 #include "scene/LodGroup.h"
@@ -31,6 +33,8 @@ namespace lila::link
 namespace
 {
 constexpr const char* kPrefFile = "unreal";
+/** Hidden user attr holding a node's mapping as JSON. */
+constexpr const char* kMappingAttr = "unrealMapping";
 constexpr int kHelloTimeoutMs = 3000;
 constexpr int kImportTimeoutMs = 10 * 60 * 1000;
 constexpr int kImportIdleTimeoutMs = 60 * 1000;
@@ -38,7 +42,7 @@ constexpr int kImportIdleTimeoutMs = 60 * 1000;
 const char* const kOptionKeys[] = {
     "skeleton", "importMaterials", "importTextures", "combineMeshes", "autoCollision", "generateLightmapUVs",
     "normals",  "lodGroup",        "existing",       "nanite",        "importAnimations", "reapplyOptions", "save",
-    "materialFolder", "keepMaterials", "lodScreenSizes", "materialCurves",
+    "materialFolder", "keepMaterials", "lodScreenSizes", "materialCurves", "facing",
 };
 
 std::string lower(std::string s)
@@ -103,17 +107,23 @@ scene::Node* mappedNode(const std::string& node)
     }
 }
 
-bool sameMappedNode(const std::string& a, const std::string& b)
+/** The mapping a node carries in kMappingAttr, without "node"; null when it has none. */
+json storedMapping(const scene::Node& n)
 {
-    if (a == b)
-        return true;
-    scene::Node* n = mappedNode(a);
-    return n && n == mappedNode(b);
+    const int attr = n.type().attrIndex(kMappingAttr);
+    if (attr < 0)
+        return nullptr;
+    const auto* text = std::get_if<std::string>(&n.value(attr));
+    if (!text || text->empty())
+        return nullptr;
+    json m = json::parse(*text, nullptr, false);
+    return m.is_object() ? m : json();
 }
 
-void writeMappings(const json& list)
+/** Static and skeletal mappings export meshes; one with none under it (a joint chain on its own) has nothing to send. */
+bool sendsNothing(scene::Graph& g, const scene::Node& n, const std::string& kind)
 {
-    PrefStore::get().set(kPrefFile, "/mappings", list, PrefScope::Workspace);
+    return (kind == "static" || kind == "skeletal") && !scene::objectSets::isSet(n) && seq::meshNodes(g, {n.id()}).empty();
 }
 
 void reportImport(const std::string& what, const RpcResult& r)
@@ -399,36 +409,104 @@ std::vector<Instance> discover(bool probe, const std::string& host)
 
 json mappings()
 {
-    json list = PrefStore::get().value(kPrefFile, "/mappings", json::array());
-    return list.is_array() ? list : json::array();
+    scene::Graph& g = scene::Graph::current();
+    std::vector<scene::NodeId> ids = g.nodes();
+    std::ranges::sort(ids);
+    json list = json::array();
+    for (scene::NodeId id : ids)
+        if (const scene::Node* n = g.node(id))
+            if (json m = storedMapping(*n); m.is_object())
+            {
+                m["node"] = g.fullPath(id);
+                list.push_back(std::move(m));
+            }
+    return list;
+}
+
+json mappingOf(const std::string& node)
+{
+    scene::Node* n = mappedNode(node);
+    if (!n)
+        return nullptr;
+    json m = storedMapping(*n);
+    if (m.is_object())
+        m["node"] = n->path();
+    return m;
 }
 
 void setMapping(const json& m)
 {
     LILA_ZONE();
 
-    json list = mappings();
-    std::string node = m.value("node", std::string());
-    auto it = std::ranges::find_if(list, [&](const json& x) { return x.is_object() && sameMappedNode(x.value("node", std::string()), node); });
-    if (it != list.end())
-        *it = m;
-    else
-        list.push_back(m);
-    writeMappings(list);
+    const std::string node = m.value("node", std::string());
+    scene::Node* n = mappedNode(node);
+    if (!n)
+        throw std::invalid_argument("no node named '" + node + "'");
+    scene::Graph& g = scene::Graph::current();
+    int attr = n->type().attrIndex(kMappingAttr);
+    if (attr < 0)
+        attr = g.addAttr(n->id(), {.name = kMappingAttr,
+                                   .type = scene::PlugType::String,
+                                   .defaultValue = std::string(),
+                                   .flags = scene::AttrHidden | scene::AttrUnique,
+                                   .doc = "Where this node goes in Unreal (unrealMap). Duplicates don't inherit it."});
+    json stored = m;
+    stored.erase("node");
+    g.setValue({n->id(), attr, -1}, stored.dump());
 }
 
 bool removeMapping(const std::string& node)
 {
-    json list = mappings();
-    size_t before = list.size();
-    json kept = json::array();
-    for (const json& x : list)
-        if (!x.is_object() || !sameMappedNode(x.value("node", std::string()), node))
-            kept.push_back(x);
-    if (kept.size() == before)
+    scene::Node* n = mappedNode(node);
+    if (!n || storedMapping(*n).is_null())
         return false;
-    writeMappings(kept);
+    scene::Graph::current().deleteAttr({n->id(), n->type().attrIndex(kMappingAttr), -1});
     return true;
+}
+
+void adoptWorkspaceMappings()
+{
+    LILA_ZONE();
+
+    json legacy = PrefStore::get().value(kPrefFile, "/mappings", json::array());
+    if (!legacy.is_array() || legacy.empty())
+        return;
+    scene::Graph& g = scene::Graph::current();
+    UndoStack& undo = UndoStack::get();
+    const bool wasEnabled = undo.enabled();
+    undo.setEnabled(false);
+    int adopted = 0;
+    for (const json& m : legacy)
+    {
+        scene::Node* n = m.is_object() ? mappedNode(m.value("node", std::string())) : nullptr;
+        if (!n || storedMapping(*n).is_object() || sendsNothing(g, *n, m.value("kind", std::string("static"))))
+            continue;
+        setMapping(m);
+        ++adopted;
+    }
+    undo.setEnabled(wasEnabled);
+    if (adopted > 0)
+    {
+        io::markModified();
+        log::info("Unreal: {} mapping(s) moved from the workspace into this scene; save to keep them", adopted);
+    }
+}
+
+void pruneWorkspaceMappings()
+{
+    json legacy = PrefStore::get().value(kPrefFile, "/mappings", json::array());
+    if (!legacy.is_array() || legacy.empty())
+        return;
+    json kept = json::array();
+    for (const json& m : legacy)
+        if (m.is_object() && !mappedNode(m.value("node", std::string())))
+            kept.push_back(m);
+    if (kept.size() == legacy.size())
+        return;
+    if (kept.empty())
+        PrefStore::get().remove(kPrefFile, "/mappings", PrefScope::Workspace);
+    else
+        PrefStore::get().set(kPrefFile, "/mappings", kept, PrefScope::Workspace);
 }
 
 /** Tension curves go out as plain animation curves; the plugin flags them as material curves on the skeleton. */
@@ -449,9 +527,12 @@ json importParams(const fs::path& file, const json& mapping, const json& materia
     for (const char* key : kOptionKeys)
         if (mapping.contains(key) && !mapping[key].is_null() && !(mapping[key].is_string() && mapping[key].get<std::string>().empty()))
             options[key] = mapping[key];
+    const std::string kind = mapping.value("kind", std::string("static"));
+    if ((kind == "skeletal" || kind == "animation") && !options.contains("facing"))
+        options["facing"] = PrefStore::get().value<std::string>(kPrefFile, "/facing", "x");
     json params = {{"file", file.generic_string()},
                    {"contentPath", mapping.value("contentPath", std::string())},
-                   {"kind", mapping.value("kind", std::string("static"))},
+                   {"kind", kind},
                    {"options", options}};
     if (materials.is_array())
         params["materials"] = materials;
@@ -713,18 +794,32 @@ void Link::workerLoop()
 
 void onSceneSaved()
 {
+    pruneWorkspaceMappings();
     syncMappings(false);
 }
 
-int syncMappings(bool force)
+int syncMappings(bool force, const std::vector<std::string>& only)
 {
     LILA_ZONE();
 
     if (!force && !PrefStore::get().value<bool>(kPrefFile, "/autoSync", true))
         return 0;
     json list = mappings();
+    if (!only.empty())
+    {
+        std::vector<scene::Node*> wanted;
+        for (const std::string& name : only)
+            if (scene::Node* n = mappedNode(name))
+                wanted.push_back(n);
+        json kept = json::array();
+        for (json& m : list)
+            if (std::ranges::find(wanted, mappedNode(m.value("node", std::string()))) != wanted.end())
+                kept.push_back(std::move(m));
+        list = std::move(kept);
+    }
+    auto withTextureSets = [&only](int count) { return only.empty() ? count + syncTextureSets() : count; };
     if (list.empty())
-        return syncTextureSets();
+        return withTextureSets(0);
 
     const bool haveFbx = static_cast<bool>(findExporter("fbx"));
     int skipped = 0;
@@ -854,6 +949,11 @@ int syncMappings(bool force)
             }
             continue;
         }
+        if (sendsNothing(graph, *n, kind))
+        {
+            log::warn("Unreal sync: {} has no mesh under it, nothing to send (unrealUnmap(\"{}\") removes the mapping)", node, node);
+            continue;
+        }
         json mapping = m;
         addMaterialCurves(graph, mapping, kind);
         // FBX carries the levels but not their screen sizes, so the plugin sets them on the mesh after the import.
@@ -864,7 +964,7 @@ int syncMappings(bool force)
     if (skipped > 0)
         log::warn("Unreal sync: no FBX exporter registered, {} mapping(s) skipped", skipped);
     if (jobs.empty())
-        return syncTextureSets();
+        return withTextureSets(0);
 
     int count = static_cast<int>(jobs.size());
     Link::get().post([jobs = std::move(jobs), dir] {
@@ -935,6 +1035,6 @@ int syncMappings(bool force)
         }
     });
     // After the meshes, so their slots exist when the instances are set on them.
-    return count + syncTextureSets();
+    return withTextureSets(count);
 }
 } // namespace lila::link
