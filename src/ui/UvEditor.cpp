@@ -16,7 +16,7 @@
 #include "ui/Actions.h"
 #include "ui/CursorBadges.h"
 #include "ui/Deletion.h"
-#include "ui/FlowLayout.h"
+#include "ui/FixedRowLayout.h"
 #include "ui/Icons.h"
 #include "ui/MarkingMenu.h"
 #include "ui/MenuButtons.h"
@@ -2413,6 +2413,8 @@ QDoubleSpinBox* spin(double lo, double hi, double value, int decimals, QWidget* 
     s->setDecimals(decimals);
     s->setValue(value);
     s->setKeyboardTracking(false);
+    // The hint fits the range's widest value; typical values are far shorter, so a narrow editor may squeeze the box.
+    s->setMinimumWidth(s->minimumSizeHint().width() * 2 / 3);
     return s;
 }
 } // namespace
@@ -2424,7 +2426,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     root->setSpacing(4);
 
     // Tools and display.
-    auto* row1 = new FlowLayout();
+    auto* row1 = new FixedRowLayout();
     auto* tools = new QButtonGroup(this);
     tools->setExclusive(true);
     const std::tuple<const char*, const char*, UvView::Tool> toolDefs[] = {{"Select", "pointer", UvView::Tool::Select},
@@ -2475,21 +2477,23 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     showMode();
     QToolButton* frameBtn = button("Frame", "Frame the selection (F), or everything (A)", this, "focus-centered");
     row1->addWidget(frameBtn);
-    row1->addWidget(new QLabel("Set", this));
-    mSet = new QComboBox(this);
-    mSet->setEditable(true);
-    mSet->setMinimumContentsLength(4);
-    mSet->setToolTip("UV set the editor and tools work on (uvSetCurrent)");
-    row1->addWidget(mSet);
+    row1->endRow();
+    auto toggle = [this](const QString& text, const QString& tip, const char* ic, bool on) {
+        QToolButton* b = button(text, tip, this, ic);
+        b->setCheckable(true);
+        b->setChecked(on);
+        return b;
+    };
     mDisplay = new QComboBox(this);
     mDisplay->addItems({"Plain", "Checker", "Distortion", "Stretch", "Islands"});
     mDisplay->setCurrentIndex(1);
     mDisplay->setToolTip("Distortion shades distorted faces brighter; Stretch shades stretched faces light and compressed ones dark; "
                          "Islands shades each island apart");
     row1->addWidget(mDisplay);
-    auto* udim = new QCheckBox("UDIM", this);
-    udim->setIcon(icon("grid-4x4"));
+    QToolButton* udim = toggle("UDIM", "Show the UDIM tiles", "grid-4x4", false);
     row1->addWidget(udim);
+    QToolButton* twoColour = toggle("2-colour", "Stretch display in two colours instead of grayscale", "palette", uvLive::twoColourHeatmap());
+    row1->addWidget(twoColour);
     // A texture set channel under the UVs, and the texture paint brush in UV space.
     auto* texture = new QToolButton(this);
     texture->setText("Texture");
@@ -2515,55 +2519,42 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
         }
     });
     row1->addWidget(texture);
-    auto* paint = new QCheckBox("Paint", this);
-    paint->setIcon(icon("brush"));
-    paint->setToolTip("Paint the shown texture set in UV space with the Texture Paint tool's brush and channels");
-    connect(paint, &QCheckBox::toggled, this, [this](bool on) {
+    QToolButton* paint = toggle("Paint", "Paint the shown texture set in UV space with the Texture Paint tool's brush and channels", "brush", false);
+    connect(paint, &QToolButton::toggled, this, [this](bool on) {
         mView->texturePaint().setPainting(on);
         mView->update();
     });
     row1->addWidget(paint);
+    row1->endRow();
+    row1->addWidget(new QLabel("Set", this));
+    mSet = new QComboBox(this);
+    mSet->setEditable(true);
+    mSet->setMinimumContentsLength(4);
+    mSet->setToolTip("UV set the editor and tools work on (uvSetCurrent)");
+    row1->addWidget(mSet);
+    QToolButton* children = toggle("Children", "Show and edit the uvs of meshes under the selected objects too, not only the selected meshes",
+                                   "hierarchy", uv::includeChildren());
+    row1->addWidget(children);
+    QToolButton* checker = toggle("3D checker", "Checker texture on the meshes in the viewport", "chess", uvLive::checker3d());
+    row1->addWidget(checker);
+    auto* tiling = new QSpinBox(this);
+    tiling->setRange(1, 256);
+    tiling->setValue(uvLive::checkerTiling());
+    tiling->setKeyboardTracking(false);
+    tiling->setToolTip("Checks across one 0-1 tile, in the viewport and the editor's checker display");
+    row1->addWidget(tiling);
+    QToolButton* seams = toggle("3D seams", "Draw the uv seams over the meshes in the viewport", "line-dashed", uvLive::seams3d());
+    row1->addWidget(seams);
     root->addLayout(row1);
 
-    // Operations.
-    auto* row2 = new FlowLayout();
+    // Operations, one row per stage: unwrap, edit, pack.
+    auto* row2 = new FixedRowLayout();
     auto addOp = [&](const char* ic, const QString& text, const QString& tip, std::function<void()> fn) {
         QToolButton* b = button(text, tip, this, ic);
         connect(b, &QToolButton::clicked, this, std::move(fn));
         row2->addWidget(b);
         return b;
     };
-    auto packCall = [this] { return json{{"resolution", mResolution->value()}, {"padding", mPadding->value()}}; };
-    addOp("wand", "Auto", "Seams, unwrap and pack in one step (uvAuto)", [this, packCall] { runCommand("uvAuto", packCall()); });
-    addOp("line-dashed", "Seams", "Place seams automatically (uvAutoSeams)", [this] { runCommand("uvAutoSeams"); });
-    addOp("cube-unfolded", "Unwrap", "Unwrap along the seams (uvUnwrap)", [this] { runCommand("uvUnwrap"); });
-    QToolButton* projectBtn = addOp("cube-send", "Project", "Planar, box, cylindrical or spherical projection (uvProject)", [] {});
-    auto* projectMenu = new QMenu(projectBtn);
-    for (auto [label, type, axis] : {std::tuple{"Planar (fit)", "planar", "best"}, {"Planar X", "planar", "x"}, {"Planar Y", "planar", "y"},
-                                     {"Planar Z", "planar", "z"}, {"Box", "box", "best"}, {"Cylindrical", "cylindrical", "best"},
-                                     {"Spherical", "spherical", "best"}})
-    {
-        std::string t = type, a = axis;
-        projectMenu->addAction(label, this, [this, t, a] { runCommand("uvProject", {{"type", t}, {"axis", a}}); });
-    }
-    projectBtn->setMenu(projectMenu);
-    projectBtn->setPopupMode(QToolButton::InstantPopup);
-    setRightClickAction(projectBtn, projectMenu->actions().front());
-    // Cut and sew re-solve the islands they touch straight away in live mode.
-    auto cutOrSew = [this](const char* command, json call) {
-        json r = uvLive::cutOrSew(command, std::move(call));
-        if (!r.is_null())
-            mStatus->setText(QString(command) + ": " + QString::fromStdString(r.dump()));
-        mView->invalidate();
-    };
-    addOp("scissors", "Cut", "Cut the uvs along the selected edges and let the cut open (uvCut)", [cutOrSew] { cutOrSew("uvCut", json::object()); });
-    addOp("needle-thread", "Sew", "Move and Sew: weld the selected seams, the smaller island travelling to meet the other (uvSew). In edge mode you "
-                 "can also drag a border edge onto its partner",
-          [cutOrSew] { cutOrSew("uvSew", json{{"move", true}}); });
-    addOp("link", "Weld", "Weld the selected seams where they are, both sides meeting halfway (uvSew move=False)",
-          [cutOrSew] { cutOrSew("uvSew", json{{"move", false}}); });
-    addOp("layout-grid", "Straighten", "Rectify islands into grids and rectangles (uvStraighten)", [this] { runCommand("uvStraighten"); });
-    addOp("arrow-up-circle", "Orient", "Turn islands upright (uvOrient)", [this] { runCommand("uvOrient"); });
     auto addMenuOp = [&](const char* ic, const QString& text, const QString& tip,
                          std::initializer_list<std::tuple<const char*, const char*, json>> items) {
         QToolButton* b = addOp(ic, text, tip, [] {});
@@ -2578,6 +2569,14 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
         b->setPopupMode(QToolButton::InstantPopup);
         setRightClickAction(b, menu->actions().front());
     };
+    auto packCall = [this] { return json{{"resolution", mResolution->value()}, {"padding", mPadding->value()}}; };
+    addOp("wand", "Auto", "Seams, unwrap and pack in one step (uvAuto)", [this, packCall] { runCommand("uvAuto", packCall()); });
+    addOp("line-dashed", "Seams", "Place seams automatically (uvAutoSeams)", [this] { runCommand("uvAutoSeams"); });
+    addMenuOp("route", "Seams 2", "Auto Seams 2: seams and stretch optimised together, short and hidden (uvAutoSeams method=optcuts)",
+              {{"Auto Seams 2", "uvAutoSeams", json{{"method", "optcuts"}}},
+               {"Auto Seams 2, tighter (bound 0.02)", "uvAutoSeams", json{{"method", "optcuts"}, {"distortionBound", 0.02}}},
+               {"Auto Seams 2, looser (bound 0.1)", "uvAutoSeams", json{{"method", "optcuts"}, {"distortionBound", 0.1}}}});
+    addOp("cube-unfolded", "Unwrap", "Unwrap along the seams (uvUnwrap)", [this] { runCommand("uvUnwrap"); });
     addMenuOp("circle-dashed", "BFF", "Boundary First Flattening: conformal unwrap with the boundary chosen first (uvBff)",
               {{"Free boundary (least area stretch)", "uvBff", json::object()},
                {"Disk", "uvBff", json{{"boundary", "disk"}}},
@@ -2585,51 +2584,75 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
                {"Polygon (selected corners)", "uvBff", json{{"boundary", "polygon"}}},
                {"Free with 4 cones", "uvBff", json{{"cones", 4}}},
                {"Free with 8 cones", "uvBff", json{{"cones", 8}}}});
+    addMenuOp("flip-horizontal", "Symmetric", "Unwrap one side and mirror it to the other (uvUnwrapSymmetric)",
+              {{"Mirror flipped", "uvUnwrapSymmetric", json::object()}, {"Mirror stacked", "uvUnwrapSymmetric", json{{"mode", "stack"}}}});
+    QToolButton* projectBtn = addOp("cube-send", "Project", "Planar, box, cylindrical or spherical projection (uvProject)", [] {});
+    auto* projectMenu = new QMenu(projectBtn);
+    for (auto [label, type, axis] : {std::tuple{"Planar (fit)", "planar", "best"}, {"Planar X", "planar", "x"}, {"Planar Y", "planar", "y"},
+                                     {"Planar Z", "planar", "z"}, {"Box", "box", "best"}, {"Cylindrical", "cylindrical", "best"},
+                                     {"Spherical", "spherical", "best"}})
+    {
+        std::string t = type, a = axis;
+        projectMenu->addAction(label, this, [this, t, a] { runCommand("uvProject", {{"type", t}, {"axis", a}}); });
+    }
+    projectBtn->setMenu(projectMenu);
+    projectBtn->setPopupMode(QToolButton::InstantPopup);
+    setRightClickAction(projectBtn, projectMenu->actions().front());
+    addOp("bulb", "Lightmap", "Generate Unreal lightmap uvs in uv1 (uvLightmap)", [this] { runCommand("uvLightmap"); });
+    row2->endRow();
+    // Cut and sew re-solve the islands they touch straight away in live mode.
+    auto cutOrSew = [this](const char* command, json call) {
+        json r = uvLive::cutOrSew(command, std::move(call));
+        if (!r.is_null())
+            mStatus->setText(QString(command) + ": " + QString::fromStdString(r.dump()));
+        mView->invalidate();
+    };
+    addOp("scissors", "Cut", "Cut the uvs along the selected edges and let the cut open (uvCut)", [cutOrSew] { cutOrSew("uvCut", json::object()); });
+    addOp("needle-thread", "Sew", "Move and Sew: weld the selected seams, the smaller island travelling to meet the other (uvSew). In edge mode you "
+                 "can also drag a border edge onto its partner",
+          [cutOrSew] { cutOrSew("uvSew", json{{"move", true}}); });
+    addOp("link", "Weld", "Weld the selected seams where they are, both sides meeting halfway (uvSew move=False)",
+          [cutOrSew] { cutOrSew("uvSew", json{{"move", false}}); });
+    addOp("layout-grid", "Straighten", "Rectify islands into grids and rectangles (uvStraighten)", [this] { runCommand("uvStraighten"); });
+    addMenuOp("align-left", "Align", "Straighten selected edges, align island sides to U or V (uvStraightenEdges, uvAlignToEdge)",
+              {{"Straighten edges", "uvStraightenEdges", json::object()},
+               {"Align side to U", "uvAlignToEdge", json{{"axis", "u"}}},
+               {"Align side to V", "uvAlignToEdge", json{{"axis", "v"}}},
+               {"Orient by edge", "uvAlignToEdge", json::object()}});
+    addOp("arrow-up-circle", "Orient", "Turn islands upright (uvOrient)", [this] { runCommand("uvOrient"); });
     addMenuOp("vector-triangle", "Optimize", "Relax islands from where they are, keeping angles, areas or a blend (uvOptimize, uvMosaic)",
               {{"Conformal (angles)", "uvOptimize", json{{"mode", "conformal"}}},
                {"Authalic (areas)", "uvOptimize", json{{"mode", "authalic"}}},
                {"Blend", "uvOptimize", json{{"mode", "blend"}}},
                {"Isometric (SLIM)", "uvOptimize", json{{"mode", "isometric"}}},
                {"Mosaic: split stretched islands", "uvMosaic", json::object()}});
-    addMenuOp("route", "Seams 2", "Auto Seams 2: seams and stretch optimised together, short and hidden (uvAutoSeams method=optcuts)",
-              {{"Auto Seams 2", "uvAutoSeams", json{{"method", "optcuts"}}},
-               {"Auto Seams 2, tighter (bound 0.02)", "uvAutoSeams", json{{"method", "optcuts"}, {"distortionBound", 0.02}}},
-               {"Auto Seams 2, looser (bound 0.1)", "uvAutoSeams", json{{"method", "optcuts"}, {"distortionBound", 0.1}}}});
-    addMenuOp("flip-horizontal", "Symmetric", "Unwrap one side and mirror it to the other (uvUnwrapSymmetric)",
-              {{"Mirror flipped", "uvUnwrapSymmetric", json::object()}, {"Mirror stacked", "uvUnwrapSymmetric", json{{"mode", "stack"}}}});
-    addMenuOp("align-left", "Align", "Straighten selected edges, align island sides to U or V (uvStraightenEdges, uvAlignToEdge)",
-              {{"Straighten edges", "uvStraightenEdges", json::object()},
-               {"Align side to U", "uvAlignToEdge", json{{"axis", "u"}}},
-               {"Align side to V", "uvAlignToEdge", json{{"axis", "v"}}},
-               {"Orient by edge", "uvAlignToEdge", json::object()}});
+    row2->endRow();
+
+    // Packing with its texture size and padding, then texel density.
     addOp("packages", "Pack", "Pack islands with padding for the resolution and the Pack options (uvPack)", [this] { runPack(); });
     QToolButton* packOptions = addOp("adjustments", "Pack Options", "Show the Pack options: rotation, scale, stacking, tiles, groups, effort", [] {});
     packOptions->setCheckable(true);
-    addOp("bulb", "Lightmap", "Generate Unreal lightmap uvs in uv1 (uvLightmap)", [this] { runCommand("uvLightmap"); });
-    addOp("info-circle", "Info", "Islands, overlaps, distortion and density (uvLayout)", [this] { showLayout(); });
-    root->addLayout(row2);
-
-    // Texture size, padding and texel density.
-    auto* row3 = new FlowLayout();
-    row3->addWidget(new QLabel("Res", this));
+    row2->addWidget(new QLabel("Res", this));
     mResolution = new TextureSizeBox(this);
     mResolution->setRange(16, 16384);
     mResolution->setValue(1024);
     mResolution->setToolTip("Texture size for packing and texel density, px");
-    row3->addWidget(mResolution);
-    row3->addWidget(new QLabel("Pad", this));
+    row2->addWidget(mResolution);
+    row2->addWidget(new QLabel("Pad", this));
     mPadding = spin(0.0, 64.0, 4.0, 1, this);
     mPadding->setToolTip("Texels between islands");
-    row3->addWidget(mPadding);
-    row3->addWidget(new QLabel("Density", this));
+    row2->addWidget(mPadding);
+    row2->endRow();
+    addOp("info-circle", "Info", "Islands, overlaps, distortion and density (uvLayout)", [this] { showLayout(); });
+    row2->addWidget(new QLabel("Density", this));
     mDensity = spin(0.0, 100000.0, 10.24, 3, this);
     mDensity->setToolTip("Texel density, px/cm");
-    row3->addWidget(mDensity);
+    row2->addWidget(mDensity);
     QToolButton* getTd = button("Get", "Measure texel density of the selection", this, "color-picker");
     QToolButton* setTd = button("Set", "Scale each selected island to the density", this, "ruler-measure");
-    row3->addWidget(getTd);
-    row3->addWidget(setTd);
-    root->addLayout(row3);
+    row2->addWidget(getTd);
+    row2->addWidget(setTd);
+    root->addLayout(row2);
 
     mPackPanel = new UvPackPanel(this);
     mPackPanel->setVisible(false);
@@ -2639,7 +2662,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     connect(packOptions, &QToolButton::toggled, mPackPanel, &QWidget::setVisible);
 
     // Live solving: the mode, one-shot solves, the stretch/compress balance, brushes, pins and the 3D display.
-    auto* row5 = new FlowLayout();
+    auto* row5 = new FixedRowLayout();
     auto* live = button("Live", "Live mode: drag uvs and the island relaxes around them (Ctrl on release pins them); cuts, sews and pins "
                                 "re-solve as they happen",
                         this, "bolt");
@@ -2657,11 +2680,13 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     auto* balance = new QSlider(Qt::Horizontal, this);
     balance->setRange(-100, 100);
     balance->setValue(int(std::lround(uvLive::balance() * 100.0)));
-    balance->setFixedWidth(90);
+    balance->setMinimumWidth(30);
+    balance->setMaximumWidth(90);
     balance->setToolTip("Stretch against compression: right tolerates stretch and fixes compression, left the reverse, middle treats both "
                         "alike");
     row5->addWidget(balance);
     row5->addWidget(new QLabel("Stretch", this));
+    row5->endRow();
     auto* brushCombo = new QComboBox(this);
     for (int i = 0; i <= int(uv::LiveBrush::Soften); ++i)
     {
@@ -2677,32 +2702,6 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     QToolButton* unpinBtn = button("Unpin", "Unpin the selected uvs", this, "pinned-off");
     row5->addWidget(pinBtn);
     row5->addWidget(unpinBtn);
-    auto* checker = new QCheckBox("3D checker", this);
-    checker->setChecked(uvLive::checker3d());
-    checker->setIcon(icon("chess"));
-    checker->setToolTip("Checker texture on the meshes in the viewport");
-    auto* tiling = new QSpinBox(this);
-    tiling->setRange(1, 256);
-    tiling->setValue(uvLive::checkerTiling());
-    tiling->setKeyboardTracking(false);
-    tiling->setToolTip("Checks across one 0-1 tile, in the viewport and the editor's checker display");
-    auto* seams = new QCheckBox("3D seams", this);
-    seams->setChecked(uvLive::seams3d());
-    seams->setIcon(icon("line-dashed"));
-    seams->setToolTip("Draw the uv seams over the meshes in the viewport");
-    auto* children = new QCheckBox("Children", this);
-    children->setChecked(uv::includeChildren());
-    children->setIcon(icon("hierarchy"));
-    children->setToolTip("Show and edit the uvs of meshes under the selected objects too, not only the selected meshes");
-    auto* twoColour = new QCheckBox("2-colour", this);
-    twoColour->setChecked(uvLive::twoColourHeatmap());
-    twoColour->setIcon(icon("palette"));
-    twoColour->setToolTip("Stretch display in two colours instead of grayscale");
-    row5->addWidget(checker);
-    row5->addWidget(tiling);
-    row5->addWidget(seams);
-    row5->addWidget(children);
-    row5->addWidget(twoColour);
     root->addLayout(row5);
     connect(live, &QToolButton::toggled, this, [](bool on) { uvLive::setLiveMode(on); });
     connect(relaxBtn, &QToolButton::clicked, this, [] { uvLive::run(uvLive::Op::Relax); });
@@ -2718,18 +2717,18 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     connect(brush3d, &QToolButton::clicked, this, [] { uvLive::startBrushTool3d(); });
     connect(pinBtn, &QToolButton::clicked, this, [this] { runCommand("uvPin"); });
     connect(unpinBtn, &QToolButton::clicked, this, [this] { runCommand("uvUnpin"); });
-    connect(checker, &QCheckBox::toggled, this, [](bool on) { uvLive::setChecker3d(on); });
+    connect(checker, &QToolButton::toggled, this, [](bool on) { uvLive::setChecker3d(on); });
     connect(tiling, &QSpinBox::valueChanged, this, [this](int v) {
         uvLive::setCheckerTiling(v);
         mView->update();
     });
-    connect(seams, &QCheckBox::toggled, this, [](bool on) { uvLive::setSeams3d(on); });
-    connect(children, &QCheckBox::toggled, this, [](bool on) {
+    connect(seams, &QToolButton::toggled, this, [](bool on) { uvLive::setSeams3d(on); });
+    connect(children, &QToolButton::toggled, this, [](bool on) {
         uv::setIncludeChildren(on);
         uvLive::settingsChanged();
         viewportTools::requestRedraw();
     });
-    connect(twoColour, &QCheckBox::toggled, this, [this](bool on) {
+    connect(twoColour, &QToolButton::toggled, this, [this](bool on) {
         uvLive::setTwoColourHeatmap(on);
         mView->update();
     });
@@ -2749,7 +2748,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     root->addWidget(mView, 1);
 
     // Numeric transforms.
-    auto* row4 = new FlowLayout();
+    auto* row4 = new FixedRowLayout();
     mMoveU = spin(-100.0, 100.0, 0.0, 4, this);
     mMoveV = spin(-100.0, 100.0, 0.0, 4, this);
     mRotate = spin(-360.0, 360.0, 90.0, 2, this);
@@ -2761,6 +2760,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     row4->addWidget(mMoveV);
     QToolButton* moveBtn = button("Move", "Move the selected uvs by U, V", this, "arrows-move");
     row4->addWidget(moveBtn);
+    row4->endRow();
     row4->addWidget(mRotate);
     QToolButton* rotBtn = button("Rotate", "Rotate the selected uvs, degrees counter-clockwise", this, "rotate");
     row4->addWidget(rotBtn);
@@ -2776,13 +2776,17 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     {
         QToolButton* b = button(text, tip, this, ic);
         connect(b, &QToolButton::clicked, this, [this, call] { runCommand("uvTransform", call); });
-        row4->addWidget(b);
         iconOnly.push_back(b);
     }
+    row4->addWidget(iconOnly[0]);
+    row4->addWidget(iconOnly[1]);
+    row4->endRow();
     row4->addWidget(mScaleU);
     row4->addWidget(mScaleV);
     QToolButton* scaleBtn = button("Scale", "Scale the selected uvs about their centre", this, "resize");
     row4->addWidget(scaleBtn);
+    row4->addWidget(iconOnly[2]);
+    row4->addWidget(iconOnly[3]);
     iconOnly.insert(iconOnly.end(), {moveBtn, rotBtn, scaleBtn});
     for (QToolButton* b : iconOnly)
         b->setToolButtonStyle(Qt::ToolButtonIconOnly);
@@ -2798,7 +2802,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     mView->onToolChanged = [toolButtons](UvView::Tool t) { toolButtons[size_t(t)]->setChecked(true); };
     connect(frameBtn, &QToolButton::clicked, this, [this] { mView->frameSelection(); });
     connect(mDisplay, &QComboBox::currentIndexChanged, this, [this](int i) { mView->setDisplay(UvView::Display(i)); });
-    connect(udim, &QCheckBox::toggled, this, [this](bool on) { mView->setShowUdim(on); });
+    connect(udim, &QToolButton::toggled, this, [this](bool on) { mView->setShowUdim(on); });
     connect(mSet, &QComboBox::textActivated, this, [this](const QString& s) {
         if (!s.isEmpty())
             safeRun("uvSetCurrent", {{"args", {s.toStdString()}}}, CallSource::UI);

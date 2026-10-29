@@ -10,7 +10,7 @@
 #include "ui/Actions.h"
 #include "ui/AdjustLastOp.h"
 #include "ui/DockSidebar.h"
-#include "ui/FlowLayout.h"
+#include "ui/FixedRowLayout.h"
 #include "ui/Icons.h"
 #include "ui/ModifierStack.h"
 #include "ui/OptionBox.h"
@@ -27,6 +27,7 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSpinBox>
 #include <QTimer>
 #include <QToolButton>
@@ -39,6 +40,7 @@ namespace lila::ui
 namespace
 {
 constexpr const char* kCollapsedPref = "/modelingToolkit/collapsed";
+constexpr int kColumns = 4;
 
 /** Collapsible section header, Maya frameLayout style; the collapsed state is remembered per section. */
 QWidget* section(const QString& title, QWidget* content, QWidget* parent)
@@ -69,10 +71,11 @@ QWidget* section(const QString& title, QWidget* content, QWidget* parent)
     return box;
 }
 
-QWidget* flowBox(QWidget* parent, FlowLayout** layout)
+/** A box of buttons in fixed rows; with columns, a uniform grid that lines buttons up across a section's rows. */
+QWidget* rowBox(QWidget* parent, FixedRowLayout** layout, int columns = 0)
 {
     auto* w = new QWidget(parent);
-    *layout = new FlowLayout(3);
+    *layout = new FixedRowLayout(columns, 3);
     (*layout)->setContentsMargins(2, 0, 2, 2);
     w->setLayout(*layout);
     return w;
@@ -139,15 +142,16 @@ ModelingToolkit::ModelingToolkit(QWidget* parent) : QWidget(parent)
     root->setSpacing(4);
     scroll->setWidget(body);
 
-    auto row = [&](QWidget* parent, std::initializer_list<std::tuple<const char*, const char*, const char*>> items, FlowLayout* into) {
+    auto row = [&](QWidget* parent, std::initializer_list<std::tuple<const char*, const char*, const char*>> items, FixedRowLayout* into) {
         for (auto [id, ic, text] : items)
             if (QToolButton* b = actionButton(id, ic, text, parent))
                 into->addWidget(optionBox::withOptionBox(b, id, parent));
+        into->endRow();
     };
 
     // Header: component modes.
-    FlowLayout* modes = nullptr;
-    QWidget* modesBox = flowBox(body, &modes);
+    FixedRowLayout* modes = nullptr;
+    QWidget* modesBox = rowBox(body, &modes);
     mModes = new QButtonGroup(this);
     mModes->setExclusive(true);
     int modeIndex = 0;
@@ -166,8 +170,8 @@ ModelingToolkit::ModelingToolkit(QWidget* parent) : QWidget(parent)
     root->addWidget(modesBox);
 
     // Selection options: soft select, symmetry, camera-based picking.
-    FlowLayout* opts = nullptr;
-    QWidget* optsBox = flowBox(body, &opts);
+    FixedRowLayout* opts = nullptr;
+    QWidget* optsBox = rowBox(body, &opts);
     mSoft = actionButton("softSelect.toggle", "ripple", "Soft", optsBox);
     if (mSoft)
     {
@@ -194,6 +198,7 @@ ModelingToolkit::ModelingToolkit(QWidget* parent) : QWidget(parent)
         actions::run(json(ids[std::clamp(i, 0, 4)]));
     });
     opts->addWidget(mSymmetry);
+    opts->endRow();
     mCameraBased = actionButton("select.toggleCameraBased", "camera", "Camera-Based", optsBox);
     if (mCameraBased)
     {
@@ -218,73 +223,54 @@ ModelingToolkit::ModelingToolkit(QWidget* parent) : QWidget(parent)
     root->addWidget(section("Soft Selection", new SoftSelectPanel(body), body));
 
     // Selection helpers.
-    FlowLayout* sel = nullptr;
-    QWidget* selBox = flowBox(body, &sel);
-    row(selBox,
-        {{"select.grow", "arrows-maximize", "Grow"}, {"select.shrink", "arrows-minimize", "Shrink"}, {"select.loop", "repeat", "Loop"},
-         {"select.ring", "topology-ring", "Ring"}, {"select.border", "border-outer", "Border"}, {"select.allComponents", "border-all", "All"},
-         {"select.toVertices", "point", "To Vertices"}, {"select.toEdges", "line", "To Edges"}, {"select.toFaces", "square", "To Faces"},
-         {"select.containedFaces", "square-dot", "Contained"}, {"select.paintTool", "brush", "Paint"}},
-        sel);
+    FixedRowLayout* sel = nullptr;
+    QWidget* selBox = rowBox(body, &sel, kColumns);
+    row(selBox, {{"select.grow", "arrows-maximize", "Grow"}, {"select.shrink", "arrows-minimize", "Shrink"}, {"select.loop", "repeat", "Loop"}, {"select.ring", "topology-ring", "Ring"}}, sel);
+    row(selBox, {{"select.border", "border-outer", "Border"}, {"select.allComponents", "border-all", "All"}, {"select.containedFaces", "square-dot", "Contained"}, {"select.paintTool", "brush", "Paint"}}, sel);
+    row(selBox, {{"select.toVertices", "point", "To Vertices"}, {"select.toEdges", "line", "To Edges"}, {"select.toFaces", "square", "To Faces"}}, sel);
     root->addWidget(section("Selection", selBox, body));
 
-    FlowLayout* mesh = nullptr;
-    QWidget* meshBox = flowBox(body, &mesh);
-    row(meshBox,
-        {{"mesh.combine", "layers-linked", "Combine"}, {"mesh.separate", "arrows-split", "Separate"}, {"mesh.extract", "box-padding", "Extract"},
-         {"mesh.booleanUnion", "layers-union", "Union"}, {"mesh.booleanDifference", "layers-difference", "Difference"},
-         {"mesh.booleanIntersection", "layers-intersect", "Intersection"}, {"mesh.subdivide", "sphere", "Subdivide"},
-         {"mesh.mirror", "flip-horizontal", "Mirror"}, {"mesh.triangulate", "triangle", "Triangulate"},
-         {"mesh.quadrangulate", "square-toggle", "Quadrangulate"}, {"mesh.fillHole", "square-plus", "Fill Hole"}, {"mesh.gridFill", "grid-pattern", "Grid Fill"},
-         {"mesh.repair", "wand", "Repair"}, {"modifier.decimate", "grain", "Decimate"}, {"mesh.relax", "wave-sine", "Relax"},
-         {"mesh.quadRemesh", "grid-4x4", "Remesh"}, {"mesh.flip", "arrows-exchange-2", "Flip"}, {"mesh.conform", "refresh", "Conform"},
-         {"mesh.transferAttributes", "arrows-exchange", "Transfer"}, {"mesh.bakeModifierStack", "stack-pop", "Bake Stack"}},
-        mesh);
+    FixedRowLayout* mesh = nullptr;
+    QWidget* meshBox = rowBox(body, &mesh, kColumns);
+    row(meshBox, {{"mesh.combine", "layers-linked", "Combine"}, {"mesh.separate", "arrows-split", "Separate"}, {"mesh.extract", "box-padding", "Extract"}, {"mesh.transferAttributes", "arrows-exchange", "Transfer"}}, mesh);
+    row(meshBox, {{"mesh.booleanUnion", "layers-union", "Union"}, {"mesh.booleanDifference", "layers-difference", "Difference"}, {"mesh.booleanIntersection", "layers-intersect", "Intersection"}, {"mesh.mirror", "flip-horizontal", "Mirror"}}, mesh);
+    row(meshBox, {{"mesh.subdivide", "sphere", "Subdivide"}, {"mesh.triangulate", "triangle", "Triangulate"}, {"mesh.quadrangulate", "square-toggle", "Quadrangulate"}, {"mesh.quadRemesh", "grid-4x4", "Remesh"}}, mesh);
+    row(meshBox, {{"mesh.fillHole", "square-plus", "Fill Hole"}, {"mesh.gridFill", "grid-pattern", "Grid Fill"}, {"mesh.repair", "wand", "Repair"}, {"modifier.decimate", "grain", "Decimate"}}, mesh);
+    row(meshBox, {{"mesh.relax", "wave-sine", "Relax"}, {"mesh.flip", "arrows-exchange-2", "Flip"}, {"mesh.conform", "refresh", "Conform"}, {"mesh.bakeModifierStack", "stack-pop", "Bake Stack"}}, mesh);
     root->addWidget(section("Mesh", meshBox, body));
 
-    FlowLayout* comps = nullptr;
-    QWidget* compsBox = flowBox(body, &comps);
-    row(compsBox,
-        {{"mesh.extrude", "cube-plus", "Extrude"}, {"mesh.bevel", "vector-bezier", "Bevel"}, {"mesh.bridge", "arrows-join", "Bridge"},
-         {"mesh.inset", "box-model-2", "Inset"}, {"mesh.poke", "topology-star", "Poke"}, {"mesh.merge", "arrow-merge", "Merge"},
-         {"mesh.mergeCenter", "focus-centered", "To Center"}, {"mesh.collapse", "arrows-diagonal-minimize", "Collapse"},
-         {"mesh.connect", "line-dashed", "Connect"}, {"mesh.dissolve", "eraser", "Dissolve"}, {"mesh.spin", "rotate-clockwise", "Spin"},
-         {"edit.delete", "trash", "Delete"}},
-        comps);
+    FixedRowLayout* comps = nullptr;
+    QWidget* compsBox = rowBox(body, &comps, kColumns);
+    row(compsBox, {{"mesh.extrude", "cube-plus", "Extrude"}, {"mesh.bevel", "vector-bezier", "Bevel"}, {"mesh.bridge", "arrows-join", "Bridge"}, {"mesh.inset", "box-model-2", "Inset"}}, comps);
+    row(compsBox, {{"mesh.poke", "topology-star", "Poke"}, {"mesh.connect", "line-dashed", "Connect"}, {"mesh.spin", "rotate-clockwise", "Spin"}, {"mesh.dissolve", "eraser", "Dissolve"}}, comps);
+    row(compsBox, {{"mesh.merge", "arrow-merge", "Merge"}, {"mesh.mergeCenter", "focus-centered", "To Center"}, {"mesh.collapse", "arrows-diagonal-minimize", "Collapse"}, {"edit.delete", "trash", "Delete"}}, comps);
     root->addWidget(section("Components", compsBox, body));
 
-    FlowLayout* tools = nullptr;
-    QWidget* toolsBox = flowBox(body, &tools);
-    row(toolsBox, {{"mesh.insertLoop", "separator-vertical", "Insert Loop"}, {"mesh.splitRings", "columns-3", "Split Rings"}, {"mesh.offsetLoop", "columns-2", "Offset Loop"}, {"mesh.knife", "slice", "Knife"}, {"mesh.targetWeld", "target-arrow", "Target Weld"},
-                   {"retopo.draw", "pencil", "Retopo Draw"}}, tools);
+    FixedRowLayout* tools = nullptr;
+    QWidget* toolsBox = rowBox(body, &tools, kColumns);
+    row(toolsBox, {{"mesh.insertLoop", "separator-vertical", "Insert Loop"}, {"mesh.splitRings", "columns-3", "Split Rings"}, {"mesh.offsetLoop", "columns-2", "Offset Loop"}, {"mesh.knife", "slice", "Knife"}}, tools);
+    row(toolsBox, {{"mesh.targetWeld", "target-arrow", "Target Weld"}, {"retopo.draw", "pencil", "Retopo Draw"}}, tools);
     root->addWidget(section("Tools", toolsBox, body));
 
-    FlowLayout* curves = nullptr;
-    QWidget* curvesBox = flowBox(body, &curves);
-    row(curvesBox, {{"window.curveToolkit", "tools", "Toolkit"}, {"curve.ezCurve", "line", "EZ"}, {"curve.bezierPen", "vector-bezier", "Pen"}, {"curve.epTool", "vector-spline", "EP"}, {"curve.cvTool", "vector-bezier-2", "CV"},
-                    {"curve.pencil", "scribble", "Pencil"}, {"curve.fromEdges", "polygon", "Edges"}, {"curve.extrude", "route", "Sweep"},
-                    {"curve.revolve", "rotate-360", "Revolve"}, {"curve.loft", "stack-3", "Loft"}, {"curve.pipeTool", "route-2", "Pipe"},
-                    {"curve.fillet", "vector-bezier-arc", "Fillet"}, {"curve.offset", "ripple", "Offset"}, {"curve.text", "typography", "Text"},
-                    {"curve.textMesh", "badge-3d", "Text Mesh"}, {"curve.bevelPlus", "text-size", "Bevel+"}},
-        curves);
+    FixedRowLayout* curves = nullptr;
+    QWidget* curvesBox = rowBox(body, &curves, kColumns);
+    row(curvesBox, {{"window.curveToolkit", "tools", "Toolkit"}, {"curve.ezCurve", "line", "EZ"}, {"curve.bezierPen", "vector-bezier", "Pen"}, {"curve.epTool", "vector-spline", "EP"}}, curves);
+    row(curvesBox, {{"curve.cvTool", "vector-bezier-2", "CV"}, {"curve.pencil", "scribble", "Pencil"}, {"curve.fromEdges", "polygon", "Edges"}}, curves);
+    row(curvesBox, {{"curve.fillet", "vector-bezier-arc", "Fillet"}, {"curve.offset", "ripple", "Offset"}}, curves);
+    row(curvesBox, {{"curve.extrude", "route", "Sweep"}, {"curve.revolve", "rotate-360", "Revolve"}, {"curve.loft", "stack-3", "Loft"}, {"curve.pipeTool", "route-2", "Pipe"}}, curves);
+    row(curvesBox, {{"curve.text", "typography", "Text"}, {"curve.textMesh", "badge-3d", "Text Mesh"}, {"curve.bevelPlus", "text-size", "Bevel+"}}, curves);
     root->addWidget(section("Curves", curvesBox, body));
 
-    FlowLayout* shape = nullptr;
-    QWidget* shapeBox = flowBox(body, &shape);
-    row(shapeBox,
-        {{"mesh.editEdgeFlow", "ease-in-out", "Edge Flow"}, {"mesh.straighten", "line", "Straighten"}, {"mesh.circularize", "circle", "Circularize"}, {"mesh.spherize", "sphere", "Spherize"},
-         {"mesh.flatten", "layers-subtract", "Flatten"}, {"mesh.conformShape", "shape", "To Shape"}, {"mesh.conformToObject", "magnet", "To Object"}},
-        shape);
+    FixedRowLayout* shape = nullptr;
+    QWidget* shapeBox = rowBox(body, &shape, kColumns);
+    row(shapeBox, {{"mesh.editEdgeFlow", "ease-in-out", "Edge Flow"}, {"mesh.straighten", "line", "Straighten"}, {"mesh.circularize", "circle", "Circularize"}, {"mesh.spherize", "sphere", "Spherize"}}, shape);
+    row(shapeBox, {{"mesh.flatten", "layers-subtract", "Flatten"}, {"mesh.conformShape", "shape", "To Shape"}, {"mesh.conformToObject", "magnet", "To Object"}}, shape);
     root->addWidget(section("Shape", shapeBox, body));
 
-    FlowLayout* bevel = nullptr;
-    QWidget* bevelBox = flowBox(body, &bevel);
-    row(bevelBox,
-        {{"modifier.autoBevel", "border-corner-rounded", "Auto Bevel"}, {"select.foldEdges", "chart-arcs", "Fold Edges"},
-         {"bevel.editEdges", "edit", "Edit Edges"}, {"bevel.applyEdges", "check", "Apply"}, {"bevel.cancelEdges", "x", "Cancel"},
-         {"bevel.measureThin", "ruler-measure", "Measure Thin"}, {"bevel.clearOverrides", "eraser", "Clear Overrides"},
-         {"bevel.showEdges", "eye", "Show Edges"}},
-        bevel);
+    FixedRowLayout* bevel = nullptr;
+    QWidget* bevelBox = rowBox(body, &bevel, kColumns);
+    row(bevelBox, {{"modifier.autoBevel", "border-corner-rounded", "Auto Bevel"}, {"select.foldEdges", "chart-arcs", "Fold Edges"}, {"bevel.measureThin", "ruler-measure", "Measure Thin"}, {"bevel.showEdges", "eye", "Show Edges"}}, bevel);
+    row(bevelBox, {{"bevel.editEdges", "edit", "Edit Edges"}, {"bevel.applyEdges", "check", "Apply"}, {"bevel.cancelEdges", "x", "Cancel"}, {"bevel.clearOverrides", "eraser", "Clear Overrides"}}, bevel);
     root->addWidget(section("Auto Bevel", bevelBox, body));
 
     auto* optionsBox = new QWidget(body);
@@ -301,6 +287,8 @@ ModelingToolkit::ModelingToolkit(QWidget* parent) : QWidget(parent)
     stack->setMinimumHeight(420);
     modsLayout->addWidget(stack);
     root->addWidget(section("Modifiers", modsBox, body), 1);
+    // The panel stops at its narrowest fixed row instead of clipping it.
+    scroll->setMinimumWidth(body->minimumSizeHint().width() + scroll->verticalScrollBar()->sizeHint().width());
 
     mRefresh = new QTimer(this);
     mRefresh->setSingleShot(true);

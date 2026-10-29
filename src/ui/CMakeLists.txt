@@ -141,6 +141,7 @@ lila_module(lila_ui UI
     UvPackPanel.cpp UvPackPanel.h
     UvProjectTool.cpp UvProjectTool.h
     FlowLayout.cpp FlowLayout.h
+    FixedRowLayout.cpp FixedRowLayout.h
     MenuButtons.cpp MenuButtons.h
     DockSidebar.cpp DockSidebar.h
     LocateFlash.cpp LocateFlash.h

@@ -8,7 +8,7 @@
 #include "ui/Actions.h"
 #include "ui/AdjustLastOp.h"
 #include "ui/DockSidebar.h"
-#include "ui/FlowLayout.h"
+#include "ui/FixedRowLayout.h"
 #include "ui/Icons.h"
 #include "ui/OptionBox.h"
 #include "ui/SpinScrub.h"
@@ -20,6 +20,7 @@
 #include <QDoubleSpinBox>
 #include <QLabel>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSpinBox>
 #include <QTimer>
 #include <QToolButton>
@@ -61,10 +62,10 @@ QWidget* curveSection(const QString& title, QWidget* content, QWidget* parent)
     return box;
 }
 
-QWidget* curveFlowBox(QWidget* parent, FlowLayout** layout)
+QWidget* curveRowBox(QWidget* parent, FixedRowLayout** layout, int columns = 0)
 {
     auto* w = new QWidget(parent);
-    *layout = new FlowLayout(3);
+    *layout = new FixedRowLayout(columns, 3);
     (*layout)->setContentsMargins(2, 0, 2, 2);
     w->setLayout(*layout);
     return w;
@@ -80,20 +81,22 @@ QDockWidget* findCurveDock()
 
 using Item = std::tuple<const char*, const char*, const char*>;
 
+/** A break in a section's item list: the next item starts a new row. Rows also wrap at the section's four columns. */
+constexpr Item kRow{nullptr, nullptr, nullptr};
+
 /** The toolkit's sections: action, icon, short text (empty for the action's own label). */
 const std::vector<std::pair<const char*, std::vector<Item>>>& curveSections()
 {
     static const std::vector<std::pair<const char*, std::vector<Item>>> sections = {
         {"Draw",
-         {{"curve.ezCurve", "line", "EZ"}, {"curve.bezierPen", "vector-bezier", "Pen"}, {"curve.cvTool", "vector-bezier-2", "CV"},
-          {"curve.epTool", "vector-spline", "EP"}, {"curve.pencil", "scribble", "Pencil"}, {"curve.catmullRom", "route", "Catmull-Rom"},
-          {"curve.kappa", "ease-in-out", "Kappa"}, {"curve.circle", "circle", "Circle"}, {"curve.fromEdges", "polygon", "Edges"},
-          {"curve.sketchTool", "ruler-2", "Sketch"}}},
+         {{"curve.ezCurve", "line", "EZ"}, {"curve.bezierPen", "vector-bezier", "Pen"}, {"curve.cvTool", "vector-bezier-2", "CV"}, {"curve.epTool", "vector-spline", "EP"},
+          {"curve.pencil", "scribble", "Pencil"}, {"curve.catmullRom", "route", "Catmull-Rom"}, {"curve.kappa", "ease-in-out", "Kappa"}, {"curve.sketchTool", "ruler-2", "Sketch"},
+          {"curve.circle", "circle", "Circle"}, {"curve.fromEdges", "polygon", "Edges"}}},
         {"Edit",
-         {{"curve.curvePointMode", "point", "Curve Point"}, {"curve.insertAtCurvePoints", "plus", "Insert Point"}, {"curve.fillet", "vector-bezier-arc", "Fillet"}, {"curve.offset", "ripple", "Offset"}, {"curve.rebuild", "refresh", "Rebuild"},
-          {"curve.evenSpacing", "dots", "Even"}, {"curve.fit", "wave-sine", "Fit"}, {"curve.project", "arrow-bar-to-down", "Project"},
-          {"curve.attach", "link", "Attach"}, {"curve.detach", "unlink", "Detach"}, {"curve.reverse", "arrows-exchange", "Reverse"},
-          {"curve.close", "circle-dashed", "Close"}, {"curve.open", "circle-half", "Open"}, {"curve.deletePoints", "trash", "Delete"}}},
+         {{"curve.curvePointMode", "point", "Curve Point"}, {"curve.insertAtCurvePoints", "plus", "Insert Point"}, {"curve.deletePoints", "trash", "Delete"}, kRow,
+          {"curve.attach", "link", "Attach"}, {"curve.detach", "unlink", "Detach"}, {"curve.close", "circle-dashed", "Close"}, {"curve.open", "circle-half", "Open"},
+          {"curve.reverse", "arrows-exchange", "Reverse"}, {"curve.rebuild", "refresh", "Rebuild"}, {"curve.evenSpacing", "dots", "Even"}, {"curve.fit", "wave-sine", "Fit"},
+          {"curve.fillet", "vector-bezier-arc", "Fillet"}, {"curve.offset", "ripple", "Offset"}, {"curve.project", "arrow-bar-to-down", "Project"}}},
         {"Symmetry",
          {{"curve.symmetryX", "flip-horizontal", "X"}, {"curve.symmetryY", "flip-vertical", "Y"}, {"curve.symmetryZ", "flip-horizontal", "Z"},
           {"curve.symmetryOff", "x", "Off"}, {"curve.bakeSymmetry", "copy", "Bake"}}},
@@ -101,33 +104,32 @@ const std::vector<std::pair<const char*, std::vector<Item>>>& curveSections()
          {{"curve.bend", "chart-arcs-3", "Bend"}, {"curve.curl", "spiral", "Curl"}, {"curve.scaleCurvature", "chart-arcs", "Curvature"},
           {"curve.smooth", "wave-sine", "Smooth"}}},
         {"Blend and Trim",
-         {{"curve.blendTool", "arrows-join", "Blend Tool"}, {"curve.blend", "arrows-join-2", "Blend"}, {"curve.match", "arrow-merge", "Match"},
-          {"curve.trimTool", "scissors", "Trim"}, {"curve.extend", "arrows-horizontal", "Extend"}, {"curve.split", "arrows-split", "Split"},
-          {"curve.fair", "ease-in-out", "Fair"}}},
+         {{"curve.blendTool", "arrows-join", "Blend Tool"}, {"curve.blend", "arrows-join-2", "Blend"}, {"curve.match", "arrow-merge", "Match"}, {"curve.fair", "ease-in-out", "Fair"},
+          {"curve.trimTool", "scissors", "Trim"}, {"curve.extend", "arrows-horizontal", "Extend"}, {"curve.split", "arrows-split", "Split"}}},
         {"Surfaces",
-         {{"curve.extrude", "route", "Sweep"}, {"curve.revolve", "rotate-360", "Revolve"}, {"curve.loft", "stack-3", "Loft"},
+         {{"curve.extrude", "route", "Sweep"}, {"curve.revolve", "rotate-360", "Revolve"}, {"curve.loft", "stack-3", "Loft"}, kRow,
           {"curve.patchFill", "square-plus", "Patch"}, {"curve.network", "grid-pattern", "Network"}, {"curve.borderBlend", "border-outer", "Border"}}},
         {"Pipes and Cables",
-         {{"curve.pipeTool", "route-2", "Pipe Tool"}, {"curve.pipe", "route-2", "Pipe"}, {"curve.pipePresetPipe", "cylinder", "Pipe Preset"},
-          {"curve.pipePresetHose", "wave-saw-tool", "Hose Preset"}, {"curve.pipePresetCable", "bolt", "Cable Preset"},
-          {"curve.pipePresetConduit", "line-dashed", "Conduit Preset"}, {"curve.cableTool", "plug", "Cable Tool"},
-          {"curve.cable", "plug-connected", "Cable"}}},
+         {{"curve.pipeTool", "route-2", "Pipe Tool"}, {"curve.pipe", "route-2", "Pipe"}, {"curve.cableTool", "plug", "Cable Tool"}, {"curve.cable", "plug-connected", "Cable"},
+          {"curve.pipePresetPipe", "cylinder", "Pipe Preset"}, {"curve.pipePresetHose", "wave-saw-tool", "Hose Preset"},
+          {"curve.pipePresetCable", "bolt", "Cable Preset"}, {"curve.pipePresetConduit", "line-dashed", "Conduit Preset"}}},
         {"Along and On Surface",
          {{"curve.deformAlongCurve", "route", "Deform Along"}, {"curve.arrayAlongCurve", "dots", "Array Along"},
           {"curve.instanceAlongCurve", "copy", "Instance Along"}, {"curve.flowAlongSurface", "wave-square", "Flow"},
           {"curve.keepOnSurface", "magnet", "Keep On"}, {"curve.releaseFromSurface", "magnet-off", "Release"}}},
         {"Planar",
-         {{"curve.text", "typography", "Text"}, {"curve.textMesh", "badge-3d", "Text Mesh"}, {"curve.bevelPlus", "text-size", "Bevel+"}, {"curve.booleanUnion", "layers-union", "Union"},
-          {"curve.booleanSubtract", "layers-difference", "Subtract"}, {"curve.booleanIntersect", "layers-intersect", "Intersect"},
-          {"curve.booleanXor", "layers-subtract", "Xor"}, {"curve.offsetRegion", "ripple", "Offset Region"},
-          {"curve.insetSkeleton", "box-model-2", "Skeleton"}, {"curve.centerLine", "line-dashed", "Center Line"}, {"curve.roof", "home", "Roof"}}},
+         {{"curve.text", "typography", "Text"}, {"curve.textMesh", "badge-3d", "Text Mesh"}, {"curve.bevelPlus", "text-size", "Bevel+"}, kRow,
+          {"curve.booleanUnion", "layers-union", "Union"}, {"curve.booleanSubtract", "layers-difference", "Subtract"},
+          {"curve.booleanIntersect", "layers-intersect", "Intersect"}, {"curve.booleanXor", "layers-subtract", "Xor"},
+          {"curve.offsetRegion", "ripple", "Offset Region"}, {"curve.insetSkeleton", "box-model-2", "Skeleton"}, {"curve.centerLine", "line-dashed", "Center Line"},
+          {"curve.roof", "home", "Roof"}}},
         {"Sections and Groom",
-         {{"curve.contour", "topology-ring", "Contour"}, {"curve.sectionTool", "slice", "Section"}, {"curve.sculptCurves", "brush", "Sculpt"},
+         {{"curve.contour", "topology-ring", "Contour"}, {"curve.sectionTool", "slice", "Section"}, kRow, {"curve.sculptCurves", "brush", "Sculpt"},
           {"curve.groomSurface", "feather", "Groom"}, {"curve.groomGuides", "git-branch", "Guides"}, {"curve.hairCards", "cards", "Hair Cards"}}},
         {"Handles and Convert",
-         {{"curve.handleAuto", "", "Auto"}, {"curve.handleVector", "", "Vector"}, {"curve.handleAligned", "", "Aligned"},
-          {"curve.handleFree", "", "Free"}, {"curve.toBezier", "vector-bezier", "To Bezier"}, {"curve.toNurbs", "vector-spline", "To NURBS"},
-          {"curve.toPoly", "polygon", "To Poly"}, {"curve.toggleComb", "chart-line", "Comb"}, {"curve.sendToUnreal", "send", "Send to Unreal"}}},
+         {{"curve.handleAuto", "", "Auto"}, {"curve.handleVector", "", "Vector"}, {"curve.handleAligned", "", "Aligned"}, {"curve.handleFree", "", "Free"},
+          {"curve.toBezier", "vector-bezier", "To Bezier"}, {"curve.toNurbs", "vector-spline", "To NURBS"}, {"curve.toPoly", "polygon", "To Poly"}, kRow,
+          {"curve.toggleComb", "chart-line", "Comb"}, {"curve.sendToUnreal", "send", "Send to Unreal"}}},
     };
     return sections;
 }
@@ -148,8 +150,8 @@ CurveToolkit::CurveToolkit(QWidget* parent) : QWidget(parent)
     root->setSpacing(4);
     scroll->setWidget(body);
 
-    FlowLayout* head = nullptr;
-    QWidget* headBox = curveFlowBox(body, &head);
+    FixedRowLayout* head = nullptr;
+    QWidget* headBox = curveRowBox(body, &head);
     mModes = new QButtonGroup(this);
     mModes->setExclusive(true);
     int modeIndex = 0;
@@ -170,6 +172,7 @@ CurveToolkit::CurveToolkit(QWidget* parent) : QWidget(parent)
             (*member)->setCheckable(true);
             head->addWidget(*member);
         }
+    head->endRow();
     mOffset = new QDoubleSpinBox(headBox);
     mOffset->setRange(0.0, 10000.0);
     mOffset->setDecimals(2);
@@ -187,6 +190,7 @@ CurveToolkit::CurveToolkit(QWidget* parent) : QWidget(parent)
     mDegree->setToolTip("Degree of curves the CV and EP tools draw");
     connect(mDegree, &QSpinBox::valueChanged, this, [](int v) { PrefStore::get().set("general", "/curveTools/degree", v); });
     head->addWidget(mDegree);
+    head->endRow();
     mDrawSymmetry = new QComboBox(headBox);
     mDrawSymmetry->addItems({"Draw Symmetry Off", "Draw Symmetry X", "Draw Symmetry Y", "Draw Symmetry Z"});
     mDrawSymmetry->setToolTip("Curves the draw tools make are mirrored across this world plane (Y in a draw tool cycles it)");
@@ -200,10 +204,12 @@ CurveToolkit::CurveToolkit(QWidget* parent) : QWidget(parent)
 
     for (const auto& [title, items] : curveSections())
     {
-        FlowLayout* flow = nullptr;
-        QWidget* box = curveFlowBox(body, &flow);
+        FixedRowLayout* flow = nullptr;
+        QWidget* box = curveRowBox(body, &flow, 4);
         for (auto [id, ic, text] : items)
-            if (QToolButton* b = actionButton(id, ic, text, box))
+            if (!id)
+                flow->endRow();
+            else if (QToolButton* b = actionButton(id, ic, text, box))
                 flow->addWidget(optionBox::withOptionBox(b, id, box));
         if (flow->count())
             root->addWidget(curveSection(title, box, body));
@@ -217,6 +223,8 @@ CurveToolkit::CurveToolkit(QWidget* parent) : QWidget(parent)
     optionsLayout->addWidget(new LastOpEditor(optionsBox));
     root->addWidget(curveSection("Tool Options", optionsBox, body));
     root->addStretch(1);
+    // The panel stops at its narrowest fixed row instead of clipping it.
+    scroll->setMinimumWidth(body->minimumSizeHint().width() + scroll->verticalScrollBar()->sizeHint().width());
 
     mRefresh = new QTimer(this);
     mRefresh->setSingleShot(true);

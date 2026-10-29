@@ -10,7 +10,7 @@
 #include "scene/Modifiers.h"
 #include "ui/Actions.h"
 #include "ui/DockSidebar.h"
-#include "ui/FlowLayout.h"
+#include "ui/FixedRowLayout.h"
 #include "ui/Icons.h"
 #include "ui/NodeLookup.h"
 #include "ui/OptionBox.h"
@@ -30,6 +30,7 @@
 #include <QListWidget>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSpinBox>
 #include <QTimer>
 #include <QToolButton>
@@ -73,10 +74,10 @@ QWidget* section(const QString& title, QWidget* content, QWidget* parent)
     return box;
 }
 
-QWidget* flowBox(QWidget* parent, FlowLayout** layout)
+QWidget* rowBox(QWidget* parent, FixedRowLayout** layout, int columns = 0)
 {
     auto* w = new QWidget(parent);
-    *layout = new FlowLayout(3);
+    *layout = new FixedRowLayout(columns, 3);
     (*layout)->setContentsMargins(2, 0, 2, 2);
     w->setLayout(*layout);
     return w;
@@ -183,7 +184,7 @@ TopologyToolkit::TopologyToolkit(QWidget* parent) : QWidget(parent)
     root->setSpacing(4);
     scroll->setWidget(body);
 
-    auto row = [&](QWidget* parent, std::initializer_list<std::tuple<const char*, const char*, const char*>> items, FlowLayout* into) {
+    auto row = [&](QWidget* parent, std::initializer_list<std::tuple<const char*, const char*, const char*>> items, FixedRowLayout* into) {
         for (auto [id, ic, text] : items)
             if (QToolButton* b = actionButton(id, ic, text, parent))
                 into->addWidget(optionBox::withOptionBox(b, id, parent));
@@ -196,8 +197,8 @@ TopologyToolkit::TopologyToolkit(QWidget* parent) : QWidget(parent)
     mSession = new QLabel(sessionBox);
     mSession->setWordWrap(true);
     sessionLayout->addWidget(mSession);
-    FlowLayout* sessionRow = nullptr;
-    QWidget* sessionButtons = flowBox(sessionBox, &sessionRow);
+    FixedRowLayout* sessionRow = nullptr;
+    QWidget* sessionButtons = rowBox(sessionBox, &sessionRow);
     row(sessionButtons, {{"retopo.setReference", "target", "Set Reference"}}, sessionRow);
     auto* symmetry = new QComboBox(sessionButtons);
     symmetry->addItems({"Symmetry off", "Symmetry X", "Symmetry Y", "Symmetry Z"});
@@ -215,12 +216,12 @@ TopologyToolkit::TopologyToolkit(QWidget* parent) : QWidget(parent)
     root->addWidget(section("Session", sessionBox, body));
 
     // Tools.
-    FlowLayout* tools = nullptr;
-    QWidget* toolsBox = flowBox(body, &tools);
+    FixedRowLayout* tools = nullptr;
+    QWidget* toolsBox = rowBox(body, &tools, 4);
     row(toolsBox,
-        {{"retopo.draw", "pencil", "Draw"}, {"topo.pencil", "pencil-plus", "Pencil"}, {"topo.patch", "square-plus", "Patch"},
-         {"topo.strip", "road", "Strip"}, {"topo.stroke", "line", "Stroke"}, {"topo.cylinder", "cylinder", "Cylinder"},
-         {"topo.region", "wand", "Region"}, {"topo.handles", "hand-move", "Handles"}, {"topo.relax", "wave-sine", "Relax"}},
+        {{"retopo.draw", "pencil", "Draw"}, {"topo.pencil", "pencil-plus", "Pencil"}, {"topo.stroke", "line", "Stroke"}, {"topo.strip", "road", "Strip"},
+         {"topo.patch", "square-plus", "Patch"}, {"topo.cylinder", "cylinder", "Cylinder"}, {"topo.region", "wand", "Region"},
+         {"topo.handles", "hand-move", "Handles"}, {"topo.relax", "wave-sine", "Relax"}},
         tools);
     root->addWidget(section("Tools", toolsBox, body));
 
@@ -307,8 +308,8 @@ TopologyToolkit::TopologyToolkit(QWidget* parent) : QWidget(parent)
         mRefresh->start();
     });
     listLayout->addWidget(mList);
-    FlowLayout* listRow = nullptr;
-    QWidget* listButtons = flowBox(listBox, &listRow);
+    FixedRowLayout* listRow = nullptr;
+    QWidget* listButtons = rowBox(listBox, &listRow);
     row(listButtons, {{"topo.freezeAll", "snowflake", "Freeze All"}}, listRow);
     auto* clearGuides = new QToolButton(listButtons);
     clearGuides->setText("Clear Guides");
@@ -324,11 +325,11 @@ TopologyToolkit::TopologyToolkit(QWidget* parent) : QWidget(parent)
     root->addWidget(section("Constructs", listBox, body));
 
     // Auto retopo and cleanup.
-    FlowLayout* autoRow = nullptr;
-    QWidget* autoBox = flowBox(body, &autoRow);
+    FixedRowLayout* autoRow = nullptr;
+    QWidget* autoBox = rowBox(body, &autoRow, 4);
     row(autoBox,
-        {{"topo.runRegion", "wand", "Retopo Region"}, {"mesh.quadRemesh", "grid-4x4", "Quad Remesh"}, {"retopo.poles", "point", "Poles"},
-         {"mesh.voxelRemesh", "box", "Voxel Remesh"}, {"topo.settle", "wave-sine", "Settle"}, {"mesh.relax", "wave-square", "Relax"}},
+        {{"topo.runRegion", "wand", "Retopo Region"}, {"mesh.quadRemesh", "grid-4x4", "Quad Remesh"}, {"mesh.voxelRemesh", "box", "Voxel Remesh"},
+         {"retopo.poles", "point", "Poles"}, {"topo.settle", "wave-sine", "Settle"}, {"mesh.relax", "wave-square", "Relax"}},
         autoRow);
     root->addWidget(section("Auto Retopo", autoBox, body));
 
@@ -336,8 +337,8 @@ TopologyToolkit::TopologyToolkit(QWidget* parent) : QWidget(parent)
     auto* qualityBox = new QWidget(body);
     auto* qualityLayout = new QVBoxLayout(qualityBox);
     qualityLayout->setContentsMargins(4, 0, 4, 4);
-    FlowLayout* qualityRow = nullptr;
-    QWidget* qualityButtons = flowBox(qualityBox, &qualityRow);
+    FixedRowLayout* qualityRow = nullptr;
+    QWidget* qualityButtons = rowBox(qualityBox, &qualityRow);
     if (QToolButton* b = actionButton("topo.qualityOverlay", "chart-dots", "Overlay", qualityButtons))
     {
         b->setCheckable(true);
@@ -349,6 +350,8 @@ TopologyToolkit::TopologyToolkit(QWidget* parent) : QWidget(parent)
     qualityLayout->addWidget(mStats);
     root->addWidget(section("Quality", qualityBox, body));
     root->addStretch(1);
+    // The panel stops at its narrowest fixed row instead of clipping it.
+    scroll->setMinimumWidth(body->minimumSizeHint().width() + scroll->verticalScrollBar()->sizeHint().width());
 
     mRefresh = new QTimer(this);
     mRefresh->setSingleShot(true);
