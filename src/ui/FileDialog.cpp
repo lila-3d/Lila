@@ -31,10 +31,12 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPainter>
+#include <QProcess>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QShortcut>
 #include <QSet>
+#include <QSettings>
 #include <QSortFilterProxyModel>
 #include <QSplitter>
 #include <QStackedWidget>
@@ -1749,6 +1751,32 @@ QString remove(const QStringList& paths)
         if (QFileInfo::exists(p) && !QFile::moveToTrash(p))
             addError(&error, "Couldn't move " + QFileInfo(p).fileName() + " to the bin; nothing was deleted");
     return error;
+}
+
+/** True when a file manager such as File Pilot has taken over opening folders from Explorer. */
+bool customFolderHandler()
+{
+#ifdef Q_OS_WIN
+    const QSettings cmd("HKEY_CLASSES_ROOT\Directory\shell\open\command", QSettings::NativeFormat);
+    const QString exe = cmd.value("Default").toString();
+    return !exe.isEmpty() && !exe.contains("explorer.exe", Qt::CaseInsensitive);
+#else
+    return false;
+#endif
+}
+
+void reveal(const QString& file)
+{
+#ifdef Q_OS_WIN
+    if (QFileInfo::exists(file) && !customFolderHandler())
+    {
+        QProcess::startDetached("explorer.exe", {"/select," + QDir::toNativeSeparators(file)});
+        return;
+    }
+#endif
+    const QString dir = QFileInfo(file).absolutePath();
+    if (!dir.isEmpty())
+        QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
 }
 } // namespace fileOps
 

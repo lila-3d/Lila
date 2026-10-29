@@ -8,6 +8,7 @@
 #include "ui/Actions.h"
 #include "ui/AttributeEditor.h"
 #include "ui/ExtensionUi.h"
+#include "ui/FileDialog.h"
 #include "ui/Hotkeys.h"
 #include "ui/IconBars.h"
 #include "ui/Layouts.h"
@@ -161,6 +162,11 @@ json dispatch(const std::string& op, const json& a, const std::vector<PyCall>& f
     }
     if (op == "action.remove")
         return actions::remove(str(a, "id"));
+    if (op == "file.reveal")
+    {
+        fileOps::reveal(QString::fromStdString(str(a, "path")));
+        return true;
+    }
     if (op == "action.list")
     {
         json out = json::array();

@@ -94,5 +94,7 @@ LILA_UI_API QStringList copyInto(const QStringList& paths, const QString& dir, Q
 LILA_UI_API int trackedCount(const QStringList& paths);
 /** Tracked files become pending deletes in source control; the rest go to the Recycle Bin or Trash. */
 LILA_UI_API QString remove(const QStringList& paths);
+/** Shows the file selected in Explorer on Windows; elsewhere, for a missing file, or when another file manager owns folders, opens its folder. */
+LILA_UI_API void reveal(const QString& file);
 } // namespace fileOps
 } // namespace lila::ui

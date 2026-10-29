@@ -60,6 +60,8 @@ LILA_FOUNDATION_API void setEmergencySave(EmergencySaveFn fn);
 
 /** <userConfigDir>/crashes. */
 LILA_FOUNDATION_API std::filesystem::path reportsDir();
+/** This session as a report: context, recent log and commands, process and machine details. For support bundles. */
+LILA_FOUNDATION_API std::string liveReport();
 /** Crash folders, newest first. */
 LILA_FOUNDATION_API std::vector<std::filesystem::path> reports();
 /** The report's one-line summary. */

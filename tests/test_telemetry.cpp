@@ -1,11 +1,15 @@
 #include <doctest/doctest.h>
 
 #include "core/CrashUpload.h"
+#include "core/PrefStore.h"
+#include "ui/SupportBundle.h"
 #include "ui/Telemetry.h"
 
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+
+#include <miniz.h>
 
 using namespace lila;
 namespace tel = lila::telemetry;
@@ -186,4 +190,30 @@ TEST_CASE("crash consent round trip and always-send writes the prefs")
     CHECK(j["telemetry"]["crashAlways"] == true);
     CHECK(j["telemetry"]["usage"] == true);
     CHECK_FALSE(crash::upload::readConsent(dir / "missing.json").send);
+}
+
+TEST_CASE("support bundle zips the session and redacts secrets from prefs")
+{
+    PrefStore::get().start();
+    PrefStore::get().set("test_support", "/apiToken", "super-secret-value");
+    PrefStore::get().flush();
+    fs::path zip = freshDir("support") / "bundle.zip";
+    std::string error;
+    REQUIRE(ui::support::writeBundle(zip, false, &error));
+
+    mz_zip_archive ar{};
+    REQUIRE(mz_zip_reader_init_file(&ar, zip.string().c_str(), 0));
+    CHECK(mz_zip_reader_locate_file(&ar, "session.txt", nullptr, 0) >= 0);
+    CHECK(mz_zip_reader_locate_file(&ar, "README.txt", nullptr, 0) >= 0);
+    int prefs = mz_zip_reader_locate_file(&ar, "prefs/test_support.json", nullptr, 0);
+    REQUIRE(prefs >= 0);
+    size_t size = 0;
+    char* data = static_cast<char*>(mz_zip_reader_extract_to_heap(&ar, mz_uint(prefs), &size, 0));
+    std::string text(data, size);
+    mz_free(data);
+    mz_zip_reader_end(&ar);
+    CHECK(text.find("super-secret-value") == std::string::npos);
+    CHECK(text.find("<redacted>") != std::string::npos);
+    PrefStore::get().flush();
+    fs::remove(PrefStore::get().userDir() / "test_support.json");
 }

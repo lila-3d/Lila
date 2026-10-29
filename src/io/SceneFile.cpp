@@ -520,6 +520,14 @@ bool unregisterUiSection(const std::string& key)
     return true;
 }
 
+void saveCopy(const fs::path& path)
+{
+    LILA_ZONE();
+
+    json doc = serialize(path.parent_path(), true);
+    progress::runOnWorker([&] { writeAtomic(path, [&](const Sink& sink) { encodeFor(path, std::move(doc), sink); }, [] {}); });
+}
+
 void save(const fs::path& path)
 {
     LILA_ZONE();

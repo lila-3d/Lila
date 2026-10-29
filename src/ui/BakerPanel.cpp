@@ -124,31 +124,6 @@ void openFolder(const QString& dir)
         QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
 }
 
-/** True when a file manager such as File Pilot has taken over opening folders from Explorer. */
-bool customFolderHandler()
-{
-#ifdef Q_OS_WIN
-    const QSettings cmd("HKEY_CLASSES_ROOT\\Directory\\shell\\open\\command", QSettings::NativeFormat);
-    const QString exe = cmd.value("Default").toString();
-    return !exe.isEmpty() && !exe.contains("explorer.exe", Qt::CaseInsensitive);
-#else
-    return false;
-#endif
-}
-
-/** Shows the file selected in Explorer on Windows; elsewhere, for a file not on disk, or when another file manager owns folders, opens its folder. */
-void revealFile(const QString& file)
-{
-#ifdef Q_OS_WIN
-    if (QFileInfo::exists(file) && !customFolderHandler())
-    {
-        QProcess::startDetached("explorer.exe", {"/select," + QDir::toNativeSeparators(file)});
-        return;
-    }
-#endif
-    openFolder(QFileInfo(file).absolutePath());
-}
-
 /** The folder a result wrote to: its manifest's, else its first output's. */
 QString resultFolder(const json& result)
 {
@@ -2542,7 +2517,7 @@ QMenu* BakerPanel::thumbnailMenu(QWidget* parent)
           for (const QString& f : files)
               QDesktopServices::openUrl(QUrl::fromLocalFile(f));
       })->setEnabled(any);
-    m->addAction(icon("folder-search"), "Open Containing Folder", m, [files] { revealFile(files.front()); })->setEnabled(any);
+    m->addAction(icon("folder-search"), "Open Containing Folder", m, [files] { fileOps::reveal(files.front()); })->setEnabled(any);
     m->addSeparator();
     m->addAction(icon("copy"), files.size() > 1 ? "Copy Paths" : "Copy Path", m, [files] {
           QStringList native;

@@ -714,6 +714,18 @@ void setEmergencySave(EmergencySaveFn fn)
 #endif
 }
 
+std::string liveReport()
+{
+    Report r;
+    r.summary = "Lila session report (not a crash)";
+    buildLiveReport(r, false);
+#ifdef _WIN32
+    addSystemInfo(r);
+#endif
+    sortSections(r);
+    return renderReport(r);
+}
+
 fs::path reportsDir()
 {
     return paths::userConfigDir() / "crashes";

@@ -434,6 +434,11 @@ def remove_bar_item(id):
     return _call("iconBar.removeItem", id=id)
 
 
+def reveal(path):
+    """Show a file in Explorer with it selected, or open its folder where that isn't possible."""
+    return _call("file.reveal", path=str(path))
+
+
 def bar_items(bar="toolBox"):
     """The items of an icon bar in display order: [{id, action, icon, label, owner}]."""
     return _call("iconBar.list", bar=bar)

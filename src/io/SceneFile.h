@@ -72,6 +72,8 @@ LILA_SCENE_API bool registerUiSection(ext::Context& ctx, const std::string& key,
 LILA_SCENE_API bool unregisterUiSection(const std::string& key);
 
 LILA_SCENE_API void save(const std::filesystem::path& path);
+/** Writes the scene to path without making it the current file, marking it clean or taking a backup. */
+LILA_SCENE_API void saveCopy(const std::filesystem::path& path);
 /** Reading the file can be cancelled (progress::Cancelled), which leaves the current scene alone. */
 LILA_SCENE_API void load(const std::filesystem::path& path);
 
