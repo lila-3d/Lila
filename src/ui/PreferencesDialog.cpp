@@ -21,11 +21,13 @@
 #include "ui/SpinScrub.h"
 #include "ui/TexturePicker.h"
 #include "ui/ThemeEditor.h"
+#include "ui/Telemetry.h"
 #include "ui/ThemeModel.h"
 #include "ui/ViewportDisplay.h"
 #include "ui/editor/CodeEditor.h"
 #include "ui/editor/EditorPalette.h"
 #include "ui/editor/Format.h"
+#include "ui/DocsUi.h"
 #include "ui/FileDialog.h"
 
 #include <QCheckBox>
@@ -512,6 +514,32 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         section(general, "Telemetry");
         toggle(general, "Send anonymous usage statistics", kTelemetryUsagePref, false);
         toggle(general, "Send crash reports", kTelemetryCrashPref, false);
+        auto onboarding = [&general](const char* label, const char* key, const std::vector<std::pair<std::string, std::string>>& choices) {
+            std::vector<std::pair<QString, std::string>> options;
+            for (const auto& [shown, value] : choices)
+                options.emplace_back(QString::fromStdString(shown), value);
+            choice(general, label, key, std::move(options), "");
+        };
+        onboarding("Your role", telemetry::kRolePref, telemetry::roleChoices());
+        onboarding("Team size", telemetry::kTeamSizePref, telemetry::teamSizeChoices());
+        onboarding("Used before Lila", telemetry::kPreviousDccPref, telemetry::previousDccChoices());
+        {
+            auto* buttons = new QWidget;
+            auto* row = new QHBoxLayout(buttons);
+            row->setContentsMargins(0, 0, 0, 0);
+            auto* sent = new QPushButton("What's Sent...");
+            QObject::connect(sent, &QPushButton::clicked, sent, [sent] { telemetry::showPending(sent->window()); });
+            auto* reset = new QPushButton("Reset ID");
+            reset->setToolTip("A new anonymous id: what is sent from now on can't be linked to what was sent before.");
+            QObject::connect(reset, &QPushButton::clicked, reset, [] { telemetry::resetInstallId(); });
+            auto* details = new QPushButton("Privacy Details...");
+            QObject::connect(details, &QPushButton::clicked, details, [] { docs::open("privacy"); });
+            row->addWidget(sent);
+            row->addWidget(reset);
+            row->addWidget(details);
+            row->addStretch(1);
+            addRow(general, "Anonymous id", buttons, telemetry::kInstallIdPref);
+        }
         section(general, "Change Stream");
         toggle(general, "Stream scene changes to other processes", "/changeStream/enabled", false);
         number(general, "Port", "/changeStream/port", double(stream::kDefaultPort), 1.0, 65535.0, 1.0, 0);

@@ -192,6 +192,7 @@ void bindExtensions(nb::module_& m)
                 def.flags.push_back(std::move(fd));
             }
             def.run = [fn = hold(fn), name](const Args& a) { return callPython(fn, name, a); };
+            def.scripted = true;
             ops::registerCommand(std::move(def));
             fromPython.insert(name);
         },

@@ -290,6 +290,8 @@ void MainWindow::registerActions()
                       copyCrashReport(all.front());
                       statusBar()->showMessage("Crash report copied: " + QString::fromStdWString(all.front().wstring()), 5000);
                   }, nullptr, "Puts the newest crash report on the clipboard, ready to paste into a bug report."});
+    actions::add({"help.telemetry", "Telemetry and Privacy...", "Help", [this] { showTelemetrySettings(this); }, nullptr,
+                  "Choose whether Lila sends anonymous usage statistics and crash reports, and see what's sent."});
 }
 
 } // namespace lila::ui

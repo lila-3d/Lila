@@ -96,6 +96,8 @@ struct CommandDef
     bool adjustable = false;
     /** Python snippets, each one or more lines of runnable source. */
     std::vector<std::string> examples;
+    /** Registered from Python at runtime (a user script or a Python extension), whatever its owner. */
+    bool scripted = false;
 };
 
 /** One top-level execute, reported before the command runs and again after it finished or failed. */

@@ -48,4 +48,6 @@ inline constexpr const char* kTelemetryCrashPref = "/telemetry/crashReports";
  * way out.
  */
 LILA_UI_API void runFirstRunSetup(QWidget* parent);
+/** The first-run dialog's telemetry choice on its own, from Help. */
+LILA_UI_API void showTelemetrySettings(QWidget* parent);
 } // namespace lila::ui

@@ -3,6 +3,8 @@
 #include "core/Paths.h"
 #include "core/PrefStore.h"
 #include "render/Renderer.h"
+#include "ui/DocsUi.h"
+#include "ui/Telemetry.h"
 #include "ui/ThemeModel.h"
 #include "ui/ViewportDisplay.h"
 
@@ -10,6 +12,8 @@
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QCloseEvent>
+#include <QComboBox>
+#include <QFormLayout>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFontDatabase>
@@ -657,7 +661,10 @@ QWidget* makeTelemetryChoice(QWidget* parent)
     f.setPointSizeF(f.pointSizeF() * 1.25);
     title->setFont(f);
     layout->addWidget(title);
-    auto* hint = new QLabel("Anonymous, and never your files, file names or scene content. Change it any time in Preferences > General > Telemetry.", box);
+    auto* hint = new QLabel("Lila is made by one developer. Anonymous statistics show which tools get used and where Lila crashes, so it can be fixed. "
+                            "Never your files, file names or scene content. Change it any time in "
+                            "Preferences > General > Telemetry.",
+                            box);
     hint->setForegroundRole(QPalette::PlaceholderText);
     hint->setWordWrap(true);
     layout->addWidget(hint);
@@ -669,12 +676,49 @@ QWidget* makeTelemetryChoice(QWidget* parent)
         QObject::connect(check, &QCheckBox::toggled, check, [key](bool on) { PrefStore::get().set("general", key, on); });
         layout->addWidget(check);
     }
+
+    auto* about = new QLabel("Optional, sent with usage statistics:", box);
+    about->setContentsMargins(0, 6, 0, 0);
+    layout->addWidget(about);
+    auto* form = new QFormLayout;
+    form->setContentsMargins(0, 0, 0, 0);
+    for (auto [label, key, choices] : {std::tuple{"Your role", telemetry::kRolePref, &telemetry::roleChoices()},
+                                       std::tuple{"Team size", telemetry::kTeamSizePref, &telemetry::teamSizeChoices()},
+                                       std::tuple{"Used before Lila", telemetry::kPreviousDccPref, &telemetry::previousDccChoices()}})
+    {
+        auto* combo = new QComboBox(box);
+        const std::string current = PrefStore::get().value<std::string>("general", key, "");
+        for (const auto& [shown, value] : *choices)
+        {
+            combo->addItem(QString::fromStdString(shown), QString::fromStdString(value));
+            if (value == current)
+                combo->setCurrentIndex(combo->count() - 1);
+        }
+        QObject::connect(combo, &QComboBox::currentIndexChanged, combo, [combo, key](int) {
+            PrefStore::get().set("general", key, combo->currentData().toString().toStdString());
+        });
+        form->addRow(label, combo);
+    }
+    layout->addLayout(form);
+    auto* sent = new QPushButton("See Exactly What's Sent...", box);
+    QObject::connect(sent, &QPushButton::clicked, sent, [box] { telemetry::showPending(box->window()); });
+    auto* details = new QPushButton("Privacy Details...", box);
+    QObject::connect(details, &QPushButton::clicked, details, [] { docs::open("privacy", docs::Route::Browser); });
+    auto* sentRow = new QHBoxLayout;
+    sentRow->addStretch(1);
+    sentRow->addWidget(sent);
+    sentRow->addWidget(details);
+    sentRow->addStretch(1);
+    layout->addLayout(sentRow);
     return box;
 }
 } // namespace
 
 void runFirstRunSetup(QWidget* parent)
 {
+    // Usage statistics start ticked here, where they are seen; everywhere else an unset pref means off.
+    if (PrefStore::get().value("general", kTelemetryUsagePref).is_null())
+        PrefStore::get().set("general", kTelemetryUsagePref, true);
     SetupDialog dlg(parent);
     dlg.setWindowTitle("Welcome to Lila");
     dlg.setWindowFlags(Qt::Dialog | Qt::CustomizeWindowHint | Qt::WindowTitleHint);
@@ -692,6 +736,26 @@ void runFirstRunSetup(QWidget* parent)
     layout->addWidget(buttons);
     dlg.exec();
     setThemeChooserDone();
+}
+
+void showTelemetrySettings(QWidget* parent)
+{
+    static QPointer<QDialog> open;
+    if (!open)
+    {
+        open = new QDialog(parent);
+        open->setAttribute(Qt::WA_DeleteOnClose);
+        open->setWindowTitle("Telemetry and Privacy");
+        auto* layout = new QVBoxLayout(open);
+        layout->setContentsMargins(20, 16, 20, 14);
+        layout->addWidget(makeTelemetryChoice(open));
+        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, open);
+        QObject::connect(buttons, &QDialogButtonBox::rejected, open, &QDialog::close);
+        layout->addWidget(buttons);
+    }
+    open->show();
+    open->raise();
+    open->activateWindow();
 }
 
 void applyTheme(QApplication& app)

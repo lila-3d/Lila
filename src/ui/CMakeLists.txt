@@ -117,6 +117,7 @@ lila_module(lila_ui UI
     NotesPanel.cpp NotesPanel.h
     Presenter.cpp Presenter.h
     PreferencesDialog.cpp PreferencesDialog.h
+    Telemetry.cpp Telemetry.h
     ProgressOverlay.cpp ProgressOverlay.h
     ReferenceEditor.cpp ReferenceEditor.h
     RenderSettingsDialog.cpp RenderSettingsDialog.h

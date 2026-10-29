@@ -34,6 +34,7 @@
 #include "ui/BakePaintTool.h"
 #include "ui/SurfaceSnap.h"
 #include "ui/TargetWeldTool.h"
+#include "ui/Telemetry.h"
 #include "ui/CurveUi.h"
 #include "ui/ConformTool.h"
 #include "ui/TexturePaintTool.h"
@@ -244,6 +245,7 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
     crash::addSecret(mcp::Server::get().token());
     crash::setContext("app", "qt", qVersion());
     crash::startWatchdog(host::crashOptions(true));
+    telemetry::start();
     updateCrashContext();
     QTimer crashContext;
     QObject::connect(&crashContext, &QTimer::timeout, [] { updateCrashContext(); });
@@ -279,6 +281,7 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
     // A bake still running on the GPU must stop before the renderer does.
     bake::shutdownRebakes();
     bake::cancelAsyncBake(true);
+    telemetry::stop();
     io::recovery::endSession();
 
     mcp::Server::get().stop();

@@ -39,6 +39,7 @@ add_executable(lila_tests
     test_preselect.cpp
     test_layouts.cpp
     test_themes.cpp
+    test_telemetry.cpp
     test_toolkit.cpp
     test_modeling_defaults.cpp
     test_symmetry.cpp
