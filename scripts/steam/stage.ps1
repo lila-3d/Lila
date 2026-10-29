@@ -1,12 +1,16 @@
-# Stages a self-contained Lila install into build-steam\content for SteamPipe.
+# Stages a self-contained Lila install into build-steam\content for SteamPipe, or -Destination for the installer.
 param(
     [string]$Config = "Release",
-    [string]$PythonDir = $(if ($env:LILA_PYTHON_DIR) { $env:LILA_PYTHON_DIR } else { "C:\Python314" })
+    [string]$PythonDir = $(if ($env:LILA_PYTHON_DIR) { $env:LILA_PYTHON_DIR } else { "C:\Python314" }),
+    [string]$Destination = "",
+    # Steam installs the VC++ runtime itself; a per-user installer can't, so it ships the DLLs beside lila.exe.
+    [switch]$AppLocalCrt,
+    [string]$VsDir = $(if ($env:LILA_VS) { $env:LILA_VS } else { "C:\Program Files\Microsoft Visual Studio\2022\Community" })
 )
 $ErrorActionPreference = "Stop"
 $repo = Resolve-Path "$PSScriptRoot\..\.."
 $bin = Join-Path $repo "build\bin\$Config"
-$out = Join-Path $repo "build-steam\content"
+$out = if ($Destination) { $Destination } else { Join-Path $repo "build-steam\content" }
 if (-not (Test-Path "$bin\lila.exe")) { throw "No lila.exe in $bin. Build $Config first." }
 
 if (Test-Path $out) { Remove-Item $out -Recurse -Force }
@@ -29,6 +33,12 @@ foreach ($pkg in "numpy", "numpy.libs") {
 }
 Copy-Item "$PythonDir\python.exe", "$PythonDir\pythonw.exe", "$PythonDir\python3.dll", "$PythonDir\python314.dll", "$PythonDir\LICENSE.txt" $py
 Copy-Item "$repo\LICENSE", "$repo\THIRD-PARTY-NOTICES.md" $out
+
+if ($AppLocalCrt) {
+    $crt = Get-Item "$VsDir\VC\Redist\MSVC\*\x64\Microsoft.VC14*.CRT" | Sort-Object FullName | Select-Object -Last 1
+    if (-not $crt) { throw "No VC++ runtime under $VsDir\VC\Redist" }
+    Copy-Item "$($crt.FullName)\*.dll" $out
+}
 
 $size = (Get-ChildItem $out -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
 "Staged {0:N0} MB to {1}" -f $size, $out
