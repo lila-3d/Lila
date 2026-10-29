@@ -177,14 +177,14 @@ void registerActions()
     auto spaceIs = [](std::string key, std::string space) -> std::function<bool()> {
         return [key, space] { return PrefStore::get().value<std::string>("general", key, "world") == space; };
     };
-    for (const char* tool : {"move", "rotate"})
+    for (const char* manip : {"move", "rotate"})
         for (auto [space, what] : {std::pair{"world", "the world axes"}, {"object", "the object's own axes"}, {"parent", "the parent's axes"}})
         {
-            std::string key = std::string("/manipulator/") + tool + "Space";
+            std::string key = std::string("/manipulator/") + manip + "Space";
             std::string label = std::string(1, char(std::toupper(space[0]))) + (space + 1);
-            actions::add({.id = std::string("manip.") + tool + "." + space, .label = label, .category = "Tools",
+            actions::add({.id = std::string("manip.") + manip + "." + space, .label = label, .category = "Tools",
                           .run = [key, space] { PrefStore::get().set("general", key, space); },
-                          .doc = std::string("Aligns the ") + tool + " manipulator to " + what + ".",
+                          .doc = std::string("Aligns the ") + manip + " manipulator to " + what + ".",
                           .python = "lila.prefs.set(\"general\", \"" + key + "\", \"" + space + "\")",
                           .checked = spaceIs(key, space)});
         }

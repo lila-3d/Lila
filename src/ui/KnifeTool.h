@@ -26,7 +26,7 @@ namespace lila::ui
  *   drag                 the new point follows the cursor (still snapping) until the button comes up
  *   Shift                edge points snap to steps of the snap step (10% by default, so midpoints too)
  *   Ctrl+click an edge   insert an edge loop across its ring there
- *   Ctrl+Shift+click an edge   delete it, joining its two faces (highlighted while hovering)
+ *   Ctrl+Alt+click an edge     delete it, joining its two faces (highlighted while hovering)
  *   click the first point   close the cut and finish it
  *   Enter or RMB         finish the cut; the tool stays for the next one
  *   Backspace or Z       remove the last point (Ctrl+Z too: whatever undo is bound to); scene undo waits until the tool is left
@@ -83,7 +83,7 @@ private:
     void finish(bool closed);
     void insertLoop(const Spot& spot);
     void deleteEdge(const Spot& spot);
-    /** Ctrl+Shift with no cut under way: a click deletes the hovered edge. */
+    /** Ctrl+Alt with no cut under way: a click deletes the hovered edge. */
     bool deleting() const;
     void cancel();
     void stepBack();

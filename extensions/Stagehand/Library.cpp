@@ -84,7 +84,7 @@ fs::path modelIn(const fs::path& dir, const json& meta)
 {
     if (meta.contains("model") && meta["model"].is_string())
     {
-        const fs::path p = dir / fs::u8path(meta["model"].get<std::string>());
+        const fs::path p = dir / utf8Path(meta["model"].get<std::string>());
         if (fs::exists(p))
             return p;
     }
@@ -231,10 +231,10 @@ std::vector<Root> roots(bool existingOnly)
     if (paths.is_array())
         for (const json& p : paths)
             if (p.is_string())
-                add("studio", fs::u8path(p.get<std::string>()));
+                add("studio", utf8Path(p.get<std::string>()));
     if (const char* env = std::getenv("LILA_LIBRARY_PATH"))
         for (const std::string& p : splitPaths(env))
-            add("studio", fs::u8path(p));
+            add("studio", utf8Path(p));
     add("user", tierDir("user"));
     return out;
 }
@@ -247,7 +247,12 @@ fs::path tierDir(const std::string& tier)
         return lila::PrefStore::get().userDir() / "library";
     if (tier.empty() || tier == "studio")
         return {};
-    return fs::u8path(tier);
+    return utf8Path(tier);
+}
+
+fs::path utf8Path(std::string_view utf8)
+{
+    return fs::path(std::u8string(utf8.begin(), utf8.end()));
 }
 
 const std::vector<Asset>& all()

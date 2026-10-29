@@ -384,8 +384,8 @@ std::vector<glm::dmat3> componentFrames(const Splines& ss, const std::vector<uin
             const D3 nrm = f[2] - d * (glm::dot(f[2], d) / std::max(glm::dot(d, d), 1e-300));
             if (glm::length(d) > 1e-9 && glm::length(nrm) > 1e-6)
             {
-                const D3 u = glm::normalize(d), nn = glm::normalize(nrm);
-                f = glm::dmat3(u, glm::cross(nn, u), nn);
+                const D3 t = glm::normalize(d), nn = glm::normalize(nrm);
+                f = glm::dmat3(t, glm::cross(nn, t), nn);
             }
         }
         out[k] = f;

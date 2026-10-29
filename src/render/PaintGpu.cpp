@@ -1078,7 +1078,7 @@ struct Batch
     /** Geometry pages to upload: surface, page. */
     std::vector<std::pair<std::shared_ptr<Surface>, uint32_t>> geo;
 
-    void add(const std::shared_ptr<Surface>& s, int udim, uint32_t page, std::set<std::pair<const Surface*, uint32_t>>& queued)
+    void add(const std::shared_ptr<Surface>& s, uint32_t page, std::set<std::pair<const Surface*, uint32_t>>& queued)
     {
         if (!s->geo.contains(page) && queued.insert({s.get(), page}).second)
         {
@@ -1105,7 +1105,7 @@ Batch prepareBatch(Layer& l, Live& live, std::span<const Dab> dabs)
         std::shared_ptr<Surface> s = surface(live.mesh, udim, size.first, size.second);
         for (auto& [page, list] : s->atlas->pagesFor(reach))
         {
-            b.add(s, udim, page, queued);
+            b.add(s, page, queued);
             b.items.push_back({s, udim, page, uint32_t(b.index.size()), uint32_t(list.size())});
             b.index.insert(b.index.end(), list.begin(), list.end());
         }
@@ -1153,7 +1153,7 @@ Batch prepareWhole(Layer& l, Live& live)
         std::shared_ptr<Surface> s = surface(live.mesh, udim, size.first, size.second);
         for (uint32_t page : s->atlas->pagesWhere([&](uint32_t t) { return reached[t] != 0; }))
         {
-            b.add(s, udim, page, queued);
+            b.add(s, page, queued);
             b.items.push_back({s, udim, page, 0, 0});
         }
     }

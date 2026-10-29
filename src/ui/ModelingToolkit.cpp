@@ -235,7 +235,7 @@ ModelingToolkit::ModelingToolkit(QWidget* parent) : QWidget(parent)
          {"mesh.booleanUnion", "layers-union", "Union"}, {"mesh.booleanDifference", "layers-difference", "Difference"},
          {"mesh.booleanIntersection", "layers-intersect", "Intersection"}, {"mesh.subdivide", "sphere", "Subdivide"},
          {"mesh.mirror", "flip-horizontal", "Mirror"}, {"mesh.triangulate", "triangle", "Triangulate"},
-         {"mesh.quadrangulate", "square-toggle", "Quadrangulate"}, {"mesh.fillHole", "square-plus", "Fill Hole"},
+         {"mesh.quadrangulate", "square-toggle", "Quadrangulate"}, {"mesh.fillHole", "square-plus", "Fill Hole"}, {"mesh.gridFill", "grid-pattern", "Grid Fill"},
          {"mesh.repair", "wand", "Repair"}, {"modifier.decimate", "grain", "Decimate"}, {"mesh.relax", "wave-sine", "Relax"},
          {"mesh.quadRemesh", "grid-4x4", "Remesh"}, {"mesh.flip", "arrows-exchange-2", "Flip"}, {"mesh.conform", "refresh", "Conform"},
          {"mesh.transferAttributes", "arrows-exchange", "Transfer"}, {"mesh.bakeModifierStack", "stack-pop", "Bake Stack"}},

@@ -59,7 +59,7 @@ void RetopoPolesTool::activate()
     mTimer->start(30);
     refresh();
     solve(true);
-    log::info("Retopo Poles: drag poles, Ctrl-click adds a 3/5 pair, Ctrl+Shift-click removes a pair, Ctrl-wheel sets the face "
+    log::info("Retopo Poles: drag poles, Ctrl-click adds a 3/5 pair, Ctrl+Alt-click removes a pair, Ctrl-wheel sets the face "
               "count, Backspace resets, Enter builds, Esc exits");
 }
 
@@ -340,10 +340,10 @@ std::string RetopoPolesTool::status() const
 
 bool RetopoPolesTool::mousePress(QMouseEvent* e, const ViewInfo& view)
 {
-    if (e->button() != Qt::LeftButton || (e->modifiers() & Qt::AltModifier))
+    const bool ctrl = e->modifiers() & Qt::ControlModifier, alt = e->modifiers() & Qt::AltModifier;
+    if (e->button() != Qt::LeftButton || (alt && !ctrl))
         return false;
-    const bool ctrl = e->modifiers() & Qt::ControlModifier, shift = e->modifiers() & Qt::ShiftModifier;
-    if (ctrl && shift)
+    if (ctrl && alt)
     {
         removePair(pick(e->position(), view));
         return true;
@@ -475,7 +475,7 @@ void registerRetopoPolesActions()
                 log::warn("Retopo Poles: select the mesh to remesh");
             },
         .doc = "Shows where an auto quad remesh of the selected mesh would turn its edge flow (three- and five-edge poles) with a "
-               "live preview, and lets you move them: drag a pole, Ctrl-click to add a 3/5 pair, Ctrl+Shift-click to remove a "
+               "live preview, and lets you move them: drag a pole, Ctrl-click to add a 3/5 pair, Ctrl+Alt-click to remove a "
                "pair, Ctrl-wheel for the face count, Backspace to reset, Enter to build the mesh.",
         .python = "lila.ui.run_action(\"retopo.poles\")",
     });

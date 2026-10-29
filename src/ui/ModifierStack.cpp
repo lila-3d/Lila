@@ -284,6 +284,9 @@ public:
         setMinimumWidth(40);
         setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
         setCursor(Qt::SizeHorCursor);
+        // Not click focus: Qt would focus on press, so the press would place the caret instead of starting a scrub,
+        // and the release would never select the text for typing over.
+        setFocusPolicy(Qt::TabFocus);
         setAcceptDrops(false);
         setDoc({});
         setContextMenuPolicy(Qt::CustomContextMenu);

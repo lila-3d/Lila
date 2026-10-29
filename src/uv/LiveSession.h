@@ -95,7 +95,8 @@ private:
     bool mOpen = false;
     bool mStroking = false;
     bool mPreviewed = false;
-    bool mHasHistory = false;
+    /** Where drag previews are written: the stored base mesh, or none when a generator feeds it. */
+    std::optional<scene::PlugRef> mPreviewPlug;
     std::string mLabel;
     scene::MeshPtr mBeforeIn;
     std::chrono::steady_clock::time_point mReleased;

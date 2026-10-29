@@ -615,6 +615,7 @@ void registerBuiltins()
     cmd("mesh.poke", "Poke", "Mesh", "polyPoke", json::object(), "Splits each selected face into triangles around a new center vertex.");
     cmd("mesh.spin", "Spin Edge", "Mesh", "polySpinEdge", json::object(), "Turns the selected edges to join the next corners of their two faces.");
     cmd("mesh.fillHole", "Fill Hole", "Mesh", "polyFillHole", json::object(), "Caps the selected open borders with a face.");
+    cmd("mesh.gridFill", "Grid Fill", "Mesh", "polyGridFill", json::object(), "Rebuilds the selected fans or faces, or fills the selected holes, as a quad grid inside a ring of quads.");
     cmd("mesh.flip", "Flip Normals", "Mesh", "polyFlip", json::object(), "Reverses the selected faces so they point the other way.");
     cmd("mesh.conform", "Conform Normals", "Mesh", "polyConform", json::object(), "Turns faces to agree with their neighbours, so the whole shell faces one way.");
     cmd("mesh.triangulate", "Triangulate", "Mesh", "polyTriangulate", json::object(), "Splits the selected faces into triangles.");
@@ -678,8 +679,6 @@ void registerBuiltins()
         "Wraps the selection in a fitted box, sphere, capsule, cylinder or hull, named and parented as its Unreal collision.");
     cmd("mesh.multiBoxBounds", "Multi-Box Bounds", "Mesh", "multiBoxBounds", json::object(),
         "Splits the selected meshes into chunks that conform to boxes and creates one box (or hull) per chunk, named and parented as Unreal collision.");
-    cmd("unreal.collision", "Add Collision", "Unreal", "boundingMesh", json::object(),
-        "Wraps the selection in a fitted collision shape named for Unreal (UBX_, USP_, UCP_, UCX_) and parents it under the mesh.");
     cmd("unreal.sendBake", "Send Bake to Unreal", "Unreal", "unrealSendTextures", json::object(),
         "Sends the bake project's textures to the connected Unreal editor, updating them in place, and wires them into the "
         "materials (instances of the unreal pref materialParent when it is set).");

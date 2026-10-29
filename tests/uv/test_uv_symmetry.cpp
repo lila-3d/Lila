@@ -83,9 +83,8 @@ void splitHalves(const std::string& name)
 {
     scene::Graph& g = scene::Graph::current();
     scene::Node* n = g.find(name);
-    uv::bakeUvHistory(*n);
-    g.evaluate();
-    geo::Mesh m = *n->as<scene::MeshPtr>(scene::MeshNode::kInMesh);
+    scene::PlugRef base = uv::uvEditPlug(*n);
+    geo::Mesh m = *std::get<scene::MeshPtr>(g.storedValue(base));
     std::span<glm::vec2> uv = m.cornerAttrs().get<glm::vec2>("uv0");
     for (geo::Index f = 0; f < m.faceCapacity(); ++f)
         if (m.faceValid(f))
@@ -93,7 +92,7 @@ void splitHalves(const std::string& name)
             const float du = m.faceCentroid(f).x > 0.0 ? 0.1f : -0.1f;
             m.forEachFaceCorner(f, [&](geo::Index c) { uv[c].x += du; });
         }
-    g.setValue({n->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
+    g.setValue(base, scene::MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
 }
 
 std::vector<uint32_t> allFaces(const geo::Mesh& m)

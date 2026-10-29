@@ -134,3 +134,29 @@ TEST_CASE("relocateScene moves sweeps and lofts with their curves, leaving the h
         CHECK(back[i].points == before[i].points);
     }
 }
+
+TEST_CASE("relocateScene moves a pipe whose path curve was deleted, keeping the curve it holds")
+{
+    rcall("newScene");
+    std::string path = rcall("curve", {{"type", "poly"}, {"points", rpoints({D3(4000, 0, -2500), D3(4000, 0, -2400), D3(4100, 0, -2400)})}, {"name", "Run"}});
+    json r = rcall("pipe", {{"args", {path}}, {"preset", "pipe"}, {"sides", 8}});
+    const std::string node = r[1];
+    std::string anchor = rcall("spaceLocator", {{"name", "Anchor"}});
+    rcall("setAttr", {{"args", {"Anchor.translate", {4000, 0, -2500}}}});
+    rcall("delete", {{"args", {path}}});
+    scene::Graph& g = scene::Graph::current();
+    REQUIRE(g.find(node));
+    const scene::Node* pn = g.find(node);
+    REQUIRE(!g.source({pn->id(), pn->type().attrIndex("path"), -1}));
+
+    const std::vector<RelocState> before = relocSample();
+    json moved = rcall("relocateScene", {{"args", {anchor}}, {"from", "bottom"}, {"rotation", "yaw"}});
+    INFO(moved.dump());
+    const glm::dmat4 m = relocMatrix(moved["matrix"]);
+    CHECK(glm::length(glm::dvec3(m[3])) > 1000.0);
+    std::vector<std::string> shaped;
+    for (scene::NodeId id : g.nodes())
+        if (const scene::Node* n = g.node(id); n->type().isA("mesh"))
+            shaped.push_back(n->fullPath());
+    CHECK(relocError(before, relocSample(), m, shaped) < 1e-6);
+}

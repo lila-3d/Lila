@@ -12,7 +12,7 @@ namespace lila::ui
 {
 /**
  * Maya's command line result: the last command's report in the status bar while the Script Output panel is out of
- * sight (see OutputTail::commit). Warnings and errors carry an icon and errors are bold. Hover for the last few lines; click to open the panel.
+ * sight (see OutputTail::commit). Warnings and errors carry an icon and errors are bold. Hover for the last few lines; click to open the panel, right-click to dismiss the line.
  */
 class LILA_UI_API StatusOutput : public QWidget
 {
@@ -33,6 +33,7 @@ protected:
     bool event(QEvent* e) override;
     void paintEvent(QPaintEvent* e) override;
     void mousePressEvent(QMouseEvent* e) override;
+    void contextMenuEvent(QContextMenuEvent* e) override;
 
 private:
     void append(int level, const QString& text);

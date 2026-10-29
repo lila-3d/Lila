@@ -74,9 +74,9 @@ struct Handler
  * rotation, and String attrs holding a JSON list of world [x, y, z] points have each point moved. A Vec3 keyed by curves
  * has its keys rewritten. Names may be grouped array children ("spaces.offset"); every element is rewritten.
  *
- * Two kinds are checked rather than rewritten: channelCopies are String attrs naming a node whose channels the type keeps
- * a copy of (a joint's translate at setup), refused when that node is one of the roots taking the move; worldData are
- * Data attrs holding world-space data (curves) that must come through a connection, refused when one holds a value.
+ * worldData are Data attrs holding world-space curves, moved when unconnected and refused when they hold any other kind
+ * of data. channelCopies are checked rather than rewritten: String attrs naming a node whose channels the type keeps a
+ * copy of (a joint's translate at setup), refused when that node is one of the roots taking the move.
  */
 struct WorldAttrs
 {

@@ -33,7 +33,7 @@ namespace lila::ui
  *   Tab drag             extend a strip of quads from a border edge
  *   Tab Shift drag       extrude the whole border loop the edge is on
  *   Tab Ctrl drag        extrude along the border until it turns more than the extrude angle (Tab Ctrl wheel adjusts)
- *   Ctrl Shift click     delete the face, vertex or dot under the cursor (highlighted while hovering)
+ *   Ctrl Alt click       delete the face, vertex or dot under the cursor (highlighted while hovering)
  *   MMB or LMB drag      tweak a vertex or dot along the surface; dropping a vertex on another welds them
  *   Esc, Q/W/E/R         leave the tool
  *

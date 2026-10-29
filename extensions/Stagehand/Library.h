@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 /**
@@ -55,6 +56,8 @@ struct Root
 std::vector<Root> roots(bool existingOnly = true);
 /** The folder of a writable tier: "workspace" (needs a workspace open), "user", or a studio folder by path. */
 std::filesystem::path tierDir(const std::string& tier);
+/** A path from UTF-8 text. */
+std::filesystem::path utf8Path(std::string_view utf8);
 
 /** Every asset, the winner per id, by collection then name. Scans on first use. */
 const std::vector<Asset>& all();

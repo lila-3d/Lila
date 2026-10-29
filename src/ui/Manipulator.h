@@ -96,7 +96,10 @@ private:
         scene::NodeId id = scene::kNoNode;
         scene::PlugRef plug; // component drags: the base mesh plug
         std::array<scene::PlugValue, 8> values;
+        std::optional<scene::PlugValue> jointOrient; // joints only
     };
+    static Saved saveTransform(scene::Graph& g, scene::NodeId id);
+    static void restoreTransform(scene::Graph& g, const Saved& s);
     struct Drag
     {
         Handle handle = Handle::None;
@@ -122,6 +125,8 @@ private:
         double linearSign = 1.0;
         Tool tool = Tool::Move;
         std::vector<Saved> saved;
+        /** Pivot edit on joints: the joints' children, which the live preview moves back to stay in place. */
+        std::vector<Saved> savedChildren;
         std::vector<glm::dvec3> startPivots;
         std::vector<glm::dmat3> startPivotFrames;
         std::vector<glm::dmat3> startFrames; // objects' own axes, for aligning to a surface normal

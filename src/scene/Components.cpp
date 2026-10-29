@@ -33,6 +33,7 @@ struct State
     bool keepMode = false;    // the running command's new nodes stay in component mode
     std::vector<NodeId> selectedBefore; // objects selected when a UI select began
     uint64_t serial = 0;
+    std::map<NodeId, int> pickedWedge;
 };
 
 State& st()
@@ -564,10 +565,17 @@ Ids withSymmetry(NodeId node, ComponentMode kind, const Ids& ids)
     const std::optional<geo::SymmetryMap> map = symmetryMapFor(*n, m);
     if (!map || map->empty())
         return ids;
+    st().pickedWedge[node] = map->majorityWedge(convert(m, kind, ids, ComponentMode::Vertex));
     Ids out = kind == ComponentMode::Vertex ? map->expandPoints(ids) : kind == ComponentMode::Edge ? map->expandEdges(m, ids) : map->expandFaces(m, ids);
     std::ranges::sort(out);
     out.erase(std::unique(out.begin(), out.end()), out.end());
     return out;
+}
+
+int pickedWedge(NodeId node)
+{
+    auto it = st().pickedWedge.find(node);
+    return it == st().pickedWedge.end() ? -1 : it->second;
 }
 
 void registerCommands()

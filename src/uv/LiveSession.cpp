@@ -5,7 +5,9 @@
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "scene/Graph.h"
+#include "scene/Instancing.h"
 #include "scene/MeshNodes.h"
+#include "scene/Modifiers.h"
 #include "uv/Uv.h"
 #include "uv/UvEdit.h"
 
@@ -58,14 +60,30 @@ bool sameUvState(const geo::Mesh& a, const geo::Mesh& b, std::string_view set)
            eq(a.cornerAttrs().get<float>("uvStiffness"), b.cornerAttrs().get<float>("uvStiffness"));
 }
 
-MeshPtr outMesh(NodeId id)
+/** The mesh the uv editor shows and edits: the base under any modifiers. */
+MeshPtr cageMesh(NodeId id)
 {
     Graph& g = Graph::current();
     scene::Node* n = g.node(id);
     if (!n || !n->type().isA("mesh"))
         return nullptr;
-    g.evaluate();
-    return n->as<MeshPtr>(MeshNode::kOutMesh);
+    return scene::modifiers::cage(g, id);
+}
+
+/** The stored base mesh plug a preview can overwrite without changing the graph, or none when a generator feeds it. */
+std::optional<scene::PlugRef> previewPlug(Graph& g, NodeId mesh)
+{
+    mesh = scene::instancing::root(g, mesh);
+    std::vector<NodeId> stack = scene::modifiers::stack(g, mesh);
+    scene::PlugRef base{mesh, MeshNode::kInMesh, -1};
+    if (!stack.empty())
+        base = {stack.front(), scene::modifiers::asModifier(g.node(stack.front()))->inAttr, -1};
+    auto src = g.source(base);
+    if (!src)
+        return base;
+    if (dynamic_cast<scene::MeshSourceNode*>(g.node(src->node)))
+        return scene::PlugRef{src->node, scene::MeshSourceNode::kMesh, -1};
+    return std::nullopt;
 }
 } // namespace
 
@@ -100,7 +118,7 @@ bool Session::alive() const
 
 bool Session::current() const
 {
-    return mStamp && outMesh(mNode) == mStamp;
+    return mStamp && cageMesh(mNode) == mStamp;
 }
 
 void Session::reload()
@@ -109,7 +127,7 @@ void Session::reload()
 
     if (mOpen)
         commit();
-    mBase = outMesh(mNode);
+    mBase = cageMesh(mNode);
     mStamp = mBase;
     std::vector<LiveIsland> islands;
     if (mBase)
@@ -173,8 +191,8 @@ void Session::begin(std::string label)
         mOpen = true;
         mLabel = std::move(label);
         mPreviewed = false;
-        mBeforeIn = n->as<MeshPtr>(MeshNode::kInMesh);
-        mHasHistory = g.source({mNode, MeshNode::kInMesh, -1}).has_value();
+        mPreviewPlug = previewPlug(g, mNode);
+        mBeforeIn = mPreviewPlug ? std::get<MeshPtr>(g.storedValue(*mPreviewPlug)) : nullptr;
         mReleased = Clock::now();
         mLastPreview = Clock::now();
     }
@@ -290,9 +308,9 @@ void Session::writePreview(const LiveSolver::Frame& f)
     auto mesh = std::make_shared<const geo::Mesh>(meshFromFrame(f));
     {
         NoUndo off;
-        g.setValue({mNode, MeshNode::kInMesh, -1}, MeshPtr(mesh));
+        g.setValue(*mPreviewPlug, MeshPtr(mesh));
     }
-    mStamp = outMesh(mNode);
+    mStamp = cageMesh(mNode);
     mPreviewed = true;
     mLastPreview = Clock::now();
 }
@@ -313,7 +331,7 @@ bool Session::tick()
         reload();
         return true;
     }
-    if (f->epoch == mEpoch && fresh && !mHasHistory && Clock::now() - mLastPreview > std::chrono::milliseconds(60))
+    if (f->epoch == mEpoch && fresh && mPreviewPlug && Clock::now() - mLastPreview > std::chrono::milliseconds(60))
         writePreview(*f);
     if (!mStroking && mSolver->idle())
         commit();
@@ -344,17 +362,17 @@ void Session::commit()
     if (mPreviewed)
     {
         NoUndo off;
-        g.setValue({mNode, MeshNode::kInMesh, -1}, mBeforeIn);
+        g.setValue(*mPreviewPlug, mBeforeIn);
     }
     if (f->epoch != mEpoch || !mBase)
     {
-        mStamp = outMesh(mNode);
+        mStamp = cageMesh(mNode);
         return;
     }
     auto mesh = std::make_shared<const geo::Mesh>(meshFromFrame(*f));
     if (sameUvState(*mesh, *mBase, mSet))
     {
-        mStamp = outMesh(mNode);
+        mStamp = cageMesh(mNode);
         return;
     }
     uint64_t token = stage(mNode, mesh);
@@ -367,10 +385,10 @@ void Session::commit()
     {
         log::error("{}", e.what());
     }
-    mBase = outMesh(mNode);
+    mBase = cageMesh(mNode);
     mStamp = mBase;
     // The solver still holds the unmirrored side; reload so it matches what was committed.
-    if (scene::Node* n = g.node(mNode); n && uvSymmetryAxis(*n) >= 0)
+    if (n = g.node(mNode); n && uvSymmetryAxis(*n) >= 0)
         reload();
 }
 
@@ -402,7 +420,7 @@ Session* get(NodeId node, bool create)
             return &s;
         }
     }
-    if (!create || !outMesh(node))
+    if (!create || !cageMesh(node))
         return nullptr;
     auto s = std::make_unique<Session>(node, currentUvSet());
     Session* raw = s.get();

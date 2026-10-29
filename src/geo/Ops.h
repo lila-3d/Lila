@@ -221,6 +221,22 @@ LILA_SCENE_API std::vector<Index> pokeFaces(Mesh& mesh, std::span<const Index> f
 LILA_SCENE_API std::vector<Index> spinEdges(Mesh& mesh, std::span<const Index> edges);
 /** Caps the boundary loops through the given edges (all holes when empty). Returns the new faces. */
 LILA_SCENE_API std::vector<Index> fillHoles(Mesh& mesh, std::span<const Index> edges);
+
+struct GridFillOptions
+{
+    /** The grid's size against the hole; the rest is a ring of quads out to the border. 1 grids right to the border. */
+    double gridSize = 0.4;
+    /** Steps the grid's corners round the border. */
+    int rotate = 0;
+};
+
+/**
+ * Replaces each connected patch of faces, such as the triangle fan round a pole, with a quad grid inside a ring of
+ * quads. A patch must be a disc with one border loop; others are left alone. Returns the new faces.
+ */
+LILA_SCENE_API std::vector<Index> gridFillFaces(Mesh& mesh, std::span<const Index> faces, const GridFillOptions& opts = {});
+/** Fills the holes bordered by the given edges the same way (all holes when empty). Returns the new faces. */
+LILA_SCENE_API std::vector<Index> gridFillHoles(Mesh& mesh, std::span<const Index> edges, const GridFillOptions& opts = {});
 LILA_SCENE_API void flipNormals(Mesh& mesh, std::span<const Index> faces);
 /** Makes winding consistent within each connected part; closed parts face outward. All faces when empty. */
 LILA_SCENE_API void conformNormals(Mesh& mesh, std::span<const Index> faces = {});

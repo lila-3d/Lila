@@ -19,6 +19,7 @@ lila_module(lila_geo Scene
     OpsBasic.cpp
     OpsBevel.cpp
     OpsExtrude.cpp
+    OpsGridFill.cpp
     OpsKnife.cpp
     OpsLoop.cpp
     PlyIO.cpp

@@ -233,9 +233,9 @@ NodeId loadMaster(Graph& g, const Asset& a)
     {
         if (!sp.is_object() || !sp.contains("matrix") || !sp["matrix"].is_array() || sp["matrix"].size() != 16)
             continue;
-        const json made = ops::execute("createNode", {{"args", {"stagehandSnap"}}, {"name", sp.value("name", std::string("snap"))},
+        const json snap = ops::execute("createNode", {{"args", {"stagehandSnap"}}, {"name", sp.value("name", std::string("snap"))},
                                                       {"parent", rootPath()}, {"skipSelect", true}});
-        const std::string path = made.get<std::string>();
+        const std::string path = snap.get<std::string>();
         glm::dmat4 m;
         for (int k = 0; k < 16; ++k)
             m[k / 4][k % 4] = sp["matrix"][size_t(k)].get<double>();
@@ -531,7 +531,7 @@ void registerLibraryCommands(ext::Context& ctx)
                 throw CommandError("libraryAdd: tier '" + tier + "' has no folder (open a workspace, or give a path)");
             const std::string name = identifier(a.get<std::string>("name", g.node(ids[0])->name()));
             const std::string collection = a.get<std::string>("collection", "Props");
-            const fs::path dir = base / fs::u8path(collection) / name;
+            const fs::path dir = base / library::utf8Path(collection) / name;
             if (fs::exists(dir / "asset.json") && !a.get<bool>("overwrite", false))
                 throw CommandError("libraryAdd: " + (dir / "asset.json").generic_string() + " exists (overwrite=True replaces it)");
             fs::create_directories(dir);

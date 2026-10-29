@@ -4820,6 +4820,14 @@ def polyFillHole() -> Any:
 def polyFlip() -> Any:
     """Reverse the winding of the selected faces (the whole mesh in object mode)."""
 
+def polyGridFill(gridSize: float | None = None, rotate: int | None = None) -> Any:
+    """Rebuild triangle fans and other patches as a quad grid inside a ring of quads: select the fans' centre vertices or the faces. With edges selected, fills the holes they border the same way.
+
+    Args:
+        gridSize: The grid's size against the hole; 1 grids right to the border with no ring. Default 0.4.
+        rotate: Steps the grid's corners round the border. Default 0.
+    """
+
 def polyIcoSphere(name: str | None = None, position: Sequence[float] | None = None, rotation: Sequence[float] | None = None, normal: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, subdivisions: int | None = None, baseAtOrigin: bool | None = None, fraction: float | None = None, upAxis: str | None = None, *, n: str | None = None) -> Any:
     """Create a IcoSphere mesh. Returns [mesh, generator] (generator is None with generator=False).
 
@@ -6477,12 +6485,12 @@ def setMorphTarget(*objects: Any, inBetween: float | None = None) -> Any:
     """
 
 def setPivot(*objects: Any, position: Sequence[float] | None = None, orient: Sequence[float] | None = None) -> Any:
-    """Move the rotate and scale pivots to a world position, or orient the pivot, without moving the objects.
+    """Move the rotate and scale pivots to a world position, or orient the pivot, without moving the objects. A joint's pivot is the joint itself: position= moves the joint and orient= sets its jointOrient, leaving its children where they are.
 
     Args:
         objects: objects.
         position: World position, cm.
-        orient: Pivot orientation relative to the object's axes, Euler XYZ degrees (pivotOrient).
+        orient: Pivot orientation relative to the object's axes, Euler XYZ degrees (pivotOrient); on a joint, its jointOrient.
     """
 
 def setPoseDriverTarget(*objects: Any, rest: bool | None = None) -> Any:

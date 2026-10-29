@@ -39,7 +39,7 @@ LILA_UI_API void setChecker3d(bool on);
 /** Checks across one 0-1 tile, for the 3D checker and the editor's checker backdrop. */
 LILA_UI_API int checkerTiling();
 LILA_UI_API void setCheckerTiling(int checks);
-/** Island select: clicks and marquees in the UV editor select whole islands (as faces). */
+/** Island select: face mode where clicks and marquees, in the UV editor and the viewports, select whole uv islands. */
 LILA_UI_API bool islandSelect();
 LILA_UI_API void setIslandSelect(bool on);
 /** The 3D checker only draws while a UV editor is on screen; each editor reports its visibility here. */

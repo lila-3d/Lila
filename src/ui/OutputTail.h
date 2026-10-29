@@ -82,6 +82,9 @@ public:
     /** The line the status bar shows, or null before anything was committed. */
     const OutputLine* display() const { return mDisplay ? &*mDisplay : nullptr; }
 
+    /** Clears display() until the next commit that brings a line. */
+    void dismiss() { mDisplay.reset(); }
+
 private:
     void flushPartial()
     {

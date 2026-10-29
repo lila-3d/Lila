@@ -145,7 +145,8 @@ bool ExtrudeHandles::modifierFrame(uint64_t modifier, Frame& f) const
     const glm::dmat3 w(world);
     const glm::dmat3 normalXform = glm::transpose(glm::inverse(w));
     glm::dvec3 normalSum(0.0), outSum(0.0), centre(0.0);
-    for (geo::Index id : r->ids)
+    const scene::components::Ids ids = scene::drivingSide(mesh->id(), r->kind, r->ids, r->input);
+    for (geo::Index id : ids)
     {
         geo::Index face = id;
         if (edges)
@@ -169,7 +170,7 @@ bool ExtrudeHandles::modifierFrame(uint64_t modifier, Frame& f) const
     f.normal = glm::normalize(nw);
     f.worldPerLocal = std::max(1e-9, std::abs(glm::dot(w * localNormal, f.normal)));
     // The handles sit on the cap, where the extrusion put the faces.
-    glm::dvec3 local = centre / double(r->ids.size()) + localNormal * modifierValue(modifier, "thickness");
+    glm::dvec3 local = centre / double(ids.size()) + localNormal * modifierValue(modifier, "thickness");
     const glm::dvec3 out = outSum - localNormal * glm::dot(outSum, localNormal);
     if (edges && glm::length(out) > 1e-9)
         local += glm::normalize(out) * modifierValue(modifier, "offset");
@@ -195,7 +196,7 @@ bool ExtrudeHandles::frame(Frame& f) const
     glm::dvec3 normalSum(0.0), outSum(0.0), pointSum(0.0);
     size_t points = 0;
     bool scaled = false;
-    for (auto& [node, ids] : extruded())
+    for (auto& [node, made] : extruded())
     {
         scene::Node* n = g.node(node);
         scene::MeshPtr cage = n && n->type().isA("mesh") ? scene::modifiers::cage(g, node) : nullptr;
@@ -206,6 +207,7 @@ bool ExtrudeHandles::frame(Frame& f) const
         glm::dmat3 w(world);
         glm::dmat3 normalXform = glm::transpose(glm::inverse(w));
         glm::dvec3 localSum(0.0);
+        const scene::components::Ids ids = scene::drivingSide(node, extrudeKind(), made, cage);
         for (geo::Index p : scene::components::convert(m, extrudeKind(), ids, scene::ComponentMode::Vertex))
             if (m.pointValid(p))
             {

@@ -346,7 +346,7 @@ void Manipulator::refresh()
             return;
         mComponents = true;
         mLead = mTargets.back();
-        mPivot = scene::selectionCenter();
+        mPivot = scene::symmetricSelectionCenter();
         const Tool t = pivotTool(tools::pivotEdit(), tools::current());
         if (t == Tool::Scale)
         {
@@ -724,14 +724,14 @@ bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifier
     else if (!d.componentPivot)
         for (NodeId id : mTargets)
         {
-            Saved s;
-            s.id = id;
-            for (int k = 0; k < kSavedCount; ++k)
-                s.values[k] = g.storedValue({id, kSavedAttrs[k]});
-            d.saved.push_back(s);
+            d.saved.push_back(saveTransform(g, id));
             d.startPivots.push_back(scene::xformops::worldPivot(g, id));
             d.startPivotFrames.push_back(scene::xformops::pivotFrame(g, id));
             d.startFrames.push_back(scene::xformops::frame(g, id, scene::Space::Object));
+            if (d.pivotEdit && scene::rig::isJoint(*g.node(id)))
+                for (NodeId c : g.children(id))
+                    if (dynamic_cast<Transform*>(g.node(c)))
+                        d.savedChildren.push_back(saveTransform(g, c));
         }
     if (pivotTool(d.pivotEdit, d.tool) == Tool::Move && !d.pivotEdit && !d.componentPivot && !d.alongNormal)
     {
@@ -1146,10 +1146,32 @@ void Manipulator::restore()
             if (mDrag->components)
                 g.setValue(s.plug, s.values[0]);
             else
-                for (int k = 0; k < kSavedCount; ++k)
-                    g.setValue({s.id, kSavedAttrs[k]}, s.values[k]);
+                restoreTransform(g, s);
         }
+    for (const Saved& s : mDrag->savedChildren)
+        if (g.node(s.id))
+            restoreTransform(g, s);
     u.setEnabled(was);
+}
+
+Manipulator::Saved Manipulator::saveTransform(Graph& g, NodeId id)
+{
+    Saved s;
+    s.id = id;
+    for (int k = 0; k < kSavedCount; ++k)
+        s.values[k] = g.storedValue({id, kSavedAttrs[k]});
+    // Pivot edits turn a joint through its jointOrient.
+    if (scene::rig::isJoint(*g.node(id)))
+        s.jointOrient = g.storedValue({id, scene::Joint::kJointOrient});
+    return s;
+}
+
+void Manipulator::restoreTransform(Graph& g, const Saved& s)
+{
+    for (int k = 0; k < kSavedCount; ++k)
+        g.setValue({s.id, kSavedAttrs[k]}, s.values[k]);
+    if (s.jointOrient)
+        g.setValue({s.id, scene::Joint::kJointOrient}, *s.jointOrient);
 }
 
 glm::dmat4 Manipulator::componentXform() const
@@ -1205,12 +1227,18 @@ void Manipulator::apply()
         {
             glm::dmat3 r = glm::mat3_cast(d.rotation);
             for (size_t i = 0; i < ids.size(); ++i)
-                scene::xformops::setWorldPivotFrame(g, ids[i], r * d.startPivotFrames[i]);
+                if (scene::rig::isJoint(*g.node(ids[i])))
+                    scene::rig::setJointOrient(g, ids[i], scene::rig::turnedJointOrient(g, ids[i], r));
+                else
+                    scene::xformops::setWorldPivotFrame(g, ids[i], r * d.startPivotFrames[i]);
         }
         else if (d.pivotEdit)
         {
             for (size_t i = 0; i < ids.size(); ++i)
-                scene::xformops::setWorldPivot(g, ids[i], d.startPivots[i] + d.moveDelta);
+                if (scene::rig::isJoint(*g.node(ids[i])))
+                    scene::rig::moveNodeTo(g, ids[i], d.startPivots[i] + d.moveDelta, true);
+                else
+                    scene::xformops::setWorldPivot(g, ids[i], d.startPivots[i] + d.moveDelta);
         }
         else if (t == Tool::Move)
         {
@@ -1341,6 +1369,11 @@ void Manipulator::commit()
             for (size_t i = 0; i < d.saved.size(); ++i)
             {
                 NodeId id = d.saved[i].id;
+                if (scene::rig::isJoint(*g.node(id)))
+                {
+                    ops::execute("setPivot", {{"args", {names[i]}}, {"orient", vecJson(scene::rig::turnedJointOrient(g, id, r))}}, CallSource::UI);
+                    continue;
+                }
                 glm::dmat3 local = glm::transpose(scene::xformops::frame(g, id, scene::Space::Object)) * r * d.startPivotFrames[i];
                 glm::dvec3 hint = g.node(id)->as<glm::dvec3>(Transform::kPivotOrient);
                 glm::dvec3 euler = scene::xformops::closestEuler(local, scene::RotateOrder::XYZ, hint);

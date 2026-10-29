@@ -833,7 +833,7 @@ void registerRotationCurveType()
 {
     if (types::find("animCurveRQ"))
         return;
-    constexpr const char* kInf[] = {"constant", "linear", "cycle", "cycleRelative", "oscillate"};
+    constexpr const char* kInfinity[] = {"constant", "linear", "cycle", "cycleRelative", "oscillate"};
     NodeType t;
     t.name = "animCurveRQ";
     t.timeDependent = true;
@@ -851,9 +851,9 @@ void registerRotationCurveType()
          .doc = "Keys as JSON: [{t: seconds, q: [x, y, z, w], e: Euler degrees, i/o: tangent types, iv/ov: fixed angular "
                 "velocities in degrees per second, iw/ow: weights}]."},
         {.name = "preInfinity", .shortName = "pri", .type = PlugType::Enum, .defaultValue = int64_t(0),
-         .enumNames = {std::begin(kInf), std::end(kInf)}, .doc = "Before the first key."},
+         .enumNames = {std::begin(kInfinity), std::end(kInfinity)}, .doc = "Before the first key."},
         {.name = "postInfinity", .shortName = "poi", .type = PlugType::Enum, .defaultValue = int64_t(0),
-         .enumNames = {std::begin(kInf), std::end(kInf)}, .doc = "After the last key."},
+         .enumNames = {std::begin(kInfinity), std::end(kInfinity)}, .doc = "After the last key."},
         {.name = "weightedTangents", .shortName = "wt", .type = PlugType::Bool, .defaultValue = false,
          .doc = "Tangent handles have length as well as direction."},
         {.name = "loop", .shortName = "lp", .type = PlugType::Bool, .defaultValue = false,

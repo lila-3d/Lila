@@ -2129,8 +2129,6 @@ struct Renderer::Impl
         constexpr auto depthStage = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
         constexpr auto depthWrite = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
         constexpr auto read = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
-        constexpr auto storageWrite = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
-        constexpr auto general = VK_IMAGE_LAYOUT_GENERAL;
         constexpr auto color = VK_IMAGE_ASPECT_COLOR_BIT;
 
         barrier(cmd, v.aoDepth.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, compute | fragment, 0, depthStage,
@@ -3190,9 +3188,9 @@ struct Renderer::Impl
         {
             if (p.depth != depth || !p.image || (scene && (p.opacity < 0.999f) != blended) || textureKey(p.image, 0) == 0)
                 continue;
-            Material m;
-            m.baseColorMap = p.image;
-            VkDescriptorSet set = materialSet(&m);
+            Material material;
+            material.baseColorMap = p.image;
+            VkDescriptorSet set = materialSet(&material);
             if (!set)
                 continue;
             if (!bound)

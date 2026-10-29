@@ -313,7 +313,7 @@ void ViewportWidget::drawSoftSelectRadius(OverlayPainter& p)
     if (!mSoftDrag)
         return;
     const ViewInfo view = viewInfo();
-    const glm::dvec3 centre = scene::selectionCenter();
+    const glm::dvec3 centre = scene::symmetricSelectionCenter();
     const std::optional<QPointF> at = view.project(centre);
     if (!at)
         return;

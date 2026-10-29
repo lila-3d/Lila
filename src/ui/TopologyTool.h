@@ -48,7 +48,7 @@ LILA_UI_API const char* topoModeAction(TopoMode m);
  * menu switch modes). Shared in every mode:
  *
  *   Shift drag           live relax brush (Shift wheel resizes the brush)
- *   Ctrl Shift click     delete the face, vertex, guide, knot or stroke under the cursor
+ *   Ctrl Alt click       delete the face, vertex, guide, knot or stroke under the cursor
  *   wheel / Ctrl wheel   over a live construct: its main / second count (sides, divisions, rows, points around)
  *   Enter                freeze the active construct (and finish a cylinder); Esc cancels, then leaves
  *

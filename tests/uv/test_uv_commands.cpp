@@ -2,6 +2,7 @@
 #include "scene/Graph.h"
 #include "scene/LastOp.h"
 #include "scene/MeshNodes.h"
+#include "scene/Modifiers.h"
 #include "uv/Chart.h"
 #include "uv/Uv.h"
 #include "uv/UvCommands.h"
@@ -261,4 +262,32 @@ TEST_CASE("uvProject adjustments undo and redo one at a time")
     run("redo");
     CHECK(lo::live());
     CHECK(scale() == doctest::Approx(1.0));
+}
+
+TEST_CASE("uv edits keep the modifier stack and go onto its base")
+{
+    run("newScene");
+    std::string cube = run("polyCube")[0];
+    run("addModifier", {{"args", {cube}}, {"kind", "autoBevel"}});
+    scene::Graph& g = scene::Graph::current();
+    scene::NodeId id = g.find(cube)->id();
+    REQUIRE(scene::modifiers::stack(g, id).size() == 1);
+    run("select", {{"args", {cube}}});
+
+    run("uvProject", {{"type", "box"}});
+    run("uvPack", {{"resolution", 512}, {"padding", 8}});
+    run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
+    run("uvTransform", {{"translate", {0.1, 0.0}}});
+    CHECK(scene::modifiers::stack(g, id).size() == 1);
+
+    scene::MeshPtr base = scene::modifiers::cage(g, id);
+    scene::MeshPtr out = g.node(id)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+    CHECK(base->numFaces() == 6);
+    CHECK(out->numFaces() > 6);
+    CHECK(base->cornerAttrs().get<glm::vec2>("uv0").size() == base->cornerCapacity());
+    CHECK(out->cornerAttrs().get<glm::vec2>("uv0").size() == out->cornerCapacity());
+    run("undo");
+    run("undo");
+    run("undo");
+    CHECK(scene::modifiers::stack(g, id).size() == 1);
 }

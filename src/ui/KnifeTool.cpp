@@ -77,7 +77,7 @@ public:
         if (e->type() != QEvent::KeyPress && e->type() != QEvent::KeyRelease && e->type() != QEvent::ShortcutOverride)
             return false;
         auto* k = static_cast<QKeyEvent*>(e);
-        if ((k->key() == Qt::Key_Shift || k->key() == Qt::Key_Control) && e->type() != QEvent::ShortcutOverride)
+        if ((k->key() == Qt::Key_Shift || k->key() == Qt::Key_Control || k->key() == Qt::Key_Alt) && e->type() != QEvent::ShortcutOverride)
             viewportTools::requestRedraw();
         QWidget* focus = QApplication::focusWidget();
         if (!focus || obj != focus || !focus->inherits("lila::ui::ViewportWidget"))
@@ -148,7 +148,7 @@ void KnifeTool::activate()
     mFilter = std::make_unique<KeyFilter>(this);
     qApp->installEventFilter(mFilter.get());
     refresh();
-    log::info("Knife: click points to cut, Enter or RMB finishes, Ctrl+click an edge inserts a loop, Ctrl+Shift+click an edge deletes it, "
+    log::info("Knife: click points to cut, Enter or RMB finishes, Ctrl+click an edge inserts a loop, Ctrl+Alt+click an edge deletes it, "
               "Shift snaps, A angle, X cut through, Backspace or Z removes a point, Shift+Z puts it back, Esc cancels or exits");
 }
 
@@ -162,7 +162,7 @@ void KnifeTool::deactivate()
 bool KnifeTool::deleting() const
 {
     const Qt::KeyboardModifiers m = QGuiApplication::queryKeyboardModifiers();
-    return mPoints.empty() && (m & Qt::ShiftModifier) && (m & Qt::ControlModifier);
+    return mPoints.empty() && (m & Qt::AltModifier) && (m & Qt::ControlModifier);
 }
 
 std::optional<QCursor> KnifeTool::cursor() const { return deleting() ? deleteCursor() : QCursor(Qt::CrossCursor); }
@@ -457,7 +457,7 @@ bool KnifeTool::mousePress(QMouseEvent* e, const ViewInfo& view)
         return false;
     if (mods & Qt::ControlModifier)
     {
-        const bool del = mods & Qt::ShiftModifier;
+        const bool del = mods & Qt::AltModifier;
         if (mPoints.empty())
             if (auto h = pick(e->position(), view, false, del); h && h->second.point.kind == Kind::Edge)
             {
@@ -598,7 +598,7 @@ void KnifeTool::draw(render::FrameState&, OverlayPainter& p, const ViewInfo& vie
     const bool here = view.camera == mCursorView;
     const bool ctrl = mods & Qt::ControlModifier;
     const bool del = deleting();
-    // The hover depends on Ctrl and Shift, which change without the mouse moving.
+    // The hover depends on Ctrl, Shift and Alt, which change without the mouse moving.
     if (here && mPoints.empty() && ctrl)
         mHover = pick(mCursor, view, false, del);
     const scene::NodeId node = mNode != scene::kNoNode ? mNode : mHover ? mHover->first : scene::kNoNode;
@@ -677,7 +677,7 @@ void KnifeTool::draw(render::FrameState&, OverlayPainter& p, const ViewInfo& vie
             p.disc(*s, hot ? 6.0f : 4.0f, kHot, 16);
         }
 
-    QString help = "Knife: click to cut, Enter/RMB finish, Ctrl+click edge: loop, Ctrl+Shift+click edge: delete, Shift: snap %1%, Z/Backspace: remove point, Shift+Z: restore it, Esc: cancel";
+    QString help = "Knife: click to cut, Enter/RMB finish, Ctrl+click edge: loop, Ctrl+Alt+click edge: delete, Shift: snap %1%, Z/Backspace: remove point, Shift+Z: restore it, Esc: cancel";
     help = help.arg(snapStepFraction() * 100.0, 0, 'g', 3);
     help += QString("   A angle: %1   X through: %2").arg(mAngle ? "on" : "off", mThrough ? "on" : "off");
     drawToolMessage(p, view, help);
@@ -691,7 +691,7 @@ void registerKnifeActions()
         .category = "Mesh",
         .run = [] { viewportTools::set(std::make_unique<KnifeTool>()); },
         .doc = "Multi-cut knife: click points across a mesh to cut it, snapping to vertices and edges (Shift: snap step), Ctrl+click an "
-               "edge for an edge loop, Ctrl+Shift+click an edge to delete it, Enter or RMB finishes, A angle constraint, X cut through, Esc exits.",
+               "edge for an edge loop, Ctrl+Alt+click an edge to delete it, Enter or RMB finishes, A angle constraint, X cut through, Esc exits.",
         .python = "lila.ui.run_action(\"mesh.knife\")",
     });
 }

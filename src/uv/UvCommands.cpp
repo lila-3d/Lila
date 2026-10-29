@@ -8,6 +8,7 @@
 #include "scene/Graph.h"
 #include "scene/Instancing.h"
 #include "scene/MeshNodes.h"
+#include "scene/Modifiers.h"
 #include "geo/Symmetry.h"
 #include "uv/SymmetryUv.h"
 #include "uv/Uv.h"
@@ -36,20 +37,22 @@ using Ids = scene::components::Ids;
 
 Graph& graph() { return Graph::current(); }
 
-/** Direct edits work on the base mesh, so procedural history is baked first. */
-void bakeHistory(Node& n)
+/** The base mesh's plug under any modifiers, so uv edits keep the stack. */
+scene::PlugRef basePlug(Node& n)
 {
-    Graph& g = graph();
-    scene::PlugRef in{n.id(), MeshNode::kInMesh, -1};
-    auto src = g.source(in);
-    if (!src)
-        return;
-    g.evaluate();
-    MeshPtr baked = n.as<MeshPtr>(MeshNode::kOutMesh);
-    g.disconnect(in);
-    g.setValue(in, baked);
-    if (g.destinations(*src).empty() && !g.node(src->node)->type().dag)
-        g.deleteNode(src->node);
+    return scene::modifiers::editPlug(graph(), n.id());
+}
+
+geo::Mesh baseMesh(const scene::PlugRef& plug)
+{
+    return *std::get<MeshPtr>(graph().storedValue(plug));
+}
+
+/** The mesh component ids and uvs index: the base under any modifiers. */
+MeshPtr cageOf(Graph& g, NodeId id)
+{
+    Node* n = g.node(id);
+    return n && n->type().isA("mesh") ? scene::modifiers::cage(g, id) : nullptr;
 }
 
 std::string uvSetArg(const Args& a)
@@ -78,9 +81,9 @@ std::map<NodeId, Ids> targets(ComponentMode kind, bool allowWhole)
     // An instance's uvs are its root's: the edit goes there, so every member shows it.
     if (from != ComponentMode::Object)
         for (auto& [node, ids] : scene::components::selected(from))
-            if (Node* n = g.node(node); n && n->type().isA("mesh") && n->as<MeshPtr>(MeshNode::kOutMesh))
+            if (MeshPtr cage = cageOf(g, node))
             {
-                Ids conv = scene::components::convert(*n->as<MeshPtr>(MeshNode::kOutMesh), from, ids, kind);
+                Ids conv = scene::components::convert(*cage, from, ids, kind);
                 if (conv.empty())
                     continue;
                 Ids& into = out[scene::instancing::root(g, node)];
@@ -90,7 +93,7 @@ std::map<NodeId, Ids> targets(ComponentMode kind, bool allowWhole)
             }
     if (out.empty() && allowWhole)
         for (NodeId id : selectedMeshes(g))
-            if (g.node(id)->as<MeshPtr>(MeshNode::kOutMesh))
+            if (cageOf(g, id))
                 out[scene::instancing::root(g, id)] = {};
     return out;
 }
@@ -114,11 +117,10 @@ json editUv(const char* label, ComponentMode kind, const UvEditFn& fn, bool allo
     for (auto& [node, ids] : work)
     {
         Node& n = *g.node(node);
-        bakeHistory(n);
-        g.evaluate();
-        geo::Mesh mesh = *n.as<MeshPtr>(MeshNode::kInMesh);
+        scene::PlugRef base = basePlug(n);
+        geo::Mesh mesh = baseMesh(base);
         out[n.path()] = fn(mesh, ids, n);
-        g.setValue({node, MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(std::move(mesh))));
+        g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(mesh))));
     }
     return out.size() == 1 ? out.begin().value() : out;
 }
@@ -133,7 +135,7 @@ json queryUv(const std::function<json(const geo::Mesh&, const Ids&, Node&)>& fn)
     for (auto& [node, ids] : work)
     {
         Node& n = *graph().node(node);
-        out[n.path()] = fn(*n.as<MeshPtr>(MeshNode::kOutMesh), ids, n);
+        out[n.path()] = fn(*cageOf(graph(), node), ids, n);
     }
     return out.size() == 1 ? out.begin().value() : out;
 }
@@ -402,9 +404,9 @@ json editUvMeshes(const char* label, ComponentMode kind, const UvMeshEditFn& fn,
     return editUv(label, kind, fn, allowWhole);
 }
 
-void bakeUvHistory(Node& n)
+scene::PlugRef uvEditPlug(Node& n)
 {
-    bakeHistory(n);
+    return basePlug(n);
 }
 
 json sewUvEdges(geo::Mesh& m, std::span<const Index> edges, std::string_view uvSet, bool move)
@@ -823,14 +825,13 @@ void registerCommands()
             Graph& g = graph();
             UndoChunk chunk("UV Pack");
             std::vector<NodeId> nodes;
+            std::vector<scene::PlugRef> bases;
             std::vector<geo::Mesh> meshes;
             meshes.reserve(work.size());
             for (auto& [node, ids] : work)
             {
-                Node& n = *g.node(node);
-                bakeHistory(n);
-                g.evaluate();
-                meshes.push_back(*n.as<MeshPtr>(MeshNode::kInMesh));
+                bases.push_back(basePlug(*g.node(node)));
+                meshes.push_back(baseMesh(bases.back()));
                 nodes.push_back(node);
             }
             std::vector<PackTarget> packTargets(nodes.size());
@@ -881,7 +882,7 @@ void registerCommands()
             else
                 result = packJson(pack(packTargets));
             for (size_t i = 0; i < nodes.size(); ++i)
-                g.setValue({nodes[i], MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(std::move(meshes[i]))));
+                g.setValue(bases[i], MeshPtr(std::make_shared<geo::Mesh>(std::move(meshes[i]))));
             return result;
         },
     });

@@ -6,6 +6,7 @@
 #include "ui/ThemeModel.h"
 #include "ui/ViewportDisplay.h"
 
+#include <QContextMenuEvent>
 #include <QMouseEvent>
 #include <QPainter>
 
@@ -141,5 +142,15 @@ void StatusOutput::mousePressEvent(QMouseEvent* e)
         mOpen();
     else
         QWidget::mousePressEvent(e);
+}
+
+void StatusOutput::contextMenuEvent(QContextMenuEvent* e)
+{
+    // Accepted even when blank, so the main window's toolbar menu doesn't open over the status bar.
+    e->accept();
+    if (!shown())
+        return;
+    mTail.dismiss();
+    update();
 }
 } // namespace lila::ui

@@ -166,20 +166,23 @@ public:
 
     void setRoot(const QString& dir)
     {
+        beginFilterChange();
         mRoot = dir;
-        invalidateFilter();
+        endFilterChange();
     }
 
     void setText(const QString& text)
     {
+        beginFilterChange();
         mText = text;
-        invalidateFilter();
+        endFilterChange();
     }
 
     void setShowHidden(bool on)
     {
+        beginFilterChange();
         mShowHidden = on;
-        invalidateFilter();
+        endFilterChange();
     }
 
 protected:

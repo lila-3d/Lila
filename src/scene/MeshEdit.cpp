@@ -354,6 +354,19 @@ int selectionPieces(const geo::Mesh& m, const Ids& points)
     return pieces;
 }
 
+/** The wedge holding most of points; the one last picked with symmetry when it holds as many. */
+int driveWedge(NodeId node, const geo::SymmetryMap& sym, const Ids& points)
+{
+    const int picked = components::pickedWedge(node);
+    if (picked < 0 || picked >= sym.order())
+        return sym.majorityWedge(points);
+    std::vector<int64_t> count(size_t(sym.order()), 0);
+    for (Index p : points)
+        if (const int w = sym.wedge(p); w >= 0)
+            ++count[size_t(w)];
+    return count[size_t(picked)] == *std::max_element(count.begin(), count.end()) ? picked : sym.majorityWedge(points);
+}
+
 /** World-space distance along the edges from the nearest selected point, up to limit (infinity beyond it). */
 std::vector<double> surfaceDistances(const geo::Mesh& m, const glm::dmat4& world, const Ids& selected, double limit)
 {
@@ -444,6 +457,88 @@ glm::dvec3 selectionCenter()
         count += c.count;
     }
     return count ? sum / double(count) : sum;
+}
+
+glm::dvec3 symmetricSelectionCenter()
+{
+    Graph& g = graph();
+    g.evaluate();
+    const ComponentMode kind = components::mode();
+    if (kind == ComponentMode::Object)
+        return glm::dvec3(0.0);
+    glm::dvec3 sum(0.0);
+    size_t count = 0;
+    for (auto& [node, ids] : components::selected(kind))
+    {
+        Node* n = g.node(node);
+        MeshPtr cage = n && n->type().isA("mesh") ? modifiers::cage(g, node) : nullptr;
+        if (!cage)
+            return selectionCenter();
+        const geo::Mesh& m = *cage;
+        const glm::dmat4 w = n->as<glm::dmat4>(Transform::kWorldMatrix);
+        for (Index p : components::convert(m, kind, drivingSide(node, kind, ids, cage), ComponentMode::Vertex))
+            if (m.pointValid(p))
+            {
+                sum += glm::dvec3(w * glm::dvec4(m.position(p), 1.0));
+                ++count;
+            }
+    }
+    return count ? sum / double(count) : selectionCenter();
+}
+
+namespace
+{
+Ids drivingSideOf(const Node& n, const geo::Mesh& mesh, ComponentMode kind, const Ids& ids)
+{
+    geo::Mesh m = mesh;
+    auto sym = symmetryFor(n, m);
+    if (!sym || ids.empty())
+        return ids;
+    const Ids pts = components::convert(m, kind, ids, ComponentMode::Vertex);
+    // Radial: a ring round the axis is one connected selection and stays whole; separate pieces (a petal in every wedge)
+    // each act in place.
+    if (std::any_of(pts.begin(), pts.end(), [&](Index p) { return sym->onPlane(p); }) || (sym->isRadial() && selectionPieces(m, pts) <= 1))
+        return ids;
+    const int drive = driveWedge(n.id(), *sym, pts);
+    Ids out;
+    for (Index id : ids)
+    {
+        const Ids own = kind == ComponentMode::Vertex ? Ids{id} : components::convert(m, kind, {id}, ComponentMode::Vertex);
+        if (!own.empty() && sym->wedge(own.front()) == drive)
+            out.push_back(id);
+    }
+    return out.empty() ? ids : out;
+}
+} // namespace
+
+Ids drivingSide(NodeId node, ComponentMode kind, const Ids& ids, MeshPtr mesh)
+{
+    Graph& g = graph();
+    const Node* n = g.node(node);
+    if (!n || !n->type().isA("mesh") || kind == ComponentMode::Object)
+        return ids;
+    if (!mesh)
+        mesh = modifiers::cage(g, node);
+    const std::optional<geo::SymmetrySpec> spec = symmetrySpec(*n);
+    if (!mesh || !spec)
+        return ids;
+    const glm::dvec3 key(spec->axis, spec->offset, spec->order());
+    const int picked = components::pickedWedge(node);
+    // Building the symmetry map is the cost, and gizmos ask every frame.
+    struct Cached
+    {
+        std::weak_ptr<const geo::Mesh> mesh;
+        ComponentMode kind = ComponentMode::Object;
+        glm::dvec3 spec{0.0};
+        int picked = -1;
+        Ids ids, out;
+    };
+    static std::map<std::pair<NodeId, const geo::Mesh*>, Cached> cache;
+    std::erase_if(cache, [](const auto& e) { return e.second.mesh.expired(); });
+    Cached& c = cache[{node, mesh.get()}];
+    if (c.mesh.lock() != mesh || c.kind != kind || c.spec != key || c.picked != picked || c.ids != ids)
+        c = {mesh, kind, key, picked, ids, drivingSideOf(*n, *mesh, kind, ids)};
+    return c.out;
 }
 
 namespace
@@ -600,13 +695,14 @@ glm::dvec3 selectionNormal()
             continue;
         const geo::Mesh& m = *cage;
         glm::dmat3 toWorld = glm::inverseTranspose(glm::dmat3(n->as<glm::dmat4>(Transform::kWorldMatrix)));
+        const Ids side = drivingSide(node, kind, ids, cage);
         // Runs on every manipulator refresh, so only the selection's own faces are visited.
         glm::dvec3 local(0.0);
         if (kind == ComponentMode::Face)
-            for (Index f : ids)
+            for (Index f : side)
                 local += m.faceValid(f) ? m.faceAreaVector(f) : glm::dvec3(0.0);
         else
-            for (Index p : components::convert(m, kind, ids, ComponentMode::Vertex))
+            for (Index p : components::convert(m, kind, side, ComponentMode::Vertex))
                 if (m.pointValid(p))
                     for (Index f : m.pointFaces(p))
                         local += m.faceAreaVector(f);
@@ -777,8 +873,9 @@ glm::dmat3 selectionNormalFrame()
             const geo::Mesh& m = *cage;
             glm::dmat3 linear(nd->as<glm::dmat4>(Transform::kWorldMatrix));
             // Only the selection's own points, since this runs on every manipulator refresh.
-            const FrameContext x = frameContext(m, kind, ids, glm::inverse(linear) * ref);
-            for (Index p : components::convert(m, kind, ids, ComponentMode::Vertex))
+            const Ids side = drivingSide(node, kind, ids, cage);
+            const FrameContext x = frameContext(m, kind, side, glm::inverse(linear) * ref);
+            for (Index p : components::convert(m, kind, side, ComponentMode::Vertex))
                 if (m.pointValid(p))
                     sum += worldFrame(pointFrame(x, p), linear)[0];
         }
@@ -906,7 +1003,7 @@ int deformSelected(const char* label, const PointTargetSetup& setup, const Provi
         int drive = 0;
         if (sym)
         {
-            drive = sym->majorityWedge(pts);
+            drive = driveWedge(node, *sym, pts);
             pts = sym->expandPoints(pts);
         }
         std::vector<float> weight = softWeights(m, world, pts);
@@ -1452,6 +1549,27 @@ void registerMeshEditCommands()
     });
 
     ops::registerCommand({
+        .name = "polyGridFill",
+        .doc = "Rebuild triangle fans and other patches as a quad grid inside a ring of quads: select the fans' centre vertices "
+               "or the faces. With edges selected, fills the holes they border the same way.",
+        .flags = {{"gridSize", "", T::Float, 0.4, "The grid's size against the hole; 1 grids right to the border with no ring.", {}, {}, 0.05, 1.0},
+                  {"rotate", "", T::Int, 0, "Steps the grid's corners round the border."}},
+        .run = [](const Args& a) -> json {
+            geo::GridFillOptions o;
+            o.gridSize = std::clamp(a.get<double>("gridSize"), 0.05, 1.0);
+            o.rotate = a.get<int>("rotate");
+            const K mode = components::mode();
+            const K kind = mode == K::Vertex || mode == K::Edge ? mode : K::Face;
+            return editSelected("Grid Fill", kind, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
+                const Ids all = withMirror(m, s, sel, kind);
+                if (kind == K::Edge)
+                    return faces(geo::gridFillHoles(m, all, o));
+                return faces(geo::gridFillFaces(m, kind == K::Vertex ? geo::facesOfPoints(m, all) : all, o));
+            });
+        },
+    });
+
+    ops::registerCommand({
         .name = "polyFlip",
         .doc = "Reverse the winding of the selected faces (the whole mesh in object mode).",
         .run = [](const Args&) -> json {
@@ -1915,41 +2033,6 @@ void registerMeshEditCommands()
 
     auto vec = [](const json& j) { return glm::dvec3(j[0].get<double>(), j[1].get<double>(), j[2].get<double>()); };
 
-    // With symmetry, a selection clear of the mirror plane (a pair of legs) pivots on the driving side's own centre, so
-    // each side scales and turns in place instead of about the plane.
-    auto symmetricPivot = []() -> glm::dvec3 {
-        Graph& g = graph();
-        g.evaluate();
-        ComponentMode kind = components::mode();
-        glm::dvec3 sum(0.0);
-        size_t count = 0;
-        for (auto& [node, ids] : components::selected(kind))
-        {
-            Node* n = g.node(node);
-            if (!n || !n->type().isA("mesh") || kind == K::Object)
-                continue;
-            geo::Mesh m = baseMesh(basePlug(*n));
-            Ids pts = components::convert(m, kind, ids, K::Vertex);
-            auto sym = symmetryFor(*n, m);
-            // Radial: a ring round the axis is one connected selection and turns about its own centre; separate pieces
-            // (a petal in every wedge) each turn in place.
-            if (sym && std::none_of(pts.begin(), pts.end(), [&](Index p) { return sym->onPlane(p); }) &&
-                (!sym->isRadial() || selectionPieces(m, pts) > 1))
-            {
-                int drive = sym->majorityWedge(pts);
-                std::erase_if(pts, [&](Index p) { return sym->wedge(p) != drive; });
-            }
-            glm::dmat4 w = n->as<glm::dmat4>(Transform::kWorldMatrix);
-            for (Index p : pts)
-                if (m.pointValid(p))
-                {
-                    sum += glm::dvec3(w * glm::dvec4(m.position(p), 1.0));
-                    ++count;
-                }
-        }
-        return count ? sum / double(count) : selectionCenter();
-    };
-
     ops::registerCommand({
         .name = "moveComponents",
         .doc = "Move the selected components by an offset in world space, or with normal= push each point along its own vertex normal "
@@ -1992,10 +2075,10 @@ void registerMeshEditCommands()
         .name = "rotateComponents",
         .doc = "Rotate the selected components about a world pivot (default: their centre; with symmetry, a pair clear of the mirror plane turns about each side's own centre). Degrees, XYZ order.",
         .flags = {{"by", "", T::Vec3, nullptr, "Rotation, degrees."}, {"pivot", "", T::Vec3, nullptr, "World pivot."}},
-        .run = [vec, symmetricPivot](const Args& a) -> json {
+        .run = [vec](const Args& a) -> json {
             if (!a.has("by"))
                 throw CommandError("rotateComponents: give by=");
-            glm::dvec3 pivot = a.has("pivot") ? vec(a.flags["pivot"]) : symmetricPivot();
+            glm::dvec3 pivot = a.has("pivot") ? vec(a.flags["pivot"]) : symmetricSelectionCenter();
             glm::dmat4 r = eulerToMatrix(vec(a.flags["by"]), RotateOrder::XYZ);
             transformSelectedComponents("Rotate Components",
                                         glm::translate(glm::dmat4(1.0), pivot) * r * glm::translate(glm::dmat4(1.0), -pivot));
@@ -2009,10 +2092,10 @@ void registerMeshEditCommands()
         .flags = {{"by", "", T::Vec3, nullptr, "Factor per axis: the world axes, or the axes orient= turns them to."},
                   {"pivot", "", T::Vec3, nullptr, "World pivot."},
                   {"orient", "", T::Vec3, nullptr, "Rotation of the scale axes from the world axes, degrees, XYZ order."}},
-        .run = [vec, symmetricPivot](const Args& a) -> json {
+        .run = [vec](const Args& a) -> json {
             if (!a.has("by"))
                 throw CommandError("scaleComponents: give by=");
-            glm::dvec3 pivot = a.has("pivot") ? vec(a.flags["pivot"]) : symmetricPivot();
+            glm::dvec3 pivot = a.has("pivot") ? vec(a.flags["pivot"]) : symmetricSelectionCenter();
             const glm::dmat4 r = a.has("orient") ? eulerToMatrix(vec(a.flags["orient"]), RotateOrder::XYZ) : glm::dmat4(1.0);
             transformSelectedComponents("Scale Components", glm::translate(glm::dmat4(1.0), pivot) * r * glm::scale(glm::dmat4(1.0), vec(a.flags["by"])) *
                                                                 glm::transpose(r) * glm::translate(glm::dmat4(1.0), -pivot));
@@ -2671,7 +2754,7 @@ void registerMeshEditCommands()
         },
     });
 
-    for (const char* name : {"polyExtrude", "polyInset", "polyBevel", "polyInsertLoop", "polySplitRings", "polyOffsetLoop", "polyMerge", "polyBridge", "polyQuadrangulate",
+    for (const char* name : {"polyExtrude", "polyInset", "polyBevel", "polyInsertLoop", "polySplitRings", "polyOffsetLoop", "polyMerge", "polyBridge", "polyGridFill", "polyQuadrangulate",
                              "polySubdivide", "polyMirror", "polyTriangulate", "polyReduce", "polySoftEdge"})
         ops::setAdjustable(name);
     {

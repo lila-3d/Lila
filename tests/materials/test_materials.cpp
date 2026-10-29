@@ -368,7 +368,7 @@ TEST_CASE("texture channel from file name")
     using lila::scene::materials::guessTextureChannel;
     CHECK(guessTextureChannel("X:/Titan/Textures/T_Trooper_BF_Body_BaseColor.png") == "baseColor");
     CHECK(guessTextureChannel("T_Trooper_BF_Helmet_BaseColor_1.png") == "baseColor");
-    CHECK(guessTextureChannel("C:\tex\T_Trooper_BF_Body_CRM.png") == "orm");
+    CHECK(guessTextureChannel(R"(C:\tex\T_Trooper_BF_Body_CRM.png)") == "orm");
     CHECK(guessTextureChannel("T_Rock_N.tga") == "normal");
     CHECK(guessTextureChannel("rock_roughness.1001.exr") == "roughness");
     CHECK(guessTextureChannel("T_Rock_MRO.png") == "mro");

@@ -1,7 +1,9 @@
 #include "ops/Command.h"
+#include "scene/CenterInMesh.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
 #include "scene/OrientPivot.h"
+#include "scene/Rig.h"
 #include "scene/RigElements.h"
 #include "scene/TransformOps.h"
 
@@ -244,11 +246,14 @@ void registerTransformCommands()
 
     ops::registerCommand({
         .name = "setPivot",
-        .doc = "Move the rotate and scale pivots to a world position, or orient the pivot, without moving the objects.",
+        .doc = "Move the rotate and scale pivots to a world position, or orient the pivot, without moving the objects. "
+               "A joint's pivot is the joint itself: position= moves the joint and orient= sets its jointOrient, leaving its "
+               "children where they are.",
         .positionalDoc = "objects",
         .flags = {
             {"position", "", T::Vec3, nullptr, "World position, cm."},
-            {"orient", "", T::Vec3, nullptr, "Pivot orientation relative to the object's axes, Euler XYZ degrees (pivotOrient)."},
+            {"orient", "", T::Vec3, nullptr, "Pivot orientation relative to the object's axes, Euler XYZ degrees (pivotOrient); "
+                                             "on a joint, its jointOrient."},
         },
         .run = [](const Args& a) -> json {
             if (!a.has("position") && !a.has("orient"))
@@ -256,9 +261,14 @@ void registerTransformCommands()
             Graph& g = Graph::current();
             for (NodeId id : transformsOf(a, "setPivot"))
             {
-                if (a.has("position"))
+                const bool joint = rig::isJoint(*g.node(id));
+                if (a.has("position") && joint)
+                    rig::moveNodeTo(g, id, vec3(a.flags["position"]), true);
+                else if (a.has("position"))
                     xformops::setWorldPivot(g, id, vec3(a.flags["position"]));
-                if (a.has("orient"))
+                if (a.has("orient") && joint)
+                    rig::setJointOrient(g, id, vec3(a.flags["orient"]));
+                else if (a.has("orient"))
                     g.setValue({id, Transform::kPivotOrient}, vec3(a.flags["orient"]));
             }
             return nullptr;

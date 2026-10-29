@@ -11,6 +11,8 @@ void MainWindow::registerActions()
                           actions::run(json{{"command", "newScene"}});
                   }, nullptr, "Clears the scene and starts an empty one, asking to save changes first."});
     actions::add({"file.open", "Open Scene...", "File", [this] { openScene({}); }, nullptr, "Opens a Lila or Maya scene, replacing the current one. An FBX, OBJ or other importable file opens as a new untitled scene with it imported."});
+    actions::add({"file.reload", "Reload Scene", "File", [this] { reloadScene(); }, [] { return !io::currentPath().empty(); },
+                  "Reopens the scene from its file on disk, discarding unsaved changes after asking."});
     actions::add({"file.save", "Save Scene", "File", [this] { saveScene(false); }, nullptr, "Saves the scene to its file, asking for a name the first time."});
     actions::add({"file.saveAs", "Save Scene As...", "File", [this] { saveScene(true); }, nullptr, "Saves the scene under a new name and keeps working in that file."});
     actions::add({"file.incrementAndSave", "Increment and Save", "File", [this] { incrementAndSave(); }, nullptr,

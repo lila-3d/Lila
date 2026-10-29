@@ -103,7 +103,7 @@ geo::Bounds worldBounds(const Node& mesh)
  * Pieces reaching the lowest bottom are anchored there. Colliders are hit but never move or break, and stay visible as
  * they are. Explosions come from addExplosion (impact adds the first).
  */
-json buildTogether(Graph& g, const std::vector<Node*>& meshes, const std::vector<Node*>& colliders, const Args& a)
+json buildTogether(const std::vector<Node*>& meshes, const std::vector<Node*>& colliders, const Args& a)
 {
     const std::string materialName = a.get<std::string>("material", "concrete");
     const Preset& p = preset(materialName);
@@ -505,7 +505,7 @@ const Preset& preset(const std::string& material)
 
 void registerCommands(ext::Context& ctx)
 {
-    using T = ArgType;
+    using AT = ArgType;
     ctx.registerCommand({
         .name = "breakApart",
         .doc = "Break meshes apart like concrete, glass or wood, and (by default) simulate them falling.\n\n"
@@ -516,16 +516,16 @@ void registerCommands(ext::Context& ctx)
                "Destruction mesh, with the originals hidden; add explosions with addExplosion. Colliders are meshes the pieces hit that "
                "never move or break. Returns the modifiers.",
         .positionalDoc = "meshes (default the selection)",
-        .flags = {{"material", "m", T::String, "concrete", "How it cracks.", {"concrete", "glass", "wood"}},
-                  {"impact", "i", T::Vec3, nullptr, "Where it's hit, world space cm. Default: the centre of the mesh."},
-                  {"pieces", "p", T::Int, nullptr, "Roughly how many pieces. Default: the material's.", {}, {}, 1.0},
-                  {"seed", "", T::Int, 1, "Another seed gives another pattern."},
-                  {"blast", "b", T::Float, nullptr, "How hard the impact hits, cm/s. Default: the material's.", {}, {}, 0.0},
-                  {"startFrame", "", T::Int, nullptr, "Frame it breaks on. Default: the start of the playback range."},
-                  {"simulate", "", T::Bool, true, "Simulate the pieces; False only fractures."},
-                  {"anchor", "", T::Bool, true, "Tie the pieces touching the ground to it."},
-                  {"together", "", T::Bool, true, "Several meshes: one simulation where they hit each other. False breaks each on its own."},
-                  {"colliders", "", T::List, nullptr, "Meshes the pieces hit that never move or break (the ground around a pit, say)."}},
+        .flags = {{"material", "m", AT::String, "concrete", "How it cracks.", {"concrete", "glass", "wood"}},
+                  {"impact", "i", AT::Vec3, nullptr, "Where it's hit, world space cm. Default: the centre of the mesh."},
+                  {"pieces", "p", AT::Int, nullptr, "Roughly how many pieces. Default: the material's.", {}, {}, 1.0},
+                  {"seed", "", AT::Int, 1, "Another seed gives another pattern."},
+                  {"blast", "b", AT::Float, nullptr, "How hard the impact hits, cm/s. Default: the material's.", {}, {}, 0.0},
+                  {"startFrame", "", AT::Int, nullptr, "Frame it breaks on. Default: the start of the playback range."},
+                  {"simulate", "", AT::Bool, true, "Simulate the pieces; False only fractures."},
+                  {"anchor", "", AT::Bool, true, "Tie the pieces touching the ground to it."},
+                  {"together", "", AT::Bool, true, "Several meshes: one simulation where they hit each other. False breaks each on its own."},
+                  {"colliders", "", AT::List, nullptr, "Meshes the pieces hit that never move or break (the ground around a pit, say)."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             std::vector<std::string> names = a.objects();
@@ -551,7 +551,7 @@ void registerCommands(ext::Context& ctx)
             g.evaluate();
             json made = json::array();
             if ((meshes.size() > 1 || !colliders.empty()) && a.get<bool>("together", true) && a.get<bool>("simulate", true))
-                made.push_back(buildTogether(g, meshes, colliders, a));
+                made.push_back(buildTogether(meshes, colliders, a));
             else
                 for (Node* n : meshes)
                     made.push_back(buildOne(*n, a));
@@ -568,10 +568,10 @@ void registerCommands(ext::Context& ctx)
                "gets smaller pieces around the first one that reaches it. Invisible: add your own flash or smoke. Returns the "
                "explosion's node in the destruction's group.",
         .positionalDoc = "destruction (default the selection)",
-        .flags = {{"position", "p", T::Vec3, nullptr, "Its centre, world space cm."},
-                  {"frame", "f", T::Int, nullptr, "Frame it goes off. Default: the current frame."},
-                  {"blast", "b", T::Float, 2000.0, "Speed given to pieces at the centre, cm/s.", {}, {}, 0.0},
-                  {"radius", "r", T::Float, 300.0, "Pieces this far away or more aren't pushed, cm.", {}, {}, 1.0}},
+        .flags = {{"position", "p", AT::Vec3, nullptr, "Its centre, world space cm."},
+                  {"frame", "f", AT::Int, nullptr, "Frame it goes off. Default: the current frame."},
+                  {"blast", "b", AT::Float, 2000.0, "Speed given to pieces at the centre, cm/s.", {}, {}, 0.0},
+                  {"radius", "r", AT::Float, 300.0, "Pieces this far away or more aren't pushed, cm.", {}, {}, 1.0}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             const Setup s = setupOf(g, destructionArg(a, "addExplosion"), "addExplosion");
@@ -631,14 +631,14 @@ void registerCommands(ext::Context& ctx)
                "anything standing on them falls too. The floor under it is lowered by depth so there's somewhere to fall. "
                "Running it again on the same part changes the settings. Returns the Collapse node.",
         .positionalDoc = "destruction (default the selection)",
-        .flags = {{"part", "", T::String, nullptr, "Which of the destruction's meshes gives way. Default: the one breakApart was run on."},
-                  {"start", "s", T::Float, nullptr, "Frame the first pieces fall. Default: the current frame."},
-                  {"duration", "d", T::Float, 60.0, "Frames for the failure to cross to the far side.", {}, {}, 0.0},
-                  {"direction", "dir", T::Vec3, nullptr, "Which way the failure travels (world space). Default: +X."},
-                  {"rumble", "r", T::Float, 2.0, "How far pieces shake just before they fall, cm.", {}, {}, 0.0},
-                  {"lead", "", T::Float, 30.0, "Frames of rumbling before a piece falls.", {}, {}, 0.0},
-                  {"raggedness", "", T::Float, 0.25, "0 is a straight front; 1 drops pieces in any order.", {}, {}, 0.0, 1.0},
-                  {"depth", "", T::Float, 3000.0, "How far below it the floor is, cm.", {}, {}, 0.0}},
+        .flags = {{"part", "", AT::String, nullptr, "Which of the destruction's meshes gives way. Default: the one breakApart was run on."},
+                  {"start", "s", AT::Float, nullptr, "Frame the first pieces fall. Default: the current frame."},
+                  {"duration", "d", AT::Float, 60.0, "Frames for the failure to cross to the far side.", {}, {}, 0.0},
+                  {"direction", "dir", AT::Vec3, nullptr, "Which way the failure travels (world space). Default: +X."},
+                  {"rumble", "r", AT::Float, 2.0, "How far pieces shake just before they fall, cm.", {}, {}, 0.0},
+                  {"lead", "", AT::Float, 30.0, "Frames of rumbling before a piece falls.", {}, {}, 0.0},
+                  {"raggedness", "", AT::Float, 0.25, "0 is a straight front; 1 drops pieces in any order.", {}, {}, 0.0, 1.0},
+                  {"depth", "", AT::Float, 3000.0, "How far below it the floor is, cm.", {}, {}, 0.0}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             const Setup s = setupOf(g, destructionArg(a, "collapse"), "collapse");
@@ -694,9 +694,9 @@ void registerCommands(ext::Context& ctx)
                "(N s) and the two pieces (PieceB -1 for the ground). A .csv imports into Unreal as a Data Table (the first "
                "column is the row name); a .json is a list of objects. Returns {path, breaks}.",
         .positionalDoc = "mesh or its destruction modifier (default the selection)",
-        .flags = {{"path", "p", T::String, nullptr, "The .csv or .json file."},
-                  {"end", "e", T::Int, nullptr, "Last frame. Default: the end of the playback range."},
-                  {"profile", "ax", T::String, "ue5", "Axis profile of the positions: ue5, ue6 or generic (Lila's own).", {"ue5", "ue6", "generic"}}},
+        .flags = {{"path", "p", AT::String, nullptr, "The .csv or .json file."},
+                  {"end", "e", AT::Int, nullptr, "Last frame. Default: the end of the playback range."},
+                  {"profile", "ax", AT::String, "ue5", "Axis profile of the positions: ue5, ue6 or generic (Lila's own).", {"ue5", "ue6", "generic"}}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
@@ -744,11 +744,11 @@ void registerCommands(ext::Context& ctx)
                "Sets the modifier's seed to seed, seed + 1, ... in turn, bakes each to <folder>/<mesh>_seed<n>, and puts the seed "
                "back. Needs a seed input on the modifier (breakApart makes one). Returns the bakes' file lists.",
         .positionalDoc = "mesh (default the selection)",
-        .flags = {{"count", "c", T::Int, 4, "How many variations.", {}, {}, 1.0, 1000.0},
-                  {"seed", "s", T::Int, nullptr, "First seed. Default: the one after the modifier's own."},
-                  {"folder", "fo", T::String, "destruction", "Output folder; relative paths are under the workspace."},
-                  {"start", "st", T::Float, nullptr, "First frame. Default: the playback range."},
-                  {"end", "e", T::Float, nullptr, "Last frame."}},
+        .flags = {{"count", "c", AT::Int, 4, "How many variations.", {}, {}, 1.0, 1000.0},
+                  {"seed", "s", AT::Int, nullptr, "First seed. Default: the one after the modifier's own."},
+                  {"folder", "fo", AT::String, "destruction", "Output folder; relative paths are under the workspace."},
+                  {"start", "st", AT::Float, nullptr, "First frame. Default: the playback range."},
+                  {"end", "e", AT::Float, nullptr, "Last frame."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             std::vector<std::string> names = a.objects();

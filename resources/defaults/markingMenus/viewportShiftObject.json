@@ -13,7 +13,7 @@
     "E": [{ "label": "Inset", "action": "mesh.inset" }],
     "SE": [{ "label": "Harden Normals", "action": "mesh.hardenEdges" }, { "label": "Soften by Angle", "action": "mesh.setNormalAngle" }],
     "SW": [{ "label": "Poke", "action": "mesh.poke" }, { "label": "Collapse", "action": "mesh.collapse" }],
-    "NW": [{ "label": "Fill Hole", "action": "mesh.fillHole" }],
+    "NW": [{ "label": "Fill Hole", "action": "mesh.fillHole" }, { "label": "Grid Fill", "action": "mesh.gridFill" }],
     "W": [{ "label": "Circularize", "action": "mesh.circularize" }, { "label": "Straighten", "action": "mesh.straighten" }]
   },
   "curveSelected": {

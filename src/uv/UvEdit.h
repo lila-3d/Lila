@@ -25,8 +25,8 @@ using UvMeshEditFn = std::function<json(geo::Mesh&, const scene::components::Ids
  */
 LILA_SCENE_API json editUvMeshes(const char* label, scene::ComponentMode kind, const UvMeshEditFn& fn, bool allowWhole = true);
 
-/** Direct edits work on the base mesh, so procedural history is baked first. */
-LILA_SCENE_API void bakeUvHistory(scene::Node& n);
+/** The base mesh's plug under any modifiers (modifiers::editPlug): uv edits go there so the stack survives. */
+LILA_SCENE_API scene::PlugRef uvEditPlug(scene::Node& n);
 
 /** Unmarks the seams and welds the uvs across them; with move, each smaller island first travels onto its neighbour. */
 LILA_SCENE_API json sewUvEdges(geo::Mesh& m, std::span<const geo::Index> edges, std::string_view uvSet, bool move = true);

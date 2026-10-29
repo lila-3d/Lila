@@ -546,6 +546,79 @@ TEST_CASE("ops: poke, spin, fill, flip, conform, triangulate, quadrangulate")
     CHECK(uvsDontOverlap(tri));
 }
 
+TEST_CASE("ops: grid fill")
+{
+    auto fanCylinder = [](int sides) {
+        CylinderOptions o;
+        o.subdivAxis = sides;
+        o.capFill = CapFill::Fan;
+        return makeCylinder(o);
+    };
+    auto poles = [](const Mesh& m, size_t valence) {
+        std::vector<Index> out;
+        for (Index p = 0; p < m.pointCapacity(); ++p)
+            if (m.pointValid(p) && facesOfPoints(m, std::vector<Index>{p}).size() == valence)
+                out.push_back(p);
+        return out;
+    };
+    auto countSides = [](const Mesh& m, size_t sides) {
+        int n = 0;
+        for (Index f = 0; f < m.faceCapacity(); ++f)
+            n += m.faceValid(f) && m.faceSize(f) == sides;
+        return n;
+    };
+
+    SUBCASE("even fans become a ring and a grid of quads")
+    {
+        Mesh m = fanCylinder(40);
+        const double volume = signedVolume(m);
+        const std::vector<Index> centres = poles(m, 40);
+        REQUIRE(centres.size() == 2);
+        const std::vector<Index> made = gridFillFaces(m, facesOfPoints(m, centres));
+        CHECK(made.size() == 2 * (40 + 100));
+        checkClosed(m);
+        CHECK(signedVolume(m) == doctest::Approx(volume));
+        CHECK(countSides(m, 4) == m.numFaces());
+        m.compact();
+        CHECK(uvsDontOverlap(m));
+    }
+
+    SUBCASE("odd fans keep one triangle")
+    {
+        Mesh m = fanCylinder(21);
+        const std::vector<Index> made = gridFillFaces(m, facesOfPoints(m, poles(m, 21)));
+        CHECK(made.size() == 2 * (22 + 30));
+        checkClosed(m);
+        CHECK(countSides(m, 3) == 2);
+    }
+
+    SUBCASE("holes and a grid right to the border")
+    {
+        Mesh m = fanCylinder(16);
+        const double volume = signedVolume(m);
+        deleteFaces(m, facesOfPoints(m, poles(m, 16)));
+        GridFillOptions o;
+        o.gridSize = 1.0;
+        o.rotate = 3;
+        const std::vector<Index> made = gridFillHoles(m, {}, o);
+        CHECK(made.size() == 2 * 16);
+        checkClosed(m);
+        CHECK(signedVolume(m) == doctest::Approx(volume));
+        CHECK(countSides(m, 4) == m.numFaces());
+    }
+
+    SUBCASE("patches that are not discs are left alone")
+    {
+        Mesh m = fanCylinder(12);
+        std::vector<Index> sides;
+        for (Index f = 0; f < m.faceCapacity(); ++f)
+            if (m.faceValid(f) && m.faceSize(f) == 4)
+                sides.push_back(f);
+        CHECK(gridFillFaces(m, sides).empty());
+        checkClosed(m);
+    }
+}
+
 TEST_CASE("ops: subdivide")
 {
     Mesh cube = makeCube();

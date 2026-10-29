@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include "ops/Command.h"
+#include "scene/Components.h"
 #include "scene/Graph.h"
 
 using namespace lila;
@@ -107,5 +108,23 @@ TEST_CASE("with symmetry, scaling a pair clear of the plane keeps each part in p
     {
         CHECK(std::abs(c["center"][0].get<double>()) == doctest::Approx(7.5));
         CHECK(c["area"].get<double>() == doctest::Approx(5.0 * 30.0 * 0.25));
+    }
+}
+
+TEST_CASE("with symmetry, the side clicked holds the manipulator")
+{
+    run("newScene");
+    std::string m = run("polyCube", {{"width", 20}, {"height", 10}, {"depth", 30}, {"subdivisionsX", 4}})[0];
+    run("setSymmetry", {{"args", {m}}, {"axis", "x"}});
+    for (const char* side : {"-x", "+x"})
+    {
+        json face = run("findComponents", {{"args", {m}}, {"kind", "face"}, {"normal", {0, -1, 0}}, {"side", side}, {"extreme", side}});
+        REQUIRE(face.size() == 1);
+        run("selectComponents", {{"args", {m}}, {"faces", face}, {"symmetric", true}});
+        REQUIRE(run("componentInfo", {{"args", {m}}, {"kind", "face"}, {"fields", {"id"}}}).size() == 2);
+        const double x = scene::symmetricSelectionCenter().x;
+        CHECK(x == doctest::Approx(side[0] == '-' ? -7.5 : 7.5));
+        auto [node, ids] = *scene::components::selected(scene::ComponentMode::Face).begin();
+        CHECK(scene::drivingSide(node, scene::ComponentMode::Face, ids) == scene::components::Ids(face.begin(), face.end()));
     }
 }

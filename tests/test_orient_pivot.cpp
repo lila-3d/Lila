@@ -7,10 +7,15 @@
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/OrientPivot.h"
+#include "scene/Rig.h"
 #include "scene/Transform.h"
 #include "scene/TransformOps.h"
+#include "ui/Manipulator.h"
+#include "ui/Tools.h"
+#include "ui/ViewInfo.h"
 
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <cmath>
 #include <vector>
@@ -330,4 +335,54 @@ TEST_CASE("orientPivot command: transform mode puts back the rotation a freeze r
     run("undo");
     CHECK(near(node(cyl).as<glm::dvec3>(scene::Transform::kRotate), {0, 0, 0}));
     CHECK(near(meshOf(cyl).position(startPoint), glm::dvec3(placed * glm::dvec4(local.position(startPoint), 1.0)), 1e-6));
+}
+
+TEST_CASE("pivot-edit rotate on a joint turns it once, keeps its child, and undoes")
+{
+    using scene::Joint;
+    run("newScene");
+    run("joint", {{"name", "root"}, {"position", {0, -20, 0}}, {"parent", ""}});
+    const std::string mid = run("joint", {{"name", "mid"}, {"position", {0, 0, 0}}, {"parent", "root"}}).get<std::string>();
+    run("joint", {{"name", "tip"}, {"position", {20, 0, 0}}, {"parent", mid}});
+    const glm::dvec3 tipAt = glm::dvec3(worldOf("tip")[3]);
+
+    ui::tools::setCurrent(ui::Tool::Rotate);
+    ui::tools::setPivotEdit(true);
+    // Looking down -Z, 1 px per cm, the world origin at pixel (50, 50).
+    ui::ViewInfo view;
+    view.proj = glm::ortho(-50.0, 50.0, -50.0, 50.0, -100.0, 100.0);
+    view.width = view.height = 100.0;
+    view.ortho = true;
+    view.eye = {0.0, 0.0, 50.0};
+
+    // The same drag in one step and in many lands on the same jointOrient.
+    auto dragRing = [&](int steps) {
+        run("select", {{"args", {mid}}});
+        ui::Manipulator m;
+        m.setView(view);
+        // The first ring handle out along the diagonal.
+        double r = 6.0;
+        while (r < 49.0 && !(m.hover({50 + r, 50 + r}), m.hovering()))
+            r += 0.5;
+        REQUIRE(r < 49.0);
+        REQUIRE(m.press({50 + r, 50 + r}, Qt::LeftButton, Qt::NoModifier));
+        for (int i = 1; i <= steps; ++i)
+            m.drag({50 + r - 12.0 * i / steps, 50 + r + 12.0 * i / steps}, Qt::NoModifier);
+        m.release();
+        return node(mid).as<glm::dvec3>(Joint::kJointOrient);
+    };
+    const glm::dvec3 once = dragRing(1);
+    CHECK(glm::length(once) > 1.0);
+    CHECK(near(glm::dvec3(worldOf("tip")[3]), tipAt));
+    CHECK(near(node(mid).as<glm::dvec3>(scene::Transform::kRotate), {0, 0, 0}));
+    run("undo");
+    CHECK(near(node(mid).as<glm::dvec3>(Joint::kJointOrient), {0, 0, 0}));
+
+    const glm::dvec3 many = dragRing(8);
+    CHECK(near(many, once, 1e-6));
+    run("undo");
+    CHECK(near(node(mid).as<glm::dvec3>(Joint::kJointOrient), {0, 0, 0}));
+    CHECK(near(glm::dvec3(worldOf("tip")[3]), tipAt));
+    ui::tools::setPivotEdit(false);
+    ui::tools::setCurrent(ui::Tool::Move);
 }

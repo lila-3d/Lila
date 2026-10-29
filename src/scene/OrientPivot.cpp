@@ -537,7 +537,7 @@ void registerCommand()
             else if (!sink())
                 throw CommandError("orientPivot: mode='manipulator' needs a viewport");
 
-            const glm::dvec3 at = place ? *place : mode == "manipulator" ? selectionCenter() : xformops::worldPivot(g, targets.front());
+            const glm::dvec3 at = place ? *place : mode == "manipulator" ? symmetricSelectionCenter() : xformops::worldPivot(g, targets.front());
             if (sink())
                 sink()(at, lead);
             return {{"position", vecJson(at)}, {"x", vecJson(lead[0])}, {"y", vecJson(lead[1])}, {"z", vecJson(lead[2])}};

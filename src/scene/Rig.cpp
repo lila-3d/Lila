@@ -7,6 +7,7 @@
 #include "scene/RigElements.h"
 #include "scene/SelectAs.h"
 #include "scene/RigUtil.h"
+#include "scene/TransformOps.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -261,6 +262,30 @@ std::string mirrorName(const std::string& name, const std::string& search, const
         start = end + 1;
     }
     return changed ? out : name;
+}
+
+void setJointOrient(Graph& g, NodeId joint, const glm::dvec3& degrees)
+{
+    g.evaluate();
+    std::vector<std::pair<NodeId, glm::dmat4>> kids;
+    for (NodeId c : g.children(joint))
+        if (g.node(c)->type().isA("transform"))
+            kids.push_back({c, worldOf(*g.node(c))});
+    g.setValue({joint, Joint::kJointOrient}, degrees);
+    g.evaluate();
+    const glm::dmat4 inv = glm::inverse(worldOf(*g.node(joint)));
+    for (auto& [c, world] : kids)
+        Transform::setLocalMatrix(g, c, inv * world);
+}
+
+glm::dvec3 turnedJointOrient(Graph& g, NodeId joint, const glm::dmat3& worldRotation)
+{
+    g.evaluate();
+    const Node* j = g.node(joint);
+    const glm::dmat3 parent = orthonormal(glm::dmat3(j->as<glm::dmat4>(Transform::kParentMatrix)));
+    const glm::dvec3 hint = j->as<glm::dvec3>(Joint::kJointOrient);
+    const glm::dmat3 jo = glm::transpose(parent) * worldRotation * parent * glm::dmat3(eulerToMatrix(hint, RotateOrder::XYZ));
+    return clean(xformops::closestEuler(jo, RotateOrder::XYZ, hint));
 }
 } // namespace rig
 

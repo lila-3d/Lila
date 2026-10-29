@@ -728,6 +728,11 @@ void registerEditSkeletonTypes()
     types::registerType(std::move(t));
 }
 
+bool rig::editingSkeleton(Graph& g)
+{
+    return stateNode(g) != kNoNode;
+}
+
 void registerEditSkeletonCommands()
 {
     if (ops::find("editSkeleton"))

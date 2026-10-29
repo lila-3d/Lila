@@ -33,7 +33,7 @@ void MainWindow::buildMenus()
     };
 
     menu("File", "File");
-    menus::addActions("File", {"#Scene", "file.new", "file.open"});
+    menus::addActions("File", {"#Scene", "file.new", "file.open", "file.reload"});
     addSubmenu("File", "Recent Scenes", [this](QMenu* recent) {
         recent->setProperty(menuSearch::kNoSearchProperty, true);
         connect(recent, &QMenu::aboutToShow, this, [this, recent] {
@@ -75,7 +75,7 @@ void MainWindow::buildMenus()
     });
     menus::addActions("File", {"file.save", "file.saveAs", "file.incrementAndSave", "file.versions", "#Import and Export", "file.import", "file.convertMaya",
                         "file.exportSelection", "file.gameExporter", "file.exportMeshSequence", "window.batchRun", "file.createReference", "#Unreal", "unreal.send", "animated.sendOptions", "unreal.sync", "unreal.sendBake",
-                        "deform.exportMLDeformer", "unreal.connect", "unreal.collision", "#Workspace", "file.openFolder"});
+                        "deform.exportMLDeformer", "unreal.connect","#Workspace", "file.openFolder"});
     addSubmenu("File", "Recent Folders", [this](QMenu* recent) {
         recent->setProperty(menuSearch::kNoSearchProperty, true);
         mRecentMenu = recent;
@@ -141,7 +141,7 @@ void MainWindow::buildMenus()
 
     menu("Model", "Model");
     menus::addActions("Model", {"#Components", "mesh.extrude", "mesh.inset", "mesh.insetRegion", "mesh.bevel", "mesh.insertLoop", "mesh.splitRings", "mesh.offsetLoop", "mesh.knife", "mesh.bridge",
-                                "mesh.fillHole", "mesh.poke", "#Merge", "mesh.merge", "mesh.mergeCenter", "mesh.targetWeld", "mesh.collapse", "#Edges", "mesh.dissolve",
+                                "mesh.fillHole", "mesh.gridFill", "mesh.poke", "#Merge", "mesh.merge", "mesh.mergeCenter", "mesh.targetWeld", "mesh.collapse", "#Edges", "mesh.dissolve",
                                 "mesh.spin", "#Shape", "mesh.editEdgeFlow", "mesh.straighten", "mesh.circularize", "mesh.spherize", "mesh.flatten", "mesh.conformShape",
                                 "mesh.conformToObject"});
 

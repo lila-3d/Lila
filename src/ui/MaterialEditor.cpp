@@ -345,9 +345,10 @@ MaterialEditor::MaterialEditor(QWidget* parent) : QWidget(parent)
     mAssign = iconButton("brush", "Assign: to the selected objects, or the selected faces in face mode.");
     auto* add = iconButton("plus", "New: create a material; with objects or faces selected, also assign it to them.");
     auto* del = iconButton("trash", "Delete the material.");
+    auto* showAssigned = iconButton("target", "Show the material assigned to the selected object.");
     auto* selectUsers =
         iconButton("pointer", "Select the objects this material is assigned to. Shift+click selects the assigned faces.");
-    for (QPushButton* b : {mAssign, add, del, selectUsers})
+    for (QPushButton* b : {mAssign, add, del, showAssigned, selectUsers})
         buttons->addWidget(b);
     buttons->addStretch();
     top->addLayout(buttons);
@@ -389,6 +390,7 @@ MaterialEditor::MaterialEditor(QWidget* parent) : QWidget(parent)
         if (scene::Node* n = current())
             run("assignMaterial", {{"args", json::array({n->path()})}});
     });
+    connect(showAssigned, &QPushButton::clicked, this, [this] { followSelection(); });
     connect(selectUsers, &QPushButton::clicked, this, [this] {
         if (scene::Node* n = current())
             run("selectByMaterial", {{"args", json::array({n->path()})}, {"faces", bool(QGuiApplication::keyboardModifiers() & Qt::ShiftModifier)}});

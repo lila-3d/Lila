@@ -277,6 +277,7 @@ private:
     bool mSoftDrag = false;
     double mSoftStartRadius = 0.0;
     scene::componentPick::Hover mPreselect;
+    std::vector<uint32_t> mPreselectIsland; // in uv island select, the hovered face's island
     std::optional<QPointF> mPreselectAt; // cursor awaiting a pick
     bool mPreselectQueued = false;
     double mPreselectCostMs = 0.0;

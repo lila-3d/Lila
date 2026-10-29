@@ -88,10 +88,10 @@ int NodeType::fileAttrIndex(std::string_view n, int* element) const
     return -1;
 }
 
-bool NodeType::isRetired(std::string_view name) const
+bool NodeType::isRetired(std::string_view attr) const
 {
     for (const NodeType* t = this; t; t = t->base)
-        if (std::ranges::find(t->retiredAttrs, name) != t->retiredAttrs.end())
+        if (std::ranges::find(t->retiredAttrs, attr) != t->retiredAttrs.end())
             return true;
     return false;
 }
@@ -100,7 +100,7 @@ std::vector<int> NodeType::groupChildren(std::string_view group) const
 {
     std::vector<int> out;
     for (int i = 0; i < int(attrs.size()); ++i)
-        if (const std::string& name = attrs[i].name; name.size() > group.size() && name.starts_with(group) && name[group.size()] == '.')
+        if (const std::string& attr = attrs[i].name; attr.size() > group.size() && attr.starts_with(group) && attr[group.size()] == '.')
             out.push_back(i);
     return out;
 }

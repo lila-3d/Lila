@@ -43,7 +43,7 @@ AttrDef enumAttr(std::string name, std::vector<std::string> names, int64_t def, 
 
 std::vector<AttrDef> imagePlaneAttrs()
 {
-    std::vector<AttrDef> a(ImagePlane::kCount - Transform::kCount);
+    std::vector<AttrDef> a(size_t(int(ImagePlane::kCount) - int(Transform::kCount)));
     auto at = [&](int attr) -> AttrDef& { return a[size_t(attr - Transform::kCount)]; };
     at(ImagePlane::kImageName) = {.name = "imageName", .type = PlugType::String, .defaultValue = std::string(), .flags = kStored | AttrFile,
                                   .doc = "Image file (PNG, JPG, TGA, HDR, BMP). Relative paths resolve from the workspace root, then the scene folder."};

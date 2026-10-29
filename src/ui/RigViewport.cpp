@@ -9,6 +9,7 @@
 #include "scene/Rig.h"
 #include "ui/Actions.h"
 #include "ui/AnimProxyUi.h"
+#include "ui/CursorBadges.h"
 #include "ui/DominantInfluenceUi.h"
 #include "ui/SpacesUi.h"
 #include "ui/ViewportDisplay.h"
@@ -471,9 +472,12 @@ void registerRigActions()
         "Deletes the selected constraints, or those on the selected objects, keeping the current pose.");
     add("rig.ikHandle", "IK Handle", [] { command("ikHandle"); }, "ikHandle()",
         "Solves the chain from the first selected joint to the last with an IK handle at its end.");
-    add("rig.editSkeleton", "Edit Skeleton", [] { command("editSkeleton"); }, "editSkeleton()",
-        "Toggles skeleton editing: the skinned skeleton goes to bind pose so joints can be moved and reoriented "
-        "without deforming the mesh; turning it off rebinds and keeps the animation.");
+    actions::add({.id = "rig.editSkeleton", .label = "Edit Skeleton", .category = "Rig", .run = [] { command("editSkeleton"); },
+                  .doc = "Toggles skeleton editing: the skinned skeleton goes to bind pose so joints can be moved and reoriented "
+                         "without deforming the mesh; turning it off rebinds and keeps the animation.",
+                  .python = "editSkeleton()", .checked = [] { return scene::rig::editingSkeleton(scene::Graph::current()); }});
+    cursorBadges::add({"editSkeleton", "bone", [](const ViewportState&) { return scene::rig::editingSkeleton(scene::Graph::current()); },
+                       "Editing skeleton: skins hold their shape", {"rig.editSkeleton"}});
     add("rig.xrayJoints", "X-Ray Joints", [] {
         bool on = PrefStore::get().value<bool>("general", "/rig/xrayJoints", false);
         PrefStore::get().set("general", "/rig/xrayJoints", !on);

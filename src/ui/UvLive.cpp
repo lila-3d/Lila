@@ -106,14 +106,14 @@ void save()
     p.set(kPrefs, "/uv/heatmapTwoColour", s.twoColour);
 }
 
-MeshPtr outMeshOf(NodeId id)
+/** The mesh the uv editor shows: the base under any modifiers. */
+MeshPtr cageOf(NodeId id)
 {
     scene::Graph& g = scene::Graph::current();
     scene::Node* n = g.node(id);
     if (!n || !n->type().isA("mesh"))
         return nullptr;
-    g.evaluate();
-    return n->as<MeshPtr>(scene::MeshNode::kOutMesh);
+    return scene::modifiers::cage(g, id);
 }
 
 /** The islands' options reset to the shared ones, so a Settle's SLIM pass does not stick to later drags. */
@@ -261,7 +261,7 @@ void draw3d(render::FrameState& s, OverlayPainter&, const ViewInfo& view)
             glm::mat4 w = glm::mat4(n->as<glm::dmat4>(scene::Transform::kWorldMatrix));
             const glm::vec4 color(1.0f, 1.0f, 1.0f, 1.0f);
             s.seamLineWidth = viewportDisplay::hairlineWidth(viewportDisplay::componentThickness().uvSeam, qApp->devicePixelRatio());
-            const Seams& seams = seamLines(out, set);
+            const Seams& lines = seamLines(out, set);
             MeshPtr cage = scene::modifiers::cage(g, id);
             // Visibility indexes the cage, so it only applies while the output keeps the cage's edges.
             const auto vis = isolate::visibility(view.isolation, id, cage);
@@ -269,7 +269,7 @@ void draw3d(render::FrameState& s, OverlayPainter&, const ViewInfo& view)
             if (!clip)
             {
                 render::MeshDraw d;
-                d.mesh = seams.wire;
+                d.mesh = lines.wire;
                 d.world = w;
                 d.flags = render::DrawWire | render::DrawWireDepth;
                 d.wireColor = color;
@@ -277,11 +277,11 @@ void draw3d(render::FrameState& s, OverlayPainter&, const ViewInfo& view)
                 s.meshes.push_back(std::move(d));
                 continue;
             }
-            for (size_t i = 0; i < seams.edges.size(); ++i)
-                if (vis->edge(seams.edges[i]))
+            for (size_t i = 0; i < lines.edges.size(); ++i)
+                if (vis->edge(lines.edges[i]))
                 {
-                    s.seamLines.push_back({glm::vec3(w * glm::vec4(seams.lines[2 * i], 1.0f)), color});
-                    s.seamLines.push_back({glm::vec3(w * glm::vec4(seams.lines[2 * i + 1], 1.0f)), color});
+                    s.seamLines.push_back({glm::vec3(w * glm::vec4(lines.lines[2 * i], 1.0f)), color});
+                    s.seamLines.push_back({glm::vec3(w * glm::vec4(lines.lines[2 * i + 1], 1.0f)), color});
                 }
         }
     }
@@ -529,7 +529,7 @@ private:
     bool hit(QPointF px, const ViewInfo& view, Hit& out)
     {
         retarget();
-        MeshPtr m = outMeshOf(mNode);
+        MeshPtr m = cageOf(mNode);
         if (!m)
             return false;
         if (m != mBvhMesh && !mStroking)
@@ -772,7 +772,7 @@ std::vector<geo::Index> selectedFaces(NodeId node)
     if (mode == ComponentMode::Object)
         return {};
     const auto& ids = scene::components::selected(node, mode);
-    MeshPtr m = outMeshOf(node);
+    MeshPtr m = cageOf(node);
     if (ids.empty() || !m)
         return {};
     return scene::components::convert(*m, mode, ids, ComponentMode::Face);
@@ -876,6 +876,10 @@ void install()
     done = true;
     settings();
     viewportHooks::addDrawer(draw3d);
+    scene::components::addListener([] {
+        if (settings().islands && scene::components::mode() != scene::ComponentMode::Face)
+            setIslandSelect(false);
+    });
     // Per scene; the prefs keep the last values for scenes saved without them.
     io::registerUiSection(
         "uvChecker", [] { return nlohmann::json{{"on", settings().checker}, {"tiling", settings().checkerTiling}}; },

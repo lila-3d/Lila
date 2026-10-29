@@ -104,6 +104,30 @@ void MainWindow::openScene(const std::filesystem::path& given)
     }
 }
 
+void MainWindow::reloadScene()
+{
+    const std::filesystem::path path = io::currentPath();
+    if (path.empty())
+        return;
+    if (io::modified())
+    {
+        bringToFront(this);
+        if (QMessageBox::question(this, "Reload Scene", "Discard unsaved changes and reload " + QString::fromStdString(io::displayName()) + " from disk?") !=
+            QMessageBox::Yes)
+            return;
+    }
+    try
+    {
+        io::translators::run(io::translators::Op::Open, path, json::object(), CallSource::UI);
+        refreshSourceStatus();
+        mViewports->frameUnlessRestored();
+    }
+    catch (const CommandError& e)
+    {
+        QMessageBox::warning(this, "Reload failed", e.what());
+    }
+}
+
 void MainWindow::openRecoveredScene(const std::filesystem::path& file)
 {
     if (!confirmDiscard())

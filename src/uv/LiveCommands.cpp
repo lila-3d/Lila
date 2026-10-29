@@ -169,11 +169,10 @@ json editEdges(const char* label, const Args& a, const std::function<json(geo::M
     for (const json& e : a.flags["edges"])
         edges.push_back(e.get<Index>());
     UndoChunk chunk(label);
-    bakeUvHistory(*n);
-    g.evaluate();
-    geo::Mesh mesh = *n->as<MeshPtr>(MeshNode::kInMesh);
+    scene::PlugRef base = uvEditPlug(*n);
+    geo::Mesh mesh = *std::get<MeshPtr>(g.storedValue(base));
     json r = fn(mesh, withMirrorEdges(*n, mesh, edges));
-    g.setValue({n->id(), MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(std::move(mesh))));
+    g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(mesh))));
     return r;
 }
 } // namespace
@@ -194,8 +193,7 @@ void registerLiveCommands()
             Node* n = mesh ? g.node(node) : nullptr;
             if (!n)
                 throw CommandError("uvLiveCommit: nothing staged under that token (it is only for the live uv tools)");
-            bakeUvHistory(*n);
-            g.setValue({node, MeshNode::kInMesh, -1}, mesh);
+            g.setValue(uvEditPlug(*n), mesh);
             return n->path();
         },
     });

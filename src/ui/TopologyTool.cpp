@@ -83,7 +83,7 @@ public:
         if (e->type() != QEvent::KeyPress && e->type() != QEvent::KeyRelease)
             return false;
         auto* k = static_cast<QKeyEvent*>(e);
-        if (k->key() == Qt::Key_Shift || k->key() == Qt::Key_Control)
+        if (k->key() == Qt::Key_Shift || k->key() == Qt::Key_Control || k->key() == Qt::Key_Alt)
             viewportTools::requestRedraw();
         QWidget* focus = QApplication::focusWidget();
         if (!focus || obj != focus || !focus->inherits("lila::ui::ViewportWidget") || e->type() != QEvent::KeyPress)
@@ -759,7 +759,7 @@ bool TopologyTool::mousePress(QMouseEvent* e, const ViewInfo& view)
                 return true;
             }
     }
-    if (shift && ctrl)
+    if (ctrl && (mMods & Qt::AltModifier))
     {
         mDrag = Drag::Delete;
         return true;

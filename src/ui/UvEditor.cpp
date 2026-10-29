@@ -12,6 +12,7 @@
 #include "scene/Graph.h"
 #include "scene/Isolation.h"
 #include "scene/MeshNodes.h"
+#include "scene/Modifiers.h"
 #include "ui/Actions.h"
 #include "ui/CursorBadges.h"
 #include "ui/Deletion.h"
@@ -677,7 +678,8 @@ private:
         for (scene::NodeId id : ids)
         {
             scene::Node* n = g.node(id);
-            scene::MeshPtr mesh = n ? n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh) : nullptr;
+            // The base under any modifiers: component ids and uv edits index it.
+            scene::MeshPtr mesh = n && n->type().isA("mesh") ? scene::modifiers::cage(g, id) : nullptr;
             if (!mesh)
                 continue;
             auto old = std::find_if(mMeshes.begin(), mMeshes.end(), [&](const MeshUv& m) { return m.node == id; });
@@ -2874,8 +2876,8 @@ void UvEditor::refreshSets()
     std::set<std::string> names{uv::currentUvSet(), "uv0", "uv1"};
     scene::Graph& g = scene::Graph::current();
     for (scene::NodeId id : shownMeshes())
-        if (scene::Node* n = g.node(id))
-            if (scene::MeshPtr m = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh))
+        if (scene::Node* n = g.node(id); n && n->type().isA("mesh"))
+            if (scene::MeshPtr m = scene::modifiers::cage(g, id))
                 for (const std::string& name : m->cornerAttrs().names())
                     if (const geo::Attribute* a = m->cornerAttrs().find(name); a && a->type() == geo::AttrType::Float2)
                         names.insert(name);
@@ -2963,7 +2965,7 @@ void registerUvActions()
     for (auto [mode, label, doc] : {std::tuple{"vertex", "UV Vertex Select", "Select uv points in the UV editor (vertex mode)."},
                                     {"edge", "UV Edge Select", "Select uv edges in the UV editor (edge mode)."},
                                     {"face", "UV Face Select", "Select uv faces in the UV editor (face mode)."},
-                                    {"island", "UV Island Select", "Face mode where clicks and marquees in the UV editor select whole uv islands."}})
+                                    {"island", "UV Island Select", "Face mode where clicks and marquees, in the UV editor and the viewports, select whole uv islands."}})
     {
         std::string id = std::string("uv.") + mode + "Mode";
         actions::add({.id = id, .label = label, .category = "UV", .run = [m = std::string(mode)] { setPickMode(m); }, .doc = doc,

@@ -77,6 +77,14 @@ LILA_SCENE_API glm::dmat3 aimFrame(const glm::dvec3& primary, const glm::dvec3& 
  * between underscores. Returns the name unchanged when nothing matches.
  */
 LILA_SCENE_API std::string mirrorName(const std::string& name, const std::string& search, const std::string& replace);
+
+/** True while editSkeleton is on: joints move without deforming their skins. */
+LILA_SCENE_API bool editingSkeleton(Graph& g);
+
+/** Sets a joint's jointOrient (degrees, XYZ), leaving its children where they are. */
+LILA_SCENE_API void setJointOrient(Graph& g, NodeId joint, const glm::dvec3& degrees);
+/** The jointOrient that turns a joint by a world rotation, rotate unchanged. */
+LILA_SCENE_API glm::dvec3 turnedJointOrient(Graph& g, NodeId joint, const glm::dmat3& worldRotation);
 } // namespace rig
 
 /** Joint, skinCluster and constraint node types. Idempotent; needs the built-in transform type first. */

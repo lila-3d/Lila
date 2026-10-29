@@ -6,6 +6,7 @@
 #include "ops/Undo.h"
 #include "scene/Graph.h"
 #include "scene/Naming.h"
+#include "scene/Rig.h"
 #include "scene/Transform.h"
 #include "scene/TransformOps.h"
 
@@ -265,6 +266,43 @@ TEST_CASE("pivot edits keep the object in place")
     for (int c = 0; c < 4; ++c)
         for (int r = 0; r < 4; ++r)
             CHECK(reset[c][r] == doctest::Approx(undone[c][r]).epsilon(1e-9));
+}
+
+TEST_CASE("setPivot on a joint moves the joint and leaves its children in place")
+{
+    using namespace lila::scene;
+    run("newScene");
+    std::string root = run("joint", {{"name", "root"}, {"position", {0, 10, 0}}, {"parent", ""}}).get<std::string>();
+    std::string mid = run("joint", {{"name", "mid"}, {"position", {0, 30, 0}}, {"parent", root}}).get<std::string>();
+    std::string tip = run("joint", {{"name", "tip"}, {"position", {0, 50, 0}}, {"parent", mid}}).get<std::string>();
+    run("setPivot", {{"args", {mid}}, {"position", {5, 25, 0}}});
+    Graph& g = Graph::current();
+    g.evaluate();
+    auto at = [&](const std::string& name) { return xformops::worldPivot(g, g.find(name)->id()); };
+    CHECK(glm::length(at(mid) - glm::dvec3(5, 25, 0)) == doctest::Approx(0.0));
+    CHECK(glm::length(at(tip) - glm::dvec3(0, 50, 0)) == doctest::Approx(0.0));
+    CHECK(glm::length(at(root) - glm::dvec3(0, 10, 0)) == doctest::Approx(0.0));
+    CHECK(glm::length(g.find(mid)->as<glm::dvec3>(Transform::kRotatePivot)) == doctest::Approx(0.0));
+
+    // orient= turns the joint through jointOrient; the tip stays put and rotate is untouched.
+    run("setPivot", {{"args", {mid}}, {"orient", {0, 0, 30}}});
+    g.evaluate();
+    CHECK(glm::length(at(tip) - glm::dvec3(0, 50, 0)) == doctest::Approx(0.0).epsilon(1e-9));
+    CHECK(g.find(mid)->as<glm::dvec3>(Joint::kJointOrient).z == doctest::Approx(30.0));
+    CHECK(glm::length(g.find(mid)->as<glm::dvec3>(Transform::kRotate)) == doctest::Approx(0.0));
+    CHECK(glm::length(g.find(mid)->as<glm::dvec3>(Transform::kPivotOrient)) == doctest::Approx(0.0));
+
+    // A manipulator turn: the joint's world rotation becomes the turn applied to the old one.
+    const NodeId midId = g.find(mid)->id();
+    const glm::dmat3 before(g.find(mid)->as<glm::dmat4>(Transform::kWorldMatrix));
+    const glm::dmat3 turn(eulerToMatrix(glm::dvec3(20, 0, 0), RotateOrder::XYZ));
+    rig::setJointOrient(g, midId, rig::turnedJointOrient(g, midId, turn));
+    g.evaluate();
+    const glm::dmat3 after(g.find(mid)->as<glm::dmat4>(Transform::kWorldMatrix));
+    const glm::dmat3 expected = turn * before;
+    for (int c = 0; c < 3; ++c)
+        CHECK(glm::length(after[c] - expected[c]) == doctest::Approx(0.0).epsilon(1e-9));
+    CHECK(glm::length(at(tip) - glm::dvec3(0, 50, 0)) == doctest::Approx(0.0).epsilon(1e-9));
 }
 
 TEST_CASE("matchPivot copies position, orientation or both")

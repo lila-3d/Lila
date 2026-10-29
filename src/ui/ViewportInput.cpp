@@ -45,7 +45,9 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
         requestFrame();
         return;
     }
-    if (ViewportTool* tool = viewportTools::active(); tool && !(e->modifiers() & Qt::AltModifier) && tool->mousePress(e, viewInfo()))
+    // Ctrl+Alt is not navigation, so tools can bind it.
+    const bool altNav = (e->modifiers() & Qt::AltModifier) && !(e->modifiers() & Qt::ControlModifier);
+    if (ViewportTool* tool = viewportTools::active(); tool && !altNav && tool->mousePress(e, viewInfo()))
     {
         mToolDrag = true;
         submit();
@@ -185,7 +187,7 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
     if (mSoftDrag)
     {
         // Drag right to grow the falloff, left to shrink; scaled by how big a pixel is at the selection.
-        double upp = viewInfo().unitsPerPixel(scene::selectionCenter());
+        double upp = viewInfo().unitsPerPixel(scene::symmetricSelectionCenter());
         double r = std::max(0.01, mSoftStartRadius + (e->position().x() - mPressPos.x()) * upp);
         PrefStore::get().set("general", "/softSelect/radius", r);
         requestFrame();

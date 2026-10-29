@@ -475,7 +475,7 @@ void createAt(const std::string& command, const QString& label)
     focusViewportUnderCursor();
     if (hasComponentSelection())
     {
-        actions::runWithOptions(command, {{"position", vec(scene::selectionCenter())}, {"normal", vec(scene::selectionNormal())}});
+        actions::runWithOptions(command, {{"position", vec(scene::symmetricSelectionCenter())}, {"normal", vec(scene::selectionNormal())}});
         if (const scene::lastOp::Op* op = scene::lastOp::current(); op && op->command == command && scene::lastOp::live())
             viewportTools::set(std::make_unique<ResizeCreatedTool>(command, label));
         return;

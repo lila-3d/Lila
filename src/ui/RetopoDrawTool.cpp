@@ -119,8 +119,8 @@ public:
         if (e->type() != QEvent::KeyPress && e->type() != QEvent::KeyRelease && e->type() != QEvent::ShortcutOverride)
             return false;
         auto* k = static_cast<QKeyEvent*>(e);
-        // The fill preview and delete cursor follow Shift and Ctrl without waiting for the mouse to move.
-        if ((k->key() == Qt::Key_Shift || k->key() == Qt::Key_Control) && e->type() != QEvent::ShortcutOverride)
+        // The fill preview and delete cursor follow Shift, Ctrl and Alt without waiting for the mouse to move.
+        if ((k->key() == Qt::Key_Shift || k->key() == Qt::Key_Control || k->key() == Qt::Key_Alt) && e->type() != QEvent::ShortcutOverride)
             viewportTools::requestRedraw();
         QWidget* focus = QApplication::focusWidget();
         if (!focus || obj != focus || !focus->inherits("lila::ui::ViewportWidget"))
@@ -162,7 +162,7 @@ void RetopoDrawTool::activate()
     cursorBadges::add({kMergeBadge, "arrow-merge", [this](const ViewportState&) { return merging(); }, "Vertex merges on release"});
     refresh();
     log::info("Retopo Draw on {} into {}: click dots, Shift-click to fill or place an angle-snapped dot, Ctrl-drag loops, "
-              "Tab-drag extends (Shift: whole loop, Ctrl: up to the extrude angle), Shift-drag relaxes, Ctrl+Shift-click deletes, Esc exits",
+              "Tab-drag extends (Shift: whole loop, Ctrl: up to the extrude angle), Shift-drag relaxes, Ctrl+Alt-click deletes, Esc exits",
               mRefMesh ? scene::Graph::current().node(mReference)->path() : std::string("(no reference)"), mRetopoName);
 }
 
@@ -287,7 +287,7 @@ scene::Node* RetopoDrawTool::retopoNode() const
 bool RetopoDrawTool::deleting() const
 {
     Qt::KeyboardModifiers m = QGuiApplication::queryKeyboardModifiers();
-    return (m & Qt::ShiftModifier) && (m & Qt::ControlModifier) && (mDrag == Drag::None || mDrag == Drag::DeleteClick);
+    return (m & Qt::AltModifier) && (m & Qt::ControlModifier) && (mDrag == Drag::None || mDrag == Drag::DeleteClick);
 }
 
 std::optional<QCursor> RetopoDrawTool::cursor() const
@@ -873,7 +873,7 @@ bool RetopoDrawTool::mousePress(QMouseEvent* e, const ViewInfo& view)
     }
     if (e->button() != Qt::LeftButton)
         return false;
-    if (shift && ctrl)
+    if (ctrl && (mMods & Qt::AltModifier))
         mDrag = Drag::DeleteClick;
     else if (mTabDown)
     {
@@ -1464,7 +1464,7 @@ void registerRetopoActions()
         nullptr,
         "Draw a new quad mesh over the selected reference, or resume on a selected retopo mesh: click dots, Shift-click to fill "
         "(or, with nothing to fill, place a dot on an angle-snapped line), "
-        "Ctrl-drag loops, Tab-drag extends (Tab+Shift: whole loop, Tab+Ctrl: up to the extrude angle), Shift-drag relaxes, MMB-drag tweaks, Ctrl+Shift-click deletes. Esc or Q/W/E/R exits.",
+        "Ctrl-drag loops, Tab-drag extends (Tab+Shift: whole loop, Tab+Ctrl: up to the extrude angle), Shift-drag relaxes, MMB-drag tweaks, Ctrl+Alt-click deletes. Esc or Q/W/E/R exits.",
         "lila.ui.run_action(\"retopo.draw\")",
     });
     actions::add({

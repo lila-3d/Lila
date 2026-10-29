@@ -60,6 +60,11 @@ LILA_SCENE_API void select(NodeId node, ComponentMode kind, const Ids& ids, Op o
 LILA_SCENE_API void clear();
 /** ids with their mirror images added when the mesh node's symmetry is on; ids unchanged otherwise. */
 LILA_SCENE_API Ids withSymmetry(NodeId node, ComponentMode kind, const Ids& ids);
+/**
+ * The symmetry wedge (side) the ids last given to withSymmetry on this node mostly sat in, -1 when none. A selection with
+ * as much on every side drives from it, so the side clicked leads.
+ */
+LILA_SCENE_API int pickedWedge(NodeId node);
 /** Replaces everything at once, as one undo step. */
 LILA_SCENE_API void setAll(std::map<NodeId, Ids> points, std::map<NodeId, Ids> edges, std::map<NodeId, Ids> faces);
 
@@ -120,6 +125,16 @@ LILA_SCENE_API std::vector<float> softWeights(const std::vector<glm::dvec3>& wor
 
 /** World-space centre of the selected components' points. */
 LILA_SCENE_API glm::dvec3 selectionCenter();
+/**
+ * selectionCenter, except that with symmetry a selection clear of the mirror plane (a pair of legs) gives the driving
+ * side's own centre, where it turns and scales in place.
+ */
+LILA_SCENE_API glm::dvec3 symmetricSelectionCenter();
+/**
+ * ids cut to the side that drives a symmetric edit when the mesh's symmetry is on and they lie clear of the mirror plane
+ * (a pair of legs); ids otherwise. What gizmos centre and orient on. mesh is the one the ids index, the cage when null.
+ */
+LILA_SCENE_API components::Ids drivingSide(NodeId node, ComponentMode kind, const components::Ids& ids, MeshPtr mesh = nullptr);
 /** Applies a world-space transform to the selected components' points (with symmetry), as one undo step. */
 LILA_SCENE_API void transformSelectedComponents(const char* label, const glm::dmat4& worldXform);
 /** Where a world point lands on a surface, for conforming moved components to it. */
@@ -134,7 +149,10 @@ LILA_SCENE_API SurfaceProjector closestOnMeshes(const std::vector<NodeId>& meshe
  * selection, points on the selected faces sum only those, so the region moves as one surface.
  */
 LILA_SCENE_API std::vector<glm::dvec3> componentNormals(const geo::Mesh& mesh, ComponentMode kind, const components::Ids& ids);
-/** World-space average normal of the selected components, for orienting the manipulator; +Y when there is none. */
+/**
+ * World-space average normal of the selected components (their drivingSide), for orienting the manipulator; +Y when there
+ * is none.
+ */
 LILA_SCENE_API glm::dvec3 selectionNormal();
 /** Moves each selected point (with soft selection and symmetry) by a world distance along its own normal, as one undo step. */
 LILA_SCENE_API void offsetSelectedComponents(const char* label, double distance);

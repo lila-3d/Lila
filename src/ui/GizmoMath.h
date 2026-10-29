@@ -121,7 +121,8 @@ inline double lineParam(const glm::dvec3& p, const glm::dvec3& a, const glm::dve
     double denom = 1.0 - b * b;
     if (std::abs(denom) < 1e-9)
         return 0.0;
-    return (b * e - dd) / denom;
+    // Clamped as well as guarded: MSVC warns C4723 when it folds a constant parallel call down to /0.
+    return (b * e - dd) / std::max(denom, 1e-9);
 }
 
 /** Ray o + t*d against the plane through p with normal n. False when the ray runs parallel to it. */
@@ -130,7 +131,7 @@ inline bool rayPlane(const glm::dvec3& o, const glm::dvec3& d, const glm::dvec3&
     double denom = glm::dot(d, n);
     if (std::abs(denom) < 1e-9)
         return false;
-    hit = o + d * (glm::dot(p - o, n) / denom);
+    hit = o + d * (glm::dot(p - o, n) / (std::abs(denom) < 1e-9 ? 1.0 : denom)); // see lineParam
     return true;
 }
 

@@ -94,6 +94,7 @@ private:
     void incrementAndSave();
     void showVersions();
     void openScene(const std::filesystem::path& path);
+    void reloadScene();
     void openRecoveredScene(const std::filesystem::path& file);
     void openExample(const io::examples::Example& example);
     /** welcome: examples and recent scenes; otherwise recent scenes alone. */

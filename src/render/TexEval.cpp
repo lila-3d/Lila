@@ -1774,13 +1774,13 @@ size_t Evaluator::recordPages(VulkanContext& vk, VkCommandBuffer cmd, std::span<
         const VkDeviceSize base = st.pageBase + VkDeviceSize(j) * st.pageTexels;
         for (int b : regions)
         {
-            const int m = int(kPageMargin);
-            const std::array<int, 4> rect{job.x0 - m, job.y0 - m, job.x0 + job.width + m, job.y0 + job.height + m};
+            const int margin = int(kPageMargin);
+            const std::array<int, 4> rect{job.x0 - margin, job.y0 - margin, job.x0 + job.width + margin, job.y0 + job.height + margin};
             const VkDeviceSize at = (base + st.pageExternalAt.at(b)) * kTexel;
-            const uint32_t stride = uint32_t(job.width + 2 * m);
+            const uint32_t stride = uint32_t(job.width + 2 * margin);
             if (!load || !load(vk, cmd, plan.buffers[size_t(b)].name, job.levelWidth, job.levelHeight, rect, st.arena.address + at, stride))
-                vkCmdFillBuffer(cmd, st.arena.buffer, at, VkDeviceSize(stride) * VkDeviceSize(job.height + 2 * m) * kTexel, 0);
-            st.sliceLoaded += uint64_t(stride) * uint64_t(job.height + 2 * m);
+                vkCmdFillBuffer(cmd, st.arena.buffer, at, VkDeviceSize(stride) * VkDeviceSize(job.height + 2 * margin) * kTexel, 0);
+            st.sliceLoaded += uint64_t(stride) * uint64_t(job.height + 2 * margin);
         }
     }
     compute::memoryBarrier(cmd);

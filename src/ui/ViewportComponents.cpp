@@ -1,8 +1,30 @@
 #include "ui/ViewportWidgetDetail.h"
 
+#include "ui/UvLive.h"
+#include "uv/Chart.h"
+#include "uv/Uv.h"
+
 namespace lila::ui
 {
 using namespace viewportDetail;
+
+namespace
+{
+/** Whether face picks grow to whole uv islands (the UV editor's island select mode). */
+bool uvIslandPick()
+{
+    return scene::components::mode() == scene::ComponentMode::Face && uvLive::islandSelect();
+}
+
+/** Every face of the uv islands (in the current uv set) that hold one of the faces. */
+std::vector<uint32_t> viewportUvIslands(const geo::Mesh& m, std::span<const uint32_t> faces)
+{
+    uv::ChartOptions co;
+    co.source = uv::IslandSource::Uvs;
+    co.uvSet = uv::currentUvSet();
+    return uv::islandsOfFaces(m, faces, co);
+}
+} // namespace
 
 scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
 {
@@ -217,6 +239,11 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
             it = it->second.empty() ? hits.erase(it) : std::next(it);
         }
     }
+
+    if (uvIslandPick())
+        for (auto& [id, ids] : hits)
+            if (scene::MeshPtr mesh = scene::modifiers::cage(g, id))
+                ids = viewportUvIslands(*mesh, ids);
 
     bool shift = mods & Qt::ShiftModifier, ctrl = mods & Qt::ControlModifier;
     if (click && hits.empty() && !shift && !ctrl && pickOtherObject(a))
@@ -591,10 +618,23 @@ void ViewportWidget::updatePreselect()
             if (scene::Node* n = findNode(names.front()))
                 next.node = n->id();
     }
+    bool islandChanged = false;
+    if (!uvIslandPick() || next.empty())
+    {
+        islandChanged = !mPreselectIsland.empty();
+        mPreselectIsland.clear();
+    }
+    else if (next != mPreselect || mPreselectIsland.empty())
+        if (scene::MeshPtr mesh = scene::modifiers::cage(scene::Graph::current(), next.node))
+        {
+            const uint32_t seed[] = {next.id};
+            mPreselectIsland = viewportUvIslands(*mesh, seed);
+            islandChanged = true;
+        }
     mPreselectCostMs = double(timer.nsecsElapsed()) / 1e6;
     const bool highlightChanged = !sameHighlight(highlight, mHandlerHover);
     mHandlerHover = std::move(highlight);
-    if (next == mPreselect && !highlightChanged)
+    if (next == mPreselect && !highlightChanged && !islandChanged)
         return;
     mPreselect = next;
     requestFrame();
@@ -606,6 +646,7 @@ void ViewportWidget::clearPreselect()
     if (mPreselect.empty() && !mHandlerHover)
         return;
     mPreselect = {};
+    mPreselectIsland.clear();
     mHandlerHover.reset();
     requestFrame();
 }
@@ -787,6 +828,13 @@ void ViewportWidget::drawPreselect(render::FrameState& s)
                 component(mirror, kMirrorAlpha);
             drawn.push_back(mirror);
         }
+    }
+    if (!mPreselectIsland.empty() && uvIslandPick())
+    {
+        const auto vis = isolate::visibility(&mIsolation, mPreselect.node, mesh);
+        for (uint32_t f : mPreselectIsland)
+            if (f != id && m.faceValid(f) && vis->face(f))
+                component(f, 1.0f);
     }
     component(id, 1.0f);
     // Edge hover calls out the poles at its ends.

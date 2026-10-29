@@ -158,6 +158,15 @@ TEST_CASE("output tail displays a command's report over its echo, whichever came
     CHECK_FALSE(t.add(LogLevel::Debug, "noise\n"));
     CHECK_FALSE(t.commit());
     CHECK(t.display()->text == "move(1, 0, 0)");
+
+    // Dismissed stays blank until the next command reports.
+    t.dismiss();
+    CHECK(t.display() == nullptr);
+    CHECK_FALSE(t.commit());
+    CHECK(t.display() == nullptr);
+    t.add(LogLevel::Info, "done\n");
+    CHECK(t.commit());
+    CHECK(t.display()->text == "done");
 }
 
 TEST_CASE("camera history of a camera node restores its transform")

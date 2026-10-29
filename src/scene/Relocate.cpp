@@ -1,6 +1,7 @@
 #include "scene/Relocate.h"
 
 #include "core/Profile.h"
+#include "curve/CurveNodes.h"
 #include "geo/Mesh.h"
 #include "gn/Group.h"
 #include "gn/NodeLib.h"
@@ -730,6 +731,33 @@ Edit planPointLists(const Move& mv, NodeId node, const std::vector<std::string>&
     return chain(std::move(edits));
 }
 
+/** Unconnected curves a history node holds (left when its source curve was deleted) are moved point by point. */
+Edit planWorldData(const Move& mv, NodeId node, const std::vector<std::string>& names, Notes& notes)
+{
+    Graph& g = *mv.graph;
+    const Node* n = g.node(node);
+    std::vector<Edit> edits;
+    for (const std::string& name : names)
+    {
+        const int attr = n->type().attrIndex(name);
+        if (attr < 0 || g.source({node, attr, -1}))
+            continue;
+        const DataPtr* d = std::get_if<DataPtr>(&n->value(attr));
+        if (!d || !*d)
+            continue;
+        if (std::string((*d)->kind()) != "curve")
+            refuse(n->path() + " holds world-space " + name + " of its own rather than from a connection");
+        curve::Splines splines = curve::splinesOf(n->value(attr));
+        for (curve::Spline& s : splines)
+            curve::transform(s, mv.matrix);
+        const PlugRef plug{node, attr, -1};
+        lockNote(g, plug, notes);
+        PlugValue next = curve::makeCurveData(std::move(splines));
+        edits.push_back([&g, plug, next] { writeThrough(g, plug, next); });
+    }
+    return chain(std::move(edits));
+}
+
 /** Handlers and plans that report notes see the run's notes through this. */
 Notes* gNotes = nullptr;
 
@@ -759,10 +787,7 @@ Handler worldAttrsHandler(WorldAttrs w)
             if (int attr = n->type().attrIndex(name); attr >= 0)
                 if (const Node* copied = g.find(n->as<std::string>(attr)); copied && mv.rootMove(copied->id()))
                     refuse(n->path() + " keeps a copy of where " + copied->path() + " stood, which moves as a root; move its parent instead");
-        for (const std::string& name : w.worldData)
-            if (int attr = n->type().attrIndex(name); attr >= 0 && !g.source({node, attr, -1}))
-                if (const DataPtr* d = std::get_if<DataPtr>(&n->value(attr)); d && *d)
-                    refuse(n->path() + " holds world-space " + name + " of its own rather than from a connection");
+        edits.push_back(planWorldData(mv, node, w.worldData, notes()));
         return chain(std::move(edits));
     }, .worldOutput = worldOutput};
 }
@@ -1117,7 +1142,7 @@ Anchor anchorFor(Graph& g, const std::string& from, const std::vector<NodeId>& s
         const ComponentMode m = components::mode();
         if (m == ComponentMode::Object || components::selected(m).empty())
             throw CommandError(std::string(cmd) + ": from='components' needs selected components");
-        a.point = selectionCenter();
+        a.point = symmetricSelectionCenter();
         if (a.object == kNoNode && !components::selected(m).empty())
             a.object = components::selected(m).begin()->first;
         return a;
@@ -1793,7 +1818,7 @@ void registerBuiltins()
     registerWorldAttrs("jiggle", {.directions = {"gravity"}});
     for (const char* t : {"arrayModifier", "booleanModifier", "surfaceFlowModifier", "transferAttributesModifier"})
         registerWorldAttrs(t, {.matrices = {"targetMatrix"}});
-    // Curve history: world-space curves in, world-space geometry out; curves of their own (unconnected) are refused.
+    // Curve history: world-space curves in, world-space geometry out; curves of their own (unconnected) move with the scene.
     registerNeutral("curveText");
     for (const char* t : {"curveLoft", "curveNetwork", "curvePatch", "meshBorderBlend"})
         registerWorldAttrs(t, {.worldOutput = true});
