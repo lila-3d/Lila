@@ -1,5 +1,6 @@
 #include "ui/Telemetry.h"
 
+#include "core/CrashUpload.h"
 #include "core/Log.h"
 #include "core/Paths.h"
 #include "core/PrefStore.h"
@@ -40,8 +41,8 @@ namespace lila::telemetry
 {
 namespace
 {
-/** The ingest Worker; empty until it is deployed, so events only queue. LILA_TELEMETRY_URL overrides it. */
-constexpr const char* kEndpoint = "";
+/** The ingest Worker (services/telemetry-worker). LILA_TELEMETRY_URL overrides it. */
+constexpr const char* kEndpoint = "https://lila-telemetry.lila3d.workers.dev/e";
 constexpr int kFlushIntervalMs = 30 * 60 * 1000;
 constexpr int kFirstFlushDelayMs = 10 * 1000;
 
@@ -525,11 +526,23 @@ void endSession(bool keepEvents)
     }
 }
 
+/** What the crash watchdog reads when Lila dies (see CrashUpload.h). */
+void writeCrashConsent()
+{
+    PrefStore& prefs = PrefStore::get();
+    crash::upload::Consent c;
+    c.send = !optedOutByEnvironment() && prefs.value<bool>("general", ui::kTelemetryCrashPref, false);
+    c.always = prefs.value<bool>("general", kCrashAlwaysPref, false);
+    c.prefsFile = prefs.userDir() / "general.json";
+    crash::upload::writeConsent(prefs.userDir() / "telemetry" / crash::upload::kConsentFile, c);
+}
+
 void followPref()
 {
     State& st = state();
     if (!st.store)
         return;
+    writeCrashConsent();
     if (enabled())
     {
         beginSession();

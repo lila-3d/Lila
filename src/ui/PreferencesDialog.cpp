@@ -514,6 +514,7 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         section(general, "Telemetry");
         toggle(general, "Send anonymous usage statistics", kTelemetryUsagePref, false);
         toggle(general, "Send crash reports", kTelemetryCrashPref, false);
+        toggle(general, "Send crash reports without asking", telemetry::kCrashAlwaysPref, false);
         auto onboarding = [&general](const char* label, const char* key, const std::vector<std::pair<std::string, std::string>>& choices) {
             std::vector<std::pair<QString, std::string>> options;
             for (const auto& [shown, value] : choices)

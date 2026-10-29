@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "core/CrashUpload.h"
 #include "ui/Telemetry.h"
 
 #include <cstdlib>
@@ -142,4 +143,47 @@ TEST_CASE("telemetry sessions left by a gone process become crashed session ends
     CHECK(p["command_sources"]["ui"] == 1);
     CHECK(p["command_sources"]["python"] == 1);
     CHECK(p["$geoip_disable"] == true);
+}
+
+TEST_CASE("crash report upload strips identifying details")
+{
+    const std::string report = "Lila crashed: access violation in lila_scene.dll+0x10, at lila::Foo::bar (X:/Lila/src/scene/Foo.cpp:12)\n"
+                               "\n[app]\nversion: 0.1.0\n" R"(exe: C:\Users\Jane Doe\Lila\lila.exe)" "\n" R"(configDir: C:\Users\Jane Doe\AppData\Roaming\Lila)" "\n"
+                               "\n[system]\nos: Windows 11\nmachine: JANE-PC\n"
+                               "\n[context]\nscene: D:/Projects/Secret/hero.lila\ntool: move\n"
+                               "\n[stack]\n  lila_scene.dll!lila::Foo::bar (X:/Lila/src/scene/Foo.cpp:12)\n"
+                               R"(  opened D:\Projects\Secret\hero.lila for JANE-PC)" "\n"
+                               "\n[log]\n  Saved D:/Projects/Secret/hero.lila\n"
+                               "\n[commands]\n  polyCube(name='secretThing')\n";
+    std::string out = crash::upload::sanitize(report, {"Jane Doe", "JANE-PC"});
+    CHECK(out.find("Jane") == std::string::npos);
+    CHECK(out.find("JANE-PC") == std::string::npos);
+    CHECK(out.find("Secret") == std::string::npos);
+    CHECK(out.find("hero") == std::string::npos);
+    CHECK(out.find("secretThing") == std::string::npos);
+    CHECK(out.find("Foo.cpp:12") != std::string::npos);
+    CHECK(out.find("polyCube") != std::string::npos);
+    CHECK(out.find("version: 0.1.0") != std::string::npos);
+    CHECK(out.find("tool: move") != std::string::npos);
+}
+
+TEST_CASE("crash consent round trip and always-send writes the prefs")
+{
+    fs::path dir = freshDir("consent");
+    fs::path consent = dir / "crash-consent.json";
+    fs::path prefs = dir / "general.json";
+    std::ofstream(prefs) << R"({"telemetry": {"usage": true}})";
+    crash::upload::writeConsent(consent, {.send = true, .always = false, .prefsFile = prefs});
+    crash::upload::Consent c = crash::upload::readConsent(consent);
+    CHECK(c.send);
+    CHECK_FALSE(c.always);
+    CHECK(c.prefsFile == prefs);
+
+    crash::upload::setAlways(consent, true);
+    CHECK(crash::upload::readConsent(consent).always);
+    std::ifstream in(prefs);
+    json j = json::parse(in);
+    CHECK(j["telemetry"]["crashAlways"] == true);
+    CHECK(j["telemetry"]["usage"] == true);
+    CHECK_FALSE(crash::upload::readConsent(dir / "missing.json").send);
 }

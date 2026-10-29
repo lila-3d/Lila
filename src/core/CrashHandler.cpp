@@ -599,6 +599,8 @@ bool startWatchdog(const WatchOptions& options)
     wchar_t exePath[MAX_PATH * 4];
     DWORD n = GetModuleFileNameW(nullptr, exePath, DWORD(std::size(exePath)));
     arg(L"--restart", std::wstring(exePath, n));
+    if (!options.consentFile.empty())
+        arg(L"--consent", options.consentFile.wstring());
     if (options.fullDump)
         cmd += L" --full";
     if (!options.ui)

@@ -37,6 +37,7 @@ inline constexpr const char* kRolePref = "/telemetry/onboarding/role";
 inline constexpr const char* kTeamSizePref = "/telemetry/onboarding/teamSize";
 inline constexpr const char* kPreviousDccPref = "/telemetry/onboarding/previousDcc";
 inline constexpr const char* kOnboardingSentPref = "/telemetry/onboarding/sent";
+inline constexpr const char* kCrashAlwaysPref = "/telemetry/crashAlways";
 inline constexpr int kMaxAttempts = 5;
 inline constexpr size_t kMaxQueued = 500;
 

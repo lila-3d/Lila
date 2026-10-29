@@ -5,6 +5,7 @@
 #include "bake/BakePipeline.h"
 #include "batch/BatchCommands.h"
 #include "batch/BatchRunner.h"
+#include "core/CrashUpload.h"
 #include "core/Events.h"
 #include "core/Log.h"
 #include "core/MainQueue.h"
@@ -259,6 +260,9 @@ crash::WatchOptions crashOptions(bool gui)
     o.registerWer = gui;
     o.keepReports = size_t(std::max(1, PrefStore::get().value<int>("general", "/crash/keepReports", 20)));
     o.fullDump = PrefStore::get().value<bool>("general", "/crash/fullDump", false);
+    // Nothing is sent from lilabatch.
+    if (gui)
+        o.consentFile = PrefStore::get().userDir() / "telemetry" / crash::upload::kConsentFile;
     return o;
 }
 

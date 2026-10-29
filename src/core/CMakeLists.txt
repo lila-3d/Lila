@@ -1,13 +1,14 @@
 # The crash report and capture code, without Lila's dependencies, for the lilacrash watchdog and the lilawer WER helper.
 # LilaFoundation compiles the same sources for itself.
-set(LILA_CRASHKIT_SOURCES CrashReport.cpp CrashCapture.cpp CrashWatch.cpp)
-set(LILA_CRASHKIT_LIBS)
+set(LILA_CRASHKIT_SOURCES CrashReport.cpp CrashCapture.cpp CrashWatch.cpp CrashUpload.cpp)
+set(LILA_CRASHKIT_LIBS nlohmann_json::nlohmann_json)
 if(WIN32)
-    set(LILA_CRASHKIT_LIBS dbghelp version wevtapi shcore dxgi)
+    set(LILA_CRASHKIT_LIBS nlohmann_json::nlohmann_json dbghelp version wevtapi shcore dxgi winhttp)
 endif()
 add_library(lila_crashkit STATIC ${LILA_CRASHKIT_SOURCES})
 target_include_directories(lila_crashkit PUBLIC ${CMAKE_SOURCE_DIR}/src)
-target_compile_definitions(lila_crashkit PUBLIC LILA_CRASHKIT_STATIC)
+# The shared PCH sees TBB through the vcpkg include path; the helpers must not link it.
+target_compile_definitions(lila_crashkit PUBLIC LILA_CRASHKIT_STATIC __TBB_NO_IMPLICIT_LINKAGE=1)
 target_link_libraries(lila_crashkit PUBLIC ${LILA_CRASHKIT_LIBS})
 
 lila_module(lila_core Foundation

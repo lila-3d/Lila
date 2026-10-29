@@ -26,6 +26,8 @@ struct WatchOptions
     bool fullDump = false;
     /** Register lilawer.dll with Windows Error Reporting, so fail-fast crashes still get stacks and a minidump. */
     bool registerWer = true;
+    /** The user's crash-report choice, read by the watchdog at crash time (see CrashUpload.h); empty never sends. */
+    std::filesystem::path consentFile;
 };
 
 /**
