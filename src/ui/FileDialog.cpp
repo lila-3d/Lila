@@ -57,7 +57,8 @@ namespace
 {
 constexpr const char* kFdPrefs = "general";
 constexpr const char* kFdBookmarksPref = "/fileDialog/bookmarks";
-constexpr const char* kFdRecentPref = "/fileDialog/recent";
+constexpr const char* kFdBookmarkNamesPref = "/fileDialog/bookmarkNames";
+constexpr const char* kFdRecentPref ="/fileDialog/recent";
 constexpr const char* kFdLastDirPref = "/fileDialog/lastDir";
 constexpr const char* kFdStatePref = "/fileDialog/state";
 constexpr int kFdRecentMax = 12;
@@ -97,6 +98,27 @@ void fdSetPrefList(const char* key, const QStringList& list)
     for (const QString& s : list)
         arr.push_back(s.toStdString());
     PrefStore::get().set(kFdPrefs, key, arr);
+}
+
+/** Bookmark aliases, keyed by folder path. */
+QString fdBookmarkName(const QString& dir)
+{
+    const json v = PrefStore::get().value(kFdPrefs, kFdBookmarkNamesPref);
+    const std::string key = dir.toStdString();
+    return v.is_object() && v.contains(key) && v[key].is_string() ? QString::fromStdString(v[key].get<std::string>())
+                                                                   : QString();
+}
+
+void fdSetBookmarkName(const QString& dir, const QString& name)
+{
+    json v = PrefStore::get().value(kFdPrefs, kFdBookmarkNamesPref);
+    if (!v.is_object())
+        v = json::object();
+    if (name.isEmpty())
+        v.erase(dir.toStdString());
+    else
+        v[dir.toStdString()] = name.toStdString();
+    PrefStore::get().set(kFdPrefs, kFdBookmarkNamesPref, v);
 }
 
 QString fdClean(const QString& dir) { return dir.isEmpty() ? QString() : QDir::cleanPath(QDir::fromNativeSeparators(dir)); }
@@ -469,6 +491,7 @@ void FileDialog::Impl::build(const QString& caption)
     sidebar->setIconSize(QSize(16, 16));
     sidebar->setItemDelegate(new FdSidebarDelegate(sidebar));
     sidebar->setContextMenuPolicy(Qt::CustomContextMenu);
+    sidebar->setEditTriggers(QAbstractItemView::EditKeyPressed);
     sidebar->setFrameShape(QFrame::NoFrame);
     sideLayout->addWidget(sidebarFilter);
     sideLayout->addWidget(sidebar, 1);
@@ -613,6 +636,19 @@ void FileDialog::Impl::build(const QString& caption)
         else
             show(item->data(0, FdPathRole).toString(), true);
     });
+    QObject::connect(sidebar, &QTreeWidget::itemChanged, q, [this](QTreeWidgetItem* item) {
+        if (FdKind(item->data(0, FdKindRole).toInt()) != FdKind::Bookmark)
+            return;
+        const QString path = item->data(0, FdPathRole).toString();
+        QString name = item->text(0).trimmed();
+        if (name == fdDisplayName(path))
+            name.clear();
+        if (name == fdBookmarkName(path))
+            return;
+        fdSetBookmarkName(path, name);
+        // Rebuilt later: the item is still inside its own change notification.
+        QMetaObject::invokeMethod(q, [this] { buildSidebar(); }, Qt::QueuedConnection);
+    });
     QObject::connect(sidebar, &QTreeWidget::customContextMenuRequested, q, [this](const QPoint& pos) {
         QTreeWidgetItem* item = sidebar->itemAt(pos);
         if (!item)
@@ -633,6 +669,12 @@ void FileDialog::Impl::build(const QString& caption)
             };
             menu.addAction("Move Up", [move, at]() mutable { move(at - 1); })->setEnabled(at > 0);
             menu.addAction("Move Down", [move, at]() mutable { move(at + 1); })->setEnabled(at + 1 < bookmarks.size());
+            menu.addAction(icon("pencil"), "Alias\tF2", [this, item] { sidebar->editItem(item); });
+            if (!fdBookmarkName(path).isEmpty())
+                menu.addAction("Clear Alias",[this, path] {
+                    fdSetBookmarkName(path, {});
+                    buildSidebar();
+                });
             menu.addAction(icon("bookmark-minus"), "Remove Bookmark", [this, path] { bookmarkFolder(path, false); });
         }
         else if (at < 0)
@@ -688,7 +730,11 @@ void FileDialog::Impl::buildSidebar()
     QTreeWidgetItem* quick = section("Bookmarks");
     const QStringList bookmarks = fdPrefList(kFdBookmarksPref);
     for (const QString& d : bookmarks)
-        entry(quick, FdKind::Bookmark, d, fdDisplayName(d), "folder");
+    {
+        const QString alias = fdBookmarkName(d);
+        QTreeWidgetItem* item = entry(quick, FdKind::Bookmark, d, alias.isEmpty() ? fdDisplayName(d) : alias, "folder");
+        item->setFlags(item->flags() | Qt::ItemIsEditable);
+    }
     if (bookmarks.isEmpty())
     {
         auto* hint = new QTreeWidgetItem(quick, {"Bookmark folders with the bookmark button"});
@@ -941,6 +987,8 @@ void FileDialog::Impl::bookmarkFolder(const QString& d, bool on)
     bookmarks.removeAll(d);
     if (on)
         bookmarks << d;
+    else
+        fdSetBookmarkName(d, {});
     fdSetPrefList(kFdBookmarksPref, bookmarks);
     buildSidebar();
     if (d == dir)
@@ -997,6 +1045,13 @@ void FileDialog::Impl::showListMenu(const QPoint& pos)
         if (edit)
             menu.addAction(icon("folder-plus"), "New Folder", [this] { newFolder(); });
         menu.addAction("Open in File Manager", [this] { QDesktopServices::openUrl(QUrl::fromLocalFile(dir)); });
+        if (!index.isValid())
+        {
+            const bool bookmarked = fdPrefList(kFdBookmarksPref).contains(dir);
+            menu.addAction(icon(bookmarked ? "bookmark-minus" : "bookmark-plus"),
+                           bookmarked ? "Remove Bookmark" : "Bookmark This Folder",
+                           [this, bookmarked] { bookmarkFolder(dir, !bookmarked); });
+        }
     }
     menu.exec(view->viewport()->mapToGlobal(pos));
 }
