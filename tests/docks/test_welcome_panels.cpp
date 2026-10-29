@@ -126,7 +126,7 @@ TEST_CASE("material editor filters by name and shows icon-only buttons in order"
     for (QPushButton* b : editor.findChildren<QPushButton*>(Qt::FindDirectChildrenOnly))
         if (b->text().isEmpty() && !b->icon().isNull())
             tips << b->toolTip().section(' ', 0, 0).remove(':');
-    CHECK(tips.mid(0, 4) == QStringList{"Assign", "New", "Delete", "Select"});
+    CHECK(tips == QStringList{"Assign", "New", "Delete", "Show", "Select"});
 }
 
 TEST_CASE("display layers panel marks empty layers")
