@@ -119,6 +119,7 @@ lila_module(lila_ui UI
     PreferencesDialog.cpp PreferencesDialog.h
     Telemetry.cpp Telemetry.h
     SupportBundle.cpp SupportBundle.h
+    Updater.cpp Updater.h
     ProgressOverlay.cpp ProgressOverlay.h
     ReferenceEditor.cpp ReferenceEditor.h
     RenderSettingsDialog.cpp RenderSettingsDialog.h

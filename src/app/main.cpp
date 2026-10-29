@@ -2,6 +2,7 @@
 #include "core/CrashHandler.h"
 #include "core/Version.h"
 #include "ui/AppMain.h"
+#include "ui/Updater.h"
 
 #include <cstdio>
 #ifdef _WIN32
@@ -28,6 +29,8 @@ int main(int argc, char** argv)
         return 0;
     }
 
+    if (!opts.batch && ui::updater::deferToRunningInstall())
+        return 0;
     host::startCore();
     ui::registerBatchCommands();
     const std::filesystem::path startupScene = host::openStartupWorkspace(opts);

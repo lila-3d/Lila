@@ -29,6 +29,8 @@ SolidCompression=yes
 WizardStyle=modern
 CloseApplications=yes
 RestartApplications=no
+; Lila checks for this and waits instead of starting on half-replaced files.
+SetupMutex=LilaSetup
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -48,7 +50,20 @@ Name: "{autodesktop}\Lila"; Filename: "{app}\lila.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\lila.exe"; Description: "{cm:LaunchProgram,Lila}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\lila.exe"; Flags: nowait; Check: RelaunchRequested
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\python-runtime"
 Type: filesandordirs; Name: "{app}\python"
+
+[Code]
+{ Lila leaves this flag when someone opened it while a silent update was installing. }
+function RelaunchRequested: Boolean;
+var
+  Flag: String;
+begin
+  Flag := GetEnv('TEMP') + '\LilaUpdate\relaunch';
+  Result := WizardSilent and FileExists(Flag);
+  if Result then
+    DeleteFile(Flag);
+end;

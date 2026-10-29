@@ -35,6 +35,7 @@
 #include "ui/SurfaceSnap.h"
 #include "ui/TargetWeldTool.h"
 #include "ui/Telemetry.h"
+#include "ui/Updater.h"
 #include "ui/CurveUi.h"
 #include "ui/ConformTool.h"
 #include "ui/TexturePaintTool.h"
@@ -275,6 +276,7 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
                 python::run(opts.command, "<command>");
         });
         QTimer::singleShot(3000, &window, [] { docs::startAutoUpdate(); });
+        updater::startAutoCheck(&window);
         rc = app.exec();
         docs::shutdown();
     }
@@ -282,6 +284,7 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
     bake::shutdownRebakes();
     bake::cancelAsyncBake(true);
     telemetry::stop();
+    updater::installPendingOnExit();
     io::recovery::endSession();
 
     mcp::Server::get().stop();

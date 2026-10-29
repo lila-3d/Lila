@@ -1,0 +1,101 @@
+# Push a tag like v0.2.0 (matching project(Lila VERSION ...) in CMakeLists.txt) to build, test and publish the
+# installer and latest.json as a GitHub release. Release.cmd does the same on your own machine.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release, such as v0.2.0 (must already exist)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-2022
+    timeout-minutes: 360
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Skip if already released
+        id: existing
+        shell: pwsh
+        run: |
+          gh release view $env:TAG --repo ${{ github.repository }} *> $null
+          "released=$([int]($LASTEXITCODE -eq 0))" >> $env:GITHUB_OUTPUT
+
+      - name: Check the tag matches the version
+        if: steps.existing.outputs.released == '0'
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path CMakeLists.txt -Pattern 'project\(Lila VERSION ([0-9.]+)').Matches[0].Groups[1].Value
+          if ("v$version" -ne $env:TAG) { throw "Tag $env:TAG doesn't match CMakeLists.txt version $version" }
+
+      - uses: actions/setup-python@v5
+        if: steps.existing.outputs.released == '0'
+        with:
+          python-version: "3.14"
+
+      - name: Python packages Lila bundles
+        if: steps.existing.outputs.released == '0'
+        run: python -m pip install numpy
+
+      - uses: jurplel/install-qt-action@v4
+        if: steps.existing.outputs.released == '0'
+        with:
+          version: "6.11.1"
+          arch: win64_msvc2022_64
+          cache: true
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: steps.existing.outputs.released == '0'
+
+      - name: vcpkg cache
+        if: steps.existing.outputs.released == '0'
+        uses: actions/cache@v4
+        with:
+          path: vcpkg_installed
+          key: vcpkg-${{ hashFiles('vcpkg.json', 'vcpkg-ports/**') }}
+
+      - name: Configure
+        if: steps.existing.outputs.released == '0'
+        shell: pwsh
+        run: |
+          $env:VCPKG_ROOT = $env:VCPKG_INSTALLATION_ROOT
+          # vcpkg.json's builtin-baseline must be in the runner's vcpkg history.
+          git -C $env:VCPKG_ROOT fetch --quiet origin
+          $env:LILA_QT_DIR = $env:QT_ROOT_DIR
+          $env:LILA_PYTHON_DIR = $env:pythonLocation
+          cmake --preset windows
+
+      - name: Build
+        if: steps.existing.outputs.released == '0'
+        run: cmake --build build --config Release
+
+      - name: Test
+        if: steps.existing.outputs.released == '0'
+        run: build\bin\Release\lila_tests.exe
+
+      - name: Installer
+        if: steps.existing.outputs.released == '0'
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $env:LILA_PYTHON_DIR = $env:pythonLocation
+          & scripts\installer\build.ps1 -Config Release
+
+      - name: Publish
+        if: steps.existing.outputs.released == '0'
+        shell: pwsh
+        run: |
+          $version = $env:TAG.Substring(1)
+          gh release create $env:TAG "build-installer\Lila-$version-Setup.exe" build-installer\latest.json --title "Lila $version" --generate-notes

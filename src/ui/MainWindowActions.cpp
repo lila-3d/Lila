@@ -1,5 +1,6 @@
 #include "ui/MainWindowDetail.h"
 #include "ui/SupportBundle.h"
+#include "ui/Updater.h"
 
 namespace lila::ui
 {
@@ -291,6 +292,8 @@ void MainWindow::registerActions()
                       copyCrashReport(all.front());
                       statusBar()->showMessage("Crash report copied: " + QString::fromStdWString(all.front().wstring()), 5000);
                   }, nullptr, "Puts the newest crash report on the clipboard, ready to paste into a bug report."});
+    actions::add({"help.checkUpdates", "Check for Updates...", "Help", [this] { updater::checkNow(this); }, nullptr,
+                  "Looks for a newer Lila and offers to install it when Lila closes."});
     actions::add({"help.supportBundle", "Save Support Bundle...", "Help", [this] { support::showDialog(this); }, nullptr,
                   "Saves a zip with your system, this session's log, recent crash reports and prefs, to attach to a bug report."});
     actions::add({"help.telemetry", "Telemetry and Privacy...", "Help", [this] { showTelemetrySettings(this); }, nullptr,

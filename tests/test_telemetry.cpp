@@ -4,6 +4,7 @@
 #include "core/PrefStore.h"
 #include "ui/SupportBundle.h"
 #include "ui/Telemetry.h"
+#include "ui/Updater.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -216,4 +217,20 @@ TEST_CASE("support bundle zips the session and redacts secrets from prefs")
     CHECK(text.find("<redacted>") != std::string::npos);
     PrefStore::get().flush();
     fs::remove(PrefStore::get().userDir() / "test_support.json");
+}
+
+TEST_CASE("updater compares versions and reads the manifest")
+{
+    namespace up = ui::updater;
+    CHECK(up::compareVersions("0.10.0", "0.9.2") == 1);
+    CHECK(up::compareVersions("0.1.0", "0.1") == 0);
+    CHECK(up::compareVersions("1.0.0", "1.0.1") == -1);
+    CHECK(up::compareVersions("2", "1.99.99") == 1);
+
+    up::Release r = up::parseManifest(json::parse(R"({"version": "0.2.0", "page": "https://example.com/v0.2.0", "sha256": 5})"));
+    CHECK(r.version == "0.2.0");
+    CHECK(r.page == "https://example.com/v0.2.0");
+    CHECK(r.installer.empty());
+    CHECK(r.sha256.empty());
+    CHECK(up::parseManifest(json::array()).version.empty());
 }

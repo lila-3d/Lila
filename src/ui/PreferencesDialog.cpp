@@ -22,6 +22,7 @@
 #include "ui/TexturePicker.h"
 #include "ui/ThemeEditor.h"
 #include "ui/Telemetry.h"
+#include "ui/Updater.h"
 #include "ui/ThemeModel.h"
 #include "ui/ViewportDisplay.h"
 #include "ui/editor/CodeEditor.h"
@@ -511,6 +512,7 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         toggle(general, "Offer agent setup per workspace", "/agents/promptOnTerminal", true);
         section(general, "Docs");
         toggle(general, "Download docs updates at startup", "/docs/autoUpdate", true);
+        toggle(general, "Check for Lila updates at startup", updater::kCheckPref, true);
         section(general, "Telemetry");
         toggle(general, "Send anonymous usage statistics", kTelemetryUsagePref, false);
         toggle(general, "Send crash reports", kTelemetryCrashPref, false);
