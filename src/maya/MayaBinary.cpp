@@ -6,6 +6,7 @@
 #include <bit>
 #include <cstring>
 #include <format>
+#include <set>
 #include <unordered_map>
 
 /**
@@ -399,6 +400,8 @@ public:
             scope.set(double(c.data - bytes.data()));
             scope.checkCancel();
         }
+        for (Reference& r : f.references)
+            r.loaded = !mUnloaded.contains(r.refNode);
         if (truncated)
             f.warnings.push_back("the file is truncated; what could be read was kept");
         for (const auto& [code, n] : mUnknown)
@@ -448,7 +451,9 @@ private:
             if (!n.name.empty())
                 f.nodes.push_back(std::move(n));
         }
-        else if (c.form != tag("FRDI"))
+        else if (c.form == tag("FRDI"))
+            loadState(kids);
+        else
             node(c, kids);
     }
 
@@ -491,6 +496,25 @@ private:
             uint32_t id = c.u32();
             if (c.ok() && !type.empty())
                 mPluginTypes[id] = type;
+        }
+    }
+
+    /** Depth, path, namespace, two flag bytes (the second set when unloaded), reference node. Only the scene's own references count. */
+    void loadState(const std::vector<Chunk>& kids)
+    {
+        for (const Chunk& k : kids)
+        {
+            if (k.tag != tag("FRDI"))
+                continue;
+            Cursor c(k.data, k.size);
+            const uint32_t depth = c.u32();
+            c.str();
+            c.str();
+            c.u8();
+            const bool unloaded = c.u8() != 0;
+            const std::string refNode = c.str();
+            if (c.ok() && depth == 1 && unloaded)
+                mUnloaded.insert(refNode);
         }
     }
 
@@ -775,6 +799,7 @@ private:
     std::unordered_map<uint32_t, std::string> mPluginTypes;
     std::map<uint32_t, int> mUnknown;
     std::map<std::string, int> mSkippedValues;
+    std::set<std::string> mUnloaded; // reference nodes of the references saved unloaded
     std::string mCurrentType;
 };
 } // namespace

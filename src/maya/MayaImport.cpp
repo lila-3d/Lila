@@ -830,6 +830,8 @@ public:
         // After the curves and playback, so planes on animated cameras are placed as the scene opens.
         buildImagePlanes();
         buildDisplayLayers();
+        // Last, so the reference keeps the edits everything above made to its nodes.
+        unloadDeferredRefs();
         for (const ParentEdit& p : mFile.parents)
             if (p.add && !mInstanceEdits.contains(&p))
                 mR.skipped.push_back(std::format("instance of '{}' under '{}' (only mesh shapes are converted)", p.child, p.parent));
@@ -3187,6 +3189,11 @@ private:
                 mR.warnings.push_back(std::format("reference '{}' nested too deep, skipped", ref.path));
                 continue;
             }
+            if (!ref.loaded && mOpts.references == "import")
+            {
+                mR.skipped.push_back(std::format("reference '{}' (unloaded in Maya)", ref.path));
+                continue;
+            }
             const bool ok = mOpts.references == "import" ? importRefNodes(info) : referenceFile(info);
             if (!ok)
                 continue;
@@ -3196,8 +3203,10 @@ private:
                 json edits = json::array();
                 for (auto& [node, attrs] : info.nestedEdits.items())
                     edits.push_back({{"node", node}, {"attrs", attrs}});
-                mNested->refs.push_back(
-                    {{"namespace", info.lilaNs}, {"path", paths::storedPath(info.lila, mNested->outDir)}, {"loaded", true}, {"edits", edits}});
+                mNested->refs.push_back({{"namespace", info.lilaNs},
+                                         {"path", paths::storedPath(info.lila, mNested->outDir)},
+                                         {"loaded", ref.loaded},
+                                         {"edits", edits}});
             }
             mRefs.push_back(std::move(info));
         }
@@ -3324,6 +3333,25 @@ private:
         for (const std::string& w : warnings)
             mR.warnings.push_back(std::format("reference '{}': {}", info.ref->path, w));
         return true;
+    }
+
+    /** Unloads the live references Maya saved unloaded, their edits kept for when they load. */
+    void unloadDeferredRefs()
+    {
+        bool any = false;
+        for (const RefInfo& info : mRefs)
+            if (info.live && !info.ref->loaded && mOpts.references == "reference")
+                if (io::Reference* r = io::refs::find(info.lilaNs))
+                {
+                    UndoOff off;
+                    io::refs::unload(*r);
+                    any = true;
+                }
+        if (!any)
+            return;
+        auto gone = [&](NodeId id) { return mG.node(id) == nullptr; };
+        for (std::vector<NodeId>* ids : {&mR.nodes, &mR.roots, &mR.joints, &mR.skins, &mR.morphs, &mR.cameras, &mR.lights, &mR.imagePlanes})
+            std::erase_if(*ids, gone);
     }
 
     /** The source a conversion records, relative to the .lila's folder when it can be. */

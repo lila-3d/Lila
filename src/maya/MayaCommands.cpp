@@ -405,7 +405,7 @@ void registerCommands()
                     ++counts[n.type];
             json refs = json::array();
             for (const Reference& r : f.references)
-                refs.push_back({{"path", r.path}, {"namespace", r.ns}, {"type", r.type}});
+                refs.push_back({{"path", r.path}, {"namespace", r.ns}, {"type", r.type}, {"loaded", r.loaded}});
             return {{"format", f.binary ? "binary" : "ascii"},
                     {"version", f.version},
                     {"linearUnit", f.linearUnit},

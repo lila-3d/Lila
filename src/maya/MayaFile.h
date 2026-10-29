@@ -115,6 +115,7 @@ struct Reference
 {
     std::string path, ns, type;
     std::string refNode; // the reference node holding this reference's edits (-rfn)
+    bool loaded = true;
 };
 
 struct ParentEdit

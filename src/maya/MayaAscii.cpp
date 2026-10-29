@@ -7,6 +7,7 @@
 #include <format>
 #include <fstream>
 #include <optional>
+#include <set>
 #include <sstream>
 
 namespace lila::maya
@@ -396,6 +397,7 @@ File readAscii(std::string_view text)
     std::vector<Token> t;
     int line = 0;
     int current = -1; // node that setAttr / addAttr apply to
+    std::set<std::string> unloaded; // reference nodes of the references saved unloaded
     // Reference edits parse one-line snippets; only whole files report.
     std::optional<progress::Scope> scope;
     if (text.size() > (1u << 16))
@@ -582,30 +584,35 @@ File readAscii(std::string_view text)
         }
         else if (cmd == "file")
         {
-            bool ref = false;
+            bool ref = false, depthOne = false, deferred = false;
             Reference r;
             for (size_t i = 1; i < t.size(); ++i)
             {
                 std::string_view a = t[i].text;
                 if (!t[i].quoted && (a == "-r" || a == "-reference"))
                     ref = true;
+                else if (!t[i].quoted && a == "-dr" && i + 1 < t.size())
+                    deferred = t[++i].text != "0";
+                else if (!t[i].quoted && a == "-rdi" && i + 1 < t.size())
+                    depthOne = t[++i].text == "1";
                 else if (!t[i].quoted && (a == "-ns" || a == "-namespace") && i + 1 < t.size())
                     r.ns = unescape(t[++i].text);
                 else if (!t[i].quoted && (a == "-typ" || a == "-type") && i + 1 < t.size())
                     r.type = unescape(t[++i].text);
                 else if (!t[i].quoted && a == "-rfn" && i + 1 < t.size())
                     r.refNode = unescape(t[++i].text);
-                else if (!t[i].quoted && (a == "-op" || a == "-dr" || a == "-rdi" || a == "-shd" || a == "-gl"))
+                else if (!t[i].quoted && (a == "-op" || a == "-shd" || a == "-gl"))
                 {
-                    if (a == "-rdi")
-                        ref = false;
                     if (a != "-gl" && i + 1 < t.size())
                         ++i;
                 }
                 else if (t[i].quoted)
                     r.path = unescape(a);
             }
-            if (ref && !r.path.empty())
+            // The -r line always defers; the scene's load state is on its -rdi 1 line.
+            if (depthOne && deferred && !r.refNode.empty())
+                unloaded.insert(r.refNode);
+            else if (ref && !r.path.empty())
                 f.references.push_back(std::move(r));
         }
         else if (cmd == "parent")
@@ -631,6 +638,8 @@ File readAscii(std::string_view text)
         }
         // rename -uid, relationship, lockNode, dataStructure and the rest carry nothing a conversion needs.
     }
+    for (Reference& r : f.references)
+        r.loaded = !unloaded.contains(r.refNode);
     if (f.version.empty())
         if (auto it = f.fileInfo.find("version"); it != f.fileInfo.end())
             f.version = it->second;

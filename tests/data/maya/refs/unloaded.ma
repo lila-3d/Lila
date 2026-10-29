@@ -1,0 +1,176 @@
+//Maya ASCII 2026 scene
+//Name: unloaded.ma
+//Last modified: Thu, Oct 29, 2026 02:15:30 PM
+//Codeset: 1252
+file -rdi 1 -ns "rig" -dr 1 -rfn "rigRN" -typ "mayaAscii" "C:/Users/Jared/AppData/Local/Temp/claude/X--Lila/22669225-3800-403e-a115-6de59fbef2d7/scratchpad/mk/refs/skeleton.ma";
+file -rdi 1 -ns "rigb" -rfn "rigbRN" -op "VERS|2026|UVER|undef|MADE|undef|CHNG|Thu, Oct 22, 2026 10:26:24 AM|ICON|undef|INFO|undef|OBJN|23|INCL|undef(|LUNI|cm|TUNI|film|AUNI|deg|TDUR|141120000|"
+		 -typ "mayaBinary" "C:/Users/Jared/AppData/Local/Temp/claude/X--Lila/22669225-3800-403e-a115-6de59fbef2d7/scratchpad/mk/refs/skeleton.mb";
+file -r -ns "rig" -dr 1 -rfn "rigRN" -typ "mayaAscii" "C:/Users/Jared/AppData/Local/Temp/claude/X--Lila/22669225-3800-403e-a115-6de59fbef2d7/scratchpad/mk/refs/skeleton.ma";
+file -r -ns "rigb" -dr 1 -rfn "rigbRN" -op "VERS|2026|UVER|undef|MADE|undef|CHNG|Thu, Oct 22, 2026 10:26:24 AM|ICON|undef|INFO|undef|OBJN|23|INCL|undef(|LUNI|cm|TUNI|film|AUNI|deg|TDUR|141120000|"
+		 -typ "mayaBinary" "C:/Users/Jared/AppData/Local/Temp/claude/X--Lila/22669225-3800-403e-a115-6de59fbef2d7/scratchpad/mk/refs/skeleton.mb";
+requires maya "2026";
+currentUnit -l centimeter -a degree -t film;
+fileInfo "application" "maya";
+fileInfo "product" "Maya 2026";
+fileInfo "version" "2026";
+fileInfo "cutIdentifier" "202510291147-60ec9eda33";
+fileInfo "osv" "Windows 11 Pro v2009 (Build: 26300)";
+fileInfo "UUID" "94F7A797-4E89-0A47-4D10-BEBADBF46851";
+createNode transform -s -n "persp";
+	rename -uid "026638E8-4055-F3B4-B069-F59EFC12B132";
+	setAttr ".v" no;
+	setAttr ".t" -type "double3" 28 21 28 ;
+	setAttr ".r" -type "double3" -27.938352729602379 44.999999999999972 -5.172681101354183e-14 ;
+createNode camera -s -n "perspShape" -p "persp";
+	rename -uid "5D69194F-42F0-9CFE-0101-DF91FD7213EC";
+	setAttr -k off ".v" no;
+	setAttr ".fl" 34.999999999999993;
+	setAttr ".coi" 44.82186966202994;
+	setAttr ".imn" -type "string" "persp";
+	setAttr ".den" -type "string" "persp_depth";
+	setAttr ".man" -type "string" "persp_mask";
+	setAttr ".hc" -type "string" "viewSet -p %camera";
+createNode transform -s -n "top";
+	rename -uid "05987E6D-4704-9001-B198-AFA7E8042C46";
+	setAttr ".v" no;
+	setAttr ".t" -type "double3" 0 1000.1 0 ;
+	setAttr ".r" -type "double3" -90 0 0 ;
+createNode camera -s -n "topShape" -p "top";
+	rename -uid "08D7DDEA-40F5-BB46-4541-2E9D2C8A878C";
+	setAttr -k off ".v" no;
+	setAttr ".rnd" no;
+	setAttr ".coi" 1000.1;
+	setAttr ".ow" 30;
+	setAttr ".imn" -type "string" "top";
+	setAttr ".den" -type "string" "top_depth";
+	setAttr ".man" -type "string" "top_mask";
+	setAttr ".hc" -type "string" "viewSet -t %camera";
+	setAttr ".o" yes;
+createNode transform -s -n "front";
+	rename -uid "80B12C01-4C85-9197-CD0E-369C3DDE4306";
+	setAttr ".v" no;
+	setAttr ".t" -type "double3" 0 0 1000.1 ;
+createNode camera -s -n "frontShape" -p "front";
+	rename -uid "86569788-49A6-2E74-A613-F09E13A8F6C1";
+	setAttr -k off ".v" no;
+	setAttr ".rnd" no;
+	setAttr ".coi" 1000.1;
+	setAttr ".ow" 30;
+	setAttr ".imn" -type "string" "front";
+	setAttr ".den" -type "string" "front_depth";
+	setAttr ".man" -type "string" "front_mask";
+	setAttr ".hc" -type "string" "viewSet -f %camera";
+	setAttr ".o" yes;
+createNode transform -s -n "side";
+	rename -uid "2C0C0FD2-4143-02DF-9D83-BF946F639512";
+	setAttr ".v" no;
+	setAttr ".t" -type "double3" 1000.1 0 0 ;
+	setAttr ".r" -type "double3" 0 90 0 ;
+createNode camera -s -n "sideShape" -p "side";
+	rename -uid "27D48DEF-4F7A-7058-B2B7-9CBF5D6FD8EB";
+	setAttr -k off ".v" no;
+	setAttr ".rnd" no;
+	setAttr ".coi" 1000.1;
+	setAttr ".ow" 30;
+	setAttr ".imn" -type "string" "side";
+	setAttr ".den" -type "string" "side_depth";
+	setAttr ".man" -type "string" "side_mask";
+	setAttr ".hc" -type "string" "viewSet -s %camera";
+	setAttr ".o" yes;
+createNode lightLinker -s -n "lightLinker1";
+	rename -uid "894F6F4B-49AF-9E1F-C74F-C49AA4155189";
+	setAttr -s 2 ".lnk";
+	setAttr -s 2 ".slnk";
+createNode displayLayerManager -n "layerManager";
+	rename -uid "CE0BF411-4051-37FC-F43B-429F62E660D4";
+createNode displayLayer -n "defaultLayer";
+	rename -uid "A75CFB77-45C7-8062-2868-FDB260CAE4E2";
+	setAttr ".ufem" -type "stringArray" 0  ;
+createNode renderLayerManager -n "renderLayerManager";
+	rename -uid "FB8582CC-4E7E-9FA0-5B63-3AB8AE6B4BEF";
+createNode renderLayer -n "defaultRenderLayer";
+	rename -uid "38560755-4916-1EEB-4032-6BB3AF9C6126";
+	setAttr ".g" yes;
+createNode reference -n "rigRN";
+	rename -uid "08FB8483-48FD-051F-E607-538BEB70E9E7";
+	setAttr ".ed" -type "dataReferenceEdits" 
+		"rigRN"
+		"rigRN" 1
+		2 "|rig:root|rig:spine" "translate" " -type \"double3\" 5 0 0";
+lockNode -l 1 ;
+createNode reference -n "rigbRN";
+	rename -uid "8E34A827-4A40-514C-A0C7-29BB5CA76483";
+	setAttr ".ed" -type "dataReferenceEdits" 
+		"rigbRN"
+		"rigbRN" 0;
+lockNode -l 1 ;
+createNode reference -n "sharedReferenceNode";
+	rename -uid "22CF3492-445F-590B-A9B2-AC924087DCDF";
+	setAttr ".ed" -type "dataReferenceEdits" 
+		"sharedReferenceNode";
+createNode script -n "uiConfigurationScriptNode";
+	rename -uid "8F009D88-40B3-5A04-1665-B78E85ECB2A4";
+	setAttr ".b" -type "string" "// Maya Mel UI Configuration File.\n// No UI generated in batch mode.\n";
+	setAttr ".st" 3;
+createNode script -n "sceneConfigurationScriptNode";
+	rename -uid "0D6FF2DA-4AA9-69A3-C631-D5BDE1E6DA0E";
+	setAttr ".b" -type "string" "playbackOptions -min 1 -max 120 -ast 1 -aet 200 ";
+	setAttr ".st" 6;
+select -ne :time1;
+	setAttr ".o" 1;
+	setAttr ".unw" 1;
+select -ne :hardwareRenderingGlobals;
+	setAttr ".otfna" -type "stringArray" 22 "NURBS Curves" "NURBS Surfaces" "Polygons" "Subdiv Surface" "Particles" "Particle Instance" "Fluids" "Strokes" "Image Planes" "UI" "Lights" "Cameras" "Locators" "Joints" "IK Handles" "Deformers" "Motion Trails" "Components" "Hair Systems" "Follicles" "Misc. UI" "Ornaments"  ;
+	setAttr ".otfva" -type "Int32Array" 22 0 1 1 1 1 1
+		 1 1 1 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 ;
+	setAttr ".fprt" yes;
+	setAttr ".rtfm" 1;
+select -ne :renderPartition;
+	setAttr -s 2 ".st";
+select -ne :renderGlobalsList1;
+select -ne :defaultShaderList1;
+	setAttr -s 6 ".s";
+select -ne :postProcessList1;
+	setAttr -s 2 ".p";
+select -ne :defaultRenderingList1;
+	setAttr -s 2 ".r";
+select -ne :standardSurface1;
+	setAttr ".bc" -type "float3" 0.40000001 0.40000001 0.40000001 ;
+	setAttr ".sr" 0.5;
+select -ne :openPBR_shader1;
+	setAttr ".bc" -type "float3" 0.40000001 0.40000001 0.40000001 ;
+	setAttr ".sr" 0.5;
+select -ne :initialShadingGroup;
+	setAttr ".ro" yes;
+select -ne :initialParticleSE;
+	setAttr ".ro" yes;
+select -ne :defaultRenderGlobals;
+	addAttr -ci true -h true -sn "dss" -ln "defaultSurfaceShader" -dt "string";
+	setAttr ".dss" -type "string" "openPBR_shader1";
+select -ne :defaultResolution;
+	setAttr ".pa" 1;
+select -ne :defaultColorMgtGlobals;
+	setAttr ".cfe" yes;
+	setAttr ".cfp" -type "string" "<MAYA_RESOURCES>/OCIO-configs/Maya2022-default/config.ocio";
+	setAttr ".vtn" -type "string" "ACES 1.0 SDR-video (sRGB)";
+	setAttr ".vn" -type "string" "ACES 1.0 SDR-video";
+	setAttr ".dn" -type "string" "sRGB";
+	setAttr ".wsn" -type "string" "ACEScg";
+	setAttr ".otn" -type "string" "ACES 1.0 SDR-video (sRGB)";
+	setAttr ".potn" -type "string" "ACES 1.0 SDR-video (sRGB)";
+select -ne :hardwareRenderGlobals;
+	setAttr ".ctrs" 256;
+	setAttr ".btrs" 512;
+relationship "link" ":lightLinker1" ":initialShadingGroup.message" ":defaultLightSet.message";
+relationship "link" ":lightLinker1" ":initialParticleSE.message" ":defaultLightSet.message";
+relationship "shadowLink" ":lightLinker1" ":initialShadingGroup.message" ":defaultLightSet.message";
+relationship "shadowLink" ":lightLinker1" ":initialParticleSE.message" ":defaultLightSet.message";
+connectAttr "layerManager.dli[0]" "defaultLayer.id";
+connectAttr "renderLayerManager.rlmi[0]" "defaultRenderLayer.rlid";
+connectAttr "sharedReferenceNode.sr" "rigRN.sr";
+connectAttr "defaultRenderLayer.msg" ":defaultRenderingList1.r" -na;
+dataStructure -fmt "raw" -as "name=externalContentTable:string=node:string=key:string=upath:uint32=upathcrc:string=rpath:string=roles";
+applyMetadata -fmt "raw" -v "channel\nname externalContentTable\nstream\nname v1.0\nindexType numeric\nstructure externalContentTable\n0\n\"rigRN\" \"\" \"C:/Users/Jared/AppData/Local/Temp/claude/X--Lila/22669225-3800-403e-a115-6de59fbef2d7/scratchpad/mk/refs/skeleton.ma\" 2811648242 \"C:/Users/Jared/AppData/Local/Temp/claude/X--Lila/22669225-3800-403e-a115-6de59fbef2d7/scratchpad/mk/refs/skeleton.ma\" \"FileRef\"\n1\n\"rigbRN\" \"\" \"C:/Users/Jared/AppData/Local/Temp/claude/X--Lila/22669225-3800-403e-a115-6de59fbef2d7/scratchpad/mk/refs/skeleton.mb\" 1050609992 \"C:/Users/Jared/AppData/Local/Temp/claude/X--Lila/22669225-3800-403e-a115-6de59fbef2d7/scratchpad/mk/refs/skeleton.mb\" \"FileRef\"\nendStream\nendChannel\nendAssociations\n" 
+		-scn;
+// End of unloaded.ma

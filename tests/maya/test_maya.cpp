@@ -850,6 +850,64 @@ TEST_CASE("maya references: import mode, and a .lila the converter did not write
     io::markClean();
 }
 
+TEST_CASE("maya references: a reference Maya saved unloaded comes over unloaded, its edits kept")
+{
+    for (std::string scene : {"unloaded.ma", "unloaded.mb"})
+    {
+        CAPTURE(scene);
+        fs::path dir = refsCopy(std::string("ref_unloaded_") + scene);
+        maya::File f = maya::readFile(dir / scene);
+        REQUIRE(f.references.size() == 2);
+        CHECK_FALSE(f.references[0].loaded);
+        CHECK(f.references[1].loaded);
+
+        Graph& g = fresh();
+        maya::ImportResult r = maya::importMaya(g, dir / scene);
+        REQUIRE(r.ok);
+        CHECK(r.references == std::vector<std::string>{"rig", "rigb"});
+        io::Reference* rig = io::refs::find("rig");
+        REQUIRE(rig);
+        CHECK_FALSE(rig->loaded);
+        CHECK(g.find("rig:root") == nullptr);
+        CHECK(g.find("rigb:root") != nullptr);
+        for (NodeId id : r.nodes)
+            CHECK(g.node(id) != nullptr);
+
+        std::vector<std::string> warnings;
+        io::refs::load(*rig, warnings);
+        CHECK(g.find("rig:spine")->as<glm::dvec3>(Transform::kTranslate).x == doctest::Approx(5.0));
+
+        fresh();
+        maya::ImportResult flat = maya::importMaya(Graph::current(), dir / scene, {.references = "import"});
+        REQUIRE(flat.ok);
+        CHECK(Graph::current().find("rig:root") == nullptr);
+        CHECK(Graph::current().find("rigb:root") != nullptr);
+        CHECK(contains(flat.skipped, "unloaded"));
+    }
+    fresh();
+    io::setCurrentPath({});
+    io::markClean();
+}
+
+TEST_CASE("maya convert: an unloaded reference is written unloaded")
+{
+    fs::path dir = refsCopy("ref_convert_unloaded");
+    fresh();
+    io::markClean();
+    json res = ops::execute("mayaConvert", {{"source", (dir / "unloaded.mb").generic_string()},
+                                             {"destination", (dir / "out" / "scene.lila").generic_string()}});
+    REQUIRE(res.size() == 1);
+    CHECK_FALSE(res[0].contains("error"));
+    io::load(dir / "out" / "scene.lila");
+    REQUIRE(io::refs::find("rig"));
+    CHECK_FALSE(io::refs::find("rig")->loaded);
+    CHECK(io::refs::find("rigb")->loaded);
+    CHECK(Graph::current().find("rig:root") == nullptr);
+    fresh();
+    io::setCurrentPath({});
+    io::markClean();
+}
+
 TEST_CASE("maya references: animation and connections through reference placeholders")
 {
     for (const char* scene : {"refedits2.ma", "refedits2.mb"})
