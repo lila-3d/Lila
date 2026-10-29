@@ -63,6 +63,10 @@ This license, including sections 4 and 12, binds the copyright holder and its su
 
 If no official release of the Software is made for 24 consecutive months, then from the end of that period the source code of the most recent official release is also licensed under the Apache License, Version 2.0, and the copyright holder shall make that source code publicly available. From then on, anyone may use, modify and distribute that version, and works derived from it, under the Apache License, Version 2.0. An "official release" is a new version of the Software made generally available by the copyright holder through an official distribution.
 
+13. Data the Software sends
+
+The Software can send anonymous usage statistics and crash reports to the copyright holder, and checks for updates, as described in the privacy notice at https://lila-3d.github.io/docs/#/privacy. Usage statistics and crash reports are optional: they can be turned off at any time in the Software's preferences, with the DO_NOT_TRACK or LILA_NO_TELEMETRY environment variables, or for an organisation through its studio preferences. They never include your files, file names, scene content or user names.
+
 MIT-licensed components
 
 The following are licensed under the MIT License (see the LICENSE file in each directory), so extensions and integrations built on them can be distributed under any terms, including closed source:
