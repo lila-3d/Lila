@@ -57,6 +57,6 @@ $notesArgs = if ($Notes) { @("--notes", $Notes) } else { @("--generate-notes") }
 if ($LASTEXITCODE -ne 0) { throw "gh release create failed. Run 'gh auth login' if you haven't." }
 
 if ($Steam) {
-    & "$repo\scripts\steam\upload.ps1" -Config Release
+    & "$repo\scripts\steam\upload.ps1" -Config Release -SkipBuild
 }
 "Released $tag"

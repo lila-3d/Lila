@@ -1,5 +1,5 @@
 # Stages Lila and uploads it to Steam app 5520720 with the login saved by SteamPipe GUI.
-param([string]$Config = "Release")
+param([string]$Config = "Release", [switch]$SkipBuild)
 $ErrorActionPreference = "Stop"
 $repo = (Resolve-Path "$PSScriptRoot\..\..").Path
 $builder = "$repo\third_party\steamworks\sdk\tools\ContentBuilder"
@@ -14,6 +14,11 @@ foreach ($file in Get-ChildItem "$env:LOCALAPPDATA\Valve\SteamPipeGUI.exe_Url_*"
 }
 if (-not $settings -or -not $settings.SteamLogin -or -not $settings.SteamPassword) {
     throw "No saved login in SteamPipe GUI for $builder. Open SteamPipe.lnk, fill it in with Save Password on."
+}
+
+if (-not $SkipBuild) {
+    cmd /c "`"$repo\scripts\env.cmd`" && cmake --build `"$repo\build`" --config $Config"
+    if ($LASTEXITCODE -ne 0) { throw "$Config build failed. If Lila is running from build\bin\$Config, close it." }
 }
 
 & "$PSScriptRoot\stage.ps1" -Config $Config
