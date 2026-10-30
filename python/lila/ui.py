@@ -396,10 +396,10 @@ def _call(op, fns=(), **args):
     return json.loads(_lila_sdk.call(op, json.dumps(args), tuple(_wrap(f) for f in fns)))
 
 
-def add_action(id, fn, label=None, category="Python", doc="", owner=None):
-    """Register fn as the UI action `id`, so menus, hotkeys, marking menus and shelves can run it."""
+def add_action(id, fn, label=None, category="Python", doc="", owner=None, icon=""):
+    """Register fn as the UI action `id`, so menus, hotkeys, marking menus and shelves can run it. `icon` is a Tabler icon name for menu rows."""
     return _call("action.add", [lambda: fn()], id=id, label=label or id, category=category, doc=doc or (fn.__doc__ or "").strip(),
-                 owner=_owner(owner))
+                 owner=_owner(owner), icon=icon)
 
 
 def remove_action(id):

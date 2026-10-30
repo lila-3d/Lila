@@ -36,6 +36,8 @@ struct Action
     nlohmann::json call;
     /** Set for toggles: whether it is on now. Menus and icon bars show it as a check. */
     std::function<bool()> checked;
+    /** A Tabler icon name for menu rows; see iconFor() for what an empty one falls back to. */
+    std::string icon;
 };
 
 namespace actions
@@ -71,6 +73,12 @@ LILA_UI_API bool isEnabled(const nlohmann::json& target);
 
 /** Predicate: anything is selected. */
 LILA_UI_API bool hasSelection();
+
+/**
+ * The Tabler icon a menu row shows for the action: its own icon, else Lila's default for the id, else the icon of the
+ * panel it toggles or of an icon bar button that runs it. Empty when none of those has one.
+ */
+LILA_UI_API std::string iconFor(const std::string& id);
 
 /** "Label  (Key)\ndoc", the tooltip of any button or menu item bound to an action. The id itself when unknown. */
 LILA_UI_API std::string tooltip(const std::string& id);

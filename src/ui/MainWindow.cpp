@@ -125,7 +125,7 @@ void MainWindow::registerPanels()
     auto dock = [this](const char* name) { return findChild<QDockWidget*>(name); };
     auto make = [](auto factory) { return std::function<QWidget*(QWidget*)>(factory); };
 
-    panels::add({.id = "shelf", .title = "Shelf", .create = make([](QWidget* p) { return new ShelfPanel(p); }), .area = Qt::TopDockWidgetArea,
+    panels::add({.id = "shelf", .title = "Shelf", .create = make([](QWidget* p) { return new ShelfPanel(p); }), .area = Qt::TopDockWidgetArea, .icon = "apps",
                  .place = [this](QDockWidget* shelf) {
                      shelf->setFeatures(shelf->features() & ~QDockWidget::DockWidgetVerticalTitleBar);
                      QWidget* grip = ShelfPanel::dockTitleBar(shelf);
@@ -141,11 +141,11 @@ void MainWindow::registerPanels()
                      shelf->setTitleBarWidget(grip);
                  }});
     panels::add({.id = "outliner", .title = "Outliner", .create = make([](QWidget* p) { return new OutlinerPanel(p); }),
-                 .area = Qt::LeftDockWidgetArea, .docs = "essentials?id=filter-the-outliner"});
+                 .area = Qt::LeftDockWidgetArea, .icon = "list-tree", .docs = "essentials?id=filter-the-outliner"});
     panels::add({.id = "sourceControl", .title = "Source Control", .create = make([](QWidget* p) { return new SourceControlPanel(p); }),
-                 .area = Qt::LeftDockWidgetArea});
+                 .area = Qt::LeftDockWidgetArea, .icon = "git-branch"});
     panels::add({.id = kReferenceEditorDock, .title = "Reference Editor", .create = make([](QWidget* p) { return new ReferenceEditor(p); }),
-                 .area = Qt::LeftDockWidgetArea});
+                 .area = Qt::LeftDockWidgetArea, .icon = "file-symlink"});
     panels::add({.id = kDisplayLayersDock, .title = "Display Layers", .create = make([](QWidget* p) { return new DisplayLayersPanel(p); }),
                  .area = Qt::RightDockWidgetArea, .icon = "stack-2"});
     registerAnimLayersPanel();
@@ -166,7 +166,7 @@ void MainWindow::registerPanels()
                  .area = Qt::LeftDockWidgetArea, .icon = "list-details",
                  .place = [this, dock](QDockWidget* d) { splitDockWidget(dock("outliner"), d, Qt::Vertical); }});
     panels::add({.id = "scriptOutput", .title = "Script Output", .create = make([](QWidget* p) { return new ScriptPanel(p); }),
-                 .area = Qt::BottomDockWidgetArea});
+                 .area = Qt::BottomDockWidgetArea, .icon = "file-text"});
     panels::add({.id = kScriptEditorDock, .title = "Script Editor", .create = make([](QWidget* p) {
                      auto* scriptEditor = new ScriptEditor(p);
                      scriptEditor->setEditorFont(monoFont());
@@ -179,9 +179,9 @@ void MainWindow::registerPanels()
                      });
                      return scriptEditor;
                  }),
-                 .area = Qt::BottomDockWidgetArea, .docs = "python/"});
+                 .area = Qt::BottomDockWidgetArea, .icon = "code", .docs = "python/"});
     panels::add({.id = kApiReferenceDock, .title = "API Reference", .create = make([](QWidget* p) { return new ApiReference(p); }),
-                 .area = Qt::RightDockWidgetArea, .open = false, .place = [this, dock](QDockWidget* apiDock) {
+                 .area = Qt::RightDockWidgetArea, .icon = "api", .open = false, .place = [this, dock](QDockWidget* apiDock) {
                      QDockWidget* editorDock = dock(kScriptEditorDock);
                      auto* scriptEditor = editorDock ? qobject_cast<ScriptEditor*>(editorDock->widget()) : nullptr;
                      auto* apiRef = qobject_cast<ApiReference*>(apiDock->widget());
@@ -209,12 +209,12 @@ void MainWindow::registerPanels()
                  },
                  .floatFirst = true, .docs = "python/"});
     panels::add({.id = kTerminalDock, .title = "Terminal", .create = make([](QWidget* p) { return new TerminalPanel(p); }),
-                 .area = Qt::BottomDockWidgetArea});
+                 .area = Qt::BottomDockWidgetArea, .icon = "terminal-2"});
     // The UV editor opens as its own column left of the channel box.
     panels::add({.id = kUvEditorDock, .title = "UV Editor", .create = make([](QWidget* p) { return new UvEditor(p); }),
-                 .area = Qt::RightDockWidgetArea});
+                 .area = Qt::RightDockWidgetArea, .icon = "cube-unfolded"});
     panels::add({.id = kChannelBoxDock, .title = "Channel Box", .create = make([](QWidget* p) { return new ChannelBox(p); }),
-                 .area = Qt::RightDockWidgetArea, .place = [this, dock](QDockWidget* channels) {
+                 .area = Qt::RightDockWidgetArea, .icon = "list", .place = [this, dock](QDockWidget* channels) {
                      // Back to its own width when its tab is picked after a wider one, such as the modeling toolkit.
                      channels->setProperty(kDefaultTabExtent, kDefaultSidePanelWidth);
                      splitDockWidget(dock(kUvEditorDock), channels, Qt::Horizontal);
@@ -222,20 +222,20 @@ void MainWindow::registerPanels()
                      splitDockWidget(channels, dock(kDisplayLayersDock), Qt::Vertical);
                  }});
     panels::add({.id = "attributeEditor", .title = "Attribute Editor", .create = make([](QWidget* p) { return new AttributeEditor(p); }),
-                 .area = Qt::RightDockWidgetArea, .place = [this, dock](QDockWidget* d) { tabifyDockWidget(dock(kChannelBoxDock), d); }});
+                 .area = Qt::RightDockWidgetArea, .icon = "file-description", .place = [this, dock](QDockWidget* d) { tabifyDockWidget(dock(kChannelBoxDock), d); }});
     auto tabWithAttributes = [this, dock](QDockWidget* d) { tabifyDockWidget(dock("attributeEditor"), d); };
     panels::add({.id = kModelingToolkitDock, .title = "Modeling Toolkit", .create = make([](QWidget* p) { return new ModelingToolkit(p); }),
-                 .area = Qt::RightDockWidgetArea, .open = false, .place = [tabWithAttributes](QDockWidget* toolkit) {
+                 .area = Qt::RightDockWidgetArea, .icon = "tool", .open = false, .place = [tabWithAttributes](QDockWidget* toolkit) {
                      tabWithAttributes(toolkit);
                      toolkit->setProperty(kDefaultTabExtent, kDefaultSidePanelWidth * 5 / 4);
                  }});
     panels::add({.id = kCurveToolkitDock, .title = "Curve Toolkit", .create = make([](QWidget* p) { return new CurveToolkit(p); }),
-                 .area = Qt::RightDockWidgetArea, .open = false, .place = [tabWithAttributes](QDockWidget* toolkit) {
+                 .area = Qt::RightDockWidgetArea, .icon = "vector-bezier-2", .open = false, .place = [tabWithAttributes](QDockWidget* toolkit) {
                      tabWithAttributes(toolkit);
                      toolkit->setProperty(kDefaultTabExtent, kDefaultSidePanelWidth * 5 / 4);
                  }});
     panels::add({.id = kTopologyToolkitDock, .title = "Topology Toolkit", .create = make([](QWidget* p) { return new TopologyToolkit(p); }),
-                 .area = Qt::RightDockWidgetArea, .open = false, .place = [tabWithAttributes](QDockWidget* toolkit) {
+                 .area = Qt::RightDockWidgetArea, .icon = "grid-dots", .open = false, .place = [tabWithAttributes](QDockWidget* toolkit) {
                      tabWithAttributes(toolkit);
                      toolkit->setProperty(kDefaultTabExtent, kDefaultSidePanelWidth * 2);
                  }, .docs = "topology"});
@@ -245,24 +245,24 @@ void MainWindow::registerPanels()
                      toolkit->setProperty(kDefaultTabExtent, kDefaultSidePanelWidth * 2);
                  }, .toggleAction = "window.levelToolkit"});
     panels::add({.id = kModifierStackDock, .title = "Modifier Stack", .create = make([](QWidget* p) { return new ModifierStackWidget(p); }),
-                 .area = Qt::RightDockWidgetArea, .place = tabWithAttributes});
+                 .area = Qt::RightDockWidgetArea, .icon = "stack-front", .place = tabWithAttributes});
     panels::add({.id = kMaterialEditorDock, .title = "Material Editor", .create = make([](QWidget* p) { return new MaterialEditor(p); }),
-                 .area = Qt::RightDockWidgetArea, .place = [tabWithAttributes, dock](QDockWidget* materials) {
+                 .area = Qt::RightDockWidgetArea, .icon = "color-swatch", .place = [tabWithAttributes, dock](QDockWidget* materials) {
                      tabWithAttributes(materials);
                      // Swatches and texture slots need more room than the channel box's width.
                      materials->setProperty(kDefaultTabExtent, kDefaultSidePanelWidth * 5 / 4);
                      dock(kChannelBoxDock)->raise();
                  }});
     panels::add({.id = kTimeSliderDock, .title = "Time Slider", .create = make([](QWidget* p) { return new TimeSlider(p); }),
-                 .area = Qt::BottomDockWidgetArea, .place = [](QDockWidget* timeSlider) {
+                 .area = Qt::BottomDockWidgetArea, .icon = "timeline", .place = [](QDockWidget* timeSlider) {
                      timeSlider->setTitleBarWidget(new QWidget(timeSlider));
                      // Fixed height, so a bottom area left with only the slider shrinks to it instead of handing it the space.
                      timeSlider->widget()->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
                  }});
     panels::add({.id = kGraphEditorDock, .title = "Graph Editor", .create = make([](QWidget* p) { return new GraphEditor(p); }),
-                 .area = Qt::BottomDockWidgetArea, .open = false});
+                 .area = Qt::BottomDockWidgetArea, .icon = "chart-line", .open = false});
     panels::add({.id = kNodeEditorDock, .title = "Node Editor", .create = make([](QWidget* p) { return new NodeEditor(p); }),
-                 .area = Qt::BottomDockWidgetArea, .open = false, .place = [this, dock](QDockWidget* nodeDock) {
+                 .area = Qt::BottomDockWidgetArea, .icon = "schema", .open = false, .place = [this, dock](QDockWidget* nodeDock) {
                      arrangeBottomDocks(this, {dock("scriptOutput"), dock(kScriptEditorDock), dock(kTerminalDock), dock(kGraphEditorDock), nodeDock},
                                         dock(kScriptEditorDock), dock(kTimeSliderDock));
                  }, .docs = "node-editor"});

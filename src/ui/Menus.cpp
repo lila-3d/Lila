@@ -5,6 +5,7 @@
 #include "ui/Actions.h"
 #include "ui/Arrange.h"
 #include "ui/DocsUi.h"
+#include "ui/Icons.h"
 #include "ui/Shelf.h"
 
 #include <QAction>
@@ -191,6 +192,7 @@ QAction* addActionRow(QMenu* menu, const std::string& id)
     QAction* qa = menu->addAction(QString::fromStdString(a ? a->label : id));
     qa->setData(QString::fromStdString(id));
     qa->setToolTip(QString::fromStdString(actions::tooltip(id)));
+    qa->setIcon(icon(QString::fromStdString(actions::iconFor(id))));
     if (a)
         qa->setStatusTip(QString::fromStdString(a->doc));
     QObject::connect(qa, &QAction::triggered, menu, [id, menu = QPointer<QMenu>(menu)] {

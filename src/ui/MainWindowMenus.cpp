@@ -386,7 +386,11 @@ void MainWindow::fillEditorsMenu(QMenu* menu)
             return;
         menu->addSection(title);
         for (QDockWidget* d : members)
+        {
+            if (const panels::Panel* p = panels::registry().find(d->objectName().toStdString()))
+                d->toggleViewAction()->setIcon(icon(QString::fromStdString(p->icon)));
             menu->addAction(d->toggleViewAction());
+        }
     };
     for (const auto& [group, titles] : kGroups)
     {

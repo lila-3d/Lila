@@ -6,6 +6,7 @@ lila_module(lila_ui UI
     AchievementBanner.cpp AchievementBanner.h
     AchievementRules.cpp AchievementRules.h
     Actions.cpp
+    ActionIcons.cpp
     AdjustLastOp.cpp AdjustLastOp.h
     AppMain.cpp AppMain.h
     FlagFields.cpp FlagFields.h

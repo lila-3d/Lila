@@ -156,7 +156,7 @@ json dispatch(const std::string& op, const json& a, const std::vector<PyCall>& f
                           if (run)
                               run(json::array());
                       },
-                      .doc = str(a, "doc"), .python = str(a, "python")},
+                      .doc = str(a, "doc"), .python = str(a, "python"), .icon = str(a, "icon")},
                      owner);
         return true;
     }

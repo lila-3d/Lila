@@ -214,6 +214,7 @@ void addActionRows(QMenu* menu, const std::vector<std::string>& rows, const Stat
         QAction* qa = menu->addAction(QString::fromStdString(a ? a->label : row));
         qa->setData(QString::fromStdString(row));
         qa->setToolTip(QString::fromStdString(actions::tooltip(row)));
+        qa->setIcon(icon(QString::fromStdString(actions::iconFor(row))));
         qa->setEnabled(actions::isEnabled(nlohmann::json(row)));
         if (std::optional<bool> on = state ? state(row) : std::nullopt)
         {
