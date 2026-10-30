@@ -33,7 +33,7 @@ namespace
 {
 using scene::Graph;
 using scene::Node;
-using T = ArgType;
+using AT = ArgType;
 using Ids = scene::components::Ids;
 
 constexpr const char* kPrefs = "trimSheets";
@@ -54,8 +54,8 @@ std::vector<std::string> presetIds()
     return out;
 }
 
-FlagDef sheetFlag() { return {"sheet", "sh", T::String, nullptr, "The .lilatrim file; the current sheet (trimSheetCurrent) when not given."}; }
-FlagDef uvSetFlag() { return {"uvSet", "", T::String, "uv0", "UV set to write."}; }
+FlagDef sheetFlag() { return {"sheet", "sh", AT::String, nullptr, "The .lilatrim file; the current sheet (trimSheetCurrent) when not given."}; }
+FlagDef uvSetFlag() { return {"uvSet", "", AT::String, "uv0", "UV set to write."}; }
 
 std::filesystem::path loadedPath(const Args& a, const char* cmd, std::string_view flag = "sheet")
 {
@@ -271,19 +271,19 @@ std::vector<FlagDef> hotspotFlags()
 {
     return {sheetFlag(),
             uvSetFlag(),
-            {"splitAngle", "sa", T::Float, 30.0, "Faces meeting sharper than this, degrees, become separate islands; 0 keeps the seams.", {}, {}, 0.0, 180.0},
-            {"orient", "o", T::String, "worldUp", "worldUp (up runs up the trim), longestU or asIs.", {"worldUp", "longestU", "asIs"}},
-            {"tag", "tg", T::String, "", "Only trims with this tag (edge, radial, flat or your own); unique and flat trims need one."},
-            {"seed", "s", T::Int, int64_t(0), "Variation seed: offsets along strips, picks among equal trims."},
-            {"cycle", "c", T::Int, int64_t(0), "Take the n-th best trim instead of the best: run again with cycle+1 to try the next."},
-            {"randomOffset", "ro", T::Bool, true, "Slide islands along tiling strips so repeats don't line up."},
-            {"randomFlip", "rf", T::Bool, false, "Turn islands 180 degrees at random where the trim allows it."},
-            {"randomMirror", "rm", T::Bool, false, "Mirror islands at random."},
-            {"allowRotate", "ar", T::Bool, true, "Let islands turn 90 degrees to fit."},
-            {"maxSizeError", "mse", T::Float, 1.0, "Islands off a trim's world size by more than this many doublings count as poor matches.", {}, {}, 0.0, 8.0},
-            {"aspectWeight", "aw", T::Float, 1.0, "How much shape matters.", {}, {}, 0.0, 10.0},
-            {"sizeWeight", "sw", T::Float, 1.0, "How much world size matters.", {}, {}, 0.0, 10.0},
-            {"normalWeight", "nw", T::Float, 0.5, "How much facing matters, for trims with a preferred direction.", {}, {}, 0.0, 10.0}};
+            {"splitAngle", "sa", AT::Float, 30.0, "Faces meeting sharper than this, degrees, become separate islands; 0 keeps the seams.", {}, {}, 0.0, 180.0},
+            {"orient", "o", AT::String, "worldUp", "worldUp (up runs up the trim), longestU or asIs.", {"worldUp", "longestU", "asIs"}},
+            {"tag", "tg", AT::String, "", "Only trims with this tag (edge, radial, flat or your own); unique and flat trims need one."},
+            {"seed", "s", AT::Int, int64_t(0), "Variation seed: offsets along strips, picks among equal trims."},
+            {"cycle", "c", AT::Int, int64_t(0), "Take the n-th best trim instead of the best: run again with cycle+1 to try the next."},
+            {"randomOffset", "ro", AT::Bool, true, "Slide islands along tiling strips so repeats don't line up."},
+            {"randomFlip", "rf", AT::Bool, false, "Turn islands 180 degrees at random where the trim allows it."},
+            {"randomMirror", "rm", AT::Bool, false, "Mirror islands at random."},
+            {"allowRotate", "ar", AT::Bool, true, "Let islands turn 90 degrees to fit."},
+            {"maxSizeError", "mse", AT::Float, 1.0, "Islands off a trim's world size by more than this many doublings count as poor matches.", {}, {}, 0.0, 8.0},
+            {"aspectWeight", "aw", AT::Float, 1.0, "How much shape matters.", {}, {}, 0.0, 10.0},
+            {"sizeWeight", "sw", AT::Float, 1.0, "How much world size matters.", {}, {}, 0.0, 10.0},
+            {"normalWeight", "nw", AT::Float, 0.5, "How much facing matters, for trims with a preferred direction.", {}, {}, 0.0, 10.0}};
 }
 
 /** The bake result recorded beside the textures, for sends. */
@@ -338,14 +338,14 @@ void registerCommands(ext::Context& ctx)
                "Lila material M_<name> shows them. An existing file is kept (its settings may have been changed) and only baked when "
                "its textures are missing, so calling this again is cheap. Presets: " + presetChoices() + ". The new sheet becomes "
                "current. Returns the sheet summary (trims with world sizes, textures, warnings) and the bake result.",
-        .flags = {{"preset", "p", T::String, "industrialMetal", "Layout and profiles to start from.", presetIds()},
-                  {"width", "w", T::Int, int64_t(0), "Texture width, px (0: the preset's).", {}, {}, 0.0, 8192.0},
-                  {"file", "f", T::String, nullptr, "Where to save; default <workspace>/TrimSheets/<name>.lilatrim."},
-                  {"name", "n", T::String, nullptr, "Sheet name (texture prefix); default the preset's, T_<Preset>."},
-                  {"pxPerM", "", T::Float, nullptr, "Texels per metre: sets every trim's world size.", {}, {}, 1.0},
-                  {"bake", "b", T::Bool, true, "Bake when the textures are missing."},
-                  {"overwrite", "", T::Bool, false, "Replace an existing file with the preset."},
-                  {"backend", "", T::String, "auto", "Bake backend: auto, gpu or cpu.", {"auto", "gpu", "cpu"}}},
+        .flags = {{"preset", "p", AT::String, "industrialMetal", "Layout and profiles to start from.", presetIds()},
+                  {"width", "w", AT::Int, int64_t(0), "Texture width, px (0: the preset's).", {}, {}, 0.0, 8192.0},
+                  {"file", "f", AT::String, nullptr, "Where to save; default <workspace>/TrimSheets/<name>.lilatrim."},
+                  {"name", "n", AT::String, nullptr, "Sheet name (texture prefix); default the preset's, T_<Preset>."},
+                  {"pxPerM", "", AT::Float, nullptr, "Texels per metre: sets every trim's world size.", {}, {}, 1.0},
+                  {"bake", "b", AT::Bool, true, "Bake when the textures are missing."},
+                  {"overwrite", "", AT::Bool, false, "Replace an existing file with the preset."},
+                  {"backend", "", AT::String, "auto", "Bake backend: auto, gpu or cpu.", {"auto", "gpu", "cpu"}}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -427,10 +427,10 @@ void registerCommands(ext::Context& ctx)
                "Kinds: stripU, stripV, rect, radial, unique, flat. Rebake afterwards (trimSheetBake, trims= for just the changed "
                "ones). Returns the sheet summary.",
         .flags = {sheetFlag(),
-                  {"trim", "t", T::Any, nullptr, "Trim index or name to change."},
-                  {"values", "v", T::Any, nullptr, "Fields to merge."},
-                  {"add", "", T::Any, nullptr, "A trim to append."},
-                  {"remove", "", T::Any, nullptr, "Trim index or name to delete."}},
+                  {"trim", "t", AT::Any, nullptr, "Trim index or name to change."},
+                  {"values", "v", AT::Any, nullptr, "Fields to merge."},
+                  {"add", "", AT::Any, nullptr, "A trim to append."},
+                  {"remove", "", AT::Any, nullptr, "Trim index or name to delete."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             const std::filesystem::path f = loadedPath(a, "trimSheetEdit");
@@ -471,7 +471,7 @@ void registerCommands(ext::Context& ctx)
                "or to sculpt on before baking from them yourself. The plane lies on XZ facing +Y, one texel per pxPerM. Returns both "
                "names and the high's face count.",
         .positionalDoc = "sheet (default the current one)",
-        .flags = {sheetFlag(), {"tile", "", T::Bool, false, "Repeat tiling strips one sheet width to each side, as the bake does."}},
+        .flags = {sheetFlag(), {"tile", "", AT::Bool, false, "Repeat tiling strips one sheet width to each side, as the bake does."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
@@ -507,8 +507,8 @@ void registerCommands(ext::Context& ctx)
                "Baker's result, the files, seamError (0 is seamless across the U wrap) and seconds.",
         .positionalDoc = "sheet (default the current one)",
         .flags = {sheetFlag(),
-                  {"trims", "t", T::List, nullptr, "Trim indices or names to rebake; all when not given."},
-                  {"backend", "", T::String, "auto", "auto, gpu or cpu.", {"auto", "gpu", "cpu"}}},
+                  {"trims", "t", AT::List, nullptr, "Trim indices or names to rebake; all when not given."},
+                  {"backend", "", AT::String, "auto", "auto, gpu or cpu.", {"auto", "gpu", "cpu"}}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -532,11 +532,11 @@ void registerCommands(ext::Context& ctx)
                "strips, the rest hotspot rectangles, all with a raised bevel profile to change with trimSheetEdit. Saves to file= "
                "(default beside the source) and makes it current. Returns the sheet summary.",
         .positionalDoc = "source file or mesh",
-        .flags = {{"file", "f", T::String, nullptr, "Where to save the .lilatrim."},
-                  {"width", "w", T::Int, int64_t(2048), "Sheet width, px, for .rect and mesh sources.", {}, {}, 16.0, 16384.0},
-                  {"height", "h", T::Int, int64_t(2048), "Sheet height, px, for .rect and mesh sources.", {}, {}, 16.0, 16384.0},
-                  {"name", "n", T::String, nullptr, "Sheet name; default T_<source name>."},
-                  {"pxPerM", "", T::Float, 512.0, "Texels per metre.", {}, {}, 1.0}},
+        .flags = {{"file", "f", AT::String, nullptr, "Where to save the .lilatrim."},
+                  {"width", "w", AT::Int, int64_t(2048), "Sheet width, px, for .rect and mesh sources.", {}, {}, 16.0, 16384.0},
+                  {"height", "h", AT::Int, int64_t(2048), "Sheet height, px, for .rect and mesh sources.", {}, {}, 16.0, 16384.0},
+                  {"name", "n", AT::String, nullptr, "Sheet name; default T_<source name>."},
+                  {"pxPerM", "", AT::Float, 512.0, "Texels per metre.", {}, {}, 1.0}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             if (a.positional.empty())
@@ -601,8 +601,8 @@ void registerCommands(ext::Context& ctx)
                "one flat colour per trim) or json. Returns the file written.",
         .positionalDoc = "sheet (default the current one)",
         .flags = {sheetFlag(),
-                  {"format", "fmt", T::String, "rect", "rect, svg, idmap or json.", {"rect", "svg", "idmap", "json"}},
-                  {"file", "f", T::String, nullptr, "Output file; default beside the sheet."}},
+                  {"format", "fmt", AT::String, "rect", "rect, svg, idmap or json.", {"rect", "svg", "idmap", "json"}},
+                  {"file", "f", AT::String, nullptr, "Output file; default beside the sheet."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             const std::filesystem::path f = loadedPath(a, "trimSheetExport");
@@ -632,12 +632,12 @@ void registerCommands(ext::Context& ctx)
         .flags = [] {
             std::vector<FlagDef> f = {sheetFlag(),
                                       uvSetFlag(),
-                                      {"trim", "t", T::Any, nullptr, "Trim index or name."},
-                                      {"rotate", "r", T::String, "auto", "auto (whichever fits), on or off.", {"auto", "on", "off"}},
-                                      {"splitAngle", "sa", T::Float, 30.0, "Split islands where faces meet sharper than this, degrees.", {}, {}, 0.0, 180.0},
-                                      {"orient", "o", T::String, "worldUp", "worldUp, longestU or asIs.", {"worldUp", "longestU", "asIs"}},
-                                      {"seed", "s", T::Int, int64_t(0), "Offset along strips."},
-                                      {"randomOffset", "ro", T::Bool, true, "Slide islands along tiling strips."}};
+                                      {"trim", "t", AT::Any, nullptr, "Trim index or name."},
+                                      {"rotate", "r", AT::String, "auto", "auto (whichever fits), on or off.", {"auto", "on", "off"}},
+                                      {"splitAngle", "sa", AT::Float, 30.0, "Split islands where faces meet sharper than this, degrees.", {}, {}, 0.0, 180.0},
+                                      {"orient", "o", AT::String, "worldUp", "worldUp, longestU or asIs.", {"worldUp", "longestU", "asIs"}},
+                                      {"seed", "s", AT::Int, int64_t(0), "Offset along strips."},
+                                      {"randomOffset", "ro", AT::Bool, true, "Slide islands along tiling strips."}};
             return f;
         }(),
         .run = [](const Args& a) -> json {
@@ -686,7 +686,7 @@ void registerCommands(ext::Context& ctx)
                "matched, poor, failed, and each island's trim and size error.",
         .flags = [] {
             std::vector<FlagDef> f = hotspotFlags();
-            f.push_back({"showError", "se", T::Bool, false, "Paint match quality into the colour set trimError."});
+            f.push_back({"showError", "se", AT::Bool, false, "Paint match quality into the colour set trimError."});
             return f;
         }(),
         .run = [](const Args& a) -> json {
@@ -744,7 +744,7 @@ void registerCommands(ext::Context& ctx)
         .doc = "Move the selected faces' islands to the next trim up or down the sheet (Insomniac's shift UVs): strips step to the "
                "neighbouring strip, rectangles to the neighbouring rectangle, keeping how each island was turned. Faces must "
                "have been mapped by trimApply or trimAuto. Returns per mesh how many islands moved and where.",
-        .flags = {sheetFlag(), uvSetFlag(), {"steps", "n", T::Int, int64_t(1), "Trims to move; negative goes up the sheet.", {}, {}, -64.0, 64.0}},
+        .flags = {sheetFlag(), uvSetFlag(), {"steps", "n", AT::Int, int64_t(1), "Trims to move; negative goes up the sheet.", {}, {}, -64.0, 64.0}},
         .run = [](const Args& a) -> json {
             const std::filesystem::path f = loadedPath(a, "trimShift");
             const Sheet s = loadOr(f, "trimShift");
@@ -801,9 +801,9 @@ void registerCommands(ext::Context& ctx)
                "chamfer faces.",
         .flags = {sheetFlag(),
                   uvSetFlag(),
-                  {"width", "w", T::Float, 1.0, "Chamfer width, cm.", {}, {}, 0.01},
-                  {"tag", "tg", T::String, "edge", "Trims to use for the chamfers."},
-                  {"weightedNormals", "wn", T::Bool, true, "Set face-weighted normals on the meshes afterwards."}},
+                  {"width", "w", AT::Float, 1.0, "Chamfer width, cm.", {}, {}, 0.01},
+                  {"tag", "tg", AT::String, "edge", "Trims to use for the chamfers."},
+                  {"weightedNormals", "wn", AT::Bool, true, "Set face-weighted normals on the meshes afterwards."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
@@ -835,9 +835,9 @@ void registerCommands(ext::Context& ctx)
                "wait=False queues it.",
         .positionalDoc = "sheet (default the current one)",
         .flags = {sheetFlag(),
-                  {"folder", "f", T::String, "/Game/Lila/Trims", "Content folder; the sheet's assets go in <folder>/<name>."},
-                  {"regenerateMaster", "", T::Bool, false, "Rebuild M_LilaTrim's graph from this version of Lila, discarding edits to it."},
-                  {"wait", "w", T::Bool, true, "Block until Unreal has imported everything."}},
+                  {"folder", "f", AT::String, "/Game/Lila/Trims", "Content folder; the sheet's assets go in <folder>/<name>."},
+                  {"regenerateMaster", "", AT::Bool, false, "Rebuild M_LilaTrim's graph from this version of Lila, discarding edits to it."},
+                  {"wait", "w", AT::Bool, true, "Block until Unreal has imported everything."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             LILA_ZONE();
