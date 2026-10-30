@@ -30,24 +30,10 @@ const TfToken kUvTexture("UsdUVTexture");
 const TfToken kPrimvarReader("UsdPrimvarReader_float2");
 const TfToken kTransform2d("UsdTransform2d");
 
-/** Specular 0.5 is F0 4%, an IOR of 1.5: Unreal's specular scales F0 as 0.08 * specular. */
-double iorOfSpecular(double s)
-{
-    const double f0 = std::clamp(0.08 * s, 0.0, 0.999);
-    const double r = std::sqrt(f0);
-    return (1.0 + r) / (1.0 - r);
-}
-
-double specularOfIor(double ior)
-{
-    const double r = (ior - 1.0) / (ior + 1.0);
-    return std::clamp(r * r / 0.08, 0.0, 1.0);
-}
-
 template <class T> const T& val(const scene::Node& n, int attr) { return n.as<T>(attr); }
+} // namespace
 
-/** The non-default storable values of a material node as JSON, for what UsdPreviewSurface can't hold. */
-std::string extraAttrs(const scene::Node& n)
+std::string materialSettings(const scene::Node& n)
 {
     json out = json::object();
     const auto& attrs = n.type().attrs;
@@ -62,7 +48,19 @@ std::string extraAttrs(const scene::Node& n)
     }
     return out.dump();
 }
-} // namespace
+
+double iorOfSpecular(double s)
+{
+    const double f0 = std::clamp(0.08 * s, 0.0, 0.999);
+    const double r = std::sqrt(f0);
+    return (1.0 + r) / (1.0 - r);
+}
+
+double specularOfIor(double ior)
+{
+    const double r = (ior - 1.0) / (ior + 1.0);
+    return std::clamp(r * r / 0.08, 0.0, 1.0);
+}
 
 std::string uvPrimvarName(int set) { return set <= 0 ? "st" : "st" + std::to_string(set); }
 
@@ -146,8 +144,8 @@ std::string MaterialWriter::assetPath(const std::string& lilaPath)
     return out;
 }
 
-UsdShadeMaterial MaterialWriter::writeUnlit(const UsdShadeMaterial& m, UsdShadeShader surface, const scene::Node& n, const std::string& slot,
-                                            const std::function<UsdShadeShader(const std::string&, GfVec4f)>& texture)
+void MaterialWriter::writeUnlit(const UsdShadeMaterial& m, UsdShadeShader surface, const scene::Node& n, const std::string& slot,
+                                const std::function<UsdShadeShader(const std::string&, GfVec4f)>& texture)
 {
     // UsdPreviewSurface has no unlit model: the base color goes out as emission over a black surface that reflects
     // nothing, which other tools draw unlit; the material's lila customData marks it for Lila's own import.
@@ -178,7 +176,6 @@ UsdShadeMaterial MaterialWriter::writeUnlit(const UsdShadeMaterial& m, UsdShadeS
     setLilaData(m.GetPrim(), "unlit", VtValue(true));
     if (!val<std::string>(n, mat::kEmissiveMap).empty())
         warnings.push_back(std::format("material {}: UsdPreviewSurface has no room for an unlit material's emissive map; left out", slot));
-    return m;
 }
 
 UsdShadeMaterial MaterialWriter::material(const std::string& slot)
@@ -189,22 +186,33 @@ UsdShadeMaterial MaterialWriter::material(const std::string& slot)
     UsdShadeMaterial m = UsdShadeMaterial::Define(mStage, path);
     mDone[slot] = m;
     setLilaData(m.GetPrim(), "slot", VtValue(slot));
+    const scene::Node* n = scene::materials::find(mGraph, slot);
+    if (n)
+        setLilaData(m.GetPrim(), "attrs", VtValue(materialSettings(*n)));
+    else
+        setLilaData(m.GetPrim(), "fallback", VtValue(true));
+    if (mPreview || mMaterialX == mtlx::Surface::None)
+        writePreview(m, n, slot);
+    if (mMaterialX != mtlx::Surface::None)
+        mtlx::writeUsd(network(slot, mMaterialX, true), m);
+    return m;
+}
 
+void MaterialWriter::writePreview(const UsdShadeMaterial& m, const scene::Node* n, const std::string& slot)
+{
+    const SdfPath path = m.GetPath();
     UsdShadeShader surface = UsdShadeShader::Define(mStage, path.AppendChild(TfToken("PreviewSurface")));
     surface.CreateIdAttr(VtValue(kPreviewSurface));
     m.CreateSurfaceOutput().ConnectToSource(surface.ConnectableAPI(), TfToken("surface"));
     auto input = [&](const char* name, const SdfValueTypeName& type) { return surface.CreateInput(TfToken(name), type); };
 
-    const scene::Node* n = scene::materials::find(mGraph, slot);
     if (!n)
     {
         // Lila's neutral default, so other tools draw what the viewport does; importing it back makes no material.
-        setLilaData(m.GetPrim(), "fallback", VtValue(true));
         input("diffuseColor", SdfValueTypeNames->Color3f).Set(GfVec3f(0.5f));
         input("roughness", SdfValueTypeNames->Float).Set(0.55f);
-        return m;
+        return;
     }
-    setLilaData(m.GetPrim(), "attrs", VtValue(extraAttrs(*n)));
 
     const int uvSet = int(std::max<int64_t>(0, val<int64_t>(*n, mat::kUvSet)));
     UsdShadeShader reader;
@@ -255,8 +263,11 @@ UsdShadeMaterial MaterialWriter::material(const std::string& slot)
     const double opacity = val<double>(*n, mat::kOpacity);
     const std::string& baseMap = val<std::string>(*n, mat::kBaseColorMap);
     if (mat::ShadingModel(val<int64_t>(*n, mat::kShadingModel)) == mat::ShadingModel::Unlit)
-        return writeUnlit(m, surface, *n, slot,
-                          [&](const std::string& p, GfVec4f scale) { return texture(p, "baseColor", true, mat::kBaseColorMap, scale); });
+    {
+        writeUnlit(m, surface, *n, slot,
+                   [&](const std::string& p, GfVec4f scale) { return texture(p, "baseColor", true, mat::kBaseColorMap, scale); });
+        return;
+    }
     UsdShadeInput diffuse = input("diffuseColor", SdfValueTypeNames->Color3f);
     if (!baseMap.empty())
     {
@@ -326,7 +337,6 @@ UsdShadeMaterial MaterialWriter::material(const std::string& slot)
     if (mat::ShadingModel(val<int64_t>(*n, mat::kShadingModel)) != mat::ShadingModel::DefaultLit)
         warnings.push_back(std::format("material {}: its {} shading is kept for Lila only; other tools see the default lit inputs", slot,
                                        n->type().attrs[mat::kShadingModel].enumNames[size_t(val<int64_t>(*n, mat::kShadingModel))]));
-    return m;
 }
 
 // Import
@@ -411,16 +421,6 @@ mat::TextureSampling samplingOf(const UsdShadeShader& tex)
     return s;
 }
 
-/** The shader whose output an input reads, looking through node graph outputs; null when it holds a value. */
-UsdShadeShader upstreamShader(const UsdShadeInput& in)
-{
-    if (in)
-        for (const UsdAttribute& a : in.GetValueProducingAttributes())
-            if (UsdShadeOutput::IsOutput(a))
-                return UsdShadeShader(a.GetPrim());
-    return UsdShadeShader();
-}
-
 TextureUse textureOf(const UsdShadeShader& surface, const char* inputName)
 {
     TextureUse t;
@@ -477,50 +477,6 @@ std::string MaterialReader::texturePath(const UsdShadeShader& tex, const std::st
     return path;
 }
 
-void MaterialReader::readMtlxUnlit(const UsdShadeShader& surface, scene::NodeId id, const std::string& name)
-{
-    using namespace scene;
-    auto set = [&](int attr, PlugValue v) { mGraph.setValue({id, attr, -1}, std::move(v)); };
-    set(material::kShadingModel, int64_t(material::ShadingModel::Unlit));
-    float emission = 1.0f;
-    inputValue(surface, "emission", &emission);
-    const UsdShadeShader image = upstreamShader(surface.GetInput(TfToken("emission_color")));
-    const std::string kind = shaderId(image).GetString();
-    if (image && (kind.starts_with("ND_image_color") || kind.starts_with("ND_tiledimage_color")))
-    {
-        set(material::kBaseColorMap, texturePath(image, name));
-        mat::TextureSampling s;
-        auto wrap = [&](const char* input) {
-            std::string mode;
-            if (!inputValue(image, input, &mode))
-                return mat::TextureWrap::Repeat;
-            return mode == "clamp" ? mat::TextureWrap::Clamp : mode == "mirror" ? mat::TextureWrap::Mirror
-                                                         : mode == "constant" ? mat::TextureWrap::Black
-                                                                              : mat::TextureWrap::Repeat;
-        };
-        s.wrapU = wrap("uaddressmode");
-        s.wrapV = wrap("vaddressmode");
-        if (std::string f; inputValue(image, "filtertype", &f) && f == "closest")
-            s.filter = mat::TextureFilter::Nearest;
-        materials::setSampling(mGraph, id, material::kBaseColorMap, s);
-        if (emission != 1.0f)
-            warnings.push_back(std::format("material {}: its emission weight {} is not kept with a texture", name, emission));
-    }
-    else
-    {
-        if (image)
-            warnings.push_back(std::format("material {}: emission_color comes from a {} node; imported with its value", name, kind));
-        GfVec3f c(1.0f);
-        inputValue(surface, "emission_color", &c);
-        set(material::kBaseColor, glm::dvec3(c[0], c[1], c[2]) * double(emission));
-    }
-    if (float o = 1.0f; inputValue(surface, "opacity", &o) && o < 1.0f)
-    {
-        set(material::kBlendMode, int64_t(material::BlendMode::Translucent));
-        set(material::kOpacity, double(o));
-    }
-}
-
 void MaterialReader::setTwoSided(const std::string& slot)
 {
     // Materials Lila wrote carry their own twoSided; a mesh's doubleSided only speaks for other tools' materials.
@@ -541,6 +497,8 @@ std::string MaterialReader::slot(const UsdShadeMaterial& m)
     const VtDictionary data = lilaData(m.GetPrim());
     if (auto it = data.find("slot"); it != data.end() && it->second.IsHolding<std::string>() && Graph::validName(it->second.UncheckedGet<std::string>()))
         name = it->second.UncheckedGet<std::string>();
+    else if (auto ext = external.find(m.GetPrim().GetName().GetString()); ext != external.end() && Graph::validName(ext->second.first))
+        name = ext->second.first;
     if (!types::find("material") || materials::find(mGraph, name) || lilaFlag(m.GetPrim(), "fallback"))
     {
         mSlots[m.GetPath()] = name;
@@ -553,20 +511,36 @@ std::string MaterialReader::slot(const UsdShadeMaterial& m)
     created.push_back(name);
     auto set = [&](int attr, PlugValue v) { mGraph.setValue({n->id(), attr, -1}, std::move(v)); };
 
+    std::string own;
+    if (auto it = data.find("attrs"); it != data.end() && it->second.IsHolding<std::string>())
+        own = it->second.UncheckedGet<std::string>();
+    else if (auto ext = external.find(m.GetPrim().GetName().GetString()); ext != external.end())
+        own = ext->second.second;
+
+    // MaterialX wins over a UsdPreviewSurface beside it, which other tools write as a fallback. Lila's own materials
+    // hold everything in their preview surface (occlusion included), so that is read instead.
     UsdShadeShader surface = m.ComputeSurfaceSource();
-    if (!surface)
-        for (const TfToken& ctx : {TfToken("mtlx"), TfToken("arnold"), TfToken("ri")})
-            if ((surface = m.ComputeSurfaceSource({ctx})))
-                break;
-    if (surface && shaderId(surface) == TfToken("ND_surface_unlit"))
+    UsdShadeShader mx;
+    if (const UsdShadeOutput o = m.GetSurfaceOutput(TfToken("mtlx")); o && o.HasConnectedSource())
+        mx = m.ComputeSurfaceSource({TfToken("mtlx")});
+    if (!mx && surface && shaderId(surface).GetString().starts_with("ND_"))
+        mx = surface;
+    const bool ownPreview = !own.empty() && surface && shaderId(surface) == kPreviewSurface;
+    if (mx && shaderId(mx).GetString().starts_with("ND_") && !ownPreview)
     {
-        readMtlxUnlit(surface, n->id(), name);
+        readMtlx(mx, n->id(), name, !own.empty());
+        if (!own.empty())
+            applyOwnSettings(n->id(), own);
         return name;
     }
+    if (!surface)
+        for (const TfToken& ctx : {TfToken("arnold"), TfToken("ri")})
+            if ((surface = m.ComputeSurfaceSource({ctx})))
+                break;
     if (!surface || shaderId(surface) != kPreviewSurface)
     {
-        warnings.push_back(std::format("material {} uses {} rather than UsdPreviewSurface; imported with default settings", name,
-                                       surface ? shaderId(surface).GetString() : std::string("no surface shader")));
+        skipped.push_back(std::format("material {}: its surface {} has no Lila mapping; imported with default settings", name,
+                                      surface ? shaderId(surface).GetString() : std::string("(none)")));
         return name;
     }
 
@@ -772,29 +746,43 @@ std::string MaterialReader::slot(const UsdShadeMaterial& m)
             warnings.push_back(std::format("material {}: {} is not supported and was left out", name, unsupported));
     }
 
-    // Lila's own settings, written by its exporter, win over what the preview surface implied.
-    if (auto it = data.find("attrs"); it != data.end() && it->second.IsHolding<std::string>())
-    {
-        mOwnSettings.insert(name);
-        json extra = json::parse(it->second.UncheckedGet<std::string>(), nullptr, false);
-        if (extra.is_object())
-            for (auto& [key, value] : extra.items())
-            {
-                int a = n->type().attrIndex(key);
-                if (a < 0)
-                    continue;
-                try
-                {
-                    // Texture paths come from the network, resolved against this file, rather than as they were.
-                    if (n->type().attrs[size_t(a)].flags & AttrFile)
-                        continue;
-                    set(a, fromJson(n->type().attrs[size_t(a)], value));
-                }
-                catch (const std::exception&)
-                {
-                }
-            }
-    }
+    if (!own.empty())
+        applyOwnSettings(n->id(), own);
     return name;
+}
+
+void MaterialReader::applyOwnSettings(scene::NodeId id, const std::string& attrs)
+{
+    using namespace scene;
+    Node* n = mGraph.node(id);
+    if (!n)
+        return;
+    mOwnSettings.insert(n->name());
+    json extra = json::parse(attrs, nullptr, false);
+    if (!extra.is_object())
+        return;
+    // The settings hold every value that isn't its default, so what they leave out is back at its default, whatever
+    // the network implied (an unlit preview surface's roughness 1, say).
+    const auto& defs = n->type().attrs;
+    for (size_t a = 0; a < defs.size(); ++a)
+        if ((defs[a].flags & AttrStorable) && !(defs[a].flags & AttrFile) && defs[a].type != PlugType::Mesh && defs[a].type != PlugType::Data &&
+            !extra.contains(defs[a].name) && n->value(int(a)) != defs[a].defaultValue)
+            mGraph.setValue({id, int(a), -1}, defs[a].defaultValue);
+    for (auto& [key, value] : extra.items())
+    {
+        const int a = n->type().attrIndex(key);
+        if (a < 0)
+            continue;
+        try
+        {
+            // Texture paths come from the network, resolved against this file, rather than as they were.
+            if (n->type().attrs[size_t(a)].flags & AttrFile)
+                continue;
+            mGraph.setValue({id, a, -1}, fromJson(n->type().attrs[size_t(a)], value));
+        }
+        catch (const std::exception&)
+        {
+        }
+    }
 }
 } // namespace lila::usd

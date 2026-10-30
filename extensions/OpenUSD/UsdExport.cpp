@@ -1552,6 +1552,7 @@ bool Writer::run(const std::vector<scene::NodeId>& roots)
         else if (opts.textures == ExportOptions::Textures::Absolute)
             mode = TextureMode::Absolute;
         mats = std::make_unique<MaterialWriter>(g, stage, rootPath.AppendChild(TfToken("Materials")), path, mode);
+        mats->setShading(opts.previewSurface, opts.materialX);
     }
 
     planHierarchy();

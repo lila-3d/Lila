@@ -1409,3 +1409,44 @@ TEST_CASE("usd stage: an instance whose edits are all undone is instanced again"
     saveAs(dir / "scene.lila");
     CHECK(has(edits(stage), "instanceable = false"));
 }
+
+TEST_CASE("usd stage: materials go out as MaterialX when the stage asks or already uses it")
+{
+    UpAxisScope axis(math::UpAxis::Z);
+    fresh();
+    const fs::path dir = workDir("materialx");
+    std::string stage = openStage(copyFixture(dir, "live.usda"), {{"materialX", "openPBR"}})["stage"];
+    Node* blue = materials::create(graph(), "Blue");
+    graph().setValue({blue->id(), material::kBaseColor, -1}, glm::dvec3(0.1, 0.2, 0.9));
+    geo::Mesh m = *outMesh("Geo");
+    m.faceAttrs().remove(geo::attr::kMaterial);
+    m.materialNames().clear();
+    materials::assign(m, "Blue", {});
+    graph().setValue({node("Geo").id(), MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
+    saveAs(dir / "scene.lila");
+    std::string text = edits(stage);
+    INFO(text);
+    CHECK(has(text, "def Material \"Blue\""));
+    CHECK(has(text, "outputs:mtlx:surface.connect"));
+    CHECK(has(text, "ND_open_pbr_surface_surfaceshader"));
+    CHECK(has(text, "UsdPreviewSurface"));
+
+    // A stage of MaterialX materials: nothing written until an edit, which goes out as MaterialX again.
+    fresh();
+    fs::copy(fixture("tex"), dir / "tex", fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+    copyFixture(dir, "mtlx_library.mtlx");
+    stage = openStage(copyFixture(dir, "mtlx_materials.usda"))["stage"];
+    saveAs(dir / "scene2.lila");
+    CHECK(!has(edits(stage), "def"));
+    CHECK(!has(edits(stage), "over"));
+    Node* chrome = materials::find(graph(), "Chrome");
+    REQUIRE(chrome);
+    graph().setValue({chrome->id(), material::kBaseColor, -1}, glm::dvec3(0.7, 0.7, 0.75));
+    saveAs(dir / "scene2.lila");
+    text = edits(stage);
+    CHECK(has(text, "ND_open_pbr_surface_surfaceshader"));
+    CHECK(has(text, "(0.7, 0.7, 0.75)"));
+    run("usdStageReload", {{"args", {stage}}});
+    REQUIRE(materials::find(graph(), "Chrome"));
+    CHECK(near(materials::find(graph(), "Chrome")->as<glm::dvec3>(material::kBaseColor), {0.7, 0.7, 0.75}, 1e-6));
+}

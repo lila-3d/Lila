@@ -286,6 +286,7 @@ set(LILA_UNITY_SKIP
     tests/tex/test_tex_vt.cpp
     tests/usd/test_usd_fixtures.cpp
     tests/usd/test_usd_hydra.cpp
+    tests/usd/test_usd_materialx.cpp
     tests/usd/test_usd_panels.cpp
     tests/usd/test_usd_roundtrip.cpp
     tests/usd/test_usd_stage.cpp

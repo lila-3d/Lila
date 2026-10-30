@@ -1,6 +1,7 @@
 #pragma once
 
 #include "UsdCommon.h"
+#include "UsdMaterialX.h"
 
 #include <lila/Graph.h>
 
@@ -30,6 +31,9 @@ struct ExportOptions
     /** For .usd: text or binary crate (binary by default). */
     Format format = Format::Auto;
     bool materials = true;
+    /** A MaterialX network (outputs:mtlx:surface) per material, beside the UsdPreviewSurface unless previewSurface is off. */
+    mtlx::Surface materialX = mtlx::Surface::None;
+    bool previewSurface = true;
     /** How texture files are referenced; usdz always packages them. */
     enum class Textures
     {
