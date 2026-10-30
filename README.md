@@ -7,9 +7,11 @@
 Needs Visual Studio 2022 (C++ workload, CMake 3.28+, vcpkg), Qt 6.11.1 (`msvc2022_64`, plus the Ninja tool from the Qt installer) and Python 3.14. Defaults live in `scripts/env.cmd`; set `LILA_VS`, `LILA_QT_DIR`, `LILA_PYTHON_DIR` or `VCPKG_ROOT` before calling it to override. sccache and lld-link are used when found, and are optional.
 
 ```
-scripts\build.cmd                      # first run builds the vcpkg deps (USD makes this long)
+build.bat                              # configures on first run (vcpkg deps; USD makes this long), then builds
 build\bin\RelWithDebInfo\lila.exe      # or: lila.exe <folder>  /  lila.exe scene.lila
 ```
+
+Don't create the `build` folder by hand; the first `build.bat` makes it. `build.bat <dir> <config>` builds into another folder or configuration.
 
 To build an installer instead, also install Inno Setup 6 (`winget install JRSoftware.InnoSetup`), then:
 
