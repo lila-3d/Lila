@@ -31,6 +31,7 @@ Tests: `scripts\t.cmd build RelWithDebInfo -LE slow`. `-L slow` runs the slow su
 ## Troubleshooting
 
 - **vcpkg fails with `Operation REMOVE_DUPLICATES not recognized`:** the vcpkg that ships with Visual Studio is older than Lila's pinned ports. Update Visual Studio 2022 in the Visual Studio Installer (or point `VCPKG_ROOT` at a fresh clone of github.com/microsoft/vcpkg after running its `bootstrap-vcpkg.bat`), delete the `build` folder and run `build.bat` again.
+- **vcpkg fails with `usd[python] needs a Python install with headers and import libraries`:** install Python 3.14 from python.org (not the Microsoft Store version). It installs alongside any other Python version; leave "Add to PATH" unchecked to keep your current `python`. If it isn't in `C:\Python314`, `set LILA_PYTHON_DIR=<its folder>` before `build.bat`.
 - **Link error LNK1168 while building:** Lila is running. Close it (or `taskkill /IM lila.exe /F`).
 - **Viewport stays black:** check the Script Output for a `vulkan:` line. Lila needs a Vulkan 1.3 GPU and driver.
 - **Python errors at startup:** `LILA_PYTHON_DIR` must point at the exact Python 3.14 the build used.

@@ -16,6 +16,9 @@
       "name": "windows",
       "inherits": "base",
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "environment": {
+        "VCPKG_KEEP_ENV_VARS": "LILA_PYTHON_DIR"
+      },
       "cacheVariables": {
         "VCPKG_TARGET_TRIPLET": "x64-windows",
         "CMAKE_PREFIX_PATH": "$env{LILA_QT_DIR}",
