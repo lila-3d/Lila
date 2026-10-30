@@ -11,6 +11,7 @@
       "Backspace": "edit.delete",
       "Ctrl+G": "edit.group",
       "Ctrl+D": "edit.duplicate",
+      "Ctrl+Alt+F": "modify.freezeTransforms",
       "Shift+D": "edit.duplicateWithTransform",
       "Alt+Shift+D": "mesh.bakeModifierStack",
       "H": "display.toggleVisibility",
